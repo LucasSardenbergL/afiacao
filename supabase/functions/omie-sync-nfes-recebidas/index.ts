@@ -31,6 +31,16 @@ import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
 import { classificarModeloRecebimento } from "../_shared/modelo-documento-fiscal.ts";
 import { ehFimDaListagem } from "./listagem.ts";
+import { fetchAll } from "../_shared/paginate.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import {
+  extrairPedidosDoDetalhe,
+  type LinhaPedido,
+  montarPatchVinculo,
+  type OrfaParaReconciliar,
+  reconciliarOrfas,
+  type ReconciliacaoSummary,
+} from "./reconciliacao.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -73,6 +83,8 @@ interface EmpresaSummary extends Partial<ContagemModelo> {
   vinculos_criados_total: number;     // soma de UPDATEs em linhas de pedido (NFe×pedido)
   erros: number;
   interrompido_por_timeout?: boolean;
+  /** Ausente quando o passo não rodou (timeout do laço) — nunca um 0 que afirma "medi". */
+  reconciliacao?: ReconciliacaoSummary;
   backfill?: BackfillSummary;
 }
 
@@ -322,23 +334,6 @@ function mapNFe(nfe: OmieNFeListItem | OmieConsultarRecebimentoResponse): Mapped
 }
 
 /**
- * Extrai a lista deduplicada de nNumPedCompra (CNUMERO do pedido de compra)
- * a partir de itensRecebimento[].itensInfoAdic.nNumPedCompra do detalhe da NFe.
- */
-function extractPedidosFromDetalhe(detalhe: OmieConsultarRecebimentoResponse | null): string[] {
-  const itens: OmieItemRecebimento[] = Array.isArray(detalhe?.itensRecebimento) ? detalhe.itensRecebimento : [];
-  const set = new Set<string>();
-  for (const it of itens) {
-    const adic: OmieItensInfoAdic = it?.itensInfoAdic ?? {};
-    const num = adic?.nNumPedCompra;
-    if (num !== undefined && num !== null && String(num).trim() !== "" && String(num).trim() !== "0") {
-      set.add(String(num).trim());
-    }
-  }
-  return Array.from(set);
-}
-
-/**
  * Atualiza TODAS as linhas de purchase_orders_tracking (empresa, numero_pedido = num)
  * com os dados da NFe. Retorna quantas linhas foram atualizadas.
  */
@@ -359,31 +354,12 @@ async function updateLinhasDoPedido(
   }
   const { data, error: selErr } = await q;
   if (selErr) throw selErr;
-  const linhas = (data ?? []) as PurchaseOrderTrackingRow[];
+  const linhas = (data ?? []) as LinhaPedido[];
   if (linhas.length === 0) return 0;
 
   let atualizadas = 0;
   for (const linha of linhas) {
-    const currentStatus = String(linha.status ?? "");
-    let finalStatus: "FATURADO" | "RECEBIDO" | "CANCELADO" = m.status;
-    if (currentStatus === "CANCELADO") finalStatus = "CANCELADO";
-    else if (currentStatus === "RECEBIDO" && m.status === "FATURADO") finalStatus = "RECEBIDO";
-
-    const updateRow: Record<string, unknown> = {
-      t2_data_faturamento: linha.t2_data_faturamento ?? m.data_emissao_iso,
-      nfe_chave_acesso: m.chave,
-      nfe_numero: m.numero,
-      nfe_serie: m.serie,
-      status: finalStatus,
-      updated_at: new Date().toISOString(),
-    };
-    if (m.recebida && m.data_recebimento_iso) {
-      updateRow.t4_data_recebimento = linha.t4_data_recebimento ?? m.data_recebimento_iso;
-    }
-    if (m.transp_cnpj) updateRow.transportadora_cnpj = m.transp_cnpj;
-    if (m.transp_nome) updateRow.transportadora_nome = m.transp_nome;
-    if (m.fornecedor_nome) updateRow.fornecedor_nome = m.fornecedor_nome;
-    if (m.fornecedor_cnpj) updateRow.fornecedor_cnpj = m.fornecedor_cnpj;
+    const updateRow = montarPatchVinculo(linha, m, new Date().toISOString());
 
     const { error: updErr } = await supabase
       .from("purchase_orders_tracking")
@@ -446,6 +422,69 @@ async function insertOrfa(
       .insert(insertRow);
     if (insErr) throw insErr;
   }
+}
+
+/**
+ * Reconcilia as órfãs com o pedido que apareceu DEPOIS (reconciliacao.ts tem o porquê). Só lê o
+ * banco — o recebimento inteiro já está no raw_data da órfã — e por isso roda em todo run, mesmo o
+ * `apenas_backfill`, sem custo de Omie. Roda ANTES do backfill: a linha de pedido que ganha a NF
+ * aqui nasce com `nid_receb` nulo e o backfill do mesmo run já a completa.
+ */
+async function reconciliarOrfasEmpresa(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  fornecedorCodigo: number | undefined,
+  t0: number,
+): Promise<ReconciliacaoSummary> {
+  return await reconciliarOrfas(
+    {
+      listarOrfas: () =>
+        fetchAll<OrfaParaReconciliar>((from, to) => {
+          let q = supabase
+            .from("purchase_orders_tracking")
+            .select("id, fornecedor_codigo_omie, nfe_chave_acesso, raw_data")
+            .eq("empresa", empresa)
+            .lt("omie_codigo_pedido", 0)
+            .not("nfe_chave_acesso", "is", null);
+          if (fornecedorCodigo) q = q.eq("fornecedor_codigo_omie", fornecedorCodigo);
+          // A ordem DECIDE: há pedido com 2 NFs órfãs (entrega parcial — 2 de 12 linhas em prod,
+          // 2026-10-16). O CAS deixa a 1ª vencer; ordenar pela emissão faz vencer o 1º
+          // FATURAMENTO (o t2 que o leadtime quer), e a 2ª conta em conflito_outra_nf. `id` desempata
+          // e mantém a paginação estável.
+          return q
+            .order("t2_data_faturamento", { ascending: true, nullsFirst: false })
+            .order("id")
+            .range(from, to);
+        }, "purchase_orders_tracking(órfãs)"),
+      linhasDoPedido: (contrato, fornecedor) =>
+        fetchAll<LinhaPedido>((from, to) =>
+          supabase
+            .from("purchase_orders_tracking")
+            .select("id, status, t2_data_faturamento, t4_data_recebimento, nfe_chave_acesso")
+            .eq("empresa", empresa)
+            .eq("numero_contrato_fornecedor", contrato)
+            .eq("fornecedor_codigo_omie", fornecedor)
+            .gt("omie_codigo_pedido", 0)
+            .order("id")
+            .range(from, to), "purchase_orders_tracking(pedido do contrato)"),
+      vincularSeSemNF: async (id, patch) => {
+        const { data, error } = await supabase
+          .from("purchase_orders_tracking")
+          .update(patch)
+          .eq("id", id)
+          .is("nfe_chave_acesso", null)
+          .select("id");
+        if (error) throw error;
+        return Array.isArray(data) && data.length > 0;
+      },
+    },
+    (raw) => mapNFe(raw as OmieConsultarRecebimentoResponse),
+    {
+      agoraIso: () => new Date().toISOString(),
+      temTempo: () => Date.now() - t0 <= MAIN_LOOP_GUARD_MS,
+      log: (msg) => console.warn(`[sync-nfes] ${empresa} ${msg}`),
+    },
+  );
 }
 
 async function syncEmpresa(
@@ -607,7 +646,7 @@ async function syncEmpresa(
         }
         summary.consultas_detalhadas++;
 
-        const numerosPedido = extractPedidosFromDetalhe(detalhe);
+        const numerosPedido = extrairPedidosDoDetalhe(detalhe);
 
         if (numerosPedido.length >= 2) {
           console.log(
@@ -1001,6 +1040,24 @@ Deno.serve(async (req) => {
         // 'running' órfã). O backfill retroativo pega no próximo ciclo.
         if (s.interrompido_por_timeout && !pularBackfill) {
           console.warn(`[sync-nfes] ${empresa} main loop interrompido por tempo — pulando backfill p/ garantir completeSync`);
+        }
+        if (!s.interrompido_por_timeout) {
+          // Falha aqui NÃO derruba o run nem o backfill: a órfã fica como estava (nada foi
+          // fabricado) e o próximo run tenta de novo. O erro fica VISÍVEL no results.
+          try {
+            const rc = await reconciliarOrfasEmpresa(supabase, empresa, fornecedorCodigo, t0);
+            s.reconciliacao = rc;
+            console.log(
+              `[sync-nfes] ${empresa} reconcilia: orfas=${rc.orfas_lidas} casadas=${rc.orfas_com_pedido} ` +
+              `vinculadas=${rc.linhas_vinculadas} ja=${rc.ja_vinculadas} conflito=${rc.conflito_outra_nf} ` +
+              `corrida=${rc.corrida_perdida} puladas=${rc.orfas_puladas} erros=${rc.erros}`,
+            );
+            if (rc.interrompido_por_timeout) s.interrompido_por_timeout = true;
+          } catch (errRc) {
+            const msgRc = mensagemDeErro(errRc) ?? "erro sem mensagem";
+            console.error(`[sync-nfes] ${empresa} reconciliação erro fatal: ${msgRc}`);
+            s.erros++;
+          }
         }
         if (!pularBackfill && !s.interrompido_por_timeout) {
           try {
