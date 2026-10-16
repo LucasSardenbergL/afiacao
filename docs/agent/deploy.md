@@ -1034,8 +1034,11 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   Resultado: uma visita ao dashboard gerada de propósito para testar o fix **testou o código de antes
   do fix**, e a tabela vazia quase virou "o fix não pegou". Não é caso de borda: com `skipWaiting`
   removido de propósito, **esperar é o comportamento correto**, e o cliente fica no build velho até
-  clicar. Assets antigos continuam servidos com **200** (imutáveis por hash), então o SW consegue
-  sustentar o build velho indefinidamente.
+  clicar. O SW sustenta o build velho indefinidamente **a partir do precache** — o servidor, não:
+  ⚠️ **medido 2026-10-16, o host serve SÓ os assets do build atual** (`index-DYF3GvHG.js`, build da
+  manhã, já dava **404** uma hora depois; a versão anterior desta nota dizia "200, imutáveis" — falso
+  hoje). Consequência: chunk fora do precache (`globIgnores`) some do cliente velho, e um install de
+  SW que não termina antes do próximo Publish **morre** (um asset 404 → `redundant`).
   **A regra:** *"está no ar"* e *"está rodando"* são estados diferentes, e o segundo é **por
   cliente**. Bytes no servidor não fecham nenhuma verificação cujo sujeito seja o usuário — para
   essa, o oráculo tem de ser um efeito que só o código novo produz (uma linha que só ele grava, um
@@ -1050,5 +1053,23 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   um dos regexes ande sozinho. Como ler e a conta de adoção: `docs/agent/analytics.md` §6.
   ⚠️ **O sensor só responde a partir do Publish que o contém** — antes disso a propriedade é
   ausente em 100% dos eventos, e ausente significa "build anterior à instrumentação", não "erro".
+- **iPhone preso dias no build velho, sem toast (2026-10-16) — a checagem é ATIVA agora.** Medido em
+  `telemetria_probes`: o iPhone do founder trocou de build 10× em 47 dias (1 a cada 3–7 dias) contra
+  ~12 Publish/dia; de 09/10 20:12 a 16/10 ficou 16 boots em `index-92kmkUxx`. Não era defeito do build
+  nem o fallback do `main.tsx` (o salto `DyZs→92km` em 1,6 s é um clique no toast — o prompt
+  funcionava). Três causas somadas: (1) ninguém chamava `registration.update()` — só o soft update da
+  navegação, e voltar ao app no iOS standalone é RESUMO, não navegação; (2) cada Publish troca o hash
+  de **~82% do precache** (medido: #3101→#3103, mudança aditiva em 15 arquivos, mudou 267/326 entradas
+  = 4,0 de 6,0 MB) e o host apaga os assets do build anterior, então no 4G em sessão curta o install
+  não fecha antes do próximo Publish e morre em silêncio — sem waiting, sem toast; (3) toast dispensado
+  só voltava no `online`. **Correção** (`src/lib/pwa-atualizacao.ts`, compartilhado pelos dois caminhos
+  de registro): `update()` ao voltar pro app (throttle 5 min), no `online` e a cada 30 min visível; o
+  toast reaparece ao voltar pro app enquanto houver versão pronta; o fallback nativo do `main.tsx`
+  ganhou o mesmo aviso (SKIP_WAITING + reload no `controllerchange`); o modo `prompt` fica — nada
+  recarrega sem clique. **Em que build estou:** menu do usuário (ícone de pessoa) → "Versão <hash>" +
+  fase (em dia · baixando · pronta · falha · desatualizado) e "Verificar atualização", que também lê o
+  entry do servidor. Sensor: evento `pwa.atualizacao` (`fase`: baixando/pronta/falhou/aceita) —
+  `falhou` é o install que morria calado. Alavanca que sobra (follow-up): cortar a cascata de hash
+  dos chunks, que é o que faz cada Publish custar 4 MB ao celular.
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.
