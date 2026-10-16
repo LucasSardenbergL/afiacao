@@ -11,7 +11,7 @@ export interface Candidata extends Embalagem {
   protegida: boolean;
   motivoSemScore: string | null;
 }
-export type MotivoCorte = 'economico' | 'financeiro' | 'minimo' | 'sem_score';
+type MotivoCorte = 'economico' | 'financeiro' | 'minimo' | 'sem_score';
 /**
  * `fluxos` NÃO inclui a continuidade do motor: ela vem em `continuidade` e o corte a recalcula a cada
  * passo, consumida (mais cedo primeiro) pelo desembolso já aceito — a compra aceita SUBSTITUI a provisão

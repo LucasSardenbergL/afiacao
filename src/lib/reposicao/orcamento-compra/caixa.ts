@@ -2,7 +2,7 @@
 // Guarda de caixa diária (spec §6). Saldo = fim do dia. Fluxo antes do início cai no início.
 import { addDias, diffDias, type DataISO } from './datas';
 
-export type Camada =
+type Camada =
   | 'base_titulos' | 'reconciliacao_saldo' | 'compromisso_conciliado' | 'compromisso_a_faturar' | 'compromisso_nao_conciliado'
   | 'saida_nao_sayerlack' | 'continuidade_motor' | 'candidato';
 
