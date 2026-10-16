@@ -162,6 +162,247 @@ $fn$;
 REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.raio_x_estoque_fatos(text) TO authenticated;
 
+-- ============================================================================
+-- Task 2 — escrita (money-path: raio_x_decidir altera sku_parametros, o motor de compras).
+-- SECURITY DEFINER (as tabelas nao tem policy de escrita). Gate na 1a instrucao = cap_custo_ler:
+-- a decisao le CMC do inventory_position como DEFINER e devolve a foto (custo). Mesmo gate nas 3 (tela unica).
+-- Mapa: oben -> estoque 'oben', motor sku_parametros.empresa='OBEN'; colacor -> estoque 'colacor_vendas',
+-- motor NULL (a colacor nao tem sku_parametros: tirar cai no RX001 pelas 0 linhas; nunca toca o codigo
+-- homonimo da OBEN). A conta 'vendas' nunca e lida.
+-- Atomicidade: a funcao e uma transacao so; nenhum bloco EXCEPTION engole erro (o RX001 desfaz o upsert).
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.raio_x_decidir(
+  p_empresa text, p_sku bigint, p_destino text, p_categoria text, p_observacao text, p_fornecedor text,
+  p_credito_troca numeric, p_tirar_do_motor boolean, p_restaurar_motor boolean)
+RETURNS public.raio_x_decisao
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_uid       uuid := auth.uid();
+  v_est       text;
+  v_sp_emp    text;
+  v_tirar     boolean := coalesce(p_tirar_do_motor, false);
+  v_restaurar boolean := coalesce(p_restaurar_motor, false);
+  v_old       public.raio_x_decisao%ROWTYPE;
+  v_mudou     boolean;
+  v_alvo      text;
+  v_sp_tipo   text;
+  v_sp_hab    boolean;
+  v_mexer     boolean := false;
+  v_foto      boolean := false;
+  v_ip_saldo  numeric;
+  v_ip_cmc    numeric;
+  v_cmc       numeric;
+  v_n_tirar   int;
+  v_n_rest    int;
+  v_row       public.raio_x_decisao%ROWTYPE;
+BEGIN
+  IF NOT private.cap_custo_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'RAIO_X_SO_CUSTO' USING ERRCODE = '42501';
+  END IF;
+
+  -- ---- validacao (nada e escrito antes daqui) ----
+  CASE p_empresa
+    WHEN 'oben'    THEN v_est := 'oben';    v_sp_emp := 'OBEN';
+    WHEN 'colacor' THEN v_est := 'colacor_vendas'; v_sp_emp := NULL;
+    ELSE RAISE EXCEPTION 'raio_x: empresa invalida: %', coalesce(p_empresa, '<null>') USING ERRCODE = '22023';
+  END CASE;
+  IF p_sku IS NULL THEN
+    RAISE EXCEPTION 'raio_x: sku nulo' USING ERRCODE = '22023';
+  END IF;
+  IF p_destino IS NOT NULL AND p_destino NOT IN
+     ('trocar','venda_dirigida','liquidar','manter_suspender_recompra','estrategico','erro_cadastro') THEN
+    RAISE EXCEPTION 'raio_x: destino invalido: %', p_destino USING ERRCODE = '22023';
+  END IF;
+  IF p_categoria IS NOT NULL AND p_categoria NOT IN ('nao_mercadoria','uso_consumo','mercadoria') THEN
+    RAISE EXCEPTION 'raio_x: categoria invalida: %', p_categoria USING ERRCODE = '22023';
+  END IF;
+  IF v_tirar AND v_restaurar THEN
+    RAISE EXCEPTION 'raio_x: tirar e restaurar na mesma chamada' USING ERRCODE = '22023';
+  END IF;
+  v_alvo := CASE p_destino WHEN 'trocar' THEN 'descontinuado' WHEN 'liquidar' THEN 'descontinuado'
+                           WHEN 'manter_suspender_recompra' THEN 'sob_encomenda' END;
+  IF v_tirar AND v_alvo IS NULL THEN
+    RAISE EXCEPTION 'raio_x: tirar do motor exige destino trocar, liquidar ou manter_suspender_recompra'
+      USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_old FROM public.raio_x_decisao d
+   WHERE d.empresa = p_empresa AND d.sku_codigo_omie = p_sku FOR UPDATE;
+  IF v_restaurar AND v_old.motor_antes IS NULL THEN
+    RAISE EXCEPTION 'raio_x: nada a restaurar (%/%)', p_empresa, p_sku USING ERRCODE = '22023';
+  END IF;
+
+  v_mudou := (v_old.destino IS DISTINCT FROM p_destino);
+
+  -- Estado atual do motor (trava a linha). Sem linha -> o UPDATE abaixo afeta 0 e cai no RX001.
+  IF v_tirar THEN
+    SELECT sp.tipo_reposicao, sp.habilitado_reposicao_automatica INTO v_sp_tipo, v_sp_hab
+      FROM public.sku_parametros sp
+     WHERE sp.empresa = v_sp_emp AND sp.sku_codigo_omie = p_sku FOR UPDATE;
+    -- Ja no alvo (false + mesmo tipo): nao escreve e nao marca tirou_do_motor.
+    v_mexer := NOT (FOUND AND v_sp_hab IS NOT DISTINCT FROM false AND v_sp_tipo IS NOT DISTINCT FROM v_alvo);
+  END IF;
+
+  -- Foto: so na 1a decisao (foto_em is null) e com estoque presente; sem linha -> tudo NULL, tenta de novo depois.
+  IF p_destino IS NOT NULL AND v_old.foto_em IS NULL THEN
+    SELECT x.saldo, x.cmc INTO v_ip_saldo, v_ip_cmc FROM (
+      SELECT DISTINCT ON (ip.omie_codigo_produto) ip.saldo, ip.cmc
+        FROM public.inventory_position ip
+       WHERE ip.account = v_est AND ip.omie_codigo_produto = p_sku
+       ORDER BY ip.omie_codigo_produto, ip.synced_at DESC NULLS LAST) x;
+    IF FOUND THEN
+      v_foto := true;
+      v_cmc := CASE WHEN v_ip_cmc > 0 THEN v_ip_cmc END;   -- ausente/zero != custo
+    END IF;
+  END IF;
+
+  -- ---- escrita ----
+  INSERT INTO public.raio_x_decisao AS r (
+    empresa, sku_codigo_omie, destino, observacao, fornecedor_informado, credito_troca,
+    decidido_por, decidido_em, foto_saldo, foto_cmc, foto_valor, foto_categoria, foto_em,
+    tirou_do_motor, motor_antes, atualizado_em)
+  VALUES (
+    p_empresa, p_sku, p_destino, p_observacao, p_fornecedor, p_credito_troca,
+    CASE WHEN p_destino IS NOT NULL THEN v_uid END, CASE WHEN p_destino IS NOT NULL THEN now() END,
+    CASE WHEN v_foto THEN v_ip_saldo END, CASE WHEN v_foto THEN v_cmc END,
+    CASE WHEN v_foto THEN v_ip_saldo * v_cmc END, CASE WHEN v_foto THEN p_categoria END,
+    CASE WHEN v_foto THEN now() END,
+    v_mexer,
+    CASE WHEN v_mexer THEN jsonb_build_object('tipo_reposicao', v_sp_tipo, 'habilitado', v_sp_hab) END,
+    now())
+  ON CONFLICT (empresa, sku_codigo_omie) DO UPDATE SET
+    destino              = EXCLUDED.destino,
+    observacao           = EXCLUDED.observacao,
+    fornecedor_informado = EXCLUDED.fornecedor_informado,
+    credito_troca        = EXCLUDED.credito_troca,
+    decidido_por   = CASE WHEN v_mudou THEN EXCLUDED.decidido_por ELSE r.decidido_por END,
+    decidido_em    = CASE WHEN v_mudou THEN EXCLUDED.decidido_em  ELSE r.decidido_em  END,
+    foto_saldo     = CASE WHEN v_foto THEN EXCLUDED.foto_saldo     ELSE r.foto_saldo     END,
+    foto_cmc       = CASE WHEN v_foto THEN EXCLUDED.foto_cmc       ELSE r.foto_cmc       END,
+    foto_valor     = CASE WHEN v_foto THEN EXCLUDED.foto_valor     ELSE r.foto_valor     END,
+    foto_categoria = CASE WHEN v_foto THEN EXCLUDED.foto_categoria ELSE r.foto_categoria END,
+    foto_em        = CASE WHEN v_foto THEN EXCLUDED.foto_em        ELSE r.foto_em        END,
+    tirou_do_motor = CASE WHEN v_mexer THEN true ELSE r.tirou_do_motor END,
+    motor_antes    = coalesce(r.motor_antes, EXCLUDED.motor_antes),
+    atualizado_em  = now();
+
+  -- (os marcadores abaixo delimitam o UPDATE do motor para a prova sabotar com um bloco que engole erro)
+  -- [motor:inicio]
+  IF v_mexer THEN
+    UPDATE public.sku_parametros sp
+       SET tipo_reposicao = v_alvo, habilitado_reposicao_automatica = false
+     WHERE sp.empresa = v_sp_emp AND sp.sku_codigo_omie = p_sku;
+    GET DIAGNOSTICS v_n_tirar = ROW_COUNT;
+    IF v_n_tirar = 0 THEN
+      RAISE EXCEPTION 'raio_x: sku sem sku_parametros (%/%)', p_empresa, p_sku USING ERRCODE = 'RX001';
+    END IF;
+  END IF;
+  -- [motor:fim]
+
+  IF v_restaurar THEN
+    UPDATE public.sku_parametros sp
+       SET tipo_reposicao = v_old.motor_antes->>'tipo_reposicao',
+           habilitado_reposicao_automatica = (v_old.motor_antes->>'habilitado')::boolean
+     WHERE sp.empresa = v_sp_emp AND sp.sku_codigo_omie = p_sku;
+    GET DIAGNOSTICS v_n_rest = ROW_COUNT;
+    IF v_n_rest = 0 THEN
+      RAISE EXCEPTION 'raio_x: sku sem sku_parametros (%/%)', p_empresa, p_sku USING ERRCODE = 'RX001';
+    END IF;
+    UPDATE public.raio_x_decisao d SET tirou_do_motor = false, motor_antes = NULL, atualizado_em = now()
+     WHERE d.empresa = p_empresa AND d.sku_codigo_omie = p_sku;
+  END IF;
+
+  SELECT * INTO v_row FROM public.raio_x_decisao d WHERE d.empresa = p_empresa AND d.sku_codigo_omie = p_sku;
+  RETURN v_row;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.raio_x_decidir(text, bigint, text, text, text, text, numeric, boolean, boolean) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raio_x_decidir(text, bigint, text, text, text, text, numeric, boolean, boolean) TO authenticated;
+
+-- Contagem fisica: p_qtd NULL limpa (qtd, quem, quando). SKU sem linha -> cria com destino NULL e sem foto.
+CREATE OR REPLACE FUNCTION public.raio_x_contar(p_empresa text, p_sku bigint, p_qtd numeric)
+RETURNS public.raio_x_decisao
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_row public.raio_x_decisao%ROWTYPE;
+BEGIN
+  IF NOT private.cap_custo_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'RAIO_X_SO_CUSTO' USING ERRCODE = '42501';
+  END IF;
+  IF p_empresa IS NULL OR p_empresa NOT IN ('oben','colacor') THEN
+    RAISE EXCEPTION 'raio_x: empresa invalida: %', coalesce(p_empresa, '<null>') USING ERRCODE = '22023';
+  END IF;
+  IF p_sku IS NULL THEN
+    RAISE EXCEPTION 'raio_x: sku nulo' USING ERRCODE = '22023';
+  END IF;
+  IF p_qtd < 0 THEN
+    RAISE EXCEPTION 'raio_x: quantidade negativa: %', p_qtd USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public.raio_x_decisao AS r (empresa, sku_codigo_omie, qtd_contada, contado_por, contado_em, atualizado_em)
+  VALUES (p_empresa, p_sku, p_qtd,
+          CASE WHEN p_qtd IS NOT NULL THEN auth.uid() END, CASE WHEN p_qtd IS NOT NULL THEN now() END, now())
+  ON CONFLICT (empresa, sku_codigo_omie) DO UPDATE SET
+    qtd_contada = EXCLUDED.qtd_contada, contado_por = EXCLUDED.contado_por,
+    contado_em = EXCLUDED.contado_em, atualizado_em = now()
+  RETURNING r.* INTO v_row;
+  RETURN v_row;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.raio_x_contar(text, bigint, numeric) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raio_x_contar(text, bigint, numeric) TO authenticated;
+
+-- Marcacao manual de categoria: p_categoria NULL apaga a marcacao e devolve NULL. Motivo vazio -> CHECK (23514).
+CREATE OR REPLACE FUNCTION public.raio_x_classificar(p_empresa text, p_sku bigint, p_categoria text, p_motivo text)
+RETURNS public.raio_x_classificacao_manual
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_row public.raio_x_classificacao_manual%ROWTYPE;
+BEGIN
+  IF NOT private.cap_custo_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'RAIO_X_SO_CUSTO' USING ERRCODE = '42501';
+  END IF;
+  IF p_empresa IS NULL OR p_empresa NOT IN ('oben','colacor') THEN
+    RAISE EXCEPTION 'raio_x: empresa invalida: %', coalesce(p_empresa, '<null>') USING ERRCODE = '22023';
+  END IF;
+  IF p_sku IS NULL THEN
+    RAISE EXCEPTION 'raio_x: sku nulo' USING ERRCODE = '22023';
+  END IF;
+  IF p_categoria IS NULL THEN
+    DELETE FROM public.raio_x_classificacao_manual c WHERE c.empresa = p_empresa AND c.sku_codigo_omie = p_sku;
+    RETURN NULL;
+  END IF;
+  IF p_categoria NOT IN ('nao_mercadoria','uso_consumo','mercadoria') THEN
+    RAISE EXCEPTION 'raio_x: categoria invalida: %', p_categoria USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public.raio_x_classificacao_manual AS c (empresa, sku_codigo_omie, categoria, motivo, marcado_por, marcado_em)
+  VALUES (p_empresa, p_sku, p_categoria, p_motivo, auth.uid(), now())
+  ON CONFLICT (empresa, sku_codigo_omie) DO UPDATE SET
+    categoria = EXCLUDED.categoria, motivo = EXCLUDED.motivo,
+    marcado_por = EXCLUDED.marcado_por, marcado_em = EXCLUDED.marcado_em
+  RETURNING c.* INTO v_row;
+  RETURN v_row;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.raio_x_classificar(text, bigint, text, text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raio_x_classificar(text, bigint, text, text) TO authenticated;
+
 -- Postcondicao (aborta o apply se a ACL ou o RLS nao ficaram como o desenho).
 DO $post$
 BEGIN
@@ -174,6 +415,27 @@ BEGIN
   IF NOT has_function_privilege('authenticated', 'public.raio_x_estoque_fatos(text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondicao: authenticated sem EXECUTE em raio_x_estoque_fatos';
   END IF;
+  DECLARE
+    f text;
+  BEGIN
+    FOREACH f IN ARRAY ARRAY[
+      'public.raio_x_decidir(text,bigint,text,text,text,text,numeric,boolean,boolean)',
+      'public.raio_x_contar(text,bigint,numeric)',
+      'public.raio_x_classificar(text,bigint,text,text)'] LOOP
+      IF has_function_privilege('anon', f, 'EXECUTE') THEN
+        RAISE EXCEPTION 'postcondicao: anon executa %', split_part(substr(f, 8), '(', 1);
+      END IF;
+      IF has_function_privilege('public', f, 'EXECUTE') THEN
+        RAISE EXCEPTION 'postcondicao: public executa %', split_part(substr(f, 8), '(', 1);
+      END IF;
+      IF NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN
+        RAISE EXCEPTION 'postcondicao: authenticated sem EXECUTE em %', f;
+      END IF;
+      IF NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = f::regprocedure) THEN
+        RAISE EXCEPTION 'postcondicao: % nao e SECURITY DEFINER', f;
+      END IF;
+    END LOOP;
+  END;
   IF (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = 'public' AND c.relname IN ('raio_x_decisao','raio_x_classificacao_manual')
          AND c.relrowsecurity) <> 2 THEN
