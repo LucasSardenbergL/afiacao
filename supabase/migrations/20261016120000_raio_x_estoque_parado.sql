@@ -192,6 +192,7 @@ DECLARE
   v_sp_tipo   text;
   v_sp_hab    boolean;
   v_mexer     boolean := false;
+  v_sp_achou  boolean;
   v_foto      boolean := false;
   v_ip_saldo  numeric;
   v_ip_cmc    numeric;
@@ -230,6 +231,17 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  IF p_destino IS NOT NULL AND p_categoria IS NULL THEN
+    RAISE EXCEPTION 'raio_x: categoria obrigatoria com destino' USING ERRCODE = '22023';
+  END IF;
+  IF p_credito_troca < 0 THEN
+    RAISE EXCEPTION 'raio_x: credito_troca negativo: %', p_credito_troca USING ERRCODE = '22023';
+  END IF;
+
+  -- Linha-base primeiro e trava (R14): duas 1as decisoes concorrentes serializam aqui, e a 2a ja ve a foto
+  -- da 1a. Tudo abaixo (foto, decidido_em, motor) deriva da linha TRAVADA. Erro adiante desfaz a linha-base.
+  INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (p_empresa, p_sku)
+  ON CONFLICT (empresa, sku_codigo_omie) DO NOTHING;
   SELECT * INTO v_old FROM public.raio_x_decisao d
    WHERE d.empresa = p_empresa AND d.sku_codigo_omie = p_sku FOR UPDATE;
   IF v_restaurar AND v_old.motor_antes IS NULL THEN
@@ -238,23 +250,32 @@ BEGIN
 
   v_mudou := (v_old.destino IS DISTINCT FROM p_destino);
 
-  -- Estado atual do motor (trava a linha). Sem linha -> o UPDATE abaixo afeta 0 e cai no RX001.
+  -- Estado atual do motor (trava a linha). Sem linha -> RX001 JA (R13): nunca gravar motor_antes de uma
+  -- leitura vazia (uma linha inserida entre o SELECT e o UPDATE faria o restaurar apagar o estado real).
+  -- (os marcadores [motor-sel:*] e [motor:*] delimitam o motor para a prova sabotar com um bloco que engole erro)
+  -- [motor-sel:inicio]
   IF v_tirar THEN
     SELECT sp.tipo_reposicao, sp.habilitado_reposicao_automatica INTO v_sp_tipo, v_sp_hab
       FROM public.sku_parametros sp
      WHERE sp.empresa = v_sp_emp AND sp.sku_codigo_omie = p_sku FOR UPDATE;
+    v_sp_achou := FOUND;
+    IF NOT v_sp_achou THEN
+      RAISE EXCEPTION 'raio_x: sku sem sku_parametros (%/%)', p_empresa, p_sku USING ERRCODE = 'RX001';
+    END IF;
     -- Ja no alvo (false + mesmo tipo): nao escreve e nao marca tirou_do_motor.
-    v_mexer := NOT (FOUND AND v_sp_hab IS NOT DISTINCT FROM false AND v_sp_tipo IS NOT DISTINCT FROM v_alvo);
+    v_mexer := NOT (v_sp_hab IS NOT DISTINCT FROM false AND v_sp_tipo IS NOT DISTINCT FROM v_alvo);
   END IF;
+  -- [motor-sel:fim]
 
-  -- Foto: so na 1a decisao (foto_em is null) e com estoque presente; sem linha -> tudo NULL, tenta de novo depois.
+  -- Foto: so na 1a decisao (foto_em is null) e com estoque presente; sem linha ou saldo NULL -> tudo NULL,
+  -- tenta de novo depois.
   IF p_destino IS NOT NULL AND v_old.foto_em IS NULL THEN
     SELECT x.saldo, x.cmc INTO v_ip_saldo, v_ip_cmc FROM (
       SELECT DISTINCT ON (ip.omie_codigo_produto) ip.saldo, ip.cmc
         FROM public.inventory_position ip
        WHERE ip.account = v_est AND ip.omie_codigo_produto = p_sku
        ORDER BY ip.omie_codigo_produto, ip.synced_at DESC NULLS LAST) x;
-    IF FOUND THEN
+    IF FOUND AND v_ip_saldo IS NOT NULL THEN
       v_foto := true;
       v_cmc := CASE WHEN v_ip_cmc > 0 THEN v_ip_cmc END;   -- ausente/zero != custo
     END IF;
@@ -281,16 +302,16 @@ BEGIN
     credito_troca        = EXCLUDED.credito_troca,
     decidido_por   = CASE WHEN v_mudou THEN EXCLUDED.decidido_por ELSE r.decidido_por END,
     decidido_em    = CASE WHEN v_mudou THEN EXCLUDED.decidido_em  ELSE r.decidido_em  END,
-    foto_saldo     = CASE WHEN v_foto THEN EXCLUDED.foto_saldo     ELSE r.foto_saldo     END,
-    foto_cmc       = CASE WHEN v_foto THEN EXCLUDED.foto_cmc       ELSE r.foto_cmc       END,
-    foto_valor     = CASE WHEN v_foto THEN EXCLUDED.foto_valor     ELSE r.foto_valor     END,
-    foto_categoria = CASE WHEN v_foto THEN EXCLUDED.foto_categoria ELSE r.foto_categoria END,
-    foto_em        = CASE WHEN v_foto THEN EXCLUDED.foto_em        ELSE r.foto_em        END,
+    foto_saldo     = CASE WHEN v_foto AND r.foto_em IS NULL THEN EXCLUDED.foto_saldo     ELSE r.foto_saldo     END,
+    foto_cmc       = CASE WHEN v_foto AND r.foto_em IS NULL THEN EXCLUDED.foto_cmc       ELSE r.foto_cmc       END,
+    foto_valor     = CASE WHEN v_foto AND r.foto_em IS NULL THEN EXCLUDED.foto_valor     ELSE r.foto_valor     END,
+    foto_categoria = CASE WHEN v_foto AND r.foto_em IS NULL THEN EXCLUDED.foto_categoria ELSE r.foto_categoria END,
+    foto_em        = CASE WHEN v_foto AND r.foto_em IS NULL THEN EXCLUDED.foto_em        ELSE r.foto_em        END,
     tirou_do_motor = CASE WHEN v_mexer THEN true ELSE r.tirou_do_motor END,
     motor_antes    = coalesce(r.motor_antes, EXCLUDED.motor_antes),
     atualizado_em  = now();
 
-  -- (os marcadores abaixo delimitam o UPDATE do motor para a prova sabotar com um bloco que engole erro)
+  -- Foto protegida como CONJUNTO: so escreve foto_* se a linha atual ainda tem foto_em NULL (2a camada do R14).
   -- [motor:inicio]
   IF v_mexer THEN
     UPDATE public.sku_parametros sp
