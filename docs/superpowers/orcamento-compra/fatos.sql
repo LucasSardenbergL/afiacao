@@ -64,12 +64,35 @@ snaps as (
 ),
 disparados as (
   select p.id, p.valor_total, coalesce(p.horario_disparo_real, p.horario_geracao) as momento,
-         array_remove(array_agg(distinct t.nfe_numero::text), null) as nfs
+         array_remove(array_agg(distinct t.nfe_numero::text), null) as nfs,
+         p.omie_pedido_compra_id as omie_pedido, p.portal_protocolo as protocolo
   from pedido_compra_sugerido p
   left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id
   -- R38: 270 dias = 180 de janela de compromisso antes do ciclo mais antigo (hoje − 90)
   where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%' and p.status = 'disparado' and p.data_ciclo >= current_date - 270
-  group by 1, 2, 3
+  group by 1, 2, 3, p.omie_pedido_compra_id, p.portal_protocolo
+),
+-- R57/R58: pedidos Omie Sayerlack (linha do tracking, código > 0) com contrato (= nº do pedido na Sayerlack),
+-- origem no motor (existe em pedido_compra_sugerido, qualquer status) e itens; qtde ausente fica null (ausente ≠ zero)
+pedidos_omie_say as (
+  select t.omie_codigo_pedido::text as codigo, (t.t1_data_pedido at time zone 'America/Sao_Paulo')::date as t1,
+         nullif(trim(t.raw_data->'cabecalho_consulta'->>'cContrato'), '') as contrato,
+         exists (select 1 from pedido_compra_sugerido s where s.omie_pedido_compra_id = t.omie_codigo_pedido::text) as do_motor,
+         (select coalesce(json_agg(json_build_object('prod', x->>'nCodProd', 'qtde', (x->>'nQtde')::numeric) order by x->>'nCodProd', x->>'nQtde'), '[]')
+            from jsonb_array_elements(t.raw_data->'produtos_consulta') x) as itens
+  from purchase_orders_tracking t
+  where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.omie_codigo_pedido > 0
+    and t.t1_data_pedido >= current_date - 300 and jsonb_typeof(t.raw_data->'produtos_consulta') = 'array'
+),
+-- R57: par (nNumPedCompra do ITEM, NF da linha) de itensRecebimento — inclui NF órfã (código < 0); data = faturamento
+nfs_do_contrato as (
+  select distinct trim(i->'itensInfoAdic'->>'nNumPedCompra') as contrato, t.nfe_numero as nf,
+         (t.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as data
+  from purchase_orders_tracking t
+  cross join lateral jsonb_array_elements(t.raw_data->'itensRecebimento') i
+  where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266
+    and jsonb_typeof(t.raw_data->'itensRecebimento') = 'array' and t.nfe_numero is not null
+    and coalesce(trim(i->'itensInfoAdic'->>'nNumPedCompra'), '') <> '' and t.t2_data_faturamento >= current_date - 300
 ),
 -- R35: data/valor da baixa (v_titulo_baixas, 1 linha por lançamento) — título só desconta compromisso se
 -- representado no snapshot ou liquidado antes do dia do snapshot
@@ -124,6 +147,8 @@ select 'json|' || jsonb_build_object(
   'params', (select coalesce(json_agg(p order by p.sku), '[]') from params p),
   'snapshots', (select coalesce(json_agg(s order by s.dia), '[]') from snaps s),
   'disparados', (select coalesce(json_agg(x order by x.id), '[]') from disparados x),
+  'pedidos_omie_sayerlack', (select coalesce(json_agg(x order by x.codigo), '[]') from pedidos_omie_say x),
+  'nfs_do_contrato', (select coalesce(json_agg(x order by x.contrato, x.nf), '[]') from nfs_do_contrato x),
   'titulos_sayerlack', (select coalesce(json_agg(t order by t.id), '[]') from titulos_say t),
   'ids_sayerlack', (select coalesce(json_agg(i.id order by i.id), '[]') from ids_say i),
   'chegadas', (select coalesce(json_agg(c order by c.pedido_id), '[]') from chegadas c),
