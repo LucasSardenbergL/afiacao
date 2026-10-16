@@ -69,13 +69,16 @@ novo_banco prova
 if out="$(aplicar prova "$MIG")"; then ok "A1 migration aplica (postcondição passou)"; else nok "A1 migration não aplicou: $out"; fi
 case "$out" in *"tabela com RLS fechada + 1 job ativo"*) ok "A2 NOTICE positivo de fim";; *) nok "A2 sem o NOTICE de fim: $out";; esac
 if out2="$(aplicar prova "$MIG")"; then ok "A3 re-aplicar é idempotente"; else nok "A3 re-aplicar falhou: $out2"; fi
-[ "$(Q prova "SELECT count(*) FROM cron.job WHERE jobname='sayerlack-varrer-pedidos-portal'")" = "1" ] && ok "A4 exatamente 1 job" || nok "A4 contagem de jobs"
-[ "$(Q prova "SELECT schedule FROM cron.job WHERE jobname='sayerlack-varrer-pedidos-portal'")" = "30 1,15,20 * * *" ] \
-  && ok "A5 horário UTC 01:30/15:30/20:30 (= 22:30/12:30/17:30 SP)" || nok "A5 horário"
-[ "$(Q prova "SELECT has_table_privilege('authenticated','public.sayerlack_varredura_falha','SELECT')::text || has_table_privilege('anon','public.sayerlack_varredura_falha','INSERT')::text")" = "falsefalse" ] \
-  && ok "A6 anon/authenticated sem acesso" || nok "A6 privilégio aberto"
-[ "$(Q prova "SELECT has_table_privilege('service_role','public.sayerlack_varredura_falha','UPDATE')::text")" = "true" ] \
-  && ok "A7 service_role escreve" || nok "A7 service_role sem UPDATE"
+igual() { # $1 rótulo, $2 obtido, $3 esperado
+  if [ "$2" = "$3" ]; then ok "$1"; else nok "$1 (veio '$2', esperado '$3')"; fi
+}
+igual "A4 exatamente 1 job" "$(Q prova "SELECT count(*) FROM cron.job WHERE jobname='sayerlack-varrer-pedidos-portal'")" "1"
+igual "A5 horário UTC 01:30/15:30/20:30 (= 22:30/12:30/17:30 SP)" \
+  "$(Q prova "SELECT schedule FROM cron.job WHERE jobname='sayerlack-varrer-pedidos-portal'")" "30 1,15,20 * * *"
+igual "A6 anon/authenticated sem acesso" \
+  "$(Q prova "SELECT has_table_privilege('authenticated','public.sayerlack_varredura_falha','SELECT')::text || has_table_privilege('anon','public.sayerlack_varredura_falha','INSERT')::text")" "falsefalse"
+igual "A7 service_role escreve" \
+  "$(Q prova "SELECT has_table_privilege('service_role','public.sayerlack_varredura_falha','UPDATE')::text")" "true"
 # O escritor (edge) só faz UPDATE com WHERE (pg-safeupdate do Supabase): os 2 UPDATEs dela, aqui em SQL.
 if Q prova "INSERT INTO public.sayerlack_varredura_falha(protocolo, mensagem) VALUES ('2141068','sem de-para');
             UPDATE public.sayerlack_varredura_falha SET tentativas = tentativas + 1, resolvido_em = NULL WHERE protocolo = '2141068';
