@@ -207,7 +207,7 @@ BEGIN
   IF v_src IS NULL THEN
     RAISE EXCEPTION 'A1 FALHOU: RPC sayerlack_importar_pedido_portal ausente';
   END IF;
-  IF EXISTS (SELECT 1 FROM regexp_matches(v_src, 'UPDATE\s[^;]*;', 'gi') AS m(x) WHERE m.x[1] !~* '\mWHERE\M') THEN
+  IF EXISTS (SELECT 1 FROM regexp_matches(v_src, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE m.x[1] !~* '\mWHERE\M') THEN
     RAISE EXCEPTION 'A2 FALHOU: UPDATE sem WHERE no corpo — o pg-safeupdate do Supabase recusa a importação';
   END IF;
   IF has_function_privilege('anon', 'public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid)', 'EXECUTE')

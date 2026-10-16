@@ -295,7 +295,7 @@ fi
 restaura
 # F9 — pg-safeupdate: o Supabase recusa UPDATE sem WHERE vindo da API (1º uso real, 2141068). O PG17 local não carrega
 # a extensão, então a régua é a postcondição: sem o WHERE, o apply aborta com a mensagem DELA.
-eq "S1 nenhum UPDATE sem WHERE no corpo vivo da RPC" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, 'UPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
+eq "S1 nenhum UPDATE sem WHERE no corpo vivo da RPC" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
 sed -e 's/^   WHERE qtde_omie IS NULL;  -- WHERE obrigatório.*$/   ;/' "$MIG" > "$SAB"
 if cmp -s "$MIG" "$SAB"; then
   bad "F9 sabotagem NÃO casou o WHERE do UPDATE — falsificação seria teatro"
