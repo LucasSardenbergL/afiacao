@@ -25,7 +25,7 @@
 
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
-export type StatusNFe = "FATURADO" | "RECEBIDO" | "CANCELADO";
+type StatusNFe = "FATURADO" | "RECEBIDO" | "CANCELADO";
 
 /** O subconjunto do `MappedNFe` (index.ts) que o vínculo grava. */
 export interface NFeParaVinculo {
