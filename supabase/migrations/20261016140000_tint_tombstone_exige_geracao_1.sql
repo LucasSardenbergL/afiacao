@@ -33,7 +33,8 @@
 -- Prova: db/test-tint-fase5-desativacao.sh (V10/V11 + falsificações F5/F6).
 -- ═══════════════════════════════════════════════════════════════════════════
 
-BEGIN;
+-- Sem BEGIN/COMMIT: o `bun run db:aplicar` abre a transação (e recusa o arquivo
+-- que traz a sua). Pré-voo e pós-condição abortam a transação DELE.
 
 -- ── PRÉ-VOO: o delta tem de ser 0. Tombstone fora da geração '1' da mesma conta
 -- mudaria o rótulo de alguma chave — isso exige decisão humana, não um REPLACE.
@@ -232,4 +233,3 @@ BEGIN
 END
 $pos$;
 
-COMMIT;

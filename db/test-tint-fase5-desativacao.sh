@@ -680,14 +680,15 @@ desforja() { P -q -c "UPDATE public.tint_formulas SET desativada_motivo = NULL W
 forja()    { P -q -c "UPDATE public.tint_formulas SET desativada_motivo = 'fase5_geracao_legada' WHERE id IN $FORJADAS;" >/dev/null; }
 # O PRÉ-VOO da migration aborta com carimbo forjado presente (é o desenho: delta
 # ≠ 0 exige decisão humana). Para aplicar, tira o carimbo, aplica, recoloca.
-aplica_m7() { desforja; P -q -f "$1" >/dev/null 2>&1; local rc=$?; forja; return $rc; }
+# --single-transaction = fiel ao `db:aplicar`, que embrulha o arquivo numa transação só.
+aplica_m7() { desforja; P -q --single-transaction -f "$1" >/dev/null 2>&1; local rc=$?; forja; return $rc; }
 
 # Linha de base: sob a Fase 5 CRUA o furo tem de ESTAR LÁ. Sem isto, V10 verde
 # provaria só que o seed não exerce o caso (controle verde ≠ controle exercido).
 eq "V10-base sob a Fase 5 crua o carimbo forjado ENTRA (o furo existe)" "$(v10)" "990|990|false"
 
 # O pré-voo morde: com carimbo fora da '1' presente, a migration ABORTA inteira.
-PRE_OUT="$(P -f "$MIGRATION7" 2>&1 || true)"
+PRE_OUT="$(P --single-transaction -f "$MIGRATION7" 2>&1 || true)"
 case "$PRE_OUT" in
   *"ENDURECIMENTO ABORTADO: 2 linha"*) ok "V10-pre o PRÉ-VOO aborta com 2 carimbos fora da geração '1' (delta ≠ 0 não passa calado)" ;;
   *) bad "V10-pre o pré-voo NÃO abortou com carimbo forjado: $(printf '%s' "$PRE_OUT" | tr '\n' ' ' | cut -c1-200)" ;;
@@ -714,7 +715,7 @@ if command grep -q 'FROM public.tint_subcolecoes s3' "$SAB"; then
   bad "F5 a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"
 else
   # (a) a pós-condição da própria migration TEM de abortar a versão sabotada
-  desforja; F5_OUT="$(P -f "$SAB" 2>&1 || true)"; forja
+  desforja; F5_OUT="$(P --single-transaction -f "$SAB" 2>&1 || true)"; forja
   case "$F5_OUT" in
     *"o endurecimento do carimbo não está na view"*) ok "F5a a PÓS-CONDIÇÃO da migration aborta a versão sem a exigência" ;;
     *) bad "F5a a pós-condição NÃO abortou a versão sabotada: $(printf '%s' "$F5_OUT" | tr '\n' ' ' | cut -c1-200)" ;;
