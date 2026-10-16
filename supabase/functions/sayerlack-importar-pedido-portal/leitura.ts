@@ -132,6 +132,16 @@ export function situacaoCancelada(situacao: string): boolean {
   return /^\s*6\s*-/.test(situacao) || norm(situacao).includes("cancelad");
 }
 
+/**
+ * A varredura automática só importa situação em LISTA FECHADA de códigos — e a lista tem de valer sobre a RELEITURA
+ * que precede a gravação, não só sobre a lista vista minutos antes (o pedido pode faturar no meio da rodada; Codex
+ * 2026-10-16, P1). Sem código legível ⇒ não permitido.
+ */
+export function situacaoPermitida(situacao: string, codigos: readonly string[]): boolean {
+  const m = situacao.match(/^\s*(\d+)\s*-/);
+  return !!m && codigos.includes(m[1]);
+}
+
 /** Tolerâncias: o portal exibe 4 casas e calcula o Preço Venda com o desconto de 4 casas. */
 const TOL_LINHA = 0.02;
 

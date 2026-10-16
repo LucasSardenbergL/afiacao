@@ -1,0 +1,2 @@
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "sayerlack-importar-pedido-portal", "motivo": "a varredura chama a importação por service_role; na ordem inversa a importação v1.1 aceitaria pedido cancelado no portal e o criaria como PO no Omie", "pr": 3105 }] }

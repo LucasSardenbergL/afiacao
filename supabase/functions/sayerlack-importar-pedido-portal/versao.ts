@@ -22,7 +22,11 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * v1.2 (2026-10-16) — pedido com situação "6 - Cancelado" no portal é recusado na leitura (motivo `pedido_cancelado`),
  * nada é gravado nem vai ao Omie (palavra do founder).
  */
-export const VERSAO = "v1.2-recusa-pedido-cancelado";
+/**
+ * v1.3 (2026-10-16) — aceita `situacoes_permitidas` (lista fechada de códigos, só a varredura manda): a situação RELIDA
+ * tem de estar nela antes da RPC (pedido que faturou no meio da rodada não vira PO; Codex P1).
+ */
+export const VERSAO = "v1.3-situacao-permitida-na-releitura";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
