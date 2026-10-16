@@ -93,6 +93,8 @@ CREATE TABLE public.sku_parametros (
 CREATE TABLE public.v_venda_items_history_efetivo (
   empresa text, data_emissao date, cliente_codigo_omie bigint, cliente_razao_social text,
   sku_codigo_omie bigint, sku_unidade text, quantidade numeric, valor_total numeric, valor_unitario numeric);
+CREATE TABLE public.pedido_compra_sugerido (id bigint PRIMARY KEY, empresa text, status text);
+CREATE TABLE public.pedido_compra_item (id bigserial, pedido_id bigint, sku_codigo_omie text, criado_em timestamptz);
 CREATE TABLE public.warehouses (id uuid PRIMARY KEY, code text);
 CREATE TABLE public.nfe_recebimentos (id uuid PRIMARY KEY, razao_social_emitente text, data_emissao date, warehouse_id uuid);
 CREATE TABLE public.nfe_recebimento_itens (id uuid DEFAULT gen_random_uuid(), nfe_recebimento_id uuid, produto_omie_id bigint);
@@ -277,6 +279,59 @@ suite() {
   oks "$U_CUST" "SELECT count(*) FROM public.raio_x_classificacao_manual" "0" "i customer ve 0 linhas em raio_x_classificacao_manual"
   oks "$U_CUST" "SELECT public.t_lanca('INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (''oben'', 9)', '42501')" "$RLSMSG" "i customer insert barrado por RLS"
   oks "$U_EST" "SELECT public.t_lanca('INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie) VALUES (''oben'', 9)', '42501')" "$RLSMSG" "i staff tambem nao escreve direto"
+
+  # ---- Task 3: raio_x_medicao ----
+  # decisoes: sku1 oben decidido no dia h-3 (NF do proprio dia conta: fronteira >=); sku3 oben sem foto;
+  # sku3 colacor; sku7 oben (saldo mais recente 0); sku9999 oben sem linha de estoque; sku6 so contagem (destino NULL).
+  P -c "DO \$m\$ DECLARE h date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; BEGIN
+    UPDATE public.raio_x_decisao SET decidido_em = ((h - 3)::timestamp + time '15:00') AT TIME ZONE 'America/Sao_Paulo',
+      foto_saldo = 5, foto_cmc = 10, foto_valor = 50, foto_categoria = 'mercadoria', foto_em = now(), credito_troca = 7
+     WHERE empresa = 'oben' AND sku_codigo_omie = 1;
+    INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino, decidido_em) VALUES
+      ('oben', 3, 'venda_dirigida', now() - interval '7 days'),
+      ('colacor', 3, 'trocar', now() - interval '7 days'),
+      ('oben', 7, 'liquidar', now() - interval '7 days'),
+      ('oben', 9999, 'liquidar', now() - interval '7 days');
+    INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, qtd_contada) VALUES ('oben', 6, 2);
+    INSERT INTO public.pedido_compra_sugerido VALUES (1, 'OBEN', 'disparado'), (2, 'OBEN', 'cancelado'),
+      (3, 'OBEN', 'expirado_sem_aprovacao'), (4, 'COLACOR', 'disparado');
+    INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, criado_em) VALUES
+      (1, '1', ((h - 1)::timestamp + time '10:00') AT TIME ZONE 'America/Sao_Paulo'),
+      (1, '1', ((h - 2)::timestamp + time '10:00') AT TIME ZONE 'America/Sao_Paulo'),
+      (1, '1', now() - interval '20 days'),
+      (2, '1', now() - interval '1 hour'),
+      (3, '1', now() - interval '1 hour'),
+      (4, '1', now() - interval '1 hour'),
+      (1, 'ABC-NAO-NUMERICO', now() - interval '1 hour'),
+      (1, '3', now() - interval '20 days');
+  END \$m\$"
+  MED="public.raio_x_medicao('oben')"; MEC="public.raio_x_medicao('colacor')"; MSIG="public.raio_x_medicao(text)"
+
+  # (a) venda antes da decisao nao conta; a do proprio dia conta (sku1: h-9 fora; h-3,h-2,h-1 = 6 un / 60)
+  oks "$U_EST" "SELECT qtd_vendida || '|' || receita FROM $MED WHERE sku_codigo_omie = 1" "6|60" "m a venda antes da decisao nao conta e a do dia conta"
+  oks "$U_EST" "SELECT preco_medio_12m FROM $MED WHERE sku_codigo_omie = 1" "10.0000" "m preco medio 12m na janela de fatos"
+  oks "$U_EST" "SELECT foto_saldo || '|' || foto_cmc || '|' || foto_valor || '|' || foto_categoria || '|' || credito_troca || '|' || destino FROM $MED WHERE sku_codigo_omie = 1" "5|10|50|mercadoria|7|liquidar" "m foto e destino voltam"
+  # (b) colacor: sem venda NF
+  oks "$U_EST" "SELECT (qtd_vendida IS NULL AND receita IS NULL AND preco_medio_12m IS NULL AND compras_apos IS NULL) FROM $MEC WHERE sku_codigo_omie = 3" "t" "m b colacor sem venda e sem compras e NULL"
+  oks "$U_EST" "SELECT saldo_atual FROM $MEC WHERE sku_codigo_omie = 3" "4" "m b colacor le colacor_vendas"
+  # (c) compras: so disparado, depois da decisao, ordenadas; cancelado/expirado/colacor/nao numerico nao entram
+  oks "$U_EST" "SELECT cardinality(compras_apos) || '|' || (compras_apos[1] < compras_apos[2]) FROM $MED WHERE sku_codigo_omie = 1" "2|true" "m c compras apos a decisao em ordem"
+  oks "$U_EST" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 3" "0" "m c compra antes da decisao nao aparece"
+  # (d) saldo atual: linha mais recente; 0 se a linha e 0; NULL sem linha
+  oks "$U_EST" "SELECT saldo_atual FROM $MED WHERE sku_codigo_omie = 1" "9" "m d saldo atual mais recente"
+  oks "$U_EST" "SELECT saldo_atual FROM $MED WHERE sku_codigo_omie = 7" "0" "m d saldo 0 existente volta 0"
+  oks "$U_EST" "SELECT (saldo_atual IS NULL) FROM $MED WHERE sku_codigo_omie = 9999" "t" "m d sem linha de estoque volta NULL"
+  # sem foto volta com foto NULL; destino NULL fora; ordem; contagem
+  oks "$U_EST" "SELECT (foto_saldo IS NULL AND foto_cmc IS NULL AND foto_valor IS NULL AND foto_categoria IS NULL) FROM $MED WHERE sku_codigo_omie = 3" "t" "m linha sem foto volta com foto NULL"
+  oks "$U_EST" "SELECT count(*) || '|' || count(*) FILTER (WHERE sku_codigo_omie = 6) FROM $MED" "4|0" "m so destino nao nulo"
+  oks "$U_EST" "SELECT (array_agg(s) = array_agg(s ORDER BY s)) FROM (SELECT sku_codigo_omie AS s FROM $MED) t" "t" "m ordem crescente por sku"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''colacor_sc'')', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: colacor_sc" "m empresa invalida 22023"
+  oks "$U_CUST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "m customer barrado 42501"
+  oks "$U_STAFF" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "m employee sem commercial_role barrado 42501"
+  oks "" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "m sem claims barrado 42501"
+  okp "SELECT has_function_privilege('anon','$MSIG','EXECUTE')" "f" "m anon sem EXECUTE"
+  okp "SELECT has_function_privilege('public','$MSIG','EXECUTE')" "f" "m public sem EXECUTE"
+  okp "SELECT has_function_privilege('authenticated','$MSIG','EXECUTE')" "t" "m authenticated com EXECUTE"
   return "$falhas"
 }
 
@@ -330,6 +385,29 @@ sabotar "10 clientes agrupados por razao social" \
 sabotar "11 policy de decisao volta para staff comum" \
   "s/USING ((SELECT private.cap_custo_ler((SELECT auth.uid()))));/USING ((SELECT public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')));/" \
   "i employee sem commercial_role ve 0 linhas em raio_x_decisao (custo)"
+
+# Task 3 - raio_x_medicao
+sabotar "12 fronteira de venda >= vira >" \
+  "s/FILTER (WHERE vh.data_emissao >= d.dia)/FILTER (WHERE vh.data_emissao > d.dia)/g" \
+  "m a venda antes da decisao nao conta e a do dia conta"
+sabotar "13 colacor com qtd_vendida 0" \
+  "s/CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END/coalesce(v.qtd, 0)/" \
+  "m b colacor sem venda e sem compras e NULL"
+sabotar "14 compras sem filtro de status" \
+  "s/AND pc.status IN ('disparado','split_em_filhos')/AND true/" \
+  "m c compras apos a decisao em ordem"
+sabotar "15 compras antes da decisao entram" \
+  "s/AND i.criado_em > d.decidido_em/AND true/" \
+  "m c compra antes da decisao nao aparece"
+sabotar "16 saldo atual sem linha vira 0" \
+  "s/^         e.saldo,$/         coalesce(e.saldo, 0),/" \
+  "m d sem linha de estoque volta NULL"
+sabotar "17 medicao sem gate" \
+  "/FUNCTION public.raio_x_medicao/,/^\$fn\$;/s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
+  "m customer barrado 42501"
+sabotar "18 medicao inclui destino nulo" \
+  "s/WHERE x.empresa = p_empresa AND x.destino IS NOT NULL)/WHERE x.empresa = p_empresa)/" \
+  "m so destino nao nulo"
 
 # 7) tirar anon do REVOKE: a postcondicao embutida aborta o apply (rc=99) — vermelho pelo motivo certo.
 sed "s/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC;/" "$MIG" > "$TMPD/sab.sql"

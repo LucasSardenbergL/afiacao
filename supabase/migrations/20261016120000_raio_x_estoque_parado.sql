@@ -403,6 +403,93 @@ $fn$;
 REVOKE ALL ON FUNCTION public.raio_x_classificar(text, bigint, text, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.raio_x_classificar(text, bigint, text, text) TO authenticated;
 
+-- ============================================================================
+-- Task 3 - medicao desde a decisao (read-only). Mesma capacidade de custo das demais (devolve foto_cmc/valor).
+-- Fronteira de venda: data_emissao >= dia (America/Sao_Paulo) de decidido_em - a NF do proprio dia da decisao
+-- conta (a decisao e tomada de manha e a venda do dia ainda e posterior a ela do ponto de vista do operador).
+-- Venda NF so oben; colacor -> qtd_vendida/receita/preco NULL (nunca 0). saldo_atual: linha mais recente por
+-- synced_at, INCLUINDO saldo 0; sem linha -> NULL. compras_apos: itens de pedido de compra (cabecalho
+-- pedido_compra_sugerido, empresa 'OBEN', status disparado/split_em_filhos) criados depois da decisao; so oben
+-- (colacor -> NULL: o motor de compras e so da Oben). sku_codigo_omie do item e TEXT: compara como texto.
+-- Linha sem foto (foto_em NULL) tambem volta, com foto_* NULL; quem decide "sem medicao" e o app.
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.raio_x_medicao(p_empresa text)
+RETURNS TABLE (
+  sku_codigo_omie bigint, destino text, decidido_em timestamptz,
+  foto_saldo numeric, foto_cmc numeric, foto_valor numeric, foto_categoria text, credito_troca numeric,
+  saldo_atual numeric, qtd_vendida numeric, receita numeric, preco_medio_12m numeric,
+  compras_apos timestamptz[])
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+#variable_conflict use_column
+DECLARE
+  v_est  text;
+  v_vnd  text;
+  v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+BEGIN
+  IF NOT private.cap_custo_ler(auth.uid()) THEN
+    RAISE EXCEPTION 'RAIO_X_SO_STAFF' USING ERRCODE = '42501';
+  END IF;
+
+  CASE p_empresa
+    WHEN 'oben'    THEN v_est := 'oben';           v_vnd := 'OBEN';
+    WHEN 'colacor' THEN v_est := 'colacor_vendas'; v_vnd := NULL;
+    ELSE RAISE EXCEPTION 'RAIO_X_EMPRESA_INVALIDA: %', coalesce(p_empresa, '<null>') USING ERRCODE = '22023';
+  END CASE;
+
+  RETURN QUERY
+  WITH d AS (
+    SELECT x.sku_codigo_omie AS sku, x.destino, x.decidido_em, x.foto_saldo, x.foto_cmc, x.foto_valor,
+           x.foto_categoria, x.credito_troca,
+           (x.decidido_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia
+      FROM public.raio_x_decisao x
+     WHERE x.empresa = p_empresa AND x.destino IS NOT NULL),
+  e AS (
+    SELECT DISTINCT ON (ip.omie_codigo_produto) ip.omie_codigo_produto::bigint AS sku, ip.saldo
+      FROM public.inventory_position ip
+     WHERE ip.account = v_est
+     ORDER BY ip.omie_codigo_produto, ip.synced_at DESC NULLS LAST),
+  vh AS (
+    SELECT h.sku_codigo_omie AS sku, h.data_emissao, h.quantidade, h.valor_total
+      FROM public.v_venda_items_history_efetivo h
+     WHERE v_vnd IS NOT NULL AND h.empresa = v_vnd),
+  v AS (
+    SELECT d.sku,
+           coalesce(sum(vh.quantidade)  FILTER (WHERE vh.data_emissao >= d.dia), 0) AS qtd,
+           coalesce(sum(vh.valor_total) FILTER (WHERE vh.data_emissao >= d.dia), 0) AS rec,
+           sum(vh.valor_total) FILTER (WHERE vh.data_emissao >= v_hoje - 365)
+             / nullif(sum(vh.quantidade) FILTER (WHERE vh.data_emissao >= v_hoje - 365), 0) AS pm12
+      FROM d JOIN vh ON vh.sku = d.sku
+     GROUP BY d.sku),
+  c AS (
+    SELECT d.sku, array_agg(i.criado_em ORDER BY i.criado_em) AS compras
+      FROM d
+      JOIN public.pedido_compra_item i ON i.sku_codigo_omie = d.sku::text
+      JOIN public.pedido_compra_sugerido pc ON pc.id = i.pedido_id
+     WHERE p_empresa = 'oben' AND pc.empresa = 'OBEN'
+       AND pc.status IN ('disparado','split_em_filhos')
+       AND i.criado_em > d.decidido_em
+     GROUP BY d.sku)
+  SELECT d.sku, d.destino, d.decidido_em, d.foto_saldo, d.foto_cmc, d.foto_valor, d.foto_categoria, d.credito_troca,
+         e.saldo,
+         CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END,
+         CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.rec, 0) END,
+         CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE round(v.pm12::numeric, 4) END,
+         CASE WHEN p_empresa = 'oben' THEN coalesce(c.compras, '{}'::timestamptz[]) ELSE NULL::timestamptz[] END
+    FROM d
+    LEFT JOIN e ON e.sku = d.sku
+    LEFT JOIN v ON v.sku = d.sku
+    LEFT JOIN c ON c.sku = d.sku
+   ORDER BY d.sku;
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.raio_x_medicao(text) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raio_x_medicao(text) TO authenticated;
+
 -- Postcondicao (aborta o apply se a ACL ou o RLS nao ficaram como o desenho).
 DO $post$
 BEGIN
@@ -414,6 +501,11 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('authenticated', 'public.raio_x_estoque_fatos(text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondicao: authenticated sem EXECUTE em raio_x_estoque_fatos';
+  END IF;
+  IF has_function_privilege('anon', 'public.raio_x_medicao(text)', 'EXECUTE')
+     OR has_function_privilege('public', 'public.raio_x_medicao(text)', 'EXECUTE')
+     OR NOT has_function_privilege('authenticated', 'public.raio_x_medicao(text)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'postcondicao: ACL de raio_x_medicao';
   END IF;
   DECLARE
     f text;
