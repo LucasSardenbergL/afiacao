@@ -22,6 +22,17 @@ describe('R31 — portão da v2 derivado do resultado', () => {
   it('abre só com todos os critérios', () => {
     expect(avaliarPortao(resultado({ precisao: 0.96, n: 30, cobertura: 0.5, estados: ['viavel'] }))).toEqual({ aberto: true, motivos: [] });
   });
+
+  it('R55: o portão exige evidência positiva — ≥1 ciclo e todos viáveis; sem ciclos ou estado desconhecido fecha', () => {
+    const vazio = avaliarPortao(resultado({ precisao: 0.96, n: 30, cobertura: 0.5, estados: [] }));
+    expect(vazio.aberto).toBe(false);
+    expect(vazio.motivos.join('|')).toContain('nenhum ciclo');
+    const r = resultado({ precisao: 0.96, n: 30, cobertura: 0.5, estados: ['viavel', 'viavel'] });
+    (r.ciclos[1] as { estado: unknown }).estado = { tipo: 'xpto' };
+    const estranho = avaliarPortao(r);
+    expect(estranho.aberto).toBe(false);
+    expect(estranho.motivos.join('|')).toContain('estado desconhecido');
+  });
   it('lista cada critério que falha; cobertura ausente nunca passa', () => {
     const p = avaliarPortao(resultado({ precisao: 1, n: 29, cobertura: null, estados: ['inviavel', 'viavel'] }));
     expect(p.aberto).toBe(false);

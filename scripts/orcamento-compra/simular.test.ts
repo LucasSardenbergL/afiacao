@@ -445,12 +445,19 @@ describe('onda final — base de caixa as-of (R34, R35, R38, R39, R41, R42, R45,
   it('R50: continuidade com janela incompleta = média por dia útil desde o 1º disparado; sem disparado anterior → null', () => {
     const P = { id: 40, valor_total: 1_000, momento: '2026-09-21T12:00:00Z', nfs: [] as string[] };
     // 21/09 (seg) a 30/09 (qua) = 8 dias úteis
-    expect(continuidadePorDiaUtil({ ...fatos, disparados: [P] }, '2026-10-01')).toBeCloseTo(1_000 / 8, 9);
-    expect(continuidadePorDiaUtil({ ...fatos, disparados: [] }, '2026-10-01')).toBeNull();
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [P] }, '2026-10-01', 0)).toBeCloseTo(1_000 / 8, 9);
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [] }, '2026-10-01', 0)).toBeNull();
     // controle: motor já existia antes da janela → 90 dias corridos (03/07 a 30/09 = 64 dias úteis)
-    expect(continuidadePorDiaUtil({ ...fatos, disparados: [HIST, P] }, '2026-10-01')).toBeCloseTo(1_000 / 64, 9);
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [HIST, P] }, '2026-10-01', 0)).toBeCloseTo(1_000 / 64, 9);
     const e = simularCiclo({ ...semLinhas, disparados: [] }, 1, cfg).estado;
     expect(e.tipo === 'indeterminado' && e.camadas).toContain('continuidade_sem_historico');
+  });
+
+  it('R54: a provisão de continuidade leva o frete, como o desembolso aceito que a consome', () => {
+    const P = { id: 40, valor_total: 1_000, momento: '2026-09-21T12:00:00Z', nfs: [] as string[] };
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [P] }, '2026-10-01', 0.025)).toBeCloseTo((1_000 * 1.025) / 8, 9);
+    // controle: sem frete, a média pura
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [P] }, '2026-10-01', 0)).toBeCloseTo(1_000 / 8, 9);
   });
 
   it('R52: momento as-of = horario_geracao (decisão do motor), não o disparo real', () => {

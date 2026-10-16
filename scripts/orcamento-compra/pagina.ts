@@ -67,6 +67,10 @@ export function avaliarPortao(r: Resultado): { aberto: boolean; motivos: string[
   if (!finito(cob) || cob < PORTAO.coberturaMin) motivos.push(`cobertura insuficiente: ${pct(cob)} dos episódios classificados (mínimo ${pct(PORTAO.coberturaMin)})`);
   if (inviaveis > PORTAO.inviaveisMax) motivos.push(`${num(inviaveis)} ciclos inviáveis (exige ${num(PORTAO.inviaveisMax)})`);
   if (indeterminados > PORTAO.indeterminadosMax) motivos.push(`${num(indeterminados)} ciclos indeterminados (exige ${num(PORTAO.indeterminadosMax)})`);
+  // R55: evidência positiva — abre só com ≥1 ciclo e todos de estado conhecido (ausência de ruim ≠ bom)
+  const desconhecidos = r.ciclos.filter((c) => !['viavel', 'inviavel', 'indeterminado'].includes(c.estado?.tipo)).length;
+  if (r.ciclos.length === 0) motivos.push('nenhum ciclo simulado');
+  if (desconhecidos > 0) motivos.push(`${num(desconhecidos)} ciclos com estado desconhecido`);
   return { aberto: motivos.length === 0, motivos };
 }
 

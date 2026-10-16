@@ -44,7 +44,7 @@ export const PREMISSAS: string[] = [
   'compromisso = pedido disparado nos 180 dias anteriores ao ciclo (qualquer idade, R38) × (1 + frete) (R41), menos só os títulos Sayerlack da NF que estão representados no snapshot (id_origem) ou liquidados antes do dia do snapshot (R35); título existente fora da trajetória não desconta',
   'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
-  'continuidade do motor = compra disparada por dia útil nos 90 dias anteriores; se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
+  'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
@@ -296,7 +296,8 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
  * que data−90 (janela incompleta), a média é sobre os dias úteis desde ele; sem disparado anterior → null
  * (ausência continuidade_sem_historico, nunca provisão 0 calada).
  */
-export function continuidadePorDiaUtil(f: Fatos, data: DataISO): number | null {
+/** R54: `fretePerc` obrigatório — a provisão é consumida pelo desembolso aceito, que leva frete. */
+export function continuidadePorDiaUtil(f: Fatos, data: DataISO, fretePerc: number): number | null {
   const anteriores = f.disparados.map((p) => ({ dia: dataLocalSP(p.momento), p })).filter((x) => x.dia < data);
   if (anteriores.length === 0) return null;
   const primeiro = anteriores.reduce((m, x) => (x.dia < m ? x.dia : m), anteriores[0].dia);
@@ -304,7 +305,7 @@ export function continuidadePorDiaUtil(f: Fatos, data: DataISO): number | null {
   const total = anteriores.filter((x) => x.dia >= de).reduce((s, x) => s + exigir(x.p.valor_total, 'disparados.valor_total'), 0);
   let uteis = 0;
   for (let d = de; d < data; d = addDias(d, 1)) if (ehDiaUtil(d)) uteis++;
-  return uteis ? total / uteis : null;
+  return uteis ? (total * (1 + fretePerc)) / uteis : null;
 }
 
 /** Reserva = (pagos não-Sayerlack por baixa + títulos Sayerlack por EMISSÃO) / 180 × dias; janela [data−180, data). */
@@ -406,7 +407,7 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const lagPagamento = lags.faturamentoP10 + lags.vencimentoP10;
   const base = baseDeCaixa(f, data, momento, cfg, reserva, lagPagamento, new Set(f.ids_sayerlack.map(String)));
   if (!lagsPagamentoOk) base.ausencias.push('lags_insuficientes');
-  const porDiaUtil = continuidadePorDiaUtil(f, data);
+  const porDiaUtil = continuidadePorDiaUtil(f, data, cfg.fretePerc);
   // R40: a continuidade vai para o corte, que a substitui pela compra aceita (nunca cumulativa)
   if (porDiaUtil == null) base.ausencias.push('continuidade_sem_historico');
   else base.continuidade = { porDiaUtil, lagDias: lagPagamento };
