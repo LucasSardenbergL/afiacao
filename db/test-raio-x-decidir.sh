@@ -166,8 +166,8 @@ COL() { echo "SELECT $3 FROM public.raio_x_decisao WHERE empresa = '$1' AND sku_
 # Corrida determinista: A via FIFO (transacao aberta ate mandarmos COMMIT), B em background; sincronizacao por
 # pg_stat_activity (A 'idle in transaction', B esperando Lock). Nada de sleep fixo como prova.
 espera() { # $1 SQL que deve devolver 1, $2 rotulo
-  local i
-  for i in $(seq 1 200); do
+  local _
+  for _ in $(seq 1 200); do
     [ "$(Pq -c "$1" 2>/dev/null)" = "1" ] && return 0
     sleep 0.05
   done
