@@ -278,8 +278,9 @@ sabota 's/^  IF auth\.uid() IS NOT NULL AND NOT/  IF false AND NOT/'
 dente "F6 sem o gate de papel, a RPC de custo (camada de baixo) barra o customer" "$(imp "'6000006', $ENT, 5181.82, '$DFA'::jsonb" "SET test.uid='22222222-2222-2222-2222-222222222222';")" "IMP_ERR_42501"
 restaura
 # F7 — a postcondição aborta o apply com a RPC aberta a authenticated, e o aborto é DELA.
-sed -e 's/^REVOKE ALL ON FUNCTION public\.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) FROM authenticated;$/GRANT EXECUTE ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) TO authenticated;/' "$MIG" > "$SAB"
-if cmp -s "$MIG" "$SAB"; then
+# O REVOKE mora na migration de ORIGEM (a de REPLACE preserva o ACL e não o repete).
+sed -e 's/^REVOKE ALL ON FUNCTION public\.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) FROM authenticated;$/GRANT EXECUTE ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) TO authenticated;/' "$MIG0" > "$SAB"
+if cmp -s "$MIG0" "$SAB"; then
   bad "F7 sabotagem NÃO casou o REVOKE — falsificação seria teatro"
 elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
   bad "F7 postcondição NÃO abortou com authenticated executando a RPC"
