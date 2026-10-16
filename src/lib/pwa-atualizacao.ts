@@ -52,9 +52,9 @@ export interface EstadoAtualizacao {
 
 /** id fixo → o Sonner deduplica: reabrir NÃO empilha, apenas atualiza o mesmo toast. */
 export const UPDATE_TOAST_ID = 'pwa-update-available';
-export const INTERVALO_CHECAGEM_MS = 30 * 60_000;
+const INTERVALO_CHECAGEM_MS = 30 * 60_000;
 /** Throttle das checagens AUTOMÁTICAS (voltar pro app várias vezes seguidas). */
-export const MIN_ENTRE_CHECAGENS_MS = 5 * 60_000;
+const MIN_ENTRE_CHECAGENS_MS = 5 * 60_000;
 
 type Ouvinte = () => void;
 
@@ -97,7 +97,7 @@ function online(nav: Navigator | undefined): boolean {
  * Mostra o toast "Nova versão disponível". Offline não mostra (o reload só
  * re-serviria o cache velho) — reabre no 'online' ou ao voltar pro app.
  */
-export function mostrarAvisoAtualizacao(nav: Navigator | undefined = globalThis.navigator): void {
+function mostrarAvisoAtualizacao(nav: Navigator | undefined = globalThis.navigator): void {
   if (estado.fase !== 'pronta' || !aplicador || !online(nav)) return;
   const aplicar = aplicador;
   toast('Nova versão disponível', {
