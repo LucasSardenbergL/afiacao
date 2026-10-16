@@ -139,7 +139,7 @@ BEGIN
          CASE WHEN v_vnd IS NULL THEN NULL::text[] ELSE coalesce(v.unidades, '{}'::text[]) END,
          (sp.sku_codigo_omie IS NOT NULL),
          sp.tipo_reposicao, sp.classe_abc,
-         p.created_at::date,
+         (p.created_at AT TIME ZONE 'America/Sao_Paulo')::date,
          rec.ult_entrada,
          coalesce(sp.fornecedor_nome, rec.forn_rec),
          CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.q12, 0) END AS q12,
