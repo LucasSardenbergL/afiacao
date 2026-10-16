@@ -48,6 +48,31 @@ function rotuloEstado(c: Ciclo): string {
   return 'viável';
 }
 
+/**
+ * "O que o backtest diz sobre o cenário-guarda" (Task 8, fix round 2). Contagens vêm do resultado;
+ * o detalhe por camada é o diagnóstico R29 de 2026-10-15 (datado, não recalculado aqui).
+ */
+export function secaoCenarioGuarda(r: Resultado): string {
+  const disp = r.ciclos.filter((c) => c.status === 'disparado');
+  const inv = r.ciclos.filter((c) => c.estado.tipo === 'inviavel');
+  const invDisp = disp.filter((c) => c.estado.tipo === 'inviavel');
+  const datas = inv.map((c) => c.data).sort();
+  const faixa = datas.length ? `${esc(datas[0])} a ${esc(datas[datas.length - 1])}` : AUSENTE;
+  const motorInv = invDisp.reduce((s, c) => s + c.valorMotor, 0);
+  const aceitoInv = invDisp.reduce((s, c) => s + c.valorAceito, 0);
+  const fracInv = r.ciclos.length ? inv.length / r.ciclos.length : null;
+  return `<h2>O que o backtest diz sobre o cenário-guarda</h2>
+<p>Sem nenhuma venda nova, a guarda de caixa olha 91 dias à frente e exige ficar acima de 30 dias de saídas o tempo todo. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, todos no período de ${faixa}. Nos disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
+<p>Nesses ciclos o veredito não depende da compra: <b>a base de caixa sozinha, sem nenhuma candidata, já fura a reserva</b> em todos (diagnóstico de 2026-10-15). Na mediana, isso acontece 72 dias à frente.</p>
+<p>Exemplo do ciclo de 20/07: saldo de R$ 355 mil contra reserva de R$ 291 mil, ou seja, folga de R$ 65 mil. Em 91 dias saem cerca de R$ 390 mil (continuidade do motor R$ 199 mil e saídas não-Sayerlack R$ 190 mil) e entram só R$ 108 mil de títulos já emitidos. O piso projetado fica em R$ 57 mil.</p>
+<p>Em períodos de saldo perto da reserva, portanto, a condição de reserva <b>como especificada é estrita demais para decidir compras</b>: corta tudo o que não é protegido, qualquer que seja o pedido. <b>O portão da v2 continua FECHADO.</b> A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):</p>
+<ul>
+<li><b>Calibrar um cenário de entrada de vendas</b>: substituir o “zero venda nova” por uma entrada conservadora medida, por exemplo um percentil baixo do recebimento histórico.</li>
+<li><b>Encurtar o horizonte</b>: verificar a reserva numa janela menor que 91 dias, mais próxima do ciclo pedido → pagamento.</li>
+<li><b>Baixar a reserva</b>: exigir menos que 30 dias de saídas (a tabela de sensibilidade abaixo mostra 15 e 45 dias).</li>
+</ul>`;
+}
+
 export function gerarPagina(r: Resultado): string {
   const res = r.resumo;
   const estados = res.estados as Record<string, number | undefined>;
@@ -126,6 +151,8 @@ ${kpi('Inviável', contagem('inviavel'))}
 ${kpi('Indeterminado', contagem('indeterminado'))}
 </div>
 <div class="wrap"><table><thead><tr><th>Camada ausente (indeterminado)</th><th class="n">Ciclos</th></tr></thead><tbody>${linhasCamada}</tbody></table></div>
+
+${secaoCenarioGuarda(r)}
 
 <h2>Sensibilidade da reserva</h2>
 <div class="wrap"><table><thead><tr><th>Reserva</th><th class="n">Aceito (disparados)</th><th class="n">Ciclos inviáveis</th></tr></thead><tbody>${linhasSens}</tbody></table></div>
