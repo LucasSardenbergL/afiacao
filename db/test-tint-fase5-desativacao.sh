@@ -708,48 +708,76 @@ eq "V11b I1 global sob o endurecimento" "$(Pq -c "SELECT count(*) FROM public.v_
 eq "V11c I2 global sob o endurecimento" "$(Pq -c "SELECT count(*) FROM public.v_tint_formula_canonica WHERE preco_csv_legado IS NOT NULL AND preco_piso_legado < preco_csv_legado")" "0"
 eq "V11d security_invoker=on sobreviveu" "$(Pq -c "SELECT COALESCE((SELECT 'on' FROM pg_class WHERE relname='v_tint_formula_canonica' AND 'security_invoker=on' = ANY(reloptions)),'AUSENTE')")" "on"
 
-# F5 — tira a exigência de geração '1' (volta a confiar só no motivo).
-SAB="$(mktemp "${TMPDIR:-/tmp}/fase5-f5.XXXXXX")"
-sed "s/ AND EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = '1')//" "$MIGRATION7" > "$SAB"
-if command grep -q 'FROM public.tint_subcolecoes s3' "$SAB"; then
-  bad "F5 a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"
-else
-  # (a) a pós-condição da própria migration TEM de abortar a versão sabotada
-  desforja; F5_OUT="$(P --single-transaction -f "$SAB" 2>&1 || true)"; forja
-  case "$F5_OUT" in
-    *"o endurecimento do carimbo não está na view"*) ok "F5a a PÓS-CONDIÇÃO da migration aborta a versão sem a exigência" ;;
-    *) bad "F5a a pós-condição NÃO abortou a versão sabotada: $(printf '%s' "$F5_OUT" | tr '\n' ' ' | cut -c1-200)" ;;
-  esac
-  # (b) sem a pós-condição (camada de baixo), o assert de comportamento cai sozinho
-  # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
-  sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' "$SAB" > "$SAB.sempos"
-  if command grep -q 'pós-condição: o endurecimento' "$SAB.sempos"; then
-    bad "F5b não consegui remover a pós-condição (sed sem efeito)"
-  else
-    aplica_m7 "$SAB.sempos" || true
-    case "$(v10)" in
-      "400|400|false") bad "F5b V10 seguiu verde sem a exigência de geração '1' — assert sem dente" ;;
-      *) ok "F5b sem a exigência o rótulo volta a $(v10 | cut -d'|' -f1) — V10 tem dente" ;;
-    esac
+# ── Falsificação em DUAS CAMADAS, uma por vez (regra do repo: a camada que fica
+# VERDE sob a sabotagem é redundante ou inalcançada). Para cada mutante:
+#   (a) a PÓS-CONDIÇÃO da migration tem de ABORTAR, e o aborto tem de REVERTER
+#       tudo (view segue a real: 400|400|false);
+#   (b) sem a pós-condição, o assert de COMPORTAMENTO tem de dar o valor ERRADO
+#       EXATO previsto — não "qualquer coisa ≠ 400" (o falso verde que o challenge
+#       Codex de 2026-10-16 pegou: erro de consulta caía no ramo de sucesso).
+#   esperado_b = "-" ⇒ mutante que só a pós-condição distingue (sem efeito de valor
+#   observável em K11).
+falsifica() { # <rotulo> <expressao sed> <esperado_b|-> <descricao>
+  local rot="$1" expr="$2" esp="$3" desc="$4" sab out r rc
+  sab="$(mktemp "${TMPDIR:-/tmp}/fase5-$rot.XXXXXX")"
+  sed "$expr" "$MIGRATION7" > "$sab"
+  if cmp -s "$sab" "$MIGRATION7"; then
+    bad "$rot a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"; rm -f "$sab"; return
   fi
-  rm -f "$SAB.sempos"
-fi
-rm -f "$SAB"
-aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento"; exit 1; }
+  desforja; out="$(P --single-transaction -f "$sab" 2>&1)"; rc=$?; forja
+  case "$out" in
+    *"pós-condição: o endurecimento do carimbo não está na view"*)
+      if [ "$rc" -ne 0 ] && [ "$(v10)" = "400|400|false" ]; then ok "${rot}a a PÓS-CONDIÇÃO aborta e reverte — $desc"
+      else bad "${rot}a abortou mas NÃO reverteu (rc=$rc, view=$(v10))"; fi ;;
+    *) bad "${rot}a a pós-condição NÃO abortou — $desc: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)" ;;
+  esac
+  if [ "$esp" != "-" ]; then
+    # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
+    sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' "$sab" > "$sab.sempos"
+    if command grep -q 'pós-condição: o endurecimento' "$sab.sempos"; then
+      bad "${rot}b não consegui remover a pós-condição (sed sem efeito)"
+    elif ! aplica_m7 "$sab.sempos"; then
+      bad "${rot}b a versão sabotada SEM pós-condição nem aplicou — vermelho por infraestrutura, não por defeito"
+    elif ! r="$(v10)"; then
+      bad "${rot}b a consulta do V10 falhou sob a sabotagem"
+    else
+      eq "${rot}b sem a pós-condição o rótulo|piso|is_sl vira o valor errado previsto" "$r" "$esp"
+    fi
+    rm -f "$sab.sempos"
+  fi
+  rm -f "$sab"
+  aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento após $rot"; exit 1; }
+}
 
-# F6 — tira SÓ o guard de CONTA do s3: a '1' de colacor (990) volta a entrar.
-# Isola o segundo predicado — sem F6, `s3.account = g2.account` seria enfeite.
-SAB="$(mktemp "${TMPDIR:-/tmp}/fase5-f6.XXXXXX")"
-sed 's/ AND s3\.account = g2\.account//' "$MIGRATION7" > "$SAB"
-if command grep -q 's3\.account = g2\.account' "$SAB"; then
-  bad "F6 a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"
-else
-  aplica_m7 "$SAB" || true
-  eq "F6 sem o guard de conta do s3 a '1' alheia entra (rótulo 990)" "$(v10 | cut -d'|' -f1)" "990"
-fi
-rm -f "$SAB"
+falsifica F5 "s/ AND EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = '1')//" \
+  "990|990|false" "tirar a exigência de geração '1' (volta a confiar só no motivo)"
+falsifica F6 's/ AND s3\.account = g2\.account//' \
+  "990|990|false" "tirar SÓ o guard de conta (a '1' de colacor entra)"
+falsifica F7 's/s3\.id = g2\.subcolecao_id AND //' \
+  "990|990|false" "tirar a correlação por id (qualquer '1' da conta valida qualquer linha)"
+# F8: agrupamento ((ativa OR carimbada) AND geração). Em K11 não muda valor (a única
+# ativa é a '1' legítima), então só a pós-condição o distingue — esperado_b "-".
+falsifica F8 "s/OR (g2\.desativada_motivo = 'fase5_geracao_legada' AND EXISTS \(.*\)'1')))\$/OR g2.desativada_motivo = 'fase5_geracao_legada') AND (EXISTS \1'1'))/" \
+  "-" "trocar o agrupamento para (ativa OR carimbada) AND geração"
 
-aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento"; exit 1; }
+# ── V12 POSITIVO no ramo NÃO-SL (pedido do challenge): um tombstone LEGÍTIMO
+# ('1' da mesma conta) tem de seguir sendo a fonte DECISIVA do rótulo. Sem isto,
+# um endurecimento que excluísse todo tombstone no ramo não-SL passaria tudo.
+# K12 @sku ...0f: personalizada ATIVA com receita (canônica não-SL), CSV 300 ·
+#                 '1' da MESMA conta, carimbada, CSV 600 ⇒ rótulo 600.
+P -q <<'SQL' >/dev/null
+INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, preco_final_sayersystem) VALUES
+  ('f0120000-0000-0000-0000-0000000000b2','oben','K12','NAOSLPOS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e6',NULL,'50000000-0000-0000-0000-00000000000f',300),
+  ('f0120000-0000-0000-0000-000000000012','oben','K12','NAOSLPOS','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e6','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000f',600);
+INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VALUES
+  ('f0120000-0000-0000-0000-0000000000b2','c0000000-0000-0000-0000-000000000001',1,10);
+UPDATE public.tint_formulas
+   SET desativada_em = now() - interval '1 day', desativada_motivo = 'fase5_geracao_legada'
+ WHERE id = 'f0120000-0000-0000-0000-000000000012';
+SQL
+eq "V12 ramo não-SL: tombstone LEGÍTIMO segue decidindo o rótulo (rótulo|piso|is_sl)" \
+   "$(Pq -c "SELECT COALESCE(preco_csv_legado::text,'(null)')||'|'||COALESCE(preco_piso_legado::text,'(null)')||'|'||is_sl FROM public.v_tint_formula_canonica WHERE cor_id='K12'")" "600|600|false"
+
 eq "R2 restauração: endurecimento real de volta" "$(v10)" "400|400|false"
 
 echo
