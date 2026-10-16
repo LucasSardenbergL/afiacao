@@ -235,9 +235,9 @@ describe('R27 — integração da base de caixa (money-path)', () => {
         { data: '2026-10-01', valor: 777 }, // o próprio dia: fora
       ],
       titulos_sayerlack: [
-        { id: 'a', nf: '1', valor: 300, data_emissao: '2026-09-26', created_at: '2026-09-26T12:00:00Z' },
-        { id: 'b', nf: '2', valor: 444, data_emissao: '2026-09-28', created_at: '2026-10-01T13:00:00Z' }, // criado depois do momento
-        { id: 'c', nf: '3', valor: 555, data_emissao: '2026-03-01', created_at: '2026-03-01T12:00:00Z' }, // fora da janela
+        { id: 'a', nf: '1', valor: 300, data_emissao: '2026-09-26', created_at: '2026-09-26T12:00:00Z', data_baixa: null, valor_baixado: null },
+        { id: 'b', nf: '2', valor: 444, data_emissao: '2026-09-28', created_at: '2026-10-01T13:00:00Z', data_baixa: null, valor_baixado: null }, // criado depois do momento
+        { id: 'c', nf: '3', valor: 555, data_emissao: '2026-03-01', created_at: '2026-03-01T12:00:00Z', data_baixa: null, valor_baixado: null }, // fora da janela
       ],
     };
     expect(reservaDe(f, '2026-10-01', momento, 30)).toBeCloseTo(((500 + 50 + 300) / 180) * 30, 9);
@@ -300,7 +300,7 @@ describe('backtest', () => {
 
 describe('R31 — precisão por episódio (portão da v2)', () => {
   const corte = (sku: string, classe: DetalheCorte['classe'], valor: number | null, motivo = 'economico'): DetalheCorte => ({
-    sku, k: 1, qtde: 1, valor, motivo, classe, estoqueMedioCom: null, estoqueMedioSem: null, precoUnit: 10, fechamentoOk: true,
+    sku, k: 1, qtde: 1, valor, motivo, classe, estoqueMedioCom: null, estoqueMedioSem: null, precoUnit: 10, fechamentoOk: true, chegadaAproximada: false,
   });
   const ciclo = (cicloId: number, data: string, cortesDetalhe: DetalheCorte[]): ResultadoCiclo => ({
     cicloId, data, status: 'disparado', valorMotor: 0, valorAceito: 0, aceitas: 0, cortadas: cortesDetalhe.length,
