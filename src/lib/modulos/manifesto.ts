@@ -844,6 +844,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/offline-queue.ts",
       "src/lib/phone.ts",
       "src/lib/postgrest.ts",
+      "src/lib/pwa-atualizacao.ts",
       "src/lib/pwa-update.ts",
       "src/lib/routeCrumbs.ts",
       "src/lib/telemetria-probe.ts",
