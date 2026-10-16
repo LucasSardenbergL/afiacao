@@ -26,7 +26,7 @@ const customer = {
   cnae: null,
 } as unknown as Customer;
 
-const score = { health_class: 'saudavel', churn_risk: 10, gross_margin_pct: 0.35 } as unknown as CustomerScore;
+const score = { health_class: 'saudavel', churn_risk: 10, gross_margin_pct: 35 } as unknown as CustomerScore;
 
 function renderHero(ui: React.ReactElement) {
   return render(<MemoryRouter><TooltipProvider>{ui}</TooltipProvider></MemoryRouter>);
