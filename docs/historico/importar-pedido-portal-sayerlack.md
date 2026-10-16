@@ -55,3 +55,19 @@ apply = tentativa **#449** com recibo (sha256 `658bf9f2…`). 2ª testemunha por
 válido, colunas e ACL (anon/authenticated sem EXECUTE, service_role com) ✅; `md5(prosrc)` = md5 do corpo do arquivo
 (`e7294d18…`). Carimbo de authz re-medido: os 6 audits de prod exit 0 (o achado `FUNCAO_AUSENTE_EM_PROD` sumiu).
 Pendente: edges (`disparar-pedidos-aprovados` v1.9 ANTES de `sayerlack-importar-pedido-portal`) e Publish.
+
+## Deploy e 1º uso real (2026-10-15/16)
+
+- **Edges em ondas**: `disparar-pedidos-aprovados` v1.9 → `sayerlack-importar-pedido-portal`. A ferramenta não emitia
+  onda de edge NOVA com ordem (pelo nome retinha; pelo ledger ignorava `NUNCA_ATESTADA`) → #3085. O bloco do Lovable
+  só vale colado NA HORA: o `sonda-fingerprints.ts` muda a cada PR que toca edge (2 recusas por hash) e a prova da
+  predecessora vence em 6 h (re-sonda via `db:aplicar`; o SQL da sonda sai byte-igual → linha de comentário própria,
+  senão "já aplicado").
+- **1º uso (2141068) — leitura**: "0 linha(s) lida(s)" com o pedido existindo. A edge clicava em Filtrar antes de o
+  portal ligar jQuery/DataTables → v1.1 (#3101) espera `table.dataTable` e a RESPOSTA do `POST /order-viewer/form/list`.
+- **1º uso — gravação**: "UPDATE requires a WHERE clause". O Supabase carrega o **pg-safeupdate** nas sessões da API;
+  a RPC tinha 2 UPDATE sem WHERE em tabela temporária, e o PG17 local NÃO carrega a extensão → a prova não pega.
+  Migration `20261016013000` (#3102) + postcondição/assert que reprova UPDATE sem WHERE (regex com `\m`: sem fronteira,
+  o comentário "safeupdate" dava falso positivo). Tudo-ou-nada segurou: nada gravado.
+- **Resultado**: pedido #3644 → **PO 1291** no Omie; 10 × DFA.4080LT, R$ 304,097 + IPI 6,5% = R$ 323,863/un,
+  total R$ 3.238,63 = Vlr Total do portal (provado).
