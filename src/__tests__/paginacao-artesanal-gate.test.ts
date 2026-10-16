@@ -1142,6 +1142,8 @@ serve(async (req) => {
     ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1],
     ['supabase/functions/omie-cliente/index.ts', 1],
     ['supabase/functions/omie-sync/index.ts', 1],
+    // O fetch é à edge de importar (service_role); "Omie" é do comentário/variável vizinha, não chamada à API.
+    ['supabase/functions/sayerlack-varrer-pedidos-portal/index.ts', 1],
   ]);
 
   it('DENOMINADOR/G6: a vizinhança do corte de 260 não cresce sem alguém ler', () => {

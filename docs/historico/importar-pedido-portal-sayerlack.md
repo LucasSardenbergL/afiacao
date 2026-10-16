@@ -71,3 +71,27 @@ Pendente: edges (`disparar-pedidos-aprovados` v1.9 ANTES de `sayerlack-importar-
   o comentário "safeupdate" dava falso positivo). Tudo-ou-nada segurou: nada gravado.
 - **Resultado**: pedido #3644 → **PO 1291** no Omie; 10 × DFA.4080LT, R$ 304,097 + IPI 6,5% = R$ 323,863/un,
   total R$ 3.238,63 = Vlr Total do portal (provado).
+
+## 2026-10-16 — cancelado recusado (#3105) e varredura automática (cron)
+
+Palavras do founder: "não precisa pegar pedidos cancelados" e "quero que exista um cron às 12:30, 17:30 e 22:30 que,
+caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, ele seja lançado no Omie".
+
+- **Cancelado** (#3105, importar v1.2): `leitura.ts` recusa a situação `6 - Cancelado` (motivo `pedido_cancelado`).
+  O filtro do portal segue `todos`: o cancelado é LIDO e recusado, para a tela dizer "cancelado", não "não encontrado".
+- **Varredura** (edge nova `sayerlack-varrer-pedidos-portal` v1.0 + migration `20261016150000`): job
+  `30 1,15,20 * * *` UTC (= 22:30/12:30/17:30 SP), modo `importar`. Lê a Consulta Pedidos (OBEN, Exibir = Pedido,
+  emissão dos últimos 7 dias, todas as páginas) e chama a edge de importar — o MESMO caminho do botão — para cada
+  pedido sem `portal_protocolo` no app e sem contrato no espelho do Omie. Decisões do founder (money-path):
+  - corrida com envio do próprio app: pedido OBEN em `enviando_portal` / `aceito_portal_sem_protocolo` /
+    `indeterminado_requer_conciliacao` ⇒ a rodada não importa, e reconfere antes de cada importação. A trava fecha
+    porque o envio grava estado e protocolo no MESMO UPDATE. A consulta do portal só tem DATA de emissão (sem hora):
+    carência em minutos não é possível;
+  - janela de 7 dias, sem cancelados e sem faturados: a situação importável é **lista fechada** de códigos
+    (`SITUACOES_IMPORTAVEIS`, vazia na partida = só relata, inclusive o `<select id="situacao">` real); há POs
+    Sayerlack no Omie sem nº de contrato (vindos de NF), e um faturado viraria PO em dobro;
+  - falha ⇒ `sayerlack_varredura_falha` + e-mail 1 vez por protocolo; `<UltimaExecucao acao="reposicao.varrer_portal_sayerlack">`
+    em Gerir pedidos.
+- **IPI — alíquota no PO**: a API do Omie (IncluirPedCompra, `produtos_incluir`/`produtos_alterar`/`produtos_consulta`)
+  **não tem campo de alíquota**, só `nValorIpi` (que já vai). O `raw_data` do PO 1291 (ConsultarPedCompra) confirma: 29
+  chaves por item, nenhuma de alíquota. O campo que o founder vê na tela do Omie não é exposto pela API.

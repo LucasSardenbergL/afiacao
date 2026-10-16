@@ -111,6 +111,10 @@ verify_jwt = false
 [functions.disparar-pedidos-aprovados]
 verify_jwt = false
 
+# Cron com x-cron-secret (sem JWT): o gateway recusaria com 401 antes do handler. O gate é authorizeCronOrStaff.
+[functions.sayerlack-varrer-pedidos-portal]
+verify_jwt = false
+
 [functions.promocao-extrair-via-vision]
 verify_jwt = false
 

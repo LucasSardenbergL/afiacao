@@ -17,7 +17,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { lerPedidoPortal, mensagemErroImportacao, type LinhaConsultaRaw } from "./leitura.ts";
+import { lerPedidoPortal, mensagemErroImportacao, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -318,9 +318,9 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  let body: { protocolo?: unknown } = {};
+  let body: { protocolo?: unknown; situacoes_permitidas?: unknown } = {};
   try {
-    body = (await req.json()) as { protocolo?: unknown };
+    body = (await req.json()) as { protocolo?: unknown; situacoes_permitidas?: unknown };
   } catch {
     return json({ ok: false, mensagem: "Body JSON inválido" }, 400);
   }
@@ -339,6 +339,16 @@ Deno.serve(async (req: Request) => {
   const protocolo = String(body?.protocolo ?? "").trim();
   if (!PROTOCOLO_RE.test(protocolo)) {
     return json({ ok: false, mensagem: "Número do pedido deve ter só dígitos (3 a 12)." }, 400);
+  }
+
+  // Lista fechada de situações (só a varredura manda): presente ⇒ a situação RELIDA tem de estar nela antes da RPC.
+  let situacoesPermitidas: string[] | null = null;
+  if (body?.situacoes_permitidas !== undefined) {
+    const v = body.situacoes_permitidas;
+    if (!Array.isArray(v) || !v.every((c) => typeof c === "string" && /^\d+$/.test(c))) {
+      return json({ ok: false, mensagem: "situacoes_permitidas deve ser lista de códigos numéricos." }, 400);
+    }
+    situacoesPermitidas = v as string[];
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -443,6 +453,12 @@ Deno.serve(async (req: Request) => {
     const lido = lerPedidoPortal(envelope.consulta?.linhas ?? [], envelope.itens, protocolo);
     if (!lido.ok) {
       return json({ ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, mensagem: lido.detalhe, trace: envelope.trace ?? null });
+    }
+    if (situacoesPermitidas && !situacaoPermitida(lido.cabecalho.situacao, situacoesPermitidas)) {
+      return json({
+        ok: false, etapa: "leitura", protocolo, motivo: "situacao_nao_permitida", situacao_portal: lido.cabecalho.situacao,
+        mensagem: `O pedido ${protocolo} está "${lido.cabecalho.situacao}" no portal — fora das situações que a varredura importa.`,
+      });
     }
 
     // 3. Grava (tudo-ou-nada) com a prova de custo.

@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR, situacaoCancelada } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -113,5 +113,13 @@ Deno.test("situacaoCancelada: código 6 ou o texto; as outras situações passam
   assertEquals(
     ["6 - Cancelado", "6 -", "Cancelado", "CANCELADA", "5 - Suspenso", "1 - Aberto", "16 - Outro", "4 - Faturado"].map(situacaoCancelada),
     [true, true, true, true, false, false, false, false],
+  );
+});
+
+Deno.test("situacaoPermitida: só código da lista; sem código ou lista vazia = não", () => {
+  assertEquals(
+    [situacaoPermitida("1 - Aberto", ["1"]), situacaoPermitida("4 - Faturado", ["1"]), situacaoPermitida("Aberto", ["1"]),
+     situacaoPermitida("1 - Aberto", []), situacaoPermitida("11 - Outro", ["1"])],
+    [true, false, false, false, false],
   );
 });
