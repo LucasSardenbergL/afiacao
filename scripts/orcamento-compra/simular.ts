@@ -38,6 +38,7 @@ export const PREMISSAS: string[] = [
   'cm_anual (custo de capital) é o atual de empresa_configuracao_custos',
   'reserva = saída média diária: pagos não-Sayerlack por data de baixa + títulos Sayerlack por data de EMISSÃO (criados até o momento do ciclo)',
   'recebimentos = quantidade PEDIDA (produtos_consulta.nQtde) na data t4 do tracking; pedido sem t4 não entra (o erro de fechamento pega o buraco)',
+  'replay do corte: Σ das embalagens cortadas do SKU no ciclo removidas juntas (R32) no t4 real do pedido; sem t4, na chegada mediana as-of, marcada aproximada (R33)',
   'saídas atrasadas do snapshot (data < dia do ciclo) entram no dia 0; se já estavam pagas, contam em dobro (viés conservador)',
   'pedido disparado sem NF, ou com NF sem título no CP até o snapshot, com menos de 15 dias (p90 pedido→faturamento) entra inteiro como compromisso a faturar e não torna o ciclo indeterminado; com 15 dias ou mais, é não conciliado (a lista de NFs do pedido é a de hoje, não a do ciclo)',
   'compromisso = pedido disparado nos 180 dias anteriores ao ciclo (qualquer idade, R38) × (1 + frete) (R41), menos só os títulos Sayerlack da NF que estão representados no snapshot (id_origem) ou liquidados antes do dia do snapshot (R35); título existente fora da trajetória não desconta',
@@ -47,6 +48,9 @@ export const PREMISSAS: string[] = [
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
+  'intervalo de oportunidade de 1 dia (o motor roda todo dia): domina o corte econômico — a embalagem marginal só compra 1 dia de cobertura extra (R49)',
+  'margem cheia sobre o backlog: unidade que cobre venda já feita sem estoque conta a margem inteira, sem desconto por cancelamento (R49)',
+  'promoção tudo-ou-nada: a embalagem inteira ganha o desconto se o tempo médio de consumo (sem limite de janela) cabe no horizonte da promoção (R43/R49)',
   'demanda média/desvio do ciclo derivados da série as-of [data−180, data−1] (dias não censurados); params.demanda_media_diaria só no CMV diário do resumo',
 ];
 

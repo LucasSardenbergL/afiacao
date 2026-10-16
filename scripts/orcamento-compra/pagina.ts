@@ -10,7 +10,7 @@ export type Resultado = ReturnType<typeof backtest>;
 /** Premissas da leitura que não estão no PREMISSAS do simulador (decisão do controlador, Task 8). */
 export const PREMISSAS_EXTRAS: string[] = [
   'semana agregada que atravessa o ciclo perde entradas (conservador)',
-  'cortes sem score com preço entram na quantidade removida do episódio',
+  'cortes sem score (revisão humana) entram na quantidade removida do replay do SKU (conservador), mas ficam fora do valor cortado e da precisão (R48)',
 ];
 
 const AUSENTE = '—';
@@ -48,19 +48,25 @@ function rotuloEstado(c: Ciclo): string {
   return 'viável';
 }
 
-/** Critérios do portão da v2 (R31). "Explicar" inviáveis não abre o portão — só decisão do founder sobre o cenário-guarda. */
-export const PORTAO = { precisaoMin: 0.95, nMin: 30, coberturaMin: 0.5, inviaveisMax: 0 } as const;
+/**
+ * Critérios do portão da v2 (R31 + R36). "Explicar" inviáveis não abre o portão — só decisão do founder sobre
+ * o cenário-guarda. Indeterminado também fecha: ausência de ciclo inviável não comprova viabilidade.
+ */
+export const PORTAO = { precisaoMin: 0.95, nMin: 30, coberturaMin: 0.5, inviaveisMax: 0, indeterminadosMax: 0 } as const;
 
 /** Portão da v2 derivado do resultado: aberto só se todos os critérios passam; senão a lista dos que falharam. */
 export function avaliarPortao(r: Resultado): { aberto: boolean; motivos: string[] } {
   const pe = r.resumo.precisaoEpisodios;
   const cob = r.resumo.coberturaEpisodios;
   const inviaveis = r.ciclos.filter((c) => c.estado.tipo === 'inviavel').length;
+  const indeterminados = r.ciclos.filter((c) => c.estado.tipo === 'indeterminado').length;
   const motivos: string[] = [];
-  if (!finito(pe.precisao) || pe.precisao < PORTAO.precisaoMin) motivos.push(`precisão por episódio ${pct(pe.precisao)} < ${pct(PORTAO.precisaoMin)}`);
-  if (pe.n < PORTAO.nMin) motivos.push(`${num(pe.n)} episódios classificados < ${num(PORTAO.nMin)}`);
+  // R47: todo critério é fail-closed — undefined/NaN (resultado.json antigo) nunca passa
+  if (!finito(pe?.precisao) || pe.precisao < PORTAO.precisaoMin) motivos.push(`precisão por episódio ${pct(pe?.precisao)} < ${pct(PORTAO.precisaoMin)}`);
+  if (!finito(pe?.n) || pe.n < PORTAO.nMin) motivos.push(`${num(pe?.n)} episódios classificados < ${num(PORTAO.nMin)}`);
   if (!finito(cob) || cob < PORTAO.coberturaMin) motivos.push(`cobertura insuficiente: ${pct(cob)} dos episódios classificados (mínimo ${pct(PORTAO.coberturaMin)})`);
   if (inviaveis > PORTAO.inviaveisMax) motivos.push(`${num(inviaveis)} ciclos inviáveis (exige ${num(PORTAO.inviaveisMax)})`);
+  if (indeterminados > PORTAO.indeterminadosMax) motivos.push(`${num(indeterminados)} ciclos indeterminados (exige ${num(PORTAO.indeterminadosMax)})`);
   return { aberto: motivos.length === 0, motivos };
 }
 
@@ -68,7 +74,7 @@ function secaoPortao(r: Resultado): string {
   const { aberto, motivos } = avaliarPortao(r);
   const lista = motivos.length ? `<ul>${motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : '';
   return `<h2>Portão da v2</h2>
-<p>Abre só com precisão por episódio ≥ ${pct(PORTAO.precisaoMin)}, ≥ ${num(PORTAO.nMin)} episódios classificados, cobertura ≥ ${pct(PORTAO.coberturaMin)} e ${num(PORTAO.inviaveisMax)} ciclos inviáveis. Inviáveis “explicados” não abrem o portão; só a decisão do founder sobre o cenário-guarda muda esse critério.</p>
+<p>Abre só com precisão por episódio ≥ ${pct(PORTAO.precisaoMin)}, ≥ ${num(PORTAO.nMin)} episódios classificados, cobertura ≥ ${pct(PORTAO.coberturaMin)}, ${num(PORTAO.inviaveisMax)} ciclos inviáveis e ${num(PORTAO.indeterminadosMax)} ciclos indeterminados. Inviáveis “explicados” não abrem o portão; só a decisão do founder sobre o cenário-guarda muda esse critério. Indeterminado também fecha: sem veredito de caixa não há prova de viabilidade.</p>
 <p><b class="${aberto ? '' : 'ruim'}">Nesta rodada: ${aberto ? 'ABERTO' : 'FECHADO'}</b>${aberto ? '.' : ', porque:'}</p>${lista}`;
 }
 
@@ -108,7 +114,7 @@ export function gerarPagina(r: Resultado): string {
   const porCamada = indeterminadosPorCamada(r.ciclos);
 
   const linhasSens = r.sensibilidade
-    .map((s) => `<tr><td>${num(s.reservaDias)} dias</td><td class="n">${brl(s.valorAceito)}</td><td class="n">${num(s.inviaveis)}</td></tr>`)
+    .map((s) => `<tr><td>${num(s.reservaDias)} dias</td><td class="n">${brl(s.valorAceito)}</td><td class="n">${num(s.inviaveis)}</td><td class="n">${brl(s.valorAceitoSemGuarda)}</td><td class="n">${num(s.indeterminados)}</td></tr>`)
     .join('');
   const linhasCamada = porCamada.length
     ? porCamada.map(([camada, n]) => `<tr><td>${esc(camada)}</td><td class="n">${num(n)}</td></tr>`).join('')
@@ -155,8 +161,10 @@ ${secaoPortao(r)}
 <div class="kpis">
 ${kpi('Ciclos (disparados / total)', `${num(res.nDisparados)} / ${num(res.nCiclos)}`)}
 ${kpi('Motor pediu (disparados)', brl(res.valorMotorDisparados))}
-${kpi('Orçamento aceitaria (disparados)', brl(res.valorAceitoDisparados))}
-${kpi('Valor cortado — efetivo', brl(res.valorCortadoEfetivo), 'ciclos disparados; dedup. por episódio')}
+${kpi('Orçamento aceitaria (disparados com guarda de caixa)', brl(res.valorAceitoDisparados), `de ${brl(res.valorMotorComGuarda)} que o motor pediu nesses ciclos (viáveis ou inviáveis)`)}
+${kpi('Aceito sem guarda de caixa', brl(res.valorAceitoSemGuarda), `${num(res.ciclosSemGuarda)} ciclos disparados indeterminados — só o gate econômico decidiu; fora do “aceitaria”`)}
+${kpi('Valor cortado — efetivo', brl(res.valorCortadoEfetivo), 'ciclos disparados; dedup. por episódio; sem score fora (revisão humana)')}
+${kpi('Revisão humana (sem score)', brl(res.revisaoHumana?.valor), `${num(res.revisaoHumana?.embalagens)} embalagens nos disparados (${num(res.revisaoHumana?.semPreco)} sem preço) — fora do valor cortado e da precisão`)}
 ${kpi('Valor cortado — expirado', brl(res.valorCortadoExpirado), 'ciclos não disparados (a compra não aconteceu)')}
 ${kpi('Cortes sem preço', num(res.cortesSemPreco), 'fora do valor cortado')}
 ${kpi('Episódios de corte (dedup.)', num(res.episodios))}
@@ -167,14 +175,15 @@ ${kpi('Embalagens sensíveis ao modelo', num(res.sensiveisAoModelo), 'sinal de �
 <div class="kpis">
 ${kpi('Precisão por episódio (valor não-rompido / valor classificado)', pct(res.precisaoEpisodios.precisao), `${num(res.precisaoEpisodios.n)} episódios classificados · ${num(res.precisaoEpisodios.indeterminados)} indeterminados. Ruptura em período censurado vira indeterminado por construção — a precisão só cobre os episódios classificados (cobertura ${pct(res.coberturaEpisodios)})`)}
 ${kpi('Precisão por corte', pct(res.precisao.precisao), `${num(res.precisao.n)} cortes classificados · ${num(res.precisao.indeterminados)} indeterminados de ${num(precisaoTotal)} · valor classificado ${brl(res.precisao.valorCortado)}`)}
+${kpi('Cortes com chegada aproximada', num(res.cortesChegadaAproximada), 'pedido sem t4 no tracking: remoção na chegada mediana as-of')}
 ${kpi('SKUs com fechamento ruim', `${num(res.skusFechamentoRuim)} / ${num(res.skusAvaliados)}`, fechamentoFrac == null ? AUSENTE : `${pct(fechamentoFrac)} — replay desses SKUs vira indeterminado`)}
 </div>
 
 <h2>Estoque e caixa liberado</h2>
 <div class="kpis">
-${kpi('ΔDIO (dias)', num(res.deltaDio, 2), `${num(res.episodiosDio)} episódios medidos · ${num(res.episodiosSemHorizonte)} sem horizonte de replay · ${num(res.episodiosDioIndeterminados)} indeterminados`)}
+${kpi('ΔDIO (dias; positivo = menos estoque)', num(res.deltaDio, 2), `soma dos episódios medidos, não média do período · ${num(res.episodiosDioNoCmv)} episódios no subconjunto do CMV de ${num(res.episodiosDio)} medidos · ${num(res.episodiosSemHorizonte)} sem horizonte de replay · ${num(res.episodiosDioIndeterminados)} indeterminados · cobertura do CMV ${pct(res.cmvCobertura)} (abaixo de 80% → —)`)}
 ${kpi('Caixa liberado (R$)', brl(res.caixaLiberado), 'estoque médio a custo, com − sem o corte, nos episódios medidos')}
-${kpi('CMV diário do universo do motor', brl(res.cmvDiarioBase))}
+${kpi('CMV diário do universo do motor', brl(res.cmvDiarioBase), `SKUs com preço e demanda: ${pct(res.cmvCobertura)} do universo`)}
 </div>
 
 <h2>Estado do caixa por ciclo</h2>
@@ -188,7 +197,7 @@ ${kpi('Indeterminado', contagem('indeterminado'))}
 ${secaoCenarioGuarda(r)}
 
 <h2>Sensibilidade da reserva</h2>
-<div class="wrap"><table><thead><tr><th>Reserva</th><th class="n">Aceito (disparados)</th><th class="n">Ciclos inviáveis</th></tr></thead><tbody>${linhasSens}</tbody></table></div>
+<div class="wrap"><table><thead><tr><th>Reserva</th><th class="n">Aceito (disparados com guarda)</th><th class="n">Ciclos inviáveis</th><th class="n">Aceito sem guarda</th><th class="n">Indeterminados</th></tr></thead><tbody>${linhasSens}</tbody></table></div>
 
 <h2>Ciclos disparados</h2>
 <div class="wrap"><table><thead><tr><th>Data</th><th class="n">Motor</th><th class="n">Aceito</th><th>Caixa</th><th>Cortes por motivo</th></tr></thead><tbody>${linhasCiclos}</tbody></table></div>
