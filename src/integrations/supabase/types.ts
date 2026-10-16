@@ -13567,6 +13567,36 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_varredura_falha: {
+        Row: {
+          mensagem: string
+          notificado_em: string | null
+          primeira_em: string
+          protocolo: string
+          resolvido_em: string | null
+          tentativas: number
+          ultima_em: string
+        }
+        Insert: {
+          mensagem: string
+          notificado_em?: string | null
+          primeira_em?: string
+          protocolo: string
+          resolvido_em?: string | null
+          tentativas?: number
+          ultima_em?: string
+        }
+        Update: {
+          mensagem?: string
+          notificado_em?: string | null
+          primeira_em?: string
+          protocolo?: string
+          resolvido_em?: string | null
+          tentativas?: number
+          ultima_em?: string
+        }
+        Relationships: []
+      }
       score_recalc_queue: {
         Row: {
           customer_user_id: string
