@@ -57,6 +57,25 @@ tail -1 /tmp/oc-pag.log; [ "$rc" -eq 0 ]   # esperado: fim|ok
 - **Inviáveis caíram de 61 para 4** só porque os outros ciclos agora são indeterminados — a guarda não deu veredito neles. Isso não é melhora do caixa.
 - **"Orçamento aceitaria" caiu para 0%** porque agora só soma ciclos com veredito de caixa (R51). O que só o gate econômico aceitou (46,7%) aparece à parte, como "sem guarda de caixa".
 
+### R57/R58 — os 13 pedidos de maio/junho sem NF (2026-10-16)
+
+Investigação por pedido (psql-ro): a edge de NF casa NF↔pedido pelo nº do pedido na Sayerlack (`nNumPedCompra` = `cContrato`). As NFs de maio chegaram **antes** de a linha do pedido existir no tracking (criadas em 2026-06-26) e viraram linhas órfãs nunca reconciliadas. Correção na fonte: sessão própria (edge `omie-sync-nfes-recebidas`).
+
+| Destino | Pedidos | Evidência |
+|---|---|---|
+| NF órfã pelo contrato, título pago | 3 (1002, 1007, 1011) | `nNumPedCompra` = `cContrato` |
+| Refeito à mão no Omie, NF paga | 2 (1005→1010, 1015→1037) | mesmos itens e quantidades |
+| Sem NF em lugar nenhum | 8 | ficam indeterminados (decisão do founder) |
+
+O founder aprovou as duas regras; o challenge Codex (xhigh, 2026-10-16) achou que elas fabricavam liquidação e elas foram **endurecidas** (fail-closed):
+- **R57 (contrato):** liga a NF só se **todo** identificador Sayerlack do pedido (`cContrato` e protocolo do portal) tem NF. 1007, 1011 e 1005 foram **reenviados ao portal em 22/05** e ganharam outro pedido na Sayerlack (protocolos 2096768–2096771), que **não tem NF**: pode estar em aberto, então não liga.
+- **R58 (substituto):** só para pedido sem nenhum identificador Sayerlack, com veto quando o contrato do manual pertence a um pedido do motor (1037 = 1048, o mesmo pedido Sayerlack) e unicidade nos dois sentidos.
+- **As-of:** a NF vinculada só vale se faturada **antes** do dia do ciclo (a topologia NF↔pedido também carrega informação futura).
+
+**Resultado (fatos de 2026-10-16):** só 1 disparado ganha NF (1002); os estados não mudam (268 indeterminados, 4 inviáveis). A precisão por episódio desta rodada (91,8%) vem dos fatos novos, não da regra: os mesmos fatos sem os vínculos dão o mesmo número. Diagnóstico datado, não resultado: com as regras como aprovadas, sem endurecer, seriam 84 viáveis · 67 inviáveis · 121 indeterminados.
+
+**O que destrava:** conferir no portal Sayerlack o status dos pedidos 2096768, 2096769, 2096770, 2096771 (reenvios de 22/05) e 2094267 (1015). Cancelados = evidência positiva para ligar; em aberto = compromisso real que a guarda tinha razão de segurar.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅

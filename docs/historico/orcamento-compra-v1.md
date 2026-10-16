@@ -28,3 +28,10 @@ O teto de compra tem duas condições. A primeira é a reserva mínima diária d
 - **"Existe no CP" ≠ "pago" (R35/R38):** o título só desconta o compromisso se estiver representado no snapshot ou liquidado antes dele. Corte por idade não liquida dívida.
 - **Medir o mesmo corte que se aplica (R32/R33):** remover embalagem por embalagem, na chegada mediana, mede outro corte.
 - O ledger de decisões (R1–R56) ficou no workspace SDD, que não é versionado. As decisões que valem estão nas premissas (`PREMISSAS` em `simular.ts`) e no LEIA-ME.
+
+## 2026-10-16 — os 13 pedidos sem NF (R57/R58)
+
+- **Causa-raiz:** NF órfã no tracking. A edge casa NF↔pedido por `nNumPedCompra` = `cContrato`; NF que chega antes da linha do pedido vira órfã e nunca é reconciliada (25 vínculos recuperáveis no dia). A correção na fonte é de outra sessão.
+- **Lição (Codex xhigh):** "ligar a NF pelo contrato" fabrica liquidação quando o pedido tem **outro** identificador Sayerlack sem NF — os reenvios ao portal de 22/05 criaram um 2º pedido na Sayerlack para o mesmo pedido Omie. Regra: todo identificador do pedido precisa de NF. E "pedido refeito com os mesmos itens" não prova substituição se o contrato do manual pertence a um pedido do motor (1037 = 1048).
+- **Lição (Codex xhigh):** filtrar o título as-of não basta — a topologia NF↔pedido também carrega o futuro. A NF vinculada só vale se faturada antes do dia do ciclo.
+- **Resultado:** com as regras endurecidas, só 1 dos 13 ganha NF e o portão segue fechado. O que destrava é evidência do portal (status dos reenvios 2096768–2096771 e do 2094267), não regra nova.
