@@ -2,7 +2,8 @@
 -- 2ª testemunha: roda por psql-ro, OUTRA conexão, depois do commit — a pós-condição
 -- da migration está dentro do que se quer verificar.
 SELECT
-  CASE WHEN d LIKE '%s3.id_subcolecao_sayersystem = ''1''%' AND d LIKE '%s3.account = g2.account%'
+  -- mesmo trecho CONTÍGUO da pós-condição: agrupamento + correlação + conta + literal
+  CASE WHEN position('g2.desativada_em IS NULL OR g2.desativada_motivo = ''fase5_geracao_legada''::text AND (EXISTS ( SELECT 1 FROM tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = ''1''::text))' IN d) > 0
        THEN '✅ o carimbo exige geração ''1'' da mesma conta'
        ELSE '❌ endurecimento AUSENTE da view' END AS c1_predicado,
   CASE WHEN (SELECT reloptions @> ARRAY['security_invoker=on'] FROM pg_class
@@ -18,4 +19,4 @@ SELECT
                                   AND s.account = f.account AND s.id_subcolecao_sayersystem = '1')) = 0
        THEN '✅ delta 0: nenhum carimbo fora da geração ''1'''
        ELSE '⚠️ há carimbo fora da geração ''1'' — o rótulo dessas chaves MUDOU' END AS e1_delta
-FROM (SELECT pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true) AS d) v;
+FROM (SELECT regexp_replace(replace(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true), 'public.', ''), '\s+', ' ', 'g') AS d) v;

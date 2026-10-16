@@ -785,6 +785,24 @@ SQL
 eq "V12 ramo não-SL: tombstone LEGÍTIMO segue decidindo o rótulo (rótulo|piso|is_sl)" \
    "$(Pq -c "SELECT COALESCE(preco_csv_legado::text,'(null)')||'|'||COALESCE(preco_piso_legado::text,'(null)')||'|'||is_sl FROM public.v_tint_formula_canonica WHERE cor_id='K12'")" "600|600|false"
 
+# ── W4/W5: o VALIDADOR pós-apply deste endurecimento tem dente nos DOIS lados.
+# Só o c1 (predicado) é conferido: o e1_delta daria ⚠️ aqui de propósito (K11 é
+# carimbo forjado), e c2/c3 já são cobertos por V11d/V7.
+VALIDA2="$REPO_ROOT/db/valida-tint-tombstone-geracao1.sql"
+c1_valida() { P -tA -f "$VALIDA2" 2>&1 | cut -d'|' -f1; }
+eq "W4 o validador APROVA a view endurecida (c1)" "$(c1_valida)" "✅ o carimbo exige geração '1' da mesma conta"
+for mut in \
+  '/OR (g2\.desativada_motivo/ s/ AND s3\.account = g2\.account//' \
+  '/OR (g2\.desativada_motivo/ s/s3\.id = g2\.subcolecao_id AND //' ; do
+  SAB="$(mktemp "${TMPDIR:-/tmp}/fase5-w5.XXXXXX")"
+  # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
+  sed "$mut" "$MIGRATION7" | sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' > "$SAB"
+  aplica_m7 "$SAB" || bad "W5 a versão sabotada nem aplicou"
+  eq "W5 o validador REPROVA a view sabotada ($(printf '%s' "$mut" | sed 's/.* s\///; s/\/\/$//'))" "$(c1_valida)" "❌ endurecimento AUSENTE da view"
+  rm -f "$SAB"
+done
+aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento após W5"; exit 1; }
+
 eq "R2 restauração: endurecimento real de volta" "$(v10)" "400|400|false"
 
 echo
