@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 642
+-- Total de custom migrations: 644
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -14,7 +14,7 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 33 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 36 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
 --   • rls_policy public.Staff can view recalc queue (scoring_v2_signal_modifiers) — substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)
@@ -30,6 +30,7 @@
 --   • cron_job cron.fin-omie-sync-2x-diario (cron_financeiro_e_fix_sayerlack) — reorganizado → crons omie-sync-*
 --   • function public.carteira_visivel_para (carteira_omie_fase1) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • cron_job cron.sync-orders-vendas-2h (tuning_crons_estoque_freq_e_timeouts) — drop — 20260527190000_drop_redundant_sync_orders_cron
+--   • cron_job cron.disparar-pedidos-aprovados-oben (cron_baseline) — unschedule — 20261010150000_remove_cron_disparo_10h (#2911); ligar a auto-aprovação exige disparador
 --   • cron_job cron.sayerlack-portal-lote-retry (cron_sayerlack_lote_retry) — unschedule — 20260530170000_unschedule_sayerlack_lote_retry
 --   • view public.v_sayerlack_mapeamento_gap (data_health_check_sayerlack_mapeamento_gap) — view abandonada (zero uso no app/SQL)
 --   • cron_job cron.sync-inventory-full-vendas-daily (cron_sync_inventory_full) — reorganizado → sync-inventory-vendas-30m / -servicos-1h / -colacor-vendas-1h
@@ -49,6 +50,8 @@
 --   • function public.estimar_impacto_exclusao_outlier (outliers_leadtime_stack_efetivo) — drop — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa
 --   • function public.carteira_visivel_para (carteira_visivel_para_filtra_eligible) — SET SCHEMA private — 20260718150000_fu7_helpers_rls_schema_privado
 --   • rls_policy public.estoque_reservas_service_all (atp_reserva_estoque_fase1) — drop — 20260806225052_atp_reserva_estoque_fase1_1_hardening (decorativa: service_role tem BYPASSRLS) → estoque_reservas_service_select
+--   • function public.tint_reaplicar_snapshot_tick (tint_reaplicar_snapshot_cron) — nunca aplicada (superada pelo #3051) — função dropada em 20261015090000_tint_drop_reaplicar_snapshot_tick
+--   • cron_job cron.tint-reaplicar-snapshot-6h (tint_reaplicar_snapshot_cron) — nunca aplicada (superada pelo #3051) — unschedule em 20261013200000_tint_remove_cron_reaplicar_snapshot
 
 -- =====================================================
 -- SECTION 1: Status reconciliado por migration
@@ -703,7 +706,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261015003200', 'fin_ciclo_rpcs_gate', '20261015003200_fin_ciclo_rpcs_gate.sql'),
   ('20261015090000', 'tint_drop_reaplicar_snapshot_tick', '20261015090000_tint_drop_reaplicar_snapshot_tick.sql'),
   ('20261015120000', 'tactical_plans_margem_rpc_saneia_texto', '20261015120000_tactical_plans_margem_rpc_saneia_texto.sql'),
-  ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql')
+  ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql'),
+  ('20261015221600', 'vendas_sync_cursor_fencing_token', '20261015221600_vendas_sync_cursor_fencing_token.sql'),
+  ('20261015221700', 'vendas_sync_cursor_falha_honesta', '20261015221700_vendas_sync_cursor_falha_honesta.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1192,7 +1197,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cron_baseline', 'cron_job', 'cron', 'daily-calculate-scores', ''),
   ('cron_baseline', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'detectar-outliers-diario', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'disparar-pedidos-aprovados-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-ic-reconcile-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-refresh-analise-dimensoes', ''),
@@ -2703,8 +2707,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
   ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
-  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
-  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
@@ -2726,7 +2728,26 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
-  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans'),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_lease_acquire_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_heartbeat_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_finish_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_release_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_lease_acquire', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_heartbeat', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_release', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_finish', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'private', 'vendas_sync_falhos_pendentes', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_registrar_falhas_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_lease_acquire_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_heartbeat_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_lease_acquire', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -3263,7 +3284,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cron_baseline', 'cron_job', 'cron', 'daily-calculate-scores', ''),
   ('cron_baseline', 'cron_job', 'cron', 'data-health-watchdog', ''),
   ('cron_baseline', 'cron_job', 'cron', 'detectar-outliers-diario', ''),
-  ('cron_baseline', 'cron_job', 'cron', 'disparar-pedidos-aprovados-oben', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-ic-reconcile-daily', ''),
   ('cron_baseline', 'cron_job', 'cron', 'fin-refresh-analise-dimensoes', ''),
@@ -4774,8 +4794,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_s2_persistente', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('watchdog_diario_so_problema', 'function', 'public', 'fin_sync_watchdog_diario', ''),
   ('watchdog_diario_so_problema', 'cron_job', 'cron', 'fin-sync-heartbeat', ''),
-  ('tint_reaplicar_snapshot_cron', 'function', 'public', 'tint_reaplicar_snapshot_tick', ''),
-  ('tint_reaplicar_snapshot_cron', 'cron_job', 'cron', 'tint-reaplicar-snapshot-6h', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', '_tint_watchdog_fase5_transicao', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v4_fonte_viva', 'table', 'public', 'tint_watchdog_fase5_amostras', ''),
@@ -4797,7 +4815,26 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'private', 'tactical_plan_saneia_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'function', 'public', 'get_planos_margem', ''),
   ('tactical_plans_margem_rpc_saneia_texto', 'table', 'private', 'farmer_tactical_plans_texto_original', ''),
-  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans')
+  ('tactical_plans_margem_rpc_saneia_texto', 'trigger', 'public', 'trg_tactical_plan_saneia_margem', 'farmer_tactical_plans'),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_lease_acquire_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_heartbeat_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_finish_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_release_fenced', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_lease_acquire', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_heartbeat', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_release', ''),
+  ('vendas_sync_cursor_fencing_token', 'function', 'public', 'vendas_sync_finish', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'private', 'vendas_sync_falhos_pendentes', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_registrar_falhas_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_lease_acquire_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_heartbeat_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release_fenced', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_lease_acquire', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', '')
 )
 SELECT
   e.migration,
@@ -4825,7 +4862,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 136.
+-- Funções redefinidas com corpo extraível: 144.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5184,6 +5221,17 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_regua_preco_customer360', 3, '20261001014210_universo_pedidos_preco.sql', 'bc8f6c27e13c345514bfb2fa4b63e29f'),
   ('public', 'enqueue_score_recalc_from_sinais', 1, '20260616140941_fatia2_sinais_ligacao.sql', 'dfc85730eaa1d60a5272a400074541db'),
   ('public', 'enqueue_score_recalc_from_sinais', 2, '20260618230000_fix_enqueue_sinais_owner_e_reconcile_fila.sql', '178166dc2c3e943e78ab5f7b3ceeebdb'),
+  ('public', 'vendas_sync_lease_acquire', 1, '20260617133633_vendas_sync_cursor.sql', 'cf2d93fb70d4203aaab5c186508e7d9f'),
+  ('public', 'vendas_sync_lease_acquire', 2, '20261015221600_vendas_sync_cursor_fencing_token.sql', 'be9e91e6f8e9634a42a20fa07aaa8a27'),
+  ('public', 'vendas_sync_lease_acquire', 3, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '6be5d14c7006bd9f6ddb067e67e664d0'),
+  ('public', 'vendas_sync_heartbeat', 1, '20260617133633_vendas_sync_cursor.sql', 'ce2b885c6bafd220b5a4400ff82e6313'),
+  ('public', 'vendas_sync_heartbeat', 2, '20261015221600_vendas_sync_cursor_fencing_token.sql', 'f3e3ffd87cbcfee90f2ef3f2f93cd6d9'),
+  ('public', 'vendas_sync_release', 1, '20260617133633_vendas_sync_cursor.sql', '88330e51e37de15046a3023f6eddc406'),
+  ('public', 'vendas_sync_release', 2, '20261015221600_vendas_sync_cursor_fencing_token.sql', 'a6b4225a5bb960dbedd50a26222321f1'),
+  ('public', 'vendas_sync_release', 3, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'd394aebc37e9459fa7472bcde8acc98e'),
+  ('public', 'vendas_sync_finish', 1, '20260617133633_vendas_sync_cursor.sql', '72f5f2d708ce455e9d3c270800df9f37'),
+  ('public', 'vendas_sync_finish', 2, '20261015221600_vendas_sync_cursor_fencing_token.sql', '398bf458bd08862d064ce471572f3e51'),
+  ('public', 'vendas_sync_finish', 3, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '56308bc0329534d25477ff49e1d53901'),
   ('public', 'criar_pedidos_com_itens', 1, '20260617160000_criar_pedidos_com_itens.sql', 'd94bc895f6edcbad2fe3dad29f0b774f'),
   ('public', 'criar_pedidos_com_itens', 2, '20260905225613_preco_ausente_nao_e_zero.sql', 'd009751130dde7ae614b56948d926338'),
   ('public', 'criar_pedidos_com_itens', 3, '20260908163659_pedido_nasce_com_identidade_de_linha.sql', 'afdf7759d7f8e87577b6bd6565320e36'),
@@ -5260,6 +5308,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_semear_janela', 1, '20260726130000_vendas_sync_semear_janela.sql', '490d938fa275c4aa2ee669239a9ef2fd'),
   ('public', 'vendas_sync_semear_janela', 2, '20260726140000_vendas_sync_semear_janela_v2.sql', '504ffc039e88ee5c33e36cecab1fcd64'),
   ('public', 'vendas_sync_semear_janela', 3, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', 'e438005c0180328ffbbb3569579914e1'),
+  ('public', 'vendas_sync_semear_janela', 4, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '6c470c31fc7f10a3111f1551e66d6df2'),
   ('private', 'margem_cliente_agregada', 1, '20260726150000_margem_cliente_helper_compartilhado.sql', 'a4f8e8f9189a9902d8375a1836f75d15'),
   ('private', 'margem_cliente_agregada', 2, '20260726160000_margem_reconciliacao_universo_unico.sql', '56549da47ed4091706a5fdfc2df82037'),
   ('private', 'margem_cliente_agregada', 3, '20260905225613_preco_ausente_nao_e_zero.sql', '4f4f7d8b17ed930e006231a287e9d85a'),
@@ -5350,7 +5399,15 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'picking_retomar', 1, '20261011020000_picking_v2_schema.sql', '2f7ed4aa67431d59bafd177319bfe8c9'),
   ('public', 'picking_retomar', 2, '20261011140000_picking_v2_coleta_reserva.sql', '7c295ca7fb57cc73891c636cc20c6aff'),
   ('public', 'picking_concluir', 1, '20261011020000_picking_v2_schema.sql', 'e0a222a4a1dc02a7957eedcda9c5934a'),
-  ('public', 'picking_concluir', 2, '20261011140000_picking_v2_coleta_reserva.sql', '5395b2ccef54177a66cd98728a8ff507')
+  ('public', 'picking_concluir', 2, '20261011140000_picking_v2_coleta_reserva.sql', '5395b2ccef54177a66cd98728a8ff507'),
+  ('public', 'vendas_sync_lease_acquire_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '0d0aaef070dfc5a46cdd0964ec5279f3'),
+  ('public', 'vendas_sync_lease_acquire_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8404d00f852bbcac3d5262ffa6bc5170'),
+  ('public', 'vendas_sync_heartbeat_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '8e4c883f6fe239a2183a2c1915a8a5ad'),
+  ('public', 'vendas_sync_heartbeat_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'db4bde2540ee0a6b717be34af8b83c7c'),
+  ('public', 'vendas_sync_finish_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', 'e8d49891617172756d25c44f6baa0f6e'),
+  ('public', 'vendas_sync_finish_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8ab082334242f7d7c14afcfdc20ffa75'),
+  ('public', 'vendas_sync_release_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '34c7537d07424efc870fdf474ef180ee'),
+  ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

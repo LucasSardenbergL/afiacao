@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **642** custom migrations totais
-- **2054** objetos esperados (criados por estas migrations)
+- **644** custom migrations totais
+- **2073** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 723
+  - `function`: 742
   - `rls_policy`: 471
   - `index`: 276
   - `cron_job`: 184
@@ -5203,6 +5203,35 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261015120100_tactical_plans_margem_fecha_coluna.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261015221600_vendas_sync_cursor_fencing_token.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_lease_acquire_fenced` | — |
+| `function` | `public.vendas_sync_heartbeat_fenced` | — |
+| `function` | `public.vendas_sync_finish_fenced` | — |
+| `function` | `public.vendas_sync_release_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire` | — |
+| `function` | `public.vendas_sync_heartbeat` | — |
+| `function` | `public.vendas_sync_release` | — |
+| `function` | `public.vendas_sync_finish` | — |
+
+### `20261015221700_vendas_sync_cursor_falha_honesta.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.vendas_sync_falhos_pendentes` | — |
+| `function` | `public.vendas_sync_registrar_falhas_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire_fenced` | — |
+| `function` | `public.vendas_sync_heartbeat_fenced` | — |
+| `function` | `public.vendas_sync_finish_fenced` | — |
+| `function` | `public.vendas_sync_release_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire` | — |
+| `function` | `public.vendas_sync_finish` | — |
+| `function` | `public.vendas_sync_release` | — |
+| `function` | `public.vendas_sync_semear_janela` | — |
+| `function` | `public.vendas_sync_rearmar_janela` | — |
 
 ## Próximos passos por status
 
