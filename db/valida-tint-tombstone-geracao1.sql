@@ -1,9 +1,10 @@
 -- Validação PÓS-APPLY da 20261016140000_tint_tombstone_exige_geracao_1.sql (read-only).
 -- 2ª testemunha: roda por psql-ro, OUTRA conexão, depois do commit — a pós-condição
 -- da migration está dentro do que se quer verificar.
+SET quote_all_identifiers = off;  -- ligado, o deparse sai com aspas e reprovaria a view correta
 SELECT
   -- mesmo trecho CONTÍGUO da pós-condição: agrupamento + correlação + conta + literal
-  CASE WHEN position('g2.desativada_em IS NULL OR g2.desativada_motivo = ''fase5_geracao_legada''::text AND (EXISTS ( SELECT 1 FROM tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = ''1''::text))' IN d) > 0
+  CASE WHEN position('g2.cor_id = f.cor_id AND (g2.desativada_em IS NULL OR g2.desativada_motivo = ''fase5_geracao_legada''::text AND (EXISTS ( SELECT 1 FROM tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = ''1''::text))) AND (NOT rf.is_sl' IN d) > 0
        THEN '✅ o carimbo exige geração ''1'' da mesma conta'
        ELSE '❌ endurecimento AUSENTE da view' END AS c1_predicado,
   CASE WHEN (SELECT reloptions @> ARRAY['security_invoker=on'] FROM pg_class

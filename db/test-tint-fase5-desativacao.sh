@@ -722,50 +722,93 @@ eq "V11d security_invoker=on sobreviveu" "$(Pq -c "SELECT COALESCE((SELECT 'on' 
 # `s3.account = g2.account` e `s3.id = g2.subcolecao_id` literalmente) — view e guard
 # mudavam juntos, de forma consistente, e o guard "aprovava". Sabotar o guard junto com
 # o alvo é falsificar nada: a sentinela não pode conter o texto que o alvo emite.
-falsifica() { # <rotulo> <expressao sed> <esperado_b|-> <descricao>
-  local rot="$1" expr="$2" esp="$3" desc="$4" sab out r rc
+vk() { Pq -c "SELECT COALESCE(preco_csv_legado::text,'(null)')||'|'||COALESCE(preco_piso_legado::text,'(null)')||'|'||is_sl FROM public.v_tint_formula_canonica WHERE cor_id='$1'"; }
+md5_view() { Pq -c "SELECT md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true))"; }
+
+# K13 @sku ...0f — ramo NÃO-SL onde o AGRUPAMENTO decide dinheiro (2ª rodada do
+# challenge): personalizada ATIVA com receita, CSV 800 · '1' da mesma conta,
+# carimbada, CSV 600. Correto: rótulo 800. Com `(ativa OR carimbada) AND geração`
+# a ativa não-'1' sai do max e o rótulo cai para 600. O V12 não distinguia isso
+# porque lá a ativa (300) é MENOR que o tombstone (600) — o max mascarava a exclusão.
+P -q <<'SQL' >/dev/null
+INSERT INTO public.tint_formulas (id, account, cor_id, nome_cor, produto_id, base_id, embalagem_id, subcolecao_id, sku_id, preco_final_sayersystem) VALUES
+  ('f0130000-0000-0000-0000-0000000000b3','oben','K13','NAOSLAGRUP','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e6',NULL,'50000000-0000-0000-0000-00000000000f',800),
+  ('f0130000-0000-0000-0000-000000000013','oben','K13','NAOSLAGRUP','a0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-0000000000e6','0d000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-00000000000f',600);
+INSERT INTO public.tint_formula_itens (formula_id, corante_id, ordem, qtd_ml) VALUES
+  ('f0130000-0000-0000-0000-0000000000b3','c0000000-0000-0000-0000-000000000001',1,10);
+UPDATE public.tint_formulas
+   SET desativada_em = now() - interval '1 day', desativada_motivo = 'fase5_geracao_legada'
+ WHERE id = 'f0130000-0000-0000-0000-000000000013';
+SQL
+eq "V13 ramo não-SL: a personalizada ATIVA (800) segue no rótulo ao lado do tombstone (600)" "$(vk K13)" "800|800|false"
+
+# ── Falsificação em DUAS CAMADAS, uma por vez (regra do repo: a camada que fica
+# VERDE sob a sabotagem é redundante ou inalcançada). Para cada mutante:
+#   (a) a PÓS-CONDIÇÃO tem de ABORTAR, e a TESTEMUNHA do rollback é o md5 da
+#       definição da view antes × depois — não um valor de chave, que pode coincidir
+#       com a view sabotada persistida (2ª rodada do challenge: em K11 o F8 dava
+#       400 com OU sem rollback, e "reverteu" era indistinguível de "não reverteu");
+#   (b) sem a pós-condição, a chave <cor> tem de dar o valor errado EXATO previsto —
+#       nunca "qualquer coisa ≠ correto" (1ª rodada: erro de consulta caía no verde).
+# ⚠️ Toda expressão sed é ENDEREÇADA à linha do predicado. Sem o endereço, F6/F7
+# mutavam TAMBÉM o trecho que a pós-condição procura (ele contém o texto literal) —
+# view e guard mudavam juntos e o guard "aprovava". A sentinela não pode conter o
+# texto que o alvo emite.
+falsifica() { # <rotulo> <expressao sed> <cor> <esperado_b> <descricao>
+  local rot="$1" expr="$2" cor="$3" esp="$4" desc="$5" sab out r rc antes depois
   sab="$(mktemp "${TMPDIR:-/tmp}/fase5-$rot.XXXXXX")"
   sed "$expr" "$MIGRATION7" > "$sab"
   if cmp -s "$sab" "$MIGRATION7"; then
     bad "$rot a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"; rm -f "$sab"; return
   fi
+  antes="$(md5_view)"
   # `&& rc=0 || rc=$?`: sob `set -e` uma atribuição que falha MATARIA o harness
   # (é a falha ESPERADA aqui) — a captura tem de estar num contexto que o desliga.
   desforja; out="$(P --single-transaction -f "$sab" 2>&1)" && rc=0 || rc=$?; forja
+  depois="$(md5_view)"
   case "$out" in
     *"pós-condição: o endurecimento do carimbo não está na view"*)
-      if [ "$rc" -ne 0 ] && [ "$(v10)" = "400|400|false" ]; then ok "${rot}a a PÓS-CONDIÇÃO aborta e reverte — $desc"
-      else bad "${rot}a abortou mas NÃO reverteu (rc=$rc, view=$(v10))"; fi ;;
+      if [ "$rc" -ne 0 ] && [ -n "$antes" ] && [ "$antes" = "$depois" ]; then ok "${rot}a a PÓS-CONDIÇÃO aborta e a view fica byte-idêntica (md5) — $desc"
+      else bad "${rot}a abortou mas NÃO reverteu (rc=$rc, md5 antes=$antes depois=$depois)"; fi ;;
     *) bad "${rot}a a pós-condição NÃO abortou — $desc: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-160)" ;;
   esac
-  if [ "$esp" != "-" ]; then
-    # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
-    sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' "$sab" > "$sab.sempos"
-    if command grep -q 'pós-condição: o endurecimento' "$sab.sempos"; then
-      bad "${rot}b não consegui remover a pós-condição (sed sem efeito)"
-    elif ! aplica_m7 "$sab.sempos"; then
-      bad "${rot}b a versão sabotada SEM pós-condição nem aplicou — vermelho por infraestrutura, não por defeito"
-    elif ! r="$(v10)"; then
-      bad "${rot}b a consulta do V10 falhou sob a sabotagem"
-    else
-      eq "${rot}b sem a pós-condição o rótulo|piso|is_sl vira o valor errado previsto" "$r" "$esp"
-    fi
-    rm -f "$sab.sempos"
+  # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
+  sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' "$sab" > "$sab.sempos"
+  if command grep -q 'pós-condição: o endurecimento' "$sab.sempos"; then
+    bad "${rot}b não consegui remover a pós-condição (sed sem efeito)"
+  elif ! aplica_m7 "$sab.sempos"; then
+    bad "${rot}b a versão sabotada SEM pós-condição nem aplicou — vermelho por infraestrutura, não por defeito"
+  elif ! r="$(vk "$cor")"; then
+    bad "${rot}b a consulta da chave $cor falhou sob a sabotagem"
+  else
+    eq "${rot}b sem a pós-condição a chave $cor (rótulo|piso|is_sl) vira o valor errado previsto" "$r" "$esp"
   fi
-  rm -f "$sab"
+  rm -f "$sab.sempos" "$sab"
   aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento após $rot"; exit 1; }
 }
 
 falsifica F5 "/OR (g2\.desativada_motivo/ s/ AND EXISTS (SELECT 1 FROM public.tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = '1')//" \
-  "990|990|false" "tirar a exigência de geração '1' (volta a confiar só no motivo)"
+  K11 "990|990|false" "tirar a exigência de geração '1' (volta a confiar só no motivo)"
 falsifica F6 '/OR (g2\.desativada_motivo/ s/ AND s3\.account = g2\.account//' \
-  "990|990|false" "tirar SÓ o guard de conta (a '1' de colacor entra)"
+  K11 "990|990|false" "tirar SÓ o guard de conta (a '1' de colacor entra)"
 falsifica F7 '/OR (g2\.desativada_motivo/ s/s3\.id = g2\.subcolecao_id AND //' \
-  "990|990|false" "tirar a correlação por id (qualquer '1' da conta valida qualquer linha)"
-# F8: agrupamento ((ativa OR carimbada) AND geração). Em K11 não muda valor (a única
-# ativa é a '1' legítima), então só a pós-condição o distingue — esperado_b "-".
+  K11 "990|990|false" "tirar a correlação por id (qualquer '1' da conta valida qualquer linha)"
 falsifica F8 "s/OR (g2\.desativada_motivo = 'fase5_geracao_legada' AND EXISTS \(.*\)'1')))\$/OR g2.desativada_motivo = 'fase5_geracao_legada') AND (EXISTS \1'1'))/" \
-  "-" "trocar o agrupamento para (ativa OR carimbada) AND geração"
+  K13 "600|800|false" "trocar o agrupamento para (ativa OR carimbada) AND geração"
+# F9: tira os parênteses EXTERNOS ⇒ `chave AND ativa OR carimbada AND geração AND
+# allowlist`. Pela precedência, o ramo do tombstone deixa de exigir a CHAVE: K11
+# passa a ler o tombstone legítimo mais caro do banco inteiro.
+# O valor errado previsto é calculado por uma fórmula INDEPENDENTE da view, direto
+# na tabela: max(ativas de K11, todo tombstone '1' legítimo do banco).
+F9_X="$(Pq -c "SELECT max(p) FROM (
+           SELECT preco_final_sayersystem p FROM public.tint_formulas WHERE cor_id='K11' AND desativada_em IS NULL
+           UNION ALL
+           SELECT f.preco_final_sayersystem FROM public.tint_formulas f JOIN public.tint_subcolecoes s
+             ON s.id=f.subcolecao_id AND s.account=f.account AND s.id_subcolecao_sayersystem='1'
+            WHERE f.desativada_motivo='fase5_geracao_legada') x")"
+[ -n "$F9_X" ] && [ "$F9_X" != "400" ] || bad "F9 pré-condição: o seed precisa de um tombstone legítimo > 400 em OUTRA chave (veio [$F9_X])"
+falsifica F9 "s/^        AND (g2\.desativada_em IS NULL\$/        AND g2.desativada_em IS NULL/; /OR (g2\.desativada_motivo/ s/'1')))\$/'1'))/" \
+  K11 "$F9_X|$F9_X|false" "tirar os parênteses externos (tombstone de OUTRA chave entra)"
 
 # ── V12 POSITIVO no ramo NÃO-SL (pedido do challenge): um tombstone LEGÍTIMO
 # ('1' da mesma conta) tem de seguir sendo a fonte DECISIVA do rótulo. Sem isto,
@@ -789,7 +832,7 @@ eq "V12 ramo não-SL: tombstone LEGÍTIMO segue decidindo o rótulo (rótulo|pis
 # Só o c1 (predicado) é conferido: o e1_delta daria ⚠️ aqui de propósito (K11 é
 # carimbo forjado), e c2/c3 já são cobertos por V11d/V7.
 VALIDA2="$REPO_ROOT/db/valida-tint-tombstone-geracao1.sql"
-c1_valida() { P -tA -f "$VALIDA2" 2>&1 | cut -d'|' -f1; }
+c1_valida() { P -q -tA -f "$VALIDA2" 2>&1 | cut -d'|' -f1; }
 eq "W4 o validador APROVA a view endurecida (c1)" "$(c1_valida)" "✅ o carimbo exige geração '1' da mesma conta"
 for mut in \
   '/OR (g2\.desativada_motivo/ s/ AND s3\.account = g2\.account//' \

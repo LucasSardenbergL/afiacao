@@ -230,8 +230,15 @@ BEGIN
   -- trava de uma vez o AGRUPAMENTO (ativa OR (carimbada AND geração)), a correlação
   -- por id, o guard de CONTA e o literal '1'. Uma substring solta (só o literal)
   -- aceitava a view sem o guard de conta — achado do challenge Codex 2026-10-16.
+  -- O trecho inclui as FRONTEIRAS: começa na correlação da chave (`g2.cor_id = f.cor_id
+  -- AND (`) e termina na allowlist (`) AND (NOT rf.is_sl`). Sem elas, tirar os
+  -- parênteses externos — `chave AND ativa OR carimbada…` — mantinha o miolo contíguo
+  -- e, pela precedência, deixava tombstone de OUTRA chave entrar no max (2ª rodada do
+  -- challenge Codex). quote_all_identifiers fixado: ligado, o deparse sai com aspas e a
+  -- view CORRETA seria reprovada.
+  PERFORM set_config('quote_all_identifiers', 'off', true);
   v_def := regexp_replace(replace(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true), 'public.', ''), '\s+', ' ', 'g');
-  IF position('g2.desativada_em IS NULL OR g2.desativada_motivo = ''fase5_geracao_legada''::text AND (EXISTS ( SELECT 1 FROM tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = ''1''::text))' IN v_def) = 0 THEN
+  IF position('g2.cor_id = f.cor_id AND (g2.desativada_em IS NULL OR g2.desativada_motivo = ''fase5_geracao_legada''::text AND (EXISTS ( SELECT 1 FROM tint_subcolecoes s3 WHERE s3.id = g2.subcolecao_id AND s3.account = g2.account AND s3.id_subcolecao_sayersystem = ''1''::text))) AND (NOT rf.is_sl' IN v_def) = 0 THEN
     RAISE EXCEPTION 'pós-condição: o endurecimento do carimbo não está na view (agrupamento, correlação, conta ou literal)';
   END IF;
 END
