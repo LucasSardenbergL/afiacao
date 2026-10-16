@@ -836,12 +836,13 @@ c1_valida() { P -q -tA -f "$VALIDA2" 2>&1 | cut -d'|' -f1; }
 eq "W4 o validador APROVA a view endurecida (c1)" "$(c1_valida)" "✅ o carimbo exige geração '1' da mesma conta"
 for mut in \
   '/OR (g2\.desativada_motivo/ s/ AND s3\.account = g2\.account//' \
-  '/OR (g2\.desativada_motivo/ s/s3\.id = g2\.subcolecao_id AND //' ; do
+  '/OR (g2\.desativada_motivo/ s/s3\.id = g2\.subcolecao_id AND //' \
+  "s/^        AND (g2\.desativada_em IS NULL\$/        AND g2.desativada_em IS NULL/; /OR (g2\.desativada_motivo/ s/'1')))\$/'1'))/" ; do
   SAB="$(mktemp "${TMPDIR:-/tmp}/fase5-w5.XXXXXX")"
   # shellcheck disable=SC2016  # $pos$ é o delimitador dollar-quote do SQL, literal
   sed "$mut" "$MIGRATION7" | sed '/^-- ── PÓS-CONDIÇÃO/,/^\$pos\$;$/d' > "$SAB"
   aplica_m7 "$SAB" || bad "W5 a versão sabotada nem aplicou"
-  eq "W5 o validador REPROVA a view sabotada ($(printf '%s' "$mut" | sed 's/.* s\///; s/\/\/$//'))" "$(c1_valida)" "❌ endurecimento AUSENTE da view"
+  eq "W5 o validador REPROVA a view sabotada ($(printf '%s' "$mut" | cut -c1-60))" "$(c1_valida)" "❌ endurecimento AUSENTE da view"
   rm -f "$SAB"
 done
 aplica_m7 "$MIGRATION7" || { echo "FALHA: restaurar o endurecimento após W5"; exit 1; }
