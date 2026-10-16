@@ -23,8 +23,10 @@ export LC_ALL=C LANG=C
 MIG_BASE1="$REPO_ROOT/supabase/migrations/20260905090000_sayerlack_custo_portal_cas.sql"
 MIG_BASE2="$REPO_ROOT/supabase/migrations/20260906193522_valor_total_portal_provado.sql"
 MIG_BASE3="$REPO_ROOT/supabase/migrations/20261006120000_preco_exato_po_sayerlack_ipi.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261014120000_sayerlack_importar_pedido_portal.sql"
-for f in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
+MIG0="$REPO_ROOT/supabase/migrations/20261014120000_sayerlack_importar_pedido_portal.sql"
+# A RPC VIVA é a da 20261016013000 (UPDATE com WHERE, pg-safeupdate), aplicada por cima da 0120000.
+MIG="$REPO_ROOT/supabase/migrations/20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql"
+for f in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -123,8 +125,8 @@ GRANT SELECT ON public.pedido_compra_sugerido, public.pedido_compra_item, public
 SQL
 
 # ZONA 2 — o caminho REAL do SQL Editor: as versões da RPC de custo e, por cima, a migration sob prova.
-for m in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG"; do P -q -f "$m"; done
-echo "migrations aplicadas: base1 + base2 + base3 + $(basename "$MIG")"
+for m in "$MIG_BASE1" "$MIG_BASE2" "$MIG_BASE3" "$MIG0" "$MIG"; do P -q -f "$m"; done
+echo "migrations aplicadas: base1 + base2 + base3 + $(basename "$MIG0") + $(basename "$MIG")"
 eq "M0 a migration é re-aplicável (idempotente, postcondição verde na 2ª colada)" "$(P -q -f "$MIG" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
 
 # ZONA 3 — seed. DFA.4080LT = o pedido real 2140603 (16 LT, R$ 4.865,5584 + IPI 6,5% = R$ 5.181,82).
@@ -250,7 +252,7 @@ sabota() {
   if cmp -s "$MIG" "$SAB"; then echo "  ❌ sabotagem NÃO casou o padrão ($1) — falsificação seria teatro"; FAIL=$((FAIL+1)); return 1; fi
   P -q -f "$SAB"
 }
-restaura() { seed; P -q -f "$MIG"; seed; }
+restaura() { seed; P -q -f "$MIG0"; P -q -f "$MIG"; seed; }
 dente() { if [ "$2" = "$3" ]; then ok "$1 (sabotado ⇒ $2)"; else bad "$1 — sabotado devia dar [$3], veio [$2]"; fi; }
 
 seed; sabota 's/WHERE n_map <> 1;/WHERE n_map = 0;/'
@@ -276,8 +278,9 @@ sabota 's/^  IF auth\.uid() IS NOT NULL AND NOT/  IF false AND NOT/'
 dente "F6 sem o gate de papel, a RPC de custo (camada de baixo) barra o customer" "$(imp "'6000006', $ENT, 5181.82, '$DFA'::jsonb" "SET test.uid='22222222-2222-2222-2222-222222222222';")" "IMP_ERR_42501"
 restaura
 # F7 — a postcondição aborta o apply com a RPC aberta a authenticated, e o aborto é DELA.
-sed -e 's/^REVOKE ALL ON FUNCTION public\.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) FROM authenticated;$/GRANT EXECUTE ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) TO authenticated;/' "$MIG" > "$SAB"
-if cmp -s "$MIG" "$SAB"; then
+# O REVOKE mora na migration de ORIGEM (a de REPLACE preserva o ACL e não o repete).
+sed -e 's/^REVOKE ALL ON FUNCTION public\.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) FROM authenticated;$/GRANT EXECUTE ON FUNCTION public.sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid) TO authenticated;/' "$MIG0" > "$SAB"
+if cmp -s "$MIG0" "$SAB"; then
   bad "F7 sabotagem NÃO casou o REVOKE — falsificação seria teatro"
 elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
   bad "F7 postcondição NÃO abortou com authenticated executando a RPC"
@@ -288,6 +291,24 @@ else
     "ERRO:  A4 FALHOU: RPC executável por anon/authenticated — SECURITY DEFINER aberta")
       ok "F7 postcondição aborta o apply com a RPC aberta" ;;
     *) bad "F7 ERRO ALHEIO à postcondição — veio [${F7:-<nenhuma linha ERROR>}]" ;;
+  esac
+fi
+restaura
+# F9 — pg-safeupdate: o Supabase recusa UPDATE sem WHERE vindo da API (1º uso real, 2141068). O PG17 local não carrega
+# a extensão, então a régua é a postcondição: sem o WHERE, o apply aborta com a mensagem DELA.
+eq "S1 nenhum UPDATE sem WHERE no corpo vivo da RPC" "$(Pq -c "SELECT count(*) FROM pg_proc p, regexp_matches(p.prosrc, '\mUPDATE\s[^;]*;', 'gi') AS m(x) WHERE p.oid = 'public.sayerlack_importar_pedido_portal(text,date,numeric,jsonb,uuid)'::regprocedure AND m.x[1] !~* '\mWHERE\M'")" "0"
+sed -e 's/^   WHERE qtde_omie IS NULL;  -- WHERE obrigatório.*$/   ;/' "$MIG" > "$SAB"
+if cmp -s "$MIG" "$SAB"; then
+  bad "F9 sabotagem NÃO casou o WHERE do UPDATE — falsificação seria teatro"
+elif P -q -f "$SAB" >/dev/null 2>"$SAB.err"; then
+  bad "F9 postcondição NÃO abortou com UPDATE sem WHERE"
+else
+  F9="$(linhas_error "$SAB.err")"
+  case "$F9" in
+    "ERROR:  A2 FALHOU: UPDATE sem WHERE no corpo — o pg-safeupdate do Supabase recusa a importação"|\
+    "ERRO:  A2 FALHOU: UPDATE sem WHERE no corpo — o pg-safeupdate do Supabase recusa a importação")
+      ok "F9 postcondição aborta o apply com UPDATE sem WHERE" ;;
+    *) bad "F9 ERRO ALHEIO à postcondição — veio [${F9:-<nenhuma linha ERROR>}]" ;;
   esac
 fi
 restaura
