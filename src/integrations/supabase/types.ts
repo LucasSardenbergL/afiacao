@@ -21642,6 +21642,7 @@ export type Database = {
           descricao: string
           familia: string
           fornecedor: string
+          habilitado_reposicao_automatica: boolean
           ncli: number
           no_motor: boolean
           preco_medio_12m: number

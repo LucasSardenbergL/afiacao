@@ -81,6 +81,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
 $$;
 REVOKE ALL ON FUNCTION private.cap_custo_ler(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.cap_custo_ler(uuid) TO authenticated;
+-- Espelha prod: so master le compras (policy cap_compras_ler em pedido_compra_item/pedido_compra_sugerido).
+CREATE FUNCTION private.cap_compras_ler(_uid uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+  SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid, 'master'), false);
+$$;
+REVOKE ALL ON FUNCTION private.cap_compras_ler(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.cap_compras_ler(uuid) TO authenticated;
 
 CREATE TABLE public.inventory_position (
   omie_codigo_produto bigint, saldo numeric, cmc numeric, preco_medio numeric, account text, synced_at timestamptz);
@@ -95,6 +102,12 @@ CREATE TABLE public.v_venda_items_history_efetivo (
   sku_codigo_omie bigint, sku_unidade text, quantidade numeric, valor_total numeric, valor_unitario numeric);
 CREATE TABLE public.pedido_compra_sugerido (id bigint PRIMARY KEY, empresa text, status text, split_parent_id bigint);
 CREATE TABLE public.pedido_compra_item (id bigserial, pedido_id bigint, sku_codigo_omie text, criado_em timestamptz);
+ALTER TABLE public.pedido_compra_sugerido ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pedido_compra_item ENABLE ROW LEVEL SECURITY;
+CREATE POLICY cap_compras_ler ON public.pedido_compra_sugerido FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+CREATE POLICY cap_compras_ler ON public.pedido_compra_item FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
 CREATE TABLE public.warehouses (id uuid PRIMARY KEY, code text);
 CREATE TABLE public.nfe_recebimentos (id uuid PRIMARY KEY, razao_social_emitente text, data_emissao date, warehouse_id uuid);
 CREATE TABLE public.nfe_recebimento_itens (id uuid DEFAULT gen_random_uuid(), nfe_recebimento_id uuid, produto_omie_id bigint);
@@ -149,7 +162,7 @@ BEGIN
 
   INSERT INTO sku_parametros VALUES
     ('OBEN', 1, 'FORN SP', 'B', 'automatico', true),
-    ('OBEN', 3, NULL, 'A', 'automatico', true);
+    ('OBEN', 3, NULL, 'A', 'automatico', false);
 
   INSERT INTO v_venda_items_history_efetivo VALUES
     ('OBEN', h - 10, 101, 'CLI A', 3, 'UN', 6, 60, 10),
@@ -214,6 +227,8 @@ suite() {
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
+  # Re-colar a migration inteira de novo (idempotencia do re-apply) tambem tem de passar.
+  P -f "$1" || { echo "APLICACAO FALHOU (2o apply): $1"; return 99; }
   P -c "INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino) VALUES ('oben', 1, 'liquidar')"
   P -c "INSERT INTO public.raio_x_classificacao_manual (empresa, sku_codigo_omie, categoria, motivo) VALUES ('oben', 1, 'uso_consumo', 'teste')"
 
@@ -252,6 +267,12 @@ suite() {
 
   # (e) sem omie_products: nao some, tipo_produto NULL
   oks "$U_EST" "SELECT count(*) || '|' || bool_and(tipo_produto IS NULL AND codigo IS NULL) FROM $FOB WHERE sku_codigo_omie = 6" "1|true" "e sku sem omie_products volta com tipo_produto NULL"
+
+  # R17: habilitado_reposicao_automatica de sku_parametros; sem linha / colacor -> NULL
+  oks "$U_EST" "SELECT habilitado_reposicao_automatica FROM $FOB WHERE sku_codigo_omie = 3" "f" "r17 habilitado false volta false"
+  oks "$U_EST" "SELECT habilitado_reposicao_automatica FROM $FOB WHERE sku_codigo_omie = 1" "t" "r17 habilitado true volta true"
+  oks "$U_EST" "SELECT (habilitado_reposicao_automatica IS NULL) FROM $FOB WHERE sku_codigo_omie = 6" "t" "r17 sem linha em sku_parametros volta NULL"
+  oks "$U_EST" "SELECT (habilitado_reposicao_automatica IS NULL) FROM $FCO WHERE sku_codigo_omie = 3" "t" "r17 colacor volta NULL"
 
   # (f) 1.205 SKUs, ordem estritamente crescente
   oks "$U_EST" "SELECT count(*) || '|' || count(DISTINCT sku_codigo_omie) FROM $FOB" "1205|1205" "f oben 1205 skus distintos"
@@ -326,12 +347,16 @@ suite() {
   oks "$U_EST" "SELECT saldo_atual FROM $MEC WHERE sku_codigo_omie = 3" "4" "m b colacor le colacor_vendas"
   # (c) compras: so disparado, depois da decisao, ordenadas; cancelado/expirado/colacor/nao numerico nao entram
   HORAS="(SELECT string_agg(to_char(t AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI'), ',' ORDER BY ord) FROM unnest(compras_apos) WITH ORDINALITY u(t, ord))"
-  oks "$U_EST" "SELECT $HORAS FROM $MED WHERE sku_codigo_omie = 1" "10:00,10:00,11:00" "m c compras apos a decisao em ordem (disparado e filho de split entram)"
-  oks "$U_EST" "SELECT ($HORAS LIKE '%12:00%') FROM $MED WHERE sku_codigo_omie = 1" "f" "m c cabecalho COLACOR fora de compras_apos"
-  oks "$U_EST" "SELECT ($HORAS ~ '1[345]:00') FROM $MED WHERE sku_codigo_omie = 1" "f" "m c pendente cancelado expirado fora de compras_apos"
-  oks "$U_EST" "SELECT ($HORAS LIKE '%11:00%') FROM $MED WHERE sku_codigo_omie = 1" "t" "m c item em filho de split disparado entra"
+  oks "$U_MASTER" "SELECT $HORAS FROM $MED WHERE sku_codigo_omie = 1" "10:00,10:00,11:00" "m c compras apos a decisao em ordem (disparado e filho de split entram)"
+  oks "$U_MASTER" "SELECT ($HORAS LIKE '%12:00%') FROM $MED WHERE sku_codigo_omie = 1" "f" "m c cabecalho COLACOR fora de compras_apos"
+  oks "$U_MASTER" "SELECT ($HORAS ~ '1[345]:00') FROM $MED WHERE sku_codigo_omie = 1" "f" "m c pendente cancelado expirado fora de compras_apos"
+  oks "$U_MASTER" "SELECT ($HORAS LIKE '%11:00%') FROM $MED WHERE sku_codigo_omie = 1" "t" "m c item em filho de split disparado entra"
   oks "$U_EST" "SELECT qtd_vendida || '|' || receita FROM $MED WHERE sku_codigo_omie = 5" "2|20" "m fuso: decisao 23:30 SP conta NF do dia SP seguinte e nao a do mesmo dia"
-  oks "$U_EST" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 3" "0" "m c compra antes da decisao nao aparece"
+  oks "$U_MASTER" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 3" "0" "m c compra antes da decisao nao aparece"
+  # R16: sem cap_compras_ler (estrategico le custo mas nao compras) -> NULL, nunca '{}' fabricado
+  oks "$U_EST" "SELECT (compras_apos IS NULL) FROM $MED WHERE sku_codigo_omie = 1" "t" "m r16 sem cap_compras_ler compras_apos NULL"
+  oks "$U_EST" "SELECT count(*) FILTER (WHERE compras_apos IS NOT NULL) FROM $MED" "0" "m r16 sem cap_compras_ler nenhuma linha com compras_apos"
+  oks "$U_MASTER" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 1" "3" "m r16 master le as compras"
   # (d) saldo atual: linha mais recente; 0 se a linha e 0; NULL sem linha
   oks "$U_EST" "SELECT saldo_atual FROM $MED WHERE sku_codigo_omie = 1" "9" "m d saldo atual mais recente"
   oks "$U_EST" "SELECT saldo_atual FROM $MED WHERE sku_codigo_omie = 7" "0" "m d saldo 0 existente volta 0"
@@ -429,6 +454,12 @@ sabotar "16 saldo atual sem linha vira 0" \
 sabotar "17 medicao sem gate" \
   "/FUNCTION public.raio_x_medicao/,/^\$fn\$;/s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
   "m customer barrado 42501"
+sabotar "19 r16 compras_apos sem guarda cap_compras_ler" \
+  "s/ AND private.cap_compras_ler(auth.uid()) THEN coalesce/ THEN coalesce/" \
+  "m r16 sem cap_compras_ler compras_apos NULL"
+sabotar "20 r17 habilitado sem linha vira false" \
+  "s/^         sp\.habilitado_reposicao_automatica\$/         coalesce(sp.habilitado_reposicao_automatica, false)/" \
+  "r17 sem linha em sku_parametros volta NULL"
 sabotar "18 medicao inclui destino nulo" \
   "s/WHERE x.empresa = p_empresa AND x.destino IS NOT NULL)/WHERE x.empresa = p_empresa)/" \
   "m so destino nao nulo"

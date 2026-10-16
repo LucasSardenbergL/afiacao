@@ -70,6 +70,13 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
 $$;
 REVOKE ALL ON FUNCTION private.cap_custo_ler(uuid) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION private.cap_custo_ler(uuid) TO authenticated;
+-- Espelha prod (a postcondicao da migration exige que exista; a medicao e provada em test-raio-x-fatos.sh).
+CREATE FUNCTION private.cap_compras_ler(_uid uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $$
+  SELECT COALESCE(_uid IS NOT NULL AND public.has_role(_uid, 'master'), false);
+$$;
+REVOKE ALL ON FUNCTION private.cap_compras_ler(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION private.cap_compras_ler(uuid) TO authenticated;
 
 -- Tabelas-fonte que a migration referencia (fatos da Task 1 compila contra elas).
 CREATE TABLE public.inventory_position (
@@ -186,7 +193,7 @@ corrida() {
     echo "SELECT set_config('request.jwt.claims', '{\"sub\":\"$U_EST\",\"role\":\"authenticated\"}', true);"
     echo "SELECT destino FROM public.raio_x_decidir('oben', 11, 'trocar', 'mercadoria', NULL, NULL, NULL, false, false);"
   } >&3
-  if espera "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'rx_a' AND state = 'idle in transaction'" "A"; then
+  if espera "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'rx_a' AND state = 'idle in transaction' AND query ILIKE '%raio_x_decidir%'" "A"; then
     P -c "INSERT INTO public.inventory_position VALUES (11, 1, 99, 99, 'oben', now())"
     ( export PGAPPNAME=rx_b
       sess "$U_EST" "SELECT destino FROM public.raio_x_decidir('oben', 11, 'liquidar', 'uso_consumo', NULL, NULL, NULL, false, false)" ) \
@@ -333,6 +340,7 @@ suite() {
   # minors
   oks "$U_EST" "$(lanca "''oben'', 4, ''liquidar'', NULL, NULL, NULL, NULL, false, false" 22023)" "22023|raio_x: categoria obrigatoria com destino" "m destino com categoria NULL 22023"
   oks "$U_EST" "$(lanca "''oben'', 4, ''trocar'', ''mercadoria'', NULL, NULL, -1, false, false" 22023)" "22023|raio_x: credito_troca negativo: -1" "m credito_troca negativo 22023"
+  oks "$U_EST" "$(lanca "''oben'', 4, ''trocar'', ''mercadoria'', NULL, NULL, ''NaN''::numeric, false, false" 22023)" "22023|raio_x: credito_troca invalido: NaN" "r18 credito_troca NaN 22023"
   okp "$(COL oben 4 "destino || '|' || coalesce(credito_troca::text, 'N')")" "estrategico|N" "m validacoes nao gravaram"
   run "$(dec "'oben', 12, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "m sku12 saldo NULL"
   okp "$(FOTO oben 12)" "N|N|N|N|false" "m saldo NULL na linha mais recente nao congela foto"
@@ -342,6 +350,8 @@ suite() {
   oks "$U_EST" "SELECT qtd_contada || '|' || destino FROM public.raio_x_contar('oben', 4, 3)" "3|estrategico" "k contar preserva a decisao"
   oks "$U_EST" "SELECT (qtd_contada IS NULL AND contado_por IS NULL AND contado_em IS NULL)::text FROM public.raio_x_contar('oben', 4, NULL)" "true" "k contar null limpa"
   oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_contar(''oben'', 4, -1)', '22023')" "22023|raio_x: quantidade negativa: -1" "k contar negativo 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_contar(''oben'', 4, ''NaN''::numeric)', '22023')" "22023|raio_x: quantidade invalida: NaN" "r18 contar NaN 22023"
+  okp "SELECT coalesce(qtd_contada::text, 'N') FROM public.raio_x_decisao WHERE empresa = 'oben' AND sku_codigo_omie = 4" "N" "r18 contar NaN nao gravou"
   return "$falhas"
 }
 
@@ -410,6 +420,12 @@ sabotar "15 sem categoria obrigatoria" \
 sabotar "16 sem credito_troca negativo" \
   "s/IF p_credito_troca < 0 THEN/IF false THEN/" \
   "m credito_troca negativo 22023"
+sabotar "18 r18 credito_troca NaN aceito" \
+  "s/IF p_credito_troca = 'NaN'::numeric THEN/IF false THEN/" \
+  "r18 credito_troca NaN 22023"
+sabotar "19 r18 contar NaN aceito" \
+  "s/IF p_qtd = 'NaN'::numeric THEN/IF false THEN/" \
+  "r18 contar NaN 22023"
 sabotar "17 saldo NULL congela foto" \
   "s/IF FOUND AND v_ip_saldo IS NOT NULL THEN/IF FOUND THEN/" \
   "m saldo NULL na linha mais recente nao congela foto"

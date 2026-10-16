@@ -64,7 +64,8 @@ RETURNS TABLE (
   sku_codigo_omie bigint, codigo text, descricao text, familia text, tipo_produto text, ativo boolean,
   saldo numeric, cmc numeric, unidade_estoque text, unidades_venda text[], no_motor boolean,
   tipo_reposicao text, classe_abc text, cadastro_em date, ult_entrada date, fornecedor text,
-  q12 numeric, ncli int, ult_venda date, preco_medio_12m numeric, clientes jsonb, synced_at timestamptz)
+  q12 numeric, ncli int, ult_venda date, preco_medio_12m numeric, clientes jsonb, synced_at timestamptz,
+  habilitado_reposicao_automatica boolean)  -- R17: de sku_parametros; NULL sem linha (e sempre na colacor)
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
@@ -146,7 +147,8 @@ BEGIN
          CASE WHEN v_vnd IS NULL THEN NULL::date    ELSE v.uv::date END,
          CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE round(v.pm12::numeric, 4) END,
          CASE WHEN v_vnd IS NULL THEN NULL::jsonb   ELSE coalesce(cli.clientes, '[]'::jsonb) END,
-         e.synced_at
+         e.synced_at,
+         sp.habilitado_reposicao_automatica
     FROM e
     LEFT JOIN public.sku_parametros sp ON sp.empresa = 'OBEN' AND p_empresa = 'oben' AND sp.sku_codigo_omie = e.sku
     LEFT JOIN LATERAL (SELECT op.* FROM public.omie_products op
@@ -236,6 +238,10 @@ BEGIN
   END IF;
   IF p_credito_troca < 0 THEN
     RAISE EXCEPTION 'raio_x: credito_troca negativo: %', p_credito_troca USING ERRCODE = '22023';
+  END IF;
+  -- R18: NaN e maior que tudo no numeric do Postgres; o `< 0` nao pega.
+  IF p_credito_troca = 'NaN'::numeric THEN
+    RAISE EXCEPTION 'raio_x: credito_troca invalido: %', p_credito_troca USING ERRCODE = '22023';
   END IF;
 
   -- Linha-base primeiro e trava (R14): duas 1as decisoes concorrentes serializam aqui, e a 2a ja ve a foto
@@ -368,6 +374,9 @@ BEGIN
   IF p_qtd < 0 THEN
     RAISE EXCEPTION 'raio_x: quantidade negativa: %', p_qtd USING ERRCODE = '22023';
   END IF;
+  IF p_qtd = 'NaN'::numeric THEN  -- R18
+    RAISE EXCEPTION 'raio_x: quantidade invalida: %', p_qtd USING ERRCODE = '22023';
+  END IF;
 
   INSERT INTO public.raio_x_decisao AS r (empresa, sku_codigo_omie, qtd_contada, contado_por, contado_em, atualizado_em)
   VALUES (p_empresa, p_sku, p_qtd,
@@ -433,6 +442,8 @@ GRANT EXECUTE ON FUNCTION public.raio_x_classificar(text, bigint, text, text) TO
 -- synced_at, INCLUINDO saldo 0; sem linha -> NULL. compras_apos: itens de pedido de compra (cabecalho
 -- pedido_compra_sugerido, empresa 'OBEN', status disparado/split_em_filhos) criados depois da decisao; so oben
 -- (colacor -> NULL: o motor de compras e so da Oben). sku_codigo_omie do item e TEXT: compara como texto.
+-- R16: pedido_compra_item so e legivel com private.cap_compras_ler (master). Sem ela o RLS devolve 0 linhas
+-- e o coalesce fabricaria "nenhuma recompra" -> NULL (ausente != vazio).
 -- Linha sem foto (foto_em NULL) tambem volta, com foto_* NULL; quem decide "sem medicao" e o app.
 -- ============================================================================
 CREATE OR REPLACE FUNCTION public.raio_x_medicao(p_empresa text)
@@ -500,7 +511,8 @@ BEGIN
          CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END,
          CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.rec, 0) END,
          CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE round(v.pm12::numeric, 4) END,
-         CASE WHEN p_empresa = 'oben' THEN coalesce(c.compras, '{}'::timestamptz[]) ELSE NULL::timestamptz[] END
+         CASE WHEN p_empresa = 'oben' AND private.cap_compras_ler(auth.uid()) THEN coalesce(c.compras, '{}'::timestamptz[])
+              ELSE NULL::timestamptz[] END
     FROM d
     LEFT JOIN e ON e.sku = d.sku
     LEFT JOIN v ON v.sku = d.sku
@@ -528,6 +540,10 @@ BEGIN
      OR has_function_privilege('public', 'public.raio_x_medicao(text)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.raio_x_medicao(text)', 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondicao: ACL de raio_x_medicao';
+  END IF;
+  -- PL/pgSQL e late-bound: a medicao chama private.cap_compras_ler em runtime (R16) - tem de existir.
+  IF to_regprocedure('private.cap_compras_ler(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'postcondicao: private.cap_compras_ler(uuid) ausente';
   END IF;
   DECLARE
     f text;
