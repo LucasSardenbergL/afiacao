@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 644
+-- Total de custom migrations: 645
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -708,7 +708,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261015120000', 'tactical_plans_margem_rpc_saneia_texto', '20261015120000_tactical_plans_margem_rpc_saneia_texto.sql'),
   ('20261015120100', 'tactical_plans_margem_fecha_coluna', '20261015120100_tactical_plans_margem_fecha_coluna.sql'),
   ('20261015221600', 'vendas_sync_cursor_fencing_token', '20261015221600_vendas_sync_cursor_fencing_token.sql'),
-  ('20261015221700', 'vendas_sync_cursor_falha_honesta', '20261015221700_vendas_sync_cursor_falha_honesta.sql')
+  ('20261015221700', 'vendas_sync_cursor_falha_honesta', '20261015221700_vendas_sync_cursor_falha_honesta.sql'),
+  ('20261016013000', 'sayerlack_importar_pedido_portal_safeupdate', '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2747,7 +2748,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
-  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', '')
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
+  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4834,7 +4836,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_finish', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_release', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
-  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', '')
+  ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
+  ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', '')
 )
 SELECT
   e.migration,
@@ -4862,7 +4865,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 144.
+-- Funções redefinidas com corpo extraível: 145.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5400,6 +5403,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'picking_retomar', 2, '20261011140000_picking_v2_coleta_reserva.sql', '7c295ca7fb57cc73891c636cc20c6aff'),
   ('public', 'picking_concluir', 1, '20261011020000_picking_v2_schema.sql', 'e0a222a4a1dc02a7957eedcda9c5934a'),
   ('public', 'picking_concluir', 2, '20261011140000_picking_v2_coleta_reserva.sql', '5395b2ccef54177a66cd98728a8ff507'),
+  ('public', 'sayerlack_importar_pedido_portal', 1, '20261014120000_sayerlack_importar_pedido_portal.sql', 'c14ac9f70c17b8b4cdf505f568857517'),
+  ('public', 'sayerlack_importar_pedido_portal', 2, '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql', 'f6fd335ab6cdd75263cefc10539fcca4'),
   ('public', 'vendas_sync_lease_acquire_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '0d0aaef070dfc5a46cdd0964ec5279f3'),
   ('public', 'vendas_sync_lease_acquire_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8404d00f852bbcac3d5262ffa6bc5170'),
   ('public', 'vendas_sync_heartbeat_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '8e4c883f6fe239a2183a2c1915a8a5ad'),
