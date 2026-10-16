@@ -163,12 +163,15 @@ describe('o corpo REAL do repo', () => {
     // 2026-10-15: 17 → 18, consumidor novo e legítimo — `db/snapshot-parity-check.sh` (#3096) mede
     // a deriva do snapshot de DR contra prod por nome. Por `-c`; catálogo vazio vira exit 3 (não
     // "em dia"), então não entra na lista de `-f` abaixo.
-    expect(r.arquivosComVinculo).toBe(18);
+    // 2026-10-15: 18 → 19, consumidor novo e legítimo — `scripts/orcamento-compra/simular.ts`
+    // (`--banco`, backtest do orçamento de compra) exporta os fatos por `-f` COM
+    // `-v ON_ERROR_STOP=1`, checa o status e só aceita a saída com o marcador de fim. Entra na lista abaixo.
+    expect(r.arquivosComVinculo).toBe(19);
   });
 
-  it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) e o exportador do Jev, e TODOS têm ON_ERROR_STOP', () => {
+  it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev e o do orçamento de compra, e TODOS têm ON_ERROR_STOP', () => {
     const porArquivo = r.sitios.filter((s) => s.temF);
-    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'db/refresh-snapshot.sh', 'scripts/jev/exportar.ts']);
+    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'db/refresh-snapshot.sh', 'scripts/jev/exportar.ts', 'scripts/orcamento-compra/simular.ts']);
     for (const s of porArquivo) expect(s.temErrorStop).toBe(true);
   });
 

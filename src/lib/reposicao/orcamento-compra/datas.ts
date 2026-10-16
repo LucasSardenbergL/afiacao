@@ -6,7 +6,8 @@ const paraDate = (d: DataISO) => new Date(`${d}T00:00:00Z`);
 export function addDias(d: DataISO, n: number): DataISO {
   const x = paraDate(d);
   x.setUTCDate(x.getUTCDate() + n);
-  return x.toISOString().slice(0, 10);
+  const p2 = (v: number) => String(v).padStart(2, '0');
+  return `${x.getUTCFullYear()}-${p2(x.getUTCMonth() + 1)}-${p2(x.getUTCDate())}`;
 }
 
 export function diffDias(a: DataISO, b: DataISO): number {
