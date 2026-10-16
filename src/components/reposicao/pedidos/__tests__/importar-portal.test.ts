@@ -31,6 +31,12 @@ describe('interpretarRespostaImportacao', () => {
     expect([i.tom, i.titulo]).toEqual(['erro', 'Pedido 2140603 não foi importado']);
   });
 
+  it('falha de leitura traz o trace como detalhe técnico; sucesso não traz', () => {
+    const l = interpretarRespostaImportacao({ ok: false, etapa: 'leitura', mensagem: 'x', trace: [{ step: 'consulta_lida', n_linhas: 0 }] }, '1');
+    expect(l.detalheTecnico).toContain('consulta_lida');
+    expect(interpretarRespostaImportacao({ ok: true, etapa: 'concluido', pedido_id: 1 }, '1').detalheTecnico).toBeNull();
+  });
+
   it('resposta nula/lixo é erro', () => {
     expect(interpretarRespostaImportacao(null, '1').tom).toBe('erro');
     expect(interpretarRespostaImportacao('x', '1').tom).toBe('erro');
