@@ -51,7 +51,7 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
   it('faturamento parcial: título 40k + resíduo 60k (nunca 140k nem 40k)', () => {
     const r = conciliarCompromissos(
       [{ pedidoId: 1, valorTotal: 100_000, dataPedido: '2026-10-01', nfs: ['123'] }],
-      [{ nf: '000123', valor: 40_000 }], '2026-10-02', 3,
+      [{ nf: '000123', valor: 40_000 }], '2026-10-02', 3, 15,
     );
     expect(r.fluxos).toEqual([{ data: '2026-10-04', valor: -60_000, camada: 'compromisso_conciliado' }]);
     expect(r.naoConciliado).toBe(0);
@@ -62,29 +62,30 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
         { pedidoId: 1, valorTotal: 30_000, dataPedido: '2026-10-01', nfs: ['9'] },
         { pedidoId: 2, valorTotal: 20_000, dataPedido: '2026-10-02', nfs: ['9'] },
       ],
-      [{ nf: '9', valor: 45_000 }], '2026-10-01', 3,
+      [{ nf: '9', valor: 45_000 }], '2026-10-01', 3, 15,
     );
     expect(r.fluxos.reduce((s, x) => s + x.valor, 0)).toBe(-5_000);
   });
   it('pedido sem NF entra inteiro e marcado não conciliado; data nunca antes do início', () => {
-    const r = conciliarCompromissos([{ pedidoId: 3, valorTotal: 8_000, dataPedido: '2026-09-01', nfs: [] }], [], '2026-10-01', 3);
+    const r = conciliarCompromissos([{ pedidoId: 3, valorTotal: 8_000, dataPedido: '2026-09-01', nfs: [] }], [], '2026-10-01', 3, 15);
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -8_000, camada: 'compromisso_nao_conciliado' }]);
     expect(r.naoConciliado).toBe(8_000);
   });
   it('NF vazia/zero não é coringa: pedidos sem NF válida ficam não conciliados', () => {
     const r = conciliarCompromissos(
       [
-        { pedidoId: 1, valorTotal: 30_000, dataPedido: '2026-10-01', nfs: ['0'] },
-        { pedidoId: 2, valorTotal: 20_000, dataPedido: '2026-10-01', nfs: [''] },
+        // R28: pedidos com 30 dias (≥ 15) — sem NF válida e velhos o bastante para já terem faturado
+        { pedidoId: 1, valorTotal: 30_000, dataPedido: '2026-09-01', nfs: ['0'] },
+        { pedidoId: 2, valorTotal: 20_000, dataPedido: '2026-09-01', nfs: [''] },
       ],
-      [{ nf: '', valor: 45_000 }], '2026-10-01', 0,
+      [{ nf: '', valor: 45_000 }], '2026-10-01', 0, 15,
     );
     expect(r.fluxos.reduce((s, x) => s + x.valor, 0)).toBe(-50_000);
     expect(r.fluxos.length).toBe(2);
     expect(r.naoConciliado).toBe(50_000);
   });
   it('NF informada sem título casado → não conciliado', () => {
-    const r = conciliarCompromissos([{ pedidoId: 5, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['77'] }], [], '2026-10-01', 3);
+    const r = conciliarCompromissos([{ pedidoId: 5, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['77'] }], [], '2026-10-01', 3, 15);
     expect(r.fluxos).toEqual([{ data: '2026-10-04', valor: -10_000, camada: 'compromisso_nao_conciliado' }]);
     expect(r.naoConciliado).toBe(10_000);
   });
@@ -95,12 +96,33 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
         { pedidoId: 2, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['1', '2'] },
         { pedidoId: 3, valorTotal: 10_000, dataPedido: '2026-10-01', nfs: ['2'] },
       ],
-      [{ nf: '1', valor: 5_000 }, { nf: '2', valor: 5_000 }], '2026-10-01', 0,
+      [{ nf: '1', valor: 5_000 }, { nf: '2', valor: 5_000 }], '2026-10-01', 0, 15,
     );
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -20_000, camada: 'compromisso_conciliado' }]);
   });
+  it('R28: pedido sem NF com 3 dias está a faturar — entra inteiro, mas não conta como não conciliado', () => {
+    const r = conciliarCompromissos([{ pedidoId: 6, valorTotal: 8_000, dataPedido: '2026-09-28', nfs: [] }], [], '2026-10-01', 3, 15);
+    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -8_000, camada: 'compromisso_a_faturar' }]);
+    expect(r.naoConciliado).toBe(0);
+  });
+  it('R28: pedido sem NF com 20 dias → não conciliado', () => {
+    const r = conciliarCompromissos([{ pedidoId: 7, valorTotal: 8_000, dataPedido: '2026-09-11', nfs: [] }], [], '2026-10-01', 3, 15);
+    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -8_000, camada: 'compromisso_nao_conciliado' }]);
+    expect(r.naoConciliado).toBe(8_000);
+  });
+  it('R28: fronteira — 14 dias a faturar, 15 dias não conciliado', () => {
+    const idade = (dataPedido: string) =>
+      conciliarCompromissos([{ pedidoId: 8, valorTotal: 1, dataPedido, nfs: [] }], [], '2026-10-01', 0, 15).fluxos[0].camada;
+    expect(idade('2026-09-17')).toBe('compromisso_a_faturar');
+    expect(idade('2026-09-16')).toBe('compromisso_nao_conciliado');
+  });
+  it('R28: NF informada sem título é não conciliado mesmo recente (a idade só vale para pedido sem NF)', () => {
+    const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 10_000, dataPedido: '2026-09-30', nfs: ['77'] }], [], '2026-10-01', 0, 15);
+    expect(r.fluxos[0].camada).toBe('compromisso_nao_conciliado');
+    expect(r.naoConciliado).toBe(10_000);
+  });
   it('título maior que o pedido não gera entrada', () => {
-    const r = conciliarCompromissos([{ pedidoId: 4, valorTotal: 10, dataPedido: '2026-10-01', nfs: ['1'] }], [{ nf: '1', valor: 12 }], '2026-10-01', 0);
+    const r = conciliarCompromissos([{ pedidoId: 4, valorTotal: 10, dataPedido: '2026-10-01', nfs: ['1'] }], [{ nf: '1', valor: 12 }], '2026-10-01', 0, 15);
     expect(r.fluxos).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 // src/lib/reposicao/orcamento-compra/camadas.ts
 // Camadas que completam a projeção (spec §6.2, §6.3, §6.5).
-import { addDias, ehDiaUtil, type DataISO } from './datas';
+import { addDias, diffDias, ehDiaUtil, type DataISO } from './datas';
 import type { Fluxo } from './caixa';
 
 export interface PedidoDisparado { pedidoId: number; valorTotal: number; dataPedido: DataISO; nfs: string[] }
@@ -10,12 +10,18 @@ export function normalizarNf(nf: string): string {
   return nf.trim().replace(/^0+/, '');
 }
 
-/** Componentes conexos pedido↔NF; resíduo = Σ pedidos − Σ títulos das NFs do componente. */
+/**
+ * Componentes conexos pedido↔NF; resíduo = Σ pedidos − Σ títulos das NFs do componente.
+ * R28: componente SEM NF válida cujo pedido mais antigo tem idade < `idadeLimiteDias` na data do ciclo
+ * (`inicio`) está "a faturar": entra inteiro (conservador) na camada 'compromisso_a_faturar' e NÃO conta
+ * em `naoConciliado`. Sem NF com idade ≥ limite, ou NF sem título casado → 'compromisso_nao_conciliado'.
+ */
 export function conciliarCompromissos(
   pedidos: PedidoDisparado[],
   titulos: TituloCp[],
   inicio: DataISO,
   lagDias: number,
+  idadeLimiteDias: number,
 ): { fluxos: Fluxo[]; naoConciliado: number } {
   const titulosPorNf = new Map<string, number>();
   for (const t of titulos) {
@@ -47,18 +53,22 @@ export function conciliarCompromissos(
     p.nfs.map(normalizarNf).filter((x) => x !== '').forEach((nf) => c.nfs.add(nf));
     componentes.set(raiz, c);
   });
+  if (!Number.isFinite(idadeLimiteDias) || idadeLimiteDias < 0) throw new Error('idadeLimiteDias inválida');
   const fluxos: Fluxo[] = [];
   let naoConciliado = 0;
   for (const c of componentes.values()) {
     const titulado = [...c.nfs].reduce((s, nf) => s + (titulosPorNf.get(nf) ?? 0), 0);
     const residuo = c.valor - titulado;
-    // Sem NF válida, ou NF sem nenhum título casado: nada comprova o faturamento → não conciliado (spec §6.2).
-    const semNf = c.nfs.size === 0 || titulado === 0;
     if (residuo <= 0) continue;
     const dataPrevista = addDias(c.data, lagDias);
     const data = dataPrevista < inicio ? inicio : dataPrevista;
-    if (semNf) naoConciliado += residuo;
-    fluxos.push({ data, valor: -residuo, camada: semNf ? 'compromisso_nao_conciliado' : 'compromisso_conciliado' });
+    // R28: sem NF e recente = ainda não faturou (normal) → a faturar, entra inteiro sem contar no limiar.
+    const aFaturar = c.nfs.size === 0 && diffDias(c.data, inicio) < idadeLimiteDias;
+    // Sem NF já velho, ou NF sem nenhum título casado: nada comprova o faturamento → não conciliado (spec §6.2).
+    const naoConc = !aFaturar && (c.nfs.size === 0 || titulado === 0);
+    if (naoConc) naoConciliado += residuo;
+    const camada = aFaturar ? 'compromisso_a_faturar' : naoConc ? 'compromisso_nao_conciliado' : 'compromisso_conciliado';
+    fluxos.push({ data, valor: -residuo, camada });
   }
   return { fluxos, naoConciliado };
 }

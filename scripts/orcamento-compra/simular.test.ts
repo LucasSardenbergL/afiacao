@@ -190,12 +190,25 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     // a diferença de piso é exatamente o título: 1000 inteiro (depois) − 400 de resíduo (antes)
     expect(pisoDe(antes) - pisoDe(depois)).toBeCloseTo(600, 6);
   });
-  it('(c) pedido sem NF acima de 10% da reserva → indeterminado; abaixo → viável', () => {
-    // reserva = 1000/180×30 = 166,67 → limiar 16,67
-    const semNf = (valor: number): Fatos => ({ ...semLinhas, disparados: [{ id: 12, valor_total: valor, momento: '2026-09-25T12:00:00Z', nfs: [] }] });
+  it('(c) pedido sem NF com ≥ 15 dias acima de 10% da reserva → indeterminado; abaixo → viável', () => {
+    // reserva = 1000/180×30 = 166,67 → limiar 16,67. R28: pedido de 10/09 tem 21 dias no ciclo de 01/10
+    const semNf = (valor: number): Fatos => ({ ...semLinhas, disparados: [{ id: 12, valor_total: valor, momento: '2026-09-10T12:00:00Z', nfs: [] }] });
     const acima = simularCiclo(semNf(20), 1, cfg).estado;
     expect(acima.tipo === 'indeterminado' && acima.camadas).toEqual(['compromisso_nao_conciliado']);
     expect(simularCiclo(semNf(10), 1, cfg).estado.tipo).toBe('viavel');
+  });
+  it('(e) R28: pedido sem NF recente (6 dias) está a faturar — não deixa o ciclo indeterminado, mas baixa o piso pelo valor inteiro', () => {
+    const pedido = { id: 13, valor_total: 5_000, momento: '2026-09-25T12:00:00Z' };
+    const aFaturar: Fatos = { ...semLinhas, disparados: [{ ...pedido, nfs: [] }] };
+    // controle: o mesmo pedido já faturado e titulado por inteiro → resíduo 0 (mesma continuidade, mesmo ritmo)
+    const titulado: Fatos = {
+      ...semLinhas,
+      disparados: [{ ...pedido, nfs: ['555'] }],
+      titulos_sayerlack: [{ id: 't5', nf: '555', valor: 5_000, data_emissao: '2026-09-27', created_at: '2026-09-27T12:00:00Z' }],
+    };
+    expect(simularCiclo(aFaturar, 1, cfg).estado.tipo).toBe('viavel');
+    expect(simularCiclo(titulado, 1, cfg).estado.tipo).toBe('viavel');
+    expect(pisoDe(titulado) - pisoDe(aFaturar)).toBeCloseTo(5_000, 6);
   });
   it('(d) reservaDe: 180 dias por data de emissão, título só se criado até o momento do ciclo', () => {
     const f: Fatos = {

@@ -3,7 +3,7 @@
 import { addDias, diffDias, type DataISO } from './datas';
 
 export type Camada =
-  | 'base_titulos' | 'reconciliacao_saldo' | 'compromisso_conciliado' | 'compromisso_nao_conciliado'
+  | 'base_titulos' | 'reconciliacao_saldo' | 'compromisso_conciliado' | 'compromisso_a_faturar' | 'compromisso_nao_conciliado'
   | 'saida_nao_sayerlack' | 'continuidade_motor' | 'candidato';
 
 export interface Fluxo { data: DataISO; valor: number; camada: Camada }

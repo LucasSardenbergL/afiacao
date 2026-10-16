@@ -25,6 +25,9 @@ export const CONFIG_PADRAO: Config = {
   intervaloOportunidadeDias: 1, horizonteDias: 91, horizontePromoDias: 90,
 };
 
+/** R28: idade (dias, pedido→data do ciclo) a partir da qual pedido sem NF deixa de ser "a faturar" — p90 medido de pedido→faturamento. */
+export const IDADE_A_FATURAR_DIAS = 15;
+
 /** Horizonte FIXO do replay do ΔDIO/caixa liberado (R25). */
 const HORIZONTE_DIO_DIAS = 30;
 
@@ -36,6 +39,7 @@ export const PREMISSAS: string[] = [
   'reserva = saída média diária: pagos não-Sayerlack por data de baixa + títulos Sayerlack por data de EMISSÃO (criados até o momento do ciclo)',
   'recebimentos = quantidade PEDIDA (produtos_consulta.nQtde) na data t4 do tracking; pedido sem t4 não entra (o erro de fechamento pega o buraco)',
   'saídas atrasadas do snapshot (data < dia do ciclo) entram no dia 0; se já estavam pagas, contam em dobro (viés conservador)',
+  'pedido disparado sem NF com menos de 15 dias (p90 pedido→faturamento) entra inteiro como compromisso a faturar e não torna o ciclo indeterminado; com 15 dias ou mais, é não conciliado',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
   'demanda média/desvio do ciclo derivados da série as-of [data−180, data−1] (dias não censurados); params.demanda_media_diaria só no CMV diário do resumo',
@@ -191,7 +195,7 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
   const conc = conciliarCompromissos(
     anteriores.map((p) => ({ pedidoId: p.id, valorTotal: exigir(p.valor_total, 'disparados.valor_total'), dataPedido: p.momento.slice(0, 10), nfs: p.nfs ?? [] })),
     titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: exigir(t.valor, 'titulos_sayerlack.valor') })),
-    data, lagPagamento,
+    data, lagPagamento, IDADE_A_FATURAR_DIAS,
   );
   fluxos.push(...conc.fluxos);
   if (conc.naoConciliado > 0.1 * reserva) ausencias.push('compromisso_nao_conciliado');
