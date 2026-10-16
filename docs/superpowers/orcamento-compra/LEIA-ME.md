@@ -20,89 +20,77 @@ bun scripts/orcamento-compra/pagina.ts docs/superpowers/orcamento-compra/saida/r
 tail -1 /tmp/oc-pag.log; [ "$rc" -eq 0 ]   # esperado: fim|ok
 ```
 
-## Resultado da rodada de 2026-10-15, após R28+R30+R31 (fatos de hoje = 2026-10-15; ciclos de 2026-07-18 a 2026-10-15)
+## Resultado da rodada de 2026-10-15, após a onda final R32–R53 (fatos de hoje = 2026-10-15; ciclos de 2026-07-18 a 2026-10-15)
 
 | Medida | Valor |
 |---|---|
-| Ciclos / disparados | 267 / 119 (+140 expirados, 7 cancelados, 1 pendente) |
+| Ciclos / disparados | 268 / 119 (+140 expirados, 7 cancelados, 2 pendentes) |
 | Motor pediu (disparados, com frete 2,5%) | R$ 378.033 |
-| Orçamento aceitaria (disparados) | R$ 120.204 (31,8%) |
-| Cortes nos disparados por motivo | econômico R$ 168.707 · financeiro R$ 57.550 · sem score R$ 31.571 |
-| Valor cortado efetivo / expirado (dedup. por episódio) | R$ 198.812 / R$ 155.344 |
-| Cortes sem preço | 58 |
-| Episódios de corte (efetivos, dedup. 7d) | 267 |
-| **Precisão por episódio** (portão) | 100,0% — **45 episódios classificados, 222 indeterminados → cobertura 16,9%**; valor classificado R$ 40.409 |
-| Precisão por corte | 100,0% — n = 160 cortes classificados, 920 indeterminados; valor classificado R$ 43.044 |
-| Classes dos cortes classificados | adiado 112 · eliminado 48 · teria_rompido 0 |
-| ΔDIO / caixa liberado | 1,12 dia / R$ 5.304 — só 24 episódios medidos (106 sem horizonte de replay, 137 indeterminados) |
-| CMV diário do universo do motor | R$ 4.755 |
-| Embalagens sensíveis ao modelo (sinal de ΔV muda empírico × gaussiano) | 600 |
-| Estados de caixa (todos os ciclos) | viável 203 · inviável 61 · indeterminado 3 (disparados: 93 · 23 · 3) |
-| Indeterminado por camada | snapshot 2 (2026-10-15, snapshot do dia ainda não tirado) · compromisso_nao_conciliado 1 (2026-08-25) |
-| Inviáveis por mês | julho 40 de 40 · agosto 21 de 89 · setembro 0 de 86 · outubro 0 de 52 |
-| Sensibilidade (disparados) | 15d: R$ 135.264, 8 inviáveis · 30d: R$ 120.204, 23 inviáveis · 45d: R$ 102.645, 53 inviáveis |
+| **Orçamento aceitaria** (disparados **com guarda de caixa**, R51) | R$ 0 — só 2 disparados têm veredito de caixa (ambos inviáveis; motor R$ 1.838 neles) |
+| Aceito **sem guarda de caixa** (117 disparados indeterminados; só o gate econômico) | R$ 176.627 |
+| Cortes nos disparados por motivo | econômico R$ 167.996 · financeiro R$ 1.838 · sem score R$ 31.571 |
+| Valor cortado efetivo / expirado (dedup. por episódio; sem score fora, R48) | R$ 134.717 / R$ 87.097 |
+| **Revisão humana** (sem score, disparados; R48) | 91 embalagens, R$ 27.223 (dedup.), 0 sem preço |
+| Cortes sem preço (todos os ciclos) | 60 |
+| Episódios de corte (efetivos, dedup. 7d) | 215 |
+| **Precisão por episódio** (portão) | **84,9%** — 41 classificados, 174 indeterminados → cobertura **19,1%**; valor classificado R$ 32.975 |
+| Precisão por corte | 87,3% — 147 classificados, 720 indeterminados; valor classificado R$ 39.387 |
+| Classes dos cortes classificados (replay conjunto por SKU, R32) | adiado 120 · eliminado 1 · **teria_rompido 26** |
+| Cortes com chegada aproximada (pedido sem t4, R33) | 151 |
+| ΔDIO (positivo = menos estoque; soma dos episódios medidos) / caixa liberado | 0,84 dia / R$ 3.999 — 16 episódios medidos (16 no subconjunto do CMV), 88 sem horizonte, 111 indeterminados |
+| CMV diário do universo do motor (cobertura R46) | R$ 4.755 — 85,6% dos SKUs com preço e demanda |
+| Embalagens sensíveis ao modelo | 603 |
+| Estados de caixa (todos os ciclos) | **indeterminado 264** · inviável 4 · viável 0 (disparados: 117 · 2 · 0) |
+| Indeterminado por camada | compromisso_nao_conciliado 262 · snapshot 2 (2026-10-15, snapshot do dia ainda não tirado) |
+| Inviáveis | ciclos 1302, 1303 (24/07, disparados) e 1316, 1317 (25/07, expirados) — 1ª violação no dia 0 |
+| Sensibilidade (disparados) | 15d: R$ 0 com guarda, 0 inviáveis, 119 indeterminados (R$ 177.313 sem guarda) · 30d: R$ 0, 2, 117 (R$ 176.627) · 45d: R$ 36.413, 36, 60 (R$ 87.536) |
+
+### O que mudou em relação à rodada R31 (e por quê)
+
+- **Precisão caiu de 100% para 84,9%.** O replay agora tira **todas** as embalagens cortadas do SKU juntas (R32), no dia em que o pedido chegou de fato (R33). Medir uma a uma escondia ruptura: 26 cortes classificados agora romperiam. A revisão final tinha estimado ~88,8%.
+- **Quase todo ciclo virou indeterminado (264 de 268).** A causa é o fim do corte de 60 dias (R38): pedido disparado sem NF, de qualquer idade dentro de 180 dias, volta a ser compromisso inteiro. Com 15 dias ou mais, ele é "não conciliado".
+  - **Diagnóstico datado 2026-10-15, não recalculado:** 13 pedidos disparados em maio/junho **sem nenhuma NF no tracking** somam R$ 28.029 (× 1,025 de frete). Eles ficam em todas as janelas de 180 dias e, junto com títulos fora da base (R35), passam do limiar de 10% da reserva.
+  - Numa variante de diagnóstico **sem esses 13 pedidos** (só para medir o peso deles, não é resultado): 196 viáveis · 63 inviáveis · 9 indeterminados; aceito com guarda R$ 126.415.
+  - **Pergunta para o founder:** esses 13 pedidos de maio/junho foram de fato faturados e pagos (fora do tracking) ou nunca saíram? Se foram pagos, o caminho é trazer a evidência de pagamento para os fatos (não reintroduzir o corte de idade).
+- **Inviáveis caíram de 61 para 4** só porque os outros ciclos agora são indeterminados — a guarda não deu veredito neles. Isso não é melhora do caixa.
+- **"Orçamento aceitaria" caiu para R$ 0** porque agora só soma ciclos com veredito de caixa (R51). O que só o gate econômico aceitou (R$ 176.627) aparece à parte, como "sem guarda de caixa".
 
 ### Conferências de sanidade
 
-- `nDisparados` = 119 (esperado ≈ 120, contagem só Sayerlack; o pendente de 15/10 foi disparado entre as rodadas) ✅
-- `valorMotorDisparados` = R$ 378.032,87 = Σ `valor_total` dos 119 ciclos disparados (R$ 368.812,56) × 1,025 → divergência **0,00%** ✅ (sem JOIN duplicando, sem split contado 2×).
-- Fechamento do estoque reconstruído: **107 de 152 SKUs (70%) com erro de fechamento** em ao menos um ciclo (|reconstruído − estoque_fisico gravado| > max(passo, 10%)); por linha, 547 de 1.030 fecham. O erro é majoritariamente positivo (reconstruído > gravado; mediana +1 un, p90 +10 un). Pelo critério do brief (estoque reconstruído < 0 em algum dia de 270d), são 13/152 (8,6%). **Limitação, não escondida:** passa de 30% pelo critério de fechamento. O replay desses SKUs vira `indeterminado`, e por isso 85% dos cortes não classificam.
+- `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
+- `valorMotorDisparados` = R$ 378.032,87, igual à rodada R31 (o universo de ciclos disparados não mudou) ✅
+- Fatos novos: 426 ids de título Sayerlack (R34), 122 títulos na janela (110 com baixa, R35), 268 chegadas de pedido (57 com t4, R33), linhas de lag 381 faturamento / 128 vencimento / 299 chegada (R39), 176 disparados desde 2026-04-30 (R38).
+- Nenhuma semana de snapshot tem `total_saidas` diferente do detalhe (R42 sem efeito nesta rodada, coberto por teste).
+- Fechamento do estoque reconstruído: 107 de 153 SKUs com erro de fechamento em ao menos um ciclo. **Limitação, não escondida:** o replay desses SKUs vira `indeterminado`, e por isso a cobertura é baixa.
 
 ### R28 + R30 — compromisso "a faturar"
 
-Um pedido disparado entra inteiro na camada `compromisso_a_faturar` quando, com menos de 15 dias (p90 pedido→faturamento):
-- está **sem NF** (R28); ou
-- tem **NF sem título no CP até o snapshot do ciclo** (R30).
+Um pedido disparado entra inteiro (× 1,025, R41) na camada `compromisso_a_faturar` quando, com menos de 15 dias (p90 pedido→faturamento), está **sem NF** (R28) ou tem **NF sem título descontável até o snapshot** (R30/R35). Essa camada não conta no limiar de 10% da reserva. Os mesmos casos com 15 dias ou mais são `compromisso_nao_conciliado`.
 
-Essa camada **não** conta no limiar de 10% da reserva que torna o ciclo indeterminado. Os mesmos casos com 15 dias ou mais continuam `compromisso_nao_conciliado`.
+R35: um título só desconta o compromisso se está **representado no snapshot** (id na lista de saídas) ou foi **liquidado antes do dia do snapshot**. Título existente no CP, vencido e fora da projeção, não desconta.
 
-Motivo do R30: `disparados.nfs` é a lista de NFs de HOJE (olhar adiante). Uma NF recente sem título as-of significa apenas "ainda não titulada". No diagnóstico, todos os pedidos nessa situação tinham menos de 15 dias, e o título existia hoje.
+### R29 — por que havia 61 inviáveis (diagnóstico datado 2026-10-15, não recalculado)
 
-Efeito medido nos indeterminados: só o R28 levou de 232 para 230; com o R30, foram para **3**. O caixa passou a dar veredito, e com isso apareceram os inviáveis que o indeterminado mascarava: 13 → 61.
-
-### R29 — por que há ciclos inviáveis
-
-A causa é **aperto real de caixa no cenário-guarda**, não um artefato de borda de janela.
-
-- **Janelas completas:** todas as janelas de lookback estão completas.
-  - Pagos não-Sayerlack: desde 2025-12-22, e a janela da reserva do 1º ciclo começa em 2026-01-19.
-  - Títulos Sayerlack: desde 2026-01-19.
-  - Disparados: desde 2026-04-30, quando o motor começou; a consulta corta em hoje−180.
-  - Snapshots: diários desde 2026-07-13.
-- **A base sozinha fura a reserva:** nos 61 inviáveis, a base de caixa sem nenhuma candidata já fura a reserva. A 1ª violação vem de 4 a 90 dias à frente, mediana de 72.
-
-| Ciclo | Saldo inicial | Reserva 30d | Piso da base (data) | 1ª violação | 3 maiores camadas até o piso |
-|---|---|---|---|---|---|
-| 1239 (2026-07-20, disparado) | R$ 355k | R$ 291k | R$ 57k (10-18) | 09-09 | continuidade do motor −R$ 199k · saídas não-Sayerlack −R$ 190k · compromisso não conciliado −R$ 16k (títulos da base: +R$ 108k) |
-| 1259 (2026-07-22, disparado) | R$ 354k | R$ 289k | R$ 57k (10-20) | 09-11 | continuidade −R$ 205k · saídas não-Sayerlack −R$ 205k · não conciliado −R$ 19k (base: +R$ 134k) |
-
-(Diagnóstico por camada medido antes do R30; nele o "não conciliado" de ~R$ 16–21k agora é "a faturar", com o mesmo valor no caixa.)
+Na rodada R31, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva em todos os 61 inviáveis (mediana de 72 dias até a 1ª violação). Exemplo do ciclo 1239 (20/07): saldo R$ 355k, reserva R$ 291k, piso da base R$ 57k; em 91 dias a continuidade do motor tirava R$ 199k e as saídas não-Sayerlack R$ 190k, contra R$ 108k de títulos a receber.
 
 ## O que o backtest diz sobre o cenário-guarda
 
-- **Como a guarda funciona:** sem nenhuma venda nova, ela olha **91 dias** à frente e exige que o saldo fique acima de **30 dias de saídas** em todos os dias.
-- **Quantos ciclos ela reprova:** nesta rodada, **61 de 267 ciclos (23%)** ficaram inviáveis, todos de 2026-07-18 a 2026-08-23. Foram todo o mês de julho e 21 dos 89 ciclos de agosto; nenhum em setembro e outubro.
-  - Nos 23 disparados inviáveis, o motor pediu R$ 62.471 e a guarda aceitaria R$ 956.
-- **O veredito não depende da compra:** em todos os inviáveis, a base sozinha já fura a reserva (tabela do R29).
-  - Exemplo do ciclo de 20/07: o saldo de R$ 355k tem folga de só R$ 65k sobre a reserva.
-  - Em 91 dias saem ~R$ 390k (continuidade do motor + saídas não-Sayerlack) e entram só ~R$ 108k de títulos já emitidos.
+- **Hoje a guarda quase não dá veredito:** 264 dos 268 ciclos são indeterminados, 262 deles por compromisso não conciliado. A primeira decisão é sobre os 13 pedidos de maio/junho sem NF (acima).
+- **Quando dava veredito (rodada R31), a base sozinha furava a reserva** em julho e parte de agosto. Nesse caso a condição de reserva **como especificada** reprova o ciclo qualquer que seja o pedido, e por isso não serve para decidir compras.
 
-**Conclusão:** quando a base sozinha fura a reserva, a condição **como especificada** reprova o ciclo qualquer que seja o pedido. Por isso ela não serve para decidir compras. **O portão da v2 continua FECHADO.**
+A próxima decisão é do founder. Primeiro os 13 pedidos sem NF; depois, entre três caminhos para o cenário-guarda (sem ordem de preferência):
 
-A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):
-
-1. **Calibrar um cenário de entrada de vendas:** substituir o "zero venda nova" por uma entrada conservadora medida, por exemplo um percentil baixo do recebimento histórico.
-2. **Encurtar o horizonte:** verificar a reserva numa janela menor que 91 dias, mais próxima do ciclo pedido → pagamento.
-3. **Baixar a reserva:** exigir menos que 30 dias de saídas. Na sensibilidade, 15 dias deixam 8 inviáveis entre os disparados e 45 dias deixam 53.
-
-(Exemplo por camada e a mediana de 72 dias: diagnóstico datado de 2026-10-15, não recalculado a cada rodada.)
+1. **Calibrar um cenário de entrada de vendas:** substituir o "zero venda nova" por uma entrada conservadora medida.
+2. **Encurtar o horizonte:** verificar a reserva numa janela menor que 91 dias.
+3. **Baixar a reserva:** exigir menos que 30 dias de saídas.
 
 ### Leitura (o que NÃO concluir)
 
-- **Precisão 100% é sobre amostra enviesada** (cobertura 16,9% dos episódios): ruptura em período censurado vira indeterminado por construção. Só classifica corte cujo SKU fecha o estoque e cuja série pós-decisão não tem dia censurado (estoque ≤ 0). SKUs que de fato romperam caem em `indeterminado` por construção. Não ler como "o corte nunca causa ruptura".
-- **"Econômico" domina o corte** porque o intervalo de oportunidade é 1 dia (o motor roda diariamente): a embalagem marginal só "compra" um dia de cobertura extra e perde para o custo de carregamento. A classe `adiado` (112) > `eliminado` (48) é coerente com isso.
+- **A precisão de 84,9% cobre só 19,1% dos episódios.** Ruptura em período censurado vira indeterminado por construção. A amostra é enviesada para SKUs que fecham o estoque e não romperam de verdade. Não ler como "o corte rompe em 15% dos casos" nem como "rompe pouco".
+- **"Econômico" domina o corte** porque o intervalo de oportunidade é 1 dia (premissa R49). A embalagem marginal só compra 1 dia de cobertura extra e perde para o custo de carregamento.
+- **Sem score não é corte do orçamento** (R48). Ele é revisão humana: entra no replay (conservador), mas não no valor cortado nem na precisão.
 
-## Falsificação (2026-10-15, refeita após R31)
+## Falsificação (2026-10-15, refeita após a onda final R32–R53)
 
 Regras do laço:
 - Uma camada por vez.
@@ -110,7 +98,7 @@ Regras do laço:
 - Confere que o `sed` casou (`git diff` não vazio).
 - Restaura com `git checkout --`.
 
-Rodado com `LC_ALL` vazio, `LC_ALL=pt_BR.UTF-8` e `LC_ALL=C`: **7/7 vermelho nos três**, `git status` limpo ao fim.
+Rodado com `LC_ALL=C` e `LC_ALL=pt_BR.UTF-8`: **12/12 vermelho nos dois** (24/24), `git status` limpo ao fim.
 
 Para refazer, rode, para cada linha da tabela abaixo:
 1. `bun run test -- <teste>` (tem de dar verde);
@@ -119,17 +107,24 @@ Para refazer, rode, para cada linha da tabela abaixo:
 4. `git checkout -- <arquivo>`;
 5. `bun run test -- <teste>` (verde de novo).
 
-Os arquivos ficam em `src/lib/reposicao/orcamento-compra/`.
+`M/` = `src/lib/reposicao/orcamento-compra/`; `S/` = `scripts/orcamento-compra/`.
 
 | # | Intenção | Arquivo | `sed` | Teste | Resultado |
 |---|---|---|---|---|---|
-| 1 | conciliação sem descontar título | `camadas.ts` | `s/const residuo = c.valor - titulado;/const residuo = c.valor;/` | `caixa.test.ts` (faturamento parcial, muitos-para-muitos…) | 5 failed / 28 |
-| 2 | avaliarEstado sem violação | `caixa.ts` | `s/if (primeiraViolacao === null && p.saldo < reserva)/if (false)/` | `caixa.test.ts` (intrassemana, horizonte) | 2 failed / 28 |
-| 3 | corte sem checar caixa | `corte.ts` | `s/if (!temAnterior(c) \|\| !cabe(\[fluxoDe(c)\]))/if (!temAnterior(c))/` | `corte.test.ts` | 3 failed / 22 |
-| 4 | atendidas sem backlog | `valor.ts` | `s/return Math.min(Q, backlog) + /return /` | `valor.test.ts` | 2 failed / 10 |
-| 5 | classificarCorte sem `teria_rompido` | `replay.ts` | `s/  if (sem.unidadesPerdidas > com.unidadesPerdidas + 1e-9) return 'teria_rompido';//` | `replay.test.ts` | 2 failed / 21 |
-| 6 | R28/R30: nunca "a faturar" | `camadas.ts` | `s/const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;/const aFaturar = false;/` | `caixa.test.ts` (R28/R30) | 3 failed / 28 |
-| 7 | R30: só pedido sem NF pode ser "a faturar" | `camadas.ts` | `s/const aFaturar = semComprovacao && /const aFaturar = c.nfs.size === 0 \&\& /` | `caixa.test.ts` (NF 88 com 5 dias) | 1 failed / 28 |
+| 1 | conciliação sem descontar título | `M/camadas.ts` | `s/const residuo = c.valor - titulado;/const residuo = c.valor;/` | `M/caixa.test.ts` | 5 failed / 28 |
+| 2 | avaliarEstado sem violação | `M/caixa.ts` | `s/if (primeiraViolacao === null && p.saldo < reserva)/if (false)/` | `M/caixa.test.ts` | 2 failed / 28 |
+| 3 | corte sem checar caixa | `M/corte.ts` | `s/if (!temAnterior(c) \|\| !cabe(\[fluxoDe(c)\]))/if (!temAnterior(c))/` | `M/corte.test.ts` | 3 failed / 27 |
+| 4 | atendidas sem backlog | `M/valor.ts` | `s/return Math.min(Q, backlog) + /return /` | `M/valor.test.ts` | 2 failed / 12 |
+| 5 | classificarCorte sem `teria_rompido` | `M/replay.ts` | `s/  if (sem.unidadesPerdidas > com.unidadesPerdidas + 1e-9) return 'teria_rompido';//` | `M/replay.test.ts` | 2 failed / 21 |
+| 6 | R28/R30: nunca "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;/const aFaturar = false;/` | `M/caixa.test.ts` | 3 failed / 28 |
+| 7 | R30: só pedido sem NF pode ser "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && /const aFaturar = c.nfs.size === 0 \&\& /` | `M/caixa.test.ts` | 1 failed / 28 |
+| 8 | R32: replay de uma embalagem só | `S/simular.ts` | `s/const qtde = doSku.reduce((s, x) => s + x.c.qtde, 0);/const qtde = doSku[0].c.qtde;/` | `S/simular.test.ts` | 3 failed / 56 |
+| 9 | R35: título fora da base desconta | `S/simular.ts` | `s/^    return 0;$/    return valor;/` | `S/simular.test.ts` | 1 failed / 56 |
+| 10 | R36: indeterminado não fecha o portão | `S/pagina.ts` | `s/if (indeterminados > PORTAO.indeterminadosMax)/if (false)/` | `S/pagina.test.ts` | 2 failed / 13 |
+| 11 | R40: continuidade cumulativa | `M/corte.ts` | `s/lagDias, aceito)\]/lagDias, 0)]/` | `M/corte.test.ts` | 2 failed / 27 |
+| 12 | R47: `n` NaN passa no portão | `S/pagina.ts` | `s/if (!finito(pe?.n) \|\| pe.n < PORTAO.nMin)/if (pe.n < PORTAO.nMin)/` | `S/pagina.test.ts` | 1 failed / 13 |
+
+(Na tabela, `\|` é o `|` escapado do Markdown: no shell o `sed` usa `|` literal.)
 
 ## Perguntas abertas (spec §10)
 
@@ -139,27 +134,34 @@ Os arquivos ficam em `src/lib/reposicao/orcamento-compra/`.
 
 ## Portão da v2 (re-executável — não é recado)
 
-**Aplicar no app só se TODOS passarem** (R31):
+**Aplicar no app só se TODOS passarem** (R31 + R36 + R47):
 - precisão **por episódio** ≥ 95%;
 - ≥ 30 episódios classificados;
 - **cobertura ≥ 50%** (classificados ÷ episódios efetivos);
-- **zero** ciclo inviável.
+- **zero** ciclo inviável;
+- **zero** ciclo indeterminado (sem veredito de caixa não há prova de viabilidade);
+- campo ausente ou não numérico **fecha** (resultado.json antigo nunca abre).
 
-Inviáveis "explicados" **não** abrem o portão. Só uma decisão do founder sobre o cenário-guarda (ver acima) pode mudar esse critério. Rode o passo 1 de "Como rodar" e então:
+Inviáveis "explicados" **não** abrem o portão. Só uma decisão do founder sobre o cenário-guarda pode mudar esse critério. Rode o passo 1 de "Como rodar" e então (a fonte da verdade é `avaliarPortao` em `scripts/orcamento-compra/pagina.ts`; o `jq` repete os limiares):
 
 ```bash
 cd /Users/lucassardenberg/Projetos/afiacao/.claude/worktrees/affectionate-shirley-b8816d
 R=docs/superpowers/orcamento-compra/saida/resultado.json
 jq -r '
+  def num: if type == "number" and isnormal or . == 0 then . else null end;
   .resumo as $r | ([.ciclos[] | select(.estado.tipo == "inviavel")] | length) as $inv
-  | [ (if ($r.precisaoEpisodios.precisao // -1) < 0.95 then "precisão por episódio \($r.precisaoEpisodios.precisao) < 0.95" else empty end),
-      (if $r.precisaoEpisodios.n < 30 then "\($r.precisaoEpisodios.n) episódios classificados < 30" else empty end),
-      (if ($r.coberturaEpisodios // -1) < 0.5 then "cobertura insuficiente: \($r.coberturaEpisodios) < 0.5" else empty end),
-      (if $inv > 0 then "\($inv) ciclos inviáveis" else empty end) ]
+  | ([.ciclos[] | select(.estado.tipo == "indeterminado")] | length) as $ind
+  | [ (if (($r.precisaoEpisodios.precisao | num) // -1) < 0.95 then "precisão por episódio \($r.precisaoEpisodios.precisao) < 0.95" else empty end),
+      (if (($r.precisaoEpisodios.n | num) // -1) < 30 then "\($r.precisaoEpisodios.n) episódios classificados < 30" else empty end),
+      (if (($r.coberturaEpisodios | num) // -1) < 0.5 then "cobertura insuficiente: \($r.coberturaEpisodios) < 0.5" else empty end),
+      (if $inv > 0 then "\($inv) ciclos inviáveis" else empty end),
+      (if $ind > 0 then "\($ind) ciclos indeterminados" else empty end) ]
   | if length == 0 then "ABERTO" else "FECHADO: " + join(" · ") end' "$R" > /tmp/oc-portao.txt; rc=$?
 cat /tmp/oc-portao.txt; [ "$rc" -eq 0 ] && grep -qx 'ABERTO' /tmp/oc-portao.txt   # exit 0 = portão aberto
 ```
 
-**Estado em 2026-10-15 (após R31): portão FECHADO**, pelo comando acima, com dois motivos:
-- **cobertura insuficiente:** só 45 de 267 episódios (16,9%) classificam. A precisão de 100% cobre só esses 45.
-- **61 ciclos inviáveis:** são estruturais do cenário-guarda, e a decisão de calibragem é do founder.
+**Estado em 2026-10-15 (após a onda final R32–R53): portão FECHADO**, pelo comando acima e pela página, com quatro motivos:
+- **precisão por episódio 84,9%** < 95%: o replay conjunto (R32) na chegada real (R33) achou ruptura que o replay por embalagem escondia;
+- **cobertura insuficiente:** só 41 de 215 episódios (19,1%) classificam;
+- **4 ciclos inviáveis;**
+- **264 ciclos indeterminados:** 262 por compromisso não conciliado, puxados pelos 13 pedidos de maio/junho sem NF (decisão do founder, acima).
