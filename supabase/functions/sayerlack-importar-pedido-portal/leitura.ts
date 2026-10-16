@@ -40,6 +40,7 @@ export type MotivoLeitura =
   | "nao_encontrado"
   | "consulta_ambigua"
   | "consulta_incompleta"
+  | "pedido_cancelado"
   | "itens_ausentes"
   | "item_malformado"
   | "item_incoerente"
@@ -114,10 +115,21 @@ export function lerCabecalho(linhas: LinhaConsultaRaw[], protocolo: string): { o
   if (!/oben/i.test(cliente)) {
     return { ok: false, motivo: "consulta_incompleta", detalhe: `O pedido ${protocolo} é do cliente "${cliente}", não da OBEN.` };
   }
+  if (situacaoCancelada(situacao)) {
+    return { ok: false, motivo: "pedido_cancelado", detalhe: `O pedido ${protocolo} está cancelado no portal ("${situacao}") — pedido cancelado não vira pedido de compra no Omie.` };
+  }
   return {
     ok: true,
     cab: { protocolo, cliente, situacao, data_entrega: dataEntrega as string, valor_mercadoria: vlrMerc as number, valor_total: vlrTotal as number },
   };
+}
+
+/**
+ * Situação "6 - Cancelado" (código 6 do select #situacao do portal): pedido cancelado no fornecedor não vira PO
+ * (palavra do founder, 2026-10-16). Casa pelo código E pelo texto — o portal mostra "<código> - <nome>".
+ */
+export function situacaoCancelada(situacao: string): boolean {
+  return /^\s*6\s*-/.test(situacao) || norm(situacao).includes("cancelad");
 }
 
 /** Tolerâncias: o portal exibe 4 casas e calcula o Preço Venda com o desconto de 4 casas. */

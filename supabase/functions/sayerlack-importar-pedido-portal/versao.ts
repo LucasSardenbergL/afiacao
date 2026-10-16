@@ -18,7 +18,11 @@ export const respostaSonda = criarRespostaSonda("sayerlack-importar-pedido-porta
  * da consulta (POST /order-viewer/form/list, 1 nova tentativa) em vez de desistir em 8 s de tabela vazia. 1º uso real
  * (2141068) voltava "0 linha(s) lida(s)" com o pedido existindo.
  */
-export const VERSAO = "v1.1-espera-tabela-do-portal";
+/**
+ * v1.2 (2026-10-16) — pedido com situação "6 - Cancelado" no portal é recusado na leitura (motivo `pedido_cancelado`),
+ * nada é gravado nem vai ao Omie (palavra do founder).
+ */
+export const VERSAO = "v1.2-recusa-pedido-cancelado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

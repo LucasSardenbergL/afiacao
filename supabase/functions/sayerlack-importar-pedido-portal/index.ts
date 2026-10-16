@@ -144,7 +144,8 @@ export default async ({ page, context }) => {
     trace.push({ step: 'consulta_pronta', pronta, t: Date.now() - t0 });
     if (!pronta) return await falha('CONSULTA_INDISPONIVEL', 'Tabela da Consulta Pedidos não inicializou (jQuery/DataTables)');
 
-    // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação (decisão do founder),
+    // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação — o cancelado é LIDO e recusado
+    // em Deno (./leitura.ts), para a tela dizer "cancelado" em vez de "não encontrado";
     // datas desde 2020 (o default é só o último mês).
     const filtro = await page.evaluate((cod, nr) => {
       const jq = window.jQuery;
