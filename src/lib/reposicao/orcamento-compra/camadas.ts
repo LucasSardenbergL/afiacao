@@ -12,9 +12,11 @@ export function normalizarNf(nf: string): string {
 
 /**
  * Componentes conexos pedido↔NF; resíduo = Σ pedidos − Σ títulos das NFs do componente.
- * R28: componente SEM NF válida cujo pedido mais antigo tem idade < `idadeLimiteDias` na data do ciclo
- * (`inicio`) está "a faturar": entra inteiro (conservador) na camada 'compromisso_a_faturar' e NÃO conta
- * em `naoConciliado`. Sem NF com idade ≥ limite, ou NF sem título casado → 'compromisso_nao_conciliado'.
+ * R28/R30: componente sem NF válida OU com NF sem nenhum título casado, cujo pedido mais antigo tem idade
+ * < `idadeLimiteDias` na data do ciclo (`inicio`), está "a faturar": entra inteiro (conservador) na camada
+ * 'compromisso_a_faturar' e NÃO conta em `naoConciliado` (a lista de NFs do pedido é a de hoje — look-ahead;
+ * NF recente sem título as-of é só "ainda não titulada"). Os mesmos casos com idade ≥ limite →
+ * 'compromisso_nao_conciliado'.
  */
 export function conciliarCompromissos(
   pedidos: PedidoDisparado[],
@@ -62,10 +64,11 @@ export function conciliarCompromissos(
     if (residuo <= 0) continue;
     const dataPrevista = addDias(c.data, lagDias);
     const data = dataPrevista < inicio ? inicio : dataPrevista;
-    // R28: sem NF e recente = ainda não faturou (normal) → a faturar, entra inteiro sem contar no limiar.
-    const aFaturar = c.nfs.size === 0 && diffDias(c.data, inicio) < idadeLimiteDias;
-    // Sem NF já velho, ou NF sem nenhum título casado: nada comprova o faturamento → não conciliado (spec §6.2).
-    const naoConc = !aFaturar && (c.nfs.size === 0 || titulado === 0);
+    // Sem NF válida, ou NF sem nenhum título casado: nada comprova o faturamento (spec §6.2) …
+    const semComprovacao = c.nfs.size === 0 || titulado === 0;
+    // … mas recente = ainda não faturou/titulou (R28/R30) → a faturar, entra inteiro sem contar no limiar.
+    const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;
+    const naoConc = semComprovacao && !aFaturar;
     if (naoConc) naoConciliado += residuo;
     const camada = aFaturar ? 'compromisso_a_faturar' : naoConc ? 'compromisso_nao_conciliado' : 'compromisso_conciliado';
     fluxos.push({ data, valor: -residuo, camada });

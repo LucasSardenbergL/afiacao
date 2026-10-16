@@ -185,8 +185,11 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     const antes = com(T1);
     const depois = com({ ...T1, created_at: '2026-10-01T10:30:00Z' });
     expect(simularCiclo(antes, 1, cfg).estado.tipo).toBe('viavel');
-    const eDepois = simularCiclo(depois, 1, cfg).estado;
-    expect(eDepois.tipo === 'indeterminado' && eDepois.camadas).toEqual(['compromisso_nao_conciliado']);
+    // R30: P1 tem 6 dias e NF sem título as-of → a faturar (inteiro), não indeterminado (antes: nao_conciliado)
+    expect(simularCiclo(depois, 1, cfg).estado.tipo).toBe('viavel');
+    const velho = { ...com({ ...T1, created_at: '2026-10-01T10:30:00Z' }), disparados: [{ ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
+    const eVelho = simularCiclo(velho, 1, cfg).estado;
+    expect(eVelho.tipo === 'indeterminado' && eVelho.camadas).toEqual(['compromisso_nao_conciliado']);
     // a diferença de piso é exatamente o título: 1000 inteiro (depois) − 400 de resíduo (antes)
     expect(pisoDe(antes) - pisoDe(depois)).toBeCloseTo(600, 6);
   });
