@@ -11,7 +11,7 @@ import { dataPagamentoPrevista, passoDaLinha, quebrarEmEmbalagens, type LinhaMot
 import { amostrasEmpiricas, amostrasGaussianas, historicoSuficiente, marcarCensura, reconstruirEstoque, type SerieDiaria } from '@/lib/reposicao/orcamento-compra/demanda';
 import { quantidadeProtegida, valorDasEmbalagens, type ParamsValor } from '@/lib/reposicao/orcamento-compra/valor';
 import { fluxosDeSemanaAgregada, type EstadoCaixa, type Fluxo } from '@/lib/reposicao/orcamento-compra/caixa';
-import { conciliarCompromissos, projetarRitmo, provisaoContinuidade, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
+import { conciliarCompromissos, projetarRitmo, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
 import { cortar, type BaseCaixa, type Candidata, type ResultadoCorte } from '@/lib/reposicao/orcamento-compra/corte';
 import { classificarCorte, replaySku, type ClasseCorte } from '@/lib/reposicao/orcamento-compra/replay';
 import { deduplicarEpisodios, deltaDio, precisaoDoCorte, type Episodio } from '@/lib/reposicao/orcamento-compra/medicao';
@@ -34,33 +34,48 @@ const HORIZONTE_DIO_DIAS = 30;
 /** O que o backtest assume e NÃO reconstrói as-of — vai no resultado.json (R22). */
 export const PREMISSAS: string[] = [
   'preco_venda_medio é o atual (v_sku_parametros_sugeridos), não o vigente na data do ciclo',
-  'lags p10 (pedido→faturamento, emissão→vencimento) e p50 (pedido→chegada) calculados sobre 180 dias até hoje',
+  'lags p10 (pedido→faturamento, emissão→vencimento) e p50 (pedido→chegada) as-of por ciclo: só observações concluídas antes do dia do ciclo, com pedido/emissão nos 180 dias anteriores; menos de 10 observações = ausência lags_insuficientes (R39)',
   'cm_anual (custo de capital) é o atual de empresa_configuracao_custos',
   'reserva = saída média diária: pagos não-Sayerlack por data de baixa + títulos Sayerlack por data de EMISSÃO (criados até o momento do ciclo)',
   'recebimentos = quantidade PEDIDA (produtos_consulta.nQtde) na data t4 do tracking; pedido sem t4 não entra (o erro de fechamento pega o buraco)',
   'saídas atrasadas do snapshot (data < dia do ciclo) entram no dia 0; se já estavam pagas, contam em dobro (viés conservador)',
   'pedido disparado sem NF, ou com NF sem título no CP até o snapshot, com menos de 15 dias (p90 pedido→faturamento) entra inteiro como compromisso a faturar e não torna o ciclo indeterminado; com 15 dias ou mais, é não conciliado (a lista de NFs do pedido é a de hoje, não a do ciclo)',
-  'pedidos disparados há mais de 60 dias ficam fora dos compromissos (assume-se já pagos ou no CP)',
+  'compromisso = pedido disparado nos 180 dias anteriores ao ciclo (qualquer idade, R38) × (1 + frete) (R41), menos só os títulos Sayerlack da NF que estão representados no snapshot (id_origem) ou liquidados antes do dia do snapshot (R35); título existente fora da trajetória não desconta',
+  'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
+  'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
+  'continuidade do motor = compra disparada por dia útil nos 90 dias anteriores; se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
+  'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
   'demanda média/desvio do ciclo derivados da série as-of [data−180, data−1] (dias não censurados); params.demanda_media_diaria só no CMV diário do resumo',
 ];
 
 type Num = number | null;
+export interface ObsLag { t1: DataISO; fim: DataISO; dias: number }
 type Saida = { data: DataISO; valor: number; id_origem?: string; origem?: string };
 export interface Fatos {
   meta: { gerado_em: string; hoje: DataISO };
-  ciclos: { id: number; status: string; data_ciclo: DataISO; horario_geracao: string; horario_disparo_real: string | null; valor_total: Num; omie_pedido_compra_id: string | null }[];
+  ciclos: {
+    id: number; status: string; data_ciclo: DataISO; horario_geracao: string; horario_disparo_real: string | null; valor_total: Num; omie_pedido_compra_id: string | null;
+    /** R45: filhos de split (status de cada um); ausente/vazio = pedido não splitado */
+    filhos?: { id: number; status: string }[] | null;
+  }[];
   linhas: { raiz: number; pedido_id: number; sku_codigo_omie: string; qtde: Num; fator_embalagem_portal: Num; preco_unitario: Num; estoque_atual: Num; estoque_fisico: Num; ponto_pedido: Num; modo_promocao: string | null; preco_sem_desconto: Num }[];
   demanda: { sku: string; data: DataISO; qtde: Num }[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
-  snapshots: { dia: DataISO; snapshot_at: string; saldo_tesouraria: Num; dados: { inicio: DataISO; fim: DataISO; total_entradas?: number; saidas?: Saida[]; entradas?: { data?: DataISO; valor: number }[] }[] }[];
+  snapshots: { dia: DataISO; snapshot_at: string; saldo_tesouraria: Num; dados: { inicio: DataISO; fim: DataISO; total_entradas?: number; total_saidas?: number; saidas?: Saida[]; entradas?: { data?: DataISO; valor: number }[] }[] }[];
   disparados: { id: number; valor_total: Num; momento: string; nfs: string[] }[];
-  titulos_sayerlack: { id: string; nf: string | null; valor: Num; data_emissao: DataISO; created_at: string }[];
+  /** data_baixa = data_baixa_final de v_titulo_baixas (null = sem baixa); valor_baixado idem (R35) */
+  titulos_sayerlack: { id: string; nf: string | null; valor: Num; data_emissao: DataISO; created_at: string; data_baixa: DataISO | null; valor_baixado: Num }[];
+  /** R34: TODOS os ids de título do fornecedor Sayerlack no CP, sem janela de data */
+  ids_sayerlack: string[];
+  /** R33: recebimento real (t4, data local SP) por pedido (pai, filho ou não splitado); null = sem t4 */
+  chegadas: { pedido_id: number; t4: DataISO | null }[];
   pagos_nao_sayerlack: { data: DataISO; valor: Num }[];
-  lags: { faturamento_p10: Num; vencimento_p10: Num; chegada_p50: Num };
+  /** R39: observações de lag (t1 = pedido/emissão, fim = dia em que a observação ficou conhecida, dias = lag) */
+  lag_obs: { faturamento: ObsLag[]; vencimento: ObsLag[]; chegada: ObsLag[] };
   cm_anual: Num;
 }
 
@@ -129,7 +144,8 @@ export function preVoo(f: Fatos): string[] {
   if (!f.linhas.length) falhas.push('linhas vazio — consulta suspeita');
   if (!f.params.length) falhas.push('params vazio — conferir case de empresa');
   if (!f.snapshots.length) falhas.push('snapshots vazio — sem base de caixa');
-  if (f.lags.faturamento_p10 == null || f.lags.vencimento_p10 == null || f.lags.chegada_p50 == null) falhas.push('lags ausentes — sem datação de pagamento/chegada');
+  if (!f.lag_obs || !f.lag_obs.faturamento?.length || !f.lag_obs.vencimento?.length || !f.lag_obs.chegada?.length) falhas.push('lags ausentes — sem datação de pagamento/chegada');
+  if (!Array.isArray(f.ids_sayerlack) || !Array.isArray(f.chegadas)) falhas.push('ids_sayerlack/chegadas ausentes — fatos.sql antigo');
   if (f.cm_anual == null) falhas.push('cm_anual ausente — sem custo de capital');
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
@@ -169,7 +185,35 @@ function momentosDaSerie(serie: SerieDiaria): { media: number | null; sigma: num
   return { media, sigma };
 }
 
-function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number): BaseCaixa {
+/** Mínimo de observações para um lag as-of (R39). */
+export const MIN_OBS_LAG = 10;
+
+/** percentile_disc(p): 1º valor cuja posição acumulada ≥ p. */
+function percentilDisc(xs: number[], p: number): number {
+  const o = [...xs].sort((a, b) => a - b);
+  return o[Math.max(0, Math.ceil(p * o.length) - 1)];
+}
+
+/**
+ * R39: lags as-of do ciclo — observações com t1 em [data−180, data) e concluídas ANTES do dia do ciclo.
+ * Menos de MIN_OBS_LAG observações → null (nunca o p10 de hoje).
+ */
+export function lagsAsOf(f: Fatos, data: DataISO): { faturamentoP10: number | null; vencimentoP10: number | null; chegadaP50: number | null } {
+  const de = addDias(data, -180);
+  const calc = (obs: ObsLag[], p: number) => {
+    const xs = obs.filter((o) => o.t1 >= de && o.t1 < data && o.fim < data).map((o) => Number(o.dias)).filter(Number.isFinite);
+    return xs.length >= MIN_OBS_LAG ? percentilDisc(xs, p) : null;
+  };
+  return { faturamentoP10: calc(f.lag_obs.faturamento, 0.1), vencimentoP10: calc(f.lag_obs.vencimento, 0.1), chegadaP50: calc(f.lag_obs.chegada, 0.5) };
+}
+
+/** R45: pai splitado com filho disparado conta como disparado (a linhagem é pelos filhos). */
+export function statusEfetivo(c: Fatos['ciclos'][number]): string {
+  if (c.status === 'split_em_filhos' && (c.filhos ?? []).some((x) => x.status === 'disparado')) return 'disparado';
+  return c.status;
+}
+
+function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
   const ausencias: string[] = [];
   // as-of: só vale snapshot tirado ATÉ o momento do ciclo (o de 07h do próprio dia não vale para ciclo das 05h)
   const snap = f.snapshots
@@ -181,18 +225,25 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
   }
   const fluxos: Fluxo[] = [];
   const fimJanela = addDias(data, cfg.horizonteDias);
-  // R8 + R23: só títulos do CP (origem cp_omie) com vencimento DENTRO de [inicio, inicio+dias) descontam
-  // o ritmo do mês — o ritmo é medido no CP; eventos recorrentes/eventuais não estão nele.
+  // R8 + R23 + R34: só títulos do CP (origem cp_omie) NÃO-Sayerlack (pelo id do fornecedor) com vencimento
+  // DENTRO de [inicio, inicio+dias) descontam o ritmo do mês — o ritmo é medido no CP não-Sayerlack.
   const tituladoNaoSayPorMes: Record<string, number> = {};
+  const representados = new Set<string>();
   for (const sem of snap.dados) {
     // saídas passadas (atrasadas) ficam: caem no dia 0 (pior caso — ver PREMISSAS)
+    let detalhado = 0;
     for (const s of sem.saidas ?? []) {
       fluxos.push({ data: s.data, valor: -s.valor, camada: 'base_titulos' });
-      if (s.origem === 'cp_omie' && s.data >= data && s.data < fimJanela) {
+      detalhado += s.valor;
+      if (s.id_origem != null) representados.add(String(s.id_origem));
+      if (s.origem === 'cp_omie' && !(s.id_origem != null && idsSay.has(String(s.id_origem))) && s.data >= data && s.data < fimJanela) {
         const mes = s.data.slice(0, 7);
         tituladoNaoSayPorMes[mes] = (tituladoNaoSayPorMes[mes] ?? 0) + s.valor;
       }
     }
+    // R42: total_saidas sem (ou além do) detalhe → a diferença sai no 1º dia da semana, nunca 0
+    const faltante = Number(sem.total_saidas ?? 0) - detalhado;
+    if (faltante > 0.005) fluxos.push(...fluxosDeSemanaAgregada(sem.inicio, sem.fim, 0, faltante).filter((x) => x.valor !== 0));
     // R20: entrada com data anterior ao ciclo NÃO entra (seria caixa que já devia estar no saldo — aprova a mais)
     const entradas = sem.entradas ?? [];
     const candidatas: Fluxo[] = entradas.every((e) => e.data)
@@ -200,11 +251,27 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
       : fluxosDeSemanaAgregada(sem.inicio, sem.fim, sem.total_entradas ?? 0, 0).filter((x) => x.valor !== 0);
     fluxos.push(...candidatas.filter((x) => x.data >= data));
   }
-  const anteriores = f.disparados.filter((p) => ts(p.momento) < ts(momento) && dataLocalSP(p.momento) >= addDias(data, -60));
+  // R38: sem corte por idade — todo disparado dos 180 dias anteriores ao ciclo (antes do momento) é compromisso
+  const anteriores = f.disparados.filter((p) => ts(p.momento) < ts(momento) && dataLocalSP(p.momento) >= addDias(data, -180));
+  // R35: título só desconta o compromisso se está REPRESENTADO na base (id_origem nas saídas do snapshot) ou
+  // já LIQUIDADO antes do dia do snapshot (então saiu do saldo). Existir no CP não comprova nenhum dos dois.
+  const descontoDe = (t: Fatos['titulos_sayerlack'][number]): number => {
+    const valor = exigir(t.valor, 'titulos_sayerlack.valor');
+    if (representados.has(t.id)) return valor;
+    const baixado = numOuNull(t.valor_baixado);
+    if (t.data_baixa != null && t.data_baixa < snap.dia && baixado != null) return Math.min(valor, baixado);
+    return 0;
+  };
   const titulosAteSnap = f.titulos_sayerlack.filter((t) => ts(t.created_at) <= ts(snap.snapshot_at) && t.nf);
   const conc = conciliarCompromissos(
-    anteriores.map((p) => ({ pedidoId: p.id, valorTotal: exigir(p.valor_total, 'disparados.valor_total'), dataPedido: dataLocalSP(p.momento), nfs: p.nfs ?? [] })),
-    titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: exigir(t.valor, 'titulos_sayerlack.valor') })),
+    anteriores.map((p) => ({
+      pedidoId: p.id,
+      // R41: o desembolso do pedido inclui o frete, como o das candidatas
+      valorTotal: exigir(p.valor_total, 'disparados.valor_total') * (1 + cfg.fretePerc),
+      dataPedido: dataLocalSP(p.momento), nfs: p.nfs ?? [],
+    })),
+    // título sem desconto entra com 0: a NF fica "sem título" — a faturar se recente, senão não conciliada
+    titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: descontoDe(t) })),
     data, lagPagamento, IDADE_A_FATURAR_DIAS,
   );
   fluxos.push(...conc.fluxos);
@@ -218,14 +285,20 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
   return { saldoInicial: Number(snap.saldo_tesouraria), inicio: data, dias: cfg.horizonteDias, fluxos, ausencias };
 }
 
-function mediaCompraPorDiaUtil(f: Fatos, data: DataISO): number {
-  const de = addDias(data, -90);
-  const total = f.disparados
-    .filter((p) => dataLocalSP(p.momento) >= de && dataLocalSP(p.momento) < data)
-    .reduce((s, p) => s + exigir(p.valor_total, 'disparados.valor_total'), 0);
+/**
+ * R50: compra disparada por dia útil em [data−90, data). Se o 1º disparado anterior ao ciclo é mais recente
+ * que data−90 (janela incompleta), a média é sobre os dias úteis desde ele; sem disparado anterior → null
+ * (ausência continuidade_sem_historico, nunca provisão 0 calada).
+ */
+export function continuidadePorDiaUtil(f: Fatos, data: DataISO): number | null {
+  const anteriores = f.disparados.map((p) => ({ dia: dataLocalSP(p.momento), p })).filter((x) => x.dia < data);
+  if (anteriores.length === 0) return null;
+  const primeiro = anteriores.reduce((m, x) => (x.dia < m ? x.dia : m), anteriores[0].dia);
+  const de = primeiro > addDias(data, -90) ? primeiro : addDias(data, -90);
+  const total = anteriores.filter((x) => x.dia >= de).reduce((s, x) => s + exigir(x.p.valor_total, 'disparados.valor_total'), 0);
   let uteis = 0;
-  for (let i = 0; i < 90; i++) if (ehDiaUtil(addDias(de, i))) uteis++;
-  return uteis ? total / uteis : 0;
+  for (let d = de; d < data; d = addDias(d, 1)) if (ehDiaUtil(d)) uteis++;
+  return uteis ? total / uteis : null;
 }
 
 /** Reserva = (pagos não-Sayerlack por baixa + títulos Sayerlack por EMISSÃO) / 180 × dias; janela [data−180, data). */
@@ -242,11 +315,16 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const ciclo = f.ciclos.find((c) => c.id === cicloId);
   if (!ciclo) throw new Error(`ciclo ${cicloId} não está nos fatos`);
   const data = ciclo.data_ciclo;
-  const momento = ciclo.horario_disparo_real ?? ciclo.horario_geracao;
+  // R52: as-of = a decisão do motor (geração), não o disparo humano
+  const momento = ciclo.horario_geracao;
+  const status = statusEfetivo(ciclo);
   const reserva = reservaDe(f, data, momento, cfg.reservaDias);
-  const lags = { faturamentoP10: exigir(f.lags.faturamento_p10, 'lags.faturamento_p10'), vencimentoP10: exigir(f.lags.vencimento_p10, 'lags.vencimento_p10') };
-  const L = exigir(f.lags.chegada_p50, 'lags.chegada_p50');
-  const T = L + cfg.intervaloOportunidadeDias;
+  const asOf = lagsAsOf(f, data);
+  const lagsPagamentoOk = asOf.faturamentoP10 != null && asOf.vencimentoP10 != null;
+  // sem lags de pagamento o caixa é indeterminado; a data usada (o próprio dia) é só registro, o mais cedo possível
+  const lags = { faturamentoP10: asOf.faturamentoP10 ?? 0, vencimentoP10: asOf.vencimentoP10 ?? 0 };
+  const L = asOf.chegadaP50;
+  const T = L == null ? null : L + cfg.intervaloOportunidadeDias;
   const dataPagamento = dataPagamentoPrevista(data, lags);
   const hDia = exigir(f.cm_anual, 'cm_anual') / 365;
   const cands: Candidata[] = [];
@@ -284,10 +362,12 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
     fechamento.push({ sku: linha.sku, erro, ok });
     fechaOk.set(linha.sku, (fechaOk.get(linha.sku) ?? true) && ok);
 
-    if (estoqueEfetivo == null) {
+    if (estoqueEfetivo == null || L == null || T == null) {
+      // R39: sem lag de chegada as-of não há janela de valor — sem score, nunca L inventado
+      const motivo = estoqueEfetivo == null ? 'estoque_ausente' : 'lags_insuficientes';
       for (const e of embs) {
-        semScore.push({ sku: e.sku, motivo: 'estoque_ausente' });
-        cands.push({ ...e, deltaV: null, protegida: false, motivoSemScore: 'estoque_ausente' });
+        semScore.push({ sku: e.sku, motivo });
+        cands.push({ ...e, deltaV: null, protegida: false, motivoSemScore: motivo });
       }
       continue;
     }
@@ -318,14 +398,18 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
     });
   }
   const lagPagamento = lags.faturamentoP10 + lags.vencimentoP10;
-  const base = baseDeCaixa(f, data, momento, cfg, reserva, lagPagamento);
-  base.fluxos.push(...provisaoContinuidade(data, cfg.horizonteDias, mediaCompraPorDiaUtil(f, data), lagPagamento, 0));
+  const base = baseDeCaixa(f, data, momento, cfg, reserva, lagPagamento, new Set(f.ids_sayerlack.map(String)));
+  if (!lagsPagamentoOk) base.ausencias.push('lags_insuficientes');
+  const porDiaUtil = continuidadePorDiaUtil(f, data);
+  // R40: a continuidade vai para o corte, que a substitui pela compra aceita (nunca cumulativa)
+  if (porDiaUtil == null) base.ausencias.push('continuidade_sem_historico');
+  else base.continuidade = { porDiaUtil, lagDias: lagPagamento };
   const r: ResultadoCorte = cortar(cands, base, reserva, cfg.minimoPedido);
   const valorMotor = cands.reduce((s, c) => s + (c.desembolso ?? 0), 0);
   const valorAceito = r.aceitas.reduce((s, c) => s + (c.desembolso ?? 0), 0);
   const cortesPorMotivo: Record<string, number> = {};
   for (const x of r.cortadas) cortesPorMotivo[x.motivo] = (cortesPorMotivo[x.motivo] ?? 0) + (x.c.desembolso ?? 0);
-  const disparado = ciclo.status === 'disparado';
+  const disparado = status === 'disparado';
   const cortesDetalhe: DetalheCorte[] = r.cortadas.map((x) => {
     const linha = f.linhas.find((l) => l.raiz === x.c.pedidoRaizId && l.sku_codigo_omie === x.c.sku);
     const precoUnit = precoOuNull(linha?.preco_unitario ?? null);
@@ -336,10 +420,11 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
     if (!disparado || x.motivo === 'sem_score') return { ...base0, ...nulo };
     // fechamento ruim: a trajetória reconstruída não bate com o gravado → o replay não mede nada
     if (!fechamentoOk) return { ...base0, ...nulo, classe: 'indeterminado' as const };
+    if (L == null) return { ...base0, ...nulo, classe: 'indeterminado' as const };
     return { ...base0, ...classificarCorteDoSku(f, x.c.sku, x.c.qtde, data, L, numOuNull(linha?.ponto_pedido ?? null)) };
   });
   return {
-    cicloId, data, status: ciclo.status, valorMotor, valorAceito,
+    cicloId, data, status, valorMotor, valorAceito,
     aceitas: r.aceitas.length, cortadas: r.cortadas.length,
     embalagensSemDesembolso: cands.filter((c) => c.desembolso == null).length,
     protegidas: cands.filter((c) => c.protegida).length,
@@ -436,7 +521,7 @@ function cmvDiarioDoUniverso(f: Fatos): number | null {
  * R25: ΔDIO/caixa liberado por EPISÓDIO dos cortes efetivos. Por episódio, o 1º corte (1º ciclo do
  * episódio; todas as embalagens com preço daquele SKU nele, removidas juntas); replay de 30 dias fixos.
  */
-function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[], L: number) {
+function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[]) {
   const unidades = cortesPorCicloSku(efetivos);
   const episodios: Episodio[] = deduplicarEpisodios(unidades, 7);
   let custoCom = 0;
@@ -452,7 +537,8 @@ function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[], L: number) {
     const cortes = ciclo.cortesDetalhe.filter((x) => x.sku === ep.sku && x.valor != null);
     if (addDias(ep.inicio, HORIZONTE_DIO_DIAS) > f.meta.hoje) { semHorizonte++; continue; }
     const preco = cortes[0]?.precoUnit ?? null;
-    if (preco == null || !cortes.every((x) => x.fechamentoOk)) { indeterminados++; continue; }
+    const L = lagsAsOf(f, ciclo.data).chegadaP50;
+    if (preco == null || L == null || !cortes.every((x) => x.fechamentoOk)) { indeterminados++; continue; }
     const qtde = cortes.reduce((s, x) => s + x.qtde, 0);
     const linha = f.linhas.find((l) => l.raiz === ciclo.cicloId && l.sku_codigo_omie === ep.sku);
     const ate = addDias(ep.inicio, HORIZONTE_DIO_DIAS - 1);
@@ -475,8 +561,7 @@ export function backtest(f: Fatos, cfg: Config) {
   const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
   const precEp = precisaoPorEpisodio(efetivos);
 
-  const L = exigir(f.lags.chegada_p50, 'lags.chegada_p50');
-  const dio = dioPorEpisodio(f, efetivos, L);
+  const dio = dioPorEpisodio(f, efetivos);
   const cmvDiarioBase = cmvDiarioDoUniverso(f);
   const caixaLiberado = dio.n > 0 ? dio.custoCom - dio.custoSem : null;
 
@@ -489,7 +574,7 @@ export function backtest(f: Fatos, cfg: Config) {
   }
 
   const sensibilidade = [15, 30, 45].map((dias) => {
-    const r = f.ciclos.filter((c) => c.status === 'disparado').map((c) => simularCiclo(f, c.id, { ...cfg, reservaDias: dias }));
+    const r = f.ciclos.filter((c) => statusEfetivo(c) === 'disparado').map((c) => simularCiclo(f, c.id, { ...cfg, reservaDias: dias }));
     return { reservaDias: dias, valorAceito: r.reduce((s, x) => s + x.valorAceito, 0), inviaveis: r.filter((x) => x.estado.tipo === 'inviavel').length };
   });
   return {

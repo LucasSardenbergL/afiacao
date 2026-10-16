@@ -1,6 +1,6 @@
 // scripts/orcamento-compra/simular.test.ts
 import { describe, expect, it } from 'vitest';
-import { backtest, dataLocalSP, extrairJson, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
+import { backtest, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
 
 const cfg: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
@@ -8,6 +8,14 @@ const cfg: Config = {
 };
 
 const dia = (base: [number, number, number], i: number) => new Date(Date.UTC(base[0], base[1], base[2] + i)).toISOString().slice(0, 10);
+
+/** R39: 10 observações de cada lag, todas concluídas em junho (antes de qualquer ciclo dos testes). */
+const lagObs = (fat: number, venc: number, cheg: number, n = 10, base: [number, number, number] = [2026, 5, 1]): Fatos['lag_obs'] => {
+  const obs = (dias: number) => Array.from({ length: n }, (_, i) => ({ t1: dia(base, i), fim: dia(base, i + dias), dias }));
+  return { faturamento: obs(fat), vencimento: obs(venc), chegada: obs(cheg) };
+};
+/** R50: disparado antigo (fora dos 180 dias dos compromissos e dos 90 da continuidade) = o motor já existia. */
+const HIST = { id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] as string[] };
 
 const fatos: Fatos = {
   meta: { gerado_em: '2026-10-15T12:00:00Z', hoje: '2026-10-15' },
@@ -18,10 +26,12 @@ const fatos: Fatos = {
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
   snapshots: [{ dia: '2026-10-01', snapshot_at: '2026-10-01T10:00:00Z', saldo_tesouraria: 646_000, dados: [] }],
-  disparados: [],
+  disparados: [HIST],
   titulos_sayerlack: [],
+  ids_sayerlack: [],
+  chegadas: [],
   pagos_nao_sayerlack: [{ data: '2026-09-05', valor: 1_000 }],
-  lags: { faturamento_p10: 2, vencimento_p10: 1, chegada_p50: 14 },
+  lag_obs: lagObs(2, 1, 14),
   cm_anual: 0.15,
 };
 
@@ -32,7 +42,7 @@ const cortavel = (estoqueFisicoDaLinha: number): Fatos => ({
   ...fatos,
   linhas: [{ ...fatos.linhas[0], estoque_fisico: estoqueFisicoDaLinha }],
   snapshots: [{ ...fatos.snapshots[0], saldo_tesouraria: 0 }],
-  lags: { ...fatos.lags, chegada_p50: 5 },
+  lag_obs: lagObs(2, 1, 5),
 });
 
 // Igual ao `cortavel`, mas HOJE = 15/11 (o ciclo tem 30 dias de horizonte para o ΔDIO). Estoque de hoje 19:
@@ -176,10 +186,11 @@ describe('simularCiclo', () => {
 describe('R27 — integração da base de caixa (money-path)', () => {
   const momento = '2026-10-01T12:00:00Z';
   const P1 = { id: 10, valor_total: 1_000, momento: '2026-09-25T12:00:00Z', nfs: ['123'] };
-  const T1 = { id: 't1', nf: '000123', valor: 600, data_emissao: '2026-09-28', created_at: '2026-09-28T12:00:00Z' };
+  // R35: liquidado antes do snapshot (30/09 < 01/10) → desconta; sem baixa nem representação não descontaria
+  const T1 = { id: 't1', nf: '000123', valor: 600, data_emissao: '2026-09-28', created_at: '2026-09-28T12:00:00Z', data_baixa: '2026-09-30' as string | null, valor_baixado: 600 as number | null };
   // pedido disparado DEPOIS do ciclo: nunca pode entrar como compromisso
   const P2 = { id: 11, valor_total: 5_000, momento: '2026-10-01T13:00:00Z', nfs: [] };
-  const com = (titulo: typeof T1): Fatos => ({ ...semLinhas, disparados: [P1, P2], titulos_sayerlack: [titulo] });
+  const com = (titulo: typeof T1): Fatos => ({ ...semLinhas, disparados: [HIST, P1, P2], titulos_sayerlack: [titulo] });
 
   it('(a) título criado antes do snapshot concilia: só o resíduo (400) entra; (b) criado depois é ignorado', () => {
     const antes = com(T1);
@@ -187,7 +198,7 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     expect(simularCiclo(antes, 1, cfg).estado.tipo).toBe('viavel');
     // R30: P1 tem 6 dias e NF sem título as-of → a faturar (inteiro), não indeterminado (antes: nao_conciliado)
     expect(simularCiclo(depois, 1, cfg).estado.tipo).toBe('viavel');
-    const velho = { ...com({ ...T1, created_at: '2026-10-01T10:30:00Z' }), disparados: [{ ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
+    const velho = { ...com({ ...T1, created_at: '2026-10-01T10:30:00Z' }), disparados: [HIST, { ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
     const eVelho = simularCiclo(velho, 1, cfg).estado;
     expect(eVelho.tipo === 'indeterminado' && eVelho.camadas).toEqual(['compromisso_nao_conciliado']);
     // a diferença de piso é exatamente o título: 1000 inteiro (depois) − 400 de resíduo (antes)
@@ -195,19 +206,20 @@ describe('R27 — integração da base de caixa (money-path)', () => {
   });
   it('(c) pedido sem NF com ≥ 15 dias acima de 10% da reserva → indeterminado; abaixo → viável', () => {
     // reserva = 1000/180×30 = 166,67 → limiar 16,67. R28: pedido de 10/09 tem 21 dias no ciclo de 01/10
-    const semNf = (valor: number): Fatos => ({ ...semLinhas, disparados: [{ id: 12, valor_total: valor, momento: '2026-09-10T12:00:00Z', nfs: [] }] });
+    const semNf = (valor: number): Fatos => ({ ...semLinhas, disparados: [HIST, { id: 12, valor_total: valor, momento: '2026-09-10T12:00:00Z', nfs: [] }] });
     const acima = simularCiclo(semNf(20), 1, cfg).estado;
     expect(acima.tipo === 'indeterminado' && acima.camadas).toEqual(['compromisso_nao_conciliado']);
     expect(simularCiclo(semNf(10), 1, cfg).estado.tipo).toBe('viavel');
   });
   it('(e) R28: pedido sem NF recente (6 dias) está a faturar — não deixa o ciclo indeterminado, mas baixa o piso pelo valor inteiro', () => {
     const pedido = { id: 13, valor_total: 5_000, momento: '2026-09-25T12:00:00Z' };
-    const aFaturar: Fatos = { ...semLinhas, disparados: [{ ...pedido, nfs: [] }] };
+    const aFaturar: Fatos = { ...semLinhas, disparados: [HIST, { ...pedido, nfs: [] }] };
     // controle: o mesmo pedido já faturado e titulado por inteiro → resíduo 0 (mesma continuidade, mesmo ritmo)
     const titulado: Fatos = {
       ...semLinhas,
-      disparados: [{ ...pedido, nfs: ['555'] }],
-      titulos_sayerlack: [{ id: 't5', nf: '555', valor: 5_000, data_emissao: '2026-09-27', created_at: '2026-09-27T12:00:00Z' }],
+      disparados: [HIST, { ...pedido, nfs: ['555'] }],
+      // R35: título só desconta se representado no snapshot ou liquidado antes dele
+      titulos_sayerlack: [{ id: 't5', nf: '555', valor: 5_000, data_emissao: '2026-09-27', created_at: '2026-09-27T12:00:00Z', data_baixa: '2026-09-30', valor_baixado: 5_000 }],
     };
     expect(simularCiclo(aFaturar, 1, cfg).estado.tipo).toBe('viavel');
     expect(simularCiclo(titulado, 1, cfg).estado.tipo).toBe('viavel');
@@ -327,8 +339,123 @@ describe('R31 — idade do pedido em data local de São Paulo', () => {
     expect(dataLocalSP('2026-09-17T03:00:00Z')).toBe('2026-09-17');
   });
   it('pedido das 22h locais de 16/09 tem 15 dias no ciclo de 01/10 → não conciliado (o recorte UTC daria 14 → a faturar)', () => {
-    const semLinhasLocal: Fatos = { ...fatos, linhas: [], disparados: [{ id: 21, valor_total: 20, momento: '2026-09-17T01:00:00Z', nfs: [] }] };
+    const semLinhasLocal: Fatos = { ...fatos, linhas: [], disparados: [HIST, { id: 21, valor_total: 20, momento: '2026-09-17T01:00:00Z', nfs: [] }] };
     const e = simularCiclo(semLinhasLocal, 1, cfg).estado;
     expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
+  });
+});
+
+describe('onda final — base de caixa as-of (R34, R35, R38, R39, R41, R42, R45, R50, R52)', () => {
+  type Dados = Fatos['snapshots'][number]['dados'];
+  const snapCom = (dados: Dados, extra: Partial<Fatos> = {}): Fatos => ({ ...semLinhas, snapshots: [{ ...fatos.snapshots[0], dados }], ...extra });
+
+  it('R34: título Sayerlack (por id do fornecedor) não abate o ritmo não-Sayerlack (Codex P1-3)', () => {
+    const saida = { data: '2026-12-15', valor: 100, origem: 'cp_omie', id_origem: 'say-1' };
+    const semana = (s: typeof saida) => [{ inicio: '2026-12-14', fim: '2026-12-20', saidas: [s], entradas: [] }];
+    const base = pisoDe(semLinhas);
+    // controle: título não-Sayerlack do CP abate o ritmo (R23) — saldo líquido igual
+    expect(pisoDe(snapCom(semana({ ...saida, id_origem: 'outro' }), { ids_sayerlack: ['say-1'] }))).toBeCloseTo(base, 6);
+    // Sayerlack: duas despesas — a saída do título e o ritmo inteiro
+    expect(pisoDe(snapCom(semana(saida), { ids_sayerlack: ['say-1'] }))).toBeCloseTo(base - 100, 6);
+  });
+
+  it('R35: título existente fora da trajetória e não liquidado até o snapshot NÃO apaga o compromisso (Codex P1-4)', () => {
+    const P = { id: 30, valor_total: 1_000, momento: '2026-09-25T12:00:00Z', nfs: ['777'] };
+    const T = { id: 't7', nf: '777', valor: 1_000, data_emissao: '2026-09-25', created_at: '2026-09-25T12:00:00Z', data_baixa: null as string | null, valor_baixado: null as number | null };
+    const comP: Fatos = { ...semLinhas, disparados: [HIST, P] };
+    const semTitulo = pisoDe(comP);
+    expect(pisoDe({ ...comP, titulos_sayerlack: [T] })).toBeCloseTo(semTitulo, 6);
+    // liquidado DEPOIS do snapshot: ainda não representado → não desconta
+    expect(pisoDe({ ...comP, titulos_sayerlack: [{ ...T, data_baixa: '2026-10-05', valor_baixado: 1_000 }] })).toBeCloseTo(semTitulo, 6);
+    // liquidado ANTES do snapshot: já saiu do saldo → desconta (sobra o resíduo de frete)
+    expect(pisoDe({ ...comP, titulos_sayerlack: [{ ...T, data_baixa: '2026-09-30', valor_baixado: 1_000 }] })).toBeCloseTo(semTitulo + 1_000, 6);
+    // representado no snapshot (id_origem): a saída está na base e o compromisso fica só com o resíduo → total conservado
+    const representado = snapCom(
+      [{ inicio: '2026-10-05', fim: '2026-10-11', saidas: [{ data: '2026-10-06', valor: 1_000, origem: 'cp_omie', id_origem: 't7' }], entradas: [] }],
+      { disparados: [HIST, P], titulos_sayerlack: [T], ids_sayerlack: ['t7'] },
+    );
+    expect(pisoDe(representado)).toBeCloseTo(semTitulo, 6);
+  });
+
+  it('R38: pedido sem NF com 61+ dias continua compromisso inteiro — não some aos 61 dias (Codex P1-7)', () => {
+    const estado = (momento: string) => simularCiclo({ ...semLinhas, disparados: [HIST, { id: 31, valor_total: 100_000, momento, nfs: [] }] }, 1, cfg).estado;
+    const e = estado('2026-07-31T12:00:00Z');
+    expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
+    // controle: fora da janela de 180 dias não entra
+    expect(estado('2026-03-31T12:00:00Z').tipo).toBe('viavel');
+  });
+
+  it('R39: lags as-of — só observações concluídas antes do ciclo; futuras não mudam a decisão (Codex P1-8)', () => {
+    const antes = lagObs(3, 1, 14);
+    const depois = lagObs(0, 0, 0, 10, [2026, 9, 2]);
+    const f: Fatos = { ...fatos, lag_obs: { faturamento: [...antes.faturamento, ...depois.faturamento], vencimento: [...antes.vencimento, ...depois.vencimento], chegada: [...antes.chegada, ...depois.chegada] } };
+    expect(lagsAsOf(f, '2026-10-01')).toEqual({ faturamentoP10: 3, vencimentoP10: 1, chegadaP50: 14 });
+    // concluída no próprio dia do ciclo ainda não é conhecida; t1 antes de data−180 está fora da janela
+    const borda: Fatos = { ...fatos, lag_obs: { ...antes, faturamento: [...antes.faturamento.slice(1), { t1: '2026-09-29', fim: '2026-10-01', dias: 2 }] } };
+    expect(lagsAsOf(borda, '2026-10-01').faturamentoP10).toBeNull();
+    const velho: Fatos = { ...fatos, lag_obs: { ...antes, faturamento: [...antes.faturamento.slice(1), { t1: '2026-04-03', fim: '2026-04-05', dias: 2 }] } };
+    expect(lagsAsOf(velho, '2026-10-01').faturamentoP10).toBeNull();
+  });
+  it('R39: < 10 observações → ausência lags_insuficientes (caixa) e embalagens sem score (chegada)', () => {
+    const nove = lagObs(2, 1, 14, 9);
+    const e = simularCiclo({ ...fatos, lag_obs: { ...fatos.lag_obs, faturamento: nove.faturamento } }, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toContain('lags_insuficientes');
+    const r = simularCiclo({ ...fatos, lag_obs: { ...fatos.lag_obs, chegada: nove.chegada } }, 1, cfg);
+    expect(r.semScore.map((x) => x.motivo)).toEqual(Array(4).fill('lags_insuficientes'));
+    expect(r.aceitas).toBe(0);
+  });
+
+  it('R41: compromisso = valor_total × (1 + frete) antes de descontar títulos (Codex P1-10)', () => {
+    const pedido = { id: 32, valor_total: 100_000, momento: '2026-09-25T12:00:00Z' };
+    const aFaturar = pisoDe({ ...semLinhas, disparados: [HIST, { ...pedido, nfs: [] }] });
+    // mesmo pedido com NF titulada e paga por 102.500 (valor + frete) → resíduo 0
+    const quitado = pisoDe({
+      ...semLinhas, disparados: [HIST, { ...pedido, nfs: ['900'] }],
+      titulos_sayerlack: [{ id: 't9', nf: '900', valor: 102_500, data_emissao: '2026-09-26', created_at: '2026-09-26T12:00:00Z', data_baixa: '2026-09-29', valor_baixado: 102_500 }],
+    });
+    expect(quitado - aFaturar).toBeCloseTo(102_500, 6);
+  });
+
+  it('R42: semana com total_saidas sem detalhe → saídas agregadas no 1º dia, nunca 0 (Codex P2-11)', () => {
+    const base = pisoDe(semLinhas);
+    expect(pisoDe(snapCom([{ inicio: '2026-10-05', fim: '2026-10-11', total_saidas: 1_000, entradas: [] }]))).toBeCloseTo(base - 1_000, 6);
+    // detalhe parcial: o que falta para o total também entra no 1º dia
+    const parcial = [{ inicio: '2026-10-05', fim: '2026-10-11', total_saidas: 1_000, saidas: [{ data: '2026-10-07', valor: 400, origem: 'evento' }], entradas: [] }];
+    expect(pisoDe(snapCom(parcial))).toBeCloseTo(base - 1_000, 6);
+  });
+
+  it('R45: pai split_em_filhos com filho disparado conta como disparado — mesmo resultado do pedido inteiro (Codex P2-14)', () => {
+    const inteiro = cortavel(65);
+    const split: Fatos = {
+      ...inteiro,
+      ciclos: [{ ...inteiro.ciclos[0], status: 'split_em_filhos', filhos: [{ id: 2, status: 'disparado' }] }],
+      linhas: [{ ...inteiro.linhas[0], pedido_id: 2 }],
+    };
+    const a = backtest(inteiro, cfg).resumo;
+    const b = backtest(split, cfg).resumo;
+    expect(b.nDisparados).toBe(1);
+    expect(b.valorCortadoExpirado).toBe(0);
+    expect(b.valorCortadoEfetivo).toBeCloseTo(a.valorCortadoEfetivo, 9);
+    expect(b.episodios).toBe(a.episodios);
+    // controle: filho não disparado → o pai continua não efetivo
+    const naoDisp = backtest({ ...split, ciclos: [{ ...split.ciclos[0], filhos: [{ id: 2, status: 'expirado_sem_aprovacao' }] }] }, cfg).resumo;
+    expect(naoDisp.nDisparados).toBe(0);
+  });
+
+  it('R50: continuidade com janela incompleta = média por dia útil desde o 1º disparado; sem disparado anterior → null', () => {
+    const P = { id: 40, valor_total: 1_000, momento: '2026-09-21T12:00:00Z', nfs: [] as string[] };
+    // 21/09 (seg) a 30/09 (qua) = 8 dias úteis
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [P] }, '2026-10-01')).toBeCloseTo(1_000 / 8, 9);
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [] }, '2026-10-01')).toBeNull();
+    // controle: motor já existia antes da janela → 90 dias corridos (03/07 a 30/09 = 64 dias úteis)
+    expect(continuidadePorDiaUtil({ ...fatos, disparados: [HIST, P] }, '2026-10-01')).toBeCloseTo(1_000 / 64, 9);
+    const e = simularCiclo({ ...semLinhas, disparados: [] }, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toContain('continuidade_sem_historico');
+  });
+
+  it('R52: momento as-of = horario_geracao (decisão do motor), não o disparo real', () => {
+    const f: Fatos = { ...fatos, ciclos: [{ ...fatos.ciclos[0], horario_geracao: '2026-10-01T09:00:00Z', horario_disparo_real: '2026-10-01T12:00:00Z' }] };
+    const e = simularCiclo(f, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toContain('snapshot');
   });
 });
