@@ -21,6 +21,10 @@ const linha = (extra: Partial<JanelaCursorRow>): JanelaCursorRow => ({
   running_since: null,
   heartbeat_at: null,
   updated_at: "2026-07-21T12:00:00Z",
+  pedidos_falhos: [],
+  tentativas_falha: 0,
+  falhou_em: null,
+  motivo_falha: null,
   ...extra,
 });
 
@@ -129,5 +133,68 @@ describe("rotuloSemeadura", () => {
     expect(rotuloSemeadura("ja_concluida")).toBe("já concluída nesta janela");
     expect(rotuloSemeadura("ja_pendente_outra")).toBe("outra importação em andamento");
     expect(rotuloSemeadura(undefined)).toBe("—");
+  });
+});
+
+describe("falha honesta (janela que não completa com pedido perdido)", () => {
+  const agora = new Date("2026-07-21T12:00:00Z");
+
+  it("terminal por pedidos falhos: INCOMPLETA, conta os pedidos e mostra um exemplo; pode re-armar", () => {
+    const [s] = statusJanelas(
+      [linha({ falhou_em: "2026-07-21T11:00:00Z", motivo_falha: "pedidos_falhos",
+               pedidos_falhos: [{ codigo_pedido: 98765, sqlstate: "23505" }, { codigo_pedido: 2, sqlstate: "23505" }] })],
+      agora,
+    );
+    expect(s.estado).toBe("falhou");
+    expect(s.descricao).toContain("INCOMPLETA");
+    expect(s.descricao).toContain("2 pedidos sem prova no banco");
+    expect(s.descricao).toContain("pedido 98765 (23505)");
+    expect(s.podeRearmar).toBe(true);
+    expect([s.dateFrom, s.dateTo]).toEqual(["2026-01-22", "2026-07-21"]);
+  });
+
+  it("terminal por erro persistente: diz a página e o tipo do erro", () => {
+    const [s] = statusJanelas(
+      [linha({ falhou_em: "2026-07-21T11:00:00Z", motivo_falha: "erro_persistente", next_page: 14, last_error_kind: "http" })],
+      agora,
+    );
+    expect(s.estado).toBe("falhou");
+    expect(s.descricao).toContain("erro persistente na página 14 (http)");
+  });
+
+  it("terminal NÃO conta como em andamento (não prende botões nem polling)", () => {
+    expect(haJanelaAberta([linha({ falhou_em: "2026-07-21T11:00:00Z", motivo_falha: "pedidos_falhos" })])).toBe(false);
+    expect(haJanelaAberta([linha({ falhou_em: "2026-07-21T11:00:00Z" }), linha({ account: "colacor" })])).toBe(true);
+  });
+
+  it("terminal NUNCA expira do card (é a única via de Re-tentar) — Codex 2º, P5", () => {
+    const recente = linha({ falhou_em: "2026-07-01T12:00:00Z" });
+    const antiga = linha({ account: "colacor", falhou_em: "2025-01-01T12:00:00Z" });
+    expect(janelasRelevantes([recente, antiga], agora)).toEqual([recente, antiga]);
+  });
+
+  it("varredura em curso com falhos acumulados avisa, sem esconder (e marca a 2ª varredura)", () => {
+    const [s] = statusJanelas(
+      [linha({ next_page: 5, tentativas_falha: 1, pedidos_falhos: [{ codigo_pedido: 1, sqlstate: "23505" }] })],
+      agora,
+    );
+    expect(s.estado).toBe("aguardando");
+    expect(s.descricao).toContain("1 pedido falhou até aqui");
+    expect(s.descricao).toContain("2ª varredura");
+  });
+
+  it("pré-registro em trânsito (sem SQLSTATE) NÃO aparece como falha (3º challenge Codex, P6)", () => {
+    const [s] = statusJanelas([linha({ next_page: 5, pedidos_falhos: [{ codigo_pedido: 1, hash: "omie_oben_1" }] })], agora);
+    expect(s.descricao).not.toContain("falhou");
+  });
+
+  it("pedidos_falhos fora do formato não quebra (ausente ≠ zero: só o que dá para ler)", () => {
+    const [s] = statusJanelas([linha({ pedidos_falhos: "lixo" as unknown })], agora);
+    expect(s.estado).toBe("aguardando");
+    expect(s.descricao).not.toContain("falhou");
+  });
+
+  it("rótulo do semear para janela terminal aponta o Re-tentar", () => {
+    expect(rotuloSemeadura("ja_falhou")).toBe("esta janela falhou — use Re-tentar");
   });
 });

@@ -1461,6 +1461,79 @@ describe('guardrail money-path: syncPedidos resolve user pela view fresca accoun
   // (ver o invariante do espelho no topo); esta via segue vigiada pelo assert do cache acima.
 });
 
+// ── Fencing token do lease do backfill (vendas_sync_cursor, migration 20261015221600) ──
+// O banco recusa o worker que perdeu o lease; a edge tem de (a) usar SÓ as RPCs cercadas e passar o
+// token, (b) PARAR o laço quando o heartbeat volta 'perdido' e (c) não chamar o finish nesse caso.
+// O lado SQL está provado no PG17 (db/test-vendas-sync-cursor-fencing.sh) e os helpers no Deno
+// (cursor-lease_test.ts); aqui fica o WIRING, contra a reversão do bot do Lovable.
+const VENDAS_LEASE = 'supabase/functions/omie-vendas-sync/cursor-lease.ts';
+
+describe('guardrail money-path: backfill de pedidos usa o lease CERCADO (fencing token)', () => {
+  const edge = removerComentarios(read(VENDAS_SYNC));
+  const lease = removerComentarios(read(VENDAS_LEASE));
+
+  it('sentinela: leu os arquivos reais', () => {
+    expect(edge).toContain('syncPedidos');
+    expect(lease).toContain('export async function heartbeatVendasCursor');
+  });
+
+  it('as 4 chamadas são às RPCs _fenced, com o token em heartbeat/finish/release', () => {
+    for (const nome of ['lease_acquire', 'heartbeat', 'finish', 'release']) {
+      expect(lease, `cursor-lease.ts não chama vendas_sync_${nome}_fenced`).toContain(`db.rpc("vendas_sync_${nome}_fenced"`);
+    }
+    expect(lease, 'cursor-lease.ts não chama vendas_sync_registrar_falhas_fenced').toContain('db.rpc("vendas_sync_registrar_falhas_fenced"');
+    expect(count(lease, 'p_lease_token: lease.leaseToken'), 'heartbeat/finish/release/registrar têm de mandar o token').toBe(4);
+  });
+
+  it('nenhuma chamada às RPCs ANTIGAS (sem cerca) sobrou na edge ou no módulo', () => {
+    const antigas = /\.rpc\(\s*['"]vendas_sync_(lease_acquire|heartbeat|finish|release)['"]/;
+    expect(edge, 'REVERSÃO Lovable? a edge voltou a chamar a RPC de lease sem cerca').not.toMatch(antigas);
+    expect(lease).not.toMatch(antigas);
+  });
+
+  it('o laço PARA quando o heartbeat não confirma a posse (perdido OU erro)', () => {
+    // Ancorado como a 1ª instrução do `while` da paginação: um `break` embrulhado em outro bloco
+    // (`do { … } while (false)`) sairia só do bloco e a paginação seguiria (challenge Codex, P3).
+    expect(
+      edge,
+      'REGRESSÃO: o syncPedidos não para o laço sem posse confirmada — o zumbi seguiria trabalhando na janela do sucessor',
+    ).toMatch(
+      /while \(pagesProcessed < maxPages\) \{\s*if \(cursor\) \{\s*const posse = await heartbeatVendasCursor\([^)]*cursor\.lease, pagina\);\s*if \(posse === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(posse === 'erro'\) \{ lastErrorKind = 'transient'; break; \}/,
+    );
+    expect(edge, 'lease perdido não pode contar como janela completa').toContain('const complete = reachedEnd && !leasePerdido;');
+  });
+
+  it('falha honesta: o failed[] da página é REGISTRADO na janela e, sem confirmação, a invocação LANÇA', () => {
+    expect(lease, 'cursor-lease.ts não chama a RPC cercada de registro').toContain('db.rpc("vendas_sync_registrar_falhas_fenced"');
+    expect(
+      edge,
+      'REGRESSÃO: os pedidos falhos voltaram a ser só log — a janela fecharia completa com pedido perdido',
+    ).toMatch(
+      /if \(cursor && fails\.length > 0\) \{\s*const registro = await registrarFalhasVendasCursor\([^)]*falhasDaPagina\(fails, pagina\)\);\s*if \(registro === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(registro === 'erro'\) \{\s*throw new Error\(/,
+    );
+  });
+
+  it('pendência PROVADA: o lote é pré-registrado ANTES de criar_pedidos_com_itens (2º challenge Codex, P2)', () => {
+    const iPre = edge.indexOf('pendenciasDoLote(pedidosRpc, pagina)');
+    const iRpc = edge.indexOf("supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc })");
+    expect(iPre, 'REGRESSÃO: sumiu o pré-registro das pendências do lote').toBeGreaterThan(-1);
+    expect(iRpc, 'sentinela: a chamada da RPC de pedidos mudou de forma').toBeGreaterThan(-1);
+    expect(iPre, 'REGRESSÃO: o pré-registro foi para DEPOIS da gravação — volta o intervalo em que o pedido some').toBeLessThan(iRpc);
+    // Forma EXATA, ancorada no início do bloco da RPC: `if (cursor && false)` ou outro desvio deixaria o
+    // pré-registro inalcançável com o texto ainda presente (3º challenge Codex, P7).
+    expect(edge, 'o pré-registro tem de rodar em TODO lote do modo cursor, e sem confirmação LANÇAR antes de gravar').toMatch(
+      /if \(pedidosRpc\.length > 0\) \{\s*if \(cursor\) \{\s*const pendencias = pendenciasDoLote\(pedidosRpc, pagina\);\s*if \(pendencias\.length > 0\) \{\s*const pre = await registrarFalhasVendasCursor\(supabase, account, cursor\.df, cursor\.dt, cursor\.lease, pendencias\);\s*if \(pre === 'perdido'\) \{ leasePerdido = true; break; \}\s*if \(pre === 'erro'\) \{\s*throw new Error\(/,
+    );
+  });
+
+  it('o finish NÃO é chamado com lease perdido', () => {
+    expect(
+      edge,
+      'REGRESSÃO: o finish voltou a ser chamado incondicionalmente depois do syncPedidos',
+    ).toMatch(/r\.leasePerdido\s*\?\s*"lease_perdido"\s*:\s*await finishVendasCursor\(/);
+  });
+});
+
 // ── P0-B-bis (incidente carteira, ponta 1/2): o writer popula o vendedor de recomendacoes NA PROOF ──
 // A carteira estava 100% Hunter: o writer gravava omie_codigo_vendedor lendo só c.codigo_vendedor (raiz
 // vazio) → proof NULL → todo cliente órfão. O vendedor mora em recomendacoes.codigo_vendedor. O writer
@@ -3922,7 +3995,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
   // anterior nasceu no #1922, DEPOIS do #1888, então já provava aquela fatia por transitividade
   // — mas responderia idêntico antes e depois da prova COMPORTAMENTAL, que é a única a
   // sobreviver a um deploy em que o Lovable reinterpreta o código (#1272, #1445→#1478).
-  const CONTRATO = 'identidade-a2-client-to-user-v3';
+  const CONTRATO = 'identidade-a2-client-to-user-v4';
   // Sobre a fonte SEM comentários: a prosa que EXPLICA o campo cita o campo (`// \`canary: true\`
   // acompanha o probe_no_ar...`), então um assert POSITIVO sobre o texto cru passa lendo o
   // comentário e sobrevive à remoção do código. Falsificação S3 pegou exatamente isso.

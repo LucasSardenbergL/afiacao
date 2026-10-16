@@ -22,6 +22,7 @@ import { descontoNaLeituraDoOmie } from "../_shared/edicao-desconto-omie.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
 import { avaliarAssinaturaA2, CONTRATO_A2 } from "./assinatura-a2.ts";
+import { acquireVendasLease, falhasDaPagina, finishVendasCursor, heartbeatVendasCursor, type LeaseCursor, pendenciasDoLote, registrarFalhasVendasCursor, releaseVendasCursor } from "./cursor-lease.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { avaliarPagina, MAX_PAGINAS_LISTAGEM, MAX_PAGINAS_PEDIDOS, MAX_PAGINAS_POS_ESTOQUE, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 import { atenderSondaOptions } from '../_shared/sonda-cron.ts';
@@ -1061,9 +1062,10 @@ async function syncPedidos(
   account: Account = "oben",
   dateFrom?: string, // DD/MM/YYYY
   dateTo?: string,   // DD/MM/YYYY
-  // Modo cursor (backfill): presença ⟹ heartbeat do lease por página + completude
-  // null-discriminada (vendas_sync_cursor). df/dt são as datas ISO (PK do cursor).
-  cursor?: { df: string; dt: string },
+  // Modo cursor (backfill): presença ⟹ heartbeat CERCADO do lease por página + completude
+  // null-discriminada (vendas_sync_cursor). df/dt são as datas ISO (PK do cursor); `lease` traz
+  // o fencing token — sem ele o banco recusa heartbeat/finish/release (20261015221600).
+  cursor?: { df: string; dt: string; lease: LeaseCursor },
 ) {
   let pagina = startPage;
   let totalPaginas = 1;
@@ -1084,6 +1086,7 @@ async function syncPedidos(
   // janela do cron. Sem ele, o pedido pulado some em silêncio quando a data sai da janela.
   let pedidosDescontoIlegivel = 0;
   const amostraDescontoIlegivel: number[] = [];
+  let leasePerdido = false;          // o banco recusou o heartbeat: outro worker tomou a janela
   let reachedEnd = false;            // true SÓ no fim real do Omie (null = "Não existem registros", ou página vazia)
   let lastErrorKind: 'rate_limit' | 'transient' | 'http' | null = null;
 
@@ -1287,7 +1290,17 @@ async function syncPedidos(
   while (pagesProcessed < maxPages) {
     // Modo cursor: renova o lease + persiste progresso (next_page := pagina em curso)
     // ANTES da página longa (~40s/pág + lookups). Crash → retoma daqui, não do run-start.
-    if (cursor) await heartbeatVendasCursor(supabase, account, cursor.df, cursor.dt, pagina);
+    // CERCADO — o heartbeat é a conferência de POSSE antes de cada página:
+    //  • 'perdido': o banco diz que o lease agora é de OUTRO worker (este ficou >3 min sem heartbeat
+    //    e foi substituído) → PARA; continuar seria trabalhar em dobro sobre a janela do sucessor.
+    //  • 'erro': sem confirmação de posse → PARA também, como pausa 'transient' (retoma da página
+    //    em curso no próximo ciclo, ≤6 min; não conta para o terminal). Seguir best-effort deixava
+    //    um zumbi escrever VÁRIAS páginas depois do takeover (challenge Codex 2026-10-15, P2).
+    if (cursor) {
+      const posse = await heartbeatVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, pagina);
+      if (posse === 'perdido') { leasePerdido = true; break; }
+      if (posse === 'erro') { lastErrorKind = 'transient'; break; }
+    }
 
     const listParams: Record<string, unknown> = { pagina, registros_por_pagina: 50, filtrar_apenas_inclusao: "N" };
     if (dateFrom) listParams.filtrar_por_data_de = dateFrom;
@@ -1558,6 +1571,20 @@ async function syncPedidos(
     // (órfão de cabeçalho compatível) / skip (completo ou divergente). Ver migration
     // 20260617160000_criar_pedidos_com_itens.sql + prove em db/test-criar-pedidos-com-itens.sh.
     if (pedidosRpc.length > 0) {
+      // Modo cursor: PRÉ-REGISTRA a identidade de cada pedido do lote ANTES de gravar. A janela só
+      // completa quando o banco PROVA (sales_orders) que todos existem — não há mais intervalo entre
+      // "gravar" e "anotar" em que um pedido some (2º challenge Codex, P2). Sem confirmação, LANÇA
+      // antes de escrever: o release preserva a página em curso e a próxima passada a refaz.
+      if (cursor) {
+        const pendencias = pendenciasDoLote(pedidosRpc, pagina);
+        if (pendencias.length > 0) {
+          const pre = await registrarFalhasVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, pendencias);
+          if (pre === 'perdido') { leasePerdido = true; break; }
+          if (pre === 'erro') {
+            throw new Error(`[sync_pedidos][${account}] sem confirmação do pré-registro de ${pendencias.length} pedido(s) da pág ${pagina} — não gravo sem a pendência anotada`);
+          }
+        }
+      }
       const { data: rpcRes, error: rpcErr } = await supabase.rpc('criar_pedidos_com_itens', { p_pedidos: pedidosRpc });
       if (rpcErr) {
         // Money-path: a RPC é o ÚNICO caminho de escrita agora. Se ela falha (migration não
@@ -1574,6 +1601,16 @@ async function syncPedidos(
         totalFailed += fails.length;
         if (divs.length > 0) console.warn(`[sync_pedidos][${account}] ${divs.length} pedido(s) com cabeçalho divergente (Fase 2, NÃO reconciliado):`, JSON.stringify(divs.slice(0, 5)));
         if (fails.length > 0) console.error(`[sync_pedidos][${account}] ${fails.length} pedido(s) FALHARAM na RPC pág ${pagina}:`, JSON.stringify(fails.slice(0, 5)));
+        // Modo cursor: anexa o SQLSTATE/mensagem aos pedidos falhos (já pré-registrados acima) — é o
+        // diagnóstico que o staff vê no card. A completude NÃO depende disto: depende da prova em
+        // sales_orders. Sem confirmação, LANÇA (a página é refeita e anotada de novo).
+        if (cursor && fails.length > 0) {
+          const registro = await registrarFalhasVendasCursor(supabase, account, cursor.df, cursor.dt, cursor.lease, falhasDaPagina(fails, pagina));
+          if (registro === 'perdido') { leasePerdido = true; break; }
+          if (registro === 'erro') {
+            throw new Error(`[sync_pedidos][${account}] sem confirmação do registro de ${fails.length} pedido(s) falho(s) da pág ${pagina} — a janela não segue sem eles`);
+          }
+        }
         console.log(`[sync_pedidos][${account}] RPC pág ${pagina}: inserted=${r.inserted || 0} repaired=${r.repaired || 0} items=${r.items || 0} skip_completo=${r.skipped_complete || 0} skip_sem_item=${r.skipped_no_items || 0} divergencia=${divs.length} falhas=${fails.length} itens_com_codigo_item=${itensComIdentidade}/${itensLidos} identidade_ambigua=${pedidosIdentidadeAmbigua}`);
       }
     }
@@ -1585,8 +1622,8 @@ async function syncPedidos(
 
   // Completude = FIM REAL alcançado (null/página vazia), NUNCA pagina>totalPaginas.
   // Pausa (transitório/erro) ou budget de página esgotado ⟹ complete=false, retoma do `pagina`.
-  const complete = reachedEnd;
-  return { totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, pedidosDescontoIlegivel, amostraDescontoIlegivel, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
+  const complete = reachedEnd && !leasePerdido;
+  return { leasePerdido, totalSynced, totalItems, totalFailed, skippedNoClient, skippedExisting, itensLidos, itensComIdentidade, pedidosIdentidadeAmbigua, pedidosDescontoIlegivel, amostraDescontoIlegivel, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete, lastErrorKind };
 }
 
 // ── Reparo dos órfãos PRESOS (pai sem itens, fora da janela do cron) ──────────────────
@@ -2617,65 +2654,8 @@ async function completeVendaSync(
   }
 }
 
-// ─── Cursor + lease do BACKFILL de pedidos (tabela vendas_sync_cursor) ───
-// Espelha o state-machine SQL da migration 20260617133633 (lease_acquire/heartbeat/
-// finish — SECURITY DEFINER gated a service_role). `omieDateToIso` (DD/MM/YYYY → ISO,
-// PK date) vem de ./pagination.ts (puro/testado).
-// O lease atômico tem que ser RPC: `.or()` em UPDATE do PostgREST quebra (42703, CLAUDE.md).
-
-// Tenta tomar o lease ATOMICAMENTE. Retorna a página de retomada, ou null se NÃO
-// conseguiu (outra invocação viva / janela completa / inexistente / RPC ausente)
-// ⟹ o caller sai no-op. Degradação segura: sem a migration aplicada, é sempre no-op.
-async function acquireVendasLease(
-  db: SupabaseClient, account: Account, dfIso: string, dtIso: string,
-): Promise<number | null> {
-  const { data, error } = await db.rpc('vendas_sync_lease_acquire', {
-    p_account: account, p_date_from: dfIso, p_date_to: dtIso,
-  });
-  if (error) {
-    console.error(`[sync_pedidos][${account}] lease_acquire falhou (no-op):`, error.message);
-    return null;
-  }
-  return typeof data === 'number' ? data : null;
-}
-
-// Renova o lease por página (best-effort: uma falha de heartbeat não derruba o sync).
-// supabase-js .rpc() NÃO lança em erro de RPC — resolve {error} (Codex). Por isso
-// checamos `error` (try/catch não pegaria), pra ao menos LOGAR um heartbeat negado.
-// Renova o lease E persiste o progresso: next_page := a página EM CURSO (`page`).
-// Assim um crash retoma da página em curso (re-faz ≤1 página, idempotente), nunca o run.
-async function heartbeatVendasCursor(
-  db: SupabaseClient, account: Account, dfIso: string, dtIso: string, page: number,
-): Promise<void> {
-  const { error } = await db.rpc('vendas_sync_heartbeat', { p_account: account, p_date_from: dfIso, p_date_to: dtIso, p_page: page });
-  if (error) console.warn(`[sync_pedidos][${account}] heartbeat falhou (segue):`, error.message);
-}
-
-// Encerra e LIBERA o lease. complete=true ⟹ fecha completed_at (fim real); false ⟹
-// pausa (retoma do nextPage, grava last_error_kind). A RPC zera running_since sempre.
-async function finishVendasCursor(
-  db: SupabaseClient, account: Account, dfIso: string, dtIso: string,
-  complete: boolean, nextPage: number | null, lastErrorKind: string | null,
-): Promise<void> {
-  const { error } = await db.rpc('vendas_sync_finish', {
-    p_account: account, p_date_from: dfIso, p_date_to: dtIso,
-    p_complete: complete,
-    p_next_page: complete ? null : nextPage,
-    p_last_error_kind: complete ? null : lastErrorKind,
-  });
-  if (error) console.error(`[sync_pedidos][${account}] finish falhou:`, error.message);
-}
-
-// LIBERA o lease preservando o next_page (o progresso que o heartbeat persistiu). Para
-// o erro INESPERADO escapado do syncPedidos: solta o lease + grava o kind sem rebobinar.
-async function releaseVendasCursor(
-  db: SupabaseClient, account: Account, dfIso: string, dtIso: string, lastErrorKind: string,
-): Promise<void> {
-  const { error } = await db.rpc('vendas_sync_release', {
-    p_account: account, p_date_from: dfIso, p_date_to: dtIso, p_last_error_kind: lastErrorKind,
-  });
-  if (error) console.error(`[sync_pedidos][${account}] release falhou:`, error.message);
-}
+// ─── Cursor + lease CERCADO do BACKFILL de pedidos (vendas_sync_cursor) ───
+// Helpers em ./cursor-lease.ts (fencing token, migration 20261015221600; testes no Deno).
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -3995,23 +3975,28 @@ Deno.serve(async (req) => {
           const dtIso = omieDateToIso(dateTo);
           if (!dfIso || !dtIso) throw new Error(`Datas inválidas (esperado DD/MM/YYYY): ${dateFrom}..${dateTo}`);
 
-          // Lease atômico: serialização REAL (não intervalo de cron). 0 linhas = outra
-          // invocação viva / janela já completa → sai no-op (não processa).
-          const resumePage = await acquireVendasLease(supabaseAdmin, account, dfIso, dtIso);
-          if (resumePage == null) {
+          // Lease atômico CERCADO: serialização REAL (não intervalo de cron). null = outra
+          // invocação viva / janela já completa / RPC ausente → sai no-op (não processa).
+          const lease = await acquireVendasLease(supabaseAdmin, account, dfIso, dtIso);
+          if (lease == null) {
             result = { success: true, skipped: "lease_nao_adquirido", account, date_from: dateFrom, date_to: dateTo };
             break;
           }
           try {
-            const r = await syncPedidos(supabaseAdmin, resumePage, maxPagesPedidos, account, dateFrom, dateTo, { df: dfIso, dt: dtIso });
-            // Fecha o cursor: completo (fim real) OU pausa (budget/transitório/erro Omie).
-            await finishVendasCursor(supabaseAdmin, account, dfIso, dtIso, r.complete, r.nextPage, r.lastErrorKind);
-            result = { success: true, use_cursor: true, resume_page: resumePage, ...r };
+            const r = await syncPedidos(supabaseAdmin, lease.resumePage, maxPagesPedidos, account, dateFrom, dateTo, { df: dfIso, dt: dtIso, lease });
+            // Lease PERDIDO no meio do run: a janela é de outro worker, que a fecha. Chamar o
+            // finish aqui seria escrever o estado DESTE worker sobre o do dono (o banco recusaria
+            // de qualquer forma — o finish é cercado —, mas nem tentar deixa o log honesto).
+            const fechamento = r.leasePerdido
+              ? "lease_perdido"
+              : await finishVendasCursor(supabaseAdmin, account, dfIso, dtIso, lease, r.complete, r.nextPage, r.lastErrorKind);
+            result = { success: true, use_cursor: true, resume_page: lease.resumePage, fechamento, ...r };
           } catch (e) {
             // Erro inesperado (DB/bug) escapou do syncPedidos: LIBERA o lease preservando
             // o next_page que o heartbeat persistiu (retoma da página EM CURSO, re-faz ≤1
-            // página idempotente — NÃO o run inteiro, achado Codex). Propaga p/ visibilidade.
-            await releaseVendasCursor(supabaseAdmin, account, dfIso, dtIso, "error");
+            // página idempotente — NÃO o run inteiro, achado Codex). Cercado: se o lease já
+            // era de outro worker, o banco recusa e nada muda. Propaga p/ visibilidade.
+            await releaseVendasCursor(supabaseAdmin, account, dfIso, dtIso, lease, "error");
             throw e;
           }
           break;
@@ -4211,7 +4196,7 @@ Deno.serve(async (req) => {
           // a única que sobrevive a um deploy em que o Lovable reinterpreta o código (#1272,
           // #1445→#1478). Bumpar aqui exige bumpar junto o gate de `edge-money-path-invariants`, a
           // tabela de `docs/agent/deploy.md` e o mapa de `_shared/sonda-versao-contrato_test.ts`.
-          contrato: "identidade-a2-client-to-user-v3",
+          contrato: "identidade-a2-client-to-user-v4",
           // O `contrato` acima nomeia a FATIA que a fixture verifica; o `versao` diz QUAL BUNDLE
           // respondeu. São papéis distintos e o `contrato` pode ficar parado de forma legítima —
           // por isso o discriminador de bundle viaja JUNTO, como na `generate-tactical-plan`:

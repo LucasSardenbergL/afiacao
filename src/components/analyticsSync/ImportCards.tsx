@@ -2,7 +2,7 @@
 // Extraídos verbatim de src/pages/AdminAnalyticsSync.tsx (god-component split).
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2, Clock, AlertTriangle } from "lucide-react";
+import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2, Clock, AlertTriangle, XCircle, RotateCcw } from "lucide-react";
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
 import type { StatusJanelaConta } from "./janelas";
@@ -106,6 +106,7 @@ const JANELA_ICON = {
   rodando: <Loader2 className="h-3 w-3 animate-spin text-primary" />,
   aguardando: <Clock className="h-3 w-3 text-muted-foreground" />,
   falhando: <AlertTriangle className="h-3 w-3 text-status-warning" />,
+  falhou: <XCircle className="h-3 w-3 text-status-error" />,
   concluida: <CheckCircle2 className="h-3 w-3 text-status-success" />,
 } as const;
 
@@ -117,6 +118,8 @@ export function ImportPedidosCard({
   janelas,
   onImportRecent,
   onImportAll,
+  onRearmar,
+  rearmando = false,
 }: {
   isRunning: boolean;
   recentPending: boolean;
@@ -126,6 +129,9 @@ export function ImportPedidosCard({
   janelas: StatusJanelaConta[];
   onImportRecent: () => void;
   onImportAll: () => void;
+  /** Re-arma uma janela TERMINAL (falhou) — ação sobre UM registro, estado no próprio cursor. */
+  onRearmar?: (janela: StatusJanelaConta) => void;
+  rearmando?: boolean;
 }) {
   const desabilitado = isRunning || importandoEmAndamento;
   return (
@@ -177,11 +183,26 @@ export function ImportPedidosCard({
               </div>
             )}
             {janelas.map((j) => (
-              <div key={`${j.account}-${j.janela}`} className="flex items-center gap-2 text-xs text-muted-foreground">
+              <div
+                key={`${j.account}-${j.janela}`}
+                className={`flex flex-wrap items-center gap-2 text-xs ${j.estado === "falhou" ? "text-status-error" : "text-muted-foreground"}`}
+              >
                 {JANELA_ICON[j.estado]}
                 <span className="font-medium text-foreground">{j.account}</span>
                 <span>{j.janela}</span>
                 <span>— {j.descricao}</span>
+                {j.estado === "falhou" && j.podeRearmar && onRearmar && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    disabled={rearmando}
+                    onClick={() => onRearmar(j)}
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Re-tentar
+                  </Button>
+                )}
               </div>
             ))}
           </div>
