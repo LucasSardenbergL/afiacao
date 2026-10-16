@@ -83,3 +83,20 @@ describe('carregamento limitado à janela de adiamento (spec §5.2)', () => {
     expect(v[0]).toEqual({ deltaV: null, unidadesAtendidas: null, motivoSemScore: 'preco_ou_margem_ausente' });
   });
 });
+
+describe('R43 — promoção decidida pelo tempo de consumo NÃO limitado pela janela (Codex P2-12)', () => {
+  it('estoque 1.000, d 0,05/dia, embalagem 20: consumo leva ~20 mil dias ≫ 90 → sem benefício de promoção', () => {
+    const amostras = [{ ateChegada: 0, total: 0 }];
+    const q = { ...p, demandaMediaDiaria: 0.05 };
+    const sem = valorDasEmbalagens(1_000, [20], amostras, q)[0].deltaV!;
+    const com = valorDasEmbalagens(1_000, [20], amostras, { ...q, promoBeneficioUnit: 2 })[0].deltaV!;
+    expect(com).toBeCloseTo(sem, 9);
+  });
+  it('demanda zero → nunca consome → sem benefício de promoção', () => {
+    const amostras = [{ ateChegada: 0, total: 0 }];
+    const q = { ...p, demandaMediaDiaria: 0 };
+    const sem = valorDasEmbalagens(0, [1], amostras, q)[0].deltaV!;
+    const com = valorDasEmbalagens(0, [1], amostras, { ...q, promoBeneficioUnit: 2 })[0].deltaV!;
+    expect(com).toBeCloseTo(sem, 9);
+  });
+});

@@ -4,6 +4,7 @@
 import type { DataISO } from './datas';
 import type { Embalagem } from './embalagens';
 import { avaliarEstado, trajetoriaDiaria, type EstadoCaixa, type Fluxo } from './caixa';
+import { provisaoContinuidade } from './camadas';
 
 export interface Candidata extends Embalagem {
   deltaV: number | null;
@@ -11,7 +12,15 @@ export interface Candidata extends Embalagem {
   motivoSemScore: string | null;
 }
 export type MotivoCorte = 'economico' | 'financeiro' | 'minimo' | 'sem_score';
-export interface BaseCaixa { saldoInicial: number; inicio: DataISO; dias: number; fluxos: Fluxo[]; ausencias: string[] }
+/**
+ * `fluxos` NÃO inclui a continuidade do motor: ela vem em `continuidade` e o corte a recalcula a cada
+ * passo, consumida (mais cedo primeiro) pelo desembolso já aceito — a compra aceita SUBSTITUI a provisão
+ * (spec §6.5, R40), nunca é debitada em cima dela.
+ */
+export interface BaseCaixa {
+  saldoInicial: number; inicio: DataISO; dias: number; fluxos: Fluxo[]; ausencias: string[];
+  continuidade?: { porDiaUtil: number; lagDias: number };
+}
 export interface ResultadoCorte {
   aceitas: Candidata[];
   cortadas: { c: Candidata; motivo: MotivoCorte }[];
@@ -26,14 +35,20 @@ const chaveSku = (c: Candidata) => `${c.pedidoRaizId}|${c.sku}`;
 
 export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, minimoPedido: number): ResultadoCorte {
   const fluxos: Fluxo[] = [...base.fluxos];
+  const aceitas: Candidata[] = [];
+  // R40: provisão de continuidade consumida pelo desembolso aceito (+ o extra em teste), mais cedo primeiro
+  const comProvisao = (extra: Fluxo[]): Fluxo[] => {
+    if (!base.continuidade) return [...fluxos, ...extra];
+    const aceito = aceitas.reduce((s, c) => s + (c.desembolso as number), 0) - extra.reduce((s, f) => s + f.valor, 0);
+    const { porDiaUtil, lagDias } = base.continuidade;
+    return [...fluxos, ...extra, ...provisaoContinuidade(base.inicio, base.dias, porDiaUtil, lagDias, aceito)];
+  };
+  const trajetoria = (extra: Fluxo[] = []) => trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, comProvisao(extra));
   // Base de caixa com camada ausente: só o gate econômico decide; o estado final sai `indeterminado`
   // (nunca "aceito pelo orçamento" sobre saldo fabricado — spec §6).
   const semCaixa = base.ausencias.length > 0;
-  const cabe = (extra: Fluxo[]) =>
-    semCaixa ||
-    avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, [...fluxos, ...extra]), reserva, []).tipo === 'viavel';
+  const cabe = (extra: Fluxo[]) => semCaixa || avaliarEstado(trajetoria(extra), reserva, []).tipo === 'viavel';
 
-  const aceitas: Candidata[] = [];
   const retirarFluxo = (c: Candidata) => {
     const i = fluxos.findIndex((f) => f.camada === 'candidato' && f.data === c.dataPagamento && f.valor === -(c.desembolso as number));
     if (i >= 0) fluxos.splice(i, 1);
@@ -50,7 +65,7 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
     if (c.desembolso == null) { cortadas.push({ c, motivo: 'sem_score' }); protegidoSemDesembolso = true; continue; }
     aceitas.push(c); marcar(c); fluxos.push(fluxoDe(c));
   }
-  const estadoProtegidas = avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, fluxos), reserva, []);
+  const estadoProtegidas = avaliarEstado(trajetoria(), reserva, []);
   if (!semCaixa && estadoProtegidas.tipo === 'inviavel') {
     for (const c of cands) if (!c.protegida) cortadas.push({ c, motivo: c.deltaV == null || c.desembolso == null ? 'sem_score' : 'financeiro' });
     return { aceitas, cortadas, estado: estadoProtegidas, scoreMarginal: null, escassezCaixa: true, pedidosAbaixoMinimo: [] };
@@ -113,7 +128,10 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
         aceitas.push(x.c); marcar(x.c); fluxos.push(fluxoDe(x.c)); adicionadas.push(x);
       }
       const somaDeltaV = doPedido().reduce((s, c) => s + (c.deltaV ?? 0), 0);
-      if (total() >= minimoPedido && (somaDeltaV > 0 || temProtegida)) continue;
+      // R44: com protegida o pedido não é zerado, mas o complemento só fica se ele mesmo não destrói valor
+      const somaDeltaVAdicionadas = adicionadas.reduce((s, a) => s + (a.c.deltaV as number), 0);
+      const util = temProtegida ? somaDeltaVAdicionadas >= 0 : somaDeltaV > 0;
+      if (total() >= minimoPedido && util) continue;
       // não fechou o mínimo de forma útil: desfaz as adicionadas (aceitas, prefixo, fluxo) devolvendo o motivo original
       for (const a of adicionadas) {
         aceitas.splice(aceitas.indexOf(a.c), 1);
@@ -135,7 +153,7 @@ export function cortar(cands: Candidata[], base: BaseCaixa, reserva: number, min
   const aceitasDiscricionarias = aceitas.filter((c) => !c.protegida);
   const scoreMarginal = aceitasDiscricionarias.length === 0 ? null : Math.min(...aceitasDiscricionarias.map((c) => ajustado.get(c)!));
 
-  const estado = avaliarEstado(trajetoriaDiaria(base.saldoInicial, base.inicio, base.dias, fluxos), reserva, protegidoSemDesembolso ? [...base.ausencias, 'protegido_sem_desembolso'] : base.ausencias);
+  const estado = avaliarEstado(trajetoria(), reserva, protegidoSemDesembolso ? [...base.ausencias, 'protegido_sem_desembolso'] : base.ausencias);
   return {
     aceitas,
     cortadas,

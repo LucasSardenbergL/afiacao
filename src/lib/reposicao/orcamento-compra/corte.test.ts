@@ -130,4 +130,35 @@ describe('cortar', () => {
     expect(r.cortadas.map((x) => [x.c.k, x.motivo]).sort()).toEqual([[1, 'sem_score'], [2, 'sem_score']]);
     expect(r.escassezCaixa).toBe(false);
   });
+  it('R40: a compra aceita substitui a provisão de continuidade (Codex P1-9: saldo 200, reserva 50, provisão 150, candidata 100 → cabe, piso 50)', () => {
+    // início qui 01/10, 3 dias, lag 0 → provisão única de 150 na sex 02/10; a candidata consome 100 dela
+    // (cumulativo daria 200 − 100 − 150 = −50 → corte financeiro; sem provisão daria piso 100)
+    const b: BaseCaixa = { ...base(200), dias: 3, continuidade: { porDiaUtil: 150, lagDias: 0 } };
+    const r = cortar([c('A', 1, 100, 5, { dataPagamento: '2026-10-02' })], b, 50, 0);
+    expect(r.aceitas.map((x) => x.sku)).toEqual(['A']);
+    expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 50 });
+  });
+  it('R40: candidata cortada não consome a provisão (controle: piso = saldo − provisão inteira)', () => {
+    const b: BaseCaixa = { ...base(200), dias: 3, continuidade: { porDiaUtil: 100, lagDias: 0 } };
+    const r = cortar([c('A', 1, 100, -1, { dataPagamento: '2026-10-02' })], b, 50, 0);
+    expect(r.cortadas.map((x) => x.motivo)).toEqual(['economico']);
+    expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 100 });
+  });
+  it('R40: protegida também consome a provisão antes do teste de inviabilidade', () => {
+    // cumulativo: 200 − 100 − 150 = −50 → inviável; com substituição: 200 − 100 − 50 = 50
+    const b: BaseCaixa = { ...base(200), dias: 3, continuidade: { porDiaUtil: 150, lagDias: 0 } };
+    const r = cortar([c('P', 1, 100, null, { protegida: true, dataPagamento: '2026-10-02' })], b, 50, 0);
+    expect(r.estado).toMatchObject({ tipo: 'viavel', piso: 50 });
+  });
+  it('R44: complemento ao mínimo com ΔV < 0 não é aceito só por haver protegida (Codex P2-13)', () => {
+    const r = cortar([c('A', 1, 900, 5, { protegida: true }), c('A', 2, 100, -100)], base(1_000_000), 224_000, 1_000);
+    expect(r.aceitas.map((x) => x.k)).toEqual([1]);
+    expect(r.cortadas.map((x) => [x.c.k, x.motivo])).toEqual([[2, 'economico']]);
+    expect(r.pedidosAbaixoMinimo).toEqual([1]);
+  });
+  it('R44: complemento com ΔV ≥ 0 em pedido com protegida fecha o mínimo (controle)', () => {
+    const r = cortar([c('A', 1, 900, 5, { protegida: true }), c('B', 1, 100, 0)], base(1_000_000), 224_000, 1_000);
+    expect(r.aceitas.map((x) => x.sku)).toEqual(['A', 'B']);
+    expect(r.pedidosAbaixoMinimo).toEqual([]);
+  });
 });

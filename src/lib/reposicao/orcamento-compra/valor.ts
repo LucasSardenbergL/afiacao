@@ -56,9 +56,13 @@ export function valorDasEmbalagens(
     // parte da embalagem que vai para a prateleira (não cobre backlog)
     const qEstocada = Math.max(qAtual - backlog, 0) - Math.max(qAnterior - backlog, 0);
     const posicaoAntes = onhandMedio + Math.max(qAnterior - backlog, 0);
-    const dias = d > 0 ? Math.min((posicaoAntes + qEstocada / 2) / d, p.diasJanela) : p.diasJanela;
+    // tempo médio até consumir a embalagem, SEM limite: a janela limita só o carregamento (R4), nunca
+    // vira prazo de consumo da promoção (R43). Demanda 0 → nunca consome.
+    const diasConsumo = d > 0 ? (posicaoAntes + qEstocada / 2) / d : Infinity;
+    const dias = Math.min(diasConsumo, p.diasJanela);
     const carregamento = p.custoUnit * p.hDia * qEstocada * dias;
-    const promo = dias <= p.horizontePromoDias ? p.promoBeneficioUnit * qEstocada : 0;
+    // tudo-ou-nada: a embalagem inteira ganha o benefício se o consumo médio cabe no horizonte da promoção
+    const promo = diasConsumo <= p.horizontePromoDias ? p.promoBeneficioUnit * qEstocada : 0;
     out.push({ deltaV: p.margemUnit * unidades - carregamento + promo, unidadesAtendidas: unidades, motivoSemScore: null });
     qAnterior = qAtual;
   }
