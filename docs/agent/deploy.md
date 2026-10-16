@@ -1072,4 +1072,19 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   `falhou` é o install que morria calado. Alavanca que sobra (follow-up): cortar a cascata de hash
   dos chunks, que é o que faz cada Publish custar 4 MB ao celular.
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
+- **Entry fino = Publish barato no 4G** (`manualChunks` → `app-core`, 2026-10-16). O entry
+  `index-*.js` muda em TODO Publish que mexe no app: carrega o `__vite__mapDeps` com o nome de
+  todos os chunks lazy. Quando o código compartilhado (supabase client, contexts, `ui/*`, preload
+  helper) morava dentro dele, ~266 chunks importavam `./index-<hash>.js`, e o hash do Rollup é
+  transitivo: cada Publish trocava ~4 MB do precache, e o install do SW no celular morria antes do
+  Publish seguinte. Agora vai para `app-core` o que é **estático a partir do entry E usado por
+  algum chunk lazy**, e **nenhum chunk importa o entry**. O que só o shell usa (`AppShell`,
+  `CommandPalette`, `GuardModuloCongelado` → `lib/modulos/manifesto.ts`, que quase todo PR edita)
+  **fica no entry de propósito**: em `app-core` voltaria a cascatear a cada PR. **Invariantes:**
+  (1) o build não pode emitir `Circular chunk`, por isso só código de `src/` vai para `app-core`,
+  e `node_modules`/helpers `\0` ficam com os buckets de vendor (mandá-los junto criou
+  `vendor-react → app-core → vendor-react`); (2) o entry continua sendo `index-*.js`, 1º
+  `<script>` do HTML (eixo do `build_id` e do `verify-frontend.sh`). **Prova de build:**
+  `grep -l "<entry>" dist/assets/*.js` dá **0**. Custo residual: editar um módulo do `app-core`
+  (contexts, hooks e `ui/*` usados pelas telas) ainda cascateia para quem o importa.
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.

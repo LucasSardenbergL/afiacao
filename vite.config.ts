@@ -312,45 +312,43 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // Só agrupa VENDORS (node_modules) em buckets cacheáveis. NÃO agrupar
-        // páginas por feature: o agrupamento anterior (feature-admin/financeiro/...)
+        // Agrupa VENDORS (node_modules) em buckets cacheáveis + o grafo estático
+        // do entry em app-core (abaixo). NÃO agrupar páginas por feature: o agrupamento anterior (feature-admin/financeiro/...)
         // criava chunks com dependência circular (páginas se importam entre si),
         // e o Rollup avisava "Circular chunk: feature-admin -> feature-financeiro".
         // Em produção isso virava um TDZ em runtime ("Cannot access 'X' before
         // initialization") que crashava o boot ANTES do React montar → tela
         // travada. Deixar o Rollup auto-splitar as páginas (1 chunk por rota lazy)
         // é circular-safe e era o comportamento que funcionava.
-        manualChunks(id) {
+        manualChunks(id, { getModuleInfo }) {
+          // ENTRY FINO (app-core). O entry (index-*.js) carrega o `__vite__mapDeps`
+          // com o nome de TODOS os chunks lazy (as rotas do App.tsx): o hash dele
+          // muda em todo Publish que mexe no app. Antes, o código compartilhado
+          // que o entry importava estaticamente (supabase client, contexts, ui/*,
+          // preload helper do Vite...) morava DENTRO dele, então ~266 chunks lazy
+          // faziam `import ... from "./index-<hash>.js"`. Como o hash do Rollup é
+          // transitivo (o nome do import faz parte do conteúdo), o hash de todos
+          // trocava junto: 267/326 entradas do precache = 4,0 de 6,0 MB por
+          // Publish (medido 2026-10-16), mesmo editando uma tela só.
+          // Agora vai pra app-core só o que é estático a partir do entry E é
+          // usado por algum chunk lazy. O que só o shell usa (AppShell,
+          // CommandPalette, GuardModuloCongelado → lib/modulos/manifesto.ts, que
+          // quase todo PR edita) fica no entry, que muda de qualquer jeito.
+          // Mandar o shell pro app-core voltaria a cascatear a cada PR.
+          // Acíclico por construção: o que um módulo de app-core importa é também
+          // estático a partir do entry E alcançável por um lazy → app-core ou
+          // vendor. Nada em app-core importa o entry nem um chunk lazy.
+          // Só código do APP (src/) + o preload helper do Vite (todo chunk com
+          // import() dinâmico o importa). Helpers virtuais do Rollup (\0commonjs*)
+          // e node_modules sem bucket ficam com o Rollup, que os absorve no 1º
+          // chunk manual que depende deles; mandá-los pra app-core criava
+          // "Circular chunk: vendor-react -> app-core -> vendor-react".
           if (id.includes('node_modules')) {
-            // Utilitários de classe usados pelo cn() do shell. SEM esta regra o
-            // Rollup alocava o clsx DENTRO do vendor-charts (recharts depende
-            // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
-            // gzip) só pra obter o clsx — medido no build de 2026-06-09.
-            if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
-            // Ancorado em node_modules: a regex antiga sem âncora casava
-            // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
-            // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
-            // dentro do vendor-react. react-router core + @remix-run/router
-            // entram explícitos (a família toda num chunk coeso e estável).
-            if (/node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|@remix-run)[\\/]/.test(id)) return 'vendor-react';
-            if (id.includes('@tanstack/react-query')) return 'vendor-query';
-            if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
-            if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
-            // Nome explícito: sem isto o chunk do posthog-js (dynamic import
-            // em analytics.ts) nasce como "module-<hash>.js" (basename do
-            // entry ESM do pacote) — nome genérico que o globIgnores do
-            // precache não consegue mirar com segurança.
-            if (id.includes('posthog-js')) return 'vendor-posthog';
-            // Mesmo racional do vendor-posthog: SDKs pesados atrás de dynamic
-            // import (voz ElevenLabs no MotorVozScribe; OCR no LoteScannerOCR) —
-            // nome explícito pro globIgnores do precache conseguir mirá-los.
-            if (/node_modules[\\/]@elevenlabs[\\/]/.test(id)) return 'vendor-elevenlabs';
-            if (/node_modules[\\/]tesseract\.js[\\/]/.test(id)) return 'vendor-tesseract';
-            if (id.includes('framer-motion')) return 'vendor-motion';
-            if (id.includes('@radix-ui/')) return 'vendor-ui';
-            if (id.includes('lucide-react')) return 'vendor-icons';
-            if (id.includes('date-fns')) return 'vendor-dates';
-            return; // resto: deixar Rollup decidir
+            return vendorChunk(id);
+          }
+          if (id.includes('vite/preload-helper')) return 'app-core';
+          if (id.startsWith(SRC_DIR) && !id.endsWith('.css') && compartilhadoComLazy(getModuleInfo).has(id)) {
+            return 'app-core';
           }
           // App code: sem agrupamento manual → Rollup decide (circular-safe).
         },
@@ -358,3 +356,80 @@ export default defineConfig(({ mode }) => ({
     },
   },
 }));
+
+const SRC_DIR = path.resolve(__dirname, "src") + path.sep;
+
+// Módulos de app-core: alcançáveis por import ESTÁTICO a partir do entry
+// (src/main.tsx), menos main.tsx e App.tsx (o App tem os lazy() das rotas e
+// portanto o mapDeps), E alcançáveis por import estático a partir de algum
+// alvo de import() dinâmico, ou seja, que algum chunk lazy usa. Calculado uma
+// vez por build: o manualChunks roda com o grafo já completo.
+type ModuleInfoMinima = { importedIds: readonly string[]; dynamicallyImportedIds: readonly string[] };
+type GetModuleInfo = (id: string) => ModuleInfoMinima | null;
+const compartilhadoCache = new WeakMap<GetModuleInfo, Set<string>>();
+function compartilhadoComLazy(getModuleInfo: GetModuleInfo): Set<string> {
+  const emCache = compartilhadoCache.get(getModuleInfo);
+  if (emCache) return emCache;
+  const fecho = (raizes: Iterable<string>, comDinamicos: boolean) => {
+    const seen = new Set<string>();
+    const pilha = [...raizes];
+    while (pilha.length) {
+      const id = pilha.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const info = getModuleInfo(id);
+      for (const dep of info?.importedIds ?? []) pilha.push(dep);
+      if (comDinamicos) for (const dep of info?.dynamicallyImportedIds ?? []) pilha.push(dep);
+    }
+    return seen;
+  };
+  const entryId = path.resolve(__dirname, "src/main.tsx");
+  const estaticoDoEntry = fecho([entryId], false);
+  estaticoDoEntry.delete(entryId);
+  estaticoDoEntry.delete(path.resolve(__dirname, "src/App.tsx"));
+  const alvosDinamicos = new Set<string>();
+  for (const id of fecho([entryId], true)) {
+    for (const dep of getModuleInfo(id)?.dynamicallyImportedIds ?? []) alvosDinamicos.add(dep);
+  }
+  const usadoPorLazy = fecho(alvosDinamicos, false);
+  const resultado = new Set([...estaticoDoEntry].filter((id) => usadoPorLazy.has(id)));
+  compartilhadoCache.set(getModuleInfo, resultado);
+  return resultado;
+}
+
+// Buckets de VENDOR (node_modules) cacheáveis. undefined = Rollup decide.
+function vendorChunk(id: string): string | undefined {
+  // Utilitários de classe usados pelo cn() do shell. SEM esta regra o
+  // Rollup alocava o clsx DENTRO do vendor-charts (recharts depende
+  // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
+  // gzip) só pra obter o clsx — medido no build de 2026-06-09.
+  if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
+  // Ancorado em node_modules: a regex antiga sem âncora casava
+  // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
+  // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
+  // dentro do vendor-react. react-router core + @remix-run/router
+  // entram explícitos (a família toda num chunk coeso e estável).
+  if (/node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler|@remix-run)[\\/]/.test(id)) return 'vendor-react';
+  if (id.includes('@tanstack/react-query')) return 'vendor-query';
+  if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
+  if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';
+  // Nome explícito: sem isto o chunk do posthog-js (dynamic import
+  // em analytics.ts) nasce como "module-<hash>.js" (basename do
+  // entry ESM do pacote) — nome genérico que o globIgnores do
+  // precache não consegue mirar com segurança.
+  if (id.includes('posthog-js')) return 'vendor-posthog';
+  // Mesmo racional do vendor-posthog: SDKs pesados atrás de dynamic
+  // import (voz ElevenLabs no MotorVozScribe; OCR no LoteScannerOCR) —
+  // nome explícito pro globIgnores do precache conseguir mirá-los.
+  if (/node_modules[\\/]@elevenlabs[\\/]/.test(id)) return 'vendor-elevenlabs';
+  if (/node_modules[\\/]tesseract\.js[\\/]/.test(id)) return 'vendor-tesseract';
+  if (id.includes('framer-motion')) return 'vendor-motion';
+  if (id.includes('@radix-ui/')) return 'vendor-ui';
+  // next-themes: o ThemeProvider é do shell (fica no entry), mas telas lazy
+  // usam useTheme. Sem bucket, o Rollup o deixava DENTRO do entry e a tela
+  // importava ./index-<hash>.js (cascata, ver app-core). Só depende de react.
+  if (/node_modules[\\/]next-themes[\\/]/.test(id)) return 'vendor-ui';
+  if (id.includes('lucide-react')) return 'vendor-icons';
+  if (id.includes('date-fns')) return 'vendor-dates';
+  return; // resto: deixar Rollup decidir
+}
