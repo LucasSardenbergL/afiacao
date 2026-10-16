@@ -1,0 +1,2 @@
+{ "formato": "deploy-ordem/1",
+  "depoisDe": [{ "edge": "sayerlack-importar-pedido-portal", "motivo": "a varredura manda situacoes_permitidas, que só a importação v1.3 respeita na releitura; na ordem inversa a v1.2 ignora a lista fechada e um pedido que faturou no meio da rodada viraria PO no Omie", "pr": 3109 }] }

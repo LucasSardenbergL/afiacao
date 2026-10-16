@@ -168,7 +168,7 @@ db/test-sayerlack-ipi-po.sh                95
 # Importar pedido digitado direto no portal Sayerlack: de-para inverso (ambíguo/inativo/outra empresa = sem de-para),
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
-db/test-sayerlack-importar-pedido-portal.sh 49
+db/test-sayerlack-importar-pedido-portal.sh 51
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -213,7 +213,7 @@ db/test-tint-tombstone-fase5-imutavel.sh   16
 # negados nas 4 tabelas, medido pelo GATE real (o ataque de "fabricar legado" destravava um manual
 # barrado); a pós-condição aborta o apply que revoga de menos OU de mais (T1-T5).
 db/test-tint-grants-escrita-staff.sh      15
-db/test-tint-fase5-desativacao.sh          37
+db/test-tint-fase5-desativacao.sh          62
 
 # ── Eixo 4 — CONCORRÊNCIA / TOCTOU ────────────────────────────────────────────────
 # A janela entre dois round-trips PostgREST, com uma chamada HTTP que cria pedido de
@@ -222,6 +222,16 @@ db/test-tint-fase5-desativacao.sh          37
 db/test-claim-disparo-cenario-b.sh         76
 db/test-disparado-simulado-pos-disparo.sh  59
 db/test-fin-sync-lease.sh                  22
+# Backfill de pedidos (vendas_sync_cursor): o lease ganhou FENCING TOKEN — o zumbi que perdeu o lease
+# (>3 min sem heartbeat, substituído pelo cron) não rebobina/solta/fecha a janela do sucessor. Corrida
+# real com 2 sessões e bloqueio OBSERVADO (EPQ); o caminho antigo (edge velha) não toca lease cercado;
+# 10 sabotagens inline, cada uma com o seu vermelho, e o validador pós-apply reprova 6 delas.
+db/test-vendas-sync-cursor-fencing.sh      47
+# ... e a FALHA HONESTA sobre o mesmo cursor: a janela só completa com a PROVA em sales_orders de que
+# nenhum pedido ficou para trás (pré-registro antes de gravar, poda pela existência, re-arme que não
+# apaga a lista), erro persistente → terminal, terminal sai do cron/acquire/semear, re-armar só staff.
+# 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
+db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO

@@ -26,6 +26,7 @@ import * as nfeRecebimento from "../omie-nfe-recebimento/versao.ts";
 import * as processNfe from "../process-nfe/versao.ts";
 import * as capturaPrecos from "../sayerlack-captura-precos/versao.ts";
 import * as importarPedidoPortal from "../sayerlack-importar-pedido-portal/versao.ts";
+import * as varrerPedidosPortal from "../sayerlack-varrer-pedidos-portal/versao.ts";
 import * as deparaAuto from "../reposicao-depara-sayerlack-auto/versao.ts";
 import * as omieCliente from "../omie-cliente/versao.ts";
 import * as recommendMod from "../recommend/versao.ts";
@@ -210,7 +211,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // Oitava leva (2026-08-25): a ÚLTIMA das 6 canárias sem sonda. Era a única entrada de
   // `VERIFICAVEL_POR_CANARIA` — a dispensa que o gate de prova de deploy concede a quem tem
   // canária — e a dispensa saiu junto com esta linha, porque agora ela É uma edge instrumentada.
-  // Mesma divisão de papéis do #2009: o `contrato` (`identidade-a2-client-to-user-v3`) nomeia a
+  // Mesma divisão de papéis do #2009: o `contrato` (`identidade-a2-client-to-user-v4`) nomeia a
   // fatia que a fixture verifica e pode ficar parado de forma legítima; o `VERSAO` prova qual
   // BUNDLE respondeu. Aqui os dois viajam juntos na resposta da canária.
   { nome: "omie-vendas-sync", mod: vendasSync },
@@ -314,6 +315,7 @@ const EDGES: Array<{ nome: string; mod: ModSonda }> = [
   // 2026-10-14 — nasce instrumentada: importar pedido digitado direto no portal Sayerlack pelo número. Lê o
   // portal do fornecedor (Browserless), grava o pedido no app e cria PO REAL no Omie (via disparar).
   { nome: "sayerlack-importar-pedido-portal", mod: importarPedidoPortal },
+  { nome: "sayerlack-varrer-pedidos-portal", mod: varrerPedidosPortal },
 ];
 
 /** As cinco da terceira leva — os gates estruturais abaixo varrem todas. */
@@ -792,6 +794,13 @@ Deno.test("sayerlack-importar-pedido-portal: o EFEITO diz portal do FORNECEDOR e
   // Ela LÊ o portal, mas o efeito caro é o PO no Omie (via disparar) — a recusa da sonda tem de dizer os dois.
   if (!/fornecedor/i.test(importarPedidoPortal.EFEITO) || !/omie/i.test(importarPedidoPortal.EFEITO)) {
     throw new Error(`EFEITO não menciona fornecedor e Omie: ${importarPedidoPortal.EFEITO}`);
+  }
+});
+
+Deno.test("sayerlack-varrer-pedidos-portal: o EFEITO diz portal do FORNECEDOR e PO REAL no Omie", () => {
+  // Ela só LÊ a lista do portal, mas importa o pedido novo e cria PO no Omie — a recusa da sonda tem de dizer os dois.
+  if (!/fornecedor/i.test(varrerPedidosPortal.EFEITO) || !/omie/i.test(varrerPedidosPortal.EFEITO)) {
+    throw new Error(`EFEITO não menciona fornecedor e Omie: ${varrerPedidosPortal.EFEITO}`);
   }
 });
 

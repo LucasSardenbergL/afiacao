@@ -763,6 +763,8 @@ export default function AdminReposicaoPedidos() {
           </AlertDialog>
           <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
           <ImportarPedidoPortalDialog />
+          {/* Varredura automática do portal (cron 12:30 · 17:30 · 22:30) — registro server-side da edge. */}
+          <UltimaExecucao acao="reposicao.varrer_portal_sayerlack" />
         </div>
       </div>
 

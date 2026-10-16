@@ -13663,6 +13663,36 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_varredura_falha: {
+        Row: {
+          mensagem: string
+          notificado_em: string | null
+          primeira_em: string
+          protocolo: string
+          resolvido_em: string | null
+          tentativas: number
+          ultima_em: string
+        }
+        Insert: {
+          mensagem: string
+          notificado_em?: string | null
+          primeira_em?: string
+          protocolo: string
+          resolvido_em?: string | null
+          tentativas?: number
+          ultima_em?: string
+        }
+        Update: {
+          mensagem?: string
+          notificado_em?: string | null
+          primeira_em?: string
+          protocolo?: string
+          resolvido_em?: string | null
+          tentativas?: number
+          ultima_em?: string
+        }
+        Relationships: []
+      }
       score_recalc_queue: {
         Row: {
           customer_user_id: string
@@ -17416,10 +17446,17 @@ export type Database = {
           completed_at: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas: number
+          falhou_em: string | null
           heartbeat_at: string | null
           last_error_kind: string | null
+          lease_token: string | null
+          motivo_falha: string | null
           next_page: number | null
+          pausas_sem_progresso: number
+          pedidos_falhos: Json
           running_since: string | null
+          tentativas_falha: number
           updated_at: string
         }
         Insert: {
@@ -17427,10 +17464,17 @@ export type Database = {
           completed_at?: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Update: {
@@ -17438,10 +17482,17 @@ export type Database = {
           completed_at?: string | null
           date_from?: string
           date_to?: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Relationships: []
@@ -22206,6 +22257,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_finish_fenced: {
+        Args: {
+          p_account: string
+          p_complete: boolean
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+          p_next_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_heartbeat: {
         Args: {
           p_account: string
@@ -22215,9 +22278,37 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_heartbeat_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_lease_token: string
+          p_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_lease_acquire: {
         Args: { p_account: string; p_date_from: string; p_date_to: string }
         Returns: number
+      }
+      vendas_sync_lease_acquire_fenced: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
+      vendas_sync_rearmar_janela: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
+      vendas_sync_registrar_falhas_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_falhas: Json
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_release: {
         Args: {
@@ -22227,6 +22318,16 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
+      }
+      vendas_sync_release_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_semear_janela: {
         Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }

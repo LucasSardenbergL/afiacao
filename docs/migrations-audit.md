@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **643** custom migrations totais
-- **2063** objetos esperados (criados por estas migrations)
+- **648** custom migrations totais
+- **2086** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 728
+  - `function`: 748
   - `rls_policy`: 473
   - `index`: 276
-  - `cron_job`: 184
-  - `table`: 180
-  - `view`: 113
+  - `cron_job`: 185
+  - `table`: 181
+  - `view`: 114
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5204,6 +5204,41 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261015221600_vendas_sync_cursor_fencing_token.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.vendas_sync_lease_acquire_fenced` | — |
+| `function` | `public.vendas_sync_heartbeat_fenced` | — |
+| `function` | `public.vendas_sync_finish_fenced` | — |
+| `function` | `public.vendas_sync_release_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire` | — |
+| `function` | `public.vendas_sync_heartbeat` | — |
+| `function` | `public.vendas_sync_release` | — |
+| `function` | `public.vendas_sync_finish` | — |
+
+### `20261015221700_vendas_sync_cursor_falha_honesta.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.vendas_sync_falhos_pendentes` | — |
+| `function` | `public.vendas_sync_registrar_falhas_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire_fenced` | — |
+| `function` | `public.vendas_sync_heartbeat_fenced` | — |
+| `function` | `public.vendas_sync_finish_fenced` | — |
+| `function` | `public.vendas_sync_release_fenced` | — |
+| `function` | `public.vendas_sync_lease_acquire` | — |
+| `function` | `public.vendas_sync_finish` | — |
+| `function` | `public.vendas_sync_release` | — |
+| `function` | `public.vendas_sync_semear_janela` | — |
+| `function` | `public.vendas_sync_rearmar_janela` | — |
+
+### `20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_importar_pedido_portal` | — |
+
 ### `20261016120000_raio_x_estoque_parado.sql`
 
 | Tipo | Objeto | Parent |
@@ -5217,6 +5252,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.raio_x_decisao` | — |
 | `rls_policy` | `public.raio_x_classificacao_manual_select_staff` | `raio_x_classificacao_manual` |
 | `rls_policy` | `public.raio_x_decisao_select_staff` | `raio_x_decisao` |
+
+### `20261016140000_tint_tombstone_exige_geracao_1.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_tint_formula_canonica` | — |
+
+### `20261016150000_sayerlack_varrer_pedidos_portal_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_varredura_falha` | — |
+| `cron_job` | `cron.sayerlack-varrer-pedidos-portal` | — |
 
 ## Próximos passos por status
 

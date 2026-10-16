@@ -33,6 +33,8 @@ describe("ImportEnderecosCard", () => {
   });
 });
 
+const J = { dateFrom: "2026-01-22", dateTo: "2026-07-21", janela: "22/01/2026 → 21/07/2026", podeRearmar: false };
+
 describe("ImportPedidosCard", () => {
   const base = {
     isRunning: false,
@@ -79,8 +81,8 @@ describe("ImportPedidosCard", () => {
         {...base}
         importandoEmAndamento
         janelas={[
-          { account: "oben", janela: "22/01/2026 → 21/07/2026", estado: "rodando", descricao: "importando — página 12" },
-          { account: "colacor", janela: "22/01/2026 → 21/07/2026", estado: "concluida", descricao: "concluída 21/07/2026 14:32" },
+          { ...J, account: "oben", estado: "rodando", descricao: "importando — página 12" },
+          { ...J, account: "colacor", estado: "concluida", descricao: "concluída 21/07/2026 14:32" },
         ]}
       />,
     );
@@ -88,5 +90,40 @@ describe("ImportPedidosCard", () => {
     expect(screen.getByText("oben")).toBeTruthy();
     expect(screen.getByText(/importando — página 12/)).toBeTruthy();
     expect(screen.getByText(/concluída 21\/07\/2026 14:32/)).toBeTruthy();
+  });
+
+  it("janela que FALHOU mostra Re-tentar e chama onRearmar com a janela", () => {
+    const onRearmar = vi.fn();
+    const falhou = { ...J, account: "oben", estado: "falhou" as const, descricao: "importação INCOMPLETA — 2 pedidos não gravados", podeRearmar: true };
+    render(<ImportPedidosCard {...base} janelas={[falhou]} onRearmar={onRearmar} />);
+    expect(screen.getByText(/importação INCOMPLETA/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Re-tentar/ }));
+    expect(onRearmar).toHaveBeenCalledWith(falhou);
+  });
+
+  it("Re-tentar não aparece fora do estado falhou nem quando não pode re-armar", () => {
+    render(
+      <ImportPedidosCard
+        {...base}
+        onRearmar={() => {}}
+        janelas={[
+          { ...J, account: "oben", estado: "falhando", descricao: "página 3 — última tentativa falhou (http)" },
+          { ...J, account: "colacor", estado: "falhou", descricao: "importação INCOMPLETA", podeRearmar: false },
+        ]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Re-tentar/ })).toBeNull();
+  });
+
+  it("Re-tentar desabilitado enquanto re-arma", () => {
+    render(
+      <ImportPedidosCard
+        {...base}
+        rearmando
+        onRearmar={() => {}}
+        janelas={[{ ...J, account: "oben", estado: "falhou", descricao: "INCOMPLETA", podeRearmar: true }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Re-tentar/ })).toHaveProperty("disabled", true);
   });
 });

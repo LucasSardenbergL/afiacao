@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import { acompanharRegistro, aplicadorNativo } from "./lib/pwa-atualizacao";
 
 /** Carimbo de build: o Vite (`define`) substitui por uma string literal com o short SHA
  *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
@@ -81,13 +82,20 @@ if (__PWA_ENABLED__) {
     .then((m) => m.setupPwaUpdatePrompt())
     .catch(() => {
       // Fallback offline-first: se o chunk do prompt falhar ao carregar (rede
-      // instável no boot, chunk 404 pós-deploy), registra o SW direto — sem o
-      // toast de update, mas o offline-first (não-negociável) é preservado.
-      // Perder o SW porque um import lazy falhou seria uma regressão pior.
+      // instável no boot, chunk 404 pós-deploy), registra o SW direto — o
+      // offline-first (não-negociável) é preservado. Perder o SW porque um import
+      // lazy falhou seria uma regressão pior. Antes este caminho registrava SEM
+      // aviso de update (o cliente ficava preso sem saber); agora o mesmo
+      // acompanhamento (toast + checagem ativa) vale aqui, via API nativa.
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/sw.js").catch(() => {
-          // best-effort: registro falhou de vez; não pode derrubar o app
-        });
+        navigator.serviceWorker
+          .register("/sw.js")
+          .then((reg) => {
+            acompanharRegistro(reg, { aplicar: aplicadorNativo(reg) });
+          })
+          .catch(() => {
+            // best-effort: registro falhou de vez; não pode derrubar o app
+          });
       }
     });
 }

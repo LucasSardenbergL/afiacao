@@ -16,7 +16,7 @@
 // "respondeu" de "é o bundle que eu deployei", e é o que esta fatia instala.
 //
 // A CANÁRIA NÃO É SUBSTITUÍDA — mesma divisão de papéis que o #2009 assentou na `carteira-rebuild`:
-// o `contrato` (`identidade-a2-client-to-user-v3`) nomeia a fatia que a FIXTURE verifica e pode
+// o `contrato` (`identidade-a2-client-to-user-v4`) nomeia a fatia que a FIXTURE verifica e pode
 // ficar estável de forma legítima; o `VERSAO` prova QUAL BUNDLE está no ar e muda a cada fatia.
 // Aqui os dois viajam JUNTOS na resposta da canária (o `identidade_probe` passa a ecoar `versao`),
 // que é o desenho da `generate-tactical-plan`: quem verifica a canária lê o discriminador de
@@ -91,9 +91,9 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
- * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA.
+ * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
  */
-export const VERSAO = "v1.18-log-sem-pii";
+export const VERSAO = "v1.19-lease-cercado-falha-honesta";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

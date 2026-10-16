@@ -82,7 +82,10 @@
 # foi avançado: lá a cadeia vazia é defeito e as provas dele seguiram verdes sobre o snapshot novo.
 # Antes: 20260905090000 — e com ela a cadeia re-aplicava a 20260929000234 sobre um snapshot que já tinha a
 # 20260930220148, e o PRE da 0929 derrubava fornecedores-classificacao e melhorias-rpcs no PR do re-dump.
-CV_INICIO=20261008010000
+# Re-dump de 2026-10-15 (#3096): medido pelo audit contra prod — das 54 migrations >= 20261008010000,
+# 53 aplicadas; a única ❌ (20261013180000, cron do tint) não toca objeto guardado. A cadeia antiga
+# re-aplicava a 20261009194000, cujo PRE estrito barrou o motor já na versão da 20261010210000.
+CV_INICIO=20261015120100
 
 # _cv_alternativas <nome…> — "a|b|c" para o regex; vazio se a lista for vazia (o chamador pula o ramo:
 # alternação vazia casaria qualquer migration).

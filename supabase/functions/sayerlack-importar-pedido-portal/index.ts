@@ -17,7 +17,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff, corsHeaders } from "../_shared/auth.ts";
 import { classificarPosLogin } from "../_shared/sayerlack-pos-login.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
-import { lerPedidoPortal, mensagemErroImportacao, type LinhaConsultaRaw } from "./leitura.ts";
+import { lerPedidoPortal, mensagemErroImportacao, situacaoPermitida, type LinhaConsultaRaw } from "./leitura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -134,8 +134,18 @@ export default async ({ page, context }) => {
     trace.push({ step: 'consulta_aberta', via_menu: clicouMenu, url: page.url(), t: Date.now() - t0 });
     const temForm = await page.waitForSelector('#getFilterData', { timeout: budgetFor('form-consulta', 15000) }).then(() => true).catch(() => false);
     if (!temForm) return await falha('CONSULTA_INDISPONIVEL', 'Tela Consulta Pedidos sem o botão Filtrar');
+    // O botão aparece ANTES de o portal ligar o jQuery e o DataTables: clicar nessa janela não dispara a consulta e a
+    // tabela fica vazia (1º uso real, pedido 2141068, 2026-10-16: "0 linha(s) lida(s)" com o pedido existindo).
+    // Espera a tabela INICIALIZADA (classe dataTable, posta pelo DataTables) antes de filtrar.
+    const pronta = await page.waitForFunction(
+      () => !!window.jQuery && !!document.querySelector('table.dataTable'),
+      { timeout: budgetFor('consulta-pronta', 20000), polling: 250 },
+    ).then(() => true).catch(() => false);
+    trace.push({ step: 'consulta_pronta', pronta, t: Date.now() - t0 });
+    if (!pronta) return await falha('CONSULTA_INDISPONIVEL', 'Tabela da Consulta Pedidos não inicializou (jQuery/DataTables)');
 
-    // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação (decisão do founder),
+    // Filtros: cliente OBEN, nº início = fim, só PEDIDO (não proposta), qualquer situação — o cancelado é LIDO e recusado
+    // em Deno (./leitura.ts), para a tela dizer "cancelado" em vez de "não encontrado";
     // datas desde 2020 (o default é só o último mês).
     const filtro = await page.evaluate((cod, nr) => {
       const jq = window.jQuery;
@@ -164,7 +174,28 @@ export default async ({ page, context }) => {
     if (filtro.ini !== String(protocolo) || filtro.fim !== String(protocolo)) {
       return await falha('FILTRO_NAO_APLICADO', 'Número do pedido não ficou no filtro', { filtro });
     }
-    await page.evaluate(() => { const b = document.querySelector('#getFilterData'); if (b) b.click(); });
+    // Trocar o cliente pode disparar uma consulta própria do portal: deixa ela assentar para a resposta esperada
+    // abaixo ser a do NOSSO clique, não a da troca de filtro.
+    await sleep(1500);
+    // Clica e espera a RESPOSTA da consulta (POST /order-viewer/form/list), com 1 nova tentativa se ela não sair,
+    // em vez de desistir às cegas em 8 s de tabela vazia.
+    const clicarEsperar = async (rotulo) => {
+      const resp = page.waitForResponse(
+        (r) => r.url().indexOf('/order-viewer/form/list') !== -1 && r.request().method() === 'POST',
+        { timeout: budgetFor('resposta-' + rotulo, 60000) },
+      ).then((r) => ({ ok: true, status: r.status() })).catch((e) => ({ ok: false, erro: String((e && e.message) || e).substring(0, 120) }));
+      await page.evaluate(() => { const b = document.querySelector('#getFilterData'); if (b) b.click(); });
+      return await resp;
+    };
+    let respConsulta = await clicarEsperar('1');
+    trace.push({ step: 'consulta_resposta', tentativa: 1, resp: respConsulta, t: Date.now() - t0 });
+    if (!respConsulta.ok) {
+      respConsulta = await clicarEsperar('2');
+      trace.push({ step: 'consulta_resposta', tentativa: 2, resp: respConsulta, t: Date.now() - t0 });
+    }
+    if (!respConsulta.ok) {
+      return await falha('CONSULTA_SEM_RESPOSTA', 'O portal não respondeu à consulta do pedido (2 tentativas)');
+    }
 
     // Lê a tabela de resultado por NOME de coluna. Os cabeçalhos são campos de filtro: o nome mora no placeholder.
     const lerConsulta = () => page.evaluate(() => {
@@ -201,7 +232,8 @@ export default async ({ page, context }) => {
       consulta = await lerConsulta().catch(() => consulta);
       const achou = consulta.linhas.some((l) => Object.keys(l).some((k) => l[k] === String(protocolo)));
       if (achou && !consulta.processando) break;
-      if (Date.now() - tFiltro > 8000 && !consulta.processando && consulta.linhas.length === 0) break;
+      // A resposta já chegou: 4 s para o DataTables redesenhar; vazia depois disso é vazia de verdade.
+      if (Date.now() - tFiltro > 4000 && !consulta.processando && consulta.linhas.length === 0) break;
     }
     trace.push({ step: 'consulta_lida', headers: consulta.headers, n_linhas: consulta.linhas.length, t: Date.now() - t0 });
 
@@ -286,9 +318,9 @@ Deno.serve(async (req: Request) => {
   const auth = await authorizeCronOrStaff(req);
   if (!auth.ok) return auth.response;
 
-  let body: { protocolo?: unknown } = {};
+  let body: { protocolo?: unknown; situacoes_permitidas?: unknown } = {};
   try {
-    body = (await req.json()) as { protocolo?: unknown };
+    body = (await req.json()) as { protocolo?: unknown; situacoes_permitidas?: unknown };
   } catch {
     return json({ ok: false, mensagem: "Body JSON inválido" }, 400);
   }
@@ -307,6 +339,16 @@ Deno.serve(async (req: Request) => {
   const protocolo = String(body?.protocolo ?? "").trim();
   if (!PROTOCOLO_RE.test(protocolo)) {
     return json({ ok: false, mensagem: "Número do pedido deve ter só dígitos (3 a 12)." }, 400);
+  }
+
+  // Lista fechada de situações (só a varredura manda): presente ⇒ a situação RELIDA tem de estar nela antes da RPC.
+  let situacoesPermitidas: string[] | null = null;
+  if (body?.situacoes_permitidas !== undefined) {
+    const v = body.situacoes_permitidas;
+    if (!Array.isArray(v) || !v.every((c) => typeof c === "string" && /^\d+$/.test(c))) {
+      return json({ ok: false, mensagem: "situacoes_permitidas deve ser lista de códigos numéricos." }, 400);
+    }
+    situacoesPermitidas = v as string[];
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -411,6 +453,12 @@ Deno.serve(async (req: Request) => {
     const lido = lerPedidoPortal(envelope.consulta?.linhas ?? [], envelope.itens, protocolo);
     if (!lido.ok) {
       return json({ ok: false, etapa: "leitura", protocolo, motivo: lido.motivo, mensagem: lido.detalhe, trace: envelope.trace ?? null });
+    }
+    if (situacoesPermitidas && !situacaoPermitida(lido.cabecalho.situacao, situacoesPermitidas)) {
+      return json({
+        ok: false, etapa: "leitura", protocolo, motivo: "situacao_nao_permitida", situacao_portal: lido.cabecalho.situacao,
+        mensagem: `O pedido ${protocolo} está "${lido.cabecalho.situacao}" no portal — fora das situações que a varredura importa.`,
+      });
     }
 
     // 3. Grava (tudo-ou-nada) com a prova de custo.

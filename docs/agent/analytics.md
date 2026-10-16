@@ -546,6 +546,12 @@ WHERE timestamp > now() - INTERVAL 7 DAY
 GROUP BY build ORDER BY clientes DESC"
 ```
 
+**Sensor irmão (2026-10-16): `pwa.atualizacao`** com `fase` ∈ `baixando` · `pronta` · `falhou` ·
+`aceita` (emitido em `src/lib/pwa-atualizacao.ts`, só em TRANSIÇÃO de fase). Responde o PORQUÊ de um
+aparelho parado num `build_id` velho: `baixando` sem `pronta` depois = install que não fechou;
+`falhou` = install que morreu (asset 404 pós-Publish, app suspenso); `pronta` sem `aceita` = o aviso
+apareceu e o operador não clicou. Ausência dos quatro num aparelho com boots = nem achou o SW novo.
+
 ### Armadilhas de leitura
 
 - ⚠️ **Ausente, `'desconhecido'` e um hash são TRÊS estados, não dois.** Propriedade

@@ -126,6 +126,12 @@ function ResultadoImportacao({ r }: { r: ResultadoTela }) {
           {r.valorTotal != null && (<><dt className="text-muted-foreground">Total com IPI</dt><dd>{formatBRL(r.valorTotal)}</dd></>)}
         </dl>
       )}
+      {r.tom === 'erro' && r.detalheTecnico && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-muted-foreground">Detalhes técnicos (para o suporte)</summary>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2">{r.detalheTecnico}</pre>
+        </details>
+      )}
       {r.itens.length > 0 && (
         <ul className="text-xs divide-y">
           {r.itens.map((it) => (

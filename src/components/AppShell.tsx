@@ -37,6 +37,7 @@ import { NetworkStatusIndicator } from '@/components/shell/NetworkStatusIndicato
 import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente';
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
+import { VersaoDoApp } from '@/components/shell/VersaoDoApp';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { GlobalBreadcrumbs } from "@/components/shell/GlobalBreadcrumbs";
@@ -773,6 +774,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
             <DropdownMenuItem onClick={() => navigate('/profile')}>
               <User className="w-4 h-4 mr-2" /> Meu perfil
             </DropdownMenuItem>
+            <VersaoDoApp />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={pedirSaida} className="text-destructive">
               <LogOut className="w-4 h-4 mr-2" /> Sair

@@ -169,6 +169,31 @@ export function churnTone(risk: number | null): { label: string; className: stri
   return { label, className: 'text-status-success-bold' };
 }
 
+/**
+ * Cortes do badge de margem do cliente, em PERCENTUAL (0–100).
+ *
+ * Decisão de produto (founder, 2026-10-16), tomada sobre a distribuição real — 501 clientes com
+ * margem apurada (12m), p10 32,6 · p25 42,2 · p50 58,0 · p75 70,5:
+ *  - verde ≥ 55 ≈ acima da mediana da carteira;
+ *  - vermelho < 30 ≈ os ~7% piores + as margens negativas — raro o bastante para ser sinal.
+ * Os 30/15 anteriores eram tradução literal de 0.3/0.15 (de quando a coluna era fração e zero para
+ * todos) e pintavam 93% da base de verde. Corte por porte foi considerado e adiado: a margem cai
+ * com o tamanho do cliente (p50 61% < R$500/mês vs 44% ≥ R$10k), mas os grupos grandes têm n<40.
+ */
+export const MARGEM_BOA_MIN = 55;
+export const MARGEM_ATENCAO_MIN = 30;
+
+/** Faixa e cor do badge. Recebe só margem CONHECIDA — null não é faixa (o caller não renderiza). */
+export function margemTone(pct: number): { faixa: 'boa' | 'atencao' | 'baixa'; className: string } {
+  if (pct >= MARGEM_BOA_MIN) {
+    return { faixa: 'boa', className: 'bg-status-success-bg text-status-success-bold border-status-success/20' };
+  }
+  if (pct >= MARGEM_ATENCAO_MIN) {
+    return { faixa: 'atencao', className: 'bg-status-warning-bg text-status-warning-bold border-status-warning/20' };
+  }
+  return { faixa: 'baixa', className: 'bg-status-error-bg text-status-error-bold border-status-error/20' };
+}
+
 export function formatDocument(doc: string): string {
   const d = doc.replace(/\D/g, '');
   if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');

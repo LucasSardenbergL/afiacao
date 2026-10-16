@@ -4,7 +4,7 @@ function assertEquals(atual: unknown, esperado: unknown) {
   const e = JSON.stringify(esperado);
   if (a !== e) throw new Error(`esperado ${e}, veio ${a}`);
 }
-import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR } from "./leitura.ts";
+import { dataBRparaISO, lerCabecalho, lerItens, lerPedidoPortal, mensagemErroImportacao, numeroBR, situacaoCancelada, situacaoPermitida } from "./leitura.ts";
 
 // Resposta REAL do portal (pedido 2140603, 2026-10-14) — consulta e busca-itens-pedido.
 const LINHA_REAL = {
@@ -101,4 +101,25 @@ Deno.test("numeroBR e dataBRparaISO", () => {
 Deno.test("mensagem de erro por SQLSTATE; desconhecida não inventa motivo", () => {
   assertEquals(mensagemErroImportacao("IP002", null).startsWith("Há item sem de-para"), true);
   assertEquals(mensagemErroImportacao("XX999", "boom"), "Falha ao gravar a importação. Detalhe: boom");
+});
+
+Deno.test("pedido cancelado no portal (6 - Cancelado) é recusado na leitura, com motivo próprio", () => {
+  const r = lerPedidoPortal([{ ...LINHA_REAL, "Situação": "6 - Cancelado" }], ITENS_REAL, "2140603");
+  assertEquals(r.ok ? "ok" : r.motivo, "pedido_cancelado");
+  if (!r.ok && !r.detalhe.includes("cancelado no portal")) throw new Error(`detalhe sem o motivo: ${r.detalhe}`);
+});
+
+Deno.test("situacaoCancelada: código 6 ou o texto; as outras situações passam", () => {
+  assertEquals(
+    ["6 - Cancelado", "6 -", "Cancelado", "CANCELADA", "5 - Suspenso", "1 - Aberto", "16 - Outro", "4 - Faturado"].map(situacaoCancelada),
+    [true, true, true, true, false, false, false, false],
+  );
+});
+
+Deno.test("situacaoPermitida: só código da lista; sem código ou lista vazia = não", () => {
+  assertEquals(
+    [situacaoPermitida("1 - Aberto", ["1"]), situacaoPermitida("4 - Faturado", ["1"]), situacaoPermitida("Aberto", ["1"]),
+     situacaoPermitida("1 - Aberto", []), situacaoPermitida("11 - Outro", ["1"])],
+    [true, false, false, false, false],
+  );
 });
