@@ -29,6 +29,8 @@ const fatos: Fatos = {
   disparados: [HIST],
   titulos_sayerlack: [],
   ids_sayerlack: [],
+  pedidos_omie_sayerlack: [],
+  nfs_do_contrato: [],
   chegadas: [],
   pagos_nao_sayerlack: [{ data: '2026-09-05', valor: 1_000 }],
   lag_obs: lagObs(2, 1, 14),
@@ -210,6 +212,22 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     const acima = simularCiclo(semNf(20), 1, cfg).estado;
     expect(acima.tipo === 'indeterminado' && acima.camadas).toEqual(['compromisso_nao_conciliado']);
     expect(simularCiclo(semNf(10), 1, cfg).estado.tipo).toBe('viavel');
+  });
+  it('(c2) R57: NF órfã pelo contrato concilia o pedido sem NF no tracking — só se faturada ANTES do dia do ciclo', () => {
+    const comVinculo = (dataNf: string, protocolo: string | null = null): Fatos => ({
+      ...semLinhas,
+      disparados: [HIST, { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [], omie_pedido: '500', protocolo }],
+      pedidos_omie_sayerlack: [{ codigo: '500', t1: '2026-09-10', contrato: '2091397', do_motor: true, itens: [{ prod: 'P', qtde: 1 }] }],
+      nfs_do_contrato: [{ contrato: '2091397', nf: '000777', data: dataNf }],
+      titulos_sayerlack: [{ id: 't7', nf: '000777', valor: 20, data_emissao: dataNf, created_at: '2026-09-15T12:00:00Z', data_baixa: '2026-09-20', valor_baixado: 20 }],
+    });
+    expect(simularCiclo(comVinculo('2026-09-15'), 1, cfg).estado.tipo).toBe('viavel');
+    // controle negativo as-of: a mesma NF faturada no dia do ciclo não existia na decisão
+    const noDia = simularCiclo(comVinculo('2026-10-01'), 1, cfg).estado;
+    expect(noDia.tipo === 'indeterminado' && noDia.camadas).toEqual(['compromisso_nao_conciliado']);
+    // controle negativo R57: protocolo de reenvio sem NF → o pedido na Sayerlack pode estar em aberto
+    const reenvio = simularCiclo(comVinculo('2026-09-15', '2096769'), 1, cfg).estado;
+    expect(reenvio.tipo === 'indeterminado' && reenvio.camadas).toEqual(['compromisso_nao_conciliado']);
   });
   it('(e) R28: pedido sem NF recente (6 dias) está a faturar — não deixa o ciclo indeterminado, mas baixa o piso pelo valor inteiro', () => {
     const pedido = { id: 13, valor_total: 5_000, momento: '2026-09-25T12:00:00Z' };

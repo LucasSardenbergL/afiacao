@@ -1,5 +1,5 @@
 // src/lib/reposicao/orcamento-compra/vinculo-nf.ts
-// R54/R55: NFs de um pedido disparado além da linha do tracking (decisão do founder 2026-10-16, endurecida
+// R57/R58: NFs de um pedido disparado além da linha do tracking (decisão do founder 2026-10-16, endurecida
 // pelo challenge Codex xhigh da mesma data). A NF órfã do tracking (chegou antes da linha do pedido) e o
 // pedido refeito à mão no Omie deixavam pedidos faturados e pagos sem NF → "não conciliado" para sempre.
 // Aqui só se ACRESCENTA NF, com a data em que ela passou a existir; quem decide se liquida é
@@ -32,9 +32,9 @@ function assinatura(itens: { prod: string; qtde: number }[]): string | null {
 
 /**
  * Só para disparados SEM NF no tracking. Devolve os vínculos novos (id → NFs com data, via).
- * R54 (A): todo identificador Sayerlack do pedido (cContrato, protocolo do portal) tem de ter NF; se um deles
+ * R57 (A): todo identificador Sayerlack do pedido (cContrato, protocolo do portal) tem de ter NF; se um deles
  *   não tem, aquele pedido na Sayerlack pode estar em aberto (ex.: reenvio ao portal) → não liga.
- * R55 (B): só quando o pedido não tem NENHUM identificador Sayerlack (não chegou à Sayerlack pelo motor): pedido Omie
+ * R58 (B): só quando o pedido não tem NENHUM identificador Sayerlack (não chegou à Sayerlack pelo motor): pedido Omie
  *   manual com o mesmo multiconjunto de itens, t1 em [t1(d), t1(d)+janela], com NF por contrato, cujo contrato
  *   não pertence a nenhum pedido do motor (proprietário concorrente) — e unicidade nos dois sentidos.
  */

@@ -14,6 +14,7 @@ import { fluxosDeSemanaAgregada, type EstadoCaixa, type Fluxo } from '@/lib/repo
 import { conciliarCompromissos, projetarRitmo, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
 import { cortar, type BaseCaixa, type Candidata, type ResultadoCorte } from '@/lib/reposicao/orcamento-compra/corte';
 import { classificarCorte, replaySku, type ClasseCorte } from '@/lib/reposicao/orcamento-compra/replay';
+import { vincularNfs, type NfVinculada, type ViaNf } from '@/lib/reposicao/orcamento-compra/vinculo-nf';
 import { deduplicarEpisodios, deltaDio, precisaoDoCorte, type Episodio } from '@/lib/reposicao/orcamento-compra/medicao';
 
 export interface Config {
@@ -46,6 +47,7 @@ export const PREMISSAS: string[] = [
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
   'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
+  'NF de disparado sem NF no tracking (R57/R58): por contrato só se TODO identificador Sayerlack do pedido (cContrato, protocolo do portal) tem NF — reenvio sem NF pode estar em aberto; por substituto só se o pedido não tem identificador Sayerlack, o manual tem itens idênticos em até 21 dias, NF por contrato e dono fora do motor, com unicidade; a NF só vale se faturada ANTES do dia do ciclo; conciliar continua exigindo título as-of',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
   'intervalo de oportunidade de 1 dia (o motor roda todo dia): domina o corte econômico — a embalagem marginal só compra 1 dia de cobertura extra (R49)',
@@ -70,7 +72,12 @@ export interface Fatos {
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
   snapshots: { dia: DataISO; snapshot_at: string; saldo_tesouraria: Num; dados: { inicio: DataISO; fim: DataISO; total_entradas?: number; total_saidas?: number; saidas?: Saida[]; entradas?: { data?: DataISO; valor: number }[] }[] }[];
-  disparados: { id: number; valor_total: Num; momento: string; nfs: string[] }[];
+  /** omie_pedido = omie_pedido_compra_id; protocolo = portal_protocolo (R57) */
+  disparados: { id: number; valor_total: Num; momento: string; nfs: string[]; omie_pedido?: string | null; protocolo?: string | null }[];
+  /** R57/R58: pedidos Omie Sayerlack (tracking, codigo > 0) com contrato, origem no motor e itens */
+  pedidos_omie_sayerlack?: { codigo: string; t1: DataISO; contrato: string | null; do_motor: boolean; itens: { prod: string; qtde: Num }[] }[];
+  /** R57: pares (nNumPedCompra, NF, faturamento) de itensRecebimento do tracking Sayerlack, órfãs incluídas */
+  nfs_do_contrato?: { contrato: string; nf: string; data: DataISO | null }[];
   /** data_baixa = data_baixa_final de v_titulo_baixas (null = sem baixa); valor_baixado idem (R35) */
   titulos_sayerlack: { id: string; nf: string | null; valor: Num; data_emissao: DataISO; created_at: string; data_baixa: DataISO | null; valor_baixado: Num }[];
   /** R34: TODOS os ids de título do fornecedor Sayerlack no CP, sem janela de data */
@@ -153,6 +160,7 @@ export function preVoo(f: Fatos): string[] {
   if (!f.lag_obs || !f.lag_obs.faturamento?.length || !f.lag_obs.vencimento?.length || !f.lag_obs.chegada?.length) falhas.push('lags ausentes — sem datação de pagamento/chegada');
   if (!Array.isArray(f.ids_sayerlack) || !Array.isArray(f.chegadas)) falhas.push('ids_sayerlack/chegadas ausentes — fatos.sql antigo');
   if (f.cm_anual == null) falhas.push('cm_anual ausente — sem custo de capital');
+  if (!Array.isArray(f.pedidos_omie_sayerlack) || !Array.isArray(f.nfs_do_contrato)) falhas.push('pedidos_omie_sayerlack/nfs_do_contrato ausentes — fatos.sql antigo (R57/R58)');
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
   if (f.disparados.some((p) => p.valor_total == null)) falhas.push('disparados com valor_total nulo — compromissos inválidos');
@@ -219,6 +227,26 @@ export function statusEfetivo(c: Fatos['ciclos'][number]): string {
   return c.status;
 }
 
+const JANELA_SUBSTITUTO_DIAS = 21;
+const memoVinculos = new WeakMap<Fatos, Map<number, { nfs: NfVinculada[]; via: ViaNf }>>();
+/** R57/R58: vínculos NF↔disparado além do tracking, calculados uma vez por conjunto de fatos */
+export function vinculosDe(f: Fatos): Map<number, { nfs: NfVinculada[]; via: ViaNf }> {
+  const memo = memoVinculos.get(f);
+  if (memo) return memo;
+  const v = vincularNfs(
+    f.disparados.map((d) => ({ id: d.id, omiePedido: d.omie_pedido ?? null, protocolo: d.protocolo ?? null, nfs: d.nfs ?? [] })),
+    (f.pedidos_omie_sayerlack ?? []).map((p) => ({
+      codigo: p.codigo, t1: p.t1, contrato: p.contrato, doMotor: p.do_motor,
+      // ausente ≠ zero: qtde nula vira NaN e a assinatura de itens recusa o casamento
+      itens: p.itens.map((i) => ({ prod: i.prod, qtde: i.qtde == null ? Number.NaN : Number(i.qtde) })),
+    })),
+    (f.nfs_do_contrato ?? []).flatMap((x) => (x.data ? [{ contrato: x.contrato, nf: x.nf, data: x.data }] : [])),
+    { janelaSubstitutoDias: JANELA_SUBSTITUTO_DIAS },
+  );
+  memoVinculos.set(f, v);
+  return v;
+}
+
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
   const ausencias: string[] = [];
   // as-of: só vale snapshot tirado ATÉ o momento do ciclo (o de 07h do próprio dia não vale para ciclo das 05h)
@@ -274,7 +302,8 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
       pedidoId: p.id,
       // R41: o desembolso do pedido inclui o frete, como o das candidatas
       valorTotal: exigir(p.valor_total, 'disparados.valor_total') * (1 + cfg.fretePerc),
-      dataPedido: dataLocalSP(p.momento), nfs: p.nfs ?? [],
+      // R57/R58: NF vinculada por contrato/substituto só vale se já existia antes do dia do ciclo (as-of)
+      dataPedido: dataLocalSP(p.momento), nfs: [...(p.nfs ?? []), ...(vinculosDe(f).get(p.id)?.nfs ?? []).filter((v) => v.data < data).map((v) => v.nf)],
     })),
     // título sem desconto entra com 0: a NF fica "sem título" — a faturar se recente, senão não conciliada
     titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: descontoDe(t) })),
@@ -652,10 +681,14 @@ export function backtest(f: Fatos, cfg: Config) {
     config: cfg,
     gerado_em: f.meta.gerado_em,
     premissas: PREMISSAS,
+    /** R57/R58: lista auditável dos vínculos (disparado, via, NF, data em que a NF passou a existir) */
+    vinculosNf: [...vinculosDe(f)].map(([id, v]) => ({ id, ...v })).sort((a, b) => a.id - b.id),
     ciclos,
     resumo: {
       nCiclos: ciclos.length,
       nDisparados: efetivos.length,
+      /** R57/R58: disparados sem NF no tracking que ganharam NF por contrato / por substituto (antes do filtro as-of) */
+      vinculosNf: [...vinculosDe(f).values()].reduce((acc, v) => ({ ...acc, [v.via]: acc[v.via] + 1 }), { contrato: 0, substituto: 0 }),
       valorMotorDisparados: efetivos.reduce((s, c) => s + c.valorMotor, 0),
       /** motor nos disparados COM guarda de caixa (denominador do aceito) */
       valorMotorComGuarda: efetivos.filter(comGuarda).reduce((s, c) => s + c.valorMotor, 0),

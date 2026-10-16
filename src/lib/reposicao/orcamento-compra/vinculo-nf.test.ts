@@ -8,7 +8,7 @@ const ped = (p: Partial<PedidoOmieSay> & { codigo: string }): PedidoOmieSay => (
 const disp = (d: Partial<DisparadoVinculo> & { id: number }): DisparadoVinculo => ({ omiePedido: null, protocolo: null, nfs: [], ...d });
 const nfc = (contrato: string, nf: string, data = '2026-05-12'): NfDoContrato => ({ contrato, nf, data });
 
-describe('vincularNfs — R54 (A: contrato)', () => {
+describe('vincularNfs — R57 (A: contrato)', () => {
   it('não mexe em disparado que já tem NF no tracking', () => {
     const r = vincularNfs([disp({ id: 1, omiePedido: '10', nfs: ['000900'] })], [ped({ codigo: '10', contrato: 'C', doMotor: true })], [nfc('C', '000901')], OPTS);
     expect(r.has(1)).toBe(false);
@@ -59,7 +59,7 @@ describe('vincularNfs — R54 (A: contrato)', () => {
   });
 });
 
-describe('vincularNfs — R55 (B: substituto manual)', () => {
+describe('vincularNfs — R58 (B: substituto manual)', () => {
   const itens = [{ prod: 'P1', qtde: 8 }, { prod: 'P2', qtde: 5 }];
   const base = ped({ codigo: '1005', t1: '2026-05-07', doMotor: true, itens });
   const manual = (p: Partial<PedidoOmieSay> = {}) => ped({ codigo: 'M', t1: '2026-05-09', contrato: 'CM', itens: [...itens].reverse(), ...p });
