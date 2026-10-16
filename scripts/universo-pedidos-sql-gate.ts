@@ -47,6 +47,10 @@ export const REGISTRO_UNIVERSO_PEDIDOS: Readonly<Record<string, EntradaRegistro>
     motivo: 'gatilho dos gêmeos push/pull (20261001100001): acha a importada do MESMO pedido Omie por (conta, hash canônico), em QUALQUER status — a gêmea cancelada também tira a linha do app do universo',
   },
   'public.staff_get_sales_order_payload': { tipo: 'lookup', motivo: 'payload de pedidos pedidos por ids' },
+  'private.vendas_sync_falhos_pendentes': {
+    tipo: 'lookup',
+    motivo: 'backfill de pedidos (20261015221700): PROVA de que cada pedido pré-registrado foi gravado, por (conta, hash) + ≥1 item — em QUALQUER status: o importado que depois foi cancelado também foi importado',
+  },
   'public.tint_gate_revalida': { tipo: 'lookup', motivo: 'tint: revalida o preço de UM pedido no submit (por id)' },
   'public._data_health_compute': {
     tipo: 'lookup',

@@ -77,6 +77,22 @@ const OBSOLETE: Record<string, string> = {
   'visit_intelligence_v1::Staff can view visit recalc queue': 'substituída → Master can view visit recalc queue (20260718100000_filas_recalc_rls_master_only)',
   'visit_intelligence_v1::Staff can manage their visit scores': 'substituída → cvs_insert/update/delete_own_or_gestor (20260526020000_rls_score_carteira_hardening)',
   'visit_intelligence_v1::Staff can view their visit scores': 'substituída → cvs_select_carteira (20260526020000_rls_score_carteira_hardening)',
+  // Mitigação temporária do tint que NUNCA precisou ir a prod (2026-10-15). O #3054 (cron de 6h que
+  // re-aplicava o snapshot de chaves) mergeou 13/10 19:16 UTC; o conserto de raiz #3051 mergeou 3h
+  // depois, trouxe a remoção do cron (20261013200000) e a 20261015090000 dropou a função. Ninguém
+  // aplicou a mitigação porque a raiz chegou antes — que é o que o cabeçalho dela pedia ("manter os
+  // dois é pior que manter só o #3051"). Medido via psql-ro em 2026-10-15: cron e função ausentes;
+  // corpo vivo de tint_promote_sync_run com as 4 marcas das pós-condições do #3051; fantasmas do
+  // watchdog fase 5 = 25.476 → 0 desde 14/10 12h, mantido por 2 snapshots aplicados (14/10 e 15/10).
+  'tint_reaplicar_snapshot_cron::tint_reaplicar_snapshot_tick': 'nunca aplicada (superada pelo #3051) — função dropada em 20261015090000_tint_drop_reaplicar_snapshot_tick',
+  'tint_reaplicar_snapshot_cron::tint-reaplicar-snapshot-6h': 'nunca aplicada (superada pelo #3051) — unschedule em 20261013200000_tint_remove_cron_reaplicar_snapshot',
+  // Lote de disparo das 10h removido a pedido do founder (#2911): ele dispara pelo botão
+  // Disparar/Aprovar+disparar, que chama a edge com {pedido_id} na hora. Cron ausente em prod,
+  // conferido via psql-ro em 2026-10-15. ⚠️ A ressalva da migration vale enquanto esta exclusão
+  // existir: o único caminho que DEPENDIA do lote era a auto-aprovação Sayerlack (hoje desligada,
+  // company_config.reposicao_auto_aprovacao_ativa='false'). Ligá-la exige um disparador de novo —
+  // senão o pedido auto-aprovado fica órfão, e este audit NÃO vai mais acusar.
+  'cron_baseline::disparar-pedidos-aprovados-oben': 'unschedule — 20261010150000_remove_cron_disparo_10h (#2911); ligar a auto-aprovação exige disparador',
 };
 
 interface MigrationAudit {

@@ -10,6 +10,7 @@ import {
   type Fechamento, type FechamentoLog,
 } from '@/services/financeiroV2Service';
 import { triggerFinanceiroSync } from '@/services/financeiroService';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { AuditTrailDrawer } from '@/components/financeiro/AuditTrailDrawer';
 import { parsePostgresFinanceiroError } from '@/lib/financeiro/error-handler';
@@ -51,6 +52,11 @@ const FinanceiroFechamento = () => {
   const [motivoReabertura] = useState('');
   const [auditTarget, setAuditTarget] = useState<{ table: string; id: string; title: string } | null>(null);
   const [mappingPendentes, setMappingPendentes] = useState<Array<{id: string; nome: string}>>([]);
+  // DRE fase 2 (decisão do founder, 2026-10-14): fechar/aprovar mês com resultado PROVISÓRIO
+  // (saída fora do DRE com composição principal × juros pendente) é permitido, mas AVISADO.
+  // Chave `${company}-${mes}` → true se algum regime do mês está provisório. 'erro' = não deu para
+  // ler (≠ "sem pendência": a tela diz que não conferiu, em vez de calar).
+  const [provisorios, setProvisorios] = useState<Set<string> | 'erro'>(new Set());
   const icDivQuery = useIcMatches('divergencia_valor');
   const icSemQuery = useIcMatches('sem_contrapartida');
   const totalIc = (icDivQuery.data?.length ?? 0) + (icSemQuery.data?.length ?? 0);
@@ -65,6 +71,14 @@ const FinanceiroFechamento = () => {
     try {
       const data = await getFechamentos(company, ano);
       setFechamentos(data);
+      const { data: snaps, error: snapsErr } = await supabase
+        .from('fin_dre_snapshots')
+        .select('company, mes, resultado_provisorio')
+        .eq('ano', ano)
+        .limit(100); // 3 empresas × 12 meses × 2 regimes = 72
+      setProvisorios(snapsErr || snaps == null
+        ? 'erro'
+        : new Set(snaps.filter((r) => r.resultado_provisorio === true).map((r) => `${r.company}-${r.mes}`)));
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Erro desconhecido';
       toast.error('Erro', { description: message });
@@ -91,7 +105,18 @@ const FinanceiroFechamento = () => {
     }
   };
 
+  const ehProvisorio = (co: string, mes: number) => provisorios !== 'erro' && provisorios.has(`${co}-${mes}`);
+
   const handleAcao = async (id: string, acao: 'revisar' | 'fechar' | 'aprovar' | 'reabrir', detalhes?: FechamentoAcaoDetalhes) => {
+    const fech = fechamentos.find((f) => f.id === id);
+    if ((acao === 'fechar' || acao === 'aprovar') && fech) {
+      const aviso = provisorios === 'erro'
+        ? 'Não foi possível conferir se o resultado deste mês é provisório (leitura dos snapshots falhou).'
+        : ehProvisorio(fech.company, fech.mes)
+          ? 'O resultado deste mês é PROVISÓRIO: há saída fora do DRE (empréstimo/parcelamento/investimento) com composição principal × juros pendente — os juros não estão nas despesas financeiras.'
+          : null;
+      if (aviso && !confirm(`${aviso}\n\nDeseja ${acao} mesmo assim?`)) return;
+    }
     setActing(true);
     try {
       await atualizarFechamento(id, acao, detalhes);
@@ -140,6 +165,12 @@ const FinanceiroFechamento = () => {
           >
             resolver
           </Link>
+        </div>
+      )}
+      {provisorios === 'erro' && (
+        <div role="alert" className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg p-2 rounded-md">
+          <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+          <span>Não foi possível conferir quais meses têm resultado provisório (saída fora do DRE com composição pendente).</span>
         </div>
       )}
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -208,6 +239,9 @@ const FinanceiroFechamento = () => {
                       } ${fech?.status === 'fechado' ? 'border-status-success/40 bg-status-success-bg/30' : ''}`}
                     >
                       <p className="text-xs font-medium">{mesesNome[mes - 1].slice(0, 3)}</p>
+                      {ehProvisorio(co, mes) && (
+                        <p className="text-[10px] text-status-warning">resultado provisório</p>
+                      )}
 
                       {fech ? (
                         <>

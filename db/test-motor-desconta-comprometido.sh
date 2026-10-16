@@ -34,7 +34,18 @@ export LC_ALL=C LANG=C
 
 MIG="$REPO_ROOT/supabase/migrations/20261010210000_motor_desconta_comprometido.sql"
 MIG_PRED="$REPO_ROOT/supabase/migrations/20261009194000_motor_unidades_concentrado_wp.sql"
-SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
+# Snapshot ANCORADO (#3096): esta prova aplica uma migration HISTÓRICA e foi escrita/validada contra o
+# snapshot de 2026-10-08 (#2874). O re-dump de 10-15 absorveu as migrations que ela testa E o trigger
+# tint_tombstone_fase5_imutavel / o motor da 20261010210000, que em prod vieram DEPOIS — re-aplicar sobre
+# ele inverte a ordem de prod. Ancorada pelo id do BLOB (endereçado por conteúdo: o hash prova o arquivo).
+# O estado VIVO desses objetos é provado pelas provas que os testam diretamente; esta prova a migration.
+SNAP_ANCORA_BLOB=c4f6a3199c7e2f0171bc47978d9dcfe6e222b441
+SNAP_ANCORADO="${TMPDIR:-/tmp}/afiacao-snapshot-$SNAP_ANCORA_BLOB.sql"
+if [ "$(git -C "$REPO_ROOT" hash-object "$SNAP_ANCORADO" 2>/dev/null)" != "$SNAP_ANCORA_BLOB" ]; then
+  git -C "$REPO_ROOT" cat-file blob "$SNAP_ANCORA_BLOB" > "$SNAP_ANCORADO" \
+    || { echo "INFRA: snapshot ancorado $SNAP_ANCORA_BLOB indisponível (histórico do git raso?)"; exit 1; }
+fi
+SNAP="$SNAP_ANCORADO"
 MD5_SNAP=7a15485d16c2a88c2de88cc80f87756b   # o motor do snapshot (antes da 20261009194000)
 MD5_PRED=d3f55f2621c27a234925821e06f73dd7   # o motor VIVO em prod em 2026-10-10 (= 20261009194000)
 MD5_NOVO=4187116fdf4284f79d416249d3f35335

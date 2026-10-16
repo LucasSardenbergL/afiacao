@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict SbsqGAuVJJeXXTpgiIv1laTtKk7Gra4RI3YQQFdDJNiY4oZcqcKAWX3JrfxgkoJ
+\restrict mPYOAbRhM9fbnhsDn7eEcwMOtB1uVcGJW4BidNkn98bu0i0vRtaly3P7aQuQmcS
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.10 (Homebrew)
@@ -219,6 +219,26 @@ CREATE TYPE public.visit_mission AS ENUM (
 
 
 --
+-- Name: atp_canonico_da_reserva(uuid); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.atp_canonico_da_reserva(p_reserva_id uuid) RETURNS TABLE(canonico_id uuid, status text, omie_pedido_id bigint, account text)
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  SELECT c.id, c.status, c.omie_pedido_id, c.account
+  FROM public.estoque_reservas r
+  LEFT JOIN public.sales_orders push ON push.id = r.sales_order_id
+  JOIN public.sales_orders c
+    ON c.account = CASE WHEN r.omie_pedido_id IS NOT NULL THEN r.omie_account ELSE push.account END
+   AND c.omie_pedido_id = COALESCE(r.omie_pedido_id, push.omie_pedido_id)
+   AND c.hash_payload IS NOT NULL
+  WHERE r.id = p_reserva_id
+  LIMIT 1;
+$$;
+
+
+--
 -- Name: atp_disponivel(text, bigint, uuid); Type: FUNCTION; Schema: private; Owner: -
 --
 
@@ -316,16 +336,14 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
     FROM base b CROSS JOIN seg s
   ),
   res AS (
-    -- FASE 3 — a ÚNICA mudança desta migration no cálculo.
-    -- Reserva de PV FIRME (o pedido vinculado já tem omie_pedido_id) desconta
-    -- enquanto estiver 'ativa', SEM olhar expira_em: o Omie só baixa o saldo no
-    -- faturamento (p90 medido de 324h) e o TTL de 30min mataria a reserva antes,
-    -- devolvendo a mesma unidade ao ATP. Quem a tira de 'ativa' é o desfecho —
-    -- cancelamento confirmado (job) ou resolução humana auditada.
-    -- O discriminante é omie_pedido_id, NÃO sales_order_id: o vínculo nasce ANTES
-    -- da chamada ao Omie (fase 2), então reserva pré-PV (ou de PV que falhou em
-    -- definitivo) segue no TTL — ali o relógio é a resposta certa, porque não há
-    -- fato futuro que a resolva.
+    -- FASE 3 — reserva de PV FIRME desconta enquanto estiver 'ativa', SEM olhar
+    -- expira_em (o Omie só baixa o saldo no faturamento; p90 medido de 324h).
+    -- Quem a tira de 'ativa' é o desfecho — cancelamento confirmado (job) ou
+    -- resolução humana auditada. Reserva pré-PV segue no TTL.
+    -- FASE 3.1 — a ÚNICA mudança desta migration no cálculo: "PV firme" passa a
+    -- ser o PAR PRÓPRIO da reserva (r.omie_pedido_id, gravado por
+    -- atp_confirmar_pv, sobrevive ao DELETE da linha push) OU o EXISTS legado
+    -- pelo vínculo (reserva confirmada pelo edge antigo, antes do deploy).
     SELECT COALESCE(sum(r.quantidade), 0) AS reservado
     FROM public.estoque_reservas r
     WHERE r.pool = p_pool
@@ -333,6 +351,7 @@ CREATE FUNCTION private.atp_disponivel(p_pool text, p_sku bigint, p_excluir_chec
       AND r.status = 'ativa'
       AND (
         r.expira_em > now()
+        OR r.omie_pedido_id IS NOT NULL
         OR EXISTS (
           SELECT 1 FROM public.sales_orders so
           WHERE so.id = r.sales_order_id
@@ -394,15 +413,15 @@ DECLARE
   v_presas integer;
 BEGIN
   -- ── (a) LIBERAÇÃO por cancelamento CONFIRMADO no Omie (etapa 80 → 'cancelado'
-  --        na linha canônica). Aqui o Omie não baixou nada, então o estoque volta
-  --        a estar livre de verdade — não há fato futuro a esperar.
-  --        deleted_at NÃO entra: é gravado pelo front ANTES da confirmação remota.
+  --        na linha canônica). deleted_at NÃO entra (o front o grava antes da
+  --        confirmação remota) — e o DELETE da push também não: sem 'cancelado'
+  --        na canônica, a reserva desvinculada segue ativa (PV pode estar vivo).
   WITH alvo AS (
     SELECT r.id, r.checkout_id, r.sales_order_id, k.account
     FROM public.estoque_reservas r
-    CROSS JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k
+    CROSS JOIN LATERAL private.atp_canonico_da_reserva(r.id) k
     WHERE r.status = 'ativa'
-      AND r.sales_order_id IS NOT NULL
+      AND (r.sales_order_id IS NOT NULL OR r.omie_pedido_id IS NOT NULL)
       AND k.status = 'cancelado'
   ),
   upd AS (
@@ -424,16 +443,14 @@ BEGIN
   )
   SELECT count(*) INTO v_liberadas FROM upd;
 
-  -- ── (b) OBSERVAÇÃO do faturamento. Só CARIMBA — não consome. O carimbo não
-  --        afirma que o estoque baixou (ver item B do cabeçalho); ele é o gatilho
-  --        da revisão humana. clock_timestamp(), não now(): o carimbo é um
-  --        instante de parede, e now() é o do BEGIN.
+  -- ── (b) OBSERVAÇÃO do faturamento. Só CARIMBA — não consome (ver fase 3,
+  --        item B, e o "NÃO entra" deste cabeçalho).
   WITH alvo AS (
     SELECT r.id, r.checkout_id, r.sales_order_id, k.account
     FROM public.estoque_reservas r
-    CROSS JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k
+    CROSS JOIN LATERAL private.atp_canonico_da_reserva(r.id) k
     WHERE r.status = 'ativa'
-      AND r.sales_order_id IS NOT NULL
+      AND (r.sales_order_id IS NOT NULL OR r.omie_pedido_id IS NOT NULL)
       AND r.faturamento_observado_em IS NULL
       AND k.status = 'faturado'
   ),
@@ -455,23 +472,19 @@ BEGIN
   )
   SELECT count(*) INTO v_observadas FROM upd;
 
-  -- ── (c) REARMA o carimbo quando o status canônico REGREDIU. statusEhOmie
-  --        aceita trocar 'faturado' por outra etapa conhecida; sem isto, um
-  --        faturamento futuro reaproveitaria uma observação velha.
+  -- ── (c) REARMA o carimbo quando o status canônico REGREDIU.
   UPDATE public.estoque_reservas r
      SET faturamento_observado_em = NULL,
          atualizado_em = now()
    WHERE r.status = 'ativa'
      AND r.faturamento_observado_em IS NOT NULL
      AND NOT EXISTS (
-       SELECT 1 FROM private.atp_pedido_canonico(r.sales_order_id) k
+       SELECT 1 FROM private.atp_canonico_da_reserva(r.id) k
        WHERE k.status = 'faturado'
      );
   GET DIAGNOSTICS v_rearmadas = ROW_COUNT;
 
-  -- ── Observabilidade. Sem escape por relógio, "reserva parada" é o modo de
-  --     falha que substitui o oversell — e é um número que alguém precisa olhar
-  --     (sync de pedidos parado trava TODAS em silêncio).
+  -- ── Observabilidade (a reserva desvinculada com par próprio CONTA aqui).
   SELECT count(*) INTO v_aguardando
   FROM public.estoque_reservas r
   WHERE r.status = 'ativa' AND r.faturamento_observado_em IS NOT NULL;
@@ -479,7 +492,7 @@ BEGIN
   SELECT count(*) INTO v_presas
   FROM public.estoque_reservas r
   WHERE r.status = 'ativa'
-    AND r.sales_order_id IS NOT NULL
+    AND (r.sales_order_id IS NOT NULL OR r.omie_pedido_id IS NOT NULL)
     AND r.created_at <= now() - interval '7 days';
 
   RETURN jsonb_build_object(
@@ -771,6 +784,35 @@ COMMENT ON FUNCTION private.custo_canonico(p_cost_final numeric, p_cost_price nu
 
 
 --
+-- Name: estoque_reservas_pv_write_once(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.estoque_reservas_pv_write_once() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.omie_pedido_id IS NOT NULL OR NEW.omie_account IS NOT NULL THEN
+      RAISE EXCEPTION 'estoque_reservas: reserva nasce sem PV — o par (omie_account, omie_pedido_id) só é gravado por public.atp_confirmar_pv'
+        USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF OLD.omie_pedido_id IS NOT NULL
+     AND (NEW.omie_pedido_id IS DISTINCT FROM OLD.omie_pedido_id
+          OR NEW.omie_account IS DISTINCT FROM OLD.omie_account) THEN
+    RAISE EXCEPTION 'estoque_reservas %: o par do PV é write-once (% / %) — não pode ser trocado nem apagado',
+      OLD.id, OLD.omie_account, OLD.omie_pedido_id
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: expirar_reservas_vencidas_job(); Type: FUNCTION; Schema: private; Owner: -
 --
 
@@ -787,7 +829,8 @@ BEGIN
          atualizado_em = now()
    WHERE r.status = 'ativa'
      AND r.expira_em <= now()
-     -- FASE 3: reserva de PV firme não morre pelo relógio (mesmo predicado do M1).
+     -- FASE 3.1: PV firme = par próprio (sobrevive ao DELETE) OU o EXISTS legado.
+     AND r.omie_pedido_id IS NULL
      AND NOT EXISTS (
        SELECT 1 FROM public.sales_orders so
        WHERE so.id = r.sales_order_id
@@ -796,6 +839,109 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
   RETURN jsonb_build_object('ok', true, 'expiradas', v_n);
+END;
+$$;
+
+
+--
+-- Name: expurgar_conteudo_conversas(integer); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.expurgar_conteudo_conversas(p_dias integer DEFAULT 90) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_corte timestamptz;
+  v_calls bigint;
+  v_sessoes bigint;
+  v_eventos bigint;
+  v_msgs bigint;
+  v_webhook bigint;
+BEGIN
+  IF p_dias IS NULL OR p_dias < 90 THEN
+    RAISE EXCEPTION 'retencao_minima: p_dias=% < 90', p_dias USING ERRCODE = '22023';
+  END IF;
+  v_corte := now() - make_interval(days => p_dias);
+
+  UPDATE public.farmer_calls
+     SET transcript = NULL
+   WHERE created_at < v_corte AND NOT legal_hold AND transcript IS NOT NULL;
+  GET DIAGNOSTICS v_calls = ROW_COUNT;
+
+  UPDATE public.farmer_copilot_sessions
+     SET transcript_summary = NULL
+   WHERE started_at < v_corte AND NOT legal_hold AND transcript_summary IS NOT NULL;
+  GET DIAGNOSTICS v_sessoes = ROW_COUNT;
+
+  UPDATE public.farmer_copilot_events e
+     SET transcript_snippet = NULL
+   WHERE e.created_at < v_corte AND e.transcript_snippet IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.farmer_copilot_sessions s WHERE s.id = e.session_id AND s.legal_hold);
+  GET DIAGNOSTICS v_eventos = ROW_COUNT;
+
+  UPDATE public.whatsapp_messages m
+     SET body = NULL, transcript = NULL, media_url = NULL, media_id = NULL
+   WHERE m.created_at < v_corte
+     AND (m.body IS NOT NULL OR m.transcript IS NOT NULL OR m.media_url IS NOT NULL OR m.media_id IS NOT NULL)
+     AND NOT EXISTS (SELECT 1 FROM public.whatsapp_conversations c WHERE c.id = m.conversation_id AND c.legal_hold);
+  GET DIAGNOSTICS v_msgs = ROW_COUNT;
+
+  DELETE FROM public.whatsapp_webhook_events
+   WHERE received_at < v_corte AND processed_at IS NOT NULL;
+  GET DIAGNOSTICS v_webhook = ROW_COUNT;
+
+  RETURN jsonb_build_object(
+    'corte', v_corte,
+    'farmer_calls_transcript', v_calls,
+    'copilot_sessions_summary', v_sessoes,
+    'copilot_events_snippet', v_eventos,
+    'whatsapp_messages_conteudo', v_msgs,
+    'whatsapp_webhook_events_apagados', v_webhook
+  );
+END;
+$$;
+
+
+--
+-- Name: expurgar_scores_antigos(integer, integer); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.expurgar_scores_antigos(p_dias integer DEFAULT 90, p_lote integer DEFAULT 50000) RETURNS jsonb
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+DECLARE
+  v_corte timestamptz;
+  v_h bigint := 0;
+  v_p bigint := 0;
+  n bigint;
+BEGIN
+  IF p_dias IS NULL OR p_dias < 30 THEN
+    RAISE EXCEPTION 'retencao_minima: p_dias=% < 30', p_dias USING ERRCODE = '22023';
+  END IF;
+  IF p_lote IS NULL OR p_lote < 1 THEN
+    RAISE EXCEPTION 'lote_invalido: p_lote=%', p_lote USING ERRCODE = '22023';
+  END IF;
+  v_corte := now() - make_interval(days => p_dias);
+
+  LOOP
+    DELETE FROM public.health_score_history
+     WHERE id IN (SELECT id FROM public.health_score_history WHERE calculated_at < v_corte LIMIT p_lote);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    v_h := v_h + n;
+    EXIT WHEN n = 0;
+  END LOOP;
+
+  LOOP
+    DELETE FROM public.priority_score_log
+     WHERE id IN (SELECT id FROM public.priority_score_log WHERE score_date < v_corte::date LIMIT p_lote);
+    GET DIAGNOSTICS n = ROW_COUNT;
+    v_p := v_p + n;
+    EXIT WHEN n = 0;
+  END LOOP;
+
+  RETURN jsonb_build_object('corte', v_corte, 'health_score_history', v_h, 'priority_score_log', v_p);
 END;
 $$;
 
@@ -1006,6 +1152,9 @@ CREATE FUNCTION private.margem_cliente_agregada() RETURNS TABLE(customer_user_id
      -- em trânsito (`separacao`, `enviado`) e os importados do Omie.
      WHERE so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')
        AND so.deleted_at IS NULL
+       -- JANELA (2026-10-09): só pedidos dos últimos 12 meses móveis — o custo é o ATUAL, e aplicá-lo
+       -- a preço de anos atrás deprime a margem. Sem compra no período → cliente fora (NULL, não 0).
+       AND so.created_at >= now() - interval '12 months'
        AND oi.customer_user_id IS NOT NULL
        -- NOT EXISTS, não NOT IN: NOT IN é NULL-blind e zeraria o resultado inteiro.
        AND NOT EXISTS (
@@ -1065,7 +1214,7 @@ $$;
 -- Name: FUNCTION margem_cliente_agregada(); Type: COMMENT; Schema: private; Owner: -
 --
 
-COMMENT ON FUNCTION private.margem_cliente_agregada() IS 'Fonte UNICA da margem bruta por cliente (order_items x omie_products x product_costs). Universo por DENYLIST de status (inclui separacao/enviado/importado: sao vendas reais, R$ 6.985.425,66 que a allowlist anterior descartava). JOIN por omie_codigo_produto — product_id e nulo em 2,67% dos itens. ausente<>zero nas TRES pernas: sem item computavel devolve NULL, nunca 0. Preco exige > 0 (nao >= 0): enquanto unit_price foi NOT NULL DEFAULT 0, preco ausente chegava como 0 e era computavel — margem negativa fabricada. itens_sem_preco e itens_sem_custo SE SOBREPOEM (item sem os dois conta nas duas) e NAO somam itens_ignorados.';
+COMMENT ON FUNCTION private.margem_cliente_agregada() IS 'Fonte UNICA da margem bruta por cliente (order_items x omie_products x product_costs). JANELA: so itens de pedidos dos ULTIMOS 12 MESES moveis (sales_orders.created_at) — o custo e o atual e nao vale para preco de anos atras (decisao 2026-10-09); cliente sem compra no periodo nao aparece (NULL, nunca 0). Universo por DENYLIST de status (inclui separacao/enviado/importado: sao vendas reais). JOIN por omie_codigo_produto — product_id e nulo em 2,67% dos itens. ausente<>zero nas TRES pernas: sem item computavel devolve NULL, nunca 0. Preco exige > 0 (nao >= 0): enquanto unit_price foi NOT NULL DEFAULT 0, preco ausente chegava como 0 e era computavel — margem negativa fabricada. itens_sem_preco e itens_sem_custo SE SOBREPOEM (item sem os dois conta nas duas) e NAO somam itens_ignorados.';
 
 
 --
@@ -1179,6 +1328,117 @@ $$;
 --
 
 COMMENT ON FUNCTION private.regua_piso_calc(p_cmc numeric, p_aliquota numeric, p_dias numeric[], p_taxa numeric, OUT piso numeric, OUT prazo_aplicado boolean) IS 'FU4-F fase 2: fórmula do piso de MC (à vista e ajustada ao prazo). Migrada de calcPisoMC/pisoComPrazo, que saíram do TS — fonte ÚNICA. Pura; qualquer guard do prazo que falhe degrada para o piso à vista, nunca para NULL nem para número fabricado.';
+
+
+--
+-- Name: sanear_jsonb_margem(jsonb); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.sanear_jsonb_margem(p_valor jsonb) RETURNS jsonb
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+DECLARE
+  v_saida jsonb;
+BEGIN
+  CASE jsonb_typeof(p_valor)
+    WHEN 'string' THEN
+      RETURN to_jsonb(private.sanear_texto_margem(p_valor #>> '{}'));
+    WHEN 'array' THEN
+      SELECT coalesce(jsonb_agg(private.sanear_jsonb_margem(e.valor) ORDER BY e.ordem), '[]'::jsonb)
+        INTO v_saida
+        FROM jsonb_array_elements(p_valor) WITH ORDINALITY AS e(valor, ordem);
+      RETURN v_saida;
+    WHEN 'object' THEN
+      SELECT coalesce(jsonb_object_agg(o.chave, private.sanear_jsonb_margem(o.valor)), '{}'::jsonb)
+        INTO v_saida
+        FROM jsonb_each(p_valor) AS o(chave, valor);
+      RETURN v_saida;
+    ELSE
+      -- número, booleano, null JSON e NULL SQL: não são texto, ficam como estão.
+      RETURN p_valor;
+  END CASE;
+END;
+$$;
+
+
+--
+-- Name: sanear_texto_margem(text); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.sanear_texto_margem(p_texto text) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+  -- Fala de margem. `\mpares\M` com borda de palavra: "comparação" não conta.
+  c_contexto constant text := '(margem|margens|rentabil|lucrativ|lucro|cluster|\mpares\M)';
+  -- Número com unidade de margem. "36 categorias" não casa; "9,3 pp", "~19pp", "4 p.p.", "14 pontos
+  -- percentuais", "R$ 380" e "trinta e oito por cento" casam. `R$` sozinho não derruba a frase: só cai
+  -- junto de margem ou dentro de uma sequência que fala de margem ("R$ 380 de margem sobre R$ 1.000").
+  c_numero   constant text := '([0-9]+([.,][0-9]+)?\s*(%|por cento|pontos?|p\.?\s?p(\M|\.))|R\$\s*[0-9]|\mpor cento\M|pontos percentuais)';
+  v_frase        text;
+  v_saida        text[] := '{}';
+  v_tirou        boolean := false;
+  v_em_sequencia boolean := false;
+  v_contexto     boolean;
+  v_tem_numero   boolean;
+  v_cai          boolean;
+BEGIN
+  -- Sem dígito e sem número por extenso não há o que remover: devolve como veio (inclusive NULL e '').
+  IF p_texto IS NULL OR p_texto !~* '([0-9]|por cento|percentua)' THEN
+    RETURN p_texto;
+  END IF;
+
+  -- "p.p." vira "pp" ANTES de partir em frases: o ponto da abreviação partia "Recuperar 4 p.p. de margem"
+  -- em duas frases, uma com o número sem a palavra e outra com a palavra sem o número — e nenhuma caía
+  -- (achado do harness; os detectores da medição tinham a mesma cegueira). Só afeta a saída quando alguma
+  -- frase cai; sem queda o texto volta como veio.
+  FOREACH v_frase IN ARRAY regexp_split_to_array(regexp_replace(p_texto, '\mp\.\s?p\.', 'pp', 'gi'), '(?<=[.!?;])\s+') LOOP
+    v_tem_numero := v_frase ~* c_numero;
+    v_contexto   := v_frase ~* c_contexto;
+    -- Cai a frase com número que fala de margem, ou que está numa sequência aberta por uma que falava.
+    v_cai := v_tem_numero AND (v_contexto OR v_em_sequencia);
+    IF v_cai THEN
+      v_tirou := true;
+    ELSE
+      v_saida := v_saida || v_frase;
+    END IF;
+    -- A sequência segue enquanto a frase fala de margem ou caiu; uma frase MANTIDA que não fala de margem
+    -- a encerra ("Churn de 62%." depois de "Qual a margem? Foque no ciclo." fica).
+    v_em_sequencia := v_contexto OR v_cai;
+  END LOOP;
+
+  IF NOT v_tirou THEN
+    RETURN p_texto;  -- byte a byte: a rejunção abaixo normalizaria espaços e quebras de linha
+  END IF;
+  IF cardinality(v_saida) = 0 THEN
+    RETURN '[trecho removido: citava a margem]';
+  END IF;
+  RETURN array_to_string(v_saida, ' ');
+END;
+$_$;
+
+
+--
+-- Name: tactical_plan_saneia_margem(); Type: FUNCTION; Schema: private; Owner: -
+--
+
+CREATE FUNCTION private.tactical_plan_saneia_margem() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+BEGIN
+  NEW.approach_strategy    := private.sanear_texto_margem(NEW.approach_strategy);
+  NEW.approach_strategy_b  := private.sanear_texto_margem(NEW.approach_strategy_b);
+  NEW.implication_question := private.sanear_texto_margem(NEW.implication_question);
+  NEW.offer_transition     := private.sanear_texto_margem(NEW.offer_transition);
+  NEW.diagnostic_questions := private.sanear_jsonb_margem(NEW.diagnostic_questions);
+  NEW.probable_objections  := private.sanear_jsonb_margem(NEW.probable_objections);
+  NEW.operational_risks    := private.sanear_jsonb_margem(NEW.operational_risks);
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -2468,6 +2728,7 @@ CREATE FUNCTION public._data_health_compute() RETURNS TABLE(source text, domain 
                  ('oben',         'strategic',            'products',                       30),
                  ('oben',         'status_produtos',      'sku_status_omie',                30),
                  ('colacor',      'status_produtos',      'sku_status_omie',                30),
+                 ('colacor',      'operational',          'orders',                          4),
                  -- DISPENSADAS (sla_h NULL) — catalogadas p/ nao virarem "nao catalogada":
                  -- `manual` e disparo HUMANO e sincrono: quem dispara ve o resultado na hora, e
                  -- staleness nao tem sentido sem cadencia. colacor/manual/products esta em error
@@ -2979,6 +3240,23 @@ $$;
 
 
 --
+-- Name: _fin_ciclo_gate_master(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public._fin_ciclo_gate_master() RETURNS void
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF auth.uid() IS NULL OR NOT EXISTS (
+       SELECT 1 FROM public.user_roles WHERE user_id = auth.uid() AND role = 'master') THEN
+    RAISE EXCEPTION 'CICLO_SO_MASTER' USING ERRCODE = '42501';
+  END IF;
+END
+$$;
+
+
+--
 -- Name: _push_enviar(uuid[], text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3140,6 +3418,7 @@ CREATE FUNCTION public._tint_watchdog_fase5_transicao(p_company text, p_tipo tex
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
+  -- tint_watchdog_fase5 helper v2 (20261013210000)
   v_ant      bigint;
   -- fornecedor_alerta tem CHECK próprio e vocabulário DIFERENTE de fin_alertas
   -- (info/atencao/urgente vs info/aviso/critico). Derivar aqui, em vez de passar
@@ -3150,6 +3429,7 @@ DECLARE
   v_upd int;
   v_ant_email bigint;
   v_emitir boolean;
+  v_subiu_sev boolean;
   v_sev_ant text;
 BEGIN
   IF p_n <= 0 THEN
@@ -3169,16 +3449,8 @@ BEGIN
     RETURN;
   END IF;
 
-  -- Alerta já aberto. Com ON CONFLICT DO NOTHING puro, uma PIORA durante um
-  -- incidente aberto ficaria MUDA (Codex [P1]). Se o conjunto cresceu, atualiza o
-  -- alerta e re-enfileira o e-mail.
-  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
-  -- B16c): `_n` é o valor do último CICLO e avança sempre, então comparar com ele
-  -- faria o gatilho fugir junto — S2 subindo 15/ciclo nunca alcançaria o dobro e o
-  -- e-mail NUNCA mais sairia, nem se explodisse de 300 para 100.000. A âncora certa
-  -- é `_n_email`: o valor de quando o último e-mail saiu. Assim a re-emissão é
-  -- logarítmica (300 → 600 → 1200 …): silenciosa no crescimento vegetativo, mas
-  -- garantida a cada duplicação.
+  -- Alerta já aberto. Duas âncoras: `_n` = valor do último CICLO; `_n_email` = valor de quando o
+  -- último e-mail saiu.
   SELECT COALESCE((contexto->>'_n')::bigint, 0),
          COALESCE((contexto->>'_n_email')::bigint, COALESCE((contexto->>'_n')::bigint, 0)),
          severidade
@@ -3186,33 +3458,29 @@ BEGIN
     FROM fin_alertas
    WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL;
 
-  -- ⚠️ O UPDATE é INCONDICIONAL (2ª rodada do challenge Codex, [P1]). A versão
-  -- anterior o embrulhava num `IF p_n > v_ant`, então uma MELHORA parcial não
-  -- atualizava nada: com S2 caindo de 1.200 para 300, o alerta seguia mostrando
-  -- 1.200 e a severidade do pico, e S2 podia voltar a 1.199 em silêncio total.
-  -- Estado no banco reflete SEMPRE o ciclo atual; o que a histerese governa é só
-  -- o E-MAIL.
-  --
-  -- Duas âncoras DIFERENTES, e confundi-las quebra a histerese (pego pelo assert
-  -- B16c): `_n` é o valor do ciclo atual; `_n_email` é o valor de quando o último
-  -- e-mail saiu. Comparar com `_n` faria o gatilho fugir junto com o valor e o
-  -- e-mail nunca mais sairia. Com `_n_email`, a re-emissão é logarítmica.
-  --
-  -- REARME NA RECUPERAÇÃO ([P1] da 2ª rodada): se o sinal MELHORA materialmente
-  -- (cai a metade ou menos do valor emailado), a âncora desce junto — senão, depois
-  -- de um pico de 1.200, um novo patamar de 1.199 ficaria mudo para sempre.
+  -- REARME NA RECUPERAÇÃO (fator 2.0): se o sinal cai à metade ou menos do valor emailado, a
+  -- âncora desce junto — senão um novo patamar logo abaixo do pico ficaria mudo para sempre.
   v_ant_email := CASE WHEN p_n <= v_ant_email / 2 THEN p_n ELSE v_ant_email END;
 
-  -- Emite se DOBROU desde o último e-mail, OU se a SEVERIDADE SUBIU ([P1] da 2ª
-  -- rodada): 9.600 'aviso' → 10.000 'critico' mudava o alerta para crítico sem
-  -- avisar ninguém, e o próximo e-mail só sairia em 19.200.
-  v_emitir := p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1)
-              OR (CASE p_sev      WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END
-                > CASE v_sev_ant WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END);
+  -- v2 (20261013210000, challenge Codex v3b P2a):
+  --  · SUBIDA DE SEVERIDADE notifica SEMPRE, inclusive com o número CAINDO. No S4 a severidade é
+  --    uma FRAÇÃO (bruto/universo): o universo encolher sobe o alerta a 'critico' com o bruto
+  --    parado ou menor, e a v1 calava isso pelo `AND p_n > v_ant` do envio.
+  --  · FATOR 1.0 ("toda piora") compara com o CICLO ANTERIOR, não com a âncora do e-mail. Com a
+  --    âncora, 90.000 → 46.000 → 89.000 não reemitia: 46.000 não chega à metade (não rearma) e
+  --    89.000 < 90.000 — uma piora de 43.000 em silêncio.
+  --  · FATOR 2.0 inalterado: re-emissão logarítmica pela âncora (e só se cresceu no ciclo).
+  v_subiu_sev := (CASE p_sev     WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END)
+               > (CASE v_sev_ant WHEN 'critico' THEN 3 WHEN 'aviso' THEN 2 ELSE 1 END);
+  v_emitir := v_subiu_sev
+              OR CASE WHEN p_fator <= 1.0
+                      THEN p_n > v_ant
+                      ELSE p_n >= GREATEST(v_ant_email * p_fator, v_ant_email + 1) AND p_n > v_ant
+                 END;
 
-  -- UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
-  -- UPDATE faria o UPDATE não achar linha e, com o INSERT incondicional, sairia um
-  -- e-mail "AGRAVOU" fantasma, sem alerta aberto por trás (Codex [P2]).
+  -- O UPDATE é INCONDICIONAL: o estado no banco reflete SEMPRE o ciclo atual; a histerese governa
+  -- só o E-MAIL. UPDATE ... RETURNING numa passada só: um dismiss CONCORRENTE entre o SELECT e o
+  -- UPDATE não pode gerar um e-mail "AGRAVOU" sem alerta aberto por trás (Codex [P2]).
   UPDATE fin_alertas
      SET severidade = p_sev,
          mensagem   = p_msg,
@@ -3223,10 +3491,11 @@ BEGIN
    WHERE company = p_company AND tipo = p_tipo AND dismissed_at IS NULL
   RETURNING 1 INTO v_upd;
 
-  IF v_upd IS NOT NULL AND v_emitir AND p_n > v_ant THEN
+  IF v_upd IS NOT NULL AND v_emitir THEN
     INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
     VALUES (p_company, 'outro', v_sev_forn, 'AGRAVOU: ' || p_titulo,
-            p_msg || E'\n\n(agravamento: eram ' || v_ant || ')', 'pendente_notificacao');
+            p_msg || E'\n\n(agravamento: eram ' || v_ant || ', severidade ' || COALESCE(v_sev_ant, '?') || ')',
+            'pendente_notificacao');
   END IF;
 END;
 $$;
@@ -3445,7 +3714,7 @@ BEGIN
   END IF;
 
   -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
-  IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida') THEN
+  IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida', 'dashboard.crescimento_comparavel_servido') THEN
     RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
       USING ERRCODE = '22023';
   END IF;
@@ -3587,7 +3856,7 @@ BEGIN
   -- `UPDATE OF` mesmo quando o valor final não mudou.
   ELSIF NEW.status = 'expirado_sem_aprovacao' AND OLD.status IS DISTINCT FROM NEW.status THEN
     v_evento := 'reposicao.sugestao_expirada';
-  ELSIF NEW.status = 'cancelado_humano' AND OLD.status IS DISTINCT FROM NEW.status THEN
+  ELSIF NEW.status IN ('cancelado_humano', 'cancelado') AND OLD.status IS DISTINCT FROM NEW.status THEN
     v_evento := 'reposicao.sugestao_cancelada';
   ELSE
     RETURN NULL;  -- AFTER trigger: o retorno é ignorado
@@ -3611,7 +3880,10 @@ BEGIN
         'condicao_origem',    NEW.condicao_origem,
         'origem_evento_tipo', NEW.origem_evento_tipo,
         -- booleano, não o e-mail: diz SE houve humano, sem dizer QUEM.
-        'aprovacao_humana',   (NEW.aprovado_por IS NOT NULL)
+        'aprovacao_humana',   (NEW.aprovado_por IS NOT NULL),
+        -- rótulo, não o autor: 'cancelado' é o vocabulário dos encerramentos de sistema.
+        'origem_cancelamento', CASE NEW.status WHEN 'cancelado_humano' THEN 'humano'
+                                               WHEN 'cancelado' THEN 'sistema' END
       ),
       -- ⚠️ a chave inclui o EVENTO, não só o id: um pedido passa por criada →
       -- aprovada → (expirada|cancelada) e cada transição é uma linha. Chavear
@@ -4437,10 +4709,10 @@ COMMENT ON FUNCTION public.aplicar_sql(p_sql text, p_sha text, p_id bigint) IS '
 
 
 --
--- Name: apply_score_updates(jsonb); Type: FUNCTION; Schema: public; Owner: -
+-- Name: apply_score_updates(jsonb, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.apply_score_updates(p_updates jsonb) RETURNS integer
+CREATE FUNCTION public.apply_score_updates(p_updates jsonb, p_run_id text DEFAULT NULL::text) RETURNS integer
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
@@ -4448,8 +4720,46 @@ DECLARE
   v_count int;
   v_total int;
   v_valid int;
+  v_dono  text;
+  v_status text;
 BEGIN
+  -- ── FENCING DO LEASE ─────────────────────────────────────────────────────────────────────────
+  -- Primeira coisa do corpo, ANTES do guard de contrato e do UPDATE: quem não é dono não paga nem
+  -- o custo de validar o payload, e o lock é tomado antes de qualquer trabalho.
+  IF p_run_id IS NOT NULL THEN
+    IF btrim(p_run_id) = '' THEN
+      RAISE EXCEPTION 'apply_score_updates: p_run_id vazio (use NULL para chamar sem fencing, nunca string vazia)'
+        USING ERRCODE = '22004';
+    END IF;
+
+    -- FOR SHARE: trava a linha de lease até o COMMIT deste chunk. O claim rival bloqueia até lá, de
+    -- modo que "sou dono" e "escrevo" ficam atômicos. Sem isto a checagem seria decorativa.
+    PERFORM 1
+       FROM public.sync_state
+      WHERE entity_type = 'calculate_scores'
+        AND account     = 'global'
+        AND status      = 'syncing'
+        AND (metadata->>'run_id') = p_run_id
+      FOR SHARE;
+
+    IF NOT FOUND THEN
+      -- Diagnóstico: quem é o dono corrente e em que estado. Só ids de run (crypto.randomUUID da
+      -- edge) e o status do lease — domínio fechado, sem dado de cliente.
+      SELECT s.metadata->>'run_id', s.status INTO v_dono, v_status
+        FROM public.sync_state s
+       WHERE s.entity_type = 'calculate_scores' AND s.account = 'global';
+      RAISE EXCEPTION
+        'apply_score_updates: run % nao e dono do lease (dono=% status=%) — escrita recusada para nao restaurar snapshot velho',
+        p_run_id, coalesce(v_dono, '<sem lease>'), coalesce(v_status, '<sem linha>')
+        USING ERRCODE = '55000';
+    END IF;
+  END IF;
+  -- ── fim do fencing ───────────────────────────────────────────────────────────────────────────
+
   -- GUARD DE CONTRATO (full-update only): as 12 chaves CORE são obrigatórias em TODA linha.
+  -- Aqui jsonb_to_recordset basta: ausente e null são AMBOS inválidos, então colapsá-los é correto.
+  -- sales_history_status, gross_margin_pct, m_score, itens_com_custo e itens_sem_custo NÃO entram
+  -- (nuláveis por semântica).
   v_total := jsonb_array_length(p_updates);
 
   SELECT count(*) INTO v_valid
@@ -4487,7 +4797,7 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
-  -- UPDATE-only por id (anti-ressurreição #971) + base de vendas (#987) + sales_history_status
+  -- UPDATE-only por id (anti-ressurreição #971), base de vendas (#987) + sales_history_status (COALESCE)
   -- + cobertura de custo (itens_com_custo/itens_sem_custo, jsonb_exists como gross_margin_pct).
   UPDATE public.farmer_client_scores f SET
     health_score             = u.health_score,
@@ -4536,6 +4846,13 @@ BEGIN
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
 END $$;
+
+
+--
+-- Name: FUNCTION apply_score_updates(p_updates jsonb, p_run_id text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.apply_score_updates(p_updates jsonb, p_run_id text) IS 'Aplica o lote de scores do calculate-scores (UPDATE-only por id, anti-ressurreicao). p_run_id e o FENCING TOKEN do lease: quando informado, a RPC so escreve se sync_state(calculate_scores/global) ainda estiver syncing com metadata->>run_id = p_run_id, validado sob FOR SHARE na MESMA transacao da escrita (55000 se perdeu o lease). p_run_id NULL = sem fencing, retrocompat exata com a edge antiga; string vazia e 22004, NAO bypass. Sem o parametro o lease e apenas cooperativo: protege inicio e fim, mas um run que perdeu o lease e continuou vivo ainda restauraria o snapshot velho.';
 
 
 --
@@ -4901,6 +5218,217 @@ $$;
 
 
 --
+-- Name: atp_confirmar_pv(uuid, text, bigint, text, jsonb, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.atp_confirmar_pv(p_sales_order_id uuid, p_account text, p_omie_pedido_id bigint, p_omie_numero_pedido text, p_omie_payload jsonb, p_omie_response jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_ck uuid;
+  v_lock record;
+  v_n_so integer;
+  v_n_res integer;
+  v_reconciliado boolean := COALESCE(p_omie_response->>'reconciled', '') = 'true';
+  v_det jsonb;
+  v_pv jsonb;            -- {sku: quantidade} do PV no Omie, agregado por SKU
+  v_legivel boolean;     -- NULL = não se aplica (envio normal ou conta sem reserva)
+  v_cks uuid[];
+  v_cks_sob_lock uuid[];
+  v_expira timestamptz;
+  v_aj record;
+  v_ajustes jsonb := '[]'::jsonb;
+  v_falha text;
+BEGIN
+  -- Defesa em profundidade: o EXECUTE já é só de service_role (REVOKE da 3.1).
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION 'atp_confirmar_pv é exclusiva do edge (service_role)'
+      USING ERRCODE = '42501';
+  END IF;
+  IF p_sales_order_id IS NULL THEN
+    RAISE EXCEPTION 'p_sales_order_id é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_account IS NULL OR btrim(p_account) = '' THEN
+    RAISE EXCEPTION 'p_account é obrigatório' USING ERRCODE = '22023';
+  END IF;
+  IF p_omie_pedido_id IS NULL OR p_omie_pedido_id <= 0 THEN
+    RAISE EXCEPTION 'p_omie_pedido_id inválido: %', p_omie_pedido_id USING ERRCODE = '22023';
+  END IF;
+
+  -- Itens do PV reconciliado, lidos da resposta do ConsultarPedido. Só o pool
+  -- oben reserva. Qualquer item fora do formato (código não inteiro positivo,
+  -- quantidade não numérica ou ≤ 0, soma fora do domínio da reserva) torna a
+  -- leitura INTEIRA ilegível: ajustar metade seria fabricar reserva.
+  IF v_reconciliado AND p_account = 'oben' THEN
+    v_det := COALESCE(p_omie_response #> '{consulta,pedido_venda_produto,det}',
+                      p_omie_response #> '{consulta,det}');
+    -- CASE (não AND): jsonb_array_length/jsonb_array_elements LANÇAM sobre
+    -- não-array, e um erro aqui desfaria o write-back de um PV que existe.
+    v_legivel := CASE
+      WHEN COALESCE(jsonb_typeof(v_det), '') <> 'array' THEN false
+      WHEN jsonb_array_length(v_det) = 0 THEN false
+      ELSE NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(v_det) e
+         WHERE NOT (
+           CASE WHEN COALESCE(e #>> '{produto,codigo_produto}', '') !~ '^[0-9]{1,18}$' THEN false
+                WHEN jsonb_typeof(e #> '{produto,quantidade}') IS DISTINCT FROM 'number' THEN false
+                ELSE (e #>> '{produto,quantidade}')::numeric > 0 END))
+    END;
+    IF v_legivel THEN
+      -- Item que o Omie não baixa do estoque (nao_movimentar_estoque = 'S') não
+      -- é reservado. PV só com esses itens ⇒ {} (o pedido não compromete estoque).
+      SELECT COALESCE(jsonb_object_agg(s.sku::text, s.qtd), '{}'::jsonb),
+             COALESCE(bool_and(s.sku > 0 AND s.qtd > 0 AND s.qtd <= 1000000), true)
+        INTO v_pv, v_legivel
+        FROM (SELECT (e #>> '{produto,codigo_produto}')::bigint AS sku,
+                     sum((e #>> '{produto,quantidade}')::numeric) AS qtd
+                FROM jsonb_array_elements(v_det) e
+               WHERE COALESCE(e #>> '{inf_adic,nao_movimentar_estoque}', 'N') <> 'S'
+               GROUP BY 1) s;
+    END IF;
+    IF NOT v_legivel THEN
+      v_pv := NULL;
+    END IF;
+  END IF;
+
+  -- O ajuste só existe sobre reserva viva do pedido, num checkout só (o índice
+  -- único da reserva é por checkout; dois checkouts no mesmo pedido = estado
+  -- que nenhum writer produz, e então não se ajusta nada).
+  SELECT array_agg(DISTINCT r.checkout_id ORDER BY r.checkout_id)
+    INTO v_cks
+    FROM public.estoque_reservas r
+   WHERE r.sales_order_id = p_sales_order_id AND r.status = 'ativa';
+
+  -- Serialização com reservar_estoque, na MESMA ordem global dele: checkout(s)
+  -- primeiro, depois SKUs em ordem crescente, mesmo namespace. O conjunto de
+  -- SKUs inclui os do PV: o ajuste pode CRIAR reserva de SKU que o pedido não
+  -- tinha.
+  FOREACH v_ck IN ARRAY COALESCE(v_cks, '{}'::uuid[])
+  LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended('atp:checkout:' || v_ck::text, 0));
+  END LOOP;
+  FOR v_lock IN
+    SELECT DISTINCT x.pool, x.sku
+      FROM (SELECT r.pool, r.omie_codigo_produto AS sku
+              FROM public.estoque_reservas r
+             WHERE r.sales_order_id = p_sales_order_id AND r.status = 'ativa'
+            UNION
+            SELECT 'oben', k::bigint
+              FROM jsonb_object_keys(COALESCE(v_pv, '{}'::jsonb)) k) x
+     ORDER BY x.sku, x.pool
+  LOOP
+    PERFORM pg_advisory_xact_lock(hashtextextended('atp:sku:' || v_lock.pool || ':' || v_lock.sku::text, 0));
+  END LOOP;
+
+  -- Releitura SOB o lock (Codex 3.3): a leitura acima foi feita antes de esperar
+  -- o lock do checkout; uma substituição concorrente pode ter trocado o conjunto.
+  SELECT array_agg(DISTINCT r.checkout_id ORDER BY r.checkout_id), max(r.expira_em)
+    INTO v_cks_sob_lock, v_expira
+    FROM public.estoque_reservas r
+   WHERE r.sales_order_id = p_sales_order_id AND r.status = 'ativa';
+  IF v_pv IS NOT NULL
+     AND (v_cks_sob_lock IS DISTINCT FROM v_cks OR COALESCE(array_length(v_cks_sob_lock, 1), 0) <> 1) THEN
+    v_pv := NULL;
+  END IF;
+
+  UPDATE public.sales_orders
+     SET omie_pedido_id = p_omie_pedido_id,
+         omie_numero_pedido = p_omie_numero_pedido,
+         omie_payload = p_omie_payload,
+         omie_response = p_omie_response,
+         status = 'enviado'
+   WHERE id = p_sales_order_id
+     AND account = p_account;
+  GET DIAGNOSTICS v_n_so = ROW_COUNT;
+  IF v_n_so <> 1 THEN
+    RAISE EXCEPTION 'write-back do PV % não casou exatamente 1 linha (id=%, account=%)',
+      p_omie_pedido_id, p_sales_order_id, p_account
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  -- #1: a reserva passa a ser a do PV. ANTES do carimbo: a reserva criada
+  -- aqui nasce sem par (o trigger write-once exige) e é carimbada abaixo.
+  -- Subtransação: o ajuste pode falhar; o write-back acima NÃO.
+  IF v_pv IS NOT NULL THEN
+    BEGIN
+      FOR v_aj IN
+        SELECT COALESCE(r.sku, p.sku) AS sku, r.id, r.quantidade AS antes, p.qtd AS depois
+          FROM (SELECT er.id, er.omie_codigo_produto AS sku, er.quantidade
+                  FROM public.estoque_reservas er
+                 WHERE er.sales_order_id = p_sales_order_id AND er.status = 'ativa'
+                   AND er.pool = 'oben') r
+          FULL JOIN (SELECT k::bigint AS sku, (v_pv ->> k)::numeric AS qtd
+                       FROM jsonb_object_keys(v_pv) k) p ON p.sku = r.sku
+         WHERE r.quantidade IS DISTINCT FROM p.qtd
+         ORDER BY 1
+      LOOP
+        IF v_aj.id IS NULL THEN
+          INSERT INTO public.estoque_reservas
+            (pool, omie_codigo_produto, quantidade, checkout_id, sales_order_id,
+             status, expira_em, motivo)
+          VALUES
+            ('oben', v_aj.sku, v_aj.depois, v_cks_sob_lock[1], p_sales_order_id,
+             'ativa', v_expira, 'pv_divergente: item do PV no Omie sem reserva');
+        ELSIF v_aj.depois IS NULL THEN
+          UPDATE public.estoque_reservas
+             SET status = 'liberada',
+                 motivo = 'pv_divergente: SKU fora do PV no Omie',
+                 atualizado_em = now()
+           WHERE id = v_aj.id;
+        ELSE
+          UPDATE public.estoque_reservas
+             SET quantidade = v_aj.depois,
+                 atualizado_em = now()
+           WHERE id = v_aj.id;
+        END IF;
+        v_ajustes := v_ajustes || jsonb_build_object(
+          'sku', v_aj.sku, 'antes', COALESCE(v_aj.antes, 0), 'depois', COALESCE(v_aj.depois, 0));
+      END LOOP;
+    EXCEPTION WHEN OTHERS THEN
+      -- desfaz SÓ o ajuste; a reserva fica a do carrinho e a falha é exposta
+      v_ajustes := '[]'::jsonb;
+      v_falha := SQLSTATE || ': ' || SQLERRM;
+    END;
+  END IF;
+
+  -- Carimba SÓ as ativas: reserva já encerrada (expirada/liberada/consumida)
+  -- continua encerrada — o cálculo exige 'ativa' e a fase 3 já travou que
+  -- expirada não ressuscita (assert A5). O trigger write-once barra PID trocado.
+  UPDATE public.estoque_reservas r
+     SET omie_pedido_id = p_omie_pedido_id,
+         omie_account = p_account,
+         atualizado_em = now()
+   WHERE r.sales_order_id = p_sales_order_id
+     AND r.status = 'ativa';
+  GET DIAGNOSTICS v_n_res = ROW_COUNT;
+
+  IF jsonb_array_length(v_ajustes) > 0 OR v_falha IS NOT NULL THEN
+    INSERT INTO public.atp_decisoes
+      (sales_order_id, checkout_id, pool, account, decisao, contexto, enforcement, atp_snapshot)
+    VALUES
+      (p_sales_order_id, v_cks_sob_lock[1], 'oben', p_account,
+       CASE WHEN v_falha IS NULL THEN 'reservado' ELSE 'verificacao_indisponivel' END,
+       'reconciliacao', true,
+       jsonb_build_object('reserva_ajustada', v_falha IS NULL,
+                          'omie_pedido_id', p_omie_pedido_id,
+                          'ajustes', v_ajustes,
+                          'ajuste_falhou', v_falha));
+  END IF;
+
+  RETURN jsonb_build_object('ok', true,
+                            'sales_order_id', p_sales_order_id,
+                            'omie_pedido_id', p_omie_pedido_id,
+                            'reservas_firmadas', v_n_res,
+                            'pv_itens_legiveis', v_legivel,
+                            'reserva_ajustada', jsonb_array_length(v_ajustes) > 0,
+                            'ajuste_falhou', v_falha,
+                            'ajustes', v_ajustes);
+END;
+$_$;
+
+
+--
 -- Name: atp_consultar(text, bigint[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5123,7 +5651,7 @@ $$;
 -- Name: atp_reservas_pendentes(integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.atp_reservas_pendentes(p_dias integer DEFAULT 0) RETURNS TABLE(reserva_id uuid, sales_order_id uuid, omie_pedido_id bigint, omie_codigo_produto bigint, quantidade numeric, status_vinculado text, status_canonico text, faturamento_observado_em timestamp with time zone, ativa_ha_dias numeric)
+CREATE FUNCTION public.atp_reservas_pendentes(p_dias integer DEFAULT 0) RETURNS TABLE(reserva_id uuid, sales_order_id uuid, omie_pedido_id bigint, omie_codigo_produto bigint, quantidade numeric, status_vinculado text, status_canonico text, faturamento_observado_em timestamp with time zone, ativa_ha_dias numeric, saldo_synced_at timestamp with time zone, saldo_embute_faturamento boolean)
     LANGUAGE plpgsql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -5137,14 +5665,29 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  SELECT r.id, r.sales_order_id, so.omie_pedido_id, r.omie_codigo_produto, r.quantidade,
+  SELECT r.id, r.sales_order_id, COALESCE(r.omie_pedido_id, so.omie_pedido_id),
+         r.omie_codigo_produto, r.quantidade,
          so.status, k.status, r.faturamento_observado_em,
-         round((EXTRACT(epoch FROM (now() - r.created_at)) / 86400)::numeric, 1)
+         round((EXTRACT(epoch FROM (now() - r.created_at)) / 86400)::numeric, 1),
+         d.saldo_synced_at,
+         -- FASE 3.2 (achado #5): o sinal só se pronuncia sobre saldo que o
+         -- PRÓPRIO ATP aceitaria (saldo_confiavel: fresco, não datado no futuro,
+         -- contas do pool concordando) e com a canônica AINDA em 'faturado'
+         -- (entre uma regressão e o próximo tick, o carimbo é velho). Fora
+         -- disso é indecidível ⇒ NULL, nunca true nem false.
+         CASE
+           WHEN r.faturamento_observado_em IS NULL
+             OR d.saldo_synced_at IS NULL
+             OR d.saldo_confiavel IS DISTINCT FROM true
+             OR k.status IS DISTINCT FROM 'faturado' THEN NULL
+           ELSE d.saldo_synced_at >= r.faturamento_observado_em + interval '1 hour'
+         END
   FROM public.estoque_reservas r
   LEFT JOIN public.sales_orders so ON so.id = r.sales_order_id
-  LEFT JOIN LATERAL private.atp_pedido_canonico(r.sales_order_id) k ON true
+  LEFT JOIN LATERAL private.atp_canonico_da_reserva(r.id) k ON true
+  LEFT JOIN LATERAL private.atp_disponivel(r.pool, r.omie_codigo_produto) d ON true
   WHERE r.status = 'ativa'
-    AND r.sales_order_id IS NOT NULL
+    AND (r.sales_order_id IS NOT NULL OR r.omie_pedido_id IS NOT NULL)
     AND r.created_at <= now() - make_interval(days => p_dias)
   ORDER BY r.faturamento_observado_em NULLS LAST, r.created_at;
 END;
@@ -6657,11 +7200,13 @@ BEGIN
     p_volume_minimo, p_volume_unidade,
     'aceita', p_observacoes, false
   ) RETURNING id INTO v_campanha_id;
+  -- descricao_produto_fornecedor fica NULL: a negociação não traz texto do fornecedor, e a
+  -- descrição do SKU se lê pelo sku_codigo_omie
   INSERT INTO promocao_item (
-    campanha_id, sku_codigo_fornecedor, descricao_produto_fornecedor, sku_codigo_omie,
+    campanha_id, sku_codigo_fornecedor, sku_codigo_omie,
     mapeamento_qualidade, desconto_perc, confirmado, ativo, observacoes
   ) VALUES (
-    v_campanha_id, v_codigo, v_sugestao.sku_descricao, v_sugestao.sku_codigo_omie::bigint,
+    v_campanha_id, v_codigo, v_sugestao.sku_codigo_omie::bigint,
     'manual_confirmado', p_desconto_perc, true, true,
     format('Convertido da sugestão de negociação paralela #%s', p_sugestao_id)
   );
@@ -8513,7 +9058,7 @@ BEGIN
     UPDATE promocao_item 
     SET mapeamento_qualidade = CASE WHEN v_usou_similaridade THEN 'unico_por_similaridade' ELSE 'unico' END,
         sku_codigo_omie = v_variante.omie_codigo_produto,
-        descricao_produto_fornecedor = COALESCE(descricao_produto_fornecedor, v_variante.descricao),
+        -- descricao_produto_fornecedor fica como o fornecedor ofertou (NULL inclusive): o SKU se lê pelo código
         confirmado = NOT v_usou_similaridade,
         mapeamento_candidatos = NULL,
         observacoes = CASE WHEN v_usou_similaridade THEN 
@@ -8549,7 +9094,8 @@ BEGIN
       sku_codigo_omie, mapeamento_qualidade, mapeamento_candidatos,
       desconto_perc, volume_minimo, confirmado, ativo, observacoes
     ) VALUES (
-      v_item.campanha_id, v_item.sku_codigo_fornecedor, v_variante.descricao,
+      -- a filha leva o texto que o FORNECEDOR ofertou (o da origem); o SKU dela se lê pelo código
+      v_item.campanha_id, v_item.sku_codigo_fornecedor, v_item.descricao_produto_fornecedor,
       v_variante.omie_codigo_produto,
       CASE WHEN v_usou_similaridade THEN 'expandido_por_similaridade' ELSE 'expandido_automatico' END,
       NULL, v_item.desconto_perc, v_item.volume_minimo,
@@ -10552,6 +11098,501 @@ END $$;
 
 
 --
+-- Name: fin_movimentacoes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.fin_movimentacoes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    company text NOT NULL,
+    omie_ncodmov bigint NOT NULL,
+    omie_ncodcc bigint,
+    data_movimento date NOT NULL,
+    tipo text,
+    valor numeric(15,2) NOT NULL,
+    descricao text,
+    categoria_codigo text,
+    categoria_descricao text,
+    conciliado boolean DEFAULT false,
+    omie_codigo_lancamento bigint,
+    natureza text,
+    metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now(),
+    updated_at timestamp with time zone DEFAULT now(),
+    resumo_val_pago numeric(15,2),
+    resumo_val_liquido numeric(15,2),
+    resumo_desconto numeric(15,2),
+    resumo_juros numeric(15,2),
+    resumo_multa numeric(15,2),
+    resumo_val_aberto numeric(15,2),
+    resumo_liquidado boolean,
+    valor_titulo numeric(15,2),
+    tipo_documento text,
+    omie_ncodbaixa bigint,
+    data_pagamento_omie date,
+    data_credito_omie date,
+    resumo_lido_em timestamp with time zone,
+    CONSTRAINT fin_movimentacoes_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
+    CONSTRAINT fin_movimentacoes_resumo_finito CHECK ((((resumo_val_pago IS NULL) OR ((resumo_val_pago <> 'NaN'::numeric) AND (resumo_val_pago < 'Infinity'::numeric) AND (resumo_val_pago > '-Infinity'::numeric))) AND ((resumo_val_liquido IS NULL) OR ((resumo_val_liquido <> 'NaN'::numeric) AND (resumo_val_liquido < 'Infinity'::numeric) AND (resumo_val_liquido > '-Infinity'::numeric))) AND ((resumo_desconto IS NULL) OR ((resumo_desconto <> 'NaN'::numeric) AND (resumo_desconto < 'Infinity'::numeric) AND (resumo_desconto > '-Infinity'::numeric))) AND ((resumo_juros IS NULL) OR ((resumo_juros <> 'NaN'::numeric) AND (resumo_juros < 'Infinity'::numeric) AND (resumo_juros > '-Infinity'::numeric))) AND ((resumo_multa IS NULL) OR ((resumo_multa <> 'NaN'::numeric) AND (resumo_multa < 'Infinity'::numeric) AND (resumo_multa > '-Infinity'::numeric))) AND ((resumo_val_aberto IS NULL) OR ((resumo_val_aberto <> 'NaN'::numeric) AND (resumo_val_aberto < 'Infinity'::numeric) AND (resumo_val_aberto > '-Infinity'::numeric))) AND ((valor_titulo IS NULL) OR ((valor_titulo <> 'NaN'::numeric) AND (valor_titulo < 'Infinity'::numeric) AND (valor_titulo > '-Infinity'::numeric))))),
+    CONSTRAINT fin_movimentacoes_tipo_check CHECK ((tipo = ANY (ARRAY['E'::text, 'S'::text])))
+);
+
+
+--
+-- Name: COLUMN fin_movimentacoes.resumo_val_pago; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.resumo_val_pago IS 'Omie resumo.nValPago: PRINCIPAL do título baixado (sem encargo, antes do desconto). NULL = ausente, nunca 0 fabricado.';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.resumo_val_liquido; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.resumo_val_liquido IS 'Omie resumo.nValLiquido: o que entrou em caixa = nValPago − nDesconto + nJuros + nMulta (identidade medida 172/172).';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.resumo_juros; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.resumo_juros IS 'Omie resumo.nJuros. ⚠️ O retorno bancário de boleto vem com a MULTA SOMADA aqui (nMulta=0) — use juros+multa juntos.';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.omie_ncodbaixa; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.omie_ncodbaixa IS 'Omie detalhes.nCodBaixa: chave natural da baixa (ótica conta corrente). Distingue duas baixas iguais legítimas de duas versões da mesma.';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.data_pagamento_omie; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.data_pagamento_omie IS 'Omie detalhes.dDtPagamento. Na ótica do título (CONTA_A_RECEBER) é a data da BAIXA — a que decide atraso.';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.data_credito_omie; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.data_credito_omie IS 'Omie detalhes.dDtCredito (ótica conta corrente): liquidação bancária, em geral o próximo dia útil após a baixa.';
+
+
+--
+-- Name: COLUMN fin_movimentacoes.resumo_lido_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_movimentacoes.resumo_lido_em IS 'Quando a edge que persiste o resumo gravou esta linha. NULL = linha nunca relida (versão antiga ou pré-backfill), NÃO "sem encargo". Não prova vigência.';
+
+
+--
+-- Name: v_titulo_baixas; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_titulo_baixas WITH (security_invoker='on') AS
+ WITH mov AS (
+         SELECT fin_movimentacoes.company,
+            fin_movimentacoes.omie_codigo_lancamento AS cod,
+            fin_movimentacoes.tipo,
+            fin_movimentacoes.data_movimento,
+            fin_movimentacoes.valor,
+            fin_movimentacoes.categoria_descricao AS grupo
+           FROM public.fin_movimentacoes
+          WHERE ((fin_movimentacoes.omie_codigo_lancamento IS NOT NULL) AND (fin_movimentacoes.data_movimento IS NOT NULL) AND (fin_movimentacoes.tipo = ANY (ARRAY['E'::text, 'S'::text])) AND (fin_movimentacoes.valor > (0)::numeric) AND (fin_movimentacoes.categoria_descricao = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text, 'CONTA_CORRENTE_REC'::text, 'CONTA_CORRENTE_PAG'::text])))
+        ), canon AS (
+         SELECT mov.company,
+            mov.cod,
+            mov.tipo,
+            bool_or((mov.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) AS tem_otica_titulo
+           FROM mov
+          GROUP BY mov.company, mov.cod, mov.tipo
+        ), base AS (
+         SELECT m.company,
+            m.cod,
+            m.tipo,
+            m.data_movimento,
+            m.valor,
+                CASE
+                    WHEN c.tem_otica_titulo THEN 'titulo'::text
+                    ELSE 'conta_corrente'::text
+                END AS origem
+           FROM (mov m
+             JOIN canon c ON (((c.company = m.company) AND (c.cod = m.cod) AND (c.tipo = m.tipo))))
+          WHERE ((c.tem_otica_titulo AND (m.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) OR (NOT c.tem_otica_titulo))
+        ), mov_canon AS (
+        ( SELECT DISTINCT ON (base.company, base.cod, base.tipo) base.company,
+            base.cod,
+            base.tipo,
+            base.data_movimento,
+            base.valor,
+            base.origem
+           FROM base
+          WHERE (base.origem = 'titulo'::text)
+          ORDER BY base.company, base.cod, base.tipo, base.valor DESC, base.data_movimento DESC)
+        UNION ALL
+         SELECT base.company,
+            base.cod,
+            base.tipo,
+            base.data_movimento,
+            base.valor,
+            base.origem
+           FROM base
+          WHERE (base.origem = 'conta_corrente'::text)
+        )
+ SELECT cr.company,
+    cr.omie_codigo_lancamento,
+    'CR'::text AS tipo,
+    max(m.data_movimento) AS data_baixa_final,
+    sum(m.valor) AS valor_baixado,
+    (count(*))::integer AS n_movimentos,
+        CASE
+            WHEN ((cr.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cr.data_emissao))::numeric)) / sum(m.valor)))
+            ELSE NULL::numeric
+        END AS prazo_ponderado_dias,
+    max(m.origem) AS origem_baixa
+   FROM (public.fin_contas_receber cr
+     JOIN mov_canon m ON (((m.company = cr.company) AND (m.cod = cr.omie_codigo_lancamento) AND (m.tipo = 'E'::text))))
+  WHERE ((cr.omie_codigo_lancamento IS NOT NULL) AND (cr.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text])))
+  GROUP BY cr.company, cr.omie_codigo_lancamento, cr.data_emissao
+UNION ALL
+ SELECT cp.company,
+    cp.omie_codigo_lancamento,
+    'CP'::text AS tipo,
+    max(m.data_movimento) AS data_baixa_final,
+    sum(m.valor) AS valor_baixado,
+    (count(*))::integer AS n_movimentos,
+        CASE
+            WHEN ((cp.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cp.data_emissao))::numeric)) / sum(m.valor)))
+            ELSE NULL::numeric
+        END AS prazo_ponderado_dias,
+    max(m.origem) AS origem_baixa
+   FROM (public.fin_contas_pagar cp
+     JOIN mov_canon m ON (((m.company = cp.company) AND (m.cod = cp.omie_codigo_lancamento) AND (m.tipo = 'S'::text))))
+  WHERE ((cp.omie_codigo_lancamento IS NOT NULL) AND (cp.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text])))
+  GROUP BY cp.company, cp.omie_codigo_lancamento, cp.data_emissao;
+
+
+--
+-- Name: v_ciclo_cr_titulos; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ciclo_cr_titulos WITH (security_invoker='on') AS
+ WITH base AS (
+         SELECT r.company,
+            r.omie_codigo_cliente,
+            r.nome_cliente,
+            r.omie_codigo_lancamento,
+            COALESCE(NULLIF(btrim(r.numero_documento_fiscal), ''::text), NULLIF(btrim(r.numero_documento), ''::text)) AS numero_documento,
+            r.data_emissao,
+            r.data_vencimento,
+            r.valor_documento,
+            r.saldo,
+            r.status_titulo,
+            b.data_baixa_final,
+            (b.prazo_ponderado_dias - ((r.data_vencimento - r.data_emissao))::numeric) AS atraso_calc,
+            b.prazo_ponderado_dias,
+            ((b.omie_codigo_lancamento IS NOT NULL) AND (b.prazo_ponderado_dias IS NOT NULL) AND (b.prazo_ponderado_dias <> 'NaN'::numeric) AND (b.prazo_ponderado_dias < 'Infinity'::numeric) AND (b.prazo_ponderado_dias > '-Infinity'::numeric)) AS tem_baixa,
+            ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS hoje_sp
+           FROM (public.fin_contas_receber r
+             LEFT JOIN public.v_titulo_baixas b ON (((b.company = r.company) AND (b.omie_codigo_lancamento = r.omie_codigo_lancamento) AND (b.tipo = 'CR'::text))))
+          WHERE ((r.status_titulo IS DISTINCT FROM 'CANCELADO'::text) AND (r.valor_documento IS NOT NULL) AND (r.valor_documento <> 'NaN'::numeric) AND (r.valor_documento < 'Infinity'::numeric) AND (r.valor_documento > (0)::numeric) AND (r.data_emissao IS NOT NULL) AND (r.data_vencimento IS NOT NULL) AND (r.data_vencimento >= r.data_emissao) AND (r.omie_codigo_cliente IS NOT NULL))
+        ), classif AS (
+         SELECT base.company,
+            base.omie_codigo_cliente,
+            base.nome_cliente,
+            base.omie_codigo_lancamento,
+            base.numero_documento,
+            base.data_emissao,
+            base.data_vencimento,
+            base.valor_documento,
+            base.saldo,
+            base.status_titulo,
+            base.data_baixa_final,
+            base.atraso_calc,
+            base.prazo_ponderado_dias,
+            base.tem_baixa,
+            base.hoje_sp,
+                CASE
+                    WHEN ((base.status_titulo IS NULL) OR (base.status_titulo <> ALL (ARRAY['RECEBIDO'::text, 'A VENCER'::text, 'VENCE HOJE'::text, 'ATRASADO'::text, 'CANCELADO'::text]))) THEN 'status_ambiguo'::text
+                    WHEN (base.tem_baixa AND (base.data_vencimento >= (base.hoje_sp - 365)) AND (base.data_vencimento < base.hoje_sp)) THEN 'paga'::text
+                    WHEN ((NOT base.tem_baixa) AND (base.status_titulo = 'RECEBIDO'::text) AND (base.data_vencimento >= (base.hoje_sp - 365)) AND (base.data_vencimento < base.hoje_sp)) THEN 'paga_sem_baixa'::text
+                    WHEN ((NOT base.tem_baixa) AND (base.saldo IS NOT NULL) AND (base.saldo <> 'NaN'::numeric) AND (base.saldo < 'Infinity'::numeric) AND (base.saldo > (0)::numeric) AND ((base.status_titulo = 'ATRASADO'::text) OR ((base.status_titulo = ANY (ARRAY['A VENCER'::text, 'VENCE HOJE'::text])) AND (base.data_vencimento < base.hoje_sp)))) THEN 'vencida_aberta'::text
+                    ELSE NULL::text
+                END AS situacao
+           FROM base
+        )
+ SELECT company,
+    omie_codigo_cliente,
+    nome_cliente,
+    omie_codigo_lancamento,
+    numero_documento,
+    data_emissao,
+    data_vencimento,
+        CASE
+            WHEN (situacao = 'paga'::text) THEN data_baixa_final
+            ELSE NULL::date
+        END AS data_baixa,
+    valor_documento,
+    saldo,
+    situacao,
+    (data_vencimento - data_emissao) AS prazo_concedido_dias,
+        CASE
+            WHEN (situacao = 'paga'::text) THEN prazo_ponderado_dias
+            ELSE NULL::numeric
+        END AS prazo_real_dias,
+        CASE
+            WHEN (situacao = 'paga'::text) THEN atraso_calc
+            ELSE NULL::numeric
+        END AS atraso_dias,
+        CASE
+            WHEN (situacao = 'vencida_aberta'::text) THEN (hoje_sp - data_vencimento)
+            ELSE NULL::integer
+        END AS dias_vencido
+   FROM classif
+  WHERE (situacao IS NOT NULL);
+
+
+--
+-- Name: v_ciclo_cliente_resumo; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ciclo_cliente_resumo WITH (security_invoker='on') AS
+ WITH t AS (
+         SELECT v_ciclo_cr_titulos.company,
+            v_ciclo_cr_titulos.omie_codigo_cliente,
+            v_ciclo_cr_titulos.nome_cliente,
+            v_ciclo_cr_titulos.omie_codigo_lancamento,
+            v_ciclo_cr_titulos.numero_documento,
+            v_ciclo_cr_titulos.data_emissao,
+            v_ciclo_cr_titulos.data_vencimento,
+            v_ciclo_cr_titulos.data_baixa,
+            v_ciclo_cr_titulos.valor_documento,
+            v_ciclo_cr_titulos.saldo,
+            v_ciclo_cr_titulos.situacao,
+            v_ciclo_cr_titulos.prazo_concedido_dias,
+            v_ciclo_cr_titulos.prazo_real_dias,
+            v_ciclo_cr_titulos.atraso_dias,
+            v_ciclo_cr_titulos.dias_vencido
+           FROM public.v_ciclo_cr_titulos
+        ), hoje AS (
+         SELECT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS h
+        ), pagas AS (
+         SELECT t.company,
+            t.omie_codigo_cliente,
+            (count(*))::integer AS n_parcelas,
+            (count(DISTINCT COALESCE(('d:'::text || t.numero_documento), ('l:'::text || (t.omie_codigo_lancamento)::text))))::integer AS n_documentos,
+            sum(t.valor_documento) AS valor_pago,
+            (sum((t.valor_documento * (t.prazo_concedido_dias)::numeric)) / sum(t.valor_documento)) AS prazo_concedido_pond,
+            (sum((t.valor_documento * t.prazo_real_dias)) / sum(t.valor_documento)) AS prazo_real_pond,
+            (sum((t.valor_documento * t.atraso_dias)) / sum(t.valor_documento)) AS atraso_pond,
+            percentile_cont((0.5)::double precision) WITHIN GROUP (ORDER BY ((t.atraso_dias)::double precision)) AS atraso_p50,
+            percentile_cont((0.8)::double precision) WITHIN GROUP (ORDER BY ((t.atraso_dias)::double precision)) AS atraso_p80,
+            max(t.atraso_dias) AS atraso_max_observado,
+            (sum((t.valor_documento * GREATEST((t.atraso_dias - (3)::numeric), (0)::numeric))) / sum(t.valor_documento)) AS excesso_carencia_pond,
+            (COALESCE(sum(t.valor_documento) FILTER (WHERE (t.atraso_dias > (0)::numeric)), (0)::numeric) / sum(t.valor_documento)) AS pct_valor_atrasado,
+            max(t.data_baixa) AS ultima_baixa
+           FROM t
+          WHERE (t.situacao = 'paga'::text)
+          GROUP BY t.company, t.omie_codigo_cliente
+        ), p80v AS (
+         SELECT x.company,
+            x.omie_codigo_cliente,
+            min(x.atraso_dias) AS atraso_p80_valor
+           FROM ( SELECT t.company,
+                    t.omie_codigo_cliente,
+                    t.atraso_dias,
+                    (sum(t.valor_documento) OVER (PARTITION BY t.company, t.omie_codigo_cliente ORDER BY t.atraso_dias, t.omie_codigo_lancamento) / sum(t.valor_documento) OVER (PARTITION BY t.company, t.omie_codigo_cliente)) AS acum
+                   FROM t
+                  WHERE (t.situacao = 'paga'::text)) x
+          WHERE (x.acum >= 0.8)
+          GROUP BY x.company, x.omie_codigo_cliente
+        ), sem_baixa AS (
+         SELECT t.company,
+            t.omie_codigo_cliente,
+            sum(t.valor_documento) AS valor_pago_sem_baixa
+           FROM t
+          WHERE (t.situacao = 'paga_sem_baixa'::text)
+          GROUP BY t.company, t.omie_codigo_cliente
+        ), vencidas AS (
+         SELECT t.company,
+            t.omie_codigo_cliente,
+            (count(*))::integer AS n_vencidas,
+            sum(t.saldo) AS saldo_vencido,
+            COALESCE(sum(t.saldo) FILTER (WHERE (t.dias_vencido > 90)), (0)::numeric) AS saldo_vencido_90,
+            max(t.dias_vencido) AS dias_vencido_max
+           FROM t
+          WHERE (t.situacao = 'vencida_aberta'::text)
+          GROUP BY t.company, t.omie_codigo_cliente
+        ), ambiguos AS (
+         SELECT t.company,
+            t.omie_codigo_cliente,
+            (count(*))::integer AS n_status_ambiguo
+           FROM t
+          WHERE (t.situacao = 'status_ambiguo'::text)
+          GROUP BY t.company, t.omie_codigo_cliente
+        ), volume AS (
+         SELECT r.company,
+            r.omie_codigo_cliente,
+            sum(r.valor_documento) AS volume_emitido_12m,
+            min(r.data_emissao) AS primeira_emissao
+           FROM public.fin_contas_receber r,
+            hoje
+          WHERE ((r.status_titulo IS DISTINCT FROM 'CANCELADO'::text) AND (r.valor_documento IS NOT NULL) AND (r.valor_documento <> 'NaN'::numeric) AND (r.valor_documento < 'Infinity'::numeric) AND (r.valor_documento > (0)::numeric) AND (r.data_emissao IS NOT NULL) AND (r.data_vencimento IS NOT NULL) AND (r.data_vencimento >= r.data_emissao) AND (r.omie_codigo_cliente IS NOT NULL) AND (r.data_emissao >= (hoje.h - 365)) AND (r.data_emissao < hoje.h))
+          GROUP BY r.company, r.omie_codigo_cliente
+        ), chaves AS (
+         SELECT pagas.company,
+            pagas.omie_codigo_cliente
+           FROM pagas
+        UNION
+         SELECT vencidas.company,
+            vencidas.omie_codigo_cliente
+           FROM vencidas
+        UNION
+         SELECT sem_baixa.company,
+            sem_baixa.omie_codigo_cliente
+           FROM sem_baixa
+        UNION
+         SELECT ambiguos.company,
+            ambiguos.omie_codigo_cliente
+           FROM ambiguos
+        ), nomes AS (
+         SELECT t.company,
+            t.omie_codigo_cliente,
+            max(t.nome_cliente) AS nome_cliente
+           FROM t
+          GROUP BY t.company, t.omie_codigo_cliente
+        )
+ SELECT k.company,
+    k.omie_codigo_cliente,
+    n.nome_cliente,
+    p.n_parcelas,
+    p.n_documentos,
+    p.valor_pago,
+    sb.valor_pago_sem_baixa,
+    p.prazo_concedido_pond,
+    p.prazo_real_pond,
+    p.atraso_pond,
+    p.atraso_p50,
+    p.atraso_p80,
+    pv.atraso_p80_valor,
+    p.atraso_max_observado,
+    p.excesso_carencia_pond,
+    p.pct_valor_atrasado,
+    p.ultima_baixa,
+    v.n_vencidas,
+    v.saldo_vencido,
+    v.saldo_vencido_90,
+    v.dias_vencido_max,
+    vol.volume_emitido_12m,
+    vol.primeira_emissao,
+    a.n_status_ambiguo
+   FROM (((((((chaves k
+     LEFT JOIN nomes n USING (company, omie_codigo_cliente))
+     LEFT JOIN pagas p USING (company, omie_codigo_cliente))
+     LEFT JOIN p80v pv USING (company, omie_codigo_cliente))
+     LEFT JOIN sem_baixa sb USING (company, omie_codigo_cliente))
+     LEFT JOIN vencidas v USING (company, omie_codigo_cliente))
+     LEFT JOIN ambiguos a USING (company, omie_codigo_cliente))
+     LEFT JOIN volume vol USING (company, omie_codigo_cliente));
+
+
+--
+-- Name: fin_ciclo_cliente_resumo(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_ciclo_cliente_resumo() RETURNS SETOF public.v_ciclo_cliente_resumo
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  RETURN QUERY
+    SELECT v.* FROM public.v_ciclo_cliente_resumo v
+    WHERE public.fin_user_can_access(v.company);
+END
+$$;
+
+
+--
+-- Name: v_ciclo_empresa_coorte; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_ciclo_empresa_coorte WITH (security_invoker='on') AS
+ WITH hoje AS (
+         SELECT ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date AS h
+        ), t AS (
+         SELECT v_ciclo_cr_titulos.company,
+            v_ciclo_cr_titulos.omie_codigo_cliente,
+            v_ciclo_cr_titulos.nome_cliente,
+            v_ciclo_cr_titulos.omie_codigo_lancamento,
+            v_ciclo_cr_titulos.numero_documento,
+            v_ciclo_cr_titulos.data_emissao,
+            v_ciclo_cr_titulos.data_vencimento,
+            v_ciclo_cr_titulos.data_baixa,
+            v_ciclo_cr_titulos.valor_documento,
+            v_ciclo_cr_titulos.saldo,
+            v_ciclo_cr_titulos.situacao,
+            v_ciclo_cr_titulos.prazo_concedido_dias,
+            v_ciclo_cr_titulos.prazo_real_dias,
+            v_ciclo_cr_titulos.atraso_dias,
+            v_ciclo_cr_titulos.dias_vencido
+           FROM public.v_ciclo_cr_titulos
+          WHERE ((v_ciclo_cr_titulos.situacao = ANY (ARRAY['paga'::text, 'paga_sem_baixa'::text, 'vencida_aberta'::text])) AND (v_ciclo_cr_titulos.data_vencimento >= (((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date - 365)) AND (v_ciclo_cr_titulos.data_vencimento < ((now() AT TIME ZONE 'America/Sao_Paulo'::text))::date))
+        )
+ SELECT t.company,
+    (date_trunc('month'::text, (t.data_vencimento)::timestamp with time zone))::date AS mes_vencimento,
+    sum(t.valor_documento) AS valor_vencido_no_mes,
+    COALESCE(sum(t.valor_documento) FILTER (WHERE (t.situacao = ANY (ARRAY['paga'::text, 'paga_sem_baixa'::text]))), (0)::numeric) AS valor_pago,
+    COALESCE(sum(t.saldo) FILTER (WHERE (t.situacao = 'vencida_aberta'::text)), (0)::numeric) AS valor_em_aberto,
+    (COALESCE(sum(t.valor_documento) FILTER (WHERE (t.situacao = ANY (ARRAY['paga'::text, 'paga_sem_baixa'::text]))), (0)::numeric) / sum(t.valor_documento)) AS pct_valor_pago,
+    (sum((t.valor_documento * (t.prazo_concedido_dias)::numeric)) FILTER (WHERE (t.situacao = 'paga'::text)) / NULLIF(sum(t.valor_documento) FILTER (WHERE (t.situacao = 'paga'::text)), (0)::numeric)) AS prazo_concedido_pond,
+    (sum((t.valor_documento * t.prazo_real_dias)) FILTER (WHERE (t.situacao = 'paga'::text)) / NULLIF(sum(t.valor_documento) FILTER (WHERE (t.situacao = 'paga'::text)), (0)::numeric)) AS prazo_real_pond_pagas,
+    (sum((t.valor_documento * t.atraso_dias)) FILTER (WHERE (t.situacao = 'paga'::text)) / NULLIF(sum(t.valor_documento) FILTER (WHERE (t.situacao = 'paga'::text)), (0)::numeric)) AS atraso_pond_pagas,
+    (((date_trunc('month'::text, (t.data_vencimento)::timestamp with time zone))::date = (date_trunc('month'::text, (hoje.h)::timestamp with time zone))::date) OR (((date_trunc('month'::text, (t.data_vencimento)::timestamp with time zone))::date = (date_trunc('month'::text, ((hoje.h - 365))::timestamp with time zone))::date) AND ((hoje.h - 365) <> (date_trunc('month'::text, ((hoje.h - 365))::timestamp with time zone))::date))) AS mes_parcial
+   FROM t,
+    hoje
+  GROUP BY t.company, (date_trunc('month'::text, (t.data_vencimento)::timestamp with time zone)), hoje.h;
+
+
+--
+-- Name: fin_ciclo_empresa_coorte(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_ciclo_empresa_coorte() RETURNS SETOF public.v_ciclo_empresa_coorte
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  RETURN QUERY
+    SELECT v.* FROM public.v_ciclo_empresa_coorte v
+    WHERE public.fin_user_can_access(v.company);
+END
+$$;
+
+
+--
+-- Name: fin_ciclo_titulos_cliente(text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_ciclo_titulos_cliente(p_company text, p_cliente bigint) RETURNS SETOF public.v_ciclo_cr_titulos
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  IF NOT public.fin_user_can_access(p_company) THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+    SELECT v.* FROM public.v_ciclo_cr_titulos v
+    WHERE v.company = p_company AND v.omie_codigo_cliente = p_cliente;
+END
+$$;
+
+
+--
 -- Name: fin_consolidado_intercompany(integer, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10709,6 +11750,24 @@ BEGIN
   NEW.updated_at := now();
   RETURN NEW;
 END $$;
+
+
+--
+-- Name: fin_dre_snapshots_contrato_fase2(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_dre_snapshots_contrato_fase2() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public'
+    AS $$
+BEGIN
+  IF NEW.detalhamento IS NULL OR NOT (NEW.detalhamento ? 'contrato') THEN
+    NEW.fora_dre := NULL;
+    NEW.resultado_provisorio := NULL;
+  END IF;
+  RETURN NEW;
+END
+$$;
 
 
 --
@@ -11074,12 +12133,15 @@ CREATE FUNCTION public.fin_sync_kicks_perdidos(p_now timestamp with time zone DE
   FROM empresas e
   CROSS JOIN ultima_janela u
   WHERE
-    -- (a) nenhum sinal no log pós-janela (qualquer status = kick chegou)
+    -- (a) nenhum sinal no log pós-janela (qualquer status = kick chegou), EXCETO
+    --     skipped_busy: essa invocação não pegou o lease e saiu sem sincronizar
+    --     nada — o kick se perdeu do mesmo jeito (2026-10-12).
     NOT EXISTS (
       SELECT 1 FROM public.fin_sync_log l
       WHERE l.action = 'sync_' || u.resource
         AND e.company = ANY (l.companies)
         AND l.started_at >= u.janela
+        AND l.status IS DISTINCT FROM 'skipped_busy'
     )
     -- (b) cursor pendente (o continuador cobre) ou tocado pós-janela
     AND NOT EXISTS (
@@ -11360,6 +12422,103 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
+END;
+$$;
+
+
+--
+-- Name: fin_sync_watchdog_diario(timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fin_sync_watchdog_diario(p_agora timestamp with time zone DEFAULT now()) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_local    timestamp := p_agora AT TIME ZONE 'America/Sao_Paulo';
+  v_n        int;
+  v_sev      text;
+  v_det      jsonb := '{}'::jsonb;
+  v_det_erro text;
+  v_corpo    text := '';
+  v_i        int := 0;
+  r          record;
+  d          jsonb;
+  v_src      text;
+BEGIN
+  SELECT count(*),
+         CASE WHEN bool_or(severidade = 'critico') THEN 'urgente' ELSE 'atencao' END
+    INTO v_n, v_sev
+  FROM fin_alertas
+  WHERE (tipo LIKE 'sync_%' OR tipo LIKE 'data_health_%') AND dismissed_at IS NULL;
+
+  IF v_n = 0 THEN
+    IF extract(isodow FROM v_local) = 1 THEN
+      INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+      VALUES ('oben', 'outro', 'info',
+              '[Watchdog OK] semana de '||to_char(v_local, 'DD/MM'),
+              'Tudo certo: nenhum alerta de sync nem de saúde de dados ativo agora.'||E'\n\n'||
+              'Este e-mail só chega às segundas, como prova de que o vigia está vivo. '||
+              'Se algo quebrar, você recebe um aviso no mesmo dia, dizendo o que corrigir. '||
+              'Se uma segunda passar sem este e-mail, o próprio vigia parou.',
+              'pendente_notificacao');
+      RETURN 'ok_semanal';
+    END IF;
+    RETURN 'silencio';
+  END IF;
+
+  -- Detalhe (causa/correção) vem do compute. Se ELE quebrar, o aviso sai mesmo assim com a
+  -- mensagem do alerta: degradar é certo no sensor — calar o e-mail de problema não é.
+  BEGIN
+    SELECT COALESCE(jsonb_object_agg(c.source, to_jsonb(c)), '{}'::jsonb)
+      INTO v_det
+    FROM public._data_health_compute() c;
+  EXCEPTION WHEN OTHERS THEN
+    v_det := '{}'::jsonb;
+    v_det_erro := SQLERRM;
+  END;
+
+  FOR r IN
+    SELECT a.company, a.tipo, a.severidade, a.mensagem, a.criado_em
+    FROM fin_alertas a
+    WHERE (a.tipo LIKE 'sync_%' OR a.tipo LIKE 'data_health_%') AND a.dismissed_at IS NULL
+    ORDER BY CASE a.severidade WHEN 'critico' THEN 0 WHEN 'aviso' THEN 1 ELSE 2 END,
+             a.criado_em, a.company, a.tipo
+  LOOP
+    v_i := v_i + 1;
+    v_src := CASE WHEN r.tipo LIKE 'data_health_%' THEN substr(r.tipo, 13) END;
+    d := CASE WHEN v_src IS NOT NULL THEN v_det -> v_src END;
+
+    v_corpo := v_corpo || CASE WHEN v_i > 1 THEN E'\n\n' ELSE '' END
+      || v_i || '. '
+      || CASE WHEN v_src IS NOT NULL THEN 'Saúde de dados — '||v_src
+              ELSE 'Sync '||r.company||' — '||r.tipo END
+      || ' ['||r.severidade||', desde '
+      || to_char(r.criado_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI')||']'
+      || E'\n   O que está errado: '||r.mensagem
+      || CASE WHEN d IS NOT NULL AND d->>'status' = 'ok'
+              THEN E'\n   (A última medição já voltou a OK; o alerta fecha sozinho na próxima rodada do vigia.)'
+              ELSE '' END
+      || CASE WHEN NULLIF(d->>'probable_cause', '') IS NOT NULL
+              THEN E'\n   Causa provável: '||(d->>'probable_cause') ELSE '' END
+      || CASE WHEN NULLIF(d->>'how_to_fix', '') IS NOT NULL
+              THEN E'\n   Como corrigir: '||(d->>'how_to_fix') ELSE '' END
+      || CASE WHEN NULLIF(d->>'last_error', '') IS NOT NULL
+              THEN E'\n   Último erro: '||left(d->>'last_error', 400) ELSE '' END;
+  END LOOP;
+
+  IF v_det_erro IS NOT NULL THEN
+    v_corpo := v_corpo || E'\n\n(Detalhes de causa/correção indisponíveis: _data_health_compute falhou — '
+               || v_det_erro || ')';
+  END IF;
+
+  INSERT INTO fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status)
+  VALUES ('oben', 'outro', v_sev,
+          '[Watchdog: '||v_n||' problema(s)] '||to_char(v_local, 'DD/MM'),
+          v_n||' problema(s) ativo(s) para corrigir:'||E'\n\n'||v_corpo||E'\n\n'||
+          'Você recebe este aviso todo dia útil às 08:00 enquanto houver problema ativo.',
+          'pendente_notificacao');
+  RETURN 'problema';
 END;
 $$;
 
@@ -12680,6 +13839,10 @@ DECLARE
   v_teto_ativo boolean := false;
   v_teto_b numeric := NULL;
   v_teto_c numeric := NULL;
+  -- [COMPROMETIDO] janela de frescor da RELEITURA do pedido de venda no Omie. CONSTANTE de propósito: 7d seria
+  -- outra análise (Codex 2026-10-10), não um ajuste de config. O que a config faz é só DESLIGAR (v_comp_ativo).
+  v_comp_horas CONSTANT int := 36;
+  v_comp_ativo boolean := false;
 BEGIN
   -- [INTRADAY 1/4] serializa execuções concorrentes (cron 2/2h × botão "Recalcular" × retry).
   PERFORM pg_advisory_xact_lock(hashtext('gerar_pedidos_sugeridos_ciclo:' || lower(p_empresa)));
@@ -12708,6 +13871,13 @@ BEGIN
                    WHERE key = 'reposicao_teto_cobertura_' || lower(p_empresa) || '_dias_c' LIMIT 1), 0)
       INTO v_teto_c;
   END IF;
+
+  -- [COMPROMETIDO] Desligador POR EMPRESA: 'true' liga, qualquer outro valor desliga (= o motor de antes). Chave
+  -- ausente (ou valor NULL) → ligado SÓ na oben, a única empresa onde a unidade e o Omie foram medidos.
+  SELECT COALESCE((SELECT lower(btrim(value)) = 'true' FROM company_config
+                   WHERE key = 'reposicao_comprometido_' || lower(p_empresa) || '_ativo' LIMIT 1),
+                  lower(p_empresa) = 'oben')
+    INTO v_comp_ativo;
 
   -- [INTRADAY 2/4] expira pendentes NORMAIS de ciclos anteriores (zumbis pós-corte).
   UPDATE pedido_compra_sugerido
@@ -12755,6 +13925,49 @@ BEGIN
       )
     GROUP BY pcs2.empresa, pci.sku_codigo_omie
   ),
+  -- [COMPROMETIDO] Estoque já VENDIDO em pedido de venda ABERTO no Omie. O Omie da Oben não reserva (disponível =
+  -- físico em 500/500 SKUs, 2026-10-10) e só baixa o físico na NF: sem isto o motor via como livre o que já
+  -- tem dono e não comprava. Abertos = os 3 status pré-NF (etapa 10 → importado, 20 → enviado, 50 → separacao).
+  -- PRECISÃO > RECALL: subcontar é o motor de antes (seguro); supercontar fabrica compra. Por isso só conta:
+  --   · a linha CANÔNICA importada do Omie (hash_payload 'omie_…'); o gêmeo push do app fica fora (dupla contagem);
+  --   · pedido RELIDO pelo Omie nas últimas 36 h (omie_reconciliado_em). Há ~2.500 pedidos velhos parados em status
+  --     aberto sem releitura — lixo que fabricaria compra. A releitura é a ListarPedidos por inclusão OU alteração
+  --     (2/2h, janela 7d; 1×/dia, 30d): faturar/cancelar/editar é alteração e volta a ser lido. A janela é "visto
+  --     há pouco", não prova de que segue aberto: NF emitida entre a releitura e o sync do físico conta 2× por até
+  --     ~2h, e pedido EXCLUÍDO no Omie (não volta na listagem) conta até 36 h — o freio é a aprovação humana, que vê
+  --     o desconto no item (estoque_comprometido);
+  --   · pedido sem irmão de MESMO número (o faturamento parcial — ver [PARCIAL] abaixo);
+  --   · quantidade numérica > 0 (ausente/texto/negativa = item ignorado, nunca 0 fabricado nem soma negativa).
+  --     Limite conhecido do PRODUTOR: o sync grava `quantidade || 1` (0/ausente no Omie vira 1) — sem efeito medido.
+  -- Unidade: a do Omie do SKU, a MESMA do estoque/ponto/máximo — por isso só o caminho SEM grupo de equivalência
+  -- o desconta (sku_base): no concentrado WP a venda vem ora em litro, ora em embalagem (medido), e adivinhar é
+  -- fabricar. RLS de sales_orders vale (função INVOKER): staff e o cron veem tudo; customer só o seu → subconta.
+  comprometido AS (
+    SELECT x.sku, SUM(x.q) AS qtde
+    FROM (
+      -- O cast só sob o CASE: a ordem de avaliação do WHERE não é garantida (o planner pode castar antes de filtrar).
+      SELECT it->>'omie_codigo_produto' AS sku,
+             CASE WHEN jsonb_typeof(it->'quantidade') = 'number' THEN (it->>'quantidade')::numeric END AS q
+      FROM sales_orders so
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(so.items) = 'array' THEN so.items ELSE '[]'::jsonb END) it
+      WHERE v_comp_ativo
+        AND so.account = lower(p_empresa)
+        AND so.deleted_at IS NULL
+        AND so.hash_payload LIKE 'omie\_%'
+        AND so.status IN ('importado', 'separacao', 'enviado')
+        AND so.omie_reconciliado_em > now() - make_interval(hours => v_comp_horas)
+        -- [PARCIAL] O faturamento parcial do Omie gera OUTRO pedido com o MESMO número, e a origem pode seguir aberta
+        -- com a quantidade ORIGINAL (medido: nº 12580 — origem 'importado' e irmão 'faturado' com itens idênticos).
+        -- Sem saldo por item não há como separar: número repetido entre os importados da conta → a origem não conta
+        -- (1 em 2.323 pedidos em 180 dias). Sem número não dá para conferir → não conta.
+        AND so.omie_numero_pedido IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM sales_orders s2
+                         WHERE s2.account = so.account AND s2.omie_numero_pedido = so.omie_numero_pedido
+                           AND s2.hash_payload LIKE 'omie\_%' AND s2.id <> so.id)
+    ) x
+    WHERE x.q > 0 AND x.q < 1e9   -- ausente/texto/zero/negativa = item ignorado (nunca 0 fabricado nem soma negativa)
+    GROUP BY 1
+  ),
   -- [DEDUP-NFE] 1 obs por (empresa, NFe, SKU); antes: 1 por LINHA de sku_leadtime_history, o que
   -- ponderava o AVG pela multiplicidade (NFe que fatura N pedidos regravava o item N×).
   -- [2 CONSUMIDORES] O filtro de preço saiu do WHERE e virou FILTER na agregação — de propósito.
@@ -12779,10 +13992,20 @@ BEGIN
   ),
   -- ── EMBALAGEM (novo) ─────────────────────────────────────────────────────────────────────
   -- Membros ativos dos grupos de equivalência (empresa = lower).
+  -- [UNIDADES #2849] conv = unidades Omie (o que o estoque, o ponto e o máximo contam) por embalagem comprada
+  -- (o que qtde_final, o em trânsito e o PO contam). Concentrado WP: estoque em L, QT = 0,81 L e GL = 3,24 L.
+  -- Vale só com o grupo INTEIRO cadastrado e COERENTE com o fator (u/fator igual em todos os membros: a
+  -- escolha QT↔GL compara custo por fator, a quantidade divide por conv — os dois têm de concordar). Senão o
+  -- grupo todo volta ao fator relativo, que é a conta de antes (cadastro ausente ≠ 1 L por embalagem).
   equiv AS (
-    SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base
-    FROM sku_embalagem_equivalencia
-    WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0
+    SELECT q.grupo_id, q.sku, q.fator_para_base,
+           CASE WHEN bool_and(q.u IS NOT NULL AND q.u > 0 AND q.u < 1e9) OVER (PARTITION BY q.grupo_id)
+                 AND min(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)
+                   = max(q.u / q.fator_para_base) OVER (PARTITION BY q.grupo_id)
+                THEN q.u ELSE q.fator_para_base END AS conv
+    FROM (SELECT grupo_id, sku_codigo_omie::text AS sku, fator_para_base, unidades_omie_por_embalagem AS u
+          FROM sku_embalagem_equivalencia
+          WHERE empresa = lower(p_empresa) AND ativo = TRUE AND fator_para_base > 0) q
   ),
   -- Só grupos com >= 2 membros têm decisão de embalagem.
   equiv_grupos AS (
@@ -12829,7 +14052,7 @@ BEGIN
   -- [P1-f] Membro ELEGÍVEL p/ a decisão: preço-app FRESCO + portal-map + CATÁLOGO OK (ativo, tipo≠04, família
   -- comprável, ativo_no_omie) — os MESMOS filtros que protegem a âncora, agora também no SKU que pode ser escolhido.
   membro_elegivel AS (
-    SELECT e.grupo_id, e.sku, e.fator_para_base, pa.preco,
+    SELECT e.grupo_id, e.sku, e.fator_para_base, e.conv, pa.preco,
            (pa.preco / e.fator_para_base) AS custo_base
     FROM equiv e
     JOIN equiv_grupos eg ON eg.grupo_id = e.grupo_id
@@ -12849,19 +14072,19 @@ BEGIN
   embalagem_escolhida AS (
     SELECT DISTINCT ON (grupo_id)
            grupo_id, sku AS sku_escolhido, fator_para_base AS fator_escolhido,
-           preco AS preco_escolhido, custo_base AS custo_base_escolhido
+           preco AS preco_escolhido, custo_base AS custo_base_escolhido, conv AS conv_escolhido
     FROM membro_elegivel
     ORDER BY grupo_id, custo_base ASC, fator_para_base DESC
   ),
   -- [P0-a/P0-b] Estoque consolidado por grupo (escala unidades-âncora):
   --   físico = Σ GREATEST(inv.saldo, sea.estoque_fisico)   ← pega o galão real de onde estiver
-  --   a caminho = Σ [pendente(sea) + em_transito × fator]  ← galão em voo conta em unidades-base (2 GL = 8), não cru
+  --   a caminho = Σ [pendente(sea) + em_transito × conv]   ← embalagem em voo conta em unidades Omie (2 GL = 6,48 L no WP; 8 sem cadastro)
   grupo_estoque AS (
     SELECT e.grupo_id,
            SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0)))                              AS fisico_grupo,
-           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)           AS acaminho_grupo,
+           SUM(COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.conv)           AS acaminho_grupo,
            SUM(GREATEST(COALESCE(inv.saldo, 0), COALESCE(sea.estoque_fisico, 0))
-               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.fator_para_base)         AS estoque_grupo,
+               + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0) * e.conv)         AS estoque_grupo,
            -- [GATE estoque-não-confirmado] grupo NÃO-CONFIRMADO se QUALQUER membro ATIVO tem seed (cold_start_seed)
            -- sem inventory_position — pode ter saldo real que mudaria a decisão. NÃO conta "sem linha de sea" (galão
            -- legitimamente vive sem sea próprio; o estoque vem de outro membro — só a LINHA isolada gateia sea ausente).
@@ -12892,9 +14115,15 @@ BEGIN
            ea.grupo_id AS equiv_grupo,
            ge.estoque_grupo, ge.fisico_grupo, ge.acaminho_grupo,
            -- estoque efetivo: do GRUPO quando a âncora pertence a um grupo; senão o próprio (no-op p/ a maioria).
+           -- [COMPROMETIDO] só na linha SEM grupo (cp casa só ea.grupo_id IS NULL): − o vendido em aberto. Pode ficar
+           -- NEGATIVO (vendido > físico): a compra cobre o pedido E repõe o máximo.
            COALESCE(ge.estoque_grupo,
-                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) AS estoque_efetivo,
+                    COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)
+                    - COALESCE(cp.qtde, 0)) AS estoque_efetivo,
+           -- rastro: NULL = desconto não se aplica (SKU de grupo ou desligado); 0 = aplicado, nada em aberto.
+           CASE WHEN ea.grupo_id IS NULL AND v_comp_ativo THEN COALESCE(cp.qtde, 0) END AS estoque_comprometido,
            ee.sku_escolhido, ee.fator_escolhido, ee.preco_escolhido, ee.custo_base_escolhido,
+           ee.conv_escolhido, ea.conv AS conv_ancora,   -- [UNIDADES #2849] NULL p/ SKU sem grupo
            me_anc.custo_base AS ancora_custo_base,  -- NULL = âncora não-elegível → estrito (não troca)
            -- custo da linha p/ a ÂNCORA: cmc account-aware, senão preço médio histórico, senão NULL.
            -- [PRECO-AUSENTE] ausente≠zero — NÃO fabrica R$0 (o gate de auto-aprovação e o disparo já barram custo desconhecido).
@@ -12937,6 +14166,7 @@ BEGIN
     LEFT JOIN embalagem_escolhida ee ON ee.grupo_id = ea.grupo_id
     LEFT JOIN membro_elegivel me_anc ON me_anc.grupo_id = ea.grupo_id AND me_anc.sku = sp.sku_codigo_omie::text
     LEFT JOIN portal_fator pf ON pf.sku = sp.sku_codigo_omie::text AND pf.fornecedor_nome = sp.fornecedor_nome
+    LEFT JOIN comprometido cp ON cp.sku = sp.sku_codigo_omie::text AND ea.grupo_id IS NULL   -- [COMPROMETIDO] só sem grupo
     WHERE sp.empresa = p_empresa
       AND sp.habilitado_reposicao_automatica = TRUE
       AND COALESCE(sp.tipo_reposicao, 'automatica') = 'automatica'
@@ -12966,9 +14196,10 @@ BEGIN
       -- mantido por causa de uma oportunidade do galão que nem vai ser comprado. [P1-d, refinado pós-re-Codex]
       AND sp.ponto_pedido IS NOT NULL
       AND sp.estoque_maximo IS NOT NULL
-      -- GATILHO consolidado: estoque do GRUPO (ou próprio) <= ponto_pedido da âncora.
+      -- GATILHO consolidado: estoque do GRUPO (ou próprio, − comprometido) <= ponto_pedido da âncora.
       AND COALESCE(ge.estoque_grupo,
-                   COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)) <= sp.ponto_pedido
+                   COALESCE(sea.estoque_fisico, 0) + COALESCE(sea.estoque_pendente_entrada, 0) + COALESCE(et.qtde, 0)
+                   - COALESCE(cp.qtde, 0)) <= sp.ponto_pedido
   ),
   -- ── DECISÃO: troca p/ galão só se ESTRITAMENTE mais barato/base e a âncora também é elegível ──
   -- [EMBALAGEM PORTAL] esta CTE decide em unidades-Omie (L) ou em embalagens do grupo; o múltiplo do portal
@@ -12984,32 +14215,34 @@ BEGIN
            b.fornecedor_nome, b.grupo_codigo, b.ponto_pedido, b.estoque_maximo,
            COALESCE(b.fisico_grupo, b.estoque_fisico_proprio)  AS estoque_fisico,
            COALESCE(b.acaminho_grupo, b.acaminho_proprio)      AS estoque_a_caminho,
-           b.estoque_efetivo,
-           ceil(b.estoque_maximo - b.estoque_efetivo) AS qtde_sugerida,  -- gate >0 (unidades-âncora)
-           -- nº de embalagens do SKU escolhido: galão = ceil(necessidade / fator); quartinho = lógica atual.
+           b.estoque_efetivo, b.estoque_comprometido,
+           ceil((b.estoque_maximo - b.estoque_efetivo) / COALESCE(b.conv_ancora, 1)) AS qtde_sugerida,  -- gate >0; EMBALAGENS da âncora [UNIDADES #2849]
+           -- nº de embalagens do SKU escolhido: ceil(necessidade em unidades Omie / conv) [UNIDADES #2849];
+           -- SKU sem grupo divide por 1 (idêntico ao de antes).
            -- [P1-e] minimo_forcado_manual (unidades-âncora) aplicado como piso ANTES de dividir pelo fator.
            -- [TETO cobertura] só o ramo ELSE recebe o cap (trocou ⇒ tem grupo ⇒ cap NULL; min_forcado ⇒ cap NULL).
            -- LEAST na necessidade-âncora ANTES do ceil; cap 0 zera a linha (sai do pedido via skus_inseriveis + log).
            CASE
              WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
-                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.conv_escolhido)
              WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
-                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual) / COALESCE(b.conv_ancora, 1))
              ELSE ceil(LEAST(b.estoque_maximo - b.estoque_efetivo,
-                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)))
+                             COALESCE(b.cap_teto_ancora, b.estoque_maximo - b.estoque_efetivo)) / COALESCE(b.conv_ancora, 1))
            END AS qtde_final,
            -- [TETO cobertura] o que a linha compraria SEM o cap (mesma unidade de qtde_final — embalagens no galão):
            -- rastro p/ item/log; capada ⇔ qtde_final < qtde_sem_teto (comparação nos consumidores).
            CASE
              WHEN trocou THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo,
-                                            COALESCE(b.minimo_forcado_manual, 0)) / b.fator_escolhido)
+                                            COALESCE(b.minimo_forcado_manual, 0)) / b.conv_escolhido)
              WHEN b.minimo_forcado_manual IS NOT NULL AND b.minimo_forcado_manual > 0
-                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual))
-             ELSE ceil(b.estoque_maximo - b.estoque_efetivo)
+                  THEN ceil(GREATEST(b.estoque_maximo - b.estoque_efetivo, b.minimo_forcado_manual) / COALESCE(b.conv_ancora, 1))
+             ELSE ceil((b.estoque_maximo - b.estoque_efetivo) / COALESCE(b.conv_ancora, 1))
            END AS qtde_sem_teto,
            b.cap_teto_ancora, b.teto_dias_linha, b.demanda_diaria_linha, b.classe_abc_efetiva,
-           -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc atual.
-           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora END AS preco_unitario,
+           -- custo da linha: galão → preço-app (R$/embalagem, nunca 0); quartinho → cmc (R$/unidade Omie) × conv
+           -- = R$/embalagem [UNIDADES #2849]; SKU sem grupo × 1.
+           CASE WHEN trocou THEN b.preco_escolhido ELSE b.preco_unitario_ancora * COALESCE(b.conv_ancora, 1) END AS preco_unitario,
            b.primeira_compra, b.horario_corte_pedido, b.valor_maximo_mensal, b.delta_max_perc,
            -- [GATE estoque-não-confirmado] espelha estoque_efetivo=COALESCE(grupo,linha): decisão pelo grupo usa a
            -- confirmação do grupo; pela linha, a da linha. Suprime quando a fonte é só seed (ausente≠zero, precisão>recall).
@@ -13073,10 +14306,10 @@ BEGIN
   -- qtde_sem_teto recebe a MESMA conversão: capada ⇔ qtde_final < qtde_sem_teto compara na MESMA unidade
   -- (cap 27 L→30 L vs 36 L→40 L segue capada; cap 36→40 vs 38→40 deixa de sê-lo porque FISICAMENTE são os
   -- mesmos 8 baldes — o cap não mudou a compra). Linha capada a ZERO fica 0 (o CASE exige > 0).
-  -- qtde_sugerida NÃO muda (rastro em L; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
+  -- qtde_sugerida NÃO muda (rastro em embalagens da âncora; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
   skus_necessitando AS (
     SELECT sd.empresa, sd.sku_codigo_omie, sd.sku_descricao, sd.fornecedor_nome, sd.grupo_codigo,
-           sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo,
+           sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo, sd.estoque_comprometido,
            sd.qtde_sugerida,
            CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0
                 THEN trim_scale(round(GREATEST(1, ceil(round(sd.qtde_final * sd.fator_embalagem, 6))) / sd.fator_embalagem, 6))
@@ -13139,12 +14372,13 @@ BEGIN
   INSERT INTO pedido_compra_item (
     pedido_id, sku_codigo_omie, sku_descricao, estoque_atual, ponto_pedido, estoque_maximo,
     qtde_sugerida, qtde_final, preco_unitario, valor_linha, primeira_compra,
-    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado, fator_embalagem_portal
+    estoque_fisico, estoque_a_caminho, qtde_sem_teto, teto_cobertura_aplicado, fator_embalagem_portal,
+    estoque_comprometido
   )
   SELECT pfg.id, sn.sku_codigo_omie, sn.sku_descricao, sn.estoque_efetivo, sn.ponto_pedido, sn.estoque_maximo,
          sn.qtde_sugerida, sn.qtde_final, sn.preco_unitario, sn.qtde_final * sn.preco_unitario, sn.primeira_compra,
          sn.estoque_fisico, sn.estoque_a_caminho, sn.qtde_sem_teto, (sn.qtde_final < sn.qtde_sem_teto),
-         sn.fator_embalagem_portal
+         sn.fator_embalagem_portal, sn.estoque_comprometido
   FROM skus_inseriveis sn
   JOIN pedidos_por_fornecedor_grupo pfg
     -- [GRUPO-NULL] a MESMA partição do GROUP BY acima (que separa NULL de ''). COALESCE(...,'') fundia os
@@ -13535,7 +14769,10 @@ BEGIN
       SELECT
         oi.unit_price,
         oi.quantity,
-        oi.discount AS disc_item,
+        -- desconto do ITEM em R$ da linha (desconto-omie.ts). NULL = NÃO APURADO ≠ 0 = o Omie
+        -- informou zero. A coluna legada `order_items.discount` (0 em 100% das linhas — lia `prod.desconto`,
+        -- chave que a API não tem): o guard abaixo nunca disparou enquanto lia ela.
+        oi.desconto_valor AS disc_item,
         so.discount AS disc_pedido,
         COALESCE(
           to_date(NULLIF(so.omie_payload->'infoCadastro'->>'dInc',''),'DD/MM/YYYY'),
@@ -13580,7 +14817,14 @@ BEGIN
            ELSE NULL END,
       sum(quantity),
       (SELECT data_real FROM melhor_data),
-      bool_or(COALESCE(disc_item,0) > 0 OR COALESCE(disc_pedido,0) > 0),
+      -- Âncora só é preço CHEIO provado se TODA linha do dia tem desconto apurado = 0. NULL (não
+      -- apurado), NaN e negativo também NÃO provam ausência de desconto → `IS DISTINCT FROM 0`, e não
+      -- `COALESCE(…,0) > 0`, que trataria "não sei" como "sem desconto" (spec 2b §5.4: nunca
+      -- fabricar alerta). Medido em 2026-10-14: o NULL soma +4 pares aos 172 que o >0 já neutraliza
+      -- entre os pares com status acionável; os NULL vivem em âncora antiga, já neutra.
+      -- `so.discount` (capa) é 0 por desenho: o writer grava 0 e o Omie distribui o desconto de
+      -- capa aos itens — fica como defesa, com a régua de sempre.
+      bool_or(disc_item IS DISTINCT FROM 0 OR COALESCE(disc_pedido,0) > 0),
       (count(*) > 0)
     INTO v_p_last, v_qtd_ancora, v_data_ancora, v_disc, v_tem_ancora
     FROM no_dia;
@@ -13766,6 +15010,55 @@ BEGIN
   IF p_target IS NULL THEN RAISE EXCEPTION 'target required'; END IF;
   RETURN public._carteira_positivacao_for_owner(p_target);
 END; $$;
+
+
+--
+-- Name: get_planos_margem(uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_planos_margem(p_plan_ids uuid[]) RETURNS TABLE(plan_id uuid, current_margin_pct numeric, cluster_avg_margin_pct numeric, expected_result jsonb, margem_visivel boolean)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_uid      uuid;
+  v_pode_num boolean;
+BEGIN
+  -- Atribuição no CORPO (erro em DECLARE não é capturável pelo bloco).
+  v_uid := (SELECT auth.uid());
+
+  -- Fail-closed: sem identidade ou sem ids, zero linhas.
+  IF v_uid IS NULL OR p_plan_ids IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Escopo de LINHA = tactical_plans_select_staff. SECURITY DEFINER pula a RLS, então a policy é
+  -- reproduzida aqui; quem não é staff não recebe linha nenhuma.
+  IF NOT (public.has_role(v_uid, 'master'::public.app_role) OR public.has_role(v_uid, 'employee'::public.app_role)) THEN
+    RETURN;
+  END IF;
+
+  v_pode_num := COALESCE(private.cap_custo_ler(v_uid), false);
+
+  RETURN QUERY
+  SELECT p.id,
+         -- Gate de PROJEÇÃO: esconde na SAÍDA. Os cenários de margem são projeção do mesmo número.
+         CASE WHEN v_pode_num THEN p.current_margin_pct END,
+         CASE WHEN v_pode_num THEN p.cluster_avg_margin_pct END,
+         CASE WHEN v_pode_num THEN p.expected_result END,
+         v_pode_num
+    FROM public.farmer_tactical_plans p
+   WHERE p.id = ANY (p_plan_ids)
+   ORDER BY p.id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION get_planos_margem(p_plan_ids uuid[]); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_planos_margem(p_plan_ids uuid[]) IS 'Margem do cliente e média dos pares gravadas no plano tático (e os cenários de margem), no escopo de tactical_plans_select_staff. O número só sai sob private.cap_custo_ler; os demais recebem NULL com margem_visivel=false. Substitui a leitura direta das colunas, que a 20261015120100 fecha (FU4-F).';
 
 
 --
@@ -14116,6 +15409,52 @@ BEGIN
   RETURN v_out;
 END;
 $$;
+
+
+--
+-- Name: get_scores_margem(uuid[], uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_scores_margem(p_customer_ids uuid[] DEFAULT NULL::uuid[], p_farmer_id uuid DEFAULT NULL::uuid) RETURNS TABLE(customer_user_id uuid, gross_margin_pct numeric, margem_visivel boolean)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_uid      uuid;
+  v_pode_num boolean;
+  v_cap_todo boolean;
+BEGIN
+  -- Atribuição no CORPO (erro em DECLARE não é capturável pelo bloco).
+  v_uid := (SELECT auth.uid());
+
+  -- Fail-closed: sem identidade, zero linhas.
+  IF v_uid IS NULL THEN
+    RETURN;
+  END IF;
+
+  v_pode_num := COALESCE(private.cap_custo_ler(v_uid), false);
+  v_cap_todo := COALESCE(private.cap_carteira_ler(v_uid), false);
+
+  RETURN QUERY
+  SELECT s.customer_user_id,
+         -- Gate de PROJEÇÃO: esconde na SAÍDA.
+         CASE WHEN v_pode_num THEN s.gross_margin_pct END,
+         v_pode_num
+    FROM public.farmer_client_scores s
+   WHERE (p_customer_ids IS NULL OR s.customer_user_id = ANY (p_customer_ids))
+     AND (p_farmer_id IS NULL OR s.farmer_id = p_farmer_id)
+     -- Escopo espelhando fcs_select_carteira.
+     AND (v_cap_todo OR COALESCE(private.carteira_visivel_para(s.customer_user_id, v_uid), false))
+   ORDER BY s.customer_user_id;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION get_scores_margem(p_customer_ids uuid[], p_farmer_id uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.get_scores_margem(p_customer_ids uuid[], p_farmer_id uuid) IS 'Margem bruta PERSISTIDA (farmer_client_scores.gross_margin_pct) por cliente, no escopo de fcs_select_carteira. O número só sai sob private.cap_custo_ler; os demais recebem NULL com margem_visivel=false. Substitui a leitura direta da coluna, que a 20261014120100 fecha para authenticated (FU4-F).';
 
 
 --
@@ -15020,7 +16359,13 @@ BEGIN
          portal_erro = NULL,
          portal_proximo_retry_em = now() + interval '15 minutes'
    WHERE id = p_pedido_id
-     AND COALESCE(status_envio_portal, 'nao_aplicavel') <> 'enviando_portal'
+     AND COALESCE(status_envio_portal, 'nao_aplicavel') NOT IN (
+           'enviando_portal',
+           'erro_nao_retentavel',
+           'aceito_portal_sem_protocolo',
+           'indeterminado_requer_conciliacao',
+           'sucesso_portal',
+           'enviado_portal')
      AND status IN ('aprovado_aguardando_disparo', 'disparado', 'falha_envio')
      AND portal_recusa_motivo IS NULL
   RETURNING true INTO v_claimed;
@@ -15166,6 +16511,7 @@ CREATE FUNCTION public.liberar_reserva_checkout(p_checkout_id uuid, p_pool text 
 DECLARE
   v_uid uuid := (SELECT auth.uid());
   v_n integer;
+  v_firmes integer;
 BEGIN
   IF NOT private.cap_estoque_reservar(v_uid) THEN
     RAISE EXCEPTION 'Sem permissão para liberar reserva de estoque (staff apenas)'
@@ -15181,16 +16527,31 @@ BEGIN
 
   PERFORM pg_advisory_xact_lock(hashtextextended('atp:checkout:' || p_checkout_id::text, 0));
 
-  UPDATE public.estoque_reservas
+  -- FASE 3.2 (achado #2 do Codex retroativo da 3.1): reserva de PV CONFIRMADO
+  -- no Omie NÃO sai por aqui — liberar sem motivo, sem ator e sem trilha
+  -- devolveria ao ATP estoque de pedido vivo. Ela fica 'ativa' e é contada em
+  -- 'preservadas_firmes'; a saída dela é a atp_resolver_reserva (humana,
+  -- auditada) ou a reconciliação por cancelamento confirmado.
+  UPDATE public.estoque_reservas r
      SET status = 'liberada',
          motivo = COALESCE(p_motivo, 'liberacao pelo caller'),
          atualizado_em = now()
-   WHERE checkout_id = p_checkout_id
-     AND status = 'ativa'
-     AND (p_pool IS NULL OR pool = p_pool);
+   WHERE r.checkout_id = p_checkout_id
+     AND r.status = 'ativa'
+     AND (p_pool IS NULL OR r.pool = p_pool)
+     AND r.omie_pedido_id IS NULL
+     AND NOT EXISTS (SELECT 1 FROM public.sales_orders so
+                     WHERE so.id = r.sales_order_id AND so.omie_pedido_id IS NOT NULL);
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
-  RETURN jsonb_build_object('ok', true, 'checkout_id', p_checkout_id, 'liberadas', v_n);
+  SELECT count(*) INTO v_firmes
+  FROM public.estoque_reservas r
+  WHERE r.checkout_id = p_checkout_id
+    AND r.status = 'ativa'
+    AND (p_pool IS NULL OR r.pool = p_pool);
+
+  RETURN jsonb_build_object('ok', true, 'checkout_id', p_checkout_id, 'liberadas', v_n,
+                            'preservadas_firmes', v_firmes);
 END;
 $$;
 
@@ -15652,6 +17013,128 @@ CREATE FUNCTION public.normalizar_cep(p text) RETURNS text
     AS $$
   SELECT NULLIF(regexp_replace(COALESCE(p, ''), '\D', '', 'g'), '')
 $$;
+
+
+--
+-- Name: omie_cota_liberar(text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.omie_cota_liberar(p_conta text, p_metodo text, p_token text) RETURNS boolean
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  UPDATE public.omie_cota_metodo c
+     SET ocupado_ate   = NULL,
+         ocupado_por   = NULL,
+         atualizado_em = clock_timestamp()
+   WHERE c.conta = p_conta AND c.metodo = p_metodo
+     AND c.ocupado_por IS NOT DISTINCT FROM p_token
+     AND p_token IS NOT NULL;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n > 0;
+END;
+$$;
+
+
+--
+-- Name: omie_cota_registrar_fault(text, text, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.omie_cota_registrar_fault(p_conta text, p_metodo text, p_bloqueio_segundos integer, p_fault text) RETURNS timestamp with time zone
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  v_agora timestamptz := clock_timestamp();
+  v_ate   timestamptz;
+BEGIN
+  IF p_conta IS NULL OR p_conta NOT IN ('oben', 'colacor') THEN
+    RAISE EXCEPTION 'omie_cota_registrar_fault: conta inválida (%)', p_conta USING ERRCODE = '22023';
+  END IF;
+  IF p_metodo IS NULL OR p_metodo !~ '^[A-Za-z]{1,80}$' THEN
+    RAISE EXCEPTION 'omie_cota_registrar_fault: método inválido (%)', p_metodo USING ERRCODE = '22023';
+  END IF;
+  IF p_bloqueio_segundos IS NULL OR p_bloqueio_segundos NOT BETWEEN 1 AND 7200 THEN
+    RAISE EXCEPTION 'omie_cota_registrar_fault: bloqueio fora de 1..7200 s (%)', p_bloqueio_segundos
+      USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public.omie_cota_metodo AS c (conta, metodo, bloqueado_ate, ultimo_fault, ultimo_fault_em, atualizado_em)
+  VALUES (p_conta, p_metodo, v_agora + make_interval(secs => p_bloqueio_segundos),
+          left(p_fault, 300), v_agora, v_agora)
+  ON CONFLICT (conta, metodo) DO UPDATE
+     SET bloqueado_ate   = GREATEST(c.bloqueado_ate, EXCLUDED.bloqueado_ate),
+         ultimo_fault    = EXCLUDED.ultimo_fault,
+         ultimo_fault_em = EXCLUDED.ultimo_fault_em,
+         atualizado_em   = EXCLUDED.atualizado_em
+  RETURNING c.bloqueado_ate INTO v_ate;
+
+  RETURN v_ate;
+END;
+$_$;
+
+
+--
+-- Name: omie_cota_tentar(text, text, text, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.omie_cota_tentar(p_conta text, p_metodo text, p_token text, p_lease_segundos integer) RETURNS TABLE(ok boolean, motivo text, ate timestamp with time zone)
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  v_agora timestamptz;
+  v_linha public.omie_cota_metodo%ROWTYPE;
+BEGIN
+  IF p_conta IS NULL OR p_conta NOT IN ('oben', 'colacor') THEN
+    RAISE EXCEPTION 'omie_cota_tentar: conta inválida (%)', p_conta USING ERRCODE = '22023';
+  END IF;
+  IF p_metodo IS NULL OR p_metodo !~ '^[A-Za-z]{1,80}$' THEN
+    RAISE EXCEPTION 'omie_cota_tentar: método inválido (%)', p_metodo USING ERRCODE = '22023';
+  END IF;
+  IF p_token IS NULL OR length(p_token) NOT BETWEEN 8 AND 120 THEN
+    RAISE EXCEPTION 'omie_cota_tentar: token inválido' USING ERRCODE = '22023';
+  END IF;
+  IF p_lease_segundos IS NULL OR p_lease_segundos NOT BETWEEN 1 AND 300 THEN
+    RAISE EXCEPTION 'omie_cota_tentar: lease fora de 1..300 s (%)', p_lease_segundos USING ERRCODE = '22023';
+  END IF;
+
+  INSERT INTO public.omie_cota_metodo (conta, metodo)
+  VALUES (p_conta, p_metodo)
+  ON CONFLICT (conta, metodo) DO NOTHING;
+
+  SELECT * INTO v_linha
+    FROM public.omie_cota_metodo c
+   WHERE c.conta = p_conta AND c.metodo = p_metodo
+   FOR UPDATE;
+
+  -- relógio DEPOIS do lock: quem esperou a trava compara com o agora real, não com o início da
+  -- transação (now() congelado faria um lease recém-vencido parecer vivo, ou o contrário).
+  v_agora := clock_timestamp();
+
+  IF v_linha.bloqueado_ate IS NOT NULL AND v_linha.bloqueado_ate > v_agora THEN
+    RETURN QUERY SELECT false, 'bloqueado'::text, v_linha.bloqueado_ate;
+    RETURN;
+  END IF;
+
+  IF v_linha.ocupado_ate IS NOT NULL AND v_linha.ocupado_ate > v_agora
+     AND v_linha.ocupado_por IS DISTINCT FROM p_token THEN
+    RETURN QUERY SELECT false, 'ocupado'::text, v_linha.ocupado_ate;
+    RETURN;
+  END IF;
+
+  UPDATE public.omie_cota_metodo c
+     SET ocupado_ate   = v_agora + make_interval(secs => p_lease_segundos),
+         ocupado_por   = p_token,
+         atualizado_em = v_agora
+   WHERE c.conta = p_conta AND c.metodo = p_metodo;
+
+  RETURN QUERY SELECT true, 'livre'::text, v_agora + make_interval(secs => p_lease_segundos);
+END;
+$_$;
 
 
 --
@@ -16482,6 +17965,960 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN n;
 END;
+$$;
+
+
+--
+-- Name: picking_coleta_reservar(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_coleta_reservar(p_account text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_agora timestamptz;
+  v_e     public.picking_coleta_estado%ROWTYPE;
+  v_token uuid := pg_catalog.gen_random_uuid();
+BEGIN
+  IF p_account IS NULL OR p_account NOT IN ('oben', 'colacor') THEN
+    RAISE EXCEPTION 'picking_coleta_reservar: conta inválida (%)', p_account USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_conta:' || p_account, 0));
+  v_agora := clock_timestamp();
+  SELECT * INTO v_e FROM public.picking_coleta_estado e WHERE e.account = p_account FOR UPDATE;
+  IF NOT FOUND THEN
+    -- 1ª reserva da conta: nasce o estado, sob o lock da conta (Codex 0.5b r2 P1-4).
+    INSERT INTO public.picking_coleta_estado (account, ultima_coleta_iniciada_em, aplicada_em, lease_token, lease_ate)
+    VALUES (p_account, v_agora, NULL, v_token, v_agora + interval '150 seconds');
+    RETURN jsonb_build_object('ok', true, 'token', v_token, 'iniciada_em', v_agora);
+  END IF;
+  IF v_e.lease_ate IS NOT NULL AND v_e.lease_ate > v_agora THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'ocupada', 'lease_ate', v_e.lease_ate);
+  END IF;
+  IF v_e.ultima_coleta_iniciada_em > v_agora - interval '90 seconds' THEN
+    RETURN jsonb_build_object('ok', false, 'motivo', 'intervalo_minimo',
+                              'ultima_coleta_iniciada_em', v_e.ultima_coleta_iniciada_em);
+  END IF;
+  -- Lease vencido (coleta abandonada) também é substituído: o token velho perde a escrita.
+  UPDATE public.picking_coleta_estado e
+     SET lease_token = v_token, lease_ate = v_agora + interval '150 seconds', ultima_coleta_iniciada_em = v_agora
+   WHERE e.account = p_account;
+  RETURN jsonb_build_object('ok', true, 'token', v_token, 'iniciada_em', v_agora);
+END;
+$$;
+
+
+--
+-- Name: picking_concluir(uuid, text, uuid, uuid, integer, uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_concluir(p_evento_id uuid, p_account text, p_tarefa_id uuid, p_atribuicao_id uuid, p_tarefa_revisao integer, p_leituras uuid[]) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_cmd  jsonb;
+  v_ev   public.picking_eventos%ROWTYPE;
+  v_t    public.picking_tarefas%ROWTYPE;
+  v_res  jsonb;
+  v_para text;
+  v_faltam integer;
+  v_inseriu integer;
+BEGIN
+  IF NOT (public.has_role(v_uid, 'employee'::public.app_role) OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'picking_concluir: só staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_evento_id IS NULL OR p_tarefa_id IS NULL OR p_account IS NULL OR p_atribuicao_id IS NULL
+     OR p_tarefa_revisao IS NULL OR p_leituras IS NULL OR array_position(p_leituras, NULL) IS NOT NULL THEN
+    RAISE EXCEPTION 'picking_concluir: parâmetros ausentes' USING ERRCODE = '22023';
+  END IF;
+  v_cmd := jsonb_build_object('op', 'concluir', 'account', p_account, 'tarefa', p_tarefa_id,
+                              'atribuicao', p_atribuicao_id, 'tarefa_revisao', p_tarefa_revisao,
+                              'leituras', (SELECT to_jsonb(array_agg(DISTINCT x ORDER BY x)) FROM unnest(p_leituras) x));
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || p_tarefa_id::text, 0));
+  SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = p_tarefa_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_concluir: tarefa inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_t.account <> p_account THEN
+    RAISE EXCEPTION 'picking_concluir: tarefa de outra conta' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_ev FROM public.picking_eventos e WHERE e.id = p_evento_id;
+  IF FOUND THEN
+    IF v_ev.operador_id IS DISTINCT FROM v_uid OR v_ev.detalhe -> 'comando' IS DISTINCT FROM v_cmd THEN
+      RAISE EXCEPTION 'picking_concluir: evento % reutilizado em outro comando', p_evento_id USING ERRCODE = '22023';
+    END IF;
+    RETURN (v_ev.detalhe -> 'resultado') || jsonb_build_object('replay', true);
+  END IF;
+
+  SELECT count(*) INTO v_faltam FROM unnest(p_leituras) x
+   WHERE NOT EXISTS (SELECT 1 FROM public.picking_leituras r
+                      WHERE r.id = x AND r.tarefa_id = v_t.id AND r.atribuicao_id = p_atribuicao_id);
+
+  IF v_t.status <> 'em_separacao' THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'tarefa_fora_de_separacao');
+  ELSIF v_t.ausente_rodadas >= 2 THEN
+    -- Separado só vale para pedido que ainda está na etapa 10 (Codex 0.5b r4 P1).
+    v_res := jsonb_build_object('ok', false, 'motivo', 'ausente_do_omie');
+  ELSIF v_t.atribuicao_id IS DISTINCT FROM p_atribuicao_id OR v_t.operador_id IS DISTINCT FROM v_uid THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'atribuicao_antiga');
+  ELSIF v_t.revisao <> p_tarefa_revisao THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'revisao_antiga');
+  ELSIF v_faltam > 0 THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'leituras_pendentes', 'faltam', v_faltam);
+  ELSIF NOT EXISTS (SELECT 1 FROM public.picking_linhas l WHERE l.tarefa_id = v_t.id AND l.ativa) THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'sem_linhas');
+  ELSIF EXISTS (SELECT 1 FROM public.picking_linhas l
+                 WHERE l.tarefa_id = v_t.id AND l.ativa
+                   AND public.picking_v2_separada(l.id, l.revisao) <> l.quantidade) THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'linhas_incompletas');
+  ELSE
+    UPDATE public.picking_tarefas t
+       SET status = 'separado', separado_em = clock_timestamp(), estado_seq = t.estado_seq + 1,
+           atualizado_em = clock_timestamp()
+     WHERE t.id = v_t.id;
+    v_para := 'separado';
+    v_res := jsonb_build_object('ok', true, 'estado_seq', v_t.estado_seq + 1);
+  END IF;
+
+  INSERT INTO public.picking_eventos (id, account, tarefa_id, tipo, de_status, para_status, operador_id, detalhe)
+  VALUES (p_evento_id, v_t.account, v_t.id, 'concluir', v_t.status, v_para, v_uid,
+          jsonb_build_object('comando', v_cmd, 'resultado', v_res))
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_inseriu = ROW_COUNT;
+  IF v_inseriu = 0 THEN
+    RAISE EXCEPTION 'evento % gravado por outra transação', p_evento_id USING ERRCODE = '22023';
+  END IF;
+  RETURN v_res || jsonb_build_object('replay', false);
+END;
+$$;
+
+
+--
+-- Name: picking_leituras_imutavel(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_leituras_imutavel() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'picking_leituras é imutável (% bloqueado)', TG_OP USING ERRCODE = '55000';
+END;
+$$;
+
+
+--
+-- Name: picking_marcar_falta(uuid, text, uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_marcar_falta(p_evento_id uuid, p_account text, p_tarefa_id uuid, p_atribuicao_id uuid, p_linha_id uuid, p_observacao text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid   uuid := auth.uid();
+  v_cmd   jsonb;
+  v_ev    public.picking_eventos%ROWTYPE;
+  v_t     public.picking_tarefas%ROWTYPE;
+  v_l     public.picking_linhas%ROWTYPE;
+  v_saldo numeric;
+  v_res   jsonb;
+  v_para  text;
+  v_inseriu integer;
+BEGIN
+  IF NOT (public.has_role(v_uid, 'employee'::public.app_role) OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'picking_marcar_falta: só staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_evento_id IS NULL OR p_tarefa_id IS NULL OR p_account IS NULL OR p_linha_id IS NULL OR p_atribuicao_id IS NULL THEN
+    RAISE EXCEPTION 'picking_marcar_falta: parâmetros ausentes' USING ERRCODE = '22023';
+  END IF;
+  v_cmd := jsonb_build_object('op', 'falta', 'account', p_account, 'tarefa', p_tarefa_id,
+                              'atribuicao', p_atribuicao_id, 'linha', p_linha_id);
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || p_tarefa_id::text, 0));
+  SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = p_tarefa_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_marcar_falta: tarefa inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_t.account <> p_account THEN
+    RAISE EXCEPTION 'picking_marcar_falta: tarefa de outra conta' USING ERRCODE = '22023';
+  END IF;
+  SELECT * INTO v_l FROM public.picking_linhas l WHERE l.id = p_linha_id AND l.tarefa_id = v_t.id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_marcar_falta: linha não pertence à tarefa' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_ev FROM public.picking_eventos e WHERE e.id = p_evento_id;
+  IF FOUND THEN
+    IF v_ev.operador_id IS DISTINCT FROM v_uid OR v_ev.detalhe -> 'comando' IS DISTINCT FROM v_cmd THEN
+      RAISE EXCEPTION 'picking_marcar_falta: evento % reutilizado em outro comando', p_evento_id USING ERRCODE = '22023';
+    END IF;
+    RETURN (v_ev.detalhe -> 'resultado') || jsonb_build_object('replay', true);
+  END IF;
+
+  IF v_t.status <> 'em_separacao' THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'tarefa_fora_de_separacao');
+  ELSIF v_t.atribuicao_id IS DISTINCT FROM p_atribuicao_id OR v_t.operador_id IS DISTINCT FROM v_uid THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'atribuicao_antiga');
+  ELSIF NOT v_l.ativa THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'linha_inativa');
+  ELSE
+    v_saldo := v_l.quantidade - public.picking_v2_separada(v_l.id, v_l.revisao);
+    IF v_saldo <= 0 THEN
+      v_res := jsonb_build_object('ok', false, 'motivo', 'linha_completa');
+    ELSE
+      UPDATE public.picking_tarefas t
+         SET status = 'aguardando_ajuste', estado_seq = t.estado_seq + 1, atualizado_em = clock_timestamp()
+       WHERE t.id = v_t.id;
+      v_para := 'aguardando_ajuste';
+      v_res := jsonb_build_object('ok', true, 'codigo_item', v_l.codigo_item, 'faltante', v_saldo);
+    END IF;
+  END IF;
+
+  INSERT INTO public.picking_eventos (id, account, tarefa_id, linha_id, tipo, de_status, para_status, operador_id, detalhe)
+  VALUES (p_evento_id, v_t.account, v_t.id, v_l.id, 'falta', v_t.status, v_para, v_uid,
+          jsonb_build_object('comando', v_cmd, 'resultado', v_res, 'observacao', left(p_observacao, 500)))
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_inseriu = ROW_COUNT;
+  IF v_inseriu = 0 THEN
+    RAISE EXCEPTION 'evento % gravado por outra transação', p_evento_id USING ERRCODE = '22023';
+  END IF;
+  RETURN v_res || jsonb_build_object('replay', false);
+END;
+$$;
+
+
+--
+-- Name: picking_pegar_task(uuid, text, uuid, integer, boolean, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_pegar_task(p_evento_id uuid, p_account text, p_tarefa_id uuid, p_estado_seq integer, p_assumir boolean DEFAULT false, p_reconciliacao_fisica boolean DEFAULT false) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_cmd  jsonb;
+  v_ev   public.picking_eventos%ROWTYPE;
+  v_t    public.picking_tarefas%ROWTYPE;
+  v_atr  uuid;
+  v_res  jsonb;
+  v_para text;
+  v_inseriu integer;
+BEGIN
+  IF NOT (public.has_role(v_uid, 'employee'::public.app_role) OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'picking_pegar_task: só staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_evento_id IS NULL OR p_tarefa_id IS NULL OR p_account IS NULL OR p_estado_seq IS NULL THEN
+    RAISE EXCEPTION 'picking_pegar_task: parâmetros ausentes' USING ERRCODE = '22023';
+  END IF;
+  v_cmd := jsonb_build_object('op', 'pegar', 'account', p_account, 'tarefa', p_tarefa_id,
+                              'estado_seq', p_estado_seq, 'assumir', p_assumir IS TRUE,
+                              'reconciliacao', p_reconciliacao_fisica IS TRUE);
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || p_tarefa_id::text, 0));
+  SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = p_tarefa_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_pegar_task: tarefa inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_t.account <> p_account THEN
+    RAISE EXCEPTION 'picking_pegar_task: tarefa de outra conta' USING ERRCODE = '22023';
+  END IF;
+
+  -- UUID já processado: devolve o resultado gravado ANTES de olhar o estado (contrato 5).
+  SELECT * INTO v_ev FROM public.picking_eventos e WHERE e.id = p_evento_id;
+  IF FOUND THEN
+    IF v_ev.operador_id IS DISTINCT FROM v_uid OR v_ev.detalhe -> 'comando' IS DISTINCT FROM v_cmd THEN
+      RAISE EXCEPTION 'picking_pegar_task: evento % reutilizado em outro comando', p_evento_id USING ERRCODE = '22023';
+    END IF;
+    RETURN (v_ev.detalhe -> 'resultado') || jsonb_build_object('replay', true);
+  END IF;
+
+  IF v_t.estado_seq <> p_estado_seq THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'estado_mudou');
+  ELSIF v_t.ausente_rodadas >= 2 THEN
+    -- Sumiu da etapa 10 em 2 coletas completas seguidas e ninguém confirmou para onde foi: não
+    -- se começa, assume nem reabre a separação (nem o próprio operador) até reaparecer.
+    v_res := jsonb_build_object('ok', false, 'motivo', 'ausente_do_omie');
+  ELSIF v_t.status = 'aguardando' THEN
+    v_atr := gen_random_uuid();
+  ELSIF v_t.status = 'em_separacao' AND v_t.operador_id = v_uid THEN
+    v_res := jsonb_build_object('ok', true, 'atribuicao_id', v_t.atribuicao_id, 'tarefa_revisao', v_t.revisao,
+                                'estado_seq', v_t.estado_seq);
+  ELSIF v_t.status = 'em_separacao' AND p_assumir IS NOT TRUE THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'em_separacao_por_outro');
+  ELSIF v_t.status = 'em_separacao' AND p_reconciliacao_fisica IS NOT TRUE THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'exige_reconciliacao_fisica');
+  ELSIF v_t.status = 'em_separacao' THEN
+    v_atr := gen_random_uuid();
+  ELSE
+    v_res := jsonb_build_object('ok', false, 'motivo', 'status_' || v_t.status);
+  END IF;
+
+  IF v_atr IS NOT NULL THEN
+    UPDATE public.picking_tarefas t
+       SET status = 'em_separacao', operador_id = v_uid, atribuicao_id = v_atr,
+           pega_em = clock_timestamp(), estado_seq = t.estado_seq + 1, atualizado_em = clock_timestamp()
+     WHERE t.id = v_t.id;
+    v_para := 'em_separacao';
+    v_res := jsonb_build_object('ok', true, 'atribuicao_id', v_atr, 'tarefa_revisao', v_t.revisao,
+                                'estado_seq', v_t.estado_seq + 1);
+  END IF;
+
+  INSERT INTO public.picking_eventos (id, account, tarefa_id, tipo, de_status, para_status, operador_id, detalhe)
+  VALUES (p_evento_id, v_t.account, v_t.id, 'pegar', v_t.status, v_para, v_uid,
+          jsonb_build_object('comando', v_cmd, 'resultado', v_res))
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_inseriu = ROW_COUNT;
+  IF v_inseriu = 0 THEN
+    RAISE EXCEPTION 'evento % gravado por outra transação', p_evento_id USING ERRCODE = '22023';
+  END IF;
+  RETURN v_res || jsonb_build_object('replay', false);
+END;
+$$;
+
+
+--
+-- Name: picking_registrar_leitura(uuid, text, uuid, uuid, integer, text, text, uuid, numeric, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_registrar_leitura(p_leitura_id uuid, p_account text, p_tarefa_id uuid, p_atribuicao_id uuid, p_tarefa_revisao integer, p_tipo text, p_codigo_lido text DEFAULT NULL::text, p_linha_id uuid DEFAULT NULL::uuid, p_quantidade numeric DEFAULT NULL::numeric, p_estorna_leitura_id uuid DEFAULT NULL::uuid, p_lido_em timestamp with time zone DEFAULT NULL::timestamp with time zone) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid       uuid := auth.uid();
+  v_codigo    text := nullif(btrim(p_codigo_lido), '');
+  v_cmd       jsonb;
+  v_ex        public.picking_leituras%ROWTYPE;
+  v_t         public.picking_tarefas%ROWTYPE;
+  v_l         public.picking_linhas%ROWTYPE;
+  v_orig      public.picking_leituras%ROWTYPE;
+  v_motivo    text;
+  v_linha     uuid;
+  v_linrev    integer;
+  v_unid      numeric;
+  v_prod      bigint;
+  v_fator     numeric;
+  v_cb_status text;
+  v_cb_unid   text;
+  v_tem_cb    boolean;
+  v_nprod     integer;
+  v_inseriu   integer;
+BEGIN
+  IF NOT (public.has_role(v_uid, 'employee'::public.app_role) OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: só staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_leitura_id IS NULL OR p_tarefa_id IS NULL OR p_account IS NULL OR p_tarefa_revisao IS NULL
+     OR p_atribuicao_id IS NULL OR p_tipo IS NULL OR p_tipo NOT IN ('bipe', 'manual', 'estorno') THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: parâmetros ausentes ou tipo inválido' USING ERRCODE = '22023';
+  END IF;
+  -- Domínio positivo e FINITO (NaN > Infinity no Postgres, então `< 'Infinity'` também barra NaN).
+  IF (p_tipo = 'bipe' AND (v_codigo IS NULL OR length(v_codigo) > 64 OR p_linha_id IS NOT NULL
+                           OR p_quantidade IS NOT NULL OR p_estorna_leitura_id IS NOT NULL))
+     OR (p_tipo = 'manual' AND (p_linha_id IS NULL OR p_quantidade IS NULL
+                                OR NOT (p_quantidade > 0 AND p_quantidade < 'Infinity')
+                                OR v_codigo IS NOT NULL OR p_estorna_leitura_id IS NOT NULL))
+     OR (p_tipo = 'estorno' AND (p_estorna_leitura_id IS NULL OR p_quantidade IS NOT NULL
+                                 OR v_codigo IS NOT NULL OR p_linha_id IS NOT NULL)) THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: parâmetros incompatíveis com o tipo %', p_tipo USING ERRCODE = '22023';
+  END IF;
+  v_cmd := jsonb_build_object('account', p_account, 'tarefa', p_tarefa_id, 'atribuicao', p_atribuicao_id,
+                              'tarefa_revisao', p_tarefa_revisao, 'tipo', p_tipo, 'codigo', v_codigo,
+                              'linha', p_linha_id, 'quantidade', p_quantidade, 'estorno', p_estorna_leitura_id);
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || p_tarefa_id::text, 0));
+  SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = p_tarefa_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: tarefa inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_t.account <> p_account THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: tarefa de outra conta' USING ERRCODE = '22023';
+  END IF;
+
+  -- UUID já processado: resolvido ANTES do estado atual (contrato 5), e só para o MESMO comando.
+  SELECT * INTO v_ex FROM public.picking_leituras r WHERE r.id = p_leitura_id;
+  IF FOUND THEN
+    IF v_ex.operador_id <> v_uid OR v_ex.comando IS DISTINCT FROM v_cmd THEN
+      RAISE EXCEPTION 'picking_registrar_leitura: leitura % reutilizada em outro comando', p_leitura_id USING ERRCODE = '22023';
+    END IF;
+    RETURN jsonb_build_object('ok', v_ex.aceita, 'motivo', v_ex.motivo_rejeicao, 'linha_id', v_ex.linha_id,
+                              'unidades', v_ex.unidades, 'replay', true);
+  END IF;
+
+  IF v_t.status <> 'em_separacao' THEN
+    v_motivo := 'tarefa_fora_de_separacao';
+  ELSIF v_t.atribuicao_id IS DISTINCT FROM p_atribuicao_id OR v_t.operador_id IS DISTINCT FROM v_uid THEN
+    v_motivo := 'atribuicao_antiga';
+  ELSIF v_t.revisao <> p_tarefa_revisao THEN
+    v_motivo := 'revisao_antiga';
+  ELSIF v_t.ausente_rodadas >= 2 AND p_tipo <> 'estorno' THEN
+    -- Sumiu da etapa 10 em 2 coletas completas seguidas: nada entra no volume até reaparecer
+    -- (estorno, que tira, segue permitido). Codex 0.5b r4 P1.
+    v_motivo := 'ausente_do_omie';
+  END IF;
+
+  IF v_motivo IS NULL AND p_tipo = 'bipe' THEN
+    SELECT c.omie_codigo_produto, c.unidades_por_leitura, c.status, c.unidade
+      INTO v_prod, v_fator, v_cb_status, v_cb_unid
+      FROM public.picking_codigos_barras c
+     WHERE c.account = v_t.account AND c.codigo = v_codigo AND c.status <> 'revogado';
+    v_tem_cb := FOUND;
+    -- Interpretações distintas do EAN = pares (produto, unidade): o mesmo EAN numa linha UN e
+    -- noutra CX do mesmo produto faria 1 peça avulsa valer 1 caixa.
+    SELECT count(DISTINCT (l.omie_codigo_produto, l.unidade)) INTO v_nprod
+      FROM public.picking_linhas l
+     WHERE l.tarefa_id = v_t.id AND l.ativa AND l.ean = v_codigo;
+
+    IF v_tem_cb AND v_cb_status <> 'aprovado' THEN
+      v_motivo := 'codigo_pendente_aprovacao';
+    ELSIF v_tem_cb AND EXISTS (SELECT 1 FROM public.picking_linhas l
+                                WHERE l.tarefa_id = v_t.id AND l.ativa AND l.ean = v_codigo
+                                  AND (l.omie_codigo_produto <> v_prod OR l.unidade <> v_cb_unid
+                                       OR v_fator <> 1)) THEN
+      -- O mesmo código lido como EAN da linha (1 unidade) e como cadastro (outro produto,
+      -- unidade ou fator): duas interpretações físicas — não se escolhe uma no escuro.
+      v_motivo := 'codigo_ambiguo';
+    ELSIF NOT v_tem_cb AND v_nprod = 0 THEN
+      v_motivo := 'codigo_desconhecido';
+    ELSIF NOT v_tem_cb AND v_nprod > 1 THEN
+      v_motivo := 'codigo_ambiguo';
+    ELSIF v_tem_cb AND NOT EXISTS (SELECT 1 FROM public.picking_linhas l
+                                    WHERE l.tarefa_id = v_t.id AND l.ativa AND l.omie_codigo_produto = v_prod) THEN
+      v_motivo := 'codigo_fora_do_pedido';
+    ELSIF v_tem_cb AND NOT EXISTS (SELECT 1 FROM public.picking_linhas l
+                                    WHERE l.tarefa_id = v_t.id AND l.ativa AND l.omie_codigo_produto = v_prod
+                                      AND l.unidade = v_cb_unid) THEN
+      v_motivo := 'unidade_incompativel';
+    END IF;
+
+    IF v_motivo IS NULL THEN
+      IF NOT v_tem_cb THEN v_fator := 1; END IF;  -- EAN do próprio item: 1 leitura = 1 unidade da linha
+      -- Candidatas: código cadastrado → linhas do produto NA UNIDADE do código; EAN → linhas com esse EAN.
+      IF NOT EXISTS (SELECT 1 FROM public.picking_linhas l
+                      WHERE l.tarefa_id = v_t.id AND l.ativa AND NOT l.fracionaria
+                        AND CASE WHEN v_tem_cb THEN l.omie_codigo_produto = v_prod AND l.unidade = v_cb_unid
+                                 ELSE l.ean = v_codigo END) THEN
+        v_motivo := 'linha_fracionaria_exige_manual';
+      ELSE
+        SELECT * INTO v_l FROM public.picking_linhas l
+         WHERE l.tarefa_id = v_t.id AND l.ativa AND NOT l.fracionaria
+           AND CASE WHEN v_tem_cb THEN l.omie_codigo_produto = v_prod AND l.unidade = v_cb_unid
+                    ELSE l.ean = v_codigo END
+           AND l.quantidade - public.picking_v2_separada(l.id, l.revisao) > 0
+         ORDER BY l.codigo_item LIMIT 1;
+        IF NOT FOUND THEN
+          v_motivo := 'excesso';
+        ELSE
+          v_linha := v_l.id; v_linrev := v_l.revisao; v_unid := v_fator;
+          IF v_fator > v_l.quantidade - public.picking_v2_separada(v_l.id, v_l.revisao) THEN
+            v_motivo := 'excesso';
+          END IF;
+        END IF;
+      END IF;
+    END IF;
+
+  ELSIF v_motivo IS NULL AND p_tipo = 'manual' THEN
+    SELECT * INTO v_l FROM public.picking_linhas l WHERE l.id = p_linha_id AND l.tarefa_id = v_t.id;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'picking_registrar_leitura: linha não pertence à tarefa' USING ERRCODE = '22023';
+    END IF;
+    v_linha := v_l.id; v_linrev := v_l.revisao; v_unid := p_quantidade;
+    IF NOT v_l.ativa THEN
+      v_motivo := 'linha_inativa';
+    ELSIF NOT v_l.fracionaria AND (v_l.ean IS NOT NULL OR EXISTS (
+            SELECT 1 FROM public.picking_codigos_barras c
+             WHERE c.account = v_t.account AND c.omie_codigo_produto = v_l.omie_codigo_produto
+               AND c.unidade = v_l.unidade AND c.status = 'aprovado')) THEN
+      v_motivo := 'manual_nao_permitido';
+    ELSIF NOT v_l.fracionaria AND p_quantidade <> trunc(p_quantidade) THEN
+      v_motivo := 'quantidade_nao_inteira';
+    ELSIF p_quantidade > v_l.quantidade - public.picking_v2_separada(v_l.id, v_l.revisao) THEN
+      v_motivo := 'excesso';
+    END IF;
+
+  ELSIF v_motivo IS NULL AND p_tipo = 'estorno' THEN
+    SELECT * INTO v_orig FROM public.picking_leituras r WHERE r.id = p_estorna_leitura_id;
+    IF NOT FOUND THEN
+      -- Dependência ainda não recebida (offline fora de ordem): NÃO grava; o aparelho reenvia.
+      RETURN jsonb_build_object('ok', false, 'motivo', 'original_nao_recebido', 'pendente', true, 'replay', false);
+    END IF;
+    IF v_orig.tarefa_id <> v_t.id OR NOT v_orig.aceita OR v_orig.tipo = 'estorno' THEN
+      v_motivo := 'estorno_invalido';
+    ELSE
+      SELECT * INTO v_l FROM public.picking_linhas l WHERE l.id = v_orig.linha_id;
+      v_linha := v_l.id; v_linrev := v_orig.linha_revisao; v_unid := -v_orig.unidades;
+      IF NOT v_l.ativa OR v_l.revisao <> v_orig.linha_revisao THEN
+        v_motivo := 'estorno_revisao_antiga';
+      ELSIF EXISTS (SELECT 1 FROM public.picking_leituras r
+                     WHERE r.estorna_leitura_id = v_orig.id AND r.aceita) THEN
+        v_motivo := 'ja_estornada';
+      END IF;
+    END IF;
+  END IF;
+
+  -- UUID concorrente em OUTRA tarefa (lock diferente): o ON CONFLICT espera a outra transação.
+  INSERT INTO public.picking_leituras
+         (id, account, tarefa_id, linha_id, linha_revisao, tarefa_revisao, tipo, codigo_lido, unidades,
+          estorna_leitura_id, operador_id, atribuicao_id, comando, lido_em, recebido_em, aceita, motivo_rejeicao)
+  VALUES (p_leitura_id, v_t.account, v_t.id, v_linha, v_linrev, p_tarefa_revisao, p_tipo, v_codigo, v_unid,
+          v_orig.id, v_uid, p_atribuicao_id, v_cmd, p_lido_em, clock_timestamp(), v_motivo IS NULL, v_motivo)
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_inseriu = ROW_COUNT;
+  IF v_inseriu = 0 THEN
+    RAISE EXCEPTION 'picking_registrar_leitura: leitura % gravada por outra transação', p_leitura_id USING ERRCODE = '22023';
+  END IF;
+
+  RETURN jsonb_build_object('ok', v_motivo IS NULL, 'motivo', v_motivo, 'linha_id', v_linha,
+                            'unidades', v_unid, 'replay', false);
+END;
+$$;
+
+
+--
+-- Name: picking_retomar(uuid, text, uuid, integer, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_retomar(p_evento_id uuid, p_account text, p_tarefa_id uuid, p_estado_seq integer, p_reconciliacao_fisica boolean DEFAULT false) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE
+  v_uid  uuid := auth.uid();
+  v_cmd  jsonb;
+  v_ev   public.picking_eventos%ROWTYPE;
+  v_t    public.picking_tarefas%ROWTYPE;
+  v_atr  uuid;
+  v_res  jsonb;
+  v_para text;
+  v_inseriu integer;
+BEGIN
+  IF NOT (public.has_role(v_uid, 'employee'::public.app_role) OR public.has_role(v_uid, 'master'::public.app_role)) THEN
+    RAISE EXCEPTION 'picking_retomar: só staff' USING ERRCODE = '42501';
+  END IF;
+  IF p_evento_id IS NULL OR p_tarefa_id IS NULL OR p_account IS NULL OR p_estado_seq IS NULL THEN
+    RAISE EXCEPTION 'picking_retomar: parâmetros ausentes' USING ERRCODE = '22023';
+  END IF;
+  v_cmd := jsonb_build_object('op', 'retomar', 'account', p_account, 'tarefa', p_tarefa_id,
+                              'estado_seq', p_estado_seq, 'reconciliacao', p_reconciliacao_fisica IS TRUE);
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || p_tarefa_id::text, 0));
+  SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = p_tarefa_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'picking_retomar: tarefa inexistente' USING ERRCODE = 'P0002';
+  END IF;
+  IF v_t.account <> p_account THEN
+    RAISE EXCEPTION 'picking_retomar: tarefa de outra conta' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT * INTO v_ev FROM public.picking_eventos e WHERE e.id = p_evento_id;
+  IF FOUND THEN
+    IF v_ev.operador_id IS DISTINCT FROM v_uid OR v_ev.detalhe -> 'comando' IS DISTINCT FROM v_cmd THEN
+      RAISE EXCEPTION 'picking_retomar: evento % reutilizado em outro comando', p_evento_id USING ERRCODE = '22023';
+    END IF;
+    RETURN (v_ev.detalhe -> 'resultado') || jsonb_build_object('replay', true);
+  END IF;
+
+  IF v_t.estado_seq <> p_estado_seq THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'estado_mudou');
+  ELSIF v_t.ausente_rodadas >= 2 THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'ausente_do_omie');
+  ELSIF v_t.status NOT IN ('suspensa_alteracao', 'separado', 'aguardando_ajuste') THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'status_' || v_t.status);
+  ELSIF v_t.fora_da_etapa_em IS NOT NULL THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'fora_da_etapa');
+  ELSIF p_reconciliacao_fisica IS NOT TRUE THEN
+    v_res := jsonb_build_object('ok', false, 'motivo', 'exige_reconciliacao_fisica');
+  ELSE
+    v_atr := gen_random_uuid();
+    UPDATE public.picking_tarefas t
+       SET status = 'em_separacao', operador_id = v_uid, atribuicao_id = v_atr, separado_em = NULL,
+           pega_em = clock_timestamp(), estado_seq = t.estado_seq + 1, atualizado_em = clock_timestamp()
+     WHERE t.id = v_t.id;
+    v_para := 'em_separacao';
+    v_res := jsonb_build_object('ok', true, 'atribuicao_id', v_atr, 'tarefa_revisao', v_t.revisao,
+                                'estado_seq', v_t.estado_seq + 1);
+  END IF;
+
+  INSERT INTO public.picking_eventos (id, account, tarefa_id, tipo, de_status, para_status, operador_id, detalhe)
+  VALUES (p_evento_id, v_t.account, v_t.id, 'retomar', v_t.status, v_para, v_uid,
+          jsonb_build_object('comando', v_cmd, 'resultado', v_res))
+  ON CONFLICT (id) DO NOTHING;
+  GET DIAGNOSTICS v_inseriu = ROW_COUNT;
+  IF v_inseriu = 0 THEN
+    RAISE EXCEPTION 'evento % gravado por outra transação', p_evento_id USING ERRCODE = '22023';
+  END IF;
+  RETURN v_res || jsonb_build_object('replay', false);
+END;
+$$;
+
+
+--
+-- Name: picking_sincronizar_fila(text, uuid, bigint[], integer, jsonb, bigint[], boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_sincronizar_fila(p_account text, p_lease_token uuid, p_presentes bigint[], p_total_de_registros integer, p_pedidos jsonb, p_confirmados_fora bigint[], p_listagem_suspeita boolean) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  v_agora        timestamptz;
+  v_ultima       timestamptz;
+  v_token        uuid;
+  v_achou        boolean;
+  v_completa     boolean;
+  v_ped          jsonb;
+  v_cod          bigint;
+  v_motivo       text;
+  v_versao       text;
+  v_hash         text;
+  v_t            public.picking_tarefas%ROWTYPE;
+  v_mudou        boolean;
+  v_novo_status  text;
+  v_ausentes     bigint[] := '{}'::bigint[];
+  v_fora         bigint[] := coalesce(p_confirmados_fora, '{}'::bigint[]);
+  v_criadas      integer := 0;
+  v_revisadas    integer := 0;
+  v_bloqueadas   integer := 0;
+  v_interromp    integer := 0;
+  v_saidas       integer := 0;
+  v_resumo       jsonb;
+BEGIN
+  IF p_account IS NULL OR p_account NOT IN ('oben', 'colacor') THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: conta inválida (%)', p_account USING ERRCODE = '22023';
+  END IF;
+  IF p_lease_token IS NULL OR p_presentes IS NULL OR p_total_de_registros IS NULL
+     OR p_confirmados_fora IS NULL OR p_listagem_suspeita IS NULL
+     OR p_total_de_registros < 0 OR jsonb_typeof(p_pedidos) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: parâmetros ausentes ou malformados' USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (SELECT 1 FROM unnest(p_presentes) x WHERE x IS NULL OR x <= 0)
+     OR EXISTS (SELECT 1 FROM unnest(v_fora) x WHERE x IS NULL OR x <= 0) THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: código de pedido nulo ou não positivo' USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedidos) e
+              WHERE jsonb_typeof(e) IS DISTINCT FROM 'object'
+                 OR coalesce(e ->> 'codigo_pedido', '') !~ '^[1-9][0-9]{0,17}$') THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: pedido sem codigo_pedido válido' USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedidos) e
+              GROUP BY (e ->> 'codigo_pedido')::bigint HAVING count(*) > 1) THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: pedido duplicado no lote' USING ERRCODE = '22023';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedidos) e
+              WHERE NOT ((e ->> 'codigo_pedido')::bigint = ANY (p_presentes))) THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: pedido detalhado fora de p_presentes' USING ERRCODE = '22023';
+  END IF;
+
+  -- Só a coleta DONA da reserva vigente escreve (Codex 0.5b P1-1): reserva trocada por outra
+  -- coleta, ou já consumida por esta (token NULL), = reserva perdida, sem efeito. A geração é a
+  -- do lease, atribuída pelo servidor em picking_coleta_reservar.
+  PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_conta:' || p_account, 0));
+  v_agora := clock_timestamp();
+  SELECT e.ultima_coleta_iniciada_em, e.lease_token INTO v_ultima, v_token
+    FROM public.picking_coleta_estado e WHERE e.account = p_account FOR UPDATE;
+  v_achou := FOUND;
+  IF NOT v_achou OR (v_token = p_lease_token) IS NOT TRUE THEN
+    RETURN jsonb_build_object('aplicada', false, 'motivo', 'reserva_perdida');
+  END IF;
+
+  -- O corte de data decide só a ADMISSÃO: tarefa acompanhada e presente tem de vir detalhada,
+  -- senão uma alteração no Omie nunca chegaria a ela.
+  IF EXISTS (SELECT 1 FROM public.picking_tarefas t
+              WHERE t.account = p_account AND t.omie_codigo_pedido = ANY (p_presentes)
+                AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedidos) e
+                                 WHERE (e ->> 'codigo_pedido')::bigint = t.omie_codigo_pedido)) THEN
+    RAISE EXCEPTION 'picking_sincronizar_fila: tarefa acompanhada presente na listagem sem detalhe' USING ERRCODE = '22023';
+  END IF;
+
+  -- Listagem só é fotografia se bate com o total do Omie e não tem duplicata (contrato 2).
+  -- `p_listagem_suspeita` VETA a completude (Codex 0.5b P2-7): total mutável entre páginas pode
+  -- coincidir na soma e esconder a falta.
+  v_completa := cardinality(p_presentes) = p_total_de_registros
+                AND (SELECT count(DISTINCT x) FROM unnest(p_presentes) x) = cardinality(p_presentes)
+                AND NOT p_listagem_suspeita;
+
+  FOR v_ped IN SELECT e FROM jsonb_array_elements(p_pedidos) e ORDER BY (e ->> 'codigo_pedido')::bigint LOOP
+    v_cod    := (v_ped ->> 'codigo_pedido')::bigint;
+    v_motivo := public.picking_v2_motivo_invalido(v_ped);
+    v_versao := nullif(btrim(concat_ws(' ', v_ped ->> 'd_alt', v_ped ->> 'h_alt')), '');
+    v_hash   := NULL;
+    IF v_motivo IS NULL THEN
+      SELECT md5(string_agg(i.hash_linha, ',' ORDER BY i.codigo_item)) INTO v_hash
+        FROM public.picking_v2_itens(v_ped) i;
+    END IF;
+
+    SELECT * INTO v_t FROM public.picking_tarefas t
+     WHERE t.account = p_account AND t.omie_codigo_pedido = v_cod;
+
+    IF NOT FOUND THEN
+      INSERT INTO public.picking_tarefas AS t
+             (account, omie_codigo_pedido, numero_pedido, cliente_nome, status, versao_omie,
+              hash_fisico, motivo_bloqueio, ultima_coleta_em, incluido_em)
+      VALUES (p_account, v_cod, v_ped ->> 'numero_pedido', v_ped ->> 'cliente_nome',
+              CASE WHEN v_motivo IS NULL THEN 'aguardando' ELSE 'bloqueado_dado' END,
+              v_versao, v_hash, v_motivo, v_agora, public.picking_v2_data(v_ped ->> 'incluido_em'))
+      RETURNING * INTO v_t;
+      IF v_motivo IS NULL THEN
+        INSERT INTO public.picking_linhas
+               (account, tarefa_id, codigo_item, omie_codigo_produto, codigo_produto, descricao,
+                quantidade, unidade, ean, fracionaria, hash_linha)
+        SELECT p_account, v_t.id, i.codigo_item, i.omie_codigo_produto, i.codigo_produto, i.descricao,
+               i.quantidade, i.unidade, i.ean, i.fracionaria, i.hash_linha
+          FROM public.picking_v2_itens(v_ped) i;
+      ELSE
+        v_bloqueadas := v_bloqueadas + 1;
+      END IF;
+      INSERT INTO public.picking_eventos (account, tarefa_id, tipo, para_status, detalhe)
+      VALUES (p_account, v_t.id, 'criada', v_t.status, jsonb_build_object('motivo', v_motivo));
+      v_criadas := v_criadas + 1;
+      CONTINUE;
+    END IF;
+
+    -- Estado relido DEPOIS do lock da tarefa.
+    PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || v_t.id::text, 0));
+    SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = v_t.id FOR UPDATE;
+
+    UPDATE public.picking_tarefas t
+       SET ausente_desde = NULL, fora_da_etapa_em = NULL, ultima_coleta_em = v_agora,
+           ausente_rodadas = 0,
+           estado_seq = t.estado_seq + CASE WHEN t.ausente_rodadas >= 2 THEN 1 ELSE 0 END,
+           numero_pedido = coalesce(v_ped ->> 'numero_pedido', t.numero_pedido),
+           cliente_nome  = coalesce(v_ped ->> 'cliente_nome', t.cliente_nome),
+           incluido_em   = coalesce(public.picking_v2_data(v_ped ->> 'incluido_em'), t.incluido_em)
+     WHERE t.id = v_t.id;
+
+    -- Dado ilegível: a tarefa inteira para (nunca pula linha); leituras em voo param de valer.
+    IF v_motivo IS NOT NULL THEN
+      IF v_t.status <> 'bloqueado_dado' OR v_t.motivo_bloqueio IS DISTINCT FROM v_motivo THEN
+        UPDATE public.picking_tarefas t
+           SET status = 'bloqueado_dado', motivo_bloqueio = v_motivo, versao_omie = v_versao,
+               separado_em = NULL,
+               revisao = t.revisao + CASE WHEN v_t.status <> 'bloqueado_dado' THEN 1 ELSE 0 END,
+               estado_seq = t.estado_seq + 1, atualizado_em = v_agora
+         WHERE t.id = v_t.id;
+        INSERT INTO public.picking_eventos (account, tarefa_id, tipo, de_status, para_status, detalhe)
+        VALUES (p_account, v_t.id, 'bloqueada_dado', v_t.status, 'bloqueado_dado',
+                jsonb_build_object('motivo', v_motivo));
+        v_bloqueadas := v_bloqueadas + 1;
+      END IF;
+      CONTINUE;
+    END IF;
+
+    -- Descrição e código acompanham o Omie sem subir revisão (não decidem o bipe).
+    UPDATE public.picking_linhas l
+       SET codigo_produto = n.codigo_produto, descricao = n.descricao
+      FROM public.picking_v2_itens(v_ped) n
+     WHERE l.tarefa_id = v_t.id AND n.codigo_item = l.codigo_item
+       AND (l.codigo_produto IS DISTINCT FROM n.codigo_produto OR l.descricao IS DISTINCT FROM n.descricao);
+
+    -- Mudou só preço/imposto (hash igual) numa tarefa saudável: nada a recontar.
+    IF v_hash = v_t.hash_fisico AND v_t.status NOT IN ('bloqueado_dado', 'interrompida_externa') THEN
+      UPDATE public.picking_tarefas t SET versao_omie = v_versao WHERE t.id = v_t.id
+         AND t.versao_omie IS DISTINCT FROM v_versao;
+      CONTINUE;
+    END IF;
+
+    v_mudou := v_hash IS DISTINCT FROM v_t.hash_fisico;
+    IF v_mudou THEN
+      UPDATE public.picking_linhas l
+         SET ativa = false, revisao = l.revisao + 1, atualizado_em = v_agora
+       WHERE l.tarefa_id = v_t.id AND l.ativa
+         AND NOT EXISTS (SELECT 1 FROM public.picking_v2_itens(v_ped) n WHERE n.codigo_item = l.codigo_item);
+
+      UPDATE public.picking_linhas l
+         SET omie_codigo_produto = n.omie_codigo_produto, quantidade = n.quantidade,
+             unidade = n.unidade, ean = n.ean, fracionaria = n.fracionaria, hash_linha = n.hash_linha,
+             ativa = true, revisao = l.revisao + 1, atualizado_em = v_agora
+        FROM public.picking_v2_itens(v_ped) n
+       WHERE l.tarefa_id = v_t.id AND n.codigo_item = l.codigo_item
+         AND (NOT l.ativa OR l.hash_linha <> n.hash_linha);
+
+      INSERT INTO public.picking_linhas
+             (account, tarefa_id, codigo_item, omie_codigo_produto, codigo_produto, descricao,
+              quantidade, unidade, ean, fracionaria, hash_linha)
+      SELECT p_account, v_t.id, n.codigo_item, n.omie_codigo_produto, n.codigo_produto, n.descricao,
+             n.quantidade, n.unidade, n.ean, n.fracionaria, n.hash_linha
+        FROM public.picking_v2_itens(v_ped) n
+       WHERE NOT EXISTS (SELECT 1 FROM public.picking_linhas l
+                          WHERE l.tarefa_id = v_t.id AND l.codigo_item = n.codigo_item);
+    END IF;
+
+    -- Tarefa que JÁ FOI PEGA nunca volta direto à fila: o volume pode ter peças que o banco não
+    -- conta (revisão perdida, leitura offline rejeitada) → reconciliação física em picking_retomar.
+    v_novo_status := CASE WHEN v_t.pega_em IS NOT NULL THEN 'suspensa_alteracao' ELSE 'aguardando' END;
+
+    UPDATE public.picking_tarefas t
+       SET status = v_novo_status, hash_fisico = v_hash, versao_omie = v_versao,
+           motivo_bloqueio = NULL, separado_em = NULL,
+           revisao = t.revisao + CASE WHEN v_mudou THEN 1 ELSE 0 END,
+           estado_seq = t.estado_seq + 1, atualizado_em = v_agora
+     WHERE t.id = v_t.id;
+    INSERT INTO public.picking_eventos (account, tarefa_id, tipo, de_status, para_status, detalhe)
+    VALUES (p_account, v_t.id, CASE WHEN v_mudou THEN 'linha_revisada' ELSE 'recuperada' END,
+            v_t.status, v_novo_status, jsonb_build_object('versao_omie', v_versao));
+    v_revisadas := v_revisadas + 1;
+  END LOOP;
+
+  -- Presente na listagem: limpa as marcas de ausência (inclusive de quem não tem tarefa a revisar).
+  UPDATE public.picking_tarefas t
+     SET ausente_desde = NULL, fora_da_etapa_em = NULL, ausente_rodadas = 0,
+         estado_seq = t.estado_seq + CASE WHEN t.ausente_rodadas >= 2 THEN 1 ELSE 0 END
+   WHERE t.account = p_account AND t.omie_codigo_pedido = ANY (p_presentes)
+     AND (t.ausente_desde IS NOT NULL OR t.fora_da_etapa_em IS NOT NULL OR t.ausente_rodadas > 0);
+
+  -- Ausência: só com listagem completa (fail-closed) e só vira estado com confirmação individual.
+  IF v_completa THEN
+    FOR v_t IN SELECT * FROM public.picking_tarefas t
+                WHERE t.account = p_account AND t.status <> 'interrompida_externa'
+                  AND t.fora_da_etapa_em IS NULL AND NOT (t.omie_codigo_pedido = ANY (p_presentes))
+                ORDER BY t.omie_codigo_pedido LOOP
+      PERFORM pg_advisory_xact_lock(hashtextextended('picking_v2_tarefa:' || v_t.id::text, 0));
+      SELECT * INTO v_t FROM public.picking_tarefas t WHERE t.id = v_t.id FOR UPDATE;
+      IF v_t.omie_codigo_pedido = ANY (v_fora) THEN
+        IF v_t.status = 'separado' THEN
+          -- Fim normal: alguém moveu o pedido separado para a etapa seguinte.
+          UPDATE public.picking_tarefas t
+             SET fora_da_etapa_em = v_agora, ausente_desde = NULL, estado_seq = t.estado_seq + 1
+           WHERE t.id = v_t.id;
+          INSERT INTO public.picking_eventos (account, tarefa_id, tipo, de_status, para_status)
+          VALUES (p_account, v_t.id, 'saiu_da_etapa', 'separado', 'separado');
+          v_saidas := v_saidas + 1;
+        ELSE
+          UPDATE public.picking_tarefas t
+             SET status = 'interrompida_externa', motivo_bloqueio = NULL, ausente_desde = NULL,
+                 revisao = t.revisao + 1, estado_seq = t.estado_seq + 1, atualizado_em = v_agora
+           WHERE t.id = v_t.id;
+          INSERT INTO public.picking_eventos (account, tarefa_id, tipo, de_status, para_status)
+          VALUES (p_account, v_t.id, 'interrompida_externa', v_t.status, 'interrompida_externa');
+          v_interromp := v_interromp + 1;
+        END IF;
+      ELSE
+        -- 2ª coleta seguida sem o pedido = começa o bloqueio: estado_seq sobe (a tela relê).
+        UPDATE public.picking_tarefas t
+           SET ausente_desde = coalesce(t.ausente_desde, v_agora), ausente_rodadas = t.ausente_rodadas + 1,
+               estado_seq = t.estado_seq + CASE WHEN t.ausente_rodadas + 1 = 2 THEN 1 ELSE 0 END
+         WHERE t.id = v_t.id;
+        v_ausentes := v_ausentes || v_t.omie_codigo_pedido;
+      END IF;
+    END LOOP;
+  END IF;
+
+  v_resumo := jsonb_build_object(
+    'aplicada', true, 'listagem_completa', v_completa, 'listagem_suspeita', p_listagem_suspeita,
+    'coleta_iniciada_em', v_ultima, 'criadas', v_criadas,
+    'revisadas', v_revisadas, 'bloqueadas', v_bloqueadas, 'interrompidas', v_interromp,
+    'saidas_da_etapa', v_saidas, 'ausentes_a_confirmar', to_jsonb(v_ausentes));
+
+  -- Aplicou: libera a reserva (o mesmo token não aplica duas vezes).
+  UPDATE public.picking_coleta_estado e
+     SET aplicada_em = v_agora, ultimo_resumo = v_resumo, lease_token = NULL, lease_ate = NULL
+   WHERE e.account = p_account;
+
+  RETURN v_resumo;
+END;
+$_$;
+
+
+--
+-- Name: picking_v2_data(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_v2_data(p text) RETURNS date
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO ''
+    AS $_$
+BEGIN
+  IF p IS NULL OR p !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN
+    RETURN NULL;
+  END IF;
+  RETURN p::date;
+EXCEPTION WHEN datetime_field_overflow OR invalid_datetime_format THEN
+  RETURN NULL;
+END;
+$_$;
+
+
+--
+-- Name: picking_v2_itens(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_v2_itens(p_pedido jsonb) RETURNS TABLE(codigo_item bigint, omie_codigo_produto bigint, codigo_produto text, descricao text, quantidade numeric, unidade text, ean text, fracionaria boolean, hash_linha text)
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO ''
+    AS $$
+  SELECT x.ci, x.cp, nullif(btrim(i ->> 'codigo'), ''), nullif(btrim(i ->> 'descricao'), ''),
+         x.q, x.un, x.ean,
+         (x.un IN ('M2', 'M²', 'M', 'MT', 'L', 'LT', 'KG') OR x.q <> trunc(x.q)),
+         md5(concat_ws('|', x.ci::text, x.cp::text, trim_scale(x.q)::text, x.un, coalesce(x.ean, '')))
+    FROM jsonb_array_elements(p_pedido -> 'itens') i
+    CROSS JOIN LATERAL (SELECT (i ->> 'codigo_item')::bigint AS ci,
+                               (i ->> 'codigo_produto')::bigint AS cp,
+                               (i ->> 'quantidade')::numeric AS q,
+                               upper(btrim(i ->> 'unidade')) AS un,
+                               nullif(btrim(i ->> 'ean'), '') AS ean) x;
+$$;
+
+
+--
+-- Name: picking_v2_motivo_invalido(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_v2_motivo_invalido(p_pedido jsonb) RETURNS text
+    LANGUAGE plpgsql IMMUTABLE
+    SET search_path TO ''
+    AS $_$
+BEGIN
+  IF jsonb_typeof(p_pedido -> 'itens') IS DISTINCT FROM 'array' OR jsonb_array_length(p_pedido -> 'itens') = 0 THEN
+    RETURN 'pedido sem itens';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              WHERE jsonb_typeof(i) IS DISTINCT FROM 'object'
+                 OR coalesce(i ->> 'codigo_item', '') !~ '^[1-9][0-9]{0,17}$') THEN
+    RETURN 'item sem codigo_item válido';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              GROUP BY (i ->> 'codigo_item')::bigint HAVING count(*) > 1) THEN
+    RETURN 'codigo_item duplicado';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              WHERE coalesce(i ->> 'codigo_produto', '') !~ '^[1-9][0-9]{0,17}$') THEN
+    RETURN 'item sem codigo_produto válido';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              WHERE coalesce(i ->> 'quantidade', '') !~ '^[0-9]{1,12}(\.[0-9]{1,6})?$'
+                 OR (i ->> 'quantidade')::numeric <= 0) THEN
+    RETURN 'item com quantidade inválida';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              WHERE coalesce(btrim(i ->> 'unidade'), '') = '') THEN
+    RETURN 'item sem unidade';
+  END IF;
+  IF EXISTS (SELECT 1 FROM jsonb_array_elements(p_pedido -> 'itens') i
+              WHERE length(btrim(i ->> 'ean')) > 64) THEN
+    RETURN 'item com ean longo demais';
+  END IF;
+  RETURN NULL;
+END;
+$_$;
+
+
+--
+-- Name: picking_v2_separada(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picking_v2_separada(p_linha_id uuid, p_revisao integer) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO ''
+    AS $$
+  SELECT coalesce(sum(r.unidades), 0)
+    FROM public.picking_leituras r
+   WHERE r.linha_id = p_linha_id AND r.aceita AND r.linha_revisao = p_revisao;
 $$;
 
 
@@ -19050,6 +21487,24 @@ $$;
 
 
 --
+-- Name: reposicao__carimbo_recusa_definitiva(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao__carimbo_recusa_definitiva() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF NEW.status_envio_portal = 'erro_nao_retentavel'
+     AND OLD.status_envio_portal IS DISTINCT FROM NEW.status_envio_portal THEN
+    NEW.portal_recusa_definitiva_em := now();
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: reposicao__po_id(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -19785,6 +22240,58 @@ BEGIN
   END IF;
 
   RETURN QUERY SELECT true, true, NULL::text, '[]'::jsonb;
+END;
+$$;
+
+
+--
+-- Name: reposicao_encerrar_recusas_definitivas(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.reposicao_encerrar_recusas_definitivas(p_dias integer DEFAULT 3) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+  v_ids bigint[];
+BEGIN
+  IF p_dias IS NULL OR p_dias < 1 THEN
+    RAISE EXCEPTION '[ENCERRAR-RECUSA] p_dias invalido (%): minimo 1', p_dias USING ERRCODE = '22023';
+  END IF;
+
+  WITH encerrados AS (
+    UPDATE public.pedido_compra_sugerido pcs
+       SET status = 'cancelado',
+           cancelado_por = 'sistema:recusa_portal',
+           cancelado_em = now(),
+           justificativa_cancelamento =
+             'Encerrado automaticamente: recusa definitiva do portal Sayerlack há mais de ' || p_dias
+             || ' dia(s), sem protocolo, sem PO no Omie e sem clique no Efetivar. Motivo do portal: '
+             || COALESCE(NULLIF(btrim(portal_erro), ''), '(não registrado)')
+             || '. Os itens ainda necessários voltam pelo ciclo normal.',
+           status_envio_portal = 'nao_aplicavel',
+           portal_proximo_retry_em = NULL,
+           atualizado_em = now()
+     WHERE status = 'aprovado_aguardando_disparo'
+       AND status_envio_portal = 'erro_nao_retentavel'
+       AND NULLIF(btrim(portal_protocolo), '') IS NULL
+       AND NULLIF(btrim(omie_pedido_compra_id), '') IS NULL
+       AND NULLIF(btrim(omie_pedido_compra_numero), '') IS NULL
+       AND portal_resposta -> 'evidence' -> 'efetivarAttempted' = 'false'::jsonb
+       AND disparo_claim_em IS NULL
+       AND cancelado_em IS NULL
+       -- Relógio = o CARIMBO da recusa (coluna + trigger abaixo), gravado na MESMA escrita que põe
+       -- o pedido em erro_nao_retentavel. Não `atualizado_em` (salvar condição de pagamento renova a
+       -- linha e adiaria o encerramento) e não a última linha de pedidos_portal_tentativas (achado
+       -- Codex): o writer grava o estado ANTES da auditoria, que é best-effort — depois de um
+       -- "Forçar reenvio", a NOVA recusa seria encerrada na hora usando a tentativa antiga. Sem
+       -- carimbo → não encerra (precisão > recall).
+       AND portal_recusa_definitiva_em < now() - make_interval(days => p_dias)
+    RETURNING pcs.id
+  )
+  SELECT COALESCE(array_agg(e.id ORDER BY e.id), '{}') INTO v_ids FROM encerrados e;
+
+  RETURN jsonb_build_object('encerrados', cardinality(v_ids), 'ids', to_jsonb(v_ids), 'dias', p_dias);
 END;
 $$;
 
@@ -20852,14 +23359,17 @@ BEGIN
     WITH wp AS (
       SELECT substring(descricao FROM '^(WP[0-9]+\.[0-9]+)') AS cor,
              substring(descricao FROM '^WP[0-9]+\.[0-9]+([A-Z0-9]+)') AS sufixo,
-             omie_codigo_produto
+             omie_codigo_produto, unidade
       FROM public.omie_products
       WHERE account = p_empresa AND ativo
         AND descricao ~ '^WP[0-9]+\.[0-9]+(QT|GL) '
     )
     SELECT cor,
            max(omie_codigo_produto) FILTER (WHERE sufixo='QT') AS qt,
-           max(omie_codigo_produto) FILTER (WHERE sufixo='GL') AS gl
+           max(omie_codigo_produto) FILTER (WHERE sufixo='GL') AS gl,
+           -- [UNIDADES #2849] 0,81 L/QT e 3,24 L/GL só valem com a cor em LITROS no Omie; fora disso NULL e o
+           -- motor fica no fator relativo (a conta de antes) — nunca um litro presumido.
+           COALESCE(bool_and(upper(btrim(unidade)) = 'L'), false) AS em_litros
     FROM wp GROUP BY cor
     HAVING count(*) FILTER (WHERE sufixo='QT') = 1
        AND count(*) FILTER (WHERE sufixo='GL') = 1
@@ -20874,9 +23384,11 @@ BEGIN
 
     -- Insere só as embalagens faltantes (idempotente; ON CONFLICT é atômico no índice).
     INSERT INTO public.sku_embalagem_equivalencia
-      (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por)
-    SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp'
-    FROM (VALUES (r.qt, 1::numeric), (r.gl, 4::numeric)) AS x(sku, fator)
+      (empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base, fornecedor_nome, ativo, criado_por,
+       unidades_omie_por_embalagem)
+    SELECT p_empresa, v_grupo, x.sku::text, 'QT', x.fator, 'Sayerlack', true, 'auto:embalagem-wp',
+           CASE WHEN r.em_litros THEN x.unidades END
+    FROM (VALUES (r.qt, 1::numeric, 0.81::numeric), (r.gl, 4::numeric, 3.24::numeric)) AS x(sku, fator, unidades)
     ON CONFLICT (empresa, sku_codigo_omie) WHERE ativo DO NOTHING;
     GET DIAGNOSTICS v_ins = ROW_COUNT;
     v_linhas := v_linhas + v_ins;
@@ -20981,6 +23493,28 @@ BEGIN
   LOOP
     PERFORM pg_advisory_xact_lock(hashtextextended('atp:sku:' || p_pool || ':' || v_sku::text, 0));
   END LOOP;
+
+  -- FASE 3.2 (achado #2 do Codex retroativo da 3.1): a SUBSTITUIÇÃO abaixo
+  -- solta TODAS as ativas do checkout — inclusive a de um PV já CONFIRMADO no
+  -- Omie, que voltaria inteira ao ATP com o pedido vivo. Reserva firme só sai
+  -- de 'ativa' pelo desfecho (reconciliação por cancelamento confirmado, ou
+  -- atp_resolver_reserva, humana e auditada) — nunca por substituição.
+  -- Conferido DEPOIS do lock do checkout: é o lock que o atp_confirmar_pv
+  -- também toma, então o PID gravado por uma confirmação concorrente já está
+  -- visível aqui (o gate lê o PID ANTES do lock — esta é a releitura sob trava).
+  -- 22023 (sem override): reenviar/forçar backorder não muda o fato.
+  IF EXISTS (
+    SELECT 1 FROM public.estoque_reservas r
+    WHERE r.checkout_id = p_checkout_id
+      AND r.pool = p_pool
+      AND r.status = 'ativa'
+      AND (r.omie_pedido_id IS NOT NULL
+           OR EXISTS (SELECT 1 FROM public.sales_orders so
+                      WHERE so.id = r.sales_order_id AND so.omie_pedido_id IS NOT NULL))
+  ) THEN
+    RAISE EXCEPTION 'checkout % já tem reserva de PV CONFIRMADO no Omie — não pode ser substituída (o desfecho dela é cancelamento confirmado ou resolução humana em atp_resolver_reserva)', p_checkout_id
+      USING ERRCODE = '22023';
+  END IF;
 
   -- Decide TUDO antes de escrever (all-or-nothing sem depender de exception).
   -- O cálculo EXCLUI as reservas ativas do próprio checkout: a substituição
@@ -21112,6 +23646,98 @@ CREATE FUNCTION public.resolve_markup_policy(p_empresa text, p_codigo bigint, p_
          GREATEST((SELECT meta_markup FROM produto),(SELECT meta_markup FROM por_tier)) AS meta_markup
   WHERE (SELECT piso_markup FROM produto) IS NOT NULL OR (SELECT piso_markup FROM por_tier) IS NOT NULL;
 $$;
+
+
+--
+-- Name: resolver_cliente_por_telefone(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.resolver_cliente_por_telefone(p_telefone text) RETURNS TABLE(customer_user_id uuid, contato_nome text, contato_cargo text, fonte text, candidatos integer)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO ''
+    AS $_$
+DECLARE
+  v_sufixo     text := right(regexp_replace(coalesce(p_telefone, ''), '\D', '', 'g'), 8);
+  v_ids        uuid[];
+  v_fonte      text;
+  v_na_carteira uuid[];
+  v_escolhido  uuid;
+BEGIN
+  IF length(v_sufixo) < 8 THEN
+    RETURN;
+  END IF;
+  -- placeholder (00000000, 99999999…): não identifica ninguém — há 3 perfis assim em prod
+  -- (2026-10-10). Casar por ele gravaria ligação de quem não é cliente.
+  IF v_sufixo ~ '^(\d)\1{7}$' THEN
+    RETURN;
+  END IF;
+
+  -- 1) contatos cadastrados (mais específicos: trazem nome e cargo)
+  SELECT array_agg(DISTINCT cc.customer_user_id)
+    INTO v_ids
+    FROM public.customer_contacts cc
+   WHERE cc.customer_user_id IS NOT NULL
+     AND right(regexp_replace(coalesce(cc.phone, ''), '\D', '', 'g'), 8) = v_sufixo;
+
+  IF v_ids IS NOT NULL THEN
+    v_fonte := 'contato';
+  ELSE
+    -- 2) telefone do perfil, só de quem NÃO é staff
+    SELECT array_agg(DISTINCT pr.user_id)
+      INTO v_ids
+      FROM public.profiles pr
+     WHERE right(regexp_replace(coalesce(pr.phone, ''), '\D', '', 'g'), 8) = v_sufixo
+       AND NOT EXISTS (
+             SELECT 1 FROM public.user_roles r
+              WHERE r.user_id = pr.user_id
+                AND r.role IN ('employee'::public.app_role, 'master'::public.app_role)
+           );
+    IF v_ids IS NULL THEN
+      RETURN;
+    END IF;
+    v_fonte := 'perfil';
+  END IF;
+
+  IF cardinality(v_ids) = 1 THEN
+    v_escolhido := v_ids[1];
+  ELSE
+    -- desempate: o único candidato da carteira de quem liga; sem isso, fica sem dono
+    SELECT array_agg(DISTINCT a.customer_user_id)
+      INTO v_na_carteira
+      FROM public.carteira_assignments a
+     WHERE a.customer_user_id = ANY (v_ids)
+       AND a.owner_user_id = auth.uid()
+       AND a.eligible IS TRUE;
+    IF cardinality(v_na_carteira) = 1 THEN
+      v_escolhido := v_na_carteira[1];
+    END IF;
+  END IF;
+
+  RETURN QUERY
+  SELECT v_escolhido,
+         c.nome,
+         c.cargo,
+         v_fonte,
+         cardinality(v_ids)
+    FROM (SELECT 1) um
+    LEFT JOIN LATERAL (
+      SELECT cc.nome, cc.cargo
+        FROM public.customer_contacts cc
+       WHERE v_fonte = 'contato'
+         AND cc.customer_user_id = v_escolhido
+         AND right(regexp_replace(coalesce(cc.phone, ''), '\D', '', 'g'), 8) = v_sufixo
+       ORDER BY cc.is_primary DESC NULLS LAST, cc.created_at
+       LIMIT 1
+    ) c ON true;
+END
+$_$;
+
+
+--
+-- Name: FUNCTION resolver_cliente_por_telefone(p_telefone text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.resolver_cliente_por_telefone(p_telefone text) IS 'Dono de um telefone por sufixo de 8 DÍGITOS (ignora formatação). customer_contacts antes de profiles; perfil de staff não conta. Vários donos: o único da carteira de quem chama, senão customer_user_id NULL com candidatos > 1. Zero linhas = desconhecido. SECURITY INVOKER (RLS de quem chama).';
 
 
 --
@@ -21701,6 +24327,191 @@ $_$;
 --
 
 COMMENT ON FUNCTION public.sayerlack_aplicar_custo_portal(p_pedido_id bigint, p_itens jsonb, p_valor_total numeric) IS 'Custo do portal Sayerlack com IPI (edge enviar-pedido-portal-sayerlack, service_role): CAS omie IS NULL + sucesso_portal; payload = pedido inteiro {item_id, qtde_final, valor_mercadoria, valor_ipi}; IPI conferido contra ipi_aliquota_ncm (sayerlack_ipi_itens) com igualdade exata; prova contra o total cobrado; grava a decomposição (sem IPI/IPI/alíquota/NCM) e o custo com IPI, e remantém o derivado — uma transação. SQLSTATE CP001–CP004, CP006, CP007.';
+
+
+--
+-- Name: sayerlack_importar_pedido_portal(text, date, numeric, jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sayerlack_importar_pedido_portal(p_protocolo text, p_data_entrega date, p_valor_total numeric, p_itens jsonb, p_operador uuid) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $_$
+DECLARE
+  v_existente   bigint;
+  v_n           integer;
+  v_sem_depara  text;
+  v_fracionados text;
+  v_fornecedor  text;
+  v_n_fornec    integer;
+  v_pedido_id   bigint;
+  v_payload     jsonb;
+  v_atualizados integer;
+  v_po_omie     text;
+BEGIN
+  -- Gate de papel (defesa em profundidade; a tranca é o privilégio: só service_role executa).
+  IF auth.uid() IS NOT NULL AND NOT (public.has_role(auth.uid(), 'employee'::app_role) OR public.has_role(auth.uid(), 'master'::app_role)) THEN
+    RAISE EXCEPTION 'Acesso negado: requer perfil staff' USING ERRCODE = '42501';
+  END IF;
+
+  -- IP001 — payload. Ausente ≠ zero: nada aqui degrada para default.
+  IF p_protocolo IS NULL OR p_protocolo !~ '^[0-9]{3,12}$' THEN
+    RAISE EXCEPTION 'importar_portal: protocolo inválido (%)', coalesce(p_protocolo, 'null') USING ERRCODE = 'IP001';
+  END IF;
+  IF p_data_entrega IS NULL THEN
+    RAISE EXCEPTION 'importar_portal: data de entrega ausente' USING ERRCODE = 'IP001';
+  END IF;
+  IF p_valor_total IS NULL OR p_valor_total = 'NaN'::numeric OR NOT (p_valor_total > 0 AND p_valor_total < 'Infinity'::numeric) THEN
+    RAISE EXCEPTION 'importar_portal: valor_total não finito ou ≤ 0 (%)', coalesce(p_valor_total::text, 'null') USING ERRCODE = 'IP001';
+  END IF;
+  IF p_itens IS NULL OR jsonb_typeof(p_itens) <> 'array' OR jsonb_array_length(p_itens) = 0 THEN
+    RAISE EXCEPTION 'importar_portal: pedido sem itens' USING ERRCODE = 'IP001';
+  END IF;
+  -- `IS DISTINCT FROM`, nunca `<>`: chave ausente dá NULL e `NULL <> 'number'` passaria (verde por ausência).
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) e
+     WHERE jsonb_typeof(e) IS DISTINCT FROM 'object'
+        OR jsonb_typeof(e->'sku_portal') IS DISTINCT FROM 'string'
+        OR btrim(e->>'sku_portal') = ''
+        OR jsonb_typeof(e->'qtde_portal') IS DISTINCT FROM 'number'
+        OR jsonb_typeof(e->'valor_mercadoria') IS DISTINCT FROM 'number'
+  ) THEN
+    RAISE EXCEPTION 'importar_portal: item sem sku_portal/qtde_portal/valor_mercadoria' USING ERRCODE = 'IP001';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements(p_itens) e
+     WHERE NOT ((e->>'qtde_portal')::numeric > 0 AND (e->>'valor_mercadoria')::numeric > 0)
+  ) THEN
+    RAISE EXCEPTION 'importar_portal: qtde_portal ou valor_mercadoria ≤ 0' USING ERRCODE = 'IP001';
+  END IF;
+
+  -- Serializa importações do MESMO protocolo (duas abas, duplo clique): a 2ª espera e cai no "já existe".
+  PERFORM pg_advisory_xact_lock(hashtext('sayerlack_importar_pedido_portal:' || p_protocolo));
+
+  SELECT id INTO v_existente FROM public.pedido_compra_sugerido WHERE portal_protocolo = p_protocolo;
+  IF v_existente IS NOT NULL THEN
+    RETURN jsonb_build_object('pedido_id', v_existente, 'ja_existia', true);
+  END IF;
+
+  -- IP006 — PO lançado DIRETO no Omie com este nº do portal no contrato (sem passar pelo app: 210 Sayerlack
+  -- assim em 2026-10-14). Importar criaria um 2º PO com outra chave AFI-<id>. Codex 2026-10-14, P1.
+  -- Limite: o espelho `purchase_orders_tracking` tem a defasagem do sync — PO digitado no Omie minutos antes escapa.
+  SELECT string_agg(coalesce(t.numero_pedido, '?'), ', ') INTO v_po_omie
+    FROM public.purchase_orders_tracking t
+   WHERE t.empresa::text = 'OBEN' AND btrim(t.numero_contrato_fornecedor) = p_protocolo;
+  IF v_po_omie IS NOT NULL THEN
+    RAISE EXCEPTION 'importar_portal: já existe pedido de compra no Omie com o contrato % (PO %)', p_protocolo, v_po_omie USING ERRCODE = 'IP006';
+  END IF;
+
+  v_n := jsonb_array_length(p_itens);
+
+  -- IP005 — o mesmo SKU duas vezes no pedido do portal: a prova de custo é por item, não somamos às cegas.
+  IF (SELECT count(DISTINCT upper(btrim(e->>'sku_portal'))) FROM jsonb_array_elements(p_itens) e) <> v_n THEN
+    RAISE EXCEPTION 'importar_portal: SKU repetido no pedido % do portal', p_protocolo USING ERRCODE = 'IP005';
+  END IF;
+
+  -- De-para inverso: EXATAMENTE um mapeamento ativo OBEN por sku_portal (o UNIQUE é por sku_omie,
+  -- então 2 sku_omie com o mesmo sku_portal é possível — e é ambíguo, logo "sem de-para").
+  CREATE TEMP TABLE IF NOT EXISTS _importar_portal_itens (
+    ordem int, sku_portal text, qtde_portal numeric, valor_mercadoria numeric,
+    n_map int, sku_omie text, fornecedor_nome text, fator numeric, qtde_omie numeric, descricao text
+  ) ON COMMIT DROP;
+  TRUNCATE _importar_portal_itens;
+  INSERT INTO _importar_portal_itens (ordem, sku_portal, qtde_portal, valor_mercadoria, n_map, sku_omie, fornecedor_nome, fator)
+  SELECT e.ord::int,
+         upper(btrim(e.val->>'sku_portal')),
+         (e.val->>'qtde_portal')::numeric,
+         (e.val->>'valor_mercadoria')::numeric,
+         (SELECT count(*) FROM public.sku_fornecedor_externo d
+           WHERE d.empresa = 'OBEN' AND d.ativo AND upper(btrim(d.sku_portal)) = upper(btrim(e.val->>'sku_portal'))),
+         (SELECT min(d.sku_omie) FROM public.sku_fornecedor_externo d
+           WHERE d.empresa = 'OBEN' AND d.ativo AND upper(btrim(d.sku_portal)) = upper(btrim(e.val->>'sku_portal'))),
+         (SELECT min(d.fornecedor_nome) FROM public.sku_fornecedor_externo d
+           WHERE d.empresa = 'OBEN' AND d.ativo AND upper(btrim(d.sku_portal)) = upper(btrim(e.val->>'sku_portal'))),
+         (SELECT min(d.fator_conversao) FROM public.sku_fornecedor_externo d
+           WHERE d.empresa = 'OBEN' AND d.ativo AND upper(btrim(d.sku_portal)) = upper(btrim(e.val->>'sku_portal')))
+    FROM jsonb_array_elements(p_itens) WITH ORDINALITY AS e(val, ord);
+
+  SELECT string_agg(sku_portal || CASE WHEN n_map > 1 THEN ' (ambíguo: ' || n_map || ' SKUs Omie)' ELSE '' END, ', ' ORDER BY ordem)
+    INTO v_sem_depara
+    FROM _importar_portal_itens WHERE n_map <> 1;
+  IF v_sem_depara IS NOT NULL THEN
+    RAISE EXCEPTION 'importar_portal: sem de-para ativo no app para: %', v_sem_depara USING ERRCODE = 'IP002';
+  END IF;
+
+  -- IP004 — todos do MESMO fornecedor, e ele é a Sayerlack (o disparo decide portal×Omie pelo nome).
+  SELECT count(DISTINCT fornecedor_nome), min(fornecedor_nome) INTO v_n_fornec, v_fornecedor FROM _importar_portal_itens;
+  IF v_n_fornec <> 1 OR v_fornecedor IS NULL OR v_fornecedor !~* 'sayerlack' THEN
+    RAISE EXCEPTION 'importar_portal: de-para aponta fornecedor(es) inesperado(s): %',
+      (SELECT string_agg(DISTINCT coalesce(fornecedor_nome, 'null'), ', ') FROM _importar_portal_itens) USING ERRCODE = 'IP004';
+  END IF;
+
+  -- IP003 — fator = unidades do PORTAL por unidade do Omie ⇒ qtde_omie = qtde_portal ÷ fator, INTEIRA.
+  -- (O PO manda nQtde inteiro e a RPC de custo exige qtde_final inteira; arredondar aqui mudaria o preço.)
+  UPDATE _importar_portal_itens
+     SET qtde_omie = CASE WHEN fator > 0 THEN qtde_portal / fator END;
+  SELECT string_agg(sku_portal || ' (' || trim_scale(qtde_portal) || ' ÷ fator ' || coalesce(trim_scale(fator)::text, 'null') || ')', ', ' ORDER BY ordem)
+    INTO v_fracionados
+    FROM _importar_portal_itens
+   WHERE qtde_omie IS NULL OR NOT (qtde_omie > 0) OR qtde_omie <> trunc(qtde_omie);
+  IF v_fracionados IS NOT NULL THEN
+    RAISE EXCEPTION 'importar_portal: quantidade não vira inteira no Omie: %', v_fracionados USING ERRCODE = 'IP003';
+  END IF;
+
+  UPDATE _importar_portal_itens t
+     SET descricao = (SELECT p.descricao FROM public.omie_products p
+                       WHERE p.account = 'oben' AND p.omie_codigo_produto::text = t.sku_omie
+                       LIMIT 1);
+
+  INSERT INTO public.pedido_compra_sugerido (
+    empresa, fornecedor_nome, valor_total, num_skus, status,
+    aprovado_por, aprovado_em, canal_usado,
+    condicao_pagamento_codigo, condicao_pagamento_descricao, num_parcelas, condicao_origem,
+    status_envio_portal, enviado_portal_em, portal_protocolo, portal_data_entrega,
+    importado_portal_em, importado_portal_por, resposta_canal
+  ) VALUES (
+    'OBEN', v_fornecedor,
+    (SELECT sum(valor_mercadoria) FROM _importar_portal_itens),  -- provisório: a RPC de custo regrava com o IPI
+    v_n, 'aprovado_aguardando_disparo',
+    p_operador, now(), 'portal_sayerlack',
+    '000', 'À Vista', 1, 'importado_portal',
+    'sucesso_portal', now(), p_protocolo, p_data_entrega,
+    now(), p_operador,
+    jsonb_build_object('importado_portal', true, 'valor_total_portal', p_valor_total)
+  ) RETURNING id INTO v_pedido_id;
+
+  INSERT INTO public.pedido_compra_item (
+    pedido_id, sku_codigo_omie, sku_descricao, qtde_sugerida, qtde_final,
+    preco_unitario, valor_linha, sku_portal_aprovado, fator_portal_aprovado
+  )
+  SELECT v_pedido_id, t.sku_omie, coalesce(t.descricao, t.sku_portal), t.qtde_omie, t.qtde_omie,
+         t.valor_mercadoria / t.qtde_omie, t.valor_mercadoria, t.sku_portal, t.fator
+    FROM _importar_portal_itens t
+   ORDER BY t.ordem;
+
+  -- O custo pela MESMA prova do fluxo normal. O IPI do payload é a conta da própria RPC de custo
+  -- (round(round(merc,2) × alíquota ÷ 100, 2)) sobre a alíquota de `sayerlack_ipi_itens`; a prova
+  -- EXTERNA é o total cobrado pelo portal (p_valor_total). Alíquota ausente vira 0 só aqui, no
+  -- payload — a RPC de custo recusa antes (CP006, ausente ≠ zero) e nada é gravado.
+  SELECT jsonb_agg(jsonb_build_object(
+           'item_id', i.id,
+           'qtde_final', i.qtde_final,
+           'valor_mercadoria', i.valor_linha,
+           'valor_ipi', round(round(i.valor_linha, 2) * coalesce(x.aliquota_pct, 0) / 100, 2)
+         ) ORDER BY i.id)
+    INTO v_payload
+    FROM public.pedido_compra_item i
+    LEFT JOIN public.sayerlack_ipi_itens(v_pedido_id) x ON x.item_id = i.id
+   WHERE i.pedido_id = v_pedido_id;
+
+  v_atualizados := public.sayerlack_aplicar_custo_portal(v_pedido_id, v_payload, p_valor_total);
+  IF v_atualizados <> v_n THEN
+    RAISE EXCEPTION 'importar_portal: custo aplicado em % de % itens — nada gravado', v_atualizados, v_n USING ERRCODE = 'IP001';
+  END IF;
+
+  RETURN jsonb_build_object('pedido_id', v_pedido_id, 'ja_existia', false);
+END;
+$_$;
 
 
 --
@@ -22921,6 +25732,41 @@ $$;
 
 
 --
+-- Name: tint_adocao_balcao(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_adocao_balcao(p_dias integer DEFAULT 30) RETURNS TABLE(pedidos_com_cor bigint, pelo_app bigint)
+    LANGUAGE sql STABLE
+    SET search_path TO ''
+    AS $$
+  WITH pedidos AS (
+    SELECT
+      EXISTS (SELECT 1 FROM jsonb_array_elements(so.items) e
+               WHERE nullif(e->>'tint_nome_cor', '') IS NOT NULL) AS com_cor,
+      EXISTS (SELECT 1 FROM jsonb_array_elements(so.items) e
+               WHERE nullif(e->>'tint_formula_id', '') IS NOT NULL) AS pelo_app
+    FROM public.sales_orders so
+    WHERE so.created_at > now() - make_interval(days => CASE WHEN p_dias BETWEEN 1 AND 365 THEN p_dias ELSE 30 END)
+      AND jsonb_typeof(so.items) = 'array'
+      -- universo de VENDA canônico (src/lib/farmer/universo-pedidos.ts): cancelado/rascunho/
+      -- pendente/orçamento e pedido apagado não são venda — nem pelo app, nem fora dele.
+      AND so.status NOT IN ('cancelado','rascunho','pendente','orcamento')
+      AND so.deleted_at IS NULL
+  )
+  SELECT count(*) FILTER (WHERE com_cor OR pelo_app),
+         count(*) FILTER (WHERE pelo_app)
+  FROM pedidos;
+$$;
+
+
+--
+-- Name: FUNCTION tint_adocao_balcao(p_dias integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.tint_adocao_balcao(p_dias integer) IS 'Adoção do balcão: pedidos com cor nos últimos N dias e quantos saíram do seletor do app (tint_formula_id). SECURITY INVOKER.';
+
+
+--
 -- Name: tint_apply_keys_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23130,6 +25976,43 @@ END $$;
 
 
 --
+-- Name: tint_formulas_guard_tombstone_fase5(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_formulas_guard_tombstone_fase5() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  -- Escape de manutenção: GUC explícito na transação E fora das roles da API.
+  IF current_setting('afiacao.tint_tombstone_manutencao', true) = 'on'
+     AND current_user NOT IN ('anon', 'authenticated')
+     AND session_user NOT IN ('authenticator', 'anon', 'authenticated', 'service_role') THEN
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  END IF;
+
+  -- UPDATE que não muda nada não mexe no piso.
+  IF TG_OP = 'UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'tint_tombstone_fase5_imutavel: % barrado em tint_formulas (id %)',
+                  TG_OP, CASE WHEN TG_OP = 'INSERT' THEN NEW.id ELSE OLD.id END
+    USING ERRCODE = '42501',
+          DETAIL  = 'Linha carimbada desativada_motivo=fase5_geracao_legada: o preco_final_sayersystem dela é o piso do tint_gate_revalida e o rótulo do balcão.',
+          HINT    = 'Manutenção deliberada: ver docs/agent/tintometrico.md (tombstone da Fase 5).';
+END
+$$;
+
+
+--
+-- Name: FUNCTION tint_formulas_guard_tombstone_fase5(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.tint_formulas_guard_tombstone_fase5() IS 'Tombstone da Fase 5 imutável (20261010120000): barra INSERT/UPDATE/DELETE de linha tint_formulas carimbada fase5_geracao_legada. Escape: SET LOCAL afiacao.tint_tombstone_manutencao=on fora de anon/authenticated.';
+
+
+--
 -- Name: tint_gate_revalida(text, uuid, uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23138,6 +26021,7 @@ CREATE FUNCTION public.tint_gate_revalida(p_account text, p_customer_user_id uui
     SET search_path TO 'public', 'pg_temp'
     AS $_$
 DECLARE
+  v_tab_implausivel boolean := false;
   v_bloqueios jsonb := '[]'::jsonb;
   v_warnings  jsonb := '[]'::jsonb;
   v_baseline  jsonb;
@@ -23360,7 +26244,7 @@ BEGIN
       CONTINUE;
     END IF;
 
-    v_can_id := NULL; v_can_csv := NULL; v_can_piso := NULL;
+    v_can_id := NULL; v_can_csv := NULL; v_can_piso := NULL; v_tab_implausivel := false;
     IF v_n_skus > 1 THEN
       -- só a fórmula declarada (do picker) desambigua a célula
       SELECT c.id, c.preco_csv_legado, c.preco_piso_legado
@@ -23415,6 +26299,20 @@ BEGIN
     -- RÓTULO (fonte 'tabela'): allowlist, proveniência provada.
     v_tab  := CASE WHEN v_can_csv IS NOT NULL AND v_can_csv > 0
                    THEN ceil((v_can_csv)::float8 * 10) / 10 ELSE NULL END;
+    -- RÓTULO IMPLAUSÍVEL (2026-10-12): o CSV legado abaixo de 50% do calculado
+    -- é o preço SÓ DOS CORANTES — o export Sayersystem da geração '1' veio sem
+    -- a base (prod: 53.626 chaves vendáveis; ex. 360V-BS 405ML: 0,70 × 102,20).
+    -- Ele deixa de EXISTIR como fonte: 'tabela' bloqueia (tabela_implausivel) e,
+    -- pelo acoplamento abaixo (v_tab NULL ⇒ v_piso NULL), o piso de 'manual'/
+    -- legado volta a ser v_calc. Só RESTRINGE: piso_novo = v_calc ≥
+    -- LEAST(v_calc, piso_antigo); 'calculado'/'cliente' não leem v_tab.
+    -- ⚠️ ESPELHO de csvTabelaElegivel (src/lib/tint/select-price.ts): ceil10 ×
+    -- ceil10, estrito — exatamente 50% segue elegível. ANTES de v_piso, sempre.
+    v_tab_implausivel := v_tab IS NOT NULL AND v_tab < 0.5 * v_calc;
+    IF v_tab_implausivel THEN
+      v_tab := NULL;
+    END IF;
+
     -- PISO (fontes 'manual' e legado): conservador.
     -- ⚠️ ELEGIBILIDADE ACOPLADA a v_tab (achado P1 do challenge Codex xhigh,
     -- 2026-07-21). O NULL-preserving da view garante os invariantes sobre os
@@ -23458,6 +26356,12 @@ BEGIN
       -- ⚠️ a fonte 'tabela' valida contra o RÓTULO (v_tab), NÃO contra o piso:
       -- a escolha da vendedora é sobre PROVENIÊNCIA ("versão anterior"), e
       -- validar contra o piso conservador barraria a escolha legítima.
+      IF v_tab_implausivel THEN
+        v_bloqueios := v_bloqueios || jsonb_build_object(
+          'index', v_idx, 'cor_id', v_cor, 'motivo', 'tabela_implausivel',
+          'detalhe', 'o preço de tabela desta cor é menor que metade do calculado (CSV antigo sem a base) — use o calculado');
+        CONTINUE;
+      END IF;
       IF v_tab IS NULL THEN
         v_bloqueios := v_bloqueios || jsonb_build_object(
           'index', v_idx, 'cor_id', v_cor, 'motivo', 'fonte_tabela_indisponivel',
@@ -23565,7 +26469,7 @@ $_$;
 -- Name: FUNCTION tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb) IS 'Fase 3 tint: gate da fronteira omie-vendas-sync (criar_pedido/alterar_pedido). Revalida item tint contra o estado ATUAL (canônica viva + preço recomputado + fonte declarada, aritmética float8 ≡ JS). Baseline persistido decide proveniência (legado=piso) e intocabilidade (edição). Fontes: calculado/tabela/cliente (exigem tint_formula_id coerente) · manual (piso) · ausente (legado com lastro). Base tint sem cor: bloqueia na criação; na edição só intocada (inbound). Multi-SKU sem fórmula que desambigue: bloqueia. service_role-only. Bloqueio ⇒ {ok:false,bloqueios:[…]} — o edge NÃO toca o Omie. 2026-07-21: o PISO ("manual"/legado) passou a ler preco_piso_legado (max CONSERVADOR de todas as ativas da chave); a fonte "tabela" segue lendo preco_csv_legado (RÓTULO, allowlist). Separar os dois impede que dar precisão de proveniência ao rótulo afrouxe o piso do submit.';
+COMMENT ON FUNCTION public.tint_gate_revalida(p_account text, p_customer_user_id uuid, p_sales_order_id uuid, p_contexto text, p_items jsonb) IS 'Fase 3 tint: gate da fronteira omie-vendas-sync (criar_pedido/alterar_pedido). Revalida item tint contra o estado ATUAL (canônica viva + preço recomputado + fonte declarada, aritmética float8 ≡ JS). Baseline persistido decide proveniência (legado=piso) e intocabilidade (edição). Fontes: calculado/tabela/cliente (exigem tint_formula_id coerente) · manual (piso) · ausente (legado com lastro). Base tint sem cor: bloqueia na criação; na edição só intocada (inbound). Multi-SKU sem fórmula que desambigue: bloqueia. service_role-only. Bloqueio ⇒ {ok:false,bloqueios:[…]} — o edge NÃO toca o Omie. 2026-07-21: o PISO ("manual"/legado) passou a ler preco_piso_legado (max CONSERVADOR de todas as ativas da chave); a fonte "tabela" segue lendo preco_csv_legado (RÓTULO, allowlist). Separar os dois impede que dar precisão de proveniência ao rótulo afrouxe o piso do submit. 2026-10-12: rótulo < 50% do calculado (ceil10) é implausível (CSV sem a base) — "tabela" bloqueia (tabela_implausivel) e o piso volta ao calculado.';
 
 
 --
@@ -23880,6 +26784,9 @@ DECLARE
   v_limpezas_24h   int := 0;
   v_cap_limpezas   constant int := 50;
   v_tombstones_fase5 int := 0;  -- 5b#1 (20260924120000)
+  v_fantasmas_fonte int := 0;   -- (20261013150000)
+  v_snap_id uuid;
+  v_snap_recebido timestamptz;
 BEGIN
   SELECT * INTO v_run FROM tint_sync_runs WHERE id = p_sync_run_id;
   IF NOT FOUND THEN
@@ -24655,6 +27562,42 @@ BEGIN
     AND tf.desativada_motivo IS NOT NULL;
   GET DIAGNOSTICS v_tombstones_fase5 = ROW_COUNT;
 
+  -- (20261013150000) A FONTE RETIROU A COR: o staging LATEST que o _formulas_latest reexpande
+  -- (across TODOS os runs) pode ser de uma cor que o último snapshot de chaves APLICADO não
+  -- contém. Se esse staging foi RECEBIDO ANTES do snapshot, ele é estado superado: reexpandi-lo
+  -- reativava a fórmula que o apply acabara de desativar (26.180 fantasmas precificáveis em
+  -- 13/10). Staging recebido DEPOIS do snapshot é evidência nova de presença e passa; chave
+  -- presente no snapshot passa sempre. Relógio do SERVIDOR nos dois lados (created_at).
+  SELECT ks.snapshot_id, max(ks.created_at)
+    INTO v_snap_id, v_snap_recebido
+    FROM tint_keys_snapshots ks
+   WHERE ks.account = v_account AND ks.store_code = v_store AND ks.entity = 'formulas'
+     AND ks.aplicacao_status = 'aplicado'
+   GROUP BY ks.snapshot_id
+   ORDER BY max(ks.generated_at) DESC, max(ks.created_at) DESC  -- (20261013220000) ordem do apply, não aplicado_em
+   LIMIT 1;
+
+  IF v_snap_id IS NOT NULL THEN
+    CREATE TEMP TABLE _snap_fonte ON COMMIT DROP AS
+    SELECT DISTINCT chave
+      FROM tint_keys_snapshots, jsonb_array_elements_text(keys) AS chave
+     WHERE snapshot_id = v_snap_id AND entity = 'formulas';
+    CREATE INDEX ON _snap_fonte (chave);
+
+    -- Chave no MESMO formato de 4 partes do tint_apply_keys_snapshot (sem embalagem).
+    DELETE FROM _expand_uniq eu
+    USING tint_staging_formulas sf, tint_produtos pr, tint_bases bs
+    WHERE sf.id = eu.staging_formula_id
+      AND sf.created_at < v_snap_recebido
+      AND pr.id = eu.produto_id
+      AND bs.id = eu.base_id
+      AND NOT EXISTS (
+            SELECT 1 FROM _snap_fonte s
+             WHERE s.chave = eu.cor_id || '|' || pr.cod_produto || '|' || bs.id_base_sayersystem || '|'
+                             || (CASE WHEN eu.personalizada THEN 'true' ELSE 'false' END));
+    GET DIAGNOSTICS v_fantasmas_fonte = ROW_COUNT;
+  END IF;
+
   SELECT count(*) INTO v_promovidas FROM _expand_uniq;
 
   -- Corante stubs em massa ANTES dos itens (espelha tint_ensure_corante_stub: volume 1000).
@@ -24789,7 +27732,7 @@ BEGIN
   WHERE id = v_importacao_id;
 
   UPDATE tint_sync_runs
-    SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc, 'receitas_limpas', v_limpezas, 'tombstones_fase5_preservados', v_tombstones_fase5)
+    SET inserts = v_promovidas, errors = v_erros, metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('recalculadas', v_recalc, 'receitas_limpas', v_limpezas, 'tombstones_fase5_preservados', v_tombstones_fase5, 'fantasmas_fonte_barradas', v_fantasmas_fonte)
   WHERE id = p_sync_run_id;
 
   -- PURGE: NUNCA apaga a linha MAIS RECENTE por chave natural (account+store) — a promoção
@@ -24876,6 +27819,7 @@ BEGIN
     'ok', true, 'promovidas', v_promovidas, 'recalculadas', v_recalc,
     'receitas_limpas', v_limpezas,
     'tombstones_fase5_preservados', v_tombstones_fase5,
+    'fantasmas_fonte_barradas', v_fantasmas_fonte,
     'erros', v_erros, 'importacao_id', v_importacao_id);
 END $_$;
 
@@ -25065,6 +28009,36 @@ BEGIN
   );
 END;
 $$;
+
+
+--
+-- Name: tint_subcolecoes_guard_tombstone_fase5(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.tint_subcolecoes_guard_tombstone_fase5() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+  IF current_setting('afiacao.tint_tombstone_manutencao', true) = 'on'
+     AND current_user NOT IN ('anon', 'authenticated')
+     AND session_user NOT IN ('authenticator', 'anon', 'authenticated', 'service_role') THEN
+    RETURN NEW;
+  END IF;
+
+  RAISE EXCEPTION 'tint_tombstone_fase5_imutavel: rename da subcoleção ''1'' barrado em tint_subcolecoes (id %)', OLD.id
+    USING ERRCODE = '42501',
+          DETAIL  = 'A v_tint_formula_canonica só lê o tombstone da Fase 5 na subcoleção id_subcolecao_sayersystem=1: renomeá-la derruba o piso de todas as linhas carimbadas.',
+          HINT    = 'Manutenção deliberada: ver docs/agent/tintometrico.md (tombstone da Fase 5).';
+END
+$$;
+
+
+--
+-- Name: FUNCTION tint_subcolecoes_guard_tombstone_fase5(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.tint_subcolecoes_guard_tombstone_fase5() IS 'Tombstone da Fase 5 (20261010120000): barra trocar id_subcolecao_sayersystem/account da subcoleção ''1''. Escape: SET LOCAL afiacao.tint_tombstone_manutencao=on fora de anon/authenticated.';
 
 
 --
@@ -25279,42 +28253,102 @@ CREATE FUNCTION public.tint_watchdog_fase5_check() RETURNS void
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-  -- tint_watchdog_fase5 guard v1 — MARCADOR do guard anti-rollback. Uma versão
-  -- SUCESSORA que recrie esta função DEVE trocar este marcador (v2, v3...), para que
+  -- tint_watchdog_fase5 guard v4 — MARCADOR do guard anti-rollback. Uma versão
+  -- SUCESSORA que recrie esta função DEVE trocar este marcador (v5, v6...), para que
   -- re-aplicar ESTA por cima dela ABORTE em vez de revertê-la em silêncio.
-  v_conta      text := 'oben';   -- 100% do catálogo tint é oben (medido)
-  v_t0         timestamptz := clock_timestamp();
-  v_s1         bigint;
-  v_s2         bigint;
-  v_universo   bigint;
-  v_max        bigint;
-  v_ancora     timestamptz;
-  v_dismiss    timestamptz;
-  v_queda      numeric;
-  v_msg        text;
+  v_conta       text := 'oben';   -- 100% do catálogo tint é oben (medido)
+  v_criterio    constant text := 'v4';
+  v_t0          timestamptz := clock_timestamp();
+  v_s1          bigint;
+  v_s2          bigint;   -- RETIRADA NOVA (janela de 7 dias de snapshots) — o que alarma
+  v_s2_bruto    bigint;   -- carimbadas sem ativa — MÉTRICA e denominador do S4
+  v_universo    bigint;
+  v_max         bigint;
+  v_ancora      timestamptz;
+  v_dismiss     timestamptz;
+  v_queda       numeric;
+  v_msg         text;
+  v_snap_id     uuid;          -- último snapshot de chaves APLICADO
+  v_snap_rec    timestamptz;   -- max(created_at) dos chunks dele: relógio do SERVIDOR
+  v_ret_fonte   bigint;        -- chaves-fonte retiradas na janela
+  v_fant        bigint;        -- S5: ativas ausentes da fonte, sem staging posterior
+  v_fant_vend   bigint;
+  v_fant_fonte  bigint;
+  v_cor_nova    bigint;        -- ausentes do snapshot COM staging posterior (legítimas)
 BEGIN
-  -- Anti-sobreposição. A varredura custa ~53s contra um ciclo de 6h (margem 400x),
-  -- mas um ciclo preso não pode empilhar um segundo por cima. Se já há um rodando,
-  -- SAI SEM avançar o marcador — e é justamente o marcador parado que faz o
-  -- dead-man cruzado do PR 1 alarmar em 13h. Falha aberta vira alerta, não silêncio.
+  -- Anti-sobreposição: um ciclo preso não pode empilhar outro por cima. Se já há um rodando,
+  -- SAI SEM avançar o marcador — e o marcador parado é o que faz o dead-man cruzado alarmar.
   IF NOT pg_try_advisory_xact_lock(hashtext('tint_watchdog_fase5')) THEN
     RETURN;
   END IF;
 
-  -- ── VARREDURA ÚNICA (ver "A FORMA DA QUERY" no cabeçalho) ───────────────
-  -- Uma passada só produz os 3 sinais: materializar a view duas vezes dobraria o
-  -- custo, e duas varreduras em instantes diferentes poderiam se contradizer.
-  -- count(DISTINCT ...) no universo, não count(*): o count(*) conta LINHAS pós-JOIN,
-  -- e a unicidade da view por chave é propriedade dela, não invariante imposta aqui
-  -- (Codex [P1]). Medido hoje: 0 chaves com >1 linha na view — então é hardening, não
-  -- correção de bug. Se um dia duplicar, o universo inflaria e uma queda real poderia
-  -- ser mascarada por duplicidade.
-  SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL),
-         count(*) FILTER (WHERE NOT k.tem_ativa),
-         count(DISTINCT (k.account, k.sku_id, k.cor_id))
-    INTO v_s1, v_s2, v_universo
-  FROM (
-    -- as chaves carimbadas pela Fase 5, com "ainda existe na fonte?" por agregação
+  -- ── UMA FOTOGRAFIA SÓ (challenge Codex v4, P1-2) ──────────────────────────────────────────
+  -- Referência da fonte, janela de retirada, staging posterior, universo carimbado e fórmulas
+  -- ativas saem do MESMO statement: em READ COMMITTED cada statement de uma função VOLATILE tem
+  -- snapshot próprio, e a varredura leva minutos — staging lido numa query e fórmulas lidas noutra,
+  -- com uma promoção no meio, transformavam cor nova legítima em "fantasma".
+  --
+  -- REFERÊNCIA = o snapshot APLICADO de maior generated_at (P1-1). É a ordem do PRÓPRIO apply: ele
+  -- só aplica de fato quando generated_at > last_keys_snapshot_at, e o que ele pula como "fora de
+  -- ordem" é marcado 'aplicado' com aplicado_em NOVO sem ter governado nada. Ordenar por aplicado_em
+  -- deixava um snapshot ANTIGO re-aplicado virar a referência. aplicado_em não decide nada aqui.
+  -- O relógio da PRESENÇA (staging × snapshot) é created_at nos dois lados, como no 20261013150000.
+  --
+  -- JANELA DA RETIRADA NOVA = snapshots APLICADOS inteiros (por snapshot_id, nunca por chunk — P2-6)
+  -- gerados nos últimos 7 dias. generated_at é o relógio do conector; numa janela de dias, skew de
+  -- minutos é irrelevante, e é ele que exclui o snapshot velho recebido atrasado.
+  WITH ref AS MATERIALIZED (
+    SELECT ks.snapshot_id, max(ks.created_at) AS rec
+      FROM tint_keys_snapshots ks
+     WHERE ks.account = v_conta AND ks.entity = 'formulas'
+       AND ks.aplicacao_status = 'aplicado'
+     GROUP BY ks.snapshot_id
+     ORDER BY max(ks.generated_at) DESC NULLS LAST, max(ks.created_at) DESC
+     LIMIT 1
+  ), snap AS MATERIALIZED (
+    SELECT DISTINCT c.chave
+      FROM tint_keys_snapshots ks
+      JOIN ref ON ref.snapshot_id = ks.snapshot_id,
+           jsonb_array_elements_text(ks.keys) AS c(chave)
+     WHERE ks.entity = 'formulas' AND c.chave IS NOT NULL
+  ), janela AS MATERIALIZED (
+    SELECT ks.snapshot_id
+      FROM tint_keys_snapshots ks
+     WHERE ks.account = v_conta AND ks.entity = 'formulas'
+       AND ks.aplicacao_status = 'aplicado'
+       AND ks.snapshot_id <> (SELECT snapshot_id FROM ref)
+     GROUP BY ks.snapshot_id
+    HAVING max(ks.generated_at) >= now() - interval '7 days'
+  ), retirada AS MATERIALIZED (
+    -- chave-fonte presente em algum snapshot aplicado da janela e ausente da referência
+    SELECT DISTINCT c.chave
+      FROM tint_keys_snapshots ks
+      JOIN janela j ON j.snapshot_id = ks.snapshot_id,
+           jsonb_array_elements_text(ks.keys) AS c(chave)
+     WHERE ks.entity = 'formulas' AND c.chave IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM snap s WHERE s.chave = c.chave)
+  ), k_ret AS MATERIALIZED (
+    -- as chaves (account, sku_id, cor_id) que expandem essas chaves-fonte (N embalagens por fonte).
+    -- Pré-filtro por cor_id (índice account, cor_id, …); quem decide é a chave inteira.
+    SELECT DISTINCT f.account, f.sku_id, f.cor_id
+      FROM tint_formulas f
+      JOIN tint_produtos p ON p.id = f.produto_id
+      JOIN tint_bases    b ON b.id = f.base_id
+     WHERE f.account = v_conta AND f.sku_id IS NOT NULL
+       AND f.cor_id IN (SELECT split_part(r.chave, '|', 1) FROM retirada r)
+       AND (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
+            || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END))
+           IN (SELECT r.chave FROM retirada r)
+  ), novo AS MATERIALIZED (
+    -- COR NOVA: staging RECEBIDO a partir da referência (o 20261013150000 só barra created_at < rec)
+    SELECT DISTINCT x.chave
+      FROM (SELECT sf.cor_id || '|' || sf.cod_produto || '|' || sf.id_base || '|'
+                   || (CASE WHEN sf.personalizada THEN 'true' ELSE 'false' END) AS chave
+              FROM tint_staging_formulas sf
+             WHERE sf.account = v_conta AND sf.created_at >= (SELECT rec FROM ref)) x
+     WHERE x.chave IS NOT NULL
+  ), k AS (
+    -- as chaves carimbadas pela Fase 5, com "ainda tem fórmula ativa?" por agregação
     SELECT f.account, f.sku_id, f.cor_id,
            bool_or(f.desativada_em IS NULL AND f.sku_id IS NOT NULL) AS tem_ativa
       FROM tint_formulas f
@@ -25323,18 +28357,58 @@ BEGIN
                FROM tint_formulas
               WHERE desativada_motivo = 'fase5_geracao_legada')
      GROUP BY f.account, f.sku_id, f.cor_id
-  ) k
-  LEFT JOIN (
-    -- o oráculo: o que o balcão consegue precificar hoje
-    SELECT account, sku_id, cor_id
-      FROM v_tint_formula_canonica
-     WHERE receita_valida
-  ) v ON v.account = k.account AND v.sku_id = k.sku_id AND v.cor_id = k.cor_id;
+  ), o AS (
+    -- S5: o universo do apply (ativas da conta com produto e base resolvidos)
+    SELECT f.sku_id,
+           (f.cor_id || '|' || p.cod_produto || '|' || b.id_base_sayersystem || '|'
+            || (CASE WHEN f.personalizada THEN 'true' ELSE 'false' END)) AS chave
+      FROM tint_formulas f
+      JOIN tint_produtos p ON p.id = f.produto_id
+      JOIN tint_bases    b ON b.id = f.base_id
+     WHERE f.account = v_conta AND f.desativada_em IS NULL
+  )
+  SELECT (SELECT snapshot_id FROM ref), (SELECT rec FROM ref), (SELECT count(*) FROM retirada),
+         u.s1, u.s2, u.bruto, u.universo,
+         f5.fant, f5.fant_vend, f5.fant_fonte, f5.cor_nova
+    INTO v_snap_id, v_snap_rec, v_ret_fonte,
+         v_s1, v_s2, v_s2_bruto, v_universo,
+         v_fant, v_fant_vend, v_fant_fonte, v_cor_nova
+    FROM (
+      -- count(DISTINCT ...) no universo, não count(*): a unicidade da view por chave é propriedade
+      -- dela, não invariante imposta aqui (Codex [P1]).
+      SELECT count(*) FILTER (WHERE k.tem_ativa AND v.account IS NULL) AS s1,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id))
+               FILTER (WHERE NOT k.tem_ativa AND kr.cor_id IS NOT NULL) AS s2,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id)) FILTER (WHERE NOT k.tem_ativa) AS bruto,
+             count(DISTINCT (k.account, k.sku_id, k.cor_id)) AS universo
+        FROM k
+        LEFT JOIN (
+          -- o oráculo: o que o balcão consegue precificar hoje
+          SELECT account, sku_id, cor_id
+            FROM v_tint_formula_canonica
+           WHERE receita_valida
+        ) v ON v.account = k.account AND v.sku_id = k.sku_id AND v.cor_id = k.cor_id
+        LEFT JOIN k_ret kr
+               ON kr.account = k.account AND kr.sku_id = k.sku_id AND kr.cor_id = k.cor_id
+    ) u,
+    (
+      SELECT count(*) FILTER (WHERE n.chave IS NULL) AS fant,
+             count(*) FILTER (WHERE n.chave IS NULL AND o.sku_id IS NOT NULL) AS fant_vend,
+             count(DISTINCT o.chave) FILTER (WHERE n.chave IS NULL) AS fant_fonte,
+             count(*) FILTER (WHERE n.chave IS NOT NULL) AS cor_nova
+        FROM o
+        LEFT JOIN novo n ON n.chave = o.chave
+       WHERE NOT EXISTS (SELECT 1 FROM snap s WHERE s.chave = o.chave)
+    ) f5;
 
-  -- ── S3: CARDINALIDADE do universo (Codex [P1]: o carimbo não é durável) ──
-  -- Sem isto, limpar o carimbo (follow-up 5b#1) ou deletar as linhas esvazia o
-  -- universo, S1 e S2 vão a zero por VACUIDADE, e o watchdog fica "verde" tendo
-  -- perdido a visão. Âncora = maior universo já visto.
+  -- Sem referência da fonte: S2 e S5 são AUSENTES, não zero (com snap vazio o S5 contaria TODA
+  -- ativa como fantasma, e o S2 zeraria por vacuidade).
+  IF v_snap_id IS NULL THEN
+    v_s2 := NULL; v_ret_fonte := NULL;
+    v_fant := NULL; v_fant_vend := NULL; v_fant_fonte := NULL; v_cor_nova := NULL;
+  END IF;
+
+  -- ── S3: CARDINALIDADE do universo (o vigia de vacuidade) — corpo da v3 ──────────────────────
   SELECT COALESCE((metadata->>'universo_max')::bigint, 0),
          COALESCE((metadata->>'ancora_em')::timestamptz, '-infinity'::timestamptz)
     INTO v_max, v_ancora
@@ -25343,30 +28417,14 @@ BEGIN
   v_max    := COALESCE(v_max, 0);
   v_ancora := COALESCE(v_ancora, '-infinity'::timestamptz);
 
-  -- Um encolhimento DELIBERADO (a limpeza do 5b#1) não pode deixar um alerta preso
-  -- para sempre — alerta imortal treina o founder a ignorar alertas. O dismiss
-  -- MANUAL é o aceite do novo patamar: re-ancora. O auto-dismiss abaixo avança a
-  -- âncora junto, então nunca é lido como aceite manual.
   SELECT max(dismissed_at) INTO v_dismiss
     FROM fin_alertas
    WHERE company = v_conta AND tipo = 'tint_fase5_universo_encolheu'
      AND dismissed_at IS NOT NULL;
 
-  -- Re-ancorar por dismiss é o aceite do patamar novo — mas dismiss é um clique de UI,
-  -- não uma autorização auditada (Codex [P1]). Dois venenos ficam barrados aqui:
-  --   (a) dismiss com universo ZERO gravaria universo_max=0, e S1/S2/S3 ficariam
-  --       verdes por VACUIDADE para sempre;
-  --   (b) dismiss durante um COLAPSO transitório (>=50%) canonizaria o valor
-  --       degradado como referência.
-  -- Nesses casos o alerta é dispensado (o founder não fica com alerta imortal), mas a
-  -- ÂNCORA NÃO desce: se o colapso for real e deliberado, o rebaseline é decisão
-  -- explícita — uma migration, não um clique.
+  -- Dismiss manual re-ancora só com universo > 0 e queda <= 1.000 chaves (teto ABSOLUTO, Codex
+  -- [P1]); acima disso o rebaseline é escrita deliberada no SQL Editor.
   IF v_dismiss IS NOT NULL AND v_dismiss > v_ancora THEN
-    -- Teto ABSOLUTO, não percentual (2ª rodada do Codex, [P1]): 50% de 463.995 são
-    -- ~232 mil chaves — um único clique de dismiss canonizaria a perda de metade da
-    -- cobertura. Uma limpeza legítima do 5b#1 mexe em centenas (hoje S2=300), então
-    -- 1.000 cobre o caso real com folga e barra o catastrófico. Acima disso o
-    -- rebaseline é escrita deliberada no SQL Editor — o gate humano do repo.
     IF v_universo > 0 AND (v_max - v_universo) <= 1000 THEN
       v_max := v_universo; v_ancora := now();
     ELSE
@@ -25381,28 +28439,14 @@ BEGIN
   v_queda := CASE WHEN v_max > 0
                   THEN (v_max - v_universo)::numeric / v_max ELSE 0 END;
 
-  -- Limiar de 1%: este sinal é sobre o universo COLAPSAR (o vigia de vacuidade),
-  -- não sobre erosão de unidades. O universo é estático por desenho — nada o
-  -- escreve — então tolerar <1% custa recall irrelevante e compra silêncio.
-  -- QUALQUER queda alarma (2ª rodada do Codex, [P1]): o piso de 100 que eu tinha
-  -- posto ainda deixava 99 chaves saírem da cobertura em SILÊNCIO PERMANENTE — elas
-  -- somem do universo E de S1/S2, e nada mais as vigia. Como o universo é ESTÁTICO
-  -- por desenho (nenhum writer o toca; só uma limpeza deliberada do 5b#1 o muda),
-  -- o limiar coerente com a premissa é 1, não um percentual: qualquer queda é
-  -- anômala por construção. Trocar 4.639 silenciosas por 99 silenciosas seria
-  -- reduzir o dano em vez de fechar o furo.
   IF v_max > 0 AND v_universo < v_max THEN
     v_msg := 'Tintometrico/Fase 5: o universo carimbado ENCOLHEU de ' || v_max ||
              ' para ' || v_universo || ' chaves (' ||
              round(v_queda * 100, 1) || '%). O watchdog por chave mede sobre esse ' ||
              'universo: se ele sumir, S1/S2 vao a zero por VACUIDADE e a rede fica ' ||
              'cega sem nunca ficar vermelha. ' ||
-             -- A mensagem TEM de dizer a verdade sobre o que o dismiss faz (2a rodada
-             -- do Codex, [P1]): acima do teto ele NAO re-ancora, e o alerta reabre no
-             -- ciclo seguinte. Prometer "dispense e pronto" treinaria o founder a
-             -- clicar num botao que nao resolve.
              CASE WHEN (v_max - v_universo) <= 1000
-                  THEN 'Se a limpeza foi deliberada (5b#1), dispense este alerta que ' ||
+                  THEN 'Se a mudanca foi deliberada, dispense este alerta que ' ||
                        'o patamar novo vira a referencia.'
                   ELSE 'Queda ACIMA do teto de re-ancoragem (1.000 chaves): dispensar ' ||
                        'NAO muda o patamar e o alerta reabre no proximo ciclo. Restaure ' ||
@@ -25422,7 +28466,7 @@ BEGIN
     v_ancora := now();   -- auto-dismiss NAO pode parecer aceite manual
   END IF;
 
-  -- ── S1: a chave existe e NAO PRECIFICA (dano de venda real) ─────────────
+  -- ── S1: a chave existe e NAO PRECIFICA (dano de venda real) — corpo da v3 ───────────────────
   IF v_s1 > 0 THEN
     v_msg := 'Tintometrico: ' || v_s1 || ' chave(s) desativada(s) pela Fase 5 estao ' ||
              'SEM formula precificavel - a RPC devolve precoFinal NULL (fail-closed) ' ||
@@ -25439,43 +28483,119 @@ BEGIN
       v_conta, 'tint_fase5_chave_sem_preco', 0, 'info', '', '', '{}'::jsonb);
   END IF;
 
-  -- ── S2: a FONTE retirou a chave, tombstone órfão (higiene) ──────────────
-  -- Tipo SEPARADO de S1 de propósito: remediação diferente, cadência diferente
-  -- (~30/dia esperados), e no mesmo tipo silenciaria S1 pelo ON CONFLICT.
-  IF v_s2 > 0 THEN
-    v_msg := 'Tintometrico: ' || v_s2 || ' chave(s) carimbada(s) pela Fase 5 nao tem ' ||
-             'mais NENHUMA formula ativa - a fonte retirou a chave e o carimbo da ' ||
-             'geracao 1 ficou orfao (o writer tint_apply_keys_snapshot desativa a SL ' ||
-             'sem setar desativada_motivo). Nao e venda perdida: a cor saiu do ' ||
-             'catalogo. E higiene do carimbo - recarimbar/limpar e o follow-up 5b#1.';
+  -- ── S2: RETIRADA NOVA pela fonte ──────────────────────────────────────────────────────────
+  -- Encerramento por MUDANÇA DE CRITÉRIO (P2c): um alerta aberto sob outro critério não é
+  -- "resolvido" quando o número dele zera aqui — ele mede outra coisa. Fecha anotando de qual
+  -- critério para qual, e o critério novo abre o seu (com e-mail) se tiver o que dizer.
+  UPDATE fin_alertas
+     SET dismissed_at = now(),
+         contexto = COALESCE(contexto, '{}'::jsonb)
+                    || jsonb_build_object('encerrado_por', 'mudanca_criterio',
+                                          'criterio_de', COALESCE(contexto->>'criterio', 'v3'),
+                                          'criterio_para', v_criterio,
+                                          'encerrado_em', now())
+   WHERE company = v_conta AND tipo = 'tint_fase5_fonte_retirada' AND dismissed_at IS NULL
+     AND (contexto->>'criterio') IS DISTINCT FROM v_criterio
+     -- só quando o critério novo PODE avaliar (Codex v4 P2-4): sem referência, nada é tocado
+     AND v_s2 IS NOT NULL;
+
+  IF v_s2 IS NULL THEN
+    NULL;   -- sem snapshot aplicado: não abre nem fecha (ausência de dado ≠ saudável)
+  ELSIF v_s2 > 0 THEN
+    v_msg := 'Tintometrico: ' || v_s2 || ' chave(s) carimbada(s) pela Fase 5 ficaram sem ' ||
+             'formula ativa porque a FONTE retirou a cor nos ultimos 7 dias (' || v_ret_fonte ||
+             ' chave(s)-fonte estavam num snapshot aplicado da janela e sumiram do ultimo). ' ||
+             'Nao e venda perdida por defeito (S1 mede isso): e a cor saindo do catalogo do ' ||
+             'SayerSystem. NAO mexa no tombstone da Fase 5: ele e o piso do tint_gate_revalida ' ||
+             'e o rotulo do balcao, e alterar o carimbo foi REJEITADO em 20260924120000 e e ' ||
+             'barrado por trigger (20261010120000). A acao e confirmar na fonte se a cor saiu ' ||
+             'mesmo e, se sim, decidir em PRODUTO o que fazer com o piso dela.';
     PERFORM public._tint_watchdog_fase5_transicao(
       v_conta, 'tint_fase5_fonte_retirada', v_s2,
-      CASE WHEN v_s2 >= 10000 THEN 'critico'
-           WHEN v_s2 >= 100   THEN 'aviso' ELSE 'info' END,
-      '[Tintometrico] fonte retirou chaves com carimbo da Fase 5', v_msg,
-      jsonb_build_object('chaves', v_s2, 'universo', v_universo),
-      -- HISTERESE 2.0 (Codex [P1]): S2 cresce ~60 chaves/dia por DESENHO da fonte.
-      -- Com re-emissão a cada incremento seriam ~4 e-mails/dia — o alerta viraria
-      -- ruído e treinaria o founder a ignorar a família inteira. Só um SALTO (dobro)
-      -- volta a e-mailar; o alerta em fin_alertas segue sempre atualizado.
+      -- v2 (decisão do founder): S2 NUNCA é crítico.
+      CASE WHEN v_s2 >= 100 THEN 'aviso' ELSE 'info' END,
+      '[Tintometrico] fonte retirou cores com carimbo da Fase 5', v_msg,
+      jsonb_build_object('criterio', v_criterio, 'chaves', v_s2,
+                         'chaves_fonte_retiradas_7d', v_ret_fonte,
+                         'bruto', v_s2_bruto, 'universo', v_universo,
+                         'snapshot_id', v_snap_id),
+      -- histerese 2.0: retirada chega em lote; re-emissão logarítmica.
       2.0);
   ELSE
     PERFORM public._tint_watchdog_fase5_transicao(
       v_conta, 'tint_fase5_fonte_retirada', 0, 'info', '', '', '{}'::jsonb);
   END IF;
 
-  -- ── MARCADOR DE SUCESSO (Codex [P1]: "verde por construção") ────────────
-  -- last_sync_at = último sucesso COMPLETO. Só chega aqui quem varreu E transicionou
-  -- os 3 alertas; qualquer exceção acima aborta a função e NAO avança o marcador.
-  -- É este marcador que o dead-man cruzado do PR 1 (*/5) vigia: >13h sem sucesso
-  -- => alerta tint_watchdog_fase5_parado. Sem ele, "sem alerta" seria
-  -- indistinguível de "nunca rodou" — que é o modo de falha do vigia silencioso.
+  -- ── S4: COLAPSO do bruto (snapshot truncado / retirada em massa) — corpo da v3 ──────────────
+  -- LIMIAR 5% (aviso) e 20% (crítico) do universo. O churn normal medido fica em ~2,7%.
+  IF v_universo > 0 AND v_s2_bruto::numeric / v_universo >= 0.05 THEN
+    v_msg := 'Tintometrico: ' || v_s2_bruto || ' de ' || v_universo || ' chaves ' ||
+             'carimbadas (' || round(v_s2_bruto::numeric * 100 / v_universo, 1) ||
+             '%) estao SEM formula ativa AGORA. O patamar normal fica em torno de 2-3% ' ||
+             '(maxima medida 2,7%); este indica snapshot TRUNCADO ou retirada em ' ||
+             'massa pela fonte. O balcao nao vende essas cores enquanto durar. Acao: ' ||
+             'conferir o ultimo ciclo do conector (tint_sync_runs) e a fonte.';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_colapso', v_s2_bruto,
+      CASE WHEN v_s2_bruto::numeric / v_universo >= 0.20 THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] colapso de disponibilidade no catalogo carimbado', v_msg,
+      jsonb_build_object('bruto', v_s2_bruto, 'universo', v_universo,
+                         'pct', round(v_s2_bruto::numeric * 100 / v_universo, 2)),
+      1.0);
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_colapso', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  -- ── S5: FANTASMA — a fórmula está ATIVA e a fonte não a tem ─────────────────────────────────
+  -- Nasce em ZERO por construção: o apply desativa toda ativa ausente do snapshot, e desde
+  -- 20261013150000 o promote não reativa staging recebido antes dele. Qualquer valor > 0 é o
+  -- balcão cotando cor que o SayerSystem não tem. Fator 1.0: toda piora merece e-mail.
+  IF v_fant IS NULL THEN
+    NULL;   -- sem snapshot aplicado: não abre nem fecha
+  ELSIF v_fant > 0 THEN
+    v_msg := 'Tintometrico: ' || v_fant || ' formula(s) ATIVA(s) (' || v_fant_vend ||
+             ' com SKU, ' || v_fant_fonte || ' chave(s)-fonte) NAO estao no ultimo snapshot de ' ||
+             'chaves APLICADO da fonte (recebido em ' || to_char(v_snap_rec AT TIME ZONE 'UTC',
+             'YYYY-MM-DD HH24:MI') || ' UTC) e nao tem staging recebido depois dele. O balcao ' ||
+             'cota cor que o SayerSystem nao tem mais. Nao e cor nova (' || v_cor_nova ||
+             ' formula(s) com staging posterior ficaram de fora deste numero). Causa tipica: o ' ||
+             'promote voltou a reativar staging antigo (regressao do 20261013150000) ou o apply do ' ||
+             'snapshot nao desativou (tint_sync_runs keys_snapshot: skipped, erro, blast radius).';
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_fantasma', v_fant,
+      CASE WHEN v_fant >= 1000 THEN 'critico' ELSE 'aviso' END,
+      '[Tintometrico] formulas ativas que a fonte nao tem', v_msg,
+      jsonb_build_object('formulas', v_fant, 'com_sku', v_fant_vend,
+                         'chaves_fonte', v_fant_fonte, 'cor_nova', v_cor_nova,
+                         'snapshot_id', v_snap_id, 'snapshot_recebido_em', v_snap_rec),
+      1.0);
+  ELSE
+    PERFORM public._tint_watchdog_fase5_transicao(
+      v_conta, 'tint_fase5_fonte_fantasma', 0, 'info', '', '', '{}'::jsonb);
+  END IF;
+
+  -- ── SÉRIE (P2d) + MARCADOR DE SUCESSO ─────────────────────────────────────────────────────
+  -- Só chega aqui quem varreu E transicionou todos os alertas; exceção acima aborta a função e
+  -- não grava amostra nem avança o marcador que o dead-man cruzado vigia (>13h => alerta).
+  INSERT INTO tint_watchdog_fase5_amostras
+    (criterio, universo, s1_sem_preco, sem_ativa_bruto, s2_retirada_nova, fantasmas,
+     fantasmas_vendaveis, cor_nova, snapshot_id, snapshot_recebido_em, duracao_s)
+  VALUES (v_criterio, v_universo, v_s1, v_s2_bruto, v_s2, v_fant, v_fant_vend, v_cor_nova,
+          v_snap_id, v_snap_rec,
+          round(EXTRACT(epoch FROM clock_timestamp() - v_t0)::numeric, 1));
+  DELETE FROM tint_watchdog_fase5_amostras WHERE medido_em < now() - interval '180 days';
+
   INSERT INTO sync_state (entity_type, account, last_sync_at, status, error_message, metadata)
-  -- clock_timestamp(), não now(): now() é o início da TRANSAÇÃO, e esta varredura
-  -- leva ~53s. Registrar o início faria uma execução longa parecer mais velha do que
-  -- é para o dead-man do PR 1 (Codex [P2]).
+  -- clock_timestamp(), não now(): now() é o início da TRANSAÇÃO e a varredura leva minutos.
   VALUES ('tint_watchdog_fase5', v_conta, clock_timestamp(), 'complete', NULL,
-          jsonb_build_object('chaves_sem_preco', v_s1, 'fonte_retirada', v_s2,
+          jsonb_build_object('criterio', v_criterio,
+                             'chaves_sem_preco', v_s1, 'fonte_retirada', v_s2,
+                             'fonte_retirada_bruto', v_s2_bruto,
+                             'chaves_fonte_retiradas_7d', v_ret_fonte,
+                             'fantasmas', v_fant, 'fantasmas_com_sku', v_fant_vend,
+                             'cor_nova', v_cor_nova,
+                             'snapshot_id', v_snap_id, 'snapshot_recebido_em', v_snap_rec,
                              'universo', v_universo, 'universo_max', v_max,
                              'ancora_em', v_ancora,
                              'duracao_s', round(EXTRACT(epoch FROM clock_timestamp() - v_t0)::numeric, 1)))
@@ -26162,15 +29282,28 @@ CREATE FUNCTION public.wa_owner_efetivo(p_customer uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
-  select coalesce(
-    (select cc.covering_user_id from public.carteira_coverage cc
-      where cc.covered_user_id = ca.owner_user_id and cc.active
-        and now() >= cc.valid_from and (cc.valid_until is null or now() <= cc.valid_until)
-      order by cc.valid_from desc limit 1),
-    ca.owner_user_id)
-  from public.carteira_assignments ca
-  where ca.customer_user_id = p_customer and ca.eligible
-  order by ca.valid_from desc limit 1;
+  SELECT CASE
+    WHEN (
+      -- (a) automação: identidade POSITIVA (≠ "auth.uid() IS NULL", que é fail-open)
+      COALESCE((SELECT auth.role()) = 'service_role', false)
+      -- (b) staff humano. COALESCE p/ totalidade: has_role é SELECT EXISTS (nunca NULL),
+      --     mas o COALESCE torna a totalidade explícita na fonte em vez de herdada.
+      OR COALESCE(public.has_role((SELECT auth.uid()), 'master'::public.app_role), false)
+      OR COALESCE(public.has_role((SELECT auth.uid()), 'employee'::public.app_role), false)
+    )
+    THEN (
+      select coalesce(
+        (select cc.covering_user_id from public.carteira_coverage cc
+          where cc.covered_user_id = ca.owner_user_id and cc.active
+            and now() >= cc.valid_from and (cc.valid_until is null or now() <= cc.valid_until)
+          order by cc.valid_from desc limit 1),
+        ca.owner_user_id)
+      from public.carteira_assignments ca
+      where ca.customer_user_id = p_customer and ca.eligible
+      order by ca.valid_from desc limit 1
+    )
+    ELSE NULL::uuid
+  END;
 $$;
 
 
@@ -26401,6 +29534,30 @@ CREATE MATERIALIZED VIEW private.customer_metrics_mv AS
      LEFT JOIN cadence c ON ((c.customer_user_id = p.user_id)))
   WHERE ((p.is_employee = false) OR (p.is_employee IS NULL))
   WITH NO DATA;
+
+
+--
+-- Name: farmer_tactical_plans_texto_original; Type: TABLE; Schema: private; Owner: -
+--
+
+CREATE TABLE private.farmer_tactical_plans_texto_original (
+    plan_id uuid NOT NULL,
+    approach_strategy text,
+    approach_strategy_b text,
+    implication_question text,
+    offer_transition text,
+    diagnostic_questions jsonb,
+    probable_objections jsonb,
+    operational_risks jsonb,
+    guardado_em timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE farmer_tactical_plans_texto_original; Type: COMMENT; Schema: private; Owner: -
+--
+
+COMMENT ON TABLE private.farmer_tactical_plans_texto_original IS 'Texto ORIGINAL dos planos táticos antes do saneamento de margem (FU4-F, 20261015120000). Sem GRANT para authenticated/anon: o texto cita a margem bruta por cliente.';
 
 
 --
@@ -28077,30 +31234,6 @@ CREATE MATERIALIZED VIEW private.mv_oportunidade_badge AS
 
 
 --
--- Name: _quarantine_omie_clientes_20260722; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public._quarantine_omie_clientes_20260722 (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    user_id uuid NOT NULL,
-    omie_codigo_cliente bigint NOT NULL,
-    omie_codigo_cliente_integracao text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    omie_codigo_vendedor bigint,
-    empresa_omie text DEFAULT 'colacor'::text NOT NULL,
-    CONSTRAINT omie_clientes_empresa_omie_check CHECK ((empresa_omie = ANY (ARRAY['colacor'::text, 'oben'::text, 'colacor_sc'::text])))
-);
-
-
---
--- Name: TABLE _quarantine_omie_clientes_20260722; Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON TABLE public._quarantine_omie_clientes_20260722 IS 'QUARENTENA do espelho omie_clientes (P0-B-bis Fatia 5B, 2026-07-22). Renomeada, nao dropada, para detectar consumidor externo dormente (PostgREST/Zapier/n8n/BI) que nenhum grep enxerga. REVERSAO: ALTER TABLE public._quarantine_omie_clientes_20260722 RENAME TO omie_clientes; + re-conceder os grants. DROP definitivo so apos um ciclo completo sem erro — ver o PR de fecho. Guarda o unico dado nao-reconstruivel: omie_codigo_cliente_integracao (41 linhas / 32 distintos, 9 delas sem conta identificavel na proof).';
-
-
---
 -- Name: abc_xyz_classification; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28356,6 +31489,9 @@ CREATE TABLE public.pedido_compra_sugerido (
     portal_recusa_motivo text,
     disparo_claim_em timestamp with time zone,
     disparo_claim_por text,
+    portal_recusa_definitiva_em timestamp with time zone,
+    importado_portal_em timestamp with time zone,
+    importado_portal_por uuid,
     CONSTRAINT pedido_compra_sugerido_cancel_pos_disparo_motivo_check CHECK (((cancelamento_pos_disparo_motivo IS NULL) OR (cancelamento_pos_disparo_motivo = ANY (ARRAY['cancelado_junto_ao_fornecedor'::text, 'po_excluido_no_omie'::text, 'duplicidade_operacional'::text])))),
     CONSTRAINT pedido_compra_sugerido_origem_evento_tipo_check CHECK ((origem_evento_tipo = ANY (ARRAY['campanha_promocao'::text, 'aumento_anunciado'::text, NULL::text]))),
     CONSTRAINT pedido_compra_sugerido_status_envio_portal_check CHECK ((status_envio_portal = ANY (ARRAY['nao_aplicavel'::text, 'pendente_envio_portal'::text, 'enviando_portal'::text, 'enviado_portal'::text, 'falha_envio_portal'::text, 'sucesso_portal'::text, 'aceito_portal_sem_protocolo'::text, 'indeterminado_requer_conciliacao'::text, 'erro_retentavel'::text, 'erro_nao_retentavel'::text]))),
@@ -28452,6 +31588,20 @@ COMMENT ON COLUMN public.pedido_compra_sugerido.disparo_claim_em IS 'Pendência 
 --
 
 COMMENT ON COLUMN public.pedido_compra_sugerido.disparo_claim_por IS 'Quem abriu a pendência (modo + run da edge). Diagnóstico apenas — nenhuma decisão lê esta coluna. Preserva o PRIMEIRO reivindicante, para casar com disparo_claim_em.';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.portal_recusa_definitiva_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.portal_recusa_definitiva_em IS 'Quando o pedido ENTROU em status_envio_portal=erro_nao_retentavel (trigger trg_carimbo_recusa_definitiva). Relógio do encerramento automático (reposicao_encerrar_recusas_definitivas).';
+
+
+--
+-- Name: COLUMN pedido_compra_sugerido.importado_portal_em; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_sugerido.importado_portal_em IS 'Preenchido quando o pedido NÃO nasceu do motor: foi digitado direto no portal Sayerlack e importado pelo número (sayerlack_importar_pedido_portal).';
 
 
 --
@@ -28811,7 +31961,7 @@ CREATE TABLE public.cmc_snapshot (
     data_posicao date NOT NULL,
     cmc numeric NOT NULL,
     synced_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT cmc_snapshot_cmc_check CHECK (((cmc > (0)::numeric) AND (cmc <> 'NaN'::numeric) AND (cmc < 'Infinity'::numeric)))
+    CONSTRAINT cmc_snapshot_cmc_faixa CHECK (((cmc > (0)::numeric) AND (cmc <> 'NaN'::numeric) AND (cmc < 'Infinity'::numeric) AND (cmc <= (10000000)::numeric)))
 );
 
 
@@ -29648,7 +32798,10 @@ CREATE TABLE public.estoque_reservas (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
     faturamento_observado_em timestamp with time zone,
+    omie_pedido_id bigint,
+    omie_account text,
     CONSTRAINT estoque_reservas_pool_check CHECK ((pool = 'oben'::text)),
+    CONSTRAINT estoque_reservas_pv_par_check CHECK ((((omie_pedido_id IS NULL) AND (omie_account IS NULL)) OR ((omie_pedido_id IS NOT NULL) AND (omie_pedido_id > 0) AND (omie_account IS NOT NULL) AND (btrim(omie_account) <> ''::text)))),
     CONSTRAINT estoque_reservas_qtd_check CHECK (((quantidade > (0)::numeric) AND (quantidade <= (1000000)::numeric))),
     CONSTRAINT estoque_reservas_status_check CHECK ((status = ANY (ARRAY['ativa'::text, 'liberada'::text, 'consumida'::text, 'expirada'::text])))
 );
@@ -29659,6 +32812,20 @@ CREATE TABLE public.estoque_reservas (
 --
 
 COMMENT ON COLUMN public.estoque_reservas.faturamento_observado_em IS 'Instante em que a reconciliação viu a linha CANÔNICA do pedido em status=faturado. Não afirma que o Omie baixou o estoque (faturar item sem movimentação e faturamento parcial quebram essa inferência) — é o gatilho da revisão humana via public.atp_resolver_reserva. Limpo se o status canônico regredir.';
+
+
+--
+-- Name: COLUMN estoque_reservas.omie_pedido_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estoque_reservas.omie_pedido_id IS 'PID do PV CONFIRMADO no Omie a que esta reserva pertence. Writer ÚNICO: public.atp_confirmar_pv (mesma transação do write-back em sales_orders). Write-once (trigger trg_estoque_reservas_pv_write_once). Sobrevive ao DELETE da linha push — é o elo com a linha canônica quando sales_order_id vira NULL.';
+
+
+--
+-- Name: COLUMN estoque_reservas.omie_account; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.estoque_reservas.omie_account IS 'Conta (sales_orders.account) do PV em omie_pedido_id — o par (conta, PID) acha a linha canônica. Mesmo writer e mesma regra write-once de omie_pedido_id.';
 
 
 --
@@ -29895,7 +33062,10 @@ CREATE TABLE public.farmer_calls (
     phone_dialed text,
     atendimento_id uuid,
     sinais_ligacao jsonb,
-    CONSTRAINT farmer_calls_call_backend_check CHECK (((call_backend IS NULL) OR (call_backend = ANY (ARRAY['nvoip'::text, 'webrtc'::text, 'manual'::text]))))
+    legal_hold boolean DEFAULT false NOT NULL,
+    legal_hold_motivo text,
+    CONSTRAINT farmer_calls_call_backend_check CHECK (((call_backend IS NULL) OR (call_backend = ANY (ARRAY['nvoip'::text, 'webrtc'::text, 'manual'::text])))),
+    CONSTRAINT farmer_calls_legal_hold_motivo_chk CHECK (((NOT legal_hold) OR (NULLIF(btrim(legal_hold_motivo), ''::text) IS NOT NULL)))
 );
 
 
@@ -30095,7 +33265,10 @@ CREATE TABLE public.farmer_copilot_sessions (
     margin_generated numeric DEFAULT 0,
     transcript_summary text,
     created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now(),
+    legal_hold boolean DEFAULT false NOT NULL,
+    legal_hold_motivo text,
+    CONSTRAINT farmer_copilot_sessions_legal_hold_motivo_chk CHECK (((NOT legal_hold) OR (NULLIF(btrim(legal_hold_motivo), ''::text) IS NOT NULL)))
 );
 
 
@@ -30725,7 +33898,8 @@ CREATE TABLE public.fin_categoria_dre_mapping (
     created_at timestamp with time zone DEFAULT now(),
     updated_at timestamp with time zone DEFAULT now(),
     CONSTRAINT fin_categoria_dre_mapping_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text, '_default'::text]))),
-    CONSTRAINT fin_categoria_dre_mapping_dre_linha_check CHECK ((dre_linha = ANY (ARRAY['receita_bruta'::text, 'deducoes'::text, 'cmv'::text, 'despesas_operacionais'::text, 'despesas_administrativas'::text, 'despesas_comerciais'::text, 'despesas_financeiras'::text, 'receitas_financeiras'::text, 'outras_receitas'::text, 'outras_despesas'::text, 'impostos'::text])))
+    CONSTRAINT fin_categoria_dre_mapping_dre_linha_check CHECK ((dre_linha = ANY (ARRAY['receita_bruta'::text, 'deducoes'::text, 'cmv'::text, 'despesas_operacionais'::text, 'despesas_administrativas'::text, 'despesas_comerciais'::text, 'despesas_financeiras'::text, 'receitas_financeiras'::text, 'outras_receitas'::text, 'outras_despesas'::text, 'impostos'::text, 'ded_icms'::text, 'ded_iss'::text, 'ded_pis'::text, 'ded_cofins'::text, 'ded_ipi'::text, 'das'::text, 'irpj'::text, 'csll'::text, 'fora_dre'::text]))),
+    CONSTRAINT fin_categoria_dre_mapping_fora_dre_por_empresa_check CHECK ((NOT ((company = '_default'::text) AND (dre_linha = 'fora_dre'::text))))
 );
 
 
@@ -31057,6 +34231,8 @@ CREATE TABLE public.fin_dre_snapshots (
     calculated_at timestamp with time zone DEFAULT now(),
     regime text DEFAULT 'caixa'::text NOT NULL,
     qtd_categorias_sem_mapeamento integer DEFAULT 0,
+    fora_dre numeric(15,2),
+    resultado_provisorio boolean,
     CONSTRAINT fin_dre_snapshots_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
     CONSTRAINT fin_dre_snapshots_mes_check CHECK (((mes >= 1) AND (mes <= 12))),
     CONSTRAINT fin_dre_snapshots_regime_check CHECK ((regime = ANY (ARRAY['caixa'::text, 'competencia'::text])))
@@ -31075,6 +34251,20 @@ COMMENT ON COLUMN public.fin_dre_snapshots.regime IS 'caixa = baseado em pagamen
 --
 
 COMMENT ON COLUMN public.fin_dre_snapshots.qtd_categorias_sem_mapeamento IS 'Quantidade de categorias classificadas por heurística, sem mapeamento explícito na fin_categoria_dre_mapping';
+
+
+--
+-- Name: COLUMN fin_dre_snapshots.fora_dre; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_dre_snapshots.fora_dre IS 'DRE fase 2: saídas classificadas fora do DRE (empréstimo/parcelamento/CAPEX/imobilizado), fora de todo subtotal. NULL = snapshot pré-fase 2. Composição em detalhamento.fora_dre.';
+
+
+--
+-- Name: COLUMN fin_dre_snapshots.resultado_provisorio; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.fin_dre_snapshots.resultado_provisorio IS 'DRE fase 2: true = há movimentação fora_dre com composição pendente (principal × juros) — resultado provisório. false = sem pendência fora_dre identificada (NÃO é lucro validado). NULL = pré-fase 2.';
 
 
 --
@@ -31416,32 +34606,6 @@ CREATE TABLE public.fin_kpi_tributario (
     calculated_at timestamp with time zone DEFAULT now(),
     CONSTRAINT fin_kpi_tributario_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
     CONSTRAINT fin_kpi_tributario_mes_check CHECK (((mes >= 1) AND (mes <= 12)))
-);
-
-
---
--- Name: fin_movimentacoes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.fin_movimentacoes (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    company text NOT NULL,
-    omie_ncodmov bigint NOT NULL,
-    omie_ncodcc bigint,
-    data_movimento date NOT NULL,
-    tipo text,
-    valor numeric(15,2) NOT NULL,
-    descricao text,
-    categoria_codigo text,
-    categoria_descricao text,
-    conciliado boolean DEFAULT false,
-    omie_codigo_lancamento bigint,
-    natureza text,
-    metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now(),
-    updated_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT fin_movimentacoes_company_check CHECK ((company = ANY (ARRAY['oben'::text, 'colacor'::text, 'colacor_sc'::text]))),
-    CONSTRAINT fin_movimentacoes_tipo_check CHECK ((tipo = ANY (ARRAY['E'::text, 'S'::text])))
 );
 
 
@@ -33023,6 +36187,32 @@ CREATE TABLE public.omie_condicao_pagamento_catalogo (
 
 
 --
+-- Name: omie_cota_metodo; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.omie_cota_metodo (
+    conta text NOT NULL,
+    metodo text NOT NULL,
+    ocupado_ate timestamp with time zone,
+    ocupado_por text,
+    bloqueado_ate timestamp with time zone,
+    ultimo_fault text,
+    ultimo_fault_em timestamp with time zone,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT omie_cota_metodo_conta_check CHECK ((conta = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT omie_cota_metodo_lease_coerente CHECK (((ocupado_ate IS NULL) = (ocupado_por IS NULL))),
+    CONSTRAINT omie_cota_metodo_metodo_check CHECK ((metodo ~ '^[A-Za-z]{1,80}$'::text))
+);
+
+
+--
+-- Name: TABLE omie_cota_metodo; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.omie_cota_metodo IS 'Trava compartilhada por (conta, método) do Omie: lease de quem está chamando e o "aguarde" que o Omie mandou. Só service_role. Ver migration 20261010204708.';
+
+
+--
 -- Name: omie_customer_account_map_fresco; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -33651,6 +36841,7 @@ CREATE TABLE public.pedido_compra_item (
     valor_ipi_portal numeric,
     aliquota_ipi_portal numeric,
     ncm_ipi_portal text,
+    estoque_comprometido numeric,
     CONSTRAINT pedido_compra_item_ipi_portal_coerente CHECK (((num_nulls(preco_unitario_sem_ipi_portal, valor_ipi_portal, aliquota_ipi_portal, ncm_ipi_portal) = ANY (ARRAY[0, 4])) AND ((preco_unitario_sem_ipi_portal IS NULL) OR ((preco_unitario_sem_ipi_portal > (0)::numeric) AND (preco_unitario_sem_ipi_portal < 'Infinity'::numeric))) AND ((valor_ipi_portal IS NULL) OR ((valor_ipi_portal >= (0)::numeric) AND (valor_ipi_portal < 'Infinity'::numeric))) AND ((aliquota_ipi_portal IS NULL) OR ((aliquota_ipi_portal >= (0)::numeric) AND (aliquota_ipi_portal < (100)::numeric))) AND ((ncm_ipi_portal IS NULL) OR (ncm_ipi_portal ~ '^[0-9]{8}$'::text)))),
     CONSTRAINT pedido_compra_item_modo_promocao_check CHECK ((modo_promocao = ANY (ARRAY['flat'::text, 'forward_buying'::text, NULL::text])))
 );
@@ -33738,6 +36929,13 @@ COMMENT ON COLUMN public.pedido_compra_item.aliquota_ipi_portal IS 'Alíquota (%
 --
 
 COMMENT ON COLUMN public.pedido_compra_item.ncm_ipi_portal IS 'NCM (8 dígitos, do omie_products da conta do pedido) usado na prova deste item. Escritor único: sayerlack_aplicar_custo_portal.';
+
+
+--
+-- Name: COLUMN pedido_compra_item.estoque_comprometido; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.pedido_compra_item.estoque_comprometido IS 'Unidades Omie já vendidas em pedido de venda aberto (relido pelo Omie na janela) descontadas do estoque_atual pelo motor. NULL = desconto não se aplica (SKU em grupo de equivalência ou desligado).';
 
 
 --
@@ -33967,6 +37165,68 @@ CREATE TABLE public.permission_overrides (
 
 
 --
+-- Name: picking_codigos_barras; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_codigos_barras (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    codigo text NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    unidade text NOT NULL,
+    unidades_por_leitura numeric NOT NULL,
+    origem text NOT NULL,
+    status text NOT NULL,
+    criado_por uuid,
+    aprovado_por uuid,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    aprovado_em timestamp with time zone,
+    CONSTRAINT picking_codigos_barras_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT picking_codigos_barras_aprendido_aprovado_por_master CHECK (((status <> 'aprovado'::text) OR (origem = 'omie'::text) OR (aprovado_por IS NOT NULL))),
+    CONSTRAINT picking_codigos_barras_codigo_check CHECK (((codigo = btrim(codigo)) AND ((length(codigo) >= 1) AND (length(codigo) <= 64)))),
+    CONSTRAINT picking_codigos_barras_omie_codigo_produto_check CHECK ((omie_codigo_produto > 0)),
+    CONSTRAINT picking_codigos_barras_origem_check CHECK ((origem = ANY (ARRAY['omie'::text, 'aprendido'::text]))),
+    CONSTRAINT picking_codigos_barras_status_check CHECK ((status = ANY (ARRAY['pendente'::text, 'aprovado'::text, 'revogado'::text]))),
+    CONSTRAINT picking_codigos_barras_unidade_check CHECK (((unidade = upper(btrim(unidade))) AND (unidade <> ''::text))),
+    CONSTRAINT picking_codigos_barras_unidades_por_leitura_check CHECK (((unidades_por_leitura > (0)::numeric) AND (unidades_por_leitura < 'Infinity'::numeric)))
+);
+
+
+--
+-- Name: picking_coleta_estado; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_coleta_estado (
+    account text NOT NULL,
+    ultima_coleta_iniciada_em timestamp with time zone NOT NULL,
+    aplicada_em timestamp with time zone,
+    ultimo_resumo jsonb,
+    lease_token uuid,
+    lease_ate timestamp with time zone,
+    CONSTRAINT picking_coleta_estado_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+);
+
+
+--
+-- Name: picking_eventos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_eventos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    tarefa_id uuid NOT NULL,
+    linha_id uuid,
+    tipo text NOT NULL,
+    de_status text,
+    para_status text,
+    operador_id uuid,
+    detalhe jsonb DEFAULT '{}'::jsonb NOT NULL,
+    criado_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT picking_eventos_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text])))
+);
+
+
+--
 -- Name: picking_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33982,6 +37242,145 @@ CREATE TABLE public.picking_events (
     metadata jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: picking_leituras; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_leituras (
+    id uuid NOT NULL,
+    account text NOT NULL,
+    tarefa_id uuid NOT NULL,
+    linha_id uuid,
+    linha_revisao integer,
+    tarefa_revisao integer NOT NULL,
+    tipo text NOT NULL,
+    codigo_lido text,
+    unidades numeric,
+    estorna_leitura_id uuid,
+    operador_id uuid NOT NULL,
+    atribuicao_id uuid,
+    comando jsonb NOT NULL,
+    lido_em timestamp with time zone,
+    recebido_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    aceita boolean NOT NULL,
+    motivo_rejeicao text,
+    CONSTRAINT picking_leituras_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT picking_leituras_aceita_completa CHECK (((NOT aceita) OR ((linha_id IS NOT NULL) AND (linha_revisao IS NOT NULL) AND (unidades IS NOT NULL) AND (unidades <> (0)::numeric)))),
+    CONSTRAINT picking_leituras_estorno_coerente CHECK (((NOT aceita) OR ((tipo = 'estorno'::text) = (estorna_leitura_id IS NOT NULL)))),
+    CONSTRAINT picking_leituras_motivo_coerente CHECK ((aceita = (motivo_rejeicao IS NULL))),
+    CONSTRAINT picking_leituras_sinal_coerente CHECK (((NOT aceita) OR ((tipo = 'estorno'::text) = (unidades < (0)::numeric)))),
+    CONSTRAINT picking_leituras_tipo_check CHECK ((tipo = ANY (ARRAY['bipe'::text, 'manual'::text, 'estorno'::text]))),
+    CONSTRAINT picking_leituras_unidades_check CHECK (((unidades IS NULL) OR ((unidades > '-Infinity'::numeric) AND (unidades < 'Infinity'::numeric))))
+);
+
+
+--
+-- Name: TABLE picking_leituras; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.picking_leituras IS 'Picking v2: leituras IMUTÁVEIS (id = UUID do aparelho). Separado da linha = soma das aceitas da revisão vigente.';
+
+
+--
+-- Name: picking_linhas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_linhas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    tarefa_id uuid NOT NULL,
+    codigo_item bigint NOT NULL,
+    omie_codigo_produto bigint NOT NULL,
+    codigo_produto text,
+    descricao text,
+    quantidade numeric NOT NULL,
+    unidade text NOT NULL,
+    ean text,
+    fracionaria boolean NOT NULL,
+    revisao integer DEFAULT 1 NOT NULL,
+    ativa boolean DEFAULT true NOT NULL,
+    hash_linha text NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT picking_linhas_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT picking_linhas_codigo_item_check CHECK ((codigo_item > 0)),
+    CONSTRAINT picking_linhas_omie_codigo_produto_check CHECK ((omie_codigo_produto > 0)),
+    CONSTRAINT picking_linhas_quantidade_check CHECK (((quantidade > (0)::numeric) AND (quantidade < 'Infinity'::numeric))),
+    CONSTRAINT picking_linhas_revisao_check CHECK ((revisao >= 1))
+);
+
+
+--
+-- Name: picking_linhas_progresso; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.picking_linhas_progresso WITH (security_invoker='on') AS
+ SELECT l.id,
+    l.account,
+    l.tarefa_id,
+    l.codigo_item,
+    l.omie_codigo_produto,
+    l.codigo_produto,
+    l.descricao,
+    l.quantidade,
+    l.unidade,
+    l.ean,
+    l.fracionaria,
+    l.revisao,
+    l.ativa,
+    COALESCE(s.separada, (0)::numeric) AS separada,
+    (l.quantidade - COALESCE(s.separada, (0)::numeric)) AS saldo
+   FROM (public.picking_linhas l
+     LEFT JOIN LATERAL ( SELECT sum(r.unidades) AS separada
+           FROM public.picking_leituras r
+          WHERE ((r.linha_id = l.id) AND r.aceita AND (r.linha_revisao = l.revisao))) s ON (true));
+
+
+--
+-- Name: picking_tarefas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.picking_tarefas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account text NOT NULL,
+    omie_codigo_pedido bigint NOT NULL,
+    numero_pedido text,
+    cliente_nome text,
+    status text NOT NULL,
+    revisao integer DEFAULT 1 NOT NULL,
+    estado_seq integer DEFAULT 1 NOT NULL,
+    versao_omie text,
+    hash_fisico text,
+    motivo_bloqueio text,
+    operador_id uuid,
+    atribuicao_id uuid,
+    pega_em timestamp with time zone,
+    separado_em timestamp with time zone,
+    ausente_desde timestamp with time zone,
+    fora_da_etapa_em timestamp with time zone,
+    ultima_coleta_em timestamp with time zone NOT NULL,
+    criado_em timestamp with time zone DEFAULT now() NOT NULL,
+    atualizado_em timestamp with time zone DEFAULT now() NOT NULL,
+    incluido_em date,
+    ausente_rodadas integer DEFAULT 0 NOT NULL,
+    CONSTRAINT picking_tarefas_account_check CHECK ((account = ANY (ARRAY['oben'::text, 'colacor'::text]))),
+    CONSTRAINT picking_tarefas_bloqueio_tem_motivo CHECK (((status = 'bloqueado_dado'::text) = (motivo_bloqueio IS NOT NULL))),
+    CONSTRAINT picking_tarefas_em_separacao_tem_dono CHECK (((status <> 'em_separacao'::text) OR ((atribuicao_id IS NOT NULL) AND (operador_id IS NOT NULL)))),
+    CONSTRAINT picking_tarefas_estado_seq_check CHECK ((estado_seq >= 1)),
+    CONSTRAINT picking_tarefas_fora_da_etapa_so_separado CHECK (((fora_da_etapa_em IS NULL) OR (status = 'separado'::text))),
+    CONSTRAINT picking_tarefas_omie_codigo_pedido_check CHECK ((omie_codigo_pedido > 0)),
+    CONSTRAINT picking_tarefas_revisao_check CHECK ((revisao >= 1)),
+    CONSTRAINT picking_tarefas_status_check CHECK ((status = ANY (ARRAY['aguardando'::text, 'em_separacao'::text, 'separado'::text, 'aguardando_ajuste'::text, 'suspensa_alteracao'::text, 'interrompida_externa'::text, 'bloqueado_dado'::text])))
+);
+
+
+--
+-- Name: TABLE picking_tarefas; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.picking_tarefas IS 'Picking v2: 1 tarefa por pedido da etapa 10 do Omie. Escrita só pelas RPCs picking_*. Ver migration 20261011020000.';
 
 
 --
@@ -34172,7 +37571,7 @@ CREATE TABLE public.product_costs (
     product_id uuid NOT NULL,
     cost_price numeric,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    cmc numeric DEFAULT 0,
+    cmc numeric,
     cost_source text DEFAULT 'UNKNOWN'::text,
     cost_confidence numeric DEFAULT 0,
     family_category text,
@@ -34180,7 +37579,8 @@ CREATE TABLE public.product_costs (
     custo_producao numeric,
     custo_producao_source text,
     custo_producao_status text,
-    custo_producao_computed_at timestamp with time zone
+    custo_producao_computed_at timestamp with time zone,
+    CONSTRAINT product_costs_cmc_faixa CHECK (((cmc IS NULL) OR ((cmc >= (0)::numeric) AND (cmc <> 'NaN'::numeric) AND (cmc < 'Infinity'::numeric) AND (cmc <= (10000000)::numeric))))
 );
 
 
@@ -34196,6 +37596,13 @@ COMMENT ON COLUMN public.product_costs.custo_producao IS 'Custo de producao reco
 --
 
 COMMENT ON COLUMN public.product_costs.custo_producao_status IS 'Proveniencia/diagnostico da recomposicao: ok | empty_structure | missing_component_cost | suspeito_unidade | erro_api. A v_caca so confia no custo_producao quando status = ok.';
+
+
+--
+-- Name: CONSTRAINT product_costs_cmc_faixa ON product_costs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON CONSTRAINT product_costs_cmc_faixa ON public.product_costs IS 'cmc: NULL = sem CMC (ausente, NUNCA 0 por fabricação) ou finito em [0, 1e7]. 0 aceito só na transição do motor (cmc ?? null). Ver docs/agent/money-path.md §2.';
 
 
 --
@@ -35263,7 +38670,8 @@ CREATE TABLE public.sales_price_history (
     product_id uuid NOT NULL,
     unit_price numeric NOT NULL,
     sales_order_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_price_history_created_at_nao_futuro CHECK ((created_at <= (now() + '1 day'::interval)))
 );
 
 
@@ -35503,8 +38911,17 @@ CREATE TABLE public.sku_embalagem_equivalencia (
     vigente_ate date,
     criado_por text,
     criado_em timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT sku_embalagem_equivalencia_fator_para_base_check CHECK ((fator_para_base > (0)::numeric))
+    unidades_omie_por_embalagem numeric,
+    CONSTRAINT sku_embalagem_equivalencia_fator_para_base_check CHECK ((fator_para_base > (0)::numeric)),
+    CONSTRAINT sku_embalagem_equivalencia_unidades_omie_por_embalagem_check CHECK (((unidades_omie_por_embalagem IS NULL) OR (unidades_omie_por_embalagem > (0)::numeric)))
 );
+
+
+--
+-- Name: COLUMN sku_embalagem_equivalencia.unidades_omie_por_embalagem; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.sku_embalagem_equivalencia.unidades_omie_por_embalagem IS 'Unidades do Omie (omie_products.unidade) contidas em 1 embalagem comprada deste SKU. Concentrado WP em litros: QT = 0,81, GL = 3,24. O motor de reposição (gerar_pedidos_sugeridos_ciclo) só a usa quando TODO membro ativo do grupo a tem e u/fator_para_base é igual entre eles; senão usa fator_para_base. NULL = sem cadastro (#2849).';
 
 
 --
@@ -36151,15 +39568,15 @@ CREATE TABLE public.tint_formula_itens (
     ordem integer NOT NULL,
     qtd_ml numeric NOT NULL,
     created_at timestamp with time zone DEFAULT now(),
-    CONSTRAINT tint_formula_itens_qtd_ml_finita CHECK (((qtd_ml > (0)::numeric) AND (qtd_ml <> 'NaN'::numeric) AND (qtd_ml < 'Infinity'::numeric)))
+    CONSTRAINT tint_formula_itens_qtd_ml_faixa CHECK (((qtd_ml > (0)::numeric) AND (qtd_ml <> 'NaN'::numeric) AND (qtd_ml < 'Infinity'::numeric) AND (qtd_ml <= (1000000)::numeric)))
 );
 
 
 --
--- Name: CONSTRAINT tint_formula_itens_qtd_ml_finita ON tint_formula_itens; Type: COMMENT; Schema: public; Owner: -
+-- Name: CONSTRAINT tint_formula_itens_qtd_ml_faixa ON tint_formula_itens; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON CONSTRAINT tint_formula_itens_qtd_ml_finita ON public.tint_formula_itens IS 'Dose do corante: finita e positiva. Os 3 lados (>0, <>NaN, <Infinity) porque em numeric NaN > 0 é TRUE — guard de sinal sozinho aceita NaN. Ver docs/agent/money-path.md §2.';
+COMMENT ON CONSTRAINT tint_formula_itens_qtd_ml_faixa ON public.tint_formula_itens IS 'Dose do corante: finita, positiva e <= 1.000.000 ml. Finitude não é faixa: 1e100000 é finito e vira Infinity em JS. Ver docs/agent/money-path.md §2.';
 
 
 --
@@ -36703,6 +40120,48 @@ CREATE TABLE public.tint_vendas_itens (
 
 
 --
+-- Name: tint_watchdog_fase5_amostras; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tint_watchdog_fase5_amostras (
+    id bigint NOT NULL,
+    medido_em timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    criterio text NOT NULL,
+    universo bigint NOT NULL,
+    s1_sem_preco bigint NOT NULL,
+    sem_ativa_bruto bigint NOT NULL,
+    s2_retirada_nova bigint,
+    fantasmas bigint,
+    fantasmas_vendaveis bigint,
+    cor_nova bigint,
+    snapshot_id uuid,
+    snapshot_recebido_em timestamp with time zone,
+    duracao_s numeric
+);
+
+
+--
+-- Name: TABLE tint_watchdog_fase5_amostras; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.tint_watchdog_fase5_amostras IS 'Série do tint_watchdog_fase5_check (v4+): uma amostra por execução bem-sucedida, retenção 180 dias. Único writer: a função (SECURITY DEFINER). Sem policy de propósito: leitura via SQL de staff.';
+
+
+--
+-- Name: tint_watchdog_fase5_amostras_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_watchdog_fase5_amostras ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.tint_watchdog_fase5_amostras_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: tool_categories; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -36847,6 +40306,9 @@ CREATE TABLE public.whatsapp_conversations (
     last_message_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     last_outbound_at timestamp with time zone,
+    legal_hold boolean DEFAULT false NOT NULL,
+    legal_hold_motivo text,
+    CONSTRAINT whatsapp_conversations_legal_hold_motivo_chk CHECK (((NOT legal_hold) OR (NULLIF(btrim(legal_hold_motivo), ''::text) IS NOT NULL))),
     CONSTRAINT whatsapp_conversations_status_check CHECK ((status = ANY (ARRAY['aberta'::text, 'aguardando_cliente'::text, 'fechada'::text])))
 );
 
@@ -37096,93 +40558,6 @@ CREATE VIEW public.v_caca_compradores WITH (security_invoker='on') AS
      LEFT JOIN fam f ON (((f.documento = c.documento) AND (f.account = c.account))))
      LEFT JOIN luc l ON (((l.documento = c.documento) AND (l.account = c.account))))
      LEFT JOIN cid ON ((cid.user_id = cd.user_id)));
-
-
---
--- Name: v_titulo_baixas; Type: VIEW; Schema: public; Owner: -
---
-
-CREATE VIEW public.v_titulo_baixas WITH (security_invoker='on') AS
- WITH mov AS (
-         SELECT fin_movimentacoes.company,
-            fin_movimentacoes.omie_codigo_lancamento AS cod,
-            fin_movimentacoes.tipo,
-            fin_movimentacoes.data_movimento,
-            fin_movimentacoes.valor,
-            fin_movimentacoes.categoria_descricao AS grupo
-           FROM public.fin_movimentacoes
-          WHERE ((fin_movimentacoes.omie_codigo_lancamento IS NOT NULL) AND (fin_movimentacoes.data_movimento IS NOT NULL) AND (fin_movimentacoes.tipo = ANY (ARRAY['E'::text, 'S'::text])) AND (fin_movimentacoes.valor > (0)::numeric) AND (fin_movimentacoes.categoria_descricao = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text, 'CONTA_CORRENTE_REC'::text, 'CONTA_CORRENTE_PAG'::text])))
-        ), canon AS (
-         SELECT mov.company,
-            mov.cod,
-            mov.tipo,
-            bool_or((mov.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) AS tem_otica_titulo
-           FROM mov
-          GROUP BY mov.company, mov.cod, mov.tipo
-        ), base AS (
-         SELECT m.company,
-            m.cod,
-            m.tipo,
-            m.data_movimento,
-            m.valor,
-                CASE
-                    WHEN c.tem_otica_titulo THEN 'titulo'::text
-                    ELSE 'conta_corrente'::text
-                END AS origem
-           FROM (mov m
-             JOIN canon c ON (((c.company = m.company) AND (c.cod = m.cod) AND (c.tipo = m.tipo))))
-          WHERE ((c.tem_otica_titulo AND (m.grupo = ANY (ARRAY['CONTA_A_RECEBER'::text, 'CONTA_A_PAGAR'::text]))) OR (NOT c.tem_otica_titulo))
-        ), mov_canon AS (
-        ( SELECT DISTINCT ON (base.company, base.cod, base.tipo) base.company,
-            base.cod,
-            base.tipo,
-            base.data_movimento,
-            base.valor,
-            base.origem
-           FROM base
-          WHERE (base.origem = 'titulo'::text)
-          ORDER BY base.company, base.cod, base.tipo, base.valor DESC, base.data_movimento DESC)
-        UNION ALL
-         SELECT base.company,
-            base.cod,
-            base.tipo,
-            base.data_movimento,
-            base.valor,
-            base.origem
-           FROM base
-          WHERE (base.origem = 'conta_corrente'::text)
-        )
- SELECT cr.company,
-    cr.omie_codigo_lancamento,
-    'CR'::text AS tipo,
-    max(m.data_movimento) AS data_baixa_final,
-    sum(m.valor) AS valor_baixado,
-    (count(*))::integer AS n_movimentos,
-        CASE
-            WHEN ((cr.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cr.data_emissao))::numeric)) / sum(m.valor)))
-            ELSE NULL::numeric
-        END AS prazo_ponderado_dias,
-    max(m.origem) AS origem_baixa
-   FROM (public.fin_contas_receber cr
-     JOIN mov_canon m ON (((m.company = cr.company) AND (m.cod = cr.omie_codigo_lancamento) AND (m.tipo = 'E'::text))))
-  WHERE ((cr.omie_codigo_lancamento IS NOT NULL) AND (cr.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text])))
-  GROUP BY cr.company, cr.omie_codigo_lancamento, cr.data_emissao
-UNION ALL
- SELECT cp.company,
-    cp.omie_codigo_lancamento,
-    'CP'::text AS tipo,
-    max(m.data_movimento) AS data_baixa_final,
-    sum(m.valor) AS valor_baixado,
-    (count(*))::integer AS n_movimentos,
-        CASE
-            WHEN ((cp.data_emissao IS NOT NULL) AND (sum(m.valor) > (0)::numeric)) THEN round((sum((m.valor * ((m.data_movimento - cp.data_emissao))::numeric)) / sum(m.valor)))
-            ELSE NULL::numeric
-        END AS prazo_ponderado_dias,
-    max(m.origem) AS origem_baixa
-   FROM (public.fin_contas_pagar cp
-     JOIN mov_canon m ON (((m.company = cp.company) AND (m.cod = cp.omie_codigo_lancamento) AND (m.tipo = 'S'::text))))
-  WHERE ((cp.omie_codigo_lancamento IS NOT NULL) AND (cp.status_titulo = ANY (ARRAY['PAGO'::text, 'LIQUIDADO'::text])))
-  GROUP BY cp.company, cp.omie_codigo_lancamento, cp.data_emissao;
 
 
 --
@@ -39171,6 +42546,295 @@ COMMENT ON VIEW public.v_tint_formula_canonica IS 'Fase 2 tintométrico: 1 fórm
 
 
 --
+-- Name: v_titulo_encargos_cr; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.v_titulo_encargos_cr WITH (security_invoker='on') AS
+ WITH cr_linhas AS (
+         SELECT m.id,
+            m.company,
+            m.omie_ncodmov,
+            m.omie_ncodcc,
+            m.data_movimento,
+            m.tipo,
+            m.valor,
+            m.descricao,
+            m.categoria_codigo,
+            m.categoria_descricao,
+            m.conciliado,
+            m.omie_codigo_lancamento,
+            m.natureza,
+            m.metadata,
+            m.created_at,
+            m.updated_at,
+            m.resumo_val_pago,
+            m.resumo_val_liquido,
+            m.resumo_desconto,
+            m.resumo_juros,
+            m.resumo_multa,
+            m.resumo_val_aberto,
+            m.resumo_liquidado,
+            m.valor_titulo,
+            m.tipo_documento,
+            m.omie_ncodbaixa,
+            m.data_pagamento_omie,
+            m.data_credito_omie,
+            m.resumo_lido_em
+           FROM public.fin_movimentacoes m
+          WHERE ((m.categoria_descricao = 'CONTA_A_RECEBER'::text) AND (m.omie_codigo_lancamento IS NOT NULL))
+        ), cr_atual AS (
+         SELECT DISTINCT ON (c_1.company, c_1.omie_codigo_lancamento) c_1.company,
+            c_1.omie_codigo_lancamento AS cod,
+            c_1.data_movimento,
+            c_1.data_pagamento_omie,
+            c_1.tipo_documento,
+            c_1.valor_titulo,
+            c_1.resumo_val_pago,
+            c_1.resumo_val_liquido,
+            c_1.resumo_desconto,
+            c_1.resumo_juros,
+            c_1.resumo_multa,
+            c_1.resumo_val_aberto,
+            c_1.resumo_liquidado,
+            c_1.resumo_lido_em
+           FROM cr_linhas c_1
+          ORDER BY c_1.company, c_1.omie_codigo_lancamento, c_1.updated_at DESC NULLS LAST, c_1.created_at DESC NULLS LAST, c_1.id DESC
+        ), cr_versoes AS (
+         SELECT cr_linhas.company,
+            cr_linhas.omie_codigo_lancamento AS cod,
+            (count(*))::integer AS versoes
+           FROM cr_linhas
+          GROUP BY cr_linhas.company, cr_linhas.omie_codigo_lancamento
+        ), baixa_linhas AS (
+         SELECT m.id,
+            m.company,
+            m.omie_codigo_lancamento AS cod,
+            m.omie_ncodcc,
+            m.data_movimento,
+            m.valor,
+            m.omie_ncodbaixa,
+            m.updated_at,
+            m.created_at
+           FROM public.fin_movimentacoes m
+          WHERE ((m.categoria_descricao = 'CONTA_CORRENTE_REC'::text) AND (m.natureza = ANY (ARRAY['BAXR'::text, 'APBR'::text])) AND (m.tipo = 'E'::text) AND (m.omie_codigo_lancamento IS NOT NULL))
+        ), baixa_com_id AS (
+         SELECT DISTINCT ON (b.company, b.cod, b.omie_ncodbaixa) b.id,
+            b.company,
+            b.cod,
+            b.omie_ncodcc,
+            b.data_movimento,
+            b.valor,
+            b.omie_ncodbaixa,
+            b.updated_at,
+            b.created_at
+           FROM baixa_linhas b
+          WHERE (b.omie_ncodbaixa IS NOT NULL)
+          ORDER BY b.company, b.cod, b.omie_ncodbaixa, b.updated_at DESC NULLS LAST, b.created_at DESC NULLS LAST, b.id DESC
+        ), baixa_sem_id AS (
+         SELECT b.id,
+            b.company,
+            b.cod,
+            b.omie_ncodcc,
+            b.data_movimento,
+            b.valor,
+            b.omie_ncodbaixa,
+            b.updated_at,
+            b.created_at
+           FROM baixa_linhas b
+          WHERE ((b.omie_ncodbaixa IS NULL) AND (NOT (EXISTS ( SELECT 1
+                   FROM baixa_linhas n
+                  WHERE ((n.company = b.company) AND (n.cod = b.cod) AND (NOT (n.omie_ncodcc IS DISTINCT FROM b.omie_ncodcc)) AND (n.data_movimento = b.data_movimento) AND (n.valor = b.valor) AND (n.id <> b.id) AND ((n.omie_ncodbaixa IS NOT NULL) OR (ROW(COALESCE(n.updated_at, '-infinity'::timestamp with time zone), COALESCE(n.created_at, '-infinity'::timestamp with time zone), n.id) > ROW(COALESCE(b.updated_at, '-infinity'::timestamp with time zone), COALESCE(b.created_at, '-infinity'::timestamp with time zone), b.id))))))))
+        ), baixa_atual AS (
+         SELECT baixa_com_id.id,
+            baixa_com_id.company,
+            baixa_com_id.cod,
+            baixa_com_id.omie_ncodcc,
+            baixa_com_id.data_movimento,
+            baixa_com_id.valor,
+            baixa_com_id.omie_ncodbaixa,
+            baixa_com_id.updated_at,
+            baixa_com_id.created_at
+           FROM baixa_com_id
+        UNION ALL
+         SELECT baixa_sem_id.id,
+            baixa_sem_id.company,
+            baixa_sem_id.cod,
+            baixa_sem_id.omie_ncodcc,
+            baixa_sem_id.data_movimento,
+            baixa_sem_id.valor,
+            baixa_sem_id.omie_ncodbaixa,
+            baixa_sem_id.updated_at,
+            baixa_sem_id.created_at
+           FROM baixa_sem_id
+        ), baixa_titulo AS (
+         SELECT baixa_atual.company,
+            baixa_atual.cod,
+            (count(*))::integer AS n_baixas,
+            sum(baixa_atual.valor) AS soma_baixas,
+            max(baixa_atual.data_movimento) AS data_ultima_liquidacao
+           FROM baixa_atual
+          GROUP BY baixa_atual.company, baixa_atual.cod
+        ), base AS (
+         SELECT t.company,
+            t.omie_codigo_lancamento,
+            t.cnpj_cpf,
+            t.numero_documento,
+            t.data_emissao,
+            t.data_vencimento,
+            t.valor_documento,
+            t.status_titulo,
+            ca.tipo_documento,
+            cv.versoes AS versoes_titulo,
+            bt.n_baixas,
+            bt.soma_baixas,
+            COALESCE(ca.data_pagamento_omie, ca.data_movimento, bt.data_ultima_liquidacao) AS data_baixa,
+                CASE
+                    WHEN (ca.data_pagamento_omie IS NOT NULL) THEN 'omie_data_pagamento'::text
+                    WHEN (ca.data_movimento IS NOT NULL) THEN 'titulo_data_movimento'::text
+                    WHEN (bt.data_ultima_liquidacao IS NOT NULL) THEN 'conta_corrente_liquidacao'::text
+                    ELSE NULL::text
+                END AS fonte_data_baixa,
+            ca.valor_titulo,
+            ca.resumo_val_pago,
+            ca.resumo_val_liquido,
+            ca.resumo_desconto,
+            ca.resumo_juros,
+            ca.resumo_multa,
+            ca.resumo_val_aberto,
+            ca.resumo_liquidado,
+            ca.resumo_lido_em,
+            ((ca.resumo_val_pago IS NOT NULL) AND (ca.resumo_val_liquido IS NOT NULL) AND (ca.resumo_desconto IS NOT NULL) AND (ca.resumo_juros IS NOT NULL) AND (ca.resumo_multa IS NOT NULL)) AS resumo_completo
+           FROM (((public.fin_contas_receber t
+             LEFT JOIN cr_atual ca ON (((ca.company = t.company) AND (ca.cod = t.omie_codigo_lancamento))))
+             LEFT JOIN cr_versoes cv ON (((cv.company = t.company) AND (cv.cod = t.omie_codigo_lancamento))))
+             LEFT JOIN baixa_titulo bt ON (((bt.company = t.company) AND (bt.cod = t.omie_codigo_lancamento))))
+          WHERE ((t.omie_codigo_lancamento IS NOT NULL) AND (t.status_titulo = ANY (ARRAY['RECEBIDO'::text, 'LIQUIDADO'::text])))
+        ), avaliado AS (
+         SELECT b.company,
+            b.omie_codigo_lancamento,
+            b.cnpj_cpf,
+            b.numero_documento,
+            b.data_emissao,
+            b.data_vencimento,
+            b.valor_documento,
+            b.status_titulo,
+            b.tipo_documento,
+            b.versoes_titulo,
+            b.n_baixas,
+            b.soma_baixas,
+            b.data_baixa,
+            b.fonte_data_baixa,
+            b.valor_titulo,
+            b.resumo_val_pago,
+            b.resumo_val_liquido,
+            b.resumo_desconto,
+            b.resumo_juros,
+            b.resumo_multa,
+            b.resumo_val_aberto,
+            b.resumo_liquidado,
+            b.resumo_lido_em,
+            b.resumo_completo,
+            COALESCE((b.resumo_completo AND (b.resumo_val_pago >= (0)::numeric) AND (b.resumo_val_liquido >= (0)::numeric) AND (b.resumo_desconto >= (0)::numeric) AND (b.resumo_juros >= (0)::numeric) AND (b.resumo_multa >= (0)::numeric) AND (abs((b.resumo_val_liquido - (((b.resumo_val_pago - b.resumo_desconto) + b.resumo_juros) + b.resumo_multa))) <= 0.01)), false) AS identidade_ok,
+            COALESCE(((b.resumo_liquidado IS TRUE) AND (b.resumo_val_aberto = (0)::numeric) AND (abs((b.resumo_val_pago - b.valor_documento)) <= 0.01) AND ((b.valor_titulo IS NULL) OR (abs(((b.resumo_val_pago + b.resumo_val_aberto) - b.valor_titulo)) <= 0.01))), false) AS quitado,
+            ((b.soma_baixas IS NOT NULL) AND (b.resumo_val_liquido IS NOT NULL) AND (abs((b.soma_baixas - b.resumo_val_liquido)) <= 0.01)) AS caixa_bate
+           FROM base b
+        ), classificado AS (
+         SELECT a.company,
+            a.omie_codigo_lancamento,
+            a.cnpj_cpf,
+            a.numero_documento,
+            a.data_emissao,
+            a.data_vencimento,
+            a.valor_documento,
+            a.status_titulo,
+            a.tipo_documento,
+            a.versoes_titulo,
+            a.n_baixas,
+            a.soma_baixas,
+            a.data_baixa,
+            a.fonte_data_baixa,
+            a.valor_titulo,
+            a.resumo_val_pago,
+            a.resumo_val_liquido,
+            a.resumo_desconto,
+            a.resumo_juros,
+            a.resumo_multa,
+            a.resumo_val_aberto,
+            a.resumo_liquidado,
+            a.resumo_lido_em,
+            a.resumo_completo,
+            a.identidade_ok,
+            a.quitado,
+            a.caixa_bate,
+                CASE
+                    WHEN (a.resumo_completo AND (NOT a.identidade_ok)) THEN 'inconsistente'::text
+                    WHEN (a.identidade_ok AND (a.soma_baixas IS NOT NULL) AND (NOT a.caixa_bate)) THEN 'divergente'::text
+                    WHEN (a.identidade_ok AND (a.soma_baixas IS NULL)) THEN 'erp_sem_caixa'::text
+                    WHEN (a.identidade_ok AND a.quitado) THEN 'alta'::text
+                    WHEN a.identidade_ok THEN 'erp_nao_quitado'::text
+                    WHEN (a.soma_baixas IS NOT NULL) THEN 'so_diferenca_caixa'::text
+                    ELSE 'sem_dado'::text
+                END AS confianca
+           FROM avaliado a
+        )
+ SELECT company,
+    omie_codigo_lancamento,
+    cnpj_cpf,
+    numero_documento,
+    data_emissao,
+    data_vencimento,
+    valor_documento,
+    status_titulo,
+    tipo_documento,
+    versoes_titulo,
+    n_baixas,
+    soma_baixas,
+    data_baixa,
+    fonte_data_baixa,
+    (data_baixa - data_vencimento) AS dias_atraso,
+        CASE
+            WHEN identidade_ok THEN resumo_val_pago
+            ELSE NULL::numeric
+        END AS valor_pago_principal,
+        CASE
+            WHEN identidade_ok THEN resumo_val_liquido
+            ELSE NULL::numeric
+        END AS valor_liquido_recebido,
+        CASE
+            WHEN identidade_ok THEN resumo_juros
+            ELSE NULL::numeric
+        END AS juros_informado_omie,
+        CASE
+            WHEN identidade_ok THEN resumo_multa
+            ELSE NULL::numeric
+        END AS multa_informada_omie,
+        CASE
+            WHEN (confianca = ANY (ARRAY['alta'::text, 'erp_sem_caixa'::text, 'erp_nao_quitado'::text])) THEN (resumo_juros + resumo_multa)
+            ELSE NULL::numeric
+        END AS encargo_recebido,
+        CASE
+            WHEN (confianca = ANY (ARRAY['alta'::text, 'erp_sem_caixa'::text, 'erp_nao_quitado'::text])) THEN resumo_desconto
+            ELSE NULL::numeric
+        END AS desconto_concedido,
+    (soma_baixas - valor_documento) AS diferenca_caixa_documento,
+        CASE
+            WHEN (confianca = ANY (ARRAY['alta'::text, 'erp_sem_caixa'::text, 'erp_nao_quitado'::text])) THEN 'omie_resumo'::text
+            WHEN (confianca = 'so_diferenca_caixa'::text) THEN 'diferenca_caixa'::text
+            ELSE NULL::text
+        END AS fonte,
+    confianca,
+    resumo_lido_em
+   FROM classificado c;
+
+
+--
+-- Name: VIEW v_titulo_encargos_cr; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.v_titulo_encargos_cr IS 'Por título a receber RECEBIDO/LIQUIDADO: encargo (juros+multa) e desconto efetivos do resumo do Omie, com fonte e confiança (alta | erp_sem_caixa | erp_nao_quitado | divergente | inconsistente | so_diferenca_caixa | sem_dado). Ausente = NULL, nunca 0. encargo_recebido só sai quando nenhuma evidência o contradiz. Política de cobrança (2% + 10% a.m.) fica FORA — a view expõe dias_atraso.';
+
+
+--
 -- Name: whatsapp_messages; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40017,6 +43681,14 @@ ALTER TABLE ONLY public.sku_substituicao ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.sugestao_negociacao_paralela ALTER COLUMN id SET DEFAULT nextval('public.sugestao_negociacao_paralela_id_seq'::regclass);
+
+
+--
+-- Name: farmer_tactical_plans_texto_original farmer_tactical_plans_texto_original_pkey; Type: CONSTRAINT; Schema: private; Owner: -
+--
+
+ALTER TABLE ONLY private.farmer_tactical_plans_texto_original
+    ADD CONSTRAINT farmer_tactical_plans_texto_original_pkey PRIMARY KEY (plan_id);
 
 
 --
@@ -41796,19 +45468,19 @@ ALTER TABLE ONLY public.omie_clientes_nao_vinculados
 
 
 --
--- Name: _quarantine_omie_clientes_20260722 omie_clientes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._quarantine_omie_clientes_20260722
-    ADD CONSTRAINT omie_clientes_pkey PRIMARY KEY (id);
-
-
---
 -- Name: omie_condicao_pagamento_catalogo omie_condicao_pagamento_catalogo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.omie_condicao_pagamento_catalogo
     ADD CONSTRAINT omie_condicao_pagamento_catalogo_pkey PRIMARY KEY (empresa, codigo);
+
+
+--
+-- Name: omie_cota_metodo omie_cota_metodo_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.omie_cota_metodo
+    ADD CONSTRAINT omie_cota_metodo_pkey PRIMARY KEY (conta, metodo);
 
 
 --
@@ -42132,11 +45804,91 @@ ALTER TABLE ONLY public.permission_overrides
 
 
 --
+-- Name: picking_codigos_barras picking_codigos_barras_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_codigos_barras
+    ADD CONSTRAINT picking_codigos_barras_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_coleta_estado picking_coleta_estado_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_coleta_estado
+    ADD CONSTRAINT picking_coleta_estado_pkey PRIMARY KEY (account);
+
+
+--
+-- Name: picking_eventos picking_eventos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_eventos
+    ADD CONSTRAINT picking_eventos_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: picking_events picking_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.picking_events
     ADD CONSTRAINT picking_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_leituras picking_leituras_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_leituras
+    ADD CONSTRAINT picking_leituras_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_linhas picking_linhas_id_tarefa_conta; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_linhas
+    ADD CONSTRAINT picking_linhas_id_tarefa_conta UNIQUE (id, tarefa_id, account);
+
+
+--
+-- Name: picking_linhas picking_linhas_item_unico; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_linhas
+    ADD CONSTRAINT picking_linhas_item_unico UNIQUE (tarefa_id, codigo_item);
+
+
+--
+-- Name: picking_linhas picking_linhas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_linhas
+    ADD CONSTRAINT picking_linhas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: picking_tarefas picking_tarefas_id_conta; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_tarefas
+    ADD CONSTRAINT picking_tarefas_id_conta UNIQUE (id, account);
+
+
+--
+-- Name: picking_tarefas picking_tarefas_pedido_unico; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_tarefas
+    ADD CONSTRAINT picking_tarefas_pedido_unico UNIQUE (account, omie_codigo_pedido);
+
+
+--
+-- Name: picking_tarefas picking_tarefas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_tarefas
+    ADD CONSTRAINT picking_tarefas_pkey PRIMARY KEY (id);
 
 
 --
@@ -43244,6 +46996,14 @@ ALTER TABLE ONLY public.tint_vendas
 
 
 --
+-- Name: tint_watchdog_fase5_amostras tint_watchdog_fase5_amostras_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tint_watchdog_fase5_amostras
+    ADD CONSTRAINT tint_watchdog_fase5_amostras_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: tool_categories tool_categories_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43297,14 +47057,6 @@ ALTER TABLE ONLY public.training_modules
 
 ALTER TABLE ONLY public.omie_servicos
     ADD CONSTRAINT unique_omie_codigo_servico UNIQUE (omie_codigo_servico);
-
-
---
--- Name: _quarantine_omie_clientes_20260722 unique_user_omie; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public._quarantine_omie_clientes_20260722
-    ADD CONSTRAINT unique_user_omie UNIQUE (user_id);
 
 
 --
@@ -44376,6 +48128,13 @@ CREATE INDEX idx_estoque_reservas_pedido_ativa ON public.estoque_reservas USING 
 
 
 --
+-- Name: idx_estoque_reservas_pv_ativa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_estoque_reservas_pv_ativa ON public.estoque_reservas USING btree (omie_account, omie_pedido_id) WHERE ((status = 'ativa'::text) AND (omie_pedido_id IS NOT NULL));
+
+
+--
 -- Name: idx_estoque_sync; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -44789,6 +48548,13 @@ CREATE INDEX idx_gov_iniciativas_empresa_status ON public.gov_iniciativas USING 
 
 
 --
+-- Name: idx_health_history_calculated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_health_history_calculated_at ON public.health_score_history USING btree (calculated_at);
+
+
+--
 -- Name: idx_health_history_customer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -44975,20 +48741,6 @@ CREATE INDEX idx_nv_empresa_synced ON public.omie_clientes_nao_vinculados USING 
 --
 
 CREATE INDEX idx_ocam_user ON public.omie_customer_account_map USING btree (user_id);
-
-
---
--- Name: idx_omie_clientes_codigo_empresa; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX idx_omie_clientes_codigo_empresa ON public._quarantine_omie_clientes_20260722 USING btree (omie_codigo_cliente, empresa_omie);
-
-
---
--- Name: idx_omie_clientes_user_empresa; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX idx_omie_clientes_user_empresa ON public._quarantine_omie_clientes_20260722 USING btree (user_id, empresa_omie);
 
 
 --
@@ -45360,6 +49112,13 @@ CREATE INDEX idx_priority_log_customer ON public.priority_score_log USING btree 
 --
 
 CREATE INDEX idx_priority_log_farmer_date ON public.priority_score_log USING btree (farmer_id, score_date DESC);
+
+
+--
+-- Name: idx_priority_log_score_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_priority_log_score_date ON public.priority_score_log USING btree (score_date);
 
 
 --
@@ -46434,6 +50193,41 @@ CREATE UNIQUE INDEX omie_products_omie_codigo_produto_account_key ON public.omie
 
 
 --
+-- Name: picking_codigos_barras_vigente; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX picking_codigos_barras_vigente ON public.picking_codigos_barras USING btree (account, codigo) WHERE (status <> 'revogado'::text);
+
+
+--
+-- Name: picking_eventos_tarefa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX picking_eventos_tarefa ON public.picking_eventos USING btree (tarefa_id, criado_em);
+
+
+--
+-- Name: picking_leituras_estorno_unico; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX picking_leituras_estorno_unico ON public.picking_leituras USING btree (estorna_leitura_id) WHERE (aceita AND (estorna_leitura_id IS NOT NULL));
+
+
+--
+-- Name: picking_leituras_linha_revisao; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX picking_leituras_linha_revisao ON public.picking_leituras USING btree (linha_id, linha_revisao) WHERE aceita;
+
+
+--
+-- Name: picking_leituras_tarefa; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX picking_leituras_tarefa ON public.picking_leituras USING btree (tarefa_id, atribuicao_id);
+
+
+--
 -- Name: reposicao_alerta_pedido_minimo_ativo; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -46616,6 +50410,13 @@ COMMENT ON INDEX public.ux_farmer_tactical_plans_dia_operacional IS 'Idempotênc
 
 
 --
+-- Name: ux_pedido_compra_sugerido_portal_protocolo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX ux_pedido_compra_sugerido_portal_protocolo ON public.pedido_compra_sugerido USING btree (portal_protocolo) WHERE (portal_protocolo IS NOT NULL);
+
+
+--
 -- Name: ux_sku_fornecedor_externo_ativo; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -46648,6 +50449,20 @@ CREATE CONSTRAINT TRIGGER pcp_rota_saidas_valida AFTER INSERT OR DELETE OR UPDAT
 --
 
 CREATE TRIGGER pcp_rotas_imutavel BEFORE UPDATE ON public.pcp_bom_rotas FOR EACH ROW EXECUTE FUNCTION public.fn_pcp_rota_imutavel();
+
+
+--
+-- Name: picking_leituras picking_leituras_imutavel_linha; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER picking_leituras_imutavel_linha BEFORE DELETE OR UPDATE ON public.picking_leituras FOR EACH ROW EXECUTE FUNCTION public.picking_leituras_imutavel();
+
+
+--
+-- Name: picking_leituras picking_leituras_imutavel_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER picking_leituras_imutavel_truncate BEFORE TRUNCATE ON public.picking_leituras FOR EACH STATEMENT EXECUTE FUNCTION public.picking_leituras_imutavel();
 
 
 --
@@ -46791,6 +50606,13 @@ CREATE TRIGGER trg_campanha_alerta AFTER INSERT OR UPDATE OF estado ON public.pr
 
 
 --
+-- Name: pedido_compra_sugerido trg_carimbo_recusa_definitiva; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_carimbo_recusa_definitiva BEFORE UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.reposicao__carimbo_recusa_definitiva();
+
+
+--
 -- Name: carteira_assignments trg_carteira_cleanup_orphan_score; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -46851,6 +50673,13 @@ CREATE TRIGGER trg_customer_contacts_updated_at BEFORE UPDATE ON public.customer
 --
 
 CREATE TRIGGER trg_customer_processes_updated_at BEFORE UPDATE ON public.customer_processes FOR EACH ROW EXECUTE FUNCTION public.kb_documents_set_updated_at();
+
+
+--
+-- Name: estoque_reservas trg_estoque_reservas_pv_write_once; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_estoque_reservas_pv_write_once BEFORE INSERT OR UPDATE OF omie_pedido_id, omie_account ON public.estoque_reservas FOR EACH ROW EXECUTE FUNCTION private.estoque_reservas_pv_write_once();
 
 
 --
@@ -46942,6 +50771,13 @@ CREATE TRIGGER trg_fin_dividas_autor BEFORE INSERT OR UPDATE ON public.fin_divid
 --
 
 CREATE TRIGGER trg_fin_dre_custo_tipo_autor BEFORE INSERT OR UPDATE ON public.fin_dre_custo_tipo FOR EACH ROW EXECUTE FUNCTION public.fin_dre_custo_tipo_set_autor();
+
+
+--
+-- Name: fin_dre_snapshots trg_fin_dre_snapshots_contrato_fase2; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_fin_dre_snapshots_contrato_fase2 BEFORE INSERT OR UPDATE ON public.fin_dre_snapshots FOR EACH ROW EXECUTE FUNCTION public.fin_dre_snapshots_contrato_fase2();
 
 
 --
@@ -47047,13 +50883,6 @@ CREATE TRIGGER trg_mapping_gate BEFORE UPDATE ON public.fin_fechamentos FOR EACH
 --
 
 CREATE TRIGGER trg_melhoria_itens_touch BEFORE UPDATE ON public.melhoria_itens FOR EACH ROW EXECUTE FUNCTION public.melhoria_itens_touch_updated_at();
-
-
---
--- Name: _quarantine_omie_clientes_20260722 trg_omie_clientes_to_ledger; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_omie_clientes_to_ledger AFTER INSERT ON public._quarantine_omie_clientes_20260722 FOR EACH ROW EXECUTE FUNCTION public.tg_omie_clientes_to_ledger();
 
 
 --
@@ -47313,10 +51142,45 @@ CREATE TRIGGER trg_tactical_plan_recusa_mascarado BEFORE INSERT ON public.farmer
 
 
 --
+-- Name: farmer_tactical_plans trg_tactical_plan_saneia_margem; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tactical_plan_saneia_margem BEFORE INSERT OR UPDATE OF approach_strategy, approach_strategy_b, implication_question, offer_transition, diagnostic_questions, probable_objections, operational_risks ON public.farmer_tactical_plans FOR EACH ROW EXECUTE FUNCTION private.tactical_plan_saneia_margem();
+
+
+--
 -- Name: tarefas trg_tarefas_guard_comprovacao; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_tarefas_guard_comprovacao BEFORE UPDATE ON public.tarefas FOR EACH ROW EXECUTE FUNCTION public.tarefas_guard_comprovacao();
+
+
+--
+-- Name: tint_formulas trg_tint_formulas_tombstone_fase5_del; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tint_formulas_tombstone_fase5_del BEFORE DELETE ON public.tint_formulas FOR EACH ROW WHEN ((old.desativada_motivo = 'fase5_geracao_legada'::text)) EXECUTE FUNCTION public.tint_formulas_guard_tombstone_fase5();
+
+
+--
+-- Name: tint_formulas trg_tint_formulas_tombstone_fase5_ins; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tint_formulas_tombstone_fase5_ins BEFORE INSERT ON public.tint_formulas FOR EACH ROW WHEN ((new.desativada_motivo = 'fase5_geracao_legada'::text)) EXECUTE FUNCTION public.tint_formulas_guard_tombstone_fase5();
+
+
+--
+-- Name: tint_formulas trg_tint_formulas_tombstone_fase5_upd; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tint_formulas_tombstone_fase5_upd BEFORE UPDATE ON public.tint_formulas FOR EACH ROW WHEN (((old.desativada_motivo = 'fase5_geracao_legada'::text) OR (new.desativada_motivo = 'fase5_geracao_legada'::text))) EXECUTE FUNCTION public.tint_formulas_guard_tombstone_fase5();
+
+
+--
+-- Name: tint_subcolecoes trg_tint_subcolecoes_tombstone_fase5_upd; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tint_subcolecoes_tombstone_fase5_upd BEFORE UPDATE ON public.tint_subcolecoes FOR EACH ROW WHEN (((old.id_subcolecao_sayersystem = '1'::text) AND ((new.id_subcolecao_sayersystem IS DISTINCT FROM old.id_subcolecao_sayersystem) OR (new.account IS DISTINCT FROM old.account)))) EXECUTE FUNCTION public.tint_subcolecoes_guard_tombstone_fase5();
 
 
 --
@@ -47509,13 +51373,6 @@ CREATE TRIGGER update_nfe_recebimentos_updated_at BEFORE UPDATE ON public.nfe_re
 
 
 --
--- Name: _quarantine_omie_clientes_20260722 update_omie_clientes_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER update_omie_clientes_updated_at BEFORE UPDATE ON public._quarantine_omie_clientes_20260722 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
-
-
---
 -- Name: omie_ordens_servico update_omie_ordens_servico_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -47604,6 +51461,14 @@ CREATE TRIGGER update_warehouses_updated_at BEFORE UPDATE ON public.warehouses F
 --
 
 CREATE TRIGGER vendor_sip_credentials_updated_at_trigger BEFORE UPDATE ON public.vendor_sip_credentials FOR EACH ROW EXECUTE FUNCTION public.update_vendor_sip_credentials_updated_at();
+
+
+--
+-- Name: farmer_tactical_plans_texto_original farmer_tactical_plans_texto_original_plan_id_fkey; Type: FK CONSTRAINT; Schema: private; Owner: -
+--
+
+ALTER TABLE ONLY private.farmer_tactical_plans_texto_original
+    ADD CONSTRAINT farmer_tactical_plans_texto_original_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.farmer_tactical_plans(id) ON DELETE CASCADE;
 
 
 --
@@ -48543,6 +52408,22 @@ ALTER TABLE ONLY public.permission_overrides
 
 
 --
+-- Name: picking_eventos picking_eventos_linha_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_eventos
+    ADD CONSTRAINT picking_eventos_linha_fk FOREIGN KEY (linha_id, tarefa_id, account) REFERENCES public.picking_linhas(id, tarefa_id, account);
+
+
+--
+-- Name: picking_eventos picking_eventos_tarefa_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_eventos
+    ADD CONSTRAINT picking_eventos_tarefa_fk FOREIGN KEY (tarefa_id, account) REFERENCES public.picking_tarefas(id, account);
+
+
+--
 -- Name: picking_events picking_events_picking_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -48556,6 +52437,38 @@ ALTER TABLE ONLY public.picking_events
 
 ALTER TABLE ONLY public.picking_events
     ADD CONSTRAINT picking_events_picking_task_item_id_fkey FOREIGN KEY (picking_task_item_id) REFERENCES public.picking_task_items(id) ON DELETE CASCADE;
+
+
+--
+-- Name: picking_leituras picking_leituras_estorna_leitura_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_leituras
+    ADD CONSTRAINT picking_leituras_estorna_leitura_id_fkey FOREIGN KEY (estorna_leitura_id) REFERENCES public.picking_leituras(id);
+
+
+--
+-- Name: picking_leituras picking_leituras_linha_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_leituras
+    ADD CONSTRAINT picking_leituras_linha_fk FOREIGN KEY (linha_id, tarefa_id, account) REFERENCES public.picking_linhas(id, tarefa_id, account);
+
+
+--
+-- Name: picking_leituras picking_leituras_tarefa_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_leituras
+    ADD CONSTRAINT picking_leituras_tarefa_fk FOREIGN KEY (tarefa_id, account) REFERENCES public.picking_tarefas(id, account);
+
+
+--
+-- Name: picking_linhas picking_linhas_tarefa_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.picking_linhas
+    ADD CONSTRAINT picking_linhas_tarefa_fk FOREIGN KEY (tarefa_id, account) REFERENCES public.picking_tarefas(id, account);
 
 
 --
@@ -49261,6 +53174,12 @@ ALTER TABLE ONLY public.whatsapp_template_sends
 ALTER TABLE ONLY public.whatsapp_template_sends
     ADD CONSTRAINT whatsapp_template_sends_template_nome_fkey FOREIGN KEY (template_nome) REFERENCES public.whatsapp_templates(nome);
 
+
+--
+-- Name: farmer_tactical_plans_texto_original; Type: ROW SECURITY; Schema: private; Owner: -
+--
+
+ALTER TABLE private.farmer_tactical_plans_texto_original ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: fornecedor_cadeia_logistica_historico Admin pode inserir historico cadeia; Type: POLICY; Schema: public; Owner: -
@@ -50019,13 +53938,6 @@ CREATE POLICY "Staff can manage inventory" ON public.inventory_position USING ((
 --
 
 CREATE POLICY "Staff can manage learning weights" ON public.farmer_learning_weights USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
-
-
---
--- Name: _quarantine_omie_clientes_20260722 Staff can manage omie clients; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Staff can manage omie clients" ON public._quarantine_omie_clientes_20260722 TO authenticated USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role))) WITH CHECK ((public.has_role(auth.uid(), 'master'::public.app_role) OR public.has_role(auth.uid(), 'employee'::public.app_role)));
 
 
 --
@@ -51002,13 +54914,6 @@ CREATE POLICY "Users can view their own membership" ON public.carteira_membershi
 
 
 --
--- Name: _quarantine_omie_clientes_20260722 Users can view their own omie client mapping; Type: POLICY; Schema: public; Owner: -
---
-
-CREATE POLICY "Users can view their own omie client mapping" ON public._quarantine_omie_clientes_20260722 FOR SELECT USING ((auth.uid() = user_id));
-
-
---
 -- Name: omie_ordens_servico Users can view their own order sync data; Type: POLICY; Schema: public; Owner: -
 --
 
@@ -51100,12 +55005,6 @@ CREATE POLICY "View carteira por visibilidade" ON public.carteira_assignments FO
 
 CREATE POLICY "View coverage envolvido" ON public.carteira_coverage FOR SELECT USING ((public.has_role(auth.uid(), 'master'::public.app_role) OR (covering_user_id = auth.uid()) OR (covered_user_id = auth.uid())));
 
-
---
--- Name: _quarantine_omie_clientes_20260722; Type: ROW SECURITY; Schema: public; Owner: -
---
-
-ALTER TABLE public._quarantine_omie_clientes_20260722 ENABLE ROW LEVEL SECURITY;
 
 --
 -- Name: abc_xyz_classification; Type: ROW SECURITY; Schema: public; Owner: -
@@ -51897,7 +55796,7 @@ ALTER TABLE public.empresa_configuracao_custos ENABLE ROW LEVEL SECURITY;
 -- Name: reposicao_estoque_nao_confirmado_log estoque_nao_confirmado_log_ins; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY estoque_nao_confirmado_log_ins ON public.reposicao_estoque_nao_confirmado_log FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY estoque_nao_confirmado_log_ins ON public.reposicao_estoque_nao_confirmado_log FOR INSERT TO authenticated WITH CHECK (( SELECT private.cap_compras_escrever(( SELECT auth.uid() AS uid)) AS cap_compras_escrever));
 
 
 --
@@ -53817,6 +57716,12 @@ ALTER TABLE public.omie_clientes_nao_vinculados ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.omie_condicao_pagamento_catalogo ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: omie_cota_metodo; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.omie_cota_metodo ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: omie_customer_account_map; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -54187,10 +58092,81 @@ ALTER TABLE public.permission_change_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.permission_overrides ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: picking_codigos_barras; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_codigos_barras ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_codigos_barras picking_codigos_barras_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY picking_codigos_barras_staff_select ON public.picking_codigos_barras FOR SELECT TO authenticated USING ((( SELECT public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) AS has_role) OR ( SELECT public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) AS has_role)));
+
+
+--
+-- Name: picking_coleta_estado; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_coleta_estado ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_eventos; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_eventos ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_eventos picking_eventos_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY picking_eventos_staff_select ON public.picking_eventos FOR SELECT TO authenticated USING ((( SELECT public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) AS has_role) OR ( SELECT public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) AS has_role)));
+
+
+--
 -- Name: picking_events; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
 ALTER TABLE public.picking_events ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_leituras; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_leituras ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_leituras picking_leituras_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY picking_leituras_staff_select ON public.picking_leituras FOR SELECT TO authenticated USING ((( SELECT public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) AS has_role) OR ( SELECT public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) AS has_role)));
+
+
+--
+-- Name: picking_linhas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_linhas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_linhas picking_linhas_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY picking_linhas_staff_select ON public.picking_linhas FOR SELECT TO authenticated USING ((( SELECT public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) AS has_role) OR ( SELECT public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) AS has_role)));
+
+
+--
+-- Name: picking_tarefas; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.picking_tarefas ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: picking_tarefas picking_tarefas_staff_select; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY picking_tarefas_staff_select ON public.picking_tarefas FOR SELECT TO authenticated USING ((( SELECT public.has_role(( SELECT auth.uid() AS uid), 'employee'::public.app_role) AS has_role) OR ( SELECT public.has_role(( SELECT auth.uid() AS uid), 'master'::public.app_role) AS has_role)));
+
 
 --
 -- Name: picking_task_items; Type: ROW SECURITY; Schema: public; Owner: -
@@ -54592,7 +58568,7 @@ ALTER TABLE public.reposicao_motor_run ENABLE ROW LEVEL SECURITY;
 -- Name: reposicao_motor_run reposicao_motor_run_ins; Type: POLICY; Schema: public; Owner: -
 --
 
-CREATE POLICY reposicao_motor_run_ins ON public.reposicao_motor_run FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY reposicao_motor_run_ins ON public.reposicao_motor_run FOR INSERT TO authenticated WITH CHECK (( SELECT private.cap_compras_escrever(( SELECT auth.uid() AS uid)) AS cap_compras_escrever));
 
 
 --
@@ -56280,6 +60256,12 @@ ALTER TABLE public.tint_vendas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tint_vendas_itens ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: tint_watchdog_fase5_amostras; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.tint_watchdog_fase5_amostras ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: tool_categories; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -56643,5 +60625,5 @@ CREATE POLICY wts_staff_read ON public.whatsapp_template_sends FOR SELECT TO aut
 -- PostgreSQL database dump complete
 --
 
-\unrestrict SbsqGAuVJJeXXTpgiIv1laTtKk7Gra4RI3YQQFdDJNiY4oZcqcKAWX3JrfxgkoJ
+\unrestrict mPYOAbRhM9fbnhsDn7eEcwMOtB1uVcGJW4BidNkn98bu0i0vRtaly3P7aQuQmcS
 

@@ -16,6 +16,10 @@
 // fatia de propósito: verificar só a de baixo deixaria o batch inverificável, que é como o par
 // chegou até aqui.
 //
+// v1.1 (incidente 2026-10-09, cron `succeeded` com ZERO planos e causa irrecuperável): o lote
+// grava o próprio corpo em acoes_execucoes (slug `tactical_plans_batch.pregerar`). A prova
+// barata do deploy é a linha aparecer na execução das 08:00 UTC seguinte — sem sondar.
+//
 // A sonda vem DEPOIS do gate (comparação de env pura com cron-secret) e ANTES do `createClient`.
 
 export { classificarSonda, erroSondaAmbigua } from "../_shared/sonda-versao.ts";
@@ -25,7 +29,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("tactical-plans-batch");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+export const VERSAO = "v1.1-registro-acoes-execucoes";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

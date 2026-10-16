@@ -251,9 +251,13 @@ describe('o repo', () => {
   });
 
   it('sem a 20260929001651, os 5 corpos que ela conserta (e têm CREATE antigo no repo) voltam como NOVOS', async () => {
-    // A 20261001014210 (universo de pedidos) recria get_regua_preco POR CIMA da FIX e herda o hoje de SP: no
-    // contrafactual ela sai junto, senão a régua não volta crua (a última a recriar vence).
-    const SUCESSORAS = ['supabase/migrations/20261001014210_universo_pedidos_preco.sql'];
+    // A 20261001014210 (universo de pedidos) recria get_regua_preco POR CIMA da FIX e herda o hoje de SP; a
+    // 20261015221700 (falha honesta do cursor de vendas) faz o mesmo com vendas_sync_semear_janela. No
+    // contrafactual elas saem juntas, senão o corpo não volta cru (a última a recriar vence).
+    const SUCESSORAS = [
+      'supabase/migrations/20261001014210_universo_pedidos_preco.sql',
+      'supabase/migrations/20261015221700_vendas_sync_cursor_falha_honesta.sql',
+    ];
     const semFix = REPO.arquivos.filter((a) => a.caminho !== FIX && !SUCESSORAS.includes(a.caminho));
     const v = veredito(analisar(semFix, await corposCedendo(semFix)), true);
     expect(v.codigo).toBe(1);

@@ -17320,10 +17320,17 @@ export type Database = {
           completed_at: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas: number
+          falhou_em: string | null
           heartbeat_at: string | null
           last_error_kind: string | null
+          lease_token: string | null
+          motivo_falha: string | null
           next_page: number | null
+          pausas_sem_progresso: number
+          pedidos_falhos: Json
           running_since: string | null
+          tentativas_falha: number
           updated_at: string
         }
         Insert: {
@@ -17331,10 +17338,17 @@ export type Database = {
           completed_at?: string | null
           date_from: string
           date_to: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Update: {
@@ -17342,10 +17356,17 @@ export type Database = {
           completed_at?: string | null
           date_from?: string
           date_to?: string
+          falhas_consecutivas?: number
+          falhou_em?: string | null
           heartbeat_at?: string | null
           last_error_kind?: string | null
+          lease_token?: string | null
+          motivo_falha?: string | null
           next_page?: number | null
+          pausas_sem_progresso?: number
+          pedidos_falhos?: Json
           running_since?: string | null
+          tentativas_falha?: number
           updated_at?: string
         }
         Relationships: []
@@ -21984,7 +22005,6 @@ export type Database = {
       tint_promocao_tick: { Args: never; Returns: Json }
       tint_promocao_watchdog: { Args: never; Returns: Json }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
-      tint_reaplicar_snapshot_tick: { Args: never; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {
           p_account: string
@@ -22038,6 +22058,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_finish_fenced: {
+        Args: {
+          p_account: string
+          p_complete: boolean
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+          p_next_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_heartbeat: {
         Args: {
           p_account: string
@@ -22047,9 +22079,37 @@ export type Database = {
         }
         Returns: undefined
       }
+      vendas_sync_heartbeat_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_lease_token: string
+          p_page: number
+        }
+        Returns: boolean
+      }
       vendas_sync_lease_acquire: {
         Args: { p_account: string; p_date_from: string; p_date_to: string }
         Returns: number
+      }
+      vendas_sync_lease_acquire_fenced: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
+      vendas_sync_rearmar_janela: {
+        Args: { p_account: string; p_date_from: string; p_date_to: string }
+        Returns: Json
+      }
+      vendas_sync_registrar_falhas_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_falhas: Json
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_release: {
         Args: {
@@ -22059,6 +22119,16 @@ export type Database = {
           p_last_error_kind: string
         }
         Returns: undefined
+      }
+      vendas_sync_release_fenced: {
+        Args: {
+          p_account: string
+          p_date_from: string
+          p_date_to: string
+          p_last_error_kind: string
+          p_lease_token: string
+        }
+        Returns: boolean
       }
       vendas_sync_semear_janela: {
         Args: { p_accounts?: string[]; p_date_from: string; p_date_to: string }

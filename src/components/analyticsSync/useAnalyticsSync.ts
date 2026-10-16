@@ -22,6 +22,7 @@ import {
   type DesfechoSemeadura,
   type JanelaCursorRow,
   type JanelaImportacao,
+  type StatusJanelaConta,
 } from "./janelas";
 
 const JANELAS_CURSOR_QUERY_KEY = "vendas-sync-cursor-janelas";
@@ -386,13 +387,20 @@ export function useAnalyticsSync() {
   const { data: janelasCursor } = useQuery({
     queryKey: [JANELAS_CURSOR_QUERY_KEY],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("vendas_sync_cursor")
-        .select("*")
-        .order("updated_at", { ascending: false })
-        .limit(12);
-      if (error) throw error;
-      return data as JanelaCursorRow[];
+      // As 12 mais recentes + TODAS as terminais (falhou e não completou): a terminal é a única via de
+      // "Re-tentar" e não pode sumir do card por ser antiga ou por ficar fora do top-12 (Codex 2º, P5).
+      const [recentes, terminais] = await Promise.all([
+        supabase.from("vendas_sync_cursor").select("*").order("updated_at", { ascending: false }).limit(12),
+        supabase.from("vendas_sync_cursor").select("*").not("falhou_em", "is", null).is("completed_at", null)
+          .order("falhou_em", { ascending: false }).limit(200),
+      ]);
+      if (recentes.error) throw recentes.error;
+      if (terminais.error) throw terminais.error;
+      const porChave = new Map<string, JanelaCursorRow>();
+      for (const r of [...(terminais.data ?? []), ...(recentes.data ?? [])] as JanelaCursorRow[]) {
+        porChave.set(`${r.account}|${r.date_from}|${r.date_to}`, r);
+      }
+      return [...porChave.values()];
     },
     refetchInterval: (query) => (haJanelaAberta(query.state.data ?? []) ? 8000 : false),
   });
@@ -437,6 +445,38 @@ export function useAnalyticsSync() {
     onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
   });
 
+  // Re-armar uma janela TERMINAL (falhou): ação sobre UM registro — o estado vive no próprio cursor,
+  // então useMutation simples (não registra em acoes_execucoes). Staff-gated na RPC (20261015221700).
+  const rearmarJanelaMutation = useMutation({
+    mutationFn: async (j: StatusJanelaConta) => {
+      const { data, error } = await supabase.rpc("vendas_sync_rearmar_janela", {
+        p_account: j.account,
+        p_date_from: j.dateFrom,
+        p_date_to: j.dateTo,
+      });
+      if (error) throw new Error(error.message);
+      return { janela: j, r: data as { rearmada?: boolean; motivo?: string | null } | null };
+    },
+    onSuccess: ({ janela, r }) => {
+      if (r?.rearmada) {
+        toast.success(`Janela ${janela.account} ${janela.janela} re-armada`, {
+          description: "Volta à fila do servidor e é varrida de novo desde a página 1.",
+        });
+      } else {
+        toast.warning("Janela não re-armada", {
+          description:
+            r?.motivo === "ja_pendente_outra"
+              ? "Há outra importação em andamento nesta conta — re-tente quando ela terminar."
+              : "A janela não está mais no estado de falha (alguém já re-armou ou ela mudou).",
+        });
+      }
+    },
+    onError: (error) => {
+      toast.error("Erro ao re-armar a janela", { description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe." });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [JANELAS_CURSOR_QUERY_KEY] }),
+  });
+
   const getStateFor = (entity: string, account: string) =>
     syncStates?.find((s) => s.entity_type === entity && s.account === account);
 
@@ -473,6 +513,7 @@ export function useAnalyticsSync() {
     addressSyncProgress,
     janelasImportacao,
     importacaoEmAndamento,
+    rearmarJanelaMutation,
     editingConfig,
     setEditingConfig,
     getStateFor,
