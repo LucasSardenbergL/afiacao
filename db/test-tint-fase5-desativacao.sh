@@ -724,7 +724,9 @@ falsifica() { # <rotulo> <expressao sed> <esperado_b|-> <descricao>
   if cmp -s "$sab" "$MIGRATION7"; then
     bad "$rot a sabotagem NAO casou o alvo (sed sem efeito) — falsificação inerte"; rm -f "$sab"; return
   fi
-  desforja; out="$(P --single-transaction -f "$sab" 2>&1)"; rc=$?; forja
+  # `&& rc=0 || rc=$?`: sob `set -e` uma atribuição que falha MATARIA o harness
+  # (é a falha ESPERADA aqui) — a captura tem de estar num contexto que o desliga.
+  desforja; out="$(P --single-transaction -f "$sab" 2>&1)" && rc=0 || rc=$?; forja
   case "$out" in
     *"pós-condição: o endurecimento do carimbo não está na view"*)
       if [ "$rc" -ne 0 ] && [ "$(v10)" = "400|400|false" ]; then ok "${rot}a a PÓS-CONDIÇÃO aborta e reverte — $desc"
