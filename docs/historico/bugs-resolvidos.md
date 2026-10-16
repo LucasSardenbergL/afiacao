@@ -1099,3 +1099,18 @@ pelo founder no SQL Editor e versionada em `20261012233000_picking_cron_fora_do_
 (`select schedule, jobname from cron.job where active order by 1`), não só os que o PR lembra. E o
 "ocupado" do `obterVez` sempre carrega o fim do lease (150 s), então qualquer sobreposição vira erro
 — a espera curta só vale para o "aguarde" do Omie.
+
+## 2026-10-16 — NF que chega antes do pedido virava órfã para sempre (`omie-sync-nfes-recebidas`)
+
+**Sintoma:** 13 pedidos Sayerlack de mai/jun "sem NF" travavam a guarda de caixa do backtest do
+orçamento de compra v1 (#3103: 268/272 ciclos indeterminados) — 5 deles tinham NF e título pago.
+**Causa:** a edge casa NF↔pedido por `nNumPedCompra` = `numero_contrato_fornecedor`. A NF de maio chegou
+quando a linha do pedido ainda não existia (nasceu em 26/06) → órfã (`omie_codigo_pedido = -nIdReceb`),
+e o laço só revê a janela de 3 dias do cron: nada revisitava a órfã. 25 vínculos recuperáveis em 10 órfãs.
+**Correção (v1.5):** todo run relê o `itensRecebimento` do `raw_data` das órfãs (já está no banco, sem
+Omie) e preenche o pedido SEM NF por compare-and-set; pedido com outra NF fica intocado e contado; a
+órfã não é apagada (cascata em `sku_leadtime_history`). Ver `reconciliacao.ts`.
+**Lição:** casamento por chave de OUTRA entidade que pode nascer depois precisa de passo de
+reconciliação idempotente — "não casou agora" não é "não casa nunca". Ponta aberta: 000936908 e
+000945865 estão no CP e fora do rastreio; hipótese (não provada) é a janela incremental de 3 dias por
+`dtEmissao` — NF lançada no recebimento depois dela nunca é listada. Caminho: reprocesso com janela.
