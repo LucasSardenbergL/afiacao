@@ -228,6 +228,24 @@
       "md5": "ca824f4f04b38e57402320a9f354b169",
       "md5Tokens": "70f4d4dc4f639a56b0d0b63067de55b6",
       "desde": "2026-10-12"
+    },
+    {
+      "funcao": "has_role",
+      "identidade": "uuid,app_role",
+      "classe": "PATCH",
+      "patch": "20261015120000_tactical_plans_margem_rpc_saneia_texto.sql",
+      "efeito": "SO_CITA",
+      "motivo": "Só cita: guard PRE `to_regprocedure('public.has_role(uuid,public.app_role)')` e chamadas no corpo de get_planos_margem. Prod (xmin 9106714) conferido via psql-ro em 2026-10-16.",
+      "desde": "2026-10-16"
+    },
+    {
+      "funcao": "get_planos_margem",
+      "identidade": "uuid[]",
+      "classe": "PATCH",
+      "patch": "20261015120000_tactical_plans_margem_rpc_saneia_texto.sql",
+      "efeito": "SO_CITA",
+      "motivo": "O 'patch' é a própria migration do CREATE: a postcondição POS5 lê pg_get_functiondef e procura 'cap_custo_ler'. md5(prosrc) de prod (xmin 12050366) = md5 do corpo do CREATE = 3f7e2616681ecdd48e9d3bd8555b2b61, conferido via psql-ro em 2026-10-16.",
+      "desde": "2026-10-16"
     }
   ]
 }
