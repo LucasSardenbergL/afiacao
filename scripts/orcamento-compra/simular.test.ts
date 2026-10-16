@@ -312,13 +312,13 @@ describe('R31 — precisão por episódio (portão da v2)', () => {
     ciclo(2, '2026-09-03', [corte('A', 'teria_rompido', 50), corte('B', 'eliminado', 40)]),
     ciclo(3, '2026-09-20', [corte('A', 'adiado', 30), corte('C', 'eliminado', 70), corte('D', null, 20, 'sem_score')]),
   ];
-  it('episódio = dedup 7d; teria_rompido se QUALQUER corte romperia; senão a classe do 1º corte', () => {
+  it('episódio = dedup 7d; teria_rompido se QUALQUER corte romperia; senão o pior caso (R37)', () => {
     const p = precisaoPorEpisodio(efetivos);
-    // episódios: A(01–03/09, valor 100, teria_rompido) · A(20/09, 30, adiado) · B(01–03/09, indeterminado pelo 1º corte)
-    //            C(70, eliminado) · D(só sem_score, sem classe → indeterminado). E (sem preço) não é episódio.
+    // episódios: A(01–03/09, valor 100, teria_rompido) · A(20/09, 30, adiado) · B(01–03/09, indeterminado)
+    //            C(70, eliminado). R48: D (só sem_score) é revisão humana, não episódio; E (sem preço) também não.
     expect(p.n).toBe(3);
-    expect(p.indeterminados).toBe(2);
-    expect(p.cobertura).toBeCloseTo(3 / 5, 12);
+    expect(p.indeterminados).toBe(1);
+    expect(p.cobertura).toBeCloseTo(3 / 4, 12);
     expect(p.precisao).toBeCloseTo((30 + 70) / (100 + 30 + 70), 12);
   });
   it('sem episódio classificado → precisão e cobertura ausentes (nunca 0 nem 100%)', () => {
@@ -459,3 +459,131 @@ describe('onda final — base de caixa as-of (R34, R35, R38, R39, R41, R42, R45,
     expect(e.tipo === 'indeterminado' && e.camadas).toContain('snapshot');
   });
 });
+
+describe('onda final — medição (R32, R33, R37, R46, R48, R51)', () => {
+  // Codex P1-1: estoque 10 no fim de 30/09, recebimento de 3 em 03/10 (dia 2), demanda 2/dia de 01 a 06/10, PP 0, L 2.
+  // Linha de 4 un: k=1 protegida, k=2..4 cortadas (caixa zerado). Tirar 1 un por vez → adiado; tirar as 3 juntas → 2 un perdidas.
+  const conjunto = (): Fatos => ({
+    ...fatos,
+    meta: { ...fatos.meta, hoje: '2026-10-08' },
+    linhas: [{ ...fatos.linhas[0], estoque_fisico: 10, ponto_pedido: 0 }],
+    demanda: [
+      ...Array.from({ length: 183 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
+      ...Array.from({ length: 6 }, (_, i) => ({ sku: '9', data: dia([2026, 9, 1], i), qtde: 2 })),
+    ],
+    recebimentos: [{ sku: '9', data: '2026-10-03', qtde: 3 }],
+    estoque: [{ sku: '9', estoque_fisico: 1 }],
+    snapshots: [{ ...fatos.snapshots[0], saldo_tesouraria: 0 }],
+    lag_obs: lagObs(2, 1, 2),
+    chegadas: [{ pedido_id: 1, t4: '2026-10-03' }],
+  });
+  it('R32: replay por (ciclo, SKU) remove TODAS as embalagens cortadas juntas (Codex P1-1)', () => {
+    const r = simularCiclo(conjunto(), 1, cfg);
+    expect(r.cortesDetalhe.map((x) => [x.k, x.motivo])).toEqual([[2, 'financeiro'], [3, 'financeiro'], [4, 'financeiro']]);
+    expect(r.cortesDetalhe.map((x) => x.classe)).toEqual(Array(3).fill('teria_rompido'));
+  });
+
+  // Codex P1-2: estoque 2 no fim de 30/09, compra de 5 recebida em 02/10 (dia 1), demanda 1/dia de 02 a 05/10, L = 5.
+  const chegadaReal = (t4: string | null): Fatos => ({
+    ...fatos,
+    meta: { ...fatos.meta, hoje: '2026-10-08' },
+    linhas: [{ ...fatos.linhas[0], qtde: 5, estoque_atual: 100, estoque_fisico: 2, ponto_pedido: 0 }],
+    demanda: [
+      ...Array.from({ length: 183 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
+      ...Array.from({ length: 4 }, (_, i) => ({ sku: '9', data: dia([2026, 9, 2], i), qtde: 1 })),
+    ],
+    recebimentos: [{ sku: '9', data: '2026-10-02', qtde: 5 }],
+    estoque: [{ sku: '9', estoque_fisico: 3 }],
+    snapshots: [{ ...fatos.snapshots[0], saldo_tesouraria: 0 }],
+    lag_obs: lagObs(2, 1, 5),
+    chegadas: [{ pedido_id: 1, t4 }],
+  });
+  it('R33: remoção no recebimento REAL (t4) do pedido, não na chegada mediana (Codex P1-2)', () => {
+    const r = simularCiclo(chegadaReal('2026-10-02'), 1, cfg);
+    expect(r.cortesDetalhe).toHaveLength(5);
+    expect(r.cortesDetalhe.map((x) => [x.classe, x.chegadaAproximada])).toEqual(Array(5).fill(['teria_rompido', false]));
+  });
+  it('R33: sem t4 → chegada mediana L e marca aproximada', () => {
+    const r = simularCiclo(chegadaReal(null), 1, cfg);
+    expect(r.cortesDetalhe.every((x) => x.chegadaAproximada === true)).toBe(true);
+    expect(r.cortesDetalhe.every((x) => x.classe === 'adiado')).toBe(true);
+  });
+  it('R33: t4 depois de hoje → indeterminado (a remoção ainda não aconteceu)', () => {
+    const r = simularCiclo(chegadaReal('2026-10-09'), 1, cfg);
+    expect(r.cortesDetalhe.every((x) => x.classe === 'indeterminado')).toBe(true);
+  });
+
+  const corte = (sku: string, classe: DetalheCorte['classe'], valor: number | null, motivo = 'economico'): DetalheCorte => ({
+    sku, k: 1, qtde: 1, valor, motivo, classe, estoqueMedioCom: null, estoqueMedioSem: null, precoUnit: 10, fechamentoOk: true, chegadaAproximada: false,
+  });
+  const ciclo = (cicloId: number, data: string, cortesDetalhe: DetalheCorte[]): ResultadoCiclo => ({
+    cicloId, data, status: 'disparado', valorMotor: 0, valorAceito: 0, aceitas: 0, cortadas: cortesDetalhe.length,
+    embalagensSemDesembolso: 0, protegidas: 0, cortesPorMotivo: {}, estado: { tipo: 'viavel', piso: 0, dataPiso: data },
+    scoreMarginal: null, escassezCaixa: false, semScore: [], sensiveisAoModelo: 0, fechamento: [], cortesDetalhe,
+  });
+  it('R37: episódio com qualquer corte indeterminado é indeterminado — o 1º corte conhecido não cobre o resto (Codex P1-6)', () => {
+    const p = precisaoPorEpisodio([
+      ciclo(1, '2026-09-01', [corte('A', 'eliminado', 10)]),
+      ciclo(2, '2026-09-03', [corte('A', 'indeterminado', 1_000)]),
+    ]);
+    expect(p).toMatchObject({ precisao: null, n: 0, indeterminados: 1, cobertura: 0 });
+  });
+  it('R37: teria_rompido ainda vence indeterminado (controle)', () => {
+    const p = precisaoPorEpisodio([
+      ciclo(1, '2026-09-01', [corte('A', 'indeterminado', 10)]),
+      ciclo(2, '2026-09-03', [corte('A', 'teria_rompido', 1_000)]),
+    ]);
+    expect(p).toMatchObject({ precisao: 0, n: 1, indeterminados: 0 });
+  });
+
+  it('R48: sem_score com preço é revisão humana — fora do valor cortado e dos episódios', () => {
+    const f = cortavel(65);
+    const b = backtest({ ...f, params: [{ ...f.params[0], preco_venda_medio: null }] }, cfg).resumo;
+    expect(b.valorCortadoEfetivo).toBe(0);
+    expect(b.episodios).toBe(0);
+    // k=1 protegida (aceita); k=2..4 sem score
+    expect(b.revisaoHumana.embalagens).toBe(3);
+    expect(b.revisaoHumana.valor).toBeCloseTo(3 * 10 * 1.025, 9);
+  });
+
+  it('R51: "orçamento aceitaria" só soma ciclos com guarda de caixa; indeterminado vai em KPI próprio', () => {
+    const dois: Fatos = {
+      ...fatos,
+      ciclos: [fatos.ciclos[0], { ...fatos.ciclos[0], id: 2, data_ciclo: '2026-10-03', horario_geracao: '2026-10-03T12:00:00Z' }],
+      linhas: [fatos.linhas[0], { ...fatos.linhas[0], raiz: 2, pedido_id: 2 }],
+    };
+    const b = backtest(dois, cfg);
+    const [c1, c2] = b.ciclos;
+    expect(c1.estado.tipo).toBe('viavel');
+    expect(c2.estado.tipo).toBe('indeterminado'); // sem snapshot de 02–03/10
+    expect(c2.valorAceito).toBeGreaterThan(0);
+    expect(b.resumo.valorAceitoDisparados).toBeCloseTo(c1.valorAceito, 9);
+    expect(b.resumo.valorAceitoSemGuarda).toBeCloseTo(c2.valorAceito, 9);
+    expect(b.sensibilidade.find((x) => x.reservaDias === 30)).toMatchObject({ valorAceito: c1.valorAceito, valorAceitoSemGuarda: c2.valorAceito, indeterminados: 1 });
+  });
+
+  it('R46: ΔDIO só com CMV comparável — cobertura < 80% dos SKUs do universo → null (Codex P2-15)', () => {
+    const f = cortavelLongo();
+    // SKU 8 no universo (linha de outra raiz) sem demanda nos params → CMV cobre 1 de 2 SKUs
+    const b = backtest({ ...f, linhas: [...f.linhas, { ...f.linhas[0], raiz: 77, pedido_id: 77, sku_codigo_omie: '8' }] }, cfg).resumo;
+    expect(b.cmvCobertura).toBeCloseTo(0.5, 12);
+    expect(b.deltaDio).toBeNull();
+    expect(b.caixaLiberado).not.toBeNull();
+  });
+  it('R46: numerador do ΔDIO só com episódios de SKUs do subconjunto do CMV', () => {
+    const f = cortavelLongo();
+    const extras = ['5', '6', '7', '8'];
+    const g: Fatos = {
+      ...f,
+      linhas: [...f.linhas, ...extras.map((sku) => ({ ...f.linhas[0], raiz: 77, pedido_id: 77, sku_codigo_omie: sku }))],
+      params: [{ ...f.params[0], demanda_media_diaria: null }, ...extras.map((sku) => ({ ...f.params[0], sku }))],
+    };
+    const b = backtest(g, cfg).resumo;
+    expect(b.cmvCobertura).toBeCloseTo(0.8, 12);
+    expect(b.cmvDiarioBase).toBeCloseTo(40, 9);
+    // o episódio é do SKU 9, fora do subconjunto → ΔDIO sem numerador comparável
+    expect(b.deltaDio).toBeNull();
+    expect(b.caixaLiberado).not.toBeNull();
+  });
+});
+

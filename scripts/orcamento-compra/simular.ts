@@ -90,6 +90,8 @@ export interface DetalheCorte {
   estoqueMedioCom: number | null; estoqueMedioSem: number | null;
   precoUnit: number | null;
   fechamentoOk: boolean;
+  /** R33: true = remoção na chegada mediana L (pedido sem t4); null = não classificado */
+  chegadaAproximada: boolean | null;
 }
 
 export interface ResultadoCiclo {
@@ -410,18 +412,29 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const cortesPorMotivo: Record<string, number> = {};
   for (const x of r.cortadas) cortesPorMotivo[x.motivo] = (cortesPorMotivo[x.motivo] ?? 0) + (x.c.desembolso ?? 0);
   const disparado = status === 'disparado';
+  type Medida = Pick<DetalheCorte, 'classe' | 'estoqueMedioCom' | 'estoqueMedioSem' | 'chegadaAproximada'>;
+  const nulo: Medida = { classe: null, estoqueMedioCom: null, estoqueMedioSem: null, chegadaAproximada: null };
+  // R32: UM replay por (ciclo, SKU) removendo a soma de TODAS as embalagens cortadas do SKU — inclusive as
+  // sem score (R48: conservador, elas também não seriam compradas). Medir uma a uma aprova conjunto inseguro.
+  const medidaPorSku = new Map<string, Medida>();
+  for (const sku of new Set(r.cortadas.map((x) => x.c.sku))) {
+    const doSku = r.cortadas.filter((x) => x.c.sku === sku);
+    // R26: ciclo não disparado — a compra não aconteceu; tirar a embalagem da realidade não é contrafactual
+    if (!disparado || doSku.every((x) => x.motivo === 'sem_score')) { medidaPorSku.set(sku, nulo); continue; }
+    // fechamento ruim: a trajetória reconstruída não bate com o gravado → o replay não mede nada
+    if (!(fechaOk.get(sku) ?? false)) { medidaPorSku.set(sku, { ...nulo, classe: 'indeterminado' }); continue; }
+    const linha = f.linhas.find((l) => l.raiz === cicloId && l.sku_codigo_omie === sku);
+    const qtde = doSku.reduce((s, x) => s + x.c.qtde, 0);
+    medidaPorSku.set(sku, classificarCorteDoSku(f, cicloId, sku, qtde, data, L, numOuNull(linha?.ponto_pedido ?? null)));
+  }
   const cortesDetalhe: DetalheCorte[] = r.cortadas.map((x) => {
     const linha = f.linhas.find((l) => l.raiz === x.c.pedidoRaizId && l.sku_codigo_omie === x.c.sku);
-    const precoUnit = precoOuNull(linha?.preco_unitario ?? null);
-    const fechamentoOk = fechaOk.get(x.c.sku) ?? false;
-    const base0 = { sku: x.c.sku, k: x.c.k, qtde: x.c.qtde, valor: x.c.desembolso, motivo: x.motivo, precoUnit, fechamentoOk };
-    const nulo = { classe: null, estoqueMedioCom: null, estoqueMedioSem: null };
-    // R26: ciclo não disparado — a compra não aconteceu; tirar a embalagem da realidade não é contrafactual
-    if (!disparado || x.motivo === 'sem_score') return { ...base0, ...nulo };
-    // fechamento ruim: a trajetória reconstruída não bate com o gravado → o replay não mede nada
-    if (!fechamentoOk) return { ...base0, ...nulo, classe: 'indeterminado' as const };
-    if (L == null) return { ...base0, ...nulo, classe: 'indeterminado' as const };
-    return { ...base0, ...classificarCorteDoSku(f, x.c.sku, x.c.qtde, data, L, numOuNull(linha?.ponto_pedido ?? null)) };
+    const base0 = {
+      sku: x.c.sku, k: x.c.k, qtde: x.c.qtde, valor: x.c.desembolso, motivo: x.motivo,
+      precoUnit: precoOuNull(linha?.preco_unitario ?? null), fechamentoOk: fechaOk.get(x.c.sku) ?? false,
+    };
+    // R48: sem score é revisão humana — sem classe própria (a quantidade dele já está no replay do SKU)
+    return { ...base0, ...(x.motivo === 'sem_score' ? nulo : (medidaPorSku.get(x.c.sku) as Medida)) };
   });
   return {
     cicloId, data, status, valorMotor, valorAceito,
@@ -434,36 +447,53 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   };
 }
 
-/** Replay com e sem `qtde` removida na chegada (mediana L), de `data` até `ate`. */
-function replayComSem(f: Fatos, sku: string, qtde: number, data: DataISO, ate: DataISO, L: number, pontoPedido: number | null) {
+/**
+ * R33: dia (relativo a `data`) em que a compra do SKU chegou de fato — t4 do pedido (pai/filho) que contém a
+ * linha; sem t4 → a chegada mediana L as-of, marcada aproximada; sem nenhum dos dois → null.
+ */
+function chegadaDoSku(f: Fatos, cicloId: number, sku: string, data: DataISO, L: number | null): { dia: number | null; aproximada: boolean } {
+  const pedidos = new Set(f.linhas.filter((l) => l.raiz === cicloId && l.sku_codigo_omie === sku).map((l) => l.pedido_id));
+  const t4s = f.chegadas.filter((c) => pedidos.has(c.pedido_id) && c.t4 != null).map((c) => c.t4 as DataISO).sort();
+  // mais de um pedido com o SKU: a remoção mais cedo é a conservadora
+  if (t4s.length > 0) return { dia: diffDias(data, t4s[0]), aproximada: false };
+  return { dia: L, aproximada: true };
+}
+
+/** Replay com e sem `qtde` removida no dia `diaChegada`, de `data` até `ate`. */
+function replayComSem(f: Fatos, sku: string, qtde: number, data: DataISO, ate: DataISO, diaChegada: number, leadTime: number, pontoPedido: number | null) {
   const { serie, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
   const estoqueInicial = estoqueFim[0];
   const demanda = serie.slice(1);
   const recebimentos = f.recebimentos
     .filter((r) => r.sku === sku && r.data >= data && r.data <= ate)
     .map((r) => ({ dia: diffDias(data, r.data), qtde: exigir(r.qtde, 'recebimentos.qtde') }));
-  const diaChegada = Math.min(L, demanda.length - 1);
-  const politica = pontoPedido != null ? { pontoPedido, leadTimeDias: L } : null;
+  const politica = pontoPedido != null ? { pontoPedido, leadTimeDias: leadTime } : null;
   const com = replaySku({ estoqueInicial, demanda, recebimentos, removido: null, politica: null });
   const sem = replaySku({ estoqueInicial, demanda, recebimentos, removido: { dia: diaChegada, qtde }, politica });
   return { com, sem };
 }
 
-/** Classificação do corte: replay até HOJE. */
+/** Classificação do corte (Σ qtde cortada do SKU no ciclo): replay até HOJE, remoção na chegada real (R33). */
 function classificarCorteDoSku(
-  f: Fatos, sku: string, qtde: number, data: DataISO, L: number, pontoPedido: number | null,
-): { classe: ClasseCorte; estoqueMedioCom: number | null; estoqueMedioSem: number | null } {
+  f: Fatos, cicloId: number, sku: string, qtde: number, data: DataISO, L: number | null, pontoPedido: number | null,
+): { classe: ClasseCorte; estoqueMedioCom: number | null; estoqueMedioSem: number | null; chegadaAproximada: boolean } {
   const ate = f.meta.hoje;
-  if (diffDias(data, ate) < L + 1) return { classe: 'indeterminado', estoqueMedioCom: null, estoqueMedioSem: null };
-  const { com, sem } = replayComSem(f, sku, qtde, data, ate, L, pontoPedido);
-  return { classe: classificarCorte(com, sem), estoqueMedioCom: com.estoqueMedio, estoqueMedioSem: sem.estoqueMedio };
+  const chegada = chegadaDoSku(f, cicloId, sku, data, L);
+  const indet = { classe: 'indeterminado' as const, estoqueMedioCom: null, estoqueMedioSem: null, chegadaAproximada: chegada.aproximada };
+  // sem chegada conhecida, ou chegada que ainda não aconteceu até hoje → a remoção não é mensurável
+  if (chegada.dia == null || chegada.dia < 0 || diffDias(data, ate) < chegada.dia + 1) return indet;
+  const { com, sem } = replayComSem(f, sku, qtde, data, ate, chegada.dia, L ?? chegada.dia, pontoPedido);
+  return { classe: classificarCorte(com, sem), estoqueMedioCom: com.estoqueMedio, estoqueMedioSem: sem.estoqueMedio, chegadaAproximada: chegada.aproximada };
 }
 
-/** Valor cortado com preço, somado por (ciclo, SKU) — a unidade que vira episódio. */
-function cortesPorCicloSku(ciclos: ResultadoCiclo[]) {
+/** O corte é do orçamento (econômico/financeiro/mínimo, com preço) — sem score é revisão humana (R48). */
+const corteMedido = (x: DetalheCorte) => x.valor != null && x.motivo !== 'sem_score';
+
+/** Valor cortado com preço, somado por (ciclo, SKU) — a unidade que vira episódio. `filtro` escolhe os cortes. */
+function cortesPorCicloSku(ciclos: ResultadoCiclo[], filtro: (x: DetalheCorte) => boolean = corteMedido) {
   const m = new Map<string, { cicloId: number; sku: string; data: DataISO; valor: number }>();
   for (const c of ciclos) for (const x of c.cortesDetalhe) {
-    if (x.valor == null) continue; // sem preço: fora do valor (conta em cortesSemPreco)
+    if (x.valor == null || !filtro(x)) continue; // sem preço: fora do valor (conta em cortesSemPreco)
     const k = `${c.cicloId}|${x.sku}`;
     const atual = m.get(k) ?? { cicloId: c.cicloId, sku: x.sku, data: c.data, valor: 0 };
     atual.valor += x.valor;
@@ -473,10 +503,10 @@ function cortesPorCicloSku(ciclos: ResultadoCiclo[]) {
 }
 
 /**
- * R31: precisão por EPISÓDIO (dedup 7d dos cortes com preço dos ciclos efetivos). Classe do episódio:
- * teria_rompido se QUALQUER corte dele romperia; senão a classe do 1º corte (data, ciclo, k). Corte sem
- * classe (sem score) conta como indeterminado. Precisão ponderada pelo valor do episódio; cobertura =
- * classificados / episódios (null sem episódio).
+ * R31 + R37 + R48: precisão por EPISÓDIO (dedup 7d dos cortes do orçamento com preço, ciclos efetivos; sem
+ * score fica fora — revisão humana). Classe do episódio pelo PIOR caso: teria_rompido se qualquer corte
+ * romperia; senão indeterminado se qualquer corte é indeterminado/sem classe; senão adiado se algum foi
+ * adiado; senão eliminado. Precisão ponderada pelo valor do episódio; cobertura = classificados / episódios.
  */
 export function precisaoPorEpisodio(efetivos: ResultadoCiclo[]) {
   const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
@@ -484,8 +514,11 @@ export function precisaoPorEpisodio(efetivos: ResultadoCiclo[]) {
     const cortes = efetivos
       .filter((c) => c.data >= ep.inicio && c.data <= ep.fim)
       .sort((a, b) => a.data.localeCompare(b.data) || a.cicloId - b.cicloId)
-      .flatMap((c) => c.cortesDetalhe.filter((x) => x.sku === ep.sku && x.valor != null).sort((a, b) => a.k - b.k));
-    const classe: ClasseCorte = cortes.some((x) => x.classe === 'teria_rompido') ? 'teria_rompido' : (cortes[0]?.classe ?? 'indeterminado');
+      .flatMap((c) => c.cortesDetalhe.filter((x) => x.sku === ep.sku && corteMedido(x)));
+    const tem = (k: ClasseCorte) => cortes.some((x) => x.classe === k);
+    const classe: ClasseCorte = tem('teria_rompido') ? 'teria_rompido'
+      : cortes.length === 0 || tem('indeterminado') || cortes.some((x) => x.classe == null) ? 'indeterminado'
+        : tem('adiado') ? 'adiado' : 'eliminado';
     return { classe, valor: ep.valor };
   });
   const p = precisaoDoCorte(itens);
@@ -497,8 +530,15 @@ function valorDeduplicado(ciclos: ResultadoCiclo[]): number {
   return deduplicarEpisodios(cortesPorCicloSku(ciclos), 7).reduce((s, e) => s + e.valor, 0);
 }
 
-/** CMV diário do universo do motor: Σ_sku demanda_media_diaria × preço (linha mais recente com preço); null se nenhum. */
-function cmvDiarioDoUniverso(f: Fatos): number | null {
+/** R46: cobertura mínima (SKUs com dados completos ÷ SKUs do universo) para o ΔDIO existir. */
+export const COBERTURA_MIN_CMV = 0.8;
+
+/**
+ * R46: CMV diário do universo do motor sobre o subconjunto de SKUs com dados COMPLETOS (preço da linha mais
+ * recente e demanda_media_diaria): Σ demanda × preço. Cobertura = completos ÷ SKUs do universo.
+ */
+function cmvDiarioDoUniverso(f: Fatos): { cmv: number | null; completos: Set<string>; cobertura: number | null } {
+  const universo = new Set(f.linhas.map((l) => l.sku_codigo_omie));
   const precoPorSku = new Map<string, { raiz: number; preco: number }>();
   for (const l of f.linhas) {
     const preco = precoOuNull(l.preco_unitario);
@@ -507,25 +547,29 @@ function cmvDiarioDoUniverso(f: Fatos): number | null {
     if (!atual || l.raiz > atual.raiz) precoPorSku.set(l.sku_codigo_omie, { raiz: l.raiz, preco });
   }
   let total = 0;
-  let algum = false;
+  const completos = new Set<string>();
   for (const [sku, { preco }] of precoPorSku) {
     const d = numOuNull(f.params.find((p) => p.sku === sku)?.demanda_media_diaria ?? null);
     if (d == null) continue;
     total += d * preco;
-    algum = true;
+    completos.add(sku);
   }
-  return algum ? total : null;
+  return { cmv: completos.size > 0 ? total : null, completos, cobertura: universo.size > 0 ? completos.size / universo.size : null };
 }
 
 /**
  * R25: ΔDIO/caixa liberado por EPISÓDIO dos cortes efetivos. Por episódio, o 1º corte (1º ciclo do
- * episódio; todas as embalagens com preço daquele SKU nele, removidas juntas); replay de 30 dias fixos.
+ * episódio; todas as embalagens do orçamento com preço daquele SKU nele, removidas juntas, na chegada real
+ * — R33); replay de 30 dias fixos. `noCmv` (R46): numerador do ΔDIO só com SKUs do subconjunto do CMV.
  */
-function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[]) {
+function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[], noCmv: Set<string>) {
   const unidades = cortesPorCicloSku(efetivos);
   const episodios: Episodio[] = deduplicarEpisodios(unidades, 7);
   let custoCom = 0;
   let custoSem = 0;
+  let custoComCmv = 0;
+  let custoSemCmv = 0;
+  let nCmv = 0;
   let n = 0;
   let semHorizonte = 0;
   let indeterminados = 0;
@@ -534,7 +578,7 @@ function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[]) {
       .filter((u) => u.sku === ep.sku && u.data === ep.inicio)
       .sort((a, b) => a.cicloId - b.cicloId)[0];
     const ciclo = efetivos.find((c) => c.cicloId === primeiro.cicloId)!;
-    const cortes = ciclo.cortesDetalhe.filter((x) => x.sku === ep.sku && x.valor != null);
+    const cortes = ciclo.cortesDetalhe.filter((x) => x.sku === ep.sku && corteMedido(x));
     if (addDias(ep.inicio, HORIZONTE_DIO_DIAS) > f.meta.hoje) { semHorizonte++; continue; }
     const preco = cortes[0]?.precoUnit ?? null;
     const L = lagsAsOf(f, ciclo.data).chegadaP50;
@@ -542,13 +586,20 @@ function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[]) {
     const qtde = cortes.reduce((s, x) => s + x.qtde, 0);
     const linha = f.linhas.find((l) => l.raiz === ciclo.cicloId && l.sku_codigo_omie === ep.sku);
     const ate = addDias(ep.inicio, HORIZONTE_DIO_DIAS - 1);
-    const { com, sem } = replayComSem(f, ep.sku, qtde, ep.inicio, ate, L, numOuNull(linha?.ponto_pedido ?? null));
+    const chegada = chegadaDoSku(f, ciclo.cicloId, ep.sku, ep.inicio, L);
+    if (chegada.dia == null || chegada.dia < 0 || chegada.dia > HORIZONTE_DIO_DIAS - 1) { indeterminados++; continue; }
+    const { com, sem } = replayComSem(f, ep.sku, qtde, ep.inicio, ate, chegada.dia, L, numOuNull(linha?.ponto_pedido ?? null));
     if (com.indeterminado || sem.indeterminado || com.estoqueMedio == null || sem.estoqueMedio == null) { indeterminados++; continue; }
     custoCom += com.estoqueMedio * preco;
     custoSem += sem.estoqueMedio * preco;
     n++;
+    if (noCmv.has(ep.sku)) {
+      custoComCmv += com.estoqueMedio * preco;
+      custoSemCmv += sem.estoqueMedio * preco;
+      nCmv++;
+    }
   }
-  return { custoCom, custoSem, n, semHorizonte, indeterminados };
+  return { custoCom, custoSem, n, semHorizonte, indeterminados, custoComCmv, custoSemCmv, nCmv };
 }
 
 export function backtest(f: Fatos, cfg: Config) {
@@ -556,14 +607,23 @@ export function backtest(f: Fatos, cfg: Config) {
   const efetivos = ciclos.filter((c) => c.status === 'disparado');
   const naoEfetivos = ciclos.filter((c) => c.status !== 'disparado');
   const itensClasse = efetivos.flatMap((c) => c.cortesDetalhe
-    .filter((x) => x.classe && x.valor != null)
+    .filter((x) => x.classe && corteMedido(x))
     .map((x) => ({ classe: x.classe as ClasseCorte, valor: x.valor as number })));
   const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
   const precEp = precisaoPorEpisodio(efetivos);
 
-  const dio = dioPorEpisodio(f, efetivos);
-  const cmvDiarioBase = cmvDiarioDoUniverso(f);
+  const cmv = cmvDiarioDoUniverso(f);
+  const dio = dioPorEpisodio(f, efetivos, cmv.completos);
+  const cmvDiarioBase = cmv.cmv;
   const caixaLiberado = dio.n > 0 ? dio.custoCom - dio.custoSem : null;
+  // R46: ΔDIO só com cobertura do CMV ≥ 80% e numerador/denominador sobre o mesmo subconjunto de SKUs
+  const deltaDioComparavel = cmv.cobertura != null && cmv.cobertura >= COBERTURA_MIN_CMV && dio.nCmv > 0
+    ? deltaDio(dio.custoComCmv, dio.custoSemCmv, cmvDiarioBase)
+    : null;
+  // R51: aceito só conta onde a guarda de caixa deu veredito (viável/inviável)
+  const comGuarda = (c: ResultadoCiclo) => c.estado.tipo !== 'indeterminado';
+  // R48: sem score = revisão humana (fora do valor cortado e da precisão)
+  const semScoreEfetivos = efetivos.flatMap((c) => c.cortesDetalhe.filter((x) => x.motivo === 'sem_score'));
 
   const avaliados = new Set<string>();
   const ruins = new Set<string>();
@@ -575,7 +635,13 @@ export function backtest(f: Fatos, cfg: Config) {
 
   const sensibilidade = [15, 30, 45].map((dias) => {
     const r = f.ciclos.filter((c) => statusEfetivo(c) === 'disparado').map((c) => simularCiclo(f, c.id, { ...cfg, reservaDias: dias }));
-    return { reservaDias: dias, valorAceito: r.reduce((s, x) => s + x.valorAceito, 0), inviaveis: r.filter((x) => x.estado.tipo === 'inviavel').length };
+    return {
+      reservaDias: dias,
+      valorAceito: r.filter(comGuarda).reduce((s, x) => s + x.valorAceito, 0),
+      valorAceitoSemGuarda: r.filter((x) => !comGuarda(x)).reduce((s, x) => s + x.valorAceito, 0),
+      inviaveis: r.filter((x) => x.estado.tipo === 'inviavel').length,
+      indeterminados: r.filter((x) => !comGuarda(x)).length,
+    };
   });
   return {
     config: cfg,
@@ -586,10 +652,22 @@ export function backtest(f: Fatos, cfg: Config) {
       nCiclos: ciclos.length,
       nDisparados: efetivos.length,
       valorMotorDisparados: efetivos.reduce((s, c) => s + c.valorMotor, 0),
-      valorAceitoDisparados: efetivos.reduce((s, c) => s + c.valorAceito, 0),
+      /** motor nos disparados COM guarda de caixa (denominador do aceito) */
+      valorMotorComGuarda: efetivos.filter(comGuarda).reduce((s, c) => s + c.valorMotor, 0),
+      valorAceitoDisparados: efetivos.filter(comGuarda).reduce((s, c) => s + c.valorAceito, 0),
+      /** R51: aceito em ciclos indeterminados — sem guarda de caixa, só o gate econômico decidiu */
+      valorAceitoSemGuarda: efetivos.filter((c) => !comGuarda(c)).reduce((s, c) => s + c.valorAceito, 0),
+      ciclosSemGuarda: efetivos.filter((c) => !comGuarda(c)).length,
       valorCortadoEfetivo: valorDeduplicado(efetivos),
       valorCortadoExpirado: valorDeduplicado(naoEfetivos),
       cortesSemPreco: ciclos.reduce((s, c) => s + c.cortesDetalhe.filter((x) => x.valor == null).length, 0),
+      revisaoHumana: {
+        embalagens: semScoreEfetivos.length,
+        semPreco: semScoreEfetivos.filter((x) => x.valor == null).length,
+        /** dedup. por episódio, como o valor cortado */
+        valor: deduplicarEpisodios(cortesPorCicloSku(efetivos, (x) => x.motivo === 'sem_score'), 7).reduce((s, e) => s + e.valor, 0),
+      },
+      cortesChegadaAproximada: efetivos.reduce((s, c) => s + c.cortesDetalhe.filter((x) => corteMedido(x) && x.chegadaAproximada === true).length, 0),
       estados: ciclos.reduce<Record<string, number>>((m, c) => ({ ...m, [c.estado.tipo]: (m[c.estado.tipo] ?? 0) + 1 }), {}),
       precisao: precisaoDoCorte(itensClasse),
       precisaoEpisodios: { precisao: precEp.precisao, valorCortado: precEp.valorCortado, n: precEp.n, indeterminados: precEp.indeterminados },
@@ -598,9 +676,13 @@ export function backtest(f: Fatos, cfg: Config) {
       sensiveisAoModelo: ciclos.reduce((s, c) => s + c.sensiveisAoModelo, 0),
       /** rótulo: "CMV diário do universo do motor" */
       cmvDiarioBase,
+      /** R46: SKUs com preço e demanda ÷ SKUs do universo do motor; < 80% → ΔDIO null */
+      cmvCobertura: cmv.cobertura,
       caixaLiberado,
-      deltaDio: dio.n > 0 ? deltaDio(dio.custoCom, dio.custoSem, cmvDiarioBase) : null,
+      /** R53: positivo = MENOS estoque; soma dos episódios medidos ÷ CMV diário, não média do período */
+      deltaDio: deltaDioComparavel,
       episodiosDio: dio.n,
+      episodiosDioNoCmv: dio.nCmv,
       episodiosSemHorizonte: dio.semHorizonte,
       episodiosDioIndeterminados: dio.indeterminados,
       skusAvaliados: avaliados.size,
