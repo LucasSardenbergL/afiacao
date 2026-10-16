@@ -405,8 +405,9 @@ GRANT EXECUTE ON FUNCTION public.raio_x_classificar(text, bigint, text, text) TO
 
 -- ============================================================================
 -- Task 3 - medicao desde a decisao (read-only). Mesma capacidade de custo das demais (devolve foto_cmc/valor).
--- Fronteira de venda: data_emissao >= dia (America/Sao_Paulo) de decidido_em - a NF do proprio dia da decisao
--- conta (a decisao e tomada de manha e a venda do dia ainda e posterior a ela do ponto de vista do operador).
+-- Fronteira de venda ESTRITA: data_emissao > dia (America/Sao_Paulo) de decidido_em. A NF so tem dia, nao hora:
+-- a do proprio dia da decisao pode ter sido emitida antes dela e NAO conta. Vies conservador de proposito:
+-- money-path prefere subcontar a inflar o caixa liberado atribuido a decisao.
 -- Venda NF so oben; colacor -> qtd_vendida/receita/preco NULL (nunca 0). saldo_atual: linha mais recente por
 -- synced_at, INCLUINDO saldo 0; sem linha -> NULL. compras_apos: itens de pedido de compra (cabecalho
 -- pedido_compra_sugerido, empresa 'OBEN', status disparado/split_em_filhos) criados depois da decisao; so oben
@@ -458,8 +459,8 @@ BEGIN
      WHERE v_vnd IS NOT NULL AND h.empresa = v_vnd),
   v AS (
     SELECT d.sku,
-           coalesce(sum(vh.quantidade)  FILTER (WHERE vh.data_emissao >= d.dia), 0) AS qtd,
-           coalesce(sum(vh.valor_total) FILTER (WHERE vh.data_emissao >= d.dia), 0) AS rec,
+           coalesce(sum(vh.quantidade)  FILTER (WHERE vh.data_emissao > d.dia), 0) AS qtd,
+           coalesce(sum(vh.valor_total) FILTER (WHERE vh.data_emissao > d.dia), 0) AS rec,
            sum(vh.valor_total) FILTER (WHERE vh.data_emissao >= v_hoje - 365)
              / nullif(sum(vh.quantidade) FILTER (WHERE vh.data_emissao >= v_hoje - 365), 0) AS pm12
       FROM d JOIN vh ON vh.sku = d.sku
