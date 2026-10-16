@@ -40,6 +40,7 @@ export const PREMISSAS: string[] = [
   'recebimentos = quantidade PEDIDA (produtos_consulta.nQtde) na data t4 do tracking; pedido sem t4 não entra (o erro de fechamento pega o buraco)',
   'saídas atrasadas do snapshot (data < dia do ciclo) entram no dia 0; se já estavam pagas, contam em dobro (viés conservador)',
   'pedido disparado sem NF, ou com NF sem título no CP até o snapshot, com menos de 15 dias (p90 pedido→faturamento) entra inteiro como compromisso a faturar e não torna o ciclo indeterminado; com 15 dias ou mais, é não conciliado (a lista de NFs do pedido é a de hoje, não a do ciclo)',
+  'pedidos disparados há mais de 60 dias ficam fora dos compromissos (assume-se já pagos ou no CP)',
   'obsolescência = 0 no custo de carregamento',
   'corte guloso com score ajustado não-crescente por SKU: heurística não-ótima (score marginal, não preço-sombra)',
   'demanda média/desvio do ciclo derivados da série as-of [data−180, data−1] (dias não censurados); params.demanda_media_diaria só no CMV diário do resumo',
@@ -92,6 +93,15 @@ export interface ResultadoCiclo {
 }
 
 const ts = (s: string) => Date.parse(s);
+
+const FMT_SP = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+/** Dia (YYYY-MM-DD) do instante em America/Sao_Paulo — nunca o recorte UTC de um timestamptz (R31). */
+export function dataLocalSP(instante: string): DataISO {
+  const t = ts(instante);
+  if (!Number.isFinite(t)) throw new Error(`instante inválido: ${instante}`);
+  const partes = Object.fromEntries(FMT_SP.formatToParts(new Date(t)).map((x) => [x.type, x.value]));
+  return `${partes.year}-${partes.month}-${partes.day}`;
+}
 
 function exigir(v: Num, nome: string): number {
   if (v == null || !Number.isFinite(Number(v))) throw new Error(`${nome} ausente — rode o preVoo`);
@@ -190,10 +200,10 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
       : fluxosDeSemanaAgregada(sem.inicio, sem.fim, sem.total_entradas ?? 0, 0).filter((x) => x.valor !== 0);
     fluxos.push(...candidatas.filter((x) => x.data >= data));
   }
-  const anteriores = f.disparados.filter((p) => ts(p.momento) < ts(momento) && p.momento.slice(0, 10) >= addDias(data, -60));
+  const anteriores = f.disparados.filter((p) => ts(p.momento) < ts(momento) && dataLocalSP(p.momento) >= addDias(data, -60));
   const titulosAteSnap = f.titulos_sayerlack.filter((t) => ts(t.created_at) <= ts(snap.snapshot_at) && t.nf);
   const conc = conciliarCompromissos(
-    anteriores.map((p) => ({ pedidoId: p.id, valorTotal: exigir(p.valor_total, 'disparados.valor_total'), dataPedido: p.momento.slice(0, 10), nfs: p.nfs ?? [] })),
+    anteriores.map((p) => ({ pedidoId: p.id, valorTotal: exigir(p.valor_total, 'disparados.valor_total'), dataPedido: dataLocalSP(p.momento), nfs: p.nfs ?? [] })),
     titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: exigir(t.valor, 'titulos_sayerlack.valor') })),
     data, lagPagamento, IDADE_A_FATURAR_DIAS,
   );
@@ -211,7 +221,7 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
 function mediaCompraPorDiaUtil(f: Fatos, data: DataISO): number {
   const de = addDias(data, -90);
   const total = f.disparados
-    .filter((p) => p.momento.slice(0, 10) >= de && p.momento.slice(0, 10) < data)
+    .filter((p) => dataLocalSP(p.momento) >= de && dataLocalSP(p.momento) < data)
     .reduce((s, p) => s + exigir(p.valor_total, 'disparados.valor_total'), 0);
   let uteis = 0;
   for (let i = 0; i < 90; i++) if (ehDiaUtil(addDias(de, i))) uteis++;
@@ -377,6 +387,26 @@ function cortesPorCicloSku(ciclos: ResultadoCiclo[]) {
   return [...m.values()];
 }
 
+/**
+ * R31: precisão por EPISÓDIO (dedup 7d dos cortes com preço dos ciclos efetivos). Classe do episódio:
+ * teria_rompido se QUALQUER corte dele romperia; senão a classe do 1º corte (data, ciclo, k). Corte sem
+ * classe (sem score) conta como indeterminado. Precisão ponderada pelo valor do episódio; cobertura =
+ * classificados / episódios (null sem episódio).
+ */
+export function precisaoPorEpisodio(efetivos: ResultadoCiclo[]) {
+  const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
+  const itens = episodios.map((ep) => {
+    const cortes = efetivos
+      .filter((c) => c.data >= ep.inicio && c.data <= ep.fim)
+      .sort((a, b) => a.data.localeCompare(b.data) || a.cicloId - b.cicloId)
+      .flatMap((c) => c.cortesDetalhe.filter((x) => x.sku === ep.sku && x.valor != null).sort((a, b) => a.k - b.k));
+    const classe: ClasseCorte = cortes.some((x) => x.classe === 'teria_rompido') ? 'teria_rompido' : (cortes[0]?.classe ?? 'indeterminado');
+    return { classe, valor: ep.valor };
+  });
+  const p = precisaoDoCorte(itens);
+  return { ...p, cobertura: episodios.length > 0 ? p.n / episodios.length : null };
+}
+
 /** Soma o valor cortado do SKU dentro do ciclo e só então deduplica entre ciclos (gap 7d, valor máximo). */
 function valorDeduplicado(ciclos: ResultadoCiclo[]): number {
   return deduplicarEpisodios(cortesPorCicloSku(ciclos), 7).reduce((s, e) => s + e.valor, 0);
@@ -443,6 +473,7 @@ export function backtest(f: Fatos, cfg: Config) {
     .filter((x) => x.classe && x.valor != null)
     .map((x) => ({ classe: x.classe as ClasseCorte, valor: x.valor as number })));
   const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
+  const precEp = precisaoPorEpisodio(efetivos);
 
   const L = exigir(f.lags.chegada_p50, 'lags.chegada_p50');
   const dio = dioPorEpisodio(f, efetivos, L);
@@ -476,6 +507,8 @@ export function backtest(f: Fatos, cfg: Config) {
       cortesSemPreco: ciclos.reduce((s, c) => s + c.cortesDetalhe.filter((x) => x.valor == null).length, 0),
       estados: ciclos.reduce<Record<string, number>>((m, c) => ({ ...m, [c.estado.tipo]: (m[c.estado.tipo] ?? 0) + 1 }), {}),
       precisao: precisaoDoCorte(itensClasse),
+      precisaoEpisodios: { precisao: precEp.precisao, valorCortado: precEp.valorCortado, n: precEp.n, indeterminados: precEp.indeterminados },
+      coberturaEpisodios: precEp.cobertura,
       episodios: episodios.length,
       sensiveisAoModelo: ciclos.reduce((s, c) => s + c.sensiveisAoModelo, 0),
       /** rótulo: "CMV diário do universo do motor" */

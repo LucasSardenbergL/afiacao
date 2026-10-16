@@ -131,6 +131,10 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
     const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 10_000, dataPedido: '2026-09-30', nfs: ['88'] }], [{ nf: '88', valor: 4_000 }], '2026-10-01', 0, 15);
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -6_000, camada: 'compromisso_conciliado' }]);
   });
+  it('idadeLimiteDias inválida é rejeitada (fail-closed, mesmo sem pedidos)', () => {
+    expect(() => conciliarCompromissos([], [], '2026-10-01', 0, Number.NaN)).toThrow('idadeLimiteDias inválida');
+    expect(() => conciliarCompromissos([], [], '2026-10-01', 0, -1)).toThrow('idadeLimiteDias inválida');
+  });
   it('título maior que o pedido não gera entrada', () => {
     const r = conciliarCompromissos([{ pedidoId: 4, valorTotal: 10, dataPedido: '2026-10-01', nfs: ['1'] }], [{ nf: '1', valor: 12 }], '2026-10-01', 0, 15);
     expect(r.fluxos).toEqual([]);

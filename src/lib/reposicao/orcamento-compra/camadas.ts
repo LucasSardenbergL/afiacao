@@ -25,6 +25,7 @@ export function conciliarCompromissos(
   lagDias: number,
   idadeLimiteDias: number,
 ): { fluxos: Fluxo[]; naoConciliado: number } {
+  if (!Number.isFinite(idadeLimiteDias) || idadeLimiteDias < 0) throw new Error('idadeLimiteDias inválida');
   const titulosPorNf = new Map<string, number>();
   for (const t of titulos) {
     const k = normalizarNf(t.nf);
@@ -55,7 +56,6 @@ export function conciliarCompromissos(
     p.nfs.map(normalizarNf).filter((x) => x !== '').forEach((nf) => c.nfs.add(nf));
     componentes.set(raiz, c);
   });
-  if (!Number.isFinite(idadeLimiteDias) || idadeLimiteDias < 0) throw new Error('idadeLimiteDias inválida');
   const fluxos: Fluxo[] = [];
   let naoConciliado = 0;
   for (const c of componentes.values()) {

@@ -1,6 +1,6 @@
 // scripts/orcamento-compra/simular.test.ts
 import { describe, expect, it } from 'vitest';
-import { backtest, extrairJson, preVoo, reservaDe, simularCiclo, type Config, type Fatos } from './simular';
+import { backtest, dataLocalSP, extrairJson, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
 
 const cfg: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
@@ -283,5 +283,52 @@ describe('backtest', () => {
     // ciclo 2: a linha grava 65 e a reconstrução no fim de 02/10 dá 63 — erro 2 ≤ 10% de 65, fecha
     expect(b.resumo.skusAvaliados).toBe(1);
     expect(b.resumo.skusFechamentoRuim).toBe(0);
+  });
+});
+
+describe('R31 — precisão por episódio (portão da v2)', () => {
+  const corte = (sku: string, classe: DetalheCorte['classe'], valor: number | null, motivo = 'economico'): DetalheCorte => ({
+    sku, k: 1, qtde: 1, valor, motivo, classe, estoqueMedioCom: null, estoqueMedioSem: null, precoUnit: 10, fechamentoOk: true,
+  });
+  const ciclo = (cicloId: number, data: string, cortesDetalhe: DetalheCorte[]): ResultadoCiclo => ({
+    cicloId, data, status: 'disparado', valorMotor: 0, valorAceito: 0, aceitas: 0, cortadas: cortesDetalhe.length,
+    embalagensSemDesembolso: 0, protegidas: 0, cortesPorMotivo: {}, estado: { tipo: 'viavel', piso: 0, dataPiso: data },
+    scoreMarginal: null, escassezCaixa: false, semScore: [], sensiveisAoModelo: 0, fechamento: [], cortesDetalhe,
+  });
+  const efetivos = [
+    ciclo(1, '2026-09-01', [corte('A', 'adiado', 100), corte('B', 'indeterminado', 40), corte('E', 'eliminado', null)]),
+    ciclo(2, '2026-09-03', [corte('A', 'teria_rompido', 50), corte('B', 'eliminado', 40)]),
+    ciclo(3, '2026-09-20', [corte('A', 'adiado', 30), corte('C', 'eliminado', 70), corte('D', null, 20, 'sem_score')]),
+  ];
+  it('episódio = dedup 7d; teria_rompido se QUALQUER corte romperia; senão a classe do 1º corte', () => {
+    const p = precisaoPorEpisodio(efetivos);
+    // episódios: A(01–03/09, valor 100, teria_rompido) · A(20/09, 30, adiado) · B(01–03/09, indeterminado pelo 1º corte)
+    //            C(70, eliminado) · D(só sem_score, sem classe → indeterminado). E (sem preço) não é episódio.
+    expect(p.n).toBe(3);
+    expect(p.indeterminados).toBe(2);
+    expect(p.cobertura).toBeCloseTo(3 / 5, 12);
+    expect(p.precisao).toBeCloseTo((30 + 70) / (100 + 30 + 70), 12);
+  });
+  it('sem episódio classificado → precisão e cobertura ausentes (nunca 0 nem 100%)', () => {
+    const p = precisaoPorEpisodio([ciclo(1, '2026-09-01', [corte('B', 'indeterminado', 40)])]);
+    expect(p).toMatchObject({ precisao: null, n: 0, indeterminados: 1, cobertura: 0 });
+    expect(precisaoPorEpisodio([]).cobertura).toBeNull();
+  });
+  it('backtest expõe precisaoEpisodios e coberturaEpisodios no resumo', () => {
+    const b = backtest(cortavelLongo(), cfg);
+    expect(b.resumo.precisaoEpisodios.n + b.resumo.precisaoEpisodios.indeterminados).toBe(b.resumo.episodios);
+    expect(b.resumo.coberturaEpisodios).not.toBeUndefined();
+  });
+});
+
+describe('R31 — idade do pedido em data local de São Paulo', () => {
+  it('dataLocalSP converte o instante UTC para o dia em America/Sao_Paulo', () => {
+    expect(dataLocalSP('2026-09-17T01:00:00+00:00')).toBe('2026-09-16');
+    expect(dataLocalSP('2026-09-17T03:00:00Z')).toBe('2026-09-17');
+  });
+  it('pedido das 22h locais de 16/09 tem 15 dias no ciclo de 01/10 → não conciliado (o recorte UTC daria 14 → a faturar)', () => {
+    const semLinhasLocal: Fatos = { ...fatos, linhas: [], disparados: [{ id: 21, valor_total: 20, momento: '2026-09-17T01:00:00Z', nfs: [] }] };
+    const e = simularCiclo(semLinhasLocal, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
   });
 });

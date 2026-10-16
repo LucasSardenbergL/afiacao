@@ -48,28 +48,56 @@ function rotuloEstado(c: Ciclo): string {
   return 'viável';
 }
 
+/** Critérios do portão da v2 (R31). "Explicar" inviáveis não abre o portão — só decisão do founder sobre o cenário-guarda. */
+export const PORTAO = { precisaoMin: 0.95, nMin: 30, coberturaMin: 0.5, inviaveisMax: 0 } as const;
+
+/** Portão da v2 derivado do resultado: aberto só se todos os critérios passam; senão a lista dos que falharam. */
+export function avaliarPortao(r: Resultado): { aberto: boolean; motivos: string[] } {
+  const pe = r.resumo.precisaoEpisodios;
+  const cob = r.resumo.coberturaEpisodios;
+  const inviaveis = r.ciclos.filter((c) => c.estado.tipo === 'inviavel').length;
+  const motivos: string[] = [];
+  if (!finito(pe.precisao) || pe.precisao < PORTAO.precisaoMin) motivos.push(`precisão por episódio ${pct(pe.precisao)} < ${pct(PORTAO.precisaoMin)}`);
+  if (pe.n < PORTAO.nMin) motivos.push(`${num(pe.n)} episódios classificados < ${num(PORTAO.nMin)}`);
+  if (!finito(cob) || cob < PORTAO.coberturaMin) motivos.push(`cobertura insuficiente: ${pct(cob)} dos episódios classificados (mínimo ${pct(PORTAO.coberturaMin)})`);
+  if (inviaveis > PORTAO.inviaveisMax) motivos.push(`${num(inviaveis)} ciclos inviáveis (exige ${num(PORTAO.inviaveisMax)})`);
+  return { aberto: motivos.length === 0, motivos };
+}
+
+function secaoPortao(r: Resultado): string {
+  const { aberto, motivos } = avaliarPortao(r);
+  const lista = motivos.length ? `<ul>${motivos.map((m) => `<li>${esc(m)}</li>`).join('')}</ul>` : '';
+  return `<h2>Portão da v2</h2>
+<p>Abre só com precisão por episódio ≥ ${pct(PORTAO.precisaoMin)}, ≥ ${num(PORTAO.nMin)} episódios classificados, cobertura ≥ ${pct(PORTAO.coberturaMin)} e ${num(PORTAO.inviaveisMax)} ciclos inviáveis. Inviáveis “explicados” não abrem o portão; só a decisão do founder sobre o cenário-guarda muda esse critério.</p>
+<p><b class="${aberto ? '' : 'ruim'}">Nesta rodada: ${aberto ? 'ABERTO' : 'FECHADO'}</b>${aberto ? '.' : ', porque:'}</p>${lista}`;
+}
+
 /**
- * "O que o backtest diz sobre o cenário-guarda" (Task 8, fix round 2). Contagens vêm do resultado;
- * o detalhe por camada é o diagnóstico R29 de 2026-10-15 (datado, não recalculado aqui).
+ * "O que o backtest diz sobre o cenário-guarda" — só existe com ciclo inviável. Contagens vêm do resultado;
+ * o exemplo por camada é o diagnóstico R29, num bloco datado e não recalculado.
  */
 export function secaoCenarioGuarda(r: Resultado): string {
-  const disp = r.ciclos.filter((c) => c.status === 'disparado');
   const inv = r.ciclos.filter((c) => c.estado.tipo === 'inviavel');
+  if (inv.length === 0) return '';
+  const disp = r.ciclos.filter((c) => c.status === 'disparado');
   const invDisp = disp.filter((c) => c.estado.tipo === 'inviavel');
   const datas = inv.map((c) => c.data).sort();
-  const faixa = datas.length ? `${esc(datas[0])} a ${esc(datas[datas.length - 1])}` : AUSENTE;
+  const faixa = `${esc(datas[0])} a ${esc(datas[datas.length - 1])}`;
   const motorInv = invDisp.reduce((s, c) => s + c.valorMotor, 0);
   const aceitoInv = invDisp.reduce((s, c) => s + c.valorAceito, 0);
   const fracInv = r.ciclos.length ? inv.length / r.ciclos.length : null;
+  const h = num(r.config.horizonteDias);
+  const res = num(r.config.reservaDias);
+  const outras = r.sensibilidade.filter((s) => s.reservaDias !== r.config.reservaDias).map((s) => `${num(s.reservaDias)}`).join(' e ');
   return `<h2>O que o backtest diz sobre o cenário-guarda</h2>
-<p>Sem nenhuma venda nova, a guarda de caixa olha 91 dias à frente e exige ficar acima de 30 dias de saídas o tempo todo. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, todos no período de ${faixa}. Nos disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
-<p>Nesses ciclos o veredito não depende da compra: <b>a base de caixa sozinha, sem nenhuma candidata, já fura a reserva</b> em todos (diagnóstico de 2026-10-15). Na mediana, isso acontece 72 dias à frente.</p>
-<p>Exemplo do ciclo de 20/07: saldo de R$ 355 mil contra reserva de R$ 291 mil, ou seja, folga de R$ 65 mil. Em 91 dias saem cerca de R$ 390 mil (continuidade do motor R$ 199 mil e saídas não-Sayerlack R$ 190 mil) e entram só R$ 108 mil de títulos já emitidos. O piso projetado fica em R$ 57 mil.</p>
-<p>Em períodos de saldo perto da reserva, portanto, a condição de reserva <b>como especificada é estrita demais para decidir compras</b>: corta tudo o que não é protegido, qualquer que seja o pedido. <b>O portão da v2 continua FECHADO.</b> A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):</p>
+<p>Sem nenhuma venda nova, a guarda de caixa olha ${h} dias à frente e exige que o saldo fique acima de ${res} dias de saídas em todos os dias. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, no período de ${faixa}. Entre os disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
+<div class="diag"><p class="rot">Diagnóstico datado 2026-10-15, não recalculado</p>
+<p>Nos inviáveis da rodada de 2026-10-15, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva (mediana: 72 dias à frente). Exemplo do ciclo de 20/07: saldo de R$ 355 mil, reserva de R$ 291 mil. Em 91 dias, a continuidade do motor tirava R$ 199 mil e as saídas não-Sayerlack R$ 190 mil, contra R$ 108 mil de títulos a receber. O piso projetado ficava em R$ 57 mil.</p></div>
+<p>Quando a base sozinha fura a reserva, a condição de reserva <b>como especificada não distingue um pedido de outro</b> e não serve para decidir compras. A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):</p>
 <ul>
-<li><b>Calibrar um cenário de entrada de vendas</b>: substituir o “zero venda nova” por uma entrada conservadora medida, por exemplo um percentil baixo do recebimento histórico.</li>
-<li><b>Encurtar o horizonte</b>: verificar a reserva numa janela menor que 91 dias, mais próxima do ciclo pedido → pagamento.</li>
-<li><b>Baixar a reserva</b>: exigir menos que 30 dias de saídas (a tabela de sensibilidade abaixo mostra 15 e 45 dias).</li>
+<li><b>Calibrar um cenário de entrada de vendas</b>: substituir o “zero venda nova” por uma entrada conservadora medida.</li>
+<li><b>Encurtar o horizonte</b>: verificar a reserva numa janela menor que ${h} dias.</li>
+<li><b>Baixar a reserva</b>: exigir menos que ${res} dias de saídas${outras ? ` (a tabela de sensibilidade mostra ${outras} dias)` : ''}.</li>
 </ul>`;
 }
 
@@ -95,19 +123,22 @@ export function gerarPagina(r: Resultado): string {
   const premissas = [...r.premissas, ...PREMISSAS_EXTRAS].map((p) => `<li>${esc(p)}</li>`).join('');
   const fechamentoFrac = res.skusAvaliados > 0 ? res.skusFechamentoRuim / res.skusAvaliados : null;
   const precisaoTotal = res.precisao.n + res.precisao.indeterminados;
+  const datasCiclos = r.ciclos.map((c) => c.data).sort();
+  const periodo = datasCiclos.length ? `${esc(datasCiclos[0])} a ${esc(datasCiclos[datasCiclos.length - 1])}` : AUSENTE;
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Orçamento de compra</title>
 <style>
-:root{--bg:#fafafa;--fg:#111;--muted:#666;--line:#e5e5e5;--card:#fff;--ruim:#b42318;--aviso:#8a5a00}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0b;--fg:#eee;--muted:#9a9a9a;--line:#262626;--card:#141414;--ruim:#f08a7e;--aviso:#e0b45c}}
-:root[data-theme="dark"]{--bg:#0b0b0b;--fg:#eee;--muted:#9a9a9a;--line:#262626;--card:#141414;--ruim:#f08a7e;--aviso:#e0b45c}
+:root{--bg:#fafafa;--fg:#111;--muted:#666;--line:#e5e5e5;--card:#fff;--ruim:#b42318;--line2:#f2f2f2}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b0b0b;--fg:#eee;--muted:#9a9a9a;--line:#262626;--card:#141414;--ruim:#f08a7e;--line2:#1c1c1c}}
+:root[data-theme="dark"]{--bg:#0b0b0b;--fg:#eee;--muted:#9a9a9a;--line:#262626;--card:#141414;--ruim:#f08a7e;--line2:#1c1c1c}
 *{box-sizing:border-box}
 html{background:var(--bg)}
 body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,sans-serif;margin:0 auto;padding:24px 16px;max-width:1100px;overflow-wrap:anywhere}
 h1{font-size:24px;margin:0 0 4px}h2{font-size:18px;margin:32px 0 8px}
 .muted,.nota,.rot{color:var(--muted)}.nota{display:block;font-size:12px}.rot{font-size:13px}
-.ruim{color:var(--ruim)}.aviso{color:var(--aviso)}
+.ruim{color:var(--ruim)}
+.diag{border-left:3px solid var(--line);background:var(--line2);padding:8px 12px;margin:12px 0;border-radius:6px}.diag p{margin:4px 0}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:20px 0}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0}.kpi b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
 .wrap{overflow-x:auto;max-width:100%}
@@ -115,8 +146,10 @@ table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;p
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 ul{padding-left:20px}
 </style></head><body>
-<h1>Orçamento de compra — backtest 90 dias</h1>
-<p class="muted">Simulação (nada mudou em produção). Fatos gerados em ${esc(r.gerado_em)}. Reserva ${num(r.config.reservaDias)} dias; gate ΔV&gt;0 por embalagem; frete ${pct(r.config.fretePerc)} no desembolso; caixa em cenário-guarda (sem vendas novas).</p>
+<h1>Orçamento de compra — backtest ${periodo}</h1>
+<p class="muted">Simulação (nada mudou em produção). Fatos gerados em ${esc(r.gerado_em)}. Reserva ${num(r.config.reservaDias)} dias; horizonte de caixa ${num(r.config.horizonteDias)} dias; gate ΔV&gt;0 por embalagem; frete ${pct(r.config.fretePerc)} no desembolso; caixa em cenário-guarda (sem vendas novas).</p>
+
+${secaoPortao(r)}
 
 <h2>Corte</h2>
 <div class="kpis">
@@ -132,14 +165,14 @@ ${kpi('Embalagens sensíveis ao modelo', num(res.sensiveisAoModelo), 'sinal de �
 
 <h2>Precisão do corte</h2>
 <div class="kpis">
-${kpi('Precisão (valor não-rompido / valor classificado)', pct(res.precisao.precisao), `n=${num(res.precisao.n)} classificados · ${num(res.precisao.indeterminados)} indeterminados de ${num(precisaoTotal)}`)}
-${kpi('Valor classificado', brl(res.precisao.valorCortado))}
+${kpi('Precisão por episódio (valor não-rompido / valor classificado)', pct(res.precisaoEpisodios.precisao), `${num(res.precisaoEpisodios.n)} episódios classificados · ${num(res.precisaoEpisodios.indeterminados)} indeterminados. Ruptura em período censurado vira indeterminado por construção — a precisão só cobre os episódios classificados (cobertura ${pct(res.coberturaEpisodios)})`)}
+${kpi('Precisão por corte', pct(res.precisao.precisao), `${num(res.precisao.n)} cortes classificados · ${num(res.precisao.indeterminados)} indeterminados de ${num(precisaoTotal)} · valor classificado ${brl(res.precisao.valorCortado)}`)}
 ${kpi('SKUs com fechamento ruim', `${num(res.skusFechamentoRuim)} / ${num(res.skusAvaliados)}`, fechamentoFrac == null ? AUSENTE : `${pct(fechamentoFrac)} — replay desses SKUs vira indeterminado`)}
 </div>
 
 <h2>Estoque e caixa liberado</h2>
 <div class="kpis">
-${kpi('ΔDIO (dias)', num(res.deltaDio, 2), `${num(res.episodiosDio)} episódios medidos · ${num(res.episodiosSemHorizonte)} sem horizonte de 30d · ${num(res.episodiosDioIndeterminados)} indeterminados`)}
+${kpi('ΔDIO (dias)', num(res.deltaDio, 2), `${num(res.episodiosDio)} episódios medidos · ${num(res.episodiosSemHorizonte)} sem horizonte de replay · ${num(res.episodiosDioIndeterminados)} indeterminados`)}
 ${kpi('Caixa liberado (R$)', brl(res.caixaLiberado), 'estoque médio a custo, com − sem o corte, nos episódios medidos')}
 ${kpi('CMV diário do universo do motor', brl(res.cmvDiarioBase))}
 </div>
