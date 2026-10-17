@@ -95,7 +95,7 @@ CREATE TABLE public.omie_products (
   omie_codigo_produto bigint, codigo text, descricao text, unidade text, ativo boolean, familia text,
   account text, tipo_produto text, metadata jsonb, created_at timestamptz);
 CREATE TABLE public.sku_parametros (
-  empresa text, sku_codigo_omie bigint, fornecedor_nome text, classe_abc text, tipo_reposicao text,
+  empresa text, sku_codigo_omie bigint, fornecedor_nome text, classe_abc character(1), tipo_reposicao text,
   habilitado_reposicao_automatica boolean);
 CREATE TABLE public.v_venda_items_history_efetivo (
   empresa text, data_emissao date, cliente_codigo_omie bigint, cliente_razao_social text,
