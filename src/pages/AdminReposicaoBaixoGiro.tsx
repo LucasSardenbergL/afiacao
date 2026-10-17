@@ -8,6 +8,7 @@ import { ExcessoKpis } from "@/components/reposicao/baixoGiro/ExcessoKpis";
 import { ExcessoTable } from "@/components/reposicao/baixoGiro/ExcessoTable";
 import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEmEstoqueDialog";
 import { DesovaMissaoDialog } from "@/components/reposicao/baixoGiro/DesovaMissaoDialog";
+import { RaioXTab } from "@/components/reposicao/raioX/RaioXTab";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -104,6 +105,7 @@ export default function AdminReposicaoBaixoGiro() {
         <TabsList>
           <TabsTrigger value="baixo-giro">Baixo giro</TabsTrigger>
           <TabsTrigger value="excesso">Excesso de estoque{excesso.kpis.skusN > 0 ? ` (${excesso.kpis.skusN})` : ""}</TabsTrigger>
+          <TabsTrigger value="raio-x">Raio-X</TabsTrigger>
         </TabsList>
 
         <TabsContent value="baixo-giro" className="space-y-4">
@@ -238,6 +240,10 @@ export default function AdminReposicaoBaixoGiro() {
               Não consegui ler a posição de estoque — a fila pode estar incompleta. Recarregue a página.
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="raio-x" className="space-y-4">
+          <RaioXTab />
         </TabsContent>
       </Tabs>
 
