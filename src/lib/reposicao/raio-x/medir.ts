@@ -6,7 +6,7 @@ import type { Destino, Empresa, LinhaMedicao } from './tipos';
 const CONTRADICAO: Destino[] = ['trocar', 'liquidar', 'manter_suspender_recompra'];
 const LIMIAR_LIQUIDACAO = 0.9;
 
-export interface Contradicao {
+interface Contradicao {
   sku_codigo_omie: number;
   destino: Destino;
   pedido_em: string;

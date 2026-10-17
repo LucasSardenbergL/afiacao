@@ -14,7 +14,7 @@ export type Destino =
   | 'erro_cadastro';
 export type Sugestao = Destino | 'novo_aguarde' | 'revisar' | 'sem_historico';
 
-export interface ClienteComprador {
+interface ClienteComprador {
   nome: string;
   ult: string | null;
   qtd: number;

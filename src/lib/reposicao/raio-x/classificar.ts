@@ -5,7 +5,7 @@ import type {
 } from './tipos';
 
 export const TOP_N = 61;
-export const DIAS_NOVO = 90;
+const DIAS_NOVO = 90;
 export const DESTINOS = [
   'trocar', 'venda_dirigida', 'liquidar', 'manter_suspender_recompra', 'estrategico', 'erro_cadastro',
 ] as const;

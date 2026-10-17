@@ -1,7 +1,7 @@
 // Saídas do Raio-X: lista de troca, venda dirigida por cliente e diferença de contagem. Lógica pura.
 import type { DecisaoRow, ItemRaioX } from './tipos';
 
-export const SEM_COMPRADOR = 'sem comprador em 12m';
+const SEM_COMPRADOR = 'sem comprador em 12m';
 
 export interface LinhaTroca {
   sku_codigo_omie: number;
