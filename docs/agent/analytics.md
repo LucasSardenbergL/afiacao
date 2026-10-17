@@ -552,6 +552,13 @@ aparelho parado num `build_id` velho: `baixando` sem `pronta` depois = install q
 `falhou` = install que morreu (asset 404 pós-Publish, app suspenso); `pronta` sem `aceita` = o aviso
 apareceu e o operador não clicou. Ausência dos quatro num aparelho com boots = nem achou o SW novo.
 
+**Build mínimo (2026-10-17).** Todo evento leva também **`build_em`** (carimbo ISO do build, do
+`<meta name="app-build-em">`) — junto do `build_id`, nunca no lugar: a adoção continua lida por
+`build_id`; `build_em` só ordena builds (ausente = build anterior ao carimbo). `pwa.atualizacao`
+ganhou `fase: 'reparo'` (clique em "Reparar app"), e **`pwa.build_minimo`** (`exigencia` ∈ `aviso` ·
+`bloqueio`) marca a transição de um aparelho de staff para abaixo do mínimo de `company_config`
+(`pwa_build_minimo`). Runbook: `deploy.md` §PWA "Build mínimo".
+
 ### Armadilhas de leitura
 
 - ⚠️ **Ausente, `'desconhecido'` e um hash são TRÊS estados, não dois.** Propriedade

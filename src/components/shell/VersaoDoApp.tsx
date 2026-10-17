@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import {
@@ -7,8 +7,17 @@ import {
   assinarEstadoAtualizacao,
   descreverEstadoAtualizacao,
   obterEstadoAtualizacao,
+  podeReparar,
+  repararApp,
   verificarAtualizacaoAgora,
 } from '@/lib/pwa-atualizacao';
+
+/** "17/10 14:32" — quando ESTE build foi gerado (o carimbo do build mínimo). */
+function formatarCarimbo(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
 
 /**
  * Itens do menu do usuário: em que BUILD este aparelho está e a fase da
@@ -43,7 +52,7 @@ export function VersaoDoApp() {
     <>
       <DropdownMenuSeparator />
       <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-        <span className="block">Versão {build}</span>
+        <span className="block">Versão {build}{estado.buildEm ? ` · ${formatarCarimbo(estado.buildEm)}` : ''}</span>
         <span className="block">{situacao}</span>
       </DropdownMenuLabel>
       {estado.fase === 'pronta' ? (
@@ -55,6 +64,13 @@ export function VersaoDoApp() {
           <RefreshCw className="w-4 h-4 mr-2" /> Verificar atualização
         </DropdownMenuItem>
       ) : null}
+      {/* Install do build novo morreu: o caminho normal não sai do lugar. Reparar = tirar o SW
+          e os caches e recarregar pela rede (clique explícito; a fila offline fica). */}
+      {podeReparar(estado.fase) && (
+        <DropdownMenuItem onClick={() => void repararApp()}>
+          <Wrench className="w-4 h-4 mr-2" /> Reparar app
+        </DropdownMenuItem>
+      )}
     </>
   );
 }

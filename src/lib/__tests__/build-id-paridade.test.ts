@@ -8,7 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { extrairBuildId, resolverBuildId, BUILD_ID_DESCONHECIDO } from '@/lib/build-id';
+import { extrairBuildEm, extrairBuildId, resolverBuildEm, resolverBuildId, BUILD_ID_DESCONHECIDO } from '@/lib/build-id';
 
 const VERIFY_SH = join(process.cwd(), '.claude/skills/lovable-deploy-verify/scripts/verify-frontend.sh');
 
@@ -67,5 +67,46 @@ describe.skipIf(!existsSync(DIST) && !EXIGE_DIST)('contra o dist/ real', () => {
     const id = resolverBuildId(doc);
     expect(id).not.toBe(BUILD_ID_DESCONHECIDO);
     expect(id).toMatch(/^index-[A-Za-z0-9_-]+$/);
+  });
+
+  it('o carimbo ordenável sai no MESMO index.html, e a leitura de texto (servidor) = a de DOM (cliente)', () => {
+    const html = readFileSync(DIST, 'utf8');
+    const doc = document.implementation.createHTMLDocument('dist');
+    doc.documentElement.innerHTML = html;
+    const doDom = resolverBuildEm(doc);
+    expect(doDom, 'dist/index.html sem <meta name="app-build-em"> — o plugin carimboDeBuild saiu do vite.config?').not.toBeNull();
+    expect(extrairBuildEm(html)).toBe(doDom);
+    // build_id segue o eixo de adoção: o carimbo vai junto, não no lugar.
+    expect(resolverBuildId(doc)).toBe(extrairBuildId([html]));
+  });
+});
+
+// O carimbo é COMPLEMENTO do build_id, nunca substituto (o build_id é o eixo de adoção):
+// as duas leituras saem do mesmo documento e uma não mexe na outra.
+describe('paridade build_id × carimbo (build_em)', () => {
+  const HTML =
+    '<head><meta name="app-build-em" content="2026-10-17T15:00:00.000Z"></head>' +
+    '<body><script type="module" src="/assets/index-TTF9Kw1g.js"></script></body>';
+
+  it('lê os dois do mesmo documento; texto (servidor) e DOM (cliente) concordam', () => {
+    const doc = document.implementation.createHTMLDocument('t');
+    doc.documentElement.innerHTML = HTML;
+    expect(resolverBuildId(doc)).toBe('index-TTF9Kw1g');
+    expect(extrairBuildId([HTML])).toBe('index-TTF9Kw1g');
+    expect(resolverBuildEm(doc)).toBe('2026-10-17T15:00:00.000Z');
+    expect(extrairBuildEm(HTML)).toBe('2026-10-17T15:00:00.000Z');
+  });
+
+  it('sem o carimbo, o build_id não muda (build anterior ao carimbo segue identificável)', () => {
+    const semCarimbo = '<script type="module" src="/assets/index-TTF9Kw1g.js"></script>';
+    const doc = document.implementation.createHTMLDocument('t');
+    doc.documentElement.innerHTML = semCarimbo;
+    expect(resolverBuildId(doc)).toBe('index-TTF9Kw1g');
+    expect(resolverBuildEm(doc)).toBeNull();
+    expect(extrairBuildEm(semCarimbo)).toBeNull();
+  });
+
+  it('carimbo ilegível → null (ausência de dado, nunca um instante inventado)', () => {
+    expect(extrairBuildEm('<meta name="app-build-em" content="ontem">')).toBeNull();
   });
 });
