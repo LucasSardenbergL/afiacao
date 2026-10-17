@@ -42,7 +42,7 @@ import {
   type ReconciliacaoSummary,
 } from "./reconciliacao.ts";
 import type { PedidoDoContrato } from "./associacao.ts";
-import { executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
+import { capturarPedidosDaFila, executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -234,6 +234,8 @@ async function callOmie(
   call: "ListarRecebimentos" | "ConsultarRecebimento",
   param: Record<string, unknown>,
   deadline: number,
+  /** Instante antes do fetch de CADA tentativa: a última chamada é a da resposta devolvida (carimbo da sombra). */
+  aoTentar?: (iso: string) => void,
 ): Promise<OmieGenericResponse> {
   const body = { call, app_key, app_secret, param: [param] };
 
@@ -250,6 +252,7 @@ async function callOmie(
     if (timeoutMs === 0) {
       throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
     }
+    aoTentar?.(new Date().toISOString());
     const res = await fetch(OMIE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -693,9 +696,11 @@ async function syncEmpresa(
         // ConsultarRecebimento → busca itens e nNumPedCompra
         await sleep(RATE_LIMIT_DELAY_MS);
         let detalhe: OmieConsultarRecebimentoResponse;
-        const detalheLidoEm = new Date().toISOString();
+        // Carimbo da TENTATIVA que produziu a resposta (Codex 2026-10-17): o de antes dos retries deixaria uma leitura
+        // mais nova (cancelamento) perder o compare-and-set para uma mais velha.
+        let detalheLidoEm = "";
         try {
-          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline)) as OmieConsultarRecebimentoResponse;
+          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline, (t) => { detalheLidoEm = t; })) as OmieConsultarRecebimentoResponse;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
           // Falha esgotada/transitória do ConsultarRecebimento NÃO prova ausência de
@@ -751,7 +756,7 @@ async function syncEmpresa(
           summary.nfes_orfas++;
         }
         summary.nfes_processadas++;
-        filaSombra.push({
+        if (detalheLidoEm !== "") filaSombra.push({
           nf: { empresa, nIdReceb, numero_nfe: m.numero, chave_nfe: m.chave, fornecedor_codigo_omie: m.fornecedor_codigo },
           detalhe, observadoEm: detalheLidoEm,
         });
@@ -1083,6 +1088,7 @@ Deno.serve(async (req) => {
 
     const summary: EmpresaSummary[] = [];
     const filasSombra = new Map<Empresa, { s: EmpresaSummary; fila: ItemFilaSombra[] }>();
+    const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
     const aConcluir: Array<{ empLogId: Awaited<ReturnType<typeof logSync>>; s: EmpresaSummary; falha: string | undefined }> = [];
     // O finally conclui TODA empresa que terminou com sucesso, mesmo se algo lançar depois dela (outra empresa, a sombra).
     try {
@@ -1105,6 +1111,8 @@ Deno.serve(async (req) => {
           const fila: ItemFilaSombra[] = [];
           s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, fila, dataInicial, dataFinal);
           filasSombra.set(empresa, { s, fila });
+          // Documento dos POs capturado ANTES do backfill, que troca o raw_data do PO pelo recebimento (Codex 2026-10-17).
+          await capturarPedidosDaFila(fila, criarPortaSombra(supabase, empresa), sombraTemTempo);
           console.log(
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
@@ -1183,7 +1191,6 @@ Deno.serve(async (req) => {
 
     // Fase da sombra da associação NF↔PO (sombra.ts): nada vai ao Omie, depois de TODO o trabalho prioritário.
     try {
-      const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
       for (const [empresa, { s, fila }] of filasSombra) {
         if (!aConcluir.some((c) => c.s === s)) continue;
         const r = novaSombraSummary();

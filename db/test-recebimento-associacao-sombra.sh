@@ -23,13 +23,18 @@ export LC_ALL=C LANG=C
 MIG="$REPO_ROOT/supabase/migrations/20261017040000_recebimento_associacao_sombra.sql"
 TOTAL_ESPERADO=20
 
-# ── --falsificar: controle primeiro, na MESMA invocação; cada sabotagem declara os asserts que TÊM de ficar vermelhos
-# e os que TÊM de seguir verdes — verde só conta com a linha VERDE explícita e o filho só conta se chegou ao RESUMO
-# (ausência de VERMELHO não é aprovação; Codex 2026-10-17). Quarto campo: texto que o 1º vermelho TEM de conter. Comportamento é sabotado no BANCO depois da migration real (SABOTAGEM_SQL); a
-# postcondição é sabotada numa CÓPIA da migration (SABOTAGEM_MIG) — uma camada por vez.
+# ── --falsificar: controle primeiro, na MESMA invocação. SABOTAGENS: <nome>:<VERMELHOS>[:<VERDES>] — os asserts que
+# TÊM de acusar a sabotagem (`ID!MARCA`: o vermelho tem de trazer a marca do motivo declarado) e os que TÊM de seguir
+# verdes. Verde só conta com a linha VERDE explícita, e o filho só conta se chegou ao RESUMO (ausência de VERMELHO
+# não é aprovação; Codex 2026-10-17). Comportamento é sabotado no BANCO depois da migration real; a postcondição,
+# numa CÓPIA da migration — uma camada por vez.
+SABOTAGENS="sem_cas:A2,A3:A1,A4 cas_invertido:A4:A1 check_aberto:A5,A6:A1 rls_aberta:R1:R2,R3
+            escrita_staff:W1:W2,X1 escrita_service:W2:W1 execute_aberto:X1:X2 rpc_aceita_ausente:A8,A9:A1,A7
+            pc_policy_extra_aceita:I2!reaplicou:I0,I1,R1 pc_sem_rls:I0!RLS pc_sem_cas:I0!SECURITY
+            pc_execute_aberto:I0!EXECUTE pc_sem_check:I0!CHECK"
 if [ "${1:-}" = "--falsificar" ]; then
   falhas=0
-  rodar() {  # <nome> <porta> → imprime a linha de resumo do filho
+  rodar() {  # <nome> <porta> → as linhas de veredito do filho
     PGPORT_TEST="$2" SABOTAGEM="$1" bash "$0" 2>&1 | grep -E '^(RESUMO|VERDE|VERMELHO|ERRO)' || true
   }
   ctl="$(rodar "" 5852)"
@@ -37,24 +42,29 @@ if [ "${1:-}" = "--falsificar" ]; then
     echo "CONTROLE NÃO VERDE — falsificação inválida:"; printf '%s\n' "$ctl"; exit 1
   fi
   echo "controle: $TOTAL_ESPERADO/$TOTAL_ESPERADO verdes"
-  porta=5853; n_sab=0
-  for spec in sem_cas:A2,A3:A1,A4 cas_invertido:A4:A1 check_aberto:A5,A6:A1 rls_aberta:R1:R2,R3 \
-              escrita_staff:W1:W2,X1 escrita_service:W2:W1 execute_aberto:X1:X2 rpc_aceita_ausente:A8,A9:A1,A7 \
-              pc_policy_extra_aceita:I2:I0,I1,R1:'obtido=[reaplicou]' \
-              pc_sem_rls:I0::'POSTCONDICAO FALHOU: tabela' pc_sem_cas:I0::'POSTCONDICAO FALHOU: RPC' \
-              pc_execute_aberto:I0::'POSTCONDICAO FALHOU: EXECUTE' pc_sem_check:I0::'POSTCONDICAO FALHOU: CHECK'; do
-    IFS=: read -r nome vermelhos verdes marca <<<"$spec"; n_sab=$((n_sab + 1))
-    out="$(rodar "$nome" "$porta")"; porta=$((porta + 1))
-    ok=1
-    printf '%s\n' "$out" | grep -q '^RESUMO ' || { ok=0; echo "  $nome: o filho não chegou ao RESUMO (abortou antes de provar)"; }
-    for id in ${vermelhos//,/ }; do printf '%s\n' "$out" | grep -q "^VERMELHO $id " || { ok=0; echo "  $nome: $id deveria ficar VERMELHO"; }; done
-    for id in ${verdes//,/ }; do printf '%s\n' "$out" | grep -q "^VERDE $id\$" || { ok=0; echo "  $nome: $id deveria seguir VERDE (linha VERDE ausente)"; }; done
-    if [ -n "$marca" ]; then
-      printf '%s\n' "$out" | grep -m1 '^VERMELHO ' | grep -qF "$marca" || { ok=0; echo "  $nome: vermelho pelo motivo errado (sem '$marca')"; }
-    fi
-    if [ "$ok" = 1 ]; then echo "sabotagem $nome: tem dente"; else falhas=$((falhas + 1)); printf '%s\n' "$out"; fi
+  porta=5853
+  for item in $SABOTAGENS; do
+    sab="${item%%:*}"; resto="${item#*:}"
+    verm="${resto%%:*}"; verdes=""
+    [ "$resto" = "$verm" ] || verdes="${resto#*:}"
+    out="$(rodar "$sab" "$porta")"; porta=$((porta + 1))
+    motivo=""
+    printf '%s\n' "$out" | grep -q '^RESUMO ' || motivo="$motivo o filho não chegou ao RESUMO (abortou antes de provar);"
+    for decl in ${verm//,/ }; do
+      id="${decl%%!*}"; marca=""
+      [ "$id" = "$decl" ] || marca="${decl#*!}"
+      linha_v="$(printf '%s\n' "$out" | grep -m1 "^VERMELHO $id " || true)"
+      if [ -z "$linha_v" ]; then motivo="$motivo $id deveria ficar VERMELHO;"
+      elif [ -n "$marca" ] && ! printf '%s' "$linha_v" | grep -qF -- "$marca"; then motivo="$motivo $id vermelho pelo motivo errado (sem '$marca');"
+      fi
+    done
+    for id in ${verdes//,/ }; do
+      printf '%s\n' "$out" | grep -q "^VERDE $id\$" || motivo="$motivo $id deveria seguir VERDE (linha VERDE ausente);"
+    done
+    if [ -z "$motivo" ]; then echo "sabotagem $sab: tem dente ($verm)"; else falhas=$((falhas + 1)); echo "sabotagem $sab:$motivo"; printf '%s\n' "$out"; fi
   done
-  echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"
+  total="$(wc -w <<<"$SABOTAGENS" | tr -d ' ')"
+  echo "SABOTAGENS: $((total - falhas)) vermelhas / $falhas falhas"
   if [ "$falhas" -eq 0 ]; then echo "FALSIFICACAO-OK"; exit 0; fi
   echo "FALSIFICACAO REPROVOU: $falhas sabotagem(ns) sem dente"; exit 1
 fi
@@ -128,7 +138,7 @@ if [ "$SABOTAGEM" = pc_policy_extra_aceita ]; then  # só a cópia usada no I2: 
   MIG_I2="$TMPD/m2.sql"
 fi
 [ -f "$TMPD/m.sql" ] && MIG_USADA="$TMPD/m.sql"
-if Pdb -q -f "$MIG_USADA" >"$TMPD/i0.log" 2>&1 && grep -q "POSTCONDICAO OK" "$TMPD/i0.log"; then ok I0 aplicou aplicou; else ok I0 aplicou "falhou: $(grep -m1 -E 'ERROR|EXCEPTION' "$TMPD/i0.log" | cut -c1-200)"; fi
+if Pdb -q -f "$MIG_USADA" >"$TMPD/i0.log" 2>&1 && grep -q "POSTCONDICAO OK" "$TMPD/i0.log"; then ok I0 aplicou aplicou; else ok I0 aplicou "falhou: $(grep -m1 -E 'ERROR|EXCEPTION' "$TMPD/i0.log" | cut -c1-400)"; fi
 if [ "${MIG_USADA}" != "$MIG" ]; then  # sabotagem de postcondição: só o I0 importa
   echo "RESUMO verdes=$verdes vermelhos=$vermelhos"; exit 0
 fi

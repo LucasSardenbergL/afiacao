@@ -26,11 +26,26 @@ describe('omie-sync-nfes-recebidas — sombra da associação', () => {
     expect(iOrfa).toBeGreaterThan(0);
   });
 
-  it('carimbo de leitura sai ANTES da consulta da NF', () => {
-    const iCarimbo = fonte.indexOf('const detalheLidoEm = new Date().toISOString();');
-    const iConsulta = fonte.indexOf('"ConsultarRecebimento", { nIdReceb }');
-    expect(iCarimbo).toBeGreaterThan(0);
-    expect(iCarimbo).toBeLessThan(iConsulta);
+  it('carimbo é o da TENTATIVA que trouxe a NF (antes do fetch de cada retry), não o de antes dos retries', () => {
+    const iCall = fonte.indexOf('async function callOmie(');
+    const iAoTentar = fonte.indexOf('aoTentar?.(new Date().toISOString());', iCall);
+    const iFetch = fonte.indexOf('await fetch(OMIE_ENDPOINT', iCall);
+    const iLaco = fonte.indexOf('for (let attempt = 0;', iCall);
+    expect(iLaco).toBeGreaterThan(iCall);
+    expect(iAoTentar).toBeGreaterThan(iLaco);
+    expect(iFetch).toBeGreaterThan(iAoTentar);
+    expect(fonte).toMatch(/"ConsultarRecebimento", \{ nIdReceb \}, deadline, \(t\) => \{ detalheLidoEm = t; \}\)/);
+    expect(fonte).not.toMatch(/const detalheLidoEm = new Date\(\)/);
+  });
+
+  it('os POs da fila são capturados ANTES da reconciliação e do backfill (que troca o raw_data do PO)', () => {
+    const iSync = fonte.indexOf('s = await syncEmpresa(');
+    const iCaptura = fonte.indexOf('await capturarPedidosDaFila(fila,', iSync);
+    const iReconc = fonte.indexOf('await reconciliarOrfasEmpresa(', iSync);
+    const iBackfill = fonte.indexOf('await backfillRawData(', iSync);
+    expect(iCaptura).toBeGreaterThan(iSync);
+    expect(iCaptura).toBeLessThan(iReconc);
+    expect(iCaptura).toBeLessThan(iBackfill);
   });
 
   it('a fase roda depois do laço das empresas e antes dos completeSync de sucesso, que ficam no finally', () => {

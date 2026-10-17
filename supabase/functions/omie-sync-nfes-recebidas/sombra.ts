@@ -7,6 +7,7 @@
 // verde anterior não sobrevive como evidência vigente. Invariante: tentadas = gravadas + leituras_velhas +
 // falhas_publicacao; leituras_po_falhas ≤ tentadas.
 
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   classificarAssociacao,
   type Classificacao,
@@ -67,6 +68,7 @@ export async function executarSombra(
   observadoEm: string,
   temTempo: () => boolean,
   resumo: SombraSummary,
+  pedidosCapturados?: ReadonlyMap<string, PedidoDoContrato[]>,
 ): Promise<Classificacao | null> {
   if (!temTempo()) { resumo.puladas_por_tempo++; return null; }
   resumo.tentadas++;
@@ -76,12 +78,13 @@ export async function executarSombra(
   if (!DECIDIDA_PELA_NF.has(c.classe)) {
     try {
       // Sem contrato buscável (só compostos "a/b") a consulta é vazia por definição — não "não consultada".
-      const pedidos = contratos.length > 0 ? await porta.buscarPedidos(contratos) : new Map<string, PedidoDoContrato[]>();
+      const pedidos = contratos.length === 0 ? new Map<string, PedidoDoContrato[]>()
+        : pedidosCapturados ?? await porta.buscarPedidos(contratos);
       c = classificarAssociacao({ ...base, pedidosPorContrato: pedidos });
     } catch (err) {
       resumo.leituras_po_falhas++;
       c = { ...c, classe: "ambigua", motivos: [...new Set([...c.motivos, "leitura_po_falhou"])].sort(), pares: [], pedidos: [] };
-      console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} leitura de POs falhou (publica ambígua): ${err instanceof Error ? err.message : String(err)}`);
+      console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} leitura de POs falhou (publica ambígua): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);
     }
   }
   resumo.por_classe[c.classe] = (resumo.por_classe[c.classe] ?? 0) + 1;
@@ -98,7 +101,7 @@ export async function executarSombra(
     return c;
   } catch (err) {
     resumo.falhas_publicacao++;
-    console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} publicação falhou (o vínculo segue): ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} publicação falhou (o vínculo segue): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);
     return null;
   }
 }
@@ -106,8 +109,35 @@ export async function executarSombra(
 export interface ItemFilaSombra {
   nf: NFParaSombra;
   detalhe: unknown;
-  /** Carimbo tirado ANTES da consulta da NF: ordena a evidência pela leitura, não pela chegada da resposta. */
+  /** Carimbo antes do fetch da tentativa que trouxe a NF: ordena a evidência pela leitura, não pela chegada. */
   observadoEm: string;
+  /** POs dos contratos capturados antes do backfill (capturarPedidosDaFila); ausente = a fase busca ao vivo. */
+  pedidos?: ReadonlyMap<string, PedidoDoContrato[]>;
+}
+
+const CONTRATOS_POR_LEITURA = 50;
+
+/** Uma leitura em lote dos POs da fila, ANTES do backfill (que troca o raw_data do PO pelo recebimento — Codex
+ *  2026-10-17). Sem tempo ou com erro, não captura nada: a fase busca ao vivo, e o raw_data já trocado só pode
+ *  virar `po_sem_itens` (ambígua), nunca proposta falsa. Nunca lança. */
+export async function capturarPedidosDaFila(
+  fila: ItemFilaSombra[],
+  porta: PortaSombra,
+  temTempo: () => boolean,
+): Promise<void> {
+  const contratos = [...new Set(fila.flatMap((f) => contratosDoDetalhe(f.detalhe).filter((c) => !c.includes("/"))))].sort();
+  if (contratos.length === 0 || !temTempo()) return;
+  const mapa = new Map<string, PedidoDoContrato[]>();
+  try {
+    for (let i = 0; i < contratos.length; i += CONTRATOS_POR_LEITURA) {
+      if (!temTempo()) return;
+      for (const [k, v] of await porta.buscarPedidos(contratos.slice(i, i + CONTRATOS_POR_LEITURA))) mapa.set(k, v);
+    }
+  } catch (err) {
+    console.warn(`[sync-nfes] sombra: captura dos POs falhou (a fase busca ao vivo): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);
+    return;
+  }
+  for (const f of fila) f.pedidos = mapa;
 }
 
 /** Fase da sombra de uma empresa: roda DEPOIS de todo o trabalho prioritário do run, no tempo que sobrar. */
@@ -122,5 +152,5 @@ export async function executarFaseSombra(
   if (!temTempo()) { resumo.puladas_por_tempo += fila.length; return; }
   let skus: ReadonlySet<string> | null;
   try { skus = await lerEquivalencias(); } catch { skus = null; }
-  for (const f of fila) await executarSombra(porta, f.nf, f.detalhe, skus, f.observadoEm, temTempo, resumo);
+  for (const f of fila) await executarSombra(porta, f.nf, f.detalhe, skus, f.observadoEm, temTempo, resumo, f.pedidos);
 }

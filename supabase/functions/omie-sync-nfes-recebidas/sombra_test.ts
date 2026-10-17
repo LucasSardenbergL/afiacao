@@ -5,6 +5,7 @@
 // tempo, publica o estado decidido pela NF sem buscar POs, invalida a proposta quando a busca falha, e mantém
 // tentadas = gravadas + leituras_velhas + falhas_publicacao.
 import {
+  capturarPedidosDaFila,
   contratosDoDetalhe,
   executarFaseSombra,
   executarSombra,
@@ -132,4 +133,31 @@ Deno.test("fase: equivalência que lança vira null → ambígua, nunca associá
   const r = novaSombraSummary();
   await executarFaseSombra([{ nf: NF, detalhe, observadoEm: "t" }], p, async () => { throw new Error("rede"); }, sempre, r);
   assertEquals([chamadas.publicar[0].classe, chamadas.publicar[0].motivos], ["ambigua", ["equivalencia_nao_lida"]]);
+});
+
+Deno.test("captura antes do backfill: a fase usa os POs capturados, mesmo com a busca ao vivo já estragada", async () => {
+  const fila: ItemFilaSombra[] = [{ nf: NF, detalhe, observadoEm: "t" }];
+  await capturarPedidosDaFila(fila, porta().p, sempre);
+  // depois do backfill o raw_data do PO virou o recebimento: a busca ao vivo não acha mais os itens
+  const estragada = porta({ buscarPedidos: async () => new Map([["2138394", [{ ...pedido, etapa: null, itens: undefined }]]]) });
+  const r = novaSombraSummary();
+  await executarFaseSombra(fila, estragada.p, async () => new Set(), sempre, r);
+  assertEquals([estragada.chamadas.publicar[0].classe, r.por_classe], ["associavel", { associavel: 1 }]);
+});
+
+Deno.test("captura: lotes de 50 contratos, sem tempo não lê, erro não captura nada (a fase busca ao vivo)", async () => {
+  const fila: ItemFilaSombra[] = Array.from({ length: 120 }, (_, i) => ({
+    nf: { ...NF, nIdReceb: i + 1 }, observadoEm: "t",
+    detalhe: { ...detalhe, itensRecebimento: [{ ...detalhe.itensRecebimento[0], itensInfoAdic: { nNumPedCompra: `C${i}` } }] },
+  }));
+  const x = porta({ buscarPedidos: async (c) => { x.chamadas.buscar.push(c); return new Map(); } });
+  await capturarPedidosDaFila(fila, x.p, sempre);
+  assertEquals([x.chamadas.buscar.map((c) => c.length), fila.every((f) => f.pedidos !== undefined)], [[50, 50, 20], true]);
+  const semTempo = fila.map((f) => ({ ...f, pedidos: undefined }));
+  const y = porta();
+  await capturarPedidosDaFila(semTempo, y.p, () => false);
+  assertEquals([y.chamadas.buscar.length, semTempo.some((f) => f.pedidos !== undefined)], [0, false]);
+  const comErro = fila.map((f) => ({ ...f, pedidos: undefined }));
+  await capturarPedidosDaFila(comErro, porta({ buscarPedidos: async () => { throw new Error("timeout"); } }).p, sempre);
+  assertEquals(comErro.some((f) => f.pedidos !== undefined), false);
 });
