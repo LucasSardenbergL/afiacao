@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **646** custom migrations totais
-- **2075** objetos esperados (criados por estas migrations)
+- **648** custom migrations totais
+- **2086** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 743
-  - `rls_policy`: 471
+  - `function`: 748
+  - `rls_policy`: 473
   - `index`: 276
-  - `cron_job`: 184
-  - `table`: 178
+  - `cron_job`: 185
+  - `table`: 181
   - `view`: 114
   - `trigger`: 105
   - `enum_value`: 4
@@ -5239,11 +5239,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sayerlack_importar_pedido_portal` | — |
 
+### `20261016120000_raio_x_estoque_parado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_estoque_fatos` | — |
+| `function` | `public.raio_x_decidir` | — |
+| `function` | `public.raio_x_contar` | — |
+| `function` | `public.raio_x_classificar` | — |
+| `function` | `public.raio_x_medicao` | — |
+| `table` | `public.raio_x_classificacao_manual` | — |
+| `table` | `public.raio_x_decisao` | — |
+| `rls_policy` | `public.raio_x_classificacao_manual_select_staff` | `raio_x_classificacao_manual` |
+| `rls_policy` | `public.raio_x_decisao_select_staff` | `raio_x_decisao` |
+
 ### `20261016140000_tint_tombstone_exige_geracao_1.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20261016150000_sayerlack_varrer_pedidos_portal_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_varredura_falha` | — |
+| `cron_job` | `cron.sayerlack-varrer-pedidos-portal` | — |
 
 ## Próximos passos por status
 

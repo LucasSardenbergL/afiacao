@@ -161,6 +161,14 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'folga de margem vs piso de markup; gate private.cap_custo_ler',
   },
+  // 2026-10-16 — Raio-X (PR 1 da fase B). ACL DECLARADO pela própria migration-âncora
+  // (REVOKE PUBLIC, anon + GRANT authenticated), provado na prova PG17 por has_function_privilege;
+  // medir em prod com `bun run authz:funcoes:prod` depois do apply.
+  'public.raio_x_decidir': {
+    fechadaPor: '20261016120000_raio_x_estoque_parado.sql',
+    permitido: PORTA_GATE,
+    motivo: 'decisão do Raio-X (foto de custo + tirar do motor); gate private.cap_custo_ler',
+  },
   // 2026-09-06 — a porta única do cancelamento pós-disparo. `authenticated` PRECISA executar (é
   // dela que a correção legítima sai); `anon` foi revogado nominalmente na própria migration que
   // a cria, junto com PUBLIC. O fecho por privilégio e o gate no corpo são complementares aqui:

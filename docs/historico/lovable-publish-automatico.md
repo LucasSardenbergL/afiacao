@@ -1,5 +1,7 @@
 # Publish automático do Lovable pela API (2026-10-11)
 
+> ⚠️ **Estado em 2026-10-16: DESLIGADO na prática.** O secret `LOVABLE_API_KEY` não está configurado, então o workflow sai `success` sem publicar (run 38888350365). O desenho abaixo vale quando o secret for cadastrado; até lá, Publish é manual — ver `docs/agent/deploy.md` (Camada 2).
+
 **Incidente que motiva:** "merge ≠ produção" — `steu.lovable.app` serve o build velho até alguém
 clicar Publish (lição de 2026-05-31; recorrente no `/fecho`). A API do Lovable passou a expor
 `POST /v1/projects/{id}/publish` (versão `2026-09-11`, plano Business, escopo `projects:write`).
