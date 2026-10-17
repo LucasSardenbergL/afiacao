@@ -407,3 +407,144 @@ Pela rotação medida em 08-06 (23% → 86,7% de cobertura por tráfego em 48h),
 resolve sozinha em dias. **Mas a data efetiva do revert NÃO é a data do merge** — quem for
 medir o efeito desta reversão tem que recortar por quando a cobertura convergiu, não por
 `mergedAt`, sob pena de repetir exatamente o erro da verificação de 08-04.
+
+---
+
+# Verificação pós-reversão — 2026-10-01
+
+**Veredito: 🧭 os números caem no ramo 1, mas o mecanismo NÃO confirma.** Os três ramos
+pré-registrados no agendamento eram: ✅ funcionou · ❌ atribuição causal errada (capacidade,
+não default) · ❌ a inércia voltou. Nenhum descreve o que aconteceu. O uso de Fable em sessão
+principal voltou como **um surto de 2 dias colado num lançamento de modelo** e depois sumiu
+de novo **sem default nenhum**. Não re-fixei `"model": "opus"` (seria a ação do ramo 2, e o
+critério dele não fecha limpo), e nenhum código mudou.
+
+## O instrumento quase fabricou o ramo 2: o modelo trocou de NOME
+
+Em 2026-09-02 entrou o **`claude-fable-5-1`**, e em 09-24 o **`claude-opus-5-5`**. A receita
+de 08-29 filtrava `.message.model == "claude-fable-5"` (igualdade exata). Rodada como estava,
+ela devolve **0 requests Fable no pós-revert** (conferido: 0), ou seja, "PRINCIPAL ≈ 0 por
+≥14 dias" e ramo 2 disparado em cima de um zero de **filtro**, não de uso. O certo é
+`startswith("claude-fable")`. É o "ausente ≠ zero" de novo: aqui o zero vinha de um nome que
+mudou.
+
+Receita corrigida (dedupe por `requestId`, com sessão e modelo para medir concentração):
+
+```bash
+cat > f.jq <<'JQ'
+select((.message.model // "") | startswith("claude-fable"))
+| select(.message.usage != null)
+| [ ((.timestamp // "?")[0:10]),
+    (if (.isSidechain // false) then "SUBAGENTE" else "PRINCIPAL" end),
+    (.requestId // .uuid // "-"), (.sessionId // "-"), .message.model ] | @tsv
+JQ
+jq -n -f f.jq </dev/null   # valida o filtro antes (exit 0)
+grep -rl 'claude-fable' --include='*.jsonl' ~/.claude/projects \
+  | while IFS= read -r f; do jq -r -f f.jq "$f" 2>/dev/null; done \
+  | awk -F'\t' '!($3 in v){v[$3]=1; print}'
+```
+
+## O medido
+
+O mesmo instrumento para os dois lados: uma coleta global (`--dias 0`), **119.592 requests**
+após dedupe, e recortes por data do request via `--pular-coleta`.
+
+| recorte | janela real | requests | Fable %reqs | Fable %custo |
+|---|---|---|---|---|
+| `--ate 2026-08-28` | 05-20 .. 08-28 (43 dias c/ dados) | 47.451 | 2,3% | 6,4% |
+| **pós-revert** `--desde 2026-08-31` | 08-31 .. 10-01 (25 dias c/ dados) | 66.538 | **5,9%** (3.920) | **8,7%** (US$ 1.251) |
+
+Corte PRINCIPAL vs SUBAGENTE (Fable, por `requestId`):
+
+| período | PRINCIPAL | SUBAGENTE |
+|---|---|---|
+| sob o default (08-09..08-30) | **0** | 54 |
+| pós-revert (08-31..10-01) | **1.738** | 2.182 |
+
+Pelo agregado é o ramo 1: PRINCIPAL > 0 e `%reqs` em 5,9%, dentro da faixa de 2–8%. O
+calendário desmonta essa leitura:
+
+| dia | Fable PRINCIPAL |
+|---|---|
+| 09-02 (dia em que o Fable 5.1 entrou) | 8 |
+| **09-05** | **1.535** |
+| 09-06 | 140 |
+| **09-07 .. 09-22 (16 dias corridos)** | **0** |
+| 09-23 | 55 |
+| 09-24 .. 10-01 (Opus 5.5 entra em 09-24) | 0 |
+
+**88% do Fable principal do mês cabe num único dia.** O SUBAGENTE, ao contrário, é contínuo
+(entre 180 e 620 por semana). O canal da delegação de 08-24 se firmou, e é ele que segura o
+`%reqs` total na faixa.
+
+## Concentração: nem "poucas longas", nem "muitas curtas"
+
+As **30 sessões** principais em Fable têm entre 8 e 153 requests (média de ~58); 16 delas
+ficaram abaixo de 50. O conteúdo é quase todo legítimo pelo critério da auditoria original:
+money-path de compras/reposição, deploy de edges, codex-async, um "veja todo o código e monte
+um plano". Nada parecido com o "me explique como a uma criança".
+
+Mas o **modelo inicial** dessas 30 sessões foi **Fable em 30 de 30**, e 13 delas desceram
+depois para Opus. A assinatura que o #1654 chamou de inércia (começar no topo e descer)
+reaparece, só que comprimida num dia de lançamento. Boa parte das sessões abre com um
+"Contexto (auto-contido)…", que é o formato de chip `spawn_task` e de handoff. **Hipótese,
+não medida:** a sessão spawnada herda o modelo selecionado na hora, então um seletor parado
+em Fable 5.1 propaga para cada chip que o founder clica.
+
+## Por que nenhum ramo fecha
+
+- **Ramo 1 (✅):** os números passam (PRINCIPAL > 0, 5,9%), mas o ramo exige um uso
+  deliberado *sustentado*, e o medido é um evento de lançamento seguido de 16 dias de zero.
+- **Ramo 2 (atribuição errada):** a letra é satisfeita, porque são 16 dias corridos de zero
+  sem default. Só que o ramo pressupõe que o principal "segue" em ~0 desde o revert, e ele
+  saltou para 1.683 na primeira semana. O default **suprimia** sim: sob ele foram 0 em 21
+  dias, inclusive com trabalho long-horizon acontecendo. E o zero de 09-07..09-22 **não** tem
+  modelo novo de Opus como confusor (o Opus 5.5 só entra em 09-24), o que derruba a
+  explicação "foi só capacidade".
+- **Ramo 3 (inércia difusa):** não. O `%reqs` ficou em 5,9% (o ramo pede ≥13%), e só a
+  semana do lançamento passou de 13% (17,1%).
+
+A leitura que os dados sustentam: **sem default, a escolha de Fable na sessão principal é
+movida a evento** (lançamento de modelo, uma frente de money-path), não a hábito diário. A
+delegação a subagente cobre o uso de fundo. Não é a inércia de 91% em regime contínuo, nem a
+extinção de agosto.
+
+## Cobertura do revert (por tráfego, no recorte pós)
+
+| bucket | requests | |
+|---|---|---|
+| worktree viva **sem** a linha (revert aplicado) | 22.530 | 33,8% |
+| worktree viva que **ainda tem** `"model": "opus"` | **125** | **0,2%** |
+| worktree já reciclada | 44.024 | 66,0% |
+
+Há 17 de 105 worktrees vivas com a linha velha, quase sem tráfego. A data efetiva usada,
+`--desde 2026-08-31`, se sustenta. Não há `model` no `~/.claude/settings.json`.
+
+## Nota de instrumento: o baseline pré-#1654 está apodrecendo no disco
+
+Hoje o disco tem **309** requests Fable PRINCIPAL ≤ 08-03; o veredito de 08-29 mediu 837.
+O total `--ate 2026-08-28` caiu de ~52k para 47k requests. JSONLs antigos estão sendo
+removidos (limpeza periódica do harness). **Os baselines deste doc só valem como registrados;
+remedir o passado não reproduz o passado.** Quem precisar deles, use as tabelas, não o disco.
+
+## Próxima medição (se houver)
+
+1. Exclua da janela os **7 dias após cada lançamento** de modelo (09-02 Fable 5.1, 09-24
+   Opus 5.5) e meça o PRINCIPAL em regime. Lançamento é evento, e evento não mede política.
+2. Separe sessões spawnadas (chip/handoff) das abertas à mão, para testar a hipótese da
+   herança de modelo antes de qualquer mecanismo novo.
+3. O "gatilho por custo acumulado" do ramo 3 continua **não justificado**: não há cauda
+   difusa para ele acertar.
+
+## Lição transferível
+
+> **Um filtro por igualdade sobre um identificador versionado é um detector de zero.** Quando
+> o fornecedor renomeia (`fable-5` → `fable-5-1`), o filtro exato não falha nem avisa: ele
+> devolve zero, e zero era justamente o resultado que decidia um ramo. Use prefixo de
+> família, e antes de aceitar um zero confira que a família aparece no período com outro
+> nome. (Aqui, `uniq -c` da coluna de modelo do próprio `tokens-report` mostrou o 5.1.)
+>
+> E **regra de decisão pré-registrada com três ramos ainda pode não ter um ramo para o
+> resultado.** Os três presumiam regime estável. O medido foi um pulso. Forçar o pulso num
+> ramo para "cumprir o protocolo" seria fabricar veredito. O protocolo honesto registra que o
+> espaço de hipóteses estava incompleto.
