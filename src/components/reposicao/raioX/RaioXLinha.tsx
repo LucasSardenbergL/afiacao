@@ -4,7 +4,7 @@ import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import type { DecisaoRow, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { fmtValor, SEM_NF } from './formato';
 
-export const dataBR = (d: string | null): string => {
+const dataBR = (d: string | null): string => {
   if (!d) return '—';
   const [y, m, dia] = d.slice(0, 10).split('-');
   return `${dia}/${m}/${y}`;
@@ -20,7 +20,7 @@ export function rotuloDestino(i: ItemRaioX, d: DecisaoRow | undefined): { texto:
 }
 
 /** Top 5 clientes por quantidade. Sem lista (Colacor) → aviso de ausência, não "nenhum cliente". */
-export function TopClientes({ item }: { item: ItemRaioX }) {
+function TopClientes({ item }: { item: ItemRaioX }) {
   if (item.clientes === null) return <p className="text-xs text-muted-foreground">{SEM_NF}</p>;
   const top = [...item.clientes].sort((a, b) => b.qtd - a.qtd).slice(0, 5);
   if (top.length === 0) return <p className="text-xs text-muted-foreground">Nenhum cliente comprou nos últimos 12 meses.</p>;

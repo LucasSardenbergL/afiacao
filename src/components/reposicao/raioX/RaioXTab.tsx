@@ -33,7 +33,7 @@ export function RaioXTab() {
   const { empresa } = useReposicaoEmpresa();
   const chave = empresaDoRaioX(empresa);
   const rx = useRaioX(chave);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: '' });
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' ? f.rx : 'mercadoria';
 
