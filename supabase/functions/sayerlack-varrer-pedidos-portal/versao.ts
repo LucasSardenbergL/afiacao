@@ -20,7 +20,14 @@ export const respostaSonda = criarRespostaSonda("sayerlack-varrer-pedidos-portal
  * importadora, página ilegível/HTTP ≥ 400 = falha (nunca lista parcial completa), rodada com falha = erro no registro,
  * timeout da importadora = indeterminado (sem e-mail).
  */
-export const VERSAO = "v1.0-varredura-portal";
+/**
+ * v1.2 (2026-10-17) — lista ligada (palavra do founder + 2 rodadas de Codex): importa sozinho 1 Aberto e 5 Suspenso;
+ * 2/3 Atendido sem PO viram e-mail para conferir (o espelho não prova que a NF não está no Omie). Carência de 1 rodada
+ * contra PO lançado à mão no Omie (visto antes em rodada de importar E sync `complete` do espelho depois da vista);
+ * a importadora recebe a situação EXATA classificada; contrato relido antes de cada importação; contrato composto
+ * "a/b" conta os dois pedidos.
+ */
+export const VERSAO = "v1.2-aberto-suspenso-e-carencia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

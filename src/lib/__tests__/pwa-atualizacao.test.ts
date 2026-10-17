@@ -10,7 +10,12 @@ import {
   acompanharRegistro,
   aplicadorNativo,
   descreverEstadoAtualizacao,
+  faseDoIndicador,
   lerBuildDoServidor,
+  lerCarimbosDoServidor,
+  podeReparar,
+  repararApp,
+  type FaseAtualizacao,
   obterEstadoAtualizacao,
   verificarAtualizacaoAgora,
   UPDATE_TOAST_ID,
@@ -267,7 +272,14 @@ describe('aplicadorNativo (fallback do main.tsx, sem workbox-window)', () => {
 });
 
 describe('em que build estou (menu do usuário)', () => {
-  const base: EstadoAtualizacao = { fase: 'em_dia', buildId: 'index-92kmkUxx', buildServidor: null, ultimaVerificacaoEm: null };
+  const base: EstadoAtualizacao = {
+    fase: 'em_dia',
+    buildId: 'index-92kmkUxx',
+    buildServidor: null,
+    buildEm: null,
+    buildServidorEm: null,
+    ultimaVerificacaoEm: null,
+  };
 
   it('mostra o hash curto, no mesmo eixo do build_id/telemetria_probes', () => {
     expect(descreverEstadoAtualizacao(base)).toEqual({ build: '92kmkUxx', situacao: 'em dia' });
@@ -302,5 +314,115 @@ describe('lerBuildDoServidor', () => {
     expect(await lerBuildDoServidor(erro as unknown as typeof fetch)).toBeNull();
     const semEntry = vi.fn(async () => new Response('<html></html>'));
     expect(await lerBuildDoServidor(semEntry as unknown as typeof fetch)).toBeNull();
+  });
+});
+
+const HTML_SERVIDOR =
+  '<meta name="app-build-em" content="2026-10-17T15:00:00.000Z">' +
+  '<script type="module" src="/assets/index-DHn6ISaE.js"></script>';
+
+describe('lerCarimbosDoServidor (build_id + carimbo ordenável, do MESMO HTML)', () => {
+  it('lê os dois; o build_id segue idêntico ao de lerBuildDoServidor', async () => {
+    const f = vi.fn(async () => new Response(HTML_SERVIDOR));
+    expect(await lerCarimbosDoServidor(f as unknown as typeof fetch)).toEqual({
+      buildId: 'index-DHn6ISaE',
+      buildEm: '2026-10-17T15:00:00.000Z',
+    });
+    expect(await lerBuildDoServidor(f as unknown as typeof fetch)).toBe('index-DHn6ISaE');
+  });
+
+  it('HTML sem carimbo (build anterior a ele) → buildEm null, build_id preservado', async () => {
+    const f = vi.fn(async () => new Response('<script type="module" src="/assets/index-DHn6ISaE.js"></script>'));
+    expect(await lerCarimbosDoServidor(f as unknown as typeof fetch)).toEqual({ buildId: 'index-DHn6ISaE', buildEm: null });
+  });
+
+  it('verificarAtualizacaoAgora grava o carimbo do servidor no estado', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(HTML_SERVIDOR)));
+    try {
+      await verificarAtualizacaoAgora();
+      expect(obterEstadoAtualizacao().buildServidorEm).toBe('2026-10-17T15:00:00.000Z');
+      expect(obterEstadoAtualizacao().buildServidor).toBe('index-DHn6ISaE');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('indicador do topbar: some no estado normal', () => {
+  const TODAS: FaseAtualizacao[] = ['inativo', 'em_dia', 'verificando', 'baixando', 'pronta', 'falhou'];
+  it('só baixando e pronta aparecem', () => {
+    const visiveis = TODAS.filter((f) => faseDoIndicador(f) !== null);
+    expect(visiveis).toEqual(['baixando', 'pronta']);
+    expect(faseDoIndicador('baixando')).toBe('baixando');
+    expect(faseDoIndicador('pronta')).toBe('pronta');
+  });
+});
+
+describe('Reparar app (fase falhou)', () => {
+  function chegarEmFalhou() {
+    const h = montar();
+    h.armar();
+    const novo = new FakeSW('installing');
+    h.reg.acharUpdate(novo);
+    h.reg.installing = null;
+    novo.mudar('redundant');
+    expect(obterEstadoAtualizacao().fase).toBe('falhou');
+  }
+  function dubles() {
+    const regs = [{ unregister: vi.fn(async () => true) }, { unregister: vi.fn(async () => true) }];
+    const sw = { getRegistrations: vi.fn(async () => regs as unknown as readonly ServiceWorkerRegistration[]) };
+    const caches = { keys: vi.fn(async () => ['workbox-precache-v2', 'supabase-api']), delete: vi.fn<(nome: string) => Promise<boolean>>(async () => true) };
+    const recarregar = vi.fn();
+    return { regs, sw, caches, recarregar };
+  }
+
+  it('só oferece em falhou E online', () => {
+    expect(podeReparar('falhou', { onLine: true } as Navigator)).toBe(true);
+    expect(podeReparar('falhou', { onLine: false } as Navigator)).toBe(false);
+    for (const f of ['inativo', 'em_dia', 'verificando', 'baixando', 'pronta'] as FaseAtualizacao[]) {
+      expect(podeReparar(f, { onLine: true } as Navigator)).toBe(false);
+    }
+  });
+
+  it('desregistra TODO SW, apaga TODO cache e recarrega — nessa ordem', async () => {
+    chegarEmFalhou();
+    const d = dubles();
+    const ordem: string[] = [];
+    d.regs.forEach((r) => r.unregister.mockImplementation(async () => (ordem.push('unregister'), true)));
+    d.caches.delete.mockImplementation(async () => (ordem.push('cache'), true));
+    d.recarregar.mockImplementation(() => ordem.push('reload'));
+    const fez = await repararApp({ sw: d.sw, caches: d.caches, nav: { onLine: true } as Navigator, recarregar: d.recarregar });
+    expect(fez).toBe(true);
+    expect(d.caches.delete.mock.calls.map((c) => c[0])).toEqual(['workbox-precache-v2', 'supabase-api']);
+    expect(ordem).toEqual(['unregister', 'unregister', 'cache', 'cache', 'reload']);
+    expect(trackMock).toHaveBeenCalledWith('pwa.atualizacao', { fase: 'reparo' });
+  });
+
+  it('offline: não faz NADA (sem SW e sem cache, o app não abriria)', async () => {
+    chegarEmFalhou();
+    const d = dubles();
+    const fez = await repararApp({ sw: d.sw, caches: d.caches, nav: { onLine: false } as Navigator, recarregar: d.recarregar });
+    expect(fez).toBe(false);
+    expect(d.sw.getRegistrations).not.toHaveBeenCalled();
+    expect(d.caches.delete).not.toHaveBeenCalled();
+    expect(d.recarregar).not.toHaveBeenCalled();
+  });
+
+  it('fora de falhou: não faz nada', async () => {
+    const d = dubles();
+    const fez = await repararApp({ sw: d.sw, caches: d.caches, nav: { onLine: true } as Navigator, recarregar: d.recarregar });
+    expect(fez).toBe(false);
+    expect(d.recarregar).not.toHaveBeenCalled();
+  });
+
+  it('um unregister/cache que falha não impede o resto nem o reload', async () => {
+    chegarEmFalhou();
+    const d = dubles();
+    d.regs[0].unregister.mockRejectedValue(new Error('x'));
+    d.caches.delete.mockRejectedValueOnce(new Error('y'));
+    await repararApp({ sw: d.sw, caches: d.caches, nav: { onLine: true } as Navigator, recarregar: d.recarregar });
+    expect(d.regs[1].unregister).toHaveBeenCalled();
+    expect(d.caches.delete).toHaveBeenCalledTimes(2);
+    expect(d.recarregar).toHaveBeenCalledTimes(1);
   });
 });

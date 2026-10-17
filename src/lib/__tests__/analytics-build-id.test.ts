@@ -38,6 +38,7 @@ const { fake, capturas } = vi.hoisted(() => {
 vi.mock('posthog-js', () => ({ default: fake }));
 
 const BUILD_DE_TESTE = 'index-TESTE123';
+const BUILD_EM_DE_TESTE = '2026-10-17T15:00:00.000Z';
 
 async function carregarAnalytics() {
   vi.resetModules();
@@ -55,6 +56,10 @@ beforeEach(() => {
   s.type = 'module';
   s.setAttribute('src', `/assets/${BUILD_DE_TESTE}.js`);
   document.head.appendChild(s);
+  const m = document.createElement('meta');
+  m.setAttribute('name', 'app-build-em');
+  m.setAttribute('content', BUILD_EM_DE_TESTE);
+  document.head.appendChild(m);
 });
 
 afterEach(() => {
@@ -68,6 +73,16 @@ describe('analytics carimba o build que está EXECUTANDO', () => {
     initAnalytics();
     await vi.waitFor(() => expect(fake.register).toHaveBeenCalled());
     expect(fake.register).toHaveBeenCalledWith(expect.objectContaining({ build_id: BUILD_DE_TESTE }));
+  });
+
+  it('build_em (carimbo ordenável) vai JUNTO do build_id, no mesmo register — não no lugar', async () => {
+    const { initAnalytics, track } = await carregarAnalytics();
+    initAnalytics();
+    await vi.waitFor(() => expect(fake.register).toHaveBeenCalled());
+    expect(fake.register).toHaveBeenCalledWith({ build_id: BUILD_DE_TESTE, build_em: BUILD_EM_DE_TESTE });
+    track('pedido.criado');
+    const evento = capturas.find((c) => c.evento === 'pedido.criado');
+    expect(evento?.props).toMatchObject({ build_id: BUILD_DE_TESTE, build_em: BUILD_EM_DE_TESTE });
   });
 
   it('evento ENFILEIRADO antes do init drena JÁ com o build_id', async () => {

@@ -65,7 +65,7 @@ exceções que envelhece sozinha.
 ## Merge na `main` ≠ produção — 3 deploys MANUAIS e independentes (+ a 4ª dependência)
 
 1. **Migration** → colar o SQL no **SQL Editor do Lovable** → Run → validar com query de contagem. O Lovable **NÃO** aplica migration de nome custom sozinho (falha SILENCIOSA: a feature compila e quebra em runtime). Detalhe + ritual + skill `lovable-db-operator`: `docs/agent/database.md`.
-2. **Frontend** → **Publish automático desde 2026-10-11** pelo workflow `lovable-publish.yml` — **cron de 15 min**, porque merge do auto-merge não dispara `push` (API `POST /v1/projects/{id}/publish`, secret `LOVABLE_API_KEY`, plano Business), lógica em `scripts/lovable-publish.sh`. O marcador é o **SHA que o ar serve** (`__BUILD_SHA__`), não tag nem run verde. Se o intervalo ar..main tem `supabase/migrations/` ou `supabase/functions/`, o Publish fica **RETIDO** (Issue `lovable-publish-retido`): aplique as camadas e rode o workflow à mão com `liberar_sha` = SHA da main (libera só esse SHA). Resultado **AMBÍGUO** (503, deployment sem desfecho) abre `lovable-publish-ambiguo` e **trava** os runs seguintes até alguém conferir o ar e fechá-la. O gate é por diff: não prova que a migration foi aplicada, só que existe uma no caminho; e front novo chamando RPC SEM migration no intervalo passa. Sem o secret, o caminho manual abaixo segue valendo. Desenho e challenge Codex: [lovable-publish-automatico.md](../historico/lovable-publish-automatico.md).
+2. **Frontend** → ⚠️ **Publish automático DESLIGADO: o secret `LOVABLE_API_KEY` não está configurado no repo** (medido 2026-10-16: `gh secret list` sem ele; run `workflow_dispatch` 38888350365 termina com o notice "LOVABLE_API_KEY não configurado — Publish automático desligado"). Toda run agendada sai **`success` sem publicar** — o verde do workflow **não** é Publish; o #3106 ficou fora do ar até o clique manual. **Até o secret existir, vale o caminho manual abaixo** — e a prova é sempre o `__BUILD_SHA__` servido conter o merge, nunca o run. O desenho, para quando for ligado: workflow `lovable-publish.yml` (desde 2026-10-11) — cron de 15 min (na prática o GitHub espaça o schedule em horas: 22:47 → 00:54 → 05:18 → 10:00 UTC em 2026-10-15/16), porque merge do auto-merge não dispara `push` (API `POST /v1/projects/{id}/publish`, secret `LOVABLE_API_KEY`, plano Business), lógica em `scripts/lovable-publish.sh`. O marcador é o **SHA que o ar serve** (`__BUILD_SHA__`), não tag nem run verde. Se o intervalo ar..main tem `supabase/migrations/` ou `supabase/functions/`, o Publish fica **RETIDO** (Issue `lovable-publish-retido`): aplique as camadas e rode o workflow à mão com `liberar_sha` = SHA da main (libera só esse SHA). Resultado **AMBÍGUO** (503, deployment sem desfecho) abre `lovable-publish-ambiguo` e **trava** os runs seguintes até alguém conferir o ar e fechá-la. O gate é por diff: não prova que a migration foi aplicada, só que existe uma no caminho; e front novo chamando RPC SEM migration no intervalo passa. Sem o secret, o caminho manual abaixo segue valendo. Desenho e challenge Codex: [lovable-publish-automatico.md](../historico/lovable-publish-automatico.md).
    Caminho manual: **Publish** no editor do Lovable. `steu.lovable.app` serve o **build velho** até o Publish (lição 2026-05-31: mergear e achar que foi pro ar é o erro recorrente). **Desde 2026-09-29 a SESSÃO também publica, pelo MCP** (a pedido do founder, no fecho do #2627): `mcp__lovable__deploy_project` com o projeto `8f005805-000a-42b7-88a1-9683f785fab6` e `name: "steu"`. O `name` é o slug da URL publicada: fixe o canônico, porque outro valor muda o endereço de produção. Não é `send_message`, então não acorda o agente, e o bot não commitou nada depois. Antes, a ordem da casa: DDL aplicada (`deriva:corpo:prod` em exit 0) e `pendencias:deploy` em exit 0. O Lovable publica o commit em que o workspace está (`get_project` → `latest_commit_sha`), então confira que é a main. A prova é a troca do bundle de entrada no HTML de `steu.lovable.app` (`/assets/index-*.js`), lido antes e depois do Publish, com espera limitada. Medido no 1º uso: `index-CQMs4SNa.js` → `index-D6F9cOzP.js`. Bytes provam disponibilidade, não adoção: o PWA só troca de build quando o cliente aceita a atualização.
 3. **Edge functions** → criadas/editadas pelo **chat do Lovable** (ele lê `supabase/functions/<nome>/index.ts` do repo e deploya **verbatim**), **NÃO** pela UI Cloud (que só mostra logs). **Desde 2026-09-08 quem cola é a SESSÃO, pelo MCP** — §Deploy de edge pela SESSÃO.
 4. **SECRET novo de edge** → **Edge Functions → Secrets**, e **antes** do deploy da edge. Não é camada de código — nenhuma das 3 acima o acusa — e falha do jeito mais caro: a edge fica **Active**, o cron fica **verde**, `cron.job_run_details` diz `succeeded`, e a função morre no 1º `Deno.env.get` devolvendo 500 sem fazer nada. Deployar antes do secret **arma** exatamente esse estado, e a verificação por sonda pode carimbar "no ar" uma edge que não faz nada. #2035 (`analytics-outbox-drain` ↔ `POSTHOG_INGEST_KEY`, lido por essa edge e por nenhuma outra) só não quebrou porque o secret já estava lá — **sorte, não processo**.
@@ -1071,6 +1071,60 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   entry do servidor. Sensor: evento `pwa.atualizacao` (`fase`: baixando/pronta/falhou/aceita) —
   `falhou` é o install que morria calado. Alavanca que sobra (follow-up): cortar a cascata de hash
   dos chunks, que é o que faz cada Publish custar 4 MB ao celular.
+- **Build mínimo — EXIGIR o build novo antes de uma migration que quebra build velho (2026-10-17).**
+  O modo `prompt` deixa o operador no build velho até ele clicar, por desenho. Migration que FECHA
+  coluna/função que o build velho lê (as migrations B, #3072/#3084, fecham as colunas de margem →
+  42501 no build velho) precisava de "todo mundo atualizou?" e não tinha como exigir. Agora tem:
+  - **Carimbo ordenável**: `<meta name="app-build-em" content="<ISO UTC>">` no `index.html`
+    (plugin `carimboDeBuild` no `vite.config.ts`), lido do MESMO documento que o `build_id`
+    (`src/lib/build-id.ts` → `resolverBuildEm`/`extrairBuildEm`) e enviado ao PostHog como
+    `build_em` junto do `build_id`. O **`build_id` segue sendo o eixo de adoção**; o carimbo só
+    responde "este build é anterior àquele?", que o hash não sabe. É `<meta>` e não `define` de JS
+    de propósito: um `define` que muda a cada build troca o hash de todo chunk que o lê e refaria a
+    cascata do precache que o #3114 cortou. Paridade: `build-id-paridade.test.ts`.
+  - **Config**: linha `key = 'pwa_build_minimo'` em `company_config` (RLS existente: staff lê,
+    master escreve; **sem migration**), `value` = `{"build_minimo_em": <ISO>, "prazo": <ISO>}`.
+    Linha ausente ou JSON ilegível = sem exigência (falha aberta: erro de digitação não tranca o
+    staff). Regras puras e testes: `src/lib/pwa-build-minimo.ts`.
+  - **Efeito** (só staff, identidade real; `src/components/shell/ExigenciaDeVersao.tsx`): build
+    anterior ao mínimo → banner fixo **"Atualize o app até <prazo>"**; depois do prazo → **modal
+    bloqueante** com "Atualizar" (ou "Reparar app" se o install falhou). **Nunca recarrega
+    sozinho** — o modal só tira o operador do caminho; quem recarrega é o clique, e a fila offline
+    (localStorage) sobrevive ao reload. Se o build que o SERVIDOR entrega também está abaixo do
+    mínimo (mínimo erguido antes do Publish), fica no aviso: bloquear ali não teria saída. Sensor:
+    evento `pwa.build_minimo` (`exigencia`: aviso/bloqueio).
+  - **Runbook (nesta ordem):**
+    1. Mergear e **Publicar** o código que já funciona com a migration (não lê o que ela fecha).
+    2. Ler o carimbo do build SERVIDO (é ele o mínimo — não "agora", que pode ser antes do build):
+       `curl -s "https://steu.lovable.app/?v=$(date +%s)" | grep -o 'app-build-em" content="[^"]*'`
+    3. Subir o mínimo (sessão pelo envelope via MCP, ou founder no SQL Editor) com um prazo que dê
+       pelo menos um turno inteiro para atualizar sem perder formulário:
+       ```sql
+       BEGIN;
+       INSERT INTO public.company_config (key, value)
+       VALUES ('pwa_build_minimo', jsonb_build_object(
+         'build_minimo_em', '<CARIMBO DO PASSO 2>', 'prazo', '<ex.: 2026-10-20T18:00:00-03:00>')::text)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+       DO $post$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM public.company_config WHERE key = 'pwa_build_minimo'
+                        AND (value::jsonb ->> 'build_minimo_em')::timestamptz = '<CARIMBO DO PASSO 2>'::timestamptz)
+         THEN RAISE EXCEPTION 'pwa_build_minimo não gravou'; END IF;
+       END $post$;
+       COMMIT;
+       ```
+    4. Acompanhar a adoção pelo eixo de sempre (`telemetria_probes` por `build_id` / PostHog), e o
+       `pwa.build_minimo` para ver quem ainda está no aviso/bloqueio.
+    5. **Aplicar a migration só DEPOIS do prazo** — antes dele o build velho ainda roda (só avisado).
+       A linha pode ficar: todo build posterior passa. Na próxima, sobrescreve.
+  - ⚠️ **Limites**: só alcança quem já está num build que CONTÉM esta feature (o mesmo ovo-e-galinha
+    do #3108 — o 1º salto ainda depende do toast); só staff (cliente não lê `company_config`);
+    o prazo usa o relógio do aparelho; offline não relê a config (mas offline também não chega ao
+    banco). Reabrir o app relê a config (`refetchOnWindowFocus`) e a cada 15 min.
+- **Indicador no topbar + "Reparar app" (2026-10-17).** `IndicadorAtualizacao` aparece só em
+  `baixando`/`pronta` (padrão do `NetworkStatusIndicator`: some no estado normal). Na fase `falhou`
+  e online, o menu do usuário ganha **"Reparar app"**: desregistra o SW, apaga os caches (precache +
+  runtime) e recarrega pela rede — sem tocar localStorage (a fila offline fica). Offline não
+  oferece: sem SW e sem cache o app não abriria. Evento `pwa.atualizacao` com `fase: 'reparo'`.
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
 - **Entry fino = Publish barato no 4G** (`manualChunks` → `app-core`, 2026-10-16). O entry
   `index-*.js` muda em TODO Publish que mexe no app: carrega o `__vite__mapDeps` com o nome de
@@ -1085,6 +1139,12 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   e `node_modules`/helpers `\0` ficam com os buckets de vendor (mandá-los junto criou
   `vendor-react → app-core → vendor-react`); (2) o entry continua sendo `index-*.js`, 1º
   `<script>` do HTML (eixo do `build_id` e do `verify-frontend.sh`). **Prova de build:**
-  `grep -l "<entry>" dist/assets/*.js` dá **0**. Custo residual: editar um módulo do `app-core`
-  (contexts, hooks e `ui/*` usados pelas telas) ainda cascateia para quem o importa.
+  `grep -l "<entry>" dist/assets/*.js` dá **0**.
+  **Por alcance (2026-10-17):** o `app-core` guarda só o que ≥ 20 chunks lazy usam
+  (`LAZY_MIN_APP_CORE`: supabase client, `AuthContext`, `postgrest`, `ui/*`). O resto vai para
+  um chunk `app-<módulo>` por **assinatura de alcance** (módulos usados pelas mesmas telas dividem
+  chunk). Editar `useTarefas`/`offline-queue`/`financeiroV2Service` troca ~10 entradas (0,3 MB),
+  não 268 (4 MB). Sem ciclo por construção: se X importa Y, alcance(Y) ⊇ alcance(X). Custo
+  residual: editar um módulo do `app-core` ainda cascateia para quase todas as telas (3 de 74
+  commits recentes com `src/`).
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.

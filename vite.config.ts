@@ -46,6 +46,27 @@ function buildEnvProbe(): string {
 const commitSha = resolveCommitSha();
 const buildEnvKeys = buildEnvProbe();
 
+// Carimbo ORDENÁVEL do build (ISO-8601 UTC, instante em que o Vite rodou). Existe para o
+// "build mínimo" (src/lib/pwa-build-minimo.ts): o `build_id` (hash do entry) identifica o
+// build mas não diz se é ANTERIOR a outro, e o builder do Lovable não tem SHA de commit.
+// Não substitui o `build_id` — ele segue sendo o eixo de adoção.
+//
+// ⚠️ Vai como <meta> no index.html, NÃO como `define` em JS: um `define` que muda a cada
+// build troca o hash de todo chunk que o lê, e se ele morasse em código compartilhado
+// refaria a cascata de hash do precache que o #3114 cortou (cada Publish = ~4 MB no
+// celular). O index.html já muda em todo build (aponta pro entry), então o carimbo sai
+// de graça. E fica no MESMO documento que o `build_id` é lido (src/lib/build-id.ts): o SW
+// velho serve o index.html PRECACHEADO, com o carimbo velho — que é a leitura certa.
+const buildEm = new Date().toISOString();
+function carimboDeBuild(): Plugin {
+  return {
+    name: "carimbo-de-build",
+    transformIndexHtml: () => [
+      { tag: "meta", attrs: { name: "app-build-em", content: buildEm }, injectTo: "head" },
+    ],
+  };
+}
+
 // 'virtual:pwa-register' só ganha resolvedor quando o VitePWA está ativo (produção
 // non-preview). Fora dele, o guard `__PWA_ENABLED__` protege o RUNTIME e o BUILD
 // (DCE), mas NÃO o scanner de deps do dev server: o esbuild segue o grafo estático
@@ -96,6 +117,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
+    carimboDeBuild(),
     mcpPlugin(),
     mode === "development" && componentTagger(),
     mode === "production" && !isLovablePreview && VitePWA({
@@ -347,8 +369,8 @@ export default defineConfig(({ mode }) => ({
             return vendorChunk(id);
           }
           if (id.includes('vite/preload-helper')) return 'app-core';
-          if (id.startsWith(SRC_DIR) && !id.endsWith('.css') && compartilhadoComLazy(getModuleInfo).has(id)) {
-            return 'app-core';
+          if (id.startsWith(SRC_DIR) && !id.endsWith('.css')) {
+            return chunkCompartilhado(getModuleInfo).get(id);
           }
           // App code: sem agrupamento manual → Rollup decide (circular-safe).
         },
@@ -359,16 +381,34 @@ export default defineConfig(({ mode }) => ({
 
 const SRC_DIR = path.resolve(__dirname, "src") + path.sep;
 
-// Módulos de app-core: alcançáveis por import ESTÁTICO a partir do entry
-// (src/main.tsx), menos main.tsx e App.tsx (o App tem os lazy() das rotas e
-// portanto o mapDeps), E alcançáveis por import estático a partir de algum
-// alvo de import() dinâmico, ou seja, que algum chunk lazy usa. Calculado uma
-// vez por build: o manualChunks roda com o grafo já completo.
+// A partir de quantos chunks lazy (alvos de import() dinâmico) um módulo
+// compartilhado vai pro app-core em vez de um chunk do seu grupo. Abaixo
+// disso a edição custa no máximo ~LAZY_MIN_APP_CORE telas; acima, separar
+// não compensa (quase toda tela muda junto de qualquer jeito).
+const LAZY_MIN_APP_CORE = 20;
+
+// Chunk de cada módulo COMPARTILHADO do app: alcançável por import ESTÁTICO a
+// partir do entry (src/main.tsx), menos main.tsx e App.tsx (o App tem os lazy()
+// das rotas e portanto o mapDeps), E usado por algum chunk lazy. O que só o
+// shell usa fica de fora (fica no entry, que muda em todo Publish).
+// Alcance = conjunto de alvos de import() dinâmico que chegam ao módulo por
+// import estático.
+//  - alcance >= LAZY_MIN_APP_CORE (supabase client, AuthContext, ui/*,
+//    postgrest) → app-core.
+//  - abaixo disso, um chunk por ASSINATURA de alcance: módulos usados pelas
+//    MESMAS telas cascateiam pras mesmas telas, então dividir chunk não custa
+//    nada. Editar useTarefas troca só as ~6 telas que o usam. Dentro do
+//    app-core trocava o hash dele e de todos os ~263 importadores; eram assim
+//    6 dos 9 commits residuais medidos em 2026-10-17.
+// Sem ciclo entre chunks, por construção: se X importa Y, todo lazy que alcança
+// X alcança Y (alcance(Y) ⊇ alcance(X)). Um ciclo exigiria alcances iguais,
+// e alcances iguais caem no mesmo chunk. O app-core nunca importa um grupo.
+// Calculado uma vez por build: o manualChunks roda com o grafo já completo.
 type ModuleInfoMinima = { importedIds: readonly string[]; dynamicallyImportedIds: readonly string[] };
 type GetModuleInfo = (id: string) => ModuleInfoMinima | null;
-const compartilhadoCache = new WeakMap<GetModuleInfo, Set<string>>();
-function compartilhadoComLazy(getModuleInfo: GetModuleInfo): Set<string> {
-  const emCache = compartilhadoCache.get(getModuleInfo);
+const chunkCompartilhadoCache = new WeakMap<GetModuleInfo, Map<string, string>>();
+function chunkCompartilhado(getModuleInfo: GetModuleInfo): Map<string, string> {
+  const emCache = chunkCompartilhadoCache.get(getModuleInfo);
   if (emCache) return emCache;
   const fecho = (raizes: Iterable<string>, comDinamicos: boolean) => {
     const seen = new Set<string>();
@@ -391,9 +431,29 @@ function compartilhadoComLazy(getModuleInfo: GetModuleInfo): Set<string> {
   for (const id of fecho([entryId], true)) {
     for (const dep of getModuleInfo(id)?.dynamicallyImportedIds ?? []) alvosDinamicos.add(dep);
   }
-  const usadoPorLazy = fecho(alvosDinamicos, false);
-  const resultado = new Set([...estaticoDoEntry].filter((id) => usadoPorLazy.has(id)));
-  compartilhadoCache.set(getModuleInfo, resultado);
+  const alcance = new Map<string, string[]>();
+  for (const alvo of [...alvosDinamicos].sort()) {
+    for (const id of fecho([alvo], false)) {
+      if (id.startsWith(SRC_DIR) && estaticoDoEntry.has(id)) alcance.set(id, [...(alcance.get(id) ?? []), alvo]);
+    }
+  }
+  const grupos = new Map<string, string[]>();
+  const resultado = new Map<string, string>();
+  for (const [id, alvos] of alcance) {
+    if (alvos.length >= LAZY_MIN_APP_CORE) {
+      resultado.set(id, "app-core");
+      continue;
+    }
+    const assinatura = alvos.join("\n");
+    grupos.set(assinatura, [...(grupos.get(assinatura) ?? []), id]);
+  }
+  // Nome legível e determinístico: o 1º módulo (em ordem) do grupo.
+  for (const membros of grupos.values()) {
+    const primeiro = path.relative(SRC_DIR, [...membros].sort()[0]);
+    const nome = "app-" + primeiro.replace(/\.[^.]+$/, "").replace(/[\\/]/g, "-");
+    for (const id of membros) resultado.set(id, nome);
+  }
+  chunkCompartilhadoCache.set(getModuleInfo, resultado);
   return resultado;
 }
 

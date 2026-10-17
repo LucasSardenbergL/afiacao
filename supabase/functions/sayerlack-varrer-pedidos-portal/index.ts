@@ -28,7 +28,8 @@ import {
   lerListaConsulta,
   type LinhaConsultaRaw,
   motivoBloqueio,
-  normalizarContrato,
+  aplicarCarencia,
+  contratosDoTexto,
   portalSayerlackFechado,
   resumoImportacao,
   SITUACOES_IMPORTAVEIS,
@@ -327,8 +328,7 @@ async function contratosNoOmie(db: Db, protocolos: string[]): Promise<Set<string
   const alvo = new Set(protocolos);
   const achados = new Set<string>();
   for (const l of linhas) {
-    const c = normalizarContrato(l.numero_contrato_fornecedor);
-    if (c && alvo.has(c)) achados.add(c);
+    for (const c of contratosDoTexto(l.numero_contrato_fornecedor)) if (alvo.has(c)) achados.add(c);
   }
   return achados;
 }
@@ -389,15 +389,46 @@ async function marcarResolvidos(db: Db, protocolos: string[]): Promise<void> {
   if (error) console.warn(`[varrer-portal] não marcou ${protocolos.length} protocolo(s) resolvido(s) (fail-open): ${error.message}`);
 }
 
-async function importar(protocolo: string): Promise<{ httpStatus: number; corpo: unknown }> {
+/** 1ª vista de cada protocolo (carência). Erro de leitura LANÇA: sem saber se já foi visto, ninguém importa. */
+async function vistosAntes(db: Db, protocolos: string[]): Promise<Map<string, string>> {
+  const m = new Map<string, string>();
+  if (protocolos.length === 0) return m;
+  const linhas = await fetchAll<{ protocolo: string; primeira_vez_em: string }>(
+    (de, ate) => db.from("sayerlack_varredura_visto").select("protocolo, primeira_vez_em").in("protocolo", protocolos)
+      .order("protocolo", { ascending: true }).range(de, ate),
+    "varrer-portal:vistos",
+  );
+  for (const l of linhas) m.set(l.protocolo, l.primeira_vez_em);
+  return m;
+}
+
+/** Grava a 1ª vista (a que já existe não muda). Erro LANÇA: carência sem registro nunca venceria — e falharia calada. */
+async function registrarVistos(db: Db, protocolos: string[]): Promise<void> {
+  if (protocolos.length === 0) return;
+  const { error } = await db.from("sayerlack_varredura_visto")
+    .upsert(protocolos.map((protocolo) => ({ protocolo })), { onConflict: "protocolo", ignoreDuplicates: true });
+  if (error) throw new Error(`Registro da 1ª vista: ${error.message}`);
+}
+
+/** Fim do último sync COMPLETE de pedidos de compra da OBEN (marcador 1-writer `sync_state`); outro status ⇒ null. */
+async function syncPedidosCompletoEm(db: Db): Promise<string | null> {
+  const { data, error } = await db.from("sync_state").select("status, last_sync_at")
+    .eq("entity_type", "pedidos_compra").eq("account", "oben").maybeSingle();
+  if (error) throw new Error(`Leitura do sync de pedidos de compra: ${error.message}`);
+  const r = data as { status?: string | null; last_sync_at?: string | null } | null;
+  return r?.status === "complete" && r.last_sync_at ? r.last_sync_at : null;
+}
+
+async function importar(protocolo: string, situacaoCodigo: string): Promise<{ httpStatus: number; corpo: unknown }> {
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), 240_000);
   try {
     const resp = await fetch(`${SUPABASE_URL}/functions/v1/sayerlack-importar-pedido-portal`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
-      // A lista fechada vale também na RELEITURA da importadora, antes da RPC (Codex P1).
-      body: JSON.stringify({ protocolo, situacoes_permitidas: [...SITUACOES_IMPORTAVEIS] }),
+      // A releitura da importadora tem de achar a MESMA situação que a varredura classificou (Codex P1, 2026-10-16/17):
+      // um pedido que passou de Aberto para Atendido no meio da rodada escaparia da trava de NF.
+      body: JSON.stringify({ protocolo, situacoes_permitidas: [situacaoCodigo] }),
       signal: ctrl.signal,
     });
     const txt = await resp.text();
@@ -489,10 +520,17 @@ Deno.serve(async (req: Request) => {
       // 2. Classifica.
       const lista = lerListaConsulta(envelope.linhas ?? []);
       const protocolos = lista.pedidos.map((p) => p.protocolo);
-      const [noApp, noOmie] = await Promise.all([protocolosNoApp(db, protocolos), contratosNoOmie(db, protocolos)]);
-      const classificados = classificar(lista.pedidos, {
+      const [noApp, noOmie, vistos, syncEm] = await Promise.all([
+        protocolosNoApp(db, protocolos), contratosNoOmie(db, protocolos), vistosAntes(db, protocolos), syncPedidosCompletoEm(db),
+      ]);
+      const preCarencia = classificar(lista.pedidos, {
         protocolosNoApp: noApp, contratosNoOmie: noOmie, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
       });
+      // A 1ª vista só conta em rodada de IMPORTAR: "listar" não tem efeito sobre compras futuras (Codex P2).
+      if (modo === "importar") {
+        await registrarVistos(db, preCarencia.filter((p) => p.classe === "candidato" && !vistos.has(p.protocolo)).map((p) => p.protocolo));
+      }
+      const classificados = aplicarCarencia(preCarencia, vistos, syncEm);
       const candidatos = classificados.filter((p) => p.classe === "candidato");
       const contagem: Record<string, number> = {};
       for (const p of classificados) contagem[p.classe] = (contagem[p.classe] ?? 0) + 1;
@@ -506,7 +544,18 @@ Deno.serve(async (req: Request) => {
       };
       // Falha aberta de protocolo que JÁ entrou no app (por timeout indeterminado, botão ou rodada anterior) se resolve.
       await marcarResolvidos(db, classificados.filter((p) => p.classe === "ja_no_app" || p.classe === "ja_no_omie").map((p) => p.protocolo));
-      if (modo === "listar" || candidatos.length === 0) return { ...base, importados: [], falhas: [], adiados: [] };
+      // Atendido sem PO: e-mail 1 vez por pedido para o founder conferir no Omie (não é falha da rodada).
+      const conferir = classificados.filter((p) => p.classe === "atendido_conferir");
+      const avisados: unknown[] = [];
+      if (modo === "importar") {
+        for (const p of conferir) {
+          const { notificado } = await registrarFalha(db, p.protocolo,
+            `Pedido ${p.protocolo} está "${p.situacao}" no portal (emissão ${p.emissao ?? "?"}) e não tem pedido de compra no Omie. ` +
+              `O cron não importa pedido já faturado: confira no Omie se a NF já foi lançada e, se não, use "Importar do portal".`);
+          avisados.push({ protocolo: p.protocolo, notificado });
+        }
+      }
+      if (modo === "listar" || candidatos.length === 0) return { ...base, avisados, importados: [], falhas: [], adiados: [] };
 
       // 3. Importa, um por vez, reconferindo o banco antes de cada um.
       const importados: unknown[] = [];
@@ -525,7 +574,16 @@ Deno.serve(async (req: Request) => {
           break;
         }
         if ((await protocolosNoApp(db, [c.protocolo])).size > 0) continue; // entrou no app durante a rodada
-        const r = await importar(c.protocolo).catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
+        // A prova de "não está no Omie / NF não lançada" é RELIDA agora, não a do começo da rodada (Codex P1).
+        const omieAgora = await contratosNoOmie(db, [c.protocolo]);
+        const reclasse = classificar([c], {
+          protocolosNoApp: new Set(), contratosNoOmie: omieAgora, situacoesImportaveis: SITUACOES_IMPORTAVEIS, emissaoDesde,
+        })[0].classe;
+        if (reclasse !== "candidato") {
+          adiados.push(c.protocolo);
+          continue;
+        }
+        const r = await importar(c.protocolo, c.situacao_codigo as string).catch((e) => ({ httpStatus: 0, corpo: { ok: false, mensagem: mensagemDeErro(e) ?? "erro de rede" } }));
         const res = resumoImportacao(r.httpStatus, r.corpo);
         console.log(`[varrer-portal] ${c.protocolo}: importar HTTP ${r.httpStatus} ok=${res.ok}`);
         // Sem corpo da importadora (timeout de 150 s do gateway, rede): o PO pode ter saído depois. É INDETERMINADO —
@@ -541,7 +599,7 @@ Deno.serve(async (req: Request) => {
           falhas.push({ protocolo: c.protocolo, mensagem: res.mensagem, notificado });
         }
       }
-      resumoFinal = { ...base, importados, falhas, adiados, indeterminados };
+      resumoFinal = { ...base, avisados, importados, falhas, adiados, indeterminados };
       // Rodada com falha NÃO é sucesso no registro (Codex P2): o ✓ do UltimaExecucao esconderia o pedido que não entrou.
       if (falhas.length > 0) {
         throw new Error(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);

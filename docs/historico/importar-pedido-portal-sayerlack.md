@@ -95,3 +95,23 @@ caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, 
 - **IPI — alíquota no PO**: a API do Omie (IncluirPedCompra, `produtos_incluir`/`produtos_alterar`/`produtos_consulta`)
   **não tem campo de alíquota**, só `nValorIpi` (que já vai). O `raw_data` do PO 1291 (ConsultarPedCompra) confirma: 29
   chaves por item, nenhuma de alíquota. O campo que o founder vê na tela do Omie não é exposto pela API.
+
+## 2026-10-17 — 1ª rodada real e lista fechada ligada (varredura v1.1)
+
+- **1ª rodada real** (modo listar, disparo manual em 16/10 23:26 SP; o cron de sábado 12:30 cai no portal fechado):
+  22 pedidos lidos em 1 página — 15 no app, 5 no Omie, 1 cancelado (2140501), 1 fora (2140762, "1 - Aberto").
+  Select real do portal: 1 Aberto · 2 Atendido Parcial · 3 Atendido Total · 4 Pendentes · 5 Suspenso · 6 Cancelado ·
+  7 Fatur Balcão.
+- **Founder**: "aberto + suspenso + atendido total ou parcial caso as respectivas NF dos pedidos não tenham sido
+  lançadas ainda no Omie"; Pendentes desconhecido → fora.
+- **Codex (2 rodadas, 0 P0)** mostrou que o espelho NÃO prova "NF não lançada": NF com 2 pedidos casada só com um não
+  deixa órfã do outro (`omie-sync-nfes-recebidas` só cria órfã quando NENHUM pedido casa); NF que o sync não leu some.
+  Decisão do founder: o cron importa sozinho só **1 Aberto e 5 Suspenso**; **2/3 Atendido** sem PO viram e-mail
+  (1 vez por pedido, `sayerlack_varredura_falha`) para conferir no Omie e usar "Importar do portal".
+- **Carência de 1 rodada** (founder, contra PO lançado à mão no Omie: 8 de 21 em outubro): só importa o pedido já
+  visto numa rodada de IMPORTAR anterior (`sayerlack_varredura_visto`, migration `20261017120000`, só INSERT) E com
+  `sync_state(pedidos_compra, oben)` `complete` terminado > vista + 5 min. Risco residual registrado pelo Codex: PO
+  manual criado DEPOIS desse sync e antes da rodada seguinte ainda escapa (o espelho é a única fonte; sem consulta ao
+  vivo no Omie). Não usar `status` do tracking para NF: o sync de PO reescreve `FATURADO` com `CRIADO`.
+- **Contrato composto** "1998739/1998740" (15 POs em prod) passou a contar os dois protocolos na varredura. A RPC
+  (IP006, `btrim(contrato) = protocolo`) ainda compara inteiro — o filtro da varredura é quem pega.

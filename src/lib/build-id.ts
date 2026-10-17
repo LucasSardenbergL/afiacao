@@ -59,3 +59,30 @@ export function resolverBuildId(doc: Document | null | undefined = globalThis.do
   const srcs = Array.from(doc.querySelectorAll('script[src]'), (s) => s.getAttribute('src') ?? '');
   return extrairBuildId(srcs);
 }
+
+/**
+ * Carimbo ORDENÁVEL do build (ISO-8601, quando o Vite rodou) — o `<meta name="app-build-em">`
+ * que o `vite.config.ts` injeta no index.html. Complementa o `build_id`, não o substitui:
+ * o hash do entry identifica o build e é o eixo de ADOÇÃO (dois Publish do mesmo código = o
+ * mesmo id); o carimbo só responde "este build é anterior àquele?", que é o que o build
+ * mínimo (`pwa-build-minimo.ts`) precisa e o hash não sabe dizer.
+ *
+ * Ausente/ilegível → `null` (ausência de dado, nunca "build antigo" nem "build novo").
+ */
+const META_BUILD_EM = 'app-build-em';
+const RE_META_BUILD_EM = /<meta\s+name="app-build-em"\s+content="([^"]+)"/;
+
+function carimboValido(v: string | null | undefined): string | null {
+  return v && Number.isFinite(Date.parse(v)) ? v : null;
+}
+
+/** Lê o carimbo do HTML como TEXTO (o index.html que o servidor entrega agora). */
+export function extrairBuildEm(html: string): string | null {
+  return carimboValido(RE_META_BUILD_EM.exec(html)?.[1]);
+}
+
+/** Lê o carimbo do documento que o browser REALMENTE carregou — mesmo documento do `build_id`. */
+export function resolverBuildEm(doc: Document | null | undefined = globalThis.document): string | null {
+  if (!doc) return null;
+  return carimboValido(doc.querySelector(`meta[name="${META_BUILD_EM}"]`)?.getAttribute('content'));
+}
