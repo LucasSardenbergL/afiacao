@@ -5,8 +5,10 @@
 // mediu. Sem esta guarda o saldo ainda não recebido sumiria do "a caminho" e o motor recompraria. Falsificações:
 //   (a) etapa desconhecida COM saldo recusa;            (b) etapa conhecida (10, 15) nunca recusa aqui;
 //   (c) etapa desconhecida totalmente recebida passa;   (d) AUSÊNCIA não prova saldo zero: sem itens / [] / ilegível recusa;
-//   (e) etapa vazia é desconhecida;                     (f) nQtdeRec omitido (Omie) = nada recebido → saldo cheio → recusa.
-import { problemaDeEtapaDesconhecida } from "./etapa-desconhecida.ts";
+//   (e) etapa vazia é desconhecida;                     (f) nQtdeRec omitido (Omie) = nada recebido → saldo cheio → recusa;
+//   (g) por página, o PO DO APP (carimbo AFI-, ainda no em_transito) também recusa — a de-dup vem depois (Codex P1).
+// O elo seguinte (problemas → confiavel=false → nenhuma escrita) é o teste "pendente não confiável" de publicacao_test.ts.
+import { problemaDeEtapaDesconhecida, problemasDeEtapaDaPagina } from "./etapa-desconhecida.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   const ja = JSON.stringify(a), jb = JSON.stringify(b);
@@ -57,4 +59,18 @@ Deno.test("(e) etapa vazia é desconhecida", () => {
 
 Deno.test("(f) nQtdeRec omitido conta como nada recebido", () => {
   assertContem(avaliar("40", [{ nQtde: 2, nQtdeRec: 2 }, { nQtde: 1 }]), "saldo a receber", "2º item com saldo");
+});
+
+Deno.test("(g) por página: PO do app, cabecalho alternativo e etapa com espaços", () => {
+  const pagina = [
+    { cabecalho_consulta: { cEtapa: "15", cNumero: "1200", nCodPed: 1 }, produtos_consulta: [{ nQtde: 3 }] },
+    { cabecalho_consulta: { cEtapa: "40", cNumero: "1244", cCodIntPed: "AFI-3356", nCodPed: 2 }, produtos_consulta: [{ nQtde: 10, nQtdeRec: 4 }] },
+    { cabecalho: { cEtapa: " 50 ", nCodPed: 3 }, produtos_consulta: [{ nQtde: 1 }] },
+    { cabecalho_consulta: { cEtapa: " 15 ", cNumero: "1201" } },
+  ];
+  const p = problemasDeEtapaDaPagina(pagina, CONHECIDAS, parse);
+  assertEquals(p.length, 2, "só os dois de etapa desconhecida");
+  assertContem(p[0], 'PO 1244 com etapa DESCONHECIDA "40"', "PO do app não escapa");
+  assertContem(p[1], 'PO 3 com etapa DESCONHECIDA "50"', "cabecalho alternativo + trim + id por nCodPed");
+  assertEquals(problemasDeEtapaDaPagina([], CONHECIDAS, parse), [], "página vazia");
 });

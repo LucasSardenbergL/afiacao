@@ -39,3 +39,24 @@ export function problemaDeEtapaDesconhecida(
   }
   return null;
 }
+
+/**
+ * Aplica a guarda a TODOS os POs da página, ANTES de qualquer desvio (de-dup do app, etapa não aberta): um PO do app
+ * ainda no em_transito, numa etapa desconhecida, também tem de recusar o run (Codex, adversarial do diff, P1).
+ */
+export function problemasDeEtapaDaPagina(
+  pedidos: readonly unknown[],
+  conhecidas: ReadonlySet<string>,
+  parse: { parseQtd: ParseQuantidade; parseRecebido: ParseQuantidade },
+): string[] {
+  const out: string[] = [];
+  for (const ped of pedidos) {
+    const p = (ped ?? {}) as { cabecalho_consulta?: Record<string, unknown>; cabecalho?: Record<string, unknown>; produtos_consulta?: unknown };
+    const cab = p.cabecalho_consulta ?? p.cabecalho ?? {};
+    const etapa = String(cab.cEtapa ?? "").trim();
+    const id = String(cab.cNumero ?? "").trim() || String(cab.nCodPed ?? "").trim() || "—";
+    const problema = problemaDeEtapaDesconhecida(etapa, p.produtos_consulta, conhecidas, id, parse);
+    if (problema) out.push(problema);
+  }
+  return out;
+}

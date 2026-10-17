@@ -16,7 +16,7 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { exigirLeitura } from "../_shared/leitura-critica.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
-import { problemaDeEtapaDesconhecida } from "./etapa-desconhecida.ts";
+import { problemasDeEtapaDaPagina } from "./etapa-desconhecida.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
 import {
@@ -448,6 +448,10 @@ async function computePendenteViaPedidosCompra(
     }
     fpsVistos.add(fp);
     paginasLidas++;
+    // PR(d): etapa DESCONHECIDA com saldo (ou sem itens legíveis) recusa o run — senão o saldo do PO associado no Omie
+    // ("Recebido Parcialmente") sumiria do "a caminho" e o motor recompraria. Por PÁGINA, antes de qualquer desvio:
+    // nem o PO do app (de-dup) escapa (etapa-desconhecida.ts).
+    problemas.push(...problemasDeEtapaDaPagina(pedidos, ETAPAS_CONHECIDAS, { parseQtd, parseRecebido }));
     for (const ped of pedidos) {
       pedidosVistos++;
       const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
@@ -481,14 +485,8 @@ async function computePendenteViaPedidosCompra(
         continue;
       }
       // Só etapa APROVADA-ABERTA (15) contribui pro pendente. Em-aprovação (10) não conta → ignora sem exigir nCodPed
-      // nem de-dup ([Codex P2 round3]); etapa DESCONHECIDA com saldo recusa o run (PR(d), abaixo).
+      // nem de-dup ([Codex P2 round3]); etapa DESCONHECIDA com saldo já recusou o run (PR(d), por página, acima).
       if (!ETAPAS_APROVADO_ABERTO.has(etapa)) {
-        // PR(d): etapa DESCONHECIDA com saldo (ou sem itens legíveis) recusa o run — senão o saldo do PO associado
-        // no Omie ("Recebido Parcialmente") sumiria do "a caminho" e o motor recompraria (etapa-desconhecida.ts).
-        const problemaEtapa = problemaDeEtapaDesconhecida(
-          etapa, ped?.produtos_consulta, ETAPAS_CONHECIDAS, cNumero || nCodPed || "—", { parseQtd, parseRecebido },
-        );
-        if (problemaEtapa) problemas.push(problemaEtapa);
         coletor.registrar(cabObs, itensObs, "etapa_nao_aberta");
         continue;
       }

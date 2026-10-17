@@ -3,22 +3,25 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { removerComentarios } from '@/lib/gates/limpeza-fonte';
 
-// Guarda textual do PR(d) da baixa de PO: o helper puro (etapa-desconhecida.ts) tem os testes Deno; aqui se vigia só
-// a LIGAÇÃO na edge — chamado dentro do ramo de etapa não aberta, ANTES do `continue`, e o resultado vai para
-// `problemas` (que recusa o run). Sem isso o helper poderia existir, testado, e nunca barrar nada.
+// Guarda textual do PR(d) da baixa de PO. O comportamento está nos testes Deno: o helper por página
+// (etapa-desconhecida_test.ts, inclusive o PO do app) e a recusa sem escrita quando o pendente não é confiável
+// (publicacao_test.ts). Aqui se vigia só a LIGAÇÃO: a guarda roda sobre a página INTEIRA, antes do laço por PO —
+// onde a de-dup do app e o ramo de etapa não aberta dão `continue` —, e o resultado entra em `problemas`.
 const fonte = removerComentarios(
   readFileSync(resolve(__dirname, '../../../../supabase/functions/omie-sync-estoque/index.ts'), 'utf8'),
 );
 
 describe('omie-sync-estoque — etapa desconhecida recusa o run', () => {
-  it('o ramo de etapa não aberta consulta o helper e empurra o problema antes de seguir', () => {
-    const iRamo = fonte.indexOf('if (!ETAPAS_APROVADO_ABERTO.has(etapa)) {');
-    expect(iRamo).toBeGreaterThan(0);
-    const iFimRamo = fonte.indexOf('continue;', iRamo);
-    const ramo = fonte.slice(iRamo, iFimRamo);
-    expect(ramo).toMatch(/problemaDeEtapaDesconhecida\(\s*etapa, ped\?\.produtos_consulta, ETAPAS_CONHECIDAS,/);
-    expect(ramo).toMatch(/if \(problemaEtapa\) problemas\.push\(problemaEtapa\);/);
-    expect(ramo).toContain('coletor.registrar(cabObs, itensObs, "etapa_nao_aberta")');
+  it('a guarda roda por página, antes do laço por PO, e alimenta `problemas`', () => {
+    const iGuarda = fonte.indexOf(
+      'problemas.push(...problemasDeEtapaDaPagina(pedidos, ETAPAS_CONHECIDAS, { parseQtd, parseRecebido }));',
+    );
+    const iLaco = fonte.indexOf('for (const ped of pedidos) {');
+    const iPaginaLida = fonte.indexOf('paginasLidas++;');
+    expect(iGuarda).toBeGreaterThan(iPaginaLida);
+    expect(iPaginaLida).toBeGreaterThan(0);
+    expect(iLaco).toBeGreaterThan(iGuarda);
+    expect(fonte.slice(iPaginaLida, iLaco)).not.toMatch(/\bif\s*\(|continue;|return\b/);
   });
 
   it('problema torna o pendente não confiável', () => {
