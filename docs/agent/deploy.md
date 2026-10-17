@@ -1085,6 +1085,12 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   e `node_modules`/helpers `\0` ficam com os buckets de vendor (mandá-los junto criou
   `vendor-react → app-core → vendor-react`); (2) o entry continua sendo `index-*.js`, 1º
   `<script>` do HTML (eixo do `build_id` e do `verify-frontend.sh`). **Prova de build:**
-  `grep -l "<entry>" dist/assets/*.js` dá **0**. Custo residual: editar um módulo do `app-core`
-  (contexts, hooks e `ui/*` usados pelas telas) ainda cascateia para quem o importa.
+  `grep -l "<entry>" dist/assets/*.js` dá **0**.
+  **Por alcance (2026-10-17):** o `app-core` guarda só o que ≥ 20 chunks lazy usam
+  (`LAZY_MIN_APP_CORE`: supabase client, `AuthContext`, `postgrest`, `ui/*`). O resto vai para
+  um chunk `app-<módulo>` por **assinatura de alcance** (módulos usados pelas mesmas telas dividem
+  chunk). Editar `useTarefas`/`offline-queue`/`financeiroV2Service` troca ~10 entradas (0,3 MB),
+  não 268 (4 MB). Sem ciclo por construção: se X importa Y, alcance(Y) ⊇ alcance(X). Custo
+  residual: editar um módulo do `app-core` ainda cascateia para quase todas as telas (3 de 74
+  commits recentes com `src/`).
 - **Transição única no 1º Publish com prompt mode:** clientes com o SW antigo (autoUpdate) auto-recarregam **uma última vez** ao pegar este build; daí em diante toda atualização vira o toast. Inerente, não dá pra evitar.
