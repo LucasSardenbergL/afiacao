@@ -2,7 +2,7 @@
 // (diagnóstico) em TAREFA para o comercial (ação), sem tocar preço. A descrição é o
 // contrato humano da missão — precisa ser honesta com capital não medido (cmc ausente).
 import { describe, it, expect } from 'vitest';
-import { formatarMissaoDesova, type AlvoDesova } from '../desova-helpers';
+import { formatarMissaoDesova, sensorDaMissaoExcesso, type AlvoDesova } from '../desova-helpers';
 
 const alvo = (over: Partial<AlvoDesova> = {}): AlvoDesova => ({
   sku_codigo_omie: 12345,
@@ -52,5 +52,47 @@ describe('formatarMissaoDesova', () => {
     const m = formatarMissaoDesova([alvo({ sku_descricao: null })]);
     expect(m.descricao).toContain('12345');
     expect(m.descricao).not.toContain('null');
+  });
+});
+
+describe('formatarMissaoDesova — prefixo do título (missão por cliente do Raio-X)', () => {
+  it('(a) com prefixo, o título começa com "Cliente X — "', () => {
+    const m = formatarMissaoDesova([alvo()], 'Cliente X');
+    expect(m.titulo.startsWith('Cliente X — Desova de excesso')).toBe(true);
+    expect(m.descricao.startsWith('Cliente X — Desova de excesso')).toBe(true);
+  });
+
+  it('(b) sem prefixo o título é idêntico ao da aba Excesso', () => {
+    expect(formatarMissaoDesova([alvo()]).titulo).toBe('Desova de excesso — 1 SKU, R$ 1.200 presos');
+    expect(formatarMissaoDesova([alvo()], undefined).titulo).toBe('Desova de excesso — 1 SKU, R$ 1.200 presos');
+  });
+
+  it('capital null (sem custo) não vira R$ 0 e dias_sem_vender null é omitido', () => {
+    const m = formatarMissaoDesova([alvo({ capital_excedente: null, dias_sem_vender: null })], 'Cliente X');
+    expect(m.capitalIncompleto).toBe(true);
+    expect(m.descricao).toContain('capital não medido (sem CMC)');
+    expect(m.descricao).not.toContain('sem vender');
+    expect(m.descricao.split('\n')[2]).not.toMatch(/R\$/); // a linha do SKU não fabrica R$ 0
+  });
+
+  it('todos os alvos sem capital: título diz "capital não medido", nunca "R$ 0"', () => {
+    const m = formatarMissaoDesova([alvo({ capital_excedente: null }), alvo({ sku_codigo_omie: 2, capital_excedente: null })]);
+    expect(m.titulo).toBe('Desova de excesso — 2 SKUs, capital não medido (sem CMC)');
+    expect(m.titulo).not.toMatch(/R\$/);
+  });
+
+  it('com prefixo (Raio-X) a descrição não cita fila de excesso nem o motor', () => {
+    const m = formatarMissaoDesova(Array.from({ length: 10 }, (_, i) => alvo({ sku_codigo_omie: i + 1 })), 'Cliente X');
+    expect(m.descricao).toContain('SKUs parados (Raio-X) para oferecer a este cliente.');
+    expect(m.descricao).not.toMatch(/fila de excesso|motor/);
+  });
+});
+
+describe('sensorDaMissaoExcesso — o Raio-X não infla o sensor da aba Excesso', () => {
+  it('sem prefixo (aba Excesso) → reposicao.desova_missao_criada', () => {
+    expect(sensorDaMissaoExcesso()).toBe('reposicao.desova_missao_criada');
+  });
+  it('com prefixo (missão por cliente do Raio-X) → null', () => {
+    expect(sensorDaMissaoExcesso('Cliente X')).toBeNull();
   });
 });

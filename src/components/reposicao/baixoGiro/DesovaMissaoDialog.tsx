@@ -12,20 +12,21 @@ import { Input } from '@/components/ui/input';
 import { useSalespeople } from '@/hooks/useCoverage';
 import { useTarefaMutations } from '@/hooks/useTarefas';
 import { autoSatisfyDaCategoria } from '@/lib/tarefas/categoria-map';
-import { formatarMissaoDesova } from '@/lib/reposicao/desova-helpers';
+import { formatarMissaoDesova, sensorDaMissaoExcesso, type AlvoDesova } from '@/lib/reposicao/desova-helpers';
 import { track } from '@/lib/analytics';
-import type { RowExcesso } from './types';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
 function dataMaisDias(dias: number): string {
   return addDias(hojeSP(), dias); // o due_date persistido é dia de SP (o UTC vira às 21h BRT)
 }
 
-export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa }: {
+export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa, tituloPrefixo, onCriada }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  alvos: RowExcesso[];
+  alvos: AlvoDesova[];
   empresa: string; // convenção de tarefas: lowercase ('oben')
+  tituloPrefixo?: string; // ex.: 'Cliente X' — a missão por cliente do Raio-X
+  onCriada?: () => void; // só no sucesso (≠ fechar/cancelar)
 }) {
   const { data: salespeople = [] } = useSalespeople();
   const { criarTarefas } = useTarefaMutations();
@@ -33,14 +34,7 @@ export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa }: {
   const [dueDate, setDueDate] = useState(() => dataMaisDias(14));
   const [saving, setSaving] = useState(false);
 
-  const missao = useMemo(() => formatarMissaoDesova(alvos.map((a) => ({
-    sku_codigo_omie: a.sku_codigo_omie,
-    sku_descricao: a.sku_descricao,
-    excedente_un: a.excedente_un,
-    capital_excedente: a.capital_excedente,
-    tempo_digerir_dias: a.tempo_digerir_dias,
-    dias_sem_vender: a.dias_sem_vender,
-  }))), [alvos]);
+  const missao = useMemo(() => formatarMissaoDesova(alvos, tituloPrefixo), [alvos, tituloPrefixo]);
 
   const salvar = async () => {
     if (!assignedTo || alvos.length === 0) return;
@@ -58,11 +52,13 @@ export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa }: {
         auto_satisfy_mode: autoSatisfyDaCategoria('outro'),
         target_texto: null,
       }]);
-      track('reposicao.desova_missao_criada', {
+      const sensor = sensorDaMissaoExcesso(tituloPrefixo);
+      if (sensor) track(sensor, {
         skus: alvos.length,
         capital_medido: missao.capitalTotal,
         capital_incompleto: missao.capitalIncompleto,
       });
+      onCriada?.();
       onOpenChange(false);
     } finally {
       setSaving(false);
