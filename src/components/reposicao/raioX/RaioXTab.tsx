@@ -74,7 +74,7 @@ export function RaioXTab() {
     return (
       <div role="alert" className="rounded-md border border-status-error/30 bg-status-error/5 p-4 text-sm">
         {semPermissao
-          ? 'Sem permissão para ver custo — o Raio-X depende do custo do estoque.'
+          ? 'Raio-X indisponível: sem permissão para ver custo.'
           : 'Não foi possível carregar o Raio-X. Recarregue a página; se persistir, avise o time.'}
       </div>
     );
