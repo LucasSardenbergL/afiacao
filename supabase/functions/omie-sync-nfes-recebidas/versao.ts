@@ -48,8 +48,13 @@ export const EDGE = "omie-sync-nfes-recebidas";
  * `ListarRecebimentos`, antes do sono, do `ConsultarRecebimento` e de toda escrita — deixa de virar
  * linha órfã do rastreio. `results` ganha `ctes_ignorados`, `modelo_divergente` e `modelo_ausente`;
  * `nfes_processadas` passa a contar só NF-e. Ver _shared/modelo-documento-fiscal.ts.
+ *
+ * v1.5 (2026-10-16): todo run (inclusive `apenas_backfill`) reconcilia as NFs ÓRFÃS com o pedido
+ * que apareceu DEPOIS, relendo o `itensRecebimento` do raw_data da órfã — sem chamada à Omie. Só
+ * preenche pedido SEM NF (compare-and-set); pedido com outra NF fica intocado. `results` ganha
+ * `reconciliacao`. Ver reconciliacao.ts.
  */
-export const VERSAO = "v1.4-cte-fora-do-rastreio";
+export const VERSAO = "v1.5-reconcilia-orfas";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

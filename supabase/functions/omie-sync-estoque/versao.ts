@@ -71,7 +71,8 @@ export const respostaSonda = criarRespostaSonda("omie-sync-estoque");
  * habilitados, no dos membros e na `contribuicao` da observação. Equivalência não lida/ilegível → recusa do run (C1).
  * Só o PO DO APP (carimbo cCodIntPed AFI-<id>) converte: o PO lançado à mão no Omie já vem em litros (founder).
  */
-export const VERSAO = "v1.9-pendente-po-app-em-unidade-omie";
+// v1.10: PR(d) da baixa de PO — etapa desconhecida com saldo (ou sem itens legíveis) recusa o run (etapa-desconhecida.ts).
+export const VERSAO = "v1.10-etapa-desconhecida-recusa";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

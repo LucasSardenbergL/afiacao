@@ -21661,11 +21661,51 @@ export type Database = {
           p_motivo: string
           p_sku: number
         }
-        Returns: Database["public"]["Tables"]["raio_x_classificacao_manual"]["Row"]
+        Returns: {
+          categoria: string
+          empresa: string
+          marcado_em: string
+          marcado_por: string | null
+          motivo: string
+          sku_codigo_omie: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_classificacao_manual"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       raio_x_contar: {
         Args: { p_empresa: string; p_qtd: number; p_sku: number }
-        Returns: Database["public"]["Tables"]["raio_x_decisao"]["Row"]
+        Returns: {
+          atualizado_em: string
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          qtd_contada: number | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_decisao"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       raio_x_decidir: {
         Args: {
@@ -21679,7 +21719,34 @@ export type Database = {
           p_sku: number
           p_tirar_do_motor: boolean
         }
-        Returns: Database["public"]["Tables"]["raio_x_decisao"]["Row"]
+        Returns: {
+          atualizado_em: string
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          qtd_contada: number | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_decisao"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       raio_x_estoque_fatos: {
         Args: { p_empresa: string }
