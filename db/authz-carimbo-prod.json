@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-16T23:30:06.593Z",
-  "sourceHead": "818a1504670e7d52b1d7c44eebaa33b8d5302bbe",
+  "medidoEm": "2026-10-17T10:28:20.669Z",
+  "sourceHead": "caebdaa38e59d724f6ea589340ffa330bdedd405",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 65 definição(ões) lida(s) para 65 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 65 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 66 definição(ões) lida(s) para 65 chave(s) da allowlist.",
       "contratoFingerprint": "764e4eb3612533b724d32dcaf7c841aa14f587f9ce60bdbe084ecd764eebccd0",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": [
-        {
-          "id": "d58e2958d539e3ad",
-          "linha": "❌ public.raio_x_decidir — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_decidir está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-10-16",
-          "ultimaVez": "2026-10-16"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -36,19 +29,12 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 1,
-      "resumo": "authz:audit:prod — 1 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 25 definição(ões) lida(s) para 25 chave(s) do manifest.",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 25 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 26 definição(ões) lida(s) para 25 chave(s) do manifest.",
       "contratoFingerprint": "16ff3907bd51b6c617092a3b7ac4be599dd9f5c5370ce41677b4887220cb732e",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
-      "achados": [
-        {
-          "id": "be843d06f79983cd",
-          "linha": "❌ AUSENTE_EM_PROD: public.raio_x_decidir está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-10-16",
-          "ultimaVez": "2026-10-16"
-        }
-      ]
+      "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -62,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 355 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 357 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "cd77f88e4f15cea9d10af15e2c79671e910723fb0f2954d14f618957887f52d7",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -72,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 362 identidade(s) batem com o repo (285 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 362 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@6363dc8b5 (fetch ok) · prod 2026-10-16 23:30:31.855617Z",
+      "denominador": "🔎 deriva-corpo — 362 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@1d5f49754 (fetch ok) · prod 2026-10-17 10:28:50.103249Z",
       "contratoFingerprint": "a0c8858fa173bfdffa5f7fb8157bbd284c7018170bbc79f8f67c34a97786a267",
       "auditorFingerprint": "32a5addf29ac70a751983e2f0e9c72cacce79e39781a59c7f53e03fe8a5f62bb",
       "achados": []
