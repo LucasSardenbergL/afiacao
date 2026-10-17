@@ -31,7 +31,9 @@ export function formatarMissaoDesova(alvos: AlvoDesova[], tituloPrefixo?: string
   const capitalTotal = medidos.reduce((s, a) => s + (a.capital_excedente as number), 0);
   const capitalIncompleto = medidos.length < alvos.length;
   const plural = alvos.length === 1 ? 'SKU' : 'SKUs';
-  const capitalLabel = capitalIncompleto ? `≥ ${brl0(capitalTotal)} presos (parcial)` : `${brl0(capitalTotal)} presos`;
+  const capitalLabel = alvos.length > 0 && medidos.length === 0
+    ? 'capital não medido (sem CMC)'
+    : capitalIncompleto ? `≥ ${brl0(capitalTotal)} presos (parcial)` : `${brl0(capitalTotal)} presos`;
   const base = `Desova de excesso — ${alvos.length} ${plural}, ${capitalLabel}`;
   const titulo = tituloPrefixo ? `${tituloPrefixo} — ${base}` : base;
 
@@ -45,11 +47,14 @@ export function formatarMissaoDesova(alvos: AlvoDesova[], tituloPrefixo?: string
     return `• ${nome}: ${a.excedente_un} un excedentes · ${capital} · ${digestao}${parado}`;
   });
   const resto = alvos.length - MAX_SKUS_LISTADOS;
-  if (resto > 0) linhas.push(`… e mais ${resto} SKUs (lista completa na fila de excesso)`);
+  const raioX = !!tituloPrefixo; // missão por cliente do Raio-X: texto próprio
+  if (resto > 0) linhas.push(raioX ? `… e mais ${resto} SKUs` : `… e mais ${resto} SKUs (lista completa na fila de excesso)`);
 
   const descricao = [
     `${titulo}.`,
-    'Ação: oferecer/queimar comercialmente (kit, bundle, oferta dirigida) — o motor NÃO compra estes SKUs enquanto houver excesso.',
+    raioX
+      ? 'SKUs parados (Raio-X) para oferecer a este cliente.'
+      : 'Ação: oferecer/queimar comercialmente (kit, bundle, oferta dirigida) — o motor NÃO compra estes SKUs enquanto houver excesso.',
     ...linhas,
   ].join('\n');
 

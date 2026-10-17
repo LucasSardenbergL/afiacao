@@ -74,4 +74,16 @@ describe('formatarMissaoDesova — prefixo do título (missão por cliente do Ra
     expect(m.descricao).not.toContain('sem vender');
     expect(m.descricao.split('\n')[2]).not.toMatch(/R\$/); // a linha do SKU não fabrica R$ 0
   });
+
+  it('todos os alvos sem capital: título diz "capital não medido", nunca "R$ 0"', () => {
+    const m = formatarMissaoDesova([alvo({ capital_excedente: null }), alvo({ sku_codigo_omie: 2, capital_excedente: null })]);
+    expect(m.titulo).toBe('Desova de excesso — 2 SKUs, capital não medido (sem CMC)');
+    expect(m.titulo).not.toMatch(/R\$/);
+  });
+
+  it('com prefixo (Raio-X) a descrição não cita fila de excesso nem o motor', () => {
+    const m = formatarMissaoDesova(Array.from({ length: 10 }, (_, i) => alvo({ sku_codigo_omie: i + 1 })), 'Cliente X');
+    expect(m.descricao).toContain('SKUs parados (Raio-X) para oferecer a este cliente.');
+    expect(m.descricao).not.toMatch(/fila de excesso|motor/);
+  });
 });
