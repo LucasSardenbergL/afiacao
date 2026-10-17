@@ -58,7 +58,7 @@ export function diffContagem(
 ): { dif_un: number; dif_valor: number | null } | null {
   if (qtd === null || qtd === undefined || !Number.isFinite(qtd)) return null;
   const dif = qtd - item.saldo;
-  return { dif_un: dif, dif_valor: item.cmc === null ? null : dif * item.cmc };
+  return { dif_un: dif, dif_valor: item.cmc === null || item.cmc <= 0 ? null : dif * item.cmc };
 }
 
 // ── Exportação da lista de troca (o app não envia nada: o usuário copia ou baixa o CSV) ──────────────────

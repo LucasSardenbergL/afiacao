@@ -44,6 +44,15 @@ describe('RaioXSaidas', () => {
     expect(dialogProps?.alvos.find((a) => a.sku_codigo_omie === 3)?.capital_excedente).toBeNull();
   });
 
+  it('grupo de venda dirigida com parte sem custo mostra piso "≥ … (parcial)"; sem nenhum custo, "sem custo"', () => {
+    const { unmount } = render(<RaioXSaidas itens={itens} decisoes={decisoes} empresa="oben" />);
+    expect(screen.getByText(/3 SKU\(s\) · ≥ .*15.* \(parcial\)/)).toBeTruthy();
+    unmount();
+    const so = classificar([fato({ sku_codigo_omie: 3, codigo: 'A3', cmc: null, q12: 1, clientes: CLIENTE })], new Map(), 'oben', HOJE);
+    render(<RaioXSaidas itens={so} decisoes={mapaDecisoes(decisao(3, { destino: 'venda_dirigida' }))} empresa="oben" />);
+    expect(screen.getByText(/1 SKU\(s\) · sem custo — não avaliado/)).toBeTruthy();
+  });
+
   it('missão criada dispara raio_x.missao_criada com empresa e nº de SKUs', () => {
     render(<RaioXSaidas itens={itens} decisoes={decisoes} empresa="oben" />);
     fireEvent.click(screen.getByRole('button', { name: 'Criar missão' }));

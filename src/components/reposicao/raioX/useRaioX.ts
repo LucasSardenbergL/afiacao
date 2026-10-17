@@ -8,6 +8,7 @@ import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { hojeSP } from '@/lib/time/sp-day';
 import { classificar } from '@/lib/reposicao/raio-x/classificar';
 import { placar } from '@/lib/reposicao/raio-x/placar';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type {
   ClassificacaoManual,
   DecisaoRow,
@@ -24,7 +25,7 @@ function preservarCode(e: unknown): Error {
   const origem = ehFalhaDePagina(e) ? (e.cause ?? e) : e;
   const code = (origem as { code?: unknown } | null)?.code;
   const msg = (origem as { message?: unknown } | null)?.message;
-  const erro = new Error(typeof msg === 'string' && msg ? msg : e instanceof Error ? e.message : 'Falha ao ler o Raio-X');
+  const erro = new Error(typeof msg === 'string' && msg ? msg : mensagemDeErro(e) ?? 'Falha ao ler o Raio-X');
   if (typeof code === 'string') (erro as Error & { code?: string }).code = code;
   return erro;
 }

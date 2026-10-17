@@ -50,6 +50,13 @@ describe('vendaDirigidaPorCliente — valor parcial e ordem', () => {
   });
 });
 
+describe('diffContagem — CMC <= 0', () => {
+  it('cmc 0 e cmc negativo → dif_valor null (ausente ≠ zero, sem sinal invertido)', () => {
+    expect(diffContagem({ saldo: 10, cmc: 0 }, 4)).toEqual({ dif_un: -6, dif_valor: null });
+    expect(diffContagem({ saldo: 10, cmc: -5 }, 4)).toEqual({ dif_un: -6, dif_valor: null });
+  });
+});
+
 describe('diffContagem', () => {
   const it0 = { saldo: 10, cmc: 5 };
   it('null sem contagem', () => {

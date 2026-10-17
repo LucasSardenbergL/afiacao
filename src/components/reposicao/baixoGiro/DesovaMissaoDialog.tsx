@@ -52,7 +52,8 @@ export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa, tituloP
         auto_satisfy_mode: autoSatisfyDaCategoria('outro'),
         target_texto: null,
       }]);
-      track('reposicao.desova_missao_criada', {
+      // missão do Raio-X (com prefixo) tem sensor próprio (raio_x.missao_criada): não infla o da aba Excesso
+      if (!tituloPrefixo) track('reposicao.desova_missao_criada', {
         skus: alvos.length,
         capital_medido: missao.capitalTotal,
         capital_incompleto: missao.capitalIncompleto,

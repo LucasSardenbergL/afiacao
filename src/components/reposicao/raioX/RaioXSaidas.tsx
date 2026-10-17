@@ -99,7 +99,7 @@ export function RaioXSaidas({ itens, decisoes, empresa }: {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm">
                 <span className="font-medium">{g.cliente}</span>
-                <span className="text-muted-foreground"> — {g.itens.length} SKU(s) · {fmtValor(g.valor)}</span>
+                <span className="text-muted-foreground"> — {g.itens.length} SKU(s) · {g.valor !== null && g.itens.some((i) => i.valor === null) ? `≥ ${fmtValor(g.valor)} (parcial)` : fmtValor(g.valor)}</span>
               </div>
               {g.cliente !== SEM_COMPRADOR && (
                 <Button size="touch" onClick={() => setMissao(g)}>Criar missão</Button>
