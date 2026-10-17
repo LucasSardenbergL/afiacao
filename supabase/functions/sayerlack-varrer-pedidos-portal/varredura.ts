@@ -60,10 +60,19 @@ export function portalSayerlackFechado(agora: Date): boolean {
 const JANELA_DIAS = 7;
 
 /**
- * Códigos de situação do portal que viram PO. VAZIA de propósito até a 1ª rodada listar as situações reais do select
- * `#situacao` (só se conhece "5 - Suspenso" e "6 - Cancelado"): com a lista vazia a varredura só RELATA, não importa.
+ * Códigos de situação do portal que o cron importa SOZINHO — palavra do founder (2026-10-17), sobre o select real lido
+ * na 1ª rodada (1 Aberto · 2 Atendido Parcial · 3 Atendido Total · 4 Pendentes · 5 Suspenso · 6 Cancelado ·
+ * 7 Fatur Balcão): Aberto e Suspenso ainda não têm NF, então não há NF no Omie para duplicar.
  */
-export const SITUACOES_IMPORTAVEIS: ReadonlySet<string> = new Set<string>([]);
+export const SITUACOES_IMPORTAVEIS: ReadonlySet<string> = new Set<string>(["1", "5"]);
+
+/**
+ * Atendido parcial/total: a Sayerlack já faturou. O founder quer o PO se a NF ainda não está no Omie, mas o espelho
+ * não prova isso (Codex 2026-10-17, P1: NF com 2 pedidos casada só com um, NF que o sync não leu) — então o cron NÃO
+ * importa: avisa por e-mail (1 vez por pedido) para o founder conferir no Omie e usar "Importar do portal".
+ * 4 (Pendentes) o founder desconhece; 6 e 7 ficam de fora.
+ */
+const SITUACOES_CONFERIR: ReadonlySet<string> = new Set<string>(["2", "3"]);
 
 /** Estados de envio em que o pedido do app pode já estar no portal SEM protocolo no banco. */
 export const ESTADOS_EM_VOO: readonly string[] = ["enviando_portal", "aceito_portal_sem_protocolo", "indeterminado_requer_conciliacao"];
@@ -123,7 +132,10 @@ type Classe =
   | "ja_no_omie"
   | "cancelado"
   | "situacao_nao_importavel"
-  | "fora_da_janela";
+  | "fora_da_janela"
+  | "atendido_conferir"
+  | "carencia_primeira_vista"
+  | "carencia_aguarda_sync";
 
 export interface PedidoClassificado extends PedidoListado {
   classe: Classe;
@@ -144,9 +156,38 @@ export function classificar(
       : ctx.contratosNoOmie.has(p.protocolo) ? "ja_no_omie"
       : situacaoCancelada(p.situacao) ? "cancelado"
       : !(p.emissao && p.emissao >= ctx.emissaoDesde) ? "fora_da_janela"
+      : p.situacao_codigo && SITUACOES_CONFERIR.has(p.situacao_codigo) ? "atendido_conferir"
       : !(p.situacao_codigo && ctx.situacoesImportaveis.has(p.situacao_codigo)) ? "situacao_nao_importavel"
       : "candidato";
     return { ...p, classe };
+  });
+}
+
+/** Folga entre a 1ª vista e o FIM do sync do espelho: o sync leva até ~2,5 min, então só um fim > vista + 5 min prova
+ *  que a coleta inteira começou depois da vista. */
+const FOLGA_SYNC_MS = 5 * 60_000;
+
+/**
+ * Carência de 1 rodada (palavra do founder, 2026-10-17): PO lançado À MÃO no Omie só chega ao espelho no próximo sync
+ * (a cada 2 h) — importar na 1ª vista criaria o 2º PO. O candidato só vale se já foi visto numa rodada ANTERIOR e o
+ * sync de pedidos de compra da OBEN terminou `complete` depois dessa vista (+ folga). `syncCompletoEm` null (sem
+ * marcador, ou o último sync não foi complete) ⇒ espera.
+ */
+export function aplicarCarencia(
+  classificados: PedidoClassificado[],
+  vistos: ReadonlyMap<string, string>,
+  syncCompletoEm: string | null,
+): PedidoClassificado[] {
+  const fimSync = syncCompletoEm ? Date.parse(syncCompletoEm) : NaN;
+  return classificados.map((p) => {
+    if (p.classe !== "candidato") return p;
+    const visto = vistos.get(p.protocolo);
+    if (!visto) return { ...p, classe: "carencia_primeira_vista" };
+    const vistoMs = Date.parse(visto);
+    if (!(Number.isFinite(fimSync) && Number.isFinite(vistoMs) && fimSync > vistoMs + FOLGA_SYNC_MS)) {
+      return { ...p, classe: "carencia_aguarda_sync" };
+    }
+    return p;
   });
 }
 
@@ -162,11 +203,13 @@ export function inicioDaJanela(hojeISO: string, dias = JANELA_DIAS): string {
   return somarDias(hojeISO, -(dias - 1));
 }
 
-/** Nº do contrato no espelho do Omie → protocolo comparável (mesmo `btrim` da RPC, IP006). */
-export function normalizarContrato(v: unknown): string | null {
-  if (typeof v !== "string") return null;
-  const s = v.trim();
-  return s === "" ? null : s;
+/**
+ * Nº do contrato no espelho do Omie → protocolos. Um PO pode carregar DOIS pedidos do portal ("1998739/1998740", 15
+ * casos medidos em prod): cada pedaço conta. Pedaço que não é nº de pedido (ex. "AFI26050780") é ignorado.
+ */
+export function contratosDoTexto(v: unknown): string[] {
+  if (typeof v !== "string") return [];
+  return v.split("/").map((x) => x.trim()).filter((x) => PROTOCOLO_RE.test(x));
 }
 
 /** Resultado da edge de importar → falha a notificar? (ok=true com PO criado é sucesso; o resto é falha.) */

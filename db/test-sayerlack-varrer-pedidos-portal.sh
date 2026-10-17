@@ -21,7 +21,8 @@ export LC_ALL=C LANG=C
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 
 MIG="$REPO_ROOT/supabase/migrations/20261016150000_sayerlack_varrer_pedidos_portal_cron.sql"
-[ -f "$MIG" ] || { echo "INFRA: ausente: $MIG"; exit 1; }
+MIG2="$REPO_ROOT/supabase/migrations/20261017120000_sayerlack_varredura_visto.sql"
+for f in "$MIG" "$MIG2"; do [ -f "$f" ] || { echo "INFRA: ausente: $f"; exit 1; }; done
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
@@ -89,6 +90,17 @@ if out="$(Q prova "INSERT INTO public.sayerlack_varredura_falha(protocolo, mensa
   nok "A9 protocolo não numérico foi aceito"
 else case "$out" in *"sayerlack_varredura_falha_protocolo_check"*) ok "A9 protocolo não numérico recusado pelo CHECK";; *) nok "A9 erro inesperado: $out";; esac; fi
 
+# ── 20261017120000: 1ª vista (carência) ─────────────────────────────────────────────
+if out="$(aplicar prova "$MIG2")"; then ok "B1 migration da 1ª vista aplica"; else nok "B1 não aplicou: $out"; fi
+case "$out" in *"service_role só SELECT/INSERT"*) ok "B2 NOTICE positivo de fim";; *) nok "B2 sem o NOTICE de fim: $out";; esac
+if out2="$(aplicar prova "$MIG2")"; then ok "B3 re-aplicar é idempotente"; else nok "B3 re-aplicar falhou: $out2"; fi
+# O escritor: INSERT ... ON CONFLICT DO NOTHING — a 1ª vista não muda numa 2ª rodada.
+Q prova "INSERT INTO public.sayerlack_varredura_visto(protocolo, primeira_vez_em) VALUES ('2140762','2026-10-16T12:00:00Z')" >/dev/null
+Q prova "INSERT INTO public.sayerlack_varredura_visto(protocolo) VALUES ('2140762') ON CONFLICT (protocolo) DO NOTHING" >/dev/null
+igual "B4 2ª vista não mexe na 1ª" "$(Q prova "SELECT primeira_vez_em = '2026-10-16T12:00:00Z' FROM public.sayerlack_varredura_visto WHERE protocolo='2140762'")" "t"
+igual "B5 service_role sem UPDATE (vista imutável)" \
+  "$(Q prova "SELECT has_table_privilege('service_role','public.sayerlack_varredura_visto','UPDATE')::text")" "false"
+
 # ── Falsificação: cada sabotagem tem que dar o vermelho DA SUA postcondição ──────────────
 sabotar() { # $1 rótulo, $2 marcador esperado, $3.. expressão sed
   local rot="$1" marca="$2"; shift 2
@@ -103,6 +115,19 @@ sabotar sem_rls     "P2 FALHOU" -e '/ENABLE ROW LEVEL SECURITY/d'
 sabotar sem_revoke  "P3 FALHOU" -e '/^REVOKE ALL ON TABLE/d'
 sabotar horario     "P5 FALHOU" -e "/^  '30 1,15,20/s/'30 1,15,20/'30 15,20/"
 sabotar sem_timeout "P6 FALHOU" -e 's/, timeout_milliseconds:=150000//'
+
+sabotar2() { # mesma ideia, sobre a 2ª migration
+  local rot="$1" marca="$2"; shift 2
+  local f="$TMPD/sab2-$rot.sql" db="sab2_$rot"
+  sed "$@" "$MIG2" > "$f"
+  if cmp -s "$f" "$MIG2"; then nok "F2-$rot sed não mudou nada (sabotagem inerte)"; return; fi
+  novo_banco "$db"
+  if out="$(aplicar "$db" "$f")"; then nok "F2-$rot sabotada e passou: $out"
+  else case "$out" in *"$marca"*) ok "F2-$rot vermelho certo ($marca)";; *) nok "F2-$rot vermelho errado: $out";; esac; fi
+}
+sabotar2 sem_rls    "V2 FALHOU" -e '/ENABLE ROW LEVEL SECURITY/d'
+sabotar2 sem_revoke "V3 FALHOU" -e '/^REVOKE ALL ON TABLE/d'
+sabotar2 com_update "V4 FALHOU" -e 's/GRANT SELECT, INSERT ON TABLE public.sayerlack_varredura_visto/GRANT SELECT, INSERT, UPDATE ON TABLE public.sayerlack_varredura_visto/'
 
 if [ "$FALHOU" -ne 0 ]; then echo "RESULTADO: VERMELHO"; exit 1; fi
 echo "RESULTADO: VERDE — test-sayerlack-varrer-pedidos-portal (LC=$HARNESS_LC)"
