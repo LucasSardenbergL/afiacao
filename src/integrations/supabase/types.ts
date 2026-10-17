@@ -13693,6 +13693,21 @@ export type Database = {
         }
         Relationships: []
       }
+      sayerlack_varredura_visto: {
+        Row: {
+          primeira_vez_em: string
+          protocolo: string
+        }
+        Insert: {
+          primeira_vez_em?: string
+          protocolo: string
+        }
+        Update: {
+          primeira_vez_em?: string
+          protocolo?: string
+        }
+        Relationships: []
+      }
       score_recalc_queue: {
         Row: {
           customer_user_id: string
