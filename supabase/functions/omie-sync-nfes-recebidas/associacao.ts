@@ -12,13 +12,18 @@
 //   - SKU com equivalência de embalagem (concentrados WP) é ambíguo: rótulo de unidade igual não prova grandeza igual;
 //   - ausência nunca vira "N"/0: flag, quantidade ou unidade ilegível é motivo, e lista vazia não passa num every();
 //   - estado da NF, vínculo existente e elegibilidade são eixos separados.
+// Formato medido em 84 detalhes reais (psql-ro, 2026-10-17; revisão Codex 2026-10-17): as flags da NF ficam em
+// `infoCadastro` (não em `cabec`); NF pendente = cEtapa "40" + cRecebido "N". O Omie OMITE `nIdItPedido` no item sem
+// vínculo (199/199 itens de NF pendente) e o traz positivo no vinculado (206/206 de NF concluída) — ausente é o estado
+// medido de "sem vínculo"; presente e torto é ilegível. `nIdPedido` não existe no item. `cDevolvidoParc` e
+// `cItemDevolvido` só aparecem quando houve devolução. Candidato só vale com o PO na etapa 15 (aprovado, em aberto).
 // O resultado é PROPOSTA auditável, não autorização: a escrita futura reconsulta NF e POs e recalcula.
 
-export const VERSAO_CLASSIFICADOR = "assoc-sombra-v1";
+export const VERSAO_CLASSIFICADOR = "assoc-sombra-v2";
 
-export type EstadoNF = "pendente" | "concluida" | "cancelada" | "ilegivel";
-export type Vinculo = "nenhum" | "parcial" | "completo";
-export type Classe = "associavel" | "ambigua" | "orfa" | "ja_vinculada" | "fora_de_alcance";
+type EstadoNF = "pendente" | "concluida" | "cancelada" | "ilegivel";
+type Vinculo = "nenhum" | "parcial" | "completo";
+type Classe = "associavel" | "ambigua" | "orfa" | "ja_vinculada" | "fora_de_alcance";
 
 export interface ItemPO {
   nCodItem: unknown;
@@ -32,11 +37,13 @@ export interface PedidoDoContrato {
   omie_codigo_pedido: number;
   numero_pedido: string | null;
   fornecedor_codigo_omie: number | null;
+  /** `raw_data.cabecalho_consulta.cEtapa` do PO; `null` = ausente/ilegível (nunca elegível). */
+  etapa: string | null;
   /** `raw_data.produtos_consulta` do PesquisarPedCompra; `undefined` = espelho sem o documento do PO. */
   itens: ItemPO[] | undefined;
 }
 
-export interface Par {
+interface Par {
   nSequencia: number;
   nIdPedido: number;
   nIdItPedido: number;
@@ -44,7 +51,7 @@ export interface Par {
   unidade: string;
 }
 
-export interface PedidoCoberto {
+interface PedidoCoberto {
   nIdPedido: number;
   numero_pedido: string | null;
   cobertura: "total" | "parcial";
@@ -63,8 +70,9 @@ export interface Classificacao {
 export interface EntradaClassificador {
   detalhe: unknown;
   fornecedor_codigo_omie: number | null;
-  /** Todos os POs (de qualquer situação) de cada contrato citado pela NF, já filtrados por empresa. */
-  pedidosPorContrato: ReadonlyMap<string, PedidoDoContrato[]>;
+  /** Todos os POs (de qualquer situação) de cada contrato citado pela NF, já filtrados por empresa.
+   *  `null` = não consultados: classifica só pelo que a NF decide sozinha e NUNCA propõe associação. */
+  pedidosPorContrato: ReadonlyMap<string, PedidoDoContrato[]> | null;
   /** SKUs com equivalência de embalagem ativa; `null` = não foi possível ler (tudo vira ambíguo). */
   skusComEquivalencia: ReadonlySet<string> | null;
 }
@@ -106,18 +114,37 @@ function texto(v: unknown): string | null {
   return s === "" ? null : s;
 }
 
-function estadoDaNF(cabec: Obj): EstadoNF {
-  const cancelada = flag(cabec.cCancelada);
+/** Ausente = o Omie omitiu porque não houve (medido); presente e fora de S/N = ilegível. */
+function flagOmitidaQuandoN(o: Obj, k: string): "S" | "N" | null {
+  return k in o ? flag(o[k]) : "N";
+}
+
+const ETAPA_NF_PENDENTE = "40";
+const ETAPA_PO_ABERTO = "15";
+
+function estadoDaNF(cabec: Obj, info: Obj): EstadoNF {
+  const cancelada = flag(info.cCancelada);
   if (cancelada === "S") return "cancelada";
-  const recebido = flag(cabec.cRecebido);
+  const recebido = flag(info.cRecebido);
   if (cancelada === null || recebido === null) return "ilegivel";
-  return recebido === "S" ? "concluida" : "pendente";
+  if (recebido === "S") return "concluida";
+  return texto(cabec.cEtapa) === ETAPA_NF_PENDENTE ? "pendente" : "ilegivel";
+}
+
+/** Vínculo do item no Omie: chave ausente = sem vínculo (medido); 0 explícito = sem vínculo; outro valor = ilegível. */
+function vinculoDoItem(cab: Obj): "sim" | "nao" | null {
+  const pedido = "nIdPedido" in cab ? cab.nIdPedido : 0;
+  const item = "nIdItPedido" in cab ? cab.nIdItPedido : 0;
+  const ok = (v: unknown) => v === 0 || v === "0" || idPositivo(v) !== null;
+  if (!ok(pedido) || !ok(item)) return null;
+  return idPositivo(item) !== null || idPositivo(pedido) !== null ? "sim" : "nao";
 }
 
 export function classificarAssociacao(e: EntradaClassificador): Classificacao {
   const d = obj(e.detalhe);
   const cabec = obj(d.cabec);
-  const estado_nf = estadoDaNF(cabec);
+  const info = obj(d.infoCadastro);
+  const estado_nf = estadoDaNF(cabec, info);
   const motivos = new Set<string>();
   const contratos = new Set<string>();
   const pares: Par[] = [];
@@ -126,8 +153,9 @@ export function classificarAssociacao(e: EntradaClassificador): Classificacao {
     pares: classe === "associavel" ? pares : [], pedidos: classe === "associavel" ? pedidos : [],
   });
 
-  if (flag(cabec.cDevolvido) !== "N" || flag(cabec.cDevolvidoParc) !== "N") {
-    motivos.add(flag(cabec.cDevolvido) === "S" || flag(cabec.cDevolvidoParc) === "S" ? "nf_devolvida" : "devolucao_ilegivel");
+  const devolvido = flag(info.cDevolvido), devolvidoParc = flagOmitidaQuandoN(info, "cDevolvidoParc");
+  if (devolvido !== "N" || devolvidoParc !== "N") {
+    motivos.add(devolvido === "S" || devolvidoParc === "S" ? "nf_devolvida" : "devolucao_ilegivel");
   }
   if (e.skusComEquivalencia === null) motivos.add("equivalencia_nao_lida");
 
@@ -153,13 +181,16 @@ export function classificarAssociacao(e: EntradaClassificador): Classificacao {
     if (ignorar === null) motivos.add("item_ignorar_ilegivel");
     ativos++;
 
-    if ((idPositivo(cab.nIdItPedido) ?? 0) > 0) vinculados++;
+    const vinc = vinculoDoItem(cab);
+    if (vinc === null) motivos.add("vinculo_ilegivel");
+    else if (vinc === "sim") vinculados++;
     const seq = idPositivo(cab.nSequencia);
     if (seq === null) { motivos.add("sequencia_ilegivel"); continue; }
     if (sequencias.has(seq)) motivos.add("sequencia_duplicada");
     sequencias.add(seq);
 
-    if (flag(cab.cItemDevolvido) !== "N") motivos.add(flag(cab.cItemDevolvido) === "S" ? "item_devolvido" : "devolucao_ilegivel");
+    const itemDevolvido = flagOmitidaQuandoN(cab, "cItemDevolvido");
+    if (itemDevolvido !== "N") motivos.add(itemDevolvido === "S" ? "item_devolvido" : "devolucao_ilegivel");
     if (flag(aj.cNaoGerarMovEstoque) !== "N") {
       motivos.add(flag(aj.cNaoGerarMovEstoque) === "S" ? "item_nao_movimenta_estoque" : "mov_estoque_ilegivel");
     }
@@ -173,6 +204,7 @@ export function classificarAssociacao(e: EntradaClassificador): Classificacao {
     const produto = idPositivo(cab.nIdProduto);
     if (produto === null) { motivos.add("produto_ilegivel"); continue; }
     if (e.skusComEquivalencia?.has(String(produto))) motivos.add("sku_com_equivalencia_de_embalagem");
+    if (e.pedidosPorContrato === null) continue;
 
     const pos = (e.pedidosPorContrato.get(contrato) ?? [])
       .filter((p) => e.fornecedor_codigo_omie === null || p.fornecedor_codigo_omie === e.fornecedor_codigo_omie);
@@ -180,6 +212,7 @@ export function classificarAssociacao(e: EntradaClassificador): Classificacao {
     if (pos.length === 0) { motivos.add("contrato_sem_po"); continue; }
     if (pos.length > 1) { motivos.add("contrato_em_varios_pos"); continue; }
     const po = pos[0];
+    if (po.etapa !== ETAPA_PO_ABERTO) { motivos.add("po_fora_da_etapa_aberta"); continue; }
     if (!Array.isArray(po.itens) || po.itens.length === 0) { motivos.add("po_sem_itens"); continue; }
 
     const candidatos = po.itens.filter((i) => idPositivo(i.nCodProd) === produto);
@@ -223,6 +256,8 @@ export function classificarAssociacao(e: EntradaClassificador): Classificacao {
   }
   if (vinculo !== "nenhum") return out(vinculo, "ja_vinculada");
   if (comContrato === 0) return out(vinculo, "orfa");
+  if (e.pedidosPorContrato === null) motivos.add("pedidos_nao_consultados");
+  if (motivos.size === 0 && pares.length === 0) motivos.add("nenhum_par");
   if (motivos.size > 0) return out(vinculo, "ambigua");
 
   // Cobertura por PO: TODOS os itens do PO legíveis; total = todo item fica com saldo 0 depois dos pares.

@@ -71,8 +71,11 @@ AS $fn$
 DECLARE
   v_n integer;
 BEGIN
-  IF p IS NULL OR jsonb_typeof(p) <> 'object' OR p->>'observado_em' IS NULL
-     OR jsonb_typeof(p->'motivos') <> 'array' OR jsonb_typeof(p->'contratos') <> 'array' THEN
+  -- IS DISTINCT FROM: campo AUSENTE dá jsonb_typeof NULL, e "NULL <> 'array'" não dispara (viraria array vazio).
+  IF jsonb_typeof(p) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(p->'observado_em') IS DISTINCT FROM 'string'
+     OR jsonb_typeof(p->'motivos') IS DISTINCT FROM 'array' OR jsonb_typeof(p->'contratos') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(p->'pares') IS DISTINCT FROM 'array' OR jsonb_typeof(p->'pedidos') IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'recebimento_associacao_sombra_publicar: payload inválido' USING ERRCODE = '22023';
   END IF;
   INSERT INTO public.recebimento_associacao_sombra AS s (
@@ -119,8 +122,8 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = v_tab AND polcmd = 'r'
                  AND polname = 'recebimento_associacao_sombra_select_staff'
                  AND pg_get_expr(polqual, polrelid) LIKE '%employee%' AND pg_get_expr(polqual, polrelid) LIKE '%master%')
-     OR EXISTS (SELECT 1 FROM pg_policy WHERE polrelid = v_tab AND polcmd <> 'r') THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU: policy de leitura staff ausente ou policy de escrita presente';
+     OR (SELECT count(*) FROM pg_policy WHERE polrelid = v_tab) <> 1 THEN
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU: policy de leitura staff ausente ou policy a mais (leitura ou escrita fora do staff)';
   END IF;
   FOREACH v_priv IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
     IF has_table_privilege('anon', v_tab, v_priv) OR has_table_privilege('authenticated', v_tab, v_priv)
@@ -134,7 +137,8 @@ BEGIN
   IF v_fn IS NULL
      OR (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true
      OR (SELECT 'search_path=public, pg_temp' = ANY (p.proconfig) FROM pg_proc p WHERE p.oid = v_fn) IS DISTINCT FROM true
-     OR (SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn) NOT LIKE '%WHERE s.observado_em < EXCLUDED.observado_em%' THEN
+     OR (SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn) NOT LIKE '%WHERE s.observado_em < EXCLUDED.observado_em%'
+     OR (SELECT p.prosrc FROM pg_proc p WHERE p.oid = v_fn) NOT LIKE '%IS DISTINCT FROM ''array''%' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: RPC ausente, sem SECURITY DEFINER, sem search_path fixo ou sem compare-and-set';
   END IF;
   IF has_function_privilege('anon', v_fn, 'EXECUTE') OR has_function_privilege('authenticated', v_fn, 'EXECUTE')

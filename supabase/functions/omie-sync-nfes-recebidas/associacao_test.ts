@@ -12,25 +12,29 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 }
 
 const SAYERLACK = 8689681266;
-const cabecPendente = { cCancelada: "N", cRecebido: "N", cDevolvido: "N", cDevolvidoParc: "N" };
+// Formato MEDIDO em 84 detalhes reais (psql-ro 2026-10-17): flags da NF em infoCadastro; pendente = cEtapa "40";
+// no item pendente o Omie OMITE nIdItPedido e cItemDevolvido; cDevolvidoParc só aparece se houve devolução.
+const cabecPendente = { cEtapa: "40", nIdReceb: 12196962110 };
+const infoPendente = { cCancelada: "N", cRecebido: "N", cDevolvido: "N", cFaturado: "S" };
 
 function item(seq: number, produto: number, qtd: unknown, contrato: unknown, extra: Record<string, unknown> = {}) {
   return {
-    itensCabec: { nSequencia: seq, nIdProduto: produto, nIdItPedido: 0, cIgnorarItem: "N", cItemDevolvido: "N", ...(extra.cab ?? {}) },
+    itensCabec: { nSequencia: seq, nIdProduto: produto, cIgnorarItem: "N", nIdItem: 0, ...(extra.cab ?? {}) },
     itensAjustes: { nQtdeRecebida: qtd, cUnidade: "GL", cNaoGerarMovEstoque: "N", ...(extra.aj ?? {}) },
     itensInfoAdic: contrato === undefined ? {} : { nNumPedCompra: contrato },
   };
 }
 const ip = (nCodItem: number, nCodProd: number, nQtde: unknown, extra: Partial<ItemPO> = {}): ItemPO =>
   ({ nCodItem, nCodProd, nQtde, cUnidade: "GL", ...extra });
-const po = (id: number, numero: string, itens: ItemPO[] | undefined, forn = SAYERLACK): PedidoDoContrato =>
-  ({ omie_codigo_pedido: id, numero_pedido: numero, fornecedor_codigo_omie: forn, itens });
+const po = (id: number, numero: string, itens: ItemPO[] | undefined, forn = SAYERLACK, etapa: string | null = "15"): PedidoDoContrato =>
+  ({ omie_codigo_pedido: id, numero_pedido: numero, fornecedor_codigo_omie: forn, etapa, itens });
 
-function entrada(itens: unknown[], pedidos: Record<string, PedidoDoContrato[]>, over: Partial<EntradaClassificador> & { cabec?: Record<string, unknown> } = {}): EntradaClassificador {
+type Over = Partial<EntradaClassificador> & { cabec?: Record<string, unknown>; info?: Record<string, unknown> };
+function entrada(itens: unknown[], pedidos: Record<string, PedidoDoContrato[]> | null, over: Over = {}): EntradaClassificador {
   return {
-    detalhe: { cabec: over.cabec ?? cabecPendente, itensRecebimento: itens },
+    detalhe: { cabec: over.cabec ?? cabecPendente, infoCadastro: over.info ?? infoPendente, itensRecebimento: itens },
     fornecedor_codigo_omie: over.fornecedor_codigo_omie === undefined ? SAYERLACK : over.fornecedor_codigo_omie,
-    pedidosPorContrato: new Map(Object.entries(pedidos)),
+    pedidosPorContrato: pedidos === null ? null : new Map(Object.entries(pedidos)),
     skusComEquivalencia: over.skusComEquivalencia === undefined ? new Set<string>() : over.skusComEquivalencia,
   };
 }
@@ -97,14 +101,62 @@ Deno.test("humanos: contrato em 2 POs, contrato composto, PO de outro fornecedor
 
 Deno.test("estado da NF: concluída e cancelada ficam fora de alcance; flag ausente é ilegível, nunca 'N'", () => {
   const pedidos = { C1: [po(9001, "1", [ip(77, 501, 2)])] };
-  const conc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { ...cabecPendente, cRecebido: "S" } }));
+  const conc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { cEtapa: "80" }, info: { ...infoPendente, cRecebido: "S" } }));
   assertEquals([conc.estado_nf, conc.classe, conc.pares], ["concluida", "fora_de_alcance", []]);
-  const canc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { ...cabecPendente, cCancelada: "S" } }));
+  const canc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { info: { ...infoPendente, cCancelada: "S" } }));
   assertEquals([canc.estado_nf, canc.classe], ["cancelada", "fora_de_alcance"]);
-  const sem = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { cCancelada: "N" } }));
+  const sem = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { info: { cCancelada: "N" } }));
   assertEquals([sem.estado_nf, sem.classe, sem.motivos.includes("devolucao_ilegivel")], ["ilegivel", "fora_de_alcance", true]);
-  const vazia = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { ...cabecPendente, cRecebido: "" } }));
+  const vazia = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { info: { ...infoPendente, cRecebido: "" } }));
   assertEquals([vazia.estado_nf, vazia.classe], ["ilegivel", "fora_de_alcance"], "flag em branco não vira 'N'");
+  const etapa = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { cEtapa: "50" } }));
+  assertEquals([etapa.estado_nf, etapa.classe], ["ilegivel", "fora_de_alcance"], "N fora da etapa 40 não é pendente medido");
+  // Regressão Codex 2026-10-17 P1: flags no cabec (formato que a API NÃO usa) não podem ser lidas como estado.
+  const errado = classificarAssociacao({ ...entrada([item(1, 501, 2, "C1")], pedidos), detalhe: { cabec: { ...cabecPendente, ...infoPendente }, itensRecebimento: [item(1, 501, 2, "C1")] } });
+  assertEquals([errado.estado_nf, errado.classe], ["ilegivel", "fora_de_alcance"]);
+});
+
+Deno.test("devolução: cDevolvidoParc/cItemDevolvido ausentes = sem devolução (medido); presentes e tortos = ilegível", () => {
+  const p = { C1: [po(9001, "1", [ip(77, 501, 2)])] };
+  assertEquals(classificarAssociacao(entrada([item(1, 501, 2, "C1")], p, { info: { ...infoPendente, cDevolvidoParc: "S" } })).motivos, ["nf_devolvida"]);
+  assertEquals(classificarAssociacao(entrada([item(1, 501, 2, "C1")], p, { info: { ...infoPendente, cDevolvidoParc: "" } })).motivos, ["devolucao_ilegivel"]);
+  assertEquals(classificarAssociacao(entrada([item(1, 501, 2, "C1", { cab: { cItemDevolvido: "?" } })], p)).motivos, ["devolucao_ilegivel"]);
+  assertEquals(classificarAssociacao(entrada([item(1, 501, 2, "C1", { cab: { cItemDevolvido: "N" } })], p)).classe, "associavel");
+});
+
+Deno.test("vínculo: ausente ou 0 = sem vínculo; null/texto/negativo = ilegível; nIdPedido sem item = vinculada", () => {
+  const p = { C1: [po(9001, "1", [ip(77, 501, 2)])] };
+  assertEquals(classificarAssociacao(entrada([item(1, 501, 2, "C1", { cab: { nIdItPedido: 0 } })], p)).classe, "associavel", "0 explícito");
+  for (const v of [null, "abc", -1, 1.5, ""]) {
+    const c = classificarAssociacao(entrada([item(1, 501, 2, "C1", { cab: { nIdItPedido: v } })], p));
+    assertEquals([c.classe, c.motivos], ["ambigua", ["vinculo_ilegivel"]], `nIdItPedido=${JSON.stringify(v)}`);
+  }
+  const cab = classificarAssociacao(entrada([item(1, 501, 2, "C1", { cab: { nIdPedido: 9999, nIdItPedido: 0 } })], p));
+  assertEquals([cab.vinculo, cab.classe, cab.pares], ["completo", "ja_vinculada", []]);
+});
+
+Deno.test("PO candidato fora da etapa 15 (terminal, desconhecida ou ausente) não é associável", () => {
+  for (const etapa of ["90", "80", "10", "??", null]) {
+    const c = classificarAssociacao(entrada([item(1, 501, 2, "C1")], { C1: [po(9001, "1", [ip(77, 501, 2)], SAYERLACK, etapa)] }));
+    assertEquals([c.classe, c.motivos], ["ambigua", ["po_fora_da_etapa_aberta"]], `etapa=${etapa}`);
+  }
+});
+
+Deno.test("POs não consultados: nunca associável; estado decidido pela NF não ganha motivo de PO", () => {
+  const nc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], null));
+  assertEquals([nc.classe, nc.motivos, nc.pares], ["ambigua", ["pedidos_nao_consultados"], []]);
+  const conc = classificarAssociacao(entrada([item(1, 501, 2, "C1")], null, { cabec: { cEtapa: "80" }, info: { ...infoPendente, cRecebido: "S" } }));
+  assertEquals([conc.classe, conc.motivos], ["fora_de_alcance", ["nf_concluida"]]);
+});
+
+Deno.test("payload real (item de NF pendente, recorte do detalhe de 14/10): 6 casas e L×UN → ambígua, nunca associável", () => {
+  const real = {
+    itensCabec: { cUnidadeNfe: "L", nIdItem: 0, nQtdeNFe: 1, nIdProduto: 8689717792, nSequencia: 1, cIgnorarItem: "N", cAssociarExistente: "S" },
+    itensAjustes: { cUnidade: "UN", nQtdeRecebida: 0.055556, cNaoGerarMovEstoque: "N" },
+    itensInfoAdic: { cCategoriaItem: "2.01.01", nNumPedCompra: "C1" },
+  };
+  const c = classificarAssociacao(entrada([real], { C1: [po(9001, "1", [ip(77, 8689717792, 1, { cUnidade: "UN" })])] }));
+  assertEquals([c.estado_nf, c.classe, c.motivos], ["pendente", "ambigua", ["quantidade_ilegivel"]]);
 });
 
 Deno.test("vínculo existente no Omie: 1 de 2 itens vinculado é parcial, não 'resolvido'", () => {

@@ -42,7 +42,7 @@ import {
   type ReconciliacaoSummary,
 } from "./reconciliacao.ts";
 import type { PedidoDoContrato } from "./associacao.ts";
-import { executarSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
+import { executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -491,9 +491,10 @@ async function reconciliarOrfasEmpresa(
   );
 }
 
-// A sombra cede antes do laço: com menos que isto do guard, a NF fica `puladas_por_tempo` (o vínculo tem prioridade).
-const SOMBRA_FOLGA_MS = 15_000;
+// A sombra é uma FASE depois do vínculo, da reconciliação e do backfill de TODAS as empresas (Codex 2026-10-17, P1):
+// não come o orçamento do trabalho prioritário. Só começa NF com folga ≥ 2 prazos (busca + publicação) antes do guard.
 const SOMBRA_PRAZO_MS = 8_000;
+const SOMBRA_FOLGA_MS = 2 * SOMBRA_PRAZO_MS + 1_000;
 
 /** SKUs com equivalência de embalagem ativa (concentrados WP); `null` = não lido → toda NF da sombra fica ambígua. */
 async function lerSkusComEquivalencia(supabase: SupabaseClient, empresa: Empresa): Promise<Set<string> | null> {
@@ -527,7 +528,7 @@ function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSomb
       if ((data ?? []).length >= 1000) throw new Error("POs dos contratos: 1000+ linhas (capa do PostgREST)");
       const out = new Map<string, PedidoDoContrato[]>();
       for (const r of (data ?? []) as Array<Record<string, unknown>>) {
-        const raw = (r.raw_data ?? {}) as { cabecalho_consulta?: { nCodPed?: unknown }; produtos_consulta?: unknown };
+        const raw = (r.raw_data ?? {}) as { cabecalho_consulta?: { nCodPed?: unknown; cEtapa?: unknown }; produtos_consulta?: unknown };
         // raw_data é multi-writer (o backfill de NF já gravou o RECEBIMENTO ali): só vale o documento do PRÓPRIO PO.
         const doPO = Number(raw.cabecalho_consulta?.nCodPed) === Number(r.omie_codigo_pedido);
         const contrato = String(r.numero_contrato_fornecedor);
@@ -536,6 +537,8 @@ function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSomb
           omie_codigo_pedido: Number(r.omie_codigo_pedido),
           numero_pedido: (r.numero_pedido as string | null) ?? null,
           fornecedor_codigo_omie: r.fornecedor_codigo_omie == null ? null : Number(r.fornecedor_codigo_omie),
+          etapa: doPO && (typeof raw.cabecalho_consulta?.cEtapa === "string" || typeof raw.cabecalho_consulta?.cEtapa === "number")
+            ? String(raw.cabecalho_consulta.cEtapa).trim() : null,
           itens: doPO && Array.isArray(raw.produtos_consulta) ? raw.produtos_consulta as PedidoDoContrato["itens"] : undefined,
         });
         out.set(contrato, lista);
@@ -558,6 +561,7 @@ async function syncEmpresa(
   dias: number,
   fornecedorCodigo: number | undefined,
   t0: number,
+  filaSombra: ItemFilaSombra[],
   dataInicialOverride?: string,
   dataFinalOverride?: string,
 ): Promise<EmpresaSummary> {
@@ -597,13 +601,6 @@ async function syncEmpresa(
 
   // Cache para evitar reprocessar mesma NFe (nIdReceb) no mesmo run
   const processadasNoRun = new Set<number>();
-
-  // Sombra da associação NF↔PO (associacao.ts/sombra.ts): nada vai ao Omie; NUNCA derruba o vínculo.
-  const sombraResumo = novaSombraSummary();
-  summary.sombra = sombraResumo;
-  const skusComEquivalencia = await lerSkusComEquivalencia(supabase, empresa);
-  const portaSombra = criarPortaSombra(supabase, empresa);
-  const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
 
   let pagina = 1;
   let totalPaginas = 1;
@@ -696,6 +693,7 @@ async function syncEmpresa(
         // ConsultarRecebimento → busca itens e nNumPedCompra
         await sleep(RATE_LIMIT_DELAY_MS);
         let detalhe: OmieConsultarRecebimentoResponse;
+        const detalheLidoEm = new Date().toISOString();
         try {
           detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline)) as OmieConsultarRecebimentoResponse;
         } catch (errDet) {
@@ -717,7 +715,6 @@ async function syncEmpresa(
           continue;
         }
         summary.consultas_detalhadas++;
-        const detalheLidoEm = new Date().toISOString();
 
         const numerosPedido = extrairPedidosDoDetalhe(detalhe);
 
@@ -754,11 +751,10 @@ async function syncEmpresa(
           summary.nfes_orfas++;
         }
         summary.nfes_processadas++;
-        await executarSombra(
-          portaSombra,
-          { empresa, nIdReceb, numero_nfe: m.numero, chave_nfe: m.chave, fornecedor_codigo_omie: m.fornecedor_codigo },
-          detalhe, skusComEquivalencia, detalheLidoEm, sombraTemTempo, sombraResumo,
-        );
+        filaSombra.push({
+          nf: { empresa, nIdReceb, numero_nfe: m.numero, chave_nfe: m.chave, fornecedor_codigo_omie: m.fornecedor_codigo },
+          detalhe, observadoEm: detalheLidoEm,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);
@@ -1086,6 +1082,10 @@ Deno.serve(async (req) => {
     console.log(`[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} janela=${dataInicial ?? "-"}→${dataFinal ?? "-"} fornecedor=${fornecedorCodigo ?? "todos"} apenas_backfill=${apenasBackfill} pular_backfill=${pularBackfill}`);
 
     const summary: EmpresaSummary[] = [];
+    const filasSombra = new Map<Empresa, { s: EmpresaSummary; fila: ItemFilaSombra[] }>();
+    const aConcluir: Array<{ empLogId: Awaited<ReturnType<typeof logSync>>; s: EmpresaSummary; falha: string | undefined }> = [];
+    // O finally conclui TODA empresa que terminou com sucesso, mesmo se algo lançar depois dela (outra empresa, a sombra).
+    try {
     for (const empresa of empresas) {
       const empLogId = await logSync(supabase, "sync_nfes_recebidas", [empresaParaLog(empresa)], triggeredBy);
       try {
@@ -1102,7 +1102,9 @@ Deno.serve(async (req) => {
             erros: 0,
           };
         } else {
-          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, dataInicial, dataFinal);
+          const fila: ItemFilaSombra[] = [];
+          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, fila, dataInicial, dataFinal);
+          filasSombra.set(empresa, { s, fila });
           console.log(
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
@@ -1160,7 +1162,8 @@ Deno.serve(async (req) => {
         const falhaSistemica = s.erros > 0 && s.nfes_processadas === 0
           ? `0 NFes processadas com ${s.erros} erro(s) — rate-limit/Omie?`
           : undefined;
-        await completeSync(supabase, empLogId, s as unknown as Record<string, unknown>, falhaSistemica, Date.now() - t0);
+        // Sucesso: o completeSync espera a fase da sombra (abaixo) para levar o resumo dela no results.
+        aConcluir.push({ empLogId, s, falha: falhaSistemica });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} erro fatal: ${msg}`);
@@ -1175,6 +1178,28 @@ Deno.serve(async (req) => {
           vinculos_criados_total: 0,
           erros: 1,
         });
+      }
+    }
+
+    // Fase da sombra da associação NF↔PO (sombra.ts): nada vai ao Omie, depois de TODO o trabalho prioritário.
+    try {
+      const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
+      for (const [empresa, { s, fila }] of filasSombra) {
+        if (!aConcluir.some((c) => c.s === s)) continue;
+        const r = novaSombraSummary();
+        s.sombra = r;
+        await executarFaseSombra(fila, criarPortaSombra(supabase, empresa), () => lerSkusComEquivalencia(supabase, empresa), sombraTemTempo, r);
+      }
+    } catch (errSombra) {
+      console.error(`[sync-nfes] fase da sombra erro (o vínculo segue): ${mensagemDeErro(errSombra) ?? "erro sem mensagem"}`);
+    }
+    } finally {
+      for (const c of aConcluir) {
+        try {
+          await completeSync(supabase, c.empLogId, c.s as unknown as Record<string, unknown>, c.falha, Date.now() - t0);
+        } catch (errCs) {
+          console.error(`[sync-nfes] ${c.s.empresa} completeSync erro: ${mensagemDeErro(errCs) ?? "erro sem mensagem"}`);
+        }
       }
     }
 

@@ -1,9 +1,11 @@
 // Orquestra a SOMBRA da associação NF↔PO para UMA NF: busca os POs dos contratos, classifica (associacao.ts) e
 // publica (RPC recebimento_associacao_sombra_publicar, compare-and-set por observado_em). Nada vai ao Omie.
 //
-// Contrato com o laço principal (parecer Codex 2026-10-16, achado 10): a sombra NUNCA derruba o vínculo NF↔PO —
-// roda depois dele, NUNCA lança, e tem contadores próprios com denominador (tentadas = classificadas + falhas;
-// gravadas + velhas ≤ classificadas). Saúde do vínculo e saúde da sombra ficam distinguíveis no fin_sync_log.
+// Contrato com o laço principal (pareceres Codex 2026-10-16 achado 10 e 2026-10-17): a sombra roda numa FASE
+// POSTERIOR ao vínculo NF↔PO, com orçamento próprio, e NUNCA lança. Estado decidido só pela NF (fora de alcance, já
+// vinculada, órfã) é publicado sem buscar POs; falha na busca publica `ambigua` + `leitura_po_falhou` — a proposta
+// verde anterior não sobrevive como evidência vigente. Invariante: tentadas = gravadas + leituras_velhas +
+// falhas_publicacao; leituras_po_falhas ≤ tentadas.
 
 import {
   classificarAssociacao,
@@ -14,17 +16,17 @@ import {
 
 export interface SombraSummary {
   tentadas: number;
-  classificadas: number;
   gravadas: number;
   leituras_velhas: number;
-  falhas: number;
+  falhas_publicacao: number;
+  leituras_po_falhas: number;
   puladas_por_tempo: number;
-  /** Contagem por classe das classificadas neste run (não é o estado da tabela). */
+  /** Contagem por classe das classificações deste run (não é o estado da tabela). */
   por_classe: Record<string, number>;
 }
 
 export function novaSombraSummary(): SombraSummary {
-  return { tentadas: 0, classificadas: 0, gravadas: 0, leituras_velhas: 0, falhas: 0, puladas_por_tempo: 0, por_classe: {} };
+  return { tentadas: 0, gravadas: 0, leituras_velhas: 0, falhas_publicacao: 0, leituras_po_falhas: 0, puladas_por_tempo: 0, por_classe: {} };
 }
 
 export interface PortaSombra {
@@ -55,6 +57,8 @@ export function contratosDoDetalhe(detalhe: unknown): string[] {
   return [...set].sort();
 }
 
+const DECIDIDA_PELA_NF = new Set(["fora_de_alcance", "ja_vinculada", "orfa"]);
+
 export async function executarSombra(
   porta: PortaSombra,
   nf: NFParaSombra,
@@ -66,12 +70,22 @@ export async function executarSombra(
 ): Promise<Classificacao | null> {
   if (!temTempo()) { resumo.puladas_por_tempo++; return null; }
   resumo.tentadas++;
+  const base = { detalhe, fornecedor_codigo_omie: nf.fornecedor_codigo_omie, skusComEquivalencia };
+  let c = classificarAssociacao({ ...base, pedidosPorContrato: null });
+  const contratos = contratosDoDetalhe(detalhe).filter((x) => !x.includes("/"));
+  if (!DECIDIDA_PELA_NF.has(c.classe)) {
+    try {
+      // Sem contrato buscável (só compostos "a/b") a consulta é vazia por definição — não "não consultada".
+      const pedidos = contratos.length > 0 ? await porta.buscarPedidos(contratos) : new Map<string, PedidoDoContrato[]>();
+      c = classificarAssociacao({ ...base, pedidosPorContrato: pedidos });
+    } catch (err) {
+      resumo.leituras_po_falhas++;
+      c = { ...c, classe: "ambigua", motivos: [...new Set([...c.motivos, "leitura_po_falhou"])].sort(), pares: [], pedidos: [] };
+      console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} leitura de POs falhou (publica ambígua): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  resumo.por_classe[c.classe] = (resumo.por_classe[c.classe] ?? 0) + 1;
   try {
-    const contratos = contratosDoDetalhe(detalhe).filter((c) => !c.includes("/"));
-    const pedidosPorContrato = contratos.length > 0 ? await porta.buscarPedidos(contratos) : new Map();
-    const c = classificarAssociacao({ detalhe, fornecedor_codigo_omie: nf.fornecedor_codigo_omie, pedidosPorContrato, skusComEquivalencia });
-    resumo.classificadas++;
-    resumo.por_classe[c.classe] = (resumo.por_classe[c.classe] ?? 0) + 1;
     const r = await porta.publicar({
       empresa: nf.empresa, nid_receb: nf.nIdReceb, numero_nfe: nf.numero_nfe, chave_nfe: nf.chave_nfe,
       fornecedor_codigo_omie: nf.fornecedor_codigo_omie, estado_nf: c.estado_nf, vinculo: c.vinculo, classe: c.classe,
@@ -83,8 +97,30 @@ export async function executarSombra(
     else throw new Error(`resposta inesperada da RPC: ${String(r).slice(0, 60)}`);
     return c;
   } catch (err) {
-    resumo.falhas++;
-    console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} falhou (o vínculo segue): ${err instanceof Error ? err.message : String(err)}`);
+    resumo.falhas_publicacao++;
+    console.warn(`[sync-nfes] sombra nIdReceb=${nf.nIdReceb} publicação falhou (o vínculo segue): ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
+}
+
+export interface ItemFilaSombra {
+  nf: NFParaSombra;
+  detalhe: unknown;
+  /** Carimbo tirado ANTES da consulta da NF: ordena a evidência pela leitura, não pela chegada da resposta. */
+  observadoEm: string;
+}
+
+/** Fase da sombra de uma empresa: roda DEPOIS de todo o trabalho prioritário do run, no tempo que sobrar. */
+export async function executarFaseSombra(
+  fila: readonly ItemFilaSombra[],
+  porta: PortaSombra,
+  lerEquivalencias: () => Promise<ReadonlySet<string> | null>,
+  temTempo: () => boolean,
+  resumo: SombraSummary,
+): Promise<void> {
+  if (fila.length === 0) return;
+  if (!temTempo()) { resumo.puladas_por_tempo += fila.length; return; }
+  let skus: ReadonlySet<string> | null;
+  try { skus = await lerEquivalencias(); } catch { skus = null; }
+  for (const f of fila) await executarSombra(porta, f.nf, f.detalhe, skus, f.observadoEm, temTempo, resumo);
 }
