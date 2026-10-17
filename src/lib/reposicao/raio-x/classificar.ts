@@ -106,7 +106,7 @@ export function classificar(
     const s = parado ? sugerirDestino(f, hoje) : null;
     return {
       ...f,
-      valor: f.cmc === null ? null : f.saldo * f.cmc,
+      valor: f.cmc === null || f.cmc <= 0 ? null : f.saldo * f.cmc,
       cobertura: cob,
       categoria: c.categoria,
       motivo_categoria: c.motivo,
@@ -117,10 +117,10 @@ export function classificar(
     };
   });
   itens.sort((a, b) => {
-    if (a.valor === null && b.valor === null) return 0;
+    if (a.valor === null && b.valor === null) return a.sku_codigo_omie - b.sku_codigo_omie;
     if (a.valor === null) return 1;
     if (b.valor === null) return -1;
-    return b.valor - a.valor;
+    return b.valor - a.valor || a.sku_codigo_omie - b.sku_codigo_omie;
   });
   itens.filter((i) => i.parado && i.valor !== null).slice(0, TOP_N).forEach((i) => { i.top = true; });
   return itens;

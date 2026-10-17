@@ -32,7 +32,8 @@ export function listaTroca(itens: ItemRaioX[], decisoes: Map<number, DecisaoRow>
 
 export interface GrupoCliente {
   cliente: string;
-  valor: number;
+  /** null = todos os itens do grupo sem custo (não avaliado, nunca R$ 0). */
+  valor: number | null;
   itens: ItemRaioX[];
 }
 
@@ -42,13 +43,13 @@ export function vendaDirigidaPorCliente(itens: ItemRaioX[], decisoes: Map<number
     if (decisoes.get(i.sku_codigo_omie)?.destino !== 'venda_dirigida') continue;
     const nomes = i.clientes?.length ? i.clientes.map((c) => c.nome) : [SEM_COMPRADOR];
     for (const nome of nomes) {
-      const g = grupos.get(nome) ?? { cliente: nome, valor: 0, itens: [] };
+      const g = grupos.get(nome) ?? { cliente: nome, valor: null, itens: [] };
       g.itens.push(i);
-      if (i.valor !== null) g.valor += i.valor; // sem custo: o item aparece, mas não soma R$ 0 fabricado
+      if (i.valor !== null) g.valor = (g.valor ?? 0) + i.valor; // sem custo: o item aparece, mas não soma R$ 0 fabricado
       grupos.set(nome, g);
     }
   }
-  return [...grupos.values()].sort((a, b) => b.valor - a.valor);
+  return [...grupos.values()].sort((a, b) => (b.valor ?? -Infinity) - (a.valor ?? -Infinity));
 }
 
 export function diffContagem(

@@ -114,6 +114,19 @@ describe('classificar', () => {
     expect(r.find((i) => i.sku_codigo_omie === 70)?.top).toBe(true);
     expect(r.find((i) => i.sku_codigo_omie === 9)?.top).toBe(false);
   });
+  it('cmc 0 ou negativo → valor null (CMC <= 0 = ausente)', () => {
+    const r = classificar([fato({ sku_codigo_omie: 1, cmc: 0 }), fato({ sku_codigo_omie: 2, cmc: -3 })], sem, 'oben', HOJE);
+    expect(r.every((i) => i.valor === null && !i.top)).toBe(true);
+  });
+  it('empate de valor na fronteira 61/62 desempata por sku_codigo_omie, independente da ordem de entrada', () => {
+    const fatos = Array.from({ length: 62 }, (_, k) => fato({ sku_codigo_omie: k + 1, cmc: 1 }));
+    const a = classificar(fatos, sem, 'oben', HOJE);
+    const b = classificar([...fatos].reverse(), sem, 'oben', HOJE);
+    const topo = (r: typeof a) => r.filter((i) => i.top).map((i) => i.sku_codigo_omie).sort((x, y) => x - y);
+    expect(topo(a)).toEqual(topo(b));
+    expect(topo(a)).toHaveLength(61);
+    expect(topo(a)).not.toContain(62);
+  });
   it('Oben: parado = fora do motor, q12 0 ou cobertura > 180', () => {
     const r = classificar([
       fato({ sku_codigo_omie: 1, no_motor: true, q12: 100, saldo: 10 }), // 36,5 d, no motor → não parado

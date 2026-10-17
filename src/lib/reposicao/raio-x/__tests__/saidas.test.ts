@@ -36,7 +36,17 @@ describe('vendaDirigidaPorCliente', () => {
       mapaDecisoes(decisao(1, { destino: 'venda_dirigida' })));
     expect(g).toHaveLength(1);
     expect(g[0].itens).toHaveLength(1);
-    expect(g[0].valor).toBe(0);
+    expect(g[0].valor).toBeNull();
+  });
+});
+
+describe('vendaDirigidaPorCliente — valor parcial e ordem', () => {
+  it('grupo com um item com custo soma só ele; grupo sem custo vai por último', () => {
+    const g = vendaDirigidaPorCliente(itens(
+      { sku_codigo_omie: 1, cmc: null, clientes: [{ nome: 'SEM', ult: null, qtd: 1 }] },
+      { sku_codigo_omie: 2, cmc: 1, clientes: [{ nome: 'COM', ult: null, qtd: 1 }] },
+    ), mapaDecisoes(decisao(1, { destino: 'venda_dirigida' }), decisao(2, { destino: 'venda_dirigida' })));
+    expect(g.map((x) => [x.cliente, x.valor])).toEqual([['COM', 10], ['SEM', null]]);
   });
 });
 

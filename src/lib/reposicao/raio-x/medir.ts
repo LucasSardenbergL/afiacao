@@ -22,10 +22,14 @@ export interface Medicao {
   recomprado: number | null;
   saiu_sem_nf: number | null;
   reclassificado_nao_caixa: number;
+  /** SKUs reclassificados sem custo (foto_valor null): ficam fora da soma, nunca como R$ 0. */
+  reclassificado_sem_custo_n: number;
   contradicoes: Contradicao[];
   compras_visiveis: boolean;
   sem_medicao: number[];
   sem_medicao_valor: number;
+  /** SKUs sem medição E sem custo (foto_valor null): a soma acima é piso. */
+  sem_medicao_sem_custo_n: number;
 }
 
 export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
@@ -33,11 +37,15 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
   const comprasVisiveis = linhas.every((l) => l.compras_apos !== null);
   let vendido = 0, liquidado = 0, margem = 0, recomprado = 0;
   let trocado = 0, parado = 0, saiuSemNf = 0, reclassificado = 0, semMedicaoValor = 0;
+  let reclassificadoSemCustoN = 0, semMedicaoSemCustoN = 0;
   const contradicoes: Contradicao[] = [];
   const semMedicao: number[] = [];
 
   for (const l of linhas) {
-    if (l.foto_categoria === 'nao_mercadoria') { reclassificado += l.foto_valor ?? 0; continue; }
+    if (l.foto_categoria === 'nao_mercadoria') {
+      if (l.foto_valor === null) reclassificadoSemCustoN += 1; else reclassificado += l.foto_valor;
+      continue;
+    }
     if (l.foto_categoria === 'uso_consumo') continue;
     // crédito de troca vem da decisão, não do estoque: conta mesmo se o SKU sumiu da medição
     if (l.destino === 'trocar' && typeof l.credito_troca === 'number') trocado += l.credito_troca;
@@ -45,14 +53,14 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     const { foto_saldo: fs, foto_cmc: fc, saldo_atual: sa } = l;
     if (fs === null || fc === null || sa === null || (comNf && l.qtd_vendida === null)) {
       semMedicao.push(l.sku_codigo_omie);
-      semMedicaoValor += l.foto_valor ?? 0;
+      if (l.foto_valor === null) semMedicaoSemCustoN += 1; else semMedicaoValor += l.foto_valor;
       continue;
     }
     const saiu = Math.max(0, fs - sa);
     if (comNf) {
       const qv = l.qtd_vendida as number;
       // só conta como saída o que de fato deixou o saldo da foto; venda acima disso foi recomprada
-      const vendidoNoPeriodo = Math.min(qv, fs);
+      const vendidoNoPeriodo = Math.max(0, Math.min(qv, fs));
       const qtd = Math.min(vendidoNoPeriodo, saiu);
       recomprado += (vendidoNoPeriodo - qtd) * fc;
       const custo = qtd * fc;
@@ -66,7 +74,7 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     } else {
       saiuSemNf += saiu * fc; // sem NF: só sabemos que saiu, não por quê nem a que preço
     }
-    parado += Math.min(sa, fs) * fc;
+    parado += Math.max(0, Math.min(sa, fs)) * fc;
     if (comprasVisiveis && CONTRADICAO.includes(l.destino) && l.decidido_em) {
       const t0 = Date.parse(l.decidido_em);
       for (const p of l.compras_apos ?? []) {
@@ -87,9 +95,11 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     recomprado: comNf && comprasVisiveis ? recomprado : null,
     saiu_sem_nf: comNf ? null : saiuSemNf,
     reclassificado_nao_caixa: reclassificado,
+    reclassificado_sem_custo_n: reclassificadoSemCustoN,
     contradicoes,
     compras_visiveis: comprasVisiveis,
     sem_medicao: semMedicao,
     sem_medicao_valor: semMedicaoValor,
+    sem_medicao_sem_custo_n: semMedicaoSemCustoN,
   };
 }

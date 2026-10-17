@@ -75,6 +75,32 @@ describe('medir (oben)', () => {
   });
 });
 
+describe('medir — ausente ≠ zero e bordas', () => {
+  it('foto_valor null em sem_medicao e reclassificado não soma 0: conta à parte', () => {
+    const m = medir([
+      linha({ sku_codigo_omie: 1, saldo_atual: null, qtd_vendida: null, foto_valor: null, foto_cmc: null }),
+      linha({ sku_codigo_omie: 2, saldo_atual: null, qtd_vendida: null, foto_valor: 7 }),
+      linha({ sku_codigo_omie: 3, foto_categoria: 'nao_mercadoria', foto_valor: null }),
+      linha({ sku_codigo_omie: 4, foto_categoria: 'nao_mercadoria', foto_valor: 9 }),
+    ], 'oben');
+    expect(m.sem_medicao_valor).toBe(7);
+    expect(m.sem_medicao_sem_custo_n).toBe(1);
+    expect(m.reclassificado_nao_caixa).toBe(9);
+    expect(m.reclassificado_sem_custo_n).toBe(1);
+  });
+  it('saldo_atual negativo não subtrai do parado; qtd_vendida negativa não vira venda', () => {
+    const m = medir([linha({ saldo_atual: -4, qtd_vendida: -2, receita: -20 })], 'oben');
+    expect(m.parado).toBe(0);
+    expect(m.vendido).toBe(0);
+    expect(m.recomprado).toBe(0);
+  });
+  it('Oben com receita null e qtd_vendida > 0 cai em vendido (sem preço do período)', () => {
+    const m = medir([linha({ saldo_atual: 6, qtd_vendida: 4, receita: null })], 'oben');
+    expect(m.vendido).toBe(20);
+    expect(m.liquidado).toBe(0);
+  });
+});
+
 describe('medir (colacor)', () => {
   it('vendido/liquidado null (ausente ≠ zero); saiu_sem_nf = (foto − atual) × cmc', () => {
     const m = medir([linha({ saldo_atual: 4, qtd_vendida: null, receita: null, preco_medio_12m: null, compras_apos: null })], 'colacor');
@@ -91,6 +117,16 @@ describe('medir (colacor)', () => {
       linha({ sku_codigo_omie: 2, saldo_atual: 20, qtd_vendida: null, compras_apos: null }),
     ], 'colacor');
     expect(m.saiu_sem_nf).toBe(30);
+  });
+  it('linha sem foto ou sem saldo_atual vai a sem_medicao, sem número', () => {
+    const m = medir([
+      linha({ sku_codigo_omie: 1, saldo_atual: null, qtd_vendida: null, compras_apos: null }),
+      linha({ sku_codigo_omie: 2, foto_saldo: null, foto_cmc: null, foto_valor: null, qtd_vendida: null, compras_apos: null }),
+    ], 'colacor');
+    expect(m.sem_medicao).toEqual([1, 2]);
+    expect(m.saiu_sem_nf).toBe(0);
+    expect(m.sem_medicao_valor).toBe(50);
+    expect(m.sem_medicao_sem_custo_n).toBe(1);
   });
   it('crédito de troca ainda conta', () => {
     const m = medir([linha({ destino: 'trocar', credito_troca: 25, saldo_atual: 10, qtd_vendida: null, compras_apos: null })], 'colacor');
