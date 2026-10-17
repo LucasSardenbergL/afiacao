@@ -138,7 +138,7 @@ BEGIN
          p.unidade,
          CASE WHEN v_vnd IS NULL THEN NULL::text[] ELSE coalesce(v.unidades, '{}'::text[]) END,
          (sp.sku_codigo_omie IS NOT NULL),
-         sp.tipo_reposicao, sp.classe_abc,
+         sp.tipo_reposicao, sp.classe_abc::text,  -- prod: character(1)
          (p.created_at AT TIME ZONE 'America/Sao_Paulo')::date,
          rec.ult_entrada,
          coalesce(sp.fornecedor_nome, rec.forn_rec),
