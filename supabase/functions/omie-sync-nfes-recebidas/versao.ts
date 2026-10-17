@@ -54,7 +54,8 @@ export const EDGE = "omie-sync-nfes-recebidas";
  * preenche pedido SEM NF (compare-and-set); pedido com outra NF fica intocado. `results` ganha
  * `reconciliacao`. Ver reconciliacao.ts.
  */
-export const VERSAO = "v1.5-reconcilia-orfas";
+// v1.6: sombra da associação NF↔PO (associacao.ts/sombra.ts) — classifica e publica em recebimento_associacao_sombra; nada vai ao Omie.
+export const VERSAO = "v1.6-sombra-associacao";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

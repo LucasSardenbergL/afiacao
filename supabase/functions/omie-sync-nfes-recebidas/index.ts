@@ -41,6 +41,8 @@ import {
   reconciliarOrfas,
   type ReconciliacaoSummary,
 } from "./reconciliacao.ts";
+import type { PedidoDoContrato } from "./associacao.ts";
+import { executarSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,6 +87,8 @@ interface EmpresaSummary extends Partial<ContagemModelo> {
   interrompido_por_timeout?: boolean;
   /** Ausente quando o passo não rodou (timeout do laço) — nunca um 0 que afirma "medi". */
   reconciliacao?: ReconciliacaoSummary;
+  /** Sombra da associação NF↔PO (sombra.ts): saúde própria, distinta da do vínculo. */
+  sombra?: SombraSummary;
   backfill?: BackfillSummary;
 }
 
@@ -487,6 +491,67 @@ async function reconciliarOrfasEmpresa(
   );
 }
 
+// A sombra cede antes do laço: com menos que isto do guard, a NF fica `puladas_por_tempo` (o vínculo tem prioridade).
+const SOMBRA_FOLGA_MS = 15_000;
+const SOMBRA_PRAZO_MS = 8_000;
+
+/** SKUs com equivalência de embalagem ativa (concentrados WP); `null` = não lido → toda NF da sombra fica ambígua. */
+async function lerSkusComEquivalencia(supabase: SupabaseClient, empresa: Empresa): Promise<Set<string> | null> {
+  try {
+    const { data, error } = await supabase
+      .from("sku_embalagem_equivalencia")
+      .select("sku_codigo_omie")
+      .eq("empresa", empresa.toLowerCase())
+      .eq("ativo", true)
+      .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+    if (error || !Array.isArray(data)) return null;
+    return new Set(data.map((r) => String((r as { sku_codigo_omie: unknown }).sku_codigo_omie)));
+  } catch {
+    return null;
+  }
+}
+
+function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSombra {
+  return {
+    async buscarPedidos(contratos) {
+      const { data, error } = await supabase
+        .from("purchase_orders_tracking")
+        .select("omie_codigo_pedido, numero_pedido, fornecedor_codigo_omie, numero_contrato_fornecedor, raw_data")
+        .eq("empresa", empresa)
+        .gt("omie_codigo_pedido", 0)
+        .in("numero_contrato_fornecedor", contratos)
+        .order("omie_codigo_pedido")
+        .range(0, 999)
+        .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+      if (error) throw new Error(`POs dos contratos: ${error.message}`);
+      if ((data ?? []).length >= 1000) throw new Error("POs dos contratos: 1000+ linhas (capa do PostgREST)");
+      const out = new Map<string, PedidoDoContrato[]>();
+      for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+        const raw = (r.raw_data ?? {}) as { cabecalho_consulta?: { nCodPed?: unknown }; produtos_consulta?: unknown };
+        // raw_data é multi-writer (o backfill de NF já gravou o RECEBIMENTO ali): só vale o documento do PRÓPRIO PO.
+        const doPO = Number(raw.cabecalho_consulta?.nCodPed) === Number(r.omie_codigo_pedido);
+        const contrato = String(r.numero_contrato_fornecedor);
+        const lista = out.get(contrato) ?? [];
+        lista.push({
+          omie_codigo_pedido: Number(r.omie_codigo_pedido),
+          numero_pedido: (r.numero_pedido as string | null) ?? null,
+          fornecedor_codigo_omie: r.fornecedor_codigo_omie == null ? null : Number(r.fornecedor_codigo_omie),
+          itens: doPO && Array.isArray(raw.produtos_consulta) ? raw.produtos_consulta as PedidoDoContrato["itens"] : undefined,
+        });
+        out.set(contrato, lista);
+      }
+      return out;
+    },
+    async publicar(linha) {
+      const { data, error } = await supabase
+        .rpc("recebimento_associacao_sombra_publicar", { p: linha })
+        .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+      if (error) throw new Error(`publicar: ${error.message}`);
+      return String(data);
+    },
+  };
+}
+
 async function syncEmpresa(
   supabase: SupabaseClient,
   empresa: Empresa,
@@ -532,6 +597,13 @@ async function syncEmpresa(
 
   // Cache para evitar reprocessar mesma NFe (nIdReceb) no mesmo run
   const processadasNoRun = new Set<number>();
+
+  // Sombra da associação NF↔PO (associacao.ts/sombra.ts): nada vai ao Omie; NUNCA derruba o vínculo.
+  const sombraResumo = novaSombraSummary();
+  summary.sombra = sombraResumo;
+  const skusComEquivalencia = await lerSkusComEquivalencia(supabase, empresa);
+  const portaSombra = criarPortaSombra(supabase, empresa);
+  const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
 
   let pagina = 1;
   let totalPaginas = 1;
@@ -645,6 +717,7 @@ async function syncEmpresa(
           continue;
         }
         summary.consultas_detalhadas++;
+        const detalheLidoEm = new Date().toISOString();
 
         const numerosPedido = extrairPedidosDoDetalhe(detalhe);
 
@@ -681,6 +754,11 @@ async function syncEmpresa(
           summary.nfes_orfas++;
         }
         summary.nfes_processadas++;
+        await executarSombra(
+          portaSombra,
+          { empresa, nIdReceb, numero_nfe: m.numero, chave_nfe: m.chave, fornecedor_codigo_omie: m.fornecedor_codigo },
+          detalhe, skusComEquivalencia, detalheLidoEm, sombraTemTempo, sombraResumo,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);

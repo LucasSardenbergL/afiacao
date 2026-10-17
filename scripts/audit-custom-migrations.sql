@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 646
+-- Total de custom migrations: 648
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -710,7 +710,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261015221600', 'vendas_sync_cursor_fencing_token', '20261015221600_vendas_sync_cursor_fencing_token.sql'),
   ('20261015221700', 'vendas_sync_cursor_falha_honesta', '20261015221700_vendas_sync_cursor_falha_honesta.sql'),
   ('20261016013000', 'sayerlack_importar_pedido_portal_safeupdate', '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql'),
-  ('20261016140000', 'tint_tombstone_exige_geracao_1', '20261016140000_tint_tombstone_exige_geracao_1.sql')
+  ('20261016140000', 'tint_tombstone_exige_geracao_1', '20261016140000_tint_tombstone_exige_geracao_1.sql'),
+  ('20261016150000', 'sayerlack_varrer_pedidos_portal_cron', '20261016150000_sayerlack_varrer_pedidos_portal_cron.sql'),
+  ('20261017040000', 'recebimento_associacao_sombra', '20261017040000_recebimento_associacao_sombra.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2751,7 +2753,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
   ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
-  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('sayerlack_varrer_pedidos_portal_cron', 'table', 'public', 'sayerlack_varredura_falha', ''),
+  ('sayerlack_varrer_pedidos_portal_cron', 'cron_job', 'cron', 'sayerlack-varrer-pedidos-portal', ''),
+  ('recebimento_associacao_sombra', 'function', 'public', 'recebimento_associacao_sombra_publicar', ''),
+  ('recebimento_associacao_sombra', 'table', 'public', 'recebimento_associacao_sombra', ''),
+  ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
+  ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4840,7 +4848,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_semear_janela', ''),
   ('vendas_sync_cursor_falha_honesta', 'function', 'public', 'vendas_sync_rearmar_janela', ''),
   ('sayerlack_importar_pedido_portal_safeupdate', 'function', 'public', 'sayerlack_importar_pedido_portal', ''),
-  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', '')
+  ('tint_tombstone_exige_geracao_1', 'view', 'public', 'v_tint_formula_canonica', ''),
+  ('sayerlack_varrer_pedidos_portal_cron', 'table', 'public', 'sayerlack_varredura_falha', ''),
+  ('sayerlack_varrer_pedidos_portal_cron', 'cron_job', 'cron', 'sayerlack-varrer-pedidos-portal', ''),
+  ('recebimento_associacao_sombra', 'function', 'public', 'recebimento_associacao_sombra_publicar', ''),
+  ('recebimento_associacao_sombra', 'table', 'public', 'recebimento_associacao_sombra', ''),
+  ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
+  ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra')
 )
 SELECT
   e.migration,

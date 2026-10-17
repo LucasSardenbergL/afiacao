@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **646** custom migrations totais
-- **2075** objetos esperados (criados por estas migrations)
+- **648** custom migrations totais
+- **2081** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 743
-  - `rls_policy`: 471
-  - `index`: 276
-  - `cron_job`: 184
-  - `table`: 178
+  - `function`: 744
+  - `rls_policy`: 472
+  - `index`: 277
+  - `cron_job`: 185
+  - `table`: 180
   - `view`: 114
   - `trigger`: 105
   - `enum_value`: 4
@@ -5244,6 +5244,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_tint_formula_canonica` | — |
+
+### `20261016150000_sayerlack_varrer_pedidos_portal_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_varredura_falha` | — |
+| `cron_job` | `cron.sayerlack-varrer-pedidos-portal` | — |
+
+### `20261017040000_recebimento_associacao_sombra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.recebimento_associacao_sombra_publicar` | — |
+| `table` | `public.recebimento_associacao_sombra` | — |
+| `index` | `public.idx_recebimento_associacao_sombra_classe` | `recebimento_associacao_sombra` |
+| `rls_policy` | `public.recebimento_associacao_sombra_select_staff` | `recebimento_associacao_sombra` |
 
 ## Próximos passos por status
 
