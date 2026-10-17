@@ -46,7 +46,7 @@ const RELOGIO_MS = 60_000;
  */
 export function ExigenciaDeVersao() {
   const { isStaff } = useAuth();
-  const { data: config } = useQuery({
+  const { data: lida, error: erroDeLeitura } = useQuery({
     queryKey: ['config', CHAVE_CONFIG_BUILD_MINIMO],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -63,6 +63,10 @@ export function ExigenciaDeVersao() {
     refetchOnWindowFocus: true,
     refetchInterval: 15 * 60_000,
   });
+  // Falha de leitura é DECIDIDA aqui, não colapsada: sem nenhum valor lido, erro = sem
+  // exigência (não se tranca o staff por ausência de dado — falhar aberto custa só o aviso);
+  // com um valor já lido, o react-query o mantém e ele segue valendo durante o erro.
+  const config = erroDeLeitura && lida === undefined ? null : (lida ?? null);
   const estado = useSyncExternalStore(assinarEstadoAtualizacao, obterEstadoAtualizacao);
   const [agora, setAgora] = useState(() => Date.now());
   useEffect(() => {
@@ -73,7 +77,7 @@ export function ExigenciaDeVersao() {
   const exigencia = decidirExigencia({
     buildEm: estado.buildEm,
     buildServidorEm: estado.buildServidorEm,
-    config: isStaff ? (config ?? null) : null,
+    config: isStaff ? config : null,
     agora,
   });
 
