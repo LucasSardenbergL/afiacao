@@ -38,6 +38,12 @@ vi.mock('@/integrations/supabase/client', () => {
   };
 });
 
+vi.mock('@/lib/reposicao/raio-x/classificar', async (orig) => {
+  const mod = await orig<typeof import('@/lib/reposicao/raio-x/classificar')>();
+  return { ...mod, classificar: vi.fn(mod.classificar) };
+});
+
+import { classificar } from '@/lib/reposicao/raio-x/classificar';
 import { useRaioX } from '../useRaioX';
 
 function fato(i: number, extra: Record<string, unknown> = {}) {
@@ -109,5 +115,36 @@ describe('useRaioX', () => {
     expect(chamadas.rpc).toEqual([]);
     expect(result.current.itens).toEqual([]);
     expect(result.current.erro).toBeNull();
+  });
+
+  it('erro na leitura de raio_x_decisao => erro preenchido e itens vazios', async () => {
+    respostas.fatos = () => ({ data: [fato(1)], error: null });
+    respostas.decisoes = () => ({ data: null, error: { code: 'XX000', message: 'falhou decisao' } });
+    const { result } = renderHook(() => useRaioX('oben'), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.erro).not.toBeNull());
+    expect(result.current.erro?.message).toContain('falhou decisao');
+    expect(result.current.itens).toEqual([]);
+  });
+
+  it('erro na leitura de raio_x_classificacao_manual => erro preenchido e itens vazios', async () => {
+    respostas.fatos = () => ({ data: [fato(1)], error: null });
+    respostas.manuais = () => ({ data: null, error: { code: 'XX000', message: 'falhou manual' } });
+    const { result } = renderHook(() => useRaioX('oben'), { wrapper: wrapper() });
+    await waitFor(() => expect(result.current.erro).not.toBeNull());
+    expect(result.current.erro?.message).toContain('falhou manual');
+    expect(result.current.itens).toEqual([]);
+  });
+
+  it('hoje é a data de São Paulo, não UTC (02:30Z de 17/10 => 2026-10-16)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-17T02:30:00Z'));
+    try {
+      respostas.fatos = () => ({ data: [fato(1, { synced_at: null })], error: null });
+      const { result } = renderHook(() => useRaioX('oben'), { wrapper: wrapper() });
+      await waitFor(() => expect(result.current.itens).toHaveLength(1));
+      expect(vi.mocked(classificar).mock.calls.at(-1)?.[3]).toBe('2026-10-16');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

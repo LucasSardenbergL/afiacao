@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
+import { hojeSP } from '@/lib/time/sp-day';
 import { classificar } from '@/lib/reposicao/raio-x/classificar';
 import { placar } from '@/lib/reposicao/raio-x/placar';
 import type {
@@ -119,7 +120,7 @@ export function useRaioX(empresa: Empresa | null): {
     const manuais = new Map<number, ClassificacaoManual>(
       manuaisData.map((m) => [m.sku_codigo_omie, { categoria: m.categoria, motivo: m.motivo }]),
     );
-    return classificar(fatos, manuais, empresa, new Date().toISOString().slice(0, 10));
+    return classificar(fatos, manuais, empresa, hojeSP());
   }, [fatos, manuaisData, empresa]);
 
   const placarCalc = useMemo(() => placar(itens, decisoes), [itens, decisoes]);
