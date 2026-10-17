@@ -36,6 +36,11 @@ export function RaioXPlacar({ placar }: { placar: Placar }) {
         <div className="font-display text-xl">{fmtReais(placar.distorceDio)}</div>
         <p className="text-sm text-muted-foreground">R$ que distorce o DIO</p>
         <p className="text-xs text-muted-foreground">Não-mercadoria + uso e consumo. Não entra no total ao lado.</p>
+        {placar.semCustoDioN > 0 && (
+          <p className="text-xs text-status-warning">
+            {placar.semCustoDioN} SKU(s) de uso/não-mercadoria sem custo — não avaliado (fora da soma)
+          </p>
+        )}
       </div>
     </section>
   );

@@ -13,6 +13,8 @@ export interface Placar {
   topDecidido: number;
   semCustoN: number;
   distorceDio: number;
+  /** uso/não-mercadoria sem custo: ficam fora de `distorceDio` (contados, nunca R$ 0). */
+  semCustoDioN: number;
 }
 
 const destinoDecidido = (d: DecisaoRow | undefined): Destino | null =>
@@ -20,11 +22,12 @@ const destinoDecidido = (d: DecisaoRow | undefined): Destino | null =>
 
 export function placar(itens: ItemRaioX[], decisoes: Map<number, DecisaoRow>): Placar {
   const p: Placar = {
-    total: 0, decidido: 0, pendente: 0, porDestino: {}, topTotal: 0, topDecidido: 0, semCustoN: 0, distorceDio: 0,
+    total: 0, decidido: 0, pendente: 0, porDestino: {}, topTotal: 0, topDecidido: 0, semCustoN: 0, distorceDio: 0, semCustoDioN: 0,
   };
   for (const i of itens) {
     if (i.categoria !== 'mercadoria') {
       if (i.valor !== null) p.distorceDio += i.valor;
+      else p.semCustoDioN += 1;
       continue;
     }
     if (!i.parado) continue;

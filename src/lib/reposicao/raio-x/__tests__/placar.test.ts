@@ -37,4 +37,13 @@ describe('placar', () => {
     expect(p.topTotal).toBe(50);
     expect(p.topDecidido).toBe(50);
   });
+
+  it('uso/não-mercadoria sem custo: contado em semCustoDioN, fora de distorceDio (nunca R$ 0)', () => {
+    const p = placar(itens(
+      { sku_codigo_omie: 1, tipo_produto: '07', cmc: null },
+      { sku_codigo_omie: 2, tipo_produto: '07', cmc: 4 },
+    ), mapaDecisoes());
+    expect(p.semCustoDioN).toBe(1);
+    expect(p.distorceDio).toBe(40);
+  });
 });
