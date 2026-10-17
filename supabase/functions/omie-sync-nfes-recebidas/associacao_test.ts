@@ -103,6 +103,8 @@ Deno.test("estado da NF: concluída e cancelada ficam fora de alcance; flag ause
   assertEquals([canc.estado_nf, canc.classe], ["cancelada", "fora_de_alcance"]);
   const sem = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { cCancelada: "N" } }));
   assertEquals([sem.estado_nf, sem.classe, sem.motivos.includes("devolucao_ilegivel")], ["ilegivel", "fora_de_alcance", true]);
+  const vazia = classificarAssociacao(entrada([item(1, 501, 2, "C1")], pedidos, { cabec: { ...cabecPendente, cRecebido: "" } }));
+  assertEquals([vazia.estado_nf, vazia.classe], ["ilegivel", "fora_de_alcance"], "flag em branco não vira 'N'");
 });
 
 Deno.test("vínculo existente no Omie: 1 de 2 itens vinculado é parcial, não 'resolvido'", () => {
