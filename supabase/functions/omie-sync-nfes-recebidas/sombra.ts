@@ -31,8 +31,9 @@ export function novaSombraSummary(): SombraSummary {
 }
 
 export interface PortaSombra {
-  /** POs (todos, qualquer situação) de cada contrato, por empresa. Lança em erro de leitura. */
-  buscarPedidos(contratos: string[]): Promise<Map<string, PedidoDoContrato[]>>;
+  /** POs (todos, qualquer situação) de cada contrato, por empresa. Lança em erro de leitura. `sinal` = teto
+   *  compartilhado de quem chama (a captura); sem ele, a porta usa o prazo de uma leitura. */
+  buscarPedidos(contratos: string[], sinal?: AbortSignal): Promise<Map<string, PedidoDoContrato[]>>;
   /** Devolve o texto da RPC ('gravada' | 'leitura_velha'). Lança em erro. */
   publicar(linha: Record<string, unknown>): Promise<string>;
 }
@@ -124,14 +125,17 @@ export async function capturarPedidosDaFila(
   fila: ItemFilaSombra[],
   porta: PortaSombra,
   temTempo: () => boolean,
+  prazoTotalMs: number,
 ): Promise<void> {
   const contratos = [...new Set(fila.flatMap((f) => contratosDoDetalhe(f.detalhe).filter((c) => !c.includes("/"))))].sort();
   if (contratos.length === 0 || !temTempo()) return;
+  // UM teto para a captura inteira (Codex 2026-10-17, 3ª rodada): ela roda antes da reconciliação e do backfill.
+  const sinal = AbortSignal.timeout(prazoTotalMs);
   const mapa = new Map<string, PedidoDoContrato[]>();
   try {
     for (let i = 0; i < contratos.length; i += CONTRATOS_POR_LEITURA) {
-      if (!temTempo()) return;
-      for (const [k, v] of await porta.buscarPedidos(contratos.slice(i, i + CONTRATOS_POR_LEITURA))) mapa.set(k, v);
+      if (!temTempo() || sinal.aborted) return;
+      for (const [k, v] of await porta.buscarPedidos(contratos.slice(i, i + CONTRATOS_POR_LEITURA), sinal)) mapa.set(k, v);
     }
   } catch (err) {
     console.warn(`[sync-nfes] sombra: captura dos POs falhou (a fase busca ao vivo): ${mensagemDeErro(err) ?? "erro sem mensagem"}`);

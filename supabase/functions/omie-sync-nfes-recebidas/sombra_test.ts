@@ -137,7 +137,7 @@ Deno.test("fase: equivalência que lança vira null → ambígua, nunca associá
 
 Deno.test("captura antes do backfill: a fase usa os POs capturados, mesmo com a busca ao vivo já estragada", async () => {
   const fila: ItemFilaSombra[] = [{ nf: NF, detalhe, observadoEm: "t" }];
-  await capturarPedidosDaFila(fila, porta().p, sempre);
+  await capturarPedidosDaFila(fila, porta().p, sempre, 8000);
   // depois do backfill o raw_data do PO virou o recebimento: a busca ao vivo não acha mais os itens
   const estragada = porta({ buscarPedidos: async () => new Map([["2138394", [{ ...pedido, etapa: null, itens: undefined }]]]) });
   const r = novaSombraSummary();
@@ -151,18 +151,34 @@ Deno.test("captura: lotes de 50 contratos, sem tempo não lê, erro não captura
     detalhe: { ...detalhe, itensRecebimento: [{ ...detalhe.itensRecebimento[0], itensInfoAdic: { nNumPedCompra: `C${i}` } }] },
   }));
   const x = porta({ buscarPedidos: async (c) => { x.chamadas.buscar.push(c); return new Map(); } });
-  await capturarPedidosDaFila(fila, x.p, sempre);
+  await capturarPedidosDaFila(fila, x.p, sempre, 8000);
   assertEquals([x.chamadas.buscar.map((c) => c.length), fila.every((f) => f.pedidos !== undefined)], [[50, 50, 20], true]);
   const semTempo = fila.map((f) => ({ ...f, pedidos: undefined }));
   const y = porta();
-  await capturarPedidosDaFila(semTempo, y.p, () => false);
+  await capturarPedidosDaFila(semTempo, y.p, () => false, 8000);
   assertEquals([y.chamadas.buscar.length, semTempo.some((f) => f.pedidos !== undefined)], [0, false]);
   const meio = fila.map((f) => ({ ...f, pedidos: undefined }));
   const z = porta({ buscarPedidos: async (c) => { z.chamadas.buscar.push(c); return new Map(); } });
   let tiques = 0;
-  await capturarPedidosDaFila(meio, z.p, () => ++tiques <= 2);
+  await capturarPedidosDaFila(meio, z.p, () => ++tiques <= 2, 8000);
   assertEquals([z.chamadas.buscar.length, meio.some((f) => f.pedidos !== undefined)], [1, false], "relógio esgota no meio: nada anexado");
   const comErro = fila.map((f) => ({ ...f, pedidos: undefined }));
-  await capturarPedidosDaFila(comErro, porta({ buscarPedidos: async () => { throw new Error("timeout"); } }).p, sempre);
+  await capturarPedidosDaFila(comErro, porta({ buscarPedidos: async () => { throw new Error("timeout"); } }).p, sempre, 8000);
   assertEquals(comErro.some((f) => f.pedidos !== undefined), false);
+});
+
+Deno.test("captura: UM teto para todos os lotes — mesmo sinal em cada leitura; estourou, não anexa mapa parcial", async () => {
+  const fila: ItemFilaSombra[] = Array.from({ length: 120 }, (_, i) => ({
+    nf: { ...NF, nIdReceb: i + 1 }, observadoEm: "t",
+    detalhe: { ...detalhe, itensRecebimento: [{ ...detalhe.itensRecebimento[0], itensInfoAdic: { nNumPedCompra: `C${i}` } }] },
+  }));
+  const sinais: (AbortSignal | undefined)[] = [];
+  const x = porta({ buscarPedidos: async (_c, s) => { sinais.push(s); return new Map(); } });
+  await capturarPedidosDaFila(fila, x.p, sempre, 8000);
+  assertEquals([sinais.length, sinais.every((s) => s !== undefined && s === sinais[0])], [3, true], "o mesmo sinal nos 3 lotes");
+  const lenta = fila.map((f) => ({ ...f, pedidos: undefined }));
+  let leituras = 0;
+  const y = porta({ buscarPedidos: async () => { leituras++; await new Promise((r) => setTimeout(r, 30)); return new Map(); } });
+  await capturarPedidosDaFila(lenta, y.p, sempre, 10);
+  assertEquals([leituras, lenta.some((f) => f.pedidos !== undefined)], [1, false], "teto estourado: para e não anexa");
 });

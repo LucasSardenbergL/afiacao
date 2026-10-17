@@ -517,7 +517,7 @@ async function lerSkusComEquivalencia(supabase: SupabaseClient, empresa: Empresa
 
 function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSombra {
   return {
-    async buscarPedidos(contratos) {
+    async buscarPedidos(contratos, sinal) {
       const { data, error } = await supabase
         .from("purchase_orders_tracking")
         .select("omie_codigo_pedido, numero_pedido, fornecedor_codigo_omie, numero_contrato_fornecedor, raw_data")
@@ -526,7 +526,7 @@ function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSomb
         .in("numero_contrato_fornecedor", contratos)
         .order("omie_codigo_pedido")
         .range(0, 999)
-        .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+        .abortSignal(sinal ?? AbortSignal.timeout(SOMBRA_PRAZO_MS));
       if (error) throw new Error(`POs dos contratos: ${error.message}`);
       if ((data ?? []).length >= 1000) throw new Error("POs dos contratos: 1000+ linhas (capa do PostgREST)");
       const out = new Map<string, PedidoDoContrato[]>();
@@ -1112,7 +1112,7 @@ Deno.serve(async (req) => {
           s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, fila, dataInicial, dataFinal);
           filasSombra.set(empresa, { s, fila });
           // Documento dos POs capturado ANTES do backfill, que troca o raw_data do PO pelo recebimento (Codex 2026-10-17).
-          await capturarPedidosDaFila(fila, criarPortaSombra(supabase, empresa), sombraTemTempo);
+          await capturarPedidosDaFila(fila, criarPortaSombra(supabase, empresa), sombraTemTempo, SOMBRA_PRAZO_MS);
           console.log(
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
