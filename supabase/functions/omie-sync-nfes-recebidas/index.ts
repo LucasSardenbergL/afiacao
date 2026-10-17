@@ -41,6 +41,8 @@ import {
   reconciliarOrfas,
   type ReconciliacaoSummary,
 } from "./reconciliacao.ts";
+import type { PedidoDoContrato } from "./associacao.ts";
+import { capturarPedidosDaFila, executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -85,6 +87,8 @@ interface EmpresaSummary extends Partial<ContagemModelo> {
   interrompido_por_timeout?: boolean;
   /** Ausente quando o passo não rodou (timeout do laço) — nunca um 0 que afirma "medi". */
   reconciliacao?: ReconciliacaoSummary;
+  /** Sombra da associação NF↔PO (sombra.ts): saúde própria, distinta da do vínculo. */
+  sombra?: SombraSummary;
   backfill?: BackfillSummary;
 }
 
@@ -230,6 +234,8 @@ async function callOmie(
   call: "ListarRecebimentos" | "ConsultarRecebimento",
   param: Record<string, unknown>,
   deadline: number,
+  /** Instante antes do fetch de CADA tentativa: a última chamada é a da resposta devolvida (carimbo da sombra). */
+  aoTentar?: (iso: string) => void,
 ): Promise<OmieGenericResponse> {
   const body = { call, app_key, app_secret, param: [param] };
 
@@ -246,6 +252,7 @@ async function callOmie(
     if (timeoutMs === 0) {
       throw new Error(`Omie ${call}: deadline do run atingido antes da chamada`);
     }
+    aoTentar?.(new Date().toISOString());
     const res = await fetch(OMIE_ENDPOINT, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -487,12 +494,77 @@ async function reconciliarOrfasEmpresa(
   );
 }
 
+// A sombra é uma FASE depois do vínculo, da reconciliação e do backfill de TODAS as empresas (Codex 2026-10-17, P1):
+// não come o orçamento do trabalho prioritário. Só começa NF com folga ≥ 2 prazos (busca + publicação) antes do guard.
+const SOMBRA_PRAZO_MS = 8_000;
+const SOMBRA_FOLGA_MS = 2 * SOMBRA_PRAZO_MS + 1_000;
+
+/** SKUs com equivalência de embalagem ativa (concentrados WP); `null` = não lido → toda NF da sombra fica ambígua. */
+async function lerSkusComEquivalencia(supabase: SupabaseClient, empresa: Empresa): Promise<Set<string> | null> {
+  try {
+    const { data, error } = await supabase
+      .from("sku_embalagem_equivalencia")
+      .select("sku_codigo_omie")
+      .eq("empresa", empresa.toLowerCase())
+      .eq("ativo", true)
+      .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+    if (error || !Array.isArray(data)) return null;
+    return new Set(data.map((r) => String((r as { sku_codigo_omie: unknown }).sku_codigo_omie)));
+  } catch {
+    return null;
+  }
+}
+
+function criarPortaSombra(supabase: SupabaseClient, empresa: Empresa): PortaSombra {
+  return {
+    async buscarPedidos(contratos, sinal) {
+      const { data, error } = await supabase
+        .from("purchase_orders_tracking")
+        .select("omie_codigo_pedido, numero_pedido, fornecedor_codigo_omie, numero_contrato_fornecedor, raw_data")
+        .eq("empresa", empresa)
+        .gt("omie_codigo_pedido", 0)
+        .in("numero_contrato_fornecedor", contratos)
+        .order("omie_codigo_pedido")
+        .range(0, 999)
+        .abortSignal(sinal ?? AbortSignal.timeout(SOMBRA_PRAZO_MS));
+      if (error) throw new Error(`POs dos contratos: ${error.message}`);
+      if ((data ?? []).length >= 1000) throw new Error("POs dos contratos: 1000+ linhas (capa do PostgREST)");
+      const out = new Map<string, PedidoDoContrato[]>();
+      for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+        const raw = (r.raw_data ?? {}) as { cabecalho_consulta?: { nCodPed?: unknown; cEtapa?: unknown }; produtos_consulta?: unknown };
+        // raw_data é multi-writer (o backfill de NF já gravou o RECEBIMENTO ali): só vale o documento do PRÓPRIO PO.
+        const doPO = Number(raw.cabecalho_consulta?.nCodPed) === Number(r.omie_codigo_pedido);
+        const contrato = String(r.numero_contrato_fornecedor);
+        const lista = out.get(contrato) ?? [];
+        lista.push({
+          omie_codigo_pedido: Number(r.omie_codigo_pedido),
+          numero_pedido: (r.numero_pedido as string | null) ?? null,
+          fornecedor_codigo_omie: r.fornecedor_codigo_omie == null ? null : Number(r.fornecedor_codigo_omie),
+          etapa: doPO && (typeof raw.cabecalho_consulta?.cEtapa === "string" || typeof raw.cabecalho_consulta?.cEtapa === "number")
+            ? String(raw.cabecalho_consulta.cEtapa).trim() : null,
+          itens: doPO && Array.isArray(raw.produtos_consulta) ? raw.produtos_consulta as PedidoDoContrato["itens"] : undefined,
+        });
+        out.set(contrato, lista);
+      }
+      return out;
+    },
+    async publicar(linha) {
+      const { data, error } = await supabase
+        .rpc("recebimento_associacao_sombra_publicar", { p: linha })
+        .abortSignal(AbortSignal.timeout(SOMBRA_PRAZO_MS));
+      if (error) throw new Error(`publicar: ${error.message}`);
+      return String(data);
+    },
+  };
+}
+
 async function syncEmpresa(
   supabase: SupabaseClient,
   empresa: Empresa,
   dias: number,
   fornecedorCodigo: number | undefined,
   t0: number,
+  filaSombra: ItemFilaSombra[],
   dataInicialOverride?: string,
   dataFinalOverride?: string,
 ): Promise<EmpresaSummary> {
@@ -624,8 +696,11 @@ async function syncEmpresa(
         // ConsultarRecebimento → busca itens e nNumPedCompra
         await sleep(RATE_LIMIT_DELAY_MS);
         let detalhe: OmieConsultarRecebimentoResponse;
+        // Carimbo da TENTATIVA que produziu a resposta (Codex 2026-10-17): o de antes dos retries deixaria uma leitura
+        // mais nova (cancelamento) perder o compare-and-set para uma mais velha.
+        let detalheLidoEm = "";
         try {
-          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline)) as OmieConsultarRecebimentoResponse;
+          detalhe = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline, (t) => { detalheLidoEm = t; })) as OmieConsultarRecebimentoResponse;
         } catch (errDet) {
           const msgDet = errDet instanceof Error ? errDet.message : String(errDet);
           // Falha esgotada/transitória do ConsultarRecebimento NÃO prova ausência de
@@ -681,6 +756,10 @@ async function syncEmpresa(
           summary.nfes_orfas++;
         }
         summary.nfes_processadas++;
+        if (detalheLidoEm !== "") filaSombra.push({
+          nf: { empresa, nIdReceb, numero_nfe: m.numero, chave_nfe: m.chave, fornecedor_codigo_omie: m.fornecedor_codigo },
+          detalhe, observadoEm: detalheLidoEm,
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} nIdReceb=${nIdReceb} chave=${nfe?.cabec?.cChaveNFe ?? nfe?.cabec?.cChaveNfe} erro: ${msg}`);
@@ -1008,6 +1087,11 @@ Deno.serve(async (req) => {
     console.log(`[sync-nfes] início empresas=${empresas.join(",")} dias=${dias} janela=${dataInicial ?? "-"}→${dataFinal ?? "-"} fornecedor=${fornecedorCodigo ?? "todos"} apenas_backfill=${apenasBackfill} pular_backfill=${pularBackfill}`);
 
     const summary: EmpresaSummary[] = [];
+    const filasSombra = new Map<Empresa, { s: EmpresaSummary; fila: ItemFilaSombra[] }>();
+    const sombraTemTempo = () => Date.now() - t0 < MAIN_LOOP_GUARD_MS - SOMBRA_FOLGA_MS;
+    const aConcluir: Array<{ empLogId: Awaited<ReturnType<typeof logSync>>; s: EmpresaSummary; falha: string | undefined }> = [];
+    // O finally conclui TODA empresa que terminou com sucesso, mesmo se algo lançar depois dela (outra empresa, a sombra).
+    try {
     for (const empresa of empresas) {
       const empLogId = await logSync(supabase, "sync_nfes_recebidas", [empresaParaLog(empresa)], triggeredBy);
       try {
@@ -1024,7 +1108,11 @@ Deno.serve(async (req) => {
             erros: 0,
           };
         } else {
-          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, dataInicial, dataFinal);
+          const fila: ItemFilaSombra[] = [];
+          s = await syncEmpresa(supabase, empresa, dias, fornecedorCodigo, t0, fila, dataInicial, dataFinal);
+          filasSombra.set(empresa, { s, fila });
+          // Documento dos POs capturado ANTES do backfill, que troca o raw_data do PO pelo recebimento (Codex 2026-10-17).
+          await capturarPedidosDaFila(fila, criarPortaSombra(supabase, empresa), sombraTemTempo, SOMBRA_PRAZO_MS);
           console.log(
             `[sync-nfes] ${empresa} TOTAL: nfes=${s.nfes_processadas} ` +
             `consultas=${s.consultas_detalhadas} vinculadas=${s.pedidos_vinculados} ` +
@@ -1082,7 +1170,8 @@ Deno.serve(async (req) => {
         const falhaSistemica = s.erros > 0 && s.nfes_processadas === 0
           ? `0 NFes processadas com ${s.erros} erro(s) — rate-limit/Omie?`
           : undefined;
-        await completeSync(supabase, empLogId, s as unknown as Record<string, unknown>, falhaSistemica, Date.now() - t0);
+        // Sucesso: o completeSync espera a fase da sombra (abaixo) para levar o resumo dela no results.
+        aConcluir.push({ empLogId, s, falha: falhaSistemica });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`[sync-nfes] ${empresa} erro fatal: ${msg}`);
@@ -1097,6 +1186,27 @@ Deno.serve(async (req) => {
           vinculos_criados_total: 0,
           erros: 1,
         });
+      }
+    }
+
+    // Fase da sombra da associação NF↔PO (sombra.ts): nada vai ao Omie, depois de TODO o trabalho prioritário.
+    try {
+      for (const [empresa, { s, fila }] of filasSombra) {
+        if (!aConcluir.some((c) => c.s === s)) continue;
+        const r = novaSombraSummary();
+        s.sombra = r;
+        await executarFaseSombra(fila, criarPortaSombra(supabase, empresa), () => lerSkusComEquivalencia(supabase, empresa), sombraTemTempo, r);
+      }
+    } catch (errSombra) {
+      console.error(`[sync-nfes] fase da sombra erro (o vínculo segue): ${mensagemDeErro(errSombra) ?? "erro sem mensagem"}`);
+    }
+    } finally {
+      for (const c of aConcluir) {
+        try {
+          await completeSync(supabase, c.empLogId, c.s as unknown as Record<string, unknown>, c.falha, Date.now() - t0);
+        } catch (errCs) {
+          console.error(`[sync-nfes] ${c.s.empresa} completeSync erro: ${mensagemDeErro(errCs) ?? "erro sem mensagem"}`);
+        }
       }
     }
 

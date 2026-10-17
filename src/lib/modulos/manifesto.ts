@@ -580,6 +580,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/AdminReposicaoBaixoGiro.raio-x.test.tsx",
       "src/lib/reposicao/__tests__/observacao-po-edge.test.ts",
       "src/lib/reposicao/__tests__/etapa-desconhecida-edge.test.ts",
+      "src/lib/reposicao/__tests__/sombra-associacao-edge.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },

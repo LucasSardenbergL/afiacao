@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **648** custom migrations totais
-- **2086** objetos esperados (criados por estas migrations)
+- **650** custom migrations totais
+- **2091** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 748
-  - `rls_policy`: 473
-  - `index`: 276
+  - `function`: 749
+  - `rls_policy`: 474
+  - `index`: 277
   - `cron_job`: 185
-  - `table`: 181
+  - `table`: 183
   - `view`: 114
   - `trigger`: 105
   - `enum_value`: 4
@@ -5265,6 +5265,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `table` | `public.sayerlack_varredura_falha` | — |
 | `cron_job` | `cron.sayerlack-varrer-pedidos-portal` | — |
+
+### `20261017040000_recebimento_associacao_sombra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.recebimento_associacao_sombra_publicar` | — |
+| `table` | `public.recebimento_associacao_sombra` | — |
+| `index` | `public.idx_recebimento_associacao_sombra_classe` | `recebimento_associacao_sombra` |
+| `rls_policy` | `public.recebimento_associacao_sombra_select_staff` | `recebimento_associacao_sombra` |
+
+### `20261017120000_sayerlack_varredura_visto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `table` | `public.sayerlack_varredura_visto` | — |
 
 ## Próximos passos por status
 
