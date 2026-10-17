@@ -2,7 +2,7 @@
 // (diagnóstico) em TAREFA para o comercial (ação), sem tocar preço. A descrição é o
 // contrato humano da missão — precisa ser honesta com capital não medido (cmc ausente).
 import { describe, it, expect } from 'vitest';
-import { formatarMissaoDesova, type AlvoDesova } from '../desova-helpers';
+import { formatarMissaoDesova, sensorDaMissaoExcesso, type AlvoDesova } from '../desova-helpers';
 
 const alvo = (over: Partial<AlvoDesova> = {}): AlvoDesova => ({
   sku_codigo_omie: 12345,
@@ -85,5 +85,14 @@ describe('formatarMissaoDesova — prefixo do título (missão por cliente do Ra
     const m = formatarMissaoDesova(Array.from({ length: 10 }, (_, i) => alvo({ sku_codigo_omie: i + 1 })), 'Cliente X');
     expect(m.descricao).toContain('SKUs parados (Raio-X) para oferecer a este cliente.');
     expect(m.descricao).not.toMatch(/fila de excesso|motor/);
+  });
+});
+
+describe('sensorDaMissaoExcesso — o Raio-X não infla o sensor da aba Excesso', () => {
+  it('sem prefixo (aba Excesso) → reposicao.desova_missao_criada', () => {
+    expect(sensorDaMissaoExcesso()).toBe('reposicao.desova_missao_criada');
+  });
+  it('com prefixo (missão por cliente do Raio-X) → null', () => {
+    expect(sensorDaMissaoExcesso('Cliente X')).toBeNull();
   });
 });

@@ -26,6 +26,12 @@ const MAX_SKUS_LISTADOS = 8;
 const brl0 = (x: number) =>
   x.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).replace(/\u00A0/g, ' ');
 
+/** Sensor de adoção da desova da aba Excesso. A missão por cliente do Raio-X (com prefixo) tem o
+ *  sensor próprio (`raio_x.missao_criada`) e não pode inflar este. */
+export function sensorDaMissaoExcesso(tituloPrefixo?: string): 'reposicao.desova_missao_criada' | null {
+  return tituloPrefixo ? null : 'reposicao.desova_missao_criada';
+}
+
 export function formatarMissaoDesova(alvos: AlvoDesova[], tituloPrefixo?: string): MissaoDesova {
   const medidos = alvos.filter((a) => a.capital_excedente != null && Number.isFinite(a.capital_excedente));
   const capitalTotal = medidos.reduce((s, a) => s + (a.capital_excedente as number), 0);

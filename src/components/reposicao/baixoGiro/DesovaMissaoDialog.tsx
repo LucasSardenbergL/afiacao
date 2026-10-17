@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { useSalespeople } from '@/hooks/useCoverage';
 import { useTarefaMutations } from '@/hooks/useTarefas';
 import { autoSatisfyDaCategoria } from '@/lib/tarefas/categoria-map';
-import { formatarMissaoDesova, type AlvoDesova } from '@/lib/reposicao/desova-helpers';
+import { formatarMissaoDesova, sensorDaMissaoExcesso, type AlvoDesova } from '@/lib/reposicao/desova-helpers';
 import { track } from '@/lib/analytics';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 
@@ -52,8 +52,8 @@ export function DesovaMissaoDialog({ open, onOpenChange, alvos, empresa, tituloP
         auto_satisfy_mode: autoSatisfyDaCategoria('outro'),
         target_texto: null,
       }]);
-      // missão do Raio-X (com prefixo) tem sensor próprio (raio_x.missao_criada): não infla o da aba Excesso
-      if (!tituloPrefixo) track('reposicao.desova_missao_criada', {
+      const sensor = sensorDaMissaoExcesso(tituloPrefixo);
+      if (sensor) track(sensor, {
         skus: alvos.length,
         capital_medido: missao.capitalTotal,
         capital_incompleto: missao.capitalIncompleto,
