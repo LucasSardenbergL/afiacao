@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-16T10:14:32.164Z",
-  "sourceHead": "f8679a1942c889722d847c56287de80c399f8362",
+  "medidoEm": "2026-10-17T10:28:20.669Z",
+  "sourceHead": "caebdaa38e59d724f6ea589340ffa330bdedd405",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 64 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 65 definição(ões) lida(s) para 64 chave(s) da allowlist.",
-      "contratoFingerprint": "08b629ce113579818cde9e40660cd1a0ca1882e4d65b3f6d797a7d58d34d9b37",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 65 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 66 definição(ões) lida(s) para 65 chave(s) da allowlist.",
+      "contratoFingerprint": "764e4eb3612533b724d32dcaf7c841aa14f587f9ce60bdbe084ecd764eebccd0",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 24 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 25 definição(ões) lida(s) para 24 chave(s) do manifest.",
-      "contratoFingerprint": "48c83d23c6995c9920d577d3c595628774ff758c3be77d9c6622dd21f0153254",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 25 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 26 definição(ões) lida(s) para 25 chave(s) do manifest.",
+      "contratoFingerprint": "16ff3907bd51b6c617092a3b7ac4be599dd9f5c5370ce41677b4887220cb732e",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 354 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 357 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "cd77f88e4f15cea9d10af15e2c79671e910723fb0f2954d14f618957887f52d7",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -58,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 362 identidade(s) batem com o repo (285 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 362 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@a9b5c042c (fetch ok) · prod 2026-10-16 10:15:02.574383Z",
+      "denominador": "🔎 deriva-corpo — 362 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@1d5f49754 (fetch ok) · prod 2026-10-17 10:28:50.103249Z",
       "contratoFingerprint": "a0c8858fa173bfdffa5f7fb8157bbd284c7018170bbc79f8f67c34a97786a267",
       "auditorFingerprint": "32a5addf29ac70a751983e2f0e9c72cacce79e39781a59c7f53e03fe8a5f62bb",
       "achados": []
