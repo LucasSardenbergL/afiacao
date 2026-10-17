@@ -121,6 +121,7 @@ fi
 if Pdb -q -f "$MIG" >"$TMPD/i1.log" 2>&1; then ok I1 reaplicou reaplicou; else ok I1 reaplicou falhou; fi
 
 # ── sabotagens de COMPORTAMENTO, aplicadas no banco depois da migration real ──
+# shellcheck disable=SC2016  # '$fn$' é o delimitador literal do corpo da função, não expansão
 case "$SABOTAGEM" in
   sem_cas)  Pdb -q -c "$(sed -n '/^CREATE OR REPLACE FUNCTION public.recebimento_associacao_sombra_publicar/,/^\$fn\$;/p' "$MIG" | sed 's/  WHERE s.observado_em < EXCLUDED.observado_em;/  ;/')" ;;
   cas_invertido) Pdb -q -c "$(sed -n '/^CREATE OR REPLACE FUNCTION public.recebimento_associacao_sombra_publicar/,/^\$fn\$;/p' "$MIG" | sed 's/WHERE s.observado_em < EXCLUDED.observado_em/WHERE s.observado_em > EXCLUDED.observado_em/')" ;;
