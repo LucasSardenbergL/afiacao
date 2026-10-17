@@ -26,13 +26,22 @@ const MAX_SKUS_LISTADOS = 8;
 const brl0 = (x: number) =>
   x.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).replace(/\u00A0/g, ' ');
 
-export function formatarMissaoDesova(alvos: AlvoDesova[]): MissaoDesova {
+/** Sensor de adoção da desova da aba Excesso. A missão por cliente do Raio-X (com prefixo) tem o
+ *  sensor próprio (`raio_x.missao_criada`) e não pode inflar este. */
+export function sensorDaMissaoExcesso(tituloPrefixo?: string): 'reposicao.desova_missao_criada' | null {
+  return tituloPrefixo ? null : 'reposicao.desova_missao_criada';
+}
+
+export function formatarMissaoDesova(alvos: AlvoDesova[], tituloPrefixo?: string): MissaoDesova {
   const medidos = alvos.filter((a) => a.capital_excedente != null && Number.isFinite(a.capital_excedente));
   const capitalTotal = medidos.reduce((s, a) => s + (a.capital_excedente as number), 0);
   const capitalIncompleto = medidos.length < alvos.length;
   const plural = alvos.length === 1 ? 'SKU' : 'SKUs';
-  const capitalLabel = capitalIncompleto ? `≥ ${brl0(capitalTotal)} presos (parcial)` : `${brl0(capitalTotal)} presos`;
-  const titulo = `Desova de excesso — ${alvos.length} ${plural}, ${capitalLabel}`;
+  const capitalLabel = alvos.length > 0 && medidos.length === 0
+    ? 'capital não medido (sem CMC)'
+    : capitalIncompleto ? `≥ ${brl0(capitalTotal)} presos (parcial)` : `${brl0(capitalTotal)} presos`;
+  const base = `Desova de excesso — ${alvos.length} ${plural}, ${capitalLabel}`;
+  const titulo = tituloPrefixo ? `${tituloPrefixo} — ${base}` : base;
 
   const linhas = alvos.slice(0, MAX_SKUS_LISTADOS).map((a) => {
     const nome = a.sku_descricao?.trim() ? `${a.sku_codigo_omie} — ${a.sku_descricao.trim()}` : String(a.sku_codigo_omie);
@@ -44,11 +53,14 @@ export function formatarMissaoDesova(alvos: AlvoDesova[]): MissaoDesova {
     return `• ${nome}: ${a.excedente_un} un excedentes · ${capital} · ${digestao}${parado}`;
   });
   const resto = alvos.length - MAX_SKUS_LISTADOS;
-  if (resto > 0) linhas.push(`… e mais ${resto} SKUs (lista completa na fila de excesso)`);
+  const raioX = !!tituloPrefixo; // missão por cliente do Raio-X: texto próprio
+  if (resto > 0) linhas.push(raioX ? `… e mais ${resto} SKUs` : `… e mais ${resto} SKUs (lista completa na fila de excesso)`);
 
   const descricao = [
     `${titulo}.`,
-    'Ação: oferecer/queimar comercialmente (kit, bundle, oferta dirigida) — o motor NÃO compra estes SKUs enquanto houver excesso.',
+    raioX
+      ? 'SKUs parados (Raio-X) para oferecer a este cliente.'
+      : 'Ação: oferecer/queimar comercialmente (kit, bundle, oferta dirigida) — o motor NÃO compra estes SKUs enquanto houver excesso.',
     ...linhas,
   ].join('\n');
 
