@@ -38,6 +38,8 @@ import { useSaidaComFilaPendente } from '@/components/shell/SaidaComFilaPendente
 import { DataHealthBadge } from '@/components/shell/DataHealthBadge';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { VersaoDoApp } from '@/components/shell/VersaoDoApp';
+import { IndicadorAtualizacao } from '@/components/shell/IndicadorAtualizacao';
+import { ExigenciaDeVersao } from '@/components/shell/ExigenciaDeVersao';
 import { PageViewTracker } from '@/components/shell/PageViewTracker';
 import { AnalyticsIdentify } from '@/components/shell/AnalyticsIdentify';
 import { GlobalBreadcrumbs } from "@/components/shell/GlobalBreadcrumbs";
@@ -755,6 +757,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
         </Suspense>
         <CompanySwitcher />
         <NetworkStatusIndicator />
+        <IndicadorAtualizacao />
         <DataHealthBadge />
         <ThemeToggle />
         {displayIsStaff && (
@@ -908,6 +911,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               )}
             >
               <div className="p-4 lg:p-6">
+                <ExigenciaDeVersao />
                 <GlobalBreadcrumbs />
                 {children}
               </div>

@@ -46,6 +46,27 @@ function buildEnvProbe(): string {
 const commitSha = resolveCommitSha();
 const buildEnvKeys = buildEnvProbe();
 
+// Carimbo ORDENÁVEL do build (ISO-8601 UTC, instante em que o Vite rodou). Existe para o
+// "build mínimo" (src/lib/pwa-build-minimo.ts): o `build_id` (hash do entry) identifica o
+// build mas não diz se é ANTERIOR a outro, e o builder do Lovable não tem SHA de commit.
+// Não substitui o `build_id` — ele segue sendo o eixo de adoção.
+//
+// ⚠️ Vai como <meta> no index.html, NÃO como `define` em JS: um `define` que muda a cada
+// build troca o hash de todo chunk que o lê, e se ele morasse em código compartilhado
+// refaria a cascata de hash do precache que o #3114 cortou (cada Publish = ~4 MB no
+// celular). O index.html já muda em todo build (aponta pro entry), então o carimbo sai
+// de graça. E fica no MESMO documento que o `build_id` é lido (src/lib/build-id.ts): o SW
+// velho serve o index.html PRECACHEADO, com o carimbo velho — que é a leitura certa.
+const buildEm = new Date().toISOString();
+function carimboDeBuild(): Plugin {
+  return {
+    name: "carimbo-de-build",
+    transformIndexHtml: () => [
+      { tag: "meta", attrs: { name: "app-build-em", content: buildEm }, injectTo: "head" },
+    ],
+  };
+}
+
 // 'virtual:pwa-register' só ganha resolvedor quando o VitePWA está ativo (produção
 // non-preview). Fora dele, o guard `__PWA_ENABLED__` protege o RUNTIME e o BUILD
 // (DCE), mas NÃO o scanner de deps do dev server: o esbuild segue o grafo estático
@@ -96,6 +117,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
+    carimboDeBuild(),
     mcpPlugin(),
     mode === "development" && componentTagger(),
     mode === "production" && !isLovablePreview && VitePWA({

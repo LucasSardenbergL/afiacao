@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
-import { extrairBuildId, resolverBuildId } from '@/lib/build-id';
+import { extrairBuildEm, extrairBuildId, resolverBuildEm, resolverBuildId } from '@/lib/build-id';
 
 /**
  * Estado e CHECAGEM da atualização do PWA — o miolo testável do modo `prompt`.
@@ -47,6 +47,10 @@ export interface EstadoAtualizacao {
   buildId: string;
   /** Build que o servidor entrega — só conhecido após uma checagem manual. */
   buildServidor: string | null;
+  /** Carimbo ordenável (`app-build-em`) do build em execução — para o build mínimo. */
+  buildEm: string | null;
+  /** Carimbo do build que o servidor entrega — junto do `buildServidor`. */
+  buildServidorEm: string | null;
   ultimaVerificacaoEm: number | null;
 }
 
@@ -62,6 +66,8 @@ let estado: EstadoAtualizacao = {
   fase: 'inativo',
   buildId: resolverBuildId(),
   buildServidor: null,
+  buildEm: resolverBuildEm(),
+  buildServidorEm: null,
   ultimaVerificacaoEm: null,
 };
 const ouvintes = new Set<Ouvinte>();
@@ -127,25 +133,34 @@ export function aplicarAtualizacao(aplicar: (() => void) | null = aplicador): vo
  * que o servidor entrega, pra o operador ver "você: X · servidor: Y".
  */
 export async function verificarAtualizacaoAgora(): Promise<FaseAtualizacao> {
-  const buildServidor = await lerBuildDoServidor();
-  if (buildServidor) definir({ buildServidor });
+  const servidor = await lerCarimbosDoServidor();
+  if (servidor) definir({ buildServidor: servidor.buildId, buildServidorEm: servidor.buildEm });
   return verificador ? verificador(true) : estado.fase;
 }
 
 /**
- * Lê o entry que o SERVIDOR entrega agora. O query param único tira o pedido do
- * precache do SW (o precache casaria `/` → index.html velho) e `no-store` do HTTP
- * cache. Falha = null (ausência de dado, nunca "igual").
+ * Lê o index.html que o SERVIDOR entrega agora: o entry (`build_id`) e o carimbo
+ * (`app-build-em`). O query param único tira o pedido do precache do SW (o precache
+ * casaria `/` → index.html velho) e `no-store` do HTTP cache. Falha ou HTML sem entry =
+ * null (ausência de dado, nunca "igual"); carimbo ausente vem `null` à parte.
  */
-export async function lerBuildDoServidor(f: typeof fetch = globalThis.fetch): Promise<string | null> {
+export async function lerCarimbosDoServidor(
+  f: typeof fetch = globalThis.fetch,
+): Promise<{ buildId: string; buildEm: string | null } | null> {
   try {
     const r = await f(`/?versao=${Date.now()}`, { cache: 'no-store' });
     if (!r.ok) return null;
-    const id = extrairBuildId([await r.text()]);
-    return id.startsWith('index-') ? id : null;
+    const html = await r.text();
+    const id = extrairBuildId([html]);
+    return id.startsWith('index-') ? { buildId: id, buildEm: extrairBuildEm(html) } : null;
   } catch {
     return null;
   }
+}
+
+/** Só o entry do servidor — a leitura original, mantida para quem só quer o `build_id`. */
+export async function lerBuildDoServidor(f: typeof fetch = globalThis.fetch): Promise<string | null> {
+  return (await lerCarimbosDoServidor(f))?.buildId ?? null;
 }
 
 /** Dependências injetáveis — o teste roda sem browser. */
@@ -283,8 +298,8 @@ export function aplicadorNativo(
 }
 
 /** Só para teste: volta o singleton ao estado inicial. */
-export function __resetEstadoAtualizacao(buildId = resolverBuildId()): void {
-  estado = { fase: 'inativo', buildId, buildServidor: null, ultimaVerificacaoEm: null };
+export function __resetEstadoAtualizacao(buildId = resolverBuildId(), buildEm = resolverBuildEm()): void {
+  estado = { fase: 'inativo', buildId, buildServidor: null, buildEm, buildServidorEm: null, ultimaVerificacaoEm: null };
   aplicador = null;
   verificador = null;
   ouvintes.clear();
@@ -314,4 +329,60 @@ export function descreverEstadoAtualizacao(e: EstadoAtualizacao): { build: strin
     return { build, situacao: `desatualizado (servidor: ${curto(e.buildServidor as string)})` };
   }
   return { build, situacao: ROTULO_FASE[e.fase] };
+}
+
+/**
+ * Indicador do topbar: aparece SÓ quando há algo a comunicar (o padrão do
+ * `NetworkStatusIndicator` — some no estado normal). `baixando` e `pronta` são as
+ * fases em que o operador ganha algo olhando; o resto (em dia, verificando, inativo)
+ * é ruído, e `falhou` tem o seu lugar no menu ("Reparar app").
+ */
+export function faseDoIndicador(fase: FaseAtualizacao): 'baixando' | 'pronta' | null {
+  return fase === 'baixando' || fase === 'pronta' ? fase : null;
+}
+
+/**
+ * "Reparar app" só quando o install do build novo MORREU e há rede. Offline, apagar o
+ * SW e os caches deixaria o app sem nada para abrir — o reparo precisa baixar tudo de
+ * novo pela rede logo em seguida.
+ */
+export function podeReparar(fase: FaseAtualizacao, nav: Navigator | undefined = globalThis.navigator): boolean {
+  return fase === 'falhou' && online(nav);
+}
+
+export interface DepsReparo {
+  sw?: Pick<ServiceWorkerContainer, 'getRegistrations'>;
+  caches?: Pick<CacheStorage, 'keys' | 'delete'>;
+  nav?: Navigator;
+  recarregar?: () => void;
+}
+
+/**
+ * Reparo do app preso num install que não fecha: desregistra o SW, apaga os caches
+ * (precache do Workbox + runtime) e recarrega PELA REDE — sem SW no controle, a
+ * navegação vai ao servidor e o build atual se instala do zero. É um clique explícito
+ * do operador (o modo `prompt` não é violado).
+ *
+ * NÃO toca localStorage/IndexedDB: a fila offline (`offline-queue.ts`, localStorage)
+ * sobrevive ao reparo, como sobrevive a qualquer reload.
+ *
+ * Devolve `false` sem fazer nada quando o reparo não se aplica (ver `podeReparar`).
+ */
+export async function repararApp(deps: DepsReparo = {}): Promise<boolean> {
+  const nav = deps.nav ?? globalThis.navigator;
+  if (!podeReparar(estado.fase, nav)) return false;
+  const sw = deps.sw ?? nav?.serviceWorker;
+  const cs = deps.caches ?? globalThis.caches;
+  const recarregar = deps.recarregar ?? (() => globalThis.location.reload());
+  track('pwa.atualizacao', { fase: 'reparo' });
+  // allSettled: um registro/cache que não sai não pode impedir o resto nem o reload —
+  // no pior caso o reload cai no mesmo estado de antes, nunca num pior.
+  const regs = sw ? await sw.getRegistrations().catch(() => [] as readonly ServiceWorkerRegistration[]) : [];
+  await Promise.allSettled(regs.map((r) => r.unregister()));
+  if (cs) {
+    const nomes = await cs.keys().catch(() => [] as string[]);
+    await Promise.allSettled(nomes.map((n) => cs.delete(n)));
+  }
+  recarregar();
+  return true;
 }

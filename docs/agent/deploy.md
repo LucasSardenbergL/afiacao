@@ -1071,6 +1071,60 @@ O SW usa `registerType: 'prompt'` (não `autoUpdate`): a versão nova **instala 
   entry do servidor. Sensor: evento `pwa.atualizacao` (`fase`: baixando/pronta/falhou/aceita) —
   `falhou` é o install que morria calado. Alavanca que sobra (follow-up): cortar a cascata de hash
   dos chunks, que é o que faz cada Publish custar 4 MB ao celular.
+- **Build mínimo — EXIGIR o build novo antes de uma migration que quebra build velho (2026-10-17).**
+  O modo `prompt` deixa o operador no build velho até ele clicar, por desenho. Migration que FECHA
+  coluna/função que o build velho lê (as migrations B, #3072/#3084, fecham as colunas de margem →
+  42501 no build velho) precisava de "todo mundo atualizou?" e não tinha como exigir. Agora tem:
+  - **Carimbo ordenável**: `<meta name="app-build-em" content="<ISO UTC>">` no `index.html`
+    (plugin `carimboDeBuild` no `vite.config.ts`), lido do MESMO documento que o `build_id`
+    (`src/lib/build-id.ts` → `resolverBuildEm`/`extrairBuildEm`) e enviado ao PostHog como
+    `build_em` junto do `build_id`. O **`build_id` segue sendo o eixo de adoção**; o carimbo só
+    responde "este build é anterior àquele?", que o hash não sabe. É `<meta>` e não `define` de JS
+    de propósito: um `define` que muda a cada build troca o hash de todo chunk que o lê e refaria a
+    cascata do precache que o #3114 cortou. Paridade: `build-id-paridade.test.ts`.
+  - **Config**: linha `key = 'pwa_build_minimo'` em `company_config` (RLS existente: staff lê,
+    master escreve; **sem migration**), `value` = `{"build_minimo_em": <ISO>, "prazo": <ISO>}`.
+    Linha ausente ou JSON ilegível = sem exigência (falha aberta: erro de digitação não tranca o
+    staff). Regras puras e testes: `src/lib/pwa-build-minimo.ts`.
+  - **Efeito** (só staff, identidade real; `src/components/shell/ExigenciaDeVersao.tsx`): build
+    anterior ao mínimo → banner fixo **"Atualize o app até <prazo>"**; depois do prazo → **modal
+    bloqueante** com "Atualizar" (ou "Reparar app" se o install falhou). **Nunca recarrega
+    sozinho** — o modal só tira o operador do caminho; quem recarrega é o clique, e a fila offline
+    (localStorage) sobrevive ao reload. Se o build que o SERVIDOR entrega também está abaixo do
+    mínimo (mínimo erguido antes do Publish), fica no aviso: bloquear ali não teria saída. Sensor:
+    evento `pwa.build_minimo` (`exigencia`: aviso/bloqueio).
+  - **Runbook (nesta ordem):**
+    1. Mergear e **Publicar** o código que já funciona com a migration (não lê o que ela fecha).
+    2. Ler o carimbo do build SERVIDO (é ele o mínimo — não "agora", que pode ser antes do build):
+       `curl -s "https://steu.lovable.app/?v=$(date +%s)" | grep -o 'app-build-em" content="[^"]*'`
+    3. Subir o mínimo (sessão pelo envelope via MCP, ou founder no SQL Editor) com um prazo que dê
+       pelo menos um turno inteiro para atualizar sem perder formulário:
+       ```sql
+       BEGIN;
+       INSERT INTO public.company_config (key, value)
+       VALUES ('pwa_build_minimo', jsonb_build_object(
+         'build_minimo_em', '<CARIMBO DO PASSO 2>', 'prazo', '<ex.: 2026-10-20T18:00:00-03:00>')::text)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+       DO $post$ BEGIN
+         IF NOT EXISTS (SELECT 1 FROM public.company_config WHERE key = 'pwa_build_minimo'
+                        AND (value::jsonb ->> 'build_minimo_em')::timestamptz = '<CARIMBO DO PASSO 2>'::timestamptz)
+         THEN RAISE EXCEPTION 'pwa_build_minimo não gravou'; END IF;
+       END $post$;
+       COMMIT;
+       ```
+    4. Acompanhar a adoção pelo eixo de sempre (`telemetria_probes` por `build_id` / PostHog), e o
+       `pwa.build_minimo` para ver quem ainda está no aviso/bloqueio.
+    5. **Aplicar a migration só DEPOIS do prazo** — antes dele o build velho ainda roda (só avisado).
+       A linha pode ficar: todo build posterior passa. Na próxima, sobrescreve.
+  - ⚠️ **Limites**: só alcança quem já está num build que CONTÉM esta feature (o mesmo ovo-e-galinha
+    do #3108 — o 1º salto ainda depende do toast); só staff (cliente não lê `company_config`);
+    o prazo usa o relógio do aparelho; offline não relê a config (mas offline também não chega ao
+    banco). Reabrir o app relê a config (`refetchOnWindowFocus`) e a cada 15 min.
+- **Indicador no topbar + "Reparar app" (2026-10-17).** `IndicadorAtualizacao` aparece só em
+  `baixando`/`pronta` (padrão do `NetworkStatusIndicator`: some no estado normal). Na fase `falhou`
+  e online, o menu do usuário ganha **"Reparar app"**: desregistra o SW, apaga os caches (precache +
+  runtime) e recarrega pela rede — sem tocar localStorage (a fila offline fica). Offline não
+  oferece: sem SW e sem cache o app não abriria. Evento `pwa.atualizacao` com `fase: 'reparo'`.
 - **Prova de build** (não confiar na config): `dist/sw.js` deve ter `skipWaiting` **só dentro do listener de `message`** (não no `install`) + `clientsClaim` presente. `dist/index.html` **sem** auto-register (por `injectRegister: false`).
 - **Entry fino = Publish barato no 4G** (`manualChunks` → `app-core`, 2026-10-16). O entry
   `index-*.js` muda em TODO Publish que mexe no app: carrega o `__vite__mapDeps` com o nome de

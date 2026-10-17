@@ -1,7 +1,7 @@
 import type { PostHog } from 'posthog-js';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { resolverBuildId } from '@/lib/build-id';
+import { resolverBuildEm, resolverBuildId } from '@/lib/build-id';
 
 /**
  * Wrapper de telemetria sobre PostHog. Centraliza:
@@ -125,7 +125,9 @@ export function initAnalytics(): void {
       // primeiros eventos da sessão — justamente os do boot, os que mais
       // importam pra medir adoção — sem build_id, ou pior, com o build ANTERIOR
       // que ficou persistido no localStorage do cliente que acabou de atualizar.
-      posthog.register({ build_id: resolverBuildId() });
+      // `build_em` (carimbo ordenável) vai JUNTO, nunca no lugar: a adoção segue lida
+      // por `build_id`; o carimbo só diz se um build é anterior a outro (build mínimo).
+      posthog.register({ build_id: resolverBuildId(), build_em: resolverBuildEm() });
       ph = posthog;
       // Drena os eventos que chegaram enquanto o SDK baixava (1º pageview etc.)
       const queued = preInitQueue.splice(0);
