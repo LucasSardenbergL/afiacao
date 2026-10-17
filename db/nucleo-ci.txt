@@ -101,7 +101,7 @@ db/test-fornecedores-classificacao.sh      26  falsificar=55
 db/test-reposicao-po-observado.sh          39  falsificar=33
 # Sombra da associação NF↔PO (20261017040000): só a RPC escreve, com compare-and-set por observado_em (run atrasado
 # não sobrescreve evidência nova); CHECK impede "associável" com motivo e proposta fora do associável; RLS staff.
-db/test-recebimento-associacao-sombra.sh    17  falsificar=11
+db/test-recebimento-associacao-sombra.sh    20  falsificar=13
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc

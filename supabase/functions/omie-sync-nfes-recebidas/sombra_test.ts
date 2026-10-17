@@ -122,8 +122,9 @@ Deno.test("fase: relógio esgota no meio — as NFs restantes ficam puladas, nen
   invariante(r);
   const sem = novaSombraSummary();
   const y = porta();
-  await executarFaseSombra(fila, y.p, async () => { throw new Error("não devia ler"); }, () => false, sem);
-  assertEquals([sem.puladas_por_tempo, y.chamadas.publicar.length], [4, 0], "sem tempo nem lê equivalências");
+  let leituras = 0;
+  await executarFaseSombra(fila, y.p, async () => { leituras++; return new Set(); }, () => false, sem);
+  assertEquals([sem.puladas_por_tempo, y.chamadas.publicar.length, leituras], [4, 0, 0], "sem tempo nem lê equivalências");
 });
 
 Deno.test("fase: equivalência que lança vira null → ambígua, nunca associável", async () => {
