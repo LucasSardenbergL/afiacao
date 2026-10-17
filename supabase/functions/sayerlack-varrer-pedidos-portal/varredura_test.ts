@@ -10,7 +10,9 @@ import {
   inicioDaJanela,
   lerListaConsulta,
   motivoBloqueio,
-  normalizarContrato,
+  aplicarCarencia,
+  contratosDoTexto,
+  SITUACOES_IMPORTAVEIS,
   portalSayerlackFechado,
   resumoImportacao,
   situacaoCancelada,
@@ -101,8 +103,25 @@ Deno.test("janela de 7 dias contando hoje, inclusive virada de mês", () => {
   assertEquals(inicioDaJanela("2026-11-03"), "2026-10-28");
 });
 
-Deno.test("contrato do Omie normalizado como a RPC (btrim); vazio = ausente", () => {
-  assertEquals([normalizarContrato(" 2141068 "), normalizarContrato(""), normalizarContrato(null)], ["2141068", null, null]);
+Deno.test("contrato do Omie: btrim como a RPC, composto 'a/b' conta os dois, lixo some", () => {
+  assertEquals(
+    [contratosDoTexto(" 2141068 "), contratosDoTexto("1998739/1998740"), contratosDoTexto("AFI26050780"), contratosDoTexto(""), contratosDoTexto(null)],
+    [["2141068"], ["1998739", "1998740"], [], [], []],
+  );
+});
+
+Deno.test("lista do founder: cron importa só 1 Aberto e 5 Suspenso; 2/3 Atendido viram aviso; 4, 6, 7 fora", () => {
+  assertEquals([...SITUACOES_IMPORTAVEIS].sort(), ["1", "5"]);
+  const { pedidos } = lerListaConsulta([
+    linha("801", "1 - Aberto", "15/10/2026"), linha("802", "2 - Atendido Parcial", "15/10/2026"),
+    linha("803", "3 - Atendido Total", "15/10/2026"), linha("804", "4 - Pendentes", "15/10/2026"),
+    linha("805", "5 - Suspenso", "15/10/2026"), linha("807", "7 - Fatur Balcão", "15/10/2026"),
+    linha("100", "3 - Atendido Total", "15/10/2026"), // já no app: não avisa
+  ]);
+  assertEquals(classificar(pedidos, { ...ctxBase, situacoesImportaveis: SITUACOES_IMPORTAVEIS }).map((p) => `${p.protocolo}:${p.classe}`), [
+    "801:candidato", "802:atendido_conferir", "803:atendido_conferir", "804:situacao_nao_importavel",
+    "805:candidato", "807:situacao_nao_importavel", "100:ja_no_app",
+  ]);
 });
 
 Deno.test("resultado da importação: só ok=true com HTTP 2xx é sucesso", () => {
@@ -110,4 +129,21 @@ Deno.test("resultado da importação: só ok=true com HTTP 2xx é sucesso", () =
   assertEquals(resumoImportacao(200, { ok: false, mensagem: "Há item sem de-para" }), { ok: false, mensagem: "Há item sem de-para" });
   assertEquals(resumoImportacao(500, { ok: true }).ok, false);
   assertEquals(resumoImportacao(502, "lixo").mensagem, "resposta HTTP 502 sem mensagem");
+});
+
+Deno.test("carência: 1ª vista espera; visto antes sem sync complete depois espera; com sync depois (+5 min) importa", () => {
+  const { pedidos } = lerListaConsulta([linha("701", "1 - Aberto", "15/10/2026"), linha("702", "1 - Aberto", "15/10/2026"),
+    linha("703", "1 - Aberto", "15/10/2026"), linha("704", "1 - Aberto", "15/10/2026")]);
+  const cls = classificar(pedidos, { ...ctxBase, situacoesImportaveis: SITUACOES_IMPORTAVEIS });
+  const vistos = new Map([["702", "2026-10-16T15:30:00Z"], ["703", "2026-10-16T15:30:00Z"], ["704", "2026-10-16T15:30:00Z"]]);
+  // sync terminou 16:15 (> vista + 5 min) para 702/704; para 703 só testamos o caso "sync antes da vista" abaixo.
+  assertEquals(aplicarCarencia(cls, vistos, "2026-10-16T16:15:00Z").map((p) => `${p.protocolo}:${p.classe}`),
+    ["701:carencia_primeira_vista", "702:candidato", "703:candidato", "704:candidato"]);
+  // Sync que terminou só 3 min depois da vista (podia ter começado antes dela) não vale.
+  assertEquals(aplicarCarencia(cls, vistos, "2026-10-16T15:33:00Z")[1].classe, "carencia_aguarda_sync");
+  // Sem sync complete (marcador ausente / último não-complete) ⇒ espera.
+  assertEquals(aplicarCarencia(cls, vistos, null)[1].classe, "carencia_aguarda_sync");
+  // Quem não é candidato não muda.
+  const outro = classificar(lerListaConsulta([linha("100", "1 - Aberto", "15/10/2026")]).pedidos, ctxBase);
+  assertEquals(aplicarCarencia(outro, new Map(), null)[0].classe, "ja_no_app");
 });
