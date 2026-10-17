@@ -32,3 +32,37 @@ Codex (gpt-6-astra, xhigh) em duas rodadas: metodologia (`logs/encargos/codex-co
 ## Leitura provisória (pré-backfill)
 
 Ver o corpo do PR: classificação dos títulos atrasados de liquidação única por "cobrado conforme a política / não cobrado / parcial / desconto". A política bate **ao centavo** nos casos cobrados, o que valida a fórmula e a data. O número definitivo, com filtro de boleto e desconto separado do encargo, sai depois do backfill.
+
+## Resposta medida (pós-backfill, 2026-10-13 16:32Z)
+
+Deploy: migration aplicada pelo `db:aplicar` (recibo #413), edge v1.4 pelo conector Lovable (sonda `DEPLOY CONFIRMADO`, fonte = main), backfill desde 2020 (recibos #420/#421) concluído nas 3 empresas às 16:31Z. Cobertura da view nos boletos atrasados: **100% em confiança que expõe encargo** (nenhum `divergente`/`sem_dado`).
+
+Recorte: `tipo_documento='BOL'`, baixa nos 12 meses, atraso > 3 dias, devido = documento × (2% + 10% × dias/30), atraso pela `dDtPagamento` do título. Query: `db/consulta-encargos-boleto-12m.sql` (read-only, roda no psql-ro).
+
+| CNPJ | boletos | devido | recebido | % | conforme | não cobrado (devido) | parcial (faltou) | desconto em pago atrasado |
+|---|---|---|---|---|---|---|---|---|
+| oben | 512 | R$ 24.909,50 | R$ 20.009,33 | **80,3%** | 378 | 47 (R$ 4.138,99) | 87 (R$ 731,86) | 1 · R$ 2,40 |
+| colacor | 110 | R$ 2.709,37 | R$ 2.063,75 | **76,2%** | 88 | 9 (R$ 621,00) | 13 (R$ 19,67) | 0 |
+| colacor_sc | 38 | R$ 631,71 | R$ 555,11 | **87,9%** | 32 | 5 (R$ 75,90) | 1 (R$ 0,27) | 0 |
+
+**Fora do núcleo, separados de propósito:**
+- **Baixa sem caixa** (líquido 0, o "desconto" é 100% do documento — abatimento/perdão/compensação, não desconto comercial): oben 67 títulos · R$ 39.278,82; colacor_sc 4 · R$ 1.027,57; colacor 1 · R$ 307,00. Somá-los como "desconto concedido" inventaria uma política de desconto que não existe.
+- **Atraso > 180 dias** (cobrança/renegociação; a política linear daria 347% do principal): colacor 1 título de R$ 920 (vencido em 2023).
+
+**Leitura:** onde há encargo, ele bate com a política ao centavo (378+88+32 títulos). A perda é **não cobrar** (61 títulos) e, na oben, as 67 baixas sem caixa de boletos atrasados — que pedem leitura humana (devolução? acordo?). A medição retratada (44% / −R$ 84,6k) misturava versões, CC zerado, todos os meios de pagamento, liquidação CC como data e baixas sem caixa.
+
+## DRE caixa da colacor 2026 (pedido do founder, 2026-10-13)
+
+Primeira gravação (não havia snapshot caixa da colacor em ano nenhum; nenhum mês de 2026 fechado). `db/2026-10-13-dre-caixa-colacor-2026.sql` (recibo #424, trava que recusa durante backfill — provada) gravou jan–jul e a edge foi cortada no wall-clock (~27 s/mês × 10 meses passa do teto pós-desconexão); `…-meses-8-10.sql` (recibo #426) fechou ago–out. Log `complete` 16:53Z.
+
+✅ **Correção (medida no mesmo dia):** escrevi aqui que o DRE caixa estava "subcontado" por categorias sem mapeamento. Errado nas duas pontas: (1) o "~R$ 17,8M/ano" do `financeiro.md` é o ACUMULADO de vários anos — na mesma fonte canônica a receita da colacor é R$ 2,9M (2024) → R$ 1,3M (2025) → **R$ 596k (2026 jan–out)**, coerente com os R$ 567,7k do caixa; (2) receita sem mapeamento cai em `receita_bruta` pelo fallback de `classificarLinhaDRE` — o mapa não muda receita nem resultado, só a distribuição da DESPESA entre linhas.
+
+## Mapeamento DRE da colacor — fase 1 (2026-10-13)
+
+`db/2026-10-13-mapeamento-dre-colacor-fase1.sql` (recibo #433): **97 categorias** da colacor mapeadas por código EXATO (o gate de fechamento `trg_mapping_gate` não enxerga prefixo), só `company='colacor'`, só o inequívoco pelo nome **e** dentro das 5 linhas que o ponto de equilíbrio reconcilia. DRE caixa 2026 recalculado (`…-pos-mapeamento.sql`, recibo #435): receita e resultado **idênticos** (−R$ 221.770,83), Σ das 5 linhas idêntica (R$ 789.441,60), operacionais R$ 592k → R$ 364k (admin R$ 165k, comerciais R$ 62k), ocorrências sem mapa 171 → 33.
+
+**Fase 2 (não feita — desenho multi-engine, parecer Codex `gpt-6-astra` xhigh):**
+- **`fora_dre` com "composição pendente"** para 2.05.03 empréstimos (R$ 258k), 2.06.90/96/97 parcelamentos (R$ 41,7k), 2.07 CAPEX, 2.01.99 imobilizado, 2.03.76 distribuição de lucros, 2.03.78/2.08.01 adiantamentos, 2.05.99 devolução de cheques. Hoje seguem em `despesas_operacionais` — o prejuízo de 2026 está inflado por ~R$ 300k de saídas que não são despesa, mas excluí-las e mostrar +R$ 78k também fabricaria certeza (a parcela mistura principal e juros/Selic, o Omie não separa). Pré-requisitos (todos juntos): CHECK + `DRE_LINHAS_VALIDAS` + espelho `dre-helpers.ts` com ramo de exclusão explícito (hoje linha desconhecida vira `receita_bruta`/`despesas_operacionais` **com `mapeado:true`**); ponto de equilíbrio (reconcilia Σdespesas × 5 linhas → `snapshot_inconsistente`); `fin-valor-engine` (EBIT/ROIC); `fin-regime-tributario` (usa `resultado_antes_impostos` sem ler confiança — **crítico**); tela de mapeamento (só conhece 11 linhas: valor novo aparece em branco e é sobrescrito no 1º clique); `fin-suggest-mapping`.
+- **Impostos em linha própria** (decisão do founder: ICMS/PIS/COFINS → `ded_*`, IRPJ/CSLL → `irpj`/`csll`) e 2.09 → `deducoes`: o motor já aceita, mas tirar esses valores das 5 linhas quebra a reconciliação do ponto de equilíbrio (que pressupõe imposto "no balde") — vai junto com o `fora_dre`.
+- **Ambíguos, sem dono:** 2.06.95 DIFAL (R$ 24 — venda × aquisição), 2.11.85, 2.11.88, 2.11.90, 2.12.87, 2.12.89, 2.12.92, 2.05.01, 2.05.02, 2.04.13 ISS.
+
