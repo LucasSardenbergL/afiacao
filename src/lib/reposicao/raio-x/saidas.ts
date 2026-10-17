@@ -1,7 +1,7 @@
 // Saídas do Raio-X: lista de troca, venda dirigida por cliente e diferença de contagem. Lógica pura.
 import type { DecisaoRow, ItemRaioX } from './tipos';
 
-const SEM_COMPRADOR = 'sem comprador em 12m';
+export const SEM_COMPRADOR = 'sem comprador em 12m';
 
 export interface LinhaTroca {
   sku_codigo_omie: number;
@@ -59,4 +59,28 @@ export function diffContagem(
   if (qtd === null || qtd === undefined || !Number.isFinite(qtd)) return null;
   const dif = qtd - item.saldo;
   return { dif_un: dif, dif_valor: item.cmc === null ? null : dif * item.cmc };
+}
+
+// ── Exportação da lista de troca (o app não envia nada: o usuário copia ou baixa o CSV) ──────────────────
+const num2 = (n: number) => n.toFixed(2).replace('.', ',');
+/** Célula de texto: aspas/`;`/quebra escapados e fórmula (`= + - @`) neutralizada. */
+function celula(t: string): string {
+  const seguro = /^[=+\-@]/.test(t) ? `'${t}` : t;
+  return /[;"\n\r]/.test(seguro) ? `"${seguro.replace(/"/g, '""')}"` : seguro;
+}
+
+/** CSV `;` (Excel pt-BR). Valor null → célula vazia: ausente ≠ zero. */
+export function csvTroca(linhas: LinhaTroca[]): string {
+  const corpo = linhas.map((l) =>
+    [celula(l.codigo), celula(l.descricao ?? ''), num2(l.saldo), l.valor === null ? '' : num2(l.valor), celula(l.fornecedor)].join(';'));
+  return ['codigo;descricao;saldo;valor;fornecedor', ...corpo].join('\n');
+}
+
+/** Texto para colar (e-mail/WhatsApp), agrupado por fornecedor. Sem custo: omite o R$ do item. */
+export function textoTroca(linhas: LinhaTroca[]): string {
+  const porForn = new Map<string, LinhaTroca[]>();
+  for (const l of linhas) porForn.set(l.fornecedor, [...(porForn.get(l.fornecedor) ?? []), l]);
+  return [...porForn.entries()].map(([forn, ls]) =>
+    [forn, ...ls.map((l) => `- ${l.codigo}${l.descricao ? ` ${l.descricao}` : ''}: ${l.saldo} un${l.valor === null ? '' : ` · R$ ${num2(l.valor)}`}`)].join('\n'),
+  ).join('\n\n');
 }

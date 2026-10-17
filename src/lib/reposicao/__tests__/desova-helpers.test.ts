@@ -54,3 +54,24 @@ describe('formatarMissaoDesova', () => {
     expect(m.descricao).not.toContain('null');
   });
 });
+
+describe('formatarMissaoDesova — prefixo do título (missão por cliente do Raio-X)', () => {
+  it('(a) com prefixo, o título começa com "Cliente X — "', () => {
+    const m = formatarMissaoDesova([alvo()], 'Cliente X');
+    expect(m.titulo.startsWith('Cliente X — Desova de excesso')).toBe(true);
+    expect(m.descricao.startsWith('Cliente X — Desova de excesso')).toBe(true);
+  });
+
+  it('(b) sem prefixo o título é idêntico ao da aba Excesso', () => {
+    expect(formatarMissaoDesova([alvo()]).titulo).toBe('Desova de excesso — 1 SKU, R$ 1.200 presos');
+    expect(formatarMissaoDesova([alvo()], undefined).titulo).toBe('Desova de excesso — 1 SKU, R$ 1.200 presos');
+  });
+
+  it('capital null (sem custo) não vira R$ 0 e dias_sem_vender null é omitido', () => {
+    const m = formatarMissaoDesova([alvo({ capital_excedente: null, dias_sem_vender: null })], 'Cliente X');
+    expect(m.capitalIncompleto).toBe(true);
+    expect(m.descricao).toContain('capital não medido (sem CMC)');
+    expect(m.descricao).not.toContain('sem vender');
+    expect(m.descricao.split('\n')[2]).not.toMatch(/R\$/); // a linha do SKU não fabrica R$ 0
+  });
+});

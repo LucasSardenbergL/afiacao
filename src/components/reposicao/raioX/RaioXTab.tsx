@@ -12,13 +12,14 @@ import { useRaioX } from './useRaioX';
 import { RaioXPlacar } from './RaioXPlacar';
 import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
+import { RaioXSaidas } from './RaioXSaidas';
 
-// `saidas` entra na Task 9: o tipo já aceita, mas não há botão nem conteúdo.
 type Segmento = 'mercadoria' | 'uso' | 'nao' | 'saidas';
-const SEGMENTOS: { id: Exclude<Segmento, 'saidas'>; rotulo: string }[] = [
+const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
   { id: 'mercadoria', rotulo: 'Mercadoria' },
   { id: 'uso', rotulo: 'Uso e consumo / insumo' },
   { id: 'nao', rotulo: 'Não-mercadoria' },
+  { id: 'saidas', rotulo: 'Saídas' },
 ];
 
 function empresaDoRaioX(e: string): Empresa | null {
@@ -35,7 +36,7 @@ export function RaioXTab() {
   const rx = useRaioX(chave);
   const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
 
-  const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' ? f.rx : 'mercadoria';
+  const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
   const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && i.parado), [rx.itens]);
   const fornecedores = useMemo(
@@ -91,7 +92,7 @@ export function RaioXTab() {
 
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
         {SEGMENTOS.map((s) => (
-          <Button key={s.id} size="touch" variant={segmento === s.id ? 'default' : 'outline'} onClick={() => setF({ rx: s.id })}>
+          <Button key={s.id} size="touch" variant={segmento === s.id ? 'default' : 'outline'} aria-pressed={segmento === s.id} onClick={() => setF({ rx: s.id })}>
             {s.rotulo}
           </Button>
         ))}
@@ -124,6 +125,8 @@ export function RaioXTab() {
             <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} />
           )}
         </>
+      ) : segmento === 'saidas' ? (
+        <RaioXSaidas itens={rx.itens} decisoes={rx.decisoes} empresa={chave} />
       ) : contagem.length === 0 ? (
         <EmptyState tone="operational" icon={PackageSearch} title="Nada neste segmento" description="Nenhum item nesta categoria." />
       ) : (

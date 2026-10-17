@@ -8,6 +8,7 @@ import { ExcessoKpis } from "@/components/reposicao/baixoGiro/ExcessoKpis";
 import { ExcessoTable } from "@/components/reposicao/baixoGiro/ExcessoTable";
 import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEmEstoqueDialog";
 import { DesovaMissaoDialog } from "@/components/reposicao/baixoGiro/DesovaMissaoDialog";
+import type { AlvoDesova } from "@/lib/reposicao/desova-helpers";
 import { RaioXTab } from "@/components/reposicao/raioX/RaioXTab";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,15 @@ import { hojeSP } from "@/lib/time/sp-day";
 
 /** Alvo comum dos dois fluxos de descontinuação (baixo giro e excesso). */
 type AlvoDescontinuar = Pick<RowBaixoGiro, "sku_codigo_omie" | "sku_descricao">;
+
+const paraAlvoDesova = (a: RowExcesso): AlvoDesova => ({
+  sku_codigo_omie: a.sku_codigo_omie,
+  sku_descricao: a.sku_descricao,
+  excedente_un: a.excedente_un,
+  capital_excedente: a.capital_excedente,
+  tempo_digerir_dias: a.tempo_digerir_dias,
+  dias_sem_vender: a.dias_sem_vender,
+});
 
 function exportarCsvExcesso(rows: RowExcesso[]) {
   const head = ["sku", "descricao", "fornecedor", "classe", "saldo", "estoque_maximo", "excedente_un", "capital_excedente_rs", "digere_em_dias", "dias_sem_vender", "situacao"];
@@ -250,7 +260,7 @@ export default function AdminReposicaoBaixoGiro() {
       <DesovaMissaoDialog
         open={!!missaoAlvos}
         onOpenChange={(v) => { if (!v) setMissaoAlvos(null); }}
-        alvos={missaoAlvos ?? []}
+        alvos={(missaoAlvos ?? []).map(paraAlvoDesova)}
         empresa={empresa.toLowerCase()}
       />
       <ManterEmEstoqueDialog
