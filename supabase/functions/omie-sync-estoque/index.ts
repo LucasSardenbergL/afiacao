@@ -16,6 +16,7 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { exigirLeitura } from "../_shared/leitura-critica.ts";
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { criarColetorObservacao, type LinhaObservada } from "./observacao-po.ts";
+import { problemasDeEtapaDaPagina } from "./etapa-desconhecida.ts";
 import { registroComPrazo } from "./registro-com-prazo.ts";
 import { criarAcumuladorFisico } from "./fisico.ts";
 import {
@@ -447,6 +448,10 @@ async function computePendenteViaPedidosCompra(
     }
     fpsVistos.add(fp);
     paginasLidas++;
+    // PR(d): etapa DESCONHECIDA com saldo (ou sem itens legíveis) recusa o run — senão o saldo do PO associado no Omie
+    // ("Recebido Parcialmente") sumiria do "a caminho" e o motor recompraria. Por PÁGINA, antes de qualquer desvio:
+    // nem o PO do app (de-dup) escapa (etapa-desconhecida.ts).
+    problemas.push(...problemasDeEtapaDaPagina(pedidos, ETAPAS_CONHECIDAS, { parseQtd, parseRecebido }));
     for (const ped of pedidos) {
       pedidosVistos++;
       const cab = ped?.cabecalho_consulta ?? ped?.cabecalho ?? {};
@@ -479,8 +484,8 @@ async function computePendenteViaPedidosCompra(
         coletor.registrar(cabObs, itensObs, "dedup_app");
         continue;
       }
-      // Só etapa APROVADA-ABERTA (15) contribui pro pendente. Em-aprovação (10)/desconhecida não conta → ignora
-      // sem exigir nCodPed nem de-dup (uma PO irrelevante não pode congelar o snapshot — [Codex P2 round3]).
+      // Só etapa APROVADA-ABERTA (15) contribui pro pendente. Em-aprovação (10) não conta → ignora sem exigir nCodPed
+      // nem de-dup ([Codex P2 round3]); etapa DESCONHECIDA com saldo já recusou o run (PR(d), por página, acima).
       if (!ETAPAS_APROVADO_ABERTO.has(etapa)) {
         coletor.registrar(cabObs, itensObs, "etapa_nao_aberta");
         continue;
@@ -545,8 +550,8 @@ async function computePendenteViaPedidosCompra(
     throw new Error(`PesquisarPedCompra excedeu ${MAX_PAGINAS_PED} páginas sem ver fim — abort anti-truncamento`);
   }
   // [Codex P1] CONFIABILIDADE do snapshot (fail-closed que PRESERVA): dado torto (problemas) ou varredura totalmente
-  // vazia (0 pedidos — a OBEN sempre tem PO aberta) ⇒ pendente NÃO confiável → o caller NÃO grava a coluna (preserva
-  // o último valor bom); o FÍSICO segue atualizando (não derruba o sync de estoque por 1 PO suja de fornecedor).
+  // vazia (0 pedidos — a OBEN sempre tem PO aberta) ⇒ pendente NÃO confiável → desde a v1.6 o run é RECUSADO antes de
+  // qualquer escrita (publicacao.ts): o PAR (físico, pendente) anterior fica, coerente entre si — não só o pendente.
   const confiavel = problemas.length === 0 && pedidosVistos > 0;
   const pendente = confiavel
     ? computePendenteEntradaPorSku(items, { etapasAbertas: ETAPAS_APROVADO_ABERTO, poNumerosEmTransito: emTransitoNumeros })
