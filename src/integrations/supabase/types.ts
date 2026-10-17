@@ -11937,6 +11937,102 @@ export type Database = {
         }
         Relationships: []
       }
+      raio_x_classificacao_manual: {
+        Row: {
+          categoria: string
+          empresa: string
+          marcado_em: string
+          marcado_por: string | null
+          motivo: string
+          sku_codigo_omie: number
+        }
+        Insert: {
+          categoria: string
+          empresa: string
+          marcado_em?: string
+          marcado_por?: string | null
+          motivo: string
+          sku_codigo_omie: number
+        }
+        Update: {
+          categoria?: string
+          empresa?: string
+          marcado_em?: string
+          marcado_por?: string | null
+          motivo?: string
+          sku_codigo_omie?: number
+        }
+        Relationships: []
+      }
+      raio_x_decisao: {
+        Row: {
+          atualizado_em: string
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          qtd_contada: number | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        Insert: {
+          atualizado_em?: string
+          contado_em?: string | null
+          contado_por?: string | null
+          credito_troca?: number | null
+          decidido_em?: string | null
+          decidido_por?: string | null
+          destino?: string | null
+          empresa: string
+          fornecedor_informado?: string | null
+          foto_categoria?: string | null
+          foto_cmc?: number | null
+          foto_em?: string | null
+          foto_saldo?: number | null
+          foto_valor?: number | null
+          motor_antes?: Json | null
+          observacao?: string | null
+          origem?: string
+          qtd_contada?: number | null
+          sku_codigo_omie: number
+          tirou_do_motor?: boolean
+        }
+        Update: {
+          atualizado_em?: string
+          contado_em?: string | null
+          contado_por?: string | null
+          credito_troca?: number | null
+          decidido_em?: string | null
+          decidido_por?: string | null
+          destino?: string | null
+          empresa?: string
+          fornecedor_informado?: string | null
+          foto_categoria?: string | null
+          foto_cmc?: number | null
+          foto_em?: string | null
+          foto_saldo?: number | null
+          foto_valor?: number | null
+          motor_antes?: Json | null
+          observacao?: string | null
+          origem?: string
+          qtd_contada?: number | null
+          sku_codigo_omie?: number
+          tirou_do_motor?: boolean
+        }
+        Relationships: []
+      }
       recommendation_config: {
         Row: {
           description: string | null
@@ -21557,6 +21653,146 @@ export type Database = {
           p_status?: string
         }
         Returns: Json
+      }
+      raio_x_classificar: {
+        Args: {
+          p_categoria: string
+          p_empresa: string
+          p_motivo: string
+          p_sku: number
+        }
+        Returns: {
+          categoria: string
+          empresa: string
+          marcado_em: string
+          marcado_por: string | null
+          motivo: string
+          sku_codigo_omie: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_classificacao_manual"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      raio_x_contar: {
+        Args: { p_empresa: string; p_qtd: number; p_sku: number }
+        Returns: {
+          atualizado_em: string
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          qtd_contada: number | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_decisao"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      raio_x_decidir: {
+        Args: {
+          p_categoria: string
+          p_credito_troca: number
+          p_destino: string
+          p_empresa: string
+          p_fornecedor: string
+          p_observacao: string
+          p_restaurar_motor: boolean
+          p_sku: number
+          p_tirar_do_motor: boolean
+        }
+        Returns: {
+          atualizado_em: string
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          qtd_contada: number | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_decisao"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      raio_x_estoque_fatos: {
+        Args: { p_empresa: string }
+        Returns: {
+          ativo: boolean
+          cadastro_em: string
+          classe_abc: string
+          clientes: Json
+          cmc: number
+          codigo: string
+          descricao: string
+          familia: string
+          fornecedor: string
+          habilitado_reposicao_automatica: boolean
+          ncli: number
+          no_motor: boolean
+          preco_medio_12m: number
+          q12: number
+          saldo: number
+          sku_codigo_omie: number
+          synced_at: string
+          tipo_produto: string
+          tipo_reposicao: string
+          ult_entrada: string
+          ult_venda: string
+          unidade_estoque: string
+          unidades_venda: string[]
+        }[]
+      }
+      raio_x_medicao: {
+        Args: { p_empresa: string }
+        Returns: {
+          compras_apos: string[]
+          credito_troca: number
+          decidido_em: string
+          destino: string
+          foto_categoria: string
+          foto_cmc: number
+          foto_saldo: number
+          foto_valor: number
+          preco_medio_12m: number
+          qtd_vendida: number
+          receita: number
+          saldo_atual: number
+          sku_codigo_omie: number
+        }[]
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
