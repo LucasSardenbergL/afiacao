@@ -157,6 +157,11 @@ Deno.test("captura: lotes de 50 contratos, sem tempo não lê, erro não captura
   const y = porta();
   await capturarPedidosDaFila(semTempo, y.p, () => false);
   assertEquals([y.chamadas.buscar.length, semTempo.some((f) => f.pedidos !== undefined)], [0, false]);
+  const meio = fila.map((f) => ({ ...f, pedidos: undefined }));
+  const z = porta({ buscarPedidos: async (c) => { z.chamadas.buscar.push(c); return new Map(); } });
+  let tiques = 0;
+  await capturarPedidosDaFila(meio, z.p, () => ++tiques <= 2);
+  assertEquals([z.chamadas.buscar.length, meio.some((f) => f.pedidos !== undefined)], [1, false], "relógio esgota no meio: nada anexado");
   const comErro = fila.map((f) => ({ ...f, pedidos: undefined }));
   await capturarPedidosDaFila(comErro, porta({ buscarPedidos: async () => { throw new Error("timeout"); } }).p, sempre);
   assertEquals(comErro.some((f) => f.pedidos !== undefined), false);
