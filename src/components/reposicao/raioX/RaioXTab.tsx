@@ -10,8 +10,9 @@ import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
 import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
-import { useRaioX } from './useRaioX';
+import { useRaioX, useRaioXMedicao } from './useRaioX';
 import { RaioXPlacar } from './RaioXPlacar';
+import { RaioXCaixaLiberado } from './RaioXCaixaLiberado';
 import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
 import { RaioXSaidas } from './RaioXSaidas';
@@ -34,6 +35,7 @@ export function RaioXTab() {
   const { empresa } = useReposicaoEmpresa();
   const chave = empresaDoRaioX(empresa);
   const rx = useRaioX(chave);
+  const medicao = useRaioXMedicao(chave);
   // Sheet: guarda sku + empresa de quem abriu; item e decisão são relidos do cache (vivos após invalidar).
   const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa } | null>(null);
   const fechar = useCallback(() => setAberto(null), []);
@@ -51,6 +53,13 @@ export function RaioXTab() {
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
   const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
+
+  const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
+  // Contradição clicável: lista de mercadoria filtrada pelo SKU (via a busca por código, que já vive na URL).
+  const filtrarSku = useCallback(
+    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: codigos.get(sku) ?? String(sku) }),
+    [codigos, setF],
+  );
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
@@ -110,6 +119,14 @@ export function RaioXTab() {
         </p>
       )}
       <RaioXPlacar placar={rx.placar} />
+      <RaioXCaixaLiberado
+        linhas={medicao.linhas}
+        isLoading={medicao.isLoading}
+        erro={medicao.erro}
+        empresa={chave}
+        codigos={codigos}
+        onFiltrarSku={filtrarSku}
+      />
 
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
         {SEGMENTOS.map((s) => (

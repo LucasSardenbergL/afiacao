@@ -26,7 +26,10 @@ let ret: Retorno;
 let empresaCtx = 'OBEN';
 const useRaioXMock = vi.fn((_e: unknown) => ret);
 
-vi.mock('@/components/reposicao/raioX/useRaioX', () => ({ useRaioX: (e: unknown) => useRaioXMock(e) }));
+vi.mock('@/components/reposicao/raioX/useRaioX', () => ({
+  useRaioX: (e: unknown) => useRaioXMock(e),
+  useRaioXMedicao: () => ({ linhas: [], isLoading: false, erro: null }),
+}));
 vi.mock('@/contexts/ReposicaoEmpresaContext', () => ({
   useReposicaoEmpresa: () => ({ empresa: empresaCtx, setEmpresa: () => {} }),
 }));
