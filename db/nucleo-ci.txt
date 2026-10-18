@@ -186,6 +186,9 @@ db/test-cancelar-pedido-guard-atomico.sh   48
 # encerramento automático só toca o pedido PROVADAMENTE não-efetivado (7 condições, cada uma
 # sabotada inline com controle verde na mesma invocação; baseline do corpo velho reabrindo o terminal).
 db/test-recusa-definitiva-portal-servidor.sh 64
+# Trigger da outbox: pedido INSERIDO já aprovado (importação do portal) emite criada E aprovada; o corpo de
+# prod entra pela migration de 2026-10-11 com md5 CONFERIDO; backfill só de importados; fail-open vivo.
+db/test-analytics-outbox-insert-ja-aprovado.sh 23
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de

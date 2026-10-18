@@ -1046,6 +1046,8 @@ Quem for medir adoção da fase 2 do MixGap: o denominador continua sendo 3, e o
 aumenta. Ele só garante que, quando houver mais gente, o histórico não terá nascido censurado —
 que é a retroatividade da §"A quarta saída", não uma promessa de recuperar usuário hoje.
 
+⚠️ **A 2ª causa de órfã aconteceu (2026-10-16): pedido INSERIDO já aprovado** pela importação do portal Sayerlack emitia só `criada`. Ramo do trigger corrigido (INSERT já aprovado ⇒ criada **e** aprovada) + backfill dos importados, com prova PG17 que pegou um `text[] || literal` quebrando FORA do fail-open → [outbox-insert-ja-aprovado.md](../historico/outbox-insert-ja-aprovado.md).
+
 ### Session Replay: DESLIGADO — e por que o config anterior mentia (2026-08-25)
 
 ⚠️ **`maskAllInputs` mascara CAMPO DE FORMULÁRIO, não o texto da TELA.** O `posthog.init()` trazia
