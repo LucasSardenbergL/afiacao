@@ -76,6 +76,15 @@ O founder aprovou as duas regras; o challenge Codex (xhigh, 2026-10-16) achou qu
 
 **O que destrava:** conferir no portal Sayerlack o status dos pedidos 2096768, 2096769, 2096770, 2096771 (reenvios de 22/05) e 2094267 (1015). Cancelados = evidência positiva para ligar; em aberto = compromisso real que a guarda tinha razão de segurar.
 
+### R59 — pedido ENCERRADO no Omie sai do caixa (2026-10-18)
+
+Decisão do founder: corrigir na fonte. Pedido disparado que foi **encerrado no Omie** (cancelado no portal) e **não tem evidência nenhuma de NF** deixa de ser compromisso. Com qualquer NF (no tracking, por vínculo R57/R58 ou de qualquer identificador Sayerlack do pedido, em qualquer data), segue a conciliação normal.
+
+- **De onde vem o sinal.** O encerramento não aparece no cabeçalho do `PesquisarPedCompra` (os pedidos encerrados vêm com `cEtapa="15"`, como os abertos). A `omie-sync-pedidos-compra` (v1.5) faz, depois do completo limpo, uma passada só com `lExibirPedidosEncerrados` ligado e registra o conjunto em `reposicao_encerrados_omie_publicacao`. A coluna `purchase_orders_tracking.encerrado_omie_em` (1 writer) é esse conjunto **quando publicado**.
+- **Habilitação.** Que o filtro sozinho devolve só encerrados ainda é hipótese. Até alguém ligar `habilitado` na publicação, a passada só **observa**: grava o conjunto e não toca a coluna. Antes de habilitar, confira no conjunto observado o controle positivo (1014 e 1049 dentro) e o negativo (um pedido aberto de out/2026 fora).
+- **Pré-voo.** O backtest recusa rodar sem a publicação `publicado` de até 48h antes dos fatos. Observado, abstenção ou publicação velha = sinal ausente, não "nenhum encerrado".
+- **Look-ahead (premissa).** O sinal é o de **hoje**. `encerrado_omie_em` é quando a passada viu o encerramento, não a data real (o Omie não a expõe). Um ciclo anterior ao encerramento já trata o pedido como fora do caixa, então o backtest fica mais otimista do que a guarda teria sido naquele dia. A continuidade do motor (R54) segue contando o encerrado, o que é conservador.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
