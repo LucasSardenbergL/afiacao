@@ -61,8 +61,11 @@ const item = (p: Partial<ItemRaioX>): ItemRaioX => ({
 
 const abrirAba = () => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={qc}><MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>);
+  const invalidar = vi.spyOn(qc, 'invalidateQueries');
+  const arvore = () => <QueryClientProvider client={qc}><MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>;
+  const r = render(arvore());
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Raio-X' }), { button: 0 });
+  return { invalidar, rerender: () => r.rerender(arvore()) };
 };
 
 beforeEach(() => {
@@ -199,6 +202,20 @@ describe('aba Raio-X', () => {
     fireEvent.change(sel, { target: { value: 'ACRE' } });
     expect(screen.getByText('INFORMADO')).toBeTruthy();
     expect(screen.queryByText('DO CADASTRO')).toBeNull();
+  });
+
+  it('(FI1) abrir o Sheet relê o servidor; decisão nova de outro operador → aviso e Salvar bloqueado', () => {
+    const d0 = { sku_codigo_omie: 1, destino: 'liquidar', observacao: 'A', atualizado_em: '2026-10-18T10:00:00Z' } as DecisaoRow;
+    ret = { ...ret, decisoes: new Map([[1, d0]]) };
+    const { invalidar, rerender } = abrirAba();
+    fireEvent.click(screen.getByRole('button', { name: 'Decidir C1' }));
+    expect(invalidar).toHaveBeenCalledWith({ queryKey: ['raio-x', 'oben'] });
+    expect(screen.queryByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeNull();
+    // o refetch disparado pela invalidação traz o que o operador B gravou
+    ret = { ...ret, decisoes: new Map([[1, { ...d0, observacao: 'gravado por B', atualizado_em: '2026-10-18T10:05:00Z' }]]) };
+    rerender();
+    expect(screen.getByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Salvar decisão' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('botão "Decidir" da linha abre o Sheet do item', () => {

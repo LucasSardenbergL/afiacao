@@ -14,12 +14,13 @@ import type { Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
 type Fns = Database['public']['Functions'];
 
 const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
+const MSG_RX001_RESTAURAR = 'Este SKU não tem mais parâmetro de reposição — não há motor para restaurar';
 const MSG_SEM_PERMISSAO = 'Sem permissão para decidir no Raio-X (exige acesso a custo).';
 
 /** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
-function avisarErro(e: unknown, fallback: string) {
+function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
   const code = (e as { code?: unknown } | null)?.code;
-  if (code === 'RX001') toast.error(MSG_RX001);
+  if (code === 'RX001') toast.error(msgRx001);
   else if (code === '42501') toast.error(MSG_SEM_PERMISSAO);
   else toast.error(mensagemDeErro(e) ?? fallback);
 }
@@ -63,7 +64,9 @@ export function useRaioXMutacoes(empresa: Empresa) {
         acao,
       });
     },
-    onError: (e) => avisarErro(e, 'Não foi possível salvar a decisão.'),
+    // RX001 no restaurar = o sku_parametros sumiu; "desmarque tirar do motor" não se aplica.
+    onError: (e, { acao }) =>
+      avisarErro(e, 'Não foi possível salvar a decisão.', acao === 'restaurar' ? MSG_RX001_RESTAURAR : MSG_RX001),
   });
 
   const mContar = useMutation({

@@ -191,6 +191,14 @@ describe('DecisaoSheet', () => {
     expect(track).not.toHaveBeenCalled();
   });
 
+  it('(M-b) RX001 no Restaurar → mensagem própria (não "desmarque tirar do motor")', async () => {
+    rpc.mockImplementation(() => Promise.resolve({ data: null, error: { code: 'RX001', message: 'raio_x: sku sem sku_parametros (oben/1)' } }));
+    abrir({ decisao: decisao(1, { destino: 'liquidar', tirou_do_motor: true, motor_antes: { tipo_reposicao: 'normal', habilitado: true } }) });
+    fireEvent.click(screen.getByRole('button', { name: 'Restaurar motor ao estado anterior' }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalledWith('Este SKU não tem mais parâmetro de reposição — não há motor para restaurar');
+  });
+
   it('(f) 42501 → sem permissão; outro erro → mensagem do servidor (nunca [object Object])', async () => {
     rpc.mockImplementationOnce(() => Promise.resolve({ data: null, error: { code: '42501', message: 'RAIO_X_SO_CUSTO' } }));
     abrir();
@@ -326,6 +334,17 @@ describe('RaioXContagem — campo de contagem', () => {
     await waitFor(() => expect(argsDe('raio_x_contar')).toHaveLength(1));
     expect(argsDe('raio_x_contar')[0]).toEqual({ p_empresa: 'oben', p_sku: 1, p_qtd: 12.5 });
     await waitFor(() => expect(invalidar).toHaveBeenCalledWith({ queryKey: ['raio-x', 'oben'] }));
+  });
+
+  it('(M-a) diferença em unidades sai pt-BR com até 3 casas: 12,5 − 10,3 → "+2,2"', () => {
+    const qc = new QueryClient();
+    render(
+      <QueryClientProvider client={qc}>
+        <RaioXContagem empresa="oben" categoria="uso_consumo" itens={[itemRX({ categoria: 'uso_consumo', parado: false, saldo: 10.3 })]}
+          decisoes={new Map([[1, decisao(1, { qtd_contada: 12.5 })]])} onDecidir={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByTestId('dif-un-1').textContent).toBe('+2,2');
   });
 
   it('(h) "abc" → erro no campo, nada enviado', () => {

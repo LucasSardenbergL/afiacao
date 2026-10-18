@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { PackageSearch } from 'lucide-react';
 import { useReposicaoEmpresa } from '@/contexts/ReposicaoEmpresaContext';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -40,7 +41,15 @@ export function RaioXTab() {
   useEffect(() => {
     if (aberto && aberto.empresa !== chave) setAberto(null);
   }, [aberto, chave]);
-  const abrir = useCallback((i: ItemRaioX) => { if (chave) setAberto({ sku: i.sku_codigo_omie, empresa: chave }); }, [chave]);
+  const qc = useQueryClient();
+  // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9
+  // nunca mudaria — salvar apagaria o que outro operador gravou. Quando o refetch chegar com outra assinatura,
+  // o Sheet bloqueia e oferece "Recarregar".
+  const abrir = useCallback((i: ItemRaioX) => {
+    if (!chave) return;
+    setAberto({ sku: i.sku_codigo_omie, empresa: chave });
+    void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
+  }, [chave, qc]);
   const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';

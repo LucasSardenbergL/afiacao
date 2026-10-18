@@ -9,7 +9,11 @@ import { colDecidir, colValor, type Coluna } from './RaioXLinha';
 import { fmtValorFino, SEM_CUSTO } from './formato';
 import { useRaioXMutacoes } from './useRaioXMutacoes';
 
-const sinal = (n: number) => (n > 0 ? `+${n}` : String(n));
+/** Diferença em unidades, pt-BR com até 3 casas (12,5 − 10,3 → "+2,2", nunca "+2.1999999999999993"). */
+const sinal = (n: number) => {
+  const t = n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  return n > 0 ? `+${t}` : t;
+};
 const paraTexto = (n: number | null | undefined) => (n == null ? '' : String(n).replace('.', ','));
 
 /** Qtd contada editável. Vazio limpa a contagem; inválido mostra erro e não envia (vírgula pt-BR). */
