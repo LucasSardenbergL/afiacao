@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-17T10:28:20.669Z",
-  "sourceHead": "caebdaa38e59d724f6ea589340ffa330bdedd405",
+  "medidoEm": "2026-10-18T19:04:55.443Z",
+  "sourceHead": "0b4a15e62533eb144e01baa5ad70627f8e41ec6c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -21,9 +21,9 @@
     "grants": {
       "script": "authz:grants:prod",
       "exit": 0,
-      "resumo": "✅ audit-grants — 8 tabela(s) conferida(s); prod bate com o contrato.",
+      "resumo": "✅ audit-grants — 10 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "9a7d4477ffac7c1185686d4acca1a2ac59e5ebd2106e93b8d305216a37952188",
+      "contratoFingerprint": "e66cbeb1ce3678179eb3fb971ccd5e69e662088804c3d6e5b4998db551f5a1f7",
       "auditorFingerprint": "b55db338c6c26db92938511d5e8f118e5013c3bffcb770401655e1b7aecac3fe",
       "achados": []
     },
@@ -48,17 +48,17 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 357 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 360 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
-      "contratoFingerprint": "cd77f88e4f15cea9d10af15e2c79671e910723fb0f2954d14f618957887f52d7",
+      "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
       "achados": []
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 362 identidade(s) batem com o repo (285 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 362 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@1d5f49754 (fetch ok) · prod 2026-10-17 10:28:50.103249Z",
+      "resumo": "✅ deriva-corpo — 370 identidade(s) batem com o repo (293 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 370 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@895198047 (fetch ok) · prod 2026-10-18 19:05:22.058792Z",
       "contratoFingerprint": "a0c8858fa173bfdffa5f7fb8157bbd284c7018170bbc79f8f67c34a97786a267",
       "auditorFingerprint": "32a5addf29ac70a751983e2f0e9c72cacce79e39781a59c7f53e03fe8a5f62bb",
       "achados": []
