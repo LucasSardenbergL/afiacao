@@ -71,11 +71,11 @@ Fonte real do estoque: `inventory_position` (saldo × `cmc` do Omie, sync a cada
 
 Função SQL nova `fin_estoque_giro_valor(p_company text)` (SECURITY DEFINER, mesmo gate de `fin_estimar_estoque_omie`: service_role ou `private.cap_custo_ler`), retorna `valor_giro, valor_fora_giro, valor_sem_classificacao, skus_giro, skus_giro_com_custo, cobertura_pct`.
 
-- **Giro** = `tipo_produto` ∈ {00, 01, 02, 03, 04, 05, 06, 10} (SPED: revenda, MP, embalagem, em processo, acabado, subproduto, intermediário, outros insumos) — **e `99`, a confirmar com o founder (§8)**.
-- **Fora do giro** = 07 (uso e consumo), 08 (imobilizado), 09 (serviço). Mostrado à parte, nunca somado ao PME/NCG.
+- **Fora do giro** = `tipo_produto` ∈ {07 uso e consumo, 08 imobilizado, 09 serviço, 99 outras} **ou** `familia` (trim, sem caixa) ∈ {"uso e consumo", "imobilizado"}. Founder confirmou (2026-10-18): os 08 da colacor são imobilizado; os 99 medidos são pneus, cabos, cafeteira, extintor → fora.
+- **Giro** = tem `tipo_produto` e não é fora do giro (na prática 00, 01, 02, 03, 04, 05, 06, 10). Só o giro entra no PME/NCG.
 - **Sem classificação** = sem `product_id`/`tipo_produto` (todo `servicos`). Fora do numerador, com motivo e R$ mostrado.
 - `fin_estimar_estoque_omie` fica intocada (o diálogo de configuração passa a chamar a nova; a velha sai num PR de limpeza).
-- Uma constante SQL lista os tipos de giro; a RPC da §5.2 usa **a mesma** (função `IMMUTABLE` auxiliar), nunca uma cópia.
+- **Divergência de cadastro** = tipo e família discordam (ex.: tipo 08 com família de produto, como "LIQUIDOS BIO" R$ 13 mil na oben; tipo 00 com família "Uso e Consumo"). A classificação acima decide; a divergência vira flag para o founder conferir no Omie. Uma função SQL auxiliar `IMMUTABLE` (`_fin_estoque_classe(tipo, familia)` → `giro|fora_giro|sem_classificacao`) é a única dona da regra; `fin_estoque_giro_valor` e a RPC da §5.2 a chamam, nunca copiam.
 
 ### 5.1 Engine `fin-cashflow-engine` (edge) — PME e estoque
 
@@ -113,7 +113,7 @@ Consumo e última saída: **ambos** de `v_sku_demanda_efetiva` (venda efetiva + 
 
 SKU que é `sku_codigo_antigo` em `sku_substituicao` aplicada (`consolidar_demanda`): demanda foi transferida ao novo → `acao = null`, `motivo_acao = 'substituido'` (decisão do builder: o saldo do código velho é problema de cadastro, não de giro).
 
-Universo: `inventory_position` da account com `saldo > 0` **e tipo de giro** (§5.0). Fora do giro e sem classificação não entram na lista; aparecem como totais na faixa de resumo.
+Universo: `inventory_position` da account com `saldo > 0`, **todas as classes**, com colunas `classe` (`giro|fora_giro|sem_classificacao`), `tipo_produto`, `familia` e `divergencia_cadastro` (bool). Consumo/dias/ação só são calculados para `giro`; nas demais ficam null. O cliente separa as duas listas.
 
 Colunas por linha:
 
@@ -146,7 +146,8 @@ Desempenho: alvo < 2 s sob `SET ROLE authenticated` + claims do master (medir em
 - `CicloEmpresaCards`: PME passa a aceitar null → "—" + motivo (mesmo tratamento de PMR/PMP); mostra a fonte do estoque ("Omie, agora" / "manual, dd/mm").
 - Seção nova `CicloGiroEstoque.tsx` na `CicloTab`, abaixo dos cards, respeitando o filtro de empresa existente (`cicloEmpresa`; em "all", um bloco por empresa, nunca somados):
   - faixa de resumo (G4) com rótulo "cenário — não é previsão";
-  - tabela top por R$ parado com filtro de ação (`useUrlState`), colunas da §5.2, "—" com tooltip de motivo;
+  - tabela de giro por R$ parado com filtro de ação (`useUrlState`), colunas da §5.2, "—" com tooltip de motivo;
+  - **lista "Fora do giro" (pedido do founder, para acompanhar)**: TODOS os SKUs `fora_giro` e `sem_classificacao` com saldo, por empresa, com tipo, família, saldo, R$ e o selo "conferir cadastro" quando `divergencia_cadastro`; ordenada por R$, recolhida por padrão com o total no cabeçalho;
   - em colacor/colacor_sc: R$ parado aparece, dias/ação "—" com "sem consumo por SKU (NF-e só da Oben)".
 - Sensor: `track('financeiro.ciclo_giro_visto', { empresa })` ao renderizar e `track('financeiro.ciclo_giro_filtro', { acao })` ao filtrar.
 - `manifesto.ts` registra arquivos novos.
@@ -169,10 +170,10 @@ Desempenho: alvo < 2 s sob `SET ROLE authenticated` + claims do master (medir em
 - Última saída pela demanda efetiva, não pela venda direta; SKU substituído sem etiqueta.
 - Estoque sem classificação (`servicos`) fora do numerador, mostrado à parte.
 
-## 8. Decisão do founder
+## 8. Decisões do founder (2026-10-18)
 
-- **Tipo 99 ("outras") é estoque de giro?** (colacor R$ 42 mil, oben R$ 0,2 mil.)
-- **Os 198 itens tipo 08 da colacor (R$ 1,48 mi — máquinas de afiação, dispensador, guilhotina…) são mesmo imobilizado, ou parte é máquina à venda?** Se parte é revenda, o cadastro no Omie está errado e a regra pelo tipo subestima o estoque; a spec segue a classificação do Omie e mostra o R$ fora do giro, para ninguém perder de vista.
+- Tipo 08 da colacor (máquinas etc., R$ 1,48 mi) **é imobilizado** → fora do giro, mas **listado** para acompanhamento (§5.3).
+- Tipo 99: medido, é uso e consumo/imobilizado → fora do giro (regra §5.0).
 
 ## 9. Deploy
 
