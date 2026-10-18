@@ -18,8 +18,11 @@ describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
     // ser gravado — o CI ficou vermelho em CARIMBO_CONTRATO_MUDOU sem remédio possível por PR.
     // As 4 do catálogo tintométrico (PR #2941, 2026-10-11) entraram pelo mesmo caminho: depois do
     // apply (recibo #344 do db:aplicar) e da 2ª testemunha por psql-ro, com o carimbo regravado.
+    // As 2 da margem (FU4-F, #3072/#3084, 2026-10-18) idem: recibos #505 e #506, fechadas por coluna.
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
       'public.deploy_atestacoes',
+      'public.farmer_client_scores',
+      'public.farmer_tactical_plans',
       'public.omie_products',
       'public.product_costs',
       'public.sales_orders',
