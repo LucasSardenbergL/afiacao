@@ -2,7 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { materializarRecebimento } from "./importacao.ts";
-import { portaSupabase } from "./porta.ts";
+import { type ClienteRecebimentos, portaSupabase } from "./porta.ts";
 // `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
 // lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
 // Erro determinístico no lote é o pior caso do retry: repete a mesma falha para sempre.
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
       omie_id_receb: omieIdReceb ? parseInt(omieIdReceb) : null,
     };
 
-    const resultado = await materializarRecebimento(portaSupabase(supabase), {
+    const resultado = await materializarRecebimento(portaSupabase(supabase as unknown as ClienteRecebimentos), {
       chaveAcesso,
       cabecalho,
       itens: itensToInsert,

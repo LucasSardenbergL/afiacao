@@ -2,9 +2,26 @@
 //
 // Separado do `index.ts` (que importa `npm:` e por isso não entra no `deno test --no-remote`)
 // para que a parte que INTERPRETA a resposta do PostgREST — contagem embutida, NULL comprovado,
-// SQLSTATE — seja testável com um cliente falso (`porta_test.ts`). O cliente é `any` pelo mesmo
-// motivo do `index.ts`: tipar o builder do PostgREST aqui seria dívida no edges:typecheck.
+// SQLSTATE — seja testável com um cliente falso (`porta_test.ts`). O cliente entra pelo contrato
+// ESTRUTURAL `ClienteRecebimentos` (padrão da casa: `BancoPostgrest` em `_shared/paginate.ts`), não
+// como `SupabaseClient`: o fake do teste o satisfaz sem importar o npm, e o cliente real entra por
+// cast no call-site (`index.ts`). `any` aqui o ESLint do CI barra (`no-explicit-any`).
 import type { ErroEscrita, LeituraPorChave, PortaRecebimento } from "./importacao.ts";
+
+/** Erro como o PostgREST o devolve: `message` e `code` (SQLSTATE). */
+export type ErroPostgrest = { message?: unknown; code?: unknown };
+export type RespostaPostgrest = { data?: unknown; error: ErroPostgrest | null };
+
+/** O que esta porta usa do supabase-js — e NADA mais. */
+export interface ClienteRecebimentos {
+  from(tabela: string): {
+    select(colunas: string): { eq(coluna: string, valor: string): { maybeSingle(): Promise<RespostaPostgrest> } };
+    insert(linhas: Record<string, unknown> | Record<string, unknown>[]): {
+      select(colunas: string): { single(): Promise<RespostaPostgrest> };
+      then(ok: (resposta: RespostaPostgrest) => unknown): unknown;
+    };
+  };
+}
 
 /** Colunas cujo NULL comprovado é condição para reparar. */
 export const SINAIS_DE_USO = ["conferente_id", "conferido_at", "efetivado_at", "efetivacao_lock_at"] as const;
@@ -39,15 +56,14 @@ export function interpretarCabecalho(data: unknown): LeituraPorChave {
   return { tipo: "existe", id: linha.id, status: linha.status, itens, emUso: emUso(linha) };
 }
 
-function erroDe(error: { message?: unknown; code?: unknown }): ErroEscrita {
+function erroDe(error: ErroPostgrest): ErroEscrita {
   return {
     erro: typeof error.message === "string" ? error.message : "erro sem mensagem",
     code: typeof error.code === "string" ? error.code : null,
   };
 }
 
-// deno-lint-ignore no-explicit-any
-export function portaSupabase(supabase: any): PortaRecebimento {
+export function portaSupabase(supabase: ClienteRecebimentos): PortaRecebimento {
   return {
     async buscarPorChave(chave) {
       const { data, error } = await supabase

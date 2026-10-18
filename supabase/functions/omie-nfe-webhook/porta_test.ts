@@ -2,7 +2,15 @@
 // consome. É a camada onde "ausente vira zero" e "campo faltando vira NULL" nasceriam — e onde o
 // banco falso de importacao_test.ts não enxerga nada, porque recebe a leitura já interpretada.
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/omie-nfe-webhook/
-import { contagemComprovada, emUso, interpretarCabecalho, portaSupabase, SELECT_CABECALHO } from "./porta.ts";
+import {
+  contagemComprovada,
+  emUso,
+  type ErroPostgrest,
+  interpretarCabecalho,
+  portaSupabase,
+  type RespostaPostgrest,
+  SELECT_CABECALHO,
+} from "./porta.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -84,7 +92,7 @@ function projetar(linha: unknown, select: string | undefined): unknown {
 }
 
 /** Cliente supabase-js falso: grava a chamada e responde o que o teste mandar, PROJETADO pelo SELECT. */
-function clienteFalso(resposta: { data?: unknown; error?: unknown }) {
+function clienteFalso(resposta: { data?: unknown; error: ErroPostgrest | null }) {
   const chamadas: { tabela: string; op: string; arg: unknown; select?: string }[] = [];
   const builder = (tabela: string) => {
     const reg: { tabela: string; op: string; arg: unknown; select?: string } = { tabela, op: "", arg: undefined };
@@ -106,7 +114,9 @@ function clienteFalso(resposta: { data?: unknown; error?: unknown }) {
       },
       maybeSingle: () => Promise.resolve({ ...resposta, data: projetar(resposta.data, reg.select) }),
       single: () => Promise.resolve({ ...resposta, data: projetar(resposta.data, reg.select) }),
-      then: (ok: (v: unknown) => unknown) => Promise.resolve(resposta).then(ok),
+      then(ok: (v: RespostaPostgrest) => unknown) {
+        return Promise.resolve(resposta).then(ok);
+      },
     };
     return b;
   };
