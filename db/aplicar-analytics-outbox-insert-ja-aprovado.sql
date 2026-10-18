@@ -190,7 +190,7 @@ BEGIN
      AND p.aprovado_em <  '2026-10-19 00:00:00+00'
      AND NOT EXISTS (SELECT 1 FROM public.analytics_outbox o
                       WHERE o.chave_dedup = 'pcs:' || p.id::text || ':reposicao.sugestao_aprovada');
-  IF v_orfas <> 0 THEN
+  IF v_orfas IS DISTINCT FROM 0 THEN   -- nunca `<>`: NULL <> 0 e NULL e nao dispara (gate verde-por-ausencia)
     RAISE EXCEPTION 'POS FALHOU [BACKFILL]: % pedido(s) importado(s) do portal ainda sem reposicao.sugestao_aprovada na outbox', v_orfas;
   END IF;
   RAISE NOTICE 'analytics_outbox_pedido_compra: INSERT ja aprovado emite criada+aprovada; trigger ativo com a definicao certa; zero importados orfaos';

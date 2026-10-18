@@ -190,5 +190,6 @@ elif [ "$got" = "2" ]; then fbad "F2b corpo sabotado AINDA emite 2 — a asserç
 else fbad "F2b corpo sabotado emitiu [$got], nem 1 nem 2"; fi
 
 echo
-echo "═══ RESULTADO: $PASS verdes, $FAIL vermelhos · falsificação: $FALSIF_OK com dente, $FALSIF_BAD sem ═══"
+echo "=== RESULTADO: $PASS OK, $FAIL FAIL ==="
+echo "=== falsificação: $FALSIF_OK sabotagem(ns) com dente, $FALSIF_BAD sem dente ==="
 [ "$FAIL" -eq 0 ] && [ "$FALSIF_BAD" -eq 0 ]
