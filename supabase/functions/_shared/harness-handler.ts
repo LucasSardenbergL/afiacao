@@ -109,7 +109,7 @@ export function igual(recebido: unknown, esperado: unknown, msg: string): void {
 }
 
 /**
- * Os 4 casos negativos + 1 controle positivo que TODA edge com `authorizeCronOrStaff` + sonda tem
+ * Os 6 casos negativos + 1 controle positivo que TODA edge com `authorizeCronOrStaff` + sonda tem
  * de passar. `url` é a URL pública da edge (só para montar o Request); `versaoEsperada` é o
  * `VERSAO` do `versao.ts` dela — o controle positivo prova que o request ALCANÇOU o handler e que a
  * sonda (único caminho sem efeito) respondeu, senão um 401 vindo de qualquer lugar passaria.
@@ -126,6 +126,12 @@ export function registrarCasosDeGate(
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(corpo),
     });
+
+  // Registrado PRIMEIRO e sem `limpar()`: o contador ainda guarda o que saiu DURANTE o import do
+  // módulo — efeito anterior a qualquer gate ficaria invisível depois da 1ª limpeza (Codex P2 #3).
+  Deno.test(`${nome}: carregar o módulo NÃO faz fetch`, () => {
+    igual(h.chamadas.map((c) => c.url), [], "efeito no topo do módulo é efeito sem gate");
+  });
 
   Deno.test(`${nome}: sem credencial → 401 e ZERO fetch`, async () => {
     h.limpar();
@@ -166,6 +172,16 @@ export function registrarCasosDeGate(
       "customer: só user + user_roles podem sair; nada de dado/Omie",
     );
     igual(h.chamadasForaDoGate().length, 0, "zero efeito fora do gate");
+  });
+
+  // Sem isto, mover a sonda para ANTES do gate manteria os 5 resultados (Codex P2 #2): o probe
+  // tem de ser recusado sem credencial exatamente como o fluxo real.
+  Deno.test(`${nome}: {probe:true} SEM credencial → 401 e ZERO fetch (sonda atrás do gate)`, async () => {
+    h.limpar();
+    const r = await h.handler()(post({}, { probe: true }));
+    igual(r.status, 401, "status");
+    await r.body?.cancel();
+    igual(h.chamadas.map((c) => c.url), [], "a sonda não é porta de saída do gate");
   });
 
   Deno.test(`${nome}: CONTROLE — x-cron-secret válido + {probe:true} → 200 com VERSAO e ZERO fetch`, async () => {
