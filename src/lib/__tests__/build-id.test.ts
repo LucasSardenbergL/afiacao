@@ -6,7 +6,7 @@
  * project e é local ao arquivo, então não vira ímã de conflito entre worktrees.
  */
 import { describe, it, expect } from 'vitest';
-import { extrairBuildId, resolverBuildId, BUILD_ID_DESCONHECIDO } from '@/lib/build-id';
+import { BUILD_ID_DESCONHECIDO, extrairBuildId, extrairCommitEm, resolverBuildId, resolverCommit } from '@/lib/build-id';
 
 describe('extrairBuildId', () => {
   it('extrai o hash do chunk do entry', () => {
@@ -52,5 +52,32 @@ describe('resolverBuildId', () => {
 
   it('não explode sem document (SSR/worker)', () => {
     expect(resolverBuildId(null)).toBe(BUILD_ID_DESCONHECIDO);
+  });
+});
+
+describe('commit do build (app-commit-sha / app-commit-em) — a versão igual no preview e no Publish', () => {
+  it('extrairCommitEm lê a data do commit do HTML como texto; ilegível/ausente → null', () => {
+    expect(extrairCommitEm('<meta name="app-commit-em" content="2026-10-18T19:02:11.000Z">')).toBe(
+      '2026-10-18T19:02:11.000Z',
+    );
+    expect(extrairCommitEm('<meta name="app-commit-em" content="ontem">')).toBeNull();
+    expect(extrairCommitEm('<meta name="app-build-em" content="2026-10-18T19:06:02.000Z">')).toBeNull();
+  });
+
+  it('resolverCommit: sem documento ou sem as metas (builder sem .git) → { null, null }, nunca "dev"', () => {
+    expect(resolverCommit(null)).toEqual({ sha: null, em: null });
+    const vazio = { querySelector: () => null } as unknown as Document;
+    expect(resolverCommit(vazio)).toEqual({ sha: null, em: null });
+  });
+
+  it('resolverCommit lê as duas metas do documento carregado', () => {
+    const metas: Record<string, string> = {
+      'meta[name="app-commit-sha"]': '0153e797',
+      'meta[name="app-commit-em"]': '2026-10-18T19:02:11.000Z',
+    };
+    const doc = {
+      querySelector: (sel: string) => (sel in metas ? { getAttribute: () => metas[sel] } : null),
+    } as unknown as Document;
+    expect(resolverCommit(doc)).toEqual({ sha: '0153e797', em: '2026-10-18T19:02:11.000Z' });
   });
 });
