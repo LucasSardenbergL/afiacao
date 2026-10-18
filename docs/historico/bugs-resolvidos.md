@@ -1139,5 +1139,14 @@ Descartado: tabela dedicada de itens do recebimento (migration; a listagem já �
 **Histórico (maio–julho) fica FORA dos 30 dias:** catch-up único com janela explícita, sem passar o laço
 principal (que sobrescreve) pelo período — `{"empresa":"OBEN","dias":1,"revisita_de":"01/05/2026",
 "revisita_ate":"31/07/2026"}` (teto 120 dias), depois do deploy da v1.7.
+**No ar (2026-10-18):** v1.7 + cron-diario v1.1 publicados às ~12:20 UTC. O 1º catch-up (12:49) achou
+um bug: a janela explícita chegava à Omie SEM datas (`{de, ate}` lido como `{dataDe, dataAte}`; o
+TS2339 era "dívida tolerada" do `edges:typecheck`). Listou 550 documentos, estourou o tempo e, pela
+regra "listagem incompleta não escreve", **não gravou nada**. A v1.8 corrigiu (entrou na `main` por
+push direto, sem PR; ver `docs/agent/worktrees.md` §`--no-track`). O catch-up de 13:20 com a v1.8
+listou 84 documentos de mai–jul em 31 s, com 0 erros: **2 pedidos Sayerlack ganharam NF** (997 ↔
+000935555, 1072 ↔ 000940056) e **4 NFs de outros fornecedores**, nunca listadas, entraram como
+órfãs. Dos 13 pedidos do backtest, 1014, 1032 e 1049 foram cancelados e o 1005 foi substituído pelo
+1010: não têm NF por desenho.
 **Lição:** "processei esta NF" não é "terminei esta NF" — enquanto o outro lado do casamento pode
 nascer depois, a NF precisa de uma janela de revisita, e a fonte barata (a listagem) costuma bastar.
