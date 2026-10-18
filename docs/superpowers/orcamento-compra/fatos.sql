@@ -65,7 +65,10 @@ snaps as (
 disparados as (
   select p.id, p.valor_total, coalesce(p.horario_disparo_real, p.horario_geracao) as momento,
          array_remove(array_agg(distinct t.nfe_numero::text), null) as nfs,
-         p.omie_pedido_compra_id as omie_pedido, p.portal_protocolo as protocolo
+         p.omie_pedido_compra_id as omie_pedido, p.portal_protocolo as protocolo,
+         -- R59: encerrado no Omie HOJE (coluna de 1 writer, passada de encerrados do omie-sync-pedidos-compra);
+         -- sem linha no tracking = não encerrado (fica no caixa: o lado conservador)
+         coalesce(bool_or(t.encerrado_omie_em is not null), false) as encerrado_omie
   from pedido_compra_sugerido p
   left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id
   -- R38: 270 dias = 180 de janela de compromisso antes do ciclo mais antigo (hoje − 90)
@@ -138,7 +141,9 @@ custo as (
   from empresa_configuracao_custos where upper(empresa) = 'OBEN'
 )
 select 'json|' || jsonb_build_object(
-  'meta', json_build_object('gerado_em', now(), 'hoje', (now() at time zone 'America/Sao_Paulo')::date),
+  'meta', json_build_object('gerado_em', now(), 'hoje', (now() at time zone 'America/Sao_Paulo')::date,
+    -- R59: última passada LIMPA de encerrados (null = nunca concluiu → o preVoo recusa)
+    'encerrados_verificado_em', (select last_sync_at from sync_state where entity_type = 'pedidos_compra_encerrados' and account = 'oben')),
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),
