@@ -119,7 +119,10 @@ ALTER TABLE public.nfe_recebimento_itens ENABLE ROW LEVEL SECURITY;
 -- ACL de prod para o papel das edges (default do Supabase: service_role tem tudo; BYPASSRLS vem do stub).
 GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+-- DEFAULT PRIVILEGES como na prod (Supabase): tabela nova nasce com ALL para anon/authenticated/service_role.
+-- É o que fez o ensaio do db:aplicar abortar em A11 antes de o REVOKE entrar na migration — sem isto aqui,
+-- a prova passava sem exercitar o REVOKE de authenticated.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
 INSERT INTO public.warehouses (id, code) VALUES ('00000000-0000-0000-0000-00000000000b','OB'), ('00000000-0000-0000-0000-00000000000c','CC');
 -- Construtores de payload (só do harness): cabeçalho e N itens 1..N (codigo P<i>, quantidade 10*i).
 CREATE FUNCTION public.t_cab(chave text, wh uuid DEFAULT '00000000-0000-0000-0000-00000000000b', receb bigint DEFAULT 777) RETURNS jsonb LANGUAGE sql

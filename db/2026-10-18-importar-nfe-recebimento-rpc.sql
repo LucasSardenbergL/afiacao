@@ -104,12 +104,15 @@ COMMENT ON TABLE public.nfe_importacao_falhas IS
   'NF-e cuja importação (importar_nfe_recebimento) falhou por erro de DADO (NFE0x, tipo que não cabe). Escrita pelas edges fora da transação abortada; apagada pela RPC no sucesso. tentativas ≥ 3 estaciona a chave na triagem do cron. 2026-10-18.';
 
 ALTER TABLE public.nfe_importacao_falhas ENABLE ROW LEVEL SECURITY;
--- Privilégio de TABELA explícito (policy não concede privilégio; o default do criador varia por caminho):
--- as edges (service_role) escrevem, staff (authenticated, filtrado por policy) lê, anon nada.
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.nfe_importacao_falhas TO service_role;
-GRANT SELECT ON public.nfe_importacao_falhas TO authenticated;
-REVOKE ALL ON public.nfe_importacao_falhas FROM anon;
+-- Privilégio de TABELA explícito (policy não concede privilégio). Na prod a tabela NASCE com os
+-- DEFAULT PRIVILEGES do Supabase (anon/authenticated/service_role com ALL) — medido no ensaio do
+-- db:aplicar (A11 abortou): por isso REVOKE ALL antes do GRANT estreito. As edges (service_role)
+-- escrevem, staff (authenticated, filtrado por policy) só lê, anon nada.
 REVOKE ALL ON public.nfe_importacao_falhas FROM PUBLIC;
+REVOKE ALL ON public.nfe_importacao_falhas FROM anon;
+REVOKE ALL ON public.nfe_importacao_falhas FROM authenticated;
+GRANT SELECT ON public.nfe_importacao_falhas TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.nfe_importacao_falhas TO service_role;
 
 -- Mesmo molde das policies de nfe_recebimentos (medido em prod): service_role tudo, staff lê.
 DROP POLICY IF EXISTS "Service role full access nfe_importacao_falhas" ON public.nfe_importacao_falhas;
