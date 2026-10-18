@@ -11,7 +11,7 @@ import { avaliarPagina, proximoTotalPaginas } from "../_shared/omie-paginacao.ts
 import { type CabecalhoRecebimentoRow, mapearCabecalho, type OmieCabecRecebimento } from "./cabecalho.ts";
 import { normalizarChaveAcesso } from "./chave.ts";
 import { estadoNoOmie } from "./estado.ts";
-import { type DesfechoImportacao, type ErroRpc } from "../_shared/nfe-importacao.ts";
+import { type DesfechoImportacao, erroDeLote, registravel, validarLote } from "../_shared/nfe-importacao.ts";
 import { type ItemRecebimentoRow, mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import {
   type ContagemArmazem,
@@ -47,8 +47,8 @@ export interface DepsRodada {
   jaImportados(ids: number[], chaves: string[]): Promise<JaImportados>;
   /** A RPC transacional `importar_nfe_recebimento`: cabeçalho + itens numa chamada. Nunca lança. */
   importar(cabecalho: CabecalhoRecebimentoRow, itens: ItemRecebimentoRow[]): Promise<DesfechoImportacao>;
-  /** Registro durável da falha de DADO, fora da transação abortada. Tentativas acumuladas, ou null. */
-  registrarFalha(chave: string, erro: ErroRpc, omieIdReceb: number): Promise<number | null>;
+  /** Registro durável (falha de DADO ou impedimento), fora da transação abortada. Tentativas acumuladas, ou null. */
+  registrarFalha(chave: string, code: string, mensagem: string, omieIdReceb: number): Promise<number | null>;
 }
 
 /** O que aconteceu com a NF-e que recebeu a consulta da rodada. */
@@ -199,10 +199,20 @@ async function gravar(
   // UMA transação (RPC): cabeçalho + itens entram juntos ou nada entra. Antes, o lote que falhava
   // deixava o cabeçalho SEM itens e a rodada seguinte o pulava como "já importada" (foi assim que o
   // NCM pontuado zerou os itens de prod em silêncio, 2026-09-26).
-  const d = await deps.importar(
-    mapearCabecalho(cabec, warehouseId, chave, nIdReceb),
-    mapearItensRecebimento(detalhe.itensRecebimento ?? []),
-  );
+  // Estrutura do lote ANTES do banco (o mapper fabrica "Item"/quantidade 0 de entrada vazia, e o DDL
+  // aceita): lote inválido é erro de DADO aqui mesmo, sem gastar a RPC — e vai ao ledger.
+  const itens = mapearItensRecebimento(detalhe.itensRecebimento ?? []);
+  const motivoLote = validarLote(itens);
+  const d = motivoLote !== null
+    ? erroDeLote(motivoLote)
+    : await deps.importar(mapearCabecalho(cabec, warehouseId, chave, nIdReceb), itens);
+  // Erro de DADO e IMPEDIMENTO (bloqueada/divergente) vão ao ledger durável, FORA da transação: com
+  // rollback total a NF-e inválida voltaria a parecer inédita, e um conflito permanente (cabeçalho de
+  // OUTRO armazém com a mesma chave → divergente toda rodada) disputaria a única consulta da rodada
+  // para sempre. tentativas ≥ 3 estaciona a chave na triagem sem esconder a NF-e.
+  const registro = registravel(d);
+  const tentativas = registro ? await deps.registrarFalha(chave, registro.code, registro.mensagem, nIdReceb) : null;
+  const ledger = `registrada em nfe_importacao_falhas (tentativas: ${tentativas ?? "NÃO registrou"})`;
   switch (d.tipo) {
     case "importada":
       return "importada";
@@ -212,20 +222,14 @@ async function gravar(
       // Outro writer (webhook, botão) gravou entre a triagem e aqui — o mesmo conjunto de itens.
       return "duplicada_por_chave";
     case "bloqueada":
-      erros.push(`NF-e ${numero}: cabeçalho ${d.id} sem itens e não reparável (${d.motivo}) — nada gravado`);
+      erros.push(`NF-e ${numero}: cabeçalho ${d.id} sem itens e não reparável (${d.motivo}) — nada gravado — ${ledger}`);
       return "bloqueada";
     case "divergente":
-      erros.push(`NF-e ${numero}: cabeçalho ${d.id} com itens divergentes do Omie (${d.motivo}: ${d.itens} gravados, ${d.esperados} no Omie) — nada gravado`);
+      erros.push(`NF-e ${numero}: cabeçalho ${d.id} com itens divergentes do Omie (${d.motivo}: ${d.itens} gravados, ${d.esperados} no Omie) — nada gravado — ${ledger}`);
       return "divergente";
     case "erro": {
       if (d.classe === "dado") {
-        // Com rollback total a NF-e inválida voltaria a parecer inédita e a disputar a única consulta
-        // da rodada para sempre: o registro durável é o que faz a fila andar (tentativas ≥ 3 estaciona
-        // a chave na triagem) sem esconder a NF-e.
-        const tentativas = await deps.registrarFalha(chave, d, nIdReceb);
-        erros.push(
-          `NF-e ${numero}: rejeitada pelo banco (${d.code}) — ${d.mensagem} — registrada em nfe_importacao_falhas (tentativas: ${tentativas ?? "NÃO registrou"})`,
-        );
+        erros.push(`NF-e ${numero}: rejeitada pelo banco (${d.code}) — ${d.mensagem} — ${ledger}`);
         return "falha_dado";
       }
       if (d.classe === "rpc_ausente") {

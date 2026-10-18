@@ -582,4 +582,4 @@ db/test-tint-promote-fantasma.sh            11
 # A prova do #3054 (db/test-tint-reaplicar-snapshot.sh) saiu daqui junto com o cron, como o
 # comentário dela pedia; o arquivo e a migration seguem no repo como histórico aplicado.
 db/test-tint-remove-cron-reaplicar.sh       3
-db/test-importar-nfe-recebimento.sh          65  falsificar=8
+db/test-importar-nfe-recebimento.sh          75  falsificar=9

@@ -8,6 +8,7 @@ import {
   type ClienteRpc,
   importarViaRpc,
   registrarFalhaImportacao,
+  registravel,
   SELECT_TRIAGEM,
   TENTATIVAS_PARA_ESTACIONAR,
   triarCabecalho,
@@ -138,14 +139,16 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
       // triagem o pulava pela simples existência, e o reparo era inalcançável (parecer Codex).
       const idsJa = new Set<number>();
       const chavesJa = new Set<string>();
+      // `omie_id_receb` só vale DENTRO da conta: um id de OB nunca marca uma NF-e de CC como importada
+      // (parecer adversarial). Linha de outro armazém só contribui com a CHAVE (que é global).
       const classificar = (linhas: unknown[]) => {
         for (const l of linhas) {
           const t = triarCabecalho(l);
           // Contagem ilegível é ERRO (nenhuma consulta é gasta nesta rodada), nunca "sem itens".
           if (t.tipo === "erro") throw new Error(`triagem de nfe_recebimentos: ${t.mensagem}`);
           if (t.tipo === "reparavel") continue;
-          const r = l as { omie_id_receb: number | string | null; chave_acesso: string | null };
-          if (r.omie_id_receb !== null) idsJa.add(Number(r.omie_id_receb));
+          const r = l as { omie_id_receb: number | string | null; chave_acesso: string | null; warehouse_id: string | null };
+          if (r.omie_id_receb !== null && r.warehouse_id === warehouseId) idsJa.add(Number(r.omie_id_receb));
           if (r.chave_acesso) chavesJa.add(r.chave_acesso);
         }
       };
@@ -166,6 +169,7 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
         const { data: estacionadas, error: estacErr } = await supabase
           .from("nfe_importacao_falhas")
           .select("chave_acesso, omie_id_receb")
+          .eq("warehouse_id", warehouseId)
           .in("omie_id_receb", ids)
           .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
         if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
@@ -195,8 +199,8 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
         itens: itens as unknown as Record<string, unknown>[],
         origem: "sync",
       }),
-    registrarFalha: (chave, erro, omieIdReceb) =>
-      registrarFalhaImportacao(supabase as unknown as ClienteRpc, { chaveAcesso: chave, origem: "sync", erro, warehouseId, omieIdReceb }),
+    registrarFalha: (chave, code, mensagem, omieIdReceb) =>
+      registrarFalhaImportacao(supabase as unknown as ClienteRpc, { chaveAcesso: chave, origem: "sync", code, mensagem, warehouseId, omieIdReceb }),
   };
 }
 
@@ -234,8 +238,18 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
   if (linha) {
     const t = triarCabecalho(linha);
     if (t.tipo === "erro") return responder({ status: "erro_gravacao", error: t.mensagem }, 500);
-    if (t.tipo === "completo") {
+    if (t.tipo === "completo" && t.itens > 0) {
       return responder({ status: "ja_importada", nfe_recebimento_id: (linha as { id: string }).id, itens: t.itens }, 200);
+    }
+    if (t.tipo === "completo") {
+      // Sem itens e NÃO reparável (efetivado/em uso): "já importada" seria certificar o vazio.
+      const l = linha as { id: string; status: string };
+      return responder({
+        status: "bloqueada",
+        nfe_recebimento_id: l.id,
+        itens: 0,
+        error: `Esta NF-e já está no app SEM itens e não pode ser completada (status ${l.status}) — avise a equipe`,
+      }, 409);
     }
   }
 
@@ -305,6 +319,18 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
     itens: mapearItensRecebimento(detalhe.itensRecebimento ?? []) as unknown as Record<string, unknown>[],
     origem: "importacao_chave",
   });
+  // Impedimento (bloqueada/divergente) e erro de dado ficam no ledger durável — fora da transação.
+  const registro = registravel(d);
+  const tentativas = registro
+    ? await registrarFalhaImportacao(cliente, {
+      chaveAcesso: chave,
+      origem: "importacao_chave",
+      code: registro.code,
+      mensagem: registro.mensagem,
+      warehouseId: wh.id,
+      omieIdReceb: Number(avaliacao.nIdReceb),
+    })
+    : null;
   switch (d.tipo) {
     case "importada":
     case "reparada":
@@ -327,13 +353,6 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
       }, 409);
     case "erro": {
       if (d.classe === "dado") {
-        const tentativas = await registrarFalhaImportacao(cliente, {
-          chaveAcesso: chave,
-          origem: "importacao_chave",
-          erro: d,
-          warehouseId: wh.id,
-          omieIdReceb: Number(avaliacao.nIdReceb),
-        });
         return responder({
           status: "erro_gravacao",
           error: `o banco rejeitou a NF-e (${d.code}): ${d.mensagem} — registrada em nfe_importacao_falhas (tentativas: ${tentativas ?? "não registrou"})`,

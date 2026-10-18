@@ -5,8 +5,9 @@
 // os itens estão de fato gravados (importada/reparada/ja_importada); cabeçalho sem itens que não se
 // pode completar (bloqueada) ou itens diferentes (divergente) são 409 — o Omie tenta 3× e manda à
 // DLQ por 5 dias, onde o evento fica reprocessável em vez de sumir. Erro de DADO (NFE0x, tipo que
-// não cabe) é 422 e tem registro durável em `nfe_importacao_falhas`: reenviar o mesmo payload não
-// conserta, e o log sozinho não é recuperação. RPC ausente é 500 com o motivo escrito: deploy da
+// não cabe) é 422; 409 e 422 têm registro durável em `nfe_importacao_falhas` (`tentativas_registradas`
+// no corpo; null = o ledger não gravou): reenviar o mesmo payload não conserta, e o log sozinho não é
+// recuperação. RPC ausente é 500 com o motivo escrito: deploy da
 // edge antes da migration — fail-closed e barulhento, nunca o caminho antigo em silêncio.
 import type { DesfechoImportacao } from "../_shared/nfe-importacao.ts";
 
@@ -40,7 +41,7 @@ export function responderDesfecho(d: DesfechoImportacao, chave: string, tentativ
     case "bloqueada":
       return {
         status: 409,
-        corpo: { error: "NF-e já cadastrada sem itens e não reparável — reenvie", nfe_recebimento_id: d.id, details: d.motivo },
+        corpo: { error: "NF-e já cadastrada sem itens e não reparável — reenvie", nfe_recebimento_id: d.id, details: d.motivo, tentativas_registradas: tentativas },
         log: { nivel: "error", texto: `Recebimento sem itens e não reparável: ${d.id} (${d.motivo})` },
       };
     case "divergente":
@@ -52,6 +53,7 @@ export function responderDesfecho(d: DesfechoImportacao, chave: string, tentativ
           itens_count: d.itens,
           itens_payload: d.esperados,
           details: d.motivo,
+          tentativas_registradas: tentativas,
         },
         log: { nivel: "error", texto: `Itens divergentes para ${chave}: ${d.itens} gravados, ${d.esperados} no payload (${d.motivo})` },
       };

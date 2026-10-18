@@ -9,18 +9,41 @@
 | `nfe_recebimentos.origem` (+ CHECK) | denominador "cabeçalhos criados pelo webhook / sync / botão". NULL = antes do sensor (sem backfill) |
 | `nfe_recebimentos.reparada_origem` / `reparada_em` | quem COMPLETOU um cabeçalho que ficou sem itens (a origem de criação não muda) |
 | `UNIQUE (nfe_recebimento_id, sequencia)` em `nfe_recebimento_itens` | 2 lotes do mesmo recebimento nunca coexistem (0 ou N, nunca 2N) — defesa atrás do lock |
-| `nfe_importacao_falhas` (RLS: service_role tudo, staff lê) | registro DURÁVEL da falha de DADO, fora da transação abortada; a RPC apaga no sucesso; ≥3 tentativas estaciona a chave na triagem do cron |
-| `importar_nfe_recebimento(jsonb, jsonb, text)` | a RPC: lock consultivo por chave + `FOR UPDATE` + cabeçalho e itens no mesmo commit. Só `service_role` executa |
+| `nfe_importacao_falhas` (RLS: service_role tudo, staff lê) | registro DURÁVEL de falha de DADO e de IMPEDIMENTO (`bloqueada`/`divergente`), fora da transação abortada; a RPC apaga no sucesso; ≥3 tentativas estaciona a chave na triagem do cron |
+| `importar_nfe_recebimento(jsonb, jsonb, text)` | a RPC: lock consultivo por chave + `FOR UPDATE` + cabeçalho e itens no mesmo commit; lote vazio nunca materializa nem certifica (NFE03); compatibilidade de armazém/recebimento antes de qualquer sucesso. Só `service_role` executa |
 | `nfe_importacao_falha_registrar(…)` | `tentativas + 1` atômico (um upsert do PostgREST não incrementa). Só `service_role` |
 
 ## ⚠️ ORDEM — as etapas irreversíveis
 
 ```
-(1) migration no banco  →  (2) validação psql-ro ✅  →  (3) NOTIFY pgrst  →  (4) deploy das DUAS edges na MESMA leva  →  (5) validação ponta a ponta
+(0) DRENAR os writers antigos  →  (1) migration  →  (2) validação psql-ro ✅  →  (3) NOTIFY pgrst  →  (4) deploy das DUAS edges  →  (5) RELIGAR o cron + validação ponta a ponta
 ```
 
 - **Edge nova sem a migration** responde **500 nomeando a migration** (webhook) / `errors[]` do cron e `erro_gravacao` no botão — fail-closed e barulhento; **não há fallback** para o caminho antigo de 2 requisições (seria um 2º writer em silêncio). Por isso a migration vem PRIMEIRO.
-- **Migration sem as edges novas** é inócua para o bundle antigo (coluna nova é nullable; a UNIQUE só barra o que já era defeito). A janela de versões mistas tem UM caso que importa, apontado pelo Codex: o **botão antigo** (bundle v1.4 da sync) cria o cabeçalho, outro writer novo o repara via RPC, o lote antigo colide na UNIQUE e o botão antigo **apaga o cabeçalho por compensação — em cascata, apaga os itens certos**. Exige webhook com tráfego (hoje 0/72) **e** um clique no botão no mesmo segundo. Mitigação: as duas edges saem na mesma leva, logo depois da migration; não deixe o passo (4) para outro dia.
+- **Versões mistas** (bundle antigo rodando com a migration aplicada): o caso que importa, apontado pelos 2 pareceres do Codex — o **botão antigo** cria o cabeçalho (1ª requisição), um writer NOVO o repara via RPC e commita, o lote antigo colide na UNIQUE e a compensação antiga **apaga o cabeçalho — em cascata, apaga os itens certos**. "Mesma leva" só encurta a janela; **uma execução antiga em andamento atravessa a publicação**. Daí o passo (0): drenar de forma VERIFICÁVEL.
+
+## (0) Drenar os writers antigos (verificável)
+
+1. **Pausar o cron** da sync (`omie-nfe-recebimento-import-1h`, `50 10-22 * * 1-6`) — 🟣 SQL Editor:
+
+```sql
+SELECT cron.alter_job(jobid, active := false) FROM cron.job WHERE jobname = 'omie-nfe-recebimento-import-1h';
+SELECT jobname, active FROM cron.job WHERE jobname = 'omie-nfe-recebimento-import-1h';  -- esperado: active = false
+```
+
+2. **Esperar a última rodada TERMINAR** (a edge dura segundos; o teto é o `timeout_milliseconds` do job). Prova positiva de que não há execução em voo: a última resposta HTTP do cron já chegou:
+
+```sql
+SELECT r.created, r.status_code, left(r.content::text, 80)
+FROM net._http_response r
+WHERE r.content::text LIKE '%por_armazem%'
+ORDER BY r.created DESC LIMIT 1;   -- esperado: created < agora - 2 min (a rodada que o cron pausado disparou já respondeu)
+```
+
+3. **Botão "Importar NF-e"**: avise a equipe para não usá-lo até o passo (5). Prova de que ninguém usou na janela (rode depois do deploy): `SELECT count(*) FROM public.nfe_recebimentos WHERE created_at > '<hora do passo 0 em UTC>' AND origem IS NULL;` → esperado `0` (cabeçalho com `origem` NULL depois da migration = bundle antigo escreveu).
+4. **Webhook**: hoje sem chamador (0/72). Se um dia o Omie estiver apontado para ele, a drenagem é desligar o webhook no painel do Omie antes do passo (1) e religar no (5) — os eventos ficam na fila/DLQ dele.
+
+Só depois: (1) migration.
 
 ## (1) Aplicar a migration
 
@@ -63,7 +86,14 @@ NOTIFY pgrst, 'reload schema';
 
 Quem decide é o ledger: `bun run pendencias:deploy` lista `omie-nfe-webhook` (`v1.4-rpc-transacional`) e `omie-nfe-recebimento-sync` (`v1.5-rpc-transacional`). Caminho de deploy e sonda: [`docs/agent/deploy.md`](../agent/deploy.md). Sondas esperadas: `{"probe":true}` → `v1.4-rpc-transacional` / `v1.5-rpc-transacional`.
 
-## (5) Validação ponta a ponta (com denominador)
+## (5) Religar o cron e validar ponta a ponta (com denominador)
+
+🟣 SQL Editor, depois que as DUAS edges respondem a sonda nova:
+
+```sql
+SELECT cron.alter_job(jobid, active := true) FROM cron.job WHERE jobname = 'omie-nfe-recebimento-import-1h';
+SELECT jobname, active FROM cron.job WHERE jobname = 'omie-nfe-recebimento-import-1h';  -- esperado: active = true
+```
 
 1. **Sem escrita:** em `/recebimento` → "Importar NF-e" com a chave de uma NF-e **já importada com itens** → toast "Esta NF-e já foi importada (N itens)". Prova que a triagem lê (não prova a RPC).
 2. **Com escrita, consertando um legado:** as 4 NF-e `pendente` sem itens e sem sinais de uso que a prod tem hoje (medido 2026-10-18) são exatamente o que a RPC repara. Liste-as e importe UMA pelo botão:
@@ -95,4 +125,4 @@ WHERE NOT EXISTS (SELECT 1 FROM public.nfe_recebimento_itens i WHERE i.nfe_receb
 
 ## Rollback
 
-As edges voltam ao bundle anterior pelo caminho normal de deploy; a migration **fica** (é aditiva: coluna nullable, UNIQUE que só barra defeito, tabela e funções que o bundle antigo não chama). Não há `DROP` neste runbook — se um dia for preciso, é DDL destrutivo e vai pelo SQL Editor do founder.
+As edges voltam ao bundle anterior pelo caminho normal de deploy — **com a mesma drenagem do passo (0)** (cron pausado, botão parado), porque a coexistência bundle-antigo × migration tem a janela do DELETE em cascata descrita acima. A migration **fica** (é aditiva: coluna nullable, UNIQUE que só barra defeito, tabela e funções que o bundle antigo não chama). Não há `DROP` neste runbook — se um dia for preciso, é DDL destrutivo e vai pelo SQL Editor do founder.

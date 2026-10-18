@@ -23,7 +23,8 @@ const WH = "wh-ob";
 /** Chave de 44 dígitos que termina no id — uma por NF-e do teste. */
 const chave = (id: number) => `3126091234567800019055001000012345${String(id).padStart(10, "0")}`;
 const SEM_REGISTROS = { faultstring: "ERROR: Não existem registros para a página [1]!", faultcode: "SOAP-ENV:Client-5113" };
-const ITENS = [{}, {}, {}] as unknown as OmieRecebimentoItem[];
+/** 3 itens SÃOS (quantidade > 0): o lote passa em `validarLote` antes de chegar à RPC falsa. */
+const ITENS = [1, 2, 3].map((q) => ({ itensCabec: { nQtdeNFe: q } })) as unknown as OmieRecebimentoItem[];
 
 function reg(id: number, info?: { cRecebido?: string; cCancelada?: string }, ch: string | null = chave(id)): RegistroListagem {
   return { cabec: { nIdReceb: id, cChaveNFe: ch }, ...(info ? { infoCadastro: info } : {}) };
@@ -88,8 +89,8 @@ function falsos(c: Cenario) {
       if (c.importarLanca) return Promise.reject(new Error("conexão encerrada"));
       return Promise.resolve(c.importarDesfecho ?? { tipo: "importada", id: `nfe-${cabecalho.omie_id_receb}`, itens: itens.length });
     },
-    registrarFalha: (chave, erro, omieIdReceb) => {
-      chamadas.falhas.push([chave, erro.code, omieIdReceb]);
+    registrarFalha: (chave, code, _mensagem, omieIdReceb) => {
+      chamadas.falhas.push([chave, code, omieIdReceb]);
       return Promise.resolve(c.falhaTentativas === undefined ? 1 : c.falhaTentativas);
     },
   };
@@ -333,13 +334,25 @@ Deno.test("bloqueada e divergente: não importam, vão a errors[] com o id do ca
     detalhes: { 910: detalhe(910) },
     importarDesfecho: { tipo: "bloqueada", id: "nfe-910", itens: 0, motivo: "status efetivado" },
   });
-  assertEquals([b.importadas, b.resumo.consulta, b.erros], [0, { nIdReceb: 910, desfecho: "bloqueada" }, ["NF-e 910: cabeçalho nfe-910 sem itens e não reparável (status efetivado) — nada gravado"]]);
+  assertEquals([b.importadas, b.resumo.consulta, b.erros], [0, { nIdReceb: 910, desfecho: "bloqueada" }, ["NF-e 910: cabeçalho nfe-910 sem itens e não reparável (status efetivado) — nada gravado — registrada em nfe_importacao_falhas (tentativas: 1)"]]);
+  assertEquals(b.chamadas.falhas, [[chave(910), "BLOQUEADA", 910]], "impedimento vai ao ledger: sem isso o conflito disputa a consulta para sempre");
   const d = await rodar({
     paginas: [pagina([reg(911, PENDENTE)])],
     detalhes: { 911: detalhe(911) },
     importarDesfecho: { tipo: "divergente", id: "nfe-911", itens: 2, esperados: 3, motivo: "cardinalidade" },
   });
-  assertEquals([d.importadas, d.resumo.consulta, d.erros], [0, { nIdReceb: 911, desfecho: "divergente" }, ["NF-e 911: cabeçalho nfe-911 com itens divergentes do Omie (cardinalidade: 2 gravados, 3 no Omie) — nada gravado"]]);
+  assertEquals([d.importadas, d.resumo.consulta, d.erros], [0, { nIdReceb: 911, desfecho: "divergente" }, ["NF-e 911: cabeçalho nfe-911 com itens divergentes do Omie (cardinalidade: 2 gravados, 3 no Omie) — nada gravado — registrada em nfe_importacao_falhas (tentativas: 1)"]]);
+  assertEquals(d.chamadas.falhas, [[chave(911), "DIVERGENTE", 911]]);
+});
+
+Deno.test("lote que o mapper fabricaria inválido (quantidade 0) NÃO chega à RPC: falha_dado com NFE01 no ledger", async () => {
+  const ruim = [{ itensCabec: { nQtdeNFe: 0 } }] as unknown as OmieRecebimentoItem[];
+  const r = await rodar({
+    paginas: [pagina([reg(912, PENDENTE)])],
+    detalhes: { 912: { cabec: { nIdReceb: 912, cChaveNFe: chave(912), cNumeroNFe: "912" }, infoCadastro: PENDENTE, itensRecebimento: ruim } },
+  });
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.chamadas.falhas], [{ nIdReceb: 912, desfecho: "falha_dado" }, 0, [[chave(912), "NFE01", 912]]]);
+  assertEquals(r.erros, ["NF-e 912: rejeitada pelo banco (NFE01) — lote inválido: item #1: quantidade_nfe inválida (0) — registrada em nfe_importacao_falhas (tentativas: 1)"]);
 });
 
 Deno.test("exceção na gravação não leva o resumo nem os pulos já contados", async () => {

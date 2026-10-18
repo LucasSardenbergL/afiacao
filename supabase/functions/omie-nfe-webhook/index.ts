@@ -1,7 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { type ClienteRpc, importarViaRpc, registrarFalhaImportacao } from "../_shared/nfe-importacao.ts";
+import { type ClienteRpc, erroDeLote, importarViaRpc, registrarFalhaImportacao, registravel } from "../_shared/nfe-importacao.ts";
+import { normalizarChaveAcesso } from "../omie-nfe-recebimento-sync/chave.ts";
 import { responderDesfecho } from "./resposta.ts";
 // `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
 // lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
@@ -99,12 +100,14 @@ Deno.serve(async (req) => {
     // LGPD) — o log da edge não é lugar de dado pessoal.
     console.log("[omie-nfe-webhook] Payload recebido, campos:", Object.keys(payload).join(","));
 
-    const chaveAcesso: string | undefined =
-      payload.chave_acesso ?? payload.chNFe ?? payload.nfe?.chave_acesso ?? payload.nfe?.chNFe;
-
+    // 44 dígitos, espaços fora (a RPC e o ledger exigem a forma exata). Sem chave válida não há
+    // identidade para registrar: 400, e o log diz que faltou.
+    const chaveAcesso = normalizarChaveAcesso(
+      payload.chave_acesso ?? payload.chNFe ?? payload.nfe?.chave_acesso ?? payload.nfe?.chNFe,
+    );
     if (!chaveAcesso) {
-      console.error("[omie-nfe-webhook] chave_acesso ausente no payload");
-      return jsonResponse({ error: "chave_acesso ausente no payload" }, 400);
+      console.error("[omie-nfe-webhook] chave_acesso ausente ou inválida no payload (são 44 dígitos)");
+      return jsonResponse({ error: "chave_acesso ausente ou inválida no payload — são 44 dígitos" }, 400);
     }
 
     // O guard de duplicata vive na RPC `importar_nfe_recebimento` (SQL, com lock por chave): ela lê
@@ -150,10 +153,27 @@ Deno.serve(async (req) => {
     }
 
     // Parse items — NO conversion table, smart rounding only
-    const rawItems: Record<string, unknown>[] =
-      nfe.itens ?? nfe.items ?? nfe.det ?? nfe.produtos ?? [];
-
+    const rawItemsBruto: unknown = nfe.itens ?? nfe.items ?? nfe.det ?? nfe.produtos ?? [];
+    const cliente = supabase as unknown as ClienteRpc;
     const cnpjEmClean = cnpjEmitente.replace(/\D/g, "");
+
+    // Estrutura ANTES do mapper: `det: [7]` ou `det: [null]` viravam "Item sem descrição, quantidade 0"
+    // (que o DDL aceita) ou TypeError 500 sem RPC e sem ledger. Lista de objetos, ou 422 registrado.
+    const elementoInvalido = !Array.isArray(rawItemsBruto)
+      ? "itens não é uma lista"
+      : rawItemsBruto.findIndex((it) => it === null || typeof it !== "object" || Array.isArray(it)) >= 0
+      ? `item #${rawItemsBruto.findIndex((it) => it === null || typeof it !== "object" || Array.isArray(it)) + 1}: não é um objeto`
+      : null;
+    if (elementoInvalido !== null) {
+      const erro = erroDeLote(elementoInvalido);
+      const tentativas = await registrarFalhaImportacao(cliente, {
+        chaveAcesso, origem: "webhook", code: erro.code ?? "NFE01", mensagem: erro.mensagem, warehouseId: warehouse.id,
+      });
+      const resposta = responderDesfecho(erro, chaveAcesso, tentativas);
+      console.error(`[omie-nfe-webhook] NF-e ${numeroNfe}: ${resposta.log.texto}`);
+      return jsonResponse(resposta.corpo, resposta.status);
+    }
+    const rawItems = rawItemsBruto as Record<string, unknown>[];
 
     const itensToInsert = rawItems.map((item: Record<string, unknown>, idx: number) => {
       const codigoProduto = item.codigo_produto ?? item.cProd ?? item.codigo ?? null;
@@ -203,15 +223,16 @@ Deno.serve(async (req) => {
     // UMA chamada, UMA transação: cabeçalho + itens entram juntos ou nada entra (2 pareceres Codex
     // 2026-10-18; prova em db/test-importar-nfe-recebimento.sh). Sem fallback para o caminho antigo
     // de 2 requisições: RPC ausente é 500 nomeando a migration (deploy fora de ordem), não silêncio.
-    const cliente = supabase as unknown as ClienteRpc;
     const desfecho = await importarViaRpc(cliente, { cabecalho, itens: itensToInsert, origem: "webhook" });
-    // Erro de DADO (NFE0x, tipo que não cabe) tem registro DURÁVEL fora da transação abortada: o
-    // Omie tenta 3× e manda à DLQ; "log alto" sozinho não é recuperação.
-    const tentativas = desfecho.tipo === "erro"
+    // Erro de DADO (NFE0x, tipo que não cabe) e IMPEDIMENTO (bloqueada/divergente) têm registro DURÁVEL
+    // fora da transação abortada: o Omie tenta 3× e manda à DLQ; "log alto" sozinho não é recuperação.
+    const registro = registravel(desfecho);
+    const tentativas = registro
       ? await registrarFalhaImportacao(cliente, {
-        chaveAcesso: chaveAcesso,
+        chaveAcesso,
         origem: "webhook",
-        erro: desfecho,
+        code: registro.code,
+        mensagem: registro.mensagem,
         warehouseId: warehouse.id,
         omieIdReceb: cabecalho.omie_id_receb,
       })

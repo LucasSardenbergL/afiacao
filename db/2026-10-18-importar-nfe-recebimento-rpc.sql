@@ -104,6 +104,12 @@ COMMENT ON TABLE public.nfe_importacao_falhas IS
   'NF-e cuja importação (importar_nfe_recebimento) falhou por erro de DADO (NFE0x, tipo que não cabe). Escrita pelas edges fora da transação abortada; apagada pela RPC no sucesso. tentativas ≥ 3 estaciona a chave na triagem do cron. 2026-10-18.';
 
 ALTER TABLE public.nfe_importacao_falhas ENABLE ROW LEVEL SECURITY;
+-- Privilégio de TABELA explícito (policy não concede privilégio; o default do criador varia por caminho):
+-- as edges (service_role) escrevem, staff (authenticated, filtrado por policy) lê, anon nada.
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.nfe_importacao_falhas TO service_role;
+GRANT SELECT ON public.nfe_importacao_falhas TO authenticated;
+REVOKE ALL ON public.nfe_importacao_falhas FROM anon;
+REVOKE ALL ON public.nfe_importacao_falhas FROM PUBLIC;
 
 -- Mesmo molde das policies de nfe_recebimentos (medido em prod): service_role tudo, staff lê.
 DROP POLICY IF EXISTS "Service role full access nfe_importacao_falhas" ON public.nfe_importacao_falhas;
@@ -187,6 +193,13 @@ BEGIN
       USING ERRCODE = 'NFE01';
   END IF;
   v_n := jsonb_array_length(p_itens);
+  -- Lote vazio NÃO materializa nem CERTIFICA recebimento: cabeçalho sem itens é NF-e invisível para a
+  -- conferência, e 2xx diria ao Omie "pode descartar o evento". Vale para chave nova E existente
+  -- (parecer adversarial: "já importada" com payload vazio era a exceção ao certificado por conjunto).
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'importar_nfe_recebimento: lote sem itens nao materializa nem certifica recebimento'
+      USING ERRCODE = 'NFE03';
+  END IF;
 
   -- Sequência: obrigatória em cada item e ÚNICA no payload. (`e ->> 'sequencia'` ausente é NULL: o
   -- coalesce é o que faz "ausente" contar como inválida. Número em string — "3", como o nItem do
@@ -215,12 +228,6 @@ BEGIN
   SELECT * INTO v_cab FROM public.nfe_recebimentos WHERE chave_acesso = v_chave FOR UPDATE;
 
   IF NOT FOUND THEN
-    -- Lote vazio NÃO materializa recebimento: cabeçalho sem itens é NF-e invisível para a
-    -- conferência, e 2xx aqui diria ao Omie "pode descartar o evento". Nada é gravado.
-    IF v_n = 0 THEN
-      RAISE EXCEPTION 'importar_nfe_recebimento: lote sem itens nao materializa recebimento novo'
-        USING ERRCODE = 'NFE03';
-    END IF;
     INSERT INTO public.nfe_recebimentos (
       warehouse_id, numero_nfe, serie_nfe, chave_acesso, cnpj_emitente, razao_social_emitente,
       data_emissao, valor_total, xml_completo, status, omie_nfe_id, omie_id_receb, origem
@@ -234,28 +241,24 @@ BEGIN
   ELSE
     v_id := v_cab.id;
     SELECT count(*) INTO v_existentes FROM public.nfe_recebimento_itens WHERE nfe_recebimento_id = v_id;
+    -- O payload fala do MESMO recebimento? Armazém e id do recebimento no Omie compatíveis (NULL de um
+    -- lado é metadado ausente, não conflito). Vale ANTES de qualquer sucesso — reparo OU certificado:
+    -- conjunto igual com cabeçalho de outro armazém não é "já importada". Conflito é divergência.
+    SELECT * INTO v_novo FROM jsonb_populate_record(NULL::public.nfe_recebimentos, p_cabecalho);
+    IF (v_novo.warehouse_id IS NOT NULL AND v_novo.warehouse_id IS DISTINCT FROM v_cab.warehouse_id)
+       OR (v_novo.omie_id_receb IS NOT NULL AND v_cab.omie_id_receb IS NOT NULL
+           AND v_novo.omie_id_receb IS DISTINCT FROM v_cab.omie_id_receb) THEN
+      RETURN jsonb_build_object('resultado', 'divergente', 'id', v_id, 'itens', v_existentes, 'esperados', v_n,
+                                'motivo', 'cabecalho de outro armazem ou outro recebimento do Omie');
+    END IF;
     IF v_existentes = 0 THEN
-      IF v_n = 0 THEN
-        -- Sem itens no banco E no payload: não há o que certificar. Não-2xx: o reenvio com itens completa.
-        RETURN jsonb_build_object('resultado', 'bloqueada', 'id', v_id, 'itens', 0,
-                                  'motivo', 'sem itens no banco e no payload');
-      END IF;
-      -- Reparável = ainda não entrou na conferência/efetivação e ninguém o tocou (os 4 sinais NULL)…
+      -- Reparável = ainda não entrou na conferência/efetivação e ninguém o tocou (os 4 sinais NULL).
       IF NOT (v_cab.status = 'pendente'
               AND v_cab.conferente_id IS NULL AND v_cab.conferido_at IS NULL
               AND v_cab.efetivado_at IS NULL AND v_cab.efetivacao_lock_at IS NULL) THEN
-        v_motivo := CASE WHEN v_cab.status <> 'pendente' THEN 'status ' || v_cab.status
+        v_motivo := CASE WHEN v_cab.status IS DISTINCT FROM 'pendente' THEN 'status ' || v_cab.status
                          ELSE 'em uso (conferencia ou efetivacao em curso)' END;
         RETURN jsonb_build_object('resultado', 'bloqueada', 'id', v_id, 'itens', 0, 'motivo', v_motivo);
-      END IF;
-      -- …e o payload fala do MESMO recebimento: armazém e id do recebimento no Omie compatíveis
-      -- (NULL de um lado é metadado ausente, não conflito). Conflito é divergência, não escolha.
-      SELECT * INTO v_novo FROM jsonb_populate_record(NULL::public.nfe_recebimentos, p_cabecalho);
-      IF (v_novo.warehouse_id IS NOT NULL AND v_novo.warehouse_id <> v_cab.warehouse_id)
-         OR (v_novo.omie_id_receb IS NOT NULL AND v_cab.omie_id_receb IS NOT NULL
-             AND v_novo.omie_id_receb <> v_cab.omie_id_receb) THEN
-        RETURN jsonb_build_object('resultado', 'divergente', 'id', v_id, 'itens', 0, 'esperados', v_n,
-                                  'motivo', 'cabecalho de outro armazem ou outro recebimento do Omie');
       END IF;
       -- Metadados AUSENTES no cabeçalho são preenchidos pelo payload (procedência: o mesmo lock e o
       -- mesmo Omie); os presentes não mudam.
@@ -272,10 +275,7 @@ BEGIN
       -- Com itens gravados, "já importada" exige o MESMO CONJUNTO (sequência, código do produto,
       -- quantidade da NF-e) — cardinalidade igual com conteúdo diferente é outra obrigação de
       -- conferência. Diferença em qualquer direção é `divergente`: não apaga, não completa, não
-      -- certifica (payload sem itens sobre cabeçalho com itens também: nada a certificar).
-      IF v_n = 0 THEN
-        RETURN jsonb_build_object('resultado', 'ja_importada', 'id', v_id, 'itens', v_existentes);
-      END IF;
+      -- certifica.
       WITH payload AS (
         SELECT r.sequencia, btrim(coalesce(r.codigo_produto, '')) AS codigo, r.quantidade_nfe
           FROM jsonb_populate_recordset(NULL::public.nfe_recebimento_itens, p_itens) AS r
@@ -286,9 +286,9 @@ BEGIN
       )
       SELECT count(*) INTO v_diferentes
         FROM ((TABLE payload EXCEPT TABLE banco) UNION ALL (TABLE banco EXCEPT TABLE payload)) AS d;
-      IF v_existentes <> v_n OR v_diferentes > 0 THEN
+      IF v_existentes IS DISTINCT FROM v_n OR v_diferentes > 0 THEN
         RETURN jsonb_build_object('resultado', 'divergente', 'id', v_id, 'itens', v_existentes, 'esperados', v_n,
-                                  'motivo', CASE WHEN v_existentes <> v_n THEN 'cardinalidade' ELSE 'conteudo dos itens' END);
+                                  'motivo', CASE WHEN v_existentes IS DISTINCT FROM v_n THEN 'cardinalidade' ELSE 'conteudo dos itens' END);
       END IF;
       RETURN jsonb_build_object('resultado', 'ja_importada', 'id', v_id, 'itens', v_existentes);
     END IF;
@@ -316,7 +316,7 @@ END
 $fn$;
 
 COMMENT ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) IS
-  'Materializa NF-e (cabeçalho + itens) numa transação, com lock por chave de acesso. Idempotente no reenvio: importada | reparada | ja_importada (mesmo conjunto de itens) | bloqueada | divergente. NFE01 = entrada inválida, NFE02 = sequência repetida, NFE03 = lote vazio em cabeçalho novo. Único writer de nfe_recebimento_itens (webhook e sync). 2026-10-18.';
+  'Materializa NF-e (cabeçalho + itens) numa transação, com lock por chave de acesso. Idempotente no reenvio: importada | reparada | ja_importada (mesmo conjunto de itens) | bloqueada | divergente. NFE01 = entrada inválida, NFE02 = sequência repetida, NFE03 = lote vazio (não materializa nem certifica). Único writer de nfe_recebimento_itens (webhook e sync). 2026-10-18.';
 
 REVOKE ALL ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) FROM anon;
@@ -368,7 +368,7 @@ BEGIN
     RAISE EXCEPTION 'A1 FALHOU: importar_nfe_recebimento(jsonb, jsonb, text) nao existe — as edges responderiam PGRST202';
   END IF;
   SELECT md5(prosrc) INTO v_agora FROM pg_proc WHERE oid = v_oid;
-  IF coalesce(v_antes, '') <> '' AND v_antes <> v_agora THEN
+  IF nullif(v_antes, '') IS NOT NULL AND v_agora IS DISTINCT FROM v_antes THEN
     RAISE EXCEPTION 'A2 FALHOU: prod tinha OUTRO corpo de importar_nfe_recebimento (md5 % ≠ %) — deriva; nada foi aplicado (rollback)', v_antes, v_agora;
   END IF;
   IF (SELECT prosecdef FROM pg_proc WHERE oid = v_oid) THEN
@@ -392,13 +392,13 @@ BEGIN
   END IF;
   IF (SELECT count(*) FROM information_schema.columns
        WHERE table_schema = 'public' AND table_name = 'nfe_recebimentos'
-         AND column_name IN ('origem', 'reparada_origem', 'reparada_em')) <> 3 THEN
+         AND column_name IN ('origem', 'reparada_origem', 'reparada_em')) IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'A7 FALHOU: colunas origem/reparada_origem/reparada_em incompletas em nfe_recebimentos — a RPC falharia no INSERT/UPDATE';
   END IF;
   IF (SELECT count(*) FROM pg_constraint
        WHERE conrelid = 'public.nfe_recebimentos'::regclass
          AND conname IN ('nfe_recebimentos_origem_check', 'nfe_recebimentos_reparada_origem_check')
-         AND contype = 'c' AND convalidated) <> 2 THEN
+         AND contype = 'c' AND convalidated) IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'A8 FALHOU: CHECK de origem/reparada_origem ausente — vocabulario da origem aberto';
   END IF;
   IF to_regprocedure('public.nfe_importacao_falha_registrar(text, text, text, text, uuid, bigint)') IS NULL
@@ -410,8 +410,14 @@ BEGIN
   END IF;
   IF to_regclass('public.nfe_importacao_falhas') IS NULL
      OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.nfe_importacao_falhas'::regclass)
-     OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'nfe_importacao_falhas') <> 2 THEN
+     OR (SELECT count(*) FROM pg_policies WHERE schemaname = 'public' AND tablename = 'nfe_importacao_falhas') IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'A9 FALHOU: nfe_importacao_falhas ausente, sem RLS ou sem as 2 policies — registro de falha aberto ou inexistente';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.nfe_importacao_falhas', 'INSERT')
+     OR NOT has_table_privilege('authenticated', 'public.nfe_importacao_falhas', 'SELECT')
+     OR has_table_privilege('anon', 'public.nfe_importacao_falhas', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.nfe_importacao_falhas', 'INSERT') THEN
+    RAISE EXCEPTION 'A11 FALHOU: privilegios de nfe_importacao_falhas fora do desenho (service_role escreve · authenticated so le · anon nada)';
   END IF;
   RAISE NOTICE 'importar_nfe_recebimento OK: funcao INVOKER so-service_role · UNIQUE(nfe_recebimento_id, sequencia) validada · origem/reparada_* com CHECK · nfe_importacao_falhas com RLS';
 END

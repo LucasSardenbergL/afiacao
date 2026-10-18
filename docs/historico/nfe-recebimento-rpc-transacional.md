@@ -25,11 +25,25 @@ Parecer de DESENHO (gpt-6-astra · max · 251s · 107k tokens): **REPROVADO na f
 
 Decisões minhas (não do Codex): `importacao_chave` como 3ª origem (o botão é um writer distinto da sync); sequência numérica em string vale (`"01"` ≡ `1`); o id determinístico do TS saiu — UNIQUE + lock o substituem.
 
-## A prova (`db/test-importar-nfe-recebimento.sh`, no núcleo CI com `falsificar=8`)
+## O adversarial de CÓDIGO (2º estágio) — REPROVOU sem P0, 6 P1 integrados
 
-PG17 descartável aplica o SQL REAL 2× (idempotência + PRE md5). **65 asserts**: os 5 desfechos, NFE01/02/03 e 22001 por SQLSTATE (WHEN OTHERS re-lança), rollback total (nenhum cabeçalho órfão; reparo falho preserva o anterior), UNIQUE por fora da RPC, ACL por `has_function_privilege` E 42501, PRE anti-deriva abortando em A2, e **duas conexões com barreira observada** (`pg_blocking_pids`, nunca sleep): webhook×sync na chave NOVA (a 2ª fica presa no advisory e sai `ja_importada`, N itens), reconcile depois da RPC (espera o `FOR UPDATE`, promove cabeçalho COM itens) e reconcile ANTES segurando a linha (a RPC espera, relê a tupla promovida, `bloqueada`, 0 itens).
+Parecer sobre o diff (gpt-6-astra · max · 476s · 219k tokens; executou os 74 testes Deno e contramodelos em TS com dependências falsas):
 
-**Falsificação, 8/8 vermelhas no assert certo**, com três lições de dente:
+| Codex (P1) | O que entrou |
+|---|---|
+| Payload vazio sobre cabeçalho com itens devolvia `ja_importada` — a exceção ao certificado por conjunto; e conjunto igual com cabeçalho de OUTRO armazém certificava | `NFE03` para QUALQUER lote vazio; compatibilidade de `warehouse_id`/`omie_id_receb` antes de qualquer sucesso (reparo OU certificado) |
+| Ledger consultado por `omie_id_receb` sem filtro de armazém: falha de OB estacionava NF-e de CC com id coincidente; chave global alimentava `idsJa` de outra conta | ledger por id filtrado por `warehouse_id`; linha de outro armazém só contribui com a CHAVE |
+| Conflito permanente (cabeçalho de OB reparável numa rodada de CC → `divergente` toda rodada) consumia a consulta sem estado durável | `bloqueada`/`divergente` também vão ao ledger (`registravel`), nas 3 origens; ≥3 estaciona |
+| Mapper fabricava item válido de entrada inválida (`det:[7]` → "Item sem descrição, quantidade 0"); `det:[null]` → TypeError 500 sem RPC nem ledger | `validarLote` compartilhado (objeto, sequência ≥1, quantidade finita > 0, descrição/unidade não vazias) ANTES da RPC, nas 3 origens; webhook valida a estrutura antes do mapper; chave normalizada (espaços fora) |
+| Rejeições sem registro durável nosso (`divergente` só com 409) | ledger para impedimentos; `tentativas_registradas` no corpo dos 409/422 |
+| "Mesma leva" não drena uma execução antiga em voo (botão antigo + DELETE em cascata) | runbook passo (0): pausar o cron com prova positiva de rodada terminada, botão parado com prova por `origem IS NULL` pós-janela, religar no (5); rollback com a mesma drenagem |
+| P2: `22P05` como infra; ledger sem deadline segurava a resposta; botão devolvia `ja_importada` com 0 itens; policies só contadas; trigger ausente no harness | `22P05` → dado; `Promise.race` com 5 s; botão → 409 `bloqueada`; A22e–i exercitam staff/customer/anon/service_role de verdade; trigger `updated_at` no harness |
+
+## A prova (`db/test-importar-nfe-recebimento.sh`, no núcleo CI com `falsificar=9`)
+
+PG17 descartável aplica o SQL REAL 2× (idempotência + PRE md5). **75 asserts**: os 5 desfechos, NFE01/02/03 e 22001 por SQLSTATE (WHEN OTHERS re-lança), rollback total (nenhum cabeçalho órfão; reparo falho preserva o anterior), UNIQUE por fora da RPC, ACL por `has_function_privilege` E 42501, PRE anti-deriva abortando em A2, e **duas conexões com barreira observada** (`pg_blocking_pids`, nunca sleep): webhook×sync na chave NOVA (a 2ª fica presa no advisory e sai `ja_importada`, N itens), reconcile depois da RPC (espera o `FOR UPDATE`, promove cabeçalho COM itens) e reconcile ANTES segurando a linha (a RPC espera, relê a tupla promovida, `bloqueada`, 0 itens).
+
+**Falsificação, 9/9 vermelhas no assert certo**, com três lições de dente:
 - **Sem `FOR UPDATE` a RPC ainda bloqueia** — no UPDATE do reparo. "B preso" fica verde; o que fica vermelho é **itens injetados num cabeçalho efetivado** (a janela SELECT→UPDATE). Teste de lock precisa do adversário segurando a linha ANTES.
 - **`REVOKE … FROM anon` é redundante com o de PUBLIC**: deletá-lo não muda nada. Só CONCEDER expõe — e aí o **42501 continua vindo da TABELA** (INVOKER): a testemunha é `has_function_privilege`, nunca só o SQLSTATE (exatamente o aviso do Codex).
 - Seed com `status='efetivado'` E `efetivado_at` tem DUAS camadas; sabotar o gate de status ficava verde pela 2ª. O caso de uma camada só é `falha_efetivacao` (o 1 de prod).

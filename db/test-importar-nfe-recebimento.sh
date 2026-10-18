@@ -20,7 +20,7 @@
 # ║     promove um cabeçalho COM itens; reconcile ANTES → bloqueada.                           ║
 # ║   · PRE anti-deriva: corpo vivo diferente → a aplicação aborta (A2) e nada muda.           ║
 # ║                                                                                            ║
-# ║  --falsificar: controle verde + 8 sabotagens num espelho em tmp (NUNCA no arquivo do       ║
+# ║  --falsificar: controle verde + 9 sabotagens num espelho em tmp (NUNCA no arquivo do       ║
 # ║  repo), cada uma exigindo VERMELHO no assert ESPECÍFICO. Recibo:                           ║
 # ║  `SABOTAGENS: <v> vermelhas / <f> falhas`.                                                 ║
 # ║  Exit: 0 verde · 1 vermelho · 3 infra (barreira/âncora podre: nada a julgar).              ║
@@ -51,8 +51,11 @@ PAPP() { local app="$1"; shift; env PGAPPNAME="$app" "$PGBIN/psql" -X -p "$PORT"
 # ── zona 1: o que a migration lê mas não cria (DDL de prod, 2026-10-18) ───────────────────────────
 cat > "$WORK/prereq.sql" <<'SQL'
 DO $$ BEGIN CREATE TYPE public.app_role AS ENUM ('employee','customer','master'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- has_role de prod lê user_roles; aqui lê o GUC test.papel ('master'/'employee' = staff; outro = customer/anon).
 CREATE OR REPLACE FUNCTION public.has_role(uid uuid, r public.app_role) RETURNS boolean LANGUAGE sql STABLE
-  AS $f$ SELECT false $f$;
+  AS $f$ SELECT current_setting('test.papel', true) = r::text $f$;
+CREATE OR REPLACE FUNCTION public.update_updated_at_column() RETURNS trigger LANGUAGE plpgsql
+  AS $f$ BEGIN NEW.updated_at = now(); RETURN NEW; END $f$;
 CREATE TABLE public.warehouses (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), code text NOT NULL UNIQUE);
 CREATE TABLE public.nfe_recebimentos (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
@@ -107,6 +110,8 @@ CREATE TABLE public.nfe_recebimento_itens (
     ajuste_estoque_at timestamp with time zone
 );
 CREATE INDEX idx_nfe_recebimento_itens_nfe ON public.nfe_recebimento_itens USING btree (nfe_recebimento_id);
+CREATE TRIGGER update_nfe_recebimentos_updated_at BEFORE UPDATE ON public.nfe_recebimentos
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 ALTER TABLE public.nfe_recebimentos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.nfe_recebimento_itens ENABLE ROW LEVEL SECURITY;
 -- ACL de prod para o papel das edges (default do Supabase: service_role tem tudo; BYPASSRLS vem do stub).
@@ -215,9 +220,14 @@ SQL
   eq "A04a N diferente = divergente" "$(res "$r")" "divergente"
   eq "A04b esperados=2" "$(campo "$r" esperados)" "2"
   eq "A04c itens=3" "$(campo "$r" itens)" "3"
-  # A05 payload sem itens sobre cabeçalho COM itens → ja_importada (3)
-  r="$(Pq -c "SELECT $RPC(t_cab('$k1'), '[]'::jsonb, 'sync')")"
-  eq "A05 payload vazio sobre cabeçalho completo = ja_importada" "$(res "$r")·$(campo "$r" itens)" "ja_importada·3"
+  # A05 payload sem itens sobre cabeçalho COM itens → NFE03 (vazio não certifica; adversarial: era a exceção ao conjunto)
+  espera_sqlstate "A05 payload vazio sobre cabeçalho completo = NFE03 (não certifica)" "NFE03" "PERFORM $RPC(t_cab('$k1'), '[]'::jsonb, 'sync')"
+  # A05b conjunto IGUAL mas cabeçalho de OUTRO armazém → divergente (compatibilidade vale antes de qualquer sucesso)
+  r="$(Pq -c "SELECT $RPC(t_cab('$k1', '00000000-0000-0000-0000-00000000000c'), t_itens(3), 'webhook')")"
+  eq "A05b conjunto igual + outro armazém = divergente (não certifica)" "$(res "$r")·$(campo "$r" motivo | cut -c1-9)" "divergente·cabecalho"
+  r="$(Pq -c "SELECT $RPC(t_cab('$k1', '00000000-0000-0000-0000-00000000000b', 778), t_itens(3), 'webhook')")"
+  eq "A05c conjunto igual + outro omie_id_receb = divergente" "$(res "$r")" "divergente"
+  eq "A05d itens intactos (3)" "$(Pq -c "SELECT count(*) FROM nfe_recebimento_itens WHERE nfe_recebimento_id = '$id'")" "3"
 
   # A06 reparo: cabeçalho LEGADO pendente sem itens, origem NULL, omie_id_receb NULL → reparada;
   #     origem de criação segue NULL, reparada_origem=webhook, omie_id_receb preenchido (ausente→payload).
@@ -249,9 +259,8 @@ SQL
   r="$(Pq -c "SELECT $RPC(t_cab('$k5', '00000000-0000-0000-0000-00000000000b', 778), t_itens(2), 'sync')")"
   eq "A09b outro omie_id_receb no reparo = divergente" "$(res "$r")" "divergente"
   eq "A09c nada gravado" "$(Pq -c "SELECT count(*) FROM nfe_recebimento_itens i JOIN nfe_recebimentos r ON r.id = i.nfe_recebimento_id WHERE r.chave_acesso = '$k5'")" "0"
-  # A10 sem itens no banco E no payload → bloqueada (não certifica)
-  r="$(Pq -c "SELECT $RPC(t_cab('$k5'), '[]'::jsonb, 'sync')")"
-  eq "A10 vazio sobre vazio = bloqueada" "$(res "$r")" "bloqueada"
+  # A10 sem itens no banco E no payload → NFE03 (nada gravado, nada certificado)
+  espera_sqlstate "A10 vazio sobre vazio = NFE03" "NFE03" "PERFORM $RPC(t_cab('$k5'), '[]'::jsonb, 'sync')"
 
   # Negativos — SQLSTATE esperada, WHEN OTHERS re-lança.
   k6="$(chave 6)"
@@ -260,6 +269,7 @@ SQL
   espera_sqlstate "A13 item sem sequência = NFE01" "NFE01" "PERFORM $RPC(t_cab('$k6'), (t_itens(1) - 0) || '[{\"descricao\":\"x\"}]'::jsonb, 'sync')"
   espera_sqlstate "A14 sequência repetida (\"01\" e 1 são a MESMA) = NFE02" "NFE02" "PERFORM $RPC(t_cab('$k6'), t_itens(1) || jsonb_set(t_itens(1), '{0,sequencia}', '\"01\"'), 'sync')"
   espera_sqlstate "A15 lote vazio em cabeçalho novo = NFE03" "NFE03" "PERFORM $RPC(t_cab('$k6'), '[]'::jsonb, 'sync')"
+  espera_sqlstate "A15b lote JSON null em cabeçalho novo = NFE03" "NFE03" "PERFORM $RPC(t_cab('$k6'), 'null'::jsonb, 'sync')"
   espera_sqlstate "A16 itens não-array = NFE01" "NFE01" "PERFORM $RPC(t_cab('$k6'), '{}'::jsonb, 'sync')"
   eq "A17 nenhum cabeçalho ficou dos negativos (chave 6)" "$(Pq -c "SELECT count(*) FROM nfe_recebimentos WHERE chave_acesso = '$k6'")" "0"
   # A18 rollback total: ncm com 9 chars → 22001 na transação INTEIRA — nenhum cabeçalho órfão
@@ -289,6 +299,16 @@ SQL
   eq "A22b falha apagada no sucesso" "$(Pq -c "SELECT count(*) FROM nfe_importacao_falhas WHERE chave_acesso = '$k8'")" "0"
   eq "A22c nfe_importacao_falhas com RLS e 2 policies" "$(Pq -c "SELECT relrowsecurity||'·'||(SELECT count(*) FROM pg_policies WHERE tablename='nfe_importacao_falhas') FROM pg_class WHERE relname='nfe_importacao_falhas'")" "true·2"
   espera_sqlstate "A22d falha com chave inválida = 23514 (CHECK)" "23514" "INSERT INTO nfe_importacao_falhas (chave_acesso, origem, erro) VALUES ('abc','sync','x')"
+  # A22e–h AUTORIZAÇÃO real (não só contar policies): staff lê · customer vê 0 · anon 42501 · authenticated não escreve · service_role escreve
+  P -q -c "INSERT INTO nfe_importacao_falhas (chave_acesso, origem, erro) VALUES ('$(chave 99)','sync','seed')"
+  # (`-1`: os -c numa transação só — fora dela o SET LOCAL é no-op e a leitura corre como superuser,
+  #  e o assert do staff passaria por VACUIDADE; o do customer é o que denunciou.)
+  eq "A22e staff (employee) lê o ledger" "$(Pq -1 -c "SET LOCAL ROLE authenticated" -c "SET LOCAL test.papel = 'employee'" -c "SELECT count(*) FROM nfe_importacao_falhas WHERE chave_acesso = '$(chave 99)'" | tail -1)" "1"
+  eq "A22f customer vê 0 (RLS, não erro)" "$(Pq -1 -c "SET LOCAL ROLE authenticated" -c "SET LOCAL test.papel = 'customer'" -c "SELECT count(*) FROM nfe_importacao_falhas" | tail -1)" "0"
+  eq "A22f' customer de verdade correu como authenticated (não superuser)" "$(Pq -1 -c "SET LOCAL ROLE authenticated" -c "SELECT current_user" | tail -1)" "authenticated"
+  espera_sqlstate "A22g anon = 42501 na tabela" "42501" "SET LOCAL ROLE anon; PERFORM count(*) FROM nfe_importacao_falhas"
+  espera_sqlstate "A22h authenticated (staff) NÃO escreve = 42501" "42501" "SET LOCAL ROLE authenticated; SET LOCAL test.papel = 'master'; INSERT INTO nfe_importacao_falhas (chave_acesso, origem, erro) VALUES ('$(chave 98)','sync','x')"
+  eq "A22i service_role escreve (grant explícito + BYPASSRLS)" "$(Pq -c "SET ROLE service_role" -c "SELECT nfe_importacao_falha_registrar('$(chave 97)','webhook','NFE02','x')" | tail -1)" "1"
 
   # ── corridas: DUAS conexões, barreira OBSERVADA ─────────────────────────────────────────────
   # A23 webhook × sync na MESMA chave NOVA: A (sync) segura a transação com o cabeçalho inserido;
@@ -370,29 +390,41 @@ echo "═══ CONTROLE (SQL real) ═══"
 if ! suite "$SQL_REAL" "controle" >"$WORK/controle.log" 2>&1; then echo "INFRA: o controle não ficou verde — sem linha de base, sabotar é teatro"; tail -20 "$WORK/controle.log"; exit 3; fi
 echo "  controle verde ($(grep -o 'PASS=[0-9]*' "$WORK/controle.log"))"
 VERMELHAS=0; FALHOU=0
-sabota() { # <rótulo> <assert que tem de ficar vermelho> <sed expr...>
-  local rot="$1" alvo="$2"; shift 2
-  local esp="$WORK/espelho.sql"; cp "$SQL_REAL" "$esp"
-  for e in "$@"; do sed "$e" "$esp" > "$esp.tmp" && mv "$esp.tmp" "$esp"; done
-  if cmp -s "$SQL_REAL" "$esp"; then echo "  INFRA $rot — o sed não mudou nada (âncora podre)"; FALHOU=$((FALHOU+1)); return; fi
-  if suite "$esp" "sabotagem: $rot" >"$WORK/sab.log" 2>&1; then
-    echo "  FALHA $rot — a suíte seguiu VERDE: o assert $alvo não tem dente"; FALHOU=$((FALHOU+1)); return
-  fi
-  if grep -q "FAIL $alvo" "$WORK/sab.log"; then
-    echo "  VERMELHA $rot → $alvo ($(grep -o 'FAIL=[0-9]*' "$WORK/sab.log"))"; VERMELHAS=$((VERMELHAS+1))
-  else
-    echo "  FALHA $rot — ficou vermelha, mas NÃO em $alvo: $(grep -o 'FAIL A[0-9a-z]*' "$WORK/sab.log" | tr '\n' ' ')"; FALHOU=$((FALHOU+1))
-  fi
+# Cada sabotagem: nome:ASSERT_QUE_TEM_DE_FICAR_VERMELHO. O `case` abaixo traduz o nome em `sed` sobre um
+# ESPELHO (nunca no arquivo do repo); a suíte roda inteira e o veredito exige o `FAIL <assert>` NO LOG —
+# vermelho em outro lugar é falha da falsificação, não aprovação.
+SABOTAGENS="sem_advisory_lock:A23b sem_for_update:A24f unique_vira_check:A20 execute_para_anon:A21c
+            gate_de_status:A07a nfe02_desligado:A14 so_cardinalidade:A03a origem_nao_gravada:A01d
+            sem_compatibilidade:A05b"
+seds_de() { # <nome> → expressões sed, uma por linha
+  case "$1" in
+    sem_advisory_lock)   echo '/pg_advisory_xact_lock(hashtext/d' ;;
+    sem_for_update)      echo 's/ FOR UPDATE;/;/' ;;
+    unique_vira_check)   echo 's/UNIQUE (nfe_recebimento_id, sequencia);/CHECK (true);/'; echo "s/AND contype = 'u' AND convalidated/AND convalidated/" ;;
+    execute_para_anon)   echo 's/^REVOKE ALL ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) FROM anon;/GRANT EXECUTE ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) TO anon;/'; echo "s/OR has_function_privilege('anon', v_oid, 'EXECUTE')/OR false/" ;;
+    gate_de_status)      echo "s/IF NOT (v_cab.status = 'pendente'/IF NOT (true/" ;;
+    nfe02_desligado)     echo 's/IF v_repetidas > 0 THEN/IF false THEN/' ;;
+    so_cardinalidade)    echo 's/IF v_existentes IS DISTINCT FROM v_n OR v_diferentes > 0 THEN/IF v_existentes IS DISTINCT FROM v_n THEN/' ;;
+    origem_nao_gravada)  echo "s/c.omie_nfe_id, c.omie_id_receb, p_origem/c.omie_nfe_id, c.omie_id_receb, NULL/" ;;
+    sem_compatibilidade) echo "s/IF (v_novo.warehouse_id IS NOT NULL AND v_novo.warehouse_id IS DISTINCT FROM v_cab.warehouse_id)/IF (false)/" ;;
+    *) return 1 ;;
+  esac
 }
 echo "═══ SABOTAGENS ═══"
-sabota "sem advisory lock (corrida chave nova)"      "A23b" '/pg_advisory_xact_lock(hashtext/d'
-sabota "sem FOR UPDATE (itens injetados no efetivado)"  "A24f" 's/ FOR UPDATE;/;/'
-sabota "UNIQUE vira CHECK(true) (lote paralelo passa)" "A20" 's/UNIQUE (nfe_recebimento_id, sequencia);/CHECK (true);/' "s/AND contype = 'u' AND convalidated/AND convalidated/"
-sabota "EXECUTE concedido a anon (+ PÓS cega)"       "A21c" 's/^REVOKE ALL ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) FROM anon;/GRANT EXECUTE ON FUNCTION public.importar_nfe_recebimento(jsonb, jsonb, text) TO anon;/' "s/OR has_function_privilege('anon', v_oid, 'EXECUTE')/OR false/"
-sabota "gate de status removido (efetivado repara)"  "A07a" "s/IF NOT (v_cab.status = 'pendente'/IF NOT (true/"
-sabota "NFE02 desligado (sequência repetida passa)"  "A14" 's/IF v_repetidas > 0 THEN/IF false THEN/'
-sabota "certificado só por cardinalidade"            "A03a" 's/IF v_existentes <> v_n OR v_diferentes > 0 THEN/IF v_existentes <> v_n THEN/'
-sabota "origem não gravada"                          "A01d" "s/c.omie_nfe_id, c.omie_id_receb, p_origem/c.omie_nfe_id, c.omie_id_receb, NULL/"
+for item in $SABOTAGENS; do
+  sab="${item%%:*}"; esperado="${item#*:}"
+  esp="$WORK/espelho.sql"; cp "$SQL_REAL" "$esp"
+  seds_de "$sab" > "$WORK/seds.txt" || { echo "  INFRA $sab — sabotagem sem tradução"; FALHOU=$((FALHOU+1)); continue; }
+  while IFS= read -r e; do sed "$e" "$esp" > "$esp.tmp" && mv "$esp.tmp" "$esp"; done < "$WORK/seds.txt"
+  if cmp -s "$SQL_REAL" "$esp"; then echo "  INFRA $sab — o sed não mudou nada (âncora podre)"; FALHOU=$((FALHOU+1)); continue; fi
+  if suite "$esp" "sabotagem: $sab" > "$WORK/$sab.log" 2>&1; then
+    echo "  FALHA $sab — a suíte seguiu VERDE: o assert $esperado não tem dente"; FALHOU=$((FALHOU+1))
+  elif grep -q "FAIL $esperado " "$WORK/$sab.log"; then
+    echo "  VERMELHA $sab → $esperado ($(grep -o 'FAIL=[0-9]*' "$WORK/$sab.log"))"; VERMELHAS=$((VERMELHAS+1))
+  else
+    echo "  FALHA $sab — ficou vermelha, mas NÃO em $esperado: $(grep -o 'FAIL A[0-9a-z]*' "$WORK/$sab.log" | tr '\n' ' ')"; FALHOU=$((FALHOU+1))
+  fi
+done
 echo "──────────────────────────────"
 echo "SABOTAGENS: $VERMELHAS vermelhas / $FALHOU falhas"
 if [ "$FALHOU" -eq 0 ]; then echo "FALSIFICACAO OK — todo verde tem vermelho alcancavel, e pelo motivo certo"; exit 0; fi

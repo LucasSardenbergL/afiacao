@@ -24,7 +24,7 @@ export interface ClienteRpc {
 
 export type ResultadoRpc =
   | { tipo: "importada" | "reparada" | "ja_importada"; id: string; itens: number }
-  /** Cabeçalho sem itens que NÃO pode ser completado (não-pendente, em uso, ou payload também vazio). */
+  /** Cabeçalho sem itens que NÃO pode ser completado (não-pendente ou em uso). */
   | { tipo: "bloqueada"; id: string; itens: number; motivo: string }
   /** Itens gravados ≠ payload (cardinalidade OU conteúdo), ou cabeçalho de outro armazém/recebimento. */
   | { tipo: "divergente"; id: string; itens: number; esperados: number; motivo: string };
@@ -47,12 +47,16 @@ export const RPC_REGISTRAR_FALHA = "nfe_importacao_falha_registrar";
 /** A partir de quantas falhas registradas a triagem do cron PULA a chave (a fila anda; o botão ignora). */
 export const TENTATIVAS_PARA_ESTACIONAR = 3;
 
+/** Teto da escrita no ledger de falhas: ela não pode segurar a resposta ao Omie (promessa pendurada = sem deadline). */
+export const LEDGER_DEADLINE_MS = 5_000;
+
 const SQLSTATES_DE_DADO = new Set([
   "22001", // string_data_right_truncation (ncm > 8…)
   "22003", // numeric_value_out_of_range
   "22007", // invalid_datetime_format
   "22008", // datetime_field_overflow
   "22P02", // invalid_text_representation (uuid/número inválido)
+  "22P05", // untranslatable_character (\u0000 em texto → jsonb/text rejeitam sempre)
   "23502", // not_null_violation (descricao NULL, warehouse_id ausente…)
   "23503", // foreign_key_violation (warehouse inexistente)
   "23514", // check_violation
@@ -109,6 +113,36 @@ export function interpretarResultadoRpc(data: unknown): DesfechoImportacao {
   }
 }
 
+/**
+ * Estrutura e campos obrigatórios do lote ANTES dos defaults dos mapeadores chegarem ao SQL — o
+ * mapper transforma `7`/`null` em "Item sem descrição, quantidade 0", que o DDL aceita (parecer
+ * adversarial). Devolve o motivo da rejeição, ou `null` se o lote está são. Não valida o que a RPC
+ * já valida melhor (sequência repetida, tipos que não cabem): valida o que ela NÃO vê — a quantidade
+ * zero/negativa e a descrição vazia fabricadas por default.
+ */
+export function validarLote(itens: unknown): string | null {
+  if (!Array.isArray(itens)) return "itens não é uma lista";
+  if (itens.length === 0) return "lote sem itens";
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    const n = i + 1;
+    if (it === null || typeof it !== "object" || Array.isArray(it)) return `item #${n}: não é um objeto`;
+    const r = it as Record<string, unknown>;
+    const seq = typeof r.sequencia === "string" ? Number(r.sequencia) : r.sequencia;
+    if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 1) return `item #${n}: sequencia inválida (${String(r.sequencia)})`;
+    const q = typeof r.quantidade_nfe === "string" ? Number(r.quantidade_nfe) : r.quantidade_nfe;
+    if (typeof q !== "number" || !Number.isFinite(q) || q <= 0) return `item #${n}: quantidade_nfe inválida (${String(r.quantidade_nfe)})`;
+    if (typeof r.descricao !== "string" || r.descricao.trim() === "") return `item #${n}: descricao vazia`;
+    if (typeof r.unidade_nfe !== "string" || r.unidade_nfe.trim() === "") return `item #${n}: unidade_nfe vazia`;
+  }
+  return null;
+}
+
+/** Lote rejeitado ANTES do banco: a mesma classe (dado, NFE01) que a RPC daria — registrável e 422. */
+export function erroDeLote(motivo: string): ErroRpc {
+  return { tipo: "erro", classe: "dado", code: "NFE01", mensagem: `lote inválido: ${motivo}` };
+}
+
 export interface EntradaImportacao {
   cabecalho: Record<string, unknown>;
   /** Itens SEM `id`/`nfe_recebimento_id` (a RPC ignora os dois e carimba o cabeçalho que valer). */
@@ -116,8 +150,10 @@ export interface EntradaImportacao {
   origem: OrigemImportacao;
 }
 
-/** Chama a RPC. Nunca lança: transporte que explode vira `erro` classe infra. */
+/** Chama a RPC. Nunca lança: transporte que explode vira `erro` classe infra. Valida o lote antes. */
 export async function importarViaRpc(cliente: ClienteRpc, entrada: EntradaImportacao): Promise<DesfechoImportacao> {
+  const motivo = validarLote(entrada.itens);
+  if (motivo !== null) return erroDeLote(motivo);
   let resposta: RespostaRpc;
   try {
     resposta = await cliente.rpc(RPC_IMPORTAR, {
@@ -132,45 +168,78 @@ export async function importarViaRpc(cliente: ClienteRpc, entrada: EntradaImport
   return interpretarResultadoRpc(resposta.data);
 }
 
+/**
+ * O que vai ao ledger durável `nfe_importacao_falhas`: erro de DADO (reenviar não conserta) e os
+ * IMPEDIMENTOS da RPC (`bloqueada`, `divergente`) — sem registro, um conflito permanente (cabeçalho de
+ * outro armazém com a mesma chave) consumiria a única consulta da rodada para sempre. `rpc_ausente`
+ * é deploy fora de ordem (não é a NF-e) e `infra` vale repetir: não entram.
+ */
+export function registravel(d: DesfechoImportacao): { code: string; mensagem: string } | null {
+  switch (d.tipo) {
+    case "erro":
+      return d.classe === "dado" ? { code: d.code ?? "DADO", mensagem: d.mensagem } : null;
+    case "bloqueada":
+      return { code: "BLOQUEADA", mensagem: d.motivo };
+    case "divergente":
+      return { code: "DIVERGENTE", mensagem: `${d.motivo}: ${d.itens} gravados, ${d.esperados} no payload` };
+    default:
+      return null;
+  }
+}
+
 export interface FalhaImportacao {
   chaveAcesso: string;
   origem: OrigemImportacao;
-  erro: ErroRpc;
+  code: string;
+  mensagem: string;
   warehouseId?: string | null;
   omieIdReceb?: number | null;
 }
 
 /**
- * Registro DURÁVEL da falha de DADO, fora da transação abortada (a RPC apaga a linha no sucesso).
- * Só classe `dado`: `rpc_ausente` é deploy fora de ordem (não é a NF-e) e `infra` vale repetir.
- * Devolve as tentativas acumuladas, ou `null` se não registrou (fail-open, com log: o ledger não
- * pode derrubar a resposta ao Omie — mas a ausência fica escrita).
+ * Registro DURÁVEL fora da transação abortada (a RPC apaga a linha no sucesso). Devolve as tentativas
+ * acumuladas, ou `null` se não registrou — fail-open COM deadline e COM log: o ledger não pode derrubar
+ * nem segurar a resposta ao Omie, mas a ausência fica escrita.
  */
-export async function registrarFalhaImportacao(cliente: ClienteRpc, falha: FalhaImportacao): Promise<number | null> {
-  if (falha.erro.classe !== "dado") return null;
+export async function registrarFalhaImportacao(
+  cliente: ClienteRpc,
+  falha: FalhaImportacao,
+  deadlineMs = LEDGER_DEADLINE_MS,
+): Promise<number | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const prazo = new Promise<"prazo">((resolve) => {
+    timer = setTimeout(() => resolve("prazo"), deadlineMs);
+  });
   try {
-    const { data, error } = await cliente.rpc(RPC_REGISTRAR_FALHA, {
+    const escrita = Promise.resolve(cliente.rpc(RPC_REGISTRAR_FALHA, {
       p_chave_acesso: falha.chaveAcesso,
       p_origem: falha.origem,
-      p_sqlstate: falha.erro.code,
-      p_erro: falha.erro.mensagem,
+      p_sqlstate: falha.code,
+      p_erro: falha.mensagem,
       p_warehouse_id: falha.warehouseId ?? null,
       p_omie_id_receb: falha.omieIdReceb ?? null,
-    });
-    if (error) {
-      console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}:`, error.message);
+    }));
+    const r = await Promise.race([escrita, prazo]);
+    if (r === "prazo") {
+      console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}: ledger não respondeu em ${deadlineMs}ms`);
       return null;
     }
-    return inteiroNaoNegativo(data);
+    if (r.error) {
+      console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}:`, r.error.message);
+      return null;
+    }
+    return inteiroNaoNegativo(r.data);
   } catch (e) {
     console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}:`, e instanceof Error ? e.message : e);
     return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
 /** Colunas do cabeçalho que a triagem lê para decidir se a NF-e ainda PRECISA de importação. */
 export const SELECT_TRIAGEM =
-  "id, omie_id_receb, chave_acesso, status, conferente_id, conferido_at, efetivado_at, efetivacao_lock_at, nfe_recebimento_itens(count)";
+  "id, omie_id_receb, chave_acesso, warehouse_id, status, conferente_id, conferido_at, efetivado_at, efetivacao_lock_at, nfe_recebimento_itens(count)";
 
 export type Triagem =
   /** Tem itens, ou não pode ser reparado: NÃO gasta consulta/importação. */
