@@ -15,10 +15,10 @@ const lagObs = (fat: number, venc: number, cheg: number, n = 10, base: [number, 
   return { faturamento: obs(fat), vencimento: obs(venc), chegada: obs(cheg) };
 };
 /** R50: disparado antigo (fora dos 180 dias dos compromissos e dos 90 da continuidade) = o motor já existia. */
-const HIST = { id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] as string[] };
+const HIST = { id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] as string[], encerrado_omie: false };
 
 const fatos: Fatos = {
-  meta: { gerado_em: '2026-10-15T12:00:00Z', hoje: '2026-10-15' },
+  meta: { gerado_em: '2026-10-15T12:00:00Z', hoje: '2026-10-15', encerrados_publicacao: { status: 'publicado', publicado_em: '2026-10-15T04:20:00Z', habilitado: true } },
   ciclos: [{ id: 1, status: 'disparado', data_ciclo: '2026-10-01', horario_geracao: '2026-10-01T12:00:00Z', horario_disparo_real: null, valor_total: 40, omie_pedido_compra_id: null }],
   linhas: [{ raiz: 1, pedido_id: 1, sku_codigo_omie: '9', qtde: 4, fator_embalagem_portal: null, preco_unitario: 10, estoque_atual: 0, estoque_fisico: 0, ponto_pedido: 2, modo_promocao: null, preco_sem_desconto: null }],
   demanda: Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
@@ -31,6 +31,8 @@ const fatos: Fatos = {
   ids_sayerlack: [],
   pedidos_omie_sayerlack: [],
   nfs_do_contrato: [],
+  evidencia_nf_contratos: [],
+  contratos_pedidos_omie: [],
   chegadas: [],
   pagos_nao_sayerlack: [{ data: '2026-09-05', valor: 1_000 }],
   lag_obs: lagObs(2, 1, 14),
@@ -86,6 +88,24 @@ describe('preVoo', () => {
       'snapshots vazio — sem base de caixa',
       'cm_anual ausente — sem custo de capital',
     ]);
+  });
+  it('R59: sem o sinal (fatos.sql antigo), passada não publicada ou publicação velha → falha', () => {
+    const semCampo = { ...fatos, disparados: [{ id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] }] };
+    expect(preVoo(semCampo)).toEqual(['disparados sem encerrado_omie — fatos.sql antigo (R59)']);
+    const comPub = (encerrados_publicacao: Fatos['meta']['encerrados_publicacao']) => preVoo({ ...fatos, meta: { ...fatos.meta, encerrados_publicacao } });
+    expect(comPub(null)).toEqual(['passada de encerrados do Omie não publicada (R59: nunca rodou) — sinal ausente não é "nenhum encerrado"']);
+    // observado = filtro ainda não habilitado pelos controles: a coluna não é o conjunto de hoje
+    expect(preVoo({ ...fatos, evidencia_nf_contratos: undefined })).toEqual(['evidencia_nf_contratos/contratos_pedidos_omie ausentes — fatos.sql antigo (R59)']);
+    // invalidado/coletando = a tentativa mais recente falhou ou morreu: a publicação anterior não vale
+    expect(comPub({ status: 'invalidado', publicado_em: '2026-10-15T04:20:00Z', habilitado: true })).toEqual(['passada de encerrados do Omie não publicada (R59: invalidado) — sinal ausente não é "nenhum encerrado"']);
+    expect(comPub({ status: 'publicado', publicado_em: '2026-10-15T04:20:00Z', habilitado: false })).toEqual(['publicação de encerrados do Omie desabilitada (R59) — o filtro não está mais habilitado']);
+    expect(comPub({ status: 'observado', publicado_em: null })).toEqual(['passada de encerrados do Omie não publicada (R59: observado) — sinal ausente não é "nenhum encerrado"']);
+    // publicada há 49h (gerado_em 15/10 12:00): marca velha não vale como a de hoje; 47h vale
+    const velha = ['publicação de encerrados do Omie fora de 48h (R59) — conjunto velho não vale como o de hoje'];
+    expect(comPub({ status: 'publicado', publicado_em: '2026-10-13T11:00:00Z', habilitado: true })).toEqual(velha);
+    expect(comPub({ status: 'publicado', publicado_em: '2026-10-13T13:00:00Z', habilitado: true })).toEqual([]);
+    // publicação DEPOIS do gerado_em não existe (relógio torto) → recusa
+    expect(comPub({ status: 'publicado', publicado_em: '2026-10-15T13:00:00Z', habilitado: true })).toEqual(velha);
   });
   it('quantidade nula em recebimento é falha (ausente ≠ zero)', () => {
     const f = { ...fatos, recebimentos: [{ sku: '9', data: '2026-10-02', qtde: null }] };
@@ -228,6 +248,76 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     // controle negativo R57: protocolo de reenvio sem NF → o pedido na Sayerlack pode estar em aberto
     const reenvio = simularCiclo(comVinculo('2026-09-15', '2096769'), 1, cfg).estado;
     expect(reenvio.tipo === 'indeterminado' && reenvio.camadas).toEqual(['compromisso_nao_conciliado']);
+  });
+  it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
+    // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2096999' as string | null };
+    const com = (extra: Partial<Fatos['disparados'][number]>, f: Partial<Fatos> = {}): Fatos => ({ ...semLinhas, disparados: [HIST, { ...P, ...extra }], ...f });
+    // controle: o mesmo pedido aberto (21 dias, sem NF, acima de 10% da reserva) deixa o ciclo indeterminado
+    const aberto = simularCiclo(com({ encerrado_omie: false }), 1, cfg).estado;
+    expect(aberto.tipo === 'indeterminado' && aberto.camadas).toEqual(['compromisso_nao_conciliado']);
+    // encerrado e sem NF: fora do caixa por inteiro — o piso é o do mesmo pedido já titulado e liquidado
+    // (resíduo 0, mesma continuidade), não o do ciclo sem o pedido (a continuidade o conta)
+    expect(simularCiclo(com({ encerrado_omie: true }), 1, cfg).estado.tipo).toBe('viavel');
+    const quitado = com({ encerrado_omie: false, nfs: ['123'] }, {
+      titulos_sayerlack: [{ id: 't9', nf: '000123', valor: 20 * 1.025, data_emissao: '2026-09-12', created_at: '2026-09-12T12:00:00Z', data_baixa: '2026-09-20', valor_baixado: 20 * 1.025 }],
+    });
+    expect(pisoDe(com({ encerrado_omie: true }))).toBeCloseTo(pisoDe(quitado), 6);
+    // e o encerrado não é "de graça": o mesmo pedido aberto a faturar (recente) baixa o piso pelo valor com frete
+    const recente = { momento: '2026-09-25T12:00:00Z' };
+    expect(pisoDe(com({ ...recente, encerrado_omie: false })) - pisoDe(com({ ...recente, encerrado_omie: true }))).toBeCloseTo(-20 * 1.025, 6);
+    // encerrado COM NF no tracking: a NF prova que houve faturamento → conciliação normal (sem título = não conciliado)
+    const comNf = simularCiclo(com({ encerrado_omie: true, nfs: ['123'] }), 1, cfg).estado;
+    expect(comNf.tipo === 'indeterminado' && comNf.camadas).toEqual(['compromisso_nao_conciliado']);
+    // encerrado com NF por contrato faturada DEPOIS do ciclo: tem NF hoje → não sai do caixa (e as-of ela não vale)
+    const vinculoDepois = simularCiclo(com({ encerrado_omie: true }, {
+      pedidos_omie_sayerlack: [{ codigo: '500', t1: '2026-09-10', contrato: '2091397', do_motor: true, itens: [{ prod: 'P', qtde: 1 }] }],
+      nfs_do_contrato: [{ contrato: '2091397', nf: '000777', data: '2026-10-05' }],
+    }), 1, cfg).estado;
+    expect(vinculoDepois.tipo === 'indeterminado' && vinculoDepois.camadas).toEqual(['compromisso_nao_conciliado']);
+    // Codex P1: contrato com NF + protocolo de reenvio sem NF → o R57 recusa o vínculo, mas a NF do contrato
+    // prova faturamento: o encerrado NÃO sai do caixa
+    const reenvio = simularCiclo(com({ encerrado_omie: true, protocolo: '2096768' }, {
+      pedidos_omie_sayerlack: [{ codigo: '500', t1: '2026-09-10', contrato: '2091397', do_motor: true, itens: [{ prod: 'P', qtde: 1 }] }],
+      nfs_do_contrato: [{ contrato: '2091397', nf: '000777', data: '2026-09-15' }],
+    }), 1, cfg).estado;
+    expect(reenvio.tipo === 'indeterminado' && reenvio.camadas).toEqual(['compromisso_nao_conciliado']);
+    // NF só do protocolo (o contrato sem NF) também é evidência
+    const soProtocolo = simularCiclo(com({ encerrado_omie: true, protocolo: '2096768' }, {
+      nfs_do_contrato: [{ contrato: '2096768', nf: '000888', data: '2026-10-09' }],
+    }), 1, cfg).estado;
+    expect(soProtocolo.tipo === 'indeterminado' && soProtocolo.camadas).toEqual(['compromisso_nao_conciliado']);
+    // R58/Codex 3ª rodada: sem identificador Sayerlack (sem contrato, sem protocolo) nunca sai do caixa — nem
+    // com o substituto faturado (NF datada depois do ciclo), nem sem evidência nenhuma
+    const itens = [{ prod: 'P1', qtde: 8 }, { prod: 'P2', qtde: 5 }];
+    const substituto = simularCiclo(com({ encerrado_omie: true, protocolo: null }, {
+      pedidos_omie_sayerlack: [
+        { codigo: '500', t1: '2026-09-10', contrato: null, do_motor: true, itens },
+        { codigo: 'M', t1: '2026-09-12', contrato: 'CM', do_motor: false, itens: [...itens].reverse() },
+      ],
+      nfs_do_contrato: [{ contrato: 'CM', nf: '000936384', data: '2026-10-05' }],
+    }), 1, cfg).estado;
+    expect(substituto.tipo === 'indeterminado' && substituto.camadas).toEqual(['compromisso_nao_conciliado']);
+    const semIdentificador = simularCiclo(com({ encerrado_omie: true, omie_pedido: null, protocolo: null }), 1, cfg).estado;
+    expect(semIdentificador.tipo === 'indeterminado' && semIdentificador.camadas).toEqual(['compromisso_nao_conciliado']);
+    // Codex 2ª rodada P1: NF do protocolo sem data (fora do exportador da conciliação) e contrato de pedido Omie
+    // sem itens (fora de pedidos_omie_sayerlack) também são evidência
+    const semData = simularCiclo(com({ encerrado_omie: true, protocolo: '2096768' }, { evidencia_nf_contratos: ['2096768'] }), 1, cfg).estado;
+    expect(semData.tipo === 'indeterminado' && semData.camadas).toEqual(['compromisso_nao_conciliado']);
+    const semItens = simularCiclo(com({ encerrado_omie: true }, {
+      contratos_pedidos_omie: [{ codigo: '500', contrato: '2091397' }], evidencia_nf_contratos: ['2091397'],
+    }), 1, cfg).estado;
+    expect(semItens.tipo === 'indeterminado' && semItens.camadas).toEqual(['compromisso_nao_conciliado']);
+    // controle: evidência de OUTRO contrato não segura o encerrado
+    expect(simularCiclo(com({ encerrado_omie: true }, {
+      contratos_pedidos_omie: [{ codigo: '500', contrato: '2091397' }], evidencia_nf_contratos: ['9999999'],
+    }), 1, cfg).estado.tipo).toBe('viavel');
+    // lista auditável: o backtest nomeia cada pedido que o R59 tirou do caixa (e só esses)
+    expect(backtest(com({ encerrado_omie: true }), cfg).foraDoCaixaR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2096999', momento: '2026-09-10T12:00:00Z' }]);
+    expect(backtest(com({ encerrado_omie: false }), cfg).foraDoCaixaR59).toEqual([]);
+    // continuidade do motor segue contando o encerrado (conservador: a provisão não encolhe)
+    expect(continuidadePorDiaUtil(com({ encerrado_omie: true }), '2026-10-01', cfg.fretePerc))
+      .toBeCloseTo(continuidadePorDiaUtil(com({ encerrado_omie: false }), '2026-10-01', cfg.fretePerc) as number, 9);
   });
   it('(e) R28: pedido sem NF recente (6 dias) está a faturar — não deixa o ciclo indeterminado, mas baixa o piso pelo valor inteiro', () => {
     const pedido = { id: 13, valor_total: 5_000, momento: '2026-09-25T12:00:00Z' };

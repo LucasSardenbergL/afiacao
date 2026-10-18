@@ -11,6 +11,13 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import {
+  decidirPublicacaoEncerrados,
+  FILTROS_SO_ENCERRADOS,
+  FILTROS_TODOS,
+  isoParaBR,
+} from "./encerrados.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
@@ -87,6 +94,19 @@ interface EmpresaSummary {
   // MOTIVO do 1º erro (página + classe), persistido no error_message do sync_state. Sem ele o marcador dizia só
   // "1 erro(s)" e o log da edge (retenção ~10 min) era a única fonte — todo episódio parcial ficou sem causa.
   primeiro_erro: string | null;
+  // R59: passada SÓ de encerrados (depois do completo limpo). Ausente = a passada não rodou neste run.
+  encerrados?: ResumoEncerrados;
+}
+
+interface ResumoEncerrados {
+  // publicado = coluna atualizada; observado = registrado sem tocar a coluna (habilitado=false, aguardando os
+  // controles); obsoleto = coleta mais velha que a já aceita (fencing); abstencao/erro = nada registrado
+  status: "publicado" | "observado" | "obsoleto" | "abstencao" | "erro";
+  ids: number;            // encerrados devolvidos pelo filtro (telemetria dos controles do 1º run)
+  paginas: number;
+  novos: number | null;   // da RPC (null = não publicou)
+  limpos: number | null;
+  motivo: string | null;
 }
 
 // Sem hora/duração: o motivo entra na message do check (fingerprint do push) → texto estável por causa.
@@ -436,20 +456,19 @@ async function callOmie(
   pagina: number,
   dataDe: string,
   dataAte: string,
+  filtros: Readonly<Record<string, "T" | "F">> = FILTROS_TODOS,
+  // só a passada de encerrados passa (Codex 3ª rodada P2): nenhuma tentativa — 1ª, re-tentativa de timeout ou
+  // de 429 — COMEÇA sem caber inteira antes dele. O run principal segue sem deadline (ver FETCH_TIMEOUT_MS).
+  deadline?: number,
 ): Promise<OmieSearchResponse> {
   // PesquisarPedCompra NÃO suporta filtro nativo por fornecedor.
   // Filtramos pós-resposta em syncEmpresa().
+  // filtros: a varredura liga os 7 (FILTROS_TODOS); a passada de encerrados (R59) liga SÓ o de encerrados.
   const param: Record<string, unknown> = {
     nPagina: pagina,
     nRegsPorPagina: PAGE_SIZE,
     lApenasImportadoApi: "F",
-    lExibirPedidosPendentes: "T",
-    lExibirPedidosFaturados: "T",
-    lExibirPedidosRecebidos: "T",
-    lExibirPedidosCancelados: "T",
-    lExibirPedidosEncerrados: "T",
-    lExibirPedidosRecParciais: "T",
-    lExibirPedidosFatParciais: "T",
+    ...filtros,
     dDataInicial: dataDe,
     dDataFinal: dataAte,
   };
@@ -465,6 +484,10 @@ async function callOmie(
   let timeouts = 0; // contador PRÓPRIO: um 429 antes não pode gastar a re-tentativa do timeout
   while (attempt < MAX_RETRIES) {
     attempt++;
+    const teto = timeouts > 0 ? FETCH_TIMEOUT_RETRY_MS : FETCH_TIMEOUT_MS;
+    if (deadline !== undefined && Date.now() + teto > deadline) {
+      throw new Error(`sem tempo para a tentativa ${attempt} da pág ${pagina} (deadline da passada)`);
+    }
     let res: Response;
     let text: string;
     try {
@@ -552,6 +575,9 @@ const PRESERVE_FIELDS = new Set([
   // eternamente sem nunca convergir (contador de identificadas travado por dias no
   // fin_sync_log). Sem esta linha, o Sísifo volta.
   "nid_receb",
+  // R59: 1 writer — reposicao_registrar_encerrados_omie (passada de encerrados). O mapPedidoToRow não o gera;
+  // listado aqui para que nenhum upsert do espelho o regrave por engano.
+  "encerrado_omie_em",
 ]);
 
 /**
@@ -822,6 +848,185 @@ async function syncEmpresa(
   // (shape torto, nCodPed não-canônico, sobreposição, fim contraditório) já veio como anomalia → abortado.
   summary.varredura_completa = fim && !abortado;
   return summary;
+}
+
+// ===== Passada SÓ de encerrados (R59 — money-path) =====
+// O encerramento não aparece no cabeçalho (cEtapa segue "15"); o único sinal é o filtro
+// lExibirPedidosEncerrados ligado SOZINHO (encerrados.ts). Roda só depois de um completo LIMPO e
+// não-filtrado do MESMO run, na MESMA janela: o completo já upsertou todo pedido da janela (os 7
+// filtros ligados), então esta passada não escreve espelho — só coleta IDs. Mesmo parser de página
+// do completo (classificarPagina/acumularPiso: paginar até vazio, piso, sobreposição = anomalia),
+// fingerprint anti-loop e teto MAX_PAGINAS. Cota: ~1 página a mais por completo (~1×/dia).
+async function coletarEncerrados(
+  app_key: string,
+  app_secret: string,
+  dataDe: string,
+  dataAte: string,
+  deadline: number,
+): Promise<{ ids: Set<number>; completa: boolean; paginas: number; motivo: string | null }> {
+  const ids = new Set<number>();
+  const fpsVistos = new Set<string>();
+  let piso: PisoTotais = PISO_ZERO;
+  for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
+    // prazo POR PÁGINA (Codex 2ª rodada P2): só começa a página se cabe o pior caso dela (25s + 5s + 60s da
+    // re-tentativa de timeout) antes do deadline — o worker não morre no meio com o registro em 'coletando'
+    if (Date.now() + RATE_LIMIT_DELAY_MS + PIOR_CASO_PAGINA_MS > deadline) {
+      return { ids, completa: false, paginas: pagina - 1, motivo: `sem tempo antes da pág ${pagina}` };
+    }
+    await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie: a 1ª página vem logo depois da última do completo
+    let resp: OmieSearchResponse;
+    try {
+      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS, deadline);
+    } catch (err) {
+      const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+      return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} erro fetch: ${msg}`.slice(0, 200) };
+    }
+    piso = acumularPiso(resp, piso);
+    const cls = classificarPagina(resp, { pagina, idsVistos: ids, piso });
+    if (cls.tipo === "anomalia") {
+      return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} anomalia: ${cls.motivo}`.slice(0, 200) };
+    }
+    if (cls.tipo === "fim") return { ids, completa: true, paginas: pagina - 1, motivo: null };
+    const fp = fingerprintPagina(cls.pedidos as OmiePedido[]);
+    if (fp && fpsVistos.has(fp)) {
+      return { ids, completa: false, paginas: pagina, motivo: `pág ${pagina} repetição de página (anti-loop)` };
+    }
+    fpsVistos.add(fp);
+    for (const id of cls.ids) ids.add(id);
+  }
+  return { ids, completa: false, paginas: MAX_PAGINAS, motivo: `excedeu ${MAX_PAGINAS} páginas sem ver fim` };
+}
+
+// Marcador da passada no sync_state (entity_type='pedidos_compra_encerrados'): SÓ para o Sentinela ver —
+// 'running' antes da coleta (worker que morre fica órfão e o eixo auto-declarado do _data_health_compute o
+// acusa em >6h), 'complete' em publicado/observado/obsoleto, 'error' com o motivo em abstenção/erro. A
+// VERDADE para o backtest é o registro atômico em reposicao_encerrados_omie_publicacao (mesmo commit da coluna).
+const HEARTBEAT_ENCERRADOS_ENTITY = "pedidos_compra_encerrados";
+// Orçamento de relógio: a passada só começa se o run ainda tem folga até o wall-clock do worker (~400s). O
+// completo leva ~185s; cada página da passada pode gastar até ~90s com a re-tentativa de timeout.
+const ORCAMENTO_ENCERRADOS_MS = 240_000;
+// Deadline da passada inteira, contado do início do run (abaixo do wall-clock do worker, ~400s).
+const DEADLINE_ENCERRADOS_MS = 380_000;
+const PIOR_CASO_PAGINA_MS = FETCH_TIMEOUT_MS + RETRY_DELAY_MS + FETCH_TIMEOUT_RETRY_MS;
+
+// Tentativa no registro protegido (reposicao_tentativa_encerrados_omie): 'coletando' antes da 1ª página e
+// 'invalidado' em toda saída que não registra conjunto — o backtest só aceita 'publicado', então uma
+// tentativa ruim ou morta invalida a publicação anterior (Codex 2ª rodada P1). Devolve o status gravado
+// ('obsoleto' = outra tentativa mais nova já está no registro) ou null em erro.
+async function tentativaEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  seq: number | null,
+  status: "coletando" | "invalidado",
+  motivo: string | null,
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc("reposicao_tentativa_encerrados_omie", {
+      p_empresa: empresa, p_seq: seq, p_status: status, p_motivo: motivo,
+    });
+    if (error) throw error;
+    const st = (data as { status?: unknown } | null)?.status;
+    return typeof st === "string" ? st : null;
+  } catch (err) {
+    const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+    console.error(`[sync-pedidos] tentativa encerrados (${status}) falhou empresa=${empresa}: ${msg}`);
+    return null;
+  }
+}
+
+async function heartbeatEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  status: "running" | "complete" | "error",
+  extra: Record<string, unknown>,
+): Promise<void> {
+  const nowISO = new Date().toISOString();
+  const row: Record<string, unknown> = {
+    entity_type: HEARTBEAT_ENCERRADOS_ENTITY,
+    account: empresa.toLowerCase(),
+    status,
+    updated_at: nowISO,
+    ...extra,
+  };
+  if (status === "complete") row.last_sync_at = nowISO;
+  try {
+    const { error } = await supabase.from("sync_state").upsert(row, { onConflict: "entity_type,account" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+    console.error(`[sync-pedidos] heartbeat encerrados (${status}) falhou empresa=${empresa}: ${msg}`);
+  }
+}
+
+async function passadaEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  s: EmpresaSummary,
+  idsGeral: Set<number>,
+  t0: number,
+): Promise<ResumoEncerrados> {
+  const vazio = { ids: 0, paginas: 0, novos: null, limpos: null };
+  const dataDe = isoParaBR(s.janela_de);
+  const dataAte = isoParaBR(s.janela_ate);
+  let r: ResumoEncerrados;
+  let seq: number | null = null;
+  if (!dataDe || !dataAte || !s.janela_de || !s.janela_ate) {
+    r = { status: "abstencao", ...vazio, motivo: "janela do completo ausente" };
+  } else if (Date.now() - t0 > ORCAMENTO_ENCERRADOS_MS) {
+    r = { status: "abstencao", ...vazio, motivo: `sem tempo: run já em ${Math.round((Date.now() - t0) / 1000)}s` };
+  } else {
+    await heartbeatEncerrados(supabase, empresa, "running", { metadata: { started_at: new Date().toISOString() } });
+    // fencing da COLETA (Codex 2026-10-18 P1): token alocado imediatamente antes da 1ª página — uma coleta
+    // que começou antes e publica depois é 'obsoleto' na RPC e não ressuscita encerramento já limpo
+    seq = await alocarRunSeq(supabase, empresa);
+    const aberta = seq == null ? null : await tentativaEncerrados(supabase, empresa, seq, "coletando", null);
+    if (seq == null) {
+      r = { status: "abstencao", ...vazio, motivo: "sem fencing token (reposicao_alocar_run_seq falhou)" };
+    } else if (aberta !== "coletando") {
+      // obsoleto = uma tentativa mais nova já abriu; null = o registro não abriu → não coleta às cegas
+      r = { status: aberta === "obsoleto" ? "obsoleto" : "erro", ...vazio, motivo: `tentativa não abriu (${aberta ?? "erro"})` };
+    } else {
+      const { app_key, app_secret } = getCredentials(empresa);
+      const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte, t0 + DEADLINE_ENCERRADOS_MS);
+      const dec = decidirPublicacaoEncerrados({
+        completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
+      });
+      if (dec.tipo === "abster") {
+        r = { status: "abstencao", ids: col.ids.size, paginas: col.paginas, novos: null, limpos: null, motivo: col.motivo ?? dec.motivo };
+      } else {
+        try {
+          const { data, error } = await supabase.rpc("reposicao_registrar_encerrados_omie", {
+            p_empresa: empresa, p_seq: seq, p_ids: dec.ids, p_janela_de: s.janela_de, p_janela_ate: s.janela_ate,
+          });
+          if (error) throw error;
+          const d = (data ?? {}) as { status?: unknown; novos?: unknown; limpos?: unknown };
+          const st = d.status === "publicado" || d.status === "observado" || d.status === "obsoleto" ? d.status : null;
+          r = st === null
+            ? { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc devolveu status ilegível: ${JSON.stringify(data)}`.slice(0, 200) }
+            : {
+              status: st, ids: dec.ids.length, paginas: col.paginas,
+              novos: typeof d.novos === "number" ? d.novos : null, limpos: typeof d.limpos === "number" ? d.limpos : null, motivo: null,
+            };
+        } catch (err) {
+          const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+          r = { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc: ${msg}`.slice(0, 200) };
+        }
+      }
+    }
+  }
+  // abstenção/erro invalida o registro (com o seq da própria tentativa, ou sem condição quando nem há token):
+  // a publicação anterior deixa de valer para o backtest até a próxima passada boa
+  if (r.status === "abstencao" || r.status === "erro") {
+    await tentativaEncerrados(supabase, empresa, seq, "invalidado", `${r.status}: ${r.motivo ?? "sem motivo"}`);
+  }
+  console.log(`[sync-pedidos] empresa=${empresa} encerrados ${JSON.stringify(r)}`);
+  const ok = r.status === "publicado" || r.status === "observado" || r.status === "obsoleto";
+  await heartbeatEncerrados(supabase, empresa, ok ? "complete" : "error", {
+    total_synced: r.ids,
+    error_message: ok ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "sem motivo"}`,
+    metadata: { ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: new Date().toISOString() },
+  });
+  return r;
 }
 
 // ===== Heartbeat do Sentinela (sync_state) =====
@@ -1170,6 +1375,15 @@ Deno.serve(async (req) => {
         } else {
           const publicou = await publicarRunCompleto(supabase, s, idsVistos, runSeq);
           if (publicou) await marcarCompletoOk(supabase, empresa);
+        }
+        // R59: passada SÓ de encerrados, só depois do completo limpo e não-filtrado (mesma janela, mesmos IDs
+        // de referência). Tem fencing PRÓPRIO (alocado antes da coleta dela); não publica run, só encerrados.
+        try {
+          s.encerrados = await passadaEncerrados(supabase, empresa, s, idsVistos, t0);
+        } catch (err) {
+          const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+          console.error(`[sync-pedidos] empresa=${empresa} passada de encerrados falhou: ${msg}`);
+          s.encerrados = { status: "erro", ids: 0, paginas: 0, novos: null, limpos: null, motivo: msg.slice(0, 200) };
         }
       }
     }

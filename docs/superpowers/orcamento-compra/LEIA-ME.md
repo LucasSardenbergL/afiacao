@@ -76,6 +76,18 @@ O founder aprovou as duas regras; o challenge Codex (xhigh, 2026-10-16) achou qu
 
 **O que destrava:** conferir no portal Sayerlack o status dos pedidos 2096768, 2096769, 2096770, 2096771 (reenvios de 22/05) e 2094267 (1015). Cancelados = evidência positiva para ligar; em aberto = compromisso real que a guarda tinha razão de segurar.
 
+### R59 — pedido ENCERRADO no Omie sai do caixa (2026-10-18)
+
+Decisão do founder: corrigir na fonte. Pedido disparado que foi **encerrado no Omie** (cancelado no portal) e **não tem evidência nenhuma de NF** deixa de ser compromisso. Com qualquer NF (no tracking, por vínculo R57/R58 ou de qualquer identificador Sayerlack do pedido, em qualquer data), segue a conciliação normal.
+
+- **De onde vem o sinal.** O encerramento não aparece no cabeçalho do `PesquisarPedCompra` (os pedidos encerrados vêm com `cEtapa="15"`, como os abertos). A `omie-sync-pedidos-compra` (v1.5) faz, depois do completo limpo, uma passada só com `lExibirPedidosEncerrados` ligado e registra o conjunto em `reposicao_encerrados_omie_publicacao`. A coluna `purchase_orders_tracking.encerrado_omie_em` (1 writer) é esse conjunto **quando publicado**.
+- **Habilitação.** Que o filtro sozinho devolve só encerrados ainda é hipótese. Até alguém ligar `habilitado` na publicação, a passada só **observa**: grava o conjunto e não toca a coluna. Antes de habilitar, confira no conjunto observado o controle positivo (1014 e 1049 dentro) e o negativo (um pedido aberto de out/2026 fora).
+- **Pré-voo.** O backtest só roda se a ÚLTIMA tentativa da passada estiver `publicado`, com `habilitado` ligado e de até 48h antes dos fatos. Toda passada abre o registro em `coletando` e, se falhar, se abstiver ou morrer no meio, ele fica `coletando` ou `invalidado`, e a publicação anterior deixa de valer. Observado, invalidado ou velho = sinal ausente, não "nenhum encerrado".
+- **De onde o backtest tira o conjunto.** Pedido encerrado = marcado na coluna **e** presente nos `ids` da publicação, uma tabela que cliente não escreve. Escrita manual na coluna sozinha não tira pedido do caixa. Evidência de NF vem de dois exportadores: o da conciliação (com data) e um sem filtro de data e de janela.
+- **Só sai do caixa quem tem identificador.** O pedido precisa ter cContrato ou protocolo do portal, e nenhum desses identificadores pode ter NF. Sem identificador, o pedido nunca sai: um substituto refeito à mão (R58) pode ter faturado sem deixar rastro.
+- **Resíduo conhecido (premissa).** A varredura completa reescreve o `raw_data` das linhas de pedido e apaga o `itensRecebimento` (medido em 18/10: só 4 de 390 linhas com NF ainda o têm). Uma NF de vários pedidos gravada na linha de OUTRO pedido antes de 18/10 não aparece como evidência. A `recebimento_associacao_sombra` (#3124) fecha isso daqui em diante. Por isso o `resultado.json` lista em `foraDoCaixaR59` cada pedido que o R59 tirou do caixa, para revisar um a um.
+- **Look-ahead (premissa).** O sinal é o de **hoje**. `encerrado_omie_em` é quando a passada viu o encerramento, não a data real (o Omie não a expõe). Um ciclo anterior ao encerramento já trata o pedido como fora do caixa, então o backtest fica mais otimista do que a guarda teria sido naquele dia. A continuidade do motor (R54) segue contando o encerrado, o que é conservador.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅

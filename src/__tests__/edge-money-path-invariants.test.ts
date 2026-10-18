@@ -2037,8 +2037,11 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     // começa antes mas publica depois recebe seq MENOR → NÃO suprime a prova por ID de um PO excluído (Codex v3.3 P1).
     expect(src, 'a edge não aloca o fencing token (reposicao_alocar_run_seq)').toContain('reposicao_alocar_run_seq');
     expect(src, 'a RPC de publicação não recebe p_seq (perdeu a ordem total de INÍCIO)').toMatch(/p_seq:\s*runSeq/);
-    const idxAloca = src.indexOf('await alocarRunSeq(');
-    const idxSync = src.indexOf('await syncEmpresa(');
+    // escopo: o run principal (processarTudo) — a passada de encerrados (R59) tem fencing próprio, asseverado abaixo
+    const idxRun = src.indexOf('const processarTudo');
+    expect(idxRun, 'processarTudo não encontrado').toBeGreaterThan(0);
+    const idxAloca = src.indexOf('await alocarRunSeq(', idxRun);
+    const idxSync = src.indexOf('await syncEmpresa(', idxRun);
     expect(idxAloca, 'alocarRunSeq não é chamado com await').toBeGreaterThan(0);
     expect(
       idxAloca < idxSync,
@@ -2048,12 +2051,28 @@ describe('guardrail money-path: publicação diferida de run (edge USA os predic
     // NOVO coleta e publica primeiro enquanto o R1 trava no heartbeat; o token velho deixa de refletir a ordem de
     // início, e um PO excluído nessa janela fica com last_seen == marcador → nunca vira candidato, a prova por ID
     // nunca roda e o fantasma sobrevive. O heartbeat tem de vir ANTES da alocação.
-    const idxHeartbeat = src.indexOf('await heartbeatRunning(');
+    const idxHeartbeat = src.indexOf('await heartbeatRunning(', idxRun);
     expect(idxHeartbeat, 'heartbeatRunning não encontrado').toBeGreaterThan(0);
     expect(
       idxHeartbeat < idxAloca,
       'REGRESSÃO Codex #9 P1: heartbeatRunning (await de REDE) voltou a ficar ENTRE o fencing token e a coleta',
     ).toBe(true);
+  });
+
+  it('R59: a passada de encerrados aloca o PRÓPRIO token depois do heartbeat e só coleta com a tentativa fenced aberta', () => {
+    // Mesma regra do Codex #9 P1: o heartbeat (rede) vem ANTES do token. Entre o token e a 1ª página fica só a
+    // tentativa 'coletando' — que é ela mesma fenced (seq menor que o aceito = obsoleto, não coleta).
+    const ini = src.indexOf('async function passadaEncerrados(');
+    expect(ini, 'passadaEncerrados não encontrada').toBeGreaterThan(0);
+    const corpo = src.slice(ini, src.indexOf('\n}\n', ini));
+    const iHb = corpo.indexOf('await heartbeatEncerrados(supabase, empresa, "running"');
+    const iSeq = corpo.indexOf('await alocarRunSeq(');
+    const iTent = corpo.indexOf('"coletando"');
+    const iCol = corpo.indexOf('await coletarEncerrados(');
+    expect(iHb > 0 && iSeq > iHb, 'heartbeat running tem de vir ANTES do token da passada').toBe(true);
+    expect(iTent > iSeq && iCol > iTent, 'a coleta só pode começar depois da tentativa fenced aberta').toBe(true);
+    expect(corpo, 'a coleta precisa de fechamento só com a tentativa aberta').toMatch(/aberta !== "coletando"/);
+    expect(corpo, 'a RPC de registro recebe o seq da passada').toMatch(/p_seq:\s*seq/);
   });
 
   it('PARIDADE: o parser omie-pagina espelhado no edge é IDÊNTICO ao de src/ (pega reversão do Lovable)', () => {
