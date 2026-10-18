@@ -408,20 +408,35 @@ const ROTULO_FASE: Record<FaseAtualizacao, string> = {
 };
 
 /**
- * Texto do menu do usuário — puro, pra o staff dizer "em que build estou" sem
- * DevTools. `build` é o hash curto (sem `index-`), o mesmo que aparece no
- * `build_id` do PostHog e no `telemetria_probes`. Quando uma checagem manual
- * leu o servidor e ele difere do que roda aqui, diz isso explicitamente — é o
- * único caso em que "em dia" seria mentira.
+ * Versão LEGÍVEL de um build: a data e hora em que ele foi gerado (o carimbo
+ * `app-build-em`, horário de Brasília) — "18/10 14:54". Ordenada por construção (o
+ * mais recente é o mais novo), ao contrário do hash. Um número sequencial (v1, v2…)
+ * exigiria um contador que o builder do Lovable não tem (sem git no build).
  */
-export function descreverEstadoAtualizacao(e: EstadoAtualizacao): { build: string; situacao: string } {
+function formatarVersao(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).replace(',', '');
+}
+
+/**
+ * Texto do menu do usuário — puro, pra o staff dizer "em que versão estou" sem
+ * DevTools. `versao` é a DATA do build (o que a pessoa lê e compara); `build` é o
+ * hash curto (sem `index-`), o mesmo do `build_id` no PostHog e no `telemetria_probes`
+ * — fica em letra miúda para o suporte. Build anterior ao carimbo: só o hash.
+ * Quando uma checagem manual leu o servidor e ele difere do que roda aqui, diz isso
+ * explicitamente — é o único caso em que "em dia" seria mentira.
+ */
+export function descreverEstadoAtualizacao(e: EstadoAtualizacao): { versao: string; build: string; situacao: string } {
   const curto = (id: string) => id.replace(/^index-/, '');
   const build = curto(e.buildId);
+  const versao = e.buildEm ? formatarVersao(e.buildEm) : build;
   const defasado = e.buildServidor !== null && e.buildServidor !== e.buildId;
   if (defasado && (e.fase === 'em_dia' || e.fase === 'falhou' || e.fase === 'inativo')) {
-    return { build, situacao: `desatualizado (servidor: ${curto(e.buildServidor as string)})` };
+    const doServidor = e.buildServidorEm ? formatarVersao(e.buildServidorEm) : curto(e.buildServidor as string);
+    return { versao, build, situacao: `desatualizado (servidor: ${doServidor})` };
   }
-  return { build, situacao: ROTULO_FASE[e.fase] };
+  return { versao, build, situacao: ROTULO_FASE[e.fase] };
 }
 
 /**
