@@ -50,6 +50,10 @@ PG17 descartável aplica o SQL REAL 2× (idempotência + PRE md5). **75 asserts*
 
 Edges: 74 testes Deno (`--no-remote`): interpretação fail-closed do jsonb, classificação de erro, triagem, tradução HTTP do webhook, laço real do cron com os desfechos novos.
 
+## O ensaio contra a prod pegou o que o harness não via
+
+`bun run db:aplicar … --ensaio` (transação com ROLLBACK) abortou em **A11**: na prod a tabela nova nasce com os DEFAULT PRIVILEGES do Supabase (`pg_default_acl`: `anon`/`authenticated`/`service_role` = `arwdDxtm` em tabelas, `X` em funções), e `authenticated` ficou com INSERT em `nfe_importacao_falhas`. O harness dava ALL só à `service_role`, então o `GRANT SELECT` estreito parecia suficiente. Conserto: `REVOKE ALL … FROM authenticated` antes do `GRANT SELECT`, e o harness passou a declarar o mesmo default (`ALTER DEFAULT PRIVILEGES … GRANT ALL ON TABLES TO anon, authenticated, service_role`) — sem isso a prova aprovava uma migration que a postcondição reprovaria na mão do founder. **Lição:** o ACL de tabela nova é do CRIADOR + default do schema, nunca só do que a migration escreve; o ensaio do `db:aplicar` é a 2ª testemunha barata antes do apply, e a prova local tem de carregar o `pg_default_acl` medido (como já faz com `corpo-vivo-acl.sql` para o que o snapshot não traz).
+
 ## Deploy (manual, 3 camadas) e o que fica
 
 Migration (founder no SQL Editor com `BEGIN/COMMIT`, ou `bun run db:aplicar` após o merge) → validação psql-ro → `NOTIFY pgrst` → `pendencias:deploy` das duas edges na mesma leva. **Passivo visível, não resolvido:** 52 `efetivado` + 1 `falha_efetivacao` sem itens (a RPC responde `bloqueada`); os 4 `pendente` o cron deve reparar sozinho em 1–2 dias (o denominador `origem`/`reparada_origem` nasce aqui). Webhook segue sem tráfego: a correção é para o dia em que for apontado.
