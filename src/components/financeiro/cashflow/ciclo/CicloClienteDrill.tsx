@@ -5,6 +5,7 @@ import { porDia, sugerirAlavanca, type ResumoCliente } from '@/lib/financeiro/ci
 import type { Company } from '@/contexts/CompanyContext';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { brl } from './ciclo-format';
+import { nomeExibido } from './ciclo-format';
 
 const ROTULO_SITUACAO: Record<string, string> = {
   paga: 'Paga',
@@ -26,7 +27,7 @@ export function CicloClienteDrill({ cliente, hoje, onFechar }: { cliente: Resumo
     <Sheet open={cliente !== null} onOpenChange={(o) => { if (!o) onFechar(); }}>
       <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>{cliente ? cliente.nomeCliente ?? `#${cliente.omieCodigoCliente}` : ''}</SheetTitle>
+          <SheetTitle>{cliente ? nomeExibido(cliente) : ''}</SheetTitle>
           <SheetDescription>Parcelas pagas (12 meses), pagas sem data de baixa, vencidas em aberto e com status ambíguo.</SheetDescription>
         </SheetHeader>
         {s && (

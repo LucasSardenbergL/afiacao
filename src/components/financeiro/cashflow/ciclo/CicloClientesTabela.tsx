@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { confiancaCliente, perfilCliente, sugerirAlavanca, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { brl, dias, ROTULO_PERFIL } from './ciclo-format';
+import { nomeExibido } from './ciclo-format';
 
 const ORDEM = { recuperar_vencido: 0, cobrar_atraso: 1, degrau_prazo: 2, nenhuma: 3 } as const;
 
@@ -38,7 +39,7 @@ export function CicloClientesTabela({ clientes, hoje, empresa, perfilFiltro, onA
             onClick={() => onAbrir(c)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onAbrir(c); } }}
           >
-            <TableCell>{c.nomeCliente ?? `#${c.omieCodigoCliente}`}</TableCell>
+            <TableCell>{nomeExibido(c)}</TableCell>
             <TableCell>{COMPANIES[c.company as Company]?.shortName ?? c.company}</TableCell>
             <TableCell className="text-right font-mono">{c.saldoVencido !== null ? <span className="text-status-error">{brl(c.saldoVencido)}</span> : '—'}</TableCell>
             <TableCell className="text-right font-mono">{c.nDocumentos ?? '—'}</TableCell>

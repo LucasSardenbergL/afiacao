@@ -22,7 +22,7 @@ vi.mock('@/hooks/useCashflowProjection', () => ({
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
 
 import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
-import { montarSerieTendencia } from '@/components/financeiro/cashflow/ciclo/ciclo-format';
+import { montarSerieTendencia, nomeExibido } from '@/components/financeiro/cashflow/ciclo/ciclo-format';
 
 const ok = <T,>(data: T) => ({ data, isLoading: false, error: null });
 const cli = (o: Partial<ResumoCliente>): ResumoCliente => ({
@@ -281,5 +281,12 @@ describe('CicloTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /ACME/ }));
     expect(screen.getByRole('dialog')).toHaveTextContent(/sem data de baixa.*vencidas em aberto.*status ambíguo/);
     expect(screen.getByTestId('ciclo-drill-conta')).toHaveTextContent(/excesso 10,0 d × R\$\s*100,00\/dia = R\$\s*1\.000 \(cenário, não é previsão\)/);
+  });
+});
+
+describe('nomeExibido', () => {
+  it('decodifica entidade HTML do Omie e cai no código sem nome', () => {
+    expect(nomeExibido({ nomeCliente: 'MOVEIS &amp; CIA', omieCodigoCliente: 1 })).toBe('MOVEIS & CIA');
+    expect(nomeExibido({ nomeCliente: null, omieCodigoCliente: 42 })).toBe('#42');
   });
 });
