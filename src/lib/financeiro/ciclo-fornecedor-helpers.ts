@@ -92,24 +92,28 @@ const temDesconto = (t: TituloCp) => t.descontoInformado !== null && t.descontoI
 
 type Documento = { chave: string; vencimento: string; desconto: number; principal: number; emDia: boolean };
 
-/** Agrupa parcelas por NF: vencimento = o mais cedo; em dia só se TODAS as parcelas tiverem atraso ≤ 0. */
+/**
+ * Agrupa parcelas por NF. Taxa e vencimento vêm só das parcelas COM desconto; "em dia" olha TODAS as parcelas pagas
+ * da NF (uma parcela atrasada sem desconto, ou com data incerta, tira a NF de "em dia" — Codex review #1).
+ */
 function documentosComDesconto(titulos: TituloCp[]): Documento[] {
-  const m = new Map<string, Documento>();
+  const m = new Map<string, Documento & { comDesconto: boolean }>();
   for (const t of titulos) {
-    if (!temDesconto(t)) continue;
+    const pagaParcela = t.situacao === 'paga' || t.situacao === 'paga_sem_baixa';
+    if (!pagaParcela && !temDesconto(t)) continue;
     const k = chaveDocumento(t);
-    const emDia = t.atrasoBaixa !== null && t.atrasoBaixa <= 0;
-    const base = t.valorPagoPrincipal ?? t.valor;
-    const d = m.get(k);
-    if (!d) m.set(k, { chave: k, vencimento: t.vencimento, desconto: t.descontoInformado ?? 0, principal: base, emDia });
-    else {
-      if (t.vencimento < d.vencimento) d.vencimento = t.vencimento;
+    const d = m.get(k) ?? { chave: k, vencimento: t.vencimento, desconto: 0, principal: 0, emDia: true, comDesconto: false };
+    if (pagaParcela) d.emDia = d.emDia && t.atrasoBaixa !== null && t.atrasoBaixa <= 0;
+    if (temDesconto(t)) {
+      if (!d.comDesconto || t.vencimento < d.vencimento) d.vencimento = t.vencimento;
       d.desconto += t.descontoInformado ?? 0;
-      d.principal += base;
-      d.emDia = d.emDia && emDia;
+      d.principal += t.valorPagoPrincipal ?? t.valor;
+      d.comDesconto = true;
     }
+    m.set(k, d);
   }
-  return [...m.values()].sort((a, b) => (a.vencimento < b.vencimento ? -1 : a.vencimento > b.vencimento ? 1 : 0));
+  return [...m.values()].filter((d) => d.comDesconto)
+    .sort((a, b) => (a.vencimento < b.vencimento ? -1 : a.vencimento > b.vencimento ? 1 : 0));
 }
 
 /** Vencimento do 1º de ≥ 3 NFs com desconto em até 90 dias. Desconto isolado não abre regime. */
@@ -141,7 +145,9 @@ export function taxaDescontoObservada(
   if (n < 5) return { taxa: null, nDocumentos: n, motivo: 'amostra' };
   const taxas = docs.map((d) => d.desconto / d.principal).sort((a, b) => a - b);
   const mediana = percentil(taxas, 0.5);
-  if (Math.abs(percentil(taxas, 0.2) - mediana) > 0.005 || Math.abs(percentil(taxas, 0.8) - mediana) > 0.005) {
+  // ±0,5 p.p. inclusivo; a folga de 1e-9 absorve o erro binário (1,5% e 2,5% em torno de 2% — Codex review #8).
+  const TOL = 0.005 + 1e-9;
+  if (Math.abs(percentil(taxas, 0.2) - mediana) > TOL || Math.abs(percentil(taxas, 0.8) - mediana) > TOL) {
     return { taxa: null, nDocumentos: n, motivo: 'dispersao' };
   }
   if (docs.filter((d) => d.emDia).length / n < 0.8) return { taxa: null, nDocumentos: n, motivo: 'nao_pontualidade' };
@@ -206,11 +212,12 @@ export type PontualidadeMes = {
   pctEmDia: number | null; pctAtrasado: number | null; coberturaData: number | null; mesParcial: boolean;
 };
 
-/** Por mês de vencimento (só o que já venceu): % em dia / atrasado entre os títulos com data de baixa confiável. */
+/** Por mês de vencimento (só o que já venceu — vencimento < hoje, igual ao SQL; vence hoje = a vencer):
+ *  % em dia / atrasado entre os títulos com data de baixa confiável. */
 export function pontualidadePorMes(titulos: TituloCp[], hoje: string): PontualidadeMes[] {
   const meses = new Map<string, { vencido: number; aberto: number; datavel: number; emDia: number; atrasado: number }>();
   for (const t of titulos) {
-    if (t.vencimento > hoje || t.situacao === 'status_ambiguo') continue;
+    if (t.vencimento >= hoje || t.situacao === 'a_vencer' || t.situacao === 'status_ambiguo') continue;
     const mes = `${t.vencimento.slice(0, 7)}-01`;
     const m = meses.get(mes) ?? { vencido: 0, aberto: 0, datavel: 0, emDia: 0, atrasado: 0 };
     m.vencido += t.valor;

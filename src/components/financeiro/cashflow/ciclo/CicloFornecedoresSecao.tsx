@@ -31,12 +31,14 @@ function Kpi({ rotulo, valor, nota }: { rotulo: string; valor: string; nota?: st
   );
 }
 
-function soma(xs: ResumoFornecedor[], campo: 'descontoObtido12m' | 'encargoPago12m' | 'valorVencidoAberto'): number | null {
+/** Subtotal dos fornecedores COM o dado. Nenhum com dado → null (nunca R$ 0); parte sem dado → a nota diz quantos. */
+function soma(xs: ResumoFornecedor[], campo: 'descontoObtido12m' | 'encargoPago12m' | 'valorVencidoAberto') {
   let s = 0;
-  let algum = false;
-  for (const x of xs) { const v = x[campo]; if (v !== null) { s += v; algum = true; } }
-  return algum ? s : null; // nenhum fornecedor com o dado → ausente, nunca R$ 0
+  let comDado = 0;
+  for (const x of xs) { const v = x[campo]; if (v !== null) { s += v; comDado++; } }
+  return { valor: comDado > 0 ? s : null, cobertura: comDado < xs.length ? `${comDado} de ${xs.length} fornecedores com dado` : null };
 }
+const notaApurado = (c: string | null) => ['apurado · títulos quitados', c].filter(Boolean).join(' · ');
 
 function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
   company: Company; resumo: ResumoFornecedor[]; titulos: TituloCp[]; cp: CpEmpresa | undefined; hoje: string;
@@ -72,6 +74,9 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
     );
   }
 
+  const desc = soma(doCompany, 'descontoObtido12m');
+  const enc = soma(doCompany, 'encargoPago12m');
+  const venc = soma(doCompany, 'valorVencidoAberto');
   const ordenados = [...doCompany].sort((a, b) => (b.compras12m ?? -1) - (a.compras12m ?? -1));
   return (
     <section className="space-y-3" aria-label={`Fornecedores — ${nome}`}>
@@ -79,9 +84,9 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <Kpi rotulo="PMP de compras" valor={cp?.pmpComprasPond == null ? '—' : `${cp.pmpComprasPond.toFixed(1).replace('.', ',')} d`} />
         <Kpi rotulo="1 dia de PMP de compras" valor={brl(cp?.rsPorDia)} nota="cenário" />
-        <Kpi rotulo="Desconto obtido (12m)" valor={brl(soma(doCompany, 'descontoObtido12m'))} nota="apurado" />
-        <Kpi rotulo="Juros + multa pagos (12m)" valor={brl(soma(doCompany, 'encargoPago12m'))} nota="apurado" />
-        <Kpi rotulo="Vencido em aberto" valor={brl(soma(doCompany, 'valorVencidoAberto'))} />
+        <Kpi rotulo="Desconto obtido (12m)" valor={brl(desc.valor)} nota={notaApurado(desc.cobertura)} />
+        <Kpi rotulo="Juros + multa pagos (12m)" valor={brl(enc.valor)} nota={notaApurado(enc.cobertura)} />
+        <Kpi rotulo="Vencido em aberto" valor={brl(venc.valor)} nota={venc.cobertura ?? undefined} />
       </div>
 
       <div role="region" aria-label={`Onde o prazo está custando — ${nome}`} className="space-y-2 rounded-md border p-3">

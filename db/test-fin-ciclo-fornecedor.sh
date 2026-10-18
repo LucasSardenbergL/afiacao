@@ -149,7 +149,11 @@ BEGIN
     ('oben',1010,900,'','D10','',h-20,h+5,1000,1000,'ATRASADO','2.01.01'),
     ('oben',1011,900,'','D11','',h-35,h-5,1000,1000,'ATRASADO','2.01.01'),
     ('oben',1012,900,'','D12','',h-2,h+10,700,700,'A VENCER','2.01.01'),
-    ('oben',1013,900,'','D13','',h-30,h-20,90,90,'XPTO','2.01.01');
+    ('oben',1013,900,'','D13','',h-30,h-20,90,90,'XPTO','2.01.01'),
+    -- 1014 (Codex review #6): PAGO sem baixa nenhuma e sem fonte de data → paga_sem_baixa (nunca some).
+    ('colacor_sc',1014,950,'','D14','',h-25,h-15,400,400,'PAGO','2.01.01'),
+    -- 2006 (Codex review #4): 2.01.* fora da lista com valor NULL → valor do sensor desconhecido, nunca R$ 0.
+    ('colacor',2006,960,'','D2006','',h-10,h+20,NULL,NULL,'A VENCER','2.01.98');
   INSERT INTO fin_movimentacoes (company, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, natureza,
       omie_codigo_lancamento, resumo_val_pago, resumo_val_liquido, resumo_desconto, resumo_juros,
       resumo_multa, resumo_val_aberto, resumo_liquidado, valor_titulo, omie_ncodbaixa, data_pagamento_omie, resumo_lido_em) VALUES
@@ -253,6 +257,8 @@ suite() {
   okp "SELECT string_agg(omie_codigo_lancamento||':'||data_baixa_confiavel||':'||coalesce(dias_atraso_baixa::text,'NULL')||':'||coalesce(prazo_real_dias::text,'NULL'), ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE omie_codigo_lancamento IN (1005,1006)" \
       "1005:false:NULL:NULL,1006:false:NULL:NULL" "fatos so titulo_data_movimento ou so CC = data incerta"
   okp "SELECT prazo_concedido_dias||'|'||situacao FROM $TIT WHERE omie_codigo_lancamento=1007" "-5|paga" "fatos prazo negativo entra"
+  okp "SELECT situacao||'|'||coalesce(data_baixa_confiavel::text,'NULL') FROM $TIT WHERE omie_codigo_lancamento=1014" \
+      "paga_sem_baixa|false" "fatos pago sem baixa nenhuma nao some"
   okp "SELECT string_agg(omie_codigo_lancamento||':'||situacao||':'||coalesce(valor_aberto::text,'')||':'||coalesce(fonte_valor_aberto,''), ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE omie_codigo_lancamento IN (1004,1010,1011,1012,1013)" \
       "1004:vencida_aberta:500.00:omie_resumo,1010:paga_parcial:600.00:omie_resumo,1011:paga_parcial:600.00:omie_resumo,1012:a_vencer:700:valor_titulo,1013:status_ambiguo::" \
       "fatos situacoes de aberto, parcial e ambiguo"
@@ -304,8 +310,8 @@ suite() {
       "10.45|34609.44|94.82|18" "empresa oben pmp compras, compras, R\$/dia e controle do engine"
   oks "$U_MASTER" "SELECT n_fora_lista||'|'||valor_fora_lista||'|'||n_sem_categoria||'|'||valor_sem_categoria $EMPO" \
       "1|4000|1|300" "empresa oben sensor de categoria"
-  oks "$U_MASTER" "SELECT coalesce(pmp_compras_pond::text,'NULL')||'|'||compras_12m||'|'||pmp_engine_controle||'|'||n_fora_lista FROM $R_EMP WHERE company='colacor'" \
-      "NULL|2500|30|1" "empresa colacor sem pagas = PMP NULL, nunca 0"
+  oks "$U_MASTER" "SELECT coalesce(pmp_compras_pond::text,'NULL')||'|'||compras_12m||'|'||pmp_engine_controle||'|'||n_fora_lista||'|'||coalesce(valor_fora_lista::text,'NULL') FROM $R_EMP WHERE company='colacor'" \
+      "NULL|2500|30|2|NULL" "empresa colacor sem pagas = PMP NULL, nunca 0"
   echo "PASS=$((asserts-falhas)) FAIL=$falhas"
   return "$falhas"
 }
@@ -367,5 +373,14 @@ sabotar "h anon fora do REVOKE sem postcondicao" \
 sabotar "i nome multiplica (join direto nos pedidos)" \
   "s/FROM public.purchase_orders_tracking GROUP BY 1, 2/FROM public.purchase_orders_tracking GROUP BY 1, 2, ctid/" \
   "fatos uma linha por fornecedor"
+sabotar "j tem_baixa sem coalesce (PAGO sem baixa some)" \
+  "s/OR coalesce(e.fonte_data_baixa = 'omie_data_pagamento', false) AS tem_baixa/OR e.fonte_data_baixa = 'omie_data_pagamento' AS tem_baixa/" \
+  "fatos pago sem baixa nenhuma nao some"
+sabotar "k sensor NULL vira 0 no SELECT final" \
+  "s/CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END/coalesce(s.valor_fora_lista, 0)/" \
+  "empresa colacor sem pagas = PMP NULL, nunca 0"
+sabotar "l sensor soma ignora o NULL" \
+  "/bool_or(p.valor_documento IS NULL) FILTER (WHERE p.categoria_codigo LIKE/s/THEN NULL/THEN 0/" \
+  "empresa colacor sem pagas = PMP NULL, nunca 0"
 
 echo "PROVA-CICLO-FORNECEDOR-OK"

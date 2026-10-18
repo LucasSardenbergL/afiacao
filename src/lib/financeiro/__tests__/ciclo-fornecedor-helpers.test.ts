@@ -187,3 +187,24 @@ describe('confiancaFornecedor e R$/dia', () => {
     expect(rotuloPorDiaCompras(365000)).toEqual({ porDia: 1000 });
   });
 });
+
+describe('revisão Codex', () => {
+  it('#1 parcela atrasada SEM desconto da mesma NF tira a NF de "em dia"', () => {
+    const ts = [1, 2, 3, 4, 5].flatMap((i) => {
+      const venc = `2026-08-${String(i * 4).padStart(2, '0')}`;
+      return [
+        pago(i * 10, venc, { documento: `NF${i}` }),
+        pago(i * 10 + 1, venc, { documento: `NF${i}`, descontoInformado: 0, atrasoBaixa: 6 }),
+      ];
+    });
+    expect(taxaDescontoObservada(ts, '2026-08-04', HOJE)).toMatchObject({ taxa: null, motivo: 'nao_pontualidade' });
+  });
+  it('#3 título que vence HOJE não entra como vencido (o SQL o chama de a_vencer)', () => {
+    const t = { ...pago(1, HOJE), situacao: 'a_vencer' as const, valorAberto: 1000, dataBaixa: null, atrasoBaixa: null, dataBaixaConfiavel: false };
+    expect(pontualidadePorMes([t], HOJE)).toEqual([]);
+  });
+  it('#8 P20/P80 exatamente a 0,5 p.p. da mediana passa (sem erro de ponto flutuante)', () => {
+    const ts = [15, 15, 20, 25, 25].map((d, i) => pago(i + 1, `2026-08-${String((i + 1) * 4).padStart(2, '0')}`, { descontoInformado: d }));
+    expect(taxaDescontoObservada(ts, '2026-08-04', HOJE)).toMatchObject({ taxa: 0.02, motivo: null });
+  });
+});

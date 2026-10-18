@@ -86,6 +86,10 @@ describe('CicloFornecedoresSecao', () => {
     expect(screen.getByText(/Não foi possível ler os fornecedores/)).toBeTruthy();
     expect(screen.queryByText('Sem compras em 12 meses')).toBeNull();
   });
+  it('KPI apurado com fornecedor sem dado mostra a cobertura (Codex #5), nunca R$ 0 como conclusão', () => {
+    renderSecao();
+    expect(screen.getByText(/Juros \+ multa pagos/).parentElement?.textContent).toMatch(/1 de 2 fornecedores com dado/);
+  });
   it('rodapé mostra o sensor de categoria', () => {
     renderSecao();
     expect(screen.getByText(/119 títulos de 2\.01\.\* fora da lista/)).toBeTruthy();

@@ -122,7 +122,7 @@ db/test-fin-encargos-titulo.sh             47
 # encargo/desconto, dedup de versão de baixa em 2 camadas, evidência × decisão), fatos de compras (universo por
 # (empresa, código), pontualidade só por dDtPagamento, parcial pelo vencimento, nome sem multiplicar) e 3 RPCs
 # com gate master + views sem leitura direta. 9 sabotagens INLINE (controle verde antes); ~40 s local.
-db/test-fin-ciclo-fornecedor.sh            40
+db/test-fin-ciclo-fornecedor.sh            41
 # DRE fase 2 (2026-10-13): CHECK do mapa ampliado (impostos em linha própria + fora_dre), fora_dre
 # proibido em _default (provado pelo COMPORTAMENTO na postcondição), colunas fora_dre/provisório SEM
 # default (ausente ≠ 0), e o script do mapa colacor só entra com a omie-financeiro v1.5 servida (ledger +

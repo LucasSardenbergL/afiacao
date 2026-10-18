@@ -272,10 +272,11 @@ WITH base AS (
   SELECT e.company, e.omie_codigo_cliente_fornecedor AS omie_codigo_fornecedor, e.omie_codigo_lancamento,
          e.numero_documento, p.categoria_codigo, e.data_emissao, e.data_vencimento,
          e.data_baixa, e.fonte_data_baixa, e.valor_documento, e.status_titulo,
-         coalesce(e.n_baixas, 0) > 0 OR e.fonte_data_baixa = 'omie_data_pagamento' AS tem_baixa,
+         -- coalesce: sem baixa e sem fonte de data, `false OR NULL` = NULL apagaria o PAGO (nem paga, nem paga_sem_baixa).
+         coalesce(e.n_baixas, 0) > 0 OR coalesce(e.fonte_data_baixa = 'omie_data_pagamento', false) AS tem_baixa,
          e.valor_aberto_informado, e.valor_pago_principal, e.desconto_obtido, e.desconto_informado_omie,
          e.encargo_pago, e.confianca AS confianca_encargo,
-         (e.fonte_data_baixa = 'omie_data_pagamento') AS data_baixa_confiavel,
+         coalesce(e.fonte_data_baixa = 'omie_data_pagamento', false) AS data_baixa_confiavel,
          (now() AT TIME ZONE 'America/Sao_Paulo')::date AS hoje_sp
     FROM public.v_titulo_encargos_cp e
     JOIN public.fin_contas_pagar p
@@ -510,9 +511,12 @@ BEGIN
   sensor AS (
     SELECT p.company,
            count(*) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL)::int AS n_fora_lista,
-           coalesce(sum(p.valor_documento) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL), 0) AS valor_fora_lista,
+           -- Título com valor NULL no conjunto → soma desconhecida (NULL), nunca R$ 0; conjunto vazio → 0.
+           CASE WHEN bool_or(p.valor_documento IS NULL) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL) THEN NULL
+                ELSE coalesce(sum(p.valor_documento) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL), 0) END AS valor_fora_lista,
            count(*) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL)::int AS n_sem_categoria,
-           coalesce(sum(p.valor_documento) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL), 0) AS valor_sem_categoria
+           CASE WHEN bool_or(p.valor_documento IS NULL) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL) THEN NULL
+                ELSE coalesce(sum(p.valor_documento) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL), 0) END AS valor_sem_categoria
       FROM public.fin_contas_pagar p
       LEFT JOIN public.v_ciclo_cp_compras_categorias l
         ON l.company = p.company AND l.categoria_codigo = p.categoria_codigo
@@ -524,8 +528,9 @@ BEGIN
   SELECT e.company, pmp.pmp_compras_pond, vol.compras_12m,
          CASE WHEN vol.compras_12m > 0 THEN vol.compras_12m / 365 END,
          eng.pmp_engine_controle,
-         coalesce(s.n_fora_lista, 0), coalesce(s.valor_fora_lista, 0),
-         coalesce(s.n_sem_categoria, 0), coalesce(s.valor_sem_categoria, 0)
+         -- sem linha no sensor = nenhum título em 12 m → 0 legítimo; com linha, o NULL do sensor é preservado.
+         coalesce(s.n_fora_lista, 0), CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END,
+         coalesce(s.n_sem_categoria, 0), CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_sem_categoria END
     FROM empresas e
     LEFT JOIN pmp    ON pmp.company = e.company
     LEFT JOIN vol    ON vol.company = e.company
