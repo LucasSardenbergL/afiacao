@@ -180,4 +180,63 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'função legítima do TintMapping — RESIDUAL declarado no PR #2941: um remapeamento para Omie mais barato ' +
       'ainda move v_calc, e o que cabe ali é trilha de auditoria (decisão de produto), não revogação.',
   },
+  // Margem por cliente e do plano tático — FU4-F (#3072, #3084). Registradas DEPOIS do apply das duas B
+  // (db:aplicar, recibos #505 e #506, 2026-10-18), na ordem do #2199: com prod já fechada, o carimbo mede o
+  // contrato novo. Fechadas por COLUNA: o SELECT table-level saiu e voltou só nas colunas que não são margem.
+  'public.farmer_client_scores': {
+    fechadaPor: '20261014120100_fcs_margem_fecha_coluna.sql',
+    permitido: { anon: [], authenticated: [] },
+    colunasPermitidas: {
+      authenticated: {
+        SELECT: [
+          'answer_rate_60d', 'avg_monthly_spend_180d', 'avg_repurchase_interval', 'calculated_at',
+          'category_count', 'churn_risk', 'created_at', 'customer_user_id', 'days_since_last_purchase',
+          'eff_score', 'expansion_score', 'farmer_id', 'g_score', 'health_class', 'health_score', 'id',
+          'itens_com_custo', 'itens_sem_custo', 'last_signal_recalc_at', 'm_score', 'priority_score',
+          'recover_score', 'revenue_potential', 'rf_score', 's_score', 'sales_history_status',
+          'signal_modifiers', 'updated_at', 'whatsapp_reply_rate_60d', 'x_score',
+        ],
+      },
+    },
+    motivo:
+      'margem bruta por cliente (gross_margin_pct, money-path) — fechada por privilégio de COLUNA pela B do ' +
+      '#3072: REVOKE SELECT de tabela + GRANT SELECT das 30 colunas restantes; a margem só sai pela RPC ' +
+      'get_scores_margem, sob private.cap_custo_ler. NUNCA reemitir GRANT SELECT ON public.farmer_client_scores ' +
+      'TO authenticated (table) — reabre a margem. Coluna nova nasce sem SELECT: conceder na migration que a cria. ' +
+      'Writers são service_role (calculate-scores, scoring-recalc-client); o front não escreve. ' +
+      '⚠️ Medido por psql-ro após o apply (2026-10-18): authenticated=awdDxtm e anon=awdDxtm (sobra do default ' +
+      'do Supabase) DIVERGEM deste contrato. authz:grants:prod rotula isso NAO_APLICADA (a heurística vê ' +
+      'INSERT/UPDATE/DELETE sobrando e supõe o default intacto), mas a B ESTÁ aplicada (recibo #505; SELECT de ' +
+      'tabela fora, margem fora) — o que sobra é a escrita que a B não tocou, e o achado é real, não ruído: ' +
+      'a policy fcs_update_own_or_gestor deixa a dona fazer UPDATE da própria linha, inclusive da margem ' +
+      '(escrita cega), e TRUNCATE não passa por RLS. Fecha com REVOKE INSERT, UPDATE, DELETE, TRUNCATE, ' +
+      'REFERENCES, TRIGGER, MAINTAIN das duas roles; até lá o alarme fica de pé, por desenho.',
+  },
+  'public.farmer_tactical_plans': {
+    fechadaPor: '20261015120100_tactical_plans_margem_fecha_coluna.sql',
+    permitido: { anon: [], authenticated: [] },
+    colunasPermitidas: {
+      authenticated: {
+        SELECT: [
+          'actual_margin', 'approach_strategy', 'approach_strategy_b', 'best_individual_lie',
+          'bundle_incremental_margin', 'bundle_lie', 'bundle_probability', 'bundle_recommendation_id',
+          'call_duration_seconds', 'call_result', 'churn_risk', 'completed_at', 'created_at',
+          'customer_profile', 'customer_user_id', 'diagnostic_questions', 'effectiveness_score',
+          'expansion_potential', 'farmer_id', 'generated_at', 'health_score', 'id', 'implication_question',
+          'ltv_projection', 'mix_gap', 'notes', 'objection_type', 'offer_transition', 'operational_risks',
+          'plan_followed', 'plan_type', 'probable_objections', 'second_bundle', 'status',
+          'strategic_objective', 'top_bundle', 'updated_at', 'used_at',
+        ],
+      },
+    },
+    motivo:
+      'margem do plano tático (current_margin_pct, cluster_avg_margin_pct, expected_result) — fechada por ' +
+      'privilégio de COLUNA pela B do #3084: REVOKE SELECT de tabela + GRANT SELECT das 38 colunas restantes; ' +
+      'a margem só sai pela RPC get_planos_margem, sob private.cap_custo_ler. NUNCA reemitir GRANT SELECT ON ' +
+      'public.farmer_tactical_plans TO authenticated (table). Writers são RPCs SECURITY DEFINER (criar_plano_tatico, ' +
+      'registrar_resultado_plano, expirar_planos_taticos) e as edges com service_role. ' +
+      '⚠️ Medido por psql-ro após o apply (2026-10-18): authenticated=Dxtm e anon=Dxtm (sobra do default) DIVERGEM ' +
+      'deste contrato e authz:grants:prod acusa DRIFT_PROD — achado real: TRUNCATE não passa por RLS. Fecha com ' +
+      'REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN das duas roles; até lá o alarme fica de pé.',
+  },
 };
