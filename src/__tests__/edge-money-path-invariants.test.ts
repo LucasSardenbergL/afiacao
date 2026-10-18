@@ -4664,21 +4664,24 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
   // Medido em 2026-09-26: 47 cabeçalhos e 0 itens em prod. O NCM pontuado do Omie estourava
   // `varchar(8)` (22001 no lote inteiro) e a edge só fazia console.error, contava a NF-e como
   // importada e respondia success:true — a run "verde" escondia 100% de falha.
-  // Desde a importação por chave (PR 3/3) o insert de itens mora num helper só, e cada CAMINHO
-  // decide o que fazer quando ele falha: o cron registra e segue; o manual desfaz o cabeçalho.
   // Desde 2026-10-05 o laço do cron mora em rodada.ts, com o Omie e o banco injetados, e o
   // COMPORTAMENTO dele é provado no Deno (rodada_test.ts); aqui fica a FIAÇÃO, que o Deno não vê.
+  // Desde 2026-10-18 (#3147) NÃO há mais insert de itens nas edges: cabeçalho + itens entram numa
+  // transação pela RPC `importar_nfe_recebimento`, chamada por `importarViaRpc` (_shared) — 1 writer
+  // para cron, botão E webhook. A falha de dado/impedimento vai ao ledger `nfe_importacao_falhas`.
   const bruto = read('supabase/functions/omie-nfe-recebimento-sync/index.ts');
   const src = removerComentarios(bruto);
   const rodadaBruta = read('supabase/functions/omie-nfe-recebimento-sync/rodada.ts');
   const rodada = removerComentarios(rodadaBruta);
+  const compartilhado = removerComentarios(read('supabase/functions/_shared/nfe-importacao.ts'));
+  const webhook = removerComentarios(read('supabase/functions/omie-nfe-webhook/index.ts'));
   const fatiaDe = (texto: string, de: string, ate: string) => {
     const i = texto.indexOf(de);
     const f = i >= 0 ? texto.indexOf(ate, i) : -1;
     return i >= 0 && f > i ? texto.slice(i, f) : '';
   };
   const fatia = (de: string, ate: string) => fatiaDe(src, de, ate);
-  const helper = fatia('async function inserirItens(', '\n}\n');
+  const rpc = fatiaDe(compartilhado, 'export async function importarViaRpc(', '\n}\n');
   const manual = fatia('async function importarPorChave(', '\n}\n');
   const handler = fatia('Deno.serve(', '\n});');
   const deps = fatia('function depsDaConta(', '\n}\n');
@@ -4692,34 +4695,53 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(src.length).toBeGreaterThan(bruto.length * 0.5);
     expect(src.length).toBeLessThan(bruto.length);
     expect(rodada.length).toBeLessThan(rodadaBruta.length);
-    for (const [nome, trecho] of Object.entries({ helper, manual, handler, deps, omie, gravacao })) {
+    expect(compartilhado).toContain('importar_nfe_recebimento');
+    for (const [nome, trecho] of Object.entries({ rpc, manual, handler, deps, omie, gravacao })) {
       expect(trecho.length, `fatia "${nome}" vazia — a função mudou de nome ou de forma`).toBeGreaterThan(0);
     }
   });
 
-  it('controle positivo: um único insert de itens, no helper, chamado pelos dois caminhos', () => {
-    expect(count(src, '.from("nfe_recebimento_itens")'), 'o insert de itens sumiu ou duplicou').toBe(1);
+  it('controle positivo: UM writer — a RPC transacional, pelos dois caminhos da sync e pelo webhook; nenhuma edge insere itens direto', () => {
+    expect(count(src, '.from("nfe_recebimento_itens")'), 'a sync voltou a inserir itens fora da transação').toBe(0);
+    expect(count(webhook, '.from("nfe_recebimento_itens")'), 'o webhook voltou a inserir itens fora da transação').toBe(0);
+    expect(count(src, '.from("nfe_recebimentos").insert('), 'a sync voltou a inserir cabeçalho fora da transação').toBe(0);
+    expect(count(webhook, '.from("nfe_recebimentos").insert('), 'o webhook voltou a inserir cabeçalho fora da transação').toBe(0);
     expect(count(rodada, 'nfe_recebimento_itens'), 'a rodada não grava itens por conta própria').toBe(0);
-    expect(helper).toContain('.from("nfe_recebimento_itens")');
-    expect(helper, 'o NCM tem de passar pelo mapeamento que o normaliza').toContain('mapearItensRecebimento(');
-    expect(deps, 'o cron grava os itens pelo helper').toContain('inserirItens(supabase');
-    expect(manual).toContain('inserirItens(');
+    expect(rpc, 'a RPC é chamada pelo nome canônico').toContain('cliente.rpc(RPC_IMPORTAR');
+    expect(compartilhado).toContain('export const RPC_IMPORTAR = "importar_nfe_recebimento";');
+    expect(deps, 'o cron grava pela RPC, com a origem certa').toMatch(/importar:\s*\(cabecalho, itens\)\s*=>\s*importarViaRpc\(/);
+    expect(deps).toContain('origem: "sync"');
+    expect(manual, 'o botão grava pela RPC, com a origem certa').toContain('importarViaRpc(');
+    expect(manual).toContain('origem: "importacao_chave"');
+    expect(count(webhook, 'importarViaRpc('), 'o webhook grava pela RPC, uma vez').toBe(1);
+    expect(webhook).toContain('origem: "webhook"');
+    expect(gravacao, 'o NCM tem de passar pelo mapeamento que o normaliza').toContain('mapearItensRecebimento(');
+    expect(manual).toContain('mapearItensRecebimento(');
   });
 
-  it('cron: a falha de itens sai em erros, mantém o cabeçalho e não conta como importada', () => {
-    const depois = gravacao.slice(gravacao.indexOf('deps.inserirItens('));
+  it('cron: falha de dado, bloqueada e divergente saem em erros E no ledger durável; nunca contam como importada; o lote é validado ANTES da RPC', () => {
+    const depois = gravacao.slice(gravacao.indexOf('deps.importar('));
     expect(depois, 'console.error sozinho é success:true sobre NF-e sem itens').toContain('erros.push(');
-    expect(depois.indexOf('"itens_falharam"'), 'a falha de itens tem de sair antes do "importada"').toBeLessThan(depois.indexOf('"importada"'));
-    expect(depois.indexOf('"itens_falharam"')).toBeGreaterThan(-1);
+    for (const desfecho of ['"falha_dado"', '"bloqueada"', '"divergente"']) {
+      expect(depois, `${desfecho} sumiu do laço`).toContain(desfecho);
+    }
+    expect(gravacao, 'o impedimento/erro de dado tem de ir ao ledger (sem isso o conflito disputa a consulta para sempre)').toContain('registravel(d)');
+    expect(gravacao).toContain('deps.registrarFalha(');
+    expect(gravacao.indexOf('validarLote('), 'o lote é validado antes de gastar a RPC').toBeLessThan(gravacao.indexOf('deps.importar('));
+    expect(gravacao.indexOf('validarLote(')).toBeGreaterThan(-1);
     expect(rodada, 'a rodada do cron não apaga cabeçalho (a fila de 1 consulta travaria)').not.toMatch(/\.delete\(/);
   });
 
-  it('manual: a falha de itens desfaz o cabeçalho e responde erro — nunca "importada"', () => {
-    const depois = manual.slice(manual.indexOf('inserirItens('));
+  it('manual: sem DELETE de compensação (apagava em cascata itens de outro writer); erro de dado é 422 registrado; nunca "importada" por boa vontade', () => {
+    expect(manual, 'o DELETE de compensação voltou').not.toMatch(/\.delete\(/);
+    const depois = manual.slice(manual.indexOf('importarViaRpc('));
     const ateSucesso = depois.slice(0, depois.indexOf('status: "importada"'));
-    expect(ateSucesso.length, 'o sucesso veio antes do tratamento da falha').toBeGreaterThan(0);
-    expect(ateSucesso).toContain('.delete()');
-    expect(ateSucesso).toContain('500');
+    expect(ateSucesso.length, 'o sucesso veio antes do tratamento').toBeGreaterThan(0);
+    expect(ateSucesso, 'impedimento/erro de dado vai ao ledger antes de responder').toContain('registravel(d)');
+    expect(depois).toContain('d.classe === "dado"');
+    expect(depois).toContain('422');
+    expect(depois, 'RPC ausente tem de nomear a migration').toContain('2026-10-18-importar-nfe-recebimento-rpc.sql');
+    expect(manual, 'cabeçalho vazio NÃO reparável não é "já importada" — é 409 bloqueada').toContain('status: "bloqueada"');
   });
 
   it('o caminho por chave só roda DEPOIS do gate de staff/cron', () => {
@@ -4765,13 +4787,16 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     // Sabotagens que a 3ª rodada do Codex (2026-10-05) comprovou passarem: o Deno usa falsos, não este adaptador.
     expect(handler, 'success tem de refletir os erros da rodada').toContain('success: errors.length === 0');
     expect(src, 'a vez do sorteio tem de vir do relógio, não de uma constante').toMatch(/const vez = Math\.floor\(Date\.now\(\) \/ 60_000\);/);
-    expect(deps, 'os itens do detalhe têm de chegar ao insert').toContain('inserirItens(supabase, itens, nfeRecebimentoId)');
-    expect(helper, 'o erro do insert de itens tem de voltar ao chamador').toContain('return error ? error.message : null');
+    expect(rpc, 'o erro da RPC tem de voltar classificado ao chamador, nunca engolido').toContain('if (resposta.error) return erroDe(resposta.error);');
     expect(count(deps, 'if (error) throw new Error(error.message);'), 'leitura do banco que falha não pode virar "nada importado"').toBe(2);
+    expect(count(deps, 'throw new Error(`nfe_importacao_falhas:'), 'leitura do ledger que falha não pode virar "nada estacionado"').toBe(2);
     // 4ª revisão do Codex (2026-10-05): mais três sabotagens que passavam.
-    expect(helper, 'o mapeador tem de receber os itens do detalhe').toContain('mapearItensRecebimento(rawItems, nfeRecebimentoId)');
+    expect(gravacao, 'o mapeador tem de receber os itens do detalhe').toContain('mapearItensRecebimento(detalhe.itensRecebimento ?? [])');
     expect(deps, 'o que já está no banco tem de voltar à triagem').toContain('return { ids: idsJa, chaves: chavesJa };');
-    expect(manual, 'no manual, a falha de itens desfaz o cabeçalho — a condição não pode inverter').toContain('if (erroItens) {');
+    // Adversarial 2026-10-18: o reparável NÃO é "já importado" (a consulta o completa); id de outra conta não contamina a triagem.
+    expect(deps, 'o cabeçalho reparável tem de seguir para a consulta').toContain('if (t.tipo === "reparavel") continue;');
+    expect(deps, 'omie_id_receb só vale dentro da conta').toContain('r.warehouse_id === warehouseId) idsJa.add(');
+    expect(deps, 'o ledger por id é filtrado por armazém').toMatch(/from\("nfe_importacao_falhas"\)[\s\S]{0,120}\.eq\("warehouse_id", warehouseId\)[\s\S]{0,80}\.in\("omie_id_receb", ids\)/);
   });
 
   it('o Omie devolve o corpo de falha mesmo com HTTP 500 — quem classifica é o chamador', () => {
