@@ -56,8 +56,9 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
  * 20261011150000 fecha a mesma porta na RPC, de forma independente).
  * v1.9 (2026-10-14) — pedido Sayerlack COM protocolo (ex.: importado do portal) não é dividido em lotes de 20.
+ * v1.10: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  */
-export const VERSAO = "v1.9-split-respeita-protocolo";
+export const VERSAO = "v1.10-gate-auth-canonico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = "esta edge cria pedido de compra REAL no Omie, inclusive em dry_run";

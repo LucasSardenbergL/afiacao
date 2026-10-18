@@ -1,7 +1,9 @@
 // Shared authorization helpers for edge functions.
 // - authorizeCron: aceita SOMENTE header `x-cron-secret` válido (cron-only).
-// - authorizeCronOrStaff: aceita `x-cron-secret` OU JWT staff (admin/employee/manager/master)
-//   ou SERVICE_ROLE_KEY direto.
+// - authorizeCronOrStaff: aceita `x-cron-secret` OU JWT staff (role `employee` ou `master` em
+//   `user_roles`) ou SERVICE_ROLE_KEY direto. É o ÚNICO gate cron+staff do repo: cópia local em
+//   edge é proibida (gate no `test:hooks`) — a cópia booleana + este `AuthResult` abre a edge
+//   (`{ok:false}` é truthy). Teste executado: `auth_test.ts`.
 // - authorizeMaster: aceita SERVICE_ROLE_KEY OU JWT com role 'master' (sem cron, sem employee).
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -40,7 +42,8 @@ export function authorizeCron(req: Request): AuthResult {
  * Cron + staff gate. Aceita:
  *  - x-cron-secret válido
  *  - Authorization: Bearer <SERVICE_ROLE_KEY>
- *  - Authorization: Bearer <user JWT> com role admin/employee/manager/master
+ *  - Authorization: Bearer <user JWT> com role `employee` ou `master` (`admin`/`manager` NÃO
+ *    existem em `user_roles` — `AppRole = employee | customer | master`; comentário antigo mentia)
  */
 export async function authorizeCronOrStaff(req: Request): Promise<AuthResult> {
   const expected = Deno.env.get("CRON_SECRET");
