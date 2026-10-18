@@ -1150,3 +1150,7 @@ listou 84 documentos de mai–jul em 31 s, com 0 erros: **2 pedidos Sayerlack ga
 1010: não têm NF por desenho.
 **Lição:** "processei esta NF" não é "terminei esta NF" — enquanto o outro lado do casamento pode
 nascer depois, a NF precisa de uma janela de revisita, e a fonte barata (a listagem) costuma bastar.
+
+## 2026-10-18 — conferência de recebimento mostrava descrição EM BRANCO em todos os itens (`RecebimentoConferencia`)
+
+A tela fazia `select … nfe_recebimento_itens(*)` e renderizava `item.descricao_produto`; a coluna da tabela é `descricao` (gravada igual pelos dois writers, `omie-nfe-webhook` e `omie-nfe-recebimento-sync/itens.ts`). O tipo local tinha `[k: string]: unknown`, então o campo inventado compilou e o balcão conferia só por código. Visto de passagem no PR #3142. **Conserto:** `NfeItem` agora é `Pick<Tables<'nfe_recebimento_itens'>, …>` (campo que não existe deixa de compilar) e a tela lê `descricao`; teste `RecebimentoConferencia.descricao-do-item.test.tsx` renderiza um item com a Row gerada e exige o texto (falsificado: vermelho antes do conserto e sob sabotagem). **Lição:** tipo local com índice `[k: string]: unknown` sobre uma linha do Supabase anula o typecheck — derive dos types gerados.
