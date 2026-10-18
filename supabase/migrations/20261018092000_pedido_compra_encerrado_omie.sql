@@ -23,6 +23,11 @@
 --    da empresa — inclusive marca sem cobertura (previsão nula, fora da janela). Errar a limpeza devolve
 --    o pedido ao caixa, o lado conservador; manter marca não confirmada não.
 --  • ATÔMICO: conjunto, marcas e o registro da publicação no MESMO commit — o backtest lê o registro.
+--  • TENTATIVA (Codex 2ª rodada): toda passada abre o registro em 'coletando' (fenced) e termina em
+--    'publicado'/'observado' ou 'invalidado' — uma passada que falha, se abstém ou morre no meio deixa o
+--    registro fora de 'publicado', e o backtest recusa: publicação de ontem não vale depois de tentativa ruim.
+--  • O backtest consome `ids` desta tabela (sem escrita para clientes) ∩ a coluna — escrita manual de staff
+--    na coluna (a policy do tracking permite) não basta para tirar pedido do caixa.
 -- encerrado_omie_em = quando a passada o viu encerrado pela 1ª vez (o Omie não expõe a data real).
 -- ============================================================
 BEGIN;
@@ -38,9 +43,11 @@ CREATE TABLE IF NOT EXISTS public.reposicao_encerrados_omie_publicacao (
   seq bigint NOT NULL,
   coletado_em timestamptz NOT NULL,
   ids bigint[] NOT NULL,
-  janela_de date NOT NULL,
-  janela_ate date NOT NULL,
-  status text NOT NULL CHECK (status IN ('observado', 'publicado')),
+  janela_de date,
+  janela_ate date,
+  status text NOT NULL CHECK (status IN ('coletando', 'observado', 'publicado', 'invalidado')),
+  motivo text,
+  tentativa_em timestamptz,
   novos integer,
   limpos integer,
   publicado_em timestamptz,
@@ -49,7 +56,7 @@ CREATE TABLE IF NOT EXISTS public.reposicao_encerrados_omie_publicacao (
 );
 
 COMMENT ON TABLE public.reposicao_encerrados_omie_publicacao IS
-  'Última passada de encerrados do Omie por empresa (1 writer: reposicao_registrar_encerrados_omie; habilitado é ligado à mão após os controles). O backtest R59 exige status=publicado recente.';
+  'Última tentativa de passada de encerrados do Omie por empresa (escrita só pelas RPCs reposicao_tentativa_/reposicao_registrar_encerrados_omie; habilitado é ligado à mão após os controles). O backtest R59 exige status=publicado, habilitado e recente, e consome ids daqui.';
 
 ALTER TABLE public.reposicao_encerrados_omie_publicacao ENABLE ROW LEVEL SECURITY;
 
@@ -108,7 +115,8 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('reposicao_registrar_encerrados_omie:' || p_empresa::text));
 
   SELECT * INTO v_atual FROM public.reposicao_encerrados_omie_publicacao WHERE empresa = p_empresa;
-  IF FOUND AND p_seq <= v_atual.seq THEN
+  -- obsoleta: seq menor que o aceito, ou o MESMO seq já encerrado (só a tentativa 'coletando' dele fecha)
+  IF FOUND AND (p_seq < v_atual.seq OR (p_seq = v_atual.seq AND v_atual.status <> 'coletando')) THEN
     RETURN jsonb_build_object('status', 'obsoleto', 'seq_aceito', v_atual.seq);
   END IF;
 
@@ -145,16 +153,16 @@ BEGIN
   END IF;
 
   INSERT INTO public.reposicao_encerrados_omie_publicacao AS p
-    (empresa, seq, coletado_em, ids, janela_de, janela_ate, status, novos, limpos, publicado_em)
+    (empresa, seq, coletado_em, ids, janela_de, janela_ate, status, novos, limpos, publicado_em, motivo)
   VALUES
     (p_empresa, p_seq, now(), (SELECT coalesce(array_agg(DISTINCT x ORDER BY x), '{}') FROM unnest(p_ids) x),
      p_janela_de, p_janela_ate,
      CASE WHEN v_habilitado THEN 'publicado' ELSE 'observado' END,
-     v_novos, v_limpos, CASE WHEN v_habilitado THEN now() END)
+     v_novos, v_limpos, CASE WHEN v_habilitado THEN now() END, NULL)
   ON CONFLICT (empresa) DO UPDATE SET
     seq = EXCLUDED.seq, coletado_em = EXCLUDED.coletado_em, ids = EXCLUDED.ids,
     janela_de = EXCLUDED.janela_de, janela_ate = EXCLUDED.janela_ate, status = EXCLUDED.status,
-    novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em;
+    novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em, motivo = NULL;
     -- habilitado NÃO entra no SET: só a mão o liga ou desliga
 
   RETURN jsonb_build_object(
@@ -166,6 +174,54 @@ $$;
 COMMENT ON FUNCTION public.reposicao_registrar_encerrados_omie(public.empresa_reposicao, bigint, bigint[], date, date) IS
   'Único writer de purchase_orders_tracking.encerrado_omie_em e de reposicao_encerrados_omie_publicacao (exceto habilitado). Fencing por seq; só publica com habilitado=true. service_role-only.';
 
+-- Abre ('coletando', antes da 1ª página) e fecha em falha ('invalidado') a tentativa. Fenced como a de cima:
+-- 'coletando' exige seq NOVO; 'invalidado' exige o seq da própria tentativa (≥ aceito) — ou seq NULL, quando
+-- nem o token saiu, e então invalida sem condição (o lado conservador: o backtest recusa até a próxima boa).
+-- Não mexe na coluna nem nos ids: o que deixa de valer é o STATUS, que o backtest exige 'publicado'.
+DROP FUNCTION IF EXISTS public.reposicao_tentativa_encerrados_omie(public.empresa_reposicao, bigint, text, text);
+CREATE FUNCTION public.reposicao_tentativa_encerrados_omie(
+  p_empresa public.empresa_reposicao,
+  p_seq bigint,
+  p_status text,
+  p_motivo text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+  v_atual public.reposicao_encerrados_omie_publicacao%ROWTYPE;
+BEGIN
+  IF p_empresa IS NULL OR p_status IS NULL OR p_status NOT IN ('coletando', 'invalidado')
+     OR (p_status = 'coletando' AND p_seq IS NULL) OR (p_seq IS NOT NULL AND p_seq <= 0) THEN
+    RAISE EXCEPTION 'reposicao_tentativa_encerrados_omie: argumento ausente ou inválido' USING ERRCODE = '22023';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtext('reposicao_registrar_encerrados_omie:' || p_empresa::text));
+  SELECT * INTO v_atual FROM public.reposicao_encerrados_omie_publicacao WHERE empresa = p_empresa;
+
+  IF NOT FOUND THEN
+    INSERT INTO public.reposicao_encerrados_omie_publicacao (empresa, seq, coletado_em, ids, status, motivo, tentativa_em)
+    VALUES (p_empresa, coalesce(p_seq, 0), now(), '{}', p_status, left(p_motivo, 300), now());
+    RETURN jsonb_build_object('status', p_status);
+  END IF;
+
+  IF p_seq IS NOT NULL AND (p_seq < v_atual.seq OR (p_status = 'coletando' AND p_seq = v_atual.seq)) THEN
+    RETURN jsonb_build_object('status', 'obsoleto', 'seq_aceito', v_atual.seq);
+  END IF;
+
+  UPDATE public.reposicao_encerrados_omie_publicacao
+     SET seq = coalesce(p_seq, seq), status = p_status, motivo = left(p_motivo, 300), tentativa_em = now()
+   WHERE empresa = p_empresa;
+  RETURN jsonb_build_object('status', p_status);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reposicao_tentativa_encerrados_omie(public.empresa_reposicao, bigint, text, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reposicao_tentativa_encerrados_omie(public.empresa_reposicao, bigint, text, text)
+  TO service_role;
+
 -- DROP+CREATE reseta o ACL: REVOKE nomeando as roles (PUBLIC E anon E authenticated)
 REVOKE ALL ON FUNCTION public.reposicao_registrar_encerrados_omie(public.empresa_reposicao, bigint, bigint[], date, date)
   FROM PUBLIC, anon, authenticated;
@@ -175,6 +231,7 @@ GRANT EXECUTE ON FUNCTION public.reposicao_registrar_encerrados_omie(public.empr
 DO $post$
 DECLARE
   fn constant text := 'public.reposicao_registrar_encerrados_omie(public.empresa_reposicao,bigint,bigint[],date,date)';
+  fn2 constant text := 'public.reposicao_tentativa_encerrados_omie(public.empresa_reposicao,bigint,text,text)';
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -204,6 +261,11 @@ BEGIN
   END IF;
   IF NOT has_function_privilege('service_role', fn, 'EXECUTE') THEN
     RAISE EXCEPTION 'A7 FALHOU: service_role sem EXECUTE — a edge não consegue registrar';
+  END IF;
+  IF to_regprocedure(fn2) IS NULL OR (SELECT prosecdef FROM pg_proc WHERE oid = to_regprocedure(fn2))
+     OR has_function_privilege('anon', fn2, 'EXECUTE') OR has_function_privilege('authenticated', fn2, 'EXECUTE')
+     OR NOT has_function_privilege('service_role', fn2, 'EXECUTE') THEN
+    RAISE EXCEPTION 'A8 FALHOU: reposicao_tentativa_encerrados_omie ausente, DEFINER ou com ACL errado';
   END IF;
   RAISE NOTICE 'encerrado_omie_em + publicação (RLS) + reposicao_registrar_encerrados_omie ok (INVOKER, service_role-only)';
 END

@@ -66,9 +66,10 @@ disparados as (
   select p.id, p.valor_total, coalesce(p.horario_disparo_real, p.horario_geracao) as momento,
          array_remove(array_agg(distinct t.nfe_numero::text), null) as nfs,
          p.omie_pedido_compra_id as omie_pedido, p.portal_protocolo as protocolo,
-         -- R59: encerrado no Omie HOJE (coluna de 1 writer, passada de encerrados do omie-sync-pedidos-compra);
-         -- sem linha no tracking = não encerrado (fica no caixa: o lado conservador)
-         coalesce(bool_or(t.encerrado_omie_em is not null), false) as encerrado_omie
+         -- R59: encerrado no Omie HOJE = marcado na coluna E no conjunto da publicação (tabela sem escrita para
+         -- clientes) — escrita manual na coluna sozinha não tira pedido do caixa; sem linha no tracking = não encerrado
+         coalesce(bool_or(t.encerrado_omie_em is not null and t.omie_codigo_pedido = any (
+           coalesce((select e.ids from reposicao_encerrados_omie_publicacao e where e.empresa = 'OBEN'), '{}'))), false) as encerrado_omie
   from pedido_compra_sugerido p
   -- R59: o join casa a EMPRESA também — código homônimo da outra empresa não empresta NF nem encerramento
   left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id and upper(t.empresa::text) = upper(p.empresa)
@@ -97,6 +98,21 @@ nfs_do_contrato as (
   where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266
     and jsonb_typeof(t.raw_data->'itensRecebimento') = 'array' and t.nfe_numero is not null
     and coalesce(trim(i->'itensInfoAdic'->>'nNumPedCompra'), '') <> '' and t.t2_data_faturamento >= current_date - 300
+),
+-- R59: EVIDÊNCIA de NF para o encerrado — sem os filtros de conciliação (data, janela, itens): qualquer NF
+-- Sayerlack de qualquer contrato, e o contrato de todo pedido Omie Sayerlack, impedem tirar do caixa
+evidencia_nf as (
+  select distinct trim(i->'itensInfoAdic'->>'nNumPedCompra') as contrato
+  from purchase_orders_tracking t
+  cross join lateral jsonb_array_elements(case when jsonb_typeof(t.raw_data->'itensRecebimento') = 'array' then t.raw_data->'itensRecebimento' else '[]' end) i
+  where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.nfe_numero is not null
+    and coalesce(trim(i->'itensInfoAdic'->>'nNumPedCompra'), '') <> ''
+),
+contratos_omie as (
+  select t.omie_codigo_pedido::text as codigo, trim(t.raw_data->'cabecalho_consulta'->>'cContrato') as contrato
+  from purchase_orders_tracking t
+  where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.omie_codigo_pedido > 0
+    and coalesce(trim(t.raw_data->'cabecalho_consulta'->>'cContrato'), '') <> ''
 ),
 -- R35: data/valor da baixa (v_titulo_baixas, 1 linha por lançamento) — título só desconta compromisso se
 -- representado no snapshot ou liquidado antes do dia do snapshot
@@ -144,7 +160,7 @@ custo as (
 select 'json|' || jsonb_build_object(
   'meta', json_build_object('gerado_em', now(), 'hoje', (now() at time zone 'America/Sao_Paulo')::date,
     -- R59: última passada de encerrados (status publicado/observado + quando publicou); null = nunca rodou → o preVoo recusa
-    'encerrados_publicacao', (select json_build_object('status', e.status, 'publicado_em', e.publicado_em)
+    'encerrados_publicacao', (select json_build_object('status', e.status, 'publicado_em', e.publicado_em, 'habilitado', e.habilitado)
                               from reposicao_encerrados_omie_publicacao e where e.empresa = 'OBEN')),
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
@@ -156,6 +172,8 @@ select 'json|' || jsonb_build_object(
   'disparados', (select coalesce(json_agg(x order by x.id), '[]') from disparados x),
   'pedidos_omie_sayerlack', (select coalesce(json_agg(x order by x.codigo), '[]') from pedidos_omie_say x),
   'nfs_do_contrato', (select coalesce(json_agg(x order by x.contrato, x.nf), '[]') from nfs_do_contrato x),
+  'evidencia_nf_contratos', (select coalesce(json_agg(x.contrato order by x.contrato), '[]') from evidencia_nf x),
+  'contratos_pedidos_omie', (select coalesce(json_agg(x order by x.codigo), '[]') from contratos_omie x),
   'titulos_sayerlack', (select coalesce(json_agg(t order by t.id), '[]') from titulos_say t),
   'ids_sayerlack', (select coalesce(json_agg(i.id order by i.id), '[]') from ids_say i),
   'chegadas', (select coalesce(json_agg(c order by c.pedido_id), '[]') from chegadas c),

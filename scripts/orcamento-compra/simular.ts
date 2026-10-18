@@ -49,7 +49,7 @@ export const PREMISSAS: string[] = [
   'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
   'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
-  'disparado ENCERRADO no Omie e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador Sayerlack do pedido, em qualquer data) sai do compromisso (R59); só vale com a última passada de encerrados PUBLICADA há no máximo 48h (habilitada após os controles positivo/negativo). LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
+  'disparado ENCERRADO no Omie e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador Sayerlack do pedido, em qualquer data) sai do compromisso (R59); só vale com a ÚLTIMA tentativa da passada de encerrados PUBLICADA, habilitada (após os controles positivo/negativo) e de no máximo 48h; o conjunto vem da tabela de publicação ∩ a coluna. LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'NF de disparado sem NF no tracking (R57/R58): por contrato só se TODO identificador Sayerlack do pedido (cContrato, protocolo do portal) tem NF — reenvio sem NF pode estar em aberto; por substituto só se o pedido não tem identificador Sayerlack, o manual tem itens idênticos em até 21 dias, NF por contrato e dono fora do motor, com unicidade; a NF só vale se faturada ANTES do dia do ciclo; conciliar continua exigindo título as-of',
   'obsolescência = 0 no custo de carregamento',
@@ -65,7 +65,7 @@ export interface ObsLag { t1: DataISO; fim: DataISO; dias: number }
 type Saida = { data: DataISO; valor: number; id_origem?: string; origem?: string };
 export interface Fatos {
   /** R59: registro da última passada de encerrados do Omie (OBEN, reposicao_encerrados_omie_publicacao); null = nunca rodou */
-  meta: { gerado_em: string; hoje: DataISO; encerrados_publicacao?: { status: string; publicado_em: string | null } | null };
+  meta: { gerado_em: string; hoje: DataISO; encerrados_publicacao?: { status: string; publicado_em: string | null; habilitado?: boolean } | null };
   ciclos: {
     id: number; status: string; data_ciclo: DataISO; horario_geracao: string; horario_disparo_real: string | null; valor_total: Num; omie_pedido_compra_id: string | null;
     /** R45: filhos de split (status de cada um); ausente/vazio = pedido não splitado */
@@ -81,6 +81,10 @@ export interface Fatos {
   disparados: { id: number; valor_total: Num; momento: string; nfs: string[]; omie_pedido?: string | null; protocolo?: string | null; encerrado_omie?: boolean }[];
   /** R57/R58: pedidos Omie Sayerlack (tracking, codigo > 0) com contrato, origem no motor e itens */
   pedidos_omie_sayerlack?: { codigo: string; t1: DataISO; contrato: string | null; do_motor: boolean; itens: { prod: string; qtde: Num }[] }[];
+  /** R59: contratos com QUALQUER NF Sayerlack (sem filtro de data/janela) — evidência, não conciliação */
+  evidencia_nf_contratos?: string[];
+  /** R59: contrato de todo pedido Omie Sayerlack (sem o filtro de itens/janela de pedidos_omie_sayerlack) */
+  contratos_pedidos_omie?: { codigo: string; contrato: string }[];
   /** R57: pares (nNumPedCompra, NF, faturamento) de itensRecebimento do tracking Sayerlack, órfãs incluídas */
   nfs_do_contrato?: { contrato: string; nf: string; data: DataISO | null }[];
   /** data_baixa = data_baixa_final de v_titulo_baixas (null = sem baixa); valor_baixado idem (R35) */
@@ -172,7 +176,9 @@ export function preVoo(f: Fatos): string[] {
     // falha depois de uma publicação deixaria marca velha valendo (Codex 2026-10-18 P1)
     const pub = f.meta.encerrados_publicacao;
     const idadeH = pub?.publicado_em ? (ts(f.meta.gerado_em) - ts(pub.publicado_em)) / 3_600_000 : Number.NaN;
-    if (pub?.status !== 'publicado') falhas.push(`passada de encerrados do Omie não publicada (R59: ${pub?.status ?? 'nunca rodou'}) — sinal ausente não é "nenhum encerrado"`);
+    if (!Array.isArray(f.evidencia_nf_contratos) || !Array.isArray(f.contratos_pedidos_omie)) falhas.push('evidencia_nf_contratos/contratos_pedidos_omie ausentes — fatos.sql antigo (R59)');
+    else if (pub?.status !== 'publicado') falhas.push(`passada de encerrados do Omie não publicada (R59: ${pub?.status ?? 'nunca rodou'}) — sinal ausente não é "nenhum encerrado"`);
+    else if (pub.habilitado !== true) falhas.push('publicação de encerrados do Omie desabilitada (R59) — o filtro não está mais habilitado');
     else if (!(idadeH >= 0 && idadeH <= ENCERRADOS_IDADE_MAX_H)) falhas.push(`publicação de encerrados do Omie fora de ${ENCERRADOS_IDADE_MAX_H}h (R59) — conjunto velho não vale como o de hoje`);
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
@@ -274,7 +280,10 @@ export function foraDoCaixa(f: Fatos, p: Fatos['disparados'][number]): boolean {
   const ids = new Set<string>();
   if (p.protocolo) ids.add(p.protocolo.trim());
   for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
-  return !(f.nfs_do_contrato ?? []).some((x) => ids.has(x.contrato.trim()));
+  for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+  // evidência = os dois exportadores: o da conciliação (com data) e o sem filtro (NF sem data / fora da janela)
+  const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
+  return ![...ids].some((c) => comNf.has(c));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {

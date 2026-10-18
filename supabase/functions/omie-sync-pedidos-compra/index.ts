@@ -855,11 +855,17 @@ async function coletarEncerrados(
   app_secret: string,
   dataDe: string,
   dataAte: string,
+  deadline: number,
 ): Promise<{ ids: Set<number>; completa: boolean; paginas: number; motivo: string | null }> {
   const ids = new Set<number>();
   const fpsVistos = new Set<string>();
   let piso: PisoTotais = PISO_ZERO;
   for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
+    // prazo POR PÁGINA (Codex 2ª rodada P2): só começa a página se cabe o pior caso dela (25s + 5s + 60s da
+    // re-tentativa de timeout) antes do deadline — o worker não morre no meio com o registro em 'coletando'
+    if (Date.now() + RATE_LIMIT_DELAY_MS + PIOR_CASO_PAGINA_MS > deadline) {
+      return { ids, completa: false, paginas: pagina - 1, motivo: `sem tempo antes da pág ${pagina}` };
+    }
     await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie: a 1ª página vem logo depois da última do completo
     let resp: OmieSearchResponse;
     try {
@@ -892,6 +898,34 @@ const HEARTBEAT_ENCERRADOS_ENTITY = "pedidos_compra_encerrados";
 // Orçamento de relógio: a passada só começa se o run ainda tem folga até o wall-clock do worker (~400s). O
 // completo leva ~185s; cada página da passada pode gastar até ~90s com a re-tentativa de timeout.
 const ORCAMENTO_ENCERRADOS_MS = 240_000;
+// Deadline da passada inteira, contado do início do run (abaixo do wall-clock do worker, ~400s).
+const DEADLINE_ENCERRADOS_MS = 380_000;
+const PIOR_CASO_PAGINA_MS = FETCH_TIMEOUT_MS + RETRY_DELAY_MS + FETCH_TIMEOUT_RETRY_MS;
+
+// Tentativa no registro protegido (reposicao_tentativa_encerrados_omie): 'coletando' antes da 1ª página e
+// 'invalidado' em toda saída que não registra conjunto — o backtest só aceita 'publicado', então uma
+// tentativa ruim ou morta invalida a publicação anterior (Codex 2ª rodada P1). Devolve o status gravado
+// ('obsoleto' = outra tentativa mais nova já está no registro) ou null em erro.
+async function tentativaEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  seq: number | null,
+  status: "coletando" | "invalidado",
+  motivo: string | null,
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.rpc("reposicao_tentativa_encerrados_omie", {
+      p_empresa: empresa, p_seq: seq, p_status: status, p_motivo: motivo,
+    });
+    if (error) throw error;
+    const st = (data as { status?: unknown } | null)?.status;
+    return typeof st === "string" ? st : null;
+  } catch (err) {
+    const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+    console.error(`[sync-pedidos] tentativa encerrados (${status}) falhou empresa=${empresa}: ${msg}`);
+    return null;
+  }
+}
 
 async function heartbeatEncerrados(
   supabase: SupabaseClient,
@@ -928,6 +962,7 @@ async function passadaEncerrados(
   const dataDe = isoParaBR(s.janela_de);
   const dataAte = isoParaBR(s.janela_ate);
   let r: ResumoEncerrados;
+  let seq: number | null = null;
   if (!dataDe || !dataAte || !s.janela_de || !s.janela_ate) {
     r = { status: "abstencao", ...vazio, motivo: "janela do completo ausente" };
   } else if (Date.now() - t0 > ORCAMENTO_ENCERRADOS_MS) {
@@ -936,12 +971,16 @@ async function passadaEncerrados(
     await heartbeatEncerrados(supabase, empresa, "running", { metadata: { started_at: new Date().toISOString() } });
     // fencing da COLETA (Codex 2026-10-18 P1): token alocado imediatamente antes da 1ª página — uma coleta
     // que começou antes e publica depois é 'obsoleto' na RPC e não ressuscita encerramento já limpo
-    const seq = await alocarRunSeq(supabase, empresa);
+    seq = await alocarRunSeq(supabase, empresa);
+    const aberta = seq == null ? null : await tentativaEncerrados(supabase, empresa, seq, "coletando", null);
     if (seq == null) {
       r = { status: "abstencao", ...vazio, motivo: "sem fencing token (reposicao_alocar_run_seq falhou)" };
+    } else if (aberta !== "coletando") {
+      // obsoleto = uma tentativa mais nova já abriu; null = o registro não abriu → não coleta às cegas
+      r = { status: aberta === "obsoleto" ? "obsoleto" : "erro", ...vazio, motivo: `tentativa não abriu (${aberta ?? "erro"})` };
     } else {
       const { app_key, app_secret } = getCredentials(empresa);
-      const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte);
+      const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte, t0 + DEADLINE_ENCERRADOS_MS);
       const dec = decidirPublicacaoEncerrados({
         completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
       });
@@ -967,6 +1006,11 @@ async function passadaEncerrados(
         }
       }
     }
+  }
+  // abstenção/erro invalida o registro (com o seq da própria tentativa, ou sem condição quando nem há token):
+  // a publicação anterior deixa de valer para o backtest até a próxima passada boa
+  if (r.status === "abstencao" || r.status === "erro") {
+    await tentativaEncerrados(supabase, empresa, seq, "invalidado", `${r.status}: ${r.motivo ?? "sem motivo"}`);
   }
   console.log(`[sync-pedidos] empresa=${empresa} encerrados ${JSON.stringify(r)}`);
   const ok = r.status === "publicado" || r.status === "observado" || r.status === "obsoleto";

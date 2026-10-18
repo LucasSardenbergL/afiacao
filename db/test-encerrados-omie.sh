@@ -45,6 +45,9 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota sem-revoke      's/FROM PUBLIC, anon, authenticated;/FROM PUBLIC;/'
   sabota outra-empresa   's/WHERE t.empresa = p_empresa$/WHERE true/'
   sabota sobrescreve-hab 's/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em;/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em, habilitado = false;/'
+  sabota tent-sem-fencing 's/IF p_seq IS NOT NULL AND (p_seq < v_atual.seq OR/IF false AND (p_seq < v_atual.seq OR/'
+  sabota fecha-2-vezes   "s/OR (p_seq = v_atual.seq AND v_atual.status <> 'coletando'))/)/"
+  sabota tent-sem-revoke 's/^  FROM PUBLIC, anon, authenticated;$/  FROM PUBLIC;/'
   echo "FALSIFICACAO OK"
   exit 0
 fi
@@ -137,6 +140,23 @@ eq "1049 voltou a null" "$(marcado OBEN 1049)" "null"
 eq "4000 voltou a null" "$(marcado OBEN 4000)" "null"
 eq "so 1014 marcado" "$(nmarcados)" "1"
 
+echo "== tentativa (coletando / invalidado) =="
+tent() { Pq -c "SET ROLE service_role; SELECT public.reposicao_tentativa_encerrados_omie('OBEN', $1, '$2', 'motivo x')->>'status';" | tail -1; }
+eq "abre tentativa com seq novo" "$(tent 14 coletando)" "coletando"
+eq "registro sai de publicado enquanto coleta" "$(pub status)" "coletando"
+eq "coletando com o mesmo seq e obsoleto" "$(tent 14 coletando)" "obsoleto"
+eq "registrar fecha a propria tentativa" "$(run OBEN 14 "ARRAY[1014]::bigint[]")" '{"novos": 0, "limpos": 0, "status": "publicado"}'
+eq "re-registrar o mesmo seq ja fechado e obsoleto" "$(Pq -c "SET ROLE service_role; SELECT public.reposicao_registrar_encerrados_omie('OBEN', 14, ARRAY[1014]::bigint[], $J)->>'status';" | tail -1)" "obsoleto"
+eq "abre seq 15" "$(tent 15 coletando)" "coletando"
+eq "invalidado de seq velho e obsoleto" "$(tent 14 invalidado)" "obsoleto"
+eq "invalida a propria tentativa" "$(tent 15 invalidado)" "invalidado"
+eq "registro invalidado com motivo" "$(pub "status || ':' || motivo")" "invalidado:motivo x"
+eq "invalidar nao mexe na coluna" "$(nmarcados)" "1"
+eq "sem token invalida sem condicao" "$(tent NULL invalidado)" "invalidado"
+eq "seq preservado quando invalida sem token" "$(pub seq)" "15"
+eq "coletando sem token recusa" "$(Pq -c "SET ROLE service_role; DO \$\$ BEGIN PERFORM public.reposicao_tentativa_encerrados_omie('OBEN', NULL, 'coletando', 'x'); EXCEPTION WHEN SQLSTATE '22023' THEN RAISE NOTICE 'ok'; END \$\$; SELECT 'recusou';" | tail -1)" "recusou"
+eq "1a tentativa sem linha cria o registro" "$(Pq -c "SET ROLE service_role; SELECT public.reposicao_tentativa_encerrados_omie('COLACOR', 3, 'coletando', NULL)->>'status';" | tail -1)" "coletando"
+
 echo "== recusas (SQLSTATE exata, resto re-lança) =="
 P -c "CREATE TABLE public._r (s text); GRANT ALL ON public._r TO service_role;"
 recusa() { # sqlstate, seq, ids
@@ -146,7 +166,7 @@ recusa() { # sqlstate, seq, ids
 }
 eq "encerrado fora do espelho recusa com P0002" "$(recusa P0002 20 "ARRAY[1014,1049,999]::bigint[]")" "P0002"
 eq "recusa e atomica: 1049 nao marcado" "$(marcado OBEN 1049)" "null"
-eq "recusa e atomica: seq aceito segue 13" "$(pub seq)" "13"
+eq "recusa e atomica: seq aceito segue 15" "$(pub seq)" "15"
 eq "nCodPed nulo recusa com 22023" "$(recusa 22023 21 "ARRAY[1014,NULL]::bigint[]")" "22023"
 eq "nCodPed negativo recusa com 22023" "$(recusa 22023 22 "ARRAY[-5]::bigint[]")" "22023"
 eq "seq zero recusa com 22023" "$(recusa 22023 0 "ARRAY[1014]::bigint[]")" "22023"
@@ -158,6 +178,8 @@ eq "anon sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('anon','$FN','EXEC
 eq "authenticated sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('authenticated','$FN','EXECUTE');")" "f"
 eq "service_role com EXECUTE" "$(Pq -c "SELECT has_function_privilege('service_role','$FN','EXECUTE');")" "t"
 eq "authenticated sem UPDATE na publicacao" "$(Pq -c "SELECT has_table_privilege('authenticated','$TB','UPDATE');")" "f"
+FN2="public.reposicao_tentativa_encerrados_omie(public.empresa_reposicao,bigint,text,text)"
+eq "authenticated sem EXECUTE na tentativa" "$(Pq -c "SELECT has_function_privilege('authenticated','$FN2','EXECUTE');")" "f"
 eq "RLS ligada na publicacao" "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE oid='$TB'::regclass;")" "t"
 
 echo "PASS=$PASS FAIL=$FAIL"
