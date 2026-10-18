@@ -58,7 +58,9 @@ export const EDGE = "omie-sync-nfes-recebidas";
 // v1.7: revisita da janela LARGA (revisita.ts) quando o body pede `revisita_dias` — a NF que o laço de 3 dias
 // nunca mais vê (casada em parte; lançada depois da janela). Conhecida vincula pelos contratos da listagem, sem
 // ConsultarRecebimento; só preenche linha sem NF. `results` ganha `revisita`.
-export const VERSAO = "v1.7-revisita-janela-larga";
+// v1.7.1: a janela explícita (`revisita_de`/`revisita_ate`) chegava à listagem SEM datas — `{de, ate}` lido como
+// `{dataDe, dataAte}`. O caminho diário (`revisita_dias`) não era afetado.
+export const VERSAO = "v1.7.1-janela-explicita";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

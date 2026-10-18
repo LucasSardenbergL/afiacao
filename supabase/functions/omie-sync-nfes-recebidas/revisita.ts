@@ -127,12 +127,14 @@ function isoDeBR(d: string): string | null {
  * Exige as duas, válidas, em ordem e com no máximo 120 dias; senão `null` (sem revisita explícita).
  */
 const REVISITA_EXPLICITA_DIAS_MAX = 120;
-export function lerJanelaExplicita(de: unknown, ate: unknown): { de: string; ate: string } | null {
+export function lerJanelaExplicita(de: unknown, ate: unknown): { dataDe: string; dataAte: string } | null {
   if (typeof de !== "string" || typeof ate !== "string") return null;
   const a = isoDeBR(de), b = isoDeBR(ate);
   if (!a || !b || a > b) return null;
   const dias = (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000;
-  return dias <= REVISITA_EXPLICITA_DIAS_MAX ? { de, ate } : null;
+  // Mesma forma da janela de N dias (index.ts `janelaDeDias`): o 1º catch-up em prod (2026-10-18) leu `.dataDe` de
+  // um `{de, ate}`, listou SEM datas (550 documentos, histórico inteiro) e só não escreveu porque a listagem estourou.
+  return dias <= REVISITA_EXPLICITA_DIAS_MAX ? { dataDe: de, dataAte: ate } : null;
 }
 
 interface Elegivel {

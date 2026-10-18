@@ -255,8 +255,8 @@ Deno.test("revisita_dias: só inteiro de 1 a 60; o resto desliga a revisita", ()
 });
 
 Deno.test("janela explícita: dd/mm/aaaa válidas, em ordem, até 120 dias; o resto é null", () => {
-  assertEquals(lerJanelaExplicita("01/05/2026", "31/07/2026"), { de: "01/05/2026", ate: "31/07/2026" });
-  assertEquals(lerJanelaExplicita("08/05/2026", "08/05/2026"), { de: "08/05/2026", ate: "08/05/2026" });
+  assertEquals(lerJanelaExplicita("01/05/2026", "31/07/2026"), { dataDe: "01/05/2026", dataAte: "31/07/2026" });
+  assertEquals(lerJanelaExplicita("08/05/2026", "08/05/2026"), { dataDe: "08/05/2026", dataAte: "08/05/2026" });
   const invalidas: Array<[unknown, unknown]> = [
     ["01/08/2026", "01/05/2026"], // invertida
     ["31/02/2026", "10/03/2026"], // data inexistente
