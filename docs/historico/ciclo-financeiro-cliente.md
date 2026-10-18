@@ -58,6 +58,19 @@ PROVA-CICLO-CLIENTE-OK
 
 Query de uso do evento `financeiro.ciclo_aberto` com denominador (nº de sessões master no período). Sem ≥1 sinal positivo de uso em prod, a fase seguinte é instalar/ler o sensor, não construir mais tela.
 
+## Frente 3 — giro de estoque por SKU e o PME = 0d (2026-10-18)
+
+Spec `docs/superpowers/specs/2026-10-18-ciclo-giro-sku-design.md` · plano `docs/superpowers/plans/2026-10-18-ciclo-giro-sku.md` · prova `db/test-fin-ciclo-giro-sku.sh` (15 sabotagens, C e pt_BR) · migration `20261018200000_fin_ciclo_giro_sku.sql` (aplicada pela sessão, validada por psql-ro, corpo idêntico ao arquivo).
+
+- **Causa do PME 0d:** `fin_estoque_valor` nunca foi escrita em prod (só um formulário manual) e o engine fazia `Number(row?.valor ?? 0)`. O mesmo 0 ia para a NCG, que omitia o estoque das 3 empresas.
+- **O denominador também estava furado:** o DRE da oben parou em 2026-03 (6 de 12 meses na janela) e o da colacor_sc grava CMV 0. Agora o CMV exige os 12 meses fechados, senão PME "—" com motivo. Efeito na estreia: colacor com número; oben e colacor_sc com "—" até o DRE ser consertado (fora desta entrega).
+- **O "estoque" do Omie não é todo estoque:** na colacor, R$ 1,48 mi é tipo 08 (imobilizado: máquinas, dispensador) e R$ 0,2 mi é 07/99 (uso e consumo). Classe por tipo SPED **ou** família, numa função única `_fin_estoque_classe`. O founder confirmou que o 08 é imobilizado e pediu a lista para acompanhar, que virou "Fora do giro", com o selo "conferir cadastro" quando tipo e família discordam (51 SKUs na colacor, 26 na oben).
+- **Codex (challenge da spec):** nenhum P0. Os P1 viraram a §5.4 (fonte de consumo exige 330 dias de histórico e frescor de 7 dias; unidade da malha travada; compra recente (`cmc_ledger` ≤ 90d) não é giro morto; candidatos, não ordens; sem "dias agregados" que dupla-contam acabado + insumo; override manual só com `fonte='manual'`; NCG `parcial`).
+- **Desempenho:** a primeira versão da RPC levava 2,5 s em prod. A view `v_pcp_malha_oben` custa ~250 ms por avaliação e, num `EXISTS` correlacionado, era reavaliada por linha (a consulta isolada estourou o tempo). Com CTEs `MATERIALIZED` e `LEFT JOIN`, ficou em 378 ms como master sob `authenticated`.
+- **Números de estreia (prod, 2026-10-18):** oben com 315 candidatos a liquidar (≈ R$ 103 mil) e 161 a segurar (≈ R$ 109 mil acima de 90 dias); colacor e colacor_sc sem consumo por SKU (NF-e só da Oben), mostrando só o R$ parado.
+- **Onde mais muda:** a NCG das 3 empresas sobe pelo estoque de giro, e o `fin-valor-engine` (capital investido/ROIC) lê essa NCG de `fin_projecao_snapshots`. É correção, não regressão, mas o histórico de snapshots mistura antes e depois.
+- **Fase N+1 só com sinal:** os eventos `financeiro.ciclo_giro_visto` e `financeiro.ciclo_giro_filtro` (por empresa/ação), com denominador em `financeiro.ciclo_aberto`.
+
 ---
 
 # Frente 4 — PMP por fornecedor e o custo do prazo (2026-10-18)

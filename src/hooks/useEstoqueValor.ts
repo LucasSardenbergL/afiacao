@@ -32,9 +32,22 @@ export function useSalvarEstoque(company: string) {
   });
 }
 
+/**
+ * Estoque de GIRO do Omie (sem imobilizado / uso e consumo — regra única no banco,
+ * `_fin_estoque_classe`). Só pré-preenche o campo: o motor já usa este valor sozinho quando não
+ * há inventário manual dos últimos 45 dias. Sem SKU de giro com custo → lança (nunca R$ 0).
+ */
 export async function estimarEstoqueOmie(company: string) {
-  const { data, error } = await supabase.rpc('fin_estimar_estoque_omie', { p_company: company });
+  const { data, error } = await supabase.rpc('fin_estoque_giro_valor', { p_company: company });
   if (error) throw error;
-  const row = Array.isArray(data) ? data[0] : data;
-  return row as { valor_estimado: number; cobertura_pct: number; skus_total: number; skus_com_custo: number };
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    valor_giro: number | null; skus_giro: number; skus_giro_com_custo: number; cobertura_pct: number | null;
+  } | null;
+  if (!row || row.valor_giro == null) throw new Error('Sem estoque de giro com custo no Omie para esta empresa');
+  return {
+    valor_estimado: Number(row.valor_giro),
+    cobertura_pct: Number(row.cobertura_pct),
+    skus_total: Number(row.skus_giro),
+    skus_com_custo: Number(row.skus_giro_com_custo),
+  };
 }

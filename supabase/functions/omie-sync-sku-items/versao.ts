@@ -75,11 +75,12 @@ export const EDGE = "omie-sync-sku-items";
  * de pedido. Ver recebimento.ts. Exige a migration 20261005170000 ANTES do deploy.
  *
  * v1.5 (2026-10-08): as quatro leituras que MONTAM a fila (janela de NF-e, histórico, controle,
+ * v1.6: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  * irmãs) paginam por keyset com `.in()` em lotes. O `.in()` cru sobre `sku_leadtime_history`
  * voltava 1.000 de 2.962 linhas na janela de 215 dias, e os trackings da cauda viravam pendentes
  * (`fila_pendente` 228 em vez de 18). Ver leituras.ts.
  */
-export const VERSAO = "v1.5-fila-paginada";
+export const VERSAO = "v1.6-gate-auth-canonico";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

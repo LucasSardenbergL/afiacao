@@ -29,7 +29,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // numérica), então NENHUMA canária de comportamento consegue discriminar bundle novo de velho aqui:
 // os dois produzem bytes idênticos. Sem mexer no marcador, a sonda responderia "v1.0-sensor-inicial"
 // tendo o deploy acontecido ou não — o "mente verde" da ⚠️ #2 de docs/agent/deploy.md.
-export const VERSAO = "v1.3-tipos-client";
+// v1.4 → v1.5: PME e NCG com estoque de GIRO do Omie (fin_estoque_giro_valor) em vez de 0 fabricado
+// por fin_estoque_valor vazia; CMV exige os 12 meses fechados; PME/estoque viram null + motivo.
+export const VERSAO = "v1.5-pme-estoque-giro";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

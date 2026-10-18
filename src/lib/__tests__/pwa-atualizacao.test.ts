@@ -409,11 +409,55 @@ describe('em que build estou (menu do usuário)', () => {
     buildServidor: null,
     buildEm: null,
     buildServidorEm: null,
+    commitSha: null,
+    commitEm: null,
+    commitEmServidor: null,
     ultimaVerificacaoEm: null,
   };
 
   it('mostra o hash curto, no mesmo eixo do build_id/telemetria_probes', () => {
-    expect(descreverEstadoAtualizacao(base)).toEqual({ build: '92kmkUxx', situacao: 'em dia' });
+    expect(descreverEstadoAtualizacao(base)).toEqual({
+      versao: '92kmkUxx', build: '92kmkUxx', commit: null, situacao: 'em dia',
+    });
+  });
+
+  it('a VERSÃO é a data do COMMIT: preview e Publish do mesmo commit (builds e carimbos distintos) leem igual', () => {
+    const commitEm = '2026-10-18T19:02:11.000Z';
+    const preview = descreverEstadoAtualizacao({
+      ...base, buildId: 'index-BIAVBR3F', buildEm: '2026-10-18T19:06:02.000Z', commitSha: '0153e797', commitEm,
+    });
+    const publicado = descreverEstadoAtualizacao({
+      ...base, buildId: 'index-D8govl0X', buildEm: '2026-10-18T19:07:37.000Z', commitSha: '0153e797', commitEm,
+    });
+    expect(preview.versao).toBe('18/10 16:02');
+    expect(publicado.versao).toBe(preview.versao);
+    expect(preview.commit).toBe('0153e797');
+    expect(preview.build).not.toBe(publicado.build); // o build continua distinguindo os dois
+  });
+
+  it('sem data de commit (builder sem .git) cai no carimbo de build, nunca inventa', () => {
+    const d = descreverEstadoAtualizacao({ ...base, buildEm: '2026-10-18T19:06:02.000Z', commitSha: null, commitEm: null });
+    expect(d.versao).toBe('18/10 16:06');
+    expect(d.commit).toBeNull();
+  });
+
+  it('desatualizado compara no MESMO eixo: data do commit do servidor quando ele a tem', () => {
+    const d = descreverEstadoAtualizacao({
+      ...base, commitEm: '2026-10-18T19:02:11.000Z', buildServidor: 'index-CnZTQjW3',
+      buildServidorEm: '2026-10-18T20:30:00.000Z', commitEmServidor: '2026-10-18T20:21:00.000Z',
+    });
+    expect(d.situacao).toBe('desatualizado (servidor: 18/10 17:21)');
+  });
+
+  it('com carimbo, a VERSÃO é a data/hora de Brasília (legível e ordenada); o hash fica à parte', () => {
+    const d = descreverEstadoAtualizacao({ ...base, buildEm: '2026-10-18T17:54:02.494Z' });
+    expect(d.versao).toBe('18/10 14:54');
+    expect(d.build).toBe('92kmkUxx');
+  });
+
+  it('desatualizado mostra a VERSÃO do servidor quando ele tem carimbo', () => {
+    const d = descreverEstadoAtualizacao({ ...base, buildServidor: 'index-CnZTQjW3', buildServidorEm: '2026-10-18T17:54:02.494Z' });
+    expect(d.situacao).toBe('desatualizado (servidor: 18/10 14:54)');
   });
 
   it('"em dia" com o servidor em outro build vira "desatualizado" — nunca mente', () => {
@@ -450,6 +494,8 @@ describe('lerBuildDoServidor', () => {
 
 const HTML_SERVIDOR =
   '<meta name="app-build-em" content="2026-10-17T15:00:00.000Z">' +
+  '<meta name="app-commit-sha" content="0153e797">' +
+  '<meta name="app-commit-em" content="2026-10-17T14:50:00.000Z">' +
   '<script type="module" src="/assets/index-DHn6ISaE.js"></script>';
 
 describe('lerCarimbosDoServidor (build_id + carimbo ordenável, do MESMO HTML)', () => {
@@ -458,13 +504,16 @@ describe('lerCarimbosDoServidor (build_id + carimbo ordenável, do MESMO HTML)',
     expect(await lerCarimbosDoServidor(f as unknown as typeof fetch)).toEqual({
       buildId: 'index-DHn6ISaE',
       buildEm: '2026-10-17T15:00:00.000Z',
+      commitEm: '2026-10-17T14:50:00.000Z',
     });
     expect(await lerBuildDoServidor(f as unknown as typeof fetch)).toBe('index-DHn6ISaE');
   });
 
   it('HTML sem carimbo (build anterior a ele) → buildEm null, build_id preservado', async () => {
     const f = vi.fn(async () => new Response('<script type="module" src="/assets/index-DHn6ISaE.js"></script>'));
-    expect(await lerCarimbosDoServidor(f as unknown as typeof fetch)).toEqual({ buildId: 'index-DHn6ISaE', buildEm: null });
+    expect(await lerCarimbosDoServidor(f as unknown as typeof fetch)).toEqual({
+      buildId: 'index-DHn6ISaE', buildEm: null, commitEm: null,
+    });
   });
 
   it('verificarAtualizacaoAgora grava o carimbo do servidor no estado', async () => {
@@ -473,6 +522,7 @@ describe('lerCarimbosDoServidor (build_id + carimbo ordenável, do MESMO HTML)',
       await verificarAtualizacaoAgora();
       expect(obterEstadoAtualizacao().buildServidorEm).toBe('2026-10-17T15:00:00.000Z');
       expect(obterEstadoAtualizacao().buildServidor).toBe('index-DHn6ISaE');
+      expect(obterEstadoAtualizacao().commitEmServidor).toBe('2026-10-17T14:50:00.000Z');
     } finally {
       vi.unstubAllGlobals();
     }

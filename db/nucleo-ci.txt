@@ -53,6 +53,11 @@ db/test-fcs-margem-coluna-fechada.sh       63
 # de tabela + GRANT de 38) e por TEXTO (saneador + trigger + backup privado). Linha de base prova os dois furos;
 # writers de prod (fixture) seguem gravando; 15 sabotagens inline, cada uma exige o seu vermelho exato.
 db/test-tactical-plans-margem.sh           116
+# FU4-F (pós-B): a ESCRITA default do Supabase fechada nas duas tabelas (REVOKE INSERT/UPDATE/DELETE/TRUNCATE/
+# REFERENCES/TRIGGER/MAINTAIN). fcs mantém UPDATE só de (updated_at) + policy de UPDATE com WITH CHECK (false):
+# o FOR SHARE das RPCs invoker de recomendação exige as duas, e a prova mostra a trava BLOQUEANDO a troca de dono
+# concorrente. 11 sabotagens inline, 13 vermelhos exigidos (inclusive as que mostram por que não revogar tudo nem dropar a policy).
+db/test-fcs-ftp-escrita-fechada.sh         60
 # Telefonia: quem é o dono do número discado (resolver_cliente_por_telefone, INVOKER). Roda COMO a
 # vendedora sob a RLS copiada da prod: o telefone com hífen casa (a busca antiga reconhecia 4% das
 # carteiras), staff não é cliente, ambíguo fica sem dono em vez de cair num cliente ao acaso, um

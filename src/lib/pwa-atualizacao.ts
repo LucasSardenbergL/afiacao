@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
-import { extrairBuildEm, extrairBuildId, resolverBuildEm, resolverBuildId } from '@/lib/build-id';
+import { extrairBuildEm, extrairBuildId, extrairCommitEm, resolverBuildEm, resolverBuildId, resolverCommit } from '@/lib/build-id';
 import { faseDaPagina, type EstadoPublicado } from '@/sw/releases';
 
 /**
@@ -53,6 +53,12 @@ export interface EstadoAtualizacao {
   buildEm: string | null;
   /** Carimbo do build que o servidor entrega — junto do `buildServidor`. */
   buildServidorEm: string | null;
+  /** Commit (sha curto) de que este build saiu — a VERSÃO legível; null sem `.git` no builder. */
+  commitSha: string | null;
+  /** Data do commit (ISO) — igual no preview e no Publish do mesmo commit. */
+  commitEm: string | null;
+  /** Data do commit do build que o servidor entrega — junto do `buildServidorEm`. */
+  commitEmServidor: string | null;
   ultimaVerificacaoEm: number | null;
 }
 
@@ -70,8 +76,13 @@ let estado: EstadoAtualizacao = {
   buildServidor: null,
   buildEm: resolverBuildEm(),
   buildServidorEm: null,
+  ...commitInicial(),
   ultimaVerificacaoEm: null,
 };
+function commitInicial(): Pick<EstadoAtualizacao, 'commitSha' | 'commitEm' | 'commitEmServidor'> {
+  const c = resolverCommit();
+  return { commitSha: c.sha, commitEm: c.em, commitEmServidor: null };
+}
 const ouvintes = new Set<Ouvinte>();
 let aplicador: (() => void) | null = null;
 let verificador: ((forcar: boolean) => Promise<FaseAtualizacao>) | null = null;
@@ -136,7 +147,9 @@ export function aplicarAtualizacao(aplicar: (() => void) | null = aplicador): vo
  */
 export async function verificarAtualizacaoAgora(): Promise<FaseAtualizacao> {
   const servidor = await lerCarimbosDoServidor();
-  if (servidor) definir({ buildServidor: servidor.buildId, buildServidorEm: servidor.buildEm });
+  if (servidor) {
+    definir({ buildServidor: servidor.buildId, buildServidorEm: servidor.buildEm, commitEmServidor: servidor.commitEm });
+  }
   return verificador ? verificador(true) : estado.fase;
 }
 
@@ -148,13 +161,15 @@ export async function verificarAtualizacaoAgora(): Promise<FaseAtualizacao> {
  */
 export async function lerCarimbosDoServidor(
   f: typeof fetch = globalThis.fetch,
-): Promise<{ buildId: string; buildEm: string | null } | null> {
+): Promise<{ buildId: string; buildEm: string | null; commitEm: string | null } | null> {
   try {
     const r = await f(`/?versao=${Date.now()}`, { cache: 'no-store' });
     if (!r.ok) return null;
     const html = await r.text();
     const id = extrairBuildId([html]);
-    return id.startsWith('index-') ? { buildId: id, buildEm: extrairBuildEm(html) } : null;
+    return id.startsWith('index-')
+      ? { buildId: id, buildEm: extrairBuildEm(html), commitEm: extrairCommitEm(html) }
+      : null;
   } catch {
     return null;
   }
@@ -392,7 +407,10 @@ export function aplicadorPadrao(
 
 /** Só para teste: volta o singleton ao estado inicial. */
 export function __resetEstadoAtualizacao(buildId = resolverBuildId(), buildEm = resolverBuildEm()): void {
-  estado = { fase: 'inativo', buildId, buildServidor: null, buildEm, buildServidorEm: null, ultimaVerificacaoEm: null };
+  estado = {
+    fase: 'inativo', buildId, buildServidor: null, buildEm, buildServidorEm: null,
+    ...commitInicial(), ultimaVerificacaoEm: null,
+  };
   aplicador = null;
   verificador = null;
   ouvintes.clear();
@@ -408,20 +426,41 @@ const ROTULO_FASE: Record<FaseAtualizacao, string> = {
 };
 
 /**
- * Texto do menu do usuário — puro, pra o staff dizer "em que build estou" sem
- * DevTools. `build` é o hash curto (sem `index-`), o mesmo que aparece no
- * `build_id` do PostHog e no `telemetria_probes`. Quando uma checagem manual
- * leu o servidor e ele difere do que roda aqui, diz isso explicitamente — é o
- * único caso em que "em dia" seria mentira.
+ * Versão LEGÍVEL de um build: a data e hora em que ele foi gerado (o carimbo
+ * `app-build-em`, horário de Brasília) — "18/10 14:54". Ordenada por construção (o
+ * mais recente é o mais novo), ao contrário do hash. Um número sequencial (v1, v2…)
+ * exigiria um contador que o builder do Lovable não tem (sem git no build).
  */
-export function descreverEstadoAtualizacao(e: EstadoAtualizacao): { build: string; situacao: string } {
+function formatarVersao(iso: string): string {
+  return new Date(iso).toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).replace(',', '');
+}
+
+/**
+ * Texto do menu do usuário — puro, pra o staff dizer "em que versão estou" sem
+ * DevTools. `versao` é a DATA DO COMMIT (igual no preview e no Publish do Lovable, que
+ * são dois builds do mesmo commit); sem ela, a data do build; sem carimbo, o hash.
+ * `build` é o hash curto (sem `index-`), o mesmo do `build_id` no PostHog e no
+ * `telemetria_probes`; `commit` o sha curto — ambos em letra miúda para o suporte.
+ * Quando uma checagem manual leu o servidor e ele difere do que roda aqui, diz isso
+ * explicitamente — é o único caso em que "em dia" seria mentira.
+ */
+export function descreverEstadoAtualizacao(
+  e: EstadoAtualizacao,
+): { versao: string; build: string; commit: string | null; situacao: string } {
   const curto = (id: string) => id.replace(/^index-/, '');
   const build = curto(e.buildId);
+  const versaoDe = (commitEm: string | null, buildEm: string | null, fallback: string) =>
+    commitEm ? formatarVersao(commitEm) : buildEm ? formatarVersao(buildEm) : fallback;
+  const versao = versaoDe(e.commitEm, e.buildEm, build);
+  const commit = e.commitSha;
   const defasado = e.buildServidor !== null && e.buildServidor !== e.buildId;
   if (defasado && (e.fase === 'em_dia' || e.fase === 'falhou' || e.fase === 'inativo')) {
-    return { build, situacao: `desatualizado (servidor: ${curto(e.buildServidor as string)})` };
+    const doServidor = versaoDe(e.commitEmServidor, e.buildServidorEm, curto(e.buildServidor as string));
+    return { versao, build, commit, situacao: `desatualizado (servidor: ${doServidor})` };
   }
-  return { build, situacao: ROTULO_FASE[e.fase] };
+  return { versao, build, commit, situacao: ROTULO_FASE[e.fase] };
 }
 
 /**

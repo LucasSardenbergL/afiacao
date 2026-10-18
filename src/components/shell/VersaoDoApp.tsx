@@ -12,13 +12,6 @@ import {
   verificarAtualizacaoAgora,
 } from '@/lib/pwa-atualizacao';
 
-/** "17/10 14:32" — quando ESTE build foi gerado (o carimbo do build mínimo). */
-function formatarCarimbo(iso: string): string {
-  return new Date(iso).toLocaleString('pt-BR', {
-    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-  });
-}
-
 /**
  * Itens do menu do usuário: em que BUILD este aparelho está e a fase da
  * atualização — com "Verificar agora" (checa o servidor ignorando o throttle)
@@ -28,7 +21,7 @@ function formatarCarimbo(iso: string): string {
  */
 export function VersaoDoApp() {
   const estado = useSyncExternalStore(assinarEstadoAtualizacao, obterEstadoAtualizacao);
-  const { build, situacao } = descreverEstadoAtualizacao(estado);
+  const { versao, build, commit, situacao } = descreverEstadoAtualizacao(estado);
 
   const verificar = async () => {
     const fase = await verificarAtualizacaoAgora();
@@ -52,8 +45,14 @@ export function VersaoDoApp() {
     <>
       <DropdownMenuSeparator />
       <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-        <span className="block">Versão {build}{estado.buildEm ? ` · ${formatarCarimbo(estado.buildEm)}` : ''}</span>
+        <span className="block text-foreground">Versão de {versao}</span>
         <span className="block">{situacao}</span>
+        {(versao !== build || commit) && (
+          <span className="block text-[10px] opacity-70">
+            build {build}
+            {commit && ` · commit ${commit}`}
+          </span>
+        )}
       </DropdownMenuLabel>
       {estado.fase === 'pronta' ? (
         <DropdownMenuItem onClick={() => aplicarAtualizacao()}>

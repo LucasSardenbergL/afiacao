@@ -14,6 +14,7 @@ import { CicloTendencia } from './CicloTendencia';
 import { CicloClientesTabela } from './CicloClientesTabela';
 import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
+import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
 import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
 import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
@@ -31,7 +32,7 @@ export function CicloTab() {
   const coorte = useCicloCoorte();
   const receita = useReceitaDiariaTtm();
   const cpEmpresa = useCicloCpEmpresa();
-  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '' });
+  const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '', cicloGiroAcao: 'todos' });
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
   useEffect(() => { track('financeiro.ciclo_aberto'); }, []);
@@ -87,6 +88,12 @@ export function CicloTab() {
           />
         </section>
       ))}
+
+      <CicloGiroEstoque
+        empresas={tendencias}
+        acao={(['todos', 'liquidar', 'segurar_compra'].includes(filtros.cicloGiroAcao) ? filtros.cicloGiroAcao : 'todos') as FiltroAcaoGiro}
+        onAcao={(a) => setFiltros({ cicloGiroAcao: a })}
+      />
 
       <CicloDescontoPainel
         empresas={tendencias}

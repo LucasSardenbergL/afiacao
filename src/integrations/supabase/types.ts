@@ -11552,6 +11552,7 @@ export type Database = {
           cte_valor_frete: number | null
           data_previsao_original: string | null
           empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          encerrado_omie_em: string | null
           fornecedor_cnpj: string | null
           fornecedor_codigo_omie: number
           fornecedor_nome: string | null
@@ -11594,6 +11595,7 @@ export type Database = {
           cte_valor_frete?: number | null
           data_previsao_original?: string | null
           empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          encerrado_omie_em?: string | null
           fornecedor_cnpj?: string | null
           fornecedor_codigo_omie: number
           fornecedor_nome?: string | null
@@ -11636,6 +11638,7 @@ export type Database = {
           cte_valor_frete?: number | null
           data_previsao_original?: string | null
           empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          encerrado_omie_em?: string | null
           fornecedor_cnpj?: string | null
           fornecedor_codigo_omie?: number
           fornecedor_nome?: string | null
@@ -12612,6 +12615,54 @@ export type Database = {
           executado_em?: string
           id?: never
           linhas_inseridas?: number
+        }
+        Relationships: []
+      }
+      reposicao_encerrados_omie_publicacao: {
+        Row: {
+          coletado_em: string
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          habilitado: boolean
+          ids: number[]
+          janela_ate: string | null
+          janela_de: string | null
+          limpos: number | null
+          motivo: string | null
+          novos: number | null
+          publicado_em: string | null
+          seq: number
+          status: string
+          tentativa_em: string | null
+        }
+        Insert: {
+          coletado_em: string
+          empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          habilitado?: boolean
+          ids: number[]
+          janela_ate?: string | null
+          janela_de?: string | null
+          limpos?: number | null
+          motivo?: string | null
+          novos?: number | null
+          publicado_em?: string | null
+          seq: number
+          status: string
+          tentativa_em?: string | null
+        }
+        Update: {
+          coletado_em?: string
+          empresa?: Database["public"]["Enums"]["empresa_reposicao"]
+          habilitado?: boolean
+          ids?: number[]
+          janela_ate?: string | null
+          janela_de?: string | null
+          limpos?: number | null
+          motivo?: string | null
+          novos?: number | null
+          publicado_em?: string | null
+          seq?: number
+          status?: string
+          tentativa_em?: string | null
         }
         Relationships: []
       }
@@ -20156,6 +20207,16 @@ export type Database = {
         Returns: boolean
       }
       _fin_ciclo_gate_master: { Args: never; Returns: undefined }
+      _fin_estoque_account: { Args: { p_company: string }; Returns: string }
+      _fin_estoque_classe: {
+        Args: { p_familia: string; p_tipo: string }
+        Returns: string
+      }
+      _fin_estoque_familia_fora: {
+        Args: { p_familia: string }
+        Returns: boolean
+      }
+      _fin_estoque_tipo_fora: { Args: { p_tipo: string }; Returns: boolean }
       _push_enviar: {
         Args: {
           p_corpo: string
@@ -20854,6 +20915,29 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      fin_ciclo_giro_sku: {
+        Args: { p_company: string }
+        Returns: {
+          acao: string
+          classe: string
+          cmc: number
+          codigo: string
+          consumo_qtd_365d: number
+          descricao: string
+          dias_cobertura: number
+          dias_sem_saida: number
+          divergencia_cadastro: boolean
+          familia: string
+          motivo_acao: string
+          motivo_consumo: string
+          omie_codigo_produto: number
+          saldo: number
+          tipo_produto: string
+          ultima_saida: string
+          valor_excedente: number
+          valor_parado: number
+        }[]
+      }
       fin_ciclo_titulos_cliente: {
         Args: { p_cliente: number; p_company: string }
         Returns: {
@@ -20900,6 +20984,17 @@ export type Database = {
           skus_com_custo: number
           skus_total: number
           valor_estimado: number
+        }[]
+      }
+      fin_estoque_giro_valor: {
+        Args: { p_company: string }
+        Returns: {
+          cobertura_pct: number
+          skus_giro: number
+          skus_giro_com_custo: number
+          valor_fora_giro: number
+          valor_giro: number
+          valor_sem_classificacao: number
         }[]
       }
       fin_projecao_13_semanas: {
@@ -22140,6 +22235,16 @@ export type Database = {
         }
         Returns: boolean
       }
+      reposicao_registrar_encerrados_omie: {
+        Args: {
+          p_empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          p_ids: number[]
+          p_janela_ate: string
+          p_janela_de: string
+          p_seq: number
+        }
+        Returns: Json
+      }
       reposicao_selar_pedido: {
         Args: { p_pedido_id: number; p_reusar_snapshot?: boolean }
         Returns: string
@@ -22147,6 +22252,15 @@ export type Database = {
       reposicao_selo_itens: { Args: { p_pedido_id: number }; Returns: string }
       reposicao_sincronizar_embalagem_wp: {
         Args: { p_empresa?: string }
+        Returns: Json
+      }
+      reposicao_tentativa_encerrados_omie: {
+        Args: {
+          p_empresa: Database["public"]["Enums"]["empresa_reposicao"]
+          p_motivo: string
+          p_seq: number
+          p_status: string
+        }
         Returns: Json
       }
       request_customer_metrics_refresh: { Args: never; Returns: undefined }

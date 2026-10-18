@@ -42,6 +42,9 @@ export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, re
   const divergem = pmr !== null && real !== null && Math.abs(pmr - real) > 3;
   const cob = resumo === undefined ? null : coberturaPorValor(resumo, company, hoje);
   const cobTexto = resumoErro ? '— (erro de leitura)' : cob === null ? '— (carregando)' : cob.ok ? `${cob.pct.toFixed(0)}%` : `— (${cob.motivo})`;
+  const estoqueTexto = !ind || ind.estoque_fonte === undefined ? null
+    : ind.estoque_fonte === null || ind.estoque_valor == null ? '— (sem fonte de estoque)'
+    : `${brl(ind.estoque_valor)} (${ind.estoque_fonte === 'omie' ? 'Omie, agora' : `manual, ${(ind.estoque_data_ref ?? '').split('-').reverse().slice(0, 2).join('/')}`})`;
   const valores: Array<[string, number | null | undefined]> = [
     ['PME', ind?.prazo_medio_estoque],
     ['PMR', ind?.prazo_medio_recebimento],
@@ -67,6 +70,11 @@ export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, re
         {cpErro
           ? <div className="text-xs text-status-error">PMP de compras: — (erro de leitura)</div>
           : cpEmpresa && <LinhaPmpCompras cp={cpEmpresa} />}
+        {estoqueTexto !== null && (
+          <div className="text-xs text-muted-foreground" data-testid={`ciclo-estoque-${company}`}>
+            Estoque de giro (base do PME): {estoqueTexto}
+          </div>
+        )}
         <div className="text-xs text-muted-foreground" data-testid={`ciclo-cobertura-${company}`}>
           Cobertura: {cobTexto} do valor pago vem de clientes com confiança média
         </div>

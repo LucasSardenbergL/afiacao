@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **652** custom migrations totais
-- **2097** objetos esperados (criados por estas migrations)
+- **655** custom migrations totais
+- **2110** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 751
+  - `function`: 760
   - `rls_policy`: 476
   - `index`: 277
   - `cron_job`: 185
   - `table`: 184
-  - `view`: 115
+  - `view`: 119
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5296,6 +5296,33 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_ciclo_cliente_resumo` | — |
+
+### `20261018150000_fin_ciclo_fornecedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ciclo_cp_titulos` | — |
+| `function` | `public.fin_ciclo_fornecedor_resumo` | — |
+| `function` | `public.fin_ciclo_cp_empresa` | — |
+| `view` | `public.v_titulo_encargos_cp` | — |
+| `view` | `public.v_ciclo_cp_compras_categorias` | — |
+| `view` | `public.v_ciclo_cp_titulos` | — |
+| `view` | `public.v_ciclo_fornecedor_resumo` | — |
+
+### `20261018160000_fcs_ftp_fecha_escrita_default.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261018200000_fin_ciclo_giro_sku.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._fin_estoque_tipo_fora` | — |
+| `function` | `public._fin_estoque_familia_fora` | — |
+| `function` | `public._fin_estoque_classe` | — |
+| `function` | `public._fin_estoque_account` | — |
+| `function` | `public.fin_estoque_giro_valor` | — |
+| `function` | `public.fin_ciclo_giro_sku` | — |
 
 ## Próximos passos por status
 

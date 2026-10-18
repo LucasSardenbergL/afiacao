@@ -6,6 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
 import { normalizarResumo, num, type ResumoCliente, type ResumoClienteRow } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
+import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
 
 export function hojeSp(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -153,6 +154,25 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
         });
       }
       return out;
+    },
+  });
+}
+
+/** Giro de estoque por SKU (frente 3). Ordem estável = a da RPC (R$ parado desc, código) — paginação segura. */
+export function useCicloGiroSku(company: Company) {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'giro-sku', company],
+    queryFn: async (): Promise<GiroSku[]> => {
+      // .rpc() set-returning é capado em 1.000 linhas (colacor tem ~1.460 SKUs com saldo) → paginar sempre.
+      const linhas = await fetchAllPages<Record<string, unknown>>(
+        (de, ate) =>
+          supabase.rpc('fin_ciclo_giro_sku', { p_company: company }).select('*')
+            .order('valor_parado', { ascending: false, nullsFirst: false })
+            .order('omie_codigo_produto', { ascending: true })
+            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+        'fin_ciclo_giro_sku',
+      );
+      return linhas.map(normalizarGiro).filter((l): l is GiroSku => l !== null);
     },
   });
 }
