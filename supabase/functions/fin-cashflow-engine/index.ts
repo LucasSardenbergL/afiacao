@@ -26,6 +26,9 @@ import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } fro
 import { comRegistro, type DbRegistro } from "../_shared/registro-execucao.ts";
 import { hojeSP, somarDias } from "../_shared/hoje-sp.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+// PME honesto (2026-10-18): estoque = inventário manual recente OU estoque de GIRO do Omie
+// (sem imobilizado/uso e consumo); CMV = 12 meses fechados exigidos. Ausente → null + motivo.
+import { calcularPme, cmvTtmFechado, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -317,9 +320,14 @@ type DadosBase = {
   crs: CR[];
   cps: CP[];
   saldo_cc: number;
-  estoque_valor: number;
+  // null = sem fonte (nem manual recente nem estoque de giro com custo no Omie) — nunca 0.
+  estoque_valor: number | null;
   estoque_data_ref: string | null;
-  cmv_ttm: number;
+  estoque_fonte: 'manual' | 'omie' | null;
+  // false ⇒ estoque_valor é subtotal (cobertura de custo < 95%): serve à NCG, não ao PME.
+  estoque_cobertura_ok: boolean;
+  // null = DRE sem os 12 meses fechados (ou zerado) → PME null, motivo em motivos_confianca.
+  cmv_ttm: number | null;
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   curvas_aging: Record<Faixa, CurvaFaixa>;
@@ -340,7 +348,7 @@ async function carregarDados(
 ): Promise<DadosBase> {
   // CR/CP paginados (anti-truncamento, ver o import de fetchAll); o resto cabe em <1000
   // e vai em Promise.all. Tudo em paralelo.
-  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes]] = await Promise.all([
+  const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes, estoqueOmieRes]] = await Promise.all([
     fetchAll<Record<string, unknown>>((from, to) =>
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
@@ -373,9 +381,12 @@ async function carregarDados(
       // @ts-expect-error - fin_config_cashflow not in generated supabase types yet (A1 table)
       supabase.from('fin_config_cashflow').select('overrides_cenario, thresholds, adiantamento_categorias_codigos')
         .eq('company', company).maybeSingle(),
+      // Só inventário MANUAL e não-futuro conta como override (uma foto 'omie_estimado' salva
+      // pelo diálogo é a regra antiga, com imobilizado). A validade (45d) é do resolverEstoque.
       // @ts-expect-error - fin_estoque_valor (Onda 1) não está nos types gerados
       supabase.from('fin_estoque_valor').select('valor, data_ref')
-        .eq('company', company).order('data_ref', { ascending: false }).limit(1).maybeSingle(),
+        .eq('company', company).eq('fonte', 'manual').lte('data_ref', hojeSP())
+        .order('data_ref', { ascending: false }).limit(1).maybeSingle(),
       // @ts-expect-error - fin_dre_snapshots não está nos types gerados
       supabase.from('fin_dre_snapshots').select('cmv, ano, mes')
         .eq('company', company).eq('regime', 'competencia'),
@@ -388,6 +399,8 @@ async function carregarDados(
       // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
       supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
         .eq('company', company).maybeSingle(),
+      // Estoque de GIRO do Omie (inventory_position × cmc, classe por tipo SPED + família).
+      supabase.rpc('fin_estoque_giro_valor', { p_company: company }).maybeSingle(),
     ]),
   ]);
 
@@ -409,19 +422,27 @@ async function carregarDados(
   const saldo_cc = (exigirLinhas(ccRes, 'fin_contas_correntes') as Array<{ saldo_atual?: number | null }>)
     .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
 
-  // Estoque: entra no ACO da NCG e no PME. Sem LINHA continua 0 (estado legítimo e já
-  // avisado na UI — "Estoque não informado"); o que deixa de virar 0 é a falha de leitura.
-  const estoqueRow = exigirLeitura(estoqueRes, 'fin_estoque_valor') as { valor?: number; data_ref?: string } | null;
-  const estoque_valor = Number(estoqueRow?.valor ?? 0);
-  const estoque_data_ref = estoqueRow?.data_ref ?? null;
+  // Estoque: entra no ACO da NCG e no PME. Antes, sem LINHA em fin_estoque_valor (nunca
+  // escrita em prod) virava 0 → PME 0d e NCG sem estoque nas 3 empresas. Agora: manual
+  // recente > estoque de giro do Omie > null + motivo. Falha de leitura continua LANÇANDO.
+  const estoqueRow = exigirLeitura(estoqueRes, 'fin_estoque_valor') as { valor?: number | null; data_ref?: string } | null;
+  const estoqueOmie = exigirLeitura(estoqueOmieRes, 'fin_estoque_giro_valor') as EstoqueOmie;
+  const estoque = resolverEstoque(
+    estoqueRow?.valor != null && estoqueRow.data_ref ? { valor: Number(estoqueRow.valor), data_ref: estoqueRow.data_ref } : null,
+    estoqueOmie ? {
+      valor_giro: estoqueOmie.valor_giro == null ? null : Number(estoqueOmie.valor_giro),
+      skus_giro: Number(estoqueOmie.skus_giro),
+      cobertura_pct: estoqueOmie.cobertura_pct == null ? null : Number(estoqueOmie.cobertura_pct),
+      valor_sem_classificacao: estoqueOmie.valor_sem_classificacao == null ? null : Number(estoqueOmie.valor_sem_classificacao),
+    } : null,
+    hojeSP(),
+  );
 
-  // CMV TTM: soma dos últimos 12 meses de DRE competência
-  // O MÊS de SP: no servidor UTC, getMonth() da noite do último dia do mês já é o mês seguinte.
-  const [_anoTtm, _mesTtm] = hojeSP().split('-').map(Number);
-  const _cutoffMesIdx = (_anoTtm * 12 + _mesTtm) - 12;
-  const cmv_ttm = ((exigirLeitura(dreRes, 'fin_dre_snapshots') ?? []) as Array<{ cmv?: number; ano: number; mes: number }>)
-    .filter((d) => (d.ano * 12 + d.mes) > _cutoffMesIdx)
-    .reduce((s, d) => s + Number(d.cmv ?? 0), 0);
+  // CMV TTM: os 12 meses FECHADOS de DRE competência (mês de SP), todos exigidos.
+  const cmv = cmvTtmFechado(
+    (exigirLeitura(dreRes, 'fin_dre_snapshots') ?? []) as Array<{ cmv?: number | null; ano: number; mes: number }>,
+    hojeSP(),
+  );
 
   // Config: já lançava, mas a mensagem afirmava "aplique o seed" mesmo quando a causa era
   // RLS/timeout — diagnóstico errado colado num erro real. Agora o erro fala por si.
@@ -499,7 +520,7 @@ async function carregarDados(
   // linha pra empresa → calcularIndicadores mostra "—" honesto. Esta leitura TOLERA o erro
   // (o "—" já é honesto), mas o motivo deixa de mentir: antes um erro de leitura era
   // logado como "sem linha", e a tela mostrava "—" indistinguível de empresa sem dado.
-  const motivos_confianca: string[] = [];
+  const motivos_confianca: string[] = [...estoque.motivos, ...(cmv.motivo ? [cmv.motivo] : [])];
   const prazosLeitura = tolerarLeitura(prazosRes, 'v_capital_giro_prazos');
   const prazos = (prazosLeitura.dados as DadosBase['prazos']) ?? null;
   if (prazosLeitura.motivo) {
@@ -531,9 +552,11 @@ async function carregarDados(
     crs,
     cps,
     saldo_cc,
-    estoque_valor,
-    estoque_data_ref,
-    cmv_ttm,
+    estoque_valor: estoque.valor,
+    estoque_data_ref: estoque.data_ref,
+    estoque_fonte: estoque.fonte,
+    estoque_cobertura_ok: estoque.cobertura_ok,
+    cmv_ttm: cmv.valor,
     // Eventos: a falha aqui é a MAIS perigosa da função, porque erra para o lado otimista
     // — sem os recorrentes some a folha (de `folha_30d` e das saídas de todas as semanas)
     // e o caixa projetado sobe. Um "0 despesas" fabricado se parece com um mês bom.
@@ -976,9 +999,12 @@ function gerarSemanas(
 }
 
 type NCG = {
-  aco: { cr_aberto: number; estoque: number; adiantamentos: number; total: number };
+  // estoque null = sem fonte; o total então soma só o que existe e `parcial` diz isso
+  // (antes o 0 fabricado deixava a NCG parcial com cara de completa — §5.4.8 da spec).
+  aco: { cr_aberto: number; estoque: number | null; adiantamentos: number; total: number };
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;
+  parcial: boolean;
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
 
@@ -998,7 +1024,7 @@ function calcularNCG(dados: DadosBase): NCG {
     cr_aberto,
     estoque: dados.estoque_valor,
     adiantamentos,
-    total: cr_aberto + dados.estoque_valor + adiantamentos,
+    total: cr_aberto + (dados.estoque_valor ?? 0) + adiantamentos, // null → `parcial` abaixo
   };
 
   // === Onda 2: guard de folha por janela (data + categoria) ===
@@ -1061,7 +1087,7 @@ function calcularNCG(dados: DadosBase): NCG {
     });
   }
 
-  return { aco, pco, valor, projecao_12m };
+  return { aco, pco, valor, parcial: dados.estoque_valor == null, projecao_12m };
 }
 
 type Indicadores = {
@@ -1072,11 +1098,16 @@ type Indicadores = {
   inadimplencia_pct: number;
   concentracao_top5_clientes: Array<{ cliente: string; pct: number; valor: number }>;
   // null quando a cobertura de baixa derivada é baixa (< COBERTURA_MIN_EMPRESA) → "—".
-  // PME é independente da baixa (estoque/cmv) → sempre number.
+  // PME: null sem estoque, sem os 12 meses fechados de CMV ou com custo < 95% (motivo em
+  // confianca_dados) — antes era sempre number e o ausente saía 0d.
   prazo_medio_recebimento: number | null;
   prazo_medio_pagamento: number | null;
-  prazo_medio_estoque: number;
+  prazo_medio_estoque: number | null;
   cash_conversion_cycle: number | null;
+  // De onde veio o estoque do PME/NCG: o card mostra "Omie, agora" / "manual, dd/mm".
+  estoque_valor: number | null;
+  estoque_fonte: 'manual' | 'omie' | null;
+  estoque_data_ref: string | null;
 };
 
 function calcularIndicadores(
@@ -1096,7 +1127,8 @@ function calcularIndicadores(
   const dias_cobertura = diasCoberturaProjetado(dados.saldo_cc, saidasHorizonte, horizonWeeks);
   console.log(`[Cashflow][${company ?? '?'}] dias_cobertura=${dias_cobertura ?? 'null'} saidas_horizonte=${saidasHorizonte.toFixed(2)}`);
 
-  const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + ncg.aco.estoque - ncg.pco.total;
+  // Estoque null: soma sem ele; `ncg.parcial` cobre os dois números (mesma variável de estoque).
+  const liquidez_operacional_liquida = dados.saldo_cc + ncg.aco.cr_aberto + (ncg.aco.estoque ?? 0) - ncg.pco.total;
   const saldo_tesouraria = dados.saldo_cc - ncg.pco.folha_30d;
 
   // Fase 3 (B): PMR/PMP da baixa DERIVADA (view v_capital_giro_prazos), com gate de
@@ -1106,9 +1138,10 @@ function calcularIndicadores(
   const pmr = prazoComGate(dados.prazos?.pmr, dados.prazos?.pmr_cobertura);
   const pmp = prazoComGate(dados.prazos?.pmp, dados.prazos?.pmp_cobertura);
 
-  const pme = dados.cmv_ttm > 0 ? (dados.estoque_valor / dados.cmv_ttm) * 365 : 0;
-  // CCC só faz sentido com PMR E PMP (sem um dos dois, ciclo parcial engana). PME mostra à parte.
-  const ccc = (pmr !== null && pmp !== null) ? pmr + pme - pmp : null;
+  // null (nunca 0) sem estoque, sem os 12 meses de CMV ou com custo incompleto — motivo em confianca_dados.
+  const pme = calcularPme(dados.estoque_valor, dados.cmv_ttm, dados.estoque_cobertura_ok);
+  // CCC só faz sentido com PMR, PMP E PME (sem um dos três, ciclo parcial engana).
+  const ccc = (pmr !== null && pmp !== null && pme !== null) ? pmr + pme - pmp : null;
 
   // Onda 2: inadimplência = média ponderada por R$ de (1 − taxa_recebimento[faixa]) sobre
   // o CR aberto. Taxa de perda limpa — não mistura mais estoque (saldo >90) com fluxo (12m).
@@ -1146,6 +1179,9 @@ function calcularIndicadores(
     prazo_medio_pagamento: pmp,
     prazo_medio_estoque: pme,
     cash_conversion_cycle: ccc,
+    estoque_valor: dados.estoque_valor,
+    estoque_fonte: dados.estoque_fonte,
+    estoque_data_ref: dados.estoque_data_ref,
   };
 }
 
@@ -1273,6 +1309,10 @@ async function calcular(
     curvas_aging: dados.curvas_aging,
     apos_horizonte,
     ar_impaired,
+    // Leitores do snapshot (Cockpit) não veem `ncg.parcial` da resposta: sem isto a NCG sem
+    // estoque persistia com cara de completa. Snapshot sem a chave = completude desconhecida.
+    ncg_parcial: ncg.parcial,
+    estoque_fonte: dados.estoque_fonte,
   };
 
   // ⚠️ ORDEM DELIBERADA: o SNAPSHOT grava ANTES dos alertas (invertido em 2026-07-28).

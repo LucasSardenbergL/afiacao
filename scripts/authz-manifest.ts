@@ -51,6 +51,20 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'decisão do Raio-X: foto de custo (saldo×cmc) + tirar/restaurar o SKU no motor de compras',
   },
+  // 2026-10-18 — giro de estoque por SKU (aba Ciclo, frente 3). Mesmo gate de custo do
+  // fin_estimar_estoque_omie que ela substitui no engine/diálogo (service_role OU cap_custo_ler).
+  'public.fin_estoque_giro_valor': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'estoque de giro a custo (Σ saldo×cmc por classe SPED) — base do PME do fin-cashflow-engine',
+  },
+  // Master-only via `PERFORM _fin_ciclo_gate_master()` (o helper RAISE por dentro — forma que
+  // blocksOnCall não enxerga); o bloqueio verificável no corpo é o da empresa, logo em seguida.
+  'public.fin_ciclo_giro_sku': {
+    sensitive: true,
+    requiredGate: { allOf: [{ call: 'fin_user_can_access' }] },
+    motivo: 'giro por SKU a custo (saldo×cmc, candidatos a liquidar/segurar compra) — aba Ciclo, master-only',
+  },
   // 2026-08-15 — a alternativa `pode_ver_carteira_completa` SAIU do anyOf destas duas. Dívida de
   // contrato medida no PR #1751 (§8.1 de docs/historico/sentinela-authz-controle-nao-mencao.md) e
   // reconfirmada por psql-ro no corpo VIVO: em prod nenhuma das duas a CHAMA (na
