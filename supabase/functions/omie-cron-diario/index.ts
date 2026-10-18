@@ -36,6 +36,10 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const STEP_TIMEOUT_MS = 25_000;
+// Revisita diária da janela larga do step nfes (ver o step). A hora é a do tick `15 */2` em UTC.
+const REVISITA_NFES_HORA_UTC = 4;
+const REVISITA_NFES_DIAS = 30;
+const ehTickDaRevisita = (agora: Date) => agora.getUTCHours() === REVISITA_NFES_HORA_UTC;
 const TOTAL_TIMEOUT_MS = 115_000; // ~2 min teto
 
 type StepResult = {
@@ -196,7 +200,11 @@ Deno.serve(async (req) => {
     // abortando em 25s (a edge continua server-side); ela é SÍNCRONA de propósito — responder cedo soltaria
     // este step e os seguintes (nfes/ctes/sku) antes do espelho de pedidos → órfãs. (Codex 2026-06-26)
     { key: "pedidos",   name: "omie-sync-pedidos-compra", body: { empresa, dias, trigger: "cron" } },
-    { key: "nfes",      name: "omie-sync-nfes-recebidas", body: { empresa, dias } },
+    // Uma vez por dia o step nfes também revisita 30 dias (revisita.ts da edge): a NF casada em parte, ou lançada
+    // depois da janela de 3 dias, nunca mais era vista. NF conhecida não consulta a Omie (só ~1 ListarRecebimentos
+    // por 50 documentos); a desconhecida consulta 1×. 04:15 UTC fica longe do sku-items de 30 dias das 07:00, que
+    // repete ConsultarRecebimento para as mesmas NFs (REDUNDANT se cair perto). Edge velha ignora o campo.
+    { key: "nfes",      name: "omie-sync-nfes-recebidas", body: { empresa, dias, ...(ehTickDaRevisita(new Date()) ? { revisita_dias: REVISITA_NFES_DIAS } : {}) } },
     { key: "ctes",      name: "omie-sync-ctes-recebidos", body: { empresa, dias } },
     // sku_items NÃO entra (REDUNDANT com o step nfes — ver o cabeçalho): cron próprio no :35.
     { key: "vendas",    name: "omie-sync-vendas-items",   body: { empresa, dias } },

@@ -128,6 +128,46 @@ export interface ReconciliacaoSummary {
   interrompido_por_timeout?: boolean;
 }
 
+/** O que um vínculo só-preenche encontrou, linha a linha (reconciliação e revisita). */
+export interface ContagemVinculo {
+  linhas_vinculadas: number;
+  ja_vinculadas: number;
+  conflito_outra_nf: number;
+  corrida_perdida: number;
+}
+
+/**
+ * Vincula UMA NF às linhas de pedido real dos seus contratos, SÓ onde a linha ainda não tem NF
+ * (compare-and-set). Linha com a mesma NF conta em `ja_vinculadas`; com outra NF fica intocada e
+ * conta em `conflito_outra_nf`. Devolve se algum contrato tinha linha (vinculada agora ou antes).
+ */
+export async function vincularContratosSemNF(
+  porta: Pick<PortaReconciliacao, "linhasDoPedido" | "vincularSeSemNF">,
+  contratos: string[],
+  fornecedor: number,
+  chave: string,
+  patch: (linha: LinhaPedido) => Record<string, unknown>,
+  out: ContagemVinculo,
+): Promise<boolean> {
+  let casou = false;
+  for (const contrato of contratos) {
+    const linhas = await porta.linhasDoPedido(contrato, fornecedor);
+    for (const linha of linhas) {
+      casou = true;
+      if (linha.nfe_chave_acesso === chave) {
+        out.ja_vinculadas++;
+      } else if (linha.nfe_chave_acesso) {
+        out.conflito_outra_nf++;
+      } else if (await porta.vincularSeSemNF(linha.id, patch(linha))) {
+        out.linhas_vinculadas++;
+      } else {
+        out.corrida_perdida++;
+      }
+    }
+  }
+  return casou;
+}
+
 export async function reconciliarOrfas(
   porta: PortaReconciliacao,
   mapear: (raw: unknown) => NFeParaVinculo,
@@ -167,22 +207,10 @@ export async function reconciliarOrfas(
         opcoes.log?.(`[reconcilia] órfã ${orfa.id}: chave do raw_data ≠ coluna — pulada`);
         continue;
       }
-      let casou = false;
-      for (const contrato of pedidos) {
-        const linhas = await porta.linhasDoPedido(contrato, orfa.fornecedor_codigo_omie);
-        for (const linha of linhas) {
-          casou = true;
-          if (linha.nfe_chave_acesso === orfa.nfe_chave_acesso) {
-            out.ja_vinculadas++;
-          } else if (linha.nfe_chave_acesso) {
-            out.conflito_outra_nf++;
-          } else if (await porta.vincularSeSemNF(linha.id, montarPatchVinculo(linha, m, opcoes.agoraIso()))) {
-            out.linhas_vinculadas++;
-          } else {
-            out.corrida_perdida++;
-          }
-        }
-      }
+      const casou = await vincularContratosSemNF(
+        porta, pedidos, orfa.fornecedor_codigo_omie, orfa.nfe_chave_acesso,
+        (linha) => montarPatchVinculo(linha, m, opcoes.agoraIso()), out,
+      );
       if (casou) out.orfas_com_pedido++;
     } catch (err) {
       out.erros++;

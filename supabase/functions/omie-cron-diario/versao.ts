@@ -38,8 +38,9 @@ export const EDGE = "omie-cron-diario";
  * Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho.
  *
  * v1.0 nasce NOMEANDO a fatia que motivou o sensor: a lista de steps sem o `sku_items`.
+ * v1.1: o tick das 04:15 UTC pede ao step `nfes` a revisita da janela de 30 dias (`revisita_dias`).
  */
-export const VERSAO = "v1.0-sem-step-sku-items";
+export const VERSAO = "v1.1-revisita-nfes-04utc";
 
 /** O fingerprint da FONTE, para o ECO carregá-lo também (derivado — o CI regrava o mapa). */
 export const FONTE = respostaSonda(VERSAO).fonte;
