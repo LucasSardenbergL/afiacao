@@ -4,6 +4,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { quantidadeCompraCanonica } from '@/lib/reposicao/qtde-portal';
+import { SeloRaioX } from '@/components/reposicao/raioX/SeloRaioX';
+import { useDecisoesRaioX } from '@/components/reposicao/raioX/useDecisoesRaioX';
 import { formatBRL } from './shared';
 
 /**
@@ -53,6 +55,11 @@ export function ItensPreviewLinha({
     },
   });
 
+  // Selo do Raio-X: AVISO, nunca gate — o loading/erro dele não entra no render da linha. Empresa 'oben'
+  // (o motor de compras é só da Oben — Ruling S6).
+  const skusPrevia = (data ?? []).slice(0, MAX_PREVIA).map((it) => it.sku_codigo_omie);
+  const { data: selos } = useDecisoesRaioX('oben', skusPrevia);
+
   let corpo: React.ReactNode;
   if (isLoading) {
     corpo = (
@@ -84,6 +91,7 @@ export function ItensPreviewLinha({
             return (
               <li key={it.id} className="flex items-baseline gap-3 py-1">
                 <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{it.sku_codigo_omie}</span>
+                {selos?.get(it.sku_codigo_omie) && <SeloRaioX decisao={selos.get(it.sku_codigo_omie)!} />}
                 <span className="flex-1 min-w-0 truncate">{it.sku_descricao ?? '—'}</span>
                 <span className="tabular-nums w-20 text-right">{qtd}</span>
                 <span className="tabular-nums w-28 text-right">{valor == null ? '—' : formatBRL(valor)}</span>
