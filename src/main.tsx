@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
-import { acompanharRegistro, aplicadorNativo } from "./lib/pwa-atualizacao";
+import { acompanharRegistro, aplicadorPadrao } from "./lib/pwa-atualizacao";
 
 /** Carimbo de build: o Vite (`define`) substitui por uma string literal com o short SHA
  *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
@@ -9,8 +9,8 @@ import { acompanharRegistro, aplicadorNativo } from "./lib/pwa-atualizacao";
 declare const __COMMIT_SHA__: string;
 declare const __BUILD_ENV_KEYS__: string;
 /** Constante de build: true só no build de produção non-preview (onde o VitePWA
- *  existe). Guarda o import de 'virtual:pwa-register' — quando false, o Vite DCE
- *  remove o bloco e o módulo virtual (ausente em dev/preview) nunca é referenciado. */
+ *  gera o /sw.js). Guarda o registro do SW — quando false, o Vite DCE remove o bloco
+ *  (em dev/preview não há SW para registrar). */
 declare const __PWA_ENABLED__: boolean;
 
 declare global {
@@ -74,9 +74,9 @@ window.addEventListener("vite:preloadError", () => {
 
 createRoot(document.getElementById("root")!).render(<App />);
 
-// PWA em modo prompt: registra o SW e arma o toast de "atualização disponível"
-// (substitui o injectRegister automático, agora `false`). Guardado por constante
-// de build — em dev/preview o bloco some no DCE e nada importa virtual:pwa-register.
+// PWA: registra o SW ponte (src/sw/sw.ts) e arma o aviso de "atualização
+// disponível" (o injectRegister automático é `false`). Guardado por constante de
+// build — em dev/preview o plugin PWA não existe e o bloco some no DCE.
 if (__PWA_ENABLED__) {
   import("./lib/pwa-update")
     .then((m) => m.setupPwaUpdatePrompt())
@@ -89,9 +89,9 @@ if (__PWA_ENABLED__) {
       // acompanhamento (toast + checagem ativa) vale aqui, via API nativa.
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker
-          .register("/sw.js")
+          .register("/sw.js", { scope: "/" })
           .then((reg) => {
-            acompanharRegistro(reg, { aplicar: aplicadorNativo(reg) });
+            acompanharRegistro(reg, { aplicar: aplicadorPadrao(reg) });
           })
           .catch(() => {
             // best-effort: registro falhou de vez; não pode derrubar o app

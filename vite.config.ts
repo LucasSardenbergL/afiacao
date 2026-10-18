@@ -1,8 +1,10 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
+import fs from "node:fs";
 import { componentTagger } from "lovable-tagger";
 import { VitePWA } from "vite-plugin-pwa";
+import { entryPrimeiro } from "./src/sw/releases";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 import { execSync } from "node:child_process";
 
@@ -67,34 +69,6 @@ function carimboDeBuild(): Plugin {
   };
 }
 
-// 'virtual:pwa-register' só ganha resolvedor quando o VitePWA está ativo (produção
-// non-preview). Fora dele, o guard `__PWA_ENABLED__` protege o RUNTIME e o BUILD
-// (DCE), mas NÃO o scanner de deps do dev server: o esbuild segue o grafo estático
-// inteiro sem aplicar o DCE do `define`, encontra o virtual órfão em pwa-update.ts
-// e ABORTA o pré-bundle ("imported but could not be resolved") — o _metadata.json
-// nunca nasce, toda dep vira descoberta tardia re-otimizada em voo (?v= muda a cada
-// rodada) e o browser pode misturar gerações: duas cópias de React → dispatcher
-// null ("Cannot read properties of null (reading 'useEffect')") → tela branca no
-// preview do Lovable. O stub dá um resolvedor no-op ao virtual sempre que o plugin
-// real está fora, e o scan completa numa geração única.
-function pwaRegisterStub(): Plugin {
-  const VIRTUAL_ID = "virtual:pwa-register";
-  const RESOLVED_ID = "\0" + VIRTUAL_ID + "-stub";
-  return {
-    name: "pwa-register-stub",
-    resolveId(id) {
-      return id === VIRTUAL_ID ? RESOLVED_ID : undefined;
-    },
-    load(id) {
-      if (id === RESOLVED_ID) {
-        // Mesma forma do registerSW real: retorna um updateSW() assíncrono no-op.
-        return "export const registerSW = () => () => Promise.resolve();";
-      }
-      return undefined;
-    },
-  };
-}
-
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   define: {
@@ -103,9 +77,8 @@ export default defineConfig(({ mode }) => ({
     // PROBE temporário — remover quando a env de SHA do Lovable for identificada.
     __BUILD_ENV_KEYS__: JSON.stringify(buildEnvKeys),
     // Casa EXATAMENTE a condição de inclusão do VitePWA abaixo. main.tsx só
-    // importa 'virtual:pwa-register' (via @/lib/pwa-update) quando true — em dev
-    // e no preview Lovable o plugin não existe, então o módulo virtual não
-    // resolve; sendo constante de build, o Vite DCE remove o import quando false.
+    // registra o SW (via @/lib/pwa-update) quando true — em dev e no preview
+    // Lovable não há /sw.js; sendo constante de build, o DCE remove o bloco.
     __PWA_ENABLED__: JSON.stringify(mode === "production" && !isLovablePreview),
   },
   server: {
@@ -121,14 +94,14 @@ export default defineConfig(({ mode }) => ({
     mcpPlugin(),
     mode === "development" && componentTagger(),
     mode === "production" && !isLovablePreview && VitePWA({
-      // 'prompt' (não 'autoUpdate'): o SW novo INSTALA mas ESPERA — quem decide
-      // recarregar é o operador, via PwaUpdatePrompt (toast "Atualizar"). Com
-      // autoUpdate + skipWaiting, um deploy no meio do turno recarregava o app
-      // embaixo do conferente e matava o estado local do formulário (a fila
-      // offline sobrevive no localStorage, mas o lote meio-digitado não).
+      // Recarregar a PÁGINA continua sendo decisão do operador (toast "Atualizar",
+      // ou o momento seguro de src/lib/pwa-atualizacao.ts): um reload no meio do
+      // turno mata o estado local do formulário (a fila offline sobrevive no
+      // localStorage, o lote meio-digitado não). O que mudou em 2026-10-18 é que o
+      // SW em si assume sem espera — sem recarregar nada (src/sw/sw.ts).
+      // `registerType` é ignorado com injectManifest; fica 'prompt' por clareza.
       registerType: "prompt",
-      // false: registramos o SW nós mesmos via useRegisterSW() (virtual:pwa-register)
-      // no PwaUpdatePrompt — sem isto o script auto-injetado registraria em dobro.
+      // false: registramos o SW nós mesmos (src/lib/pwa-update.ts, API nativa).
       injectRegister: false,
       includeAssets: ["favicon.ico", "robots.txt"],
       manifest: {
@@ -160,17 +133,24 @@ export default defineConfig(({ mode }) => ({
           },
         ],
       },
-      workbox: {
+      // SW PRÓPRIO (src/sw/sw.ts), não mais o gerado pelo Workbox — 2026-10-18.
+      // O gerado acoplava "SW novo utilizável" a "baixou o precache INTEIRO no
+      // install" + clique: o iPhone do founder ficou 9+ dias preso num build cujo
+      // código não alcançávamos. O SW ponte instala sem baixar nada, assume na
+      // hora (sem recarregar a página aberta) e prepara o build novo em segundo
+      // plano; o modelo e as invariantes estão em src/sw/releases.ts e
+      // docs/agent/deploy.md §"Atualização do PWA". `filename: sw.ts` → publicado
+      // como /sw.js, o MESMO URL do SW antigo (é o que faz o cliente velho achá-lo).
+      strategies: "injectManifest",
+      srcDir: "src/sw",
+      filename: "sw.ts",
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
-        // Precache ENXUTO: o SW baixava TODOS os ~250 chunks (~6.2MB) na 1ª
-        // instalação e revalidava a cada deploy — custo real no 4G da
-        // vendedora. Ficam FORA do precache só chunks de telas INERENTEMENTE
-        // online (IA/voz, mapa com tiles de rede, session replay, docs
-        // internas de dev) — offline nelas não funcionaria de qualquer jeito.
-        // Telas operacionais (picking/recebimento/pedido/Meu Dia/rota) e
-        // todos os vendors continuam precacheados (offline-first, §6.1).
-        // Quem sai do precache ganha cobertura PROGRESSIVA pelo runtime
-        // caching de /assets/ (CacheFirst) abaixo: visitou 1× online, fica.
+        // Precache ENXUTO: ficam FORA só chunks de telas INERENTEMENTE online
+        // (IA/voz, mapa com tiles, session replay, docs de dev). Telas
+        // operacionais (picking/recebimento/pedido/Meu Dia/rota) e todos os
+        // vendors entram — offline-first (§6.1). Os de fora ganham cobertura
+        // progressiva pelo cache de runtime de /assets/ no SW.
         globIgnores: [
           "**/FarmerCopilot-*.js", // copilot de voz, exige rede (o SDK pesado saiu daqui → vendor-elevenlabs)
           "**/vendor-elevenlabs-*.js", // ~465KB — SDK de voz; só o copilot usa, lazy no iniciar sessão
@@ -187,144 +167,22 @@ export default defineConfig(({ mode }) => ({
           "**/UXRules-*.js",
         ],
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
-        // Web Push da vendedora: handlers `push`/`notificationclick` vivem em
-        // public/push-sw.js e são injetados no SW gerado (generateSW não aceita
-        // handler custom inline; importScripts é o caminho oficial do Workbox).
-        // ⚠️ Se EDITAR o push-sw.js, RENOMEIE pra push-sw-v2.js (+ aqui): o
-        // importScripts passa pelo HTTP cache (updateViaCache default 'imports')
-        // e um max-age na hospedagem serviria bytes velhos do handler.
-        importScripts: ["push-sw.js"],
-        // skipWaiting REMOVIDO (era true): com registerType 'prompt' o SW novo precisa
-        // FICAR em waiting até o operador confirmar (updateServiceWorker() posta o
-        // SKIP_WAITING no clique). skipWaiting:true pularia a espera e recriaria o
-        // reload-surpresa que estamos evitando.
-        // clientsClaim MANTIDO: NÃO causa reload-surpresa (só o skipWaiting causava);
-        // ele faz o SW já-ativado assumir o controle da aba atual. Sem ele, na 1ª
-        // instalação (operador sem SW ainda) a aba fica SEM controle até o próximo
-        // reload → se a rede cair na mesma sessão, offline-first não funciona no
-        // primeiro acesso. Na atualização, o claim só ocorre após o operador aceitar.
-        clientsClaim: true,
-        cleanupOutdatedCaches: true,
-        navigateFallbackDenylist: [/^\/~oauth/, /^\/__/],
-        runtimeCaching: [
-          // ─── Catálogo: cacheable longo (raramente muda) ─────────────
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(tool_categories|default_prices|company_config|category_mappings)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-catalog-cache",
-              expiration: {
-                maxEntries: 30,
-                maxAgeSeconds: 60 * 60, // 1 hour
-              },
-            },
-          },
-          // ─── Picking + recebimento (offline-first per CLAUDE.md §6.1) ─
-          // Antes: rotas não cobertas → fetch direto sem fallback offline.
-          // Agora: NetworkFirst com TTL curto. PWA tenta rede primeiro
-          // (sempre fresco quando online); fallback pro cache quando offline.
-          // Workbox NetworkFirst só cacheia GET — POSTs/PATCHes/DELETEs
-          // sempre passam direto pra rede (semântica desejada).
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(picking_tasks|picking_units|picking_lotes)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-picking-cache",
-              networkTimeoutSeconds: 3,
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 5 * 60, // 5min — turno de picking renova rápido
-              },
-            },
-          },
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(nfe_recebimentos|nfe_recebimento_itens|cte_associados)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-recebimento-cache",
-              networkTimeoutSeconds: 3,
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 60, // 1min — conferência ativa
-              },
-            },
-          },
-          // ─── Pedidos: NetworkFirst com TTL muito curto ──────────────
-          // Era NetworkOnly (sem fallback offline). NetworkFirst dá fallback
-          // de leitura quando wifi cai durante navegação. TTL 30s garante
-          // dados frescos quando online.
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(orders|sales_orders|order_items|order_messages)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-orders-cache",
-              networkTimeoutSeconds: 3,
-              expiration: {
-                maxEntries: 500,
-                maxAgeSeconds: 30,
-              },
-            },
-          },
-          // ─── Profiles + user_tools: NetworkFirst (raramente mudam) ─
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(profiles|user_tools)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-profiles-cache",
-              networkTimeoutSeconds: 3,
-              expiration: {
-                maxEntries: 200,
-                maxAgeSeconds: 5 * 60, // 5min
-              },
-            },
-          },
-          // ─── Tintométrico + Farmer (analíticos): NetworkFirst longo ─
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/rest\/v1\/(tint_|farmer_)/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "supabase-analytics-cache",
-              networkTimeoutSeconds: 3,
-              expiration: {
-                maxEntries: 300,
-                maxAgeSeconds: 2 * 60, // 2min
-              },
-            },
-          },
-          // ─── Auth e realtime: SEMPRE network only ───────────────────
-          // Sessões/tokens não podem cachear (segurança); realtime é
-          // WebSocket que workbox não deve interceptar.
-          {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/(auth|realtime)/i,
-            handler: "NetworkOnly",
-          },
-          // ─── Chunks fora do precache: cache progressivo ─────────────
-          // Assets do Vite têm hash no nome (immutable) → CacheFirst é
-          // seguro por construção (conteúdo novo = URL nova). Cobre os
-          // chunks dos globIgnores acima (e qualquer futuro): a 1ª visita
-          // online grava no cache e a tela passa a abrir offline também.
-          // same-origin only (o pattern casa pathname em same-origin).
-          {
-            urlPattern: /\/assets\/.*\.(?:js|css)$/i,
-            handler: "CacheFirst",
-            options: {
-              cacheName: "app-assets-progressive",
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 30 * 24 * 60 * 60, // 30 dias
-                purgeOnQuotaError: true,
-              },
-            },
-          },
+        // O entry REAL (o do index.html) vira a 1ª entrada: é o build_id da release
+        // no SW (há vários index-*.js no bundle). Entry ausente = build FALHA.
+        manifestTransforms: [
+          (entradas) => ({
+            manifest: entryPrimeiro(entradas, fs.readFileSync(path.resolve(__dirname, "dist/index.html"), "utf8")),
+            warnings: [],
+          }),
         ],
+        // iife: o SW é registrado como script CLÁSSICO (importScripts do
+        // push-sw.js funciona; registro ES-module não existe no iOS < 16.4).
+        rollupFormat: "iife",
       },
       devOptions: {
         enabled: false,
       },
     }),
-    // Complemento EXATO da condição do VitePWA acima: onde o plugin real não
-    // está (dev e preview), o stub resolve o virtual pro scan de deps não abortar.
-    (mode !== "production" || isLovablePreview) && pwaRegisterStub(),
   ].filter(Boolean),
   resolve: {
     alias: {

@@ -4,6 +4,8 @@
     "src/App.tsx",
     "src/test/bun-setup.ts",
     "src/lib/mcp/index.ts",
+    // Service worker ponte: entry do build `injectManifest` do vite-plugin-pwa (vite.config.ts), ninguém o importa.
+    "src/sw/sw.ts",
     "supabase/functions/**/index.ts",
     "supabase/functions/**/*_test.ts",
     "supabase/functions/**/*.test.ts",
