@@ -17,6 +17,7 @@
 import type { LinhaPedido, NFeParaVinculo } from "./reconciliacao.ts";
 import {
   type DocumentoRevisita,
+  lerJanelaExplicita,
   lerRevisitaDias,
   novaRevisitaSummary,
   type PortaRevisita,
@@ -108,9 +109,9 @@ function banco(
   return { porta, consultas, orfas, linhas };
 }
 
-const opcoes = { agoraIso: () => "2026-10-18T04:15:00Z", temTempo: () => true };
+const opcoes: Parameters<typeof revisitarJanela>[4] = { agoraIso: () => "2026-10-18T04:15:00Z", temTempo: () => true };
 const rodar = (docs: DocumentoRevisita[], b: ReturnType<typeof banco>, ja: number[] = [], op = opcoes) =>
-  revisitarJanela(docs, new Set(ja), b.porta, mapear, op, novaRevisitaSummary(30));
+  revisitarJanela(docs, new Set(ja), b.porta, mapear, op, novaRevisitaSummary("18/09/2026→18/10/2026"));
 
 Deno.test("(a) variante 2: NF conhecida vincula a linha que nasceu depois, sem consultar a Omie", async () => {
   const b = banco([
@@ -214,9 +215,30 @@ Deno.test("(g) sem tempo: conta as puladas e para", async () => {
   let n = 0;
   const r = await rodar(
     [doc(40, CHAVE_0935816, "40", ["x"]), doc(41, CHAVE_0935816, "41", ["x"]), doc(42, CHAVE_0935816, "42", ["x"])],
-    b, [], { ...opcoes, temTempo: () => n++ < 1 },
+    b, [], { ...opcoes, temTempo: () => n++ < 2 } // 1ª chamada: antes de `conhecidas`; 2ª: a NF 40,
   );
   assertEquals([r.conhecidas, r.puladas_por_tempo, r.interrompido_por_timeout], [1, 2, true]);
+});
+
+Deno.test("(g') sem tempo já no início: nem pergunta ao banco quem é conhecida", async () => {
+  let perguntou = false;
+  const b = banco([]);
+  b.porta.conhecidas = () => { perguntou = true; return Promise.resolve(new Set()); };
+  const r = await rodar([doc(43, CHAVE_0935816, "43", ["x"])], b, [], { ...opcoes, temTempo: () => false });
+  assertEquals([perguntou, r.puladas_por_tempo, r.interrompido_por_timeout], [false, 1, true]);
+});
+
+Deno.test("(i) listagem incompleta não escreve nada, mesmo com a linha esperando (Codex P1)", async () => {
+  const b = banco([{ id: "p", contrato: "2098269", fornecedor: SAYERLACK, nfe_chave_acesso: null }], {
+    detalhes: { 51: bruto(CHAVE_OUTRA, "51", []) },
+    conhecidas: [50],
+  });
+  const r = await rodar(
+    [doc(50, CHAVE_0935816, "nova", ["2098269"]), doc(51, CHAVE_OUTRA, "desconhecida", [])],
+    b, [], { ...opcoes, listagemIncompleta: true },
+  );
+  assertEquals([b.linhas[0].nfe_chave_acesso, b.consultas, b.orfas], [null, [], []]);
+  assertEquals([r.listagem_incompleta, r.erros, r.documentos_listados], [true, 1, 2]);
 });
 
 Deno.test("(h) rodar de novo é no-op", async () => {
@@ -230,4 +252,18 @@ Deno.test("(h) rodar de novo é no-op", async () => {
 Deno.test("revisita_dias: só inteiro de 1 a 60; o resto desliga a revisita", () => {
   assertEquals([30, 1, 60].map(lerRevisitaDias), [30, 1, 60]);
   assertEquals([0, 61, -3, 2.5, "30", null, undefined, Number.NaN].map(lerRevisitaDias), [null, null, null, null, null, null, null, null]);
+});
+
+Deno.test("janela explícita: dd/mm/aaaa válidas, em ordem, até 120 dias; o resto é null", () => {
+  assertEquals(lerJanelaExplicita("01/05/2026", "31/07/2026"), { de: "01/05/2026", ate: "31/07/2026" });
+  assertEquals(lerJanelaExplicita("08/05/2026", "08/05/2026"), { de: "08/05/2026", ate: "08/05/2026" });
+  const invalidas: Array<[unknown, unknown]> = [
+    ["01/08/2026", "01/05/2026"], // invertida
+    ["31/02/2026", "10/03/2026"], // data inexistente
+    ["2026-05-01", "31/07/2026"], // formato
+    ["01/01/2026", "31/07/2026"], // > 120 dias
+    ["01/05/2026", undefined],
+    [null, "31/07/2026"],
+  ];
+  assertEquals(invalidas.map(([a, b]) => lerJanelaExplicita(a, b)), invalidas.map(() => null));
 });

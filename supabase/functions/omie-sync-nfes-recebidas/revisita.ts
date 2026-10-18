@@ -21,8 +21,7 @@
 //   - exige o fornecedor: contrato é número do FORNECEDOR e colide entre fornecedores;
 //   - NF cancelada não vincula; CT-e sai antes de tudo;
 //   - ordem por emissão ASCENDENTE: quando duas NFs disputam a linha, vence o 1º faturamento (o t2);
-//   - a listagem incompleta NÃO impede o vínculo do que foi listado (nada aqui conclui por ausência),
-//     mas fica visível em `listagem_incompleta`.
+//   - listagem incompleta NÃO escreve: a ordem por emissão só decide sobre a janela inteira.
 
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
@@ -57,7 +56,8 @@ export interface PortaRevisita extends Pick<PortaReconciliacao, "linhasDoPedido"
 }
 
 export interface RevisitaSummary extends ContagemVinculo {
-  janela_dias: number;
+  /** "dd/mm/aaaa→dd/mm/aaaa" por `dtEmissao`. */
+  janela: string;
   documentos_listados: number;
   ctes_ignorados: number;
   canceladas_puladas: number;
@@ -77,9 +77,9 @@ export interface RevisitaSummary extends ContagemVinculo {
   interrompido_por_timeout?: boolean;
 }
 
-export function novaRevisitaSummary(janelaDias: number): RevisitaSummary {
+export function novaRevisitaSummary(janela: string): RevisitaSummary {
   return {
-    janela_dias: janelaDias,
+    janela,
     documentos_listados: 0,
     ctes_ignorados: 0,
     canceladas_puladas: 0,
@@ -109,6 +109,31 @@ export function lerRevisitaDias(valor: unknown): number | null {
   return valor;
 }
 
+const DATA_BR = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+
+function isoDeBR(d: string): string | null {
+  const m = d.match(DATA_BR);
+  if (!m) return null;
+  const iso = `${m[3]}-${m[2]}-${m[1]}`;
+  const t = new Date(`${iso}T00:00:00Z`);
+  // Rejeita data inexistente (31/02 rola para março no Date): a volta tem de bater.
+  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === iso ? iso : null;
+}
+
+/**
+ * Janela EXPLÍCITA da revisita (`revisita_de`/`revisita_ate`, dd/mm/aaaa) — o catch-up do histórico que a
+ * janela diária não alcança, sem passar o laço principal (que sobrescreve a NF da linha) pelo período.
+ * Exige as duas, válidas, em ordem e com no máximo 120 dias; senão `null` (sem revisita explícita).
+ */
+export const REVISITA_EXPLICITA_DIAS_MAX = 120;
+export function lerJanelaExplicita(de: unknown, ate: unknown): { de: string; ate: string } | null {
+  if (typeof de !== "string" || typeof ate !== "string") return null;
+  const a = isoDeBR(de), b = isoDeBR(ate);
+  if (!a || !b || a > b) return null;
+  const dias = (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000;
+  return dias <= REVISITA_EXPLICITA_DIAS_MAX ? { de, ate } : null;
+}
+
 interface Elegivel {
   doc: DocumentoRevisita & { chave: string; fornecedor: number };
 }
@@ -125,7 +150,7 @@ export async function revisitarJanela(
   jaProcessadas: ReadonlySet<number>,
   porta: PortaRevisita,
   mapear: (raw: unknown) => NFeParaVinculo,
-  opcoes: { agoraIso: () => string; temTempo: () => boolean; log?: (msg: string) => void },
+  opcoes: { agoraIso: () => string; temTempo: () => boolean; log?: (msg: string) => void; listagemIncompleta?: boolean },
   out: RevisitaSummary,
 ): Promise<RevisitaSummary> {
   const vistos = new Set<number>();
@@ -140,7 +165,19 @@ export async function revisitarJanela(
     if (!doc.chave || !doc.fornecedor) { out.puladas_invalidas++; continue; }
     elegiveis.push({ doc: doc as Elegivel["doc"] });
   }
+  if (opcoes.listagemIncompleta) {
+    // Listagem parcial NÃO escreve (Codex 2026-10-18, P1): a ordem por emissão só vale sobre a janela INTEIRA —
+    // com uma página faltando, a NF mais nova poderia ganhar a linha pelo CAS e fixar o t2 errado para sempre.
+    out.listagem_incompleta = true;
+    out.erros++;
+    return out;
+  }
   if (elegiveis.length === 0) return out;
+  if (!opcoes.temTempo()) {
+    out.puladas_por_tempo = elegiveis.length;
+    out.interrompido_por_timeout = true;
+    return out;
+  }
 
   let conhecidas: Set<number>;
   try {

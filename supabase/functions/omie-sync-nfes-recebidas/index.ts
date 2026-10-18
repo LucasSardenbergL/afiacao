@@ -42,7 +42,7 @@ import {
   type ReconciliacaoSummary,
 } from "./reconciliacao.ts";
 import type { PedidoDoContrato } from "./associacao.ts";
-import { type DocumentoRevisita, lerRevisitaDias, novaRevisitaSummary, type PortaRevisita, revisitarJanela, type RevisitaSummary } from "./revisita.ts";
+import { type DocumentoRevisita, lerJanelaExplicita, lerRevisitaDias, novaRevisitaSummary, type PortaRevisita, revisitarJanela, type RevisitaSummary } from "./revisita.ts";
 import { capturarPedidosDaFila, executarFaseSombra, type ItemFilaSombra, novaSombraSummary, type PortaSombra, type SombraSummary } from "./sombra.ts";
 
 const corsHeaders = {
@@ -68,6 +68,8 @@ interface RequestBody {
   apenas_backfill?: boolean; // pula ListarRecebimentos e roda só o backfill retroativo
   pular_backfill?: boolean;  // roda só ListarRecebimentos sem backfill
   revisita_dias?: number;    // 1..60: revisita a janela larga no fim do run (revisita.ts); ausente = não revisita
+  revisita_de?: string;      // dd/mm/yyyy — com revisita_ate, janela explícita da revisita (catch-up; sobrepõe revisita_dias)
+  revisita_ate?: string;
 }
 
 interface BackfillSummary {
@@ -930,12 +932,18 @@ async function backfillRawData(
 // 2026-10-18); o teto só impede um laço sem fim se a Omie insistir em página cheia.
 const REVISITA_MAX_PAGINAS = 20;
 const REVISITA_LOTE_CONHECIDAS = 50;
+// Orçamento da revisita (Codex 2026-10-18, P2): não COMEÇA NF depois de 105s, e toda leitura/escrita no banco
+// leva abort até 125s — o completeSync do finally precisa da sobra antes de o isolate morrer (~150s).
+const REVISITA_INICIO_LIMITE_MS = 105_000;
+const REVISITA_IO_LIMITE_MS = 125_000;
+const REVISITA_PRAZO_IO_MS = 8_000;
 
 /** nIdReceb que o banco já conhece: pela chave, pelo `nid_receb` da linha ou como órfã (`-nIdReceb`). */
 async function nidsConhecidos(
   supabase: SupabaseClient,
   empresa: Empresa,
   docs: Array<{ nIdReceb: number; chave: string }>,
+  sinal: () => AbortSignal,
 ): Promise<Set<number>> {
   const out = new Set<number>();
   for (let i = 0; i < docs.length; i += REVISITA_LOTE_CONHECIDAS) {
@@ -946,13 +954,13 @@ async function nidsConhecidos(
     const [porChave, porNid, porOrfa] = await Promise.all([
       fetchAll<{ nfe_chave_acesso: string | null }>((from, to) =>
         base().select("nfe_chave_acesso").eq("empresa", empresa).in("nfe_chave_acesso", [...nidPorChave.keys()])
-          .order("id").range(from, to), "purchase_orders_tracking(revisita:chave)"),
+          .order("id").range(from, to).abortSignal(sinal()), "purchase_orders_tracking(revisita:chave)"),
       fetchAll<{ nid_receb: number | null }>((from, to) =>
         base().select("nid_receb").eq("empresa", empresa).in("nid_receb", nids)
-          .order("id").range(from, to), "purchase_orders_tracking(revisita:nid)"),
+          .order("id").range(from, to).abortSignal(sinal()), "purchase_orders_tracking(revisita:nid)"),
       fetchAll<{ omie_codigo_pedido: number }>((from, to) =>
         base().select("omie_codigo_pedido").eq("empresa", empresa).in("omie_codigo_pedido", nids.map((n) => -n))
-          .order("id").range(from, to), "purchase_orders_tracking(revisita:orfa)"),
+          .order("id").range(from, to).abortSignal(sinal()), "purchase_orders_tracking(revisita:orfa)"),
     ]);
     for (const r of porChave) {
       const nid = r.nfe_chave_acesso ? nidPorChave.get(r.nfe_chave_acesso) : undefined;
@@ -1007,7 +1015,12 @@ async function listarJanelaLarga(
     }
     const declarado = Number(resp?.nTotalPaginas);
     if (Number.isFinite(declarado) && declarado > totalDeclarado) totalDeclarado = declarado;
-    const itens: OmieNFeListItem[] = Array.isArray(resp?.recebimentos) ? resp.recebimentos : [];
+    // Sem `recebimentos` e sem fault não é "acabou": é resposta que não foi lida (Codex 2026-10-18, P2).
+    if (!Array.isArray(resp?.recebimentos)) {
+      console.error(`[revisita] ${empresa} pag=${pagina} resposta sem lista de recebimentos`);
+      return { docs, incompleta: true };
+    }
+    const itens: OmieNFeListItem[] = resp.recebimentos;
     for (const nfe of itens) {
       const m = mapNFe(nfe);
       docs.push({
@@ -1029,7 +1042,7 @@ async function listarJanelaLarga(
 async function revisitarEmpresa(
   supabase: SupabaseClient,
   empresa: Empresa,
-  dias: number,
+  janela: { dataDe: string; dataAte: string },
   fornecedorCodigo: number | undefined,
   t0: number,
   processadasNoRun: ReadonlySet<number>,
@@ -1037,20 +1050,23 @@ async function revisitarEmpresa(
 ): Promise<void> {
   // Mesmo orçamento do laço principal (o guard que o run já respeita): a revisita só usa a sobra.
   const deadline = t0 + MAIN_LOOP_GUARD_MS;
-  const { dataDe, dataAte } = janelaDeDias(dias);
-  const { docs, incompleta } = await listarJanelaLarga(empresa, dataDe, dataAte, fornecedorCodigo, deadline);
-  if (incompleta) out.listagem_incompleta = true;
+  const { docs, incompleta } = await listarJanelaLarga(empresa, janela.dataDe, janela.dataAte, fornecedorCodigo, deadline);
   const { app_key, app_secret } = getCredentials(empresa);
+  const limiteIo = t0 + REVISITA_IO_LIMITE_MS;
+  const sinal = () => AbortSignal.timeout(Math.max(1, Math.min(REVISITA_PRAZO_IO_MS, limiteIo - Date.now())));
 
   const porta: PortaRevisita = {
-    conhecidas: (lista) => nidsConhecidos(supabase, empresa, lista),
+    conhecidas: (lista) => nidsConhecidos(supabase, empresa, lista, sinal),
     async consultar(nIdReceb) {
       await sleep(RATE_LIMIT_DELAY_MS);
       const det = (await callOmie(app_key, app_secret, "ConsultarRecebimento", { nIdReceb }, deadline)) as OmieConsultarRecebimentoResponse;
       if (!det || det.faultstring) throw new Error(`ConsultarRecebimento faultstring: ${String(det?.faultstring ?? "vazio")}`);
       return det;
     },
-    inserirOrfa: (d) => insertOrfa(supabase, empresa, d.bruto as OmieNFeListItem, mapNFe(d.bruto as OmieNFeListItem), d.nIdReceb),
+    inserirOrfa: (d) => {
+      if (Date.now() >= limiteIo) throw new Error("orçamento de I/O da revisita esgotado");
+      return insertOrfa(supabase, empresa, d.bruto as OmieNFeListItem, mapNFe(d.bruto as OmieNFeListItem), d.nIdReceb);
+    },
     linhasDoPedido: (contrato, fornecedor) =>
       fetchAll<LinhaPedido>((from, to) =>
         supabase
@@ -1061,14 +1077,16 @@ async function revisitarEmpresa(
           .eq("fornecedor_codigo_omie", fornecedor)
           .gt("omie_codigo_pedido", 0)
           .order("id")
-          .range(from, to), "purchase_orders_tracking(revisita:pedido do contrato)"),
+          .range(from, to)
+          .abortSignal(sinal()), "purchase_orders_tracking(revisita:pedido do contrato)"),
     vincularSeSemNF: async (id, patch) => {
       const { data, error } = await supabase
         .from("purchase_orders_tracking")
         .update(patch)
         .eq("id", id)
         .is("nfe_chave_acesso", null)
-        .select("id");
+        .select("id")
+        .abortSignal(sinal());
       if (error) throw error;
       return Array.isArray(data) && data.length > 0;
     },
@@ -1076,7 +1094,8 @@ async function revisitarEmpresa(
 
   await revisitarJanela(docs, processadasNoRun, porta, (raw) => mapNFe(raw as OmieConsultarRecebimentoResponse), {
     agoraIso: () => new Date().toISOString(),
-    temTempo: () => Date.now() < deadline,
+    temTempo: () => Date.now() - t0 < REVISITA_INICIO_LIMITE_MS,
+    listagemIncompleta: incompleta,
     log: (msg) => console.warn(`[sync-nfes] ${empresa} ${msg}`),
   }, out);
 }
@@ -1243,7 +1262,11 @@ Deno.serve(async (req) => {
     const dataFinal = typeof body.data_final === "string" ? body.data_final : undefined;
     const apenasBackfill = body.apenas_backfill === true;
     const pularBackfill = body.pular_backfill === true;
-    const revisitaDias = apenasBackfill ? null : lerRevisitaDias(body.revisita_dias);
+    // Janela da revisita: a explícita (catch-up do histórico) vence a de N dias; nenhuma válida = não revisita.
+    const revisitaDias = lerRevisitaDias(body.revisita_dias);
+    const janelaRevisita = apenasBackfill
+      ? null
+      : lerJanelaExplicita(body.revisita_de, body.revisita_ate) ?? (revisitaDias !== null ? janelaDeDias(revisitaDias) : null);
 
     const empresas: Empresa[] =
       empresaParam === "ALL" ? ["OBEN", "COLACOR"] : [empresaParam as Empresa];
@@ -1370,14 +1393,14 @@ Deno.serve(async (req) => {
 
     // Revisita da janela larga (revisita.ts): a ÚLTIMA fase, com a sobra do orçamento — o trabalho prioritário
     // (janela de 3 dias, reconciliação, backfill, sombra) já rodou. Só para a empresa que concluiu com sucesso.
-    if (revisitaDias !== null) {
+    if (janelaRevisita !== null) {
       for (const c of aConcluir) {
-        const r = novaRevisitaSummary(revisitaDias);
+        const r = novaRevisitaSummary(`${janelaRevisita.dataDe}→${janelaRevisita.dataAte}`);
         c.s.revisita = r;
         try {
-          await revisitarEmpresa(supabase, c.s.empresa, revisitaDias, fornecedorCodigo, t0, processadasPorEmpresa.get(c.s.empresa) ?? new Set(), r);
+          await revisitarEmpresa(supabase, c.s.empresa, janelaRevisita, fornecedorCodigo, t0, processadasPorEmpresa.get(c.s.empresa) ?? new Set(), r);
           console.log(
-            `[sync-nfes] ${c.s.empresa} revisita ${revisitaDias}d: listados=${r.documentos_listados} conhecidas=${r.conhecidas} ` +
+            `[sync-nfes] ${c.s.empresa} revisita ${r.janela}: listados=${r.documentos_listados} conhecidas=${r.conhecidas} ` +
             `desconhecidas=${r.desconhecidas} consultadas=${r.consultadas} vinculadas=${r.linhas_vinculadas} ja=${r.ja_vinculadas} ` +
             `conflito=${r.conflito_outra_nf} orfas=${r.orfas_inseridas} tempo=${r.puladas_por_tempo} erros=${r.erros} ` +
             `incompleta=${r.listagem_incompleta === true}`,
