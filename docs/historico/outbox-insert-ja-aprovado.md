@@ -49,3 +49,21 @@ bytes por desenho — `analytics.md` §"PAT". A evidência pela chave de dedup b
   `probable_cause`. Antes de caçar log, **leia a chave de dedup**: `criada` presente + `aprovada`
   ausente + `criado_em = aprovado_em` é a assinatura do INSERT já aprovado, e a correção é o ramo do
   trigger, não o limiar do sensor.
+
+## 2ª opinião (Codex, `scripts/codex-async.sh`, reasoning high, 400s) — sem achado ALTO
+
+Dois achados MÉDIOS viraram conserto antes da prod, com falsificação na prova:
+
+- **A PÓS aceitava trigger com o nome certo e a definição errada** (só `UPDATE`, `WHEN`, outra
+  função) — e o backfill mascararia. Agora exige a `pg_get_triggerdef` exata (`AFTER INSERT OR
+  UPDATE … FOR EACH ROW EXECUTE FUNCTION analytics_outbox_pedido_compra()`); F3 recria o trigger
+  só em UPDATE e exige `[TRIGGER]` vermelha.
+- **Backfill sem teto superior re-inseriria após a purga** (aceitas: 7 dias) — uuid novo, evento
+  duplicado no PostHog. O ledger do `db:aplicar` já recusa os mesmos bytes; o teto
+  (`aprovado_em < 2026-10-19`) é a 2ª trava, com controle negativo (M8b).
+
+Aceitos como desenho pré-existente, não deste patch: `statement_timeout`/`QUERY_CANCELED` escapa
+do `WHEN OTHERS` (lock na outbox poderia derrubar a aprovação — vale igual para o corpo velho);
+regex da PÓS sobre `prosrc` não distingue linha comentada (o comportamento é provado em PG17, não
+pela PÓS); as duas linhas do INSERT já aprovado caem juntas se uma falhar (fail-open preserva o
+pedido — C7).

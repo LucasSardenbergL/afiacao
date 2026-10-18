@@ -97,7 +97,8 @@ VALUES (3644, 'disparado', '414a9727', '2026-10-16 01:45:15.585889+00', 'importa
 -- e órfã de OUTRA origem (inserida aprovada por outro caminho) — nenhum dos dois pode ser preenchido
 INSERT INTO public.pedido_compra_sugerido (id, status, aprovado_por, aprovado_em, condicao_origem, criado_em)
 VALUES (9001, 'disparado', 'x', '2026-10-01 10:00:00+00', 'importado_portal', '2026-10-01 10:00:00+00'),
-       (9002, 'disparado', 'x', '2026-10-16 12:00:00+00', 'default_a_vista', '2026-10-16 12:00:00+00');
+       (9002, 'disparado', 'x', '2026-10-16 12:00:00+00', 'default_a_vista', '2026-10-16 12:00:00+00'),
+       (9003, 'disparado', 'x', '2026-10-25 12:00:00+00', 'importado_portal', '2026-10-25 12:00:00+00');  -- acima do teto
 SQL
 eq "B1 corpo de PROD: INSERT ja aprovado emite SO criada (1 linha)" "$(linhas 3669)" "1"
 eq "B2 corpo de PROD: nenhuma 'aprovada' para as 3 importadas" \
@@ -118,6 +119,7 @@ eq "M5 backfill: ocorrido_em = aprovado_em do pedido" \
 eq "M6 backfill: 1 linha por pedido mesmo apos 2 applies (dedup)" "$(evento 3669 sugestao_aprovada)" "1"
 eq "M7 backfill NAO toca importado anterior ao piso (9001)" "$(evento 9001 sugestao_aprovada)" "0"
 eq "M8 backfill NAO toca orfa de outra origem (9002) — precisao > recall" "$(evento 9002 sugestao_aprovada)" "0"
+eq "M8b backfill NAO toca importado ACIMA do teto (9003) — e a POS nao o conta como orfao" "$(evento 9003 sugestao_aprovada)" "0"
 eq "M9 backfill: props no formato do trigger (sugestao_id, aprovacao_humana=true)" \
    "$(Pq -c "SELECT props->>'sugestao_id' || '|' || (props->>'aprovacao_humana') FROM public.analytics_outbox WHERE chave_dedup='pcs:3670:reposicao.sugestao_aprovada';")" "3670|true"
 
@@ -157,12 +159,23 @@ fbad() { FALSIF_BAD=$((FALSIF_BAD+1)); echo "  ⚠️  $1"; }
 # Órfã nova: nasce sob o corpo novo (ganha 'aprovada') e perde a linha à mão.
 P -q -c "INSERT INTO public.pedido_compra_sugerido (id, status, aprovado_por, aprovado_em, condicao_origem) VALUES (3680, 'disparado', 'u', '2026-10-17 10:00:00+00', 'importado_portal');
          DELETE FROM public.analytics_outbox WHERE chave_dedup = 'pcs:3680:reposicao.sugestao_aprovada';" >/dev/null
-perl -0pe "s/WHERE p\.condicao_origem = 'importado_portal'\n    AND p\.aprovado_em IS NOT NULL\n    AND p\.aprovado_em >= '2026-10-14 00:00:00\+00'\n  ON CONFLICT/WHERE p.condicao_origem = 'nunca_importado'\n    AND p.aprovado_em IS NOT NULL\n    AND p.aprovado_em >= '2026-10-14 00:00:00+00'\n  ON CONFLICT/" "$ARQ" > "$RODADA/sab-backfill.sql"
+perl -0pe "s/\n  WHERE p\.condicao_origem = 'importado_portal'\n/\n  WHERE p.condicao_origem = 'nunca_importado'\n/" "$ARQ" > "$RODADA/sab-backfill.sql"
 cmp -s "$ARQ" "$RODADA/sab-backfill.sql" && { fbad "F1 a sabotagem do backfill nao mudou o arquivo (regex nao casou)"; }
 if P -q -f "$RODADA/sab-backfill.sql" > "$RODADA/f1.log" 2>&1; then fbad "F1 backfill sabotado SEGUIU VERDE: a POS nao tem dente"
 elif grep -q 'POS FALHOU \[BACKFILL\]' "$RODADA/f1.log"; then fok "F1 backfill sabotado → POS [BACKFILL] vermelha (1 importado orfao)"
 else fbad "F1 vermelha por OUTRO motivo: $(tail -c 300 "$RODADA/f1.log")"; fi
 P -q -f "$ARQ" >/dev/null 2>&1 && eq "F1b o arquivo REAL recupera a orfa nova (backfill vivo)" "$(evento 3680 sugestao_aprovada)" "1"
+
+# F3: trigger com o NOME certo mas a DEFINIÇÃO errada (só UPDATE) → a POS [TRIGGER] tem de ficar VERMELHA
+# (achado Codex: EXISTS por nome+habilitado aprovaria um trigger que nunca emite no INSERT).
+P -q -c "DROP TRIGGER trg_analytics_outbox_pedido_compra ON public.pedido_compra_sugerido;
+         CREATE TRIGGER trg_analytics_outbox_pedido_compra AFTER UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.analytics_outbox_pedido_compra();" >/dev/null
+if P -q -f "$ARQ" > "$RODADA/f3.log" 2>&1; then fbad "F3 trigger so-UPDATE com o nome certo SEGUIU VERDE: a POS [TRIGGER] nao le a definicao"
+elif grep -q 'POS FALHOU \[TRIGGER\]' "$RODADA/f3.log"; then fok "F3 trigger so-UPDATE (nome certo) → POS [TRIGGER] vermelha"
+else fbad "F3 vermelha por OUTRO motivo: $(tail -c 300 "$RODADA/f3.log")"; fi
+P -q -c "DROP TRIGGER trg_analytics_outbox_pedido_compra ON public.pedido_compra_sugerido;
+         CREATE TRIGGER trg_analytics_outbox_pedido_compra AFTER INSERT OR UPDATE ON public.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION public.analytics_outbox_pedido_compra();" >/dev/null
+P -q -f "$ARQ" >/dev/null 2>&1 && fok "F3b trigger restaurado: o arquivo real volta a passar na POS"
 
 # F2: sem o ramo novo → a POS [RAMO] do arquivo fica VERMELHA, e o corpo sabotado volta a engolir 'aprovada'.
 perl -0pe "s/\Qv_eventos := array_append(v_eventos, 'reposicao.sugestao_aprovada');\E/NULL;  -- SABOTADO/" "$ARQ" > "$RODADA/sab-ramo.sql"

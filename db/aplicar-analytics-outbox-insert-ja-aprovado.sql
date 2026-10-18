@@ -145,13 +145,17 @@ BEGIN
   WHERE p.condicao_origem = 'importado_portal'
     AND p.aprovado_em IS NOT NULL
     AND p.aprovado_em >= '2026-10-14 00:00:00+00'
+    -- teto: o que for aprovado DEPOIS deste apply ja nasce com 'aprovada' pelo ramo novo. Sem teto,
+    -- re-rodar o corpo apos a purga (aceitas: 7d) re-inseriria linha ja enviada — uuid novo, evento
+    -- duplicado no PostHog (achado Codex). O ledger do db:aplicar recusa os mesmos bytes; o teto e a 2a trava.
+    AND p.aprovado_em <  '2026-10-19 00:00:00+00'
   ON CONFLICT (chave_dedup) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RAISE NOTICE 'backfill: % linha(s) reposicao.sugestao_aprovada inserida(s) para pedidos importados do portal', v_n;
 END
 $backfill$;
 
--- PÓS: o corpo novo está vivo, o trigger segue ligado, e nenhum pedido importado ficou sem 'aprovada'.
+-- PÓS: o corpo novo está vivo, o trigger segue ligado COM a definição certa, e nenhum pedido importado ficou sem 'aprovada'.
 DO $post$
 DECLARE
   v_src   text;
@@ -168,22 +172,27 @@ BEGIN
   IF v_src !~ 'IN \(''cancelado_humano'', ''cancelado''\)' THEN
     RAISE EXCEPTION 'POS FALHOU [REGRESSAO]: o ramo de cancelamento do sistema (2026-10-11) sumiu do corpo';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger
-                  WHERE tgrelid = 'public.pedido_compra_sugerido'::regclass
-                    AND tgname = 'trg_analytics_outbox_pedido_compra'
-                    AND NOT tgisinternal AND tgenabled = 'O') THEN
-    RAISE EXCEPTION 'POS FALHOU [TRIGGER]: trg_analytics_outbox_pedido_compra ausente/desabilitado';
+  -- a DEFINICAO, nao so nome+habilitado: trigger so em UPDATE, com WHEN, ou chamando outra funcao
+  -- passaria num EXISTS por nome (achado Codex) — e o backfill mascararia.
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t
+                  WHERE t.tgrelid = 'public.pedido_compra_sugerido'::regclass
+                    AND t.tgname = 'trg_analytics_outbox_pedido_compra'
+                    AND NOT t.tgisinternal AND t.tgenabled = 'O'
+                    AND pg_catalog.pg_get_triggerdef(t.oid)
+                        ~ '^CREATE TRIGGER trg_analytics_outbox_pedido_compra AFTER INSERT OR UPDATE ON public\.pedido_compra_sugerido FOR EACH ROW EXECUTE FUNCTION (public\.)?analytics_outbox_pedido_compra\(\)$') THEN
+    RAISE EXCEPTION 'POS FALHOU [TRIGGER]: trg_analytics_outbox_pedido_compra ausente, desabilitado ou com definicao diferente de AFTER INSERT OR UPDATE FOR EACH ROW -> analytics_outbox_pedido_compra()';
   END IF;
   SELECT count(*) INTO v_orfas
     FROM public.pedido_compra_sugerido p
    WHERE p.condicao_origem = 'importado_portal'
      AND p.aprovado_em IS NOT NULL
      AND p.aprovado_em >= '2026-10-14 00:00:00+00'
+     AND p.aprovado_em <  '2026-10-19 00:00:00+00'
      AND NOT EXISTS (SELECT 1 FROM public.analytics_outbox o
                       WHERE o.chave_dedup = 'pcs:' || p.id::text || ':reposicao.sugestao_aprovada');
   IF v_orfas <> 0 THEN
     RAISE EXCEPTION 'POS FALHOU [BACKFILL]: % pedido(s) importado(s) do portal ainda sem reposicao.sugestao_aprovada na outbox', v_orfas;
   END IF;
-  RAISE NOTICE 'analytics_outbox_pedido_compra: INSERT ja aprovado emite criada+aprovada; trigger ativo; zero importados orfaos';
+  RAISE NOTICE 'analytics_outbox_pedido_compra: INSERT ja aprovado emite criada+aprovada; trigger ativo com a definicao certa; zero importados orfaos';
 END
 $post$;
