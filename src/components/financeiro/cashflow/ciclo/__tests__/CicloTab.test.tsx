@@ -15,6 +15,7 @@ vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   useCicloCoorte: () => coorteMock(),
   useReceitaDiariaTtm: () => receitaMock(),
   useCicloTitulosCliente: () => titulosMock(),
+  useCicloGiroSku: () => ({ data: [], isLoading: false, error: null }),
 }));
 vi.mock('@/hooks/useCashflowProjection', () => ({
   useCashflowProjection: (company: string) => projMock(company),
