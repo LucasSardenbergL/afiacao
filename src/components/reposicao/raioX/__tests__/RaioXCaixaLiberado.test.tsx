@@ -21,14 +21,17 @@ describe('RaioXCaixaLiberado', () => {
   it('(a) Oben: vendido/liquidado/trocado, barra contra R$ 60.000 e contradição clicável filtra pelo SKU', () => {
     const linhas = [
       linha(1, { destino: 'venda_dirigida', saldo_atual: 5, qtd_vendida: 5, receita: 250, preco_medio_12m: 50 }), // vendido 500
-      linha(2, { destino: 'liquidar', saldo_atual: 5, qtd_vendida: 5, receita: 100, preco_medio_12m: 50, compras_apos: ['2026-09-10T12:00:00Z'] }), // liquidado 500 + contradição
+      linha(2, { destino: 'liquidar', foto_cmc: 60, saldo_atual: 5, qtd_vendida: 5, receita: 100, preco_medio_12m: 50, compras_apos: ['2026-09-10T12:00:00Z'] }), // liquidado 300 (5 x 60) + contradição
       linha(3, { destino: 'trocar', credito_troca: 300 }),
     ];
     const onFiltrarSku = vi.fn();
     render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={onFiltrarSku} />);
-    expect(screen.getByText(/^Vendido$/)).toBeTruthy();
-    expect(screen.getByText(/Liquidado/)).toBeTruthy();
-    expect(screen.getByText(/Trocado/)).toBeTruthy();
+    const valorDe = (rotulo: RegExp) => screen.getByText(rotulo).closest('div')!.textContent ?? '';
+    const reais = (n: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(n);
+    expect(valorDe(/^Vendido$/)).toContain(reais(500));
+    expect(valorDe(/^Liquidado/)).toContain(reais(300));
+    expect(valorDe(/^Trocado/)).toContain(reais(300));
+    expect(screen.getByText(/de R\$ 60\.000/).parentElement!.textContent).toContain(reais(1100));
     expect(screen.getByText(/de R\$ 60\.000/)).toBeTruthy();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('60000');
     fireEvent.click(screen.getByRole('button', { name: /A2/ }));
@@ -71,7 +74,7 @@ describe('RaioXCaixaLiberado', () => {
   it('ausente ≠ zero: sem permissão de compras, recomprado vira "—"', () => {
     const linhas = [linha(1, { destino: 'venda_dirigida', saldo_atual: 5, qtd_vendida: 5, receita: 250, compras_apos: null })];
     render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={vi.fn()} />);
-    const linhaRecomprado = screen.getByText(/^Recomprado/).closest('div')!.parentElement!;
+    const linhaRecomprado = screen.getByText(/^Recomprado/).closest('div')!;
     expect(linhaRecomprado.textContent).toContain('—');
   });
 });

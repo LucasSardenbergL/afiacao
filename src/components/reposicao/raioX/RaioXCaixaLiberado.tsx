@@ -98,8 +98,8 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
         <div className="space-y-1">
           <div className="text-sm font-medium text-status-warning">Decidiu tirar do estoque e houve pedido de compra depois</div>
           <ul className="space-y-1">
-            {m.contradicoes.map((c) => (
-              <li key={`${c.sku_codigo_omie}-${c.pedido_em}`}>
+            {m.contradicoes.map((c, idx) => (
+              <li key={`${c.sku_codigo_omie}-${c.pedido_em}-${idx}`}>
                 <button
                   type="button"
                   className="text-left text-sm underline-offset-2 hover:underline"

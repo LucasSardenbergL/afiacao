@@ -52,12 +52,12 @@ export function RaioXTab() {
     setAberto({ sku: i.sku_codigo_omie, empresa: chave });
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
   // Contradição clicável: lista de mercadoria filtrada pelo SKU (via a busca por código, que já vive na URL).
   const filtrarSku = useCallback(
-    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: codigos.get(sku) ?? String(sku) }),
+    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
     [codigos, setF],
   );
 
@@ -81,6 +81,7 @@ export function RaioXTab() {
         if (f.rxStatus === 'pendente' && decidido) return false;
         if (f.rxStatus === 'decidido' && !decidido) return false;
         if (f.rxTop && !i.top) return false;
+        if (f.rxSku && String(i.sku_codigo_omie) !== f.rxSku) return false;
         if (busca && !`${i.codigo} ${i.descricao ?? ''}`.toLowerCase().includes(busca)) return false;
         return true;
       })
@@ -157,6 +158,12 @@ export function RaioXTab() {
             </label>
             <Input className="h-9 w-56" placeholder="Buscar código ou descrição" value={f.rxBusca} onChange={(e) => setF({ rxBusca: e.target.value })} />
           </div>
+          {f.rxSku && (
+            <div className="flex items-center gap-2 text-sm">
+              <span>Filtrando pelo SKU {codigos.get(Number(f.rxSku)) ?? f.rxSku}</span>
+              <Button size="sm" variant="outline" onClick={() => setF({ rxSku: '' })}>Limpar filtro do SKU</Button>
+            </div>
+          )}
           {filtrados.length === 0 ? (
             <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description={mercadoria.length === 0 ? 'Nenhuma mercadoria parada nesta empresa.' : 'Nenhum item com esses filtros.'} />
           ) : (
