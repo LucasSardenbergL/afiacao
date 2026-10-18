@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import {
   argsEstadoSalvo,
+  assinaturaServidor,
   empresaDoRaioX,
   estadoMotor,
   lerNumero,
@@ -43,6 +44,8 @@ interface Props {
 export function DecisaoSheet({ empresa, item, decisao, onClose }: Props) {
   const { empresa: empresaCtx } = useReposicaoEmpresa();
   const empresaDoSeletor = empresaDoRaioX(empresaCtx);
+  // "Recarregar" (S9) remonta o formulário com as props novas.
+  const [versao, setVersao] = useState(0);
 
   // Trocar a empresa no seletor com o Sheet aberto fecha: o item é de outra empresa (Review Focus 4).
   useEffect(() => {
@@ -58,18 +61,33 @@ export function DecisaoSheet({ empresa, item, decisao, onClose }: Props) {
             <span className="font-mono">{item.codigo}</span> · {ROTULO_CATEGORIA[item.categoria]} · {fmtValor(item.valor)}
           </SheetDescription>
         </SheetHeader>
-        {/* remonta ao trocar de item: estado local (sujo, campos) nunca vaza entre SKUs */}
-        <FormDecisao key={`${empresa}-${item.sku_codigo_omie}`} empresa={empresa} item={item} decisao={decisao} onClose={onClose} />
+        {/* remonta ao trocar de item ou recarregar: estado local (sujo, campos) nunca vaza entre SKUs nem sobrevive a refetch */}
+        <FormDecisao
+          key={`${empresa}-${item.sku_codigo_omie}-${versao}`}
+          empresa={empresa}
+          item={item}
+          decisao={decisao}
+          onClose={onClose}
+          onRecarregar={() => setVersao((v) => v + 1)}
+        />
       </SheetContent>
     </Sheet>
   );
 }
 
-function FormDecisao({ empresa, item, decisao, onClose }: Props) {
+function FormDecisao({ empresa, item, decisao, onClose, onRecarregar }: Props & { onRecarregar: () => void }) {
   const m = useRaioXMutacoes(empresa);
   const sugerido = sugestaoInicial(item);
-  const [destino, setDestino] = useState<Destino | null>(decisao?.destino ?? sugerido);
-  const [tirar, setTirar] = useState(true);
+  const gravado = decisao?.destino ?? null;
+  // S8: "tirar do motor" só nasce marcado sem decisão gravada; com decisão gravada, só ao escolher um destino
+  // DIFERENTE do gravado (ou marcar à mão). Re-salvar uma decisão nunca desliga o motor por padrão.
+  const tirarPadrao = (d: Destino | null) => gravado === null || d !== gravado;
+  const [destino, setDestino] = useState<Destino | null>(gravado ?? sugerido);
+  const [tirar, setTirar] = useState(() => tirarPadrao(gravado ?? sugerido));
+  // S9: assinatura do servidor ao abrir. Se mudar com o painel aberto (outro operador, restaurar, refetch),
+  // o rascunho está velho: gravar apagaria campos ou religaria/desligaria o motor sem querer.
+  const [assinaturaAoAbrir] = useState(() => assinaturaServidor(item, decisao));
+  const velho = assinaturaAoAbrir !== assinaturaServidor(item, decisao);
   const [observacao, setObservacao] = useState(decisao?.observacao ?? '');
   const [fornecedor, setFornecedor] = useState(decisao?.fornecedor_informado ?? '');
   const [credito, setCredito] = useState(
@@ -87,12 +105,12 @@ function FormDecisao({ empresa, item, decisao, onClose }: Props) {
 
   const escolherDestino = (d: Destino) => {
     tocar();
-    if (d !== destino) setTirar(true); // pré-marcado de novo a cada destino-alvo
+    if (d !== destino) setTirar(tirarPadrao(d));
     setDestino(d);
   };
 
   const salvar = async () => {
-    if (!destino) return;
+    if (!destino || velho) return;
     let creditoTroca: number | null = null;
     if (destino === 'trocar') {
       const r = lerNumero(credito);
@@ -118,20 +136,28 @@ function FormDecisao({ empresa, item, decisao, onClose }: Props) {
   };
 
   const restaurar = async () => {
+    if (velho) return;
     if (await m.decidir(argsEstadoSalvo(item, decisao, { restaurarMotor: true }), 'restaurar')) onClose();
   };
 
   const tirarAgora = async () => {
+    if (velho) return;
     if (await m.decidir(argsEstadoSalvo(item, decisao, { tirarDoMotor: true }), 'tirar_agora')) onClose();
   };
 
   return (
     <div className="mt-4 space-y-5 text-sm">
+      {velho && (
+        <div role="alert" className="space-y-2 rounded-md border border-status-error/40 bg-status-error/5 p-3">
+          <p className="text-status-error">Esta decisão mudou enquanto o painel estava aberto — recarregue</p>
+          <Button size="touch" variant="outline" onClick={onRecarregar}>Recarregar</Button>
+        </div>
+      )}
       {fase && (
         <div className="space-y-2 rounded-md border border-status-warning/40 bg-status-warning/5 p-3">
           <p className="text-status-warning">decidido na fase A — motor não foi tocado</p>
           {podeTirarAgora && (
-            <Button size="touch" variant="outline" disabled={m.pendente} onClick={tirarAgora}>
+            <Button size="touch" variant="outline" disabled={m.pendente || velho} onClick={tirarAgora}>
               tirar do motor agora
             </Button>
           )}
@@ -231,7 +257,7 @@ function FormDecisao({ empresa, item, decisao, onClose }: Props) {
         />
       </section>
 
-      <Button size="touch" className="w-full" disabled={!sujo || !destino || m.pendente} onClick={salvar}>
+      <Button size="touch" className="w-full" disabled={!sujo || !destino || m.pendente || velho} onClick={salvar}>
         Salvar decisão
       </Button>
 
@@ -240,7 +266,7 @@ function FormDecisao({ empresa, item, decisao, onClose }: Props) {
           <p className="text-xs text-status-warning">
             repõe exatamente o estado anterior; ajustes manuais feitos depois serão desfeitos
           </p>
-          <Button size="touch" variant="outline" disabled={m.pendente} onClick={restaurar}>
+          <Button size="touch" variant="outline" disabled={m.pendente || velho} onClick={restaurar}>
             Restaurar motor ao estado anterior
           </Button>
         </section>

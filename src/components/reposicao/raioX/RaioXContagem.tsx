@@ -37,7 +37,7 @@ function CampoContagem({ item, gravada, contar, pendente }: {
           aria-label={`Qtd contada ${item.codigo}`}
           aria-invalid={erro}
           inputMode="decimal"
-          className="h-8 w-20 text-right"
+          className="h-11 w-24 text-right"
           value={texto}
           onChange={(e) => {
             setErro(false);
@@ -45,7 +45,7 @@ function CampoContagem({ item, gravada, contar, pendente }: {
           }}
           onKeyDown={(e) => e.key === 'Enter' && salvar()}
         />
-        <Button size="sm" variant="outline" aria-label={`Salvar contagem ${item.codigo}`} disabled={pendente} onClick={salvar}>
+        <Button size="touch" variant="outline" aria-label={`Salvar contagem ${item.codigo}`} disabled={pendente} onClick={salvar}>
           OK
         </Button>
       </div>

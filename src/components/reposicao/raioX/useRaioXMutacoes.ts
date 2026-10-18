@@ -30,10 +30,12 @@ export type AcaoDecisao = 'decidir' | 'restaurar' | 'tirar_agora';
 
 export function useRaioXMutacoes(empresa: Empresa) {
   const qc = useQueryClient();
-  const invalidar = () => qc.invalidateQueries({ queryKey: ['raio-x', empresa] });
+  // S10: invalidação e track usam a empresa das VARIÁVEIS da mutação (a mesma que foi como p_empresa), nunca a
+  // do closure — se o seletor trocar antes da resposta, o cache invalidado é o da empresa gravada.
+  const invalidar = (emp: Empresa) => qc.invalidateQueries({ queryKey: ['raio-x', emp] });
 
   const mDecidir = useMutation({
-    mutationFn: async ({ args }: { args: DecidirArgs; acao: AcaoDecisao }) => {
+    mutationFn: async ({ empresa, args }: { empresa: Empresa; args: DecidirArgs; acao: AcaoDecisao }) => {
       // Os tipos gerados declaram tudo não-nulo; a RPC aceita NULL (destino/observação/fornecedor/crédito).
       const params = {
         p_empresa: empresa,
@@ -51,8 +53,8 @@ export function useRaioXMutacoes(empresa: Empresa) {
       if (error) throw error;
       return data as { tirou_do_motor?: boolean } | null;
     },
-    onSuccess: (row, { args, acao }) => {
-      void invalidar();
+    onSuccess: (row, { empresa, args, acao }) => {
+      void invalidar(empresa);
       toast.success(acao === 'restaurar' ? 'Motor restaurado' : acao === 'tirar_agora' ? 'Tirado do motor' : 'Decisão salva');
       track('raio_x.decisao', {
         empresa,
@@ -65,20 +67,20 @@ export function useRaioXMutacoes(empresa: Empresa) {
   });
 
   const mContar = useMutation({
-    mutationFn: async ({ sku, qtd }: { sku: number; qtd: number | null }) => {
+    mutationFn: async ({ empresa, sku, qtd }: { empresa: Empresa; sku: number; qtd: number | null }) => {
       const params = { p_empresa: empresa, p_sku: sku, p_qtd: qtd } as unknown as Fns['raio_x_contar']['Args'];
       const { error } = await supabase.rpc('raio_x_contar', params);
       if (error) throw error;
     },
-    onSuccess: () => {
-      void invalidar();
+    onSuccess: (_d, { empresa }) => {
+      void invalidar(empresa);
       toast.success('Contagem salva');
     },
     onError: (e) => avisarErro(e, 'Não foi possível salvar a contagem.'),
   });
 
   const mClassificar = useMutation({
-    mutationFn: async ({ sku, categoria, motivo }: { sku: number; categoria: Categoria; motivo: string }) => {
+    mutationFn: async ({ empresa, sku, categoria, motivo }: { empresa: Empresa; sku: number; categoria: Categoria; motivo: string }) => {
       const { error } = await supabase.rpc('raio_x_classificar', {
         p_empresa: empresa,
         p_sku: sku,
@@ -87,8 +89,8 @@ export function useRaioXMutacoes(empresa: Empresa) {
       });
       if (error) throw error;
     },
-    onSuccess: (_d, { categoria }) => {
-      void invalidar();
+    onSuccess: (_d, { empresa, categoria }) => {
+      void invalidar(empresa);
       toast.success('Categoria marcada');
       track('raio_x.reclassificacao', { empresa, categoria });
     },
@@ -97,13 +99,16 @@ export function useRaioXMutacoes(empresa: Empresa) {
 
   /** Resolve `true` se gravou. Erro já virou toast; nunca rejeita. Número inválido não sai do cliente. */
   const decidir = async (args: DecidirArgs, acao: AcaoDecisao = 'decidir'): Promise<boolean> => {
-    if (args.tirarDoMotor && args.restaurarMotor) return false; // a RPC recusaria (22023)
+    if (args.tirarDoMotor && args.restaurarMotor) {
+      toast.error('Não é possível tirar e restaurar o motor na mesma gravação.'); // a RPC recusaria (22023)
+      return false;
+    }
     if (!numeroValido(args.creditoTroca)) {
       toast.error('Crédito de troca inválido.');
       return false;
     }
     try {
-      await mDecidir.mutateAsync({ args, acao });
+      await mDecidir.mutateAsync({ empresa, args, acao });
       return true;
     } catch {
       return false;
@@ -116,7 +121,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
       return false;
     }
     try {
-      await mContar.mutateAsync({ sku, qtd });
+      await mContar.mutateAsync({ empresa, sku, qtd });
       return true;
     } catch {
       return false;
@@ -127,7 +132,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
     const m = motivo.trim();
     if (!m) return false; // CHECK do banco (23514): motivo obrigatório
     try {
-      await mClassificar.mutateAsync({ sku, categoria, motivo: m });
+      await mClassificar.mutateAsync({ empresa, sku, categoria, motivo: m });
       return true;
     } catch {
       return false;

@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, renderHook, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ReposicaoEmpresaProvider } from '@/contexts/ReposicaoEmpresaContext';
 import type { DecisaoRow, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
@@ -26,6 +26,7 @@ vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a), cap
 
 import { DecisaoSheet } from '../DecisaoSheet';
 import { RaioXContagem } from '../RaioXContagem';
+import { useRaioXMutacoes } from '../useRaioXMutacoes';
 
 const itemRX = (p: Partial<ItemRaioX> = {}): ItemRaioX => ({
   sku_codigo_omie: 1, codigo: 'C1', descricao: 'VERNIZ X', familia: null, tipo_produto: '00', ativo: true,
@@ -43,15 +44,23 @@ function abrir(p: { item?: ItemRaioX; decisao?: DecisaoRow; empresa?: Empresa; c
   const invalidar = vi.spyOn(qc, 'invalidateQueries');
   const onClose = vi.fn();
   const empresa = p.empresa ?? 'oben';
-  const ui = (ctx: string) => (
+  const ui = (ctx: string, item: ItemRaioX, d: DecisaoRow | undefined) => (
     <QueryClientProvider client={qc}>
       <ReposicaoEmpresaProvider value={{ empresa: ctx, setEmpresa: () => {} }}>
-        <DecisaoSheet empresa={empresa} item={p.item ?? itemRX()} decisao={p.decisao} onClose={onClose} />
+        <DecisaoSheet empresa={empresa} item={item} decisao={d} onClose={onClose} />
       </ReposicaoEmpresaProvider>
     </QueryClientProvider>
   );
-  const r = render(ui(p.ctx ?? CTX[empresa]));
-  return { onClose, invalidar, trocarCtx: (c: string) => r.rerender(ui(c)) };
+  const ctx0 = p.ctx ?? CTX[empresa];
+  const item0 = p.item ?? itemRX();
+  const r = render(ui(ctx0, item0, p.decisao));
+  return {
+    onClose,
+    invalidar,
+    trocarCtx: (c: string) => r.rerender(ui(c, item0, p.decisao)),
+    /** Simula o refetch com o Sheet aberto (outro operador gravou / motor mudou). */
+    refetch: (n: { item?: ItemRaioX; decisao?: DecisaoRow }) => r.rerender(ui(ctx0, n.item ?? item0, n.decisao ?? p.decisao)),
+  };
 }
 
 const salvar = () => screen.getByRole('button', { name: 'Salvar decisão' }) as HTMLButtonElement;
@@ -218,6 +227,57 @@ describe('DecisaoSheet', () => {
     expect(screen.queryByRole('button', { name: 'tirar do motor agora' })).toBeNull();
   });
 
+  it('(S8-i) decisão gravada liquidar com tirou=false: editar só a observação e salvar NÃO desliga o motor', async () => {
+    const { onClose } = abrir({ decisao: decisao(1, { destino: 'liquidar', tirou_do_motor: false, observacao: 'a' }) });
+    expect((screen.getByRole('checkbox', { name: /tirar do motor/i }) as HTMLInputElement).checked).toBe(false);
+    fireEvent.change(screen.getByLabelText('Observação'), { target: { value: 'b' } });
+    fireEvent.click(salvar());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(argsDe('raio_x_decidir')[0]).toMatchObject({ p_destino: 'liquidar', p_observacao: 'b', p_tirar_do_motor: false });
+  });
+
+  it('(S8) com decisão gravada: destino-alvo DIFERENTE do gravado pré-marca; voltar ao gravado desmarca', () => {
+    abrir({ decisao: decisao(1, { destino: 'liquidar' }) });
+    fireEvent.click(screen.getByRole('button', { name: 'Trocar' }));
+    expect((screen.getByRole('checkbox', { name: /tirar do motor/i }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
+    expect((screen.getByRole('checkbox', { name: /tirar do motor/i }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('(S8-ii) sem decisão gravada, clicar liquidar → checkbox marcado', () => {
+    abrir({ item: itemRX({ categoria: 'uso_consumo' }) }); // sem pré-seleção
+    expect(screen.queryByRole('checkbox', { name: /tirar do motor/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
+    expect((screen.getByRole('checkbox', { name: /tirar do motor/i }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('(S9-iii) decisão muda com o painel aberto → Salvar bloqueado + aviso; Recarregar traz os valores novos e exige toque', () => {
+    const d0 = decisao(1, { destino: 'liquidar', observacao: 'velha', atualizado_em: '2026-10-18T10:00:00Z' });
+    const { refetch } = abrir({ decisao: d0 });
+    fireEvent.change(screen.getByLabelText('Observação'), { target: { value: 'rascunho' } });
+    expect(salvar().disabled).toBe(false);
+    refetch({ decisao: { ...d0, observacao: 'do outro operador', atualizado_em: '2026-10-18T10:05:00Z' } });
+    expect(screen.getByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeTruthy();
+    expect(salvar().disabled).toBe(true);
+    fireEvent.click(salvar());
+    expect(rpc).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recarregar' }));
+    expect(screen.queryByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeNull();
+    expect((screen.getByLabelText('Observação') as HTMLTextAreaElement).value).toBe('do outro operador');
+    expect(salvar().disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
+    expect(salvar().disabled).toBe(false);
+  });
+
+  it('(S9) motor restaurado por outro operador com o painel aberto → Restaurar e Tirar-agora bloqueados', () => {
+    const d0 = decisao(1, { destino: 'liquidar', origem: 'artifact_fase_a', motor_antes: { tipo_reposicao: 'normal', habilitado: true } });
+    const { refetch } = abrir({ decisao: d0 });
+    refetch({ item: itemRX({ habilitado_reposicao_automatica: false }) });
+    expect(screen.getByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Restaurar motor ao estado anterior' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'tirar do motor agora' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it('crédito de troca inválido → erro no campo, nada enviado; válido → vai com vírgula pt-BR', async () => {
     const { onClose } = abrir();
     fireEvent.click(screen.getByRole('button', { name: 'Trocar' }));
@@ -281,5 +341,43 @@ describe('RaioXContagem — campo de contagem', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Salvar contagem C1' }));
     await waitFor(() => expect(argsDe('raio_x_contar')).toHaveLength(1));
     expect(argsDe('raio_x_contar')[0]).toEqual({ p_empresa: 'colacor', p_sku: 1, p_qtd: null });
+  });
+});
+
+describe('useRaioXMutacoes — empresa da mutação (S10)', () => {
+  it('(iv) contagem iniciada em oben e hook re-renderizado com colacor → invalida ["raio-x","oben"]', async () => {
+    let soltar: (r: Resp) => void = () => {};
+    rpc.mockImplementation(() => new Promise<Resp>((res) => { soltar = res; }));
+    const qc = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidar = vi.spyOn(qc, 'invalidateQueries');
+    const { result, rerender } = renderHook(({ e }: { e: Empresa }) => useRaioXMutacoes(e), {
+      initialProps: { e: 'oben' as Empresa },
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    });
+    let p: Promise<boolean> = Promise.resolve(false);
+    act(() => { p = result.current.contar(1, 5); });
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    expect(argsDe('raio_x_contar')[0]).toMatchObject({ p_empresa: 'oben' });
+    rerender({ e: 'colacor' });
+    await act(async () => { soltar({ data: {}, error: null }); await p; });
+    expect(invalidar).toHaveBeenCalledWith({ queryKey: ['raio-x', 'oben'] });
+    expect(invalidar).not.toHaveBeenCalledWith({ queryKey: ['raio-x', 'colacor'] });
+  });
+
+  it('(M2) tirar e restaurar juntos → toast de erro, nada enviado', async () => {
+    const qc = new QueryClient();
+    const { result } = renderHook(() => useRaioXMutacoes('oben'), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    });
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.decidir({
+        sku: 1, destino: 'liquidar', categoria: 'mercadoria', observacao: null, fornecedor: null,
+        creditoTroca: null, tirarDoMotor: true, restaurarMotor: true,
+      });
+    });
+    expect(ok).toBe(false);
+    expect(rpc).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith('Não é possível tirar e restaurar o motor na mesma gravação.');
   });
 });

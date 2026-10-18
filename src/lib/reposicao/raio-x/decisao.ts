@@ -94,6 +94,17 @@ export function argsEstadoSalvo(
   };
 }
 
+/**
+ * Assinatura do estado do SERVIDOR que o Sheet edita (Ruling S9): a decisão gravada (atualizado_em) e o motor
+ * (tipo_reposicao + habilitado). Mudou com o painel aberto → rascunho velho, gravar fica bloqueado.
+ */
+export function assinaturaServidor(
+  item: Pick<FatoSku, 'tipo_reposicao' | 'habilitado_reposicao_automatica'>,
+  d: DecisaoRow | undefined,
+): string {
+  return JSON.stringify([d?.atualizado_em ?? null, item.tipo_reposicao, item.habilitado_reposicao_automatica]);
+}
+
 /** Destino mostrado na coluna e usado no filtro (Ruling S4): o decidido vence a sugestão. */
 export function destinoEfetivo(i: ItemRaioX, d: DecisaoRow | undefined): Sugestao | null {
   return d?.destino ?? i.destino_sugerido;

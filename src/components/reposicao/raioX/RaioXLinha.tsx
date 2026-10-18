@@ -100,7 +100,7 @@ export const colDecidir = (onDecidir: (i: ItemRaioX) => void): Coluna => ({
   titulo: 'Ação',
   className: 'text-right',
   render: (i) => (
-    <Button size="sm" variant="outline" aria-label={`Decidir ${i.codigo}`} onClick={() => onDecidir(i)}>
+    <Button size="touch" variant="outline" aria-label={`Decidir ${i.codigo}`} onClick={() => onDecidir(i)}>
       Decidir
     </Button>
   ),

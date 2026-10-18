@@ -3,6 +3,7 @@ import { classificar } from '../classificar';
 import {
   alvoDoMotor,
   argsEstadoSalvo,
+  assinaturaServidor,
   destinoEfetivo,
   empresaDoRaioX,
   estadoMotor,
@@ -121,5 +122,18 @@ describe('sugestaoInicial (P10: só mercadoria parada pré-seleciona)', () => {
   it('uso e consumo → null', () => {
     const i = { ...item(), categoria: 'uso_consumo' as const, parado: true, destino_sugerido: 'liquidar' as const };
     expect(sugestaoInicial(i)).toBeNull();
+  });
+});
+
+describe('assinaturaServidor (Ruling S9)', () => {
+  it('muda com atualizado_em, tipo_reposicao ou habilitado; estável sem mudança', () => {
+    const i = item({ tipo_reposicao: 'normal', habilitado_reposicao_automatica: true });
+    const d = decisao(1, { atualizado_em: 'A' });
+    const base = assinaturaServidor(i, d);
+    expect(assinaturaServidor(i, decisao(1, { atualizado_em: 'A' }))).toBe(base);
+    expect(assinaturaServidor(i, decisao(1, { atualizado_em: 'B' }))).not.toBe(base);
+    expect(assinaturaServidor({ ...i, tipo_reposicao: 'descontinuado' }, d)).not.toBe(base);
+    expect(assinaturaServidor({ ...i, habilitado_reposicao_automatica: false }, d)).not.toBe(base);
+    expect(assinaturaServidor(i, undefined)).not.toBe(base);
   });
 });
