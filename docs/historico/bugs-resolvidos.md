@@ -1114,3 +1114,25 @@ Omie) e preenche o pedido SEM NF por compare-and-set; pedido com outra NF fica i
 reconciliação idempotente — "não casou agora" não é "não casa nunca". Ponta aberta: 000936908 e
 000945865 estão no CP e fora do rastreio; hipótese (não provada) é a janela incremental de 3 dias por
 `dtEmissao` — NF lançada no recebimento depois dela nunca é listada. Caminho: reprocesso com janela.
+
+## 2026-10-18 — NF que nunca é revisitada: casada em parte, ou lançada depois da janela (`omie-sync-nfes-recebidas` v1.7)
+
+**Sintoma:** depois da v1.5, 6 dos 13 pedidos do backtest (#3103) seguiam sem NF. As DANFEs mostraram
+NFs que cobrem vários protocolos: NF 0935816 (08/05) cobre o contrato 2091399 (pedido 1003), cuja linha
+nasceu em 15/05; idem 0938767↔2098269 e 0940479↔2102074. E a ponta aberta da v1.5 se confirmou:
+000936908 e 000945865 só entraram com reprocesso manual por janela (2026-10-17).
+**Causa:** o cron lista 3 dias por `dtEmissao` e nunca revê a NF. (2) A NF casada em PARTE não vira
+órfã, então a reconciliação da v1.5 não a lê; (3) a NF lançada no recebimento depois da janela nunca
+é listada.
+**Medido (psql-ro, 2026-10-18):** só OBEN no cron, ~12 runs/dia de 3–7 documentos; Sayerlack = 26 NFs
+em 45 dias (36 em 60); linhas de pedido nascem até ~8 dias depois da NF (fora 2 lotes de import ~45 d).
+A listagem com `cExibirDetalhes: "S"` já traz `nNumPedCompra` (17/17 órfãs Sayerlack com pedido).
+**Correção (v1.7 + `omie-cron-diario` v1.1):** no tick das 04:15 UTC o step `nfes` leva
+`revisita_dias: 30`; a revisita é a ÚLTIMA fase do run. NF conhecida (chave, `nid_receb` ou órfã) vincula
+pelos contratos da própria listagem — zero `ConsultarRecebimento`, ~1 chamada por 50 documentos; NF
+desconhecida consulta 1× e, sem linha, vira órfã (a reconciliação liga depois). Só preenche linha sem NF
+(CAS) e grava `nid_receb` junto; ordem por emissão ascendente (vence o 1º faturamento). 04:15 fica longe
+do sku-items de 30 dias das 07:00, que repete `ConsultarRecebimento` (REDUNDANT). Ver `revisita.ts`.
+Descartado: tabela dedicada de itens do recebimento (migration; a listagem já é a fonte e custa ~nada).
+**Lição:** "processei esta NF" não é "terminei esta NF" — enquanto o outro lado do casamento pode
+nascer depois, a NF precisa de uma janela de revisita, e a fonte barata (a listagem) costuma bastar.
