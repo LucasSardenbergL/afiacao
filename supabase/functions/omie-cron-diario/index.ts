@@ -26,6 +26,7 @@ import {
   respostaSonda,
   VERSAO,
 } from "./versao.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -143,36 +144,10 @@ function jsonRes(corpo: Record<string, unknown>, status = 200) {
   });
 }
 
-async function authorizeCronOrStaff(req: Request): Promise<boolean> {
-  const CRON_SEC = Deno.env.get("CRON_SECRET");
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret && CRON_SEC && cronSecret === CRON_SEC) return true;
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return false;
-  const token = authHeader.slice(7);
-  if (token === SERVICE_ROLE) return true;
-  try {
-    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { Authorization: authHeader, apikey: SERVICE_ROLE },
-    });
-    if (!userRes.ok) return false;
-    const user = await userRes.json();
-    if (!user?.id) return false;
-    const roleRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`,
-      { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
-    );
-    if (!roleRes.ok) return false;
-    const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["employee", "master"]);
-    return roles.some((r) => allowed.has(r.role));
-  } catch { return false; }
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  if (!(await authorizeCronOrStaff(req))) {
+  if (!(await authorizeCronOrStaff(req)).ok) {
     return jsonRes({ error: "Unauthorized" }, 401);
   }
 
