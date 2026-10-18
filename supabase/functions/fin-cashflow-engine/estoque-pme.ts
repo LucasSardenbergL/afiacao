@@ -7,9 +7,9 @@
 import { somarDias } from "../_shared/hoje-sp.ts";
 
 /** Inventário manual (fonte='manual') vale por este tempo; depois o Omie volta a mandar. */
-export const MANUAL_VALIDADE_DIAS = 45;
+const MANUAL_VALIDADE_DIAS = 45;
 /** Abaixo disto (% dos SKUs de giro com custo) o numerador não sustenta um PME. */
-export const COBERTURA_CUSTO_MIN_PCT = 95;
+const COBERTURA_CUSTO_MIN_PCT = 95;
 
 export type EstoqueManual = { valor: number; data_ref: string } | null;
 export type EstoqueOmie = {

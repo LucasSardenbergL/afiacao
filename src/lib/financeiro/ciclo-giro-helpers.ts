@@ -16,8 +16,8 @@ export function overrideManualVigente(dataRef: string, fonte: string | null | un
   return fonte === 'manual' && dataRef >= inicioJanela && dataRef <= hoje;
 }
 
-export type ClasseEstoque = 'giro' | 'fora_giro' | 'sem_classificacao';
-export type AcaoGiro = 'liquidar' | 'segurar_compra';
+type ClasseEstoque = 'giro' | 'fora_giro' | 'sem_classificacao';
+type AcaoGiro = 'liquidar' | 'segurar_compra';
 
 export type GiroSku = {
   omieCodigoProduto: number; codigo: string | null; descricao: string | null;
