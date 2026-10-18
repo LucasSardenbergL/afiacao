@@ -880,18 +880,26 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
         motivo:
           'INSERT puro: sem USING (o PG não consulta USING no INSERT), só WITH CHECK — ' +
-          '`cap_carteira_escrever(uid)` OR `farmer_id = uid` (escrever o PRÓPRIO score).',
+          '`cap_carteira_escrever(uid)` OR `farmer_id = uid` (escrever o PRÓPRIO score). INERTE desde a ' +
+          '20261018160000: anon/authenticated não têm INSERT (o writer é service_role). Fica por não ' +
+          'ser DROP (fora do envelope) — um GRANT INSERT devolvido a reativaria: quem vigia é o authz:grants:prod.',
       },
       fcs_update_own_or_gestor: {
         cmd: 'w',
         permissiva: true,
         roles: ['PUBLIC'],
         qualMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
-        withCheckMd5: 'e674af85831f3ebeeec81c0e2f9cc0a7',
+        // md5('false') — 20261018160000 (pós-B FU4-F).
+        withCheckMd5: '68934a3e9455fa72420237eb05902327',
         motivo:
-          'USING e WITH CHECK IDÊNTICOS (mesmo md5) — simétrico, então não há brecha de mover ' +
-          'linha para fora do próprio escopo. É FOR UPDATE e não FOR ALL, logo o check estrutural ' +
-          'de assimetria não se aplica.',
+          'NÃO autoriza escrita: WITH CHECK (false) desde a 20261018160000 — o UPDATE de authenticated ' +
+          'é recusado pela RLS (e o privilégio é só UPDATE (updated_at)). O USING (own OR ' +
+          '`cap_carteira_escrever`) segue porque é o ESCOPO da trava `SELECT … FOR SHARE` de ' +
+          '`farmer_recomendacoes_substituir`/`farmer_bundle_recomendacoes_substituir` (SECURITY INVOKER): ' +
+          'o FOR SHARE aplica o USING da policy de UPDATE como filtro e não avalia WITH CHECK. ' +
+          'DROPAR a policy ou afrouxar o WITH CHECK é alarme: sem ela a trava contra a troca de dono ' +
+          'concorrente vira no-op silencioso; com o check antigo a dona volta a gravar a margem. ' +
+          'Provado em PG17 (db/test-fcs-ftp-escrita-fechada.sh).',
       },
       fcs_delete_own_or_gestor: {
         cmd: 'd',
@@ -901,7 +909,8 @@ export const AUTHZ_RLS_ESPERADO: Record<string, TabelaRls> = {
         withCheckMd5: null,
         motivo:
           'DELETE com o MESMO USING do UPDATE — e é o comando que só consulta o USING ' +
-          '(database.md §4). Split por comando em vez de FOR ALL é o que torna isso legível.',
+          '(database.md §4). Split por comando em vez de FOR ALL é o que torna isso legível. INERTE ' +
+          'desde a 20261018160000 (sem DELETE para anon/authenticated), pelo mesmo motivo da de INSERT.',
       },
     },
   },
