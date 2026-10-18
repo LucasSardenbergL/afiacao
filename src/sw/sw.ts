@@ -105,8 +105,8 @@ let progresso: EstadoPublicado['progresso'] = null;
 let problema: EstadoPublicado['problema'] = null;
 
 async function estadoPublicado(): Promise<EstadoPublicado> {
-  const e = await estadoEfetivo();
-  return { type: 'RELEASE_ESTADO', promovida: e.promovida?.buildId ?? null, release: BUILD, progresso, problema };
+  const est = await estadoEfetivo();
+  return { type: 'RELEASE_ESTADO', promovida: est.promovida?.buildId ?? null, release: BUILD, progresso, problema };
 }
 async function anunciar(): Promise<void> {
   const msg = await estadoPublicado();
@@ -256,9 +256,9 @@ rota((url) => /^https:\/\/.*\.supabase\.co\/(auth|realtime)/i.test(url.href), ne
 
 /* ─── Mesma origem: navegação e arquivos estáticos ─── */
 async function htmlPromovido(): Promise<Response | undefined> {
-  const e = await estadoEfetivo();
-  if (!e.promovida) return undefined;
-  const cache = await caches.open(e.promovida.cache);
+  const est = await estadoEfetivo();
+  if (!est.promovida) return undefined;
+  const cache = await caches.open(est.promovida.cache);
   const index = new URL('index.html', SCOPE).href;
   // Precache do Workbox guarda o HTML como `index.html?__WB_REVISION__=…`.
   return (await cache.match(index)) ?? (await cache.match(index, { ignoreSearch: true }));
