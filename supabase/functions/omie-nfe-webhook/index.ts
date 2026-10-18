@@ -1,6 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { materializarRecebimento } from "./importacao.ts";
+import { portaSupabase } from "./porta.ts";
+// `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
+// lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
+// Erro determinístico no lote é o pior caso do retry: repete a mesma falha para sempre.
+import { normalizarNcm } from "../omie-nfe-recebimento-sync/itens.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -102,17 +108,9 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "chave_acesso ausente no payload" }, 400);
     }
 
-    // Duplicate check
-    const { data: existing } = await supabase
-      .from("nfe_recebimentos")
-      .select("id")
-      .eq("chave_acesso", chaveAcesso)
-      .maybeSingle();
-
-    if (existing) {
-      console.log("[omie-nfe-webhook] NF-e já importada:", chaveAcesso);
-      return jsonResponse({ message: "já importada", id: existing.id });
-    }
+    // O guard de duplicata vive em `materializarRecebimento` (importacao.ts): ele lê o cabeçalho
+    // COM a contagem de itens e completa um recebimento `pendente` que ficou sem itens — o reenvio
+    // do Omie é o que conserta a importação que morreu no meio, em vez de escondê-la.
 
     // Parse header fields
     const nfe = payload.nfe ?? payload;
@@ -161,7 +159,8 @@ Deno.serve(async (req) => {
     const itensToInsert = rawItems.map((item: Record<string, unknown>, idx: number) => {
       const codigoProduto = item.codigo_produto ?? item.cProd ?? item.codigo ?? null;
       const descricao = item.descricao ?? item.xProd ?? item.desc ?? "Item sem descrição";
-      const ncm = item.ncm ?? item.NCM ?? null;
+      const ncmBruto = item.ncm ?? item.NCM ?? null;
+      const ncm = normalizarNcm(ncmBruto == null ? null : String(ncmBruto));
       const ean = item.ean ?? item.cEAN ?? null;
       const unidadeNfe = item.unidade_nfe ?? item.uCom ?? item.unidade ?? "UN";
       const quantidadeNfe = parseFloat(item.quantidade_nfe ?? item.qCom ?? item.quantidade ?? 0);
@@ -190,61 +189,65 @@ Deno.serve(async (req) => {
       };
     });
 
-    // Insert NF-e header
-    const { data: recebimento, error: insErr } = await supabase
-      .from("nfe_recebimentos")
-      .insert({
-        warehouse_id: warehouse.id,
-        numero_nfe: numeroNfe,
-        serie_nfe: serieNfe,
-        chave_acesso: chaveAcesso,
-        cnpj_emitente: cnpjEmClean,
-        razao_social_emitente: razaoSocial,
-        data_emissao: dataEmissao,
-        valor_total: valorTotal ? parseFloat(valorTotal) : null,
-        xml_completo: xmlCompleto,
-        status: "pendente",
-        omie_nfe_id: omieNfeId ? parseInt(omieNfeId) : null,
-        omie_id_receb: omieIdReceb ? parseInt(omieIdReceb) : null,
-      })
-      .select("id")
-      .single();
+    const cabecalho = {
+      warehouse_id: warehouse.id,
+      numero_nfe: numeroNfe,
+      serie_nfe: serieNfe,
+      chave_acesso: chaveAcesso,
+      cnpj_emitente: cnpjEmClean,
+      razao_social_emitente: razaoSocial,
+      data_emissao: dataEmissao,
+      valor_total: valorTotal ? parseFloat(valorTotal) : null,
+      xml_completo: xmlCompleto,
+      status: "pendente",
+      omie_nfe_id: omieNfeId ? parseInt(omieNfeId) : null,
+      omie_id_receb: omieIdReceb ? parseInt(omieIdReceb) : null,
+    };
 
-    if (insErr || !recebimento) {
-      console.error("[omie-nfe-webhook] Erro ao inserir nfe_recebimentos:", insErr);
-      return jsonResponse({ error: "Erro ao inserir NF-e", details: insErr?.message }, 500);
-    }
-
-    // Insert items
-    if (itensToInsert.length > 0) {
-      const itensComNfeId = itensToInsert.map((item) => ({
-        ...item,
-        nfe_recebimento_id: recebimento.id,
-      }));
-
-      const { error: itensErr } = await supabase
-        .from("nfe_recebimento_itens")
-        .insert(itensComNfeId);
-
-      if (itensErr) {
-        console.error("[omie-nfe-webhook] Erro ao inserir itens:", itensErr);
-        return jsonResponse({
-          error: "NF-e criada mas erro ao inserir itens",
-          nfe_recebimento_id: recebimento.id,
-          details: itensErr.message,
-        }, 500);
-      }
-    }
-
-    console.log(
-      `[omie-nfe-webhook] NF-e ${numeroNfe} importada com sucesso. ID: ${recebimento.id}, ${itensToInsert.length} itens.`,
-    );
-
-    return jsonResponse({
-      success: true,
-      nfe_recebimento_id: recebimento.id,
-      itens_count: itensToInsert.length,
+    const resultado = await materializarRecebimento(portaSupabase(supabase), {
+      chaveAcesso,
+      cabecalho,
+      itens: itensToInsert,
     });
+
+    switch (resultado.tipo) {
+      case "ja_importada":
+        console.log("[omie-nfe-webhook] NF-e já importada:", chaveAcesso, `${resultado.itens} itens`);
+        return jsonResponse({ message: "já importada", id: resultado.id, itens_count: resultado.itens });
+      case "erro_leitura":
+        console.error("[omie-nfe-webhook] Erro ao consultar nfe_recebimentos:", resultado.mensagem);
+        return jsonResponse({ error: "Erro ao consultar NF-e", details: resultado.mensagem }, 500);
+      case "erro_cabecalho":
+        console.error("[omie-nfe-webhook] Erro ao inserir nfe_recebimentos:", resultado.mensagem);
+        return jsonResponse({ error: "Erro ao inserir NF-e", details: resultado.mensagem }, 500);
+      case "erro_itens":
+        // 500 de propósito: o Omie reenvia, e o reenvio COMPLETA os itens deste cabeçalho.
+        console.error("[omie-nfe-webhook] Erro ao inserir itens:", resultado.mensagem);
+        return jsonResponse({
+          error: "NF-e criada mas erro ao inserir itens — o reenvio completa os itens",
+          nfe_recebimento_id: resultado.id,
+          details: resultado.mensagem,
+        }, 500);
+      case "reparada":
+        console.log(
+          `[omie-nfe-webhook] NF-e ${numeroNfe} estava sem itens; completada. ID: ${resultado.id}, ${resultado.itens} itens.`,
+        );
+        return jsonResponse({
+          success: true,
+          reparado: true,
+          nfe_recebimento_id: resultado.id,
+          itens_count: resultado.itens,
+        });
+      case "importada":
+        console.log(
+          `[omie-nfe-webhook] NF-e ${numeroNfe} importada com sucesso. ID: ${resultado.id}, ${resultado.itens} itens.`,
+        );
+        return jsonResponse({
+          success: true,
+          nfe_recebimento_id: resultado.id,
+          itens_count: resultado.itens,
+        });
+    }
   } catch (err) {
     console.error("[omie-nfe-webhook] Erro inesperado:", err);
     return jsonResponse({ error: "Erro interno", details: String(err) }, 500);
