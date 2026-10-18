@@ -127,7 +127,7 @@ Decisão do founder: entram **mercadoria para revenda, matéria-prima, frete e s
 - **Regime de desconto no boleto:** começa no vencimento do **primeiro título com desconto observado** do fornecedor. Títulos vencidos antes ficam fora do cenário. Motivo: a Sayerlack antiga embutia o desconto na NF, e cobrar 2% "perdidos" ali seria fabricar.
 - **Desconto perdido (cenário):** soma de `taxa × valor` nos títulos do regime **pagos com atraso > 0** pela data do título, ou **pagos em dia sem desconto**. O segundo grupo vai em linha separada, "pago em dia sem desconto — conferir boleto", porque pode ser fornecedor que não deu o desconto.
 - **Custo explícito apurado** = `encargo_pago_12m` (juros + multa, confiança de decisão).
-- **Taxa implícita da condição:** `(1/(1−d))^(30/N) − 1` a.m., com N = prazo concedido de **cada parcela** (calendário real, nunca a média). Mostrada como "pagar no vencimento rende ~X% a.m." (Sayerlack: 2% em 10 d ≈ 6,2% a.m.). É informativa, sem decisão automática.
+- ~~**Taxa implícita da condição:**~~ (removida — §9 #7) `(1/(1−d))^(30/N) − 1` a.m., com N = prazo concedido de **cada parcela** (calendário real, nunca a média). Mostrada como "pagar no vencimento rende ~X% a.m." (Sayerlack: 2% em 10 d ≈ 6,2% a.m.). É informativa, sem decisão automática.
 - **Fila "onde o prazo está custando":**
   - ordem: `desconto_perdido_cenario + encargo_pago` em R$ (12m), decrescente;
   - empate: `valor_vencido_aberto`;
@@ -189,6 +189,25 @@ Sem edge. Migration nova (views + RPCs), aplicada **pela sessão** no envelope d
 | Regime de desconto: basta 1 título? | — | Regime começa no **1º mês de vencimento com ≥ 3 títulos com desconto** do fornecedor. Um desconto isolado não abre regime *(decisão da sessão)* |
 | Peso do PMP de compras | engine pondera por `valor_baixado` | Compras ponderadas por `valor_documento` (molde CR). O **controle engine-equivalente** usa exatamente a fórmula do engine (`valor_baixado`, todo o CP, sem janela) e precisa dar 32/5/12. A ponte "engine → compras" mostra os dois passos, universo e janela |
 
-## 9. Decisões que ficam com o builder
+## 9. Challenge Codex sobre a spec (2026-10-18) — calibração
+
+Parecer cru: `2026-10-18-ciclo-pmp-fornecedor-codex-spec.txt` (gpt-6-astra, high). 0 P0, 9 P1, 1 P2. **Esta seção prevalece sobre §4.4/§8 onde conflitar.**
+
+| # | Achado Codex | Decisão da sessão |
+|---|---|---|
+| 1 | Perdido pode cobrar desconto já obtido | ✅ `perdido = max(taxa·base − desconto_informado, 0)`, só com `desconto_informado` **conhecido** (não NULL). "Em dia sem desconto" fica fora do total e da fila |
+| 2 | Regime/taxa generalizam evidência fraca | ✅ Conta **documentos (NF)** distintos, não parcelas. O regime começa no **vencimento** (não no mês) do 1º de ≥ 3 documentos com desconto dentro de 90 d. Taxa = mediana dos últimos 180 d do regime. Evidência de pontualidade: ≥ 80% dos documentos com desconto pagos com atraso ≤ 0; senão a taxa é `null` (motivo `nao_pontualidade`) |
+| 3 | Evidência bruta × decisória misturadas | ✅ A view expõe `identidade_ok`, `desconto_informado_omie` (evidência) e `desconto_obtido` (decisão) separados |
+| 4 | `titulo_data_movimento` fabrica pontualidade | ✅ Só `omie_data_pagamento` decide (medido: falta em 3 de 5.125 PAGO com baixa). O resto é "data incerta", com denominador explícito: % em dia = sobre datáveis + cobertura sobre total |
+| 5 | Parcial invisível | ✅ (medido: 0 parciais hoje) Os fatos incluem abertos com BAXP; `paga_parcial`; o remanescente é classificado pelo vencimento (vencido × a vencer) |
+| 6 | Dedup não protege o PMP | ✅ PMP de compras = `data_baixa(omie_data_pagamento) − emissão`, ponderado por valor, só com data confiável. Não usa `v_titulo_baixas`. Controle do engine fica fiel. A ponte mostra os 3 passos (universo, janela, peso) |
+| 7 | Taxa implícita a.m. inventa alternativa | ✅ **Removida.** Mostra só o desconto % observado |
+| 8 | Join de nome multiplica | ✅ Nome resolvido 1×(company, fornecedor) num CTE agregado antes do join; teste de invariância das somas |
+| 9 | Views legíveis por `authenticated` contornam o gate | ✅ Views novas **sem** SELECT para `authenticated` (só `service_role`); as RPCs leem como owner. Postcondição afirma. `fin_ciclo_cp_empresa` com o mesmo gate |
+| 10 | Ausente parece zero; sinal do R$/dia | ✅ Fila separa "custo apurado", "sem evidência" (contado) e "conferir boleto". Rótulo: "pagar 1 dia antes consome ≈ R$ X de caixa · 1 dia depois retém ≈ R$ X · cenário" |
+
+Concordâncias do Codex: categorias explícitas por empresa, CNPJs separados, NULL≠0, baixa × liquidação, controle do engine separado, nome ausente visível, divergente fora do dinheiro decisório.
+
+## 10. Decisões que ficam com o builder
 
 Nomes finais de colunas; layout fino dos componentes; se `v_ciclo_fornecedor_coorte` também quebra por fornecedor no drill (a RPC de títulos já basta para a v1); limiares exatos de dispersão da taxa (o proposto aqui é o ponto de partida).
