@@ -1,4 +1,8 @@
-// harness-handler.ts — SÓ PARA `*_test.ts`. Carrega o `index.ts` de uma edge como MÓDULO e
+// harness-handler_test.ts — helper SÓ PARA `*_test.ts` (não tem `Deno.test` próprio). O sufixo `_test` é
+// DELIBERADO: é a convenção que o fingerprint (`sonda:fingerprint`), o `canaria:bump` e a régua de corpo
+// servido usam para deixar um arquivo de `_shared/` FORA da superfície das edges — como `.ts` cru ele
+// entrou na superfície da canária `paginacao_probe` de `omie-financeiro` por colisão de nome de símbolo
+// e o CI pediu bump de `contrato` numa edge que este PR não toca. Carrega o `index.ts` de uma edge como MÓDULO e
 // captura o handler que ela entrega ao `Deno.serve`, com `Deno.env.get` e `fetch` substituídos
 // ANTES da importação (os `index.ts` leem env no topo do módulo e o gate de auth chama `fetch`).
 //

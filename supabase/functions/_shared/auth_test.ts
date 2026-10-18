@@ -3,7 +3,7 @@
 // Não existia (lote H do plano de melhoria v2, 2026-10-18): 13 edges carregavam cópia local do gate
 // e nada provava o comportamento do canônico por execução.
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/_shared/auth_test.ts
-import { ENV_TESTE, igual, instalarHarness } from "./harness-handler.ts";
+import { ENV_TESTE, igual, instalarHarness } from "./harness-handler_test.ts";
 
 const env = { ...ENV_TESTE };
 const h = instalarHarness(env);

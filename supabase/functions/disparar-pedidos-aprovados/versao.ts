@@ -56,7 +56,6 @@ export const respostaSonda = criarRespostaSonda("disparar-pedidos-aprovados");
  * pendente e a edge respondia "envio iniciado". Nenhuma pré-condição de banco (a migration
  * 20261011150000 fecha a mesma porta na RPC, de forma independente).
  * v1.9 (2026-10-14) — pedido Sayerlack COM protocolo (ex.: importado do portal) não é dividido em lotes de 20.
- * v1.10: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  */
 export const VERSAO = "v1.10-gate-auth-canonico";
 

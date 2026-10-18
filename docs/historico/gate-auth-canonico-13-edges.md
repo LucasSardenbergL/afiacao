@@ -13,7 +13,7 @@ sem credencial ela passa do gate e vai ao fluxo real (Omie, inserts). Por isso o
 ordem do plano: **testes negativos nos HANDLERS primeiro**, troca depois.
 
 **O que entrou:**
-- `_shared/harness-handler.ts`: carrega o `index.ts` como módulo, captura o handler do `Deno.serve`,
+- `_shared/harness-handler_test.ts`: carrega o `index.ts` como módulo, captura o handler do `Deno.serve`,
   substitui `Deno.env.get` e `fetch` (simula só `/auth/v1/user` + `user_roles`; qualquer outra URL é
   EFEITO). Import do `index.ts` é **computado** (`new URL("./index.ts", import.meta.url)`): literal faria
   o `deno test` type-checar a edge contra o supabase-js do `node_modules` (outra versão da do lock do
@@ -42,6 +42,13 @@ marcador + `exit=1`; `_shared/auth.ts` não dispara.
   é possível offline — mas o type-check desse grafo é do `edges:typecheck`, não do `deno test`.
 - **`deno test` carrega e roda cada arquivo em sequência** (medido: A vê A, B vê B) — stubs de
   `globalThis.fetch`/`Deno.serve` por arquivo não vazam entre suítes.
+- **Helper de teste em `_shared/` leva sufixo `_test.ts`, mesmo sem `Deno.test` próprio.** Como `.ts` cru,
+  `harness-handler.ts` entrou na superfície da canária `paginacao_probe` de `omie-financeiro` (o
+  `canaria:bump` resolve `_shared/` por NOME de símbolo) e o CI pediu bump de `contrato` numa edge que o
+  PR não toca. O sufixo `_test` é a convenção que fingerprint, canária e corpo servido excluem.
+- **Comentário em `_shared/auth.ts` muda o fingerprint de 83 edges** (o mapa hasheia bytes, sem tirar
+  comentário; 96 de 97 `index.ts` importam `auth.ts`). É o desenho (bundle servido ≠ main), não bug —
+  mas um PR que só corrige prosa em `_shared/` regrava o mapa inteiro.
 - **Teste negativo sem controle positivo é teatro**: 401 "de qualquer lugar" aprova. O par
   negativo+positivo no MESMO harness é o que fecha.
 
