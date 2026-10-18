@@ -79,3 +79,9 @@ aprovado_em`, zero importados órfãos, zero órfãs na janela de 48h (0 de 0 ap
 semana). O sensor não guarda estado por fonte (`_data_health_compute()` roda a cada rodada do
 watchdog e é fechado ao `claude_ro`), então o chip vira `ok` na rodada seguinte — a prova dele é a
 contagem acima, não o chip. Nada de edge nem Publish nesta entrega.
+
+Pós-CI: três vermelhos meus (formato da linha de contagem do núcleo, `IF v_orfas <> 0` → `IS DISTINCT
+FROM 0` pelo gate verde-por-ausência, carimbo de authz regravado porque a baseline de deriva é contrato).
+A PÓS mudou os bytes do arquivo, então ele foi re-aplicado para o ledger apontar para o conteúdo final:
+**recibo #520**, corpo idêntico (`ae665653…`), backfill 0 novas linhas (3 já existiam). O 4º vermelho
+(`rpc-set-returning-paginacao-gate` em `src/hooks/useEstoqueValor.ts`) é da main em `8583694a7`.
