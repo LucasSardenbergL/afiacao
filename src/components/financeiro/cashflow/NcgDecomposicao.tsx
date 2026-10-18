@@ -42,9 +42,9 @@ export function NcgDecomposicao() {
 
   return (
     <div className="space-y-4">
-      {data.ncg.aco.estoque === 0 && (
+      {data.ncg.aco.estoque === null && (
         <div className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
-          ⚠ Estoque não informado — NCG e CCC subestimados. Informe o valor do balancete em Configuração.
+          ⚠ NCG parcial — sem estoque: não há inventário manual recente nem estoque de giro com custo no Omie. PME indisponível.
         </div>
       )}
       {/* Motivo da degradação: sem isto, uma fonte que FALHOU e um dado que não existe
@@ -139,7 +139,9 @@ export function NcgDecomposicao() {
             </div>
             <div>
               <div className="text-xs text-muted-foreground">PME</div>
-              <div className="text-xl font-mono">{data.indicadores.prazo_medio_estoque.toFixed(0)}d</div>
+              <div className="text-xl font-mono">
+                {data.indicadores.prazo_medio_estoque != null ? `${data.indicadores.prazo_medio_estoque.toFixed(0)}d` : '—'}
+              </div>
             </div>
             <div>
               <div className="text-xs text-muted-foreground">PMP</div>

@@ -23,9 +23,12 @@ type Semana = {
 };
 
 type NCGData = {
-  aco: { cr_aberto: number; estoque: number; adiantamentos: number; total: number };
+  // estoque null = sem fonte (engine v1.4+): o total soma o resto e `parcial` = true.
+  aco: { cr_aberto: number; estoque: number | null; adiantamentos: number; total: number };
   pco: { cp_fornecedor: number; folha_30d: number; tributos_a_pagar: number; total: number };
   valor: number;
+  // Opcional: engines anteriores à v1.4 não mandam o campo.
+  parcial?: boolean;
   projecao_12m: Array<{ mes: string; valor: number }>;
 };
 
@@ -43,8 +46,13 @@ export type CashflowResult = {
     // number | null | undefined: snapshots antigos persistidos têm number; os novos, null.
     prazo_medio_recebimento: number | null;
     prazo_medio_pagamento: number | null;
-    prazo_medio_estoque: number;
+    // null (engine v1.4+) sem estoque, sem os 12 meses de CMV ou com custo incompleto.
+    prazo_medio_estoque: number | null;
     cash_conversion_cycle: number | null;
+    // Fonte do estoque do PME/NCG (engine v1.4+; ausente em respostas antigas).
+    estoque_valor?: number | null;
+    estoque_fonte?: 'manual' | 'omie' | null;
+    estoque_data_ref?: string | null;
   };
   alertas: Array<{ tipo: string; severidade: string; mensagem: string; valor: number | null; threshold: number | null; contexto: Record<string, unknown> }>;
   premissas_aplicadas: Record<string, unknown>;
