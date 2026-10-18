@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **650** custom migrations totais
-- **2091** objetos esperados (criados por estas migrations)
+- **651** custom migrations totais
+- **2092** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 749
+  - `function`: 750
   - `rls_policy`: 474
   - `index`: 277
   - `cron_job`: 185
@@ -5280,6 +5280,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `table` | `public.sayerlack_varredura_visto` | — |
+
+### `20261018092000_pedido_compra_encerrado_omie.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_marcar_encerrados_omie` | — |
 
 ## Próximos passos por status
 
