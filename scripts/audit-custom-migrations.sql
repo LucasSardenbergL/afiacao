@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 651
+-- Total de custom migrations: 652
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -715,7 +715,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261016150000', 'sayerlack_varrer_pedidos_portal_cron', '20261016150000_sayerlack_varrer_pedidos_portal_cron.sql'),
   ('20261017040000', 'recebimento_associacao_sombra', '20261017040000_recebimento_associacao_sombra.sql'),
   ('20261017120000', 'sayerlack_varredura_visto', '20261017120000_sayerlack_varredura_visto.sql'),
-  ('20261018092000', 'pedido_compra_encerrado_omie', '20261018092000_pedido_compra_encerrado_omie.sql')
+  ('20261018092000', 'pedido_compra_encerrado_omie', '20261018092000_pedido_compra_encerrado_omie.sql'),
+  ('20261018120000', 'fin_ciclo_nome_cliente', '20261018120000_fin_ciclo_nome_cliente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2777,7 +2778,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_tentativa_encerrados_omie', ''),
   ('pedido_compra_encerrado_omie', 'table', 'public', 'reposicao_encerrados_omie_publicacao', ''),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
-  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao')
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
+  ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4887,7 +4889,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_tentativa_encerrados_omie', ''),
   ('pedido_compra_encerrado_omie', 'table', 'public', 'reposicao_encerrados_omie_publicacao', ''),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
-  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao')
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
+  ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', '')
 )
 SELECT
   e.migration,

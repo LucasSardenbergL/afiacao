@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **651** custom migrations totais
-- **2096** objetos esperados (criados por estas migrations)
+- **652** custom migrations totais
+- **2097** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 751
   - `rls_policy`: 476
   - `index`: 277
   - `cron_job`: 185
   - `table`: 184
-  - `view`: 114
+  - `view`: 115
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5290,6 +5290,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.reposicao_encerrados_omie_publicacao` | — |
 | `rls_policy` | `public.reposicao_encerrados_omie_publicacao_select_staff` | `reposicao_encerrados_omie_publicacao` |
 | `rls_policy` | `public.reposicao_encerrados_omie_publicacao_service_all` | `reposicao_encerrados_omie_publicacao` |
+
+### `20261018120000_fin_ciclo_nome_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_ciclo_cliente_resumo` | — |
 
 ## Próximos passos por status
 

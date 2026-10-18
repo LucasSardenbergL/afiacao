@@ -1264,7 +1264,7 @@ Deno.serve(async (req) => {
     const pularBackfill = body.pular_backfill === true;
     // Janela da revisita: a explícita (catch-up do histórico) vence a de N dias; nenhuma válida = não revisita.
     const revisitaDias = lerRevisitaDias(body.revisita_dias);
-    const janelaRevisita = apenasBackfill
+    const janelaRevisita: { dataDe: string; dataAte: string } | null = apenasBackfill
       ? null
       : lerJanelaExplicita(body.revisita_de, body.revisita_ate) ?? (revisitaDias !== null ? janelaDeDias(revisitaDias) : null);
 

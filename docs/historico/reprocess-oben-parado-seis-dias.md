@@ -193,3 +193,18 @@ independente; o challenge retroativo continua devido.
   aviso. O shell fabricou o veredito.
 - **Helper que imprime "LANCOU" para qualquer erro** aprovaria o assert que espera lançar mesmo com erro
   de digitação no SQL do teste. O certo é casar a SQLSTATE.
+
+## 2026-10-18 — strategic/inventory órfão quando products demora (v1.20)
+
+Alerta `sync_reprocess_saude` (urgente, oben): `strategic/inventory travado em running desde 16/10`
+("desde" = último sucesso, 17/10 02:31 UTC = 16/10 em SP). A órfã nasceu em 18/10 02:33:21 UTC.
+
+- **Padrão (5 órfãs, todas strategic/inventory/oben):** 22/07, 03/08, 18/08, 19/08 e 18/10 — sempre
+  às ~02:33:2x, nos dias em que `products` levou ~142-151s (normal ~70s). Os 3 estágios do
+  strategic dividem UMA invocação; com orders+products > ~180s o worker morre ao abrir inventory
+  (morte sem catch → `running` eterno). O operational/inventory (a cada 2h) seguiu completo —
+  impacto em dado ≈ zero; o dano é o alerta.
+- **Conserto:** ordem orders → **inventory** → products. Inventory leva ~6s; um products lento
+  agora só arrisca a si mesmo (e products tem seu próprio veredito no catálogo).
+- **A órfã de 18/10 não precisa de UPDATE:** o check usa a última TENTATIVA vs o último RESULTADO;
+  o próximo strategic/inventory `complete` (mais novo que a órfã) volta o veredito a `ok`.

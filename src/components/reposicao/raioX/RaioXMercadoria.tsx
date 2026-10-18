@@ -1,12 +1,14 @@
+import { useMemo } from 'react';
 import type { DecisaoRow, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import { fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
 import { RaioXLista } from './RaioXLista';
-import { colValor, rotuloDestino, textoVenda, type Coluna } from './RaioXLinha';
+import { colDecidir, colValor, rotuloDestino, textoVenda, type Coluna } from './RaioXLinha';
 
-const colunas: Coluna[] = [
+const colunasBase: Coluna[] = [
   colValor,
   { titulo: 'Saldo', className: 'text-right', render: (i) => `${i.saldo} ${i.unidade_estoque ?? ''}`.trim() },
   { titulo: 'Venda 12m', render: (i) => textoVenda(i) },
-  { titulo: 'Fornecedor', render: (i, d) => d?.fornecedor_informado || i.fornecedor || '—' },
+  { titulo: 'Fornecedor', render: (i, d) => fornecedorEfetivo(i, d) ?? '—' },
   {
     titulo: 'Destino',
     render: (i, d) => {
@@ -16,7 +18,12 @@ const colunas: Coluna[] = [
   },
 ];
 
-/** Segmento 1: mercadoria parada, por R$. Somente leitura (decidir é o PR 3). */
-export function RaioXMercadoria({ itens, decisoes }: { itens: ItemRaioX[]; decisoes: Map<number, DecisaoRow> }) {
+/** Segmento 1: mercadoria parada, por R$. "Decidir" abre o Sheet de decisão. */
+export function RaioXMercadoria({ itens, decisoes, onDecidir }: {
+  itens: ItemRaioX[];
+  decisoes: Map<number, DecisaoRow>;
+  onDecidir: (i: ItemRaioX) => void;
+}) {
+  const colunas = useMemo(() => [...colunasBase, colDecidir(onDecidir)], [onDecidir]);
   return <RaioXLista itens={itens} decisoes={decisoes} colunas={colunas} />;
 }
