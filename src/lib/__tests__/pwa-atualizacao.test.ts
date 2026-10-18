@@ -413,7 +413,18 @@ describe('em que build estou (menu do usuário)', () => {
   };
 
   it('mostra o hash curto, no mesmo eixo do build_id/telemetria_probes', () => {
-    expect(descreverEstadoAtualizacao(base)).toEqual({ build: '92kmkUxx', situacao: 'em dia' });
+    expect(descreverEstadoAtualizacao(base)).toEqual({ versao: '92kmkUxx', build: '92kmkUxx', situacao: 'em dia' });
+  });
+
+  it('com carimbo, a VERSÃO é a data/hora de Brasília (legível e ordenada); o hash fica à parte', () => {
+    const d = descreverEstadoAtualizacao({ ...base, buildEm: '2026-10-18T17:54:02.494Z' });
+    expect(d.versao).toBe('18/10 14:54');
+    expect(d.build).toBe('92kmkUxx');
+  });
+
+  it('desatualizado mostra a VERSÃO do servidor quando ele tem carimbo', () => {
+    const d = descreverEstadoAtualizacao({ ...base, buildServidor: 'index-CnZTQjW3', buildServidorEm: '2026-10-18T17:54:02.494Z' });
+    expect(d.situacao).toBe('desatualizado (servidor: 18/10 14:54)');
   });
 
   it('"em dia" com o servidor em outro build vira "desatualizado" — nunca mente', () => {
