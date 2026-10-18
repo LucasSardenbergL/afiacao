@@ -32,7 +32,6 @@ describe('RaioXCaixaLiberado', () => {
     expect(valorDe(/^Liquidado/)).toContain(reais(300));
     expect(valorDe(/^Trocado/)).toContain(reais(300));
     expect(screen.getByText(/de R\$ 60\.000/).parentElement!.textContent).toContain(reais(1100));
-    expect(screen.getByText(/de R\$ 60\.000/)).toBeTruthy();
     expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('60000');
     fireEvent.click(screen.getByRole('button', { name: /A2/ }));
     expect(onFiltrarSku).toHaveBeenCalledWith(2);
@@ -69,6 +68,27 @@ describe('RaioXCaixaLiberado', () => {
     render(<RaioXCaixaLiberado linhas={undefined} isLoading={false} erro={new Error('boom')} empresa="oben" codigos={codigos} onFiltrarSku={vi.fn()} />);
     expect(screen.getByRole('alert').textContent).toMatch(/Não foi possível medir/);
     expect(screen.queryByText(/R\$\s*0/)).toBeNull();
+  });
+
+  it('ausente ≠ zero: SKUs sem medição e sem custo não viram "R$ 0 na foto"', () => {
+    const linhas = [
+      linha(1, { saldo_atual: null, foto_valor: null }),
+      linha(2, { saldo_atual: null, foto_valor: null }),
+    ];
+    render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={vi.fn()} />);
+    const aviso = screen.getByText(/sem medição/).textContent ?? '';
+    expect(aviso).toContain('2 sem custo');
+    expect(aviso).not.toContain('R$');
+  });
+
+  it('sem medição com custo mostra o R$ da foto e soma à parte os sem custo', () => {
+    const linhas = [
+      linha(1, { saldo_atual: null, foto_valor: 1000 }),
+      linha(2, { saldo_atual: null, foto_valor: null }),
+    ];
+    render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={vi.fn()} />);
+    const aviso = screen.getByText(/sem medição/).textContent ?? '';
+    expect(aviso).toMatch(/R\$\s*1\.000 na foto, mais 1 sem custo/);
   });
 
   it('ausente ≠ zero: sem permissão de compras, recomprado vira "—"', () => {

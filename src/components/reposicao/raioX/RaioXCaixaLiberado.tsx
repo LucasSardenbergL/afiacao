@@ -21,6 +21,13 @@ interface Props {
 // Ausente ≠ zero: null vira "—", nunca "R$ 0".
 const fmt = (v: number | null): string => (v === null ? SEM_DADO : fmtReais(v));
 
+// Só há R$ a mostrar se algum SKU sem medição tem custo; senão "R$ 0 na foto" seria ausente virando zero.
+function semMedicaoDetalhe(total: number, semCusto: number, valor: number): string {
+  const comCusto = total - semCusto;
+  if (comCusto === 0) return `${semCusto} sem custo`;
+  return semCusto > 0 ? `${fmtReais(valor)} na foto, mais ${semCusto} sem custo` : `${fmtReais(valor)} na foto`;
+}
+
 function Linha({ rotulo, valor, nota }: { rotulo: string; valor: number | null; nota?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -89,8 +96,8 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
 
       {m.sem_medicao.length > 0 && (
         <p role="status" className="text-xs text-status-warning">
-          {m.sem_medicao.length} SKU(s) sem medição ({fmtReais(m.sem_medicao_valor)} na foto
-          {m.sem_medicao_sem_custo_n > 0 ? `, mais ${m.sem_medicao_sem_custo_n} sem custo` : ''}) — os números acima são piso.
+          {m.sem_medicao.length} SKU(s) sem medição ({semMedicaoDetalhe(m.sem_medicao.length, m.sem_medicao_sem_custo_n, m.sem_medicao_valor)}) — os
+          números acima são piso.
         </p>
       )}
 

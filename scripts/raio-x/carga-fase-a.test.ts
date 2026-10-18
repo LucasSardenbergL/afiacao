@@ -45,7 +45,7 @@ describe('gerarCarga', () => {
       `  ('oben', 1000, 'trocar', '${UID}'::uuid, '2026-10-15T08:39:39.000Z'::timestamptz, 10::numeric, 2.5::numeric, 25::numeric, 'Tinta água_2-x', '2026-10-15 00:00 America/Sao_Paulo'::timestamptz, 'artifact_fase_a', false),`,
     );
     expect(sql).toContain('on conflict do nothing;');
-    expect(sql).toMatch(/<> 17 then/);
+    expect(sql).toMatch(/is distinct from 17 then/);
     expect(sql).not.toMatch(/^\s*(begin|commit|rollback|start transaction)\s*;/im);
     expect(sql.split('\n').some((l) => l.startsWith('\\'))).toBe(false);
     expect(sql.trimEnd().split('\n').pop()).toBe('-- CARGA-FASE-A-OK');
@@ -66,8 +66,8 @@ describe('gerarCarga', () => {
     expect(sql).toContain('POSTCONDICAO_TUPLAS');
     expect(sql).toContain('POSTCONDICAO_ORIGEM');
     expect(sql).toMatch(/where origem = 'artifact_fase_a';/);
-    expect(sql).toContain('if v_exato <> 17 then');
-    expect(sql).toContain('if v_total <> 17 then');
+    expect(sql).toContain('if v_exato is distinct from 17 then');
+    expect(sql).toContain('if v_total is distinct from 17 then');
   });
 
   it('contagem esperada divergente aborta', () => {

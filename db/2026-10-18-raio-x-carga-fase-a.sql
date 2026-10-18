@@ -52,11 +52,11 @@ begin
      and d.foto_categoria is not distinct from e.categoria
      and d.foto_em is not distinct from e.foto_em
      and d.tirou_do_motor is not distinct from e.tirou;
-  if v_exato <> 17 then
+  if v_exato is distinct from 17 then
     raise exception 'POSTCONDICAO_TUPLAS: esperado 17 linhas identicas as tuplas da carga, achei %', v_exato;
   end if;
   select count(*) into v_total from raio_x_decisao where origem = 'artifact_fase_a';
-  if v_total <> 17 then
+  if v_total is distinct from 17 then
     raise exception 'POSTCONDICAO_ORIGEM: esperado 17 linhas com origem artifact_fase_a (todas as empresas), achei %', v_total;
   end if;
 end $$;

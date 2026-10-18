@@ -55,10 +55,10 @@ export function RaioXTab() {
   const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
-  // Contradição clicável: lista de mercadoria filtrada pelo SKU (via a busca por código, que já vive na URL).
+  // Contradição clicável: lista de mercadoria filtrada pelo SKU exato (`rxSku` na URL — nunca a busca por código, que é substring).
   const filtrarSku = useCallback(
     (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
-    [codigos, setF],
+    [setF],
   );
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
