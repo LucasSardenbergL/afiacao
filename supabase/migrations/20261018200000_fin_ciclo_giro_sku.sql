@@ -129,7 +129,10 @@ BEGIN
   END IF;
 
   RETURN QUERY
-    WITH base AS (
+    -- MATERIALIZED em tudo que é lido por junção: v_pcp_malha_oben custa ~250 ms POR avaliação e,
+    -- embutida num EXISTS correlacionado, era reavaliada por linha (medido em prod 2026-10-18:
+    -- 2,5 s → timeout na forma correlacionada; 0,56 s materializada).
+    WITH base AS MATERIALIZED (
       SELECT ip.omie_codigo_produto AS cod, op.codigo, op.descricao, op.tipo_produto, op.familia,
              op.unidade, ip.saldo, ip.cmc,
              public._fin_estoque_classe(op.tipo_produto, op.familia) AS classe,
@@ -140,41 +143,52 @@ BEGIN
         LEFT JOIN public.omie_products op ON op.id = ip.product_id
        WHERE ip.account = v_account AND ip.saldo > 0
     ),
-    dem AS (
+    dem AS MATERIALIZED (
       SELECT d.sku_codigo_omie AS cod,
              sum(d.quantidade) FILTER (WHERE d.data_emissao >= v_hoje - 365) AS qtd,
              max(d.data_emissao) AS ultima
         FROM public.v_sku_demanda_efetiva d
        WHERE v_motivo IS NULL AND d.empresa = v_empresa
-         AND d.sku_codigo_omie IN (SELECT b.cod FROM base b)
        GROUP BY d.sku_codigo_omie
     ),
-    malha_divergente AS (
-      SELECT DISTINCT mo.comp_oben AS cod
+    malha_un AS MATERIALIZED (
+      SELECT mo.comp_oben AS cod, upper(trim(mo.unidade)) AS un
         FROM public.v_pcp_malha_oben mo
-        JOIN base b ON b.cod = mo.comp_oben
-       WHERE v_empresa = 'OBEN'
-         AND upper(trim(mo.unidade)) IS DISTINCT FROM upper(trim(b.unidade))
+       WHERE v_motivo IS NULL AND v_empresa = 'OBEN'
+    ),
+    malha_divergente AS MATERIALIZED (
+      SELECT DISTINCT m.cod FROM malha_un m JOIN base b ON b.cod = m.cod
+       WHERE m.un IS DISTINCT FROM upper(trim(b.unidade))
+    ),
+    cold AS MATERIALIZED (
+      SELECT DISTINCT sp.sku_codigo_omie AS cod FROM public.sku_parametros sp
+       WHERE sp.empresa = v_empresa AND sp.parametro_cold_start IS TRUE
+    ),
+    subst AS MATERIALIZED (
+      SELECT DISTINCT ss.sku_codigo_antigo AS cod_txt FROM public.sku_substituicao ss
+       WHERE ss.empresa = v_empresa AND ss.status = 'aplicada' AND ss.acao_parametros = 'consolidar_demanda'
+    ),
+    recente AS MATERIALIZED (
+      SELECT DISTINCT cl.omie_codigo_produto AS cod FROM public.cmc_ledger cl
+       WHERE cl.account = v_account
+         AND cl.observed_at >= ((v_hoje - c_compra_recente_dias)::timestamp AT TIME ZONE 'America/Sao_Paulo')
     ),
     linha AS (
       SELECT b.*,
              CASE WHEN b.classe <> 'giro' THEN 'fora_do_giro'
                   WHEN v_motivo IS NOT NULL THEN v_motivo
-                  WHEN EXISTS (SELECT 1 FROM malha_divergente m WHERE m.cod = b.cod) THEN 'unidade_divergente'
+                  WHEN md.cod IS NOT NULL THEN 'unidade_divergente'
              END AS mot_consumo,
              dm.qtd, dm.ultima,
-             EXISTS (SELECT 1 FROM public.sku_parametros sp
-                      WHERE sp.empresa = v_empresa AND sp.sku_codigo_omie = b.cod
-                        AND sp.parametro_cold_start IS TRUE) AS cold_start,
-             EXISTS (SELECT 1 FROM public.sku_substituicao ss
-                      WHERE ss.empresa = v_empresa AND ss.sku_codigo_antigo = b.cod::text
-                        AND ss.status = 'aplicada' AND ss.acao_parametros = 'consolidar_demanda') AS substituido,
-             EXISTS (SELECT 1 FROM public.cmc_ledger cl
-                      WHERE cl.account = v_account AND cl.omie_codigo_produto = b.cod
-                        AND (cl.observed_at AT TIME ZONE 'America/Sao_Paulo')::date
-                            >= v_hoje - c_compra_recente_dias) AS compra_recente
+             (co.cod IS NOT NULL) AS cold_start,
+             (su.cod_txt IS NOT NULL) AS substituido,
+             (re.cod IS NOT NULL) AS compra_recente
         FROM base b
         LEFT JOIN dem dm ON dm.cod = b.cod
+        LEFT JOIN malha_divergente md ON md.cod = b.cod
+        LEFT JOIN cold co ON co.cod = b.cod
+        LEFT JOIN subst su ON su.cod_txt = b.cod::text
+        LEFT JOIN recente re ON re.cod = b.cod
     ),
     calc AS (
       SELECT l.*,

@@ -306,7 +306,7 @@ sabotar "8 sem gate de frescor" \
   "s/ELSIF v_max < v_hoje - c_fonte_max_atraso_dias THEN/ELSIF false THEN/" \
   "fonte desatualizada"
 sabotar "9 sem unidade divergente" \
-  "s/AND upper(trim(mo.unidade)) IS DISTINCT FROM upper(trim(b.unidade))/AND false/" \
+  "s/WHERE m.un IS DISTINCT FROM upper(trim(b.unidade))/WHERE false/" \
   "sku 1013"
 sabotar "10 valor_giro com coalesce 0" \
   "s/      sum(saldo \* cmc) FILTER (WHERE classe = 'giro' AND cmc > 0),/      coalesce(sum(saldo * cmc) FILTER (WHERE classe = 'giro' AND cmc > 0), 0),/" \
