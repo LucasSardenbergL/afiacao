@@ -36,8 +36,10 @@ SLUG="importar-nfe-recebimento"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 WORK="$(dirname "$DATA")/work"; mkdir -p "$WORK"
 export LC_ALL=C LANG=C
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 [ -f "$SQL_REAL" ] || { echo "INFRA: SQL ausente em $SQL_REAL"; exit 3; }
+# shellcheck disable=SC2329  # invocada pelo trap EXIT abaixo
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
