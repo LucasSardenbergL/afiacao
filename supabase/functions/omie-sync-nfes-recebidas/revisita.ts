@@ -114,10 +114,11 @@ const DATA_BR = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 function isoDeBR(d: string): string | null {
   const m = d.match(DATA_BR);
   if (!m) return null;
-  const iso = `${m[3]}-${m[2]}-${m[1]}`;
-  const t = new Date(`${iso}T00:00:00Z`);
+  const [dia, mes, ano] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(ano, mes - 1, dia));
   // Rejeita data inexistente (31/02 rola para março no Date): a volta tem de bater.
-  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === iso ? iso : null;
+  if (t.getUTCFullYear() !== ano || t.getUTCMonth() !== mes - 1 || t.getUTCDate() !== dia) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
 /**
