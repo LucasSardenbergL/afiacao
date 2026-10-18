@@ -175,7 +175,9 @@ export function custoDoPrazo(titulos: TituloCp[], resumo: ResumoFornecedor, hoje
   for (const t of titulos) {
     if (t.situacao !== 'paga' || t.vencimento < regimeInicio || !t.dataBaixaConfiavel) continue;
     if (t.descontoInformado === null || t.atrasoBaixa === null) continue;
-    const perdido = Math.max(taxa * (t.valorPagoPrincipal ?? t.valor) - t.descontoInformado, 0);
+    // Centavo por título: a taxa observada (mediana de razões) carrega resíduo binário — 0,0200002 × base − desconto
+    // cheio dava R$ 0,0015 e punha a Sayerlack na fila com "R$ 0" (pré-voo em prod, 2026-10-18).
+    const perdido = Math.max(Math.round((taxa * (t.valorPagoPrincipal ?? t.valor) - t.descontoInformado) * 100) / 100, 0);
     if (!pagoEmDia(t)) perdidoAtraso += perdido;
     else perdidoEmDiaSemDesconto += perdido;
   }

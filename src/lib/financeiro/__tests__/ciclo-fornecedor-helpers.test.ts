@@ -226,3 +226,12 @@ describe('revisão final — vencimento em fim de semana', () => {
     expect(c.perdidoEmDiaSemDesconto).toBeCloseTo(20, 6);
   });
 });
+
+describe('pré-voo prod — resíduo de ponto flutuante', () => {
+  it('desconto que bate com a taxa até o centavo não vira R$ perdido (Sayerlack: 0,0015)', () => {
+    // taxa observada levemente acima de 2% (19,99/999,5 etc.) e título atrasado com o desconto cheio arredondado
+    const regime = [1, 2, 3, 4, 5, 6].map((i) => pago(i, `2026-08-${String(i * 4).padStart(2, '0')}`, { descontoInformado: 20.0001 }));
+    const c = custoDoPrazo([...regime, pago(40, '2026-09-10', { atrasoBaixa: 3, descontoInformado: 20 })], resumoBase, HOJE);
+    expect(c.perdidoAtraso).toBe(0);
+  });
+});
