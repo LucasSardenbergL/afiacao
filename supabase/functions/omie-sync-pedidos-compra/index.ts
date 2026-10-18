@@ -1398,6 +1398,6 @@ Deno.serve(async (req) => {
   // request ativa o runtime faz EarlyDrop do worker ~50s depois — matava a passada de encerrados no meio
   // (manter-vivo.ts). O MESMO promise vai para o waitUntil: o worker vive até o fim, a resposta segue no fim.
   const trabalho = processarTudo();
-  if (!segurarWorker(trabalho)) console.warn("[sync-pedidos] EdgeRuntime.waitUntil AUSENTE — worker não segurado (EarlyDrop possível)");
+  if (!segurarWorker(trabalho)) console.warn("[sync-pedidos] waitUntil do runtime AUSENTE — worker não segurado (EarlyDrop possível)");
   return await responderSincrono(trabalho);
 });
