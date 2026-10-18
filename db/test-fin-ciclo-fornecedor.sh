@@ -135,6 +135,50 @@ BEGIN
     ('oben',77,h-50,'S',1000,'CONTA_CORRENTE_PAG','BAXP',1003,now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,557,NULL,now()),
     -- 1004: ATRASADO com resumo lido: nada pago, 500 em aberto.
     ('oben',77,h-21,'S',0,'CONTA_A_PAGAR','COMP',1004,now(),0,0,0,0,0,500,false,500,NULL,NULL,now());
+
+  -- ── T2: fatos de compras ──────────────────────────────────────────────────────────────
+  -- 1005: PAGO só com data_movimento do título (sem dDtPagamento) → data incerta.
+  -- 1006: PAGO só com a liquidação CC → data incerta.
+  -- 1007: prazo concedido NEGATIVO (vencimento antes da emissão), pago no vencimento.
+  -- 1010/1011: ATRASADO com BAXP parcial (400 de 1000): a vencer (h+5) e vencido (h-5).
+  -- 1012: A VENCER puro. 1013: status fora do vocabulário.
+  INSERT INTO fin_contas_pagar VALUES
+    ('oben',1005,900,'','D5','',h-80,h-70,2000,2000,'PAGO','2.01.01'),
+    ('oben',1006,900,'','D6','',h-90,h-80,3000,3000,'PAGO','2.01.01'),
+    ('oben',1007,900,'','D7','',h-60,h-65,800,800,'PAGO','2.01.01'),
+    ('oben',1010,900,'','D10','',h-20,h+5,1000,1000,'ATRASADO','2.01.01'),
+    ('oben',1011,900,'','D11','',h-35,h-5,1000,1000,'ATRASADO','2.01.01'),
+    ('oben',1012,900,'','D12','',h-2,h+10,700,700,'A VENCER','2.01.01'),
+    ('oben',1013,900,'','D13','',h-30,h-20,90,90,'XPTO','2.01.01');
+  INSERT INTO fin_movimentacoes (company, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, natureza,
+      omie_codigo_lancamento, resumo_val_pago, resumo_val_liquido, resumo_desconto, resumo_juros,
+      resumo_multa, resumo_val_aberto, resumo_liquidado, valor_titulo, omie_ncodbaixa, data_pagamento_omie, resumo_lido_em) VALUES
+    ('oben',77,h-70,'S',2000,'CONTA_A_PAGAR','COMP',1005,2000,2000,0,0,0,0,true,2000,NULL,NULL,now()),
+    ('oben',77,h-72,'S',2000,'CONTA_CORRENTE_PAG','BAXP',1005,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,558,NULL,now()),
+    ('oben',77,h-79,'S',3000,'CONTA_CORRENTE_PAG','BAXP',1006,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,559,NULL,now()),
+    ('oben',77,h-65,'S',800,'CONTA_A_PAGAR','COMP',1007,800,800,0,0,0,0,true,800,NULL,h-65,now()),
+    ('oben',77,h-65,'S',800,'CONTA_CORRENTE_PAG','BAXP',1007,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,560,NULL,now()),
+    ('oben',77,h-3,'S',400,'CONTA_A_PAGAR','COMP',1010,400,400,0,0,0,600,false,1000,NULL,h-3,now()),
+    ('oben',77,h-3,'S',400,'CONTA_CORRENTE_PAG','BAXP',1010,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,561,NULL,now()),
+    ('oben',77,h-8,'S',400,'CONTA_A_PAGAR','COMP',1011,400,400,0,0,0,600,false,1000,NULL,h-8,now()),
+    ('oben',77,h-8,'S',400,'CONTA_CORRENTE_PAG','BAXP',1011,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,562,NULL,now());
+  -- Universo: códigos que mudam de significado entre empresas + sem categoria.
+  INSERT INTO fin_contas_pagar VALUES
+    ('colacor',2001,950,'','C1','',h-40,h-10,1000,1000,'A VENCER','2.01.99'),  -- imobilizado na colacor: FORA
+    ('colacor',2002,951,'','C2','',h-40,h+10,2500,2500,'A VENCER','2.01.97'),  -- MP importada: DENTRO
+    ('oben',2003,952,'','O3','',h-40,h+10,4000,4000,'A VENCER','2.01.97'),     -- 2.01.97 na oben: FORA
+    ('oben',2004,953,'','O4','',h-40,h+10,300,300,'A VENCER',''),              -- sem categoria
+    ('oben',2005,954,'','O5','',h-40,h+10,5000,5000,'A VENCER','2.05.03');     -- empréstimo: FORA (e fora do sensor 2.01)
+  -- Nomes: 900 = pedidos de compra (10 pedidos — não pode multiplicar); 901 = cadastro Omie (fantasia
+  -- vazia → razão); 902 = só o cache; 903 = nenhum.
+  INSERT INTO purchase_orders_tracking SELECT 'OBEN', 900, 'RENNER SAYERLACK S/A' FROM generate_series(1,10);
+  INSERT INTO purchase_orders_tracking VALUES ('OBEN', 901, '  ');
+  INSERT INTO fin_contas_pagar VALUES
+    ('oben',3001,901,'','N1','',h-40,h+10,100,100,'A VENCER','2.01.02'),
+    ('oben',3002,902,'','N2','',h-40,h+10,100,100,'A VENCER','2.01.03'),
+    ('oben',3003,903,'','N3','',h-40,h+10,100,100,'A VENCER','2.01.04');
+  INSERT INTO omie_clientes_nao_vinculados VALUES ('oben',901,'RAZAO NOVECENTOS E UM','   '), ('colacor',902,'OUTRA EMPRESA','X');
+  INSERT INTO fornecedor_omie_cache VALUES ('oben',902,'CACHE NOVECENTOS E DOIS'), ('oben',902,'CACHE NOVECENTOS E DOIS');
 END $f$;
 SQL
 }
@@ -164,6 +208,39 @@ suite() {
       "500.00|ATRASADO" "encargos aberto informado em titulo ATRASADO"
   okp "SELECT has_table_privilege('authenticated','$ENC','SELECT')::text||has_table_privilege('anon','$ENC','SELECT')::text" \
       "falsefalse" "encargos sem SELECT direto para authenticated e anon"
+
+  # ── fatos (T2) ────────────────────────────────────────────────────────────────────────
+  local TIT="public.v_ciclo_cp_titulos" RES="public.v_ciclo_fornecedor_resumo"
+  local H; H="$(Pq -c "SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date")"
+  # Fixture nao vacua: as views tem de ter linhas, senao toda igualdade abaixo prova nada.
+  okp "SELECT (SELECT count(*) FROM $TIT) >= 12 AND (SELECT count(*) FROM $RES) >= 5" "t" "fatos fixture nao vacua"
+  okp "SELECT string_agg(omie_codigo_lancamento::text, ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE company='colacor' OR omie_codigo_lancamento IN (2003,2004,2005)" \
+      "2002" "fatos universo por (empresa, codigo): 2.01.99 colacor fora, 2.01.97 so colacor"
+  okp "SELECT situacao||'|'||dias_atraso_baixa||'|'||prazo_real_dias||'|'||data_baixa_confiavel||'|'||coalesce(valor_aberto::text,'NULL') FROM $TIT WHERE omie_codigo_lancamento=1002" \
+      "paga|0|11|true|NULL" "fatos CC D+1 nao e atraso; PAGO com saldo cheio nao vira aberto"
+  okp "SELECT string_agg(omie_codigo_lancamento||':'||data_baixa_confiavel||':'||coalesce(dias_atraso_baixa::text,'NULL')||':'||coalesce(prazo_real_dias::text,'NULL'), ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE omie_codigo_lancamento IN (1005,1006)" \
+      "1005:false:NULL:NULL,1006:false:NULL:NULL" "fatos so titulo_data_movimento ou so CC = data incerta"
+  okp "SELECT prazo_concedido_dias||'|'||situacao FROM $TIT WHERE omie_codigo_lancamento=1007" "-5|paga" "fatos prazo negativo entra"
+  okp "SELECT string_agg(omie_codigo_lancamento||':'||situacao||':'||coalesce(valor_aberto::text,'')||':'||coalesce(fonte_valor_aberto,''), ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE omie_codigo_lancamento IN (1004,1010,1011,1012,1013)" \
+      "1004:vencida_aberta:500.00:omie_resumo,1010:paga_parcial:600.00:omie_resumo,1011:paga_parcial:600.00:omie_resumo,1012:a_vencer:700:valor_titulo,1013:status_ambiguo::" \
+      "fatos situacoes de aberto, parcial e ambiguo"
+  local R900="FROM $RES WHERE company='oben' AND omie_codigo_fornecedor=900"
+  okp "SELECT nome_fornecedor||'|'||fonte_nome $R900" "RENNER SAYERLACK S/A|pedido_compra" "fatos nome por pedido de compra"
+  okp "SELECT compras_12m = (SELECT sum(valor_documento) FROM fin_contas_pagar WHERE company='oben' AND omie_codigo_cliente_fornecedor=900 AND status_titulo <> 'CANCELADO' AND data_emissao >= '$H'::date-365 AND data_emissao < '$H'::date) $R900" \
+      "t" "fatos nome nao multiplica compras_12m (10 pedidos)"
+  okp "SELECT count(*) FROM $RES WHERE company='oben' AND omie_codigo_fornecedor=900" "1" "fatos uma linha por fornecedor"
+  # Pagas de 900: 1001 (17261.40, divergente), 1002 (5958.04, alta), 1003 (1000, sem resumo),
+  # 1005 (2000, data incerta), 1006 (3000, data incerta), 1007 (800). 1003 tem so a data do titulo → incerta.
+  okp "SELECT valor_pago||'|'||valor_pago_em_dia||'|'||valor_pago_atrasado||'|'||valor_pago_data_incerta||'|'||n_prazo_negativo $R900" \
+      "30019.44|24019.44|0|6000|1" "fatos denominadores de pontualidade"
+  okp "SELECT valor_pago_conf_decisao||'|'||desconto_obtido_12m||'|'||n_titulos_com_desconto $R900" \
+      "8758.04|119.16|2" "fatos resumo NULL e divergente fora da decisao; evidencia conta os 2"
+  okp "SELECT valor_vencido_aberto||'|'||n_vencidas||'|'||valor_a_vencer||'|'||n_status_ambiguo $R900" \
+      "1100.00|2|1300.00|1" "fatos remanescente do parcial pelo vencimento"
+  okp "SELECT string_agg(omie_codigo_fornecedor||':'||coalesce(nome_fornecedor,'NULL')||':'||coalesce(fonte_nome,'NULL'), ',' ORDER BY omie_codigo_fornecedor) FROM $RES WHERE company='oben' AND omie_codigo_fornecedor IN (901,902,903)" \
+      "901:RAZAO NOVECENTOS E UM:cadastro_omie,902:CACHE NOVECENTOS E DOIS:cache_fornecedor,903:NULL:NULL" "fatos cascata de nome sem fabricar"
+  okp "SELECT has_table_privilege('authenticated','$TIT','SELECT')::text||has_table_privilege('authenticated','$RES','SELECT')::text" \
+      "falsefalse" "fatos views sem SELECT direto para authenticated"
   return "$falhas"
 }
 

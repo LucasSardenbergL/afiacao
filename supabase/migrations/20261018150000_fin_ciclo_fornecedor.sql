@@ -240,4 +240,202 @@ COMMENT ON VIEW public.v_titulo_encargos_cp IS
 REVOKE ALL ON public.v_titulo_encargos_cp FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.v_titulo_encargos_cp TO service_role;
 
+-- ------------------------------------------------------------
+-- 2. Compras: universo, fatos por título e por fornecedor
+-- ------------------------------------------------------------
+-- Universo (decisão do founder, 2026-10-18): mercadoria p/ revenda, matéria-prima, frete e serviço de
+-- compra. Fora: imposto, empréstimo, folha, imobilizado, uso e consumo. Lista (empresa, código)
+-- EXPLÍCITA — o mesmo código muda de significado entre empresas (fin_categorias, medido 2026-10-18).
+CREATE OR REPLACE VIEW public.v_ciclo_cp_compras_categorias
+WITH (security_invoker = on) AS
+SELECT company, categoria_codigo
+  FROM (VALUES
+    ('colacor',    '2.01.01'), ('colacor',    '2.01.02'), ('colacor',    '2.01.03'),
+    ('colacor',    '2.01.04'), ('colacor',    '2.01.97'),
+    ('colacor_sc', '2.01.01'), ('colacor_sc', '2.01.02'), ('colacor_sc', '2.01.03'), ('colacor_sc', '2.01.04'),
+    ('oben',       '2.01.01'), ('oben',       '2.01.02'), ('oben',       '2.01.03'), ('oben',       '2.01.04')
+  ) AS l(company, categoria_codigo);
+
+-- Por parcela de compra (espelho do v_ciclo_cr_titulos). Situações:
+--   paga           : PAGO/LIQUIDADO com baixa (BAXP ou dDtPagamento), vencimento em [hoje_sp−365, hoje_sp);
+--   paga_sem_baixa : PAGO/LIQUIDADO na janela sem baixa nenhuma — só cobertura;
+--   paga_parcial   : aberto (ATRASADO/A VENCER/VENCE HOJE) com baixa ou principal pago > 0, qualquer idade —
+--                    o remanescente é vencido ou a vencer pelo VENCIMENTO;
+--   vencida_aberta : aberto sem baixa e (ATRASADO, ou vencimento < hoje_sp = lag de sync);
+--   a_vencer       : aberto sem baixa com vencimento ≥ hoje_sp;
+--   status_ambiguo : status fora do vocabulário Omie do CP — só contado.
+-- Pontualidade e prazo real SÓ com data da baixa = dDtPagamento (spec §9 #4/#6); NÃO usa v_titulo_baixas.
+-- Prazo concedido pode ser NEGATIVO (lançado depois de pago/adiantamento): entra e é contado.
+CREATE OR REPLACE VIEW public.v_ciclo_cp_titulos
+WITH (security_invoker = on) AS
+WITH base AS (
+  SELECT e.company, e.omie_codigo_cliente_fornecedor AS omie_codigo_fornecedor, e.omie_codigo_lancamento,
+         e.numero_documento, p.categoria_codigo, e.data_emissao, e.data_vencimento,
+         e.data_baixa, e.fonte_data_baixa, e.valor_documento, e.status_titulo,
+         coalesce(e.n_baixas, 0) > 0 OR e.fonte_data_baixa = 'omie_data_pagamento' AS tem_baixa,
+         e.valor_aberto_informado, e.valor_pago_principal, e.desconto_obtido, e.desconto_informado_omie,
+         e.encargo_pago, e.confianca AS confianca_encargo,
+         (e.fonte_data_baixa = 'omie_data_pagamento') AS data_baixa_confiavel,
+         (now() AT TIME ZONE 'America/Sao_Paulo')::date AS hoje_sp
+    FROM public.v_titulo_encargos_cp e
+    JOIN public.fin_contas_pagar p
+      ON p.company = e.company AND p.omie_codigo_lancamento = e.omie_codigo_lancamento
+    JOIN public.v_ciclo_cp_compras_categorias l
+      ON l.company = p.company AND l.categoria_codigo = p.categoria_codigo
+   WHERE e.valor_documento IS NOT NULL AND e.valor_documento <> 'NaN'
+     AND e.valor_documento < 'Infinity' AND e.valor_documento > 0
+     AND e.data_emissao IS NOT NULL AND e.data_vencimento IS NOT NULL
+     AND e.omie_codigo_cliente_fornecedor IS NOT NULL
+), classif AS (
+  SELECT base.*,
+    CASE
+      WHEN status_titulo IS NULL
+        OR status_titulo NOT IN ('PAGO','LIQUIDADO','A VENCER','VENCE HOJE','ATRASADO') THEN 'status_ambiguo'
+      WHEN status_titulo IN ('PAGO','LIQUIDADO') AND tem_baixa
+        AND data_vencimento >= hoje_sp - 365 AND data_vencimento < hoje_sp THEN 'paga'
+      WHEN status_titulo IN ('PAGO','LIQUIDADO') AND NOT tem_baixa
+        AND data_vencimento >= hoje_sp - 365 AND data_vencimento < hoje_sp THEN 'paga_sem_baixa'
+      WHEN status_titulo IN ('PAGO','LIQUIDADO') THEN NULL  -- fora da janela de 12m
+      WHEN tem_baixa OR coalesce(valor_pago_principal, 0) > 0 THEN 'paga_parcial'
+      WHEN status_titulo = 'ATRASADO' OR data_vencimento < hoje_sp THEN 'vencida_aberta'
+      ELSE 'a_vencer'
+    END AS situacao
+  FROM base
+)
+SELECT company, omie_codigo_fornecedor, omie_codigo_lancamento, numero_documento, categoria_codigo,
+       data_emissao, data_vencimento,
+       CASE WHEN situacao IN ('paga','paga_parcial') THEN data_baixa END AS data_baixa,
+       fonte_data_baixa,
+       (situacao = 'paga' AND data_baixa_confiavel) AS data_baixa_confiavel,
+       valor_documento,
+       CASE WHEN situacao IN ('paga_parcial','vencida_aberta','a_vencer')
+            THEN coalesce(valor_aberto_informado, valor_documento) END AS valor_aberto,
+       CASE WHEN situacao IN ('paga_parcial','vencida_aberta','a_vencer')
+            THEN CASE WHEN valor_aberto_informado IS NOT NULL THEN 'omie_resumo' ELSE 'valor_titulo' END
+       END AS fonte_valor_aberto,
+       situacao,
+       (data_vencimento - data_emissao) AS prazo_concedido_dias,
+       CASE WHEN situacao = 'paga' AND data_baixa_confiavel THEN data_baixa - data_emissao END AS prazo_real_dias,
+       CASE WHEN situacao = 'paga' AND data_baixa_confiavel THEN data_baixa - data_vencimento END AS dias_atraso_baixa,
+       CASE WHEN situacao = 'paga' THEN desconto_obtido END          AS desconto_obtido,
+       CASE WHEN situacao = 'paga' THEN desconto_informado_omie END  AS desconto_informado_omie,
+       CASE WHEN situacao = 'paga' THEN valor_pago_principal END     AS valor_pago_principal,
+       CASE WHEN situacao = 'paga' THEN encargo_pago END             AS encargo_pago,
+       confianca_encargo,
+       CASE WHEN situacao IN ('vencida_aberta','paga_parcial') AND data_vencimento < hoje_sp
+            THEN hoje_sp - data_vencimento END AS dias_vencido
+  FROM classif
+ WHERE situacao IS NOT NULL;
+
+-- Por (empresa, fornecedor). Somas de R$ ignoram NULL → são SUBTOTAIS: a cobertura
+-- (valor_pago_conf_decisao / valor_pago) vai junto e a UI nunca apresenta o subtotal como total.
+CREATE OR REPLACE VIEW public.v_ciclo_fornecedor_resumo
+WITH (security_invoker = on) AS
+WITH t AS (SELECT * FROM public.v_ciclo_cp_titulos),
+hoje AS (SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date AS h),
+pagas AS (
+  SELECT company, omie_codigo_fornecedor,
+         count(DISTINCT coalesce('d:' || numero_documento, 'l:' || omie_codigo_lancamento::text))::int AS n_documentos_pagos,
+         sum(valor_documento) AS valor_pago,
+         sum(valor_documento * prazo_concedido_dias) / sum(valor_documento) AS prazo_concedido_pond,
+         sum(valor_documento * prazo_real_dias) FILTER (WHERE data_baixa_confiavel)
+           / nullif(sum(valor_documento) FILTER (WHERE data_baixa_confiavel), 0) AS prazo_real_pond,
+         sum(valor_documento * dias_atraso_baixa) FILTER (WHERE data_baixa_confiavel)
+           / nullif(sum(valor_documento) FILTER (WHERE data_baixa_confiavel), 0) AS atraso_pond_sinal,
+         sum(valor_documento * greatest(dias_atraso_baixa, 0)) FILTER (WHERE data_baixa_confiavel)
+           / nullif(sum(valor_documento) FILTER (WHERE data_baixa_confiavel), 0) AS atraso_pond_pos,
+         count(*) FILTER (WHERE prazo_concedido_dias < 0)::int AS n_prazo_negativo,
+         coalesce(sum(valor_documento) FILTER (WHERE data_baixa_confiavel AND dias_atraso_baixa <= 0), 0) AS valor_pago_em_dia,
+         coalesce(sum(valor_documento) FILTER (WHERE data_baixa_confiavel AND dias_atraso_baixa > 0), 0) AS valor_pago_atrasado,
+         coalesce(sum(valor_documento) FILTER (WHERE NOT data_baixa_confiavel), 0) AS valor_pago_data_incerta,
+         coalesce(sum(valor_documento) FILTER (WHERE confianca_encargo IN ('alta','erp_sem_caixa','erp_nao_quitado')), 0)
+           AS valor_pago_conf_decisao,
+         sum(desconto_obtido) AS desconto_obtido_12m,
+         sum(encargo_pago) AS encargo_pago_12m,
+         count(*) FILTER (WHERE desconto_informado_omie > 0)::int AS n_titulos_com_desconto
+    FROM t WHERE situacao = 'paga'
+   GROUP BY 1, 2
+),
+abertos AS (
+  SELECT t.company, t.omie_codigo_fornecedor,
+         coalesce(sum(t.valor_aberto) FILTER (WHERE t.data_vencimento <  hoje.h), 0) AS valor_vencido_aberto,
+         count(*) FILTER (WHERE t.data_vencimento < hoje.h)::int AS n_vencidas,
+         max(t.dias_vencido) AS dias_vencido_max,
+         coalesce(sum(t.valor_aberto) FILTER (WHERE t.data_vencimento >= hoje.h), 0) AS valor_a_vencer
+    FROM t, hoje
+   WHERE t.situacao IN ('vencida_aberta', 'paga_parcial', 'a_vencer')
+   GROUP BY 1, 2
+),
+ambiguos AS (
+  SELECT company, omie_codigo_fornecedor, count(*)::int AS n_status_ambiguo
+    FROM t WHERE situacao = 'status_ambiguo' GROUP BY 1, 2
+),
+volume AS ( -- competência por EMISSÃO, mesma base válida e mesmo universo do v_ciclo_cp_titulos
+  SELECT p.company, p.omie_codigo_cliente_fornecedor AS omie_codigo_fornecedor,
+         sum(p.valor_documento) AS compras_12m, count(*)::int AS n_titulos_12m
+    FROM public.fin_contas_pagar p
+    JOIN public.v_ciclo_cp_compras_categorias l
+      ON l.company = p.company AND l.categoria_codigo = p.categoria_codigo, hoje
+   WHERE p.status_titulo IS DISTINCT FROM 'CANCELADO'
+     AND p.valor_documento IS NOT NULL AND p.valor_documento <> 'NaN'
+     AND p.valor_documento < 'Infinity' AND p.valor_documento > 0
+     AND p.data_emissao IS NOT NULL AND p.data_vencimento IS NOT NULL
+     AND p.omie_codigo_cliente_fornecedor IS NOT NULL
+     AND p.data_emissao >= hoje.h - 365 AND p.data_emissao < hoje.h
+   GROUP BY 1, 2
+),
+chaves AS (
+  SELECT company, omie_codigo_fornecedor FROM pagas
+  UNION SELECT company, omie_codigo_fornecedor FROM abertos
+  UNION SELECT company, omie_codigo_fornecedor FROM ambiguos
+  UNION SELECT company, omie_codigo_fornecedor FROM volume
+),
+-- Nome: UMA linha por (empresa, fornecedor) por fonte, agregada ANTES do join (10 pedidos não
+-- multiplicam compras — spec §9 #8). Cascata: pedido de compra → cadastro Omie → cache → NULL.
+po AS (
+  SELECT lower(empresa::text) AS company, fornecedor_codigo_omie AS omie_codigo_fornecedor,
+         max(nullif(btrim(fornecedor_nome), '')) AS nome
+    FROM public.purchase_orders_tracking GROUP BY 1, 2
+),
+nv AS (
+  SELECT empresa AS company, omie_codigo_cliente AS omie_codigo_fornecedor,
+         max(coalesce(nullif(btrim(nome_fantasia), ''), nullif(btrim(razao_social), ''))) AS nome
+    FROM public.omie_clientes_nao_vinculados GROUP BY 1, 2
+),
+fc AS (
+  SELECT empresa AS company, omie_codigo_cliente_fornecedor AS omie_codigo_fornecedor,
+         max(nullif(btrim(razao_social_omie), '')) AS nome
+    FROM public.fornecedor_omie_cache GROUP BY 1, 2
+),
+nomes AS (
+  SELECT k.company, k.omie_codigo_fornecedor,
+         coalesce(po.nome, nv.nome, fc.nome) AS nome_fornecedor,
+         CASE WHEN po.nome IS NOT NULL THEN 'pedido_compra'
+              WHEN nv.nome IS NOT NULL THEN 'cadastro_omie'
+              WHEN fc.nome IS NOT NULL THEN 'cache_fornecedor' END AS fonte_nome
+    FROM chaves k
+    LEFT JOIN po USING (company, omie_codigo_fornecedor)
+    LEFT JOIN nv USING (company, omie_codigo_fornecedor)
+    LEFT JOIN fc USING (company, omie_codigo_fornecedor)
+)
+SELECT k.company, k.omie_codigo_fornecedor, n.nome_fornecedor, n.fonte_nome,
+       vol.compras_12m, vol.n_titulos_12m,
+       p.n_documentos_pagos, p.valor_pago, p.prazo_concedido_pond, p.prazo_real_pond,
+       p.atraso_pond_sinal, p.atraso_pond_pos, p.n_prazo_negativo,
+       p.valor_pago_em_dia, p.valor_pago_atrasado, p.valor_pago_data_incerta, p.valor_pago_conf_decisao,
+       p.desconto_obtido_12m, p.encargo_pago_12m, p.n_titulos_com_desconto,
+       a.valor_vencido_aberto, a.n_vencidas, a.dias_vencido_max, a.valor_a_vencer,
+       amb.n_status_ambiguo
+  FROM chaves k
+  LEFT JOIN nomes n    USING (company, omie_codigo_fornecedor)
+  LEFT JOIN pagas p    USING (company, omie_codigo_fornecedor)
+  LEFT JOIN abertos a  USING (company, omie_codigo_fornecedor)
+  LEFT JOIN ambiguos amb USING (company, omie_codigo_fornecedor)
+  LEFT JOIN volume vol USING (company, omie_codigo_fornecedor);
+
+REVOKE ALL ON public.v_ciclo_cp_compras_categorias, public.v_ciclo_cp_titulos, public.v_ciclo_fornecedor_resumo
+  FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.v_ciclo_cp_compras_categorias, public.v_ciclo_cp_titulos, public.v_ciclo_fornecedor_resumo
+  TO service_role;
+
 COMMIT;
