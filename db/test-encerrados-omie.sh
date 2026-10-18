@@ -37,7 +37,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
     echo "vermelho como esperado: $1 ($(grep -m1 'FALHA ' "$TMPD/$1.log" || tail -1 "$TMPD/$1.log"))"
   }
-  sabota sem-fencing     's/IF FOUND AND p_seq <= v_atual.seq THEN/IF false THEN/'
+  sabota sem-fencing     's/IF FOUND AND (p_seq < v_atual.seq OR (p_seq = v_atual.seq AND/IF FOUND AND (false OR (p_seq = v_atual.seq AND/'
   sabota sem-habilitacao 's/v_habilitado := coalesce(v_atual.habilitado, false);/v_habilitado := true;/'
   sabota limpa-so-janela 's/AND NOT (t.omie_codigo_pedido = ANY (p_ids));/AND NOT (t.omie_codigo_pedido = ANY (p_ids)) AND t.data_previsao_original IS NOT NULL;/'
   sabota re-carimba      's/AND t.encerrado_omie_em IS NULL;/;/'
