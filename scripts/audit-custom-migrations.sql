@@ -2773,7 +2773,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
   ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra'),
   ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', ''),
-  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_marcar_encerrados_omie', '')
+  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_registrar_encerrados_omie', ''),
+  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_tentativa_encerrados_omie', ''),
+  ('pedido_compra_encerrado_omie', 'table', 'public', 'reposicao_encerrados_omie_publicacao', ''),
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4879,7 +4883,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
   ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra'),
   ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', ''),
-  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_marcar_encerrados_omie', '')
+  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_registrar_encerrados_omie', ''),
+  ('pedido_compra_encerrado_omie', 'function', 'public', 'reposicao_tentativa_encerrados_omie', ''),
+  ('pedido_compra_encerrado_omie', 'table', 'public', 'reposicao_encerrados_omie_publicacao', ''),
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
+  ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao')
 )
 SELECT
   e.migration,

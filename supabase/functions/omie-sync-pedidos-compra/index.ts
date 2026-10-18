@@ -457,6 +457,9 @@ async function callOmie(
   dataDe: string,
   dataAte: string,
   filtros: Readonly<Record<string, "T" | "F">> = FILTROS_TODOS,
+  // só a passada de encerrados passa (Codex 3ª rodada P2): nenhuma tentativa — 1ª, re-tentativa de timeout ou
+  // de 429 — COMEÇA sem caber inteira antes dele. O run principal segue sem deadline (ver FETCH_TIMEOUT_MS).
+  deadline?: number,
 ): Promise<OmieSearchResponse> {
   // PesquisarPedCompra NÃO suporta filtro nativo por fornecedor.
   // Filtramos pós-resposta em syncEmpresa().
@@ -481,6 +484,10 @@ async function callOmie(
   let timeouts = 0; // contador PRÓPRIO: um 429 antes não pode gastar a re-tentativa do timeout
   while (attempt < MAX_RETRIES) {
     attempt++;
+    const teto = timeouts > 0 ? FETCH_TIMEOUT_RETRY_MS : FETCH_TIMEOUT_MS;
+    if (deadline !== undefined && Date.now() + teto > deadline) {
+      throw new Error(`sem tempo para a tentativa ${attempt} da pág ${pagina} (deadline da passada)`);
+    }
     let res: Response;
     let text: string;
     try {
@@ -869,7 +876,7 @@ async function coletarEncerrados(
     await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie: a 1ª página vem logo depois da última do completo
     let resp: OmieSearchResponse;
     try {
-      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS);
+      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS, deadline);
     } catch (err) {
       const msg = mensagemDeErro(err) ?? "erro sem mensagem";
       return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} erro fetch: ${msg}`.slice(0, 200) };

@@ -107,6 +107,13 @@ evidencia_nf as (
   cross join lateral jsonb_array_elements(case when jsonb_typeof(t.raw_data->'itensRecebimento') = 'array' then t.raw_data->'itensRecebimento' else '[]' end) i
   where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.nfe_numero is not null
     and coalesce(trim(i->'itensInfoAdic'->>'nNumPedCompra'), '') <> ''
+  union
+  -- o completo reescreve raw_data das linhas positivas (some o itensRecebimento): o contrato do CABEÇALHO de
+  -- linha com NF no tracking também é evidência (Codex 3ª rodada P1)
+  select trim(t.raw_data->'cabecalho_consulta'->>'cContrato')
+  from purchase_orders_tracking t
+  where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.nfe_numero is not null
+    and coalesce(trim(t.raw_data->'cabecalho_consulta'->>'cContrato'), '') <> ''
 ),
 contratos_omie as (
   select t.omie_codigo_pedido::text as codigo, trim(t.raw_data->'cabecalho_consulta'->>'cContrato') as contrato

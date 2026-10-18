@@ -250,7 +250,8 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     expect(reenvio.tipo === 'indeterminado' && reenvio.camadas).toEqual(['compromisso_nao_conciliado']);
   });
   it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
-    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500' };
+    // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2096999' as string | null };
     const com = (extra: Partial<Fatos['disparados'][number]>, f: Partial<Fatos> = {}): Fatos => ({ ...semLinhas, disparados: [HIST, { ...P, ...extra }], ...f });
     // controle: o mesmo pedido aberto (21 dias, sem NF, acima de 10% da reserva) deixa o ciclo indeterminado
     const aberto = simularCiclo(com({ encerrado_omie: false }), 1, cfg).estado;
@@ -286,10 +287,10 @@ describe('R27 — integração da base de caixa (money-path)', () => {
       nfs_do_contrato: [{ contrato: '2096768', nf: '000888', data: '2026-10-09' }],
     }), 1, cfg).estado;
     expect(soProtocolo.tipo === 'indeterminado' && soProtocolo.camadas).toEqual(['compromisso_nao_conciliado']);
-    // R58: o disparado sem identificador Sayerlack foi refeito à mão (substituto com itens idênticos, NF pelo
-    // contrato do manual, faturada DEPOIS do ciclo) — a NF do substituto é evidência: não sai do caixa
+    // R58/Codex 3ª rodada: sem identificador Sayerlack (sem contrato, sem protocolo) nunca sai do caixa — nem
+    // com o substituto faturado (NF datada depois do ciclo), nem sem evidência nenhuma
     const itens = [{ prod: 'P1', qtde: 8 }, { prod: 'P2', qtde: 5 }];
-    const substituto = simularCiclo(com({ encerrado_omie: true }, {
+    const substituto = simularCiclo(com({ encerrado_omie: true, protocolo: null }, {
       pedidos_omie_sayerlack: [
         { codigo: '500', t1: '2026-09-10', contrato: null, do_motor: true, itens },
         { codigo: 'M', t1: '2026-09-12', contrato: 'CM', do_motor: false, itens: [...itens].reverse() },
@@ -297,6 +298,8 @@ describe('R27 — integração da base de caixa (money-path)', () => {
       nfs_do_contrato: [{ contrato: 'CM', nf: '000936384', data: '2026-10-05' }],
     }), 1, cfg).estado;
     expect(substituto.tipo === 'indeterminado' && substituto.camadas).toEqual(['compromisso_nao_conciliado']);
+    const semIdentificador = simularCiclo(com({ encerrado_omie: true, omie_pedido: null, protocolo: null }), 1, cfg).estado;
+    expect(semIdentificador.tipo === 'indeterminado' && semIdentificador.camadas).toEqual(['compromisso_nao_conciliado']);
     // Codex 2ª rodada P1: NF do protocolo sem data (fora do exportador da conciliação) e contrato de pedido Omie
     // sem itens (fora de pedidos_omie_sayerlack) também são evidência
     const semData = simularCiclo(com({ encerrado_omie: true, protocolo: '2096768' }, { evidencia_nf_contratos: ['2096768'] }), 1, cfg).estado;
