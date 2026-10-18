@@ -1,8 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
-import { materializarRecebimento } from "./importacao.ts";
-import { type ClienteRecebimentos, portaSupabase } from "./porta.ts";
+import { type ClienteRpc, importarViaRpc, registrarFalhaImportacao } from "../_shared/nfe-importacao.ts";
+import { responderDesfecho } from "./resposta.ts";
 // `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
 // lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
 // Erro determinístico no lote é o pior caso do retry: repete a mesma falha para sempre.
@@ -43,8 +43,7 @@ Deno.serve(async (req) => {
   }
 
   // ⚠️ SONDA DE VERSÃO — antes de tudo, porque daqui pra frente a edge MATERIALIZA o recebimento
-  // no nosso banco (insert em `nfe_recebimentos` + `nfe_recebimento_itens`), e a retentativa não
-  // conserta importação parcial: o guard de duplicata responde "já importada".
+  // no nosso banco (RPC `importar_nfe_recebimento`: cabeçalho + itens numa transação).
   //
   // Duas diferenças em relação às edges cujo gate já aceita cron-secret, ambas deliberadas:
   //  1. o corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real abaixo;
@@ -108,8 +107,8 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: "chave_acesso ausente no payload" }, 400);
     }
 
-    // O guard de duplicata vive em `materializarRecebimento` (importacao.ts): ele lê o cabeçalho
-    // COM a contagem de itens e completa um recebimento `pendente` que ficou sem itens — o reenvio
+    // O guard de duplicata vive na RPC `importar_nfe_recebimento` (SQL, com lock por chave): ela lê
+    // o cabeçalho COM os itens e completa um recebimento `pendente` que ficou sem itens — o reenvio
     // do Omie é o que conserta a importação que morreu no meio, em vez de escondê-la.
 
     // Parse header fields
@@ -182,9 +181,7 @@ Deno.serve(async (req) => {
         valor_total: valorTotalItem ? parseFloat(valorTotalItem) : null,
         unidade_estoque: null,
         quantidade_convertida: null,
-        quantidade_conferida: 0,
         quantidade_esperada: quantidadeEsperada,
-        status_item: "pendente",
         produto_omie_id: produtoOmieId ? parseInt(produtoOmieId) : null,
       };
     });
@@ -199,75 +196,29 @@ Deno.serve(async (req) => {
       data_emissao: dataEmissao,
       valor_total: valorTotal ? parseFloat(valorTotal) : null,
       xml_completo: xmlCompleto,
-      status: "pendente",
       omie_nfe_id: omieNfeId ? parseInt(omieNfeId) : null,
       omie_id_receb: omieIdReceb ? parseInt(omieIdReceb) : null,
     };
 
-    const resultado = await materializarRecebimento(portaSupabase(supabase as unknown as ClienteRecebimentos), {
-      chaveAcesso,
-      cabecalho,
-      itens: itensToInsert,
-    });
-
-    switch (resultado.tipo) {
-      case "ja_importada":
-        console.log("[omie-nfe-webhook] NF-e já importada:", chaveAcesso, `${resultado.itens} itens`);
-        return jsonResponse({ message: "já importada", id: resultado.id, itens_count: resultado.itens });
-      case "bloqueada":
-        // Não-2xx de propósito: 2xx manda o Omie DESCARTAR o evento, e este recebimento está sem
-        // itens. Se o lock/conferência soltar, o reenvio completa; se não, o evento vai à DLQ do
-        // Omie (5 dias) em vez de sumir — e o log diz por quê.
-        console.error("[omie-nfe-webhook] Recebimento sem itens e não reparável:", resultado.id, resultado.motivo);
-        return jsonResponse({
-          error: "NF-e já cadastrada sem itens e em uso — reenvie",
-          nfe_recebimento_id: resultado.id,
-          details: resultado.motivo,
-        }, 409);
-      case "divergente":
-        console.error(
-          `[omie-nfe-webhook] Itens divergentes para ${chaveAcesso}: ${resultado.itens} gravados, ${resultado.esperados} no payload`,
-        );
-        return jsonResponse({
-          error: "NF-e já cadastrada com número de itens diferente do payload",
-          nfe_recebimento_id: resultado.id,
-          itens_count: resultado.itens,
-          itens_payload: resultado.esperados,
-        }, 409);
-      case "erro_leitura":
-        console.error("[omie-nfe-webhook] Erro ao consultar nfe_recebimentos:", resultado.mensagem);
-        return jsonResponse({ error: "Erro ao consultar NF-e", details: resultado.mensagem }, 500);
-      case "erro_cabecalho":
-        console.error("[omie-nfe-webhook] Erro ao inserir nfe_recebimentos:", resultado.mensagem);
-        return jsonResponse({ error: "Erro ao inserir NF-e", details: resultado.mensagem }, 500);
-      case "erro_itens":
-        // 500 de propósito: o Omie reenvia, e o reenvio COMPLETA os itens deste cabeçalho.
-        console.error("[omie-nfe-webhook] Erro ao inserir itens:", resultado.mensagem);
-        return jsonResponse({
-          error: "NF-e criada mas erro ao inserir itens — o reenvio completa os itens",
-          nfe_recebimento_id: resultado.id,
-          details: resultado.mensagem,
-        }, 500);
-      case "reparada":
-        console.log(
-          `[omie-nfe-webhook] NF-e ${numeroNfe} estava sem itens; completada. ID: ${resultado.id}, ${resultado.itens} itens.`,
-        );
-        return jsonResponse({
-          success: true,
-          reparado: true,
-          nfe_recebimento_id: resultado.id,
-          itens_count: resultado.itens,
-        });
-      case "importada":
-        console.log(
-          `[omie-nfe-webhook] NF-e ${numeroNfe} importada com sucesso. ID: ${resultado.id}, ${resultado.itens} itens.`,
-        );
-        return jsonResponse({
-          success: true,
-          nfe_recebimento_id: resultado.id,
-          itens_count: resultado.itens,
-        });
-    }
+    // UMA chamada, UMA transação: cabeçalho + itens entram juntos ou nada entra (2 pareceres Codex
+    // 2026-10-18; prova em db/test-importar-nfe-recebimento.sh). Sem fallback para o caminho antigo
+    // de 2 requisições: RPC ausente é 500 nomeando a migration (deploy fora de ordem), não silêncio.
+    const cliente = supabase as unknown as ClienteRpc;
+    const desfecho = await importarViaRpc(cliente, { cabecalho, itens: itensToInsert, origem: "webhook" });
+    // Erro de DADO (NFE0x, tipo que não cabe) tem registro DURÁVEL fora da transação abortada: o
+    // Omie tenta 3× e manda à DLQ; "log alto" sozinho não é recuperação.
+    const tentativas = desfecho.tipo === "erro"
+      ? await registrarFalhaImportacao(cliente, {
+        chaveAcesso: chaveAcesso,
+        origem: "webhook",
+        erro: desfecho,
+        warehouseId: warehouse.id,
+        omieIdReceb: cabecalho.omie_id_receb,
+      })
+      : null;
+    const resposta = responderDesfecho(desfecho, chaveAcesso, tentativas);
+    console[resposta.log.nivel](`[omie-nfe-webhook] NF-e ${numeroNfe}: ${resposta.log.texto}`);
+    return jsonResponse(resposta.corpo, resposta.status);
   } catch (err) {
     console.error("[omie-nfe-webhook] Erro inesperado:", err);
     return jsonResponse({ error: "Erro interno", details: String(err) }, 500);

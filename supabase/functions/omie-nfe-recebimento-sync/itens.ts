@@ -19,8 +19,9 @@ export interface OmieRecebimentoItem {
   [key: string]: unknown;
 }
 
+/** Linha do lote para a RPC `importar_nfe_recebimento`: sem `nfe_recebimento_id` (ela carimba o
+ * cabeçalho que valer) e sem `quantidade_conferida`/`status_item` (ela força 0/pendente). */
 export interface ItemRecebimentoRow {
-  nfe_recebimento_id: string;
   sequencia: number;
   codigo_produto: string | null;
   descricao: string;
@@ -32,9 +33,7 @@ export interface ItemRecebimentoRow {
   valor_total: number | null;
   unidade_estoque: null;
   quantidade_convertida: null;
-  quantidade_conferida: number;
   quantidade_esperada: number;
-  status_item: string;
   produto_omie_id: number | null;
 }
 
@@ -58,15 +57,11 @@ export function normalizarNcm(bruto: string | null | undefined): string | null {
   return m ? `${m[1]}${m[2]}${m[3]}` : null;
 }
 
-export function mapearItensRecebimento(
-  rawItems: OmieRecebimentoItem[],
-  nfeRecebimentoId: string,
-): ItemRecebimentoRow[] {
+export function mapearItensRecebimento(rawItems: OmieRecebimentoItem[]): ItemRecebimentoRow[] {
   return rawItems.map((item, idx) => {
     const iCabec: OmieItemCabec = item.itensCabec ?? (item as unknown as OmieItemCabec);
     const quantidadeNfe = parseFloat(String(iCabec.nQtdeNFe ?? 0));
     return {
-      nfe_recebimento_id: nfeRecebimentoId,
       sequencia: iCabec.nSequencia ?? idx + 1,
       codigo_produto: iCabec.cCodigoProduto ?? null,
       descricao: iCabec.cDescricaoProduto ?? "Item",
@@ -78,9 +73,7 @@ export function mapearItensRecebimento(
       valor_total: iCabec.vTotalItem ? parseFloat(String(iCabec.vTotalItem)) : null,
       unidade_estoque: null,
       quantidade_convertida: null,
-      quantidade_conferida: 0,
       quantidade_esperada: smartRound(quantidadeNfe),
-      status_item: "pendente",
       produto_omie_id: iCabec.nIdProduto ? parseInt(String(iCabec.nIdProduto)) : null,
     };
   });
