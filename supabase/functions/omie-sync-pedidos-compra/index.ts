@@ -11,6 +11,12 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
+import {
+  decidirPublicacaoEncerrados,
+  FILTROS_SO_ENCERRADOS,
+  FILTROS_TODOS,
+  isoParaBR,
+} from "./encerrados.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
@@ -87,6 +93,17 @@ interface EmpresaSummary {
   // MOTIVO do 1º erro (página + classe), persistido no error_message do sync_state. Sem ele o marcador dizia só
   // "1 erro(s)" e o log da edge (retenção ~10 min) era a única fonte — todo episódio parcial ficou sem causa.
   primeiro_erro: string | null;
+  // R59: passada SÓ de encerrados (depois do completo limpo). Ausente = a passada não rodou neste run.
+  encerrados?: ResumoEncerrados;
+}
+
+interface ResumoEncerrados {
+  status: "publicado" | "abstencao" | "erro";
+  ids: number;            // encerrados devolvidos pelo filtro (telemetria dos controles do 1º run)
+  paginas: number;
+  novos: number | null;   // da RPC (null = não publicou)
+  limpos: number | null;
+  motivo: string | null;
 }
 
 // Sem hora/duração: o motivo entra na message do check (fingerprint do push) → texto estável por causa.
@@ -436,20 +453,16 @@ async function callOmie(
   pagina: number,
   dataDe: string,
   dataAte: string,
+  filtros: Readonly<Record<string, "T" | "F">> = FILTROS_TODOS,
 ): Promise<OmieSearchResponse> {
   // PesquisarPedCompra NÃO suporta filtro nativo por fornecedor.
   // Filtramos pós-resposta em syncEmpresa().
+  // filtros: a varredura liga os 7 (FILTROS_TODOS); a passada de encerrados (R59) liga SÓ o de encerrados.
   const param: Record<string, unknown> = {
     nPagina: pagina,
     nRegsPorPagina: PAGE_SIZE,
     lApenasImportadoApi: "F",
-    lExibirPedidosPendentes: "T",
-    lExibirPedidosFaturados: "T",
-    lExibirPedidosRecebidos: "T",
-    lExibirPedidosCancelados: "T",
-    lExibirPedidosEncerrados: "T",
-    lExibirPedidosRecParciais: "T",
-    lExibirPedidosFatParciais: "T",
+    ...filtros,
     dDataInicial: dataDe,
     dDataFinal: dataAte,
   };
@@ -552,6 +565,9 @@ const PRESERVE_FIELDS = new Set([
   // eternamente sem nunca convergir (contador de identificadas travado por dias no
   // fin_sync_log). Sem esta linha, o Sísifo volta.
   "nid_receb",
+  // R59: 1 writer — reposicao_marcar_encerrados_omie (passada de encerrados). O mapPedidoToRow não o gera;
+  // listado aqui para que nenhum upsert do espelho o regrave por engano.
+  "encerrado_omie_em",
 ]);
 
 /**
@@ -822,6 +838,111 @@ async function syncEmpresa(
   // (shape torto, nCodPed não-canônico, sobreposição, fim contraditório) já veio como anomalia → abortado.
   summary.varredura_completa = fim && !abortado;
   return summary;
+}
+
+// ===== Passada SÓ de encerrados (R59 — money-path) =====
+// O encerramento não aparece no cabeçalho (cEtapa segue "15"); o único sinal é o filtro
+// lExibirPedidosEncerrados ligado SOZINHO (encerrados.ts). Roda só depois de um completo LIMPO e
+// não-filtrado do MESMO run, na MESMA janela: o completo já upsertou todo pedido da janela (os 7
+// filtros ligados), então esta passada não escreve espelho — só coleta IDs. Mesmo parser de página
+// do completo (classificarPagina/acumularPiso: paginar até vazio, piso, sobreposição = anomalia),
+// fingerprint anti-loop e teto MAX_PAGINAS. Cota: ~1 página a mais por completo (~1×/dia).
+async function coletarEncerrados(
+  app_key: string,
+  app_secret: string,
+  dataDe: string,
+  dataAte: string,
+): Promise<{ ids: Set<number>; completa: boolean; paginas: number; motivo: string | null }> {
+  const ids = new Set<number>();
+  const fpsVistos = new Set<string>();
+  let piso: PisoTotais = PISO_ZERO;
+  for (let pagina = 1; pagina <= MAX_PAGINAS; pagina++) {
+    await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie: a 1ª página vem logo depois da última do completo
+    let resp: OmieSearchResponse;
+    try {
+      resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} erro fetch: ${msg}`.slice(0, 200) };
+    }
+    piso = acumularPiso(resp, piso);
+    const cls = classificarPagina(resp, { pagina, idsVistos: ids, piso });
+    if (cls.tipo === "anomalia") {
+      return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} anomalia: ${cls.motivo}`.slice(0, 200) };
+    }
+    if (cls.tipo === "fim") return { ids, completa: true, paginas: pagina - 1, motivo: null };
+    const fp = fingerprintPagina(cls.pedidos as OmiePedido[]);
+    if (fp && fpsVistos.has(fp)) {
+      return { ids, completa: false, paginas: pagina, motivo: `pág ${pagina} repetição de página (anti-loop)` };
+    }
+    fpsVistos.add(fp);
+    for (const id of cls.ids) ids.add(id);
+  }
+  return { ids, completa: false, paginas: MAX_PAGINAS, motivo: `excedeu ${MAX_PAGINAS} páginas sem ver fim` };
+}
+
+// Marcador 1-writer da passada: entity_type='pedidos_compra_encerrados'. last_sync_at avança SÓ quando o
+// conjunto foi PUBLICADO (é o que o backtest lê como "o sinal existe"); abstenção/erro gravam status='error'
+// com o motivo — o eixo auto-declarado do Sentinela (_data_health_compute) alerta sem editar nada.
+const HEARTBEAT_ENCERRADOS_ENTITY = "pedidos_compra_encerrados";
+
+async function passadaEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  s: EmpresaSummary,
+  idsGeral: Set<number>,
+): Promise<ResumoEncerrados> {
+  const dataDe = isoParaBR(s.janela_de);
+  const dataAte = isoParaBR(s.janela_ate);
+  let r: ResumoEncerrados;
+  if (!dataDe || !dataAte || !s.janela_de || !s.janela_ate) {
+    r = { status: "abstencao", ids: 0, paginas: 0, novos: null, limpos: null, motivo: "janela do completo ausente" };
+  } else {
+    const { app_key, app_secret } = getCredentials(empresa);
+    const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte);
+    const dec = decidirPublicacaoEncerrados({
+      completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
+    });
+    const motivoColeta = col.motivo;
+    if (dec.tipo === "abster") {
+      r = { status: "abstencao", ids: col.ids.size, paginas: col.paginas, novos: null, limpos: null, motivo: motivoColeta ?? dec.motivo };
+    } else {
+      try {
+        const { data, error } = await supabase.rpc("reposicao_marcar_encerrados_omie", {
+          p_empresa: empresa, p_ids: dec.ids, p_janela_de: s.janela_de, p_janela_ate: s.janela_ate,
+        });
+        if (error) throw error;
+        const d = (data ?? {}) as { novos?: unknown; limpos?: unknown };
+        r = {
+          status: "publicado", ids: dec.ids.length, paginas: col.paginas,
+          novos: typeof d.novos === "number" ? d.novos : null, limpos: typeof d.limpos === "number" ? d.limpos : null, motivo: null,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        r = { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc: ${msg}`.slice(0, 200) };
+      }
+    }
+  }
+  console.log(`[sync-pedidos] empresa=${empresa} encerrados ${JSON.stringify(r)}`);
+  const nowISO = new Date().toISOString();
+  const row: Record<string, unknown> = {
+    entity_type: HEARTBEAT_ENCERRADOS_ENTITY,
+    account: empresa.toLowerCase(),
+    status: r.status === "publicado" ? "complete" : "error",
+    updated_at: nowISO,
+    total_synced: r.ids,
+    error_message: r.status === "publicado" ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "—"}`,
+    metadata: { ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: nowISO },
+  };
+  if (r.status === "publicado") row.last_sync_at = nowISO;
+  try {
+    const { error } = await supabase.from("sync_state").upsert(row, { onConflict: "entity_type,account" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[sync-pedidos] heartbeat encerrados falhou empresa=${empresa}: ${msg}`);
+  }
+  return r;
 }
 
 // ===== Heartbeat do Sentinela (sync_state) =====
@@ -1170,6 +1291,15 @@ Deno.serve(async (req) => {
         } else {
           const publicou = await publicarRunCompleto(supabase, s, idsVistos, runSeq);
           if (publicou) await marcarCompletoOk(supabase, empresa);
+        }
+        // R59: passada SÓ de encerrados, só depois do completo limpo e não-filtrado (mesma janela, mesmos IDs
+        // de referência). Independe do fencing token: não publica run, só a coluna encerrado_omie_em.
+        try {
+          s.encerrados = await passadaEncerrados(supabase, empresa, s, idsVistos);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[sync-pedidos] empresa=${empresa} passada de encerrados falhou: ${msg}`);
+          s.encerrados = { status: "erro", ids: 0, paginas: 0, novos: null, limpos: null, motivo: msg.slice(0, 200) };
         }
       }
     }
