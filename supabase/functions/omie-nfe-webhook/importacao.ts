@@ -42,7 +42,7 @@ export type LeituraPorChave =
   | { tipo: "erro"; mensagem: string };
 
 export type ErroEscrita = { erro: string; code: string | null };
-export type RespostaInsertCabecalho = { id: string } | ErroEscrita;
+type RespostaInsertCabecalho = { id: string } | ErroEscrita;
 
 export interface PortaRecebimento {
   /** Cabeçalho pela chave de acesso, COM contagem de itens e sinais de uso. Ilegível → `erro`. */

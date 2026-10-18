@@ -24,7 +24,7 @@ export interface ClienteRecebimentos {
 }
 
 /** Colunas cujo NULL comprovado é condição para reparar. */
-export const SINAIS_DE_USO = ["conferente_id", "conferido_at", "efetivado_at", "efetivacao_lock_at"] as const;
+const SINAIS_DE_USO = ["conferente_id", "conferido_at", "efetivado_at", "efetivacao_lock_at"] as const;
 
 export const SELECT_CABECALHO = `id, status, ${SINAIS_DE_USO.join(", ")}, nfe_recebimento_itens(count)`;
 
