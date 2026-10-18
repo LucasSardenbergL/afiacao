@@ -3,12 +3,14 @@
 // Por quê: o encerramento NÃO aparece no cabeçalho — 1014/1049/1032, encerrados no Omie, vêm com
 // cEtapa="15" (até o webhook CompraProduto.Encerrada traz "15"). O único sinal é o filtro
 // lExibirPedidosEncerrados, que a varredura completa liga JUNTO com todos os outros e por isso não
-// distingue. Esta passada liga SÓ ele, e o conjunto vira purchase_orders_tracking.encerrado_omie_em
-// pela RPC reposicao_marcar_encerrados_omie (1 writer).
+// distingue. Esta passada liga SÓ ele, e o conjunto é registrado pela RPC
+// reposicao_registrar_encerrados_omie (1 writer de purchase_orders_tracking.encerrado_omie_em).
 //
-// ⚠️ Que o filtro sozinho devolve SÓ encerrados é hipótese até a 1ª rodada em produção com controles
-// (1014/1049 aparecem; pedido aberto de out/2026 não). As guardas abaixo não provam isso — só barram
-// a falha grosseira (filtro ignorado ⇒ tudo volta), que marcaria todo pedido como fora do caixa.
+// ⚠️ Que o filtro sozinho devolve SÓ encerrados é hipótese. Por isso a RPC só OBSERVA (registra o conjunto
+// sem tocar a coluna) até alguém ligar `habilitado` em reposicao_encerrados_omie_publicacao depois de
+// conferir os controles no conjunto observado (positivo: 1014/1049 dentro; negativo: pedido aberto de
+// out/2026 fora). As guardas abaixo não provam a semântica — barram a falha GROSSEIRA (filtro ignorado ⇒
+// tudo volta) e anomalias de coleta, nos dois modos.
 
 /** Os 7 filtros da varredura completa: todos ligados (o espelho inteiro). */
 export const FILTROS_TODOS: Readonly<Record<string, "T" | "F">> = {
@@ -51,7 +53,8 @@ export type DecisaoEncerrados =
  *   não viu é paginação/janela divergente;
  * - encerrados = completo inteiro (não-vazio): o filtro foi IGNORADO e devolveu tudo — publicar tiraria
  *   do caixa todo disparado sem NF;
- * - mais da metade do completo encerrada: implausível para o espelho de compras; abstém em vez de confiar.
+ * - mais da metade do completo encerrada: ALERTA de anomalia, não prova (Codex 2026-10-18) — abstém e o
+ *   Sentinela mostra; uma carteira legitimamente majoritária em encerrados exigiria rever este teto.
  *   Conjunto VAZIO publica: limpar marcas devolve pedidos ao caixa, o lado conservador.
  */
 export function decidirPublicacaoEncerrados(e: {

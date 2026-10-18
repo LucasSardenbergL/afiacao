@@ -29,6 +29,9 @@ export const CONFIG_PADRAO: Config = {
 /** R28/R30: idade (dias, pedido→data do ciclo) a partir da qual pedido sem NF (ou com NF sem título) deixa de ser "a faturar" — p90 medido de pedido→faturamento. */
 export const IDADE_A_FATURAR_DIAS = 15;
 
+/** R59: idade máxima (h) da última publicação de encerrados em relação ao gerado_em dos fatos — o completo roda ~1×/dia. */
+export const ENCERRADOS_IDADE_MAX_H = 48;
+
 /** Horizonte FIXO do replay do ΔDIO/caixa liberado (R25). */
 const HORIZONTE_DIO_DIAS = 30;
 
@@ -46,7 +49,7 @@ export const PREMISSAS: string[] = [
   'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
   'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
-  'disparado ENCERRADO no Omie e sem NF (nem no tracking, nem por vínculo R57/R58 em qualquer data) sai do compromisso (R59). LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
+  'disparado ENCERRADO no Omie e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador Sayerlack do pedido, em qualquer data) sai do compromisso (R59); só vale com a última passada de encerrados PUBLICADA há no máximo 48h (habilitada após os controles positivo/negativo). LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'NF de disparado sem NF no tracking (R57/R58): por contrato só se TODO identificador Sayerlack do pedido (cContrato, protocolo do portal) tem NF — reenvio sem NF pode estar em aberto; por substituto só se o pedido não tem identificador Sayerlack, o manual tem itens idênticos em até 21 dias, NF por contrato e dono fora do motor, com unicidade; a NF só vale se faturada ANTES do dia do ciclo; conciliar continua exigindo título as-of',
   'obsolescência = 0 no custo de carregamento',
@@ -61,8 +64,8 @@ type Num = number | null;
 export interface ObsLag { t1: DataISO; fim: DataISO; dias: number }
 type Saida = { data: DataISO; valor: number; id_origem?: string; origem?: string };
 export interface Fatos {
-  /** encerrados_verificado_em = last_sync_at da última passada LIMPA de encerrados do Omie (OBEN, R59); null = nunca concluiu */
-  meta: { gerado_em: string; hoje: DataISO; encerrados_verificado_em?: string | null };
+  /** R59: registro da última passada de encerrados do Omie (OBEN, reposicao_encerrados_omie_publicacao); null = nunca rodou */
+  meta: { gerado_em: string; hoje: DataISO; encerrados_publicacao?: { status: string; publicado_em: string | null } | null };
   ciclos: {
     id: number; status: string; data_ciclo: DataISO; horario_geracao: string; horario_disparo_real: string | null; valor_total: Num; omie_pedido_compra_id: string | null;
     /** R45: filhos de split (status de cada um); ausente/vazio = pedido não splitado */
@@ -164,7 +167,14 @@ export function preVoo(f: Fatos): string[] {
   if (f.cm_anual == null) falhas.push('cm_anual ausente — sem custo de capital');
   if (!Array.isArray(f.pedidos_omie_sayerlack) || !Array.isArray(f.nfs_do_contrato)) falhas.push('pedidos_omie_sayerlack/nfs_do_contrato ausentes — fatos.sql antigo (R57/R58)');
   if (f.disparados.some((p) => typeof p.encerrado_omie !== 'boolean')) falhas.push('disparados sem encerrado_omie — fatos.sql antigo (R59)');
-  else if (!f.meta.encerrados_verificado_em) falhas.push('passada de encerrados do Omie nunca concluiu (R59) — sinal ausente não é "nenhum encerrado"');
+  else {
+    // a coluna só vale como "o conjunto de agora" se a ÚLTIMA passada publicou e é recente — abstenção ou
+    // falha depois de uma publicação deixaria marca velha valendo (Codex 2026-10-18 P1)
+    const pub = f.meta.encerrados_publicacao;
+    const idadeH = pub?.publicado_em ? (ts(f.meta.gerado_em) - ts(pub.publicado_em)) / 3_600_000 : Number.NaN;
+    if (pub?.status !== 'publicado') falhas.push(`passada de encerrados do Omie não publicada (R59: ${pub?.status ?? 'nunca rodou'}) — sinal ausente não é "nenhum encerrado"`);
+    else if (!(idadeH >= 0 && idadeH <= ENCERRADOS_IDADE_MAX_H)) falhas.push(`publicação de encerrados do Omie fora de ${ENCERRADOS_IDADE_MAX_H}h (R59) — conjunto velho não vale como o de hoje`);
+  }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
   if (f.disparados.some((p) => p.valor_total == null)) falhas.push('disparados com valor_total nulo — compromissos inválidos');
@@ -252,12 +262,19 @@ export function vinculosDe(f: Fatos): Map<number, { nfs: NfVinculada[]; via: Via
 }
 
 /**
- * R59: disparado encerrado no Omie (sinal de HOJE) e sem NF nenhuma HOJE — nem no tracking, nem por vínculo
- * R57/R58 em qualquer data — não é compromisso de caixa. Com NF, houve faturamento: segue a conciliação normal.
+ * R59: disparado encerrado no Omie (sinal de HOJE) e sem NENHUMA evidência de faturamento HOJE não é
+ * compromisso de caixa. Evidência = NF no tracking, vínculo R57/R58 em qualquer data, OU qualquer NF de
+ * qualquer identificador Sayerlack do pedido (cContrato do pedido Omie, protocolo do portal): o R57 recusa
+ * vincular quando um reenvio não tem NF, mas a NF do outro identificador prova que houve faturamento
+ * (Codex 2026-10-18 P1). Com evidência, segue a conciliação normal.
  */
 export function foraDoCaixa(f: Fatos, p: Fatos['disparados'][number]): boolean {
   if (p.encerrado_omie !== true) return false;
-  return (p.nfs ?? []).length === 0 && (vinculosDe(f).get(p.id)?.nfs ?? []).length === 0;
+  if ((p.nfs ?? []).length > 0 || (vinculosDe(f).get(p.id)?.nfs ?? []).length > 0) return false;
+  const ids = new Set<string>();
+  if (p.protocolo) ids.add(p.protocolo.trim());
+  for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
+  return !(f.nfs_do_contrato ?? []).some((x) => ids.has(x.contrato.trim()));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {

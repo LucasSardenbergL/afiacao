@@ -70,7 +70,8 @@ disparados as (
          -- sem linha no tracking = não encerrado (fica no caixa: o lado conservador)
          coalesce(bool_or(t.encerrado_omie_em is not null), false) as encerrado_omie
   from pedido_compra_sugerido p
-  left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id
+  -- R59: o join casa a EMPRESA também — código homônimo da outra empresa não empresta NF nem encerramento
+  left join purchase_orders_tracking t on t.omie_codigo_pedido::text = p.omie_pedido_compra_id and upper(t.empresa::text) = upper(p.empresa)
   -- R38: 270 dias = 180 de janela de compromisso antes do ciclo mais antigo (hoje − 90)
   where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%' and p.status = 'disparado' and p.data_ciclo >= current_date - 270
   group by 1, 2, 3, p.omie_pedido_compra_id, p.portal_protocolo
@@ -142,8 +143,9 @@ custo as (
 )
 select 'json|' || jsonb_build_object(
   'meta', json_build_object('gerado_em', now(), 'hoje', (now() at time zone 'America/Sao_Paulo')::date,
-    -- R59: última passada LIMPA de encerrados (null = nunca concluiu → o preVoo recusa)
-    'encerrados_verificado_em', (select last_sync_at from sync_state where entity_type = 'pedidos_compra_encerrados' and account = 'oben')),
+    -- R59: última passada de encerrados (status publicado/observado + quando publicou); null = nunca rodou → o preVoo recusa
+    'encerrados_publicacao', (select json_build_object('status', e.status, 'publicado_em', e.publicado_em)
+                              from reposicao_encerrados_omie_publicacao e where e.empresa = 'OBEN')),
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),

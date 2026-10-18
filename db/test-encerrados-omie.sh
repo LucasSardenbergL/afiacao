@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# PROVA PG17 — reposicao_marcar_encerrados_omie (único writer de purchase_orders_tracking.encerrado_omie_em).
-# Executa a migration REAL contra um stub mínimo da tabela e afirma:
-#  • marca o conjunto, 1ª vez vista (re-rodar não move o carimbo);
-#  • limpa o reaberto SÓ com previsão dentro da janela (fora da janela/previsão nula ficam);
-#  • encerrado fora do espelho → SQLSTATE P0002 e NADA muda (atômico); nCodPed nulo/≤0 → 22023;
+# PROVA PG17 — reposicao_registrar_encerrados_omie (único writer de purchase_orders_tracking.encerrado_omie_em
+# e de reposicao_encerrados_omie_publicacao). Executa a migration REAL contra um stub mínimo e afirma:
+#  • habilitado=false (default): a passada só é OBSERVADA — registra o conjunto, a coluna não muda;
+#  • habilitado=true: marca o conjunto (1ª vez vista; re-publicar não move o carimbo) e limpa TODO o
+#    resto da empresa, inclusive marca sem cobertura (previsão nula / fora da janela);
+#  • fencing: seq ≤ o aceito é 'obsoleto' e não toca nada; o habilitado nunca é sobrescrito pela RPC;
+#  • encerrado fora do espelho → SQLSTATE P0002 e NADA muda (atômico); nCodPed nulo/≤0 ou seq ≤0 → 22023;
 #  • a outra empresa não é tocada;
-#  • ACL: anon/authenticated sem EXECUTE, service_role executa.
+#  • ACL: anon/authenticated sem EXECUTE nem UPDATE na publicação, service_role executa.
 #
 #   bash db/test-encerrados-omie.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #   bash db/test-encerrados-omie.sh --falsificar    # controle verde + cada sabotagem tem de ficar VERMELHA
@@ -35,11 +37,14 @@ if [ "${1:-}" = "--falsificar" ]; then
     fi
     echo "vermelho como esperado: $1 ($(grep -m1 'FALHA ' "$TMPD/$1.log" || tail -1 "$TMPD/$1.log"))"
   }
-  sabota sem-janela      's/AND t.data_previsao_original BETWEEN p_janela_de AND p_janela_ate/AND true/'
+  sabota sem-fencing     's/IF FOUND AND p_seq <= v_atual.seq THEN/IF false THEN/'
+  sabota sem-habilitacao 's/v_habilitado := coalesce(v_atual.habilitado, false);/v_habilitado := true;/'
+  sabota limpa-so-janela 's/AND NOT (t.omie_codigo_pedido = ANY (p_ids));/AND NOT (t.omie_codigo_pedido = ANY (p_ids)) AND t.data_previsao_original IS NOT NULL;/'
   sabota re-carimba      's/AND t.encerrado_omie_em IS NULL;/;/'
   sabota sem-ausentes    's/IF v_ausentes > 0 THEN/IF false THEN/'
   sabota sem-revoke      's/FROM PUBLIC, anon, authenticated;/FROM PUBLIC;/'
   sabota outra-empresa   's/WHERE t.empresa = p_empresa$/WHERE true/'
+  sabota sobrescreve-hab 's/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em;/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em, habilitado = false;/'
   echo "FALSIFICACAO OK"
   exit 0
 fi
@@ -67,9 +72,14 @@ ok()  { PASS=$((PASS+1)); echo "  OK $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FALHA $1"; }
 eq()  { if [ "$2" = "$3" ]; then ok "$1 (=$2)"; else bad "$1 - esperado [$3], veio [$2]"; fi; }
 
-# Supabase concede EXECUTE a anon/authenticated por DEFAULT PRIVILEGE — sem isto o REVOKE seria teatro
+# Supabase concede EXECUTE a anon/authenticated por DEFAULT PRIVILEGE — sem isto o REVOKE seria teatro.
+# E o service_role do Supabase tem BYPASSRLS (medido em prod 2026-10-18).
 P -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;"
+P -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;"
+P -c "ALTER ROLE service_role BYPASSRLS;"
 P <<'SQL'
+CREATE TYPE public.app_role AS ENUM ('employee', 'customer', 'master');
+CREATE TABLE public.user_roles (user_id uuid, role public.app_role);
 CREATE TYPE public.empresa_reposicao AS ENUM ('OBEN', 'COLACOR');
 CREATE TABLE public.purchase_orders_tracking (
   id bigserial PRIMARY KEY,
@@ -90,43 +100,65 @@ P -f "$MIG" >/dev/null
 eq "re-colar a migration é idempotente" "$(P -f "$MIG" >/dev/null 2>&1 && echo ok || echo erro)" "ok"
 
 J="'2025-10-18'::date, '2027-02-15'::date"
-run() { Pq -c "SET ROLE service_role; SELECT public.reposicao_marcar_encerrados_omie('$1', $2, $J)::text;" | tail -1; }
+run() { Pq -c "SET ROLE service_role; SELECT public.reposicao_registrar_encerrados_omie('$1', $2, $3, $J)::text;" | tail -1; }
 marcado() { Pq -c "SELECT coalesce(encerrado_omie_em::text, 'null') FROM public.purchase_orders_tracking WHERE empresa='$1' AND omie_codigo_pedido=$2;"; }
+pub() { Pq -c "SELECT coalesce((SELECT $1::text FROM public.reposicao_encerrados_omie_publicacao WHERE empresa='OBEN'), 'sem-linha');"; }
+nmarcados() { Pq -c "SELECT count(*) FROM public.purchase_orders_tracking WHERE encerrado_omie_em IS NOT NULL;"; }
 
-echo "== marca =="
-eq "1a passada marca 2 novos" "$(run OBEN "ARRAY[1014,1049]::bigint[]")" '{"novos": 2, "limpos": 0, "marcados": 2}'
+echo "== observado (habilitado=false, o default) =="
+eq "1a passada so observa" "$(run OBEN 10 "ARRAY[1049,1014]::bigint[]")" '{"novos": null, "limpos": null, "status": "observado"}'
+eq "nenhuma marca na coluna" "$(nmarcados)" "0"
+eq "conjunto observado registrado (ordenado)" "$(pub ids)" "{1014,1049}"
+eq "status observado" "$(pub status)" "observado"
+eq "publicado_em nulo" "$(pub "coalesce(publicado_em::text,'null')")" "null"
+
+echo "== habilita a mao e publica =="
+P -c "UPDATE public.reposicao_encerrados_omie_publicacao SET habilitado = true WHERE empresa='OBEN';"
+eq "publica 2 novos" "$(run OBEN 11 "ARRAY[1014,1049]::bigint[]")" '{"novos": 2, "limpos": 0, "status": "publicado"}'
 C1="$(marcado OBEN 1014)"
 [ "$C1" != "null" ] && ok "1014 carimbado" || bad "1014 nao carimbado"
-eq "pedido aberto na janela segue null" "$(marcado OBEN 2000)" "null"
+eq "pedido aberto segue null" "$(marcado OBEN 2000)" "null"
 eq "outra empresa (COLACOR 1014) intocada" "$(marcado COLACOR 1014)" "null"
+eq "habilitado preservado pela RPC" "$(pub habilitado)" "true"
 sleep 1
-eq "re-rodar nao cria novos" "$(run OBEN "ARRAY[1014,1049]::bigint[]")" '{"novos": 0, "limpos": 0, "marcados": 2}'
+eq "re-publicar nao cria novos" "$(run OBEN 12 "ARRAY[1014,1049]::bigint[]")" '{"novos": 0, "limpos": 0, "status": "publicado"}'
 eq "carimbo da 1a vez preservado" "$(marcado OBEN 1014)" "$C1"
 
-echo "== reaberto =="
+echo "== fencing =="
+eq "seq menor e obsoleto" "$(run OBEN 5 "ARRAY[2000]::bigint[]")" '{"status": "obsoleto", "seq_aceito": 12}'
+eq "seq igual e obsoleto" "$(Pq -c "SET ROLE service_role; SELECT public.reposicao_registrar_encerrados_omie('OBEN', 12, ARRAY[2000]::bigint[], $J)->>'status';" | tail -1)" "obsoleto"
+eq "obsoleto nao marca 2000" "$(marcado OBEN 2000)" "null"
+eq "obsoleto nao troca o conjunto" "$(pub ids)" "{1014,1049}"
+
+echo "== coluna = conjunto atual (limpa sem cobertura) =="
 P -c "UPDATE public.purchase_orders_tracking SET encerrado_omie_em = now() WHERE omie_codigo_pedido IN (3000, 4000) AND empresa='OBEN';"
-eq "1049 some da passada: limpo; fora da janela e previsao nula ficam" "$(run OBEN "ARRAY[1014]::bigint[]")" '{"novos": 0, "limpos": 1, "marcados": 3}'
+eq "1049, 3000 (fora da janela) e 4000 (previsao nula) limpos" "$(run OBEN 13 "ARRAY[1014]::bigint[]")" '{"novos": 0, "limpos": 3, "status": "publicado"}'
 eq "1049 voltou a null" "$(marcado OBEN 1049)" "null"
-[ "$(marcado OBEN 3000)" != "null" ] && ok "3000 (previsao fora da janela) mantido" || bad "3000 limpo sem cobertura"
-[ "$(marcado OBEN 4000)" != "null" ] && ok "4000 (previsao nula) mantido" || bad "4000 limpo sem cobertura"
+eq "4000 voltou a null" "$(marcado OBEN 4000)" "null"
+eq "so 1014 marcado" "$(nmarcados)" "1"
 
 echo "== recusas (SQLSTATE exata, resto re-lança) =="
 P -c "CREATE TABLE public._r (s text); GRANT ALL ON public._r TO service_role;"
-recusa() { # sqlstate, ids
+recusa() { # sqlstate, seq, ids
   P -c "TRUNCATE public._r;"
-  P -c "SET ROLE service_role; DO \$\$ BEGIN PERFORM public.reposicao_marcar_encerrados_omie('OBEN', $2, $J); RAISE EXCEPTION 'NAO_LANCOU'; EXCEPTION WHEN SQLSTATE '$1' THEN INSERT INTO public._r VALUES ('$1'); END \$\$;" >/dev/null 2>&1 || true
+  P -c "SET ROLE service_role; DO \$\$ BEGIN PERFORM public.reposicao_registrar_encerrados_omie('OBEN', $2, $3, $J); RAISE EXCEPTION 'NAO_LANCOU'; EXCEPTION WHEN SQLSTATE '$1' THEN INSERT INTO public._r VALUES ('$1'); END \$\$;" >/dev/null 2>&1 || true
   Pq -c "SELECT coalesce(max(s), 'nada') FROM public._r;"
 }
-eq "encerrado fora do espelho recusa com P0002" "$(recusa P0002 "ARRAY[1014,1049,999]::bigint[]")" "P0002"
+eq "encerrado fora do espelho recusa com P0002" "$(recusa P0002 20 "ARRAY[1014,1049,999]::bigint[]")" "P0002"
 eq "recusa e atomica: 1049 nao marcado" "$(marcado OBEN 1049)" "null"
-eq "nCodPed nulo recusa com 22023" "$(recusa 22023 "ARRAY[1014,NULL]::bigint[]")" "22023"
-eq "nCodPed negativo recusa com 22023" "$(recusa 22023 "ARRAY[-5]::bigint[]")" "22023"
+eq "recusa e atomica: seq aceito segue 13" "$(pub seq)" "13"
+eq "nCodPed nulo recusa com 22023" "$(recusa 22023 21 "ARRAY[1014,NULL]::bigint[]")" "22023"
+eq "nCodPed negativo recusa com 22023" "$(recusa 22023 22 "ARRAY[-5]::bigint[]")" "22023"
+eq "seq zero recusa com 22023" "$(recusa 22023 0 "ARRAY[1014]::bigint[]")" "22023"
 
 echo "== ACL =="
-FN="public.reposicao_marcar_encerrados_omie(public.empresa_reposicao,bigint[],date,date)"
+FN="public.reposicao_registrar_encerrados_omie(public.empresa_reposicao,bigint,bigint[],date,date)"
+TB="public.reposicao_encerrados_omie_publicacao"
 eq "anon sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('anon','$FN','EXECUTE');")" "f"
 eq "authenticated sem EXECUTE" "$(Pq -c "SELECT has_function_privilege('authenticated','$FN','EXECUTE');")" "f"
 eq "service_role com EXECUTE" "$(Pq -c "SELECT has_function_privilege('service_role','$FN','EXECUTE');")" "t"
+eq "authenticated sem UPDATE na publicacao" "$(Pq -c "SELECT has_table_privilege('authenticated','$TB','UPDATE');")" "f"
+eq "RLS ligada na publicacao" "$(Pq -c "SELECT relrowsecurity FROM pg_class WHERE oid='$TB'::regclass;")" "t"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

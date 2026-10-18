@@ -11,6 +11,7 @@ import {
   deveRodarCompleto,
   type ModoSyncPedidos,
 } from "../_shared/janela-pedidos-compra.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   decidirPublicacaoEncerrados,
   FILTROS_SO_ENCERRADOS,
@@ -98,7 +99,9 @@ interface EmpresaSummary {
 }
 
 interface ResumoEncerrados {
-  status: "publicado" | "abstencao" | "erro";
+  // publicado = coluna atualizada; observado = registrado sem tocar a coluna (habilitado=false, aguardando os
+  // controles); obsoleto = coleta mais velha que a já aceita (fencing); abstencao/erro = nada registrado
+  status: "publicado" | "observado" | "obsoleto" | "abstencao" | "erro";
   ids: number;            // encerrados devolvidos pelo filtro (telemetria dos controles do 1º run)
   paginas: number;
   novos: number | null;   // da RPC (null = não publicou)
@@ -565,7 +568,7 @@ const PRESERVE_FIELDS = new Set([
   // eternamente sem nunca convergir (contador de identificadas travado por dias no
   // fin_sync_log). Sem esta linha, o Sísifo volta.
   "nid_receb",
-  // R59: 1 writer — reposicao_marcar_encerrados_omie (passada de encerrados). O mapPedidoToRow não o gera;
+  // R59: 1 writer — reposicao_registrar_encerrados_omie (passada de encerrados). O mapPedidoToRow não o gera;
   // listado aqui para que nenhum upsert do espelho o regrave por engano.
   "encerrado_omie_em",
 ]);
@@ -862,7 +865,7 @@ async function coletarEncerrados(
     try {
       resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = mensagemDeErro(err) ?? "erro sem mensagem";
       return { ids, completa: false, paginas: pagina - 1, motivo: `pág ${pagina} erro fetch: ${msg}`.slice(0, 200) };
     }
     piso = acumularPiso(resp, piso);
@@ -881,67 +884,97 @@ async function coletarEncerrados(
   return { ids, completa: false, paginas: MAX_PAGINAS, motivo: `excedeu ${MAX_PAGINAS} páginas sem ver fim` };
 }
 
-// Marcador 1-writer da passada: entity_type='pedidos_compra_encerrados'. last_sync_at avança SÓ quando o
-// conjunto foi PUBLICADO (é o que o backtest lê como "o sinal existe"); abstenção/erro gravam status='error'
-// com o motivo — o eixo auto-declarado do Sentinela (_data_health_compute) alerta sem editar nada.
+// Marcador da passada no sync_state (entity_type='pedidos_compra_encerrados'): SÓ para o Sentinela ver —
+// 'running' antes da coleta (worker que morre fica órfão e o eixo auto-declarado do _data_health_compute o
+// acusa em >6h), 'complete' em publicado/observado/obsoleto, 'error' com o motivo em abstenção/erro. A
+// VERDADE para o backtest é o registro atômico em reposicao_encerrados_omie_publicacao (mesmo commit da coluna).
 const HEARTBEAT_ENCERRADOS_ENTITY = "pedidos_compra_encerrados";
+// Orçamento de relógio: a passada só começa se o run ainda tem folga até o wall-clock do worker (~400s). O
+// completo leva ~185s; cada página da passada pode gastar até ~90s com a re-tentativa de timeout.
+const ORCAMENTO_ENCERRADOS_MS = 240_000;
+
+async function heartbeatEncerrados(
+  supabase: SupabaseClient,
+  empresa: Empresa,
+  status: "running" | "complete" | "error",
+  extra: Record<string, unknown>,
+): Promise<void> {
+  const nowISO = new Date().toISOString();
+  const row: Record<string, unknown> = {
+    entity_type: HEARTBEAT_ENCERRADOS_ENTITY,
+    account: empresa.toLowerCase(),
+    status,
+    updated_at: nowISO,
+    ...extra,
+  };
+  if (status === "complete") row.last_sync_at = nowISO;
+  try {
+    const { error } = await supabase.from("sync_state").upsert(row, { onConflict: "entity_type,account" });
+    if (error) throw error;
+  } catch (err) {
+    const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+    console.error(`[sync-pedidos] heartbeat encerrados (${status}) falhou empresa=${empresa}: ${msg}`);
+  }
+}
 
 async function passadaEncerrados(
   supabase: SupabaseClient,
   empresa: Empresa,
   s: EmpresaSummary,
   idsGeral: Set<number>,
+  t0: number,
 ): Promise<ResumoEncerrados> {
+  const vazio = { ids: 0, paginas: 0, novos: null, limpos: null };
   const dataDe = isoParaBR(s.janela_de);
   const dataAte = isoParaBR(s.janela_ate);
   let r: ResumoEncerrados;
   if (!dataDe || !dataAte || !s.janela_de || !s.janela_ate) {
-    r = { status: "abstencao", ids: 0, paginas: 0, novos: null, limpos: null, motivo: "janela do completo ausente" };
+    r = { status: "abstencao", ...vazio, motivo: "janela do completo ausente" };
+  } else if (Date.now() - t0 > ORCAMENTO_ENCERRADOS_MS) {
+    r = { status: "abstencao", ...vazio, motivo: `sem tempo: run já em ${Math.round((Date.now() - t0) / 1000)}s` };
   } else {
-    const { app_key, app_secret } = getCredentials(empresa);
-    const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte);
-    const dec = decidirPublicacaoEncerrados({
-      completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
-    });
-    const motivoColeta = col.motivo;
-    if (dec.tipo === "abster") {
-      r = { status: "abstencao", ids: col.ids.size, paginas: col.paginas, novos: null, limpos: null, motivo: motivoColeta ?? dec.motivo };
+    await heartbeatEncerrados(supabase, empresa, "running", { metadata: { started_at: new Date().toISOString() } });
+    // fencing da COLETA (Codex 2026-10-18 P1): token alocado imediatamente antes da 1ª página — uma coleta
+    // que começou antes e publica depois é 'obsoleto' na RPC e não ressuscita encerramento já limpo
+    const seq = await alocarRunSeq(supabase, empresa);
+    if (seq == null) {
+      r = { status: "abstencao", ...vazio, motivo: "sem fencing token (reposicao_alocar_run_seq falhou)" };
     } else {
-      try {
-        const { data, error } = await supabase.rpc("reposicao_marcar_encerrados_omie", {
-          p_empresa: empresa, p_ids: dec.ids, p_janela_de: s.janela_de, p_janela_ate: s.janela_ate,
-        });
-        if (error) throw error;
-        const d = (data ?? {}) as { novos?: unknown; limpos?: unknown };
-        r = {
-          status: "publicado", ids: dec.ids.length, paginas: col.paginas,
-          novos: typeof d.novos === "number" ? d.novos : null, limpos: typeof d.limpos === "number" ? d.limpos : null, motivo: null,
-        };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        r = { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc: ${msg}`.slice(0, 200) };
+      const { app_key, app_secret } = getCredentials(empresa);
+      const col = await coletarEncerrados(app_key, app_secret, dataDe, dataAte);
+      const dec = decidirPublicacaoEncerrados({
+        completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
+      });
+      if (dec.tipo === "abster") {
+        r = { status: "abstencao", ids: col.ids.size, paginas: col.paginas, novos: null, limpos: null, motivo: col.motivo ?? dec.motivo };
+      } else {
+        try {
+          const { data, error } = await supabase.rpc("reposicao_registrar_encerrados_omie", {
+            p_empresa: empresa, p_seq: seq, p_ids: dec.ids, p_janela_de: s.janela_de, p_janela_ate: s.janela_ate,
+          });
+          if (error) throw error;
+          const d = (data ?? {}) as { status?: unknown; novos?: unknown; limpos?: unknown };
+          const st = d.status === "publicado" || d.status === "observado" || d.status === "obsoleto" ? d.status : null;
+          r = st === null
+            ? { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc devolveu status ilegível: ${JSON.stringify(data)}`.slice(0, 200) }
+            : {
+              status: st, ids: dec.ids.length, paginas: col.paginas,
+              novos: typeof d.novos === "number" ? d.novos : null, limpos: typeof d.limpos === "number" ? d.limpos : null, motivo: null,
+            };
+        } catch (err) {
+          const msg = mensagemDeErro(err) ?? "erro sem mensagem";
+          r = { status: "erro", ids: dec.ids.length, paginas: col.paginas, novos: null, limpos: null, motivo: `rpc: ${msg}`.slice(0, 200) };
+        }
       }
     }
   }
   console.log(`[sync-pedidos] empresa=${empresa} encerrados ${JSON.stringify(r)}`);
-  const nowISO = new Date().toISOString();
-  const row: Record<string, unknown> = {
-    entity_type: HEARTBEAT_ENCERRADOS_ENTITY,
-    account: empresa.toLowerCase(),
-    status: r.status === "publicado" ? "complete" : "error",
-    updated_at: nowISO,
+  const ok = r.status === "publicado" || r.status === "observado" || r.status === "obsoleto";
+  await heartbeatEncerrados(supabase, empresa, ok ? "complete" : "error", {
     total_synced: r.ids,
-    error_message: r.status === "publicado" ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "—"}`,
-    metadata: { ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: nowISO },
-  };
-  if (r.status === "publicado") row.last_sync_at = nowISO;
-  try {
-    const { error } = await supabase.from("sync_state").upsert(row, { onConflict: "entity_type,account" });
-    if (error) throw error;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[sync-pedidos] heartbeat encerrados falhou empresa=${empresa}: ${msg}`);
-  }
+    error_message: ok ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "sem motivo"}`,
+    metadata: { ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: new Date().toISOString() },
+  });
   return r;
 }
 
@@ -1293,11 +1326,11 @@ Deno.serve(async (req) => {
           if (publicou) await marcarCompletoOk(supabase, empresa);
         }
         // R59: passada SÓ de encerrados, só depois do completo limpo e não-filtrado (mesma janela, mesmos IDs
-        // de referência). Independe do fencing token: não publica run, só a coluna encerrado_omie_em.
+        // de referência). Tem fencing PRÓPRIO (alocado antes da coleta dela); não publica run, só encerrados.
         try {
-          s.encerrados = await passadaEncerrados(supabase, empresa, s, idsVistos);
+          s.encerrados = await passadaEncerrados(supabase, empresa, s, idsVistos, t0);
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = mensagemDeErro(err) ?? "erro sem mensagem";
           console.error(`[sync-pedidos] empresa=${empresa} passada de encerrados falhou: ${msg}`);
           s.encerrados = { status: "erro", ids: 0, paginas: 0, novos: null, limpos: null, motivo: msg.slice(0, 200) };
         }
