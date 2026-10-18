@@ -11,9 +11,11 @@ import { execSync } from "node:child_process";
 const isLovablePreview = process.env.LOVABLE_PREVIEW === "true";
 
 // Carimbo de commit no bundle (lido pela verificação de deploy / cron de smoke E2E).
-// Confirmado em 2026-06-19: o build do Lovable NÃO tem `.git` (git rev-parse → "dev").
-// Por isso varremos env de SHA de várias PLATAFORMAS (uma pode ser a do Lovable); só
-// aceitamos valor que PARECE um SHA. Sem nenhuma → git local → "dev". Nunca quebra.
+// Em 2026-06-19 o build do Lovable NÃO tinha `.git` (git rev-parse → "dev"); por isso
+// varremos env de SHA de várias PLATAFORMAS; só aceitamos valor que PARECE um SHA.
+// Em 2026-10-18 o Publish (steu.lovable.app) já expunha `__BUILD_SHA__ = 0153e797` =
+// HEAD da main, com ZERO env de SHA (`__BUILD_ENV_KEYS__` = GIT_SSL_CAINFO,LOVABLE,…):
+// o `git rev-parse` do fallback FUNCIONA no builder hoje. Sem nenhum → "dev". Nunca quebra.
 function resolveCommitSha(): string {
   const candidates = [
     "VITE_COMMIT_SHA", "COMMIT_SHA", "GITHUB_SHA", "VERCEL_GIT_COMMIT_SHA",
@@ -60,11 +62,38 @@ const buildEnvKeys = buildEnvProbe();
 // de graça. E fica no MESMO documento que o `build_id` é lido (src/lib/build-id.ts): o SW
 // velho serve o index.html PRECACHEADO, com o carimbo velho — que é a leitura certa.
 const buildEm = new Date().toISOString();
+
+// Data do COMMIT (ISO-8601, `%cI`), que é a "versão" legível do menu do usuário: preview
+// e Publish do Lovable são DUAS compilações do mesmo commit (minutos distintos, e o entry
+// difere porque o preview compila sem o VitePWA) — pelo carimbo de build pareciam versões
+// diferentes. A data do commit é igual nos dois lados. Só com `.git`; sem ele → null, e o
+// menu cai no carimbo de build. NÃO substitui o `app-build-em` (eixo do build mínimo).
+function resolveCommitEm(): string | null {
+  try {
+    const v = execSync("git show -s --format=%cI HEAD", {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null;
+  } catch {
+    return null;
+  }
+}
+const commitEm = resolveCommitEm();
+
 function carimboDeBuild(): Plugin {
   return {
     name: "carimbo-de-build",
     transformIndexHtml: () => [
       { tag: "meta", attrs: { name: "app-build-em", content: buildEm }, injectTo: "head" },
+      // Commit (sha curto + data) no MESMO documento que o build_id/carimbo — o SW velho
+      // serve o index.html precacheado, com o commit velho, que é a leitura certa.
+      ...(commitSha !== "dev"
+        ? [{ tag: "meta", attrs: { name: "app-commit-sha", content: commitSha }, injectTo: "head" as const }]
+        : []),
+      ...(commitEm
+        ? [{ tag: "meta", attrs: { name: "app-commit-em", content: commitEm }, injectTo: "head" as const }]
+        : []),
     ],
   };
 }
