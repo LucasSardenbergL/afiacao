@@ -208,6 +208,14 @@ function formatDateBR(d: Date): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
+/** Janela `dtEmissao` dos últimos `dias` (laço principal e revisita): um só cálculo de "hoje". */
+function janelaDeDias(dias: number): { dataDe: string; dataAte: string } {
+  const hoje = new Date();
+  const inicio = new Date();
+  inicio.setDate(hoje.getDate() - dias);
+  return { dataDe: formatDateBR(inicio), dataAte: formatDateBR(hoje) };
+}
+
 function parseBRDateToISO(dateBR?: string | null, timeBR?: string | null): string | null {
   if (!dateBR) return null;
   const m = dateBR.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -600,11 +608,7 @@ async function syncEmpresa(
     dataDe = dataInicialOverride;
     dataAte = dataFinalOverride;
   } else {
-    const hoje = new Date();
-    const inicio = new Date();
-    inicio.setDate(hoje.getDate() - dias);
-    dataDe = formatDateBR(inicio);
-    dataAte = formatDateBR(hoje);
+    ({ dataDe, dataAte } = janelaDeDias(dias));
   }
   console.log(`[sync-nfes] ${empresa} janela ${dataDe} → ${dataAte}`);
 
@@ -1033,10 +1037,8 @@ async function revisitarEmpresa(
 ): Promise<void> {
   // Mesmo orçamento do laço principal (o guard que o run já respeita): a revisita só usa a sobra.
   const deadline = t0 + MAIN_LOOP_GUARD_MS;
-  const hoje = new Date();
-  const inicio = new Date();
-  inicio.setDate(hoje.getDate() - dias);
-  const { docs, incompleta } = await listarJanelaLarga(empresa, formatDateBR(inicio), formatDateBR(hoje), fornecedorCodigo, deadline);
+  const { dataDe, dataAte } = janelaDeDias(dias);
+  const { docs, incompleta } = await listarJanelaLarga(empresa, dataDe, dataAte, fornecedorCodigo, deadline);
   if (incompleta) out.listagem_incompleta = true;
   const { app_key, app_secret } = getCredentials(empresa);
 
