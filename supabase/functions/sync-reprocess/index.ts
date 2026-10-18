@@ -972,9 +972,14 @@ Deno.serve(async (req) => {
           break;
         }
         const windowDays = cfg.strategic_window_days || 30;
+        // inventory ANTES de products (v1.20): os 3 estágios dividem UMA invocação, e products é o
+        // lento (~70s, picos de ~150s). Nos 5 dias em que orders+products passou de ~180s
+        // (22/07, 03/08, 18/08, 19/08, 18/10/2026), o worker morreu ao abrir inventory — morte
+        // sem catch, órfã `running` e alerta `sync_reprocess_saude`. Inventory leva ~6s: rodando
+        // antes, um products lento só arrisca a si mesmo.
         const orders = await reprocessOrders(supabaseAdmin, account as Account, windowDays, "strategic");
-        const products = await reprocessProducts(supabaseAdmin, account as Account, "strategic");
         const inventory = await reprocessInventory(supabaseAdmin, account as Account, "strategic");
+        const products = await reprocessProducts(supabaseAdmin, account as Account, "strategic");
         result = { orders, products, inventory, window_days: windowDays };
         break;
       }

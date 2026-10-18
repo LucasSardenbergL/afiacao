@@ -87,7 +87,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "scoring-recalc-client": "f98c463750baa862a5072f00bac1400d7d77ff3c5e7a544c79873cadab296295",
   "sonda-relay": "18f452eb3fe28ea21389d3501ff9825e7053af2d05b36db88c0681fc7a0404a6",
   "structure-customer-process": "287f063c8791cca54f09e0fa1f122befcf8dafef6a5fa4dfbc76b11b0cc656a0",
-  "sync-reprocess": "2e09c365ec59434d5220f483cd667b42b5a05f104a6e6cf69619c8a082d6c00b",
+  "sync-reprocess": "bfc9909a405bcee1c817d0c90991e24182498c88efee14dcd10394364b70c10e",
   "tactical-plans-batch": "eb330ac3c195d6303b6133026b408c63981811e4c5cdc770de83d355aa0a597e",
   "tint-omie-sync": "cb02d31f30329f4ebb93643e382bbb98b69cc2073e02a3cf272ea822614cbaae",
   "tint-sync-agent": "c46ec6183ec758cbbec109dd0956b8bdaede89af13b48e3ffa2dafe63e716642",
