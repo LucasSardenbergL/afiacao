@@ -67,3 +67,15 @@ do `WHEN OTHERS` (lock na outbox poderia derrubar a aprovação — vale igual p
 regex da PÓS sobre `prosrc` não distingue linha comentada (o comportamento é provado em PG17, não
 pela PÓS); as duas linhas do INSERT já aprovado caem juntas se uma falhar (fail-open preserva o
 pedido — C7).
+
+## Aplicação em prod (2026-10-18, nesta sessão)
+
+`bun run db:aplicar` — ensaio 🟢 (ROLLBACK) → apply real: **tentativa #518 → recibo `aplicada`**, sha
+`6e74c9a0379e…`, commit `eea4c0d8a`. NOTICE do corpo: `backfill: 3 linha(s)`. 2ª testemunha por
+`psql-ro`, outra conexão depois do commit: `md5(prosrc) = ae665653…` (o corpo novo), trigger
+`AFTER INSERT OR UPDATE … FOR EACH ROW EXECUTE FUNCTION analytics_outbox_pedido_compra()` com
+`tgenabled = O`, 3 `aprovada` com `props.backfill` para **3644, 3669, 3670** e `ocorrido_em =
+aprovado_em`, zero importados órfãos, zero órfãs na janela de 48h (0 de 0 aprovações — fim de
+semana). O sensor não guarda estado por fonte (`_data_health_compute()` roda a cada rodada do
+watchdog e é fechado ao `claude_ro`), então o chip vira `ok` na rodada seguinte — a prova dele é a
+contagem acima, não o chip. Nada de edge nem Publish nesta entrega.
