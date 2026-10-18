@@ -1087,6 +1087,15 @@ sem gate executa o fluxo real para qualquer POST (medido). Detalhe:
     responde "este build é anterior àquele?", que o hash não sabe. É `<meta>` e não `define` de JS
     de propósito: um `define` que muda a cada build troca o hash de todo chunk que o lê e refaria a
     cascata do precache que o #3114 cortou. Paridade: `build-id-paridade.test.ts`.
+  - **Versão legível do menu = data do COMMIT, não do build** (2026-10-18): `app-commit-sha` e
+    `app-commit-em` (`git show -s --format=%cI HEAD`) vão no mesmo `index.html`. Motivo: preview
+    Lovable e Publish são DUAS compilações do mesmo commit — minutos distintos e entry distinto
+    (o preview compila sem o VitePWA) — e pelo carimbo de build pareciam versões diferentes
+    ("16:06 / BIAVBR3F" × "16:07 / D8govl0X", mesmo HEAD `0153e797`). O Publish **expõe o SHA**
+    (`window.__BUILD_SHA__`; a nota de 2026-06-19 "builder sem `.git`" está superada — zero env de
+    SHA em `__BUILD_ENV_KEYS__`, logo é o `git rev-parse` que funciona). O menu mostra "Versão de
+    <data do commit>" e "build X · commit Y"; sem `.git` cai no carimbo de build. `app-build-em`
+    segue sendo o eixo do build mínimo e `build_id` o de adoção — o commit é só a VERSÃO humana.
   - **Config**: linha `key = 'pwa_build_minimo'` em `company_config` (RLS existente: staff lê,
     master escreve; **sem migration**), `value` = `{"build_minimo_em": <ISO>, "prazo": <ISO>}`.
     Linha ausente ou JSON ilegível = sem exigência (falha aberta: erro de digitação não tranca o

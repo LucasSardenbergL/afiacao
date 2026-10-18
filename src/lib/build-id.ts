@@ -14,9 +14,10 @@
  * EXECUTA: responde DISPONIBILIDADE, não ADOÇÃO. Este módulo fecha a outra ponta.
  *
  * POR QUE O CHUNK DO ENTRY, e não o commit:
- *  - `__COMMIT_SHA__` degrada pra "dev" em produção — o builder do Lovable não tem
- *    `.git` (confirmado 2026-06-19, vite.config.ts) e nenhuma env de SHA foi
- *    identificada ainda. Um id que é constante entre builds não identifica build.
+ *  - `__COMMIT_SHA__` degradava pra "dev" em produção (builder do Lovable sem `.git`,
+ *    2026-06-19). Desde 2026-10-18 o Publish expõe o SHA — mas o motivo de fundo fica:
+ *    um id constante entre builds (preview e Publish do MESMO commit são dois builds)
+ *    não identifica build. O commit é a VERSÃO legível (menu), não o eixo de adoção.
  *  - O hash do entry é CONTENT-HASH do Vite: nasce sempre, sem depender de env, e
  *    muda se e somente se o app mudou (dois Publish do mesmo código = mesmo id, o
  *    que evita falso "não adotou").
@@ -85,4 +86,29 @@ export function extrairBuildEm(html: string): string | null {
 export function resolverBuildEm(doc: Document | null | undefined = globalThis.document): string | null {
   if (!doc) return null;
   return carimboValido(doc.querySelector(`meta[name="${META_BUILD_EM}"]`)?.getAttribute('content'));
+}
+
+/**
+ * COMMIT de que este build saiu — `<meta name="app-commit-sha">` e `app-commit-em`
+ * (data do commit, ISO), também injetados pelo `vite.config.ts`. É a "versão" que o
+ * menu mostra: igual no preview e no Publish do mesmo commit, ao contrário do carimbo
+ * de build e do hash do entry. Só existem quando o builder tem `.git`; ausentes → null.
+ */
+const META_COMMIT_SHA = 'app-commit-sha';
+const META_COMMIT_EM = 'app-commit-em';
+const RE_META_COMMIT_EM = /<meta\s+name="app-commit-em"\s+content="([^"]+)"/;
+
+/** Lê a data do commit do HTML como TEXTO (o index.html que o servidor entrega agora). */
+export function extrairCommitEm(html: string): string | null {
+  return carimboValido(RE_META_COMMIT_EM.exec(html)?.[1]);
+}
+
+/** Commit do documento que o browser REALMENTE carregou. */
+export function resolverCommit(
+  doc: Document | null | undefined = globalThis.document,
+): { sha: string | null; em: string | null } {
+  if (!doc) return { sha: null, em: null };
+  const sha = doc.querySelector(`meta[name="${META_COMMIT_SHA}"]`)?.getAttribute('content')?.trim() || null;
+  const em = carimboValido(doc.querySelector(`meta[name="${META_COMMIT_EM}"]`)?.getAttribute('content'));
+  return { sha, em };
 }

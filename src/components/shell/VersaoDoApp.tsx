@@ -21,7 +21,7 @@ import {
  */
 export function VersaoDoApp() {
   const estado = useSyncExternalStore(assinarEstadoAtualizacao, obterEstadoAtualizacao);
-  const { versao, build, situacao } = descreverEstadoAtualizacao(estado);
+  const { versao, build, commit, situacao } = descreverEstadoAtualizacao(estado);
 
   const verificar = async () => {
     const fase = await verificarAtualizacaoAgora();
@@ -47,7 +47,12 @@ export function VersaoDoApp() {
       <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
         <span className="block text-foreground">Versão de {versao}</span>
         <span className="block">{situacao}</span>
-        {versao !== build && <span className="block text-[10px] opacity-70">build {build}</span>}
+        {(versao !== build || commit) && (
+          <span className="block text-[10px] opacity-70">
+            build {build}
+            {commit && ` · commit ${commit}`}
+          </span>
+        )}
       </DropdownMenuLabel>
       {estado.fase === 'pronta' ? (
         <DropdownMenuItem onClick={() => aplicarAtualizacao()}>
