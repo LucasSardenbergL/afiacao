@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import type { DecisaoRow, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { fmtValor, SEM_NF } from './formato';
@@ -93,6 +94,17 @@ export function CartaoItem({ item, decisao, colunas }: { item: ItemRaioX; decisa
     </li>
   );
 }
+
+/** Coluna de ação: abre o Sheet de decisão do item. */
+export const colDecidir = (onDecidir: (i: ItemRaioX) => void): Coluna => ({
+  titulo: 'Ação',
+  className: 'text-right',
+  render: (i) => (
+    <Button size="sm" variant="outline" aria-label={`Decidir ${i.codigo}`} onClick={() => onDecidir(i)}>
+      Decidir
+    </Button>
+  ),
+});
 
 export const colValor: Coluna = {
   titulo: 'Valor',

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ItemRaioX, DecisaoRow } from '@/lib/reposicao/raio-x/tipos';
 
 /**
@@ -59,7 +60,8 @@ const item = (p: Partial<ItemRaioX>): ItemRaioX => ({
 });
 
 const abrirAba = () => {
-  render(<MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter>);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<QueryClientProvider client={qc}><MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>);
   fireEvent.mouseDown(screen.getByRole('tab', { name: 'Raio-X' }), { button: 0 });
 };
 
@@ -146,7 +148,7 @@ describe('aba Raio-X', () => {
     expect(screen.queryByText('CLI5')).toBeNull();
   });
 
-  it('segmento uso mostra qtd contada e diferença de decisão já gravada (somente leitura)', () => {
+  it('segmento uso mostra qtd contada e diferença de decisão já gravada, com campo de contagem editável', () => {
     ret = {
       ...ret,
       itens: [item({ categoria: 'uso_consumo', parado: false, saldo: 10, cmc: 5, motivo_categoria: 'regra X' })],
@@ -156,6 +158,52 @@ describe('aba Raio-X', () => {
     fireEvent.click(screen.getByRole('button', { name: /Uso e consumo/ }));
     expect(screen.getByText('regra X')).toBeTruthy();
     expect(screen.getByTestId('dif-un-1').textContent).toMatch(/-2/);
-    expect(screen.queryByRole('textbox', { name: /contad/i })).toBeNull();
+    expect((screen.getByRole('textbox', { name: 'Qtd contada C1' }) as HTMLInputElement).value).toBe('8');
+  });
+
+  it('(S4) filtro de destino oferece os 9 valores e filtra pelo destino DECIDIDO quando houver', () => {
+    ret = {
+      ...ret,
+      itens: [
+        item({ sku_codigo_omie: 1, codigo: 'C1', descricao: 'SUGERIDO LIQUIDAR', destino_sugerido: 'liquidar' }),
+        item({ sku_codigo_omie: 2, codigo: 'C2', descricao: 'DECIDIDO TROCAR', destino_sugerido: 'liquidar' }),
+        item({ sku_codigo_omie: 3, codigo: 'C3', descricao: 'REVISAR', destino_sugerido: 'revisar' }),
+      ],
+      decisoes: new Map([[2, { sku_codigo_omie: 2, destino: 'trocar' } as DecisaoRow]]),
+    };
+    abrirAba();
+    const sel = screen.getByRole('combobox', { name: 'Destino' }) as HTMLSelectElement;
+    expect(sel.options.length).toBe(10); // "Todos" + 9
+    fireEvent.change(sel, { target: { value: 'liquidar' } });
+    expect(screen.getByText('SUGERIDO LIQUIDAR')).toBeTruthy();
+    expect(screen.queryByText('DECIDIDO TROCAR')).toBeNull();
+    fireEvent.change(sel, { target: { value: 'trocar' } });
+    expect(screen.getByText('DECIDIDO TROCAR')).toBeTruthy();
+    expect(screen.queryByText('SUGERIDO LIQUIDAR')).toBeNull();
+    fireEvent.change(sel, { target: { value: 'revisar' } });
+    expect(screen.getByText('REVISAR')).toBeTruthy();
+  });
+
+  it('(S4) filtro de fornecedor usa o fornecedor informado quando houver', () => {
+    ret = {
+      ...ret,
+      itens: [
+        item({ sku_codigo_omie: 1, codigo: 'C1', descricao: 'DO CADASTRO', fornecedor: 'SAYERLACK' }),
+        item({ sku_codigo_omie: 2, codigo: 'C2', descricao: 'INFORMADO', fornecedor: null }),
+      ],
+      decisoes: new Map([[2, { sku_codigo_omie: 2, destino: null, fornecedor_informado: 'ACRE' } as DecisaoRow]]),
+    };
+    abrirAba();
+    const sel = screen.getByRole('combobox', { name: 'Fornecedor' }) as HTMLSelectElement;
+    expect([...sel.options].map((o) => o.value)).toEqual(['', 'ACRE', 'SAYERLACK']);
+    fireEvent.change(sel, { target: { value: 'ACRE' } });
+    expect(screen.getByText('INFORMADO')).toBeTruthy();
+    expect(screen.queryByText('DO CADASTRO')).toBeNull();
+  });
+
+  it('botão "Decidir" da linha abre o Sheet do item', () => {
+    abrirAba();
+    fireEvent.click(screen.getByRole('button', { name: 'Decidir C1' }));
+    expect(screen.getByRole('button', { name: 'Salvar decisão' })).toBeTruthy();
   });
 });

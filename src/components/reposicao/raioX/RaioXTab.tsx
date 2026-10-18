@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PackageSearch } from 'lucide-react';
 import { useReposicaoEmpresa } from '@/contexts/ReposicaoEmpresaContext';
 import { useUrlState } from '@/hooks/useUrlState';
@@ -7,12 +7,14 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
+import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
 import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { useRaioX } from './useRaioX';
 import { RaioXPlacar } from './RaioXPlacar';
 import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
 import { RaioXSaidas } from './RaioXSaidas';
+import { DecisaoSheet } from './DecisaoSheet';
 
 type Segmento = 'mercadoria' | 'uso' | 'nao' | 'saidas';
 const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
@@ -22,11 +24,8 @@ const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
   { id: 'saidas', rotulo: 'Saídas' },
 ];
 
-function empresaDoRaioX(e: string): Empresa | null {
-  if (e === 'OBEN') return 'oben';
-  if (e === 'COLACOR') return 'colacor';
-  return null; // Colacor SC e demais: sem cadastro de produto
-}
+/** Filtro de destino (Ruling S4): os 6 destinos + as 3 sugestões que não são destino. */
+const OPCOES_DESTINO = [...DESTINOS, 'novo_aguarde', 'revisar', 'sem_historico'] as const;
 
 const porValorDesc = (a: ItemRaioX, b: ItemRaioX) => (b.valor ?? -Infinity) - (a.valor ?? -Infinity);
 
@@ -34,23 +33,33 @@ export function RaioXTab() {
   const { empresa } = useReposicaoEmpresa();
   const chave = empresaDoRaioX(empresa);
   const rx = useRaioX(chave);
+  // Sheet: guarda sku + empresa de quem abriu; item e decisão são relidos do cache (vivos após invalidar).
+  const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa } | null>(null);
+  const fechar = useCallback(() => setAberto(null), []);
+  // Trocou a empresa no seletor → descarta o Sheet (senão reabriria ao voltar para a empresa original).
+  useEffect(() => {
+    if (aberto && aberto.empresa !== chave) setAberto(null);
+  }, [aberto, chave]);
+  const abrir = useCallback((i: ItemRaioX) => { if (chave) setAberto({ sku: i.sku_codigo_omie, empresa: chave }); }, [chave]);
   const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '' });
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
   const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && i.parado), [rx.itens]);
   const fornecedores = useMemo(
-    () => [...new Set(mercadoria.map((i) => i.fornecedor).filter((x): x is string => !!x))].sort(),
-    [mercadoria],
+    () =>
+      [...new Set(mercadoria.map((i) => fornecedorEfetivo(i, rx.decisoes.get(i.sku_codigo_omie))).filter((x): x is string => !!x))].sort(),
+    [mercadoria, rx.decisoes],
   );
 
   const filtrados = useMemo(() => {
     const busca = f.rxBusca.trim().toLowerCase();
     return mercadoria
       .filter((i) => {
-        if (f.rxDestino && i.destino_sugerido !== f.rxDestino) return false;
-        if (f.rxForn && i.fornecedor !== f.rxForn) return false;
-        const decidido = !!rx.decisoes.get(i.sku_codigo_omie)?.destino;
+        const d = rx.decisoes.get(i.sku_codigo_omie);
+        if (f.rxDestino && destinoEfetivo(i, d) !== f.rxDestino) return false;
+        if (f.rxForn && fornecedorEfetivo(i, d) !== f.rxForn) return false;
+        const decidido = !!d?.destino;
         if (f.rxStatus === 'pendente' && decidido) return false;
         if (f.rxStatus === 'decidido' && !decidido) return false;
         if (f.rxTop && !i.top) return false;
@@ -65,6 +74,9 @@ export function RaioXTab() {
     () => (categoriaSeg ? rx.itens.filter((i) => i.categoria === categoriaSeg).sort(porValorDesc) : []),
     [rx.itens, categoriaSeg],
   );
+
+  // Item sumiu do cache (reclassificado/fora do recorte) → nada a mostrar; o Sheet não abre com item velho.
+  const itemAberto = aberto && aberto.empresa === chave ? rx.itens.find((i) => i.sku_codigo_omie === aberto.sku) ?? null : null;
 
   if (chave === null) {
     return <EmptyState tone="operational" icon={PackageSearch} title="Sem cadastro de produto" description="sem cadastro de produto — fora do Raio-X por ora" />;
@@ -101,9 +113,9 @@ export function RaioXTab() {
       {segmento === 'mercadoria' ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="Destino sugerido" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxDestino} onChange={(e) => setF({ rxDestino: e.target.value })}>
+            <select aria-label="Destino" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxDestino} onChange={(e) => setF({ rxDestino: e.target.value })}>
               <option value="">Todos os destinos</option>
-              {DESTINOS.map((d) => <option key={d} value={d}>{ROTULOS[d]}</option>)}
+              {OPCOES_DESTINO.map((d) => <option key={d} value={d}>{ROTULOS[d]}</option>)}
             </select>
             <select aria-label="Fornecedor" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxForn} onChange={(e) => setF({ rxForn: e.target.value })}>
               <option value="">Todos os fornecedores</option>
@@ -122,7 +134,7 @@ export function RaioXTab() {
           {filtrados.length === 0 ? (
             <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description={mercadoria.length === 0 ? 'Nenhuma mercadoria parada nesta empresa.' : 'Nenhum item com esses filtros.'} />
           ) : (
-            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} />
+            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} />
           )}
         </>
       ) : segmento === 'saidas' ? (
@@ -130,7 +142,10 @@ export function RaioXTab() {
       ) : contagem.length === 0 ? (
         <EmptyState tone="operational" icon={PackageSearch} title="Nada neste segmento" description="Nenhum item nesta categoria." />
       ) : (
-        <RaioXContagem categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} />
+        <RaioXContagem empresa={chave} categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} onDecidir={abrir} />
+      )}
+      {itemAberto && aberto && (
+        <DecisaoSheet empresa={aberto.empresa} item={itemAberto} decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)} onClose={fechar} />
       )}
     </div>
   );
