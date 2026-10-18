@@ -136,9 +136,18 @@ cv_cadeia() {
 #   · 20261014120100 (fecho da coluna gross_margin_pct, FU4-F) entra na cadeia de quem guarda farmer_client_scores
 #     pelo REVOKE/GRANT de tabela; o PRE dela exige a RPC get_scores_margem, que só a 20261014120000 cria — e esta
 #     não faz DDL sobre objeto guardado (só LÊ a tabela), então a seleção textual não a leva sozinha.
+#   · 20261018160000 (fecho da ESCRITA default em fcs/ftp) entra pelo REVOKE em farmer_client_scores; o PRE dela
+#     exige a B da fcs (sem SELECT de tabela para authenticated), que ficou ABAIXO do CV_INICIO e que o snapshot
+#     de 2026-10-15 não absorveu (a B foi aplicada em 2026-10-18) — e a B do ftp, que só entra na cadeia de quem
+#     guarda farmer_tactical_plans. Predecessoras NA ORDEM de prod: A e B da fcs (a B exige get_scores_margem) e a
+#     B do ftp (a A dela, get_planos_margem, o snapshot de 2026-10-15 já traz). Pares com a mesma chave rodam na
+#     ordem desta lista. Re-aplicar a B do ftp numa cadeia que já a tem é no-op (idempotente).
 CV_PREDECESSORAS=(
   "20261010210000_motor_desconta_comprometido.sql:20261009194000_motor_unidades_concentrado_wp.sql"
   "20261014120100_fcs_margem_fecha_coluna.sql:20261014120000_fcs_margem_rpc_projecao.sql"
+  "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261014120000_fcs_margem_rpc_projecao.sql"
+  "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261014120100_fcs_margem_fecha_coluna.sql"
+  "20261018160000_fcs_ftp_fecha_escrita_default.sql:20261015120100_tactical_plans_margem_fecha_coluna.sql"
 )
 
 # cv_aplicar_cadeia <dir de migrations> — aplica a cadeia no banco de `P`, em ordem, e conta.
