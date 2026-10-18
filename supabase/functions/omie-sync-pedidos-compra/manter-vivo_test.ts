@@ -36,7 +36,7 @@ Deno.test("sem EdgeRuntime (teste local/Deno puro) não registra e devolve false
 // IDLE_TIMEOUT) e o runtime faz EarlyDrop do worker no meio da passada de encerrados.
 Deno.test("index.ts segura o worker com o trabalho antes de responder", async () => {
   const src = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
-  const m = src.match(/const (\w+) = processarTudo\(\);\s*\n\s*segurarWorker\(\1\);\s*\n\s*return await responderSincrono\(\1\);/);
-  assert(m !== null, "index.ts precisa de: const t = processarTudo(); segurarWorker(t); return await responderSincrono(t);");
+  const m = src.match(/const (\w+) = processarTudo\(\);\s*\n\s*if \(!segurarWorker\(\1\)\) console\.warn\([^\n]*\);\s*\n\s*return await responderSincrono\(\1\);/);
+  assert(m !== null, "index.ts precisa de: const t = processarTudo(); if (!segurarWorker(t)) console.warn(...); return await responderSincrono(t);");
   assert(!/responderSincrono\(processarTudo\(\)\)/.test(src), "a chamada antiga sem segurarWorker ainda está no index.ts");
 });
