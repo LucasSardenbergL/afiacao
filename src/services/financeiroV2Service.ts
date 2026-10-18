@@ -4,7 +4,7 @@ import type { Company } from "@/contexts/CompanyContext";
 import type { Json } from "@/integrations/supabase/types";
 import type { DimRowRaw } from "@/lib/financeiro/orcamento-drill-helpers";
 import { coletarTitulosEntidade, parseMesDataEmissao, type EntidadeRowRaw } from "@/lib/financeiro/orcamento-entidade-helpers";
-import { parseSnapshotSemanas, type SnapshotEmpresa } from "@/lib/financeiro/cockpit-consolida-helpers";
+import { ncgCompleta, parseSnapshotSemanas, type SnapshotEmpresa } from "@/lib/financeiro/cockpit-consolida-helpers";
 import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from "@/lib/financeiro/procedencia-baixa";
 import type {
   FinFechamentoRow,
@@ -718,7 +718,7 @@ export async function getProjecaoSnapshotsCockpit(
     companies.map(async (company): Promise<SnapshotEmpresa | null> => {
       const { data, error } = await supabase
         .from('fin_projecao_snapshots')
-        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id')
+        .select('company, snapshot_at, ncg, saldo_tesouraria, dados, id, ncg_parcial:premissas->ncg_parcial')
         .eq('company', company)
         .eq('cenario', cenario)
         .order('snapshot_at', { ascending: false })
@@ -734,6 +734,7 @@ export async function getProjecaoSnapshotsCockpit(
         company: (data.company as string) ?? company,
         snapshot_at: data.snapshot_at as string,
         ncg: (data.ncg as number | null) ?? null,
+        ncg_completa: ncgCompleta((data as { ncg_parcial?: unknown }).ncg_parcial),
         saldo_tesouraria: (data.saldo_tesouraria as number | null) ?? null,
         semanas,
       };
