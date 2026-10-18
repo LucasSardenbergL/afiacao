@@ -48,7 +48,7 @@ Fonte real do estoque: `inventory_position` (saldo × `cmc` do Omie, sync a cada
 - **G1.** PME por empresa honesto: número quando há base, **"—" + motivo** quando não há. Nunca 0 por ausência.
 - **G2.** NCG passa a incluir o estoque real (consequência de G1 — mesma variável).
 - **G3.** Lista de SKUs por empresa ordenada por **R$ parado**, com dias de cobertura, dias sem venda, R$ acima da cobertura-alvo e etiqueta de ação (`segurar_compra` | `liquidar`).
-- **G4.** Resumo por empresa da seção: R$ total em estoque, R$ com etiqueta liquidar, R$ excedente em segurar_compra, dias de estoque pela saída dos SKUs.
+- **G4.** Resumo por empresa da seção: R$ em giro (com cobertura de custo), R$ candidato a liquidar, R$ excedente em candidatos a segurar compra, R$ fora do giro. **Sem** "dias de estoque pela saída" agregado (removido pós-Codex, §5.4).
 
 ## 3. Não-objetivos
 
@@ -142,7 +142,7 @@ Desempenho: alvo < 2 s sob `SET ROLE authenticated` + claims do master (medir em
 ### 5.3 App
 
 - `useFinanceiroCicloGiro(company)` em `src/hooks/useFinanceiroCiclo.ts` (padrão do arquivo), paginando.
-- Helper puro `src/lib/financeiro/ciclo-giro-helpers.ts`: resumo por empresa (Σ `valor_parado` não-null, contagem sem custo, Σ liquidar, Σ excedente segurar, dias de estoque pela saída = Σ valor_parado / Σ(consumo_diário×cmc) só sobre SKUs com custo **e** com fonte; null sem fonte). Ausente nunca vira 0.
+- Helper puro `src/lib/financeiro/ciclo-giro-helpers.ts`: resumo por empresa (Σ `valor_parado` não-null, contagem sem custo, Σ liquidar, Σ excedente segurar, Σ fora do giro). Soma sem nenhum termo conhecido → null. Ausente nunca vira 0.
 - `CicloEmpresaCards`: PME passa a aceitar null → "—" + motivo (mesmo tratamento de PMR/PMP); mostra a fonte do estoque ("Omie, agora" / "manual, dd/mm").
 - Seção nova `CicloGiroEstoque.tsx` na `CicloTab`, abaixo dos cards, respeitando o filtro de empresa existente (`cicloEmpresa`; em "all", um bloco por empresa, nunca somados):
   - faixa de resumo (G4) com rótulo "cenário — não é previsão";
@@ -151,6 +151,19 @@ Desempenho: alvo < 2 s sob `SET ROLE authenticated` + claims do master (medir em
   - em colacor/colacor_sc: R$ parado aparece, dias/ação "—" com "sem consumo por SKU (NF-e só da Oben)".
 - Sensor: `track('financeiro.ciclo_giro_visto', { empresa })` ao renderizar e `track('financeiro.ciclo_giro_filtro', { acao })` ao filtrar.
 - `manifesto.ts` registra arquivos novos.
+
+### 5.4 Endurecimento pós-Codex (challenge de 2026-10-18; prevalece sobre §5.0–5.3 onde divergir)
+
+1. **Fonte de consumo exige cobertura e frescor**, não "≥1 linha": em `venda_items_history` da empresa, `min(data_emissao) ≤ hoje − 330` **e** `max(data_emissao) ≥ hoje − 7`. Senão `motivo_consumo` = `'consumo_incompleto'` ou `'consumo_desatualizado'` e consumo/dias/ação null. (OBEN hoje: desde 2025-10-21, última 2026-10-16 → passa.)
+2. **Unidade da malha:** insumo cujo consumo vem da explosão PCP com `v_pcp_malha_oben.unidade` ≠ `omie_products.unidade` → consumo null, `motivo_consumo='unidade_divergente'`. (Medido: 23 insumos, 0 divergentes.) Joins sempre por empresa/account + código.
+3. **Compra recente não é giro morto:** SKU com linha em `cmc_ledger` (mesma account) com `observed_at ≥ hoje − 90` → não recebe `liquidar`, `motivo_acao='compra_recente'`. Proxy declarado: não há data de criação confiável do SKU (`inventory_position.created_at` foi recriado em 2026-05-24).
+4. **Etiquetas são candidatos**, não ordens: a UI diz "Candidato a liquidar" / "Candidato a segurar compra" e um aviso "confira reservas, lead time e demanda contratada antes de agir".
+5. **Sem dias agregados na seção:** a soma de produto acabado + insumos explodidos conta a mesma venda duas vezes, e o número não reconcilia com o PME (CMV contábil). O PME do card é o único número de dias por empresa; por SKU, a coluna chama "cobertura (qtd)".
+6. **Custo incompleto derruba o PME:** `fin_estoque_giro_valor` → `valor_giro` null se `skus_giro_com_custo = 0`; o engine põe PME null (não só motivo) se `cobertura_pct < 95`.
+7. **Override manual estrito:** só linha com `fonte = 'manual'` e `hoje − 45 ≤ data_ref ≤ hoje` vale. Linha `omie_estimado` salva pelo diálogo **não** é override (é foto velha da regra antiga, com imobilizado). O diálogo deixa de gravar `omie_estimado`: o botão "estimar" só preenche o campo e o dono decide gravar como manual.
+8. **NCG parcial explícita:** com estoque null, `ncg.parcial = true` (campo novo) e `aco.estoque = null`; `liquidez_operacional_liquida` usa o mesmo estoque e herda o flag. UI escreve "parcial — sem estoque" ao lado do total. Antes deste PR as 3 eram parciais em silêncio; depois, só onde não há estoque de giro classificável (colacor_sc hoje).
+9. **CMV:** 12 meses **distintos**, exatamente os 12 fechados anteriores ao mês corrente, `cmv` não-null, Σ > 0.
+10. **`fin_estoque_giro_valor`:** valida empresa (P0001), gate cap_custo_ler/service_role (42501, inclusive `auth.uid()` null), `REVOKE ALL FROM PUBLIC, anon`, `GRANT` a `authenticated, service_role`, objetos qualificados por schema; testes negativos por papel.
 
 ## 6. Prova
 
