@@ -119,7 +119,7 @@ echo "== habilita a mao e publica =="
 P -c "UPDATE public.reposicao_encerrados_omie_publicacao SET habilitado = true WHERE empresa='OBEN';"
 eq "publica 2 novos" "$(run OBEN 11 "ARRAY[1014,1049]::bigint[]")" '{"novos": 2, "limpos": 0, "status": "publicado"}'
 C1="$(marcado OBEN 1014)"
-[ "$C1" != "null" ] && ok "1014 carimbado" || bad "1014 nao carimbado"
+if [ "$C1" != "null" ]; then ok "1014 carimbado"; else bad "1014 nao carimbado"; fi
 eq "pedido aberto segue null" "$(marcado OBEN 2000)" "null"
 eq "outra empresa (COLACOR 1014) intocada" "$(marcado COLACOR 1014)" "null"
 eq "habilitado preservado pela RPC" "$(pub habilitado)" "true"
