@@ -84,8 +84,10 @@ export const respostaSonda = criarRespostaSonda("sync-reprocess");
 // (nunca somar as duas), ausente enquanto a RPC no ar não separar. → sensor-que-mede-mudanca-nao-responde-nulificacao.md
 // v1.18 (2026-10-10, picking v2 Fase 0.2) — `ListarPedidos` pede a vez na trava `omie_cota_metodo`
 // (_shared/omie-cota.ts); vez negada LANÇA (chamada não feita). Migration 20261010204708 antes.
+// v1.20 (2026-10-18) — strategic roda inventory ANTES de products: products lento matava o worker
+// ao abrir inventory (5 órfãs `running`, alerta sync_reprocess_saude de 18/10).
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.19-pedidos-operacional";
+export const VERSAO = "v1.20-strategic-inventory-antes";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO = // v1.12 (2026-09-27, P2 Codex): run de pedidos que ABORTA grava o metadata apurado até o abort (não apurado = null, nunca 0) — ./apuracao-pedidos.ts. Nota aqui e não na linha do VERSAO: `scripts/sonda-versao-sql.ts` exige aquela linha limpa até o fim.
