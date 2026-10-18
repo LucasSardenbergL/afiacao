@@ -438,4 +438,146 @@ REVOKE ALL ON public.v_ciclo_cp_compras_categorias, public.v_ciclo_cp_titulos, p
 GRANT SELECT ON public.v_ciclo_cp_compras_categorias, public.v_ciclo_cp_titulos, public.v_ciclo_fornecedor_resumo
   TO service_role;
 
+-- ------------------------------------------------------------
+-- 3. RPCs com gate na fronteira (padrão 20261015003200)
+-- ------------------------------------------------------------
+-- gate 1 — só master (_fin_ciclo_gate_master, já em prod; REUSADO, não recriado);
+-- gate 2 — fin_user_can_access(company) sobre as linhas JÁ agregadas.
+CREATE OR REPLACE FUNCTION public.fin_ciclo_cp_titulos()
+RETURNS SETOF public.v_ciclo_cp_titulos
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  RETURN QUERY
+    SELECT v.* FROM public.v_ciclo_cp_titulos v
+    WHERE public.fin_user_can_access(v.company);
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.fin_ciclo_fornecedor_resumo()
+RETURNS SETOF public.v_ciclo_fornecedor_resumo
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  RETURN QUERY
+    SELECT v.* FROM public.v_ciclo_fornecedor_resumo v
+    WHERE public.fin_user_can_access(v.company);
+END
+$$;
+
+-- Uma linha por empresa: PMP de compras (prazo real dDtPagamento − emissão, ponderado por valor do
+-- documento, só data confiável), compras 12m por emissão e R$/dia; o CONTROLE do engine (fórmula do
+-- v_capital_giro_prazos: v_titulo_baixas CP inteiro, sem janela, peso valor_baixado) para a ponte
+-- engine → compras; e o sensor de deriva do universo (2.01.* fora da lista e sem categoria, mesma
+-- janela de emissão das compras).
+CREATE OR REPLACE FUNCTION public.fin_ciclo_cp_empresa()
+RETURNS TABLE(company text, pmp_compras_pond numeric, compras_12m numeric, rs_por_dia numeric,
+              pmp_engine_controle numeric, n_fora_lista int, valor_fora_lista numeric,
+              n_sem_categoria int, valor_sem_categoria numeric)
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  PERFORM public._fin_ciclo_gate_master();
+  RETURN QUERY
+  WITH hoje AS (SELECT (now() AT TIME ZONE 'America/Sao_Paulo')::date AS h),
+  empresas AS (
+    SELECT DISTINCT p.company FROM public.fin_contas_pagar p
+    UNION SELECT DISTINCT b.company FROM public.v_titulo_baixas b WHERE b.tipo = 'CP'
+  ),
+  pmp AS (
+    SELECT t.company,
+           sum(t.valor_documento * t.prazo_real_dias) / nullif(sum(t.valor_documento), 0) AS pmp_compras_pond
+      FROM public.v_ciclo_cp_titulos t
+     WHERE t.situacao = 'paga' AND t.data_baixa_confiavel
+     GROUP BY t.company
+  ),
+  vol AS (
+    SELECT r.company, sum(r.compras_12m) AS compras_12m
+      FROM public.v_ciclo_fornecedor_resumo r GROUP BY r.company
+  ),
+  eng AS (
+    SELECT b.company,
+           round(sum(b.prazo_ponderado_dias * b.valor_baixado) / nullif(sum(b.valor_baixado), 0)) AS pmp_engine_controle
+      FROM public.v_titulo_baixas b
+     WHERE b.tipo = 'CP' AND b.prazo_ponderado_dias IS NOT NULL
+     GROUP BY b.company
+  ),
+  sensor AS (
+    SELECT p.company,
+           count(*) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL)::int AS n_fora_lista,
+           coalesce(sum(p.valor_documento) FILTER (WHERE p.categoria_codigo LIKE '2.01.%' AND l.categoria_codigo IS NULL), 0) AS valor_fora_lista,
+           count(*) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL)::int AS n_sem_categoria,
+           coalesce(sum(p.valor_documento) FILTER (WHERE nullif(btrim(p.categoria_codigo), '') IS NULL), 0) AS valor_sem_categoria
+      FROM public.fin_contas_pagar p
+      LEFT JOIN public.v_ciclo_cp_compras_categorias l
+        ON l.company = p.company AND l.categoria_codigo = p.categoria_codigo
+      CROSS JOIN hoje
+     WHERE p.status_titulo IS DISTINCT FROM 'CANCELADO'
+       AND p.data_emissao >= hoje.h - 365 AND p.data_emissao < hoje.h
+     GROUP BY p.company
+  )
+  SELECT e.company, pmp.pmp_compras_pond, vol.compras_12m,
+         CASE WHEN vol.compras_12m > 0 THEN vol.compras_12m / 365 END,
+         eng.pmp_engine_controle,
+         coalesce(s.n_fora_lista, 0), coalesce(s.valor_fora_lista, 0),
+         coalesce(s.n_sem_categoria, 0), coalesce(s.valor_sem_categoria, 0)
+    FROM empresas e
+    LEFT JOIN pmp    ON pmp.company = e.company
+    LEFT JOIN vol    ON vol.company = e.company
+    LEFT JOIN eng    ON eng.company = e.company
+    LEFT JOIN sensor s ON s.company = e.company
+   WHERE public.fin_user_can_access(e.company);
+END
+$$;
+
+-- ACL: a 1ª criação herda EXECUTE de PUBLIC → fechar as DUAS pontas (PUBLIC e anon).
+REVOKE ALL ON FUNCTION public.fin_ciclo_cp_titulos() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.fin_ciclo_fornecedor_resumo() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.fin_ciclo_cp_titulos() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.fin_ciclo_fornecedor_resumo() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.fin_ciclo_cp_empresa() TO authenticated, service_role;
+
+-- ------------------------------------------------------------
+-- 4. Postcondição embutida
+-- ------------------------------------------------------------
+DO $post$
+DECLARE v text; f text;
+BEGIN
+  FOREACH v IN ARRAY ARRAY['v_titulo_encargos_cp','v_ciclo_cp_compras_categorias','v_ciclo_cp_titulos',
+                           'v_ciclo_fornecedor_resumo'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                   WHERE n.nspname = 'public' AND c.relname = v AND c.relkind = 'v'
+                     AND 'security_invoker=on' = ANY(coalesce(c.reloptions, '{}'))) THEN
+      RAISE EXCEPTION 'postcondicao: view % sem security_invoker', v;
+    END IF;
+    IF has_table_privilege('anon', 'public.' || v, 'SELECT')
+       OR has_table_privilege('authenticated', 'public.' || v, 'SELECT') THEN
+      RAISE EXCEPTION 'postcondicao: leitura direta de % aberta', v;
+    END IF;
+  END LOOP;
+  FOREACH f IN ARRAY ARRAY['public.fin_ciclo_cp_titulos()', 'public.fin_ciclo_fornecedor_resumo()',
+                           'public.fin_ciclo_cp_empresa()'] LOOP
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = f::regprocedure) THEN
+      RAISE EXCEPTION 'postcondicao: % sem SECURITY DEFINER', f;
+    END IF;
+    IF has_function_privilege('anon', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'postcondicao: anon executa %', f;
+    END IF;
+    IF NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN
+      RAISE EXCEPTION 'postcondicao: authenticated nao executa %', f;
+    END IF;
+  END LOOP;
+  IF has_function_privilege('authenticated', 'public._fin_ciclo_gate_master()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'postcondicao: gate interno exposto';
+  END IF;
+  RAISE NOTICE 'CICLO-FORNECEDOR-OK';
+END
+$post$;
+
 COMMIT;

@@ -118,6 +118,11 @@ db/test-check-finitude-money-path.sh       27
 # `divergente` (nunca encargo efetivo), ausente = NULL. 47 asserts + 19 sabotagens INLINE (controle verde
 # antes, alvo exato, baseline restaurado depois); ~24 s local.
 db/test-fin-encargos-titulo.sh             47
+# Ciclo — frente 4 (2026-10-18): PMP por fornecedor e custo do prazo. v_titulo_encargos_cp (espelho CP do
+# encargo/desconto, dedup de versão de baixa em 2 camadas, evidência × decisão), fatos de compras (universo por
+# (empresa, código), pontualidade só por dDtPagamento, parcial pelo vencimento, nome sem multiplicar) e 3 RPCs
+# com gate master + views sem leitura direta. 9 sabotagens INLINE (controle verde antes); ~40 s local.
+db/test-fin-ciclo-fornecedor.sh            40
 # DRE fase 2 (2026-10-13): CHECK do mapa ampliado (impostos em linha própria + fora_dre), fora_dre
 # proibido em _default (provado pelo COMPORTAMENTO na postcondição), colunas fora_dre/provisório SEM
 # default (ausente ≠ 0), e o script do mapa colacor só entra com a omie-financeiro v1.5 servida (ledger +

@@ -179,12 +179,44 @@ BEGIN
     ('oben',3003,903,'','N3','',h-40,h+10,100,100,'A VENCER','2.01.04');
   INSERT INTO omie_clientes_nao_vinculados VALUES ('oben',901,'RAZAO NOVECENTOS E UM','   '), ('colacor',902,'OUTRA EMPRESA','X');
   INSERT INTO fornecedor_omie_cache VALUES ('oben',902,'CACHE NOVECENTOS E DOIS'), ('oben',902,'CACHE NOVECENTOS E DOIS');
+  -- 1008 (fornecedor 960): a MESMA baixa em 2 versões de mesmo conteúdo, uma sem nCodBaixa → cede.
+  INSERT INTO fin_contas_pagar VALUES ('oben',1008,960,'','D8','',h-50,h-40,1000,1000,'PAGO','2.01.01');
+  INSERT INTO fin_movimentacoes (company, omie_ncodcc, data_movimento, tipo, valor, categoria_descricao, natureza,
+      omie_codigo_lancamento, updated_at, resumo_val_pago, resumo_val_liquido, resumo_desconto, resumo_juros,
+      resumo_multa, resumo_val_aberto, resumo_liquidado, valor_titulo, omie_ncodbaixa, data_pagamento_omie, resumo_lido_em) VALUES
+    ('oben',77,h-40,'S',1000,'CONTA_A_PAGAR','COMP',1008,now(),1000,1000,0,0,0,0,true,1000,NULL,h-40,now()),
+    -- a versão SEM nCodBaixa é a MAIS NOVA: só a camada (a) do dedup (linha com ID manda) a elimina.
+    ('oben',77,h-40,'S',1000,'CONTA_CORRENTE_PAG','BAXP',1008,now(),NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
+    ('oben',77,h-40,'S',1000,'CONTA_CORRENTE_PAG','BAXP',1008,now()-interval '3 day',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,563,NULL,now());
+  -- Controle do engine (fórmula do v_capital_giro_prazos sobre v_titulo_baixas CP inteiro).
+  INSERT INTO v_titulo_baixas VALUES
+    ('oben',9001,'CP',h-10,100,1,10,'titulo'), ('oben',9002,'CP',h-10,300,1,20,'titulo'),
+    ('oben',9003,'CR',h-10,999,1,99,'titulo'), ('colacor',9004,'CP',h-10,100,1,30,'titulo');
 END $f$;
 SQL
 }
 
-falhas=0
+# Sessão simulada: $1 = uuid do usuário ('' = sem claims), $2 = SQL (uma consulta). Roda como authenticated.
+sess() {
+  {
+    echo "BEGIN;"
+    echo "SET LOCAL ROLE authenticated;"
+    if [ -n "$1" ]; then
+      echo "SELECT set_config('request.jwt.claims', '{\"sub\":\"$1\",\"role\":\"authenticated\"}', true) AS c \\gset"
+    fi
+    echo "$2;"
+    echo "COMMIT;"
+  } | Pq
+}
+
+falhas=0; asserts=0
+oks() {
+  asserts=$((asserts+1))
+  local got; got="$(sess "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
+  if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
+}
 okp() { # como postgres. $1 SQL, $2 esperado, $3 rótulo. Erro de psql vira valor distinto (nunca mascara).
+  asserts=$((asserts+1))
   local got; got="$(Pq -c "$1" 2>&1)" || got="ERRO-PSQL: $got"
   if [ "$got" != "$2" ]; then echo "FALHOU: $3 | esperado=[$2] obtido=[$got]"; falhas=$((falhas+1)); fi
 }
@@ -192,7 +224,7 @@ okp() { # como postgres. $1 SQL, $2 esperado, $3 rótulo. Erro de psql vira valo
 ENC="public.v_titulo_encargos_cp"
 
 suite() {
-  falhas=0
+  falhas=0; asserts=0
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
@@ -241,6 +273,40 @@ suite() {
       "901:RAZAO NOVECENTOS E UM:cadastro_omie,902:CACHE NOVECENTOS E DOIS:cache_fornecedor,903:NULL:NULL" "fatos cascata de nome sem fabricar"
   okp "SELECT has_table_privilege('authenticated','$TIT','SELECT')::text||has_table_privilege('authenticated','$RES','SELECT')::text" \
       "falsefalse" "fatos views sem SELECT direto para authenticated"
+  okp "SELECT n_baixas||'|'||confianca FROM $ENC WHERE omie_codigo_lancamento=1008" "1|alta" "encargos versao igual sem nCodBaixa cede"
+  okp "SELECT coalesce(desconto_obtido::text,'NULL')||'|'||coalesce(desconto_informado_omie::text,'NULL') FROM $TIT WHERE omie_codigo_lancamento=1003" \
+      "NULL|NULL" "fatos resumo NULL nao vira 0 no titulo"
+
+  # ── gate e RPCs (T3) ──────────────────────────────────────────────────────────────────
+  local R_RES="public.fin_ciclo_fornecedor_resumo()" R_TIT="public.fin_ciclo_cp_titulos()" R_EMP="public.fin_ciclo_cp_empresa()"
+  local BARRADO="42501|CICLO_SO_MASTER" n_res n_tit n_res_o
+  n_res="$(Pq -c "SELECT count(*) FROM $RES")"; n_tit="$(Pq -c "SELECT count(*) FROM $TIT")"
+  n_res_o="$(Pq -c "SELECT count(*) FROM $RES WHERE company='oben'")"
+  okp "SELECT $n_res_o < $n_res" "t" "gate fixture tem 2 empresas"
+  oks "$U_MASTER" "SELECT count(*) FROM $R_RES" "$n_res" "gate master resumo = view"
+  oks "$U_MASTER" "SELECT count(*) FROM $R_TIT" "$n_tit" "gate master titulos = view"
+  for f in "$R_RES" "$R_TIT" "$R_EMP"; do
+    oks "$U_EMPLOYEE" "SELECT public.t_lanca('SELECT * FROM $f')" "$BARRADO" "gate employee barrado $f"
+    oks "" "SELECT public.t_lanca('SELECT * FROM $f')" "$BARRADO" "gate sem claims barrado $f"
+    okp "SELECT has_function_privilege('anon','$f','EXECUTE')::text||has_function_privilege('authenticated','$f','EXECUTE')::text" "falsetrue" "gate ACL $f"
+  done
+  oks "$U_MASTER_SO_OBEN" "SELECT count(*)||'|'||string_agg(DISTINCT company, ',') FROM $R_RES" "$n_res_o|oben" "gate2 resumo so oben"
+  oks "$U_MASTER_SO_OBEN" "SELECT string_agg(DISTINCT company, ',') FROM $R_TIT" "oben" "gate2 titulos so oben"
+  oks "$U_MASTER_SO_OBEN" "SELECT string_agg(company, ',') FROM $R_EMP" "oben" "gate2 empresa so oben"
+  oks "$U_MASTER" "SELECT 1 FROM public.t_lanca('SELECT 1 FROM public.v_ciclo_cp_titulos') x WHERE x LIKE '42501|%'" "1" "gate authenticated nao le a view direto"
+
+  # ── RPC por empresa ───────────────────────────────────────────────────────────────────
+  # oben: pagas confiaveis 1001 (11 d, 17261.40), 1002 (11 d, 5958.04), 1007 (-5 d, 800), 1008 (10 d, 1000)
+  #   → (11*23219.44 - 4000 + 10000)/25019.44 = 10.4484. Compras por emissao = 34609.44 → /365 = 94.8204.
+  #   Engine: round((10*100+20*300)/400) = 18 (o CR fica fora). Fora da lista: 2003 (4000). Sem categoria: 2004 (300).
+  local EMPO="FROM $R_EMP WHERE company='oben'"
+  oks "$U_MASTER" "SELECT round(pmp_compras_pond,2)||'|'||compras_12m||'|'||round(rs_por_dia,2)||'|'||pmp_engine_controle $EMPO" \
+      "10.45|34609.44|94.82|18" "empresa oben pmp compras, compras, R\$/dia e controle do engine"
+  oks "$U_MASTER" "SELECT n_fora_lista||'|'||valor_fora_lista||'|'||n_sem_categoria||'|'||valor_sem_categoria $EMPO" \
+      "1|4000|1|300" "empresa oben sensor de categoria"
+  oks "$U_MASTER" "SELECT coalesce(pmp_compras_pond::text,'NULL')||'|'||compras_12m||'|'||pmp_engine_controle||'|'||n_fora_lista FROM $R_EMP WHERE company='colacor'" \
+      "NULL|2500|30|1" "empresa colacor sem pagas = PMP NULL, nunca 0"
+  echo "PASS=$((asserts-falhas)) FAIL=$falhas"
   return "$falhas"
 }
 
@@ -248,6 +314,58 @@ suite() {
 cp "$MIG" "$TMPD/mig.sql"
 rc=0; out="$(suite "$TMPD/mig.sql" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ]; then echo "$out"; echo "CONTROLE VERMELHO (rc=$rc) — abortando antes de falsificar"; exit 1; fi
+grep -E '^PASS=[0-9]+ FAIL=0$' <<<"$out" || { echo "CONTROLE SEM CONTAGEM"; exit 1; }
 echo "CONTROLE OK"
+
+# 2) FALSIFICAÇÃO — uma camada por vez, vermelha PELA asserção esperada (marca do ramo).
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |)
+  sed "$2" "$MIG" > "$TMPD/sab.sql"
+  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+  local o r=0
+  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
+  if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o" | tail -5; exit 1; fi
+  if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
+    echo "SABOTAGEM VERMELHA PELO MOTIVO ERRADO: $1 (esperava FALHOU: $3)"; echo "$o"; exit 1
+  fi
+  echo "sabotagem vermelha ok: $1"
+}
+# Sabotagem que a POSTCONDIÇÃO embutida precisa abortar no apply (rc=99 + a mensagem dela).
+sabotar_post() { # $1 nome, $2 sed, $3 mensagem da postcondição
+  sed "$2" "$MIG" > "$TMPD/sab.sql"
+  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+  local o r=0
+  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  if [ "$r" -ne 99 ] || ! grep -qF "$3" <<<"$o"; then echo "SABOTAGEM NAO ABORTOU PELA POSTCONDICAO: $1 (rc=$r)"; echo "$o" | tail -5; exit 1; fi
+  echo "sabotagem vermelha ok: $1 (postcondicao aborta o apply)"
+}
+
+sabotar "a sem gate master no resumo" \
+  "/^CREATE OR REPLACE FUNCTION public.fin_ciclo_fornecedor_resumo/,/^\\\$\\\$;/{/PERFORM public._fin_ciclo_gate_master();/d;}" \
+  "gate employee barrado public.fin_ciclo_fornecedor_resumo()"
+sabotar "b sem fin_user_can_access no resumo" \
+  "/^CREATE OR REPLACE FUNCTION public.fin_ciclo_fornecedor_resumo/,/^\\\$\\\$;/{s/WHERE public.fin_user_can_access(v.company)//;}" \
+  "gate2 resumo so oben"
+sabotar_post "c security_invoker off nos titulos" \
+  "/^CREATE OR REPLACE VIEW public.v_ciclo_cp_titulos/{n;s/security_invoker = on/security_invoker = off/;}" \
+  "postcondicao: view v_ciclo_cp_titulos sem security_invoker"
+sabotar "d dedup sem a camada nCodBaixa" \
+  "s/AND (n.omie_ncodbaixa IS NOT NULL/AND (false/" \
+  "encargos versao igual sem nCodBaixa cede"
+sabotar "e data de baixa pela CC primeiro" \
+  "s/COALESCE(ca.data_pagamento_omie, ca.data_movimento, bt.data_ultima_liquidacao)/COALESCE(bt.data_ultima_liquidacao, ca.data_pagamento_omie, ca.data_movimento)/" \
+  "fatos CC D+1 nao e atraso; PAGO com saldo cheio nao vira aberto"
+sabotar "f desconto NULL vira 0 no titulo" \
+  "s/CASE WHEN situacao = 'paga' THEN desconto_obtido END /coalesce(CASE WHEN situacao = 'paga' THEN desconto_obtido END, 0) /" \
+  "fatos resumo NULL nao vira 0 no titulo"
+sabotar "g universo por prefixo" \
+  "s/AND l.categoria_codigo = p.categoria_codigo/AND p.categoria_codigo LIKE '2.01%'/" \
+  "fatos universo por (empresa, codigo): 2.01.99 colacor fora, 2.01.97 so colacor"
+sabotar "h anon fora do REVOKE sem postcondicao" \
+  "s/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC;/;s/IF has_function_privilege('anon', f, 'EXECUTE') THEN/IF false THEN/" \
+  "gate ACL public.fin_ciclo_cp_empresa()"
+sabotar "i nome multiplica (join direto nos pedidos)" \
+  "s/FROM public.purchase_orders_tracking GROUP BY 1, 2/FROM public.purchase_orders_tracking GROUP BY 1, 2, ctid/" \
+  "fatos uma linha por fornecedor"
 
 echo "PROVA-CICLO-FORNECEDOR-OK"
