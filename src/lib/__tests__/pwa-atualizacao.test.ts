@@ -8,7 +8,8 @@ vi.mock('@/lib/analytics', () => ({ track: trackMock }));
 import {
   __resetEstadoAtualizacao,
   acompanharRegistro,
-  aplicadorNativo,
+  aplicadorPadrao,
+  semCamposPreenchidos,
   descreverEstadoAtualizacao,
   faseDoIndicador,
   lerBuildDoServidor,
@@ -21,6 +22,7 @@ import {
   UPDATE_TOAST_ID,
   type EstadoAtualizacao,
 } from '@/lib/pwa-atualizacao';
+import type { EstadoPublicado } from '@/sw/releases';
 
 /* ─── Dublês: registro/worker/doc/window mínimos sobre EventTarget (Node) ─── */
 
@@ -46,7 +48,7 @@ class FakeReg extends EventTarget {
   }
 }
 
-function montar(opts: { onLine?: boolean; visibility?: DocumentVisibilityState } = {}) {
+function montar(opts: { onLine?: boolean; visibility?: DocumentVisibilityState; filaVazia?: boolean; telaLimpa?: boolean } = {}) {
   let t = 1_000_000;
   const doc = Object.assign(new EventTarget(), { visibilityState: opts.visibility ?? 'visible' });
   let tick: (() => void) | null = null;
@@ -60,12 +62,22 @@ function montar(opts: { onLine?: boolean; visibility?: DocumentVisibilityState }
   const nav = { onLine: opts.onLine ?? true } as Navigator;
   const reg = new FakeReg();
   const aplicar = vi.fn();
+  const container = Object.assign(new EventTarget(), { controller: null });
+  const filaVazia = vi.fn(async () => opts.filaVazia ?? true);
   return {
     reg,
     doc,
     win,
     nav,
     aplicar,
+    container,
+    filaVazia,
+    /** O SW publica seu estado (o que `src/sw/sw.ts` manda às janelas). */
+    swPublica: (e: Partial<EstadoPublicado>) => {
+      const ev = new Event('message') as Event & { data: unknown };
+      ev.data = { type: 'RELEASE_ESTADO', promovida: null, release: null, progresso: null, problema: null, ...e };
+      container.dispatchEvent(ev);
+    },
     avancar: (ms: number) => {
       t += ms;
     },
@@ -77,8 +89,12 @@ function montar(opts: { onLine?: boolean; visibility?: DocumentVisibilityState }
         doc: doc as unknown as Document,
         win: win as unknown as Window,
         nav,
+        container: container as unknown as ServiceWorkerContainer,
+        filaVazia,
+        telaLimpa: () => opts.telaLimpa ?? true,
         intervaloMs: 30 * 60_000,
         minEntreChecagensMs: 5 * 60_000,
+        autoAplicarAposOcultoMs: 30 * 60_000,
       }),
   };
 }
@@ -245,29 +261,144 @@ describe('install que morre deixa de ser silencioso', () => {
   });
 });
 
-describe('aplicadorNativo (fallback do main.tsx, sem workbox-window)', () => {
-  it('posta SKIP_WAITING ao SW em waiting e recarrega só no controllerchange', () => {
+describe('aplicadorPadrao', () => {
+  it('SW ponte (nada em waiting): aplicar = navegar de novo — o HTML promovido vem do SW', () => {
+    const reg = new FakeReg();
+    const recarregar = vi.fn();
+    aplicadorPadrao(reg as unknown as ServiceWorkerRegistration, new EventTarget() as unknown as ServiceWorkerContainer, recarregar)();
+    expect(recarregar).toHaveBeenCalledTimes(1);
+  });
+
+  it('SW à moda antiga em waiting: posta SKIP_WAITING e recarrega só no controllerchange', () => {
     const reg = new FakeReg();
     const waiting = new FakeSW('installed');
     reg.waiting = waiting;
     const container = new EventTarget();
     const recarregar = vi.fn();
-    aplicadorNativo(
-      reg as unknown as ServiceWorkerRegistration,
-      container as unknown as ServiceWorkerContainer,
-      recarregar,
-    )();
+    aplicadorPadrao(reg as unknown as ServiceWorkerRegistration, container as unknown as ServiceWorkerContainer, recarregar)();
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     expect(recarregar).not.toHaveBeenCalled();
     container.dispatchEvent(new Event('controllerchange'));
     expect(recarregar).toHaveBeenCalledTimes(1);
   });
+});
 
-  it('sem SW em waiting é no-op', () => {
-    const reg = new FakeReg();
-    const recarregar = vi.fn();
-    aplicadorNativo(reg as unknown as ServiceWorkerRegistration, new EventTarget() as unknown as ServiceWorkerContainer, recarregar)();
-    expect(recarregar).not.toHaveBeenCalled();
+describe('fase vinda do SW ponte (RELEASE_ESTADO)', () => {
+  it('pede o estado ao SW ativo ao armar', () => {
+    const h = montar();
+    h.armar();
+    expect(h.reg.active?.postMessage).toHaveBeenCalledWith({ type: 'ESTADO' });
+  });
+
+  it('SW promoveu outro build → pronta + toast; nada recarrega sem clique', () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    expect(obterEstadoAtualizacao().fase).toBe('pronta');
+    expect(toastsDeUpdate()).toHaveLength(1);
+    expect(h.aplicar).not.toHaveBeenCalled();
+  });
+
+  it('SW preparando outro build → baixando; promovida = o meu → em dia', () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-ATUAL123', release: 'index-NOVO999', progresso: { feitos: 10, total: 300 } });
+    expect(obterEstadoAtualizacao().fase).toBe('baixando');
+    h.swPublica({ promovida: 'index-ATUAL123', release: 'index-ATUAL123' });
+    expect(obterEstadoAtualizacao().fase).toBe('em_dia');
+  });
+
+  it('quota estourada no preparo → falhou (Reparar app)', () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-ATUAL123', release: 'index-NOVO999', problema: 'quota' });
+    expect(obterEstadoAtualizacao().fase).toBe('falhou');
+  });
+
+  it('mensagem que não é do SW ponte é ignorada', () => {
+    const h = montar();
+    h.armar();
+    const ev = new Event('message') as Event & { data: unknown };
+    ev.data = { type: 'OUTRA', promovida: 'index-X' };
+    h.container.dispatchEvent(ev);
+    expect(obterEstadoAtualizacao().fase).toBe('em_dia');
+  });
+});
+
+describe('momento seguro: aplica sozinho só depois de 30 min oculto e com a fila vazia', () => {
+  const ocultar = (h: ReturnType<typeof montar>) => {
+    h.doc.visibilityState = 'hidden';
+    voltarProApp(h.doc);
+  };
+  const mostrar = (h: ReturnType<typeof montar>) => {
+    h.doc.visibilityState = 'visible';
+    voltarProApp(h.doc);
+  };
+
+  it('pronta + 31 min oculto + fila vazia → aplica, com evento "auto"', async () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    ocultar(h);
+    h.avancar(31 * 60_000);
+    mostrar(h);
+    await flush();
+    expect(h.aplicar).toHaveBeenCalledTimes(1);
+    expect(trackMock).toHaveBeenCalledWith('pwa.atualizacao', { fase: 'auto' });
+  });
+
+  it('oculto só 10 min → NÃO aplica (pode estar no meio do lote); só reavisa', async () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    ocultar(h);
+    h.avancar(10 * 60_000);
+    mostrar(h);
+    await flush();
+    expect(h.aplicar).not.toHaveBeenCalled();
+    expect(toastsDeUpdate().length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('fila offline com pendência → NÃO aplica, mesmo após 2 h oculto', async () => {
+    const h = montar({ filaVazia: false });
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    ocultar(h);
+    h.avancar(2 * 60 * 60_000);
+    mostrar(h);
+    await flush();
+    expect(h.aplicar).not.toHaveBeenCalled();
+  });
+
+  it('campo preenchido na tela (lote digitado, não confirmado) → NÃO aplica', async () => {
+    const h = montar({ telaLimpa: false });
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    ocultar(h);
+    h.avancar(2 * 60 * 60_000);
+    mostrar(h);
+    await flush();
+    expect(h.aplicar).not.toHaveBeenCalled();
+  });
+
+  it('visível o tempo todo → nunca aplica sozinho', async () => {
+    const h = montar();
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO999', release: 'index-NOVO999' });
+    h.avancar(3 * 60 * 60_000);
+    h.tick();
+    await flush();
+    expect(h.aplicar).not.toHaveBeenCalled();
+  });
+
+  it('sem versão pronta → voltar após horas não aplica nada', async () => {
+    const h = montar();
+    h.armar();
+    ocultar(h);
+    h.avancar(2 * 60 * 60_000);
+    mostrar(h);
+    await flush();
+    expect(h.aplicar).not.toHaveBeenCalled();
   });
 });
 
@@ -424,5 +555,23 @@ describe('Reparar app (fase falhou)', () => {
     expect(d.regs[1].unregister).toHaveBeenCalled();
     expect(d.caches.delete).toHaveBeenCalledTimes(2);
     expect(d.recarregar).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('semCamposPreenchidos', () => {
+  const doc = (campos: Array<Partial<HTMLInputElement>>) =>
+    ({ querySelectorAll: () => campos }) as unknown as Document;
+  it('tela sem campos ou com campos vazios → limpa', () => {
+    expect(semCamposPreenchidos(doc([]))).toBe(true);
+    expect(semCamposPreenchidos(doc([{ type: 'text', value: '  ' }]))).toBe(true);
+  });
+  it('qualquer texto digitado → NÃO limpa (inclusive busca)', () => {
+    expect(semCamposPreenchidos(doc([{ type: 'text', value: 'LOTE-123' }]))).toBe(false);
+  });
+  it('hidden/checkbox/readonly/disabled não contam', () => {
+    expect(semCamposPreenchidos(doc([{ type: 'hidden', value: 'x' }, { type: 'checkbox', value: 'on' }, { type: 'text', value: 'x', readOnly: true }, { type: 'text', value: 'x', disabled: true }]))).toBe(true);
+  });
+  it('sem documento → não arrisca', () => {
+    expect(semCamposPreenchidos(undefined as unknown as Document)).toBe(false);
   });
 });

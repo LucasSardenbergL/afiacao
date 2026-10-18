@@ -1,6 +1,7 @@
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import { extrairBuildEm, extrairBuildId, resolverBuildEm, resolverBuildId } from '@/lib/build-id';
+import { faseDaPagina, type EstadoPublicado } from '@/sw/releases';
 
 /**
  * Estado e CHECAGEM da atualização do PWA — o miolo testável do modo `prompt`.
@@ -25,8 +26,9 @@ import { extrairBuildEm, extrairBuildId, resolverBuildEm, resolverBuildId } from
  * reaparece ao voltar pro app enquanto houver versão pronta; e o estado (build em
  * execução + fase) fica visível no menu do usuário, com "Verificar agora".
  *
- * Sem import de `virtual:pwa-register`: este módulo serve aos DOIS caminhos de
- * registro do main.tsx (workbox-window via pwa-update.ts, e o fallback nativo).
+ * Serve aos DOIS caminhos de registro do main.tsx (pwa-update.ts e o fallback),
+ * ambos pela API nativa. Desde 2026-10-18 a fase vem do estado que o SW ponte
+ * PUBLICA (`src/sw/releases.ts`), não mais de um SW em waiting.
  */
 
 export type FaseAtualizacao =
@@ -115,7 +117,7 @@ function mostrarAvisoAtualizacao(nav: Navigator | undefined = globalThis.navigat
 }
 
 /** Marca versão pronta e avisa. Idempotente (o caminho workbox e o nativo podem chamar os dois). */
-export function marcarAtualizacaoPronta(aplicar: () => void, nav?: Navigator): void {
+function marcarAtualizacaoPronta(aplicar: () => void, nav?: Navigator): void {
   aplicador = aplicar;
   if (estado.fase !== 'pronta') definir({ fase: 'pronta' });
   mostrarAvisoAtualizacao(nav);
@@ -163,36 +165,93 @@ export async function lerBuildDoServidor(f: typeof fetch = globalThis.fetch): Pr
   return (await lerCarimbosDoServidor(f))?.buildId ?? null;
 }
 
+/**
+ * Momento SEGURO para aplicar sozinho (sem clique): o app voltou do segundo plano
+ * depois de ficar oculto por este tempo E a fila offline está vazia E nenhum campo
+ * da tela está preenchido (`semCamposPreenchidos`). Visível o tempo todo = nunca
+ * recarrega sozinho — o motivo do modo `prompt` segue de pé.
+ */
+const AUTO_APLICAR_APOS_OCULTO_MS = 30 * 60_000;
+
+/**
+ * Nenhum campo preenchido na tela? P2 do Codex (2026-10-18): fila vazia + 30 min
+ * oculto NÃO bastam — o conferente digita lote/validade, bloqueia o celular e volta;
+ * a fila está vazia porque ele ainda não confirmou, e o reload perderia os campos
+ * (estado React, fora do localStorage). Conservador por desenho: QUALQUER campo
+ * de texto/número/data/select com valor (inclusive uma busca) segura o reload —
+ * aí o operador vê o toast e decide.
+ */
+export function semCamposPreenchidos(doc: Pick<Document, 'querySelectorAll'> | undefined = globalThis.document): boolean {
+  if (!doc) return false;
+  const campos = doc.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select');
+  for (const c of Array.from(campos)) {
+    const tipo = (c as HTMLInputElement).type ?? '';
+    if (['hidden', 'checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(tipo)) continue;
+    if ((c as HTMLInputElement).readOnly || c.disabled) continue;
+    if (typeof c.value === 'string' && c.value.trim() !== '') return false;
+  }
+  return true;
+}
+
+/** Fila offline vazia? Import dinâmico: a fila não precisa entrar no entry. */
+async function filaOfflineVazia(): Promise<boolean> {
+  try {
+    const m = await import('@/lib/offline-queue');
+    return (await m.getOfflineQueueDepth()) === 0;
+  } catch {
+    return false; // sem leitura = não arrisca
+  }
+}
+
 /** Dependências injetáveis — o teste roda sem browser. */
 export interface DepsAcompanhamento {
-  /** Ação de aplicar a versão pronta (workbox: `updateSW(true)`; nativo: SKIP_WAITING). */
+  /** Aplicar a versão pronta (ver `aplicadorPadrao`). */
   aplicar: () => void;
   agora?: () => number;
   doc?: Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventListener'>;
   win?: Pick<Window, 'addEventListener' | 'removeEventListener' | 'setInterval' | 'clearInterval'>;
   nav?: Navigator;
+  /** Onde chegam as mensagens do SW (`RELEASE_ESTADO`). */
+  container?: Pick<ServiceWorkerContainer, 'addEventListener' | 'removeEventListener' | 'controller'>;
+  filaVazia?: () => Promise<boolean>;
+  /** Nenhum campo preenchido na tela (ver `semCamposPreenchidos`). */
+  telaLimpa?: () => boolean;
   intervaloMs?: number;
   minEntreChecagensMs?: number;
+  autoAplicarAposOcultoMs?: number;
+}
+
+function ehEstadoPublicado(d: unknown): d is EstadoPublicado {
+  return typeof d === 'object' && d !== null && (d as { type?: unknown }).type === 'RELEASE_ESTADO';
 }
 
 /**
- * Acompanha um registro de SW: deriva a fase dos workers, detecta install que
- * morreu, e ARMA a checagem ativa de update (voltar pro app, 'online', intervalo
- * enquanto visível). Devolve a função que desarma tudo.
+ * Acompanha um registro de SW: deriva a fase do estado que o SW PUBLICA (release
+ * promovida/preparando — `src/sw/releases.ts`), detecta install que morreu, ARMA a
+ * checagem ativa de update (voltar pro app, 'online', intervalo enquanto visível) e
+ * aplica sozinho só no momento seguro. Devolve a função que desarma tudo.
  */
 export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAcompanhamento): () => void {
   const agora = deps.agora ?? Date.now;
   const doc = deps.doc ?? globalThis.document;
   const win = deps.win ?? globalThis.window;
   const nav = deps.nav ?? globalThis.navigator;
+  const container = deps.container ?? nav?.serviceWorker;
+  const filaVazia = deps.filaVazia ?? filaOfflineVazia;
+  const telaLimpa = deps.telaLimpa ?? (() => semCamposPreenchidos());
   const intervaloMs = deps.intervaloMs ?? INTERVALO_CHECAGEM_MS;
   const minEntre = deps.minEntreChecagensMs ?? MIN_ENTRE_CHECAGENS_MS;
+  const autoAposMs = deps.autoAplicarAposOcultoMs ?? AUTO_APLICAR_APOS_OCULTO_MS;
   aplicador = deps.aplicar;
   let ultimaChecagem = agora();
   let emVoo: Promise<FaseAtualizacao> | null = null;
+  let estadoSW: EstadoPublicado | null = null;
+  let ocultoDesde: number | null = doc?.visibilityState === 'hidden' ? agora() : null;
 
   const derivar = (): FaseAtualizacao => {
+    // SW à moda antiga em waiting (ex.: rollback para o SW do Workbox): ainda vale.
     if (reg.waiting && reg.active) return 'pronta';
+    if (estadoSW) return faseDaPagina(estado.buildId, estadoSW);
     if (reg.installing && reg.active) return 'baixando';
     return 'em_dia';
   };
@@ -201,19 +260,28 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
     if (fase === 'pronta') marcarAtualizacaoPronta(deps.aplicar, nav);
     else definir({ fase });
   };
+  const pedirEstado = () => {
+    const alvo = reg.active ?? container?.controller ?? null;
+    alvo?.postMessage({ type: 'ESTADO' });
+  };
+  const aoMensagem = (ev: Event) => {
+    const dado = (ev as MessageEvent).data;
+    if (!ehEstadoPublicado(dado)) return;
+    estadoSW = dado;
+    aplicarDerivada();
+  };
 
   const acompanharInstalando = (sw: ServiceWorker | null) => {
     if (!sw) return;
     let instalou = false;
-    // Primeira instalação (sem SW ativo) não é "atualização": não vira 'baixando'.
-    if (reg.active) definir({ fase: 'baixando' });
+    aplicarDerivada(); // SW novo instalando com um ativo no controle → 'baixando'
     sw.addEventListener('statechange', () => {
-      if (sw.state === 'installed') {
+      if (sw.state === 'installed' || sw.state === 'activated') {
         instalou = true;
+        pedirEstado();
         aplicarDerivada();
       } else if (sw.state === 'redundant' && !instalou) {
-        // O install morreu (asset 404 após um Publish no meio, app suspenso, quota).
-        // Se ainda há uma versão anterior em waiting, ela continua valendo.
+        // O install do próprio SW morreu (raro: o SW ponte instala sem baixar nada).
         definir({ fase: reg.waiting && reg.active ? 'pronta' : 'falhou' });
       }
     });
@@ -229,14 +297,14 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
     emVoo = Promise.resolve()
       .then(() => reg.update())
       .then(
-        () => aplicarDerivada(),
-        () => {
-          // `update()` rejeita se o /sw.js não veio (rede) — ausência de dado:
-          // volta à fase derivada, sem inventar "em dia" nem "falhou".
-          aplicarDerivada();
-        },
+        () => undefined,
+        // `update()` rejeita se o /sw.js não veio (rede) — ausência de dado:
+        // volta à fase derivada, sem inventar "em dia" nem "falhou".
+        () => undefined,
       )
       .then(() => {
+        pedirEstado();
+        aplicarDerivada();
         definir({ ultimaVerificacaoEm: agora() });
         return estado.fase;
       })
@@ -247,9 +315,26 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
   };
   verificador = verificar;
 
-  const aoVoltar = () => {
+  const aoMudarVisibilidade = () => {
+    if (doc?.visibilityState === 'hidden') {
+      ocultoDesde = agora();
+      return;
+    }
     if (doc?.visibilityState !== 'visible') return;
+    const tempoOculto = ocultoDesde === null ? 0 : agora() - ocultoDesde;
+    ocultoDesde = null;
     void verificar(false);
+    if (estado.fase === 'pronta' && tempoOculto >= autoAposMs && online(nav)) {
+      void filaVazia().then((vazia) => {
+        if (vazia && telaLimpa() && estado.fase === 'pronta' && aplicador) {
+          track('pwa.atualizacao', { fase: 'auto' });
+          aplicador();
+        } else {
+          mostrarAvisoAtualizacao(nav);
+        }
+      });
+      return;
+    }
     mostrarAvisoAtualizacao(nav);
   };
   const aoFicarOnline = () => {
@@ -257,22 +342,26 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
     mostrarAvisoAtualizacao(nav);
   };
   const aoAcharUpdate = () => acompanharInstalando(reg.installing);
+  const aoTrocarControlador = () => pedirEstado();
 
   reg.addEventListener('updatefound', aoAcharUpdate);
-  doc?.addEventListener('visibilitychange', aoVoltar);
+  container?.addEventListener('message', aoMensagem);
+  container?.addEventListener('controllerchange', aoTrocarControlador);
+  doc?.addEventListener('visibilitychange', aoMudarVisibilidade);
   win?.addEventListener('online', aoFicarOnline);
   const timer = win?.setInterval(() => {
     if (doc?.visibilityState === 'visible') void verificar(false);
   }, intervaloMs);
 
-  // Estado inicial: um SW pode já estar em waiting (instalou em sessão anterior)
-  // ou instalando (o soft update desta navegação).
   if (reg.installing) acompanharInstalando(reg.installing);
   aplicarDerivada();
+  pedirEstado();
 
   return () => {
     reg.removeEventListener('updatefound', aoAcharUpdate);
-    doc?.removeEventListener('visibilitychange', aoVoltar);
+    container?.removeEventListener('message', aoMensagem);
+    container?.removeEventListener('controllerchange', aoTrocarControlador);
+    doc?.removeEventListener('visibilitychange', aoMudarVisibilidade);
     win?.removeEventListener('online', aoFicarOnline);
     if (timer !== undefined) win?.clearInterval(timer);
     if (verificador === verificar) verificador = null;
@@ -280,20 +369,24 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
 }
 
 /**
- * Aplicar no caminho NATIVO (fallback do main.tsx, sem workbox-window): pede ao SW
- * em waiting que pule a espera e recarrega quando ele assumir. O SW gerado pelo
- * Workbox escuta exatamente `{type: 'SKIP_WAITING'}`.
+ * Aplicar a versão pronta. Com o SW ponte, o build novo já está PROMOVIDO: basta
+ * uma navegação (reload) para receber o HTML novo. Se houver um SW à moda antiga em
+ * waiting (rollback para o SW do Workbox), pede SKIP_WAITING e recarrega quando ele
+ * assumir — o SW antigo escuta exatamente `{type: 'SKIP_WAITING'}`.
  */
-export function aplicadorNativo(
+export function aplicadorPadrao(
   reg: ServiceWorkerRegistration,
-  sw: ServiceWorkerContainer = globalThis.navigator.serviceWorker,
+  sw: Pick<ServiceWorkerContainer, 'addEventListener'> | undefined = globalThis.navigator?.serviceWorker,
   recarregar: () => void = () => globalThis.location.reload(),
 ): () => void {
   return () => {
     const waiting = reg.waiting;
-    if (!waiting) return;
-    sw.addEventListener('controllerchange', () => recarregar(), { once: true });
-    waiting.postMessage({ type: 'SKIP_WAITING' });
+    if (waiting && sw) {
+      sw.addEventListener('controllerchange', () => recarregar(), { once: true });
+      waiting.postMessage({ type: 'SKIP_WAITING' });
+      return;
+    }
+    recarregar();
   };
 }
 
