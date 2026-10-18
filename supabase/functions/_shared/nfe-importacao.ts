@@ -11,6 +11,8 @@
 // Sem dependência do supabase-js de propósito: o cliente entra por contrato ESTRUTURAL (`ClienteRpc`),
 // que o fake dos testes (`deno test --no-remote`) satisfaz e o cliente real atende por cast.
 
+import { mensagemDeErro } from "./erro-mensagem.ts";
+
 export type OrigemImportacao = "webhook" | "sync" | "importacao_chave";
 
 /** Erro como o PostgREST o devolve: `message` e `code` (SQLSTATE, ou `PGRST…`). */
@@ -162,7 +164,7 @@ export async function importarViaRpc(cliente: ClienteRpc, entrada: EntradaImport
       p_origem: entrada.origem,
     });
   } catch (e) {
-    return { tipo: "erro", classe: "infra", code: null, mensagem: e instanceof Error ? e.message : String(e) };
+    return { tipo: "erro", classe: "infra", code: null, mensagem: mensagemDeErro(e) ?? "falha de transporte sem mensagem" };
   }
   if (resposta.error) return erroDe(resposta.error);
   return interpretarResultadoRpc(resposta.data);
@@ -230,7 +232,7 @@ export async function registrarFalhaImportacao(
     }
     return inteiroNaoNegativo(r.data);
   } catch (e) {
-    console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}:`, e instanceof Error ? e.message : e);
+    console.error(`[nfe-importacao] falha NÃO registrada para ${falha.chaveAcesso}:`, mensagemDeErro(e) ?? "falha sem mensagem");
     return null;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
