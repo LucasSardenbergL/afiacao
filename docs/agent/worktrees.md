@@ -379,6 +379,17 @@ válvula para gate errado é `GATES_RAPIDOS=pular gh pr create …`; use e diga 
     workflow durante o CI dele. O #2721 mudou o `ci.yml` às 09:43Z, e a recusa veio às 10:15Z. O
     #2731 entrou às 13:19Z, e a recusa veio às 13:33Z.
 
+### Branch novo a partir de `origin/main`: `--no-track`, ou o push vai PARA A `main` (2026-10-18)
+
+Este repo tem `push.default=upstream`. `git checkout -b <branch> origin/main` cria o branch com
+upstream **`origin/main`**, e aí `git push -u origin <branch>` empurra para o upstream, ou seja,
+direto na `main`, sem PR. A proteção do branch deixou passar (fast-forward). Mordido no fix da
+revisita da `omie-sync-nfes-recebidas` (v1.8): 4 commits WIP caíram na `main`. O CI do push
+(`validate`) passou, e o sintoma visível foi o `gh pr create` responder "head branch main is the same
+as base branch". Crie com `git checkout --no-track -b <branch> origin/main` (ou rode
+`git branch --unset-upstream` antes do 1º push) e confira `git rev-parse --abbrev-ref @{u}`: o
+esperado é "no upstream". Nunca conserte com force-push na `main`.
+
 ## Higiene de RAM/Node (M2 8GB satura; **swap em uso = RAM cheia**)
 
 | Comando | O quê (todos DRY-RUN por padrão; `--yes` executa) |
