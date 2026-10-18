@@ -66,6 +66,8 @@ describe('gerarCarga', () => {
     expect(sql).toContain('POSTCONDICAO_TUPLAS');
     expect(sql).toContain('POSTCONDICAO_ORIGEM');
     expect(sql).toMatch(/where origem = 'artifact_fase_a';/);
+    expect(sql).toContain('if v_exato <> 17 then');
+    expect(sql).toContain('if v_total <> 17 then');
   });
 
   it('contagem esperada divergente aborta', () => {
