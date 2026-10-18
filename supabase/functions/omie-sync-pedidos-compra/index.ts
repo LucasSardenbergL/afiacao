@@ -18,6 +18,7 @@ import {
   FILTROS_TODOS,
   isoParaBR,
 } from "./encerrados.ts";
+import { segurarWorker } from "./manter-vivo.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 
 const corsHeaders = {
@@ -1411,5 +1412,10 @@ Deno.serve(async (req) => {
     }
   };
 
-  return await responderSincrono(processarTudo());
+  // [2026-10-18] o gateway derruba a request aos 150s (504 IDLE_TIMEOUT) mesmo com o cliente já fora, e sem
+  // request ativa o runtime faz EarlyDrop do worker ~50s depois — matava a passada de encerrados no meio
+  // (manter-vivo.ts). O MESMO promise vai para o waitUntil: o worker vive até o fim, a resposta segue no fim.
+  const trabalho = processarTudo();
+  segurarWorker(trabalho);
+  return await responderSincrono(trabalho);
 });
