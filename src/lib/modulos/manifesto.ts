@@ -178,6 +178,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useFinanceiro.erros-carga.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
       "src/hooks/__tests__/useFinanceiroCiclo.test.tsx",
+      "src/hooks/__tests__/useFinanceiroCicloFornecedor.test.tsx",
       "src/hooks/__tests__/usePeriodOverride.test.tsx",
       "src/hooks/__tests__/useUtiContas.test.ts",
       "src/hooks/__tests__/ponto-equilibrio-folha-ambigua.test.ts",
