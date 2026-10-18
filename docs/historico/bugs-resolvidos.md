@@ -1133,6 +1133,11 @@ pelos contratos da própria listagem — zero `ConsultarRecebimento`, ~1 chamada
 desconhecida consulta 1× e, sem linha, vira órfã (a reconciliação liga depois). Só preenche linha sem NF
 (CAS) e grava `nid_receb` junto; ordem por emissão ascendente (vence o 1º faturamento). 04:15 fica longe
 do sku-items de 30 dias das 07:00, que repete `ConsultarRecebimento` (REDUNDANT). Ver `revisita.ts`.
+Listagem incompleta não escreve nada (Codex 2026-10-18, P1: a ordem por emissão só decide sobre a
+janela inteira); toda I/O da revisita tem prazo até 125 s e nenhuma NF começa após 105 s (P2).
 Descartado: tabela dedicada de itens do recebimento (migration; a listagem já é a fonte e custa ~nada).
+**Histórico (maio–julho) fica FORA dos 30 dias:** catch-up único com janela explícita, sem passar o laço
+principal (que sobrescreve) pelo período — `{"empresa":"OBEN","dias":1,"revisita_de":"01/05/2026",
+"revisita_ate":"31/07/2026"}` (teto 120 dias), depois do deploy da v1.7.
 **Lição:** "processei esta NF" não é "terminei esta NF" — enquanto o outro lado do casamento pode
 nascer depois, a NF precisa de uma janela de revisita, e a fonte barata (a listagem) costuma bastar.
