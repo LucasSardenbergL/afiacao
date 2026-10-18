@@ -8,6 +8,14 @@ export const LIMIAR_COBERTURA_ALVO_DIAS = 90;
 export const LIMIAR_SEGURAR_COMPRA_DIAS = 180;
 export const LIMIAR_GIRO_MORTO_DIAS_FIN = 270;
 
+/** Espelho de MANUAL_VALIDADE_DIAS da edge (estoque-pme.ts): override manual vale de hoje−45 até hoje (dia SP). */
+export const MANUAL_VALIDADE_DIAS = 45;
+
+/** O motor só usa o inventário manual dentro da janela; fora dela, salvar não muda PME/NCG. */
+export function overrideManualVigente(dataRef: string, fonte: string | null | undefined, hoje: string, inicioJanela: string): boolean {
+  return fonte === 'manual' && dataRef >= inicioJanela && dataRef <= hoje;
+}
+
 export type ClasseEstoque = 'giro' | 'fora_giro' | 'sem_classificacao';
 export type AcaoGiro = 'liquidar' | 'segurar_compra';
 

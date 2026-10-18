@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { hojeSP } from '@/lib/time/sp-day';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
+import { MANUAL_VALIDADE_DIAS, overrideManualVigente } from '@/lib/financeiro/ciclo-giro-helpers';
 
 type Props = { open: boolean; onOpenChange: (open: boolean) => void };
 
@@ -74,6 +75,11 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
     const valor = Number(estoqueValor);
     if (!estoqueValor || Number.isNaN(valor) || !estoqueDataRef) {
       toast.error('Informe valor e data de referência');
+      return;
+    }
+    const hoje = hojeSP();
+    if (!overrideManualVigente(estoqueDataRef, 'manual', hoje, addDias(hoje, -MANUAL_VALIDADE_DIAS))) {
+      toast.error(`Data de referência precisa estar entre ${addDias(hoje, -MANUAL_VALIDADE_DIAS)} e hoje — fora disso o motor não usa o valor.`);
       return;
     }
     try {
@@ -178,8 +184,11 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
             <CardContent className="space-y-3">
               {estoqueAtual ? (
                 <p className="text-xs text-muted-foreground">
-                  Atual: {fmtBRL(estoqueAtual.valor)} · ref {estoqueAtual.data_ref} · {estoqueAtual.fonte}
+                  Último registro: {fmtBRL(estoqueAtual.valor)} · ref {estoqueAtual.data_ref} · {estoqueAtual.fonte}
                   {estoqueAtual.cobertura_pct != null ? ` · cobertura ${estoqueAtual.cobertura_pct}%` : ''}
+                  {overrideManualVigente(estoqueAtual.data_ref, estoqueAtual.fonte, hojeSP(), addDias(hojeSP(), -MANUAL_VALIDADE_DIAS))
+                    ? ' · em uso pelo motor (substitui o Omie)'
+                    : ` · NÃO usado pelo motor (só manual dos últimos ${MANUAL_VALIDADE_DIAS} dias; vale o estoque de giro do Omie)`}
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">Nenhum valor de estoque registrado ainda.</p>

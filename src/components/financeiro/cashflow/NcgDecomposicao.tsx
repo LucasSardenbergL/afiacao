@@ -42,6 +42,12 @@ export function NcgDecomposicao() {
 
   return (
     <div className="space-y-4">
+      {/* Resposta anterior à v1.4 não tem `parcial`: lá o estoque ausente vinha como 0. */}
+      {data.ncg.parcial === undefined && data.ncg.aco.estoque === 0 && (
+        <div className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
+          ⚠ Estoque não confirmado — esta projeção é de uma versão anterior do motor; R$ 0 de estoque pode ser ausência de dado.
+        </div>
+      )}
       {data.ncg.aco.estoque === null && (
         <div className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
           ⚠ NCG parcial — sem estoque: não há inventário manual recente nem estoque de giro com custo no Omie. PME indisponível.

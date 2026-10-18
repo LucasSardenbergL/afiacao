@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   LIMIAR_COBERTURA_ALVO_DIAS, LIMIAR_GIRO_MORTO_DIAS_FIN, LIMIAR_SEGURAR_COMPRA_DIAS,
-  normalizarGiro, resumirGiro, separarListas, type GiroSku,
+  MANUAL_VALIDADE_DIAS, normalizarGiro, overrideManualVigente, resumirGiro, separarListas, type GiroSku,
 } from '@/lib/financeiro/ciclo-giro-helpers';
 
 const linha = (o: Partial<GiroSku>): GiroSku => ({
@@ -76,6 +76,22 @@ describe('normalizarGiro', () => {
   it('linha sem código ou com classe desconhecida é descartada (null)', () => {
     expect(normalizarGiro({ omie_codigo_produto: null, classe: 'giro', saldo: 1 })).toBeNull();
     expect(normalizarGiro({ omie_codigo_produto: 1, classe: 'outra', saldo: 1 })).toBeNull();
+  });
+});
+
+describe('overrideManualVigente — mesma janela do motor', () => {
+  it('só manual, de hoje−45 até hoje; futuro e vencido ficam fora', () => {
+    const h = '2026-10-18', ini = '2026-09-03';
+    expect(overrideManualVigente('2026-10-18', 'manual', h, ini)).toBe(true);
+    expect(overrideManualVigente('2026-09-03', 'manual', h, ini)).toBe(true);
+    expect(overrideManualVigente('2026-09-02', 'manual', h, ini)).toBe(false);
+    expect(overrideManualVigente('2026-10-19', 'manual', h, ini)).toBe(false);
+    expect(overrideManualVigente('2026-10-18', 'omie', h, ini)).toBe(false);
+  });
+
+  it('janela TS = edge', () => {
+    const edge = readFileSync('supabase/functions/fin-cashflow-engine/estoque-pme.ts', 'utf8');
+    expect(edge).toContain(`MANUAL_VALIDADE_DIAS = ${MANUAL_VALIDADE_DIAS}`);
   });
 });
 

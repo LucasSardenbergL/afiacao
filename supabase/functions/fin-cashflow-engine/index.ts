@@ -1362,6 +1362,10 @@ async function calcular(
     curvas_aging: dados.curvas_aging,
     apos_horizonte,
     ar_impaired,
+    // Leitores do snapshot (Cockpit) não veem `ncg.parcial` da resposta: sem isto a NCG sem
+    // estoque persistia com cara de completa. Snapshot sem a chave = completude desconhecida.
+    ncg_parcial: ncg.parcial,
+    estoque_fonte: dados.estoque_fonte,
   };
 
   // ⚠️ ORDEM DELIBERADA: o SNAPSHOT grava ANTES dos alertas (invertido em 2026-07-28).
