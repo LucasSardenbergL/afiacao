@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-18T19:04:55.443Z",
-  "sourceHead": "0b4a15e62533eb144e01baa5ad70627f8e41ec6c",
+  "medidoEm": "2026-10-18T20:42:07.478Z",
+  "sourceHead": "2fd23ea7f43621293345eb4f8523b672895e7a78",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 25 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 26 definição(ões) lida(s) para 25 chave(s) do manifest.",
-      "contratoFingerprint": "16ff3907bd51b6c617092a3b7ac4be599dd9f5c5370ce41677b4887220cb732e",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 27 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 28 definição(ões) lida(s) para 27 chave(s) do manifest.",
+      "contratoFingerprint": "2afa709da68586d46652f8e9d6f61ff5f04b6ecd99667da9e3ee689eca7d166d",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -58,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 370 identidade(s) batem com o repo (293 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 370 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@895198047 (fetch ok) · prod 2026-10-18 19:05:22.058792Z",
+      "denominador": "🔎 deriva-corpo — 370 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@95d37281d (fetch ok) · prod 2026-10-18 20:42:32.972286Z",
       "contratoFingerprint": "a0c8858fa173bfdffa5f7fb8157bbd284c7018170bbc79f8f67c34a97786a267",
       "auditorFingerprint": "32a5addf29ac70a751983e2f0e9c72cacce79e39781a59c7f53e03fe8a5f62bb",
       "achados": []
