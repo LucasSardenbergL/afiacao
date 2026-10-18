@@ -18484,6 +18484,41 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ciclo_cp_compras_categorias: {
+        Row: {
+          categoria_codigo: string | null
+          company: string | null
+        }
+        Relationships: []
+      }
+      v_ciclo_cp_titulos: {
+        Row: {
+          categoria_codigo: string | null
+          company: string | null
+          confianca_encargo: string | null
+          data_baixa: string | null
+          data_baixa_confiavel: boolean | null
+          data_emissao: string | null
+          data_vencimento: string | null
+          desconto_informado_omie: number | null
+          desconto_obtido: number | null
+          dias_atraso_baixa: number | null
+          dias_vencido: number | null
+          encargo_pago: number | null
+          fonte_data_baixa: string | null
+          fonte_valor_aberto: string | null
+          numero_documento: string | null
+          omie_codigo_fornecedor: number | null
+          omie_codigo_lancamento: number | null
+          prazo_concedido_dias: number | null
+          prazo_real_dias: number | null
+          situacao: string | null
+          valor_aberto: number | null
+          valor_documento: number | null
+          valor_pago_principal: number | null
+        }
+        Relationships: []
+      }
       v_ciclo_cr_titulos: {
         Row: {
           atraso_dias: number | null
@@ -18516,6 +18551,36 @@ export type Database = {
           valor_em_aberto: number | null
           valor_pago: number | null
           valor_vencido_no_mes: number | null
+        }
+        Relationships: []
+      }
+      v_ciclo_fornecedor_resumo: {
+        Row: {
+          atraso_pond_pos: number | null
+          atraso_pond_sinal: number | null
+          company: string | null
+          compras_12m: number | null
+          desconto_obtido_12m: number | null
+          dias_vencido_max: number | null
+          encargo_pago_12m: number | null
+          fonte_nome: string | null
+          n_documentos_pagos: number | null
+          n_prazo_negativo: number | null
+          n_status_ambiguo: number | null
+          n_titulos_12m: number | null
+          n_titulos_com_desconto: number | null
+          n_vencidas: number | null
+          nome_fornecedor: string | null
+          omie_codigo_fornecedor: number | null
+          prazo_concedido_pond: number | null
+          prazo_real_pond: number | null
+          valor_a_vencer: number | null
+          valor_pago: number | null
+          valor_pago_atrasado: number | null
+          valor_pago_conf_decisao: number | null
+          valor_pago_data_incerta: number | null
+          valor_pago_em_dia: number | null
+          valor_vencido_aberto: number | null
         }
         Relationships: []
       }
@@ -19937,6 +20002,37 @@ export type Database = {
         }
         Relationships: []
       }
+      v_titulo_encargos_cp: {
+        Row: {
+          company: string | null
+          confianca: string | null
+          data_baixa: string | null
+          data_emissao: string | null
+          data_vencimento: string | null
+          desconto_informado_omie: number | null
+          desconto_obtido: number | null
+          dias_atraso: number | null
+          diferenca_caixa_documento: number | null
+          encargo_pago: number | null
+          fonte: string | null
+          fonte_data_baixa: string | null
+          identidade_ok: boolean | null
+          n_baixas: number | null
+          numero_documento: string | null
+          omie_codigo_cliente_fornecedor: number | null
+          omie_codigo_lancamento: number | null
+          resumo_lido_em: string | null
+          soma_baixas: number | null
+          status_titulo: string | null
+          tipo_documento: string | null
+          valor_aberto_informado: number | null
+          valor_documento: number | null
+          valor_liquido_pago: number | null
+          valor_pago_principal: number | null
+          versoes_titulo: number | null
+        }
+        Relationships: []
+      }
       v_titulo_encargos_cr: {
         Row: {
           cnpj_cpf: string | null
@@ -20207,6 +20303,16 @@ export type Database = {
         Returns: boolean
       }
       _fin_ciclo_gate_master: { Args: never; Returns: undefined }
+      _fin_estoque_account: { Args: { p_company: string }; Returns: string }
+      _fin_estoque_classe: {
+        Args: { p_familia: string; p_tipo: string }
+        Returns: string
+      }
+      _fin_estoque_familia_fora: {
+        Args: { p_familia: string }
+        Returns: boolean
+      }
+      _fin_estoque_tipo_fora: { Args: { p_tipo: string }; Returns: boolean }
       _push_enviar: {
         Args: {
           p_corpo: string
@@ -20884,6 +20990,54 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      fin_ciclo_cp_empresa: {
+        Args: never
+        Returns: {
+          company: string
+          compras_12m: number
+          n_fora_lista: number
+          n_sem_categoria: number
+          pmp_compras_pond: number
+          pmp_engine_controle: number
+          rs_por_dia: number
+          valor_fora_lista: number
+          valor_sem_categoria: number
+        }[]
+      }
+      fin_ciclo_cp_titulos: {
+        Args: never
+        Returns: {
+          categoria_codigo: string | null
+          company: string | null
+          confianca_encargo: string | null
+          data_baixa: string | null
+          data_baixa_confiavel: boolean | null
+          data_emissao: string | null
+          data_vencimento: string | null
+          desconto_informado_omie: number | null
+          desconto_obtido: number | null
+          dias_atraso_baixa: number | null
+          dias_vencido: number | null
+          encargo_pago: number | null
+          fonte_data_baixa: string | null
+          fonte_valor_aberto: string | null
+          numero_documento: string | null
+          omie_codigo_fornecedor: number | null
+          omie_codigo_lancamento: number | null
+          prazo_concedido_dias: number | null
+          prazo_real_dias: number | null
+          situacao: string | null
+          valor_aberto: number | null
+          valor_documento: number | null
+          valor_pago_principal: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "v_ciclo_cp_titulos"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       fin_ciclo_empresa_coorte: {
         Args: never
         Returns: {
@@ -20904,6 +21058,65 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
+      }
+      fin_ciclo_fornecedor_resumo: {
+        Args: never
+        Returns: {
+          atraso_pond_pos: number | null
+          atraso_pond_sinal: number | null
+          company: string | null
+          compras_12m: number | null
+          desconto_obtido_12m: number | null
+          dias_vencido_max: number | null
+          encargo_pago_12m: number | null
+          fonte_nome: string | null
+          n_documentos_pagos: number | null
+          n_prazo_negativo: number | null
+          n_status_ambiguo: number | null
+          n_titulos_12m: number | null
+          n_titulos_com_desconto: number | null
+          n_vencidas: number | null
+          nome_fornecedor: string | null
+          omie_codigo_fornecedor: number | null
+          prazo_concedido_pond: number | null
+          prazo_real_pond: number | null
+          valor_a_vencer: number | null
+          valor_pago: number | null
+          valor_pago_atrasado: number | null
+          valor_pago_conf_decisao: number | null
+          valor_pago_data_incerta: number | null
+          valor_pago_em_dia: number | null
+          valor_vencido_aberto: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "v_ciclo_fornecedor_resumo"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      fin_ciclo_giro_sku: {
+        Args: { p_company: string }
+        Returns: {
+          acao: string
+          classe: string
+          cmc: number
+          codigo: string
+          consumo_qtd_365d: number
+          descricao: string
+          dias_cobertura: number
+          dias_sem_saida: number
+          divergencia_cadastro: boolean
+          familia: string
+          motivo_acao: string
+          motivo_consumo: string
+          omie_codigo_produto: number
+          saldo: number
+          tipo_produto: string
+          ultima_saida: string
+          valor_excedente: number
+          valor_parado: number
+        }[]
       }
       fin_ciclo_titulos_cliente: {
         Args: { p_cliente: number; p_company: string }
@@ -20951,6 +21164,17 @@ export type Database = {
           skus_com_custo: number
           skus_total: number
           valor_estimado: number
+        }[]
+      }
+      fin_estoque_giro_valor: {
+        Args: { p_company: string }
+        Returns: {
+          cobertura_pct: number
+          skus_giro: number
+          skus_giro_com_custo: number
+          valor_fora_giro: number
+          valor_giro: number
+          valor_sem_classificacao: number
         }[]
       }
       fin_projecao_13_semanas: {

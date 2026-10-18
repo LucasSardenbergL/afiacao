@@ -66,6 +66,15 @@
 - ⚠️ **`numero_documento` vem como `''` (string vazia) na oben** (2 valores distintos em 5,5k títulos de 12m): `coalesce` não pega `''`. A chave de documento é `coalesce(nullif(btrim(numero_documento_fiscal),''), nullif(btrim(numero_documento),''))`. Sem isso, nenhum cliente da oben passava de confiança baixa (pré-voo: 0 → 153 clientes com ≥6 NFs).
 - **'VENCE HOJE' é status Omie legítimo**, não ambíguo; título aberto (A VENCER/VENCE HOJE) com vencimento < `hoje_sp` e saldo > 0 conta como vencido (lag de sync).
 
+## Estoque de giro (PME/NCG, aba Ciclo) — classe SPED + família, ausente ≠ 0
+
+> 2026-10-18. Spec `docs/superpowers/specs/2026-10-18-ciclo-giro-sku-design.md`. Diário em `docs/historico/ciclo-financeiro-cliente.md` (frente 3).
+
+- **Estoque do engine = inventário manual (`fin_estoque_valor`, `fonte='manual'`, ≤45d) > estoque de GIRO do Omie (`fin_estoque_giro_valor`) > null.** Nunca `?? 0`: a tabela manual nunca foi escrita, e o 0 dava PME 0d e NCG sem estoque.
+- ⚠️ **`inventory_position` mistura imobilizado e uso e consumo** (colacor: R$ 1,48 mi tipo 08). A regra única é `_fin_estoque_classe(tipo, familia)`: fora do giro se o tipo for 07/08/09/99 **ou** a família for "uso e consumo"/"imobilizado". Não copie a lista; chame a função.
+- **CMV do PME = 12 meses FECHADOS, todos presentes, Σ > 0.** Senão o PME é null com motivo. O DRE da oben parou em 2026-03 e o da colacor_sc grava 0.
+- **Consumo por SKU só existe para a OBEN** (`venda_items_history`), com explosão PCP em `v_sku_demanda_efetiva`. ⚠️ A `v_pcp_malha_oben` custa ~250 ms por avaliação: leia em CTE `MATERIALIZED`, nunca dentro de `EXISTS` correlacionado.
+
 ## DRE fase 2 — `fora_dre` (composição pendente) e imposto em linha própria
 
 > 2026-10-13. Migration `20261013230000`, mapa `db/2026-10-13-fin-dre-mapa-colacor-fase2.sql`, prova `db/test-fin-dre-fora-dre.sh`. Diário: `docs/historico/dre-fora-dre-fase2.md`.
