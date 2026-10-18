@@ -4,8 +4,8 @@ export type SnapshotEmpresa = {
   company: string;
   snapshot_at: string;          // ISO 'YYYY-MM-DDThh:mm:ssZ'
   ncg: number | null;
-  // premissas.ncg_parcial do engine (v1.4+): true = NCG completa; false = sem estoque (parcial);
-  // null = snapshot anterior à v1.4, completude desconhecida → tratada como parcial.
+  // premissas.ncg_parcial do engine (v1.5+): true = NCG completa; false = sem estoque (parcial);
+  // null = snapshot anterior à v1.5, completude desconhecida → tratada como parcial.
   ncg_completa: boolean | null;
   saldo_tesouraria: number | null;
   semanas: SnapshotSemana[];

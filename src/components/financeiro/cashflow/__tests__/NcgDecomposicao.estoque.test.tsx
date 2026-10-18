@@ -43,7 +43,7 @@ describe('NcgDecomposicao — estoque ausente ≠ zero', () => {
     expect(screen.queryByText(/Estoque não confirmado/)).not.toBeInTheDocument();
   });
 
-  it('resposta pré-v1.4 (sem `parcial`) com estoque 0: aviso de não confirmado', () => {
+  it('resposta pré-v1.5 (sem `parcial`) com estoque 0: aviso de não confirmado', () => {
     const r = base(0, 0);
     delete (r.data.ncg as { parcial?: boolean }).parcial;
     projMock.mockReturnValue(r);
