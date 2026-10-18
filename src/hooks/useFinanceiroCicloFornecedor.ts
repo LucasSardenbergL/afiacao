@@ -20,11 +20,11 @@ type BuilderRpc = {
 const rpcSemTipo = (nome: string) => (supabase as unknown as { rpc: (n: string) => BuilderRpc }).rpc(nome);
 
 /** .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre, com ordem estável. */
-function lerRpc(nome: 'fin_ciclo_cp_titulos' | 'fin_ciclo_fornecedor_resumo' | 'fin_ciclo_cp_empresa', ordem: string[]) {
+/** Ordem estável: `company` + a chave única da linha (`segunda`), ou só `company` (1 linha por empresa). */
+function lerRpc(nome: 'fin_ciclo_cp_titulos' | 'fin_ciclo_fornecedor_resumo' | 'fin_ciclo_cp_empresa', segunda: string | null) {
   return fetchAllPages<Linha>((de, ate) => {
-    let q = rpcSemTipo(nome).select('*');
-    for (const c of ordem) q = q.order(c, { ascending: true });
-    return q.range(de, ate);
+    const q = rpcSemTipo(nome).select('*').order('company', { ascending: true });
+    return (segunda === null ? q : q.order(segunda, { ascending: true })).range(de, ate);
   }, nome);
 }
 
@@ -32,7 +32,7 @@ export function useCicloCpTitulos() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'cp-titulos'],
     queryFn: async (): Promise<TituloCp[]> => {
-      const linhas = await lerRpc('fin_ciclo_cp_titulos', ['company', 'omie_codigo_lancamento']);
+      const linhas = await lerRpc('fin_ciclo_cp_titulos', 'omie_codigo_lancamento');
       return linhas
         .filter((l) => num(l.omie_codigo_fornecedor) !== null && num(l.omie_codigo_lancamento) !== null)
         .map(normalizarTituloCp);
@@ -44,7 +44,7 @@ export function useCicloFornecedorResumo() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'fornecedor-resumo'],
     queryFn: async (): Promise<ResumoFornecedor[]> => {
-      const linhas = await lerRpc('fin_ciclo_fornecedor_resumo', ['company', 'omie_codigo_fornecedor']);
+      const linhas = await lerRpc('fin_ciclo_fornecedor_resumo', 'omie_codigo_fornecedor');
       // Sem omie_codigo_fornecedor não há fornecedor: descarta (evita a chave -1 do normalizador).
       return linhas.filter((l) => num(l.omie_codigo_fornecedor) !== null).map(normalizarResumoFornecedor);
     },
@@ -60,7 +60,7 @@ export function useCicloCpEmpresa() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'cp-empresa'],
     queryFn: async (): Promise<Partial<Record<Company, CpEmpresa>>> => {
-      const linhas = await lerRpc('fin_ciclo_cp_empresa', ['company']);
+      const linhas = await lerRpc('fin_ciclo_cp_empresa', null);
       const out: Partial<Record<Company, CpEmpresa>> = {};
       for (const r of linhas) {
         out[r.company as Company] = {

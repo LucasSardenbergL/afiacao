@@ -425,8 +425,10 @@ SELECT k.company, k.omie_codigo_fornecedor, n.nome_fornecedor, n.fonte_nome,
        p.atraso_pond_sinal, p.atraso_pond_pos, p.n_prazo_negativo,
        p.valor_pago_em_dia, p.valor_pago_atrasado, p.valor_pago_data_incerta, p.valor_pago_conf_decisao,
        p.desconto_obtido_12m, p.encargo_pago_12m, p.n_titulos_com_desconto,
-       a.valor_vencido_aberto, a.n_vencidas, a.dias_vencido_max, a.valor_a_vencer,
-       amb.n_status_ambiguo
+       -- Sem título aberto/ambíguo = zero real (a chave existe por compra ou paga), não dado ausente.
+       coalesce(a.valor_vencido_aberto, 0) AS valor_vencido_aberto, coalesce(a.n_vencidas, 0) AS n_vencidas,
+       a.dias_vencido_max, coalesce(a.valor_a_vencer, 0) AS valor_a_vencer,
+       coalesce(amb.n_status_ambiguo, 0) AS n_status_ambiguo
   FROM chaves k
   LEFT JOIN nomes n    USING (company, omie_codigo_fornecedor)
   LEFT JOIN pagas p    USING (company, omie_codigo_fornecedor)

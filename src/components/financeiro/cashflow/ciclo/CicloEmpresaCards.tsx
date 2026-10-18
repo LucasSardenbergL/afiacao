@@ -23,7 +23,7 @@ export function LinhaPmpCompras({ cp }: { cp: CpEmpresa }) {
   const pmp = cp.pmpComprasPond === null ? '—' : `${cp.pmpComprasPond.toFixed(1).replace('.', ',')} d`;
   return (
     <div className="text-xs text-muted-foreground" data-testid="ciclo-pmp-compras" title="O PMP acima inclui imposto, empréstimo e folha; o de compras não.">
-      PMP de compras: {pmp} · pagar 1 dia antes consome ≈ {brl(cp.rsPorDia)} de caixa; 1 dia depois retém ≈ {brl(cp.rsPorDia)} · cenário
+      {cp.pmpEngineControle !== null && `PMP do motor ${cp.pmpEngineControle.toFixed(0)} d → `}PMP de compras: {pmp} · pagar 1 dia antes consome ≈ {brl(cp.rsPorDia)} de caixa; 1 dia depois retém ≈ {brl(cp.rsPorDia)} · cenário
     </div>
   );
 }

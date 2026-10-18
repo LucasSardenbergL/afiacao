@@ -31,14 +31,16 @@ function Kpi({ rotulo, valor, nota }: { rotulo: string; valor: string; nota?: st
   );
 }
 
+type CampoSoma = 'descontoObtido12m' | 'encargoPago12m' | 'valorVencidoAberto' | 'valorPagoEmDia' | 'valorPagoAtrasado'
+  | 'valorPagoDataIncerta' | 'nPrazoNegativo' | 'nStatusAmbiguo';
 /** Subtotal dos fornecedores COM o dado. Nenhum com dado → null (nunca R$ 0); parte sem dado → a nota diz quantos. */
-function soma(xs: ResumoFornecedor[], campo: 'descontoObtido12m' | 'encargoPago12m' | 'valorVencidoAberto') {
+function soma(xs: ResumoFornecedor[], campo: CampoSoma) {
   let s = 0;
   let comDado = 0;
   for (const x of xs) { const v = x[campo]; if (v !== null) { s += v; comDado++; } }
   return { valor: comDado > 0 ? s : null, cobertura: comDado < xs.length ? `${comDado} de ${xs.length} fornecedores com dado` : null };
 }
-const notaApurado = (c: string | null) => ['apurado · títulos quitados', c].filter(Boolean).join(' · ');
+const notaApurado = (c: string | null) => ['apurado', c].filter(Boolean).join(' · ');
 
 function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
   company: Company; resumo: ResumoFornecedor[]; titulos: TituloCp[]; cp: CpEmpresa | undefined; hoje: string;
@@ -74,24 +76,36 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
     );
   }
 
-  const desc = soma(doCompany, 'descontoObtido12m');
-  const enc = soma(doCompany, 'encargoPago12m');
+  // Desconto e juros só existem em título pago: a cobertura conta só fornecedores com pagas (sem pagas não é dado faltando).
+  const comPagas = doCompany.filter((r) => (r.nDocumentosPagos ?? 0) > 0);
+  const desc = soma(comPagas, 'descontoObtido12m');
+  const enc = soma(comPagas, 'encargoPago12m');
   const venc = soma(doCompany, 'valorVencidoAberto');
+  const emDia = soma(comPagas, 'valorPagoEmDia').valor;
+  const atrasado = soma(comPagas, 'valorPagoAtrasado').valor;
+  const pctEmDia = emDia !== null && atrasado !== null && emDia + atrasado > 0 ? `${Math.round((emDia / (emDia + atrasado)) * 100)}%` : '—';
+  const perdidos = analise.fila.map((i) => i.custo.perdidoAtraso).filter((v): v is number => v !== null);
+  const perdido = perdidos.length > 0 ? perdidos.reduce((a, b) => a + b, 0) : null;
+  const nNeg = soma(doCompany, 'nPrazoNegativo').valor ?? 0;
+  const incerta = soma(comPagas, 'valorPagoDataIncerta').valor ?? 0;
+  const nAmb = soma(doCompany, 'nStatusAmbiguo').valor ?? 0;
   const ordenados = [...doCompany].sort((a, b) => (b.compras12m ?? -1) - (a.compras12m ?? -1));
   return (
     <section className="space-y-3" aria-label={`Fornecedores — ${nome}`}>
       <h3 className="text-sm font-medium">{nome}</h3>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-7">
         <Kpi rotulo="PMP de compras" valor={cp?.pmpComprasPond == null ? '—' : `${cp.pmpComprasPond.toFixed(1).replace('.', ',')} d`} />
         <Kpi rotulo="1 dia de PMP de compras" valor={brl(cp?.rsPorDia)} nota="cenário" />
         <Kpi rotulo="Desconto obtido (12m)" valor={brl(desc.valor)} nota={notaApurado(desc.cobertura)} />
         <Kpi rotulo="Juros + multa pagos (12m)" valor={brl(enc.valor)} nota={notaApurado(enc.cobertura)} />
         <Kpi rotulo="Vencido em aberto" valor={brl(venc.valor)} nota={venc.cobertura ?? undefined} />
+        <Kpi rotulo="% pago em dia" valor={pctEmDia} nota="por valor, data confiável" />
+        <Kpi rotulo="Desconto perdido por atraso" valor={brl(perdido)} nota="cenário" />
       </div>
 
       <div role="region" aria-label={`Onde o prazo está custando — ${nome}`} className="space-y-2 rounded-md border p-3">
         <h4 className="text-sm font-medium">Onde o prazo está custando</h4>
-        <div className="text-xs text-muted-foreground">custo apurado</div>
+        <div className="text-xs text-muted-foreground">custo do prazo (apurado + cenário)</div>
         {analise.fila.length === 0 && <p className="text-xs text-muted-foreground">Nenhum fornecedor com custo de prazo medido.</p>}
         <ul className="space-y-1">
           {analise.fila.map(({ resumo: r, custo, totalRs }) => {
@@ -164,6 +178,13 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
         </TableBody>
       </Table>
       <CicloPontualidade titulos={titulosCompany} hoje={hoje} rotulo={`Pontualidade dos pagamentos de compra — ${nome}`} />
+      {(nNeg > 0 || incerta > 0 || nAmb > 0) && (
+        <p className="text-xs text-muted-foreground">
+          {[nNeg > 0 && `${nNeg} títulos com prazo concedido negativo (entram na média)`,
+            incerta > 0 && `${brl(incerta)} pagos com data incerta (fora da pontualidade)`,
+            nAmb > 0 && `${nAmb} títulos com status ambíguo (só contados)`].filter(Boolean).join(' · ')}
+        </p>
+      )}
       {rodape}
     </section>
   );

@@ -3,8 +3,9 @@
 // mostra o CUSTO do prazo (desconto perdido, juros/multa), nunca sugere pedir prazo.
 // Money-path: ausente ≠ zero — dado faltando degrada para null, nunca vira 0.
 import { num, porDia } from '@/lib/financeiro/ciclo-cliente-helpers';
+import { addDias } from '@/lib/time/sp-day';
 
-export type SituacaoCp = 'paga' | 'paga_sem_baixa' | 'paga_parcial' | 'vencida_aberta' | 'a_vencer' | 'status_ambiguo';
+type SituacaoCp = 'paga' | 'paga_sem_baixa' | 'paga_parcial' | 'vencida_aberta' | 'a_vencer' | 'status_ambiguo';
 
 export type TituloCp = {
   company: string; fornecedor: number; lancamento: number; documento: string | null;
@@ -81,12 +82,14 @@ export function normalizarResumoFornecedor(r: Record<string, unknown>): ResumoFo
   };
 }
 
-// ── datas ISO (YYYY-MM-DD) em UTC, sem fuso ──
-function somaDias(iso: string, dias: number): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + dias);
-  return d.toISOString().slice(0, 10);
+/** Vencimento no sábado/domingo: pagar no próximo dia útil (segunda) é em dia. Feriado não é tratado (sem tabela). */
+function folgaFimDeSemana(venc: string): number {
+  const dia = new Date(`${venc}T00:00:00Z`).getUTCDay();
+  return dia === 6 ? 2 : dia === 0 ? 1 : 0;
 }
+/** Em dia = data de baixa confiável até o vencimento (ou até o próximo dia útil, se venceu no fim de semana). */
+const pagoEmDia = (t: TituloCp) => t.atrasoBaixa !== null && t.atrasoBaixa <= folgaFimDeSemana(t.vencimento);
+
 const chaveDocumento = (t: TituloCp) => t.documento ?? `l:${t.lancamento}`;
 const temDesconto = (t: TituloCp) => t.descontoInformado !== null && t.descontoInformado > 0;
 
@@ -103,7 +106,7 @@ function documentosComDesconto(titulos: TituloCp[]): Documento[] {
     if (!pagaParcela && !temDesconto(t)) continue;
     const k = chaveDocumento(t);
     const d = m.get(k) ?? { chave: k, vencimento: t.vencimento, desconto: 0, principal: 0, emDia: true, comDesconto: false };
-    if (pagaParcela) d.emDia = d.emDia && t.atrasoBaixa !== null && t.atrasoBaixa <= 0;
+    if (pagaParcela) d.emDia = d.emDia && pagoEmDia(t);
     if (temDesconto(t)) {
       if (!d.comDesconto || t.vencimento < d.vencimento) d.vencimento = t.vencimento;
       d.desconto += t.descontoInformado ?? 0;
@@ -120,7 +123,7 @@ function documentosComDesconto(titulos: TituloCp[]): Documento[] {
 export function inicioRegimeDesconto(titulos: TituloCp[]): string | null {
   const docs = documentosComDesconto(titulos);
   for (let i = 0; i + 2 < docs.length; i++) {
-    if (docs[i + 2].vencimento <= somaDias(docs[i].vencimento, 90)) return docs[i].vencimento;
+    if (docs[i + 2].vencimento <= addDias(docs[i].vencimento, 90)) return docs[i].vencimento;
   }
   return null;
 }
@@ -139,7 +142,7 @@ export function taxaDescontoObservada(
   titulos: TituloCp[], regimeInicio: string | null, hoje: string,
 ): { taxa: number | null; nDocumentos: number; motivo: MotivoSemTaxa | null } {
   if (regimeInicio === null) return { taxa: null, nDocumentos: 0, motivo: 'sem_regime' };
-  const ini = [regimeInicio, somaDias(hoje, -180)].sort()[1];
+  const ini = [regimeInicio, addDias(hoje, -180)].sort()[1];
   const docs = documentosComDesconto(titulos).filter((d) => d.vencimento >= ini && d.vencimento < hoje && d.principal > 0);
   const n = docs.length;
   if (n < 5) return { taxa: null, nDocumentos: n, motivo: 'amostra' };
@@ -173,7 +176,7 @@ export function custoDoPrazo(titulos: TituloCp[], resumo: ResumoFornecedor, hoje
     if (t.situacao !== 'paga' || t.vencimento < regimeInicio || !t.dataBaixaConfiavel) continue;
     if (t.descontoInformado === null || t.atrasoBaixa === null) continue;
     const perdido = Math.max(taxa * (t.valorPagoPrincipal ?? t.valor) - t.descontoInformado, 0);
-    if (t.atrasoBaixa > 0) perdidoAtraso += perdido;
+    if (!pagoEmDia(t)) perdidoAtraso += perdido;
     else perdidoEmDiaSemDesconto += perdido;
   }
   return { taxa, regimeInicio, perdidoAtraso, perdidoEmDiaSemDesconto, ...apurado };
@@ -224,8 +227,8 @@ export function pontualidadePorMes(titulos: TituloCp[], hoje: string): Pontualid
     if (t.situacao === 'vencida_aberta' || t.situacao === 'paga_parcial') m.aberto += t.valorAberto ?? 0;
     if (t.dataBaixaConfiavel && t.atrasoBaixa !== null) {
       m.datavel += t.valor;
-      if (t.atrasoBaixa > 0) m.atrasado += t.valor;
-      else m.emDia += t.valor;
+      if (pagoEmDia(t)) m.emDia += t.valor;
+      else m.atrasado += t.valor;
     }
     meses.set(mes, m);
   }

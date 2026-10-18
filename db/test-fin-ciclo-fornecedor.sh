@@ -259,6 +259,8 @@ suite() {
   okp "SELECT prazo_concedido_dias||'|'||situacao FROM $TIT WHERE omie_codigo_lancamento=1007" "-5|paga" "fatos prazo negativo entra"
   okp "SELECT situacao||'|'||coalesce(data_baixa_confiavel::text,'NULL') FROM $TIT WHERE omie_codigo_lancamento=1014" \
       "paga_sem_baixa|false" "fatos pago sem baixa nenhuma nao some"
+  okp "SELECT valor_vencido_aberto||'|'||n_vencidas||'|'||valor_a_vencer||'|'||n_status_ambiguo FROM $RES WHERE company='colacor_sc' AND omie_codigo_fornecedor=950" \
+      "0|0|0|0" "fatos fornecedor sem titulo aberto = zero real, nao NULL"
   okp "SELECT string_agg(omie_codigo_lancamento||':'||situacao||':'||coalesce(valor_aberto::text,'')||':'||coalesce(fonte_valor_aberto,''), ',' ORDER BY omie_codigo_lancamento) FROM $TIT WHERE omie_codigo_lancamento IN (1004,1010,1011,1012,1013)" \
       "1004:vencida_aberta:500.00:omie_resumo,1010:paga_parcial:600.00:omie_resumo,1011:paga_parcial:600.00:omie_resumo,1012:a_vencer:700:valor_titulo,1013:status_ambiguo::" \
       "fatos situacoes de aberto, parcial e ambiguo"
@@ -382,5 +384,8 @@ sabotar "k sensor NULL vira 0 no SELECT final" \
 sabotar "l sensor soma ignora o NULL" \
   "/bool_or(p.valor_documento IS NULL) FILTER (WHERE p.categoria_codigo LIKE/s/THEN NULL/THEN 0/" \
   "empresa colacor sem pagas = PMP NULL, nunca 0"
+sabotar "m vencido sem coalesce no resumo" \
+  "s/coalesce(a.valor_vencido_aberto, 0) AS valor_vencido_aberto/a.valor_vencido_aberto/" \
+  "fatos fornecedor sem titulo aberto = zero real, nao NULL"
 
 echo "PROVA-CICLO-FORNECEDOR-OK"

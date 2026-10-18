@@ -208,3 +208,21 @@ describe('revisão Codex', () => {
     expect(taxaDescontoObservada(ts, '2026-08-04', HOJE)).toMatchObject({ taxa: 0.02, motivo: null });
   });
 });
+
+describe('revisão final — vencimento em fim de semana', () => {
+  // 2026-08-08 e 2026-08-15 são sábados; pagos na segunda (atraso bruto 2 d) com o desconto concedido.
+  const docs = ['2026-08-04', '2026-08-08', '2026-08-12', '2026-08-15', '2026-08-20', '2026-08-24'].map((v, i) =>
+    pago(i + 1, v, ['2026-08-08', '2026-08-15'].includes(v) ? { atrasoBaixa: 2 } : {}));
+  it('sábado pago na segunda conta como em dia na prova da taxa', () => {
+    expect(taxaDescontoObservada(docs, '2026-08-04', HOJE)).toMatchObject({ taxa: 0.02, motivo: null });
+  });
+  it('domingo pago na terça continua atrasado (1 dia útil depois)', () => {
+    expect(pontualidadePorMes([pago(1, '2026-08-09', { atrasoBaixa: 2 })], HOJE)[0].pctAtrasado).toBe(1);
+  });
+  it('sábado pago na segunda não é atraso na pontualidade nem desconto perdido por atraso', () => {
+    expect(pontualidadePorMes([pago(1, '2026-08-08', { atrasoBaixa: 2 })], HOJE)[0].pctEmDia).toBe(1);
+    const c = custoDoPrazo([...docs, pago(50, '2026-09-05', { atrasoBaixa: 2, descontoInformado: 0 })], resumoBase, HOJE);
+    expect(c.perdidoAtraso).toBe(0);
+    expect(c.perdidoEmDiaSemDesconto).toBeCloseTo(20, 6);
+  });
+});

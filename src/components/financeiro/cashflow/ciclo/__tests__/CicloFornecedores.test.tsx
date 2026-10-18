@@ -90,6 +90,21 @@ describe('CicloFornecedoresSecao', () => {
     renderSecao();
     expect(screen.getByText(/Juros \+ multa pagos/).parentElement?.textContent).toMatch(/1 de 2 fornecedores com dado/);
   });
+  it('revisão final: KPIs de % em dia e desconto perdido (cenário), fila rotulada apurado + cenário, contadores no rodapé', () => {
+    resumoMock.mockReturnValue(ok([forn({ nPrazoNegativo: 3, valorPagoDataIncerta: 1234, nStatusAmbiguo: 2 })]));
+    renderSecao();
+    expect(screen.getByText('% pago em dia').parentElement?.textContent).toMatch(/93%/);
+    expect(screen.getByText(/Desconto perdido por atraso/).parentElement?.textContent).toMatch(/R\$\s?200.*cenário/);
+    expect(screen.getByText('custo do prazo (apurado + cenário)')).toBeTruthy();
+    expect(screen.getByText(/3 títulos com prazo concedido negativo/)).toBeTruthy();
+    expect(screen.getByText(/R\$\s?1\.234 pagos com data incerta/)).toBeTruthy();
+    expect(screen.getByText(/2 títulos com status ambíguo/)).toBeTruthy();
+  });
+  it('revisão final: fornecedor sem pagas não entra na cobertura de juros', () => {
+    resumoMock.mockReturnValue(ok([forn({}), forn({ fornecedor: 77, nDocumentosPagos: 0, valorPago: null, encargoPago12m: null })]));
+    renderSecao();
+    expect(screen.getByText(/Juros \+ multa pagos/).parentElement?.textContent).not.toMatch(/fornecedores com dado/);
+  });
   it('rodapé mostra o sensor de categoria', () => {
     renderSecao();
     expect(screen.getByText(/119 títulos de 2\.01\.\* fora da lista/)).toBeTruthy();
@@ -111,6 +126,10 @@ describe('LinhaPmpCompras (card de empresa)', () => {
     expect(l.textContent).toMatch(/PMP de compras: 13,1 d/);
     expect(l.textContent).toMatch(/pagar 1 dia antes consome ≈ R\$\s?6\.615 de caixa; 1 dia depois retém ≈ R\$\s?6\.615 · cenário/);
     expect(l.getAttribute('title')).toBe('O PMP acima inclui imposto, empréstimo e folha; o de compras não.');
+  });
+  it('revisão final: ponte do PMP do motor para o PMP de compras', () => {
+    render(<LinhaPmpCompras cp={empresa} />);
+    expect(screen.getByTestId('ciclo-pmp-compras').textContent).toMatch(/PMP do motor 12 d → PMP de compras: 13,1 d/);
   });
   it('R$/dia null → "—", nunca R$ 0', () => {
     render(<LinhaPmpCompras cp={{ ...empresa, rsPorDia: null, pmpComprasPond: null }} />);
