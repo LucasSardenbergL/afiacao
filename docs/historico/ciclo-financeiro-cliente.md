@@ -57,3 +57,35 @@ PROVA-CICLO-CLIENTE-OK
 ## Fase N+1 só com sinal
 
 Query de uso do evento `financeiro.ciclo_aberto` com denominador (nº de sessões master no período). Sem ≥1 sinal positivo de uso em prod, a fase seguinte é instalar/ler o sensor, não construir mais tela.
+
+---
+
+# Frente 4 — PMP por fornecedor e o custo do prazo (2026-10-18)
+
+Spec `docs/superpowers/specs/2026-10-18-ciclo-pmp-fornecedor-design.md` (§9 = calibração do challenge Codex, prevalece). Plano `docs/superpowers/plans/2026-10-18-ciclo-pmp-fornecedor.md`. Migration `20261018150000_fin_ciclo_fornecedor.sql`. Prova `db/test-fin-ciclo-fornecedor.sh` (40 asserts + 9 sabotagens INLINE, no `nucleo-ci`).
+
+## A premissa que o founder derrubou
+
+O handoff pedia "fila de fornecedores onde cabe negociar prazo maior". O founder: *prazo maior = preço de compra maior*. Ele quer o menor preço, o estoque girando rápido e receber cedo. A frente virou **"quanto o prazo está custando"**. O caso concreto é a Sayerlack: 2% de desconto no boleto pago até o vencimento (vem escrito no boleto); antecipado dá 2% na NF; acima disso o preço sobe. Desde jul/2026 o boleto vence em 9–11 d, por escolha da fábrica.
+
+## Medido em prod (psql-ro)
+
+| Fato | Medida |
+|---|---|
+| Controle do engine (`v_capital_giro_prazos.pmp`, reproduzido) | **32 / 5 / 12 d — bate** |
+| PMP de COMPRAS (dDtPagamento − emissão, ponderado por valor) | colacor 50,3 d · oben 13,1 d · colacor_sc −29,5 d (1 título) |
+| Ponte engine → compras | universo (o engine inclui empréstimo, ICMS, folha — a colacor_sc é quase só folha) + janela 12m + peso `valor_documento` |
+| Compras 12m por emissão · R$/dia | colacor R$ 263,7 mil · R$ 723/d — oben R$ 2,41 mi · R$ 6.615/d |
+| Sensor de universo (12m, emissão) | 2.01.* fora da lista: colacor 87 títulos / R$ 50,7 mil; colacor_sc 26 / R$ 35,2 mil; oben 119 / R$ 18,8 mil. Sem categoria: colacor 18 / R$ 54,5 mil |
+| Tempo da consulta inteira (corpo da RPC por empresa) | 1,9 s (como dono, sem RLS por linha) |
+| Sayerlack por mês de vencimento | até mai/2026 vencimento 1–2 d após a emissão e quase tudo pago depois dele, **sem** desconto no boleto (regime antigo: 2% embutido na NF). Descontos isolados em nov/2025 (1,2%) e fev/2026 (2,9%). **Desde ago/2026: 27 títulos a exatamente 2%**, quase tudo em dia; 1 pago atrasado ainda COM desconto; ~4 pagos em dia SEM desconto ("conferir boleto") |
+
+## Decisões que a medição forçou
+
+- **Saldo do CP não serve:** `saldo = valor_documento` até em PAGO. Em aberto = `resumo_val_aberto` (identidade ok), senão o valor do título com selo.
+- **Pontualidade só por `data_pagamento_omie`:** `titulo_data_movimento` pode ser registro/previsão, e a CC liquida em D+1. Ambos viram "data incerta", com denominador explícito.
+- **Regime de desconto:** abre no vencimento do 1º de ≥ 3 NFs com desconto em 90 d. Sem isso, os descontos isolados de nov/fev abririam o regime e o cenário cobraria "2% perdidos" de um ano em que o desconto vinha na NF.
+- **Perdido = `max(taxa·base − desconto_informado, 0)`:** o título pago atrasado que ainda levou o desconto contribui 0.
+- **Código de categoria muda entre empresas:** lista (empresa, código) explícita; o prefixo `2.01%` puxaria imobilizado da colacor.
+- **Views sem SELECT para `authenticated`:** só as RPCs (gate master) leem. `security_invoker` não cria restrição master (Codex #9).
+- **Taxa implícita a.m. removida:** não existe a alternativa "pagar depois sem desconto" como data concreta (Codex #7).
