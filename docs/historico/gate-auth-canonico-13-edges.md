@@ -46,6 +46,13 @@ marcador + `exit=1`; `_shared/auth.ts` não dispara.
   `harness-handler.ts` entrou na superfície da canária `paginacao_probe` de `omie-financeiro` (o
   `canaria:bump` resolve `_shared/` por NOME de símbolo) e o CI pediu bump de `contrato` numa edge que o
   PR não toca. O sufixo `_test` é a convenção que fingerprint, canária e corpo servido excluem.
+- **O comentário defasado do `_shared/auth.ts` (dizia `admin/employee/manager/master`; o código aceita
+  `employee|master`) NÃO entrou — adiado, com motivo:** o assert `M0` de `db/test-fin-dre-fora-dre.sh`
+  exige que o fingerprint versionado de `omie-financeiro` seja igual ao `v_fonte_esperada` pinado na
+  migration `20261013230000_fin_dre_fora_dre_fase2.sql` (imutável). `omie-financeiro` importa `auth.ts`,
+  o mapa hasheia bytes sem tirar comentário → qualquer byte em `auth.ts` muda esse fingerprint e deixa
+  `provas-sql (2)` vermelho. Corrija o comentário no PR que, de qualquer forma, mudar o closure de
+  `omie-financeiro` e trouxer migration nova com o pin.
 - **Comentário em `_shared/auth.ts` muda o fingerprint de 83 edges** (o mapa hasheia bytes, sem tirar
   comentário; 96 de 97 `index.ts` importam `auth.ts`). É o desenho (bundle servido ≠ main), não bug —
   mas um PR que só corrige prosa em `_shared/` regrava o mapa inteiro.
