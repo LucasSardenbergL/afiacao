@@ -15,6 +15,7 @@ import type {
   Empresa,
   FatoSku,
   ItemRaioX,
+  LinhaMedicao,
 } from '@/lib/reposicao/raio-x/tipos';
 
 type Pagina<T> = PromiseLike<{ data: T[] | null; error: unknown }>;
@@ -145,5 +146,34 @@ export function useRaioX(empresa: Empresa | null): {
     syncedHoras,
     isLoading: enabled && (fatosQ.isLoading || decisoesQ.isLoading || manuaisQ.isLoading),
     erro: erro as Error | null,
+  };
+}
+
+/** Medição do que o Raio-X liberou (`raio_x_medicao`). Falha vira `erro` — nunca lista vazia fingindo "nada liberado". */
+export function useRaioXMedicao(empresa: Empresa | null): {
+  linhas: LinhaMedicao[] | undefined;
+  isLoading: boolean;
+  erro: Error | null;
+} {
+  const q = useQuery({
+    queryKey: ['raio-x', empresa, 'medicao'],
+    enabled: empresa !== null,
+    retry,
+    queryFn: () =>
+      ler(() =>
+        fetchAllPages<LinhaMedicao>(
+          (de, ate) =>
+            supabase
+              .rpc('raio_x_medicao', { p_empresa: empresa as string })
+              .order('sku_codigo_omie', { ascending: true })
+              .range(de, ate) as unknown as Pagina<LinhaMedicao>,
+          'raio_x_medicao',
+        ),
+      ),
+  });
+  return {
+    linhas: q.error ? undefined : q.data,
+    isLoading: empresa !== null && q.isLoading,
+    erro: (q.error as Error | null) ?? null,
   };
 }
