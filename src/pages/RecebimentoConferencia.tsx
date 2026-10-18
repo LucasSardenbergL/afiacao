@@ -3,6 +3,7 @@ import { decodeHtmlEntities } from '@/lib/utils';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 import {
   ArrowLeft, Truck, Plus, Loader2, ScanLine, Keyboard, Copy,
   AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
@@ -36,19 +37,15 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
-interface NfeItem {
-  id: string;
-  codigo_produto?: string | null;
-  descricao_produto?: string | null;
-  quantidade_esperada?: number | null;
-  quantidade_conferida?: number | null;
-  quantidade_nfe?: number | null;
-  quantidade_convertida?: number | null;
-  unidade_estoque?: string | null;
-  unidade_nfe?: string | null;
-  status_item?: ItemStatus | null;
-  [k: string]: unknown;
-}
+// O shape vem dos types gerados do Supabase: a tela renderizava um campo `descricao_produto`
+// (coluna de OUTRA tabela) e o `[k: string]: unknown` escondia o erro — descrição em branco
+// em TODOS os itens da conferência, dos dois writers (webhook e sync).
+type NfeItemRow = Tables<'nfe_recebimento_itens'>;
+type NfeItem = Pick<
+  NfeItemRow,
+  | 'id' | 'codigo_produto' | 'descricao' | 'quantidade_esperada' | 'quantidade_conferida'
+  | 'quantidade_nfe' | 'quantidade_convertida' | 'unidade_estoque' | 'unidade_nfe'
+> & { status_item?: ItemStatus | null };
 
 interface CteAssociado {
   id: string;
@@ -565,7 +562,7 @@ export default function RecebimentoConferencia() {
                     <div className="flex items-start justify-between gap-2" onClick={() => isClickable && openItemSheet(item.id)}>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">
-                          {item.descricao_produto}
+                          {item.descricao}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           Cód: {item.codigo_produto}
@@ -667,7 +664,7 @@ export default function RecebimentoConferencia() {
             <div className="space-y-5 pb-4">
               <SheetHeader>
                 <SheetTitle className="text-sm text-muted-foreground truncate">
-                  {activeItem.descricao_produto}
+                  {activeItem.descricao}
                 </SheetTitle>
               </SheetHeader>
 

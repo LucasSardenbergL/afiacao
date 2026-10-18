@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { consolidarCockpit, compararCaixaInicial, parseSnapshotSemanas, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
+import { consolidarCockpit, compararCaixaInicial, ncgCompleta, parseSnapshotSemanas, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
 
 const sem = (inicio: string, ent: number, sai: number, saldo: number, saldo_inicial: number | null = null) =>
   ({ inicio, total_entradas: ent, total_saidas: sai, saldo_final: saldo, saldo_inicial });
 const snap = (company: string, at: string, ncg: number | null, semanas: ReturnType<typeof sem>[], saldo_tes: number | null = 0): SnapshotEmpresa =>
-  ({ company, snapshot_at: at, ncg, saldo_tesouraria: saldo_tes, semanas });
+  ({ company, snapshot_at: at, ncg, ncg_completa: true, saldo_tesouraria: saldo_tes, semanas });
 const ESP = ['oben', 'colacor', 'colacor_sc'];
 
 describe('consolidarCockpit', () => {
@@ -126,6 +126,21 @@ describe('consolidarCockpit', () => {
     const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
     expect(r.ncg_total).toBe(50);
     expect(r.ncg_parcial).toBe(true);
+  });
+
+  it('NCG sem estoque (engine marcou parcial) ou snapshot antigo sem a marca → ncg_parcial, valor ainda somado', () => {
+    for (const marca of [false, null] as const) {
+      const snaps = ESP.map((c) => snap(c, '2026-05-27T10:00:00Z', 10, [sem('2026-05-26', 1, 0, 1)]));
+      snaps[2] = { ...snaps[2], ncg_completa: marca };
+      const r = consolidarCockpit({ esperadas: ESP, snapshots: snaps });
+      expect(r.ncg_total).toBe(30);
+      expect(r.ncg_parcial).toBe(true);
+    }
+  });
+
+  it('ncgCompleta: só boolean declara; ausente/lixo = desconhecido', () => {
+    expect([ncgCompleta(false), ncgCompleta(true), ncgCompleta(undefined), ncgCompleta(null), ncgCompleta('false')])
+      .toEqual([true, false, null, null, null]);
   });
 
   it('inícios fora de ordem → união ordenada asc; alinha por inicio', () => {

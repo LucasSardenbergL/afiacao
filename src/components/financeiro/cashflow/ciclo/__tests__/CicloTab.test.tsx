@@ -15,6 +15,7 @@ vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   useCicloCoorte: () => coorteMock(),
   useReceitaDiariaTtm: () => receitaMock(),
   useCicloTitulosCliente: () => titulosMock(),
+  useCicloGiroSku: () => ({ data: [], isLoading: false, error: null }),
 }));
 vi.mock('@/hooks/useCashflowProjection', () => ({
   useCashflowProjection: (company: string) => projMock(company),
@@ -49,6 +50,21 @@ describe('CicloTab', () => {
     renderTab();
     expect(screen.getByText(/não foi possível ler/i)).toBeInTheDocument();
     expect(screen.queryByText(/sem títulos/i)).not.toBeInTheDocument();
+  });
+
+  it('PME ausente mostra — e o motivo, nunca 0d; fonte do estoque aparece', () => {
+    resumoMock.mockReturnValue(ok([]));
+    projMock.mockImplementation((company: string) => ok({
+      indicadores: { ...proj, prazo_medio_estoque: company === 'oben' ? null : 40, cash_conversion_cycle: company === 'oben' ? null : 59,
+        estoque_valor: 445476, estoque_fonte: company === 'oben' ? 'omie' : 'manual', estoque_data_ref: '2026-10-01' },
+      confianca_dados: { motivos: company === 'oben' ? ['CMV do DRE cobre 6/12 meses fechados (último: 2026-03) — PME indisponível.'] : [] },
+    }));
+    renderTab('/?cicloEmpresa=all');
+    const card = screen.getByTestId('ciclo-card-oben');
+    expect(within(card).queryByText('0d')).not.toBeInTheDocument();
+    expect(within(card).getByText(/6\/12 meses fechados/)).toBeInTheDocument();
+    expect(within(card).getByTestId('ciclo-estoque-oben').textContent).toMatch(/Omie, agora/);
+    expect(within(screen.getByTestId('ciclo-card-colacor')).getByTestId('ciclo-estoque-colacor').textContent).toMatch(/manual, 01\/10/);
   });
 
   it('sucesso vazio mostra EmptyState', () => {

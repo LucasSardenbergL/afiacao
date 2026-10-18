@@ -169,6 +169,16 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'decisão do Raio-X (foto de custo + tirar do motor); gate private.cap_custo_ler',
   },
+  'public.fin_estoque_giro_valor': {
+    fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
+    permitido: PORTA_GATE,
+    motivo: 'estoque de giro a custo (base do PME do fin-cashflow-engine); gate service_role OU private.cap_custo_ler',
+  },
+  'public.fin_ciclo_giro_sku': {
+    fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
+    permitido: PORTA_GATE,
+    motivo: 'giro por SKU a custo (aba Ciclo); gate _fin_ciclo_gate_master + fin_user_can_access',
+  },
   // 2026-09-06 — a porta única do cancelamento pós-disparo. `authenticated` PRECISA executar (é
   // dela que a correção legítima sai); `anon` foi revogado nominalmente na própria migration que
   // a cria, junto com PUBLIC. O fecho por privilégio e o gate no corpo são complementares aqui:
