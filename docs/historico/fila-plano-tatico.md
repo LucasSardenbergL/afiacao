@@ -487,3 +487,38 @@ fazer do app a ferramenta da rotina, ou pausar a geração até haver uso.
 
 **Lição:** antes de otimizar a superfície de captura, meça se a superfície é **vista**. Três
 fatias (saída da fila, volume, 1 toque) foram entregues contra um gargalo que estava um passo antes.
+
+## O batch grava o próprio resumo (#3093) — incidente de 2026-10-09
+
+Em **2026-10-09** o cron `tactical-plans-batch-nightly` (jobid 165) saiu `succeeded` e criou
+**zero** planos, inclusive para carteiras com 52 e 93 candidatos. A causa ficou irrecuperável: o
+corpo da resposta só existia em `net._http_response` (TTL ~6h) e `cron.job_run_details` só prova o
+enqueue.
+
+**O que mudou (só observabilidade — seleção, TOP_N, gate R$/h e fila intactos):** o lote passa por
+`comRegistro` (`_shared/registro-execucao.ts`) com o slug **`tactical_plans_batch.pregerar`** (1
+escritor: a edge, cron-only). `corpoDoLote` (`_shared/tactical-batch-resultado.ts`) é a fonte única
+da resposta HTTP **e** de `detalhes`, que só acrescenta `registrado_em` e `dia_operacional_brt`. A
+gravação é fail-open: falha ao registrar só loga, nunca derruba o lote nem altera o corpo.
+
+**Como ler** (`acoes_execucoes`, `order by iniciado_em desc`):
+
+| Estado da linha do dia | Significa |
+|---|---|
+| ausente | o lote nem começou (cron, `net.http_post`, gate) |
+| `executando` sem `finalizado_em` | morreu no meio (wall-clock/timeout) |
+| `erro` | leitura crítica falhou (passos 0/1/1b); `detalhes.erro` traz a mensagem |
+| `sucesso` com `gerados = 0` | ler `erros_por_motivo`, `pulados_por_motivo`, `ja_na_fila`, `sem_margem_indecidivel` |
+
+**Medição pós-deploy (psql-ro, 2026-10-18):** deploy pelo MCP em 2026-10-16 00:48Z (14/14 hashes
+contra `efe4938f`, sensor de edição `SEM_EDICAO`); ledger `CONFERE` em `v1.1-registro-acoes-execucoes`.
+
+| Dia BRT | Status | Duração | Alvos | Gerados | Erros | Já na fila |
+|---|---|---|---|---|---|---|
+| 2026-10-16 | sucesso | 86 s | 6 | 6 | 0 | 35 |
+| 2026-10-17 | sucesso | 45 s | 5 | 5 | 0 | 41 |
+| 2026-10-18 | sucesso | 88 s | 6 | 6 | 0 | 34 |
+
+Os 6 `gerados` de 16/10 batem com `farmer_tactical_plans` (6 linhas de 3 farmers com
+`generated_at` dentro da janela da execução). A causa do zero de 09/10 continua desconhecida; a
+próxima ocorrência fica explicada pela própria linha.
