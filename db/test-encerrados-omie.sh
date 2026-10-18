@@ -44,7 +44,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   sabota sem-ausentes    's/IF v_ausentes > 0 THEN/IF false THEN/'
   sabota sem-revoke      's/FROM PUBLIC, anon, authenticated;/FROM PUBLIC;/'
   sabota outra-empresa   's/WHERE t.empresa = p_empresa$/WHERE true/'
-  sabota sobrescreve-hab 's/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em;/novos = EXCLUDED.novos, limpos = EXCLUDED.limpos, publicado_em = EXCLUDED.publicado_em, habilitado = false;/'
+  sabota sobrescreve-hab 's/publicado_em = EXCLUDED.publicado_em, motivo = NULL;/publicado_em = EXCLUDED.publicado_em, motivo = NULL, habilitado = false;/'
   sabota tent-sem-fencing 's/IF p_seq IS NOT NULL AND (p_seq < v_atual.seq OR/IF false AND (p_seq < v_atual.seq OR/'
   sabota fecha-2-vezes   "s/OR (p_seq = v_atual.seq AND v_atual.status <> 'coletando'))/)/"
   sabota tent-sem-revoke 's/^  FROM PUBLIC, anon, authenticated;$/  FROM PUBLIC;/'
