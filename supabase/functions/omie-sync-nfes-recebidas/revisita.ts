@@ -100,7 +100,7 @@ export function novaRevisitaSummary(janela: string): RevisitaSummary {
 }
 
 /** Teto de dias da janela: além disso a listagem pesa e a NF já saiu do horizonte do leadtime. */
-export const REVISITA_DIAS_MAX = 60;
+const REVISITA_DIAS_MAX = 60;
 
 /** `revisita_dias` do body → dias válidos, ou `null` (sem revisita). Nunca adivinha um valor. */
 export function lerRevisitaDias(valor: unknown): number | null {
@@ -126,7 +126,7 @@ function isoDeBR(d: string): string | null {
  * janela diária não alcança, sem passar o laço principal (que sobrescreve a NF da linha) pelo período.
  * Exige as duas, válidas, em ordem e com no máximo 120 dias; senão `null` (sem revisita explícita).
  */
-export const REVISITA_EXPLICITA_DIAS_MAX = 120;
+const REVISITA_EXPLICITA_DIAS_MAX = 120;
 export function lerJanelaExplicita(de: unknown, ate: unknown): { de: string; ate: string } | null {
   if (typeof de !== "string" || typeof ate !== "string") return null;
   const a = isoDeBR(de), b = isoDeBR(ate);
