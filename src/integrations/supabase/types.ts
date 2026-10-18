@@ -12033,6 +12033,63 @@ export type Database = {
         }
         Relationships: []
       }
+      recebimento_associacao_sombra: {
+        Row: {
+          atualizado_em: string
+          chave_nfe: string | null
+          classe: string
+          contratos: string[]
+          empresa: string
+          estado_nf: string
+          fornecedor_codigo_omie: number | null
+          motivos: string[]
+          nid_receb: number
+          numero_nfe: string | null
+          observado_em: string
+          pares: Json
+          pedidos: Json
+          primeira_observacao_em: string
+          versao_classificador: string
+          vinculo: string
+        }
+        Insert: {
+          atualizado_em?: string
+          chave_nfe?: string | null
+          classe: string
+          contratos: string[]
+          empresa: string
+          estado_nf: string
+          fornecedor_codigo_omie?: number | null
+          motivos: string[]
+          nid_receb: number
+          numero_nfe?: string | null
+          observado_em: string
+          pares: Json
+          pedidos: Json
+          primeira_observacao_em?: string
+          versao_classificador: string
+          vinculo: string
+        }
+        Update: {
+          atualizado_em?: string
+          chave_nfe?: string | null
+          classe?: string
+          contratos?: string[]
+          empresa?: string
+          estado_nf?: string
+          fornecedor_codigo_omie?: number | null
+          motivos?: string[]
+          nid_receb?: number
+          numero_nfe?: string | null
+          observado_em?: string
+          pares?: Json
+          pedidos?: Json
+          primeira_observacao_em?: string
+          versao_classificador?: string
+          vinculo?: string
+        }
+        Relationships: []
+      }
       recommendation_config: {
         Row: {
           description: string | null
@@ -21811,6 +21868,10 @@ export type Database = {
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }
+      recebimento_associacao_sombra_publicar: {
+        Args: { p: Json }
+        Returns: string
+      }
       recommend_cluster_agregado: {
         Args: { p_health_class: string; p_teto_clientes?: number }
         Returns: {
