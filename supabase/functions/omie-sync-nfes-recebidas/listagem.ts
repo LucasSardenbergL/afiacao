@@ -22,3 +22,15 @@ export function ehFimDaListagem(faultstring: string, pagina: number): boolean {
   if (FIM_LEGADO.test(faultstring)) return true;
   return pagina === 1 && classificarFaultstring(faultstring) === "fim_de_pagina";
 }
+
+// A REVISITA (revisita.ts) lista uma janela larga e não confia no total declarado (CLAUDE.md: a Omie
+// subestima `total_de_paginas`): página CHEIA no fim pede a seguinte, e a fault canônica numa página
+// além do total declarado é o fim dessa sondagem, não anomalia — foi o laço que pediu além do total.
+export function pedirProximaPaginaLarga(pagina: number, totalDeclarado: number, itens: number, tamanho: number): boolean {
+  return pagina < totalDeclarado || itens >= tamanho;
+}
+
+export function ehFimDaListagemLarga(faultstring: string, pagina: number, totalDeclarado: number): boolean {
+  if (ehFimDaListagem(faultstring, pagina)) return true;
+  return pagina > totalDeclarado && classificarFaultstring(faultstring) === "fim_de_pagina";
+}

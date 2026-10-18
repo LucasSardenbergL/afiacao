@@ -18,7 +18,7 @@
 //   (b2) os textos de fim que o regex antigo já aceitava continuam aceitos em qualquer página;
 //   (c) fault que não é fim — rate-limit, credencial, erro interno, "consumo redundante" — NÃO é
 //       fim: tratá-la como fim fecharia o run `complete` com a listagem PARCIAL.
-import { ehFimDaListagem } from "./listagem.ts";
+import { ehFimDaListagem, ehFimDaListagemLarga, pedirProximaPaginaLarga } from "./listagem.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (a !== b) throw new Error(`${msg ? `${msg}: ` : ""}esperado ${JSON.stringify(b)}, veio ${JSON.stringify(a)}`);
@@ -60,4 +60,18 @@ Deno.test("fault que não é fim NÃO encerra a listagem (seria retrato parcial 
     "",
   ];
   for (const f of naoFim) assertEquals(ehFimDaListagem(f, 1), false, JSON.stringify(f));
+});
+
+Deno.test("revisita: página cheia no fim pede a próxima; parcial ou vazia encerra", () => {
+  if (!pedirProximaPaginaLarga(1, 3, 50, 50)) throw new Error("antes do total segue");
+  if (!pedirProximaPaginaLarga(3, 3, 50, 50)) throw new Error("última página CHEIA sonda a próxima");
+  if (pedirProximaPaginaLarga(3, 3, 49, 50)) throw new Error("última parcial encerra");
+  if (pedirProximaPaginaLarga(4, 3, 0, 50)) throw new Error("sondagem vazia encerra");
+});
+
+Deno.test("revisita: fault canônica além do total declarado é fim; dentro dele segue anomalia", () => {
+  const fs = "Não existem registros para a página [4]!";
+  if (!ehFimDaListagemLarga(fs, 4, 3)) throw new Error("além do total = fim da sondagem");
+  if (ehFimDaListagemLarga(fs, 3, 3)) throw new Error("dentro do total = anomalia");
+  if (ehFimDaListagemLarga("SOAP-ERROR: Broken response", 4, 3)) throw new Error("fault que não é fim nunca é fim");
 });

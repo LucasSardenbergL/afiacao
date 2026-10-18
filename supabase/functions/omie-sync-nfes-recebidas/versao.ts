@@ -55,7 +55,10 @@ export const EDGE = "omie-sync-nfes-recebidas";
  * `reconciliacao`. Ver reconciliacao.ts.
  */
 // v1.6: sombra da associação NF↔PO (associacao.ts/sombra.ts) — classifica e publica em recebimento_associacao_sombra; nada vai ao Omie.
-export const VERSAO = "v1.6-sombra-associacao";
+// v1.7: revisita da janela LARGA (revisita.ts) quando o body pede `revisita_dias` — a NF que o laço de 3 dias
+// nunca mais vê (casada em parte; lançada depois da janela). Conhecida vincula pelos contratos da listagem, sem
+// ConsultarRecebimento; só preenche linha sem NF. `results` ganha `revisita`.
+export const VERSAO = "v1.7-revisita-janela-larga";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.
