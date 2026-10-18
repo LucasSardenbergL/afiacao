@@ -64,7 +64,12 @@ export type ResultadoImportacao =
   | { tipo: "importada"; id: string; itens: number }
   /** Cabeçalho já existia `pendente` sem itens e sem uso; os itens entraram agora. */
   | { tipo: "reparada"; id: string; itens: number }
+  /** Cabeçalho existe com a MESMA cardinalidade de itens do payload (ou o payload não tem itens). */
   | { tipo: "ja_importada"; id: string; itens: number }
+  /** Cabeçalho sem itens que NÃO pode ser reparado (não-pendente ou em uso). Não é 2xx: o Omie reenvia. */
+  | { tipo: "bloqueada"; id: string; motivo: string }
+  /** Cabeçalho com itens, mas em número diferente do payload: ninguém aqui sabe qual lote é o certo. */
+  | { tipo: "divergente"; id: string; itens: number; esperados: number }
   | { tipo: "erro_leitura"; mensagem: string }
   | { tipo: "erro_cabecalho"; mensagem: string }
   /** O cabeçalho ficou gravado (`id`); a retentativa com o mesmo payload completa os itens. */
@@ -75,15 +80,18 @@ const STATUS_REPARAVEL = "pendente";
 
 /**
  * `id` determinístico do item: UUID (versão 8, "custom") derivado de SHA-256 de
- * `cabeçalho | sequência | posição`. A posição entra porque `sequencia` vem do payload e pode
- * repetir; o mesmo payload reenviado produz os MESMOS ids — é isso que faz a PK barrar o 2º lote.
+ * `cabeçalho | sequência | ocorrência`. `ocorrência` é o ordinal ENTRE os itens de mesma sequência
+ * (0 para a 1ª, 1 para a 2ª…), não a posição global no payload: assim o CONJUNTO de ids não muda
+ * se o payload chegar reordenado (parecer adversarial: posição global deixava W1 `[1,2]` e W2
+ * `[2,1]` sem nenhum id em comum → 2N). O mesmo conjunto de itens produz o MESMO conjunto de ids —
+ * é isso que faz a PK barrar o 2º lote.
  */
 export async function idDeterministicoDoItem(
   nfeRecebimentoId: string,
   sequencia: unknown,
-  posicao: number,
+  ocorrencia: number,
 ): Promise<string> {
-  const base = `${nfeRecebimentoId}|${String(sequencia)}|${posicao}`;
+  const base = `${nfeRecebimentoId}|${String(sequencia)}|${ocorrencia}`;
   const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(base)));
   const b = hash.slice(0, 16);
   b[6] = (b[6] & 0x0f) | 0x80; // versão 8 (RFC 9562: custom/experimental)
@@ -96,12 +104,18 @@ async function carimbarItens(
   id: string,
   itens: Record<string, unknown>[],
 ): Promise<Record<string, unknown>[]> {
+  const vistas = new Map<string, number>();
   return await Promise.all(
-    itens.map(async (item, idx) => ({
-      ...item,
-      id: await idDeterministicoDoItem(id, item.sequencia, idx),
-      nfe_recebimento_id: id,
-    })),
+    itens.map((item) => {
+      const seq = String(item.sequencia);
+      const ocorrencia = vistas.get(seq) ?? 0;
+      vistas.set(seq, ocorrencia + 1);
+      return idDeterministicoDoItem(id, item.sequencia, ocorrencia).then((idItem) => ({
+        ...item,
+        id: idItem,
+        nfe_recebimento_id: id,
+      }));
+    }),
   );
 }
 
@@ -111,8 +125,10 @@ export function reparavel(c: CabecalhoExistente, nItensPayload: number): boolean
 }
 
 /**
- * Insere o lote num cabeçalho (novo ou existente). Se a PK barrar (23505), um concorrente já
- * gravou ESTE lote: relê e, com itens comprovados, é "já importada" — não é erro nem 2N.
+ * Insere o lote num cabeçalho (novo ou existente). Se a PK barrar (23505), um concorrente gravou
+ * um lote que compartilha id com o nosso: relê e, com a MESMA cardinalidade comprovada, é "já
+ * importada" — não é erro nem 2N. Cardinalidade diferente (ele gravou `[1]`, nós trazíamos
+ * `[1,2,3]`) não ganha certificado: é erro, e o reenvio cai em `divergente`.
  */
 async function gravarLote(
   porta: PortaRecebimento,
@@ -125,23 +141,40 @@ async function gravarLote(
   if (!erro) return { tipo: sucesso, id, itens: itens.length };
   if (erro.code === SQLSTATE_UNIQUE) {
     const releitura = await porta.buscarPorChave(chave);
-    if (releitura.tipo === "existe" && releitura.id === id && releitura.itens > 0) {
+    if (releitura.tipo === "existe" && releitura.id === id && releitura.itens === itens.length) {
       return { tipo: "ja_importada", id, itens: releitura.itens };
     }
+    const visto = releitura.tipo === "existe" ? `${releitura.itens} item(ns) gravados` : releitura.tipo;
+    return { tipo: "erro_itens", id, mensagem: `${erro.erro} (lote já existe com cardinalidade divergente: ${visto})` };
   }
   return { tipo: "erro_itens", id, mensagem: erro.erro };
 }
 
+/**
+ * Decide sobre um cabeçalho que JÁ existe. "Já importada" só com a MESMA cardinalidade do payload
+ * (ou payload sem itens): um 2xx aqui diz ao Omie "pode descartar o evento", então ele só pode
+ * sair quando os itens estão de fato gravados. Sem itens e sem poder reparar → `bloqueada`
+ * (não-2xx: o Omie reenvia; se o lock/conferência soltar, o reenvio completa). Com itens em
+ * número diferente → `divergente` (não-2xx; ninguém aqui sabe qual lote é o certo).
+ */
 async function sobreExistente(
   porta: PortaRecebimento,
   chave: string,
   existente: CabecalhoExistente,
   itens: Record<string, unknown>[],
 ): Promise<ResultadoImportacao> {
-  if (!reparavel(existente, itens.length)) {
-    return { tipo: "ja_importada", id: existente.id, itens: existente.itens };
+  if (itens.length === 0) return { tipo: "ja_importada", id: existente.id, itens: existente.itens };
+  if (existente.itens === 0) {
+    if (reparavel(existente, itens.length)) return await gravarLote(porta, chave, existente.id, itens, "reparada");
+    const motivo = existente.status !== STATUS_REPARAVEL
+      ? `status ${existente.status}`
+      : "em uso (conferência ou efetivação em curso)";
+    return { tipo: "bloqueada", id: existente.id, motivo };
   }
-  return await gravarLote(porta, chave, existente.id, itens, "reparada");
+  if (existente.itens !== itens.length) {
+    return { tipo: "divergente", id: existente.id, itens: existente.itens, esperados: itens.length };
+  }
+  return { tipo: "ja_importada", id: existente.id, itens: existente.itens };
 }
 
 export async function materializarRecebimento(

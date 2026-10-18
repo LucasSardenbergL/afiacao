@@ -65,8 +65,9 @@ interface BancoFalso extends PortaRecebimento {
   falhasCabecalho: ErroEscrita[];
   /** Se definido, `buscarPorChave` responde isto em vez de ler o estado. */
   leituraForcada: LeituraPorChave | null;
-  /** Gancho chamado ANTES de cada `inserirItens` (para intercalar com barreiras). */
+  /** Ganchos chamados ANTES de cada insert (para intercalar com barreiras). */
   antesDeInserirItens: (() => Promise<void>) | null;
+  antesDeInserirCabecalho: (() => Promise<void>) | null;
 }
 
 function bancoFalso(semente: { cabecalhos?: Cabecalho[]; itens?: Item[] } = {}): BancoFalso {
@@ -79,6 +80,7 @@ function bancoFalso(semente: { cabecalhos?: Cabecalho[]; itens?: Item[] } = {}):
     falhasCabecalho: [],
     leituraForcada: null,
     antesDeInserirItens: null,
+    antesDeInserirCabecalho: null,
     // deno-lint-ignore require-await
     async buscarPorChave(chave) {
       banco.chamadas.buscar++;
@@ -88,8 +90,8 @@ function bancoFalso(semente: { cabecalhos?: Cabecalho[]; itens?: Item[] } = {}):
       const n = banco.itens.filter((i) => i.nfe_recebimento_id === cab.id).length;
       return { tipo: "existe", id: cab.id, status: cab.status, itens: n, emUso: cab.emUso ?? false };
     },
-    // deno-lint-ignore require-await
     async inserirCabecalho(row) {
+      if (banco.antesDeInserirCabecalho) await banco.antesDeInserirCabecalho();
       banco.chamadas.inserirCabecalho++;
       const forcada = banco.falhasCabecalho.shift();
       if (forcada) return forcada;
@@ -142,8 +144,8 @@ function itensDe(banco: BancoFalso, id: string): Item[] {
   return banco.itens.filter((i) => i.nfe_recebimento_id === id);
 }
 
-async function itemSemeado(id: string, sequencia: number, posicao = sequencia - 1): Promise<Item> {
-  return { id: await idDeterministicoDoItem(id, sequencia, posicao), nfe_recebimento_id: id, sequencia };
+async function itemSemeado(id: string, sequencia: number, ocorrencia = 0): Promise<Item> {
+  return { id: await idDeterministicoDoItem(id, sequencia, ocorrencia), nfe_recebimento_id: id, sequencia };
 }
 
 Deno.test("o incidente: itens falham após o cabeçalho → erro com o id; o reenvio COMPLETA os itens uma vez só; o 3º não escreve", async () => {
@@ -194,7 +196,7 @@ Deno.test("caminho feliz: cabeçalho e itens entram; cada item carrega id determ
   assertEquals((r as { itens: number }).itens, 2);
   assertEquals(itensDe(banco, id).map((i) => i.id), [
     await idDeterministicoDoItem(id, 1, 0),
-    await idDeterministicoDoItem(id, 2, 1),
+    await idDeterministicoDoItem(id, 2, 0),
   ]);
   assertEquals(banco.chamadas.inserirItens, 1);
 });
@@ -211,23 +213,24 @@ Deno.test("já importada COM itens: responde sem tocar no banco", async () => {
     cabecalhos: [{ id: "cab-x", chave_acesso: CHAVE, status: "pendente" }],
     itens: [await itemSemeado("cab-x", 1)],
   });
-  const r = await materializarRecebimento(banco, entrada(3));
+  const r = await materializarRecebimento(banco, entrada(1)); // MESMA cardinalidade do gravado
   assertEquals(r, { tipo: "ja_importada", id: "cab-x", itens: 1 } satisfies ResultadoImportacao);
   assertEquals(banco.chamadas.inserirItens, 0);
   assertEquals(banco.chamadas.inserirCabecalho, 0);
 });
 
-Deno.test("estado preexistente DIVERGENTE (menos itens que o payload) não ganha certificado nem reparo: 'já importada' com a contagem real", async () => {
+Deno.test("estado preexistente DIVERGENTE (menos itens que o payload) não ganha certificado nem reparo: `divergente`, nada acrescentado", async () => {
   const banco = bancoFalso({
     cabecalhos: [{ id: "cab-p", chave_acesso: CHAVE, status: "pendente" }],
     itens: [await itemSemeado("cab-p", 1)],
   });
   const r = await materializarRecebimento(banco, entrada(3));
-  assertEquals(r, { tipo: "ja_importada", id: "cab-p", itens: 1 } satisfies ResultadoImportacao);
+  assertEquals(r, { tipo: "divergente", id: "cab-p", itens: 1, esperados: 3 } satisfies ResultadoImportacao);
   assertEquals(itensDe(banco, "cab-p").length, 1, "count > 0 encerra a recuperação — nada é acrescentado");
+  assertEquals(banco.chamadas.inserirItens, 0);
 });
 
-Deno.test("gate de estado: sem itens mas já efetivado, ou pendente com sinal de uso, NÃO repara", async () => {
+Deno.test("gate de estado: sem itens mas já efetivado, ou pendente com sinal de uso, NÃO repara — e NÃO é 'já importada' (seria 2xx sem itens)", async () => {
   for (const cab of [
     { id: "cab-e", chave_acesso: CHAVE, status: "efetivado" },
     { id: "cab-f", chave_acesso: CHAVE, status: "falha_efetivacao" },
@@ -235,9 +238,15 @@ Deno.test("gate de estado: sem itens mas já efetivado, ou pendente com sinal de
   ]) {
     const banco = bancoFalso({ cabecalhos: [cab] });
     const r = await materializarRecebimento(banco, entrada(3));
-    assertEquals(r, { tipo: "ja_importada", id: cab.id, itens: 0 } satisfies ResultadoImportacao, cab.id);
+    assertEquals(r.tipo, "bloqueada", `${cab.id}: ${JSON.stringify(r)}`);
+    assertEquals((r as { id: string }).id, cab.id);
     assertEquals(banco.chamadas.inserirItens, 0, `${cab.id}: inseriu itens em recebimento que não é reparável`);
   }
+  // Veto que depois SOLTA (lock liberado): o reenvio seguinte completa.
+  const banco = bancoFalso({ cabecalhos: [{ id: "cab-u", chave_acesso: CHAVE, status: "pendente", emUso: true }] });
+  assertEquals((await materializarRecebimento(banco, entrada(2))).tipo, "bloqueada");
+  banco.cabecalhos[0].emUso = false;
+  assertEquals(await materializarRecebimento(banco, entrada(2)), { tipo: "reparada", id: "cab-u", itens: 2 } satisfies ResultadoImportacao);
 });
 
 Deno.test("reparavel(): só pendente + zero comprovado + sem uso + payload com itens", () => {
@@ -366,6 +375,7 @@ Deno.test("23505 nos ITENS cuja releitura não comprova o lote (zero, erro ou ou
     { tipo: "existe", id: "cab-1", status: "pendente", itens: 0, emUso: false },
     { tipo: "erro", mensagem: "timeout" },
     { tipo: "existe", id: "outro", status: "pendente", itens: 3, emUso: false },
+    { tipo: "existe", id: "cab-1", status: "pendente", itens: 1, emUso: false }, // concorrente gravou [1]; nós trazíamos 3
   ];
   for (const releitura of casos) {
     const banco = bancoFalso();
@@ -383,7 +393,7 @@ Deno.test("idDeterministicoDoItem: estável para o mesmo (cabeçalho, sequência
   assertEquals(a, await idDeterministicoDoItem("cab-1", 1, 0));
   assertEquals(a === await idDeterministicoDoItem("cab-2", 1, 0), false);
   assertEquals(a === await idDeterministicoDoItem("cab-1", 2, 0), false);
-  assertEquals(a === await idDeterministicoDoItem("cab-1", 1, 1), false, "sequência repetida no payload não colide: a posição entra");
+  assertEquals(a === await idDeterministicoDoItem("cab-1", 1, 1), false, "sequência repetida no payload não colide: a ocorrência entra");
   assertEquals(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(a), true, a);
 });
 
@@ -395,4 +405,68 @@ Deno.test("sequência REPETIDA no payload (nItem duplicado) não derruba o lote 
   });
   assertEquals(r.tipo, "importada", JSON.stringify(r));
   assertEquals(banco.itens.length, 3);
+});
+
+Deno.test("conjunto de ids NÃO depende da ordem do payload: [1,2] e [2,1] produzem os MESMOS ids (é o que a PK precisa para barrar o 2º lote)", async () => {
+  const a = bancoFalso();
+  await materializarRecebimento(a, { ...entrada(0), itens: [{ sequencia: 1 }, { sequencia: 2 }, { sequencia: 2 }] });
+  const b = bancoFalso();
+  await materializarRecebimento(b, { ...entrada(0), itens: [{ sequencia: 2 }, { sequencia: 1 }, { sequencia: 2 }] });
+  assertEquals(a.itens.map((i) => i.id).sort(), b.itens.map((i) => i.id).sort());
+});
+
+Deno.test("CORRIDA com payload REORDENADO: W1 [1,2] e W2 [2,1], ambos veem zero — fim com N, não 2N (achado P1 do adversarial)", async () => {
+  const banco = bancoFalso({ cabecalhos: [{ id: "cab-o", chave_acesso: CHAVE, status: "pendente" }] });
+  const b1 = barreira();
+  const b2 = barreira();
+  let vez = 0;
+  banco.antesDeInserirItens = async () => {
+    const minha = ++vez;
+    if (minha === 1) await b1.esperar();
+    if (minha === 2) await b2.esperar();
+  };
+  const w1 = materializarRecebimento(banco, { ...entrada(0), itens: [{ sequencia: 1 }, { sequencia: 2 }] });
+  await ate(() => vez === 1, "W1 na barreira");
+  const w2 = materializarRecebimento(banco, { ...entrada(0), itens: [{ sequencia: 2 }, { sequencia: 1 }] });
+  await ate(() => vez === 2, "W2 na barreira");
+  b2.soltar();
+  await ate(() => banco.chamadas.inserirItens === 1, "W2 gravou");
+  b1.soltar();
+  const [r1, r2] = await Promise.all([w1, w2]);
+  assertEquals(itensDe(banco, "cab-o").length, 2, `N, não 2N (W1=${r1.tipo}, W2=${r2.tipo})`);
+  assertEquals([r1.tipo, r2.tipo], ["ja_importada", "reparada"]);
+});
+
+Deno.test("CORRIDA na CRIAÇÃO de verdade: ambos leem 'nenhuma' ANTES de qualquer cabeçalho; o perdedor do UNIQUE relê com zero itens e completa; o vencedor colide na PK", async () => {
+  const banco = bancoFalso();
+  const cab1 = barreira(); // W1 parado antes de inserir o cabeçalho
+  const cab2 = barreira(); // W2 idem
+  const it1 = barreira(); // W1 parado antes dos itens
+  let vezCab = 0;
+  let vezItens = 0;
+  banco.antesDeInserirCabecalho = async () => {
+    const minha = ++vezCab;
+    if (minha === 1) await cab1.esperar();
+    if (minha === 2) await cab2.esperar();
+  };
+  banco.antesDeInserirItens = async () => {
+    if (++vezItens === 1) await it1.esperar();
+  };
+  const w1 = materializarRecebimento(banco, entrada(3));
+  await ate(() => vezCab === 1, "W1 leu 'nenhuma' e está na barreira do cabeçalho");
+  const w2 = materializarRecebimento(banco, entrada(3));
+  await ate(() => vezCab === 2, "W2 leu 'nenhuma' e está na barreira do cabeçalho");
+  assertEquals(banco.chamadas.buscar, 2, "os DOIS leram antes de qualquer cabeçalho existir");
+  cab1.soltar(); // W1 cria o cabeçalho e para antes dos itens
+  await ate(() => vezItens === 1, "W1 na barreira dos itens");
+  cab2.soltar(); // W2 toma 23505, relê (zero itens) e COMPLETA
+  await ate(() => banco.chamadas.inserirItens === 1, "W2 gravou (W1 ainda está parado ANTES do contador)");
+  it1.soltar(); // W1 colide na PK
+  const [r1, r2] = await Promise.all([w1, w2]);
+  const id = banco.cabecalhos[0].id;
+  assertEquals(banco.cabecalhos.length, 1);
+  assertEquals(banco.chamadas.inserirCabecalho, 2, "duas tentativas de cabeçalho (uma barrada pelo UNIQUE)");
+  assertEquals(itensDe(banco, id).length, 3, `N, não 2N (W1=${r1.tipo}, W2=${r2.tipo})`);
+  assertEquals(r2, { tipo: "reparada", id, itens: 3 } satisfies ResultadoImportacao);
+  assertEquals(r1, { tipo: "ja_importada", id, itens: 3 } satisfies ResultadoImportacao);
 });

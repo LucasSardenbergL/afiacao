@@ -75,7 +75,15 @@ Deno.test("interpretarCabecalho: id/status ilegíveis são erro", () => {
   assertEquals(interpretarCabecalho([LINHA_LIMPA]).tipo, "erro");
 });
 
-/** Cliente supabase-js falso: grava a chamada e responde o que o teste mandar. */
+/** Projeta a linha pelas colunas pedidas no SELECT (como o PostgREST faz) — sem isso o teste não vê um SELECT que esqueceu uma coluna. */
+function projetar(linha: unknown, select: string | undefined): unknown {
+  if (!linha || typeof linha !== "object" || !select) return linha;
+  const pedidas = select.split(",").map((c) => c.trim().replace(/\(.*$/, ""));
+  const fonte = linha as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(fonte).filter(([k]) => pedidas.includes(k)));
+}
+
+/** Cliente supabase-js falso: grava a chamada e responde o que o teste mandar, PROJETADO pelo SELECT. */
 function clienteFalso(resposta: { data?: unknown; error?: unknown }) {
   const chamadas: { tabela: string; op: string; arg: unknown; select?: string }[] = [];
   const builder = (tabela: string) => {
@@ -96,8 +104,8 @@ function clienteFalso(resposta: { data?: unknown; error?: unknown }) {
         reg.arg = v;
         return b;
       },
-      maybeSingle: () => Promise.resolve(resposta),
-      single: () => Promise.resolve(resposta),
+      maybeSingle: () => Promise.resolve({ ...resposta, data: projetar(resposta.data, reg.select) }),
+      single: () => Promise.resolve({ ...resposta, data: projetar(resposta.data, reg.select) }),
       then: (ok: (v: unknown) => unknown) => Promise.resolve(resposta).then(ok),
     };
     return b;
@@ -105,11 +113,18 @@ function clienteFalso(resposta: { data?: unknown; error?: unknown }) {
   return { cliente: { from: builder }, chamadas };
 }
 
-Deno.test("portaSupabase.buscarPorChave: pede o SELECT com contagem e sinais; erro do transporte vira erro, não 'nenhuma'", async () => {
+Deno.test("portaSupabase.buscarPorChave: o SELECT pede id, status, os 4 sinais e a contagem — e a leitura só é 'existe' porque pediu", async () => {
   const ok = clienteFalso({ data: LINHA_LIMPA, error: null });
   const r = await portaSupabase(ok.cliente).buscarPorChave("chave");
-  assertEquals(r.tipo, "existe");
+  assertEquals(r, { tipo: "existe", id: "cab-1", status: "pendente", itens: 0, emUso: false });
   assertEquals(ok.chamadas[0], { tabela: "nfe_recebimentos", op: "select", arg: "chave", select: SELECT_CABECALHO });
+  for (const coluna of ["id", "status", "conferente_id", "conferido_at", "efetivado_at", "efetivacao_lock_at", "nfe_recebimento_itens(count)"]) {
+    assertEquals(SELECT_CABECALHO.split(",").map((c) => c.trim()).includes(coluna), true, `SELECT sem ${coluna}`);
+  }
+  // Prova de que o fake projeta: um SELECT sem a contagem NÃO chega a 'existe'.
+  const semCount = clienteFalso({ data: LINHA_LIMPA, error: null });
+  const linha = await semCount.cliente.from("nfe_recebimentos").select("id, status").eq("chave_acesso", "c").maybeSingle();
+  assertEquals("nfe_recebimento_itens" in (linha.data as Record<string, unknown>), false);
 
   const falha = clienteFalso({ data: null, error: { message: "timeout", code: "57014" } });
   assertEquals((await portaSupabase(falha.cliente).buscarPorChave("chave")).tipo, "erro");

@@ -214,6 +214,26 @@ Deno.serve(async (req) => {
       case "ja_importada":
         console.log("[omie-nfe-webhook] NF-e já importada:", chaveAcesso, `${resultado.itens} itens`);
         return jsonResponse({ message: "já importada", id: resultado.id, itens_count: resultado.itens });
+      case "bloqueada":
+        // Não-2xx de propósito: 2xx manda o Omie DESCARTAR o evento, e este recebimento está sem
+        // itens. Se o lock/conferência soltar, o reenvio completa; se não, o evento vai à DLQ do
+        // Omie (5 dias) em vez de sumir — e o log diz por quê.
+        console.error("[omie-nfe-webhook] Recebimento sem itens e não reparável:", resultado.id, resultado.motivo);
+        return jsonResponse({
+          error: "NF-e já cadastrada sem itens e em uso — reenvie",
+          nfe_recebimento_id: resultado.id,
+          details: resultado.motivo,
+        }, 409);
+      case "divergente":
+        console.error(
+          `[omie-nfe-webhook] Itens divergentes para ${chaveAcesso}: ${resultado.itens} gravados, ${resultado.esperados} no payload`,
+        );
+        return jsonResponse({
+          error: "NF-e já cadastrada com número de itens diferente do payload",
+          nfe_recebimento_id: resultado.id,
+          itens_count: resultado.itens,
+          itens_payload: resultado.esperados,
+        }, 409);
       case "erro_leitura":
         console.error("[omie-nfe-webhook] Erro ao consultar nfe_recebimentos:", resultado.mensagem);
         return jsonResponse({ error: "Erro ao consultar NF-e", details: resultado.mensagem }, 500);
