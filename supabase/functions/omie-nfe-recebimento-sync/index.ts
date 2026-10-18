@@ -163,13 +163,13 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
           .in("omie_id_receb", ids);
         if (error) throw new Error(error.message);
         classificar(data ?? []);
-        const estac = await supabase
+        const { data: estacionadas, error: estacErr } = await supabase
           .from("nfe_importacao_falhas")
           .select("chave_acesso, omie_id_receb")
           .in("omie_id_receb", ids)
           .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
-        if (estac.error) throw new Error(`nfe_importacao_falhas: ${estac.error.message}`);
-        estacionar(estac.data ?? []);
+        if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
+        estacionar(estacionadas ?? []);
       }
       for (let i = 0; i < chaves.length; i += LOTE_CHAVES) {
         const lote = chaves.slice(i, i + LOTE_CHAVES);
@@ -179,13 +179,13 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
           .in("chave_acesso", lote);
         if (error) throw new Error(error.message);
         classificar(data ?? []);
-        const estac = await supabase
+        const { data: estacionadas, error: estacErr } = await supabase
           .from("nfe_importacao_falhas")
           .select("chave_acesso, omie_id_receb")
           .in("chave_acesso", lote)
           .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
-        if (estac.error) throw new Error(`nfe_importacao_falhas: ${estac.error.message}`);
-        estacionar(estac.data ?? []);
+        if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
+        estacionar(estacionadas ?? []);
       }
       return { ids: idsJa, chaves: chavesJa };
     },
