@@ -312,6 +312,9 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     expect(simularCiclo(com({ encerrado_omie: true }, {
       contratos_pedidos_omie: [{ codigo: '500', contrato: '2091397' }], evidencia_nf_contratos: ['9999999'],
     }), 1, cfg).estado.tipo).toBe('viavel');
+    // lista auditável: o backtest nomeia cada pedido que o R59 tirou do caixa (e só esses)
+    expect(backtest(com({ encerrado_omie: true }), cfg).foraDoCaixaR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2096999', momento: '2026-09-10T12:00:00Z' }]);
+    expect(backtest(com({ encerrado_omie: false }), cfg).foraDoCaixaR59).toEqual([]);
     // continuidade do motor segue contando o encerrado (conservador: a provisão não encolhe)
     expect(continuidadePorDiaUtil(com({ encerrado_omie: true }), '2026-10-01', cfg.fretePerc))
       .toBeCloseTo(continuidadePorDiaUtil(com({ encerrado_omie: false }), '2026-10-01', cfg.fretePerc) as number, 9);

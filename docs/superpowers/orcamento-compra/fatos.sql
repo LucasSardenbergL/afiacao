@@ -114,6 +114,11 @@ evidencia_nf as (
   from purchase_orders_tracking t
   where upper(t.empresa::text) = 'OBEN' and t.fornecedor_codigo_omie = 8689681266 and t.nfe_numero is not null
     and coalesce(trim(t.raw_data->'cabecalho_consulta'->>'cContrato'), '') <> ''
+  union
+  -- e os contratos que a sombra da associação (#3124, persistente) leu da NF — fecha o furo acima daqui em diante
+  select trim(c)
+  from recebimento_associacao_sombra s cross join lateral unnest(s.contratos) c
+  where upper(s.empresa) = 'OBEN' and s.fornecedor_codigo_omie = 8689681266 and coalesce(trim(c), '') <> ''
 ),
 contratos_omie as (
   select t.omie_codigo_pedido::text as codigo, trim(t.raw_data->'cabecalho_consulta'->>'cContrato') as contrato
