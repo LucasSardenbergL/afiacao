@@ -77,10 +77,12 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
       return;
     }
     try {
+      // Sempre 'manual': é o dono declarando o inventário (o motor só aceita esta fonte como
+      // override, por 45 dias). Uma foto da estimativa do Omie não é override — o motor já lê o Omie ao vivo.
       await salvarEstoque.mutateAsync(
         estoqueEstimativa
-          ? { valor, data_ref: estoqueDataRef, fonte: 'omie_estimado', cobertura_pct: estoqueEstimativa.cobertura_pct }
-          : { valor, data_ref: estoqueDataRef }
+          ? { valor, data_ref: estoqueDataRef, fonte: 'manual', cobertura_pct: estoqueEstimativa.cobertura_pct }
+          : { valor, data_ref: estoqueDataRef, fonte: 'manual' }
       );
       toast.success('Valor de estoque salvo');
       setEstoqueValor('');
@@ -182,6 +184,10 @@ export function ConfigCashflowDialog({ open, onOpenChange }: Props) {
               ) : (
                 <p className="text-xs text-muted-foreground">Nenhum valor de estoque registrado ainda.</p>
               )}
+              <p className="text-xs text-muted-foreground">
+                Opcional: sem inventário manual dos últimos 45 dias, o motor usa o estoque de giro do Omie
+                (sem imobilizado e uso e consumo). Grave aqui só um inventário contado.
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Valor (R$)</Label>
