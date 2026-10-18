@@ -28,6 +28,12 @@ dialog{position:fixed;inset:0;margin:auto;height:fit-content;max-height:calc(100
 </style>
 <main>
   <h1>Raio-X do estoque parado</h1>
+  <div class="aviso" role="status" style="border-color:var(--accent);color:var(--fg)">
+    <b>Migrado para o app.</b> Esta página agora é só leitura: as decisões continuam visíveis aqui, mas novas decisões,
+    contagens e créditos de troca se registram no app, em
+    <a href="https://steu.lovable.app/admin/reposicao/baixo-giro" target="_blank" rel="noopener" style="color:var(--accent)">Reposição › Baixo giro &amp; estoque parado › aba Raio-X</a>.
+    As 17 decisões feitas aqui foram levadas para lá em 18/10/2026.
+  </div>
   <p class="muted" id="meta"></p>
   <div id="aviso"></div>
   <section class="placar" id="placar"></section>
@@ -230,8 +236,8 @@ render(); // primeiro desenho sem db (modo leitura)
   const user = await window.claude?.use?.('user') ?? null;
   if (!db) { avisar('Decisões indisponíveis nesta visualização — mostrando só o retrato.'); return; }
   uid = user ? await user.id() : null;
-  const pode = user ? await user.can('data.write') : null;
-  somenteLeitura = pode === false;
+  // Migrado para o app (fase B): a página fica só leitura para todos — nada grava daqui, os dados ficam.
+  somenteLeitura = true;
   db.collection('decisoes').limit(1000).onSnapshot(
     (snap) => { decisoes = Object.fromEntries(snap.docs.map((d) => [d.id, d.data()])); render(); },
     (e) => avisar(`Conexão com as decisões caiu (${e.code}). Recarregue a página.`),
