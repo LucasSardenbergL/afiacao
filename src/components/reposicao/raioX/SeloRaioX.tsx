@@ -1,3 +1,4 @@
+import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import type { DecisaoSelo } from './useDecisoesRaioX';
 
 function dataBR(iso: string | null): string | null {
@@ -9,7 +10,7 @@ function dataBR(iso: string | null): string | null {
 
 /** Aviso (nunca bloqueio): este SKU foi decidido no Raio-X para sair do estoque. */
 export function SeloRaioX({ decisao }: { decisao: DecisaoSelo }) {
-  const partes = [`Raio-X: ${decisao.destino}`, dataBR(decisao.decidido_em), decisao.decidido_por_nome].filter(
+  const partes = [`Raio-X: ${ROTULOS[decisao.destino]?.toLowerCase() ?? decisao.destino}`, dataBR(decisao.decidido_em), decisao.decidido_por_nome].filter(
     (p): p is string => !!p,
   );
   return (

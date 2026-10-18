@@ -93,6 +93,15 @@ describe('ItensPreviewLinha', () => {
       expect(selo.className).toContain('text-status-warning');
     });
 
+    it('manter_suspender_recompra mostra rótulo legível, não snake_case (S11)', async () => {
+      resposta = { data: [item({ sku_codigo_omie: '1' })], error: null };
+      respostaDecisoes = { data: [decisao({ destino: 'manter_suspender_recompra' })], error: null };
+      renderPrevia();
+      const selo = await screen.findByTestId('selo-raio-x');
+      expect(selo.textContent).toContain('Raio-X: manter · suspender recompra');
+      expect(selo.textContent).not.toContain('manter_suspender');
+    });
+
     it('venda_dirigida não gera selo', async () => {
       resposta = { data: [item({ sku_codigo_omie: '1' })], error: null };
       respostaDecisoes = { data: [decisao({ destino: 'venda_dirigida' })], error: null };

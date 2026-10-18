@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Empresa } from '@/lib/reposicao/raio-x/tipos';
 
-export const DESTINOS_COM_SELO = ['trocar', 'liquidar', 'manter_suspender_recompra'] as const;
+const DESTINOS_COM_SELO = ['trocar', 'liquidar', 'manter_suspender_recompra'] as const;
 
 export interface DecisaoSelo {
   destino: string;

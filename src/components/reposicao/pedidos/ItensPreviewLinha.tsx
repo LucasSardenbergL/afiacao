@@ -88,10 +88,11 @@ export function ItensPreviewLinha({
             const qtd = quantidadeCompraCanonica(it.qtde_final ?? it.qtde_sugerida, it.fator_embalagem_portal);
             // Preço ausente ≠ R$ 0: sem preço, a linha diz "—", não fabrica um valor.
             const valor = it.preco_unitario == null ? null : qtd * it.preco_unitario;
+            const selo = selos?.get(it.sku_codigo_omie);
             return (
               <li key={it.id} className="flex items-baseline gap-3 py-1">
                 <span className="font-mono text-xs text-muted-foreground w-24 shrink-0">{it.sku_codigo_omie}</span>
-                {selos?.get(it.sku_codigo_omie) && <SeloRaioX decisao={selos.get(it.sku_codigo_omie)!} />}
+                {selo && <SeloRaioX decisao={selo} />}
                 <span className="flex-1 min-w-0 truncate">{it.sku_descricao ?? '—'}</span>
                 <span className="tabular-nums w-20 text-right">{qtd}</span>
                 <span className="tabular-nums w-28 text-right">{valor == null ? '—' : formatBRL(valor)}</span>

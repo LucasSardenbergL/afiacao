@@ -13,7 +13,7 @@ import type { Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
 
 type Fns = Database['public']['Functions'];
 
-export const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
+const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
 const MSG_SEM_PERMISSAO = 'Sem permissão para decidir no Raio-X (exige acesso a custo).';
 
 /** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
