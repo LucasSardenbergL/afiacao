@@ -990,3 +990,37 @@ ORDER BY c.unidades_no_motor DESC, t.t4_data_recebimento;
     do §17.2;
   - **D3 lote 1:** em 05/10 a migration do PR0 está aplicada, mas nenhum run foi publicado. A query do §17.1 roda assim que
     existir o 1º run com `varredura_completa AND pendente_aplicado`.
+
+## 18. Sombra no ar e o D4' real (2026-10-17/18)
+
+- **Entregue:** #3116 (`omie-sync-estoque` v1.10 — etapa desconhecida com saldo recusa o run) e #3124 (sombra da
+  associação, `omie-sync-nfes-recebidas` v1.6 + `recebimento_associacao_sombra`). Narrativa e o que o Codex pegou:
+  `docs/historico/baixa-po-sombra-associacao.md`.
+- **Gatilho do §17.3 satisfeito:** o preço exato no PO está no ar (#2829/#2835) e há NF Sayerlack pendente cujos POs
+  saíram com ele. Alerta: o PO 1263 (primer, NCM 3208) e dois itens do 1273 estão com `nValorIpi = 0`; se a NCM for de
+  3,25%, o unitário associado diverge da NF nesses itens.
+- **Sombra das duas NFs pendentes (2026-10-18 12:13Z):** 000955263 `ambigua` (`item_sem_par`,
+  `quantidade_menor_que_saldo`) e 000955580 `ambigua` (`produto_ilegivel`, `quantidade_ilegivel`). Nenhuma é associável
+  pela regra exata; a primeira é o caso **parcial** que o §17.2 pedia para um 2º piloto.
+
+### 18.1 Piloto D4' real — NF 000955263 (decisão do founder, 2026-10-18)
+
+A equipe associa no recebimento e conclui **junto** (§17.3: associar sem concluir abre a janela de subcontagem).
+
+| Itens da NF | PO | Item do PO (`nCodItem`) | Esperado no PO |
+|---|---|---|---|
+| 1 PRD00861 (3,6 L) · 7 PRD00712 (0,9 L) | 1260 | 12191944316 (3 UN) · 12191944274 (4 UN) | parcial |
+| 2 PRD03663 (10,8 L) | 1261 | 12191967025 (12 UN) — o outro item é da NF 955580 | parcial |
+| 3 PRD03576 (75 KG) | 1263 | 12192156380 (3 UN) | total |
+| 4 PRD00338 (5 L) | 1264 | 12192168135 (2 UN) | parcial |
+| 5, 9, 11, 13, 15, 17 | 1273 | 6 itens | total |
+| 6, 10, 12, 14, 16 | 1277 | 5 itens | total |
+| 8 PRD00339 (5 L) | — | SKU fora de PO: não associar | — |
+
+- **Linha de base (2026-10-18 12:48Z, `psql-ro`):** os 6 POs na etapa 15 com `nQtdeRec = 0` em todos os itens; físico e
+  pendente dos 17 SKUs com sincronização às 11:40Z (cópia nas notas da sessão, `piloto-955263-antes.txt`).
+- **O que medir depois:** `cEtapa` e `nQtdeRec` dos 6 POs no próximo sync de POs; pendente e físico dos SKUs no próximo
+  run do estoque; se o run do motor foi **recusado** por etapa desconhecida (PR(d)) — se sim, classificar a etapa nova
+  antes de qualquer outra coisa, porque a recusa congela a sugestão de compra.
+- **Sucesso:** 1263/1273/1277 em "Recebido" e 1260/1261/1264 em "Recebido Parcialmente"; o pendente cai no mesmo run em
+  que o físico sobe.
