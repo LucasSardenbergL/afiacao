@@ -269,14 +269,16 @@ export function vinculosDe(f: Fatos): Map<number, { nfs: NfVinculada[]; via: Via
 
 /**
  * R59: disparado encerrado no Omie (sinal de HOJE) e sem NENHUMA evidência de faturamento HOJE não é
- * compromisso de caixa. Evidência = NF no tracking, vínculo R57/R58 em qualquer data, OU qualquer NF de
+ * compromisso de caixa. Evidência = NF no tracking OU qualquer NF de
  * qualquer identificador Sayerlack do pedido (cContrato do pedido Omie, protocolo do portal): o R57 recusa
  * vincular quando um reenvio não tem NF, mas a NF do outro identificador prova que houve faturamento
  * (Codex 2026-10-18 P1). Com evidência, segue a conciliação normal.
  */
 export function foraDoCaixa(f: Fatos, p: Fatos['disparados'][number]): boolean {
   if (p.encerrado_omie !== true) return false;
-  if ((p.nfs ?? []).length > 0 || (vinculosDe(f).get(p.id)?.nfs ?? []).length > 0) return false;
+  // (o vínculo R57/R58 não entra: por contrato ele é coberto pelos identificadores abaixo, e o substituto só
+  // existe para pedido SEM identificador, que nunca sai — a falsificação mostrou a camada redundante)
+  if ((p.nfs ?? []).length > 0) return false;
   const ids = new Set<string>();
   if (p.protocolo) ids.add(p.protocolo.trim());
   for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
