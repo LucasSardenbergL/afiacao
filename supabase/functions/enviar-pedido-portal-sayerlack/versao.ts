@@ -21,8 +21,9 @@ export const respostaSonda = criarRespostaSonda("enviar-pedido-portal-sayerlack"
  * v1.5 escrita do custo em RPC transacional com CAS · v1.6 Preço Venda é o total da linha ·
  * v1.7 enviado = aprovado na quantidade (NULL lê-se 1:1; qtde fora do múltiplo recusa; normalização sai) ·
  * v1.8 itens+de-para por caminho único (a RPC inexistente e a instrumentação `[DEBUG_*]` saíram) · v1.9 prova sem mudança e sensor do unitário · v1.10 IPI por NCM: a prova soma o IPI e a RPC grava a decomposição.
+ * v1.12: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  */
-export const VERSAO = "v1.11-reverte-bot-lovable";
+export const VERSAO = "v1.12-gate-auth-canonico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

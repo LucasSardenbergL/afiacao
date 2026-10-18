@@ -39,8 +39,9 @@ export const EDGE = "omie-cron-diario";
  *
  * v1.0 nasce NOMEANDO a fatia que motivou o sensor: a lista de steps sem o `sku_items`.
  * v1.1: o tick das 04:15 UTC pede ao step `nfes` a revisita da janela de 30 dias (`revisita_dias`).
+ * v1.2: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  */
-export const VERSAO = "v1.1-revisita-nfes-04utc";
+export const VERSAO = "v1.2-gate-auth-canonico";
 
 /** O fingerprint da FONTE, para o ECO carregá-lo também (derivado — o CI regrava o mapa). */
 export const FONTE = respostaSonda(VERSAO).fonte;

@@ -49,6 +49,7 @@ import { separarCtes } from "./escopo.ts";
 import { carregarControleDaFila, carregarIrmas, carregarNfesDaJanela, carregarTrackingsComLinha } from "./leituras.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 // Tipos da resposta do Omie: consulta.ts (junto da chamada que os produz).
 
@@ -318,29 +319,6 @@ function irmasDoRecebimento(lidas: readonly Irma[] | undefined, eleita: NFeFilaR
   return irmas;
 }
 
-async function authorizeCronOrStaff(req: Request): Promise<boolean> {
-  const SUPA_URL = Deno.env.get("SUPABASE_URL")!;
-  const SVC_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  const CRON_SEC = Deno.env.get("CRON_SECRET");
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret && CRON_SEC && cronSecret === CRON_SEC) return true;
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return false;
-  const token = authHeader.slice(7);
-  if (token === SVC_KEY) return true;
-  try {
-    const userRes = await fetch(`${SUPA_URL}/auth/v1/user`, { headers: { Authorization: authHeader, apikey: SVC_KEY } });
-    if (!userRes.ok) return false;
-    const user = await userRes.json();
-    if (!user?.id) return false;
-    const roleRes = await fetch(`${SUPA_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`, { headers: { apikey: SVC_KEY, Authorization: `Bearer ${SVC_KEY}` } });
-    if (!roleRes.ok) return false;
-    const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["employee", "master"]);
-    return roles.some((r) => allowed.has(r.role));
-  } catch { return false; }
-}
-
 // ─── Observabilidade em fin_sync_log (best-effort; NUNCA derruba o sync) ───
 // Rastreabilidade independente do orquestrador: action LIKE 'sync_%' + companies em
 // minúsculo (ex.: ['oben']) → o fin_sync_watchdog_check (*/30) JÁ reclassifica órfã
@@ -559,7 +537,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
-  if (!(await authorizeCronOrStaff(req))) {
+  if (!(await authorizeCronOrStaff(req)).ok) {
     return jsonRes({ error: "Unauthorized" }, 401);
   }
 
