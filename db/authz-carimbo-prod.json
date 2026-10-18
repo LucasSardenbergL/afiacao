@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-18T20:42:07.478Z",
-  "sourceHead": "2fd23ea7f43621293345eb4f8523b672895e7a78",
+  "medidoEm": "2026-10-18T21:29:20.022Z",
+  "sourceHead": "c8727c6fa6ac5909dbd59c2f29b63af4892c2385",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 65 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 66 definição(ões) lida(s) para 65 chave(s) da allowlist.",
-      "contratoFingerprint": "764e4eb3612533b724d32dcaf7c841aa14f587f9ce60bdbe084ecd764eebccd0",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 67 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 68 definição(ões) lida(s) para 67 chave(s) da allowlist.",
+      "contratoFingerprint": "a59ba206140c014c4d6da39264eff536b0169989146d6c6ed22c8a2eb91f3a85",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -58,7 +58,7 @@
       "script": "deriva:corpo:prod",
       "exit": 0,
       "resumo": "✅ deriva-corpo — 370 identidade(s) batem com o repo (293 em dia, 68 só cosméticas, 8 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 370 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@95d37281d (fetch ok) · prod 2026-10-18 20:42:32.972286Z",
+      "denominador": "🔎 deriva-corpo — 370 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@53ef99c99 (fetch ok) · prod 2026-10-18 21:29:50.900252Z",
       "contratoFingerprint": "a0c8858fa173bfdffa5f7fb8157bbd284c7018170bbc79f8f67c34a97786a267",
       "auditorFingerprint": "32a5addf29ac70a751983e2f0e9c72cacce79e39781a59c7f53e03fe8a5f62bb",
       "achados": []
