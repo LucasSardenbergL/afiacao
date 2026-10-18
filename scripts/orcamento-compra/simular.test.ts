@@ -280,6 +280,17 @@ describe('R27 — integração da base de caixa (money-path)', () => {
       nfs_do_contrato: [{ contrato: '2096768', nf: '000888', data: '2026-10-09' }],
     }), 1, cfg).estado;
     expect(soProtocolo.tipo === 'indeterminado' && soProtocolo.camadas).toEqual(['compromisso_nao_conciliado']);
+    // R58: o disparado sem identificador Sayerlack foi refeito à mão (substituto com itens idênticos, NF pelo
+    // contrato do manual, faturada DEPOIS do ciclo) — a NF do substituto é evidência: não sai do caixa
+    const itens = [{ prod: 'P1', qtde: 8 }, { prod: 'P2', qtde: 5 }];
+    const substituto = simularCiclo(com({ encerrado_omie: true }, {
+      pedidos_omie_sayerlack: [
+        { codigo: '500', t1: '2026-09-10', contrato: null, do_motor: true, itens },
+        { codigo: 'M', t1: '2026-09-12', contrato: 'CM', do_motor: false, itens: [...itens].reverse() },
+      ],
+      nfs_do_contrato: [{ contrato: 'CM', nf: '000936384', data: '2026-10-05' }],
+    }), 1, cfg).estado;
+    expect(substituto.tipo === 'indeterminado' && substituto.camadas).toEqual(['compromisso_nao_conciliado']);
     // continuidade do motor segue contando o encerrado (conservador: a provisão não encolhe)
     expect(continuidadePorDiaUtil(com({ encerrado_omie: true }), '2026-10-01', cfg.fretePerc))
       .toBeCloseTo(continuidadePorDiaUtil(com({ encerrado_omie: false }), '2026-10-01', cfg.fretePerc) as number, 9);
