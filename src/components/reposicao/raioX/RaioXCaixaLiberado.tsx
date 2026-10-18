@@ -4,7 +4,7 @@ import { medir } from '@/lib/reposicao/raio-x/medir';
 import type { Empresa, LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
 import { fmtReais } from './formato';
 
-export const META_CAIXA = 60000;
+const META_CAIXA = 60000;
 const META_TEXTO = 'R$ 60.000';
 const SEM_DADO = '—';
 
