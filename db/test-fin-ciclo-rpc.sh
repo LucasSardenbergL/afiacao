@@ -35,6 +35,7 @@ LOC="${LOCALE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 MIG_VIEWS="$REPO_ROOT/supabase/migrations/20261014120000_fin_ciclo_cliente_views.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261015003200_fin_ciclo_rpcs_gate.sql"
+MIG_NOME="$REPO_ROOT/supabase/migrations/20261018120000_fin_ciclo_nome_cliente.sql"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/db/lib/pg-harness.sh"
@@ -65,6 +66,10 @@ CREATE TABLE public.v_titulo_baixas (
   valor_baixado numeric, n_movimentos integer, prazo_ponderado_dias numeric, origem_baixa text);
 CREATE TABLE public.user_roles (user_id uuid, role text);
 CREATE TABLE public.fin_permissoes_stub (user_id uuid, empresas text[]);
+-- Fontes de nome da 20261018120000 (so as colunas que a view le).
+CREATE TABLE public.profiles (user_id uuid, name text);
+CREATE TABLE public.omie_customer_account_map (account text, omie_codigo_cliente bigint, user_id uuid);
+CREATE TABLE public.omie_clientes_nao_vinculados (empresa text, omie_codigo_cliente bigint, razao_social text, nome_fantasia text);
 
 CREATE FUNCTION public.fin_user_can_access(check_company text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
@@ -87,7 +92,8 @@ END $$;
 -- Como o Supabase: EXECUTE por default para as 3 roles (a migration precisa fechar as duas pontas).
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 GRANT SELECT ON public.fin_contas_receber, public.v_titulo_baixas, public.user_roles,
-                public.fin_permissoes_stub TO authenticated;
+                public.fin_permissoes_stub, public.profiles, public.omie_customer_account_map,
+                public.omie_clientes_nao_vinculados TO authenticated;
 
 INSERT INTO public.user_roles VALUES
   ('11111111-1111-1111-1111-111111111111','master'),
@@ -115,10 +121,26 @@ BEGIN
   INSERT INTO v_titulo_baixas VALUES
     ('colacor',801,'CR',h-150,100,1,40,'titulo'),
     ('colacor',802,'CR',h-150,300,1,20,'titulo');
+  -- nomes (oben): 11 vinculo->perfil; 12 so nao-vinculados (fantasia); 13 fantasia vazia (razao); 14 nenhum.
+  -- nome_cliente de fin_contas_receber vazio ('' e NULL), como em prod.
+  INSERT INTO fin_contas_receber VALUES
+    ('oben',11,'',1101,'N1',h-40,h-10,10,10,'ATRASADO'),
+    ('oben',12,NULL,1201,'N2',h-40,h-10,10,10,'ATRASADO'),
+    ('oben',13,'  ',1301,'N3',h-40,h-10,10,10,'ATRASADO'),
+    ('oben',14,NULL,1401,'N4',h-40,h-10,10,10,'ATRASADO');
+  INSERT INTO profiles VALUES ('44444444-4444-4444-4444-444444444444','PERFIL ONZE');
+  INSERT INTO omie_customer_account_map VALUES ('oben',11,'44444444-4444-4444-4444-444444444444');
+  INSERT INTO omie_clientes_nao_vinculados VALUES
+    ('oben',11,'RAZAO ONZE NAO USADA','FANTASIA ONZE NAO USADA'),
+    ('oben',12,'RAZAO DOZE','FANTASIA DOZE'),
+    ('oben',13,'RAZAO TREZE','   ');
 END $f$;
 SQL
   P -f "$MIG_VIEWS"
 }
+
+# Migration de nome (aplicada depois das views e das RPCs): $1 = caminho.
+aplicar_nome() { P -f "$1"; }
 
 # Sessão simulada: $1 = uuid do usuário ('' = sem claims), $2 = SQL (uma consulta). Roda como authenticated.
 sess() {
@@ -154,6 +176,8 @@ suite() {
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
+  local nome_mig="${2:-$MIG_NOME}"
+  aplicar_nome "$nome_mig" || { echo "APLICACAO FALHOU: $nome_mig"; return 99; }
 
   local n_res n_coo n_res_o n_coo_o n_tit
   n_res="$(Pq -c "SELECT count(*) FROM public.v_ciclo_cliente_resumo")"
@@ -197,6 +221,16 @@ suite() {
   oks "$U_MASTER_SO_OBEN" "SELECT count(*) FROM public.fin_ciclo_titulos_cliente('colacor', 3)" "0" "f titulos de empresa sem acesso = 0"
   oks "$U_MASTER" "SELECT count(*) FROM public.fin_ciclo_titulos_cliente('colacor', 3)" "1" "f controle: master ve titulos de colacor"
   oks "$U_MASTER_SO_OBEN" "SELECT count(*) FROM $TIT" "$n_tit" "f master so-oben ve titulos de oben"
+
+  # (g) nome do cliente (20261018120000), lido como master pela RPC. NULL imprime vazio (UI mostra #codigo).
+  local NM="SELECT nome_cliente FROM $RES WHERE company='oben' AND omie_codigo_cliente"
+  oks "$U_MASTER" "$NM = 1" "CLI UM" "g nome da propria fin_contas_receber segue valendo"
+  oks "$U_MASTER" "$NM = 11" "PERFIL ONZE" "g nome vinculo -> perfil"
+  oks "$U_MASTER" "$NM = 12" "FANTASIA DOZE" "g nome so nao-vinculados -> fantasia"
+  oks "$U_MASTER" "$NM = 13" "RAZAO TREZE" "g nome fantasia vazia -> razao social"
+  oks "$U_MASTER" "SELECT (nome_cliente IS NULL)::text FROM $RES WHERE company='oben' AND omie_codigo_cliente = 14" "true" "g nome sem nenhuma fonte -> NULL"
+  oks "$U_MASTER" "SELECT count(*) FROM $RES WHERE company='oben' AND omie_codigo_cliente IN (11,12,13,14)" "4" "g nome nao duplica linhas"
+  okp "SELECT has_table_privilege('anon','public.v_ciclo_cliente_resumo','SELECT')" "f" "g anon sem SELECT na view"
   return "$falhas"
 }
 
@@ -207,11 +241,13 @@ if [ "$rc" -ne 0 ]; then echo "$out"; echo "CONTROLE VERMELHO (rc=$rc) — abort
 echo "CONTROLE OK"
 
 # 2) FALSIFICAÇÃO — uma sabotagem por vez, vermelha PELA asserção esperada.
-sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |)
-  sed "$2" "$MIG" > "$TMPD/sab.sql"
-  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |), $4 (opcional) "nome" = sabota a migration de nome
+  local alvo="$MIG" a1="$TMPD/sab.sql" a2="$MIG_NOME"
+  if [ "${4:-}" = "nome" ]; then alvo="$MIG_NOME"; a1="$MIG"; a2="$TMPD/sab.sql"; fi
+  sed "$2" "$alvo" > "$TMPD/sab.sql"
+  if cmp -s "$alvo" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
   local o r=0
-  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  o="$(suite "$a1" "$a2" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; exit 1; fi
   if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
@@ -245,5 +281,10 @@ echo "sabotagem vermelha ok: 5 anon fora do REVOKE (postcondicao aborta o apply,
 sabotar "5b anon fora do REVOKE sem postcondicao" \
   "s/REVOKE ALL ON FUNCTION public.fin_ciclo_cliente_resumo() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_cliente_resumo() FROM PUBLIC;/;s/IF has_function_privilege('anon', f, 'EXECUTE') THEN/IF false THEN/" \
   "d anon sem EXECUTE resumo"
+
+# 6) nome: so a fonte da fin_contas_receber (cascata cortada) — vinculo e nao-vinculados somem.
+sabotar "6 nome sem cascata (so nt.nome)" \
+  "s/coalesce(nt.nome, nm.nome, nv.nome)/nt.nome/" \
+  "g nome vinculo -> perfil" nome
 
 echo "PROVA-CICLO-RPC-OK"

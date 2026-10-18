@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 650
+-- Total de custom migrations: 651
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -714,7 +714,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261016140000', 'tint_tombstone_exige_geracao_1', '20261016140000_tint_tombstone_exige_geracao_1.sql'),
   ('20261016150000', 'sayerlack_varrer_pedidos_portal_cron', '20261016150000_sayerlack_varrer_pedidos_portal_cron.sql'),
   ('20261017040000', 'recebimento_associacao_sombra', '20261017040000_recebimento_associacao_sombra.sql'),
-  ('20261017120000', 'sayerlack_varredura_visto', '20261017120000_sayerlack_varredura_visto.sql')
+  ('20261017120000', 'sayerlack_varredura_visto', '20261017120000_sayerlack_varredura_visto.sql'),
+  ('20261018120000', 'fin_ciclo_nome_cliente', '20261018120000_fin_ciclo_nome_cliente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2771,7 +2772,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('recebimento_associacao_sombra', 'table', 'public', 'recebimento_associacao_sombra', ''),
   ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
   ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra'),
-  ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', '')
+  ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', ''),
+  ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4876,7 +4878,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('recebimento_associacao_sombra', 'table', 'public', 'recebimento_associacao_sombra', ''),
   ('recebimento_associacao_sombra', 'index', 'public', 'idx_recebimento_associacao_sombra_classe', 'recebimento_associacao_sombra'),
   ('recebimento_associacao_sombra', 'rls_policy', 'public', 'recebimento_associacao_sombra_select_staff', 'recebimento_associacao_sombra'),
-  ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', '')
+  ('sayerlack_varredura_visto', 'table', 'public', 'sayerlack_varredura_visto', ''),
+  ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', '')
 )
 SELECT
   e.migration,
