@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 659
+-- Total de custom migrations: 660
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -723,7 +723,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql'),
   ('20261019090100', 'fin_dre_recalculo_diario_cron', '20261019090100_fin_dre_recalculo_diario_cron.sql'),
   ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
-  ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql')
+  ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql'),
+  ('20261019110100', 'fin_titulo_baixas_cr_mapa', '20261019110100_fin_titulo_baixas_cr_mapa.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2804,7 +2805,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
-  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4933,7 +4935,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
-  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', '')
 )
 SELECT
   e.migration,

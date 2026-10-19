@@ -9,7 +9,9 @@
 // recorte (company + tipo='CR') como UM jsonb — uma avaliação, fora do cap de 1000 linhas.
 //
 // Fail-closed (money-path "ausente ≠ zero"): erro → FalhaLeituraCritica com o código real;
-// data null, não-array ou par fora de forma → MALFORMADA. Nunca vira lista vazia, que
+// data null, fora do envelope {total, pares}, pares.length ≠ total ou par fora de forma →
+// MALFORMADA. O envelope existe porque o supabase-js converte HTTP 404 com corpo `[]` em
+// {data: [], error: null} — um array cru vazio passaria por "empresa sem baixa". Nunca vira lista vazia, que
 // derrubaria a cobertura da calibração em silêncio.
 import { exigirLeitura, FalhaLeituraCritica, type RespostaLeitura } from "../_shared/leitura-critica.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
@@ -20,11 +22,17 @@ export type BaixaCr = { omie_codigo_lancamento: number; data_baixa_final: string
 
 const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Valida o jsonb [[cod, 'YYYY-MM-DD'], …] e devolve as linhas no formato que a view tinha. */
+/** Valida o jsonb {total, pares: [[cod, 'YYYY-MM-DD'], …]} e devolve as linhas no formato da view. */
 export function parsearMapaBaixasCr(res: RespostaLeitura<unknown>): BaixaCr[] {
-  const dados = exigirLeitura(res, FONTE_BAIXAS_CR);
-  if (!Array.isArray(dados)) throw new FalhaLeituraCritica(FONTE_BAIXAS_CR, { code: "MALFORMADA" });
-  return dados.map((par) => {
+  const dados = exigirLeitura(res, FONTE_BAIXAS_CR) as { total?: unknown; pares?: unknown } | null;
+  if (
+    dados == null || typeof dados !== "object" || Array.isArray(dados) ||
+    !Array.isArray(dados.pares) || typeof dados.total !== "number" ||
+    dados.pares.length !== dados.total
+  ) {
+    throw new FalhaLeituraCritica(FONTE_BAIXAS_CR, { code: "MALFORMADA" });
+  }
+  return dados.pares.map((par: unknown) => {
     if (
       !Array.isArray(par) || par.length !== 2 ||
       typeof par[0] !== "number" || !Number.isSafeInteger(par[0]) ||

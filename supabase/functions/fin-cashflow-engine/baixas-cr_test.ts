@@ -21,15 +21,28 @@ async function assertFalha(f: () => unknown, codigo: string) {
 }
 
 Deno.test("parsearMapaBaixasCr: pares viram as linhas que a view devolvia", () => {
-  const r = parsearMapaBaixasCr({ data: [[101, "2026-09-30"], [9876543210, "2026-10-01"]], error: null });
+  const r = parsearMapaBaixasCr({ data: { total: 2, pares: [[101, "2026-09-30"], [9876543210, "2026-10-01"]] }, error: null });
   assertEq(r, [
     { omie_codigo_lancamento: 101, data_baixa_final: "2026-09-30" },
     { omie_codigo_lancamento: 9876543210, data_baixa_final: "2026-10-01" },
   ]);
 });
 
-Deno.test("parsearMapaBaixasCr: array vazio é fato (empresa sem baixa), não falha", () => {
-  assertEq(parsearMapaBaixasCr({ data: [], error: null }), []);
+Deno.test("parsearMapaBaixasCr: envelope com total 0 é fato (empresa sem baixa), não falha", () => {
+  assertEq(parsearMapaBaixasCr({ data: { total: 0, pares: [] }, error: null }), []);
+});
+
+Deno.test("parsearMapaBaixasCr: array cru vazio (404 com [] convertido pelo supabase-js) é MALFORMADA", async () => {
+  await assertFalha(() => parsearMapaBaixasCr({ data: [], error: null }), "MALFORMADA");
+});
+
+Deno.test("parsearMapaBaixasCr: pares.length ≠ total é MALFORMADA (lista parcial)", async () => {
+  await assertFalha(() => parsearMapaBaixasCr({ data: { total: 3, pares: [[1, "2026-01-01"]] }, error: null }), "MALFORMADA");
+});
+
+Deno.test("parsearMapaBaixasCr: total ausente ou texto é MALFORMADA", async () => {
+  await assertFalha(() => parsearMapaBaixasCr({ data: { pares: [] }, error: null }), "MALFORMADA");
+  await assertFalha(() => parsearMapaBaixasCr({ data: { total: "0", pares: [] }, error: null }), "MALFORMADA");
 });
 
 Deno.test("parsearMapaBaixasCr: erro do banco (57014) LANÇA com o código real — nunca lista vazia", async () => {
@@ -45,8 +58,8 @@ Deno.test("parsearMapaBaixasCr: objeto no lugar do array é MALFORMADA", async (
 });
 
 Deno.test("parsearMapaBaixasCr: par fora de forma é MALFORMADA", async () => {
-  for (const par of [[1], [1, null], ["1", "2026-01-01"], [1.5, "2026-01-01"], [1, "01/01/2026"], null]) {
-    await assertFalha(() => parsearMapaBaixasCr({ data: [par], error: null }), "MALFORMADA");
+  for (const par of [[1], [1, null], ["1", "2026-01-01"], [1.5, "2026-01-01"], [1, "01/01/2026"], null, [2 ** 53, "2026-01-01"]]) {
+    await assertFalha(() => parsearMapaBaixasCr({ data: { total: 1, pares: [par] }, error: null }), "MALFORMADA");
   }
 });
 
@@ -55,7 +68,7 @@ Deno.test("carregarBaixasCr: chama a RPC literal com p_company", async () => {
   const cli = {
     rpc: (fn: string, args: Record<string, unknown>) => {
       chamadas.push([fn, args]);
-      return Promise.resolve({ data: [[7, "2026-10-02"]], error: null });
+      return Promise.resolve({ data: { total: 1, pares: [[7, "2026-10-02"]] }, error: null });
     },
   };
   const r = await carregarBaixasCr(cli, "colacor");
