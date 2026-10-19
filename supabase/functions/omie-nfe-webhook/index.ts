@@ -3,10 +3,12 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { materializarRecebimento } from "./importacao.ts";
 import { type ClienteRecebimentos, portaSupabase } from "./porta.ts";
-// `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
-// lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
-// Erro determinístico no lote é o pior caso do retry: repete a mesma falha para sempre.
-import { normalizarNcm } from "../omie-nfe-recebimento-sync/itens.ts";
+// NCM normalizado (incidente do NCM pontuado estourando `varchar(8)`, 22001 no lote inteiro,
+// 2026-09-26): o webhook grava a MESMA coluna com o MESMO dado do Omie, e erro determinístico no
+// lote é o pior caso do retry — repete a mesma falha para sempre. Importado de `_shared/`, NUNCA de
+// outra pasta de função: o bundle de deploy do Lovable só leva esta pasta + `_shared/` (v1.3 falhou
+// no deploy com `Module not found` por importar da sync).
+import { normalizarNcm } from "../_shared/ncm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
