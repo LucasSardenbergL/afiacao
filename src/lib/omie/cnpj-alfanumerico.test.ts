@@ -41,4 +41,19 @@ describe('cnpj-alfanumerico (espelho src/ do _shared/)', () => {
     expect(ehCnpjAlfanumerico('123450136')).toBe(false);
     expect(ehCnpjAlfanumerico('12345678000190')).toBe(false);
   });
+
+  // Invariante 3 (Codex retroativo do #3175, PR #3192): separador só conta na POSIÇÃO EXATA da máscara —
+  // "aeg-123.456.789-09" (CPF anotado) virava AEG12345678909, DV válido por coincidência. Espelha
+  // `normalizar_documento()` (migration 20261019140000) e `radar_recruzar_ja_cliente()` (20261019150000).
+  it('máscara exata: separador fora da posição da máscara NÃO cola um CNPJ alfanumérico', () => {
+    expect(normalizarDocumento('aeg-123.456.789-09')).toBe('12345678909');
+    expect(normalizarDocumento('AEG-123.456.789-09')).toBe('12345678909');
+    expect(normalizarDocumento('12ABC.34501DE-35')).toBe('123450135');
+    expect(normalizarDocumento('12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(normalizarDocumento('12ABC34501DE35')).toBe('12ABC34501DE35');
+    expect(normalizarDocumento('12-ABC-345-01DE-35')).toBe('123450135');
+    expect(normalizarDocumento('12.ABC.345/01DE-35.')).toBe('123450135');
+    // Prova de que o caso é real: o resultado inflado de antes ERA um CNPJ alfanumérico válido.
+    expect(ehCnpjAlfanumerico('AEG12345678909')).toBe(true);
+  });
 });

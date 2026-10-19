@@ -63,6 +63,34 @@ Deno.test("alfanumérico inválido: DV errado / formato errado → só-dígitos 
   assertEquals(normalizarDocumento("12.ABC.345/01DE-36"), "123450136");
   assertEquals(normalizarDocumento("12ABC34501DE3"), "12345013");
   assertEquals(normalizarDocumento("12 ABC34501DE35"), "123450135"); // espaço interno não é separador (espelha o SQL)
+});
+
+// Invariante 3 (Codex retroativo do #3175, PR #3192): separador só conta na POSIÇÃO EXATA da máscara.
+// Tirar `[-./]` de qualquer posição transforma "aeg-123.456.789-09" (CPF com anotação) no CNPJ
+// alfanumérico AEG12345678909, cujo DV confere POR COINCIDÊNCIA — e o escritor gravava o documento
+// inflado em `omie_clientes_nao_vinculados.cnpj_cpf`. Espelha `normalizar_documento()` (migration
+// 20261019140000) e `radar_recruzar_ja_cliente()` (20261019150000): cru OU máscara exata, só então remove.
+Deno.test("máscara exata: separador fora da posição da máscara NÃO cola um CNPJ alfanumérico", () => {
+  assertEquals(normalizarDocumento("aeg-123.456.789-09"), "12345678909"); // CPF anotado → só-dígitos
+  assertEquals(normalizarDocumento("AEG-123.456.789-09"), "12345678909");
+  assertEquals(normalizarDocumento("12ABC.34501DE-35"), "123450135"); // máscara fora de posição → só-dígitos
+  assertEquals(normalizarDocumento("12.ABC.345/01DE-35"), "12ABC34501DE35"); // máscara exata → chave alnum
+  assertEquals(normalizarDocumento("12ABC34501DE35"), "12ABC34501DE35"); // cru → chave alnum
+  assertEquals(normalizarDocumento("12-ABC-345-01DE-35"), "123450135"); // separador certo, posição/tipo errados
+  assertEquals(normalizarDocumento("12.ABC.345/01DE-35."), "123450135"); // separador sobrando no fim
+  // Prova de que o caso é real: o resultado inflado de antes ERA um CNPJ alfanumérico válido.
+  assertEquals(ehCnpjAlfanumerico("AEG12345678909"), true);
+});
+
+Deno.test("máscara exata: documentoParaCadastro segue o mesmo contrato (CPF anotado cadastra como CPF)", () => {
+  assertEquals(documentoParaCadastro("aeg-123.456.789-09"), "12345678909");
+  let msg = "";
+  try {
+    documentoParaCadastro("12ABC.34501DE-35"); // letra depois do 1º dígito e máscara fora de posição → recusa
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assertEquals(msg.includes("cadastro recusado"), true, `mensagem ${JSON.stringify(msg)}`);
   assertEquals(ehCnpjAlfanumerico("123450136"), false);
   assertEquals(ehCnpjAlfanumerico("12345678000190"), false); // numérico não é "alfanumérico"
 });
