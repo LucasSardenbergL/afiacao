@@ -3,10 +3,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { depsCadastroSupabase } from '@/queries/useRadarAcoesLead';
 import { cadastrarEmpresaNoOmie, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
-import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, type ResultadoItem } from '@/lib/radar/lote';
+import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, TETO_LOTE, type ResultadoItem } from '@/lib/radar/lote';
 import {
   chaveLotePersistido,
   itensPendentes,
@@ -18,17 +19,33 @@ import {
   type LotePersistido,
 } from '@/lib/radar/lote-persistido';
 
+// Trava de execução POR USUÁRIO fora do React: sobrevive a unmount/remount da página (voltar
+// e entrar de novo não pode disparar um 2º runner sobre o mesmo lote — P1 do review Codex).
+const execucoesEmVoo = new Set<string>();
+
+function gravarStorage(uid: string | null, lote: LotePersistido | null) {
+  if (!uid || typeof localStorage === 'undefined') return;
+  try {
+    const k = chaveLotePersistido(uid);
+    if (!lote || loteConcluido(lote)) localStorage.removeItem(k);
+    else localStorage.setItem(k, serializarLote(lote));
+  } catch {
+    /* quota cheia: o estado em memória continua valendo */
+  }
+}
+
 /**
  * Lote de cadastro no Omie (Oben), orquestrado NO CLIENTE.
  *
  * - Itens CONGELADOS no início (snapshot das empresas) — a lista pode mudar embaixo.
  * - Concorrência 1 e PARADA no primeiro throttling persistente do Omie (a edge já faz retry
  *   com backoff; insistir só alonga o bloqueio).
- * - Estado persistido no localStorage por usuário: fechar a aba perde a execução, não os
- *   efeitos; na volta, a tela oferece RETOMAR o que ficou pendente/indeterminado.
- * - Retry por ETAPA: falha na gravação do Radar com código conhecido só repete a RPC
- *   (relendo o vínculo antes); falha no Omie repete a edge (anti-dup pelo CNPJ).
+ * - Estado persistido no localStorage por usuário, gravado de forma SÍNCRONA a cada item
+ *   (não via effect: continua gravando mesmo se a página desmontar com o lote em voo).
+ * - Retomada: TODO item não-ok relê o vínculo no Radar antes de qualquer chamada; falha na
+ *   gravação do Radar com código conhecido só repete a RPC.
  * - Cache do Radar invalidado SÓ ao final (não a cada item) — a paginação é por offset.
+ * - Lote novo NÃO substitui um lote com pendências: o usuário resolve ou esquece o anterior.
  */
 export function useRadarLoteOmie() {
   const { user } = useAuth();
@@ -36,74 +53,80 @@ export function useRadarLoteOmie() {
   const qc = useQueryClient();
 
   const [lote, setLote] = useState<LotePersistido | null>(null);
+  const loteRef = useRef<LotePersistido | null>(null);
   const [rodando, setRodando] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const snapshots = useRef<Map<string, RadarEmpresa>>(new Map());
+
+  const gravar = useCallback((novo: LotePersistido | null) => {
+    loteRef.current = novo;
+    setLote(novo);
+    gravarStorage(uid, novo);
+  }, [uid]);
 
   // Carrega o lote persistido 1× por usuário.
   useEffect(() => {
     if (!uid || typeof localStorage === 'undefined') return;
     try {
       const salvo = parsearLote(localStorage.getItem(chaveLotePersistido(uid)));
-      if (salvo && !loteConcluido(salvo)) setLote(salvo);
+      if (salvo && !loteConcluido(salvo)) { loteRef.current = salvo; setLote(salvo); }
     } catch {
       /* storage indisponível: segue sem retomada */
     }
+    setRodando(execucoesEmVoo.has(uid));
   }, [uid]);
 
-  // Persiste a cada mudança (remove quando esquecido ou concluído).
-  useEffect(() => {
-    if (!uid || typeof localStorage === 'undefined') return;
-    try {
-      const k = chaveLotePersistido(uid);
-      if (!lote || loteConcluido(lote)) localStorage.removeItem(k);
-      else localStorage.setItem(k, serializarLote(lote));
-    } catch {
-      /* quota cheia: o estado em memória continua valendo */
-    }
-  }, [lote, uid]);
+  // Desmontar a página PARA novos disparos (o item em voo termina e persiste pelo ref).
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const atualizarItem = useCallback((cnpj: string, estado: EstadoItemLote) => {
-    setLote((l) => (l ? { ...l, itens: l.itens.map((i) => (i.cnpj === cnpj ? { ...i, estado } : i)) } : l));
-  }, []);
+    const atual = loteRef.current;
+    if (!atual) return;
+    gravar({ ...atual, itens: atual.itens.map((i) => (i.cnpj === cnpj ? { ...i, estado } : i)) });
+  }, [gravar]);
 
-  const garantirSnapshots = useCallback(async (cnpjs: string[]) => {
+  /** Lê do Radar as empresas sem snapshot. Devolve os CNPJs que NÃO conseguiu obter (e por quê). */
+  const garantirSnapshots = useCallback(async (cnpjs: string[]): Promise<{ cnpj: string; erro: string }[]> => {
     const faltam = cnpjs.filter((c) => !snapshots.current.has(c));
-    if (faltam.length === 0) return;
-    const { data, error } = await supabase.from('radar_empresas').select('*').in('cnpj', faltam);
-    if (error) throw error;
+    if (faltam.length === 0) return [];
+    // `.in()` sobre a PK, delimitado pelo teto do lote (≤ 100): nunca pede "a tabela".
+    const { data, error } = await supabase.from('radar_empresas').select('*').in('cnpj', faltam).range(0, TETO_LOTE - 1);
+    if (error) {
+      const erro = `não consegui ler o lead no Radar: ${mensagemDeErro(error) ?? 'erro de leitura'}`;
+      return faltam.map((cnpj) => ({ cnpj, erro }));
+    }
     for (const e of (data ?? []) as RadarEmpresa[]) snapshots.current.set(e.cnpj, e);
+    return faltam.filter((c) => !snapshots.current.has(c)).map((cnpj) => ({ cnpj, erro: 'lead não encontrado no Radar' }));
   }, []);
 
   const executar = useCallback(
-    async (itens: ItemLote[]) => {
-      if (itens.length === 0 || rodando) return;
+    async (itens: ItemLote[], retomada: boolean) => {
+      if (!uid || itens.length === 0 || execucoesEmVoo.has(uid)) return;
+      execucoesEmVoo.add(uid);
       setRodando(true);
       const ac = new AbortController();
       abortRef.current = ac;
-      try {
-        await garantirSnapshots(itens.filter((i) => !(i.estado.status === 'falha' && i.estado.codigo)).map((i) => i.cnpj));
-      } catch (e) {
-        // Sem os dados do lead não dá para montar o payload: marca a falha, não inventa.
-        const msg = e instanceof Error ? e.message : 'não consegui ler os leads';
-        for (const i of itens) atualizarItem(i.cnpj, { status: 'falha', etapa: 'omie', erro: msg, codigo: null });
-        setRodando(false);
-        return;
-      }
+
+      // Quem precisa do snapshot: todo item que vai passar pela edge (sem código conhecido).
+      const precisaSnapshot = (i: ItemLote) => !(i.estado.status === 'falha' && i.estado.etapa === 'radar' && i.estado.codigo);
+      const semSnapshot = await garantirSnapshots(itens.filter(precisaSnapshot).map((i) => i.cnpj));
+      const indisponiveis = new Map(semSnapshot.map((s) => [s.cnpj, s.erro]));
+      for (const [cnpj, erro] of indisponiveis) atualizarItem(cnpj, { status: 'falha', etapa: 'omie', erro, codigo: null });
+      const executaveis = itens.filter((i) => !indisponiveis.has(i.cnpj));
 
       const resultados = await executarEmLote(
-        itens,
+        executaveis,
         async (item) => {
           const anterior = item.estado;
           const opcoes =
             anterior.status === 'falha' && anterior.etapa === 'radar' && anterior.codigo
               ? { codigoConhecido: anterior.codigo }
-              : anterior.status === 'falha' || anterior.status === 'cancelado'
+              : retomada
                 ? { retentativa: true }
                 : {};
-          const empresa = snapshots.current.get(item.cnpj);
-          if (!empresa && !opcoes.codigoConhecido) throw new FalhaCadastro('omie', 'lead não encontrado no Radar');
           try {
+            const empresa = snapshots.current.get(item.cnpj);
+            if (!empresa && !opcoes.codigoConhecido) throw new FalhaCadastro('omie', 'lead não encontrado no Radar');
             const r = await cadastrarEmpresaNoOmie(
               empresa ?? ({ cnpj: item.cnpj } as RadarEmpresa),
               depsCadastroSupabase,
@@ -115,7 +138,7 @@ export function useRadarLoteOmie() {
             if (e instanceof FalhaCadastro) {
               atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo });
             } else {
-              atualizarItem(item.cnpj, { status: 'falha', etapa: 'omie', erro: e instanceof Error ? e.message : String(e), codigo: null });
+              atualizarItem(item.cnpj, { status: 'falha', etapa: 'omie', erro: mensagemDeErro(e) ?? 'falha desconhecida', codigo: null });
             }
             throw e;
           }
@@ -123,13 +146,17 @@ export function useRadarLoteOmie() {
         { concorrencia: CONCORRENCIA_LOTE, signal: ac.signal, pararEm: ehThrottlingOmie },
       );
 
-      for (const r of resultados) if (r.status === 'cancelado') atualizarItem(r.item.cnpj, { status: 'cancelado' });
+      // Não iniciados: só quem ainda estava 'aguardando' muda de estado — uma falha anterior
+      // (com código Omie confirmado, por exemplo) NÃO pode ser apagada por 'nao_iniciado'.
+      for (const r of resultados) {
+        if (r.status === 'cancelado' && r.item.estado.status === 'aguardando') atualizarItem(r.item.cnpj, { status: 'nao_iniciado' });
+      }
 
       const resumo = resumirLote(resultados as ResultadoItem<ItemLote, { jaExistia: boolean }>[], (v) => v.jaExistia);
       track('radar.lote_cadastrado_omie', {
-        total: resumo.total, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
-        falhas: resumo.falhas, cancelados: resumo.cancelados,
-        parou_por_throttling: resultados.some((r) => r.status === 'falha' && /OMIE_TRANSIENT|rate.?limit/i.test(r.erro)),
+        total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
+        falhas: resumo.falhas + indisponiveis.size, nao_iniciados: resumo.cancelados, retomada,
+        parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),
       });
 
       // Só agora o cache: a lista é paginada por offset — reiniciar da 1ª página evita pular
@@ -139,53 +166,61 @@ export function useRadarLoteOmie() {
       qc.invalidateQueries({ queryKey: ['radar', 'contagem-municipios'] });
       qc.invalidateQueries({ queryKey: ['radar', 'contatos'] });
       abortRef.current = null;
+      execucoesEmVoo.delete(uid);
       setRodando(false);
     },
-    [rodando, garantirSnapshots, atualizarItem, qc],
+    [uid, garantirSnapshots, atualizarItem, qc],
   );
 
-  /** Inicia um lote NOVO com as empresas selecionadas (substitui lote anterior esquecido). */
+  const temPendencias = !!lote && itensPendentes(lote).length > 0;
+
+  /**
+   * Inicia um lote NOVO. Recusa (false) se há lote rodando ou com pendências — o anterior
+   * guarda códigos Omie já confirmados que uma substituição silenciosa perderia.
+   */
   const iniciar = useCallback(
-    (empresas: RadarEmpresa[]) => {
-      if (rodando || empresas.length === 0) return;
+    (empresas: RadarEmpresa[]): boolean => {
+      if (!uid || rodando || empresas.length === 0 || temPendencias) return false;
       snapshots.current = new Map(empresas.map((e) => [e.cnpj, e]));
       const itens: ItemLote[] = empresas.map((e) => ({
         cnpj: e.cnpj,
         nome: e.nome_fantasia || e.razao_social || e.cnpj,
-        estado: { status: 'pendente' },
+        estado: { status: 'aguardando' },
       }));
-      setLote({ v: 1, iniciadoEm: new Date().toISOString(), itens });
-      void executar(itens);
+      gravar({ v: 1, iniciadoEm: new Date().toISOString(), itens });
+      void executar(itens, false);
+      return true;
     },
-    [rodando, executar],
+    [uid, rodando, temPendencias, gravar, executar],
   );
 
-  /** Retoma o que não está ok (pendente, falha, cancelado). */
+  /** Retoma o que não está ok (aguardando, falha, não iniciado) — sempre relendo o vínculo. */
   const retomar = useCallback(() => {
-    if (!lote || rodando) return;
-    void executar(itensPendentes(lote));
-  }, [lote, rodando, executar]);
+    const atual = loteRef.current;
+    if (!atual || rodando) return;
+    void executar(itensPendentes(atual), true);
+  }, [rodando, executar]);
 
   /** Para novos disparos; o item em voo termina (não há como desfazer a chamada ao Omie). */
   const parar = useCallback(() => abortRef.current?.abort(), []);
 
   const esquecer = useCallback(() => {
     if (rodando) return;
-    setLote(null);
+    gravar(null);
     snapshots.current = new Map();
-  }, [rodando]);
+  }, [rodando, gravar]);
 
   const progresso = useMemo(() => {
     if (!lote) return null;
     const total = lote.itens.length;
-    const feitos = lote.itens.filter((i) => i.estado.status !== 'pendente').length;
+    const aguardando = lote.itens.filter((i) => i.estado.status === 'aguardando').length;
     const ok = lote.itens.filter((i) => i.estado.status === 'ok').length;
     const falhas = lote.itens.filter((i) => i.estado.status === 'falha').length;
-    const cancelados = lote.itens.filter((i) => i.estado.status === 'cancelado').length;
-    return { total, feitos, ok, falhas, cancelados, pendentes: total - feitos };
+    const naoIniciados = lote.itens.filter((i) => i.estado.status === 'nao_iniciado').length;
+    return { total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, pendentes: total - ok };
   }, [lote]);
 
-  return { lote, rodando, progresso, iniciar, retomar, parar, esquecer };
+  return { lote, rodando, progresso, temPendencias, iniciar, retomar, parar, esquecer };
 }
 
 /**

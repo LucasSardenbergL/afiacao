@@ -7,7 +7,7 @@ const lote: LotePersistido = {
   itens: [
     { cnpj: '12345678000195', nome: 'A', estado: { status: 'ok', codigo: '1', jaExistia: false, recuperado: false } },
     { cnpj: '12345678000276', nome: 'B', estado: { status: 'falha', etapa: 'radar', erro: 'x', codigo: '2' } },
-    { cnpj: '12345678000357', nome: 'C', estado: { status: 'pendente' } },
+    { cnpj: '12345678000357', nome: 'C', estado: { status: 'aguardando' } },
   ],
 };
 

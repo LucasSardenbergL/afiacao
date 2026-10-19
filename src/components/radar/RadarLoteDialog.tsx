@@ -14,7 +14,7 @@ function IconeItem({ item }: { item: ItemLote }) {
   switch (item.estado.status) {
     case 'ok': return <CheckCircle2 className="w-4 h-4 text-status-success shrink-0" />;
     case 'falha': return <XCircle className="w-4 h-4 text-status-error shrink-0" />;
-    case 'cancelado': return <CircleDashed className="w-4 h-4 text-muted-foreground shrink-0" />;
+    case 'nao_iniciado': return <CircleDashed className="w-4 h-4 text-muted-foreground shrink-0" />;
     default: return <Loader2 className="w-4 h-4 text-muted-foreground shrink-0 animate-spin" />;
   }
 }
@@ -23,7 +23,7 @@ function detalheItem(item: ItemLote): string {
   const e = item.estado;
   if (e.status === 'ok') return e.jaExistia ? `já existia no Omie · cód. ${e.codigo}${e.recuperado ? ' (recuperado)' : ''}` : `cadastrado · cód. ${e.codigo}`;
   if (e.status === 'falha') return `${e.etapa === 'radar' ? 'Omie OK, falhou gravar no Radar' : 'falhou no Omie'}: ${e.erro}`;
-  if (e.status === 'cancelado') return 'não iniciado (lote parado)';
+  if (e.status === 'nao_iniciado') return 'não iniciado (lote parado)';
   return 'aguardando…';
 }
 
@@ -36,7 +36,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
   const { lote: estado, rodando, progresso, retomar, parar, esquecer } = lote;
   if (!estado || !progresso) return null;
   const pct = progresso.total ? Math.round((progresso.feitos / progresso.total) * 100) : 0;
-  const pendentes = progresso.falhas + progresso.cancelados + progresso.pendentes;
+  const pendentes = progresso.pendentes;
   const parouPorThrottling = estado.itens.some(
     (i) => i.estado.status === 'falha' && /OMIE_TRANSIENT|rate.?limit/i.test(i.estado.erro),
   );
@@ -51,7 +51,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           <DialogDescription>
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
-              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.cancelados} não iniciado(s)`}
+              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)`}
           </DialogDescription>
         </DialogHeader>
 

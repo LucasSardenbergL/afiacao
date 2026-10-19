@@ -60,7 +60,11 @@ export function RadarAcoesLote({
 
   const iniciarOmie = () => {
     setConfirmOmie(false);
-    loteOmie.iniciar(dentro);
+    if (!loteOmie.iniciar(dentro)) {
+      toast.info('Há um lote anterior com pendências — resolva ou esqueça-o antes de começar outro.');
+      onAbrirLote();
+      return;
+    }
     onRemover(cnpjs);
     onAbrirLote();
   };
@@ -99,7 +103,9 @@ export function RadarAcoesLote({
         itemSingular="lead"
         itemPlural="leads"
         actions={[
-          { id: 'omie', label: `Cadastrar no Omie${fora > 0 ? ` (${dentro.length})` : ''}`, icon: Building2, onClick: () => setConfirmOmie(true), disabled: ocupado },
+          loteOmie.temPendencias
+            ? { id: 'omie', label: 'Lote pendente — ver', icon: Building2, variant: 'outline', onClick: onAbrirLote }
+            : { id: 'omie', label: `Cadastrar no Omie${fora > 0 ? ` (${dentro.length})` : ''}`, icon: Building2, onClick: () => setConfirmOmie(true), disabled: ocupado },
           { id: 'tarefa', label: 'Criar tarefas', icon: ClipboardPlus, variant: 'outline', onClick: () => setConfirmTarefa(true), disabled: ocupado },
           { id: 'csv', label: 'Exportar CSV', icon: Download, variant: 'outline', onClick: exportar },
           { id: 'descartar', label: 'Descartar', icon: Ban, variant: 'destructive', onClick: () => { setMotivo(''); setConfirmDescartar(true); }, disabled: ocupado },

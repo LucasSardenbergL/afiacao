@@ -105,3 +105,15 @@ export const UFS_BR = [
   'AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI',
   'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO',
 ] as const;
+
+/** `0111301` → `0111-3/01` (formato oficial; pontuado vira TEXTO no Excel, zero à esquerda fica). */
+export function formatarCnae(cnae: string | null | undefined): string {
+  if (!cnae || !/^\d{7}$/.test(cnae)) return cnae ?? '';
+  return cnae.replace(/^(\d{4})(\d)(\d{2})$/, '$1-$2/$3');
+}
+/** `01001000` → `01001-000`. */
+export function formatarCep(cep: string | null | undefined): string {
+  const d = (cep ?? '').replace(/\D/g, '');
+  if (d.length !== 8) return cep ?? '';
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}

@@ -82,13 +82,21 @@ describe('cadastrarEmpresaNoOmie', () => {
     expect(r).toEqual({ codigo: '777', jaExistia: true, recuperado: true });
   });
 
-  it('retentativa de falha na etapa omie (resposta perdida): relê o vínculo antes de gravar', async () => {
+  it('retentativa (resposta perdida): relê o vínculo ANTES da edge — já gravado → não toca Omie nem Radar', async () => {
     const d = deps({ lerVinculo: vi.fn(async () => '555') });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
-    expect(d.criarNoOmie).toHaveBeenCalledTimes(1);
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
-    expect(r.codigo).toBe('555');
-    expect(r.recuperado).toBe(true);
+    expect(r).toEqual({ codigo: '555', jaExistia: true, recuperado: true });
+  });
+
+  it('retentativa sem vínculo: segue pela edge (anti-dup pelo CNPJ) e grava', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: false, codigo_cliente: 9 })) });
+    const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
+    expect(d.lerVinculo).toHaveBeenCalledTimes(1);
+    expect(d.criarNoOmie).toHaveBeenCalledTimes(1);
+    expect(d.registrarNoRadar).toHaveBeenCalledWith('12345678000195', '9', true);
+    expect(r).toEqual({ codigo: '9', jaExistia: true, recuperado: true });
   });
 
   it('erro de rede na edge → etapa omie, sem gravar', async () => {

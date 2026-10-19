@@ -111,6 +111,11 @@ describe('csvEmpresas', () => {
     const semCapital = csvEmpresas([{ ...base, capital_social: null }]).split('\n')[1];
     expect(semCapital).toMatch(/;;|;$/);
   });
+  it('CNAE e CEP saem pontuados — Excel lê como texto e não come o zero à esquerda (P2 Codex)', () => {
+    const linha = csvEmpresas([{ ...base, cnae_principal: '0111301', cep: '01001000' }]).split('\n')[1];
+    expect(linha).toContain(';0111-3/01;');
+    expect(linha).toContain(';01001-000');
+  });
   it('formata capital no padrão pt-BR (vírgula decimal)', () => {
     expect(csvEmpresas([base]).split('\n')[1]).toContain('1500,50');
   });

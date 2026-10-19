@@ -130,7 +130,7 @@ export default function RadarClientes() {
     });
   };
 
-  const pendentesDoLote = loteOmie.progresso ? loteOmie.progresso.total - loteOmie.progresso.ok : 0;
+  const pendentesDoLote = loteOmie.progresso?.pendentes ?? 0;
 
   return (
     <div className="p-4 space-y-4 max-w-6xl mx-auto pb-24">

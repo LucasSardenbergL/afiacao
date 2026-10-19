@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeFunction } from '@/lib/invoke-function';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import {
@@ -36,13 +37,10 @@ function montarPayloadCriarCliente(e: RadarEmpresa) {
  * grava no Radar; retomada relê o vínculo antes de repetir a RPC.
  */
 export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
-  criarNoOmie: async (e) => {
-    const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-      body: montarPayloadCriarCliente(e),
-    });
-    if (error) throw new Error(error.message);
-    return data;
-  },
+  // invokeFunction (não `supabase.functions.invoke` cru): em HTTP 500 o `error.message` do
+  // supabase-js é o genérico "non-2xx"; o motivo real (ex.: `OMIE_TRANSIENT … rate limit`,
+  // que PARA o lote) vem no corpo, e só o helper o lê (P1 do review Codex).
+  criarNoOmie: (e) => invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e)),
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {
     const { error } = await (supabase.rpc as RpcFn)(
       'radar_registrar_cadastro_omie' as never,

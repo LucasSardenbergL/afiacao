@@ -3,11 +3,13 @@
 // que ficou pendente/indeterminado em vez de fingir que nada aconteceu (P1 do consult
 // Codex 2026-10-18). Puro: parse/serialize testáveis; quem lê/grava o storage é o hook.
 
+// Vocabulário PRÓPRIO (aguardando/nao_iniciado, não pendente/cancelado): o gate G5 do
+// universo de pedidos caça cópias da lista de status de VENDA, e colidir com ela é ruído.
 export type EstadoItemLote =
-  | { status: 'pendente' }
+  | { status: 'aguardando' }
   | { status: 'ok'; codigo: string; jaExistia: boolean; recuperado: boolean }
   | { status: 'falha'; etapa: 'omie' | 'radar'; erro: string; codigo: string | null }
-  | { status: 'cancelado' };
+  | { status: 'nao_iniciado' };
 
 export interface ItemLote {
   cnpj: string;
@@ -28,7 +30,7 @@ export function serializarLote(lote: LotePersistido): string {
   return JSON.stringify(lote);
 }
 
-const STATUS = new Set(['pendente', 'ok', 'falha', 'cancelado']);
+const STATUS = new Set(['aguardando', 'ok', 'falha', 'nao_iniciado']);
 
 /** Devolve null em JSON inválido, versão diferente ou shape estranho — nunca lança. */
 export function parsearLote(raw: string | null): LotePersistido | null {

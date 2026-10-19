@@ -11,6 +11,8 @@
 // código não-vazio. Precisão > recall: um lead que sobra na fila custa um clique; um
 // lead que sai da fila sem cliente no Omie é venda perdida sem rastro.
 
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+
 export type EtapaCadastro = 'omie' | 'radar';
 
 export class FalhaCadastro extends Error {
@@ -82,28 +84,36 @@ export interface ResultadoCadastro {
   recuperado: boolean;
 }
 
-function mensagem(e: unknown): string {
-  return e instanceof Error ? e.message : typeof e === 'string' ? e : 'erro desconhecido';
-}
+const mensagem = (e: unknown): string => mensagemDeErro(e) ?? 'erro desconhecido';
 
 /**
  * Omie primeiro, Radar depois. A RPC não é idempotente de verdade (atualiza a data e
- * insere OUTRO contato a cada chamada), então toda retomada relê o vínculo antes de
- * gravar — e pula a RPC se já estiver lá.
+ * insere OUTRO contato a cada chamada), então TODA retomada relê o vínculo ANTES de
+ * qualquer chamada — se já está gravado, termina sem tocar Omie nem Radar (um throttling
+ * no Omie não pode esconder um cadastro que já tinha concluído).
  */
 export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   e: E,
   deps: DepsCadastro<E>,
   opcoes: OpcoesCadastro = {},
 ): Promise<ResultadoCadastro> {
+  const retomada = Boolean(opcoes.codigoConhecido || opcoes.retentativa);
+
+  if (retomada) {
+    let vinculo: string | null;
+    try {
+      vinculo = await deps.lerVinculo(e.cnpj);
+    } catch (err) {
+      throw new FalhaCadastro('radar', `não consegui reler o vínculo: ${mensagem(err)}`, opcoes.codigoConhecido ?? null);
+    }
+    if (vinculo) return { codigo: vinculo, jaExistia: true, recuperado: true };
+  }
+
   let codigo: string;
   let jaExistia: boolean;
-  let recuperado = false;
-
   if (opcoes.codigoConhecido) {
     codigo = opcoes.codigoConhecido;
     jaExistia = true;
-    recuperado = true;
   } else {
     let data: unknown;
     try {
@@ -121,27 +131,16 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
     jaExistia = validada.jaExistia;
   }
 
-  if (opcoes.codigoConhecido || opcoes.retentativa) {
-    let vinculo: string | null;
-    try {
-      vinculo = await deps.lerVinculo(e.cnpj);
-    } catch (err) {
-      throw new FalhaCadastro('radar', `não consegui reler o vínculo: ${mensagem(err)}`, codigo);
-    }
-    if (vinculo) return { codigo: vinculo, jaExistia: true, recuperado: true };
-    recuperado = true;
-  }
-
   try {
     await deps.registrarNoRadar(e.cnpj, codigo, jaExistia);
   } catch (err) {
     throw new FalhaCadastro('radar', mensagem(err), codigo);
   }
-  return { codigo, jaExistia, recuperado };
+  return { codigo, jaExistia, recuperado: retomada };
 }
 
 /** Rate-limit persistente do Omie (a edge já fez retry com backoff): insistir só alonga o bloqueio. */
 export function ehThrottlingOmie(e: unknown): boolean {
-  const m = e instanceof Error ? e.message : '';
+  const m = mensagemDeErro(e) ?? '';
   return /OMIE_TRANSIENT|rate.?limit/i.test(m);
 }

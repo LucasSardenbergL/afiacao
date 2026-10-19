@@ -11,7 +11,8 @@
 // - Teto por lote (TETO_LOTE) e concorrência baixa (CONCORRENCIA_LOTE): o Omie tem
 //   rate-limit e a edge já faz retry com backoff; paralelismo alto só transforma
 //   backoff em fila de timeouts.
-import { formatarCnpj } from './ui-helpers';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { formatarCnpj, formatarCnae, formatarCep } from './ui-helpers';
 
 /** Máximo de leads por lote. Acima disso o resto fica de fora e a UI DIZ quantos. */
 export const TETO_LOTE = 100;
@@ -36,14 +37,7 @@ export interface OpcoesLote {
   pararEm?: (erro: unknown) => boolean;
 }
 
-function mensagemDe(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'string') return e;
-  if (e && typeof e === 'object' && 'message' in e && typeof (e as { message: unknown }).message === 'string') {
-    return (e as { message: string }).message;
-  }
-  return 'erro desconhecido';
-}
+const mensagemDe = (e: unknown): string => mensagemDeErro(e) ?? 'erro desconhecido';
 
 /**
  * Executa `fn` sobre cada item com até `concorrencia` promessas em voo. O resultado
@@ -165,7 +159,7 @@ export function csvEmpresas(empresas: readonly EmpresaCsv[]): string {
       celula(e.email),
       celula(e.municipio_nome),
       celula(e.uf),
-      celula(e.cnae_principal),
+      celula(formatarCnae(e.cnae_principal)), // pontuado = texto no Excel (zero à esquerda preservado)
       celula(e.cnae_descricao),
       celula(e.data_abertura),
       celula(e.porte),
@@ -174,7 +168,7 @@ export function csvEmpresas(empresas: readonly EmpresaCsv[]): string {
       celula(e.logradouro),
       celula(e.numero),
       celula(e.bairro),
-      celula(e.cep),
+      celula(formatarCep(e.cep)),
     ].join(';'),
   );
   return [CSV_CABECALHO, ...corpo].join('\n');

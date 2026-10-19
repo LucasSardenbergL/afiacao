@@ -8,7 +8,7 @@ import { RadarAcoesLead } from './RadarAcoesLead';
 import { isCellphone, whatsappLink } from '@/lib/phone';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
-import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
@@ -44,6 +44,7 @@ function Telefone({ numero, nome }: { numero: string; nome: string }) {
 function Historico({ cnpj }: { cnpj: string }) {
   const q = useRadarContatos(cnpj);
   const estado = estadoDeLeitura(q);
+  const velho = desatualizado(q, Boolean(q.data));
   return (
     <div className="mt-4">
       <div className="flex items-center gap-1 text-sm font-medium mb-1">
@@ -55,7 +56,10 @@ function Historico({ cnpj }: { cnpj: string }) {
       ) : naoConsegui(estado) && !q.data ? (
         <AvisoLeituraFalhou oque="o histórico de contatos" estado={estado} className="mb-0" />
       ) : !q.data || q.data.length === 0 ? (
-        <p className="text-xs text-muted-foreground">Nenhum contato registrado ainda.</p>
+        <>
+          <p className="text-xs text-muted-foreground">Nenhum contato registrado ainda.</p>
+          {velho && <AvisoLeituraFalhou oque="a leitura mais recente do histórico" estado={velho} className="mt-1" />}
+        </>
       ) : (
         <ul className="divide-y text-sm">
           {q.data.map((c) => (
@@ -74,6 +78,7 @@ function Historico({ cnpj }: { cnpj: string }) {
           ))}
         </ul>
       )}
+      {velho && q.data && q.data.length > 0 && <AvisoLeituraFalhou oque="a leitura mais recente do histórico" estado={velho} className="mt-1" />}
     </div>
   );
 }
