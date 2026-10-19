@@ -1,5 +1,7 @@
 // Helpers PUROS de apresentação da tela /radar. Sem I/O — testáveis.
 
+import { CNPJ_RE } from '@/lib/radar/normalizar';
+
 export type AcaoContato = 'em_conversa' | 'contatado_sem_resposta' | 'virou_cliente' | 'descartado';
 
 export interface AcaoConfig {
@@ -60,9 +62,11 @@ export function formatarCapital(v: number | null | undefined): string {
   return `R$ ${Math.round(v).toLocaleString('pt-BR')}`;
 }
 
+/** Máscara 00.000.000/0000-00 — vale igual para o CNPJ alfanumérico (RFB jul/2026: 12.ABC.345/01DE-35).
+ *  Fora do formato (`CNPJ_RE`) devolve cru. */
 export function formatarCnpj(cnpj: string): string {
-  if (!/^\d{14}$/.test(cnpj)) return cnpj;
-  return cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  if (!CNPJ_RE.test(cnpj)) return cnpj;
+  return cnpj.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, '$1.$2.$3/$4-$5');
 }
 
 /** Extrai só os dígitos de um input de CNAE (até 7). O banco guarda o CNAE como
