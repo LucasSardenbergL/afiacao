@@ -30,3 +30,8 @@ Armadilha de teste que custou 2 rodadas: gancho de barreira que lia `vez` **depo
 
 - `RecebimentoConferencia.tsx` renderiza `item.descricao_produto`, mas a coluna é `descricao` (select `nfe_recebimento_itens(*)`, sem alias) → descrição em branco na conferência para TODOS os itens, dos dois writers.
 - Sem coluna de origem no cabeçalho, o denominador "cabeçalhos criados pelo webhook" não existe; vai junto da RPC.
+
+## Deploy (2026-10-19): a v1.3 não entrou no ar — import de outra pasta de função
+
+Sonda via envelope (recibos #526 e #530) provou prod em `v1.2`. O 1º motivo foi humano: a edge não estava em nenhuma das 3 levas de deploy do dia. O 2º foi do PR: ao enviar o pacote `d559f80115f3`, o agente do Lovable conferiu 8/8 hashes e o deploy falhou com `Module not found` para `omie-nfe-recebimento-sync/itens.ts` — o empacotador sobe só a pasta da função + `_shared/`. Nenhum gate local vê isso (todos leem o repo inteiro), e era o ÚNICO import entre pastas de função do repo. v1.4 move `normalizarNcm` para `_shared/ncm.ts` (teste de igualdade com a cópia da sync, que fica até o PR da RPC) e nasce o gate `src/__tests__/edge-import-entre-funcoes-gate.test.ts` (baseline zero). Lição em `docs/agent/deploy.md` §4.
+

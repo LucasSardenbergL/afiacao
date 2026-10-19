@@ -1,8 +1,12 @@
-// NCM em 8 dígitos — compartilhado entre `omie-nfe-recebimento-sync` (itens.ts) e `omie-nfe-webhook`.
+// NCM em 8 dígitos — compartilhado entre os DOIS writers de `nfe_recebimento_itens`
+// (`omie-nfe-recebimento-sync` e `omie-nfe-webhook`).
 //
-// Mora em `_shared/` porque o empacotador do Lovable leva só a pasta da função + `_shared/`: import de
-// OUTRA pasta de função ("../omie-nfe-recebimento-sync/itens.ts") passa no Deno local e no CI e falha no
-// deploy com "Module not found" (medido no deploy da webhook v1.3, 2026-10-18).
+// Por que aqui e não na sync: o deploy de uma edge pelo Lovable empacota SÓ a pasta da função e
+// `_shared/`. Import de OUTRA pasta de função compila e passa em todos os gates locais, mas o
+// bundle de deploy falha com `Module not found` (medido em 2026-10-19: omie-nfe-webhook v1.3
+// importava `../omie-nfe-recebimento-sync/itens.ts`; 8/8 hashes conferidos, deploy recusado).
+// A cópia em `omie-nfe-recebimento-sync/itens.ts` segue sendo a usada pela sync até o PR da RPC
+// (`importar_nfe_recebimento`), que reescreve as duas edges e passa a importar daqui.
 
 /**
  * O NCM em 8 dígitos, que é o que cabe em `nfe_recebimento_itens.ncm` (`varchar(8)`).
