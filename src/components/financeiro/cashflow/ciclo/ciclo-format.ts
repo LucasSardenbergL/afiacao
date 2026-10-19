@@ -2,6 +2,7 @@
 import type { CoorteMes } from '@/hooks/useFinanceiroCiclo';
 import type { Company } from '@/contexts/CompanyContext';
 import { confiancaCliente, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
+import type { ResumoFornecedor } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 import { decodeHtmlEntities } from '@/lib/format';
 
 export const brl = (v: number | null | undefined, frac = 0): string =>
@@ -49,4 +50,9 @@ export const CHAVE_CUSTO: Record<Company, 'cicloCustoOben' | 'cicloCustoColacor'
  *  sem nome em nenhuma fonte, mostra o código (nunca um nome inventado). */
 export function nomeExibido(c: Pick<ResumoCliente, 'nomeCliente' | 'omieCodigoCliente'>): string {
   return c.nomeCliente ? decodeHtmlEntities(c.nomeCliente) : `#${c.omieCodigoCliente}`;
+}
+
+/** Fornecedor sem nome em nenhuma fonte aparece pelo código do Omie (nunca um nome inventado). */
+export function nomeFornecedor(f: Pick<ResumoFornecedor, 'nome' | 'fornecedor'>): string {
+  return f.nome ? decodeHtmlEntities(f.nome) : `#${f.fornecedor}`;
 }
