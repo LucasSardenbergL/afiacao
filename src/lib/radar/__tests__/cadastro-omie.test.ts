@@ -53,6 +53,15 @@ describe('cadastrarEmpresaNoOmie', () => {
     expect(d.registrarNoRadar).toHaveBeenCalledWith('12345678000195', '777', false);
   });
 
+  it('CNPJ alfanumérico (RFB jul/2026) → falha na etapa omie ANTES de chamar a edge (ela apagaria as letras)', async () => {
+    const d = deps();
+    const err = await cadastrarEmpresaNoOmie({ cnpj: '12ABC34501DE35' }, d).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect((err as FalhaCadastro).etapa).toBe('omie');
+    expect((err as FalhaCadastro).message).toMatch(/alfanum/);
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
   it('P0: código nulo → NÃO grava no Radar e falha na etapa omie', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: true, codigo_cliente: null })) });
     await expect(cadastrarEmpresaNoOmie(empresa, d)).rejects.toMatchObject({ etapa: 'omie' });

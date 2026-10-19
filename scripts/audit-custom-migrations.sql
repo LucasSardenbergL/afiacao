@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 658
+-- Total de custom migrations: 659
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -722,7 +722,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql'),
   ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql'),
   ('20261019090100', 'fin_dre_recalculo_diario_cron', '20261019090100_fin_dre_recalculo_diario_cron.sql'),
-  ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql')
+  ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
+  ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2802,7 +2803,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
-  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', '')
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4930,7 +4932,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
-  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', '')
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
 )
 SELECT
   e.migration,
@@ -4958,7 +4961,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 146.
+-- Funções redefinidas com corpo extraível: 147.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5274,6 +5277,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pedido_auto_aprovavel', 1, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'a169166d1b33f40a5c7a82e1ad45e297'),
   ('public', 'reposicao_pedido_auto_aprovavel', 2, '20260615210000_reposicao_auto_aprovacao_v2.sql', 'af98b16e4efefa646d6a206be52c725b'),
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
+  ('public', 'radar_recruzar_ja_cliente', 1, '20260610200000_radar_fundacao.sql', 'c24f51789aef9dd5069206c772cafb73'),
+  ('public', 'radar_recruzar_ja_cliente', 2, '20261019110000_radar_cnpj_alfanumerico.sql', '9151dc6344dab327e86fd617abde5c50'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 3, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'bb80edea94d19835ec55c34f007dc0ed'),
