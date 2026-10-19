@@ -1,52 +1,68 @@
 import { Badge } from '@/components/ui/badge';
-import { idadeEmAnos, rotuloPorte } from '@/lib/radar/ui-helpers';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BotaoLigar } from '@/components/call/BotaoLigar';
+import { cn } from '@/lib/utils';
+import {
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal,
+} from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
-const STATUS_LABEL: Record<string, string> = {
-  a_contatar: 'A contatar',
-  contatado_sem_resposta: 'Não atendeu',
-  em_conversa: 'Em conversa',
-  descartado: 'Descartado',
-  virou_cliente: 'Virou cliente',
-};
-
+/**
+ * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
+ * era um <button> e um checkbox dentro dele é inválido em HTML e dispara os dois cliques.
+ */
 export function RadarLinha({
   empresa,
   hojeISO,
+  selecionada,
+  onSelecionar,
   onAbrir,
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
+  selecionada: boolean;
+  onSelecionar: (v: boolean) => void;
   onAbrir: () => void;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
+  const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
+  const tel = telefonePrincipal(empresa);
   return (
-    <button
-      onClick={onAbrir}
-      className="w-full text-left border-b px-3 py-2 hover:bg-accent/50 transition-colors grid grid-cols-[1fr_auto] gap-2 items-center"
+    <div
+      className={cn(
+        'grid grid-cols-[auto_1fr_auto_auto] gap-2 items-center border-b px-2 py-1.5 transition-colors',
+        selecionada ? 'bg-accent/40' : 'hover:bg-accent/30',
+      )}
+      data-cnpj={empresa.cnpj}
     >
-      <div className="min-w-0">
+      <Checkbox
+        checked={selecionada}
+        onCheckedChange={(v) => onSelecionar(v === true)}
+        aria-label={`Selecionar ${nome}`}
+        className="ml-1"
+      />
+      <button onClick={onAbrir} className="min-w-0 text-left py-0.5">
         <div className="flex items-center gap-2">
-          <span className="font-medium truncate">
-            {empresa.nome_fantasia || empresa.razao_social || empresa.cnpj}
-          </span>
+          <span className="font-medium truncate">{nome}</span>
           {empresa.ja_cliente && (
-            <Badge variant="secondary" className="shrink-0">
-              já é cliente
-            </Badge>
+            <Badge variant="secondary" className="shrink-0">já é cliente</Badge>
           )}
         </div>
         <div className="text-xs text-muted-foreground truncate">
           {[empresa.municipio_nome, empresa.uf].filter(Boolean).join(' · ')}
           {empresa.cnae_descricao ? ` · ${empresa.cnae_descricao}` : ''}
+          {tel ? <span className="font-tabular"> · {tel}</span> : ''}
         </div>
-      </div>
+      </button>
       <div className="text-right text-xs text-muted-foreground shrink-0">
-        <div>
-          {idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}
-        </div>
-        <div>{STATUS_LABEL[empresa.prospeccao_status] ?? empresa.prospeccao_status}</div>
+        <div>{idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}</div>
+        <span className={cn('inline-block mt-0.5 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[tomStatus(empresa.prospeccao_status)])}>
+          {rotuloStatus(empresa.prospeccao_status)}
+        </span>
       </div>
-    </button>
+      <div className="w-8 flex justify-center">
+        {tel && <BotaoLigar telefone={tel} nomeCliente={empresa.razao_social || nome} variant="icon" />}
+      </div>
+    </div>
   );
 }

@@ -14,14 +14,13 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import type { RadarFiltros as Filtros } from '@/queries/useRadarLista';
-import type { PresetRadar } from '@/lib/radar/ui-helpers';
+import { UFS_BR, type PresetRadar } from '@/lib/radar/ui-helpers';
 
 // Sentinel para "todas as UFs" (substitui value="" que Radix rejeita).
 const SENTINEL_UF = '__todas_ufs__';
 // Sentinel para "fila default / qualquer status ativo" (substitui value="").
 const SENTINEL_STATUS = '__fila__';
 
-const UFS = ['MG', 'SP', 'RJ', 'ES', 'PR', 'SC', 'RS', 'GO', 'BA', 'PE', 'CE'];
 
 const STATUS_OPTIONS = [
   { v: SENTINEL_STATUS, label: 'Fila (ativos)' },
@@ -78,7 +77,7 @@ export function RadarFiltros({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={SENTINEL_UF}>Todas UFs</SelectItem>
-            {UFS.map((u) => (
+            {UFS_BR.map((u) => (
               <SelectItem key={u} value={u}>
                 {u}
               </SelectItem>

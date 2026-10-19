@@ -86,6 +86,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/OrderSuccessDialog.tsx", para: "src/lib/reposicao.ts", deModulo: "loja-afiacao", paraModulo: "reposicao", kind: "runtime" },
   { de: "src/components/OrderSuccessDialog.tsx", para: "src/services/orderSubmission/index.ts", deModulo: "loja-afiacao", paraModulo: "vendas", kind: "type" },
   { de: "src/components/radar/RadarDetailSheet.tsx", para: "src/components/call/BotaoLigar.tsx", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
+  { de: "src/components/radar/RadarLinha.tsx", para: "src/components/call/BotaoLigar.tsx", deModulo: "farmer-inteligencia", paraModulo: "telefonia-whatsapp-rota", kind: "runtime" },
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/hooks/useCoverage.ts", deModulo: "reposicao", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/hooks/useTarefas.ts", deModulo: "reposicao", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/lib/tarefas/categoria-map.ts", deModulo: "reposicao", paraModulo: "tarefas", kind: "runtime" },

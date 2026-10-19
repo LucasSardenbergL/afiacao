@@ -41,7 +41,7 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-export function RadarOutcomeMenu({ cnpj }: { cnpj: string }) {
+export function RadarOutcomeMenu({ cnpj, onRegistrado }: { cnpj: string; onRegistrado?: (acao: AcaoContato) => void }) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
   const { isImpersonating } = useImpersonation();
@@ -51,6 +51,7 @@ export function RadarOutcomeMenu({ cnpj }: { cnpj: string }) {
   const registrar = async (acao: AcaoContato, nota?: string) => {
     try {
       const r = await reg.mutateAsync({ cnpj, acao, nota });
+      onRegistrado?.(acao);
       if (!r.deduped) {
         toast.success(LABEL_OK[acao], {
           action: {

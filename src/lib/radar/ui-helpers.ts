@@ -71,3 +71,49 @@ export function formatarCnpj(cnpj: string): string {
 export function digitosCnae(input: string | null | undefined): string {
   return (input ?? '').replace(/\D/g, '').slice(0, 7);
 }
+
+// ── Status de prospecção: rótulo + tom (cor semântica, nunca cor crua) ──────────────────
+export type TomStatus = 'neutro' | 'info' | 'warning' | 'success' | 'muted';
+const STATUS_UI: Record<string, { label: string; tom: TomStatus }> = {
+  a_contatar:             { label: 'A contatar',    tom: 'neutro' },
+  em_conversa:            { label: 'Em conversa',   tom: 'info' },
+  contatado_sem_resposta: { label: 'Não atendeu',   tom: 'warning' },
+  virou_cliente:          { label: 'Virou cliente', tom: 'success' },
+  descartado:             { label: 'Descartado',    tom: 'muted' },
+};
+export function rotuloStatus(status: string | null | undefined): string {
+  return (status && STATUS_UI[status]?.label) || status || '—';
+}
+export function tomStatus(status: string | null | undefined): TomStatus {
+  return (status && STATUS_UI[status]?.tom) || 'neutro';
+}
+export const CLASSE_TOM: Record<TomStatus, string> = {
+  neutro: 'border-border text-foreground',
+  info: 'border-status-info/40 text-status-info bg-status-info/10',
+  warning: 'border-status-warning/40 text-status-warning bg-status-warning/10',
+  success: 'border-status-success/40 text-status-success bg-status-success/10',
+  muted: 'border-border text-muted-foreground',
+};
+
+/** Primeiro telefone utilizável (telefone1, senão telefone2) — o botão Ligar da linha. */
+export function telefonePrincipal(e: { telefone1: string | null; telefone2: string | null }): string | null {
+  return e.telefone1 || e.telefone2 || null;
+}
+
+/** Todas as 27 UFs do Brasil (o filtro antes trazia 11 hardcoded). */
+export const UFS_BR = [
+  'AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI',
+  'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO',
+] as const;
+
+/** `0111301` → `0111-3/01` (formato oficial; pontuado vira TEXTO no Excel, zero à esquerda fica). */
+export function formatarCnae(cnae: string | null | undefined): string {
+  if (!cnae || !/^\d{7}$/.test(cnae)) return cnae ?? '';
+  return cnae.replace(/^(\d{4})(\d)(\d{2})$/, '$1-$2/$3');
+}
+/** `01001000` → `01001-000`. */
+export function formatarCep(cep: string | null | undefined): string {
+  const d = (cep ?? '').replace(/\D/g, '');
+  if (d.length !== 8) return cep ?? '';
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
