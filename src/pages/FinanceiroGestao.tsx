@@ -8,7 +8,6 @@ import {
   Wallet,
   TrendingDown,
   TrendingUp,
-  Banknote,
   AlertTriangle,
   Building2,
 } from "lucide-react";
@@ -61,8 +60,8 @@ function KpiCards({ empresa }: { empresa: string }) {
     staleTime: 240_000,
   });
 
-  // TODO: tabela fin_saldo_bancario ainda não existe — exibir 0 até ser criada.
-  const saldoBancario = 0;
+  // Saldo Bancário OCULTO (decisão do founder, 2026-10-19): mostrava 0 fixo = informação
+  // falsa (ausente ≠ zero). Só volta quando existir a fonte real `fin_saldo_bancario`.
 
   const { data: inadimplencia } = useQuery({
     queryKey: ["fin-gestao-inadimp", company],
@@ -102,13 +101,6 @@ function KpiCards({ empresa }: { empresa: string }) {
       border: "border-border",
     },
     {
-      label: "Saldo Bancário",
-      value: fmtBRL(saldoBancario),
-      icon: Banknote,
-      tone: "text-muted-foreground",
-      border: "border-border",
-    },
-    {
       label: "Inadimplência %",
       value: `${(Number(inadimplencia ?? 0)).toFixed(1)}%`,
       icon: AlertTriangle,
@@ -122,7 +114,7 @@ function KpiCards({ empresa }: { empresa: string }) {
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
       {cards.map((c) => (
         <Card key={c.label} className={c.border}>
           <CardContent className="pt-4 flex items-center justify-between">

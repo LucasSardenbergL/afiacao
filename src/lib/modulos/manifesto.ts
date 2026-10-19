@@ -172,6 +172,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FinanceiroAnalytics.baixa-indisponivel.test.tsx",
       "src/pages/__tests__/FinanceiroDashboard.coerencia-pos-sync.test.tsx",
       "src/pages/__tests__/FinanceiroDashboard.erro-por-aba.test.tsx",
+      "src/pages/__tests__/FinanceiroGestao.saldo-bancario-oculto.test.tsx",
       "src/pages/__tests__/FinanceiroFechamento.provisorio.test.tsx",
       "src/pages/__tests__/FinanceiroIc.leitura-falhou.test.tsx",
       "src/pages/__tests__/FinanceiroSync.erro-honesto.test.tsx",
