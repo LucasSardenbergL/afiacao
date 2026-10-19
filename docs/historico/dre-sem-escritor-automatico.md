@@ -53,3 +53,10 @@ migration.
   `fin_sync_log` (a mais lenta 36,8 s — caixa de um mês da Oben).
 - `fin_dre_snapshots` competência, meses fechados out/2025–set/2026: **Oben 12/12, Colacor SC 12/12**.
   Oben caixa abr–out/2026 recalculado (7/7). CMV competência da Oben abr–set: R$ 160k–225k/mês.
+
+## Efeito no consumidor (2026-10-19)
+
+Leitura sem gravar do `fin-cashflow-engine` (`db/leitura-pme-oben-pos-dre-2026-10-19.sql`, `db:aplicar`
+#550, `net._http_response` 122623, HTTP 200, cenário realista): Oben **PME 68,0 d** (era `null`), CCC
+87,0 d, PMR 31 d, PMP 12 d, NCG −R$ 876.123, estoque R$ 445.476 (Omie). Coerência: 445.476 ÷ 68,04 × 365
+≈ R$ 2,39 M de CMV em 12 meses ≈ R$ 199 k/mês — dentro da faixa mensal medida no DRE (160–225 k).

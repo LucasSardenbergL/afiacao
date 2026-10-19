@@ -53,8 +53,11 @@ export type DecisaoEncerrados =
  *   não viu é paginação/janela divergente;
  * - encerrados = completo inteiro (não-vazio): o filtro foi IGNORADO e devolveu tudo — publicar tiraria
  *   do caixa todo disparado sem NF;
- * - mais da metade do completo encerrada: ALERTA de anomalia, não prova (Codex 2026-10-18) — abstém e o
- *   Sentinela mostra; uma carteira legitimamente majoritária em encerrados exigiria rever este teto.
+ * - [R59 v2, 2026-10-19] a guarda de "mais da metade" SAIU: medido em prod, o filtro devolve o ciclo CONCLUÍDO
+ *   (520 de 549, os 29 de fora todos em voo) — maioria legítima, e a guarda abstinha sempre. A contenção do
+ *   efeito em dinheiro mora no consumidor: o backtest só tira do caixa exclusão APROVADA
+ *   (scripts/orcamento-compra/r59-exclusoes-aprovadas.ts). Nenhum invariante entre os dois conjuntos prova a
+ *   semântica (Codex 2026-10-19); a edge prova a integridade da coleta.
  *   Conjunto VAZIO publica: limpar marcas devolve pedidos ao caixa, o lado conservador.
  */
 export function decidirPublicacaoEncerrados(e: {
@@ -72,9 +75,6 @@ export function decidirPublicacaoEncerrados(e: {
   const n = e.idsEncerrados.size;
   if (n > 0 && n === e.idsGeral.size) {
     return { tipo: "abster", motivo: "filtro de encerrados devolveu a varredura inteira (filtro ignorado?)" };
-  }
-  if (n * 2 > e.idsGeral.size) {
-    return { tipo: "abster", motivo: `encerrados (${n}) passam da metade da varredura (${e.idsGeral.size}) — implausível` };
   }
   return { tipo: "publicar", ids: [...e.idsEncerrados].sort((a, b) => a - b) };
 }
