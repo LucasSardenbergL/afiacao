@@ -46,3 +46,17 @@ não oferecer `waitUntil`.
   sobrescrever um mais novo. Sobreviver até ~400s alarga essa janela (os ticks do cron, a cada 2h, não se
   sobrepõem).
 - As RPCs da passada não têm timeout próprio; o deadline de 380s cobre só as chamadas ao Omie.
+
+## Prova pós-deploy (2026-10-19)
+
+Deploy pelo MCP do Lovable (pacote `77a6bb85dc14`, 9/9 sha256 contra `5bb91c6a5`, sensor de edição
+`SEM_EDICAO`); sonda (recibo #532) → **DEPLOY CONFIRMADO** `v1.7-worker-segurado-waituntil` com o `fonte` da
+main; ledger `CONFERE`. Disparo de prova (recibo #533, `db/disparo-prova-v17-ospc-oben-20261019.sql`, cliente
+corta em 25s): completo limpo 01:37:48 (549 pedidos) e a passada **chegou a estado terminal às 01:39:36,
+~220s após o disparo** — depois do ponto em que o `EarlyDrop` a matava. Primeira vez em 4 runs.
+
+O terminal foi **abstenção**: `encerrados (520) passam da metade da varredura (549) — implausível`, registro
+`invalidado` seq 149, nada publicado. A guarda de >50% fez o trabalho dela. Se o filtro só-encerrados
+discrimina "encerrado" no sentido do R59 continua em aberto: com a abstenção, o registro não guarda os IDs, e
+os controles do #3132 (positivo 12096301530/12098830141 dentro; negativo pedido aberto de out/2026 fora)
+precisam do conjunto.
