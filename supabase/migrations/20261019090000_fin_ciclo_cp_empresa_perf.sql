@@ -17,6 +17,26 @@
 
 BEGIN;
 
+-- TRAVA antes de ler (ALTER sem efeito: a volatilidade VIVA) — ninguém troca a função entre a PRE e o CREATE.
+DO $trava$
+BEGIN
+  IF to_regprocedure('public.fin_ciclo_cp_empresa()') IS NOT NULL THEN
+    ALTER FUNCTION public.fin_ciclo_cp_empresa() STABLE;
+  END IF;
+END
+$trava$;
+
+-- PRE anti-deriva: md5 do corpo vivo ∈ {20261018150000 revisada, este}. Ausente ABORTA.
+DO $pre$
+DECLARE vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
+                       WHERE p.oid = to_regprocedure('public.fin_ciclo_cp_empresa()'));
+BEGIN
+  IF vivo IS NULL OR vivo NOT IN ('60b314b69f715e63c1f9ba429b14358e', 'd4f556fafb31efc038119d269d9b20b6') THEN
+    RAISE EXCEPTION 'PRE FALHOU: fin_ciclo_cp_empresa() vivo (md5 %) nao e o predecessor revisado nem este', vivo;
+  END IF;
+END
+$pre$;
+
 CREATE OR REPLACE FUNCTION public.fin_ciclo_cp_empresa()
 RETURNS TABLE(company text, pmp_compras_pond numeric, compras_12m numeric, rs_por_dia numeric,
               pmp_engine_controle numeric, n_fora_lista int, valor_fora_lista numeric,

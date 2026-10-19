@@ -340,14 +340,16 @@ echo "CONTROLE OK"
 
 # 2) FALSIFICAÇÃO — uma camada por vez, vermelha PELA asserção esperada (marca do ramo).
 # O sed vale para as DUAS migrations (o REPLACE da perf reescreve fin_ciclo_cp_empresa); basta alterar uma.
-sabotar_arquivos() { # $1 nome, $2 sed
-  sed "$2" "$MIG" > "$TMPD/sab.sql"; sed "$2" "$MIG_PERF" > "$TMPD/sab-perf.sql"
+# $3=perf: só a perf (o corpo VIVO da função é o dela; mexer no da base derruba a PRE anti-deriva).
+sabotar_arquivos() { # $1 nome, $2 sed, [$3 perf]
+  if [ "${3:-}" = perf ]; then cp "$MIG" "$TMPD/sab.sql"; else sed "$2" "$MIG" > "$TMPD/sab.sql"; fi
+  sed "$2" "$MIG_PERF" > "$TMPD/sab-perf.sql"
   if cmp -s "$MIG" "$TMPD/sab.sql" && cmp -s "$MIG_PERF" "$TMPD/sab-perf.sql"; then
     echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1
   fi
 }
-sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |)
-  sabotar_arquivos "$1" "$2"
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |), [$4 perf]
+  sabotar_arquivos "$1" "$2" "${4:-}"
   local o r=0
   o="$(suite "$TMPD/sab.sql" "$TMPD/sab-perf.sql" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
@@ -398,17 +400,17 @@ sabotar "j tem_baixa sem coalesce (PAGO sem baixa some)" \
   "fatos pago sem baixa nenhuma nao some"
 sabotar "k sensor NULL vira 0 no SELECT final" \
   "s/CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END/coalesce(s.valor_fora_lista, 0)/" \
-  "empresa colacor sem pagas = PMP NULL, nunca 0"
+  "empresa colacor sem pagas = PMP NULL, nunca 0" perf
 sabotar "l sensor soma ignora o NULL" \
   "/bool_or(p.valor_documento IS NULL) FILTER (WHERE p.categoria_codigo LIKE/s/THEN NULL/THEN 0/" \
-  "empresa colacor sem pagas = PMP NULL, nunca 0"
+  "empresa colacor sem pagas = PMP NULL, nunca 0" perf
 sabotar "m vencido sem coalesce no resumo" \
   "s/coalesce(a.valor_vencido_aberto, 0) AS valor_vencido_aberto/a.valor_vencido_aberto/" \
   "fatos fornecedor sem titulo aberto = zero real, nao NULL"
 # ── perf (20261019090000) ──
 sabotar "n vol sem o universo de compras" \
   "/^  vol AS (/,/GROUP BY p.company/{s/AND l.categoria_codigo = p.categoria_codigo/AND true/;}" \
-  "empresa compras e controle = caminho antigo"
+  "empresa compras e controle = caminho antigo" perf
 sabotar "o empresas sem o lado das baixas CP" \
   "/^    UNION SELECT eng.company FROM eng\$/d" \
   "empresa so com baixa CP aparece, controle NULL"
@@ -422,4 +424,8 @@ sabotar_post "r perf volta a citar o resumo" \
   "s/do resumo por fornecedor/do v_ciclo_fornecedor_resumo/" \
   "postcondicao: public.fin_ciclo_cp_empresa() ainda passa pelo resumo"
 
+# PRE anti-deriva: corpo vivo fora de {revisado, este} (aqui: a base sabotada) ABORTA o apply da perf.
+sabotar_post "s PRE barra corpo vivo desconhecido" \
+  "s/CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END/coalesce(s.valor_fora_lista, 0)/" \
+  "PRE FALHOU: fin_ciclo_cp_empresa() vivo"
 echo "PROVA-CICLO-FORNECEDOR-OK"
