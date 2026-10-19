@@ -133,7 +133,7 @@ describe('montarFilaCustoPrazo', () => {
   const r = (forn: number, vencido: number): ResumoFornecedor => ({ ...resumoBase, fornecedor: forn, valorVencidoAberto: vencido });
   const custo = (perdido: number | null, encargo: number | null, emDia: number | null = null) => ({
     taxa: perdido === null ? null : 0.02, regimeInicio: null, perdidoAtraso: perdido,
-    perdidoEmDiaSemDesconto: emDia, encargoPago: encargo, descontoObtido: null,
+    perdidoEmDiaSemDesconto: emDia, perdidoEmDiaDescontoAbaixo: null, encargoPago: encargo, descontoObtido: null,
   });
   it('ordena por R$ apurado+cenário, desempata pelo vencido, separa sem evidência e conferir boleto', () => {
     const f = montarFilaCustoPrazo([
