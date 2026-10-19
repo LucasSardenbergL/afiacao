@@ -166,7 +166,7 @@ export function useCicloGiroSku(company: Company) {
       // .rpc() set-returning é capado em 1.000 linhas (colacor tem ~1.460 SKUs com saldo) → paginar sempre.
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
-          supabase.rpc('fin_ciclo_giro_sku' as never, { p_company: company } as never).select('*')
+          supabase.rpc('fin_ciclo_giro_sku', { p_company: company }).select('*')
             .order('valor_parado', { ascending: false, nullsFirst: false })
             .order('omie_codigo_produto', { ascending: true })
             .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
