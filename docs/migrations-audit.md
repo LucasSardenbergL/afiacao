@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **656** custom migrations totais
-- **2111** objetos esperados (criados por estas migrations)
+- **658** custom migrations totais
+- **2114** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 761
+  - `function`: 763
   - `rls_policy`: 476
   - `index`: 277
+  - `table`: 185
   - `cron_job`: 185
-  - `table`: 184
   - `view`: 119
   - `trigger`: 105
   - `enum_value`: 4
@@ -5329,6 +5329,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.fin_ciclo_cp_empresa` | — |
+
+### `20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reconciliar_pedidos_omie` | — |
+
+### `20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.pedido_total_liquido_converter` | — |
+| `table` | `public.pedido_total_liquido_excecao` | — |
 
 ## Próximos passos por status
 

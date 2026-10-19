@@ -45,7 +45,12 @@ if [ "$MODO" = "falsificar" ]; then
               ancora_adulterada:A4
               filtro_neutralizado:A4
               prevoo_tabela_cego:A1b
-              duas_camadas_fora:A6,A7"
+              duas_camadas_fora:A6,A7
+              canonica_corpo_1token:C2,C3
+              canonica_sem_guardas_sem_not_exists:C3,C5
+              canonica_pre_errada:C2
+              canonica_grant_auth:C2
+              canonica_tabela_sem_check:C2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
 
@@ -106,7 +111,8 @@ COER="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_venda_coerencia_ag
 DBF="$REPO_ROOT/db/aplicar-pedido-total-liquido-rpc.sql"
 A1_SRC="$REPO_ROOT/db/2026-10-05-pedido-total-liquido-excecao.sql"
 A2_SRC="$REPO_ROOT/db/2026-10-05-pedido-total-liquido-converter-acervo.sql"
-for f in "$MIG1" "$MIG2" "$COER" "$DBF" "$A1_SRC" "$A2_SRC"; do
+CANON_SRC="$(find "$REPO_ROOT/supabase/migrations" -name "*_pedido_total_liquido_converter_canonica_*.sql" | sort | tail -1)"
+for f in "$MIG1" "$MIG2" "$COER" "$DBF" "$A1_SRC" "$A2_SRC" "$CANON_SRC"; do
   if [ -z "$f" ] || [ ! -f "$f" ]; then echo "FALTA ARQUIVO [$f] — o harness testaria o NADA"; exit 1; fi
 done
 
@@ -118,6 +124,11 @@ sabotar() {   # sabotar <destino> <fonte> <sed...>
   local dst="$1" src="$2"; shift 2
   sed "$@" "$src" > "$dst"
   if cmp -s "$src" "$dst"; then echo "SABOTAGEM INERTE: o sed não mudou nada em $src"; exit 1; fi
+}
+sabotar_perl() {   # sabotar_perl <destino> <fonte> <programa perl -0pe> — sabotagem multi-linha (blocos DO)
+  local dst="$1" src="$2" prog="$3"
+  perl -0pe "$prog" "$src" > "$dst"
+  if cmp -s "$src" "$dst"; then echo "SABOTAGEM INERTE: o perl não mudou nada em $src"; exit 1; fi
 }
 # O passo 2 do apply 1 usa `p.updated_at <`; a postcondição (c) usa `so.updated_at >=`. São âncoras
 # distintas DE PROPÓSITO: dá para derrubar a guarda sem tocar seu verificador, que é o único jeito de
@@ -135,6 +146,23 @@ case "$SABOTAGEM" in
                        A1="$TMPD/a1.sql" ;;
   prevoo_tabela_cego)  sabotar "$TMPD/a2.sql" "$A2_SRC" \
                          -e "s/to_regclass('public.pedido_total_liquido_excecao') IS NULL/false/"; A2="$TMPD/a2.sql" ;;
+  # ── a canônica (seção C): integridade (a migration ABORTA) × comportamento (guardas fora, o assert acusa)
+  canonica_corpo_1token)   sabotar_perl "$TMPD/canon.sql" "$CANON_SRC" \
+                             's/WHERE NOT EXISTS \(SELECT 1/WHERE NOT EXISTS (SELECT 2/'; CANON="$TMPD/canon.sql" ;;
+  # shellcheck disable=SC2016  # programa perl: o $ é do perl, não do shell
+  canonica_sem_guardas_sem_not_exists)
+                           sabotar_perl "$TMPD/canon.sql" "$CANON_SRC" \
+                             's/WHERE x\.sales_order_id = z\.sales_order_id\)/WHERE x.sales_order_id = z.sales_order_id AND false)/; s/DO \$pre\$.*?\$pre\$;//s; s/DO \$pos\$.*?\$pos\$;//s'
+                           CANON="$TMPD/canon.sql" ;;
+  canonica_pre_errada)     sabotar_perl "$TMPD/canon.sql" "$CANON_SRC" \
+                             "s/'0cdb517ed0e81b65e1330d815fde6784'/'00000000000000000000000000000000'/"; CANON="$TMPD/canon.sql" ;;
+  # shellcheck disable=SC2016  # programa perl: $1 é a captura do perl
+  canonica_grant_auth)     sabotar_perl "$TMPD/canon.sql" "$CANON_SRC" \
+                             's/(GRANT EXECUTE ON FUNCTION public\.pedido_total_liquido_converter\([^)]*\) TO service_role;)/$1\nGRANT EXECUTE ON FUNCTION public.pedido_total_liquido_converter(boolean, timestamp with time zone, text[], date, date, integer, boolean) TO authenticated;/'
+                           CANON="$TMPD/canon.sql" ;;
+  canonica_tabela_sem_check)
+                           sabotar_perl "$TMPD/canon.sql" "$CANON_SRC" \
+                             's/ CHECK \(length\(btrim\(evidencia\)\) > 0\)//'; CANON="$TMPD/canon.sql" ;;
   *) echo "SABOTAGEM desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -z "$SABOTAGEM" ] || echo "SABOTAGEM ativa: $SABOTAGEM"
@@ -322,6 +350,91 @@ echo "── Reaplicar o apply 2 FALHA em vez de escrever de novo ──"
 r2="$(aplicar "$A2" || true)"
 if [ "$r2" = "ok" ]; then nok "A20 FALHOU — o apply 2 rodou 2× sem reclamar: dupla escrita silenciosa"
 else ok "A20 OK — o apply 2 recusa a 2ª passada"; fi
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# C · I2 (plano v2, item 5): a migration CANÔNICA reproduz o corpo da PROD byte a byte — e EXECUTA
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# O apply 1 deixou em prod um conversor (e uma tabela) que nenhuma migration explicava. A canônica
+# (20261019120100_pedido_total_liquido_converter_canonica_*) copia o corpo do hex da prod e declara a
+# tabela. Dois caminhos, o MESMO md5(prosrc): cadeia + apply 1 (`prove`) e cadeia + canônica
+# (`prove_c`, o restore só de migrations). Sobre a canônica: a exceção nominal destrava o mês, o não
+# listado segue bloqueando, o excluído nunca converte (apply 2 real), reaplicar sobre o corpo da prod
+# é no-op, e a PRE recusa corpo estranho.
+echo "── C · a canônica (I2): mesmo corpo da prod, pelo caminho do restore ──"
+CANON_B="$CANON_SRC"
+CANON="${CANON:-$CANON_B}"   # uma sabotagem canonica_* troca o arquivo aqui
+MD5_PRED_B="0cdb517ed0e81b65e1330d815fde6784"   # md5(prosrc) que a 20260914193000 (e o DBF) deixam
+MD5_PROD_B="4d88eebd9dea026346d706befca0fced"   # md5(prosrc) da PROD em 2026-10-19 (= depois do apply 1)
+CONV_ID="public.pedido_total_liquido_converter(boolean,timestamptz,text[],date,date,integer,boolean)"
+PC()  { "$PGBIN/psql" -X -p "$PORT" -h /tmp -U postgres -d prove_c -v ON_ERROR_STOP=1 "$@"; }
+PCq() { PC -tA "$@"; }
+md5_conv()   { "$1" -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('$CONV_ID')"; }
+elegiveis_c() {
+  PCq -c "SELECT (public.pedido_total_liquido_converter(false, '2026-09-14 20:09:13+00', NULL,
+                   '2025-09-01', '2026-10-01')->>'elegiveis')::int;" 2>/dev/null || echo "erro"
+}
+excecoes_c() {
+  PCq -c "SELECT public.pedido_total_liquido_converter(false, '2026-09-14 20:09:13+00', NULL,
+                   '2025-09-01', '2026-10-01') #>> '{escopo,excecoes_ativas}';" 2>/dev/null || echo "erro"
+}
+total_c() { PCq -c "SELECT round(total,2)::text FROM public.sales_orders WHERE id = '$1';"; }
+aplicar_c() {
+  local sql="$1" out="$TMPD/apply-c.out" rc=0
+  PC -1 -f "$sql" > "$out" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ] && grep -q 'FIM_APLICACAO_OK' "$out"; then echo "ok"; return 0; fi
+  grep -m1 -o 'ERROR:.*' "$out" | cut -c1-150 || echo "rc=$rc sem ERROR"
+  return 1
+}
+asserta C0 "$MD5_PROD_B" "$(md5_conv Pq)" "(controle) o apply 1 deixou em prove EXATAMENTE o corpo da PROD"
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove_c
+PC -q -f "$REPO_ROOT/db/stubs-supabase.sql"
+PC -q -f "$SCHEMA"
+PC -q -f "$COER"
+PC -q -f "$MIG1"
+PC -q -f "$MIG2"
+PC -q -1 -f "$DBF"
+PC -q -f "$FIXT"
+asserta C1 "$MD5_PRED_B" "$(md5_conv PCq)" "antes da canônica o corpo é o predecessor revisado (a cadeia aqui é a de prod)"
+asserta C1b "false" "$(PCq -c "SELECT (to_regclass('public.pedido_total_liquido_excecao') IS NOT NULL)::text")" "e a tabela de exceção NÃO existe (só o envelope a criava)"
+OUT_C="$(PC -q -f "$CANON" 2>&1 || true)"
+asserta C2 "nao" "$(if grep -q 'ERROR' <<<"$OUT_C"; then echo sim; else echo nao; fi)" "a canônica roda inteira sobre o predecessor (tabela + TRAVA → PRE → CREATE → PÓS)"
+asserta C3 "$MD5_PROD_B" "$(md5_conv PCq)" "e deixa o corpo da PROD, byte a byte (= apply 1 = prod)"
+asserta C3b 'false/v/search_path=public, pg_temp/p_aplicar boolean, p_corte timestamp with time zone, p_contas text[] DEFAULT NULL::text[], p_mes_de date DEFAULT NULL::date, p_mes_ate date DEFAULT NULL::date, p_limite integer DEFAULT 5000, p_exigir_mes_completo boolean DEFAULT true' \
+  "$(PCq -c "SELECT prosecdef::text || '/' || provolatile::text || '/' || coalesce(array_to_string(proconfig, ';'), '-') || '/' || pg_get_function_arguments(oid) FROM pg_proc WHERE oid = to_regprocedure('$CONV_ID')")" \
+  "contrato fora do prosrc: INVOKER, VOLATILE, search_path, assinatura COM defaults"
+asserta C3c "f/f/t" \
+  "$(PCq -c "SELECT concat_ws('/', has_function_privilege('anon', o, 'EXECUTE'), has_function_privilege('authenticated', o, 'EXECUTE'), has_function_privilege('service_role', o, 'EXECUTE')) FROM to_regprocedure('$CONV_ID') o")" \
+  "ACL da função: EXECUTE só para service_role entre as roles da API"
+asserta C3d "true/0/-/-/true" \
+  "$(PCq -c "SELECT relrowsecurity::text || '/' || (SELECT count(*) FROM pg_policy WHERE polrelid = c.oid) || '/'
+                   || coalesce((SELECT string_agg(pr, ',') FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) pr WHERE has_table_privilege('anon', c.oid, pr)), '-') || '/'
+                   || coalesce((SELECT string_agg(pr, ',') FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) pr WHERE has_table_privilege('authenticated', c.oid, pr)), '-') || '/'
+                   || has_table_privilege('service_role', c.oid, 'SELECT')::text
+              FROM pg_class c WHERE c.oid = 'public.pedido_total_liquido_excecao'::regclass")" \
+  "tabela: RLS ligada, zero policies, NADA para anon/authenticated (nem TRUNCATE), SELECT para service_role"
+asserta C4 "0" "$(elegiveis_c)" "sem exceção listada o gate prende os dois meses (fail-closed por omissão)"
+PC -q -c "INSERT INTO public.pedido_total_liquido_excecao (sales_order_id, motivo, evidencia, criado_por, revisar_em) VALUES
+  ('00000000-0000-0000-0000-00000000c0d2', 'sem_apuracao',     'prova C: nenhuma linha apurada', 'db/test', '2026-12-31'),
+  ('00000000-0000-0000-0000-00000000c0d3', 'apuracao_parcial', 'prova C: linha apurada + linha NULL', 'db/test', '2026-12-31');" \
+  || echo "  (C5) o INSERT na tabela de exceção falhou — nesta rodada a canônica não a deixou"
+asserta C5 "1/2" "$(elegiveis_c)/$(excecoes_c)" "a exceção NOMINAL destrava julho, junho (em voo, não listado) segue preso — e o retorno publica escopo.excecoes_ativas"
+asserta C6 "ok" "$(aplicar_c "$A2_SRC" || true)" "o apply 2 (conversão REAL) roda sobre o corpo da canônica"
+asserta C6b "90.00/200.00/50.00/100.00/30.00" \
+  "$(total_c 00000000-0000-0000-0000-00000000c0d1)/$(total_c 00000000-0000-0000-0000-00000000c0d4)/$(total_c 00000000-0000-0000-0000-00000000c0d2)/$(total_c 00000000-0000-0000-0000-00000000c0d3)/$(total_c 00000000-0000-0000-0000-00000000c0d5)" \
+  "convertível LÍQUIDO; junho intacto; os 2 excluídos NUNCA convertem (ausente != zero); o em voo intocado"
+OUT_NEG="$(PCq -c "SET ROLE authenticated; SELECT public.pedido_total_liquido_converter(false, now())" 2>&1 || true)"
+asserta C7 "sim" "$(if grep -q 'permission denied for function pedido_total_liquido_converter' <<<"$OUT_NEG"; then echo sim; else echo nao; fi)" "authenticated EXECUTANDO leva permission denied"
+OUT_C2="$(P -q -f "$CANON" 2>&1 || true)"
+asserta C8 "nao/$MD5_PROD_B" "$(if grep -q 'ERROR' <<<"$OUT_C2"; then echo sim; else echo nao; fi)/$(md5_conv Pq)" "reaplicar POR CIMA do corpo da prod (o que o founder cola) passa na PRE por 'este' e é no-op"
+asserta C8b "2" "$(Pq -c "SELECT count(*) FROM public.pedido_total_liquido_excecao;")" "e a lista nominal de prove segue com as 2 (IF NOT EXISTS não recria)"
+PCq -c "SELECT pg_get_functiondef(to_regprocedure('$CONV_ID'))" \
+  | perl -0pe 's/\nDECLARE\n/\nDECLARE\n  -- outra entrega mexeu aqui\n/' > "$TMPD/c9.sql"
+PC -q -f "$TMPD/c9.sql"
+MD5_OUTRO_B="$(md5_conv PCq)"
+OUT_C9="$(PC -q -f "$CANON" 2>&1 || true)"
+asserta C9 "sim/intacto" \
+  "$(if grep -q 'PRE FALHOU' <<<"$OUT_C9"; then echo sim; else echo nao; fi)/$(if [ "$MD5_OUTRO_B" != "$MD5_PROD_B" ] && [ "$(md5_conv PCq)" = "$MD5_OUTRO_B" ]; then echo intacto; fi)" \
+  "a PRE recusa corpo estranho e o deixa intacto (nada de 'última a recriar vence')"
 
 echo "═══ $PASS ok / $FAIL fail ═══"
 if [ "$FAIL" -eq 0 ]; then echo "FIM_PROVA_OK"; exit 0; fi
