@@ -59,11 +59,14 @@ Deno.test("abstém se o filtro devolveu a varredura inteira (filtro ignorado)", 
   assertEquals(d.tipo === "abster" && d.motivo.startsWith("filtro de encerrados devolveu a varredura inteira"), true);
 });
 
-Deno.test("abstém acima da metade; exatamente a metade publica", () => {
+// R59 v2 (2026-10-19): "encerrado" no Omie é o ciclo CONCLUÍDO — maioria legítima (520 de 549 medidos). A fração
+// deixou de ser guarda; a contenção é a lista aprovada do backtest. Só "devolveu TUDO" segue abstendo.
+Deno.test("maioria publica (até completo − 1); o conjunto inteiro abstém", () => {
   const seis = new Set([1, 2, 3, 4, 5, 6]);
-  assertEquals(decide([1, 2, 3], { idsGeral: seis }).tipo, "publicar");
-  const d = decide([1, 2, 3, 4], { idsGeral: seis });
-  assertEquals(d.tipo === "abster" && d.motivo.startsWith("encerrados (4) passam da metade"), true);
+  assertEquals(decide([1, 2, 3, 4], { idsGeral: seis }), { tipo: "publicar", ids: [1, 2, 3, 4] });
+  assertEquals(decide([1, 2, 3, 4, 5], { idsGeral: seis }).tipo, "publicar");
+  const d = decide([1, 2, 3, 4, 5, 6], { idsGeral: seis });
+  assertEquals(d.tipo === "abster" && d.motivo.startsWith("filtro de encerrados devolveu a varredura inteira"), true);
 });
 
 // v1.8: a abstenção grava o conjunto observado SÓ para diagnóstico (heartbeat), nunca no registro protegido.
