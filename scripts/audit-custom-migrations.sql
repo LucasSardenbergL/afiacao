@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 656
+-- Total de custom migrations: 657
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -720,7 +720,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261018150000', 'fin_ciclo_fornecedor', '20261018150000_fin_ciclo_fornecedor.sql'),
   ('20261018160000', 'fcs_ftp_fecha_escrita_default', '20261018160000_fcs_ftp_fecha_escrita_default.sql'),
   ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql'),
-  ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql')
+  ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql'),
+  ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2797,7 +2798,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_account', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
-  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', '')
+  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4922,7 +4925,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_account', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
-  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', '')
+  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', '')
 )
 SELECT
   e.migration,

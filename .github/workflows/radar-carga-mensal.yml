@@ -1,0 +1,111 @@
+# Carga automática do Radar de Clientes (dump mensal de CNPJ da Receita Federal → edge radar-ingest).
+#
+# SONDA semanal, CARGA mensal: toda segunda 03:00 BRT o `mes-alvo.ts` pergunta à RFB quais meses da janela
+# [M-2, M-1, M] já estão publicados e à edge quais lotes já estão `complete`, e carrega NO MÁXIMO UM mês
+# por rodada — o mais antigo pendente, nunca um mês anterior ao último `complete` (regressão barrada no
+# seletor; parecer Codex 2026-10-18). A pasta do mês aparece na 2ª semana (medido: 09/08, 14/09, 13/10),
+# então o caso normal é 3 rodadas "nada a fazer" (~1 min) e 1 carga (~2-4 h) por mês. Uma rodada perdida
+# ou publicação atrasada não faz um mês sumir: ele entra na semana seguinte.
+#
+# Runner: repo PÚBLICO → ubuntu-latest 4 vCPU / 16 GB RAM. O dump de 2026-10 tem ~7,4 GB comprimidos e o
+# maior CSV descompactado passa de 10 GB (saneamento faz cópia transitória) → o trabalho vai para /mnt
+# (RADAR_WORK_DIR) com guarda de espaço livre ANTES de baixar; `/` (~14 GB) não comporta.
+#
+# Falha = job vermelho (GitHub e-maila o autor do último commit do schedule) + `radar_ingest_state.erro`
+# quando a falha é na edge. Ausência de execução (schedule desativado por 60 dias sem commit, runner
+# morto) NÃO fica vermelha aqui — é o check da Sentinela ("último lote > N dias"), desenhado em
+# docs/historico/radar-carga-mensal-e-recruzamento-diario.md e instalado só depois da 1ª execução real.
+#
+# Segredo: `RADAR_CRON_SECRET` (repo secret, = CRON_SECRET do Vault do Supabase; o founder cadastra em
+# Settings → Secrets → Actions). A URL da edge é pública. Invariantes deste YAML estão presas em
+# scripts/radar/carga-mensal-workflow.test.ts.
+
+name: radar-carga-mensal
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # segunda 06:00 UTC = 03:00 BRT (cron do GitHub é UTC)
+  workflow_dispatch:
+    inputs:
+      mes:
+        description: 'YYYY-MM específico (vazio = automático: mais antigo pendente da janela de 3 meses)'
+        required: false
+        default: ''
+        type: string
+      forcar:
+        description: 'Recarregar mesmo se o lote do mês pedido já estiver complete (nunca regride para antes do último complete)'
+        required: false
+        default: false
+        type: boolean
+
+# Nunca duas cargas ao mesmo tempo e nunca cancelar uma em andamento (chunks parciais + finalize de outra).
+concurrency:
+  group: radar-carga-mensal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  carga:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      RADAR_INGEST_URL: https://fzvklzpomgnyikkfkzai.supabase.co/functions/v1/radar-ingest
+      RADAR_CRON_SECRET: ${{ secrets.RADAR_CRON_SECRET }}
+      RADAR_WORK_DIR: /mnt/radar
+      RADAR_APAGAR_ZIPS: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pin ESTRITO x.y.z, igual ao ci.yml (`bun run bunpin:check`). Sem `bun install`: os scripts do radar
+      # só importam TS do próprio repo (src/lib/radar/normalizar, scripts/radar/*).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Segredo presente (fail-closed)
+        run: |
+          if [ -z "$RADAR_CRON_SECRET" ]; then
+            echo "::error::secret RADAR_CRON_SECRET ausente — cadastre em Settings → Secrets → Actions (valor = CRON_SECRET do Vault)"
+            exit 1
+          fi
+
+      # Mesma major/minor do laptop onde a 1ª carga rodou (v1.5.4). Digest publicado no release do GitHub.
+      - name: DuckDB CLI pinado
+        run: |
+          curl -fsSL --retry 3 -o /tmp/duckdb.zip https://github.com/duckdb/duckdb/releases/download/v1.5.4/duckdb_cli-linux-amd64.zip
+          echo "1f2fa724fb054b3dbe1a9cbd13de5b76997d850e7087ec762ba88db04e0180cf  /tmp/duckdb.zip" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin" && unzip -q -o /tmp/duckdb.zip -d "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/duckdb" --version
+
+      - name: Escolher o mês
+        id: mes
+        run: bun scripts/radar/mes-alvo.ts --mes "${{ inputs.mes }}" ${{ inputs.forcar == true && '--forcar' || '' }}
+
+      # Guarda de capacidade: ~60 GB em /mnt NÃO é garantia da spec do runner — medir antes de baixar.
+      # Pico estimado para 2026-10: zips (~7,4 GB, apagados conforme consumidos) + maior CSV ×2 (~25 GB)
+      # + parquet/jsonl (~2 GB) → exige 40 GB livres.
+      - name: Disco de trabalho em /mnt (fail-closed se faltar espaço)
+        if: steps.mes.outputs.mes != ''
+        run: |
+          sudo mkdir -p /mnt/radar && sudo chown "$(id -u):$(id -g)" /mnt/radar
+          df -h /mnt /
+          livre_gb=$(df -BG --output=avail /mnt | tail -1 | tr -dc '0-9')
+          if [ "${livre_gb:-0}" -lt 40 ]; then
+            echo "::error::/mnt tem ${livre_gb} GB livres; a carga precisa de ≥ 40 GB — rode num runner maior ou local"
+            exit 1
+          fi
+
+      - name: Carga ${{ steps.mes.outputs.mes }}
+        if: steps.mes.outputs.mes != ''
+        run: bun scripts/radar/carga.ts --mes "${{ steps.mes.outputs.mes }}"
+
+      - name: Estado do lote na edge
+        if: always() && steps.mes.outputs.mes != ''
+        run: |
+          curl -sS --max-time 60 -X POST "$RADAR_INGEST_URL" \
+            -H "Content-Type: application/json" -H "x-cron-secret: $RADAR_CRON_SECRET" \
+            -d '{"action":"status"}' | head -c 2000; echo
