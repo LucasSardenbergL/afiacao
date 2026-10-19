@@ -857,11 +857,34 @@ jobs:
   # Preâmbulo igual ao do `gates-e-falsificacao`, de propósito — o ambiente dos alvos não muda:
   # fetch-depth 0, bun, deno (`sonda-cron-prova.ts --falsificar` faz `spawnSync('deno')`) e o
   # MESMO shellcheck pinado que eles tinham lá.
+  #
+  # ─── 3 fatias ESTÁTICAS (2026-10-18, J2 do plano de melhoria v2) ────────────────────────────
+  # O step levava 15–16 min (run 39169583037: 21:59:05 → ~22:15:00) e era o caminho crítico do
+  # `validate`. Medido por alvo no log (cabeçalho de cada suíte): `codex-async` 5,4 min e
+  # `fecho-edges-pendentes` 4,1 min somam 60% do step; os outros 26 alvos + `sonda-cron-prova`
+  # cabem em ~4,5 min. Por isso a partição é ESTÁTICA, no package.json (`test:falsificacao:1..3`,
+  # ~5,8 / 5,7 / 4,4 min), e não round-robin: duas peças pesadas e muitas leves não se balanceiam
+  # por posição. `test:falsificacao` (o laço inteiro) continua existindo — é o que se roda no
+  # laptop, o que `falsificacao-cobertura.test.ts` e `falsificar-exige-assert-gate.ts` leem, e a
+  # DEFINIÇÃO da partição: o mesmo vitest exige que a união das fatias seja exatamente o roteiro
+  # inteiro, sem alvo em duas, e que este job tenha UM step por fatia, casado com `matrix.parte`.
+  # Parte que não roda não reprova nada — a prova de que cada fatia roda é estática, ali.
+  #
+  # Por que fatias com NOME e não um `env:` de parte sobre a mesma invocação: o `exclusividade`
+  # assina argv+env literal de cada gate bloqueante e exige UMA assinatura por gate (AMBIGUA se
+  # houver duas; NAO-REPRODUZIVEL se o env vier de `${{ }}`). Três scripts são três gates com
+  # fonte própria (o laço expandido), e entram na matriz como `dispensados` com o motivo: são
+  # fatias do `test:falsificacao`, medido em 8 linhas — a união delas É a invocação medida.
+  # O nome do job fica `falsificacao`: é o que o `validate` exige por identidade (`viu_falsificacao`).
   falsificacao:
     runs-on: ubuntu-latest
-    # ~17 min medidos (16 do step + preâmbulo), e o custo cresce a cada regra nova: 30 deixa ~45%
-    # de folga. Timeout é ausência de dado (docs/historico/timeout-de-job-e-ausencia-de-dado.md).
-    timeout-minutes: 30
+    # Fatia maior ~6 min medida (5,8 de alvos + preâmbulo); 15 deixa ~2,5× de folga e segue acima
+    # do pior alvo isolado. Timeout é ausência de dado (docs/historico/timeout-de-job-e-ausencia-de-dado.md).
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        parte: [1, 2, 3]
     permissions:
       contents: read
 
@@ -915,8 +938,18 @@ jobs:
       #
       # 2026-10-02: voltou a ser job próprio — agora DENTRO do `validate.needs`, então ele BARRA como
       # barrava no job de gates (o agregador não existia no #1947). Ver o cabeçalho do job.
-      - name: Falsificação — sabota o alvo e EXIGE vermelho em cada regra
-        run: bun run test:falsificacao
+      #
+      # 2026-10-18: UM step por fatia, escolhido por `matrix.parte`. O `if` casa o número do script
+      # — `falsificacao-cobertura.test.ts` confere esse casamento e que a união das 3 é o roteiro.
+      - name: Falsificação (fatia 1) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 1
+        run: bun run test:falsificacao:1
+      - name: Falsificação (fatia 2) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 2
+        run: bun run test:falsificacao:2
+      - name: Falsificação (fatia 3) — sabota o alvo e EXIGE vermelho em cada regra
+        if: matrix.parte == 3
+        run: bun run test:falsificacao:3
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -1021,7 +1054,17 @@ jobs:
         # cancelado em seguida). O ci.yml já prescrevia a saída desde o #2685: "a próxima prova a
         # estourar pedia PARALELIZAR, não subir o teto de novo". Com N=4 as 90 provas do manifesto
         # caem para ~22 por parte (round-robin em db/roda-nucleo-ci.sh; nenhuma parte vazia, medido).
-        parte: [1, 2, 3, 4]
+        #
+        # 4 -> 6 partes (2026-10-18, J1 do plano de melhoria v2). O round-robin é por POSIÇÃO, e o
+        # custo não: medido no run 39169562475 (duração impressa por prova, 146 unidades), as 4 partes
+        # somavam 10,1 / 12,1 / 7,8 / 10,4 min de núcleo — a 2ª era o caminho crítico do `validate`
+        # (12,6 min de job; 15,3 em 39167870221). Simulado com esses custos sobre a ordem do
+        # manifesto: N=5 dá MAX 14,6 min (pior: as caras se alinham), N=6 dá 6,4 / 6,8 / 8,9 / 7,5 /
+        # 2,6 / 8,1 (MAX 8,9) e N=7 volta a 11,3. Reordenar o manifesto para balancear foi descartado:
+        # a ordem lá é a dos EIXOS (ordem de dano), não de custo. Preâmbulo por parte é ~30 s
+        # (checkout + PGDG); custo da mudança: +2 runners curtos por run. Re-simule ao somar prova
+        # cara: `NUCLEO_PARTE=i/6 bash db/roda-nucleo-ci.sh --lista` diz em que parte ela cai.
+        parte: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
 

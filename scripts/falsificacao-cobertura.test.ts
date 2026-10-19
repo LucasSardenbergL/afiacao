@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { parse } from 'yaml';
 
 /**
  * Vigia de FORMA, irmão de `hooks-guard-cobertura.test.ts`: toda suíte `scripts/test-*.sh` que
@@ -162,5 +163,87 @@ describe('cobertura do modo --falsificar', () => {
       `Estas estão no laço mas não têm a guarda de \`--falsificar\`: ${semModo.join(', ')}. ` +
         `Um script sem o modo ignora a flag e roda o modo normal — verde que não sabotou nada.`,
     ).toEqual([]);
+  });
+});
+
+/**
+ * As FATIAS do CI (2026-10-18, J2 do plano de melhoria v2). O job `falsificacao` do ci.yml roda
+ * `test:falsificacao:1..N` em matriz — uma fatia por runner — porque o roteiro inteiro levava
+ * 15–16 min em série e era o caminho crítico do `validate`. A partição é ESTÁTICA (dois alvos
+ * pesados e muitos leves não se balanceiam por posição), e estático é o que se prova aqui:
+ *
+ *   · a UNIÃO das fatias é exatamente o roteiro `test:falsificacao` — alvo que entra no laço
+ *     inteiro e não entra em fatia nenhuma roda no laptop e NUNCA no CI (a mesma "ausência de
+ *     dado" que a cobertura acima pega para o script órfão);
+ *   · nenhum alvo em DUAS fatias (custo em dobro, calado);
+ *   · todo comando FORA do laço do roteiro (`bun scripts/x.ts --falsificar`) está em exatamente
+ *     uma fatia;
+ *   · o ci.yml tem UM step por fatia, `run: bun run test:falsificacao:k` casado com
+ *     `if: matrix.parte == k`, e `matrix.parte` é exatamente 1..N — parte que não roda não
+ *     reprova nada, e um `if` trocado deixaria a fatia verde sem rodar.
+ */
+export function fatiasDoRoteiro(scripts: Record<string, string>): { k: number; nome: string; cmd: string }[] {
+  return Object.keys(scripts)
+    .map((nome) => ({ nome, m: /^test:falsificacao:(\d+)$/.exec(nome) }))
+    .filter((x): x is { nome: string; m: RegExpExecArray } => x.m !== null)
+    .map(({ nome, m }) => ({ k: Number(m[1]), nome, cmd: scripts[nome] }))
+    .sort((a, b) => a.k - b.k);
+}
+
+/** Comandos fora do laço que passam a flag: `bun scripts/sonda-cron-prova.ts --falsificar`. */
+export function foraDoLaco(cmd: string): string[] {
+  const semLacos = cmd.replace(/for\s+\w+\s+in\s+[^;]+;\s*do\b[\s\S]*?\bdone\b/g, '');
+  return [...semLacos.matchAll(/bun\s+(scripts\/[A-Za-z0-9_.-]+\.ts)\s+--falsificar\b/g)].map((m) => m[1]).sort();
+}
+
+describe('fatias do CI — a união das test:falsificacao:N é o roteiro inteiro', () => {
+  const pkg = JSON.parse(readFileSync(join(RAIZ, 'package.json'), 'utf8')) as {
+    scripts: Record<string, string>;
+  };
+  const roteiro = pkg.scripts['test:falsificacao'] ?? '';
+  const fatias = fatiasDoRoteiro(pkg.scripts);
+
+  it('há pelo menos 2 fatias, numeradas 1..N sem buraco', () => {
+    expect(fatias.length).toBeGreaterThanOrEqual(2);
+    expect(fatias.map((f) => f.k)).toEqual(fatias.map((_, i) => i + 1));
+  });
+
+  it('cada fatia passa --falsificar a pelo menos um alvo (fatia vazia é runner verde sem prova)', () => {
+    for (const f of fatias) {
+      expect(alvosFalsificados(f.cmd).length, `${f.nome} não falsifica alvo nenhum`).toBeGreaterThan(0);
+    }
+  });
+
+  it('a união das fatias é exatamente o roteiro — nenhum alvo fora do CI, nenhum em duas fatias', () => {
+    const porFatia = fatias.map((f) => alvosFalsificados(f.cmd));
+    const uniao = porFatia.flat();
+    const duplicados = uniao.filter((a, i) => uniao.indexOf(a) !== i);
+    expect(duplicados, `alvo(s) em mais de uma fatia: ${duplicados.join(', ')}`).toEqual([]);
+    expect([...uniao].sort(), 'união das fatias ≠ alvos do test:falsificacao').toEqual(alvosFalsificados(roteiro));
+  });
+
+  it('o que o roteiro roda FORA do laço está em exatamente uma fatia', () => {
+    const esperado = foraDoLaco(roteiro);
+    expect(esperado.length, 'o roteiro perdeu o comando fora do laço (sonda-cron-prova) — a asserção ficaria vazia').toBeGreaterThan(0);
+    const achado = fatias.flatMap((f) => foraDoLaco(f.cmd)).sort();
+    expect(achado).toEqual(esperado);
+  });
+
+  it('ci.yml: job `falsificacao` em matriz 1..N com UM step por fatia, `if` casado com o script', () => {
+    const ci = parse(readFileSync(join(RAIZ, '.github/workflows/ci.yml'), 'utf8')) as {
+      jobs: Record<string, { strategy?: { matrix?: { parte?: unknown } }; steps?: { run?: unknown; if?: unknown }[]; needs?: unknown }>;
+    };
+    const job = ci.jobs.falsificacao;
+    expect(job, 'o job `falsificacao` sumiu do ci.yml').toBeTruthy();
+    expect(job.strategy?.matrix?.parte).toEqual(fatias.map((f) => f.k));
+
+    const steps = (job.steps ?? []).filter((s) => typeof s.run === 'string' && /bun run test:falsificacao/.test(s.run as string));
+    expect(steps.map((s) => String(s.run).trim())).toEqual(fatias.map((f) => `bun run ${f.nome}`));
+    for (const [i, s] of steps.entries()) {
+      const cond = String(s.if ?? '').replace(/\$\{\{|\}\}/g, '').trim();
+      expect(cond, `o step de ${fatias[i].nome} não está gateado pela parte ${fatias[i].k}`).toBe(`matrix.parte == ${fatias[i].k}`);
+    }
+    const needs = ci.jobs.validate?.needs;
+    expect(Array.isArray(needs) && needs.includes('falsificacao'), '`falsificacao` saiu do needs do validate').toBe(true);
   });
 });
