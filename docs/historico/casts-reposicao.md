@@ -6,7 +6,7 @@
 
 1. Passada **mecânica** (script no scratchpad da sessão, não versionado): tira `as never` e `as unknown as <tipo balanceado>` (inclusive multi-linha) de todos os arquivos da lista; o typecheck passa a ver as colunas reais e aponta o que o cast escondia.
 2. Cada erro do `tsc` é tratado na origem: interface local divergente do `types.ts` → deriva de `Tables<>`/`Returns`, ou mapeia na borda (`Number()` para numeric que chega string).
-3. Gate `casts:stale`: baseline `{from: 49, rpc: 47}` → `{from: 30, rpc: 37}`; piso `castsLiterais` **40 → 67** = contagem real. A partir daqui o piso é ratchet junto com a baseline: remover cast exige baixar o piso no mesmo PR.
+3. Gate `casts:stale`: baseline `{from: 49, rpc: 47}` → `{from: 30, rpc: 35}` (os 2 rpc de `fin_*` saíram pelo #3153 no meio do caminho); piso `castsLiterais` **40 → 65** = contagem real. A sincronização com a main provou o ratchet: com o piso em 67 e 65 casts na árvore, o gate acusou `CEGO` até o piso descer. A partir daqui o piso é ratchet junto com a baseline: remover cast exige baixar o piso no mesmo PR.
 
 ## O que os casts escondiam (achados do typecheck)
 
