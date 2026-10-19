@@ -75,6 +75,16 @@
 - **CMV do PME = 12 meses FECHADOS, todos presentes, Σ > 0.** Senão o PME é null com motivo. O DRE da oben parou em 2026-03 e o da colacor_sc grava 0.
 - **Consumo por SKU só existe para a OBEN** (`venda_items_history`), com explosão PCP em `v_sku_demanda_efetiva`. ⚠️ A `v_pcp_malha_oben` custa ~250 ms por avaliação: leia em CTE `MATERIALIZED`, nunca dentro de `EXISTS` correlacionado.
 
+## PMP por fornecedor / custo do prazo (frente 4, aba "Ciclo") — `v_ciclo_cp_*`, regra em `ciclo-fornecedor-helpers.ts`
+
+> 2026-10-18. Spec `docs/superpowers/specs/2026-10-18-ciclo-pmp-fornecedor-design.md` (§9 prevalece). Prova `db/test-fin-ciclo-fornecedor.sh`. Diário `docs/historico/ciclo-financeiro-cliente.md` §Frente 4.
+
+- ⚠️ **Fornecedor: prazo maior = preço maior** (founder). O lado CP mostra o **custo do prazo**, nunca "peça mais prazo".
+- ⚠️ **`fin_contas_pagar.saldo` = `valor_documento` até em PAGO**; `valor_desconto/juros/multa` = 0 e `nome_fornecedor`/`cnpj_cpf` vazios. Desconto e encargo do CP saem de `fin_movimentacoes.resumo_*` (ótica `CONTA_A_PAGAR`; baixa = `CONTA_CORRENTE_PAG` `BAXP`). Nome: `purchase_orders_tracking` (enum `empresa_reposicao` maiúsculo) → `omie_clientes_nao_vinculados` → `fornecedor_omie_cache`.
+- ⚠️ **Código de categoria NÃO é global:** 2.01.99 = imobilizado na colacor, uso e consumo nas outras. Universo de compras = lista (empresa, código) em `v_ciclo_cp_compras_categorias`.
+- **O PMP do engine (`v_capital_giro_prazos`) é de TODO o CP** (empréstimo, ICMS, folha): 32/5/12 d. O de compras (50/13 d) é outro número, e a ponte precisa aparecer na tela.
+- **Desconto de pontualidade:** taxa = mediana por NF (≥ 5 NFs em 180 d, P20–P80 ± 0,5 p.p., ≥ 80% em dia). Regime = 1º de ≥ 3 NFs com desconto em 90 d. Perdido = `max(taxa·base − desconto_informado, 0)`. Sem evidência → null, nunca 0.
+
 ## DRE fase 2 — `fora_dre` (composição pendente) e imposto em linha própria
 
 > 2026-10-13. Migration `20261013230000`, mapa `db/2026-10-13-fin-dre-mapa-colacor-fase2.sql`, prova `db/test-fin-dre-fora-dre.sh`. Diário: `docs/historico/dre-fora-dre-fase2.md`.
