@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **654** custom migrations totais
-- **2103** objetos esperados (criados por estas migrations)
+- **655** custom migrations totais
+- **2110** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 757
+  - `function`: 760
   - `rls_policy`: 476
   - `index`: 277
   - `cron_job`: 185
   - `table`: 184
-  - `view`: 115
+  - `view`: 119
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5296,6 +5296,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_ciclo_cliente_resumo` | — |
+
+### `20261018150000_fin_ciclo_fornecedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ciclo_cp_titulos` | — |
+| `function` | `public.fin_ciclo_fornecedor_resumo` | — |
+| `function` | `public.fin_ciclo_cp_empresa` | — |
+| `view` | `public.v_titulo_encargos_cp` | — |
+| `view` | `public.v_ciclo_cp_compras_categorias` | — |
+| `view` | `public.v_ciclo_cp_titulos` | — |
+| `view` | `public.v_ciclo_fornecedor_resumo` | — |
 
 ### `20261018160000_fcs_ftp_fecha_escrita_default.sql`
 

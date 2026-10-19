@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 654
+-- Total de custom migrations: 655
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -717,6 +717,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261017120000', 'sayerlack_varredura_visto', '20261017120000_sayerlack_varredura_visto.sql'),
   ('20261018092000', 'pedido_compra_encerrado_omie', '20261018092000_pedido_compra_encerrado_omie.sql'),
   ('20261018120000', 'fin_ciclo_nome_cliente', '20261018120000_fin_ciclo_nome_cliente.sql'),
+  ('20261018150000', 'fin_ciclo_fornecedor', '20261018150000_fin_ciclo_fornecedor.sql'),
   ('20261018160000', 'fcs_ftp_fecha_escrita_default', '20261018160000_fcs_ftp_fecha_escrita_default.sql'),
   ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql')
 ),
@@ -2782,6 +2783,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
   ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_fornecedor_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_titulo_encargos_cp', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_compras_categorias', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_fornecedor_resumo', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_tipo_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_familia_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_classe', ''),
@@ -4899,6 +4907,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
   ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_fornecedor_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_titulo_encargos_cp', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_compras_categorias', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_fornecedor_resumo', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_tipo_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_familia_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_classe', ''),

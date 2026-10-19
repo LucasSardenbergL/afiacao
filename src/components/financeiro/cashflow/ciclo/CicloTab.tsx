@@ -15,6 +15,8 @@ import { CicloClientesTabela } from './CicloClientesTabela';
 import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
+import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
+import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
 const CAVEAT_CICLO =
   'Direcional. Prazo concedido = vencimento − emissão de cada parcela (vencimento vigente; renegociação apaga o original). Todo R$ é cenário, não previsão — não há piloto medido.';
@@ -29,6 +31,7 @@ export function CicloTab() {
   const resumo = useCicloResumo();
   const coorte = useCicloCoorte();
   const receita = useReceitaDiariaTtm();
+  const cpEmpresa = useCicloCpEmpresa();
   const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '', cicloGiroAcao: 'todos' });
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
@@ -46,7 +49,8 @@ export function CicloTab() {
       <div className="grid gap-3 md:grid-cols-3">
         {ALL_COMPANIES.map((c) => (
           <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c].porDia ?? null} receitaMeses={receita.data?.[c].mesesComDado} receitaErro={receita.error !== null && receita.error !== undefined}
-            resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje} />
+            resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje}
+            cpEmpresa={cpEmpresa.data?.[c]} cpErro={cpEmpresa.error !== null && cpEmpresa.error !== undefined} />
         ))}
       </div>
       {receita.error && <p className="text-status-error text-sm">Não foi possível ler a receita TTM (valor de 1 dia de PMR indisponível).</p>}
@@ -96,6 +100,7 @@ export function CicloTab() {
         custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
         onCusto={(c, t) => setFiltros({ [CHAVE_CUSTO[c]]: t })}
       />
+      <CicloFornecedoresSecao empresas={tendencias} hoje={hoje} />
       <CicloClienteDrill cliente={aberto} hoje={hoje} onFechar={() => setAberto(null)} />
     </div>
   );
