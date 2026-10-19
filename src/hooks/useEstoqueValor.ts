@@ -38,7 +38,7 @@ export function useSalvarEstoque(company: string) {
  * há inventário manual dos últimos 45 dias. Sem SKU de giro com custo → lança (nunca R$ 0).
  */
 export async function estimarEstoqueOmie(company: string) {
-  const { data, error } = await supabase.rpc('fin_estoque_giro_valor' as never, { p_company: company } as never);
+  const { data, error } = await supabase.rpc('fin_estoque_giro_valor', { p_company: company });
   if (error) throw error;
   const row = (Array.isArray(data) ? data[0] : data) as {
     valor_giro: number | null; skus_giro: number; skus_giro_com_custo: number; cobertura_pct: number | null;

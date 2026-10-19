@@ -202,6 +202,8 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 13, prova: 'mesma função do hook acima; entrou na lista quando o scanner passou a ver `.rpc("…")`' }],
   ['fin_consolidado_intercompany @ src/pages/FinanceiroIntercompany.tsx',
     { tipo: 'estrutural', teto: 4, prova: '`UNION ALL` de 4 SELECTs agregados sem GROUP BY' }],
+  ['fin_estoque_giro_valor @ src/hooks/useEstoqueValor.ts',
+    { tipo: 'estrutural', teto: 1, prova: 'um SELECT agregado (SUM/COUNT FILTER) sem GROUP BY' }],
   ['get_whatsapp_funil @ src/hooks/useWhatsappFunil.ts',
     { tipo: 'estrutural', teto: 1, prova: 'SELECT de subqueries escalares, sem FROM' }],
   ['get_data_health @ src/hooks/useDataHealth.ts',
