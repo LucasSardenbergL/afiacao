@@ -23,6 +23,7 @@
  *   • só sonda os meses que passaram pelas guardas, do mais antigo para o mais novo, parando no 1º disponível.
  */
 import { appendFileSync } from "node:fs";
+import { mensagemDeErro } from "../../src/lib/erro-mensagem";
 import { ARQUIVO_SONDA, authorizationDe, basesCandidatas } from "./rfb";
 
 export type StatusLote = "running" | "complete" | "error";
@@ -108,7 +109,7 @@ if (import.meta.main) {
         respostas.push({ tipo: "http", status: r.status });
         if (r.status === 200) break;
       } catch (e) {
-        respostas.push({ tipo: "erro", detalhe: `${base} → ${e instanceof Error ? e.message : String(e)}` });
+        respostas.push({ tipo: "erro", detalhe: `${base} → ${mensagemDeErro(e) ?? "falha de rede sem mensagem"}` });
       }
     }
     const d = concluirSonda(mes, respostas); // lança em transporte ruim sem nenhum 200
