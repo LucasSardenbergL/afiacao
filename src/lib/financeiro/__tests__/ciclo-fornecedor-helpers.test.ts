@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizarTituloCp, normalizarResumoFornecedor, inicioRegimeDesconto, taxaDescontoObservada,
   custoDoPrazo, montarFilaCustoPrazo, pontualidadePorMes, confiancaFornecedor, rotuloPorDiaCompras,
+  rotuloConferirBoleto, descontoNoDrill, ordenarFornecedores, filtrarFornecedores,
   type TituloCp, type ResumoFornecedor,
 } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 
@@ -15,6 +16,7 @@ function pago(lanc: number, venc: string, extra: Partial<TituloCp> = {}): Titulo
     emissao: venc, vencimento: venc, dataBaixa: venc, dataBaixaConfiavel: true,
     valor: 1000, valorAberto: null, situacao: 'paga', prazoConcedido: 10, prazoReal: 10, atrasoBaixa: 0,
     descontoObtido: 20, descontoInformado: 20, valorPagoPrincipal: 1000, encargoPago: 0, diasVencido: null,
+    fonteValorAberto: null,
     ...extra,
   };
 }
@@ -233,5 +235,84 @@ describe('pré-voo prod — resíduo de ponto flutuante', () => {
     const regime = [1, 2, 3, 4, 5, 6].map((i) => pago(i, `2026-08-${String(i * 4).padStart(2, '0')}`, { descontoInformado: 20.0001 }));
     const c = custoDoPrazo([...regime, pago(40, '2026-09-10', { atrasoBaixa: 3, descontoInformado: 20 })], resumoBase, HOJE);
     expect(c.perdidoAtraso).toBe(0);
+  });
+});
+
+describe('follow-up da revisão final (minors)', () => {
+  const regime = [1, 2, 3, 4, 5, 6].map((i) => pago(i, `2026-08-${String(i * 4).padStart(2, '0')}`));
+  it('pago em dia com desconto ABAIXO do observado não é "sem desconto": as duas parcelas saem separadas', () => {
+    const c = custoDoPrazo([...regime,
+      pago(40, '2026-09-10', { descontoInformado: 0 }),   // em dia, sem desconto: perde 20
+      pago(41, '2026-09-12', { descontoInformado: 5 }),   // em dia, desconto de 0,5%: perde 15
+    ], resumoBase, HOJE);
+    expect(c.perdidoEmDiaSemDesconto).toBeCloseTo(20, 6);
+    expect(c.perdidoEmDiaDescontoAbaixo).toBeCloseTo(15, 6);
+    const { conferirBoleto } = montarFilaCustoPrazo([{ resumo: resumoBase, custo: c }]);
+    expect(conferirBoleto).toHaveLength(1);
+    expect(conferirBoleto[0]).toMatchObject({ semDesconto: 20, descontoAbaixo: 15 });
+    expect(conferirBoleto[0].valor).toBeCloseTo(35, 6);
+  });
+  it('sem taxa observada, as duas parcelas do em dia são null (nunca 0)', () => {
+    const c = custoDoPrazo([pago(1, '2026-09-10')], resumoBase, HOJE);
+    expect(c.perdidoEmDiaSemDesconto).toBeNull();
+    expect(c.perdidoEmDiaDescontoAbaixo).toBeNull();
+  });
+  it('rótulo do "conferir boleto" diz qual dos dois casos', () => {
+    expect(rotuloConferirBoleto({ semDesconto: 20, descontoAbaixo: 0 })).toBe('pago em dia sem desconto');
+    expect(rotuloConferirBoleto({ semDesconto: 0, descontoAbaixo: 15 })).toBe('pago em dia com desconto abaixo do observado');
+    expect(rotuloConferirBoleto({ semDesconto: 20, descontoAbaixo: 15 }))
+      .toBe('pago em dia sem desconto (R$ 20) ou com desconto abaixo do observado (R$ 15)');
+  });
+  it('1º mês da tendência cortado pela janela de 12 m sai marcado como parcial', () => {
+    // janela começa em 2025-10-18: out/2025 só tem do dia 18 em diante; set/2025 só tem abertos (fora da janela de pagas).
+    const ts: TituloCp[] = [
+      { ...pago(1, '2025-09-20'), situacao: 'vencida_aberta', valorAberto: 100, dataBaixa: null, atrasoBaixa: null, dataBaixaConfiavel: false },
+      pago(2, '2025-10-20'),
+      pago(3, '2025-11-05'),
+    ];
+    const m = pontualidadePorMes(ts, HOJE);
+    expect(m.map((x) => [x.mes, x.mesParcial])).toEqual([
+      ['2025-09-01', true], ['2025-10-01', true], ['2025-11-01', false],
+    ]);
+  });
+  it('janela que começa no dia 1 não marca o 1º mês como parcial', () => {
+    const m = pontualidadePorMes([pago(1, '2025-11-03')], '2026-11-01');
+    expect(m[0].mesParcial).toBe(false);
+  });
+  it('drill usa o desconto OBTIDO (o mesmo da tabela); informado sem confirmação aparece à parte', () => {
+    expect(descontoNoDrill(pago(1, '2026-09-01'))).toEqual({ obtido: 20, informadoNaoConfirmado: null });
+    expect(descontoNoDrill(pago(2, '2026-09-01', { descontoObtido: null, descontoInformado: 345.23 })))
+      .toEqual({ obtido: null, informadoNaoConfirmado: 345.23 });
+    expect(descontoNoDrill(pago(3, '2026-09-01', { descontoObtido: null, descontoInformado: null })))
+      .toEqual({ obtido: null, informadoNaoConfirmado: null });
+  });
+  it('normaliza fonte_valor_aberto (selo "valor do título" no drill)', () => {
+    const base = { company: 'oben', omie_codigo_fornecedor: 1, omie_codigo_lancamento: 1, data_emissao: HOJE, data_vencimento: HOJE,
+      valor_documento: '10', situacao: 'a_vencer', prazo_concedido_dias: 0 };
+    expect(normalizarTituloCp({ ...base, fonte_valor_aberto: 'valor_titulo' }).fonteValorAberto).toBe('valor_titulo');
+    expect(normalizarTituloCp({ ...base, fonte_valor_aberto: 'omie_resumo' }).fonteValorAberto).toBe('omie_resumo');
+    expect(normalizarTituloCp({ ...base, fonte_valor_aberto: null }).fonteValorAberto).toBeNull();
+    expect(normalizarTituloCp({ ...base, fonte_valor_aberto: 'xpto' }).fonteValorAberto).toBeNull();
+  });
+  it('ordenação da tabela: campo escolhido desc, null por último; nome asc; desempate estável por compras', () => {
+    const a = { ...resumoBase, fornecedor: 1, nome: 'BETA', compras12m: 100, atrasoPondPos: null, valorVencidoAberto: 50 };
+    const b = { ...resumoBase, fornecedor: 2, nome: 'ALFA', compras12m: 300, atrasoPondPos: 2, valorVencidoAberto: 0 };
+    const c = { ...resumoBase, fornecedor: 3, nome: null, compras12m: null, atrasoPondPos: 5, valorVencidoAberto: 50 };
+    const ids = (xs: ResumoFornecedor[]) => xs.map((x) => x.fornecedor);
+    expect(ids(ordenarFornecedores([a, b, c], 'compras'))).toEqual([2, 1, 3]);
+    expect(ids(ordenarFornecedores([a, b, c], 'atraso'))).toEqual([3, 2, 1]);
+    expect(ids(ordenarFornecedores([a, b, c], 'vencido'))).toEqual([1, 3, 2]);
+    expect(ids(ordenarFornecedores([a, b, c], 'nome'))).toEqual([2, 1, 3]);
+    expect(ids(ordenarFornecedores([a, b, c], 'desconhecido'))).toEqual([2, 1, 3]);
+  });
+  it('filtro por nome ou código, sem caixa nem acento', () => {
+    const a = { ...resumoBase, fornecedor: 900, nome: 'RENNER SAYERLACK S/A' };
+    const b = { ...resumoBase, fornecedor: 8689691709, nome: null };
+    const c = { ...resumoBase, fornecedor: 5, nome: 'Fábrica São João' };
+    const ids = (xs: ResumoFornecedor[]) => xs.map((x) => x.fornecedor);
+    expect(ids(filtrarFornecedores([a, b, c], ''))).toEqual([900, 8689691709, 5]);
+    expect(ids(filtrarFornecedores([a, b, c], 'sayer'))).toEqual([900]);
+    expect(ids(filtrarFornecedores([a, b, c], '86896'))).toEqual([8689691709]);
+    expect(ids(filtrarFornecedores([a, b, c], 'fabrica sao'))).toEqual([5]);
   });
 });
