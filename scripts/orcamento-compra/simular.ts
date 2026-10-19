@@ -88,7 +88,7 @@ export interface Fatos {
   contratos_pedidos_omie?: { codigo: string; contrato: string }[];
   /** R59 v2: exclusões aprovadas (id do disparado + pedido Omie). AUSENTE = nada aprovado (fail-closed); o CLI injeta
    *  EXCLUSOES_R59_APROVADAS — chamador que monta Fatos à mão não tira nada do caixa sem declarar a lista. */
-  r59_aprovadas?: readonly { disparado_id: number; omie_pedido: string }[];
+  r59_aprovadas?: readonly { disparado_id: number; omie_pedido: string; identificadores: readonly string[] }[];
   /** R57: pares (nNumPedCompra, NF, faturamento) de itensRecebimento do tracking Sayerlack, órfãs incluídas */
   nfs_do_contrato?: { contrato: string; nf: string; data: DataISO | null }[];
   /** data_baixa = data_baixa_final de v_titulo_baixas (null = sem baixa); valor_baixado idem (R35) */
@@ -285,7 +285,22 @@ export function foraDoCaixa(f: Fatos, p: Fatos['disparados'][number]): boolean {
 }
 
 function aprovadoR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
-  return p.omie_pedido != null && (f.r59_aprovadas ?? []).some((a) => a.disparado_id === p.id && a.omie_pedido === String(p.omie_pedido));
+  if (p.omie_pedido == null) return false;
+  // a aprovação vale para o pedido COMO FOI REVISADO: mesmo disparado, mesmo pedido Omie e o MESMO conjunto de
+  // identificadores Sayerlack — reenvio (protocolo/contrato novo, sem NF) muda o conjunto e exige revisão (Codex
+  // 2026-10-19 P1: o histórico tem reenvio que criou outro pedido Sayerlack mantendo o mesmo Omie)
+  const atuais = identificadoresR59(f, p).join('|');
+  return (f.r59_aprovadas ?? []).some((a) => a.disparado_id === p.id && a.omie_pedido === String(p.omie_pedido)
+    && [...a.identificadores].map((x) => x.trim()).sort().join('|') === atuais);
+}
+
+/** Identificadores Sayerlack do disparado (protocolo do portal + cContrato dos pedidos Omie), ordenados. */
+export function identificadoresR59(f: Fatos, p: Fatos['disparados'][number]): string[] {
+  const ids = new Set<string>();
+  if (p.protocolo) ids.add(p.protocolo.trim());
+  for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
+  for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+  return [...ids].sort();
 }
 
 /** O critério do R59 v1 (encerrado + identificador Sayerlack + nenhuma evidência de NF), antes da aprovação. */
@@ -294,10 +309,7 @@ export function candidatoR59(f: Fatos, p: Fatos['disparados'][number]): boolean 
   // (o vínculo R57/R58 não entra: por contrato ele é coberto pelos identificadores abaixo, e o substituto só
   // existe para pedido SEM identificador, que nunca sai — a falsificação mostrou a camada redundante)
   if ((p.nfs ?? []).length > 0) return false;
-  const ids = new Set<string>();
-  if (p.protocolo) ids.add(p.protocolo.trim());
-  for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
-  for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+  const ids = new Set(identificadoresR59(f, p));
   // sem identificador Sayerlack não há como provar ausência de NF (o substituto R58 pode ter faturado, com NF
   // sem data ou com o raw_data reescrito pelo completo) → fica no caixa (Codex 3ª rodada P1)
   if (ids.size === 0) return false;
@@ -749,7 +761,7 @@ export function backtest(f: Fatos, cfg: Config) {
       .sort((a, b) => a.id - b.id),
     /** R59 v2: candidatos (encerrado, identificador, sem NF) NÃO aprovados — ficaram no caixa; revisar e aprovar por PR */
     pendentesR59: f.disparados.filter((p) => candidatoR59(f, p) && !aprovadoR59(f, p))
-      .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, momento: p.momento, valor_total: p.valor_total }))
+      .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, momento: p.momento, valor_total: p.valor_total, identificadores: identificadoresR59(f, p) }))
       .sort((a, b) => a.id - b.id),
     ciclos,
     resumo: {

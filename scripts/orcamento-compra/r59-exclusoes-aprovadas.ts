@@ -13,21 +13,15 @@
 export interface ExclusaoR59Aprovada {
   disparado_id: number;
   omie_pedido: string;
+  /** protocolo + cContrato(s) revisados, como `pendentesR59` os lista; conjunto diferente hoje = revisar de novo */
+  identificadores: readonly string[];
   numero: string;
   evidencia: string;
   aprovado_por: string;
   aprovado_em: string;
 }
 
-export const EXCLUSOES_R59_APROVADAS: readonly ExclusaoR59Aprovada[] = [
-  {
-    disparado_id: 91, omie_pedido: '12096301530', numero: '1014',
-    evidencia: 'cancelado no portal Sayerlack — caso que motivou o R59 (docs/historico/orcamento-compra-v1.md, #3132); controle positivo da passada v1.8',
-    aprovado_por: 'founder (#3132)', aprovado_em: '2026-10-18',
-  },
-  {
-    disparado_id: 194, omie_pedido: '12098830141', numero: '1049',
-    evidencia: 'cancelado no portal Sayerlack — caso que motivou o R59 (docs/historico/orcamento-compra-v1.md, #3132); controle positivo da passada v1.8',
-    aprovado_por: 'founder (#3132)', aprovado_em: '2026-10-18',
-  },
-];
+// VAZIA de propósito (2026-10-19): nenhum cancelamento foi aprovado EXPLICITAMENTE para sair do caixa. 1014/1049
+// são os casos que motivaram o R59 e os controles positivos da passada, mas o #3132 os cita como diagnóstico, não
+// como autorização (Codex 2026-10-19 P2). Copie a entrada de `pendentesR59` + a evidência do portal/Omie.
+export const EXCLUSOES_R59_APROVADAS: readonly ExclusaoR59Aprovada[] = [];
