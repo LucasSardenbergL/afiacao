@@ -85,6 +85,8 @@ export interface ResultadoCadastro {
 }
 
 const mensagem = (e: unknown): string => mensagemDeErro(e) ?? 'erro desconhecido';
+/** O que o Omie aceita hoje: só o CNPJ numérico clássico. */
+const CNPJ_NUMERICO_RE = /^[0-9]{14}$/;
 
 /**
  * Omie primeiro, Radar depois. A RPC não é idempotente de verdade (atualiza a data e
@@ -97,6 +99,13 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   deps: DepsCadastro<E>,
   opcoes: OpcoesCadastro = {},
 ): Promise<ResultadoCadastro> {
+  // CNPJ alfanumérico (RFB jul/2026) existe no Radar, mas o cadastro no Omie ainda NÃO o suporta: a
+  // edge omie-vendas-sync (`criar_cliente`) remove tudo que não é dígito antes de consultar/criar —
+  // "12ABC34501DE35" viraria "12345013 5" (11 dígitos) e seria tratado como CPF de OUTRA pessoa.
+  // Bloqueio explícito e barulhento aqui, antes de tocar o Omie (parecer Codex 2026-10-19).
+  if (!CNPJ_NUMERICO_RE.test(e.cnpj)) {
+    throw new FalhaCadastro('omie', 'CNPJ alfanumérico: cadastro no Omie ainda não suportado (a edge removeria as letras do documento)');
+  }
   const retomada = Boolean(opcoes.codigoConhecido || opcoes.retentativa);
 
   if (retomada) {
