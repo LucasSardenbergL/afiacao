@@ -56,7 +56,9 @@ vi.mock('@/components/ui/page-skeleton', () => ({ PageSkeleton: () => <div data-
 // Os filhos são do MESMO módulo e têm testes próprios; aqui interessa QUAL ramo a página escolhe.
 // O herói stubado mostra o nome — é a prova positiva de que a página abriu com o cliente.
 vi.mock('@/components/customer360/CustomerHero', () => ({
-  CustomerHero: ({ customer }: { customer: { name: string | null } }) => <h1>{customer.name}</h1>,
+  CustomerHero: ({ customer, isPj }: { customer: { name: string | null }; isPj: boolean }) => (
+    <h1 data-pj={String(isPj)}>{customer.name}</h1>
+  ),
 }));
 vi.mock('@/components/customer360/CustomerKpiStrip', () => ({ CustomerKpiStrip: () => null }));
 vi.mock('@/components/customer360/IdentityColumn', () => ({ IdentityColumn: () => null }));
@@ -165,5 +167,30 @@ describe('Customer360 — "não consegui ler" NÃO pode virar "cliente não enco
     // `queryBy`, não `getBy`: o `getBy` LANÇA antes do expect e a mensagem abaixo nunca chegava ao relatório
     expect(screen.queryByText(NOME), 'o refetch falhou e a página trocou o cliente em mãos pelo aviso').not.toBeNull();
     expect(screen.queryByText(NAO_ENCONTRADO)).toBeNull();
+  });
+});
+
+// `isPj` decide o herói/coluna de identidade (PJ × PF). Era `replace(/\D/g,'').length === 14` — CNPJ
+// alfanumérico (RFB jul/2026, 9 dígitos) abria como PF. Oráculo oficial 12.ABC.345/01DE-35; DV errado = inválido.
+describe('Customer360 — isPj com CNPJ alfanumérico', () => {
+  const abrir = async () => {
+    renderPagina();
+    const h1 = await screen.findByRole('heading', { name: NOME });
+    return h1.getAttribute('data-pj');
+  };
+  it('numérico 14 dígitos: PJ (como antes)', async () => {
+    expect(await abrir()).toBe('true');
+  });
+  it('CNPJ alfanumérico VÁLIDO: PJ', async () => {
+    respostaCore = () => ok({ ...cliente, document: '12.ABC.345/01DE-35' });
+    expect(await abrir()).toBe('true');
+  });
+  it('alfanumérico INVÁLIDO: PF, como antes (não se fabrica CNPJ)', async () => {
+    respostaCore = () => ok({ ...cliente, document: '12.ABC.345/01DE-36' });
+    expect(await abrir()).toBe('false');
+  });
+  it('CPF: PF', async () => {
+    respostaCore = () => ok({ ...cliente, document: '123.456.789-09' });
+    expect(await abrir()).toBe('false');
   });
 });

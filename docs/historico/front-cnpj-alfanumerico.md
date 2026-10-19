@@ -65,6 +65,24 @@
   migration. Verificação pós-Publish: abrir `/auth`, digitar `12abc34501de35` no passo do documento e ver a máscara
   `12.ABC.345/01DE-35` ficar (antes: sumia a cada letra).
 
+## Resíduos fechados em #PR_RESIDUOS (classificação/busca por CONTAGEM DE DÍGITOS)
+
+Os pontos listados acima como "fora" que ainda classificavam ou buscavam documento por `replace(/\D/g,'').length`
+— e por isso tratavam um CNPJ alfanumérico VÁLIDO como PF ou não o encontravam. Tudo sobre o mesmo
+`normalizarDocumento` (espelho intocado); numérico byte-idêntico; inválido = comportamento antigo (fail-closed).
+
+| Ponto | Antes | Agora |
+|---|---|---|
+| `Customer360.isPj` · `useCustomerDashboard.displayName` | `length === 14` (alnum = PF, perdia a razão social) | `ehCnpjDocumento` (helper novo em `documento-cliente.ts`); `displayName` virou `nomeExibicaoCliente` exportado e testado |
+| `useUtiContas.normDoc` | `>= 11` dígitos → alnum sem chave → inadimplência `null` | `chaveDocumentoParaBusca` — título Omie ↔ perfil casam com as letras |
+| `AdminApprovals.tryLinkOmie` | strip → 9 dígitos → `not_found` no `buscar_por_documento` | `documentoParaBuscarNoOmie` (helper novo); vazio → `no_data` como antes |
+| `orcamento-entidade-helpers.cnpjValido` | rejeitava alnum → entidade agregada pelo NOME (`sem_id: true`) | `normalizarDocumento`; válido agrega na chave com letras. **Money-path** (drill de variância do orçamento, só a CHAVE de agregação muda, nunca o valor): teste RED antes do código = falsificação (`money-path.md`) |
+| `FarmerCalls` · `useBuscaClienteOmie` | `OR(strip, cru)` — o cru mascarado não casa o `profiles.document` normalizado | `OR(normalizarDocumento, cru)` (1 linha cada) |
+
+**Fica de fora (ainda):** grupos de clientes/Caça (CHECK SQL `^[0-9]+$`, follow-up 3 do #3180) e `IntelligenceUtiTab`
+(busca por texto, não classifica). Deploy: front → **Publish do Lovable**; verificação: abrir o 360 de um cliente com
+CNPJ alfanumérico e ver o herói de PJ (razão social), não o de PF.
+
 ## Lições
 
 - **"Carrega → normaliza → grava de volta" é um escritor silencioso.** O formulário de perfil gravava um campo que
