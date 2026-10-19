@@ -23,6 +23,10 @@ const makeCampanha = (over: Partial<Campanha> = {}): Campanha => ({
   extracao_observacoes: null,
   extraido_em: null,
   criado_em: "2026-04-01T00:00:00Z",
+  atualizado_em: null, atualizado_por: null, canal_oferta: null, criado_por: null, data_corte_faturamento: null,
+  data_corte_pedido: null, data_oferta: null, observacoes_negociacao: null, permite_pedido_oportunidade: null,
+  responsavel_oferta_email: null, responsavel_oferta_nome: null, status_aceite: null, volume_minimo_condicional: null,
+  volume_minimo_unidade: null,
   ...over,
 });
 

@@ -22,6 +22,7 @@ function etapa(partial: Partial<Etapa>): Etapa {
     valido_desde: "2026-01-01",
     valido_ate: null,
     observacoes: null,
+    atualizado_em: null, atualizado_por: null, criado_em: null,
     ...partial,
   };
 }

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { TrendingUp, Sparkles, ExternalLink, ArrowRight, Scale } from "lucide-react";
-import { OportunidadeComDecisao, AumentoRef } from "./types";
+import { OportunidadeComDecisao } from "./types";
 import {
   cenarioIcon, cenarioLabel, formatBRL, formatNumber, formatDate,
   recomendacaoBadgeClass, RECOMENDACAO_LABEL,
@@ -47,7 +47,7 @@ export function DrawerConteudo({
   const incluiPromo = o.cenario.startsWith("promo");
   const incluiAumento =
     o.cenario === "aumento_apenas" || o.cenario === "promo_e_aumento";
-  const aumentos = (o.aumentos_json ?? []) as AumentoRef[];
+  const aumentos = o.aumentos_json ?? [];
   const d = o.decisao;
 
   return (

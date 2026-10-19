@@ -55,6 +55,7 @@ const makeItem = (over: Partial<ItemRow> = {}): ItemRow => ({
   desconto_extra_negociado_por: null,
   desconto_extra_negociado_em: null,
   desconto_extra_email_referencia: null,
+  atualizado_em: null, criado_em: null, observacoes: null,
   ...over,
 });
 

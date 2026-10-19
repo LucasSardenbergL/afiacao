@@ -75,7 +75,7 @@ export default function AdminReposicaoVendaPerdida() {
       const qtde = Number(quantidade.replace(",", "."));
       if (!produto) throw new Error("Escolha o produto");
       if (!Number.isFinite(qtde) || qtde <= 0) throw new Error("Quantidade inválida");
-      const { error } = await supabase.from("venda_perdida_log" as never).insert({
+      const { error } = await supabase.from("venda_perdida_log").insert({
         empresa: EMPRESA,
         sku_codigo_omie: String(produto.omie_codigo_produto),
         sku_descricao: produto.descricao,
@@ -84,7 +84,7 @@ export default function AdminReposicaoVendaPerdida() {
         motivo,
         observacao: observacao.trim() || null,
         criado_por: user?.id ?? null,
-      } as never);
+      });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -101,13 +101,13 @@ export default function AdminReposicaoVendaPerdida() {
     staleTime: 30_000,
     queryFn: async (): Promise<RegistroPerdido[]> => {
       const { data, error } = await supabase
-        .from("venda_perdida_log" as never)
+        .from("venda_perdida_log")
         .select("id, criado_em, sku_codigo_omie, sku_descricao, quantidade, cliente_nome, motivo, observacao")
         .eq("empresa", EMPRESA)
         .order("criado_em", { ascending: false })
         .limit(20);
       if (error) throw error;
-      return (data ?? []) as unknown as RegistroPerdido[];
+      return (data ?? []);
     },
   });
 

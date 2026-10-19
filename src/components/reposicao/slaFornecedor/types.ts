@@ -1,3 +1,5 @@
+import type { Tables } from "@/integrations/supabase/types";
+import type { ComColunas } from "@/lib/reposicao/linha-view";
 // Tipos do SLA de fornecedor.
 // Extraídos verbatim de src/pages/AdminReposicaoSlaFornecedor.tsx (god-component split).
 
@@ -24,20 +26,19 @@ export interface ForCompliance {
   lt_medio_observado_agregado: number | null;
 }
 
-export interface SkuCompliance {
-  empresa: string;
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  fornecedor_nome: string | null;
-  grupo_codigo: string | null;
-  lt_teorico: number | null;
-  lt_observado_medio: number | null;
-  lt_recente_medio: number | null;
-  n_observacoes: number | null;
-  ultimo_recebimento: string | null;
-  desvio_perc: number | null;
-  status_sla: SlaStatus;
-  tendencia: Tendencia;
+const SLA_STATUS: readonly SlaStatus[] = ["cumprindo", "limite", "violando", "critico", "sem_sla_teorico", "poucos_dados"];
+export function ehSlaStatus(s: string | null | undefined): s is SlaStatus {
+  return (SLA_STATUS as readonly string[]).includes(s ?? "");
+}
+// Linha de v_sku_sla_compliance (view: tudo `| null` no types.ts). A borda (useSlaFornecedor) exige
+// empresa/sku e estreita status_sla pelo guard — sem `as unknown as`.
+export type SkuCompliance = Omit<
+  ComColunas<Tables<"v_sku_sla_compliance">, "empresa" | "sku_codigo_omie">,
+  "status_sla" | "tendencia"
+> & { status_sla: SlaStatus; tendencia: Tendencia | null };
+const TENDENCIAS: readonly Tendencia[] = ["melhorando", "estavel", "piorando", "sem_dados"];
+export function ehTendencia(s: string | null | undefined): s is Tendencia {
+  return (TENDENCIAS as readonly string[]).includes(s ?? "");
 }
 
 export interface HistPoint {

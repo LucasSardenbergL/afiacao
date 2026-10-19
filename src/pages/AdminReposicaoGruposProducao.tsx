@@ -41,7 +41,7 @@ export default function AdminReposicaoGruposProducao() {
         .order("fornecedor_nome")
         .order("grupo_codigo");
       if (error) throw error;
-      return (data || []) as unknown as Grupo[];
+      return (data || []);
     },
   });
 
@@ -160,9 +160,9 @@ export default function AdminReposicaoGruposProducao() {
 
   // ============ MUTATIONS ============
   const recalcular = async () => {
-    const { error } = await supabase.rpc("atualizar_parametros_numericos_skus" as never, {
+    const { error } = await supabase.rpc("atualizar_parametros_numericos_skus", {
       p_empresa: EMPRESA,
-    } as never);
+    });
     if (error) {
       toast.error("Erro ao recalcular parâmetros: " + error.message);
       return false;

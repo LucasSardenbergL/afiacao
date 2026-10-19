@@ -24,6 +24,7 @@ const evento: Evento = {
   conteudo: "Proposta inicial enviada ao cliente",
   registrado_por: "lucas@colacor",
   registrado_em: new Date().toISOString(),
+  item_id: null,
 };
 
 describe("NegociacaoTab", () => {

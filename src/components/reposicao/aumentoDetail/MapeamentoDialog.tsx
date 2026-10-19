@@ -69,10 +69,7 @@ export function MapeamentoDialog({
         .select("familia_omie, sku_codigo_omie_especifico")
         .eq("aumento_item_id", item.id);
       if (error) throw error;
-      return (data || []) as unknown as Array<{
-        familia_omie: string;
-        sku_codigo_omie_especifico: number | null;
-      }>;
+      return (data || []);
     },
   });
 

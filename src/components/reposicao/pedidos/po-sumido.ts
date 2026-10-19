@@ -218,9 +218,9 @@ export function ehAcessoNegado(erro: unknown): boolean {
 }
 
 /**
- * Normaliza o que veio da RPC ANTES de qualquer conta. A resposta chega por um cast (`as never`,
- * porque a função ainda não está no types.ts gerado), então nada garante que `valor_total` seja um
- * número finito. Um `NaN` que passe daqui contamina tudo em silêncio: `NaN != null` é true, então
+ * Normaliza o que veio da RPC ANTES de qualquer conta. A resposta é tipada pelo types.ts gerado
+ * (`Returns` da RPC), mas numeric do PostgREST pode chegar como string, então nada garante que
+ * `valor_total` seja um número finito. Um `NaN` que passe daqui contamina tudo em silêncio: `NaN != null` é true, então
  * entraria na soma como se fosse valor apurado (total NaN), e no comparador `NaN !== NaN` devolve NaN,
  * que o sort lê como EMPATE — a lista sai fora de ordem sem erro nenhum.
  *

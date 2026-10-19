@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
 import { ilikeContainsPattern } from "@/lib/postgrest";
 import { EMPRESA, FORNECEDOR_DEFAULT, ALL } from "./config";
-import type { Aumento, AumentoComAgg, FornecedorRow, AumentoItemAgg } from "./types";
+import type { AumentoComAgg } from "./types";
 
 export function useAumentos() {
   const navigate = useNavigate();
@@ -34,7 +34,7 @@ export function useAumentos() {
         .select("fornecedor_nome")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      const rows = (data || []) as unknown as FornecedorRow[];
+      const rows = (data || []);
       const uniq = Array.from(
         new Set(rows.map((r) => r.fornecedor_nome).filter((n): n is string => Boolean(n))),
       );
@@ -65,7 +65,7 @@ export function useAumentos() {
 
       const { data, error } = await q;
       if (error) throw error;
-      const rows = (data || []) as unknown as Aumento[];
+      const rows = (data || []);
 
       // Aggregate items: count + avg(perc) onde ativo=true e confirmado=true
       const ids = rows.map((r) => r.id);
@@ -77,7 +77,7 @@ export function useAumentos() {
           .select("aumento_id, aumento_perc, ativo, confirmado")
           .in("aumento_id", ids)
           .eq("ativo", true);
-        ((itens || []) as unknown as AumentoItemAgg[]).forEach((it) => {
+        ((itens || [])).forEach((it) => {
           counts[it.aumento_id] = (counts[it.aumento_id] || 0) + 1;
           if (it.confirmado && typeof it.aumento_perc === "number") {
             const s = sums[it.aumento_id] || { sum: 0, n: 0 };

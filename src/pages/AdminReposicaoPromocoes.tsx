@@ -8,7 +8,7 @@ import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
 import { ilikeContainsPattern } from "@/lib/postgrest";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { EMPRESA, ALL, type Campanha, type CampanhaComContagem } from "@/components/reposicao/promocoes/types";
+import { EMPRESA, ALL, type CampanhaComContagem } from "@/components/reposicao/promocoes/types";
 import { useUploadPromocoes } from "@/components/reposicao/promocoes/useUploadPromocoes";
 import { CampanhasFiltros } from "@/components/reposicao/promocoes/CampanhasFiltros";
 import { CampanhasTable } from "@/components/reposicao/promocoes/CampanhasTable";
@@ -43,7 +43,7 @@ export default function AdminReposicaoPromocoes() {
 
       const { data, error } = await q;
       if (error) throw error;
-      const rows = (data || []) as unknown as Campanha[];
+      const rows = (data || []);
 
       // Buscar contagem de itens em batch
       const ids = rows.map((c) => c.id);

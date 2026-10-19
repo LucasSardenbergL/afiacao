@@ -583,6 +583,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/reposicao/__tests__/observacao-po-edge.test.ts",
       "src/lib/reposicao/__tests__/etapa-desconhecida-edge.test.ts",
       "src/lib/reposicao/__tests__/sombra-associacao-edge.test.ts",
+      "src/lib/reposicao/__tests__/linha-view.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },

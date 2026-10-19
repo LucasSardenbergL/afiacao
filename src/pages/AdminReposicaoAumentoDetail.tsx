@@ -1,3 +1,4 @@
+import { linhasCom } from "@/lib/reposicao/linha-view";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +14,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Aumento, Item, Mapeamento, SkuAfetado } from "@/components/reposicao/aumentoDetail/types";
+import { Aumento, Item, Mapeamento } from "@/components/reposicao/aumentoDetail/types";
 import { EMPRESA, ESTADOS_LABEL, diasEntre } from "@/components/reposicao/aumentoDetail/shared";
 import { DetalhesTab } from "@/components/reposicao/aumentoDetail/DetalhesTab";
 import { CategoriasTab } from "@/components/reposicao/aumentoDetail/CategoriasTab";
@@ -50,7 +51,7 @@ export default function AdminReposicaoAumentoDetail() {
         .eq("id", aumentoId!)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as Aumento;
+      return data;
     },
   });
 
@@ -74,7 +75,7 @@ export default function AdminReposicaoAumentoDetail() {
         .eq("ativo", true)
         .order("categoria_fornecedor", { ascending: true });
       if (error) throw error;
-      return (data || []) as unknown as Item[];
+      return (data || []);
     },
   });
 
@@ -89,7 +90,7 @@ export default function AdminReposicaoAumentoDetail() {
         .select("id, aumento_item_id, familia_omie, sku_codigo_omie_especifico")
         .in("aumento_item_id", ids);
       if (error) throw error;
-      return (data || []) as unknown as Mapeamento[];
+      return (data || []);
     },
   });
 
@@ -106,7 +107,7 @@ export default function AdminReposicaoAumentoDetail() {
         .order("familia", { ascending: true })
         .order("sku_descricao", { ascending: true });
       if (error) throw error;
-      return (data || []) as unknown as SkuAfetado[];
+      return linhasCom(data, ["sku_codigo_omie", "categoria_fornecedor", "data_vigencia_efetiva", "aumento_perc"], "v_sku_aumento_vigente");
     },
   });
 
