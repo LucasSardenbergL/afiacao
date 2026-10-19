@@ -85,15 +85,32 @@ perdido só quando um alnum e sua mutilação coexistem legitimamente no mesmo r
 Logo: **sem bump de VERSAO, sem `sonda:bump`/`fingerprint`, sem bump de canária** neste PR. A remoção é
 follow-up, gated na **atestação** da migration em prod (query de validação abaixo ✅ via psql-ro).
 
-## Handoff (o que NÃO está no ar)
+## Aplicação em prod — ✅ atestada (2026-10-19 ~21:50Z, envelope via conector Lovable, autorizada pelo founder)
 
-- 🟣 **Migration no SQL Editor** (envelope `BEGIN/COMMIT`; idempotente; PRE aborta se o corpo vivo não for o de
-  prod revisado nem este). Validação pós-apply (psql-ro):
+1. Pré-voo colado (psql-ro): md5 vivo da RPC = predecessor `16200d4e…`; 16.122 linhas, 0 violariam o CHECK novo; helpers
+   inexistentes; arquivo = o do PR (md5 `2c81f26c…`).
+2. **Ensaio**: o mesmo SQL terminando em `RAISE EXCEPTION 'ENSAIO_OK'` → TRAVA, PRE, helpers, CHECK, RPC e PÓS passaram
+   e a transação voltou (confirmado por fora: md5 = predecessor, helpers ausentes, 0 `idle in transaction`). A 1ª tentativa
+   caiu em `ECONNRESET` do conector antes de responder — por terminar em RAISE, nada podia ter persistido, e o psql-ro confirmou.
+3. **Aplicação real** (arquivo byte a byte, `COMMIT;`): `{"rows":[]}` — que não é prova.
+4. **2ª testemunha** (psql-ro, outra conexão, pós-commit): md5 vivo da RPC = `4e8f9ec2…` (este arquivo); `md5(prosrc)` dos
+   helpers em prod (`b27b482a…`, `b7659502…`) **idênticos** aos que o arquivo commitado produz num PG17 local descartável —
+   a transcrição pelo conector foi byte-exata; CHECK novo `convalidated`; ACL das 3 funções fechado a anon/authenticated/PUBLIC
+   e aberto a service_role; `pg_depend` RPC→helper registrado; comentário da coluna novo. `claude_ro` não tem EXECUTE nos
+   helpers (por desenho), então os vetores rodaram pelo conector em `SET TRANSACTION READ ONLY` (`transaction_read_only=on`
+   atestado): `vetores_ok=true`; a RPC no acervo real de `oben`: 5.668 chaves em `doc_to_user`, 0 ambíguas, 5.622 em
+   `client_to_user`, **0 revogadas, 0 chaves com letra** — o acervo numérico saiu byte-idêntico, sem efeito colateral.
+5. Não registrada em `supabase_migrations.schema_migrations` (schema de sistema é do founder; cosmético para o audit).
+
+## Handoff (o que ficou)
+
+- ~~Migration no SQL Editor~~ — aplicada e atestada acima. Validação (psql-ro) para reconferir:
   `SELECT public.normalizar_documento('12.abc.345/01de-35') = '12ABC34501DE35' AND pg_get_constraintdef(c.oid) LIKE '%[0-9A-Z]{12}[0-9]{2}%' FROM pg_constraint c WHERE c.conname = 'ocam_evidence_document_normalizado_chk';`
   → `t`.
 - Nenhuma edge muda neste PR. `bun run pendencias:deploy` decide o resto pelo ledger.
-- Depois de atestada: (a) remover o laço de mutilação nos 2 espelhos com bump de VERSAO + contrato da
-  `doc_ambiguo_probe` + `sonda:bump` + `sonda:fingerprint -- --write`; (b) Codex retroativo.
+- Agora que está atestada: (a) remover o laço de mutilação nos 2 espelhos com bump de VERSAO + contrato da
+  `doc_ambiguo_probe` + `sonda:bump` + `sonda:fingerprint -- --write` — DEPOIS do PR de harmonização do helper TS mergear
+  (os dois tocam `omie-analytics-sync/versao.ts`); (b) Codex retroativo quando a cota reabrir (24/10).
 
 ## Divergência DELIBERADA com o escritor TS (follow-up)
 
