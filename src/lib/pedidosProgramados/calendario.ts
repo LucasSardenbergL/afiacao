@@ -3,7 +3,14 @@
 // que interpreta UTC e desloca o dia no fuso local. Money-path: valor ausente propaga
 // null (ausente ≠ zero — CLAUDE.md); soma de estado anômalo não vira 0 fabricado.
 
-export type StatusEnvio = 'agendado' | 'enviado' | 'erro' | 'cancelado';
+// 'processando' = claim transitório do edge (migration 20260704070000) — status REAL do banco
+// que o cast antigo do hook escondia; conta como ativo (≠ cancelado) e não ganha dot próprio.
+export type StatusEnvio = 'agendado' | 'processando' | 'enviado' | 'erro' | 'cancelado';
+const STATUS_ENVIO: readonly string[] = ['agendado', 'processando', 'enviado', 'erro', 'cancelado'];
+/** Guarda de tipo da borda banco→calendário: `status` é texto no banco; aqui vira o union. */
+export function ehStatusEnvio(s: string): s is StatusEnvio {
+  return STATUS_ENVIO.includes(s);
+}
 type AccountPP = 'oben' | 'colacor';
 
 export interface ItemEnvioCalendario {
