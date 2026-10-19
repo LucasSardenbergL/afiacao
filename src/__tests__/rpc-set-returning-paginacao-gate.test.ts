@@ -202,6 +202,11 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 13, prova: 'mesma função do hook acima; entrou na lista quando o scanner passou a ver `.rpc("…")`' }],
   ['fin_consolidado_intercompany @ src/pages/FinanceiroIntercompany.tsx',
     { tipo: 'estrutural', teto: 4, prova: '`UNION ALL` de 4 SELECTs agregados sem GROUP BY' }],
+  // #3146 trocou `fin_estimar_estoque_omie` por `fin_estoque_giro_valor` e tirou o waiver do nome
+  // antigo sem pôr o do novo — passou verde porque o `types.ts` ainda não conhecia a função; o
+  // "Work in progress" do Lovable regenerou os tipos (`Returns: {…}[]`) e a main ficou vermelha.
+  ['fin_estoque_giro_valor @ src/hooks/useEstoqueValor.ts',
+    { tipo: 'estrutural', teto: 1, prova: '`RETURN QUERY SELECT sum(…) FILTER…, count(…)` sem GROUP BY — 1 linha agregada (pg_get_functiondef na prod, 2026-10-18)' }],
   ['get_whatsapp_funil @ src/hooks/useWhatsappFunil.ts',
     { tipo: 'estrutural', teto: 1, prova: 'SELECT de subqueries escalares, sem FROM' }],
   ['get_data_health @ src/hooks/useDataHealth.ts',
