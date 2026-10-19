@@ -51,8 +51,8 @@ SELECT format($sonda$
 --          1: nada a colar. Espere ~10s pela resposta HTTP. É SELECT puro —
 --          roda no read-only: cole no chat, ou em ~/.config/afiacao/psql-ro -v ON_ERROR_STOP=1
 WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES
-  ('omie-nfe-webhook', 'v1.5-rpc-transacional', '21ea31840b4594f82019a5c268d229692484cb07ac6bebc7a5dc70f898539853'),
-  ('omie-nfe-recebimento-sync', 'v1.5-rpc-transacional', 'e6b5ca8ed00c98cacf2e465619ba5cddadc004f4006f931641d08aab13c5b801')
+  ('omie-nfe-webhook', 'v1.5-rpc-transacional', '17a6baa3ec4d64e63a2a1aa6975bd711f0c04f7ac687f1757d6ee36ab6a6fcb6'),
+  ('omie-nfe-recebimento-sync', 'v1.5-rpc-transacional', '20f3691e36b69f0c2f862d7a7ea8a43d0b72b8435cb2714e185bd9e5fb4ffeff')
 ),
 ids AS (
   -- EMBUTIDO pelo passo 1 — o mapa `edge → request_id` foi escrito pelo próprio banco
@@ -204,8 +204,8 @@ FROM mapa m;
 --    db:aplicar — é ESTRITAMENTE melhor: com o mapa embutido, PRE-SENSOR e recusa HTTP (que não
 --    ecoam) saem determinados, e o 401 também.
 WITH esperado(edge, versao_esperada, fonte_esperada) AS (VALUES
-  ('omie-nfe-webhook', 'v1.5-rpc-transacional', '21ea31840b4594f82019a5c268d229692484cb07ac6bebc7a5dc70f898539853'),
-  ('omie-nfe-recebimento-sync', 'v1.5-rpc-transacional', 'e6b5ca8ed00c98cacf2e465619ba5cddadc004f4006f931641d08aab13c5b801')
+  ('omie-nfe-webhook', 'v1.5-rpc-transacional', '17a6baa3ec4d64e63a2a1aa6975bd711f0c04f7ac687f1757d6ee36ab6a6fcb6'),
+  ('omie-nfe-recebimento-sync', 'v1.5-rpc-transacional', '20f3691e36b69f0c2f862d7a7ea8a43d0b72b8435cb2714e185bd9e5fb4ffeff')
 ),
 recentes AS (
   -- A JANELA. O filtro textual roda ANTES do cast de propósito: um corpo não-JSON no meio da

@@ -10,6 +10,10 @@ describe('accountToEmpresa', () => {
 });
 
 describe('normalizeDoc', () => {
+  it('CNPJ alfanumérico VÁLIDO preserva as letras (mesmo contrato do edge)', () => {
+    expect(normalizeDoc('12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(normalizeDoc('12.ABC.345/01DE-36')).toBe('123450136'); // DV errado → só-dígitos como antes
+  });
   it('remove tudo que não é dígito', () => {
     expect(normalizeDoc('12.345.678/0001-99')).toBe('12345678000199');
     expect(normalizeDoc('123.456.789-00')).toBe('12345678900');

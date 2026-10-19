@@ -166,7 +166,10 @@ describe('o corpo REAL do repo', () => {
     // 2026-10-15: 18 → 19, consumidor novo e legítimo — `scripts/orcamento-compra/simular.ts`
     // (`--banco`, backtest do orçamento de compra) exporta os fatos por `-f` COM
     // `-v ON_ERROR_STOP=1`, checa o status e só aceita a saída com o marcador de fim. Entra na lista abaixo.
-    expect(r.arquivosComVinculo).toBe(19);
+    // 2026-10-19: 19 → 20, consumidor novo e legítimo — `db/test-deriva-baseline-prod.sh` (I2, plano v2 item 5)
+    // embrulha o wrapper num proxy de CAPTURA para o auditor de deriva (`PSQL_RO` injetado): repassa os
+    // argumentos do auditor (`-c`, já com `ON_ERROR_STOP`) e ainda o declara explícito na própria linha.
+    expect(r.arquivosComVinculo).toBe(20);
   });
 
   it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev e o do orçamento de compra, e TODOS têm ON_ERROR_STOP', () => {

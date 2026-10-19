@@ -921,6 +921,128 @@ if sabotado_apply fj2 's/\(d\.traz_desconto AND a\.desconto_valor IS NOT NULL\n[
   R=$(reconc1 9804 '[{"cod":555,"q":1,"p":120}]' 120 -10)
   confere FJ2 "$(sensn "$R")" "1/0/1/0" "J4 (sem traz_desconto, para_null > corrigido — a contenção quebra)"
 fi
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# K · I2 (plano v2, item 5): a migration CANÔNICA reproduz o corpo da PROD byte a byte — e EXECUTA
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# O envelope J deixou em prod um corpo que nenhuma migration explicava. A canônica
+# (20261019120000_reconciliar_pedidos_omie_canonica_*) copia esse corpo do hex da prod. Aqui os DOIS
+# caminhos terminam no MESMO md5(prosrc): cadeia + envelope (prove_j) e cadeia + canônica (prove_k,
+# o restore só de migrations). Depois, os 4 eventos de J rodam sobre a canônica, a reaplicação sobre
+# o corpo da prod (o que o founder vai colar) é no-op, e a PRE recusa corpo estranho.
+echo "═══ K · I2: a canônica reproduz o corpo da PROD (= envelope) e executa ═══"
+CANON_A="$(find "$REPO_ROOT/supabase/migrations" -name "*_reconciliar_pedidos_omie_canonica_*.sql" | sort | tail -1)"
+[ -n "$CANON_A" ] || { echo "migration canônica da reconciliação não encontrada — K testaria o NADA"; exit 1; }
+MD5_PRED_A="49a16ad05acb94066233b9692919570c"   # md5(prosrc) que a 20260914180104 deixa (predecessor da PRE)
+MD5_PROD_A="4b16bbb469c7b4dc6f688df58e191d72"   # md5(prosrc) da PROD em 2026-10-19 (= depois do envelope J)
+REC_ID="public.reconciliar_pedidos_omie(jsonb,text[],timestamptz)"
+md5_rec()  { Q "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')"; }
+attrs_rec() { Q "SELECT prosecdef::text || '/' || provolatile::text || '/' || coalesce(array_to_string(proconfig, ';'), '-') || '/' || pg_get_function_arguments(oid) FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')"; }
+acl_rec()  { Q "SELECT concat_ws('/', has_function_privilege('anon', o, 'EXECUTE'), has_function_privilege('authenticated', o, 'EXECUTE'), has_function_privilege('service_role', o, 'EXECUTE')) FROM to_regprocedure('$REC_ID') o"; }
+# os 4 eventos de J, parametrizados pelo banco corrente — a MESMA régua nos dois corpos
+eventos_desconto() {  # $1 = prefixo do rótulo, $2 = base dos números de pedido
+  local p="$1" n="$2" R
+  cria $((n+1)) '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 $((n+1)) '[{"cod":555,"q":1,"p":100,"dv":null}]' 100 -10)
+  eq "$p.1 valor→NULL: a linha nulificou e conta nos DOIS (contenção)" "$(dv $((n+1)) 555)|$(sensn "$R")" "NULO|1/1/1/0"
+  cria $((n+2)) '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 $((n+2)) '[{"cod":555,"q":1,"p":100,"dv":20}]' 80 -10)
+  eq "$p.2 valor→outro valor: conta em corrigido, NÃO em corrigido_para_null" "$(dv $((n+2)) 555)|$(sensn "$R")" "20|1/1/0/0"
+  cria $((n+3)) '[{"cod":555,"q":1,"p":100}]' 100
+  R=$(reconc1 $((n+3)) '[{"cod":555,"q":1,"p":100,"dv":10}]' 90 -10)
+  eq "$p.3 NULL→valor: apuração, nem correção nem nulificação" "$(dv $((n+3)) 555)|$(sensn "$R")" "10|0/0/0/1"
+  cria $((n+4)) '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 $((n+4)) '[{"cod":555,"q":1,"p":120}]' 120 -10)
+  eq "$p.4 chave ausente: a linha nulifica, mas o sensor NÃO atribui à leitura" "$(dv $((n+4)) 555)|$(sensn "$R")" "NULO|1/0/0/0"
+}
+DB=prove_j
+eq "K0 (controle) o envelope J deixou em prove_j EXATAMENTE o corpo da PROD" "$(md5_rec)" "$MD5_PROD_A"
+# Caminho DR: a cadeia de migrations SEM o envelope. A canônica tem de reconstruir a correção.
+novo_banco prove_k nova
+eq "K1 antes da canônica o corpo é o predecessor revisado (a cadeia aqui é a de prod)" "$(md5_rec)" "$MD5_PRED_A"
+OUT_K="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K2 a canônica roda inteira sobre o predecessor (TRAVA → PRE → CREATE → PÓS)" "$(tem "$OUT_K" 'ERROR')" "nao"
+eq "K3 e deixa o corpo da PROD, byte a byte (= envelope = prod)" "$(md5_rec)" "$MD5_PROD_A"
+eq "K3b contrato fora do prosrc: INVOKER, VOLATILE, search_path vazio, assinatura sem defaults" "$(attrs_rec)" \
+  'false/v/search_path=""/p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone'
+eq "K3c ACL: EXECUTE só para service_role entre as roles da API" "$(acl_rec)" "f/f/t"
+eventos_desconto K4 9820
+OUT_NEG="$(Q "SET ROLE authenticated; SELECT public.reconciliar_pedidos_omie('[]'::jsonb, ARRAY['importado'], now())" 2>&1 || true)"
+eq "K5 authenticated EXECUTANDO leva permission denied (não só o catálogo dizendo)" "$(tem "$OUT_NEG" 'permission denied for function reconciliar_pedidos_omie')" "sim"
+# O cenário real do founder: colar a canônica POR CIMA do corpo da prod (o do envelope) — no-op.
+DB=prove_j
+OUT_K2="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K6 reaplicar sobre o corpo da PROD passa na PRE por 'este' e não muda nada" "$(tem "$OUT_K2" 'ERROR')|$(md5_rec)" "nao|$MD5_PROD_A"
+eventos_desconto K7 9830
+# A PRE recusa corpo que não é nem o predecessor nem este (outra entrega mexeu depois do pré-flight).
+DB=prove_k
+Q "SELECT pg_get_functiondef(to_regprocedure('$REC_ID'))" \
+  | perl -0pe 's/\nDECLARE\n/\nDECLARE\n  -- outra entrega mexeu aqui\n/' > "$TMPF.k8.sql"
+Qf "$TMPF.k8.sql" >/dev/null
+MD5_OUTRO_A="$(md5_rec)"
+OUT_K8="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K8 a PRE recusa corpo estranho e o deixa intacto (nada de 'última a recriar vence')" \
+  "$(tem "$OUT_K8" 'PRE FALHOU')|$([ "$MD5_OUTRO_A" != "$MD5_PROD_A" ] && [ "$(md5_rec)" = "$MD5_OUTRO_A" ] && echo intacto)" "sim|intacto"
+
+# A PRE pina também o que o md5 do corpo NÃO vê (parecer Codex de código, P1): atributo ou ACL mudados
+# à mão com o MESMO corpo têm de abortar — o CREATE/REVOKE/GRANT os normalizaria em silêncio.
+novo_banco prove_k9 nova
+Q "ALTER FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) SET search_path = public" >/dev/null
+OUT_K9="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K9 search_path mudado à mão (md5 igual): a PRE aborta e o atributo fica como estava" \
+  "$(tem "$OUT_K9" 'PRE FALHOU: atributos vivos')|$(md5_rec)|$(Q "SELECT array_to_string(proconfig, ';') FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')")" "sim|$MD5_PRED_A|search_path=public"
+novo_banco prove_k10 nova
+Q "REVOKE EXECUTE ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) FROM service_role" >/dev/null
+OUT_K10="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K10 EXECUTE revogado de service_role à mão (emergência): a PRE aborta e a revogação fica" \
+  "$(tem "$OUT_K10" 'PRE FALHOU: ACL viva')|$(acl_rec)" "sim|f/f/f"
+novo_banco prove_k11 nova
+Q "ALTER FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) STABLE" >/dev/null
+OUT_K11="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K11 volatilidade mudada à mão: a TRAVA confere ANTES de normalizar e aborta" \
+  "$(tem "$OUT_K11" 'não é VOLATILE')|$(Q "SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')")" "sim|s"
+
+
+echo "═══ FK · FALSIFICAÇÃO da canônica (Lei #3): integridade e comportamento, uma por banco ═══"
+# Integridade (a própria migration tem de ABORTAR) × comportamento (as guardas removidas, o
+# assert financeiro tem de acusar). Sabotagem que fica vermelha pela defesa errada não prova
+# o assert (parecer Codex de desenho, 2026-10-19, P1) — por isso cada uma declara o que espera.
+sab_canon() {  # $1 = rótulo (vira o banco), $2 = programa perl -0pe sobre a canônica → OUT_SAB
+  local sab="$TMPF.$1.sql"
+  perl -0pe "$2" "$CANON_A" > "$sab"
+  if cmp -s "$sab" "$CANON_A"; then bad "$1.0 a sabotagem NÃO alterou a canônica — o assert seria teatro"; return 1; fi
+  DB="$1"
+  "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T molde "$DB"
+  Qf "$MIG" >/dev/null; Qf "$MIG_COER" >/dev/null; Qf "$MIG_RECONC" >/dev/null
+  Q "$HELPERS_SQL" >/dev/null
+  OUT_SAB="$(Qf "$sab" 2>&1 || true)"
+}
+SAB_TOKEN='s/v_desc_corr_null := v_desc_corr_null \+ v_corr_null;/v_desc_corr_null := v_desc_corr_null + v_corr;/'
+# shellcheck disable=SC2016  # programa perl: o $ é do perl, não do shell
+SAB_SEM_GUARDAS='s/DO \$pre\$.*?\$pre\$;//s; s/DO \$pos\$.*?\$pos\$;//s'
+if sab_canon fk1 "$SAB_TOKEN"; then
+  eq "FK1 1 token no corpo, guardas intactas: a PÓS aborta pelo md5 e o predecessor fica" \
+    "$(tem "$OUT_SAB" 'POS FALHOU: o corpo vivo')|$(md5_rec)" "sim|$MD5_PRED_A"
+fi
+if sab_canon fk2 "$SAB_TOKEN; $SAB_SEM_GUARDAS"; then
+  eq "FK2.0 (controle da sabotagem) sem PRE/PÓS o corpo adulterado INSTALA" "$(tem "$OUT_SAB" 'ERROR')|$([ "$(md5_rec)" != "$MD5_PROD_A" ] && echo difere)" "nao|difere"
+  cria 9842 '[{"cod":555,"q":1,"p":100,"dv":10}]' 90
+  R=$(reconc1 9842 '[{"cod":555,"q":1,"p":100,"dv":20}]' 80 -10)
+  confere FK2 "$(sensn "$R")" "1/1/1/0" "K4.2/K7.2 (a troca de valor passaria a contar como nulificação)"
+fi
+if sab_canon fk3 "s/'49a16ad05acb94066233b9692919570c'/'00000000000000000000000000000000'/"; then
+  eq "FK3 predecessor errado na PRE: aborta antes do CREATE e o predecessor fica" \
+    "$(tem "$OUT_SAB" 'PRE FALHOU')|$(md5_rec)" "sim|$MD5_PRED_A"
+fi
+# shellcheck disable=SC2016  # programa perl: $1 é a captura do perl
+if sab_canon fk4 's/(GRANT EXECUTE ON FUNCTION public\.reconciliar_pedidos_omie\(jsonb, text\[\], timestamp with time zone\) TO service_role;)/$1\nGRANT EXECUTE ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) TO authenticated;/'; then
+  eq "FK4 GRANT a authenticated: a PÓS aborta pela ACL e o rollback desfaz o grant" \
+    "$(tem "$OUT_SAB" 'POS FALHOU: ACL')|$(acl_rec)" "sim|f/f/t"
+fi
+if sab_canon fk5 "s/'desconto_corrigido_para_null', v_desc_corr_null,/'desconto_corrigido_para_null', v_desc_corr_null \/ 0,/; s/IF md5\(v_src\) IS DISTINCT FROM '4b16bbb469c7b4dc6f688df58e191d72' THEN/IF false THEN/"; then
+  eq "FK5 corpo que só quebra em RUNTIME (md5 cego): a PÓS EXECUTA e pega; o predecessor fica" \
+    "$(tem "$OUT_SAB" 'division by zero')|$(md5_rec)" "sim|$MD5_PRED_A"
+fi
+
 rm -f "$TMPF".*
 
 # Formato `N ok / N fail`: é o que o runner do núcleo (db/roda-nucleo-ci.sh) sabe contar. O
