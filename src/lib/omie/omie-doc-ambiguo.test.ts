@@ -28,6 +28,26 @@ describe('docsComCodigoAmbiguoNoOmie (P1b fail-closed money-path)', () => {
     expect(r.size).toBe(0);
   });
 
+  it('alfanumérico preservado cuja mutilação só-dígitos é o doc de OUTRO registro → o numérico vira ambíguo (Codex ALTO)', () => {
+    // AEG12345678909 → só-dígitos 12345678909: o snapshot SQL chaveia o profile alfanumérico por esse
+    // número, e o registro numérico (outro código) casaria com o profile errado.
+    const r = docsComCodigoAmbiguoNoOmie([
+      { doc: 'AEG12345678909', codigo: 10 },
+      { doc: '12345678909', codigo: 20 },
+    ]);
+    expect(r.has('12345678909')).toBe(true);
+    expect(r.has('AEG12345678909')).toBe(false); // o alfanumérico nunca está no mapa SQL — não precisa
+    expect(r.size).toBe(1);
+  });
+
+  it('alfanumérico SEM gêmeo numérico → NÃO ambíguo (não inventa ambiguidade)', () => {
+    const r = docsComCodigoAmbiguoNoOmie([
+      { doc: 'AEG12345678909', codigo: 10 },
+      { doc: '99999999999', codigo: 20 },
+    ]);
+    expect(r.size).toBe(0);
+  });
+
   it('3+ códigos no mesmo doc → ambíguo', () => {
     const r = docsComCodigoAmbiguoNoOmie([
       { doc: '111', codigo: 100 },
