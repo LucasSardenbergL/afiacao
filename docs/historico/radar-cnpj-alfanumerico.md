@@ -38,6 +38,12 @@ E **0 de 526.176** CNPJs do radar falham o módulo 11 — validar DV também nos
 
 Custo medido do `DROP + ADD CHECK` em 526.176 linhas (PG17 local, mesma regex): **1,08 s** de `ACCESS EXCLUSIVE` — abaixo de qualquer timeout; `NOT VALID` + `VALIDATE` separado (sugestão Codex) não compensa a perda da garantia `convalidated` na PÓS.
 
+## Estado em prod (2026-10-19)
+
+- **Migration APLICADA** pelo envelope MCP (`postgres`), pré-voo colado 🟢 e validada por psql-ro em outra conexão após o COMMIT: `check_empresas_ok=t · check_contatos_ok=t · funcao_ok=t (md5 9163372c…) · acl_ok=t · ja_cliente_total=3001 (inalterado) · provolatile=v`. Evidência no comentário do PR.
+- **Edge `radar-ingest` v1.1**: pendente até o deploy pelo chat do Lovable (`bun run pendencias:pacote radar-ingest` após o merge; sonda deve responder `v1.1-cnpj-alfanumerico`). Até lá a edge em prod (`v1.0-sonda`) descarta alfanumérico como hoje — sem regressão.
+- **Codex de código: REVISÃO INDEPENDENTE PENDENTE** (`COTA_ESGOTADA`, plano `prolite` a 71 %). Rodar retroativo quando a janela voltar.
+
 ## Follow-ups (não feitos aqui — cada um é um bloco)
 
 - **Escritores que apagam letras** antes de persistir o documento: `omie-analytics-sync` (`cnpj_cpf: replace(/\D/g,'')`), `omie-vendas-sync` (`documentClean`, `criar_cliente`), import de `profiles.document`, `analyze-unified-order`. Sem isso o recruzamento alfanumérico é **inerte** para clientes vindos do Omie. Exige revisar os consumidores de `cnpj_cpf` que deduplicam por dígitos — domínio `sync.md`.
