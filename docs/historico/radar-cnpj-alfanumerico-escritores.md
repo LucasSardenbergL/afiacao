@@ -105,9 +105,17 @@ tabela de `deploy.md` §Canárias e `edge-money-path-invariants`.
 4. **Aceite do Omie** — não provamos que `ListarClientes clientesFiltro.cnpj_cpf` e `IncluirCliente` aceitam
    letra. Se o Omie exigir só-dígitos, o lookup devolve vazio — **como hoje** (9 dígitos também não acha
    ninguém); não piora. A 1ª atestação de deploy destas edges é o lugar de medir.
-5. **Deploy** — 5 edges + `_shared`: `bun run pendencias:pacote` decide pelo ledger `deploy_atestacoes`. Sem
-   ordem obrigatória entre elas (cada uma lê/escreve com o helper no seu próprio bundle; o cruzamento
-   Omie×profile dentro da `omie-analytics-sync` é intra-bundle).
+5. **Deploy — FEITO pela sessão (2026-10-19 14:46Z)**: pacote `4c48919bab24` (5 edges, 22 RPCs de
+   pré-condição verdes, `origin/main@29d9a80c4`) colado verbatim via MCP do Lovable; 55/55 hashes conferidos,
+   5× **Active**, `No files were edited.`, 2,7 créditos. Sensor pós-envio: `EDICAO_DETECTADA` **só** pelo
+   sinal `edit_id`/`commit_sha` da resposta — o commit do bot (`d6813764c`) ficou na branch `lovable-sync-*`,
+   toca apenas `src/integrations/supabase/types.ts` (+1, o regenerado tolerado) e há 0 commits do bot na
+   `main` desde o envio. **1ª atestação pelo envelope** (`db:aplicar`, ensaio + real): relé
+   `deploy_sonda_disparar` para `omie-analytics-sync`/`omie-vendas-sync` (tentativa #556) e disparo legado
+   `sonda:sql --so-disparo` para `analyze-unified-order`/`omie-cliente`/`omie-sync` (tentativa #557, passo 2
+   lido no `psql-ro`): **3× DEPLOY CONFIRMADO** (versão + fonte batendo) e `pendencias:deploy` mostra as 5
+   em "✅ confere" (`visto há 2 min via sonda`). Sem ordem obrigatória entre elas (o cruzamento
+   Omie×profile da `omie-analytics-sync` é intra-bundle). Arquivos: `db/2026-10-19-sonda-*-cnpj-alfanumerico-*.sql`.
 
 ## Lições
 
