@@ -6,12 +6,13 @@
 // chão de fábrica: a partir daqui a NF-e aparece para conferência e vira candidata à efetivação
 // no Omie pela `omie-nfe-recebimento`.
 //
-// Desde a v1.4 a materialização é UMA transação no banco: a RPC `importar_nfe_recebimento`
+// Desde a v1.5 a materialização é UMA transação no banco: a RPC `importar_nfe_recebimento`
 // (lock consultivo por chave + FOR UPDATE no cabeçalho + cabeçalho e lote no mesmo commit;
 // db/2026-10-18-importar-nfe-recebimento-rpc.sql). Ela COMPLETA um cabeçalho `pendente` que ficou
 // sem itens e sem sinal de uso, certifica "já importada" só pelo MESMO CONJUNTO de itens, e fecha
 // webhook×sync e reconcile-no-meio — o que a v1.3 (ids determinísticos, sem migration) deixava
-// aberto. Erro de dado vai a `nfe_importacao_falhas`. Ver _shared/nfe-importacao.ts e resposta.ts.
+// aberto. (A v1.4-ncm-em-shared, do #3157, só moveu `normalizarNcm` para _shared/: a prod pula da v1.2
+// direto para esta.) Erro de dado vai a `nfe_importacao_falhas`. Ver _shared/nfe-importacao.ts e resposta.ts.
 // ⚠️ Deploy desta versão SÓ depois da migration aplicada: sem a RPC a edge responde 500 nomeando a
 // migration (fail-closed), não cai no caminho antigo.
 //
@@ -26,7 +27,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-nfe-webhook");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.4-rpc-transacional";
+export const VERSAO = "v1.5-rpc-transacional";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

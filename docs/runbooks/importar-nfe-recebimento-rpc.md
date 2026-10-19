@@ -84,7 +84,7 @@ NOTIFY pgrst, 'reload schema';
 
 ## (4) Deploy das duas edges (mesma leva)
 
-Quem decide é o ledger: `bun run pendencias:deploy` lista `omie-nfe-webhook` (`v1.4-rpc-transacional`) e `omie-nfe-recebimento-sync` (`v1.5-rpc-transacional`). Caminho de deploy e sonda: [`docs/agent/deploy.md`](../agent/deploy.md). Sondas esperadas: `{"probe":true}` → `v1.4-rpc-transacional` / `v1.5-rpc-transacional`.
+Quem decide é o ledger: `bun run pendencias:deploy` lista `omie-nfe-webhook` (`v1.5-rpc-transacional`) e `omie-nfe-recebimento-sync` (`v1.5-rpc-transacional`). Caminho de deploy e sonda: [`docs/agent/deploy.md`](../agent/deploy.md). Sondas esperadas: `{"probe":true}` → `v1.5-rpc-transacional` / `v1.5-rpc-transacional`.
 
 ## (5) Religar o cron e validar ponta a ponta (com denominador)
 
