@@ -387,7 +387,7 @@ sabotar "f desconto NULL vira 0 no titulo" \
   "s/CASE WHEN situacao = 'paga' THEN desconto_obtido END /coalesce(CASE WHEN situacao = 'paga' THEN desconto_obtido END, 0) /" \
   "fatos resumo NULL nao vira 0 no titulo"
 sabotar "g universo por prefixo" \
-  "s/AND l.categoria_codigo = p.categoria_codigo/AND p.categoria_codigo LIKE '2.01%'/" \
+  "/^CREATE OR REPLACE VIEW public.v_ciclo_cp_titulos/,/^ WHERE situacao IS NOT NULL;/{s/AND l.categoria_codigo = p.categoria_codigo/AND p.categoria_codigo LIKE '2.01%'/;}" \
   "fatos universo por (empresa, codigo): 2.01.99 colacor fora, 2.01.97 so colacor"
 sabotar "h anon fora do REVOKE sem postcondicao" \
   "s/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC;/;s/IF has_function_privilege('anon', f, 'EXECUTE') THEN/IF false THEN/" \
