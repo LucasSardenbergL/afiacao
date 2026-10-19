@@ -5,6 +5,8 @@
 
 // Vocabulário PRÓPRIO (aguardando/nao_iniciado, não pendente/cancelado): o gate G5 do
 // universo de pedidos caça cópias da lista de status de VENDA, e colidir com ela é ruído.
+import { CNPJ_RE } from '@/lib/radar/normalizar';
+
 export type EstadoItemLote =
   | { status: 'aguardando' }
   | { status: 'ok'; codigo: string; jaExistia: boolean; recuperado: boolean }
@@ -42,7 +44,7 @@ export function parsearLote(raw: string | null): LotePersistido | null {
     for (const it of o.itens as unknown[]) {
       if (!it || typeof it !== 'object') return null;
       const i = it as Partial<ItemLote>;
-      if (typeof i.cnpj !== 'string' || !/^\d{14}$/.test(i.cnpj)) return null;
+      if (typeof i.cnpj !== 'string' || !CNPJ_RE.test(i.cnpj)) return null;
       const estado = i.estado as Partial<EstadoItemLote> | undefined;
       if (!estado || typeof estado.status !== 'string' || !STATUS.has(estado.status)) return null;
       itens.push({ cnpj: i.cnpj, nome: typeof i.nome === 'string' ? i.nome : i.cnpj, estado: estado as EstadoItemLote });

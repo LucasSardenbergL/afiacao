@@ -8030,6 +8030,50 @@ export type Database = {
           },
         ]
       }
+      nfe_importacao_falhas: {
+        Row: {
+          chave_acesso: string
+          erro: string
+          omie_id_receb: number | null
+          origem: string
+          primeira_em: string
+          sqlstate: string | null
+          tentativas: number
+          ultima_em: string
+          warehouse_id: string | null
+        }
+        Insert: {
+          chave_acesso: string
+          erro: string
+          omie_id_receb?: number | null
+          origem: string
+          primeira_em?: string
+          sqlstate?: string | null
+          tentativas?: number
+          ultima_em?: string
+          warehouse_id?: string | null
+        }
+        Update: {
+          chave_acesso?: string
+          erro?: string
+          omie_id_receb?: number | null
+          origem?: string
+          primeira_em?: string
+          sqlstate?: string | null
+          tentativas?: number
+          ultima_em?: string
+          warehouse_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "nfe_importacao_falhas_warehouse_id_fkey"
+            columns: ["warehouse_id"]
+            isOneToOne: false
+            referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       nfe_lotes_escaneados: {
         Row: {
           data_fabricacao: string | null
@@ -8175,7 +8219,10 @@ export type Database = {
           observacoes: string | null
           omie_id_receb: number | null
           omie_nfe_id: number | null
+          origem: string | null
           razao_social_emitente: string | null
+          reparada_em: string | null
+          reparada_origem: string | null
           serie_nfe: string | null
           status: string
           updated_at: string
@@ -8203,7 +8250,10 @@ export type Database = {
           observacoes?: string | null
           omie_id_receb?: number | null
           omie_nfe_id?: number | null
+          origem?: string | null
           razao_social_emitente?: string | null
+          reparada_em?: string | null
+          reparada_origem?: string | null
           serie_nfe?: string | null
           status?: string
           updated_at?: string
@@ -8231,7 +8281,10 @@ export type Database = {
           observacoes?: string | null
           omie_id_receb?: number | null
           omie_nfe_id?: number | null
+          origem?: string | null
           razao_social_emitente?: string | null
+          reparada_em?: string | null
+          reparada_origem?: string | null
           serie_nfe?: string | null
           status?: string
           updated_at?: string
@@ -21626,6 +21679,10 @@ export type Database = {
           usado_hora: number
         }[]
       }
+      importar_nfe_recebimento: {
+        Args: { p_cabecalho: Json; p_itens: Json; p_origem: string }
+        Returns: Json
+      }
       iniciar_envio_portal_pre_claim: {
         Args: { p_pedido_id: number }
         Returns: boolean
@@ -21725,6 +21782,17 @@ export type Database = {
           customer_user_id: string
           owner_user_id: string
         }[]
+      }
+      nfe_importacao_falha_registrar: {
+        Args: {
+          p_chave_acesso: string
+          p_erro: string
+          p_omie_id_receb?: number
+          p_origem: string
+          p_sqlstate: string
+          p_warehouse_id?: string
+        }
+        Returns: number
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
@@ -21984,6 +22052,7 @@ export type Database = {
         }[]
       }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
+      radar_recruzar_ja_cliente_tick: { Args: never; Returns: number }
       radar_registrar_cadastro_omie: {
         Args: {
           p_cnpj: string

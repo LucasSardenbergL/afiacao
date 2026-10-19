@@ -55,7 +55,10 @@ describe('formatarCapital', () => {
 
 describe('formatarCnpj', () => {
   it('aplica a máscara', () => expect(formatarCnpj('11222333000144')).toBe('11.222.333/0001-44'));
+  it('aplica a máscara ao CNPJ alfanumérico (exemplo oficial RFB)', () =>
+    expect(formatarCnpj('12ABC34501DE35')).toBe('12.ABC.345/01DE-35'));
   it('tamanho errado → devolve cru', () => expect(formatarCnpj('123')).toBe('123'));
+  it('minúscula → devolve cru (fora do formato)', () => expect(formatarCnpj('12abc34501DE35')).toBe('12abc34501DE35'));
 });
 
 describe('digitosCnae', () => {

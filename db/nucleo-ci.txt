@@ -559,6 +559,10 @@ db/test-cron-dr-sync-reprocess-pedidos-colacor.sh 10
 # ou, sem problema, às SEGUNDAS em Brasília como prova de vida. Defeito aqui = silêncio com sistema
 # quebrado (o founder deixa de ser avisado) ou ruído diário. Esquema mínimo, sem snapshot (~5 s/rodada).
 db/test-watchdog-diario-so-problema.sh      22  falsificar=6
+# Radar: recruzamento DIÁRIO de ja_cliente (20261019093000). Defeito aqui = lead que já é cliente do Omie
+# continua na fila de prospecção (duplicado no ERP) ou tick que qualquer authenticated dispara. Prova
+# em sessão limpa (sem JWT, como o pg_cron), ledger com denominador, erro propagando. Esquema mínimo.
+db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
@@ -591,3 +595,6 @@ db/test-tint-promote-fantasma.sh            11
 # comentário dela pedia; o arquivo e a migration seguem no repo como histórico aplicado.
 db/test-tint-remove-cron-reaplicar.sh       3
 db/test-importar-nfe-recebimento.sh          75  falsificar=9
+# Radar: CNPJ alfanumérico (RFB jul/2026) — CHECKs + recruzar com upper/separadores; a PRE exige o md5 de PROD do
+# predecessor, então repo≠prod fica vermelho aqui. 4 sabotagens: CHECK afrouxado, sem upper(), alnum→só-dígitos, PÓS.
+db/test-radar-cnpj-alfanumerico.sh          23  falsificar=4

@@ -16,6 +16,7 @@ import {
   splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
 } from "../../src/lib/radar/normalizar";
 import type { RadarEmpresaRow, RadarMunicipioRow } from "./types";
+import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
@@ -25,21 +26,17 @@ for (let i = 2; i < process.argv.length; i++) {
 const MES = args.get("mes") ?? "";
 if (!/^\d{4}-\d{2}$/.test(MES)) { console.error("--mes YYYY-MM obrigatório"); process.exit(1); }
 const DRY = args.get("dry-run") === "true";
-// Share público oficial da RFB (Nextcloud). O token identifica o SHARE público,
-// não é credencial — é o mesmo link aberto da página de dados abertos do gov.br.
-const RFB_SHARE_TOKEN = "YggdBLfdninEJX9";
-const URL_BASES = args.get("base-url") ? [args.get("base-url")!] : [
-  `https://arquivos.receitafederal.gov.br/public.php/webdav/${MES}`,
-  `https://arquivos.receitafederal.gov.br/dados/cnpj/dados_abertos_cnpj/${MES}`,
-  `https://dadosabertos.rfb.gov.br/CNPJ/dados_abertos_cnpj/${MES}`,
-];
+// Share público oficial da RFB (Nextcloud) — token/bases em rfb.ts (compartilhado com mes-alvo.ts).
+const URL_BASES = args.get("base-url") ? [args.get("base-url")!] : basesCandidatas(MES);
 // WebDAV de share Nextcloud exige basic auth "<token>:" — as outras bases, não.
-const authDe = (base: string) => base.includes("public.php/webdav") ? `-u "${RFB_SHARE_TOKEN}:"` : "";
+const authDe = (base: string) => precisaDeAuth(base) ? `-u "${RFB_SHARE_TOKEN}:"` : "";
 const INGEST_URL = process.env.RADAR_INGEST_URL ?? "";
 const SECRET = process.env.RADAR_CRON_SECRET ?? "";
 if (!DRY && (!INGEST_URL || !SECRET)) { console.error("RADAR_INGEST_URL e RADAR_CRON_SECRET obrigatórios (ou use --dry-run)"); process.exit(1); }
 
-const WORK = `/tmp/radar-${MES}`;
+// RADAR_WORK_DIR: no runner do GitHub o `/` tem ~14 GB livres e o dump descompactado passa de 20 GB —
+// a Action aponta para /mnt (~60 GB). Default local inalterado.
+const WORK = process.env.RADAR_WORK_DIR ? `${process.env.RADAR_WORK_DIR}/radar-${MES}` : `/tmp/radar-${MES}`;
 mkdirSync(WORK, { recursive: true });
 const sh = (cmd: string) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1024 * 1024 * 64 }).toString();
 
@@ -77,8 +74,13 @@ baixar("Cnaes.zip");
 sh(`cd ${WORK} && rm -rf cnaes/ && unzip -o -q Cnaes.zip -d cnaes/`);
 // duckdb via execFileSync (args em array, SEM shell) — o SQL contém aspas duplas
 // (quote='"') e single quotes; string-shell quoting quebrava (1ª carga, 2026-06-11).
+// temp_directory no WORK: o spill do DuckDB (sort/join grande) vai por padrão para `.tmp` no cwd —
+// no runner do GitHub o cwd é o checkout em `/` (~14 GB livres), não o disco de trabalho.
 const duck = (q: string) =>
-  execFileSync("duckdb", ["-json", "-c", q], { maxBuffer: 1024 * 1024 * 256 }).toString();
+  execFileSync("duckdb", ["-json", "-c", `SET temp_directory='${WORK}/duck_tmp'; ${q}`], { maxBuffer: 1024 * 1024 * 256 }).toString();
+// RADAR_APAGAR_ZIPS=1 (Action): zip consumido é apagado — o cache de resume é o parquet, não o zip.
+// Local fica como era (zip retido evita re-download numa carga interrompida).
+const APAGAR_ZIPS = process.env.RADAR_APAGAR_ZIPS === "1";
 
 // Saneamento dos CSVs da RFB ANTES do DuckDB (lições da 1ª carga, 2026-06-11):
 // 1) encoding real é Windows-1252 COM bytes indefinidos (0x81 etc.) → iconv -c
@@ -143,6 +145,7 @@ for (let i = 0; i <= 9; i++) {
       WHERE situacao = '02' AND cnae1 IN (${inList})
     ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet)`);
   rmSync(`${WORK}/est/`, { recursive: true, force: true });
+  if (APAGAR_ZIPS) rmSync(zip, { force: true });
   console.log(`✅ Estabelecimentos${i} filtrado`);
 }
 
@@ -150,6 +153,7 @@ for (let i = 0; i <= 9; i++) {
 for (let i = 0; i <= 9; i++) baixar(`Empresas${i}.zip`);
 for (let i = 0; i <= 9; i++) baixar(`Socios${i}.zip`);
 sh(`cd ${WORK} && rm -rf emp/ soc/ && mkdir emp soc && for z in Empresas*.zip; do unzip -o -q $z -d emp/; done && for z in Socios*.zip; do unzip -o -q $z -d soc/; done`);
+if (APAGAR_ZIPS) sh(`cd ${WORK} && rm -f Empresas*.zip Socios*.zip`);
 sanear("emp"); sanear("soc");
 baixar("Municipios.zip");
 sh(`cd ${WORK} && rm -rf mun/ && unzip -o -q Municipios.zip -d mun/`);
@@ -182,9 +186,13 @@ duck(`
 const brutas = readFileSync(`${WORK}/final.jsonl`, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const porCnae = new Map<string, number>();
 const linhas: RadarEmpresaRow[] = [];
+// Rejeições LOCAIS contadas por motivo (antes era um `continue` mudo): com o CNPJ alfanumérico
+// (RFB jul/2026) e o DV validado em montarCnpj, uma linha fora do formato é sinal, não ruído.
+const rejeitadasLocal = { cnpj: 0, cnae: 0 };
 for (const r of brutas) {
   const cnpj = montarCnpj(r.b ?? "", r.o ?? "", r.dv ?? "");
-  if (!cnpj || !/^\d{7}$/.test(r.cnae1 ?? "")) continue;
+  if (!cnpj) { rejeitadasLocal.cnpj++; continue; }
+  if (!/^\d{7}$/.test(r.cnae1 ?? "")) { rejeitadasLocal.cnae++; continue; }
   porCnae.set(r.cnae1, (porCnae.get(r.cnae1) ?? 0) + 1);
   linhas.push({
     cnpj,
@@ -263,9 +271,22 @@ const post = async (body: unknown) => {
 await post({ action: "begin_lote", mes: MES });
 for (let i = 0; i < municipios.length; i += 1000)
   await post({ action: "chunk_municipios", mes: MES, linhas: municipios.slice(i, i + 1000) });
+// Soma o que a edge descartou (por motivo) e deduplicou — o retorno dos chunks era ignorado.
+const descartadasEdge: Record<string, number> = {};
+let duplicadasNoChunk = 0;
 for (let i = 0; i < linhas.length; i += 1000) {
-  await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) });
+  const resp = (await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) })) as
+    { descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+  for (const [motivo, n] of Object.entries(resp?.descartadas_por_motivo ?? {})) {
+    descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
+  }
+  duplicadasNoChunk += resp?.duplicadas_no_chunk ?? 0;
   if ((i / 1000) % 25 === 0) console.log(`… ${i}/${linhas.length}`);
 }
+const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
+  + Object.values(descartadasEdge).reduce((a, b) => a + b, 0);
+console.log(`${totalRejeitadas > 0 ? "⚠️" : "📋"} rejeições — local: ${JSON.stringify(rejeitadasLocal)}`
+  + ` · edge: ${JSON.stringify(descartadasEdge)} · duplicadas no chunk: ${duplicadasNoChunk}`
+  + (totalRejeitadas > 0 ? " — confira antes de confiar no lote (CNPJ fora do formato RFB/DV, CNAE ≠ 7 dígitos)" : ""));
 const fin = await post({ action: "finalize", mes: MES });
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));

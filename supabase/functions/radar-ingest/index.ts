@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -13,7 +14,6 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
 const MES_RE = /^\d{4}-\d{2}$/;
-const CNPJ_RE = /^\d{14}$/;
 
 // Espelho fino do authorizeCronOrStaff: cron-secret OU staff master via JWT.
 async function autorizado(req: Request): Promise<boolean> {
@@ -74,12 +74,21 @@ Deno.serve(async (req) => {
       const linhas = (body.linhas ?? []) as Record<string, unknown>[];
       if (!Array.isArray(linhas) || linhas.length === 0) return json({ error: "linhas vazio" }, 400);
       if (linhas.length > 1000) return json({ error: "máx 1000 linhas/chunk" }, 400);
-      const validas = linhas.filter((l) =>
-        CNPJ_RE.test(String(l.cnpj ?? "")) && /^\d{7}$/.test(String(l.cnae_principal ?? "")));
-      if (validas.length !== linhas.length) {
-        console.warn(`chunk: ${linhas.length - validas.length} linhas inválidas descartadas`);
+      // Descarte POR MOTIVO (CNPJ alfanumérico RFB jul/2026 — formato, DV, CNAE): a contagem volta
+      // no JSON para o chamador registrar; antes era só um console.warn que ninguém lia e uma
+      // empresa nova com letra sumia em silêncio.
+      const descartadas_por_motivo: Record<MotivoDescarte, number> = { cnpj_formato: 0, cnpj_dv: 0, cnae: 0 };
+      const validas: Record<string, unknown>[] = [];
+      for (const l of linhas) {
+        const motivo = motivoDescarte(l.cnpj, l.cnae_principal);
+        if (motivo) descartadas_por_motivo[motivo]++;
+        else validas.push(l);
       }
-      if (validas.length === 0) return json({ ok: true, upserted: 0, descartadas: linhas.length });
+      const descartadas = linhas.length - validas.length;
+      if (descartadas > 0) {
+        console.warn(`chunk ${mes}: ${descartadas} linhas descartadas`, descartadas_por_motivo);
+      }
+      if (validas.length === 0) return json({ ok: true, upserted: 0, descartadas, descartadas_por_motivo });
       // ⚠️ payload SÓ com campos cadastrais + ultimo_lote: o UPDATE do upsert não
       // toca primeira_vista_em / prospeccao_status / ja_cliente (preservação por omissão).
       const payload = validas.map((l) => ({
@@ -102,7 +111,8 @@ Deno.serve(async (req) => {
       if (error) throw error;
       // Sem contador incremental no chunk: a contagem oficial (total/novos) é
       // recomputada no finalize com count real da tabela — chunk replay-safe.
-      return json({ ok: true, upserted: finalPayload.length, descartadas: linhas.length - finalPayload.length });
+      return json({ ok: true, upserted: finalPayload.length, descartadas, descartadas_por_motivo,
+        duplicadas_no_chunk: validas.length - finalPayload.length });
     }
 
     if (action === "chunk_municipios") {
