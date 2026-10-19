@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **665** custom migrations totais
-- **2124** objetos esperados (criados por estas migrations)
+- **666** custom migrations totais
+- **2127** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 769
+  - `function`: 772
   - `rls_policy`: 476
   - `index`: 279
   - `cron_job`: 187
@@ -5367,6 +5367,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.pedido_total_liquido_converter` | — |
 | `table` | `public.pedido_total_liquido_excecao` | — |
+
+### `20261019140000_omie_identidade_cnpj_alfanumerico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cnpj_alfanumerico_valido` | — |
+| `function` | `public.normalizar_documento` | — |
+| `function` | `public.omie_sync_identity_snapshot` | — |
 
 ### `20261019150000_radar_recruzar_mascara_exata.sql`
 
