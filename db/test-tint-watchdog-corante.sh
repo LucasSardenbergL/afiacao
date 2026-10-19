@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — tint_watchdog_corante_check() (Fase 5b#2, PR 1)                  ║
+# ║  PROVA PG17 — tint_watchdog_corante_check() v2 (Fase 5b#2 + incidente 10-19)   ║
 # ║  bash db/test-tint-watchdog-corante.sh > /tmp/t.log 2>&1; echo "exit=$?"       ║
 # ║  (NÃO pipe pra tail — engole o exit≠0.)                                        ║
 # ║                                                                                ║
-# ║  O QUE PROVA (a migration 20260727150000):                                     ║
+# ║  O QUE PROVA (aplica a v1 20260727150000 e a v2 20261019150000 por cima; a     ║
+# ║  suíte e as sabotagens rodam sobre a v2):                                      ║
 # ║   A1 corante impagável EM USO  -> alerta criado (fin_alertas + e-mail)         ║
 # ║   A2 corante impagável FORA de uso -> NÃO alerta      (precisão > recall)      ║
 # ║   A3 impagável só em fórmula DESATIVADA -> NÃO alerta (precisão > recall)      ║
@@ -16,11 +17,16 @@
 # ║   A7 severidade escala com o nº de fórmulas atingidas (Codex [P2])             ║
 # ║   A8 dead-man cruzado NÃO alarma quando a Camada B ainda não existe            ║
 # ║   A9 marcador da Camada B stale (>13h) -> alerta watchdog parado               ║
+# ║   A10 corante impagável só em fórmula cuja base NÃO tem vínculo Omie -> MUDO   ║
+# ║   A10b idem com base Omie INATIVA -> MUDO (espelha v_base_disponivel da RPC)   ║
+# ║   A11 corante sem vínculo Omie é rotulado pela DESCRIÇÃO, não pelo UUID        ║
 # ║  FALSIFICAÇÕES (cada uma declara o CONJUNTO EXATO que derruba):                ║
-# ║   F1 remove o filtro de USO            -> {A2,A3}                              ║
+# ║   F1 remove o filtro de USO            -> {A2,A3} + cascata A5,A6,A6b,A10,A10b ║
 # ║   F2 remove `ativo` do predicado       -> {A1}                                 ║
 # ║   F3 remove o bloco de agravamento     -> {A6}                                 ║
 # ║   F4 remove o marcador de sucesso      -> {A4}                                 ║
+# ║   F5 volta ao predicado de base da v1  -> {A10,A10b}                           ║
+# ║   F6 tira a descrição do corante do rótulo -> {A11,A11b}                       ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -64,12 +70,20 @@ DECLARE v bigint; BEGIN
   RETURN v;
 END $f$;
 
+-- a postcondição da v2 confere has_function_privilege por NOME de role
+DO $r$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated; END IF;
+END $r$;
+
 CREATE TABLE public.omie_products (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   valor_unitario numeric, ativo boolean, descricao text, codigo text);
 CREATE TABLE public.tint_corantes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  omie_product_id uuid, volume_total_ml numeric, ativo boolean DEFAULT true);
+  omie_product_id uuid, volume_total_ml numeric, ativo boolean DEFAULT true, descricao text);
+CREATE TABLE public.tint_skus (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), omie_product_id uuid);
 CREATE TABLE public.tint_formulas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   account text NOT NULL DEFAULT 'oben', sku_id uuid, cor_id uuid,
@@ -96,11 +110,20 @@ CREATE TABLE public.sync_state (
 CREATE UNIQUE INDEX sync_state_entity_account_uq ON public.sync_state (entity_type, account);
 SQL
 
-# ══ ZONA 2 — a migration REAL (Lei #1: nunca um stub da lógica) ══
-MIG="$REPO_ROOT/supabase/migrations/20260727150000_tint_watchdog_corante_impagavel.sql"
+# ══ ZONA 2 — as migrations REAIS (Lei #1: nunca um stub da lógica) ══
+MIG_V1="$REPO_ROOT/supabase/migrations/20260727150000_tint_watchdog_corante_impagavel.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261019150000_tint_watchdog_corante_v2_base_precificavel.sql"
+[ -f "$MIG_V1" ] || { echo "migration nao encontrada: $MIG_V1"; exit 1; }
 [ -f "$MIG" ] || { echo "migration nao encontrada: $MIG"; exit 1; }
+P -q -f "$MIG_V1"
+# a PRE da v2 só aceita a v1 cujo md5 foi medido em prod — prova que a v1 do repo É a de prod
+eq "PRE v1 do repo = v1 de prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "c512a912fb1725fb89413ddc6690fde3"
 P -q -f "$MIG"
-echo "=== migration aplicada ==="
+eq "v2 aplicada (marcador)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v2' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v2 aceita a si mesma na PRE (md5 da v2 listado)" "$(Pq -c "SELECT position(md5(prosrc) IN \$\$$(cat "$MIG")\$\$) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+P -q -f "$MIG"   # re-aplicar a v2 sobre ela mesma passa (idempotente)
+[ "$FAIL" -eq 0 ] || { echo "SETUP VERMELHO: ${FALHAS[*]}"; exit 1; }
+echo "=== migrations aplicadas (v1 -> v2) ==="
 
 # guarda o corpo verdadeiro, para restaurar depois de cada sabotagem
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_corante_check()'::regprocedure) AS def;"
@@ -117,16 +140,32 @@ INSERT INTO public.omie_products (id, valor_unitario, ativo, descricao) VALUES
  ('a0000000-0000-0000-0000-000000000003', 0,    true, 'CONCENTRADO SEM CUSTO'),
  ('a0000000-0000-0000-0000-000000000004', 0,    true, 'CONCENTRADO ORFAO'),
  ('a0000000-0000-0000-0000-000000000005', 0,    true, 'CONCENTRADO SO EM MORTA');
+-- bases: B_OK precifica; B_INAT inativa no Omie
+INSERT INTO public.omie_products (id, valor_unitario, ativo, descricao) VALUES
+ ('b0000000-0000-0000-0000-000000000001', 100, true,  'BASE OK'),
+ ('b0000000-0000-0000-0000-000000000003', 100, false, 'BASE INATIVA');
+-- SKU_OK -> B_OK; SKU_SEMVINC sem omie (linha nova); SKU_BINAT -> base inativa
+INSERT INTO public.tint_skus (id, omie_product_id) VALUES
+ ('5c000000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-000000000001'),
+ ('5c000000-0000-0000-0000-000000000002', NULL),
+ ('5c000000-0000-0000-0000-000000000003','b0000000-0000-0000-0000-000000000003');
 INSERT INTO public.tint_corantes (id, omie_product_id, volume_total_ml) VALUES
  ('c0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000001', 810),
  ('c0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000002', 810),
  ('c0000000-0000-0000-0000-000000000003','a0000000-0000-0000-0000-000000000003', 810),
  ('c0000000-0000-0000-0000-000000000004','a0000000-0000-0000-0000-000000000004', 810),
  ('c0000000-0000-0000-0000-000000000005','a0000000-0000-0000-0000-000000000005', 810);
+-- C_LINHA6/C_LINHA7: corantes da linha nova, sem vínculo Omie. C_SEMVINC: sem vínculo, com descrição.
+INSERT INTO public.tint_corantes (id, omie_product_id, volume_total_ml, descricao) VALUES
+ ('c0000000-0000-0000-0000-000000000006', NULL, 810, 'WFO.6506.71 - ACAB10 VIOLETA'),
+ ('c0000000-0000-0000-0000-000000000007', NULL, 810, 'WFO.6506.42 - ACAB10 BORDO'),
+ ('c0000000-0000-0000-0000-000000000008', NULL, 810, 'CORANTE SEM VINCULO X');
 -- F_ATIVA usa C_OK e C_INAT; F_MORTA (desativada) usa C_MORTA; C_ORFAO não é usado por ninguém.
 INSERT INTO public.tint_formulas (id, account, sku_id, cor_id, desativada_em, desativada_motivo) VALUES
  ('f0000000-0000-0000-0000-000000000001','oben','5c000000-0000-0000-0000-000000000001'::uuid,'c0100000-0000-0000-0000-000000000001'::uuid, NULL, NULL),
- ('f0000000-0000-0000-0000-000000000002','oben','5c000000-0000-0000-0000-000000000001'::uuid,'c0100000-0000-0000-0000-000000000002'::uuid, now(), 'fase5_geracao_legada');
+ ('f0000000-0000-0000-0000-000000000002','oben','5c000000-0000-0000-0000-000000000001'::uuid,'c0100000-0000-0000-0000-000000000002'::uuid, now(), 'fase5_geracao_legada'),
+ ('f0000000-0000-0000-0000-000000000003','oben','5c000000-0000-0000-0000-000000000002'::uuid,'c0100000-0000-0000-0000-000000000003'::uuid, NULL, NULL),
+ ('f0000000-0000-0000-0000-000000000004','oben','5c000000-0000-0000-0000-000000000003'::uuid,'c0100000-0000-0000-0000-000000000004'::uuid, NULL, NULL);
 INSERT INTO public.tint_formula_itens (formula_id, corante_id, qtd_ml) VALUES
  ('f0000000-0000-0000-0000-000000000001','c0000000-0000-0000-0000-000000000001', 10),
  ('f0000000-0000-0000-0000-000000000002','c0000000-0000-0000-0000-000000000005', 10);
@@ -136,8 +175,8 @@ reset_estado() {
   P -q -c "DELETE FROM public.fin_alertas; DELETE FROM public.fornecedor_alerta; DELETE FROM public.sync_state;"
 }
 # liga/desliga um corante impagável DENTRO de uma fórmula ATIVA
-usa_na_ativa() { P -q -c "INSERT INTO public.tint_formula_itens (formula_id, corante_id, qtd_ml) VALUES ('f0000000-0000-0000-0000-000000000001','$1', 5);"; }
-tira_da_ativa() { P -q -c "DELETE FROM public.tint_formula_itens WHERE formula_id='f0000000-0000-0000-0000-000000000001' AND corante_id='$1';"; }
+usa_na_ativa() { P -q -c "INSERT INTO public.tint_formula_itens (formula_id, corante_id, qtd_ml) VALUES ('${2:-f0000000-0000-0000-0000-000000000001}','$1', 5);"; }
+tira_da_ativa() { P -q -c "DELETE FROM public.tint_formula_itens WHERE formula_id='${2:-f0000000-0000-0000-0000-000000000001}' AND corante_id='$1';"; }
 
 alertas_ativos() { Pq -c "SELECT count(*) FROM public.fin_alertas WHERE tipo='$1' AND dismissed_at IS NULL;"; }
 emails()         { Pq -c "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '%$1%';"; }
@@ -173,6 +212,28 @@ roda_suite() {
   tira_da_ativa 'c0000000-0000-0000-0000-000000000003'
   P -q -c "SELECT public.tint_watchdog_corante_check();"
   eq "A5 dismiss quando volta a zero" "$(alertas_ativos tint_corante_impagavel)" "0"
+
+  # A10: incidente 2026-10-19 — linha nova cuja BASE nao tem vinculo Omie. A formula ja nao
+  # tem preco pela base; o corante nao e o bloqueio -> MUDO. Cada caso isolado (limpa depois).
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000006' 'f0000000-0000-0000-0000-000000000003'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A10 base sem vinculo Omie nao alarma" "$(alertas_ativos tint_corante_impagavel)" "0"
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000006' 'f0000000-0000-0000-0000-000000000003'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000007' 'f0000000-0000-0000-0000-000000000004'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A10b base Omie INATIVA nao alarma" "$(alertas_ativos tint_corante_impagavel)" "0"
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000007' 'f0000000-0000-0000-0000-000000000004'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+
+  # A11: corante sem vinculo Omie numa formula de base OK alarma, rotulado pela DESCRICAO
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000008'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A11 rotulo usa a descricao do corante" "$(Pq -c "SELECT position('CORANTE SEM VINCULO X (sem vinculo Omie)' IN contexto->>'detalhe') > 0 FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "t"
+  eq "A11b rotulo sem UUID" "$(Pq -c "SELECT position('c0000000-0000-0000-0000-000000000008' IN mensagem) FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "0"
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000008'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
 
   # A9: marcador da Camada B velho -> dead-man cruzado dispara
   P -q -c "INSERT INTO public.sync_state (entity_type, account, last_sync_at, status) VALUES ('tint_watchdog_fase5','oben', now() - interval '20 hours','complete');"
@@ -263,14 +324,12 @@ echo "=== FALSIFICACOES ==="
 #      contam SEMPRE: a chave nunca volta a zero (derruba o dismiss A5) e a
 #      contagem nunca sobe de 1->2 (derruba o agravamento A6/A6b). Declarado como
 #      medido: prever {A2,A3} e "consertar" o harness para casar seria repintar
-#      de verde uma sabotagem que de fato morde mais fundo.
+#      de verde uma sabotagem que de fato morde mais fundo. Na v2 a mesma cascata
+#      alcança A10/A10b: o alerta dos órfãos já está aberto quando eles medem.
 sabota_e_mede "F1" \
-  "AND EXISTS (SELECT 1 FROM tint_formula_itens fi
-                     JOIN tint_formulas f ON f.id = fi.formula_id
-                    WHERE fi.corante_id = c.id
-                      AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL)" \
-  "AND true" \
-  A2 A3 A5 A6 A6b
+  "WHERE u.formulas > 0;" \
+  "WHERE true;" \
+  A2 A3 A5 A6 A6b A10 A10b
 
 # F2 — remove o 'ativo' do predicado: o corante INATIVO deixa de ser impagável.
 #      Prova que a detecção cobre inatividade no Omie, não só custo zero.
@@ -293,6 +352,24 @@ sabota_e_mede "F4" \
   "'tint_watchdog_NOME_ERRADO', v_conta" \
   A4
 
+# F5 — volta ao predicado de base da v1 (só f.sku_id IS NOT NULL): a linha nova sem base no
+#      Omie volta a alarmar como corante caído. Prova que A10/A10b têm dente.
+sabota_e_mede "F5" \
+  "JOIN tint_skus s        ON s.id = f.sku_id
+      JOIN omie_products bp   ON bp.id = s.omie_product_id
+     WHERE fi.corante_id = r.id
+       AND f.desativada_em IS NULL
+       AND bp.valor_unitario > 0 AND COALESCE(bp.ativo, false)" \
+  "WHERE fi.corante_id = r.id
+       AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL" \
+  A10 A10b
+
+# F6 — tira a descrição do corante do rótulo: volta a listar UUID no e-mail.
+sabota_e_mede "F6" \
+  "NULLIF(btrim(c.descricao), ''), c.id::text)" \
+  "c.id::text)" \
+  A11 A11b
+
 # ══ fecho: re-roda a suíte na versão REAL e exige verde ══
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
@@ -304,4 +381,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 4 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 6 falsificacoes com conjunto exato"
