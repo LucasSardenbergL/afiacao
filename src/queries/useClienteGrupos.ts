@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 
 /**
  * Grupo de Cliente 360 — camada de dados (CRUD de grupos + membros).
@@ -80,7 +81,7 @@ export function useUpdateGrupo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (input: { id: string; nome?: string; notas?: string | null; ativo?: boolean }) => {
-      const patch: Record<string, unknown> = {};
+      const patch: TablesUpdate<'cliente_grupos'> = {};
       if (input.nome !== undefined) patch.nome = input.nome.trim();
       if (input.notas !== undefined) patch.notas = input.notas;
       if (input.ativo !== undefined) patch.ativo = input.ativo;
