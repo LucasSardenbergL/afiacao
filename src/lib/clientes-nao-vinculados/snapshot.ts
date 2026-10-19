@@ -1,6 +1,8 @@
 // Helpers puros do snapshot de clientes não-vinculados.
 // ⚠️ ESPELHADOS VERBATIM no edge function `omie-analytics-sync` (Deno não importa de src/).
-// Manter sem dependências externas.
+// Única dependência: o espelho `@/lib/omie/cnpj-alfanumerico` (mesmo contrato do `_shared/` do edge).
+
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
 export type OmieAccount = 'vendas' | 'servicos' | 'colacor_vendas';
 export type Empresa = 'oben' | 'colacor' | 'colacor_sc';
@@ -38,8 +40,11 @@ export function accountToEmpresa(account: OmieAccount): Empresa {
   }
 }
 
+// Mesmo contrato do edge (`_shared/cnpj-alfanumerico.ts`): só-dígitos para CPF/CNPJ numérico, letras
+// preservadas para CNPJ alfanumérico VÁLIDO (RFB jul/2026). Antes este espelho apagava letra e os testes
+// daqui deixavam de verificar o comportamento implantado (Codex BAIXO, 2026-10-19).
 export function normalizeDoc(raw: string | undefined | null): string {
-  return (raw ?? '').replace(/\D/g, '');
+  return normalizarDocumento(raw);
 }
 
 // Classificação de um cliente Omie contra os conjuntos em massa:

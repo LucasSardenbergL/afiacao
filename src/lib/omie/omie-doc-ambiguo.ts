@@ -16,6 +16,15 @@ export function docsComCodigoAmbiguoNoOmie(
   }
   const ambiguos = new Set<string>();
   for (const [doc, cods] of codigosPorDoc) if (cods.size > 1) ambiguos.add(doc);
+  // CNPJ alfanumérico (letra PRESERVADA pelo normalizarDocumento) cuja mutilação só-dígitos é o doc de
+  // OUTRO registro Omie: o snapshot SQL (doc_to_user) ainda chaveia o profile pelo só-dígitos, então o
+  // registro numérico casaria com o profile do alfanumérico (Codex ALTO, 2026-10-19). Antes da
+  // preservação os dois tinham a MESMA chave mutilada e caíam no ramo acima — mantém o fail-closed.
+  for (const doc of codigosPorDoc.keys()) {
+    if (!/[A-Z]/.test(doc)) continue;
+    const mutilado = doc.replace(/\D/g, "");
+    if (mutilado && codigosPorDoc.has(mutilado)) ambiguos.add(mutilado);
+  }
   return ambiguos;
 }
 // MIRROR-END

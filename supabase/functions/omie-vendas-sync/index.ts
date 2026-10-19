@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
@@ -759,7 +760,7 @@ async function buscarClienteVendas(
   account: Account = "oben",
   opts?: { throwOnTransient?: boolean },
 ) {
-  const documentClean = document.replace(/\D/g, "");
+  const documentClean = normalizarDocumento(document);
 
   const result = await callOmieVendasApi(
     "geral/clientes/",
@@ -1236,7 +1237,7 @@ async function syncPedidos(
       clientCache.set(codigoCliente, null);
       return null;
     }
-    const doc = (result.cnpj_cpf || '').replace(/\D/g, '');
+    const doc = normalizarDocumento(result.cnpj_cpf);
     // Cache address/phone from ConsultarCliente result
     const addrParts = [result.endereco, result.endereco_numero, result.complemento, result.bairro, result.cidade, result.estado, result.cep].filter(Boolean);
     const phone = result.telefone1_ddd && result.telefone1_numero ? `(${result.telefone1_ddd}) ${result.telefone1_numero}` : '';
@@ -2132,7 +2133,7 @@ function aplicarProvaPositivaNoCache(
 // Resolve os matches de cliente por documento na conta (registros_por_pagina:2 p/ detectar duplicata-CNPJ).
 // throwOnTransient: erro Omie transitório LANÇA (ausência só como array vazio confirmado, nunca timeout).
 async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
-  const documentClean = document.replace(/\D/g, "");
+  const documentClean = normalizarDocumento(document);
   const result = await callOmieVendasApi(
     "geral/clientes/",
     "ListarClientes",
@@ -2159,13 +2160,13 @@ async function deriveOmieAccountIdentity(
   suppliedCodigo: number | null,
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
-  let doc = rawDoc.replace(/\D/g, "");
+  let doc = normalizarDocumento(rawDoc);
   // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
   // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
   // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
   if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    doc = ((prof?.document as string | undefined) || "").trim().replace(/\D/g, "");
+    doc = normalizarDocumento(prof?.document);
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
@@ -2909,7 +2910,7 @@ Deno.serve(async (req) => {
       case "criar_cliente": {
         const { document: docCriar, razao_social, nome_fantasia, endereco, endereco_numero, bairro, cidade, estado, cep, telefone, contato } = params;
         if (!docCriar || !razao_social) throw new Error("Documento e razão social são obrigatórios");
-        const docClean = String(docCriar).replace(/\D/g, "");
+        const docClean = documentoParaCadastro(docCriar);
         // Lookup anti-duplicação ESTRITO (retroativo Codex): com o null
         // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
         // o IncluirCliente abaixo criava DUPLICATA no ERP. Transient → throw

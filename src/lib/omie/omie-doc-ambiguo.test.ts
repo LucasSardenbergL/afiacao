@@ -28,6 +28,26 @@ describe('docsComCodigoAmbiguoNoOmie (P1b fail-closed money-path)', () => {
     expect(r.size).toBe(0);
   });
 
+  it('alfanumérico preservado cuja mutilação só-dígitos é o doc de OUTRO registro → o numérico vira ambíguo (Codex ALTO)', () => {
+    // AEG12345678909 → só-dígitos 12345678909: o snapshot SQL chaveia o profile alfanumérico por esse
+    // número, e o registro numérico (outro código) casaria com o profile errado.
+    const r = docsComCodigoAmbiguoNoOmie([
+      { doc: 'AEG12345678909', codigo: 10 },
+      { doc: '12345678909', codigo: 20 },
+    ]);
+    expect(r.has('12345678909')).toBe(true);
+    expect(r.has('AEG12345678909')).toBe(false); // o alfanumérico nunca está no mapa SQL — não precisa
+    expect(r.size).toBe(1);
+  });
+
+  it('alfanumérico SEM gêmeo numérico → NÃO ambíguo (não inventa ambiguidade)', () => {
+    const r = docsComCodigoAmbiguoNoOmie([
+      { doc: 'AEG12345678909', codigo: 10 },
+      { doc: '99999999999', codigo: 20 },
+    ]);
+    expect(r.size).toBe(0);
+  });
+
   it('3+ códigos no mesmo doc → ambíguo', () => {
     const r = docsComCodigoAmbiguoNoOmie([
       { doc: '111', codigo: 100 },
@@ -79,7 +99,7 @@ const stableId = (o: unknown): string =>
 
 const canon = (xs: Iterable<string>): string[] => [...xs].sort();
 
-// Espelha VERBATIM os 7 fixtures do edge (case doc_ambiguo_probe) — a enumeração completa do oráculo.
+// Espelha VERBATIM os 9 fixtures do edge (case doc_ambiguo_probe) — a enumeração completa do oráculo.
 const PROBE_FIXTURES: Array<{ caso: string; registros: Array<{ doc: string; codigo: number }>; expected: string[] }> = [
   { caso: 'doc_1_codigo', registros: [{ doc: '111', codigo: 100 }], expected: [] },
   { caso: 'doc_2_codigos_distintos', registros: [{ doc: '111', codigo: 100 }, { doc: '111', codigo: 200 }], expected: ['111'] },
@@ -87,6 +107,8 @@ const PROBE_FIXTURES: Array<{ caso: string; registros: Array<{ doc: string; codi
   { caso: 'doc_3_codigos', registros: [{ doc: '111', codigo: 100 }, { doc: '111', codigo: 200 }, { doc: '111', codigo: 300 }], expected: ['111'] },
   { caso: 'doc_vazio_ignorado', registros: [{ doc: '', codigo: 100 }, { doc: '', codigo: 200 }], expected: [] },
   { caso: 'mistura_so_ambiguos', registros: [{ doc: 'A', codigo: 1 }, { doc: 'B', codigo: 2 }, { doc: 'B', codigo: 3 }, { doc: 'C', codigo: 4 }, { doc: 'C', codigo: 4 }], expected: ['B'] },
+  { caso: 'alfanumerico_mutilacao_de_outro', registros: [{ doc: 'AEG12345678909', codigo: 10 }, { doc: '12345678909', codigo: 20 }], expected: ['12345678909'] },
+  { caso: 'alfanumerico_sem_gemeo', registros: [{ doc: 'AEG12345678909', codigo: 10 }, { doc: '99999999999', codigo: 20 }], expected: [] },
   { caso: 'lista_vazia', registros: [], expected: [] },
 ];
 
@@ -104,7 +126,7 @@ describe('canária doc_ambiguo_probe: mecânica de comparação + fixtures (mesm
     expect(stableId(canon(['A']))).not.toBe(stableId(canon(['A', 'B'])));
   });
 
-  it('os 7 fixtures do probe rodam a função REAL e batem no esperado (probe → ok:true pós-deploy)', () => {
+  it('os 9 fixtures do probe rodam a função REAL e batem no esperado (probe → ok:true pós-deploy)', () => {
     for (const f of PROBE_FIXTURES) {
       const resolved = canon(docsComCodigoAmbiguoNoOmie(f.registros));
       expect(stableId(resolved), `fixture ${f.caso}: resolved diverge do expected`).toBe(stableId(canon(f.expected)));

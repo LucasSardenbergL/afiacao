@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
@@ -348,11 +349,11 @@ async function syncClienteOmie(
   }
 ): Promise<ClienteOmieResult> {
   // VALIDAÇÃO: CPF/CNPJ é obrigatório
-  if (!profile.document || profile.document.replace(/\D/g, "").length < 11) {
+  if (!profile.document || normalizarDocumento(profile.document).length < 11) {
     throw new Error("CPF ou CNPJ é obrigatório para criar pedidos. Por favor, atualize seu perfil.");
   }
 
-  const documentClean = profile.document.replace(/\D/g, "");
+  const documentClean = normalizarDocumento(profile.document);
 
   // P0-B-bis: identidade Omie pela VIEW FRESCA account-correta (colacor_sc), NÃO o espelho poluído
   // omie_clientes (mix de contas, rótulo 'colacor' mentiroso). Ausência na view → fallback API
@@ -1059,7 +1060,7 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
-        const documentClean = document.replace(/\D/g, "");
+        const documentClean = normalizarDocumento(document);
         try {
           const searchResult = await callOmieApi(
             "geral/clientes/",
@@ -1096,7 +1097,7 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
-        const docClean = docCriar.replace(/\D/g, "");
+        const docClean = documentoParaCadastro(docCriar);
         try {
           // First check if already exists
           const searchRes = await callOmieApi(
