@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 659
+-- Total de custom migrations: 661
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -723,7 +723,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql'),
   ('20261019090100', 'fin_dre_recalculo_diario_cron', '20261019090100_fin_dre_recalculo_diario_cron.sql'),
   ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
-  ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql')
+  ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql'),
+  ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
+  ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2804,7 +2806,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
-  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4933,7 +4938,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
-  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
 )
 SELECT
   e.migration,
@@ -5467,6 +5475,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reconciliar_pedidos_omie', 3, '20260906180000_order_items_identidade_linha.sql', '0a18feb377a089da307c822912a3fb36'),
   ('public', 'reconciliar_pedidos_omie', 4, '20260908215704_desconto_valor_atravessa_os_escritores.sql', '9086cdf6e69b8ca1b632d485d1c61dbf'),
   ('public', 'reconciliar_pedidos_omie', 5, '20260914180104_reconciliar_carrega_desconto_e_isola_coerencia.sql', 'bc85f6b5437a50fdb9a488867f4ee1a3'),
+  ('public', 'reconciliar_pedidos_omie', 6, '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql', '7bb459f58e37c6bc9691971f0b2aa009'),
   ('public', 'sayerlack_aplicar_custo_portal', 1, '20260905090000_sayerlack_custo_portal_cas.sql', 'ad876e8c210428971511537d07f019e6'),
   ('public', 'sayerlack_aplicar_custo_portal', 2, '20260906193522_valor_total_portal_provado.sql', 'b7ddc0e52eb4e7e23b9febf0ff8e5a98'),
   ('public', 'sayerlack_aplicar_custo_portal', 3, '20261006120000_preco_exato_po_sayerlack_ipi.sql', '1b967a515beb300b9e3215d31a04ffe4'),
@@ -5484,6 +5493,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'desconto_backfill_aplicar', 2, '20260910214850_desconto_backfill_aplicar_ja_apuradas.sql', '09e34b475c6f2b9cfd832b90e62d9b77'),
   ('public', 'pedido_total_liquido_converter', 1, '20260914181500_pedido_total_liquido_acervo.sql', 'ed8296520bc8513f55f4039161657cc8'),
   ('public', 'pedido_total_liquido_converter', 2, '20260914193000_pedido_total_liquido_acervo_mes_entre_contas.sql', 'dc365744059741095767a967d0c05055'),
+  ('public', 'pedido_total_liquido_converter', 3, '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql', 'b01c8f547258a2f3ffbafdf8a6e2812e'),
   ('public', 'expandir_promocao_item', 1, '20260929000234_padrao_like_contem_escapa_curinga.sql', '6a4779419c33db1ffe1f5c6bc6d7670b'),
   ('public', 'expandir_promocao_item', 2, '20260930220148_expandir_promocao_item_overload_similarity_volume.sql', '15cd9b2496f669df8e979de9545b4f98'),
   ('public', 'expandir_promocao_item', 3, '20261010224755_promocao_item_descricao_fornecedor_preservada.sql', 'cfe541d604932b2db559ba4a8e3a0790'),
