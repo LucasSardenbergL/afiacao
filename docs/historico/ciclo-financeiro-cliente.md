@@ -77,6 +77,18 @@ Spec `docs/superpowers/specs/2026-10-18-ciclo-giro-sku-design.md` · plano `docs
 
 Spec `docs/superpowers/specs/2026-10-18-ciclo-pmp-fornecedor-design.md` (§9 = calibração do challenge Codex, prevalece). Plano `docs/superpowers/plans/2026-10-18-ciclo-pmp-fornecedor.md`. Migration `20261018150000_fin_ciclo_fornecedor.sql`. Prova `db/test-fin-ciclo-fornecedor.sh` (40 asserts + 9 sabotagens INLINE, no `nucleo-ci`).
 
+### Pós-deploy (2026-10-18) — PME/NCG medidos em prod
+
+Edge `fin-cashflow-engine` **v1.5** no ar (sonda: DEPLOY CONFIRMADO; Publish do #3146 provado por `monitor-deploy.sh --pr 3146`). Leitura sem gravar (`save_snapshot:false`, cenário realista; `db/leitura-pme-ncg-v1.5-2026-10-18.sql`, `net._http_response` 122084–122086):
+
+| empresa | estoque (fonte) | PME | NCG | motivo |
+|---|---|---|---|---|
+| Oben | R$ 445.476 (Omie) | — | −R$ 876.123 (era −R$ 1.321.599 no snapshot v1.3) | DRE competência só até 2026-03 (6/12 meses fechados) → PME honesto `null` |
+| Colacor | R$ 1.064.000 (Omie) | **1.531 d** (CCC 1.525 d) | R$ 545.716 | CMV 12m R$ 253.707 (receita líquida R$ 576.747; CR emitido 12m R$ 793.412 confere) — estoque ≈ 4,2 anos de CMV: **dado real**, não bug |
+| Colacor SC | — | — | −R$ 151.829 (`parcial=true`) | sem SKU de giro |
+
+Pendência de DADO (fora desta entrega): o DRE competência da Oben em `fin_dre_snapshots` parou em 2026-03 — enquanto não voltar a fechar os meses, o PME da Oben fica `null` com motivo.
+
 ## A premissa que o founder derrubou
 
 O handoff pedia "fila de fornecedores onde cabe negociar prazo maior". O founder: *prazo maior = preço de compra maior*. Ele quer o menor preço, o estoque girando rápido e receber cedo. A frente virou **"quanto o prazo está custando"**. O caso concreto é a Sayerlack: 2% de desconto no boleto pago até o vencimento (vem escrito no boleto); antecipado dá 2% na NF; acima disso o preço sobe. Desde jul/2026 o boleto vence em 9–11 d, por escolha da fábrica.
