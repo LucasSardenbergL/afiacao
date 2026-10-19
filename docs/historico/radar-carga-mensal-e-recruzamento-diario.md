@@ -25,15 +25,32 @@
 
 Pasta `YYYY-MM` aparece na 2ª semana do próprio mês: 2026-08 em 09/08, 2026-09 em 14/09, 2026-10 em 13/10. Dump de 2026-10: ~7,4 GB comprimidos (Estabelecimentos0 sozinho 2,1 GB; os outros nove ~330 MB; Empresas ~1,3 GB; Socios ~0,7 GB). Sonda ao vivo: `2026-10` → 200, `2026-11` → 404.
 
-## Cabe no runner? (estimativa — a 1ª execução real é a medição)
+## Cabe no runner? (estimativa feita antes da 1ª execução — medição real na seção seguinte)
 
 Repo público → ubuntu-latest 4 vCPU / 16 GB RAM / 6 h. Disco é o gargalo: o maior CSV descompactado passa de 10 GB e o saneamento (iconv + awk) faz cópia transitória → pico ~25 GB, impossível em `/` (~14 GB), ok em `/mnt` (~60 GB, **não garantido pela spec** → guarda `df` fail-closed antes de baixar). Tempo: download de 7,4 GB + 10 passadas de DuckDB + 527 POSTs — estimado em 2-4 h; `timeout-minutes: 350`. RAM: `final.jsonl` (526k linhas) é lido inteiro em memória (como no laptop). Se a 1ª execução estourar, a alternativa desenhada é um runner self-hosted/maior ou processar Empresas/Socios por partição (parecer Codex P0-5/P1-7).
+
+## 1ª execução real — medida (run 39262699046, 2026-10-19 13:44 → 16:42 UTC, 2h58 de um teto de 5h50)
+
+Secret `RADAR_CRON_SECRET` cadastrado pelo founder às 13:34 UTC; dispatch manual às 13:44. O seletor escolheu **2026-08** (o mais antigo pendente da janela, com só 2026-05 `complete`). Runner: 145 GB de disco, **86 GB livres** (`/mnt` é o mesmo filesystem de `/` nesse runner; a guarda de 40 GB passou com folga).
+
+| Fase | Duração |
+| --- | --- |
+| Download + filtro de Estabelecimentos0 (2,1 GB) | 48 min |
+| Os 10 zips de Estabelecimentos filtrados | 2h00 acumuladas |
+| Empresas + Socios + join + normalização | 47 min |
+| 502 POSTs (municípios + chunks + finalize) | 9m28s |
+
+Resultado: lote **2026-08 `complete`**, `total_recebido=501.380`, `novos=27.466` (`primeira_vista_em` de hoje). 14 linhas com aspas desbalanceadas descartadas no saneamento (como na 1ª carga manual). `ja_cliente` 3.001 → 3.007: o `finalize` recruzou 6 empresas novas que já eram clientes.
+
+**52.262 empresas ficaram com `ultimo_lote=2026-05`** (saíram do dump: fechadas ou mudaram de CNAE principal) e **continuam na fila de prospecção** — a lista não filtra por lote vigente. É o card "inéditos do lote"/foto vigente do bloco 2, e vale ser o próximo passo de produto: 1 em cada 10 leads da fila é foto velha.
+
+Com o writer rodado 1× em prod, o check da Sentinela abaixo está **desbloqueado**.
 
 ## Falha visível
 
 Job vermelho + e-mail do GitHub ao autor do último commit do schedule + `radar_ingest_state.status='error'`/`erro` quando a falha é na edge. **Não cobre ausência de execução** (schedule desativado após 60 dias sem commit, runner morto) — é o check da Sentinela abaixo.
 
-## Sensor desenhado (NÃO instalado — e por quê)
+## Sensor desenhado (NÃO instalado nesta entrega — desbloqueado pela 1ª execução)
 
 `_data_health_compute` é arquivo QUENTE multi-sessão e exige recriar **duas** funções (`data_health_watchdog` + `fin_sync_heartbeat`, IN-list de sources) com pré-flight `pg_get_functiondef`. A regra "check de marcador só nasce DEPOIS do writer existir e ter rodado 1× em prod" vale para a carga mensal: o writer (a Action) só existe após o merge e ainda não rodou. Dois checks, para a próxima entrega:
 
