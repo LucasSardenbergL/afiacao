@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 658
+-- Total de custom migrations: 660
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -721,6 +721,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261018160000', 'fcs_ftp_fecha_escrita_default', '20261018160000_fcs_ftp_fecha_escrita_default.sql'),
   ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql'),
   ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql'),
+  ('20261019090100', 'fin_dre_recalculo_diario_cron', '20261019090100_fin_dre_recalculo_diario_cron.sql'),
+  ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
   ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql')
 ),
@@ -2800,6 +2802,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
   ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
+  ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
@@ -4928,6 +4933,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
   ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_dre_recalculo_diario_cron', 'cron_job', 'cron', 'fin-dre-recalculo-diario', ''),
+  ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
+  ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')

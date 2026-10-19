@@ -43,8 +43,9 @@ export type ErroRpc = { tipo: "erro"; classe: ClasseErro; code: string | null; m
 
 export type DesfechoImportacao = ResultadoRpc | ErroRpc;
 
-const RPC_IMPORTAR = "importar_nfe_recebimento";
-const RPC_REGISTRAR_FALHA = "nfe_importacao_falha_registrar";
+// Os nomes das RPCs ficam LITERAIS nas chamadas `.rpc("…")` (não em constante): é assim que o
+// extrator de pré-condição do deploy (`pendencias:pacote` / `preflight:rpcs`) descobre de que
+// função do banco a edge depende — por indireção ele declara a lista incompleta e RECUSA o pacote.
 
 /** A partir de quantas falhas registradas a triagem do cron PULA a chave (a fila anda; o botão ignora). */
 export const TENTATIVAS_PARA_ESTACIONAR = 3;
@@ -158,7 +159,7 @@ export async function importarViaRpc(cliente: ClienteRpc, entrada: EntradaImport
   if (motivo !== null) return erroDeLote(motivo);
   let resposta: RespostaRpc;
   try {
-    resposta = await cliente.rpc(RPC_IMPORTAR, {
+    resposta = await cliente.rpc("importar_nfe_recebimento", {
       p_cabecalho: entrada.cabecalho,
       p_itens: entrada.itens,
       p_origem: entrada.origem,
@@ -213,7 +214,7 @@ export async function registrarFalhaImportacao(
     timer = setTimeout(() => resolve("prazo"), deadlineMs);
   });
   try {
-    const escrita = Promise.resolve(cliente.rpc(RPC_REGISTRAR_FALHA, {
+    const escrita = Promise.resolve(cliente.rpc("nfe_importacao_falha_registrar", {
       p_chave_acesso: falha.chaveAcesso,
       p_origem: falha.origem,
       p_sqlstate: falha.code,
