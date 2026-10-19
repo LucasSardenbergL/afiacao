@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
@@ -284,7 +285,7 @@ async function validarVendedorMultiOmie(cnpjCpf: string): Promise<{
   vendedores: Array<{ conta: string; codigo_vendedor: number | null; nome_vendedor: string | null; encontrado: boolean }>;
   divergencias: string[];
 }> {
-  const docLimpo = cnpjCpf.replace(/\D/g, "");
+  const docLimpo = normalizarDocumento(cnpjCpf);
   const accounts = getOmieAccounts();
   
   const resultados = await Promise.all(
@@ -507,7 +508,7 @@ function isIndustrialByCNAE(cnae: string): boolean {
 }
 
 async function consultarCNPJ(cnpj: string): Promise<CNPJData | null> {
-  const cnpjLimpo = cnpj.replace(/\D/g, '');
+  const cnpjLimpo = normalizarDocumento(cnpj);
   if (cnpjLimpo.length !== 14) return null;
 
   try {
@@ -532,7 +533,7 @@ function isEmployeeByTags(tags: Array<{ tag: string }> | undefined): boolean {
 }
 
 async function buscarClientePorDocumento(documento: string): Promise<{ cliente: OmieCliente | null; cnpjData: CNPJData | null; isIndustrial: boolean; isEmployee: boolean }> {
-  const docLimpo = documento.replace(/\D/g, "");
+  const docLimpo = normalizarDocumento(documento);
   
   if (docLimpo.length !== 11 && docLimpo.length !== 14) {
     throw new Error("Documento inválido. Informe um CPF (11 dígitos) ou CNPJ (14 dígitos)");
@@ -853,7 +854,7 @@ Deno.serve(async (req) => {
 
         // Check if a profile with the same document (CPF/CNPJ) already exists
         if (cliente.cnpj_cpf) {
-          const docLimpo = cliente.cnpj_cpf.replace(/\D/g, "");
+          const docLimpo = normalizarDocumento(cliente.cnpj_cpf);
           if (docLimpo.length >= 11) {
             // Caminho rápido: o documento é gravado já normalizado por este edge e pelo
             // sync_all_clients, então o match direto resolve o caso comum sem varrer a tabela.
@@ -878,7 +879,7 @@ Deno.serve(async (req) => {
             // novo para quem já tinha cadastro.
             if (!matchedUserId) {
               for await (const pagina of paginarProfilesComDocumento(adminClient)) {
-                const hit = pagina.find((p) => p.document.replace(/\D/g, "") === docLimpo);
+                const hit = pagina.find((p) => normalizarDocumento(p.document) === docLimpo);
                 if (hit) {
                   matchedUserId = hit.user_id;
                   break;
@@ -943,7 +944,7 @@ Deno.serve(async (req) => {
             name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
             email: cliente.email || null,
             phone: cliente.telefone || null,
-            document: cliente.cnpj_cpf ? cliente.cnpj_cpf.replace(/\D/g, "") : null,
+            document: cliente.cnpj_cpf ? normalizarDocumento(cliente.cnpj_cpf) : null,
           });
 
         if (profileError) {
@@ -1095,7 +1096,7 @@ Deno.serve(async (req) => {
         // um usuário Auth NOVO para cliente que já tinha cadastro. Esta é a fábrica dos clones.
         const profileByDoc = new Map<string, string>();
         for await (const pagina of paginarProfilesComDocumento(adminClient)) {
-          for (const p of pagina) profileByDoc.set(p.document.replace(/\D/g, ""), p.user_id);
+          for (const p of pagina) profileByDoc.set(normalizarDocumento(p.document), p.user_id);
         }
 
         console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
@@ -1187,7 +1188,7 @@ Deno.serve(async (req) => {
 
             for (const cliente of clientes) {
               const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
-              const cnpjCpf = cliente.cnpj_cpf?.replace(/\D/g, "") || "";
+              const cnpjCpf = normalizarDocumento(cliente.cnpj_cpf);
 
               if (!codigoCliente || cnpjCpf.length < 11) {
                 accSkipped++;

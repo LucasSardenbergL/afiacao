@@ -84,7 +84,7 @@ export const respostaSonda = criarRespostaSonda("analyze-unified-order");
  * `ia-nao-precifica-v1`); v1.4 = hotfix do BOOT_ERROR. Por quê: docs/historico/ia-nao-precifica.md.
  * `v1.6-so-imagem-2-passos`: só-imagem transcreve a foto e ranqueia catálogo/perfis INTEIROS (transcricao.ts).
  */
-export const VERSAO = "v1.7-cliente-ia-com-coleira";
+export const VERSAO = "v1.8-cnpj-alfanumerico";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
