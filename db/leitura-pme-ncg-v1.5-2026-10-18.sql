@@ -20,7 +20,7 @@ BEGIN
     RAISE NOTICE 'LEITURA_PME % %', c, rid;
     n := n + 1;
   END LOOP;
-  IF n <> 3 THEN
+  IF n IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'LEITURA_PME FALHOU: % disparos, esperado 3', n;
   END IF;
 END
