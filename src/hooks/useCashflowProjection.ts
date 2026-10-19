@@ -77,7 +77,7 @@ export type CashflowResult = {
   }>;
 };
 
-/** `opcoes.fila`/`retryDelay`: a aba Ciclo põe a edge na MESMA fila das RPCs dela (carga escalonada — ver ciclo-fila.ts). */
+/** `opcoes.fila`/`retryDelay`: a aba Ciclo põe a edge na faixa própria dela (filaCicloEdge) (carga escalonada — ver ciclo-fila.ts). */
 export function useCashflowProjection(
   company: string, cenario: Cenario = 'realista', horizonWeeks = 13,
   opcoes: { fila?: Fila; retryDelay?: (tentativa: number) => number } = {},
