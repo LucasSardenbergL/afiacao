@@ -42,20 +42,10 @@ function smartRound(qty: number): number {
   return Math.abs(qty - rounded) < 0.05 ? rounded : Math.ceil(qty);
 }
 
-/**
- * O NCM em 8 dígitos, que é o que cabe em `nfe_recebimento_itens.ncm` (`varchar(8)`).
- *
- * O Omie devolve o NCM PONTUADO (`2909.60.90`), e gravá-lo cru estourava a coluna: 22001 no
- * insert do lote inteiro, e toda NF-e de produção ficou só com o cabeçalho (0 itens, medido em
- * 2026-09-26). O NCM é o bloco `dddd.dd.dd` do início (pontos opcionais); o que vem depois de um
- * separador não-dígito é extensão (EX TIPI, ex.: `3920.49.00.01`) e não faz parte dele. Qualquer
- * outra forma vira `null`: ausente, nunca um código fabricado por corte ou preenchimento.
- */
-export function normalizarNcm(bruto: string | null | undefined): string | null {
-  if (bruto == null) return null;
-  const m = /^\s*(\d{4})\.?(\d{2})\.?(\d{2})(?:\D.*)?$/.exec(bruto);
-  return m ? `${m[1]}${m[2]}${m[3]}` : null;
-}
+// `normalizarNcm` mora em `_shared/ncm.ts` (o webhook também a usa, e import entre pastas de função
+// não entra no bundle do Lovable); re-exportada aqui para quem já importava deste módulo.
+export { normalizarNcm } from "../_shared/ncm.ts";
+import { normalizarNcm } from "../_shared/ncm.ts";
 
 export function mapearItensRecebimento(rawItems: OmieRecebimentoItem[]): ItemRecebimentoRow[] {
   return rawItems.map((item, idx) => {

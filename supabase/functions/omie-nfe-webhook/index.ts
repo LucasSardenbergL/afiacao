@@ -2,12 +2,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { type ClienteRpc, erroDeLote, importarViaRpc, registrarFalhaImportacao, registravel } from "../_shared/nfe-importacao.ts";
-import { normalizarChaveAcesso } from "../omie-nfe-recebimento-sync/chave.ts";
+import { normalizarChaveAcesso } from "../_shared/nfe-chave.ts";
 import { responderDesfecho } from "./resposta.ts";
-// `normalizarNcm` mora na sync porque o incidente (NCM pontuado estourando `varchar(8)`, 22001 no
-// lote inteiro, 2026-09-26) foi medido lá; o webhook grava a MESMA coluna com o MESMO dado do Omie.
-// Erro determinístico no lote é o pior caso do retry: repete a mesma falha para sempre.
-import { normalizarNcm } from "../omie-nfe-recebimento-sync/itens.ts";
+// `normalizarNcm` em `_shared/`: o incidente (NCM pontuado estourando `varchar(8)`, 22001 no lote
+// inteiro, 2026-09-26) foi medido na sync, e o webhook grava a MESMA coluna com o MESMO dado do Omie.
+// ⚠️ NUNCA importar de "../omie-nfe-recebimento-sync/…": o empacotador do Lovable leva só esta pasta
+// + _shared/ — o deploy da v1.3 falhou com "Module not found" por isso.
+import { normalizarNcm } from "../_shared/ncm.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
