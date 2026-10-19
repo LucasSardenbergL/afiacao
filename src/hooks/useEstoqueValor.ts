@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPages } from '@/lib/postgrest';
 
 export type EstoqueValor = { valor: number; data_ref: string; fonte: string; cobertura_pct: number | null };
 
@@ -38,9 +39,13 @@ export function useSalvarEstoque(company: string) {
  * há inventário manual dos últimos 45 dias. Sem SKU de giro com custo → lança (nunca R$ 0).
  */
 export async function estimarEstoqueOmie(company: string) {
-  const { data, error } = await supabase.rpc('fin_estoque_giro_valor', { p_company: company });
-  if (error) throw error;
-  const row = (Array.isArray(data) ? data[0] : data) as {
+  // Set-returning (1 linha por empresa hoje): paginado mesmo assim — a capa de 1.000 do PostgREST vale para .rpc().
+  const linhas = await fetchAllPages(
+    (de, ate) => supabase.rpc('fin_estoque_giro_valor', { p_company: company })
+      .order('valor_giro', { ascending: true }).range(de, ate),
+    'fin_estoque_giro_valor',
+  );
+  const row = (linhas[0] ?? null) as {
     valor_giro: number | null; skus_giro: number; skus_giro_com_custo: number; cobertura_pct: number | null;
   } | null;
   if (!row || row.valor_giro == null) throw new Error('Sem estoque de giro com custo no Omie para esta empresa');
