@@ -1,6 +1,6 @@
 # Radar: CNPJ alfanumérico de ponta a ponta (RFB, desde jul/2026)
 
-> PR: #PR_NUM (2026-10-19). Bloco seguinte ao #3169 (carga mensal automática + recruzamento diário). Origem: P0 do parecer Codex de desenho do #3169, fora daquele bloco.
+> PR: #3175 (2026-10-19). Bloco seguinte ao #3169 (carga mensal automática + recruzamento diário). Origem: P0 do parecer Codex de desenho do #3169, fora daquele bloco.
 
 ## O problema
 
