@@ -31,7 +31,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // tendo o deploy acontecido ou não — o "mente verde" da ⚠️ #2 de docs/agent/deploy.md.
 // v1.4 → v1.5: PME e NCG com estoque de GIRO do Omie (fin_estoque_giro_valor) em vez de 0 fabricado
 // por fin_estoque_valor vazia; CMV exige os 12 meses fechados; PME/estoque viram null + motivo.
-export const VERSAO = "v1.5-pme-estoque-giro";
+// v1.5 → v1.6: baixa CR derivada lida em UMA chamada (RPC fin_titulo_baixas_cr_mapa) em vez de
+// paginar v_titulo_baixas — cada página reavaliava a view inteira e a colacor dava 57014 (500).
+export const VERSAO = "v1.6-baixas-cr-rpc";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

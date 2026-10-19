@@ -18,6 +18,7 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente, tolerarLeitura } fro
 // contrato de leitura acima é o que fecha a engine — ler certo e não gravar é tão
 // silencioso quanto gravar lixo; nenhum dos dois basta sozinho.
 import { escritaCritica } from "../_shared/escrita-critica.ts";
+import { carregarBaixasCr } from "./baixas-cr.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -360,14 +361,10 @@ async function carregarDados(
         .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
     , 'fin_contas_pagar'),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
-    // aging. Paginado (oben CR ~11k linhas > cap 1000 do PostgREST — sem isso a
-    // cobertura cairia falsa). order estável; usado SÓ na calibração, PMR/PMP/dias_
-    // cobertura do engine ficam intactos (sem regressão, sem novo viés do colacor).
-    fetchAll<Record<string, unknown>>((from, to) =>
-      // @ts-expect-error - v_titulo_baixas (view nova) não está nos types gerados
-      supabase.from('v_titulo_baixas').select('omie_codigo_lancamento, data_baixa_final')
-        .eq('company', company).eq('tipo', 'CR').order('omie_codigo_lancamento', { ascending: true }).range(from, to)
-    , 'v_titulo_baixas'),
+    // aging. UMA leitura via RPC (jsonb, fora do cap de 1000): paginar a view reavaliava-a
+    // inteira a cada página e estourou o statement_timeout na colacor (ver ./baixas-cr.ts).
+    // Usado SÓ na calibração, PMR/PMP/dias_cobertura do engine ficam intactos.
+    carregarBaixasCr(supabase, company),
     Promise.all([
       // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
       supabase.from('fin_contas_correntes').select('saldo_atual')
@@ -469,11 +466,7 @@ async function carregarDados(
   // Fase 3: mapa da baixa derivada por omie_codigo_lancamento (CR), pra calibrar as
   // curvas de aging com o TIMING real do recebimento (não a coluna base sempre-NULL).
   const baixaCrPorCod = new Map<number, string>();
-  for (const b of (baixaCrData as Array<{ omie_codigo_lancamento?: number | null; data_baixa_final?: string | null }>)) {
-    if (b.omie_codigo_lancamento != null && b.data_baixa_final) {
-      baixaCrPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final);
-    }
-  }
+  for (const b of baixaCrData) baixaCrPorCod.set(b.omie_codigo_lancamento, b.data_baixa_final);
 
   const cps: CP[] = (cpsData as Array<Record<string, unknown>>).map((c) => ({
     id: c.id as string,
