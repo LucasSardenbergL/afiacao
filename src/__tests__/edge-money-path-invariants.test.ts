@@ -4708,7 +4708,7 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(count(webhook, '.from("nfe_recebimentos").insert('), 'o webhook voltou a inserir cabeçalho fora da transação').toBe(0);
     expect(count(rodada, 'nfe_recebimento_itens'), 'a rodada não grava itens por conta própria').toBe(0);
     expect(rpc, 'a RPC é chamada pelo nome canônico').toContain('cliente.rpc(RPC_IMPORTAR');
-    expect(compartilhado).toContain('export const RPC_IMPORTAR = "importar_nfe_recebimento";');
+    expect(compartilhado).toContain('const RPC_IMPORTAR = "importar_nfe_recebimento";');
     expect(deps, 'o cron grava pela RPC, com a origem certa').toMatch(/importar:\s*\(cabecalho, itens\)\s*=>\s*importarViaRpc\(/);
     expect(deps).toContain('origem: "sync"');
     expect(manual, 'o botão grava pela RPC, com a origem certa').toContain('importarViaRpc(');

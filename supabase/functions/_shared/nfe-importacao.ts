@@ -13,10 +13,10 @@
 
 import { mensagemDeErro } from "./erro-mensagem.ts";
 
-export type OrigemImportacao = "webhook" | "sync" | "importacao_chave";
+type OrigemImportacao = "webhook" | "sync" | "importacao_chave";
 
 /** Erro como o PostgREST o devolve: `message` e `code` (SQLSTATE, ou `PGRST…`). */
-export type ErroPostgrest = { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
+type ErroPostgrest = { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
 export type RespostaRpc = { data?: unknown; error: ErroPostgrest | null };
 
 /** O que este módulo usa do supabase-js — e NADA mais. */
@@ -24,7 +24,7 @@ export interface ClienteRpc {
   rpc(fn: string, args: Record<string, unknown>): PromiseLike<RespostaRpc>;
 }
 
-export type ResultadoRpc =
+type ResultadoRpc =
   | { tipo: "importada" | "reparada" | "ja_importada"; id: string; itens: number }
   /** Cabeçalho sem itens que NÃO pode ser completado (não-pendente ou em uso). */
   | { tipo: "bloqueada"; id: string; itens: number; motivo: string }
@@ -43,14 +43,14 @@ export type ErroRpc = { tipo: "erro"; classe: ClasseErro; code: string | null; m
 
 export type DesfechoImportacao = ResultadoRpc | ErroRpc;
 
-export const RPC_IMPORTAR = "importar_nfe_recebimento";
-export const RPC_REGISTRAR_FALHA = "nfe_importacao_falha_registrar";
+const RPC_IMPORTAR = "importar_nfe_recebimento";
+const RPC_REGISTRAR_FALHA = "nfe_importacao_falha_registrar";
 
 /** A partir de quantas falhas registradas a triagem do cron PULA a chave (a fila anda; o botão ignora). */
 export const TENTATIVAS_PARA_ESTACIONAR = 3;
 
 /** Teto da escrita no ledger de falhas: ela não pode segurar a resposta ao Omie (promessa pendurada = sem deadline). */
-export const LEDGER_DEADLINE_MS = 5_000;
+const LEDGER_DEADLINE_MS = 5_000;
 
 const SQLSTATES_DE_DADO = new Set([
   "22001", // string_data_right_truncation (ncm > 8…)
