@@ -1,0 +1,41 @@
+scripts/codex-async.sh: line 127: 17700 Terminated: 15          sleep 1
+saldo da cota: 25.0% usado (teto 85%, leitura de 13 min atrás)
+=== PARECER CODEX (modelo gpt-6-astra · reasoning high · tentativa 1 · 146s · 63.065 tokens) ===
+**Recomendação: corrigir a spec antes de implementar.** Há P1 capazes de fabricar perdas e pontualidade. Não identifiquei P0 demonstrável. Revisão estática: li os arquivos indicados; não abri o snapshot, alterei código ou executei PG17.
+
+1. **P1 — “Desconto perdido” pode cobrar desconto já obtido (§4.4).**  
+   A regra inclui todo pagamento atrasado. Um título de R$ 10.000, pago atrasado com R$ 200 de desconto, produziria outros R$ 200 “perdidos”. Também contradiz §7: pagamento em dia com desconto embutido na NF pode entrar como perda. **Correção:** exigir elegibilidade demonstrada da condição; calcular `max(desconto_elegível − desconto_observado, 0)`. Desconto desconhecido permanece desconhecido; “conferir boleto” fica fora do total e do ranking de perdas.
+
+2. **P1 — Regime e taxa generalizam evidência insuficiente (§4.4 versus §8).**  
+   Três parcelas da mesma NF podem abrir regime; cinco descontos comerciais podem virar “pontualidade”. Abrir no primeiro mês retroage a títulos anteriores à condição. A regra também perpetua 2% depois de eventual mudança para 1%. **Correção:** segmentar por empresa, fornecedor, condição e vigência; contar documentos independentes; não retroagir ao início do mês; medir cobertura entre todos os elegíveis. Consolidar as regras conflitantes numa definição normativa.
+
+3. **P1 — A taxa ampliada da §8 não cabe no contrato do espelho.**  
+   A §8 aceita títulos `divergente` com `identidade_ok` para estimar taxa. Porém, o [espelho CR](/Users/lucassardenberg/Projetos/afiacao-claude-ciclo-pmp-fornecedor/supabase/migrations/20261013094000_fin_movimentacoes_resumo_encargos.sql:301) devolve desconto decisório NULL nesses casos e não expõe `identidade_ok` nem desconto informado separadamente. **Correção:** expor evidência bruta validada, desconto decisório e elegibilidade da taxa em campos distintos. Coerência aritmética não demonstra que o desconto decorre de pontualidade.
+
+4. **P1 — Data substituta ainda fabrica pontualidade (§8).**  
+   `titulo_data_movimento` pode representar registro/previsão, como reconhece o próprio molde. Sem `data_pagamento_omie`, um movimento datado no vencimento pode classificar como pontual um pagamento posterior. **Correção:** aceitar essa fonte somente com semântica comprovada para o evento CP; caso contrário, “data incerta”. Definir explicitamente denominadores: percentual entre pagamentos datáveis, cobertura sobre pagamentos totais e parcela desconhecida. Nunca transformar desconhecido em pontual por complemento.
+
+5. **P1 — Pagamentos parciais são impossíveis pelo espelho proposto (§4.2/§8).**  
+   O molde de encargos filtra quitados; `v_titulo_baixas` também exige PAGO/LIQUIDADO. Assim, ATRASADO de R$ 1.000 com R$ 400 pagos não fornece o `tem_baixa` esperado. O espelho tampouco expõe o aberto requerido. Além disso, parcial antes do vencimento não pode virar vencido automaticamente. **Correção:** criar fatos que incluam abertos/parciais, exponham principal pago e saldo validado, reconciliem pago+aberto e classifiquem o remanescente pela data de vencimento.
+
+6. **P1 — Dedup dos encargos não protege o PMP (§4.2).**  
+   No fallback CC, [v_titulo_baixas](/Users/lucassardenberg/Projetos/afiacao-claude-ciclo-pmp-fornecedor/supabase/migrations/20260909074613_v_titulo_baixas_otica_canonica.sql:117) soma movimentos sem esse dedup. O exemplo 12182935508 pode carregar R$ 34.177,57 e duas datas nessa rota, embora encargos sejam `divergente`. **Correção:** manter o controle fiel ao engine, mas proteger o PMP decisório com elegibilidade própria e cobertura. A ponte também precisa mostrar a troca de peso `valor_baixado → valor_documento`, além de universo e janela.
+
+7. **P1 — Rentabilidade mensal usa intervalo inexistente (§4.4).**  
+   Vencimento−emissão não é necessariamente o prazo entre pagar com desconto e pagar sem desconto. “2% em 10 dias rende 6,2% a.m.” inventa essa alternativa; N=0 divide por zero e N negativo produz interpretação absurda. **Correção:** exigir duas condições reais, com preços e datas, usando a diferença entre essas datas. Sem alternativa observada, mostrar somente desconto percentual; exigir `0<d<1` e N>0.
+
+8. **P1 — Cascata de nomes pode multiplicar dinheiro (§4.2).**  
+   Um fornecedor com dez pedidos pode multiplicar cada parcela por dez num join direto. Código Omie sem empresa pode associar outro fornecedor. **Correção:** resolver exatamente um nome por `(company, fornecedor)` antes do join; exigir unicidade dos fatos por título e invariância das somas após enriquecimento.
+
+9. **P1 — Gate deixa rota direta e quarta RPC indefinidas (§4.3).**  
+   Copiar os grants do molde permite consultar views como `authenticated`, contornando o gate master quando a RLS autoriza acesso financeiro. `security_invoker` aplica permissões existentes; não cria restrição master. [Documentação PG17](https://www.postgresql.org/docs/17/sql-createview.html). **Correção:** fechar leitura direta das views exclusivas e exigir gate/ACL/postcondição também em `fin_ciclo_cp_empresa`. Filtrar empresa depois da agregação exige preservar empresa em todos os joins e agrupamentos.
+
+10. **P2 — Ausência pode parecer custo zero; R$/dia tem direção ambígua.**  
+    `SUM` ignora NULL; 80% de cobertura não torna o subtotal um total completo. “Sem taxa e sem encargo” pode esconder fornecedor desconhecido. E reduzir PMP **consome** caixa. **Correção:** distinguir zero comprovado, subtotal e desconhecido; manter pendências visíveis; rotular R$/dia como sensibilidade de caixa, com sinal explícito.
+
+**PG17 que falta:** parcelas da mesma NF; joins multiplicadores; duas baixas legítimas iguais com IDs distintos; versão que altera data/valor; aberto parcial antes/depois do vencimento; PAGO sem movimento; fontes de data ausentes; conjuntos integral/parcialmente NULL; denominador zero; fronteiras da janela/SP; acesso direto às views; quatro RPCs com usuário sem sessão, não-master e empresa trocada. Regime, taxa e N≤0 também exigem testes TS.
+
+**Concordo** com categorias explícitas por empresa, separação entre CNPJs, NULL≠0, distinção baixa/liquidação, controle engine separado, nomes ausentes visíveis e exclusão de divergências do dinheiro decisório.
+
+(cópia em /var/folders/cz/94l8x0rn6hqfk080j49r247r0000gn/T/codex-async.XXXXXX.n9qRFqR7UY)
+EXIT=0

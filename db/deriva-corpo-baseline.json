@@ -246,6 +246,16 @@
       "efeito": "SO_CITA",
       "motivo": "O 'patch' é a própria migration do CREATE: a postcondição POS5 lê pg_get_functiondef e procura 'cap_custo_ler'. md5(prosrc) de prod (xmin 12050366) = md5 do corpo do CREATE = 3f7e2616681ecdd48e9d3bd8555b2b61, conferido via psql-ro em 2026-10-16.",
       "desde": "2026-10-16"
+    },
+    {
+      "funcao": "analytics_outbox_pedido_compra",
+      "identidade": "",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20261011150000_reposicao_recusa_definitiva_portal_servidor.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/aplicar-analytics-outbox-insert-ja-aprovado.sql (db_aplicacoes #518, 2026-10-18, PR #3149): o ramo TG_OP='INSERT' passa a emitir criada E aprovada quando o pedido nasce com aprovado_em (importação do portal Sayerlack perdia 'aprovada', 3 de 3). TRAVA → PRE (md5 vivo = 049e1b52… da 20261011150000) → CREATE → backfill → PÓS; prova PG17 db/test-analytics-outbox-insert-ja-aprovado.sh (fixture = prod, md5 conferido). Corpo = o da 20261011150000 + ramo novo com array_append + INSERT ... SELECT FROM unnest. Histórico: docs/historico/outbox-insert-ja-aprovado.md.",
+      "md5": "ae665653674267a3613b015366375a33",
+      "md5Tokens": "83a4733748558d479b3c34d367c28cd8",
+      "desde": "2026-10-18"
     }
   ]
 }
