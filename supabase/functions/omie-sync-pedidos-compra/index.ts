@@ -1036,6 +1036,7 @@ async function passadaEncerrados(
     error_message: ok ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "sem motivo"}`,
     metadata: {
       ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: new Date().toISOString(),
+      seq, versao: VERSAO, // correlaciona o heartbeat com a tentativa do registro protegido (Codex v1.8)
       // v1.8: o conjunto que as guardas RECUSARAM, só para os controles do #3132 — o registro protegido (o que o
       // backtest lê) segue 'invalidado' e sem ids. Sobrescrito pelo 'running' da próxima passada.
       ...(diagnostico ? { diagnostico } : {}),
