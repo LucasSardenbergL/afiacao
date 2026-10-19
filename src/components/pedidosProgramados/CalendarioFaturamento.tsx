@@ -19,12 +19,14 @@ import {
 
 const DOT_CLS: Record<Exclude<StatusEnvio, 'cancelado'>, string> = {
   agendado: 'bg-status-info',
+  processando: 'bg-status-warning',
   enviado: 'bg-status-success',
   erro: 'bg-status-error',
 };
 
 const BADGE_CLS: Record<StatusEnvio, string> = {
   agendado: 'text-status-info',
+  processando: 'text-status-warning',
   enviado: 'text-status-success',
   erro: 'text-status-error',
   cancelado: 'text-muted-foreground',

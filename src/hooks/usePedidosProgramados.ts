@@ -1,88 +1,63 @@
 // Pedidos programados (Lider): queries + mutations da tela /sales/programados.
-// Tabelas novas ainda fora dos tipos gerados do Supabase → casts `as never` no .from()
-// (mesmo padrão do order_feed em useSalesOrders) com tipos locais na borda.
+// Tabelas tipadas pelo types.ts gerado → `.from()` TIPADO do supabase-js (coluna, argumento e
+// retorno checados pelo typecheck). Nenhum `as never`/`as unknown as`: o que o banco entrega
+// como texto (`status`, `account`) viaja como `string` até a borda que precisa do union, e lá
+// é ESTREITADO por guarda de tipo (`ehStatusEnvio`), nunca por cast.
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json, Tables, TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
-import { isOmieIncerto } from '@/lib/pedidosProgramados/helpers';
-import type { EnvioCalendario, StatusEnvio } from '@/lib/pedidosProgramados/calendario';
+import { isOmieIncerto, type AccountPP } from '@/lib/pedidosProgramados/helpers';
+import { ehStatusEnvio, type EnvioCalendario } from '@/lib/pedidosProgramados/calendario';
 
-interface PedidoProgramado {
-  id: string;
-  cliente_ref: string;
-  arquivo_path: string;
-  numero_pedido_compra: string | null;
-  versao: string | null;
-  data_emissao_cliente: string | null;
-  status: 'extraindo' | 'erro_extracao' | 'ativo' | 'concluido' | 'cancelado';
-  erro_motivo: string | null;
-  created_at: string;
-}
+// Linha do banco como o types.ts a conhece. `status` é texto no banco
+// ('extraindo' | 'erro_extracao' | 'ativo' | 'concluido' | 'cancelado'); as telas indexam
+// `Record<string, …>` e comparam por igualdade, então o tipo largo é o honesto aqui.
+type PedidoProgramado = Tables<'pedidos_programados'>;
 
-export interface ProdutoMapeado {
-  id: string;
-  omie_codigo_produto: number;
-  codigo: string;
-  descricao: string;
-  unidade: string | null;
-  account: 'oben' | 'colacor';
-  ativo: boolean | null;
-}
+export type ProdutoMapeado = Pick<
+  Tables<'omie_products'>,
+  'id' | 'omie_codigo_produto' | 'codigo' | 'descricao' | 'unidade' | 'account' | 'ativo'
+>;
+const COLUNAS_PRODUTO = 'id, omie_codigo_produto, codigo, descricao, unidade, account, ativo';
 
-export interface PedidoProgramadoItem {
-  id: string;
-  pedido_programado_id: string;
-  envio_id: string | null;
-  codigo_item_cliente: string;
-  num_ordem_cliente: string | null;
-  descricao_cliente: string;
-  quantidade: number;
-  unidade: string | null;
-  data_entrega_cliente: string | null;
-  cod_forn: string | null;
-  preco_pdf: number | null;
-  preco_final: number | null;
-  mapa_id: string | null;
+export interface PedidoProgramadoItem extends Tables<'pedidos_programados_itens'> {
   mapa: { id: string; ultimo_preco: number | null; omie_products: ProdutoMapeado | null } | null;
 }
 
-interface PedidoProgramadoEnvio {
-  id: string;
-  pedido_programado_id: string;
-  data_envio: string;
-  // 'processando' = claim transitório do edge (migration 20260704070000): o runner é o
-  // dono do envio até o release; cancelamentos (CAS em agendado/erro) não o enxergam.
-  status: 'agendado' | 'processando' | 'enviado' | 'erro' | 'cancelado';
-  erro_motivo: string | null;
-  sales_orders_map: Record<string, string>;
-  created_at: string;
+// 'processando' = claim transitório do edge (migration 20260704070000): o runner é o
+// dono do envio até o release; cancelamentos (CAS em agendado/erro) não o enxergam.
+type PedidoProgramadoEnvio = Tables<'pedidos_programados_envios'>;
+
+export type PedidoProgramadoConfig = Omit<Tables<'pedidos_programados_config'>, 'account' | 'updated_at'> & {
+  account: AccountPP;
+};
+
+// sales_orders_map é jsonb (`Json` no types): só o objeto {account: sales_order_id} é o
+// contrato — qualquer outra forma (null, array, escalar) rende mapa vazio, sem cast.
+function idsDoMapaDePedidos(j: Json | null): string[] {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return [];
+  return Object.values(j).filter((v): v is string => typeof v === 'string');
 }
 
-export interface PedidoProgramadoConfig {
-  account: 'oben' | 'colacor';
-  codigo_cliente_omie: number | null;
-  customer_user_id: string | null;
-  obs_venda: string | null;
-  dados_adicionais_nf: string | null;
-  codigo_parcela: string | null;
+function comoAccountPP(s: string | null | undefined): AccountPP | null {
+  return s === 'oben' || s === 'colacor' ? s : null;
 }
-
-// .from() sem tipos gerados (tabelas novas): cast único aqui.
-const t = (name: string) => supabase.from(name as never);
 
 export function usePedidosProgramadosLista() {
   return useQuery({
     queryKey: ['pedidos-programados'],
     staleTime: 60_000,
-    queryFn: async () => {
-      const { data, error } = await t('pedidos_programados')
+    queryFn: async (): Promise<PedidoProgramado[]> => {
+      const { data, error } = await supabase
+        .from('pedidos_programados')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return (data ?? []) as unknown as PedidoProgramado[];
+      return data ?? [];
     },
   });
 }
@@ -94,13 +69,15 @@ export function usePedidoProgramadoDetalhe(id: string | undefined) {
     staleTime: 30_000,
     queryFn: async () => {
       const [header, itens, envios] = await Promise.all([
-        t('pedidos_programados').select('*').eq('id', id!).single(),
-        t('pedidos_programados_itens')
-          .select('*, mapa:cliente_item_mapa(id, ultimo_preco, omie_products(id, omie_codigo_produto, codigo, descricao, unidade, account, ativo))')
+        supabase.from('pedidos_programados').select('*').eq('id', id!).single(),
+        supabase
+          .from('pedidos_programados_itens')
+          .select(`*, mapa:cliente_item_mapa(id, ultimo_preco, omie_products(${COLUNAS_PRODUTO}))`)
           .eq('pedido_programado_id', id!)
           .order('data_entrega_cliente', { ascending: true, nullsFirst: false })
           .order('codigo_item_cliente', { ascending: true }),
-        t('pedidos_programados_envios')
+        supabase
+          .from('pedidos_programados_envios')
           .select('*')
           .eq('pedido_programado_id', id!)
           .order('data_envio', { ascending: true }),
@@ -108,17 +85,21 @@ export function usePedidoProgramadoDetalhe(id: string | undefined) {
       if (header.error) throw header.error;
       if (itens.error) throw itens.error;
       if (envios.error) throw envios.error;
-      const normalizados = ((itens.data ?? []) as unknown as PedidoProgramadoItem[]).map((it) => ({
+      const normalizados: PedidoProgramadoItem[] = (itens.data ?? []).map((it) => ({
         ...it,
         // numeric do PostgREST pode vir string — converter na borda (contrato do helpers.ts)
         quantidade: Number(it.quantidade),
         preco_pdf: it.preco_pdf === null ? null : Number(it.preco_pdf),
         preco_final: it.preco_final === null ? null : Number(it.preco_final),
+        mapa: it.mapa
+          ? { id: it.mapa.id, ultimo_preco: it.mapa.ultimo_preco, omie_products: it.mapa.omie_products ?? null }
+          : null,
       }));
+      const enviosDoPedido: PedidoProgramadoEnvio[] = envios.data ?? [];
       return {
-        pedido: header.data as unknown as PedidoProgramado,
+        pedido: header.data,
         itens: normalizados,
-        envios: (envios.data ?? []) as unknown as PedidoProgramadoEnvio[],
+        envios: enviosDoPedido,
       };
     },
   });
@@ -128,10 +109,15 @@ export function usePedidosProgramadosConfig() {
   return useQuery({
     queryKey: ['pedidos-programados-config'],
     staleTime: 60_000,
-    queryFn: async () => {
-      const { data, error } = await t('pedidos_programados_config').select('*');
+    queryFn: async (): Promise<PedidoProgramadoConfig[]> => {
+      const { data, error } = await supabase.from('pedidos_programados_config').select('*');
       if (error) throw error;
-      return (data ?? []) as unknown as PedidoProgramadoConfig[];
+      // `account` é texto no banco; a config só existe para as 2 contas do programa — linha
+      // fora delas não tem tela e não entra (precisão > recall, sem fabricar conta).
+      return (data ?? []).flatMap((c) => {
+        const account = comoAccountPP(c.account);
+        return account ? [{ ...c, account }] : [];
+      });
     },
   });
 }
@@ -139,20 +125,6 @@ export function usePedidosProgramadosConfig() {
 // Calendário de faturamento: 1 query por mês visível ('YYYY-MM').
 // queryKey com prefixo 'pedidos-programados' → invalidação automática pelas
 // mutations existentes (invalidar() usa exatamente esse prefixo).
-interface EnvioCalendarioRow {
-  id: string;
-  pedido_programado_id: string;
-  data_envio: string;
-  status: StatusEnvio;
-  erro_motivo: string | null;
-  pedido: { numero_pedido_compra: string | null } | null;
-  itens: Array<{
-    quantidade: number | string;
-    preco_final: number | string | null;
-    mapa: { omie_products: { account: 'oben' | 'colacor' } | null } | null;
-  }>;
-}
-
 const CAPA_POSTGREST = 1000;
 
 export function usePedidosProgramadosCalendario(mes: string) {
@@ -163,32 +135,37 @@ export function usePedidosProgramadosCalendario(mes: string) {
     queryFn: async () => {
       const [ano, m] = mes.split('-').map(Number);
       const ultimoDia = new Date(ano, m, 0).getDate(); // dia 0 do mês seguinte = último do mês
-      const { data, error } = await t('pedidos_programados_envios')
+      const { data, error } = await supabase
+        .from('pedidos_programados_envios')
+        // Literal ÚNICO: concatenado com `+` o supabase-js não infere as colunas (GenericStringError)
         .select(
-          'id, pedido_programado_id, data_envio, status, erro_motivo, ' +
-            'pedido:pedidos_programados(numero_pedido_compra), ' +
-            'itens:pedidos_programados_itens(quantidade, preco_final, mapa:cliente_item_mapa(omie_products(account)))',
+          'id, pedido_programado_id, data_envio, status, erro_motivo, pedido:pedidos_programados(numero_pedido_compra), itens:pedidos_programados_itens(quantidade, preco_final, mapa:cliente_item_mapa(omie_products(account)))',
         )
         .gte('data_envio', `${mes}-01`)
         .lte('data_envio', `${mes}-${String(ultimoDia).padStart(2, '0')}`)
         .order('data_envio', { ascending: true })
         .limit(CAPA_POSTGREST);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as EnvioCalendarioRow[];
-      const envios: EnvioCalendario[] = rows.map((r) => ({
-        id: r.id,
-        pedido_programado_id: r.pedido_programado_id,
-        numero_pedido_compra: r.pedido?.numero_pedido_compra ?? null,
-        data_envio: r.data_envio,
-        status: r.status,
-        erro_motivo: r.erro_motivo,
-        itens: (r.itens ?? []).map((it) => ({
-          // numeric do PostgREST pode vir string — converter na borda (padrão do arquivo)
-          quantidade: Number(it.quantidade),
-          preco_final: it.preco_final === null ? null : Number(it.preco_final),
-          account: it.mapa?.omie_products?.account ?? null,
-        })),
-      }));
+      const rows = data ?? [];
+      const envios: EnvioCalendario[] = rows.map((r) => {
+        // Status fora do vocabulário do calendário: o banco mudou e esta tela não sabe
+        // desenhá-lo — erro visível (react-query) em vez de dot/badge inventado.
+        if (!ehStatusEnvio(r.status)) throw new Error(`Envio ${r.id} com status desconhecido: ${r.status}`);
+        return {
+          id: r.id,
+          pedido_programado_id: r.pedido_programado_id,
+          numero_pedido_compra: r.pedido?.numero_pedido_compra ?? null,
+          data_envio: r.data_envio,
+          status: r.status,
+          erro_motivo: r.erro_motivo,
+          itens: (r.itens ?? []).map((it) => ({
+            // numeric do PostgREST pode vir string — converter na borda (padrão do arquivo)
+            quantidade: Number(it.quantidade),
+            preco_final: it.preco_final === null ? null : Number(it.preco_final),
+            account: comoAccountPP(it.mapa?.omie_products?.account),
+          })),
+        };
+      });
       // Capa silenciosa do PostgREST: impossível no volume atual, mas nunca confiar em silêncio
       return { envios, truncado: rows.length === CAPA_POSTGREST };
     },
@@ -204,33 +181,29 @@ export function useBuscaProdutoMapeamento(termo: string, codForn: string | null)
     enabled: termoUtil || !!codForn,
     staleTime: 60_000,
     queryFn: async () => {
-      const sel = 'id, omie_codigo_produto, codigo, descricao, unidade, account, ativo';
       // O `await` INLINE tornava o `error` inalcançável por construção (ninguém guardava a
       // resposta): uma falha de RLS/timeout saía como "nenhum produto encontrado" na tela de
       // mapeamento, e o operador amarraria o item do cliente ao SKU errado — ou criaria um
       // mapeamento novo para um produto que já existe. Guardar a resposta e lançar deixa o
       // react-query mostrar o erro em vez de uma lista vazia convincente.
-      let sugestoes: unknown[] = [];
+      let sugestoes: ProdutoMapeado[] = [];
       if (codForn) {
-        const resp = await supabase.from('omie_products').select(sel).eq('codigo', codForn).limit(4);
+        const resp = await supabase.from('omie_products').select(COLUNAS_PRODUTO).eq('codigo', codForn).limit(4);
         if (resp.error) throw resp.error;
         sugestoes = resp.data ?? [];
       }
-      let busca: unknown[] = [];
+      let busca: ProdutoMapeado[] = [];
       if (termoUtil) {
         const resp = await supabase
           .from('omie_products')
-          .select(sel)
+          .select(COLUNAS_PRODUTO)
           .or(ilikeOr(['codigo', 'descricao'], termo))
           .order('descricao', { ascending: true })
           .limit(20);
         if (resp.error) throw resp.error;
         busca = resp.data ?? [];
       }
-      return {
-        sugestoes: sugestoes as unknown as ProdutoMapeado[],
-        busca: busca as unknown as ProdutoMapeado[],
-      };
+      return { sugestoes, busca };
     },
   });
 }
@@ -246,8 +219,9 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
   // como LIMPEZA de um abort (o erro acionável é o do abort, não o da limpeza).
   const desanexarItens = async (envioIds: string[]): Promise<boolean> => {
     if (envioIds.length === 0) return true;
-    const { error } = await t('pedidos_programados_itens')
-      .update({ envio_id: null } as never)
+    const { error } = await supabase
+      .from('pedidos_programados_itens')
+      .update({ envio_id: null })
       .in('envio_id', envioIds);
     return !error;
   };
@@ -263,12 +237,13 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         .from('pedidos-programados')
         .upload(path, file, { contentType: 'application/pdf', upsert: false });
       if (upErr) throw upErr;
-      const { data: header, error: insErr } = await t('pedidos_programados')
-        .insert({ arquivo_path: path, created_by: uid, status: 'extraindo' } as never)
+      const { data: header, error: insErr } = await supabase
+        .from('pedidos_programados')
+        .insert({ arquivo_path: path, created_by: uid, status: 'extraindo' })
         .select('id')
         .single();
       if (insErr || !header) throw insErr ?? new Error('Header não criado');
-      const headerId = (header as { id: string }).id;
+      const headerId = header.id;
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('pedido-programado-extrair', {
         body: { pedido_programado_id: headerId },
       });
@@ -290,10 +265,10 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
 
   const atualizarItem = useMutation({
     mutationFn: async (p: { id: string; quantidade?: number; preco_final?: number | null }) => {
-      const patch: Record<string, unknown> = {};
+      const patch: TablesUpdate<'pedidos_programados_itens'> = {};
       if (p.quantidade !== undefined) patch.quantidade = p.quantidade;
       if (p.preco_final !== undefined) patch.preco_final = p.preco_final;
-      const { error } = await t('pedidos_programados_itens').update(patch as never).eq('id', p.id);
+      const { error } = await supabase.from('pedidos_programados_itens').update(patch).eq('id', p.id);
       if (error) throw error;
     },
     onSuccess: invalidar,
@@ -302,18 +277,19 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
 
   const mapearItem = useMutation({
     mutationFn: async (p: { clienteRef: string; codigoItemCliente: string; omieProductId: string }) => {
-      const { data: mapa, error: mapaErr } = await t('cliente_item_mapa')
+      const { data: mapa, error: mapaErr } = await supabase
+        .from('cliente_item_mapa')
         .upsert(
-          { cliente_ref: p.clienteRef, codigo_item_cliente: p.codigoItemCliente, omie_product_id: p.omieProductId } as never,
+          { cliente_ref: p.clienteRef, codigo_item_cliente: p.codigoItemCliente, omie_product_id: p.omieProductId },
           { onConflict: 'cliente_ref,codigo_item_cliente' },
         )
         .select('id, ultimo_preco')
         .single();
       if (mapaErr || !mapa) throw mapaErr ?? new Error('De-para não salvo');
-      const m = mapa as { id: string; ultimo_preco: number | null };
       // Aplica a TODOS os itens pendentes deste pedido com o mesmo código do cliente
-      const { error: updErr } = await t('pedidos_programados_itens')
-        .update({ mapa_id: m.id } as never)
+      const { error: updErr } = await supabase
+        .from('pedidos_programados_itens')
+        .update({ mapa_id: mapa.id })
         .eq('pedido_programado_id', pedidoId!)
         .eq('codigo_item_cliente', p.codigoItemCliente)
         .is('envio_id', null);
@@ -326,26 +302,29 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
 
   const criarEnvio = useMutation({
     mutationFn: async (p: { itens: PedidoProgramadoItem[]; dataEnvio: string }) => {
-      const { data: envio, error: envErr } = await t('pedidos_programados_envios')
-        .insert({ pedido_programado_id: pedidoId!, data_envio: p.dataEnvio } as never)
+      const { data: envio, error: envErr } = await supabase
+        .from('pedidos_programados_envios')
+        .insert({ pedido_programado_id: pedidoId!, data_envio: p.dataEnvio })
         .select('id')
         .single();
       if (envErr || !envio) throw envErr ?? new Error('Envio não criado');
-      const envioId = (envio as { id: string }).id;
+      const envioId = envio.id;
       // Anexa SÓ itens ainda livres (.is null) e confere a contagem via representation:
       // um item capturado por outra via no meio (re-anexo do edge, outro envio) não pode
       // entrar aqui — envio com item já enviado ao Omie duplicaria o PV no reenvio.
-      const { data: anexados, error: updErr } = await t('pedidos_programados_itens')
-        .update({ envio_id: envioId } as never)
+      const { data: anexados, error: updErr } = await supabase
+        .from('pedidos_programados_itens')
+        .update({ envio_id: envioId })
         .in('id', p.itens.map((i) => i.id))
         .is('envio_id', null)
         .select('id');
       if (updErr) throw updErr;
-      if (((anexados ?? []) as unknown[]).length !== p.itens.length) {
+      if ((anexados ?? []).length !== p.itens.length) {
         // rollback: envio pela metade não pode ficar 'agendado' (o cron o enviaria parcial)
         const soltos = await desanexarItens([envioId]);
-        const { error: cancErr } = await t('pedidos_programados_envios')
-          .update({ status: 'cancelado' } as never).eq('id', envioId);
+        const { error: cancErr } = await supabase
+          .from('pedidos_programados_envios')
+          .update({ status: 'cancelado' }).eq('id', envioId);
         throw new Error(
           'Alguns itens mudaram de estado enquanto você agendava (outro envio ou cancelamento em andamento) — recarregue e re-selecione.' +
           (soltos && !cancErr ? '' : NOTA_LIMPEZA),
@@ -354,8 +333,9 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // Memória de preço: o preço final agendado vira o ultimo_preco do de-para
       for (const it of p.itens) {
         if (it.mapa_id && typeof it.preco_final === 'number' && it.preco_final > 0) {
-          const { error: memErr } = await t('cliente_item_mapa')
-            .update({ ultimo_preco: it.preco_final } as never)
+          const { error: memErr } = await supabase
+            .from('cliente_item_mapa')
+            .update({ ultimo_preco: it.preco_final })
             .eq('id', it.mapa_id);
           if (memErr) throw memErr;
         }
@@ -375,10 +355,10 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // Colacor falhou) NÃO pode ser cancelado — devolver os itens ao pool permitiria
       // re-agendá-los e criar pedido DUPLICADO real no ERP. Resolver no Omie primeiro
       // (excluir o pedido lá) ou reprocessar o restante com "Enviar agora".
-      const { data: envioRow, error: envErr } = await t('pedidos_programados_envios')
+      const { data: envioAtual, error: envErr } = await supabase
+        .from('pedidos_programados_envios')
         .select('status, erro_motivo, sales_orders_map').eq('id', envioId).single();
       if (envErr) throw envErr;
-      const envioAtual = envioRow as { status: string; erro_motivo: string | null; sales_orders_map: Record<string, string> | null };
       // Claim ativo (edge processando AGORA): o CAS abaixo já barraria, mas a mensagem
       // dedicada explica o estado — e o watchdog devolve claim órfão pra 'erro' em ~15min.
       if (envioAtual.status === 'processando') {
@@ -397,7 +377,7 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // ∪ sales_orders_map legado: a união cobre a janela de deploy em que o edge velho
       // (que só escreve o map) ainda roda com a migration aplicada — e o caso de map
       // perdido (write falhou) que só a coluna enxerga. Precisão > recall.
-      const idsDoMapa = Object.values(envioAtual.sales_orders_map ?? {});
+      const idsDoMapa = idsDoMapaDePedidos(envioAtual.sales_orders_map);
       const [porColuna, porMapa] = await Promise.all([
         supabase
           .from('sales_orders')
@@ -429,13 +409,14 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // UPDATE de 0 linhas. Só desanexa itens depois do CAS confirmar; na ordem
       // antiga, um envio que virasse 'enviado' no meio devolvia itens JÁ ENVIADOS
       // ao pool → envio novo → sales_order novo → PV_ novo → duplicata real no Omie.
-      const { data: cas, error: e2 } = await t('pedidos_programados_envios')
-        .update({ status: 'cancelado' } as never)
+      const { data: cas, error: e2 } = await supabase
+        .from('pedidos_programados_envios')
+        .update({ status: 'cancelado' })
         .eq('id', envioId)
         .in('status', ['agendado', 'erro'])
         .select('id');
       if (e2) throw e2;
-      if (((cas ?? []) as unknown[]).length !== 1) {
+      if ((cas ?? []).length !== 1) {
         throw new Error('Este envio mudou de estado enquanto você decidia (cron/Enviar agora) — recarregue e confira antes de repetir.');
       }
       if (!(await desanexarItens([envioId]))) {
@@ -471,10 +452,11 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       // Cancela o PEDIDO (header) — fluxo de revisão de PDF (VERSAO nova substitui a antiga).
       // Guard: qualquer envio 'enviado' ou 'erro' (pode ter parcial no Omie) bloqueia;
       // envios 'agendado' são cancelados junto (itens voltam ao pool e morrem com o header).
-      const { data: envios, error: envErr } = await t('pedidos_programados_envios')
+      const { data: envios, error: envErr } = await supabase
+        .from('pedidos_programados_envios')
         .select('id, status').eq('pedido_programado_id', pedidoId!);
       if (envErr) throw envErr;
-      const rows = (envios ?? []) as unknown as Array<{ id: string; status: string }>;
+      const rows = envios ?? [];
       // 'processando' bloqueia como 'enviado'/'erro': é o edge criando PV no Omie AGORA
       // (claim) — sem isto o header cancelaria com envio em voo.
       const travado = rows.find((e) => e.status === 'enviado' || e.status === 'erro' || e.status === 'processando');
@@ -493,13 +475,14 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       if (agendados.length > 0) {
         // Barreira 1: cancela envios re-condicionando o status no banco. Se o cron
         // enviou um deles entre o SELECT e aqui, ele NÃO volta no representation.
-        const { data: cas, error: e2 } = await t('pedidos_programados_envios')
-          .update({ status: 'cancelado' } as never)
+        const { data: cas, error: e2 } = await supabase
+          .from('pedidos_programados_envios')
+          .update({ status: 'cancelado' })
           .in('id', agendados)
           .eq('status', 'agendado')
           .select('id');
         if (e2) throw e2;
-        cancelados = ((cas ?? []) as unknown as Array<{ id: string }>).map((r) => r.id);
+        cancelados = (cas ?? []).map((r) => r.id);
         if (cancelados.length !== agendados.length) {
           const limpo = await desanexarItens(cancelados);
           throw new Error(
@@ -510,12 +493,13 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
       }
       // Barreira 2: envio novo criado (ou claim iniciado) por outra via entre o guard
       // e aqui. Predicado positivo (sem negação NULL-blind — regra PostgREST do repo).
-      const { data: restantes, error: eRest } = await t('pedidos_programados_envios')
+      const { data: restantes, error: eRest } = await supabase
+        .from('pedidos_programados_envios')
         .select('id')
         .eq('pedido_programado_id', pedidoId!)
         .in('status', ['agendado', 'processando', 'enviado', 'erro']);
       if (eRest) throw eRest;
-      if (((restantes ?? []) as unknown[]).length > 0) {
+      if ((restantes ?? []).length > 0) {
         const limpo = await desanexarItens(cancelados);
         throw new Error(
           'Surgiu um envio novo neste pedido durante o cancelamento — recarregue e resolva-o antes de cancelar.' +
@@ -523,13 +507,14 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
         );
       }
       // Barreira 3: o header só cancela se ainda está num status cancelável pela UI.
-      const { data: casHeader, error: e3 } = await t('pedidos_programados')
-        .update({ status: 'cancelado' } as never)
+      const { data: casHeader, error: e3 } = await supabase
+        .from('pedidos_programados')
+        .update({ status: 'cancelado' })
         .eq('id', pedidoId!)
         .in('status', ['ativo', 'erro_extracao'])
         .select('id');
       if (e3) throw e3;
-      if (((casHeader ?? []) as unknown[]).length !== 1) {
+      if ((casHeader ?? []).length !== 1) {
         const limpo = await desanexarItens(cancelados);
         throw new Error('O pedido mudou de estado durante o cancelamento — recarregue.' + (limpo ? '' : NOTA_LIMPEZA));
       }
@@ -546,7 +531,7 @@ export function usePedidosProgramadosMutations(pedidoId?: string) {
 
   const salvarConfig = useMutation({
     mutationFn: async (cfg: PedidoProgramadoConfig) => {
-      const { error } = await t('pedidos_programados_config').upsert(cfg as never, { onConflict: 'account' });
+      const { error } = await supabase.from('pedidos_programados_config').upsert(cfg, { onConflict: 'account' });
       if (error) throw error;
     },
     onSuccess: () => {
