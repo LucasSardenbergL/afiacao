@@ -2815,6 +2815,12 @@ Deno.serve(async (req) => {
           { caso: "doc_vazio_ignorado", registros: [{ doc: "", codigo: 100 }, { doc: "", codigo: 200 }], expected: [] },
           // mistura: só os ambíguos entram; os limpos ficam de fora (precisão do escopo do fail-closed)
           { caso: "mistura_so_ambiguos", registros: [{ doc: "A", codigo: 1 }, { doc: "B", codigo: 2 }, { doc: "B", codigo: 3 }, { doc: "C", codigo: 4 }, { doc: "C", codigo: 4 }], expected: ["B"] },
+          // CNPJ alfanumérico PRESERVADO (fatia cnpj-alfanumerico) cuja mutilação só-dígitos é o doc de
+          // OUTRO registro → o numérico vira ambíguo (o snapshot SQL ainda chaveia por só-dígitos e
+          // casaria o código errado — Codex ALTO 2026-10-19). Velho: ∅ (os dois tinham a mesma chave mutilada).
+          { caso: "alfanumerico_mutilacao_de_outro", registros: [{ doc: "AEG12345678909", codigo: 10 }, { doc: "12345678909", codigo: 20 }], expected: ["12345678909"] },
+          // alfanumérico SEM gêmeo numérico → ∅ (não se inventa ambiguidade)
+          { caso: "alfanumerico_sem_gemeo", registros: [{ doc: "AEG12345678909", codigo: 10 }, { doc: "99999999999", codigo: 20 }], expected: [] },
           // lista vazia → ∅ (nenhum doc marcado por acidente)
           { caso: "lista_vazia", registros: [], expected: [] },
         ];
@@ -2829,12 +2835,14 @@ Deno.serve(async (req) => {
         // fatias atrás — "ter canária não dispensa marcador". O nome NOMEIA a fatia que ela verifica:
         // o fail-closed do P1b (doc com >1 código no Omie não vira vínculo).
         // ⚠️ BUMP obrigatório a cada fatia que mude essa tabela-verdade.
+        //   v2 (2026-10-19, cnpj-alfanumerico): o numérico que é a MUTILAÇÃO de um alfanumérico presente no
+        //   mesmo run também é ambíguo — um bundle velho responde ∅ no caso `alfanumerico_mutilacao_de_outro`.
         // `canary: true` acompanha o `probe_no_ar` histórico para a receita SQL do guia — que aqui
         // precisa descer no envelope `data` (esta edge responde `{success,data}`, não no topo).
         result = {
           success: true,
           canary: true,
-          contrato: "doc-ambiguo-fail-closed-v1",
+          contrato: "doc-ambiguo-mutilacao-alfanumerica-v2",
           probe_no_ar: true, // a action respondeu → o helper P1b está no build deployado
           ok: casosDoc.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosDoc,

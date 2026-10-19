@@ -49,6 +49,11 @@ busca ficam como estão):
 | `omie-sync` | v1.5 | gate/doc de profile, lookup, `criar_cliente_afiacao` → `documentoParaCadastro` |
 | `analyze-unified-order` | v1.8 | comparação `cDoc === rDoc` dos dois lados |
 
+**Canária `doc_ambiguo_probe` bumpada** para `doc-ambiguo-mutilacao-alfanumerica-v2` (o gate `canaria:bump`
+reprovou o `v1`: a tabela-verdade mudou e um bundle velho responderia `ok:true` mentindo). Ganhou os fixtures
+`alfanumerico_mutilacao_de_outro` (velho: ∅) e `alfanumerico_sem_gemeo`; espelho em `omie-doc-ambiguo.test.ts`,
+tabela de `deploy.md` §Canárias e `edge-money-path-invariants`.
+
 **Prova de 2 pontas com o MESMO literal** (`12ABC34501DE35`):
 
 - Deno `_shared/cnpj-alfanumerico_test.ts` (9 testes): o escritor emite esse byte para o exemplo oficial;
