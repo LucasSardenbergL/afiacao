@@ -2,13 +2,63 @@ import { describe, expect, it } from 'vitest';
 import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
   splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
+  CNPJ_RE, dvCnpj, cnpjValido,
 } from '../normalizar';
 
+// Oráculo externo: o exemplo OFICIAL da RFB para o CNPJ alfanumérico é 12.ABC.345/01DE-35
+// (manual do CNPJ alfanumérico, jul/2026). Se o algoritmo divergir dele, o teste é quem avisa.
+const RFB_EXEMPLO_BASE = '12ABC34501DE';
+const RFB_EXEMPLO_DV = '35';
+
+describe('dvCnpj — módulo 11 sobre ASCII-48 (regra RFB jul/2026)', () => {
+  it('reproduz o exemplo oficial da RFB (12.ABC.345/01DE-35)', () =>
+    expect(dvCnpj(RFB_EXEMPLO_BASE)).toBe(RFB_EXEMPLO_DV));
+  it('para base só-numérica coincide com a regra clássica (dígito = valor)', () =>
+    expect(dvCnpj('000001230001')).toBe('22'));
+  it('resto < 2 vira DV 0 (caso 99888777 0001 → 00)', () =>
+    expect(dvCnpj('998887770001')).toBe('00'));
+  it('base com tamanho errado ou caractere fora de [0-9A-Z] → null', () => {
+    expect(dvCnpj('12ABC34501D')).toBeNull();
+    expect(dvCnpj('12abc34501DE')).toBeNull();
+    expect(dvCnpj('12ABC34501D-')).toBeNull();
+  });
+});
+
+describe('CNPJ_RE / cnpjValido', () => {
+  it('formato: 12 posições [0-9A-Z] + 2 dígitos', () => {
+    expect(CNPJ_RE.test('12ABC34501DE35')).toBe(true);
+    expect(CNPJ_RE.test('00000123000122')).toBe(true);
+    expect(CNPJ_RE.test('12ABC34501DE3A')).toBe(false); // DV com letra
+    expect(CNPJ_RE.test('12abc34501DE35')).toBe(false); // minúscula
+    expect(CNPJ_RE.test('12ABC34501DE3')).toBe(false);  // 13
+  });
+  it('cnpjValido exige formato E DV', () => {
+    expect(cnpjValido('12ABC34501DE35')).toBe(true);
+    expect(cnpjValido('00000123000122')).toBe(true);
+    expect(cnpjValido('12ABC34501DE36')).toBe(false); // DV errado
+    expect(cnpjValido('00000123000144')).toBe(false); // DV errado numérico
+    expect(cnpjValido('12abc34501DE35')).toBe(false); // minúscula
+  });
+});
+
 describe('montarCnpj', () => {
-  it('compõe basico+ordem+dv com zero-pad', () =>
-    expect(montarCnpj('123', '1', '44')).toBe('00000123000144'));
-  it('rejeita componente não-numérico', () =>
-    expect(montarCnpj('abc', '0001', '44')).toBeNull());
+  it('compõe basico+ordem+dv com zero-pad (numérico, DV válido)', () =>
+    expect(montarCnpj('123', '1', '22')).toBe('00000123000122'));
+  it('aceita componentes alfanuméricos maiúsculos (exemplo oficial RFB)', () =>
+    expect(montarCnpj('12ABC345', '01DE', '35')).toBe('12ABC34501DE35'));
+  it('zero-pad também vale para componente alfanumérico curto', () =>
+    expect(montarCnpj('ABC', '1DE', dvCnpj('00000ABC01DE')!)).toBe(`00000ABC01DE${dvCnpj('00000ABC01DE')}`));
+  it('rejeita DV inválido (numérico e alfanumérico) — fail-closed', () => {
+    expect(montarCnpj('123', '1', '44')).toBeNull();
+    expect(montarCnpj('12ABC345', '01DE', '36')).toBeNull();
+  });
+  it('rejeita letra minúscula (o dump RFB é maiúsculo; não normaliza)', () =>
+    expect(montarCnpj('12abc345', '01DE', '35')).toBeNull());
+  it('rejeita DV não-numérico e caractere fora de [0-9A-Z]', () => {
+    expect(montarCnpj('12ABC345', '01DE', '3A')).toBeNull();
+    expect(montarCnpj('12-BC345', '01DE', '35')).toBeNull();
+    expect(montarCnpj('', '0001', '22')).toBeNull();
+  });
 });
 
 describe('normalizarData', () => {

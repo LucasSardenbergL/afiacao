@@ -186,9 +186,13 @@ duck(`
 const brutas = readFileSync(`${WORK}/final.jsonl`, "utf-8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 const porCnae = new Map<string, number>();
 const linhas: RadarEmpresaRow[] = [];
+// Rejeições LOCAIS contadas por motivo (antes era um `continue` mudo): com o CNPJ alfanumérico
+// (RFB jul/2026) e o DV validado em montarCnpj, uma linha fora do formato é sinal, não ruído.
+const rejeitadasLocal = { cnpj: 0, cnae: 0 };
 for (const r of brutas) {
   const cnpj = montarCnpj(r.b ?? "", r.o ?? "", r.dv ?? "");
-  if (!cnpj || !/^\d{7}$/.test(r.cnae1 ?? "")) continue;
+  if (!cnpj) { rejeitadasLocal.cnpj++; continue; }
+  if (!/^\d{7}$/.test(r.cnae1 ?? "")) { rejeitadasLocal.cnae++; continue; }
   porCnae.set(r.cnae1, (porCnae.get(r.cnae1) ?? 0) + 1);
   linhas.push({
     cnpj,
@@ -267,9 +271,22 @@ const post = async (body: unknown) => {
 await post({ action: "begin_lote", mes: MES });
 for (let i = 0; i < municipios.length; i += 1000)
   await post({ action: "chunk_municipios", mes: MES, linhas: municipios.slice(i, i + 1000) });
+// Soma o que a edge descartou (por motivo) e deduplicou — o retorno dos chunks era ignorado.
+const descartadasEdge: Record<string, number> = {};
+let duplicadasNoChunk = 0;
 for (let i = 0; i < linhas.length; i += 1000) {
-  await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) });
+  const resp = (await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) })) as
+    { descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+  for (const [motivo, n] of Object.entries(resp?.descartadas_por_motivo ?? {})) {
+    descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
+  }
+  duplicadasNoChunk += resp?.duplicadas_no_chunk ?? 0;
   if ((i / 1000) % 25 === 0) console.log(`… ${i}/${linhas.length}`);
 }
+const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
+  + Object.values(descartadasEdge).reduce((a, b) => a + b, 0);
+console.log(`${totalRejeitadas > 0 ? "⚠️" : "📋"} rejeições — local: ${JSON.stringify(rejeitadasLocal)}`
+  + ` · edge: ${JSON.stringify(descartadasEdge)} · duplicadas no chunk: ${duplicadasNoChunk}`
+  + (totalRejeitadas > 0 ? " — confira antes de confiar no lote (CNPJ fora do formato RFB/DV, CNAE ≠ 7 dígitos)" : ""));
 const fin = await post({ action: "finalize", mes: MES });
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
