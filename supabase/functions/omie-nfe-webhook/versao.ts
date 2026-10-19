@@ -11,6 +11,8 @@
 // ficou sem itens (e sem sinal de uso): o reenvio do Omie conserta a importação que morreu no meio,
 // em vez de escondê-la. Itens têm `id` determinístico (cabeçalho+sequência+posição), então dois
 // envios simultâneos não produzem 2N: o 2º lote colide na PK. Ver importacao.ts.
+// v1.3.1: `normalizarNcm` vem de `_shared/ncm.ts` — a v1.3 importava da pasta da sync e o bundle de
+// deploy do Lovable (só a pasta da função + `_shared/`) a recusou com `Module not found`.
 //
 // ⚠️ O gate desta edge é `x-webhook-secret` (segredo compartilhado com o Omie, que não emite
 // JWT) — ele NÃO aceita `x-cron-secret`, que é como o founder invoca a sonda pelo SQL Editor.
@@ -23,7 +25,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-nfe-webhook");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.3-reenvio-completa-itens";
+export const VERSAO = "v1.3.1-ncm-em-shared";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
