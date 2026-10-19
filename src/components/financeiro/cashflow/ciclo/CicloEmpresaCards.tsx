@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCashflowProjection } from '@/hooks/useCashflowProjection';
-import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
+import { filaCicloEdge, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import type { CoorteMes } from '@/hooks/useFinanceiroCiclo';
 import type { CpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
@@ -33,7 +33,7 @@ export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, re
   company: Company; coorte: CoorteMes[]; receitaDia: number | null; receitaMeses?: number; receitaErro?: boolean;
   resumo: ResumoCliente[] | undefined; resumoErro?: boolean; hoje: string; cpEmpresa?: CpEmpresa; cpErro?: boolean;
 }) {
-  const { data, error, isLoading } = useCashflowProjection(company, 'realista', 13, { fila: filaCiclo, retryDelay: retryDelayCiclo });
+  const { data, error, isLoading } = useCashflowProjection(company, 'realista', 13, { fila: filaCicloEdge, retryDelay: retryDelayCiclo });
   const ind = error ? null : data?.indicadores;
   const motivos = error ? [] : data?.confianca_dados?.motivos ?? [];
   const meses = coorte.filter((m) => m.company === company);

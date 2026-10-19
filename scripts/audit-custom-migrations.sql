@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 663
+-- Total de custom migrations: 664
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -727,7 +727,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019110100', 'fin_titulo_baixas_cr_mapa', '20261019110100_fin_titulo_baixas_cr_mapa.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
   ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql'),
-  ('20261019140000', 'omie_identidade_cnpj_alfanumerico', '20261019140000_omie_identidade_cnpj_alfanumerico.sql')
+  ('20261019140000', 'omie_identidade_cnpj_alfanumerico', '20261019140000_omie_identidade_cnpj_alfanumerico.sql'),
+  ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2815,7 +2816,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
   ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
   ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
-  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', '')
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4951,7 +4953,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
   ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
   ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
-  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', '')
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', '')
 )
 SELECT
   e.migration,
@@ -5297,6 +5300,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
   ('public', 'radar_recruzar_ja_cliente', 1, '20260610200000_radar_fundacao.sql', 'c24f51789aef9dd5069206c772cafb73'),
   ('public', 'radar_recruzar_ja_cliente', 2, '20261019110000_radar_cnpj_alfanumerico.sql', '9151dc6344dab327e86fd617abde5c50'),
+  ('public', 'radar_recruzar_ja_cliente', 3, '20261019150000_radar_recruzar_mascara_exata.sql', '6ab63faa41d9068bde697c09f9f7622c'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 3, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'bb80edea94d19835ec55c34f007dc0ed'),

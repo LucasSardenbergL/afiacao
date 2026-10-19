@@ -7,7 +7,8 @@
 # ║                                                                                              ║
 # ║  Mundo: stubs de prod + 20260610200000_radar_fundacao (função PREDECESSORA: a PRE da migration ║
 # ║  exige md5(prosrc) = o de PROD, lido por psql-ro em 2026-10-19 — se o repo divergir de prod,  ║
-# ║  a prova fica vermelha aqui, não na mão do founder) → a migration sob prova → asserts:        ║
+# ║  a prova fica vermelha aqui, não na mão do founder) → 20261019110000 (CHECKs + recruzar v1) → ║
+# ║  20261019150000 (recruzar v2: alnum só cru/máscara exata) → asserts:                         ║
 # ║   A0a aplica · A0b re-aplicar é no-op (PRE aceita "este") · A0c CHECK vivo é o alfanumérico   ║
 # ║   A1  CHECK: alfanumérico maiúsculo entra; minúscula, 13 posições, DV com letra → 23514        ║
 # ║       (radar_empresas E radar_contatos)                                                       ║
@@ -20,7 +21,8 @@
 # ║   check_aceita_minuscula   CHECK afrouxado → A1b                                              ║
 # ║   sem_upper                sem upper() no doc (régua de md5 neutralizada) → A2e               ║
 # ║   alnum_so_digitos         caminho alnum vira só-dígitos (md5 neutralizado) → A2f             ║
-# ║   corpo_sabotado_md5       corpo sabotado SEM neutralizar o md5 → A0a (a PÓS morde)           ║
+# ║   sem_mascara_exata        alnum aceita separador em qualquer posição (md5 neutr.) → A2j      ║
+# ║   corpo_sabotado_md5       corpo sabotado SEM neutralizar o md5 → A0d (a PÓS da MIG2 morde)   ║
 # ║  A régua de md5 da PRE/PÓS é neutralizada (literal → md5 vivo) nas sabotagens SEMÂNTICAS,      ║
 # ║  senão todo mutante morreria na PÓS sem exercitar o assert funcional.                          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════╝
@@ -28,12 +30,13 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261019110000_radar_cnpj_alfanumerico.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261019150000_radar_recruzar_mascara_exata.sql"   # recruzar: alnum só cru/máscara exata
 FUND="$REPO_ROOT/supabase/migrations/20260610200000_radar_fundacao.sql"
 MD5_PROD="27ccab8ed049e4403a9e4232507915a4"   # md5(prosrc) de radar_recruzar_ja_cliente() em PROD, psql-ro 2026-10-19
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="check_aceita_minuscula:A1b sem_upper:A2e alnum_so_digitos:A2f corpo_sabotado_md5:A0a"
+  SABOTAGENS="check_aceita_minuscula:A1b sem_upper:A2e alnum_so_digitos:A2f sem_mascara_exata:A2j corpo_sabotado_md5:A0d"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-alnum.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -67,13 +70,15 @@ TMPD="$(mktemp -d "/tmp/pgtest-radar-alnum.XXXXXX")"
 DATA="$TMPD/data"
 export LC_ALL=C LANG=C
 MIG_USADA="$TMPD/mig.sql"
+MIG2_USADA="$TMPD/mig2.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
 
 [ -f "$MIG" ] || { echo "migration nao encontrada: $MIG"; exit 1; }
-cp "$MIG" "$MIG_USADA"
-sabotar() { # $1 = de, $2 = para (literal; troca TODAS as ocorrências)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+[ -f "$MIG2" ] || { echo "migration nao encontrada: $MIG2"; exit 1; }
+cp "$MIG" "$MIG_USADA"; cp "$MIG2" "$MIG2_USADA"
+sabotar() { # $1 = arquivo, $2 = de, $3 = para (literal; troca TODAS as ocorrências)
+  python3 -I - "$1" "$2" "$3" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -82,16 +87,18 @@ if de not in s:
 open(p, "w", encoding="utf-8").write(s.replace(de, para))
 PY
 }
-# A régua de md5 "este" da PRE/PÓS: o literal de 32 hex que aparece em `IS DISTINCT FROM '<md5>'`.
-ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG" | grep -oE '[0-9a-f]{32}' | head -1)"
+# A régua de md5 "este" da PRE/PÓS da MIG2 (a função final): o literal de 32 hex de `IS DISTINCT FROM '<md5>'`.
+ESTE_MD5="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG2" | grep -oE '[0-9a-f]{32}' | head -1)"
 MD5_VIVO="(SELECT md5(q.prosrc) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.radar_recruzar_ja_cliente()'))"
 case "${SABOTAGEM:-}" in
   "") ;;
-  check_aceita_minuscula) sabotar "cnpj ~ '^[0-9A-Z]{12}[0-9]{2}\$'" "cnpj ~ '^[0-9A-Za-z]{12}[0-9]{2}\$'"
-                          sabotar "cnpj ~ ''^[0-9A-Z]{12}[0-9]{2}\$''" "cnpj ~ ''^[0-9A-Za-z]{12}[0-9]{2}\$''" ;;
-  sem_upper)              sabotar "btrim(upper(bruto))" "btrim(bruto)"; sabotar "'$ESTE_MD5'" "$MD5_VIVO" ;;
-  alnum_so_digitos)       sabotar "'[-./]'" "'[^0-9]'"; sabotar "'$ESTE_MD5'" "$MD5_VIVO" ;;
-  corpo_sabotado_md5)     sabotar "btrim(upper(bruto))" "btrim(bruto)" ;;
+  check_aceita_minuscula) sabotar "$MIG_USADA" "cnpj ~ '^[0-9A-Z]{12}[0-9]{2}\$'" "cnpj ~ '^[0-9A-Za-z]{12}[0-9]{2}\$'"
+                          sabotar "$MIG_USADA" "cnpj ~ ''^[0-9A-Z]{12}[0-9]{2}\$''" "cnpj ~ ''^[0-9A-Za-z]{12}[0-9]{2}\$''" ;;
+  sem_upper)              sabotar "$MIG2_USADA" "btrim(upper(bruto))" "btrim(bruto)"; sabotar "$MIG2_USADA" "'$ESTE_MD5'" "$MD5_VIVO" ;;
+  alnum_so_digitos)       sabotar "$MIG2_USADA" "'[-./]'" "'[^0-9]'"; sabotar "$MIG2_USADA" "'$ESTE_MD5'" "$MD5_VIVO" ;;
+  sem_mascara_exata)      sabotar "$MIG2_USADA" "OR d ~ '^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}/[0-9A-Z]{4}-[0-9]{2}\$'" "OR d ~ '.'"
+                          sabotar "$MIG2_USADA" "'$ESTE_MD5'" "$MD5_VIVO" ;;
+  corpo_sabotado_md5)     sabotar "$MIG2_USADA" "btrim(upper(bruto))" "btrim(bruto)" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -135,7 +142,8 @@ INSERT INTO public.profiles VALUES
   ('00000000-0000-0000-0000-000000000001', '11.222.333/0001-81'),        -- numérico com máscara (acervo)
   ('00000000-0000-0000-0000-000000000002', 'CNPJ: 22.333.444/0001-81'),  -- numérico com PREFIXO de letras (acervo: só-dígitos casa)
   ('00000000-0000-0000-0000-000000000003', '12.abc.345/01de-35'),        -- alfanumérico MINÚSCULO com máscara (exemplo oficial RFB)
-  ('00000000-0000-0000-0000-000000000004', 'aeg 123.456.789-09');       -- CPF com ANOTAÇÃO (contraexemplo Codex): NÃO pode virar chave AEG12345678909
+  ('00000000-0000-0000-0000-000000000004', 'aeg 123.456.789-09'),       -- CPF com ANOTAÇÃO (contraexemplo Codex): NÃO pode virar chave AEG12345678909
+  ('00000000-0000-0000-0000-000000000005', 'xyz-123.456.789-09');       -- idem com HÍFEN (Codex retroativo): separador fora da máscara NÃO vira chave XYZ12345678909
 INSERT INTO public.omie_clientes_nao_vinculados (cnpj_cpf) VALUES
   ('55666777000181'),   -- numérico cru (acervo)
   ('A1B2C3D4E5F668');   -- alfanumérico cru maiúsculo
@@ -145,6 +153,7 @@ echo "── A0 aplicação"
 eq A0p "predecessor local = PROD (md5 prosrc)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('public.radar_recruzar_ja_cliente()')")" "$MD5_PROD"
 if P -f "$MIG_USADA" >"$TMPD/apply.log" 2>&1; then ok A0a "migration aplica"; else bad A0a "migration abortou: $(grep -m1 -E 'ERROR|ERRO' "$TMPD/apply.log" | cut -c1-160)"; fi
 if P -f "$MIG_USADA" >"$TMPD/apply2.log" 2>&1; then ok A0b "re-aplicar é no-op (PRE aceita 'este')"; else bad A0b "re-aplicar abortou: $(grep -m1 -E 'ERROR|ERRO' "$TMPD/apply2.log" | cut -c1-160)"; fi
+if P -f "$MIG2_USADA" >"$TMPD/apply3.log" 2>&1; then ok A0d "migration 2 (máscara exata) aplica sobre a 1"; else bad A0d "migration 2 abortou: $(grep -m1 -E 'ERROR|ERRO' "$TMPD/apply3.log" | cut -c1-160)"; fi
 eq A0c "CHECK vivo de radar_empresas é o alfanumérico" "$(Pq -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='public.radar_empresas'::regclass AND conname='radar_empresas_cnpj_check'")" "CHECK ((cnpj ~ '^[0-9A-Z]{12}[0-9]{2}\$'::text))"
 
 echo "── A1 CHECK"
@@ -162,7 +171,8 @@ P -c "INSERT INTO public.radar_empresas (cnpj, cnae_principal, ultimo_lote, raza
   ('55666777000181','3101200','2026-10','NUM VIA OMIE CRU'),
   ('A1B2C3D4E5F668','3101200','2026-10','ALNUM VIA OMIE CRU'),
   ('99888777000100','3101200','2026-10','LEAD LIVRE'),
-  ('AEG12345678909','3101200','2026-10','LEAD QUE COINCIDE COM ANOTACAO+CPF')" >/dev/null
+  ('AEG12345678909','3101200','2026-10','LEAD QUE COINCIDE COM ANOTACAO+CPF'),
+  ('XYZ12345678909','3101200','2026-10','LEAD QUE COINCIDE COM ANOTACAO-HIFEN+CPF')" >/dev/null
 eq A2a "marcados (5 clientes; 12ABC34501DE35 já está no radar via A1)" "$(Pq -c "SELECT public.radar_recruzar_ja_cliente()")" "5"
 eq A2b "numérico com máscara marcou" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='11222333000181'")" "t"
 eq A2c "numérico com prefixo de letras marcou (acervo intocado)" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='22333444000181'")" "t"
@@ -171,6 +181,7 @@ eq A2e "alfanumérico MINÚSCULO com máscara (profile) marcou" "$(Pq -c "SELECT
 eq A2f "alfanumérico cru (omie) marcou" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='A1B2C3D4E5F668'")" "t"
 eq A2g "lead livre NÃO marcou" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='99888777000100'")" "f"
 eq A2h "anotação+CPF NÃO vira chave alfanumérica (letra nunca é apagada)" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='AEG12345678909'")" "f"
+eq A2j "anotação-HÍFEN+CPF NÃO vira chave (só cru ou máscara exata)" "$(Pq -c "SELECT ja_cliente FROM public.radar_empresas WHERE cnpj='XYZ12345678909'")" "f"
 eq A2i "2ª passada marca 0 (idempotente)" "$(Pq -c "SELECT public.radar_recruzar_ja_cliente()")" "0"
 
 echo "── A3 ACL"
