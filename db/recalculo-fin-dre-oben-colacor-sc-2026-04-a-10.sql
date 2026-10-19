@@ -56,7 +56,7 @@ BEGIN
 
   -- Postcondição: as 9 requisições DESTA execução estão na fila (o pg_net só dispara após o COMMIT).
   -- O resultado HTTP de cada id confere-se depois em net._http_response (psql-ro); o NOTICE leva os ids.
-  IF cardinality(v_ids) <> 9 OR (SELECT count(*) FROM net.http_request_queue q WHERE q.id = ANY (v_ids)) <> 9 THEN
+  IF cardinality(v_ids) IS DISTINCT FROM 9 OR (SELECT count(*) FROM net.http_request_queue q WHERE q.id = ANY (v_ids)) IS DISTINCT FROM 9 THEN
     RAISE EXCEPTION 'R2 FALHOU: % ids capturados, esperado 9 na fila do pg_net', cardinality(v_ids);
   END IF;
   RAISE NOTICE 'recompute enfileirado, ids pg_net: %', v_ids;

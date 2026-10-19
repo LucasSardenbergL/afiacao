@@ -58,11 +58,11 @@ BEGIN
     RAISE EXCEPTION 'P0 FALHOU: CRON_SECRET ausente no vault — o job chamaria a edge sem credencial';
   END IF;
   SELECT count(*) INTO v_n FROM cron.job WHERE jobname = 'fin-dre-recalculo-diario';
-  IF v_n <> 1 THEN
+  IF v_n IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'P1 FALHOU: % job(s) fin-dre-recalculo-diario — esperado exatamente 1', v_n;
   END IF;
   SELECT command, schedule, active INTO v_cmd, v_sched, v_ativo FROM cron.job WHERE jobname = 'fin-dre-recalculo-diario';
-  IF v_sched <> '30 15 * * *' OR NOT v_ativo THEN
+  IF v_sched IS DISTINCT FROM '30 15 * * *' OR v_ativo IS NOT TRUE THEN
     RAISE EXCEPTION 'P2 FALHOU: job inativo ou horário inesperado: % (active=%)', v_sched, v_ativo;
   END IF;
   IF position('timeout_milliseconds:=150000' IN v_cmd) = 0
