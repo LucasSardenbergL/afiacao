@@ -4,7 +4,7 @@ import type { DecisaoCompra } from "@/lib/reposicao/compras-otimizador-helpers";
 
 export type Cenario = "promo_flat" | "promo_volume" | "promo_e_aumento" | "aumento_apenas";
 
-export type AumentoRef = {
+type AumentoRef = {
   aumento_id: number;
   aumento_nome?: string;
   data_vigencia?: string;
@@ -12,8 +12,8 @@ export type AumentoRef = {
   aumento_perc?: number;
 };
 
-export const CENARIOS: readonly Cenario[] = ["promo_flat", "promo_volume", "promo_e_aumento", "aumento_apenas"];
-export function ehCenario(s: string | null | undefined): s is Cenario {
+const CENARIOS: readonly Cenario[] = ["promo_flat", "promo_volume", "promo_e_aumento", "aumento_apenas"];
+function ehCenario(s: string | null | undefined): s is Cenario {
   return (CENARIOS as readonly string[]).includes(s ?? "");
 }
 // Linha de v_otimizador_compras_insumos (view: tudo `| null`). A borda (AdminReposicaoOportunidades)
@@ -24,7 +24,7 @@ export type Oportunidade = Omit<
 > & { cenario: Cenario; aumentos_json: AumentoRef[] | null };
 
 /** `aumentos_json` é jsonb: só entra o que tem a forma AumentoRef (aumento_id numérico); o resto lança. */
-export function aumentosDe(j: Json | null, contexto: string): AumentoRef[] | null {
+function aumentosDe(j: Json | null, contexto: string): AumentoRef[] | null {
   if (j === null) return null;
   if (!Array.isArray(j)) throw new Error(`${contexto}: aumentos_json não é lista`);
   return j.map((e, i) => {

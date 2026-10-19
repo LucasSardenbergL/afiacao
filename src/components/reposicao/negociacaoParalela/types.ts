@@ -15,12 +15,12 @@ export type StatusSugestao =
 export type Categoria = "prioritario" | "forte" | "moderado" | "fraco";
 export type OrdenacaoKey = "score" | "volume" | "preco" | "expirando";
 
-export const STATUS_SUGESTAO: readonly StatusSugestao[] = ["nova", "visualizada", "acao_tomada", "ignorada", "fechada_sem_acordo", "convertida"];
-export function ehStatusSugestao(s: string | null | undefined): s is StatusSugestao {
+const STATUS_SUGESTAO: readonly StatusSugestao[] = ["nova", "visualizada", "acao_tomada", "ignorada", "fechada_sem_acordo", "convertida"];
+function ehStatusSugestao(s: string | null | undefined): s is StatusSugestao {
   return (STATUS_SUGESTAO as readonly string[]).includes(s ?? "");
 }
-export const CATEGORIA_VALORES: readonly Categoria[] = ["prioritario", "forte", "moderado", "fraco"];
-export function ehCategoria(s: string | null | undefined): s is Categoria {
+const CATEGORIA_VALORES: readonly Categoria[] = ["prioritario", "forte", "moderado", "fraco"];
+function ehCategoria(s: string | null | undefined): s is Categoria {
   return (CATEGORIA_VALORES as readonly string[]).includes(s ?? "");
 }
 // Linha de v_sugestao_negociacao_ativa (view: tudo `| null`). A borda exige id/empresa/sku, estreita
@@ -101,17 +101,6 @@ export interface ConvertForm {
 }
 
 // --- Negociação Paralela v2 (fila por R$ líquido) ---
-
-// Linha crua da view v_sku_parametros_sugeridos (subset usado pela fila).
-export interface LinhaViewSugeridos {
-  sku_codigo_omie: number | string;
-  sku_descricao: string | null;
-  demanda_media_diaria: number | null;
-  preco_compra_real: number | null;
-  preco_item_eoq: number | null;     // = CMC quando fonte_preco='cmc'
-  fonte_preco: string | null;        // 'cmc' | 'compra_real' | 'venda_estimado' | 'sem_preco'
-  custo_capital_efetivo_perc: number | null; // %/ano
-}
 
 // Candidato pronto pra UI: identidade + insumos + avaliação corrente (recalculada com o desconto do card).
 export interface CandidatoNegociacao {

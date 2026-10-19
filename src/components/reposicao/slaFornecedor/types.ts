@@ -26,7 +26,7 @@ export interface ForCompliance {
   lt_medio_observado_agregado: number | null;
 }
 
-export const SLA_STATUS: readonly SlaStatus[] = ["cumprindo", "limite", "violando", "critico", "sem_sla_teorico", "poucos_dados"];
+const SLA_STATUS: readonly SlaStatus[] = ["cumprindo", "limite", "violando", "critico", "sem_sla_teorico", "poucos_dados"];
 export function ehSlaStatus(s: string | null | undefined): s is SlaStatus {
   return (SLA_STATUS as readonly string[]).includes(s ?? "");
 }
@@ -36,7 +36,7 @@ export type SkuCompliance = Omit<
   ComColunas<Tables<"v_sku_sla_compliance">, "empresa" | "sku_codigo_omie">,
   "status_sla" | "tendencia"
 > & { status_sla: SlaStatus; tendencia: Tendencia | null };
-export const TENDENCIAS: readonly Tendencia[] = ["melhorando", "estavel", "piorando", "sem_dados"];
+const TENDENCIAS: readonly Tendencia[] = ["melhorando", "estavel", "piorando", "sem_dados"];
 export function ehTendencia(s: string | null | undefined): s is Tendencia {
   return (TENDENCIAS as readonly string[]).includes(s ?? "");
 }

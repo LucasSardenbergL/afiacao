@@ -1,5 +1,4 @@
 import type { Tables } from "@/integrations/supabase/types";
-import type { ComColunas } from "@/lib/reposicao/linha-view";
 // Types + constantes compartilhados da tela de detalhe de promoção/campanha.
 // Extraídos de src/pages/AdminReposicaoPromocaoDetail.tsx (god-component split).
 
@@ -10,7 +9,6 @@ export type Campanha = Tables<"promocao_campanha">;
 
 export type ItemRow = Tables<"promocao_item">;
 
-export type ItemEfetivo = ComColunas<Pick<Tables<"v_promocao_item_efetivo">, "id" | "desconto_efetivo">, "id" | "desconto_efetivo">;
 
 export type Evento = Tables<"promocao_negociacao_evento">;
 

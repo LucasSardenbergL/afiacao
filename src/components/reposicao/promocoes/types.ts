@@ -21,7 +21,7 @@ export type UploadItem = {
 };
 
 // As colunas que a lista de campanhas seleciona (criado_em é `| null` no banco).
-export type Campanha = Pick<Tables<"promocao_campanha">, "id" | "nome" | "fornecedor_nome" | "tipo_origem" | "data_inicio" | "data_fim" | "estado" | "extracao_confianca" | "criado_em">;
+type Campanha = Pick<Tables<"promocao_campanha">, "id" | "nome" | "fornecedor_nome" | "tipo_origem" | "data_inicio" | "data_fim" | "estado" | "extracao_confianca" | "criado_em">;
 
 export type CampanhaComContagem = Campanha & { num_itens: number };
 

@@ -36,7 +36,7 @@ export function linhasCom<T extends object, K extends keyof T>(
 }
 
 /** Guarda do enum `empresa_reposicao` (as views de reposição tipam `empresa` por ele; a UI carrega string). */
-export function ehEmpresaReposicao(s: string | null | undefined): s is EmpresaReposicao {
+function ehEmpresaReposicao(s: string | null | undefined): s is EmpresaReposicao {
   return s === 'OBEN' || s === 'COLACOR';
 }
 
