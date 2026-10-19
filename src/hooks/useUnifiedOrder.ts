@@ -26,6 +26,7 @@ import { buildOmieCustomer } from '@/lib/unified-order/build-omie-customer';
 import { computeCheckoutFingerprint, decideCheckoutEnvelope, type CheckoutEnvelope } from '@/services/orderSubmission/checkout-envelope';
 import { resolveBridgeMetadata } from '@/services/orderSubmission/origem';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
 import {
   lerRespostaFormas,
   condicoesDoClienteIndisponiveis,
@@ -703,8 +704,8 @@ export function useUnifiedOrder() {
         return;
       }
       if (selectedCustomer.cnpj_cpf) {
-        const docClean = selectedCustomer.cnpj_cpf.replace(/\D/g, '');
-        if (docClean.length >= 11) {
+        const docClean = chaveDocumentoParaBusca(selectedCustomer.cnpj_cpf);
+        if (docClean) {
           const { data: profile } = await supabase
             .from('profiles').select('user_id').eq('document', docClean).maybeSingle();
           if (profile?.user_id) {

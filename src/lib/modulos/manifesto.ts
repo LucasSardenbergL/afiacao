@@ -915,6 +915,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/edge-import-entre-funcoes-gate.test.ts",
       "src/__tests__/app-route-dedupe.test.ts",
       "src/__tests__/auth.test.ts",
+      "src/__tests__/documento-alfanumerico-front.test.ts",
       "src/__tests__/edge-app-url.test.ts",
       "src/__tests__/index-html.test.ts",
       "src/__tests__/leitura-single-shot-gate.test.ts",

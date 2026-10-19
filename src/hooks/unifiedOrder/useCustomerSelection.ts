@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
 import { maskDocument } from '@/lib/format';
 import { eqText, orFilter } from '@/lib/postgrest';
+import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
 import { deveCriarClienteNaConta } from './ensure-helpers';
 import { montarPrecosLocaisPorConta, type PrecosLocaisPorConta } from './precos-por-conta';
 import type {
@@ -259,8 +260,8 @@ export function useCustomerSelection({
       if (mapping?.user_id) localUserId = mapping.user_id;
     }
     if (!localUserId && cust.cnpj_cpf) {
-      const docClean = cust.cnpj_cpf.replace(/\D/g, '');
-      if (docClean.length >= 11) {
+      const docClean = chaveDocumentoParaBusca(cust.cnpj_cpf);
+      if (docClean) {
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id, requires_po')
