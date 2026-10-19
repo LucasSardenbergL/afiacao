@@ -16,6 +16,7 @@ import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
 import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
+import { CargaAoAparecer } from './CargaAoAparecer';
 import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
 const CAVEAT_CICLO =
@@ -89,18 +90,23 @@ export function CicloTab() {
         </section>
       ))}
 
-      <CicloGiroEstoque
-        empresas={tendencias}
-        acao={(['todos', 'liquidar', 'segurar_compra'].includes(filtros.cicloGiroAcao) ? filtros.cicloGiroAcao : 'todos') as FiltroAcaoGiro}
-        onAcao={(a) => setFiltros({ cicloGiroAcao: a })}
-      />
+      {/* Abaixo da dobra: só monta (e só lê) quando aparece na tela — carga escalonada, ver ciclo-fila.ts. */}
+      <CargaAoAparecer rotulo="Giro de estoque">
+        <CicloGiroEstoque
+          empresas={tendencias}
+          acao={(['todos', 'liquidar', 'segurar_compra'].includes(filtros.cicloGiroAcao) ? filtros.cicloGiroAcao : 'todos') as FiltroAcaoGiro}
+          onAcao={(a) => setFiltros({ cicloGiroAcao: a })}
+        />
+      </CargaAoAparecer>
 
       <CicloDescontoPainel
         empresas={tendencias}
         custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
         onCusto={(c, t) => setFiltros({ [CHAVE_CUSTO[c]]: t })}
       />
-      <CicloFornecedoresSecao empresas={tendencias} hoje={hoje} />
+      <CargaAoAparecer rotulo="Fornecedores">
+        <CicloFornecedoresSecao empresas={tendencias} hoje={hoje} />
+      </CargaAoAparecer>
       <CicloClienteDrill cliente={aberto} hoje={hoje} onFechar={() => setAberto(null)} />
     </div>
   );

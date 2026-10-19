@@ -1154,3 +1154,13 @@ nascer depois, a NF precisa de uma janela de revisita, e a fonte barata (a lista
 ## 2026-10-18 — conferência de recebimento mostrava descrição EM BRANCO em todos os itens (`RecebimentoConferencia`)
 
 A tela fazia `select … nfe_recebimento_itens(*)` e renderizava `item.descricao_produto`; a coluna da tabela é `descricao` (gravada igual pelos dois writers, `omie-nfe-webhook` e `omie-nfe-recebimento-sync/itens.ts`). O tipo local tinha `[k: string]: unknown`, então o campo inventado compilou e o balcão conferia só por código. Visto de passagem no PR #3142. **Conserto:** `NfeItem` agora é `Pick<Tables<'nfe_recebimento_itens'>, …>` (campo que não existe deixa de compilar) e a tela lê `descricao`; teste `RecebimentoConferencia.descricao-do-item.test.tsx` renderiza um item com a Row gerada e exige o texto (falsificado: vermelho antes do conserto e sob sabotagem). **Lição:** tipo local com índice `[k: string]: unknown` sobre uma linha do Supabase anula o typecheck — derive dos types gerados.
+
+## 2026-10-19 — `fin-cashflow-engine` em 500 para a colacor desde 14/10 (57014 em `v_titulo_baixas`) — PR #3184
+
+**Sintoma.** Cron `fin-cashflow-snapshot-diario`: os 3 cenários da colacor em HTTP 500 `Leitura de v_titulo_baixas falhou (código 57014)` a partir de 2026-10-14; oben e colacor_sc normais. Motor certo em falhar fechado.
+
+**Causa (medida).** Backfill de 84.795 movimentos da colacor em 13/10 → `fin_movimentacoes` ~145k. A view materializa o CTE `mov` (2 referências) sobre a tabela INTEIRA, sem pushdown de company (~0,65 s/avaliação). O engine paginava a view (~29 páginas na colacor, cada uma reavaliando tudo) e o cron dispara 9 chamadas juntas → página > 8 s (`statement_timeout` do authenticator).
+
+**Lição.** *Paginar uma VIEW agregada por `.range()` reavalia a view a cada página* — o custo é páginas × view inteira, e escala com o volume de OUTRAS empresas. E "uma leitura só" não bastou: 9 avaliações simultâneas da view estouraram as 8 s todas; o que resolveu foi o filtro de empresa DENTRO do CTE (máx 2,1 s nas 9). Meça sob a concorrência REAL do cron, não sozinho.
+
+**Fix.** RPC `fin_titulo_baixas_cr_mapa(p_company)` (migration `20261019110100`, aplicada 2026-10-19 via MCP no envelope, validada por psql-ro: ACL + md5 do corpo = repo) — ramo CR da view verbatim com company no `mov`, envelope `{total, pares}`; PRE por md5 + A6 (igualdade com a view) no apply e guarda de md5 em runtime (P0001 se a view mudar). Edge `v1.6-baixas-cr-rpc`. Prova `db/test-fin-titulo-baixas-cr-mapa.sh`. Codex 2 rodadas. Pendente na mesma classe: `fin-valor-cockpit` (oben) pagina a mesma view.

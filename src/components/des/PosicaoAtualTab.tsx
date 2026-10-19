@@ -3,6 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Star, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
+import { type ComColunas, linhasCom } from "@/lib/linha-view";
+import { faixaDeJson } from "./faixa-json";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,43 +29,8 @@ const fmtBRL = (v: number | null | undefined) =>
 const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
-interface PosicaoRow {
-  empresa: string;
-  ano: number;
-  trimestre: number;
-  gooddata_data_referencia: string | null;
-  gooddata_objetivo: number | null;
-  fat_bruto_confirmado: number | null;
-  gooddata_pedidos_abertos: number | null;
-  meta_pessoal: number | null;
-  faixa_des_alvo: number | null;
-  valor_em_transito_seguro: number | null;
-  valor_em_transito_risco: number | null;
-  valor_fora_trimestre: number | null;
-  qtd_pedidos_no_trimestre: number | null;
-  qtd_pedidos_fora_trimestre: number | null;
-  posicao_ao_vivo_conservadora: number | null;
-  posicao_ao_vivo_otimista: number | null;
-  faixa_conservadora: { faixa_numero?: number; estrelas?: number } | null;
-  faixa_otimista: { faixa_numero?: number; estrelas?: number } | null;
-  gap_para_meta_pessoal: number | null;
-  inicio_trimestre: string | null;
-  fim_trimestre: string | null;
-  dias_restantes: number | null;
-}
-
-interface PedidoTransito {
-  pedido_id: number;
-  empresa: string;
-  fornecedor_nome: string | null;
-  grupo_codigo: string | null;
-  data_emissao: string | null;
-  data_faturamento_prevista: string | null;
-  valor_total: number | null;
-  status: string | null;
-  zona_confianca: "verde" | "amarelo" | "vermelho" | "fora_trimestre" | string | null;
-  fatura_no_trimestre: boolean | null;
-}
+/** Linha da `v_des_pedidos_em_transito` (view: tudo `| null` no types.ts) com `pedido_id` exigido na borda. */
+type PedidoTransito = ComColunas<Tables<"v_des_pedidos_em_transito">, "pedido_id">;
 
 interface SnapshotRow {
   id: number;
@@ -115,7 +83,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
         .eq("trimestre", trimestre)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as PosicaoRow | null;
+      return data;
     },
   });
 
@@ -132,7 +100,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
       }
       const { data, error } = await q.order("data_emissao", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as unknown as PedidoTransito[];
+      return linhasCom(data, ["pedido_id"], "v_des_pedidos_em_transito");
     },
   });
 
@@ -199,8 +167,8 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
   const progressColor =
     progress >= 100 ? "bg-status-success" : progress >= 75 ? "bg-status-warning" : "bg-status-error";
 
-  const faixaConserv = pos.faixa_conservadora?.estrelas ?? 0;
-  const faixaOtim = pos.faixa_otimista?.estrelas ?? 0;
+  const faixaConserv = faixaDeJson(pos.faixa_conservadora)?.estrelas ?? 0;
+  const faixaOtim = faixaDeJson(pos.faixa_otimista)?.estrelas ?? 0;
 
   const dias = pos.dias_restantes ?? 0;
   const diasCls =

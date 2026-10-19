@@ -163,7 +163,9 @@ export async function lerCarimbosDoServidor(
   f: typeof fetch = globalThis.fetch,
 ): Promise<{ buildId: string; buildEm: string | null; commitEm: string | null } | null> {
   try {
-    const r = await f(`/?versao=${Date.now()}`, { cache: 'no-store' });
+    // `credentials: 'omit'`: com cookie o host devolve o HTML do deployment PINADO (`__dpl`,
+    // 2026-10-19) — o servidor "pareceria" no build velho e "em dia" viraria mentira.
+    const r = await f(`/?versao=${Date.now()}`, { cache: 'no-store', credentials: 'omit' });
     if (!r.ok) return null;
     const html = await r.text();
     const id = extrairBuildId([html]);
@@ -264,9 +266,13 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
   let ocultoDesde: number | null = doc?.visibilityState === 'hidden' ? agora() : null;
 
   const derivar = (): FaseAtualizacao => {
+    // Com o SW ponte ATIVO (publica estado), só a PROMOÇÃO entrega build novo: um SW em
+    // waiting ali é outro SW ponte segurado pelos eventos pendentes do ativo (ele ativa
+    // sozinho; já pediu skipWaiting) — não é "versão pronta". Medido 2026-10-19: o toast
+    // vindo do waiting mandava clicar num "Atualizar" que não trocava nada.
+    if (estadoSW) return faseDaPagina(estado.buildId, estadoSW);
     // SW à moda antiga em waiting (ex.: rollback para o SW do Workbox): ainda vale.
     if (reg.waiting && reg.active) return 'pronta';
-    if (estadoSW) return faseDaPagina(estado.buildId, estadoSW);
     if (reg.installing && reg.active) return 'baixando';
     return 'em_dia';
   };
@@ -383,21 +389,36 @@ export function acompanharRegistro(reg: ServiceWorkerRegistration, deps: DepsAco
   };
 }
 
+/** Prazo para o SW em waiting assumir após o SKIP_WAITING; vencido, recarrega mesmo assim. */
+const PRAZO_SKIP_WAITING_MS = 1500;
+
 /**
  * Aplicar a versão pronta. Com o SW ponte, o build novo já está PROMOVIDO: basta
- * uma navegação (reload) para receber o HTML novo. Se houver um SW à moda antiga em
- * waiting (rollback para o SW do Workbox), pede SKIP_WAITING e recarrega quando ele
- * assumir — o SW antigo escuta exatamente `{type: 'SKIP_WAITING'}`.
+ * uma navegação (reload) para receber o HTML novo. Se houver um SW em waiting, pede
+ * SKIP_WAITING (o SW à moda antiga do Workbox escuta exatamente `{type: 'SKIP_WAITING'}`)
+ * e recarrega quando ele assumir — OU no prazo: um SW ponte em waiting ignora a
+ * mensagem (já pulou a espera no install, está segurado pelos eventos pendentes do
+ * ativo) e, sem o prazo, o clique fechava o toast e não fazia NADA (medido 2026-10-19).
+ * Recarregar é sempre seguro: a navegação recebe o HTML promovido pelo SW ativo.
  */
 export function aplicadorPadrao(
   reg: ServiceWorkerRegistration,
   sw: Pick<ServiceWorkerContainer, 'addEventListener'> | undefined = globalThis.navigator?.serviceWorker,
   recarregar: () => void = () => globalThis.location.reload(),
+  prazoMs: number = PRAZO_SKIP_WAITING_MS,
 ): () => void {
   return () => {
     const waiting = reg.waiting;
     if (waiting && sw) {
-      sw.addEventListener('controllerchange', () => recarregar(), { once: true });
+      let feito = false;
+      const umaVez = () => {
+        if (feito) return;
+        feito = true;
+        clearTimeout(prazo);
+        recarregar();
+      };
+      const prazo = setTimeout(umaVez, prazoMs);
+      sw.addEventListener('controllerchange', umaVez, { once: true });
       waiting.postMessage({ type: 'SKIP_WAITING' });
       return;
     }

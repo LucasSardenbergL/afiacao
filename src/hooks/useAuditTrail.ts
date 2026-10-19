@@ -1,19 +1,33 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
 
-export type AuditEntry = {
-  id: number;
-  table_name: string;
-  row_id: string;
-  op: 'INSERT' | 'UPDATE' | 'DELETE';
+type LinhaAudit = Tables<'fin_audit_log'>;
+
+// Espelham os CHECKs de `fin_audit_log.op` / `.origem` (conferidos na prod em 2026-10-19).
+const OPS = ['INSERT', 'UPDATE', 'DELETE'] as const;
+const ORIGENS = ['manual', 'omie_sync', 'edge_fn', 'override_emergencia', 'cron', 'trigger'] as const;
+
+export type AuditEntry = Omit<LinhaAudit, 'op' | 'origem' | 'changed_fields'> & {
+  op: (typeof OPS)[number];
+  origem: (typeof ORIGENS)[number];
   changed_fields: Record<string, unknown>;
-  changed_by: string | null;
-  changed_at: string;
-  company: string | null;
-  origem: 'manual' | 'omie_sync' | 'edge_fn' | 'override_emergencia' | 'cron' | 'trigger';
-  period_ref: string | null;
-  override_justificativa: string | null;
 };
+
+function umDe<T extends string>(lista: readonly T[], v: string): v is T {
+  return (lista as readonly string[]).includes(v);
+}
+
+/** Borda: `op`/`origem` fora do CHECK e `changed_fields` que não é objeto LANÇAM — nunca badge inventado. */
+function paraAuditEntry(l: LinhaAudit): AuditEntry {
+  if (!umDe(OPS, l.op)) throw new Error(`fin_audit_log#${l.id}: op "${l.op}" fora do vocabulário`);
+  if (!umDe(ORIGENS, l.origem)) throw new Error(`fin_audit_log#${l.id}: origem "${l.origem}" fora do vocabulário`);
+  const cf = l.changed_fields;
+  if (cf === null || typeof cf !== 'object' || Array.isArray(cf)) {
+    throw new Error(`fin_audit_log#${l.id}: changed_fields não é um objeto`);
+  }
+  return { ...l, op: l.op, origem: l.origem, changed_fields: cf };
+}
 
 export function useAuditTrail(params: { tableName: string; rowId: string; limit?: number }) {
   const { tableName, rowId, limit = 50 } = params;
@@ -29,7 +43,7 @@ export function useAuditTrail(params: { tableName: string; rowId: string; limit?
         .order('changed_at', { ascending: false })
         .limit(limit);
       if (error) throw error;
-      return (data ?? []) as unknown as AuditEntry[];
+      return (data ?? []).map(paraAuditEntry);
     },
   });
 }

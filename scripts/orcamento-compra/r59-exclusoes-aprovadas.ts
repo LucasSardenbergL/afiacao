@@ -21,7 +21,26 @@ export interface ExclusaoR59Aprovada {
   aprovado_em: string;
 }
 
-// VAZIA de propósito (2026-10-19): nenhum cancelamento foi aprovado EXPLICITAMENTE para sair do caixa. 1014/1049
-// são os casos que motivaram o R59 e os controles positivos da passada, mas o #3132 os cita como diagnóstico, não
-// como autorização (Codex 2026-10-19 P2). Copie a entrada de `pendentesR59` + a evidência do portal/Omie.
-export const EXCLUSOES_R59_APROVADAS: readonly ExclusaoR59Aprovada[] = [];
+// 2026-10-19: o founder conferiu no portal Sayerlack cada identificador dos 4 candidatos que a passada de encerrados
+// (v1.8, disparo #542) e o backtest apontaram. Entram os 3 CANCELADOS. Ficou de fora o 1230 (2790/12184846749):
+// 2130311 e 2130322 estão "Atendido total" — houve faturamento que o backtest NÃO enxerga (NF consolidada de
+// vários pedidos gravada na linha de outro, a cegueira do Codex 2026-10-19 P1). Ele segue no caixa, como pendente.
+const CONFERENCIA = 'founder (Lucas) — conferência no portal Sayerlack, 2026-10-19';
+
+export const EXCLUSOES_R59_APROVADAS: readonly ExclusaoR59Aprovada[] = [
+  {
+    disparado_id: 80, omie_pedido: '12087313479', numero: '1005', identificadores: ['2096768', 'AFI26050780'],
+    evidencia: '2096768 cancelado na Sayerlack; AFI26050780 é o código interno do próprio disparado (AFI + 26-05-07 + id 80, cCodIntPed AFI-80), presente só neste pedido',
+    aprovado_por: CONFERENCIA, aprovado_em: '2026-10-19',
+  },
+  {
+    disparado_id: 91, omie_pedido: '12096301530', numero: '1014', identificadores: ['2093559', '2096771'],
+    evidencia: '2093559 e 2096771 (original e reenvio) cancelados na Sayerlack',
+    aprovado_por: CONFERENCIA, aprovado_em: '2026-10-19',
+  },
+  {
+    disparado_id: 194, omie_pedido: '12098830141', numero: '1049', identificadores: ['2094968'],
+    evidencia: '2094968 cancelado na Sayerlack',
+    aprovado_por: CONFERENCIA, aprovado_em: '2026-10-19',
+  },
+];
