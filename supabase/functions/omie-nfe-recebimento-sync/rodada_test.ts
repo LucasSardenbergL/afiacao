@@ -6,6 +6,7 @@
 // Os demais casos são os que as duas rodadas de revisão do Codex (2026-10-05) reproduziram contra o
 // laço: chave ausente na listagem, cancelada no detalhe, duplicata só pela chave, HTTP 500 de lista
 // vazia, prioridade sem progresso, exceção levando o resumo, e as sabotagens que passavam verdes.
+import type { DesfechoImportacao } from "../_shared/nfe-importacao.ts";
 import type { CabecalhoRecebimentoRow } from "./cabecalho.ts";
 import type { OmieRecebimentoItem } from "./itens.ts";
 import type { RegistroListagem } from "./listagem.ts";
@@ -22,7 +23,8 @@ const WH = "wh-ob";
 /** Chave de 44 dígitos que termina no id — uma por NF-e do teste. */
 const chave = (id: number) => `3126091234567800019055001000012345${String(id).padStart(10, "0")}`;
 const SEM_REGISTROS = { faultstring: "ERROR: Não existem registros para a página [1]!", faultcode: "SOAP-ENV:Client-5113" };
-const ITENS = [{}, {}, {}] as unknown as OmieRecebimentoItem[];
+/** 3 itens SÃOS (quantidade > 0): o lote passa em `validarLote` antes de chegar à RPC falsa. */
+const ITENS = [1, 2, 3].map((q) => ({ itensCabec: { nQtdeNFe: q } })) as unknown as OmieRecebimentoItem[];
 
 function reg(id: number, info?: { cRecebido?: string; cCancelada?: string }, ch: string | null = chave(id)): RegistroListagem {
   return { cabec: { nIdReceb: id, cChaveNFe: ch }, ...(info ? { infoCadastro: info } : {}) };
@@ -46,9 +48,11 @@ interface Cenario {
   chaves?: string[];
   /** Lança a partir desta chamada de `jaImportados` (1 = a da listagem, 2 = a da checagem pós-detalhe). */
   jaLancaNaChamada?: number;
-  erroCabecalho?: string;
-  cabecalhoLanca?: boolean;
-  erroItens?: string;
+  /** O que a RPC falsa devolve (default: importada com os itens do detalhe). */
+  importarDesfecho?: DesfechoImportacao;
+  importarLanca?: boolean;
+  /** O que o ledger de falhas falso devolve (default 1; null = não registrou). */
+  falhaTentativas?: number | null;
 }
 
 function falsos(c: Cenario) {
@@ -58,6 +62,7 @@ function falsos(c: Cenario) {
     ja: 0,
     cabecalhos: [] as CabecalhoRecebimentoRow[],
     itens: [] as [string, number][],
+    falhas: [] as [string, string | null, number][],
   };
   const deps: DepsRodada = {
     listar: (params) => {
@@ -78,14 +83,15 @@ function falsos(c: Cenario) {
         chaves: new Set((c.chaves ?? []).filter((k) => chaves.includes(k))),
       });
     },
-    inserirCabecalho: (row) => {
-      chamadas.cabecalhos.push(row);
-      if (c.cabecalhoLanca) return Promise.reject(new Error("conexão encerrada"));
-      return Promise.resolve(c.erroCabecalho ? { erro: c.erroCabecalho } : { id: `nfe-${row.omie_id_receb}` });
+    importar: (cabecalho, itens) => {
+      chamadas.cabecalhos.push(cabecalho);
+      chamadas.itens.push([cabecalho.chave_acesso, itens.length]);
+      if (c.importarLanca) return Promise.reject(new Error("conexão encerrada"));
+      return Promise.resolve(c.importarDesfecho ?? { tipo: "importada", id: `nfe-${cabecalho.omie_id_receb}`, itens: itens.length });
     },
-    inserirItens: (itens, id) => {
-      chamadas.itens.push([id, itens.length]);
-      return Promise.resolve(c.erroItens ?? null);
+    registrarFalha: (chave, code, _mensagem, omieIdReceb) => {
+      chamadas.falhas.push([chave, code, omieIdReceb]);
+      return Promise.resolve(c.falhaTentativas === undefined ? 1 : c.falhaTentativas);
     },
   };
   return { deps, chamadas };
@@ -104,7 +110,7 @@ Deno.test("o incidente: recebida e cancelada no topo nunca gastam a consulta —
   const [escolhida] = r.chamadas.consultar;
   assertEquals([r.chamadas.consultar.length, escolhida === 103 || escolhida === 104], [1, true], `consultou ${r.chamadas.consultar}`);
   assertEquals(r.chamadas.cabecalhos.map((c) => [c.omie_id_receb, c.chave_acesso, c.status, c.warehouse_id]), [[escolhida, chave(escolhida), "pendente", WH]]);
-  assertEquals(r.chamadas.itens, [[`nfe-${escolhida}`, 3]], "os itens do detalhe têm de chegar ao insert");
+  assertEquals(r.chamadas.itens, [[chave(escolhida), 3]], "os itens do detalhe têm de chegar à RPC junto do cabeçalho");
   assertEquals([r.importadas, r.puladas, r.erros], [1, 1, []]);
   const s = r.resumo;
   assertEquals(
@@ -263,19 +269,94 @@ Deno.test("falha da consulta (faultstring, só faultcode ou transporte) vai a er
   assertEquals([rede.erros.length, rede.resumo.consulta], [1, { nIdReceb: 802, desfecho: "falha_omie" }]);
 });
 
-Deno.test("itens que falham: erro em errors[], cabeçalho mantido, NÃO conta como importada", async () => {
-  const r = await rodar({ paginas: [pagina([reg(901, PENDENTE)])], detalhes: { 901: detalhe(901) }, erroItens: "value too long for type character varying(8)" });
-  assertEquals([r.importadas, r.resumo.importados, r.chamadas.cabecalhos.length, r.resumo.consulta], [0, 0, 1, { nIdReceb: 901, desfecho: "itens_falharam" }]);
-  assertEquals(r.erros, ["NF-e 901: cabeçalho gravado SEM itens — value too long for type character varying(8)"]);
+Deno.test("dado rejeitado pelo banco (22001): NÃO conta como importada, vai a errors[] e ao ledger de falhas com a chave e o id", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(901, PENDENTE)])],
+    detalhes: { 901: detalhe(901) },
+    importarDesfecho: { tipo: "erro", classe: "dado", code: "22001", mensagem: "value too long for type character varying(8)" },
+    falhaTentativas: 3,
+  });
+  assertEquals([r.importadas, r.resumo.importados, r.chamadas.cabecalhos.length, r.resumo.consulta], [0, 0, 1, { nIdReceb: 901, desfecho: "falha_dado" }]);
+  assertEquals(r.erros, ["NF-e 901: rejeitada pelo banco (22001) — value too long for type character varying(8) — registrada em nfe_importacao_falhas (tentativas: 3)"]);
+  assertEquals(r.chamadas.falhas, [[chave(901), "22001", 901]]);
 });
 
-Deno.test("cabeçalho que falha: erro, sem tentar os itens", async () => {
-  const r = await rodar({ paginas: [pagina([reg(902, PENDENTE)])], detalhes: { 902: detalhe(902) }, erroCabecalho: "duplicate key value" });
-  assertEquals([r.importadas, r.chamadas.itens, r.erros, r.resumo.consulta], [0, [], ["NF-e 902: duplicate key value"], { nIdReceb: 902, desfecho: "falha_banco" }]);
+Deno.test("ledger de falhas que não grava: o erro DIZ que não registrou (nunca 'tentativas: 0')", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(906, PENDENTE)])],
+    detalhes: { 906: detalhe(906) },
+    importarDesfecho: { tipo: "erro", classe: "dado", code: "NFE02", mensagem: "sequencia repetida" },
+    falhaTentativas: null,
+  });
+  assertEquals(r.erros, ["NF-e 906: rejeitada pelo banco (NFE02) — sequencia repetida — registrada em nfe_importacao_falhas (tentativas: NÃO registrou)"]);
+});
+
+Deno.test("erro de infra na RPC: falha_banco, erro em errors[], NADA no ledger (vale repetir)", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(902, PENDENTE)])],
+    detalhes: { 902: detalhe(902) },
+    importarDesfecho: { tipo: "erro", classe: "infra", code: "23505", mensagem: "duplicate key value" },
+  });
+  assertEquals([r.importadas, r.chamadas.falhas, r.erros, r.resumo.consulta], [0, [], ["NF-e 902: duplicate key value"], { nIdReceb: 902, desfecho: "falha_banco" }]);
+});
+
+Deno.test("RPC ausente (edge implantada antes da migration): falha_banco e o erro NOMEIA a migration", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(907, PENDENTE)])],
+    detalhes: { 907: detalhe(907) },
+    importarDesfecho: { tipo: "erro", classe: "rpc_ausente", code: "PGRST202", mensagem: "Could not find the function" },
+  });
+  assertEquals([r.resumo.consulta, r.chamadas.falhas.length], [{ nIdReceb: 907, desfecho: "falha_banco" }, 0]);
+  if (!r.erros[0].includes("2026-10-18-importar-nfe-recebimento-rpc.sql")) throw new Error(`tem de apontar a migration: ${r.erros[0]}`);
+});
+
+Deno.test("reparada (cabeçalho antigo sem itens completado pela consulta) CONTA como importada", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(908, PENDENTE)])],
+    detalhes: { 908: detalhe(908) },
+    importarDesfecho: { tipo: "reparada", id: "nfe-908", itens: 3 },
+  });
+  assertEquals([r.importadas, r.resumo.importados, r.erros, r.resumo.consulta], [1, 1, [], { nIdReceb: 908, desfecho: "reparada" }]);
+});
+
+Deno.test("ja_importada vinda da RPC (outro writer ganhou a corrida) é duplicada_por_chave: pulada, sem erro", async () => {
+  const r = await rodar({
+    paginas: [pagina([reg(909, PENDENTE)])],
+    detalhes: { 909: detalhe(909) },
+    importarDesfecho: { tipo: "ja_importada", id: "nfe-909", itens: 3 },
+  });
+  assertEquals([r.importadas, r.puladas, r.erros, r.resumo.consulta], [0, 1, [], { nIdReceb: 909, desfecho: "duplicada_por_chave" }]);
+});
+
+Deno.test("bloqueada e divergente: não importam, vão a errors[] com o id do cabeçalho e o motivo", async () => {
+  const b = await rodar({
+    paginas: [pagina([reg(910, PENDENTE)])],
+    detalhes: { 910: detalhe(910) },
+    importarDesfecho: { tipo: "bloqueada", id: "nfe-910", itens: 0, motivo: "status efetivado" },
+  });
+  assertEquals([b.importadas, b.resumo.consulta, b.erros], [0, { nIdReceb: 910, desfecho: "bloqueada" }, ["NF-e 910: cabeçalho nfe-910 sem itens e não reparável (status efetivado) — nada gravado — registrada em nfe_importacao_falhas (tentativas: 1)"]]);
+  assertEquals(b.chamadas.falhas, [[chave(910), "BLOQUEADA", 910]], "impedimento vai ao ledger: sem isso o conflito disputa a consulta para sempre");
+  const d = await rodar({
+    paginas: [pagina([reg(911, PENDENTE)])],
+    detalhes: { 911: detalhe(911) },
+    importarDesfecho: { tipo: "divergente", id: "nfe-911", itens: 2, esperados: 3, motivo: "cardinalidade" },
+  });
+  assertEquals([d.importadas, d.resumo.consulta, d.erros], [0, { nIdReceb: 911, desfecho: "divergente" }, ["NF-e 911: cabeçalho nfe-911 com itens divergentes do Omie (cardinalidade: 2 gravados, 3 no Omie) — nada gravado — registrada em nfe_importacao_falhas (tentativas: 1)"]]);
+  assertEquals(d.chamadas.falhas, [[chave(911), "DIVERGENTE", 911]]);
+});
+
+Deno.test("lote que o mapper fabricaria inválido (quantidade 0) NÃO chega à RPC: falha_dado com NFE01 no ledger", async () => {
+  const ruim = [{ itensCabec: { nQtdeNFe: 0 } }] as unknown as OmieRecebimentoItem[];
+  const r = await rodar({
+    paginas: [pagina([reg(912, PENDENTE)])],
+    detalhes: { 912: { cabec: { nIdReceb: 912, cChaveNFe: chave(912), cNumeroNFe: "912" }, infoCadastro: PENDENTE, itensRecebimento: ruim } },
+  });
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.chamadas.falhas], [{ nIdReceb: 912, desfecho: "falha_dado" }, 0, [[chave(912), "NFE01", 912]]]);
+  assertEquals(r.erros, ["NF-e 912: rejeitada pelo banco (NFE01) — lote inválido: item #1: quantidade_nfe inválida (0) — registrada em nfe_importacao_falhas (tentativas: 1)"]);
 });
 
 Deno.test("exceção na gravação não leva o resumo nem os pulos já contados", async () => {
-  const r = await rodar({ paginas: [pagina([reg(904, { cRecebido: "S" }), reg(905, PENDENTE)])], detalhes: { 905: detalhe(905) }, cabecalhoLanca: true });
+  const r = await rodar({ paginas: [pagina([reg(904, { cRecebido: "S" }), reg(905, PENDENTE)])], detalhes: { 905: detalhe(905) }, importarLanca: true });
   assertEquals([r.resumo.consulta, r.puladas, r.resumo.recebidos_no_omie, r.erros.length], [{ nIdReceb: 905, desfecho: "falha_interna" }, 1, 1, 1]);
 });
 

@@ -1,8 +1,9 @@
 // Marcador de versão da edge `omie-nfe-recebimento-sync`.
 // Classificador da sonda (money-path, compartilhado): `_shared/sonda-versao.ts`.
 //
-// Efeito desta edge: materializa recebimentos de NF-e a partir do Omie: insere `nfe_recebimentos` e
-// depois `nfe_recebimento_itens` em DUAS escritas não-transacionais.
+// Efeito desta edge: materializa recebimentos de NF-e a partir do Omie pela RPC transacional
+// `importar_nfe_recebimento` (cabeçalho + itens numa transação; v1.5). Até a v1.4 eram DUAS escritas
+// não-transacionais.
 //
 // Entrou na 12ª leva (2026-09-05) pelo critério "escrita money-path no NOSSO banco", e é a
 // continuação direta da 11ª: ela também estava na CLASSE CEGA do Passo 3 do `/fecho` — fora do
@@ -36,11 +37,17 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * o corpo de falha do Omie vale com HTTP 200 ou 500 ("não existem registros" é fim); a resposta traz
  * `por_armazem` com o desfecho da consulta (o sensor do cron), mesmo quando algo quebra no meio. O
  * laço mora em rodada.ts, testado no Deno com falsos.
+ * v1.5: cabeçalho + itens numa TRANSAÇÃO pela RPC `importar_nfe_recebimento` (lock por chave, 1 writer
+ * com o webhook; db/2026-10-18-importar-nfe-recebimento-rpc.sql); a triagem do cron deixa de pular o
+ * cabeçalho `pendente` sem itens e sem sinais de uso — a consulta o COMPLETA (reparada) — e pula a
+ * chave estacionada em nfe_importacao_falhas (≥3 falhas de dado); o botão "Importar NF-e" idem, sem o
+ * DELETE de compensação (podia apagar em cascata itens de outro writer). ⚠️ Deploy SÓ depois da
+ * migration: sem a RPC, cron e botão respondem erro nomeando-a (fail-closed), não o caminho antigo.
  */
-export const VERSAO = "v1.4-omie-cliente-compartilhado";
+export const VERSAO = "v1.5-rpc-transacional";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
-  "esta edge materializa recebimentos de NF-e (nfe_recebimentos + nfe_recebimento_itens, em " +
-  "duas escritas não-transacionais) e o guard de duplicata faz a retentativa PULAR a NF " +
-  "importada pela metade em vez de consertá-la";
+  "esta edge materializa recebimentos de NF-e (RPC importar_nfe_recebimento: nfe_recebimentos + " +
+  "nfe_recebimento_itens numa transação, com lock por chave) e consulta o Omie — 1 consulta de " +
+  "detalhe por conta e rodada";
