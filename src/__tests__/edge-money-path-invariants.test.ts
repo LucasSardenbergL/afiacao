@@ -1103,6 +1103,7 @@ describe('guardrail money-path: P1b doc-ambíguo-Omie (syncCustomers USA o helpe
     expect(bloco, 'a probe deveria cobrir o doc de 1 código (limpo) — senão um helper que marca tudo passaria').toContain('doc_1_codigo');
     expect(bloco, 'a probe deveria cobrir o MESMO código repetido (duplicata da paginação ≠ ambiguidade)').toContain('doc_mesmo_codigo_repetido');
     expect(bloco, 'a probe deveria cobrir o doc vazio (não vira chave)').toContain('doc_vazio_ignorado');
+    expect(bloco, 'a probe deveria cobrir a mutilação de alfanumérico (fatia v2) — senão um bundle pré-cnpj-alfanumerico passaria').toContain('alfanumerico_mutilacao_de_outro');
   });
 });
 
@@ -4084,7 +4085,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
 describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínculo)', () => {
   const src = read(ANALYTICS);
   const deployDoc = read(DEPLOY_DOC);
-  const CONTRATO = 'doc-ambiguo-fail-closed-v1';
+  const CONTRATO = 'doc-ambiguo-mutilacao-alfanumerica-v2';
   // Idem vendas-sync: medir o CÓDIGO, não a prosa que o descreve.
   const bloco = removerComentarios(src).match(/case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/)?.[0] ?? '';
 
@@ -4096,7 +4097,7 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
     expect(
       bloco,
       'sumiu o marcador `contrato` do doc_ambiguo_probe — foi a canária citada em docs/historico/deploy-no-op-por-desenho.md como "tinha canária, mas NÃO-VERSIONADA"',
-    ).toMatch(/contrato: ['"]doc-ambiguo-fail-closed-v1['"]/);
+    ).toMatch(/contrato: ['"]doc-ambiguo-mutilacao-alfanumerica-v2['"]/);
   });
 
   it('emite TAMBÉM `canary: true`, sem perder `probe_no_ar`', () => {
@@ -4107,7 +4108,7 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
   it('a LINHA da tabela do deploy.md fixa o MESMO marcador', () => {
     expect(
       deployDoc,
-      'a linha do `omie-analytics-sync` na tabela de canárias não fixa `doc-ambiguo-fail-closed-v1`',
+      'a linha do `omie-analytics-sync` na tabela de canárias não fixa `doc-ambiguo-mutilacao-alfanumerica-v2`',
     ).toMatch(linhaDaTabela('omie-analytics-sync', CONTRATO));
   });
 
@@ -4707,8 +4708,8 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(count(src, '.from("nfe_recebimentos").insert('), 'a sync voltou a inserir cabeçalho fora da transação').toBe(0);
     expect(count(webhook, '.from("nfe_recebimentos").insert('), 'o webhook voltou a inserir cabeçalho fora da transação').toBe(0);
     expect(count(rodada, 'nfe_recebimento_itens'), 'a rodada não grava itens por conta própria').toBe(0);
-    expect(rpc, 'a RPC é chamada pelo nome canônico').toContain('cliente.rpc(RPC_IMPORTAR');
-    expect(compartilhado).toContain('const RPC_IMPORTAR = "importar_nfe_recebimento";');
+    expect(rpc, 'a RPC é chamada pelo nome LITERAL (o extrator de pré-condição do deploy não vê constante)').toContain('cliente.rpc("importar_nfe_recebimento"');
+    expect(compartilhado).toContain('cliente.rpc("nfe_importacao_falha_registrar"');
     expect(deps, 'o cron grava pela RPC, com a origem certa').toMatch(/importar:\s*\(cabecalho, itens\)\s*=>\s*importarViaRpc\(/);
     expect(deps).toContain('origem: "sync"');
     expect(manual, 'o botão grava pela RPC, com a origem certa').toContain('importarViaRpc(');

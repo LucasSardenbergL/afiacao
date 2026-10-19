@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
+  opcoesDeBusca,
   BUILD_LEGADO,
   CACHE_ASSETS_PROGRESSIVO,
   CACHE_META,
@@ -193,5 +195,20 @@ describe('faseDaPagina', () => {
   });
   it('tudo no meu build → em dia', () => {
     expect(faseDaPagina('index-A', { ...base, promovida: 'index-A', release: 'index-A' })).toBe('em_dia');
+  });
+});
+
+describe('cookie `__dpl` do host (2026-10-19): o preparo busca SEM cookies', () => {
+  // Medido no Chrome do founder: com cookies, `/index.html` e os assets vinham do deployment
+  // PINADO (velho) — entry novo 404 → `obsoleta` para sempre; `/sw.js` vinha sempre do mais novo.
+  it('toda entrada vai com credentials omit; o modo de cache segue por tipo (hash = default, revisão = no-cache)', () => {
+    expect(opcoesDeBusca({ url: 'assets/vendor-react-Dm9CHLxI.js', revision: null })).toEqual({ cache: 'default', credentials: 'omit' });
+    expect(opcoesDeBusca({ url: 'index.html', revision: 'abc' })).toEqual({ cache: 'no-cache', credentials: 'omit' });
+  });
+
+  it('o SW usa opcoesDeBusca no fetch do preparo — nenhum fetch com cookies em sw.ts', () => {
+    const src = readFileSync(new URL('../../sw/sw.ts', import.meta.url), 'utf8');
+    expect(src).toContain('fetch(url, opcoesDeBusca(e))');
+    expect(src).not.toMatch(/credentials:\s*['"](same-origin|include)['"]/);
   });
 });

@@ -14,6 +14,7 @@ import {
 } from "./saida-ia.ts";
 import { classificarFlag, erroFlagAmbigua } from "../_shared/sonda-versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
+import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import {
   type AcumuladorCache,
@@ -1429,8 +1430,8 @@ Deno.serve(async (req) => {
         if (c.codigo_cliente && result.customer.codigo_cliente && c.codigo_cliente === result.customer.codigo_cliente) return true;
         // Match by document
         if (c.documento && result.customer.cnpj_cpf) {
-          const cDoc = (c.documento || '').replace(/\D/g, '');
-          const rDoc = (result.customer.cnpj_cpf || '').replace(/\D/g, '');
+          const cDoc = normalizarDocumento(c.documento);
+          const rDoc = normalizarDocumento(result.customer.cnpj_cpf);
           if (cDoc && rDoc && cDoc === rDoc) return true;
         }
         // DO NOT match by user_id — AI often returns wrong user_id from the candidate list index

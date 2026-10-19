@@ -34,6 +34,7 @@ import {
   normalizarEstado,
   nomeCachePrecacheWorkbox,
   nomeCacheRelease,
+  opcoesDeBusca,
   promover,
   reaproveitavel,
   respostaServivel,
@@ -148,7 +149,8 @@ async function obterEntrada(cache: Cache, e: EntradaManifesto): Promise<void> {
       return;
     }
   }
-  const r = await fetch(url, { cache: reaproveitavel(e) ? 'default' : 'no-cache', credentials: 'same-origin' });
+  // Sem cookies: o cookie `__dpl` do host pinaria o pedido no deployment VELHO (ver releases.ts).
+  const r = await fetch(url, opcoesDeBusca(e));
   const v = avaliarResposta(url, { ok: r.ok, status: r.status, contentType: r.headers.get('content-type') });
   if (v === 'ausente') throw new FimDoPreparo('obsoleta');
   if (v === 'invalida') throw new FimDoPreparo('invalida');

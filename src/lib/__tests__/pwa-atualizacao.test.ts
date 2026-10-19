@@ -625,3 +625,79 @@ describe('semCamposPreenchidos', () => {
     expect(semCamposPreenchidos(undefined as unknown as Document)).toBe(false);
   });
 });
+
+describe('cookie `__dpl` do host (2026-10-19): SW em waiting não é "versão pronta" quando o SW ponte publica estado', () => {
+  // O SW ponte em waiting (segurado pelos eventos pendentes do ativo) não serve build nenhum;
+  // o toast "pronta" vindo dele mandava clicar num "Atualizar" que não trocava nada.
+  it('waiting + estado publicado "preparando" → baixando, sem toast', () => {
+    const h = montar();
+    h.reg.waiting = new FakeSW('installed');
+    h.armar();
+    h.swPublica({ promovida: 'index-ATUAL123', release: 'index-NOVO1', progresso: { feitos: 14, total: 367 } });
+    expect(obterEstadoAtualizacao().fase).toBe('baixando');
+    expect(toastsDeUpdate()).toHaveLength(1); // só o do boot, antes de o SW responder
+  });
+
+  it('waiting + estado publicado "promovida ≠ meu build" → pronta (é o SW ativo quem serve o build novo)', () => {
+    const h = montar();
+    h.reg.waiting = new FakeSW('installed');
+    h.armar();
+    h.swPublica({ promovida: 'index-NOVO1', release: 'index-NOVO1' });
+    expect(obterEstadoAtualizacao().fase).toBe('pronta');
+  });
+
+  it('sem estado publicado (SW à moda antiga), waiting segue valendo como pronta', () => {
+    const h = montar();
+    h.reg.waiting = new FakeSW('installed');
+    h.armar();
+    expect(obterEstadoAtualizacao().fase).toBe('pronta');
+  });
+});
+
+describe('aplicadorPadrao com waiting que NÃO responde ao SKIP_WAITING (SW ponte em waiting)', () => {
+  it('sem controllerchange no prazo, recarrega mesmo assim — o HTML promovido vem do SW ativo', async () => {
+    vi.useFakeTimers();
+    try {
+      const reg = new FakeReg();
+      reg.waiting = new FakeSW('installed');
+      const container = new EventTarget();
+      const recarregar = vi.fn();
+      aplicadorPadrao(reg as unknown as ServiceWorkerRegistration, container as unknown as ServiceWorkerContainer, recarregar, 1500)();
+      expect(recarregar).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1499);
+      expect(recarregar).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(recarregar).toHaveBeenCalledTimes(1);
+      container.dispatchEvent(new Event('controllerchange'));
+      expect(recarregar).toHaveBeenCalledTimes(1); // nunca dois reloads
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('controllerchange antes do prazo recarrega uma vez e cancela o prazo', () => {
+    vi.useFakeTimers();
+    try {
+      const reg = new FakeReg();
+      reg.waiting = new FakeSW('installed');
+      const container = new EventTarget();
+      const recarregar = vi.fn();
+      aplicadorPadrao(reg as unknown as ServiceWorkerRegistration, container as unknown as ServiceWorkerContainer, recarregar, 1500)();
+      container.dispatchEvent(new Event('controllerchange'));
+      vi.advanceTimersByTime(5000);
+      expect(recarregar).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('lerCarimbosDoServidor fora do deployment pinado pelo cookie `__dpl`', () => {
+  it('busca sem cookies — com cookies o host devolve o HTML do deployment velho e "em dia" vira mentira', async () => {
+    const f = vi.fn(async () => new Response(HTML_SERVIDOR));
+    await lerCarimbosDoServidor(f as unknown as typeof fetch);
+    const [, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.cache).toBe('no-store');
+    expect(init.credentials).toBe('omit');
+  });
+});
