@@ -26,7 +26,7 @@ export function useDescricoesSkuOmie(
         .eq("account", conta as string)
         .in("omie_codigo_produto", chave);
       if (error) throw error;
-      return (linhas as unknown as ProdutoOmie[] | null) ?? [];
+      return (linhas) ?? [];
     },
     enabled: conta != null && chave.length > 0,
   });

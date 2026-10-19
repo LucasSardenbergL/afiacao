@@ -97,7 +97,7 @@ function SkuDetailSheetImpl({
         .eq('sku_codigo_omie', sku.sku_codigo_omie)
         .maybeSingle();
       if (error) return null;
-      return data as unknown as ViewStats;
+      return data;
     },
   });
 

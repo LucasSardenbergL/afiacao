@@ -52,7 +52,7 @@ export function useExcessoEstoque() {
             .eq("ativo", true)
             .not("estoque_maximo", "is", null)
             .order("sku_codigo_omie", { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ParamRow[] | null; error: unknown }>,
+            .range(de, ate),
         "sku_parametros/excesso",
       );
       const codes = params.map((r) => Number(r.sku_codigo_omie));
@@ -67,7 +67,7 @@ export function useExcessoEstoque() {
               .in("account", accountsDaEmpresa(empresa))
               .in("omie_codigo_produto", codes)
               .order("id", { ascending: true })
-              .range(de, ate) as unknown as PromiseLike<{ data: PosicaoEstoque[] | null; error: unknown }>,
+              .range(de, ate),
           "inventory_position/excesso",
         ),
         fetchAllPages<{ sku_codigo_omie: number; ultima_venda_data: string | null }>(
@@ -78,7 +78,7 @@ export function useExcessoEstoque() {
               .eq("empresa", empresa)
               .in("sku_codigo_omie", codes)
               .order("sku_codigo_omie", { ascending: true })
-              .range(de, ate) as unknown as PromiseLike<{ data: { sku_codigo_omie: number; ultima_venda_data: string | null }[] | null; error: unknown }>,
+              .range(de, ate),
           "v_sku_demanda_estatisticas/excesso",
         ),
       ]);

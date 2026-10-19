@@ -43,7 +43,7 @@ export default function AdminReposicaoPromocoes() {
 
       const { data, error } = await q;
       if (error) throw error;
-      const rows = (data || []) as unknown as Campanha[];
+      const rows = (data || []);
 
       // Buscar contagem de itens em batch
       const ids = rows.map((c) => c.id);

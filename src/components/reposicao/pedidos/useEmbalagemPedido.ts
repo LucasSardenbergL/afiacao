@@ -41,36 +41,36 @@ export function useEmbalagemPedido(
 
       // 1) Grupos a que os SKUs do pedido pertencem
       const equivResp = await supabase
-        .from('sku_embalagem_equivalencia' as never)
+        .from('sku_embalagem_equivalencia')
         .select('empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base')
         .eq('empresa', empresa)
         .eq('ativo', true)
         .in('sku_codigo_omie', skus);
       if (equivResp.error) throw equivResp.error; // money-path: não degradar silencioso [codex P2]
-      const equivDoPedido = (equivResp.data ?? []) as unknown as EquivRow[];
+      const equivDoPedido = (equivResp.data ?? []);
       const gruposEnvolvidos = [...new Set(equivDoPedido.map((e) => e.grupo_id))];
       if (gruposEnvolvidos.length === 0) return {};
 
       // 2) TODOS os membros desses grupos (inclui a embalagem-irmã fora do pedido)
       const membrosResp = await supabase
-        .from('sku_embalagem_equivalencia' as never)
+        .from('sku_embalagem_equivalencia')
         .select('empresa, grupo_id, sku_codigo_omie, unidade_base, fator_para_base')
         .eq('empresa', empresa)
         .eq('ativo', true)
         .in('grupo_id', gruposEnvolvidos);
       if (membrosResp.error) throw membrosResp.error;
-      const membros = (membrosResp.data ?? []) as unknown as EquivRow[];
+      const membros = (membrosResp.data ?? []);
       const skusGrupo = [...new Set(membros.map((m) => m.sku_codigo_omie))];
 
       // 3) Preço mais recente por SKU do grupo
       const precoResp = await supabase
-        .from('sku_preco_fornecedor_capturado' as never)
+        .from('sku_preco_fornecedor_capturado')
         .select('sku_codigo_omie, preco, capturado_em, status')
         .eq('empresa', empresa)
         .in('sku_codigo_omie', skusGrupo)
         .order('capturado_em', { ascending: false });
       if (precoResp.error) throw precoResp.error; // senão "sem preço" mascara falha de query [codex P2]
-      const precoRows = (precoResp.data ?? []) as unknown as PrecoRow[];
+      const precoRows = (precoResp.data ?? []);
       const precoMap = new Map<string, PrecoRow>();
       for (const p of precoRows) {
         if (!precoMap.has(String(p.sku_codigo_omie))) precoMap.set(String(p.sku_codigo_omie), p);
@@ -87,7 +87,7 @@ export function useEmbalagemPedido(
       // cobertura em dias da opção de embalagem e esconde o giro real do comprador.
       if (paramResp.error) throw paramResp.error;
       const demandaMap = new Map<string, number | null>();
-      ((paramResp.data ?? []) as unknown as { sku_codigo_omie: number; demanda_media_diaria: number | null }[])
+      ((paramResp.data ?? []))
         .forEach((p) => demandaMap.set(String(p.sku_codigo_omie), p.demanda_media_diaria));
 
       const cmResp = await supabase
@@ -99,7 +99,7 @@ export function useEmbalagemPedido(
       // (estoque parado). Sem ele a economia do lote maior sai INFLADA — e o pedido cresce.
       if (cmResp.error) throw cmResp.error;
       const cmMap = new Map<string, number | null>();
-      ((cmResp.data ?? []) as unknown as ParamRow[])
+      ((cmResp.data ?? []))
         .forEach((p) => cmMap.set(String(p.sku_codigo_omie), p.custo_capital_efetivo_perc));
 
       // 5) Limiar de economia + janela de stale (company_config)

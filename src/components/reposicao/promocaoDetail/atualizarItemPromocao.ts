@@ -10,11 +10,11 @@ import type { ItemRow } from "./types";
 export async function atualizarItemPromocao(itemId: number, changes: Partial<ItemRow>): Promise<void> {
   const { data, error } = await supabase
     .from("promocao_item")
-    .update(changes as never)
+    .update(changes)
     .eq("id", itemId)
     .select("id");
   if (error) throw error;
-  const linhas = (data as unknown[] | null)?.length ?? 0;
+  const linhas = data?.length ?? 0;
   if (linhas !== 1) {
     throw new Error(`Item ${itemId}: nenhuma linha gravada (${linhas}) — recarregue a campanha; ele pode ter sido removido`);
   }

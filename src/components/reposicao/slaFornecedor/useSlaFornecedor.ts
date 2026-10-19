@@ -48,7 +48,7 @@ export function useSlaFornecedor() {
         .eq("empresa", empresa)
         .limit(5000);
       if (error) throw error;
-      return (data ?? []) as unknown as SkuCompliance[];
+      return (data ?? []);
     },
   });
 

@@ -67,12 +67,12 @@ export function ConsolidarDemandaDialog({
   const consolidar = useMutation({
     mutationFn: async () => {
       if (!destino) throw new Error('Selecione o SKU destino');
-      // as never: a RPC (RETURNS void) ainda não está nos types gerados do Supabase.
-      const { error } = await supabase.rpc('consolidar_demanda_sku' as never, {
+      //: a RPC (RETURNS void) ainda não está nos types gerados do Supabase.
+      const { error } = await supabase.rpc('consolidar_demanda_sku', {
         p_empresa: empresa,
         p_sku_antigo: String(skuAntigoCodigo),
         p_sku_novo: String(destino.sku_codigo_omie),
-      } as never);
+      });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -82,7 +82,7 @@ export function ConsolidarDemandaDialog({
       queryClient.invalidateQueries({ queryKey: ['sku_parametros_revisao'] });
       onDone();
     },
-    onError: (e: Error) => toast.error(mensagemErroConsolidacao(e as unknown as ConsolidacaoErro)),
+    onError: (e: Error) => toast.error(mensagemErroConsolidacao(e)),
   });
 
   return (

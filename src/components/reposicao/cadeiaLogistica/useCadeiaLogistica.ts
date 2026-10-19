@@ -99,7 +99,7 @@ export function useCadeiaLogistica() {
         descricao_mudanca: args.descricao,
         valores_anteriores: args.valoresAnt ?? null,
         valores_novos: args.valoresNov ?? null,
-      } as never);
+      });
 
       // chamar recálculo (best-effort)
       const { error: rpcErr } = await supabase.rpc(
@@ -158,7 +158,7 @@ export function useCadeiaLogistica() {
             parceiro_contato: payload.etapa.parceiro_contato ?? null,
             observacoes: payload.etapa.observacoes ?? null,
             ativo: true,
-          } as never);
+          });
         if (error) throw error;
 
         await recalcularComImpacto({

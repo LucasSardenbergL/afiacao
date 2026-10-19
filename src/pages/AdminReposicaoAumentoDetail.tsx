@@ -50,7 +50,7 @@ export default function AdminReposicaoAumentoDetail() {
         .eq("id", aumentoId!)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as Aumento;
+      return data;
     },
   });
 
@@ -74,7 +74,7 @@ export default function AdminReposicaoAumentoDetail() {
         .eq("ativo", true)
         .order("categoria_fornecedor", { ascending: true });
       if (error) throw error;
-      return (data || []) as unknown as Item[];
+      return (data || []);
     },
   });
 
@@ -89,7 +89,7 @@ export default function AdminReposicaoAumentoDetail() {
         .select("id, aumento_item_id, familia_omie, sku_codigo_omie_especifico")
         .in("aumento_item_id", ids);
       if (error) throw error;
-      return (data || []) as unknown as Mapeamento[];
+      return (data || []);
     },
   });
 
@@ -106,7 +106,7 @@ export default function AdminReposicaoAumentoDetail() {
         .order("familia", { ascending: true })
         .order("sku_descricao", { ascending: true });
       if (error) throw error;
-      return (data || []) as unknown as SkuAfetado[];
+      return (data || []);
     },
   });
 

@@ -182,10 +182,10 @@ export default function AdminReposicaoEmbalagem() {
 
   const sincronizar = useMutation({
     mutationFn: async () => {
-      // as never: a RPC ainda não está nos tipos gerados do Supabase (regenerados pós-deploy).
-      const { data, error } = await supabase.rpc('reposicao_sincronizar_embalagem_wp' as never, {
+      //: a RPC ainda não está nos tipos gerados do Supabase (regenerados pós-deploy).
+      const { data, error } = await supabase.rpc('reposicao_sincronizar_embalagem_wp', {
         p_empresa: EMPRESA,
-      } as never);
+      });
       if (error) throw error;
       return data as { cores_elegiveis: number; linhas_inseridas: number };
     },

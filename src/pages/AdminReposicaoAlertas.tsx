@@ -125,15 +125,15 @@ export default function AdminReposicaoAlertas() {
         type LeadtimeRow = { t1_data_pedido: string; lt_bruto_dias_uteis: number };
         const { data, error } = await supabase
           .from("v_sku_leadtime_efetivo")
-          .select("t1_data_pedido, lt_bruto_dias_uteis" as never)
-          .eq("empresa", drillEvento.empresa as never)
-          .eq("sku_codigo_omie", drillEvento.sku_codigo_omie as never)
+          .select("t1_data_pedido, lt_bruto_dias_uteis")
+          .eq("empresa", drillEvento.empresa)
+          .eq("sku_codigo_omie", drillEvento.sku_codigo_omie)
           .not("t1_data_pedido", "is", null)
           .not("lt_bruto_dias_uteis", "is", null)
           .order("t1_data_pedido", { ascending: true });
         if (error) throw error;
         const outlierDay = drillEvento.data_evento.slice(0, 10);
-        const rows = (data ?? []) as unknown as LeadtimeRow[];
+        const rows = (data ?? []);
         return rows.map((r, i: number) => ({
           idx: i + 1,
           dia: String(r.t1_data_pedido).slice(0, 10),
@@ -153,11 +153,11 @@ export default function AdminReposicaoAlertas() {
       // NOTE: schema gerado parcial — usar cast pra row local
       const { data } = await supabase
         .from("sku_parametros")
-        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lt_medio_dias_uteis, preco_compra_real" as never)
+        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lt_medio_dias_uteis, preco_compra_real")
         .eq("empresa", drillEvento.empresa)
         .eq("sku_codigo_omie", Number(drillEvento.sku_codigo_omie))
         .maybeSingle();
-      return (data ?? null) as unknown as SkuInfo | null;
+      return (data ?? null);
     },
   });
 
@@ -180,12 +180,12 @@ export default function AdminReposicaoAlertas() {
       // NOTE: `codigo_grupo` no schema gerado é `grupo_codigo`; cast pra row local.
       const { data, error } = await supabase
         .from("fornecedor_grupo_producao")
-        .select("id, codigo_grupo, descricao, lt_producao_dias" as never)
+        .select("id, codigo_grupo, descricao, lt_producao_dias")
         .eq("empresa", drillEvento.empresa)
         .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor ?? "")
-        .order("codigo_grupo" as never);
+        .order("codigo_grupo");
       if (error) throw error;
-      return (data ?? []) as unknown as GrupoRow[];
+      return (data ?? []);
     },
   });
 
@@ -195,7 +195,7 @@ export default function AdminReposicaoAlertas() {
   const atribuirGrupoMut = useMutation({
     mutationFn: async () => {
       if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
-      const grupo = (gruposFornecedor ?? []).find((g) => g.id === (grupoEscolhido as unknown as number));
+      const grupo = (gruposFornecedor ?? []).find((g) => g.id === (grupoEscolhido));
       if (!grupo) throw new Error("Grupo inválido");
       // Insere associação — payload diverge do schema gerado (fornecedor_grupo_id, codigo_grupo)
       const { error: insErr } = await supabase
@@ -206,7 +206,7 @@ export default function AdminReposicaoAlertas() {
           fornecedor_grupo_id: grupo.id,
           fornecedor_nome: drillEvento.detalhes?.fornecedor,
           codigo_grupo: grupo.codigo_grupo,
-        } as never);
+        });
       if (insErr) throw insErr;
       // Marca evento como aceito
       const { error: resErr } = await supabase.rpc("resolver_outlier", {

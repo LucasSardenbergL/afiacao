@@ -64,7 +64,7 @@ export default function AdminReposicaoHistorico() {
         .order("snapshot_em", { ascending: false })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
       if (error) throw error;
-      return { rows: (data ?? []) as unknown as Hist[], total: count ?? 0 };
+      return { rows: (data ?? []), total: count ?? 0 };
     },
   });
 

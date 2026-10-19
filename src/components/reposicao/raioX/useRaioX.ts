@@ -64,7 +64,7 @@ export function useRaioX(empresa: Empresa | null): {
             supabase
               .rpc('raio_x_estoque_fatos', { p_empresa: empresa as string })
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<FatoSku>,
+              .range(de, ate),
           'raio_x_estoque_fatos',
         ),
       ),
@@ -83,7 +83,7 @@ export function useRaioX(empresa: Empresa | null): {
               .select('*')
               .eq('empresa', empresa as string)
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<DecisaoRow>,
+              .range(de, ate),
           'raio_x_decisao',
         ),
       ),
@@ -102,7 +102,7 @@ export function useRaioX(empresa: Empresa | null): {
               .select('sku_codigo_omie, categoria, motivo')
               .eq('empresa', empresa as string)
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<LinhaManual>,
+              .range(de, ate),
           'raio_x_classificacao_manual',
         ),
       ),
@@ -166,7 +166,7 @@ export function useRaioXMedicao(empresa: Empresa | null): {
             supabase
               .rpc('raio_x_medicao', { p_empresa: empresa as string })
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<LinhaMedicao>,
+              .range(de, ate),
           'raio_x_medicao',
         ),
       ),

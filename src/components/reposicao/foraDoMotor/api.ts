@@ -14,9 +14,9 @@ export const LIMITE_FORA_DO_MOTOR = 1000;
 /** Quantos SKUs da empresa vendem e estão fora do motor. Contagem ausente lança (ausente ≠ zero). */
 export async function contarForaDoMotor(empresa: string): Promise<number> {
   const { count, error } = await supabase
-    .from(VIEW_FORA_DO_MOTOR as never)
+    .from(VIEW_FORA_DO_MOTOR)
     .select("sku_codigo_omie", { count: "exact", head: true })
-    .eq("empresa" as never, empresa as never);
+    .eq("empresa", empresa);
   if (error) throw error;
   if (count == null) throw new Error("sensor fora-do-motor: contagem ausente");
   return count;
@@ -25,13 +25,13 @@ export async function contarForaDoMotor(empresa: string): Promise<number> {
 /** SKU → o flag caiu numa inativação do Omie já revertida (evento sku_reativado_omie pendente). */
 export async function buscarForaDoMotor(empresa: string): Promise<Map<number, boolean>> {
   const { data, error } = await supabase
-    .from(VIEW_FORA_DO_MOTOR as never)
+    .from(VIEW_FORA_DO_MOTOR)
     .select("sku_codigo_omie, reativado_omie_pendente")
-    .eq("empresa" as never, empresa as never)
-    .order("sku_codigo_omie" as never)
+    .eq("empresa", empresa)
+    .order("sku_codigo_omie")
     .range(0, LIMITE_FORA_DO_MOTOR - 1);
   if (error) throw error;
-  const linhas = (data ?? []) as unknown as { sku_codigo_omie: number; reativado_omie_pendente: boolean | null }[];
+  const linhas = (data ?? []);
   if (linhas.length >= LIMITE_FORA_DO_MOTOR) {
     throw new Error(`sensor fora-do-motor: ${linhas.length} linhas bateram no teto do PostgREST — lista truncada`);
   }

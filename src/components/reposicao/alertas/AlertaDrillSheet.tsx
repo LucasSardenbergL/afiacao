@@ -133,8 +133,8 @@ export function AlertaDrillSheet({
                         </SelectTrigger>
                         <SelectContent>
                           {(gruposFornecedor ?? []).map((g) => (
-                            // SelectItem espera string, mas a lógica original passava o number — preservar via cast
-                            <SelectItem key={g.id} value={g.id as unknown as string}>
+                            // SelectItem espera string; o id (number) vai como texto e volta por Number() em quem escolhe
+                            <SelectItem key={g.id} value={String(g.id)}>
                               {g.codigo_grupo} — {g.descricao} (LT {g.lt_producao_dias}d)
                             </SelectItem>
                           ))}

@@ -42,17 +42,11 @@ export function useBaixoGiro() {
       // (cast: a view é da migration 20260731120000 e só entra nos types gerados no próximo type-gen)
       const [invRes, demRes, sugRes, sbRes] = await Promise.all([
         supabase.from("inventory_position").select("omie_codigo_produto, saldo, cmc").eq("account", empresa.toLowerCase()).in("omie_codigo_produto", codes),
-        supabase.from("v_sku_ultima_venda" as never).select("sku_codigo_omie, ultima_venda_data, vendas_registradas").eq("empresa", empresa).in("sku_codigo_omie", codes) as unknown as PromiseLike<{
-          data: { sku_codigo_omie: number; ultima_venda_data: string | null; vendas_registradas: number }[] | null;
-          error: unknown;
-        }>,
+        supabase.from("v_sku_ultima_venda").select("sku_codigo_omie, ultima_venda_data, vendas_registradas").eq("empresa", empresa).in("sku_codigo_omie", codes),
         supabase.from("v_sku_parametros_sugeridos").select("sku_codigo_omie, status_sugestao").eq("empresa", empresa).in("sku_codigo_omie", codes),
         // Classificação Syntetos-Boylan (advisory; view da migration 20260802120000, cast pré-type-gen).
         // Falha aqui NÃO derruba a tela: o badge some (advisory puro — nenhuma decisão em cima).
-        supabase.from("v_sku_classe_sb" as never).select("sku_codigo_omie, quadrante").eq("empresa", empresa).in("sku_codigo_omie", codes) as unknown as PromiseLike<{
-          data: { sku_codigo_omie: number; quadrante: string | null }[] | null;
-          error: unknown;
-        }>,
+        supabase.from("v_sku_classe_sb").select("sku_codigo_omie, quadrante").eq("empresa", empresa).in("sku_codigo_omie", codes),
       ]);
       // Falha na fonte do giro morto LANÇA — "não consegui ler a última venda" viraria
       // vendas_registradas=0 ⇒ giro_morto=true na lista INTEIRA (veredito de descontinuar

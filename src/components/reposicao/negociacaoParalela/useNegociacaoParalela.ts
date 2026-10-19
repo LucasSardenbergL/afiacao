@@ -35,14 +35,14 @@ export function useNegociacaoParalela() {
     queryKey: ["neg-paralela-fila", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_sku_parametros_sugeridos" as never)
+        .from("v_sku_parametros_sugeridos")
         .select(
-          "sku_codigo_omie, sku_descricao, demanda_media_diaria, preco_compra_real, preco_item_eoq, fonte_preco, custo_capital_efetivo_perc, fornecedor_nome, empresa" as never,
+          "sku_codigo_omie, sku_descricao, demanda_media_diaria, preco_compra_real, preco_item_eoq, fonte_preco, custo_capital_efetivo_perc, fornecedor_nome, empresa",
         )
         .eq("empresa", EMPRESA)
         .ilike("fornecedor_nome", "%SAYERLACK%");
       if (error) throw error;
-      return (data ?? []) as unknown as LinhaViewSugeridos[];
+      return (data ?? []);
     },
     staleTime: 60_000,
   });
@@ -52,12 +52,12 @@ export function useNegociacaoParalela() {
     queryKey: ["neg-paralela-andamento", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_sugestao_negociacao_ativa" as never)
+        .from("v_sugestao_negociacao_ativa")
         .select("*")
         .eq("empresa", EMPRESA)
         .eq("status", "acao_tomada");
       if (error) throw error;
-      return (data ?? []) as unknown as Sugestao[];
+      return (data ?? []);
     },
     staleTime: 30_000,
   });
@@ -117,7 +117,7 @@ export function useNegociacaoParalela() {
         data_acao: new Date().toISOString(),
         data_geracao: hojeSP(), // o dia de SP — o mesmo do DEFAULT da coluna (20260930230623)
         valido_ate: addDias(hojeSP(), 30),
-      } as never);
+      });
       if (error) throw error;
       toast.success(`Negociação iniciada para ${c.sku_descricao ?? c.sku_codigo_omie}.`);
       queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
@@ -145,7 +145,7 @@ export function useNegociacaoParalela() {
     if (convertForm.volume_minimo <= 0) { toast.error("Volume mínimo deve ser maior que zero."); return; }
     setConvertSubmitting(true);
     try {
-      const { data, error } = await supabase.rpc("converter_sugestao_em_campanha_flat" as never, {
+      const { data, error } = await supabase.rpc("converter_sugestao_em_campanha_flat", {
         p_sugestao_id: convertTarget.id,
         p_desconto_perc: convertForm.desconto_perc,
         p_volume_minimo: convertForm.volume_minimo,
@@ -155,7 +155,7 @@ export function useNegociacaoParalela() {
         p_responsavel_nome: convertForm.responsavel || null,
         p_canal: convertForm.canal,
         p_observacoes: convertForm.observacoes || null,
-      } as never);
+      });
       if (error) throw error;
       toast.success("Negociação convertida em campanha.");
       queryClient.invalidateQueries({ queryKey: ["neg-paralela-andamento"] });
@@ -172,7 +172,7 @@ export function useNegociacaoParalela() {
   const handleFecharSemAcordoConfirm = async () => {
     if (!fecharSemAcordoTarget) return;
     const { error } = await supabase.from("sugestao_negociacao_paralela")
-      .update({ status: "fechada_sem_acordo", observacoes: fecharObs || null, data_acao: new Date().toISOString() } as never)
+      .update({ status: "fechada_sem_acordo", observacoes: fecharObs || null, data_acao: new Date().toISOString() })
       .eq("id", fecharSemAcordoTarget.id);
     if (error) { toast.error("Erro: " + error.message); return; }
     toast.success("Negociação encerrada sem acordo.");

@@ -118,7 +118,7 @@ export function MapeamentoStatusCell({
         : query.or(ilikeOr(["descricao", "codigo"], term));
       const { data, error } = await query.limit(20);
       setSearching(false);
-      if (!error) setSearchResults((data as unknown as OmieSearchRow[]) || []);
+      if (!error) setSearchResults((data) || []);
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, searchOpen]);
@@ -397,7 +397,7 @@ export function MapeamentoStatusCell({
                     }));
                     const { error } = await supabase
                       .from("promocao_item")
-                      .insert(payload as never);
+                      .insert(payload);
                     if (error) {
                       // O original JÁ foi vinculado: o erro diz o estado parcial, não "falhou tudo".
                       throw new Error(

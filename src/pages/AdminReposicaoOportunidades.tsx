@@ -88,7 +88,7 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["negociacao-paralela-sugestoes-count"],
     queryFn: async () => {
       const { count, error } = await supabase
-        .from("v_sugestao_negociacao_ativa" as never)
+        .from("v_sugestao_negociacao_ativa")
         .select("*", { count: "exact", head: true })
         .eq("empresa", EMPRESA)
         .eq("status", "nova");
@@ -107,11 +107,11 @@ export default function AdminReposicaoOportunidades() {
     queryKey: ["oportunidades-hoje", EMPRESA],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_otimizador_compras_insumos" as never)
+        .from("v_otimizador_compras_insumos")
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      const base = ((data || []) as unknown) as Oportunidade[];
+      const base = (data || []);
       // Decisão net-R$ marginal por SKU via helper puro (compras-otimizador-helpers).
       return base.map((o): OportunidadeComDecisao => ({
         ...o,
@@ -169,7 +169,7 @@ export default function AdminReposicaoOportunidades() {
         .select("data_inicio")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as Array<{ data_inicio: string | null }>;
+      const rows = (data ?? []);
       const meses = new Set<string>();
       for (const r of rows) {
         const k = r.data_inicio?.slice(0, 7);
@@ -275,9 +275,9 @@ export default function AdminReposicaoOportunidades() {
   const handleGerarCiclo = async () => {
     setExecutandoCiclo(true);
     try {
-      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia" as never, {
+      const { data, error } = await supabase.rpc("ciclo_oportunidade_do_dia", {
         p_empresa: EMPRESA,
-      } as never);
+      });
       if (error) throw error;
 
       const result = (data ?? {}) as {
