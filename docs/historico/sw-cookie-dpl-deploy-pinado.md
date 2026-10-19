@@ -49,3 +49,36 @@ Ou seja: o host do Lovable (Cloudflare na frente) **pina o browser num deploymen
 
 - **Medir "o que o servidor serve" com curl não é medir o que o BROWSER recebe** quando o host roteia por cookie. Toda sonda de "disponibilidade" (`verify-frontend.sh`, `lerCarimbosDoServidor`) mede o deployment padrão; o cliente pinado pode ver outro. Prova pelo browser: mesmo pedido com `credentials: 'omit'` e `'same-origin'`, comparando `x-deployment-id`.
 - Veredito `obsoleta` (404) só é "virá SW mais novo" se o 404 vier do deployment que entregou o `sw.js`.
+
+## Verificado em prod (2026-10-19, Chrome real, aba logada do founder)
+
+Publish do Lovable às ~15:05Z (clique do founder no editor; o `deploy_project` pelo MCP foi negado pelo classificador de deploy de produção). Build publicado `2f16e2cb` (contém o `54f3ced22` do #3181). Medição na aba do grupo MCP do Claude-in-Chrome, mesma origem/perfil da aba logada — a página montou em `/` já autenticada.
+
+**Pré-condição provada:** `curl -s https://steu.lovable.app/sw.js` passou de `credentials:"same-origin"` 1× / `"omit"` 0× (deployment `7c7845e9`) para `"omit"` 1× (deployment `33b51d44`) na primeira leitura após o clique. `monitor-deploy.sh --pr 3181` antes do Publish: `PR_FORA_DO_AR`, ar `9e9c340c`, `PR_TOCA_O_BUNDLE` (sw.ts, releases.ts, pwa-atualizacao.ts).
+
+**Antes do Publish (o sintoma, ainda com o SW velho no ar):**
+
+| item | valor |
+|---|---|
+| ESTADO (MessageChannel) | promovida `index-DNJHyL4m` · release do SW rodando `index-CiJBrr63` · progresso `null` · problema `null` |
+| cache da release do SW rodando | `afiacao-release-index-CiJBrr63` = **361** chaves, nunca promovida |
+| página | entry `index-DNJHyL4m`, `__BUILD_SHA__=28080496` (03:01Z, anterior ao #3181) |
+| `x-deployment-id` de `/` com cookie / sem cookie | `edb7c9b2` (entry `DNJHyL4m`) / `7c7845e9` (entry `eEtNvdDs`) |
+| caches `afiacao-release-*` retidos | 6 (D8govl0X 362 · DNJHyL4m 364 · lxXxvm7h 362 · B6QCfAWT 362 · BaM-tCGm 361 · CiJBrr63 361) |
+
+**Depois do Publish (um reload da aba, sem desregistrar nada — `getRegistrations().length` = 1, mesmo `scriptURL`):**
+
+| instante | leitura |
+|---|---|
+| 15:06:15Z (~1 min após o reload) | release `index-Ccbc8fVo` em preparo: progresso **251/367**, cache `afiacao-release-index-Ccbc8fVo` = 251, promovida ainda `DNJHyL4m` |
+| 15:06:40Z | **promovida = `index-Ccbc8fVo`**, progresso `null`, cache = **364** chaves; meta `anteriores` = `[DNJHyL4m, D8govl0X]`; toast "Nova versão disponível · Atualizar" na tela |
+| 15:07:36Z (clique em "Atualizar" + ≤7 s) | `navigation.type = reload`, entry **`/assets/index-Ccbc8fVo.js`**, `__BUILD_SHA__=2f16e2cb`, toast sumiu, `reg.waiting = false` |
+| 15:07:59Z | `/` com cookie: **ainda** `edb7c9b2` / entry `DNJHyL4m`; sem cookie: `33b51d44` / `Ccbc8fVo`; `/sw.js`: `33b51d44` |
+
+Total do manifesto: **367 entradas, 364 URLs únicas** (`favicon.ico`, `pwa-192x192.png` e `pwa-512x512.png` aparecem 2×) — o cache fecha em 364, não em 367; o `progresso.total` reporta 367 porque conta entradas. Caches retidos após a promoção: **3** (D8govl0X 362 · DNJHyL4m 364 · Ccbc8fVo 364) — os 5 intermediários (lxXxvm7h, B6QCfAWT, BaM-tCGm, CiJBrr63 e o parcial eEtNvdDs em 209) foram removidos pela própria promoção.
+
+**Leituras:**
+
+- O fix fecha o laço: o SW novo preparou a release inteira em ~1,5 min (antes parava em 361/364 e virava `obsoleta` em loop), promoveu sem desregistrar e a página trocou de entry no clique.
+- O cookie `__dpl` continua pinando o **host**: a navegação `/` com cookie segue devolvendo o HTML do deployment velho mesmo depois do Publish. O que o usuário recebe é o HTML da release promovida servido pelo SW — sem o SW ponte, o browser pinado continuaria no build velho até o cookie expirar. É por isso que a prova tem de ser lida no browser, não no curl.
+- A última linha "sem o fix" da versão original deste doc continua certa: o build velho no ar era `28080496`, mais de 11 h atrás do Publish, com 6 caches de release acumulados — o custo do bug era disco e adoção zero.

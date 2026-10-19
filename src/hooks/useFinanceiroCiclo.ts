@@ -7,6 +7,7 @@ import { fetchAllPages } from '@/lib/postgrest';
 import { normalizarResumo, num, type ResumoCliente, type ResumoClienteRow } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
+import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 
 export function hojeSp(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -15,7 +16,8 @@ export function hojeSp(): string {
 export function useCicloResumo() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'resumo'],
-    queryFn: async (): Promise<ResumoCliente[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<ResumoCliente[]> => filaCiclo(async () => {
       const linhas = await fetchAllPages<ResumoClienteRow>(
         (de, ate) =>
           supabase.rpc('fin_ciclo_cliente_resumo').select('*')
@@ -26,7 +28,7 @@ export function useCicloResumo() {
       );
       // Linha sem omie_codigo_cliente é descartada (sem chave não há cliente; evita a chave -1 do normalizador).
       return linhas.filter((l) => num(l.omie_codigo_cliente) !== null).map(normalizarResumo);
-    },
+    }),
   });
 }
 
@@ -38,7 +40,8 @@ export type CoorteMes = {
 export function useCicloCoorte() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'coorte'],
-    queryFn: async (): Promise<CoorteMes[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<CoorteMes[]> => filaCiclo(async () => {
       // .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre.
       const data = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
@@ -66,7 +69,7 @@ export function useCicloCoorte() {
         });
       }
       return out;
-    },
+    }),
   });
 }
 
@@ -77,7 +80,8 @@ export type ReceitaTtm = { porDia: number | null; mesesComDado: number };
 export function useReceitaDiariaTtm() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'receita-ttm', hojeSp().slice(0, 7)],
-    queryFn: async (): Promise<Record<Company, ReceitaTtm>> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Record<Company, ReceitaTtm>> => filaCiclo(async () => {
       const hoje = hojeSp();
       const [a, m] = hoje.split('-').map(Number);
       const fimExclusivo = a * 100 + m; // mês corrente (excluído)
@@ -114,7 +118,7 @@ export function useReceitaDiariaTtm() {
         out[c] = { porDia: total === null ? null : total / 365, mesesComDado: meses[c].size };
       }
       return out;
-    },
+    }),
   });
 }
 
@@ -128,7 +132,8 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'titulos', company, cliente],
     enabled: company !== null && cliente !== null,
-    queryFn: async (): Promise<TituloCliente[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<TituloCliente[]> => filaCiclo(async () => {
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
           supabase.rpc('fin_ciclo_titulos_cliente', { p_company: company as string, p_cliente: cliente as number }).select('*')
@@ -154,7 +159,7 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
         });
       }
       return out;
-    },
+    }),
   });
 }
 
@@ -162,7 +167,8 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
 export function useCicloGiroSku(company: Company) {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'giro-sku', company],
-    queryFn: async (): Promise<GiroSku[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<GiroSku[]> => filaCiclo(async () => {
       // .rpc() set-returning é capado em 1.000 linhas (colacor tem ~1.460 SKUs com saldo) → paginar sempre.
       const linhas = await fetchAllPages<Record<string, unknown>>(
         (de, ate) =>
@@ -173,6 +179,6 @@ export function useCicloGiroSku(company: Company) {
         'fin_ciclo_giro_sku',
       );
       return linhas.map(normalizarGiro).filter((l): l is GiroSku => l !== null);
-    },
+    }),
   });
 }

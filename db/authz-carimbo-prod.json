@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-18T23:15:40.787Z",
-  "sourceHead": "01489a279ea413bb8f4d525ab13f811227b6295a",
+  "medidoEm": "2026-10-19T14:16:15.368Z",
+  "sourceHead": "9e9c340cb10b04e0de3e379e01c90695fd899302",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 360 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 361 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -57,10 +57,10 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 376 identidade(s) batem com o repo (298 em dia, 68 só cosméticas, 9 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 376 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@72f3b7e90 (fetch ok) · prod 2026-10-18 23:19:09.251669Z",
-      "contratoFingerprint": "1c7c94fd2b7a65af8904b2745b21ecb42294cc54e0b7c4a3f33df15083c58b2f",
-      "auditorFingerprint": "dcede38ad6277c34885f11be969a1732b9dd7488b8b980407cca5188c4224837",
+      "resumo": "✅ deriva-corpo — 380 identidade(s) batem com o repo (304 em dia, 68 só cosméticas, 7 aceitas na baseline) e 19 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 380 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@9e9c340cb (fetch ok) · prod 2026-10-19 14:17:22.279929Z",
+      "contratoFingerprint": "84e9a630883796361eb217a22b1d4c35752b2f56564d9bd62e0ff1943bde46a5",
+      "auditorFingerprint": "0d9fbe318f3db89107f5492026a7f6a8934c38bedc67b56d556ae14b78a80fd6",
       "achados": []
     }
   }

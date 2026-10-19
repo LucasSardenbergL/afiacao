@@ -1,5 +1,7 @@
 // Tipos do check-in qualitativo DES.
 // Extraídos verbatim de src/components/des/CheckinQualitativoTab.tsx (god-component split).
+import type { Tables } from "@/integrations/supabase/types";
+import type { ComColunas } from "@/lib/linha-view";
 
 export interface Props {
   empresa: string;
@@ -22,60 +24,15 @@ export interface CriterioPercentual {
   percentual: number;
 }
 
-export interface DescontoCheckin {
-  checkin_id: number;
-  data_avaliacao: string;
-  tipo: string;
-  faixa_numero: number | null;
-  estrelas: number | null;
-  desconto_padrao: number | null;
-  qualitativos_atingidos_perc: number | null;
-  bonus_atingido_perc: number | null;
-  desconto_total_projetado: number | null;
-  desconto_total_maximo: number | null;
-  avaliado_por?: string | null;
-}
-
-export interface CheckinAtualRow {
-  checkin_id: number;
-  data_avaliacao: string;
-  tipo: string;
-  avaliado_com: string | null;
-  avaliado_por: string | null;
-  codigo: string;
-  nome: string;
-  criterio_tipo: string;
-  atingido: boolean;
-  observacao_criterio: string | null;
-}
-
-interface FaixaInfo {
-  faixa_id: number | null;
-  [key: string]: unknown;
-}
-
-export interface PosicaoTrimestreRow {
-  faixa_conservadora: FaixaInfo | null;
-  faixa_otimista: FaixaInfo | null;
-}
-
-export interface DescontoCheckinRow {
-  checkin_id: number;
-  data_avaliacao: string;
-  tipo: string;
-  faixa_numero: number | null;
-  estrelas: number | null;
-  desconto_padrao: number | null;
-  qualitativos_atingidos_perc: number | null;
-  bonus_atingido_perc: number | null;
-  desconto_total_projetado: number | null;
-  desconto_total_maximo: number | null;
-}
-
-export interface CheckinQualitativoRow {
-  id: number;
-  avaliado_por: string | null;
-}
+/**
+ * Linha da `v_des_desconto_por_checkin` (view: todas as colunas chegam `| null` no types.ts) com as
+ * colunas-chave exigidas na borda (`linhasCom`/`exigirColunas`). `avaliado_por` vem do join com
+ * `des_checkin_qualitativo` feito no hook.
+ */
+export type DescontoCheckin = ComColunas<
+  Tables<"v_des_desconto_por_checkin">,
+  "checkin_id" | "data_avaliacao" | "tipo"
+> & { avaliado_por?: string | null };
 
 export interface Resposta {
   atingido: boolean;

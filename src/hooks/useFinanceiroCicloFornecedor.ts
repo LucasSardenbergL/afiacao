@@ -9,6 +9,7 @@ import {
   normalizarResumoFornecedor, normalizarTituloCp, type ResumoFornecedor, type TituloCp,
 } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 import type { Company } from '@/contexts/CompanyContext';
+import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 
 type Linha = Record<string, unknown>;
 // As 3 RPCs nascem nesta migration e ainda não estão no types.ts gerado: builder mínimo tipado à mão.
@@ -31,23 +32,25 @@ function lerRpc(nome: 'fin_ciclo_cp_titulos' | 'fin_ciclo_fornecedor_resumo' | '
 export function useCicloCpTitulos() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'cp-titulos'],
-    queryFn: async (): Promise<TituloCp[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<TituloCp[]> => filaCiclo(async () => {
       const linhas = await lerRpc('fin_ciclo_cp_titulos', 'omie_codigo_lancamento');
       return linhas
         .filter((l) => num(l.omie_codigo_fornecedor) !== null && num(l.omie_codigo_lancamento) !== null)
         .map(normalizarTituloCp);
-    },
+    }),
   });
 }
 
 export function useCicloFornecedorResumo() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'fornecedor-resumo'],
-    queryFn: async (): Promise<ResumoFornecedor[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<ResumoFornecedor[]> => filaCiclo(async () => {
       const linhas = await lerRpc('fin_ciclo_fornecedor_resumo', 'omie_codigo_fornecedor');
       // Sem omie_codigo_fornecedor não há fornecedor: descarta (evita a chave -1 do normalizador).
       return linhas.filter((l) => num(l.omie_codigo_fornecedor) !== null).map(normalizarResumoFornecedor);
-    },
+    }),
   });
 }
 
@@ -59,7 +62,8 @@ export type CpEmpresa = {
 export function useCicloCpEmpresa() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'cp-empresa'],
-    queryFn: async (): Promise<Partial<Record<Company, CpEmpresa>>> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Partial<Record<Company, CpEmpresa>>> => filaCiclo(async () => {
       const linhas = await lerRpc('fin_ciclo_cp_empresa', null);
       const out: Partial<Record<Company, CpEmpresa>> = {};
       for (const r of linhas) {
@@ -71,6 +75,6 @@ export function useCicloCpEmpresa() {
         };
       }
       return out;
-    },
+    }),
   });
 }

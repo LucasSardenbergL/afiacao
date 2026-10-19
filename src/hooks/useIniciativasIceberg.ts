@@ -124,7 +124,7 @@ function fetchIniciativas(): Promise<IniciativaIceberg[]> {
         .select('*')
         .order('created_at', { ascending: false })
         .order('id', { ascending: true })
-        .range(de, ate) as unknown as PromiseLike<{ data: IniciativaIceberg[] | null; error: unknown }>,
+        .range(de, ate),
     'gov_iniciativas/iceberg',
     'gov_iniciativas',
   );

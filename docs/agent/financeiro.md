@@ -65,6 +65,7 @@
 - Todo R$ da aba é **cenário rotulado**; encurtar prazo de quem paga ANTES do vencimento pode liberar zero (sem R$).
 - ⚠️ **`numero_documento` vem como `''` (string vazia) na oben** (2 valores distintos em 5,5k títulos de 12m): `coalesce` não pega `''`. A chave de documento é `coalesce(nullif(btrim(numero_documento_fiscal),''), nullif(btrim(numero_documento),''))`. Sem isso, nenhum cliente da oben passava de confiança baixa (pré-voo: 0 → 153 clientes com ≥6 NFs).
 - **'VENCE HOJE' é status Omie legítimo**, não ambíguo; título aberto (A VENCER/VENCE HOJE) com vencimento < `hoje_sp` e saldo > 0 conta como vencido (lag de sync).
+- ⚠️ **Toda leitura pesada nova da aba passa pela `filaCiclo`** (`src/lib/financeiro/ciclo-fila.ts`, FIFO, teto 2, retry 4 s/8 s); seção abaixo da dobra entra em `<CargaAoAparecer>`. Incidente 2026-10-19 (#3182): após a frente 4, ~10 leituras saíam juntas no mount e TODAS estouravam o `statement_timeout` de 8 s do `authenticated` (500) — sozinhas, 1–3,4 s cada. Prova: `CicloTab.carga.test.tsx` (pico de leituras em voo).
 
 ## Estoque de giro (PME/NCG, aba Ciclo) — classe SPED + família, ausente ≠ 0
 

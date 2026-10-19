@@ -30,53 +30,44 @@ const Settings = lazy(() => import("./SettingsConfig"));
 
 const TabFallback = () => <PageSkeleton variant="auto" />;
 
-const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
-  try {
-    return await fn();
-  } catch {
-    return fallback;
-  }
-};
+/** Contagem `head` tipada. Erro LANÇA (o react-query expõe) — nunca vira 0 fabricado (ausente ≠ zero). */
+async function contar(
+  q: PromiseLike<{ count: number | null; error: { message: string } | null }>,
+  fonte: string,
+): Promise<number> {
+  const { count, error } = await q;
+  if (error) throw error;
+  if (count === null) throw new Error(`${fonte}: contagem veio nula`);
+  return count;
+}
 
+/**
+ * Conta nas tabelas que as ABAS leem (até 2026-10-19 contava `governance_*`, tabelas que nunca
+ * existiram no banco — o cast escondia e o try/catch devolvia 0 em todos os cards).
+ */
 function KpiCards({ empresa }: { empresa: string }) {
   void empresa;
 
   const { data } = useQuery({
     queryKey: ["gestao-governanca-kpis", empresa],
     queryFn: async () => {
-      type HeadCountBuilder = PromiseLike<{ count: number | null }> & {
-        eq(column: string, value: string | number | boolean | undefined): HeadCountBuilder;
-      };
-      const client = supabase as unknown as {
-        from(table: string): {
-          select(columns: string, options: { count: "exact"; head: true }): HeadCountBuilder;
-        };
-      };
-
-      const countWhere = (table: string, col?: string, val?: string | number | boolean) =>
-        safeQuery(async () => {
-          let q = client.from(table).select("id", { count: "exact", head: true });
-          if (col !== undefined) q = q.eq(col, val);
-          const { count } = await q;
-          return count ?? 0;
-        }, 0);
-
-      const [usuarios, permissoes, parametros, auditoria] = await Promise.all([
-        countWhere("governance_users", "active", true),
-        countWhere("governance_permissions"),
-        countWhere("governance_math_params"),
-        countWhere("governance_audit_logs"),
+      const [usuarios, permissoes, parametros, logPermissoes, logFarmer, logMargem] = await Promise.all([
+        contar(supabase.from("profiles").select("user_id", { count: "exact", head: true }).eq("is_employee", true), "profiles"),
+        contar(supabase.from("permission_overrides").select("id", { count: "exact", head: true }), "permission_overrides"),
+        contar(supabase.from("farmer_algorithm_config").select("id", { count: "exact", head: true }), "farmer_algorithm_config"),
+        contar(supabase.from("permission_change_log").select("id", { count: "exact", head: true }), "permission_change_log"),
+        contar(supabase.from("farmer_audit_log").select("id", { count: "exact", head: true }), "farmer_audit_log"),
+        contar(supabase.from("margin_audit_log").select("id", { count: "exact", head: true }), "margin_audit_log"),
       ]);
-
-      return { usuarios, permissoes, parametros, auditoria };
+      return { usuarios, permissoes, parametros, auditoria: logPermissoes + logFarmer + logMargem };
     },
   });
 
   const cards = [
-    { label: "Usuários Ativos", value: data?.usuarios ?? 0, icon: Users },
-    { label: "Permissões Definidas", value: data?.permissoes ?? 0, icon: KeyRound },
-    { label: "Parâmetros Configurados", value: data?.parametros ?? 0, icon: Sliders },
-    { label: "Eventos Auditoria", value: data?.auditoria ?? 0, icon: ScrollText },
+    { label: "Usuários Ativos", value: data?.usuarios, icon: Users },
+    { label: "Permissões Definidas", value: data?.permissoes, icon: KeyRound },
+    { label: "Parâmetros Configurados", value: data?.parametros, icon: Sliders },
+    { label: "Eventos Auditoria", value: data?.auditoria, icon: ScrollText },
   ];
 
   return (
@@ -86,7 +77,7 @@ function KpiCards({ empresa }: { empresa: string }) {
           <CardContent className="pt-4 flex items-center justify-between">
             <div>
               <div className="text-xs text-muted-foreground">{c.label}</div>
-              <div className="text-2xl font-bold mt-1">{c.value}</div>
+              <div className="text-2xl font-bold mt-1">{c.value ?? "—"}</div>
             </div>
             <c.icon className="h-8 w-8 text-muted-foreground opacity-60" />
           </CardContent>

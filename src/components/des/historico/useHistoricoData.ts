@@ -8,10 +8,10 @@ import { quarterDates } from "./format";
 import type {
   MetaRow,
   SnapshotRow,
-  CheckinDescontoRow,
-  PosicaoLiveRow,
   QuarterCard,
 } from "./types";
+import { faixaDeJson } from "../faixa-json";
+import { linhasCom } from "@/lib/linha-view";
 
 export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtual: number) {
   const [filtroAno, setFiltroAno] = useState<string>("__todos__");
@@ -56,7 +56,7 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
         .eq("empresa", empresa)
         .order("data_avaliacao", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as unknown as CheckinDescontoRow[];
+      return linhasCom(data, ["checkin_id", "ano", "trimestre", "data_avaliacao", "tipo"], "v_des_desconto_por_checkin");
     },
   });
 
@@ -72,7 +72,7 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
         .eq("trimestre", trimestreAtual)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as PosicaoLiveRow | null;
+      return data;
     },
   });
 
@@ -107,7 +107,7 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
         null;
 
       const faixaEstrelas = isAtual
-        ? Number(live?.faixa_conservadora?.estrelas ?? ultimoCheckin?.estrelas ?? 0)
+        ? Number(faixaDeJson(live?.faixa_conservadora)?.estrelas ?? ultimoCheckin?.estrelas ?? 0)
         : Number(ultimoCheckin?.estrelas ?? 0);
 
       const dates = quarterDates(a, t);

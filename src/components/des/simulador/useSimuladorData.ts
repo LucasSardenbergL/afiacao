@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PrazoOption } from "./types";
+import { faixaDeJson } from "../faixa-json";
 
 export function useSimuladorData(empresa: string, ano: number, trimestre: number) {
   // Prazos disponíveis
@@ -27,17 +28,14 @@ export function useSimuladorData(empresa: string, ano: number, trimestre: number
     queryKey: ["des-posicao-sim", empresa, ano, trimestre],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("v_des_posicao_trimestre_ao_vivo" as never)
+        .from("v_des_posicao_trimestre_ao_vivo")
         .select("posicao_ao_vivo_conservadora, faixa_conservadora")
-        .eq("empresa" as never, empresa as never)
-        .eq("ano" as never, ano as never)
-        .eq("trimestre" as never, trimestre as never)
+        .eq("empresa", empresa)
+        .eq("ano", ano)
+        .eq("trimestre", trimestre)
         .maybeSingle();
       if (error) throw error;
-      return data as unknown as {
-        posicao_ao_vivo_conservadora: number | null;
-        faixa_conservadora: { faixa_numero?: number; estrelas?: number; volume_max?: number } | null;
-      } | null;
+      return data;
     },
   });
 
@@ -62,7 +60,7 @@ export function useSimuladorData(empresa: string, ano: number, trimestre: number
   const faltamProximaFaixa = useMemo(() => {
     const conserv = Number(posQuery.data?.posicao_ao_vivo_conservadora ?? 0);
     const faixas = faixasQuery.data ?? [];
-    const atualNumero = posQuery.data?.faixa_conservadora?.faixa_numero ?? 0;
+    const atualNumero = faixaDeJson(posQuery.data?.faixa_conservadora)?.faixa_numero ?? 0;
     const proxima = faixas.find((f) => f.faixa_numero === atualNumero + 1);
     if (!proxima) return null;
     const gap = Number(proxima.volume_min) - conserv;

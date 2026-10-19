@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { LoginForm } from '@/components/auth/LoginForm';
 import { SignupForm } from '@/components/auth/SignupForm';
@@ -103,7 +104,7 @@ const Auth = () => {
 
         await supabase.from('profiles').upsert({
           user_id: signUpData.user.id, name: formData.name, email: formData.email,
-          phone: formData.phone.replace(/\D/g, ''), document: formData.document.replace(/\D/g, ''),
+          phone: formData.phone.replace(/\D/g, ''), document: normalizarDocumento(formData.document),
           customer_type: opts.isIndustrial ? 'industrial' : 'domestic',
           cnae: opts.cnae, is_employee: opts.isEmployee, is_approved: shouldAutoApprove,
         }, { onConflict: 'user_id' });

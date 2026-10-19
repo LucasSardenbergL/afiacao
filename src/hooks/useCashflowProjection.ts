@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { Fila } from '@/lib/financeiro/ciclo-fila';
 import { supabase } from '@/integrations/supabase/client';
 
 export type Cenario = 'realista' | 'otimista' | 'pessimista';
@@ -76,16 +77,22 @@ export type CashflowResult = {
   }>;
 };
 
-export function useCashflowProjection(company: string, cenario: Cenario = 'realista', horizonWeeks = 13) {
+/** `opcoes.fila`/`retryDelay`: a aba Ciclo põe a edge na MESMA fila das RPCs dela (carga escalonada — ver ciclo-fila.ts). */
+export function useCashflowProjection(
+  company: string, cenario: Cenario = 'realista', horizonWeeks = 13,
+  opcoes: { fila?: Fila; retryDelay?: (tentativa: number) => number } = {},
+) {
+  const fila: Fila = opcoes.fila ?? ((fn) => fn());
   return useQuery({
     queryKey: ['fin_cashflow_projection', company, cenario, horizonWeeks],
     enabled: Boolean(company),
-    queryFn: async (): Promise<CashflowResult> => {
+    ...(opcoes.retryDelay ? { retryDelay: opcoes.retryDelay } : {}),
+    queryFn: (): Promise<CashflowResult> => fila(async () => {
       const { data, error } = await supabase.functions.invoke('fin-cashflow-engine', {
         body: { company, cenario, horizon_weeks: horizonWeeks },
       });
       if (error) throw error;
       return data as CashflowResult;
-    },
+    }),
   });
 }
