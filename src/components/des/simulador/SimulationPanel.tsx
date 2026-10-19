@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PrazoOption, SimResult } from "./types";
+import { simResultDeJson } from "./sim-result";
 import { SimulationControls } from "./SimulationControls";
 import { SimulationResult } from "./SimulationResult";
 
@@ -66,7 +67,7 @@ export function SimulationPanel({
     setLoading(true);
     try {
       const { data, error } = await supabase.rpc(
-        "simular_puxar_volume_trimestre" as never,
+        "simular_puxar_volume_trimestre",
         {
           p_empresa: empresa,
           p_ano: ano,
@@ -74,10 +75,10 @@ export function SimulationPanel({
           p_valor_extra: valorExtra,
           p_prazo_pagamento_codigo: prazoCodigo,
           p_dias_estoque_extra: diasEstoque,
-        } as never,
+        },
       );
       if (error) throw error;
-      setResultado(data as unknown as SimResult);
+      setResultado(simResultDeJson(data));
       toast.success("Cenário simulado");
     } catch (err) {
       console.error(err);

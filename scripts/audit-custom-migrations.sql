@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 661
+-- Total de custom migrations: 662
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -724,6 +724,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019090100', 'fin_dre_recalculo_diario_cron', '20261019090100_fin_dre_recalculo_diario_cron.sql'),
   ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
   ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql'),
+  ('20261019110100', 'fin_titulo_baixas_cr_mapa', '20261019110100_fin_titulo_baixas_cr_mapa.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
   ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql')
 ),
@@ -2807,6 +2808,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
   ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
@@ -4939,6 +4941,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_recruzamento_diario_cron', 'function', 'public', 'radar_recruzar_ja_cliente_tick', ''),
   ('radar_recruzamento_diario_cron', 'cron_job', 'cron', 'radar-recruzar-ja-cliente-diario', ''),
   ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
