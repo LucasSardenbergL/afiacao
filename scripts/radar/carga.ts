@@ -244,7 +244,11 @@ const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
 }).filter((m) => m.uf); // só municípios que aparecem no nosso universo
 console.log(`🗺️  municípios do universo: ${municipios.length} (${semLatLng} sem lat/lng — mapa os ignora)`);
 
-if (DRY) { console.log("🏁 dry-run: nada enviado"); process.exit(0); }
+if (DRY) {
+  // Relatório LOCAL também no dry-run: a simulação é justamente onde se quer ver o que o dump rejeitaria.
+  console.log(`${rejeitadasLocal.cnpj + rejeitadasLocal.cnae > 0 ? "⚠️" : "📋"} rejeições locais: ${JSON.stringify(rejeitadasLocal)}`);
+  console.log("🏁 dry-run: nada enviado"); process.exit(0);
+}
 
 // ── 7. POST em chunks ─────────────────────────────────────────────────────────
 const post = async (body: unknown) => {
@@ -276,9 +280,14 @@ const descartadasEdge: Record<string, number> = {};
 let duplicadasNoChunk = 0;
 for (let i = 0; i < linhas.length; i += 1000) {
   const resp = (await post({ action: "chunk", mes: MES, linhas: linhas.slice(i, i + 1000) })) as
-    { descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
-  for (const [motivo, n] of Object.entries(resp?.descartadas_por_motivo ?? {})) {
-    descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
+    { descartadas?: number; descartadas_por_motivo?: Record<string, number>; duplicadas_no_chunk?: number } | undefined;
+  if (resp?.descartadas_por_motivo) {
+    for (const [motivo, n] of Object.entries(resp.descartadas_por_motivo)) {
+      descartadasEdge[motivo] = (descartadasEdge[motivo] ?? 0) + n;
+    }
+  } else if (typeof resp?.descartadas === "number" && resp.descartadas > 0) {
+    // Edge ANTIGA (< v1.1): só o total. Ausente ≠ zero — entra como não classificado, nunca como 0.
+    descartadasEdge.nao_classificado = (descartadasEdge.nao_classificado ?? 0) + resp.descartadas;
   }
   duplicadasNoChunk += resp?.duplicadas_no_chunk ?? 0;
   if ((i / 1000) % 25 === 0) console.log(`… ${i}/${linhas.length}`);

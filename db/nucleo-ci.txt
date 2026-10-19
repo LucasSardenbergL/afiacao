@@ -599,5 +599,6 @@ db/test-tint-promote-fantasma.sh            11
 db/test-tint-remove-cron-reaplicar.sh       3
 db/test-importar-nfe-recebimento.sh          75  falsificar=9
 # Radar: CNPJ alfanumérico (RFB jul/2026) — CHECKs + recruzar com upper/separadores; a PRE exige o md5 de PROD do
-# predecessor, então repo≠prod fica vermelho aqui. 4 sabotagens: CHECK afrouxado, sem upper(), alnum→só-dígitos, PÓS.
-db/test-radar-cnpj-alfanumerico.sh          23  falsificar=4
+# predecessor, então repo≠prod fica vermelho aqui. 5 sabotagens: CHECK afrouxado, sem upper(), alnum→só-dígitos,
+# alnum sem máscara exata (20261019150000), PÓS.
+db/test-radar-cnpj-alfanumerico.sh          25  falsificar=5

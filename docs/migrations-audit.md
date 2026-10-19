@@ -5368,6 +5368,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.pedido_total_liquido_converter` | — |
 | `table` | `public.pedido_total_liquido_excecao` | — |
 
+### `20261019150000_radar_recruzar_mascara_exata.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_recruzar_ja_cliente` | — |
+
 ## Próximos passos por status
 
 **❌ NÃO aplicado / ⚠️ PARCIAL** (objetos faltam em prod — o caso que importa):
