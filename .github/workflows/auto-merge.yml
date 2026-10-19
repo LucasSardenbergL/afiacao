@@ -60,12 +60,20 @@ jobs:
   ci-na-main-pos-merge:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Só o CI de PR que terminou VERDE. O run do próprio dispatch (event=workflow_dispatch), o do
-    # cron e o do push do Lovable ficam fora — sem isso, cada CI da main dispararia outro (laço).
+    # Só o CI de PR. O run do próprio dispatch (event=workflow_dispatch), o do cron e o do push do
+    # Lovable ficam fora — sem isso, cada CI da main dispararia outro (laço).
+    #
+    # ⚠️ NÃO exija `workflow_run.conclusion == 'success'` aqui (J0 do plano de melhoria v2,
+    # 2026-10-18). `conclusion` é do WORKFLOW inteiro, e o CI tem jobs INFORMATIVOS fora do
+    # `validate.needs` (`mutation-check`, que abre Issue em vez de barrar): um vermelho dele deixa o
+    # workflow `failure` com o `validate` verde, o auto-merge mergeia (ele só espera o required
+    # check) e este job era PULADO — a main ficava sem CI pós-merge justamente no PR em que algo
+    # falhou. O veredito que importa é o do job `validate`, lido pela API no step abaixo.
+    # `cancelled`/`skipped` ficam fora já no `if`: ali não há `validate` verde a procurar.
     if: >-
       github.event_name == 'workflow_run'
       && github.event.workflow_run.event == 'pull_request'
-      && github.event.workflow_run.conclusion == 'success'
+      && (github.event.workflow_run.conclusion == 'success' || github.event.workflow_run.conclusion == 'failure')
     permissions:
       actions: write        # `gh workflow run` (workflow_dispatch)
       pull-requests: read
@@ -80,8 +88,19 @@ jobs:
           REPO: ${{ github.repository }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
           SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CONCLUSAO_WORKFLOW: ${{ github.event.workflow_run.conclusion }}
         run: |
           set -u
+          # O required check é o JOB `validate`, não o workflow (ver o `if`). Lê a conclusão dele no run
+          # que terminou; `success` POSITIVO ou nada — job ausente, API muda, `null`: tudo "não disparo".
+          validate="$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" --paginate \
+                      -q '.jobs[] | select(.name == "validate") | .conclusion' 2>/dev/null | head -n 1)" || validate=""
+          if [ "$validate" != "success" ]; then
+            echo "::notice::run $RUN_ID: validate='${validate:-<ausente>}' (workflow=$CONCLUSAO_WORKFLOW) — o PR não mergeia por este run; nada a disparar"
+            exit 0
+          fi
+          echo "validate=success no run $RUN_ID (workflow=$CONCLUSAO_WORKFLOW — vermelho fora do required não cala o pós-merge)"
           # O número do PR vem pela branch: `workflow_run.pull_requests` chega VAZIO em PR de fork e
           # às vezes no de mesma origem. Casa também o head SHA: o verde tem de ser do head atual.
           pr="$(gh pr list --repo "$REPO" --head "$BRANCH" --state all --limit 5 \
