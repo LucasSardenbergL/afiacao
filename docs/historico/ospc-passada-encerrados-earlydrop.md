@@ -60,3 +60,24 @@ O terminal foi **abstenção**: `encerrados (520) passam da metade da varredura 
 discrimina "encerrado" no sentido do R59 continua em aberto: com a abstenção, o registro não guarda os IDs, e
 os controles do #3132 (positivo 12096301530/12098830141 dentro; negativo pedido aberto de out/2026 fora)
 precisam do conjunto.
+
+## v1.8 — conjunto da abstenção gravado e os 3 controles do #3132 (2026-10-19)
+
+A v1.8 (#3167) grava, na abstenção, o conjunto observado em `sync_state.metadata.diagnostico` (só
+diagnóstico; registro protegido e backtest intactos). Deploy `a299ed60b998` (9/9 sha256 contra `5a8a2910a`);
+o sensor acusou `EDICAO_DETECTADA` pelos SINAIS do MCP (`commit_sha` `0a53b5ef`), mas medido contra o commit
+deployado ele é um merge `lovable-sync-*` que muda só o `types.ts` (+1 linha regenerada), zero em
+`supabase/` e fora da main — classe tolerada, nada a reverter. Sonda #541 → DEPLOY CONFIRMADO v1.8; ledger
+`CONFERE`. Disparo #542: abstenção de novo (520/549), seq 151, `completa=true`, `truncado=false`.
+
+| controle | resultado |
+|---|---|
+| positivo — 12096301530 e 12098830141 em `ids_observados` | ✅ os dois dentro |
+| negativo — pedido aberto de out/2026 em `ids_fora_do_filtro` | ✅ 12197300494, 12197359383, 12199229751, 12199229888 (16/10, sem NF, previsão 27–29/10) estão no complemento; 12199229881 não foi visto pelo completo (fora dos dois) |
+| tamanho — observados − alheios + fora = completo | ✅ 520 − 0 + 29 = 549 · **94,7%** do completo |
+
+Perfil: os 29 de fora são TODOS pedidos de out/2026 com previsão 20–30/10 (18 sem NF, 11 com NF) — os em voo.
+Os 13 pedidos de out/2026 observados têm NF. ⇒ o filtro só-encerrados separa "ciclo concluído" de "em voo",
+não "encerrado manualmente sem NF". Com a guarda de metade, a passada absterá SEMPRE nesta carteira: ligar
+`habilitado` sozinho é inerte. A decisão aberta é a SEMÂNTICA (o que o R59 quer tirar do caixa) e, com ela,
+a guarda — não o interruptor.
