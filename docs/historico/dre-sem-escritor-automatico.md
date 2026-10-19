@@ -45,3 +45,11 @@ Snapshot derivado sem escritor agendado apodrece em silêncio: o consumidor (PME
 para `null`, que é o certo — mas ninguém via que a FONTE do snapshot era só um botão. Ao criar tabela
 derivada, a pergunta é "quem a escreve sem humano?", e o `cron.job` responde, não o comentário na
 migration.
+
+## Aplicado e validado (2026-10-19, psql-ro)
+
+- Migration: `db:aplicar` tentativa #547 → job `fin-dre-recalculo-diario` (jobid 215, `30 15 * * *`, ativo).
+- Recompute: tentativa #548 → ids pg_net 122589–122597, **9/9 HTTP 200**, 9/9 `complete` em
+  `fin_sync_log` (a mais lenta 36,8 s — caixa de um mês da Oben).
+- `fin_dre_snapshots` competência, meses fechados out/2025–set/2026: **Oben 12/12, Colacor SC 12/12**.
+  Oben caixa abr–out/2026 recalculado (7/7). CMV competência da Oben abr–set: R$ 160k–225k/mês.
