@@ -18,6 +18,7 @@ import {
   FILTROS_TODOS,
   isoParaBR,
 } from "./encerrados.ts";
+import { segurarWorker } from "./manter-vivo.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
@@ -875,6 +876,9 @@ async function coletarEncerrados(
       return { ids, completa: false, paginas: pagina - 1, motivo: `sem tempo antes da pág ${pagina}` };
     }
     await sleep(RATE_LIMIT_DELAY_MS); // rate-limit Omie: a 1ª página vem logo depois da última do completo
+    // rastro por página (Codex 2026-10-18 P2): a morte por EarlyDrop não deixou NENHUMA linha — sem isto não se
+    // sabe em qual await a passada estava quando o worker caiu
+    console.log(`[sync-pedidos] encerrados pág ${pagina} pedindo (restam ${deadline - Date.now()}ms do deadline)`);
     let resp: OmieSearchResponse;
     try {
       resp = await callOmie(app_key, app_secret, pagina, dataDe, dataAte, FILTROS_SO_ENCERRADOS, deadline);
@@ -894,6 +898,7 @@ async function coletarEncerrados(
     }
     fpsVistos.add(fp);
     for (const id of cls.ids) ids.add(id);
+    console.log(`[sync-pedidos] encerrados pág ${pagina} ok (${cls.ids.length} ids, acumulado ${ids.size})`);
   }
   return { ids, completa: false, paginas: MAX_PAGINAS, motivo: `excedeu ${MAX_PAGINAS} páginas sem ver fim` };
 }
@@ -1389,5 +1394,10 @@ Deno.serve(async (req) => {
     }
   };
 
-  return await responderSincrono(processarTudo());
+  // [2026-10-18] o gateway derruba a request aos 150s (504 IDLE_TIMEOUT) mesmo com o cliente já fora, e sem
+  // request ativa o runtime faz EarlyDrop do worker ~50s depois — matava a passada de encerrados no meio
+  // (manter-vivo.ts). O MESMO promise vai para o waitUntil: o worker vive até o fim, a resposta segue no fim.
+  const trabalho = processarTudo();
+  if (!segurarWorker(trabalho)) console.warn("[sync-pedidos] waitUntil do runtime AUSENTE — worker não segurado (EarlyDrop possível)");
+  return await responderSincrono(trabalho);
 });

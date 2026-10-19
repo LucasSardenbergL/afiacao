@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 654
+-- Total de custom migrations: 656
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -717,8 +717,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261017120000', 'sayerlack_varredura_visto', '20261017120000_sayerlack_varredura_visto.sql'),
   ('20261018092000', 'pedido_compra_encerrado_omie', '20261018092000_pedido_compra_encerrado_omie.sql'),
   ('20261018120000', 'fin_ciclo_nome_cliente', '20261018120000_fin_ciclo_nome_cliente.sql'),
+  ('20261018150000', 'fin_ciclo_fornecedor', '20261018150000_fin_ciclo_fornecedor.sql'),
   ('20261018160000', 'fcs_ftp_fecha_escrita_default', '20261018160000_fcs_ftp_fecha_escrita_default.sql'),
-  ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql')
+  ('20261018200000', 'fin_ciclo_giro_sku', '20261018200000_fin_ciclo_giro_sku.sql'),
+  ('20261019090000', 'fin_ciclo_cp_empresa_perf', '20261019090000_fin_ciclo_cp_empresa_perf.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2782,12 +2784,20 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
   ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_fornecedor_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_titulo_encargos_cp', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_compras_categorias', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_fornecedor_resumo', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_tipo_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_familia_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_classe', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_account', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
-  ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', '')
+  ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
+  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4899,12 +4909,20 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_select_staff', 'reposicao_encerrados_omie_publicacao'),
   ('pedido_compra_encerrado_omie', 'rls_policy', 'public', 'reposicao_encerrados_omie_publicacao_service_all', 'reposicao_encerrados_omie_publicacao'),
   ('fin_ciclo_nome_cliente', 'view', 'public', 'v_ciclo_cliente_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_fornecedor_resumo', ''),
+  ('fin_ciclo_fornecedor', 'function', 'public', 'fin_ciclo_cp_empresa', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_titulo_encargos_cp', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_compras_categorias', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_cp_titulos', ''),
+  ('fin_ciclo_fornecedor', 'view', 'public', 'v_ciclo_fornecedor_resumo', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_tipo_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_familia_fora', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_classe', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', '_fin_estoque_account', ''),
   ('fin_ciclo_giro_sku', 'function', 'public', 'fin_estoque_giro_valor', ''),
-  ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', '')
+  ('fin_ciclo_giro_sku', 'function', 'public', 'fin_ciclo_giro_sku', ''),
+  ('fin_ciclo_cp_empresa_perf', 'function', 'public', 'fin_ciclo_cp_empresa', '')
 )
 SELECT
   e.migration,
@@ -4932,7 +4950,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 145.
+-- Funções redefinidas com corpo extraível: 146.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5479,7 +5497,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_finish_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', 'e8d49891617172756d25c44f6baa0f6e'),
   ('public', 'vendas_sync_finish_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8ab082334242f7d7c14afcfdc20ffa75'),
   ('public', 'vendas_sync_release_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '34c7537d07424efc870fdf474ef180ee'),
-  ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa')
+  ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa'),
+  ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
+  ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

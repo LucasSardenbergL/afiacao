@@ -69,6 +69,18 @@ describe("guardrail money-path: omie-sync-pedidos-compra (réplica purchase_orde
       .not.toMatch(/EdgeRuntime|status:\s*202|background:\s*true/);
   });
 
+  it("segura o worker SEM responder cedo: o MESMO trabalho vai ao waitUntil e é aguardado antes da resposta (EarlyDrop, 2026-10-18)", () => {
+    // O gateway derruba a request aos 150s (504 IDLE_TIMEOUT) mesmo com o cliente fora, e sem promise no waitUntil o
+    // runtime faz EarlyDrop do worker ~200s após o boot — matava a passada de encerrados. O uso do runtime fica
+    // CONFINADO em manter-vivo.ts (o teste acima segue barrando EdgeRuntime no index.ts) e lá não há resposta.
+    expect(removerComentarios(src), "index.ts tem de segurar o MESMO trabalho que aguarda antes de responder")
+      .toMatch(/const (\w+) = processarTudo\(\);\s*\n\s*if \(!segurarWorker\(\1\)\)[^\n]*\n\s*return await responderSincrono\(\1\);/);
+    const manter = removerComentarios(edgeSrc("supabase/functions/omie-sync-pedidos-compra/manter-vivo.ts"));
+    expect(manter, "manter-vivo.ts perdeu o waitUntil — o worker volta a morrer por EarlyDrop").toMatch(/\.waitUntil\(/);
+    expect(manter, "manter-vivo.ts não pode responder (Response/202) — só segurar o worker")
+      .not.toMatch(/new Response|status:\s*202|background:\s*true/);
+  });
+
   it("todo ponto que conta erro registra o MOTIVO no heartbeat (alerta PARCIAL sem causa, out/2026 — #2954)", () => {
     // O log da edge expira em ~10min no Lovable Cloud: se o motivo não chega ao sync_state, o alerta
     // "1 erro(s), 400 sincronizado(s)" fica sem causa recuperável. Erro do loop entra por anotarErro();
