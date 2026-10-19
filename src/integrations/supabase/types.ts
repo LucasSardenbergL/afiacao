@@ -21984,6 +21984,7 @@ export type Database = {
         }[]
       }
       radar_recruzar_ja_cliente: { Args: never; Returns: number }
+      radar_recruzar_ja_cliente_tick: { Args: never; Returns: number }
       radar_registrar_cadastro_omie: {
         Args: {
           p_cnpj: string
