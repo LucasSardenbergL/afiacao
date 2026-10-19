@@ -2,87 +2,99 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
+import {
+  cadastrarEmpresaNoOmie,
+  type DepsCadastro,
+  type OpcoesCadastro,
+  type ResultadoCadastro,
+} from '@/lib/radar/cadastro-omie';
 
 // TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
 type RpcFn = typeof supabase.rpc;
 
-interface CadastroOmieResult {
-  codigo_cliente: string | number | null;
-  ja_existia: boolean;
+/** Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). */
+function montarPayloadCriarCliente(e: RadarEmpresa) {
+  return {
+    action: 'criar_cliente',
+    account: 'oben',
+    document: e.cnpj,
+    razao_social: e.razao_social || e.nome_fantasia || e.cnpj,
+    nome_fantasia: e.nome_fantasia || undefined,
+    endereco: e.logradouro || undefined,
+    endereco_numero: e.numero || undefined,
+    bairro: e.bairro || undefined,
+    cidade: e.municipio_nome || undefined,
+    estado: e.uf || undefined,
+    cep: e.cep || undefined,
+    telefone: e.telefone1 || e.telefone2 || undefined,
+  };
 }
 
 /**
- * Cadastra a empresa no Omie (Oben) via a edge `omie-vendas-sync` action `criar_cliente`.
- * Anti-dup: a edge consulta pelo documento antes de criar; se já existir, retorna `created: false`.
- * Após o Omie confirmar, persiste o vínculo em `radar_empresas` via RPC `radar_registrar_cadastro_omie`.
+ * I/O real do cadastro (edge + RPC + leitura do vínculo). A DECISÃO mora em
+ * `@/lib/radar/cadastro-omie` (pura, testada): resposta sem código é INDETERMINADA e não
+ * grava no Radar; retomada relê o vínculo antes de repetir a RPC.
+ */
+export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
+  criarNoOmie: async (e) => {
+    const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
+      body: montarPayloadCriarCliente(e),
+    });
+    if (error) throw new Error(error.message);
+    return data;
+  },
+  registrarNoRadar: async (cnpj, codigo, jaExistia) => {
+    const { error } = await (supabase.rpc as RpcFn)(
+      'radar_registrar_cadastro_omie' as never,
+      { p_cnpj: cnpj, p_codigo_cliente: codigo, p_ja_existia: jaExistia } as never,
+    );
+    if (error) throw error;
+  },
+  lerVinculo: async (cnpj) => {
+    const { data, error } = await supabase
+      .from('radar_empresas')
+      .select('omie_codigo_cliente')
+      .eq('cnpj', cnpj)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.omie_codigo_cliente ?? null;
+  },
+};
+
+/**
+ * Cadastra UMA empresa no Omie (Oben). Anti-dup: a edge consulta pelo documento antes de
+ * criar; `created:false` = já existia. Depois persiste o vínculo via RPC.
  */
 export function useRadarCadastrarOmie() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (e: RadarEmpresa): Promise<CadastroOmieResult> => {
-      // 1. Criar/buscar no Omie
-      const { data, error } = await supabase.functions.invoke('omie-vendas-sync', {
-        body: {
-          action: 'criar_cliente',
-          account: 'oben',
-          document: e.cnpj,
-          razao_social: e.razao_social || e.nome_fantasia || e.cnpj,
-          nome_fantasia: e.nome_fantasia || undefined,
-          endereco: e.logradouro || undefined,
-          endereco_numero: e.numero || undefined,
-          bairro: e.bairro || undefined,
-          cidade: e.municipio_nome || undefined,
-          estado: e.uf || undefined,
-          cep: e.cep || undefined,
-          telefone: e.telefone1 || undefined,
-        },
-      });
-      if (error) throw new Error(error.message);
-      if (data && data.success === false) {
-        throw new Error((data.error as string | undefined) || 'Falha no cadastro Omie');
-      }
-
-      const codigo = (data?.codigo_cliente ?? null) as string | number | null;
-      const jaExistia = data?.created === false;
-
-      // 2. Persistir o vínculo na radar_empresas
-      // TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
-      const { error: rpcErr } = await (supabase.rpc as RpcFn)(
-        'radar_registrar_cadastro_omie' as never,
-        {
-          p_cnpj: e.cnpj,
-          p_codigo_cliente: codigo != null ? String(codigo) : null,
-          p_ja_existia: jaExistia,
-        } as never,
-      );
-      if (rpcErr) throw rpcErr;
-
-      return { codigo_cliente: codigo, ja_existia: jaExistia };
-    },
+    mutationFn: async (v: { empresa: RadarEmpresa; opcoes?: OpcoesCadastro }): Promise<ResultadoCadastro> =>
+      cadastrarEmpresaNoOmie(v.empresa, depsCadastroSupabase, v.opcoes),
     onSuccess: (r) => {
-      track('radar.lead_cadastrado_omie', { ja_existia: r.ja_existia });
+      track('radar.lead_cadastrado_omie', { ja_existia: r.jaExistia, recuperado: r.recuperado });
       qc.invalidateQueries({ queryKey: ['radar'] });
     },
   });
 }
 
+/** RPC `radar_atribuir_tarefa` (SECURITY DEFINER gestor/master): { id, deduped }. */
+export async function atribuirTarefaRadar(v: { cnpj: string; diasRetomada?: number }) {
+  const { data, error } = await (supabase.rpc as RpcFn)(
+    'radar_atribuir_tarefa' as never,
+    { p_cnpj: v.cnpj, p_dias_retomada: v.diasRetomada ?? 7 } as never,
+  );
+  if (error) throw error;
+  return data as unknown as { id: string; deduped: boolean };
+}
+
 /**
  * Cria (ou reaproveita) uma tarefa de retomada para o lead do radar.
- * A RPC `radar_atribuir_tarefa` é SECURITY DEFINER gestor/master;
- * retorna { id, deduped } — `deduped: true` quando já havia tarefa aberta.
+ * `deduped: true` quando já havia tarefa aberta (janela de 2 min).
  */
 export function useRadarAtribuirTarefa() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (v: { cnpj: string; diasRetomada?: number }) => {
-      // TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
-      const { data, error } = await (supabase.rpc as RpcFn)(
-        'radar_atribuir_tarefa' as never,
-        { p_cnpj: v.cnpj, p_dias_retomada: v.diasRetomada ?? 7 } as never,
-      );
-      if (error) throw error;
-      return data as unknown as { id: string; deduped: boolean };
-    },
+    mutationFn: atribuirTarefaRadar,
     onSuccess: () => {
       track('radar.tarefa_criada', {});
       qc.invalidateQueries({ queryKey: ['radar'] });

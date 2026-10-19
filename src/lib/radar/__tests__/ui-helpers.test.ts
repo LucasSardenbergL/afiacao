@@ -68,3 +68,18 @@ describe('digitosCnae', () => {
     expect(digitosCnae(null)).toBe('');
   });
 });
+
+describe('status de prospecção (rótulo + tom)', () => {
+  it('cobre o vocabulário com tom semântico', async () => {
+    const { rotuloStatus, tomStatus, telefonePrincipal, UFS_BR } = await import('../ui-helpers');
+    expect(rotuloStatus('virou_cliente')).toBe('Virou cliente');
+    expect(tomStatus('virou_cliente')).toBe('success');
+    expect(tomStatus('contatado_sem_resposta')).toBe('warning');
+    expect(rotuloStatus('zzz')).toBe('zzz'); // desconhecido: mostra o cru, não inventa
+    expect(rotuloStatus(null)).toBe('—');
+    expect(telefonePrincipal({ telefone1: null, telefone2: '31999' })).toBe('31999');
+    expect(telefonePrincipal({ telefone1: null, telefone2: null })).toBeNull();
+    expect(UFS_BR).toHaveLength(27);
+    expect(new Set(UFS_BR).size).toBe(27);
+  });
+});
