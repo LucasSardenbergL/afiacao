@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **655** custom migrations totais
-- **2110** objetos esperados (criados por estas migrations)
+- **656** custom migrations totais
+- **2111** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 760
+  - `function`: 761
   - `rls_policy`: 476
   - `index`: 277
   - `cron_job`: 185
@@ -5323,6 +5323,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public._fin_estoque_account` | — |
 | `function` | `public.fin_estoque_giro_valor` | — |
 | `function` | `public.fin_ciclo_giro_sku` | — |
+
+### `20261019090000_fin_ciclo_cp_empresa_perf.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ciclo_cp_empresa` | — |
 
 ## Próximos passos por status
 
