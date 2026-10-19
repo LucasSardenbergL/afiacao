@@ -4,7 +4,7 @@
 // Sozinhas, cada uma leva de 1 a 3,4 s. Esta fila põe um TETO de leituras simultâneas (FIFO): a que espera continua
 // "carregando" (a promise do queryFn só resolve quando roda), nunca vira vazio nem zero.
 
-export const LIMITE_LEITURAS_CICLO = 2;
+const LIMITE_LEITURAS_CICLO = 2;
 
 export type Fila = <T>(fn: () => Promise<T>) => Promise<T>;
 
