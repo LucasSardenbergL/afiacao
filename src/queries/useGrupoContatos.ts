@@ -3,10 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 
 /**
  * Contatos consolidados do grupo (lê a view v_grupo_contatos): nome/telefone/endereço/vendedor
- * por documento. Read-only. Cast temporário até a regen de tipos (Task 4).
+ * por documento. Read-only.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (table: string) => any };
 
 export interface GrupoContato {
   documento: string;
@@ -26,7 +24,8 @@ export function useGrupoContatos(grupoId: string | undefined) {
     queryKey: ['grupo-contatos', grupoId],
     enabled: !!grupoId,
     queryFn: async (): Promise<GrupoContato[]> => {
-      const { data, error } = await db
+      if (!grupoId) throw new Error('grupo_id ausente (enabled deveria ter barrado)');
+      const { data, error } = await supabase
         .from('v_grupo_contatos')
         .select('*')
         .eq('grupo_id', grupoId);

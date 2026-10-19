@@ -5,11 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
  * Recebível consolidado do grupo (lê as views v_grupo_contas_receber*).
  * As views vêm de produção e somam `saldo` em aberto (status NOT IN RECEBIDO/CANCELADO),
  * aging por data_vencimento, across as 3 empresas. Provadas em db/test-grupo-contas-receber.sh.
- *
- * Cast temporário até a regen de tipos (Task 4) — igual a useClienteGrupos.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (table: string) => any };
 
 export interface GrupoFinanceiroResumo {
   total_aberto: number;
@@ -46,9 +42,10 @@ export function useGrupoFinanceiro(grupoId: string | undefined) {
     queryKey: ['grupo-financeiro', grupoId],
     enabled: !!grupoId,
     queryFn: async (): Promise<GrupoFinanceiro> => {
+      if (!grupoId) throw new Error('grupo_id ausente (enabled deveria ter barrado)');
       const [resumoRes, porDocRes] = await Promise.all([
-        db.from('v_grupo_contas_receber').select('*').eq('grupo_id', grupoId).maybeSingle(),
-        db.from('v_grupo_contas_receber_por_doc').select('*').eq('grupo_id', grupoId).order('total_aberto', { ascending: false }),
+        supabase.from('v_grupo_contas_receber').select('*').eq('grupo_id', grupoId).maybeSingle(),
+        supabase.from('v_grupo_contas_receber_por_doc').select('*').eq('grupo_id', grupoId).order('total_aberto', { ascending: false }),
       ]);
       if (resumoRes.error) throw resumoRes.error;
       if (porDocRes.error) throw porDocRes.error;

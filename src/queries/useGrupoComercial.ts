@@ -5,10 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
  * Comercial consolidado do grupo (lê a view v_grupo_comercial): faturamento + recência +
  * tendência por janela (90d vs 90d anterior), somando os documentos nas 3 empresas.
  * Tendência por janela (não intervalo pooled) — regra do Codex. Provada em db/test-grupo-comercial.sh.
- * Cast temporário até a regen de tipos (Task 4).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (table: string) => any };
 
 export interface GrupoComercial {
   documentos_com_compra: number;
@@ -33,7 +30,8 @@ export function useGrupoComercial(grupoId: string | undefined) {
     queryKey: ['grupo-comercial', grupoId],
     enabled: !!grupoId,
     queryFn: async (): Promise<GrupoComercial> => {
-      const { data, error } = await db
+      if (!grupoId) throw new Error('grupo_id ausente (enabled deveria ter barrado)');
+      const { data, error } = await supabase
         .from('v_grupo_comercial')
         .select('*')
         .eq('grupo_id', grupoId)
