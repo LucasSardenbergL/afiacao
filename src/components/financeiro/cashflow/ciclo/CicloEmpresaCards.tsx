@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCashflowProjection } from '@/hooks/useCashflowProjection';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import type { CoorteMes } from '@/hooks/useFinanceiroCiclo';
+import type { CpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { brl, coberturaPorValor, dias } from './ciclo-format';
 
@@ -16,9 +17,20 @@ function pond(meses: CoorteMes[], campo: 'prazoConcedido' | 'prazoReal') {
   return w > 0 ? s / w : null;
 }
 
-export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, receitaErro, resumo, resumoErro, hoje }: {
+/** Ponte PMP do motor → PMP de COMPRAS (só mercadoria, matéria-prima, frete e serviço de compra). R$ de 1 dia sobre
+ *  compras, não CMV. É cenário de caixa — prazo com fornecedor tem preço, então não é meta de alongar. */
+export function LinhaPmpCompras({ cp }: { cp: CpEmpresa }) {
+  const pmp = cp.pmpComprasPond === null ? '—' : `${cp.pmpComprasPond.toFixed(1).replace('.', ',')} d`;
+  return (
+    <div className="text-xs text-muted-foreground" data-testid="ciclo-pmp-compras" title="O PMP acima inclui imposto, empréstimo e folha; o de compras não.">
+      {cp.pmpEngineControle !== null && `PMP do motor ${cp.pmpEngineControle.toFixed(0)} d → `}PMP de compras: {pmp} · pagar 1 dia antes consome ≈ {brl(cp.rsPorDia)} de caixa; 1 dia depois retém ≈ {brl(cp.rsPorDia)} · cenário
+    </div>
+  );
+}
+
+export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, receitaErro, resumo, resumoErro, hoje, cpEmpresa, cpErro }: {
   company: Company; coorte: CoorteMes[]; receitaDia: number | null; receitaMeses?: number; receitaErro?: boolean;
-  resumo: ResumoCliente[] | undefined; resumoErro?: boolean; hoje: string;
+  resumo: ResumoCliente[] | undefined; resumoErro?: boolean; hoje: string; cpEmpresa?: CpEmpresa; cpErro?: boolean;
 }) {
   const { data, error, isLoading } = useCashflowProjection(company);
   const ind = error ? null : data?.indicadores;
@@ -55,6 +67,9 @@ export function CicloEmpresaCard({ company, coorte, receitaDia, receitaMeses, re
           1 dia de PMR = {receitaErro ? '— (erro de leitura da receita TTM)' : receitaDia === null ? '— (sem receita TTM)' : brl(receitaDia)}
           {receitaDia !== null && receitaMeses !== undefined && receitaMeses < 12 && ` (base: ${receitaMeses} de 12 meses)`}
         </div>
+        {cpErro
+          ? <div className="text-xs text-status-error">PMP de compras: — (erro de leitura)</div>
+          : cpEmpresa && <LinhaPmpCompras cp={cpEmpresa} />}
         {estoqueTexto !== null && (
           <div className="text-xs text-muted-foreground" data-testid={`ciclo-estoque-${company}`}>
             Estoque de giro (base do PME): {estoqueTexto}
