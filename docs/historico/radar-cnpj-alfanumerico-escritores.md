@@ -90,7 +90,7 @@ tabela de `deploy.md` §Canárias e `edge-money-path-invariants`.
 
 ## O que fica de FORA (follow-ups explícitos, não esquecimento)
 
-1. **Identidade Omie por documento** — a RPC `omie_sync_identity_snapshot` monta `doc_to_user` com
+1. **Identidade Omie por documento** — ✅ entregue em #3195 (`docs/historico/omie-identidade-cnpj-alfanumerico.md`). Era: a RPC `omie_sync_identity_snapshot` monta `doc_to_user` com
    `regexp_replace(document,'\D')` + `length>=11`, e `omie_customer_account_map.evidence_document_normalized`
    tem CHECK `^[0-9]{11,}$`. O vínculo automático de um cliente alfanumérico já era impossível (os dois lados
    mutilavam; 9 < 11) e continua impossível, mas agora **honesto**: o doc preservado não está no mapa →
