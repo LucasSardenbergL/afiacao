@@ -602,3 +602,8 @@ db/test-importar-nfe-recebimento.sh          75  falsificar=9
 # predecessor, então repo≠prod fica vermelho aqui. 5 sabotagens: CHECK afrouxado, sem upper(), alnum→só-dígitos,
 # alnum sem máscara exata (20261019150000), PÓS.
 db/test-radar-cnpj-alfanumerico.sh          25  falsificar=5
+# Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
+# CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
+# vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
+# 7 sabotagens: chave só-dígitos, sem máscara exata (#3192), CHECK só-dígitos, DV ignorado (×2: funcional e PÓS), RPC mutila, PÓS.
+db/test-omie-identidade-cnpj-alfanumerico.sh 40  falsificar=7
