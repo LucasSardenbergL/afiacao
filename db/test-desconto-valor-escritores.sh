@@ -983,6 +983,25 @@ OUT_K8="$(Qf "$CANON_A" 2>&1 || true)"
 eq "K8 a PRE recusa corpo estranho e o deixa intacto (nada de 'última a recriar vence')" \
   "$(tem "$OUT_K8" 'PRE FALHOU')|$([ "$MD5_OUTRO_A" != "$MD5_PROD_A" ] && [ "$(md5_rec)" = "$MD5_OUTRO_A" ] && echo intacto)" "sim|intacto"
 
+# A PRE pina também o que o md5 do corpo NÃO vê (parecer Codex de código, P1): atributo ou ACL mudados
+# à mão com o MESMO corpo têm de abortar — o CREATE/REVOKE/GRANT os normalizaria em silêncio.
+novo_banco prove_k9 nova
+Q "ALTER FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) SET search_path = public" >/dev/null
+OUT_K9="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K9 search_path mudado à mão (md5 igual): a PRE aborta e o atributo fica como estava" \
+  "$(tem "$OUT_K9" 'PRE FALHOU: atributos vivos')|$(md5_rec)|$(Q "SELECT array_to_string(proconfig, ';') FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')")" "sim|$MD5_PRED_A|search_path=public"
+novo_banco prove_k10 nova
+Q "REVOKE EXECUTE ON FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) FROM service_role" >/dev/null
+OUT_K10="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K10 EXECUTE revogado de service_role à mão (emergência): a PRE aborta e a revogação fica" \
+  "$(tem "$OUT_K10" 'PRE FALHOU: ACL viva')|$(acl_rec)" "sim|f/f/f"
+novo_banco prove_k11 nova
+Q "ALTER FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) STABLE" >/dev/null
+OUT_K11="$(Qf "$CANON_A" 2>&1 || true)"
+eq "K11 volatilidade mudada à mão: a TRAVA confere ANTES de normalizar e aborta" \
+  "$(tem "$OUT_K11" 'não é VOLATILE')|$(Q "SELECT provolatile FROM pg_proc WHERE oid = to_regprocedure('$REC_ID')")" "sim|s"
+
+
 echo "═══ FK · FALSIFICAÇÃO da canônica (Lei #3): integridade e comportamento, uma por banco ═══"
 # Integridade (a própria migration tem de ABORTAR) × comportamento (as guardas removidas, o
 # assert financeiro tem de acusar). Sabotagem que fica vermelha pela defesa errada não prova

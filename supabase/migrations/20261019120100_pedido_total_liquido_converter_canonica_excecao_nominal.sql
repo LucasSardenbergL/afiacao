@@ -37,6 +37,8 @@
 -- Narrativa: docs/historico/deriva-canonica-i2.md
 -- ============================================================================================
 BEGIN;
+SET LOCAL lock_timeout = '5s';          -- orçamento: ENABLE RLS e a TRAVA esperam no máximo isto
+SET LOCAL statement_timeout = '180s';   -- a PÓS executa o ensaio sobre o acervo; nada aqui pode segurar a prod mais que isto
 
 -- ─── 1. A tabela de exceção nominal (DDL do envelope, verbatim) ─────────────────────────────
 CREATE TABLE IF NOT EXISTS public.pedido_total_liquido_excecao (
@@ -71,6 +73,11 @@ GRANT SELECT ON public.pedido_total_liquido_excecao TO service_role;
 DO $trava$
 BEGIN
   IF to_regprocedure('public.pedido_total_liquido_converter(boolean,timestamp with time zone,text[],date,date,integer,boolean)') IS NOT NULL THEN
+    -- a volatilidade é conferida ANTES do ALTER (que a normalizaria): mesmo corpo, outra volatilidade → aborta
+    IF (SELECT p.provolatile FROM pg_catalog.pg_proc p
+         WHERE p.oid = to_regprocedure('public.pedido_total_liquido_converter(boolean,timestamp with time zone,text[],date,date,integer,boolean)')) <> 'v' THEN
+      RAISE EXCEPTION 'PRE FALHOU: pedido_total_liquido_converter viva não é VOLATILE — alguém mudou a volatilidade à mão; reconcilie antes de colar';
+    END IF;
     ALTER FUNCTION public.pedido_total_liquido_converter(boolean, timestamp with time zone, text[], date, date, integer, boolean) VOLATILE;
   END IF;
 END
@@ -93,6 +100,26 @@ BEGIN
                     '4d88eebd9dea026346d706befca0fced')   -- PROD 2026-10-19: ESTE corpo (reaplicar é no-op)
   THEN
     RAISE EXCEPTION 'PRE FALHOU: o corpo vivo de pedido_total_liquido_converter (md5 %) não é o predecessor revisado nem este — outra entrega o recriou; NÃO troque a constante: confirme o rollback, recapture a definição viva na PROD e reconcilie antes de colar de novo', v_vivo;
+  END IF;
+  -- O contrato FORA do prosrc e a ACL, ANTES de o CREATE/REVOKE/GRANT os sobrescreverem (parecer Codex de
+  -- código, 2026-10-19, P1): o mesmo corpo com `p_limite DEFAULT 100`, outro search_path ou SECURITY DEFINER,
+  -- ou uma revogação de emergência de EXECUTE, não pode ser normalizado em silêncio — aborta e alguém olha.
+  IF pg_get_function_arguments(v_oid) IS DISTINCT FROM
+       'p_aplicar boolean, p_corte timestamp with time zone, p_contas text[] DEFAULT NULL::text[], '
+       'p_mes_de date DEFAULT NULL::date, p_mes_ate date DEFAULT NULL::date, p_limite integer DEFAULT 5000, '
+       'p_exigir_mes_completo boolean DEFAULT true'
+     OR pg_get_function_result(v_oid) IS DISTINCT FROM 'jsonb'
+     OR (SELECT l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang WHERE p.oid = v_oid) IS DISTINCT FROM 'plpgsql'
+     OR (SELECT p.prosecdef OR p.proisstrict FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
+     OR (SELECT p.proconfig FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM ARRAY['search_path=public, pg_temp']::text[]
+  THEN
+    RAISE EXCEPTION 'PRE FALHOU: atributos vivos de pedido_total_liquido_converter fora do contrato (defaults da assinatura, RETURNS jsonb, plpgsql, INVOKER, não-STRICT, search_path public,pg_temp) com o mesmo corpo — mudança à mão; reconcilie antes de colar';
+  END IF;
+  IF NOT has_function_privilege('service_role', v_oid, 'EXECUTE')
+     OR has_function_privilege('public', v_oid, 'EXECUTE')
+     OR has_function_privilege('anon', v_oid, 'EXECUTE')
+     OR has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+    RAISE EXCEPTION 'PRE FALHOU: ACL viva de pedido_total_liquido_converter fora do contrato (EXECUTE só para service_role entre as roles da API) — revogação de emergência ou grant à mão; reconcilie antes de colar';
   END IF;
 END
 $pre$;
@@ -380,22 +407,24 @@ BEGIN
                              'criado_em:timestamp with time zone:NO:now(),criado_por:text:NO:-,revisar_em:date:NO:-' THEN
     RAISE EXCEPTION 'POS FALHOU: colunas/nulabilidade/defaults da tabela fora do contrato: %', v_cols;
   END IF;
-  IF (SELECT count(*) FROM pg_catalog.pg_constraint k WHERE k.conrelid = v_tab AND k.contype = 'c'
-        AND k.conname IN ('pedido_total_liquido_excecao_motivo_check',
-                          'pedido_total_liquido_excecao_evidencia_check',
-                          'pedido_total_liquido_excecao_criado_por_check')) <> 3
+  -- CHECKs pela EXPRESSÃO, não pelo nome (parecer Codex de código, P2): `> 0` virado `>= 0` mantém o nome.
+  IF (SELECT count(*) FROM pg_catalog.pg_constraint k WHERE k.conrelid = v_tab AND k.contype = 'c' AND k.convalidated
+        AND pg_get_constraintdef(k.oid) IN (
+          'CHECK ((motivo = ANY (ARRAY[''sem_apuracao''::text, ''apuracao_parcial''::text])))',
+          'CHECK ((length(btrim(evidencia)) > 0))',
+          'CHECK ((length(btrim(criado_por)) > 0))')) <> 3
      OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = v_tab AND k.contype = 'p'
                       AND pg_get_constraintdef(k.oid) = 'PRIMARY KEY (sales_order_id)')
-     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = v_tab AND k.contype = 'f'
-                      AND k.confrelid = 'public.sales_orders'::regclass AND k.confdeltype = 'c' AND k.convalidated) THEN
-    RAISE EXCEPTION 'POS FALHOU: CHECKs (3), PK ou FK validada ON DELETE CASCADE para sales_orders faltando na tabela de exceção';
+     OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.conrelid = v_tab AND k.contype = 'f' AND k.convalidated
+                      AND pg_get_constraintdef(k.oid) = 'FOREIGN KEY (sales_order_id) REFERENCES sales_orders(id) ON DELETE CASCADE') THEN
+    RAISE EXCEPTION 'POS FALHOU: os 3 CHECKs (pela expressão), a PK ou a FK validada sales_order_id → sales_orders(id) ON DELETE CASCADE faltam na tabela de exceção';
   END IF;
   IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c WHERE c.oid = v_tab)
      OR (SELECT count(*) FROM pg_catalog.pg_policy p WHERE p.polrelid = v_tab) <> 0 THEN
     RAISE EXCEPTION 'POS FALHOU: a tabela de exceção precisa de RLS ligada e ZERO policies';
   END IF;
   IF EXISTS (SELECT 1 FROM unnest(ARRAY['public', 'anon', 'authenticated']) r,
-                           unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) pr
+                           unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN']) pr
               WHERE has_table_privilege(r, v_tab, pr))
      OR NOT has_table_privilege('service_role', v_tab, 'SELECT') THEN
     RAISE EXCEPTION 'POS FALHOU: privilégios da tabela de exceção fora do contrato (nada para PUBLIC/anon/authenticated; SELECT para service_role)';

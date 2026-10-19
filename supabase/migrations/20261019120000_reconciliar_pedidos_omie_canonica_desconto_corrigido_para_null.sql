@@ -33,12 +33,19 @@
 -- baseline. Narrativa: docs/historico/deriva-canonica-i2.md
 -- ============================================================================================
 BEGIN;
+SET LOCAL lock_timeout = '5s';          -- orçamento: a TRAVA e o ENABLE RLS esperam no máximo isto
+SET LOCAL statement_timeout = '180s';   -- a PÓS executa a função; nada aqui pode segurar a prod mais que isto
 
 -- TRAVA: ALTER sem efeito (a volatilidade VIVA é VOLATILE) — serializa com qualquer
--- CREATE OR REPLACE concorrente, que morre com XX000 "tuple concurrently updated".
+-- CREATE OR REPLACE concorrente, que morre com XX000 "tuple concurrently updated". A volatilidade
+-- é conferida ANTES do ALTER (que a normalizaria): com o mesmo corpo e outra volatilidade, aborta.
 DO $trava$
 BEGIN
   IF to_regprocedure('public.reconciliar_pedidos_omie(jsonb,text[],timestamp with time zone)') IS NOT NULL THEN
+    IF (SELECT p.provolatile FROM pg_catalog.pg_proc p
+         WHERE p.oid = to_regprocedure('public.reconciliar_pedidos_omie(jsonb,text[],timestamp with time zone)')) <> 'v' THEN
+      RAISE EXCEPTION 'PRE FALHOU: reconciliar_pedidos_omie viva não é VOLATILE — alguém mudou a volatilidade à mão; reconcilie antes de colar';
+    END IF;
     ALTER FUNCTION public.reconciliar_pedidos_omie(jsonb, text[], timestamp with time zone) VOLATILE;
   END IF;
 END
@@ -58,6 +65,23 @@ BEGIN
                     '4b16bbb469c7b4dc6f688df58e191d72')   -- PROD 2026-10-19: ESTE corpo (reaplicar é no-op)
   THEN
     RAISE EXCEPTION 'PRE FALHOU: o corpo vivo de reconciliar_pedidos_omie (md5 %) não é o predecessor revisado nem este — outra entrega o recriou; NÃO troque a constante: confirme o rollback, recapture a definição viva na PROD e reconcilie antes de colar de novo', v_vivo;
+  END IF;
+  -- O contrato FORA do prosrc e a ACL, ANTES de o CREATE/REVOKE/GRANT os sobrescreverem (parecer Codex de
+  -- código, 2026-10-19, P1): mesmo corpo com outro search_path/SECURITY/STRICT, ou uma revogação de
+  -- emergência de EXECUTE, não pode ser normalizado em silêncio — aborta e alguém olha.
+  IF pg_get_function_arguments(v_oid) IS DISTINCT FROM 'p_pedidos jsonb, p_status_gerido_omie text[], p_lido_em timestamp with time zone'
+     OR pg_get_function_result(v_oid) IS DISTINCT FROM 'jsonb'
+     OR (SELECT l.lanname FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang WHERE p.oid = v_oid) IS DISTINCT FROM 'plpgsql'
+     OR (SELECT p.prosecdef OR p.proisstrict FROM pg_catalog.pg_proc p WHERE p.oid = v_oid)
+     OR (SELECT p.proconfig FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM ARRAY['search_path=""']::text[]
+  THEN
+    RAISE EXCEPTION 'PRE FALHOU: atributos vivos de reconciliar_pedidos_omie fora do contrato (assinatura, RETURNS jsonb, plpgsql, INVOKER, não-STRICT, search_path vazio) com o mesmo corpo — mudança à mão; reconcilie antes de colar';
+  END IF;
+  IF NOT has_function_privilege('service_role', v_oid, 'EXECUTE')
+     OR has_function_privilege('public', v_oid, 'EXECUTE')
+     OR has_function_privilege('anon', v_oid, 'EXECUTE')
+     OR has_function_privilege('authenticated', v_oid, 'EXECUTE') THEN
+    RAISE EXCEPTION 'PRE FALHOU: ACL viva de reconciliar_pedidos_omie fora do contrato (EXECUTE só para service_role entre as roles da API) — revogação de emergência ou grant à mão; reconcilie antes de colar';
   END IF;
 END
 $pre$;

@@ -44,7 +44,7 @@ echo "== locale: ${LC_ALL:-?}"
 cat > "$TMPD/psql-captura" <<WRAP
 #!/usr/bin/env bash
 printf '%s' "\${@: -1}" > "$SQLCAP"
-"$PSQL_REAL" "\$@" | tee "$CAP"
+"$PSQL_REAL" -v ON_ERROR_STOP=1 "\$@" | tee "$CAP"
 exit "\${PIPESTATUS[0]}"
 WRAP
 # ── wrapper 2: REPLAY da captura mutada — só se o SQL for o MESMO da captura (outro universo não vale)
