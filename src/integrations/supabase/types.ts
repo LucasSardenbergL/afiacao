@@ -21272,6 +21272,7 @@ export type Database = {
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_sync_watchdog_diario: { Args: { p_agora?: string }; Returns: string }
+      fin_titulo_baixas_cr_mapa: { Args: { p_company: string }; Returns: Json }
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
