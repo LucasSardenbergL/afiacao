@@ -1,6 +1,6 @@
 # Identidade Omie por documento aceita CNPJ alfanumérico — follow-up 1 do #3180 (2026-10-19)
 
-PR: _(preenchido no commit de fecho)_ · Branch `claude/relaxed-leakey-23ddaf`.
+PR: https://github.com/LucasSardenbergL/afiacao/pull/3195 · Branch `claude/relaxed-leakey-23ddaf`.
 Migration **manual** (Lovable não aplica custom): `supabase/migrations/20261019140000_omie_identidade_cnpj_alfanumerico.sql`.
 Prova PG17: `db/test-omie-identidade-cnpj-alfanumerico.sh` (40 asserts, `--falsificar` 7/7) no `db/nucleo-ci.txt`.
 
