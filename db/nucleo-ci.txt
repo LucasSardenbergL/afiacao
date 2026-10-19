@@ -601,3 +601,8 @@ db/test-importar-nfe-recebimento.sh          75  falsificar=9
 # Radar: CNPJ alfanumérico (RFB jul/2026) — CHECKs + recruzar com upper/separadores; a PRE exige o md5 de PROD do
 # predecessor, então repo≠prod fica vermelho aqui. 4 sabotagens: CHECK afrouxado, sem upper(), alnum→só-dígitos, PÓS.
 db/test-radar-cnpj-alfanumerico.sh          23  falsificar=4
+# Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
+# CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
+# vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
+# 6 sabotagens: chave só-dígitos, CHECK só-dígitos, DV ignorado (×2: assert funcional e PÓS), RPC mutila, PÓS.
+db/test-omie-identidade-cnpj-alfanumerico.sh 37  falsificar=6

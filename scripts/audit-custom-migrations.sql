@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 661
+-- Total de custom migrations: 662
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -725,7 +725,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019093000', 'radar_recruzamento_diario_cron', '20261019093000_radar_recruzamento_diario_cron.sql'),
   ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
-  ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql')
+  ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql'),
+  ('20261019140000', 'omie_identidade_cnpj_alfanumerico', '20261019140000_omie_identidade_cnpj_alfanumerico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2809,7 +2810,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
-  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4941,7 +4945,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cnpj_alfanumerico', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
-  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', '')
 )
 SELECT
   e.migration,
