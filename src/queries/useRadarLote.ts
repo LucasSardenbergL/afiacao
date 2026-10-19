@@ -90,7 +90,12 @@ export function useRadarLoteOmie() {
     const faltam = cnpjs.filter((c) => !snapshots.current.has(c));
     if (faltam.length === 0) return [];
     // `.in()` sobre a PK, delimitado pelo teto do lote (≤ 100): nunca pede "a tabela".
-    const { data, error } = await supabase.from('radar_empresas').select('*').in('cnpj', faltam).range(0, TETO_LOTE - 1);
+    const { data, error } = await supabase
+      .from('radar_empresas')
+      .select('*')
+      .in('cnpj', faltam)
+      .order('cnpj', { ascending: true }) // ordem estável junto do .range() (gate G7)
+      .range(0, TETO_LOTE - 1);
     if (error) {
       const erro = `não consegui ler o lead no Radar: ${mensagemDeErro(error) ?? 'erro de leitura'}`;
       return faltam.map((cnpj) => ({ cnpj, erro }));
