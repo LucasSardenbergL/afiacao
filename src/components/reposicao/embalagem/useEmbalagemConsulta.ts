@@ -1,3 +1,4 @@
+import type { Tables } from '@/integrations/supabase/types';
 // Hook da tela avulsa de consulta de embalagem econômica (compra manual).
 // Carrega TODOS os grupos de equivalência ativos da empresa (não filtra por pedido)
 // + preços + descrição + demanda/cm, pra a página rodar o helper com a necessidade
@@ -9,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { StatusPreco } from '@/lib/reposicao/embalagem-helpers';
 
 interface EquivRow { grupo_id: string; sku_codigo_omie: string; unidade_base: string; fator_para_base: number; }
-interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
+type PrecoRow = Pick<Tables<'sku_preco_fornecedor_capturado'>, 'sku_codigo_omie' | 'preco' | 'capturado_em' | 'status'>;
 
 interface MembroEmbalagem {
   sku_codigo_omie: string;
@@ -46,12 +47,12 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
     queryFn: async (): Promise<{ grupos: GrupoEmbalagem[]; limiar: number }> => {
       // 1) Todos os grupos ativos da empresa
       const equivResp = await supabase
-        .from('sku_embalagem_equivalencia' as never)
+        .from('sku_embalagem_equivalencia')
         .select('grupo_id, sku_codigo_omie, unidade_base, fator_para_base')
         .eq('empresa', emp)
         .eq('ativo', true);
       if (equivResp.error) throw equivResp.error; // money-path: não degradar silencioso
-      const equiv = (equivResp.data ?? []) as unknown as EquivRow[];
+      const equiv = (equivResp.data ?? []);
       if (equiv.length === 0) return { grupos: [], limiar: 5 };
 
       const skusGrupo = [...new Set(equiv.map((e) => e.sku_codigo_omie))];
@@ -59,13 +60,13 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
 
       // 2) Preço mais recente por SKU
       const precoResp = await supabase
-        .from('sku_preco_fornecedor_capturado' as never)
+        .from('sku_preco_fornecedor_capturado')
         .select('sku_codigo_omie, preco, capturado_em, status')
         .eq('empresa', emp)
         .in('sku_codigo_omie', skusGrupo)
         .order('capturado_em', { ascending: false });
       if (precoResp.error) throw precoResp.error;
-      const precoRows = (precoResp.data ?? []) as unknown as PrecoRow[];
+      const precoRows = (precoResp.data ?? []);
       const precoMap = new Map<string, PrecoRow>();
       for (const p of precoRows) {
         const k = String(p.sku_codigo_omie);
@@ -80,7 +81,7 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
           .select('omie_codigo_produto, descricao')
           .in('omie_codigo_produto', skuNums);
         if (prodResp.error) throw prodResp.error; // senão o SKU perde o rótulo e vira código cru
-        ((prodResp.data ?? []) as unknown as { omie_codigo_produto: number | string; descricao: string | null }[])
+        ((prodResp.data ?? []))
           .forEach((p) => {
             const k = String(p.omie_codigo_produto);
             if (p.descricao && !descMap.has(k)) descMap.set(k, p.descricao);
@@ -99,7 +100,7 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
         // Falha ≠ "SKU sem demanda": o mapa vazio faz a cobertura em dias sumir da opção de
         // embalagem, e a comparação entre embalagens sai como se o giro fosse desconhecido.
         if (paramResp.error) throw paramResp.error;
-        ((paramResp.data ?? []) as unknown as { sku_codigo_omie: number; demanda_media_diaria: number | null }[])
+        ((paramResp.data ?? []))
           .forEach((p) => demandaMap.set(String(p.sku_codigo_omie), p.demanda_media_diaria));
 
         const cmResp = await supabase
@@ -110,7 +111,7 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
         // Falha ≠ "custo de capital zero": o custo de capital é o que penaliza a embalagem
         // grande (mais estoque parado). Sem ele a economia do lote maior sai INFLADA.
         if (cmResp.error) throw cmResp.error;
-        ((cmResp.data ?? []) as unknown as { sku_codigo_omie: number; custo_capital_efetivo_perc: number | null }[])
+        ((cmResp.data ?? []))
           .forEach((p) => cmMap.set(String(p.sku_codigo_omie), p.custo_capital_efetivo_perc));
       }
 
@@ -124,7 +125,8 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
         if (!p) return null;
         if (p.status === 'falhou') return 'falhou';
         const idadeH = (agoraMs - Date.parse(p.capturado_em)) / 3_600_000;
-        return idadeH > staleHoras ? 'stale' : (p.status ?? 'ok');
+        // `status` é texto no banco; fora de 'falhou' (tratado acima) o que decide é a idade.
+        return idadeH > staleHoras ? 'stale' : 'ok';
       };
 
       // 6) Montar grupos (>= 2 membros)

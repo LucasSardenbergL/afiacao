@@ -1,3 +1,5 @@
+import type { Tables } from '@/integrations/supabase/types';
+import { linhasCom, type ComColunas } from '@/lib/reposicao/linha-view';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -52,12 +54,7 @@ import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 import { ForaDoMotorBadge } from '@/components/reposicao/foraDoMotor/ForaDoMotorBadge';
 import { BaixoGiroBadge } from '@/components/reposicao/BaixoGiroBadge';
 
-type SkuSemFornecedor = {
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  estoque_efetivo: number | null;
-  ponto_pedido: number | null;
-};
+type SkuSemFornecedor = ComColunas<Pick<Tables<"v_reposicao_sku_sem_fornecedor">, "sku_codigo_omie" | "sku_descricao" | "estoque_efetivo" | "ponto_pedido">, "sku_codigo_omie">;
 
 /* ─── Relógio isolado ───
  * O tick de minuto vivia como state da PÁGINA: a cada 60s o setNow re-renderizava
@@ -355,13 +352,13 @@ export default function AdminReposicaoPedidos() {
     // deixaria o próximo usuário AUTORIZADO sem polling. Chave por principal resolve os dois.
     queryKey: ['pedidos-ciclo', 'pos-candidatos', EMPRESA, user?.id],
     queryFn: async (): Promise<PoCandidato[]> => {
-      const { data, error } = await supabase.rpc('reposicao_pos_candidatos' as never, {
+      const { data, error } = await supabase.rpc('reposicao_pos_candidatos', {
         p_empresa: EMPRESA,
-      } as never);
+      });
       if (error) throw error;
       // Normaliza na FRONTEIRA: a resposta entra por cast (a RPC não está no types.ts gerado), então
       // um valor não-finito passaria direto e viraria total NaN / ordenação embaralhada em silêncio.
-      return normalizarCandidatos((data as unknown as PoCandidato[] | null) ?? []);
+      return normalizarCandidatos((data) ?? []);
     },
     // Sem principal, NÃO consulta: durante o boot do AuthContext `user` é undefined, e disparar aqui
     // criaria uma entrada de cache sob a chave [...,undefined] — uma chamada a mais e, pior, um balde
@@ -397,9 +394,9 @@ export default function AdminReposicaoPedidos() {
   } = useQuery({
     queryKey: ['pedidos-ciclo', 'pos-marcador', EMPRESA, user?.id],
     queryFn: async (): Promise<MarcadorPos | null> => {
-      const { data, error } = await supabase.rpc('reposicao_pos_marcador' as never, {
+      const { data, error } = await supabase.rpc('reposicao_pos_marcador', {
         p_empresa: EMPRESA,
-      } as never);
+      });
       if (error) throw error;
       // A RPC devolve SEMPRE 1 linha (LEFT JOIN sobre linha sintética), mas o PostgREST entrega
       // array — e a normalização na fronteira cobre a janela em que este código já está publicado e
@@ -455,14 +452,14 @@ export default function AdminReposicaoPedidos() {
     queryKey: ['pedidos-ciclo', 'motor-run', EMPRESA],
     queryFn: async (): Promise<{ run_id: string; suprimidos_n: number; criado_em: string } | null> => {
       const { data, error } = await supabase
-        .from('reposicao_motor_run' as never)
+        .from('reposicao_motor_run')
         .select('run_id, suprimidos_n, criado_em')
         .eq('empresa', EMPRESA)
         .order('criado_em', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) throw error;
-      return (data as unknown as { run_id: string; suprimidos_n: number; criado_em: string } | null) ?? null;
+      return (data) ?? null;
     },
     refetchInterval: 60_000,
     staleTime: 30_000,
@@ -620,12 +617,12 @@ export default function AdminReposicaoPedidos() {
     queryKey: ['reposicao-sku-sem-fornecedor', EMPRESA],
     queryFn: async (): Promise<SkuSemFornecedor[]> => {
       const { data, error } = await supabase
-        .from('v_reposicao_sku_sem_fornecedor' as never)
+        .from('v_reposicao_sku_sem_fornecedor')
         .select('sku_codigo_omie, sku_descricao, estoque_efetivo, ponto_pedido')
         .eq('empresa', EMPRESA)
         .order('sku_descricao', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as unknown as SkuSemFornecedor[];
+      return linhasCom(data, ['sku_codigo_omie'], 'v_reposicao_sku_sem_fornecedor');
     },
     refetchInterval: 60_000,
     staleTime: 30_000,

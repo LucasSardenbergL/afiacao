@@ -34,6 +34,7 @@ const ERRO = { message: 'permission denied' };
  */
 let falha: 'nenhuma' | 'metricas' | 'erros' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' = 'nenhuma';
 let listaErros: unknown[] = [];
+let ultimoRun: unknown = null;
 let ultimaImportacao: unknown = null;
 
 const CONTAGENS = {
@@ -44,10 +45,22 @@ const CONTAGENS = {
   corantesMapeados: 10,
 };
 
-const importacaoComErro = (over: Record<string, unknown> = {}) => ({
-  id: 'e1', tipo: 'formulas', arquivo_nome: 'lote-42.csv', registros_erro: 7,
-  erros_detalhe: [{ linha: 3, motivo: 'corante desconhecido' }],
-  created_at: '2026-09-07T08:00:00Z', ...over,
+/**
+ * Linhas de `tint_sync_errors` do ÚLTIMO run de fórmulas — a cor `303U - BS` aparece 3 vezes
+ * (uma por produto/embalagem) de propósito: o card tem que DEDUPLICAR por cor e contar.
+ */
+const MSG_SEM_DOSE =
+  'receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula/não-finita) + linha inválida sob protocolo declarado (1d-E) — fórmula PRETO/0,9L';
+const MSG_ORFAO =
+  'receita corrompida: dose sem corante identificado (item órfão) + linha inválida sob protocolo declarado (1d-E) — fórmula 303U - BS/3,6L';
+const errosDoRun = () => [
+  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
+  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
+  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
+  { entity_type: 'formula_promote', entity_id: 'PRETO', error_message: MSG_SEM_DOSE },
+];
+const runComErro = (over: Record<string, unknown> = {}) => ({
+  id: 'run-1', started_at: '2026-10-16T22:45:14Z', errors: 4, ...over,
 });
 
 const importacaoOk = () => ({
@@ -58,12 +71,16 @@ const importacaoOk = () => ({
 /**
  * As 6 leituras de `useMetrics` batem em 4 tabelas — `tint_skus` e `tint_corantes` aparecem DUAS
  * vezes cada, e o discriminador é o `.not('omie_product_id','is',null)` que só a versão "mapeados"
- * aplica. `tint_importacoes` também é lida duas vezes: o `.gt('registros_erro', 0)` é o que separa
- * o card de erros da última importação. Responder só pelo nome da tabela colapsaria os pares.
+ * aplica. `tint_importacoes` responde só a última importação (`.maybeSingle()`) — o card de
+ * rejeições NÃO lê mais dela: o detalhe vive em `tint_sync_errors`, nunca em `erros_detalhe`.
+ * a leitura aqui. Responder só pelo nome da tabela colapsaria os pares.
  */
 function resposta(tabela: string, chamados: Set<string>): Resposta {
   const vazio = { data: null, error: null, count: null };
-  if (tabela === 'tint_importacoes' && chamados.has('gt')) {
+  // O card de rejeições lê DUAS tabelas: o último run de fórmulas e as linhas de erro dele.
+  // `falha === 'erros'` derruba a segunda — é a leitura que alimenta a lista.
+  if (tabela === 'tint_sync_runs') return { ...vazio, data: ultimoRun };
+  if (tabela === 'tint_sync_errors') {
     return falha === 'erros'
       ? { ...vazio, error: ERRO }
       : { ...vazio, data: listaErros };
@@ -124,7 +141,7 @@ import TintDashboard from '../TintDashboard';
 /** A frase do aviso — o que separa "não consegui ler" de "não há". */
 const AVISO = /não quer dizer que está tudo certo/i;
 const FRASE_SEM_IMPORTACAO = /Nenhuma importação/i;
-const TITULO_ERROS = /Últimos Erros de Importação/i;
+const TITULO_ERROS = /Fórmulas rejeitadas pela fonte/i;
 
 function novoQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -141,7 +158,8 @@ function renderPagina(qc = novoQc()) {
 beforeEach(() => {
   onlineManager.setOnline(true);
   falha = 'nenhuma';
-  listaErros = [importacaoComErro()];
+  listaErros = errosDoRun();
+  ultimoRun = runComErro();
   ultimaImportacao = importacaoOk();
 });
 afterEach(() => { onlineManager.setOnline(true); });
@@ -238,6 +256,7 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
   it('erro e vazio real NÃO produzem a mesma tela (o colapso, medido)', async () => {
     ultimaImportacao = null;
     listaErros = [];
+    ultimoRun = runComErro({ errors: 0 });
     const vazia = renderPagina();
     await screen.findByText(FRASE_SEM_IMPORTACAO);
     const telaVazia = vazia.container.textContent;
@@ -257,8 +276,9 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     expect(screen.queryByText(AVISO)).toBeNull();
   });
 
-  it('CONTROLE do vazio REAL: leu e não há erro → o card some, e isso é HONESTO', async () => {
+  it('CONTROLE do vazio REAL: leu e o último run não rejeitou nada → o card some, e isso é HONESTO', async () => {
     listaErros = [];
+    ultimoRun = runComErro({ errors: 0 });
     renderPagina();
     await waitFor(() => expect(screen.queryByText(TITULO_ERROS)).toBeNull());
     expect(screen.queryByTestId('aviso-leitura-erros')).toBeNull();
@@ -295,5 +315,44 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     expect(aviso.getAttribute('data-estado')).toBe('sem-rede');
     // apagar erros de importação REAIS porque um refetch falhou seria trocar um defeito por outro
     expect(screen.getByText(TITULO_ERROS)).toBeTruthy();
+  });
+
+  it('sem NENHUM run de fórmulas: o card some sem avisar — não há o que listar', async () => {
+    ultimoRun = null;
+    listaErros = [];
+    renderPagina();
+    await waitFor(() => expect(screen.queryByText(TITULO_ERROS)).toBeNull());
+    expect(screen.queryByTestId('aviso-leitura-erros')).toBeNull();
+  });
+
+  it('DEDUPLICA por cor e CONTA as fórmulas: 3 linhas de 303U - BS viram UMA entrada com "3 fórmulas"', async () => {
+    renderPagina();
+    expect(await screen.findByText(TITULO_ERROS)).toBeTruthy();
+    expect(screen.getAllByText('303U - BS')).toHaveLength(1);
+    expect(screen.getByText('3 fórmulas')).toBeTruthy();
+    expect(screen.getByText('1 fórmula')).toBeTruthy();
+    // 2 cores no último run — a contagem do cabeçalho é de CORES, não de linhas
+    expect(screen.getByText(/2 cores/)).toBeTruthy();
+  });
+
+  it('o MOTIVO aparece curto — sem o sufixo técnico "(qtd_ml <= 0/...)" nem a fórmula no fim', async () => {
+    renderPagina();
+    expect(await screen.findByText('receita corrompida: dose sem corante identificado')).toBeTruthy();
+    expect(screen.getByText('receita corrompida: corante presente sem dose válida')).toBeTruthy();
+    expect(screen.queryByText(/qtd_ml/)).toBeNull();
+    expect(screen.queryByText(/1d-E/)).toBeNull();
+  });
+
+  it('o card diz DE QUANDO é o run — a lista é um retrato do último sync, não um histórico', async () => {
+    renderPagina();
+    expect(await screen.findByText(/16\/10\/2026/)).toBeTruthy();
+  });
+
+  it('run com errors>0 mas SEM linhas de detalhe: mostra a contagem do run e diz que o detalhe faltou — nunca "tudo certo"', async () => {
+    listaErros = [];
+    ultimoRun = runComErro({ errors: 4 });
+    renderPagina();
+    expect(await screen.findByText(TITULO_ERROS)).toBeTruthy();
+    expect(screen.getByText(/4 rejeições sem detalhe/)).toBeTruthy();
   });
 });

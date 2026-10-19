@@ -1,3 +1,4 @@
+import type { Tables } from "@/integrations/supabase/types";
 // Tipos, constantes e helpers puros da página de Promoções (AdminReposicaoPromocoes).
 // Extraídos de src/pages/AdminReposicaoPromocoes.tsx (god-component split).
 
@@ -19,17 +20,8 @@ export type UploadItem = {
   erro?: string;
 };
 
-export type Campanha = {
-  id: number;
-  nome: string;
-  fornecedor_nome: string;
-  tipo_origem: string;
-  data_inicio: string;
-  data_fim: string;
-  estado: string;
-  extracao_confianca: number | null;
-  criado_em: string;
-};
+// As colunas que a lista de campanhas seleciona (criado_em é `| null` no banco).
+type Campanha = Pick<Tables<"promocao_campanha">, "id" | "nome" | "fornecedor_nome" | "tipo_origem" | "data_inicio" | "data_fim" | "estado" | "extracao_confianca" | "criado_em">;
 
 export type CampanhaComContagem = Campanha & { num_itens: number };
 

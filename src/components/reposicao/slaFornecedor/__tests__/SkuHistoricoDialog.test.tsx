@@ -18,6 +18,8 @@ function makeSku(o: Partial<SkuCompliance> = {}): SkuCompliance {
     desvio_perc: 12,
     status_sla: "violando",
     tendencia: "piorando",
+    desvio_absoluto: null, lt_faturamento_medio: null, lt_logistica_medio: null, lt_max: null, lt_min: null,
+    lt_observado_desvio: null, lt_observado_mediana: null, lt_observado_p95: null, n_recentes: null,
     ...o,
   };
 }

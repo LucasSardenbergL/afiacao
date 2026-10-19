@@ -57,7 +57,7 @@ function KpiCards() {
         .select("sku_codigo_omie")
         .eq("empresa", empresa);
       if (e1) return 0;
-      const grupoRows = (comGrupo ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      const grupoRows = (comGrupo ?? []);
       const setComGrupo = new Set(grupoRows.map((r) => String(r.sku_codigo_omie)));
 
       const { data: ativos, error: e2 } = await supabase
@@ -67,7 +67,7 @@ function KpiCards() {
         .eq("ativo", true);
       if (e2) return 0;
 
-      const ativosRows = (ativos ?? []) as unknown as Array<{ sku_codigo_omie: string | number | null }>;
+      const ativosRows = (ativos ?? []);
       return ativosRows.filter((r) => !setComGrupo.has(String(r.sku_codigo_omie))).length;
     },
     refetchInterval: 60000,

@@ -4,6 +4,15 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarOmie, enviarOmie } from "../_shared/omie-cliente.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import {
+  type ClienteRpc,
+  importarViaRpc,
+  registrarFalhaImportacao,
+  registravel,
+  SELECT_TRIAGEM,
+  TENTATIVAS_PARA_ESTACIONAR,
+  triarCabecalho,
+} from "../_shared/nfe-importacao.ts";
 import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import { mapearCabecalho } from "./cabecalho.ts";
 import { avaliarDetalhePorChave, classificarConsultaPorChave, normalizarChaveAcesso } from "./chave.ts";
@@ -124,79 +133,79 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
     consultar: (nIdReceb) =>
       chamadaOmie(cred, "produtos/recebimentonfe/", "ConsultarRecebimento", { nIdReceb }),
     jaImportados: async (ids, chaves) => {
+      // "Já importada" para a TRIAGEM = não precisa de consulta: tem itens, ou não é reparável, ou está
+      // ESTACIONADA em nfe_importacao_falhas (tentativas ≥ 3). Cabeçalho `pendente` sem itens e sem
+      // sinais de uso NÃO entra: a consulta desta rodada é o que o completa (RPC → reparada). Antes a
+      // triagem o pulava pela simples existência, e o reparo era inalcançável (parecer Codex).
       const idsJa = new Set<number>();
       const chavesJa = new Set<string>();
+      // `omie_id_receb` só vale DENTRO da conta: um id de OB nunca marca uma NF-e de CC como importada
+      // (parecer adversarial). Linha de outro armazém só contribui com a CHAVE (que é global).
+      const classificar = (linhas: unknown[]) => {
+        for (const l of linhas) {
+          const t = triarCabecalho(l);
+          // Contagem ilegível é ERRO (nenhuma consulta é gasta nesta rodada), nunca "sem itens".
+          if (t.tipo === "erro") throw new Error(`triagem de nfe_recebimentos: ${t.mensagem}`);
+          if (t.tipo === "reparavel") continue;
+          const r = l as { omie_id_receb: number | string | null; chave_acesso: string | null; warehouse_id: string | null };
+          if (r.omie_id_receb !== null && r.warehouse_id === warehouseId) idsJa.add(Number(r.omie_id_receb));
+          if (r.chave_acesso) chavesJa.add(r.chave_acesso);
+        }
+      };
+      const estacionar = (linhas: unknown[]) => {
+        for (const l of linhas as { omie_id_receb: number | string | null; chave_acesso: string }[]) {
+          chavesJa.add(l.chave_acesso);
+          if (l.omie_id_receb !== null) idsJa.add(Number(l.omie_id_receb));
+        }
+      };
       if (ids.length > 0) {
         const { data, error } = await supabase
           .from("nfe_recebimentos")
-          .select("omie_id_receb")
+          .select(SELECT_TRIAGEM)
           .eq("warehouse_id", warehouseId)
           .in("omie_id_receb", ids);
         if (error) throw new Error(error.message);
-        for (const r of (data ?? []) as { omie_id_receb: number | string | null }[]) {
-          if (r.omie_id_receb !== null) idsJa.add(Number(r.omie_id_receb));
-        }
+        classificar(data ?? []);
+        const { data: estacionadas, error: estacErr } = await supabase
+          .from("nfe_importacao_falhas")
+          .select("chave_acesso, omie_id_receb")
+          .eq("warehouse_id", warehouseId)
+          .in("omie_id_receb", ids)
+          .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
+        if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
+        estacionar(estacionadas ?? []);
       }
       for (let i = 0; i < chaves.length; i += LOTE_CHAVES) {
+        const lote = chaves.slice(i, i + LOTE_CHAVES);
         const { data, error } = await supabase
           .from("nfe_recebimentos")
-          .select("chave_acesso")
-          .in("chave_acesso", chaves.slice(i, i + LOTE_CHAVES));
+          .select(SELECT_TRIAGEM)
+          .in("chave_acesso", lote);
         if (error) throw new Error(error.message);
-        for (const r of (data ?? []) as { chave_acesso: string | null }[]) {
-          if (r.chave_acesso) chavesJa.add(r.chave_acesso);
-        }
+        classificar(data ?? []);
+        const { data: estacionadas, error: estacErr } = await supabase
+          .from("nfe_importacao_falhas")
+          .select("chave_acesso, omie_id_receb")
+          .in("chave_acesso", lote)
+          .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
+        if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
+        estacionar(estacionadas ?? []);
       }
       return { ids: idsJa, chaves: chavesJa };
     },
-    inserirCabecalho: async (row) => {
-      const { data, error } = await supabase.from("nfe_recebimentos").insert(row).select("id").single();
-      if (error || !data) return { erro: error?.message ?? "o insert do cabeçalho não devolveu o id" };
-      return { id: (data as { id: string }).id };
-    },
-    inserirItens: (itens, nfeRecebimentoId) => inserirItens(supabase, itens, nfeRecebimentoId),
+    importar: (cabecalho, itens) =>
+      importarViaRpc(supabase as unknown as ClienteRpc, {
+        cabecalho: cabecalho as unknown as Record<string, unknown>,
+        itens: itens as unknown as Record<string, unknown>[],
+        origem: "sync",
+      }),
+    registrarFalha: (chave, code, mensagem, omieIdReceb) =>
+      registrarFalhaImportacao(supabase as unknown as ClienteRpc, { chaveAcesso: chave, origem: "sync", code, mensagem, warehouseId, omieIdReceb }),
   };
 }
 
 /** Teto da consulta por chave: quem espera é o operador, com o diálogo aberto. */
 const OMIE_TIMEOUT_POR_CHAVE_MS = 25_000;
-
-/**
- * Grava os itens de UMA NF-e. Devolve a mensagem do erro, ou `null`. O que fazer com o cabeçalho
- * quando os itens falham é decisão do CHAMADOR, e ela difere entre os dois caminhos — ver o laço
- * do cron e `importarPorChave`.
- */
-async function inserirItens(
-  supabase: SupabaseClient,
-  rawItems: OmieRecebimentoItem[],
-  nfeRecebimentoId: string,
-): Promise<string | null> {
-  if (rawItems.length === 0) return null;
-  const { error } = await supabase
-    .from("nfe_recebimento_itens")
-    .insert(mapearItensRecebimento(rawItems, nfeRecebimentoId));
-  return error ? error.message : null;
-}
-
-type NfePorChave =
-  | { tipo: "existe"; id: string; itens: number }
-  | { tipo: "nenhuma" }
-  | { tipo: "erro"; mensagem: string };
-
-/** A NF-e já gravada com esta chave e quantos itens ela tem. Contagem ilegível é ERRO, não zero. */
-async function buscarPorChave(supabase: SupabaseClient, chave: string): Promise<NfePorChave> {
-  const { data, error } = await supabase
-    .from("nfe_recebimentos")
-    .select("id, nfe_recebimento_itens(count)")
-    .eq("chave_acesso", chave)
-    .maybeSingle();
-  if (error) return { tipo: "erro", mensagem: `ler nfe_recebimentos: ${error.message}` };
-  if (!data) return { tipo: "nenhuma" };
-  const linha = data as { id: string; nfe_recebimento_itens?: Array<{ count?: unknown }> };
-  const itens = linha.nfe_recebimento_itens?.[0]?.count;
-  if (typeof itens !== "number") return { tipo: "erro", mensagem: "contagem de itens da NF-e indisponível" };
-  return { tipo: "existe", id: linha.id, itens };
-}
 
 /**
  * Importa UMA NF-e pela chave de acesso — o botão "Importar NF-e" de /recebimento.
@@ -216,11 +225,32 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
   const warehouseId = typeof corpo.warehouse_id === "string" && corpo.warehouse_id ? corpo.warehouse_id : null;
   if (!warehouseId) return responder({ status: "entrada_invalida", error: "armazém (warehouse_id) não informado" }, 400);
 
-  // Dedupe ANTES de gastar a consulta ao Omie (e de arriscar o "consumo redundante" dele).
-  const existente = await buscarPorChave(supabase, chave);
-  if (existente.tipo === "erro") return responder({ status: "erro_gravacao", error: existente.mensagem }, 500);
-  if (existente.tipo === "existe") {
-    return responder({ status: "ja_importada", nfe_recebimento_id: existente.id, itens: existente.itens }, 200);
+  // Dedupe ANTES de gastar a consulta ao Omie (e de arriscar o "consumo redundante" dele) — mas um
+  // cabeçalho `pendente` SEM itens e sem sinais de uso (importação antiga que morreu no meio) NÃO é
+  // "já importada": segue para o Omie, e a RPC o completa. O botão é o reprocessamento humano: ignora
+  // o estacionamento de nfe_importacao_falhas (a RPC apaga o registro no sucesso).
+  const { data: linha, error: lerErr } = await supabase
+    .from("nfe_recebimentos")
+    .select(SELECT_TRIAGEM)
+    .eq("chave_acesso", chave)
+    .maybeSingle();
+  if (lerErr) return responder({ status: "erro_gravacao", error: `ler nfe_recebimentos: ${lerErr.message}` }, 500);
+  if (linha) {
+    const t = triarCabecalho(linha);
+    if (t.tipo === "erro") return responder({ status: "erro_gravacao", error: t.mensagem }, 500);
+    if (t.tipo === "completo" && t.itens > 0) {
+      return responder({ status: "ja_importada", nfe_recebimento_id: (linha as { id: string }).id, itens: t.itens }, 200);
+    }
+    if (t.tipo === "completo") {
+      // Sem itens e NÃO reparável (efetivado/em uso): "já importada" seria certificar o vazio.
+      const l = linha as { id: string; status: string };
+      return responder({
+        status: "bloqueada",
+        nfe_recebimento_id: l.id,
+        itens: 0,
+        error: `Esta NF-e já está no app SEM itens e não pode ser completada (status ${l.status}) — avise a equipe`,
+      }, 409);
+    }
   }
 
   const { data: wh, error: whErr } = await supabase
@@ -280,35 +310,63 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
   }
 
   const detalhe = consulta.detalhe as OmieConsultarRecebimentoResponse;
-  const { data: nova, error: insErr } = await supabase
-    .from("nfe_recebimentos")
-    .insert(mapearCabecalho(detalhe.cabec ?? {}, wh.id, chave, avaliacao.nIdReceb))
-    .select("id")
-    .single();
-  if (insErr?.code === "23505") {
-    // Outro escritor (o cron, ou um 2º clique) gravou esta chave entre o dedupe e o insert.
-    const vencedora = await buscarPorChave(supabase, chave);
-    if (vencedora.tipo === "existe") {
-      return responder({ status: "ja_importada", nfe_recebimento_id: vencedora.id, itens: vencedora.itens }, 200);
+  const cliente = supabase as unknown as ClienteRpc;
+  // UMA transação: cabeçalho + itens entram juntos ou nada entra — não há mais cabeçalho a desfazer
+  // (o DELETE de compensação de antes podia, em cascata, apagar itens que outro writer acabara de
+  // materializar). Os `status` continuam os que o front lê (src/lib/recebimento/importacao-resposta.ts).
+  const d = await importarViaRpc(cliente, {
+    cabecalho: mapearCabecalho(detalhe.cabec ?? {}, wh.id, chave, avaliacao.nIdReceb) as unknown as Record<string, unknown>,
+    itens: mapearItensRecebimento(detalhe.itensRecebimento ?? []) as unknown as Record<string, unknown>[],
+    origem: "importacao_chave",
+  });
+  // Impedimento (bloqueada/divergente) e erro de dado ficam no ledger durável — fora da transação.
+  const registro = registravel(d);
+  const tentativas = registro
+    ? await registrarFalhaImportacao(cliente, {
+      chaveAcesso: chave,
+      origem: "importacao_chave",
+      code: registro.code,
+      mensagem: registro.mensagem,
+      warehouseId: wh.id,
+      omieIdReceb: Number(avaliacao.nIdReceb),
+    })
+    : null;
+  switch (d.tipo) {
+    case "importada":
+    case "reparada":
+      return responder({ status: "importada", nfe_recebimento_id: d.id, itens: d.itens, reparada: d.tipo === "reparada" }, 200);
+    case "ja_importada":
+      return responder({ status: "ja_importada", nfe_recebimento_id: d.id, itens: d.itens }, 200);
+    case "bloqueada":
+      return responder({
+        status: "bloqueada",
+        nfe_recebimento_id: d.id,
+        itens: 0,
+        error: `Esta NF-e já está no app SEM itens e não pode ser completada (${d.motivo}) — avise a equipe`,
+      }, 409);
+    case "divergente":
+      return responder({
+        status: "divergente",
+        nfe_recebimento_id: d.id,
+        itens: d.itens,
+        error: `Esta NF-e já está no app com itens DIFERENTES do Omie (${d.motivo}: ${d.itens} no app, ${d.esperados} no Omie) — avise a equipe`,
+      }, 409);
+    case "erro": {
+      if (d.classe === "dado") {
+        return responder({
+          status: "erro_gravacao",
+          error: `o banco rejeitou a NF-e (${d.code}): ${d.mensagem} — registrada em nfe_importacao_falhas (tentativas: ${tentativas ?? "não registrou"})`,
+        }, 422);
+      }
+      if (d.classe === "rpc_ausente") {
+        return responder({
+          status: "erro_gravacao",
+          error: "RPC importar_nfe_recebimento indisponível — migration db/2026-10-18-importar-nfe-recebimento-rpc.sql não aplicada (ou cache do PostgREST não recarregado); nada gravado",
+        }, 500);
+      }
+      return responder({ status: "erro_gravacao", error: `NF-e não gravada (${d.mensagem}) — nada ficou gravado, tente de novo` }, 500);
     }
-    return responder({ status: "erro_gravacao", error: "outro processo gravou esta NF-e agora, e não consegui relê-la" }, 500);
   }
-  if (insErr || !nova) {
-    return responder({ status: "erro_gravacao", error: `cabeçalho não gravado: ${insErr?.message ?? "insert sem id"}` }, 500);
-  }
-
-  const rawItems: OmieRecebimentoItem[] = detalhe.itensRecebimento ?? [];
-  const erroItens = await inserirItens(supabase, rawItems, nova.id);
-  if (erroItens) {
-    // Caminho MANUAL: não há fila para travar (é UMA NF-e, pedida por alguém), então o cabeçalho é
-    // desfeito — de pé, ele faria o dedupe acima responder "já importada" a toda nova tentativa,
-    // com a NF-e pela metade. (O cron mantém o cabeçalho por outro motivo; ver o laço.)
-    const { error: delErr } = await supabase.from("nfe_recebimentos").delete().eq("id", nova.id);
-    const sobra = delErr ? ` — e o cabeçalho ${nova.id} FICOU gravado (${delErr.message})` : " — nada ficou gravado";
-    return responder({ status: "erro_gravacao", error: `itens não gravados (${erroItens})${sobra}` }, 500);
-  }
-
-  return responder({ status: "importada", nfe_recebimento_id: nova.id, itens: rawItems.length }, 200);
 }
 
 Deno.serve(async (req) => {
@@ -327,8 +385,8 @@ Deno.serve(async (req) => {
   // ⚠️ Esta edge NÃO lia o corpo: no bundle pré-sensor, `{"probe":true}` caía direto no laço de
   // sync de todas as credenciais. A leitura abaixo é ADITIVA (nenhum outro ponto do handler
   // consome `req`), e o `.catch(() => ({}))` com o guard de método preserva o caminho do cron, que
-  // chama sem corpo. Daqui pra frente a edge insere `nfe_recebimentos` e, em escrita SEPARADA,
-  // `nfe_recebimento_itens` — e a retentativa PULA a NF que ficou só com cabeçalho.
+  // chama sem corpo. Daqui pra frente a edge materializa `nfe_recebimentos` + `nfe_recebimento_itens`
+  // pela RPC transacional `importar_nfe_recebimento`.
   const corpoBruto: unknown = req.method === "POST" ? await req.json().catch(() => ({})) : {};
   const decisaoSonda = classificarSonda(corpoBruto);
   if (decisaoSonda.tipo === "sonda") return jsonResponse(respostaSonda(VERSAO), 200);

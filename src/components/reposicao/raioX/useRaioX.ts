@@ -1,3 +1,4 @@
+import { comoDecisaoRow, comoFatoSku, comoLinhaManual, comoLinhaMedicao } from '@/lib/reposicao/raio-x/borda';
 // Hook de leitura do Raio-X do estoque parado (fase B). Lê fatos (RPC), decisões e classificações
 // manuais, tudo PAGINADO (PostgREST capa em 1.000 linhas, inclusive `.rpc()`), e entrega itens já
 // classificados + placar. A medição (`raio_x_medicao`) fica para o PR 4.
@@ -13,13 +14,10 @@ import type {
   ClassificacaoManual,
   DecisaoRow,
   Empresa,
-  FatoSku,
   ItemRaioX,
   LinhaMedicao,
 } from '@/lib/reposicao/raio-x/tipos';
 
-type Pagina<T> = PromiseLike<{ data: T[] | null; error: unknown }>;
-type LinhaManual = ClassificacaoManual & { sku_codigo_omie: number };
 
 /** Devolve um Error que carrega o `code` (SQLSTATE) do PostgrestError, mesmo vindo embrulhado por fetchAllPages. */
 function preservarCode(e: unknown): Error {
@@ -59,14 +57,14 @@ export function useRaioX(empresa: Empresa | null): {
     retry,
     queryFn: () =>
       ler(() =>
-        fetchAllPages<FatoSku>(
+        fetchAllPages(
           (de, ate) =>
             supabase
               .rpc('raio_x_estoque_fatos', { p_empresa: empresa as string })
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<FatoSku>,
+              .range(de, ate),
           'raio_x_estoque_fatos',
-        ),
+        ).then((rows) => rows.map(comoFatoSku)),
       ),
   });
 
@@ -76,16 +74,16 @@ export function useRaioX(empresa: Empresa | null): {
     retry,
     queryFn: () =>
       ler(() =>
-        fetchAllPages<DecisaoRow>(
+        fetchAllPages(
           (de, ate) =>
             supabase
               .from('raio_x_decisao')
               .select('*')
               .eq('empresa', empresa as string)
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<DecisaoRow>,
+              .range(de, ate),
           'raio_x_decisao',
-        ),
+        ).then((rows) => rows.map(comoDecisaoRow)),
       ),
   });
 
@@ -95,16 +93,16 @@ export function useRaioX(empresa: Empresa | null): {
     retry,
     queryFn: () =>
       ler(() =>
-        fetchAllPages<LinhaManual>(
+        fetchAllPages(
           (de, ate) =>
             supabase
               .from('raio_x_classificacao_manual')
               .select('sku_codigo_omie, categoria, motivo')
               .eq('empresa', empresa as string)
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<LinhaManual>,
+              .range(de, ate),
           'raio_x_classificacao_manual',
-        ),
+        ).then((rows) => rows.map(comoLinhaManual)),
       ),
   });
 
@@ -161,14 +159,14 @@ export function useRaioXMedicao(empresa: Empresa | null): {
     retry,
     queryFn: () =>
       ler(() =>
-        fetchAllPages<LinhaMedicao>(
+        fetchAllPages(
           (de, ate) =>
             supabase
               .rpc('raio_x_medicao', { p_empresa: empresa as string })
               .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate) as unknown as Pagina<LinhaMedicao>,
+              .range(de, ate),
           'raio_x_medicao',
-        ),
+        ).then((rows) => rows.map(comoLinhaMedicao)),
       ),
   });
   return {

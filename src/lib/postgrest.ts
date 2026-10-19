@@ -216,11 +216,13 @@ export const POSTGREST_PAGE_SIZE = 1000;
  * silencioso deixaria justo a lacuna no mecanismo criado para observabilidade. (Codex, #1550.)
  *
  * ```ts
- * const custos = await fetchAllPages<CostRow>(
+ * // Sem cast: `T` sai da inferência do select — o builder do supabase-js já é um
+ * // PromiseLike<{ data: Row[] | null; error }>. `as unknown as PromiseLike<…>` só serve para
+ * // esconder uma interface local divergente do types.ts (foi o caso dos 10 sítios de reposição).
+ * const custos = await fetchAllPages(
  *   (de, ate) =>
  *     supabase.from('product_costs').select('product_id, cost_final')
- *       .order('product_id', { ascending: true }).range(de, ate) as unknown as
- *         PromiseLike<{ data: CostRow[] | null; error: unknown }>,
+ *       .order('product_id', { ascending: true }).range(de, ate),
  *   'product_costs/exemplo',
  * );
  * ```

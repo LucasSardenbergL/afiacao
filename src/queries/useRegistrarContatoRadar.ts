@@ -5,18 +5,21 @@ import type { AcaoContato } from '@/lib/radar/ui-helpers';
 
 type RpcFn = typeof supabase.rpc;
 
+/** RPC `registrar_contato_radar`: { id, deduped }. Usada pelo menu individual e pelo lote. */
+export async function registrarContatoRadar(v: { cnpj: string; acao: AcaoContato; nota?: string | null }) {
+  // TODO: tipos regeneram após apply da migration da fatia 2
+  const { data, error } = await (supabase.rpc as RpcFn)(
+    'registrar_contato_radar' as never,
+    { p_cnpj: v.cnpj, p_acao: v.acao, p_nota: v.nota ?? null } as never,
+  );
+  if (error) throw error;
+  return data as unknown as { id: string; deduped: boolean };
+}
+
 export function useRegistrarContatoRadar() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (v: { cnpj: string; acao: AcaoContato; nota?: string | null }) => {
-      // TODO: tipos regeneram após apply da migration da fatia 2
-      const { data, error } = await (supabase.rpc as RpcFn)(
-        'registrar_contato_radar' as never,
-        { p_cnpj: v.cnpj, p_acao: v.acao, p_nota: v.nota ?? null } as never,
-      );
-      if (error) throw error;
-      return data as unknown as { id: string; deduped: boolean };
-    },
+    mutationFn: registrarContatoRadar,
     onSuccess: (_d, v) => {
       track('radar.contato_registrado', { acao: v.acao });
       qc.invalidateQueries({ queryKey: ['radar'] });

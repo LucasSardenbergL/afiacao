@@ -1,27 +1,13 @@
+import type { Tables } from "@/integrations/supabase/types";
 // Tipos dos aumentos anunciados.
 // Extraídos verbatim de src/pages/AdminReposicaoAumentos.tsx (god-component split).
 
-export type Aumento = {
-  id: number;
-  nome: string;
-  fornecedor_nome: string;
-  data_vigencia: string;
-  data_anuncio: string | null;
-  estado: string;
-  extracao_confianca: number | null;
-  criado_em: string;
-};
+// Linha de fornecedor_aumento_anunciado como o types.ts a conhece (criado_em etc. são `| null` no banco).
+type Aumento = Pick<Tables<"fornecedor_aumento_anunciado">, "id" | "nome" | "fornecedor_nome" | "data_vigencia" | "data_anuncio" | "estado" | "extracao_confianca" | "criado_em">;
 
 export type AumentoComAgg = Aumento & {
   num_categorias: number;
   perc_medio: number | null;
 };
 
-export type FornecedorRow = { fornecedor_nome: string | null };
 
-export type AumentoItemAgg = {
-  aumento_id: number;
-  aumento_perc: number | null;
-  ativo: boolean | null;
-  confirmado: boolean | null;
-};

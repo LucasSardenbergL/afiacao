@@ -20,11 +20,10 @@ interface DetalhePorChave {
 }
 
 /** A chave de acesso em 44 dígitos, ou `null`. Só espaço é tolerado — letra não é chave. */
-export function normalizarChaveAcesso(bruta: unknown): string | null {
-  if (typeof bruta !== "string") return null;
-  const semEspaco = bruta.replace(/\s/g, "");
-  return /^\d{44}$/.test(semEspaco) ? semEspaco : null;
-}
+// `normalizarChaveAcesso` mora em `_shared/nfe-chave.ts` (o webhook também a usa; import entre pastas de
+// função não entra no bundle do Lovable); re-exportada aqui para quem já importava deste módulo.
+export { normalizarChaveAcesso } from "../_shared/nfe-chave.ts";
+import { normalizarChaveAcesso } from "../_shared/nfe-chave.ts";
 
 export type DesfechoConsulta =
   | { tipo: "ok"; detalhe: DetalhePorChave }

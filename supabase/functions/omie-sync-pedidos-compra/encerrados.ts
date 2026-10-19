@@ -78,3 +78,46 @@ export function decidirPublicacaoEncerrados(e: {
   }
   return { tipo: "publicar", ids: [...e.idsEncerrados].sort((a, b) => a - b) };
 }
+
+/** Teto por lista do diagnóstico: a janela OBEN tem ~550 pedidos; 5000 cobre ~9× isso sem inflar o heartbeat. */
+export const TETO_IDS_DIAGNOSTICO = 5000;
+
+export interface DiagnosticoAbstencao {
+  completa: boolean;
+  n_observados: number;
+  n_fora_do_filtro: number;
+  n_alheios: number;
+  truncado: boolean;
+  ids_observados: number[];     // o que o filtro só-encerrados devolveu
+  ids_fora_do_filtro: number[]; // vistos pelo completo e NÃO devolvidos pelo filtro (o complemento)
+  ids_alheios: number[];        // devolvidos pelo filtro e NÃO vistos pelo completo (janela/paginação divergente)
+}
+
+/**
+ * v1.8 (2026-10-19): o conjunto da passada que ABSTEVE, só para DIAGNÓSTICO. A 1ª passada que chegou ao fim
+ * (v1.7, 520 de 549) absteve pela guarda de metade, e o registro protegido não guarda ids numa abstenção —
+ * os controles do #3132 (positivo dentro / negativo fora) ficaram sem o conjunto. Vai para o heartbeat
+ * (sync_state.metadata, 1 escritor, ninguém lê como sinal); NUNCA para reposicao_encerrados_omie_publicacao:
+ * o backtest não pode ver um conjunto que as guardas recusaram.
+ */
+export function diagnosticoAbstencao(
+  idsEncerrados: ReadonlySet<number>,
+  idsGeral: ReadonlySet<number>,
+  completa: boolean,
+): DiagnosticoAbstencao {
+  const ordena = (xs: number[]) => xs.sort((a, b) => a - b);
+  const observados = ordena([...idsEncerrados]);
+  const fora = ordena([...idsGeral].filter((id) => !idsEncerrados.has(id)));
+  const alheios = observados.filter((id) => !idsGeral.has(id));
+  const corta = (xs: number[]) => xs.slice(0, TETO_IDS_DIAGNOSTICO);
+  return {
+    completa,
+    n_observados: observados.length,
+    n_fora_do_filtro: fora.length,
+    n_alheios: alheios.length,
+    truncado: [observados, fora, alheios].some((xs) => xs.length > TETO_IDS_DIAGNOSTICO),
+    ids_observados: corta(observados),
+    ids_fora_do_filtro: corta(fora),
+    ids_alheios: corta(alheios),
+  };
+}

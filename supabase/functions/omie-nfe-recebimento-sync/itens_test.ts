@@ -49,8 +49,7 @@ Deno.test("mapearItensRecebimento: item real do ConsultarRecebimento vira linha 
     },
   }];
 
-  assertEquals(mapearItensRecebimento(itens, "nfe-1"), [{
-    nfe_recebimento_id: "nfe-1",
+  assertEquals(mapearItensRecebimento(itens), [{
     sequencia: 3,
     codigo_produto: "SAY-FS-0123",
     descricao: "FUNDO SELADOR PU 3,6L",
@@ -62,9 +61,7 @@ Deno.test("mapearItensRecebimento: item real do ConsultarRecebimento vira linha 
     valor_total: 1750.8,
     unidade_estoque: null,
     quantidade_convertida: null,
-    quantidade_conferida: 0,
     quantidade_esperada: 12,
-    status_item: "pendente",
     produto_omie_id: 4155896651,
   }]);
 });
@@ -74,6 +71,6 @@ Deno.test("mapearItensRecebimento: nenhum NCM do lote passa de 8 caracteres", ()
     itensCabec: { nSequencia: i + 1, cNCM, nQtdeNFe: 1 },
   }));
 
-  const ncms = mapearItensRecebimento(itens, "nfe-1").map((l) => l.ncm);
+  const ncms = mapearItensRecebimento(itens).map((l) => l.ncm);
   assertEquals(ncms, ["29096090", "39204900", null, null]);
 });

@@ -76,7 +76,7 @@ describe("AlertaDrillSheet", () => {
         {...baseProps({
           drillEvento: evtSemGrupo,
           isSemGrupo: true,
-          gruposFornecedor: [{ id: 1, codigo_grupo: "G1", descricao: "Grupo 1", lt_producao_dias: 5 }],
+          gruposFornecedor: [{ id: 1, grupo_codigo: "G1", descricao: "Grupo 1", lt_producao_dias: 5 }],
           grupoEscolhido: "1",
           onAtribuirGrupo,
         })}

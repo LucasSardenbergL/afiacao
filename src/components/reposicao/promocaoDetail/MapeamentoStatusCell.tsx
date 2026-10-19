@@ -107,7 +107,6 @@ export function MapeamentoStatusCell({
       if (!isSearchablePostgrestTerm(term)) { setSearchResults([]); setSearching(false); return; }
       // Busca por descrição OU código OU sku omie (numérico). account no banco é lowercase.
       const isNumeric = /^\d+$/.test(term);
-      type OmieSearchRow = { omie_codigo_produto: number; descricao: string; codigo: string };
       let query = supabase
         .from("omie_products")
         .select("omie_codigo_produto, descricao, codigo")
@@ -118,7 +117,7 @@ export function MapeamentoStatusCell({
         : query.or(ilikeOr(["descricao", "codigo"], term));
       const { data, error } = await query.limit(20);
       setSearching(false);
-      if (!error) setSearchResults((data as unknown as OmieSearchRow[]) || []);
+      if (!error) setSearchResults((data) || []);
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, searchOpen]);
@@ -397,7 +396,7 @@ export function MapeamentoStatusCell({
                     }));
                     const { error } = await supabase
                       .from("promocao_item")
-                      .insert(payload as never);
+                      .insert(payload);
                     if (error) {
                       // O original JÁ foi vinculado: o erro diz o estado parcial, não "falhou tudo".
                       throw new Error(

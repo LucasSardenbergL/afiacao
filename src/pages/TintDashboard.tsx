@@ -52,22 +52,71 @@ function contagem(r: { count: number | null; error: { message: string } | null }
   return r.count;
 }
 
-function useLastErrors() {
+type CorRejeitada = { cor: string; formulas: number; motivo: string };
+type FormulasRejeitadas = {
+  /** Quando o último run de fórmulas começou — a lista é um RETRATO dele, não histórico. */
+  runEm: string | null;
+  /** O que o run contou (`tint_sync_runs.errors`) — pode ser >0 com a lista vazia (detalhe faltou). */
+  rejeicoesDoRun: number;
+  cores: CorRejeitada[];
+};
+
+/**
+ * O motivo que `tint_promote_sync_run` grava vem com o sufixo técnico e a fórmula colada:
+ * "receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula/não-finita) + linha
+ * inválida sob protocolo declarado (1d-E) — fórmula PRETO/0,9L". O operador precisa só da cabeça.
+ */
+function motivoCurto(msg: string): string {
+  return msg.split(' — ')[0].split(' + ')[0].replace(/\s*\(.*$/, '').trim();
+}
+
+/**
+ * Fórmulas que o guard REJEITOU no último run de fórmulas — deduplicadas por cor.
+ *
+ * Antes o card lia `tint_importacoes.erros_detalhe`, coluna que o writer vivo (`tint_promote_sync_run`)
+ * NUNCA preenche (0 de 4.160 linhas com erro, psql-ro 2026-10-18): mostrava "5 erro(s)" sem dizer
+ * quais, e uma entrada por run — o conector re-envia o mesmo lote a cada ciclo, então as MESMAS
+ * 5 cores viravam 5 blocos idênticos. O detalhe vive em `tint_sync_errors`; a correção dessas
+ * receitas é na máquina SayerSystem (`docs/agent/tintometrico.md`: dado da fonte, guard certo).
+ */
+function useFormulasRejeitadas() {
   return useQuery({
-    queryKey: ['tint-dashboard-errors'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('tint_importacoes')
-        .select('id, tipo, arquivo_nome, registros_erro, erros_detalhe, created_at')
+    queryKey: ['tint-formulas-rejeitadas'],
+    queryFn: async (): Promise<FormulasRejeitadas | null> => {
+      const run = await supabase
+        .from('tint_sync_runs')
+        .select('id, started_at, errors')
         .eq('account', ACCOUNT)
-        .gt('registros_erro', 0)
-        .order('created_at', { ascending: false })
-        .limit(5);
-      // Sem desestruturar `error`, `data ?? []` fazia a query terminar em `success` com `[]` e o
-      // card "Últimos Erros de Importação" sumir CALADO — 2.124 importações com erro na fonte
-      // (psql-ro, 2026-09-07). O `error` do react-query nunca populava: o aviso era inalcançável.
-      if (error) throw error;
-      return data ?? [];
+        .eq('sync_type', 'formulas')
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (run.error) throw run.error;
+      // Sem run nenhum não há o que listar — `null` aqui é "não existe", não "não li".
+      if (!run.data) return null;
+
+      // Teto do PostgREST é 1.000 linhas SILENCIOSO; o máximo visto por run foi 162. Pede mais que
+      // isso explicitamente para a dedup não contar errado se a fonte piorar.
+      const linhas = await supabase
+        .from('tint_sync_errors')
+        .select('entity_type, entity_id, error_message')
+        .eq('sync_run_id', run.data.id)
+        .order('entity_id')
+        .range(0, 1999);
+      if (linhas.error) throw linhas.error;
+
+      const porCor = new Map<string, CorRejeitada>();
+      for (const l of linhas.data ?? []) {
+        const chave = `${l.entity_type}:${l.entity_id}`;
+        const atual = porCor.get(chave);
+        if (atual) atual.formulas += 1;
+        else porCor.set(chave, { cor: l.entity_id ?? '—', formulas: 1, motivo: motivoCurto(l.error_message ?? '') });
+      }
+      return {
+        runEm: run.data.started_at,
+        rejeicoesDoRun: run.data.errors ?? 0,
+        cores: [...porCor.values()].sort((a, b) => b.formulas - a.formulas || a.cor.localeCompare(b.cor)),
+      };
     },
   });
 }
@@ -89,7 +138,7 @@ export default function TintDashboard() {
   // por `const q = useMetrics()` + `q.data` some com o sítio do detector do gate sem corrigir nada
   // (docs/historico/a-forma-que-some-e-a-forma-que-mente.md, achado da fatia #2).
   const { data: m, status: statusM, fetchStatus: fetchM } = useMetrics();
-  const { data: errors, status: statusE, fetchStatus: fetchE } = useLastErrors();
+  const { data: rejeitadas, status: statusE, fetchStatus: fetchE } = useFormulasRejeitadas();
 
   const fatiaM = { status: statusM, fetchStatus: fetchM };
   const fatiaE = { status: statusE, fetchStatus: fetchE };
@@ -100,9 +149,12 @@ export default function TintDashboard() {
   const metricasSemLeitura: EstadoSemLeitura | null =
     naoConsegui(estadoM) && !m ? estadoM : null;
   const metricasVelhas = desatualizado(fatiaM, Boolean(m));
+  // `rejeitadas` é `null` quando LEU e não há run (≠ undefined, que é "não li") — o aviso só
+  // cabe no segundo caso. O `status` do react-query é o que separa os dois.
   const errosSemLeitura: EstadoSemLeitura | null =
-    naoConsegui(estadoE) && !errors ? estadoE : null;
-  const errosVelhos = desatualizado(fatiaE, Boolean(errors));
+    naoConsegui(estadoE) && rejeitadas === undefined ? estadoE : null;
+  const errosVelhos = desatualizado(fatiaE, rejeitadas !== undefined);
+  const haRejeicao = Boolean(rejeitadas && (rejeitadas.cores.length > 0 || rejeitadas.rejeicoesDoRun > 0));
 
   if (estadoM === 'carregando') return <div className="space-y-4"><Skeleton className="h-8 w-64" /><div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[1,2,3,4].map(i=><Skeleton key={i} className="h-28"/>)}</div></div>;
 
@@ -194,7 +246,7 @@ export default function TintDashboard() {
 
       {errosSemLeitura && (
         <AvisoLeituraFalhou
-          oque="os últimos erros de importação"
+          oque="as fórmulas rejeitadas no último sync"
           estado={errosSemLeitura}
           variante="bloco"
           testId="aviso-leitura-erros"
@@ -202,41 +254,44 @@ export default function TintDashboard() {
       )}
       {errosVelhos && (
         <AvisoLeituraFalhou
-          oque="a leitura mais recente dos erros de importação"
+          oque="a leitura mais recente das fórmulas rejeitadas"
           estado={errosVelhos}
           variante="bloco"
           testId="aviso-leitura-erros"
         />
       )}
 
-      {errors && errors.length > 0 && (
+      {haRejeicao && rejeitadas && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-status-warning" />
-              Últimos Erros de Importação
+              Fórmulas rejeitadas pela fonte
             </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Último sync de fórmulas em {rejeitadas.runEm ? new Date(rejeitadas.runEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+              {' · '}{rejeitadas.cores.length} {rejeitadas.cores.length === 1 ? 'cor' : 'cores'} com receita incompleta no SayerSystem.
+              {' '}O guard não importa a receita; a correção é na máquina, não aqui.
+            </p>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {errors.map((imp) => (
-                <div key={imp.id} className="border rounded-md p-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-sm font-medium">{imp.arquivo_nome}</span>
-                    <Badge variant="outline">{imp.tipo}</Badge>
-                    <span className="text-xs text-muted-foreground">{imp.created_at ? new Date(imp.created_at).toLocaleDateString('pt-BR') : '—'}</span>
-                  </div>
-                  <p className="text-xs text-destructive">{imp.registros_erro} erro(s)</p>
-                  {imp.erros_detalhe && Array.isArray(imp.erros_detalhe) && (
-                    <ul className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                      {(imp.erros_detalhe as Array<{ linha?: number; motivo?: string }>).slice(0, 3).map((e, i: number) => (
-                        <li key={i}>Linha {e.linha}: {e.motivo}</li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ))}
-            </div>
+            {rejeitadas.cores.length === 0 ? (
+              <p className="text-xs text-status-warning">
+                {rejeitadas.rejeicoesDoRun} rejeições sem detalhe gravado neste run — a contagem é do run, a lista não veio.
+              </p>
+            ) : (
+              <ul className="divide-y">
+                {rejeitadas.cores.map((c) => (
+                  <li key={c.cor} className="flex items-center justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.cor}</p>
+                      <p className="text-xs text-muted-foreground">{c.motivo}</p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0">{c.formulas} {c.formulas === 1 ? 'fórmula' : 'fórmulas'}</Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       )}

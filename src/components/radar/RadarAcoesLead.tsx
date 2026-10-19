@@ -22,8 +22,8 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   const doCadastrar = async () => {
     setConfirmOmie(false);
     try {
-      const r = await cadastrar.mutateAsync(empresa);
-      toast.success(r.ja_existia ? 'Já era cliente no Omie (Oben) — reconciliado' : `Cadastrado no Omie (Oben)${r.codigo_cliente ? ` · cód. ${r.codigo_cliente}` : ''}`);
+      const r = await cadastrar.mutateAsync({ empresa });
+      toast.success(r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`);
     } catch (e) {
       toast.error('Não foi possível cadastrar', { description: e instanceof Error ? e.message : undefined });
     }
@@ -41,12 +41,13 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   };
 
   const disabled = isImpersonating;
+  const jaNoOmie = !!empresa.omie_codigo_cliente;
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <Button size="sm" disabled={disabled || cadastrar.isPending} onClick={() => setConfirmOmie(true)}
+      <Button size="sm" variant={jaNoOmie ? 'outline' : 'default'} disabled={disabled || cadastrar.isPending} onClick={() => setConfirmOmie(true)}
         title={disabled ? 'Indisponível em modo Ver como' : undefined}>
         {cadastrar.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Building2 className="w-4 h-4 mr-1" />}
-        Cadastrar no Omie (Oben)
+        {jaNoOmie ? `No Omie · cód. ${empresa.omie_codigo_cliente}` : 'Cadastrar no Omie (Oben)'}
       </Button>
       <div className="flex items-center gap-1">
         <Button size="sm" variant="outline" disabled={disabled || tarefa.isPending} onClick={doTarefa}

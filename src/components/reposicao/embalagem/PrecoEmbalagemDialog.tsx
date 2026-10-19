@@ -44,7 +44,7 @@ export function PrecoEmbalagemDialog({
         status: 'ok',
         criado_por: user?.email ?? 'sistema',
       }));
-      const { error } = await supabase.from('sku_preco_fornecedor_capturado' as never).insert(rows as never);
+      const { error } = await supabase.from('sku_preco_fornecedor_capturado').insert(rows);
       if (error) throw error;
     },
     onSuccess: () => {

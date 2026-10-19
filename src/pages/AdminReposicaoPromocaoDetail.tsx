@@ -1,3 +1,4 @@
+import { linhasCom } from "@/lib/reposicao/linha-view";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,10 +15,7 @@ import {
   EMPRESA,
   FORNECEDOR_DEFAULT,
   ESTADO_LABEL,
-  type Campanha,
   type ItemRow,
-  type ItemEfetivo,
-  type Evento,
   type NovoEventoForm,
 } from "@/components/reposicao/promocaoDetail/types";
 import { CancelCampanhaDialog } from "@/components/reposicao/promocaoDetail/CancelCampanhaDialog";
@@ -54,7 +52,7 @@ export default function AdminReposicaoPromocaoDetail() {
         .eq("id", Number(id))
         .single();
       if (error) throw error;
-      return data as unknown as Campanha;
+      return data;
     },
     enabled: !isNew,
   });
@@ -75,7 +73,7 @@ export default function AdminReposicaoPromocaoDetail() {
         .eq("ativo", true)
         .order("sku_codigo_fornecedor");
       if (error) throw error;
-      return (data as unknown as ItemRow[]) || [];
+      return (data) || [];
     },
     enabled: !isNew,
   });
@@ -97,7 +95,7 @@ export default function AdminReposicaoPromocaoDetail() {
         .select("id, desconto_efetivo")
         .in("id", itemIds);
       if (error) throw error;
-      return (data as unknown as ItemEfetivo[]) || [];
+      return linhasCom(data, ["id", "desconto_efetivo"], "v_promocao_item_efetivo");
     },
     enabled: itemIds.length > 0,
   });
@@ -117,7 +115,7 @@ export default function AdminReposicaoPromocaoDetail() {
         .eq("campanha_id", Number(id))
         .order("data_evento", { ascending: false });
       if (error) throw error;
-      return (data as unknown as Evento[]) || [];
+      return (data) || [];
     },
     enabled: !isNew && campanha?.tipo_origem === "negociacao_cliente",
   });
@@ -257,7 +255,7 @@ export default function AdminReposicaoPromocaoDetail() {
       }
       const { error } = await supabase
         .from("promocao_campanha")
-        .update(updates as never)
+        .update(updates)
         .eq("id", Number(id));
       if (error) throw error;
       return novoEstado;
@@ -311,8 +309,8 @@ export default function AdminReposicaoPromocaoDetail() {
       const novoId = (inserted as { id: number }).id;
       // Chama RPC de expansão
       const { error: rpcErr } = await supabase.rpc(
-        "expandir_promocao_item" as never,
-        { p_item_id: novoId } as never,
+        "expandir_promocao_item",
+        { p_item_id: novoId },
       );
       if (rpcErr) throw rpcErr;
 

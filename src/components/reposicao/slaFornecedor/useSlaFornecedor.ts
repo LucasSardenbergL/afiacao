@@ -1,3 +1,4 @@
+import { linhasCom } from "@/lib/reposicao/linha-view";
 // Hook de dados/estado do SLA de fornecedor.
 // Extraído verbatim de src/pages/AdminReposicaoSlaFornecedor.tsx (god-component split):
 // 3 queries (compliance por fornecedor/SKU + histórico) + memos + exportCsv + toggleStatus.
@@ -7,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { STATUS_RANK } from "./config";
-import type { ForCompliance, SkuCompliance, SlaStatus } from "./types";
+import { ehSlaStatus, ehTendencia, type ForCompliance, type SkuCompliance, type SlaStatus } from "./types";
 import { hojeSP } from "@/lib/time/sp-day";
 
 export function useSlaFornecedor() {
@@ -48,7 +49,12 @@ export function useSlaFornecedor() {
         .eq("empresa", empresa)
         .limit(5000);
       if (error) throw error;
-      return (data ?? []) as unknown as SkuCompliance[];
+      return linhasCom(data, ["empresa", "sku_codigo_omie"], "v_sku_sla_compliance").map((s): SkuCompliance => {
+        // status fora do vocabulário = view mudou e esta tela não sabe ranquear — erro visível, não "cumprindo".
+        if (!ehSlaStatus(s.status_sla)) throw new Error(`v_sku_sla_compliance: status_sla "${s.status_sla}" desconhecido (SKU ${s.sku_codigo_omie})`);
+        if (s.tendencia !== null && !ehTendencia(s.tendencia)) throw new Error(`v_sku_sla_compliance: tendencia "${s.tendencia}" desconhecida (SKU ${s.sku_codigo_omie})`);
+        return { ...s, status_sla: s.status_sla, tendencia: s.tendencia };
+      });
     },
   });
 

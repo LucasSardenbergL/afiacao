@@ -1,3 +1,4 @@
+import type { Tables } from "@/integrations/supabase/types";
 // Tipos e helpers puros dos Alertas de Outlier (AdminReposicaoAlertas).
 // Extraídos de src/pages/AdminReposicaoAlertas.tsx (god-component split).
 
@@ -47,7 +48,9 @@ export type SkuInfo = {
   preco_compra_real: number | null;
 };
 
-export type GrupoRow = { id: number; codigo_grupo: string; descricao: string | null; lt_producao_dias: number };
+// Colunas reais de fornecedor_grupo_producao (a coluna é `grupo_codigo`; o nome antigo `codigo_grupo`
+// não existia e a query dava 400 escondida por um cast).
+export type GrupoRow = Pick<Tables<"fornecedor_grupo_producao">, "id" | "grupo_codigo" | "descricao" | "lt_producao_dias">;
 
 // Sem `tipo`: 'aceitar' virou a única decisão, então o campo não distingue mais nada e
 // ninguém o lê. 'excluir' saiu (prometia remover da estatística e nunca alcançou o motor —
