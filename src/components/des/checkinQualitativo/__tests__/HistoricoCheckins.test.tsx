@@ -5,7 +5,7 @@ import type { DescontoCheckin } from "../types";
 
 function row(p: Partial<DescontoCheckin>): DescontoCheckin {
   return {
-    checkin_id: 1, data_avaliacao: "2026-05-20", tipo: "projecao",
+    checkin_id: 1, data_avaliacao: "2026-05-20", tipo: "projecao", empresa: "OBEN", ano: 2026, trimestre: 2,
     faixa_numero: 2, estrelas: 3, desconto_padrao: 5,
     qualitativos_atingidos_perc: 2.5, bonus_atingido_perc: 0,
     desconto_total_projetado: 7.5, desconto_total_maximo: 10, avaliado_por: "joao",
