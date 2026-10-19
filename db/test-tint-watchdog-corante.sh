@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — tint_watchdog_corante_check() v2 (Fase 5b#2 + incidente 10-19)   ║
+# ║  PROVA PG17 — tint_watchdog_corante_check() v3 (Fase 5b#2 + incidente 10-19)   ║
 # ║  bash db/test-tint-watchdog-corante.sh > /tmp/t.log 2>&1; echo "exit=$?"       ║
 # ║  (NÃO pipe pra tail — engole o exit≠0.)                                        ║
 # ║                                                                                ║
-# ║  O QUE PROVA (aplica a v1 20260727150000 e a v2 20261019150000 por cima; a     ║
-# ║  suíte e as sabotagens rodam sobre a v2):                                      ║
+# ║  O QUE PROVA (aplica v1 20260727150000 -> v2 20261019150000 -> v3              ║
+# ║  20261019160000, a cadeia real de prod; suíte e sabotagens rodam sobre a v3):  ║
 # ║   A1 corante impagável EM USO  -> alerta criado (fin_alertas + e-mail)         ║
 # ║   A2 corante impagável FORA de uso -> NÃO alerta      (precisão > recall)      ║
 # ║   A3 impagável só em fórmula DESATIVADA -> NÃO alerta (precisão > recall)      ║
@@ -114,18 +114,24 @@ SQL
 
 # ══ ZONA 2 — as migrations REAIS (Lei #1: nunca um stub da lógica) ══
 MIG_V1="$REPO_ROOT/supabase/migrations/20260727150000_tint_watchdog_corante_impagavel.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261019150000_tint_watchdog_corante_v2_base_precificavel.sql"
+MIG_V2="$REPO_ROOT/supabase/migrations/20261019150000_tint_watchdog_corante_v2_base_precificavel.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261019160000_tint_watchdog_corante_v3_plano_custom.sql"
 [ -f "$MIG_V1" ] || { echo "migration nao encontrada: $MIG_V1"; exit 1; }
+[ -f "$MIG_V2" ] || { echo "migration nao encontrada: $MIG_V2"; exit 1; }
 [ -f "$MIG" ] || { echo "migration nao encontrada: $MIG"; exit 1; }
 P -q -f "$MIG_V1"
 # a PRE da v2 só aceita a v1 cujo md5 foi medido em prod — prova que a v1 do repo É a de prod
 eq "PRE v1 do repo = v1 de prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "c512a912fb1725fb89413ddc6690fde3"
+P -q -f "$MIG_V2"
+# a PRE da v3 só aceita a v2 cujo md5 foi conferido em prod no apply de 2026-10-19
+eq "v2 do repo = v2 aplicada em prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "8febcd9e495c4536f3a548b1afab278e"
 P -q -f "$MIG"
-eq "v2 aplicada (marcador)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v2' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
-eq "v2 aceita a si mesma na PRE (md5 da v2 listado)" "$(Pq -c "SELECT position(md5(prosrc) IN \$\$$(cat "$MIG")\$\$) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
-P -q -f "$MIG"   # re-aplicar a v2 sobre ela mesma passa (idempotente)
+eq "v3 aplicada (marcador)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v3' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v3 planeja com valores reais" "$(Pq -c "SELECT 'plan_cache_mode=force_custom_plan' = ANY(proconfig) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v3 aceita a si mesma na PRE (md5 da v3 listado)" "$(Pq -c "SELECT position(md5(prosrc) IN \$\$$(cat "$MIG")\$\$) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+P -q -f "$MIG"   # re-aplicar a v3 sobre ela mesma passa (idempotente)
 [ "$FAIL" -eq 0 ] || { echo "SETUP VERMELHO: ${FALHAS[*]}"; exit 1; }
-echo "=== migrations aplicadas (v1 -> v2) ==="
+echo "=== migrations aplicadas (v1 -> v2 -> v3) ==="
 
 # guarda o corpo verdadeiro, para restaurar depois de cada sabotagem
 P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_corante_check()'::regprocedure) AS def;"
@@ -335,8 +341,8 @@ echo "=== FALSIFICACOES ==="
 #      alcança A6c/A10/A10b: o alerta dos órfãos já está aberto (e congelado) quando
 #      eles medem.
 sabota_e_mede "F1" \
-  "WHERE u.formulas > 0;" \
-  "WHERE true;" \
+  "    JOIN uso u ON u.corante_id = c.id" \
+  "    LEFT JOIN uso u ON u.corante_id = c.id" \
   A2 A3 A5 A6 A6b A6c A10 A10b
 
 # F2 — remove o 'ativo' do predicado: o corante INATIVO deixa de ser impagável.
@@ -365,11 +371,13 @@ sabota_e_mede "F4" \
 sabota_e_mede "F5" \
   "JOIN tint_skus s        ON s.id = f.sku_id
       JOIN omie_products bp   ON bp.id = s.omie_product_id
-     WHERE fi.corante_id = r.id
+     WHERE fi.corante_id = ANY (v_cand)
        AND f.desativada_em IS NULL
-       AND bp.valor_unitario > 0 AND COALESCE(bp.ativo, false)" \
-  "WHERE fi.corante_id = r.id
-       AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL" \
+       AND bp.valor_unitario > 0 AND COALESCE(bp.ativo, false)
+     GROUP BY" \
+  "WHERE fi.corante_id = ANY (v_cand)
+       AND f.desativada_em IS NULL AND f.sku_id IS NOT NULL
+     GROUP BY" \
   A10 A10b
 
 # F6 — tira a descrição do corante do rótulo: volta a listar UUID no e-mail.

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 664
+-- Total de custom migrations: 665
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -728,7 +728,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
   ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql'),
   ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
-  ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql')
+  ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
+  ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2816,7 +2817,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
   ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
   ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
-  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
+  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4952,7 +4955,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
   ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
   ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
-  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
+  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
 )
 SELECT
   e.migration,
@@ -5438,6 +5443,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
   ('public', 'tint_watchdog_corante_check', 1, '20260727150000_tint_watchdog_corante_impagavel.sql', '34489e3784a08d574b657d6efaf1919b'),
   ('public', 'tint_watchdog_corante_check', 2, '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql', 'b93c78b1fd5712b764e9ca3cb8a82c03'),
+  ('public', 'tint_watchdog_corante_check', 3, '20261019160000_tint_watchdog_corante_v3_plano_custom.sql', '6ce4f655ce3a303b5cc6d450eabba37d'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
   ('public', '_tint_watchdog_fase5_transicao', 1, '20260730120000_tint_watchdog_fase5_chave.sql', 'd4dc06f6433a2e83bc19241bafd8302d'),
