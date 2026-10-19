@@ -2,7 +2,7 @@
 
 PR: _(preenchido no commit de fecho)_ · Branch `claude/relaxed-leakey-23ddaf`.
 Migration **manual** (Lovable não aplica custom): `supabase/migrations/20261019140000_omie_identidade_cnpj_alfanumerico.sql`.
-Prova PG17: `db/test-omie-identidade-cnpj-alfanumerico.sh` (37 asserts, `--falsificar` 6/6) no `db/nucleo-ci.txt`.
+Prova PG17: `db/test-omie-identidade-cnpj-alfanumerico.sh` (40 asserts, `--falsificar` 7/7) no `db/nucleo-ci.txt`.
 
 ## O buraco que fechou
 
@@ -28,8 +28,11 @@ mutilando do lado SQL — dois pontos, ambos nesta migration:
   e `6,5,4,3,2,9,8,7,6,5,4,3,2` — espelho SQL de `dvCnpj`/`cnpjValido` do helper TS. **O #3175 não criou função
   de DV em SQL** (o briefing dizia que sim): lá o DV "é validado no ingest" (TS) e o `radar_recruzar_ja_cliente()`
   casa por igualdade com um cnpj já validado. Aqui a chave precisa do DV, então a função nasce nesta migration.
-- **`normalizar_documento(text)`** (sql IMMUTABLE): a chave, com a **mesma regra** do `normalizarDocumento` TS —
-  alnum = `btrim(upper(x))` sem `[-./]` **só se tem letra E é CNPJ alfanumérico válido**; senão só-dígitos,
+- **`normalizar_documento(text)`** (sql IMMUTABLE): a chave, com a regra do `normalizarDocumento` TS **mais o aperto
+  do #3192** (Codex retroativo do #3175, `radar_recruzar_ja_cliente`): o caminho alnum só aceita documento **cru**
+  (14 posições) ou com a **máscara nas posições exatas** `00.000.000/0000-00` após `btrim(upper(x))`, e só então remove
+  `[-./]` — `aeg-123.456.789-09` (CPF com anotação, DV válido por coincidência) cai no só-dígitos `12345678909`,
+  que é o CPF de verdade. Entra como alnum **só se tem letra E é CNPJ alfanumérico válido**; senão só-dígitos,
   byte-idêntico ao `regexp_replace(x, '\D', '', 'g')` de sempre (acervo numérico com máscara/prefixo "CNPJ:"
   produz exatamente a chave de antes). Espaço interno não é separador (`aeg 987.654.321-00` → `98765432100`,
   nunca `AEG98765432100`).
@@ -59,6 +62,7 @@ inteira volta (fail-closed) e a régua vira marcador textual; a prova A0p pega o
 | A4 | ACL das 3 funções |
 
 Falsificação (cada sabotagem sozinha, controle verde na mesma invocação): `chave_so_digitos`→A3c ·
+`sem_mascara_exata`→A1k (alnum aceita separador em qualquer posição; régua da PÓS neutralizada) ·
 `check_so_digitos`→A2a · `dv_ignorado`→A3g (régua da PÓS neutralizada) · `dv_ignorado_pos`→A0a (a PÓS **executa**
 o helper e morde) · `rpc_mutila`→A3a (md5 da RPC neutralizado) · `corpo_sabotado_md5`→A0a.
 
@@ -90,6 +94,15 @@ follow-up, gated na **atestação** da migration em prod (query de validação a
 - Nenhuma edge muda neste PR. `bun run pendencias:deploy` decide o resto pelo ledger.
 - Depois de atestada: (a) remover o laço de mutilação nos 2 espelhos com bump de VERSAO + contrato da
   `doc_ambiguo_probe` + `sonda:bump` + `sonda:fingerprint -- --write`; (b) Codex retroativo.
+
+## Divergência DELIBERADA com o escritor TS (follow-up)
+
+`_shared/cnpj-alfanumerico.ts` (`normalizarDocumento`, os 5 escritores do #3180) ainda remove `[-./]` em **qualquer**
+posição — o #3192 apertou só o SQL do radar. A chave SQL daqui é **mais estrita** que a do escritor: para um input
+como `aeg-123.456.789-09` o escritor produz `AEG12345678909` e o SQL `12345678909`. Consequência: o escritor nunca
+consegue um vínculo que o SQL não daria (ele só CONSULTA `doc_to_user` com a chave dele → miss → sem vínculo,
+fail-closed), mas pode gravar `omie_clientes_nao_vinculados.cnpj_cpf` com a chave inflada. Harmonizar o helper TS
+(e seu espelho `src/lib/omie/cnpj-alfanumerico.ts`) com a máscara exata é follow-up próprio — mexe em 5 edges.
 
 ## Lições
 

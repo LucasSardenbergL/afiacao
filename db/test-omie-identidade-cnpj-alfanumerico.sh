@@ -11,7 +11,8 @@
 # ║  em 2026-10-19 — repo≠prod fica vermelho aqui, não na mão do founder) → a migration sob prova. ║
 # ║   A0  aplica · re-aplicar é no-op (PRE aceita "este") · CHECK vivo é o alfanumérico           ║
 # ║   A1  helpers EXECUTADOS: DV (exemplo oficial RFB, DV errado, numérico clássico, minúscula)    ║
-# ║       e a chave nos 3 ramos (alnum com máscara/minúscula, anotação+CPF, prefixo "CNPJ:")       ║
+# ║       e a chave: alnum cru/máscara EXATA/minúscula; anotação+CPF (espaço ou hífen), máscara  ║
+# ║       fora de posição e prefixo "CNPJ:" → só-dígitos                                          ║
 # ║   A2  CHECK da evidência: alnum maiúsculo entra; minúscula, máscara, 10 dígitos → 23514;        ║
 # ║       numérico ≥ 11 segue entrando                                                            ║
 # ║   A3  snapshot (o money-path): profile alnum casa com cliente Omie alnum (client_to_user);      ║
@@ -21,6 +22,7 @@
 # ║   A4  ACL: anon/authenticated/PUBLIC sem EXECUTE nas 3 funções; service_role com               ║
 # ║  FALSIFICAÇÃO (o vermelho que conta é o do assert DECLARADO em SABOTAGENS), uma camada por vez:║
 # ║   chave_so_digitos        normalizar_documento apaga letra (md5 do helper neutralizado) → A3c  ║
+# ║   sem_mascara_exata       alnum aceita separador em qualquer posição (régua da PÓS neutralizada) → A1k║
 # ║   check_so_digitos        CHECK volta a ^[0-9]{11,}$ → A2a                                     ║
 # ║   dv_ignorado             DV sempre válido (régua da PÓS neutralizada) → A3g                   ║
 # ║   dv_ignorado_pos         DV sempre válido SEM neutralizar a PÓS → A0a (a PÓS executa o helper)║
@@ -37,7 +39,7 @@ MD5_PROD="16200d4e779b573dbc88ad5a49f5e4e4"   # md5(pg_get_functiondef) de omie_
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="chave_so_digitos:A3c check_so_digitos:A2a dv_ignorado:A3g dv_ignorado_pos:A0a rpc_mutila:A3a corpo_sabotado_md5:A0a"
+  SABOTAGENS="chave_so_digitos:A3c sem_mascara_exata:A1k check_so_digitos:A2a dv_ignorado:A3g dv_ignorado_pos:A0a rpc_mutila:A3a corpo_sabotado_md5:A0a"
   LOGDIR="$(mktemp -d "/tmp/falsifica-omie-alnum.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -93,6 +95,8 @@ RAMO_ALNUM="    THEN regexp_replace(btrim(upper(p_bruto)), '[-./]', '', 'g')"
 case "${SABOTAGEM:-}" in
   "") ;;
   chave_so_digitos)   sabotar "$RAMO_ALNUM" "    THEN regexp_replace(p_bruto, '\\D', '', 'g')" ;;
+  sem_mascara_exata)  sabotar "(btrim(upper(p_bruto)) ~ '^[0-9A-Z]{12}[0-9]{2}\$'" "(true"
+                      sabotar "OR public.normalizar_documento('aeg-123.456.789-09') IS DISTINCT FROM '12345678909'" "OR false" ;;
   check_so_digitos)   sabotar "~ '^([0-9]{11,}|[0-9A-Z]{12}[0-9]{2})\$'" "~ '^[0-9]{11,}\$'"
                       sabotar "~ ''^([0-9]{11,}|[0-9A-Z]{12}[0-9]{2})\$''" "~ ''^[0-9]{11,}\$''" ;;
   # a PÓS EXECUTA o helper (DV errado tem de dar false): nas duas sabotagens de DV, uma neutraliza
@@ -190,6 +194,9 @@ eq A1f "chave: alnum minúsculo com máscara → maiúsculo sem separadores" "$(
 eq A1g "chave: anotação + CPF (espaço interno) → só-dígitos" "$(RS "SELECT public.normalizar_documento('aeg 123.456.789-09')")" "12345678909"
 eq A1h "chave: prefixo 'CNPJ:' + numérico → só-dígitos (acervo intocado)" "$(RS "SELECT public.normalizar_documento('CNPJ: 22.333.444/0001-81')")" "22333444000181"
 eq A1i "chave: numérico com máscara byte-idêntico ao regexp_replace '\\D'" "$(RS "SELECT public.normalizar_documento('11.222.333/0001-81') = regexp_replace('11.222.333/0001-81', '\\D', '', 'g')")" "t"
+eq A1k "chave: anotação com HÍFEN (aeg-123.456.789-09) → só-dígitos, nunca AEG12345678909 (Codex #3192)" "$(RS "SELECT public.normalizar_documento('aeg-123.456.789-09')")" "12345678909"
+eq A1l "chave: máscara fora das posições exatas (12ABC.34501DE-35) → só-dígitos" "$(RS "SELECT public.normalizar_documento('12ABC.34501DE-35')")" "123450135"
+eq A1m "chave: máscara exata em maiúsculo (12.ABC.345/01DE-35) → alnum" "$(RS "SELECT public.normalizar_documento('12.ABC.345/01DE-35')")" "12ABC34501DE35"
 eq A1j "chave: alnum com DV errado → só-dígitos (não se fabrica documento)" "$(RS "SELECT public.normalizar_documento('12ABC34501DE36')")" "123450136"
 
 echo "── A2 CHECK da evidência"

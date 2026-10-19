@@ -604,5 +604,5 @@ db/test-radar-cnpj-alfanumerico.sh          23  falsificar=4
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
-# 6 sabotagens: chave só-dígitos, CHECK só-dígitos, DV ignorado (×2: assert funcional e PÓS), RPC mutila, PÓS.
-db/test-omie-identidade-cnpj-alfanumerico.sh 37  falsificar=6
+# 7 sabotagens: chave só-dígitos, sem máscara exata (#3192), CHECK só-dígitos, DV ignorado (×2: funcional e PÓS), RPC mutila, PÓS.
+db/test-omie-identidade-cnpj-alfanumerico.sh 40  falsificar=7

@@ -17,8 +17,9 @@
 -- `postgres`, fora do alcance do `db:aplicar`):
 --   1) `cnpj_alfanumerico_valido(text)` — DV mod-11 do CNPJ alfanumérico (espelho SQL de `dvCnpj`/
 --      `cnpjValido` do helper TS; para numérico coincide com a regra clássica). IMMUTABLE.
---   2) `normalizar_documento(text)` — a chave: alnum = upper + btrim + remove SÓ separadores [-./]
---      quando tem letra E é CNPJ alfanumérico válido; senão só-dígitos (byte-idêntico ao de hoje).
+--   2) `normalizar_documento(text)` — a chave: alnum = upper + btrim, só documento CRU ou com a MÁSCARA
+--      exata (regra do #3192), sem separadores, quando tem letra E é CNPJ alfanumérico válido (DV);
+--      senão só-dígitos (byte-idêntico ao de hoje).
 --   3) CHECK `ocam_evidence_document_normalizado_chk` → ^([0-9]{11,}|[0-9A-Z]{12}[0-9]{2})$
 --      (recriado só se a definição divergir).
 --   4) `omie_sync_identity_snapshot(text)`: doc_valid deriva a chave por `normalizar_documento`;
@@ -94,10 +95,13 @@ BEGIN
 END;
 $$;
 
--- 2) A chave de identidade por documento — espelho de `normalizarDocumento` (mesmo arquivo TS):
---    · alnum = btrim + upper + remove SÓ os separadores da máscara (. - /) — espaço INTERNO não é
---      separador ("aeg 123.456.789-09" NÃO vira AEG12345678909; contraexemplo do Codex no #3175);
---    · entra como chave só se TEM letra e é CNPJ alfanumérico VÁLIDO (regex + DV);
+-- 2) A chave de identidade por documento — a regra de `normalizarDocumento` (mesmo arquivo TS), com o
+--    aperto do Codex retroativo do #3175 (PR #3192, radar_recruzar_ja_cliente): o caminho alnum só aceita
+--    o documento CRU (14 posições) ou com a MÁSCARA nas posições exatas 00.000.000/0000-00 — depois de
+--    btrim + upper — e só então remove os separadores. "aeg-123.456.789-09" (CPF com anotação) NÃO vira
+--    AEG12345678909 (DV válido por coincidência): cai no só-dígitos, que é o CPF de verdade. Espaço
+--    interno também não é separador ("aeg 123.456.789-09"; contraexemplo do Codex no #3175).
+--    · entra como chave só se TEM letra e é CNPJ alfanumérico VÁLIDO (formato + DV);
 --    · senão só-dígitos — byte-idêntico ao `regexp_replace(x, '\D', '', 'g')` de sempre: o acervo
 --      numérico (com máscara, com prefixo "CNPJ:", cru) produz exatamente a chave de antes.
 --    Não corta por tamanho: quem decide `>= 11` é o chamador (a RPC), como hoje.
@@ -108,7 +112,9 @@ IMMUTABLE STRICT PARALLEL SAFE
 SET search_path = ''
 AS $$
   SELECT CASE
-    WHEN regexp_replace(btrim(upper(p_bruto)), '[-./]', '', 'g') ~ '[A-Z]'
+    WHEN (btrim(upper(p_bruto)) ~ '^[0-9A-Z]{12}[0-9]{2}$'
+          OR btrim(upper(p_bruto)) ~ '^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}/[0-9A-Z]{4}-[0-9]{2}$')
+     AND btrim(upper(p_bruto)) ~ '[A-Z]'
      AND public.cnpj_alfanumerico_valido(regexp_replace(btrim(upper(p_bruto)), '[-./]', '', 'g'))
     THEN regexp_replace(btrim(upper(p_bruto)), '[-./]', '', 'g')
     ELSE regexp_replace(p_bruto, '\D', '', 'g')
@@ -264,7 +270,8 @@ BEGIN
   END IF;
   IF public.normalizar_documento('12.abc.345/01de-35') IS DISTINCT FROM '12ABC34501DE35'
      OR public.normalizar_documento('CNPJ: 22.333.444/0001-81') IS DISTINCT FROM '22333444000181'
-     OR public.normalizar_documento('aeg 123.456.789-09') IS DISTINCT FROM '12345678909' THEN
+     OR public.normalizar_documento('aeg 123.456.789-09') IS DISTINCT FROM '12345678909'
+     OR public.normalizar_documento('aeg-123.456.789-09') IS DISTINCT FROM '12345678909' THEN
     RAISE EXCEPTION 'POS FALHOU: normalizar_documento() não reproduz normalizarDocumento() do helper TS';
   END IF;
 
