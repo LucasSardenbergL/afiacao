@@ -131,10 +131,11 @@ for nome in $NOMES; do
   k="$(mutar "$nome" token)" || { xx "B  $nome: a captura não tem o corpo — não mutei"; continue; }
   if cmp -s "$CAP" "$MUT"; then xx "B  $nome: mutação INERTE"; continue; fi
   roda "$TMPD/psql-replay" --sem-rede
-  if [ "$RC" = 1 ] && grep -qF "\`$nome(" <<<"$OUT" && ! grep -qF '[INCERTO]' <<<"$OUT"; then
+  # a linha do auditor é `❌ [CLASSE] nome(args): …` — casar a CLASSE em caixa alta + o nome com parêntese, sem crase
+  if [ "$RC" = 1 ] && grep -q "❌ \[[A-Z_]*\] $nome(" <<<"$OUT" && ! grep -qF '[INCERTO]' <<<"$OUT"; then
     ok "B  $nome: 1 token a mais em $k overload(s) → exit 1 nomeando-a"
   else
-    xx "B  $nome: 1 token a mais devia sair 1 nomeando-a (saiu $RC)"; head -c 600 <<<"$OUT" | sed 's/^/        /'
+    xx "B  $nome: 1 token a mais devia sair 1 nomeando-a (saiu $RC)"; { grep '❌' <<<"$OUT" || head -c 600 <<<"$OUT"; } | sed 's/^/        /'
   fi
   mutar "$nome" cosmetico >/dev/null
   roda "$TMPD/psql-replay" --sem-rede
