@@ -65,7 +65,7 @@
   migration. Verificação pós-Publish: abrir `/auth`, digitar `12abc34501de35` no passo do documento e ver a máscara
   `12.ABC.345/01DE-35` ficar (antes: sumia a cada letra).
 
-## Resíduos fechados em #PR_RESIDUOS (classificação/busca por CONTAGEM DE DÍGITOS)
+## Resíduos fechados em #3197 (classificação/busca por CONTAGEM DE DÍGITOS)
 
 Os pontos listados acima como "fora" que ainda classificavam ou buscavam documento por `replace(/\D/g,'').length`
 — e por isso tratavam um CNPJ alfanumérico VÁLIDO como PF ou não o encontravam. Tudo sobre o mesmo
