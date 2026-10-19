@@ -26,6 +26,8 @@ DATA="$TMPD/data"
 LOC="${LOCALE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 MIG="$REPO_ROOT/supabase/migrations/20261018150000_fin_ciclo_fornecedor.sql"
+# Follow-up de performance: REPLACE do fin_ciclo_cp_empresa() aplicado POR CIMA (como em prod).
+MIG_PERF="$REPO_ROOT/supabase/migrations/20261019090000_fin_ciclo_cp_empresa_perf.sql"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/db/lib/pg-harness.sh"
@@ -195,7 +197,9 @@ BEGIN
   -- Controle do engine (fórmula do v_capital_giro_prazos sobre v_titulo_baixas CP inteiro).
   INSERT INTO v_titulo_baixas VALUES
     ('oben',9001,'CP',h-10,100,1,10,'titulo'), ('oben',9002,'CP',h-10,300,1,20,'titulo'),
-    ('oben',9003,'CR',h-10,999,1,99,'titulo'), ('colacor',9004,'CP',h-10,100,1,30,'titulo');
+    ('oben',9003,'CR',h-10,999,1,99,'titulo'), ('colacor',9004,'CP',h-10,100,1,30,'titulo'),
+    -- so_baixa: empresa SÓ com baixa CP e prazo NULL → aparece, controle NULL. so_cr: só CR → não aparece.
+    ('so_baixa',9005,'CP',h-10,50,1,NULL,'titulo'), ('so_cr',9006,'CR',h-10,50,1,5,'titulo');
 END $f$;
 SQL
 }
@@ -230,8 +234,9 @@ ENC="public.v_titulo_encargos_cp"
 suite() {
   falhas=0; asserts=0
   preparar_banco
-  # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
+  # As migrations (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
+  P -f "$2" || { echo "APLICACAO FALHOU: $2"; return 99; }
 
   # ── encargos_cp (T1) ──────────────────────────────────────────────────────────────────
   okp "SELECT n_baixas||'|'||confianca||'|'||coalesce(desconto_obtido::text,'NULL')||'|'||desconto_informado_omie FROM $ENC WHERE omie_codigo_lancamento=1001" \
@@ -314,23 +319,39 @@ suite() {
       "1|4000|1|300" "empresa oben sensor de categoria"
   oks "$U_MASTER" "SELECT coalesce(pmp_compras_pond::text,'NULL')||'|'||compras_12m||'|'||pmp_engine_controle||'|'||n_fora_lista||'|'||coalesce(valor_fora_lista::text,'NULL') FROM $R_EMP WHERE company='colacor'" \
       "NULL|2500|30|2|NULL" "empresa colacor sem pagas = PMP NULL, nunca 0"
+  # Perf (20261019090000): o caminho curto tem de dar o MESMO número do caminho antigo (resumo + 2 varreduras).
+  local ANTIGO
+  ANTIGO="$(Pq -c "SELECT string_agg(e.company||':'||coalesce((SELECT sum(r.compras_12m) FROM $RES r WHERE r.company=e.company)::text,'NULL')||':'||coalesce((SELECT round(sum(b.prazo_ponderado_dias*b.valor_baixado)/nullif(sum(b.valor_baixado),0)) FROM public.v_titulo_baixas b WHERE b.company=e.company AND b.tipo='CP' AND b.prazo_ponderado_dias IS NOT NULL)::text,'NULL'), ',' ORDER BY e.company) FROM (SELECT DISTINCT company FROM public.fin_contas_pagar UNION SELECT DISTINCT company FROM public.v_titulo_baixas WHERE tipo='CP') e")"
+  okp "SELECT position('so_baixa:NULL:NULL' IN '$ANTIGO') > 0 AND position('so_cr' IN '$ANTIGO') = 0" "t" "empresa caminho antigo cobre so_baixa e nao so_cr"
+  oks "$U_MASTER" "SELECT string_agg(company||':'||coalesce(compras_12m::text,'NULL')||':'||coalesce(pmp_engine_controle::text,'NULL'), ',' ORDER BY company) FROM $R_EMP" \
+      "$ANTIGO" "empresa compras e controle = caminho antigo"
+  oks "$U_MASTER" "SELECT string_agg(company||'|'||coalesce(pmp_engine_controle::text,'NULL')||'|'||coalesce(compras_12m::text,'NULL')||'|'||n_fora_lista, ',') FROM $R_EMP WHERE company IN ('so_baixa','so_cr')" \
+      "so_baixa|NULL|NULL|0" "empresa so com baixa CP aparece, controle NULL"
   echo "PASS=$((asserts-falhas)) FAIL=$falhas"
   return "$falhas"
 }
 
 # 1) CONTROLE VERDE — a migration real precisa passar inteira.
-cp "$MIG" "$TMPD/mig.sql"
-rc=0; out="$(suite "$TMPD/mig.sql" 2>&1)" || rc=$?
+cp "$MIG" "$TMPD/mig.sql"; cp "$MIG_PERF" "$TMPD/mig-perf.sql"
+rc=0; out="$(suite "$TMPD/mig.sql" "$TMPD/mig-perf.sql" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ]; then echo "$out"; echo "CONTROLE VERMELHO (rc=$rc) — abortando antes de falsificar"; exit 1; fi
 grep -E '^PASS=[0-9]+ FAIL=0$' <<<"$out" || { echo "CONTROLE SEM CONTAGEM"; exit 1; }
 echo "CONTROLE OK"
 
 # 2) FALSIFICAÇÃO — uma camada por vez, vermelha PELA asserção esperada (marca do ramo).
-sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |)
-  sed "$2" "$MIG" > "$TMPD/sab.sql"
-  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+# O sed vale para as DUAS migrations (o REPLACE da perf reescreve fin_ciclo_cp_empresa); basta alterar uma.
+# $3=perf: só a perf (o corpo VIVO da função é o dela; mexer no da base derruba a PRE anti-deriva).
+sabotar_arquivos() { # $1 nome, $2 sed, [$3 perf]
+  if [ "${3:-}" = perf ]; then cp "$MIG" "$TMPD/sab.sql"; else sed "$2" "$MIG" > "$TMPD/sab.sql"; fi
+  sed "$2" "$MIG_PERF" > "$TMPD/sab-perf.sql"
+  if cmp -s "$MIG" "$TMPD/sab.sql" && cmp -s "$MIG_PERF" "$TMPD/sab-perf.sql"; then
+    echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1
+  fi
+}
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |), [$4 perf]
+  sabotar_arquivos "$1" "$2" "${4:-}"
   local o r=0
-  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  o="$(suite "$TMPD/sab.sql" "$TMPD/sab-perf.sql" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o" | tail -5; exit 1; fi
   if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
@@ -340,10 +361,9 @@ sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> 
 }
 # Sabotagem que a POSTCONDIÇÃO embutida precisa abortar no apply (rc=99 + a mensagem dela).
 sabotar_post() { # $1 nome, $2 sed, $3 mensagem da postcondição
-  sed "$2" "$MIG" > "$TMPD/sab.sql"
-  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+  sabotar_arquivos "$1" "$2"
   local o r=0
-  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  o="$(suite "$TMPD/sab.sql" "$TMPD/sab-perf.sql" 2>&1)" || r=$?
   if [ "$r" -ne 99 ] || ! grep -qF "$3" <<<"$o"; then echo "SABOTAGEM NAO ABORTOU PELA POSTCONDICAO: $1 (rc=$r)"; echo "$o" | tail -5; exit 1; fi
   echo "sabotagem vermelha ok: $1 (postcondicao aborta o apply)"
 }
@@ -367,7 +387,7 @@ sabotar "f desconto NULL vira 0 no titulo" \
   "s/CASE WHEN situacao = 'paga' THEN desconto_obtido END /coalesce(CASE WHEN situacao = 'paga' THEN desconto_obtido END, 0) /" \
   "fatos resumo NULL nao vira 0 no titulo"
 sabotar "g universo por prefixo" \
-  "s/AND l.categoria_codigo = p.categoria_codigo/AND p.categoria_codigo LIKE '2.01%'/" \
+  "/^CREATE OR REPLACE VIEW public.v_ciclo_cp_titulos/,/^ WHERE situacao IS NOT NULL;/{s/AND l.categoria_codigo = p.categoria_codigo/AND p.categoria_codigo LIKE '2.01%'/;}" \
   "fatos universo por (empresa, codigo): 2.01.99 colacor fora, 2.01.97 so colacor"
 sabotar "h anon fora do REVOKE sem postcondicao" \
   "s/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_cp_empresa() FROM PUBLIC;/;s/IF has_function_privilege('anon', f, 'EXECUTE') THEN/IF false THEN/" \
@@ -380,12 +400,32 @@ sabotar "j tem_baixa sem coalesce (PAGO sem baixa some)" \
   "fatos pago sem baixa nenhuma nao some"
 sabotar "k sensor NULL vira 0 no SELECT final" \
   "s/CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END/coalesce(s.valor_fora_lista, 0)/" \
-  "empresa colacor sem pagas = PMP NULL, nunca 0"
+  "empresa colacor sem pagas = PMP NULL, nunca 0" perf
 sabotar "l sensor soma ignora o NULL" \
   "/bool_or(p.valor_documento IS NULL) FILTER (WHERE p.categoria_codigo LIKE/s/THEN NULL/THEN 0/" \
-  "empresa colacor sem pagas = PMP NULL, nunca 0"
+  "empresa colacor sem pagas = PMP NULL, nunca 0" perf
 sabotar "m vencido sem coalesce no resumo" \
   "s/coalesce(a.valor_vencido_aberto, 0) AS valor_vencido_aberto/a.valor_vencido_aberto/" \
   "fatos fornecedor sem titulo aberto = zero real, nao NULL"
+# ── perf (20261019090000) ──
+sabotar "n vol sem o universo de compras" \
+  "/^  vol AS (/,/GROUP BY p.company/{s/AND l.categoria_codigo = p.categoria_codigo/AND true/;}" \
+  "empresa compras e controle = caminho antigo" perf
+sabotar "o empresas sem o lado das baixas CP" \
+  "/^    UNION SELECT eng.company FROM eng\$/d" \
+  "empresa so com baixa CP aparece, controle NULL"
+sabotar "p prazo NULL no WHERE do eng (some a empresa)" \
+  "s/^     WHERE b.tipo = 'CP'\$/     WHERE b.tipo = 'CP' AND b.prazo_ponderado_dias IS NOT NULL/" \
+  "empresa so com baixa CP aparece, controle NULL"
+sabotar "q eng conta o CR" \
+  "s/^     WHERE b.tipo = 'CP'\$/     WHERE b.tipo IN ('CP','CR')/" \
+  "empresa so com baixa CP aparece, controle NULL"
+sabotar_post "r perf volta a citar o resumo" \
+  "s/do resumo por fornecedor/do v_ciclo_fornecedor_resumo/" \
+  "postcondicao: public.fin_ciclo_cp_empresa() ainda passa pelo resumo"
 
+# PRE anti-deriva: corpo vivo fora de {revisado, este} (aqui: a base sabotada) ABORTA o apply da perf.
+sabotar_post "s PRE barra corpo vivo desconhecido" \
+  "s/CASE WHEN s.company IS NULL THEN 0 ELSE s.valor_fora_lista END/coalesce(s.valor_fora_lista, 0)/" \
+  "PRE FALHOU: fin_ciclo_cp_empresa() vivo"
 echo "PROVA-CICLO-FORNECEDOR-OK"

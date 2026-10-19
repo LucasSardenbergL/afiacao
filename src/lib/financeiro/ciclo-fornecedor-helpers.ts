@@ -13,7 +13,11 @@ export type TituloCp = {
   valor: number; valorAberto: number | null; situacao: SituacaoCp; prazoConcedido: number;
   prazoReal: number | null; atrasoBaixa: number | null; descontoObtido: number | null;
   descontoInformado: number | null; valorPagoPrincipal: number | null; encargoPago: number | null; diasVencido: number | null;
+  /** De onde vem o valorAberto: resumo do Omie (exato) ou o valor cheio do título (estimativa). */
+  fonteValorAberto: FonteValorAberto | null;
 };
+
+type FonteValorAberto = 'omie_resumo' | 'valor_titulo';
 
 export type ResumoFornecedor = {
   company: string; fornecedor: number; nome: string | null; fonteNome: string | null;
@@ -27,6 +31,8 @@ export type ResumoFornecedor = {
 };
 
 const txt = (x: unknown): string | null => (typeof x === 'string' && x !== '' ? x : null);
+const fonteValorAberto = (x: unknown): FonteValorAberto | null =>
+  (x === 'omie_resumo' || x === 'valor_titulo' ? x : null);
 
 export function normalizarTituloCp(r: Record<string, unknown>): TituloCp {
   return {
@@ -49,6 +55,7 @@ export function normalizarTituloCp(r: Record<string, unknown>): TituloCp {
     valorPagoPrincipal: num(r.valor_pago_principal),
     encargoPago: num(r.encargo_pago),
     diasVencido: num(r.dias_vencido),
+    fonteValorAberto: fonteValorAberto(r.fonte_valor_aberto),
   };
 }
 
@@ -159,7 +166,11 @@ export function taxaDescontoObservada(
 
 export type CustoPrazo = {
   taxa: number | null; regimeInicio: string | null; perdidoAtraso: number | null;
-  perdidoEmDiaSemDesconto: number | null; encargoPago: number | null; descontoObtido: number | null;
+  /** Pago em dia sem desconto nenhum (cenário). */
+  perdidoEmDiaSemDesconto: number | null;
+  /** Pago em dia com desconto, mas abaixo da taxa observada (cenário) — não é "sem desconto". */
+  perdidoEmDiaDescontoAbaixo: number | null;
+  encargoPago: number | null; descontoObtido: number | null;
 };
 
 /** Desconto perdido é CENÁRIO (taxa observada × base); desconto obtido e juros/multa são apurados do resumo. */
@@ -168,10 +179,11 @@ export function custoDoPrazo(titulos: TituloCp[], resumo: ResumoFornecedor, hoje
   const { taxa } = taxaDescontoObservada(titulos, regimeInicio, hoje);
   const apurado = { encargoPago: resumo.encargoPago12m, descontoObtido: resumo.descontoObtido12m };
   if (taxa === null || regimeInicio === null) {
-    return { taxa: null, regimeInicio, perdidoAtraso: null, perdidoEmDiaSemDesconto: null, ...apurado };
+    return { taxa: null, regimeInicio, perdidoAtraso: null, perdidoEmDiaSemDesconto: null, perdidoEmDiaDescontoAbaixo: null, ...apurado };
   }
   let perdidoAtraso = 0;
   let perdidoEmDiaSemDesconto = 0;
+  let perdidoEmDiaDescontoAbaixo = 0;
   for (const t of titulos) {
     if (t.situacao !== 'paga' || t.vencimento < regimeInicio || !t.dataBaixaConfiavel) continue;
     if (t.descontoInformado === null || t.atrasoBaixa === null) continue;
@@ -179,27 +191,33 @@ export function custoDoPrazo(titulos: TituloCp[], resumo: ResumoFornecedor, hoje
     // cheio dava R$ 0,0015 e punha a Sayerlack na fila com "R$ 0" (pré-voo em prod, 2026-10-18).
     const perdido = Math.max(Math.round((taxa * (t.valorPagoPrincipal ?? t.valor) - t.descontoInformado) * 100) / 100, 0);
     if (!pagoEmDia(t)) perdidoAtraso += perdido;
+    else if (t.descontoInformado > 0) perdidoEmDiaDescontoAbaixo += perdido;
     else perdidoEmDiaSemDesconto += perdido;
   }
-  return { taxa, regimeInicio, perdidoAtraso, perdidoEmDiaSemDesconto, ...apurado };
+  return { taxa, regimeInicio, perdidoAtraso, perdidoEmDiaSemDesconto, perdidoEmDiaDescontoAbaixo, ...apurado };
 }
 
 export type ItemFilaCusto = { resumo: ResumoFornecedor; custo: CustoPrazo; totalRs: number };
 
 /**
  * Fila "onde o prazo está custando": R$ perdido por atraso (cenário) + juros/multa (apurado), desempate pelo
- * vencido em aberto. Sem nenhum dos dois = "sem evidência" (nunca R$ 0). Pago em dia sem desconto vai para
- * "conferir boleto", fora do total.
+ * vencido em aberto. Sem nenhum dos dois = "sem evidência" (nunca R$ 0). Pago em dia sem desconto (ou com desconto
+ * abaixo do observado) vai para "conferir boleto", fora do total.
  */
+export type ItemConferirBoleto = { resumo: ResumoFornecedor; valor: number; semDesconto: number; descontoAbaixo: number };
+
 export function montarFilaCustoPrazo(itens: Array<{ resumo: ResumoFornecedor; custo: CustoPrazo }>): {
-  fila: ItemFilaCusto[]; semEvidencia: ResumoFornecedor[]; conferirBoleto: Array<{ resumo: ResumoFornecedor; valor: number }>;
+  fila: ItemFilaCusto[]; semEvidencia: ResumoFornecedor[]; conferirBoleto: ItemConferirBoleto[];
 } {
   const fila: ItemFilaCusto[] = [];
   const semEvidencia: ResumoFornecedor[] = [];
-  const conferirBoleto: Array<{ resumo: ResumoFornecedor; valor: number }> = [];
+  const conferirBoleto: ItemConferirBoleto[] = [];
   for (const { resumo, custo } of itens) {
-    const emDia = custo.perdidoEmDiaSemDesconto;
-    if (emDia !== null && emDia > 0) conferirBoleto.push({ resumo, valor: emDia });
+    const semDesconto = custo.perdidoEmDiaSemDesconto ?? 0;
+    const descontoAbaixo = custo.perdidoEmDiaDescontoAbaixo ?? 0;
+    if (semDesconto + descontoAbaixo > 0) {
+      conferirBoleto.push({ resumo, valor: semDesconto + descontoAbaixo, semDesconto, descontoAbaixo });
+    }
     if (custo.perdidoAtraso === null && custo.encargoPago === null) {
       semEvidencia.push(resumo);
       continue;
@@ -212,13 +230,33 @@ export function montarFilaCustoPrazo(itens: Array<{ resumo: ResumoFornecedor; cu
   return { fila, semEvidencia, conferirBoleto };
 }
 
+const brlCurto = (v: number) => `R$ ${Math.round(v).toLocaleString('pt-BR')}`;
+
+/** O que o "conferir boleto" diz: sem desconto, desconto abaixo do observado, ou os dois (com o R$ de cada). */
+export function rotuloConferirBoleto({ semDesconto, descontoAbaixo }: { semDesconto: number; descontoAbaixo: number }): string {
+  if (semDesconto > 0 && descontoAbaixo > 0) {
+    return `pago em dia sem desconto (${brlCurto(semDesconto)}) ou com desconto abaixo do observado (${brlCurto(descontoAbaixo)})`;
+  }
+  return descontoAbaixo > 0 ? 'pago em dia com desconto abaixo do observado' : 'pago em dia sem desconto';
+}
+
+/** Desconto do drill = o OBTIDO (o mesmo da tabela). O informado pelo Omie sem confirmação vai à parte, nunca no lugar. */
+export function descontoNoDrill(t: TituloCp): { obtido: number | null; informadoNaoConfirmado: number | null } {
+  return {
+    obtido: t.descontoObtido,
+    informadoNaoConfirmado: t.descontoObtido === null && t.descontoInformado !== null && t.descontoInformado > 0
+      ? t.descontoInformado : null,
+  };
+}
+
 export type PontualidadeMes = {
   mes: string; valorVencido: number; valorAberto: number;
   pctEmDia: number | null; pctAtrasado: number | null; coberturaData: number | null; mesParcial: boolean;
 };
 
 /** Por mês de vencimento (só o que já venceu — vencimento < hoje, igual ao SQL; vence hoje = a vencer):
- *  % em dia / atrasado entre os títulos com data de baixa confiável. */
+ *  % em dia / atrasado entre os títulos com data de baixa confiável. Parcial: o mês corrente e todo mês que começa
+ *  antes da janela de 12 m das pagas (vencimento ≥ hoje − 365) — ali só entra parte do mês, ou só os abertos. */
 export function pontualidadePorMes(titulos: TituloCp[], hoje: string): PontualidadeMes[] {
   const meses = new Map<string, { vencido: number; aberto: number; datavel: number; emDia: number; atrasado: number }>();
   for (const t of titulos) {
@@ -235,6 +273,7 @@ export function pontualidadePorMes(titulos: TituloCp[], hoje: string): Pontualid
     meses.set(mes, m);
   }
   const mesHoje = `${hoje.slice(0, 7)}-01`;
+  const inicioJanela = addDias(hoje, -365);
   return [...meses.entries()]
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([mes, m]) => ({
@@ -244,7 +283,7 @@ export function pontualidadePorMes(titulos: TituloCp[], hoje: string): Pontualid
       pctEmDia: m.datavel > 0 ? m.emDia / m.datavel : null,
       pctAtrasado: m.datavel > 0 ? m.atrasado / m.datavel : null,
       coberturaData: m.vencido > 0 ? m.datavel / m.vencido : null,
-      mesParcial: mes === mesHoje,
+      mesParcial: mes === mesHoje || mes < inicioJanela,
     }));
 }
 
@@ -258,4 +297,31 @@ export function confiancaFornecedor(r: ResumoFornecedor): 'media' | 'baixa' {
 export function rotuloPorDiaCompras(compras12m: number | null): { porDia: number } | null {
   const v = porDia(compras12m);
   return v === null ? null : { porDia: v };
+}
+
+export type OrdemFornecedores = 'compras' | 'atraso' | 'vencido' | 'juros' | 'desconto' | 'nome';
+const CAMPO_ORDEM: Record<Exclude<OrdemFornecedores, 'nome'>, keyof ResumoFornecedor> = {
+  compras: 'compras12m', atraso: 'atrasoPondPos', vencido: 'valorVencidoAberto', juros: 'encargoPago12m', desconto: 'descontoObtido12m',
+};
+const desc = (a: number | null, b: number | null) => (a === null ? (b === null ? 0 : 1) : b === null ? -1 : b - a);
+
+/** Ordena a tabela: campo desc com null por último (ausente nunca vira 0), nome asc; desempate por compras. Ordem
+ *  desconhecida (URL editado à mão) cai em compras. */
+export function ordenarFornecedores(xs: ResumoFornecedor[], ordem: string): ResumoFornecedor[] {
+  const porCompras = (a: ResumoFornecedor, b: ResumoFornecedor) => desc(a.compras12m, b.compras12m);
+  if (ordem === 'nome') {
+    return [...xs].sort((a, b) => (a.nome === null ? (b.nome === null ? 0 : 1) : b.nome === null ? -1
+      : a.nome.localeCompare(b.nome, 'pt-BR')) || porCompras(a, b));
+  }
+  const campo = CAMPO_ORDEM[ordem as keyof typeof CAMPO_ORDEM] ?? 'compras12m';
+  return [...xs].sort((a, b) => desc(a[campo] as number | null, b[campo] as number | null) || porCompras(a, b));
+}
+
+const semAcento = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/** Busca por nome ou código Omie, sem caixa nem acento. */
+export function filtrarFornecedores(xs: ResumoFornecedor[], busca: string): ResumoFornecedor[] {
+  const q = semAcento(busca.trim());
+  if (q === '') return xs;
+  return xs.filter((x) => semAcento(x.nome ?? '').includes(q) || String(x.fornecedor).includes(q));
 }

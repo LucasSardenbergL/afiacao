@@ -1,6 +1,6 @@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import type { ResumoFornecedor, TituloCp } from '@/lib/financeiro/ciclo-fornecedor-helpers';
+import { descontoNoDrill, type ResumoFornecedor, type TituloCp } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 import { brl, dias, nomeFornecedor } from './ciclo-format';
 import { CicloPontualidade } from './CicloPontualidade';
 
@@ -32,11 +32,14 @@ export function CicloFornecedorDrill({ fornecedor, titulos, hoje, onFechar }: {
             <TableHeader><TableRow>
               <TableHead>Documento</TableHead><TableHead>Vencimento</TableHead><TableHead>Baixa</TableHead>
               <TableHead className="text-right">Valor</TableHead><TableHead className="text-right">Prazo</TableHead>
-              <TableHead className="text-right">Atraso</TableHead><TableHead className="text-right">Desconto</TableHead>
-              <TableHead className="text-right">Juros/multa</TableHead><TableHead>Situação</TableHead>
+              <TableHead className="text-right">Atraso</TableHead><TableHead className="text-right">Desconto obtido</TableHead>
+              <TableHead className="text-right">Juros/multa</TableHead><TableHead className="text-right">Em aberto</TableHead>
+              <TableHead>Situação</TableHead>
             </TableRow></TableHeader>
             <TableBody>
-              {doFornecedor.map((t) => (
+              {doFornecedor.map((t) => {
+                const d = descontoNoDrill(t);
+                return (
                 <TableRow key={t.lancamento}>
                   <TableCell>{t.documento ?? `#${t.lancamento}`}</TableCell>
                   <TableCell>{t.vencimento}</TableCell>
@@ -44,11 +47,23 @@ export function CicloFornecedorDrill({ fornecedor, titulos, hoje, onFechar }: {
                   <TableCell className="text-right font-mono">{brl(t.valor, 2)}</TableCell>
                   <TableCell className="text-right font-mono">{dias(t.prazoConcedido)}</TableCell>
                   <TableCell className="text-right font-mono">{t.dataBaixaConfiavel ? dias(t.atrasoBaixa) : '—'}</TableCell>
-                  <TableCell className="text-right font-mono">{brl(t.descontoInformado, 2)}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {brl(d.obtido, 2)}
+                    {d.informadoNaoConfirmado !== null && (
+                      <span className="block text-xs text-muted-foreground">informado {brl(d.informadoNaoConfirmado, 2)}, não confirmado</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right font-mono">{brl(t.encargoPago, 2)}</TableCell>
+                  <TableCell className="text-right font-mono">
+                    {brl(t.valorAberto, 2)}
+                    {t.valorAberto !== null && t.fonteValorAberto === 'valor_titulo' && (
+                      <span className="text-xs text-muted-foreground" title="Sem o resumo do Omie: o aberto é o valor cheio do título (estimativa)."> (valor do título)</span>
+                    )}
+                  </TableCell>
                   <TableCell>{ROTULO_SITUACAO[t.situacao] ?? t.situacao}</TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>
