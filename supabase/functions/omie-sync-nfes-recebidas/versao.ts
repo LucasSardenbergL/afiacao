@@ -50,6 +50,7 @@ export const EDGE = "omie-sync-nfes-recebidas";
  * `nfes_processadas` passa a contar só NF-e. Ver _shared/modelo-documento-fiscal.ts.
  *
  * v1.5 (2026-10-16): todo run (inclusive `apenas_backfill`) reconcilia as NFs ÓRFÃS com o pedido
+ * v1.9: gate de auth canônico (`_shared/auth.ts`) no lugar da cópia local; teste negativo de handler (lote H).
  * que apareceu DEPOIS, relendo o `itensRecebimento` do raw_data da órfã — sem chamada à Omie. Só
  * preenche pedido SEM NF (compare-and-set); pedido com outra NF fica intocado. `results` ganha
  * `reconciliacao`. Ver reconciliacao.ts.
@@ -60,7 +61,7 @@ export const EDGE = "omie-sync-nfes-recebidas";
 // ConsultarRecebimento; só preenche linha sem NF. `results` ganha `revisita`.
 // v1.8: a janela explícita (`revisita_de`/`revisita_ate`) chegava à listagem SEM datas — `{de, ate}` lido como
 // `{dataDe, dataAte}`. O caminho diário (`revisita_dias`) não era afetado.
-export const VERSAO = "v1.8-janela-explicita";
+export const VERSAO = "v1.9-gate-auth-canonico";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

@@ -22,6 +22,7 @@ import {
   type AddJsonPortal, type ItemPedido, type LinhaDom, type MotivoRpcCusto, type ResultadoMatch,
 } from "./captura-custo.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
+import { authorizeCronOrStaff } from "../_shared/auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2296,32 +2297,6 @@ async function alertarFornecedor(
   }
 }
 
-async function authorizeCronOrStaff(req: Request): Promise<boolean> {
-  const CRON_SEC = Deno.env.get("CRON_SECRET");
-  const cronSecret = req.headers.get("x-cron-secret");
-  if (cronSecret && CRON_SEC && cronSecret === CRON_SEC) return true;
-  const authHeader = req.headers.get("Authorization");
-  if (!authHeader?.startsWith("Bearer ")) return false;
-  const token = authHeader.slice(7);
-  if (token === SERVICE_ROLE_KEY) return true;
-  try {
-    const userRes = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      headers: { Authorization: authHeader, apikey: SERVICE_ROLE_KEY },
-    });
-    if (!userRes.ok) return false;
-    const user = await userRes.json();
-    if (!user?.id) return false;
-    const roleRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/user_roles?user_id=eq.${user.id}&select=role`,
-      { headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` } },
-    );
-    if (!roleRes.ok) return false;
-    const roles = (await roleRes.json()) as Array<{ role: string }>;
-    const allowed = new Set(["employee", "master"]);
-    return roles.some((r) => allowed.has(r.role));
-  } catch { return false; }
-}
-
 // Watchdog: trata pedidos travados em "enviando_portal" há mais de N minutos.
 // Acontece quando o background task (EdgeRuntime.waitUntil) é interrompido.
 // PR1: NUNCA reverte para pendente_envio_portal — um pedido travado em
@@ -2428,7 +2403,7 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
-  if (!(await authorizeCronOrStaff(req))) {
+  if (!(await authorizeCronOrStaff(req)).ok) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

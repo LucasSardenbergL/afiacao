@@ -4,6 +4,9 @@ export type SnapshotEmpresa = {
   company: string;
   snapshot_at: string;          // ISO 'YYYY-MM-DDThh:mm:ssZ'
   ncg: number | null;
+  // premissas.ncg_parcial do engine (v1.5+): true = NCG completa; false = sem estoque (parcial);
+  // null = snapshot anterior à v1.5, completude desconhecida → tratada como parcial.
+  ncg_completa: boolean | null;
   saldo_tesouraria: number | null;
   semanas: SnapshotSemana[];
 };
@@ -44,6 +47,11 @@ const dataDe = (snapshotAt: string): string => snapshotAt.slice(0, 10);
 // Parse das semanas do snapshot (campo `dados` jsonb). Os 3 campos core gateiam a validade da
 // semana (inválido → semana dropada); `saldo_inicial` é só-display → fora do filtro (NÃO dropa a
 // semana), mas ausente/não-número vira `null` (NUNCA 0 — `Number(null)===0` seria fabricação).
+/** premissas.ncg_parcial (jsonb) → completude da NCG. Só boolean declara; qualquer outra coisa = desconhecido. */
+export function ncgCompleta(ncgParcial: unknown): boolean | null {
+  return ncgParcial === false ? true : ncgParcial === true ? false : null;
+}
+
 export function parseSnapshotSemanas(dadosRaw: unknown): SnapshotSemana[] {
   if (!Array.isArray(dadosRaw)) return [];
   return (dadosRaw as Array<Record<string, unknown>>)
@@ -106,6 +114,7 @@ export function consolidarCockpit(input: { esperadas: string[]; snapshots: Snaps
   for (const s of coorte.values()) {
     if (s.ncg != null) ncgTotalRaw += s.ncg;
     else algumNcgNull = true;
+    if (s.ncg_completa !== true) algumNcgNull = true;
   }
   const ncg_total = round2(ncgTotalRaw);
   const ncg_parcial = parcial || algumNcgNull;

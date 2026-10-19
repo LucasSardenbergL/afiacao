@@ -35,7 +35,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { useCicloCoorte, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm } from '../useFinanceiroCiclo';
+import { useCicloCoorte, useCicloGiroSku, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm } from '../useFinanceiroCiclo';
 
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
@@ -172,6 +172,33 @@ describe('useReceitaDiariaTtm', () => {
   it('erro do supabase vira `error` do hook', async () => {
     tabelas.fin_dre_competencia_base = { data: null, error: { message: 'boom' } };
     const { result } = renderHook(() => useReceitaDiariaTtm(), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe('useCicloGiroSku', () => {
+  it('chama fin_ciclo_giro_sku com {p_company}, pagina, normaliza e descarta linha sem código', async () => {
+    tabelas.fin_ciclo_giro_sku = {
+      error: null,
+      data: [
+        { omie_codigo_produto: 1001, codigo: 'P1001', descricao: 'TINTA', tipo_produto: '00', familia: 'TINTAS', classe: 'giro',
+          divergencia_cadastro: false, saldo: '100', cmc: '10', valor_parado: '1000', consumo_qtd_365d: '365', dias_cobertura: '100.0',
+          ultima_saida: '2026-10-08', dias_sem_saida: 10, valor_excedente: '100.00', acao: null, motivo_acao: null, motivo_consumo: null },
+        { omie_codigo_produto: null, classe: 'giro', saldo: '1' },
+      ],
+    };
+    const { result } = renderHook(() => useCicloGiroSku('oben'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(rpcs).toEqual([{ nome: 'fin_ciclo_giro_sku', args: { p_company: 'oben' } }]);
+    expect(consultas.some((q) => q.tabela === 'fin_ciclo_giro_sku' && q.de === 0)).toBe(true);
+    expect(result.current.data).toHaveLength(1);
+    expect(result.current.data![0]).toMatchObject({ omieCodigoProduto: 1001, saldo: 100, valorParado: 1000, diasCobertura: 100, motivoConsumo: null });
+  });
+
+  it('erro do supabase vira `error` do hook (nunca lista vazia)', async () => {
+    tabelas.fin_ciclo_giro_sku = { data: null, error: { message: 'boom' } };
+    const { result } = renderHook(() => useCicloGiroSku('colacor'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
   });

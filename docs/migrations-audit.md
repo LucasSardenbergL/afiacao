@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **652** custom migrations totais
-- **2097** objetos esperados (criados por estas migrations)
+- **654** custom migrations totais
+- **2103** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 751
+  - `function`: 757
   - `rls_policy`: 476
   - `index`: 277
   - `cron_job`: 185
@@ -5296,6 +5296,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.v_ciclo_cliente_resumo` | — |
+
+### `20261018160000_fcs_ftp_fecha_escrita_default.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261018200000_fin_ciclo_giro_sku.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._fin_estoque_tipo_fora` | — |
+| `function` | `public._fin_estoque_familia_fora` | — |
+| `function` | `public._fin_estoque_classe` | — |
+| `function` | `public._fin_estoque_account` | — |
+| `function` | `public.fin_estoque_giro_valor` | — |
+| `function` | `public.fin_ciclo_giro_sku` | — |
 
 ## Próximos passos por status
 

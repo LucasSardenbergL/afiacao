@@ -196,6 +196,9 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
           'recover_score', 'revenue_potential', 'rf_score', 's_score', 'sales_history_status',
           'signal_modifiers', 'updated_at', 'whatsapp_reply_rate_60d', 'x_score',
         ],
+        // O FOR SHARE das RPCs invoker de recomendação exige UPDATE em >=1 coluna; a policy de UPDATE
+        // (WITH CHECK false) recusa a gravação. Ver o motivo e a 20261018160000.
+        UPDATE: ['updated_at'],
       },
     },
     motivo:
@@ -203,14 +206,15 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       '#3072: REVOKE SELECT de tabela + GRANT SELECT das 30 colunas restantes; a margem só sai pela RPC ' +
       'get_scores_margem, sob private.cap_custo_ler. NUNCA reemitir GRANT SELECT ON public.farmer_client_scores ' +
       'TO authenticated (table) — reabre a margem. Coluna nova nasce sem SELECT: conceder na migration que a cria. ' +
-      'Writers são service_role (calculate-scores, scoring-recalc-client); o front não escreve. ' +
-      '⚠️ Medido por psql-ro após o apply (2026-10-18): authenticated=awdDxtm e anon=awdDxtm (sobra do default ' +
-      'do Supabase) DIVERGEM deste contrato. authz:grants:prod rotula isso NAO_APLICADA (a heurística vê ' +
-      'INSERT/UPDATE/DELETE sobrando e supõe o default intacto), mas a B ESTÁ aplicada (recibo #505; SELECT de ' +
-      'tabela fora, margem fora) — o que sobra é a escrita que a B não tocou, e o achado é real, não ruído: ' +
-      'a policy fcs_update_own_or_gestor deixa a dona fazer UPDATE da própria linha, inclusive da margem ' +
-      '(escrita cega), e TRUNCATE não passa por RLS. Fecha com REVOKE INSERT, UPDATE, DELETE, TRUNCATE, ' +
-      'REFERENCES, TRIGGER, MAINTAIN das duas roles; até lá o alarme fica de pé, por desenho.',
+      'Writers são service_role (calculate-scores, scoring-recalc-client) e RPCs SECURITY DEFINER; o front não ' +
+      'escreve. ESCRITA fechada pela 20261018160000 (pós-B): REVOKE INSERT, UPDATE, DELETE, TRUNCATE, ' +
+      'REFERENCES, TRIGGER, MAINTAIN de anon e authenticated — a sobra do default (awdDxtm) deixava a dona ' +
+      'gravar a própria margem (escrita cega) e qualquer authenticated dar TRUNCATE (não passa por RLS). ' +
+      'Sobra UMA exceção, por desenho: UPDATE (updated_at) para authenticated, porque o SELECT … FOR SHARE de ' +
+      'farmer_recomendacoes_substituir/farmer_bundle_recomendacoes_substituir (SECURITY INVOKER) exige UPDATE ' +
+      'em >=1 coluna; quem impede a gravação é a policy fcs_update_own_or_gestor com WITH CHECK (false). ' +
+      'NUNCA revogar esse UPDATE de coluna (o FOR SHARE dá 42501 e a geração de recomendações quebra) nem ' +
+      'dropar a policy (a trava contra a troca de dono vira no-op silencioso) — db/test-fcs-ftp-escrita-fechada.sh.',
   },
   'public.farmer_tactical_plans': {
     fechadaPor: '20261015120100_tactical_plans_margem_fecha_coluna.sql',
@@ -234,9 +238,9 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'privilégio de COLUNA pela B do #3084: REVOKE SELECT de tabela + GRANT SELECT das 38 colunas restantes; ' +
       'a margem só sai pela RPC get_planos_margem, sob private.cap_custo_ler. NUNCA reemitir GRANT SELECT ON ' +
       'public.farmer_tactical_plans TO authenticated (table). Writers são RPCs SECURITY DEFINER (criar_plano_tatico, ' +
-      'registrar_resultado_plano, expirar_planos_taticos) e as edges com service_role. ' +
-      '⚠️ Medido por psql-ro após o apply (2026-10-18): authenticated=Dxtm e anon=Dxtm (sobra do default) DIVERGEM ' +
-      'deste contrato e authz:grants:prod acusa DRIFT_PROD — achado real: TRUNCATE não passa por RLS. Fecha com ' +
-      'REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN das duas roles; até lá o alarme fica de pé.',
+      'registrar_resultado_plano, expirar_planos_taticos) e as edges com service_role. ESCRITA fechada pela ' +
+      '20261018160000 (pós-B): a sobra do default (Dxtm — TRUNCATE não passa por RLS) saiu com REVOKE INSERT, ' +
+      'UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN de anon e authenticated. Sem exceção de coluna: ' +
+      'ninguém trava linha desta tabela como invoker.',
   },
 };
