@@ -42,7 +42,17 @@ Custo medido do `DROP + ADD CHECK` em 526.176 linhas (PG17 local, mesma regex): 
 
 - **Migration APLICADA** pelo envelope MCP (`postgres`), pré-voo colado 🟢 e validada por psql-ro em outra conexão após o COMMIT: `check_empresas_ok=t · check_contatos_ok=t · funcao_ok=t (md5 9163372c…) · acl_ok=t · ja_cliente_total=3001 (inalterado) · provolatile=v`. Evidência no comentário do PR.
 - **Edge `radar-ingest` v1.1**: pendente até o deploy pelo chat do Lovable (`bun run pendencias:pacote radar-ingest` após o merge; sonda deve responder `v1.1-cnpj-alfanumerico`). Até lá a edge em prod (`v1.0-sonda`) descarta alfanumérico como hoje — sem regressão.
-- **Codex de código: REVISÃO INDEPENDENTE PENDENTE** (`COTA_ESGOTADA`, plano `prolite` a 71 %). Rodar retroativo quando a janela voltar.
+- **Codex de código**: rodou retroativo (seção abaixo); achados consertados no #PR2.
+
+## Codex retroativo de código (PR #PR2, 2026-10-19)
+
+A cota voltou e o parecer rodou (448 s, 143k tokens): **sem veto ALTO**; conferiu pesos, slices e zeros do DV contra cálculo independente em 20 mil bases, os hashes de predecessor/corpo e a agregação do contrato novo. Dois MÉDIOs e um BAIXO, consertados no #PR2:
+
+- **Anotação com HÍFEN virava chave** (`aeg-123.456.789-09` → `AEG12345678909`, DV válido por coincidência): a 1ª versão removia `.`/`-`/`/` em qualquer posição. Migration `20261019150000_radar_recruzar_mascara_exata.sql` (TRAVA→PRE md5 `9163372c…`→CREATE→PÓS): o caminho alnum só aceita documento **cru** (14 posições) ou com a **máscara nas posições exatas** `00.000.000/0000-00`, e só então remove os separadores. Caminho numérico intocado. Prova: seed `xyz-123.456.789-09` + lead `XYZ12345678909` (assert A2j) e sabotagem `sem_mascara_exata` (`25 falsificar=5`).
+- **`carga.ts` com edge antiga**: resposta sem `descartadas_por_motivo` virava zero rejeições. Agora `descartadas` da edge < v1.1 entra como `nao_classificado` — ausente ≠ zero.
+- **`--dry-run` escondia as rejeições locais**: o relatório local sai antes do retorno do dry-run.
+
+Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` do #3175 cai com este PR.
 
 ## Follow-ups (não feitos aqui — cada um é um bloco)
 
