@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
 /** Resultado da busca de cliente (Omie ERP + perfis locais), antes de resolver user_id. */
 export type ClienteBusca = {
@@ -66,7 +67,7 @@ export function useBuscaClienteOmie() {
   const resolver = useCallback(async (c: ClienteBusca): Promise<string | null> => {
     if (c.user_id) return c.user_id;
     if (c.documento) {
-      const docClean = c.documento.replace(/\D/g, '');
+      const docClean = normalizarDocumento(c.documento);
       const { data: profile } = await supabase.from('profiles').select('user_id')
         .or(orFilter(eqText('document', docClean), eqText('document', c.documento)))
         .limit(1).maybeSingle();

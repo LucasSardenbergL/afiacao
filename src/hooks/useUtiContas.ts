@@ -3,6 +3,7 @@ import { format, subDays, subMonths } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
 import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
+import { chaveDocumentoParaBusca } from '@/lib/omie/documento-cliente';
 
 /**
  * UTI de Contas — triagem de clientes críticos por 3 sinais independentes
@@ -70,9 +71,10 @@ function chunk<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+// CNPJ alfanumérico (RFB jul/2026): `chaveDocumentoParaBusca` é o `replace(/\D/g,'') + >= 11` de antes para o
+// numérico e preserva as letras do válido (o inválido cai nos dígitos e segue sem chave).
 const normDoc = (d: string | null | undefined): string | null => {
-  const clean = (d ?? '').replace(/\D/g, '');
-  return clean.length >= 11 ? clean : null;
+  return chaveDocumentoParaBusca(d);
 };
 
 export interface ScoreRow {

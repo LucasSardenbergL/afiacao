@@ -153,3 +153,36 @@ describe('peso_perc com total negativo (estorno dominante) usa denominador absol
     expect(res.componentes.every(c => Number.isFinite(c.peso_perc))).toBe(true);
   });
 });
+
+// CNPJ alfanumérico (RFB jul/2026): a chave de identidade preserva as letras do válido; o inválido cai no
+// nome como qualquer id curto. Numérico segue byte-idêntico (docs/historico/front-cnpj-alfanumerico.md).
+describe('concentrarPorEntidade — identidade com CNPJ alfanumérico', () => {
+  const ALNUM = '12ABC34501DE35';
+  const ALNUM_MASCARADO = '12.ABC.345/01DE-35';
+  const ALNUM_INVALIDO = '12.ABC.345/01DE-36';
+
+  it('alfanumérico VÁLIDO: mascarado e cru agregam na MESMA chave com letras, sem_id=false (antes: ia pelo nome)', () => {
+    const res = concentrarPorEntidade({
+      rowsAno: [r(ALNUM_MASCARADO, 'Alfa Ltda', 1, 100), r(ALNUM, 'ALFA LTDA', 2, 50)],
+      rowsAnoAnterior: [],
+      mesesFechados: [1, 2],
+    });
+    const alfa = res.componentes.find(c => c.entidade_chave === ALNUM);
+    expect(alfa).toBeDefined();
+    expect(alfa!.realizado_ytd).toBe(150);
+    expect(alfa!.sem_id).toBe(false);
+    expect(res.componentes.find(c => c.entidade_chave === 'ALFA LTDA')).toBeUndefined();
+  });
+
+  it('alfanumérico INVÁLIDO (DV errado): vai pelo nome normalizado, sem_id=true — comportamento antigo', () => {
+    const res = concentrarPorEntidade({
+      rowsAno: [r(ALNUM_INVALIDO, 'Beta Ltda', 1, 30)],
+      rowsAnoAnterior: [],
+      mesesFechados: [1],
+    });
+    const beta = res.componentes.find(c => c.entidade_chave === 'BETA LTDA');
+    expect(beta).toBeDefined();
+    expect(beta!.sem_id).toBe(true);
+    expect(res.componentes.find(c => c.entidade_chave === ALNUM_INVALIDO.replace(/\D/g, ''))).toBeUndefined();
+  });
+});

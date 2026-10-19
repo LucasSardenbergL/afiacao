@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   chaveDocumentoParaBusca,
   documentoEditadoParaGravar,
+  documentoParaBuscarNoOmie,
+  ehCnpjDocumento,
   ehDocumentoPessoaJuridica,
 } from './documento-cliente';
 
@@ -66,5 +68,43 @@ describe('ehDocumentoPessoaJuridica — rótulo Razão Social / Nome Fantasia do
   it('CNPJ alfanumérico válido é PJ (antes caía em "Nome Completo" por ter 9 dígitos)', () => {
     expect(ehDocumentoPessoaJuridica(ALNUM_MASCARADO)).toBe(true);
     expect(ehDocumentoPessoaJuridica('12.ABC.345/01DE-36')).toBe(false);
+  });
+});
+
+// Oráculo negativo: o exemplo oficial com o DV errado (…-36) — alfanumérico INVÁLIDO cai nos dígitos (9).
+const ALNUM_INVALIDO = '12.ABC.345/01DE-36';
+
+describe('ehCnpjDocumento — o "length === 14" de Customer360/useCustomerDashboard (PF × PJ na exibição)', () => {
+  it('numérico: CNPJ 14 dígitos é PJ, CPF é PF, vazio/null é PF (byte-idêntico ao replace+length de antes)', () => {
+    expect(ehCnpjDocumento('11.222.333/0001-81')).toBe(true);
+    expect(ehCnpjDocumento(CNPJ_NUM)).toBe(true);
+    expect(ehCnpjDocumento('123.456.789-09')).toBe(false);
+    expect(ehCnpjDocumento('')).toBe(false);
+    expect(ehCnpjDocumento(null)).toBe(false);
+    expect(ehCnpjDocumento(undefined)).toBe(false);
+  });
+  it('CNPJ alfanumérico VÁLIDO é PJ (antes: 9 dígitos ≠ 14 → tratado como PF)', () => {
+    expect(ehCnpjDocumento(ALNUM)).toBe(true);
+    expect(ehCnpjDocumento(ALNUM_MASCARADO)).toBe(true);
+  });
+  it('alfanumérico INVÁLIDO (DV errado) NÃO vira PJ — comportamento antigo (dígitos: 9 ≠ 14)', () => {
+    expect(ehCnpjDocumento(ALNUM_INVALIDO)).toBe(false);
+  });
+});
+
+describe('documentoParaBuscarNoOmie — o strip de AdminApprovals.tryLinkOmie antes do buscar_por_documento', () => {
+  it('numérico: só-dígitos como antes; sem dígito nenhum → null (vira no_data)', () => {
+    expect(documentoParaBuscarNoOmie('11.222.333/0001-81')).toBe(CNPJ_NUM);
+    expect(documentoParaBuscarNoOmie('123.456.789-09')).toBe(CPF);
+    expect(documentoParaBuscarNoOmie('abc')).toBeNull();
+    expect(documentoParaBuscarNoOmie('')).toBeNull();
+    expect(documentoParaBuscarNoOmie(null)).toBeNull();
+  });
+  it('CNPJ alfanumérico VÁLIDO vai inteiro para o Omie (antes: mutilado em 9 dígitos → not_found)', () => {
+    expect(documentoParaBuscarNoOmie(ALNUM_MASCARADO)).toBe(ALNUM);
+    expect(documentoParaBuscarNoOmie(ALNUM)).toBe(ALNUM);
+  });
+  it('alfanumérico INVÁLIDO: só os dígitos, como o strip antigo (não se fabrica documento)', () => {
+    expect(documentoParaBuscarNoOmie(ALNUM_INVALIDO)).toBe(ALNUM_INVALIDO.replace(/\D/g, ''));
   });
 });

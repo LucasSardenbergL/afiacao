@@ -8,6 +8,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { ehCnpjDocumento } from '@/lib/omie/documento-cliente';
 import { useCustomerContacts } from '@/hooks/useCustomerContacts';
 import { useSalespeople } from '@/hooks/useCoverage';
 import { useFeatureFlag } from '@/hooks/useFeatureFlag';
@@ -123,7 +124,7 @@ export default function Customer360() {
   }
 
   const s = score.data;
-  const isPj = (customer.document ?? '').replace(/\D/g, '').length === 14;
+  const isPj = ehCnpjDocumento(customer.document);
   const podeCriarTarefaPorVoz = isMaster || isGestorComercial;
 
   return (
