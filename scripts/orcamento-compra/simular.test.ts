@@ -249,10 +249,31 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     const reenvio = simularCiclo(comVinculo('2026-09-15', '2096769'), 1, cfg).estado;
     expect(reenvio.tipo === 'indeterminado' && reenvio.camadas).toEqual(['compromisso_nao_conciliado']);
   });
+  it('(c3b) R59 v2: candidato NÃO aprovado fica no caixa e sai em pendentesR59; aprovação casa id E pedido Omie', () => {
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2096999' as string | null, encerrado_omie: true };
+    const com = (r59_aprovadas: Fatos['r59_aprovadas']): Fatos => ({ ...semLinhas, disparados: [HIST, P], r59_aprovadas });
+    // sem a lista (fatos de outro chamador): nada aprovado → fica no caixa (fail-closed), como o pedido aberto
+    const semLista = simularCiclo({ ...semLinhas, disparados: [HIST, P] }, 1, cfg).estado;
+    expect(semLista.tipo === 'indeterminado' && semLista.camadas).toEqual(['compromisso_nao_conciliado']);
+    // lista sem ele, ou aprovação de OUTRO pedido Omie para o mesmo id: idem
+    for (const lista of [[], [{ disparado_id: 12, omie_pedido: '999' }], [{ disparado_id: 13, omie_pedido: '500' }]]) {
+      const e = simularCiclo(com(lista), 1, cfg).estado;
+      expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
+      const r = backtest(com(lista), cfg);
+      expect(r.foraDoCaixaR59).toEqual([]);
+      expect(r.pendentesR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2096999', momento: '2026-09-10T12:00:00Z', valor_total: 20 }]);
+    }
+    // aprovado: sai do caixa e não fica pendente
+    const ok = backtest(com([{ disparado_id: 12, omie_pedido: '500' }]), cfg);
+    expect([ok.foraDoCaixaR59.length, ok.pendentesR59]).toEqual([1, []]);
+    expect(simularCiclo(com([{ disparado_id: 12, omie_pedido: '500' }]), 1, cfg).estado.tipo).toBe('viavel');
+  });
   it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
     // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)
     const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2096999' as string | null };
-    const com = (extra: Partial<Fatos['disparados'][number]>, f: Partial<Fatos> = {}): Fatos => ({ ...semLinhas, disparados: [HIST, { ...P, ...extra }], ...f });
+    // R59 v2: a exclusão só vale APROVADA (id do disparado + pedido Omie); aqui o pedido 12 está aprovado
+    const APROVADO = [{ disparado_id: 12, omie_pedido: '500' }];
+    const com = (extra: Partial<Fatos['disparados'][number]>, f: Partial<Fatos> = {}): Fatos => ({ ...semLinhas, disparados: [HIST, { ...P, ...extra }], r59_aprovadas: APROVADO, ...f });
     // controle: o mesmo pedido aberto (21 dias, sem NF, acima de 10% da reserva) deixa o ciclo indeterminado
     const aberto = simularCiclo(com({ encerrado_omie: false }), 1, cfg).estado;
     expect(aberto.tipo === 'indeterminado' && aberto.camadas).toEqual(['compromisso_nao_conciliado']);
@@ -313,7 +334,7 @@ describe('R27 — integração da base de caixa (money-path)', () => {
       contratos_pedidos_omie: [{ codigo: '500', contrato: '2091397' }], evidencia_nf_contratos: ['9999999'],
     }), 1, cfg).estado.tipo).toBe('viavel');
     // lista auditável: o backtest nomeia cada pedido que o R59 tirou do caixa (e só esses)
-    expect(backtest(com({ encerrado_omie: true }), cfg).foraDoCaixaR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2096999', momento: '2026-09-10T12:00:00Z' }]);
+    expect(backtest(com({ encerrado_omie: true }), cfg).foraDoCaixaR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2096999', momento: '2026-09-10T12:00:00Z', valor_total: 20 }]);
     expect(backtest(com({ encerrado_omie: false }), cfg).foraDoCaixaR59).toEqual([]);
     // continuidade do motor segue contando o encerrado (conservador: a provisão não encolhe)
     expect(continuidadePorDiaUtil(com({ encerrado_omie: true }), '2026-10-01', cfg.fretePerc))
