@@ -118,6 +118,22 @@ export function reaproveitavel(e: EntradaManifesto): boolean {
   return e.revision === null;
 }
 
+/**
+ * Opções do `fetch` de uma entrada no PREPARO. `credentials: 'omit'` é a correção do
+ * incidente de 2026-10-19 (`docs/historico/sw-cookie-dpl-deploy-pinado.md`): o host do
+ * Lovable PINA o browser num deployment pelo cookie `__dpl` — todo pedido COM cookie
+ * recebe o HTML e os assets DAQUELE deployment (`cache-control: private, no-store`) —
+ * mas serve `/sw.js` sempre do deployment mais novo. O SW novo pedia os assets do build
+ * novo com cookie → caía no deployment velho → entry 404 → `obsoleta` → release nunca
+ * promovida; e como a navegação vem do cache, o cookie nunca se renovava (deadlock até
+ * desregistrar o SW). Sem cookie, o pedido cai no deployment atual — o mesmo que
+ * entregou o `sw.js`. O modo de cache segue por tipo: arquivo com hash pode vir do HTTP
+ * cache; com revisão (index.html, ícones) revalida.
+ */
+export function opcoesDeBusca(e: EntradaManifesto): { cache: RequestCache; credentials: RequestCredentials } {
+  return { cache: reaproveitavel(e) ? 'default' : 'no-cache', credentials: 'omit' };
+}
+
 /** Entradas que ainda faltam na release (dado o conjunto de URLs já presentes). */
 export function faltantes(
   manifesto: readonly EntradaManifesto[],
