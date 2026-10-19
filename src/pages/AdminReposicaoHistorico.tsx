@@ -18,18 +18,6 @@ import { PageSkeleton } from "@/components/ui/page-skeleton";
 
 const PAGE_SIZE = 50;
 
-type Hist = {
-  id: string;
-  sku_parametro_id: string;
-  snapshot_em: string;
-  classe_consolidada: string | null;
-  demanda_media_diaria: number | null;
-  lt_medio_dias_uteis: number | null;
-  estoque_seguranca: number | null;
-  ponto_pedido: number | null;
-  trigger: string | null;
-  sku?: { sku_codigo_omie: number; sku_descricao: string | null; aprovado_por: string | null } | null;
-};
 
 const fmt = (v: number | null | undefined, dec = 2) =>
   v == null ? "—" : Number(v).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -117,7 +105,7 @@ export default function AdminReposicaoHistorico() {
                 {rows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell className="text-xs whitespace-nowrap">
-                      {new Date(r.snapshot_em).toLocaleString("pt-BR")}
+                      {r.snapshot_em ? new Date(r.snapshot_em).toLocaleString("pt-BR") : "—"}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {r.sku?.sku_codigo_omie ?? "—"}

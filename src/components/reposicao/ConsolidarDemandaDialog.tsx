@@ -20,7 +20,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { mensagemErroConsolidacao, type ConsolidacaoErro } from '@/lib/reposicao/consolidacao';
+import { mensagemErroConsolidacao } from '@/lib/reposicao/consolidacao';
 
 interface SkuOpcao {
   sku_codigo_omie: number;
@@ -67,7 +67,6 @@ export function ConsolidarDemandaDialog({
   const consolidar = useMutation({
     mutationFn: async () => {
       if (!destino) throw new Error('Selecione o SKU destino');
-      //: a RPC (RETURNS void) ainda não está nos types gerados do Supabase.
       const { error } = await supabase.rpc('consolidar_demanda_sku', {
         p_empresa: empresa,
         p_sku_antigo: String(skuAntigoCodigo),

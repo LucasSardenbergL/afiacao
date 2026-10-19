@@ -87,11 +87,9 @@ function SkuDetailSheetImpl({
       if (!sku) return null;
       const { data, error } = await supabase
         .from('v_sku_parametros_sugeridos')
+        // Literal ÚNICO: concatenado com `+` o supabase-js não infere as colunas (GenericStringError)
         .select(
-          'pico_maximo_dia, p95_diario, p90_quando_vende, cobertura_alvo_dias, ' +
-            'preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, n_compras, ' +
-            'custo_capital_efetivo_perc, custo_pedido_aplicado, modo_pedido, ' +
-            'z_aplicado, demanda_sigma_diario, sigma_lt_d, lead_time_medio, qtde_compra_ciclo_sugerida',
+          'pico_maximo_dia, p95_diario, p90_quando_vende, cobertura_alvo_dias, preco_compra_real, preco_venda_medio, preco_item_eoq, fonte_preco, n_compras, custo_capital_efetivo_perc, custo_pedido_aplicado, modo_pedido, z_aplicado, demanda_sigma_diario, sigma_lt_d, lead_time_medio, qtde_compra_ciclo_sugerida',
         )
         .eq('empresa', sku.empresa)
         .eq('sku_codigo_omie', sku.sku_codigo_omie)

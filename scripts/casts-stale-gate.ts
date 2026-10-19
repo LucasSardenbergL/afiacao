@@ -14,7 +14,7 @@
  *
  * O gate: conta os casts `as never` sobre LITERAL cujo nome está em Tables∪Views (para `.from`) ou
  * em Functions (para `.rpc`) do schema `public`, e exige que a contagem seja IGUAL à baseline de
- * `scripts/casts-stale-baseline.json` (medida em 2026-10-11: 49 + 48). Cast velho NOVO → vermelho.
+ * `scripts/casts-stale-baseline.json` (2026-10-11: 49 + 48; 2026-10-18, plano v2 item 4: 30 + 37). Cast velho NOVO → vermelho.
  * Cast removido → vermelho também, pedindo para baixar o número no MESMO PR: é ratchet, a baseline
  * só desce. Este PR não remove casts (a remoção é trabalho de módulo, com o typecheck dizendo o que
  * o cast escondia).
@@ -38,8 +38,13 @@ import { removerComentarios } from '../src/lib/gates/limpeza-fonte';
 export const ARQ_TYPES = 'src/integrations/supabase/types.ts';
 export const ARQ_BASELINE = 'scripts/casts-stale-baseline.json';
 
-/** Medidos em 2026-10-11: 354 tabelas + 87 views, 316 funções, ~2.400 fontes, 57 + 50 casts literais. */
-export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 40 } as const;
+/**
+ * Medidos em 2026-10-11: 354 tabelas + 87 views, 316 funções, ~2.400 fontes, 57 + 50 casts literais.
+ * `castsLiterais` é RATCHET junto com a baseline (plano v2, item 4): o piso É a contagem real de casts
+ * literais `as never` no src/ — remover cast exige baixar o piso no MESMO PR (senão o gate acusa
+ * varredura cega), e o piso nunca sobe. 2026-10-18: 67 (reposição + pedidos programados sem cast).
+ */
+export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 67 } as const;
 
 export interface Nomes {
   relacoes: Set<string>; // Tables ∪ Views

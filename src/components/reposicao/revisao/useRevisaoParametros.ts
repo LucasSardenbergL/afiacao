@@ -117,8 +117,7 @@ export function useRevisaoParametros() {
 
       // Cold-start: candidatos a PRIMEIRA COMPRA (venda recorrente, nunca comprados). Lê de uma VIEW
       // DERIVADA dedicada (v_sku_candidatos_primeira_compra) — não toca a view-mãe money-path. A view
-      // só contém candidatos, então não precisa filtrar por status. Não está nos types gerados até a
-      // migration A1 + regen → cast `as never` no .from (resultado tipado por SkuSugeridoView).
+      // só contém candidatos, então não precisa filtrar por status.
       if (statusFilter === "primeira_compra") {
         let q = supabase
           .from("v_sku_candidatos_primeira_compra")
@@ -237,8 +236,6 @@ export function useRevisaoParametros() {
       const { data, error, count } = await q;
       if (error) throw error;
 
-      // `as unknown as`: minimo_forcado_manual (Frente B) só entra nos types gerados do Supabase
-      // após a migration + regen; até lá o Row do select('*') não sobrepõe SkuParam (TS2352).
       const baseRows = (data ?? []);
 
       // Buscar preços/fonte da view para todos os SKUs da página em uma chamada
@@ -327,7 +324,6 @@ export function useRevisaoParametros() {
 
   // Promove um candidato a primeira compra: preenche os parâmetros capados em sku_parametros e habilita
   // a reposição → o item entra no fluxo NORMAL (motor sugere → aprovação do pedido → disparo).
-  // RPC `as never`: ainda não está nos types gerados do Supabase (vem só após a migration A2 + regen).
   const promoverMutation = useMutation({
     mutationFn: async (sku: number) => {
       const { data, error } = await supabase.rpc(

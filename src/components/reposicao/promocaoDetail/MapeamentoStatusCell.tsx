@@ -107,7 +107,6 @@ export function MapeamentoStatusCell({
       if (!isSearchablePostgrestTerm(term)) { setSearchResults([]); setSearching(false); return; }
       // Busca por descrição OU código OU sku omie (numérico). account no banco é lowercase.
       const isNumeric = /^\d+$/.test(term);
-      type OmieSearchRow = { omie_codigo_produto: number; descricao: string; codigo: string };
       let query = supabase
         .from("omie_products")
         .select("omie_codigo_produto, descricao, codigo")

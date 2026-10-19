@@ -1,3 +1,5 @@
+import type { Tables } from "@/integrations/supabase/types";
+import { exigirColunas, type ComColunas } from "@/lib/reposicao/linha-view";
 // Types + constantes da tela de negociação paralela (sugestões de campanha).
 // Extraídos de src/pages/AdminReposicaoNegociacaoParalela.tsx (god-component split).
 
@@ -13,28 +15,33 @@ export type StatusSugestao =
 export type Categoria = "prioritario" | "forte" | "moderado" | "fraco";
 export type OrdenacaoKey = "score" | "volume" | "preco" | "expirando";
 
-export interface Sugestao {
-  id: number;
-  empresa: string;
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  motivo: string | null;
-  motivo_detalhes: Record<string, unknown> | null;
-  score_final: number | null;
-  volume_financeiro_12m: number | null;
-  preco_medio_unitario: number | null;
-  promocoes_12m: number | null;
-  perc_meses_com_promo: number | null;
-  status: StatusSugestao;
-  data_geracao: string | null;
-  valido_ate: string | null;
-  dias_ate_expirar: number | null;
-  campanha_id_gerada: number | null;
-  categoria: Categoria | null;
-  fornecedor_nome: string | null;
-  ponto_pedido: number | null;
-  estoque_maximo: number | null;
-  estoque_efetivo: number | null;
+export const STATUS_SUGESTAO: readonly StatusSugestao[] = ["nova", "visualizada", "acao_tomada", "ignorada", "fechada_sem_acordo", "convertida"];
+export function ehStatusSugestao(s: string | null | undefined): s is StatusSugestao {
+  return (STATUS_SUGESTAO as readonly string[]).includes(s ?? "");
+}
+export const CATEGORIA_VALORES: readonly Categoria[] = ["prioritario", "forte", "moderado", "fraco"];
+export function ehCategoria(s: string | null | undefined): s is Categoria {
+  return (CATEGORIA_VALORES as readonly string[]).includes(s ?? "");
+}
+// Linha de v_sugestao_negociacao_ativa (view: tudo `| null`). A borda exige id/empresa/sku, estreita
+// status/categoria pelos guards e lê motivo_detalhes como objeto — sem `as unknown as`.
+export type Sugestao = Omit<
+  ComColunas<Tables<"v_sugestao_negociacao_ativa">, "id" | "empresa" | "sku_codigo_omie">,
+  "status" | "categoria" | "motivo_detalhes"
+> & { status: StatusSugestao; categoria: Categoria | null; motivo_detalhes: Record<string, unknown> | null };
+
+/** Borda banco→UI: lança em status/categoria fora do vocabulário (estado desconhecido não vira card). */
+export function comoSugestao(r: Tables<"v_sugestao_negociacao_ativa">): Sugestao {
+  exigirColunas(r, ["id", "empresa", "sku_codigo_omie"], "v_sugestao_negociacao_ativa");
+  if (!ehStatusSugestao(r.status)) throw new Error(`v_sugestao_negociacao_ativa: status "${r.status}" desconhecido (id ${r.id})`);
+  if (r.categoria !== null && !ehCategoria(r.categoria)) throw new Error(`v_sugestao_negociacao_ativa: categoria "${r.categoria}" desconhecida (id ${r.id})`);
+  const md = r.motivo_detalhes;
+  return {
+    ...r,
+    status: r.status,
+    categoria: r.categoria,
+    motivo_detalhes: md !== null && typeof md === "object" && !Array.isArray(md) ? md : null,
+  };
 }
 
 export interface RankingRow {

@@ -1,3 +1,4 @@
+import type { Tables } from '@/integrations/supabase/types';
 /**
  * Tipos + helpers compartilhados entre AdminReposicaoRevisao (page) e
  * SkuDetailSheet (componente extraído). Extraído pra esta lib durante o refactor
@@ -50,26 +51,15 @@ export type SkuParam = {
   habilitado_reposicao_automatica?: boolean | null;
 };
 
-export type ViewStats = {
-  pico_maximo_dia: number | null;
-  p95_diario: number | null;
-  p90_quando_vende: number | null;
-  dias_seguranca: number | null;
-  cobertura_alvo_dias: number | null;
-  preco_compra_real: number | null;
-  preco_venda_medio: number | null;
-  preco_item_eoq: number | null;
-  fonte_preco: string | null;
-  n_compras: number | null;
-  custo_capital_efetivo_perc: number | null;
-  custo_pedido_aplicado: number | null;
-  modo_pedido: string | null;
-  z_aplicado: number | null;
-  demanda_sigma_diario: number | null;
-  sigma_lt_d: number | null;
-  lead_time_medio: number | null;
-  qtde_compra_ciclo_sugerida: number | null;
-};
+// As 17 colunas que o SkuDetailSheet lê de v_sku_parametros_sugeridos (view: tudo `| null`).
+// `dias_seguranca` saiu: nunca entrou no select, logo nunca existiu em runtime.
+export type ViewStats = Pick<
+  Tables<'v_sku_parametros_sugeridos'>,
+  | 'pico_maximo_dia' | 'p95_diario' | 'p90_quando_vende' | 'cobertura_alvo_dias' | 'preco_compra_real'
+  | 'preco_venda_medio' | 'preco_item_eoq' | 'fonte_preco' | 'n_compras' | 'custo_capital_efetivo_perc'
+  | 'custo_pedido_aplicado' | 'modo_pedido' | 'z_aplicado' | 'demanda_sigma_diario' | 'sigma_lt_d'
+  | 'lead_time_medio' | 'qtde_compra_ciclo_sugerida'
+>;
 
 export type RowWithPrice = SkuParam & {
   preco_compra_real: number | null;

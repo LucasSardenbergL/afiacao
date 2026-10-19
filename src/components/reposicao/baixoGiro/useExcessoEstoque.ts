@@ -70,7 +70,7 @@ export function useExcessoEstoque() {
               .range(de, ate),
           "inventory_position/excesso",
         ),
-        fetchAllPages<{ sku_codigo_omie: number; ultima_venda_data: string | null }>(
+        fetchAllPages(
           (de, ate) =>
             supabase
               .from("v_sku_demanda_estatisticas")

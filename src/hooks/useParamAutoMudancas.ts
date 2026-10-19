@@ -1,6 +1,6 @@
 // Hook: lê o run diário + log de mudanças automáticas de parâmetros de reposição.
 // Mutations: reverter item, reverter tudo do run, despinar (devolver ao automático).
-// Tabelas ainda fora do Database type → segue o padrão de useAplicacaoFila.ts (as never /).
+// Tabelas e RPCs tipadas pelo types.ts gerado — sem cast; o retorno é o que o banco declara.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';

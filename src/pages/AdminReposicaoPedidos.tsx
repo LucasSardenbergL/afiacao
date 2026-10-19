@@ -1,3 +1,5 @@
+import type { Tables } from '@/integrations/supabase/types';
+import { linhasCom, type ComColunas } from '@/lib/reposicao/linha-view';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -52,12 +54,7 @@ import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 import { ForaDoMotorBadge } from '@/components/reposicao/foraDoMotor/ForaDoMotorBadge';
 import { BaixoGiroBadge } from '@/components/reposicao/BaixoGiroBadge';
 
-type SkuSemFornecedor = {
-  sku_codigo_omie: string;
-  sku_descricao: string | null;
-  estoque_efetivo: number | null;
-  ponto_pedido: number | null;
-};
+type SkuSemFornecedor = ComColunas<Pick<Tables<"v_reposicao_sku_sem_fornecedor">, "sku_codigo_omie" | "sku_descricao" | "estoque_efetivo" | "ponto_pedido">, "sku_codigo_omie">;
 
 /* ─── Relógio isolado ───
  * O tick de minuto vivia como state da PÁGINA: a cada 60s o setNow re-renderizava
@@ -625,7 +622,7 @@ export default function AdminReposicaoPedidos() {
         .eq('empresa', EMPRESA)
         .order('sku_descricao', { ascending: true });
       if (error) throw error;
-      return (data ?? []);
+      return linhasCom(data, ['sku_codigo_omie'], 'v_reposicao_sku_sem_fornecedor');
     },
     refetchInterval: 60_000,
     staleTime: 30_000,

@@ -6,7 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { EMPRESA, type Sugestao, type ConvertForm, type LinhaViewSugeridos, type CandidatoNegociacao } from "./types";
+import { EMPRESA, comoSugestao, type Sugestao, type ConvertForm, type CandidatoNegociacao } from "./types";
 import { lastDayOfNextMonth } from "./helpers";
 import { avaliarNegociacao, clampDesconto, DESCONTO_PADRAO } from "@/lib/reposicao/negociacao-valor-helpers";
 import { addDias, hojeSP } from "@/lib/time/sp-day";
@@ -57,7 +57,7 @@ export function useNegociacaoParalela() {
         .eq("empresa", EMPRESA)
         .eq("status", "acao_tomada");
       if (error) throw error;
-      return (data ?? []);
+      return (data ?? []).map(comoSugestao);
     },
     staleTime: 30_000,
   });
@@ -152,9 +152,9 @@ export function useNegociacaoParalela() {
         p_volume_unidade: convertForm.volume_unidade,
         p_data_fim: convertForm.data_fim,
         p_sku_codigo_fornecedor: codigoFornecedor,
-        p_responsavel_nome: convertForm.responsavel || null,
+        p_responsavel_nome: convertForm.responsavel || undefined,
         p_canal: convertForm.canal,
-        p_observacoes: convertForm.observacoes || null,
+        p_observacoes: convertForm.observacoes || undefined,
       });
       if (error) throw error;
       toast.success("Negociação convertida em campanha.");

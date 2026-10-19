@@ -37,7 +37,9 @@ export function useRaioXMutacoes(empresa: Empresa) {
 
   const mDecidir = useMutation({
     mutationFn: async ({ empresa, args }: { empresa: Empresa; args: DecidirArgs; acao: AcaoDecisao }) => {
-      // Os tipos gerados declaram tudo não-nulo; a RPC aceita NULL (destino/observação/fornecedor/crédito).
+      // Cast RESIDUAL deliberado (plano v2 item 4): o gerador do Supabase declara todo Arg não-nulo, mas a
+      // RPC (migration 20261016120000, sem DEFAULT) aceita NULL em destino/observação/fornecedor/crédito.
+      // Não é cast sobre nome (o gate `casts:stale` não o conta) e não há forma tipada de passar NULL aqui.
       const params = {
         p_empresa: empresa,
         p_sku: args.sku,

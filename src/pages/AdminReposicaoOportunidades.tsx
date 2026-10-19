@@ -10,7 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 
-import { Cenario, Oportunidade, OportunidadeComDecisao, OrdemKey } from "@/components/reposicao/oportunidades/types";
+import { Cenario, Oportunidade, OportunidadeComDecisao, OrdemKey, comoOportunidade } from "@/components/reposicao/oportunidades/types";
 import { EMPRESA, ALL, CENARIOS, formatBRL, diasEntre } from "@/components/reposicao/oportunidades/shared";
 import { avaliarComprarMais, type InsumoSku } from "@/lib/reposicao/compras-otimizador-helpers";
 import { DrawerConteudo } from "@/components/reposicao/oportunidades/components";
@@ -111,7 +111,7 @@ export default function AdminReposicaoOportunidades() {
         .select("*")
         .eq("empresa", EMPRESA);
       if (error) throw error;
-      const base = (data || []);
+      const base = (data || []).map(comoOportunidade);
       // Decisão net-R$ marginal por SKU via helper puro (compras-otimizador-helpers).
       return base.map((o): OportunidadeComDecisao => ({
         ...o,

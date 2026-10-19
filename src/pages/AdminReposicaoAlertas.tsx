@@ -1,3 +1,4 @@
+import { exigirEmpresaReposicao } from "@/lib/reposicao/linha-view";
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -7,7 +8,7 @@ import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
   PAGE_SIZE,
-  type EventoOutlier, type SkuInfo, type GrupoRow, type AcaoConfirm,
+  type EventoOutlier, type SkuInfo, type AcaoConfirm,
 } from "@/components/reposicao/alertas/types";
 import { StatsCards } from "@/components/reposicao/alertas/StatsCards";
 import { AlertasFiltros } from "@/components/reposicao/alertas/AlertasFiltros";
@@ -122,12 +123,11 @@ export default function AdminReposicaoAlertas() {
         // Fonte = v_sku_leadtime_efetivo: 1 ponto por NFe, não por linha-de-pedido.
         // t1 NOT NULL: a view emite t1 NULL quando as cópias divergem e
         // sem data não há eixo X — a observação é omitida do gráfico, não inventada.
-        type LeadtimeRow = { t1_data_pedido: string; lt_bruto_dias_uteis: number };
         const { data, error } = await supabase
           .from("v_sku_leadtime_efetivo")
           .select("t1_data_pedido, lt_bruto_dias_uteis")
-          .eq("empresa", drillEvento.empresa)
-          .eq("sku_codigo_omie", drillEvento.sku_codigo_omie)
+          .eq("empresa", exigirEmpresaReposicao(drillEvento.empresa, "v_sku_leadtime_efetivo"))
+          .eq("sku_codigo_omie", Number(drillEvento.sku_codigo_omie))
           .not("t1_data_pedido", "is", null)
           .not("lt_bruto_dias_uteis", "is", null)
           .order("t1_data_pedido", { ascending: true });
@@ -150,14 +150,24 @@ export default function AdminReposicaoAlertas() {
     queryKey: ["outlier-sku", drillEvento?.sku_codigo_omie, drillEvento?.empresa],
     queryFn: async () => {
       if (!drillEvento) return null;
-      // NOTE: schema gerado parcial — usar cast pra row local
-      const { data } = await supabase
-        .from("sku_parametros")
-        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lt_medio_dias_uteis, preco_compra_real")
+      // Fonte = v_sku_parametros_sugeridos: sku_parametros NÃO tem demanda_sigma_diario nem
+      // preco_compra_real (a query antiga dava 400 e o `error` era descartado — o painel ficava vazio
+      // em silêncio). `lead_time_medio` da view é o LT médio em dias úteis aplicado pelo motor.
+      const { data, error } = await supabase
+        .from("v_sku_parametros_sugeridos")
+        .select("classe_consolidada, demanda_media_diaria, demanda_sigma_diario, lead_time_medio, preco_compra_real")
         .eq("empresa", drillEvento.empresa)
         .eq("sku_codigo_omie", Number(drillEvento.sku_codigo_omie))
         .maybeSingle();
-      return (data ?? null);
+      if (error) throw error;
+      if (!data) return null;
+      return {
+        classe_consolidada: data.classe_consolidada,
+        demanda_media_diaria: data.demanda_media_diaria,
+        demanda_sigma_diario: data.demanda_sigma_diario,
+        lt_medio_dias_uteis: data.lead_time_medio,
+        preco_compra_real: data.preco_compra_real,
+      };
     },
   });
 
@@ -177,13 +187,12 @@ export default function AdminReposicaoAlertas() {
     queryKey: ["grupos-fornecedor", drillEvento?.empresa, drillEvento?.detalhes?.fornecedor],
     queryFn: async () => {
       if (!drillEvento) return [];
-      // NOTE: `codigo_grupo` no schema gerado é `grupo_codigo`; cast pra row local.
       const { data, error } = await supabase
         .from("fornecedor_grupo_producao")
-        .select("id, codigo_grupo, descricao, lt_producao_dias")
+        .select("id, grupo_codigo, descricao, lt_producao_dias")
         .eq("empresa", drillEvento.empresa)
         .eq("fornecedor_nome", drillEvento.detalhes?.fornecedor ?? "")
-        .order("codigo_grupo");
+        .order("grupo_codigo");
       if (error) throw error;
       return (data ?? []);
     },
@@ -195,24 +204,25 @@ export default function AdminReposicaoAlertas() {
   const atribuirGrupoMut = useMutation({
     mutationFn: async () => {
       if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
-      const grupo = (gruposFornecedor ?? []).find((g) => g.id === (grupoEscolhido));
+      // O Select devolve o id como TEXTO (SelectItem value é string); compara pelo texto, sem cast.
+      const grupo = (gruposFornecedor ?? []).find((g) => String(g.id) === grupoEscolhido);
       if (!grupo) throw new Error("Grupo inválido");
-      // Insere associação — payload diverge do schema gerado (fornecedor_grupo_id, codigo_grupo)
+      // sku_grupo_producao = (empresa, sku_codigo_omie, grupo_codigo) — conferido na prod 2026-10-18.
+      // O payload antigo mandava fornecedor_grupo_id/fornecedor_nome/codigo_grupo (colunas que não
+      // existem) e o insert dava 400; o cast escondia isso do typecheck.
       const { error: insErr } = await supabase
         .from("sku_grupo_producao")
         .insert({
           empresa: drillEvento.empresa,
           sku_codigo_omie: drillEvento.sku_codigo_omie,
-          fornecedor_grupo_id: grupo.id,
-          fornecedor_nome: drillEvento.detalhes?.fornecedor,
-          codigo_grupo: grupo.codigo_grupo,
+          grupo_codigo: grupo.grupo_codigo,
         });
       if (insErr) throw insErr;
       // Marca evento como aceito
       const { error: resErr } = await supabase.rpc("resolver_outlier", {
         p_evento_id: drillEvento.id,
         p_decisao: "aceitar",
-        p_justificativa: `Atribuído ao grupo ${grupo.codigo_grupo} — ${grupo.descricao}`,
+        p_justificativa: `Atribuído ao grupo ${grupo.grupo_codigo} — ${grupo.descricao}`,
         p_usuario_email: user?.email || undefined,
       });
       if (resErr) throw resErr;

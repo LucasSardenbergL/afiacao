@@ -1,3 +1,4 @@
+import type { Tables } from '@/integrations/supabase/types';
 // Hook que, para os SKUs de um pedido, carrega os grupos de equivalência de
 // embalagem + preços + demanda + custo de capital e roda o helper de decisão.
 // Spec: docs/superpowers/specs/2026-06-04-embalagem-economica-design.md
@@ -11,9 +12,7 @@ import {
 } from '@/lib/reposicao/embalagem-helpers';
 import type { PedidoItem } from './types';
 
-interface EquivRow { empresa: string; grupo_id: string; sku_codigo_omie: string; unidade_base: string; fator_para_base: number; }
-interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
-interface ParamRow { sku_codigo_omie: number; custo_capital_efetivo_perc: number | null; }
+type PrecoRow = Pick<Tables<'sku_preco_fornecedor_capturado'>, 'sku_codigo_omie' | 'preco' | 'capturado_em' | 'status'>;
 
 interface EmbalagemItemResult {
   decisao: DecisaoEmbalagem;
@@ -112,7 +111,8 @@ export function useEmbalagemPedido(
         if (!p) return null;
         if (p.status === 'falhou') return 'falhou';
         const idadeH = (agoraMs - Date.parse(p.capturado_em)) / 3_600_000;
-        return idadeH > staleHoras ? 'stale' : (p.status ?? 'ok');
+        // `status` é texto no banco; fora de 'falhou' (tratado acima) o que decide é a idade.
+        return idadeH > staleHoras ? 'stale' : 'ok';
       };
 
       // 6) Opções por grupo

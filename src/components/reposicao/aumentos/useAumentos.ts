@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { agruparPorMes, chavesUltimosNMeses } from "@/lib/agruparPorMes";
 import { ilikeContainsPattern } from "@/lib/postgrest";
 import { EMPRESA, FORNECEDOR_DEFAULT, ALL } from "./config";
-import type { Aumento, AumentoComAgg, FornecedorRow, AumentoItemAgg } from "./types";
+import type { AumentoComAgg } from "./types";
 
 export function useAumentos() {
   const navigate = useNavigate();

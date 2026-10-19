@@ -1,66 +1,18 @@
+import type { Tables } from "@/integrations/supabase/types";
+import type { ComColunas } from "@/lib/reposicao/linha-view";
 // Types + constantes compartilhados da tela de detalhe de promoção/campanha.
 // Extraídos de src/pages/AdminReposicaoPromocaoDetail.tsx (god-component split).
 
 export const EMPRESA = "OBEN";
 export const FORNECEDOR_DEFAULT = "RENNER SAYERLACK S/A";
 
-export type Campanha = {
-  id: number;
-  empresa: string;
-  nome: string;
-  fornecedor_nome: string;
-  tipo_origem: string;
-  data_inicio: string;
-  data_fim: string;
-  estado: string;
-  observacoes: string | null;
-  origem_arquivo_url: string | null;
-  origem_arquivo_tipo: string | null;
-  origem_email_assunto: string | null;
-  origem_email_remetente: string | null;
-  origem_email_data: string | null;
-  extracao_confianca: number | null;
-  extracao_observacoes: string | null;
-  extraido_em: string | null;
-  criado_em: string;
-};
+export type Campanha = Tables<"promocao_campanha">;
 
-export type ItemRow = {
-  id: number;
-  campanha_id: number;
-  sku_codigo_fornecedor: string;
-  descricao_produto_fornecedor: string | null;
-  sku_codigo_omie: number | null;
-  mapeamento_qualidade: string | null;
-  mapeamento_candidatos: unknown;
-  desconto_perc: number;
-  volume_minimo: number | null;
-  confirmado: boolean;
-  ativo: boolean;
-  desconto_extra_perc: number | null;
-  desconto_extra_observacoes: string | null;
-  desconto_extra_negociado_por: string | null;
-  desconto_extra_negociado_em: string | null;
-  desconto_extra_email_referencia: string | null;
-};
+export type ItemRow = Tables<"promocao_item">;
 
-export type ItemEfetivo = {
-  id: number;
-  desconto_efetivo: number;
-};
+export type ItemEfetivo = ComColunas<Pick<Tables<"v_promocao_item_efetivo">, "id" | "desconto_efetivo">, "id" | "desconto_efetivo">;
 
-export type Evento = {
-  id: number;
-  campanha_id: number;
-  tipo_evento: string;
-  desconto_perc_proposto: number | null;
-  volume_minimo_proposto: number | null;
-  data_evento: string;
-  email_referencia: string | null;
-  conteudo: string | null;
-  registrado_por: string | null;
-  registrado_em: string;
-};
+export type Evento = Tables<"promocao_negociacao_evento">;
 
 // Estado do formulário do modal "Registrar evento" (todos os campos como string,
 // convertidos no submit). Compartilhado entre a page e EventoDialog.

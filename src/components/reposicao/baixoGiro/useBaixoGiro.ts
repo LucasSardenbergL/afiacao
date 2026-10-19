@@ -39,12 +39,12 @@ export function useBaixoGiro() {
 
       // 2) enriquecimentos (.in) — última venda vem da fonte ALL-TIME (v_sku_ultima_venda):
       // a v_sku_demanda_estatisticas é janelada em 90d e mostrava "nunca" p/ quem vendeu há 4 meses.
-      // (cast: a view é da migration 20260731120000 e só entra nos types gerados no próximo type-gen)
+      // (view da migration 20260731120000, tipada pelo types.ts gerado)
       const [invRes, demRes, sugRes, sbRes] = await Promise.all([
         supabase.from("inventory_position").select("omie_codigo_produto, saldo, cmc").eq("account", empresa.toLowerCase()).in("omie_codigo_produto", codes),
         supabase.from("v_sku_ultima_venda").select("sku_codigo_omie, ultima_venda_data, vendas_registradas").eq("empresa", empresa).in("sku_codigo_omie", codes),
         supabase.from("v_sku_parametros_sugeridos").select("sku_codigo_omie, status_sugestao").eq("empresa", empresa).in("sku_codigo_omie", codes),
-        // Classificação Syntetos-Boylan (advisory; view da migration 20260802120000, cast pré-type-gen).
+        // Classificação Syntetos-Boylan (advisory; view da migration 20260802120000).
         // Falha aqui NÃO derruba a tela: o badge some (advisory puro — nenhuma decisão em cima).
         supabase.from("v_sku_classe_sb").select("sku_codigo_omie, quadrante").eq("empresa", empresa).in("sku_codigo_omie", codes),
       ]);

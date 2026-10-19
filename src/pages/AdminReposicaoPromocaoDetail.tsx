@@ -1,3 +1,4 @@
+import { linhasCom } from "@/lib/reposicao/linha-view";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,10 +15,7 @@ import {
   EMPRESA,
   FORNECEDOR_DEFAULT,
   ESTADO_LABEL,
-  type Campanha,
   type ItemRow,
-  type ItemEfetivo,
-  type Evento,
   type NovoEventoForm,
 } from "@/components/reposicao/promocaoDetail/types";
 import { CancelCampanhaDialog } from "@/components/reposicao/promocaoDetail/CancelCampanhaDialog";
@@ -97,7 +95,7 @@ export default function AdminReposicaoPromocaoDetail() {
         .select("id, desconto_efetivo")
         .in("id", itemIds);
       if (error) throw error;
-      return (data) || [];
+      return linhasCom(data, ["id", "desconto_efetivo"], "v_promocao_item_efetivo");
     },
     enabled: itemIds.length > 0,
   });

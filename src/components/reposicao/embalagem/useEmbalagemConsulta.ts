@@ -1,3 +1,4 @@
+import type { Tables } from '@/integrations/supabase/types';
 // Hook da tela avulsa de consulta de embalagem econômica (compra manual).
 // Carrega TODOS os grupos de equivalência ativos da empresa (não filtra por pedido)
 // + preços + descrição + demanda/cm, pra a página rodar o helper com a necessidade
@@ -9,7 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { StatusPreco } from '@/lib/reposicao/embalagem-helpers';
 
 interface EquivRow { grupo_id: string; sku_codigo_omie: string; unidade_base: string; fator_para_base: number; }
-interface PrecoRow { sku_codigo_omie: string; preco: number; capturado_em: string; status: StatusPreco; }
+type PrecoRow = Pick<Tables<'sku_preco_fornecedor_capturado'>, 'sku_codigo_omie' | 'preco' | 'capturado_em' | 'status'>;
 
 interface MembroEmbalagem {
   sku_codigo_omie: string;
@@ -124,7 +125,8 @@ export function useEmbalagemConsulta(empresa: string): EmbalagemConsultaResult {
         if (!p) return null;
         if (p.status === 'falhou') return 'falhou';
         const idadeH = (agoraMs - Date.parse(p.capturado_em)) / 3_600_000;
-        return idadeH > staleHoras ? 'stale' : (p.status ?? 'ok');
+        // `status` é texto no banco; fora de 'falhou' (tratado acima) o que decide é a idade.
+        return idadeH > staleHoras ? 'stale' : 'ok';
       };
 
       // 6) Montar grupos (>= 2 membros)

@@ -1,3 +1,4 @@
+import type { Json } from "@/integrations/supabase/types";
 // Lógica da tela de cadeia logística (queries, mutations, recálculo de LT com impacto).
 // Extraída verbatim de src/pages/AdminReposicaoCadeiaLogistica.tsx (god-component split).
 import { useMemo, useState } from "react";
@@ -83,14 +84,13 @@ export function useCadeiaLogistica() {
     acao: string;
     descricao: string;
     etapa_codigo?: string | null;
-    valoresAnt?: Record<string, unknown> | Etapa | null;
-    valoresNov?: Record<string, unknown> | Partial<Etapa> | null;
+    valoresAnt?: Json | null;
+    valoresNov?: Json | null;
   }) {
     try {
       const ltDepois = await ltTotalAtualForn(args.fornecedor);
       const delta = ltDepois - args.ltAntes;
 
-      // log histórico — coluna `empresa` existe no DB mas ainda não no generated type
       await supabase.from("fornecedor_cadeia_logistica_historico").insert({
         empresa: EMPRESA,
         fornecedor_nome: args.fornecedor,
@@ -142,7 +142,8 @@ export function useCadeiaLogistica() {
         const proxOrdem = ordensExist.length > 0 ? Math.max(...ordensExist) + 1 : 1;
         const codigo = `${payload.fornecedor.slice(0, 4).toUpperCase().replace(/\s/g, "")}_E${proxOrdem}_${Date.now().toString(36)}`;
 
-        // `empresa` field existe no DB mas ainda não no generated type
+        // Insert tipado exige descrição e LT — o formulário já os obriga; aqui é a prova.
+        if (!payload.etapa.descricao || payload.etapa.lt_dias == null) throw new Error("Etapa sem descrição ou LT");
         const { error } = await supabase
           .from("fornecedor_cadeia_logistica")
           .insert({
