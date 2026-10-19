@@ -18,7 +18,7 @@ var echo_default = defineTool({
 });
 
 // src/lib/mcp/tools/search-customers.ts
-import { createClient } from "npm:@supabase/supabase-js@^2.117.0";
+import { createClient } from "npm:@supabase/supabase-js@^2.95.3";
 import { defineTool as defineTool2 } from "npm:@lovable.dev/mcp-js@0.20.0";
 import { z as z2 } from "npm:zod@^3.25";
 function supabaseForUser(ctx) {
