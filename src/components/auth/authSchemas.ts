@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ehCnpjAlfanumerico, normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
 export const loginSchema = z.object({
   email: z.string().email('E-mail inválido'),
@@ -6,7 +7,11 @@ export const loginSchema = z.object({
 });
 
 export const documentSchema = z.object({
-  document: z.string().min(11, 'Informe um CPF ou CNPJ válido').max(18, 'Documento inválido'),
+  document: z.string().min(11, 'Informe um CPF ou CNPJ válido').max(18, 'Documento inválido')
+    // Letra no documento só passa como CNPJ alfanumérico VÁLIDO (RFB jul/2026, DV mod-11). Numérico
+    // segue sem conferência de DV, como sempre. `normalizarDocumento` devolve só-dígitos para um
+    // alfanumérico inválido — e "sobram 11 dígitos" NÃO pode virar o CPF de outra pessoa (fail-closed).
+    .refine((v) => !/[a-z]/i.test(v) || ehCnpjAlfanumerico(normalizarDocumento(v)), 'CNPJ alfanumérico inválido'),
 });
 
 export const signupSchema = z.object({
@@ -86,7 +91,21 @@ export const BRAZILIAN_STATES = [
   'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO',
 ];
 
+// CNPJ alfanumérico (RFB jul/2026): 12 posições [0-9A-Z] + 2 DVs numéricos. Só entra aqui se o
+// usuário digitou letra — o caminho numérico abaixo é byte-idêntico ao de sempre (oráculo no teste).
+const formatCnpjAlfanumerico = (value: string): string => {
+  const chars = value.toUpperCase().replace(/[^0-9A-Z]/g, '');
+  const corpo = chars.slice(0, 12);
+  const dv = chars.slice(12).replace(/\D/g, '').slice(0, 2);
+  return (corpo + dv)
+    .replace(/^([0-9A-Z]{2})([0-9A-Z])/, '$1.$2')
+    .replace(/^([0-9A-Z]{2}\.[0-9A-Z]{3})([0-9A-Z])/, '$1.$2')
+    .replace(/^([0-9A-Z]{2}\.[0-9A-Z]{3}\.[0-9A-Z]{3})([0-9A-Z])/, '$1/$2')
+    .replace(/^([0-9A-Z]{2}\.[0-9A-Z]{3}\.[0-9A-Z]{3}\/[0-9A-Z]{4})(\d{1,2})$/, '$1-$2');
+};
+
 const formatDocument = (value: string): string => {
+  if (/[a-z]/i.test(value)) return formatCnpjAlfanumerico(value);
   const numbers = value.replace(/\D/g, '');
   if (numbers.length <= 11) {
     return numbers
