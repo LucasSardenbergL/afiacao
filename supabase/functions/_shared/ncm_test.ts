@@ -24,12 +24,16 @@ Deno.test("normalizarNcm (_shared): forma irreconhecível é AUSENTE (null), nun
   }
 });
 
-Deno.test("normalizarNcm (_shared): é a MESMA função da sync (não pode divergir até o PR da RPC)", async () => {
-  const daSync = await Deno.readTextFile("supabase/functions/omie-nfe-recebimento-sync/itens.ts");
-  const daqui = await Deno.readTextFile("supabase/functions/_shared/ncm.ts");
+Deno.test("normalizarNcm (_shared): a sync usa a MESMA função — re-exporta daqui, ou mantém cópia byte-idêntica", async () => {
+  // Relativo a ESTE arquivo (import.meta.url), não ao CWD: o teste roda igual de qualquer pasta.
+  const daSync = await Deno.readTextFile(new URL("../omie-nfe-recebimento-sync/itens.ts", import.meta.url));
+  const daqui = await Deno.readTextFile(new URL("./ncm.ts", import.meta.url));
+  // Estado final (PR da RPC): a sync re-exporta daqui — uma fonte só.
+  if (/export\s*\{[^}]*\bnormalizarNcm\b[^}]*\}\s*from\s*["']\.\.\/_shared\/ncm\.ts["']/.test(daSync)) return;
+  // Estado transitório: cópia na sync, que não pode divergir desta.
   const corpo = (s: string) => {
-    const m = /export function normalizarNcm[\s\S]*?\n}\n/.exec(s);
-    if (!m) throw new Error("normalizarNcm não encontrada");
+    const m = /^export function normalizarNcm[\s\S]*?\n}\n/m.exec(s);
+    if (!m) throw new Error("normalizarNcm não encontrada (nem função, nem re-export de _shared/ncm.ts)");
     return m[0];
   };
   assertEquals(corpo(daSync), corpo(daqui), "os dois corpos de normalizarNcm divergiram");
