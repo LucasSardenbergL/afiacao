@@ -81,9 +81,17 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/duckdb" --version
 
+      # Inputs entram por `env`, nunca interpolados no `run`: `${{ inputs.mes }}` dentro do shell seria
+      # injeção de comando num ambiente que carrega o segredo (parecer Codex de código).
       - name: Escolher o mês
         id: mes
-        run: bun scripts/radar/mes-alvo.ts --mes "${{ inputs.mes }}" ${{ inputs.forcar == true && '--forcar' || '' }}
+        env:
+          MES_PEDIDO: ${{ inputs.mes }}
+          FORCAR: ${{ inputs.forcar }}
+        run: |
+          args=(--mes "$MES_PEDIDO")
+          [ "$FORCAR" = "true" ] && args+=(--forcar)
+          bun scripts/radar/mes-alvo.ts "${args[@]}"
 
       # Guarda de capacidade: ~60 GB em /mnt NÃO é garantia da spec do runner — medir antes de baixar.
       # Pico estimado para 2026-10: zips (~7,4 GB, apagados conforme consumidos) + maior CSV ×2 (~25 GB)

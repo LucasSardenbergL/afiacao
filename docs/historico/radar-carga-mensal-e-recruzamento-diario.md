@@ -50,7 +50,11 @@ Mudaram: regressão de mês barrada no seletor; sonda semanal em ordem crescente
 
 Follow-ups (fora deste bloco, pré-existentes ao desenho da ingestão): **CNPJ alfanumérico** (RFB emite desde jul/2026; CHECK `^[0-9]{14}$` na tabela, regex da edge e `montarCnpj` descartam — hoje 0 ocorrências nas fontes de cliente, medido); foto parcial/mistura de lotes (chunks escrevem direto, sem staging + publicação atômica); `complete` sem reconciliação de rejeitados; empresa que sai do dump fica na fila (a lista não filtra por `ultimo_lote` vigente — é o card "inéditos do lote" do bloco 2); concorrência SQL tick × finalize sem lock compartilhado (mesmo conjunto de linhas, row-lock espera; medir antes de serializar).
 
+## Codex (código `max`, 192 s, 100k tokens) — 6 achados, 5 corrigidos no PR
+
+Corrigidos: (P1) lote `running` vivo em QUALQUER mês bloqueia a seleção inteira (antes só o próprio mês — dois escritores disputariam `ultimo_lote`); (P1) timeout/5xx/429 na sonda sem nenhum 200 é ERRO, só "todas 404" vira "não publicado"; (P1) régua de regressão = lote mais NOVO conhecido de qualquer status (o `status` devolve só 3 lotes, e um `error` novo já tem chunks no acervo); (P2) sonda preguiçosa — só meses que passaram pelas guardas, parando no 1º disponível; (P2) `inputs.mes`/`forcar` entram por `env`, não interpolados no `run` (injeção de shell com o segredo no ambiente). Ficou documentado: (P2) retomada local recente preserva `iniciado_em` antigo → a guarda de 8 h a trata como órfã; corrigir exige um `atualizado_em` no `radar_ingest_state` (edge) — fora deste bloco.
+
 ## Provas
 
 - `db/test-radar-recruzamento-diario.sh` (no `nucleo-ci.txt`, 13 asserts, `--falsificar` 8/8 vermelhas com controle verde; duas sabotagens são pegas pela própria postcondição da migration e as variantes `_sem_post` provam que o assert da suíte pega sozinho).
-- `scripts/radar/mes-alvo.test.ts` (11) e `scripts/radar/carga-mensal-workflow.test.ts` (7, invariantes do YAML).
+- `scripts/radar/mes-alvo.test.ts` (17) e `scripts/radar/carga-mensal-workflow.test.ts` (8, invariantes do YAML).

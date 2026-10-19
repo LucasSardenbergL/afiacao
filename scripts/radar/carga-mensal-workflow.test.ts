@@ -80,6 +80,13 @@ describe("workflow radar-carga-mensal", () => {
     expect(seletor?.run).toContain("scripts/radar/mes-alvo.ts");
   });
 
+  it("[WF8] inputs do dispatch entram por env, nunca interpolados no shell (injeção com o segredo no ambiente)", () => {
+    const seletor = passos().find((p) => /Escolher o mês/.test(p.name ?? ""));
+    expect(seletor?.env?.MES_PEDIDO).toBe("${{ inputs.mes }}");
+    expect(seletor?.env?.FORCAR).toBe("${{ inputs.forcar }}");
+    for (const p of passos()) expect(p.run ?? "").not.toMatch(/\$\{\{\s*inputs\./);
+  });
+
   it("[WF7] bun pinado na MESMA versão do ci.yml (bunpin)", () => {
     const setup = passos().find((p) => /setup-bun/.test(p.uses ?? ""));
     expect(setup?.with?.["bun-version"]).toBe(bunDoCi());

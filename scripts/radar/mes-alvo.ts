@@ -12,10 +12,15 @@
  * Regras (parecer Codex de desenho, 2026-10-18 — P0 "regressão de mês" e P1 "pula mês em silêncio"):
  *   • candidatos = janela de 3 meses [M-2, M-1, M] (horário de Brasília), do MAIS ANTIGO para o mais novo:
  *     publicação atrasada ou rodada perdida não faz um mês sumir — ele entra na próxima semana;
- *   • NUNCA regride: mês ≤ último lote `complete` é descartado (sobrescreveria `ultimo_lote` com foto
- *     mais velha). `--forcar` só releva o `complete` do PRÓPRIO mês pedido, nunca a regressão;
- *   • lote `running` iniciado há < 8 h = outra carga em andamento (ex.: local) → não escolhe;
- *   • mês indisponível na RFB (HEAD 404 em Cnaes.zip) → pula; qualquer outro status ≠ 200 → erro.
+ *   • NUNCA regride: mês < o lote mais NOVO conhecido (qualquer status — os chunks escrevem `ultimo_lote`
+ *     direto, então até um lote `error` já pode ter foto mais nova no acervo) é descartado. `--forcar`
+ *     só releva o `complete` do PRÓPRIO mês pedido, nunca a regressão. O `status` da edge devolve os 3
+ *     lotes mais novos: o mais novo de todos está sempre lá, então a régua não depende do histórico inteiro;
+ *   • QUALQUER lote `running` iniciado há < 8 h = outra carga em andamento (ex.: local) → NADA é escolhido
+ *     (dois escritores em meses diferentes disputam o mesmo `ultimo_lote`);
+ *   • mês indisponível na RFB = TODAS as bases responderam 404 ao HEAD em Cnaes.zip; timeout/5xx/429 em
+ *     qualquer base sem nenhum 200 → erro (transporte não vira "não publicado");
+ *   • só sonda os meses que passaram pelas guardas, do mais antigo para o mais novo, parando no 1º disponível.
  */
 import { appendFileSync } from "node:fs";
 import { ARQUIVO_SONDA, authorizationDe, basesCandidatas } from "./rfb";
@@ -39,26 +44,42 @@ export const candidatosDe = (agora: Date): string[] => [mesBr(agora, -2), mesBr(
 
 export interface Decisao { mes: string | null; motivos: string[] }
 
-/** Decisão PURA (testável): recebe o que a sonda e o status devolveram. */
-export const escolherMes = (p: {
+/** O que a sonda de UM mês concluiu a partir das respostas de cada base (pura, testável). */
+export type RespostaSonda = { tipo: "http"; status: number } | { tipo: "erro"; detalhe: string };
+export const concluirSonda = (mes: string, respostas: RespostaSonda[]): Disponibilidade => {
+  if (respostas.some((r) => r.tipo === "http" && r.status === 200)) return "disponivel";
+  const ruins = respostas.filter((r) => !(r.tipo === "http" && r.status === 404));
+  if (ruins.length > 0) {
+    const d = ruins.map((r) => (r.tipo === "http" ? `HTTP ${r.status}` : r.detalhe)).join("; ");
+    throw new Error(`sonda da RFB para ${mes} sem resposta conclusiva (${d}) — transporte não é "não publicado"`);
+  }
+  return "indisponivel";
+};
+
+const loteVivo = (l: Lote, agora: Date): boolean =>
+  l.status === "running" && !!l.iniciado_em && agora.getTime() - new Date(l.iniciado_em).getTime() < HORAS_LOTE_VIVO * 3_600_000;
+
+/** Decisão (testável): recebe o status dos lotes e uma sonda preguiçosa, chamada só para quem passou pelas guardas. */
+export const escolherMes = async (p: {
   candidatos: string[];
-  disponivel: (mes: string) => Disponibilidade;
+  disponivel: (mes: string) => Promise<Disponibilidade> | Disponibilidade;
   lotes: Lote[];
   forcar: boolean;
   agora: Date;
-}): Decisao => {
+}): Promise<Decisao> => {
   const motivos: string[] = [];
-  const completos = p.lotes.filter((l) => l.status === "complete").map((l) => l.mes_referencia);
-  const ultimoCompleto = completos.length ? completos.sort().at(-1)! : null;
+  const vivo = p.lotes.find((l) => loteVivo(l, p.agora));
+  if (vivo) {
+    motivos.push(`${vivo.mes_referencia}: lote running iniciado há < ${HORAS_LOTE_VIVO} h (outra carga em andamento) — nenhum mês é escolhido`);
+    return { mes: null, motivos };
+  }
+  const conhecidos = p.lotes.map((l) => l.mes_referencia).sort();
+  const maisNovoConhecido = conhecidos.at(-1) ?? null;
   for (const mes of [...p.candidatos].sort()) {
     const lote = p.lotes.find((l) => l.mes_referencia === mes);
-    if (ultimoCompleto && mes < ultimoCompleto) { motivos.push(`${mes}: regressão (último lote complete é ${ultimoCompleto})`); continue; }
+    if (maisNovoConhecido && mes < maisNovoConhecido) { motivos.push(`${mes}: regressão (lote mais novo conhecido é ${maisNovoConhecido})`); continue; }
     if (lote?.status === "complete" && !p.forcar) { motivos.push(`${mes}: já complete`); continue; }
-    if (lote?.status === "running" && lote.iniciado_em
-        && p.agora.getTime() - new Date(lote.iniciado_em).getTime() < HORAS_LOTE_VIVO * 3_600_000) {
-      motivos.push(`${mes}: lote running iniciado há < ${HORAS_LOTE_VIVO} h (outra carga em andamento?)`); continue;
-    }
-    if (p.disponivel(mes) === "indisponivel") { motivos.push(`${mes}: ainda não publicado pela RFB`); continue; }
+    if ((await p.disponivel(mes)) === "indisponivel") { motivos.push(`${mes}: ainda não publicado pela RFB`); continue; }
     return { mes, motivos };
   }
   return { mes: null, motivos };
@@ -80,20 +101,19 @@ if (import.meta.main) {
   if (!INGEST_URL || !SECRET) { console.error("RADAR_INGEST_URL e RADAR_CRON_SECRET obrigatórios"); process.exit(1); }
 
   const sondar = async (mes: string): Promise<Disponibilidade> => {
-    let ultimo = "";
+    const respostas: RespostaSonda[] = [];
     for (const base of basesCandidatas(mes)) {
       try {
         const r = await fetch(`${base}/${ARQUIVO_SONDA}`, { method: "HEAD", headers: authorizationDe(base), signal: AbortSignal.timeout(30_000) });
-        if (r.status === 200) return "disponivel";
-        ultimo = `${base} → HTTP ${r.status}`;
-        if (r.status !== 404) throw new Error(`sonda da RFB respondeu ${r.status} para ${mes} (${base}) — não é "indisponível", é erro`);
+        respostas.push({ tipo: "http", status: r.status });
+        if (r.status === 200) break;
       } catch (e) {
-        if (e instanceof Error && e.message.startsWith("sonda da RFB")) throw e;
-        ultimo = `${base} → ${e instanceof Error ? e.message : String(e)}`;
+        respostas.push({ tipo: "erro", detalhe: `${base} → ${e instanceof Error ? e.message : String(e)}` });
       }
     }
-    console.log(`   ${mes}: indisponível (${ultimo})`);
-    return "indisponivel";
+    const d = concluirSonda(mes, respostas); // lança em transporte ruim sem nenhum 200
+    console.log(`   sonda ${mes}: ${d}`);
+    return d;
   };
 
   const r = await fetch(INGEST_URL, {
@@ -105,12 +125,8 @@ if (import.meta.main) {
   console.log(`lotes conhecidos: ${lotes.map((l) => `${l.mes_referencia}=${l.status}`).join(", ") || "nenhum"}`);
 
   const candidatos = mesPedido && mesPedido !== "true" ? [mesPedido] : candidatosDe(agora);
-  // Sonda só os meses que a regra ainda não descartou (uma função pura decide; a sonda é preguiçosa).
-  const cache = new Map<string, Disponibilidade>();
-  const disponivelAsync = async (mes: string) => { if (!cache.has(mes)) cache.set(mes, await sondar(mes)); return cache.get(mes)!; };
-  // Pré-sonda sequencial (a decisão pura é síncrona): candidatos em ordem, parando no 1º escolhível.
-  for (const mes of [...candidatos].sort()) await disponivelAsync(mes);
-  const decisao = escolherMes({ candidatos, disponivel: (m) => cache.get(m) ?? "indisponivel", lotes, forcar, agora });
+  // A sonda é preguiçosa: só os meses que passaram pelas guardas, parando no 1º disponível.
+  const decisao = await escolherMes({ candidatos, disponivel: sondar, lotes, forcar, agora });
   for (const m of decisao.motivos) console.log(`   ${m}`);
   const linha = `mes=${decisao.mes ?? ""}`;
   console.log(decisao.mes ? `🎯 ${linha}` : `🏁 nada a fazer (${linha})`);
