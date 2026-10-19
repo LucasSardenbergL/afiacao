@@ -14,6 +14,8 @@ import {
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   decidirPublicacaoEncerrados,
+  diagnosticoAbstencao,
+  type DiagnosticoAbstencao,
   FILTROS_SO_ENCERRADOS,
   FILTROS_TODOS,
   isoParaBR,
@@ -976,6 +978,7 @@ async function passadaEncerrados(
   const dataAte = isoParaBR(s.janela_ate);
   let r: ResumoEncerrados;
   let seq: number | null = null;
+  let diagnostico: DiagnosticoAbstencao | null = null; // v1.8: só abstenção com coleta; só no heartbeat
   if (!dataDe || !dataAte || !s.janela_de || !s.janela_ate) {
     r = { status: "abstencao", ...vazio, motivo: "janela do completo ausente" };
   } else if (Date.now() - t0 > ORCAMENTO_ENCERRADOS_MS) {
@@ -998,6 +1001,7 @@ async function passadaEncerrados(
         completaEncerrados: col.completa, idsEncerrados: col.ids, completaGeral: s.varredura_completa, idsGeral,
       });
       if (dec.tipo === "abster") {
+        diagnostico = diagnosticoAbstencao(col.ids, idsGeral, col.completa);
         r = { status: "abstencao", ids: col.ids.size, paginas: col.paginas, novos: null, limpos: null, motivo: col.motivo ?? dec.motivo };
       } else {
         try {
@@ -1030,7 +1034,12 @@ async function passadaEncerrados(
   await heartbeatEncerrados(supabase, empresa, ok ? "complete" : "error", {
     total_synced: r.ids,
     error_message: ok ? null : `passada de encerrados ${r.status}: ${r.motivo ?? "sem motivo"}`,
-    metadata: { ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: new Date().toISOString() },
+    metadata: {
+      ...r, janela_de: s.janela_de, janela_ate: s.janela_ate, completo_ids: idsGeral.size, finished_at: new Date().toISOString(),
+      // v1.8: o conjunto que as guardas RECUSARAM, só para os controles do #3132 — o registro protegido (o que o
+      // backtest lê) segue 'invalidado' e sem ids. Sobrescrito pelo 'running' da próxima passada.
+      ...(diagnostico ? { diagnostico } : {}),
+    },
   });
   return r;
 }
