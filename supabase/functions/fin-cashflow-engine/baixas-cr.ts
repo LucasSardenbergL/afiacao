@@ -16,7 +16,7 @@
 import { exigirLeitura, FalhaLeituraCritica, type RespostaLeitura } from "../_shared/leitura-critica.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
-export const FONTE_BAIXAS_CR = "fin_titulo_baixas_cr_mapa";
+const FONTE_BAIXAS_CR = "fin_titulo_baixas_cr_mapa";
 
 export type BaixaCr = { omie_codigo_lancamento: number; data_baixa_final: string };
 
