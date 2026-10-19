@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import type { ResumoFornecedor, TituloCp } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 
 const titulosMock = vi.fn();
@@ -36,17 +37,19 @@ const titulosSayerlack: TituloCp[] = [
     vencimento: `2026-08-${String(d).padStart(2, '0')}`, dataBaixa: `2026-08-${String(d).padStart(2, '0')}`, dataBaixaConfiavel: true,
     valor: 1000, valorAberto: null, situacao: 'paga' as const, prazoConcedido: 10, prazoReal: 10, atrasoBaixa: 0,
     descontoObtido: 20, descontoInformado: 20, valorPagoPrincipal: 1000, encargoPago: 0, diasVencido: null,
+    fonteValorAberto: null,
   })),
   {
     company: 'oben', fornecedor: 900, lancamento: 99, documento: 'NF99', emissao: '2026-09-01', vencimento: '2026-09-11',
     dataBaixa: '2026-09-14', dataBaixaConfiavel: true, valor: 10000, valorAberto: null, situacao: 'paga', prazoConcedido: 10,
     prazoReal: 13, atrasoBaixa: 3, descontoObtido: 0, descontoInformado: 0, valorPagoPrincipal: 10000, encargoPago: 0, diasVencido: null,
+    fonteValorAberto: null,
   },
 ];
 const empresa = { pmpComprasPond: 13.07, compras12m: 2_414_503, rsPorDia: 6615.08, pmpEngineControle: 12,
   nForaLista: 119, valorForaLista: 18781.15, nSemCategoria: 0, valorSemCategoria: 0 };
 
-const renderSecao = () => render(<CicloFornecedoresSecao empresas={['oben']} hoje={HOJE} />);
+const renderSecao = (url = '/') => render(<MemoryRouter initialEntries={[url]}><CicloFornecedoresSecao empresas={['oben']} hoje={HOJE} /></MemoryRouter>);
 
 beforeEach(() => {
   trackMock.mockReset();
@@ -116,6 +119,44 @@ describe('CicloFornecedoresSecao', () => {
     fireEvent.click(within(tabela).getByText('RENNER SAYERLACK S/A'));
     expect(trackMock).toHaveBeenCalledWith('financeiro.ciclo_fornecedor_drill', { empresa: 'oben' });
     expect(screen.getByRole('dialog')).toBeTruthy();
+  });
+  it('drill mostra o desconto OBTIDO (o da tabela) e o selo "valor do título" no aberto estimado', () => {
+    titulosMock.mockReturnValue(ok([
+      ...titulosSayerlack,
+      { ...titulosSayerlack[0], lancamento: 200, documento: 'NF200', descontoObtido: null, descontoInformado: 345.23 },
+      { ...titulosSayerlack[0], lancamento: 201, documento: 'NF201', situacao: 'a_vencer' as const, vencimento: '2026-10-30',
+        dataBaixa: null, valorAberto: 1000, fonteValorAberto: 'valor_titulo' as const, descontoObtido: null, descontoInformado: null },
+    ]));
+    renderSecao();
+    fireEvent.click(within(screen.getByRole('table', { name: 'Fornecedores Oben' })).getByText('RENNER SAYERLACK S/A'));
+    const drill = screen.getByRole('dialog');
+    expect(within(drill).getByText('Desconto obtido')).toBeTruthy();
+    const nf200 = within(drill).getByText('NF200').closest('tr');
+    expect(nf200?.textContent).toMatch(/informado R\$\s?345,23, não confirmado/);
+    const nf201 = within(drill).getByText('NF201').closest('tr');
+    expect(nf201?.textContent).toMatch(/R\$\s?1\.000,00 \(valor do título\)/);
+  });
+  it('"conferir boleto" separa sem desconto de desconto abaixo do observado', () => {
+    titulosMock.mockReturnValue(ok([
+      ...titulosSayerlack,
+      { ...titulosSayerlack[0], lancamento: 300, documento: 'NF300', vencimento: '2026-09-20', descontoInformado: 5, descontoObtido: 5 },
+    ]));
+    renderSecao();
+    expect(screen.getByText(/pago em dia com desconto abaixo do observado/)).toBeTruthy();
+    expect(screen.queryByText(/pago em dia sem desconto/)).toBeNull();
+  });
+  it('ordenação e busca da tabela vêm do URL (useUrlState)', () => {
+    resumoMock.mockReturnValue(ok([
+      forn({}),
+      forn({ fornecedor: 5, nome: 'ALFA TINTAS', compras12m: 10, atrasoPondPos: 9 }),
+    ]));
+    renderSecao('/?fornOrdem=atraso');
+    const linhas = () => within(screen.getByRole('table', { name: 'Fornecedores Oben' })).getAllByRole('row').slice(1)
+      .map((r) => r.textContent ?? '');
+    expect(linhas()[0]).toMatch(/ALFA TINTAS/);
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar fornecedor' }), { target: { value: 'sayer' } });
+    expect(linhas()).toHaveLength(1);
+    expect(linhas()[0]).toMatch(/RENNER SAYERLACK/);
   });
 });
 

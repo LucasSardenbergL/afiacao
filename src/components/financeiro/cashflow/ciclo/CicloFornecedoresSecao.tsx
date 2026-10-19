@@ -3,12 +3,15 @@ import { Truck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useUrlState } from '@/hooks/useUrlState';
 import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useCicloCpEmpresa, useCicloCpTitulos, useCicloFornecedorResumo, type CpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 import {
-  confiancaFornecedor, custoDoPrazo, inicioRegimeDesconto, montarFilaCustoPrazo, taxaDescontoObservada,
-  type ResumoFornecedor, type TituloCp,
+  confiancaFornecedor, custoDoPrazo, filtrarFornecedores, inicioRegimeDesconto, montarFilaCustoPrazo, ordenarFornecedores,
+  rotuloConferirBoleto, taxaDescontoObservada, type OrdemFornecedores, type ResumoFornecedor, type TituloCp,
 } from '@/lib/financeiro/ciclo-fornecedor-helpers';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { track } from '@/lib/analytics';
@@ -18,6 +21,12 @@ import { CicloPontualidade } from './CicloPontualidade';
 
 const CAVEAT =
   'Só compras (mercadoria, matéria-prima, frete e serviço de compra). Prazo com fornecedor tem preço: aqui aparece o custo do prazo — desconto perdido, juros e multa —, não uma meta de alongar. Desconto perdido é cenário (taxa observada × valor); desconto obtido e juros/multa são apurados.';
+
+const ORDENS: Array<{ valor: OrdemFornecedores; rotulo: string }> = [
+  { valor: 'compras', rotulo: 'Compras 12m' }, { valor: 'atraso', rotulo: 'Atraso' },
+  { valor: 'vencido', rotulo: 'Vencido aberto' }, { valor: 'juros', rotulo: 'Juros/multa' },
+  { valor: 'desconto', rotulo: 'Desconto obtido' }, { valor: 'nome', rotulo: 'Nome' },
+];
 
 const pctTaxa = (t: number) => `${(t * 100).toFixed(1).replace('.', ',').replace(',0', '')}%`;
 
@@ -42,9 +51,9 @@ function soma(xs: ResumoFornecedor[], campo: CampoSoma) {
 }
 const notaApurado = (c: string | null) => ['apurado', c].filter(Boolean).join(' · ');
 
-function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
+function Empresa({ company, resumo, titulos, cp, hoje, ordem, busca, onAbrir }: {
   company: Company; resumo: ResumoFornecedor[]; titulos: TituloCp[]; cp: CpEmpresa | undefined; hoje: string;
-  onAbrir: (f: ResumoFornecedor) => void;
+  ordem: string; busca: string; onAbrir: (f: ResumoFornecedor) => void;
 }) {
   const nome = COMPANIES[company].shortName;
   const doCompany = useMemo(() => resumo.filter((r) => r.company === company), [resumo, company]);
@@ -89,7 +98,8 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
   const nNeg = soma(doCompany, 'nPrazoNegativo').valor ?? 0;
   const incerta = soma(comPagas, 'valorPagoDataIncerta').valor ?? 0;
   const nAmb = soma(doCompany, 'nStatusAmbiguo').valor ?? 0;
-  const ordenados = [...doCompany].sort((a, b) => (b.compras12m ?? -1) - (a.compras12m ?? -1));
+  // Ordem e busca só mudam a TABELA; KPIs e fila continuam sobre todos os fornecedores da empresa.
+  const ordenados = ordenarFornecedores(filtrarFornecedores(doCompany, busca), ordem);
   return (
     <section className="space-y-3" aria-label={`Fornecedores — ${nome}`}>
       <h3 className="text-sm font-medium">{nome}</h3>
@@ -131,8 +141,8 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
           <div className="space-y-1">
             <div className="text-xs text-muted-foreground">conferir boleto</div>
             <ul className="space-y-1 text-xs">
-              {analise.conferirBoleto.map(({ resumo: r, valor }) => (
-                <li key={r.fornecedor}>{nomeFornecedor(r)}: {brl(valor)} pago em dia sem desconto — conferir boleto · cenário</li>
+              {analise.conferirBoleto.map((item) => (
+                <li key={item.resumo.fornecedor}>{nomeFornecedor(item.resumo)}: {brl(item.valor)} {rotuloConferirBoleto(item)} — conferir boleto · cenário</li>
               ))}
             </ul>
           </div>
@@ -156,6 +166,9 @@ function Empresa({ company, resumo, titulos, cp, hoje, onAbrir }: {
           <TableHead className="text-right">A vencer</TableHead><TableHead>Confiança</TableHead>
         </TableRow></TableHeader>
         <TableBody>
+          {ordenados.length === 0 && (
+            <TableRow><TableCell colSpan={10} className="text-muted-foreground">Nenhum fornecedor com “{busca}”.</TableCell></TableRow>
+          )}
           {ordenados.map((r) => {
             const conf = confiancaFornecedor(r);
             return (
@@ -196,6 +209,7 @@ export function CicloFornecedoresSecao({ empresas, hoje }: { empresas: Company[]
   const resumo = useCicloFornecedorResumo();
   const cp = useCicloCpEmpresa();
   const [aberto, setAberto] = useState<ResumoFornecedor | null>(null);
+  const [{ fornOrdem, fornBusca }, setFiltro] = useUrlState({ fornOrdem: 'compras', fornBusca: '' });
 
   useEffect(() => { track('financeiro.ciclo_fornecedor_secao'); }, []);
 
@@ -206,12 +220,23 @@ export function CicloFornecedoresSecao({ empresas, hoje }: { empresas: Company[]
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">Fornecedores — PMP de compras e custo do prazo</CardTitle>
         <p className="text-xs text-muted-foreground">{CAVEAT}</p>
+        <div className="flex flex-wrap items-center gap-2 pt-2">
+          <Input type="search" aria-label="Buscar fornecedor" placeholder="Buscar fornecedor (nome ou código)"
+            className="h-8 w-full sm:w-64" value={fornBusca} onChange={(e) => setFiltro({ fornBusca: e.target.value })} />
+          <Select value={fornOrdem} onValueChange={(v) => setFiltro({ fornOrdem: v })}>
+            <SelectTrigger aria-label="Ordenar fornecedores por" className="h-8 w-48"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {ORDENS.map((o) => <SelectItem key={o.valor} value={o.valor}>Ordenar: {o.rotulo}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
       </CardHeader>
       <CardContent className="space-y-6 text-sm">
         {erro && <p className="text-status-error text-sm">Não foi possível ler os fornecedores.</p>}
         {carregando && <PageSkeleton variant="list" />}
         {!erro && !carregando && empresas.map((c) => (
           <Empresa key={c} company={c} resumo={resumo.data ?? []} titulos={titulos.data ?? []} cp={cp.data?.[c]} hoje={hoje}
+            ordem={fornOrdem} busca={fornBusca}
             onAbrir={(f) => { setAberto(f); track('financeiro.ciclo_fornecedor_drill', { empresa: f.company }); }} />
         ))}
         {cp.error && <p className="text-status-error text-xs">Não foi possível ler o PMP de compras por empresa.</p>}

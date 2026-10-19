@@ -102,3 +102,9 @@ O handoff pedia "fila de fornecedores onde cabe negociar prazo maior". O founder
 - **Código de categoria muda entre empresas:** lista (empresa, código) explícita; o prefixo `2.01%` puxaria imobilizado da colacor.
 - **Views sem SELECT para `authenticated`:** só as RPCs (gate master) leem. `security_invoker` não cria restrição master (Codex #9).
 - **Taxa implícita a.m. removida:** não existe a alternativa "pagar depois sem desconto" como data concreta (Codex #7).
+
+## Follow-up (2026-10-19) — performance da RPC por empresa e minors da revisão final
+
+- **`fin_ciclo_cp_empresa()` de ~2,25–4,25 s para ~1,08–1,11 s** (authenticated + master, prod, 3 medições). O gargalo não era só o `vol` pelo resumo (~0,5 s): o `empresas` varria `v_titulo_baixas` só para `DISTINCT company` (~0,8 s) e o `eng` varria de novo (~0,75 s). Migration `20261019090000` (aplicada no envelope, TRAVA+PRE anti-deriva): `vol` direto de `fin_contas_pagar` com o filtro do `volume`, e `eng` numa varredura só com o prazo NULL no `FILTER` (não no `WHERE`), para a empresa só com baixa CP continuar aparecendo. Saída em prod idêntica antes/depois (md5 da saída da RPC). Lição: **medir por CTE** (psql-ro `\timing`) antes de aceitar a hipótese da causa.
+- **Minors:** o drill mostra o desconto OBTIDO (o da tabela; o informado sem confirmação vai à parte), coluna "Em aberto" com selo "valor do título", mês cortado pela janela de 12 m marcado como parcial, "conferir boleto" separa "sem desconto" de "desconto abaixo do observado", e a tabela tem busca/ordem por `useUrlState` (`fornBusca`/`fornOrdem`).
+- **Não feitos (de propósito):** `n_titulos_com_desconto` conta parcelas mas não aparece na UI (nada a corrigir na tela); endurecer `resumo_completo` com `resumo_lido_em IS NOT NULL` mexe na view base e ficou fora.
