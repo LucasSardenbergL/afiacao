@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { useReindexRag } from './useReindexRag';
 import type { StandardProcessStatus } from '@/lib/standard-process/types';
@@ -18,7 +19,7 @@ export function useApproveStandardProcess() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Não autenticado');
 
-      const payload: Record<string, unknown> = {
+      const payload: TablesUpdate<'standard_processes'> = {
         status,
         status_notes: notes ?? null,
       };
