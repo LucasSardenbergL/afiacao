@@ -26,17 +26,28 @@
 --      da v1 fica implícito no JOIN).
 --   b) Rótulo: descrição Omie -> código Omie -> descrição do corante -> id.
 --   c) Uma única avaliação por corante ruim (LATERAL count, filtro > 0) no lugar de
---      count + EXISTS, e índice em tint_formula_itens(corante_id): cada corante ruim vira
---      um index scan em vez de uma varredura de 3,5M linhas.
+--      count + EXISTS, e índice em tint_formula_itens(corante_id): o lookup por corante
+--      ruim passa a poder usar o índice em vez de varrer 3,5M linhas.
+--   d) "formula(s) atingidas" = fórmulas DISTINTAS (a v1 somava pares fórmula×corante: as
+--      28 fórmulas da linha nova viraram "148"; 500 fórmulas com 2 corantes ruins virariam
+--      1.000 e cruzariam o limiar de 'critico'). Achado do challenge Codex.
 --
 -- ⚠️ O CREATE INDEX (não-CONCURRENTLY: dentro da transação) segura SHARE LOCK em
--- tint_formula_itens durante o build — LEITURA segue livre (balcão/RPC), ESCRITA (promote do
--- sync) espera. Aplicar fora de uma promoção em curso (tint_sync_runs sem 'running').
+-- tint_formula_itens ATÉ O COMMIT — LEITURA segue livre (balcão/RPC), ESCRITA espera.
+-- O único escritor de massa é a promoção assíncrona, que só roda sob
+-- pg_try_advisory_xact_lock(hashtext('tint_promocao_tick')) (20260925210000): esta migration
+-- pega ESSE lock primeiro, então o worker pula o tick em vez de esperar o build; e
+-- lock_timeout curto faz o apply ABORTAR (sem efeito) se uma promoção estiver em curso,
+-- em vez de enfileirar escritas atrás de si. (Codex P1 operacional.)
 --
 -- Prova: db/test-tint-watchdog-corante.sh (PG17, aplica a v1 e ESTA por cima, falsificação).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 BEGIN;
+
+SET LOCAL lock_timeout = '10s';
+-- exclusão real do worker de promoção (ele usa try_lock: pula o tick enquanto seguramos)
+SELECT pg_advisory_xact_lock(hashtext('tint_promocao_tick'));
 
 -- TRAVA antes de ler (ALTER sem efeito: a função já é VOLATILE) — ninguém troca a função
 -- entre a PRE e o CREATE.
@@ -53,7 +64,7 @@ DO $pre$
 DECLARE vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                        WHERE p.oid = to_regprocedure('public.tint_watchdog_corante_check()'));
 BEGIN
-  IF vivo IS NULL OR vivo NOT IN ('c512a912fb1725fb89413ddc6690fde3', '78ed0866d39c4268a5773d3bb2399b1c') THEN
+  IF vivo IS NULL OR vivo NOT IN ('c512a912fb1725fb89413ddc6690fde3', '8febcd9e495c4536f3a548b1afab278e') THEN
     RAISE EXCEPTION 'PRE FALHOU: tint_watchdog_corante_check() vivo (md5 %) nao e a v1 revisada nem esta v2', vivo;
   END IF;
 END
@@ -74,6 +85,7 @@ DECLARE
   -- re-aplicar ESTA por cima dela ABORTE em vez de revertê-la em silêncio.
   v_conta        text := 'oben';   -- 100% do catálogo tint é oben (medido)
   v_ruins        int;
+  v_ids          uuid[];
   v_formulas     bigint;
   v_lista        text;
   v_msg          text;
@@ -93,9 +105,9 @@ BEGIN
   -- Uma avaliação por corante ruim, via idx_tint_formula_itens_corante (v2: a v1 fazia
   -- count + EXISTS sem índice e estourou o timeout com 12 corantes ruins).
   SELECT count(*),
-         COALESCE(sum(u.formulas), 0),
+         array_agg(r.id),
          string_agg(r.rotulo, '; ' ORDER BY u.formulas DESC)
-    INTO v_ruins, v_formulas, v_lista
+    INTO v_ruins, v_ids, v_lista
   FROM (
     SELECT c.id,
            COALESCE(NULLIF(btrim(op.descricao), ''), op.codigo,
@@ -124,6 +136,18 @@ BEGIN
        AND bp.valor_unitario > 0 AND COALESCE(bp.ativo, false)
   ) u
   WHERE u.formulas > 0;
+
+  -- Fórmulas DISTINTAS atingidas (v2: a v1 somava pares fórmula×corante). Mesmo universo do
+  -- LATERAL acima; v_ids NULL (nenhum corante ruim) => ANY(NULL) => 0.
+  SELECT count(DISTINCT fi.formula_id)
+    INTO v_formulas
+    FROM tint_formula_itens fi
+    JOIN tint_formulas f    ON f.id = fi.formula_id
+    JOIN tint_skus s        ON s.id = f.sku_id
+    JOIN omie_products bp   ON bp.id = s.omie_product_id
+   WHERE fi.corante_id = ANY (v_ids)
+     AND f.desativada_em IS NULL
+     AND bp.valor_unitario > 0 AND COALESCE(bp.ativo, false);
 
   IF v_ruins > 0 THEN
     -- Agravamento (Codex [P2]): 1 corante numa fórmula != 1 corante em 300 mil.
@@ -237,8 +261,17 @@ BEGIN
      OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
     RAISE EXCEPTION 'postcondicao: anon/authenticated executam %', f;
   END IF;
-  IF to_regclass('public.idx_tint_formula_itens_corante') IS NULL THEN
-    RAISE EXCEPTION 'postcondicao: idx_tint_formula_itens_corante ausente';
+  -- IF NOT EXISTS só olha o NOME: confere que é o índice certo e utilizável (Codex P2).
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index i
+     WHERE i.indexrelid = to_regclass('public.idx_tint_formula_itens_corante')
+       AND i.indrelid   = 'public.tint_formula_itens'::regclass
+       AND i.indisvalid AND i.indisready
+       AND i.indpred IS NULL
+       AND i.indkey[0] = (SELECT a.attnum FROM pg_attribute a
+                           WHERE a.attrelid = 'public.tint_formula_itens'::regclass
+                             AND a.attname = 'corante_id')) THEN
+    RAISE EXCEPTION 'postcondicao: idx_tint_formula_itens_corante ausente, invalido ou nao lidera por corante_id';
   END IF;
   RAISE NOTICE 'TINT-WATCHDOG-CORANTE-V2-OK';
 END

@@ -17,16 +17,18 @@
 # ║   A7 severidade escala com o nº de fórmulas atingidas (Codex [P2])             ║
 # ║   A8 dead-man cruzado NÃO alarma quando a Camada B ainda não existe            ║
 # ║   A9 marcador da Camada B stale (>13h) -> alerta watchdog parado               ║
-# ║   A10 corante impagável só em fórmula cuja base NÃO tem vínculo Omie -> MUDO   ║
+# ║   A6c "formulas atingidas" conta fórmulas DISTINTAS, não pares (Codex P2)     ║
+# ║   A10 base sem vínculo Omie -> MUDO, e DISMISSA o alerta da v1 aberto com 11   ║
 # ║   A10b idem com base Omie INATIVA -> MUDO (espelha v_base_disponivel da RPC)   ║
 # ║   A11 corante sem vínculo Omie é rotulado pela DESCRIÇÃO, não pelo UUID        ║
 # ║  FALSIFICAÇÕES (cada uma declara o CONJUNTO EXATO que derruba):                ║
-# ║   F1 remove o filtro de USO            -> {A2,A3} + cascata A5,A6,A6b,A10,A10b ║
+# ║   F1 remove o filtro de USO            -> {A2,A3} + cascata A5,A6*,A10,A10b    ║
 # ║   F2 remove `ativo` do predicado       -> {A1}                                 ║
 # ║   F3 remove o bloco de agravamento     -> {A6}                                 ║
 # ║   F4 remove o marcador de sucesso      -> {A4}                                 ║
 # ║   F5 volta ao predicado de base da v1  -> {A10,A10b}                           ║
 # ║   F6 tira a descrição do corante do rótulo -> {A11,A11b}                       ║
+# ║   F7 volta a contar pares fórmula×corante -> {A6c}                             ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -206,6 +208,8 @@ roda_suite() {
   P -q -c "SELECT public.tint_watchdog_corante_check();"
   eq "A6 agravamento atualiza o contexto" "$(Pq -c "SELECT contexto->>'corantes' FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "2"
   eq "A6b agravamento re-emite e-mail" "$(emails 'AGRAVOU')" "1"
+  # os 2 corantes ruins estão na MESMA fórmula: 1 fórmula atingida, não 2 pares
+  eq "A6c formulas atingidas = distintas" "$(Pq -c "SELECT contexto->>'formulas_ativas' FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "1"
 
   # A5: tudo volta ao normal -> dismiss
   tira_da_ativa 'c0000000-0000-0000-0000-000000000002'
@@ -214,10 +218,13 @@ roda_suite() {
   eq "A5 dismiss quando volta a zero" "$(alertas_ativos tint_corante_impagavel)" "0"
 
   # A10: incidente 2026-10-19 — linha nova cuja BASE nao tem vinculo Omie. A formula ja nao
-  # tem preco pela base; o corante nao e o bloqueio -> MUDO. Cada caso isolado (limpa depois).
+  # tem preco pela base; o corante nao e o bloqueio -> MUDO. Parte do estado REAL do apply: o
+  # alerta que a v1 abriu (corantes=11) segue aberto e a v2 tem de DISMISSA-LO (11 -> 0).
+  # Cada caso isolado (limpa depois).
+  P -q -c "INSERT INTO public.fin_alertas (company, tipo, severidade, mensagem, contexto) VALUES ('oben','tint_corante_impagavel','aviso','v1: 11 corantes', '{\"corantes\": 11, \"formulas_ativas\": 148}') ON CONFLICT (company, tipo) WHERE dismissed_at IS NULL DO NOTHING;"
   usa_na_ativa 'c0000000-0000-0000-0000-000000000006' 'f0000000-0000-0000-0000-000000000003'
   P -q -c "SELECT public.tint_watchdog_corante_check();"
-  eq "A10 base sem vinculo Omie nao alarma" "$(alertas_ativos tint_corante_impagavel)" "0"
+  eq "A10 base sem vinculo Omie nao alarma (e fecha o alerta v1)" "$(alertas_ativos tint_corante_impagavel)" "0"
   tira_da_ativa 'c0000000-0000-0000-0000-000000000006' 'f0000000-0000-0000-0000-000000000003'
   P -q -c "SELECT public.tint_watchdog_corante_check();"
 
@@ -325,11 +332,12 @@ echo "=== FALSIFICACOES ==="
 #      contagem nunca sobe de 1->2 (derruba o agravamento A6/A6b). Declarado como
 #      medido: prever {A2,A3} e "consertar" o harness para casar seria repintar
 #      de verde uma sabotagem que de fato morde mais fundo. Na v2 a mesma cascata
-#      alcança A10/A10b: o alerta dos órfãos já está aberto quando eles medem.
+#      alcança A6c/A10/A10b: o alerta dos órfãos já está aberto (e congelado) quando
+#      eles medem.
 sabota_e_mede "F1" \
   "WHERE u.formulas > 0;" \
   "WHERE true;" \
-  A2 A3 A5 A6 A6b A10 A10b
+  A2 A3 A5 A6 A6b A6c A10 A10b
 
 # F2 — remove o 'ativo' do predicado: o corante INATIVO deixa de ser impagável.
 #      Prova que a detecção cobre inatividade no Omie, não só custo zero.
@@ -370,6 +378,12 @@ sabota_e_mede "F6" \
   "c.id::text)" \
   A11 A11b
 
+# F7 — volta a somar pares fórmula×corante: 2 corantes na mesma fórmula viram "2 fórmulas".
+sabota_e_mede "F7" \
+  "SELECT count(DISTINCT fi.formula_id)" \
+  "SELECT count(fi.formula_id)" \
+  A6c
+
 # ══ fecho: re-roda a suíte na versão REAL e exige verde ══
 echo "=== VERIFICACAO FINAL (migration real restaurada) ==="
 roda_suite
@@ -381,4 +395,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 6 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 7 falsificacoes com conjunto exato"
