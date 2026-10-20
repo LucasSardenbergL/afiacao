@@ -86,5 +86,11 @@ o PostgREST corta em 1.000 linhas em silêncio, e o cron diário gravaria DRE/CM
   falsificação (sem cursor, order, teto, neq ou or) dá 5/5 vermelhos, com controle verde em
   `LC_ALL=C` e em `pt_BR.UTF-8`. A integração no `index.ts` fica coberta pelo gate
   `single-shot-truncado` (baseline 6→2), que reprova se o select único voltar.
+- **Codex**: r1 REPROVA (P1 do offset, acima) → r2 **APROVA COM RESSALVAS** (high; ordem de uuid em
+  JS = Postgres; nenhum caminho grava parcial).
 - **Resíduo**: os 2 single-shots restantes do `calcularDRE` (`fin_categoria_dre_mapping`, 157 linhas;
-  histórico de `fin_dre_snapshots`, ≤ ~50 meses) estão bem abaixo do teto.
+  histórico de `fin_dre_snapshots`, ≤ ~50 meses) estão bem abaixo do teto. Ressalvas do Codex r2, ambas
+  anteriores a esta entrega: (i) `carregarBaixaMapDRE` ainda pagina por offset e pode omitir uma baixa
+  sob escrita concorrente; (ii) falta teste de integração `calcularDRE → snapshot` (um `.slice(0,1000)`
+  no call-site passaria pelo gate). O `index.ts` importa `npm:` e a suíte roda `--no-remote`, então a
+  prova da integração é a não-regressão em prod (DRE recalculado = baseline nos meses < 1.000 títulos).
