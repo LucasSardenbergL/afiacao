@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **667** custom migrations totais
-- **2130** objetos esperados (criados por estas migrations)
+- **669** custom migrations totais
+- **2136** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 774
+  - `function`: 775
   - `rls_policy`: 476
-  - `index`: 279
-  - `cron_job`: 188
+  - `index`: 280
+  - `cron_job`: 192
   - `table`: 185
   - `view`: 119
   - `trigger`: 105
@@ -5396,6 +5396,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `index` | `public.idx_tint_formula_itens_corante` | `tint_formula_itens` |
 
+### `20261019180000_radar_score_lead.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+| `index` | `public.idx_radar_lista_score` | `radar_empresas` |
+| `cron_job` | `cron.radar-score-recalcular-diario` | — |
+
 ### `20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql`
 
 | Tipo | Objeto | Parent |
@@ -5403,6 +5411,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `function` | `public.tint_watchdog_corante_vigia_check` | — |
 | `cron_job` | `cron.tint-watchdog-corante-vigia-15min` | — |
+
+### `20261020120100_fin_cashflow_snapshot_cron_escalonado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
 
 ## Próximos passos por status
 
