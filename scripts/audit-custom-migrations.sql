@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 675
+-- Total de custom migrations: 676
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -739,7 +739,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
   ('20261020130000', 'grupos_caca_cnpj_alfanumerico', '20261020130000_grupos_caca_cnpj_alfanumerico.sql'),
-  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql')
+  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql'),
+  ('20261020143511', 'venda_cliente_complemento', '20261020143511_venda_cliente_complemento.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2864,7 +2865,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('venda_cliente_complemento', 'function', 'private', '_mixgap_gaps_compradores', ''),
+  ('venda_cliente_complemento', 'function', 'public', '_carteira_mixgap_for_owner', ''),
+  ('venda_cliente_complemento', 'function', 'public', 'venda_complemento_comprador', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5037,7 +5041,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('venda_cliente_complemento', 'function', 'private', '_mixgap_gaps_compradores', ''),
+  ('venda_cliente_complemento', 'function', 'public', '_carteira_mixgap_for_owner', ''),
+  ('venda_cliente_complemento', 'function', 'public', 'venda_complemento_comprador', '')
 )
 SELECT
   e.migration,
@@ -5229,6 +5236,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', 'db0c50e56dfd8d59be008ddce86edf0e'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
+  ('public', '_carteira_mixgap_for_owner', 3, '20261020143511_venda_cliente_complemento.sql', '5921c2ec1232c856725d049e1392c4ff'),
   ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
   ('public', '_carteira_positivacao_for_owner', 2, '20260927133606_positivacao_mes_sp_sessao_utc.sql', 'f0292c2defd776c715af118c4e8053a8'),
   ('public', '_carteira_positivacao_for_owner', 3, '20260927195430_positivacao_universo_canonico.sql', '9ded7c1530049a13422001fc66956069'),
