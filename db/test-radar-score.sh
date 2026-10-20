@@ -109,8 +109,10 @@ case "${SABOTAGEM:-}" in
   sem_guarda_versao)   cegar_md5; sabotar "       AND e.updated_at IS NOT DISTINCT FROM c.versao
        AND e.ja_cliente = c.ja_cliente_lido
 " "" ;;
-  acl_aberta)          sabotar "FROM PUBLIC, anon, authenticated;" "FROM anon;" ;;
-  acl_aberta_sem_post) sabotar "FROM PUBLIC, anon, authenticated;" "FROM anon;"
+  # A v2 é CREATE OR REPLACE: o ACL fechado pela v1 sobrevive, então tirar o REVOKE da v2 é inerte (medido:
+  # suíte verde). O defeito real na v2 é um GRANT a mais — é ele que as duas sabotagens injetam.
+  acl_aberta)          sabotar "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role;" "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role, authenticated;" ;;
+  acl_aberta_sem_post) sabotar "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role;" "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role, authenticated;"
                        sabotar "  IF has_function_privilege('anon', 'public.radar_score_recalcular()', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.radar_score_recalcular()', 'EXECUTE') THEN" "  IF false THEN" ;;
   cron_sumiu_sem_post) sabotar "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role;" "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO service_role;
