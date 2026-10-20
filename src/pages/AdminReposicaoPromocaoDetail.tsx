@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { TablesUpdate } from "@/integrations/supabase/types";
 import { format } from "date-fns";
 import { hojeSP } from "@/lib/time/sp-day";
 import { useAuth } from "@/contexts/AuthContext";
@@ -244,7 +245,7 @@ export default function AdminReposicaoPromocaoDetail() {
 
   const transicionarEstadoMut = useMutation({
     mutationFn: async (novoEstado: string) => {
-      const updates: Record<string, string | null> = {
+      const updates: TablesUpdate<"promocao_campanha"> = {
         estado: novoEstado,
         atualizado_por: userEmail,
       };

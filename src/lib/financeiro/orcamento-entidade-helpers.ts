@@ -8,8 +8,11 @@
  * compara YTD vs ano-1 e produz dois Paretos honestos: concentração de NÍVEL
  * (quem representa o estoque atual) e de AUMENTO (quem puxou a alta vs ano-1).
  *
- * Módulo leaf: funções puras, sem React, sem Supabase, sem imports do projeto.
+ * Módulo leaf: funções puras, sem React, sem Supabase; o único import do projeto é o espelho puro
+ * `cnpj-alfanumerico` (CNPJ alfanumérico RFB jul/2026 na chave de identidade).
  */
+
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 
 export type EntidadeRowRaw = {
   entidade_id: string | null;
@@ -76,9 +79,12 @@ export function parseMesDataEmissao(d: string | null): number | null {
   return Number(m[1]);
 }
 
-/** Retorna o documento limpo (só dígitos) se for CPF (11) ou CNPJ (14) válido; senão null. */
+/**
+ * Retorna o documento normalizado se for CPF (11) ou CNPJ (14, inclusive alfanumérico RFB jul/2026); senão null.
+ * Numérico é byte-idêntico ao `replace(/\D/g,'')` de antes; alfanumérico inválido cai nos dígitos (9) → null → nome.
+ */
 function cnpjValido(s: string | null): string | null {
-  const dig = (s ?? '').replace(/\D/g, '');
+  const dig = normalizarDocumento(s);
   if (dig.length !== 11 && dig.length !== 14) return null;
   // rejeita sentinelas todos-iguais (ex.: 00000000000000)
   if (/^(\d)\1+$/.test(dig)) return null;

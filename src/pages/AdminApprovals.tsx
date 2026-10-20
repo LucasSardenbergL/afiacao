@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, Check, X, UserCheck, Clock, Link2, AlertTriangle } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { documentoParaBuscarNoOmie } from '@/lib/omie/documento-cliente';
 
 interface PendingUser {
   id: string;
@@ -81,7 +82,7 @@ const AdminApprovals = () => {
   const tryLinkOmie = async (profileUserId: string, document: string | null, _name: string): Promise<'linked' | 'no_data' | 'already_linked' | 'not_found' | 'error'> => {
     if (!document) return 'no_data';
 
-    const normalizedDoc = document.replace(/\D/g, '');
+    const normalizedDoc = documentoParaBuscarNoOmie(document);
     if (!normalizedDoc) return 'no_data';
 
     try {

@@ -8,8 +8,10 @@ import { Label } from '@/components/ui/label';
 import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { documentoEditadoParaGravar } from '@/lib/omie/documento-cliente';
 import { useBiometricAuth } from '@/hooks/useBiometricAuth';
 import { useProfile, useProfileStats } from '@/queries/useProfile';
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,6 +36,9 @@ const Profile = () => {
   const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editDocument, setEditDocument] = useState('');
+  // Documento como veio do banco: só gravamos `document` se o usuário EDITOU o campo — regravar o
+  // valor carregado mutilaria o CNPJ alfanumérico que a edge preservou (#3180).
+  const [documentoOriginal, setDocumentoOriginal] = useState<string | null>(null);
   const [editBusinessOpen, setEditBusinessOpen] = useState('');
   const [editBusinessClose, setEditBusinessClose] = useState('');
   const [editLunchStart, setEditLunchStart] = useState('');
@@ -130,6 +135,7 @@ const Profile = () => {
     setEditPhone(profile?.phone || '');
     setEditEmail(profile?.email || '');
     setEditDocument(profile?.document || '');
+    setDocumentoOriginal(profile?.document ?? null);
     setEditBusinessOpen(profile?.business_hours_open || '');
     setEditBusinessClose(profile?.business_hours_close || '');
     setEditLunchStart(profile?.lunch_start || '');
@@ -146,17 +152,18 @@ const Profile = () => {
     if (!user) return;
     setSaving(true);
     try {
-      const updateData: Record<string, unknown> = {
+      const updateData: TablesUpdate<'profiles'> = {
         name: editName,
         email: editEmail || null,
         phone: editPhone || null,
-        document: editDocument?.replace(/\D/g, '') || null,
         business_hours_open: editBusinessOpen || null,
         business_hours_close: editBusinessClose || null,
         lunch_start: editLunchStart || null,
         lunch_end: editLunchEnd || null,
         preferred_delivery_time: editDeliveryTime || null,
       };
+      const documento = documentoEditadoParaGravar(editDocument, documentoOriginal);
+      if (documento !== undefined) updateData.document = documento;
 
       // Validate delivery time against business hours and lunch
       if (editDeliveryTime && editBusinessOpen && editBusinessClose) {

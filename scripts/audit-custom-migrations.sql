@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 662
+-- Total de custom migrations: 666
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -726,7 +726,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019110000', 'radar_cnpj_alfanumerico', '20261019110000_radar_cnpj_alfanumerico.sql'),
   ('20261019110100', 'fin_titulo_baixas_cr_mapa', '20261019110100_fin_titulo_baixas_cr_mapa.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
-  ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql')
+  ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql'),
+  ('20261019140000', 'omie_identidade_cnpj_alfanumerico', '20261019140000_omie_identidade_cnpj_alfanumerico.sql'),
+  ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
+  ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
+  ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2811,7 +2815,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
-  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4944,7 +4956,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_titulo_baixas_cr_mapa', 'function', 'public', 'fin_titulo_baixas_cr_mapa', ''),
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
-  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', '')
+  ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'cnpj_alfanumerico_valido', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'normalizar_documento', ''),
+  ('omie_identidade_cnpj_alfanumerico', 'function', 'public', 'omie_sync_identity_snapshot', ''),
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
 )
 SELECT
   e.migration,
@@ -4972,7 +4992,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 147.
+-- Funções redefinidas com corpo extraível: 148.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5290,6 +5310,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'reposicao_pedido_auto_aprovavel', 3, '20260629140000_reposicao_preco_ausente_null.sql', '3a26656e94c9bbd8db410c2a33c1a704'),
   ('public', 'radar_recruzar_ja_cliente', 1, '20260610200000_radar_fundacao.sql', 'c24f51789aef9dd5069206c772cafb73'),
   ('public', 'radar_recruzar_ja_cliente', 2, '20261019110000_radar_cnpj_alfanumerico.sql', '9151dc6344dab327e86fd617abde5c50'),
+  ('public', 'radar_recruzar_ja_cliente', 3, '20261019150000_radar_recruzar_mascara_exata.sql', '6ab63faa41d9068bde697c09f9f7622c'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 1, '20260611120000_reposicao_fixes_codex_711.sql', '0b88073f4ac26f6c3aedc8055a5c7ab7'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 2, '20260922225449_oportunidade_erro_terminal_nao_bloqueia_oferta.sql', 'feeda17a3271a3791a39db4870aae2da'),
   ('public', 'gerar_pedidos_oportunidade_ciclo', 3, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'bb80edea94d19835ec55c34f007dc0ed'),
@@ -5427,6 +5448,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'margem_cliente_agregada', 4, '20261009220000_margem_cliente_janela_12m.sql', '9b441ed8dda18973dea8097afa96754b'),
   ('public', 'get_carteira_margem_faixa', 1, '20260726170000_fu4f_fase3_carteira_margem_faixa.sql', '075209b91d13be52c58220f6ddc88521'),
   ('public', 'get_carteira_margem_faixa', 2, '20260813234112_carteira_margem_faixa_motivo_gate_custo.sql', '169677feb2e686d3e73ec31426c608b6'),
+  ('public', 'tint_watchdog_corante_check', 1, '20260727150000_tint_watchdog_corante_impagavel.sql', '34489e3784a08d574b657d6efaf1919b'),
+  ('public', 'tint_watchdog_corante_check', 2, '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql', 'b93c78b1fd5712b764e9ca3cb8a82c03'),
+  ('public', 'tint_watchdog_corante_check', 3, '20261019160000_tint_watchdog_corante_v3_plano_custom.sql', '6ce4f655ce3a303b5cc6d450eabba37d'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
   ('public', '_tint_watchdog_fase5_transicao', 1, '20260730120000_tint_watchdog_fase5_chave.sql', 'd4dc06f6433a2e83bc19241bafd8302d'),

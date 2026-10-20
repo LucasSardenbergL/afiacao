@@ -7,7 +7,14 @@ import { useGamificationScore, getLevelInfo } from '@/hooks/useGamificationScore
 import { differenceInDays } from 'date-fns';
 import { supabase } from '@/integrations/supabase/client';
 import { computePriority } from './priority';
+import { ehCnpjDocumento } from '@/lib/omie/documento-cliente';
 import type { Profile, Order, UserTool } from './types';
+
+/** PJ (CNPJ, inclusive alfanumérico) mostra o nome inteiro; PF só o primeiro nome. Era `replace(/\D/g,'').length === 14`. */
+export function nomeExibicaoCliente(profile: Profile | null): string {
+  const isCNPJ = ehCnpjDocumento(profile?.document);
+  return isCNPJ ? profile?.name || 'Cliente' : profile?.name?.split(' ')[0] || 'Cliente';
+}
 
 export function useCustomerDashboard(profile: Profile | null, pendingOrders: Order[], userTools: UserTool[]) {
   const { data: gamScore } = useGamificationScore();
@@ -24,8 +31,7 @@ export function useCustomerDashboard(profile: Profile | null, pendingOrders: Ord
     })();
   }, []);
 
-  const isCNPJ = profile?.document && profile.document.replace(/\D/g, '').length === 14;
-  const displayName = isCNPJ ? profile?.name || 'Cliente' : profile?.name?.split(' ')[0] || 'Cliente';
+  const displayName = nomeExibicaoCliente(profile);
 
   const toolsOverdue = userTools.filter(t => {
     if (!t.next_sharpening_due) return false;

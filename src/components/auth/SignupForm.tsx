@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
+import { ehDocumentoPessoaJuridica } from '@/lib/omie/documento-cliente';
 import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -72,7 +74,7 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
     setErrors({});
     setExistingUserError(false);
     try {
-      const docLimpo = formData.document.replace(/\D/g, '');
+      const docLimpo = normalizarDocumento(formData.document);
       const { data: existingProfile } = await supabase.from('profiles').select('id').eq('document', docLimpo).maybeSingle();
       if (existingProfile) {
         setExistingUserError(true);
@@ -212,13 +214,13 @@ export function SignupForm({ formData, onInputChange, isLoading, onFinalSubmit, 
             <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2"><User className="w-4 h-4" />Dados Pessoais</h3>
             <div>
               <Label htmlFor="name" className="text-sm font-medium">
-                {formData.document.replace(/\D/g, '').length > 11 ? 'Razão Social' : 'Nome Completo'} *
+                {ehDocumentoPessoaJuridica(formData.document) ? 'Razão Social' : 'Nome Completo'} *
               </Label>
               <Input id="name" type="text" placeholder="Nome completo ou razão social" value={formData.name}
                 onChange={(e) => onInputChange('name', e.target.value)} className={cn(errors.name && 'border-destructive')} disabled={isLoading} />
               {errors.name && <p className="text-xs text-destructive mt-1">{errors.name}</p>}
             </div>
-            {formData.document.replace(/\D/g, '').length > 11 && (
+            {ehDocumentoPessoaJuridica(formData.document) && (
               <div>
                 <Label htmlFor="tradeName" className="text-sm font-medium">Nome Fantasia</Label>
                 <Input id="tradeName" type="text" placeholder="Nome fantasia" value={formData.tradeName}
