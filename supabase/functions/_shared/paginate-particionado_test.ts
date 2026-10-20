@@ -87,6 +87,8 @@ interface Sabotagem {
   semAte?: boolean;         // esquece o .lt(ate)
   deExclusivo?: boolean;    // .gt(de) no lugar de .gte(de) — perde a linha da fronteira
   capServidor?: number;     // max-rows do servidor menor que o limite pedido
+  comCount?: boolean;       // responde `count` como o PostgREST com count=exact (filtro sem o limit)
+  countFixo?: unknown;      // força o valor de `count` (inválido, contraditório…)
 }
 
 /** Banco de memória que aplica o contrato do build sobre o estado ATUAL de `estado()`. */
@@ -94,12 +96,15 @@ function fakeBanco(estado: () => Linha[], sab: Sabotagem = {}) {
   const chamadas: Array<{ faixa: FaixaUuid; cursor: string | null }> = [];
   const build = (faixa: FaixaUuid, cursor: string | null, limite: number) => {
     chamadas.push({ faixa, cursor });
-    const janela = ordenada(estado()).filter((l) =>
+    const casam = ordenada(estado()).filter((l) =>
       (sab.semDe || faixa.de === null || (sab.deExclusivo ? l.id > faixa.de : l.id >= faixa.de)) &&
       (sab.semAte || faixa.ate === null || l.id < faixa.ate) &&
       (cursor === null || l.id > cursor)
-    ).slice(0, Math.min(limite, sab.capServidor ?? Infinity));
-    return Promise.resolve({ data: janela, error: null });
+    );
+    const janela = casam.slice(0, Math.min(limite, sab.capServidor ?? Infinity));
+    // Count e dados do MESMO estado (um statement só), como o PostgREST faz.
+    const count = "countFixo" in sab ? sab.countFixo as number : sab.comCount ? casam.length : undefined;
+    return Promise.resolve({ data: janela, error: null, count });
   };
   return { build, chamadas };
 }
@@ -288,4 +293,106 @@ Deno.test("limites inválidos (fora de ordem) → lança antes de ler", async ()
   }
   if (!lancou) throw new Error("aceitou limites fora de ordem");
   assertEquals(chamadas.length, 0);
+});
+
+// ── v1.9: EOF provado pelo servidor (count exato no mesmo statement) ─────────────────────────────
+
+/** Requisições esperadas com o EOF por count: ceil(n/limite) por faixa, mínimo 1 (faixa vazia). */
+function requisicoesComCount(dados: Linha[], limite: number): number {
+  const cortes = [null, ...LIMITES_UUID_8];
+  let total = 0;
+  for (let i = 0; i < cortes.length; i++) {
+    const de = cortes[i];
+    const ate = LIMITES_UUID_8[i] ?? null;
+    const n = dados.filter((l) => (de === null || l.id >= de) && (ate === null || l.id < ate)).length;
+    total += Math.max(1, Math.ceil(n / limite));
+  }
+  return total;
+}
+
+Deno.test("count exato: completo E sem a página vazia de fim de faixa (menos requisições)", async () => {
+  const dados = colecao(5000);
+  const { build, chamadas } = fakeBanco(() => dados, { comCount: true, capServidor: 300 });
+  assertEquals(await fetchAllParticionadoUuid(build, (l) => l.id, "t"), ordenada(dados));
+  assertEquals(chamadas.length, requisicoesComCount(dados, 300), `requisições: ${chamadas.length}`);
+});
+
+Deno.test("CONTROLE do atalho: sem count, o mesmo cenário paga 1 página vazia por faixa", async () => {
+  const dados = colecao(5000);
+  const { build, chamadas } = fakeBanco(() => dados, { capServidor: 300 });
+  assertEquals(await fetchAllParticionadoUuid(build, (l) => l.id, "t"), ordenada(dados));
+  assertEquals(chamadas.length, requisicoesComCount(dados, 300) + LIMITES_UUID_8.length + 1);
+});
+
+Deno.test("count + INSERT concorrente À FRENTE e ATRÁS do cursor: nenhuma linha original some, nada duplica", async () => {
+  // O desenho descartado ("para quando o acumulado atinge o count da 1ª página") PERDE aqui: as
+  // linhas inseridas à frente fazem o total chegar antes da última original ser lida.
+  const original = colecao(4000);
+  const estado = [...original];
+  const novos = uuidsAleatorios(600, 99).filter((id) => !estado.some((l) => l.id === id));
+  let i = 0;
+  const base = fakeBanco(() => estado, { comCount: true, capServidor: 150 });
+  const build = (faixa: FaixaUuid, cursor: string | null, limite: number) => {
+    for (let k = 0; k < 3 && i < novos.length; k++) estado.push({ id: novos[i++], valor: -1 });
+    return base.build(faixa, cursor, limite);
+  };
+  const lido = await fetchAllParticionadoUuid(build, (l) => l.id, "t");
+  const ids = lido.map((l) => l.id);
+  if (new Set(ids).size !== ids.length) throw new Error("linha duplicada sob INSERT concorrente");
+  for (const l of original) if (!ids.includes(l.id)) throw new Error(`linha original ${l.id} sumiu`);
+});
+
+Deno.test("count + DELETE concorrente: as sobreviventes vêm todas, sem duplicata", async () => {
+  const original = colecao(3000);
+  let estado = [...original];
+  const apagadas = new Set<string>();
+  let n = 0;
+  const base = fakeBanco(() => estado, { comCount: true, capServidor: 200 });
+  const build = (faixa: FaixaUuid, cursor: string | null, limite: number) => {
+    if (++n % 4 === 0) {
+      const alvo = estado[(n * 7) % estado.length];
+      apagadas.add(alvo.id);
+      estado = estado.filter((l) => l.id !== alvo.id);
+    }
+    return base.build(faixa, cursor, limite);
+  };
+  const ids = (await fetchAllParticionadoUuid(build, (l) => l.id, "t")).map((l) => l.id);
+  if (new Set(ids).size !== ids.length) throw new Error("duplicata sob DELETE concorrente");
+  // Sobrevivente = nunca apagada; a apagada pode ter sido lida antes de sumir (snapshot por página).
+  for (const l of original) {
+    if (!apagadas.has(l.id) && !ids.includes(l.id)) throw new Error(`sobrevivente ${l.id} sumiu`);
+  }
+});
+
+for (const [nome, countFixo] of [
+  ["count menor que as linhas da página", 3],
+  ["count negativo", -1],
+  ["count fracionário", 2.5],
+  ["count string", "1000"],
+  ["count NaN", Number.NaN],
+] as const) {
+  Deno.test(`count incoerente (${nome}): MALFORMADA, nunca EOF`, async () => {
+    const dados = colecao(500);
+    const { build } = fakeBanco(() => dados, { countFixo });
+    await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "MALFORMADA");
+  });
+}
+
+Deno.test("página VAZIA com count positivo: MALFORMADA — truncar contra a evidência não é EOF", async () => {
+  const build = (_f: FaixaUuid, _c: string | null) =>
+    Promise.resolve({ data: [] as Linha[], error: null, count: 7 });
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "MALFORMADA");
+});
+
+Deno.test("count null: cai no EOF legado (página vazia), completo", async () => {
+  const dados = colecao(2000);
+  const { build, chamadas } = fakeBanco(() => dados, { countFixo: null, capServidor: 400 });
+  assertEquals(await fetchAllParticionadoUuid(build, (l) => l.id, "t"), ordenada(dados));
+  assertEquals(chamadas.length, requisicoesComCount(dados, 400) + LIMITES_UUID_8.length + 1);
+});
+
+Deno.test("página TERMINAL (rows === count) com uuid fora da faixa: o atalho NÃO esconde a violação", async () => {
+  const dados = colecao(800);
+  const base = fakeBanco(() => dados, { comCount: true, semAte: true });
+  await assertFalha(() => fetchAllParticionadoUuid(base.build, (l) => l.id, "t"), "KEYSET_PAGINA_SOBREPOSTA");
 });
