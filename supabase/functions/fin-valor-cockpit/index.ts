@@ -8,6 +8,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
 // nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
 import { fetchAll } from "../_shared/paginate.ts";
+import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 // A leitura de `order_items` NÃO mora mais aqui: esta edge importa
 // `npm:@supabase/supabase-js@2` e nunca roda sob `--no-remote`, então nada dela era
@@ -714,11 +715,13 @@ Deno.serve(async (req: Request) => {
     // AR da Oben relevante à janela (emitido na janela OU ainda em aberto) — serve p/ AR por cliente e cobertura.
     type CR = { omie_codigo_cliente: number | null; omie_codigo_lancamento: number | null; valor_documento: number; saldo: number; valor_recebido: number; data_emissao: string | null; data_vencimento: string | null; status_titulo: string };
     const crsAll = await fetchAll<CR>((f, t) => db.from("fin_contas_receber").select("omie_codigo_cliente, omie_codigo_lancamento, valor_documento, saldo, valor_recebido, data_emissao, data_vencimento, status_titulo").eq("company", COMPANY).or(`data_recebimento.is.null,data_recebimento.gte.${ttm_inicio},data_emissao.gte.${ttm_inicio}`).order("id", { ascending: true }).range(f, t), "fin_contas_receber");
-    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) por omie_codigo_lancamento.
-    type Baixa = { omie_codigo_lancamento: number | null; data_baixa_final: string | null };
-    const baixasAll = await fetchAll<Baixa>((f, t) => db.from("v_titulo_baixas").select("omie_codigo_lancamento, data_baixa_final").eq("company", COMPANY).eq("tipo", "CR").order("omie_codigo_lancamento", { ascending: true }).range(f, t), "v_titulo_baixas");
+    // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) por omie_codigo_lancamento, numa
+    // ÚNICA avaliação via RPC (paginar a view com .range() reavaliava-a inteira a cada página).
+    // Falha ou envelope fora de forma LANÇA (FalhaLeituraCritica), como o fetchAll lançava —
+    // nunca vira "nenhum título baixado". A RPC já só devolve pares com cod e data não nulos.
+    const baixasAll = await carregarBaixasCr(db, COMPANY);
     const baixaPorCod = new Map<number, string>();
-    for (const b of baixasAll) { if (b.omie_codigo_lancamento != null && b.data_baixa_final) baixaPorCod.set(Number(b.omie_codigo_lancamento), b.data_baixa_final); }
+    for (const b of baixasAll) baixaPorCod.set(b.omie_codigo_lancamento, b.data_baixa_final);
     const titulosPorCliente = new Map<string, TituloAR[]>();
     for (const cr of crsAll) {
       if (cr.omie_codigo_cliente == null) continue;

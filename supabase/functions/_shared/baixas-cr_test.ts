@@ -1,6 +1,6 @@
-// deno test supabase/functions/fin-cashflow-engine/baixas-cr_test.ts
+// deno test supabase/functions/_shared/baixas-cr_test.ts
 import { carregarBaixasCr, parsearMapaBaixasCr } from "./baixas-cr.ts";
-import { FalhaLeituraCritica } from "../_shared/leitura-critica.ts";
+import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEq(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {

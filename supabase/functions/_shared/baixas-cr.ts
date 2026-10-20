@@ -13,8 +13,8 @@
 // MALFORMADA. O envelope existe porque o supabase-js converte HTTP 404 com corpo `[]` em
 // {data: [], error: null} — um array cru vazio passaria por "empresa sem baixa". Nunca vira lista vazia, que
 // derrubaria a cobertura da calibração em silêncio.
-import { exigirLeitura, FalhaLeituraCritica, type RespostaLeitura } from "../_shared/leitura-critica.ts";
-import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { exigirLeitura, FalhaLeituraCritica, type RespostaLeitura } from "./leitura-critica.ts";
+import { mensagemDeErro } from "./erro-mensagem.ts";
 
 const FONTE_BAIXAS_CR = "fin_titulo_baixas_cr_mapa";
 

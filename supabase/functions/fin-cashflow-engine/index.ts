@@ -11,14 +11,15 @@ import { fetchAll } from "../_shared/paginate.ts";
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
 // calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
-import { exigirLeitura, exigirLinhas, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
+import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/leitura-critica.ts";
 // E o terceiro lado da mesma moeda, no eixo da PERSISTÊNCIA: o supabase-js resolve normal
 // com `error` preenchido, então um `await ....insert()` cujo retorno é ignorado devolve
 // HTTP 200 sem ter gravado. Medido em prod: 8 de 9 snapshots em 2026-07-28. O par com o
 // contrato de leitura acima é o que fecha a engine — ler certo e não gravar é tão
 // silencioso quanto gravar lixo; nenhum dos dois basta sozinho.
 import { escritaCritica } from "../_shared/escrita-critica.ts";
-import { carregarBaixasCr } from "./baixas-cr.ts";
+import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
+import { lerPrazosEmpresa } from "./prazos-empresa.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -332,7 +333,8 @@ type DadosBase = {
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   curvas_aging: Record<Faixa, CurvaFaixa>;
-  // PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos, 1 linha/empresa).
+  // PMR/PMP + cobertura da baixa derivada (a linha de v_capital_giro_prazos da empresa, lida pela
+  // RPC fin_capital_giro_prazos_empresa — cópia da view travada por md5 e igualdade, A6).
   // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
   prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
@@ -362,7 +364,7 @@ async function carregarDados(
     , 'fin_contas_pagar'),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
     // aging. UMA leitura via RPC (jsonb, fora do cap de 1000): paginar a view reavaliava-a
-    // inteira a cada página e estourou o statement_timeout na colacor (ver ./baixas-cr.ts).
+    // inteira a cada página e estourou o statement_timeout na colacor (ver _shared/baixas-cr.ts).
     // Usado SÓ na calibração, PMR/PMP/dias_cobertura do engine ficam intactos.
     carregarBaixasCr(supabase, company),
     Promise.all([
@@ -392,10 +394,10 @@ async function carregarDados(
       // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
       supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
         .eq('company', company).maybeSingle(),
-      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos).
-      // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
-      supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
-        .eq('company', company).maybeSingle(),
+      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada — a linha de v_capital_giro_prazos
+      // desta empresa, via RPC com o filtro de empresa dentro do CTE (a view varria
+      // fin_movimentacoes inteira 2× por chamada; ver ./prazos-empresa.ts).
+      supabase.rpc('fin_capital_giro_prazos_empresa', { p_company: company }),
       // Estoque de GIRO do Omie (inventory_position × cmc, classe por tipo SPED + família).
       supabase.rpc('fin_estoque_giro_valor', { p_company: company }).maybeSingle(),
     ]),
@@ -514,13 +516,13 @@ async function carregarDados(
   // (o "—" já é honesto), mas o motivo deixa de mentir: antes um erro de leitura era
   // logado como "sem linha", e a tela mostrava "—" indistinguível de empresa sem dado.
   const motivos_confianca: string[] = [...estoque.motivos, ...(cmv.motivo ? [cmv.motivo] : [])];
-  const prazosLeitura = tolerarLeitura(prazosRes, 'v_capital_giro_prazos');
-  const prazos = (prazosLeitura.dados as DadosBase['prazos']) ?? null;
+  const prazosLeitura = lerPrazosEmpresa(prazosRes);
+  const prazos = prazosLeitura.dados;
   if (prazosLeitura.motivo) {
     motivos_confianca.push(`${prazosLeitura.motivo} PMR/PMP/CCC ficam indisponíveis.`);
     console.error(`[Cashflow][${company}] ${prazosLeitura.motivo}`);
   } else if (!prazos) {
-    console.warn(`[Cashflow][${company}] v_capital_giro_prazos sem linha → PMR/PMP/CCC = null`);
+    console.warn(`[Cashflow][${company}] fin_capital_giro_prazos_empresa: existe=false → PMR/PMP/CCC = null`);
   }
 
   // Onda 2: curvas de cobrança por aging, calibradas POR EXPOSIÇÃO sobre todos os
