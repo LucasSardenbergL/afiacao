@@ -59,6 +59,10 @@ Custo do 2º envio: 2,9 créditos e **edições não pedidas** pelo bot (`lovabl
 versão → faixa do `package.json`, `^2.117.0` desde o #3198), então o bot só regenerou. O revert (#3206) foi
 fechado; o que quebrava era o lock do `edges:typecheck`, regravado no #3207 (este diário foi junto). Lição: **antes de colar o pacote, confira o ledger colado** — `visto há N min via sonda` com a `versao` da
 main já diz que outra sessão colou; a pista de sessão-irmã é fraca, a sonda é a prova.
+E a 2ª lição, do #3206: **`EDICAO_DETECTADA` em arquivo GERADO é falso positivo do sensor**, que hoje só tolera
+`types.ts` — antes de reverter commit do bot, pergunte "quem gera este arquivo?" (`git grep` do caminho em
+`vite.config.ts`/plugins); saída de gerador se corrige na FONTE (`src/lib/mcp/`, `package.json`), nunca no artefato.
+Incidente para o sensor passar a tolerar `supabase/functions/mcp/index.ts`: #3206.
 
 ## Lição
 
