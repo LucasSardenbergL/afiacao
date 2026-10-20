@@ -52,7 +52,7 @@ Apply pelo envelope (ensaio `ENSAIO_OK` + ROLLBACK antes; postcondição A1–A7
 | Dedupe | `avisado_em = 15:21:17`; 2ª chamada → `{"avisados":0}` |
 | Ledger | `radar.avisar_lote` automatica/sucesso, `detalhes.lotes[0].alerta_id=548` |
 
-E-mail: `dispatch-notifications` roda a cada 30 min (cron 102) — o estado de `email_enviado` do 548 fica no PR.
+E-mail: `dispatch-notifications` (cron 102, a cada 30 min) **enviou** o 548 na rodada das 15:30 UTC — `status='notificado'`, `email_enviado_em = 15:30:42` (1º aviso real do Radar ao gestor).
 
 ## Lições
 
