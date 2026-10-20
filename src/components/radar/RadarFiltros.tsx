@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import type { RadarFiltros as Filtros } from '@/queries/useRadarLista';
 import { UFS_BR, type PresetRadar } from '@/lib/radar/ui-helpers';
 import type { LoteIngest } from '@/lib/radar/lote-vigente';
+import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import { track } from '@/lib/analytics';
 
 // Sentinel para "todas as UFs" (substitui value="" que Radix rejeita).
@@ -182,6 +183,24 @@ export function RadarFiltros({
           />
           <Label htmlFor="radar-so-ineditos" className="text-sm cursor-pointer">
             Só inéditos do lote
+          </Label>
+        </div>
+
+        {/* "Só sugeridos p/ cadastro" = o mesmo filtro do card "Sugeridos para cadastro" (em conversa ·
+            não cliente · score ≥ limiar · foto vigente). Vence status/já-clientes/saiu-do-dump. */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="radar-so-sugeridos"
+            checked={filtros.soSugeridos}
+            onCheckedChange={(checked) => {
+              track('radar.sugeridos_filtro', {
+                ativo: checked, origem: 'filtro', lote: lote?.mes_referencia ?? null, sugeridos: null, total: lote?.total_recebido ?? null, limiar: LIMIAR_SUGERIDO,
+              });
+              set({ soSugeridos: checked });
+            }}
+          />
+          <Label htmlFor="radar-so-sugeridos" className="text-sm cursor-pointer" title={`Em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}, na foto vigente`}>
+            Só sugeridos p/ cadastro
           </Label>
         </div>
       </div>

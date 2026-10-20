@@ -45,7 +45,8 @@ export type Veredito<M extends string> = { ok: true } | { ok: false; motivo: M }
  */
 export function cadastravelNoOmie(e: LeadSugerivel): Veredito<MotivoNaoCadastravel> {
   if (e.ja_cliente) return { ok: false, motivo: 'ja_cliente' };
-  if (e.omie_codigo_cliente) return { ok: false, motivo: 'ja_vinculado_omie' };
+  // `!= null` (não truthiness): o count em SQL usa `IS NULL` — '' precisa cair do MESMO lado nos dois.
+  if (e.omie_codigo_cliente != null) return { ok: false, motivo: 'ja_vinculado_omie' };
   if (e.rfb_situacao != null && e.rfb_situacao !== RFB_ATIVA) return { ok: false, motivo: 'rfb_nao_ativa' };
   if (!CNPJ_NUMERICO_RE.test(e.cnpj)) return { ok: false, motivo: 'cnpj_alfanumerico' };
   return { ok: true };

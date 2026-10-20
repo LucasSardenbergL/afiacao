@@ -40,6 +40,9 @@ describe('cadastravelNoOmie (gatilho pós-sinal)', () => {
   it('recusa quem já tem código Omie mesmo com ja_cliente=false (vínculo é a prova)', () => {
     expect(cadastravelNoOmie({ ...base, omie_codigo_cliente: '4242' })).toEqual({ ok: false, motivo: 'ja_vinculado_omie' });
   });
+  it("vínculo vazio ('') também conta como vinculado — paridade com o `IS NULL` do count", () => {
+    expect(cadastravelNoOmie({ ...base, omie_codigo_cliente: '' })).toEqual({ ok: false, motivo: 'ja_vinculado_omie' });
+  });
   it.each(['08', '04', '03', '01'])('recusa RFB %s (baixado/inapto/suspenso/nulo)', (s) => {
     expect(cadastravelNoOmie({ ...base, rfb_situacao: s })).toEqual({ ok: false, motivo: 'rfb_nao_ativa' });
   });

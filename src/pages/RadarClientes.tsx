@@ -41,6 +41,7 @@ type RadarUrlState = {
   comTelefone: boolean;
   incluirSaiuDoDump: boolean;
   soIneditos: boolean;
+  soSugeridos: boolean;
   preset: string;
   vista: string;
   [k: string]: string | boolean;
@@ -56,6 +57,7 @@ const DEFAULTS: RadarUrlState = {
   comTelefone: false,
   incluirSaiuDoDump: false,
   soIneditos: false,
+  soSugeridos: false,
   preset: 'score',
   vista: 'lista',
 };
@@ -163,7 +165,12 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
-      <RadarKpis soIneditos={filtros.soIneditos} onSoIneditos={(v) => set({ soIneditos: v })} />
+      <RadarKpis
+        soIneditos={filtros.soIneditos}
+        onSoIneditos={(v) => set({ soIneditos: v })}
+        soSugeridos={filtros.soSugeridos}
+        onSoSugeridos={(v) => set({ soSugeridos: v })}
+      />
       <Filtros filtros={filtros} set={set} lote={lote} />
       <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
@@ -229,6 +236,7 @@ export default function RadarClientes() {
                   onSelecionar={(v) => selecionar(e, v)}
                   onAbrir={() => abrir(e)}
                   lote={lote}
+                  mostrarMotivos={filtros.soSugeridos}
                 />
               ))}
               <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
