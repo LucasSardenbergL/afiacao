@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 681
+-- Total de custom migrations: 682
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -743,6 +743,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql'),
   ('20261020143511', 'venda_cliente_complemento', '20261020143511_venda_cliente_complemento.sql'),
   ('20261020150000', 'fin_capital_giro_prazos_empresa', '20261020150000_fin_capital_giro_prazos_empresa.sql'),
+  ('20261020150000', 'venda_cliente_recompra', '20261020150000_venda_cliente_recompra.sql'),
   ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
   ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql'),
   ('20261020181743', 'venda_cliente_gerador', '20261020181743_venda_cliente_gerador.sql')
@@ -2876,6 +2877,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_complemento', 'function', 'public', '_carteira_mixgap_for_owner', ''),
   ('venda_cliente_complemento', 'function', 'public', 'venda_complemento_comprador', ''),
   ('fin_capital_giro_prazos_empresa', 'function', 'public', 'fin_capital_giro_prazos_empresa', ''),
+  ('venda_cliente_recompra', 'function', 'private', 'venda_mediana', ''),
+  ('venda_cliente_recompra', 'function', 'private', 'venda_linhas_pedido', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_recompra_em', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_situacao_em', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_recompra_atualizar', ''),
+  ('venda_cliente_recompra', 'table', 'public', 'venda_recompra', ''),
+  ('venda_cliente_recompra', 'table', 'public', 'venda_situacao', ''),
+  ('venda_cliente_recompra', 'index', 'public', 'idx_venda_recompra_atrasado', 'venda_recompra'),
+  ('venda_cliente_recompra', 'cron_job', 'cron', 'venda-recompra', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', ''),
   ('venda_cliente_espinha', 'function', 'private', 'venda_sync_dia_coberto', ''),
@@ -5082,6 +5092,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_complemento', 'function', 'public', '_carteira_mixgap_for_owner', ''),
   ('venda_cliente_complemento', 'function', 'public', 'venda_complemento_comprador', ''),
   ('fin_capital_giro_prazos_empresa', 'function', 'public', 'fin_capital_giro_prazos_empresa', ''),
+  ('venda_cliente_recompra', 'function', 'private', 'venda_mediana', ''),
+  ('venda_cliente_recompra', 'function', 'private', 'venda_linhas_pedido', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_recompra_em', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_situacao_em', ''),
+  ('venda_cliente_recompra', 'function', 'public', 'venda_recompra_atualizar', ''),
+  ('venda_cliente_recompra', 'table', 'public', 'venda_recompra', ''),
+  ('venda_cliente_recompra', 'table', 'public', 'venda_situacao', ''),
+  ('venda_cliente_recompra', 'index', 'public', 'idx_venda_recompra_atrasado', 'venda_recompra'),
+  ('venda_cliente_recompra', 'cron_job', 'cron', 'venda-recompra', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', ''),
   ('venda_cliente_espinha', 'function', 'private', 'venda_sync_dia_coberto', ''),

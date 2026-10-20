@@ -658,6 +658,13 @@ db/test-data-health-radar.sh               39  falsificar=12
 # desconto como zero, fase na RPC, 1ª marcação, carteira sem alias, RLS sombra, POST ACL, ACL sem POST, POST cron.
 db/test-venda-espinha.sh                   30  falsificar=12
 
+# Venda por cliente, Task 2 — recompra comprador × SKU × empresa e situação do comprador
+# (20261020150000). Paridade SQL × TS (oráculo src/lib/venda-cliente/recompra.ts via `bun`, sem deps)
+# sobre db/fixtures/venda-recompra.json em 3 datas; alias → canônico, cancelado/deleted fora, sem olhar
+# o futuro, Oben × Colacor separados, desconto não apurado → preço NULL, borda 1,5, perdido/sem_base,
+# ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
+db/test-venda-recompra.sh                  49  falsificar=15
+
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
 # db/fixtures/venda-cidades-alvo.json) com os `teto` maiores atrasos fora da rota; perdido, founder e inelegível fora;
