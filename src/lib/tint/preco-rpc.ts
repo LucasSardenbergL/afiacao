@@ -20,9 +20,12 @@ function objeto(j: Json | undefined, fonte: string): Objeto {
   return j;
 }
 
+// NULL EXPLÍCITO é contrato (custo oculto fora do staff); chave AUSENTE é forma desconhecida e LANÇA
+// — senão `{baseDisponivel, corantesCompletos, precoFinal}` sem os custos liberaria preço (Codex, PR 4).
 function numeroOuNull(o: Objeto, campo: string, fonte: string): number | null {
+  if (!(campo in o) || o[campo] === undefined) throw new Error(`${fonte}: ${campo} ausente`);
   const v = o[campo];
-  if (v === null || v === undefined) return null;
+  if (v === null) return null;
   if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${fonte}: ${campo} não é número`);
   return v;
 }

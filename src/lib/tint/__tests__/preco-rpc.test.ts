@@ -34,6 +34,18 @@ describe('precoDeJson (get_tint_price)', () => {
     expect(() => precoDeJson(null)).toThrow(/não é objeto/);
     expect(() => precoDeJson({ ...staff, itensCorantes: null })).toThrow(/itensCorantes/);
   });
+
+  it('chave AUSENTE não é NULL: resposta sem custoBase/custoCorantes/precoFinal LANÇA', () => {
+    const { custoBase: _b, ...semBase } = staff;
+    const { custoCorantes: _c, ...semCorantes } = staff;
+    const { precoFinal: _p, ...semPreco } = staff;
+    expect(() => precoDeJson(semBase)).toThrow(/custoBase ausente/);
+    expect(() => precoDeJson(semCorantes)).toThrow(/custoCorantes ausente/);
+    expect(() => precoDeJson(semPreco)).toThrow(/precoFinal ausente/);
+    expect(() => precosDeJson({ f1: { baseDisponivel: true, corantesCompletos: true, precoFinal: 112.5 } })).toThrow(
+      /get_tint_prices\[f1\]: custoBase ausente/,
+    );
+  });
 });
 
 describe('precosDeJson (get_tint_prices)', () => {
@@ -44,7 +56,7 @@ describe('precosDeJson (get_tint_prices)', () => {
   });
 
   it('entrada fora da forma LANÇA com o id da fórmula', () => {
-    expect(() => precosDeJson({ f1: { baseDisponivel: true } })).toThrow(/get_tint_prices\[f1\]: corantesCompletos/);
+    expect(() => precosDeJson({ f1: { baseDisponivel: true } })).toThrow(/get_tint_prices\[f1\]: custoBase ausente/);
     expect(() => precosDeJson([])).toThrow(/não é objeto/);
   });
 });
