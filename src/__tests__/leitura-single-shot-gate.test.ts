@@ -324,8 +324,9 @@ describe('gate estrutural: leitura single-shot que trata falha como zero (irmã 
       /exigirLinhas\(ccRes, 'fin_contas_correntes'\)/.test(fonte),
       'fin_contas_correntes voltou a aceitar lista vazia como saldo 0',
     ).toBe(true);
-    // A que degrada em vez de lançar continua degradando COM motivo.
-    expect(/tolerarLeitura\([A-Za-z]+Res, 'v_capital_giro_prazos'\)/.test(fonte)).toBe(true);
+    // A que degrada em vez de lançar continua degradando COM motivo (prazos: o leitor estrito
+    // da RPC fin_capital_giro_prazos_empresa, ver fin-cashflow-engine/prazos-empresa.ts).
+    expect(/lerPrazosEmpresa\(prazosRes\)/.test(fonte)).toBe(true);
     // E a coluna opcional continua tolerando SÓ coluna ausente (não qualquer erro).
     expect(/tolerarColunaAusente\(folhaCatRes,/.test(fonte)).toBe(true);
     // Nenhum `.data` cru sobrou no arquivo-âncora: o pin acima garante QUAIS fontes estão
