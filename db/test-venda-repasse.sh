@@ -343,7 +343,8 @@ EXCEPTION WHEN $4 THEN RAISE NOTICE 'NEG-OK[%]', SQLERRM;
           WHEN OTHERS THEN RAISE;
 END \$n\$;
 ROLLBACK;" 2>&1 || true)"
-  if printf '%s' "$out" | grep -q "NEG-OK\[.*$5"; then ok "$1 $2"
+  # here-string, não pipe: com pipefail, `printf | grep -q` reprova ao acaso (grep sai no 1º match → SIGPIPE 141)
+  if grep -q "NEG-OK\[.*$5" <<< "$out"; then ok "$1 $2"
   else bad "$1 $2 — veio: $(printf '%s' "$out" | grep -E 'NEG-|ERROR' | head -1 | cut -c1-220)"; fi
 }
 
