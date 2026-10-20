@@ -29,6 +29,9 @@
 # ║   guard_aceita_minuscula    as 3 aceitam [a-z] (md5 neutralizado) → A1c                        ║
 # ║   sem_search_path           tarefa perde o SET search_path (md5 neutralizado) → A0a (PÓS)      ║
 # ║   corpo_sabotado_md5        corpo mexido SEM neutralizar o md5 → A0a (a PÓS morde)             ║
+# ║   pre_sem_atributos         PRE deixa de conferir SECURITY/search_path → A6a                   ║
+# ║   pre_sem_acl               PRE deixa de conferir o ACL → A6b                                  ║
+# ║   trava_sem_volatilidade    TRAVA deixa de conferir a volatilidade antes do ALTER → A6c        ║
 # ║  A régua de md5 "este" é neutralizada (literal → md5 vivo) nas sabotagens SEMÂNTICAS, senão     ║
 # ║  todo mutante morreria na PÓS sem exercitar o assert funcional.                                ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════════════╝
@@ -47,7 +50,7 @@ MD5_PROD_CADASTRO="1ad5c63172e48b51931a910922974f75"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="guard_numerico_contato:A1a guard_numerico_tarefa:A2a guard_numerico_cadastro:A3a guard_aceita_minuscula:A1c sem_search_path:A0a corpo_sabotado_md5:A0a"
+  SABOTAGENS="guard_numerico_contato:A1a guard_numerico_tarefa:A2a guard_numerico_cadastro:A3a guard_aceita_minuscula:A1c sem_search_path:A0a corpo_sabotado_md5:A0a pre_sem_atributos:A6a pre_sem_acl:A6b trava_sem_volatilidade:A6c"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-rpcs-alnum.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -150,6 +153,10 @@ AS \$function\$" "
 AS \$function\$" radar_atribuir_tarefa
                            neutralizar radar_atribuir_tarefa 'radar_atribuir_tarefa(text,integer)' ;;
   corpo_sabotado_md5)      sabotar "$MIG_USADA" "'cnpj inválido'" "'cnpj invalido'" registrar_contato_radar ;;
+  pre_sem_atributos)       sabotar "$MIG_USADA" "IF NOT r.prosecdef OR r.proconfig IS DISTINCT FROM ARRAY['search_path=public'] THEN" "IF false THEN" ;;
+  pre_sem_acl)             sabotar "$MIG_USADA" "IF has_function_privilege('anon', r.fn, 'EXECUTE') OR has_function_privilege('public', r.fn, 'EXECUTE')
+       OR NOT has_function_privilege('authenticated', r.fn, 'EXECUTE') OR NOT has_function_privilege('service_role', r.fn, 'EXECUTE') THEN" "IF false THEN" ;;
+  trava_sem_volatilidade)  sabotar "$MIG_USADA" "IF r.provolatile <> 'v' THEN" "IF false THEN" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -245,6 +252,11 @@ P -f "$FATIA3" >/dev/null
 P -f "$TAREFA_VIVA" >/dev/null
 P <<'SQL'
 GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+-- ACL de PROD (psql-ro 2026-10-19): as 3 têm EXECUTE para authenticated E service_role (as predecessoras do repo
+-- só concedem a authenticated; o service_role veio por apply posterior). A PRE exige o ACL revisado.
+GRANT EXECUTE ON FUNCTION public.registrar_contato_radar(text,text,text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.radar_atribuir_tarefa(text,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.radar_registrar_cadastro_omie(text,text,boolean) TO service_role;
 INSERT INTO public.test_gestores VALUES ('00000000-0000-0000-0000-0000000000a1');
 INSERT INTO public.radar_empresas (cnpj, razao_social, nome_fantasia, cnae_principal, municipio_nome, uf, telefone1, ultimo_lote) VALUES
   ('11111111000111', 'NUMERICA LTDA', 'NUMERICA', '3101200', 'BELO HORIZONTE', 'MG', '3133334444', '2026-10'),
@@ -269,6 +281,8 @@ eq A1c "minúscula → RAISE 'cnpj inválido' (fail-closed, como o CHECK)" "$(ch
 eq A1d "13 posições → RAISE" "$(chamada "$GESTOR" "public.registrar_contato_radar('12ABC34501DE3','em_conversa',NULL)")" "GUARD"
 eq A1e "NULL → RAISE" "$(chamada "$GESTOR" "public.registrar_contato_radar(NULL,'em_conversa',NULL)")" "GUARD"
 eq A1f "numérico antigo intocado (passa e grava)" "$(chamada "$GESTOR" "public.registrar_contato_radar('11111111000111','a_contatar',NULL)")" "PASSOU"
+eq A1h "curinga % → RAISE (o guard protege o dedupe por LIKE)" "$(chamada "$GESTOR" "public.registrar_contato_radar('%','em_conversa',NULL)")" "GUARD"
+eq A1i "curinga _ na posição do DV → RAISE" "$(chamada "$GESTOR" "public.registrar_contato_radar('12ABC34501DE3_','em_conversa',NULL)")" "GUARD"
 eq A1g "alfanumérico válido FORA do radar passa o guard e cai no lookup" "$(chamada "$GESTOR" "public.registrar_contato_radar('A1B2C3D4E5F668','em_conversa',NULL)")" "NAO_ENCONTRADA"
 
 echo "── A2 radar_atribuir_tarefa"
@@ -277,6 +291,7 @@ eq A2b "tarefa com o CNPJ alfanumérico na descrição (1, do gestor)" "$(Pq -c 
 eq A2c "2ª chamada em 2 min dedupa (o LIKE do dedupe serve o alfanumérico)" "$(Pq -c "SET test.uid='$GESTOR'; SELECT (public.radar_atribuir_tarefa('12ABC34501DE35', 7))->>'deduped'")" "true"
 eq A2d "minúscula → RAISE" "$(chamada "$GESTOR" "public.radar_atribuir_tarefa('12abc34501DE35', 7)")" "GUARD"
 eq A2e "numérico antigo intocado" "$(chamada "$GESTOR" "public.radar_atribuir_tarefa('11111111000111', 7)")" "PASSOU"
+eq A2f "curinga % → RAISE antes do LIKE do dedupe" "$(chamada "$GESTOR" "public.radar_atribuir_tarefa('%CNPJ %', 7)")" "GUARD"
 
 echo "── A3 radar_registrar_cadastro_omie"
 eq A3a "alfanumérico válido PASSA e registra o cadastro" "$(chamada "$GESTOR" "public.radar_registrar_cadastro_omie('12ABC34501DE35','4242',false)")" "PASSOU"
@@ -284,6 +299,7 @@ eq A3b "empresa virou cliente com o código Omie" "$(Pq -c "SELECT ja_cliente||'
 eq A3c "contato 'virou_cliente' gravado com o status anterior" "$(Pq -c "SELECT count(*)||'/'||max(status_anterior) FROM public.radar_contatos WHERE cnpj='12ABC34501DE35' AND acao='virou_cliente'")" "1/em_conversa"
 eq A3d "minúscula → RAISE" "$(chamada "$GESTOR" "public.radar_registrar_cadastro_omie('12abc34501DE35','4242',false)")" "GUARD"
 eq A3e "numérico antigo intocado" "$(chamada "$GESTOR" "public.radar_registrar_cadastro_omie('11111111000111','4343',true)")" "PASSOU"
+eq A3f "curinga _ → RAISE" "$(chamada "$GESTOR" "public.radar_registrar_cadastro_omie('1111111100011_','4343',true)")" "GUARD"
 
 echo "── A4 ACL (REPLACE preserva; o REVOKE/GRANT reemite nomeando as roles)"
 for r in anon public; do
@@ -295,6 +311,27 @@ done
 
 echo "── A5 gate de gestor"
 eq A5a "não-gestor → forbidden ANTES do guard (mesmo com CNPJ alfanumérico válido)" "$(chamada "$VENDEDOR" "public.registrar_contato_radar('12ABC34501DE35','em_conversa',NULL)")" "FORBIDDEN"
+eq A5b "não-gestor com CNPJ INVÁLIDO → forbidden (o gate precede o guard, não o contrário)" "$(chamada "$VENDEDOR" "public.radar_atribuir_tarefa('12abc34501DE35', 7)")" "FORBIDDEN"
+
+echo "── A6 anti-deriva de ATRIBUTO/ACL (Codex ALTO): corpo igual (md5 = este), atributo/ACL mudado → a migration ABORTA e nada muda"
+# aborta_em ID descrição marcador-esperado: re-aplica a migration e exige o aborto NOMEADO (outro aborto é vermelho)
+aborta_em() {
+  if P -f "$MIG_USADA" > "$TMPD/re.log" 2>&1; then bad "$1" "$2 — re-aplicar PASSOU";
+  elif grep -q "$3" "$TMPD/re.log"; then ok "$1" "$2";
+  else bad "$1" "$2 — abortou fora do esperado: $(grep -m1 ERROR "$TMPD/re.log" | cut -c1-140)"; fi
+}
+ESTADO_Q="SELECT string_agg(proname||':'||md5(prosrc)||':'||prosecdef||':'||proconfig[1]||':'||provolatile::text||':'||has_function_privilege('authenticated', p.oid, 'EXECUTE')||':'||has_function_privilege('anon', p.oid, 'EXECUTE'), ',' ORDER BY proname) FROM pg_proc p WHERE proname IN ('registrar_contato_radar','radar_atribuir_tarefa','radar_registrar_cadastro_omie')"
+ESTADO_ANTES="$(Pq -c "$ESTADO_Q")"
+P -c "ALTER FUNCTION public.registrar_contato_radar(text,text,text) SECURITY INVOKER"
+aborta_em A6a "SECURITY INVOKER no predecessor → PRE FALHOU (o md5 do corpo não vê)" "PRE FALHOU: registrar_contato_radar(text,text,text) vivo mudou SECURITY"
+P -c "ALTER FUNCTION public.registrar_contato_radar(text,text,text) SECURITY DEFINER"
+P -c "REVOKE EXECUTE ON FUNCTION public.radar_atribuir_tarefa(text,integer) FROM authenticated"
+aborta_em A6b "REVOKE de authenticated no predecessor → PRE FALHOU (ACL divergente; o GRANT não o desfaz)" "PRE FALHOU: radar_atribuir_tarefa(text,integer) vivo tem ACL divergente"
+P -c "GRANT EXECUTE ON FUNCTION public.radar_atribuir_tarefa(text,integer) TO authenticated"
+P -c "ALTER FUNCTION public.radar_registrar_cadastro_omie(text,text,boolean) STABLE"
+aborta_em A6c "STABLE no predecessor → TRAVA FALHOU (volatilidade conferida ANTES do ALTER)" "TRAVA FALHOU: radar_registrar_cadastro_omie(text,text,boolean) não é VOLATILE"
+P -c "ALTER FUNCTION public.radar_registrar_cadastro_omie(text,text,boolean) VOLATILE"
+eq A6d "após os 3 abortos (rollback) o estado é o mesmo de antes: md5 este, atributos e ACL íntegros nas 3" "$(Pq -c "$ESTADO_Q")" "$ESTADO_ANTES"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "✅ test-radar-rpcs-cnpj-alfanumerico: todos os asserts passaram"

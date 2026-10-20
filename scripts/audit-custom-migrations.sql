@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 667
+-- Total de custom migrations: 668
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -731,6 +731,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
   ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
+  ('20261019225545', 'radar_rpcs_cnpj_alfanumerico', '20261019225545_radar_rpcs_cnpj_alfanumerico.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2825,6 +2826,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_atribuir_tarefa', ''),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', '')
@@ -4969,6 +4973,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_atribuir_tarefa', ''),
+  ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', '')
@@ -4999,7 +5006,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 148.
+-- Funções redefinidas com corpo extraível: 150.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5326,6 +5333,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'buscar_skus_candidatos', 2, '20260929000234_padrao_like_contem_escapa_curinga.sql', '70b42aa312d47e00816a37cf11ba1198'),
   ('public', 'confirmar_vinculo_boletim', 1, '20260611140000_kb_fundacao_casamento.sql', '69ec58b207bc65e6437f16e391f7a109'),
   ('public', 'confirmar_vinculo_boletim', 2, '20260613120000_kb_0c_aprovacao_master_only.sql', 'b8332df9e8b9ed7291daccf313524f23'),
+  ('public', 'registrar_contato_radar', 1, '20260612130000_radar_rpcs_contato.sql', 'debfb2b1df4a40dde8949e17da4bd865'),
+  ('public', 'registrar_contato_radar', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '97d0726906cfd8499c5128b99371589d'),
   ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
   ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
@@ -5336,6 +5345,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 2, '20260614140000_radar_contagem_perf.sql', 'a0067efe8a2bf49bb83877ca34c0142b'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
+  ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
+  ('public', 'radar_registrar_cadastro_omie', 1, '20260613190000_radar_fatia3.sql', '60becb171538c0fdf7a7cac32fb540b1'),
+  ('public', 'radar_registrar_cadastro_omie', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '7610ed60036aa30ad49a881dec8d1429'),
   ('public', 'radar_prospects_para_rota', 1, '20260613230000_roteirizador_prospects.sql', '5e60b8b20f0fb33d469b664c36b792a8'),
   ('public', 'radar_prospects_para_rota', 2, '20260614160000_roteirizador_campo_banco.sql', 'cba7b31d56e029925d06a13804fffeac'),
   ('public', 'radar_prospects_para_rota', 3, '20260615190000_geocoding_cep_geo.sql', '6c9e09329e90a7f5752de1c92e186047'),

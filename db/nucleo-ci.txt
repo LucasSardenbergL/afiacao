@@ -604,9 +604,11 @@ db/test-importar-nfe-recebimento.sh          75  falsificar=9
 db/test-radar-cnpj-alfanumerico.sh          25  falsificar=5
 # Radar: as 3 RPCs de prospecção (registrar_contato_radar, radar_atribuir_tarefa, radar_registrar_cadastro_omie)
 # aceitam o CNPJ alfanumérico que o CHECK já aceita (20261019225545). Defeito aqui = lead alfanumérico sem
-# contato/tarefa/cadastro (falha ALTA) ou guard afrouxado (minúscula/13 posições passam). Predecessoras REAIS
-# com md5 = PROD; 6 sabotagens: 3× guard numérico de volta (uma por RPC), [a-z] aceito, search_path perdido, PÓS.
-db/test-radar-rpcs-cnpj-alfanumerico.sh     29  falsificar=6
+# contato/tarefa/cadastro (falha ALTA), guard afrouxado (minúscula/13 posições/curinga passam) ou migration que
+# apaga ALTER/REVOKE concorrente (PRE confere SECURITY/search_path/ACL, TRAVA confere volatilidade — Codex ALTO).
+# Predecessoras REAIS com md5 = PROD; 9 sabotagens: 3× guard numérico de volta (uma por RPC), [a-z] aceito,
+# search_path perdido, PÓS, PRE sem atributos, PRE sem ACL, TRAVA sem volatilidade.
+db/test-radar-rpcs-cnpj-alfanumerico.sh     38  falsificar=9
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

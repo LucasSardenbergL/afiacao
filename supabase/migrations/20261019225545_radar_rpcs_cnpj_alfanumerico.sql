@@ -16,31 +16,44 @@
 BEGIN;
 
 -- TRAVA, antes de ler: ALTER sem efeito (volatilidade VIVA = v) em cada função que a PRE guarda e este arquivo recria.
+-- A volatilidade é conferida ANTES do ALTER (ele a normalizaria e a PRE não veria a deriva — Codex 2026-10-20).
 DO $trava$
+DECLARE
+  r record;
 BEGIN
-  IF to_regprocedure('public.registrar_contato_radar(text,text,text)') IS NULL THEN
-    RAISE EXCEPTION 'TRAVA FALHOU: registrar_contato_radar(text,text,text) ausente';
-  END IF;
+  FOR r IN
+    SELECT x.alvo, p.provolatile
+      FROM (VALUES
+        ('registrar_contato_radar(text,text,text)'),
+        ('radar_atribuir_tarefa(text,integer)'),
+        ('radar_registrar_cadastro_omie(text,text,boolean)')
+      ) AS x(alvo)
+      LEFT JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || x.alvo)
+  LOOP
+    IF r.provolatile IS NULL THEN
+      RAISE EXCEPTION 'TRAVA FALHOU: % ausente', r.alvo;
+    END IF;
+    IF r.provolatile <> 'v' THEN
+      RAISE EXCEPTION 'TRAVA FALHOU: % não é VOLATILE (%) — alguém mudou a volatilidade; revise antes de recriar', r.alvo, r.provolatile;
+    END IF;
+  END LOOP;
   ALTER FUNCTION public.registrar_contato_radar(text, text, text) VOLATILE;
-  IF to_regprocedure('public.radar_atribuir_tarefa(text,integer)') IS NULL THEN
-    RAISE EXCEPTION 'TRAVA FALHOU: radar_atribuir_tarefa(text,integer) ausente';
-  END IF;
   ALTER FUNCTION public.radar_atribuir_tarefa(text, integer) VOLATILE;
-  IF to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)') IS NULL THEN
-    RAISE EXCEPTION 'TRAVA FALHOU: radar_registrar_cadastro_omie(text,text,boolean) ausente';
-  END IF;
   ALTER FUNCTION public.radar_registrar_cadastro_omie(text, text, boolean) VOLATILE;
 END
 $trava$;
 
 -- PRE: md5(prosrc) vivo ∈ {predecessores revisados (PROD 2026-10-19; registrar_contato_radar também o corpo do repo,
--- que difere da PROD só em comentários), este arquivo}. Ausente ou outro ABORTA.
+-- que difere da PROD só em comentários), este arquivo}. Ausente ou outro ABORTA. E, sob a trava, os ATRIBUTOS e o
+-- ACL do predecessor têm de ser os revisados (SECURITY DEFINER, search_path=public, EXECUTE só para
+-- authenticated/service_role): o md5 do corpo não vê um ALTER FUNCTION/REVOKE concorrente, e o CREATE OR REPLACE
+-- + GRANT abaixo os desfariam em silêncio (Codex ALTO, 2026-10-20).
 DO $pre$
 DECLARE
   r record;
 BEGIN
   FOR r IN
-    SELECT x.alvo, x.vivo, x.predecessores, x.este
+    SELECT x.alvo, x.vivo, x.predecessores, x.este, p.prosecdef, p.proconfig, p.oid AS fn
       FROM (VALUES
         ('registrar_contato_radar(text,text,text)',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.registrar_contato_radar(text,text,text)')),
@@ -52,9 +65,17 @@ BEGIN
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')),
          ARRAY['1ad5c63172e48b51931a910922974f75'], '46717b268a9c44abaf09024de816c72b' /* este:radar_registrar_cadastro_omie */)
       ) AS x(alvo, vivo, predecessores, este)
+      LEFT JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure('public.' || x.alvo)
   LOOP
     IF r.vivo IS NULL OR (r.vivo <> ALL (r.predecessores) AND r.vivo <> r.este) THEN
       RAISE EXCEPTION 'PRE FALHOU: % vivo (md5 %) não é o predecessor revisado nem este', r.alvo, r.vivo;
+    END IF;
+    IF NOT r.prosecdef OR r.proconfig IS DISTINCT FROM ARRAY['search_path=public'] THEN
+      RAISE EXCEPTION 'PRE FALHOU: % vivo mudou SECURITY/search_path (secdef=%, config=%) — revise antes de recriar', r.alvo, r.prosecdef, r.proconfig;
+    END IF;
+    IF has_function_privilege('anon', r.fn, 'EXECUTE') OR has_function_privilege('public', r.fn, 'EXECUTE')
+       OR NOT has_function_privilege('authenticated', r.fn, 'EXECUTE') OR NOT has_function_privilege('service_role', r.fn, 'EXECUTE') THEN
+      RAISE EXCEPTION 'PRE FALHOU: % vivo tem ACL divergente do predecessor revisado — revise antes de recriar', r.alvo;
     END IF;
   END LOOP;
 END
