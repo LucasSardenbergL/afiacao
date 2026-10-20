@@ -84,6 +84,11 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
     // continua valendo sobre o corpo NOVO (é ele que a prod executa).
     const POSTERIORES: Readonly<Record<string, RegExp>> = {
       'public.get_defasagem_cliente': /^20261014211500_defasagem_desconto_valor\.sql$/,
+      // 20261020130000: as 3 views do universo recriadas com o corpo da prod + normalizar_documento() no documento
+      // (CNPJ alfanumérico) — o filtro do universo é o MESMO; o juízo abaixo continua sobre o corpo novo.
+      'public.v_grupo_comercial': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
+      'public.v_caca_compradores': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
+      'public.v_caca_candidatos': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
     };
     for (const o of CORRIGIDOS) {
       const d = modelo.get(o)!;

@@ -4,7 +4,7 @@ import { invokeFunction } from '@/lib/invoke-function';
 import { toast } from 'sonner';
 import { useReindexRag } from './useReindexRag';
 import type { CustomerProcess, StructuredProcessResponse } from '@/lib/customer-process/types';
-import type { Json } from '@/integrations/supabase/types';
+import { customerProcessDaLinha } from '@/lib/customer-process/linha';
 
 export function useCustomerProcess(customerId: string | null) {
   return useQuery({
@@ -20,9 +20,8 @@ export function useCustomerProcess(customerId: string | null) {
         .eq('is_current', true)
         .maybeSingle();
       if (error) throw error;
-      // etapas vem como Json do banco; CustomerProcess.etapas é ProcessEtapa[].
-      // Cast via unknown (mesmo padrão da linha do insert) — tipos não se sobrepõem.
-      return (data as unknown as CustomerProcess) ?? null;
+      // etapas vem como Json do banco; a borda lê por forma (lança fora do contrato).
+      return data ? customerProcessDaLinha(data) : null;
     },
   });
 }
@@ -53,7 +52,7 @@ export function useSaveCustomerProcess() {
       const payload = {
         customer_user_id: input.customerId,
         descricao_livre: input.descricao_livre,
-        etapas: (input.structured?.etapas ?? null) as unknown as Json,
+        etapas: input.structured?.etapas ?? null,
         segmento: input.structured?.segmento ?? null,
         porte: input.structured?.porte ?? null,
         tags: input.structured?.tags ?? [],
@@ -72,7 +71,7 @@ export function useSaveCustomerProcess() {
         .single();
 
       if (error) throw error;
-      return data as unknown as CustomerProcess;
+      return customerProcessDaLinha(data);
     },
     onSuccess: (data, variables) => {
       qc.invalidateQueries({ queryKey: ['customer-process', variables.customerId] });

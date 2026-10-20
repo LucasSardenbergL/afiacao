@@ -22,10 +22,11 @@ import {
 import { Loader2 } from 'lucide-react';
 import {
   useAddMembro,
-  documentoValido,
-  normalizarDocumento,
+  avaliarDocumento,
+  MENSAGEM_DOCUMENTO,
   type RelationType,
 } from '@/queries/useClienteGrupos';
+import { ehCnpjAlfanumerico } from '@/lib/omie/cnpj-alfanumerico';
 
 interface AddDocumentoDialogProps {
   open: boolean;
@@ -54,12 +55,18 @@ export function AddDocumentoDialog({ open, onOpenChange, grupoId, grupoNome }: A
     }
   }, [open]);
 
-  const digits = normalizarDocumento(documento);
-  const valido = documentoValido(documento);
+  const { chave, motivo } = avaliarDocumento(documento);
+  const valido = motivo === 'ok';
+  const rotulo =
+    chave.length === 11
+      ? 'CPF válido (11 dígitos)'
+      : ehCnpjAlfanumerico(chave)
+        ? 'CNPJ alfanumérico válido (14 posições)'
+        : 'CNPJ válido (14 dígitos)';
 
   const handleAdd = async () => {
-    if (!valido) {
-      toast.error('Informe um CPF (11 dígitos) ou CNPJ (14 dígitos).');
+    if (motivo !== 'ok') {
+      toast.error(MENSAGEM_DOCUMENTO[motivo]);
       return;
     }
     try {
@@ -86,15 +93,17 @@ export function AddDocumentoDialog({ open, onOpenChange, grupoId, grupoNome }: A
               id="doc"
               value={documento}
               onChange={(e) => setDocumento(e.target.value)}
-              placeholder="00.000.000/0000-00 ou 000.000.000-00"
+              placeholder="00.000.000/0000-00, 12.ABC.345/01DE-35 ou 000.000.000-00"
               autoFocus
             />
             <p className="text-xs text-muted-foreground">
-              {digits.length > 0
+              {documento.trim().length > 0
                 ? valido
-                  ? `${digits.length === 11 ? 'CPF' : 'CNPJ'} válido (${digits.length} dígitos)`
-                  : `${digits.length} dígitos — precisa ser 11 (CPF) ou 14 (CNPJ)`
-                : 'Pode colar formatado; eu normalizo pra dígitos.'}
+                  ? rotulo
+                  : motivo === 'dv_alfanumerico'
+                    ? 'CNPJ alfanumérico com dígito verificador inválido'
+                    : `${chave.length} caracteres — precisa ser CPF (11), CNPJ (14) ou CNPJ alfanumérico válido`
+                : 'Pode colar formatado; eu normalizo (dígitos, ou maiúsculas no CNPJ alfanumérico).'}
             </p>
           </div>
 

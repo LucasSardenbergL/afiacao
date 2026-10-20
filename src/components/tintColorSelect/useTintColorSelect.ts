@@ -260,28 +260,26 @@ export function useTintColorSelect({ product, open, customerUserId, initialSearc
   // server-side: só pedido real no Omie (omie_pedido_id), não-cancelado, janela
   // de 180 dias. A MESMA função valida a fonte 'cliente' no gate do submit
   // (tint_gate_revalida) — paridade estrutural picker×fronteira, zero espelho.
-  // (`as never`: RPC nova ainda fora do types.ts gerado pelo Lovable — padrão
-  // do repo, ver staff_get_sales_order_payload em useSalesOrderEdit.)
   const { data: lastPracticedPrice, isLoading: loadingLastPrice } = useQuery({
     queryKey: ['tint-last-price', customerUserId, product.id, selectedFormula?.cor_id],
     staleTime: 30 * 1000,
     enabled: !!customerUserId && !!selectedFormula?.cor_id && !!product.id,
     queryFn: async () => {
       if (!customerUserId || !selectedFormula?.cor_id || !product.id) return null;
-      const { data, error } = await supabase.rpc(
-        'tint_ultimo_preco_cliente' as never,
-        {
-          p_customer_user_id: customerUserId,
-          p_product_id: product.id,
-          p_cor_id: selectedFormula.cor_id,
-        } as never,
-      );
+      const { data, error } = await supabase.rpc('tint_ultimo_preco_cliente', {
+        p_customer_user_id: customerUserId,
+        p_product_id: product.id,
+        p_cor_id: selectedFormula.cor_id,
+      });
       // Erro (RPC ausente/permissão) → sem histórico, NUNCA preço fabricado;
       // a fonte 'cliente' simplesmente não aparece no seletor.
       if (error) return null;
-      const row = data as unknown as { price?: number; date?: string } | null;
-      if (!row || typeof row.price !== 'number' || row.price <= 0) return null;
-      return { price: row.price, date: row.date ?? '' };
+      // `jsonb` lido por forma: `{price, date, sales_order_id}` ou NULL (sem pedido na janela).
+      const row = data !== null && typeof data === 'object' && !Array.isArray(data) ? data : null;
+      const price = row?.price;
+      if (typeof price !== 'number' || price <= 0) return null;
+      const date = row?.date;
+      return { price, date: typeof date === 'string' ? date : '' };
     },
   });
 

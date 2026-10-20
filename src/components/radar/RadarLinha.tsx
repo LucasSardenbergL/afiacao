@@ -7,6 +7,7 @@ import {
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
+import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -19,20 +20,24 @@ export function RadarLinha({
   onSelecionar,
   onAbrir,
   lote = null,
+  mostrarMotivos = false,
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
   selecionada: boolean;
   onSelecionar: (v: boolean) => void;
   onAbrir: () => void;
-  /** Lote vigente (foto da RFB) — dá os selos "inédito" e "saiu do dump em <mês>"; sem ele, nenhum selo. */
+  /** Lote vigente (foto da RFB) — dá os selos "inédito", "saiu do dump em <mês>" e "sugerido"; sem ele, nenhum selo. */
   lote?: LoteIngest | null;
+  /** Fila de qualificação ("só sugeridos"): os motivos do score viram TEXTO na linha, para justificar o cadastro. */
+  mostrarMotivos?: boolean;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
   const tel = telefonePrincipal(empresa);
   const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
+  const sugerido = ehSugerido(empresa, lote);
   return (
     <div
       className={cn(
@@ -59,6 +64,15 @@ export function RadarLinha({
           {saiuDoDump(empresa, lote) && (
             <Badge variant="outline" className="shrink-0 text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
           )}
+          {sugerido && (
+            <Badge
+              variant="success"
+              className="shrink-0"
+              title={`Sugerido para cadastro: em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}${empresa.rfb_situacao == null ? ' (RFB ainda não cruzada)' : ''}`}
+            >
+              sugerido p/ cadastro
+            </Badge>
+          )}
           {rfb && (
             <span
               className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}
@@ -74,6 +88,11 @@ export function RadarLinha({
           {empresa.cnae_descricao ? ` · ${empresa.cnae_descricao}` : ''}
           {tel ? <span className="font-tabular"> · {tel}</span> : ''}
         </div>
+        {mostrarMotivos && empresa.score != null && empresa.score_motivos && empresa.score_motivos.length > 0 && (
+          <div className="text-xs text-muted-foreground truncate" data-testid="radar-score-motivos">
+            {empresa.score_motivos.join(' · ')}
+          </div>
+        )}
       </button>
       <div className="text-right text-xs text-muted-foreground shrink-0">
         <div className="flex items-center justify-end gap-1.5">

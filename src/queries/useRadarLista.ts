@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
+import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -18,6 +19,7 @@ export interface RadarFiltros {
   preset: PresetRadar;
   incluirSaiuDoDump: boolean; // default false: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente)
   soIneditos: boolean;        // só quem entrou no universo NESTE lote (primeira_vista_em >= iniciado_em)
+  soSugeridos: boolean;       // só os "sugeridos para cadastro" (predicado do card: em conversa · não cliente · score ≥ limiar · foto vigente)
 }
 
 const PAGE = 50;
@@ -33,6 +35,12 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
       // ultimo_lote=2026-05 na fila de 2026-08, medido 2026-10-19).
       const lote = await lerLoteVigente(qc);
+      // "Só sugeridos" sem lote completo: não há foto, logo não há sugestão (`ehSugerido(e, null)`
+      // recusa todos). Ignorar o toggle mostraria a fila GERAL sob o rótulo (Codex, código
+      // 2026-10-20) — a lista FALHA com o motivo antes de montar a consulta, inclusive via URL.
+      if (filtros.soSugeridos && !lote) {
+        throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
+      }
       const p = presetParaParams(filtros.preset, hojeISO);
       let q = supabase.from('radar_empresas').select('*');
 
@@ -50,14 +58,24 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       const cnaePrefixo = likePrefixPattern(cnaeDigitos);
       if (cnaeDigitos.length === 7) q = q.eq('cnae_principal', cnaeDigitos);
       else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
-      if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
-      else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
-      if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`, o mesmo
+      // count): ele já fixa status/ja_cliente/lote, então vence os filtros abaixo. Sem lote completo
+      // não há foto: a falha honesta já saiu lá em cima, logo após ler o lote.
+      const sugeridos = Boolean(lote && filtros.soSugeridos);
+      if (sugeridos && lote) q = filtrarSugeridos(q, lote);
+      if (!sugeridos) {
+        if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
+        else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
+        if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      }
       // Foto VIGENTE: default só `ultimo_lote = vigente`; "incluir quem saiu do dump" solta o
       // filtro. "Só inéditos" é o predicado do card (`ehInedito`): vigente E primeira vista no
       // lote — e vence o toggle (inédito é, por definição, do lote vigente). Sem lote completo
       // (`null`) não há foto para filtrar: a fila roda inteira, como a RPC `radar_kpis`.
-      if (lote && filtros.soIneditos) {
+      if (sugeridos) {
+        // lote já fixado por filtrarSugeridos; "só inéditos" ainda pode somar
+        if (lote && filtros.soIneditos) q = q.gte('primeira_vista_em', lote.iniciado_em);
+      } else if (lote && filtros.soIneditos) {
         q = q.eq('ultimo_lote', lote.mes_referencia).gte('primeira_vista_em', lote.iniciado_em);
       } else if (lote && !filtros.incluirSaiuDoDump) {
         q = q.eq('ultimo_lote', lote.mes_referencia);

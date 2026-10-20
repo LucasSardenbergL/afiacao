@@ -18,7 +18,7 @@ let respostas: Record<string, { data: unknown; error: { message: string } | null
 function builder(tabela: string) {
   chamadas[tabela] = chamadas[tabela] ?? [];
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'or', 'eq', 'neq', 'gte', 'lte', 'like', 'order', 'range', 'limit']) {
+  for (const m of ['select', 'or', 'eq', 'neq', 'gte', 'lte', 'like', 'is', 'filter', 'order', 'range', 'limit']) {
     b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); return b; };
   }
   b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => Promise.resolve(respostas[tabela]).then(res, rej);
@@ -30,7 +30,7 @@ import { useRadarLista, type RadarFiltros } from '../useRadarLista';
 
 const FILTROS: RadarFiltros = {
   busca: '', uf: '', municipio: '', cnae: '', status: '', incluirJaClientes: false, comTelefone: false,
-  preset: 'novas', incluirSaiuDoDump: false, soIneditos: false,
+  preset: 'novas', incluirSaiuDoDump: false, soIneditos: false, soSugeridos: false,
 };
 const LOTES = [
   { mes_referencia: '2026-10', status: 'running', total_recebido: 0, novos: null, iniciado_em: '2026-11-02T03:00:00+00:00' },
@@ -90,5 +90,39 @@ describe('useRadarLista — a fila é a foto vigente', () => {
     const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-19'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(chamadas.radar_empresas ?? []).toEqual([]);
+  });
+});
+
+describe('useRadarLista — filtro "só sugeridos para cadastro" (bloco 5)', () => {
+  it('aplica o predicado inteiro do card (mesmo conjunto que o count) sobre a foto vigente', async () => {
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true }, '2026-10-20'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const c = chamadas.radar_empresas;
+    for (const esperado of [
+      ['eq', 'ultimo_lote', '2026-08'], ['eq', 'prospeccao_status', 'em_conversa'], ['eq', 'ja_cliente', false],
+      ['is', 'omie_codigo_cliente', null], ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'],
+      ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
+    ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
+  });
+
+  it('vence "incluir já-clientes" e "incluir quem saiu do dump": sugerido é por definição não-cliente e da foto', async () => {
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true, incluirJaClientes: true, incluirSaiuDoDump: true }, '2026-10-20'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(chamadas.radar_empresas).toContainEqual(['eq', 'ja_cliente', false]);
+    expect(filtroLote()).toEqual([['eq', 'ultimo_lote', '2026-08']]);
+  });
+
+  it('sem lote vigente: a lista FALHA com o motivo — nunca a fila geral sob o rótulo "só sugeridos"', async () => {
+    respostas.radar_ingest_state = { data: [LOTES[0]], error: null };
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true }, '2026-10-20'), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(String(result.current.error)).toMatch(/Sem lote completo/);
+    expect(chamadas.radar_empresas ?? [], 'consultou a fila geral').toEqual([]);
+  });
+
+  it('controle: SEM o filtro e sem lote, a fila roda inteira (a falha acima é do filtro, não do lote)', async () => {
+    respostas.radar_ingest_state = { data: [LOTES[0]], error: null };
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: false }, '2026-10-20'), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 });

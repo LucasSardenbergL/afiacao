@@ -29,12 +29,20 @@ let respostasTabela: Record<string, RespostaTabela> = {};
 const chamadas: Record<string, unknown[][]> = {};
 function builder(tabela: string) {
   chamadas[tabela] = chamadas[tabela] ?? [];
+  const cadeia: unknown[][] = [];
   const b: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'gte', 'order', 'limit']) {
-    b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); return b; };
+  for (const m of ['select', 'eq', 'gte', 'order', 'limit', 'is', 'or', 'filter', 'not']) {
+    b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); cadeia.push([m, ...args]); return b; };
   }
-  b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) =>
-    Promise.resolve(respostasTabela[tabela] ?? { data: null, error: { message: `sem resposta p/ ${tabela}` } }).then(res, rej);
+  // `radar_empresas` recebe DUAS leituras (count de inéditos e count de sugeridos): a resposta é
+  // escolhida pela FORMA da cadeia, para cada card ter o seu dado.
+  // Decidido NO `then` (a cadeia só existe depois que o hook encadeou) — na criação ela é vazia e
+  // todo count cairia na resposta de inéditos.
+  const tem = (c: unknown[]) => cadeia.some((x) => JSON.stringify(x) === JSON.stringify(c));
+  b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => {
+    const chave = tem(['eq', 'prospeccao_status', 'em_conversa']) ? `${tabela}:sugeridos` : tabela;
+    return Promise.resolve(respostasTabela[chave] ?? respostasTabela[tabela] ?? { data: null, error: { message: `sem resposta p/ ${chave}` } }).then(res, rej);
+  };
   return b;
 }
 const LOTE_VIGENTE = {
@@ -60,11 +68,17 @@ const A_CONTATAR = /523\.180/;
 
 let qc: QueryClient;
 const onSoIneditos = vi.fn();
-function renderKpis(props: { soIneditos?: boolean } = {}) {
+const onSoSugeridos = vi.fn();
+function renderKpis(props: { soIneditos?: boolean; soSugeridos?: boolean } = {}) {
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
-      <RadarKpis soIneditos={props.soIneditos ?? false} onSoIneditos={onSoIneditos} />
+      <RadarKpis
+        soIneditos={props.soIneditos ?? false}
+        onSoIneditos={onSoIneditos}
+        soSugeridos={props.soSugeridos ?? false}
+        onSoSugeridos={onSoSugeridos}
+      />
     </QueryClientProvider>,
   );
 }
@@ -74,10 +88,14 @@ beforeEach(() => {
   auth = { isMaster: true, isGestorComercial: false };
   track.mockClear();
   onSoIneditos.mockClear();
+  onSoSugeridos.mockClear();
   for (const k of Object.keys(chamadas)) delete chamadas[k];
   respostasTabela = {
     radar_ingest_state: { data: [LOTE_RODANDO, LOTE_VIGENTE], error: null },
     radar_empresas: { data: null, count: 27466, error: null },
+    'radar_empresas:sugeridos': { data: null, count: 12, error: null },
+    // ledger: a última rodada `sucesso` do score cobriu o lote vigente
+    acoes_execucoes: { data: [{ detalhes: { lote_vigente: '2026-08' } }], error: null },
   };
 });
 afterEach(() => { onlineManager.setOnline(true); });
@@ -224,7 +242,8 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     resposta = { data: kpis(), error: null };
     renderKpis();
     expect(await screen.findByText(/27\.466/)).toBeTruthy();
-    expect(screen.getByText(/de 501\.380/)).toBeTruthy();
+    // "de 501.380" também aparece no card de sugeridos (bloco 5) — escopo no card de inéditos.
+    expect(screen.getByTestId('radar-kpi-ineditos').textContent).toMatch(/de 501\.380/);
     expect(screen.getByText(/Inéditos do lote 2026-08/)).toBeTruthy();
     const c = chamadas.radar_empresas;
     expect(c).toContainEqual(['eq', 'ultimo_lote', '2026-08']);
@@ -238,7 +257,7 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-ineditos');
     await waitFor(() => expect(card.textContent).toMatch(/sem lote/i));
-    expect(card.textContent, 'ausente virou zero').not.toMatch(/\b0\b/);
+    expect(card.textContent, 'ausente virou zero').not.toMatch(/(?<!\d)0(?!\d)/);
     expect(chamadas.radar_empresas ?? [], 'contou inéditos sem saber o lote').toEqual([]);
   });
 
@@ -248,7 +267,7 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-ineditos');
     await waitFor(() => expect(card.textContent).toMatch(/não consegui/i));
-    expect(card.textContent).not.toMatch(/\b0 de/);
+    expect(card.textContent).not.toMatch(/(?<!\d)0 de/);
   });
 
   it('1 clique no card liga o filtro "só inéditos" e emite o sensor com denominador', async () => {
@@ -275,5 +294,87 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     expect(onSoIneditos).toHaveBeenCalledWith(false);
     const ev = track.mock.calls.find(([n]) => n === 'radar.ineditos_filtro') as [string, Record<string, unknown>] | undefined;
     expect(ev?.[1]).toMatchObject({ ativo: false });
+  });
+});
+
+describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
+  const sugeridos = () => (chamadas.radar_empresas ?? []).filter((c) => c[0] === 'eq' && c[1] === 'prospeccao_status' && c[2] === 'em_conversa');
+
+  it('com lote e score calculado: "N de T", e o count tem o predicado inteiro do helper puro', async () => {
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
+    expect(card.textContent).toMatch(/de 501\.380/);
+    expect(sugeridos()).toHaveLength(1);
+    const c = chamadas.radar_empresas;
+    for (const esperado of [
+      ['eq', 'ultimo_lote', '2026-08'], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
+      ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'], ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
+    ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
+  });
+
+  it('score calculado e NENHUM sugerido: mostra "0 de T" — zero legítimo', async () => {
+    respostasTabela['radar_empresas:sugeridos'] = { data: null, count: 0, error: null };
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)0 de 501\.380/));
+  });
+
+  it('rodada de score ainda não cobriu o lote vigente (ledger na foto anterior): "sem score" — nunca 0', async () => {
+    respostasTabela.acoes_execucoes = { data: [{ detalhes: { lote_vigente: '2026-05' } }], error: null };
+    respostasTabela['radar_empresas:sugeridos'] = { data: null, count: 0, error: null };
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/sem score/i));
+    expect(card.textContent, 'ausente virou zero').not.toMatch(/(?<!\d)0(?!\d)/);
+    expect(screen.queryByRole('button', { name: /só sugeridos/i }), 'filtro sem efeito ofertado').toBeNull();
+  });
+
+  it('SEM lote complete: "sem lote", sem count', async () => {
+    respostasTabela.radar_ingest_state = { data: [LOTE_RODANDO], error: null };
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/sem lote/i));
+    expect(card.textContent).not.toMatch(/(?<!\d)0(?!\d)/);
+    expect(sugeridos()).toHaveLength(0);
+  });
+
+  it('count FALHOU: "não consegui", não 0', async () => {
+    respostasTabela['radar_empresas:sugeridos'] = { data: null, count: null, error: { message: 'boom' } };
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/não consegui/i));
+    expect(card.textContent).not.toMatch(/(?<!\d)0 de/);
+  });
+
+  it('refetch do count FALHA com número no cache: o número fica e o aviso "desatualizado" vem junto', async () => {
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
+    expect(screen.queryByTestId('radar-kpi-sugeridos-desatualizado'), 'aviso sem falha').toBeNull();
+
+    respostasTabela['radar_empresas:sugeridos'] = { data: null, count: null, error: { message: 'boom' } };
+    await qc.refetchQueries({ queryKey: ['radar', 'sugeridos'] });
+
+    await waitFor(() => expect(screen.queryByTestId('radar-kpi-sugeridos-desatualizado')).toBeTruthy());
+    expect(card.textContent, 'o número sumiu — o erro não pode apagar o dado em mãos').toMatch(/(?<!\d)12 de 501\.380/);
+  });
+
+  it('1 clique liga "só sugeridos" e o sensor leva N, T e o limiar', async () => {
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
+    screen.getByRole('button', { name: /só sugeridos/i }).click();
+    expect(onSoSugeridos).toHaveBeenCalledWith(true);
+    const ev = track.mock.calls.find(([n]) => n === 'radar.sugeridos_filtro') as [string, Record<string, unknown>] | undefined;
+    expect(ev, 'sensor radar.sugeridos_filtro não emitiu').toBeTruthy();
+    expect(ev?.[1]).toMatchObject({ ativo: true, origem: 'card', sugeridos: 12, total: 501380, limiar: 70, lote: '2026-08' });
   });
 });

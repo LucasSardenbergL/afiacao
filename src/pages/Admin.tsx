@@ -8,22 +8,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Users, ChevronRight, Clock, MapPin, Mail, BarChart3, Trophy, Gamepad2, BookOpen, DollarSign, Phone, FlaskConical, Crown } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import type { Tables } from '@/integrations/supabase/types';
 
-interface OrderWithProfile {
-  id: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  items: unknown;
-  total: number;
-  delivery_option: string;
-  user_id: string;
-  profiles?: {
-    name: string;
-    document: string | null;
-    phone: string | null;
-  };
-}
+type OrderWithProfile = Tables<'orders'> & {
+  profiles?: Pick<Tables<'profiles'>, 'name' | 'document' | 'phone'>;
+};
 
 const Admin = () => {
   const navigate = useNavigate();
@@ -47,46 +36,30 @@ const Admin = () => {
 
   const loadOrders = async () => {
     try {
-      const { data, error } = await supabase
+      // `orders` NÃO tem FK para `profiles` (prod 2026-10-19: 0 constraints, 0 linhas; types.ts:
+      // `Relationships: []`). O embed `profiles!orders_user_id_fkey` de antes falhava SEMPRE (400)
+      // e caía neste caminho — o `as unknown as` escondia o join impossível. Perfil carregado à parte.
+      const { data: ordersOnly, error } = await supabase
         .from('orders')
-        .select(`
-          *,
-          profiles!orders_user_id_fkey (
-            name,
-            document,
-            phone
-          )
-        `)
+        .select('*')
         .order('created_at', { ascending: false });
+      if (error) throw error;
 
-      if (error) {
-        console.error('Error loading orders:', error);
-        // Try without join if foreign key doesn't exist
-        const { data: ordersOnly } = await supabase
-          .from('orders')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        if (ordersOnly) {
-          // Load profiles separately
-          const userIds = [...new Set(ordersOnly.map(o => o.user_id))];
-          const { data: profiles } = await supabase
-            .from('profiles')
-            .select('user_id, name, document, phone')
-            .in('user_id', userIds);
+      const userIds = [...new Set(ordersOnly.map((o) => o.user_id))];
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('user_id, name, document, phone')
+        .in('user_id', userIds);
+      if (profilesError) throw profilesError;
 
-          const ordersWithProfiles = ordersOnly.map(order => ({
-            ...order,
-            profiles: profiles?.find(p => p.user_id === order.user_id),
-          }));
-          
-          setOrders(ordersWithProfiles as OrderWithProfile[]);
-        }
-      } else {
-        setOrders((data || []) as unknown as OrderWithProfile[]);
-      }
+      setOrders(ordersOnly.map((order) => ({
+        ...order,
+        profiles: profiles.find((p) => p.user_id === order.user_id),
+      })));
     } catch (error) {
+      // Falha de leitura AVISA: lista vazia calada seria indistinguível de "nenhum pedido".
       console.error('Error loading orders:', error);
+      toast.error('Erro ao carregar pedidos');
     } finally {
       setLoading(false);
     }
