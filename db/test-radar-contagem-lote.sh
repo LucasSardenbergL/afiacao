@@ -26,7 +26,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>. `post:<texto>` = a postcondição/PRE da própria migration
   # abortou o apply com aquele texto; a variante `_sem_post` cega essa camada para provar que o
   # assert da suíte pega sozinho (uma camada por vez).
-  SABOTAGENS="fast_sem_lote:A2 slow_sem_lote:A3 fast_sem_vista:A4 slow_sem_vista:A5 sem_validacao_lote:A6 default_mudou:A1 mantem_velha:post:assinatura_velha mantem_velha_sem_post:A7 acl_aberta:post:PUBLIC/anon acl_aberta_sem_post:A8 pre_cega:A9 corpo_divergente:post:corpo_da_nova"
+  SABOTAGENS="fast_sem_lote:A2 slow_sem_lote:A3 fast_sem_vista:A4 slow_sem_vista:A5 sem_validacao_lote:A6a default_mudou:A1a mantem_velha:post:assinatura_velha mantem_velha_sem_post:A7 acl_aberta:post:PUBLIC/anon acl_aberta_sem_post:A8 pre_cega:A9a corpo_divergente:post:corpo_da_nova"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-contagem-lote.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
