@@ -21055,6 +21055,10 @@ export type Database = {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
       }
+      fin_capital_giro_prazos_empresa: {
+        Args: { p_company: string }
+        Returns: Json
+      }
       fin_categorias_sem_mapping: {
         Args: { p_company: string; p_end: string; p_start: string }
         Returns: {
@@ -22080,6 +22084,8 @@ export type Database = {
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
           p_limit?: number
+          p_lote?: string
+          p_primeira_vista_min?: string
           p_status?: string
           p_uf?: string
         }

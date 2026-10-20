@@ -5433,6 +5433,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20261020120000_radar_score_lead_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+
 ### `20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql`
 
 | Tipo | Objeto | Parent |
