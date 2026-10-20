@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Phone, ChevronDown, ChevronUp, CheckCircle2, XCircle } from 'lucide-react';
 import { actionIcons, actionLabels, confidenceBadge } from './config';
 import { EvidenceItem } from './EvidenceItem';
-import type { AIDecision, Evidence } from './types';
+import type { AIDecision } from './types';
 
 export function DecisionCard({
   decision,
@@ -22,7 +22,7 @@ export function DecisionCard({
   onDismiss: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const ActionIcon = actionIcons[decision.suggested_action] || Phone;
+  const ActionIcon = (decision.suggested_action && actionIcons[decision.suggested_action]) || Phone;
   const conf = confidenceBadge[decision.confidence] || confidenceBadge.baixa;
 
   return (
@@ -49,7 +49,7 @@ export function DecisionCard({
 
         {/* Evidences (first 2 always visible) */}
         <div className="mt-3 space-y-1">
-          {(decision.evidences as Evidence[]).slice(0, expanded ? 4 : 2).map((ev, i) => (
+          {decision.evidences.slice(0, expanded ? 4 : 2).map((ev, i) => (
             <EvidenceItem key={i} evidence={ev} />
           ))}
         </div>
@@ -64,7 +64,7 @@ export function DecisionCard({
               disabled={decision.status !== 'pending'}
             >
               <ActionIcon className="w-3.5 h-3.5" />
-              {actionLabels[decision.suggested_action]}
+              {decision.suggested_action && actionLabels[decision.suggested_action]}
             </Button>
             {decision.status === 'pending' && (
               <Button size="sm" variant="ghost" onClick={onDismiss}>
