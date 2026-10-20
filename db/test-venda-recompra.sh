@@ -178,9 +178,11 @@ BEGIN
   INSERT INTO public.order_items (sales_order_id, product_id, omie_codigo_produto, quantity, unit_price, desconto_valor)
   VALUES (v, md5('p' || p_cod)::uuid, p_cod, p_qtd, p_preco, p_desc);
 END $f$;
+CREATE TABLE t_contagem (n bigserial, nome text NOT NULL);
 CREATE FUNCTION t_ok(p_nome text, p_cond boolean, p_det text DEFAULT '') RETURNS void LANGUAGE plpgsql AS $f$
 BEGIN
   IF p_cond IS NOT TRUE THEN RAISE EXCEPTION 'FAIL % % (%)', p_nome, p_det, p_cond; END IF;
+  INSERT INTO t_contagem (nome) VALUES (p_nome);
   RAISE NOTICE 'OK %', p_nome;
 END $f$;
 CREATE FUNCTION t_perto(a numeric, b numeric) RETURNS boolean LANGUAGE sql IMMUTABLE AS $f$
@@ -400,5 +402,8 @@ SELECT t_ok('K snapshot sem divergencia', NOT EXISTS (
     FROM public.venda_recompra_em((now() AT TIME ZONE 'America/Sao_Paulo')::date)));
 SQL
 
+# Contagem para db/roda-nucleo-ci.sh: qualquer FAIL aborta antes daqui (ON_ERROR_STOP), então fail = 0.
+N_OK="$(P -tA -c "SELECT count(*) FROM t_contagem")"
+echo "RESULTADO: $N_OK ok / 0 fail"
 [ -n "${PULA_PARIDADE:-}" ] && echo "AVISO: paridade PULADA — este verde NÃO é o da suíte"
 echo "FIM-OK venda-recompra (locale $LOCALE)"

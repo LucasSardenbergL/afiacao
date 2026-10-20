@@ -649,3 +649,9 @@ db/test-grupos-caca-cnpj-alfanumerico.sh    80  falsificar=7
 # referência→finalizado_em, janela, ledger sem filtro, fora do v_sources, fora do heartbeat, PRE, PÓS md5, REVOKE,
 # PÓS v_sources, PÓS IN-list, PÓS ACL.
 db/test-data-health-radar.sh               39  falsificar=12
+# Venda por cliente, Task 2 — recompra comprador × SKU × empresa e situação do comprador
+# (20261020150000). Paridade SQL × TS (oráculo src/lib/venda-cliente/recompra.ts via `bun`, sem deps)
+# sobre db/fixtures/venda-recompra.json em 3 datas; alias → canônico, cancelado/deleted fora, sem olhar
+# o futuro, Oben × Colacor separados, desconto não apurado → preço NULL, borda 1,5, perdido/sem_base,
+# ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
+db/test-venda-recompra.sh                  48  falsificar=15
