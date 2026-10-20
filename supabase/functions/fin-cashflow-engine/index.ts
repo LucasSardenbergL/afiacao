@@ -353,6 +353,8 @@ async function carregarDados(
   // em <1000 e vai em Promise.all. Tudo em paralelo. O build segue o contrato do helper: faixa
   // por `.gte/.lt`, cursor por `.gt`, `.order('id')` ascendente e `.limit` — o helper LANÇA se
   // uma linha voltar fora da faixa, então esquecer um filtro não duplica título em silêncio.
+  // `.order().limit()` no PRÓPRIO `let q =` (gate single-shot-truncado lê a expressão inicial);
+  // filtro encadeado depois do `limit` só acrescenta parâmetro na URL — a semântica é a mesma.
   // Teto de 8 requisições em voo para CR + CP JUNTAS (não 8 por tabela): o cron dispara os 3
   // cenários da empresa no mesmo minuto, e 3 × 16 já pressionaria o pool do PostgREST.
   const limitador = criarLimitador(8);
@@ -360,20 +362,22 @@ async function carregarDados(
     fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
       let q = supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO');
+        .eq('company', company).neq('status_titulo', 'CANCELADO')
+        .order('id', { ascending: true }).limit(limite);
       if (faixa.de !== null) q = q.gte('id', faixa.de);
       if (faixa.ate !== null) q = q.lt('id', faixa.ate);
       if (cursor !== null) q = q.gt('id', cursor);
-      return q.order('id', { ascending: true }).limit(limite);
+      return q;
     }, (linha) => linha.id, 'fin_contas_receber', { limitador }),
     fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
       let q = supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO');
+        .eq('company', company).neq('status_titulo', 'CANCELADO')
+        .order('id', { ascending: true }).limit(limite);
       if (faixa.de !== null) q = q.gte('id', faixa.de);
       if (faixa.ate !== null) q = q.lt('id', faixa.ate);
       if (cursor !== null) q = q.gt('id', cursor);
-      return q.order('id', { ascending: true }).limit(limite);
+      return q;
     }, (linha) => linha.id, 'fin_contas_pagar', { limitador }),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
     // aging. UMA leitura via RPC (jsonb, fora do cap de 1000): paginar a view reavaliava-a
