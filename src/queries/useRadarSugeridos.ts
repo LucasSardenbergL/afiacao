@@ -13,8 +13,10 @@ export interface BuilderSugeridos<T> {
 
 /**
  * Tradução PostgREST de `sugeridoParaCadastro` (helper puro): foto vigente, sinal comercial
- * (`em_conversa`), não cliente e sem vínculo Omie, RFB ativa ou não cruzada, CNPJ numérico (o
- * Omie ainda não aceita o alfanumérico) e `score ≥ LIMIAR_SUGERIDO`. Card, filtro da fila e selo
+ * (`em_conversa`), não cliente e sem vínculo Omie, RFB ativa ou não cruzada, CNPJ no FORMATO que o
+ * Omie recebe (numérico ou alfanumérico RFB, #3215) e `score ≥ LIMIAR_SUGERIDO`. O DV do alfanumérico
+ * não se confere em PostgREST: o helper puro e a lib o conferem antes de tocar o ERP (o dump da RFB
+ * só traz DV válido; um inválido contaria aqui e falharia ALTO no clique, sem cadastro errado). Card, filtro da fila e selo
  * da linha precisam contar/mostrar o MESMO conjunto — qualquer cláusula nova entra aqui e lá
  * (`sugeridos.test.ts` + os testes do card e da lista exigem o predicado inteiro).
  *
@@ -30,7 +32,7 @@ export function filtrarSugeridos<T extends BuilderSugeridos<T>>(q: T, lote: { me
     .eq('ja_cliente', false)
     .is('omie_codigo_cliente', null)
     .or('rfb_situacao.is.null,rfb_situacao.eq.02')
-    .filter('cnpj', 'match', '^[0-9]{14}$')
+    .filter('cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$')
     .gte('score', LIMIAR_SUGERIDO);
 }
 

@@ -46,8 +46,16 @@ describe('cadastravelNoOmie (gatilho pós-sinal)', () => {
   it.each(['08', '04', '03', '01'])('recusa RFB %s (baixado/inapto/suspenso/nulo)', (s) => {
     expect(cadastravelNoOmie({ ...base, rfb_situacao: s })).toEqual({ ok: false, motivo: 'rfb_nao_ativa' });
   });
-  it('recusa CNPJ alfanumérico (a edge do Omie ainda não suporta — não oferecer o que vai falhar)', () => {
-    expect(cadastravelNoOmie({ ...base, cnpj: '12ABC34501DE35' })).toEqual({ ok: false, motivo: 'cnpj_alfanumerico' });
+  it('aceita CNPJ alfanumérico VÁLIDO (#3215 liberou o criar_cliente) — mesma regra de cadastro-omie.ts', () => {
+    expect(cadastravelNoOmie({ ...base, cnpj: '12ABC34501DE35' })).toEqual({ ok: true });
+  });
+
+  it.each([
+    ['DV errado', '12ABC34501DE36'],
+    ['minúscula', '12abc34501de35'],
+    ['13 posições', '12ABC34501DE3'],
+  ])('recusa documento que a lib recusaria (%s) — não oferecer o que vai falhar', (_c, cnpj) => {
+    expect(cadastravelNoOmie({ ...base, cnpj })).toEqual({ ok: false, motivo: 'cnpj_invalido' });
   });
   it('elegivelCadastroPosSinal é o booleano do mesmo predicado', () => {
     expect(elegivelCadastroPosSinal(base)).toBe(true);

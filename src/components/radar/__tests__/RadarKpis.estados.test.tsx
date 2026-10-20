@@ -310,7 +310,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     const c = chamadas.radar_empresas;
     for (const esperado of [
       ['eq', 'ultimo_lote', '2026-08'], ['eq', 'ja_cliente', false], ['is', 'omie_codigo_cliente', null],
-      ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'], ['filter', 'cnpj', 'match', '^[0-9]{14}$'], ['gte', 'score', 70],
+      ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'], ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
     ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
   });
 

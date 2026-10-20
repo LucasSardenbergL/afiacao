@@ -13,14 +13,14 @@
 // à medida que o time marca conversas. 70 é o corte: 852 é um universo que cabe numa rodada
 // de qualificação; 60 (12 mil) é a fila inteira de novo; 80 (33) só o topo.
 
+import { documentoCadastravelNoOmie } from '@/lib/radar/cadastro-omie';
+
 /** Score mínimo para o Radar SUGERIR o cadastro. Mudar = re-medir (comentário acima) + diário. */
 export const LIMIAR_SUGERIDO = 70;
 
 /** Situação cadastral RFB "ativa". Os demais códigos (01 nula · 03 suspensa · 04 inapta · 08 baixada)
  *  bloqueiam; `null` (ainda não cruzado) NÃO bloqueia — ausente ≠ baixado. */
 const RFB_ATIVA = '02';
-/** O que o Omie aceita hoje: só o CNPJ numérico clássico (mesma regra de `cadastro-omie.ts`). */
-const CNPJ_NUMERICO_RE = /^[0-9]{14}$/;
 const STATUS_SINAL = 'em_conversa';
 
 export interface LeadSugerivel {
@@ -33,7 +33,7 @@ export interface LeadSugerivel {
   score: number | null;
 }
 
-export type MotivoNaoCadastravel = 'ja_cliente' | 'ja_vinculado_omie' | 'rfb_nao_ativa' | 'cnpj_alfanumerico';
+export type MotivoNaoCadastravel = 'ja_cliente' | 'ja_vinculado_omie' | 'rfb_nao_ativa' | 'cnpj_invalido';
 export type MotivoNaoSugerido = MotivoNaoCadastravel | 'sem_lote' | 'saiu_do_dump' | 'sem_sinal' | 'sem_score' | 'score_abaixo';
 
 export type Veredito<M extends string> = { ok: true } | { ok: false; motivo: M };
@@ -41,14 +41,17 @@ export type Veredito<M extends string> = { ok: true } | { ok: false; motivo: M }
 /**
  * Pode ser cadastrado no Omie AGORA? (gatilho pós-sinal da ficha). Não olha score nem lote: quem
  * acabou de conversar com o gestor é lead real, independente da nota. Olha o que faria o cadastro
- * ser errado (já cliente, já vinculado) ou falhar (RFB baixada, CNPJ alfanumérico).
+ * ser errado (já cliente, já vinculado) ou falhar (RFB baixada, documento que a lib recusaria).
  */
 export function cadastravelNoOmie(e: LeadSugerivel): Veredito<MotivoNaoCadastravel> {
   if (e.ja_cliente) return { ok: false, motivo: 'ja_cliente' };
   // `!= null` (não truthiness): o count em SQL usa `IS NULL` — '' precisa cair do MESMO lado nos dois.
   if (e.omie_codigo_cliente != null) return { ok: false, motivo: 'ja_vinculado_omie' };
   if (e.rfb_situacao != null && e.rfb_situacao !== RFB_ATIVA) return { ok: false, motivo: 'rfb_nao_ativa' };
-  if (!CNPJ_NUMERICO_RE.test(e.cnpj)) return { ok: false, motivo: 'cnpj_alfanumerico' };
+  // A MESMA regra que `cadastrarEmpresaNoOmie` aplica antes de tocar o ERP: numérico de 14 dígitos OU
+  // alfanumérico RFB válido (maiúsculo, DV conferido — liberado no #3215). Divergir daqui ofereceria
+  // um cadastro que falha, ou esconderia um que passa.
+  if (!documentoCadastravelNoOmie(e.cnpj)) return { ok: false, motivo: 'cnpj_invalido' };
   return { ok: true };
 }
 

@@ -10,8 +10,9 @@ ligava sinal → sugestão → aprovação.
 
 1. **Helper puro `src/lib/radar/sugeridos.ts`** — o predicado vive UMA vez:
    - `cadastravelNoOmie(e)`: não cliente · sem `omie_codigo_cliente` (`!= null`, '' conta como vínculo — paridade
-     com o `IS NULL` do count) · `rfb_situacao` NULL ou `02` · CNPJ numérico (a edge do Omie ainda não aceita o
-     alfanumérico — não oferecer o que vai falhar).
+     com o `IS NULL` do count) · `rfb_situacao` NULL ou `02` · documento que a lib aceita (`documentoCadastravelNoOmie`: numérico de 14 dígitos ou
+     alfanumérico RFB válido — o #3215 liberou o `criar_cliente` com letras; o filtro PostgREST confere o
+     FORMATO e o DV fica com o helper e a lib, antes de tocar o ERP).
    - `sugeridoParaCadastro(e, lote)`: cadastrável E `ultimo_lote = vigente` E `prospeccao_status = em_conversa` E
      `score ≥ LIMIAR_SUGERIDO` (**70**). Motivos distintos para cada recusa; `score NULL` é `sem_score`, nunca
      "abaixo". Sem lote completo ninguém é sugerido.
@@ -71,7 +72,7 @@ ainda não cruzada".
 ## Provas
 
 - `src/lib/radar/__tests__/sugeridos.test.ts` — limiar, predicado, cada exclusão (já cliente · vínculo (inclusive
-  `''`) · RFB 01/03/04/08 · CNPJ alfanumérico · saiu do dump · lote em ingestão · status ≠ em_conversa · score NULL
+  `''`) · RFB 01/03/04/08 · alfanumérico válido aceito, DV errado/minúscula/13 posições recusados · saiu do dump · lote em ingestão · status ≠ em_conversa · score NULL
   · abaixo), estados do card (sem lote · sem score · carregando · zero legítimo).
 - `src/components/radar/__tests__/RadarOutcomeMenu.oferta.test.tsx` — oferece só com `empresa` + `em_conversa` +
   cadastrável + registro OK e não deduplicado; consumo único; releitura; "lead mudou"; indeterminado com
