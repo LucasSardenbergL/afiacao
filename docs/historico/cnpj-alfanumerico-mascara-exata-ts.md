@@ -21,7 +21,7 @@ CPF `12345678909`) — e o front (`Auth`/`SignupForm`/`Profile` via o espelho) a
 
 - `normalizarDocumento`: `trim+upper` → só se o todo casa `CNPJ_RE` **ou** o novo `CNPJ_MASCARA_RE` remove `[-./]`; e
   ainda exige letra + DV (`ehCnpjAlfanumerico`). Qualquer outra forma → só-dígitos **byte-idêntico** ao `.replace(/\D/g,'')`.
-- `CNPJ_MASCARA_RE` exportado nos dois arquivos, com o **mesmo literal** das duas migrations.
+- `CNPJ_MASCARA_RE` (constante interna — exportar sem consumidor reprova o `knip`) nos dois arquivos, com o **mesmo literal** das duas migrations.
 - `documentoParaCadastro` herda a regra (CPF anotado cadastra como CPF; `12ABC.34501DE-35` recusa com a marca do ramo).
 
 | entrada | antes | agora | SQL (`normalizar_documento`) |

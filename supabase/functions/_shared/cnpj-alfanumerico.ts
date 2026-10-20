@@ -10,7 +10,7 @@
 
 export const CNPJ_RE = /^[0-9A-Z]{12}[0-9]{2}$/;
 /** Máscara RFB nas posições exatas (`12.ABC.345/01DE-35`) — o MESMO regex das migrations 20261019140000/150000. */
-export const CNPJ_MASCARA_RE = /^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}\/[0-9A-Z]{4}-[0-9]{2}$/;
+const CNPJ_MASCARA_RE = /^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}\/[0-9A-Z]{4}-[0-9]{2}$/;
 const BASE_RE = /^[0-9A-Z]{12}$/;
 const PESOS_1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
 const PESOS_2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
