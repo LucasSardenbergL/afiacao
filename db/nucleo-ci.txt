@@ -574,7 +574,7 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
-db/test-radar-score.sh                      18  falsificar=12
+db/test-radar-score.sh                      21  falsificar=14
 # Radar: AVISO AO GESTOR por lote fechado (20261020143000). Defeito aqui = e-mail repetido do mesmo lote,
 # e-mail retroativo do lote velho no 1º cron (ou pendência apagada por re-colada), "0 de N" com score de
 # outra foto (ausente ≠ zero), "0 de 0" sem cliente verificado, número sem denominador, lote running
