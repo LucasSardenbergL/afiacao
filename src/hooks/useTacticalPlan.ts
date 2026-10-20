@@ -810,7 +810,7 @@ export const useTacticalPlan = () => {
         );
       }
 
-      const { error: rpcError } = await supabase.rpc('criar_plano_tatico' as never, {
+      const { error: rpcError } = await supabase.rpc('criar_plano_tatico', {
         _customer_user_id: customerId,
         _expected_owner: ownerId,
         _payload: {
@@ -842,7 +842,7 @@ export const useTacticalPlan = () => {
           expected_result: aiPlan?.expected_result || null,
           operational_risks: aiPlan?.operational_risks || [],
         },
-      } as never);
+      });
       if (rpcError) throw rpcError;
 
       toast.success(`Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso`);
@@ -918,7 +918,7 @@ export const useTacticalPlan = () => {
       // Via RPC-fronteira (#1037 + split de RLS): gateia carteira_visivel_para(cliente do plano)
       // e a RLS pós-split nega UPDATE direto — fecha o #1 (qualquer staff com o UUID concluía
       // plano de carteira que não enxerga). completed_at/status são server-side.
-      const { error } = await supabase.rpc('registrar_resultado_plano' as never, {
+      const { error } = await supabase.rpc('registrar_resultado_plano', {
         _plan_id: planId,
         _plan_followed: result.planFollowed,
         _call_result: result.callResult,
@@ -926,7 +926,7 @@ export const useTacticalPlan = () => {
         _call_duration_seconds: result.callDurationSeconds,
         _objection_type: result.objectionType || null,
         _notes: result.notes || null,
-      } as never);
+      });
       if (error) throw error;
 
       toast.success('Resultado registrado');

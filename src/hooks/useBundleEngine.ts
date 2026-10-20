@@ -803,13 +803,11 @@ export const useBundleEngine = () => {
         // coerência deixa de ser probabilística, e o cap de 1.000 some por construção (ele
         // conta LINHAS, e agora há uma) — o caminho sai da classe #1782/#1801 em vez de se
         // defender dela.
-        // `as never` no nome porque `types.ts` é gerado pelo Lovable e ainda não conhece esta
-        // RPC — mesmo idioma do `farmer_bundle_recomendacoes_substituir` logo abaixo. O contrato
-        // de verdade não é o tipo gerado e sim `validarRespostaMelhorIndividual`, que roda em
-        // RUNTIME: um tipo estático não teria detido resposta malformada de qualquer forma.
+        // O tipo gerado devolve `Json`: o contrato de verdade é `validarRespostaMelhorIndividual`,
+        // que roda em RUNTIME — um tipo estático não teria detido resposta malformada.
         const { data, error } = await supabase.rpc(
-          'farmer_melhores_individuais_por_cliente' as never,
-          { p_farmer_id: effectiveUserId } as never,
+          'farmer_melhores_individuais_por_cliente',
+          { p_farmer_id: effectiveUserId },
         );
         if (error) throw error;
         // Valida a resposta INTEIRA e LANÇA — nunca filtra. Descartar linha inválida daria um
@@ -1220,7 +1218,7 @@ export const useBundleEngine = () => {
         }
         if (recomendacoes.length > 0) {
           const { error: erroRecs } = await supabase.rpc(
-            'farmer_bundle_recomendacoes_substituir' as never,
+            'farmer_bundle_recomendacoes_substituir',
             {
               p_farmer_id: effectiveUserId,
               p_run_id: runId,
@@ -1233,7 +1231,7 @@ export const useBundleEngine = () => {
               // Ver useCrossSellEngine: sem o head ORIGINAL, um run vazio mais novo seria
               // sobrescrito por este, que leu snapshot mais velho.
               p_head_visto: headVisto ?? null,
-            } as never,
+            },
           );
           if (erroRecs) {
             console.error('Falha ao substituir farmer_bundle_recommendations:', erroRecs);
