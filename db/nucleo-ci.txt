@@ -662,6 +662,9 @@ db/test-venda-espinha.sh                   30  falsificar=12
 # extraído para private._defasagem_item com o cockpit IDÊNTICO (md5 do JSON antes/depois, com e sem cap, lote nos 14
 # motivos) + candidatos (master E cap) + aprovação (alvo ≤ último → 22023; tinta NULL/Colacor/dia sem preço → 22023;
 # tela velha → 40001) + leitura da farmer com o conjunto EXATO de 6 chaves (sem custo/markup/piso), dono ÚNICO da
-# carteira do grupo canônico, vencido/revogado/alvo já alcançado somem. 10 sabotagens: vaza cmc, vaza c_now, sem
-# recusa, tinta NULL, dono por união, sem revalidar, markup do cockpit, gate de candidatos, POS ACL anon, POS RLS.
+# carteira do grupo canônico, vencido/revogado/alvo já alcançado somem; último = média ponderada do líquido (116, não
+# MAX); CMC Infinity não vira custo; versão do trio (repetir criação após revogar → 40001). Falsificação exige o
+# conjunto EXATO de vermelhos. 15 sabotagens: vaza cmc, vaza c_now, sem recusa, tinta NULL, dono por união, sem
+# revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
+# gate de candidatos, POS ACL anon, POS RLS.
 db/test-venda-repasse.sh                   52  falsificar=15

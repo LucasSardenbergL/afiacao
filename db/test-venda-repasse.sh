@@ -41,14 +41,14 @@ TOTAL_ESPERADO=52
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
 # então a migration aplica e o dente provado é o do ASSERT. As "pos_" provam o dente da POS (MIG vermelho).
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="vaza_cmc:C4a:C4b,C4c
-              vaza_c_now:C4a:C4b,C4c
-              sem_recusa:C3a,C3b:AP1,C3c
+  SABOTAGENS="vaza_cmc:C4a,C4t:C4b,C4c
+              vaza_c_now:C4a,C4t:C4b,C4c
+              sem_recusa:C3a,C3b,W1:AP1,C3c
               tinta_null:C6,C3c:CAND1,C3a
               dono_uniao:C4e,C4h:C4a,C4d
               sem_revalidar:C5d,C5b:C5a,C4b
               sem_finito:CAND1,CAND2,C4b:C4a,C4t
-              ressuscita:AP5:AP4b,AP6
+              ressuscita:AP5,AP6:AP4b
               retry_subst:AP4b:AP2,AP4
               media_max:W2:W1
               alvo_texto:C4t:C4a
@@ -334,13 +334,15 @@ como() { # $1 = uid, $2 = SQL → saída (sem as linhas SET)
 neg() { # $1 id, $2 descrição, $3 uid ('' = anon), $4 condição, $5 marca ('' = qualquer), $6 statement
   local papel="authenticated" out
   [ -n "$3" ] || papel="anon"
-  out="$(Pq -c "SET test.uid='$3'; SET ROLE $papel;
+  # dentro de BEGIN … ROLLBACK: um negativo que PASSA indevidamente não deixa efeito para os asserts seguintes
+  out="$(Pq -c "BEGIN; SET LOCAL test.uid='$3'; SET LOCAL ROLE $papel;
 DO \$n\$ BEGIN
   $6;
   RAISE NOTICE 'NEG-PASSOU';
 EXCEPTION WHEN $4 THEN RAISE NOTICE 'NEG-OK[%]', SQLERRM;
           WHEN OTHERS THEN RAISE;
-END \$n\$;" 2>&1 || true)"
+END \$n\$;
+ROLLBACK;" 2>&1 || true)"
   if printf '%s' "$out" | grep -q "NEG-OK\[.*$5"; then ok "$1 $2"
   else bad "$1 $2 — veio: $(printf '%s' "$out" | grep -E 'NEG-|ERROR' | head -1 | cut -c1-220)"; fi
 }
