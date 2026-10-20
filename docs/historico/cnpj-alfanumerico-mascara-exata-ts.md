@@ -42,11 +42,27 @@ CPF `12345678909`) — e o front (`Auth`/`SignupForm`/`Profile` via o espelho) a
 - Gates: `test:edges` 2027 ok · `edges:typecheck` 0 crash · `edges:sintaxe` 320 módulos · `sonda:bump` ✓ (5 edges
   `-cnpj-mascara-exata`) · `sonda:fingerprint` ✓ · 22 vitests de forma (740) · `typecheck:app` · eslint.
 
-## Deploy
+## Deploy (medido 2026-10-20)
 
-As 5 edges precisam de deploy manual (Lovable) — `bun run pendencias:deploy` decide a fila pelo `(versao, fonte)`.
-Até lá, o `cnpj_cpf` inflado só pode nascer de um documento Omie com letras E separador fora da máscara (raro);
-o recruzar SQL já não o aceita como chave desde o #3192.
+PR #3199 mergeado em `36a401d1f`. O ledger (`pendencias:deploy`) listou as 5 edges em `DIVERGE_P1` junto com
+`fin-cashflow-engine` (#3191); o `pendencias:pacote` saiu exit 0 (pré-condição de banco ok, 6 edges numa colagem).
+**Duas sessões colaram o mesmo pacote com 1 min de diferença** (01:42 e 01:43 UTC): a 1ª deployou as 6; a 2ª (esta)
+recebeu do agente "3 de 60 hashes diferem" — a `main` já tinha andado (#3201 bumpou `omie-analytics-sync` para
+`v1.14`) — e, como manda o pacote, ele **não publicou nada**. Resultado honesto nos dois lados: ninguém deployou
+subconjunto nem bundle fora da `main`. Sonda 4 min depois: as 5 edges servem `-cnpj-mascara-exata` (`CONFERE`);
+`omie-analytics-sync` ficou pendente de novo pelo `v1.14` do #3201, não por esta entrega.
+
+Custo do 2º envio: 2,9 créditos e **edições não pedidas** pelo bot (`lovable-sensor-edicao` → `EDICAO_DETECTADA`):
+`types.ts` ganhou as 4 RPCs que já existem em prod (tolerado) e `supabase/functions/mcp/index.ts` levou um bump de
+`@supabase/supabase-js` 2.95.3 → 2.117.0 apesar do "No files were edited.". Esse **não** se reverte: o
+`mcp/index.ts` é AUTO-GENERATED pelo plugin Vite `@lovable.dev/mcp-js` a partir de `src/lib/mcp/` (import sem
+versão → faixa do `package.json`, `^2.117.0` desde o #3198), então o bot só regenerou. O revert (#3206) foi
+fechado; o que quebrava era o lock do `edges:typecheck`, regravado no #3207 (este diário foi junto). Lição: **antes de colar o pacote, confira o ledger colado** — `visto há N min via sonda` com a `versao` da
+main já diz que outra sessão colou; a pista de sessão-irmã é fraca, a sonda é a prova.
+E a 2ª lição, do #3206: **`EDICAO_DETECTADA` em arquivo GERADO é falso positivo do sensor**, que hoje só tolera
+`types.ts` — antes de reverter commit do bot, pergunte "quem gera este arquivo?" (`git grep` do caminho em
+`vite.config.ts`/plugins); saída de gerador se corrige na FONTE (`src/lib/mcp/`, `package.json`), nunca no artefato.
+Incidente para o sensor passar a tolerar `supabase/functions/mcp/index.ts`: #3206.
 
 ## Lição
 

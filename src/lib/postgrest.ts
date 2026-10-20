@@ -398,6 +398,17 @@ export function ehFalhaDePagina(erro: unknown): erro is FalhaDePagina {
 function categoriaDoErro(code: string | null, causa: unknown): string {
   if (causa === null) return 'data_null_sem_error';
   if (code === null) return 'desconhecido';
+  // `code: ''` não é SQLSTATE: é o postgrest-js convertendo a REJEIÇÃO do fetch (sem resposta
+  // HTTP, `status: 0`) em `{ error }`. O `hint` do ramo de abort é string FIXA da lib — compará-lo
+  // não expõe texto do Postgres, e ele nunca é enviado. Abort inclui timeout do client e o
+  // AbortError do lock de sessão do auth; rede é o resto (offline, DNS, CORS). (Alerta
+  // "inadimplentes (all)" de 2026-10-18, que chegou como `desconhecido`.)
+  if (code === '') {
+    const hint = (causa as { hint?: unknown } | null)?.hint;
+    return typeof hint === 'string' && hint.startsWith('Request was aborted')
+      ? 'transporte_abortado'
+      : 'transporte_rede';
+  }
   if (code === '57014') return 'timeout';
   if (code === '42501') return 'rls_ou_permissao';
   if (code === 'P0001') return 'excecao_customizada'; // RAISE do plpgsql — o de maior risco de PII
