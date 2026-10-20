@@ -20,10 +20,10 @@ export const ACOES_CONTATO: AcaoConfig[] = [
   { acao: 'descartado',             label: 'Descartar',           icon: 'ban',          confirmar: true,  destrutivo: true  },
 ];
 
-export type PresetRadar = 'novas' | 'estabelecidas';
+export type PresetRadar = 'score' | 'novas' | 'estabelecidas';
 
 export interface RadarOrderParams {
-  orderColumn: 'data_abertura' | 'capital_social';
+  orderColumn: 'score' | 'data_abertura' | 'capital_social';
   orderAsc: boolean;
   dataAberturaMax: string | null;  // 'YYYY-MM-DD' (abertura <= isto)
   dataAberturaMin: string | null;  // 'YYYY-MM-DD' (abertura >= isto)
@@ -36,6 +36,10 @@ function menosAnos(hojeISO: string, anos: number): string {
 }
 
 export function presetParaParams(preset: PresetRadar, hojeISO: string): RadarOrderParams {
+  // 'score' = fila por score DESC (o hook põe NULL por último); sem corte de idade.
+  if (preset === 'score') {
+    return { orderColumn: 'score', orderAsc: false, dataAberturaMax: null, dataAberturaMin: null };
+  }
   if (preset === 'estabelecidas') {
     return { orderColumn: 'capital_social', orderAsc: false, dataAberturaMax: menosAnos(hojeISO, 5), dataAberturaMin: null };
   }
@@ -98,6 +102,21 @@ export const CLASSE_TOM: Record<TomStatus, string> = {
   success: 'border-status-success/40 text-status-success bg-status-success/10',
   muted: 'border-border text-muted-foreground',
 };
+
+// ── Score de lead (radar_score_recalcular, 1×/dia): número + motivos, ou "sem score" honesto ───────
+export interface ScoreUI {
+  texto: string;    // '72' ou 'sem score'
+  tom: TomStatus;   // ≥60 success · ≥40 info · <40 neutro · NULL muted
+  detalhe: string;  // motivos que pontuaram, ou o motivo do NULL ('fora da foto vigente'), ou 'ainda não calculado'
+}
+/** NULL nunca vira 0: score ausente é um ESTADO ("sem score") com o motivo que o banco escreveu. */
+export function scoreUI(score: number | null | undefined, motivos: string[] | null | undefined): ScoreUI {
+  if (score == null || !Number.isFinite(score)) {
+    return { texto: 'sem score', tom: 'muted', detalhe: motivos?.[0] || 'ainda não calculado' };
+  }
+  const tom: TomStatus = score >= 60 ? 'success' : score >= 40 ? 'info' : 'neutro';
+  return { texto: String(score), tom, detalhe: motivos && motivos.length > 0 ? motivos.join(' · ') : 'sem fatores pontuados' };
+}
 
 /** Primeiro telefone utilizável (telefone1, senão telefone2) — o botão Ligar da linha. */
 export function telefonePrincipal(e: { telefone1: string | null; telefone2: string | null }): string | null {

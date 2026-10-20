@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 668
+-- Total de custom migrations: 669
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -731,6 +731,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
   ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
+  ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
 ),
@@ -2826,6 +2827,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
+  ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
@@ -4973,6 +4977,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
+  ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
