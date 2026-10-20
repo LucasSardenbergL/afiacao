@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **679** custom migrations totais
-- **2173** objetos esperados (criados por estas migrations)
+- **680** custom migrations totais
+- **2175** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 797
+  - `function`: 799
   - `rls_policy`: 477
   - `index`: 283
   - `cron_job`: 194
@@ -5506,6 +5506,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.venda_situacao` | — |
 | `index` | `public.idx_venda_recompra_atrasado` | `venda_recompra` |
 | `cron_job` | `cron.venda-recompra` | — |
+
+### `20261020151500_scores_intervalo_recompra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_customer_sales_summary` | — |
+| `function` | `public.apply_score_updates` | — |
 
 ## Próximos passos por status
 
