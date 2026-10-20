@@ -21,9 +21,12 @@
 --
 -- ENVELOPE: idempotente (re-rodar mantém true); transação do executor (`bun run db:aplicar <arquivo>`, sem
 -- BEGIN/COMMIT); pré-condição e pós-condição abaixo.
+--
+-- RECIBOS: #569 aplicou a 1ª versão (a pré-condição com `<> 1`, que o assert-verde-por-ausencia-gate recusa).
+-- Esta versão (`is distinct from 1`) foi reaplicada para o recibo bater com o arquivo. Mesmo efeito: idempotente.
 do $pre$
 begin
-  if (select count(*) from public.reposicao_encerrados_omie_publicacao where empresa = 'OBEN') <> 1 then
+  if (select count(*) from public.reposicao_encerrados_omie_publicacao where empresa = 'OBEN') is distinct from 1 then
     raise exception 'pré-condição: esperava 1 linha OBEN em reposicao_encerrados_omie_publicacao';
   end if;
   if exists (select 1 from public.reposicao_encerrados_omie_publicacao
