@@ -1,6 +1,7 @@
 import { supabase } from '@/integrations/supabase/client';
 import { captureException } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { comNulo } from '@/lib/rpc-args';
 import type { Completude, InsumosSnapshot } from './completude-snapshot';
 
 /**
@@ -47,17 +48,21 @@ export async function registrarGeracaoFarmer(params: {
   // exceção e derrubaria a tela — que é justamente o que o fail-open promete não fazer.
   let error: unknown;
   try {
-    ({ error } = await supabase.rpc('farmer_geracao_registrar' as never, {
-    p_motor: params.motor,
-    p_farmer_id: params.farmerId,
-    p_run_id: params.runId,
-    p_resultado: params.resultado,
-    p_linhas_geradas: params.linhasGeradas,
-    p_completude: params.completude,
-    p_motivo: params.motivo,
-    p_insumos: params.insumos,
-      p_head_visto: params.headVisto,
-    } as never));
+    // `p_motivo`/`p_head_visto` NULL = "sem motivo" / "primeira geração" (DEFAULT NULL na prod).
+    ({ error } = await supabase.rpc(
+      'farmer_geracao_registrar',
+      comNulo<'farmer_geracao_registrar', 'p_motivo' | 'p_head_visto'>({
+        p_motor: params.motor,
+        p_farmer_id: params.farmerId,
+        p_run_id: params.runId,
+        p_resultado: params.resultado,
+        p_linhas_geradas: params.linhasGeradas,
+        p_completude: params.completude,
+        p_motivo: params.motivo,
+        p_insumos: params.insumos,
+        p_head_visto: params.headVisto,
+      }),
+    ));
   } catch (e) {
     error = e;
   }
@@ -119,7 +124,7 @@ export async function lerHeadVigente(
   farmerId: string,
 ): Promise<string | null | undefined> {
   const { data, error } = await supabase
-    .from('farmer_geracao_vigente' as never)
+    .from('farmer_geracao_vigente')
     .select('run_id')
     .eq('motor', motor)
     .eq('farmer_id', farmerId)
@@ -129,5 +134,5 @@ export async function lerHeadVigente(
     console.error(`[farmer/head] não consegui ler o head vigente de ${motor}:`, mensagemDeErro(error) ?? error);
     return undefined;
   }
-  return ((data as { run_id?: string } | null)?.run_id ?? null) as string | null;
+  return data?.run_id ?? null;
 }

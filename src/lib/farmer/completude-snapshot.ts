@@ -22,7 +22,9 @@
 // falam em `InsumosSnapshot`. Exportar sem consumidor faz o gate de dead-code (knip)
 // reprovar no CI — e o `bun run test` local NÃO cobre esse gate (o health stack sim).
 /** Um insumo do snapshot: foi lido com sucesso, e quantas linhas vieram. */
-interface InsumoLido {
+// `type` (e não `interface`) de propósito: só alias tem a assinatura de índice implícita que o
+// torna atribuível a `Json` — o snapshot vai cru para o `p_insumos jsonb` das RPCs de geração.
+type InsumoLido = {
   /** `false` = a leitura FALHOU (exceção, página perdida, RPC recusada). */
   ok: boolean;
   /** Quantas linhas o insumo devolveu. Só faz sentido quando `ok`. */
@@ -46,7 +48,7 @@ interface InsumoLido {
    * proíbe justamente por não ser fato. Cada call-site declara o seu e responde por ele.
    */
   pisoCobertura?: number;
-}
+};
 
 export type InsumosSnapshot = Record<string, InsumoLido>;
 
