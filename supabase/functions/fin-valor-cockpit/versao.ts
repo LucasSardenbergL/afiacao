@@ -30,7 +30,9 @@ export const respostaSonda = criarRespostaSonda("fin-valor-cockpit");
 // cockpit inteiro, devolvendo o payload do fluxo real — sem `probe:true`. O veredito é binário
 // mesmo com as cinco edges desta leva nascendo na mesma string (o campo `edge` da resposta desfaz
 // o empate entre elas; ver `criarRespostaSonda`).
-export const VERSAO = "v1.7-universo-canonico";
+// v1.7 → v1.8: baixa CR derivada lida pela RPC fin_titulo_baixas_cr_mapa (UMA avaliação) em vez de
+// paginar v_titulo_baixas com .range() (~14 páginas, cada uma reavaliando a view inteira).
+export const VERSAO = "v1.8-baixas-cr-rpc";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

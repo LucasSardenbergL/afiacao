@@ -36,7 +36,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // v1.6 → v1.7: CR/CP lidos por keyset em 8 faixas de uuid concorrentes (teto 8 em voo, CR+CP
 // juntas) em vez de OFFSET em série — colacor levava 19–22 s em 31 idas e voltas. Mesmas linhas,
 // mesma ordem; o bump é a prova do deploy (a saída é idêntica, nenhuma canária discrimina).
-export const VERSAO = "v1.7-cr-cp-keyset-particionado";
+// v1.7 → v1.8: PMR/PMP lidos pela RPC fin_capital_giro_prazos_empresa (O(empresa)) em vez da view
+// v_capital_giro_prazos, que varria fin_movimentacoes inteira 2× por chamada; deriva da cópia → 500.
+export const VERSAO = "v1.8-prazos-rpc";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
