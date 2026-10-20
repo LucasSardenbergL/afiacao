@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **680** custom migrations totais
-- **2181** objetos esperados (criados por estas migrations)
+- **681** custom migrations totais
+- **2192** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 799
-  - `rls_policy`: 480
+  - `function`: 805
+  - `rls_policy`: 482
   - `index`: 285
-  - `cron_job`: 194
-  - `table`: 189
+  - `cron_job`: 195
+  - `table`: 191
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5519,6 +5519,22 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.venda_config_select_staff` | `venda_config` |
 | `rls_policy` | `public.venda_sugestao_select` | `venda_sugestao` |
 | `rls_policy` | `public.venda_contato_select` | `venda_contato` |
+
+### `20261020181743_venda_cliente_gerador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_city_uf` | — |
+| `function` | `public.venda_cidades_alvo` | — |
+| `function` | `private.venda_lista_calc` | — |
+| `function` | `public.venda_gerar_lista` | — |
+| `function` | `public.venda_reconstruir_historico` | — |
+| `function` | `public.venda_avaliar_ondas` | — |
+| `table` | `public.venda_gerador_execucao` | — |
+| `table` | `public.venda_onda_log` | — |
+| `cron_job` | `cron.venda-gerador` | — |
+| `rls_policy` | `public.venda_gerador_execucao_select_master` | `venda_gerador_execucao` |
+| `rls_policy` | `public.venda_onda_log_select_master` | `venda_onda_log` |
 
 ## Próximos passos por status
 

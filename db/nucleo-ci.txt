@@ -657,3 +657,11 @@ db/test-data-health-radar.sh               39  falsificar=12
 # pedido do ALIAS conta para o canônico. 12 sabotagens: alias, sync→nao_virou, fecha cobrível, cursor ignorado,
 # desconto como zero, fase na RPC, 1ª marcação, carteira sem alias, RLS sombra, POST ACL, ACL sem POST, POST cron.
 db/test-venda-espinha.sh                   30  falsificar=12
+
+# Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
+# atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
+# db/fixtures/venda-cidades-alvo.json) com os `teto` maiores atrasos fora da rota; perdido, founder e inelegível fora;
+# alias → canônico; idempotente; reconstrução sem olhar o futuro; ondas que ligam sozinhas e nunca desligam; ACL/RLS.
+# 16 sabotagens: perdido, teto, papel farmer, UF, alias, override, dia da rota, UF entre parênteses, ON CONFLICT,
+# 3 dias, divergência, sombra tardia, 365 dias, taxa 80%, captura 42703 da Onda 3, POST ACL.
+db/test-venda-gerador.sh                   59  falsificar=16

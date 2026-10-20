@@ -497,7 +497,10 @@ eq "A farmer não lê execuções nem log de ondas" "$(Pq -c "$(como "$F1" "SELE
 eq "A master lê o log das ondas" "$(Pq -c "$(como "$M" "SELECT count(*) FROM public.venda_onda_log")")" "3"
 eq "A farmer não escreve no log" "$(estado "$(como "$F1" "INSERT INTO public.venda_onda_log (onda, condicao) VALUES ('onda_preco', '{}')")")" "42501"
 
+# A query de validação do PR (db/validar-venda-gerador.sql) dá ✅ depois do apply.
+VALIDA="$(Pq -f "$REPO_ROOT/db/validar-venda-gerador.sql")"
+eq "A validar-venda-gerador.sql dá ✅" "${VALIDA:0:1}" "✅"
+
 echo "PASS=$PASS FAIL=$FAIL"
-echo "RESULTADO: $PASS ok / $FAIL fail"
 [ "$FAIL" -eq 0 ] || exit 1
 echo "FIM-OK venda-gerador (locale $LOC)"

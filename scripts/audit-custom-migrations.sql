@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 680
+-- Total de custom migrations: 681
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -744,7 +744,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020143511', 'venda_cliente_complemento', '20261020143511_venda_cliente_complemento.sql'),
   ('20261020150000', 'fin_capital_giro_prazos_empresa', '20261020150000_fin_capital_giro_prazos_empresa.sql'),
   ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
-  ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql')
+  ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql'),
+  ('20261020181743', 'venda_cliente_gerador', '20261020181743_venda_cliente_gerador.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2891,7 +2892,18 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
-  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
+  ('venda_cliente_gerador', 'function', 'private', 'venda_city_uf', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_cidades_alvo', ''),
+  ('venda_cliente_gerador', 'function', 'private', 'venda_lista_calc', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_gerar_lista', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_reconstruir_historico', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_avaliar_ondas', ''),
+  ('venda_cliente_gerador', 'table', 'public', 'venda_gerador_execucao', ''),
+  ('venda_cliente_gerador', 'table', 'public', 'venda_onda_log', ''),
+  ('venda_cliente_gerador', 'cron_job', 'cron', 'venda-gerador', ''),
+  ('venda_cliente_gerador', 'rls_policy', 'public', 'venda_gerador_execucao_select_master', 'venda_gerador_execucao'),
+  ('venda_cliente_gerador', 'rls_policy', 'public', 'venda_onda_log_select_master', 'venda_onda_log')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5086,7 +5098,18 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
-  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
+  ('venda_cliente_gerador', 'function', 'private', 'venda_city_uf', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_cidades_alvo', ''),
+  ('venda_cliente_gerador', 'function', 'private', 'venda_lista_calc', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_gerar_lista', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_reconstruir_historico', ''),
+  ('venda_cliente_gerador', 'function', 'public', 'venda_avaliar_ondas', ''),
+  ('venda_cliente_gerador', 'table', 'public', 'venda_gerador_execucao', ''),
+  ('venda_cliente_gerador', 'table', 'public', 'venda_onda_log', ''),
+  ('venda_cliente_gerador', 'cron_job', 'cron', 'venda-gerador', ''),
+  ('venda_cliente_gerador', 'rls_policy', 'public', 'venda_gerador_execucao_select_master', 'venda_gerador_execucao'),
+  ('venda_cliente_gerador', 'rls_policy', 'public', 'venda_onda_log_select_master', 'venda_onda_log')
 )
 SELECT
   e.migration,
