@@ -1,15 +1,8 @@
-<<<<<<< HEAD
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, versaoDaFila, type PresetRadar } from '@/lib/radar/ui-helpers';
-=======
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
-import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
->>>>>>> f93992cdb3913062fb69d4e89a9cefc55e601b21
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -67,12 +60,9 @@ function useRadarRodadaScore() {
 }
 
 export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
-<<<<<<< HEAD
+  const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
-=======
-  const qc = useQueryClient();
->>>>>>> f93992cdb3913062fb69d4e89a9cefc55e601b21
   return useInfiniteQuery({
     queryKey: ['radar', 'lista', filtros, hojeISO, versao],
     // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
