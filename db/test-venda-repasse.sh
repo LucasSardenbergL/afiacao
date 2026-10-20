@@ -35,7 +35,7 @@ export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_repasse.sql}"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=43
+TOTAL_ESPERADO=52
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -46,7 +46,12 @@ if [ "${1:-}" = "--falsificar" ]; then
               sem_recusa:C3a,C3b:AP1,C3c
               tinta_null:C6,C3c:CAND1,C3a
               dono_uniao:C4e,C4h:C4a,C4d
-              sem_revalidar:C5d:C5a,C4b
+              sem_revalidar:C5d,C5b:C5a,C4b
+              sem_finito:CAND1,CAND2,C4b:C4a,C4t
+              ressuscita:AP5:AP4b,AP6
+              retry_subst:AP4b:AP2,AP4
+              media_max:W2:W1
+              alvo_texto:C4t:C4a
               paridade_markup:C1b:C1a,CAND1
               gate_candidatos:C2b:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
@@ -69,6 +74,16 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); continue
     fi
     antes=$falhas
+    # conjunto EXATO: nenhum vermelho além dos anunciados (Codex código P2) …
+    falhou="$(grep -oE '^  ❌ [A-Za-z0-9]+' "$log" | awk '{print $2}' | sort -u | paste -sd, - || true)"
+    anunciado="$(printf '%s\n' "$reds" | tr ',' '\n' | sed 's/!.*//' | sort -u | paste -sd, -)"
+    [ "$falhou" = "$anunciado" ] || { echo "❌ $nome: vermelhos [$falhou] ≠ anunciados [$anunciado]"; falhas=$((falhas+1)); }
+    # … e o mutante que aplica a migration tem de rodar a suíte INTEIRA (não abortar no meio)
+    case "$reds" in
+      *MIG*) ;;
+      *) n_exec=$(grep -cE '^  (✅|❌) ' "$log" || true)
+         [ "$n_exec" = "$TOTAL_ESPERADO" ] || { echo "❌ $nome: executou $n_exec asserts, esperado $TOTAL_ESPERADO"; falhas=$((falhas+1)); } ;;
+    esac
     for a in ${reds//,/ }; do
       case "$a" in
         *!*) id="${a%%!*}"; marca="${a#*!}"   # vermelho de EXECUÇÃO: o erro tem de trazer a marca
@@ -266,7 +281,8 @@ BEGIN
     (7101,'7101','R1 lixa','oben',false), (7102,'7102','R2 base tinta','oben',true),
     (7103,'7103','R3 colacor','colacor',false), (7104,'7104','R4 abaixo piso','oben',false),
     (7105,'7105','R5 dia sem preço','oben',false), (7106,'7106','R6 tinta NULL','oben',NULL),
-    (7107,'7107','R7 vencido','oben',false), (7108,'7108','R8 venda posterior','oben',false);
+    (7107,'7107','R7 vencido','oben',false), (7108,'7108','R8 venda posterior','oben',false),
+    (7110,'7110','R10 média ponderada','oben',false);
   FOR r IN SELECT * FROM (VALUES
       (7101, 'oben',    100, 0::numeric, 60, 80),
       (7102, 'oben',    100, 0,          60, 80),
@@ -286,6 +302,15 @@ BEGIN
                                        ultima_compra, ultimo_preco, data_referencia, calculado_em)
       VALUES (can, r.acc, r.cod, 2, 30, 10, d30, r.unit, hoje, now());
   END LOOP;
+  -- R1: a conta 'oben' tem CMC Infinity sincronizado AGORA e a 'vendas' tem 80 de 1 h atrás → o lote usa 80
+  UPDATE public.inventory_position SET cmc = 'Infinity' WHERE omie_codigo_produto = 7101 AND account = 'oben';
+  INSERT INTO public.inventory_position (omie_codigo_produto, cmc, account, synced_at) VALUES (7101, 80, 'vendas', now() - interval '1 hour');
+  -- R10: último dia com 1×(100 − 20 de desconto) + 9×120 → média ponderada do líquido = 116
+  --      (MAX = 120 · média simples = 100 · cheio ponderado = 118)
+  PERFORM pg_temp.compra(can, 7110, 'oben', d90, 10, 90, 0);
+  PERFORM pg_temp.compra(ali, 7110, 'oben', d30, 1, 100, 20);
+  PERFORM pg_temp.compra(can, 7110, 'oben', d30, 9, 120, 0);
+  PERFORM pg_temp.custo(7110, 'oben', d30, 60, 80, now());
   -- grupo 2 (dois donos): uma compra só para existir base
   PERFORM pg_temp.compra(can2, 7101, 'oben', d30, 10, 100, 0);
 END $seed$;
@@ -356,6 +381,11 @@ case "${SABOTAGEM:-}" in
   sem_revalidar)   sabotar 's/^( +)AND b\.ultimo_preco < ra\.preco_alvo$/\1AND true/' ;;
   paridade_markup) sabotar 's/^( +)markup_ant := \(p_p_last - p_c_last\) \/ p_c_last \* 100;/\1markup_ant := (p_p_last - p_c_last) \/ p_c_last * 101;/' ;;
   gate_candidatos) sabotar 's/^( +)OR NOT private\.cap_custo_ler\(v_uid\) THEN/\1THEN/' ;;
+  sem_finito)      sabotar "s/AND private\.regua_num_finito\(ip\.cmc\) AND ip\.cmc > 0 /AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric /" ;;
+  ressuscita)      sabotar "s/^( +WHERE ra\.comprador_id = v_comprador AND ra\.empresa = 'oben' AND ra\.omie_codigo_produto = p_codigo)$/\1 AND ra.revogado_em IS NULL/" ;;
+  retry_subst)     sabotar 's/AND v_atual\.substitui_id IS NOT DISTINCT FROM p_substitui THEN/AND p_substitui IS NULL THEN/' ;;
+  media_max)       sabotar 's/^( +)sum\(l\.preco_unit_liquido \* l\.quantidade\) FILTER \(WHERE l\.preco_unit_liquido > 0\) AS soma,/\1max(l.preco_unit_liquido) * sum(l.quantidade) FILTER (WHERE l.preco_unit_liquido > 0) AS soma,/' ;;
+  alvo_texto)      sabotar "s/^( +)'preco_alvo', +r\.preco_alvo,/\1'preco_alvo', r.preco_alvo::text,/" ;;
   pos_acl_anon)    sabotar '/^REVOKE ALL ON FUNCTION public\.venda_repasse_candidatos\(\) FROM PUBLIC, anon;/d' ;;
   pos_rls)         sabotar '/^ALTER TABLE public\.venda_repasse_aprovado ENABLE ROW LEVEL SECURITY;/d' ;;
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
@@ -432,6 +462,23 @@ eq AP4 "substituir com o id visto: 1 não-revogado, o anterior revogado" \
   "$(Pq -c "SELECT count(*) FILTER (WHERE revogado_em IS NULL)||'|'||bool_and(revogado_em IS NOT NULL) FILTER (WHERE id='$ID1')||'|'||(SELECT id FROM public.venda_repasse_aprovado WHERE revogado_em IS NULL AND omie_codigo_produto=7101 AND comprador_id='$CAN') FROM public.venda_repasse_aprovado WHERE omie_codigo_produto=7101")" \
   "1|true|$ID2"
 
+eq AP4b "retry idêntico da SUBSTITUIÇÃO devolve o mesmo id novo" \
+  "$(como "$MST" "SELECT public.venda_aprovar_repasse('$CAN', 'oben', 7101, 126.00, $VAL, '$ID1')")" "$ID2"
+# média ponderada do líquido do último dia (116): 115 recusa, 117 aceita
+neg W1 "R10: alvo 115 < média ponderada 116 → 22023" "$MST" invalid_parameter_value "REPASSE_ALVO_ABAIXO" \
+  "PERFORM public.venda_aprovar_repasse('$CAN', 'oben', 7110, 115.00, $VAL)"
+ID10="$(como "$MST" "SELECT public.venda_aprovar_repasse('$CAN', 'oben', 7110, 117.00, $VAL)")"
+eq W2 "R10: alvo 117 > 116 é aceito (último gravado = 116)" \
+  "$(Pq -c "SELECT (ultimo_preco_na_aprovacao = 116)::text FROM public.venda_repasse_aprovado WHERE id = '${ID10:-00000000-0000-0000-0000-000000000000}'")" "true"
+como "$MST" "SELECT public.venda_revogar_repasse('${ID10:-00000000-0000-0000-0000-000000000000}')" >/dev/null   # fora da leitura dos C4/C5
+# parâmetros inválidos → 22023 com marca
+neg N1 "aprovar com alvo NULL → 22023" "$MST" invalid_parameter_value "REPASSE_PARAM" \
+  "PERFORM public.venda_aprovar_repasse('$CAN', 'oben', 7101, NULL, $VAL)"
+neg N2 "leitura com comprador NULL → 22023" "$FAR" invalid_parameter_value "REPASSE_PARAM" \
+  "PERFORM public.venda_preco_alvo_comprador(NULL)"
+neg N3 "revogar id inexistente → 22023" "$MST" invalid_parameter_value "REPASSE_INEXISTENTE" \
+  "PERFORM public.venda_revogar_repasse(gen_random_uuid())"
+
 # C4 — leitura da farmer
 leitura() { # $1 uid, $2 comprador
   como "$1" "SELECT public.venda_preco_alvo_comprador('$2')"
@@ -439,6 +486,9 @@ leitura() { # $1 uid, $2 comprador
 eq C4a "farmer recebe SÓ as 6 chaves permitidas (conjunto exato, com linha)" \
   "$(como "$FAR" "SELECT count(DISTINCT e)||':'||string_agg(DISTINCT k, ',' ORDER BY k) FROM jsonb_array_elements(public.venda_preco_alvo_comprador('$CAN')) e, jsonb_object_keys(e) k")" \
   "1:empresa,faixa_margem,omie_codigo_produto,preco_alvo,ultimo_preco,valido_ate"
+eq C4t "tipos das 6 chaves (número é número, não texto)" \
+  "$(como "$FAR" "SELECT string_agg(k||':'||jsonb_typeof(e->k), ',' ORDER BY k) FROM jsonb_array_elements(public.venda_preco_alvo_comprador('$CAN')) e, jsonb_object_keys(e) k")" \
+  "empresa:string,faixa_margem:string,omie_codigo_produto:number,preco_alvo:number,ultimo_preco:number,valido_ate:string"
 eq C4b "valores: último, alvo, faixa (CMC 80 / alvo 126 = 36% → verde)" \
   "$(como "$FAR" "SELECT e->>'empresa'||'|'||(e->>'omie_codigo_produto')||'|'||(e->>'ultimo_preco')||'|'||(e->>'preco_alvo')||'|'||(e->>'faixa_margem') FROM jsonb_array_elements(public.venda_preco_alvo_comprador('$CAN')) e")" \
   "oben|7101|100.00|126.00|verde"
@@ -473,6 +523,10 @@ REV1="$(Pq -c "SELECT revogado_em||'|'||revogado_por FROM public.venda_repasse_a
 como "$MST" "SELECT public.venda_revogar_repasse('$ID2')" >/dev/null
 eq C5e "revogar de novo é no-op (autor/data preservados)" \
   "$(Pq -c "SELECT revogado_em||'|'||revogado_por FROM public.venda_repasse_aprovado WHERE id='$ID2'")" "$REV1"
+neg AP5 "repetir a CRIAÇÃO depois da revogação não ressuscita → 40001" "$MST" serialization_failure "REPASSE_CONFLITO" \
+  "PERFORM public.venda_aprovar_repasse('$CAN', 'oben', 7101, 125.00, $VAL)"
+eq AP6 "re-aprovar conscientemente (vendo a versão revogada) funciona" \
+  "$(como "$MST" "SELECT public.venda_aprovar_repasse('$CAN', 'oben', 7101, 127.00, $VAL, '$ID2') IS NOT NULL")" "t"
 neg C5f "farmer não revoga → 42501" "$FAR" insufficient_privilege "requer master" "PERFORM public.venda_revogar_repasse('$ID8')"
 
 # ACL — tabela e RPCs pelo ACL efetivo

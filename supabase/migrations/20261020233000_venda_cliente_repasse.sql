@@ -391,7 +391,7 @@ AS $function$
     LEFT JOIN LATERAL (
       SELECT ip.cmc, ip.synced_at FROM public.inventory_position ip
        WHERE ip.omie_codigo_produto = d.omie_codigo_produto
-         AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric
+         AND private.regua_num_finito(ip.cmc) AND ip.cmc > 0   -- finito: Infinity não é custo (Codex código P1)
          AND ip.account = ANY (ARRAY['vendas','oben'])
        ORDER BY ip.synced_at DESC NULLS LAST
        LIMIT 1
@@ -400,7 +400,7 @@ AS $function$
       SELECT cs.cmc FROM public.cmc_snapshot cs
        WHERE cs.omie_codigo_produto = d.omie_codigo_produto
          AND cs.account = ANY (ARRAY['vendas','oben'])
-         AND cs.cmc > 0 AND cs.cmc <> 'NaN'::numeric
+         AND private.regua_num_finito(cs.cmc) AND cs.cmc > 0
          AND cs.data_posicao BETWEEN d.dia - 7 AND d.dia + 7
        ORDER BY abs(cs.data_posicao - d.dia) ASC, cs.synced_at DESC
        LIMIT 1
@@ -439,6 +439,7 @@ CREATE TABLE IF NOT EXISTS public.venda_repasse_aprovado (
   aprovado_em                timestamptz NOT NULL DEFAULT clock_timestamp(),
   revogado_em                timestamptz NULL,
   revogado_por               uuid NULL,
+  substitui_id               uuid NULL REFERENCES public.venda_repasse_aprovado(id),  -- versão anterior do trio
   CONSTRAINT venda_repasse_alvo_acima_ultimo CHECK (preco_alvo > ultimo_preco_na_aprovacao),
   CONSTRAINT venda_repasse_revogacao_par CHECK ((revogado_em IS NULL) = (revogado_por IS NULL))
 );
@@ -522,13 +523,17 @@ BEGIN
            'n_pedidos',               c.n_pedidos,
            'cadencia_dias',           c.cadencia_dias,
            'qtd_sugerida',            c.qtd_sugerida,
-           -- o que a tela precisa devolver em p_substitui para trocar uma decisão existente
+           -- a VERSÃO do trio = o registro mais recente (revogado ou não): é o que a tela devolve em p_substitui
            'repasse_atual', (
              SELECT jsonb_build_object('id', ra.id, 'preco_alvo', ra.preco_alvo, 'valido_ate', ra.valido_ate,
-                                       'vigente', ra.valido_ate >= (now() AT TIME ZONE 'America/Sao_Paulo')::date)
+                                       'revogado', ra.revogado_em IS NOT NULL,
+                                       'vigente', ra.revogado_em IS NULL
+                                                  AND ra.valido_ate >= (now() AT TIME ZONE 'America/Sao_Paulo')::date)
                FROM public.venda_repasse_aprovado ra
               WHERE ra.comprador_id = c.comprador_id AND ra.empresa = 'oben'
-                AND ra.omie_codigo_produto = c.omie_codigo_produto AND ra.revogado_em IS NULL)
+                AND ra.omie_codigo_produto = c.omie_codigo_produto
+              ORDER BY ra.aprovado_em DESC, ra.id DESC
+              LIMIT 1)
          ) ORDER BY c.valor_anual DESC NULLS LAST, c.comprador_id, c.omie_codigo_produto), '[]'::jsonb)
     INTO v_out
     FROM c;
@@ -538,9 +543,11 @@ END;
 $function$;
 
 -- ── 5. Aprovar (master) ─────────────────────────────────────────────────────
--- p_substitui: id do repasse NÃO revogado que a tela viu (repasse_atual.id dos candidatos), ou NULL
--- quando a tela não viu nenhum. Divergiu do estado atual → 40001 (decisão de tela velha não sobrescreve).
--- Retry idêntico (mesmo alvo e validade sobre o mesmo registro vigente) devolve o mesmo id.
+-- Versão do trio = o registro MAIS RECENTE (revogado ou não). p_substitui = a versão que a tela viu
+-- (repasse_atual.id dos candidatos), NULL só para trio sem histórico. Divergiu → 40001: decisão de tela velha
+-- não sobrescreve, e repetir uma criação depois de uma revogação NÃO ressuscita a aprovação (Codex código P1).
+-- Retry idêntico (mesmo alvo, validade e mesmo p_substitui da requisição que criou a versão vigente) devolve o
+-- mesmo id — vale para a criação e para a substituição (substitui_id guarda o antecessor).
 CREATE OR REPLACE FUNCTION public.venda_aprovar_repasse(
   p_comprador uuid, p_empresa text, p_codigo bigint, p_preco_alvo numeric, p_valido_ate date,
   p_substitui uuid DEFAULT NULL)
@@ -561,7 +568,7 @@ BEGIN
     RAISE EXCEPTION 'venda_aprovar_repasse: requer master' USING ERRCODE = '42501';
   END IF;
   IF p_comprador IS NULL OR p_codigo IS NULL OR p_preco_alvo IS NULL OR p_valido_ate IS NULL THEN
-    RAISE EXCEPTION 'venda_aprovar_repasse: parametro obrigatorio ausente' USING ERRCODE = '22004';
+    RAISE EXCEPTION 'REPASSE_PARAM: parametro obrigatorio ausente' USING ERRCODE = '22023';
   END IF;
   IF p_empresa IS DISTINCT FROM 'oben' THEN
     RAISE EXCEPTION 'REPASSE_EMPRESA: regua v1 so Oben (empresa=%)', p_empresa USING ERRCODE = '22023';
@@ -601,31 +608,33 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- versão do trio (sob o advisory lock: ninguém insere/revoga o trio em paralelo)
   SELECT * INTO v_atual FROM public.venda_repasse_aprovado ra
    WHERE ra.comprador_id = v_comprador AND ra.empresa = 'oben' AND ra.omie_codigo_produto = p_codigo
-     AND ra.revogado_em IS NULL
+   ORDER BY ra.aprovado_em DESC, ra.id DESC
+   LIMIT 1
    FOR UPDATE;
 
-  IF v_atual.id IS NOT NULL THEN
-    IF v_atual.preco_alvo = p_preco_alvo AND v_atual.valido_ate = p_valido_ate
-       AND (p_substitui IS NULL OR p_substitui = v_atual.id) THEN
-      RETURN v_atual.id;   -- retry idêntico
-    END IF;
-    IF p_substitui IS DISTINCT FROM v_atual.id THEN
-      RAISE EXCEPTION 'REPASSE_CONFLITO: o repasse do trio mudou desde a leitura (atual=%)', v_atual.id
-        USING ERRCODE = '40001';
-    END IF;
+  -- retry idêntico da requisição que criou a versão vigente
+  IF v_atual.id IS NOT NULL AND v_atual.revogado_em IS NULL
+     AND v_atual.preco_alvo = p_preco_alvo AND v_atual.valido_ate = p_valido_ate
+     AND v_atual.substitui_id IS NOT DISTINCT FROM p_substitui THEN
+    RETURN v_atual.id;
+  END IF;
+  IF p_substitui IS DISTINCT FROM v_atual.id THEN
+    RAISE EXCEPTION 'REPASSE_CONFLITO: a versao do trio mudou desde a leitura (atual=%, vista=%)', v_atual.id, p_substitui
+      USING ERRCODE = '40001';
+  END IF;
+  IF v_atual.id IS NOT NULL AND v_atual.revogado_em IS NULL THEN
     UPDATE public.venda_repasse_aprovado
        SET revogado_em = clock_timestamp(), revogado_por = v_uid
      WHERE id = v_atual.id;
-  ELSIF p_substitui IS NOT NULL THEN
-    RAISE EXCEPTION 'REPASSE_CONFLITO: o repasse % nao esta mais ativo', p_substitui USING ERRCODE = '40001';
   END IF;
 
   INSERT INTO public.venda_repasse_aprovado
     (comprador_id, empresa, omie_codigo_produto, preco_alvo, ultimo_preco_na_aprovacao, valido_ate,
-     aprovado_por, aprovado_em)
-  VALUES (v_comprador, 'oben', p_codigo, p_preco_alvo, v_ultimo, p_valido_ate, v_uid, clock_timestamp())
+     aprovado_por, aprovado_em, substitui_id)
+  VALUES (v_comprador, 'oben', p_codigo, p_preco_alvo, v_ultimo, p_valido_ate, v_uid, clock_timestamp(), p_substitui)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -647,7 +656,7 @@ BEGIN
   END IF;
   SELECT * INTO v_r FROM public.venda_repasse_aprovado WHERE id = p_id;
   IF v_r.id IS NULL THEN
-    RAISE EXCEPTION 'REPASSE_INEXISTENTE: %', p_id USING ERRCODE = 'P0002';
+    RAISE EXCEPTION 'REPASSE_INEXISTENTE: %', p_id USING ERRCODE = '22023';
   END IF;
   PERFORM pg_advisory_xact_lock(hashtextextended(
     'venda_repasse:' || v_r.comprador_id::text || ':oben:' || v_r.omie_codigo_produto::text, 0));
@@ -685,7 +694,7 @@ BEGIN
     RAISE EXCEPTION 'venda_preco_alvo_comprador: requer perfil staff' USING ERRCODE = '42501';
   END IF;
   IF p_comprador IS NULL THEN
-    RAISE EXCEPTION 'venda_preco_alvo_comprador: comprador obrigatorio' USING ERRCODE = '22004';
+    RAISE EXCEPTION 'REPASSE_PARAM: comprador obrigatorio' USING ERRCODE = '22023';
   END IF;
 
   SELECT a.canonical_user_id INTO v_comprador
