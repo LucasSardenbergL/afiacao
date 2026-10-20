@@ -95,6 +95,48 @@ async function paginarComTeto(
   );
 }
 
+/**
+ * Mapa `omie_codigo_lancamento → data_baixa_final` (v_titulo_baixas) da empresa INTEIRA, para o
+ * DRE-caixa. Até o #3234 era `fetchAll` por OFFSET sobre a view agregada (~29 páginas na colacor
+ * CR, 28.908 linhas em 2026-10-20): um movimento novo do sync entre duas páginas desloca o offset
+ * e PULA uma baixa — mapa parcial = título contado no mês errado (ressalva do Codex no #3234).
+ * Keyset pela própria chave: medido único e não-nulo por (company, tipo) na view (psql-ro,
+ * 2026-10-20), e a view agrupa por ela. Sem teto: é o histórico todo e cresce; a chave
+ * estritamente crescente (validada pelo helper) já impede laço que não converge.
+ */
+export async function carregarBaixaMap(
+  db: BancoTitulos,
+  company: string,
+  tipo: "CR" | "CP",
+): Promise<Map<number, string>> {
+  type LinhaBaixa = { omie_codigo_lancamento: number; data_baixa_final: string | null };
+  const rows = await fetchAllKeyset<LinhaBaixa, number>(
+    (cursor, limite) => {
+      let q = db.from<LinhaBaixa>("v_titulo_baixas")
+        .select("omie_codigo_lancamento, data_baixa_final")
+        .eq("company", company).eq("tipo", tipo);
+      if (cursor !== null) q = q.gt("omie_codigo_lancamento", cursor);
+      return q.order("omie_codigo_lancamento", { ascending: true }).limit(limite);
+    },
+    (l) => {
+      // bigint chega como número JSON: acima de 2^53 ele ARREDONDA, e o `.gt` seguinte pularia
+      // o código vizinho sem lançar (reproduzido pelo Codex). Maior código em prod: 1,2e10
+      // (psql-ro, 2026-10-20) — longe, mas a guarda é o que torna o limite visível.
+      const k = l.omie_codigo_lancamento;
+      if (typeof k === "number" && !Number.isSafeInteger(k)) {
+        throw new FalhaLeituraCritica(`v_titulo_baixas ${tipo}/${company}`, { code: "MALFORMADA" });
+      }
+      return k;
+    },
+    `v_titulo_baixas ${tipo}/${company}`,
+  );
+  const map = new Map<number, string>();
+  for (const r of rows) {
+    if (r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
+  }
+  return map;
+}
+
 /** Competência: títulos EMITIDOS no mês, exceto cancelados. */
 export function buscarTitulosCompetencia(
   db: BancoTitulos,

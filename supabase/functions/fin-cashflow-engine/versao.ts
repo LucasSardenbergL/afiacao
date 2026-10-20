@@ -38,7 +38,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // mesma ordem; o bump é a prova do deploy (a saída é idêntica, nenhuma canária discrimina).
 // v1.7 → v1.8: PMR/PMP lidos pela RPC fin_capital_giro_prazos_empresa (O(empresa)) em vez da view
 // v_capital_giro_prazos, que varria fin_movimentacoes inteira 2× por chamada; deriva da cópia → 500.
-export const VERSAO = "v1.8-prazos-rpc";
+// v1.8 → v1.9: CR/CP encerram cada faixa quando o servidor prova o fim (count exato = linhas da
+// página, mesmo statement) em vez de buscar a página vazia; teto 8 → 12; header Server-Timing.
+export const VERSAO = "v1.9-count-teto12-timing";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

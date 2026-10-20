@@ -105,3 +105,24 @@ o PostgREST corta em 1.000 linhas em silêncio, e o cron diário gravaria DRE/CM
   comando do próprio job 215, mesmo recorte da baseline capturada às 16:00Z com a v1.5. Ids pg_net
   124604–124615: **12/12 HTTP 200**. Comparação com a baseline: **45/45 snapshots iguais** nas 11
   colunas de valor (13 meses competência + 2 caixa × 3 empresas), inclusive o mês corrente.
+
+## Mapa de baixas do DRE-caixa por keyset (2026-10-20, v1.7)
+
+Fecha a ressalva (i) do Codex: `carregarBaixaMapDRE` lia `v_titulo_baixas` da empresa inteira por
+offset (~29 páginas na colacor CR, 28.908 linhas). Uma baixa que saísse do recorte entre páginas fazia
+o offset pular uma sobrevivente, e o título ia para o mês errado no DRE-caixa.
+
+- Agora é `carregarBaixaMap` em `titulos-dre.ts`: `fetchAllKeyset` por `omie_codigo_lancamento`, que é
+  único e não-nulo por (company, tipo) nas 6 combinações (psql-ro). Não tem teto, porque o histórico
+  cresce, e a chave estritamente crescente já impede laço infinito.
+- Código acima de 2^53 lança `MALFORMADA` em vez de arredondar e pular o vizinho, achado do Codex
+  reproduzido. O maior código em prod é 1,2e10.
+- Custo medido (`EXPLAIN ANALYZE`, colacor CR, página após 27.000 linhas): keyset 527 ms contra
+  offset 689 ms.
+- Testes: 2.500 baixas com INSERT entre páginas, baixa que sai do recorte, ordem numérica e 2^53.
+  A falsificação dá 5/5 vermelhos (sem cursor, sem order, chave como texto, sem filtro tipo, sem
+  guarda), com controle verde em `C` e `pt_BR.UTF-8`.
+- Codex: APROVA COM RESSALVAS (high, 573 s / 115.764 tok). As duas P2 foram tratadas neste PR.
+- Resíduo, citado pelo Codex e bem abaixo do teto: `fin_categoria_dre_mapping` (157 linhas) e o
+  histórico de `fin_dre_snapshots` (≤ ~50 meses) seguem single-shot. Keyset não é snapshot: uma
+  baixa nova atrás do cursor pode ficar para a apuração seguinte.

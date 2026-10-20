@@ -54,6 +54,24 @@ Edges: 74 testes Deno (`--no-remote`): interpretação fail-closed do jsonb, cla
 
 `bun run db:aplicar … --ensaio` (transação com ROLLBACK) abortou em **A11**: na prod a tabela nova nasce com os DEFAULT PRIVILEGES do Supabase (`pg_default_acl`: `anon`/`authenticated`/`service_role` = `arwdDxtm` em tabelas, `X` em funções), e `authenticated` ficou com INSERT em `nfe_importacao_falhas`. O harness dava ALL só à `service_role`, então o `GRANT SELECT` estreito parecia suficiente. Conserto: `REVOKE ALL … FROM authenticated` antes do `GRANT SELECT`, e o harness passou a declarar o mesmo default (`ALTER DEFAULT PRIVILEGES … GRANT ALL ON TABLES TO anon, authenticated, service_role`) — sem isso a prova aprovava uma migration que a postcondição reprovaria na mão do founder. **Lição:** o ACL de tabela nova é do CRIADOR + default do schema, nunca só do que a migration escreve; o ensaio do `db:aplicar` é a 2ª testemunha barata antes do apply, e a prova local tem de carregar o `pg_default_acl` medido (como já faz com `corpo-vivo-acl.sql` para o que o snapshot não traz).
 
-## Deploy (manual, 3 camadas) e o que fica
+## Deploy (manual, 3 camadas) — como de fato chegou à prod
 
-Migration (founder no SQL Editor com `BEGIN/COMMIT`, ou `bun run db:aplicar` após o merge) → validação psql-ro → `NOTIFY pgrst` → `pendencias:deploy` das duas edges na mesma leva. **Passivo visível, não resolvido:** 52 `efetivado` + 1 `falha_efetivacao` sem itens (a RPC responde `bloqueada`); os 4 `pendente` o cron deve reparar sozinho em 1–2 dias (o denominador `origem`/`reparada_origem` nasce aqui). Webhook segue sem tráfego: a correção é para o dia em que for apontado.
+1. **Migration:** `bun run db:aplicar` após o merge (#3147 → `54a792ae3`), ensaio e apply (recibo #546, 2026-10-19 02:35Z), validada por `psql-ro` numa 2ª conexão.
+2. **Edges, 1ª tentativa:** o founder relatou o deploy feito, mas a sonda (`bun run sonda:sql` + `db:aplicar`, recibo #549, #3171) respondeu **BUNDLE VELHO nas duas** (webhook v1.4-ncm-em-shared, sync v1.4). **Merge e "Active" no Lovable não provam o bundle:** só a sonda prova, comparando a `fonte`.
+3. **Por que não pegou:** o pacote de deploy (`bun run pendencias:pacote`) **recusava emitir** a colagem (exit 3). As chamadas usavam `cliente.rpc(RPC_IMPORTAR, …)` com constante, e o extrator de pré-condição (`preflight:rpcs`) só enxerga nome **literal**. Sem enumerar as RPCs, ele não mede se o banco as tem e não libera a edge. Correção no #3172: o nome literal na chamada, mais um guardrail que exige o literal. **Regra:** RPC chamada por edge leva o nome literal no `.rpc("…")`.
+4. **Edges, 2ª tentativa:** um pacote por edge (não há ordem entre elas), colado no chat do Lovable, e a re-sonda (recibo #551, #3177) deu **DEPLOY CONFIRMADO** nas duas, com `v1.5-rpc-transacional` e a `fonte` igual à da main.
+
+O passo de drenagem do runbook (pausar o cron) existe para a janela de versões mistas. O webhook segue sem tráfego.
+
+## Primeiro sinal de uso (com denominador) — e o achado do CT-e
+
+Medido por `psql-ro` entre 2026-10-19 e 2026-10-20:
+
+- **Importada:** a NF-e 000955811 (modelo 55) entrou pela RPC em 20/10 11:50Z, com **11 itens** e 11 sequências distintas, e `origem = 'sync'`. É o 1º cabeçalho com origem medida.
+- **Reparo alcançável, mas os alvos eram CT-e.** A triagem nova deixou de pular os `pendente` sem itens (no `por_armazem.OB`, `ja_importados` caiu de 24 para 22). Os 2 que estavam dentro da janela foram consultados e deram `falha_dado` NFE01 com "lote sem itens". O motivo: a chave tem **modelo 57, ou seja, CT-e de frete da Renner Sayerlack**, e CT-e não tem itens de produto. A RPC fez o certo: não gravou cabeçalho órfão, registrou em `nfe_importacao_falhas` e estacionou a chave após 3 tentativas. Desde então o cron faz 0 consultas desperdiçadas. Um 3º CT-e apareceu em 20/10 e seguiu o mesmo caminho.
+- **Causa raiz, que é anterior a esta entrega:** a `omie-nfe-recebimento-sync` não filtra o modelo do documento, e o `ListarRecebimentos` mistura NF-e e CT-e. Dos 57 cabeçalhos sem itens em prod, **28 são CT-e**; os 16 com itens são todos NF-e. O helper `_shared/modelo-documento-fiscal.ts` (`ehCte`) já existia, mas só o rastreio o usava. Pular CT-e na triagem e no botão ficou para uma sessão própria, a v1.6 da sync.
+
+## O que fica (passivo visível, não contabilizado como resolvido)
+
+- 52 `efetivado` + 1 `falha_efetivacao` sem itens, parte deles CT-e. A RPC responde `bloqueada` para esses casos. O que fazer com eles é decisão do founder.
+- 2 `pendente` sem itens que são NF-e de verdade (de 03/2026 e 07/2026) ficam fora da janela de 30 dias do cron. Só o botão "Importar NF-e" os alcança, e só se o Omie ainda os listar como abertos.

@@ -81,12 +81,32 @@ O founder aprovou as duas regras; o challenge Codex (xhigh, 2026-10-16) achou qu
 Decisão do founder: corrigir na fonte. Pedido disparado que foi **encerrado no Omie** (cancelado no portal) e **não tem evidência nenhuma de NF** deixa de ser compromisso. Com qualquer NF (no tracking, por vínculo R57/R58 ou de qualquer identificador Sayerlack do pedido, em qualquer data), segue a conciliação normal.
 
 - **De onde vem o sinal.** O encerramento não aparece no cabeçalho do `PesquisarPedCompra` (os pedidos encerrados vêm com `cEtapa="15"`, como os abertos). A `omie-sync-pedidos-compra` (v1.5) faz, depois do completo limpo, uma passada só com `lExibirPedidosEncerrados` ligado e registra o conjunto em `reposicao_encerrados_omie_publicacao`. A coluna `purchase_orders_tracking.encerrado_omie_em` (1 writer) é esse conjunto **quando publicado**.
-- **Habilitação.** Que o filtro sozinho devolve só encerrados ainda é hipótese. Até alguém ligar `habilitado` na publicação, a passada só **observa**: grava o conjunto e não toca a coluna. Antes de habilitar, confira no conjunto observado o controle positivo (1014 e 1049 dentro) e o negativo (um pedido aberto de out/2026 fora).
+- **Habilitação.** Até alguém ligar `habilitado` na publicação, a passada só **observa**: grava o conjunto e não toca a coluna.
+- **O filtro não é "cancelado" (medido na 1ª publicação, 2026-10-20).** O `lExibirPedidosEncerrados` devolveu **517 de 560** pedidos da janela (92%), e 382 deles têm NF: é o ciclo CONCLUÍDO do Omie, não só o pedido cancelado. O controle positivo passou (1014, 1049 e 1005 dentro) e o negativo também (0 dos 23 pedidos abertos de out/2026 sem NF no conjunto). Mas ser encerrado não basta para sair do caixa. Daí o **R59 v2** (#3176): o candidato (encerrado, com identificador Sayerlack, sem NF) só sai **se aprovado por nome** em `scripts/orcamento-compra/r59-exclusoes-aprovadas.ts`, depois de revisado. Candidato não aprovado fica no caixa e aparece em `pendentesR59`.
 - **Pré-voo.** O backtest só roda se a ÚLTIMA tentativa da passada estiver `publicado`, com `habilitado` ligado e de até 48h antes dos fatos. Toda passada abre o registro em `coletando` e, se falhar, se abstiver ou morrer no meio, ele fica `coletando` ou `invalidado`, e a publicação anterior deixa de valer. Observado, invalidado ou velho = sinal ausente, não "nenhum encerrado".
 - **De onde o backtest tira o conjunto.** Pedido encerrado = marcado na coluna **e** presente nos `ids` da publicação, uma tabela que cliente não escreve. Escrita manual na coluna sozinha não tira pedido do caixa. Evidência de NF vem de dois exportadores: o da conciliação (com data) e um sem filtro de data e de janela.
 - **Só sai do caixa quem tem identificador.** O pedido precisa ter cContrato ou protocolo do portal, e nenhum desses identificadores pode ter NF. Sem identificador, o pedido nunca sai: um substituto refeito à mão (R58) pode ter faturado sem deixar rastro.
 - **Resíduo conhecido (premissa).** A varredura completa reescreve o `raw_data` das linhas de pedido e apaga o `itensRecebimento` (medido em 18/10: só 4 de 390 linhas com NF ainda o têm). Uma NF de vários pedidos gravada na linha de OUTRO pedido antes de 18/10 não aparece como evidência. A `recebimento_associacao_sombra` (#3124) fecha isso daqui em diante. Por isso o `resultado.json` lista em `foraDoCaixaR59` cada pedido que o R59 tirou do caixa, para revisar um a um.
 - **Look-ahead (premissa).** O sinal é o de **hoje**. `encerrado_omie_em` é quando a passada viu o encerramento, não a data real (o Omie não a expõe). Um ciclo anterior ao encerramento já trata o pedido como fora do caixa, então o backtest fica mais otimista do que a guarda teria sido naquele dia. A continuidade do motor (R54) segue contando o encerrado, o que é conservador.
+
+### Rodada de 2026-10-20 — com o R59 v2 (fatos de 2026-10-20; ciclos de 2026-07-22 a 2026-10-20)
+
+Publicação dos encerrados: seq 155, de 2026-10-20, habilitada. Aprovados (#3183): **1005, 1014 e 1049**, conferidos pelo founder como cancelados na Sayerlack. Pendente: **1230**, atendido total, segue no caixa. O contrafactual "sem R59" usa os mesmos fatos com `encerrado_omie=false` em todo disparado.
+
+| | sem R59 | com R59 v2 |
+|---|---|---|
+| Estados, todos os 279 ciclos (viável · inviável · indeterminado) | 166 · 74 · 39 | **200 · 70 · 9** |
+| Estados, 127 disparados | 72 · 31 · 24 | **92 · 30 · 5** |
+| Indeterminados (disparados) por camada | 20 compromisso não conciliado · 4 snapshot | 1 compromisso não conciliado · 4 snapshot |
+| Aceito com guarda (motor nos disparados com veredito) | 31,5% | 33,7% |
+| Aceito sem guarda (indeterminados, só o gate econômico) | 10,0% do motor | 1,9% do motor |
+| Sensibilidade da reserva, disparados (inviáveis · indeterminados) | 15d: 12 · 115 · 30d: 31 · 24 · 45d: 60 · 5 | 15d: 13 · 26 · 30d: 30 · 5 · 45d: 56 · 4 |
+| Precisão por episódio (portão) | 89,1%, com 48 classificados e cobertura de 19,2% | igual (o R59 mexe no caixa, não no replay) |
+
+- **Três pedidos destravaram a guarda.** Tirá-los do caixa leva os indeterminados dos disparados de 24 para 5. O compromisso não conciliado cai de 20 ciclos para 1, e os 4 por falta de snapshot não mudam.
+- **Inviáveis quase não mudam (31 → 30).** O efeito é dar veredito onde não havia, não fabricar folga.
+- **O portão segue FECHADO** (abaixo): precisão 89,1% < 95%, cobertura 19,2% < 50%, 70 ciclos inviáveis e 9 indeterminados.
+- **Rodar:** `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro com o banco sob carga. Gerar o `fatos.sql` com `set statement_timeout = '10min'` na frente (75–90s) e passar o JSON ao `simular.ts`.
 
 ### Conferências de sanidade
 
@@ -192,6 +212,8 @@ jq -r '
   | if length == 0 then "ABERTO" else "FECHADO: " + join(" · ") end' "$R" > /tmp/oc-portao.txt; rc=$?
 cat /tmp/oc-portao.txt; [ "$rc" -eq 0 ] && grep -qx 'ABERTO' /tmp/oc-portao.txt   # exit 0 = portão aberto
 ```
+
+**Estado em 2026-10-20 (R59 v2):** portão **FECHADO** por precisão (89,1%), cobertura (19,2%), 70 inviáveis e 9 indeterminados — o R59 tirou 30 indeterminados, mas não mexe nos outros três motivos.
 
 **Estado em 2026-10-15 (após a onda final R32–R53): portão FECHADO**, pelo comando acima e pela página, com quatro motivos:
 - **precisão por episódio 84,9%** < 95%: o replay conjunto (R32) na chegada real (R33) achou ruptura que o replay por embalagem escondia;

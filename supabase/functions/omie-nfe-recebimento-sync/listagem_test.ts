@@ -6,6 +6,7 @@
 // estes helpers deixava o laço sabotável com tudo verde.
 import { estadoNoOmie } from "./estado.ts";
 import {
+  acrescentarEstacionadas,
   contagemVazia,
   corpoDeFalhaOmie,
   falhaNoCorpo,
@@ -149,4 +150,60 @@ Deno.test("registrarPulo: cada motivo cai no seu contador", () => {
   registrarPulo(c, "cancelado");
   registrarPulo(c, "sem_id");
   assertEquals([c.ja_importados, c.recebidos_no_omie, c.cancelados, c.sem_id, c.consultados, c.importados], [1, 2, 1, 1, 0, 0]);
+});
+
+// ── CT-e (modelo 57) fora da fila (2026-10-20) ──────────────────────────────────────────────────
+// O `ListarRecebimentos` mistura NF-e e CT-e (frete, SEM itens). Medido em prod: 28 cabeçalhos
+// CT-e gravados sem itens, e a única consulta da rodada 12:50Z gasta numa CT-e → NFE01 "lote sem itens".
+const CHAVE_CTE = CHAVE.slice(0, 20) + "57" + CHAVE.slice(22);
+const PENDENTE_L = { cRecebido: "N", cCancelada: "N" };
+/** `cModeloNFe: null` = o campo não veio na listagem (undefined cairia no default). */
+function cte(id: number, chave: string | null = CHAVE_CTE, cModeloNFe: string | null = "57"): RegistroListagem {
+  return { cabec: { nIdReceb: id, cChaveNFe: chave, cModeloNFe }, infoCadastro: PENDENTE_L };
+}
+
+Deno.test("triarRegistro: CT-e (chave E cModeloNFe 57) é pulo 'cte' — nunca candidata, mesmo pendente e inédita", () => {
+  assertEquals(triarRegistro(cte(2001), NADA), { tipo: "pular", motivo: "cte" });
+});
+
+Deno.test("triarRegistro: 'cte' vence 'ja_importado' — os 26 CT-e efetivados contam como CT-e, não como já importadas", () => {
+  const ja = { ids: new Set([2002]), chaves: new Set([CHAVE_CTE]) };
+  assertEquals(triarRegistro(cte(2002), ja), { tipo: "pular", motivo: "cte" }, "pelo id");
+  assertEquals(triarRegistro(cte(2003), ja), { tipo: "pular", motivo: "cte" }, "pela chave");
+  assertEquals(triarRegistro(cte(-1), NADA), { tipo: "pular", motivo: "cte" }, "até sem id utilizável é CT-e, não sem_id");
+});
+
+Deno.test("triarRegistro: NF-e (55) com cModeloNFe segue o fluxo de hoje; CT-e só pela chave (sem cModeloNFe) NÃO é excluída — incerteza vira consulta", () => {
+  assertEquals(triarRegistro({ cabec: { nIdReceb: 2004, cChaveNFe: CHAVE, cModeloNFe: "55" }, infoCadastro: PENDENTE_L }, NADA), { tipo: "consultar", nIdReceb: 2004, incompleta: null });
+  assertEquals(triarRegistro(cte(2005, CHAVE_CTE, null), NADA), { tipo: "consultar", nIdReceb: 2005, incompleta: null }, "contrato do helper: denylist com os DOIS sinais");
+  assertEquals(triarRegistro(cte(2006, CHAVE, "57"), NADA), { tipo: "consultar", nIdReceb: 2006, incompleta: null }, "divergente (chave 55, cabeçalho 57) segue o fluxo");
+  assertEquals(triarRegistro(cte(2007, CHAVE_CTE, "55"), NADA), { tipo: "consultar", nIdReceb: 2007, incompleta: null }, "divergente (chave 57, cabeçalho 55) segue o fluxo");
+  assertEquals(triarRegistro(cte(2008, CHAVE_CTE.slice(1), "57"), NADA), { tipo: "consultar", nIdReceb: 2008, incompleta: "chave_na_listagem" }, "chave de 43 dígitos é ilegível: não prova CT-e, vai à consulta");
+  assertEquals(triarRegistro(cte(2009, CHAVE_CTE, "5 7"), NADA), { tipo: "consultar", nIdReceb: 2009, incompleta: null }, "modelo malformado não é evidência");
+});
+
+Deno.test("registrarPulo('cte') cai em `ctes` — o denominador do sensor do cron", () => {
+  const c = contagemVazia();
+  registrarPulo(c, "cte");
+  registrarPulo(c, "cte");
+  assertEquals([c.ctes, c.ja_importados, c.sem_id], [2, 0, 0]);
+});
+
+Deno.test("acrescentarEstacionadas: a chave vale para qualquer conta; o id SÓ na conta que o registrou", () => {
+  // Parecer adversarial do Codex (2026-10-20): CT-e estacionada em OB com id 101 fazia a NF-e 55 de CC
+  // com o mesmo id 101 virar "já importada" — a leitura do ledger por chave não filtra armazém.
+  const ids = new Set<number>();
+  const chaves = new Set<string>();
+  acrescentarEstacionadas(
+    [
+      { chave_acesso: CHAVE_CTE, omie_id_receb: 101, warehouse_id: "wh-ob" },
+      { chave_acesso: CHAVE, omie_id_receb: "202", warehouse_id: "wh-cc" },
+      { chave_acesso: CHAVE.replace(/^31/, "35"), omie_id_receb: 303, warehouse_id: null },
+    ],
+    "wh-cc",
+    ids,
+    chaves,
+  );
+  assertEquals([[...ids], [...chaves].length], [[202], 3]);
+  assertEquals(triarRegistro(registro(101, { cRecebido: "N", cCancelada: "N" }, CHAVE.replace(/^31/, "41")), { ids, chaves }), { tipo: "consultar", nIdReceb: 101, incompleta: null }, "a NF-e de CC com o id da CT-e de OB segue candidata");
 });
