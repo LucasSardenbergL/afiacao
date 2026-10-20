@@ -97,7 +97,7 @@ export async function fetchAllParticionadoUuid<T>(
     faixa: FaixaUuid,
     cursor: string | null,
     limite: number,
-  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null }>,
+  ) => PromiseLike<{ data: T[] | null; error: ErroPostgrest | null; count?: number | null }>,
   chave: (linha: T) => unknown,
   label: string,
   opts: { limitador?: Limitador; limites?: readonly string[] } = {},
@@ -122,14 +122,46 @@ export async function fetchAllParticionadoUuid<T>(
   const interrompida = () =>
     new FalhaLeituraCritica(label, { code: 'REJEITADA', message: 'leitura interrompida: outra faixa falhou' });
 
-  const partes = await Promise.all(faixas.map((faixa) =>
-    fetchAllKeyset<T, string>(
-      (cursor, limite) => {
+  // EOF PROVADO PELO SERVIDOR (v1.9 da fin-cashflow-engine): se o build pede `count: 'exact'`, o
+  // PostgREST devolve no MESMO statement (um snapshot só) quantas linhas casam o filtro — faixa +
+  // `id > cursor`, ignorando o `limit`. `rows.length === count` diz que NADA havia além desta página
+  // naquele snapshot: a mesma garantia da página vazia, que também é um snapshot instantâneo, sem a
+  // ida e volta dela (16 das 64 requisições da colacor na v1.7). A página vazia seguinte é então
+  // SINTETIZADA aqui, sem rede, e o `fetchAllKeyset` encerra pelo caminho de sempre.
+  //
+  // Descartado "parar quando o acumulado atinge o count da 1ª página": sob INSERT concorrente no
+  // meio da faixa o total chega antes de uma linha ORIGINAL ser lida — perda silenciosa. E "página
+  // curta = fim" reacoplaria ao `max-rows` (ver `fetchAll`). `count` ausente/não numérico → nenhum
+  // atalho: o EOF volta a ser a página vazia observada.
+  const partes = await Promise.all(faixas.map((faixa) => {
+    let fimProvado = false;
+    return fetchAllKeyset<T, string>(
+      async (cursor, limite) => {
         if (falhou) throw interrompida();
-        return limitador(() => {
+        if (fimProvado) return { data: [] as T[], error: null };
+        const resposta = await limitador(() => {
           if (falhou) throw interrompida();
           return build(faixa, cursor, limite);
         });
+        const { data, error, count } = resposta;
+        // `count` presente é PROVA ou é contradição — nunca é ignorado. Ausente (null/undefined) é
+        // o único caso que cai no EOF legado por página vazia. Challenge Codex do v1.9 (P1).
+        if (!error && Array.isArray(data) && count !== null && count !== undefined) {
+          const incoerente = !Number.isSafeInteger(count) || count < 0
+            ? `count inválido (${String(count)})`
+            // Mais linhas do que o servidor diz existir no mesmo snapshot.
+            : data.length > count
+            ? `página com ${data.length} linhas e count ${count} no mesmo statement`
+            // Página VAZIA com count positivo: aceitar como EOF seria truncar contra a evidência.
+            : data.length === 0 && count > 0
+            ? `página vazia com count ${count} no mesmo statement`
+            : null;
+          if (incoerente) throw new FalhaLeituraCritica(label, { code: 'MALFORMADA', message: incoerente });
+          // A página terminal ainda passa pelas guardas do `fetchAllKeyset` (ordem, unicidade, faixa)
+          // ANTES de a vazia sintetizada encerrar o laço: o atalho não esconde violação.
+          if (data.length === count) fimProvado = true;
+        }
+        return { data, error };
       },
       (linha) => {
         const k = chave(linha);
@@ -158,7 +190,7 @@ export async function fetchAllParticionadoUuid<T>(
     ).catch((e) => {
       falhou = true;
       throw e;
-    })
-  ));
+    });
+  }));
   return partes.flat();
 }
