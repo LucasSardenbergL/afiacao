@@ -1,6 +1,6 @@
 # Radar bloco 2 — a fila é a FOTO VIGENTE + card "Inéditos do lote"
 
-**PR:** (preenchido ao abrir) · **Antecessores:** #3163 (cadastro em massa), #3169 (carga mensal automática — [diário](radar-carga-mensal-e-recruzamento-diario.md)).
+**PR:** [#3216](https://github.com/LucasSardenbergL/afiacao/pull/3216) · **Antecessores:** #3163 (cadastro em massa), #3169 (carga mensal automática — [diário](radar-carga-mensal-e-recruzamento-diario.md)).
 
 ## O problema (medido, psql-ro 2026-10-19)
 
