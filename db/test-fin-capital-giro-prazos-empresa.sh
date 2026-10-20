@@ -240,7 +240,8 @@ SQL
 }
 
 # VERBOSITY verbose: o log traz a SQLSTATE (o texto o lc_messages traduz em pt_BR).
-aplicar() { P -v VERBOSITY=verbose -f "$1" >"$TMPD/apply.log" 2>&1; }
+# --single-transaction: a migration não traz BEGIN/COMMIT (a transação é do db:aplicar).
+aplicar() { P --single-transaction -v VERBOSITY=verbose -f "$1" >"$TMPD/apply.log" 2>&1; }
 
 # Igualdade com a view, como service_role (o papel do engine), num único statement (1 snapshot).
 IGUAL_A_VIEW="SET ROLE service_role;

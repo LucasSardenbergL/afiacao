@@ -27,9 +27,9 @@
 -- supabase-js converte HTTP 404 com corpo `[]` em {data: [], error: null}.
 -- SECURITY INVOKER (lê com o RLS de quem chama, como a view security_invoker=on); EXECUTE só
 -- para service_role (o engine); PUBLIC/anon/authenticated revogados pelo nome. As views não mudam.
+-- Sem BEGIN/COMMIT: aplicada por `bun run db:aplicar`, cuja transação é do executor (ele recusa
+-- arquivo com envelope). A prova PG17 aplica com --single-transaction pelo mesmo motivo.
 -- ============================================================
-
-BEGIN;
 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
@@ -271,5 +271,3 @@ BEGIN
   RAISE NOTICE 'fin_capital_giro_prazos_empresa ok: invoker, so service_role executa, envelope coerente, igual a view';
 END
 $post$;
-
-COMMIT;
