@@ -32,14 +32,14 @@ MEDICAO_PLACEHOLDER
 
 | Camada | Estado | Quem |
 | --- | --- | --- |
-| Migration `20261019200000` | DEPLOY_MIGRATION_PLACEHOLDER | sessão (envelope MCP + 2ª testemunha psql-ro) |
-| Edge `radar-ingest` v1.2 | DEPLOY_EDGE_PLACEHOLDER | `bun run pendencias:deploy` → `pendencias:pacote` → chat do Lovable, após o merge |
+| Migration `20261019200000` | ✅ APLICADA em 2026-10-20 10:18 UTC pelo envelope MCP (`postgres`): ensaio com `RAISE EXCEPTION 'ENSAIO_OK'` + md5 dos 4 corpos iguais ao arquivo (`4857…`, `51e4…`, `b162…`, `ec75…`), rollback conferido, apply real, 2ª testemunha psql-ro em outra conexão: `tabela_pk_ok=t rls_ok=t policy_ok=t anon_select=f cols_rfb=3 check_ok=t`, 3 funções `secdef=t anon/auth/public=f service=t`, `ja_cliente_total=3007` (inalterado), `linhas_sit=0` | sessão |
+| Edge `radar-ingest` v1.2 | ⏳ após o merge (até lá a v1.1 em prod ignora `cnpjs_conhecidos` → a carga nova ABORTA alto se rodar antes do deploy; a carga velha segue funcionando) | `bun run pendencias:deploy` → `pendencias:pacote` → chat do Lovable |
 | Publish do Lovable (selo na UI) | ⏳ após o merge | founder (Publish) |
 | 1ª execução real | próxima carga (2026-09, segunda 03:00 BRT ou `gh workflow run`) — o retorno do `finalize` nos logs traz `leads_descartados`/`clientes_alertados_novos` | auto |
 
 ## Codex
 
-CODEX_PLACEHOLDER
+**Não consultado — Caminho B.** `scripts/codex-async.sh -r max` recusou as duas chamadas (desenho e código) com `exit 79 SALDO_ALTO`: cota em 94% (teto 85%), janela de 7 dias reabre em 24/10 19:09. As 3 saídas são do founder (DRAFT · Caminho B · `CODEX_ASYNC_TETO_SALDO=0` para gastar a reserva); o PR nasce DRAFT com `sem-codex:` no corpo e o prompt de desenho (com a RÉGUA) fica em `docs/historico/radar-situacao-cadastral-codex-prompt.md` para rodar quando a janela reabrir. Perguntas que eu levaria ao Codex e respondi sozinho: (1) dedupe por (cnpj, situacao) não re-avisa oscilação 03→02→03 (documentado como follow-up); (2) lead reativado fica descartado com motivo preservado; (3) `rfb_*` denormalizado tem 1 escritor e o `chunk` não toca; (4) uuid fixo de sistema em vez de `DROP NOT NULL` (o undo humano filtra `criado_por = auth.uid()` e não alcança a linha de sistema — por desenho); (5) `radar_docs_clientes()` é cópia literal da normalização viva, provada igual no seed (A13/A13b); (6) custo do scan: uma leitura por zip com `OR` + semi-join em 563k chaves, sem segunda passada.
 
 ## Follow-ups (não feitos aqui)
 
