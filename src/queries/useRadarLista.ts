@@ -51,7 +51,7 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
 
       const from = (pageParam as number) * PAGE;
       const { data, error } = await q
-        .order(p.orderColumn, { ascending: p.orderAsc, nullsFirst: false })
+        .order(p.orderColumn, { ascending: p.orderAsc, nullsFirst: false }) // preset 'score': score DESC NULLS LAST (idx_radar_lista_score)
         .order('cnpj', { ascending: true }) // tie-break estável p/ paginação
         .range(from, from + PAGE - 1);
       if (error) throw error;

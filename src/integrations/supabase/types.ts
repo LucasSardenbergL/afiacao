@@ -11823,6 +11823,9 @@ export type Database = {
           prospeccao_atualizado_em: string | null
           prospeccao_status: string
           razao_social: string | null
+          score: number | null
+          score_em: string | null
+          score_motivos: string[] | null
           socios_nomes: string | null
           telefone1: string | null
           telefone2: string | null
@@ -11860,6 +11863,9 @@ export type Database = {
           prospeccao_atualizado_em?: string | null
           prospeccao_status?: string
           razao_social?: string | null
+          score?: number | null
+          score_em?: string | null
+          score_motivos?: string[] | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null
@@ -11897,6 +11903,9 @@ export type Database = {
           prospeccao_atualizado_em?: string | null
           prospeccao_status?: string
           razao_social?: string | null
+          score?: number | null
+          score_em?: string | null
+          score_motivos?: string[] | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null

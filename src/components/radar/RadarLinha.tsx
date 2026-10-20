@@ -3,7 +3,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal,
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -27,6 +27,7 @@ export function RadarLinha({
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
   const tel = telefonePrincipal(empresa);
+  const score = scoreUI(empresa.score, empresa.score_motivos);
   return (
     <div
       className={cn(
@@ -55,7 +56,16 @@ export function RadarLinha({
         </div>
       </button>
       <div className="text-right text-xs text-muted-foreground shrink-0">
-        <div>{idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}</div>
+        <div className="flex items-center justify-end gap-1.5">
+          <span
+            className={cn('inline-block rounded border px-1.5 py-px text-[11px] leading-4 font-tabular', CLASSE_TOM[score.tom])}
+            title={score.detalhe}
+            data-testid="radar-score"
+          >
+            {score.texto}
+          </span>
+          <span>{idade != null ? `${idade} anos` : '—'} · {rotuloPorte(empresa.porte)}</span>
+        </div>
         <span className={cn('inline-block mt-0.5 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[tomStatus(empresa.prospeccao_status)])}>
           {rotuloStatus(empresa.prospeccao_status)}
         </span>
