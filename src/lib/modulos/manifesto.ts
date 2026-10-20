@@ -295,6 +295,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/dashboard/**",
       "src/lib/sinais/**",
       "src/lib/fila/**",
+      "src/lib/venda-cliente/**",
       "src/components/fila/**",
       "src/components/farmer/**",
       "src/components/intelligence/**",
