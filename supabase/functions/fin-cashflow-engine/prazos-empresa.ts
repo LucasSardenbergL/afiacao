@@ -18,7 +18,7 @@
 //     que são defeito de deploy e LANÇAM: a edge fecha em 500, alto, como a
 //     fin_titulo_baixas_cr_mapa já fecha na deriva de v_titulo_baixas (Codex: "—" permanente
 //     sem alarme não é aceitável).
-import { codigoDoErro, FalhaLeituraCritica, type RespostaLeitura } from "../_shared/leitura-critica.ts";
+import { codigoDoErro, FalhaLeituraCritica, type RespostaLeitura, tolerarLeitura } from "../_shared/leitura-critica.ts";
 
 export const FONTE_PRAZOS = "fin_capital_giro_prazos_empresa";
 
@@ -45,11 +45,12 @@ function motivo(codigo: string): string {
 export function lerPrazosEmpresa(
   res: RespostaLeitura<unknown>,
 ): { dados: Prazos | null; motivo: string | null } {
-  if (res.error) {
-    if (CODIGOS_FATAIS.has(codigoDoErro(res.error))) throw new FalhaLeituraCritica(FONTE_PRAZOS, res.error);
-    return { dados: null, motivo: motivo(codigoDoErro(res.error)) };
+  if (res.error && CODIGOS_FATAIS.has(codigoDoErro(res.error))) {
+    throw new FalhaLeituraCritica(FONTE_PRAZOS, res.error);
   }
-  const d = res.data as Record<string, unknown> | null;
+  const lido = tolerarLeitura(res, FONTE_PRAZOS);
+  if (lido.motivo) return { dados: null, motivo: lido.motivo };
+  const d = lido.dados as Record<string, unknown> | null;
   if (
     d == null || typeof d !== "object" || Array.isArray(d) ||
     Object.keys(d).sort().join(",") !== CHAVES ||
