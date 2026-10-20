@@ -1091,6 +1091,22 @@ async function revisitarEmpresa(
       if (error) throw error;
       return Array.isArray(data) && data.length > 0;
     },
+    // v1.10: compare-and-set pela chave E pelo t4 nulo — nunca sobrescreve um recebimento gravado.
+    // Status fica com a sync de pedidos (ela o reescreve; o t4 está no PRESERVE_FIELDS dela).
+    preencherRecebimentoSemT4: async (chave, t4Iso, agoraIso) => {
+      if (Date.now() >= limiteIo) throw new Error("orçamento de I/O da revisita esgotado");
+      const { data, error } = await supabase
+        .from("purchase_orders_tracking")
+        .update({ t4_data_recebimento: t4Iso, updated_at: agoraIso })
+        .eq("empresa", empresa)
+        .eq("nfe_chave_acesso", chave)
+        .is("t4_data_recebimento", null)
+        .neq("status", "CANCELADO")
+        .select("id")
+        .abortSignal(sinal());
+      if (error) throw error;
+      return Array.isArray(data) ? data.length : 0;
+    },
   };
 
   await revisitarJanela(docs, processadasNoRun, porta, (raw) => mapNFe(raw as OmieConsultarRecebimentoResponse), {
@@ -1380,7 +1396,7 @@ Deno.serve(async (req) => {
           console.log(
             `[sync-nfes] ${c.s.empresa} revisita ${r.janela}: listados=${r.documentos_listados} conhecidas=${r.conhecidas} ` +
             `desconhecidas=${r.desconhecidas} consultadas=${r.consultadas} vinculadas=${r.linhas_vinculadas} ja=${r.ja_vinculadas} ` +
-            `conflito=${r.conflito_outra_nf} orfas=${r.orfas_inseridas} tempo=${r.puladas_por_tempo} erros=${r.erros} ` +
+            `conflito=${r.conflito_outra_nf} orfas=${r.orfas_inseridas} t4=${r.t4_preenchidos} tempo=${r.puladas_por_tempo} erros=${r.erros} ` +
             `incompleta=${r.listagem_incompleta === true}`,
           );
         } catch (errRv) {

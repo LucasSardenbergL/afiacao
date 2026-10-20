@@ -13,7 +13,9 @@
 //   (e) a NF mais ANTIGA vence a disputa pela mesma linha (o t2 é o 1º faturamento);
 //   (f) falha na consulta não vira órfã; falha em `conhecidas` não revisita nada;
 //   (g) sem tempo, conta as puladas e para;
-//   (h) rodar de novo é no-op.
+//   (h) rodar de novo é no-op;
+//   (j) NF conhecida e RECEBIDA na listagem preenche o t4 das linhas com a MESMA chave e t4 nulo (o backfill
+//       grava `nid_receb` na 1ª consulta, ainda sem recebimento, e a linha sai da fila dele para sempre).
 import type { LinhaPedido, NFeParaVinculo } from "./reconciliacao.ts";
 import {
   type DocumentoRevisita,
@@ -64,14 +66,14 @@ function doc(nIdReceb: number, chave: string, numero: string, pedidos: string[],
 
 // O mapeador real (mapNFe) vive no index.ts, que sobe o Deno.serve — aqui um equivalente mínimo.
 function mapear(raw: unknown): NFeParaVinculo {
-  const cab = (raw as { cabec?: { cChaveNFe?: string; cNumeroNFe?: string; cancelada?: boolean } }).cabec ?? {};
+  const cab = (raw as { cabec?: { cChaveNFe?: string; cNumeroNFe?: string; cancelada?: boolean; recebidaEm?: string } }).cabec ?? {};
   return {
     chave: cab.cChaveNFe ?? null,
     numero: cab.cNumeroNFe ?? null,
     serie: "1",
     data_emissao_iso: "2026-05-08T00:00:00-03:00",
-    data_recebimento_iso: null,
-    recebida: false,
+    data_recebimento_iso: cab.recebidaEm ?? null,
+    recebida: cab.recebidaEm != null,
     status: cab.cancelada ? "CANCELADO" : "FATURADO",
     transp_cnpj: null,
     transp_nome: null,
@@ -104,6 +106,12 @@ function banco(
       if (l.nfe_chave_acesso) return Promise.resolve(false);
       Object.assign(l, patch);
       return Promise.resolve(true);
+    },
+    preencherRecebimentoSemT4: (chave, t4Iso) => {
+      // espelha o UPDATE do index.ts: mesma chave, t4 nulo, status ≠ CANCELADO
+      const alvo = linhas.filter((l) => l.nfe_chave_acesso === chave && !l.t4_data_recebimento && l.status !== "CANCELADO");
+      for (const l of alvo) l.t4_data_recebimento = t4Iso;
+      return Promise.resolve(alvo.length);
     },
   };
   return { porta, consultas, orfas, linhas };
@@ -247,6 +255,40 @@ Deno.test("(h) rodar de novo é no-op", async () => {
   await rodar(docs, banco(linhas, { conhecidas: [935816] }));
   const r = await rodar(docs, banco(linhas, { conhecidas: [935816] }));
   assertEquals([r.linhas_vinculadas, r.ja_vinculadas], [0, 1]);
+});
+
+Deno.test("(j) NF conhecida e recebida preenche o t4 só das linhas da MESMA chave com t4 nulo, sem consultar", async () => {
+  const REC = "2026-08-21T10:00:00-03:00";
+  const b = banco([
+    // NF de vários pedidos (1161 e 1162): as duas linhas sem t4 ganham o recebimento
+    { id: "p1161", contrato: "2110001", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO" },
+    { id: "p1162", contrato: "2110002", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO" },
+    // t4 já gravado não é sobrescrito; cancelada não vira recebida; outra chave fica intocada
+    { id: "comT4", contrato: "2110003", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, t4_data_recebimento: "2026-08-20T09:00:00-03:00" },
+    { id: "canc", contrato: "2110004", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CANCELADO" },
+    { id: "outra", contrato: "2110005", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_OUTRA },
+  ], { conhecidas: [947706] });
+  const d = doc(947706, CHAVE_0935816, "000947706", ["2110001", "2110002"]);
+  (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = REC;
+  const r = await rodar([d], b);
+  assertEquals(b.consultas, [], "conhecida não consulta");
+  assertEquals(b.linhas.map((l) => l.t4_data_recebimento ?? null), [REC, REC, "2026-08-20T09:00:00-03:00", null, null]);
+  assertEquals(r.t4_preenchidos, 2);
+  const r2 = await rodar([d], b);
+  assertEquals(r2.t4_preenchidos, 0, "rodar de novo é no-op");
+});
+
+Deno.test("(j') NF ainda não recebida, ou listagem incompleta, não grava t4", async () => {
+  const linha = (): LinhaTabela => ({ id: "p", contrato: "1", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816 });
+  const b = banco([linha()], { conhecidas: [60] });
+  const r = await rodar([doc(60, CHAVE_0935816, "60", ["1"])], b);
+  assertEquals([b.linhas[0].t4_data_recebimento ?? null, r.t4_preenchidos], [null, 0]);
+
+  const b2 = banco([linha()], { conhecidas: [61] });
+  const d = doc(61, CHAVE_0935816, "61", ["1"]);
+  (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = "2026-08-21T10:00:00-03:00";
+  const r2 = await rodar([d], b2, [], { ...opcoes, listagemIncompleta: true });
+  assertEquals([b2.linhas[0].t4_data_recebimento ?? null, r2.t4_preenchidos], [null, 0]);
 });
 
 Deno.test("revisita_dias: só inteiro de 1 a 60; o resto desliga a revisita", () => {
