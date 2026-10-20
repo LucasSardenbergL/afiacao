@@ -48,8 +48,7 @@ function useBases(produtoId: string) {
       if (error) throw new Error(`Falha ao carregar bases do produto: ${error.message}`);
       if (data == null) throw new Error('Falha ao carregar bases do produto: data=null sem error');
       const seen = new Set<string>();
-      type BaseRow = { base_id: string; tint_bases: { id: string; descricao: string | null } | null };
-      return (data as unknown as BaseRow[]).filter((d) => {
+      return data.filter((d) => {
         if (seen.has(d.base_id)) return false;
         seen.add(d.base_id);
         return true;
@@ -65,14 +64,14 @@ function useOmieMap() {
       // Paginado (fetchAllPages): 145 produtos tintométricos hoje, mas o catálogo cresce
       // com o staging Sayerlack — na capa de 1.000 o corante fora da página viraria
       // "sem custo" no detalhe da fórmula (money), em silêncio.
-      const data = await fetchAllPages<{ id: string; valor_unitario: number | null }>((de, ate) =>
+      const data = await fetchAllPages((de, ate) =>
         supabase
           .from('omie_products')
           .select('id, valor_unitario')
           .eq('account', ACCOUNT)
           .eq('is_tintometric', true)
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: { id: string; valor_unitario: number | null }[] | null; error: unknown }>,
+          .range(de, ate),
         'omie_products/tint-cost-map',
       );
       return new Map(data.map(p => [p.id, p.valor_unitario]));
@@ -250,17 +249,7 @@ export default function TintFormulas() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {((data?.rows ?? []) as unknown as Array<{
-                    id: string;
-                    cor_id: string;
-                    nome_cor: string | null;
-                    volume_final_ml: number | null;
-                    preco_final_sayersystem: number | null;
-                    personalizada: boolean | null;
-                    tint_produtos: { descricao: string | null } | null;
-                    tint_bases: { descricao: string | null } | null;
-                    tint_embalagens: { descricao: string | null; volume_ml: number | null } | null;
-                  }>).map((f) => (
+                  {(data?.rows ?? []).map((f) => (
                     <>
                       <TableRow key={f.id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleExpand(f)}>
                         <TableCell>
@@ -316,11 +305,7 @@ export default function TintFormulas() {
                                   </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                  {((expandedDetail ?? []) as unknown as Array<{
-                                    qtd_ml: number;
-                                    ordem: number;
-                                    tint_corantes: { id: string; descricao: string | null; omie_product_id: string | null; volume_total_ml: number } | null;
-                                  }>).map((it, idx: number) => {
+                                  {(expandedDetail ?? []).map((it, idx: number) => {
                                     const cor = it.tint_corantes;
                                     const custoConc = cor?.omie_product_id && omieMap ? (omieMap.get(cor.omie_product_id) ?? 0) : 0;
                                     const custoMl = cor && cor.volume_total_ml > 0 ? custoConc / cor.volume_total_ml : 0;

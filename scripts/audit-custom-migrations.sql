@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 672
+-- Total de custom migrations: 673
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -736,7 +736,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019225545', 'radar_rpcs_cnpj_alfanumerico', '20261019225545_radar_rpcs_cnpj_alfanumerico.sql'),
   ('20261020101636', 'data_health_radar_lote_e_recruzamento', '20261020101636_data_health_radar_lote_e_recruzamento.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
-  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
+  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
+  ('20261020130000', 'grupos_caca_cnpj_alfanumerico', '20261020130000_grupos_caca_cnpj_alfanumerico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2852,7 +2853,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_comercial', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contatos', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5016,7 +5023,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_comercial', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contatos', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', '')
 )
 SELECT
   e.migration,
