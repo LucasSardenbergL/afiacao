@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **666** custom migrations totais
-- **2127** objetos esperados (criados por estas migrations)
+- **667** custom migrations totais
+- **2130** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 772
+  - `function`: 775
   - `rls_policy`: 476
   - `index`: 279
   - `cron_job`: 187
@@ -5395,6 +5395,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `index` | `public.idx_tint_formula_itens_corante` | `tint_formula_itens` |
+
+### `20261020101636_data_health_radar_lote_e_recruzamento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+| `function` | `public.data_health_watchdog` | — |
+| `function` | `public.fin_sync_heartbeat` | — |
 
 ## Próximos passos por status
 
