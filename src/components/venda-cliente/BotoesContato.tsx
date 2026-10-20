@@ -15,12 +15,8 @@ import {
 import { cn } from '@/lib/utils';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { MOTIVOS_RECUSA } from '@/hooks/useFarmerDesfecho';
-import {
-  useContatosDoDia,
-  useRegistrarContato,
-  rotuloResultado,
-  type ResultadoContato,
-} from '@/hooks/useRegistrarContato';
+import { useRegistrarContato, rotuloResultado, type ResultadoContato } from '@/hooks/useRegistrarContato';
+import { useContatosDoDia } from '@/hooks/useContatosDoDia';
 
 const ICONE: Record<ResultadoContato, typeof CheckCircle2> = {
   vendeu: CheckCircle2,

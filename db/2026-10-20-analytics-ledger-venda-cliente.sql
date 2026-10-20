@@ -125,7 +125,7 @@ BEGIN
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: analytics_ledger_registrar(text,text,jsonb) nao existe — o ledger inteiro fica mudo';
   END IF;
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) <> '6eaf1d41626ece3a6fe6b51617788f21' THEN
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) IS DISTINCT FROM '6eaf1d41626ece3a6fe6b51617788f21' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo vivo nao e o desta migration';
   END IF;
   v_def := pg_get_functiondef(v_oid);

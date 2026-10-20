@@ -353,6 +353,7 @@ export const MODULOS: ModuloApp[] = [
       // re-hospedados aqui (spec §7.5): vinham de telefonia (congelada) e vendas; puros, sem WebRTC.
       "src/hooks/useMinhasSugestoes.ts",
       "src/hooks/useRegistrarContato.ts",
+      "src/hooks/useContatosDoDia.ts",
       "src/hooks/useMunicaoLigacao.ts",
       "src/hooks/useHistoricoCompras.ts",
       "src/hooks/useDashboardCompany.ts",

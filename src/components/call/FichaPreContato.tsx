@@ -21,8 +21,8 @@ export function FichaPreContato({ customerUserId, name, cidade, children }: Prop
   const [open, setOpen] = useState(false);
   // Lazy: só busca quando o drawer abre.
   const alvo = open ? customerUserId : null;
-  const { municao } = useMunicaoLigacao(alvo);
-  const { historico, loading } = useHistoricoCompras(alvo);
+  const { municao, erro: erroMunicao } = useMunicaoLigacao(alvo);
+  const { historico, loading, erro: erroHistorico } = useHistoricoCompras(alvo);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -34,7 +34,7 @@ export function FichaPreContato({ customerUserId, name, cidade, children }: Prop
         </SheetHeader>
 
         <div className="mt-3 rounded-md bg-muted/40 px-3 py-2">
-          <MunicaoResumo municao={municao} />
+          <MunicaoResumo municao={municao} erro={erroMunicao} />
         </div>
 
         {loading ? (
@@ -43,6 +43,8 @@ export function FichaPreContato({ customerUserId, name, cidade, children }: Prop
             <div className="h-4 w-full animate-pulse rounded bg-muted" />
             <div className="h-4 w-full animate-pulse rounded bg-muted" />
           </div>
+        ) : erroHistorico ? (
+          <p className="mt-4 text-sm text-status-warning">Não consegui ler o histórico deste cliente agora.</p>
         ) : historico && (historico.topProdutos.length > 0 || historico.ultimosPedidos.length > 0) ? (
           <>
             {historico.topProdutos.length > 0 && (

@@ -8,9 +8,8 @@ import type { AcaoSugerida } from '@/lib/fila/types';
 const filaMock = vi.fn();
 vi.mock('@/hooks/useFilaAcoes', () => ({ useFilaAcoes: () => filaMock() }));
 vi.mock('@/hooks/useCriticaFila', () => ({ useCriticaFila: () => new Map() }));
-vi.mock('@/hooks/useRegistrarContato', () => ({
+vi.mock('@/hooks/useContatosDoDia', () => ({
   useContatosDoDia: () => ({ data: new Map([['c1', 'nao_atendeu']]) }),
-  rotuloResultado: (r: string) => (r === 'nao_atendeu' ? 'Não atendeu' : r),
 }));
 vi.mock('@/components/venda-cliente/FichaLigacao', () => ({ FichaLigacao: () => null }));
 vi.mock('@/components/fila/AcaoOutcomeMenu', () => ({ AcaoOutcomeMenu: () => null }));

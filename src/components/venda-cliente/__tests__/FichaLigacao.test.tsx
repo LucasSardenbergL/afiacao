@@ -38,8 +38,8 @@ const mutateMock = vi.fn();
 vi.mock('@/hooks/useRegistrarContato', async (orig) => ({
   ...(await orig<typeof import('@/hooks/useRegistrarContato')>()),
   useRegistrarContato: () => ({ mutate: mutateMock, isPending: false }),
-  useContatosDoDia: () => ({ data: new Map() }),
 }));
+vi.mock('@/hooks/useContatosDoDia', () => ({ useContatosDoDia: () => ({ data: new Map() }) }));
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { FichaLigacao } from '../FichaLigacao';
