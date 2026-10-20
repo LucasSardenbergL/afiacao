@@ -6,6 +6,7 @@ import {
   idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
+import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -17,12 +18,15 @@ export function RadarLinha({
   selecionada,
   onSelecionar,
   onAbrir,
+  lote = null,
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
   selecionada: boolean;
   onSelecionar: (v: boolean) => void;
   onAbrir: () => void;
+  /** Lote vigente (foto da RFB) — dá os selos "inédito" e "saiu do dump em <mês>"; sem ele, nenhum selo. */
+  lote?: LoteIngest | null;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
@@ -48,6 +52,12 @@ export function RadarLinha({
           <span className="font-medium truncate">{nome}</span>
           {empresa.ja_cliente && (
             <Badge variant="secondary" className="shrink-0">já é cliente</Badge>
+          )}
+          {ehInedito(empresa, lote) && (
+            <Badge variant="info" className="shrink-0">inédito</Badge>
+          )}
+          {saiuDoDump(empresa, lote) && (
+            <Badge variant="outline" className="shrink-0 text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
           )}
           {rfb && (
             <span

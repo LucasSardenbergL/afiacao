@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   validarRespostaCriarCliente,
   cadastrarEmpresaNoOmie,
+  documentoCadastravelNoOmie,
   FalhaCadastro,
   ehThrottlingOmie,
   type DepsCadastro,
@@ -53,14 +54,33 @@ describe('cadastrarEmpresaNoOmie', () => {
     expect(d.registrarNoRadar).toHaveBeenCalledWith('12345678000195', '777', false);
   });
 
-  it('CNPJ alfanumérico (RFB jul/2026) → falha na etapa omie ANTES de chamar a edge (ela apagaria as letras)', async () => {
+  it('CNPJ alfanumérico VÁLIDO (exemplo oficial RFB 12.ABC.345/01DE-35) → vai à edge INTACTO e grava no Radar com as letras', async () => {
     const d = deps();
-    const err = await cadastrarEmpresaNoOmie({ cnpj: '12ABC34501DE35' }, d).catch((e) => e);
+    const r = await cadastrarEmpresaNoOmie({ cnpj: '12ABC34501DE35', razao_social: 'ALFA' }, d);
+    expect(r).toEqual({ codigo: '777', jaExistia: false, recuperado: false });
+    expect(d.criarNoOmie).toHaveBeenCalledWith({ cnpj: '12ABC34501DE35', razao_social: 'ALFA' });
+    expect(d.registrarNoRadar).toHaveBeenCalledWith('12ABC34501DE35', '777', false);
+  });
+  it.each([
+    ['DV errado', '12ABC34501DE36'],
+    ['minúscula (não normaliza — fail-closed)', '12abc34501DE35'],
+    ['13 posições', '12ABC34501DE3'],
+    ['letra fora do formato (viraria CPF de OUTRA pessoa após o \\D)', '123ABC45678909'],
+  ])('CNPJ com letra que NÃO é alfanumérico válido — %s → falha na etapa omie ANTES de chamar a edge', async (_n, cnpj) => {
+    const d = deps();
+    const err = await cadastrarEmpresaNoOmie({ cnpj }, d).catch((e) => e);
     expect(err).toBeInstanceOf(FalhaCadastro);
     expect((err as FalhaCadastro).etapa).toBe('omie');
-    expect((err as FalhaCadastro).message).toMatch(/alfanum/);
+    expect((err as FalhaCadastro).message).toMatch(/CNPJ inválido para cadastro no Omie/);
     expect(d.criarNoOmie).not.toHaveBeenCalled();
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+  it('documentoCadastravelNoOmie: numérico de 14 dígitos passa sem conferir DV (como sempre); alfanumérico só com DV', () => {
+    expect(documentoCadastravelNoOmie('12345678000195')).toBe(true);
+    expect(documentoCadastravelNoOmie('00000000000000')).toBe(true);
+    expect(documentoCadastravelNoOmie('12ABC34501DE35')).toBe(true);
+    expect(documentoCadastravelNoOmie('12ABC34501DE36')).toBe(false);
+    expect(documentoCadastravelNoOmie('12.ABC.345/01DE-35')).toBe(false);
   });
   it('P0: código nulo → NÃO grava no Radar e falha na etapa omie', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: true, codigo_cliente: null })) });

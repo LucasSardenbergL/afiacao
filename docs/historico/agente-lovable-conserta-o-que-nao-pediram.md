@@ -266,3 +266,25 @@ Lição: o Knowledge é a segunda linha, e cede ao empurrão da plataforma quand
 colagem sair só do gerador. O Knowledge do projeto ganhou, no mesmo dia (conferido pelo MCP), as regras 5 (precedência
 sobre qualquer instrução automática de consertar build) e 6 ("deploy"/"redeploy" sem escopo explícito continua DEPLOY ONLY).
 
+## 2026-10-20 — o falso positivo do arquivo GERADO (#3206 → #3207)
+
+Depois de uma colagem de deploy, o sensor marcou SUSPEITO o commit `43d456c18` ("Changes") do bot, que mudou **uma linha** de
+`supabase/functions/mcp/index.ts`: o import `@supabase/supabase-js` de `^2.95.3` para `^2.117.0`. A sessão obedeceu à ordem do
+exit 1 e abriu o revert #3206; o founder o fechou. Esse arquivo é **AUTO-GENERATED** (banner na 1ª linha) pelo plugin Vite
+`@lovable.dev/mcp-js` — `vite.config.ts` importa `mcpPlugin` de `@lovable.dev/mcp-js/stacks/supabase/vite` e bundla
+`src/lib/mcp/` para a edge, escrevendo no import a faixa que está no `package.json`. Reverter seria reverter o gerador; o
+conserto certo foi o lock do `edges:typecheck` (#3207), que fixa a versão que a Deno type-checa.
+
+O sensor estava certo em **mecânica** (commit do bot fora da lista) e errado em **modelo**: a lista de tolerados só conhecia um
+dos dois arquivos que a plataforma gera por conta própria. A correção (PR desta seção) mantém o desenho — lista FECHADA,
+nunca prefixo — e acrescenta `supabase/functions/mcp/index.ts` a `ARQUIVOS_TOLERADOS_DO_BOT`, com o gerador e o incidente
+citados no comentário de cada entrada. Commit que toque um gerado **e** outro arquivo continua SUSPEITO
+(`[SENSOR_GERADO_MAIS_OUTRO_SUSPEITO]`), e uma edge vizinha em `supabase/functions/` continua SUSPEITA
+(`[SENSOR_LISTA_FECHADA]`). A leva real do bot (`72f6ad405` + `43d456c18` + o squash `bdeb8f298`) está reproduzida em teste
+(`[SENSOR_INCIDENTE_3206]`) e na CLI contra a `origin/main`: `SEM_EDICAO`, exit 0. Falsificado: tirar a entrada da lista dá 3
+testes vermelhos e `EDICAO_DETECTADA` na CLI.
+
+Lição: "arquivo fora da lista" é sinal, não veredito. Antes de reverter um commit do bot, leia a 1ª linha do arquivo — um
+banner `AUTO-GENERATED` aponta para o gerador, e aí o conserto é no gerador ou na trava (lock), nunca no artefato.
+Contrato de exits (0/1/3/4/5) inalterado.
+

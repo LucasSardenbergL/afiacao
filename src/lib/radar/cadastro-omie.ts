@@ -12,6 +12,7 @@
 // lead que sai da fila sem cliente no Omie é venda perdida sem rastro.
 
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { ehCnpjAlfanumerico } from '@/lib/omie/cnpj-alfanumerico';
 
 export type EtapaCadastro = 'omie' | 'radar';
 
@@ -85,8 +86,18 @@ export interface ResultadoCadastro {
 }
 
 const mensagem = (e: unknown): string => mensagemDeErro(e) ?? 'erro desconhecido';
-/** O que o Omie aceita hoje: só o CNPJ numérico clássico. */
+/** O numérico clássico passa como sempre passou (sem conferir DV aqui — o Omie confere). */
 const CNPJ_NUMERICO_RE = /^[0-9]{14}$/;
+/**
+ * O que pode ir para o `criar_cliente`: numérico de 14 dígitos OU CNPJ alfanumérico VÁLIDO (formato RFB
+ * jul/2026 + DV mod-11 sobre ASCII−48). A edge omie-vendas-sync (v1.20+, `documentoParaCadastro`) preserva as
+ * letras exatamente nesse caso, e a API Omie aceita o formato no IncluirCliente desde 10/04/2026
+ * (cronograma oficial, ajuda.omie.com.br/articles/13941990 — diário radar-cnpj-alfanumerico.md). Minúscula,
+ * 13 posições ou DV errado: falha ALTA aqui, antes de tocar o ERP (precisão > recall).
+ */
+export function documentoCadastravelNoOmie(cnpj: string): boolean {
+  return CNPJ_NUMERICO_RE.test(cnpj) || ehCnpjAlfanumerico(cnpj);
+}
 
 /**
  * Omie primeiro, Radar depois. A RPC não é idempotente de verdade (atualiza a data e
@@ -99,12 +110,11 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   deps: DepsCadastro<E>,
   opcoes: OpcoesCadastro = {},
 ): Promise<ResultadoCadastro> {
-  // CNPJ alfanumérico (RFB jul/2026) existe no Radar, mas o cadastro no Omie ainda NÃO o suporta: a
-  // edge omie-vendas-sync (`criar_cliente`) remove tudo que não é dígito antes de consultar/criar —
-  // "12ABC34501DE35" viraria "12345013 5" (11 dígitos) e seria tratado como CPF de OUTRA pessoa.
-  // Bloqueio explícito e barulhento aqui, antes de tocar o Omie (parecer Codex 2026-10-19).
-  if (!CNPJ_NUMERICO_RE.test(e.cnpj)) {
-    throw new FalhaCadastro('omie', 'CNPJ alfanumérico: cadastro no Omie ainda não suportado (a edge removeria as letras do documento)');
+  // Só o que a edge sabe preservar e o Omie sabe receber chega ao ERP (ver documentoCadastravelNoOmie):
+  // um documento com letra que NÃO é CNPJ alfanumérico válido viraria, depois do `\D`, o CPF de OUTRA
+  // pessoa — bloqueio explícito e barulhento aqui, antes de tocar o Omie (parecer Codex 2026-10-19).
+  if (!documentoCadastravelNoOmie(e.cnpj)) {
+    throw new FalhaCadastro('omie', 'CNPJ inválido para cadastro no Omie: só numérico de 14 dígitos ou alfanumérico RFB (maiúsculo, DV conferido)');
   }
   const retomada = Boolean(opcoes.codigoConhecido || opcoes.retentativa);
 

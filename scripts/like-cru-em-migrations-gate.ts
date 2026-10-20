@@ -212,8 +212,14 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   {
     arquivo: 'supabase/migrations/20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql',
     trecho: "like '%CNPJ ' || p_cnpj || '%'", n: 1,
-    motivo: 'radar_atribuir_tarefa: a definição viva (a 20260929001651 só troca o hoje da sessão pelo de SP), '
-      + 'em VIVOS_PERMITIDOS (p_cnpj validado por ^[0-9]{14}$)',
+    motivo: 'radar_atribuir_tarefa: definição antiga (a 20260929001651 só troca o hoje da sessão pelo de SP; '
+      + 'a viva é a 20261019225545, em VIVOS_PERMITIDOS)',
+  },
+  {
+    arquivo: 'supabase/migrations/20261019225545_radar_rpcs_cnpj_alfanumerico.sql',
+    trecho: "like '%CNPJ ' || p_cnpj || '%'", n: 1,
+    motivo: 'radar_atribuir_tarefa: a definição viva (a 20261019225545 só troca o guard de p_cnpj pelo formato RFB '
+      + 'alfanumérico), em VIVOS_PERMITIDOS (p_cnpj validado por ^[0-9A-Z]{12}[0-9]{2}$)',
   },
 ];
 
@@ -222,8 +228,9 @@ export const VIVOS_PERMITIDOS: readonly VivoPermitido[] = [
   {
     identidade: 'radar_atribuir_tarefa(text,integer)',
     trecho: "like '%CNPJ ' || p_cnpj || '%'",
-    ancora: "p_cnpj !~ '^[0-9]{14}$'",
-    motivo: 'o LIKE é o dedupe da tarefa por CNPJ, e p_cnpj passa por ^[0-9]{14}$ (RAISE) antes — não chega curinga',
+    ancora: "p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'",
+    motivo: 'o LIKE é o dedupe da tarefa por CNPJ, e p_cnpj passa por ^[0-9A-Z]{12}[0-9]{2}$ (RAISE) antes — '
+      + 'só [0-9A-Z] (CNPJ alfanumérico RFB jul/2026, 20261019225545), não chega curinga',
   },
   {
     identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer)',
