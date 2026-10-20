@@ -66,7 +66,7 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **Falsificação de corpo com PÓS por md5 é sempre vermelha** — e por isso não prova a semântica. Neutralize a régua de md5 nas sabotagens semânticas e deixe **uma** sabotagem para provar que a régua morde.
 - **Normalizar apagando** (`[^0-9A-Z]`) transforma anotação em chave. Remova só o que é separador conhecido.
 
-## Follow-ups fechados — guard alfanumérico nas 3 RPCs + `criar_cliente` (2026-10-20, PR #PR_DESTA_ENTREGA)
+## Follow-ups fechados — guard alfanumérico nas 3 RPCs + `criar_cliente` (2026-10-20, PR #3215)
 
 ### (A) RPCs do Radar: `registrar_contato_radar` · `radar_atribuir_tarefa` · `radar_registrar_cadastro_omie`
 
@@ -75,7 +75,7 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **Achado do pré-voo:** `registrar_contato_radar` em PROD (md5 `efdd73b6…`) ≠ repo `20260612130000` (md5 `41eb0fdd…`) — diff = **só comentários `--`** (alguém aplicou a função sem eles). A PRE aceita os dois md5 como predecessor; a prova registra (A0p1/A0p1b). Os outros dois batem byte a byte com o repo (`20260929001651` para a tarefa, `20260613190000` para o cadastro).
 - **Gate `like-cru-em-migrations-gate`:** a âncora de `VIVOS_PERMITIDOS` para o LIKE do dedupe de `radar_atribuir_tarefa` passa a ser `p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'`; `CONHECIDOS` ganha o sítio da migration nova (baseline 23 → 24) e a entrada da `20260929001651` vira "definição antiga". Teste novo: um corpo vivo que **voltasse** ao guard numérico reprova (`PERMITIDO … a âncora sumiu`) — o gate continua barrando LIKE cru sem a validação a montante.
 - **Prova PG17 `db/test-radar-rpcs-cnpj-alfanumerico.sh`** (nucleo-ci, 38 asserts, `falsificar=9`): predecessoras REAIS aplicadas com md5 = PROD; alfanumérico válido passa nas 3 e grava (contato, tarefa com o CNPJ na descrição + dedupe pelo LIKE, cadastro com código/status/contato); minúscula/13 posições/NULL → `cnpj inválido`; alfanumérico válido fora do radar cai no lookup (prova que o guard passou); numérico intocado; ACL nas 3; gate de gestor na frente do guard. Sabotagens (idioma `SABOTAGENS="nome:assert"`, uma por rodada, md5 neutralizado nas semânticas): `guard_numerico_{contato,tarefa,cadastro}` → A1a/A2a/A3a, `guard_aceita_minuscula` → A1c, `sem_search_path` → A0a (PÓS), `corpo_sabotado_md5` → A0a, `pre_sem_atributos` → A6a, `pre_sem_acl` → A6b, `trava_sem_volatilidade` → A6c. Curinga `%`/`_` em cada RPC → RAISE (A1h/A1i/A2f/A3f); não-gestor com CNPJ inválido → forbidden (A5b: o gate precede o guard).
-- **Deploy:** APLICACAO_PENDENTE_PLACEHOLDER
+- **Deploy:** aplicada via envelope MCP em 2026-10-20 11:56Z (1ª tentativa `ECONNRESET` sem efeito, provado por psql-ro; 2ª ok), validada por psql-ro: md5 "este" ×3, SECURITY DEFINER, `search_path=public`, VOLATILE, EXECUTE só `authenticated`/`service_role`, guard novo presente
 
 ### Codex (desenho `max` 493s · código `max` 428s, 2026-10-20) — achados e o que mudou
 
