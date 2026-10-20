@@ -205,7 +205,8 @@ describe('o repo', () => {
     expect(confrontar(r.contagem, CONHECIDOS)).toEqual({ novos: [], quitados: [] });
     // 22 + 1: a 20260929001651 recria radar_atribuir_tarefa (só o hoje de SP muda) — o MESMO
     // falso-positivo de VIVOS_PERMITIDOS, agora no arquivo da definição viva.
-    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(23);
+    // + 1: a 20261020120200 recria radar_contagem_por_municipio com p_lote (assinatura de 10 args).
+    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(24);
   });
 
   it('os 3 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {

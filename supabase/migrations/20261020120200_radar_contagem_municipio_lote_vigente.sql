@@ -173,22 +173,22 @@ DECLARE
   v_oid regprocedure := to_regprocedure('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz)');
 BEGIN
   IF to_regprocedure('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer)') IS NOT NULL THEN
-    RAISE EXCEPTION 'POS FALHOU: assinatura velha (8 args) ainda existe — PostgREST veria 2 overloads';
+    RAISE EXCEPTION 'P1 FALHOU: assinatura velha (8 args) ainda existe — PostgREST veria 2 overloads';
   END IF;
   IF v_oid IS NULL THEN
-    RAISE EXCEPTION 'POS FALHOU: assinatura nova (10 args) ausente';
+    RAISE EXCEPTION 'P2 FALHOU: assinatura nova (10 args) ausente';
   END IF;
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) <> '321d07f0c0003cc0fc9cf269ba944883' THEN
-    RAISE EXCEPTION 'POS FALHOU: corpo da nova não é o deste arquivo';
+    RAISE EXCEPTION 'P3 FALHOU: corpo da nova não é o deste arquivo';
   END IF;
   IF NOT (SELECT prosecdef AND proconfig @> ARRAY['search_path=public'] FROM pg_catalog.pg_proc WHERE oid = v_oid) THEN
-    RAISE EXCEPTION 'POS FALHOU: nova perdeu SECURITY DEFINER ou search_path';
+    RAISE EXCEPTION 'P4 FALHOU: nova perdeu SECURITY DEFINER ou search_path';
   END IF;
   IF has_function_privilege('public', v_oid, 'EXECUTE') OR has_function_privilege('anon', v_oid, 'EXECUTE') THEN
-    RAISE EXCEPTION 'POS FALHOU: PUBLIC/anon com EXECUTE — RPC de gestor aberta';
+    RAISE EXCEPTION 'P5 FALHOU: PUBLIC/anon com EXECUTE — RPC de gestor aberta';
   END IF;
   IF NOT has_function_privilege('authenticated', v_oid, 'EXECUTE') OR NOT has_function_privilege('service_role', v_oid, 'EXECUTE') THEN
-    RAISE EXCEPTION 'POS FALHOU: authenticated/service_role sem EXECUTE — ranking e mapa quebram';
+    RAISE EXCEPTION 'P6 FALHOU: authenticated/service_role sem EXECUTE — ranking e mapa quebram';
   END IF;
 END
 $post$;

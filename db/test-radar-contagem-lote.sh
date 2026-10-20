@@ -23,37 +23,49 @@ MIG="$REPO_ROOT/supabase/migrations/20261020120200_radar_contagem_municipio_lote
 PRED="$REPO_ROOT/db/fixtures/radar-contagem-por-municipio-predecessora-prod-20261020.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  # <sabotagem>:<assert que TEM de acusá-la>. `post:<texto>` = a postcondição/PRE da própria migration
-  # abortou o apply com aquele texto; a variante `_sem_post` cega essa camada para provar que o
-  # assert da suíte pega sozinho (uma camada por vez).
-  SABOTAGENS="fast_sem_lote:A2 slow_sem_lote:A3 fast_sem_vista:A4 slow_sem_vista:A5 sem_validacao_lote:A6a default_mudou:A1a mantem_velha:post:assinatura_velha mantem_velha_sem_post:A7 acl_aberta:post:PUBLIC/anon acl_aberta_sem_post:A8 pre_cega:A9a corpo_divergente:post:corpo_da_nova"
+  # Cada entrada: nome:VERMELHOS — os asserts (unidos por ',') que TÊM de ficar vermelhos; ou
+  # `APPLY!MARCA` quando a postcondição/PRE da própria migration TEM de abortar o apply com aquela marca
+  # (`_` vira espaço). A variante `_sem_post` cega essa camada para provar que o assert da suíte pega
+  # sozinho (uma camada por vez: a que fica verde é redundante ou inalcançada).
+  SABOTAGENS="fast_sem_lote:A2 slow_sem_lote:A3 fast_sem_vista:A4 slow_sem_vista:A5 sem_validacao_lote:A6a,A6b default_mudou:A1a,A1c mantem_velha:APPLY!P1_FALHOU mantem_velha_sem_post:A7 acl_aberta:APPLY!P5_FALHOU acl_aberta_sem_post:A8 pre_cega:A9a,A9b corpo_divergente:APPLY!P3_FALHOU"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-contagem-lote.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
     echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
   fi
   echo "✅ controle verde"
-  falhas=0; n_sab=0
+  SAB_V=0; SAB_F=0
   for par in $SABOTAGENS; do
-    s="${par%%:*}"; a="${par#*:}"; n_sab=$((n_sab+1))
-    if SABOTAGEM="$s" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
-      echo "❌ $s: suíte ficou VERDE"; falhas=$((falhas+1)); continue
+    s="${par%%:*}"; verm="${par#*:}"
+    log="$LOGDIR/$s.log"
+    if SABOTAGEM="$s" bash "$0" > "$log" 2>&1; then
+      echo "❌ $s: suíte ficou VERDE"; SAB_F=$((SAB_F+1)); continue
     fi
-    if ! grep -q "SABOTAGEM ATIVA: $s" "$LOGDIR/$s.log"; then
-      echo "❌ $s: sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
+    if ! grep -q "SABOTAGEM ATIVA: $s" "$log"; then
+      echo "❌ $s: sabotagem NÃO aplicou"; SAB_F=$((SAB_F+1)); continue
     fi
-    case "$a" in
-      post:*) padrao="POS FALHOU: $(printf '%s' "${a#post:}" | tr '_' ' ')" ;;
-      *)      padrao="^FAIL $a " ;;
+    case "$verm" in
+      APPLY!*)
+        marca="${verm#APPLY!}"; marca="${marca//_/ }"
+        if grep -qF "$marca" "$log"; then
+          SAB_V=$((SAB_V+1)); echo "✅ $s → apply abortou com '$marca'"
+        else
+          SAB_F=$((SAB_F+1)); echo "❌ $s: vermelho, mas o apply não abortou com '$marca' (log: $log)"
+        fi ;;
+      *)
+        faltou=""
+        for id in ${verm//,/ }; do
+          grep -q "^FAIL $id " "$log" || faltou="$faltou $id"
+        done
+        if [ -z "$faltou" ]; then
+          SAB_V=$((SAB_V+1)); echo "✅ $s → {$verm} vermelho"
+        else
+          SAB_F=$((SAB_F+1)); echo "❌ $s: declarado {$verm}, faltou:$faltou (log: $log)"
+        fi ;;
     esac
-    if grep -q "$padrao" "$LOGDIR/$s.log"; then
-      echo "✅ $s → $a vermelho"
-    else
-      echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
-    fi
   done
-  echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
-  [ "$falhas" -eq 0 ] && exit 0 || exit 1
+  echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"   # recibo exigido por db/roda-nucleo-ci.sh
+  [ "$SAB_F" -eq 0 ] && exit 0 || exit 1
 fi
 
 export PGVER=17
@@ -96,8 +108,8 @@ case "${SABOTAGEM:-}" in
   mantem_velha_sem_post)
                    sabotar "DROP FUNCTION IF EXISTS public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer);" ""
                    sabotar "  IF to_regprocedure('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer)') IS NOT NULL THEN
-    RAISE EXCEPTION 'POS FALHOU: assinatura velha" "  IF false THEN
-    RAISE EXCEPTION 'POS FALHOU: assinatura velha" ;;
+    RAISE EXCEPTION 'P1 FALHOU: assinatura velha" "  IF false THEN
+    RAISE EXCEPTION 'P1 FALHOU: assinatura velha" ;;
   acl_aberta)      sabotar "FROM PUBLIC, anon;" "FROM anon;" ;;
   acl_aberta_sem_post)
                    sabotar "FROM PUBLIC, anon;" "FROM anon;"
