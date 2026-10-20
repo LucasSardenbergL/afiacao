@@ -86,7 +86,16 @@ e `src/lib/caca/__tests__/documento.test.ts`.
 - Planos completos das views com RLS/filtros do app não foram medidos em prod (o `claude_ro` não executa a
   função); a medição é o microbenchmark PG17 acima.
 
+## Aplicação em prod (2026-10-20)
+
+O founder mandou "roda você": aplicada pela sessão via `mcp__lovable__query_database` (entra como `postgres`, transação
+completa — piloto-deploy-mcp-lovable.md), com guarda de identidade antes (`current_user`, 5.668 profiles, 0 membros,
+CHECK antigo, md5 da view = medido) e **atestada por fora via psql-ro** (query de validação `✅`, 6 md5 = "este",
+literais `on`/`true` e ACL das views intactos, smoke desfeito). Achado na atestação: `claude_ro` recebia
+`permission denied for function normalizar_documento` ao ler as views — o #3195 revogou os helpers de PUBLIC e as
+views agora os chamam. Entrou na migration um `GRANT … TO claude_ro` condicional à existência do papel (no harness
+não existe) e a PÓS o confere; re-aplicada (idempotente, PRE aceita "este").
+
 ## Pendências do founder
 
-- 🟣 SQL Editor: aplicar a migration (PR em DRAFT até a atestação via psql-ro).
 - 🖱️ Publish do Lovable após o merge; verificar com `.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh`.

@@ -98,6 +98,15 @@ $pre$;
 -- ── 1. ACL: funções puras (sem dado) executáveis por quem insere no CHECK e por quem lê as views ──
 GRANT EXECUTE ON FUNCTION public.cnpj_alfanumerico_valido(text), public.normalizar_documento(text)
   TO anon, authenticated;
+-- claude_ro (diagnóstico read-only, só em prod — no harness não existe): sem EXECUTE ele deixa de ler as 6 views
+-- (medido na atestação de 2026-10-20: "permission denied for function normalizar_documento" ao SELECT da view).
+DO $ro$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT EXECUTE ON FUNCTION public.cnpj_alfanumerico_valido(text), public.normalizar_documento(text) TO claude_ro;
+  END IF;
+END
+$ro$;
 
 -- ── 2. CHECK: só-dígitos (11|14) OU CNPJ alfanumérico válido (formato + DV). Recriado só se divergir. ──
 DO $chk$
@@ -452,7 +461,8 @@ BEGIN
   IF public.normalizar_documento('12.345.678/0001-90') <> '12345678000190' OR public.normalizar_documento('12.abc.345/01de-35') <> '12ABC34501DE35' THEN
     RAISE EXCEPTION 'PÓS FALHOU: normalizar_documento não produz a chave esperada';
   END IF;
-  FOR r IN SELECT unnest(ARRAY['anon','authenticated','service_role']) AS papel LOOP
+  FOR r IN SELECT unnest(ARRAY['anon','authenticated','service_role']) AS papel
+           UNION ALL SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = 'claude_ro' LOOP
     IF NOT has_function_privilege(r.papel, 'public.cnpj_alfanumerico_valido(text)', 'EXECUTE')
        OR NOT has_function_privilege(r.papel, 'public.normalizar_documento(text)', 'EXECUTE') THEN
       RAISE EXCEPTION 'PÓS FALHOU: % sem EXECUTE nos helpers — o CHECK/as views falhariam com 42501', r.papel;
