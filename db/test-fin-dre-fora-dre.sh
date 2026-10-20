@@ -180,8 +180,19 @@ rejeita_check "A3 de novo após restaurar" colacor "despesa_inventada"
 MAPA="$REPO_ROOT/db/2026-10-13-fin-dre-mapa-colacor-fase2.sql"
 V_OK="v1.5-dre-fora-dre-composicao"
 F_OK=$(sed -n "s/^  v_fonte_esperada  constant text := '\([0-9a-f]*\)';$/\1/p" "$MAPA")
-eq "M0 hash esperado do script = fingerprint versionado da omie-financeiro" \
-  "$F_OK" "$(sed -n 's/^  "omie-financeiro": "\([0-9a-f]*\)",$/\1/p' "$REPO_ROOT/supabase/functions/_shared/sonda-fingerprints.ts")"
+# M0 amarra o hash fixado no script ao fingerprint versionado — enquanto a edge ESTÁ na versão
+# que o script exige. O script é histórico (aplicado em 2026-10-13); depois que a omie-financeiro
+# evolui (v1.6, #3234), a igualdade deixa de existir por construção, e o resto da prova segue
+# auto-consistente (V_OK/F_OK do próprio script num ledger sintético).
+V_ATUAL=$(sed -n 's/^export const VERSAO = "\(.*\)";$/\1/p' "$REPO_ROOT/supabase/functions/omie-financeiro/versao.ts")
+if [ "$V_ATUAL" = "$V_OK" ]; then
+  eq "M0 hash esperado do script = fingerprint versionado da omie-financeiro" \
+    "$F_OK" "$(sed -n 's/^  "omie-financeiro": "\([0-9a-f]*\)",$/\1/p' "$REPO_ROOT/supabase/functions/_shared/sonda-fingerprints.ts")"
+elif [ -n "$V_ATUAL" ] && [ -n "$F_OK" ]; then
+  ok "M0 script histórico: edge já em $V_ATUAL (≠ $V_OK) — igualdade de hash não se aplica"
+else
+  bad "M0 não consegui ler VERSAO [$V_ATUAL] ou o hash do script [$F_OK]"
+fi
 P -q <<'SQL'
 ALTER TABLE public.fin_categoria_dre_mapping ADD COLUMN notas text;
 CREATE TABLE public.deploy_atestacoes (request_id bigint, observado_em timestamptz, edge text, versao text, fonte text, via text);
