@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **667** custom migrations totais
-- **2130** objetos esperados (criados por estas migrations)
+- **668** custom migrations totais
+- **2136** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 774
   - `rls_policy`: 476
   - `index`: 279
   - `cron_job`: 188
   - `table`: 185
-  - `view`: 119
+  - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5403,6 +5403,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `function` | `public.tint_watchdog_corante_vigia_check` | — |
 | `cron_job` | `cron.tint-watchdog-corante-vigia-15min` | — |
+
+### `20261020130000_grupos_caca_cnpj_alfanumerico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_comercial` | — |
+| `view` | `public.v_grupo_contatos` | — |
+| `view` | `public.v_grupo_contas_receber` | — |
+| `view` | `public.v_grupo_contas_receber_por_doc` | — |
+| `view` | `public.v_caca_compradores` | — |
+| `view` | `public.v_caca_candidatos` | — |
 
 ## Próximos passos por status
 

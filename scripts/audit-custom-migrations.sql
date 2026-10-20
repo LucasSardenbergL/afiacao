@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 667
+-- Total de custom migrations: 668
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -731,7 +731,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
   ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
-  ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql')
+  ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
+  ('20261020130000', 'grupos_caca_cnpj_alfanumerico', '20261020130000_grupos_caca_cnpj_alfanumerico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2827,7 +2828,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
-  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', '')
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_comercial', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contatos', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4971,7 +4978,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
-  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', '')
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_comercial', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contatos', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_grupo_contas_receber_por_doc', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
+  ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', '')
 )
 SELECT
   e.migration,

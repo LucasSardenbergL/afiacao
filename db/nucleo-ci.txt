@@ -607,3 +607,9 @@ db/test-radar-cnpj-alfanumerico.sh          25  falsificar=5
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
 # 7 sabotagens: chave só-dígitos, sem máscara exata (#3192), CHECK só-dígitos, DV ignorado (×2: funcional e PÓS), RPC mutila, PÓS.
 db/test-omie-identidade-cnpj-alfanumerico.sh 40  falsificar=7
+# Grupos de clientes / Caça aceitam CNPJ alfanumérico (follow-up 3 do #3180): CHECK formato+DV executado como
+# authenticated, 6 views com normalizar_documento() sob guard (numérico byte-idêntico fora da colisão; a mutilação
+# AEG12345678909→12345678909 deixa de contaminar o CPF), papéis, custo. PRE exige md5 de PROD (fixture 20261020).
+# 7 sabotagens: CHECK antigo, view contatos predecessora, REVOKE do helper, DV removido (+ PRE pega a deriva),
+# view Caça predecessora, formato sem 14 posições.
+db/test-grupos-caca-cnpj-alfanumerico.sh    80  falsificar=7
