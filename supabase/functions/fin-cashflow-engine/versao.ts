@@ -33,6 +33,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // por fin_estoque_valor vazia; CMV exige os 12 meses fechados; PME/estoque viram null + motivo.
 // v1.5 → v1.6: baixa CR derivada lida em UMA chamada (RPC fin_titulo_baixas_cr_mapa) em vez de
 // paginar v_titulo_baixas — cada página reavaliava a view inteira e a colacor dava 57014 (500).
+// v1.6 → v1.7: CR/CP lidos por keyset em 8 faixas de uuid concorrentes (teto 8 em voo, CR+CP
+// juntas) em vez de OFFSET em série — colacor levava 19–22 s em 31 idas e voltas. Mesmas linhas,
+// mesma ordem; o bump é a prova do deploy (a saída é idêntica, nenhuma canária discrimina).
 export const VERSAO = "v1.7-cr-cp-keyset-particionado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
