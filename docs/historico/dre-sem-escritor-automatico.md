@@ -60,3 +60,9 @@ Leitura sem gravar do `fin-cashflow-engine` (`db/leitura-pme-oben-pos-dre-2026-1
 #550, `net._http_response` 122623, HTTP 200, cenário realista): Oben **PME 68,0 d** (era `null`), CCC
 87,0 d, PMR 31 d, PMP 12 d, NCG −R$ 876.123, estoque R$ 445.476 (Omie). Coerência: 445.476 ÷ 68,04 × 365
 ≈ R$ 2,39 M de CMV em 12 meses ≈ R$ 199 k/mês — dentro da faixa mensal medida no DRE (160–225 k).
+
+## 1ª rodada real do cron (2026-10-19 15:30 UTC, psql-ro)
+
+`cron.job_run_details` jobid 215 `succeeded`; `fin_sync_log` **12/12 `calcular_dre` `complete`** (a mais
+lenta 77 s — caixa); `fin_dre_snapshots` gravados na janela: por empresa (oben, colacor, colacor_sc)
+**13 meses competência (2025-10..2026-10) + 2 caixa (2026-09..10)** — o desenho, sem intervenção humana.
