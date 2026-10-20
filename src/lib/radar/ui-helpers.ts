@@ -103,6 +103,14 @@ export const CLASSE_TOM: Record<TomStatus, string> = {
   muted: 'border-border text-muted-foreground',
 };
 
+/** Versão da FILA paginada: no preset 'score' é a rodada do score (id do ledger); nos outros, null (a ordem
+ *  não depende do score). Entra na queryKey: rodada nova ⇒ chave nova ⇒ paginação recomeça da página 0 —
+ *  offset sobre um ranking que mudou entre páginas pula ou repete lead (Codex MÉDIO 4 no #3214). */
+export function versaoDaFila(preset: PresetRadar, rodadaScore: string | null | undefined): string | null {
+  if (preset !== 'score') return null;
+  return rodadaScore ?? 'sem-rodada';
+}
+
 // ── Score de lead (radar_score_recalcular, 1×/dia): número + motivos, ou "sem score" honesto ───────
 export interface ScoreUI {
   texto: string;    // '72' ou 'sem score'

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
-  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI,
+  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -29,6 +29,21 @@ describe('presetParaParams', () => {
   });
 });
 
+describe('versaoDaFila (paginação estável sobre o score)', () => {
+  it('preset score: a versão é a rodada do ledger — rodada nova muda a chave e reinicia a paginação', () => {
+    expect(versaoDaFila('score', 'rodada-1')).toBe('rodada-1');
+    expect(versaoDaFila('score', 'rodada-2')).not.toBe(versaoDaFila('score', 'rodada-1'));
+  });
+  it('preset score sem rodada lida (nunca rodou / leitura falhou) → sentinela estável, nunca undefined', () => {
+    expect(versaoDaFila('score', null)).toBe('sem-rodada');
+    expect(versaoDaFila('score', undefined)).toBe('sem-rodada');
+  });
+  it('outros presets não dependem do score → null (rodada nova não reinicia a lista)', () => {
+    expect(versaoDaFila('novas', 'rodada-1')).toBeNull();
+    expect(versaoDaFila('estabelecidas', 'rodada-1')).toBeNull();
+  });
+});
+
 describe('scoreUI (score de lead)', () => {
   it('NULL é estado "sem score" com o motivo do banco — nunca 0', () => {
     expect(scoreUI(null, ['fora da foto vigente'])).toEqual({ texto: 'sem score', tom: 'muted', detalhe: 'fora da foto vigente' });
@@ -51,6 +66,9 @@ describe('scoreUI (score de lead)', () => {
     expect(scoreUI(72, ['CNAE prioritário (móveis de madeira)', 'município com 12 clientes'])).toEqual({
       texto: '72', tom: 'success', detalhe: 'CNAE prioritário (móveis de madeira) · município com 12 clientes',
     });
+  });
+  it('lote em ingestão é motivo de NULL como os outros', () => {
+    expect(scoreUI(null, ['lote em ingestão']).detalhe).toBe('lote em ingestão');
   });
 });
 
