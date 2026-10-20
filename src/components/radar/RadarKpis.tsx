@@ -5,6 +5,9 @@ import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura } from 
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { estadoNaSerie } from '@/lib/leitura/serie';
 import { track } from '@/lib/analytics';
+import { cn } from '@/lib/utils';
+import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
+import { useRadarIneditos } from '@/queries/useRadarIneditos';
 
 function Card({ label, valor, hint }: { label: string; valor: number | string; hint?: string }) {
   return (
@@ -12,6 +15,69 @@ function Card({ label, valor, hint }: { label: string; valor: number | string; h
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="kpi-value text-2xl">{valor}</div>
       {hint && <div className="text-xs text-muted-foreground mt-0.5">{hint}</div>}
+    </div>
+  );
+}
+
+/**
+ * Card "Inéditos do lote YYYY-MM: N de T" — substitui o "Novos no lote" (que mostrava o `novos`
+ * CONGELADO do ingest, sem denominador e sem ação). N vem de `useRadarIneditos` (count vivo, mesmo
+ * predicado do selo "inédito" da linha); T é `total_recebido` do lote vigente. 1 clique liga o
+ * filtro "só inéditos" da fila — e o sensor `radar.ineditos_filtro` leva N e T junto, para o uso
+ * em prod ter denominador (fase-sem-sinal.md).
+ *
+ * Três ausências, três telas distintas — nenhuma vira 0:
+ *   · lote vigente NÃO lido (erro/offline) ou count falhou → "não consegui contar";
+ *   · nenhum lote `complete` → "sem lote completo" (sem botão: o filtro não teria efeito);
+ *   · carregando → reticências.
+ */
+function CardIneditos({ soIneditos, onSoIneditos }: { soIneditos: boolean; onSoIneditos: (v: boolean) => void }) {
+  const qL = useRadarLoteVigente();
+  const lote = qL.data ?? null;
+  const qN = useRadarIneditos(lote);
+  const estadoL = estadoDeLeitura(qL);
+  const estadoN = estadoDeLeitura(qN);
+  const loteLido = qL.data !== undefined;
+  const falhou = (naoConsegui(estadoL) && !loteLido) || (lote != null && naoConsegui(estadoN) && qN.data === undefined);
+  const carregando = !falhou && (estadoL === 'carregando' || (lote != null && estadoN === 'carregando' && qN.data === undefined));
+
+  const alternar = () => {
+    if (!lote) return;
+    const ativo = !soIneditos;
+    track('radar.ineditos_filtro', {
+      ativo, origem: 'card', lote: lote.mes_referencia, ineditos: qN.data ?? null, total: lote.total_recebido,
+    });
+    onSoIneditos(ativo);
+  };
+
+  return (
+    <div className="rounded-md border bg-card p-3" data-testid="radar-kpi-ineditos">
+      <div className="text-xs text-muted-foreground">{lote ? `Inéditos do lote ${lote.mes_referencia}` : 'Inéditos do lote'}</div>
+      {carregando ? (
+        <div className="kpi-value text-2xl">…</div>
+      ) : falhou ? (
+        <div className="text-sm text-status-warning mt-1">não consegui contar</div>
+      ) : !lote ? (
+        <div className="text-sm text-muted-foreground mt-1">sem lote completo</div>
+      ) : (
+        <div className="kpi-value text-2xl">
+          {qN.data != null ? qN.data.toLocaleString('pt-BR') : '…'}
+          <span className="text-sm text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
+        </div>
+      )}
+      {lote && (
+        <button
+          type="button"
+          aria-pressed={soIneditos}
+          onClick={alternar}
+          className={cn(
+            'mt-1 rounded border px-1.5 py-px text-[11px] leading-4 transition-colors',
+            soIneditos ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground hover:bg-accent/40',
+          )}
+        >
+          só inéditos
+        </button>
+      )}
     </div>
   );
 }
@@ -31,7 +97,7 @@ function Card({ label, valor, hint }: { label: string; valor: number | string; h
  * Ausência de ACESSO NÃO passa por aqui: o `enabled` do hook espelha o gate da RPC, então
  * staff não-gestor cai em `desabilitada` — não renderiza, não avisa e não emite evento.
  */
-export function RadarKpis() {
+export function RadarKpis({ soIneditos, onSoIneditos }: { soIneditos: boolean; onSoIneditos: (v: boolean) => void }) {
   const q = useRadarKpis();
   const { data } = q;
   const estado = estadoDeLeitura(q);
@@ -83,11 +149,7 @@ export function RadarKpis() {
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card
-          label="Novos no lote"
-          valor={data.novos.toLocaleString('pt-BR')}
-          hint={data.lote ?? undefined}
-        />
+        <CardIneditos soIneditos={soIneditos} onSoIneditos={onSoIneditos} />
         <Card label="A contatar" valor={data.a_contatar.toLocaleString('pt-BR')} />
         <Card label="Em conversa" valor={data.em_conversa.toLocaleString('pt-BR')} />
         <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} />

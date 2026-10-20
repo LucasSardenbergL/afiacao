@@ -11926,6 +11926,7 @@ export type Database = {
       }
       radar_ingest_state: {
         Row: {
+          avisado_em: string | null
           erro: string | null
           finalizado_em: string | null
           iniciado_em: string
@@ -11935,6 +11936,7 @@ export type Database = {
           total_recebido: number
         }
         Insert: {
+          avisado_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -11944,6 +11946,7 @@ export type Database = {
           total_recebido?: number
         }
         Update: {
+          avisado_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -11975,6 +11978,39 @@ export type Database = {
           lng?: number | null
           nome?: string
           uf?: string
+        }
+        Relationships: []
+      }
+      radar_situacao_cadastral: {
+        Row: {
+          alertado_em: string | null
+          cnpj: string
+          data_situacao: string | null
+          lote: string
+          motivo_codigo: string | null
+          motivo_descricao: string | null
+          observado_em: string
+          situacao: string
+        }
+        Insert: {
+          alertado_em?: string | null
+          cnpj: string
+          data_situacao?: string | null
+          lote: string
+          motivo_codigo?: string | null
+          motivo_descricao?: string | null
+          observado_em?: string
+          situacao: string
+        }
+        Update: {
+          alertado_em?: string | null
+          cnpj?: string
+          data_situacao?: string | null
+          lote?: string
+          motivo_codigo?: string | null
+          motivo_descricao?: string | null
+          observado_em?: string
+          situacao?: string
         }
         Relationships: []
       }
@@ -22023,9 +22059,18 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_aplicar_situacao: {
+        Args: { p_agora?: string; p_lote: string }
+        Returns: Json
+      }
       radar_atribuir_tarefa: {
         Args: { p_cnpj: string; p_dias_retomada?: number }
         Returns: Json
+      }
+      radar_avisar_lote: { Args: { p_agora?: string }; Returns: Json }
+      radar_cnpjs_conhecidos: {
+        Args: { p_apos?: string; p_limite?: number }
+        Returns: string[]
       }
       radar_contagem_por_municipio: {
         Args: {
@@ -22047,6 +22092,13 @@ export type Database = {
           municipio_nome: string
           total: number
           uf: string
+        }[]
+      }
+      radar_docs_clientes: {
+        Args: never
+        Returns: {
+          doc: string
+          nome: string
         }[]
       }
       radar_kpis: { Args: never; Returns: Json }
@@ -22082,6 +22134,15 @@ export type Database = {
         }
         Returns: Json
       }
+      radar_rfb_descricao: {
+        Args: {
+          p_data: string
+          p_motivo_codigo: string
+          p_motivo_descricao: string
+          p_situacao: string
+        }
+        Returns: string
+      }
       radar_salvar_geocode: {
         Args: {
           p_cnpj: string
@@ -22091,6 +22152,7 @@ export type Database = {
         }
         Returns: Json
       }
+      radar_score_recalcular: { Args: never; Returns: Json }
       raio_x_classificar: {
         Args: {
           p_categoria: string

@@ -5,6 +5,7 @@ import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
+import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { RadarKpis } from '@/components/radar/RadarKpis';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
@@ -38,6 +39,8 @@ type RadarUrlState = {
   status: string;
   incluirJaClientes: boolean;
   comTelefone: boolean;
+  incluirSaiuDoDump: boolean;
+  soIneditos: boolean;
   preset: string;
   vista: string;
   [k: string]: string | boolean;
@@ -51,6 +54,8 @@ const DEFAULTS: RadarUrlState = {
   status: '',
   incluirJaClientes: false,
   comTelefone: false,
+  incluirSaiuDoDump: false,
+  soIneditos: false,
   preset: 'score',
   vista: 'lista',
 };
@@ -71,6 +76,9 @@ export default function RadarClientes() {
   const q = useRadarLista(filtros, hojeISO);
   const kpis = useRadarKpis();
   const loteOmie = useRadarLoteOmie();
+  // Lote VIGENTE (foto da RFB) — UMA leitura, compartilhada com a fila (que a lê pelo cache),
+  // o card de inéditos, a linha e a ficha. `null` = nenhum lote completo (sem selos, fila sem filtro).
+  const lote = useRadarLoteVigente().data ?? null;
   const [loteAberto, setLoteAberto] = useState(false);
 
   // Seleção por CNPJ, com SNAPSHOT de cada empresa: a linha pode sair da lista (virou
@@ -155,8 +163,8 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
-      <RadarKpis />
-      <Filtros filtros={filtros} set={set} />
+      <RadarKpis soIneditos={filtros.soIneditos} onSoIneditos={(v) => set({ soIneditos: v })} />
+      <Filtros filtros={filtros} set={set} lote={lote} />
       <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
       {/* Lote interrompido (aba fechada, parada, falhas): oferece retomar em vez de fingir que nada aconteceu. */}
@@ -220,6 +228,7 @@ export default function RadarClientes() {
                   selecionada={selecao.has(e.cnpj)}
                   onSelecionar={(v) => selecionar(e, v)}
                   onAbrir={() => abrir(e)}
+                  lote={lote}
                 />
               ))}
               <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
@@ -238,7 +247,7 @@ export default function RadarClientes() {
         onAbrirLote={() => setLoteAberto(true)}
       />
       <RadarLoteDialog lote={loteOmie} open={loteAberto} onClose={() => setLoteAberto(false)} />
-      <RadarDetailSheet empresa={aberta} hojeISO={hojeISO} onClose={() => setAbertaCnpj(null)} onProximo={proximo} />
+      <RadarDetailSheet empresa={aberta} hojeISO={hojeISO} onClose={() => setAbertaCnpj(null)} onProximo={proximo} lote={lote} />
     </div>
   );
 }

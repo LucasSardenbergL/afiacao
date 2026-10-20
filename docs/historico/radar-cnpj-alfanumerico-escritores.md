@@ -126,9 +126,10 @@ tabela de `deploy.md` §Canárias e `edge-money-path-invariants`.
    Active, 2,2 créditos; relé (tentativa #567) → `visto há 1 min via sonda`. `pendencias:deploy` **exit 0**
    (83/83 conferem). Sensor: o commit do bot desta rodada (`bdeb8f298`, 01:51:33Z) **entrou na `main`** — caiu
    entre a janela do 1º sensor (01:50Z) e o `--desde` do 2º (01:55Z): `types.ts` +4 (tolerado) e 1 linha em
-   `supabase/functions/mcp/index.ts` (pin `supabase-js ^2.95.3 → ^2.117.0`, o único pinado entre 90 edges;
-   as outras 89 usam `@2`). Não reverte nada; a edge `mcp` não tem `versao.ts` (fora do alcance do ledger)
-   e não foi redeployada — main e prod divergem nessa linha até o próximo deploy dela. Arquivos:
+   `supabase/functions/mcp/index.ts` (pin `supabase-js ^2.95.3 → ^2.117.0`). **Não é edição do agente**: o
+   arquivo é bundle `AUTO-GENERATED` pelo plugin Vite do `@lovable.dev/mcp-js` a partir de
+   `src/lib/mcp/index.ts`, e o pin só acompanhou o bump do `package.json` feito no #3198. Não reverte nada e
+   não pede revert (o #3206 foi fechado sem merge); a tolerância do sensor a esse bundle está no #3217 (aberto em 2026-10-20). Arquivos:
    `db/2026-10-20-sonda-*.sql`. **Publish do front** feito depois das duas pré-condições verdes
    (`deriva:corpo:prod` exit 0 em 10:22Z, após o merge do #3200 fechar o SEM_PAR do watchdog de corante).
 

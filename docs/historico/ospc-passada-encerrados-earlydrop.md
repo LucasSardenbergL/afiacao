@@ -81,3 +81,32 @@ Os 13 pedidos de out/2026 observados têm NF. ⇒ o filtro só-encerrados separa
 não "encerrado manualmente sem NF". Com a guarda de metade, a passada absterá SEMPRE nesta carteira: ligar
 `habilitado` sozinho é inerte. A decisão aberta é a SEMÂNTICA (o que o R59 quer tirar do caixa) e, com ela,
 a guarda — não o interruptor.
+
+## v1.9 + R59 v2 — `habilitado` ligado na OBEN (2026-10-20)
+
+A decisão de semântica foi tomada no R59 v2 (#3176): a guarda de fração saiu da edge (v1.9), e a contenção
+passou a ser a lista nomeada `scripts/orcamento-compra/r59-exclusoes-aprovadas.ts` (3 pedidos cancelados,
+conferidos no portal). O 1º ciclo da v1.9 (20/10 00:18 UTC) terminou `observado`, seq 153, 520 ids, e com isso
+o alerta `sync_state_saude` de 19/10 02:00 UTC (a abstenção da prova da v1.7, gravada como `error`) se
+resolveu sozinho às 00:30.
+
+Raio medido antes de ligar: `encerrado_omie_em` tem 1 escritor (a RPC) e 1 leitor (o backtest offline). Nenhuma
+função, view ou tela da prod o lê. Aplicado por `db/2026-10-20-r59-habilitar-encerrados-oben.sql` (recibo
+#569; reaplicado como #575 depois que o `<> 1` da pré-condição virou `is distinct from 1` pelo
+assert-verde-por-ausencia-gate, para o recibo bater com o arquivo; ensaio antes dos dois). A 2ª testemunha por psql-ro deu `OBEN|t|observado|153|520` e coluna com 0
+linhas. **Quem grava a coluna é a próxima passada** (completo diário, ~00:16 UTC de 21/10): status
+`publicado`, `novos`≈520. Reverter: `habilitado=false`. O backtest volta a recusar na hora.
+
+### 1ª publicação e backtest R59 v2 (2026-10-20)
+
+A pedido do founder, o completo foi antecipado: disparo manual `db/disparo-publicacao-r59-ospc-oben-20261020.sql`
+(recibo #579, `request_id` 124277, 13:56 UTC, fora do incremental). A passada publicou às 14:00:45: seq 155,
+520 ids, `novos=520`, `limpos=0`. O heartbeat ficou `complete` (v1.9) e há 520 linhas com `encerrado_omie_em`.
+
+Backtest (`simular.ts`, com fatos gerados pelo psql-ro): pré-voo verde e `fim|ok`.
+- `foraDoCaixaR59`: exatamente os 3 aprovados (80/1005, 91/1014, 194/1049), R$ 10.059,09.
+- `pendentesR59`: só o 2790/1230 (`2130311`, `2130311/2130322`), que segue no caixa.
+
+⚠️ `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro uma vez (e caiu a conexão em
+outra), com o banco sob carga. Gerando o `fatos.sql` à parte com `set statement_timeout='10min'`, ele levou
+75s. Ficou perto do teto: se repetir, o `--banco` precisa do mesmo `set`.

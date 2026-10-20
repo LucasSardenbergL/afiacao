@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
+import { lookupDevolveuOMesmoDocumento } from "./lookup-documento.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
@@ -786,6 +787,9 @@ async function buscarClienteVendas(
     codigo_cliente: cliente.codigo_cliente_omie,
     razao_social: cliente.razao_social,
     codigo_vendedor: codigoVendedor,
+    // Documento do registro devolvido, para o chamador conferir IDENTIDADE (o Omie devolve o 1º da
+    // página; `criar_cliente` exige que seja o documento pedido — Codex ALTO 2026-10-20).
+    cnpj_cpf: cliente.cnpj_cpf ?? null,
   };
 }
 
@@ -2917,7 +2921,20 @@ Deno.serve(async (req) => {
         // → a action falha honesta e o client não cria.
         const existingCliente = await buscarClienteVendas(docCriar, account, { throwOnTransient: true });
         if (existingCliente) {
-          result = { success: true, ...existingCliente, created: false };
+          // O lookup pega o 1º registro da página SEM conferir o documento. Se o Omie casar o filtro
+          // parcialmente ou ignorar letras (CNPJ alfanumérico, RFB jul/2026), devolveria OUTRO cliente e o
+          // lead sairia da fila com `created:false` e código alheio. Divergência = INDETERMINADO: falha
+          // alta, o lead fica na fila (Codex ALTO 2026-10-20; precisão > recall).
+          if (!lookupDevolveuOMesmoDocumento(docClean, existingCliente.cnpj_cpf)) {
+            throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
+          }
+          result = {
+            success: true,
+            codigo_cliente: existingCliente.codigo_cliente,
+            razao_social: existingCliente.razao_social,
+            codigo_vendedor: existingCliente.codigo_vendedor,
+            created: false,
+          };
           break;
         }
         // Create the client. Chave de integração DETERMINÍSTICA por
