@@ -94,3 +94,14 @@ o PostgREST corta em 1.000 linhas em silêncio, e o cron diário gravaria DRE/CM
   sob escrita concorrente; (ii) falta teste de integração `calcularDRE → snapshot` (um `.slice(0,1000)`
   no call-site passaria pelo gate). O `index.ts` importa `npm:` e a suíte roda `--no-remote`, então a
   prova da integração é a não-regressão em prod (DRE recalculado = baseline nos meses < 1.000 títulos).
+
+## Deploy e prova de não-regressão (2026-10-20, #3234)
+
+- Deploy da `omie-financeiro` v1.6 pela sessão (MCP Lovable, 17:24Z): 13/13 sha256 batendo com
+  `76607aa65`, Active, nenhum commit do bot depois do envio.
+- Sonda: `db/2026-10-20-sonda-omie-financeiro-v1.6.sql` (`db:aplicar` #584) → **DEPLOY CONFIRMADO**
+  (versão v1.6, `fonte` = fingerprint `b6f59a2c…`).
+- Prova: `db/2026-10-20-dre-recalculo-prova-nao-regressao-v1.6.sql` (`db:aplicar` #585) executa o
+  comando do próprio job 215, mesmo recorte da baseline capturada às 16:00Z com a v1.5. Ids pg_net
+  124604–124615: **12/12 HTTP 200**. Comparação com a baseline: **45/45 snapshots iguais** nas 11
+  colunas de valor (13 meses competência + 2 caixa × 3 empresas), inclusive o mês corrente.
