@@ -217,6 +217,16 @@
       "md5": "ae665653674267a3613b015366375a33",
       "md5Tokens": "83a4733748558d479b3c34d367c28cd8",
       "desde": "2026-10-18"
+    },
+    {
+      "funcao": "claim_nfe_efetivacao_lock",
+      "identidade": "uuid,timestamp with time zone,timestamp with time zone",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20260704130000_claim_nfe_efetivacao_lock.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-20-claim-nfe-efetivacao-recusa-descartado.sql (db_aplicacoes #623, 2026-10-20, PR #3258): o claim do lock de efetivação passa a recusar o recebimento `descartado` (`AND n.status IS DISTINCT FROM 'descartado'`) — um \"Reconciliar\" de aba velha devolveria à fila os 2 CT-e descartados (parecer Codex P1). TRAVA → PRE (md5 vivo = 7b537d9e… da 20260704130000) → CREATE OR REPLACE (ACL preservado: só service_role) → PÓS; prova PG17 db/test-claim-nfe-efetivacao-lock.sh (zona 6, 17 ok). Corpo = o da 20260704130000 + o predicado novo. Histórico: docs/historico/nfe-recebimento-ignora-cte.md.",
+      "md5": "1b66e565a608d3336038846363728b33",
+      "md5Tokens": "475c4553252d6ee98bed0be01bfd7021",
+      "desde": "2026-10-20"
     }
   ]
 }
