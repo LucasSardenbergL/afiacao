@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **682** custom migrations totais
-- **2201** objetos esperados (criados por estas migrations)
+- **683** custom migrations totais
+- **2203** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 810
+  - `function`: 812
   - `rls_policy`: 482
   - `index`: 286
   - `cron_job`: 196
@@ -5549,6 +5549,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.venda-gerador` | — |
 | `rls_policy` | `public.venda_gerador_execucao_select_master` | `venda_gerador_execucao` |
 | `rls_policy` | `public.venda_onda_log_select_master` | `venda_onda_log` |
+
+### `20261020194332_venda_cliente_historico_prova_dados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_mes_completo_por_dados` | — |
+| `function` | `public.venda_fechar_desfechos` | — |
 
 ## Próximos passos por status
 
