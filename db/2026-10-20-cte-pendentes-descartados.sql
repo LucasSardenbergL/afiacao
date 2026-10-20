@@ -34,7 +34,7 @@ BEGIN
   WHERE id IN ('05330de5-8495-4878-8503-629bf86a1eac', '1b0f6ce6-0bb8-4349-8c5f-51845fbeee10')
     AND status = 'descartado'
     AND observacoes LIKE '%Descartado em 2026-10-20: CT-e (modelo 57%';
-  IF v_descartados <> 2 THEN
+  IF v_descartados IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'A1 FALHOU: % de 2 CT-e pendentes viraram descartado com o motivo — algum já estava em uso ou mudou de estado; nada gravado', v_descartados;
   END IF;
 
@@ -44,10 +44,10 @@ BEGIN
     INTO v_cte_pendentes, v_cte_total, v_cte_efetivados
   FROM public.nfe_recebimentos
   WHERE substr(chave_acesso, 21, 2) = '57';
-  IF v_cte_pendentes <> 0 THEN
+  IF v_cte_pendentes IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'A2 FALHOU: ainda há % CT-e pendente(s) — a tela de conferência continuaria mostrando frete', v_cte_pendentes;
   END IF;
-  IF v_cte_total <> 28 OR v_cte_efetivados <> 26 THEN
+  IF v_cte_total IS DISTINCT FROM 28 OR v_cte_efetivados IS DISTINCT FROM 26 THEN
     RAISE EXCEPTION 'A3 FALHOU: o passivo mudou de tamanho (total %, efetivados %; esperado 28 e 26) — a mudança só pode tocar os 2 pendentes', v_cte_total, v_cte_efetivados;
   END IF;
   RAISE NOTICE 'cte-pendentes-descartados OK: 2 descartados, 0 CT-e pendente, 26 efetivados intactos (28 no total)';

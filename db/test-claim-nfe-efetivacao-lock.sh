@@ -113,12 +113,12 @@ INSERT INTO public.nfe_recebimentos(id, status, efetivacao_lock_at) VALUES
  ('66666666-6666-6666-6666-666666666666', 'descartado', NULL),
  ('77777777-7777-7777-7777-777777777777', NULL,         NULL);
 SQL
-P -q -f "$DESC" >/dev/null 2>&1 && ok "D0 o arquivo aplica sobre o predecessor (PRE aceita o corpo de 20260704130000)" || bad "D0 o arquivo não aplicou sobre o predecessor"
+if P -q -f "$DESC" >/dev/null 2>&1; then ok "D0 o arquivo aplica sobre o predecessor (PRE aceita o corpo de 20260704130000)"; else bad "D0 o arquivo não aplicou sobre o predecessor"; fi
 eq "D1 conferido livre continua claimando"   "$(claim 44444444-4444-4444-4444-444444444444)" "1"
 eq "D2 descartado livre é RECUSADO"          "$(claim 55555555-5555-5555-5555-555555555555)" "0"
 eq "D2 o descartado não ganhou lock"         "$(locked 55555555-5555-5555-5555-555555555555)" "f"
 eq "D3 status NULL não é descartado (IS DISTINCT FROM)" "$(claim 77777777-7777-7777-7777-777777777777)" "1"
-P -q -f "$DESC" >/dev/null 2>&1 && ok "D4 re-aplicar é idempotente (PRE aceita o próprio corpo)" || bad "D4 re-aplicar falhou"
+if P -q -f "$DESC" >/dev/null 2>&1; then ok "D4 re-aplicar é idempotente (PRE aceita o próprio corpo)"; else bad "D4 re-aplicar falhou"; fi
 # Falsificação 1: volta o corpo antigo (sem o predicado) → o descartado claima. Exige vermelho do dente.
 P -q -f "$MIG" >/dev/null
 eq "F3 sem o predicado o descartado é claimado (dente provado)" "$(claim 66666666-6666-6666-6666-666666666666)" "1"
