@@ -68,9 +68,9 @@ printf 'src/outro.ts\n'       > "$stub/gained_hit2.txt"  # ...e a main tem de te
 fail=0
 
 # _hook "<envs de stub>" "<cmd>" → stdout do hook
-_hook() {
-  local envs="$1" cmd="$2" json
-  json="$(jq -n --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')"
+_hook() {  # $3 (opcional) = `cwd` do JSON, o cwd da SESSÃO que o harness manda junto
+  local envs="$1" cmd="$2" cwdj="${3:-}" json
+  json="$(jq -n --arg c "$cmd" --arg w "$cwdj" '{tool_name:"Bash",tool_input:{command:$c}} + (if $w != "" then {cwd:$w} else {} end)')"
   # shellcheck disable=SC2086  # envs é lista KEY=VAL controlada (valores sem espaço) — split intencional
   printf '%s' "$json" | env $envs bash "$HOOK" 2>/dev/null
   # fail-open TOTAL: o hook DEVE sair 0 sempre. As asserções olham só o stdout, então trocar
@@ -260,6 +260,24 @@ if [ "$(cat "$stub/pwd.txt" 2>/dev/null)" = "$(cd "$stub/alvo" && pwd -P)" ]; th
   echo "  ok    cwd   | gates rodam no diretorio do cd literal"
 else
   echo "  FAIL  gates rodaram em '$(cat "$stub/pwd.txt" 2>/dev/null)', esperado $stub/alvo"; fail=1
+fi
+
+# sem `cd` literal, o diretório dos gates é o cwd da SESSÃO (`.cwd` do JSON), NÃO o `$PWD` do hook:
+# no app o hook roda em CLAUDE_PROJECT_DIR (checkout principal, commits atrás) e o harness remove o
+# `cd <cwd> &&` inicial — com `$PWD` os gates rodavam no principal (2026-10-20, #3201 criado na válvula).
+mkdir -p "$stub/sessao"
+_hook "$SEMCOL PRCG_GATES_CMD=$stub/gates_ok GATES_PWD_FILE=$stub/pwd_sessao.txt" "gh pr create --fill" "$stub/sessao" >/dev/null
+if [ "$(cat "$stub/pwd_sessao.txt" 2>/dev/null)" = "$(cd "$stub/sessao" && pwd -P)" ]; then
+  echo "  ok    cwd   | sem cd literal: gates rodam no cwd da sessao (JSON), nao no PWD do hook"
+else
+  echo "  FAIL  gates rodaram em '$(cat "$stub/pwd_sessao.txt" 2>/dev/null)', esperado $stub/sessao (cwd do JSON)"; fail=1
+fi
+# e o `cd` literal continua vencendo o cwd do JSON (ordem: JSON é o ponto de partida, cd sobrescreve)
+_hook "$SEMCOL PRCG_GATES_CMD=$stub/gates_ok GATES_PWD_FILE=$stub/pwd_cd.txt" "cd $stub/alvo && gh pr create --fill" "$stub/sessao" >/dev/null
+if [ "$(cat "$stub/pwd_cd.txt" 2>/dev/null)" = "$(cd "$stub/alvo" && pwd -P)" ]; then
+  echo "  ok    cwd   | cd literal sobrescreve o cwd do JSON"
+else
+  echo "  FAIL  gates rodaram em '$(cat "$stub/pwd_cd.txt" 2>/dev/null)', esperado $stub/alvo"; fail=1
 fi
 
 echo "── fail-open TOTAL: o hook nunca sai não-zero ──"
