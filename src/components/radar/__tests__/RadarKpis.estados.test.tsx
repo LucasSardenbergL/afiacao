@@ -352,6 +352,20 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     expect(card.textContent).not.toMatch(/(?<!\d)0 de/);
   });
 
+  it('refetch do count FALHA com número no cache: o número fica e o aviso "desatualizado" vem junto', async () => {
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    const card = await screen.findByTestId('radar-kpi-sugeridos');
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
+    expect(screen.queryByTestId('radar-kpi-sugeridos-desatualizado'), 'aviso sem falha').toBeNull();
+
+    respostasTabela['radar_empresas:sugeridos'] = { data: null, count: null, error: { message: 'boom' } };
+    await qc.refetchQueries({ queryKey: ['radar', 'sugeridos'] });
+
+    await waitFor(() => expect(screen.queryByTestId('radar-kpi-sugeridos-desatualizado')).toBeTruthy());
+    expect(card.textContent, 'o número sumiu — o erro não pode apagar o dado em mãos').toMatch(/(?<!\d)12 de 501\.380/);
+  });
+
   it('1 clique liga "só sugeridos" e o sensor leva N, T e o limiar', async () => {
     resposta = { data: kpis(), error: null };
     renderKpis();
