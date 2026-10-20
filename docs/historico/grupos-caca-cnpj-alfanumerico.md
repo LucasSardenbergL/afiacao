@@ -58,9 +58,11 @@ subtransação desfeita (23505 também vale: re-aplicar com o membro já present
   builtin: `pg_catalog.set_config(...)` sempre.
 - **Smoke da PÓS não pode usar documento que possa existir**: a 1ª versão inseria CNPJ/CPF numéricos de smoke e
   bateu no UNIQUE do harness (e bateria em prod); ficou só o alfanumérico, tolerando 23505.
-- **Falsificação que "restaura" pela migration**: a PRE (certa) recusa um CHECK que não é o antigo nem o dela — a
-  restauração do CHECK é explícita, e cada rodada termina com a migration re-aplicada limpa, senão as rodadas
-  seguintes herdam o estado quebrado e ficam "verdes" por cascata (foi o que a 1ª rodada mostrou).
+- **Falsificação in-process não passa no fiscal** (`scripts/falsificar-exige-assert-gate.ts`, R1/R2/R3): a 1ª versão
+  sabotava e restaurava no MESMO cluster — a PRE (certa) recusava restaurar um CHECK sabotado e as rodadas
+  seguintes herdavam o estado quebrado ("verdes" por cascata). Migrou para o idioma da casa: lista
+  `SABOTAGENS="nome:ASSERT"` (ids alfanuméricos, sem ponto), uma rodada = um cluster novo com `SABOTAGEM=<nome>`, e o
+  vermelho que conta é `^FAIL <ASSERT> ` no log daquela rodada — precisão, não "ficou vermelho".
 - **macOS = bash 3.2**: sem `declare -A`; expansão indireta `${!n}`.
 - `$(estado …)` roda em subshell — o "último erro" vai para arquivo, não para variável.
 
