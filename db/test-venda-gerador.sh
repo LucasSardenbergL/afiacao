@@ -19,6 +19,9 @@
 #       com outra forma = falso sem erro)
 #   7   reconstrução de um dia passado usa só pedidos anteriores (pedido posterior não muda a lista) e
 #       fecha o desfecho como virou_pedido
+#   H   prova de completude POR DADOS da linha de base (20261020194332): mês sem heartbeat fecha se 100% dos
+#       pedidos têm itens e volume ≥ 70% da mediana de 12 meses; senão nao_medivel/historico_incompleto;
+#       sombra segue exigindo heartbeat/cursor
 #   A   ACL/RLS: funções fechadas a anon/authenticated (has_function_privilege + chamada real 42501),
 #       tabelas novas só master lê
 #
@@ -33,11 +36,12 @@ MIG="$REPO_ROOT/supabase/migrations/20261020181743_venda_cliente_gerador.sql"
 MIG_ESPINHA="$REPO_ROOT/supabase/migrations/20261020174221_venda_cliente_espinha.sql"
 MIG_RECOMPRA="$REPO_ROOT/supabase/migrations/20261020150000_venda_cliente_recompra.sql"
 MIG_CITY_NORM="$REPO_ROOT/supabase/migrations/20260611150000_route_city_norm.sql"
+MIG_PROVA="$REPO_ROOT/supabase/migrations/20261020194332_venda_cliente_historico_prova_dados.sql"
 FIXTURE="$REPO_ROOT/db/fixtures/venda-cidades-alvo.json"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> (`!MARCA` = a postcondição da própria migration aborta com MARCA).
-  SABOTAGENS="sem_perdido:3 sem_teto:2 sem_papel_farmer:4 uf_ignorada:1b carteira_sem_alias:1c sem_override:8a rota_dia_errado:8a uf_sem_parenteses:8b duplica:5 onda1_dois_dias:6b.a onda1_ignora_divergencia:6b.b onda1_sombra_tardia:6b.c onda1_sem_historico:6b.d onda2_sem_taxa:6b.g onda3_sem_captura:6b.j acl_aberta:!G2_FALHOU"
+  SABOTAGENS="sem_perdido:3 sem_teto:2 sem_papel_farmer:4 uf_ignorada:1b carteira_sem_alias:1c sem_override:8a rota_dia_errado:8a uf_sem_parenteses:8b duplica:5 onda1_dois_dias:6b.a onda1_ignora_divergencia:6b.b onda1_sombra_tardia:6b.c onda1_sem_historico:6b.d onda2_sem_taxa:6b.g onda3_sem_captura:6b.j acl_aberta:!G2_FALHOU prova_sem_itens:H3 prova_sem_volume:H2 prova_limiar:H2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-gerador.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${LOCALE_TESTE:-C}) ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1 || ! grep -q "FIM-OK venda-gerador" "$LOGDIR/controle.log"; then
@@ -76,13 +80,15 @@ export LC_ALL="$LOC" LANG="$LOC"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-venda-gerador.XXXXXX")"
 DATA="$WORK/data"
 MIG_USADA="$WORK/mig.sql"
+MIG_PROVA_USADA="$WORK/mig-prova.sql"
 ESPERADO="$WORK/esperado.json"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
-sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+cp "$MIG_PROVA" "$MIG_PROVA_USADA"
+sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro); ALVO = arquivo
+  python3 -I - "${ALVO:-$MIG_USADA}" "$1" "$2" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -116,6 +122,9 @@ case "${SABOTAGEM:-}" in
         v_repasse_erro := SQLSTATE;
       END;" "      END;" ;;
   acl_aberta)         sabotar "REVOKE ALL ON FUNCTION public.venda_gerar_lista(date, text) FROM PUBLIC, anon, authenticated;" "SELECT 1;" ;;
+  prova_sem_itens)    ALVO="$MIG_PROVA_USADA" sabotar "         AND a.sem_itens = 0                       -- (i)" "" ;;
+  prova_sem_volume)   ALVO="$MIG_PROVA_USADA" sabotar "         AND a.n >= 0.7 * b.mediana                -- (ii)" "" ;;
+  prova_limiar)       ALVO="$MIG_PROVA_USADA" sabotar "AND a.n >= 0.7 * b.mediana" "AND a.n >= 0.4 * b.mediana" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -242,6 +251,7 @@ P -q -1 -f "$MIG_ESPINHA"
 # ── 8. Paridade de cidades e UF × TS (antes do mundo do gerador) ────────────────────────────────────
 echo "── 8: paridade SQL × TS ──"
 P -q -f "$MIG_USADA"   # 1º apply (só para a paridade; o mundo do gerador vem depois e re-aplica)
+P -q -f "$MIG_PROVA_USADA"   # PRE exige o corpo da espinha = o de prod (md5 do predecessor)
 P -q -v esperado="$ESPERADO" -v fixture="$FIXTURE" <<'SQL'
 CREATE TABLE t_esp AS SELECT pg_read_file(:'esperado')::jsonb AS j;
 CREATE TABLE t_fx  AS SELECT pg_read_file(:'fixture')::jsonb AS j;
@@ -314,8 +324,9 @@ SELECT 'sync_pedidos', ARRAY['oben'], 'complete', (g::date + time '13:00') AT TI
 UPDATE public.venda_config SET valor = '2'::jsonb WHERE chave = 'teto_maiores_atrasos';
 SQL
 
-echo "── migration de novo (idempotência, com dados) ──"
+echo "── migrations de novo (idempotência, com dados) ──"
 P -q -f "$MIG_USADA"
+P -q -f "$MIG_PROVA_USADA"
 eq "idempotência: re-apply não liga onda" "$(Pq -c "SELECT count(*) FROM public.venda_config WHERE chave LIKE 'onda_%' AND valor = 'true'::jsonb")" "0"
 
 D="$(Pq -c "SELECT d FROM t_cfg")"
@@ -340,6 +351,37 @@ eq "7 demais fecham nao_virou (sync coberto)" "$(Pq -c "
   SELECT string_agg(DISTINCT desfecho, ',') FROM public.venda_sugestao
    WHERE fase = 'historico' AND dia_referencia = '$D' AND comprador_id <> '$R1'")" "nao_virou"
 eq "7 execução registrada" "$(Pq -c "SELECT linhas FROM public.venda_gerador_execucao WHERE dia_referencia = '$D' AND fase = 'historico'")" "5"
+
+# ── H. Prova de completude por dados (linha de base): colacor SEM heartbeat nem cursor ─────────────
+# Comprador fora de carteira compra 10 pedidos/mês por 20 meses; M2 (hoje − 3 meses) só 5 (< 70% da mediana);
+# M3 (hoje − 2 meses) tem 1 pedido SEM itens. M1 (hoje − 4 meses) é normal.
+XC=00000000-0000-0000-0000-000000000c99; HX=00000000-0000-0000-0000-000000000c98
+P -q <<SQL
+CREATE TABLE t_mes AS SELECT (date_trunc('month', hoje) - interval '4 months')::date AS m1,
+                             (date_trunc('month', hoje) - interval '3 months')::date AS m2,
+                             (date_trunc('month', hoje) - interval '2 months')::date AS m3 FROM t_cfg;
+SELECT t_ped('$XC', (date_trunc('month', hoje) - make_interval(months => k))::date + j, 7000 + k, 1, 10, 0, 'colacor')
+  FROM t_cfg, generate_series(1, 20) k, generate_series(0, 9) j
+ WHERE NOT ((date_trunc('month', hoje) - make_interval(months => k))::date = (SELECT m2 FROM t_mes) AND j >= 5);
+INSERT INTO public.sales_orders (customer_user_id, account, status, order_date_kpi)
+SELECT '$XC', 'colacor', 'faturado', m3 + 20 FROM t_mes;          -- pedido sem order_items
+INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_user_id, comprador_id, empresa, omie_codigo_produto,
+                                   qtd_ref, valor_ref, motivo_entrada)
+SELECT 'recompra', f, m + 2, '$F1', '$HX', 'colacor', 9001, 1, 10, 'teste H'
+  FROM t_mes, LATERAL (VALUES ('historico', m1), ('historico', m2), ('historico', m3), ('sombra', m1)) v(f, m);
+SELECT public.venda_fechar_desfechos();
+SQL
+hdes() { Pq -c "SELECT desfecho || '|' || COALESCE(desfecho_motivo, '-') FROM public.venda_sugestao s, t_mes
+                 WHERE s.comprador_id = '$HX' AND s.fase = '$1' AND s.dia_referencia = $2 + 2"; }
+eq "H1 mês normal sem heartbeat: historico fecha (nao_virou)" "$(hdes historico m1)" "nao_virou|-"
+eq "H2 mês com volume < 70% da mediana → nao_medivel" "$(hdes historico m2)" "nao_medivel|historico_incompleto"
+eq "H3 mês com pedido sem itens → nao_medivel" "$(hdes historico m3)" "nao_medivel|historico_incompleto"
+eq "H4 sombra no mesmo mês continua exigindo heartbeat/cursor" "$(hdes sombra m1)" "nao_medivel|sync_atrasado"
+eq "H5 prova por mês (m1, m2, m3)" "$(Pq -c "SELECT private.venda_mes_completo_por_dados('colacor', m1)::text || ',' ||
+     private.venda_mes_completo_por_dados('colacor', m2)::text || ',' || private.venda_mes_completo_por_dados('colacor', m3)::text FROM t_mes")" "true,false,false"
+eq "H5 empresa sem histórico (mediana 0) reprova" "$(Pq -c "SELECT private.venda_mes_completo_por_dados('colacor_sc', m1) FROM t_mes")" "f"
+eq "H6 oben (com heartbeat) intocada: reconstrução de D não ganhou nao_medivel" \
+   "$(Pq -c "SELECT count(*) FROM public.venda_sugestao WHERE fase = 'historico' AND dia_referencia = '$D' AND desfecho = 'nao_medivel'")" "0"
 
 H="fase = 'historico' AND dia_referencia = '$D'"
 # ── 1. Cidade de amanhã ─────────────────────────────────────────────────────────────────────────────
