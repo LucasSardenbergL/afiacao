@@ -574,7 +574,7 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
-db/test-radar-score.sh                      18  falsificar=12
+db/test-radar-score.sh                      21  falsificar=14
 # Radar: ranking de cidades e mapa contam a FOTO VIGENTE (20261020120200). Defeito aqui = totalizador por
 # município contando quem saiu do dump (diverge da fila), lote mal formado contando zero em silêncio,
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo

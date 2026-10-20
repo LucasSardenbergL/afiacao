@@ -1,7 +1,7 @@
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
+import { presetParaParams, digitosCnae, versaoDaFila, type PresetRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
 import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
@@ -25,10 +25,52 @@ export interface RadarFiltros {
 
 const PAGE = 50;
 
+// acoes_execucoes não está no types.ts gerado (regen é do Lovable) → cast estrutural mínimo (idioma do useUltimaExecucao).
+interface SelectRodadaScore {
+  from(tabela: 'acoes_execucoes'): {
+    select(colunas: 'id'): {
+      eq(coluna: 'acao', valor: string): {
+        eq(coluna: 'status', valor: string): {
+          order(coluna: 'iniciado_em', opcoes: { ascending: boolean }): {
+            limit(n: number): PromiseLike<{ data: { id: string }[] | null; error: { message: string } | null }>;
+          };
+        };
+      };
+    };
+  };
+}
+
+/** Id da rodada mais recente do score (ledger `radar.score_recalcular`). Revisado a cada 10 min: a rodada
+ *  diária (03:30 BRT) ou uma manual troca a versão da fila e reinicia a paginação. */
+function useRadarRodadaScore() {
+  return useQuery({
+    queryKey: ['radar', 'rodada-score'],
+    refetchInterval: 10 * 60_000,
+    retry: 1,
+    queryFn: async () => {
+      const cliente = supabase as unknown as SelectRodadaScore;
+      const { data, error } = await cliente
+        .from('acoes_execucoes')
+        .select('id')
+        .eq('acao', 'radar.score_recalcular')
+        .eq('status', 'sucesso')
+        .order('iniciado_em', { ascending: false })
+        .limit(1);
+      if (error) throw new Error(error.message);
+      return data?.[0]?.id ?? null;
+    },
+  });
+}
+
 export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
   const qc = useQueryClient();
+  const rodada = useRadarRodadaScore();
+  const versao = versaoDaFila(filtros.preset, rodada.data);
   return useInfiniteQuery({
-    queryKey: ['radar', 'lista', filtros, hojeISO],
+    queryKey: ['radar', 'lista', filtros, hojeISO, versao],
+    // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
+    // ledger que falha degrada para 'sem-rodada' — a lista continua, só sem o reinício automático.
+    enabled: filtros.preset !== 'score' || !rodada.isPending,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`

@@ -21055,6 +21055,10 @@ export type Database = {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
       }
+      fin_capital_giro_prazos_empresa: {
+        Args: { p_company: string }
+        Returns: Json
+      }
       fin_categorias_sem_mapping: {
         Args: { p_company: string; p_end: string; p_start: string }
         Returns: {
