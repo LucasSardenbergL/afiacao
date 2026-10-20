@@ -194,6 +194,10 @@ db/test-recusa-definitiva-portal-servidor.sh 64
 # Trigger da outbox: pedido INSERIDO já aprovado (importação do portal) emite criada E aprovada; o corpo de
 # prod entra pela migration de 2026-10-11 com md5 CONFERIDO; backfill só de importados; fail-open vivo.
 db/test-analytics-outbox-insert-ja-aprovado.sh 23
+# Allowlist do ledger ganha os 4 sensores `venda.*` (20261020202720): os 7 eventos gravam, fora da lista 22023,
+# anon 28000, ACL nas duas pontas; PRE por md5 (deriva alheia aborta e sobrevive) e PÓS por md5 + por evento,
+# 4 sabotagens inline com controle verde na mesma invocação.
+db/test-analytics-ledger-venda-cliente.sh  17
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de

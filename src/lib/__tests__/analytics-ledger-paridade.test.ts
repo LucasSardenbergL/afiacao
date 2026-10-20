@@ -45,4 +45,10 @@ describe('ledger de analytics — paridade banco × front', () => {
     expect(allowlistDaUltimaMigration().eventos).toContain('dashboard.crescimento_comparavel_servido');
     expect(eventosDoTipo()).toContain('dashboard.crescimento_comparavel_servido');
   });
+
+  it('os 4 sensores do programa "Venda por cliente" estão nos dois lados', () => {
+    const venda = ['venda.contato_registrado', 'venda.ficha_aberta', 'venda.painel_aberto', 'venda.tel_clicado'];
+    expect(allowlistDaUltimaMigration().eventos.filter((e) => e.startsWith('venda.'))).toEqual(venda);
+    expect(eventosDoTipo().filter((e) => e.startsWith('venda.'))).toEqual(venda);
+  });
 });

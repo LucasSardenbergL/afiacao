@@ -52,7 +52,18 @@ export type EventoLedger =
    * É o sinal que libera a fase seguinte do card (ranking normalizado) — e o PostHog é censurado no
    * Chrome do founder, o principal leitor (2026-10-12: boots em `telemetria_probes`, zero evento web).
    */
-  | 'dashboard.crescimento_comparavel_servido';
+  | 'dashboard.crescimento_comparavel_servido'
+  /**
+   * Programa "Venda por cliente" (spec 2026-10-20 §7 Fase 5): a farmer abriu a ficha da ligação,
+   * registrou o desfecho manual, tocou no telefone (`tel:` — o único rastro, a ligação sai do app),
+   * o founder abriu o painel de adoção. Chave = comprador (ou a semana, no painel). A verdade do
+   * desfecho é `venda_contato` — aqui fica o rastro de UI, imune ao bloqueador do PostHog.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'venda.ficha_aberta'
+  | 'venda.contato_registrado'
+  | 'venda.tel_clicado'
+  | 'venda.painel_aberto';
 
 /**
  * Registra um evento decisório no ledger server-side.
