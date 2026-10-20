@@ -657,6 +657,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useIniciativasIceberg.test.ts",
       "src/pages/__tests__/GrupoCliente360.estados.test.tsx",
       "src/pages/__tests__/GovernanceAudit.margem-leitura-falhou.test.tsx",
+      "src/queries/__tests__/useClienteGrupos.documento.test.ts",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
