@@ -102,6 +102,42 @@ P -q -f "$MIG" >/dev/null
 P -q -c "UPDATE public.nfe_recebimentos SET efetivacao_lock_at=now() WHERE id='33333333-3333-3333-3333-333333333333';" >/dev/null
 eq "F2 restaurada volta a barrar lock ativo" "$(claim 33333333-3333-3333-3333-333333333333)" "0"
 
+# ── ZONA 6 — o claim recusa `descartado` (db/2026-10-20-claim-nfe-efetivacao-recusa-descartado.sql) ──
+# 2026-10-20: um "Reconciliar" numa aba velha devolveria o CT-e descartado à fila (parecer Codex).
+echo "── descartado ──"
+DESC="$REPO_ROOT/db/2026-10-20-claim-nfe-efetivacao-recusa-descartado.sql"
+P -q <<'SQL'
+INSERT INTO public.nfe_recebimentos(id, status, efetivacao_lock_at) VALUES
+ ('44444444-4444-4444-4444-444444444444', 'conferido',  NULL),
+ ('55555555-5555-5555-5555-555555555555', 'descartado', NULL),
+ ('66666666-6666-6666-6666-666666666666', 'descartado', NULL),
+ ('77777777-7777-7777-7777-777777777777', NULL,         NULL);
+SQL
+P -q -f "$DESC" >/dev/null 2>&1 && ok "D0 o arquivo aplica sobre o predecessor (PRE aceita o corpo de 20260704130000)" || bad "D0 o arquivo não aplicou sobre o predecessor"
+eq "D1 conferido livre continua claimando"   "$(claim 44444444-4444-4444-4444-444444444444)" "1"
+eq "D2 descartado livre é RECUSADO"          "$(claim 55555555-5555-5555-5555-555555555555)" "0"
+eq "D2 o descartado não ganhou lock"         "$(locked 55555555-5555-5555-5555-555555555555)" "f"
+eq "D3 status NULL não é descartado (IS DISTINCT FROM)" "$(claim 77777777-7777-7777-7777-777777777777)" "1"
+P -q -f "$DESC" >/dev/null 2>&1 && ok "D4 re-aplicar é idempotente (PRE aceita o próprio corpo)" || bad "D4 re-aplicar falhou"
+# Falsificação 1: volta o corpo antigo (sem o predicado) → o descartado claima. Exige vermelho do dente.
+P -q -f "$MIG" >/dev/null
+eq "F3 sem o predicado o descartado é claimado (dente provado)" "$(claim 66666666-6666-6666-6666-666666666666)" "1"
+P -q -c "UPDATE public.nfe_recebimentos SET efetivacao_lock_at=NULL WHERE id='66666666-6666-6666-6666-666666666666';" >/dev/null
+P -q -f "$DESC" >/dev/null
+eq "F4 restaurada volta a recusar o descartado" "$(claim 66666666-6666-6666-6666-666666666666)" "0"
+# Falsificação 2: corpo vivo DESCONHECIDO (deriva) → a PRE aborta e nada é recriado.
+P -q <<'SQL'
+CREATE OR REPLACE FUNCTION public.claim_nfe_efetivacao_lock(p_nfe_id uuid, p_lock_ts timestamptz, p_cutoff timestamptz)
+RETURNS TABLE (id uuid) LANGUAGE sql SECURITY DEFINER SET search_path = public AS $f$
+  UPDATE public.nfe_recebimentos AS n SET efetivacao_lock_at = p_lock_ts WHERE n.id = p_nfe_id RETURNING n.id;
+$f$;
+SQL
+DERIVA=$(P -q -f "$DESC" 2>&1 || true)
+case "$DERIVA" in
+  *"PRE FALHOU"*) ok "F5 corpo vivo desconhecido: a PRE aborta" ;;
+  *) bad "F5 — esperava PRE FALHOU, veio [$DERIVA]" ;;
+esac
+
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
 [ "$FAIL" = "0" ] || { echo "❌ HARNESS VERMELHO"; exit 1; }
