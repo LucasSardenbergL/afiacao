@@ -1,7 +1,15 @@
+<<<<<<< HEAD
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, versaoDaFila, type PresetRadar } from '@/lib/radar/ui-helpers';
+=======
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
+import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
+import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
+import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
+>>>>>>> f93992cdb3913062fb69d4e89a9cefc55e601b21
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -15,6 +23,8 @@ export interface RadarFiltros {
   incluirJaClientes: boolean;
   comTelefone: boolean;  // só empresas com telefone1 OU telefone2
   preset: PresetRadar;
+  incluirSaiuDoDump: boolean; // default false: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente)
+  soIneditos: boolean;        // só quem entrou no universo NESTE lote (primeira_vista_em >= iniciado_em)
 }
 
 const PAGE = 50;
@@ -36,7 +46,7 @@ interface SelectRodadaScore {
 
 /** Id da rodada mais recente do score (ledger `radar.score_recalcular`). Revisado a cada 10 min: a rodada
  *  diária (03:30 BRT) ou uma manual troca a versão da fila e reinicia a paginação. */
-export function useRadarRodadaScore() {
+function useRadarRodadaScore() {
   return useQuery({
     queryKey: ['radar', 'rodada-score'],
     refetchInterval: 10 * 60_000,
@@ -57,8 +67,12 @@ export function useRadarRodadaScore() {
 }
 
 export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
+<<<<<<< HEAD
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
+=======
+  const qc = useQueryClient();
+>>>>>>> f93992cdb3913062fb69d4e89a9cefc55e601b21
   return useInfiniteQuery({
     queryKey: ['radar', 'lista', filtros, hojeISO, versao],
     // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
@@ -66,6 +80,11 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
     enabled: filtros.preset !== 'score' || !rodada.isPending,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
+      // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`
+      // (lido uma vez, não por componente). Se a leitura do lote falha, a lista falha junto —
+      // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
+      // ultimo_lote=2026-05 na fila de 2026-08, medido 2026-10-19).
+      const lote = await lerLoteVigente(qc);
       const p = presetParaParams(filtros.preset, hojeISO);
       let q = supabase.from('radar_empresas').select('*');
 
@@ -86,6 +105,15 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
       else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
       if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      // Foto VIGENTE: default só `ultimo_lote = vigente`; "incluir quem saiu do dump" solta o
+      // filtro. "Só inéditos" é o predicado do card (`ehInedito`): vigente E primeira vista no
+      // lote — e vence o toggle (inédito é, por definição, do lote vigente). Sem lote completo
+      // (`null`) não há foto para filtrar: a fila roda inteira, como a RPC `radar_kpis`.
+      if (lote && filtros.soIneditos) {
+        q = q.eq('ultimo_lote', lote.mes_referencia).gte('primeira_vista_em', lote.iniciado_em);
+      } else if (lote && !filtros.incluirSaiuDoDump) {
+        q = q.eq('ultimo_lote', lote.mes_referencia);
+      }
       // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
       if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
       if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);
