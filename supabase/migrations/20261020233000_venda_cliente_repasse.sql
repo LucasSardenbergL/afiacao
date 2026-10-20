@@ -28,10 +28,10 @@
 --
 -- Molde: get_defasagem_cliente é objeto VIVO → TRAVA → PRE (md5 do predecessor medido) → CREATE → PÓS
 -- (md5 + config/ACL iguais). O resto é criação nova, idempotente. Prova: db/test-venda-repasse.sh.
+-- Sem BEGIN/COMMIT: a transação é do executor (`bun run db:aplicar`, que recusa arquivo com envelope).
 -- ⚠️ migration manual (Lovable não auto-aplica). Depende de private.venda_linhas_pedido e
 -- public.venda_recompra (Task 2, 20261020150000 — já aplicada na prod).
 
-BEGIN;
 
 -- ── PRE: dependências da Task 2 ─────────────────────────────────────────────
 DO $dep$
@@ -835,4 +835,3 @@ END $pos$;
 DROP TABLE IF EXISTS pg_temp.repasse_def_retrato;
 DROP TABLE IF EXISTS pg_temp.repasse_def_volatil;
 
-COMMIT;
