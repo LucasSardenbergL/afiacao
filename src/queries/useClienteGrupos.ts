@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { TablesUpdate } from '@/integrations/supabase/types';
+import { normalizarDocumento as normalizarChave, ehCnpjAlfanumerico, CNPJ_RE } from '@/lib/omie/cnpj-alfanumerico';
 
 /**
  * Grupo de Cliente 360 — camada de dados (CRUD de grupos + membros).
@@ -12,7 +13,7 @@ export type RelationType = 'sucessao' | 'multi_ativo' | 'incerto';
 interface ClienteGrupoMembro {
   id: string;
   grupo_id: string;
-  documento: string; // só dígitos
+  documento: string; // chave: só-dígitos (CPF 11 / CNPJ 14) ou CNPJ alfanumérico válido em MAIÚSCULAS (14)
   relation_type: RelationType;
   valid_from: string | null;
   valid_to: string | null;
@@ -32,14 +33,45 @@ export interface ClienteGrupo {
 
 const GRUPOS_KEY = ['cliente-grupos'] as const;
 
-/** Só dígitos (CPF 11 / CNPJ 14). Espelha o CHECK da migration. */
+/**
+ * Chave de documento do membro — espelha o CHECK `cliente_grupo_membros_documento_formato` (migration
+ * 20261020130000): só-dígitos (CPF 11 / CNPJ 14) OU CNPJ alfanumérico RFB VÁLIDO (formato + DV mod-11) em
+ * MAIÚSCULAS. Numérico é byte-idêntico ao `.replace(/\D/g, '')` de sempre; minúscula/máscara do alfanumérico
+ * são normalizadas AQUI (o banco rejeita o que não vier canônico — fail-closed).
+ */
 export function normalizarDocumento(doc: string): string {
-  return (doc || '').replace(/\D/g, '');
+  return normalizarChave(doc);
+}
+
+/** Máscara RFB nas posições exatas (`12.ABC.345/01DE-35`) — o MESMO regex do helper espelho (que não a exporta). */
+const CNPJ_MASCARA_RE = /^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}\/[0-9A-Z]{4}-[0-9]{2}$/;
+
+export type MotivoDocumento = 'ok' | 'dv_alfanumerico' | 'tamanho';
+
+export const MENSAGEM_DOCUMENTO: Record<Exclude<MotivoDocumento, 'ok'>, string> = {
+  dv_alfanumerico: 'CNPJ alfanumérico com dígito verificador inválido — confira o documento.',
+  tamanho: 'Documento inválido: informe um CPF (11 dígitos), um CNPJ (14 dígitos) ou um CNPJ alfanumérico válido.',
+};
+
+/**
+ * Avalia o que o usuário digitou. O que tem a FORMA de CNPJ alfanumérico (14 posições [0-9A-Z] com letra, cru ou
+ * com a máscara exata) mas DV errado é RECUSADO aqui — não cai nos dígitos, porque os dígitos de um alfanumérico
+ * errado podem ser o CPF de outra pessoa (AEG12345678908 → 12345678908; achado P1 do Codex, 2026-10-20). Letra
+ * fora dessa forma (anotação "CNPJ: …", "aeg-123.456.789-09") continua caindo nos dígitos, como sempre.
+ */
+export function avaliarDocumento(doc: string): { chave: string; motivo: MotivoDocumento } {
+  const chave = normalizarChave(doc);
+  const d = (doc || '').trim().toUpperCase();
+  const temFormaAlfanumerica = (CNPJ_RE.test(d) || CNPJ_MASCARA_RE.test(d)) && /[A-Z]/.test(d);
+  if (temFormaAlfanumerica && !ehCnpjAlfanumerico(d.replace(/[-./]/g, ''))) {
+    return { chave, motivo: 'dv_alfanumerico' };
+  }
+  if (chave.length === 11 || chave.length === 14) return { chave, motivo: 'ok' };
+  return { chave, motivo: 'tamanho' };
 }
 
 export function documentoValido(doc: string): boolean {
-  const d = normalizarDocumento(doc);
-  return d.length === 11 || d.length === 14;
+  return avaliarDocumento(doc).motivo === 'ok';
 }
 
 /** Lista os grupos ativos com seus membros. */
@@ -93,7 +125,7 @@ export function useUpdateGrupo() {
 }
 
 /**
- * Adiciona um documento ao grupo. Normaliza pra dígitos.
+ * Adiciona um documento ao grupo. Normaliza para a chave (dígitos, ou CNPJ alfanumérico em maiúsculas).
  * Erro de UNIQUE(documento) vira mensagem clara (documento já está em outro grupo).
  */
 export function useAddMembro() {
@@ -105,10 +137,8 @@ export function useAddMembro() {
       relationType?: RelationType;
       note?: string | null;
     }) => {
-      const documento = normalizarDocumento(input.documento);
-      if (!documentoValido(documento)) {
-        throw new Error('Documento inválido: informe um CPF (11 dígitos) ou CNPJ (14 dígitos).');
-      }
+      const { chave: documento, motivo } = avaliarDocumento(input.documento);
+      if (motivo !== 'ok') throw new Error(MENSAGEM_DOCUMENTO[motivo]);
       const { data: userData } = await supabase.auth.getUser();
       const { error } = await supabase.from('cliente_grupo_membros').insert({
         grupo_id: input.grupoId,
@@ -121,6 +151,10 @@ export function useAddMembro() {
         // 23505 = unique_violation
         if ((error as { code?: string }).code === '23505') {
           throw new Error('Este documento já pertence a outro grupo. Remova-o de lá antes de mover.');
+        }
+        // 23514 = check_violation (o CHECK do banco é a última palavra: formato + DV)
+        if ((error as { code?: string }).code === '23514') {
+          throw new Error('O banco recusou o documento (formato ou dígito verificador inválido).');
         }
         throw error;
       }

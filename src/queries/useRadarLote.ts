@@ -168,6 +168,7 @@ export function useRadarLoteOmie() {
       // empresas quando as cadastradas saem da fila. KPIs/ranking só invalidam.
       await qc.resetQueries({ queryKey: ['radar', 'lista'] });
       qc.invalidateQueries({ queryKey: ['radar', 'kpis'] });
+      qc.invalidateQueries({ queryKey: ['radar', 'sugeridos'] }); // os cadastrados saem do "sugeridos" (Codex 2026-10-20)
       qc.invalidateQueries({ queryKey: ['radar', 'contagem-municipios'] });
       qc.invalidateQueries({ queryKey: ['radar', 'contatos'] });
       abortRef.current = null;

@@ -34,3 +34,13 @@ describe('normalizarDocumento', () => {
     expect(normalizarDocumento('12 345')).toBe('12345');
   });
 });
+
+describe('normalizarDocumento: CNPJ alfanumérico (RFB jul/2026) — a mesma chave de v_caca_* (migration 20261020130000)', () => {
+  it('exemplo oficial da RFB preserva as letras, em maiúsculas', () => {
+    expect(normalizarDocumento('12.abc.345/01de-35')).toBe('12ABC34501DE35');
+    expect(normalizarDocumento('12ABC34501DE35')).toBe('12ABC34501DE35');
+  });
+  it('DV errado cai nos dígitos (não se fabrica documento)', () => {
+    expect(normalizarDocumento('12.ABC.345/01DE-36')).toBe('123450136');
+  });
+});

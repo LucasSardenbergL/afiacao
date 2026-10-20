@@ -43,9 +43,9 @@ export const ARQ_BASELINE = 'scripts/casts-stale-baseline.json';
  * `castsLiterais` é RATCHET junto com a baseline (plano v2, item 4): o piso É a contagem real de casts
  * literais `as never` no src/ — remover cast exige baixar o piso no MESMO PR (senão o gate acusa
  * varredura cega), e o piso nunca sobe. 2026-10-18: 65 (reposição + pedidos programados sem cast);
- * 2026-10-19: 58 (governança/DES sem cast).
+ * 2026-10-19: 58 (governança/DES sem cast); 2026-10-20: 54 (admin-crm + tintométrico sem cast).
  */
-export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 58 } as const;
+export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 54 } as const;
 
 export interface Nomes {
   relacoes: Set<string>; // Tables ∪ Views

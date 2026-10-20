@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { TintPriceBreakdown } from '@/lib/tint/compute-price';
+import { precoDeJson, precosDeJson, type TintPrecoRpc } from '@/lib/tint/preco-rpc';
 import type { TintPriceBreakdownLite } from '@/lib/tint/select-price';
 
 // O preço vem da RPC SECURITY DEFINER `get_tint_price` (hardening da receita:
@@ -8,26 +8,25 @@ import type { TintPriceBreakdownLite } from '@/lib/tint/select-price';
 // computa o custo server-side e devolve só o agregado (`custoCorantes`/
 // `precoFinal`) ao cliente; a receita (`itensCorantes`) só volta preenchida para
 // staff. O cálculo puro de referência — oráculo de paridade do SQL — vive em
-// @/lib/tint/compute-price (testado), e os tipos são re-exportados aqui para
-// manter a API pública do hook estável.
-export type { TintPriceBreakdown } from '@/lib/tint/compute-price';
+// @/lib/tint/compute-price (testado). O `jsonb` da RPC é lido por forma em
+// @/lib/tint/preco-rpc (custoBase/custoCorantes NULL fora do staff), nunca por cast.
 
 export function useTintPricing(formulaId: string | null) {
   return useQuery({
     queryKey: ['tint-pricing', formulaId],
     staleTime: 5 * 60 * 1000,
     enabled: !!formulaId,
-    queryFn: async (): Promise<TintPriceBreakdown | null> => {
+    queryFn: async (): Promise<TintPrecoRpc | null> => {
       if (!formulaId) return null;
 
-      const { data, error } = await supabase
-        .rpc('get_tint_price' as never, { p_formula_id: formulaId } as never);
+      const { data, error } = await supabase.rpc('get_tint_price', { p_formula_id: formulaId });
 
       // Erro real (rede/permissão/runtime) → PROPAGA (throw): react-query expõe isError e o balcão
       // fail-closa (sem preço) em vez de mascarar como null e cair no CSV legado — o que venderia
-      // base/corante inativo que a RPC barra. A RPC sempre devolve objeto p/ fórmula válida.
+      // base/corante inativo que a RPC barra. A RPC sempre devolve objeto p/ fórmula válida;
+      // resposta fora da forma também LANÇA (precoDeJson), pelo mesmo motivo.
       if (error) throw error;
-      return (data ?? null) as unknown as TintPriceBreakdown | null;
+      return precoDeJson(data);
     },
   });
 }
@@ -43,15 +42,14 @@ export function useTintPrices(formulaIds: string[]) {
     staleTime: 5 * 60 * 1000,
     enabled: ids.length > 0,
     queryFn: async (): Promise<Record<string, TintPriceBreakdownLite>> => {
-      const { data, error } = await supabase
-        .rpc('get_tint_prices' as never, { p_formula_ids: ids } as never);
+      const { data, error } = await supabase.rpc('get_tint_prices', { p_formula_ids: ids });
 
       // Erro PROPAGA (mesmo contrato do single acima): antes `{}` fazia a falha da RPC
       // aparecer como "sem preço" em todas as embalagens — o caller não distinguia
       // "não tem preço" de "não consegui calcular". Continua fail-closed (sem preço),
       // mas agora o `isError` deixa a UI dizer a verdade.
       if (error) throw error;
-      return (data ?? {}) as unknown as Record<string, TintPriceBreakdownLite>;
+      return precosDeJson(data);
     },
   });
 }
