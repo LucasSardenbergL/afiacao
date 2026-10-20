@@ -8,7 +8,7 @@
 --
 -- O corpo é o VIVO da prod, lido por psql-ro em 2026-10-20 (md5(prosrc) 977288a80b440c103479f953bb8f3dae,
 -- = 20261012233500_analytics_ledger_crescimento_comparavel). Muda SÓ a linha da allowlist; a PÓS exige os
--- QUATRO eventos (recriação que esquece um antigo é o modo de falha do CREATE OR REPLACE).
+-- md5 EXATO deste corpo (recriação que esquece um evento antigo é o modo de falha do CREATE OR REPLACE).
 -- Molde TRAVA → PRE → CREATE → PÓS (.claude/skills/lovable-db-operator/references/sql-house-style.md):
 -- outra sessão que recrie esta função depois do meu pré-voo faz a PRE abortar, em vez de ser apagada.
 --
@@ -97,21 +97,15 @@ DO $post$
 DECLARE
   v_oid oid := to_regprocedure('public.analytics_ledger_registrar(text,text,jsonb)')::oid;
   v_def text;
-  ev text;
 BEGIN
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: analytics_ledger_registrar(text,text,jsonb) nao existe — o ledger inteiro fica mudo';
   END IF;
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) <> 'c4628e2c1cf94bbcd022ade37f7ddf92' THEN
-    RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo de analytics_ledger_registrar nao e o deste arquivo';
+    RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo de analytics_ledger_registrar nao e o deste arquivo (allowlist com venda.painel_aberto + os 3 antigos)';
   END IF;
+  -- md5 EXATO: cobre a allowlist inteira (os 4 eventos) e o resto do corpo de uma vez
   v_def := pg_get_functiondef(v_oid);
-  FOREACH ev IN ARRAY ARRAY['venda.painel_aberto', 'dashboard.crescimento_comparavel_servido',
-                            'navegacao.rota_servida', 'carteira.mixgap_servido'] LOOP
-    IF v_def NOT LIKE '%''' || ev || '''%' THEN
-      RAISE EXCEPTION 'POSTCONDICAO FALHOU: allowlist sem % — o evento levaria 22023', ev;
-    END IF;
-  END LOOP;
   IF v_def NOT LIKE '%SECURITY DEFINER%' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: funcao perdeu SECURITY DEFINER';
   END IF;

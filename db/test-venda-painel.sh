@@ -30,7 +30,7 @@ MIG_LEDGER_PRED="$REPO_ROOT/supabase/migrations/20261012233500_analytics_ledger_
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="gate_aberto:T1 taxa_com_medivel:T3b complemento_na_taxa:T3c receita_zero:T4 hist_semana_errada:T5 base_sem_log:T6 contato_fora_da_semana:T3 acl_aberta:POST!P2_FALHOU ledger_sem_evento:POST!allowlist_sem_venda.painel ledger_sem_pre:T10c"
+  SABOTAGENS="gate_aberto:T1 taxa_com_medivel:T3b complemento_na_taxa:T3c receita_zero:T4 hist_semana_errada:T5 base_sem_log:T6 contato_fora_da_semana:T3 acl_aberta:POST!P2_FALHOU ledger_sem_evento:POST!nao_e_o_deste_arquivo ledger_sem_pre:T10c"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-painel.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
