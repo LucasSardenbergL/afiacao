@@ -430,6 +430,32 @@ describe('fetchAllPages — instrumentação da página perdida', () => {
     }
   });
 
+  // Alerta "fetchAllPages(inadimplentes (all)): página 0 perdida" (2026-10-18, PostHog
+  // 01a1508c…): `codigo: ""` caiu em `desconhecido` e o plantão teve de ir à fonte do
+  // supabase-js para descobrir que era transporte. O postgrest-js converte a REJEIÇÃO do fetch
+  // (rede caiu, AbortError — inclusive o do lock de sessão do auth) em `{ error: { code: '' },
+  // status: 0 }`; o `hint` do ramo de abort é string fixa da lib. Formato idêntico na 2.95.3 e
+  // na 2.117.0 (node_modules/@supabase/postgrest-js/dist).
+  it('falha de transporte do supabase-js (code vazio) não vira "desconhecido"', async () => {
+    const casos: Array<[Record<string, unknown>, string]> = [
+      [
+        { message: 'AbortError: signal is aborted without reason', details: '', code: '',
+          hint: 'Request was aborted (timeout or manual cancellation)' },
+        'transporte_abortado',
+      ],
+      [{ message: 'TypeError: Failed to fetch', details: '', hint: '', code: '' }, 'transporte_rede'],
+    ];
+    for (const [erro, categoriaEsperada] of casos) {
+      captureExceptionMock.mockClear();
+      await expect(
+        fetchAllPages<{ id: number }>(() => Promise.resolve({ data: null, error: erro }), 'x/y'),
+      ).rejects.toThrow(/\(0-999\) falhou/);
+      const [, ctx] = captureExceptionMock.mock.calls[0] as [unknown, Record<string, unknown>];
+      expect(ctx.categoria, String(erro.message)).toBe(categoriaEsperada);
+      expect(ctx.codigo).toBe('');
+    }
+  });
+
   it('NÃO envia as linhas lidas — metadado só, sem payload', async () => {
     await expect(fetchAllPages<{ id: number }>(falhaNaTerceira, 'product_costs/bundle')).rejects.toThrow(/\(2000-2999\) falhou/);
 
