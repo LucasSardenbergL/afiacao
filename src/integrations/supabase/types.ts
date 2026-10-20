@@ -11926,6 +11926,7 @@ export type Database = {
       }
       radar_ingest_state: {
         Row: {
+          avisado_em: string | null
           erro: string | null
           finalizado_em: string | null
           iniciado_em: string
@@ -11935,6 +11936,7 @@ export type Database = {
           total_recebido: number
         }
         Insert: {
+          avisado_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -11944,6 +11946,7 @@ export type Database = {
           total_recebido?: number
         }
         Update: {
+          avisado_em?: string | null
           erro?: string | null
           finalizado_em?: string | null
           iniciado_em?: string
@@ -22064,6 +22067,7 @@ export type Database = {
         Args: { p_cnpj: string; p_dias_retomada?: number }
         Returns: Json
       }
+      radar_avisar_lote: { Args: { p_agora?: string }; Returns: Json }
       radar_cnpjs_conhecidos: {
         Args: { p_apos?: string; p_limite?: number }
         Returns: string[]

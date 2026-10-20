@@ -409,7 +409,12 @@ INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, sta
   ('oben','strategic','inventory',           'complete', :agora - interval '3 hours'),
   ('oben','strategic','products',            'complete', :agora - interval '3 hours'),
   ('oben','status_produtos','sku_status_omie','complete', :agora - interval '3 hours'),
-  ('colacor','status_produtos','sku_status_omie','complete', :agora - interval '3 hours');
+  ('colacor','status_produtos','sku_status_omie','complete', :agora - interval '3 hours'),
+  -- [2026-10-20] chave vigiada que prod recebeu por patch de ancora em 2026-10-11 (db/2026-10-11-cron-
+  -- reconciliar-pedidos-colacor.sql) e so entrou na cadeia de migrations pela 20261020101636.
+  -- Os cenarios abaixo mexem SO na chave oben (`account='oben'` em todo UPDATE/DELETE): sem isso a gemea
+  -- colacor/operational/orders some no DELETE, vira `nunca executou` e mascara as sabotagens de running/retry.
+  ('colacor','operational','orders',         'complete', :agora - interval '30 minutes');
 SQL
 }
 # status agregado do check
@@ -428,11 +433,12 @@ eq "A2 tabela VAZIA ⇒ broken (chave vigiada que nunca executou é falha, não 
 semear_saudavel
 eq "A3 1 linha por source no compute INTEIRO" \
    "$(Pq -c "SELECT (count(*) = count(DISTINCT source))::text FROM public._data_health_compute();")" "true"
-# Contagem da VERSÃO VIVA (cadeia dinâmica): a 0918 levou o compute a 30 (29 + este) e a
-# 20261001011500 (vendas_empurradas_sem_gemeo) a 31. Fonte nova no trio muda este número — no PR que
-# a acrescenta, que é onde o vermelho tem de aparecer.
-eq "A4 o compute tem 31 sources (a 0918 trouxe este; a 20261001011500, o 31º)" \
-   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "31"
+# Contagem da VERSÃO VIVA (cadeia dinâmica): a 0918 levou o compute a 30 (29 + este), a
+# 20261001011500 (vendas_empurradas_sem_gemeo) a 31 e a 20261020101636 (radar_lote_idade +
+# radar_recruzamento_tick) a 33. Fonte nova no trio muda este número — no PR que a acrescenta, que é
+# onde o vermelho tem de aparecer.
+eq "A4 o compute tem 33 sources (a 0918 trouxe este; a 20261001011500, o 31º; a 20261020101636, 32º e 33º)" \
+   "$(Pq -c "SELECT count(DISTINCT source)::text FROM public._data_health_compute();")" "33"
 eq "A5 status dentro do vocabulário que o watchdog aceita" \
    "$(Pq -c "SELECT (status IN ('ok','stale','broken','unknown'))::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
 
@@ -441,7 +447,7 @@ eq "A6 catálogo todo com complete fresco ⇒ ok" "$(st)" "ok"
 
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET status='error', error_message='pedido 7b6f incoerente'
-          WHERE reprocess_type='operational' AND entity_type='orders';"
+          WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 eq "A7 última linha em error ⇒ broken (o incidente real)" "$(st)" "broken"
 eq "A8 o erro técnico chega ao last_error" \
    "$(Pq -c "SELECT (last_error LIKE '%7b6f%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
@@ -456,7 +462,7 @@ eq "A9 dialeto 'failed' (omie-sync-status-produtos) também é broken" "$(st)" "
 # limiar da órfã deixava a suíte verde. Aqui: complete há 3h (dentro do SLA de 4h) e uma tentativa
 # iniciada há 2h30 que nunca terminou. Só a cláusula da órfã pode dar broken.
 semear_saudavel
-P -q -c "DELETE FROM public.sync_reprocess_log WHERE reprocess_type='operational' AND entity_type='orders';"
+P -q -c "DELETE FROM public.sync_reprocess_log WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, created_at) VALUES
   ('oben','operational','orders','complete', now() - interval '3 hours'),
   ('oben','operational','orders','running',  now() - interval '150 minutes');"
@@ -487,7 +493,7 @@ eq "A14 chave ATIVA fora do catálogo ⇒ unknown (cobertura desconhecida não �
 # linha deixa de ser erro, o running é recente e o sucesso das 10h ainda cabe no SLA de 4h ⇒ o check
 # diria `ok` e o watchdog faria DISMISS AUTOMÁTICO, antes de o retry sequer completar.
 semear_saudavel
-P -q -c "DELETE FROM public.sync_reprocess_log WHERE reprocess_type='operational' AND entity_type='orders';"
+P -q -c "DELETE FROM public.sync_reprocess_log WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 P -q -c "INSERT INTO public.sync_reprocess_log (account, reprocess_type, entity_type, status, error_message, created_at) VALUES
   ('oben','operational','orders','complete', NULL,             now() - interval '150 minutes'),
   ('oben','operational','orders','error',    'RPC falhou',     now() - interval '31 minutes'),
@@ -497,7 +503,7 @@ eq "A15 erro terminal seguido de retry em voo NÃO pode virar ok (E.1)" "$(st)" 
 echo "── precisão: degradação ≠ quebra ──"
 semear_saudavel
 P -q -c "UPDATE public.sync_reprocess_log SET error_message='2 pedidos falharam na reconciliação'
-          WHERE reprocess_type='operational' AND entity_type='orders';"
+          WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 eq "A16 complete COM error_message ⇒ continua ok (o estágio andou)" "$(st)" "ok"
 eq "A17 …mas a degradação aparece na message" \
    "$(Pq -c "SELECT (message LIKE '%falha por pedido%')::text FROM public._data_health_compute() WHERE source='sync_reprocess_saude';")" "true"
@@ -600,13 +606,13 @@ P -q -c "DROP FUNCTION public.now();"
 
 echo "── as outras 2 pernas do trio EXECUTAM (late-bound: CREATE não prova nada) ──"
 semear_saudavel
-P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE reprocess_type='operational' AND entity_type='orders';"
+P -q -c "UPDATE public.sync_reprocess_log SET status='error' WHERE account='oben' AND reprocess_type='operational' AND entity_type='orders';"
 P -q -c "SELECT public.data_health_watchdog();" >/dev/null
-# 23 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23). O compute
-# produz 31 sources; o watchdog avalia os do array e ignora o resto — por isso os dois números são
-# diferentes DE PROPÓSITO.
-eq "A26 watchdog avalia 23 checks (o v_sources, não os 31 do compute)" \
-   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "23"
+# 25 = tamanho do v_sources na versão viva (a 0918 levou a 22; a 20261001011500, a 23; a
+# 20261020101636, a 25). O compute produz 33 sources; o watchdog avalia os do array e ignora o resto —
+# por isso os dois números são diferentes DE PROPÓSITO.
+eq "A26 watchdog avalia 25 checks (o v_sources, não os 33 do compute)" \
+   "$(Pq -c "SELECT checks_avaliados::text FROM public.data_health_watchdog_estado WHERE id;")" "25"
 # ⚠️ checks_falhos conta EXCECAO DE EXECUCAO do check, nunca status de negocio: o laco so o
 # incrementa no EXCEPTION. Com o check novo em `broken`, o certo e ZERO — ele avaliou bem, o
 # resultado e que e ruim. Foi por isso que o estado de 14/09 (checks_avaliados=21, checks_falhos=0)

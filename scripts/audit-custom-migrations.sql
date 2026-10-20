@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 672
+-- Total de custom migrations: 673
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -734,6 +734,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
   ('20261019200000', 'radar_situacao_cadastral', '20261019200000_radar_situacao_cadastral.sql'),
   ('20261019225545', 'radar_rpcs_cnpj_alfanumerico', '20261019225545_radar_rpcs_cnpj_alfanumerico.sql'),
+  ('20261020101636', 'data_health_radar_lote_e_recruzamento', '20261020101636_data_health_radar_lote_e_recruzamento.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
   ('20261020120200', 'radar_contagem_municipio_lote_vigente', '20261020120200_radar_contagem_municipio_lote_vigente.sql')
@@ -2844,6 +2845,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'registrar_contato_radar', ''),
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_atribuir_tarefa', ''),
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
@@ -5006,6 +5010,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'registrar_contato_radar', ''),
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_atribuir_tarefa', ''),
   ('radar_rpcs_cnpj_alfanumerico', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', '_data_health_compute', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'data_health_watchdog', ''),
+  ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'fin_sync_heartbeat', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
@@ -5201,6 +5208,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_sync_heartbeat', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '4665b298aaa4c4cbc49c78c5ddfcc2ec'),
   ('public', 'fin_sync_heartbeat', 22, '20260918200000_data_health_sync_reprocess_saude.sql', '0df60fab6586dd63777082691be69778'),
   ('public', 'fin_sync_heartbeat', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '619986fe0010f64f50b58d5922eff7d2'),
+  ('public', 'fin_sync_heartbeat', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', 'db0c50e56dfd8d59be008ddce86edf0e'),
   ('public', '_carteira_mixgap_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '45590516afa887e06b1f6b6c7e9440b5'),
   ('public', '_carteira_mixgap_for_owner', 2, '20260526230000_mixgap_feedback.sql', '09b8ada4bb8fa3cdb389d6f8257a95f2'),
   ('public', '_carteira_positivacao_for_owner', 1, '20260525210000_viewas_rpcs_for.sql', '93a9d455cf68c1d47b589849b505909f'),
@@ -5256,6 +5264,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 34, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', '04da1485a726ec5737464547eb8a886d'),
   ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
   ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
+  ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -5279,6 +5288,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'data_health_watchdog', 21, '20260829041500_analytics_outbox_trigger_sensor.sql', '2113e2acea46c34631f5c177145617dc'),
   ('public', 'data_health_watchdog', 22, '20260918200000_data_health_sync_reprocess_saude.sql', 'd972036c52c2a54c0da21fcbef783c63'),
   ('public', 'data_health_watchdog', 23, '20261001011500_data_health_vendas_empurradas_sem_gemeo.sql', 'b35c43d55f1e7688b913ce6fe0cb2a5b'),
+  ('public', 'data_health_watchdog', 24, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '4797193fa8f2b6a1a504e19b79a6fca1'),
   ('public', 'tarefas_matcher_tick', 1, '20260528133000_tarefas_bloco_d.sql', '1d22a8a6cebe7a7ac1329fc8f98fe20d'),
   ('public', 'tarefas_matcher_tick', 2, '20260528135000_tarefas_matcher_created_at_floor.sql', '99785df6ed7189c49aad580f09b24a1c'),
   ('public', 'tarefas_matcher_tick', 3, '20260615194500_fix_tarefas_matcher_enum.sql', '0bc8eb0402988ad408b80add2df00e56'),
