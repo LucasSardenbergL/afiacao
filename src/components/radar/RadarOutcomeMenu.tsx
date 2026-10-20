@@ -24,8 +24,14 @@ import {
   useRegistrarContatoRadar,
   useDesfazerContatoRadar,
 } from '@/queries/useRegistrarContatoRadar';
+import { useRadarCadastrarOmie } from '@/queries/useRadarAcoesLead';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
+import { elegivelCadastroPosSinal } from '@/lib/radar/sugeridos';
+import { FalhaCadastro } from '@/lib/radar/cadastro-omie';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { track } from '@/lib/analytics';
+import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 const ICON_MAP = {
   message: MessageCircle,
@@ -41,17 +47,42 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-export function RadarOutcomeMenu({ cnpj, onRegistrado }: { cnpj: string; onRegistrado?: (acao: AcaoContato) => void }) {
+/**
+ * Menu "Registrar contato" do lead. Com `empresa` em mãos (ficha), marcar `em_conversa` num lead
+ * cadastrável OFERECE "Cadastrar no Omie (Oben) agora" — bloco 5: qualificação + aprovação em 1
+ * clique, nunca cadastro silencioso. Sem `empresa` (card da rota) não há oferta: o payload do
+ * cadastro precisa do endereço/telefone, não só do CNPJ.
+ */
+export function RadarOutcomeMenu({
+  cnpj,
+  empresa,
+  onRegistrado,
+}: {
+  cnpj: string;
+  /** Dados do lead — habilita a oferta pós-sinal. */
+  empresa?: RadarEmpresa;
+  onRegistrado?: (acao: AcaoContato) => void;
+}) {
   const reg = useRegistrarContatoRadar();
   const undo = useDesfazerContatoRadar();
+  const cadastrar = useRadarCadastrarOmie();
   const { isImpersonating } = useImpersonation();
   const [confirmDescartar, setConfirmDescartar] = useState(false);
   const [motivo, setMotivo] = useState('');
+  // SNAPSHOT do lead ofertado: a ficha pode trocar de lead (onProximo) enquanto o diálogo está
+  // aberto — o clique cadastra ESTE, nunca a `empresa` corrente da prop.
+  const [oferta, setOferta] = useState<RadarEmpresa | null>(null);
 
   const registrar = async (acao: AcaoContato, nota?: string) => {
     try {
       const r = await reg.mutateAsync({ cnpj, acao, nota });
-      onRegistrado?.(acao);
+      // Sinal comercial num lead cadastrável: oferece o cadastro e ADIA o avanço da ficha até o
+      // gestor responder (aceitar ou não). Registro que falhou nunca chega aqui.
+      if (acao === 'em_conversa' && empresa && elegivelCadastroPosSinal(empresa)) {
+        setOferta(empresa);
+      } else {
+        onRegistrado?.(acao);
+      }
       if (!r.deduped) {
         toast.success(LABEL_OK[acao], {
           action: {
@@ -68,6 +99,34 @@ export function RadarOutcomeMenu({ cnpj, onRegistrado }: { cnpj: string; onRegis
     } catch {
       toast.error('Não foi possível registrar');
     }
+  };
+
+  const responderOferta = async (aceitou: boolean) => {
+    const alvo = oferta;
+    setOferta(null);
+    if (!alvo) return;
+    track('radar.cadastro_pos_sinal', { aceitou, origem: 'ficha' });
+    if (aceitou) {
+      try {
+        const r = await cadastrar.mutateAsync({ empresa: alvo });
+        toast.success(
+          r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`,
+          { description: alvo.razao_social ?? alvo.cnpj },
+        );
+      } catch (e) {
+        const msg = mensagemDeErro(e) ?? 'erro desconhecido';
+        if (/OMIE_RESPOSTA_INDETERMINADA/.test(msg)) {
+          // Resultado INDETERMINADO ≠ erro: o Omie pode ter criado sem devolver o código. O lead
+          // fica na fila (nada foi gravado no Radar) — conferir no Omie antes de repetir.
+          toast.warning('Cadastro não confirmado pelo Omie', { description: 'O Omie não devolveu o código do cliente. O lead continua na fila — confira no Omie (Oben) antes de repetir.' });
+        } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
+          toast.error(`Cadastrado no Omie (cód. ${e.codigo}), mas o Radar não gravou o vínculo`, { description: `${msg}. Repita pela ficha: a retomada relê o vínculo antes de tocar o Omie.` });
+        } else {
+          toast.error('Não foi possível cadastrar', { description: msg });
+        }
+      }
+    }
+    onRegistrado?.('em_conversa');
   };
 
   return (
@@ -104,6 +163,22 @@ export function RadarOutcomeMenu({ cnpj, onRegistrado }: { cnpj: string; onRegis
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <AlertDialog open={oferta != null} onOpenChange={(o) => { if (!o) void responderOferta(false); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cadastrar no Omie (Oben) agora?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {oferta?.razao_social ?? oferta?.cnpj} entrou em conversa e ainda não é cliente. Um clique cria o cadastro na Oben
+              (anti-duplicata pelo CNPJ) e tira o lead da fila. Nada é cadastrado sem este clique.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => void responderOferta(false)}>Agora não</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void responderOferta(true)}>Cadastrar agora</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmDescartar} onOpenChange={setConfirmDescartar}>
         <AlertDialogContent>
