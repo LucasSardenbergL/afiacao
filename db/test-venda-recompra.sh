@@ -26,33 +26,43 @@ MIG="$REPO_ROOT/supabase/migrations/20261020150000_venda_cliente_recompra.sql"
 FIXTURE="$REPO_ROOT/db/fixtures/venda-recompra.json"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  # <sabotagem>:<assert que TEM de acusá-la>. `post:X` = a postcondição da própria migration aborta.
-  SABOTAGENS="futuro:D sem_alias:B com_cancelado:C empresa_unica:E desconto_zero:F limiar_estrito:G piso_perdido:H acl_aberta:post:POS_ACL_ANON"
+  # <sabotagem>:<assert com a paridade>:<assert com PULA_PARIDADE=1> — uma camada por vez: a paridade (P)
+  # roda antes dos casos isolados e pega quase tudo; cegá-la prova que o caso isolado pega SOZINHO.
+  # `POS_*` = a postcondição da própria migration aborta; `-` = rodada não se aplica.
+  SABOTAGENS="futuro:P:D sem_alias:P:B com_cancelado:P:C empresa_unica:P:E desconto_zero:P:F limiar_estrito:G:G piso_perdido:P:H acl_aberta:POS_ACL_PUBLIC:-"
   LOGDIR="$(mktemp -d "/tmp/falsifica-venda-recompra.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${TEST_LOCALE:-C}) ══"
-  if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
-    echo "❌ controle VERMELHO — falsificação abortada (log: $LOGDIR/controle.log)"; tail -15 "$LOGDIR/controle.log"; exit 1
-  fi
-  grep -q "FIM-OK venda-recompra" "$LOGDIR/controle.log" || { echo "❌ controle sem marcador"; exit 1; }
-  echo "✅ controle verde"
+  for pula in "" 1; do
+    if ! SABOTAGEM="" PULA_PARIDADE="$pula" bash "$0" > "$LOGDIR/controle$pula.log" 2>&1 \
+       || ! grep -q "FIM-OK venda-recompra" "$LOGDIR/controle$pula.log"; then
+      echo "❌ controle VERMELHO (PULA_PARIDADE='$pula') — falsificação abortada (log: $LOGDIR/controle$pula.log)"
+      tail -15 "$LOGDIR/controle$pula.log"; exit 1
+    fi
+  done
+  echo "✅ controle verde (com e sem paridade)"
   falhas=0; n_sab=0
   for par in $SABOTAGENS; do
-    s="${par%%:*}"; a="${par#*:}"; n_sab=$((n_sab+1))
-    if SABOTAGEM="$s" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
-      echo "❌ $s: suíte ficou VERDE"; falhas=$((falhas+1)); continue
-    fi
-    if ! grep -q "SABOTAGEM ATIVA: $s" "$LOGDIR/$s.log"; then
-      echo "❌ $s: sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
-    fi
-    case "$a" in
-      post:*) padrao="${a#post:}" ;;
-      *)      padrao="FAIL $a " ;;
-    esac
-    if grep -q "$padrao" "$LOGDIR/$s.log"; then
-      echo "✅ $s → $a vermelho"
-    else
-      echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
-    fi
+    s="${par%%:*}"; resto="${par#*:}"; com="${resto%%:*}"; sem="${resto#*:}"
+    for modo in com sem; do
+      if [ "$modo" = com ]; then a="$com"; pula=""; else a="$sem"; pula=1; fi
+      [ "$a" = "-" ] && continue
+      n_sab=$((n_sab+1)); log="$LOGDIR/$s-$modo.log"
+      if SABOTAGEM="$s" PULA_PARIDADE="$pula" bash "$0" > "$log" 2>&1; then
+        echo "❌ $s ($modo paridade): suíte ficou VERDE"; falhas=$((falhas+1)); continue
+      fi
+      if ! grep -q "SABOTAGEM ATIVA: $s" "$log"; then
+        echo "❌ $s ($modo paridade): sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
+      fi
+      case "$a" in
+        POS_*) padrao="$a" ;;
+        *)     padrao="FAIL $a " ;;
+      esac
+      if grep -q "$padrao" "$log"; then
+        echo "✅ $s ($modo paridade) → $a vermelho"
+      else
+        echo "❌ $s ($modo paridade): vermelho, mas não no $a (log: $log)"; falhas=$((falhas+1))
+      fi
+    done
   done
   echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"
   [ "$falhas" -eq 0 ] && exit 0 || exit 1
@@ -183,6 +193,9 @@ P -1 -f "$MIG_USADA"
 echo "── migration de novo (idempotência) ──"
 P -1 -f "$MIG_USADA"
 
+if [ -n "${PULA_PARIDADE:-}" ]; then
+  echo "── P: PULADA (PULA_PARIDADE — só o falsificador usa) ──"
+else
 echo "── P: paridade SQL × TS ──"
 P -v esperado="$ESPERADO" <<'SQL'
 \set QUIET off
@@ -246,6 +259,7 @@ BEGIN
 END
 $p$;
 SQL
+fi
 
 echo "── casos B–I ──"
 P <<'SQL'
@@ -386,4 +400,5 @@ SELECT t_ok('K snapshot sem divergencia', NOT EXISTS (
     FROM public.venda_recompra_em((now() AT TIME ZONE 'America/Sao_Paulo')::date)));
 SQL
 
+[ -n "${PULA_PARIDADE:-}" ] && echo "AVISO: paridade PULADA — este verde NÃO é o da suíte"
 echo "FIM-OK venda-recompra (locale $LOCALE)"
