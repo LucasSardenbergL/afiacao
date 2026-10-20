@@ -657,3 +657,11 @@ db/test-data-health-radar.sh               39  falsificar=12
 # pedido do ALIAS conta para o canônico. 12 sabotagens: alias, sync→nao_virou, fecha cobrível, cursor ignorado,
 # desconto como zero, fase na RPC, 1ª marcação, carteira sem alias, RLS sombra, POST ACL, ACL sem POST, POST cron.
 db/test-venda-espinha.sh                   30  falsificar=12
+
+# Venda por cliente — REPASSE DE PREÇO (migration 20261020233000, Task 6 do plano 2026-10-20): núcleo da defasagem
+# extraído para private._defasagem_item com o cockpit IDÊNTICO (md5 do JSON antes/depois, com e sem cap, lote nos 14
+# motivos) + candidatos (master E cap) + aprovação (alvo ≤ último → 22023; tinta NULL/Colacor/dia sem preço → 22023;
+# tela velha → 40001) + leitura da farmer com o conjunto EXATO de 6 chaves (sem custo/markup/piso), dono ÚNICO da
+# carteira do grupo canônico, vencido/revogado/alvo já alcançado somem. 10 sabotagens: vaza cmc, vaza c_now, sem
+# recusa, tinta NULL, dono por união, sem revalidar, markup do cockpit, gate de candidatos, POS ACL anon, POS RLS.
+db/test-venda-repasse.sh                   42  falsificar=10

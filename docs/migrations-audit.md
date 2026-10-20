@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **680** custom migrations totais
-- **2181** objetos esperados (criados por estas migrations)
+- **681** custom migrations totais
+- **2191** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 799
+  - `function`: 807
   - `rls_policy`: 480
-  - `index`: 285
+  - `index`: 286
   - `cron_job`: 194
-  - `table`: 189
+  - `table`: 190
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5519,6 +5519,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.venda_config_select_staff` | `venda_config` |
 | `rls_policy` | `public.venda_sugestao_select` | `venda_sugestao` |
 | `rls_policy` | `public.venda_contato_select` | `venda_contato` |
+
+### `20261020233000_venda_cliente_repasse.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._defasagem_item` | — |
+| `function` | `public.get_defasagem_cliente` | — |
+| `function` | `private._venda_repasse_base` | — |
+| `function` | `private._venda_repasse_sku_ok` | — |
+| `function` | `public.venda_repasse_candidatos` | — |
+| `function` | `public.venda_aprovar_repasse` | — |
+| `function` | `public.venda_revogar_repasse` | — |
+| `function` | `public.venda_preco_alvo_comprador` | — |
+| `table` | `public.venda_repasse_aprovado` | — |
+| `index` | `public.venda_repasse_aprovado_vigente_uq` | `venda_repasse_aprovado` |
 
 ## Próximos passos por status
 
