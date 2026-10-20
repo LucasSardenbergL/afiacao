@@ -24,18 +24,13 @@ export interface ExibicaoReguaPayload {
  * (não é parâmetro), e as colunas de custo são apuradas lá — o cliente não as recebe mais, então
  * não teria como informá-las de forma confiável.
  *
- * Não estão nos tipos gerados (o Lovable só regenera no builder visual — NÃO editar à mão),
- * daí o cast mínimo no padrão do repo (cf. usePrecoCockpit `supabase.rpc as never`).
+ * Os nulos (`p_preco_referencia`, gaps, `p_prazo_dias`) têm `DEFAULT NULL` na prod, que o gerador
+ * declara como `?:` sem `null`: `?? undefined` tira a chave do JSON e cai no mesmo NULL.
  */
-type RpcClient = {
-  rpc: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
-};
-const rpcClient = supabase as unknown as RpcClient;
-
 /** Registra a exibição qualificada ('pendente'). Falha de log NUNCA derruba o carrinho. */
 export async function registrarExibicaoRegua(p: ExibicaoReguaPayload): Promise<string | null> {
   const r = p.result;
-  const { data, error } = await rpcClient.rpc('registrar_exibicao_regua', {
+  const { data, error } = await supabase.rpc('registrar_exibicao_regua', {
     p_account: p.account,
     p_customer_user_id: p.customerUserId,
     p_product_id: p.productId,
@@ -43,25 +38,25 @@ export async function registrarExibicaoRegua(p: ExibicaoReguaPayload): Promise<s
     p_preco_atual: p.precoAtual,
     p_sinal_exibido: r.sinal,
     p_confianca: r.confianca,
-    p_preco_referencia: r.precoReferencia,
-    p_observed_gap_pct: r.observedGapPct,
-    p_suggested_gap_pct: r.suggestedGapPct,
+    p_preco_referencia: r.precoReferencia ?? undefined,
+    p_observed_gap_pct: r.observedGapPct ?? undefined,
+    p_suggested_gap_pct: r.suggestedGapPct ?? undefined,
     p_cap_limitou: r.capLimitou,
     p_reason_codes: r.reasonCodes,
     // os dias vão junto p/ o servidor reproduzir EXATAMENTE o piso que gerou este sinal —
     // sem eles, o log gravaria o piso à vista e a evidência divergiria do que a tela mostrou.
-    p_prazo_dias: p.prazoDias,
+    p_prazo_dias: p.prazoDias ?? undefined,
   });
   if (error) {
     console.warn('[regua] log exibição falhou (ignorado):', error);
     return null;
   }
-  return typeof data === 'string' ? data : null;
+  return data ?? null;
 }
 
 /** Fecha o loop → 'aplicado'. O banco só aceita do PRÓPRIO vendedor que gerou o registro. */
 export async function registrarAplicacaoRegua(logId: string, precoFinal: number): Promise<void> {
-  const { error } = await rpcClient.rpc('registrar_aplicacao_regua', {
+  const { error } = await supabase.rpc('registrar_aplicacao_regua', {
     p_log_id: logId,
     p_preco_final: precoFinal,
   });

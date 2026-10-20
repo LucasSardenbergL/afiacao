@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import type { Tables, Json } from '@/integrations/supabase/types';
+import { itensPedidoDoJson, omiePayloadDoJson } from '@/lib/pedido/itens-json';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
@@ -13,7 +13,6 @@ import { buildExclusionQuery } from '@/hooks/unifiedOrder/types';
 import {
   BLOCKED_STATUSES,
   type OrderItem,
-  type OmiePayload,
   type SalesOrder,
   type FormasPagamentoResponse,
   type OmieProduct,
@@ -70,21 +69,18 @@ export function useSalesOrderEdit() {
         .eq('id', id)
         .single();
       if (error) throw error;
-      const row = data as unknown as Tables<'sales_orders'>;
+      const row = data;
       // omie_payload não é mais legível por .select() (fechado ao customer no PR0.0-bis); o staff
       // o recupera pelo canal SECDEF. Indispensável ANTES de montar o pedido: handleSave faz merge
       // {...order.omie_payload, cabecalho:{codigo_parcela}} — sem o payload atual, salvar APAGARIA
       // o resto do payload. Falha do canal ⇒ fail-closed (o pedido não carrega).
-      const { data: pl, error: plErr } = await supabase.rpc(
-        'staff_get_sales_order_payload' as never,
-        { p_order_ids: [id] } as never,
-      );
+      const { data: pl, error: plErr } = await supabase.rpc('staff_get_sales_order_payload', { p_order_ids: [id] });
       if (plErr) throw plErr;
-      const payload = ((pl as unknown as Array<{ omie_payload: OmiePayload | null }> | null)?.[0]?.omie_payload) ?? null;
+      const payload = omiePayloadDoJson(pl?.[0]?.omie_payload ?? null, `sales_orders ${row.id}`);
       const o: SalesOrder = {
         id: row.id,
         customer_user_id: row.customer_user_id,
-        items: (row.items as unknown as OrderItem[]) || [],
+        items: itensPedidoDoJson(row.items, `sales_orders ${row.id}`),
         subtotal: row.subtotal,
         total: row.total,
         status: row.status,
@@ -123,7 +119,7 @@ export function useSalesOrderEdit() {
         // omie_products.account armazena (analytics-sync grava 'colacor'/'oben'; NÃO
         // re-mapear p/ 'colacor_vendas' — não existe nesta coluna → 0 vendáveis). Espelha
         // o catálogo de criação (useProductCatalog: paginateAll + buildExclusionQuery).
-        paginateAll<OmieProduct>(async (from, to) => {
+        paginateAll(async (from, to) => {
           const base = supabase.from('omie_products')
             .select('id, omie_codigo_produto, codigo, descricao, unidade, valor_unitario, estoque, ativo, account, is_tintometric, tint_type')
             .eq('account', account)
@@ -136,7 +132,7 @@ export function useSalesOrderEdit() {
           // data null SEM error = malformada, não página vazia: devolvê-la ao paginateAll
           // encerraria o catálogo de edição PARCIAL em silêncio (classe #1338→#1564).
           if (data == null) throw new Error('omie_products (edição): data null sem error — malformada, não é fim');
-          return data as unknown as OmieProduct[];
+          return data;
         }),
       ]);
 
@@ -282,8 +278,8 @@ export function useSalesOrderEdit() {
       ativo: tintPendingProduct.ativo ?? true,
       omie_codigo_produto: tintPendingProduct.omie_codigo_produto,
       account: tintPendingProduct.account,
-      is_tintometric: tintPendingProduct.is_tintometric,
-      tint_type: tintPendingProduct.tint_type,
+      is_tintometric: tintPendingProduct.is_tintometric ?? undefined,
+      tint_type: tintPendingProduct.tint_type ?? undefined,
     };
   }, [tintPendingProduct]);
 
@@ -477,11 +473,11 @@ export function useSalesOrderEdit() {
         const { error } = await supabase
           .from('sales_orders')
           .update({
-            items: items as unknown as Json,
+            items,
             subtotal,
             total: subtotal,
             notes: notes || null,
-            omie_payload: updatedPayloadLocal as unknown as Json,
+            omie_payload: updatedPayloadLocal,
           })
           .eq('id', order.id);
         if (error) throw error;

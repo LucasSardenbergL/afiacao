@@ -28,55 +28,32 @@ const FarmerBundles = lazy(() => import("./FarmerBundles"));
 
 const TabFallback = () => <PageSkeleton variant="auto" />;
 
-const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
-  try {
-    return await fn();
-  } catch {
-    return fallback;
-  }
-};
-
 function KpiCards({ empresa }: { empresa: string }) {
   void empresa;
 
-  const { data } = useQuery({
-    queryKey: ["vendas-ferramentas-kpis", empresa],
-    queryFn: async () => {
-      const today = new Date().toISOString().slice(0, 10);
-      // tabelas sales_quotes/farmer_bundles/farmer_bundle_rules/sales_print_jobs ainda não estão em Database
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = supabase as unknown as { from: (t: string) => any };
-
-      const countOf = (table: string) =>
-        safeQuery(async () => {
-          const { count } = await client
-            .from(table)
-            .select("id", { count: "exact", head: true });
-          return count ?? 0;
-        }, 0);
-
-      const [orcamentos, bundles, regras, impressoes] = await Promise.all([
-        countOf("sales_quotes"),
-        countOf("farmer_bundles"),
-        countOf("farmer_bundle_rules"),
-        safeQuery(async () => {
-          const { count } = await client
-            .from("sales_print_jobs")
-            .select("id", { count: "exact", head: true })
-            .gte("data", today);
-          return count ?? 0;
-        }, 0),
-      ]);
-
-      return { orcamentos, bundles, regras, impressoes };
+  // Antes os 4 cards contavam `sales_quotes`, `farmer_bundles`, `farmer_bundle_rules` e
+  // `sales_print_jobs` por um cliente com cast duplo para `{ from: (t: string) => any }`. NENHUMA dessas
+  // tabelas existe na prod (conferido em 2026-10-20): o erro era engolido e o card mostrava 0 para
+  // sempre. Orçamentos agora conta a MESMA fonte da aba Orçamentos abaixo; os outros três não têm
+  // fonte definida e mostram "—" (ausente ≠ zero) até alguém decidir o que medem.
+  const { data: orcamentos } = useQuery({
+    queryKey: ["vendas-ferramentas-kpis", "orcamentos"],
+    queryFn: async (): Promise<number | null> => {
+      const { count, error } = await supabase
+        .from("sales_orders")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "orcamento")
+        .is("deleted_at", null);
+      if (error) throw error;
+      return count;
     },
   });
 
   const cards = [
-    { label: "Orçamentos Salvos", value: data?.orcamentos ?? 0, icon: FileText },
-    { label: "Bundles Ativos", value: data?.bundles ?? 0, icon: Package },
-    { label: "Regras de Associação", value: data?.regras ?? 0, icon: Network },
-    { label: "Impressões Hoje", value: data?.impressoes ?? 0, icon: Printer },
+    { label: "Orçamentos Salvos", value: orcamentos ?? "—", icon: FileText },
+    { label: "Bundles Ativos", value: "—", icon: Package },
+    { label: "Regras de Associação", value: "—", icon: Network },
+    { label: "Impressões Hoje", value: "—", icon: Printer },
   ];
 
   return (

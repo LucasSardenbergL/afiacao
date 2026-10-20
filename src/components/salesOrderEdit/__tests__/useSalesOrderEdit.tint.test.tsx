@@ -26,6 +26,7 @@ const baseTint: OmieProduct = {
   valor_unitario: 80,
   estoque: 10,
   ativo: true,
+  account: 'oben',
   is_tintometric: true,
   tint_type: 'base',
 };

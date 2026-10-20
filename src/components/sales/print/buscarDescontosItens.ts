@@ -14,8 +14,6 @@ import type { LinhaDescontoItem } from './descontoCupom';
 
 const IDS_POR_LOTE = 100;
 
-type LinhaLida = LinhaDescontoItem & { id: string; sales_order_id: string };
-
 /** order_items dos pedidos, agrupados por pedido. Todo pedido pedido volta no resultado — sem linhas, com `[]`. */
 export async function buscarDescontosItens(
   pedidoIds: ReadonlyArray<string>,
@@ -24,7 +22,7 @@ export async function buscarDescontosItens(
   for (const id of pedidoIds) porPedido[id] = [];
   for (let i = 0; i < pedidoIds.length; i += IDS_POR_LOTE) {
     const lote = pedidoIds.slice(i, i + IDS_POR_LOTE);
-    const linhas = await fetchAllPages<LinhaLida>(
+    const linhas = await fetchAllPages(
       (de, ate) =>
         supabase
           .from('order_items')
@@ -32,7 +30,7 @@ export async function buscarDescontosItens(
           .in('sales_order_id', lote)
           .order('sales_order_id', { ascending: true })
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: LinhaLida[] | null; error: unknown }>,
+          .range(de, ate),
       'order_items/desconto-cupom',
     );
     for (const { sales_order_id, omie_codigo_produto, quantity, unit_price, desconto_valor } of linhas) {
