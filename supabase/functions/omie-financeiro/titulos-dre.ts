@@ -118,7 +118,16 @@ export async function carregarBaixaMap(
       if (cursor !== null) q = q.gt("omie_codigo_lancamento", cursor);
       return q.order("omie_codigo_lancamento", { ascending: true }).limit(limite);
     },
-    (l) => l.omie_codigo_lancamento,
+    (l) => {
+      // bigint chega como número JSON: acima de 2^53 ele ARREDONDA, e o `.gt` seguinte pularia
+      // o código vizinho sem lançar (reproduzido pelo Codex). Maior código em prod: 1,2e10
+      // (psql-ro, 2026-10-20) — longe, mas a guarda é o que torna o limite visível.
+      const k = l.omie_codigo_lancamento;
+      if (typeof k === "number" && !Number.isSafeInteger(k)) {
+        throw new FalhaLeituraCritica(`v_titulo_baixas ${tipo}/${company}`, { code: "MALFORMADA" });
+      }
+      return k;
+    },
     `v_titulo_baixas ${tipo}/${company}`,
   );
   const map = new Map<number, string>();

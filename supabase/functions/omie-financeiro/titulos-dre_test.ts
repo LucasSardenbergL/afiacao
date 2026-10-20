@@ -13,6 +13,7 @@ import {
   TETO_TITULOS_MES,
   TetoTitulosExcedido,
 } from "./titulos-dre.ts";
+import { FalhaLeituraCritica } from "../_shared/leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -207,4 +208,35 @@ Deno.test("baixaMap: chave numérica ordena como NÚMERO (9 < 10), não como tex
   });
   const mapa = await carregarBaixaMap(db, "oben", "CP");
   assertEquals([...mapa.keys()], [9, 10, 100, 1000]);
+});
+
+// Codex (P2): o INSERT acima não separa OFFSET de keyset — a duplicata do offset some no Map.
+// O que separa é uma baixa que SAI do recorte atrás do cursor: o offset pula uma sobrevivente.
+Deno.test("baixaMap: baixa que sai do recorte entre páginas não faz nenhuma sobrevivente sumir", async () => {
+  const { db } = bancoFake(2500, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 2) linhas.splice(0, 1); // a de menor código (já lida) sai antes da 2ª página
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "colacor", "CR");
+  for (let i = 1; i < 2500; i++) {
+    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa sobrevivente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
+  }
+});
+
+Deno.test("baixaMap: código acima de 2^53 LANÇA em vez de arredondar e pular o vizinho", async () => {
+  const { db } = bancoFake(0, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 1) linhas.push({ id: "x", omie_codigo_lancamento: 9007199254740996, data_baixa_final: "2026-09-01" });
+    },
+  });
+  let pego: unknown = null;
+  try {
+    await carregarBaixaMap(db, "oben", "CR");
+  } catch (e) {
+    pego = e;
+  }
+  if (!(pego instanceof FalhaLeituraCritica) || pego.codigo !== "MALFORMADA") {
+    throw new Error(`esperava FalhaLeituraCritica MALFORMADA, veio ${String(pego)}`);
+  }
 });
