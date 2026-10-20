@@ -84,3 +84,12 @@ SELECT i.pedido_id, count(*) AS itens, count(i.valor_ipi_portal) AS com_ipi, sum
   FROM pedido_compra_item i JOIN pedido_compra_sugerido s ON s.id = i.pedido_id
  WHERE s.enviado_portal_em >= '<instante do deploy>' GROUP BY 1 ORDER BY 1 DESC LIMIT 10;
 ```
+
+## Adendo 2026-10-19 — 14ª alíquota: NCM 32091020 = 0% (portal)
+
+A varredura das 17:30 não importou o pedido 2140762 (CP006, NCM 32091020 fora da tabela; nada gravado). Não havia
+NF de recebimento com esse NCM no banco, então a medida veio do próprio pedido, pelo "Importar do portal": 1 item
+(YLO1.1118.00BA), Preço Venda R$ 954,64 = Vlr Total R$ 954,64, IPI zero (0,01% já daria R$ 0,10). O controle de que
+a consulta calcula IPI vem dos imports de 16/10, que trouxeram 6,5% em 32129090 e 38140090. Cadastrada por
+`db/2026-10-19-ipi-ncm-32091020.sql` (`db:aplicar`, recibo #559). **Atalho para o próximo NCM novo:** num pedido de
+1 item, a tela de import já mostra mercadoria e total, e `(total − mercadoria) ÷ mercadoria` é a alíquota.

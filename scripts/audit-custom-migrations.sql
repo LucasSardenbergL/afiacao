@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 666
+-- Total de custom migrations: 669
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -730,7 +730,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019140000', 'omie_identidade_cnpj_alfanumerico', '20261019140000_omie_identidade_cnpj_alfanumerico.sql'),
   ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
   ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
-  ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql')
+  ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
+  ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
+  ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
+  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2823,7 +2826,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
-  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
+  ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4964,7 +4976,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v2_base_precificavel', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v2_base_precificavel', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
   ('tint_watchdog_corante_v3_plano_custom', 'function', 'public', 'tint_watchdog_corante_check', ''),
-  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens')
+  ('tint_watchdog_corante_v3_plano_custom', 'index', 'public', 'idx_tint_formula_itens_corante', 'tint_formula_itens'),
+  ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
+  ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
+  ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
 )
 SELECT
   e.migration,
@@ -5451,6 +5472,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_watchdog_corante_check', 1, '20260727150000_tint_watchdog_corante_impagavel.sql', '34489e3784a08d574b657d6efaf1919b'),
   ('public', 'tint_watchdog_corante_check', 2, '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql', 'b93c78b1fd5712b764e9ca3cb8a82c03'),
   ('public', 'tint_watchdog_corante_check', 3, '20261019160000_tint_watchdog_corante_v3_plano_custom.sql', '6ce4f655ce3a303b5cc6d450eabba37d'),
+  ('public', 'tint_watchdog_corante_check', 4, '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql', 'be429ee9edad9a6d963e867c53f266e5'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
   ('public', '_tint_watchdog_fase5_transicao', 1, '20260730120000_tint_watchdog_fase5_chave.sql', 'd4dc06f6433a2e83bc19241bafd8302d'),

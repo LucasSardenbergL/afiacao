@@ -56,12 +56,12 @@ const DEFAULTS: RadarUrlState = {
   comTelefone: false,
   incluirSaiuDoDump: false,
   soIneditos: false,
-  preset: 'novas',
+  preset: 'score',
   vista: 'lista',
 };
 
 function narrowPreset(v: string): PresetRadar {
-  return v === 'estabelecidas' ? 'estabelecidas' : 'novas';
+  return v === 'estabelecidas' || v === 'novas' ? v : 'score';
 }
 
 export default function RadarClientes() {

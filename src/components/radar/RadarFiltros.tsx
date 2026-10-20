@@ -48,6 +48,14 @@ export function RadarFiltros({
       {/* Presets */}
       <div className="flex gap-2">
         <Button
+          variant={filtros.preset === 'score' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => set({ preset: 'score' as PresetRadar })}
+          title="Ordena pelo score de lead (0–100, recalculado 1×/dia); quem não tem score fica por último"
+        >
+          Melhores leads
+        </Button>
+        <Button
           variant={filtros.preset === 'novas' ? 'default' : 'outline'}
           size="sm"
           onClick={() => set({ preset: 'novas' as PresetRadar })}
