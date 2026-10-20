@@ -341,6 +341,14 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // Venda por cliente — job de desfecho (2026-10-20, migration 20261020174221). Lê
+  // `order_items.unit_price`/`desconto_valor` para decidir se a sugestão `tipo=preco` bateu o alvo
+  // e somar `valor_realizado`, mas NÃO é customer-facing: só o cron (`venda-fechar-desfechos`,
+  // pg_cron como postgres) e service_role a chamam. Fecha por PRIVILÉGIO — `REVOKE ALL ... FROM
+  // PUBLIC, anon, authenticated` na migration, postcondição A3 e prova T9/T9b em
+  // db/test-venda-espinha.sh; medido em prod 2026-10-20: anon/authenticated/public = false.
+  // Se um dia ganhar GRANT para authenticated, PRECISA de gate de papel e sai daqui.
+  'public.venda_fechar_desfechos',
   // Invariante do agregado pedido de venda (2026-09-07, #2363 — migration 20260907220000).
   // Lê `order_items.unit_price` para comparar os dois espelhos do pedido (jsonb x relacional),
   // mas NÃO é customer-facing e NÃO projeta dado: RETURNS void, só levanta 23514. Quem a invoca

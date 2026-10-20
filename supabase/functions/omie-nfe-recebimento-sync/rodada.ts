@@ -16,6 +16,7 @@ import { type ItemRecebimentoRow, mapearItensRecebimento, type OmieRecebimentoIt
 import {
   type ContagemArmazem,
   contagemVazia,
+  ehCteNoCabecalho,
   falhaNoCorpo,
   identidadeDoRegistro,
   interpretarPaginaListagem,
@@ -54,6 +55,8 @@ export interface DepsRodada {
 /** O que aconteceu com a NF-e que recebeu a consulta da rodada. */
 type Desfecho =
   | "importada"
+  /** O detalhe revelou um CT-e (frete, sem itens) que a listagem não tinha classificado: nada gravado, impedimento no ledger. */
+  | "cte"
   /** Cabeçalho que estava `pendente` sem itens (importação antiga que morreu no meio) e foi completado. */
   | "reparada"
   /** Cabeçalho sem itens que a RPC não pode completar (não-pendente ou em uso). */
@@ -175,6 +178,22 @@ async function gravar(
   erros: string[],
 ): Promise<Desfecho> {
   const cabec = detalhe.cabec ?? {};
+  // Defesa em profundidade: a listagem já tira o CT-e da fila (triarRegistro), mas uma listagem sem
+  // `cModeloNFe` ou sem chave deixa a candidata passar — e o detalhe é quem revela o frete. Sem RPC
+  // (não há itens para receber) e COM o ledger: sem o impedimento registrado, a mesma CT-e disputaria
+  // a única consulta da rodada para sempre (tentativas ≥ 3 a estaciona na triagem).
+  if (ehCteNoCabecalho(cabec)) {
+    const chaveCte = normalizarChaveAcesso(cabec.cChaveNFe || cabec.cChaveNfe);
+    const tentativas = chaveCte === null
+      ? null
+      : await deps.registrarFalha(chaveCte, "CTE", "CT-e (modelo 57): conhecimento de frete, sem itens de produto para receber", nIdReceb);
+    // Sem o registro, a CT-e volta ao sorteio toda rodada sem nunca estacionar: tem de aparecer em
+    // errors[] (success:false), não sair calada como `cte` (parecer adversarial do Codex, 2026-10-20).
+    if (tentativas === null) {
+      erros.push(`${conta} ConsultarRecebimento ${nIdReceb}: CT-e (frete) não importada, mas o impedimento NÃO foi registrado em nfe_importacao_falhas — ela seguirá disputando a consulta`);
+    }
+    return "cte";
+  }
   // O MESMO critério da listagem (estado.ts): a incompleta chega aqui sem triagem de estado, e a NF-e
   // pode ter sido cancelada ou recebida entre a listagem e a consulta — importá-la seria pendência
   // fantasma. Sem os "N" explícitos não há evidência de nota aberta: não grava (precisão > recall).

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 680
+-- Total de custom migrations: 681
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -744,7 +744,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020143511', 'venda_cliente_complemento', '20261020143511_venda_cliente_complemento.sql'),
   ('20261020150000', 'fin_capital_giro_prazos_empresa', '20261020150000_fin_capital_giro_prazos_empresa.sql'),
   ('20261020150000', 'venda_cliente_recompra', '20261020150000_venda_cliente_recompra.sql'),
-  ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql')
+  ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
+  ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2885,7 +2886,22 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_recompra', 'index', 'public', 'idx_venda_recompra_atrasado', 'venda_recompra'),
   ('venda_cliente_recompra', 'cron_job', 'cron', 'venda-recompra', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
-  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', '')
+  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', ''),
+  ('venda_cliente_espinha', 'function', 'private', 'venda_sync_dia_coberto', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_marcar_mostrada', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_registrar_contato', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_config', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_sugestao', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_contato', ''),
+  ('venda_cliente_espinha', 'index', 'public', 'venda_sugestao_chave_uq', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'index', 'public', 'idx_venda_sugestao_farmer_dia_ativa', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'index', 'public', 'idx_venda_sugestao_aberta', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5074,7 +5090,22 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_recompra', 'index', 'public', 'idx_venda_recompra_atrasado', 'venda_recompra'),
   ('venda_cliente_recompra', 'cron_job', 'cron', 'venda-recompra', ''),
   ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
-  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', '')
+  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', ''),
+  ('venda_cliente_espinha', 'function', 'private', 'venda_sync_dia_coberto', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_marcar_mostrada', ''),
+  ('venda_cliente_espinha', 'function', 'public', 'venda_registrar_contato', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_config', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_sugestao', ''),
+  ('venda_cliente_espinha', 'table', 'public', 'venda_contato', ''),
+  ('venda_cliente_espinha', 'index', 'public', 'venda_sugestao_chave_uq', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'index', 'public', 'idx_venda_sugestao_farmer_dia_ativa', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'index', 'public', 'idx_venda_sugestao_aberta', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
 )
 SELECT
   e.migration,

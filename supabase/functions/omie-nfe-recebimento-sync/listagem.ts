@@ -13,6 +13,7 @@
 // recebe direto no Omie. Já a falha que o Omie devolve como corpo com HTTP 200 (`faultstring`)
 // virava "listagem vazia" ou "sem chave", calada.
 
+import { classificarModeloRecebimento } from "../_shared/modelo-documento-fiscal.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { normalizarChaveAcesso } from "./chave.ts";
 import { estadoNoOmie } from "./estado.ts";
@@ -24,6 +25,8 @@ export interface RegistroListagem {
     nIdReceb?: number | string;
     cChaveNFe?: string | null;
     cChaveNfe?: string | null;
+    /** Modelo fiscal declarado ("55" NF-e, "57" CT-e) — string JSON de 2 dígitos em 210/210 medidos. */
+    cModeloNFe?: string | null;
   };
   infoCadastro?: { cCancelada?: string; cRecebido?: string };
 }
@@ -120,7 +123,44 @@ export interface JaImportados {
   chaves: ReadonlySet<string>;
 }
 
-export type MotivoPulo = "sem_id" | "ja_importado" | "cancelado" | "recebido_no_omie";
+/** Linha de `nfe_importacao_falhas` que a triagem lê (só as estacionadas: tentativas ≥ 3). */
+export interface LinhaEstacionada {
+  chave_acesso: string;
+  omie_id_receb: number | string | null;
+  warehouse_id: string | null;
+}
+
+/**
+ * Acrescenta ao `JaImportados` da conta as chaves ESTACIONADAS no ledger. A chave é global (vale para
+ * qualquer conta); o `omie_id_receb` só vale DENTRO da conta que o registrou — a leitura por chave não
+ * filtra armazém, e um id de OB marcava como "já importada" a NF-e de CC com o mesmo id (parecer
+ * adversarial do Codex, 2026-10-20: CT-e estacionada em OB fazia uma NF-e 55 de CC sumir da fila).
+ */
+export function acrescentarEstacionadas(
+  linhas: readonly LinhaEstacionada[],
+  warehouseId: string,
+  ids: Set<number>,
+  chaves: Set<string>,
+): void {
+  for (const l of linhas) {
+    chaves.add(l.chave_acesso);
+    if (l.omie_id_receb !== null && l.warehouse_id === warehouseId) ids.add(Number(l.omie_id_receb));
+  }
+}
+
+export type MotivoPulo = "cte" | "sem_id" | "ja_importado" | "cancelado" | "recebido_no_omie";
+
+/**
+ * CT-e (modelo 57, conhecimento de FRETE): não tem item de produto — não há o que receber. O
+ * `ListarRecebimentos` o traz misturado às NF-e, e até 2026-10-20 a sync o importava como cabeçalho
+ * sem itens (28 em prod) e gastava a única consulta da rodada nele (NFE01 "lote sem itens").
+ * O veredicto exige os DOIS sinais (chave crua E `cModeloNFe` = 57) — o contrato denylist de
+ * `_shared/modelo-documento-fiscal.ts`: chave ilegível, modelo ausente ou divergente SEGUEM o fluxo
+ * (a incerteza vira consulta, nunca exclusão silenciosa).
+ */
+export function ehCteNoCabecalho(cabec: unknown): boolean {
+  return classificarModeloRecebimento(cabec).tipo === "cte";
+}
 
 /**
  * Por que a candidata é INCOMPLETA: a listagem não deu o bastante para decidir sem a consulta —
@@ -138,8 +178,13 @@ export type Triagem =
  * listagem: já importada (pelo id ou pela chave), cancelada ou recebida no Omie. O que a listagem
  * não diz não é descartado — vai à consulta como INCOMPLETA (estado desconhecido, ou sem chave
  * legível: a presença de `infoCadastro` não prova que o cabeçalho veio inteiro).
+ *
+ * O CT-e sai PRIMEIRO, antes de "já importada": os 26 CT-e efetivados que já estão no banco contam
+ * como `ctes`, não como `ja_importados` — o denominador do sensor fica honesto, e um CT-e `pendente`
+ * sem itens (reparável aos olhos do banco) nunca vira candidata.
  */
 export function triarRegistro(rec: RegistroListagem, ja: JaImportados): Triagem {
+  if (ehCteNoCabecalho(rec.cabec)) return { tipo: "pular", motivo: "cte" };
   const { id, chave } = identidadeDoRegistro(rec);
   if (id === null) return { tipo: "pular", motivo: "sem_id" };
   if (ja.ids.has(id) || (chave !== null && ja.chaves.has(chave))) return { tipo: "pular", motivo: "ja_importado" };
@@ -153,10 +198,12 @@ export function triarRegistro(rec: RegistroListagem, ja: JaImportados): Triagem 
 /**
  * O que a triagem viu numa conta. `aguardando` = candidatas além da consulta da rodada (a fila que
  * o cron horário drena); `listagem_magra` > 0 = o Omie não trouxe `infoCadastro`;
- * `sem_chave_na_listagem` = candidatas que só a consulta resolve.
+ * `sem_chave_na_listagem` = candidatas que só a consulta resolve; `ctes` = CT-e (frete) que a
+ * listagem trouxe e a triagem tirou da fila — o denominador do sensor do cron.
  */
 export interface ContagemArmazem {
   listados: number;
+  ctes: number;
   ja_importados: number;
   cancelados: number;
   recebidos_no_omie: number;
@@ -171,6 +218,7 @@ export interface ContagemArmazem {
 export function contagemVazia(): ContagemArmazem {
   return {
     listados: 0,
+    ctes: 0,
     ja_importados: 0,
     cancelados: 0,
     recebidos_no_omie: 0,
@@ -184,6 +232,7 @@ export function contagemVazia(): ContagemArmazem {
 }
 
 const CAMPO_DO_PULO: Record<MotivoPulo, keyof ContagemArmazem> = {
+  cte: "ctes",
   sem_id: "sem_id",
   ja_importado: "ja_importados",
   cancelado: "cancelados",

@@ -543,6 +543,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/picking/__tests__/motor-fila.test.ts",
       "src/lib/picking/__tests__/decimal.test.ts",
       "src/lib/picking/__tests__/autorizacao.test.ts",
+      "src/lib/picking/__tests__/borda-rpc.test.ts",
       "src/lib/picking/scanner/__tests__/protocolo.test.ts",
       "src/lib/picking/scanner/__tests__/captura.test.ts",
       "src/lib/picking/scanner/__tests__/fila.test.ts",

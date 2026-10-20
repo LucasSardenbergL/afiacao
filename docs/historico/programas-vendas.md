@@ -161,3 +161,20 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
 - ✅ **Provas:** invariantes textuais no CI (`edge-money-path-invariants.test.ts` 18/18 + **falsificação** sabota→vermelho) · deno check · typecheck · lint · suíte 4.3k. **Gate provado mordendo em prod** (SQL Editor, superuser): `venda_gate_credito('colacor', 4421340383, …)` → `{"bloqueado":true,"titulos":42,"vencido":20170.75,"vencimento_mais_antigo":"2023-05-04"}`. Deploy verbatim (git diff origin/main vazio + Active).
 - ⏸️ **Adiados (aval Codex):** (b) UX pós-exceção na edição; (c) RPC "pedir aprovação" (gatilho de telemetria de atrito não satisfeito — 0 bloqueios). P2-4 (UX "pendente ERP" do throw) mantido — aceito como P2 (evita tocar frontend/Publish num caso raro).
 - **Lições money-path:** (1) **medir antes de codar** — 0/0 em prod reordenou 3 P2s cosméticos numa prova de deploy. (2) **canária de deploy > commit de deploy:** p/ um gate money-path no EDGE (deploy manual Lovable), uma action dry-run que exercita a RPC sem efeito colateral prova o DEPLOYADO; o commit de deploy é evidência fraca (Lovable pode reverter/"melhorar"). (3) **review adversarial revela dívida latente:** revisando o diff do log durável, o Codex achou um P1 de duplicação pré-existente no mesmo caminho — que morderia no 1º uso real da edição.
+
+## Venda por cliente — Task 1: espinha (2026-10-20)
+
+`venda_sugestao` (sugestão com identidade, `fase` historico|sombra|ativa) + `venda_contato` (desfecho manual, 1 escritor)
++ `venda_config` (ondas desligadas, teto 10, janelas 14/30/30) + job `venda_fechar_desfechos` (cron 09:30 UTC) e o cron
+`tactical-plans-batch-nightly` desligado. Migration `20261020174221_venda_cliente_espinha.sql`, aplicada por `db:aplicar`
+(recibo #592) e validada por psql-ro. Prova `db/test-venda-espinha.sh` (30 asserts, C e pt_BR, 12 sabotagens, no núcleo).
+
+- **O plano citava `vendas_sync_heartbeat`, que não existe.** O sinal do sync de vendas é `fin_sync_log`
+  (`sync_pedidos`, lookback de 5 dias) + `vendas_sync_cursor`. "Um sync OK depois da janela" NÃO prova a janela (cada
+  rodada só vê 5 dias): a prova é por DIA, e dia descoberto ainda cobrível deixa a linha aberta em vez de decidir.
+- **Carteira no id do alias:** 1.633 linhas de `carteira_assignments` estão no alias fiscal — gate de carteira resolve
+  alias dos dois lados.
+- **`desconto_valor` NULL = não apurado (80% dos itens):** preço com desconto desconhecido → `nao_medivel`, a menos que
+  o bruto já fique abaixo do alvo; `valor_realizado` NULL em vez do bruto.
+- **Buraco de prova na Oben (2025-07 → 2026-01-21):** o backfill não tem janela ali; a reconstrução histórica da Task 4
+  fecha esse trecho como `nao_medivel` até alguém semear a janela.
