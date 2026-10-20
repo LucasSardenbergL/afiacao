@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **675** custom migrations totais
-- **2159** objetos esperados (criados por estas migrations)
+- **676** custom migrations totais
+- **2168** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 787
+  - `function`: 792
   - `rls_policy`: 477
-  - `index`: 282
-  - `cron_job`: 193
-  - `table`: 186
+  - `index`: 283
+  - `cron_job`: 194
+  - `table`: 188
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5472,6 +5472,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_avisar_lote` | — |
 | `cron_job` | `cron.radar-avisar-lote-diario` | — |
+
+### `20261020150000_venda_cliente_recompra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_mediana` | — |
+| `function` | `private.venda_linhas_pedido` | — |
+| `function` | `public.venda_recompra_em` | — |
+| `function` | `public.venda_situacao_em` | — |
+| `function` | `public.venda_recompra_atualizar` | — |
+| `table` | `public.venda_recompra` | — |
+| `table` | `public.venda_situacao` | — |
+| `index` | `public.idx_venda_recompra_atrasado` | `venda_recompra` |
+| `cron_job` | `cron.venda-recompra` | — |
 
 ## Próximos passos por status
 
