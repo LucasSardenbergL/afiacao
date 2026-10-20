@@ -36,7 +36,8 @@ Refutados com medida: "o recálculo mascara o cartão `omie_sync_financeiro`" �
 linha de qualquer action" e recebe ~60 linhas/dia (sync_pedidos, nfes…); 6 linhas/dia a mais não mudam
 nada. Registrados como resíduo:
 - **truncamento latente**: as consultas mensais de CP/CR do `calcularDRE` não paginam (teto de 1.000 do
-  PostgREST). Pior mês medido: 534 títulos (CR Oben) — não ativo, margem ~2×;
+  PostgREST). Pior mês medido: 534 títulos (CR Oben) — não ativo, margem ~2×. **Fechado em 2026-10-20**
+  (seção "Truncamento fechado" abaixo; a remedição achou 655, Colacor);
 - **corrida** enqueue × escrita na guarda de fechamento (segundos; 0 fechamentos em prod hoje).
 
 ## Lição
@@ -66,3 +67,24 @@ Leitura sem gravar do `fin-cashflow-engine` (`db/leitura-pme-oben-pos-dre-2026-1
 `cron.job_run_details` jobid 215 `succeeded`; `fin_sync_log` **12/12 `calcular_dre` `complete`** (a mais
 lenta 77 s — caixa); `fin_dre_snapshots` gravados na janela: por empresa (oben, colacor, colacor_sc)
 **13 meses competência (2025-10..2026-10) + 2 caixa (2026-09..10)** — o desenho, sem intervenção humana.
+
+## Truncamento fechado (2026-10-20)
+
+As 4 leituras de títulos do mês do `calcularDRE` (CR/CP × competência/caixa) eram `select` único:
+o PostgREST corta em 1.000 linhas em silêncio, e o cron diário gravaria DRE/CMV truncado.
+
+- **Remedição (psql-ro)**, pior mês por empresa/tabela/regime: CR competência **colacor 655** (2023-08),
+  CR oben 534/501, CP colacor 292/232; o resto < 200. Margem real ~1,5×, não 2×. A Colacor histórica
+  só entra no `calcular_dre_year`; o cron diário cobre 13 meses.
+- **Conserto**: `omie-financeiro/titulos-dre.ts`. Paginação **keyset** por `id` (`fetchAllKeyset`)
+  com teto de 20.000 títulos/mês, que lança `TetoTitulosExcedido` em vez de gravar parcial.
+  A 1ª versão usava offset (`fetchAll` + `.range`), e o Codex **reprovou com P1 reproduzido**: o EOF
+  por página vazia faz uma 2ª requisição até num mês de 655 títulos, e um INSERT do sync entre as
+  páginas devolvia o último título duas vezes. O select único não tinha esse risco, então seria
+  regressão. O teste "INSERT concorrente" cobre o caso.
+- **Teste**: `titulos-dre_test.ts`: 1.001º título, mês de 2.500, INSERT concorrente, teto. A
+  falsificação (sem cursor, order, teto, neq ou or) dá 5/5 vermelhos, com controle verde em
+  `LC_ALL=C` e em `pt_BR.UTF-8`. A integração no `index.ts` fica coberta pelo gate
+  `single-shot-truncado` (baseline 6→2), que reprova se o select único voltar.
+- **Resíduo**: os 2 single-shots restantes do `calcularDRE` (`fin_categoria_dre_mapping`, 157 linhas;
+  histórico de `fin_dre_snapshots`, ≤ ~50 meses) estão bem abaixo do teto.
