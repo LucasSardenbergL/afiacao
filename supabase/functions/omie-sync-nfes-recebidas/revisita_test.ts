@@ -88,6 +88,7 @@ function banco(
 ) {
   const consultas: number[] = [];
   const orfas: number[] = [];
+  const preenchimentos: string[] = [];
   const porta: PortaRevisita = {
     conhecidas: () => o.falharConhecidas ? Promise.reject(new Error("PostgREST 500")) : Promise.resolve(new Set(o.conhecidas ?? [])),
     consultar: (nIdReceb) => {
@@ -108,13 +109,14 @@ function banco(
       return Promise.resolve(true);
     },
     preencherRecebimentoSemT4: (chave, t4Iso) => {
+      preenchimentos.push(chave);
       // espelha o UPDATE do index.ts: mesma chave, t4 nulo, status ≠ CANCELADO
       const alvo = linhas.filter((l) => l.nfe_chave_acesso === chave && !l.t4_data_recebimento && l.status !== "CANCELADO");
       for (const l of alvo) l.t4_data_recebimento = t4Iso;
       return Promise.resolve(alvo.length);
     },
   };
-  return { porta, consultas, orfas, linhas };
+  return { porta, consultas, orfas, linhas, preenchimentos };
 }
 
 const opcoes: Parameters<typeof revisitarJanela>[4] = { agoraIso: () => "2026-10-18T04:15:00Z", temTempo: () => true };
@@ -289,6 +291,15 @@ Deno.test("(j') NF ainda não recebida, ou listagem incompleta, não grava t4", 
   (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = "2026-08-21T10:00:00-03:00";
   const r2 = await rodar([d], b2, [], { ...opcoes, listagemIncompleta: true });
   assertEquals([b2.linhas[0].t4_data_recebimento ?? null, r2.t4_preenchidos], [null, 0]);
+});
+
+Deno.test("(j'') desconhecida e recebida: o t4 vem do VÍNCULO, sem o UPDATE por chave", async () => {
+  const REC = "2026-09-17T08:00:00-03:00";
+  const det = bruto(CHAVE_0936908, "000951654", ["2120001"], { recebidaEm: REC });
+  const b = banco([{ id: "p1221", contrato: "2120001", fornecedor: SAYERLACK, nfe_chave_acesso: null }], { detalhes: { 951654: det } });
+  const r = await rodar([doc(951654, CHAVE_0936908, "000951654", [])], b);
+  assertEquals([b.linhas[0].nfe_chave_acesso, b.linhas[0].t4_data_recebimento], [CHAVE_0936908, REC]);
+  assertEquals([b.preenchimentos, r.t4_preenchidos, r.linhas_vinculadas], [[], 0, 1]);
 });
 
 Deno.test("revisita_dias: só inteiro de 1 a 60; o resto desliga a revisita", () => {
