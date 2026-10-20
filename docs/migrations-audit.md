@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **675** custom migrations totais
-- **2159** objetos esperados (criados por estas migrations)
+- **676** custom migrations totais
+- **2174** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 787
-  - `rls_policy`: 477
-  - `index`: 282
-  - `cron_job`: 193
-  - `table`: 186
+  - `function`: 792
+  - `rls_policy`: 480
+  - `index`: 285
+  - `cron_job`: 194
+  - `table`: 189
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5472,6 +5472,26 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_avisar_lote` | — |
 | `cron_job` | `cron.radar-avisar-lote-diario` | — |
+
+### `20261020174221_venda_cliente_espinha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_sync_dia_coberto` | — |
+| `function` | `public.venda_fechar_desfechos` | — |
+| `function` | `public.venda_minhas_sugestoes` | — |
+| `function` | `public.venda_marcar_mostrada` | — |
+| `function` | `public.venda_registrar_contato` | — |
+| `table` | `public.venda_config` | — |
+| `table` | `public.venda_sugestao` | — |
+| `table` | `public.venda_contato` | — |
+| `index` | `public.venda_sugestao_chave_uq` | `venda_sugestao` |
+| `index` | `public.idx_venda_sugestao_farmer_dia_ativa` | `venda_sugestao` |
+| `index` | `public.idx_venda_sugestao_aberta` | `venda_sugestao` |
+| `cron_job` | `cron.venda-fechar-desfechos` | — |
+| `rls_policy` | `public.venda_config_select_staff` | `venda_config` |
+| `rls_policy` | `public.venda_sugestao_select` | `venda_sugestao` |
+| `rls_policy` | `public.venda_contato_select` | `venda_contato` |
 
 ## Próximos passos por status
 
