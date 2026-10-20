@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 670
+-- Total de custom migrations: 671
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -734,7 +734,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
   ('20261019200000', 'radar_situacao_cadastral', '20261019200000_radar_situacao_cadastral.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
-  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
+  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
+  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2844,7 +2845,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5002,7 +5005,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
 )
 SELECT
   e.migration,
