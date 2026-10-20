@@ -571,6 +571,11 @@ db/test-radar-recruzar-origem-omie.sh        9  falsificar=2
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
 db/test-radar-score.sh                      18  falsificar=12
+# Radar: ranking de cidades e mapa contam a FOTO VIGENTE (20261020120200). Defeito aqui = totalizador por
+# município contando quem saiu do dump (diverge da fila), lote mal formado contando zero em silêncio,
+# overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
+# VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
+db/test-radar-contagem-lote.sh              16  falsificar=12
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),

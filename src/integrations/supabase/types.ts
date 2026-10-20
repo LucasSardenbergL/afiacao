@@ -22026,6 +22026,8 @@ export type Database = {
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
           p_limit?: number
+          p_lote?: string
+          p_primeira_vista_min?: string
           p_status?: string
           p_uf?: string
         }

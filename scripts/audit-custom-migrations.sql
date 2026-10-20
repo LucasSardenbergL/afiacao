@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 669
+-- Total de custom migrations: 670
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -733,7 +733,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
   ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
-  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
+  ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
+  ('20261020120200', 'radar_contagem_municipio_lote_vigente', '20261020120200_radar_contagem_municipio_lote_vigente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2835,7 +2836,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('radar_contagem_municipio_lote_vigente', 'function', 'public', 'radar_contagem_por_municipio', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4985,7 +4987,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario', ''),
   ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor', ''),
-  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', '')
+  ('fin_cashflow_snapshot_cron_escalonado', 'cron_job', 'cron', 'fin-cashflow-snapshot-diario-colacor-sc', ''),
+  ('radar_contagem_municipio_lote_vigente', 'function', 'public', 'radar_contagem_por_municipio', '')
 )
 SELECT
   e.migration,
@@ -5348,6 +5351,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aprovar_versao_boletim', 2, '20260613180000_kb_hardening_codex.sql', 'f42e6e6696c2a2f9266ee9b9dd41b0d9'),
   ('public', 'radar_contagem_por_municipio', 1, '20260613190000_radar_fatia3.sql', 'e2280b3dda8eb76207371e534a90e170'),
   ('public', 'radar_contagem_por_municipio', 2, '20260614140000_radar_contagem_perf.sql', 'a0067efe8a2bf49bb83877ca34c0142b'),
+  ('public', 'radar_contagem_por_municipio', 3, '20261020120200_radar_contagem_municipio_lote_vigente.sql', '846683f98eef8db92fa698ba61cd6a04'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_prospects_para_rota', 1, '20260613230000_roteirizador_prospects.sql', '5e60b8b20f0fb33d469b664c36b792a8'),

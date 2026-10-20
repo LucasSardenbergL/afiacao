@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **669** custom migrations totais
-- **2136** objetos esperados (criados por estas migrations)
+- **670** custom migrations totais
+- **2137** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 775
+  - `function`: 776
   - `rls_policy`: 476
   - `index`: 280
   - `cron_job`: 192
@@ -5419,6 +5419,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
+
+### `20261020120200_radar_contagem_municipio_lote_vigente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
 
 ## Próximos passos por status
 
