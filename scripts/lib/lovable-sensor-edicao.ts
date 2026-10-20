@@ -11,7 +11,8 @@
  * 2. **Os commits do bot na `main`.** O sync bidirecional empurra a edição como commit
  *    `gpt-engineer-app[bot]` ("Changes"). O merge "Lovable update" que regenera
  *    `src/integrations/supabase/types.ts` é o efeito colateral CONHECIDO de todo deploy (medido
- *    2026-09-08 e 2026-09-26) — só ele é tolerado; qualquer outro arquivo é alerta.
+ *    2026-09-08 e 2026-09-26) — ele e os demais GERADOS de `ARQUIVOS_TOLERADOS_DO_BOT` são
+ *    tolerados; qualquer outro arquivo é alerta.
  *
  * A linha de confirmação é um terceiro sinal, FRACO de propósito: LLM afirma o que quiser, então a
  * presença dela não absolve, e a ausência só pede que alguém leia a resposta.
@@ -26,10 +27,23 @@ const CHAVES_DE_EDICAO: readonly string[] = ['edit_id', 'commit_sha', 'editId', 
 const LINHA_DE_CONFIRMACAO = 'No files were edited.';
 
 /**
- * O único arquivo que o bot toca num deploy LIMPO: ele regenera os tipos do banco a cada rodada.
- * Tolerar é decisão medida, não conveniência — e fica numa lista, não num `startsWith('src/')`.
+ * Os arquivos GERADOS que o bot toca num deploy LIMPO — e só eles. Tolerar é decisão medida, não
+ * conveniência: lista FECHADA, nunca prefixo (`startsWith('supabase/functions/')` toleraria a edição
+ * de edge que o sensor existe para pegar). Um commit que toque um destes E qualquer outro arquivo
+ * continua SUSPEITO. Cada entrada cita o gerador que a escreve:
+ *
+ * - `src/integrations/supabase/types.ts` — tipos do banco, regenerados a cada rodada (medido
+ *   2026-09-08 e 2026-09-26).
+ * - `supabase/functions/mcp/index.ts` — AUTO-GENERATED pelo plugin Vite `@lovable.dev/mcp-js`
+ *   (`vite.config.ts` importa `mcpPlugin` de `@lovable.dev/mcp-js/stacks/supabase/vite`), bundle
+ *   de `src/lib/mcp/`; o plugin escreve a faixa do `package.json` no import. Incidente #3206
+ *   (2026-10-20): o bump `^2.95.3 → ^2.117.0` em `43d456c18` foi marcado SUSPEITO, o revert #3206
+ *   foi aberto e fechado pelo founder; o conserto certo foi o lock do `edges:typecheck` (#3207).
  */
-export const ARQUIVOS_TOLERADOS_DO_BOT: readonly string[] = ['src/integrations/supabase/types.ts'];
+export const ARQUIVOS_TOLERADOS_DO_BOT: readonly string[] = [
+  'src/integrations/supabase/types.ts',
+  'supabase/functions/mcp/index.ts',
+];
 
 export interface SinaisDaResposta {
   /** `false` = entrada vazia: sem resposta não há como dizer "sem edição". */
