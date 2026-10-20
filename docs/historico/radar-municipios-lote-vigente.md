@@ -76,9 +76,23 @@ Top 10 do ranking (ja_cliente=false, sem descartados):
   lote completo; erro do lote propaga sem chamar a RPC. Falsificado: com `p_lote: null` fixo no hook,
   2 testes vermelhos.
 
-## Pendente
+## Aplicação (2026-10-20, pelo Claude, a pedido explícito do founder)
 
-- **Migration manual** `20261020120200_radar_contagem_municipio_lote_vigente.sql`: o founder aplica no
-  SQL Editor. Até lá, o front novo manda `p_lote` para uma RPC que não o conhece. O PostgREST então
-  não acha a função e devolve erro, e **o ranking e o mapa ficam em erro** (não mostram número errado).
-  Aplicar junto ou antes do Publish.
+O founder pediu que a sessão aplicasse a migration ("APLIQUE VOCE A MIGRATION"). DDL destrutivo fica
+fora do envelope por padrão, e a autorização dele na conversa é o que cobre este apply. Canal: o
+`query_database` do conector Lovable, que roda como `postgres`, o mesmo dono da função, conferido antes
+porque `SECURITY DEFINER` roda com os privilégios do dono.
+
+1. **Ensaio:** a mesma SQL, terminando em `RAISE 'ENSAIO_OK'` no lugar do `COMMIT`. PRE, DROP, CREATE,
+   ACL e PÓS passaram; dono `postgres`; ACL idêntico ao anterior (inclusive `sandbox_exec_*`, que vem
+   dos default privileges). Rollback conferido via psql-ro: a assinatura velha seguia intacta.
+2. **Apply** com `COMMIT`. O retorno `{"rows":[]}` não prova nada.
+3. **2ª testemunha (psql-ro):** a query de validação dá `✅`. Há uma assinatura só, a de 10 args, com dono
+   `postgres` e o mesmo ACL. Os event triggers `pgrst_ddl_watch`/`pgrst_drop_watch` estão ativos, então
+   o PostgREST recarrega o schema sozinho.
+4. **Sonda funcional como gestor** (claims de um master, reportando por exception, sem rastro):
+   São Paulo 26.794 sem lote × 24.910 com `p_lote='2026-08'` (Rio 11.347 × 9.738; BH 7.323 × 6.587),
+   iguais à medição. "Só inéditos" em SC: Joinville 228, Blumenau 111.
+
+A migration é retrocompatível: o front publicado hoje (sem `p_lote`) segue funcionando igual. O front
+novo entra no Publish seguinte ao merge.
