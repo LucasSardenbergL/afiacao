@@ -55,6 +55,11 @@ O trigger do pedido de compra roda desde 2026-10-18 o corpo do envelope `db/apli
 - Auditor sobre as migrations do worktree contra a prod real (visão pós-merge): EM_DIA 327 · ACEITA 5, e a entrada vira `BASELINE_OBSOLETA`. Ela fica neste PR, porque o auditor lê `origin/main` e a baseline é contrato do carimbo. O follow-up remove a entrada e regrava o carimbo (`authz:carimbo:gravar`). Baseline final: **22 entradas, todas justificadas acima**.
 - O audit de migrations extraía um "trigger" falso de dentro da regex da PÓS (parent `public`), e isso viraria um ❌ MISSING fantasma. Por isso o nome vai entre parênteses na regex.
 - **Não impede** que alguém cole de novo o CREATE antigo depois. O que a canônica faz é dar a definição para reconstruir e tornar essa regressão detectável pelo auditor.
+- **Aplicada na prod em 2026-10-20 pela sessão, via MCP do Lovable, com aval do founder, depois do merge (#3260, `07dc8f834`).**
+  - Ensaio antes: o mesmo arquivo terminando em `RAISE EXCEPTION 'ENSAIO_OK'` passou TRAVA, PRE, CREATE e PÓS e reverteu. O psql-ro confirmou `xmin` intacto (12288805).
+  - Aplicação na íntegra sem erro. A transcrição é fail-closed, porque a PÓS exige o md5 exato.
+  - Por fora (psql-ro): md5 `ae665653…`, `xmin` novo **12436730**, owner postgres, trigger com `tgfoid` certo e ACL idêntica à de antes.
+- **Follow-up (este PR):** a entrada saiu da baseline (**22**) e o carimbo foi regravado. Os 5 audits de authz deram exit 0. A deriva deu exit 1 só por 2 `SEM_PAR` de outras entregas em voo, aplicadas minutos antes: `get_defasagem_cliente` (#3259, migration já aplicada, resolve no merge) e `claim_nfe_efetivacao_lock` (envelope do #3258, sem baseline nem canônica; a sessão do NF-e foi avisada). Por isso a prova E (`db/test-deriva-baseline-prod.sh --repo-local`) abortou no controle, como deve. Ela roda de novo quando a prod voltar a bater.
 
 ## Lições
 
