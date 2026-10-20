@@ -543,3 +543,28 @@ CREATE OR REPLACE FUNCTION public._data_health_episodio(
   VALUES (p_company, p_tipo, p_status, p_sev_fin, p_titulo, p_fingerprint)
   RETURNING true
 $spy$;
+
+-- [2026-10-20] radar_lote_idade + radar_recruzamento_tick (20261020*_data_health_radar_*): os 2 writers do
+-- Radar que o compute passa a ler. Colunas = prod (psql-ro, 2026-10-20), incluindo o CHECK do formato
+-- do mes (o compute faz to_date sobre ele — a tabela e quem garante que nao chega lixo).
+CREATE TABLE IF NOT EXISTS public.radar_ingest_state (
+  mes_referencia text PRIMARY KEY CHECK (mes_referencia ~ '^[0-9]{4}-[0-9]{2}$'),
+  status text NOT NULL CHECK (status IN ('running','complete','error')),
+  total_recebido integer NOT NULL DEFAULT 0,
+  novos integer,
+  iniciado_em timestamptz NOT NULL DEFAULT now(),
+  finalizado_em timestamptz,
+  erro text
+);
+CREATE TABLE IF NOT EXISTS public.acoes_execucoes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  acao text NOT NULL,
+  origem text NOT NULL,
+  executado_por uuid,
+  executado_por_nome text,
+  iniciado_em timestamptz NOT NULL DEFAULT now(),
+  finalizado_em timestamptz,
+  status text NOT NULL,
+  detalhes jsonb
+);
+CREATE INDEX IF NOT EXISTS acoes_execucoes_acao_idx ON public.acoes_execucoes (acao, iniciado_em DESC);

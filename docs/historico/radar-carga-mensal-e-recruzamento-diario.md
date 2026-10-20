@@ -8,7 +8,7 @@
 
 1. **Recruzamento diário (migration `20261019093000_radar_recruzamento_diario_cron.sql`, aplicada em prod).** `radar_recruzar_ja_cliente_tick()` (SECURITY DEFINER, ACL só postgres/service_role) chama a função original — que NÃO foi tocada: o `finalize` da edge continua chamando-a direto — e grava UMA linha em `acoes_execucoes` (slug `radar.recruzar_ja_cliente`, origem `automatica`) com denominador. Cron `radar-recruzar-ja-cliente-diario`, `15 6 * * *` = **03:15 BRT** (jobid 213). Erro da função original **propaga** (job_run_details `failed` com a mensagem real; a linha do ledger não sobrevive ao rollback — ausência de `sucesso` recente é o sinal); só a gravação do ledger é fail-open. Por que um tick e não `SELECT radar_recruzar_ja_cliente()` direto no cron: num cron SQL-local o `return_message` de um SELECT é só `1 row` — a contagem sumiria.
 2. **Carga automática (`.github/workflows/radar-carga-mensal.yml`).** SONDA semanal (segunda 03:00 BRT), CARGA no máximo 1 mês por rodada. `scripts/radar/mes-alvo.ts` decide: janela `[M-2, M-1, M]` em Brasília, do mais antigo para o mais novo; **nunca regride** (mês ≤ último `complete` é descartado, mesmo com `forcar`); lote `running` com < 8 h não é atropelado (carga local em andamento); HEAD 404 em `Cnaes.zip` = não publicado, qualquer outro ≠ 200 = **erro** (nunca vira "nada a fazer" verde). `carga.ts` ganhou `RADAR_WORK_DIR` (o runner tem ~14 GB em `/`; o trabalho vai para `/mnt` com guarda de ≥ 40 GB livres), `RADAR_APAGAR_ZIPS=1` e `temp_directory` do DuckDB no diretório de trabalho (o spill ia para `.tmp` no cwd). Token/bases da RFB foram para `scripts/radar/rfb.ts` (compartilhado).
-3. **Sensor na Sentinela: DESENHADO, NÃO instalado** (ver abaixo).
+3. **Sensor na Sentinela: DESENHADO aqui, INSTALADO em 2026-10-20** — [radar-sentinela-lote-idade-e-recruzamento.md](radar-sentinela-lote-idade-e-recruzamento.md) (migration `20261020101636`; a referência do lote mudou para o ÚLTIMO dia do mês, ver lá).
 
 ## Camadas de deploy (quem faz o quê)
 
@@ -50,7 +50,7 @@ Com o writer rodado 1× em prod, o check da Sentinela abaixo está **desbloquead
 
 Job vermelho + e-mail do GitHub ao autor do último commit do schedule + `radar_ingest_state.status='error'`/`erro` quando a falha é na edge. **Não cobre ausência de execução** (schedule desativado após 60 dias sem commit, runner morto) — é o check da Sentinela abaixo.
 
-## Sensor desenhado (NÃO instalado nesta entrega — desbloqueado pela 1ª execução)
+## Sensor desenhado (instalado na parte 2, [radar-sentinela-lote-idade-e-recruzamento.md](radar-sentinela-lote-idade-e-recruzamento.md) — com a referência do lote no ÚLTIMO dia do mês)
 
 `_data_health_compute` é arquivo QUENTE multi-sessão e exige recriar **duas** funções (`data_health_watchdog` + `fin_sync_heartbeat`, IN-list de sources) com pré-flight `pg_get_functiondef`. A regra "check de marcador só nasce DEPOIS do writer existir e ter rodado 1× em prod" vale para a carga mensal: o writer (a Action) só existe após o merge e ainda não rodou. Dois checks, para a próxima entrega:
 
