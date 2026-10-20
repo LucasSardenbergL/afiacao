@@ -16,6 +16,14 @@ import {
   normalizarPorMaximo,
   valorMedido,
 } from "../_shared/score-ponderado.ts";
+// Frequência de recompra (Venda por cliente, 1a): intervalo medido ou NULL, e a classe de saúde.
+// Espelho verbatim de src/lib/scoring/frequencia.ts — paridade em __tests__/frequencia.test.ts.
+import {
+  classeSaude,
+  componenteRecompra,
+  intervaloRecompraConhecido,
+  scoreFrequencia,
+} from "../_shared/frequencia-recompra.ts";
 
 // Origem fixa "*" (igual ao `_shared/auth.ts`; a auth é por Bearer, não cookie): o secret ALLOWED_ORIGIN
 // valia "123456" em prod e o navegador rejeitava todo preflight — 5 edges mudas para o app (2026-10-12).
@@ -61,6 +69,10 @@ interface CustomerSalesSummaryRow {
   revenue_180d: number | null;              // últimos 180d → avg_monthly_spend_180d = revenue_180d/6
   item_count: number | null;
   category_count: number | null;
+  // Mediana dos gaps entre dias DISTINTOS de pedido (histórico inteiro); NULL com < 3 dias. Coluna
+  // acrescentada ao FIM da RPC (migration 20261020151500). Edge nova contra RPC velha → undefined →
+  // intervaloRecompraConhecido devolve null: degrada para "não medido", nunca para 0/30.
+  intervalo_mediano_dias?: number | string | null;
 }
 
 interface FarmerClientScoreSeed {
@@ -77,7 +89,9 @@ interface FarmerClientScoreSeed {
   // coluna é nullable mas tem DEFAULT 0, então OMITIR o campo faz o Postgres fabricar 0 — o mesmo
   // zero que criava o loop fechado. m_score idem (é o score derivado desta margem).
   gross_margin_pct: number | null;
-  avg_repurchase_interval: number;
+  // null = intervalo NÃO MEDIDO (enviado explícito: a coluna tinha DEFAULT 0, removido na migration
+  // 20261020151500; mandar a chave independe da ordem de deploy).
+  avg_repurchase_interval: number | null;
   // As 6 colunas SEM produtor (nenhum writer as calcula; só este seed as tocava, com 0). null =
   // "não medido", nunca 0 — mesma razão do gross_margin_pct acima. O DEFAULT 0 foi removido na
   // migration 20260727130000; enviar null EXPLÍCITO independe da ordem de deploy migration×edge.
@@ -123,6 +137,9 @@ interface ScoreUpdate {
   days_since_last_purchase: number;
   avg_monthly_spend_180d: number;
   category_count: number;
+  // Intervalo de recompra medido (Venda por cliente, 1a). null = < 3 dias de pedido (não medido): a
+  // RPC grava NULL via jsonb_exists, jamais 0/30. Chave ausente (edge velha) → preserva.
+  avg_repurchase_interval: number | null;
   // OPCIONAL na RPC (COALESCE, fora do guard das 13): null quando salesRefreshFatal → preserva o atual.
   sales_history_status: 'sem_historico' | 'stale' | 'ativo' | null;
   calculated_at: string;
@@ -157,7 +174,8 @@ interface PriorityLogRecord {
   // → null EXPLÍCITO, senão o Postgres refabrica o zero.
   margin_potential_component: number | null;
   churn_risk_component: number;
-  repurchase_component: number;
+  // null = sem intervalo de recompra medido → o componente saiu do priority (renormalizado).
+  repurchase_component: number | null;
   goal_proximity_component: number;
 }
 
@@ -690,7 +708,9 @@ Deno.serve(async (req) => {
               // loop fechado (a outra metade era a edge ler a coluna que ela mesma escreve) e
               // sobrevivia a qualquer run em que a RPC de margem falhasse.
               gross_margin_pct: null,
-              avg_repurchase_interval: 0,
+              // NULL, não 0: o 0 do seed era o resíduo que nenhum writer recalculava. O compute logo
+              // abaixo sobrepõe o valor medido da RPC de vendas (overlay), como os outros 3 da base.
+              avg_repurchase_interval: null,
               // As 6 colunas SEM produtor → null ("não medido"), nunca 0. O 0 aqui era a arma
               // carregada: um valor de decisão fabricado numa coluna que ninguém calcula (missão de
               // recuperação/expansão, componentes de health/priority). Ver migration 20260727130000.
@@ -798,6 +818,8 @@ Deno.serve(async (req) => {
         c.days_since_last_purchase = b.days_since_last_purchase;
         c.avg_monthly_spend_180d = b.avg_monthly_spend_180d;
         c.category_count = b.category_count;
+        // Intervalo de recompra medido (1a). Cliente fora do salesMap (sem pedido) → null, nunca 0/30.
+        c.avg_repurchase_interval = intervaloRecompraConhecido(salesMap.get(c.customer_user_id)?.intervalo_mediano_dias);
       }
     }
 
@@ -817,7 +839,9 @@ Deno.serve(async (req) => {
     }
 
     // Compute normalization ranges (recência NÃO usa min-max — cap configurável via computeRecencyScore)
-    const maxInterval = Math.max(...clients.map(c => Number(c.avg_repurchase_interval || 0)), 1);
+    // Teto da frequência: só intervalos MEDIDOS. O `|| 0` + piso 1 anterior deixava o resíduo 0 do
+    // seed participar e, no laço, `interval || maxInterval` dava 0 a quem não tinha intervalo.
+    const maxInterval = maximoMedido(clients.map(c => intervaloRecompraConhecido(c.avg_repurchase_interval)));
     const maxSpend = Math.max(...clients.map(c => Number(c.avg_monthly_spend_180d || 0)), 1);
     // Só margens CONHECIDAS entram no max: `|| 0` faria o desconhecido participar da normalização
     // como se fosse margem zero, deprimindo o teto e inflando o score relativo de todo mundo.
@@ -841,9 +865,12 @@ Deno.serve(async (req) => {
       // se lê de days_since_last_purchase, não de rf_score (achado /codex).
       const recencyScore = computeRecencyScore(client.days_since_last_purchase, recencyCapDays);
       
-      const freqScore = maxInterval > 0
-        ? Math.max(0, 100 - (Number(client.avg_repurchase_interval || maxInterval) / maxInterval) * 100)
-        : 50;
+      // Intervalo NULL (< 3 dias de pedido) → frequência null → sai da média como a margem. Antes o
+      // resíduo 30 valia ~98 pontos e punha cliente sem compra havia 999 dias em "atenção".
+      const intervalo = intervaloRecompraConhecido(client.avg_repurchase_interval);
+      // Perdido (sem compra há > max(3 × intervalo, 365) dias) → 0: o intervalo real sozinho dava ~96
+      // pontos a quem parou há anos (ver src/lib/scoring/frequencia.ts).
+      const freqScore = scoreFrequencia(intervalo, maxInterval, client.days_since_last_purchase);
       
       // Margem DESCONHECIDA → null, e o componente sai do score (renormalização abaixo). Com o
       // `|| 0` anterior, "não medi" virava veredito "margem zero" = pior cliente possível naquele
@@ -891,10 +918,7 @@ Deno.serve(async (req) => {
       ]);
       const healthScore = Math.round(healthMedia ?? 0);
 
-      let healthClass = 'critico';
-      if (healthScore >= 75) healthClass = 'saudavel';
-      else if (healthScore >= 50) healthClass = 'estavel';
-      else if (healthScore >= 25) healthClass = 'atencao';
+      const healthClass = classeSaude(healthScore);
 
       const churnRisk = Math.max(0, Math.min(100, 100 - healthScore));
 
@@ -906,10 +930,9 @@ Deno.serve(async (req) => {
       const churnComp = churnRisk;
       
       const daysSince = Number(client.days_since_last_purchase || 0);
-      const avgInterval = Number(client.avg_repurchase_interval || 30);
-      const repurchaseComp = avgInterval > 0
-        ? Math.max(0, Math.min(100, (1 - Math.abs(daysSince - avgInterval) / avgInterval) * 100))
-        : 50;
+      // Sem intervalo medido o componente sai do priority (renormalizado abaixo) — o `|| 30` anterior
+      // afirmava uma cadência mensal que ninguém apurou.
+      const repurchaseComp = componenteRecompra(daysSince, intervalo);
       
       const goalComp = maxSpend > 0
         ? Math.min(100, (Number(client.avg_monthly_spend_180d || 0) / maxSpend) * 100)
@@ -966,6 +989,9 @@ Deno.serve(async (req) => {
         days_since_last_purchase: client.days_since_last_purchase ?? 999,
         avg_monthly_spend_180d: client.avg_monthly_spend_180d ?? 0,
         category_count: client.category_count ?? 0,
+        // Intervalo de recompra (1a): o valor pós-overlay; null atravessa (a RPC grava NULL, jamais 0).
+        // salesRefreshFatal → overlay pulado → valor LIDO do banco → o UPDATE regrava o mesmo.
+        avg_repurchase_interval: client.avg_repurchase_interval,
         // salesRefreshFatal → null → a RPC (COALESCE) preserva o valor atual (não fabrica por RPC ausente).
         sales_history_status: salesRefreshFatal ? null : deriveSalesHistoryStatus(salesMap.get(client.customer_user_id), salesActiveDays),
         calculated_at: new Date().toISOString(),
@@ -994,7 +1020,8 @@ Deno.serve(async (req) => {
         // idem: null = componente ausente do score, não "apurei e deu zero".
         margin_potential_component: marginPotentialComp == null ? null : Math.round(marginPotentialComp),
         churn_risk_component: Math.round(churnComp),
-        repurchase_component: Math.round(repurchaseComp),
+        // idem: null = sem intervalo medido (Math.round(null) refabricaria 0).
+        repurchase_component: repurchaseComp == null ? null : Math.round(repurchaseComp),
         goal_proximity_component: Math.round(goalComp),
       });
     }
