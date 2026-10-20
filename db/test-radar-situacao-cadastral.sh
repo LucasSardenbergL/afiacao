@@ -21,7 +21,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A7` = a POSTCONDIÇÃO da própria migration (DO $post$)
   # aborta o apply antes de qualquer assert; `_sem_post` cega essa camada para provar que o assert da
   # suíte pega sozinho (uma camada por vez: a que fica verde é redundante ou inalcançada).
-  SABOTAGENS="descarta_cliente:A5 repete_alerta:A9 descarta_02:A4 so_radar:A7 regride_lote:A11 sem_denominador:A7b acl_aberta:post:A7 acl_aberta_sem_post:A12"
+  SABOTAGENS="descarta_cliente:A5 repete_alerta:A9 descarta_02:A4 so_radar:A7 regride_lote:A11 sem_denominador:A7b sem_teto:A17 acl_aberta:post:A7 acl_aberta_sem_post:A12"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-situacao.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -91,6 +91,8 @@ case "${SABOTAGEM:-}" in
                     sabotar "     AND (re.rfb_situacao_lote IS NULL OR re.rfb_situacao_lote <= p_lote)
 " "" ;;
   sem_denominador)  sabotar "|| 'de ' || v_verificados || ' clientes verificados neste lote ('" "|| 'de ' || v_novos || ' clientes verificados neste lote ('" ;;
+  sem_teto)         sabotar "             LIMIT c_teto_linhas) n;" "             LIMIT 100000) n;"
+                    sabotar "    v_omitidos := GREATEST(v_novos - c_teto_linhas, 0);" "    v_omitidos := 0;" ;;
   acl_aberta)       sabotar "REVOKE ALL ON FUNCTION public.radar_aplicar_situacao(text, timestamptz) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.radar_aplicar_situacao(text, timestamptz) FROM anon;" ;;
   acl_aberta_sem_post) sabotar "REVOKE ALL ON FUNCTION public.radar_aplicar_situacao(text, timestamptz) FROM PUBLIC, anon, authenticated;" "REVOKE ALL ON FUNCTION public.radar_aplicar_situacao(text, timestamptz) FROM anon;"
                     sabotar "    IF has_function_privilege('anon', f, 'EXECUTE')
@@ -307,6 +309,18 @@ eq "A16 radar_cnpjs_conhecidos pagina por keyset (3 por página) e cobre radar �
 eq "A16b página vazia depois do último; limite é capado em 50000 e mínimo 1" \
    "$(Pq -c "SELECT array_length(public.radar_cnpjs_conhecidos('ZZZZZZZZZZZZZZ', 3), 1) IS NULL;") $(Pq -c "SELECT array_length(public.radar_cnpjs_conhecidos('', 0), 1);")" \
    "t 1"
+
+# ── Backlog: lote com MAIS clientes irregulares do que o teto do e-mail (medido: 2.553 no 1º lote real) ────
+Pq -c "INSERT INTO public.radar_empresas (cnpj, razao_social, ja_cliente, prospeccao_status)
+         SELECT '9'||lpad(g::text,7,'0')||'000100', 'BACKLOG '||g, true, 'virou_cliente' FROM generate_series(1,150) g;
+       INSERT INTO public.radar_situacao_cadastral (cnpj, lote, situacao, data_situacao, motivo_codigo, motivo_descricao)
+         SELECT '9'||lpad(g::text,7,'0')||'000100', '2026-10', '08', date '2026-01-01' + g, '01', 'EXTINCAO' FROM generate_series(1,150) g;" >/dev/null
+R5="$(aplicar 2026-10)"
+MSG5="$(Pq -c "SELECT mensagem FROM public.fornecedor_alerta WHERE id=3;")"
+rodape5() { case "$MSG5" in *"… e mais 50 cliente(s)"*) echo "mais-50";; *) echo "sem-rodape";; esac; }
+eq "A17 e-mail com teto: 150 novos → 100 linhas (mais recentes primeiro) + '… e mais 50'; dedupe marca os 150; título N=150" \
+   "$(Pq -c "SELECT (j->>'clientes_alertados_novos') FROM (SELECT '$R5'::jsonb j) x;") $(printf '%s\n' "$MSG5" | grep -c '^BACKLOG ') $(rodape5) $(printf '%s\n' "$MSG5" | grep -c '^BACKLOG 150 ') $(printf '%s\n' "$MSG5" | grep -c '^BACKLOG 1 ') $(Pq -c "SELECT count(*) FROM public.radar_situacao_cadastral WHERE lote='2026-10' AND alertado_em IS NOT NULL;") $(Pq -c "SELECT titulo FROM public.fornecedor_alerta WHERE id=3;")" \
+   "150 100 mais-50 1 0 150 [Radar] 150 cliente(s) com baixa/inaptidão no lote 2026-10"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "RADAR_SITUACAO_CADASTRAL_PROVA_OK"

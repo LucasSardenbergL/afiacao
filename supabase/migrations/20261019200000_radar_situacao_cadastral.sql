@@ -172,6 +172,8 @@ DECLARE
   v_marcados     integer := 0;
   v_alerta_id    bigint;
   v_linhas       text;
+  v_omitidos     integer := 0;
+  c_teto_linhas  constant integer := 100;  -- o 1º lote traz o BACKLOG (medido: 2.553 clientes irregulares); o e-mail lista os 100 mais recentes
 BEGIN
   IF p_lote IS NULL OR p_lote !~ '^[0-9]{4}-[0-9]{2}$' THEN
     RAISE EXCEPTION 'lote inválido: %', COALESCE(p_lote, '(null)') USING ERRCODE = '22023';
@@ -254,13 +256,22 @@ BEGIN
    WHERE s.lote = p_lote AND (COALESCE(re.ja_cliente, false) OR c.doc IS NOT NULL);
 
   IF v_novos > 0 THEN
+    -- Teto de linhas no e-mail (baixas mais recentes primeiro); a lista COMPLETA fica na tabela
+    -- (radar_situacao_cadastral.alertado_em do lote) e em metadata.cnpjs — o dedupe marca todos.
     SELECT string_agg(
              COALESCE(NULLIF(btrim(n.razao_social), ''), NULLIF(btrim(n.nome_cliente), ''), 'razão social não informada')
              || ' (' || substr(n.cnpj, 1, 2) || '.' || substr(n.cnpj, 3, 3) || '.' || substr(n.cnpj, 6, 3)
              || '/' || substr(n.cnpj, 9, 4) || '-' || substr(n.cnpj, 13, 2) || '): ' || n.descricao,
              E'\n' ORDER BY n.situacao DESC, n.data_situacao DESC NULLS LAST, n.cnpj)
       INTO v_linhas
-      FROM tmp_rfb_novos n;
+      FROM (SELECT * FROM tmp_rfb_novos
+             ORDER BY situacao DESC, data_situacao DESC NULLS LAST, cnpj
+             LIMIT c_teto_linhas) n;
+    v_omitidos := GREATEST(v_novos - c_teto_linhas, 0);
+    IF v_omitidos > 0 THEN
+      v_linhas := v_linhas || E'\n… e mais ' || v_omitidos || ' cliente(s) — lista completa em radar_situacao_cadastral (lote '
+        || p_lote || ', alertado_em preenchido) e no campo metadata deste alerta.';
+    END IF;
 
     INSERT INTO public.fornecedor_alerta (empresa, tipo, severidade, titulo, mensagem, status, metadata)
     VALUES (
