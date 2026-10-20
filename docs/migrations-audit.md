@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **673** custom migrations totais
-- **2156** objetos esperados (criados por estas migrations)
+- **674** custom migrations totais
+- **2158** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 785
+  - `function`: 786
   - `rls_policy`: 477
   - `index`: 282
-  - `cron_job`: 192
+  - `cron_job`: 193
   - `table`: 186
   - `view`: 125
   - `trigger`: 105
@@ -5459,6 +5459,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_grupo_contas_receber_por_doc` | — |
 | `view` | `public.v_caca_compradores` | — |
 | `view` | `public.v_caca_candidatos` | — |
+
+### `20261020143000_radar_avisar_lote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-avisar-lote-diario` | — |
 
 ## Próximos passos por status
 
