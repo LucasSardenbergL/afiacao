@@ -112,10 +112,17 @@ describe('useRadarLista — filtro "só sugeridos para cadastro" (bloco 5)', () 
     expect(filtroLote()).toEqual([['eq', 'ultimo_lote', '2026-08']]);
   });
 
-  it('sem lote vigente: o filtro não tem foto para aplicar — não finge', async () => {
+  it('sem lote vigente: a lista FALHA com o motivo — nunca a fila geral sob o rótulo "só sugeridos"', async () => {
     respostas.radar_ingest_state = { data: [LOTES[0]], error: null };
     const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true }, '2026-10-20'), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(String(result.current.error)).toMatch(/Sem lote completo/);
+    expect(chamadas.radar_empresas ?? [], 'consultou a fila geral').toEqual([]);
+  });
+
+  it('controle: SEM o filtro e sem lote, a fila roda inteira (a falha acima é do filtro, não do lote)', async () => {
+    respostas.radar_ingest_state = { data: [LOTES[0]], error: null };
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: false }, '2026-10-20'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(chamadas.radar_empresas.filter((c) => c[0] === 'gte' && c[1] === 'score')).toEqual([]);
   });
 });

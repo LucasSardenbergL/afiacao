@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { CheckCircle2, MessageCircle, PhoneMissed, Ban, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -50,7 +50,9 @@ const LABEL_OK: Record<AcaoContato, string> = {
 type ResultadoPosSinal = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'lead_mudou';
 
 /** A oferta aberta: o lead (SNAPSHOT) e o id do toast "Marcado: em conversa" (para tirar o Desfazer). */
-interface Oferta { empresa: RadarEmpresa; toastId: string | number | null }
+/** `id` correlaciona exposição → resposta → resultado(s) e retries nos sensores (sem PII). */
+interface Oferta { empresa: RadarEmpresa; toastId: string | number | null; id: string }
+const novoIdOferta = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 /**
  * Menu "Registrar contato" do lead. Com `empresa` em mãos (ficha), marcar `em_conversa` num lead
@@ -91,10 +93,22 @@ export function RadarOutcomeMenu({
   const [ofertaAberta, setOfertaAberta] = useState<Oferta | null>(null);
   const ofertaRef = useRef<Oferta | null>(null);
   const [cadastrando, setCadastrando] = useState(false);
+  // Resposta tardia não pode agir sobre OUTRA ficha (Codex, código 2026-10-20): a ficha avança
+  // (`Próximo`) ou fecha enquanto a RPC/cadastro está em voo; sem esta guarda, a oferta de A
+  // aparecia sobre B e "Agora não" avançava B sem contato.
+  const cnpjAtualRef = useRef(cnpj);
+  cnpjAtualRef.current = cnpj;
+  const montadoRef = useRef(true);
+  useEffect(() => {
+    montadoRef.current = true;
+    return () => { montadoRef.current = false; };
+  }, []);
+  const aindaNoAlvo = (alvo: string) => montadoRef.current && cnpjAtualRef.current === alvo;
 
   const registrar = async (acao: AcaoContato, nota?: string) => {
+    const alvo = cnpj;
     try {
-      const r = await reg.mutateAsync({ cnpj, acao, nota });
+      const r = await reg.mutateAsync({ cnpj: alvo, acao, nota });
       let toastId: string | number | null = null;
       if (!r.deduped) {
         toastId = toast.success(LABEL_OK[acao], {
@@ -111,10 +125,14 @@ export function RadarOutcomeMenu({
       }
       // Sinal comercial num lead cadastrável: oferece o cadastro e ADIA o avanço da ficha até o
       // gestor responder. Registro que falhou nunca chega aqui; deduplicado não reoferece.
-      if (acao === 'em_conversa' && !r.deduped && empresa && cadastravelNoOmie(empresa).ok) {
-        const oferta: Oferta = { empresa, toastId };
+      // A ficha mudou de lead (ou fechou) durante o registro: o contato ficou gravado e o toast
+      // diz isso, mas nada de oferta nem de avanço — seriam sobre o lead errado.
+      if (!aindaNoAlvo(alvo)) return;
+      if (acao === 'em_conversa' && !r.deduped && empresa && empresa.cnpj === alvo && cadastravelNoOmie(empresa).ok) {
+        const oferta: Oferta = { empresa, toastId, id: novoIdOferta() };
         ofertaRef.current = oferta;
         setOfertaAberta(oferta);
+        track('radar.cadastro_pos_sinal_exibida', { oferta_id: oferta.id, origem: 'ficha' });
       } else {
         onRegistrado?.(acao);
       }
@@ -123,14 +141,17 @@ export function RadarOutcomeMenu({
     }
   };
 
-  const registrarResultado = (resultado: ResultadoPosSinal) =>
-    track('radar.cadastro_pos_sinal_resultado', { resultado, origem: 'ficha' });
-
-  const executarCadastro = async (alvo: RadarEmpresa, opcoes?: OpcoesCadastro) => {
+  const executarCadastro = async (alvo: RadarEmpresa, ofertaId: string, opcoes?: OpcoesCadastro) => {
+    const registrarResultado = (resultado: ResultadoPosSinal) =>
+      track('radar.cadastro_pos_sinal_resultado', { resultado, oferta_id: ofertaId, retomada: Boolean(opcoes), origem: 'ficha' });
     setCadastrando(true);
     try {
-      const atual = await lerLeadParaCadastro(alvo.cnpj);
-      const elegivel = atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok;
+      // A releitura barra um cadastro NOVO de quem mudou. Uma RETOMADA (código já confirmado pelo
+      // Omie, ou resposta indeterminada) não cria nada novo: a lib relê o vínculo antes de tocar o
+      // Omie e reconcilia — barrar aqui travaria a recuperação justo quando o recruzamento já
+      // marcou `ja_cliente` ou a RPC gravou e só perdeu a resposta (Codex, código 2026-10-20).
+      const atual = opcoes ? null : await lerLeadParaCadastro(alvo.cnpj);
+      const elegivel = opcoes != null || (atual != null && atual.prospeccao_status === 'em_conversa' && cadastravelNoOmie(atual).ok);
       if (!elegivel) {
         registrarResultado('lead_mudou');
         toast.info('Não cadastrei: o lead mudou desde o sinal', {
@@ -155,21 +176,21 @@ export function RadarOutcomeMenu({
         registrarResultado('indeterminado');
         toast.warning('Cadastro não confirmado pelo Omie', {
           description: 'O Omie não devolveu o código do cliente. O lead continua na fila.',
-          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, { retentativa: true }) },
+          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
         });
       } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
         registrarResultado('erro');
         const codigo = e.codigo;
         toast.error(`Cadastrado no Omie (cód. ${codigo}), mas o Radar não gravou o vínculo`, {
           description: msg,
-          action: { label: 'Gravar de novo', onClick: () => void executarCadastro(alvo, { codigoConhecido: codigo }) },
+          action: { label: 'Gravar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { codigoConhecido: codigo }) },
         });
       } else {
         registrarResultado('erro');
         toast.error('Não foi possível cadastrar', { description: msg });
       }
     } finally {
-      setCadastrando(false);
+      if (montadoRef.current) setCadastrando(false);
     }
   };
 
@@ -179,12 +200,13 @@ export function RadarOutcomeMenu({
     ofertaRef.current = null;
     setOfertaAberta(null);
     if (!oferta) return;
-    track('radar.cadastro_pos_sinal', { aceitou, origem: 'ficha' });
+    track('radar.cadastro_pos_sinal', { aceitou, oferta_id: oferta.id, origem: 'ficha' });
     if (aceitou) {
       if (oferta.toastId != null) toast.dismiss(oferta.toastId); // "Desfazer" o contato não desfaz o Omie
-      await executarCadastro(oferta.empresa);
+      await executarCadastro(oferta.empresa, oferta.id);
     }
-    onRegistrado?.('em_conversa');
+    // Avança só se a ficha ainda é a do lead ofertado (o cadastro pode levar segundos).
+    if (aindaNoAlvo(oferta.empresa.cnpj)) onRegistrado?.('em_conversa');
   };
 
   return (

@@ -35,8 +35,8 @@ ligava sinal → sugestão → aprovação.
    **indeterminado** (`OMIE_RESPOSTA_INDETERMINADA` → warning, lead segue na fila) · erro. O menu da rota
    (`RouteStopCard`, só CNPJ) não oferece.
 6. **Sensores** (nascem com a superfície, com denominador): `radar.sugeridos_filtro {ativo, origem card|filtro,
-   lote, sugeridos: N|null, total: T, limiar}`; `radar.cadastro_pos_sinal {aceitou, origem}` (cada evento = uma
-   oferta EXIBIDA; denominador = `radar.contato_registrado {acao: em_conversa}`); `radar.cadastro_pos_sinal_resultado
+   lote, sugeridos: N|null, total: T, limiar}`; `radar.cadastro_pos_sinal_exibida {oferta_id}` (exposição — o
+   denominador) · `radar.cadastro_pos_sinal {aceitou, oferta_id}` (resposta); `radar.cadastro_pos_sinal_resultado
    {resultado: sucesso|ja_existia|indeterminado|erro|lead_mudou}`.
 
 ## Medição em prod (psql-ro, 2026-10-20, foto 2026-08 = 501.380 empresas)
@@ -69,6 +69,17 @@ ainda não cruzada".
 | 11 MÉDIO | Limiar não protege contra mudança da fórmula | `limiar` vai nos eventos; versão da fórmula no ledger → **follow-up** |
 | 12 MÉDIO | Sensores sem denominador | Evento por oferta EXIBIDA (ambas as respostas) + `_resultado` correlacionado; denominador = `contato_registrado` |
 
+## Parecer Codex — 2ª rodada, CÓDIGO (adversarial sobre o diff, exit 0) — nenhum ALTO
+
+| # | Achado (reproduzido por ele) | Tratamento |
+| --- | --- | --- |
+| 1 MÉDIO | Oferta de A avançava a ficha de B: "Próximo" com a RPC em voo, a resposta chegava na ficha B e "Agora não" pulava B sem contato | Oferta e avanço só valem se a ficha AINDA é do lead (`cnpj` atual por ref) e o menu está montado; testes com `rerender` no meio do registro e com a oferta aberta |
+| 2 MÉDIO | "Gravar de novo" barrado pela própria releitura (recruzamento marcou `ja_cliente` antes da retomada) | Retomada (`codigoConhecido`/`retentativa`) não relê elegibilidade — a lib relê o vínculo e reconcilia; só cadastro NOVO é barrado |
+| 3 MÉDIO | Sem lote completo, "só sugeridos" mostrava a fila GERAL (e o teste canonizava o bug) | A lista FALHA com o motivo (inclusive vindo da URL); switch desabilitado sem lote; teste reescrito + controle sem o filtro |
+| 4 MÉDIO | Refetch do count falhava e o card seguia com o número velho, sem aviso | Estado composto: número fica + "desatualizado" (`desatualizado()` do painel) |
+| 5 MÉDIO | Paginação mistura lotes se o vigente vira no meio da rolagem (preexistente) | **Follow-up** — a chave da fila é o que o #3220 (versão da fila) está mudando |
+| 6 BAIXO | Oferta abandonada (sair sem responder) não contava | `radar.cadastro_pos_sinal_exibida {oferta_id}` na exposição; resposta e resultado levam o mesmo `oferta_id` |
+
 ## Provas
 
 - `src/lib/radar/__tests__/sugeridos.test.ts` — limiar, predicado, cada exclusão (já cliente · vínculo (inclusive
@@ -98,5 +109,6 @@ ainda não cruzada".
   lote e clique individual (Codex #3) — exige migration.
 - Versão da fórmula do score (md5 do `prosrc`) no ledger e nos eventos; re-medir a distribuição ao mudar peso
   (Codex #11).
+- Paginação da fila com a identidade do lote na chave (Codex código #5; coordenar com o #3220).
 - Mapa/ranking de cidades vão por RPC e ignoram `soSugeridos` (como já ignoram `soIneditos`).
 - Oferta pós-sinal também no `RouteStopCard` (hoje só tem o CNPJ).
