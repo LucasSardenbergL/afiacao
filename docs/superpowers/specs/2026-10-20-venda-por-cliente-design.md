@@ -143,10 +143,10 @@ Entrega: (i) `calculate-scores` passa a **calcular e persistir** o intervalo de 
   Cada comprador entra com suas linhas de recompra (§6) e o motivo de entrada ("entrega amanhã em X" ou "maior atraso da carteira").
 - **Linha de base (sem grupo controle):**
   1. **Reconstrução histórica** (`fase='historico'`): o gerador roda para cada dia dos **12 meses anteriores** usando só os pedidos conhecidos **até aquela data** (sem olhar o futuro — a cadência e o atraso de cada dia são recalculados com o histórico daquele dia) e com a carteira atual. O job de desfecho fecha essas linhas na hora (o futuro já é conhecido). Resultado: a taxa "atrasado que recomprou em 14 dias com a rotina de então", semana a semana, incluindo a **mesma época do ano passado** — o que absorve boa parte da sazonalidade.
-  2. **Sombra curta** (`fase='sombra'`): assim que a Fase 2 é implantada, o gerador grava as listas do dia sem mostrar a ninguém, até o go-live. Serve para **conferir** que a reconstrução bate com o presente (se a sombra divergir muito do histórico das mesmas semanas, a reconstrução tem defeito e o painel diz "linha de base não confiável" em vez de comparar).
+  2. **Sombra curta** (`fase='sombra'`): assim que a Fase 2 é implantada, o gerador grava as listas do dia sem mostrar a ninguém, até o go-live. Serve só para **conferir** que a reconstrução bate com o presente: a lista gerada ao vivo num dia tem de ser **idêntica** à lista que a reconstrução produz para o mesmo dia (compara a lista, não o desfecho — não espera janela). **3 dias seguidos idênticos** bastam (decisão do founder, 2026-10-20: não há razão para 2 semanas). Divergência → o painel diz "linha de base não confiável" e a Onda 1 não liga.
   3. No go-live da Onda 1, passa a gravar `fase='ativa'`.
   Limite declarado: carteira e mercado mudam de um ano para o outro — continua sendo antes × depois, não prova causal.
-- **Critério em 30 dias** (lido no painel): **≥80%** dos compradores da lista com tentativa de contato registrada; **conversão `ativa` acima da linha de base** da mesma época (virou pedido / sugeridos) e receita por comprador atendido não menor; medição incompleta (`nao_medivel` alto, sync defasado, sombra divergente do histórico) = **inconclusivo**, não libera a onda seguinte. Limite declarado: antes × depois, sujeito a sazonalidade — é sinal operacional, não prova causal.
+- **Critério em 30 dias** (lido no painel): **≥80%** dos compradores da lista com tentativa de contato registrada; **conversão `ativa` acima da linha de base** da mesma época (virou pedido / sugeridos) e receita por comprador atendido não menor; medição incompleta (`nao_medivel` alto, sync defasado, lista ao vivo divergente da reconstruída) = **inconclusivo**, não libera a onda seguinte. Limite declarado: antes × depois, sujeito a sazonalidade — é sinal operacional, não prova causal.
 - **Onde mais aparece:** a lista é uma **fonte nova da fila** (adapter `recompra`) — só aparece na Fase 5.
 - **Deploy:** migration (gerador + configuração) · cron.
 
@@ -190,7 +190,11 @@ Construímos as Fases 0–5 nesta leva, mas a farmer recebe em ondas, cada uma l
 - **Onda 2:** liga "Oferecer também" (complemento) quando a Onda 1 tiver ≥80% de tentativas por 2 semanas seguidas.
 - **Onda 3:** liga preço alvo na ficha quando o founder tiver aprovado a primeira leva de repasses (Fase 4) e a Onda 2 estiver estável.
 
-O liga/desliga é configuração no servidor (não flag em localStorage), para valer nos aparelhos das farmers. **Ondas: decisão do founder.**
+O liga/desliga é configuração no servidor (não flag em localStorage), para valer nos aparelhos das farmers. **Ondas: decisão do founder. Ligam sozinhas** (decisão do founder, 2026-10-20), avaliadas todo dia pelo cron do gerador:
+- Onda 1: reconstrução histórica carregada **e** 3 dias seguidos de lista ao vivo idêntica à reconstruída.
+- Onda 2: ≥ 80% de compradores da lista com contato registrado em cada uma das 2 últimas semanas.
+- Onda 3: existe ≥ 1 repasse aprovado vigente **e** a Onda 2 está ligada.
+Cada ligação fica registrada (data e condição atendida) e aparece no painel do founder. Antes da Onda 1, o Meu Dia mostra "sua lista começa em breve", nunca uma lista vazia.
 
 ## 9. Camadas de deploy
 
