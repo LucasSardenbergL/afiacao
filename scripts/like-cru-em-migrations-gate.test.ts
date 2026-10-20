@@ -203,10 +203,10 @@ describe('o repo', () => {
 
   it('a baseline é EXATA: as definições mortas estão no texto, e nada além delas', () => {
     expect(confrontar(r.contagem, CONHECIDOS)).toEqual({ novos: [], quitados: [] });
-    // 22 + 1: a 20260929001651 recria radar_atribuir_tarefa (só o hoje de SP muda) — o MESMO
-    // falso-positivo de VIVOS_PERMITIDOS, agora no arquivo da definição viva.
+    // 22 + 1 + 1: a 20260929001651 (hoje de SP) e a 20261019225545 (guard alfanumérico) recriam
+    // radar_atribuir_tarefa — o MESMO falso-positivo de VIVOS_PERMITIDOS, a última no arquivo da definição viva.
     // + 1: a 20261020120200 recria radar_contagem_por_municipio com p_lote (assinatura de 10 args).
-    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(24);
+    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(25);
   });
 
   it('os 3 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {
@@ -242,7 +242,21 @@ describe('o repo', () => {
   it('vivo permitido que perdeu a validação a montante reprova (a âncora sumiu)', () => {
     const corpos = new Map(REPO.corpos);
     const alvo = 'radar_atribuir_tarefa(text,integer)';
-    corpos.set(alvo, (corpos.get(alvo) ?? '').replace("p_cnpj !~ '^[0-9]{14}$'", 'false'));
+    const vivo = corpos.get(alvo) ?? '';
+    // O guard alfanumérico (20261019225545) TEM de estar no corpo vivo — senão o replace abaixo é no-op e
+    // o teste provaria o gate contra um corpo que nem é o de prod.
+    expect(vivo).toContain("p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'");
+    corpos.set(alvo, vivo.replace("p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'", 'false'));
+    const v = veredito(analisar(REPO.arquivos, corpos, VIVOS_PERMITIDOS), true);
+    expect(v.codigo).toBe(1);
+    expect(v.linhas.join('\n')).toContain('PERMITIDO radar_atribuir_tarefa(text,integer): a âncora');
+  });
+
+  it('a âncora NUMÉRICA antiga não vale mais: um corpo que voltasse a ^[0-9]{14}$ reprova (o gate ancora no guard novo)', () => {
+    const corpos = new Map(REPO.corpos);
+    const alvo = 'radar_atribuir_tarefa(text,integer)';
+    // replace com FUNÇÃO: `$'` na string de substituição é padrão especial do JS (insere o sufixo do match).
+    corpos.set(alvo, (corpos.get(alvo) ?? '').replace("p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'", () => "p_cnpj !~ '^[0-9]{14}$'"));
     const v = veredito(analisar(REPO.arquivos, corpos, VIVOS_PERMITIDOS), true);
     expect(v.codigo).toBe(1);
     expect(v.linhas.join('\n')).toContain('PERMITIDO radar_atribuir_tarefa(text,integer): a âncora');

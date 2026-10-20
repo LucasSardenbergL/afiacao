@@ -66,7 +66,7 @@ export function recorteDeLote(
   return { ultimoLote: null, primeiraVistaMin: null };
 }
 
-const MESES_PT =['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
 /** `'2026-05'` → `'mai/2026'`; fora do formato devolve cru (não inventa mês). */
 function rotuloMesLote(mes: string): string {

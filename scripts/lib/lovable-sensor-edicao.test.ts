@@ -56,11 +56,44 @@ describe('commits do bot — o eixo da main', () => {
   });
 
   it('[SENSOR_TYPES_TOLERADO] so o types.ts regenerado e tolerado; edge editada e suspeita', () => {
-    expect([...ARQUIVOS_TOLERADOS_DO_BOT]).toEqual(['src/integrations/supabase/types.ts']);
+    expect(ARQUIVOS_TOLERADOS_DO_BOT).toContain('src/integrations/supabase/types.ts');
     const limpo = commit('a', 'Lovable update', ['src/integrations/supabase/types.ts']);
     const edge = commit('b', 'Changes', ['supabase/functions/sync-reprocess/index.ts']);
     const misto = commit('c', 'Changes', ['src/integrations/supabase/types.ts', 'src/App.tsx']);
     expect(commitsSuspeitos([limpo, edge, misto])).toEqual([edge, misto]);
+  });
+
+  it('[SENSOR_MCP_GERADO_TOLERADO] #3206: a edge mcp/index.ts e GERADA pelo @lovable.dev/mcp-js — so ela, tolerado', () => {
+    expect(ARQUIVOS_TOLERADOS_DO_BOT).toContain('supabase/functions/mcp/index.ts');
+    const gerado = commit('43d456c18', 'Changes', ['supabase/functions/mcp/index.ts']);
+    expect(commitsSuspeitos([gerado])).toEqual([]);
+  });
+
+  it('[SENSOR_GERADO_MAIS_OUTRO_SUSPEITO] arquivo gerado junto de qualquer outro continua SUSPEITO', () => {
+    const misto = commit('c', 'Changes', ['supabase/functions/mcp/index.ts', 'supabase/functions/sync-reprocess/index.ts']);
+    const dupla = commit('d', 'Changes', ['src/integrations/supabase/types.ts', 'supabase/functions/mcp/index.ts', 'src/App.tsx']);
+    expect(commitsSuspeitos([misto, dupla])).toEqual([misto, dupla]);
+  });
+
+  it('[SENSOR_LISTA_FECHADA] a tolerancia e lista explicita, nao prefixo: outra edge em supabase/functions/ e suspeita', () => {
+    expect(ARQUIVOS_TOLERADOS_DO_BOT).toHaveLength(2);
+    const vizinha = commit('e', 'Changes', ['supabase/functions/mcp-outra/index.ts']);
+    expect(commitsSuspeitos([vizinha])).toEqual([vizinha]);
+  });
+
+  it('[SENSOR_INCIDENTE_3206] a leva real do bot em 2026-10-20 (72f6ad405 + 43d456c18 + squash bdeb8f298) da SEM_EDICAO', () => {
+    // `git log origin/main --author=gpt-engineer-app --since=2026-10-20T01:50:00Z --format=%x1e%H%x09%s --name-only --diff-merges=first-parent`
+    const log =
+      '\x1ebdeb8f2985297ecb43ad6757e35cafba88f9f328\tNão publicou 3 arquivos dif.\n\n' +
+      'src/integrations/supabase/types.ts\nsupabase/functions/mcp/index.ts\n' +
+      '\x1e43d456c18449a84acc54e667ee42b75a0d4e5b60\tChanges\n\nsupabase/functions/mcp/index.ts\n' +
+      '\x1e72f6ad4053e09b3e8db947debbd8e9ed5f2909d7\tWork in progress\n\nsrc/integrations/supabase/types.ts\n';
+    const commits = parsearLogDoBot(log);
+    expect(commits).toHaveLength(3);
+    const suspeitos = commitsSuspeitos(commits);
+    expect(suspeitos).toEqual([]);
+    const resposta = lerResposta('Deployed mcp. Active. Hashes match.\nNo files were edited.');
+    expect(julgar(resposta, suspeitos, true)).toBe('SEM_EDICAO');
   });
 });
 

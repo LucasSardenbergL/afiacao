@@ -93,7 +93,7 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
  * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
  */
-export const VERSAO = "v1.21-cnpj-mascara-exata";
+export const VERSAO = "v1.22-lookup-confere-documento";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
