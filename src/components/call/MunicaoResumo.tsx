@@ -1,4 +1,4 @@
-import type { Municao } from '@/lib/call/municao';
+import type { Municao } from '@/lib/venda-cliente/municao';
 
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 

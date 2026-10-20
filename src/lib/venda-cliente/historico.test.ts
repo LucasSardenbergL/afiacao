@@ -39,6 +39,15 @@ describe('derivarHistorico', () => {
     expect(derivarHistorico({ agora, pedidos: [], itens }).topProdutos).toHaveLength(5);
   });
 
+  it('produtos traz TODOS os SKUs (a ficha procura o SKU sugerido fora do top 5)', () => {
+    const itens = Array.from({ length: 8 }, (_, i) => ({
+      codigo: i, nome: `P${i}`, quantidade: 1, precoUnit: 10 + i, dataPedido: '2026-06-01',
+    }));
+    const h = derivarHistorico({ agora, pedidos: [], itens });
+    expect(h.produtos).toHaveLength(8);
+    expect(h.produtos.find((p) => p.codigo === 7)?.ultimoPreco).toBe(17);
+  });
+
   it('ultimosPedidos = 3 mais recentes por data', () => {
     const h = derivarHistorico({
       agora, itens: [],
@@ -62,6 +71,6 @@ describe('derivarHistorico', () => {
   });
 
   it('vazio → listas vazias (sem fabricar)', () => {
-    expect(derivarHistorico({ agora, itens: [], pedidos: [] })).toEqual({ topProdutos: [], ultimosPedidos: [] });
+    expect(derivarHistorico({ agora, itens: [], pedidos: [] })).toEqual({ topProdutos: [], produtos: [], ultimosPedidos: [] });
   });
 });
