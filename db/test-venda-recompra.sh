@@ -26,10 +26,10 @@ MIG="$REPO_ROOT/supabase/migrations/20261020150000_venda_cliente_recompra.sql"
 FIXTURE="$REPO_ROOT/db/fixtures/venda-recompra.json"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  # <sabotagem>:<assert com a paridade>:<assert com PULA_PARIDADE=1> — uma camada por vez: a paridade (P)
-  # roda antes dos casos isolados e pega quase tudo; cegá-la prova que o caso isolado pega SOZINHO.
-  # `POS_*` = a postcondição da própria migration aborta; `-` = rodada não se aplica.
-  SABOTAGENS="futuro:P:D sem_alias:P:B com_cancelado:P:C empresa_unica:P:E desconto_zero:P:F limiar_estrito:G:G piso_perdido:P:H acl_aberta:POS_ACL_PUBLIC:-"
+  # <sabotagem>:<assert que TEM de acusá-la> (`ID!MARCA` = a postcondição da própria migration aborta com
+  # MARCA). Uma camada por vez: a paridade (P) roda antes dos casos isolados e pega quase tudo; o sufixo
+  # `_semP` roda a MESMA sabotagem com PULA_PARIDADE=1, provando que o caso isolado pega SOZINHO.
+  SABOTAGENS="futuro:P futuro_semP:D sem_alias:P sem_alias_semP:B com_cancelado:P com_cancelado_semP:C empresa_unica:P empresa_unica_semP:E desconto_zero:P desconto_zero_semP:F limiar_estrito:G limiar_estrito_semP:G piso_perdido:P piso_perdido_semP:H acl_aberta:POS!POS_ACL_PUBLIC"
   LOGDIR="$(mktemp -d "/tmp/falsifica-venda-recompra.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${TEST_LOCALE:-C}) ══"
   for pula in "" 1; do
@@ -42,27 +42,23 @@ if [ "${1:-}" = "--falsificar" ]; then
   echo "✅ controle verde (com e sem paridade)"
   falhas=0; n_sab=0
   for par in $SABOTAGENS; do
-    s="${par%%:*}"; resto="${par#*:}"; com="${resto%%:*}"; sem="${resto#*:}"
-    for modo in com sem; do
-      if [ "$modo" = com ]; then a="$com"; pula=""; else a="$sem"; pula=1; fi
-      [ "$a" = "-" ] && continue
-      n_sab=$((n_sab+1)); log="$LOGDIR/$s-$modo.log"
-      if SABOTAGEM="$s" PULA_PARIDADE="$pula" bash "$0" > "$log" 2>&1; then
-        echo "❌ $s ($modo paridade): suíte ficou VERDE"; falhas=$((falhas+1)); continue
-      fi
-      if ! grep -q "SABOTAGEM ATIVA: $s" "$log"; then
-        echo "❌ $s ($modo paridade): sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
-      fi
-      case "$a" in
-        POS_*) padrao="$a" ;;
-        *)     padrao="FAIL $a " ;;
-      esac
-      if grep -q "$padrao" "$log"; then
-        echo "✅ $s ($modo paridade) → $a vermelho"
-      else
-        echo "❌ $s ($modo paridade): vermelho, mas não no $a (log: $log)"; falhas=$((falhas+1))
-      fi
-    done
+    s="${par%%:*}"; a="${par#*:}"; n_sab=$((n_sab+1))
+    sab="${s%_semP}"; pula=""; [ "$sab" != "$s" ] && pula=1
+    if SABOTAGEM="$sab" PULA_PARIDADE="$pula" bash "$0" > "$LOGDIR/$s.log" 2>&1; then
+      echo "❌ $s: suíte ficou VERDE"; falhas=$((falhas+1)); continue
+    fi
+    if ! grep -q "SABOTAGEM ATIVA: $sab" "$LOGDIR/$s.log"; then
+      echo "❌ $s: sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
+    fi
+    case "$a" in
+      *!*) padrao="${a#*!}" ;;
+      *)   padrao="FAIL $a " ;;
+    esac
+    if grep -q "$padrao" "$LOGDIR/$s.log"; then
+      echo "✅ $s → $a vermelho"
+    else
+      echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
+    fi
   done
   echo "SABOTAGENS: $((n_sab - falhas)) vermelhas / $falhas falhas"
   [ "$falhas" -eq 0 ] && exit 0 || exit 1

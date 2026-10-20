@@ -14,6 +14,7 @@ import {
   type Empresa,
   type LinhaPedido,
 } from '../src/lib/venda-cliente/recompra';
+import { STATUS_NAO_VENDA } from '../src/lib/farmer/universo-pedidos';
 
 type Item = [number, number, number | null, number | null];
 interface Pedido {
@@ -31,7 +32,6 @@ interface Fixture {
   pedidos: Pedido[];
 }
 
-const STATUS_NAO_VENDA = ['cancelado', 'rascunho', 'pendente', 'orcamento'];
 const EMPRESAS = ['oben', 'colacor', 'colacor_sc'];
 
 const diaSP = new Intl.DateTimeFormat('en-CA', {
