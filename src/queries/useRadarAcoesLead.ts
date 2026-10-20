@@ -59,6 +59,22 @@ export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
   },
 };
 
+/** O que a oferta pós-sinal relê ANTES de cadastrar: a elegibilidade é do AGORA, não do snapshot. */
+export type LeadParaCadastro = Pick<RadarEmpresa, 'cnpj' | 'ja_cliente' | 'omie_codigo_cliente' | 'prospeccao_status' | 'rfb_situacao' | 'ultimo_lote' | 'score'>;
+
+/** Estado ATUAL do lead (null = não existe mais). Parecer Codex 2026-10-20: snapshot identifica o
+ *  alvo, não prova elegibilidade — entre o sinal e o clique o lead pode ter virado cliente (lote em
+ *  outra aba), sido descartado ou ganho vínculo. */
+export async function lerLeadParaCadastro(cnpj: string): Promise<LeadParaCadastro | null> {
+  const { data, error } = await supabase
+    .from('radar_empresas')
+    .select('cnpj,ja_cliente,omie_codigo_cliente,prospeccao_status,rfb_situacao,ultimo_lote,score')
+    .eq('cnpj', cnpj)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
 /**
  * Cadastra UMA empresa no Omie (Oben). Anti-dup: a edge consulta pelo documento antes de
  * criar; `created:false` = já existia. Depois persiste o vínculo via RPC.
