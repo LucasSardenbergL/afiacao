@@ -1,6 +1,6 @@
 # Venda por cliente — recompra, complemento e preço dentro do dia da farmer
 
-> **Status:** decisões do founder incorporadas, aguardando aprovação · 2026-10-20 · branch `claude/cross-sell-upsell-revenue-702b57`
+> **Status:** aprovado pelo founder em 2026-10-20 · 2026-10-20 · branch `claude/cross-sell-upsell-revenue-702b57`
 > **Origem:** brainstorming Claude + Codex + Fable (dossiê de uso medido em prod, 20/10/2026).
 > **Próximo:** aprovação do Lucas → `superpowers:writing-plans`.
 
@@ -28,7 +28,7 @@ O programa entrega **um dia de trabalho da farmer dentro do app**: abrir o Meu D
 ### Objetivos
 1. **Medir sem pedir clique.** Toda sugestão mostrada tem identidade; um job casa sugestão × pedido do Omie e diz "virou / não virou / não consegui medir".
 2. **Motores sãos.** Saúde do cliente separa *perdido* de *atrasado*; recompra por cliente × produto (o quê, quanto, quando, o que está atrasado); **uma** fórmula de complemento, no servidor.
-3. **Uma lista de quem ligar**, com motivo, e um desenho que permite saber se ela funciona (taxa de conversão antes × depois, contra um período em sombra — sem grupo controle, decisão do founder).
+3. **Uma lista de quem ligar**, com motivo, e um desenho que permite saber se ela funciona (conversão da lista contra a **reconstrução do mesmo gerador nos 12 meses anteriores**, conferida por uma sombra curta — sem grupo controle, decisão do founder).
 4. **Complemento na ligação**, não numa tela separada.
 5. **Repasse de preço** determinístico: o founder vê defasagens e casos abaixo do piso; a farmer vê preço alvo, nunca custo.
 6. **UX única:** um Meu Dia com fila única, ficha da ligação e desfecho em 1 toque; telas mortas saem do caminho da farmer.
@@ -43,7 +43,7 @@ O programa entrega **um dia de trabalho da farmer dentro do app**: abrir o Meu D
 
 ### Anti-objetivos (falha mesmo se "funcionar")
 - **Mais uma tela de sugestões sem desfecho.** Se a sugestão não tiver ID e casamento com o Omie, o programa falhou.
-- **Antecipar compra e chamar de crescimento.** O critério compara a conversão das sugestões contra a **sombra** (mesmos atrasados, sem lista), não o faturamento contra o mês anterior; e o painel diz com todas as letras que antes × depois não é prova causal.
+- **Antecipar compra e chamar de crescimento.** O critério compara a conversão das sugestões contra a **linha de base** (mesmo gerador reconstruído no passado + sombra, sem lista), não o faturamento contra o mês anterior; e o painel diz com todas as letras que antes × depois não é prova causal.
 - **Comprar faturamento com margem**: desconto geral, IA sugerindo preço, preço alvo abaixo do piso.
 - **Expor custo à farmer**, direta ou indiretamente (ex.: preço alvo derivado que permita reconstruir o custo — ver §7.4).
 - **Fabricar número:** cliente sem dado vira "não consegui medir", nunca zero.
@@ -93,7 +93,7 @@ Toda sugestão que a farmer **vê** é uma linha com identidade. É a espinha do
 - `farmer_user_id` (dono da carteira no dia), `comprador_id` (`customer_user_id` canônico), `empresa` (`oben` | `colacor` | `colacor_sc`)
 - alvo: `produto_id` (recompra/preço) ou `familia` (complemento)
 - referência: `qtd_ref`, `valor_ref` (R$ esperado — nulo se não houver base, **nunca 0**), `preco_alvo` (só `tipo=preco`)
-- `fase` (`sombra` | `ativa`) — antes do go-live da onda correspondente, o gerador já roda e grava linhas **sombra** (não mostradas a ninguém); elas medem a conversão natural dos atrasados sem a lista e são a base de comparação
+- `fase` (`historico` | `sombra` | `ativa`) — `historico` = linhas reconstruídas para datas passadas (§Fase 2); `sombra` = gerador rodando antes do go-live, sem mostrar a ninguém; `ativa` = mostradas à farmer. `historico` e `sombra` são a linha de base
 - `mostrada_em` (primeira exibição real na tela; nulo = nunca vista)
 - desfecho automático: `desfecho` (`virou_pedido` | `nao_virou` | `nao_medivel`), `desfecho_motivo` (ex.: `cadastro_sem_vinculo`, `sync_atrasado`), `sales_order_id`, `valor_realizado`, `avaliado_em`
 - desfecho manual (§7.6): referência ao registro de contato
@@ -114,7 +114,7 @@ Ordem pedida pelo Lucas: **melhorar os motores primeiro, UX por último**. Cada 
 ### Fase 0 — Medir sem pedir clique
 
 - Tabela `venda_sugestao` + RPCs (marcar mostrada, ler minhas sugestões) + job de desfecho (§6).
-- **Painel de adoção do founder** (master-only): por farmer e por semana — clientes na lista (denominador), clientes contatados (desfecho manual registrado), clientes que compraram (desfecho automático), receita e faixa de margem, **conversão `ativa` × `sombra` lado a lado** (com o aviso "antes × depois, não causal"), e a contagem de `nao_medivel` (se for alta, o painel diz "não consegui medir", não "zero").
+- **Painel de adoção do founder** (master-only): por farmer e por semana — clientes na lista (denominador), clientes contatados (desfecho manual registrado), clientes que compraram (desfecho automático), receita e faixa de margem, **conversão `ativa` × linha de base lado a lado** — mesma semana do ano anterior (`historico`) e últimas semanas antes do go-live (`sombra`) — com o aviso "antes × depois, não causal", e a contagem de `nao_medivel` (se for alta, o painel diz "não consegui medir", não "zero").
 - **Onde mais aparece:** nada da farmer muda nesta fase.
 - **Sensor:** o próprio painel; a query de leitura fica no plano ("quando medir" é query).
 - **Deploy:** migration · edge/cron do job · Publish (painel).
@@ -141,8 +141,12 @@ Entrega: (i) `calculate-scores` passa a **calcular e persistir** o intervalo de 
   1. os compradores **atrasados** das **cidades com entrega amanhã** — agenda semanal `route_schedule` (dia da semana → cidade/UF, 24 linhas; só **leitura** da tabela, nenhuma tela de rota volta);
   2. os **maiores atrasos** do resto da carteira elegível, por valor esperado em atraso (teto diário ⟨decisão minha: 10 por farmer, ajustável na configuração⟩).
   Cada comprador entra com suas linhas de recompra (§6) e o motivo de entrada ("entrega amanhã em X" ou "maior atraso da carteira").
-- **Sombra antes do go-live:** o gerador começa a gravar `fase='sombra'` assim que a Fase 2 é implantada — idealmente **≥ 2 semanas antes** da Onda 1 — sem mostrar nada. No go-live, passa a gravar `fase='ativa'`.
-- **Critério em 30 dias** (lido no painel): **≥80%** dos compradores da lista com tentativa de contato registrada; **conversão `ativa` acima da `sombra`** (virou pedido / sugeridos) e receita por comprador atendido não menor; medição incompleta (`nao_medivel` alto, sync defasado, sombra curta) = **inconclusivo**, não libera a onda seguinte. Limite declarado: antes × depois, sujeito a sazonalidade — é sinal operacional, não prova causal.
+- **Linha de base (sem grupo controle):**
+  1. **Reconstrução histórica** (`fase='historico'`): o gerador roda para cada dia dos **12 meses anteriores** usando só os pedidos conhecidos **até aquela data** (sem olhar o futuro — a cadência e o atraso de cada dia são recalculados com o histórico daquele dia) e com a carteira atual. O job de desfecho fecha essas linhas na hora (o futuro já é conhecido). Resultado: a taxa "atrasado que recomprou em 14 dias com a rotina de então", semana a semana, incluindo a **mesma época do ano passado** — o que absorve boa parte da sazonalidade.
+  2. **Sombra curta** (`fase='sombra'`): assim que a Fase 2 é implantada, o gerador grava as listas do dia sem mostrar a ninguém, até o go-live. Serve para **conferir** que a reconstrução bate com o presente (se a sombra divergir muito do histórico das mesmas semanas, a reconstrução tem defeito e o painel diz "linha de base não confiável" em vez de comparar).
+  3. No go-live da Onda 1, passa a gravar `fase='ativa'`.
+  Limite declarado: carteira e mercado mudam de um ano para o outro — continua sendo antes × depois, não prova causal.
+- **Critério em 30 dias** (lido no painel): **≥80%** dos compradores da lista com tentativa de contato registrada; **conversão `ativa` acima da linha de base** da mesma época (virou pedido / sugeridos) e receita por comprador atendido não menor; medição incompleta (`nao_medivel` alto, sync defasado, sombra divergente do histórico) = **inconclusivo**, não libera a onda seguinte. Limite declarado: antes × depois, sujeito a sazonalidade — é sinal operacional, não prova causal.
 - **Onde mais aparece:** a lista é uma **fonte nova da fila** (adapter `recompra`) — só aparece na Fase 5.
 - **Deploy:** migration (gerador + configuração) · cron.
 
@@ -182,7 +186,7 @@ Um RPC por cliente/dia: `contatei` com resultado `vendeu` | `vai_pedir` | `sem_i
 
 Construímos as Fases 0–5 nesta leva, mas a farmer recebe em ondas, cada uma liberada pelo sinal da anterior (lido no painel):
 
-- **Onda 1 (go-live, uso obrigatório):** Meu Dia com lista de recompra + ficha (Recomprar + Histórico) + desfecho em 1 toque. A sombra da Fase 2 vira `ativa` aqui.
+- **Onda 1 (go-live, uso obrigatório):** Meu Dia com lista de recompra + ficha (Recomprar + Histórico) + desfecho em 1 toque. O gerador passa de `sombra` para `ativa` aqui.
 - **Onda 2:** liga "Oferecer também" (complemento) quando a Onda 1 tiver ≥80% de tentativas por 2 semanas seguidas.
 - **Onda 3:** liga preço alvo na ficha quando o founder tiver aprovado a primeira leva de repasses (Fase 4) e a Onda 2 estiver estável.
 
@@ -194,7 +198,7 @@ O liga/desliga é configuração no servidor (não flag em localStorage), para v
 |---|---|---|---|
 | 0 | `venda_sugestao`, RPCs, job | cron do job de desfecho | painel do founder |
 | 1 | situação de recompra, recompra × SKU, `get_meu_mixgap` evoluída | `calculate-scores` se 1a ficar lá | — |
-| 2 | gerador D-1 (sombra → ativa), configuração | cron do gerador | — |
+| 2 | gerador D-1 (histórico · sombra → ativa), configuração, carga da reconstrução | cron do gerador | — |
 | 3 | — (coberto em 1c) | — | seção na ficha |
 | 4 | lista de repasse em lote, tabela de aprovação | — | lista do founder + seção na ficha |
 | 5 | RPC de desfecho manual, liga/desliga por onda | — | Meu Dia + ficha |
@@ -219,7 +223,8 @@ Quem faz: migration no envelope seguro → eu; fora dele → founder no SQL Edit
 
 | Pergunta | Decisão |
 |---|---|
-| Grupo controle | **Sem controle.** Todos os atrasados entram na lista; a base de comparação é a sombra pré-go-live |
+| Grupo controle | **Sem controle.** Todos os atrasados entram na lista |
+| Linha de base | **Reconstrução dos 12 meses anteriores + sombra curta** para conferir (founder: "pode fazer como você preferir") |
 | Tudo no dia 1 × ondas | **3 ondas** (§8) |
 | Preço alvo | **Só repasses aprovados** pelo founder |
 | Lista do dia | **Cidades com entrega amanhã + maiores atrasos** do resto da carteira (união) |
