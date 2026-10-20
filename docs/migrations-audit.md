@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **676** custom migrations totais
-- **2168** objetos esperados (criados por estas migrations)
+- **679** custom migrations totais
+- **2173** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 792
+  - `function`: 797
   - `rls_policy`: 477
   - `index`: 283
   - `cron_job`: 194
@@ -5455,6 +5455,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
 
+### `20261020120200_radar_contagem_municipio_lote_vigente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
 ### `20261020130000_grupos_caca_cnpj_alfanumerico.sql`
 
 | Tipo | Objeto | Parent |
@@ -5472,6 +5478,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_avisar_lote` | — |
 | `cron_job` | `cron.radar-avisar-lote-diario` | — |
+
+### `20261020143511_venda_cliente_complemento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._mixgap_gaps_compradores` | — |
+| `function` | `public._carteira_mixgap_for_owner` | — |
+| `function` | `public.venda_complemento_comprador` | — |
+
+### `20261020150000_fin_capital_giro_prazos_empresa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_capital_giro_prazos_empresa` | — |
 
 ### `20261020150000_venda_cliente_recompra.sql`
 
