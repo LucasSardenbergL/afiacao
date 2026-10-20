@@ -371,3 +371,94 @@ Deno.test("teto de leitura: páginas cheias além do teto ficam marcadas como tr
   assertEquals([r.chamadas.listar.length, r.resumo.paginas_lidas, r.resumo.paginacao, r.resumo.listados], [MAX_PAGINAS_POR_RODADA, 3, "truncada_no_teto", 150]);
   assertEquals([r.resumo.consultados, r.resumo.aguardando], [1, 149]);
 });
+
+// ── CT-e (modelo 57) fora da fila (2026-10-20) ──────────────────────────────────────────────────
+// Prod 2026-10-20: a rodada 12:50Z (OB) gastou a única consulta na CT-e 12199225171 → NFE01 "lote
+// sem itens" no ledger; 28 cabeçalhos CT-e sem itens em nfe_recebimentos.
+const chaveCte = (id: number) => chave(id).slice(0, 20) + "57" + chave(id).slice(22);
+/** `cModeloNFe: null` = o campo não veio na listagem (undefined cairia no default). */
+function cte(id: number, cModeloNFe: string | null = "57", ch: string | null = chaveCte(id)): RegistroListagem {
+  return { cabec: { nIdReceb: id, cChaveNFe: ch, cModeloNFe }, infoCadastro: PENDENTE };
+}
+
+Deno.test("CT-e na listagem: pulada e contada em `ctes`, NUNCA consultada — a consulta vai à NF-e, que é importada", async () => {
+  const r = await rodar({
+    paginas: [pagina([cte(1401), reg(1402, PENDENTE), cte(1403)])],
+    detalhes: { 1401: detalhe(1401), 1402: detalhe(1402), 1403: detalhe(1403) },
+  });
+  assertEquals(r.chamadas.consultar, [1402], "a CT-e gastou a consulta");
+  assertEquals([r.resumo.ctes, r.resumo.listados, r.resumo.aguardando, r.resumo.consultados, r.importadas, r.puladas, r.erros], [2, 3, 0, 1, 1, 0, []]);
+  assertEquals(r.chamadas.cabecalhos.map((c) => c.chave_acesso), [chave(1402)]);
+});
+
+Deno.test("CT-e na vez em que o sorteio a ESCOLHERIA se fosse candidata: a consulta ainda vai à NF-e (desvio provado, não só contado)", async () => {
+  // Parecer Codex (desenho, 2026-10-20): a prova pelos contadores reprova a retirada do filtro, mas fixar a
+  // `vez` que escolheria a CT-e prova também o desvio da consulta.
+  let vez = 0;
+  while (escolherNaVez([1411, 1412], vez, 1)[0] !== 1411) vez++;
+  const r = await rodar({ paginas: [pagina([cte(1411), reg(1412, PENDENTE)])], detalhes: { 1411: detalhe(1411), 1412: detalhe(1412) } }, vez);
+  assertEquals([r.chamadas.consultar, r.resumo.ctes, r.importadas], [[1412], 1, 1]);
+});
+
+Deno.test("invariante do sensor: listados = ctes + sem_id + ja_importados + cancelados + recebidos_no_omie + aguardando + consultados", async () => {
+  // Parecer Codex (desenho, 2026-10-20): CT-e já importada ou recebida no Omie conta SÓ em `ctes` — `puladas`
+  // (o `skipped` da resposta) diminui em relação à série anterior; a soma dos motivos fecha com `listados`.
+  const r = await rodar({
+    paginas: [pagina([cte(1421), cte(1422), reg(1423, { cRecebido: "S" }), reg(1424, { cCancelada: "S" }), reg(1425, PENDENTE), reg(1426, PENDENTE), reg(1427, PENDENTE), { infoCadastro: PENDENTE }])],
+    ids: [1421, 1425],
+    detalhes: { 1426: detalhe(1426), 1427: detalhe(1427) },
+  });
+  const s = r.resumo;
+  assertEquals(s.listados, s.ctes + s.sem_id + s.ja_importados + s.cancelados + s.recebidos_no_omie + s.aguardando + s.consultados);
+  assertEquals([s.ctes, s.ja_importados, s.recebidos_no_omie, s.cancelados, s.sem_id, s.consultados, s.aguardando, r.puladas], [2, 1, 1, 1, 1, 1, 1, 2]);
+});
+
+Deno.test("a incerteza continua candidata no LAÇO: divergência nos dois sentidos, modelo ausente/malformado, chave ilegível", async () => {
+  // Parecer Codex (desenho, 2026-10-20): trocar o chamador por `ehCte` (chave-só) descartaria em silêncio a
+  // divergência que o contrato manda investigar — e os testes do helper seguiriam verdes.
+  const r = await rodar({
+    paginas: [pagina([cte(1431, "55"), cte(1432, "57", chave(1432)), cte(1433, null), cte(1434, "5 7"), cte(1435, "57", chaveCte(1435).slice(1))])],
+  });
+  assertEquals([r.resumo.ctes, r.resumo.aguardando + r.resumo.consultados, r.resumo.sem_chave_na_listagem], [0, 5, 1]);
+});
+
+Deno.test("CT-e já gravada (efetivada ou pendente sem itens) conta como `ctes`, não como já importada — e sozinha na lista nada é consultado", async () => {
+  const r = await rodar({ paginas: [pagina([cte(1404), cte(1405)])], ids: [1404], chaves: [chaveCte(1405)] });
+  assertEquals([r.chamadas.consultar, r.resumo.consulta, r.resumo.ctes, r.resumo.ja_importados, r.puladas], [[], null, 2, 0, 0]);
+});
+
+Deno.test("CT-e que a listagem não pegou (sem cModeloNFe) e o DETALHE revela: desfecho `cte`, RPC não chamada, impedimento no ledger", async () => {
+  const r = await rodar({
+    paginas: [pagina([cte(1406, null)])],
+    detalhes: { 1406: { cabec: { nIdReceb: 1406, cChaveNFe: chaveCte(1406), cModeloNFe: "57", cNumeroNFe: "1406" }, infoCadastro: PENDENTE, itensRecebimento: [] } },
+  });
+  assertEquals(r.chamadas.consultar, [1406]);
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.importadas, r.erros], [{ nIdReceb: 1406, desfecho: "cte" }, 0, 0, []]);
+  assertEquals(r.chamadas.falhas, [[chaveCte(1406), "CTE", 1406]], "sem o ledger a mesma CT-e disputa a consulta para sempre");
+  // O filtro vem ANTES do estado: CT-e sem infoCadastro no detalhe também é `cte`, não estado_desconhecido.
+  const semEstado = await rodar({
+    paginas: [pagina([cte(1408, null)])],
+    detalhes: { 1408: { cabec: { nIdReceb: 1408, cChaveNFe: chaveCte(1408), cModeloNFe: "57" }, itensRecebimento: [] } },
+  });
+  assertEquals([semEstado.resumo.consulta, semEstado.erros, semEstado.chamadas.falhas.length], [{ nIdReceb: 1408, desfecho: "cte" }, [], 1]);
+});
+
+Deno.test("NF-e com cModeloNFe '55' na listagem e no detalhe segue o fluxo de hoje: importada", async () => {
+  const r = await rodar({
+    paginas: [pagina([{ cabec: { nIdReceb: 1407, cChaveNFe: chave(1407), cModeloNFe: "55" }, infoCadastro: PENDENTE }])],
+    detalhes: { 1407: { ...detalhe(1407), cabec: { ...detalhe(1407).cabec, cModeloNFe: "55" } } },
+  });
+  assertEquals([r.importadas, r.resumo.ctes, r.resumo.consulta], [1, 0, { nIdReceb: 1407, desfecho: "importada" }]);
+});
+
+Deno.test("CT-e revelada no detalhe com o ledger que NÃO grava: erro visível (success:false), nunca `cte` calado", async () => {
+  // Parecer adversarial do Codex (2026-10-20): com o ledger devolvendo null (ex. 42501), a CT-e nunca
+  // estaciona e disputa a consulta toda rodada — com errors=[] isso ficava invisível.
+  const r = await rodar({
+    paginas: [pagina([cte(1441, null)])],
+    detalhes: { 1441: { cabec: { nIdReceb: 1441, cChaveNFe: chaveCte(1441), cModeloNFe: "57" }, infoCadastro: PENDENTE, itensRecebimento: [] } },
+    falhaTentativas: null,
+  });
+  assertEquals([r.resumo.consulta, r.chamadas.cabecalhos.length, r.erros.length], [{ nIdReceb: 1441, desfecho: "cte" }, 0, 1]);
+  if (!r.erros[0].includes("NÃO foi registrado")) throw new Error(`o erro tem de dizer que não registrou: ${r.erros[0]}`);
+});

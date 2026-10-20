@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+import { ehCte } from "../_shared/modelo-documento-fiscal.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarOmie, enviarOmie } from "../_shared/omie-cliente.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
@@ -16,7 +17,7 @@ import {
 import { mapearItensRecebimento, type OmieRecebimentoItem } from "./itens.ts";
 import { mapearCabecalho } from "./cabecalho.ts";
 import { avaliarDetalhePorChave, classificarConsultaPorChave, normalizarChaveAcesso } from "./chave.ts";
-import { corpoDeFalhaOmie } from "./listagem.ts";
+import { acrescentarEstacionadas, corpoDeFalhaOmie, type LinhaEstacionada } from "./listagem.ts";
 import { type DepsRodada, type ResumoConta, rodadaDaConta } from "./rodada.ts";
 
 const corsHeaders = {
@@ -152,12 +153,9 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
           if (r.chave_acesso) chavesJa.add(r.chave_acesso);
         }
       };
-      const estacionar = (linhas: unknown[]) => {
-        for (const l of linhas as { omie_id_receb: number | string | null; chave_acesso: string }[]) {
-          chavesJa.add(l.chave_acesso);
-          if (l.omie_id_receb !== null) idsJa.add(Number(l.omie_id_receb));
-        }
-      };
+      // O id da estacionada só vale na conta que a registrou (listagem.ts, `acrescentarEstacionadas`).
+      const estacionar = (linhas: unknown[]) =>
+        acrescentarEstacionadas(linhas as LinhaEstacionada[], warehouseId, idsJa, chavesJa);
       if (ids.length > 0) {
         const { data, error } = await supabase
           .from("nfe_recebimentos")
@@ -168,7 +166,7 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
         classificar(data ?? []);
         const { data: estacionadas, error: estacErr } = await supabase
           .from("nfe_importacao_falhas")
-          .select("chave_acesso, omie_id_receb")
+          .select("chave_acesso, omie_id_receb, warehouse_id")
           .eq("warehouse_id", warehouseId)
           .in("omie_id_receb", ids)
           .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
@@ -185,7 +183,7 @@ function depsDaConta(supabase: SupabaseClient, cred: OmieCredentials, warehouseI
         classificar(data ?? []);
         const { data: estacionadas, error: estacErr } = await supabase
           .from("nfe_importacao_falhas")
-          .select("chave_acesso, omie_id_receb")
+          .select("chave_acesso, omie_id_receb, warehouse_id")
           .in("chave_acesso", lote)
           .gte("tentativas", TENTATIVAS_PARA_ESTACIONAR);
         if (estacErr) throw new Error(`nfe_importacao_falhas: ${estacErr.message}`);
@@ -222,6 +220,12 @@ async function importarPorChave(supabase: SupabaseClient, corpo: Record<string, 
 
   const chave = normalizarChaveAcesso(corpo.chave_acesso);
   if (!chave) return responder({ status: "entrada_invalida", error: "chave de acesso inválida — são 44 dígitos" }, 400);
+  // CT-e (modelo 57 nas posições 21–22 da chave) é FRETE: não tem itens de produto. Recusa ANTES de
+  // ler o banco e de gastar a consulta ao Omie — aqui só há a chave, e ela basta (é a identidade
+  // fiscal do documento). Até 2026-10-20 o botão importava o CT-e como cabeçalho sem itens.
+  if (ehCte(chave)) {
+    return responder({ status: "entrada_invalida", error: "isto é um CT-e (frete), não NF-e de mercadoria — não há itens para receber" }, 400);
+  }
   const warehouseId = typeof corpo.warehouse_id === "string" && corpo.warehouse_id ? corpo.warehouse_id : null;
   if (!warehouseId) return responder({ status: "entrada_invalida", error: "armazém (warehouse_id) não informado" }, 400);
 

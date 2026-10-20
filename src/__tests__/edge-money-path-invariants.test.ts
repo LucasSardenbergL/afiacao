@@ -4745,6 +4745,30 @@ describe('guardrail: omie-nfe-recebimento-sync não conta NF-e como importada qu
     expect(manual, 'cabeçalho vazio NÃO reparável não é "já importada" — é 409 bloqueada').toContain('status: "bloqueada"');
   });
 
+  it('CT-e (modelo 57, frete, sem itens) fora da fila nos três pontos: botão recusa pela chave ANTES do banco e do Omie; o detalhe dá `cte` antes da RPC; a triagem usa os DOIS sinais', () => {
+    // 2026-10-20: o ListarRecebimentos mistura NF-e e CT-e; 28 CT-e viraram cabeçalho sem itens em prod e a
+    // única consulta da rodada era gasta neles. O comportamento está provado no Deno (listagem_test/rodada_test);
+    // aqui fica a FIAÇÃO do botão (index.ts não é testável no Deno) e a ordem no gravar.
+    const recusa = manual.indexOf('ehCte(chave)');
+    expect(recusa, 'o botão deixou de recusar o CT-e pela chave').toBeGreaterThan(-1);
+    expect(recusa, 'a recusa veio DEPOIS de ler o banco').toBeLessThan(manual.indexOf('.from("nfe_recebimentos")'));
+    expect(recusa, 'a recusa veio DEPOIS de consultar o Omie').toBeLessThan(manual.indexOf('enviarOmie('));
+    const depoisDaRecusa = manual.slice(recusa, manual.indexOf('.from("nfe_recebimentos")'));
+    expect(depoisDaRecusa, 'a recusa tem de responder 400 entrada_invalida').toContain('status: "entrada_invalida"');
+    expect(depoisDaRecusa).toContain('400');
+    expect(src, 'o helper compartilhado é o único juiz do modelo').toContain('from "../_shared/modelo-documento-fiscal.ts"');
+    const cteNoDetalhe = gravacao.indexOf('ehCteNoCabecalho(cabec)');
+    expect(cteNoDetalhe, 'o detalhe deixou de reconhecer o CT-e').toBeGreaterThan(-1);
+    expect(cteNoDetalhe, 'o CT-e tem de sair antes de gastar a RPC').toBeLessThan(gravacao.indexOf('deps.importar('));
+    expect(gravacao.slice(cteNoDetalhe, gravacao.indexOf('estadoNoOmie(')), 'o impedimento CTE tem de ir ao ledger (senão a CT-e disputa a consulta para sempre)').toContain('"CTE"');
+    const listagem = removerComentarios(read('supabase/functions/omie-nfe-recebimento-sync/listagem.ts'));
+    expect(listagem, 'a triagem tem de usar os DOIS sinais (classificarModeloRecebimento), não a chave só').toContain('classificarModeloRecebimento(cabec).tipo === "cte"');
+    expect(listagem, 'o contador do sensor sumiu').toContain('cte: "ctes"');
+    // Parecer adversarial do Codex (2026-10-20): o id de uma estacionada só vale na conta que a registrou.
+    expect(deps, 'o leitor de estacionadas tem de passar pelo helper testado (id restrito ao armazém)').toContain('acrescentarEstacionadas(');
+    expect(count(deps, '.select("chave_acesso, omie_id_receb, warehouse_id")'), 'sem warehouse_id no select o helper descarta TODO id (ou o leitor volta a misturar contas)').toBe(2);
+  });
+
   it('o caminho por chave só roda DEPOIS do gate de staff/cron', () => {
     // O botão é do browser: sem o gate na frente, qualquer anon importaria NF-e via service role.
     const gate = handler.indexOf('authorizeCronOrStaff(req)');
