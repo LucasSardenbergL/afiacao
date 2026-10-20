@@ -12,6 +12,12 @@
  * componente de recompra do priority SAEM da média (mesma renormalização da margem), em vez de
  * entrar como 0 ou como uma cadência mensal inventada (money-path: ausente ≠ zero).
  *
+ * Cliente PERDIDO (sem compra há mais que max(3 × intervalo, 365) dias — a régua do spec, a mesma
+ * da situação de recompra) pontua 0 de frequência. Sem isso o intervalo real piorava o defeito em
+ * vez de corrigi-lo: 42 dias contra o teto de 1.041 vale ~96 pontos, e na simulação sobre a base de
+ * 2026-10-20 343 clientes iriam de "crítico" para "atenção" (323 dos 472 "atenção" com > 365 dias
+ * sem compra). Com a régua: "atenção" = 164, só 15 deles com > 365 dias.
+ *
  * ⚠️ Espelhado VERBATIM em `supabase/functions/_shared/frequencia-recompra.ts` (Deno não importa de
  * `src/`). A paridade do bloco é pinada por `__tests__/frequencia.test.ts`.
  */
@@ -24,8 +30,19 @@ export function intervaloRecompraConhecido(raw: unknown): number | null {
   return v != null && v > 0 ? v : null;
 }
 
-export function scoreFrequencia(intervalo: number | null, maxIntervalo: number | null): number | null {
+export function clientePerdido(diasDesdeUltimaCompra: number | null, intervalo: number | null): boolean {
+  if (diasDesdeUltimaCompra == null || !Number.isFinite(diasDesdeUltimaCompra) || intervalo == null) return false;
+  return diasDesdeUltimaCompra > Math.max(3 * intervalo, 365);
+}
+
+export function scoreFrequencia(
+  intervalo: number | null,
+  maxIntervalo: number | null,
+  diasDesdeUltimaCompra: number | null,
+): number | null {
   if (intervalo == null || maxIntervalo == null || maxIntervalo <= 0) return null;
+  // Perdido: a cadência MEDIDA foi quebrada — veredito sobre dois valores medidos, não ausência.
+  if (clientePerdido(diasDesdeUltimaCompra, intervalo)) return 0;
   return Math.max(0, 100 - (intervalo / maxIntervalo) * 100);
 }
 

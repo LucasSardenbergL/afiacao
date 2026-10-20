@@ -868,7 +868,9 @@ Deno.serve(async (req) => {
       // Intervalo NULL (< 3 dias de pedido) → frequência null → sai da média como a margem. Antes o
       // resíduo 30 valia ~98 pontos e punha cliente sem compra havia 999 dias em "atenção".
       const intervalo = intervaloRecompraConhecido(client.avg_repurchase_interval);
-      const freqScore = scoreFrequencia(intervalo, maxInterval);
+      // Perdido (sem compra há > max(3 × intervalo, 365) dias) → 0: o intervalo real sozinho dava ~96
+      // pontos a quem parou há anos (ver src/lib/scoring/frequencia.ts).
+      const freqScore = scoreFrequencia(intervalo, maxInterval, client.days_since_last_purchase);
       
       // Margem DESCONHECIDA → null, e o componente sai do score (renormalização abaixo). Com o
       // `|| 0` anterior, "não medi" virava veredito "margem zero" = pior cliente possível naquele

@@ -17,8 +17,19 @@ export function intervaloRecompraConhecido(raw: unknown): number | null {
   return v != null && v > 0 ? v : null;
 }
 
-export function scoreFrequencia(intervalo: number | null, maxIntervalo: number | null): number | null {
+export function clientePerdido(diasDesdeUltimaCompra: number | null, intervalo: number | null): boolean {
+  if (diasDesdeUltimaCompra == null || !Number.isFinite(diasDesdeUltimaCompra) || intervalo == null) return false;
+  return diasDesdeUltimaCompra > Math.max(3 * intervalo, 365);
+}
+
+export function scoreFrequencia(
+  intervalo: number | null,
+  maxIntervalo: number | null,
+  diasDesdeUltimaCompra: number | null,
+): number | null {
   if (intervalo == null || maxIntervalo == null || maxIntervalo <= 0) return null;
+  // Perdido: a cadência MEDIDA foi quebrada — veredito sobre dois valores medidos, não ausência.
+  if (clientePerdido(diasDesdeUltimaCompra, intervalo)) return 0;
   return Math.max(0, 100 - (intervalo / maxIntervalo) * 100);
 }
 

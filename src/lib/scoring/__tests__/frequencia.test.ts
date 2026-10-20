@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   classeSaude,
+  clientePerdido,
   componenteRecompra,
   intervaloRecompraConhecido,
   scoreFrequencia,
@@ -20,9 +21,12 @@ import {
 const HS = { recency: 0.25, frequency: 0.2, margin: 0.2, diversity: 0.15, crosssell: 0.1, engagement: 0.1 };
 
 /** A composição do health de calculate-scores, com os helpers reais (sem remontar a regra aqui). */
-function saude(c: { recencia: number; intervalo: unknown; diversidade: number }, intervalosDaBase: unknown[]) {
+function saude(
+  c: { recencia: number; intervalo: unknown; diversidade: number; dias: number | null },
+  intervalosDaBase: unknown[],
+) {
   const max = maximoMedido(intervalosDaBase.map(intervaloRecompraConhecido));
-  const freq = scoreFrequencia(intervaloRecompraConhecido(c.intervalo), max);
+  const freq = scoreFrequencia(intervaloRecompraConhecido(c.intervalo), max, c.dias);
   const media = mediaPonderadaRenormalizada([
     { valor: c.recencia, peso: HS.recency },
     { valor: freq, peso: HS.frequency },
@@ -53,19 +57,43 @@ describe('intervaloRecompraConhecido — ausente ≠ zero', () => {
   });
 });
 
+describe('clientePerdido — régua do spec: sem compra há mais que max(3 × intervalo, 365) dias', () => {
+  it('cadência curta: o piso de 365 dias manda', () => {
+    expect(clientePerdido(365, 42)).toBe(false);
+    expect(clientePerdido(366, 42)).toBe(true);
+  });
+
+  it('cadência longa: 3 × intervalo manda', () => {
+    expect(clientePerdido(500, 200)).toBe(false);
+    expect(clientePerdido(601, 200)).toBe(true);
+  });
+
+  it('sem intervalo ou sem recência medida → não dá para afirmar perdido', () => {
+    expect(clientePerdido(999, null)).toBe(false);
+    expect(clientePerdido(null, 42)).toBe(false);
+  });
+});
+
 describe('scoreFrequencia', () => {
   it('cliente com 2 pedidos (intervalo nulo) → frequência AUSENTE, não 0 nem 80', () => {
-    expect(scoreFrequencia(intervaloRecompraConhecido(null), 1958)).toBeNull();
+    expect(scoreFrequencia(intervaloRecompraConhecido(null), 1958, 10)).toBeNull();
   });
 
   it('sem nenhum intervalo medido na base → null (teto fabricado não existe)', () => {
-    expect(scoreFrequencia(20, null)).toBeNull();
+    expect(scoreFrequencia(20, null, 10)).toBeNull();
   });
 
   it('intervalo 20 com teto 100 → 80 (mesma fórmula de antes: não regride)', () => {
     // Fórmula anterior: max(0, 100 − interval/maxInterval·100).
-    expect(scoreFrequencia(20, 100)).toBe(80);
-    expect(scoreFrequencia(100, 100)).toBe(0);
+    expect(scoreFrequencia(20, 100, 10)).toBe(80);
+    expect(scoreFrequencia(100, 100, 10)).toBe(0);
+    expect(scoreFrequencia(20, 100, null)).toBe(80);
+  });
+
+  it('cliente PERDIDO → 0: a cadência medida foi quebrada (veredito, não ausência)', () => {
+    // Sem isto, intervalo real de 42d contra o teto de 1.041d dava ~96 pontos a quem parou há
+    // anos: na simulação da base de 2026-10-20, 343 clientes iriam de crítico para atenção.
+    expect(scoreFrequencia(42, 1041, 999)).toBe(0);
   });
 });
 
@@ -73,16 +101,25 @@ describe('classe de saúde — o cliente morto deixa de ser "atenção"', () => 
   const base = [1958, 20, null, 0, 30];
 
   it('999 dias e intervalo null → critico', () => {
-    expect(saude({ recencia: 0, intervalo: null, diversidade: 0 }, base).classe).toBe('critico');
+    expect(saude({ recencia: 0, intervalo: null, diversidade: 0, dias: 999 }, base).classe).toBe('critico');
   });
 
   it('o MESMO cliente com o resíduo 30 caía em atenção (o defeito que este módulo fecha)', () => {
-    // Prova que o teste acima depende do intervalo, não de outro eixo.
-    expect(saude({ recencia: 0, intervalo: 30, diversidade: 0 }, base).classe).toBe('atencao');
+    // Prova que o teste acima depende do intervalo, não de outro eixo. 999 dias com intervalo 30 É
+    // perdido; o controle usa a fórmula sem a régua (dias null) para reproduzir o comportamento velho.
+    expect(saude({ recencia: 0, intervalo: 30, diversidade: 0, dias: null }, base).classe).toBe('atencao');
+  });
+
+  it('999 dias com intervalo REAL de 42 → critico (perdido, frequência 0)', () => {
+    expect(saude({ recencia: 0, intervalo: 42, diversidade: 0, dias: 999 }, base).classe).toBe('critico');
+  });
+
+  it('200 dias com intervalo 42 → atencao (atrasado em risco, não perdido)', () => {
+    expect(saude({ recencia: 0, intervalo: 42, diversidade: 0, dias: 200 }, base).classe).toBe('atencao');
   });
 
   it('intervalo 20 e compra há 10 dias → freqScore igual ao de hoje', () => {
-    const r = saude({ recencia: 100 - (10 / 180) * 100, intervalo: 20, diversidade: 50 }, base);
+    const r = saude({ recencia: 100 - (10 / 180) * 100, intervalo: 20, diversidade: 50, dias: 10 }, base);
     expect(r.freq).toBeCloseTo(100 - (20 / 1958) * 100, 10);
   });
 
