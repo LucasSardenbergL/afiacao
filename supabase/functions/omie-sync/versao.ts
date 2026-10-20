@@ -29,7 +29,7 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // v1.3 (2026-10-12) — teto de relógio de 140s no fetch ao Omie (M-33 p3, `_shared/omie-chamada-relogio.ts`):
 // falha de ESCRITA sai como OMIE_ESCRITA_INDETERMINADA (o Omie pode ter gravado). Nenhuma pré-condição de banco.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.5-cnpj-alfanumerico";
+export const VERSAO = "v1.6-cnpj-mascara-exata";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

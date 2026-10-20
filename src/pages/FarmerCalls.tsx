@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
+import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { useFarmerScoring, type AgendaItem } from '@/hooks/useFarmerScoring';
@@ -330,7 +331,7 @@ const FarmerCalls = () => {
       // Resolve local user_id when the customer came from Omie without a mapping yet
       let customerUserId = selectedCustomer.user_id;
       if (!customerUserId && selectedCustomer.document) {
-        const docClean = selectedCustomer.document.replace(/\D/g, '');
+        const docClean = normalizarDocumento(selectedCustomer.document);
         const { data: profile } = await supabase
           .from('profiles')
           .select('user_id')

@@ -32,3 +32,20 @@ export function documentoEditadoParaGravar(
 export function ehDocumentoPessoaJuridica(doc: string): boolean {
   return normalizarDocumento(doc).length > 11;
 }
+
+/**
+ * Customer360.tsx / useCustomerDashboard.ts: o `isPj`/`isCNPJ` de exibição — era `replace(/\D/g,'').length === 14`
+ * (alfanumérico válido tinha 9 dígitos e abria como PF). Normalizado, o válido tem 14 chars; o inválido cai nos
+ * dígitos e continua PF.
+ */
+export function ehCnpjDocumento(doc: unknown): boolean {
+  return normalizarDocumento(doc).length === 14;
+}
+
+/**
+ * AdminApprovals.tryLinkOmie: o documento que vai no `buscar_por_documento` (era `replace(/\D/g,'')`, mutilava o
+ * alfanumérico em 9 dígitos → `not_found`). Vazio → `null` (o chamador devolve `no_data`, como antes).
+ */
+export function documentoParaBuscarNoOmie(doc: string | null | undefined): string | null {
+  return normalizarDocumento(doc) || null;
+}

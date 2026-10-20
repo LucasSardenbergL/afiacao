@@ -76,8 +76,15 @@ export const respostaSonda = criarRespostaSonda("omie-analytics-sync");
  * já aceita NULL; a migration 20261009180000 tira o DEFAULT 0 e põe o CHECK de faixa, e vale
  * nas duas ordens de deploy (aceita 0 na transição). Após o deploy, o próximo computeCosts
  * converte os zeros sozinho (mede-se: `count(*) FILTER (WHERE cmc = 0)` deve cair a ~0).
+ *
+ * v1.14 (2026-10-19) — `docsComCodigoAmbiguoNoOmie` perde o laço de "mutilação" (#3180): o numérico que
+ * é a mutilação só-dígitos de um CNPJ alfanumérico do mesmo run NÃO é mais marcado ambíguo. Pré-condição
+ * de banco: migration 20261019140000 (#3195) APLICADA — `omie_sync_identity_snapshot` chaveia o profile
+ * por `normalizar_documento()` (letras preservadas), então os dois são donos distintos e o laço só
+ * tirava o vínculo do dono certo. Atestada em prod em 2026-10-19 (psql-ro). Canária
+ * `doc-ambiguo-mutilacao-nao-e-ambiguidade-v3`.
  */
-export const VERSAO = "v1.12-cnpj-alfanumerico";
+export const VERSAO = "v1.14-mutilacao-nao-e-ambiguidade";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

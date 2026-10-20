@@ -28,16 +28,16 @@ describe('docsComCodigoAmbiguoNoOmie (P1b fail-closed money-path)', () => {
     expect(r.size).toBe(0);
   });
 
-  it('alfanumérico preservado cuja mutilação só-dígitos é o doc de OUTRO registro → o numérico vira ambíguo (Codex ALTO)', () => {
-    // AEG12345678909 → só-dígitos 12345678909: o snapshot SQL chaveia o profile alfanumérico por esse
-    // número, e o registro numérico (outro código) casaria com o profile errado.
+  it('alfanumérico preservado cuja mutilação só-dígitos é o doc de OUTRO registro → NENHUM é ambíguo (pós-#3195: mutilação não é ambiguidade)', () => {
+    // AEG12345678909 e 12345678909 são chaves DISTINTAS no snapshot SQL desde a migration 20261019140000
+    // (`normalizar_documento()` preserva letras): cada um casa com o SEU profile. Entre o #3180 e o
+    // #3195 este caso esperava `{'12345678909'}` (o snapshot ainda mutilava) — marcar o numérico hoje
+    // tiraria o vínculo do dono certo.
     const r = docsComCodigoAmbiguoNoOmie([
       { doc: 'AEG12345678909', codigo: 10 },
       { doc: '12345678909', codigo: 20 },
     ]);
-    expect(r.has('12345678909')).toBe(true);
-    expect(r.has('AEG12345678909')).toBe(false); // o alfanumérico nunca está no mapa SQL — não precisa
-    expect(r.size).toBe(1);
+    expect(r.size).toBe(0);
   });
 
   it('alfanumérico SEM gêmeo numérico → NÃO ambíguo (não inventa ambiguidade)', () => {
@@ -107,7 +107,7 @@ const PROBE_FIXTURES: Array<{ caso: string; registros: Array<{ doc: string; codi
   { caso: 'doc_3_codigos', registros: [{ doc: '111', codigo: 100 }, { doc: '111', codigo: 200 }, { doc: '111', codigo: 300 }], expected: ['111'] },
   { caso: 'doc_vazio_ignorado', registros: [{ doc: '', codigo: 100 }, { doc: '', codigo: 200 }], expected: [] },
   { caso: 'mistura_so_ambiguos', registros: [{ doc: 'A', codigo: 1 }, { doc: 'B', codigo: 2 }, { doc: 'B', codigo: 3 }, { doc: 'C', codigo: 4 }, { doc: 'C', codigo: 4 }], expected: ['B'] },
-  { caso: 'alfanumerico_mutilacao_de_outro', registros: [{ doc: 'AEG12345678909', codigo: 10 }, { doc: '12345678909', codigo: 20 }], expected: ['12345678909'] },
+  { caso: 'alfanumerico_mutilacao_de_outro', registros: [{ doc: 'AEG12345678909', codigo: 10 }, { doc: '12345678909', codigo: 20 }], expected: [] },
   { caso: 'alfanumerico_sem_gemeo', registros: [{ doc: 'AEG12345678909', codigo: 10 }, { doc: '99999999999', codigo: 20 }], expected: [] },
   { caso: 'lista_vazia', registros: [], expected: [] },
 ];

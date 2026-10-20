@@ -1164,3 +1164,19 @@ A tela fazia `select … nfe_recebimento_itens(*)` e renderizava `item.descricao
 **Lição.** *Paginar uma VIEW agregada por `.range()` reavalia a view a cada página* — o custo é páginas × view inteira, e escala com o volume de OUTRAS empresas. E "uma leitura só" não bastou: 9 avaliações simultâneas da view estouraram as 8 s todas; o que resolveu foi o filtro de empresa DENTRO do CTE (máx 2,1 s nas 9). Meça sob a concorrência REAL do cron, não sozinho.
 
 **Fix.** RPC `fin_titulo_baixas_cr_mapa(p_company)` (migration `20261019110100`, aplicada 2026-10-19 via MCP no envelope, validada por psql-ro: ACL + md5 do corpo = repo) — ramo CR da view verbatim com company no `mov`, envelope `{total, pares}`; PRE por md5 + A6 (igualdade com a view) no apply e guarda de md5 em runtime (P0001 se a view mudar). Edge `v1.6-baixas-cr-rpc`. Prova `db/test-fin-titulo-baixas-cr-mapa.sh`. Codex 2 rodadas. Pendente na mesma classe: `fin-valor-cockpit` (oben) pagina a mesma view.
+
+## 2026-10-19 — alerta `erro_app` "AbortError: signal is aborted without reason" no `/auth` (supabase-js 2.95.3)
+
+**Sintoma.** E-mail `[Afiação ⚠️] Erro no app: DOMException` (oben, issue PostHog `01a1557b-89ee-…`): 3 `$exception` não tratadas em 84 ms, mesmo usuário (master, Chrome 152/macOS), em `/auth`, frame único em `vendor-supabase-*.js` no `abortController.abort()` do `navigatorLock`. 1ª ocorrência em 60 dias (HogQL).
+
+**Causa.** O `@supabase/auth-js` 2.95.3 serializa `getSession`/refresh num `navigator.locks` com `lockAcquireTimeout` 10 s; se o lock não libera (refresh pendurado na rede, aba órfã), cada chamador que esperava aborta e o `AbortError` cru sobe como rejeição não tratada. Upstream: 2.98 passou a recuperar com `{ steal: true }`; 2.103 parou de vazar o erro cru (vira `NavigatorLockAcquireTimeoutError`) e evita cascata de roubo.
+
+**Fix.** `@supabase/supabase-js` ^2.95.3 → ^2.117.0 (a mais nova com ≥2 semanas). Desde a 2.107 o auth-js é **lockless por padrão** (sem `lock` no `createClient` → nenhum `navigator.locks`; refresh deduplicado em-aba e corrida entre abas resolvida no servidor) — medido no build: 0 ocorrências de `navigator.locks` no `vendor-supabase`. Novo: `getSession`/`refreshSession` podem devolver `AuthRefreshDiscardedError` (benigno — `signOut` concorrente já emitiu `SIGNED_OUT`). O postgrest-js novo rejeita propriedade excedente: 4 payloads de `.update()` tipados como `Record<string, unknown>` viraram `TablesUpdate<'tabela'>` (ganho — agora a coluna é checada). Só Publish (frontend).
+
+## 2026-10-19 — alerta `erro_app` "fetchAllPages(inadimplentes (all)): página 0 perdida" chegou como `desconhecido`
+
+**Sintoma.** E-mail `[Afiação ⚠️] Erro no app: Error` (oben, issue PostHog `01a1508c-…`), 18/10 19:45 UTC: `getTopInadimplentes('all')` perdeu a página 0 (`linhas_lidas_antes_da_falha: 0`, `codigo: ""`, `categoria: desconhecido`). 1 evento em 30 dias (HogQL); os outros 39 `fetchAllPages` do período são `57014`. Sessão: dashboard aberto ~21 min parado, falha num refetch, `offline.flushed` logo depois — transporte, não banco. O helper fez o certo (lançou; `useFinanceiro` marca `inadimplentes` indisponível e o card avisa).
+
+**Causa do "desconhecido".** O postgrest-js converte a REJEIÇÃO do `fetch` (sem resposta HTTP) em `{ error: { code: '' }, status: 0 }` — mesmo formato na 2.95.3 e na 2.117.0. O `categoriaDoErro` só conhecia SQLSTATE, então `''` caía em `desconhecido` e o plantão tinha de ler o supabase-js para saber que era rede.
+
+**Fix.** `code === ''` → `transporte_abortado` (hint fixo da lib "Request was aborted": timeout do client ou o AbortError do lock de sessão do auth — o do #3198) ou `transporte_rede` (offline/DNS/CORS). Só compara o `hint`, nunca o envia. Só Publish (frontend). **Quando medir:** se `transporte_abortado` some depois do Publish do #3198, o lock era a causa; `transporte_rede` esporádico é ruído de rede do cliente.
