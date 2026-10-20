@@ -70,7 +70,7 @@ interface CustomerSalesSummaryRow {
   item_count: number | null;
   category_count: number | null;
   // Mediana dos gaps entre dias DISTINTOS de pedido (histórico inteiro); NULL com < 3 dias. Coluna
-  // acrescentada ao FIM da RPC (migration 20261020150000). Edge nova contra RPC velha → undefined →
+  // acrescentada ao FIM da RPC (migration 20261020151500). Edge nova contra RPC velha → undefined →
   // intervaloRecompraConhecido devolve null: degrada para "não medido", nunca para 0/30.
   intervalo_mediano_dias?: number | string | null;
 }
@@ -90,7 +90,7 @@ interface FarmerClientScoreSeed {
   // zero que criava o loop fechado. m_score idem (é o score derivado desta margem).
   gross_margin_pct: number | null;
   // null = intervalo NÃO MEDIDO (enviado explícito: a coluna tinha DEFAULT 0, removido na migration
-  // 20261020150000; mandar a chave independe da ordem de deploy).
+  // 20261020151500; mandar a chave independe da ordem de deploy).
   avg_repurchase_interval: number | null;
   // As 6 colunas SEM produtor (nenhum writer as calcula; só este seed as tocava, com 0). null =
   // "não medido", nunca 0 — mesma razão do gross_margin_pct acima. O DEFAULT 0 foi removido na
