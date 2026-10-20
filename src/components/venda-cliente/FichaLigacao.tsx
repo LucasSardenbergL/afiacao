@@ -3,7 +3,7 @@
 // programa "Venda por cliente". Cabeçalho (telefone `tel:` + munição), Recomprar, Histórico,
 // link para o 360 e o desfecho em 1 toque. Seções separadas e SEM score comum; "Oferecer
 // também" e "Preço" entram nas Ondas 2–3 (Task 9).
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -58,7 +58,7 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
   const comprador = useSugestoesDoComprador(compradorId);
   const historico = useHistoricoCompras(compradorId);
   const { isImpersonating } = useImpersonation();
-  const itens = comprador ? sugestoesDeRecompra(comprador) : [];
+  const itens = useMemo(() => (comprador ? sugestoesDeRecompra(comprador) : []), [comprador]);
   const nomeExibido = comprador?.nome ?? nome ?? 'Cliente';
   const telExibido = comprador?.telefone ?? telefone ?? null;
   const motivoExibido = comprador ? comprador.motivoEntrada : motivo ?? null;

@@ -2,13 +2,7 @@ import { Phone } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
-
-/** Só dígitos (e o + internacional) — o que o discador do aparelho aceita no `tel:`. */
-export function hrefTelefone(telefone: string | null | undefined): string | null {
-  if (!telefone) return null;
-  const digitos = telefone.replace(/[^\d+]/g, '');
-  return digitos.replace(/\D/g, '').length >= 8 ? `tel:${digitos}` : null;
-}
+import { hrefTelefone } from '@/lib/venda-cliente/telefone';
 
 interface Props {
   telefone: string | null;
