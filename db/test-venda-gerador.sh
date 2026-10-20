@@ -499,7 +499,9 @@ eq "A farmer não escreve no log" "$(estado "$(como "$F1" "INSERT INTO public.ve
 
 # A query de validação do PR (db/validar-venda-gerador.sql) dá ✅ depois do apply.
 VALIDA="$(Pq -f "$REPO_ROOT/db/validar-venda-gerador.sql")"
-eq "A validar-venda-gerador.sql dá ✅" "${VALIDA:0:1}" "✅"
+# Casa por padrão, não por `${VALIDA:0:1}`: em LC_ALL=C o recorte pega 1 BYTE do ✅ (multibyte).
+case "$VALIDA" in ✅*) VALIDA_OK=ok ;; *) VALIDA_OK="$VALIDA" ;; esac
+eq "A validar-venda-gerador.sql dá ✅" "$VALIDA_OK" "ok"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
