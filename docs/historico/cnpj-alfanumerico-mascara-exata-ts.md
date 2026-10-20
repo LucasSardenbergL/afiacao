@@ -52,19 +52,17 @@ recebeu do agente "3 de 60 hashes diferem" — a `main` já tinha andado (#3201 
 subconjunto nem bundle fora da `main`. Sonda 4 min depois: as 5 edges servem `-cnpj-mascara-exata` (`CONFERE`);
 `omie-analytics-sync` ficou pendente de novo pelo `v1.14` do #3201, não por esta entrega.
 
-Custo do 2º envio: 2,9 créditos e dois commits do bot na `main` (`72f6ad405` em `types.ts`, +4 RPCs que já existem em
-prod — tolerado; `43d456c18` em `supabase/functions/mcp/index.ts`, `@supabase/supabase-js` `^2.95.3` → `^2.117.0`).
-O `lovable-sensor-edicao` marcou o 2º como `SUSPEITO` → `EDICAO_DETECTADA`, e esta sessão abriu o revert #3206 —
-**que estava ERRADO** e o founder fechou: `mcp/index.ts` é **AUTO-GENERATED** pelo plugin Vite `@lovable.dev/mcp-js`
-a partir de `src/lib/mcp/` (import sem versão → o plugin escreve a faixa do `package.json`, `^2.117.0` desde o #3198).
-Reverter o import seria desfeito no próximo build do Lovable, e com o lock do `edges:typecheck` atualizado (#3207) o
-`^2.95.3` quebraria a main de novo. O conserto certo é o #3207 (lock acompanha o gerador).
-
-Duas lições: (1) **antes de colar o pacote, confira o ledger colado** — `visto há N min via sonda` com a `versao` da
-main já diz que outra sessão colou; a pista de sessão-irmã é fraca, a sonda é a prova. (2) **`EDICAO_DETECTADA` em
-arquivo GERADO é falso positivo do sensor**, que hoje só tolera `types.ts`: antes de reverter commit do bot, pergunte
-"quem gera este arquivo?" (`git grep` do caminho em `vite.config.ts`/plugins) — saída de gerador se corrige na FONTE
-(`src/lib/mcp/`, `package.json`), nunca no artefato. Incidente para o sensor tolerar `supabase/functions/mcp/index.ts`: #3206.
+Custo do 2º envio: 2,9 créditos e **edições não pedidas** pelo bot (`lovable-sensor-edicao` → `EDICAO_DETECTADA`):
+`types.ts` ganhou as 4 RPCs que já existem em prod (tolerado) e `supabase/functions/mcp/index.ts` levou um bump de
+`@supabase/supabase-js` 2.95.3 → 2.117.0 apesar do "No files were edited.". Esse **não** se reverte: o
+`mcp/index.ts` é AUTO-GENERATED pelo plugin Vite `@lovable.dev/mcp-js` a partir de `src/lib/mcp/` (import sem
+versão → faixa do `package.json`, `^2.117.0` desde o #3198), então o bot só regenerou. O revert (#3206) foi
+fechado; o que quebrava era o lock do `edges:typecheck`, regravado no #3207 (este diário foi junto). Lição: **antes de colar o pacote, confira o ledger colado** — `visto há N min via sonda` com a `versao` da
+main já diz que outra sessão colou; a pista de sessão-irmã é fraca, a sonda é a prova.
+E a 2ª lição, do #3206: **`EDICAO_DETECTADA` em arquivo GERADO é falso positivo do sensor**, que hoje só tolera
+`types.ts` — antes de reverter commit do bot, pergunte "quem gera este arquivo?" (`git grep` do caminho em
+`vite.config.ts`/plugins); saída de gerador se corrige na FONTE (`src/lib/mcp/`, `package.json`), nunca no artefato.
+Incidente para o sensor passar a tolerar `supabase/functions/mcp/index.ts`: #3206.
 
 ## Lição
 
