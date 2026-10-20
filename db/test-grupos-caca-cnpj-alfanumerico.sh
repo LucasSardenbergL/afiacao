@@ -30,7 +30,7 @@
 # ╚═══════════════════════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17; PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh (resolve PGBIN e confere a major — macOS e runner Linux)
 PORT="${PGPORT_TEST:-5473}"; SLUG="grupos-caca-alnum"
 TMPD="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"; DATA="$TMPD/data"
 export LC_ALL=C LANG=C
@@ -65,12 +65,10 @@ if [ "${1:-}" = "--falsificar" ]; then
   [ "$falhas" -eq 0 ] && exit 0 || exit 1
 fi
 SABOTAGEM="${SABOTAGEM:-}"
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente"; exit 1; }
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
+. "$REPO_ROOT/db/lib/pg-harness.sh"
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }
 [ -f "$FIX" ] || { echo "fixture ausente: $FIX"; exit 1; }
-CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}"; cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale=C >/dev/null
@@ -305,4 +303,4 @@ eq "A5b guard ≡ normalizar_documento em todas as 50k linhas + casos com letra"
 
 echo "═══ resultado: $PASS ok · $FAIL falhas ═══"
 echo "PASS=$PASS  FAIL=$FAIL"
-[ "$FAIL" -eq 0 ] && echo "HARNESS_GRUPOS_CACA_ALNUM_FIM_OK" || { echo "HARNESS_GRUPOS_CACA_ALNUM_FIM_FALHOU"; exit 1; }
+if [ "$FAIL" -eq 0 ]; then echo "HARNESS_GRUPOS_CACA_ALNUM_FIM_OK"; else echo "HARNESS_GRUPOS_CACA_ALNUM_FIM_FALHOU"; exit 1; fi
