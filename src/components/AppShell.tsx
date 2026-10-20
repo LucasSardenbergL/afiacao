@@ -160,6 +160,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Performance',
     items: [
       { icon: BarChart3, label: 'Performance', path: '/performance' },
+      { icon: Users, label: 'Venda por cliente', path: '/admin/venda-cliente', masterOnly: true },
     ],
   },
   {

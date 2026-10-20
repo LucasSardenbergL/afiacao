@@ -52,7 +52,13 @@ export type EventoLedger =
    * É o sinal que libera a fase seguinte do card (ranking normalizado) — e o PostHog é censurado no
    * Chrome do founder, o principal leitor (2026-10-12: boots em `telemetria_probes`, zero evento web).
    */
-  | 'dashboard.crescimento_comparavel_servido';
+  | 'dashboard.crescimento_comparavel_servido'
+  /**
+   * O painel do founder do programa Venda por cliente (`/admin/venda-cliente`) foi servido com
+   * dados, 1x por dia (dedup da RPC). É o sensor de uso da superfície que aprova repasses e lê a
+   * adoção das farmers — nasce com ela (fase-sem-sinal.md).
+   */
+  | 'venda.painel_aberto';
 
 /**
  * Registra um evento decisório no ledger server-side.
