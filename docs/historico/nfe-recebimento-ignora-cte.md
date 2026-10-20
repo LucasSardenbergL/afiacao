@@ -53,11 +53,24 @@ Modelos 65 e 67 ficam fora (sem medição; 65 é NFC-e com mercadoria).
   - **P2:** ledger que não grava o impedimento `CTE` saía calado. Agora vai a errors[] (success:false).
   - As duas correções e a fiação do select foram falsificadas (vermelho com a sabotagem).
 
-## Passivo: os 28 CT-e gravados (decisão do founder)
+## Passivo: os 28 CT-e gravados (decisão do founder, 2026-10-20)
 
-Nada foi apagado nem alterado. A triagem nova os classifica como `cte` e eles param de disputar a
-consulta. Ficam na tela de conferência como cabeçalhos sem itens. Opções propostas no PR: marcar com
-status próprio, arquivar fora da tela, ou deixar como está. Quem decide é o founder.
+Decisão: **só os 2 `pendente` saem da tela de conferência; os 26 `efetivado` ficam como histórico.**
+Nada é apagado.
+
+- **Banco** (`db/2026-10-20-cte-pendentes-descartados.sql`): os 2 viram status `descartado`, com o
+  motivo em `observacoes`. O UPDATE só pega linha ainda `pendente`, sem itens, sem conferente e sem
+  trava; a postcondição exige 2 descartados, 0 CT-e pendente e o passivo intacto (28, sendo 26
+  efetivados).
+- **Backend** (`db/2026-10-20-claim-nfe-efetivacao-recusa-descartado.sql`): o Codex adversarial
+  achou um P1. A efetivação (`omie-nfe-recebimento`) reserva a nota pelo `claim_nfe_efetivacao_lock`
+  sem olhar o status, e grava `efetivado`/`falha_efetivacao` conforme o Omie. Um "Reconciliar" numa
+  aba velha devolveria o descartado à fila. O claim passa a recusar `descartado` (a edge responde 409
+  e não toca a linha). Prova PG17 em `db/test-claim-nfe-efetivacao-lock.sh`, zona 6, com falsificação.
+- **Front** (`Recebimento.tsx`): `descartado` ganha rótulo próprio e sai da lista sem filtro. As abas
+  do admin e as contagens já filtravam por status explícito e não o mostram.
+- **Ordem:** claim → UPDATE → Publish. O Publish espera o `pendencias:deploy` sair 0. Até lá, a lista
+  geral sem filtro mostra os 2 com o rótulo antigo "Pendente", sem botão de ação.
 
 ## Re-sonda pós-deploy
 
