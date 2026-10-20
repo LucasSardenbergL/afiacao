@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
-  formatarCapital, formatarCnpj, digitosCnae,
+  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -15,6 +15,10 @@ describe('ACOES_CONTATO', () => {
 });
 
 describe('presetParaParams', () => {
+  it('score (default da fila): ordena por score desc, sem corte de idade', () => {
+    const p = presetParaParams('score', '2026-06-12');
+    expect(p).toEqual({ orderColumn: 'score', orderAsc: false, dataAberturaMax: null, dataAberturaMin: null });
+  });
   it('novas: ordena por data_abertura desc, sem corte de idade', () => {
     const p = presetParaParams('novas', '2026-06-12');
     expect(p).toEqual({ orderColumn: 'data_abertura', orderAsc: false, dataAberturaMax: null, dataAberturaMin: null });
@@ -22,6 +26,31 @@ describe('presetParaParams', () => {
   it('estabelecidas: corta abertura <= hoje-5anos e ordena por capital desc', () => {
     const p = presetParaParams('estabelecidas', '2026-06-12');
     expect(p).toEqual({ orderColumn: 'capital_social', orderAsc: false, dataAberturaMax: '2021-06-12', dataAberturaMin: null });
+  });
+});
+
+describe('scoreUI (score de lead)', () => {
+  it('NULL é estado "sem score" com o motivo do banco — nunca 0', () => {
+    expect(scoreUI(null, ['fora da foto vigente'])).toEqual({ texto: 'sem score', tom: 'muted', detalhe: 'fora da foto vigente' });
+    expect(scoreUI(null, ['já é cliente']).detalhe).toBe('já é cliente');
+  });
+  it('NULL sem motivos (coluna ainda não calculada) → "ainda não calculado"', () => {
+    expect(scoreUI(null, null)).toEqual({ texto: 'sem score', tom: 'muted', detalhe: 'ainda não calculado' });
+    expect(scoreUI(undefined, []).detalhe).toBe('ainda não calculado');
+  });
+  it('0 é score válido (não é "sem score")', () => {
+    expect(scoreUI(0, [])).toEqual({ texto: '0', tom: 'neutro', detalhe: 'sem fatores pontuados' });
+  });
+  it('tom por faixa: ≥60 success, ≥40 info, <40 neutro', () => {
+    expect(scoreUI(60, ['a']).tom).toBe('success');
+    expect(scoreUI(59, ['a']).tom).toBe('info');
+    expect(scoreUI(40, ['a']).tom).toBe('info');
+    expect(scoreUI(39, ['a']).tom).toBe('neutro');
+  });
+  it('detalhe junta os motivos na ordem do banco', () => {
+    expect(scoreUI(72, ['CNAE prioritário (móveis de madeira)', 'município com 12 clientes'])).toEqual({
+      texto: '72', tom: 'success', detalhe: 'CNAE prioritário (móveis de madeira) · município com 12 clientes',
+    });
   });
 });
 
@@ -84,5 +113,25 @@ describe('status de prospecção (rótulo + tom)', () => {
     expect(telefonePrincipal({ telefone1: null, telefone2: null })).toBeNull();
     expect(UFS_BR).toHaveLength(27);
     expect(new Set(UFS_BR).size).toBe(27);
+  });
+});
+
+describe('seloRfb', () => {
+  const base = { rfb_situacao: null, rfb_situacao_data: null, rfb_situacao_lote: null };
+  it('03/04/08 viram selo com rótulo, data dd/mm/aaaa (sem Date) e tom', () => {
+    expect(seloRfb({ rfb_situacao: '08', rfb_situacao_data: '2026-03-15', rfb_situacao_lote: '2026-08' }))
+      .toEqual({ texto: 'Baixado pela RFB em 15/03/2026', tom: 'muted', titulo: 'Situação cadastral na Receita Federal (dump 2026-08): baixado desde 15/03/2026. Confira o cartão CNPJ antes de agir.' });
+    expect(seloRfb({ ...base, rfb_situacao: '04', rfb_situacao_data: '2025-12-31' })?.texto).toBe('Inapto pela RFB em 31/12/2025');
+    expect(seloRfb({ ...base, rfb_situacao: '03', rfb_situacao_data: '2026-05-20' })).toMatchObject({ texto: 'Suspenso pela RFB em 20/05/2026', tom: 'warning' });
+  });
+  it('sem data: selo sem o "em"; 02, 01 e ausente: nenhum selo (ausente ≠ ativa)', () => {
+    expect(seloRfb({ ...base, rfb_situacao: '08' })?.texto).toBe('Baixado pela RFB');
+    expect(seloRfb({ ...base, rfb_situacao: '02', rfb_situacao_data: '2010-01-01' })).toBeNull();
+    expect(seloRfb({ ...base, rfb_situacao: '01' })).toBeNull();
+    expect(seloRfb(base)).toBeNull();
+  });
+  it('formatarDataIso não interpreta fuso e devolve o texto cru quando não é ISO', () => {
+    expect(formatarDataIso('2026-01-01')).toBe('01/01/2026');
+    expect(formatarDataIso('x')).toBe('x');
   });
 });

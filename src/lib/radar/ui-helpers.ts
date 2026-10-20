@@ -20,10 +20,10 @@ export const ACOES_CONTATO: AcaoConfig[] = [
   { acao: 'descartado',             label: 'Descartar',           icon: 'ban',          confirmar: true,  destrutivo: true  },
 ];
 
-export type PresetRadar = 'novas' | 'estabelecidas';
+export type PresetRadar = 'score' | 'novas' | 'estabelecidas';
 
 export interface RadarOrderParams {
-  orderColumn: 'data_abertura' | 'capital_social';
+  orderColumn: 'score' | 'data_abertura' | 'capital_social';
   orderAsc: boolean;
   dataAberturaMax: string | null;  // 'YYYY-MM-DD' (abertura <= isto)
   dataAberturaMin: string | null;  // 'YYYY-MM-DD' (abertura >= isto)
@@ -36,6 +36,10 @@ function menosAnos(hojeISO: string, anos: number): string {
 }
 
 export function presetParaParams(preset: PresetRadar, hojeISO: string): RadarOrderParams {
+  // 'score' = fila por score DESC (o hook põe NULL por último); sem corte de idade.
+  if (preset === 'score') {
+    return { orderColumn: 'score', orderAsc: false, dataAberturaMax: null, dataAberturaMin: null };
+  }
   if (preset === 'estabelecidas') {
     return { orderColumn: 'capital_social', orderAsc: false, dataAberturaMax: menosAnos(hojeISO, 5), dataAberturaMin: null };
   }
@@ -99,6 +103,21 @@ export const CLASSE_TOM: Record<TomStatus, string> = {
   muted: 'border-border text-muted-foreground',
 };
 
+// ── Score de lead (radar_score_recalcular, 1×/dia): número + motivos, ou "sem score" honesto ───────
+export interface ScoreUI {
+  texto: string;    // '72' ou 'sem score'
+  tom: TomStatus;   // ≥60 success · ≥40 info · <40 neutro · NULL muted
+  detalhe: string;  // motivos que pontuaram, ou o motivo do NULL ('fora da foto vigente'), ou 'ainda não calculado'
+}
+/** NULL nunca vira 0: score ausente é um ESTADO ("sem score") com o motivo que o banco escreveu. */
+export function scoreUI(score: number | null | undefined, motivos: string[] | null | undefined): ScoreUI {
+  if (score == null || !Number.isFinite(score)) {
+    return { texto: 'sem score', tom: 'muted', detalhe: motivos?.[0] || 'ainda não calculado' };
+  }
+  const tom: TomStatus = score >= 60 ? 'success' : score >= 40 ? 'info' : 'neutro';
+  return { texto: String(score), tom, detalhe: motivos && motivos.length > 0 ? motivos.join(' · ') : 'sem fatores pontuados' };
+}
+
 /** Primeiro telefone utilizável (telefone1, senão telefone2) — o botão Ligar da linha. */
 export function telefonePrincipal(e: { telefone1: string | null; telefone2: string | null }): string | null {
   return e.telefone1 || e.telefone2 || null;
@@ -120,4 +139,30 @@ export function formatarCep(cep: string | null | undefined): string {
   const d = (cep ?? '').replace(/\D/g, '');
   if (d.length !== 8) return cep ?? '';
   return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+// ── Situação cadastral RFB (selo na linha e na ficha) ─────────────────────────────────────────────
+// Códigos da Receita: 01 nula · 02 ativa · 03 suspensa · 04 inapta · 08 baixada. Só as irregulares viram
+// selo; 02/01 ou ausência (ausente ≠ ativa: a empresa pode não ter entrado no lote) não mostram nada.
+const SELO_RFB: Record<string, { rotulo: string; tom: TomStatus }> = {
+  '03': { rotulo: 'Suspenso', tom: 'warning' },
+  '04': { rotulo: 'Inapto',   tom: 'warning' },
+  '08': { rotulo: 'Baixado',  tom: 'muted' },
+};
+export interface SeloRfb { texto: string; tom: TomStatus; titulo: string }
+/** Selo "Baixado/Inapto/Suspenso pela RFB em dd/mm/aaaa", ou null quando não há irregularidade. */
+export function seloRfb(e: { rfb_situacao: string | null; rfb_situacao_data: string | null; rfb_situacao_lote: string | null }): SeloRfb | null {
+  const s = e.rfb_situacao ? SELO_RFB[e.rfb_situacao] : undefined;
+  if (!s) return null;
+  const data = e.rfb_situacao_data ? formatarDataIso(e.rfb_situacao_data) : null;
+  return {
+    texto: `${s.rotulo} pela RFB${data ? ` em ${data}` : ''}`,
+    tom: s.tom,
+    titulo: `Situação cadastral na Receita Federal (dump ${e.rfb_situacao_lote ?? '?'}): ${s.rotulo.toLowerCase()}${data ? ` desde ${data}` : ''}. Confira o cartão CNPJ antes de agir.`,
+  };
+}
+/** YYYY-MM-DD → dd/mm/aaaa sem passar por Date (fuso não entra). */
+export function formatarDataIso(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }

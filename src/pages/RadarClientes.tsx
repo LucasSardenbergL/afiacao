@@ -51,12 +51,12 @@ const DEFAULTS: RadarUrlState = {
   status: '',
   incluirJaClientes: false,
   comTelefone: false,
-  preset: 'novas',
+  preset: 'score',
   vista: 'lista',
 };
 
 function narrowPreset(v: string): PresetRadar {
-  return v === 'estabelecidas' ? 'estabelecidas' : 'novas';
+  return v === 'estabelecidas' || v === 'novas' ? v : 'score';
 }
 
 export default function RadarClientes() {

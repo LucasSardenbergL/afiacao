@@ -35,6 +35,15 @@ export type RadarEmpresaRow = {
   socios_nomes: string | null;
 };
 
+/** Linha do `chunk_situacao` → radar_situacao_cadastral (lote/observado_em são da edge; alertado_em é só da função SQL). */
+export type RadarSituacaoRow = {
+  cnpj: string;
+  situacao: string;             // '01'|'02'|'03'|'04'|'08'
+  data_situacao: string | null; // YYYY-MM-DD
+  motivo_codigo: string | null;
+  motivo_descricao: string | null;
+};
+
 export type RadarMunicipioRow = {
   codigo: string; nome: string; uf: string;
   lat: number | null; lng: number | null;

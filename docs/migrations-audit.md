@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **668** custom migrations totais
-- **2136** objetos esperados (criados por estas migrations)
+- **671** custom migrations totais
+- **2150** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 774
-  - `rls_policy`: 476
-  - `index`: 279
-  - `cron_job`: 188
-  - `table`: 185
+  - `function`: 779
+  - `rls_policy`: 477
+  - `index`: 282
+  - `cron_job`: 192
+  - `table`: 186
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5396,6 +5396,27 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `index` | `public.idx_tint_formula_itens_corante` | `tint_formula_itens` |
 
+### `20261019180000_radar_score_lead.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+| `index` | `public.idx_radar_lista_score` | `radar_empresas` |
+| `cron_job` | `cron.radar-score-recalcular-diario` | — |
+
+### `20261019200000_radar_situacao_cadastral.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_docs_clientes` | — |
+| `function` | `public.radar_cnpjs_conhecidos` | — |
+| `function` | `public.radar_rfb_descricao` | — |
+| `function` | `public.radar_aplicar_situacao` | — |
+| `table` | `public.radar_situacao_cadastral` | — |
+| `index` | `public.idx_radar_situacao_lote_sit` | `radar_situacao_cadastral` |
+| `index` | `public.idx_radar_situacao_cnpj_alertado` | `radar_situacao_cadastral` |
+| `rls_policy` | `public.radar_situacao_cadastral_select_gestor` | `radar_situacao_cadastral` |
+
 ### `20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql`
 
 | Tipo | Objeto | Parent |
@@ -5403,6 +5424,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.tint_watchdog_corante_check` | — |
 | `function` | `public.tint_watchdog_corante_vigia_check` | — |
 | `cron_job` | `cron.tint-watchdog-corante-vigia-15min` | — |
+
+### `20261020120100_fin_cashflow_snapshot_cron_escalonado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
+| `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
 
 ### `20261020130000_grupos_caca_cnpj_alfanumerico.sql`
 
