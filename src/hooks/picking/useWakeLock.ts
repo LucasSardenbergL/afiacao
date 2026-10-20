@@ -2,15 +2,13 @@
 // é conforto, não correção. O navegador solta o lock quando a aba some; religa ao voltar.
 import { useEffect } from "react";
 
-type Sentinela = { release(): Promise<void> };
-
 export function useWakeLock(ativo: boolean): void {
   useEffect(() => {
     if (!ativo || typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
-    let sentinela: Sentinela | null = null;
+    let sentinela: WakeLockSentinel | null = null;
     let vivo = true;
     const pedir = () => {
-      (navigator as unknown as { wakeLock: { request(t: "screen"): Promise<Sentinela> } }).wakeLock
+      navigator.wakeLock
         .request("screen")
         .then((s) => {
           if (vivo) sentinela = s;
