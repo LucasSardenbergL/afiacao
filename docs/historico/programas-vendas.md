@@ -178,3 +178,23 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
   o bruto já fique abaixo do alvo; `valor_realizado` NULL em vez do bruto.
 - **Buraco de prova na Oben (2025-07 → 2026-01-21):** o backfill não tem janela ali; a reconstrução histórica da Task 4
   fecha esse trecho como `nao_medivel` até alguém semear a janela.
+
+## Venda por cliente — Task 4: gerador D-1, reconstrução histórica e ondas (2026-10-20)
+
+`venda_cidades_alvo` (porta de `resolvePrepForWorkday`) + `venda_gerar_lista` (UNIÃO: atrasados das cidades de amanhã
++ `teto` maiores atrasos fora delas; perdido fora; só farmer; idempotente) + `venda_reconstruir_historico` +
+`venda_avaliar_ondas`/`venda_onda_log` + `venda_gerador_execucao` + cron `venda-gerador` 08:15 UTC. Migration
+`20261020181743_venda_cliente_gerador.sql`, aplicada por `db:aplicar` (recibo #597) e validada por psql-ro. Prova
+`db/test-venda-gerador.sh` (59 asserts, C e pt_BR, 16 sabotagens, no núcleo). Carga e taxa semanal: PR #3255.
+
+- **"Próximo dia útil" do plano ≠ o TS.** `resolvePrepForWorkday` prepara D+1 de CALENDÁRIO; a porta segue o TS (a
+  paridade é o contrato). Com a rota de prod em ter–sex, sexta prepara sábado = só as diárias.
+- **`venda_fechar_desfechos` custa ~11 ms por linha** (medido em ensaio: 1.733 linhas = 18,9 s; a lista em si custa
+  0,85 s/dia). Com ~600 linhas/dia, um lote de 30 dias passava dos 300 s do `db:aplicar` — lotes de 20 dias. No cron
+  noturno são ~7 s; a otimização (casar pedido só dos compradores abertos) fica de follow-up.
+- **Sombra só vale ao vivo:** a Onda 1 conta um dia de sombra só se a 1ª execução foi NAQUELE dia (SP); gravar a
+  sombra depois não fabrica a evidência. 365 dias de `historico` registrados são exigidos, não "existe uma linha".
+- **Onda 3 lê a tabela da Task 6 por `to_regclass` + `EXECUTE`** e captura só 42P01/42703: tabela ausente ou com outra
+  forma = condição falsa sem derrubar o cron (o mesmo job gera a lista).
+- **Buraco de prova da Oben:** a carga começou em 2026-01-22 (janelas cobertas). O trecho 2025-10-20 → 2026-01-21
+  só deve ser carregado depois de semear o backfill da Oben — fechado antes, vira `nao_medivel` para sempre.
