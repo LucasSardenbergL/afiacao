@@ -540,15 +540,11 @@ function docsComCodigoAmbiguoNoOmie(
   }
   const ambiguos = new Set<string>();
   for (const [doc, cods] of codigosPorDoc) if (cods.size > 1) ambiguos.add(doc);
-  // CNPJ alfanumérico (letra PRESERVADA pelo normalizarDocumento) cuja mutilação só-dígitos é o doc de
-  // OUTRO registro Omie: o snapshot SQL (doc_to_user) ainda chaveia o profile pelo só-dígitos, então o
-  // registro numérico casaria com o profile do alfanumérico (Codex ALTO, 2026-10-19). Antes da
-  // preservação os dois tinham a MESMA chave mutilada e caíam no ramo acima — mantém o fail-closed.
-  for (const doc of codigosPorDoc.keys()) {
-    if (!/[A-Z]/.test(doc)) continue;
-    const mutilado = doc.replace(/\D/g, "");
-    if (mutilado && codigosPorDoc.has(mutilado)) ambiguos.add(mutilado);
-  }
+  // SEM laço de "mutilação" (existiu entre o #3180 e o #3195, 2026-10-19): um CNPJ alfanumérico e o
+  // numérico que é a sua mutilação só-dígitos são chaves DISTINTAS de donos distintos desde a migration
+  // 20261019140000 — `omie_sync_identity_snapshot` chaveia o profile por `normalizar_documento()`,
+  // letras preservadas. Marcar o numérico como ambíguo tirava o vínculo do dono CERTO (perdia
+  // precisão, não só recall). Mutilação não é ambiguidade: o snapshot preserva letras.
   return ambiguos;
 }
 // MIRROR-END
@@ -2815,10 +2811,11 @@ Deno.serve(async (req) => {
           { caso: "doc_vazio_ignorado", registros: [{ doc: "", codigo: 100 }, { doc: "", codigo: 200 }], expected: [] },
           // mistura: só os ambíguos entram; os limpos ficam de fora (precisão do escopo do fail-closed)
           { caso: "mistura_so_ambiguos", registros: [{ doc: "A", codigo: 1 }, { doc: "B", codigo: 2 }, { doc: "B", codigo: 3 }, { doc: "C", codigo: 4 }, { doc: "C", codigo: 4 }], expected: ["B"] },
-          // CNPJ alfanumérico PRESERVADO (fatia cnpj-alfanumerico) cuja mutilação só-dígitos é o doc de
-          // OUTRO registro → o numérico vira ambíguo (o snapshot SQL ainda chaveia por só-dígitos e
-          // casaria o código errado — Codex ALTO 2026-10-19). Velho: ∅ (os dois tinham a mesma chave mutilada).
-          { caso: "alfanumerico_mutilacao_de_outro", registros: [{ doc: "AEG12345678909", codigo: 10 }, { doc: "12345678909", codigo: 20 }], expected: ["12345678909"] },
+          // CNPJ alfanumérico PRESERVADO cuja mutilação só-dígitos é o doc de OUTRO registro → NENHUM é
+          // ambíguo: desde a migration 20261019140000 (#3195) o snapshot SQL chaveia por
+          // `normalizar_documento()` (letras preservadas) e os dois são donos DISTINTOS. Velho (v2, entre o
+          // #3180 e o #3195): `["12345678909"]` — marcava o numérico e tirava o vínculo do dono certo.
+          { caso: "alfanumerico_mutilacao_de_outro", registros: [{ doc: "AEG12345678909", codigo: 10 }, { doc: "12345678909", codigo: 20 }], expected: [] },
           // alfanumérico SEM gêmeo numérico → ∅ (não se inventa ambiguidade)
           { caso: "alfanumerico_sem_gemeo", registros: [{ doc: "AEG12345678909", codigo: 10 }, { doc: "99999999999", codigo: 20 }], expected: [] },
           // lista vazia → ∅ (nenhum doc marcado por acidente)
@@ -2837,12 +2834,15 @@ Deno.serve(async (req) => {
         // ⚠️ BUMP obrigatório a cada fatia que mude essa tabela-verdade.
         //   v2 (2026-10-19, cnpj-alfanumerico): o numérico que é a MUTILAÇÃO de um alfanumérico presente no
         //   mesmo run também é ambíguo — um bundle velho responde ∅ no caso `alfanumerico_mutilacao_de_outro`.
+        //   v3 (2026-10-19, pós-#3195): mutilação NÃO é ambiguidade — o snapshot SQL preserva letras
+        //   (`normalizar_documento()`), então alfanumérico e sua mutilação são donos distintos; o caso
+        //   `alfanumerico_mutilacao_de_outro` volta a esperar ∅. Um bundle v2 responde `["12345678909"]`.
         // `canary: true` acompanha o `probe_no_ar` histórico para a receita SQL do guia — que aqui
         // precisa descer no envelope `data` (esta edge responde `{success,data}`, não no topo).
         result = {
           success: true,
           canary: true,
-          contrato: "doc-ambiguo-mutilacao-alfanumerica-v2",
+          contrato: "doc-ambiguo-mutilacao-nao-e-ambiguidade-v3",
           probe_no_ar: true, // a action respondeu → o helper P1b está no build deployado
           ok: casosDoc.every((c) => c.ok), // true = a tabela-verdade deployada bate em TODOS os fixtures
           casos: casosDoc,
