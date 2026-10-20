@@ -83,10 +83,11 @@ export function useAdminCustomers() {
     try {
       const { data } = await supabase
         .from('user_tools')
-        .select('*, tool_categories (*)')
+        // `tool_category_id` é NOT NULL → `!inner` dá a categoria sem `| null` (mesmo conjunto).
+        .select('*, tool_categories!inner(*)')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
-      setCustomerTools((data || []) as unknown as UserTool[]);
+      setCustomerTools(data ?? []);
     } catch (error) {
       console.error('Error loading customer tools:', error);
     } finally {

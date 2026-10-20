@@ -4,6 +4,7 @@ import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/
 import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
+import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -19,6 +20,7 @@ export interface RadarFiltros {
   preset: PresetRadar;
   incluirSaiuDoDump: boolean; // default false: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente)
   soIneditos: boolean;        // só quem entrou no universo NESTE lote (primeira_vista_em >= iniciado_em)
+  soSugeridos: boolean;       // só os "sugeridos para cadastro" (predicado do card: em conversa · não cliente · score ≥ limiar · foto vigente)
 }
 
 const PAGE = 50;
@@ -51,13 +53,21 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       const cnaePrefixo = likePrefixPattern(cnaeDigitos);
       if (cnaeDigitos.length === 7) q = q.eq('cnae_principal', cnaeDigitos);
       else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
-      if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
-      else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
-      if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`, o mesmo
+      // count): ele já fixa status/ja_cliente/lote, então vence os filtros abaixo. Sem lote completo
+      // não há foto — e sem foto não há sugestão: o toggle fica sem efeito em vez de fingir.
+      const sugeridos = Boolean(lote && filtros.soSugeridos);
+      if (sugeridos && lote) q = filtrarSugeridos(q, lote);
+      if (!sugeridos) {
+        if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
+        else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
+        if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
+      }
       // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte que o ranking de cidades
-      // e o mapa passam à RPC `radar_contagem_por_municipio` (`recorteDeLote`).
+      // e o mapa passam à RPC `radar_contagem_por_municipio` (`recorteDeLote`). Com "só sugeridos"
+      // o lote já foi fixado por `filtrarSugeridos`; só o recorte de inéditos ainda pode somar.
       const recorte = recorteDeLote(lote, filtros);
-      if (recorte.ultimoLote) q = q.eq('ultimo_lote', recorte.ultimoLote);
+      if (!sugeridos && recorte.ultimoLote) q = q.eq('ultimo_lote', recorte.ultimoLote);
       if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
       // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
       if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');

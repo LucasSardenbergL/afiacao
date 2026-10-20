@@ -136,7 +136,7 @@ export function RadarDetailSheet({
               Próximo <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           ) : <span />}
-          <RadarOutcomeMenu cnpj={empresa.cnpj} onRegistrado={() => onProximo?.()} />
+          <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
         </div>
         <div className="mt-3">
           <RadarAcoesLead empresa={empresa} />

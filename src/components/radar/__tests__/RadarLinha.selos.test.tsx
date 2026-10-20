@@ -20,8 +20,8 @@ const empresa = (over: Partial<RadarEmpresa>): RadarEmpresa => ({
   cnae_descricao: null, ultimo_lote: '2026-08', primeira_vista_em: '2026-06-12T01:10:00+00:00', ...over,
 } as RadarEmpresa);
 
-function renderLinha(e: RadarEmpresa, lote: typeof LOTE | null) {
-  return render(<RadarLinha empresa={e} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={lote} />);
+function renderLinha(e: RadarEmpresa, lote: typeof LOTE | null, mostrarMotivos = false) {
+  return render(<RadarLinha empresa={e} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={lote} mostrarMotivos={mostrarMotivos} />);
 }
 
 describe('RadarLinha — selos de lote', () => {
@@ -48,5 +48,38 @@ describe('RadarLinha — selos de lote', () => {
     renderLinha(empresa({ ultimo_lote: '2026-05', primeira_vista_em: '2026-10-19T16:35:00+00:00' }), null);
     expect(screen.queryByText(/^inédito$/i)).toBeNull();
     expect(screen.queryByText(/saiu do dump/i)).toBeNull();
+  });
+});
+
+describe('RadarLinha — selo "sugerido" e motivos do score (bloco 5)', () => {
+  const sugerido = () => empresa({
+    prospeccao_status: 'em_conversa', score: 75, score_motivos: ['CNAE tier 1 (+25)', 'capital ≥ 1 mi (+15)'],
+    rfb_situacao: null, omie_codigo_cliente: null,
+  });
+
+  it('em conversa, não cliente, score ≥ 70 na foto vigente: selo "sugerido"', () => {
+    renderLinha(sugerido(), LOTE);
+    expect(screen.getByText(/^sugerido/i)).toBeTruthy();
+  });
+
+  it('score abaixo do limiar: sem selo', () => {
+    renderLinha(empresa({ ...sugerido(), score: 69 }), LOTE);
+    expect(screen.queryByText(/^sugerido/i)).toBeNull();
+  });
+
+  it('sem lote vigente: sem selo (não sei qual é a foto)', () => {
+    renderLinha(sugerido(), null);
+    expect(screen.queryByText(/^sugerido/i)).toBeNull();
+  });
+
+  it('com `mostrarMotivos`, os motivos do score aparecem como TEXTO (não só no title)', () => {
+    renderLinha(sugerido(), LOTE, true);
+    expect(screen.getByText(/CNAE tier 1 \(\+25\)/)).toBeTruthy();
+  });
+
+  it('sem `mostrarMotivos`, os motivos ficam só no title do badge', () => {
+    renderLinha(sugerido(), LOTE, false);
+    expect(screen.queryByText(/CNAE tier 1 \(\+25\)/)).toBeNull();
+    expect(screen.getByTestId('radar-score').getAttribute('title')).toMatch(/CNAE tier 1/);
   });
 });

@@ -463,6 +463,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/AdminCustomers.busca-deeplink.test.tsx",
       "src/components/customer/__tests__/CustomerProfile360Summary.estados.test.tsx",
       "src/components/customer/__tests__/CustomerTabs.estados.test.tsx",
+      "src/lib/customer-process/__tests__/linha.test.ts",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
@@ -485,6 +486,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/pages/__tests__/TintDashboard.leitura-falhou.test.tsx",
       "src/hooks/__tests__/useTintCoresDoClienteUmToque.test.tsx",
+      "src/lib/tint/__tests__/preco-rpc.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
