@@ -39,7 +39,7 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * página VAZIA (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página
  * (#1901). Nenhum bundle anterior a esta fatia pode responder esta string.
  */
-export const VERSAO = "v1.2-cnpj-alfanumerico";
+export const VERSAO = "v1.3-cnpj-mascara-exata";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

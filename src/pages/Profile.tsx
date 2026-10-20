@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { SharpeningSuggestions } from '@/components/SharpeningSuggestions';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
+import type { TablesUpdate } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { documentoEditadoParaGravar } from '@/lib/omie/documento-cliente';
@@ -151,7 +152,7 @@ const Profile = () => {
     if (!user) return;
     setSaving(true);
     try {
-      const updateData: Record<string, unknown> = {
+      const updateData: TablesUpdate<'profiles'> = {
         name: editName,
         email: editEmail || null,
         phone: editPhone || null,

@@ -9,6 +9,8 @@
 // resto < 2 → 0, senão 11 − resto. Para CNPJ só-numérico coincide com a regra clássica.
 
 export const CNPJ_RE = /^[0-9A-Z]{12}[0-9]{2}$/;
+/** Máscara RFB nas posições exatas (`12.ABC.345/01DE-35`) — o MESMO regex das migrations 20261019140000/150000. */
+const CNPJ_MASCARA_RE = /^[0-9A-Z]{2}[.][0-9A-Z]{3}[.][0-9A-Z]{3}\/[0-9A-Z]{4}-[0-9]{2}$/;
 const BASE_RE = /^[0-9A-Z]{12}$/;
 const PESOS_1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
 const PESOS_2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
@@ -42,16 +44,24 @@ export function ehCnpjAlfanumerico(doc: string): boolean {
  *
  *   · CPF/CNPJ NUMÉRICO (com ou sem máscara) → só-dígitos, BYTE-IDÊNTICO ao `.replace(/\D/g, '')`
  *     que os escritores sempre fizeram — nada muda para o acervo de hoje.
- *   · CNPJ ALFANUMÉRICO VÁLIDO (formato RFB jul/2026 + DV mod-11) → btrim + upper + remove SÓ os
- *     separadores da máscara (. - /), preservando as letras. É exatamente a chave `alnum` que
- *     `radar_recruzar_ja_cliente()` deriva (migration 20261019110000) — espaço INTERNO não é
- *     separador, de propósito (contraexemplo do Codex: 'aeg 123.456.789-09' não vira chave).
- *   · Qualquer outra coisa com letra (DV errado, formato errado) → só-dígitos como hoje. Não se
- *     fabrica documento; o que já era lixo continua lixo do mesmo jeito (precisão > recall).
+ *   · CNPJ ALFANUMÉRICO VÁLIDO (formato RFB jul/2026 + DV mod-11) → btrim + upper e, SÓ se o todo
+ *     for o documento CRU (14 posições) ou a máscara nas POSIÇÕES EXATAS (`12.ABC.345/01DE-35`),
+ *     remove os separadores (. - /) preservando as letras. É exatamente a chave `alnum` de
+ *     `radar_recruzar_ja_cliente()` (migration 20261019150000) e de `normalizar_documento()`
+ *     (20261019140000). Separador FORA da posição da máscara não é tirado, de propósito: remover
+ *     `[-./]` de qualquer posição transformava 'aeg-123.456.789-09' (CPF com anotação) em
+ *     AEG12345678909, cujo DV confere por coincidência (Codex retroativo do #3175, PR #3192) — e
+ *     espaço interno tampouco é separador ('aeg 123.456.789-09' não vira chave).
+ *   · Qualquer outra coisa com letra (DV errado, formato errado, máscara fora de posição) →
+ *     só-dígitos como hoje. Não se fabrica documento; o que já era lixo continua lixo do mesmo
+ *     jeito (precisão > recall).
  */
 export function normalizarDocumento(bruto: unknown): string {
   const s = String(bruto ?? '');
-  const alnum = s.trim().toUpperCase().replace(/[-./]/g, '');
-  if (ehCnpjAlfanumerico(alnum)) return alnum;
+  const d = s.trim().toUpperCase();
+  if (CNPJ_RE.test(d) || CNPJ_MASCARA_RE.test(d)) {
+    const alnum = d.replace(/[-./]/g, '');
+    if (ehCnpjAlfanumerico(alnum)) return alnum;
+  }
   return s.replace(/\D/g, '');
 }

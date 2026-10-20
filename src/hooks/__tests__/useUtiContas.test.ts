@@ -168,3 +168,33 @@ describe('montarContasUti', () => {
     expect(r.positivacaoMes).toBe('2026-06-01');
   });
 });
+
+// CNPJ alfanumérico (RFB jul/2026) — oráculo oficial 12.ABC.345/01DE-35 e o mesmo com DV errado (…-36).
+describe('montarContasUti — documento alfanumérico (docs/historico/front-cnpj-alfanumerico.md)', () => {
+  const ALNUM = '12ABC34501DE35';
+  const ALNUM_MASCARADO = '12.ABC.345/01DE-35';
+  const ALNUM_INVALIDO = '12.ABC.345/01DE-36';
+
+  it('CNPJ alfanumérico VÁLIDO casa título ↔ perfil (antes: 9 dígitos < 11 → sem chave → inadimplência null)', () => {
+    const { contas } = montarContasUti({
+      scores: [score({ customer_user_id: 'c1', churn_risk: UTI_CRITERIOS.churnRiskMin })],
+      perfis: [perfil({ user_id: 'c1', document: ALNUM_MASCARADO })],
+      titulos: [titulo(ALNUM, 500), titulo(' 12.abc.345/01de-35 ', 250)],
+      snapshots: [],
+    });
+    expect(contas).toHaveLength(1);
+    expect(contas[0].sinalInadimplencia).toBe(true);
+    expect(contas[0].vencido31).toBe(750);
+  });
+
+  it('alfanumérico INVÁLIDO: sem chave, como antes — inadimplência null, nunca casa por dígitos soltos', () => {
+    const { contas } = montarContasUti({
+      scores: [score({ customer_user_id: 'c1', churn_risk: UTI_CRITERIOS.churnRiskMin })],
+      perfis: [perfil({ user_id: 'c1', document: ALNUM_INVALIDO })],
+      titulos: [titulo(ALNUM_INVALIDO, 500)],
+      snapshots: [],
+    });
+    expect(contas).toHaveLength(1);
+    expect(contas[0].sinalInadimplencia).toBeNull();
+  });
+});
