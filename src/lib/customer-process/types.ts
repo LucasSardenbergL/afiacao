@@ -1,7 +1,17 @@
-export interface ProcessEtapa {
+/** Vocabulário de `ProcessEtapa.tipo` — o mesmo que a edge `structure-customer-process` devolve. */
+export const TIPOS_ETAPA = ['preparacao', 'aplicacao', 'secagem', 'lixamento', 'mistura', 'inspecao', 'embalagem', 'outro'] as const;
+export type TipoEtapa = (typeof TIPOS_ETAPA)[number];
+
+/** Vocabulário de `porte` (coluna texto em `customer_processes`; só a edge escreve). */
+export const PORTES_PROCESSO = ['pequeno', 'medio', 'grande'] as const;
+export type PorteProcesso = (typeof PORTES_PROCESSO)[number];
+
+// `type` (não `interface`) de propósito: só o type literal é atribuível a `Json` do types.ts
+// gerado — é o que deixa `etapas: ProcessEtapa[]` entrar no insert SEM `as unknown as Json`.
+export type ProcessEtapa = {
   ordem: number;
   nome: string;                          // "Aplicação primer", "Secagem final", "Lixamento intermediário"
-  tipo: 'preparacao' | 'aplicacao' | 'secagem' | 'lixamento' | 'mistura' | 'inspecao' | 'embalagem' | 'outro';
+  tipo: TipoEtapa;
   produtos: string[];                    // ["nitro Renner", "lixa 220", "diluente comum"]
   parametros: {
     tempo_minutos?: number;
@@ -13,7 +23,7 @@ export interface ProcessEtapa {
   };
   equipamentos: string[];                // ["pistola HVLP", "cabine de pintura", "estufa"]
   observacoes: string;
-}
+};
 
 export interface CustomerProcess {
   id: string;
@@ -21,7 +31,7 @@ export interface CustomerProcess {
   descricao_livre: string;
   etapas: ProcessEtapa[] | null;
   segmento: string | null;
-  porte: 'pequeno' | 'medio' | 'grande' | null;
+  porte: PorteProcesso | null;
   tags: string[];
   ia_confidence: number | null;
   ia_gaps: string[];
@@ -38,7 +48,7 @@ export interface CustomerProcess {
 export interface StructuredProcessResponse {
   etapas: ProcessEtapa[];
   segmento: string;
-  porte: 'pequeno' | 'medio' | 'grande';
+  porte: PorteProcesso;
   tags: string[];
   ia_confidence: number;
   ia_gaps: string[];

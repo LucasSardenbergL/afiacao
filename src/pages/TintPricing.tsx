@@ -15,16 +15,8 @@ import { toast } from 'sonner';
 
 const ACCOUNT = 'oben';
 
-interface TintSkuRow {
-  id: string;
-  omie_product_id: string | null;
-  imposto_pct: number | null;
-  margem_pct: number | null;
-  tint_produtos?: { descricao: string | null } | null;
-  tint_bases?: { descricao: string | null } | null;
-  tint_embalagens?: { descricao: string | null; volume_ml: number | null } | null;
-  omie_products?: { valor_unitario: number | null } | null;
-}
+/** Linha de `useMappedSkus` (embeds tipados pelas FKs do types.ts). */
+type TintSkuRow = NonNullable<ReturnType<typeof useMappedSkus>['data']>[number];
 
 /** Linha da CANÔNICA (v_tint_formula_canonica) — a MESMA fórmula que o balcão serve. */
 interface SimFormulaRow {
@@ -36,13 +28,6 @@ interface SimFormulaRow {
   is_sl: boolean | null;
   tem_receita: boolean | null;
   personalizada: boolean | null;
-}
-
-interface SimReceitaItem {
-  formula_id: string;
-  qtd_ml: number;
-  ordem: number;
-  tint_corantes: { descricao: string | null } | null;
 }
 
 function useMappedSkus() {
@@ -110,11 +95,7 @@ function useSkuDescricoes(skuIds: string[]) {
         .select('id, tint_produtos!inner(descricao), tint_embalagens!inner(volume_ml)')
         .in('id', ids);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as Array<{
-        id: string;
-        tint_produtos: { descricao: string | null } | null;
-        tint_embalagens: { volume_ml: number | null } | null;
-      }>;
+      const rows = data ?? [];
       return new Map(rows.map((s) => [s.id, {
         produto: s.tint_produtos?.descricao ?? null,
         volumeMl: s.tint_embalagens?.volume_ml ?? null,
@@ -139,7 +120,7 @@ function useReceitas(formulaIds: string[]) {
         .order('ordem');
       if (error) throw error;
       const map = new Map<string, string[]>();
-      for (const it of (data ?? []) as unknown as SimReceitaItem[]) {
+      for (const it of data ?? []) {
         const rotulo = `${(it.tint_corantes?.descricao ?? '?').split(' - ')[0]} (${it.qtd_ml}ml)`;
         const arr = map.get(it.formula_id) ?? [];
         arr.push(rotulo);
@@ -236,7 +217,7 @@ export default function TintPricing() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {((skus ?? []) as unknown as TintSkuRow[]).map((sku) => {
+                  {(skus ?? []).map((sku) => {
                     // Custo AUSENTE ≠ custo zero: SKU sem custo no Omie aparecia como
                     // "R$ 0.00" de custo e de preço de referência — número fabricado.
                     const custoOmie = sku.omie_products?.valor_unitario;

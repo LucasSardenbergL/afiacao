@@ -1,37 +1,34 @@
 import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPagesComMensagem } from '@/lib/postgrest';
+import { linhasCom } from '@/lib/linha-view';
 import { track } from '@/lib/analytics';
 import { toCsv, type NaoVinculadoCsvRow } from '@/lib/clientes-nao-vinculados/csv';
 import { hojeSP } from '@/lib/time/sp-day';
 
 const EMPRESA = 'oben';
-
-// View nova não está no types.ts → cast por shape mínimo (sem any).
-type PgRange = PromiseLike<{ data: unknown; error: { message: string } | null }> & {
-  eq: (col: string, val: string) => PgRange;
-  order: (col: string, opts: { ascending: boolean }) => PgRange;
-  range: (from: number, to: number) => PgRange;
-};
+const FONTE = 'v_clientes_nao_vinculados_atual/export-csv';
 
 // Exporta TODOS os não-vinculados do último run completo como CSV (não a lista capada da tela).
 // Pagina por omie_codigo_cliente (chave estável → sem pular/duplicar linha entre páginas).
 export function useExportNaoVinculados() {
   return useMutation({
     mutationFn: async (): Promise<number> => {
-      const client = supabase as unknown as { from: (t: string) => { select: (c: string) => PgRange } };
       // Pelo canônico: página perdida LANÇA (nunca CSV PARCIAL sem aviso) e é medida pela fonte.
-      const all = await fetchAllPagesComMensagem<NaoVinculadoCsvRow>(
+      const paginas = await fetchAllPagesComMensagem(
         (de, ate) =>
-          client
+          supabase
             .from('v_clientes_nao_vinculados_atual')
             .select('omie_codigo_cliente, cnpj_cpf, razao_social, nome_fantasia, cidade, uf, codigo_vendedor')
             .eq('empresa', EMPRESA)
             .order('omie_codigo_cliente', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: NaoVinculadoCsvRow[] | null; error: unknown }>,
-        'v_clientes_nao_vinculados_atual/export-csv',
+            .range(de, ate),
+        FONTE,
         'v_clientes_nao_vinculados_atual',
       );
+      // View perde o NOT NULL no types.ts; a chave de paginação é exigida na borda (linha sem ela
+      // não entra no CSV — nunca "0" inventado na coluna codigo_omie).
+      const all: NaoVinculadoCsvRow[] = linhasCom(paginas, ['omie_codigo_cliente'], FONTE);
 
       // BOM UTF-8 → Excel mostra acentos corretamente.
       const blob = new Blob(['﻿' + toCsv(all)], { type: 'text/csv;charset=utf-8;' });
