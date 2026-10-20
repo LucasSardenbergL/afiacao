@@ -6,7 +6,9 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // malformada (data:null SEM error) virava página vazia → EOF falso → o acumulado PARCIAL
 // passava por tabela inteira. O canônico lança nos DOIS casos (money-path §6/§9).
 // Todo call-site DEVE encadear `.order()` numa coluna estável (gate paginacao-delegada).
-import { fetchAll } from "../_shared/paginate.ts";
+// v1.7: CR/CP saíram do `fetchAll` (offset, páginas EM SÉRIE) para `fetchAllParticionadoUuid`
+// (keyset em 8 faixas de uuid CONCORRENTES) — colacor levava 19–22 s em 31 idas e voltas.
+import { criarLimitador, fetchAllParticionadoUuid } from "../_shared/paginate.ts";
 // Irmã single-shot do mesmo defeito: as leituras NÃO paginadas do Promise.all abaixo
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
@@ -347,19 +349,32 @@ async function carregarDados(
   supabase: SupabaseClient,
   company: Company,
 ): Promise<DadosBase> {
-  // CR/CP paginados (anti-truncamento, ver o import de fetchAll); o resto cabe em <1000
-  // e vai em Promise.all. Tudo em paralelo.
+  // CR/CP paginados (anti-truncamento, ver o import de fetchAllParticionadoUuid); o resto cabe
+  // em <1000 e vai em Promise.all. Tudo em paralelo. O build segue o contrato do helper: faixa
+  // por `.gte/.lt`, cursor por `.gt`, `.order('id')` ascendente e `.limit` — o helper LANÇA se
+  // uma linha voltar fora da faixa, então esquecer um filtro não duplica título em silêncio.
+  // Teto de 8 requisições em voo para CR + CP JUNTAS (não 8 por tabela): o cron dispara os 3
+  // cenários da empresa no mesmo minuto, e 3 × 16 já pressionaria o pool do PostgREST.
+  const limitador = criarLimitador(8);
   const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes, estoqueOmieRes]] = await Promise.all([
-    fetchAll<Record<string, unknown>>((from, to) =>
+    fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
-      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    , 'fin_contas_receber'),
-    fetchAll<Record<string, unknown>>((from, to) =>
+      let q = supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO');
+      if (faixa.de !== null) q = q.gte('id', faixa.de);
+      if (faixa.ate !== null) q = q.lt('id', faixa.ate);
+      if (cursor !== null) q = q.gt('id', cursor);
+      return q.order('id', { ascending: true }).limit(limite);
+    }, (linha) => linha.id, 'fin_contas_receber', { limitador }),
+    fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
-      supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    , 'fin_contas_pagar'),
+      let q = supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
+        .eq('company', company).neq('status_titulo', 'CANCELADO');
+      if (faixa.de !== null) q = q.gte('id', faixa.de);
+      if (faixa.ate !== null) q = q.lt('id', faixa.ate);
+      if (cursor !== null) q = q.gt('id', cursor);
+      return q.order('id', { ascending: true }).limit(limite);
+    }, (linha) => linha.id, 'fin_contas_pagar', { limitador }),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
     // aging. UMA leitura via RPC (jsonb, fora do cap de 1000): paginar a view reavaliava-a
     // inteira a cada página e estourou o statement_timeout na colacor (ver ./baixas-cr.ts).
