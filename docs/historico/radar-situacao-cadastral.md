@@ -10,7 +10,19 @@ Dois públicos, duas ações: **lead** baixado/inapto/suspenso sai da fila (`des
 
 ## Medido ANTES de escrever (dump 2026-08, streaming local dos 10 zips de Estabelecimentos, 2026-10-19)
 
-MEDICAO_PLACEHOLDER
+Streaming dos 10 zips de `Estabelecimentos` (2026-08) no Mac, sem descompactar em disco (`unzip -p | tr -d NUL | iconv | python3 -I`), casando cada CNPJ (b+o+dv) com o conjunto radar ∪ clientes exportado de prod por `psql-ro` (563.159 CNPJs: 551.123 do radar + 15.063 documentos de cliente normalizados como `radar_recruzar_ja_cliente`). **563.158 casaram** — só 1 documento de cliente não existe no dump.
+
+| Universo | n | 02 ativa | 03 suspensa | 04 inapta | 08 baixada | 01 nula | **irregulares (03/04/08)** |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Radar inteiro | 551.101 | 502.077 | 60 | 38.603 | 10.353 | 8 | **49.016** |
+| **Sumidos** (`ultimo_lote` ≠ 2026-08) | 52.128 | 3.104 | 60 | 38.603 | 10.353 | 8 | **49.016 (94%)** |
+| … dos quais `ja_cliente` | 251 | 11 | 0 | 193 | 47 | 0 | **240 (96%)** |
+| … dos quais lead na fila | 51.877 | 3.093 | 60 | 38.410 | 10.306 | 8 | **48.776** |
+| Vigentes (2026-08) | 498.973 | 498.973 | 0 | 0 | 0 | 0 | 0 |
+| Clientes por documento (profiles ∪ Omie) | 15.062 | 12.272 | 52 | 1.074 | 1.661 | 2 | **2.787 (18,5%)** |
+| … fora do radar (CNAE fora do alvo) | 12.058 | 9.508 | 52 | 881 | 1.614 | 2 | **2.547** |
+
+Leituras: (1) **sumir do dump É quase sempre baixa/inaptidão** — 94% dos sumidos (e 96% dos clientes sumidos) estão em 03/04/08; só 3.104 trocaram de CNAE e seguem ativos (ficam na fila com lote antigo — bloco 2). (2) A **hipótese "pode ser mudança de CNAE"** valia para 6%, por isso a regra precisa da situação extraída, não da ausência. (3) O 1º finalize com esta regra descarta **48.776 leads** e abre **um** e-mail com **2.787 clientes irregulares de 15.061 verificados** — a maioria (2.547) são clientes Omie fora do radar, cadastros históricos; por isso o e-mail lista os **100 mais recentes** e aponta a lista completa na tabela (teto `c_teto_linhas`, assert A17). (4) Nenhum caso de 02 → descarte: os 498.973 vigentes são todos 02, como o filtro da carga garante.
 
 ## O que entrou
 
@@ -25,14 +37,14 @@ MEDICAO_PLACEHOLDER
 
 ## Provas
 
-- `db/test-radar-situacao-cadastral.sh` (no `nucleo-ci.txt`, `21 falsificar=8`): relógio controlado (`p_agora` fixo), 3 lotes (2026-08 → 2026-09 → 2026-07 chegando depois). Sabotagens, após controle verde na mesma invocação e nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`): `descarta_cliente`→A5 · `repete_alerta`→A9 · `descarta_02`→A4 · `so_radar`→A7 (cliente fora do radar some do e-mail) · `regride_lote`→A11 · `sem_denominador`→A7b · `acl_aberta`→post:A7 · `acl_aberta_sem_post`→A12. Também: espelho `radar_docs_clientes()` × `radar_recruzar_ja_cliente()` vivo (A13/A13b), RLS por `SET ROLE` + GUC (A15), keyset (A16).
+- `db/test-radar-situacao-cadastral.sh` (no `nucleo-ci.txt`, `22 falsificar=9`): relógio controlado (`p_agora` fixo), 3 lotes (2026-08 → 2026-09 → 2026-07 chegando depois). Sabotagens, após controle verde na mesma invocação e nos dois locales (`LC_ALL=C` e `pt_BR.UTF-8`): `descarta_cliente`→A5 · `repete_alerta`→A9 · `descarta_02`→A4 · `so_radar`→A7 (cliente fora do radar some do e-mail) · `regride_lote`→A11 · `sem_denominador`→A7b · `sem_teto`→A17 (e-mail com teto de 100 linhas + "… e mais N") · `acl_aberta`→post:A7 · `acl_aberta_sem_post`→A12. Também: espelho `radar_docs_clientes()` × `radar_recruzar_ja_cliente()` vivo (A13/A13b), RLS por `SET ROLE` + GUC (A15), keyset (A16).
 - Vitest: `scripts/radar/situacao.test.ts` (parser/decisão, 8), `src/lib/radar/__tests__/ui-helpers.test.ts` (selo, +3), `scripts/radar/radar-ingest-situacao.test.ts` (edge e carga como TEXTO: ordem recruzar→aplicar, upsert sem `alertado_em`, um scan por zip, VERSAO). Deno: `situacao_test.ts` (3).
 
 ## Camadas de deploy (quem faz o quê)
 
 | Camada | Estado | Quem |
 | --- | --- | --- |
-| Migration `20261019200000` | ✅ APLICADA em 2026-10-20 10:18 UTC pelo envelope MCP (`postgres`): ensaio com `RAISE EXCEPTION 'ENSAIO_OK'` + md5 dos 4 corpos iguais ao arquivo (`4857…`, `51e4…`, `b162…`, `ec75…`), rollback conferido, apply real, 2ª testemunha psql-ro em outra conexão: `tabela_pk_ok=t rls_ok=t policy_ok=t anon_select=f cols_rfb=3 check_ok=t`, 3 funções `secdef=t anon/auth/public=f service=t`, `ja_cliente_total=3007` (inalterado), `linhas_sit=0` | sessão |
+| Migration `20261019200000` | ✅ APLICADA em 2026-10-20 10:18 UTC pelo envelope MCP (`postgres`): ensaio com `RAISE EXCEPTION 'ENSAIO_OK'` + md5 dos 4 corpos iguais ao arquivo (`4857…`, `51e4…`, `b162…`, `ec75…`), rollback conferido, apply real, 2ª testemunha psql-ro em outra conexão: `tabela_pk_ok=t rls_ok=t policy_ok=t anon_select=f cols_rfb=3 check_ok=t`, 3 funções `secdef=t anon/auth/public=f service=t`, `ja_cliente_total=3007` (inalterado), `linhas_sit=0`. **Reaplicada às 11:5x UTC** com o teto de 100 linhas no e-mail (TRAVA→PRE md5 `4857…`→CREATE→PÓS md5 `73e049de…`, ensaio com rollback antes), 2ª testemunha psql-ro: md5 `73e049de…`, ACL fechada, zero efeito (`linhas_sit=0`, `alertas_radar=0`, `descartados_sistema=0`) | sessão |
 | Edge `radar-ingest` v1.2 | ⏳ após o merge (até lá a v1.1 em prod ignora `cnpjs_conhecidos` → a carga nova ABORTA alto se rodar antes do deploy; a carga velha segue funcionando) | `bun run pendencias:deploy` → `pendencias:pacote` → chat do Lovable |
 | Publish do Lovable (selo na UI) | ⏳ após o merge | founder (Publish) |
 | 1ª execução real | próxima carga (2026-09, segunda 03:00 BRT ou `gh workflow run`) — o retorno do `finalize` nos logs traz `leads_descartados`/`clientes_alertados_novos` | auto |
