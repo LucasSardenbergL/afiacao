@@ -2,37 +2,15 @@
 // Leitura: RLS staff. Escrita: só RPCs SECURITY DEFINER — o aparelho nunca grava tabela direto.
 import { supabase } from "@/integrations/supabase/client";
 import { fetchAllPagesComMensagem } from "@/lib/postgrest";
+import type { Json } from "@/integrations/supabase/types";
+import type { PostgrestError } from "@supabase/supabase-js";
+import { type Conta, lerResultadoComando, paraTarefaV2, type ResultadoComando, type TarefaV2 } from "./borda-rpc";
 import { classificarErro } from "./erro-rpc";
 import type { Comando, RespostaLeitura, ResultadoEnvio } from "./scanner/fila";
 import type { CodigoCadastrado } from "./validacao-local";
 import type { LeituraServidor, LinhaServidor } from "./progresso-local";
 
-export type Conta = "oben" | "colacor";
-
-type StatusTarefa =
-  | "aguardando"
-  | "em_separacao"
-  | "separado"
-  | "aguardando_ajuste"
-  | "suspensa_alteracao"
-  | "interrompida_externa"
-  | "bloqueado_dado";
-
-export interface TarefaV2 {
-  id: string;
-  account: Conta;
-  omie_codigo_pedido: number;
-  numero_pedido: string | null;
-  cliente_nome: string | null;
-  status: StatusTarefa;
-  revisao: number;
-  estado_seq: number;
-  operador_id: string | null;
-  atribuicao_id: string | null;
-  motivo_bloqueio: string | null;
-  ausente_rodadas: number;
-  incluido_em: string | null;
-}
+export type { Conta, ResultadoComando, TarefaV2 } from "./borda-rpc";
 
 export interface LinhaV2 extends LinhaServidor {
   codigo_produto: string | null;
@@ -47,8 +25,8 @@ const COLUNAS_TAREFA =
   "id, account, omie_codigo_pedido, numero_pedido, cliente_nome, status, revisao, estado_seq, operador_id, atribuicao_id, motivo_bloqueio, ausente_rodadas, incluido_em";
 
 /** Fila da conta: tudo que não terminou (separado e interrompida ficam de fora). */
-export function listarFila(conta: Conta): Promise<TarefaV2[]> {
-  return fetchAllPagesComMensagem<TarefaV2>((de, ate) =>
+export async function listarFila(conta: Conta): Promise<TarefaV2[]> {
+  const linhas = await fetchAllPagesComMensagem((de, ate) =>
     supabase
       .from("picking_tarefas")
       .select(COLUNAS_TAREFA)
@@ -56,26 +34,27 @@ export function listarFila(conta: Conta): Promise<TarefaV2[]> {
       .in("status", ["aguardando", "em_separacao", "aguardando_ajuste", "suspensa_alteracao", "bloqueado_dado"])
       .order("incluido_em", { ascending: true, nullsFirst: false })
       .order("id", { ascending: true })
-      .range(de, ate) as unknown as PromiseLike<{ data: TarefaV2[] | null; error: { message: string } | null }>,
+      .range(de, ate),
     "picking_tarefas/fila-v2",
     "picking_tarefas",
   );
+  return linhas.map(paraTarefaV2);
 }
 
 export async function lerTarefa(id: string): Promise<TarefaV2> {
   const { data, error } = await supabase.from("picking_tarefas").select(COLUNAS_TAREFA).eq("id", id).single();
   if (error) throw new Error(error.message);
-  return data as unknown as TarefaV2;
+  return paraTarefaV2(data);
 }
 
 export async function lerLinhas(tarefaId: string): Promise<LinhaV2[]> {
-  const linhas = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
+  const linhas = await fetchAllPagesComMensagem((de, ate) =>
     supabase
       .from("picking_linhas")
       .select("id, codigo_item, omie_codigo_produto, codigo_produto, descricao, quantidade, unidade, ean, fracionaria, ativa, revisao")
       .eq("tarefa_id", tarefaId)
       .order("codigo_item", { ascending: true })
-      .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+      .range(de, ate),
     "picking_linhas/tarefa-v2",
     "picking_linhas",
   );
@@ -83,11 +62,11 @@ export async function lerLinhas(tarefaId: string): Promise<LinhaV2[]> {
     id: String(l.id),
     codigo_item: Number(l.codigo_item),
     omie_codigo_produto: Number(l.omie_codigo_produto),
-    codigo_produto: (l.codigo_produto as string | null) ?? null,
-    descricao: (l.descricao as string | null) ?? null,
+    codigo_produto: l.codigo_produto,
+    descricao: l.descricao,
     quantidade: Number(l.quantidade),
     unidade: String(l.unidade),
-    ean: (l.ean as string | null) ?? null,
+    ean: l.ean,
     fracionaria: Boolean(l.fracionaria),
     ativa: Boolean(l.ativa),
     revisao: Number(l.revisao),
@@ -95,19 +74,19 @@ export async function lerLinhas(tarefaId: string): Promise<LinhaV2[]> {
 }
 
 export async function lerLeituras(tarefaId: string): Promise<LeituraServidor[]> {
-  const ls = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
+  const ls = await fetchAllPagesComMensagem((de, ate) =>
     supabase
       .from("picking_leituras")
       .select("id, linha_id, linha_revisao, unidades, aceita")
       .eq("tarefa_id", tarefaId)
       .order("id", { ascending: true })
-      .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+      .range(de, ate),
     "picking_leituras/tarefa-v2",
     "picking_leituras",
   );
   return ls.map((l) => ({
     id: String(l.id),
-    linha_id: (l.linha_id as string | null) ?? null,
+    linha_id: l.linha_id,
     linha_revisao: l.linha_revisao === null ? null : Number(l.linha_revisao),
     unidades: l.unidades === null ? null : Number(l.unidades),
     aceita: Boolean(l.aceita),
@@ -117,7 +96,7 @@ export async function lerLeituras(tarefaId: string): Promise<LeituraServidor[]> 
 /** Códigos cadastrados (não revogados) dos produtos da tarefa — base da previsão local do bipe. */
 export async function lerCodigos(conta: Conta, produtos: number[]): Promise<CodigoCadastrado[]> {
   if (produtos.length === 0) return [];
-  const cs = await fetchAllPagesComMensagem<Record<string, unknown>>((de, ate) =>
+  const cs = await fetchAllPagesComMensagem((de, ate) =>
     supabase
       .from("picking_codigos_barras")
       .select("codigo, omie_codigo_produto, unidade, unidades_por_leitura, status")
@@ -126,7 +105,7 @@ export async function lerCodigos(conta: Conta, produtos: number[]): Promise<Codi
       .in("omie_codigo_produto", produtos)
       .order("codigo", { ascending: true })
       .order("id", { ascending: true })
-      .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: { message: string } | null }>,
+      .range(de, ate),
     "picking_codigos_barras/previsao-bipe",
     "picking_codigos_barras",
   );
@@ -179,59 +158,62 @@ export async function enviarLeitura(c: Comando, dono: string): Promise<Resultado
   }
 }
 
-export interface ResultadoComando {
-  ok: boolean;
-  motivo?: string;
-  atribuicao_id?: string;
-  tarefa_revisao?: number;
-  estado_seq?: number;
-}
-
-async function rpcComando(nome: string, args: Record<string, unknown>): Promise<ResultadoComando> {
-  const { data, error } = await supabase.rpc(nome as "picking_pegar_task", args as never);
-  if (error) throw Object.assign(new Error(error.message), { code: (error as { code?: string }).code });
-  return (data ?? { ok: false, motivo: "sem_resposta" }) as unknown as ResultadoComando;
+// O retorno é `Json` no types.ts: a forma é conferida em `lerResultadoComando` (borda-rpc).
+async function rpcComando(
+  chamada: PromiseLike<{ data: Json | null; error: PostgrestError | null }>,
+): Promise<ResultadoComando> {
+  const { data, error } = await chamada;
+  if (error) throw Object.assign(new Error(error.message), { code: error.code });
+  return lerResultadoComando(data);
 }
 
 export function pegarTarefa(t: TarefaV2, opts: { assumir?: boolean; reconciliacao?: boolean } = {}) {
-  return rpcComando("picking_pegar_task", {
-    p_evento_id: crypto.randomUUID(),
-    p_account: t.account,
-    p_tarefa_id: t.id,
-    p_estado_seq: t.estado_seq,
-    p_assumir: opts.assumir ?? false,
-    p_reconciliacao_fisica: opts.reconciliacao ?? false,
-  });
+  return rpcComando(
+    supabase.rpc("picking_pegar_task", {
+      p_evento_id: crypto.randomUUID(),
+      p_account: t.account,
+      p_tarefa_id: t.id,
+      p_estado_seq: t.estado_seq,
+      p_assumir: opts.assumir ?? false,
+      p_reconciliacao_fisica: opts.reconciliacao ?? false,
+    }),
+  );
 }
 
 export function retomarTarefa(t: TarefaV2, reconciliacao: boolean) {
-  return rpcComando("picking_retomar", {
-    p_evento_id: crypto.randomUUID(),
-    p_account: t.account,
-    p_tarefa_id: t.id,
-    p_estado_seq: t.estado_seq,
-    p_reconciliacao_fisica: reconciliacao,
-  });
+  return rpcComando(
+    supabase.rpc("picking_retomar", {
+      p_evento_id: crypto.randomUUID(),
+      p_account: t.account,
+      p_tarefa_id: t.id,
+      p_estado_seq: t.estado_seq,
+      p_reconciliacao_fisica: reconciliacao,
+    }),
+  );
 }
 
 export function marcarFalta(t: TarefaV2, atribuicaoId: string, linhaId: string, observacao?: string) {
-  return rpcComando("picking_marcar_falta", {
-    p_evento_id: crypto.randomUUID(),
-    p_account: t.account,
-    p_tarefa_id: t.id,
-    p_atribuicao_id: atribuicaoId,
-    p_linha_id: linhaId,
-    p_observacao: observacao ?? null,
-  });
+  return rpcComando(
+    supabase.rpc("picking_marcar_falta", {
+      p_evento_id: crypto.randomUUID(),
+      p_account: t.account,
+      p_tarefa_id: t.id,
+      p_atribuicao_id: atribuicaoId,
+      p_linha_id: linhaId,
+      p_observacao: observacao, // ausente → DEFAULT NULL da função
+    }),
+  );
 }
 
 export function concluirTarefa(t: TarefaV2, atribuicaoId: string, revisao: number, leituras: string[]) {
-  return rpcComando("picking_concluir", {
-    p_evento_id: crypto.randomUUID(),
-    p_account: t.account,
-    p_tarefa_id: t.id,
-    p_atribuicao_id: atribuicaoId,
-    p_tarefa_revisao: revisao,
-    p_leituras: leituras,
-  });
+  return rpcComando(
+    supabase.rpc("picking_concluir", {
+      p_evento_id: crypto.randomUUID(),
+      p_account: t.account,
+      p_tarefa_id: t.id,
+      p_atribuicao_id: atribuicaoId,
+      p_tarefa_revisao: revisao,
+      p_leituras: leituras,
+    }),
+  );
 }

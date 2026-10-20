@@ -101,7 +101,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
   // Fetch NF-es with item counts
   const { data: nfes, isLoading } = useQuery({
     queryKey: ['nfe_recebimentos', selectedWarehouse, statusFilter],
-    queryFn: async () => {
+    queryFn: async (): Promise<NfeWithRelations[]> => {
       if (!selectedWarehouse) return [];
       let query = supabase
         .from('nfe_recebimentos')
@@ -116,7 +116,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
       }
       const { data, error } = await query.order('data_emissao', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as unknown as NfeWithRelations[];
+      return data ?? [];
     },
     enabled: !!selectedWarehouse,
   });
