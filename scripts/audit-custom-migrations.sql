@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 670
+-- Total de custom migrations: 671
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -732,6 +732,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019150000', 'tint_watchdog_corante_v2_base_precificavel', '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql'),
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
   ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
+  ('20261019200000', 'radar_situacao_cadastral', '20261019200000_radar_situacao_cadastral.sql'),
   ('20261020101636', 'data_health_radar_lote_e_recruzamento', '20261020101636_data_health_radar_lote_e_recruzamento.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
@@ -2831,6 +2832,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
   ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_docs_clientes', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_cnpjs_conhecidos', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_rfb_descricao', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('radar_situacao_cadastral', 'table', 'public', 'radar_situacao_cadastral', ''),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral'),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', '_data_health_compute', ''),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'fin_sync_heartbeat', ''),
@@ -4984,6 +4993,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_score_lead', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_score_lead', 'index', 'public', 'idx_radar_lista_score', 'radar_empresas'),
   ('radar_score_lead', 'cron_job', 'cron', 'radar-score-recalcular-diario', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_docs_clientes', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_cnpjs_conhecidos', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_rfb_descricao', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('radar_situacao_cadastral', 'table', 'public', 'radar_situacao_cadastral', ''),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral'),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', '_data_health_compute', ''),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'data_health_watchdog', ''),
   ('data_health_radar_lote_e_recruzamento', 'function', 'public', 'fin_sync_heartbeat', ''),

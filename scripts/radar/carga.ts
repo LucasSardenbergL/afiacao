@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
  * Carga do Radar de Clientes — dump RFB → radar-ingest.
- * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run]
+ * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run] [--conhecidos <csv>]
+ *   --conhecidos: CSV (cabeçalho `cnpj`) com os CNPJs conhecidos para extrair a situação cadastral num
+ *   dry-run local; sem a edge a lista não existe e a extração é pulada com aviso.
  * Env: RADAR_INGEST_URL (https://<proj>.supabase.co/functions/v1/radar-ingest)
  *      RADAR_CRON_SECRET (valor do CRON_SECRET do Vault)
  * ⚠️ A RFB mudou layout/URLs em jan/2026 — o caminho VIVO (descoberto na 1ª carga,
@@ -9,13 +11,14 @@
  * página oficial de dados abertos): public.php/webdav/<YYYY-MM>/<arquivo>.
  * O script tenta os candidatos e ABORTA com instrução clara se nenhum responder.
  */
-import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
 import { execFileSync, execSync } from "node:child_process";
 import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
   splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
 } from "../../src/lib/radar/normalizar";
-import type { RadarEmpresaRow, RadarMunicipioRow } from "./types";
+import type { RadarEmpresaRow, RadarMunicipioRow, RadarSituacaoRow } from "./types";
+import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 
 const args = new Map<string, string>();
@@ -39,6 +42,57 @@ if (!DRY && (!INGEST_URL || !SECRET)) { console.error("RADAR_INGEST_URL e RADAR_
 const WORK = process.env.RADAR_WORK_DIR ? `${process.env.RADAR_WORK_DIR}/radar-${MES}` : `/tmp/radar-${MES}`;
 mkdirSync(WORK, { recursive: true });
 const sh = (cmd: string) => execSync(cmd, { stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1024 * 1024 * 64 }).toString();
+
+const post = async (body: unknown) => {
+  for (let t = 1; t <= 4; t++) {
+    // try/catch cobre rejeição do fetch (rede: ECONNRESET/DNS) — review da 1ª carga:
+    // só status HTTP no retry deixava ~527 POSTs sequenciais morrerem no 1º transitório.
+    try {
+      const res = await fetch(INGEST_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return res.json();
+      const txt = await res.text();
+      if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
+      console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
+    } catch (e) {
+      if (t === 4) throw e;
+      console.warn(`tentativa ${t} falhou (rede: ${e instanceof Error ? e.message : e}), retry…`);
+    }
+    await new Promise((r) => setTimeout(r, 800 * 2 ** t));
+  }
+};
+
+// ── 0. CNPJs conhecidos (radar ∪ clientes): a situação cadastral RFB é extraída para TODOS eles, em
+//      qualquer situação (02/03/04/08), e aplicada no finalize (radar_aplicar_situacao). A lista vem da
+//      edge (ação cnpjs_conhecidos, keyset) ANTES de ler os zips — é a 2ª condição do scan do passo 3.
+//      Edge antiga (sem a ação) → o POST falha alto e a carga aborta: deploy da edge antes da carga.
+const CONHECIDOS = `${WORK}/conhecidos.csv`;
+let temConhecidos = false;
+if (args.get("conhecidos") && args.get("conhecidos") !== "true") {
+  copyFileSync(args.get("conhecidos")!, CONHECIDOS);
+  temConhecidos = true;
+} else if (!DRY) {
+  const todos: string[] = [];
+  let apos = "";
+  for (;;) {
+    const r = (await post({ action: "cnpjs_conhecidos", apos, limite: 50000 })) as
+      { cnpjs?: string[]; proximo?: string | null } | undefined;
+    if (!r?.cnpjs) throw new Error("cnpjs_conhecidos: resposta sem `cnpjs` (edge antiga?) — ausente ≠ vazio, abortando");
+    todos.push(...r.cnpjs);
+    if (!r.proximo) break;
+    apos = r.proximo;
+  }
+  if (todos.length === 0) throw new Error("cnpjs_conhecidos devolveu 0 CNPJs — radar_empresas vazio? abortando");
+  writeFileSync(CONHECIDOS, `cnpj\n${todos.join("\n")}\n`);
+  temConhecidos = true;
+  console.log(`🧾 CNPJs conhecidos (radar ∪ clientes): ${todos.length}`);
+} else {
+  console.warn("⚠️ dry-run sem --conhecidos: extração da situação cadastral PULADA (só o filtro por CNAE)");
+}
+const nConhecidos = temConhecidos ? readFileSync(CONHECIDOS, "utf-8").split("\n").filter((l) => l && l !== "cnpj").length : 0;
 
 // ── 1. Descobrir base URL viva (HEAD no Cnaes.zip, arquivo pequeno) ──────────
 let BASE = "";
@@ -124,7 +178,8 @@ for (let i = 0; i <= 9; i++) {
   // Parquet existente = cache (resume de carga interrompida). ⚠️ Se a CURADORIA
   // mudou desde a última rodada, apagar ${WORK}/est_filtrado_*.parquet antes —
   // parquet velho não contém CNAE recém-adicionado (o aviso de 0-matches denuncia).
-  if (existsSync(`${WORK}/est_filtrado_${i}.parquet`)) {
+  // Com conhecidos, o cache só vale se os DOIS parquets existem (o da situação nasce no mesmo scan).
+  if (existsSync(`${WORK}/est_filtrado_${i}.parquet`) && (!temConhecidos || existsSync(`${WORK}/sit_conhecidos_${i}.parquet`))) {
     console.log(`↩️  Estabelecimentos${i}: parquet em cache, pulando`);
     usouCache = true;
     continue;
@@ -134,16 +189,30 @@ for (let i = 0; i <= 9; i++) {
   sanear("est");
   // names= explícitos: o auto-naming do DuckDB zero-padda com ≥10 colunas
   // (column00..column29) — columnN cru quebrou na 1ª carga. Layout RFB: 30 colunas.
-  duck(`COPY (
-      SELECT b, o, dv, fantasia, dt, cnae1, cnae2, tlog, log, num,
+  // UM scan do CSV (o custo da carga é a leitura), com as duas condições em OR, para uma temp table
+  // pequena; dela saem o parquet filtrado (universo prospectável, como antes) e, com conhecidos, o parquet
+  // da situação cadastral (cnpj, situacao, dt_sit, motivo) de quem já conhecemos — em QUALQUER situação.
+  const filtroUniverso = `situacao = '02' AND cnae1 IN (${inList})`;
+  const cnpjExpr = `lpad(b, 8, '0') || lpad(o, 4, '0') || lpad(dv, 2, '0')`;
+  const filtroConhecidos = temConhecidos ? `(${cnpjExpr}) IN (SELECT cnpj FROM conhecidos)` : "false";
+  duck(`
+    ${temConhecidos ? `CREATE TEMP TABLE conhecidos AS SELECT cnpj FROM read_csv('${CONHECIDOS}', delim=',', header=true, all_varchar=true, names=['cnpj']);` : ""}
+    CREATE TEMP TABLE scan AS
+      SELECT b, o, dv, fantasia, situacao, dt_sit, motivo, dt, cnae1, cnae2, tlog, log, num,
              comp, bai, cep, uf, mun, ddd1, tel1, ddd2, tel2, email
       FROM read_csv('${WORK}/est/*', delim=';', header=false, quote='"',
                     all_varchar=true, parallel=false,
                     names=['b','o','dv','matriz','fantasia','situacao','dt_sit','motivo','cid_ext','pais',
                            'dt','cnae1','cnae2','tlog','log','num','comp','bai','cep','uf',
                            'mun','ddd1','tel1','ddd2','tel2','ddd_fax','fax','email','sit_esp','dt_sit_esp'])
-      WHERE situacao = '02' AND cnae1 IN (${inList})
-    ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet)`);
+      WHERE (${filtroUniverso}) OR ${filtroConhecidos};
+    COPY (
+      SELECT b, o, dv, fantasia, dt, cnae1, cnae2, tlog, log, num,
+             comp, bai, cep, uf, mun, ddd1, tel1, ddd2, tel2, email
+      FROM scan WHERE ${filtroUniverso}
+    ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet);
+    ${temConhecidos ? `COPY (SELECT b, o, dv, situacao, dt_sit, motivo, cnae1 FROM scan WHERE ${filtroConhecidos})
+      TO '${WORK}/sit_conhecidos_${i}.parquet' (FORMAT parquet);` : ""}`);
   rmSync(`${WORK}/est/`, { recursive: true, force: true });
   if (APAGAR_ZIPS) rmSync(zip, { force: true });
   console.log(`✅ Estabelecimentos${i} filtrado`);
@@ -158,6 +227,16 @@ sanear("emp"); sanear("soc");
 baixar("Municipios.zip");
 sh(`cd ${WORK} && rm -rf mun/ && unzip -o -q Municipios.zip -d mun/`);
 sanear("mun");
+// Motivos.zip (63 pares codigo;descricao): a descrição vai junto da situação, para o motivo do descarte e o e-mail.
+let mapaMotivos = new Map<string, string>();
+if (temConhecidos) {
+  baixar("Motivos.zip");
+  sh(`cd ${WORK} && rm -rf mot/ && unzip -o -q Motivos.zip -d mot/`);
+  sanear("mot");
+  mapaMotivos = mapaDeMotivos(JSON.parse(duck(
+    `SELECT c, d FROM read_csv('${WORK}/mot/*', delim=';', header=false, quote='"', all_varchar=true, parallel=false, names=['c','d'])`)));
+  if (mapaMotivos.size === 0) { console.error("❌ Motivos.zip sem nenhum motivo legível"); process.exit(5); }
+}
 
 duck(`
   CREATE TEMP TABLE est AS SELECT * FROM read_parquet('${WORK}/est_filtrado_*.parquet')
@@ -222,6 +301,25 @@ if (zerados.length && usouCache) {
 }
 if (zerados.length) console.warn(`\u26a0\ufe0f CNAEs com 0 matches (conferir): ${zerados.join(", ")}`);
 
+// ── 5b. Situação cadastral dos conhecidos (normalizar + relatório por situação) ──────────────────
+const situacoes: RadarSituacaoRow[] = [];
+const rejeitadasSituacao = { cnpj: 0, situacao: 0 };
+if (temConhecidos) {
+  const brutasSit = JSON.parse(duck(`SELECT b, o, dv, situacao, dt_sit, motivo FROM read_parquet('${WORK}/sit_conhecidos_*.parquet')`)) as
+    { b?: string; o?: string; dv?: string; situacao?: string; dt_sit?: string; motivo?: string }[];
+  const porSituacao = new Map<string, number>();
+  for (const r of brutasSit) {
+    const n = normalizarSituacao(r, mapaMotivos);
+    if (!n.ok) { rejeitadasSituacao[n.motivo]++; continue; }
+    situacoes.push(n.linha);
+    porSituacao.set(n.linha.situacao, (porSituacao.get(n.linha.situacao) ?? 0) + 1);
+  }
+  const resumo = [...porSituacao.entries()].sort().map(([k, v]) => `${k}: ${v}`).join(" · ");
+  // Ausente ≠ baixa: quem não está no dump fica SEM linha de situação (e sem mudança de estado no finalize).
+  console.log(`📇 situação cadastral: ${situacoes.length} de ${nConhecidos} CNPJs conhecidos encontrados no dump (${resumo || "nenhum"}) · ausentes do dump: ${nConhecidos - situacoes.length}`
+    + (rejeitadasSituacao.cnpj + rejeitadasSituacao.situacao > 0 ? ` · ⚠️ rejeitadas: ${JSON.stringify(rejeitadasSituacao)}` : ""));
+}
+
 // ── 6. Municípios RFB + lat/lng IBGE (casamento por nome normalizado) ─────────
 const ibge = readFileSync("scripts/radar/municipios-ibge.csv", "utf-8").split("\n").slice(1).filter(Boolean);
 const UF_POR_CODIGO: Record<string, string> = { "11":"RO","12":"AC","13":"AM","14":"RR","15":"PA","16":"AP","17":"TO","21":"MA","22":"PI","23":"CE","24":"RN","25":"PB","26":"PE","27":"AL","28":"SE","29":"BA","31":"MG","32":"ES","33":"RJ","35":"SP","41":"PR","42":"SC","43":"RS","50":"MS","51":"MT","52":"GO","53":"DF" };
@@ -251,27 +349,6 @@ if (DRY) {
 }
 
 // ── 7. POST em chunks ─────────────────────────────────────────────────────────
-const post = async (body: unknown) => {
-  for (let t = 1; t <= 4; t++) {
-    // try/catch cobre rejeição do fetch (rede: ECONNRESET/DNS) — review da 1ª carga:
-    // só status HTTP no retry deixava ~527 POSTs sequenciais morrerem no 1º transitório.
-    try {
-      const res = await fetch(INGEST_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-cron-secret": SECRET },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) return res.json();
-      const txt = await res.text();
-      if (t === 4) throw new Error(`POST falhou (${res.status}): ${txt}`);
-      console.warn(`tentativa ${t} falhou (${res.status}), retry…`);
-    } catch (e) {
-      if (t === 4) throw e;
-      console.warn(`tentativa ${t} falhou (rede: ${e instanceof Error ? e.message : e}), retry…`);
-    }
-    await new Promise((r) => setTimeout(r, 800 * 2 ** t));
-  }
-};
 await post({ action: "begin_lote", mes: MES });
 for (let i = 0; i < municipios.length; i += 1000)
   await post({ action: "chunk_municipios", mes: MES, linhas: municipios.slice(i, i + 1000) });
@@ -297,5 +374,21 @@ const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
 console.log(`${totalRejeitadas > 0 ? "⚠️" : "📋"} rejeições — local: ${JSON.stringify(rejeitadasLocal)}`
   + ` · edge: ${JSON.stringify(descartadasEdge)} · duplicadas no chunk: ${duplicadasNoChunk}`
   + (totalRejeitadas > 0 ? " — confira antes de confiar no lote (CNPJ fora do formato RFB/DV, CNAE ≠ 7 dígitos)" : ""));
-const fin = await post({ action: "finalize", mes: MES });
+// Situação cadastral dos conhecidos: a edge só grava (radar_situacao_cadastral); quem decide é o finalize.
+const descartadasSituacao: Record<string, number> = {};
+for (let i = 0; i < situacoes.length; i += 1000) {
+  const resp = (await post({ action: "chunk_situacao", mes: MES, linhas: situacoes.slice(i, i + 1000) })) as
+    { descartadas_por_motivo?: Record<string, number> } | undefined;
+  if (!resp?.descartadas_por_motivo) throw new Error("chunk_situacao: resposta sem `descartadas_por_motivo` (edge antiga?) — abortando");
+  for (const [motivo, n] of Object.entries(resp.descartadas_por_motivo)) descartadasSituacao[motivo] = (descartadasSituacao[motivo] ?? 0) + n;
+  if ((i / 1000) % 100 === 0) console.log(`… situação ${i}/${situacoes.length}`);
+}
+if (temConhecidos) {
+  const rej = Object.values(descartadasSituacao).reduce((a, b) => a + b, 0);
+  console.log(`${rej > 0 ? "⚠️" : "📋"} situação cadastral enviada: ${situacoes.length} linhas · descartadas pela edge: ${JSON.stringify(descartadasSituacao)}`);
+}
+const fin = (await post({ action: "finalize", mes: MES })) as { situacao?: unknown } | undefined;
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
+if (temConhecidos && fin && !("situacao" in fin)) {
+  console.warn("⚠️ finalize sem `situacao`: a edge não aplicou radar_aplicar_situacao (edge/migration antigas?) — leads baixados e alerta ao gestor NÃO aconteceram neste lote");
+}
