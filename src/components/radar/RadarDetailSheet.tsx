@@ -12,7 +12,7 @@ import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estad
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
-  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb,
+  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -103,6 +103,7 @@ export function RadarDetailSheet({
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.razao_social || empresa.cnpj;
   const rfb = seloRfb(empresa);
+  const score = scoreUI(empresa.score, empresa.score_motivos);
 
   return (
     <Sheet open={!!empresa} onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -133,6 +134,18 @@ export function RadarDetailSheet({
           <RadarAcoesLead empresa={empresa} />
         </div>
         <div className="mt-4 divide-y">
+          <Linha label="Score">
+            <span className={cn('inline-block rounded border px-1.5 py-px text-[11px] leading-4 font-tabular', CLASSE_TOM[score.tom])} data-testid="radar-score-ficha">
+              {score.texto}{empresa.score != null ? ' / 100' : ''}
+            </span>
+            {empresa.score != null && empresa.score_motivos && empresa.score_motivos.length > 0 ? (
+              <ul className="mt-1 text-xs text-muted-foreground list-disc pl-4">
+                {empresa.score_motivos.map((m) => <li key={m}>{m}</li>)}
+              </ul>
+            ) : (
+              <span className="ml-2 text-xs text-muted-foreground">{score.detalhe}</span>
+            )}
+          </Linha>
           {empresa.nome_fantasia && <Linha label="Fantasia">{empresa.nome_fantasia}</Linha>}
           <Linha label="CNPJ"><span className="font-tabular">{formatarCnpj(empresa.cnpj)}</span></Linha>
           <Linha label="CNAE">

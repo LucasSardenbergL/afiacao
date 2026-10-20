@@ -11826,6 +11826,9 @@ export type Database = {
           rfb_situacao: string | null
           rfb_situacao_data: string | null
           rfb_situacao_lote: string | null
+          score: number | null
+          score_em: string | null
+          score_motivos: string[] | null
           socios_nomes: string | null
           telefone1: string | null
           telefone2: string | null
@@ -11866,6 +11869,9 @@ export type Database = {
           rfb_situacao?: string | null
           rfb_situacao_data?: string | null
           rfb_situacao_lote?: string | null
+          score?: number | null
+          score_em?: string | null
+          score_motivos?: string[] | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null
@@ -11906,6 +11912,9 @@ export type Database = {
           rfb_situacao?: string | null
           rfb_situacao_data?: string | null
           rfb_situacao_lote?: string | null
+          score?: number | null
+          score_em?: string | null
+          score_motivos?: string[] | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null

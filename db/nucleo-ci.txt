@@ -570,6 +570,11 @@ db/test-radar-recruzar-origem-omie.sh        9  falsificar=2
 # gestor avisado 2× do mesmo (cnpj, situacao), lead ativo (02) descartado, cliente fora do radar invisível,
 # ou lote velho regredindo a foto. Relógio controlado (p_agora), esquema mínimo com os CHECKs de prod.
 db/test-radar-situacao-cadastral.sh         22  falsificar=9
+# Radar: SCORE de lead (20261019180000). Defeito aqui = fila ordenada por número fabricado (NULL virando 0,
+# já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
+# escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
+# faixas, erro propagando. Esquema mínimo, sessão limpa.
+db/test-radar-score.sh                      18  falsificar=12
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
