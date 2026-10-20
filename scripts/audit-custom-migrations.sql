@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 670
+-- Total de custom migrations: 671
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -733,6 +733,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019160000', 'tint_watchdog_corante_v3_plano_custom', '20261019160000_tint_watchdog_corante_v3_plano_custom.sql'),
   ('20261019180000', 'radar_score_lead', '20261019180000_radar_score_lead.sql'),
   ('20261019200000', 'radar_situacao_cadastral', '20261019200000_radar_situacao_cadastral.sql'),
+  ('20261020120000', 'radar_score_lead_v2', '20261020120000_radar_score_lead_v2.sql'),
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql')
 ),
@@ -2839,6 +2840,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
   ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
   ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral'),
+  ('radar_score_lead_v2', 'function', 'public', 'radar_score_recalcular', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
@@ -4997,6 +4999,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
   ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
   ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral'),
+  ('radar_score_lead_v2', 'function', 'public', 'radar_score_recalcular', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'function', 'public', 'tint_watchdog_corante_vigia_check', ''),
   ('tint_watchdog_corante_v4_renotifica_e_vigia', 'cron_job', 'cron', 'tint-watchdog-corante-vigia-15min', ''),
@@ -5030,7 +5033,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 148.
+-- Funções redefinidas com corpo extraível: 149.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5588,7 +5591,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_release_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '34c7537d07424efc870fdf474ef180ee'),
   ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa'),
   ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
-  ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57')
+  ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
+  ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
+  ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

@@ -53,12 +53,25 @@ Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital <
 
 ## Codex
 
-Desenho: **Caminho B** — `scripts/codex-async.sh -r max` devolveu `exit 79` (guard local: cota em 97 %, teto 85 %; janela reabre 24/10 19:09). A RÉGUA foi escrita e conferida na sessão (está no corpo do PR). Código: ver o corpo do PR (`sem-codex:` ou parecer, conforme a decisão do founder sobre gastar a reserva).
+- **Desenho: Caminho B.** `scripts/codex-async.sh -r max` devolveu `exit 79` (guard local: cota em 97 %, teto 85 %). A RÉGUA foi escrita e conferida na sessão (está no corpo do PR).
+- **Código: gpt-6-astra · max · 538 s · 178.416 tokens**, com a reserva liberada pelo founder (`CODEX_ASYNC_TETO_SALDO=0`). 6 achados, **todos tratados** na migration `20261020120000_radar_score_lead_v2.sql` (molde TRAVA→PRE→CREATE→PÓS sobre a v1 viva) e no front:
+
+| Achado | Severidade | O que mudou | Prova |
+| --- | --- | --- | --- |
+| Chunk de lote `running` (`ultimo_lote > vigente`) pontuava com "inédito no lote anterior" | ALTO | NULL `{lote em ingestão}` | A4, A14, sabotagem `lote_running_pontua` |
+| `UPDATE … FROM calc` gravava score do snapshot velho na linha que o recruzamento/ingestão acabou de mudar (EvalPlanQual reavalia só o alvo) | ALTO | guarda de versão: `updated_at`/`ja_cliente` iguais aos lidos; senão a linha é **pulada** (`pulados` no ledger) e refeita na rodada seguinte | **A17 com duas sessões reais** (lock segurado em `pg_sleep`), sabotagem `sem_guarda_versao` |
+| Ledger contava `avaliados` num snapshot diferente do cálculo | MÉDIO | cálculo, UPDATE e resumo num só comando (CTE modificadora + `RETURNING`) | A1, A7b |
+| Paginação por offset pula/repete lead quando o ranking muda entre páginas | MÉDIO | a rodada do ledger vira a versão da fila (`versaoDaFila`), entra na `queryKey` e reinicia a paginação; revisada a cada 10 min | vitest `versaoDaFila` |
+| Prova de monotonia não pegava inversão de uma faixa inteira de capital | MÉDIO | escada de capital nas bordas (9.999 → 1.000.000) + EPP | A6b, sabotagem `faixa_invertida` |
+| Ficha mostrava a idade de hoje e o motivo a idade do lote | BAIXO | o motivo cita a referência: "empresa com 3–10 anos (ref. 2026-08)" | A3, A10 |
+
+- **Aplicação da v2 em prod:** pré-voo (vivo = md5 da v1, volátil, cron ativo) → ensaio com `RAISE 'ENSAIO_OK'` e rollback → apply como `postgres` → psql-ro `✅` (md5 `5413669a…`, ACL fechada, cron 225 intacto).
+- **A rodada manual da v2 NÃO persistiu:** desta vez o timeout do cliente MCP (~60 s) derrubou a transação de ~96 s (nenhuma linha nova no ledger). **Nada fica errado na fila:** sem lote em ingestão, 0 linhas acima do vigente, 0 já-cliente com score — os números da v1 são os mesmos da v2; só o texto do motivo de idade muda. O cron 225 grava a v2 às **03:30 BRT de 2026-10-21**. **Lição:** rodada manual longa não vai pelo MCP — use o cron, ou o SQL Editor.
 
 ## Provas
 
-- `db/test-radar-score.sh` (no `nucleo-ci.txt`, 18 asserts, `--falsificar` 12/12 vermelhas com controle verde): determinismo (A5), monotonia por fator (A6), NULL honesto (A4/A14/A15), ja_cliente não pontua (A4/A12), idade pelo lote e não pelo relógio (A10), ledger com faixas (A7), ACL (A8), cron (A9), erro propaga (A13), `updated_at` intocado (A11). Três sabotagens são pegas pela própria postcondição da migration (ACL, cron, md5 do corpo) e as variantes `_sem_post` provam que o assert da suíte pega sozinho.
-- `src/lib/radar/__tests__/ui-helpers.test.ts`: preset `score` + `scoreUI` (NULL ≠ 0, tons por faixa, motivos na ordem do banco).
+- `db/test-radar-score.sh` (no `nucleo-ci.txt`, aplica v1 → v2 como em prod, **21 asserts**, `--falsificar` **14/14** vermelhas com controle verde): determinismo (A5), monotonia por fator e nas bordas das faixas (A6/A6b), NULL honesto (A4/A14/A15), ja_cliente não pontua (A4/A12), idade pelo lote e não pelo relógio (A10), ledger do mesmo snapshot (A7), ACL (A8), cron (A9), erro propaga (A13), `updated_at` intocado (A11), **escritor concorrente em duas sessões (A17)**. Sob `CREATE OR REPLACE` tirar o `REVOKE` da v2 é inerte (medido: suíte verde); a sabotagem de ACL injeta um `GRANT` indevido.
+- `src/lib/radar/__tests__/ui-helpers.test.ts`: preset `score`, `scoreUI` (NULL ≠ 0, tons por faixa, motivos na ordem do banco) e `versaoDaFila`.
 
 ## Follow-ups (fora deste bloco)
 
