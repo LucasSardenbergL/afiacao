@@ -43,3 +43,9 @@ O teto de compra tem duas condições. A primeira é a reserva mínima diária d
 - **Lição (Codex challenge xhigh, 6 P1):** um filtro não provado não pode publicar no 1º run, e o controle negativo tem de impedir a publicação. Daí o modo observado com `habilitado` ligado à mão. Também entraram o fencing por seq da coleta, a coluna igual ao conjunto atual (marca sem cobertura não sobrevive) e a regra de que ausência de vínculo R57 não prova ausência de NF.
 - **2ª rodada Codex (3 P1 + 1 P2):** o backtest passou a ler o conjunto da tabela protegida (a coluna é editável por staff), a evidência de NF ganhou exportador sem filtro de data, e toda tentativa abre `coletando` e fecha `publicado`, `observado` ou `invalidado`, então tentativa ruim invalida a publicação anterior. O prazo agora é por página.
 - **Falsificação:** a camada "vínculo R57" ficou verde quando sabotada, porque a checagem de identificadores já cobre o vínculo por contrato. Só o substituto R58 precisa dela, e ganhou teste.
+
+## 2026-10-20 — 1ª rodada com o R59 v2
+
+- **O filtro devolve o ciclo concluído:** 517 de 560 pedidos da janela, 382 com NF. Daí a lista aprovada do v2 (#3176/#3183). O resultado, em contagens, está no LEIA-ME §"Rodada de 2026-10-20".
+- **Efeito:** os 3 aprovados (1005, 1014, 1049) levam os indeterminados dos disparados de 24 para 5, com inviáveis de 31 para 30. O portão segue fechado por precisão e cobertura.
+- **Lição de harness:** chamar `backtest()` direto, sem `r59_aprovadas`, dá o resultado do "sem R59". O fail-closed esconde o esquecimento, porque ausente = nada aprovado. A injeção está no CLI (`simular.ts`), então qualquer script de análise tem de repeti-la.
