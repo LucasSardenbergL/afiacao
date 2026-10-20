@@ -398,6 +398,13 @@ SELECT t_ok('K snapshot sem divergencia', NOT EXISTS (
     FROM public.venda_recompra_em((now() AT TIME ZONE 'America/Sao_Paulo')::date)));
 SQL
 
+# K: a query de validação do PR (db/validar-venda-recompra.sql) dá ✅ depois do apply.
+VALIDA="$(P -tA -f "$REPO_ROOT/db/validar-venda-recompra.sql")"
+case "$VALIDA" in
+  ✅*) P -tA -c "SELECT t_ok('K validar-venda-recompra.sql', true)" >/dev/null; echo "OK K validar: $VALIDA" ;;
+  *)   echo "FAIL K validar-venda-recompra.sql ($VALIDA)"; exit 1 ;;
+esac
+
 # Contagem para db/roda-nucleo-ci.sh: qualquer FAIL aborta antes daqui (ON_ERROR_STOP), então fail = 0.
 N_OK="$(P -tA -c "SELECT count(*) FROM t_contagem")"
 echo "RESULTADO: $N_OK ok / 0 fail"

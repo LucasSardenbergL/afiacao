@@ -654,4 +654,4 @@ db/test-data-health-radar.sh               39  falsificar=12
 # sobre db/fixtures/venda-recompra.json em 3 datas; alias → canônico, cancelado/deleted fora, sem olhar
 # o futuro, Oben × Colacor separados, desconto não apurado → preço NULL, borda 1,5, perdido/sem_base,
 # ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
-db/test-venda-recompra.sh                  48  falsificar=15
+db/test-venda-recompra.sh                  49  falsificar=15
