@@ -81,3 +81,17 @@ Os 13 pedidos de out/2026 observados têm NF. ⇒ o filtro só-encerrados separa
 não "encerrado manualmente sem NF". Com a guarda de metade, a passada absterá SEMPRE nesta carteira: ligar
 `habilitado` sozinho é inerte. A decisão aberta é a SEMÂNTICA (o que o R59 quer tirar do caixa) e, com ela,
 a guarda — não o interruptor.
+
+## v1.9 + R59 v2 — `habilitado` ligado na OBEN (2026-10-20)
+
+A decisão de semântica foi tomada no R59 v2 (#3176): a guarda de fração saiu da edge (v1.9), e a contenção
+passou a ser a lista nomeada `scripts/orcamento-compra/r59-exclusoes-aprovadas.ts` (3 pedidos cancelados,
+conferidos no portal). O 1º ciclo da v1.9 (20/10 00:18 UTC) terminou `observado`, seq 153, 520 ids, e com isso
+o alerta `sync_state_saude` de 19/10 02:00 UTC (a abstenção da prova da v1.7, gravada como `error`) se
+resolveu sozinho às 00:30.
+
+Raio medido antes de ligar: `encerrado_omie_em` tem 1 escritor (a RPC) e 1 leitor (o backtest offline). Nenhuma
+função, view ou tela da prod o lê. Aplicado por `db/2026-10-20-r59-habilitar-encerrados-oben.sql` (recibo
+#569; o ensaio passou antes). A 2ª testemunha por psql-ro deu `OBEN|t|observado|153|520` e coluna com 0
+linhas. **Quem grava a coluna é a próxima passada** (completo diário, ~00:16 UTC de 21/10): status
+`publicado`, `novos`≈520. Reverter: `habilitado=false`. O backtest volta a recusar na hora.
