@@ -17502,6 +17502,57 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_config: {
+        Row: {
+          atualizado_em: string
+          chave: string
+          valor: Json
+        }
+        Insert: {
+          atualizado_em?: string
+          chave: string
+          valor: Json
+        }
+        Update: {
+          atualizado_em?: string
+          chave?: string
+          valor?: Json
+        }
+        Relationships: []
+      }
+      venda_contato: {
+        Row: {
+          atualizado_em: string
+          comprador_id: string
+          criado_em: string
+          dia: string
+          farmer_user_id: string
+          id: string
+          motivo: string | null
+          resultado: string
+        }
+        Insert: {
+          atualizado_em?: string
+          comprador_id: string
+          criado_em?: string
+          dia: string
+          farmer_user_id: string
+          id?: string
+          motivo?: string | null
+          resultado: string
+        }
+        Update: {
+          atualizado_em?: string
+          comprador_id?: string
+          criado_em?: string
+          dia?: string
+          farmer_user_id?: string
+          id?: string
+          motivo?: string | null
+          resultado?: string
+        }
+        Relationships: []
+      }
       venda_excecao_credito: {
         Row: {
           aprovado_por: string
@@ -17667,6 +17718,75 @@ export type Database = {
           quantidade?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+        }
+        Relationships: []
+      }
+      venda_sugestao: {
+        Row: {
+          avaliado_em: string | null
+          comprador_id: string
+          desfecho: string | null
+          desfecho_motivo: string | null
+          dia_referencia: string
+          empresa: string
+          familia: string | null
+          farmer_user_id: string
+          fase: string
+          gerada_em: string
+          id: string
+          mostrada_em: string | null
+          motivo_entrada: string
+          omie_codigo_produto: number | null
+          preco_alvo: number | null
+          qtd_ref: number | null
+          sales_order_id: string | null
+          tipo: string
+          valor_realizado: number | null
+          valor_ref: number | null
+        }
+        Insert: {
+          avaliado_em?: string | null
+          comprador_id: string
+          desfecho?: string | null
+          desfecho_motivo?: string | null
+          dia_referencia: string
+          empresa: string
+          familia?: string | null
+          farmer_user_id: string
+          fase: string
+          gerada_em?: string
+          id?: string
+          mostrada_em?: string | null
+          motivo_entrada: string
+          omie_codigo_produto?: number | null
+          preco_alvo?: number | null
+          qtd_ref?: number | null
+          sales_order_id?: string | null
+          tipo: string
+          valor_realizado?: number | null
+          valor_ref?: number | null
+        }
+        Update: {
+          avaliado_em?: string | null
+          comprador_id?: string
+          desfecho?: string | null
+          desfecho_motivo?: string | null
+          dia_referencia?: string
+          empresa?: string
+          familia?: string | null
+          farmer_user_id?: string
+          fase?: string
+          gerada_em?: string
+          id?: string
+          mostrada_em?: string | null
+          motivo_entrada?: string
+          omie_codigo_produto?: number | null
+          preco_alvo?: number | null
+          qtd_ref?: number | null
+          sales_order_id?: string | null
+          tipo?: string
+          valor_realizado?: number | null
+          valor_ref?: number | null
         }
         Relationships: []
       }
@@ -22838,9 +22958,16 @@ export type Database = {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
+      venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
+      }
+      venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
+      venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_registrar_contato: {
+        Args: { p_comprador: string; p_motivo?: string; p_resultado: string }
+        Returns: string
       }
       vendas_sync_finish: {
         Args: {

@@ -649,3 +649,11 @@ db/test-grupos-caca-cnpj-alfanumerico.sh    80  falsificar=7
 # referência→finalizado_em, janela, ledger sem filtro, fora do v_sources, fora do heartbeat, PRE, PÓS md5, REVOKE,
 # PÓS v_sources, PÓS IN-list, PÓS ACL.
 db/test-data-health-radar.sh               39  falsificar=12
+
+# Venda por cliente — ESPINHA (migration 20261020174221, Task 1 do plano 2026-10-20): venda_sugestao com
+# identidade + venda_contato + venda_config + job venda_fechar_desfechos. Autorização: farmer só vê as SUAS linhas
+# ATIVAS (RPC e RLS), contato só na própria carteira com alias resolvido, job fechado a authenticated. Ausente ≠ zero:
+# buraco de sync de vendas → nao_medivel (ou linha ABERTA enquanto cobrível), desconto não apurado → nao_medivel,
+# pedido do ALIAS conta para o canônico. 12 sabotagens: alias, sync→nao_virou, fecha cobrível, cursor ignorado,
+# desconto como zero, fase na RPC, 1ª marcação, carteira sem alias, RLS sombra, POST ACL, ACL sem POST, POST cron.
+db/test-venda-espinha.sh                   30  falsificar=12
