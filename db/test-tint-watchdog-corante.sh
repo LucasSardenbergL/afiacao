@@ -22,9 +22,11 @@
 # ║   A10 base sem vínculo Omie -> MUDO, e DISMISSA o alerta da v1 aberto com 11   ║
 # ║   A10b idem com base Omie INATIVA -> MUDO (espelha v_base_disponivel da RPC)   ║
 # ║   A11 corante sem vínculo Omie é rotulado pela DESCRIÇÃO, não pelo UUID        ║
-# ║   A12 TROCA de corante com alerta aberto (1 -> 1) re-emite        (v4)        ║
+# ║   A12 TROCA por corante NUNCA VISTO no incidente (1 -> 1) re-emite (v4)        ║
 # ║   A13 mesmo corante escala a >=1000 fórmulas: 'critico' + re-emite (v4)        ║
 # ║   A14 conjunto ENCOLHE: atualiza o alerta SEM e-mail               (v4)        ║
+# ║   A19 histerese: 999<->1000 fórmulas mantém 'critico', sem e-mail  (v4)        ║
+# ║   A20 histerese: corante JÁ VISTO que volta não re-emite           (v4)        ║
 # ║   A15/A16 vigia: marcador da A > 30 min alarma; A voltou -> dismissa (v4)      ║
 # ║   A17 A vigia a vigia: marcador da vigia > 1h alarma               (v4)        ║
 # ║   A18 cron da vigia armado */15                                    (v4)        ║
@@ -36,11 +38,13 @@
 # ║   F5 volta ao predicado de base da v1  -> {A10,A10b}                           ║
 # ║   F6 tira a descrição do corante do rótulo -> {A11,A11b}                       ║
 # ║   F7 volta a contar pares fórmula×corante -> {A6c}                             ║
-# ║   F8 novos por QUANTIDADE (v1-v3)        -> {A12}                              ║
+# ║   F8 novos por QUANTIDADE (v1-v3)        -> {A12,A20}                          ║
 # ║   F9 sem escalada                        -> {A13b}                             ║
-# ║   F10 sem atualização calada             -> {A14,A12}                          ║
+# ║   F10 sem atualização calada             -> {A14}                              ║
 # ║   F11 vigia lê a entidade errada         -> {A16}                              ║
 # ║   F12 A não vigia a vigia                -> {A17}                              ║
+# ║   F13 sem 'vistos' (só ids atuais)       -> {A20}                              ║
+# ║   F14 severidade não-pegajosa            -> {A19,A19b}                         ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -245,9 +249,10 @@ roda_suite() {
   eq "A14 encolheu atualiza o contexto" "$(Pq -c "SELECT contexto->>'corantes' FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "1"
   eq "A14b encolheu nao re-emite" "$(emails 'AGRAVOU')" "1"
 
-  # A12 (v4): TROCA — sai C_INAT, entra C_SEMCUSTO (1 -> 1). A v1-v3 ficavam MUDAS.
+  # A12 (v4): TROCA — sai C_INAT, entra C_SEMVINC, nunca visto no incidente (1 -> 1).
+  # A v1-v3 ficavam MUDAS.
   tira_da_ativa 'c0000000-0000-0000-0000-000000000002'
-  usa_na_ativa 'c0000000-0000-0000-0000-000000000003'
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000008'
   P -q -c "SELECT public.tint_watchdog_corante_check();"
   eq "A12 troca de corante re-emite" "$(emails 'AGRAVOU')" "2"
 
@@ -257,7 +262,25 @@ roda_suite() {
   P -q -c "SELECT public.tint_watchdog_corante_check();"
   eq "A13 escalada persiste critico" "$(Pq -c "SELECT severidade FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "critico"
   eq "A13b escalada re-emite (e diz por que)" "$(emails_msg 'passou a critico')" "1"
+
+  # A19 (v4, histerese): cai para 999 fórmulas e volta — o incidente segue 'critico' e
+  # não re-emite a cada oscilação
+  P -q -c "UPDATE public.tint_formulas SET desativada_em = now() WHERE id::text LIKE 'f1000000-0000-0000-0000-00000000000%' AND id::text <= 'f1000000-0000-0000-0000-000000000003';"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A19 severidade pegajosa abaixo de 1000" "$(Pq -c "SELECT severidade FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "critico"
+  local critico_antes; critico_antes="$(emails_msg 'passou a critico')"
+  P -q -c "UPDATE public.tint_formulas SET desativada_em = NULL WHERE id::text LIKE 'f1000000%';"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A19b volta a 1000 sem novo e-mail" "$(emails_msg 'passou a critico')" "$critico_antes"
+
+  # A20 (v4, histerese): C_INAT, já visto neste incidente (A1), volta — sem e-mail
+  local agravou_antes; agravou_antes="$(emails 'AGRAVOU')"
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000002'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A20 corante ja visto que volta nao re-emite" "$(emails 'AGRAVOU')" "$agravou_antes"
+
   P -q -c "DELETE FROM public.tint_formula_itens WHERE formula_id::text LIKE 'f1000000%'; DELETE FROM public.tint_formulas WHERE id::text LIKE 'f1000000%';"
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000008'
 
   # A5: tudo volta ao normal -> dismiss
   tira_da_ativa 'c0000000-0000-0000-0000-000000000002'
@@ -448,9 +471,9 @@ sabota_e_mede "F6" \
 
 # F8 — "novo" volta a ser medido por QUANTIDADE (comportamento v1-v3): a troca fica muda.
 sabota_e_mede "F8" \
-  "v_novos := ARRAY(SELECT x FROM unnest(v_ids) x WHERE x <> ALL (v_ant_ids) ORDER BY 1);" \
+  "v_novos := ARRAY(SELECT x FROM unnest(v_ids) x WHERE x <> ALL (v_ant_vistos) ORDER BY 1);" \
   "v_novos := CASE WHEN v_ruins > COALESCE(v_ant_n, 0) THEN v_ids END;" \
-  A12
+  A12 A20   # por quantidade, o corante já visto que volta (2 -> 3) re-emite
 
 # F9 — sem escalada: a severidade ainda é persistida pela atualização calada (A13 verde),
 #      mas o e-mail de 'passou a critico' some. Prova que A13b mede o e-mail, não só a coluna.
@@ -463,7 +486,7 @@ sabota_e_mede "F9" \
 sabota_e_mede "F10" \
   "ELSIF v_ant_ids IS DISTINCT FROM v_ids" \
   "ELSIF false AND v_ant_ids IS DISTINCT FROM v_ids" \
-  A14 A12   # contexto velho {C2,C3}: a troca do A12 ({C3}) parece subconjunto -> muda
+  A14   # a troca do A12 é para corante nunca visto: re-emite mesmo com o contexto velho
 
 # F11 — a vigia lê a entidade errada: marcador "ausente" = parada eterna, nunca dismissa.
 sabota_e_mede "F11" \
@@ -476,6 +499,18 @@ sabota_e_mede "F12" \
   "IF v_vigia_atraso IS NOT NULL AND v_vigia_atraso > interval '1 hour' THEN" \
   "IF false THEN" \
   A17
+
+# F13 — sem 'vistos': "novo" vira "fora do conjunto ATUAL" e o corante que volta re-emite.
+sabota_e_mede "F13" \
+  "v_ant_vistos := COALESCE(v_ant_vistos, v_ant_ids);" \
+  "v_ant_vistos := v_ant_ids;" \
+  A20
+
+# F14 — severidade não-pegajosa: 999 rebaixa a 'aviso' e a volta a 1000 re-emite.
+sabota_e_mede "F14" \
+  "IF v_ant_sev = 'critico' THEN" \
+  "IF false THEN" \
+  A19 A19b
 
 # F7 — volta a somar pares fórmula×corante: 2 corantes na mesma fórmula viram "2 fórmulas".
 sabota_e_mede "F7" \
@@ -494,4 +529,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 12 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 14 falsificacoes com conjunto exato"

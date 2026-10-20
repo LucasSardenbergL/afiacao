@@ -7,15 +7,20 @@
 --    e-mail quando a QUANTIDADE de corantes ruins subia (v_ruins > anterior). Ficavam MUDOS:
 --    trocar um corante por outro (1 -> 1), 2 -> 1 -> 2, e o MESMO corante se espalhar até
 --    >= 1000 fórmulas ('critico' calculado e nunca persistido). O contexto agora guarda os
---    ids; re-emite se entrou corante NOVO ou a severidade subiu a 'critico'; qualquer outra
---    mudança só atualiza o alerta (que deixa de descrever estado velho), sem e-mail.
+--    ids atuais e 'vistos' (união de todos os ids do incidente); re-emite se entrou corante
+--    NUNCA VISTO no incidente ou a severidade subiu a 'critico'; qualquer outra mudança só
+--    atualiza o alerta (que deixa de descrever estado velho), sem e-mail. Histerese (Codex
+--    P2): a severidade é PEGAJOSA durante o incidente — 999<->1000 fórmulas ou um corante
+--    que sai e volta não re-emitem a cada oscilação.
 --
 -- 2) VIGIA DA CAMADA A. Em 2026-10-19 a A estourou statement timeout 43 vezes (~11h) e
 --    NINGUÉM viu: timeout aborta antes do marcador, sync_state fica 'complete' e só
 --    envelhece; o sync_state_saude do data_health olha status='error'; a A vigiava a B,
 --    não o contrário. Nova tint_watchdog_corante_vigia_check (*/15, lê 1 linha): marcador da
 --    A > 30 min -> alerta. E a A passa a vigiar o marcador da vigia (> 1h) — nenhum cron
---    vigia a si mesmo. Fora do _data_health_compute de propósito (arquivo mais quente do
+--    vigia a si mesmo. A migration EXECUTA a vigia uma vez e exige o marcador dela (Codex P1:
+--    vigia que nunca estreia não deixa marcador e a A ignoraria a ausência para sempre).
+--    Fora do _data_health_compute de propósito (arquivo mais quente do
 --    repo; statement_timeout 8s do /health).
 --
 -- O resto da A é a v3 byte a byte (detecção com candidatos + force_custom_plan, marcador,
@@ -33,6 +38,9 @@ BEGIN
   IF to_regprocedure('public.tint_watchdog_corante_check()') IS NOT NULL THEN
     ALTER FUNCTION public.tint_watchdog_corante_check() VOLATILE;
   END IF;
+  IF to_regprocedure('public.tint_watchdog_corante_vigia_check()') IS NOT NULL THEN
+    ALTER FUNCTION public.tint_watchdog_corante_vigia_check() VOLATILE;
+  END IF;
 END
 $trava$;
 
@@ -45,7 +53,7 @@ DECLARE
   vigia text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                   WHERE p.oid = to_regprocedure('public.tint_watchdog_corante_vigia_check()'));
 BEGIN
-  IF vivo IS NULL OR vivo NOT IN ('eeddd88a26585696edfd88fc270570ce', '911f43acb9e8b1e2aa189b2b74c39f0e') THEN
+  IF vivo IS NULL OR vivo NOT IN ('eeddd88a26585696edfd88fc270570ce', '871204cf566111fb170c4b385ce10f87') THEN
     RAISE EXCEPTION 'PRE FALHOU: tint_watchdog_corante_check() vivo (md5 %) nao e a v3 aplicada nem esta v4', vivo;
   END IF;
   IF vigia IS NOT NULL AND vigia <> 'cf128aad0db39281833350bc03872859' THEN
@@ -79,6 +87,8 @@ DECLARE
   v_sev_forn     text;
   v_ant_n        int;
   v_ant_ids      uuid[];
+  v_ant_vistos   uuid[];
+  v_vistos       uuid[];
   v_ant_sev      text;
   v_ant_formulas bigint;
   v_novos        uuid[];
@@ -156,10 +166,11 @@ BEGIN
              || v_formulas || ' formula(s) ativa(s) - essas formulas deixam de ter preco '
              || '(precoFinal NULL, fail-closed) e o balcao nao vende. Apos a Fase 5 a '
              || 'geracao 1 nao e mais fallback. Corante(s): ' || COALESCE(v_lista, '?');
-    -- v4: o contexto guarda a IDENTIDADE do conjunto (ids ordenados), não só a quantidade.
+    -- v4: o contexto guarda a IDENTIDADE do conjunto (ids ordenados) e 'vistos' (união dos
+    -- ids do incidente inteiro), não só a quantidade.
     v_contexto := jsonb_build_object('corantes', v_ruins, 'formulas_ativas', v_formulas,
-                                     'ids', to_jsonb(v_ids), 'detalhe', v_lista,
-                                     'avaliado_em', now());
+                                     'ids', to_jsonb(v_ids), 'vistos', to_jsonb(v_ids),
+                                     'detalhe', v_lista, 'avaliado_em', now());
 
     INSERT INTO fin_alertas (company, tipo, severidade, mensagem, contexto)
     VALUES (v_conta, 'tint_corante_impagavel', v_sev_fin, v_msg, v_contexto)
@@ -173,25 +184,36 @@ BEGIN
       -- Incidente ABERTO. v4 (pendência herdada da v1, achada pelo Codex 2026-10-19): a v1-v3
       -- só re-emitiam quando a QUANTIDADE subia — trocar um corante por outro, ou o mesmo
       -- corante se espalhar até 'critico', ficava MUDO e o alerta descrevia o estado velho.
-      -- Agora: re-emite se entrou corante NOVO no conjunto OU a severidade subiu a 'critico';
-      -- qualquer outra mudança (conjunto encolheu, nº de fórmulas mudou) só ATUALIZA, calado.
+      -- Agora: re-emite se entrou corante NUNCA VISTO no incidente OU a severidade subiu a
+      -- 'critico'; qualquer outra mudança (conjunto encolheu, nº de fórmulas mudou) só
+      -- ATUALIZA, calado. Histerese: severidade pegajosa + 'vistos' (sem e-mail por oscilação).
       SELECT COALESCE((contexto->>'corantes')::int, 0),
-             CASE WHEN contexto ? 'ids'
+             CASE WHEN jsonb_typeof(contexto->'ids') = 'array'
                   THEN ARRAY(SELECT jsonb_array_elements_text(contexto->'ids')::uuid ORDER BY 1)
+             END,
+             CASE WHEN jsonb_typeof(contexto->'vistos') = 'array'
+                  THEN ARRAY(SELECT jsonb_array_elements_text(contexto->'vistos')::uuid ORDER BY 1)
              END,
              severidade,
              (contexto->>'formulas_ativas')::bigint
-        INTO v_ant_n, v_ant_ids, v_ant_sev, v_ant_formulas
+        INTO v_ant_n, v_ant_ids, v_ant_vistos, v_ant_sev, v_ant_formulas
         FROM fin_alertas
        WHERE company = v_conta AND tipo = 'tint_corante_impagavel' AND dismissed_at IS NULL;
 
-      IF v_ant_ids IS NULL THEN
+      v_ant_vistos := COALESCE(v_ant_vistos, v_ant_ids);
+      IF v_ant_vistos IS NULL THEN
         -- alerta aberto por versão anterior (sem 'ids'): só a quantidade é comparável
         v_novos := CASE WHEN v_ruins > COALESCE(v_ant_n, 0) THEN v_ids END;
       ELSE
-        v_novos := ARRAY(SELECT x FROM unnest(v_ids) x WHERE x <> ALL (v_ant_ids) ORDER BY 1);
+        v_novos := ARRAY(SELECT x FROM unnest(v_ids) x WHERE x <> ALL (v_ant_vistos) ORDER BY 1);
       END IF;
+      v_vistos := ARRAY(SELECT DISTINCT x FROM unnest(COALESCE(v_ant_vistos, '{}') || v_ids) x ORDER BY 1);
       v_escalou := v_sev_fin = 'critico' AND v_ant_sev IS DISTINCT FROM 'critico';
+      -- severidade PEGAJOSA: o incidente guarda o pior estado até fechar (dismiss)
+      IF v_ant_sev = 'critico' THEN
+        v_sev_fin := 'critico';
+      END IF;
+      v_contexto := v_contexto || jsonb_build_object('vistos', to_jsonb(v_vistos));
 
       IF COALESCE(cardinality(v_novos), 0) > 0 OR v_escalou THEN
         UPDATE fin_alertas
@@ -208,7 +230,8 @@ BEGIN
                       || CASE WHEN v_escalou THEN '; passou a critico' ELSE '' END || ')',
                 'pendente_notificacao');
       ELSIF v_ant_ids IS DISTINCT FROM v_ids
-         OR v_ant_formulas IS DISTINCT FROM v_formulas THEN
+         OR v_ant_formulas IS DISTINCT FROM v_formulas
+         OR v_ant_vistos IS DISTINCT FROM v_vistos THEN
         UPDATE fin_alertas
            SET severidade = v_sev_fin, mensagem = v_msg, contexto = v_contexto
          WHERE company = v_conta AND tipo = 'tint_corante_impagavel' AND dismissed_at IS NULL;
@@ -353,6 +376,10 @@ REVOKE EXECUTE ON FUNCTION public.tint_watchdog_corante_vigia_check()
 SELECT cron.schedule('tint-watchdog-corante-vigia-15min', '*/15 * * * *',
                      'SELECT public.tint_watchdog_corante_vigia_check()');
 
+-- Estreia (Codex P1): grava o 1º marcador da vigia AGORA. Sem isso, se o cron nunca rodar,
+-- não há marcador e a A ignora a ausência para sempre. Com a A saudável, não alerta nada.
+SELECT public.tint_watchdog_corante_vigia_check();
+
 -- CREATE OR REPLACE preserva o ACL (REVOKE da 20260730120000); reemitido por nome mesmo
 -- assim (idempotente) e re-conferido na postcondição.
 REVOKE EXECUTE ON FUNCTION public.tint_watchdog_corante_check()
@@ -377,6 +404,14 @@ BEGIN
                     AND command = 'SELECT public.tint_watchdog_corante_vigia_check()'
                     AND active) THEN
     RAISE EXCEPTION 'postcondicao: cron tint-watchdog-corante-vigia-15min ausente/inativo/diferente';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'tint-watchdog-corante-5min' AND active) THEN
+    RAISE EXCEPTION 'postcondicao: cron da Camada A (tint-watchdog-corante-5min) ausente/inativo';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM sync_state
+                  WHERE entity_type = 'tint_watchdog_corante_vigia' AND account = 'oben'
+                    AND last_sync_at > now() - interval '5 minutes') THEN
+    RAISE EXCEPTION 'postcondicao: a vigia nao estreou (marcador ausente)';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_proc p, unnest(p.proconfig) AS cfg
                   WHERE p.oid = f::regprocedure

@@ -5458,7 +5458,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_watchdog_corante_check', 1, '20260727150000_tint_watchdog_corante_impagavel.sql', '34489e3784a08d574b657d6efaf1919b'),
   ('public', 'tint_watchdog_corante_check', 2, '20261019150000_tint_watchdog_corante_v2_base_precificavel.sql', 'b93c78b1fd5712b764e9ca3cb8a82c03'),
   ('public', 'tint_watchdog_corante_check', 3, '20261019160000_tint_watchdog_corante_v3_plano_custom.sql', '6ce4f655ce3a303b5cc6d450eabba37d'),
-  ('public', 'tint_watchdog_corante_check', 4, '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql', 'd380f8a689b4bca0082bd8d6574a84cc'),
+  ('public', 'tint_watchdog_corante_check', 4, '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql', 'be429ee9edad9a6d963e867c53f266e5'),
   ('public', 'farmer_association_rules_substituir', 1, '20260729120000_farmer_association_rules_substituicao_atomica.sql', '248a95f8d50d51f14599d4f9ac5158db'),
   ('public', 'farmer_association_rules_substituir', 2, '20260821200000_farmer_assoc_rules_segmento.sql', '55cf64cac2239c7a9a5de12e6b965141'),
   ('public', '_tint_watchdog_fase5_transicao', 1, '20260730120000_tint_watchdog_fase5_chave.sql', 'd4dc06f6433a2e83bc19241bafd8302d'),
