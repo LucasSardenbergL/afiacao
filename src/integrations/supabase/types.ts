@@ -20676,6 +20676,7 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cnpj_alfanumerico_valido: { Args: { p_doc: string }; Returns: boolean }
       cockpit_itens_snapshot: {
         Args: {
           p_created_at_de: string
@@ -21272,6 +21273,7 @@ export type Database = {
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_sync_watchdog_diario: { Args: { p_agora?: string }; Returns: string }
+      fin_titulo_baixas_cr_mapa: { Args: { p_company: string }; Returns: Json }
       fin_user_can_access: {
         Args: { check_company?: string }
         Returns: boolean
@@ -21796,6 +21798,7 @@ export type Database = {
       }
       norm_cidade: { Args: { t: string }; Returns: string }
       normalizar_cep: { Args: { p: string }; Returns: string }
+      normalizar_documento: { Args: { p_bruto: string }; Returns: string }
       omie_cota_liberar: {
         Args: { p_conta: string; p_metodo: string; p_token: string }
         Returns: boolean
@@ -22735,6 +22738,7 @@ export type Database = {
         Returns: Json
       }
       tint_watchdog_corante_check: { Args: never; Returns: undefined }
+      tint_watchdog_corante_vigia_check: { Args: never; Returns: undefined }
       tint_watchdog_fase5_check: { Args: never; Returns: undefined }
       upsert_push_subscription: {
         Args: {
