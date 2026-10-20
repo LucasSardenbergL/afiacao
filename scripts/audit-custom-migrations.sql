@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 675
+-- Total de custom migrations: 676
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -739,7 +739,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
   ('20261020130000', 'grupos_caca_cnpj_alfanumerico', '20261020130000_grupos_caca_cnpj_alfanumerico.sql'),
-  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql')
+  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql'),
+  ('20261020150000', 'fin_capital_giro_prazos_empresa', '20261020150000_fin_capital_giro_prazos_empresa.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2864,7 +2865,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('fin_capital_giro_prazos_empresa', 'function', 'public', 'fin_capital_giro_prazos_empresa', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5037,7 +5039,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('fin_capital_giro_prazos_empresa', 'function', 'public', 'fin_capital_giro_prazos_empresa', '')
 )
 SELECT
   e.migration,
