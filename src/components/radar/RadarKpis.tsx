@@ -109,6 +109,9 @@ function CardSugeridos({ soSugeridos, onSoSugeridos }: { soSugeridos: boolean; o
   const falhou = (naoConsegui(estadoL) && !loteLido) || (lote != null && naoConsegui(estadoN) && qN.data === undefined);
   const carregando = !falhou && (estadoL === 'carregando' || (lote != null && estadoN === 'carregando' && qN.data === undefined));
   const estado = estadoCardSugeridos({ lote, temScore: qN.data?.temScore, sugeridos: qN.data?.sugeridos });
+  // Refetch que falhou COM número no cache: o número fica, com o aviso (estado composto, como o
+  // painel). Sem isso um "0 de T" velho seguia na tela, botão ativo, sem sinal da falha (Codex).
+  const velho = desatualizado(qN, qN.data !== undefined) ?? desatualizado(qL, loteLido);
 
   const alternar = () => {
     if (!lote) return;
@@ -138,6 +141,11 @@ function CardSugeridos({ soSugeridos, onSoSugeridos }: { soSugeridos: boolean; o
           <span className="text-sm text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
         </div>
       ) : null}
+      {!falhou && velho && (
+        <div className="text-[11px] text-status-warning" data-testid="radar-kpi-sugeridos-desatualizado">
+          {velho === 'sem-rede' ? 'desatualizado · sem rede' : 'desatualizado · não consegui atualizar'}
+        </div>
+      )}
       {lote && estado.tipo === 'pronto' && (
         <button
           type="button"

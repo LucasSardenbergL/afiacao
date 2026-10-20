@@ -142,6 +142,62 @@ describe('RadarOutcomeMenu — oferta de cadastro pós-sinal', () => {
     expect(cadastrar.mock.calls[1][0]).toEqual({ empresa, opcoes: { codigoConhecido: '9090' } });
   });
 
+  it('"Gravar de novo" depois que o recruzamento marcou ja_cliente: a RETOMADA não é barrada pela releitura', async () => {
+    cadastrar.mockRejectedValue(new FalhaCadastro('radar', 'RPC caiu', '9090'));
+    render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await screen.findByText(OFERTA);
+    fireEvent.click(screen.getByRole('button', { name: /cadastrar agora/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    // entre a falha e a retomada, o lead passou a constar como cliente (sem vínculo ainda)
+    lerLead.mockImplementation(async () => ({ ...empresa, prospeccao_status: 'em_conversa', ja_cliente: true }));
+    cadastrar.mockResolvedValue({ codigo: '9090', jaExistia: true, recuperado: true });
+    (toast.error.mock.calls[0][1] as { action: { onClick: () => void } }).action.onClick();
+    await waitFor(() => expect(cadastrar).toHaveBeenCalledTimes(2));
+    expect(cadastrar.mock.calls[1][0]).toEqual({ empresa, opcoes: { codigoConhecido: '9090' } });
+    expect(toast.info, 'retomada barrada como "lead mudou"').not.toHaveBeenCalled();
+    expect(lerLead, 'só o cadastro NOVO relê a elegibilidade').toHaveBeenCalledTimes(1);
+  });
+
+  it('a ficha trocou de lead durante o registro: nem oferta nem avanço (seriam sobre o lead errado)', async () => {
+    let resolver: (v: unknown) => void = () => {};
+    registrar.mockImplementation(() => new Promise((r) => { resolver = r; }));
+    const onRegistrado = vi.fn();
+    const outra = { ...empresa, cnpj: '99888777000166', razao_social: 'OUTRA LTDA' } as RadarEmpresa;
+    const { rerender } = render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={onRegistrado} />);
+    await abrirMenuEClicar(/em conversa/i);
+    rerender(<RadarOutcomeMenu cnpj={outra.cnpj} empresa={outra} onRegistrado={onRegistrado} />);
+    resolver({ id: 'c1', deduped: false });
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1)); // o contato de A ficou gravado e o toast diz
+    expect(screen.queryByText(OFERTA)).toBeNull();
+    expect(onRegistrado, 'avançou a ficha de B por um contato de A').not.toHaveBeenCalled();
+  });
+
+  it('a ficha trocou de lead com a oferta aberta: "Agora não" não avança a ficha nova', async () => {
+    const onRegistrado = vi.fn();
+    const outra = { ...empresa, cnpj: '99888777000166', razao_social: 'OUTRA LTDA' } as RadarEmpresa;
+    const { rerender } = render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={onRegistrado} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await screen.findByText(OFERTA);
+    rerender(<RadarOutcomeMenu cnpj={outra.cnpj} empresa={outra} onRegistrado={onRegistrado} />);
+    fireEvent.click(screen.getByRole('button', { name: /agora não/i }));
+    await waitFor(() => expect(eventosOferta()).toHaveLength(1));
+    expect(onRegistrado).not.toHaveBeenCalled();
+  });
+
+  it('sensor: a oferta EXIBIDA emite exposição com id, e a resposta e o resultado levam o MESMO id', async () => {
+    render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await screen.findByText(OFERTA);
+    const exib = track.mock.calls.filter(([n]) => n === 'radar.cadastro_pos_sinal_exibida');
+    expect(exib, 'exposição não emitida — oferta abandonada some do denominador').toHaveLength(1);
+    const id = (exib[0][1] as { oferta_id: string }).oferta_id;
+    expect(id).toMatch(/\S+/);
+    fireEvent.click(screen.getByRole('button', { name: /cadastrar agora/i }));
+    await waitFor(() => expect(track).toHaveBeenCalledWith('radar.cadastro_pos_sinal_resultado', expect.objectContaining({ oferta_id: id })));
+    expect(eventosOferta()[0][1]).toMatchObject({ aceitou: true, oferta_id: id });
+  });
+
   it('o lead MUDOU entre o sinal e o clique (virou cliente em outra aba): não cadastra, avisa', async () => {
     lerLead.mockResolvedValue({ ...empresa, prospeccao_status: 'em_conversa', ja_cliente: true, omie_codigo_cliente: '7' });
     render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);

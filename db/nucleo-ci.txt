@@ -580,6 +580,12 @@ db/test-radar-score.sh                      18  falsificar=12
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
 # VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
 db/test-radar-contagem-lote.sh              16  falsificar=12
+# Radar: AVISO AO GESTOR por lote fechado (20261020143000). Defeito aqui = e-mail repetido do mesmo lote,
+# e-mail retroativo do lote velho no 1º cron (ou pendência apagada por re-colada), "0 de N" com score de
+# outra foto (ausente ≠ zero), "0 de 0" sem cliente verificado, número sem denominador, lote running
+# avisado, "saíram" acumulando meses, ledger ausente, ou meio-estado após erro. Relógio controlado
+# (p_agora), esquema mínimo com os CHECKs de prod, cron de mentira.
+db/test-radar-avisar-lote.sh                23  falsificar=18
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
@@ -628,6 +634,12 @@ db/test-radar-rpcs-cnpj-alfanumerico.sh     38  falsificar=9
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
 # 7 sabotagens: chave só-dígitos, sem máscara exata (#3192), CHECK só-dígitos, DV ignorado (×2: funcional e PÓS), RPC mutila, PÓS.
 db/test-omie-identidade-cnpj-alfanumerico.sh 40  falsificar=7
+# Grupos de clientes / Caça aceitam CNPJ alfanumérico (follow-up 3 do #3180): CHECK formato+DV executado como
+# authenticated, 6 views com normalizar_documento() sob guard (numérico byte-idêntico fora da colisão; a mutilação
+# AEG12345678909→12345678909 deixa de contaminar o CPF), papéis, custo. PRE exige md5 de PROD (fixture 20261020).
+# 7 sabotagens: CHECK antigo, view contatos predecessora, REVOKE do helper, DV removido (+ PRE pega a deriva),
+# view Caça predecessora, formato sem 14 posições.
+db/test-grupos-caca-cnpj-alfanumerico.sh    80  falsificar=7
 # Sentinela do Radar (20261020101636): radar_lote_idade (foto da RFB > 75 d pela REFERÊNCIA do dump, último dia do
 # mês, nunca finalizado_em; mês inválido não derruba o compute) + radar_recruzamento_tick (sem `sucesso` do tick há
 # > 50 h; o tick não grava erro, propaga). Autocontida sobre os stubs do trio + cadeia viva SEM a migration + o patch

@@ -192,6 +192,8 @@ export function RadarFiltros({
           <Switch
             id="radar-so-sugeridos"
             checked={filtros.soSugeridos}
+            // Sem lote completo não há sugestão; ligado (pela URL) continua desligável.
+            disabled={!lote && !filtros.soSugeridos}
             onCheckedChange={(checked) => {
               track('radar.sugeridos_filtro', {
                 ativo: checked, origem: 'filtro', lote: lote?.mes_referencia ?? null, sugeridos: null, total: lote?.total_recebido ?? null, limiar: LIMIAR_SUGERIDO,

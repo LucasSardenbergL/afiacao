@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-19T14:16:15.368Z",
-  "sourceHead": "9e9c340cb10b04e0de3e379e01c90695fd899302",
+  "medidoEm": "2026-10-20T15:55:33.576Z",
+  "sourceHead": "e704e04cfcfd8d83df2127c69028864af89db582",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 361 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 362 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -56,12 +56,31 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 380 identidade(s) batem com o repo (304 em dia, 68 só cosméticas, 7 aceitas na baseline) e 19 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 380 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@9e9c340cb (fetch ok) · prod 2026-10-19 14:17:22.279929Z",
-      "contratoFingerprint": "84e9a630883796361eb217a22b1d4c35752b2f56564d9bd62e0ff1943bde46a5",
-      "auditorFingerprint": "0d9fbe318f3db89107f5492026a7f6a8934c38bedc67b56d556ae14b78a80fd6",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 3 divergência(s) em prod (1 AUSENTE, 1 SEM_PAR, 1 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 390 identidade(s) conferida(s) · 19 aposentada(s) · ref origin/main@e704e04cf (fetch ok) · prod 2026-10-20 15:56:10.875473Z",
+      "contratoFingerprint": "5b542051f6215f0baca56e75e4b78074937ef84ebad05a7c004a1046d7ea2842",
+      "auditorFingerprint": "1b0c640a8a929b8cd1c4534b11faa82303072d94dad5a8184595b6f0ad13bddf",
+      "achados": [
+        {
+          "id": "bab968e5bd309203",
+          "linha": "❌ [AUSENTE] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer): viva no repo (último CREATE: 20260614140000_radar_contagem_perf.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-10-20",
+          "ultimaVez": "2026-10-20"
+        },
+        {
+          "id": "b24d6ea087c66ebb",
+          "linha": "❌ [SEM_PAR] radar_score_recalcular(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261019180000_radar_score_lead.sql (xmin 12401366)",
+          "primeiraVez": "2026-10-20",
+          "ultimaVez": "2026-10-20"
+        },
+        {
+          "id": "36b678d0060ba0fc",
+          "linha": "❌ [OVERLOAD_FORA_DO_REPO] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone): overload vivo em prod que nenhuma migration declara (xmin 12411894)",
+          "primeiraVez": "2026-10-20",
+          "ultimaVez": "2026-10-20"
+        }
+      ]
     }
   }
 }

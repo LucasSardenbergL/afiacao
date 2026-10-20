@@ -36,6 +36,12 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
       // ultimo_lote=2026-05 na fila de 2026-08, medido 2026-10-19).
       const lote = await lerLoteVigente(qc);
+      // "Só sugeridos" sem lote completo: não há foto, logo não há sugestão (`ehSugerido(e, null)`
+      // recusa todos). Ignorar o toggle mostraria a fila GERAL sob o rótulo (Codex, código
+      // 2026-10-20) — a lista FALHA com o motivo antes de montar a consulta, inclusive via URL.
+      if (filtros.soSugeridos && !lote) {
+        throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
+      }
       const p = presetParaParams(filtros.preset, hojeISO);
       let q = supabase.from('radar_empresas').select('*');
 
@@ -55,7 +61,7 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
       // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`, o mesmo
       // count): ele já fixa status/ja_cliente/lote, então vence os filtros abaixo. Sem lote completo
-      // não há foto — e sem foto não há sugestão: o toggle fica sem efeito em vez de fingir.
+      // não há foto: a falha honesta já saiu lá em cima, logo após ler o lote.
       const sugeridos = Boolean(lote && filtros.soSugeridos);
       if (sugeridos && lote) q = filtrarSugeridos(q, lote);
       if (!sugeridos) {

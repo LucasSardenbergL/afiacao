@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **673** custom migrations totais
-- **2151** objetos esperados (criados por estas migrations)
+- **675** custom migrations totais
+- **2159** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 786
+  - `function`: 787
   - `rls_policy`: 477
   - `index`: 282
-  - `cron_job`: 192
+  - `cron_job`: 193
   - `table`: 186
-  - `view`: 119
+  - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
 
@@ -5454,6 +5454,24 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.radar_contagem_por_municipio` | — |
+
+### `20261020130000_grupos_caca_cnpj_alfanumerico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.v_grupo_comercial` | — |
+| `view` | `public.v_grupo_contatos` | — |
+| `view` | `public.v_grupo_contas_receber` | — |
+| `view` | `public.v_grupo_contas_receber_por_doc` | — |
+| `view` | `public.v_caca_compradores` | — |
+| `view` | `public.v_caca_candidatos` | — |
+
+### `20261020143000_radar_avisar_lote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-avisar-lote-diario` | — |
 
 ## Próximos passos por status
 
