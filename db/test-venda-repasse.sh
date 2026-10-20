@@ -35,7 +35,7 @@ export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_repasse.sql}"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=42
+TOTAL_ESPERADO=43
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -45,8 +45,8 @@ if [ "${1:-}" = "--falsificar" ]; then
               vaza_c_now:C4a:C4b,C4c
               sem_recusa:C3a,C3b:AP1,C3c
               tinta_null:C6,C3c:CAND1,C3a
-              dono_uniao:C4e:C4a,C4d
-              sem_revalidar:C5d:C5a,C5b
+              dono_uniao:C4e,C4h:C4a,C4d
+              sem_revalidar:C5d:C5a,C4b
               paridade_markup:C1b:C1a,CAND1
               gate_candidatos:C2b:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
@@ -447,6 +447,8 @@ neg C4d "outra farmer (fora da carteira) → 42501" "$FAR2" insufficient_privile
   "PERFORM public.venda_preco_alvo_comprador('$CAN')"
 neg C4e "grupo com DOIS donos nega até o dono do canônico → 42501" "$FAR" insufficient_privilege "fora da sua carteira" \
   "PERFORM public.venda_preco_alvo_comprador('$CAN2')"
+neg C4h "dono só do ALIAS de um grupo com dois donos → 42501" "$FAR2" insufficient_privilege "fora da sua carteira" \
+  "PERFORM public.venda_preco_alvo_comprador('$ALI2')"
 neg C4f "o próprio cliente → 42501" "$CAN" insufficient_privilege "requer perfil staff" \
   "PERFORM public.venda_preco_alvo_comprador('$CAN')"
 eq C4g "estratégico (cap_carteira) lê" "$(como "$EST" "SELECT jsonb_array_length(public.venda_preco_alvo_comprador('$CAN'))")" "1"

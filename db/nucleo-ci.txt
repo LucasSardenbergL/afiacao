@@ -664,4 +664,4 @@ db/test-venda-espinha.sh                   30  falsificar=12
 # tela velha → 40001) + leitura da farmer com o conjunto EXATO de 6 chaves (sem custo/markup/piso), dono ÚNICO da
 # carteira do grupo canônico, vencido/revogado/alvo já alcançado somem. 10 sabotagens: vaza cmc, vaza c_now, sem
 # recusa, tinta NULL, dono por união, sem revalidar, markup do cockpit, gate de candidatos, POS ACL anon, POS RLS.
-db/test-venda-repasse.sh                   42  falsificar=10
+db/test-venda-repasse.sh                   43  falsificar=10
