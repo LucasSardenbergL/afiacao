@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCron } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { motivoDescarte, type MotivoDescarte } from "./cnpj.ts";
+import { validarLinhaSituacao, type LinhaSituacao, type MotivoDescarteSituacao } from "./situacao.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -127,6 +128,45 @@ Deno.serve(async (req) => {
       return json({ ok: true, upserted: payload.length });
     }
 
+    if (action === "cnpjs_conhecidos") {
+      // Lista radar ∪ clientes (profiles ∪ omie_clientes_nao_vinculados, já normalizados) para a carga
+      // extrair a situação cadastral de TODO CNPJ conhecido, em qualquer situação. Keyset: `apos` = último
+      // CNPJ da página anterior; `proximo` null = acabou. A RPC capa em 50.000 por página.
+      const apos = String(body.apos ?? "");
+      const limite = Number(body.limite ?? 50000);
+      if (!Number.isInteger(limite) || limite < 1 || limite > 50000) return json({ error: "limite inválido (1..50000)" }, 400);
+      const { data, error } = await admin.rpc("radar_cnpjs_conhecidos", { p_apos: apos, p_limite: limite });
+      if (error) throw error;
+      const cnpjs = (data ?? []) as string[];
+      return json({ ok: true, cnpjs, proximo: cnpjs.length === limite ? cnpjs[cnpjs.length - 1] : null });
+    }
+
+    if (action === "chunk_situacao") {
+      if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+      const linhas = (body.linhas ?? []) as Record<string, unknown>[];
+      if (!Array.isArray(linhas) || linhas.length === 0) return json({ error: "linhas vazio" }, 400);
+      if (linhas.length > 1000) return json({ error: "máx 1000 linhas/chunk" }, 400);
+      const descartadas_por_motivo: Record<MotivoDescarteSituacao, number> = { cnpj_formato: 0, cnpj_dv: 0, situacao: 0, data: 0 };
+      const validas: LinhaSituacao[] = [];
+      for (const l of linhas) {
+        const r = validarLinhaSituacao(l);
+        if (r.ok) validas.push(r.linha);
+        else descartadas_por_motivo[r.motivo]++;
+      }
+      const descartadas = linhas.length - validas.length;
+      if (descartadas > 0) console.warn(`chunk_situacao ${mes}: ${descartadas} linhas descartadas`, descartadas_por_motivo);
+      if (validas.length === 0) return json({ ok: true, upserted: 0, descartadas, descartadas_por_motivo });
+      // ⚠️ payload SEM alertado_em: o UPDATE do upsert não toca o dedupe do aviso ao gestor
+      // (1 escritor: radar_aplicar_situacao; preservação por omissão, como no chunk).
+      const observado_em = new Date().toISOString();
+      const porCnpj = new Map(validas.map((l) => [l.cnpj, { ...l, lote: mes, observado_em }]));
+      const finalPayload = [...porCnpj.values()];
+      const { error } = await admin.from("radar_situacao_cadastral").upsert(finalPayload, { onConflict: "cnpj,lote" });
+      if (error) throw error;
+      return json({ ok: true, upserted: finalPayload.length, descartadas, descartadas_por_motivo,
+        duplicadas_no_chunk: validas.length - finalPayload.length });
+    }
+
     if (action === "finalize") {
       if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
       const { data: st, error: eSt } = await admin.from("radar_ingest_state")
@@ -134,6 +174,10 @@ Deno.serve(async (req) => {
       if (eSt || !st) return json({ error: "lote não iniciado" }, 400);
       const { error: eRe } = await admin.rpc("radar_recruzar_ja_cliente");
       if (eRe) throw eRe;
+      // DEPOIS do recruzar (ja_cliente fresco): foto RFB → radar_empresas, lead 03/04/08 → descartado,
+      // cliente irregular novo → 1 fornecedor_alerta por lote. Erro propaga: lote vira 'error'.
+      const { data: situacao, error: eSit } = await admin.rpc("radar_aplicar_situacao", { p_lote: mes });
+      if (eSit) throw eSit;
       const { count: total, error: eT } = await admin.from("radar_empresas")
         .select("cnpj", { count: "exact", head: true }).eq("ultimo_lote", mes);
       if (eT) throw eT;
@@ -146,7 +190,7 @@ Deno.serve(async (req) => {
         finalizado_em: new Date().toISOString(), erro: null,
       }).eq("mes_referencia", mes);
       if (eUp) throw eUp;
-      return json({ ok: true, mes, total, novos });
+      return json({ ok: true, mes, total, novos, situacao });
     }
 
     if (action === "status") {
@@ -156,7 +200,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, lotes: data });
     }
 
-    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "finalize", "status"] }, 400);
+    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "status"] }, 400);
   } catch (e) {
     // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
     // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).

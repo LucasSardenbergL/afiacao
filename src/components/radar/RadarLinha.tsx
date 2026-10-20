@@ -3,7 +3,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, scoreUI,
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -31,6 +31,7 @@ export function RadarLinha({
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
   const tel = telefonePrincipal(empresa);
+  const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
   return (
     <div
@@ -57,6 +58,15 @@ export function RadarLinha({
           )}
           {saiuDoDump(empresa, lote) && (
             <Badge variant="outline" className="shrink-0 text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
+          )}
+          {rfb && (
+            <span
+              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}
+              title={rfb.titulo}
+              data-testid="selo-rfb"
+            >
+              {rfb.texto}
+            </span>
           )}
         </div>
         <div className="text-xs text-muted-foreground truncate">

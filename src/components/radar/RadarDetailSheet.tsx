@@ -12,7 +12,7 @@ import { estadoDeLeitura, naoConsegui, desatualizado } from '@/lib/leitura/estad
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
-  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, scoreUI,
+  formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -106,6 +106,7 @@ export function RadarDetailSheet({
   const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(endereco || empresa.cnpj)}`;
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.razao_social || empresa.cnpj;
+  const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
 
   return (
@@ -121,6 +122,11 @@ export function RadarDetailSheet({
             {ehInedito(empresa, lote) && <Badge variant="info">inédito</Badge>}
             {saiuDoDump(empresa, lote) && (
               <Badge variant="outline" className="text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
+            )}
+            {rfb && (
+              <span className={cn('rounded border px-1.5 py-px text-[11px] leading-4 font-normal', CLASSE_TOM[rfb.tom])} title={rfb.titulo} data-testid="selo-rfb">
+                {rfb.texto}
+              </span>
             )}
           </SheetTitle>
         </SheetHeader>
@@ -189,6 +195,7 @@ export function RadarDetailSheet({
                 : ''}
             </Linha>
           )}
+          {rfb && <Linha label="Situação RFB">{rfb.titulo}</Linha>}
           {empresa.descarte_motivo && <Linha label="Motivo descarte">{empresa.descarte_motivo}</Linha>}
         </div>
         <Historico cnpj={empresa.cnpj} />
