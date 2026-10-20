@@ -104,7 +104,7 @@ A pedido do founder, o completo foi antecipado: disparo manual `db/disparo-publi
 520 ids, `novos=520`, `limpos=0`. O heartbeat ficou `complete` (v1.9) e há 520 linhas com `encerrado_omie_em`.
 
 Backtest (`simular.ts`, com fatos gerados pelo psql-ro): pré-voo verde e `fim|ok`.
-- `foraDoCaixaR59`: exatamente os 3 aprovados (80/1005, 91/1014, 194/1049), R$ 10.059,09.
+- `foraDoCaixaR59`: exatamente os 3 aprovados (80/1005, 91/1014, 194/1049). Sem valor absoluto aqui: o repo é público.
 - `pendentesR59`: só o 2790/1230 (`2130311`, `2130311/2130322`), que segue no caixa.
 
 ⚠️ `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro uma vez (e caiu a conexão em
