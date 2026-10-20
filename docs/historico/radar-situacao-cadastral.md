@@ -46,7 +46,7 @@ Leituras: (1) **sumir do dump É quase sempre baixa/inaptidão** — 94% dos sum
 | --- | --- | --- |
 | Migration `20261019200000` | ✅ APLICADA em 2026-10-20 10:18 UTC pelo envelope MCP (`postgres`): ensaio com `RAISE EXCEPTION 'ENSAIO_OK'` + md5 dos 4 corpos iguais ao arquivo (`4857…`, `51e4…`, `b162…`, `ec75…`), rollback conferido, apply real, 2ª testemunha psql-ro em outra conexão: `tabela_pk_ok=t rls_ok=t policy_ok=t anon_select=f cols_rfb=3 check_ok=t`, 3 funções `secdef=t anon/auth/public=f service=t`, `ja_cliente_total=3007` (inalterado), `linhas_sit=0`. **Reaplicada às 11:5x UTC** com o teto de 100 linhas no e-mail (TRAVA→PRE md5 `4857…`→CREATE→PÓS md5 `73e049de…`, ensaio com rollback antes), 2ª testemunha psql-ro: md5 `73e049de…`, ACL fechada, zero efeito (`linhas_sit=0`, `alertas_radar=0`, `descartados_sistema=0`) | sessão |
 | Edge `radar-ingest` v1.2 | ✅ **DEPLOY CONFIRMADO** em 2026-10-20 (detalhe na seção abaixo) | sessão (`pendencias:pacote` → chat do Lovable → sonda) |
-| Publish do Lovable (selo na UI) | ⏳ após o merge | founder (Publish) |
+| Publish do Lovable (selo na UI) | ✅ feito 2026-10-20 e verificado no bundle servido | founder (Publish) |
 | 1ª execução real | próxima carga (2026-09, segunda 03:00 BRT ou `gh workflow run`) — o retorno do `finalize` nos logs traz `leads_descartados`/`clientes_alertados_novos` | auto |
 
 
@@ -59,7 +59,7 @@ Leituras: (1) **sumir do dump É quase sempre baixa/inaptidão** — 94% dos sum
 - **Sonda** (`db/2026-10-20-sonda-disparo-radar-ingest-v1.2.sql` por `db:aplicar`, ensaio antes, tentativa #577; passo 2 por psql-ro): request 124207, HTTP 200, `versao=v1.2-situacao-cadastral`, `fonte=3e3fa6c7…` (= `FONTE_SHA256["radar-ingest"]` da main) → **DEPLOY CONFIRMADO**. `pendencias:deploy` saiu **0** com `radar-ingest` em ✅ "via sonda".
 - **Sensor de edição: EDICAO_DETECTADA, e a leitura dele.** A regra é "qualquer eixo com edição vence": a resposta do MCP trouxe `edit_id`/`commit_sha` (`23b0882b9`). No eixo git, os dois commits do bot desde o envio (`5d765941e` "Work in progress" e `23b0882b9` "Lovable update") tocam **só** `src/integrations/supabase/types.ts` e foram classificados `tolerado`: é a sincronização automática do schema que acrescenta a tabela nova `radar_situacao_cadastral` (+58 linhas, 0 removidas, uma ocorrência só no arquivo final). Nenhum arquivo em `supabase/` mudou desde o commit do pacote, e `typecheck:app` na main com a mudança sai 0. **Decisão: não reverter** — o tipo espelha a tabela real de prod; reverter só desalinharia o arquivo gerado. Fica registrado como edição do bot benigna, não como "No files were edited." verdadeiro.
 - Observação do bot, sem relação com esta leva: o log de build acusa `src/sw/releases.ts:133` TS2304 (`RequestCache`/`RequestCredentials`); o `typecheck:app` local, que é o gate, passa.
-- Pendente: **Publish** do Lovable para o selo na UI (founder).
+- **Publish** feito pelo founder e verificado no bundle servido em `steu.lovable.app` (2026-10-20 12:56 UTC): o chunk `RadarClientes-CKdhPUgt.js` traz os 2 `data-testid="selo-rfb"` (linha e ficha) e o rótulo "Situação RFB"; o helper compartilhado (`RadarOutcomeMenu-Dbfo8AXP.js`) traz "pela RFB" e lê `rfb_situacao`. Disponibilidade, não adoção: o service worker troca de build no clique do cliente.
 
 ## Codex
 
