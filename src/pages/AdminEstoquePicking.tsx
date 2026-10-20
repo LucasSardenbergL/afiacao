@@ -46,6 +46,7 @@ import { estadoDeLeitura, naoConsegui } from "@/lib/leitura/estado-de-leitura";
 import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
 import { usePedidosASeparar } from "@/queries/usePedidosASeparar";
 import { useEnviarParaSeparacao } from "@/queries/useEnviarParaSeparacao";
+import { linhasCom } from "@/lib/linha-view";
 
 const truncate = (s: string | null | undefined, n = 8) =>
   s ? s.slice(0, n) : "—";
@@ -126,7 +127,7 @@ function KpiCards({ account }: { account: string }) {
         // Porta OPERACIONAL (FU4-F fase 2): conta SKUs zerados sem tocar custo. `head:true` não
         // retorna linhas — mas a tabela crua exigiria cap_custo_ler e devolveria 0 ao separador,
         // fabricando "nenhum SKU crítico" (o anti-padrão count-exact-vira-0-silencioso).
-        .from("inventory_position_operacional" as never)
+        .from("inventory_position_operacional")
         .select("*", { count: "exact", head: true })
         .eq("account", CONTA_ESTOQUE[account] ?? account.toLowerCase())
         .lte("saldo", 0);
@@ -552,16 +553,10 @@ function PickingTab({ account }: { account: string }) {
 /* ─── Estoque tab ─── */
 /**
  * Linha da view `inventory_position_operacional` (FU4-F fase 2): saldo e identidade do SKU,
- * SEM cmc/preco_medio — o custo exige `private.cap_custo_ler`, que o separador não tem.
- * Tipo declarado à mão porque a view é nova e ainda não está em `types.ts` (mesmo padrão de
- * `LinhaViewSugeridos` em negociacaoParalela); regenerar os tipos após o apply em prod.
+ * SEM cmc/preco_medio — o custo exige `private.cap_custo_ler`, que o separador não tem. A view
+ * perde o NOT NULL: `omie_codigo_produto` (NOT NULL em `inventory_position`, e chave da linha) é
+ * exigido na borda; `saldo` é nullable na base e segue `| null` (ausente ≠ zero → "—").
  */
-type LinhaEstoqueOperacional = {
-  omie_codigo_produto: number | null;
-  saldo: number | null;
-  synced_at: string | null;
-};
-
 function EstoqueTab({ account }: { account: string }) {
   const [search, setSearch] = useState("");
 
@@ -574,15 +569,13 @@ function EstoqueTab({ account }: { account: string }) {
       const { data, error } = await supabase
         // Porta OPERACIONAL: saldo sem custo (FU4-F fase 2). A tabela inventory_position exige
         // private.cap_custo_ler — o separador não tem, e não precisa: aqui se consulta SALDO.
-        // `as never`: a view é nova e ainda não está nos tipos gerados (padrão já usado em
-        // useNegociacaoParalela.ts); regenerar após o apply da migration em prod.
-        .from("inventory_position_operacional" as never)
-        .select("omie_codigo_produto, saldo, synced_at" as never)
+        .from("inventory_position_operacional")
+        .select("omie_codigo_produto, saldo, synced_at")
         .eq("account", CONTA_ESTOQUE[account] ?? account.toLowerCase())
         .order("saldo", { ascending: true })
         .limit(500);
       if (error) throw error;
-      return (data ?? []) as unknown as LinhaEstoqueOperacional[];
+      return linhasCom(data, ["omie_codigo_produto"], "inventory_position_operacional");
     },
   });
   const { data, isLoading } = inventarioQuery;
@@ -638,12 +631,14 @@ function EstoqueTab({ account }: { account: string }) {
                 <TableRow key={r.omie_codigo_produto}>
                   <TableCell className="font-tabular text-xs">{r.omie_codigo_produto}</TableCell>
                   <TableCell className="text-right">
-                    {Number(r.saldo) <= 0 ? (
+                    {r.saldo === null ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : r.saldo <= 0 ? (
                       <Badge variant="outline" className="bg-destructive/15 text-destructive border-destructive/40">
-                        {Number(r.saldo).toFixed(2)}
+                        {r.saldo.toFixed(2)}
                       </Badge>
                     ) : (
-                      <span>{Number(r.saldo).toFixed(2)}</span>
+                      <span>{r.saldo.toFixed(2)}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-xs">{fmtDate(r.synced_at)}</TableCell>

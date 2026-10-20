@@ -2,9 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { mapItemsToPickingRows } from '@/lib/picking/bridge-helpers';
 
-// listar_pedidos_a_separar não está no types gerado → cast do client (mesmo padrão de useRegistrarContato).
-type RpcClient = { rpc(fn: string, p?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> };
-
 export interface PedidoASeparar {
   id: string;
   customer_user_id: string;
@@ -14,15 +11,6 @@ export interface PedidoASeparar {
   data: string | null;
   itemCount: number;
   hasFractional: boolean;
-}
-
-interface Row {
-  id: string;
-  customer_user_id: string;
-  total: number | string | null;
-  status: string;
-  data: string | null;
-  items: unknown;
 }
 
 /**
@@ -36,9 +24,9 @@ export function usePedidosASeparar(account: string, enabled = true) {
     queryKey: ['pk-pedidos-a-separar', acc],
     enabled,
     queryFn: async (): Promise<PedidoASeparar[]> => {
-      const { data, error } = await (supabase as unknown as RpcClient).rpc('listar_pedidos_a_separar', { p_account: acc });
+      const { data, error } = await supabase.rpc('listar_pedidos_a_separar', { p_account: acc });
       if (error) throw new Error(error.message);
-      const rows = (data ?? []) as Row[];
+      const rows = data ?? [];
 
       // Resolve nome do cliente (profiles.user_id = customer_user_id), padrão de AgendaTodayList/useSalesOrders.
       const ids = [...new Set(rows.map((r) => r.customer_user_id).filter(Boolean))];
