@@ -257,7 +257,7 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-ineditos');
     await waitFor(() => expect(card.textContent).toMatch(/sem lote/i));
-    expect(card.textContent, 'ausente virou zero').not.toMatch(/\b0\b/);
+    expect(card.textContent, 'ausente virou zero').not.toMatch(/(?<!\d)0(?!\d)/);
     expect(chamadas.radar_empresas ?? [], 'contou inéditos sem saber o lote').toEqual([]);
   });
 
@@ -267,7 +267,7 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-ineditos');
     await waitFor(() => expect(card.textContent).toMatch(/não consegui/i));
-    expect(card.textContent).not.toMatch(/\b0 de/);
+    expect(card.textContent).not.toMatch(/(?<!\d)0 de/);
   });
 
   it('1 clique no card liga o filtro "só inéditos" e emite o sensor com denominador', async () => {
@@ -298,13 +298,13 @@ describe('RadarKpis — card "Inéditos do lote"', () => {
 });
 
 describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
-  const sugeridos = () => chamadas.radar_empresas.filter((c) => c[0] === 'eq' && c[1] === 'prospeccao_status' && c[2] === 'em_conversa');
+  const sugeridos = () => (chamadas.radar_empresas ?? []).filter((c) => c[0] === 'eq' && c[1] === 'prospeccao_status' && c[2] === 'em_conversa');
 
   it('com lote e score calculado: "N de T", e o count tem o predicado inteiro do helper puro', async () => {
     resposta = { data: kpis(), error: null };
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
-    await waitFor(() => expect(card.textContent).toMatch(/\b12\b/));
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
     expect(card.textContent).toMatch(/de 501\.380/);
     expect(sugeridos()).toHaveLength(1);
     const c = chamadas.radar_empresas;
@@ -319,7 +319,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     resposta = { data: kpis(), error: null };
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
-    await waitFor(() => expect(card.textContent).toMatch(/\b0 de 501\.380/));
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)0 de 501\.380/));
   });
 
   it('rodada de score ainda não cobriu o lote vigente (ledger na foto anterior): "sem score" — nunca 0', async () => {
@@ -329,7 +329,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
     await waitFor(() => expect(card.textContent).toMatch(/sem score/i));
-    expect(card.textContent, 'ausente virou zero').not.toMatch(/\b0\b/);
+    expect(card.textContent, 'ausente virou zero').not.toMatch(/(?<!\d)0(?!\d)/);
     expect(screen.queryByRole('button', { name: /só sugeridos/i }), 'filtro sem efeito ofertado').toBeNull();
   });
 
@@ -339,7 +339,7 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
     await waitFor(() => expect(card.textContent).toMatch(/sem lote/i));
-    expect(card.textContent).not.toMatch(/\b0\b/);
+    expect(card.textContent).not.toMatch(/(?<!\d)0(?!\d)/);
     expect(sugeridos()).toHaveLength(0);
   });
 
@@ -349,14 +349,14 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
     await waitFor(() => expect(card.textContent).toMatch(/não consegui/i));
-    expect(card.textContent).not.toMatch(/\b0 de/);
+    expect(card.textContent).not.toMatch(/(?<!\d)0 de/);
   });
 
   it('1 clique liga "só sugeridos" e o sensor leva N, T e o limiar', async () => {
     resposta = { data: kpis(), error: null };
     renderKpis();
     const card = await screen.findByTestId('radar-kpi-sugeridos');
-    await waitFor(() => expect(card.textContent).toMatch(/\b12\b/));
+    await waitFor(() => expect(card.textContent).toMatch(/(?<!\d)12 de 501\.380/));
     screen.getByRole('button', { name: /só sugeridos/i }).click();
     expect(onSoSugeridos).toHaveBeenCalledWith(true);
     const ev = track.mock.calls.find(([n]) => n === 'radar.sugeridos_filtro') as [string, Record<string, unknown>] | undefined;
