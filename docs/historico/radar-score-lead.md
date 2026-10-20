@@ -27,7 +27,21 @@
 
 ## 1ª execução em prod
 
-__PROD_RUN__
+Rodada manual pelo canal `postgres` (MCP) em 2026-10-20 11:36 UTC — o cliente MCP estourou o timeout, mas a função é atômica e terminou do lado do banco (ledger `sucesso`, **96,3 s**; rodadas manuais longas: use o SQL Editor ou leia o ledger depois).
+
+| | |
+| --- | --- |
+| avaliados / alterados | 553.642 / 553.642 (1ª rodada escreve tudo) |
+| com score | **498.624** |
+| sem score | 3.007 já clientes · 52.011 fora da foto (os 251 restantes dos 52.262 são já-clientes, contados antes) · 0 sem lote |
+| faixas | 0–19: 1.657 · 20–39: 233.749 · 40–59: 250.784 · 60–79: 12.401 · 80–100: 33 |
+| p50 / p90 / máx / mín | 41 / 53 / 90 / 18 |
+| ≥ 60 por UF | MG 5.920 · SP 2.340 · RS 605 · SC 573 · PR 538 · ES 492 |
+| ≥ 60 por CNAE | 3101200 móveis madeira 6.620 · 2391503 marmoraria 1.722 · 1629301 artefatos madeira 1.412 · 9529105 restauração 836 · 3102100 móveis metal 644 · 3103900 334 |
+
+Topo da fila (score 90/88/86): fábricas de móveis de porte "demais", capital ≥ R$ 1 mi, em Nova Serrana, Cláudio e Formiga (MG, municípios com 35–117 clientes), com telefone e e-mail. A mesma razão social aparece 3× no topo (filiais com CNPJ próprio) — **follow-up**: agrupar matriz/filiais na fila.
+
+Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital < R$ 10 mil puxam para baixo); o que separa o topo é CNAE tier 1 + proximidade + capital. Nenhum 0 fabricado: o mínimo é 18, e o NULL carrega o motivo.
 
 ## Camadas de deploy (quem faz o quê)
 
@@ -39,7 +53,7 @@ __PROD_RUN__
 
 ## Codex
 
-Desenho: **Caminho B** — `scripts/codex-async.sh -r max` devolveu `exit 79` (guard local: cota em 97 %, teto 85 %; janela reabre 24/10 19:09). A RÉGUA foi escrita e conferida na sessão (prompt em `logs/`… não; está no corpo do PR). Código: ver o corpo do PR (`sem-codex:` ou parecer, conforme a decisão do founder sobre gastar a reserva).
+Desenho: **Caminho B** — `scripts/codex-async.sh -r max` devolveu `exit 79` (guard local: cota em 97 %, teto 85 %; janela reabre 24/10 19:09). A RÉGUA foi escrita e conferida na sessão (está no corpo do PR). Código: ver o corpo do PR (`sem-codex:` ou parecer, conforme a decisão do founder sobre gastar a reserva).
 
 ## Provas
 
@@ -48,6 +62,7 @@ Desenho: **Caminho B** — `scripts/codex-async.sh -r max` devolveu `exit 79` (g
 
 ## Follow-ups (fora deste bloco)
 
+- Agrupar matriz/filiais (mesma razão social, CNPJs distintos) na fila — hoje 3 filiais da mesma metalúrgica ocupam 3 posições do topo.
 - Bônus por `cnaes_secundarios` de tier 1 (não entrou: precisa medir se o secundário prediz compra antes de pesar).
 - Proximidade por clientes **ativos** do ERP (hoje conta `ja_cliente` do radar, inclusive os fora da foto) — trocar quando houver a tabela de clientes com município normalizado.
 - Disparar o recálculo no `finalize` da edge `radar-ingest` (hoje o lote novo só reflete no cron das 03:30).
