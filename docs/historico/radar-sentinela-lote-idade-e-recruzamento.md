@@ -27,10 +27,15 @@ Migration `20261020101636_data_health_radar_lote_e_recruzamento.sql` — recria 
 
 | Camada | Estado | Quem |
 | --- | --- | --- |
-| Migration (trio recriado) | ver seção "Fecho" abaixo | sessão (envelope, canal `postgres`) + 2ª testemunha `psql-ro` |
+| Migration (trio recriado) | ✅ aplicada em 2026-10-20 pelo `bun run db:aplicar` (ensaio com ROLLBACK antes; tentativa #571 → recibo, sha `a2e0567a…`, commit `0635b448e`), validada por `psql-ro` (2ª testemunha) e lida pelo conector Lovable em transação READ ONLY | sessão |
 | Front | nada a publicar (domain existente, RPC `get_data_health` pass-through) | — |
 | Edge | nenhuma | — |
 
-## Fecho
+## Fecho (2026-10-20)
 
-_(preenchido no apply)_
+- **Pré-voo `psql-ro` 🟢** antes do apply: md5 vivo dos 3 corpos = os da PRE (`ca824f4f…` / `633a9b71…` / `6be719aa…`), ACL fechado, `search_path=public, pg_temp`, compute com 31 sources, os dois sub-selects dos checks simulados em leitura: lote 2026-08 a 50 dias (`ok`), último sucesso do tick há 4 h (`ok`), job `radar-recruzar-ja-cliente-diario` ativo.
+- **Ensaio** (`db:aplicar --ensaio`): rodou inteiro em prod e fez ROLLBACK — PRE aceitou o corpo vivo, PÓS passou.
+- **Apply** (`db:aplicar`): tentativa #571 virou recibo na mesma transação (sha256 `a2e0567a048207edb4dbddeaccc6f7b6893f762c337caf568feaa46790a2fe0d`, commit `0635b448e`).
+- **2ª testemunha (`psql-ro`, outra conexão, depois do commit):** md5 do prosrc = o do arquivo nos 3 (`193a1dbb…` compute, `b325d2af…` watchdog, `f5defcde…` heartbeat); `search_path` preservado; 0 pares papel-público × função com EXECUTE; `radar_lote_idade` e `radar_recruzamento_tick` presentes no `v_sources` do watchdog E na IN-list do heartbeat.
+- **Leitura pelo conector Lovable** (`SET TRANSACTION READ ONLY`, `transaction_read_only=on`): `radar_lote_idade = ok` (age 4.361.583 s ≈ 50 d, teto 6.480.000 s = 75 d, message "ultimo lote completo 2026-08 (dados ate 31/08/2026)") e `radar_recruzamento_tick = ok` (age 19.076 s ≈ 5 h, teto 180.000 s = 50 h, "ultimo sucesso 20/10/2026 03:15 BRT"); ambos `domain=vendas`, `severity=warning`.
+- A rodada do watchdog das 11:30 UTC (antes do apply) avaliou 23; a próxima (`*/30`) passa a avaliar **25** — `data_health_watchdog_estado.checks_avaliados` é a testemunha independente, legível por `psql-ro`.
