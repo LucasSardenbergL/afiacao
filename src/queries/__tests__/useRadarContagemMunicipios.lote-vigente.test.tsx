@@ -35,7 +35,7 @@ import type { RadarFiltros } from '../useRadarLista';
 
 const FILTROS: RadarFiltros = {
   busca: '', uf: '', municipio: '', cnae: '', status: '', incluirJaClientes: false, comTelefone: false,
-  preset: 'novas', incluirSaiuDoDump: false, soIneditos: false,
+  preset: 'novas', incluirSaiuDoDump: false, soIneditos: false, soSugeridos: false,
 };
 const LOTES = [
   { mes_referencia: '2026-10', status: 'running', total_recebido: 0, novos: null, iniciado_em: '2026-11-02T03:00:00+00:00' },
