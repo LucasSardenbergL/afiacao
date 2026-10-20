@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **675** custom migrations totais
-- **2159** objetos esperados (criados por estas migrations)
+- **676** custom migrations totais
+- **2160** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 787
+  - `function`: 788
   - `rls_policy`: 477
   - `index`: 282
   - `cron_job`: 193
