@@ -1,6 +1,6 @@
 # Radar: situação cadastral (RFB) — baixa de CNPJ descarta lead e avisa o gestor
 
-> PR: #PR_NUM (2026-10-19). Bloco seguinte ao #3169 (carga mensal) e ao #3175/#3192 (CNPJ alfanumérico). Origem: medição da 1ª carga automática.
+> PR: #3212 (2026-10-19/20). Bloco seguinte ao #3169 (carga mensal) e ao #3175/#3192 (CNPJ alfanumérico). Origem: medição da 1ª carga automática.
 
 ## O problema
 
