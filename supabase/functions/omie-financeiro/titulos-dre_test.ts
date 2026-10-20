@@ -22,9 +22,14 @@ function assertEquals(a: unknown, b: unknown, msg?: string) {
 const MAX_ROWS = 1000;
 type Linha = Record<string, unknown>;
 
-function bancoFake(total: number, opts: { infinito?: boolean } = {}) {
+// `antesDoRequest(n, linhas)` roda antes de responder o request n (1-based) — é onde o teste
+// injeta a escrita concorrente do sync (INSERT/re-datação) entre duas páginas.
+function bancoFake(
+  total: number,
+  opts: { infinito?: boolean; antesDoRequest?: (n: number, linhas: Linha[]) => void } = {},
+) {
   const linhas: Linha[] = Array.from({ length: total }, (_, i) => ({
-    id: `id-${String(i).padStart(6, "0")}`,
+    id: `id-${String(i * 10).padStart(7, "0")}`,
     valor_documento: 1,
   }));
   const chamadas: string[][] = [];
@@ -33,7 +38,8 @@ function bancoFake(total: number, opts: { infinito?: boolean } = {}) {
     from<T>(tabela: string): QueryTitulos<T> {
       const passos: string[] = [`from:${tabela}`];
       let ordenado = false;
-      let faixa: [number, number] | null = null;
+      let cursor: string | null = null;
+      let limite: number | null = null;
       const q: QueryTitulos<T> = {
         select: (c) => (passos.push(`select:${c}`), q),
         eq: (c, v) => (passos.push(`eq:${c}=${v}`), q),
@@ -41,25 +47,37 @@ function bancoFake(total: number, opts: { infinito?: boolean } = {}) {
         in: (c, v) => (passos.push(`in:${c}=${v.join("|")}`), q),
         gte: (c, v) => (passos.push(`gte:${c}=${v}`), q),
         lt: (c, v) => (passos.push(`lt:${c}=${v}`), q),
+        gt: (c, v) => {
+          passos.push(`gt:${c}=${v}`);
+          if (c === "id") cursor = String(v);
+          return q;
+        },
         or: (f) => (passos.push(`or:${f}`), q),
         order: (c, o) => {
           passos.push(`order:${c}:${o?.ascending === false ? "desc" : "asc"}`);
           ordenado = c === "id" && o?.ascending !== false;
           return q;
         },
-        range: (de, ate) => (passos.push(`range:${de}-${ate}`), faixa = [de, ate], q),
+        limit: (n) => (passos.push(`limit:${n}`), limite = n, q),
         then(onOk, onErr) {
           requests++;
           chamadas.push(passos);
           if (requests > 100) return Promise.reject(new Error("laço não converge")).then(onOk, onErr);
           if (opts.infinito) {
-            const pagina = Array.from({ length: MAX_ROWS }, (_, i) => ({ id: `inf-${requests}-${i}` }));
+            const pagina = Array.from({ length: MAX_ROWS }, (_, i) => ({
+              id: `inf-${String(requests).padStart(4, "0")}-${String(i).padStart(4, "0")}`,
+            }));
             return Promise.resolve({ data: pagina as T[], error: null }).then(onOk, onErr);
           }
+          opts.antesDoRequest?.(requests, linhas);
           // Sem `.order()` estável: ordem rotacionada a cada request (o Postgres não promete nada).
-          const base = ordenado ? linhas : [...linhas.slice(requests * 7 % total), ...linhas.slice(0, requests * 7 % total)];
-          const janela = faixa ? base.slice(faixa[0], faixa[1] + 1) : base;
-          return Promise.resolve({ data: janela.slice(0, MAX_ROWS) as T[], error: null }).then(onOk, onErr);
+          const k = (requests * 7) % Math.max(linhas.length, 1);
+          const base = ordenado
+            ? [...linhas].sort((a, b) => String(a.id) < String(b.id) ? -1 : 1)
+            : [...linhas.slice(k), ...linhas.slice(0, k)];
+          const filtradas = cursor === null ? base : base.filter((l) => String(l.id) > cursor!);
+          const janela = filtradas.slice(0, Math.min(limite ?? Infinity, MAX_ROWS));
+          return Promise.resolve({ data: janela as T[], error: null }).then(onOk, onErr);
         },
       };
       return q;
@@ -122,4 +140,35 @@ Deno.test("teto: servidor que nunca esvazia LANÇA TetoTitulosExcedido em vez de
   // A marca é a CLASSE (não "lançou algo"): REJEITADA/MALFORMADA aqui seria outro ramo.
   if (!(pego instanceof TetoTitulosExcedido)) throw new Error(`esperava TetoTitulosExcedido, veio ${String(pego)}`);
   assertEquals(chamadas.length, TETO_TITULOS_MES / MAX_ROWS, `requests até o teto: ${chamadas.length}`);
+});
+
+// Challenge Codex: com offset, o EOF por página VAZIA faz uma 2ª requisição mesmo num mês de 655
+// títulos, e um INSERT do sync ANTES do offset entre as duas devolvia o último título de novo.
+Deno.test("INSERT concorrente entre páginas não duplica nem pula título pré-existente", async () => {
+  const { db } = bancoFake(655, {
+    antesDoRequest: (n, linhas) => {
+      // Entre a 1ª e a 2ª página: um título novo cuja chave cai ANTES de tudo o que já foi lido.
+      if (n === 2) linhas.push({ id: "id-0000005", valor_documento: 1 });
+    },
+  });
+  const rows = await buscarTitulosCompetencia(db, { ...PERIODO, tabela: "fin_contas_receber", select: "valor_documento" });
+  assertEquals(idsDistintos(rows), rows.length, `duplicata: ${rows.length} linhas, ${idsDistintos(rows)} distintas`);
+  assertEquals(rows.length, 655, `esperava os 655 pré-existentes (o novo entrou atrás do cursor), veio ${rows.length}`);
+});
+
+Deno.test("mês de 2.500 títulos com INSERT no meio da leitura: todos os pré-existentes, sem duplicata", async () => {
+  const { db } = bancoFake(2500, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 2) linhas.push({ id: "id-0000001", valor_documento: 1 });
+    },
+  });
+  const rows = await buscarTitulosCaixa(db, {
+    ...PERIODO,
+    tabela: "fin_contas_receber",
+    select: "valor_documento",
+    statuses: ["RECEBIDO"],
+    colunaBaixa: "data_recebimento",
+  });
+  assertEquals(idsDistintos(rows), rows.length, "duplicata entre páginas");
+  assertEquals(rows.length, 2500);
 });
