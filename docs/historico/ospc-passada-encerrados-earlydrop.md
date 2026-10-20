@@ -92,6 +92,7 @@ resolveu sozinho às 00:30.
 
 Raio medido antes de ligar: `encerrado_omie_em` tem 1 escritor (a RPC) e 1 leitor (o backtest offline). Nenhuma
 função, view ou tela da prod o lê. Aplicado por `db/2026-10-20-r59-habilitar-encerrados-oben.sql` (recibo
-#569; o ensaio passou antes). A 2ª testemunha por psql-ro deu `OBEN|t|observado|153|520` e coluna com 0
+#569; reaplicado como #575 depois que o `<> 1` da pré-condição virou `is distinct from 1` pelo
+assert-verde-por-ausencia-gate, para o recibo bater com o arquivo; ensaio antes dos dois). A 2ª testemunha por psql-ro deu `OBEN|t|observado|153|520` e coluna com 0
 linhas. **Quem grava a coluna é a próxima passada** (completo diário, ~00:16 UTC de 21/10): status
 `publicado`, `novos`≈520. Reverter: `habilitado=false`. O backtest volta a recusar na hora.
