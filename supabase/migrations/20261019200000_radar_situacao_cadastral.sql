@@ -320,14 +320,18 @@ DO $post$
 DECLARE
   f text;
 BEGIN
+  -- to_regclass (não ::regclass): contra o estado ANTIGO o pré-voo tem de falhar em UM predicado rotulado, não em 42P01.
+  IF to_regclass('public.radar_situacao_cadastral') IS NULL THEN
+    RAISE EXCEPTION 'A1 FALHOU: radar_situacao_cadastral ausente — o chunk_situacao não teria onde gravar';
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-    WHERE conrelid = 'public.radar_situacao_cadastral'::regclass AND contype = 'p'
+    WHERE conrelid = to_regclass('public.radar_situacao_cadastral') AND contype = 'p'
       AND conkey = ARRAY[1::smallint, 2::smallint]
   ) THEN
     RAISE EXCEPTION 'A1 FALHOU: radar_situacao_cadastral sem PK (cnpj, lote) — o upsert do chunk_situacao não teria conflito e duplicaria';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = 'public.radar_situacao_cadastral'::regclass AND relrowsecurity) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_class WHERE oid = to_regclass('public.radar_situacao_cadastral') AND relrowsecurity) THEN
     RAISE EXCEPTION 'A2 FALHOU: radar_situacao_cadastral sem RLS';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'radar_situacao_cadastral'

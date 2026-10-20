@@ -3,7 +3,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal,
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -27,6 +27,7 @@ export function RadarLinha({
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
   const tel = telefonePrincipal(empresa);
+  const rfb = seloRfb(empresa);
   return (
     <div
       className={cn(
@@ -46,6 +47,15 @@ export function RadarLinha({
           <span className="font-medium truncate">{nome}</span>
           {empresa.ja_cliente && (
             <Badge variant="secondary" className="shrink-0">já é cliente</Badge>
+          )}
+          {rfb && (
+            <span
+              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}
+              title={rfb.titulo}
+              data-testid="selo-rfb"
+            >
+              {rfb.texto}
+            </span>
           )}
         </div>
         <div className="text-xs text-muted-foreground truncate">

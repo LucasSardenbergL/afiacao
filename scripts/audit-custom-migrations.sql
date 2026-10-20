@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 662
+-- Total de custom migrations: 664
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -727,7 +727,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261019110100', 'fin_titulo_baixas_cr_mapa', '20261019110100_fin_titulo_baixas_cr_mapa.sql'),
   ('20261019120000', 'reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', '20261019120000_reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null.sql'),
   ('20261019120100', 'pedido_total_liquido_converter_canonica_excecao_nominal', '20261019120100_pedido_total_liquido_converter_canonica_excecao_nominal.sql'),
-  ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql')
+  ('20261019150000', 'radar_recruzar_mascara_exata', '20261019150000_radar_recruzar_mascara_exata.sql'),
+  ('20261019200000', 'radar_situacao_cadastral', '20261019200000_radar_situacao_cadastral.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2813,7 +2814,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
-  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_docs_clientes', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_cnpjs_conhecidos', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_rfb_descricao', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('radar_situacao_cadastral', 'table', 'public', 'radar_situacao_cadastral', ''),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4947,7 +4956,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reconciliar_pedidos_omie_canonica_desconto_corrigido_para_null', 'function', 'public', 'reconciliar_pedidos_omie', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'function', 'public', 'pedido_total_liquido_converter', ''),
   ('pedido_total_liquido_converter_canonica_excecao_nominal', 'table', 'public', 'pedido_total_liquido_excecao', ''),
-  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', '')
+  ('radar_recruzar_mascara_exata', 'function', 'public', 'radar_recruzar_ja_cliente', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_docs_clientes', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_cnpjs_conhecidos', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_rfb_descricao', ''),
+  ('radar_situacao_cadastral', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('radar_situacao_cadastral', 'table', 'public', 'radar_situacao_cadastral', ''),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_lote_sit', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'index', 'public', 'idx_radar_situacao_cnpj_alertado', 'radar_situacao_cadastral'),
+  ('radar_situacao_cadastral', 'rls_policy', 'public', 'radar_situacao_cadastral_select_gestor', 'radar_situacao_cadastral')
 )
 SELECT
   e.migration,

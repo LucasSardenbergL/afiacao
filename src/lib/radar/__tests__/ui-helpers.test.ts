@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
-  formatarCapital, formatarCnpj, digitosCnae,
+  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -84,5 +84,25 @@ describe('status de prospecção (rótulo + tom)', () => {
     expect(telefonePrincipal({ telefone1: null, telefone2: null })).toBeNull();
     expect(UFS_BR).toHaveLength(27);
     expect(new Set(UFS_BR).size).toBe(27);
+  });
+});
+
+describe('seloRfb', () => {
+  const base = { rfb_situacao: null, rfb_situacao_data: null, rfb_situacao_lote: null };
+  it('03/04/08 viram selo com rótulo, data dd/mm/aaaa (sem Date) e tom', () => {
+    expect(seloRfb({ rfb_situacao: '08', rfb_situacao_data: '2026-03-15', rfb_situacao_lote: '2026-08' }))
+      .toEqual({ texto: 'Baixado pela RFB em 15/03/2026', tom: 'muted', titulo: 'Situação cadastral na Receita Federal (dump 2026-08): baixado desde 15/03/2026. Confira o cartão CNPJ antes de agir.' });
+    expect(seloRfb({ ...base, rfb_situacao: '04', rfb_situacao_data: '2025-12-31' })?.texto).toBe('Inapto pela RFB em 31/12/2025');
+    expect(seloRfb({ ...base, rfb_situacao: '03', rfb_situacao_data: '2026-05-20' })).toMatchObject({ texto: 'Suspenso pela RFB em 20/05/2026', tom: 'warning' });
+  });
+  it('sem data: selo sem o "em"; 02, 01 e ausente: nenhum selo (ausente ≠ ativa)', () => {
+    expect(seloRfb({ ...base, rfb_situacao: '08' })?.texto).toBe('Baixado pela RFB');
+    expect(seloRfb({ ...base, rfb_situacao: '02', rfb_situacao_data: '2010-01-01' })).toBeNull();
+    expect(seloRfb({ ...base, rfb_situacao: '01' })).toBeNull();
+    expect(seloRfb(base)).toBeNull();
+  });
+  it('formatarDataIso não interpreta fuso e devolve o texto cru quando não é ISO', () => {
+    expect(formatarDataIso('2026-01-01')).toBe('01/01/2026');
+    expect(formatarDataIso('x')).toBe('x');
   });
 });

@@ -121,3 +121,29 @@ export function formatarCep(cep: string | null | undefined): string {
   if (d.length !== 8) return cep ?? '';
   return `${d.slice(0, 5)}-${d.slice(5)}`;
 }
+
+// ── Situação cadastral RFB (selo na linha e na ficha) ─────────────────────────────────────────────
+// Códigos da Receita: 01 nula · 02 ativa · 03 suspensa · 04 inapta · 08 baixada. Só as irregulares viram
+// selo; 02/01 ou ausência (ausente ≠ ativa: a empresa pode não ter entrado no lote) não mostram nada.
+const SELO_RFB: Record<string, { rotulo: string; tom: TomStatus }> = {
+  '03': { rotulo: 'Suspenso', tom: 'warning' },
+  '04': { rotulo: 'Inapto',   tom: 'warning' },
+  '08': { rotulo: 'Baixado',  tom: 'muted' },
+};
+export interface SeloRfb { texto: string; tom: TomStatus; titulo: string }
+/** Selo "Baixado/Inapto/Suspenso pela RFB em dd/mm/aaaa", ou null quando não há irregularidade. */
+export function seloRfb(e: { rfb_situacao: string | null; rfb_situacao_data: string | null; rfb_situacao_lote: string | null }): SeloRfb | null {
+  const s = e.rfb_situacao ? SELO_RFB[e.rfb_situacao] : undefined;
+  if (!s) return null;
+  const data = e.rfb_situacao_data ? formatarDataIso(e.rfb_situacao_data) : null;
+  return {
+    texto: `${s.rotulo} pela RFB${data ? ` em ${data}` : ''}`,
+    tom: s.tom,
+    titulo: `Situação cadastral na Receita Federal (dump ${e.rfb_situacao_lote ?? '?'}): ${s.rotulo.toLowerCase()}${data ? ` desde ${data}` : ''}. Confira o cartão CNPJ antes de agir.`,
+  };
+}
+/** YYYY-MM-DD → dd/mm/aaaa sem passar por Date (fuso não entra). */
+export function formatarDataIso(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}

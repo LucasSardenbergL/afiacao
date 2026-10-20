@@ -566,6 +566,10 @@ db/test-radar-recruzamento-diario.sh        12  falsificar=6
 # O byte que o ESCRITOR grava é o byte que o recruzar marca (alfanumérico preservado vs mutilado; #3175 → escritores).
 # Depende da migration 20261019110000 (#3175) estar na main.
 db/test-radar-recruzar-origem-omie.sh        9  falsificar=2
+# Radar: SITUAÇÃO CADASTRAL RFB (20261019200000). Defeito aqui = cliente baixado descartado da fila como lead,
+# gestor avisado 2× do mesmo (cnpj, situacao), lead ativo (02) descartado, cliente fora do radar invisível,
+# ou lote velho regredindo a foto. Relógio controlado (p_agora), esquema mínimo com os CHECKs de prod.
+db/test-radar-situacao-cadastral.sh         21  falsificar=8
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
