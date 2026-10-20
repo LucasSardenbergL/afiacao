@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — tint_watchdog_corante_check() v3 (Fase 5b#2 + incidente 10-19)   ║
+# ║  PROVA PG17 — tint_watchdog_corante_check() v4 + vigia (incidente 10-19)       ║
 # ║  bash db/test-tint-watchdog-corante.sh > /tmp/t.log 2>&1; echo "exit=$?"       ║
 # ║  (NÃO pipe pra tail — engole o exit≠0.)                                        ║
 # ║                                                                                ║
 # ║  O QUE PROVA (aplica v1 20260727150000 -> v2 20261019150000 -> v3              ║
-# ║  20261019160000, a cadeia real de prod; suíte e sabotagens rodam sobre a v3):  ║
+# ║  20261019160000 -> v4 20261020120000, a cadeia real de prod; suíte e           ║
+# ║  sabotagens rodam sobre a v4):                                                 ║
 # ║   A1 corante impagável EM USO  -> alerta criado (fin_alertas + e-mail)         ║
 # ║   A2 corante impagável FORA de uso -> NÃO alerta      (precisão > recall)      ║
 # ║   A3 impagável só em fórmula DESATIVADA -> NÃO alerta (precisão > recall)      ║
@@ -21,6 +22,14 @@
 # ║   A10 base sem vínculo Omie -> MUDO, e DISMISSA o alerta da v1 aberto com 11   ║
 # ║   A10b idem com base Omie INATIVA -> MUDO (espelha v_base_disponivel da RPC)   ║
 # ║   A11 corante sem vínculo Omie é rotulado pela DESCRIÇÃO, não pelo UUID        ║
+# ║   A12 TROCA por corante NUNCA VISTO no incidente (1 -> 1) re-emite (v4)        ║
+# ║   A13 mesmo corante escala a >=1000 fórmulas: 'critico' + re-emite (v4)        ║
+# ║   A14 conjunto ENCOLHE: atualiza o alerta SEM e-mail               (v4)        ║
+# ║   A19 histerese: 999<->1000 fórmulas mantém 'critico', sem e-mail  (v4)        ║
+# ║   A20 histerese: corante JÁ VISTO que volta não re-emite           (v4)        ║
+# ║   A15/A16 vigia: marcador da A > 30 min alarma; A voltou -> dismissa (v4)      ║
+# ║   A17 A vigia a vigia: marcador da vigia > 1h alarma               (v4)        ║
+# ║   A18 cron da vigia armado */15                                    (v4)        ║
 # ║  FALSIFICAÇÕES (cada uma declara o CONJUNTO EXATO que derruba):                ║
 # ║   F1 remove o filtro de USO            -> {A2,A3} + cascata A5,A6*,A10,A10b    ║
 # ║   F2 remove `ativo` do predicado       -> {A1}                                 ║
@@ -29,6 +38,13 @@
 # ║   F5 volta ao predicado de base da v1  -> {A10,A10b}                           ║
 # ║   F6 tira a descrição do corante do rótulo -> {A11,A11b}                       ║
 # ║   F7 volta a contar pares fórmula×corante -> {A6c}                             ║
+# ║   F8 novos por QUANTIDADE (v1-v3)        -> {A12,A20}                          ║
+# ║   F9 sem escalada                        -> {A13b}                             ║
+# ║   F10 sem atualização calada             -> {A14}                              ║
+# ║   F11 vigia lê a entidade errada         -> {A16}                              ║
+# ║   F12 A não vigia a vigia                -> {A17}                              ║
+# ║   F13 sem 'vistos' (só ids atuais)       -> {A20}                              ║
+# ║   F14 severidade não-pegajosa            -> {A19,A19b}                         ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -115,9 +131,11 @@ SQL
 # ══ ZONA 2 — as migrations REAIS (Lei #1: nunca um stub da lógica) ══
 MIG_V1="$REPO_ROOT/supabase/migrations/20260727150000_tint_watchdog_corante_impagavel.sql"
 MIG_V2="$REPO_ROOT/supabase/migrations/20261019150000_tint_watchdog_corante_v2_base_precificavel.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261019160000_tint_watchdog_corante_v3_plano_custom.sql"
+MIG_V3="$REPO_ROOT/supabase/migrations/20261019160000_tint_watchdog_corante_v3_plano_custom.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql"
 [ -f "$MIG_V1" ] || { echo "migration nao encontrada: $MIG_V1"; exit 1; }
 [ -f "$MIG_V2" ] || { echo "migration nao encontrada: $MIG_V2"; exit 1; }
+[ -f "$MIG_V3" ] || { echo "migration nao encontrada: $MIG_V3"; exit 1; }
 [ -f "$MIG" ] || { echo "migration nao encontrada: $MIG"; exit 1; }
 P -q -f "$MIG_V1"
 # a PRE da v2 só aceita a v1 cujo md5 foi medido em prod — prova que a v1 do repo É a de prod
@@ -125,17 +143,23 @@ eq "PRE v1 do repo = v1 de prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc
 P -q -f "$MIG_V2"
 # a PRE da v3 só aceita a v2 cujo md5 foi conferido em prod no apply de 2026-10-19
 eq "v2 do repo = v2 aplicada em prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "8febcd9e495c4536f3a548b1afab278e"
+P -q -f "$MIG_V3"
+# a PRE da v4 só aceita a v3 cujo md5 foi conferido em prod no apply de 2026-10-19
+eq "v3 do repo = v3 aplicada em prod (md5)" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "eeddd88a26585696edfd88fc270570ce"
 P -q -f "$MIG"
-eq "v3 aplicada (marcador)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v3' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
-eq "v3 planeja com valores reais" "$(Pq -c "SELECT 'plan_cache_mode=force_custom_plan' = ANY(proconfig) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
-eq "v3 aceita a si mesma na PRE (md5 da v3 listado)" "$(Pq -c "SELECT position(md5(prosrc) IN \$\$$(cat "$MIG")\$\$) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
-P -q -f "$MIG"   # re-aplicar a v3 sobre ela mesma passa (idempotente)
+eq "v4 aplicada (marcador)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v4' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v3 aplicada (marcador, prefixo)" "$(Pq -c "SELECT position('tint_watchdog_corante guard v' IN prosrc) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v4 planeja com valores reais" "$(Pq -c "SELECT 'plan_cache_mode=force_custom_plan' = ANY(proconfig) FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+eq "v4 aceita a si mesma na PRE (md5 da v4 listado)" "$(Pq -c "SELECT position(md5(prosrc) IN \$\$$(cat "$MIG")\$\$) > 0 FROM pg_proc WHERE oid='public.tint_watchdog_corante_check()'::regprocedure;")" "t"
+P -q -f "$MIG"   # re-aplicar a v4 sobre ela mesma passa (idempotente)
 [ "$FAIL" -eq 0 ] || { echo "SETUP VERMELHO: ${FALHAS[*]}"; exit 1; }
-echo "=== migrations aplicadas (v1 -> v2 -> v3) ==="
+echo "=== migrations aplicadas (v1 -> v2 -> v3 -> v4) ==="
 
 # guarda o corpo verdadeiro, para restaurar depois de cada sabotagem
-P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_corante_check()'::regprocedure) AS def;"
-restaura() { Pq -c "SELECT def FROM _bkp;" > "$RODADA/_wd_real.sql"; P -q -f "$RODADA/_wd_real.sql"; }
+# as DUAS funções da v4 (a vigia também é sabotada, F11 — e a PRE recusa corpo desconhecido)
+P -q -c "CREATE TABLE _bkp AS SELECT pg_get_functiondef('public.tint_watchdog_corante_check()'::regprocedure) AS def
+         UNION ALL SELECT pg_get_functiondef('public.tint_watchdog_corante_vigia_check()'::regprocedure);"
+restaura() { Pq -c "SELECT string_agg(def || ';', E'\n') FROM _bkp;" > "$RODADA/_wd_real.sql"; P -q -f "$RODADA/_wd_real.sql"; }
 
 # ══ ZONA 3 — seeds ══
 # C_OK: corante saudável (nunca deve alarmar).  C_INAT: omie INATIVO (impagável).
@@ -188,6 +212,7 @@ tira_da_ativa() { P -q -c "DELETE FROM public.tint_formula_itens WHERE formula_i
 
 alertas_ativos() { Pq -c "SELECT count(*) FROM public.fin_alertas WHERE tipo='$1' AND dismissed_at IS NULL;"; }
 emails()         { Pq -c "SELECT count(*) FROM public.fornecedor_alerta WHERE titulo LIKE '%$1%';"; }
+emails_msg()     { Pq -c "SELECT count(*) FROM public.fornecedor_alerta WHERE mensagem LIKE '%$1%';"; }
 
 # ══ ZONA 4 — a suíte (roda inteira; usada também sob sabotagem) ══
 roda_suite() {
@@ -216,6 +241,46 @@ roda_suite() {
   eq "A6b agravamento re-emite e-mail" "$(emails 'AGRAVOU')" "1"
   # os 2 corantes ruins estão na MESMA fórmula: 1 fórmula atingida, não 2 pares
   eq "A6c formulas atingidas = distintas" "$(Pq -c "SELECT contexto->>'formulas_ativas' FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "1"
+
+  # A14 (v4): o conjunto ENCOLHE (2 -> 1) com alerta aberto -> o alerta deixa de descrever o
+  # estado velho, mas SEM e-mail (melhora não é agravamento)
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000003'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A14 encolheu atualiza o contexto" "$(Pq -c "SELECT contexto->>'corantes' FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "1"
+  eq "A14b encolheu nao re-emite" "$(emails 'AGRAVOU')" "1"
+
+  # A12 (v4): TROCA — sai C_INAT, entra C_SEMVINC, nunca visto no incidente (1 -> 1).
+  # A v1-v3 ficavam MUDAS.
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000002'
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000008'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A12 troca de corante re-emite" "$(emails 'AGRAVOU')" "2"
+
+  # A13 (v4): o MESMO corante se espalha até >= 1000 fórmulas -> 'critico' persistido + e-mail
+  P -q -c "INSERT INTO public.tint_formulas (id, account, sku_id, cor_id) SELECT ('f1000000-0000-0000-0000-'||lpad(g::text,12,'0'))::uuid, 'oben', '5c000000-0000-0000-0000-000000000001'::uuid, gen_random_uuid() FROM generate_series(1,1000) g;
+           INSERT INTO public.tint_formula_itens (formula_id, corante_id, qtd_ml) SELECT ('f1000000-0000-0000-0000-'||lpad(g::text,12,'0'))::uuid, 'c0000000-0000-0000-0000-000000000003', 1 FROM generate_series(1,1000) g;"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A13 escalada persiste critico" "$(Pq -c "SELECT severidade FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "critico"
+  eq "A13b escalada re-emite (e diz por que)" "$(emails_msg 'passou a critico')" "1"
+
+  # A19 (v4, histerese): cai para 999 fórmulas e volta — o incidente segue 'critico' e
+  # não re-emite a cada oscilação
+  P -q -c "UPDATE public.tint_formulas SET desativada_em = now() WHERE id::text LIKE 'f1000000-0000-0000-0000-00000000000%' AND id::text <= 'f1000000-0000-0000-0000-000000000003';"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A19 severidade pegajosa abaixo de 1000" "$(Pq -c "SELECT severidade FROM public.fin_alertas WHERE tipo='tint_corante_impagavel' AND dismissed_at IS NULL;")" "critico"
+  local critico_antes; critico_antes="$(emails_msg 'passou a critico')"
+  P -q -c "UPDATE public.tint_formulas SET desativada_em = NULL WHERE id::text LIKE 'f1000000%';"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A19b volta a 1000 sem novo e-mail" "$(emails_msg 'passou a critico')" "$critico_antes"
+
+  # A20 (v4, histerese): C_INAT, já visto neste incidente (A1), volta — sem e-mail
+  local agravou_antes; agravou_antes="$(emails 'AGRAVOU')"
+  usa_na_ativa 'c0000000-0000-0000-0000-000000000002'
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A20 corante ja visto que volta nao re-emite" "$(emails 'AGRAVOU')" "$agravou_antes"
+
+  P -q -c "DELETE FROM public.tint_formula_itens WHERE formula_id::text LIKE 'f1000000%'; DELETE FROM public.tint_formulas WHERE id::text LIKE 'f1000000%';"
+  tira_da_ativa 'c0000000-0000-0000-0000-000000000008'
 
   # A5: tudo volta ao normal -> dismiss
   tira_da_ativa 'c0000000-0000-0000-0000-000000000002'
@@ -252,6 +317,21 @@ roda_suite() {
   P -q -c "INSERT INTO public.sync_state (entity_type, account, last_sync_at, status) VALUES ('tint_watchdog_fase5','oben', now() - interval '20 hours','complete');"
   P -q -c "SELECT public.tint_watchdog_corante_check();"
   eq "A9 dead-man cruzado dispara com B parada" "$(alertas_ativos tint_watchdog_fase5_parado)" "1"
+
+  # A15 (v4): VIGIA — o marcador da A envelhece 40 min (timeout aborta antes de gravá-lo)
+  P -q -c "UPDATE public.sync_state SET last_sync_at = now() - interval '40 minutes' WHERE entity_type='tint_watchdog_corante';"
+  P -q -c "SELECT public.tint_watchdog_corante_vigia_check();"
+  eq "A15 vigia alarma A parada" "$(alertas_ativos tint_watchdog_corante_parado)" "1"
+  eq "A15b vigia enfileira e-mail" "$(emails 'watchdog de corante parado')" "1"
+  # A16: a A volta a concluir -> a vigia dismissa
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  P -q -c "SELECT public.tint_watchdog_corante_vigia_check();"
+  eq "A16 vigia dismissa quando a A volta" "$(alertas_ativos tint_watchdog_corante_parado)" "0"
+  # A17: a VIGIA para (marcador 2h) -> a A alarma (nenhum cron vigia a si mesmo)
+  P -q -c "UPDATE public.sync_state SET last_sync_at = now() - interval '2 hours' WHERE entity_type='tint_watchdog_corante_vigia';"
+  P -q -c "SELECT public.tint_watchdog_corante_check();"
+  eq "A17 A alarma vigia parada" "$(alertas_ativos tint_watchdog_corante_vigia_parada)" "1"
+  eq "A18 cron da vigia armado */15" "$(Pq -c "SELECT schedule FROM cron.job WHERE jobname='tint-watchdog-corante-vigia-15min';")" "*/15 * * * *"
 }
 
 echo "=== BASELINE (migration real) ==="
@@ -338,33 +418,36 @@ echo "=== FALSIFICACOES ==="
 #      contagem nunca sobe de 1->2 (derruba o agravamento A6/A6b). Declarado como
 #      medido: prever {A2,A3} e "consertar" o harness para casar seria repintar
 #      de verde uma sabotagem que de fato morde mais fundo. Na v2 a mesma cascata
-#      alcança A6c/A10/A10b: o alerta dos órfãos já está aberto (e congelado) quando
-#      eles medem.
+#      alcança A10/A10b: o alerta dos órfãos já está aberto quando eles medem. Na v4
+#      cai também A12/A14/A14b (o conjunto nunca encolhe nem troca: os órfãos ficam), e
+#      A6c deixa de cair — a atualização calada da v4 mantém o contexto em dia.
 sabota_e_mede "F1" \
   "    JOIN uso u ON u.corante_id = c.id" \
   "    LEFT JOIN uso u ON u.corante_id = c.id" \
-  A2 A3 A5 A6 A6b A6c A10 A10b
+  A2 A3 A5 A6 A6b A10 A10b A12 A14 A14b
 
 # F2 — remove o 'ativo' do predicado: o corante INATIVO deixa de ser impagável.
 #      Prova que a detecção cobre inatividade no Omie, não só custo zero.
+# (v4: sem C_INAT ruim o alerta só nasce no A6 — sem "AGRAVOU" — e A12/A14/A14b medem
+#  um incidente que começou depois; cascata da MESMA sabotagem, medida.)
 sabota_e_mede "F2" \
   "AND COALESCE(op.ativo, false)" \
   "AND true" \
-  A1 A1b A7 A6 A6b
+  A1 A1b A7 A6 A6b A12 A14 A14b
 
 # F3 — mata o ramo de agravamento: o 2o corante caindo com alerta aberto fica MUDO.
 #      Prova que o fix do achado [P1] do Codex tem dente.
 sabota_e_mede "F3" \
-  "IF v_ruins > COALESCE(v_ant_n, 0) THEN" \
+  "IF COALESCE(cardinality(v_novos), 0) > 0 OR v_escalou THEN" \
   "IF false THEN" \
-  A6 A6b
+  A6b A12 A13b A14b   # A14b conta 'AGRAVOU' a partir do e-mail do A6, que sumiu
 
 # F4 — grava o marcador sob outro nome: o dead-man perde o last_success_at.
 #      Prova que A4 mede mesmo o avanço do marcador.
 sabota_e_mede "F4" \
   "'tint_watchdog_corante', v_conta" \
   "'tint_watchdog_NOME_ERRADO', v_conta" \
-  A4
+  A4 A16   # v4: a vigia lê o marcador certo, que nunca avança -> nunca dismissa
 
 # F5 — volta ao predicado de base da v1 (só f.sku_id IS NOT NULL): a linha nova sem base no
 #      Omie volta a alarmar como corante caído. Prova que A10/A10b têm dente.
@@ -386,6 +469,49 @@ sabota_e_mede "F6" \
   "c.id::text)" \
   A11 A11b
 
+# F8 — "novo" volta a ser medido por QUANTIDADE (comportamento v1-v3): a troca fica muda.
+sabota_e_mede "F8" \
+  "v_novos := ARRAY(SELECT x FROM unnest(v_ids) x WHERE x <> ALL (v_ant_vistos) ORDER BY 1);" \
+  "v_novos := CASE WHEN v_ruins > COALESCE(v_ant_n, 0) THEN v_ids END;" \
+  A12 A20   # por quantidade, o corante já visto que volta (2 -> 3) re-emite
+
+# F9 — sem escalada: a severidade ainda é persistida pela atualização calada (A13 verde),
+#      mas o e-mail de 'passou a critico' some. Prova que A13b mede o e-mail, não só a coluna.
+sabota_e_mede "F9" \
+  "v_escalou := v_sev_fin = 'critico' AND v_ant_sev IS DISTINCT FROM 'critico';" \
+  "v_escalou := false;" \
+  A13b
+
+# F10 — sem a atualização calada: o alerta volta a descrever o estado velho.
+sabota_e_mede "F10" \
+  "ELSIF v_ant_ids IS DISTINCT FROM v_ids" \
+  "ELSIF false AND v_ant_ids IS DISTINCT FROM v_ids" \
+  A14   # a troca do A12 é para corante nunca visto: re-emite mesmo com o contexto velho
+
+# F11 — a vigia lê a entidade errada: marcador "ausente" = parada eterna, nunca dismissa.
+sabota_e_mede "F11" \
+  "WHERE ss.entity_type = 'tint_watchdog_corante' AND ss.account = v_conta;" \
+  "WHERE ss.entity_type = 'x_entidade_errada' AND ss.account = v_conta;" \
+  A16
+
+# F12 — a A deixa de vigiar a vigia.
+sabota_e_mede "F12" \
+  "IF v_vigia_atraso IS NOT NULL AND v_vigia_atraso > interval '1 hour' THEN" \
+  "IF false THEN" \
+  A17
+
+# F13 — sem 'vistos': "novo" vira "fora do conjunto ATUAL" e o corante que volta re-emite.
+sabota_e_mede "F13" \
+  "v_ant_vistos := COALESCE(v_ant_vistos, v_ant_ids);" \
+  "v_ant_vistos := v_ant_ids;" \
+  A20
+
+# F14 — severidade não-pegajosa: 999 rebaixa a 'aviso' e a volta a 1000 re-emite.
+sabota_e_mede "F14" \
+  "IF v_ant_sev = 'critico' THEN" \
+  "IF false THEN" \
+  A19 A19b
+
 # F7 — volta a somar pares fórmula×corante: 2 corantes na mesma fórmula viram "2 fórmulas".
 sabota_e_mede "F7" \
   "SELECT count(DISTINCT fi.formula_id)" \
@@ -403,4 +529,4 @@ if [ "$FAIL" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "RESULTADO: VERMELHO"
   exit 1
 fi
-echo "RESULTADO: VERDE — $PASS asserts + 7 falsificacoes com conjunto exato"
+echo "RESULTADO: VERDE — $PASS asserts + 14 falsificacoes com conjunto exato"
