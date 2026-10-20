@@ -35,7 +35,11 @@
 # determinístico, não julgamento; a colisão continua só avisando. Sem veredito (bun ausente,
 # timeout, `cd` que não sei resolver, worktree antigo sem o script) → AVISA que não checou, nunca
 # cala. Válvula: `GATES_RAPIDOS=pular gh pr create …` (diga ao founder). O diretório dos gates é o
-# do `cd <literal>` que precede o `gh pr create` no comando, senão o cwd do hook.
+# do `cd <literal>` que precede o `gh pr create` no comando, senão o cwd da SESSÃO (`.cwd` do JSON).
+# ⚠️ NÃO o `$PWD` do hook: no app, hooks rodam em `CLAUDE_PROJECT_DIR` (o checkout PRINCIPAL, que fica
+# commits atrás), e o harness REMOVE um `cd <cwd da sessão> &&` inicial antes de entregar o comando —
+# com `$PWD` os gates rodavam no principal e negavam o PR por vermelho que não era do worktree
+# (2026-10-20, #3201 criado com a válvula; hipótese só fechou com `true; cd <wt> && …` passando mudo).
 set -u
 
 command -v jq  >/dev/null 2>&1 || exit 0
@@ -77,7 +81,9 @@ if [ -n "$tem_create" ]; then
   else
     # Diretório efetivo: segue os `cd <literal>` ANTES do `gh pr create` (o cwd do hook é o da
     # sessão, que pode ser outro worktree). `cd` com `$`/crase → não sei onde roda → não julgo.
-    gdir="$PWD"; gincerto=""
+    gdir="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
+    [ -n "$gdir" ] || gdir="$PWD"
+    gincerto=""
     pre=""
     command -v perl >/dev/null 2>&1 && pre="$(printf '%s' "$cmd" | perl -0777 -ne 'print $1 if /\A(.*?)\bgh\s+(?:-{1,2}\S+\s+(?:[^-\s]\S*\s+)?)*pr\s+create\b/s' 2>/dev/null)"
     while IFS= read -r seg; do
