@@ -664,3 +664,10 @@ db/test-venda-espinha.sh                   30  falsificar=12
 # o futuro, Oben × Colacor separados, desconto não apurado → preço NULL, borda 1,5, perdido/sem_base,
 # ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
 db/test-venda-recompra.sh                  49  falsificar=15
+
+# Venda por cliente, Task 7 — painel do founder (20261020235000) + sensor `venda.painel_aberto` na
+# allowlist do ledger (20261020235100). venda_painel: gate master (42501), período (22023), contagens
+# por comprador, taxa sem nao_medivel no denominador, complemento fora da taxa, ausente ≠ zero, base da
+# mesma semana do ano anterior, base_confiavel só pelo log da Onda 1, sem chave de custo. Ledger:
+# predecessor do repo = md5 vivo da prod, PRE aborta com deriva, dedup do evento.
+db/test-venda-painel.sh                    25  falsificar=10

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 681
+-- Total de custom migrations: 683
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -745,7 +745,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020150000', 'fin_capital_giro_prazos_empresa', '20261020150000_fin_capital_giro_prazos_empresa.sql'),
   ('20261020150000', 'venda_cliente_recompra', '20261020150000_venda_cliente_recompra.sql'),
   ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
-  ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql')
+  ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql'),
+  ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql'),
+  ('20261020235100', 'analytics_ledger_venda_painel', '20261020235100_analytics_ledger_venda_painel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2901,7 +2903,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
-  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', ''),
+  ('analytics_ledger_venda_painel', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5105,7 +5109,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_espinha', 'cron_job', 'cron', 'venda-fechar-desfechos', ''),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
-  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato')
+  ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', ''),
+  ('analytics_ledger_venda_painel', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -5647,6 +5653,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
+  ('public', 'analytics_ledger_registrar', 5, '20261020235100_analytics_ledger_venda_painel.sql', '3ec804af421ea063ef129f6b5cea1e5c'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
