@@ -396,3 +396,16 @@ Deno.test("página TERMINAL (rows === count) com uuid fora da faixa: o atalho N�
   const base = fakeBanco(() => dados, { comCount: true, semAte: true });
   await assertFalha(() => fetchAllParticionadoUuid(base.build, (l) => l.id, "t"), "KEYSET_PAGINA_SOBREPOSTA");
 });
+
+Deno.test("rows > count na página e fim coerente depois: só a guarda rows>count pega (MALFORMADA)", async () => {
+  // Isola a guarda: a página seguinte vem vazia com count 0 — um EOF legítimo para as outras
+  // guardas. Sem esta, as 5 linhas de uma página que o próprio servidor diz ter 4 passariam.
+  const cinco = ordenada(colecao(40)).filter((l) => l.id < LIMITES_UUID_8[0]).slice(0, 5);
+  const build = (faixa: FaixaUuid, cursor: string | null) => {
+    if (faixa.de !== null) return Promise.resolve({ data: [] as Linha[], error: null, count: 0 });
+    return Promise.resolve(cursor === null
+      ? { data: cinco, error: null, count: 4 }
+      : { data: [] as Linha[], error: null, count: 0 });
+  };
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "MALFORMADA");
+});
