@@ -4085,7 +4085,7 @@ describe('canária VERSIONADA: omie-vendas-sync (identidade fail-closed)', () =>
 describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínculo)', () => {
   const src = read(ANALYTICS);
   const deployDoc = read(DEPLOY_DOC);
-  const CONTRATO = 'doc-ambiguo-mutilacao-alfanumerica-v2';
+  const CONTRATO = 'doc-ambiguo-mutilacao-nao-e-ambiguidade-v3';
   // Idem vendas-sync: medir o CÓDIGO, não a prosa que o descreve.
   const bloco = removerComentarios(src).match(/case "doc_ambiguo_probe":[\s\S]*?\n {6}(?=case |default:)/)?.[0] ?? '';
 
@@ -4097,7 +4097,7 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
     expect(
       bloco,
       'sumiu o marcador `contrato` do doc_ambiguo_probe — foi a canária citada em docs/historico/deploy-no-op-por-desenho.md como "tinha canária, mas NÃO-VERSIONADA"',
-    ).toMatch(/contrato: ['"]doc-ambiguo-mutilacao-alfanumerica-v2['"]/);
+    ).toMatch(/contrato: ['"]doc-ambiguo-mutilacao-nao-e-ambiguidade-v3['"]/);
   });
 
   it('emite TAMBÉM `canary: true`, sem perder `probe_no_ar`', () => {
@@ -4108,7 +4108,7 @@ describe('canária VERSIONADA: omie-analytics-sync (doc ambíguo não vira vínc
   it('a LINHA da tabela do deploy.md fixa o MESMO marcador', () => {
     expect(
       deployDoc,
-      'a linha do `omie-analytics-sync` na tabela de canárias não fixa `doc-ambiguo-mutilacao-alfanumerica-v2`',
+      'a linha do `omie-analytics-sync` na tabela de canárias não fixa `doc-ambiguo-mutilacao-nao-e-ambiguidade-v3`',
     ).toMatch(linhaDaTabela('omie-analytics-sync', CONTRATO));
   });
 

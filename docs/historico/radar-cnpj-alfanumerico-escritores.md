@@ -116,6 +116,21 @@ tabela de `deploy.md` §Canárias e `edge-money-path-invariants`.
    lido no `psql-ro`): **3× DEPLOY CONFIRMADO** (versão + fonte batendo) e `pendencias:deploy` mostra as 5
    em "✅ confere" (`visto há 2 min via sonda`). Sem ordem obrigatória entre elas (o cruzamento
    Omie×profile da `omie-analytics-sync` é intra-bundle). Arquivos: `db/2026-10-19-sonda-*-cnpj-alfanumerico-*.sql`.
+6. **Redeploy pós-#3199/#3201 — FEITO pela sessão (2026-10-20 01:40Z e 01:55Z)**: o #3199 (máscara exata
+   no helper) bumpou as 5 edges de novo e o ledger as devolveu a P1 junto com `fin-cashflow-engine` v1.6
+   (#3184, leva do financeiro, RPCs já em prod — a pré-condição do pacote passou, então entrou na mesma
+   colagem). Pacote `4fe215768621` (6 edges, 24 RPCs, `origin/main@36a401d1f`): 60/60 hashes, 6× **Active**,
+   `No files were edited.`, 3,4 créditos. Atestação: relé (tentativa #562) + disparo legado das 4 restantes
+   (tentativa #563, passo 2 no `psql-ro`): **4× DEPLOY CONFIRMADO**. Em seguida o #3201 bumpou
+   `omie-analytics-sync` para v1.14 → pacote `e609109657fc` (1 edge, `origin/main@226df3e63`): 26/26 hashes,
+   Active, 2,2 créditos; relé (tentativa #567) → `visto há 1 min via sonda`. `pendencias:deploy` **exit 0**
+   (83/83 conferem). Sensor: o commit do bot desta rodada (`bdeb8f298`, 01:51:33Z) **entrou na `main`** — caiu
+   entre a janela do 1º sensor (01:50Z) e o `--desde` do 2º (01:55Z): `types.ts` +4 (tolerado) e 1 linha em
+   `supabase/functions/mcp/index.ts` (pin `supabase-js ^2.95.3 → ^2.117.0`, o único pinado entre 90 edges;
+   as outras 89 usam `@2`). Não reverte nada; a edge `mcp` não tem `versao.ts` (fora do alcance do ledger)
+   e não foi redeployada — main e prod divergem nessa linha até o próximo deploy dela. Arquivos:
+   `db/2026-10-20-sonda-*.sql`. **Publish do front** feito depois das duas pré-condições verdes
+   (`deriva:corpo:prod` exit 0 em 10:22Z, após o merge do #3200 fechar o SEM_PAR do watchdog de corante).
 
 ## Lições
 
