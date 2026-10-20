@@ -629,3 +629,12 @@ db/test-radar-rpcs-cnpj-alfanumerico.sh     38  falsificar=9
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
 # 7 sabotagens: chave só-dígitos, sem máscara exata (#3192), CHECK só-dígitos, DV ignorado (×2: funcional e PÓS), RPC mutila, PÓS.
 db/test-omie-identidade-cnpj-alfanumerico.sh 40  falsificar=7
+# Sentinela do Radar (20261020101636): radar_lote_idade (foto da RFB > 75 d pela REFERÊNCIA do dump, último dia do
+# mês, nunca finalizado_em; mês inválido não derruba o compute) + radar_recruzamento_tick (sem `sucesso` do tick há
+# > 50 h; o tick não grava erro, propaga). Autocontida sobre os stubs do trio + cadeia viva SEM a migration + o patch
+# de âncora que prod recebeu fora de migrations (A1 exige o md5 EXATO de prod). Relógio controlado (74/75/76 d, também
+# em fevereiro; 47/49/51 h), message estável, as 3 pernas executam (watchdog 25; resumo do heartbeat em
+# fornecedor_alerta), PRE/PÓS/ACL em clones — a PÓS (v_sources, IN-list, ACL) provada SOZINHA. 12 sabotagens: limiar,
+# referência→finalizado_em, janela, ledger sem filtro, fora do v_sources, fora do heartbeat, PRE, PÓS md5, REVOKE,
+# PÓS v_sources, PÓS IN-list, PÓS ACL.
+db/test-data-health-radar.sh               39  falsificar=12
