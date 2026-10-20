@@ -277,7 +277,7 @@ eq "8b cidade e UF do cadastro SQL = normalizeCityKey" "$(Pq -c "
   SELECT count(*) FROM t_par_cad
    WHERE city_sql IS DISTINCT FROM city_esp OR (city_esp IS NOT NULL AND uf_sql IS DISTINCT FROM uf_esp)")" "0"
 eq "8b paridade de cadastro com UF dos 3 formatos" "$(Pq -c "
-  SELECT count(*) FROM t_par_cad WHERE uf_esp IN ('MG','TO')")" "7"
+  SELECT count(*) FROM t_par_cad WHERE uf_esp IN ('MG','TO')")" "8"
 
 # ── Mundo do gerador ────────────────────────────────────────────────────────────────────────────────
 P -q <<SQL
