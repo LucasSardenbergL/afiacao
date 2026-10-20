@@ -196,5 +196,10 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
   sombra depois não fabrica a evidência. 365 dias de `historico` registrados são exigidos, não "existe uma linha".
 - **Onda 3 lê a tabela da Task 6 por `to_regclass` + `EXECUTE`** e captura só 42P01/42703: tabela ausente ou com outra
   forma = condição falsa sem derrubar o cron (o mesmo job gera a lista).
-- **Buraco de prova da Oben:** a carga começou em 2026-01-22 (janelas cobertas). O trecho 2025-10-20 → 2026-01-21
-  só deve ser carregado depois de semear o backfill da Oben — fechado antes, vira `nao_medivel` para sempre.
+- **Buraco de prova da Oben → prova POR DADOS** (migration `20261020194332`, recibo #627): para `historico`, dia sem
+  heartbeat/cursor conta como coberto se o mês tiver 100% dos pedidos com itens e volume ≥ 70% da mediana de 12 meses;
+  senão `nao_medivel/historico_incompleto`. Out/2025–jan/2026 passaram (Oben dez/2025 = 277 × mediana 354,5 = 78%).
+  O trecho só foi carregado DEPOIS da prova — fechado antes, viraria `nao_medivel` para sempre (o job não reabre).
+- **Linha de base (365 dias, 221.028 linhas, 0% `nao_medivel`):** ~7–8% das linhas (comprador × SKU) e ~19% dos
+  compradores-dia recompram em 14 dias; o vale é a 2ª quinzena de dezembro (1–3% / 3–9%). ~44–54 compradores por
+  farmer/dia, ~6 SKUs por comprador (p50 3, p90 13); compradores com 20+ SKUs são 7% e somam 45% das linhas.

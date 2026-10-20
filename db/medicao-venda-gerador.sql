@@ -21,10 +21,12 @@ SELECT date_trunc('week', dia_referencia)::date                                 
 \echo '── por comprador × dia, agregado por semana ──'
 WITH cd AS (
   SELECT dia_referencia, farmer_user_id, comprador_id,
-         bool_or(desfecho = 'virou_pedido')                         AS virou,
-         bool_and(desfecho = 'nao_virou')                           AS nao_virou,
-         bool_or(desfecho IS NULL OR desfecho = 'nao_medivel')
-           AND NOT bool_or(desfecho = 'virou_pedido')               AS sem_medida
+         -- COALESCE(…, false): linha aberta (desfecho NULL) faz bool_or/bool_and devolver NULL, e
+         -- NOT NULL some do FILTER — o "sem medida" de uma semana inteira aberta saía 0% (medido).
+         COALESCE(bool_or(desfecho = 'virou_pedido'), false)        AS virou,
+         COALESCE(bool_and(desfecho = 'nao_virou'), false)          AS nao_virou,
+         COALESCE(bool_or(desfecho IS NULL OR desfecho = 'nao_medivel'), false)
+           AND NOT COALESCE(bool_or(desfecho = 'virou_pedido'), false) AS sem_medida
     FROM public.venda_sugestao
    WHERE fase = 'historico' AND tipo = 'recompra'
    GROUP BY 1, 2, 3
