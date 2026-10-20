@@ -6,12 +6,14 @@
 //      a cada request, para que paginar por offset sem ordem duplique/pule linhas e o teste veja.
 import {
   buscarTitulosCaixa,
+  carregarBaixaMap,
   buscarTitulosCompetencia,
   type BancoTitulos,
   type QueryTitulos,
   TETO_TITULOS_MES,
   TetoTitulosExcedido,
 } from "./titulos-dre.ts";
+import { FalhaLeituraCritica } from "../_shared/leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -30,6 +32,8 @@ function bancoFake(
 ) {
   const linhas: Linha[] = Array.from({ length: total }, (_, i) => ({
     id: `id-${String(i * 10).padStart(7, "0")}`,
+    omie_codigo_lancamento: 1_000_000 + i * 10,
+    data_baixa_final: "2026-09-15",
     valor_documento: 1,
   }));
   const chamadas: string[][] = [];
@@ -37,8 +41,9 @@ function bancoFake(
   const db: BancoTitulos = {
     from<T>(tabela: string): QueryTitulos<T> {
       const passos: string[] = [`from:${tabela}`];
-      let ordenado = false;
-      let cursor: string | null = null;
+      let ordenadoPor: string | null = null;
+      let cursorCol: string | null = null;
+      let cursor: string | number | null = null;
       let limite: number | null = null;
       const q: QueryTitulos<T> = {
         select: (c) => (passos.push(`select:${c}`), q),
@@ -49,13 +54,14 @@ function bancoFake(
         lt: (c, v) => (passos.push(`lt:${c}=${v}`), q),
         gt: (c, v) => {
           passos.push(`gt:${c}=${v}`);
-          if (c === "id") cursor = String(v);
+          cursorCol = c;
+          cursor = v as string | number;
           return q;
         },
         or: (f) => (passos.push(`or:${f}`), q),
         order: (c, o) => {
           passos.push(`order:${c}:${o?.ascending === false ? "desc" : "asc"}`);
-          ordenado = c === "id" && o?.ascending !== false;
+          ordenadoPor = o?.ascending !== false ? c : null;
           return q;
         },
         limit: (n) => (passos.push(`limit:${n}`), limite = n, q),
@@ -72,10 +78,13 @@ function bancoFake(
           opts.antesDoRequest?.(requests, linhas);
           // Sem `.order()` estável: ordem rotacionada a cada request (o Postgres não promete nada).
           const k = (requests * 7) % Math.max(linhas.length, 1);
-          const base = ordenado
-            ? [...linhas].sort((a, b) => String(a.id) < String(b.id) ? -1 : 1)
+          const col = ordenadoPor;
+          const base = col
+            ? [...linhas].sort((a, b) => (a[col] as string | number) < (b[col] as string | number) ? -1 : 1)
             : [...linhas.slice(k), ...linhas.slice(0, k)];
-          const filtradas = cursor === null ? base : base.filter((l) => String(l.id) > cursor!);
+          const filtradas = cursor === null || cursorCol === null
+            ? base
+            : base.filter((l) => (l[cursorCol!] as string | number) > cursor!);
           const janela = filtradas.slice(0, Math.min(limite ?? Infinity, MAX_ROWS));
           return Promise.resolve({ data: janela as T[], error: null }).then(onOk, onErr);
         },
@@ -171,4 +180,63 @@ Deno.test("mês de 2.500 títulos com INSERT no meio da leitura: todos os pré-e
   });
   assertEquals(idsDistintos(rows), rows.length, "duplicata entre páginas");
   assertEquals(rows.length, 2500);
+});
+
+// Ressalva do Codex no #3234: o mapa de baixas era OFFSET sobre a view inteira (~29 páginas na
+// colacor CR). Um movimento novo do sync entre páginas deslocava o offset e PULAVA uma baixa.
+Deno.test("baixaMap: 2.500 baixas com INSERT entre páginas — nenhuma pré-existente some", async () => {
+  const { db, chamadas } = bancoFake(2500, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 2) linhas.push({ id: "id-novo", omie_codigo_lancamento: 5, data_baixa_final: "2026-09-01" });
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "colacor", "CR");
+  for (let i = 0; i < 2500; i++) {
+    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa pré-existente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
+  }
+  const q = chamadas[0];
+  for (const passo of ["from:v_titulo_baixas", "eq:company=colacor", "eq:tipo=CR", "order:omie_codigo_lancamento:asc"]) {
+    if (!q.includes(passo)) throw new Error(`baixaMap perdeu ${passo}: ${q.join(" · ")}`);
+  }
+});
+
+Deno.test("baixaMap: chave numérica ordena como NÚMERO (9 < 10), não como texto", async () => {
+  const { db } = bancoFake(0, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 1) for (const c of [9, 10, 100, 1000]) linhas.push({ id: `x${c}`, omie_codigo_lancamento: c, data_baixa_final: "2026-09-01" });
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "oben", "CP");
+  assertEquals([...mapa.keys()], [9, 10, 100, 1000]);
+});
+
+// Codex (P2): o INSERT acima não separa OFFSET de keyset — a duplicata do offset some no Map.
+// O que separa é uma baixa que SAI do recorte atrás do cursor: o offset pula uma sobrevivente.
+Deno.test("baixaMap: baixa que sai do recorte entre páginas não faz nenhuma sobrevivente sumir", async () => {
+  const { db } = bancoFake(2500, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 2) linhas.splice(0, 1); // a de menor código (já lida) sai antes da 2ª página
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "colacor", "CR");
+  for (let i = 1; i < 2500; i++) {
+    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa sobrevivente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
+  }
+});
+
+Deno.test("baixaMap: código acima de 2^53 LANÇA em vez de arredondar e pular o vizinho", async () => {
+  const { db } = bancoFake(0, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 1) linhas.push({ id: "x", omie_codigo_lancamento: 9007199254740996, data_baixa_final: "2026-09-01" });
+    },
+  });
+  let pego: unknown = null;
+  try {
+    await carregarBaixaMap(db, "oben", "CR");
+  } catch (e) {
+    pego = e;
+  }
+  if (!(pego instanceof FalhaLeituraCritica) || pego.codigo !== "MALFORMADA") {
+    throw new Error(`esperava FalhaLeituraCritica MALFORMADA, veio ${String(pego)}`);
+  }
 });
