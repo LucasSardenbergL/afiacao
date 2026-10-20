@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 675
+-- Total de custom migrations: 676
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -739,7 +739,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020120000', 'tint_watchdog_corante_v4_renotifica_e_vigia', '20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql'),
   ('20261020120100', 'fin_cashflow_snapshot_cron_escalonado', '20261020120100_fin_cashflow_snapshot_cron_escalonado.sql'),
   ('20261020130000', 'grupos_caca_cnpj_alfanumerico', '20261020130000_grupos_caca_cnpj_alfanumerico.sql'),
-  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql')
+  ('20261020143000', 'radar_avisar_lote', '20261020143000_radar_avisar_lote.sql'),
+  ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2864,7 +2865,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
+  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5037,7 +5040,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_compradores', ''),
   ('grupos_caca_cnpj_alfanumerico', 'view', 'public', 'v_caca_candidatos', ''),
   ('radar_avisar_lote', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', '')
+  ('radar_avisar_lote', 'cron_job', 'cron', 'radar-avisar-lote-diario', ''),
+  ('scores_intervalo_recompra', 'function', 'public', 'get_customer_sales_summary', ''),
+  ('scores_intervalo_recompra', 'function', 'public', 'apply_score_updates', '')
 )
 SELECT
   e.migration,
@@ -5453,6 +5458,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_customer_sales_summary', 1, '20260618180000_get_customer_sales_summary.sql', 'e2f5bdc39c54b5f79938cb566bdca957'),
   ('public', 'get_customer_sales_summary', 2, '20260618190000_get_customer_sales_summary_blocklist.sql', '5682e854b19bfaed77d781743107107e'),
   ('public', 'get_customer_sales_summary', 3, '20260623150000_get_customer_sales_summary_tz_fallback.sql', '4754a171fadbd0bca17757e8245547ee'),
+  ('public', 'get_customer_sales_summary', 4, '20261020151500_scores_intervalo_recompra.sql', 'b0b556d2a2332ed1d758db954b73fe3f'),
   ('public', 'apply_score_updates', 1, '20260618200000_apply_score_updates_anti_ressurreicao.sql', '3be3583cfa000a4183dc935846bc0cb3'),
   ('public', 'apply_score_updates', 2, '20260622140000_apply_score_updates_persiste_base_vendas.sql', 'd259811d70955d87a6aac4091ddf738b'),
   ('public', 'apply_score_updates', 3, '20260622160000_apply_score_updates_guard_full_update.sql', '576020b165c6da6d7e83dd9b31415af5'),
@@ -5461,6 +5467,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'apply_score_updates', 6, '20260723160000_farmer_margem_correcoes_review.sql', 'a83b8b980bfd701382b50bf5fa20959f'),
   ('public', 'apply_score_updates', 7, '20260728120000_farmer_persiste_cobertura_custo.sql', 'b1158e842845de541a8522fd23e39cdd'),
   ('public', 'apply_score_updates', 8, '20261010120000_apply_score_updates_fencing_lease.sql', '39467b187f06fc776efdcb4a7b6810f9'),
+  ('public', 'apply_score_updates', 9, '20261020151500_scores_intervalo_recompra.sql', 'c2b9f0a62a486df807ea95cb69219735'),
   ('public', 'seed_targets_faltantes', 1, '20260621120000_seed_targets_faltantes_rpc.sql', 'b4e28f3f6ef5daa898d38b4a2cea63c6'),
   ('public', 'seed_targets_faltantes', 2, '20260718220100_seed_targets_faltantes_ledger.sql', '2a7b41d037d4a34e48f230e346e5cdbd'),
   ('public', 'criar_plano_tatico', 1, '20260623180000_rpc_tactical_plan_posse_segura.sql', '55deb54a5a5949d1465ca2fcbd74689c'),
