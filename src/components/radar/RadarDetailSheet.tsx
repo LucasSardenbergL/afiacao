@@ -15,6 +15,7 @@ import {
   formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
+import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 
 function Linha({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -88,12 +89,15 @@ export function RadarDetailSheet({
   hojeISO,
   onClose,
   onProximo,
+  lote = null,
 }: {
   empresa: RadarEmpresa | null;
   hojeISO: string;
   onClose: () => void;
   /** Avança para o próximo lead da lista (registrar desfecho → próximo, sem fechar a ficha). */
   onProximo?: () => void;
+  /** Lote vigente — selos "inédito" / "saiu do dump em <mês>" (só o fato; o motivo é outra entrega). */
+  lote?: LoteIngest | null;
 }) {
   if (!empresa) return null;
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
@@ -115,6 +119,10 @@ export function RadarDetailSheet({
               {rotuloStatus(empresa.prospeccao_status)}
             </span>
             {empresa.ja_cliente && <Badge variant="secondary">já é cliente</Badge>}
+            {ehInedito(empresa, lote) && <Badge variant="info">inédito</Badge>}
+            {saiuDoDump(empresa, lote) && (
+              <Badge variant="outline" className="text-muted-foreground font-normal">{rotuloSaiuDoDump(empresa.ultimo_lote)}</Badge>
+            )}
             {rfb && (
               <span className={cn('rounded border px-1.5 py-px text-[11px] leading-4 font-normal', CLASSE_TOM[rfb.tom])} title={rfb.titulo} data-testid="selo-rfb">
                 {rfb.texto}

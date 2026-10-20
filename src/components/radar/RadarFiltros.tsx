@@ -15,6 +15,8 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import type { RadarFiltros as Filtros } from '@/queries/useRadarLista';
 import { UFS_BR, type PresetRadar } from '@/lib/radar/ui-helpers';
+import type { LoteIngest } from '@/lib/radar/lote-vigente';
+import { track } from '@/lib/analytics';
 
 // Sentinel para "todas as UFs" (substitui value="" que Radix rejeita).
 const SENTINEL_UF = '__todas_ufs__';
@@ -34,9 +36,12 @@ const STATUS_OPTIONS = [
 export function RadarFiltros({
   filtros,
   set,
+  lote = null,
 }: {
   filtros: Filtros;
   set: (next: Partial<Filtros>) => void;
+  /** Lote vigente — só para os sensores dos toggles de lote levarem o mês junto. */
+  lote?: LoteIngest | null;
 }) {
   return (
     <div className="space-y-3">
@@ -145,6 +150,38 @@ export function RadarFiltros({
           />
           <Label htmlFor="radar-com-telefone" className="text-sm cursor-pointer">
             Só com telefone
+          </Label>
+        </div>
+
+        {/* Toggles de LOTE: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente). Quem saiu do dump só
+            entra se pedido; "só inéditos" é o mesmo filtro do card do placar (1 clique lá liga aqui). */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="radar-saiu-do-dump"
+            checked={filtros.incluirSaiuDoDump}
+            onCheckedChange={(checked) => {
+              track('radar.saiu_do_dump_toggle', { ativo: checked, lote: lote?.mes_referencia ?? null });
+              set({ incluirSaiuDoDump: checked });
+            }}
+          />
+          <Label htmlFor="radar-saiu-do-dump" className="text-sm cursor-pointer">
+            Incluir quem saiu do dump
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Switch
+            id="radar-so-ineditos"
+            checked={filtros.soIneditos}
+            onCheckedChange={(checked) => {
+              track('radar.ineditos_filtro', {
+                ativo: checked, origem: 'filtro', lote: lote?.mes_referencia ?? null, ineditos: null, total: lote?.total_recebido ?? null,
+              });
+              set({ soIneditos: checked });
+            }}
+          />
+          <Label htmlFor="radar-so-ineditos" className="text-sm cursor-pointer">
+            Só inéditos do lote
           </Label>
         </div>
       </div>

@@ -14,7 +14,8 @@
  * O `git fetch` é do script: comparar contra a `origin/main` em disco é medir um retrato velho.
  *
  * EXIT CODES:
- *   0  SEM_EDICAO — nenhum sinal na resposta, nenhum commit do bot fora de `types.ts`, a `main` foi
+ *   0  SEM_EDICAO — nenhum sinal na resposta, nenhum commit do bot fora dos GERADOS tolerados
+ *      (`ARQUIVOS_TOLERADOS_DO_BOT` em `lib/`: `types.ts`, `mcp/index.ts` — #3206), a `main` foi
  *      lida ≥ `--assentar-min` (padrão 5) depois do envio, e o agente escreveu a linha de confirmação
  *   1  EDICAO_DETECTADA — reverta por PR (bumpando `VERSAO` se tocou edge) antes de qualquer outra coisa
  *   2  mecânica: argumento ausente, `--desde` inválido, `git fetch`/`git log` que não respondem
@@ -78,7 +79,7 @@ const veredito = julgar(resposta, suspeitos, decorridoMin >= assentarMin);
 
 console.log(`resposta do MCP: ${resposta.legivel ? (resposta.sinais.length > 0 ? `SINAIS ${resposta.sinais.join(', ')}` : 'sem edit_id/commit_sha') : 'VAZIA'}`);
 console.log(`confirmação "No files were edited.": ${resposta.confirmou ? 'presente' : 'AUSENTE'}`);
-console.log(`commits gpt-engineer-app em origin/main desde ${desde.toISOString()}: ${commits.length} (${suspeitos.length} fora de types.ts)`);
+console.log(`commits gpt-engineer-app em origin/main desde ${desde.toISOString()}: ${commits.length} (${suspeitos.length} fora dos gerados tolerados)`);
 for (const c of commits) {
   const marca = suspeitos.includes(c) ? 'SUSPEITO' : 'tolerado';
   console.log(`  ${marca}  ${c.sha.slice(0, 9)}  ${c.assunto}  [${c.arquivos.join(', ')}]`);
