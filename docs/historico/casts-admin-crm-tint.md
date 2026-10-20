@@ -22,4 +22,5 @@ Conferido na PROD via `psql-ro` (read-only, catálogo e `pg_get_functiondef`) an
 
 - **Comentário de cast "temporário" é dívida sem sensor.** Os 4 `.rpc(... as never)` e os 2 wrappers tinham justificativa por escrito, todas falsas desde a regeneração do `types.ts`. Antes de manter um cast, confira o nome no `types.ts`, não o comentário.
 - **Cast de retorno de RPC `jsonb` esconde o gate de staff.** Quando a RPC devolve campos diferentes por papel, o tipo local precisa dizer `| null` e a borda precisa ler por forma. O cast transformava "oculto" em "número".
+- **Na borda de `jsonb`, chave ausente ≠ NULL.** A 1ª versão de `preco-rpc.ts` tratava `undefined` como `null`. O Codex mostrou que uma resposta sem `custoBase`/`custoCorantes` liberava preço. NULL explícito é contrato; chave ausente é forma desconhecida e lança. Teste falsificado (controle verde, guarda removida vermelha).
 - **Join que sempre falha não aparece com fallback silencioso.** O caminho de erro do `Admin.tsx` funcionava, então ninguém notou que o caminho principal nunca rodou. O typecheck só apontou depois que o cast saiu.
