@@ -17721,6 +17721,84 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_recompra: {
+        Row: {
+          atrasado: boolean
+          cadencia_dias: number
+          calculado_em: string
+          comprador_id: string
+          data_referencia: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id: string | null
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco: number | null
+          valor_esperado: number | null
+        }
+        Insert: {
+          atrasado: boolean
+          cadencia_dias: number
+          calculado_em?: string
+          comprador_id: string
+          data_referencia: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id?: string | null
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco?: number | null
+          valor_esperado?: number | null
+        }
+        Update: {
+          atrasado?: boolean
+          cadencia_dias?: number
+          calculado_em?: string
+          comprador_id?: string
+          data_referencia?: string
+          due_ratio?: number
+          empresa?: string
+          n_pedidos?: number
+          omie_codigo_produto?: number
+          product_id?: string | null
+          qtd_sugerida?: number
+          ultima_compra?: string
+          ultimo_preco?: number | null
+          valor_esperado?: number | null
+        }
+        Relationships: []
+      }
+      venda_situacao: {
+        Row: {
+          calculado_em: string
+          comprador_id: string
+          data_referencia: string
+          dias_sem_compra: number | null
+          situacao: string
+          valor_atrasado: number | null
+        }
+        Insert: {
+          calculado_em?: string
+          comprador_id: string
+          data_referencia: string
+          dias_sem_compra?: number | null
+          situacao: string
+          valor_atrasado?: number | null
+        }
+        Update: {
+          calculado_em?: string
+          comprador_id?: string
+          data_referencia?: string
+          dias_sem_compra?: number | null
+          situacao?: string
+          valor_atrasado?: number | null
+        }
+        Relationships: []
+      }
       venda_sugestao: {
         Row: {
           avaliado_em: string | null
@@ -21704,6 +21782,7 @@ export type Database = {
           category_count: number
           customer_user_id: string
           days_since_last_purchase: number
+          intervalo_mediano_dias: number
           item_count: number
           revenue_180d: number
           total_revenue: number
@@ -22958,6 +23037,10 @@ export type Database = {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
+      venda_complemento_comprador: {
+        Args: { p_comprador: string }
+        Returns: Json
+      }
       venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
@@ -22965,9 +23048,36 @@ export type Database = {
       }
       venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
       venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_recompra_atualizar: { Args: never; Returns: number }
+      venda_recompra_em: {
+        Args: { p_data: string }
+        Returns: {
+          atrasado: boolean
+          cadencia_dias: number
+          comprador_id: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id: string
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco: number
+          valor_esperado: number
+        }[]
+      }
       venda_registrar_contato: {
         Args: { p_comprador: string; p_motivo?: string; p_resultado: string }
         Returns: string
+      }
+      venda_situacao_em: {
+        Args: { p_data: string }
+        Returns: {
+          comprador_id: string
+          dias_sem_compra: number
+          situacao: string
+          valor_atrasado: number
+        }[]
       }
       vendas_sync_finish: {
         Args: {
