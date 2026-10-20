@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, type PresetRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
+import { recorteDeLote } from '@/lib/radar/lote-vigente';
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -53,15 +54,11 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
       else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
       if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
-      // Foto VIGENTE: default só `ultimo_lote = vigente`; "incluir quem saiu do dump" solta o
-      // filtro. "Só inéditos" é o predicado do card (`ehInedito`): vigente E primeira vista no
-      // lote — e vence o toggle (inédito é, por definição, do lote vigente). Sem lote completo
-      // (`null`) não há foto para filtrar: a fila roda inteira, como a RPC `radar_kpis`.
-      if (lote && filtros.soIneditos) {
-        q = q.eq('ultimo_lote', lote.mes_referencia).gte('primeira_vista_em', lote.iniciado_em);
-      } else if (lote && !filtros.incluirSaiuDoDump) {
-        q = q.eq('ultimo_lote', lote.mes_referencia);
-      }
+      // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte que o ranking de cidades
+      // e o mapa passam à RPC `radar_contagem_por_municipio` (`recorteDeLote`).
+      const recorte = recorteDeLote(lote, filtros);
+      if (recorte.ultimoLote) q = q.eq('ultimo_lote', recorte.ultimoLote);
+      if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
       // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
       if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
       if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);

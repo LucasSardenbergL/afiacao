@@ -192,7 +192,12 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   {
     arquivo: 'supabase/migrations/20260614140000_radar_contagem_perf.sql',
     trecho: "like p_cnae_prefix || '%'", n: 1,
-    motivo: `${RADAR_CONTAGEM} (a definição viva, em VIVOS_PERMITIDOS)`,
+    motivo: `${RADAR_CONTAGEM} (definição antiga, de 8 args — DROPada pela 20261020120200)`,
+  },
+  {
+    arquivo: 'supabase/migrations/20261020120200_radar_contagem_municipio_lote_vigente.sql',
+    trecho: "like p_cnae_prefix || '%'", n: 1,
+    motivo: `${RADAR_CONTAGEM} (a definição viva, de 10 args com p_lote, em VIVOS_PERMITIDOS)`,
   },
   {
     arquivo: 'supabase/migrations/20260615194500_fix_tarefas_matcher_enum.sql',
@@ -226,7 +231,7 @@ export const VIVOS_PERMITIDOS: readonly VivoPermitido[] = [
     motivo: 'o LIKE é o dedupe da tarefa por CNPJ, e p_cnpj passa por ^[0-9]{14}$ (RAISE) antes — não chega curinga',
   },
   {
-    identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer)',
+    identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone)',
     trecho: "like p_cnae_prefix || '%'",
     ancora: "p_cnae_prefix !~ '^[0-9]{1,7}$'",
     motivo: 'prefixo de CNAE: p_cnae_prefix passa por ^[0-9]{1,7}$ (RAISE) antes — só dígito, e o vazio também cai',

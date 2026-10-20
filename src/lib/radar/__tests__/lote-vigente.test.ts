@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loteVigente, ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '../lote-vigente';
+import { loteVigente, ehInedito, saiuDoDump, rotuloSaiuDoDump, recorteDeLote, type LoteIngest } from '../lote-vigente';
 
 /**
  * Lote VIGENTE = a foto mais recente que TERMINOU (max(mes_referencia) com status='complete').
@@ -89,5 +89,30 @@ describe('saiuDoDump + rótulo', () => {
 
   it('rótulo não inventa mês para lote fora do formato', () => {
     expect(rotuloSaiuDoDump('lixo')).toBe('saiu do dump em lixo');
+  });
+});
+
+describe('recorteDeLote — o predicado único de fila e ranking/mapa', () => {
+  const vigente = lote({ mes_referencia: '2026-08', status: 'complete', iniciado_em: '2026-10-19T16:31:08.593+00:00' });
+  const modo = (incluirSaiuDoDump: boolean, soIneditos: boolean) => ({ incluirSaiuDoDump, soIneditos });
+
+  it('default: foto vigente, sem recorte de inéditos', () => {
+    expect(recorteDeLote(vigente, modo(false, false))).toEqual({ ultimoLote: '2026-08', primeiraVistaMin: null });
+  });
+
+  it('incluir quem saiu do dump: nada é recortado', () => {
+    expect(recorteDeLote(vigente, modo(true, false))).toEqual({ ultimoLote: null, primeiraVistaMin: null });
+  });
+
+  it('só inéditos vence o toggle: lote vigente + primeira vista >= início do lote', () => {
+    const esperado = { ultimoLote: '2026-08', primeiraVistaMin: '2026-10-19T16:31:08.593+00:00' };
+    expect(recorteDeLote(vigente, modo(true, true))).toEqual(esperado);
+    expect(recorteDeLote(vigente, modo(false, true))).toEqual(esperado);
+  });
+
+  it('sem lote complete: nada é recortado, em nenhum modo (sem foto não há filtro)', () => {
+    for (const m of [modo(false, false), modo(true, false), modo(false, true)]) {
+      expect(recorteDeLote(null, m)).toEqual({ ultimoLote: null, primeiraVistaMin: null });
+    }
   });
 });

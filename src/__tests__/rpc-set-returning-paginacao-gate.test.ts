@@ -252,7 +252,7 @@ const BASELINE = new Map<string, Waiver>([
   ['get_whatsapp_pendentes @ src/hooks/useWhatsappPendentes.ts',
     { tipo: 'estrutural', teto: 500, prova: '`LIMIT 500` constante (função SQL pura); o universo hoje é 0 — a janela é `last_inbound_at > now() - 24h` sem resposta' }],
   ['radar_contagem_por_municipio @ src/queries/useRadarCidadesRota.ts',
-    { tipo: 'estrutural', teto: 500, prova: '`LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000))` nos DOIS ramos (fast e slow path) e o caller passa a constante literal `p_limit: 500`' }],
+    { tipo: 'estrutural', teto: 500, prova: '`LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 500), 2000))` em TODOS os ramos (fast path sem lote, fast path com lote, slow path — 20261020120200) e o caller passa a constante literal `p_limit: 500`' }],
   // ── Chamadas que o scanner só passou a ENXERGAR em 2026-08-20, quando aprendeu a ler o cast
   //    `(supabase.rpc as RpcFn)('nome')`. Estavam no código o tempo todo, fora da baseline.
   ['radar_contagem_por_municipio @ src/queries/useRadarContagemMunicipios.ts',

@@ -46,7 +46,27 @@ export function saiuDoDump(e: { ultimo_lote: string | null }, lote: LoteIngest |
   return e.ultimo_lote < lote.mes_referencia;
 }
 
-const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+/** O recorte de lote que a fila E o ranking/mapa aplicam — um predicado só, para os dois
+ *  universos não divergirem. Default: foto vigente (`ultimo_lote = vigente`). "Só inéditos" é o
+ *  predicado do card (`ehInedito`) e vence o toggle (inédito é, por definição, do lote vigente).
+ *  "Incluir quem saiu do dump" solta o filtro. Sem lote completo (`null`) não há foto para
+ *  filtrar: nada é recortado, como a RPC `radar_kpis`. */
+export interface RecorteLote {
+  ultimoLote: string | null;        // filtra `ultimo_lote = <isto>` quando não nulo
+  primeiraVistaMin: string | null;  // filtra `primeira_vista_em >= <isto>` quando não nulo
+}
+
+export function recorteDeLote(
+  lote: LoteIngest | null,
+  f: { incluirSaiuDoDump: boolean; soIneditos: boolean },
+): RecorteLote {
+  if (!lote) return { ultimoLote: null, primeiraVistaMin: null };
+  if (f.soIneditos) return { ultimoLote: lote.mes_referencia, primeiraVistaMin: lote.iniciado_em };
+  if (!f.incluirSaiuDoDump) return { ultimoLote: lote.mes_referencia, primeiraVistaMin: null };
+  return { ultimoLote: null, primeiraVistaMin: null };
+}
+
+const MESES_PT =['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
 /** `'2026-05'` → `'mai/2026'`; fora do formato devolve cru (não inventa mês). */
 function rotuloMesLote(mes: string): string {

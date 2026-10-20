@@ -357,6 +357,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/__tests__/recommendation-card-sim-indisponivel.test.tsx",
       "src/components/radar/__tests__/RadarKpis.estados.test.tsx",
       "src/queries/__tests__/useRadarLista.lote-vigente.test.tsx",
+      "src/queries/__tests__/useRadarContagemMunicipios.lote-vigente.test.tsx",
       "src/components/radar/__tests__/RadarLinha.selos.test.tsx",
       "src/components/dashboard/__tests__/ClosersMtdHero.estados.test.tsx",
       "src/components/dashboard/__tests__/MinhasVisitasResultadoCard.estados.test.tsx",
