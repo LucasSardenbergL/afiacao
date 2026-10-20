@@ -236,7 +236,10 @@ describe('calibração do detector do universo', () => {
     expect(classeDe(`(supabase.from as AnyFrom)('sales_orders')${canon}`)).toEqual(['canonico']);
     expect(classeDe(`db.from<Linha>("sales_orders")${canon}`)).toEqual(['canonico']);
     expect(classeDe(`supabase\n  .from(\n    'sales_orders'\n  )${canon}`)).toEqual(['canonico']);
-    expect(classeDe(`supabase.from('sales_orders' as never)${canon}`)).toEqual(['canonico']);
+    // O `as never` vem interpolado para o próprio fixture não ser contado como cast velho pelo
+    // `casts:stale` (o stripper preserva strings, e o regex dele casa o literal cru).
+    const comoNever = 'as never';
+    expect(classeDe(`supabase.from('sales_orders' ${comoNever})${canon}`)).toEqual(['canonico']);
     expect(classeDe(`(supabase.from as AnyFrom)('sales_orders').select('id')`)).toEqual(['fora']);
   });
 

@@ -32,8 +32,7 @@ export function useAuthzContract(): UseAuthzContractReturn {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['authz-contract-version'],
     queryFn: async (): Promise<number> => {
-      // `as never`: a RPC entra nos tipos gerados só na próxima regeneração pós-migration.
-      const { data, error } = await supabase.rpc('authz_contract_version' as never);
+      const { data, error } = await supabase.rpc('authz_contract_version');
       if (error) throw error;
       return typeof data === 'number' ? data : AUTHZ_CONTRATO_MATRIZ - 1;
     },
