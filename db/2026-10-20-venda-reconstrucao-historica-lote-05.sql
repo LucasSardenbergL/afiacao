@@ -1,11 +1,13 @@
--- Venda por cliente (Task 4) — reconstrução histórica da linha de base, lote 05: 2026-05-22 .. 2026-06-20 (30 dias).
+-- Venda por cliente (Task 4) — reconstrução histórica da linha de base, lote 05: 2026-04-12 .. 2026-05-01 (20 dias).
 -- Gera a lista D-1 de cada dia passado com fase='historico' (só pedidos anteriores ao dia) e fecha os desfechos.
 -- Aplicar: bun run db:aplicar db/2026-10-20-venda-reconstrucao-historica-lote-05.sql
 -- Envelope: idempotente (ON CONFLICT DO NOTHING na chave da espinha), transação do executor, postcondição abaixo.
 -- Pré-requisito: supabase/migrations/20261020181743_venda_cliente_gerador.sql aplicada (recibo #597).
+-- Lote de 20 dias: medido em prod (ensaio) 0,85 s/dia de lista + ~11 ms/linha no venda_fechar_desfechos
+-- (~600 linhas/dia) ≈ 170 s — o db:aplicar corta em 300 s (statement_timeout).
 -- Trecho 2026-01-22 em diante: janelas 100% cobertas pelo sync de vendas das duas empresas (a lacuna de
 -- prova da Oben, 2025-07-01 → 2026-01-21, fica para depois da decisão do founder sobre o backfill).
-SELECT public.venda_reconstruir_historico(DATE '2026-05-22', DATE '2026-06-20');
+SELECT public.venda_reconstruir_historico(DATE '2026-04-12', DATE '2026-05-01');
 
 DO $post$
 DECLARE
@@ -13,17 +15,17 @@ DECLARE
   v_div  int;
 BEGIN
   SELECT count(*) INTO v_dias FROM public.venda_gerador_execucao
-   WHERE fase = 'historico' AND dia_referencia BETWEEN DATE '2026-05-22' AND DATE '2026-06-20';
-  IF v_dias <> 30 THEN
-    RAISE EXCEPTION 'R1 FALHOU: % de 30 dias do lote registrados em venda_gerador_execucao', v_dias;
+   WHERE fase = 'historico' AND dia_referencia BETWEEN DATE '2026-04-12' AND DATE '2026-05-01';
+  IF v_dias <> 20 THEN
+    RAISE EXCEPTION 'R1 FALHOU: % de 20 dias do lote registrados em venda_gerador_execucao', v_dias;
   END IF;
   SELECT count(*) INTO v_div FROM public.venda_gerador_execucao e
-   WHERE e.fase = 'historico' AND e.dia_referencia BETWEEN DATE '2026-05-22' AND DATE '2026-06-20'
+   WHERE e.fase = 'historico' AND e.dia_referencia BETWEEN DATE '2026-04-12' AND DATE '2026-05-01'
      AND e.linhas <> (SELECT count(*) FROM public.venda_sugestao s
                        WHERE s.fase = 'historico' AND s.tipo = 'recompra' AND s.dia_referencia = e.dia_referencia);
   IF v_div <> 0 THEN
     RAISE EXCEPTION 'R2 FALHOU: % dias com contagem registrada diferente das linhas gravadas', v_div;
   END IF;
-  RAISE NOTICE 'lote 05 OK: 30 dias';
+  RAISE NOTICE 'lote 05 OK: 20 dias';
 END
 $post$;
