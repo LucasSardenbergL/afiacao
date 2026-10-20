@@ -6,6 +6,7 @@
 //      a cada request, para que paginar por offset sem ordem duplique/pule linhas e o teste veja.
 import {
   buscarTitulosCaixa,
+  carregarBaixaMap,
   buscarTitulosCompetencia,
   type BancoTitulos,
   type QueryTitulos,
@@ -30,6 +31,8 @@ function bancoFake(
 ) {
   const linhas: Linha[] = Array.from({ length: total }, (_, i) => ({
     id: `id-${String(i * 10).padStart(7, "0")}`,
+    omie_codigo_lancamento: 1_000_000 + i * 10,
+    data_baixa_final: "2026-09-15",
     valor_documento: 1,
   }));
   const chamadas: string[][] = [];
@@ -37,8 +40,9 @@ function bancoFake(
   const db: BancoTitulos = {
     from<T>(tabela: string): QueryTitulos<T> {
       const passos: string[] = [`from:${tabela}`];
-      let ordenado = false;
-      let cursor: string | null = null;
+      let ordenadoPor: string | null = null;
+      let cursorCol: string | null = null;
+      let cursor: string | number | null = null;
       let limite: number | null = null;
       const q: QueryTitulos<T> = {
         select: (c) => (passos.push(`select:${c}`), q),
@@ -49,13 +53,14 @@ function bancoFake(
         lt: (c, v) => (passos.push(`lt:${c}=${v}`), q),
         gt: (c, v) => {
           passos.push(`gt:${c}=${v}`);
-          if (c === "id") cursor = String(v);
+          cursorCol = c;
+          cursor = v as string | number;
           return q;
         },
         or: (f) => (passos.push(`or:${f}`), q),
         order: (c, o) => {
           passos.push(`order:${c}:${o?.ascending === false ? "desc" : "asc"}`);
-          ordenado = c === "id" && o?.ascending !== false;
+          ordenadoPor = o?.ascending !== false ? c : null;
           return q;
         },
         limit: (n) => (passos.push(`limit:${n}`), limite = n, q),
@@ -72,10 +77,13 @@ function bancoFake(
           opts.antesDoRequest?.(requests, linhas);
           // Sem `.order()` estável: ordem rotacionada a cada request (o Postgres não promete nada).
           const k = (requests * 7) % Math.max(linhas.length, 1);
-          const base = ordenado
-            ? [...linhas].sort((a, b) => String(a.id) < String(b.id) ? -1 : 1)
+          const col = ordenadoPor;
+          const base = col
+            ? [...linhas].sort((a, b) => (a[col] as string | number) < (b[col] as string | number) ? -1 : 1)
             : [...linhas.slice(k), ...linhas.slice(0, k)];
-          const filtradas = cursor === null ? base : base.filter((l) => String(l.id) > cursor!);
+          const filtradas = cursor === null || cursorCol === null
+            ? base
+            : base.filter((l) => (l[cursorCol!] as string | number) > cursor!);
           const janela = filtradas.slice(0, Math.min(limite ?? Infinity, MAX_ROWS));
           return Promise.resolve({ data: janela as T[], error: null }).then(onOk, onErr);
         },
@@ -171,4 +179,32 @@ Deno.test("mês de 2.500 títulos com INSERT no meio da leitura: todos os pré-e
   });
   assertEquals(idsDistintos(rows), rows.length, "duplicata entre páginas");
   assertEquals(rows.length, 2500);
+});
+
+// Ressalva do Codex no #3234: o mapa de baixas era OFFSET sobre a view inteira (~29 páginas na
+// colacor CR). Um movimento novo do sync entre páginas deslocava o offset e PULAVA uma baixa.
+Deno.test("baixaMap: 2.500 baixas com INSERT entre páginas — nenhuma pré-existente some", async () => {
+  const { db, chamadas } = bancoFake(2500, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 2) linhas.push({ id: "id-novo", omie_codigo_lancamento: 5, data_baixa_final: "2026-09-01" });
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "colacor", "CR");
+  for (let i = 0; i < 2500; i++) {
+    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa pré-existente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
+  }
+  const q = chamadas[0];
+  for (const passo of ["from:v_titulo_baixas", "eq:company=colacor", "eq:tipo=CR", "order:omie_codigo_lancamento:asc"]) {
+    if (!q.includes(passo)) throw new Error(`baixaMap perdeu ${passo}: ${q.join(" · ")}`);
+  }
+});
+
+Deno.test("baixaMap: chave numérica ordena como NÚMERO (9 < 10), não como texto", async () => {
+  const { db } = bancoFake(0, {
+    antesDoRequest: (n, linhas) => {
+      if (n === 1) for (const c of [9, 10, 100, 1000]) linhas.push({ id: `x${c}`, omie_codigo_lancamento: c, data_baixa_final: "2026-09-01" });
+    },
+  });
+  const mapa = await carregarBaixaMap(db, "oben", "CP");
+  assertEquals([...mapa.keys()], [9, 10, 100, 1000]);
 });
