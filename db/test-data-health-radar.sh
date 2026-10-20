@@ -453,7 +453,7 @@ DO $x$
 DECLARE v_def text;
 BEGIN
   v_def := pg_get_functiondef('public._data_health_compute()'::regprocedure);
-  IF (length(v_def) - length(replace(v_def, '  WITH checks AS (', ''))) / length('  WITH checks AS (') <> 1 THEN
+  IF (length(v_def) - length(replace(v_def, '  WITH checks AS (', ''))) / length('  WITH checks AS (') IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'o inicio do corpo mudou de forma';
   END IF;
   EXECUTE replace(v_def, '  WITH checks AS (', '  WITH checks AS ( -- corpo estranho');
