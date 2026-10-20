@@ -35,7 +35,7 @@ export function filtrarSugeridos<T extends BuilderSugeridos<T>>(q: T, lote: { me
 }
 
 /** Slug do ledger `acoes_execucoes` escrito por `radar_score_recalcular()` (1 escritor, cron 03:30 BRT). */
-export const SLUG_SCORE = 'radar.score_recalcular';
+const SLUG_SCORE = 'radar.score_recalcular';
 
 export interface ContagemSugeridos {
   /** N do card. Só é um zero de verdade quando `temScore`. */
