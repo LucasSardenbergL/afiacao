@@ -56,7 +56,7 @@ if [ "${1:-}" = "--falsificar" ]; then
               gate_candidatos:C2b:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
               pos_rls:MIG!POS_RLS"
-  falhas=0
+  falhas=0; sab_falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
     echo "❌ CONTROLE VERMELHO — sem linha de base, a falsificação não prova nada"; tail -20 "/tmp/falsif-${SLUG}-controle.log"; exit 1
@@ -71,7 +71,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     case "$resto" in *:*) greens="${resto#*:}" ;; *) greens="" ;; esac
     log="/tmp/falsif-${SLUG}-${nome}.log"
     if SABOTAGEM="$nome" PGPORT_TEST="$((PORT+i))" bash "$0" > "$log" 2>&1; then
-      echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); continue
+      echo "❌ $nome: harness VERDE com a sabotagem — assert sem dente"; falhas=$((falhas+1)); sab_falhas=$((sab_falhas+1)); continue
     fi
     antes=$falhas
     # conjunto EXATO: nenhum vermelho além dos anunciados (Codex código P2) …
@@ -95,9 +95,10 @@ if [ "${1:-}" = "--falsificar" ]; then
       [ -n "$a" ] || continue
       grep -q "^  ✅ $a " "$log" || { echo "❌ $nome: $a (controle) devia seguir VERDE"; falhas=$((falhas+1)); }
     done
-    [ "$falhas" = "$antes" ] || continue
+    [ "$falhas" = "$antes" ] || { sab_falhas=$((sab_falhas+1)); continue; }
     echo "  ✅ $nome → vermelho em [$reds]${greens:+, verde em [$greens]}"
   done
+  echo "SABOTAGENS: $((i - sab_falhas)) vermelhas / $sab_falhas falhas"   # recibo exigido por db/roda-nucleo-ci.sh
   [ "$falhas" = 0 ] || { echo "❌ FALSIFICAÇÃO FALHOU ($falhas)"; exit 1; }
   echo "✅ FALSIFICAÇÃO OK — todas as sabotagens ficaram vermelhas onde deviam"
   exit 0
