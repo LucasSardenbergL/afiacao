@@ -52,10 +52,10 @@ export interface RecompraSku {
 
 export type SituacaoComprador = 'em_dia' | 'atrasado' | 'perdido' | 'sem_base';
 
-export const JANELA_DIAS = 540;
-export const MIN_DIAS_PEDIDO = 3;
-export const PERDIDO_MULT_CADENCIA = 3;
-export const PERDIDO_PISO_DIAS = 365;
+const JANELA_DIAS = 540;
+const MIN_DIAS_PEDIDO = 3;
+const PERDIDO_MULT_CADENCIA = 3;
+const PERDIDO_PISO_DIAS = 365;
 
 const DIA_MS = 86_400_000;
 
