@@ -8,7 +8,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // Todo call-site DEVE encadear `.order()` numa coluna estável (gate paginacao-delegada).
 // v1.7: CR/CP saíram do `fetchAll` (offset, páginas EM SÉRIE) para `fetchAllParticionadoUuid`
 // (keyset em 8 faixas de uuid CONCORRENTES) — colacor levava 19–22 s em 31 idas e voltas.
-import { criarLimitador, fetchAllParticionadoUuid } from "../_shared/paginate.ts";
+import { criarLimitador, fetchAllParticionadoUuid } from "../_shared/paginate-particionado.ts";
 // Irmã single-shot do mesmo defeito: as leituras NÃO paginadas do Promise.all abaixo
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía

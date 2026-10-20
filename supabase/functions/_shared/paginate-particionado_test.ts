@@ -5,7 +5,7 @@
 // uuids que inclui as FRONTEIRAS: o mínimo, o máximo, cada limite exato e o vizinho imediatamente
 // abaixo de cada limite. A asserção de completude é a IGUALDADE INTEGRAL com a coleção ordenada —
 // não "veio o mesmo número de linhas" —, e cada sabotagem do call-site tem par com o controle verde.
-import { criarLimitador, fetchAllParticionadoUuid, LIMITES_UUID_8, type FaixaUuid } from "./paginate.ts";
+import { criarLimitador, fetchAllParticionadoUuid, LIMITES_UUID_8, type FaixaUuid } from "./paginate-particionado.ts";
 import { FalhaLeituraCritica } from "./leitura-critica.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -137,16 +137,16 @@ Deno.test("SABOTAGEM .gt(de) no lugar de .gte(de): a comparação integral DETEC
   assertEquals(perdidas, [...LIMITES_UUID_8], "a sabotagem deveria perder exatamente as linhas-limite");
 });
 
-Deno.test("SABOTAGEM sem .lt(ate): PARTICAO_FORA_DA_FAIXA, sem o uuid na mensagem pública", async () => {
+Deno.test("SABOTAGEM sem .lt(ate): KEYSET_PAGINA_SOBREPOSTA, sem o uuid na mensagem pública", async () => {
   const dados = colecao(500);
   const { build } = fakeBanco(() => dados, { semAte: true });
-  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "fin_contas_receber"), "PARTICAO_FORA_DA_FAIXA", dados[0].id.slice(0, 8));
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "fin_contas_receber"), "KEYSET_PAGINA_SOBREPOSTA", dados[0].id.slice(0, 8));
 });
 
-Deno.test("SABOTAGEM sem .gte(de): PARTICAO_FORA_DA_FAIXA", async () => {
+Deno.test("SABOTAGEM sem .gte(de): KEYSET_PAGINA_SOBREPOSTA", async () => {
   const dados = colecao(500);
   const { build } = fakeBanco(() => dados, { semDe: true });
-  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "PARTICAO_FORA_DA_FAIXA");
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "KEYSET_PAGINA_SOBREPOSTA");
 });
 
 Deno.test("guarda ISOLADA: página ordenada e única, mas com id === ate numa página POSTERIOR → lança", async () => {
@@ -160,14 +160,14 @@ Deno.test("guarda ISOLADA: página ordenada e única, mas com id === ate numa p�
     }
     return Promise.resolve({ data: resto, error: null });
   };
-  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "PARTICAO_FORA_DA_FAIXA");
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "KEYSET_PAGINA_SOBREPOSTA");
 });
 
-Deno.test("chave não canônica (MAIÚSCULA): PARTICAO_CHAVE_NAO_CANONICA", async () => {
+Deno.test("chave não canônica (MAIÚSCULA): KEYSET_FORA_DE_ORDEM", async () => {
   const dados = colecao(50).map((l) => ({ ...l, id: l.id.toUpperCase() }));
   const build = (_f: FaixaUuid, cursor: string | null) =>
     Promise.resolve({ data: cursor === null ? dados.slice(0, 1) : [], error: null });
-  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "PARTICAO_CHAVE_NAO_CANONICA");
+  await assertFalha(() => fetchAllParticionadoUuid(build, (l) => l.id, "t"), "KEYSET_FORA_DE_ORDEM");
 });
 
 Deno.test("chave ausente: cai na guarda do keyset (KEYSET_CHAVE_AUSENTE), não passa", async () => {

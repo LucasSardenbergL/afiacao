@@ -68,11 +68,6 @@ const CODIGOS_INTERNOS = new Set([
   'KEYSET_FORA_DE_ORDEM',
   'KEYSET_CHAVE_REPETIDA',
   'KEYSET_PAGINA_SOBREPOSTA',
-  // Violação do contrato do keyset PARTICIONADO (`fetchAllParticionadoUuid`): linha fora da
-  // faixa que a pediu (o call-site esqueceu o filtro de faixa → cada linha voltaria N vezes) ou
-  // chave que não é uuid canônico (a comparação de string deixaria de ser a ordem do Postgres).
-  'PARTICAO_FORA_DA_FAIXA',
-  'PARTICAO_CHAVE_NAO_CANONICA',
   // A RPC-snapshot declara quantos itens produziu e o cliente confere contra o array que chegou.
   // Divergiu, alguma camada entre o Postgres e o Deno entregou menos — modo PRÓPRIO, e não
   // `MALFORMADA`: a resposta está bem-formada, o que falta é CONTEÚDO, e o conserto é outro
