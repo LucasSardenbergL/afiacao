@@ -873,6 +873,7 @@ export const MODULOS: ModuloApp[] = [
       "src/sw/**",
       "src/lib/pwa-build-minimo.ts",
       "src/lib/pwa-update.ts",
+      "src/lib/rpc-args.ts",
       "src/lib/routeCrumbs.ts",
       "src/lib/telemetria-probe.ts",
       "src/lib/utils.ts",
