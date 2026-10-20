@@ -21,14 +21,14 @@ DECLARE
 BEGIN
   SELECT count(*) INTO v_dias FROM public.venda_gerador_execucao
    WHERE fase = 'historico' AND dia_referencia BETWEEN DATE '2026-01-08' AND DATE '2026-01-21';
-  IF v_dias <> 14 THEN
+  IF v_dias IS DISTINCT FROM 14 THEN
     RAISE EXCEPTION 'R1 FALHOU: % de 14 dias do lote registrados em venda_gerador_execucao', v_dias;
   END IF;
   SELECT count(*) INTO v_div FROM public.venda_gerador_execucao e
    WHERE e.fase = 'historico' AND e.dia_referencia BETWEEN DATE '2026-01-08' AND DATE '2026-01-21'
      AND e.linhas <> (SELECT count(*) FROM public.venda_sugestao s
                        WHERE s.fase = 'historico' AND s.tipo = 'recompra' AND s.dia_referencia = e.dia_referencia);
-  IF v_div <> 0 THEN
+  IF v_div IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'R2 FALHOU: % dias com contagem registrada diferente das linhas gravadas', v_div;
   END IF;
   RAISE NOTICE 'lacuna 05 OK: 14 dias';

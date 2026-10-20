@@ -41,7 +41,7 @@ FIXTURE="$REPO_ROOT/db/fixtures/venda-cidades-alvo.json"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> (`!MARCA` = a postcondição da própria migration aborta com MARCA).
-  SABOTAGENS="sem_perdido:3 sem_teto:2 sem_papel_farmer:4 uf_ignorada:1b carteira_sem_alias:1c sem_override:8a rota_dia_errado:8a uf_sem_parenteses:8b duplica:5 onda1_dois_dias:6b.a onda1_ignora_divergencia:6b.b onda1_sombra_tardia:6b.c onda1_sem_historico:6b.d onda2_sem_taxa:6b.g onda3_sem_captura:6b.j acl_aberta:!G2_FALHOU prova_sem_itens:H3 prova_sem_volume:H2 prova_limiar:H2"
+  SABOTAGENS="sem_perdido:3 sem_teto:2 sem_papel_farmer:4 uf_ignorada:1b carteira_sem_alias:1c sem_override:8a rota_dia_errado:8a uf_sem_parenteses:8b duplica:5 onda1_dois_dias:6ba onda1_ignora_divergencia:6bb onda1_sombra_tardia:6bc onda1_sem_historico:6bd onda2_sem_taxa:6bg onda3_sem_captura:6bj acl_aberta:G2!G2_FALHOU prova_sem_itens:H3 prova_sem_volume:H2 prova_limiar:H2"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-gerador.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${LOCALE_TESTE:-C}) ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1 || ! grep -q "FIM-OK venda-gerador" "$LOGDIR/controle.log"; then
@@ -58,7 +58,7 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $s: sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
     fi
     case "$a" in
-      !*) padrao="${a#!}"; padrao="${padrao//_/ }" ;;
+      *!*) padrao="${a#*!}"; padrao="${padrao//_/ }" ;;
       *)  padrao="FAIL $a " ;;
     esac
     if grep -q "$padrao" "$LOGDIR/$s.log"; then
@@ -470,25 +470,25 @@ P -q -c "INSERT INTO public.venda_gerador_execucao (dia_referencia, fase, linhas
          ON CONFLICT DO NOTHING"
 sombra_ao_vivo "$DM1"; sombra_ao_vivo "$DM2"
 ondas
-eq "6b.a 2 dias idênticos → Onda 1 continua desligada" "$(onda onda_recompra)|$(logs onda_recompra)" "false|0"
+eq "6ba 2 dias idênticos → Onda 1 continua desligada" "$(onda onda_recompra)|$(logs onda_recompra)" "false|0"
 sombra_ao_vivo "$DM3"
 P -q -c "DELETE FROM public.venda_sugestao WHERE ctid = (SELECT ctid FROM public.venda_sugestao
           WHERE fase = 'sombra' AND dia_referencia = '$DM2' ORDER BY comprador_id LIMIT 1)"
-eq "6b.b dia divergente no meio → não liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,condicao,dias,1,divergencias}'")|$(onda onda_recompra)" "1|false"
+eq "6bb dia divergente no meio → não liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,condicao,dias,1,divergencias}'")|$(onda onda_recompra)" "1|false"
 Pq -c "SELECT public.venda_gerar_lista('$DM2', 'sombra')" >/dev/null            # repõe a linha; primeira_em fica
 P -q -c "UPDATE public.venda_gerador_execucao SET primeira_em = ('$D'::date + time '05:15') AT TIME ZONE 'America/Sao_Paulo'
           WHERE dia_referencia = '$DM1' AND fase = 'sombra'"
 ondas
-eq "6b.c sombra gravada a posteriori não conta como lista ao vivo" "$(onda onda_recompra)" "false"
+eq "6bc sombra gravada a posteriori não conta como lista ao vivo" "$(onda onda_recompra)" "false"
 sombra_ao_vivo "$DM1"
 P -q -c "DELETE FROM public.venda_gerador_execucao WHERE fase = 'historico' AND dia_referencia = '$D'::date - 365"
-eq "6b.d 364 dias de histórico não bastam" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,condicao,historico_dias}'")|$(onda onda_recompra)" "364|false"
+eq "6bd 364 dias de histórico não bastam" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,condicao,historico_dias}'")|$(onda onda_recompra)" "364|false"
 P -q -c "INSERT INTO public.venda_gerador_execucao (dia_referencia, fase, linhas) VALUES ('$D'::date - 365, 'historico', 1)"
-eq "6b.e 3 dias idênticos + 365 de histórico → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,ligou_agora}'")|$(onda onda_recompra)|$(logs onda_recompra)" "true|true|1"
-eq "6b.e log guarda a condição atendida" "$(Pq -c "SELECT condicao->>'historico_dias' || '|' || jsonb_array_length(condicao->'dias') FROM public.venda_onda_log WHERE onda = 'onda_recompra'")" "365|3"
+eq "6be 3 dias idênticos + 365 de histórico → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_recompra,ligou_agora}'")|$(onda onda_recompra)|$(logs onda_recompra)" "true|true|1"
+eq "6be log guarda a condição atendida" "$(Pq -c "SELECT condicao->>'historico_dias' || '|' || jsonb_array_length(condicao->'dias') FROM public.venda_onda_log WHERE onda = 'onda_recompra'")" "365|3"
 P -q -c "DELETE FROM public.venda_sugestao WHERE fase = 'sombra' AND dia_referencia = '$DM1'"
 ondas
-eq "6b.f nunca desliga (divergência depois de ligada)" "$(onda onda_recompra)|$(logs onda_recompra)" "true|1"
+eq "6bf nunca desliga (divergência depois de ligada)" "$(onda onda_recompra)|$(logs onda_recompra)" "true|1"
 
 # Onda 2: listas ATIVAS nas 2 semanas completas antes de D, e contatos.
 P -q <<SQL
@@ -502,17 +502,17 @@ SELECT DISTINCT s.farmer_user_id, s.comprador_id, date_trunc('week', s.dia_refer
 DELETE FROM public.venda_contato c USING t_cfg
  WHERE c.farmer_user_id = '$F1' AND c.dia = date_trunc('week', d)::date - 14 AND c.comprador_id IN ('$RTO','$O2');
 SQL
-eq "6b.g Onda 2: semana com farmer abaixo de 80% → não liga" \
+eq "6bg Onda 2: semana com farmer abaixo de 80% → não liga" \
    "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_complemento,ligada}'")|$(onda onda_complemento)" "false|false"
 P -q -c "INSERT INTO public.venda_contato (farmer_user_id, comprador_id, dia, resultado)
          SELECT '$F1', x, date_trunc('week', d)::date - 14, 'vai_pedir' FROM t_cfg, unnest(ARRAY['$RTO','$O2']::uuid[]) x"
-eq "6b.h Onda 2: ≥ 80% por farmer nas 2 semanas → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_complemento,ligou_agora}'")|$(onda onda_complemento)|$(logs onda_complemento)" "true|true|1"
+eq "6bh Onda 2: ≥ 80% por farmer nas 2 semanas → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_complemento,ligou_agora}'")|$(onda onda_complemento)|$(logs onda_complemento)" "true|true|1"
 
 # Onda 3: tabela da Task 6 ausente / com outra forma / vencida / vigente.
-eq "6b.i Onda 3 sem a tabela de repasse → falso, sem erro" \
+eq "6bi Onda 3 sem a tabela de repasse → falso, sem erro" \
    "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,condicao,repasse_indisponivel}'")|$(onda onda_preco)" "tabela_ausente|false"
 P -q -c "CREATE TABLE public.venda_repasse_aprovado (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), outra_coisa int)"
-eq "6b.j Onda 3 com tabela de outra forma → falso, sem erro (cron segue)" \
+eq "6bj Onda 3 com tabela de outra forma → falso, sem erro (cron segue)" \
    "$(estado "SELECT public.venda_avaliar_ondas('$D')")|$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,condicao,repasse_indisponivel}'" 2>/dev/null || true)|$(onda onda_preco)" "verde|42703|false"
 P -q <<SQL
 DROP TABLE public.venda_repasse_aprovado;
@@ -522,10 +522,10 @@ INSERT INTO public.venda_repasse_aprovado (comprador_id, empresa, omie_codigo_pr
   ('$R1', 'oben', 100, 11, '$D'::date - 1, NULL),       -- vencido
   ('$R1', 'oben', 100, 11, '$D'::date + 30, now());     -- revogado
 SQL
-eq "6b.k Onda 3: repasse vencido ou revogado não conta" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,condicao,repasse_vigente}'")|$(onda onda_preco)" "false|false"
+eq "6bk Onda 3: repasse vencido ou revogado não conta" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,condicao,repasse_vigente}'")|$(onda onda_preco)" "false|false"
 P -q -c "INSERT INTO public.venda_repasse_aprovado (comprador_id, empresa, omie_codigo_produto, preco_alvo, valido_ate)
          VALUES ('$R1', 'oben', 100, 11, '$D'::date + 30)"
-eq "6b.l Onda 3: repasse vigente + Onda 2 ligada → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,ligou_agora}'")|$(onda onda_preco)|$(logs onda_preco)" "true|true|1"
+eq "6bl Onda 3: repasse vigente + Onda 2 ligada → liga" "$(Pq -c "SELECT public.venda_avaliar_ondas('$D') #>> '{onda_preco,ligou_agora}'")|$(onda onda_preco)|$(logs onda_preco)" "true|true|1"
 
 # ── A. ACL e RLS ────────────────────────────────────────────────────────────────────────────────────
 eq "A funções fechadas a anon/authenticated/PUBLIC" "$(Pq -c "
