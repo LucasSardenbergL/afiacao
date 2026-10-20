@@ -18,11 +18,11 @@ MIG="$REPO_ROOT/supabase/migrations/20261020143000_radar_avisar_lote.sql"
 MIG_SIT="$REPO_ROOT/supabase/migrations/20261019200000_radar_situacao_cadastral.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da própria migration (DO $post$)
-  # aborta o apply antes de qualquer assert; `guarda:<regex>` = a GUARDA interna da função (RAISE) acusa
-  # antes do assert; `_sem_post`/`_sem_guarda` cegam essa camada para provar que o assert da suíte pega
-  # sozinho (uma camada por vez: a que fica verde é redundante ou inalcançada).
-  SABOTAGENS="corpo_divergente:post:A7 reapply_apaga_pendencia:A14c score_rodada_errada:A4c sairam_acumula:A9 repete_aviso:guarda:avisado_em.marcou.0 repete_aviso_sem_guarda:A2 nao_marca_avisado:A6 sem_espera:A2 running_avisa:A8 score_zero:A4c sem_denominador:A4a sairam_conta_descartado:A4b baixas_zero_de_zero:A10c sem_ledger:A11 retroativo:post:A5 retroativo_sem_post:A1 acl_aberta:post:A3 acl_aberta_sem_post:A13"
+  # <sabotagem>:<assert que TEM de acusá-la> — `POST!A3_FALHOU` = a POSTCONDIÇÃO da própria migration
+  # (DO $post$) aborta o apply com a marca exata `A3 FALHOU`; `GUARDA!<marca>` = a GUARDA interna da função
+  # (RAISE) aborta com aquela marca (`_` vira espaço; grep -F, sem curinga). `_sem_post`/`_sem_guarda`
+  # cegam essa camada para provar que o assert da suíte pega sozinho (uma camada por vez).
+  SABOTAGENS="corpo_divergente:POST!A7_FALHOU reapply_apaga_pendencia:A14c score_rodada_errada:A4c sairam_acumula:A9 repete_aviso:GUARDA!marcou_0_linha repete_aviso_sem_guarda:A2 nao_marca_avisado:A6 sem_espera:A2 running_avisa:A8 score_zero:A4c sem_denominador:A4a sairam_conta_descartado:A4b baixas_zero_de_zero:A10c sem_ledger:A11 retroativo:POST!A5_FALHOU retroativo_sem_post:A1 acl_aberta:POST!A3_FALHOU acl_aberta_sem_post:A13"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-avisar.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -39,11 +39,10 @@ if [ "${1:-}" = "--falsificar" ]; then
       echo "❌ $s: sabotagem NÃO aplicou"; falhas=$((falhas+1)); continue
     fi
     case "$a" in
-      post:*)   padrao="${a#post:} FALHOU" ;;
-      guarda:*) padrao="ERROR:.*${a#guarda:}" ;;
-      *)        padrao="^FAIL $a " ;;
+      *!*) marca="${a#*!}"; marca="${marca//_/ }"; modo="-qF" ;;   # ID!MARCA: a camada (POST/GUARDA) aborta com a marca EXATA
+      *)   marca="FAIL $a "; modo="-q" ;;
     esac
-    if grep -q "$padrao" "$LOGDIR/$s.log"; then
+    if grep "$modo" -- "$marca" "$LOGDIR/$s.log"; then
       echo "✅ $s → $a vermelho"
     else
       echo "❌ $s: vermelho, mas não no $a (log: $LOGDIR/$s.log)"; falhas=$((falhas+1))
