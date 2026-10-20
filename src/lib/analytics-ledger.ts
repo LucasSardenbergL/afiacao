@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { canonicalizarRota } from '@/lib/analytics-rota-canonica';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
@@ -75,7 +76,7 @@ export type EventoLedger =
 export async function registrarNoLedger(
   evento: EventoLedger,
   chave: string,
-  props: Record<string, unknown> = {},
+  props: { [chave: string]: Json | undefined } = {},
 ): Promise<void> {
   // ⚠️ Gate na FONTE, não no client embrulhado: sob a lente "Ver como" o
   // `auth.uid()` continua sendo o do MASTER, então o evento sairia atribuído a
@@ -85,15 +86,11 @@ export async function registrarNoLedger(
   if (isLensActive()) return;
 
   try {
-    // `as never`: os tipos de `src/integrations/supabase/types.ts` são gerados
-    // pelo Lovable a partir do banco, e a migration desta RPC ainda é apply
-    // MANUAL — até ela rodar, a função não existe nos tipos. Mesmo padrão de
-    // `consolidar_demanda_sku` e `registrar_substituicao_sku`.
-    const { error } = await supabase.rpc('analytics_ledger_registrar' as never, {
+    const { error } = await supabase.rpc('analytics_ledger_registrar', {
       p_evento: evento,
       p_chave: chave,
       p_props: props,
-    } as never);
+    });
     if (error) {
       logger.warn('Ledger de analytics não registrou', {
         evento,

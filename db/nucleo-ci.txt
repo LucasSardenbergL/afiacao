@@ -198,6 +198,11 @@ db/test-analytics-outbox-insert-ja-aprovado.sh 23
 # anon 28000, ACL nas duas pontas; PRE por md5 (deriva alheia aborta e sobrevive) e PÓS por md5 + por evento,
 # 4 sabotagens inline com controle verde na mesma invocação.
 db/test-analytics-ledger-venda-cliente.sh  17
+# Canônica do mesmo trigger (I2 · plano v2, ciclo 2): restore só de migrations e prod (cadeia + envelope)
+# terminam no MESMO md5 da prod; reaplicar é no-op preservando oid/dono/ACL; 11 sabotagens (corpo, PRE,
+# atributos, owner, volatilidade, trigger por definição e por tgfoid, UNIQUE ausente e árbitro diferível, PÓS cega) com
+# controle verde na mesma invocação e rollback conferido por outra conexão.
+db/test-analytics-outbox-canonica.sh       19  falsificar=11
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de
