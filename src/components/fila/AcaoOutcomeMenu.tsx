@@ -1,7 +1,8 @@
 // src/components/fila/AcaoOutcomeMenu.tsx
 // Menu de "outcome" de um item da fila do Meu Dia (G2). Despacha por payload.kind
 // e escreve no MOTOR DE ORIGEM — zero migration nova: tarefa→concluir,
-// rota→OutcomeMenu (registrar_contato_rota), mixgap→markFeedback.
+// rota→OutcomeMenu (registrar_contato_rota), mixgap→markFeedback,
+// recompra→BotoesContato (venda_registrar_contato).
 // "Não é pra agora" só esconde na sessão atual + emite telemetria.
 
 import { MoreHorizontal, CheckCircle2, EyeOff, Tag, ShoppingCart, XCircle } from 'lucide-react';
@@ -18,6 +19,7 @@ import { useTarefaMutations } from '@/hooks/useTarefas';
 import { useMarkMixGapFeedback } from '@/hooks/useMarkMixGapFeedback';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { OutcomeMenu } from '@/components/call/OutcomeMenu';
+import { BotoesContato } from '@/components/venda-cliente/BotoesContato';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
 interface Props {
@@ -41,6 +43,11 @@ export function AcaoOutcomeMenu({ acao, onNaoUtilAgora }: Props) {
     onNaoUtilAgora(acao.dedupeKey);
     track('fila.nao_util_agora', { fonte: acao.fonte, dedupeKey: acao.dedupeKey });
   };
+
+  // Recompra: o desfecho é o da LIGAÇÃO, por cliente/dia (escritor único venda_registrar_contato).
+  if (p.kind === 'recompra') {
+    return <BotoesContato compradorId={p.compradorId} variante="menu" />;
+  }
 
   if (p.kind === 'tarefa') {
     return (

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -64,14 +65,17 @@ export function useMinhasSugestoes(): { estado: EstadoRecompra; refetch: () => v
     if (lista.isError) void lista.refetch();
   };
 
-  let estado: EstadoRecompra;
-  if (onda.isError) estado = { tipo: 'erro', erro: onda.error };
-  else if (onda.data === undefined) estado = { tipo: 'carregando' };
-  else if (!onda.data) estado = { tipo: 'onda_desligada' };
-  else if (isImpersonating) estado = { tipo: 'lente' };
-  else if (lista.isError) estado = { tipo: 'erro', erro: lista.error };
-  else if (!lista.data) estado = { tipo: 'carregando' };
-  else estado = { tipo: 'pronta', resp: lista.data };
+  // Memoizado: o estado é dependência de memos/efeitos da fila (um objeto novo por render
+  // recalcularia o ranking e repetiria o log de erro a cada render).
+  const estado = useMemo((): EstadoRecompra => {
+    if (onda.isError) return { tipo: 'erro', erro: onda.error };
+    if (onda.data === undefined) return { tipo: 'carregando' };
+    if (!onda.data) return { tipo: 'onda_desligada' };
+    if (isImpersonating) return { tipo: 'lente' };
+    if (lista.isError) return { tipo: 'erro', erro: lista.error };
+    if (!lista.data) return { tipo: 'carregando' };
+    return { tipo: 'pronta', resp: lista.data };
+  }, [onda.isError, onda.error, onda.data, isImpersonating, lista.isError, lista.error, lista.data]);
 
   return { estado, refetch };
 }

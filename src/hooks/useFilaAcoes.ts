@@ -1,89 +1,76 @@
 import { useEffect, useMemo } from 'react';
-import { useMinhasTarefas } from '@/hooks/useTarefas';
-import { useRouteContactList } from '@/queries/useRouteContactList';
 import { useMyMixGap } from '@/hooks/useMyMixGap';
-import { useWhatsappPendentes } from '@/hooks/useWhatsappPendentes';
-import { tarefasParaAcoes } from '@/lib/fila/adapters/tarefa';
-import { rotaParaAcoes } from '@/lib/fila/adapters/rota';
+import { useMinhasSugestoes, type EstadoRecompra } from '@/hooks/useMinhasSugestoes';
 import { mixGapParaAcoes } from '@/lib/fila/adapters/mixgap';
-import { whatsappPendenteParaAcoes } from '@/lib/fila/adapters/whatsappPendente';
+import { adaptarRecompra } from '@/lib/fila/adapters/recompra';
 import { dedupe, rankearFila } from '@/lib/fila/ranking';
-import { spBusinessDate } from '@/lib/time/sp-day';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { AcaoSugerida } from '@/lib/fila/types';
 
 /** Fonte da fila — identifica QUAL falhou (a UI e o log nomeiam, não mais "uma das fontes"). */
-export type FonteFila = 'tarefas' | 'rota' | 'mix-gap' | 'whatsapp';
+export type FonteFila = 'recompra' | 'mix-gap';
 
+/**
+ * A fila única do Meu Dia. Fonte principal: `recompra` (lista gerada no servidor,
+ * `venda_minhas_sugestoes`). `mix-gap` segue até a Onda 2 levá-lo para dentro da ficha.
+ *
+ * Desligadas enquanto vigorar o congelamento M-41 (telefonia/WhatsApp/rota/tarefas, até
+ * 2027-01-10): `rota`, `tarefa` e `whatsappPendente` consultavam tabelas vazias e geravam
+ * links para módulos congelados. Os adapters ficam no repo; só não são chamados.
+ */
 export function useFilaAcoes(): {
   acoes: AcaoSugerida[];
   isLoading: boolean;
   isError: boolean;
   /** Quais fontes falharam (vazio = todas OK). Distingue p/ a UI e o log. */
   fontesComErro: FonteFila[];
+  /** Estado da lista de recompra — a UI tem uma tela para "onda desligada" e para a lente. */
+  recompra: EstadoRecompra;
   retry: () => void;
 } {
-  const workdayIso = useMemo(() => spBusinessDate(new Date()), []);
-
-  const tarefas = useMinhasTarefas();
-  const rota = useRouteContactList(workdayIso);
+  const recompra = useMinhasSugestoes();
   const mixgap = useMyMixGap();
-  // Fonte ligada no PR-2 do Canal WhatsApp: RPC sem cap com last_outbound_at real
-  // (o v1 de front tinha falso-negativo — cap 200 do inbox + proxy last_message_at).
-  const whatsapp = useWhatsappPendentes();
+  const estado = recompra.estado;
 
   const acoes = useMemo(() => {
     const todas: AcaoSugerida[] = [
-      ...tarefasParaAcoes(tarefas.data ?? []),
-      ...rotaParaAcoes(rota.data?.callQueue ?? [], rota.data?.routeDate ?? workdayIso),
+      ...adaptarRecompra(estado.tipo === 'pronta' ? estado.resp : null),
       ...mixGapParaAcoes(mixgap.data ?? null),
-      ...whatsappPendenteParaAcoes(whatsapp.data),
     ];
     return rankearFila(dedupe(todas));
-  }, [tarefas.data, rota.data, mixgap.data, whatsapp.data]);
+  }, [estado, mixgap.data]);
 
-  // isError PROPAGADO (antes era descartado): falha de RLS/rede em qualquer
-  // fonte virava lista vazia → a FilaDoDia afirmava "carteira em dia" —
-  // falso-verde num motor de receita. A UI distingue erro de dia limpo.
-  // fontesComErro NOMEIA quais falharam — antes o card só dizia "uma das fontes
-  // falhou" sem dizer qual, impossível diagnosticar pela tela. (Na lente do
-  // master a ROTA lê ~12× mais linhas que p/ a vendedora real — é a candidata.)
+  // Erro ≠ dia limpo: falha de RLS/rede em qualquer fonte NÃO vira lista vazia que afirma
+  // "carteira em dia" (falso-verde num motor de receita).
   const fontesComErro = useMemo<FonteFila[]>(() => {
     const f: FonteFila[] = [];
-    if (tarefas.isError) f.push('tarefas');
-    if (rota.isError) f.push('rota');
+    if (estado.tipo === 'erro') f.push('recompra');
     if (mixgap.isError) f.push('mix-gap');
-    if (whatsapp.isError) f.push('whatsapp');
     return f;
-  }, [tarefas.isError, rota.isError, mixgap.isError, whatsapp.isError]);
+  }, [estado.tipo, mixgap.isError]);
   const isError = fontesComErro.length > 0;
 
-  // Log estruturado com a MENSAGEM de cada fonte que falhou — o sinal que
-  // faltava p/ saber se é RLS, rede, timeout (incidente de plataforma) ou query.
   useEffect(() => {
     if (fontesComErro.length === 0) return;
     logger.warn('Fila do dia: fonte(s) falharam ao carregar', {
       fontes: fontesComErro,
-      tarefas: mensagemDeErro(tarefas.error),
-      rota: mensagemDeErro(rota.error),
+      recompra: estado.tipo === 'erro' ? mensagemDeErro(estado.erro) : null,
       mixgap: mensagemDeErro(mixgap.error),
-      whatsapp: mensagemDeErro(whatsapp.error),
     });
-  }, [fontesComErro, tarefas.error, rota.error, mixgap.error, whatsapp.error]);
+  }, [fontesComErro, estado, mixgap.error]);
 
   const retry = () => {
-    if (tarefas.isError) void tarefas.refetch();
-    if (rota.isError) void rota.refetch();
+    if (estado.tipo === 'erro') recompra.refetch();
     if (mixgap.isError) void mixgap.refetch();
-    if (whatsapp.isError) whatsapp.refetch();
   };
 
   return {
     acoes,
-    isLoading: tarefas.isLoading || rota.isLoading || mixgap.isLoading || whatsapp.isLoading,
+    isLoading: estado.tipo === 'carregando' || mixgap.isLoading,
     isError,
     fontesComErro,
+    recompra: estado,
     retry,
   };
 }
