@@ -326,6 +326,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'cálculo interno saldo−reservas−segurança; chamada só pelas 4 RPCs gateadas',
   },
+  'public.venda_fechar_desfechos': {
+    fechadaPor: '20261020174221_venda_cliente_espinha.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'job de desfecho da venda por cliente (lê unit_price/desconto) — só cron/service_role',
+  },
   'private.margem_cliente_agregada': {
     fechadaPor: '20260726160000_margem_reconciliacao_universo_unico.sql',
     permitido: PORTA_FECHADA,
