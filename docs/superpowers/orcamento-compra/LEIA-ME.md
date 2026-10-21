@@ -160,6 +160,24 @@ Linhas OBEN com NF desde junho e sem t4: **86 → 2**. Uma é o pedido 1150, com
 - **Indeterminados:** 9 por falta de snapshot (inclui o ciclo de hoje, cujo snapshot ainda não foi tirado) e 3 por compromisso não conciliado.
 - **O portão segue FECHADO.**
 
+### R60: o fechamento do estoque no instante da leitura (2026-10-21)
+
+O `estoque_fisico` que o motor grava é lido **na geração** do ciclo. A spec §7 comparava a reconstrução com o fim de `data − 1`, mas 223 de 279 ciclos são gerados à tarde (a maioria por volta das 17h15 SP), quando o estoque já descontou a venda do próprio dia.
+
+- **Medido (fatos de 2026-10-21):** resíduo entre leituras consecutivas do estoque gravado (Δestoque + demanda − recebimento), com as janelas deslocadas:
+
+  | Deslocamento | −1 dia | 0 (spec) | **+1 dia** | +2 dias |
+  |---|---|---|---|---|
+  | Σ\|resíduo\| | 845 | 760 | **419** | 786 |
+  | Janelas exatas (de 902) | 583 | 583 | **756** | 656 |
+
+  O resíduo líquido vai de 102 para 12. Deslocar os **recebimentos** (t4) para trás ou para a frente piora tudo: o `dRec` está certo.
+- **Regra:** ciclo gerado a partir das 12h SP fecha contra o fim do próprio dia; antes disso, contra o fim de `data − 1`. A série de demanda as-of continua até `data − 1` (R22).
+- **Efeito (mesmos fatos):** SKUs com fechamento ruim de 90 para **40**/155; cobertura por episódio de 38,8% para **47,5%**; precisão por episódio de 82,6% para 83,6%. Por motivo: **econômico 95,4%** (n=105, cobertura 46,5%) e financeiro 40,6% (n=10, quase tudo o ciclo 1277).
+- **Ressalva (viés de seleção do conjunto medido):** os 71 cortes econômicos que a R60 passou a medir (R$ 13,3 mil) têm **zero** rupturas, contra 7,6% dos 343 já medidos. A chance disso por acaso é de cerca de 0,4%. A R60 não usa o resultado do corte (o fechamento compara com o estoque gravado no momento da decisão), mas o conjunto medido **não é aleatório**: os SKUs que fecham tendem a ser os que o corte não rompe. Os 95,4% valem para os 46,5% medidos, e é por isso que o portão exige cobertura ≥ 50%.
+- Falsificação: forçar d−1, forçar d, cortar às 13h e vazar o dia `d` na série de demanda deram 4 de 4 vermelhos, com controle verde.
+- Hipóteses descartadas nesta rodada: NF de venda sem título no contas a receber (50 de 1.220; tirá-las só leva a cobertura de 38,8% para 39,8%) e o deslocamento do t4.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
