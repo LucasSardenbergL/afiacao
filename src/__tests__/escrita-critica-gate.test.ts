@@ -125,7 +125,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   // falhando calada, o silêncio do banco somava ao silêncio que o PR conserta.
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 7], // #PR captura de custo: 2 escritas passaram a capturar error (9→7)
   ['supabase/functions/extrair-sinais-ligacao/index.ts', 1],
-  ['supabase/functions/fin-ic-reconcile/index.ts', 1],
   ['supabase/functions/gerar-pedidos-diario/index.ts', 2],
   ['supabase/functions/gmail-webhook-receiver/index.ts', 5],
   ['supabase/functions/kb-extract-specs/index.ts', 2],
