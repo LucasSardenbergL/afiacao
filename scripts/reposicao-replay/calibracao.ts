@@ -233,17 +233,36 @@ export interface OpcoesCalibracao {
   reps?: number;
   /** Cache de grades em disco (null = sem disco; padrão $REPLAY_DADOS/cache). */
   cacheDir?: string | null;
+  /**
+   * Onde o alvo é medido. 'classe' (OFICIAL, padrão): células A/B/C da coorte inteira, com os suaves no F0. 'alt'
+   * (INFORMATIVO, R27, NÃO OFICIAL): só a população ALTERADA é simulada e o fill sai das células A_alt/B_alt/C_alt.
+   */
+  celulasAlvo?: CelulasAlvo;
+}
+
+/** R27: 'classe' = régua oficial; 'alt' = rodada informativa não oficial. */
+export type CelulasAlvo = 'classe' | 'alt';
+/** População simulada no modo: a coorte inteira (oficial) ou só os alterados (informativo, R27). */
+export function populacaoDoModo(c: { populacao: Set<string>; alterados: Set<string> }, modo: CelulasAlvo): Set<string> {
+  return modo === 'alt' ? c.alterados : c.populacao;
 }
 
 /** Simula `reps` replicações no contexto fixo da calibração e devolve o fill por classe e o estoque médio. */
-export function avaliarNaCalibracao(dados: Dados, formula: Formula, params: Map<string, ParamsDia>, reps: number): AvaliacaoTrio & { somas: SomasSemanais } {
+export function avaliarNaCalibracao(
+  dados: Dados,
+  formula: Formula,
+  params: Map<string, ParamsDia>,
+  reps: number,
+  celulas: CelulasAlvo = 'classe',
+): AvaliacaoTrio & { somas: SomasSemanais } {
   let acc: SomasSemanais | null = null;
   for (let rep = 0; rep < reps; rep++) {
     const s = simular({ formula, params, rep, lt: 'empirico', falta: CENARIOS_FALTA.servico[0], inicial: 'reconstruido', janela: JANELA_CALIBRACAO, dados });
     acc = somarSomas(acc, s);
   }
   const m = mediaSomas(acc!, reps);
-  return { fill: { A: fillDaCelula(m, 'A'), B: fillDaCelula(m, 'B'), C: fillDaCelula(m, 'C') }, estoque: estoqueDaJanela(m), somas: m };
+  const cel = (c: Classe): Celula => (celulas === 'alt' ? `${c}_alt` : c);
+  return { fill: { A: fillDaCelula(m, cel('A')), B: fillDaCelula(m, cel('B')), C: fillDaCelula(m, cel('C')) }, estoque: estoqueDaJanela(m), somas: m };
 }
 
 const QUANTIL_NEUTRO: ParamsFormula = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
@@ -254,35 +273,44 @@ function preComputarCtx(f: Formula, dados: Dados, p: ParamsFormula, o: OpcoesCal
 }
 
 interface BaseCalibracao {
+  celulasAlvo: CelulasAlvo;
   f0Mapa: Map<string, ParamsDia>;
+  /** Média das reps do F0 na calibração (diagnóstico). */
+  somasF0: SomasSemanais;
   fillF0: Record<Classe, number | null>;
   estoqueF0: number;
   alvo: Record<Classe, number | null>;
 }
-const memoBase = new WeakMap<Dados, Map<number, BaseCalibracao>>();
+const memoBase = new WeakMap<Dados, Map<string, BaseCalibracao>>();
 
 /** F0 na calibração: só para o alvo (spec §5.3) e para a régua de 1 p.p. de capital da escolha. */
 export function baseDaCalibracao(dados: Dados, opcoes: OpcoesCalibracao = {}): BaseCalibracao {
   const reps = opcoes.reps ?? REPS_CALIBRACAO;
   let porReps = memoBase.get(dados);
   if (!porReps) memoBase.set(dados, (porReps = new Map()));
-  const pronto = porReps.get(reps);
+  const modo = opcoes.celulasAlvo ?? 'classe';
+  const chave = `${reps}|${modo}`;
+  const pronto = porReps.get(chave);
   if (pronto) return pronto;
   const c = coorte(dados);
-  const f0Mapa = mapaMisto(preComputarCtx('F0', dados, QUANTIL_NEUTRO, opcoes), null, c.populacao, c.alterados);
-  const a = avaliarNaCalibracao(dados, 'F0', f0Mapa, reps);
+  const f0Mapa = mapaMisto(preComputarCtx('F0', dados, QUANTIL_NEUTRO, opcoes), null, populacaoDoModo(c, modo), c.alterados);
+  const a = avaliarNaCalibracao(dados, 'F0', f0Mapa, reps, modo);
   const base: BaseCalibracao = {
+    celulasAlvo: modo,
     f0Mapa,
+    somasF0: a.somas,
     fillF0: a.fill,
     estoqueF0: a.estoque,
     alvo: { A: alvoDaClasse('A', a.fill.A), B: alvoDaClasse('B', a.fill.B), C: alvoDaClasse('C', a.fill.C) },
   };
-  porReps.set(reps, base);
+  porReps.set(chave, base);
   return base;
 }
 
 export interface ResultadoCalibracao {
   formula: Formula;
+  /** 'classe' = oficial; 'alt' = informativo (R27). */
+  celulasAlvo: CelulasAlvo;
   params: ParamsFormula;
   inviavel: boolean;
   /** Estoque médio da coorte no trio escolhido (no inviável: o do trio final da busca, só informativo). */
@@ -314,8 +342,8 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
   for (const v of variantes) {
     const avaliar = (q: Trio): AvaliacaoTrio => {
       const p: ParamsFormula = { ...v, quantil: q };
-      const mapa = mapaMisto(base.f0Mapa, preComputarCtx(f, dados, p, opcoes), c.populacao, c.alterados);
-      return avaliarNaCalibracao(dados, f, mapa, reps);
+      const mapa = mapaMisto(base.f0Mapa, preComputarCtx(f, dados, p, opcoes), populacaoDoModo(c, base.celulasAlvo), c.alterados);
+      return avaliarNaCalibracao(dados, f, mapa, reps, base.celulasAlvo);
     };
     const busca = buscarTrio(avaliar, base.alvo);
     const params: ParamsFormula = { ...v, quantil: busca.quantil };
@@ -331,6 +359,7 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
   const r = (escolhida ?? fallback)!;
   return {
     formula: f,
+    celulasAlvo: base.celulasAlvo,
     params: r.params,
     inviavel: escolhida === null,
     estoqueMedio: r.busca.avaliacao.estoque,

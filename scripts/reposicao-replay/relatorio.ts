@@ -61,8 +61,25 @@ export interface Rodada {
     excluidosSimulacao: { sku: string; motivo: string }[];
     linhasIgnoradas: number;
   } | null;
+  /** Diagnóstico de plausibilidade da calibração (R27). null = não medido. */
+  diagnostico: Diagnostico | null;
+  /** Rodada INFORMATIVA NÃO OFICIAL (R27): alvo e tabela nas células *_alt. null = não rodada. */
+  informativo: Pick<Rodada, 'veredito' | 'congelado' | 'calibracao' | 'fronteira' | 'avaliacao'> | null;
   tempos: Record<string, number>;
   segundos: number;
+}
+
+export interface Diagnostico {
+  /** F0 na calibração (50 reps, LT empírico, espera): fill de A, A-alterados e A-suaves, com as linhas observadas. */
+  fillF0A: { total: number | null; alterados: number | null; suaves: number | null; linhasAlterados: number; linhasSuaves: number };
+  /** Fill de A do F0 por semana da calibração. */
+  semanalA: { semana: Data; fill: number | null }[];
+  /** Unidades vendidas por mês da calibração nos SKUs de A da coorte. */
+  demandaA: { mes: string; unidades: number }[];
+  /** LT (du) realizado nos pedidos de A do F0 (rep 0) a partir de `desde` × LT do parâmetro F0 no dia do pedido. */
+  lt: { desde: Data; pedidos: number; sorteadoMedio: number | null; parametroMedio: number | null };
+  /** Operação real × F0 simulado na calibração (R$ só aqui, local): estoque médio (mesma valoração) e unidades recebidas até 30/04. */
+  real: { estoqueReal: number; estoqueF0: number; recebidoReal: number; recebidoF0: number };
 }
 
 // ── formatação ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -104,31 +121,31 @@ export const LIMITES: readonly string[] = [
   '**Duplicatas de LT** (spec §10): o motor de produção deduplica por NFe/tracking (`v_sku_leadtime_efetivo`, verificado na Task 5) — sem item separado.',
 ];
 
-export function montarRelatorio(r: Rodada): string {
-  const out: string[] = [];
-  const s = (x: string) => out.push(x, '');
-  s(`# Replay TSB — ${r.nomeMetrica} (Sayerlack, OBEN)`);
-  s(`Gerado em ${r.geradoEm}. Arquivo LOCAL (contém R$ absolutos): não copiar para o repositório.`);
-
+/** O bloco que se repete entre a rodada oficial e a informativa (R27): veredito, calibração, células, fronteira, custo, terminal e sensibilidades. */
+type BlocoRodada = Pick<Rodada, 'veredito' | 'congelado' | 'calibracao' | 'fronteira' | 'avaliacao'>;
+function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h: '##' | '###'; prefixo: string; oficial: boolean; extrasVeredito?: string[] }): void {
+  const H2 = `${o.h} ${o.prefixo}`;
+  const H3 = `${o.h}# `;
   // 1. veredito
-  s(`## 1. Veredito: **${r.veredito.veredito}**`);
-  if (r.congelado) s(`Candidata congelada na calibração: **${r.congelado.candidata}** — \`${JSON.stringify(r.congelado.params)}\`.`);
-  s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
-  if (r.veredito.motivos.length > 0) s(['Motivos (FALHAs, ou INCERTOs se não há FALHA):', ...r.veredito.motivos.map((m) => `- ${m}`)].join('\n'));
-  if (r.avaliacao) {
+  s(`${H2}1. Veredito: **${b.veredito.veredito}**`);
+  if (b.congelado) s(`Candidata congelada na calibração: **${b.congelado.candidata}** — \`${JSON.stringify(b.congelado.params)}\`.`);
+  if (o.oficial) s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
+  for (const x of o.extrasVeredito ?? []) s(x);
+  if (b.veredito.motivos.length > 0) s(['Motivos (FALHAs, ou INCERTOs se não há FALHA):', ...b.veredito.motivos.map((m) => `- ${m}`)].join('\n'));
+  if (b.avaliacao) {
     const cont = { PASSA: 0, FALHA: 0, INCERTO: 0 };
-    for (const c of r.avaliacao.criterios) cont[c.estado]++;
+    for (const c of b.avaliacao.criterios) cont[c.estado]++;
     s(`Critérios: ${cont.PASSA} PASSA · ${cont.FALHA} FALHA · ${cont.INCERTO} INCERTO.`);
-    s(tabela(['Critério', 'Estado', 'Motivo'], r.avaliacao.criterios.map((c) => [c.criterio, c.estado, c.motivo.replace(/\|/g, '/')])));
+    s(tabela(['Critério', 'Estado', 'Motivo'], b.avaliacao.criterios.map((c) => [c.criterio, c.estado, c.motivo.replace(/\|/g, '/')])));
   }
 
   // calibração
-  s('### Calibração (janela 2026-02-01→04-30, 50 reps, LT empírico, espera)');
-  s(`Alvo por classe = max(piso, fill F0 − 0,25 p.p.): ${(['A', 'B', 'C'] as const).map((c) => `${c} ${pct(r.calibracao.alvo[c])} (F0 ${pct(r.calibracao.fillF0[c])})`).join(' · ')}.`);
+  s(H3 + 'Calibração (janela 2026-02-01→04-30, 50 reps, LT empírico, espera)');
+  s(`Alvo por classe = max(piso, fill F0 − 0,25 p.p.): ${(['A', 'B', 'C'] as const).map((c) => `${c} ${pct(b.calibracao.alvo[c])} (F0 ${pct(b.calibracao.fillF0[c])})`).join(' · ')}.`);
   s(
     tabela(
       ['Fórmula', 'Variante', 'Quantis A/B/C', 'Inviável', 'Fill A/B/C', 'Redução de estoque vs F0', 'Trios avaliados'],
-      r.calibracao.resultados.flatMap((x) =>
+      b.calibracao.resultados.flatMap((x) =>
         x.tentativas.map((t) => [
           x.formula,
           t.params.beta !== undefined ? `β ${t.params.beta}` : t.params.janelaDias !== undefined ? `janela ${t.params.janelaDias} du` : '—',
@@ -141,16 +158,16 @@ export function montarRelatorio(r: Rodada): string {
       ),
     ),
   );
-  s(`Escolhida: **${r.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
+  s(`Escolhida: **${b.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
 
   // 3. fronteira (sempre: vem da calibração)
   const secaoFronteira = (): void => {
-    s('## 3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
+    s(H2 + '3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
     s('Varre o MESMO quantil nas três classes (0,90 a 0,999) com o β/janela calibrados; NÃO é a recalibração por alvo de fill de 90% a 99,5% da spec §5.3 (aproximação declarada).');
     s(
       tabela(
         ['Fórmula', 'Variante', 'Quantil', 'Fill total', 'Fill A', 'Fill B', 'Fill C', 'Redução de estoque vs F0'],
-        r.fronteira.map((f) => [
+        b.fronteira.map((f) => [
           f.formula, f.params.beta !== undefined ? `β ${f.params.beta}` : `janela ${f.params.janelaDias ?? '—'} du`, String(f.params.quantil.A),
           pct(f.fill.total), pct(f.fill.A), pct(f.fill.B), pct(f.fill.C), pct(f.reducao),
         ]),
@@ -158,10 +175,10 @@ export function montarRelatorio(r: Rodada): string {
     );
   };
 
-  const a = r.avaliacao;
+  const a = b.avaliacao;
   if (a) {
     // 2. células
-    s(`## 2. Células × fórmula × cenário (ponto | LI | LS; LI = min(LI4, LI8), LS = max(LS4, LS8))`);
+    s(`${H2}2. Células × fórmula × cenário (ponto | LI | LS; LI = min(LI4, LI8), LS = max(LS4, LS8))`);
     s(`Replicações: ${a.reps}. Fill = Σ linhas integralmente atendidas no dia ÷ Σ linhas (nunca média de % por SKU).`);
     s(
       tabela(
@@ -169,7 +186,7 @@ export function montarRelatorio(r: Rodada): string {
         a.celulas.map((c) => [rotCen(c.cenario), c.celula, String(c.linhas), ivPct(c.f0), ivPct(c.alt), ivPp(c.delta === null ? null : comb(c.delta))]),
       ),
     );
-    s('### Capital (estoque físico médio a CMC, ponderado por dias corridos)');
+    s(H3 + 'Capital (estoque físico médio a CMC, ponderado por dias corridos)');
     s(
       tabela(
         ['Cenário', 'Estoque médio F0', 'Estoque médio cand.', 'Redução ponto', 'LI', 'LS'],
@@ -181,7 +198,7 @@ export function montarRelatorio(r: Rodada): string {
     secaoFronteira();
 
     // 4. custo
-    s('## 4. Grade de custo (economia líquida, positivo = candidata vantajosa) e custo de falta de equilíbrio');
+    s(H2 + '4. Grade de custo (economia líquida, positivo = candidata vantajosa) e custo de falta de equilíbrio');
     s('Gate (critério 5, R26): taxa 25% a.a.; emergencial 5/10/20% × atraso 0/0,5/1% por linha-dia; cenários espera, cancelamento e misto (60/30/10).');
     s(
       tabela(
@@ -208,7 +225,7 @@ export function montarRelatorio(r: Rodada): string {
     );
 
     // 5. terminal
-    s('## 5. Balanço terminal e fechamento (média das reps)');
+    s(H2 + '5. Balanço terminal e fechamento (média das reps)');
     s('O fechamento por SKU (demanda = imediata + tardia + emergencial + cancelada + backlog; estoque inicial + recebido − entregue = final) é verificado em CADA simulação (fail-closed): a rodada não termina se violar.');
     s(
       tabela(
@@ -225,7 +242,7 @@ export function montarRelatorio(r: Rodada): string {
     );
 
     // 6. sensibilidades
-    s('## 6. Sensibilidades');
+    s(H2 + '6. Sensibilidades');
     s(tabela(['Estado inicial', 'Veredito (sem a linha "Estado inicial")'], a.vereditoPorEstado.map((e) => [e.rotulo, e.veredito])));
     s(`Coorte "todos os ativos" (${r.coorte.todos} SKUs): **${a.todosAtivos.veredito}**.`);
     if (a.todosAtivos.motivos.length > 0) s(a.todosAtivos.motivos.slice(0, 30).map((m) => `- ${m}`).join('\n'));
@@ -258,14 +275,34 @@ export function montarRelatorio(r: Rodada): string {
     s(`Fórmula candidata aplicada também aos ${a.suaves.n} suaves/erráticos (informativo, 50 reps, empírico/espera): fill dos suaves F0 ${pct(a.suaves.f0.fill)} × candidata pura ${pct(a.suaves.fnPura.fill)} (${a.suaves.f0.linhas} linhas).`);
   } else {
     const naoAval = 'Não avaliado: sem candidata viável na calibração (o veredito sai na calibração).';
-    s('## 2. Células × fórmula × cenário');
+    s(H2 + '2. Células × fórmula × cenário');
     s(naoAval);
     secaoFronteira();
     for (const t of ['4. Grade de custo e custo de falta de equilíbrio', '5. Balanço terminal e fechamento', '6. Sensibilidades']) {
-      s(`## ${t}`);
+      s(`${H2}${t}`);
       s(naoAval);
     }
   }
+}
+
+/** Linhas da causa do veredito oficial (R27): o piso de A é inalcançável com os suaves presos no F0. */
+function causaOficial(r: Rodada): string[] {
+  const d = r.diagnostico;
+  if (!d || !r.veredito.motivos.includes('INVIAVEL_NA_CALIBRACAO')) return [];
+  return [
+    `**Causa (R27):** na calibração, o próprio F0 atende ${pct(d.fillF0A.total)} das linhas de A (piso ${pct(0.98, 0)}). Os SKUs SUAVES de A ficam no F0 em todas as variantes (spec §5.3) e atendem ${pct(d.fillF0A.suaves)} (${d.fillF0A.linhasSuaves} linhas); os alterados de A, ${pct(d.fillF0A.alterados)} (${d.fillF0A.linhasAlterados} linhas). Nenhum quantil mexe nos suaves, então nenhuma fórmula leva a célula A ao piso: o NO-GO decorre da régua (piso na célula da classe), não de uma comparação TSB × F0. Diagnóstico e rodada informativa na seção 11.`,
+  ];
+}
+
+export function montarRelatorio(r: Rodada): string {
+  const out: string[] = [];
+  const s = (x: string) => out.push(x, '');
+  s(`# Replay TSB — ${r.nomeMetrica} (Sayerlack, OBEN)`);
+  s(`Gerado em ${r.geradoEm}. Arquivo LOCAL (contém R$ absolutos): não copiar para o repositório.`);
+
+  secoesDoBloco(r, r, s, { h: '##', prefixo: '', oficial: true, extrasVeredito: causaOficial(r) });
+
+  const a = r.avaliacao;
 
   // 7. paridade
   const g = r.paridade.gate;
@@ -325,6 +362,22 @@ export function montarRelatorio(r: Rodada): string {
   // 10. limites
   s('## 10. Limites (spec §10 e rulings)');
   s(LIMITES.map((l) => `- ${l}`).join('\n'));
+
+  // 11. rodada informativa (R27)
+  s('## 11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito oficial é o NO-GO acima');
+  s('Alvo e tabela §6.1 SÓ nas células *_alt (alvo_alt = max(piso, fill do F0 em X_alt − 0,25 p.p.)): a simulação contém só a população ALTERADA (os intermitentes que trocam de fórmula), então as células A/B/C coincidem com A_alt/B_alt/C_alt e capital, estresse e economia são medidos nessa população. Mesma grade, descida, validação conjunta, regra de escolha, reps até a precisão e bootstrap 4/8. Não substitui nem relativiza o veredito oficial.');
+  const d = r.diagnostico;
+  if (d) {
+    s('### 11.0 Diagnóstico de plausibilidade (calibração, F0)');
+    s(`Fill de A: total ${pct(d.fillF0A.total)} · alterados ${pct(d.fillF0A.alterados)} (${d.fillF0A.linhasAlterados} linhas) · suaves ${pct(d.fillF0A.suaves)} (${d.fillF0A.linhasSuaves} linhas).`);
+    s(`Fill semanal de A: ${d.semanalA.map((w) => `${w.semana.slice(5)} ${pct(w.fill, 1)}`).join(' · ')}.`);
+    const base = d.demandaA[0]?.unidades ?? 0;
+    s(`Demanda de A por mês (unidades; razão contra o 1º mês): ${d.demandaA.map((m) => `${m.mes} ${num(m.unidades, 0)}${base > 0 ? ` (${num(m.unidades / base, 2)}×)` : ''}`).join(' · ')}. A média de 90 dias do F0 demora a acompanhar a alta.`);
+    s(`LT nos pedidos de A desde ${d.lt.desde} (F0, rep 0, ${d.lt.pedidos} pedidos): sorteado médio ${d.lt.sorteadoMedio === null ? 'n/d' : num(d.lt.sorteadoMedio, 1)} du × parâmetro médio do F0 ${d.lt.parametroMedio === null ? 'n/d' : num(d.lt.parametroMedio, 1)} du.`);
+    s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×); recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
+  }
+  if (r.informativo) secoesDoBloco(r, r.informativo, s, { h: '###', prefixo: '11.', oficial: false, extrasVeredito: ['**NÃO OFICIAL (R27)** — alvo e critérios nas células *_alt; população simulada = só os alterados.'] });
+  else s('Rodada informativa não executada.');
   return out.join('\n');
 }
 

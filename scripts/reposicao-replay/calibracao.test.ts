@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
-import { alvoDaClasse, avaliarNaCalibracao, buscarTrio, calibrar, escolherCandidata, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
+import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, fillDaCelula, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
 import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
@@ -217,4 +217,44 @@ describe('fix round 1', () => {
       expect(() => exigirGateParidade(ruim)).toThrow(/^GATE_PARIDADE_FALHA/);
     }
   });
+});
+
+// ── R27: rodada informativa (alvo nas células *_alt) sem mexer no caminho oficial ───────────────────────────────────
+describe('R27 — modo informativo', () => {
+  it('caminho oficial não muda (snapshot do veredito oficial na fixture)', () => {
+    const dd = cenario(false);
+    const rs = (['F1', 'F2', 'F3'] as const).map((f) => calibrar(dd, f, { reps: 3, cacheDir: null }));
+    const got = { rs: rs.map((r) => ({ f: r.formula, params: r.params, inviavel: r.inviavel, estoque: r.estoqueMedio, alvo: r.alvo })), cand: escolherCandidata(rs), v: vereditoDaCalibracao(rs) };
+    // capturado em bcc467753 (pós fix round 1), ANTES do modo informativo
+    expect(got).toEqual(JSON.parse(
+      "{\"rs\":[{\"f\":\"F1\",\"params\":{\"quantil\":{\"A\":0.95,\"B\":0.999,\"C\":0.5}},\"inviavel\":false,\"estoque\":188.62921348314606,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F2\",\"params\":{\"beta\":0.005,\"quantil\":{\"A\":0.95,\"B\":0.999,\"C\":0.5}},\"inviavel\":false,\"estoque\":190.1123595505618,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F3\",\"params\":{\"janelaDias\":90,\"quantil\":{\"A\":0.999,\"B\":0.999,\"C\":0.8}},\"inviavel\":true,\"estoque\":183.8426966292135,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}}],\"cand\":\"F1\",\"v\":{\"veredito\":\"INCONCLUSIVO\",\"motivos\":[\"CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:B\"]}}",
+    ));
+  }, 120_000);
+
+  it("modo 'alt' mede o alvo nas células *_alt (só os alterados entram)", () => {
+    const dd = cenario(false);
+    const c = coorte(dd);
+    const suaves = [...c.populacao].filter((s) => !c.alterados.has(s));
+    expect(suaves.length).toBeGreaterThan(0); // senão o teste é cego
+    const base = baseDaCalibracao(dd, { reps: 3, cacheDir: null, celulasAlvo: 'alt' });
+    for (const k of base.f0Mapa.keys()) expect(c.alterados.has(k.slice(0, k.indexOf('|')))).toBe(true);
+    // referência independente: o F0 oficial (coorte inteira) lido nas células *_alt
+    const oficial = baseDaCalibracao(dd, { reps: 3, cacheDir: null });
+    const ref = avaliarNaCalibracao(dd, 'F0', oficial.f0Mapa, 3).somas;
+    for (const cl of ['A', 'B', 'C'] as const) expect(base.alvo[cl]).toBe(alvoDaClasse(cl, fillDaCelula(ref, `${cl}_alt`)));
+    const r = calibrar(dd, 'F1', { reps: 3, cacheDir: null, celulasAlvo: 'alt' });
+    expect(r.alvo).toEqual(base.alvo);
+    expect(r.celulasAlvo).toBe('alt');
+  }, 120_000);
+
+  it("avaliação informativa: só a população alterada é simulada (células = *_alt)", async () => {
+    const dd = cenario(false);
+    const c = coorte(dd);
+    const r = await avaliarCandidata(dd, '/inexistente', { candidata: 'F1', params: { quantil: { A: 0.9, B: 0.9, C: 0.9 } }, celulasAlvo: 'alt' }, null, { paralelo: 1, tetoReps: 2, cacheDir: null });
+    const lin = dd.vendas.filter((v) => c.alterados.has(v.sku) && v.quantidade > 0 && v.data >= JANELAS.avaliacaoIni && v.data <= JANELAS.avaliacaoFim).length;
+    const ex = r.avaliacao.blocos.exposicao;
+    const soma = (cs: string[]) => ex.filter((x) => cs.includes(x.celula)).reduce((t, x) => t + (x.linhas ?? 0), 0);
+    expect(soma(['A', 'B', 'C'])).toBe(lin);
+    expect(soma(['A_alt', 'B_alt', 'C_alt'])).toBe(lin);
+  }, 300_000);
 });

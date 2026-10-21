@@ -26,7 +26,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type { CenarioLT } from './aleatorio';
+import { diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
+import { duAte, type CenarioLT } from './aleatorio';
 import {
   avaliarNaCalibracao,
   baseDaCalibracao,
@@ -38,11 +39,14 @@ import {
   fillDaCelula,
   mapaMisto,
   mediaSomas,
+  populacaoDoModo,
   REPS_CALIBRACAO,
   somarSomas,
+  type CelulasAlvo,
   type ResultadoCalibracao,
 } from './calibracao';
-import { CENARIOS_FALTA, GRADE_CUSTO, GRADE_QUANTIS, JANELAS, NOME_METRICA_SERVICO, PRECISAO, TSB } from './config';
+import { classeEfetiva } from './classe';
+import { CENARIOS_FALTA, GRADE_CUSTO, GRADE_QUANTIS, INICIO_AQUECIMENTO, JANELAS, NOME_METRICA_SERVICO, PRECISAO, TSB } from './config';
 import { carregarDados } from './dados';
 import {
   avaliarCriterios,
@@ -57,17 +61,18 @@ import {
   type Criterio,
   type EstatisticaPareada,
 } from './estatistica';
-import { hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
+import { diagnosticoF0, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
 import { custoFaltaEquilibrio, custoLiquido, type GradeCusto } from './metricas';
 import { coorte, coorteTodosAtivos } from './parados';
-import { diagnosticoEstadoInicial, negativosNaAvaliacao, type CenarioInicial } from './reconstrucao';
-import { escreverRelatorio, type Rodada } from './relatorio';
+import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
+import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
 import { CELULAS, paridadeQuantidade, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
 import {
   ErroDadosReplay,
   type BlocoBootstrap,
   type Classe,
   type Dados,
+  type Data,
   type Evidencia,
   type EvidenciaServico,
   type Intervalo,
@@ -104,6 +109,8 @@ const CELULAS_SERVICO: readonly Celula[] = ['A', 'B', 'C', 'A_alt', 'B_alt', 'C_
 export interface Congelado {
   candidata: Formula;
   params: ParamsFormula;
+  /** Ausente/'classe' = rodada OFICIAL; 'alt' = rodada INFORMATIVA NÃO OFICIAL (R27): só a população alterada é simulada. */
+  celulasAlvo?: CelulasAlvo;
 }
 interface Mapas {
   coorte: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia> };
@@ -121,9 +128,12 @@ function mapasDaAvaliacao(dados: Dados, cg: Congelado, cacheDir?: string | null)
   const fn = preAval(cg.candidata, dados, cg.params, cacheDir);
   const c = coorte(dados);
   const t = coorteTodosAtivos(dados);
+  const modo = cg.celulasAlvo ?? 'classe';
+  const pc = populacaoDoModo(c, modo);
+  const pt = populacaoDoModo(t, modo);
   return {
-    coorte: { f0: mapaMisto(f0, null, c.populacao, c.alterados), alt: mapaMisto(f0, fn, c.populacao, c.alterados) },
-    todos: { f0: mapaMisto(f0, null, t.populacao, t.alterados), alt: mapaMisto(f0, fn, t.populacao, t.alterados) },
+    coorte: { f0: mapaMisto(f0, null, pc, c.alterados), alt: mapaMisto(f0, fn, pc, c.alterados) },
+    todos: { f0: mapaMisto(f0, null, pt, t.alterados), alt: mapaMisto(f0, fn, pt, t.alterados) },
   };
 }
 
@@ -461,7 +471,7 @@ export async function avaliarCandidata(
   let cmv = 0;
   let semCmc = 0;
   for (const v of dados.vendas) {
-    if (!v.noEscopo || !c.populacao.has(v.sku) || v.data < JANELAS.avaliacaoIni || v.data > JANELAS.avaliacaoFim || !(v.quantidade > 0)) continue;
+    if (!v.noEscopo || !populacaoDoModo(c, cg.celulasAlvo ?? 'classe').has(v.sku) || v.data < JANELAS.avaliacaoIni || v.data > JANELAS.avaliacaoFim || !(v.quantidade > 0)) continue;
     if (v.cmcLinha === null) semCmc++;
     else cmv += v.cmcLinha * v.quantidade;
   }
@@ -509,6 +519,125 @@ export async function avaliarCandidata(
       excluidosSimulacao: mBase.f0.excluidos,
       linhasIgnoradas: mBase.f0.linhasIgnoradas,
     },
+  };
+}
+
+// ── calibração por modo, fronteira, diagnóstico e rodada informativa (R27) ──────────────────────────────────────────
+interface Calibracao {
+  base: ReturnType<typeof baseDaCalibracao>;
+  resultados: ResultadoCalibracao[];
+  candidata: Formula | 'NENHUMA';
+  vc: ReturnType<typeof vereditoDaCalibracao>;
+  fronteira: Rodada['fronteira'];
+}
+
+/** Calibra F1–F3 no modo, escolhe a candidata e mede a fronteira (informativa: quantil uniforme, janela de calibração). */
+function calibrarNoModo(dados: Dados, modo: CelulasAlvo): Calibracao {
+  const rot = modo === 'alt' ? '[informativo R27] ' : '';
+  const base = baseDaCalibracao(dados, { celulasAlvo: modo });
+  log(`${rot}alvo: ${JSON.stringify(base.alvo)} fill F0 calib ${JSON.stringify(base.fillF0)}`);
+  const resultados: ResultadoCalibracao[] = [];
+  for (const f of ['F1', 'F2', 'F3'] as const) {
+    const tf = performance.now();
+    const r = calibrar(dados, f, { celulasAlvo: modo });
+    resultados.push(r);
+    log(`${rot}calibrar ${f}: ${JSON.stringify(r.params)} inviável=${r.inviavel} redução=${(1 - r.estoqueMedio / r.estoqueF0).toFixed(4)} (${((performance.now() - tf) / 1000).toFixed(1)} s)`);
+  }
+  const candidata = escolherCandidata(resultados);
+  log(`${rot}candidata: ${candidata}`);
+  const c0 = coorte(dados);
+  const fronteira: Rodada['fronteira'] = [];
+  for (const r of resultados.filter((x) => x.formula === 'F2' || x.formula === 'F3')) {
+    for (const q of GRADE_QUANTIS.filter((x) => x >= 0.9)) {
+      const p: ParamsFormula = { ...r.params, quantil: { A: q, B: q, C: q } };
+      const mapa = mapaMisto(base.f0Mapa, preComputar(r.formula, dados, p, { calibracao: true }), populacaoDoModo(c0, modo), c0.alterados);
+      const av = avaliarNaCalibracao(dados, r.formula, mapa, REPS_CALIBRACAO, modo);
+      fronteira.push({ formula: r.formula, params: p, fill: { ...av.fill, total: fillDaCelula(av.somas, 'total') }, reducao: 1 - av.estoque / base.estoqueF0 });
+    }
+  }
+  return { base, resultados, candidata, vc: vereditoDaCalibracao(resultados), fronteira };
+}
+
+/** R27: rodada INFORMATIVA NÃO OFICIAL — alvo e tabela §6.1 nas células *_alt (população simulada = só os alterados). */
+async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, tempos: Record<string, number>): Promise<NonNullable<Rodada['informativo']>> {
+  let t = performance.now();
+  const cal = calibrarNoModo(dados, 'alt');
+  tempos.calibracao = (performance.now() - t) / 1000;
+  const calibracao = { alvo: cal.base.alvo, fillF0: cal.base.fillF0, resultados: cal.resultados, candidata: cal.candidata };
+  if (cal.candidata === 'NENHUMA' || cal.vc?.veredito === 'NO-GO') {
+    return { veredito: cal.vc ?? { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] }, congelado: null, calibracao, fronteira: cal.fronteira, avaliacao: null };
+  }
+  const r = cal.resultados.find((x) => x.formula === cal.candidata)!;
+  const cg: Congelado = Object.freeze({ candidata: cal.candidata, params: structuredClone(r.params), celulasAlvo: 'alt' as const });
+  t = performance.now();
+  const av = await avaliarCandidata(dados, dir, cg, cal.vc, { paralelo, tempos });
+  tempos.total = (performance.now() - t) / 1000;
+  log(`[informativo R27] VEREDITO ${av.veredito.veredito} (${av.avaliacao.reps} reps)`);
+  return { veredito: av.veredito, congelado: cg, calibracao, fronteira: cal.fronteira, avaliacao: av.avaliacao };
+}
+
+/** Diagnóstico de plausibilidade da calibração oficial (R27): A-suaves × A-alterados, semanas, demanda, LT e operação real. */
+function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): Diagnostico {
+  const c = coorte(dados);
+  const m = base.somasF0;
+  const sm = (x: readonly number[]) => x.reduce((a, b) => a + b, 0);
+  const demA = sm(m.porCelula.A.demandadas);
+  const intA = sm(m.porCelula.A.integrais);
+  const demAlt = sm(m.porCelula.A_alt.demandadas);
+  const intAlt = sm(m.porCelula.A_alt.integrais);
+  const fr = (n: number, d: number) => (d > 0 ? n / d : null);
+  const semanalA = m.semanas.map((semana, w) => ({ semana, fill: fr(m.porCelula.A.integrais[w], m.porCelula.A.demandadas[w]) }));
+  // SKUs de A (classe efetiva no início da calibração, R2) e a demanda por mês
+  const classe = classeEfetiva(dados, JANELAS.calibracaoIni);
+  const skusA = new Set([...c.populacao].filter((s) => (classe.get(s) ?? 'C') === 'A'));
+  const porMes = new Map<string, number>();
+  for (const v of dados.vendas) {
+    if (!v.noEscopo || !skusA.has(v.sku) || v.data < JANELAS.calibracaoIni || v.data > JANELAS.calibracaoFim || !(v.quantidade > 0)) continue;
+    porMes.set(v.data.slice(0, 7), (porMes.get(v.data.slice(0, 7)) ?? 0) + v.quantidade);
+  }
+  // LT realizado × LT do parâmetro nos pedidos de A do F0 (rep 0) na 2ª metade da calibração
+  const desde = '2026-03-16';
+  const s0 = simular({ formula: 'F0', params: base.f0Mapa, rep: 0, lt: 'empirico', falta: 'espera', inicial: 'reconstruido', janela: [JANELAS.calibracaoIni, JANELAS.calibracaoFim], dados, rastro: true });
+  let nLt = 0;
+  let somaSort = 0;
+  let somaPar = 0;
+  let nPar = 0;
+  for (const p of s0.pedidos ?? []) {
+    if (!skusA.has(p.sku) || p.dia < desde || p.chegada === null) continue;
+    nLt++;
+    somaSort += duAte(p.chegada) - duAte(p.dia);
+    const lt = diagnosticoF0(dados, p.sku, p.dia, { calibracao: true }).lt;
+    if (lt !== null) {
+      somaPar += lt;
+      nPar++;
+    }
+  }
+  // operação real: estoque reconstruído (com ajuste) valorado como na calibração e recebido até 30/04
+  const rec = reconstruirSkus(dados);
+  const cmc = new Map<string, { d: Data; c: number }>();
+  for (const v of dados.vendas) {
+    if (v.cmcLinha === null || !(v.cmcLinha > 0) || v.data > JANELAS.calibracaoFim || !c.populacao.has(v.sku)) continue;
+    const x = cmc.get(v.sku);
+    if (!x || v.data > x.d) cmc.set(v.sku, { d: v.data, c: v.cmcLinha });
+  }
+  let soma = 0;
+  let dias = 0;
+  for (let i = diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoIni); i <= diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim); i++) {
+    for (const s of c.populacao) {
+      const it = rec.itens.get(s);
+      const cc = cmc.get(s);
+      if (it && cc) soma += (it.fimDia[i] + it.ajuste) * cc.c;
+    }
+    dias++;
+  }
+  let recebidoReal = 0;
+  for (const r of dados.recebimentos) if (c.populacao.has(r.sku) && r.data <= JANELAS.calibracaoFim) recebidoReal += r.quantidade;
+  return {
+    fillF0A: { total: fr(intA, demA), alterados: fr(intAlt, demAlt), suaves: fr(intA - intAlt, demA - demAlt), linhasAlterados: Math.round(demAlt), linhasSuaves: Math.round(demA - demAlt) },
+    semanalA,
+    demandaA: [...porMes].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([mes, unidades]) => ({ mes, unidades })),
+    lt: { desde, pedidos: nLt, sorteadoMedio: nLt > 0 ? somaSort / nLt : null, parametroMedio: nPar > 0 ? somaPar / nPar : null },
+    real: { estoqueReal: soma / dias, estoqueF0: base.estoqueF0, recebidoReal, recebidoF0: m.balanco.recebido },
   };
 }
 
@@ -596,34 +725,21 @@ async function principal(): Promise<number> {
   exigirGateParidade(gate); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   marca('paridade', t);
 
-  // 2. calibração
+  // 2. calibração OFICIAL (alvo na célula da classe)
   t = performance.now();
-  const base = baseDaCalibracao(dados);
-  log(`alvo: ${JSON.stringify(base.alvo)} fill F0 calib ${JSON.stringify(base.fillF0)}`);
-  const resultados: ResultadoCalibracao[] = [];
-  for (const f of ['F1', 'F2', 'F3'] as const) {
-    const tf = performance.now();
-    const r = calibrar(dados, f);
-    resultados.push(r);
-    log(`calibrar ${f}: ${JSON.stringify(r.params)} inviável=${r.inviavel} redução=${(1 - r.estoqueMedio / r.estoqueF0).toFixed(4)} (${((performance.now() - tf) / 1000).toFixed(1)} s)`);
-  }
-  const candidata = escolherCandidata(resultados);
+  const of = calibrarNoModo(dados, 'classe');
+  const { base, resultados, candidata, fronteira } = of;
   marca('calibracao', t);
-  log(`candidata: ${candidata}`);
 
-  // fronteira (informativa, janela de calibração): quantil uniforme nas 3 classes, β/janela calibrados
+  // R27: diagnóstico de plausibilidade e rodada INFORMATIVA NÃO OFICIAL (alvo nas células *_alt). Não toca o oficial.
   t = performance.now();
-  const fronteira: Rodada['fronteira'] = [];
-  const c0 = coorte(dados);
-  for (const r of resultados.filter((x) => x.formula === 'F2' || x.formula === 'F3')) {
-    for (const q of GRADE_QUANTIS.filter((x) => x >= 0.9)) {
-      const p: ParamsFormula = { ...r.params, quantil: { A: q, B: q, C: q } };
-      const mapa = mapaMisto(base.f0Mapa, preComputar(r.formula, dados, p, { calibracao: true }), c0.populacao, c0.alterados);
-      const av = avaliarNaCalibracao(dados, r.formula, mapa, REPS_CALIBRACAO);
-      fronteira.push({ formula: r.formula, params: p, fill: { ...av.fill, total: fillDaCelula(av.somas, 'total') }, reducao: 1 - av.estoque / base.estoqueF0 });
-    }
-  }
-  marca('fronteira', t);
+  const diagnostico = diagnosticar(dados, base);
+  marca('diagnostico', t);
+  t = performance.now();
+  const temposInf: Record<string, number> = {};
+  const informativo = await rodadaInformativa(dados, dir, paralelo, temposInf);
+  for (const [k, v] of Object.entries(temposInf)) tempos[`informativo.${k}`] = v;
+  marca('informativo', t);
 
   const comum = {
     geradoEm: new Date().toISOString(),
@@ -637,6 +753,8 @@ async function principal(): Promise<number> {
     paridade: { f0: parF0, quantidade: parQtd, gate, gatePassa },
     calibracao: { alvo: base.alvo, fillF0: base.fillF0, resultados, candidata },
     fronteira,
+    diagnostico,
+    informativo,
     excluidosDados: dados.excluidos,
     avisos: dados.avisos,
     parados: c.parados,
