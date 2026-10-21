@@ -29,6 +29,7 @@ const fatos: Fatos = {
   demanda_fisica: DEM200,
   falhas_snapshot: [],
   recebimentos_sem_t4: [],
+  t4_por_nf: [],
   recebimentos: [],
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
@@ -299,6 +300,28 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     expect(eVelho.tipo === 'indeterminado' && eVelho.camadas).toEqual(['compromisso_nao_conciliado']);
     // a diferença de piso é exatamente o título: 1000 inteiro (depois) − 400 de resíduo (antes)
     expect(pisoDe(antes) - pisoDe(depois)).toBeCloseTo(600, 6);
+  });
+  it('R65: NF de pedido velho recebida DEPOIS do snapshot (menor t4 da NF) → título ainda não podia existir: viável, com o pedido inteiro', () => {
+    // a forma do ciclo 2083 (25/08) e dos pendentes de 21/10: NF consolidada, título nasce no recebimento
+    const velho = { ...com({ ...T1, created_at: '2026-10-01T10:30:00Z' }), disparados: [HIST, { ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
+    const comT4 = (t4: string[]): Fatos => ({ ...velho, t4_por_nf: t4.map((x) => ({ nf: '123', t4: x })) });
+    expect(simularCiclo(comT4(['2026-10-01T11:00:00Z']), 1, cfg).estado.tipo).toBe('viavel');
+    // pedido inteiro (1000 + frete) sai do caixa — a isenção muda a CLASSE, nunca o valor
+    expect(pisoDe(comT4(['2026-10-01T11:00:00Z']))).toBeCloseTo(pisoDe(comT4([])), 6);
+    // recebida ANTES do snapshot (o título já devia existir) → continua indeterminado
+    const antesDaBase = simularCiclo(comT4(['2026-10-01T09:59:00Z']), 1, cfg).estado;
+    expect(antesDaBase.tipo === 'indeterminado' && antesDaBase.camadas).toEqual(['compromisso_nao_conciliado']);
+    // NF com duas linhas de tracking: vale o MENOR t4 (a 947706 do ciclo 2083 tem uma linha de 20/08 antes da base)
+    const doisT4 = simularCiclo(comT4(['2026-10-01T11:00:00Z', '2026-09-30T08:00:00Z']), 1, cfg).estado;
+    expect(doisT4.tipo === 'indeterminado' && doisT4.camadas).toEqual(['compromisso_nao_conciliado']);
+    // t4 desconhecido → sem isenção (ausente ≠ recebida depois)
+    const semT4 = simularCiclo(comT4([]), 1, cfg).estado;
+    expect(semT4.tipo === 'indeterminado' && semT4.camadas).toEqual(['compromisso_nao_conciliado']);
+  });
+  it('R65: t4_por_nf ausente reprova o pré-voo; t4 nulo na NF também (o SQL só exporta t4 conhecido)', () => {
+    expect(preVoo({ ...fatos, t4_por_nf: undefined as unknown as Fatos['t4_por_nf'] })).toContain('t4_por_nf ausente — fatos.sql antigo (R65)');
+    expect(preVoo({ ...fatos, t4_por_nf: [{ nf: '1', t4: null as unknown as string }] })).toContain('t4_por_nf com t4 nulo ou inválido (R65)');
+    expect(preVoo(fatos).filter((x) => x.includes('R65'))).toEqual([]);
   });
   it('(c) pedido sem NF com ≥ 15 dias acima de 10% da reserva → indeterminado; abaixo → viável', () => {
     // reserva = 1000/180×30 = 166,67 → limiar 16,67. R28: pedido de 10/09 tem 21 dias no ciclo de 01/10

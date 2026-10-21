@@ -207,6 +207,39 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 - **Resíduo conhecido:** 3 NFs efetivadas em 15 e 16/10 **nunca entraram no tracking** (Sayerlack 000132472 e 000132477, de outra série; e uma pessoa física). São entradas de estoque que a reconstrução não vê.
 - **Rodada (fatos de 2026-10-21 15:54 UTC, R60–R63):** precisão dos automáticos **96,2%** (n=111) ✅ · cobertura **49,6%** · 17 inviáveis (23 a 28/07) · **3** indeterminados (compromisso não conciliado; 9 excluídos pela R63). Portão: `FECHADO: cobertura 49,6% < 50% · 17 inviáveis · 3 indeterminados`. Os inviáveis saem da janela por volta de 27/10.
 
+### R65: NF recebida depois do snapshot não é "não conciliada" (diagnóstico dos 3 indeterminados, 2026-10-21)
+
+**Por que eram indeterminados.** Nos três casos, quase todo o valor "não conciliado" vem de **uma NF consolidada da Sayerlack, sem título no CP as-of**, cujo pedido mais antigo tem **exatamente 15 dias** (o limite da R28/R30 é `< 15`):
+
+| ciclo | não conciliado / limiar (10% da reserva) | NF dominante | o que aconteceu |
+|---|---|---|---|
+| 2083 (25/08) | R$ 33.562 / R$ 23.575 | 947706 (R$ 31.667, 8 pedidos de 10–17/08) | emitida em 20/08, recebida em 24/08 15:30; o título nasceu em 25/08 08:00, depois do snapshot de 24/08 10:00 |
+| 3787 e 3788 (21/10) | R$ 20.601 / R$ 20.097 | 955263 (R$ 17.730, 4 pedidos de 06–13/10) | emitida em 15/10, efetivada em 21/10 16:10, depois do snapshot das 10:00; ainda sem título |
+
+3787 e 3788 **não existem mais**: o motor regerou os pendentes do dia como **3793 e 3794** (18:16 UTC). O diagnóstico da tabela foi medido nos sucessores, com a mesma NF dominante. O resto do não conciliado é pequeno: a NF 945097 (R$ 1.895), com título aberto desde 01/08 que o snapshot não representa (a ambiguidade de verdade da R35), e o pedido 2790 (R$ 976, contrato composto retido pela R59).
+
+**A causa é o relógio, não a fonte.** O título do CP Sayerlack nasce no **recebimento**, não no faturamento. Medido sobre os 119 títulos dos fatos de 21/10: dos 113 com t4, **112 nasceram depois do t4**; a exceção (951497) nasceu 22h antes. Do faturamento (t2) até o título passam 8 dias na mediana e 52 no p90. NF faturada e ainda não recebida **não tem** título: isso é o esperado, não uma falha de conciliação.
+
+**R65.** Um componente cujas NFs **não têm título nenhum** as-of e **todas** têm menor t4 conhecido **posterior ao snapshot** vai para `compromisso_a_faturar`, qualquer que seja a idade. O **valor não muda**: o pedido sai inteiro do caixa nos dois casos. Muda só a classe (sai do limiar de indeterminação). Fica tudo fail-closed:
+- NF sem t4, ou com **alguma** linha de tracking sem t4, fica fora (`t4_por_nf` no `fatos.sql` só exporta NF com t4 em todas as linhas);
+- vale o **menor** t4 da NF;
+- título existente que não desconta (não representado na base) **não** ganha a isenção;
+- o componente precisa de **todas** as NFs nessa condição.
+
+**Efeito medido** (fatos de 21/10 ~19h UTC; diagnóstico com o pré-voo R64 ignorado, **não** é rodada):
+- comparada com a main, a R65 não muda nenhum ciclo hoje;
+- com a hipótese de a revisita gravar t4 = efetivação (16:10) na 955263, mudam **só** 3793 e 3794 (indeterminado → viável), com o **mesmo** valor aceito e os mesmos cortes.
+
+**O 2083 continua indeterminado, e é o fail-closed funcionando.** A NF 947706 tem uma linha de tracking (pedido Omie 1172, mesma chave) com t2 = 17/08 e t4 = 20/08 00:14 UTC, **antes da emissão da própria NF** (20/08). É sujeira do tracking. O menor t4 cai antes do snapshot, então não há isenção. Como o snapshot não se refaz, o 2083 só sai do portão quando sair da janela (~23/11), a não ser que a linha do 1172 seja corrigida na fonte (outra entrega: investigar como essa linha recebeu t2/t4 de outra NF).
+
+**Auto-challenge (Codex sem cota até 27/10 07:46, exit 79 → PR em DRAFT, `REVISÃO INDEPENDENTE PENDENTE`).** Em cada cenário o valor sai inteiro, então o erro possível é só pessimismo:
+- título lançado com outro número de NF: conta em dobro;
+- NF paga por fora: já saiu do saldo e sai de novo;
+- t4 gravado com atraso: o título, se existir as-of, tem chave e veta a isenção;
+- t4 de hoje (look-ahead): só **restringe** a isenção, porque NF que nunca foi recebida não ganha nada.
+
+Nenhum desses cenários aprova compra que o caixa não suporta.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
