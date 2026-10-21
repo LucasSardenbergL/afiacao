@@ -87,7 +87,7 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 
 | KPI | Baseline (2026-10-18) | Fim do ciclo 1 | Ciclo 2 (2026-10-20) |
 |---|---|---|---|
-| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **14/12 · 26** (2026-10-21, item 4 ✅: plataforma #3257/#3262, vendas #3265, caça #3268, financeiro #3272, farmer #3273, governança + raio-X no PR de fecho do ciclo 2); em módulo ativo resta só o `useVendaPainel` (nome ainda fora do `types.ts`); o resto está em congelados |
+| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **0/0 · 0** (2026-10-21, medido na main `75a3c33cd` depois do #3322): item 4 ✅ nos ativos (plataforma #3257/#3262, vendas #3265, caça #3268, financeiro #3272, farmer #3273/#3297, governança + raio-X #3282) e **também nos congelados**, a pedido do founder (tarefas #3299, telefonia #3303, knowledge-base #3320, loja-afiacao + produção + prime #3322). Nenhum cast literal sobre nome tipado no `src/` |
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
