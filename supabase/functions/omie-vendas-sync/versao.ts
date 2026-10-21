@@ -91,9 +91,9 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * dia UTC do servidor, AMANHÃ das 21:00 às 23:59 BRT — e, sem dInc, o data_previsao vira o order_date_kpi.
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
- * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
+ * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge. v1.23: documentoParaCadastro com rótulo CPF/CNPJ explícito + alfabeto fechado (Codex ALTO #3180) no criar_cliente (lookup com docClean) e no buscar_cliente; sem pré-condição de banco/ordem.
  */
-export const VERSAO = "v1.22-lookup-confere-documento";
+export const VERSAO = "v1.23-rotulo-documento-explicito";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
