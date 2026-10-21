@@ -178,6 +178,25 @@ O `estoque_fisico` que o motor grava é lido **na geração** do ciclo. A spec �
 - Falsificação: forçar d−1, forçar d, cortar às 13h e vazar o dia `d` na série de demanda deram 4 de 4 vermelhos, com controle verde.
 - Hipóteses descartadas nesta rodada: NF de venda sem título no contas a receber (50 de 1.220; tirá-las só leva a cobertura de 38,8% para 39,8%) e o deslocamento do t4.
 
+### R61: o estoque baixa pela venda FÍSICA do próprio SKU (2026-10-21)
+
+A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substituicao`) e soma os componentes da malha PCP. Isso está certo para **decidir** a reposição, mas o estoque deste SKU só baixa pela venda **dele mesmo**.
+
+- **Regra:** a reconstrução do estoque e o replay usam a `demanda_fisica` (`venda_items_history` crua). A série da decisão (média, amostras, proteção) continua com a `demanda` efetiva, que é o que o motor enxerga. `demanda_fisica` ausente ou com `qtde` nula reprova o pré-voo.
+- **Efeito (fatos de 2026-10-21, com a R60):**
+
+  | | R60 | **R60 + R61** |
+  |---|---|---|
+  | SKUs com fechamento ruim | 40/155 | **35/155** |
+  | Cobertura por episódio | 47,5% | **50,4%** |
+  | Precisão por episódio | 83,6% | 84,3% |
+  | ↳ econômico | 95,4% (n=105) | **96,2% (n=111, cobertura 49,6%)** |
+  | ↳ financeiro | 40,6% (n=10) | 40,0% (n=11) |
+
+- **Viés de seleção:** os 34 cortes econômicos que passaram a ser medidos têm zero rupturas, contra uma taxa de base de 4,1% (17 em 410). O esperado seria cerca de 1,4, e a chance de zero por acaso é de cerca de 24%: nada significativo. Dez cortes já medidos mudaram de classe, porque o replay agora usa a venda física.
+- **Falsificação:** reconstruir com a efetiva, desligar os dois pré-voos e a decisão passar a usar a física deram 4 de 4 vermelhos, com controle verde.
+- **Portão: FECHADO**, mas agora só por três critérios: a precisão geral (84,3%, puxada pelo corte financeiro, quase todo o ciclo 1277), os 17 inviáveis e os 12 indeterminados (9 sem snapshot). A cobertura (50,4%) e o volume (120 episódios) já passam.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
