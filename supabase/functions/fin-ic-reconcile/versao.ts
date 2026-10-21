@@ -5,6 +5,10 @@
 // Contexto: cron diário `fin-ic-reconcile-daily` (0 9 * * *), o único cron ativo da classe.
 // O gate (`authorizeCronOrStaff`) já aceita `x-cron-secret` ⇒ sem gate próprio.
 //
+// v1.2: contraparte pelo CÓDIGO Omie (o cnpj_cpf do título é vazio), pares com unicidade mútua,
+// escrita insert→delete e `{"simular":true}` sem escrita. Diário:
+// docs/historico/fin-ic-reconcile-contraparte-por-codigo.md.
+//
 // ⚠️ SONDAR O BUNDLE PRÉ-SENSOR: CARA — o bundle velho não lê o corpo, então `{"probe":true}` roda a
 // conciliação intercompany inteira (lê CR/CP e regrava os matches). Use `--caro` só sabendo disso.
 
@@ -15,7 +19,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-ic-reconcile");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.1-gate-auth-canonico";
+export const VERSAO = "v1.2-contraparte-por-codigo-omie";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
