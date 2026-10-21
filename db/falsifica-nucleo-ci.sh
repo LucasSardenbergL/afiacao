@@ -442,15 +442,15 @@ else bad "partição em 3 não cobre o manifesto: $v"; fi
 
 # A partição é BALANCEADA pelo custo (db/nucleo-ci-custo.txt, 2026-10-21). As fakes acima não estão na
 # tabela, pesam o default igual e dão o round-robin — então o LPT precisa de caso PRÓPRIO, com custo
-# desigual: a 1ª prova pesa como as outras 4 juntas e tem de ficar SOZINHA na parte 0 (o round-robin
-# daria 1,3,5). E a tabela é parte do contrato: linha malformada aborta, em vez de pesar calada.
+# desigual: a ÚLTIMA prova pesa como as outras 4 juntas e tem de ficar SOZINHA na parte 0. Por ser a
+# última, o caso pega as duas metades do LPT: o round-robin E o guloso sem ordenar por custo dariam 1,3,5. E a tabela é parte do contrato: linha malformada aborta, em vez de pesar calada.
 CUSTO_DESIGUAL="$ESPELHO/custo-desigual.txt"
-printf '# comentário\n\ndb/test-fake-parte-1.sh 40\n' > "$CUSTO_DESIGUAL"
-for n in 2 3 4 5; do printf 'db/test-fake-parte-%s.sh 10\n' "$n" >> "$CUSTO_DESIGUAL"; done
+printf '# comentário\n\ndb/test-fake-parte-5.sh 40\n' > "$CUSTO_DESIGUAL"
+for n in 1 2 3 4; do printf 'db/test-fake-parte-%s.sh 10\n' "$n" >> "$CUSTO_DESIGUAL"; done
 env MANIFESTO="$MP" NUCLEO_CUSTO="$CUSTO_DESIGUAL" NUCLEO_PARTE=0/2 bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista \
   > "$LOGS/parte-lpt.lst" 2>&1 && rc=0 || rc=$?
 lpt="$(tail -n +2 "$LOGS/parte-lpt.lst" | awk '{printf "%s ", $1}')"
-if [ "$rc" -eq 0 ] && [ "$lpt" = "db/test-fake-parte-1.sh " ]; then
+if [ "$rc" -eq 0 ] && [ "$lpt" = "db/test-fake-parte-5.sh " ]; then
   ok "custo desigual: a prova cara fica SOZINHA na parte 0/2 (LPT, não round-robin)"
 else bad "custo desigual não balanceou (rc=$rc): parte 0/2 = '$lpt'"; fi
 printf 'db/test-fake-parte-1.sh quarenta\n' > "$ESPELHO/custo-podre.txt"
