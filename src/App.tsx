@@ -40,6 +40,7 @@ const AdminDemandForecast = lazy(() => import("./pages/AdminDemandForecast"));
 const AdminRoutePlanner = lazy(() => import("./pages/AdminRoutePlanner"));
 const AdminMonthlyReports = lazy(() => import("./pages/AdminMonthlyReports"));
 const AdminProductivity = lazy(() => import("./pages/AdminProductivity"));
+const VendaClientePainel = lazy(() => import("./pages/VendaClientePainel"));
 const AdminLoyalty = lazy(() => import("./pages/AdminLoyalty"));
 const AdminPrime = lazy(() => import("./pages/AdminPrime"));
 const AdminGamification = lazy(() => import("./pages/AdminGamification"));
@@ -301,6 +302,8 @@ const App = () => {
                 <Route path="admin/route-planner" element={<AdminRoutePlanner />} />
                 <Route path="admin/monthly-reports" element={<AdminMonthlyReports />} />
                 <Route path="admin/productivity" element={<AdminProductivity />} />
+                {/* Painel do founder — Venda por cliente (master: gate na página e na RPC venda_painel) */}
+                <Route path="admin/venda-cliente" element={<VendaClientePainel />} />
                 <Route path="admin/loyalty" element={<AdminLoyalty />} />
                 <Route path="admin/prime" element={<AdminPrime />} />
                 <Route path="admin/gamification" element={<AdminGamification />} />

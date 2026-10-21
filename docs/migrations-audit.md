@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **686** custom migrations totais
-- **2215** objetos esperados (criados por estas migrations)
+- **687** custom migrations totais
+- **2216** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 822
+  - `function`: 823
   - `rls_policy`: 482
   - `index`: 287
   - `cron_job`: 196
@@ -5583,6 +5583,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.venda_preco_alvo_comprador` | — |
 | `table` | `public.venda_repasse_aprovado` | — |
 | `index` | `public.venda_repasse_aprovado_vigente_uq` | `venda_repasse_aprovado` |
+
+### `20261020235000_venda_cliente_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_painel` | — |
 
 ## Próximos passos por status
 

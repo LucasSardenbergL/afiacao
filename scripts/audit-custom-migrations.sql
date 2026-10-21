@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 686
+-- Total de custom migrations: 687
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -750,7 +750,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020194332', 'venda_cliente_historico_prova_dados', '20261020194332_venda_cliente_historico_prova_dados.sql'),
   ('20261020200000', 'analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', '20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql'),
   ('20261020202720', 'analytics_ledger_venda_cliente', '20261020202720_analytics_ledger_venda_cliente.sql'),
-  ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql')
+  ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql'),
+  ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2931,7 +2932,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_repasse', 'function', 'public', 'venda_revogar_repasse', ''),
   ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
   ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
-  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado')
+  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado'),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5160,7 +5162,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_repasse', 'function', 'public', 'venda_revogar_repasse', ''),
   ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
   ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
-  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado')
+  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado'),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
 )
 SELECT
   e.migration,

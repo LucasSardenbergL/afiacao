@@ -693,3 +693,9 @@ db/test-venda-repasse.sh                   52  falsificar=15
 # 3 dias, divergência, sombra tardia, 365 dias, taxa 80%, captura 42703 da Onda 3, POST ACL; + prova por dados da
 # linha de base (20261020194332): sem itens, sem volume, limiar 70%.
 db/test-venda-gerador.sh                   66  falsificar=19
+
+# Venda por cliente, Task 7 — painel do founder (20261020235000). venda_painel: gate master (42501),
+# período (22023), contagens por comprador, taxa sem nao_medivel no denominador, complemento fora da
+# taxa, ausente ≠ zero, base da mesma semana do ano anterior, base_confiavel só pelo log da Onda 1,
+# sem chave de custo.
+db/test-venda-painel.sh                    19  falsificar=8
