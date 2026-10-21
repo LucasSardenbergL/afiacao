@@ -65,3 +65,31 @@ Codex: desenho = 405s · 116.530 tokens (sinal certo; 5 P1 de elegibilidade, tod
   SQL (helper espelhado do TS), a RPC pergunta ao próprio snapshot em que linha a categoria caiu.
 - **Tabela vazia em prod não é ausência de fenômeno:** 0 matches vinham de um writer que nunca casou,
   não de "não há intercompany".
+
+## Depois do reconcile: os 3 meses recalculados (2026-10-21)
+
+O `fin-ic-reconcile` (#3294/#3305) gravou 11 pares `auto_matched` (R$ 129.176,66) em 2024-11, 2025-05 e
+2025-06. A RPC devolveu "eliminação pendente" nesses meses, como desenhado: os snapshots eram de março/maio,
+anteriores à composição por categoria. Antes de propor o recálculo, medi que os 11 pares passariam:
+mesmo mês, mesmo valor, nenhum cancelado, e as categorias caem em `receita_bruta` (1.01.02/1.01.03) e em
+`cmv` (2.01.01/2.01.04 na oben) nos snapshots recentes.
+
+O recálculo rodou às 14:54:46Z (os 9 snapshots competência dos 3 meses; nenhum fora deles). Conferido via
+psql-ro:
+
+| Mês | Eliminação (receita e CMV) | Δ receita bruta | Δ CMV | Δ resultado |
+|---|---:|---:|---:|---:|
+| 2024-11 | −84.516,60 | +393.150,69 | +126.895,89 | +326.821,32 |
+| 2025-05 | −27.660,06 | −20.889,96 | −33.769,47 | +13.688,41 |
+| 2025-06 | −17.000,00 | +22.217,37 | +43.939,93 | +7.039,07 |
+
+O resultado consolidado ficou intacto pela eliminação nos 3 meses. Os deltas do BRUTO são do recálculo em si,
+não da eliminação: a receita nova da oben em 2024-11 (551.129,23) é exatamente a soma dos 363 CR não
+cancelados do mês, criados em 29/03, no mesmo dia do snapshot antigo, que foi calculado às 16:04 com a
+importação em andamento e ficou parcial. O resto vem do motor atual (v1.7: `fora_dre` e deduções em linha
+própria).
+
+**Lição:** pela tela não há recálculo pontual de mês passado. `/financeiro/fechamento` só recalcula dentro
+de "Criar fechamento" (abre o registro de fechamento do mês), e o painel só tem "Mês Atual" e "Ano" (todos os
+meses, 3 empresas, 2 regimes). Recalcular um mês histórico com raio mínimo é a ação `calcular_dre` com
+`{ano, meses:[m]}`, regime e empresas explícitos.
