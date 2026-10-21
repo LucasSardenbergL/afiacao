@@ -97,7 +97,7 @@ interface FiltrosEstruturais {
  *  que a RPC aplica: UF, CNAE, datas do preset; + o recorte de inéditos), agregadas por município com a
  *  mesma forma e ordem da RPC (total desc, código). Erro em qualquer página LANÇA — contagem parcial
  *  seria um número menor fabricado. */
-export async function contarSugeridosPorMunicipio(
+async function contarSugeridosPorMunicipio(
   lote: LoteIngest,
   recorte: RecorteLote,
   f: FiltrosEstruturais,
