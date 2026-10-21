@@ -79,9 +79,10 @@ Deno.test("página REPETIDA não completa a contagem (cadastros distintos < decl
   await assertRejeitaCom(consultarCodigos(omie([p1, p2]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
 });
 
-Deno.test("eco de OUTRA página (pedi a 2, veio a 1) → lança", async () => {
+Deno.test("eco de OUTRA página (pedi a 2, veio rotulada 1) → lança, mesmo com a contagem fechando", async () => {
   const p1 = pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2, 1, 2);
-  await assertRejeitaCom(consultarCodigos(omie([p1, p1]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+  const rotuladaErrada = pagina([{ codigo_cliente_omie: 2, cnpj_cpf: OBEN }], 2, 1, 2);
+  await assertRejeitaCom(consultarCodigos(omie([p1, rotuladaErrada]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
 });
 
 Deno.test("sem total_de_registros → lança (completude não provada)", async () => {
