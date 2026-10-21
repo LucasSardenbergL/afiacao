@@ -181,7 +181,7 @@ function EventoFormDialog({
   const [form, setForm] = useState<Record<string, unknown>>({});
 
   if (open && Object.keys(form).length === 0 && !isNew && editing) {
-    setForm(editing as unknown as Record<string, unknown>);
+    setForm({ ...editing });
   }
   if (!open && Object.keys(form).length > 0) {
     setForm({});

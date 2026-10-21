@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { COMPANIES } from '@/contexts/CompanyContext';
+import type { TablesInsert } from '@/integrations/supabase/types';
 import { useUpsertDivida, useReplaceParcelas } from '@/hooks/useEndividamento';
 import type {
   Divida,
@@ -200,7 +201,7 @@ export function DividaFormDialog({
     const id = divida?.id ?? crypto.randomUUID();
     const company = v.company;
 
-    const payload: Partial<Divida> & { company: Company } = {
+    const payload: TablesInsert<'fin_dividas'> & { company: Company } = {
       id,
       company,
       credor: v.credor.trim(),

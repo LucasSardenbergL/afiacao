@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { useFundingInputs, useSalvarFundingInputs } from '@/hooks/useFunding';
 import type { FundingInputs } from '@/services/financeiroService';
+import type { FundingInputsSalvos } from '@/lib/financeiro/borda-tabelas';
 
 const num = (v: string): number => {
   const n = Number(v.trim().replace(',', '.'));
@@ -44,7 +45,7 @@ const DEFAULTS: FundingInputs = {
   gap_estrutural_semanas_min: 6,
 };
 
-function merge(base: FundingInputs, over: FundingInputs | null): FundingInputs {
+function merge(base: FundingInputs, over: FundingInputsSalvos | null): FundingInputs {
   if (!over) return base;
   return {
     fontes: {
