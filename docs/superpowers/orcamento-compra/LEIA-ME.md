@@ -160,6 +160,45 @@ Linhas OBEN com NF desde junho e sem t4: **86 → 2**. Uma é o pedido 1150, com
 - **Indeterminados:** 9 por falta de snapshot (inclui o ciclo de hoje, cujo snapshot ainda não foi tirado) e 3 por compromisso não conciliado.
 - **O portão segue FECHADO.**
 
+### R60: o fechamento do estoque no instante da leitura (2026-10-21)
+
+O `estoque_fisico` que o motor grava é lido **na geração** do ciclo. A spec §7 comparava a reconstrução com o fim de `data − 1`, mas 223 de 279 ciclos são gerados à tarde (a maioria por volta das 17h15 SP), quando o estoque já descontou a venda do próprio dia.
+
+- **Medido (fatos de 2026-10-21):** resíduo entre leituras consecutivas do estoque gravado (Δestoque + demanda − recebimento), com as janelas deslocadas:
+
+  | Deslocamento | −1 dia | 0 (spec) | **+1 dia** | +2 dias |
+  |---|---|---|---|---|
+  | Σ\|resíduo\| | 845 | 760 | **419** | 786 |
+  | Janelas exatas (de 902) | 583 | 583 | **756** | 656 |
+
+  O resíduo líquido vai de 102 para 12. Deslocar os **recebimentos** (t4) para trás ou para a frente piora tudo: o `dRec` está certo.
+- **Regra:** ciclo gerado a partir das 12h SP fecha contra o fim do próprio dia; antes disso, contra o fim de `data − 1`. A série de demanda as-of continua até `data − 1` (R22).
+- **Efeito (mesmos fatos):** SKUs com fechamento ruim de 90 para **40**/155; cobertura por episódio de 38,8% para **47,5%**; precisão por episódio de 82,6% para 83,6%. Por motivo: **econômico 95,4%** (n=105, cobertura 46,5%) e financeiro 40,6% (n=10, quase tudo o ciclo 1277).
+- **Ressalva (viés de seleção do conjunto medido):** os 71 cortes econômicos que a R60 passou a medir (R$ 13,3 mil) têm **zero** rupturas, contra 7,6% dos 343 já medidos. A chance disso por acaso é de cerca de 0,4%. A R60 não usa o resultado do corte (o fechamento compara com o estoque gravado no momento da decisão), mas o conjunto medido **não é aleatório**: os SKUs que fecham tendem a ser os que o corte não rompe. Os 95,4% valem para os 46,5% medidos, e é por isso que o portão exige cobertura ≥ 50%.
+- Falsificação: forçar d−1, forçar d, cortar às 13h e vazar o dia `d` na série de demanda deram 4 de 4 vermelhos, com controle verde.
+- Hipóteses descartadas nesta rodada: NF de venda sem título no contas a receber (50 de 1.220; tirá-las só leva a cobertura de 38,8% para 39,8%) e o deslocamento do t4.
+
+### R61: o estoque baixa pela venda FÍSICA do próprio SKU (2026-10-21)
+
+A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substituicao`) e soma os componentes da malha PCP. Isso está certo para **decidir** a reposição, mas o estoque deste SKU só baixa pela venda **dele mesmo**.
+
+- **Regra:** a reconstrução do estoque e o replay usam a `demanda_fisica` (`venda_items_history` crua). A série da decisão (média, amostras, proteção) continua com a `demanda` efetiva, que é o que o motor enxerga. `demanda_fisica` ausente ou com `qtde` nula reprova o pré-voo.
+- **Efeito (fatos de 2026-10-21, com a R60):**
+
+  | | R60 | **R60 + R61** |
+  |---|---|---|
+  | SKUs com fechamento ruim | 40/155 | **35/155** |
+  | Cobertura por episódio | 47,5% | **50,4%** |
+  | Precisão por episódio | 83,6% | 84,3% |
+  | ↳ econômico | 95,4% (n=105) | **96,2% (n=111, cobertura 49,6%)** |
+  | ↳ financeiro | 40,6% (n=10) | 40,0% (n=11) |
+
+- **Viés de seleção:** os 34 cortes econômicos que passaram a ser medidos têm zero rupturas, contra uma taxa de base de 4,1% (17 em 410). O esperado seria cerca de 1,4, e a chance de zero por acaso é de cerca de 24%: nada significativo. Dez cortes já medidos mudaram de classe, porque o replay agora usa a venda física.
+- **Falsificação:** reconstruir com a efetiva, desligar os dois pré-voos e a decisão passar a usar a física deram 4 de 4 vermelhos, com controle verde.
+- **Os 17 inviáveis e o corte financeiro são a MESMA semana:** todos os inviáveis são ciclos de 23 a 28/07, o aperto de caixa de julho; desde 29/07, todo ciclo com veredito é viável. A janela é de 90 dias, então essa semana sai dela por volta de 27/10. Aí os inviáveis vão a 0 e o acerto geral tende ao do econômico. **Leitura honesta:** o portão abriria porque a semana difícil envelheceu, não porque a guarda provou que lida com aperto de caixa. A decisão sobre o que a guarda faz quando o caixa não comporta o pedido continua de pé.
+- **Indeterminados por snapshot (14 a 20/10):** a `fin-cashflow-engine` estourava o tempo lendo `v_titulo_baixas` com os três cenários em paralelo (`acoes_execucoes`: `FalhaLeituraCritica` 57014). Corrigido pela v1.9 (#3252), no ar desde 21/10 às 02:08Z, e o cron de 21/10 rodou 9 de 9. Snapshot não se refaz retroativamente: esses ciclos ficam indeterminados até saírem da janela, por volta de meados de janeiro.
+- **Portão: FECHADO**, mas agora só por três critérios: a precisão geral (84,3%, puxada pelo corte financeiro, quase todo o ciclo 1277), os 17 inviáveis e os 12 indeterminados (9 sem snapshot). A cobertura (50,4%) e o volume (120 episódios) já passam.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅

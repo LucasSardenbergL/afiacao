@@ -76,6 +76,8 @@ export interface Fatos {
   }[];
   linhas: { raiz: number; pedido_id: number; sku_codigo_omie: string; qtde: Num; fator_embalagem_portal: Num; preco_unitario: Num; estoque_atual: Num; estoque_fisico: Num; ponto_pedido: Num; modo_promocao: string | null; preco_sem_desconto: Num }[];
   demanda: { sku: string; data: DataISO; qtde: Num }[];
+  /** R61: venda FÍSICA do próprio SKU (venda_items_history crua: sem substituição nem malha) — reconstrução e replay. */
+  demanda_fisica: { sku: string; data: DataISO; qtde: Num }[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
@@ -146,6 +148,23 @@ export function dataLocalSP(instante: string): DataISO {
   return `${partes.year}-${partes.month}-${partes.day}`;
 }
 
+const FMT_HORA_SP = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23' });
+/** Hora (0–23) do instante em America/Sao_Paulo. */
+export function horaLocalSP(instante: string): number {
+  const t = ts(instante);
+  if (!Number.isFinite(t)) throw new Error(`instante inválido: ${instante}`);
+  return Number(FMT_HORA_SP.formatToParts(new Date(t)).find((x) => x.type === 'hour')?.value);
+}
+
+/**
+ * R60: instante do `estoque_fisico` gravado pelo motor. Ele é lido NA GERAÇÃO do ciclo: gerado a partir do
+ * meio-dia (SP), o estoque já descontou a venda do próprio dia → fecha contra o fim de `data`; de manhã, contra o
+ * fim de `data − 1` (spec §7). Medido 2026-10-21: 223 de 279 ciclos são gerados à tarde (a maioria ~17h15), e
+ * deslocar as janelas entre leituras para o fim do dia levou Σ|resíduo| de 760 para 419 e as janelas exatas de
+ * 583 para 756 de 902 (−1 dia: 845; +2 dias: 786).
+ */
+export const HORA_FECHAMENTO_NO_DIA = 12;
+
 function exigir(v: Num, nome: string): number {
   if (v == null || !Number.isFinite(Number(v))) throw new Error(`${nome} ausente — rode o preVoo`);
   return Number(v);
@@ -188,6 +207,8 @@ export function preVoo(f: Fatos): string[] {
     else if (!(idadeH >= 0 && idadeH <= ENCERRADOS_IDADE_MAX_H)) falhas.push(`publicação de encerrados do Omie fora de ${ENCERRADOS_IDADE_MAX_H}h (R59) — conjunto velho não vale como o de hoje`);
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
+  if (!Array.isArray(f.demanda_fisica)) falhas.push('demanda_fisica ausente — fatos.sql antigo (R61)');
+  else if (f.demanda_fisica.some((d) => d.qtde == null)) falhas.push('demanda_fisica com qtde nula — reconstrução de estoque inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
   if (f.disparados.some((p) => p.valor_total == null)) falhas.push('disparados com valor_total nulo — compromissos inválidos');
   if (f.titulos_sayerlack.some((t) => t.valor == null)) falhas.push('titulos_sayerlack com valor nulo — conciliação inválida');
@@ -199,20 +220,30 @@ export function preVoo(f: Fatos): string[] {
  * Série diária de demanda do SKU entre [de, ate], com censura pelos dias de estoque reconstruído ≤ 0.
  * A reconstrução ancora no estoque de HOJE: monta [de, hoje], reconstrói para trás e só então recorta até `ate`.
  * Estoque de hoje ausente → série toda censurada e estoque NaN (nunca 0 fabricado).
+ *
+ * R61: o estoque deste SKU só baixa pela venda DELE. A reconstrução (e a `serieFisica`, do replay) usa a venda física
+ * crua; a `serie` da decisão segue com a demanda efetiva (substituição + malha), que é o que o motor enxerga.
+ * Medido 2026-10-21: reconstruir com a efetiva punha no SKU novo a venda que baixou o estoque do antigo.
  */
-function serieDoSku(f: Fatos, sku: string, de: DataISO, ate: DataISO): { serie: SerieDiaria; estoqueFim: number[] } {
+function serieDoSku(f: Fatos, sku: string, de: DataISO, ate: DataISO): { serie: SerieDiaria; serieFisica: SerieDiaria; estoqueFim: number[] } {
   const hoje = f.meta.hoje;
   const nTotal = diffDias(de, hoje) + 1;
   const n = diffDias(de, ate) + 1;
   if (nTotal < 1 || n < 1 || n > nTotal) throw new Error(`janela inválida ${de}..${ate} (hoje ${hoje})`);
   const atual = numOuNull(f.estoque.find((e) => e.sku === sku)?.estoque_fisico ?? null);
-  if (atual == null) return { serie: new Array(n).fill(null), estoqueFim: new Array(n).fill(Number.NaN) };
+  if (atual == null) return { serie: new Array(n).fill(null), serieFisica: new Array(n).fill(null), estoqueFim: new Array(n).fill(Number.NaN) };
   const dem = new Array<number>(nTotal).fill(0);
+  const fis = new Array<number>(nTotal).fill(0);
   const rec = new Array<number>(nTotal).fill(0);
   for (const d of f.demanda) if (d.sku === sku && d.data >= de && d.data <= hoje) dem[diffDias(de, d.data)] += exigir(d.qtde, 'demanda.qtde');
+  for (const d of f.demanda_fisica) if (d.sku === sku && d.data >= de && d.data <= hoje) fis[diffDias(de, d.data)] += exigir(d.qtde, 'demanda_fisica.qtde');
   for (const r of f.recebimentos) if (r.sku === sku && r.data >= de && r.data <= hoje) rec[diffDias(de, r.data)] += exigir(r.qtde, 'recebimentos.qtde');
-  const estoqueFim = reconstruirEstoque(atual, dem, rec);
-  return { serie: marcarCensura(dem, estoqueFim).slice(0, n), estoqueFim: estoqueFim.slice(0, n) };
+  const estoqueFim = reconstruirEstoque(atual, fis, rec);
+  return {
+    serie: marcarCensura(dem, estoqueFim).slice(0, n),
+    serieFisica: marcarCensura(fis, estoqueFim).slice(0, n),
+    estoqueFim: estoqueFim.slice(0, n),
+  };
 }
 
 /** Média e desvio-padrão amostral dos dias NÃO censurados da série as-of (R22). */
@@ -449,6 +480,7 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const data = ciclo.data_ciclo;
   // R52: as-of = a decisão do motor (geração), não o disparo humano
   const momento = ciclo.horario_geracao;
+  const fechaNoDia = horaLocalSP(momento) >= HORA_FECHAMENTO_NO_DIA;
   const status = statusEfetivo(ciclo);
   const reserva = reservaDe(f, data, momento, cfg.reservaDias);
   const asOf = lagsAsOf(f, data);
@@ -484,11 +516,13 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
       precoCheioPromocao: l.modo_promocao ? precoOuNull(l.preco_sem_desconto) : null,
     };
     const embs = quebrarEmEmbalagens(linha, { fretePerc: cfg.fretePerc, dataPagamento });
-    const { serie, estoqueFim } = serieDoSku(f, linha.sku, addDias(data, -180), addDias(data, -1));
+    // Até `data` só para o fechamento (R60); a série de demanda as-of continua até data−1 (R22).
+    const ateDia = serieDoSku(f, linha.sku, addDias(data, -180), data);
+    const serie = ateDia.serie.slice(0, -1);
 
-    // Erro de fechamento (spec §7): reconstrução no fim de data−1 × estoque_fisico gravado pelo motor.
+    // Erro de fechamento (spec §7 + R60): reconstrução no instante da leitura × estoque_fisico gravado pelo motor.
     const gravado = numOuNull(l.estoque_fisico);
-    const reconstruido = estoqueFim[estoqueFim.length - 1];
+    const reconstruido = ateDia.estoqueFim[ateDia.estoqueFim.length - (fechaNoDia ? 1 : 2)];
     const erro = gravado != null && Number.isFinite(reconstruido) ? reconstruido - gravado : null;
     const ok = erro != null && Math.abs(erro) <= Math.max(passoDaLinha(linha), 0.1 * Math.abs(gravado as number));
     fechamento.push({ sku: linha.sku, erro, ok });
@@ -591,9 +625,10 @@ function chegadaDoSku(f: Fatos, cicloId: number, sku: string, data: DataISO, L: 
 
 /** Replay com e sem `qtde` removida no dia `diaChegada`, de `data` até `ate`. */
 function replayComSem(f: Fatos, sku: string, qtde: number, data: DataISO, ate: DataISO, diaChegada: number, leadTime: number, pontoPedido: number | null) {
-  const { serie, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
+  // R61: o replay simula o estoque FÍSICO do SKU — a demanda que o esvazia é a venda dele mesmo
+  const { serieFisica, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
   const estoqueInicial = estoqueFim[0];
-  const demanda = serie.slice(1);
+  const demanda = serieFisica.slice(1);
   const recebimentos = f.recebimentos
     .filter((r) => r.sku === sku && r.data >= data && r.data <= ate)
     .map((r) => ({ dia: diffDias(data, r.data), qtde: exigir(r.qtde, 'recebimentos.qtde') }));
