@@ -1,0 +1,356 @@
+// Calibração do replay TSB (spec §5.3 "Parâmetros", §5.9 "Calibração") e a escolha da candidata.
+//
+// Contexto fixo da calibração: janela 2026-02-01→2026-04-30, `calibracao = true` (LT só de documentos com t4 <= fim da
+// calibração), LT `empirico`, falta `espera`, estado inicial `reconstruido` e 50 replicações (0..49). Nada da avaliação
+// entra: os parâmetros são pré-computados com dados < d e o estado inicial usa só eventos até o fim da calibração.
+//
+// Alvo por classe = max(piso da classe, fill rate do F0 na calibração − 0,25 p.p.) (spec §5.3). A busca usa a grade fixa
+// de quantis (o serviço NÃO é monotônico no nível: múltiplo de embalagem × LT do dia), descida por coordenada (uma classe
+// por vez, duas rodadas) e valida as três classes juntas no trio final. Escolhe o trio de menor estoque médio que atinge
+// o alvo; desempate pelo menor quantil. Nada atinge ⇒ inviável.
+//
+// DECISÕES DOCUMENTADAS (Task 9):
+//  · Só os SKUs `alterados` (intermitentes/lumpy no corte) trocam de fórmula; os suaves/erráticos ficam com o F0 em todas
+//    as variantes (spec §5.3 "Classificação") — `mapaMisto`.
+//  · O fill rate da classe é o da célula da classe (A/B/C: todos os SKUs da classe, com os suaves no F0), como a spec
+//    define o alvo; as células `*_alt` não entram na calibração (só são medidas na avaliação, critério 2).
+//  · Classe sem linha na calibração (fill do F0 null) é "não observável": fica no quantil mais alto da grade (conservador
+//    para o serviço) e o veredito vira INCONCLUSIVO (spec §5.9).
+//  · Estoque médio = estoque físico médio a CMC da coorte inteira (célula total), ponderado por dias corridos, somando as
+//    replicações.
+import { CENARIOS_FALTA, FOLGA_ALVO_PP, GRADE_QUANTIS, JANELAS, PISOS_SERVICO, TSB } from './config';
+import { preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
+import { coorte } from './parados';
+import { CELULAS, simular, type Celula, type SomasSemanais } from './simulador';
+import type { Classe, Dados, Data } from './tipos';
+
+export const CLASSES: readonly Classe[] = ['A', 'B', 'C'];
+export const REPS_CALIBRACAO = 50;
+/** Janelas do F3 (du) candidatas na calibração (ParamsFormula.janelaDias). */
+export const JANELAS_F3 = [60, 90, 180] as const;
+/** Ordem de simplicidade (spec §5.9): F1 < F3 < F2. */
+export const ORDEM_SIMPLICIDADE: readonly Formula[] = ['F1', 'F3', 'F2'];
+/** Uma fórmula mais simples fica com a vaga se o estoque dela estiver a ≤ 1 p.p. de capital (do F0) da melhor. */
+export const TOLERANCIA_SIMPLICIDADE_PP = 0.01;
+const JANELA_CALIBRACAO: [Data, Data] = [JANELAS.calibracaoIni, JANELAS.calibracaoFim];
+
+// ── agregação de replicações (somas; o bootstrap e a calibração usam a MÉDIA, que preserva todas as razões) ─────────
+
+/** Acumula `s` em `acc` (mesmas semanas). Margem semanal null (só canceladas sem cmc) entra como 0 conhecido. */
+export function somarSomas(acc: SomasSemanais | null, s: SomasSemanais): SomasSemanais {
+  if (acc === null) {
+    return {
+      ...structuredClone({ ...s, pedidos: undefined, desfechos: undefined }),
+      cancelada: { valor: [...s.cancelada.valor], margem: s.cancelada.margem.map((m) => m ?? 0) },
+    };
+  }
+  if (acc.semanas.length !== s.semanas.length || acc.semanas.some((d, i) => d !== s.semanas[i])) throw new Error('AGREGACAO_SEMANAS_DIFERENTES');
+  const mais = (a: number[], b: readonly number[]) => {
+    for (let i = 0; i < a.length; i++) a[i] += b[i];
+  };
+  for (const c of CELULAS) {
+    const a = acc.porCelula[c];
+    const b = s.porCelula[c];
+    mais(a.demandadas, b.demandadas);
+    mais(a.integrais, b.integrais);
+    mais(a.unidDem, b.unidDem);
+    mais(a.unidAt, b.unidAt);
+    mais(a.valorDem, b.valorDem);
+    mais(a.valorAt, b.valorAt);
+  }
+  mais(acc.estoqueCmcDias, s.estoqueCmcDias);
+  mais(acc.entregue.imediata, s.entregue.imediata);
+  mais(acc.entregue.tardia, s.entregue.tardia);
+  mais(acc.entregue.emergencial, s.entregue.emergencial);
+  mais(acc.cancelada.valor, s.cancelada.valor);
+  for (let i = 0; i < acc.cancelada.margem.length; i++) acc.cancelada.margem[i] = (acc.cancelada.margem[i] ?? 0) + (s.cancelada.margem[i] ?? 0);
+  mais(acc.canceladaSemCmc.linhas, s.canceladaSemCmc.linhas);
+  mais(acc.canceladaSemCmc.valor, s.canceladaSemCmc.valor);
+  mais(acc.valorDiasAtraso, s.valorDiasAtraso);
+  acc.terminal.estoqueCmc += s.terminal.estoqueCmc;
+  acc.terminal.abertasCmc += s.terminal.abertasCmc;
+  acc.terminal.backlogValor += s.terminal.backlogValor;
+  acc.terminal.backlogDiasAtraso += s.terminal.backlogDiasAtraso;
+  acc.balanco.inicial += s.balanco.inicial;
+  acc.balanco.recebido += s.balanco.recebido;
+  acc.balanco.entregue += s.balanco.entregue;
+  acc.balanco.final += s.balanco.final;
+  // diasCorridos é do calendário (igual em todas as reps): NÃO soma.
+  return acc;
+}
+
+/**
+ * Média de `n` replicações já somadas: divide tudo por n, menos `diasCorridos` (calendário). As razões (fill rate, estoque
+ * médio) e o custo líquido da média são exatamente a média/razão agregada das replicações; `demandadas` volta à contagem
+ * OBSERVADA de linhas (é igual em todas as reps).
+ */
+export function mediaSomas(soma: SomasSemanais, n: number): SomasSemanais {
+  if (!(Number.isInteger(n) && n > 0)) throw new Error('AGREGACAO_N_INVALIDO');
+  const m = structuredClone(soma);
+  const div = (a: (number | null)[]) => {
+    for (let i = 0; i < a.length; i++) a[i] = (a[i] ?? 0) / n;
+  };
+  for (const c of CELULAS) {
+    const x = m.porCelula[c];
+    div(x.demandadas);
+    div(x.integrais);
+    div(x.unidDem);
+    div(x.unidAt);
+    div(x.valorDem);
+    div(x.valorAt);
+  }
+  div(m.estoqueCmcDias);
+  div(m.entregue.imediata);
+  div(m.entregue.tardia);
+  div(m.entregue.emergencial);
+  div(m.cancelada.valor);
+  div(m.cancelada.margem);
+  div(m.canceladaSemCmc.linhas);
+  div(m.canceladaSemCmc.valor);
+  div(m.valorDiasAtraso);
+  for (const k of ['estoqueCmc', 'abertasCmc', 'backlogValor', 'backlogDiasAtraso'] as const) m.terminal[k] /= n;
+  for (const k of ['inicial', 'recebido', 'entregue', 'final'] as const) m.balanco[k] /= n;
+  return m;
+}
+
+const soma = (v: readonly number[]) => v.reduce((t, x) => t + x, 0);
+/** Fill rate (Σ integrais ÷ Σ demandadas) da célula; null sem linha. */
+export function fillDaCelula(s: SomasSemanais, c: Celula): number | null {
+  const dem = soma(s.porCelula[c].demandadas);
+  return dem > 0 ? soma(s.porCelula[c].integrais) / dem : null;
+}
+/** Estoque médio a CMC ponderado por dias corridos (já é por rep se `s` for média). */
+export function estoqueDaJanela(s: SomasSemanais): number {
+  const dias = soma(s.diasCorridos);
+  if (!(dias > 0)) throw new Error('CALIBRACAO_SEM_DIAS');
+  return soma(s.estoqueCmcDias) / dias;
+}
+
+// ── mapa de parâmetros: Fn só nos alterados ───────────────────────────────────────────────────────────────────────
+
+/**
+ * Parâmetros da população: `fn` nos SKUs `alterados`, F0 nos demais (spec §5.3: os suaves ficam na fórmula atual).
+ * `fn` null = o próprio F0. Só as chaves `${sku}|${d}` dos SKUs de `populacao`.
+ */
+export function mapaMisto(
+  f0: Map<string, ParamsDia>,
+  fn: Map<string, ParamsDia> | null,
+  populacao: ReadonlySet<string>,
+  alterados: ReadonlySet<string>,
+): Map<string, ParamsDia> {
+  const out = new Map<string, ParamsDia>();
+  for (const [k, p] of f0) {
+    const sku = k.slice(0, k.indexOf('|'));
+    if (!populacao.has(sku)) continue;
+    if (fn !== null && alterados.has(sku)) {
+      const q = fn.get(k);
+      if (q === undefined) throw new Error(`MAPA_MISTO_SEM_PARAMETRO:${k}`);
+      out.set(k, q);
+    } else out.set(k, p);
+  }
+  return out;
+}
+
+// ── alvo e busca na grade ────────────────────────────────────────────────────────────────────────────────────────
+
+/** Alvo da classe = max(piso, fill do F0 na calibração − 0,25 p.p.); F0 sem linha ⇒ null (não observável). */
+export function alvoDaClasse(classe: Classe, fillF0: number | null): number | null {
+  if (fillF0 === null) return null;
+  return Math.max(PISOS_SERVICO[classe], fillF0 - FOLGA_ALVO_PP);
+}
+
+export type Trio = Record<Classe, number>;
+export interface AvaliacaoTrio {
+  fill: Record<Classe, number | null>;
+  estoque: number;
+}
+export interface ResultadoBusca {
+  quantil: Trio;
+  inviavel: boolean;
+  avaliacao: AvaliacaoTrio;
+  /** Classes sem linha na calibração (alvo null): ficam no quantil mais alto e geram INCONCLUSIVO. */
+  naoObservaveis: Classe[];
+  /** Trios distintos avaliados. */
+  avaliacoes: number;
+}
+
+const QMAX = GRADE_QUANTIS[GRADE_QUANTIS.length - 1];
+const atinge = (a: AvaliacaoTrio, alvo: Record<Classe, number | null>, c: Classe): boolean => {
+  const meta = alvo[c];
+  if (meta === null) return true; // não observável: sem restrição (fica no quantil mais alto)
+  const f = a.fill[c];
+  return f !== null && f >= meta - 1e-12;
+};
+
+/**
+ * Descida por coordenada na grade fixa (2 rodadas, ordem A, B, C) e validação conjunta do trio final. Em cada classe,
+ * entre os quantis da grade que atingem o alvo DELA (com as outras fixas), fica o de menor estoque; empate → menor
+ * quantil. Nenhum atinge ⇒ mantém o atual (a validação conjunta decide). Começa no quantil mais alto em todas.
+ */
+export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Classe, number | null>): ResultadoBusca {
+  const memo = new Map<string, AvaliacaoTrio>();
+  const aval = (q: Trio): AvaliacaoTrio => {
+    const k = `${q.A}|${q.B}|${q.C}`;
+    let a = memo.get(k);
+    if (!a) memo.set(k, (a = avaliar(q)));
+    return a;
+  };
+  const naoObservaveis = CLASSES.filter((c) => alvo[c] === null);
+  const trio: Trio = { A: QMAX, B: QMAX, C: QMAX };
+  for (let rodada = 0; rodada < 2; rodada++) {
+    for (const c of CLASSES) {
+      if (alvo[c] === null) continue;
+      let melhor: { q: number; estoque: number } | null = null;
+      for (const q of GRADE_QUANTIS) {
+        const a = aval({ ...trio, [c]: q });
+        if (!atinge(a, alvo, c)) continue;
+        if (melhor === null || a.estoque < melhor.estoque - 1e-9) melhor = { q, estoque: a.estoque }; // grade crescente: empate fica no menor
+      }
+      if (melhor !== null) trio[c] = melhor.q;
+    }
+  }
+  const final = aval(trio);
+  const inviavel = !CLASSES.every((c) => atinge(final, alvo, c));
+  return { quantil: { ...trio }, inviavel, avaliacao: final, naoObservaveis, avaliacoes: memo.size };
+}
+
+// ── avaliação simulada na janela de calibração ──────────────────────────────────────────────────────────────────
+
+export interface OpcoesCalibracao {
+  reps?: number;
+  /** Cache de grades em disco (null = sem disco; padrão $REPLAY_DADOS/cache). */
+  cacheDir?: string | null;
+}
+
+/** Simula `reps` replicações no contexto fixo da calibração e devolve o fill por classe e o estoque médio. */
+export function avaliarNaCalibracao(dados: Dados, formula: Formula, params: Map<string, ParamsDia>, reps: number): AvaliacaoTrio & { somas: SomasSemanais } {
+  let acc: SomasSemanais | null = null;
+  for (let rep = 0; rep < reps; rep++) {
+    const s = simular({ formula, params, rep, lt: 'empirico', falta: CENARIOS_FALTA.servico[0], inicial: 'reconstruido', janela: JANELA_CALIBRACAO, dados });
+    acc = somarSomas(acc, s);
+  }
+  const m = mediaSomas(acc!, reps);
+  return { fill: { A: fillDaCelula(m, 'A'), B: fillDaCelula(m, 'B'), C: fillDaCelula(m, 'C') }, estoque: estoqueDaJanela(m), somas: m };
+}
+
+const QUANTIL_NEUTRO: ParamsFormula = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
+
+/** Parâmetros no contexto da calibração (todos os ativos, dias até o fim da calibração; cache de grades opcional). */
+function preComputarCtx(f: Formula, dados: Dados, p: ParamsFormula, o: OpcoesCalibracao): Map<string, ParamsDia> {
+  return preComputarComOrigem(f, dados, p, { calibracao: true }, o.cacheDir === undefined ? {} : { cacheDir: o.cacheDir }).mapa;
+}
+
+interface BaseCalibracao {
+  f0Mapa: Map<string, ParamsDia>;
+  fillF0: Record<Classe, number | null>;
+  estoqueF0: number;
+  alvo: Record<Classe, number | null>;
+}
+const memoBase = new WeakMap<Dados, Map<number, BaseCalibracao>>();
+
+/** F0 na calibração: só para o alvo (spec §5.3) e para a régua de 1 p.p. de capital da escolha. */
+export function baseDaCalibracao(dados: Dados, opcoes: OpcoesCalibracao = {}): BaseCalibracao {
+  const reps = opcoes.reps ?? REPS_CALIBRACAO;
+  let porReps = memoBase.get(dados);
+  if (!porReps) memoBase.set(dados, (porReps = new Map()));
+  const pronto = porReps.get(reps);
+  if (pronto) return pronto;
+  const c = coorte(dados);
+  const f0Mapa = mapaMisto(preComputarCtx('F0', dados, QUANTIL_NEUTRO, opcoes), null, c.populacao, c.alterados);
+  const a = avaliarNaCalibracao(dados, 'F0', f0Mapa, reps);
+  const base: BaseCalibracao = {
+    f0Mapa,
+    fillF0: a.fill,
+    estoqueF0: a.estoque,
+    alvo: { A: alvoDaClasse('A', a.fill.A), B: alvoDaClasse('B', a.fill.B), C: alvoDaClasse('C', a.fill.C) },
+  };
+  porReps.set(reps, base);
+  return base;
+}
+
+export interface ResultadoCalibracao {
+  formula: Formula;
+  params: ParamsFormula;
+  inviavel: boolean;
+  /** Estoque médio da coorte no trio escolhido (no inviável: o do trio final da busca, só informativo). */
+  estoqueMedio: number;
+  /** Estoque médio do F0 na calibração (régua de 1 p.p. da escolha). */
+  estoqueF0: number;
+  alvo: Record<Classe, number | null>;
+  fillF0: Record<Classe, number | null>;
+  fill: Record<Classe, number | null>;
+  naoObservaveis: Classe[];
+  /** Cada β (F2) ou janela (F3) tentado: o melhor viável vence. */
+  tentativas: { params: ParamsFormula; inviavel: boolean; estoqueMedio: number; fill: Record<Classe, number | null>; avaliacoes: number }[];
+}
+
+/**
+ * Calibra F1, F2 (por β) ou F3 (por janela) na janela de calibração: grade de quantis, descida por coordenada e validação
+ * conjunta. Entre os β/janelas viáveis fica o de menor estoque (empate: o primeiro da lista). Nenhum viável ⇒ inviável.
+ */
+export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}): ResultadoCalibracao {
+  if (f === 'F0') throw new Error('CALIBRAR_F0: o F0 não é calibrado (só dá o alvo)');
+  const reps = opcoes.reps ?? REPS_CALIBRACAO;
+  const base = baseDaCalibracao(dados, opcoes);
+  const c = coorte(dados);
+  const variantes: Omit<ParamsFormula, 'quantil'>[] =
+    f === 'F2' ? TSB.betas.map((beta) => ({ beta })) : f === 'F3' ? JANELAS_F3.map((janelaDias) => ({ janelaDias })) : [{}];
+  const tentativas: ResultadoCalibracao['tentativas'] = [];
+  let escolhida: { params: ParamsFormula; busca: ResultadoBusca } | null = null;
+  let fallback: { params: ParamsFormula; busca: ResultadoBusca } | null = null;
+  for (const v of variantes) {
+    const avaliar = (q: Trio): AvaliacaoTrio => {
+      const p: ParamsFormula = { ...v, quantil: q };
+      const mapa = mapaMisto(base.f0Mapa, preComputarCtx(f, dados, p, opcoes), c.populacao, c.alterados);
+      return avaliarNaCalibracao(dados, f, mapa, reps);
+    };
+    const busca = buscarTrio(avaliar, base.alvo);
+    const params: ParamsFormula = { ...v, quantil: busca.quantil };
+    tentativas.push({ params, inviavel: busca.inviavel, estoqueMedio: busca.avaliacao.estoque, fill: busca.avaliacao.fill, avaliacoes: busca.avaliacoes });
+    if (!busca.inviavel && (escolhida === null || busca.avaliacao.estoque < escolhida.busca.avaliacao.estoque - 1e-9)) escolhida = { params, busca };
+    if (fallback === null || busca.avaliacao.estoque < fallback.busca.avaliacao.estoque - 1e-9) fallback = { params, busca };
+  }
+  const r = (escolhida ?? fallback)!;
+  return {
+    formula: f,
+    params: r.params,
+    inviavel: escolhida === null,
+    estoqueMedio: r.busca.avaliacao.estoque,
+    estoqueF0: base.estoqueF0,
+    alvo: base.alvo,
+    fillF0: base.fillF0,
+    fill: r.busca.avaliacao.fill,
+    naoObservaveis: r.busca.naoObservaveis,
+    tentativas,
+  };
+}
+
+// ── escolha da candidata e veredito da calibração ────────────────────────────────────────────────────────────────
+
+/**
+ * Candidata = a viável de menor estoque; uma mais simples (F1 < F3 < F2) a ≤ 1 p.p. de capital (fração do estoque do F0
+ * na calibração) dela fica com a vaga. Nenhuma viável ⇒ 'NENHUMA'.
+ */
+export function escolherCandidata(resultados: readonly Pick<ResultadoCalibracao, 'formula' | 'inviavel' | 'estoqueMedio' | 'estoqueF0'>[]): Formula | 'NENHUMA' {
+  const viaveis = resultados.filter((r) => !r.inviavel);
+  if (viaveis.length === 0) return 'NENHUMA';
+  const melhor = viaveis.reduce((a, b) => (b.estoqueMedio < a.estoqueMedio - 1e-9 ? b : a));
+  for (const f of ORDEM_SIMPLICIDADE) {
+    const r = viaveis.find((x) => x.formula === f);
+    if (!r) continue;
+    if (!(r.estoqueF0 > 0)) throw new Error('CALIBRACAO_ESTOQUE_F0_INVALIDO');
+    if ((r.estoqueMedio - melhor.estoqueMedio) / r.estoqueF0 <= TOLERANCIA_SIMPLICIDADE_PP + 1e-12) return f;
+  }
+  return melhor.formula;
+}
+
+/** Veredito que a calibração já decide: todas inviáveis ⇒ NO-GO `INVIAVEL_NA_CALIBRACAO`; classe não observável ⇒ INCONCLUSIVO. */
+export function vereditoDaCalibracao(
+  resultados: readonly Pick<ResultadoCalibracao, 'formula' | 'inviavel' | 'estoqueMedio' | 'estoqueF0' | 'naoObservaveis'>[],
+): { veredito: 'NO-GO' | 'INCONCLUSIVO'; motivos: string[] } | null {
+  const cand = escolherCandidata(resultados);
+  if (cand === 'NENHUMA') return { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] };
+  const r = resultados.find((x) => x.formula === cand)!;
+  if (r.naoObservaveis.length > 0) return { veredito: 'INCONCLUSIVO', motivos: [`CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:${r.naoObservaveis.join(',')}`] };
+  return null;
+}
