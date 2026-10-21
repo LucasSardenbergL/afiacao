@@ -9,6 +9,7 @@ import { Loader2, AlertTriangle, Search, CheckCircle2, Wrench, ListChecks, Packa
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
 import { decodeHtmlEntities } from '@/lib/utils';
+import { comNulo } from '@/lib/rpc-args';
 
 // Fila de revisão da BOM destilada (Fase 1A). Lê `pcp_bom_excecoes` — divergências
 // entre a malha do Omie e o modelo paramétrico destilado por linha de abrasivo.
@@ -89,13 +90,13 @@ const ProducaoBomExcecoes = () => {
   const loadExcecoes = async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from('pcp_bom_excecoes' as never)
+      .from('pcp_bom_excecoes')
       .select('*')
       .order('materializado_em', { ascending: false });
     if (error) {
       toast.error('Erro ao carregar exceções: ' + error.message);
     } else if (data) {
-      setRows(data as unknown as Excecao[]);
+      setRows(data);
     }
     setLoading(false);
   };
@@ -106,13 +107,14 @@ const ProducaoBomExcecoes = () => {
     const key = rowKey(e);
     setDispondo(key);
     try {
-      const { error } = await supabase.rpc('fn_pcp_dispor_excecao' as never, {
+      // `p_nota` NULL = sem nota (DEFAULT NULL na prod): vai explícito, como antes.
+      const { error } = await supabase.rpc('fn_pcp_dispor_excecao', comNulo<'fn_pcp_dispor_excecao', 'p_nota'>({
         p_pai: e.pai_codigo,
         p_papel: e.papel,
         p_componente: e.componente_codigo ?? 0,
         p_disposicao: disposicao,
         p_nota: null,
-      } as never);
+      }));
       if (error) throw error;
       // Reflete localmente (evita novo round-trip): materializar não roda aqui, a disposição persiste.
       setRows(prev => prev.map(r => (rowKey(r) === key ? { ...r, disposicao } : r)));
