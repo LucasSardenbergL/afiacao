@@ -17,6 +17,8 @@
 | `db/2026-10-21-radar-fotos-2026-09-parte2.sql` (passo (a), ≥ mediana) | #692 | ✅ total 553.644 (= pré-voo) |
 | `db/2026-10-21-radar-finalize-2026-09.sql` (re-rodado) | #694 | ✅ `fotos_atualizadas=0`, `leads_descartados=56952`, `clientes_verificados=15061`, `clientes_irregulares=2815`, alerta **554**, lote `complete` 502.779/10.792 |
 
+**Bytes executados ≠ bytes do repo (só nas guardas):** o ledger `db_aplicacoes` guarda o sha256 do que rodou — finalize `8158798f…`, parte 1 `91c92ab8…`, parte 2 `ca5cef93…` (commit `9f8451145`). Depois, o gate `assert-verde-por-ausencia` reprovou as guardas `IF v <> 0` (NULL-blind: contagem ausente passaria como verde) e os arquivos do repo trocaram para `IS DISTINCT FROM`. Nas execuções reais toda contagem foi não-nula (a função `count(*)` nunca devolve NULL), então o resultado é o mesmo; re-aplicar a versão do repo é no-op pelas guardas de estado.
+
 2ª testemunha (psql-ro, outra conexão): lote `complete`; 56.952 `descartado` = 56.952 linhas de `radar_contatos` do usuário de sistema `…ad0f`; foto 2026-09: 02=496.430 · 04=42.943 · 08=14.183 · 03=79 · 01=9; 2.815 linhas com `alertado_em`; alerta 554 `pendente_notificacao` (o `dispatch-notifications` envia). O aviso do lote 2026-09 (`radar_avisar_lote`) sai no cron das 06:45 UTC seguinte, depois do score das 06:30.
 
 ## Pendência — o próximo lote cai do mesmo jeito

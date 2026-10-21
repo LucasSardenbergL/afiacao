@@ -45,7 +45,7 @@ BEGIN
          finalizado_em = now(), erro = NULL
    WHERE mes_referencia = '2026-09' AND status = 'error';
   GET DIAGNOSTICS v_upd = ROW_COUNT;
-  IF v_upd <> 1 THEN
+  IF v_upd IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'radar_ingest_state marcou % linhas (esperado 1)', v_upd;
   END IF;
 
@@ -63,7 +63,8 @@ DECLARE
 BEGIN
   SELECT status, total_recebido, novos, finalizado_em INTO v_st
     FROM public.radar_ingest_state WHERE mes_referencia = '2026-09';
-  IF v_st.status <> 'complete' OR v_st.total_recebido < 500000 OR v_st.novos IS NULL OR v_st.finalizado_em IS NULL THEN
+  IF v_st.status IS DISTINCT FROM 'complete' OR v_st.total_recebido IS NULL OR v_st.total_recebido < 500000
+     OR v_st.novos IS NULL OR v_st.finalizado_em IS NULL THEN
     RAISE EXCEPTION 'POST: estado do lote 2026-09 inesperado: %', row_to_json(v_st);
   END IF;
 
@@ -72,7 +73,7 @@ BEGIN
     FROM public.radar_situacao_cadastral s JOIN public.radar_empresas re ON re.cnpj = s.cnpj
    WHERE s.lote = '2026-09'
      AND (re.rfb_situacao_lote IS DISTINCT FROM '2026-09' OR re.rfb_situacao IS DISTINCT FROM s.situacao);
-  IF v_sem_foto <> 0 THEN
+  IF v_sem_foto IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % empresas sem a foto RFB 2026-09', v_sem_foto;
   END IF;
 
@@ -83,7 +84,7 @@ BEGIN
    WHERE s.lote = '2026-09' AND s.situacao IN ('03','04','08')
      AND NOT re.ja_cliente AND NOT EXISTS (SELECT 1 FROM c WHERE c.doc = s.cnpj)
      AND re.prospeccao_status NOT IN ('descartado', 'virou_cliente');
-  IF v_leads <> 0 THEN
+  IF v_leads IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % leads irregulares seguem na fila', v_leads;
   END IF;
 
@@ -96,7 +97,7 @@ BEGIN
      AND (COALESCE(re.ja_cliente, false) OR EXISTS (SELECT 1 FROM c WHERE c.doc = s.cnpj))
      AND NOT EXISTS (SELECT 1 FROM public.radar_situacao_cadastral a
                       WHERE a.cnpj = s.cnpj AND a.situacao = s.situacao AND a.alertado_em IS NOT NULL);
-  IF v_cli_sem <> 0 THEN
+  IF v_cli_sem IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % clientes irregulares sem alerta', v_cli_sem;
   END IF;
 

@@ -20,7 +20,7 @@ BEGIN
    WHERE s.lote = '2026-09' AND s.cnpj >= '45403608000103'
      AND (re.rfb_situacao_lote IS DISTINCT FROM '2026-09' OR re.rfb_situacao IS DISTINCT FROM s.situacao
           OR re.rfb_situacao_data IS DISTINCT FROM s.data_situacao);
-  IF v_sem <> 0 THEN
+  IF v_sem IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'POST: % empresas da parte 2 sem a foto RFB 2026-09', v_sem;
   END IF;
   RAISE NOTICE 'FOTOS_PARTE_2_OK';
