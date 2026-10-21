@@ -96,3 +96,20 @@ porque `SECURITY DEFINER` roda com os privilégios do dono.
 
 A migration é retrocompatível: o front publicado hoje (sem `p_lote`) segue funcionando igual. O front
 novo entra no Publish seguinte ao merge.
+
+## Fecho do roadmap: "só sugeridos" no ranking e no mapa (2026-10-21)
+
+O bloco 5 (#3231) deu à fila o toggle "só sugeridos" (`filtrarSugeridos`: foto vigente, `em_conversa`,
+não-cliente, sem vínculo Omie, RFB ativa ou não cruzada, CNPJ no formato, `score ≥ 70`). O ranking e o mapa
+continuavam contando a foto vigente inteira sob esse rótulo.
+
+- **Decisão: agregar no cliente, sem migration.** Com "só sugeridos" ligado, `useRadarContagemMunicipios`
+  busca as linhas pelo **mesmo** `filtrarSugeridos` (mais os filtros estruturais da RPC: UF, CNAE, datas do
+  preset e o recorte de inéditos) e agrega por município, na forma e na ordem da RPC. Repetir o predicado em
+  SQL criaria um 2º lugar para divergir. O universo é pequeno por construção: em prod (psql-ro, 2026-10-21)
+  há **1** lead `em_conversa` e **0** sugeridos.
+- Pagina com `.order('cnpj').range()` até a página incompleta (teto de 1.000 do PostgREST). Há uma guarda de
+  20.000 linhas (passar disso indica predicado errado, não volume). Erro em qualquer página lança, porque
+  contagem parcial seria número menor fabricado. Sem lote completo, falha como a fila.
+- Prova: `src/queries/__tests__/useRadarContagemMunicipios.sugeridos.test.tsx` (6 casos). Falsificado: tirar o
+  `filtrarSugeridos` → 1 vermelho; parar na 1ª página → 1 vermelho.
