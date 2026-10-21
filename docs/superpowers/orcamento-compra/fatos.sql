@@ -42,6 +42,16 @@ demanda_fisica as (
     and v.data_emissao >= current_date - 270
   group by 1, 2
 ),
+-- R63: dias com falha de infraestrutura COMPROVADA no snapshot de caixa — o job registrou erro (acoes_execucoes) E o
+-- snapshot pessimista da Oben não existe. Sem registro de erro, a falta de snapshot NÃO é excluída (fail-closed).
+falhas_snapshot as (
+  select distinct (e.iniciado_em at time zone 'America/Sao_Paulo')::date as dia
+  from acoes_execucoes e
+  where e.acao = 'fin_cashflow.snapshot_diario' and e.status = 'erro' and e.iniciado_em >= current_date - 100
+    and not exists (select 1 from fin_projecao_snapshots s
+                    where s.company = 'oben' and s.cenario = 'pessimista'
+                      and (s.snapshot_at at time zone 'America/Sao_Paulo')::date = (e.iniciado_em at time zone 'America/Sao_Paulo')::date)
+),
 -- Recebimentos reais = tracking t4_data_recebimento × quantidades do pedido Omie (spec §7).
 -- (nfe_recebimento_itens só existe desde 2026-07 e quantidade_convertida veio 100% nula — não serve.)
 -- Pedido recebido sem t4/sem produtos some daqui; o erro de fechamento por SKU pega o buraco.
@@ -186,6 +196,7 @@ select 'json|' || jsonb_build_object(
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),
+  'falhas_snapshot', (select coalesce(json_agg(x.dia order by x.dia), '[]') from falhas_snapshot x),
   'demanda_fisica', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda_fisica d),
   'recebimentos', (select coalesce(json_agg(r order by r.sku, r.data), '[]') from receb r),
   'estoque', (select coalesce(json_agg(e order by e.sku), '[]') from estoque e),
