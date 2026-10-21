@@ -244,6 +244,41 @@ export function casar(input: {
   return linhas;
 }
 
+/** Linha já gravada em `fin_ic_matches`, no que a rodada precisa. */
+export interface MatchExistente {
+  id: string;
+  status: string;
+  cr_id: string | null;
+  cp_id: string | null;
+  resolvido_em: string | null;
+}
+
+/**
+ * O que a rodada faz com o que já está gravado. Informativo não resolvido → trocado (id para apagar).
+ * Todo o resto — `auto_matched` (a edge nunca o apaga: é a evidência da RPC), linha do humano ou
+ * resolvida — FICA e tira os títulos do pool.
+ */
+export function separarExistentes(existentes: ReadonlyArray<MatchExistente>): {
+  travados: Set<string>;
+  idsInformativos: string[];
+  autoPreservados: number;
+} {
+  const informativos = new Set<string>(STATUS_INFORMATIVOS);
+  const travados = new Set<string>();
+  const idsInformativos: string[] = [];
+  let autoPreservados = 0;
+  for (const m of existentes) {
+    if (informativos.has(m.status) && m.resolvido_em === null) {
+      idsInformativos.push(m.id);
+      continue;
+    }
+    if (m.status === "auto_matched" && m.resolvido_em === null) autoPreservados++;
+    if (m.cr_id) travados.add(m.cr_id);
+    if (m.cp_id) travados.add(m.cp_id);
+  }
+  return { travados, idsInformativos, autoPreservados };
+}
+
 export interface Escritor {
   inserir(linhas: LinhaMatch[]): PromiseLike<{ error: { message: string } | null }>;
   /** Apaga pelos ids SÓ as linhas que ainda são informativas e não resolvidas (filtro no DELETE). */
@@ -282,4 +317,29 @@ export async function publicarMatches(
     if (error) return { ok: false, etapa: "inserir", erro: error.message };
   }
   return { ok: true, inseridas: novas.length, informativas_apagadas: idsInformativos.length };
+}
+
+type Resultado = PromiseLike<{ error: { message: string } | null }>;
+
+/** O mínimo do builder do PostgREST que o escritor usa (o cliente real e o falso dos testes). */
+export interface TabelaMatches {
+  insert(linhas: LinhaMatch[]): Resultado;
+  delete(): {
+    in(coluna: string, valores: readonly string[]): {
+      in(coluna: string, valores: readonly string[]): { is(coluna: string, valor: null): Resultado };
+    };
+  };
+}
+
+/**
+ * Escritor sobre `fin_ic_matches`. O DELETE REFILTRA status informativo e `resolvido_em IS NULL`
+ * no próprio statement: linha que o humano promoveu/desconsiderou/resolveu entre a leitura e o
+ * delete não casa o filtro e sobrevive (o Postgres reavalia o WHERE na linha atual).
+ */
+export function escritorPostgrest(tabela: () => TabelaMatches): Escritor {
+  return {
+    inserir: (linhas) => tabela().insert(linhas),
+    apagarInformativos: (ids) =>
+      tabela().delete().in("id", ids).in("status", [...STATUS_INFORMATIVOS]).is("resolvido_em", null),
+  };
 }

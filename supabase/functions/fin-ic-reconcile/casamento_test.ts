@@ -3,9 +3,12 @@
 import {
   casar,
   chaveContraparte,
+  escritorPostgrest,
   type LinhaMatch,
   normalizarNf,
   publicarMatches,
+  separarExistentes,
+  type TabelaMatches,
   type Titulo,
 } from "./casamento.ts";
 
@@ -183,4 +186,37 @@ Deno.test("publicarMatches — apaga em lotes de 200 ids", async () => {
   const f = escritorFake();
   await publicarMatches(f.db, [], Array.from({ length: 450 }, (_, i) => `v${i}`));
   assertEquals(f.log, ["apagar:200", "apagar:200", "apagar:50"]);
+});
+
+Deno.test("separarExistentes — auto_matched NUNCA vai para apagar; trava os títulos como o humano", () => {
+  const r = separarExistentes([
+    { id: "a", status: "auto_matched", cr_id: "cr1", cp_id: "cp1", resolvido_em: null },
+    { id: "b", status: "sem_contrapartida", cr_id: "cr2", cp_id: null, resolvido_em: null },
+    { id: "c", status: "divergencia_valor", cr_id: "cr3", cp_id: "cp3", resolvido_em: "2026-10-01T00:00:00Z" },
+    { id: "d", status: "desconsiderado", cr_id: "cr4", cp_id: "cp4", resolvido_em: null },
+    { id: "e", status: "manual_matched", cr_id: "cr5", cp_id: "cp5", resolvido_em: null },
+  ]);
+  assertEquals(r.idsInformativos, ["b"]);
+  assertEquals(r.autoPreservados, 1);
+  assertEquals([...r.travados].sort(), ["cp1", "cp3", "cp4", "cp5", "cr1", "cr3", "cr4", "cr5"]);
+});
+
+Deno.test("escritorPostgrest — o DELETE refiltra status informativo e resolvido_em IS NULL", async () => {
+  const chamadas: unknown[] = [];
+  const ok = Promise.resolve({ error: null });
+  const tabela: TabelaMatches = {
+    insert: (l) => (chamadas.push(["insert", l.length]), ok),
+    delete: () => ({
+      in: (c1, v1) => ({
+        in: (c2, v2) => ({ is: (c3, v3) => (chamadas.push(["delete", c1, v1, c2, v2, c3, v3]), ok) }),
+      }),
+    }),
+  };
+  const e = escritorPostgrest(() => tabela);
+  await e.apagarInformativos(["x"]);
+  await e.inserir([NOVA]);
+  assertEquals(chamadas, [
+    ["delete", "id", ["x"], "status", ["divergencia_valor", "divergencia_data", "sem_contrapartida", "duplicidade_possivel"], "resolvido_em", null],
+    ["insert", 1],
+  ]);
 });

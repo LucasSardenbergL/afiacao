@@ -7,9 +7,11 @@ import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   casar,
   chaveContraparte,
+  escritorPostgrest,
   type LinhaMatch,
+  type MatchExistente,
   publicarMatches,
-  STATUS_INFORMATIVOS,
+  separarExistentes,
   type Titulo,
 } from "./casamento.ts";
 import { chamadorOmie, consultarCodigos, type ResultadoConsulta } from "./contrapartes.ts";
@@ -167,7 +169,7 @@ Deno.serve(async (req: Request) => {
     // 3) O que já está gravado. `auto_matched` não resolvido FICA (a edge nunca o apaga: é a
     //    evidência da RPC) e, como as linhas do humano, tira os títulos do pool. Só os informativos
     //    não resolvidos são trocados. Keyset: OFFSET com escrita concorrente repete/pula linha.
-    const existentes = await fetchAllKeyset<{ id: string; status: string; cr_id: string | null; cp_id: string | null; resolvido_em: string | null }, string>(
+    const existentes = await fetchAllKeyset<MatchExistente, string>(
       (cursor, limite) => {
         let q = supabase.from("fin_ic_matches").select("id, status, cr_id, cp_id, resolvido_em");
         if (cursor !== null) q = q.gt("id", cursor);
@@ -176,19 +178,7 @@ Deno.serve(async (req: Request) => {
       (m) => m.id,
       "fin_ic_matches",
     );
-    const informativos = new Set<string>(STATUS_INFORMATIVOS);
-    const travados = new Set<string>();
-    const idsInformativos: string[] = [];
-    let autoPreservados = 0;
-    for (const m of existentes) {
-      if (informativos.has(m.status) && m.resolvido_em === null) {
-        idsInformativos.push(m.id);
-        continue;
-      }
-      if (m.status === "auto_matched" && m.resolvido_em === null) autoPreservados++;
-      if (m.cr_id) travados.add(m.cr_id);
-      if (m.cp_id) travados.add(m.cp_id);
-    }
+    const { travados, idsInformativos, autoPreservados } = separarExistentes(existentes);
 
     // 4) Só os títulos cuja contraparte é do grupo (poucos), paginados (capa de 1.000 do PostgREST).
     const crs: Titulo[] = [];
@@ -229,12 +219,11 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, versao: VERSAO, simulado: true, ...resumo, linhas }, 200);
     }
 
-    const desfecho = await publicarMatches({
-      inserir: (novas) => supabase.from("fin_ic_matches").insert(novas),
-      apagarInformativos: (ids) =>
-        supabase.from("fin_ic_matches").delete().in("id", ids)
-          .in("status", [...STATUS_INFORMATIVOS]).is("resolvido_em", null),
-    }, linhas, idsInformativos);
+    const desfecho = await publicarMatches(
+      escritorPostgrest(() => supabase.from("fin_ic_matches")),
+      linhas,
+      idsInformativos,
+    );
     if (!desfecho.ok) {
       return json({
         versao: VERSAO,
