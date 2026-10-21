@@ -208,6 +208,16 @@ describe('FichaLigacao', () => {
       expect(rpcMock).toHaveBeenLastCalledWith('venda_marcar_mostrada', { p_ids: ['p1'] });
     });
 
+    it('repasse substituído no meio do dia (alvo ao vivo ≠ o da linha): não exibe nem marca a linha', () => {
+      compradorMock.mockReturnValue(comOndas);
+      ondasMock.mockReturnValue({ complemento: false, preco: true });
+      precoMock.mockReturnValue({ alvos: [{ empresa: 'oben', omieCodigoProduto: 10, ultimoPreco: 212.5, precoAlvo: 240, faixaMargem: 'verde', validoAte: '2026-12-31' }], loading: false, erro: false });
+      renderFicha();
+      expect(screen.queryByText(/alvo R\$/)).toBeNull();
+      expect(rpcMock).toHaveBeenCalledTimes(1);
+      expect(rpcMock).toHaveBeenCalledWith('venda_marcar_mostrada', { p_ids: ['s1', 's2'] });
+    });
+
     it('na lente "Ver como": não lê complemento/preço e não marca nada', () => {
       compradorMock.mockReturnValue(comOndas);
       ondasMock.mockReturnValue({ complemento: true, preco: true });

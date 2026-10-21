@@ -2,7 +2,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatPrecoOuAusente } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { SugestaoItem } from '@/lib/venda-cliente/sugestoes';
-import type { FaixaMargem, PrecoAlvo } from '@/lib/venda-cliente/preco';
+import { alvoDaSugestao, type FaixaMargem, type PrecoAlvo } from '@/lib/venda-cliente/preco';
 import type { TopProduto } from '@/lib/venda-cliente/historico';
 
 // Faixa QUALITATIVA: nenhum número do qual o custo se deduza (spec §7 Fase 4).
@@ -32,13 +32,12 @@ interface Props {
 }
 
 /**
- * Preço: último preço praticado e, SÓ quando o repasse aprovado pelo founder segue vigente, o preço
- * alvo e a faixa de margem. Sem repasse confirmado agora (revogado, vencido, já alcançado, leitura
- * falhou) → só o último preço. Nunca custo, markup ou piso.
+ * Preço: último preço praticado e, SÓ quando o repasse aprovado pelo founder segue vigente com o
+ * MESMO alvo da linha, o preço alvo e a faixa de margem. Sem repasse confirmado agora (revogado,
+ * vencido, já alcançado, substituído, leitura falhou) → só o último preço. Nunca custo, markup ou piso.
  */
 export function SecaoPreco({ ondaLigada, itens, alvos, loading, erro, produtos }: Props) {
   if (!ondaLigada || itens.length === 0) return null;
-  const alvoPorCodigo = new Map((alvos ?? []).map((a) => [a.omieCodigoProduto, a]));
   const historicoPorCodigo = new Map((produtos ?? []).map((p) => [p.codigo, p]));
   return (
     <section aria-labelledby="ficha-preco">
@@ -54,7 +53,7 @@ export function SecaoPreco({ ondaLigada, itens, alvos, loading, erro, produtos }
       <ul className="mt-2 divide-y divide-border rounded-md border">
         {itens.map((s) => {
           const cod = s.omieCodigoProduto as number;
-          const a = alvoPorCodigo.get(cod);
+          const a = alvoDaSugestao(s, alvos);
           const ultimo = a?.ultimoPreco ?? historicoPorCodigo.get(cod)?.ultimoPreco ?? null;
           return (
             <li key={s.id} className="px-3 py-2.5">

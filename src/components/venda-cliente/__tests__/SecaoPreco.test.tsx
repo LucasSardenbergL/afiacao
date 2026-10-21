@@ -8,7 +8,7 @@ import { SecaoPreco } from '../SecaoPreco';
 function item(id: string, codigo: number, descricao: string): SugestaoItem {
   return {
     id, tipo: 'preco', empresa: 'oben', omieCodigoProduto: codigo, descricao, familia: null,
-    qtdRef: null, valorRef: null, precoAlvo: 99, cadenciaDias: null,
+    qtdRef: null, valorRef: null, precoAlvo: 230, cadenciaDias: null,
   };
 }
 
@@ -48,6 +48,13 @@ describe('SecaoPreco', () => {
     expect(within(l).queryByText(/alvo/)).toBeNull();
     expect(within(l).queryByText(/Margem/)).toBeNull();
     expect(within(l).queryByText(/válido até/)).toBeNull();
+  });
+
+  it('repasse substituído depois da geração (alvo ao vivo ≠ alvo da linha) → só o último preço', () => {
+    render(<SecaoPreco ondaLigada itens={itens} alvos={[{ ...alvo(10, 'verde'), precoAlvo: 245 }]} loading={false} erro={false} produtos={produtos} />);
+    const l = linha('Verniz PU');
+    expect(within(l).queryByText(/alvo/)).toBeNull();
+    expect(within(l).queryByText(/Margem/)).toBeNull();
   });
 
   it('leitura do alvo falhou → só último preço, com aviso (nunca um alvo que não leu)', () => {

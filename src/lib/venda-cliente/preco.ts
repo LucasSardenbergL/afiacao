@@ -53,3 +53,20 @@ export function lerPrecoAlvoComprador(raw: unknown): PrecoAlvo[] {
     };
   });
 }
+
+function centavos(v: number): number {
+  return Math.round(v * 100);
+}
+
+/**
+ * O repasse vigente AO VIVO que corresponde a ESTA linha `preco`: mesmo SKU E mesmo alvo da linha
+ * (em centavos). Repasse substituído depois da geração (outro alvo) não casa — a ficha mostra só o
+ * último preço e não marca a linha como vista, porque o desfecho mede o alvo GRAVADO (Codex P2).
+ */
+export function alvoDaSugestao(
+  s: { omieCodigoProduto: number | null; precoAlvo: number | null },
+  alvos: PrecoAlvo[] | null,
+): PrecoAlvo | undefined {
+  if (s.omieCodigoProduto == null || s.precoAlvo == null || !alvos) return undefined;
+  return alvos.find((a) => a.omieCodigoProduto === s.omieCodigoProduto && centavos(a.precoAlvo) === centavos(s.precoAlvo as number));
+}

@@ -29,9 +29,15 @@
 --    dono único. Colacor e tinta nunca geram linha `preco`.
 --  • Desfecho de `preco` (achado P2 do Codex na Task 6): "≥ alvo × 0,99" sozinho deixava o preço VELHO
 --    contar como sucesso quando o alvo está a menos de 1% acima dele. A sugestão passa a guardar
---    `preco_anterior` = maior entre o último preço na aprovação e o último ao vivo ao gerar; o pedido só
---    qualifica com preço líquido ≥ alvo × 0,99 E > preco_anterior (precisão > recall). Bruto ≤ anterior
---    já reprova (desconto só abaixa); líquido não apurado segue nao_medivel.
+--    `preco_anterior` = maior entre o último preço na aprovação e o último ao vivo ao gerar; o PEDIDO só
+--    qualifica com preço líquido ≥ alvo × 0,99 E > preco_anterior (precisão > recall). O preço do pedido
+--    é a média ponderada do SKU no pedido, sem as linhas de líquido 0 (bonificação) — a MESMA unidade do
+--    último preço da base (média ponderada do dia): comparar item isolado com média deixava 90 + 110
+--    "subir" sobre 100 (Codex desenho P2). Bruto médio ≤ anterior já reprova (desconto só abaixa);
+--    líquido não apurado segue nao_medivel.
+--  • `complemento` e `preco` só entram na medida se a farmer os VIU (`mostrada_em`; spec §7: a linha
+--    existe "quando mostrada"). Nunca exibida → nao_medivel/nao_exibida, com ou sem pedido (simétrico:
+--    contar só o sucesso do que não foi visto inflaria a taxa). Recompra segue como na Task 1.
 --  • venda_minhas_sugestoes passa a expor `ondas` (liga/desliga do servidor) e `cadencia_dias` por SKU
 --    de recompra; total e motivo do comprador contam só `recompra` (complemento/preço não têm valor de
 --    referência e zerariam o total — ausente ≠ zero vale para o agregado também).
@@ -62,7 +68,7 @@ BEGIN
       FROM (VALUES
         ('public.venda_gerar_lista(date,text)',   '0548cd63c19a2f87db94ada259f7657f', '5abe897dbcaaf3b70351da896e35b566'),
         ('public.venda_minhas_sugestoes(date)',   '75f7d766c2989ee97813b53942a278f1', 'e38baeb57b7e19c815e45baa77a23810'),
-        ('public.venda_fechar_desfechos(date)',   'd187360234689981761b1cdfac225b2e', '732f661febd3c3e3c0dde4eb18e90bdd')
+        ('public.venda_fechar_desfechos(date)',   'd187360234689981761b1cdfac225b2e', '6c962e84f9b821d5612b555e10489616')
       ) AS x(alvo, predecessor, este)
   LOOP
     IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
@@ -183,9 +189,11 @@ AS $fn$
        AND ra.valido_ate >= p_dia
        AND private._venda_repasse_sku_ok(ra.omie_codigo_produto)
   ),
-  -- Dono ÚNICO das atribuições elegíveis do grupo canônico (o gate da ficha nega 2+ donos).
+  -- Dono ÚNICO das atribuições elegíveis do grupo canônico, e é a farmer da linha (o gate da ficha
+  -- nega 2+ donos e nega quem não é o dono — carteira transferida no meio do dia, Codex P2).
   dono AS (
-    SELECT c.comprador_id, count(DISTINCT ca.owner_user_id) AS n
+    SELECT c.comprador_id, count(DISTINCT ca.owner_user_id) AS n,
+           (array_agg(DISTINCT ca.owner_user_id))[1] AS dono
       FROM (SELECT DISTINCT r.comprador_id FROM rep r) c
       JOIN public.carteira_assignments ca
         ON ca.eligible = true AND ca.owner_user_id IS NOT NULL
@@ -202,7 +210,7 @@ AS $fn$
   SELECT r.farmer_user_id, r.comprador_id, r.omie_codigo_produto, r.preco_alvo,
          GREATEST(r.ultimo_preco_na_aprovacao, b.ultimo_preco)
     FROM rep r
-    JOIN dono d ON d.comprador_id = r.comprador_id AND d.n = 1
+    JOIN dono d ON d.comprador_id = r.comprador_id AND d.n = 1 AND d.dono = r.farmer_user_id
     JOIN base b ON b.comprador_id = r.comprador_id AND b.omie_codigo_produto = r.omie_codigo_produto
    WHERE private.regua_num_finito(b.ultimo_preco)
      AND b.ultimo_preco > 0
@@ -406,7 +414,7 @@ BEGIN
   alvo AS (
     SELECT s.id, s.tipo, s.empresa, s.fase,
            COALESCE(ca.canonical_user_id, s.comprador_id) AS comprador,
-           s.omie_codigo_produto, s.familia, s.preco_alvo, s.preco_anterior,
+           s.omie_codigo_produto, s.familia, s.preco_alvo, s.preco_anterior, s.mostrada_em,
            s.dia_referencia AS de,
            s.dia_referencia + j.dias AS ate                  -- exclusivo
       FROM public.venda_sugestao s
@@ -429,6 +437,7 @@ BEGIN
   ),
   item AS (
     SELECT a.id AS sug_id, a.tipo, a.preco_alvo, a.preco_anterior, p.id AS so_id, p.data_pedido,
+           oi.quantity                                                             AS qtd,
            oi.quantity * oi.unit_price - oi.desconto_valor                          AS valor_liq,
            (oi.quantity * oi.unit_price - oi.desconto_valor) / NULLIF(oi.quantity, 0) AS preco_liq,
            oi.unit_price                                                           AS preco_bruto
@@ -446,17 +455,32 @@ BEGIN
                  AND op.account = p.account
                  AND op.familia = a.familia))
   ),
-  item_q AS (
-    SELECT i.*,
-           CASE WHEN i.tipo <> 'preco'                       THEN true
-                -- preco_anterior NULL (impossível pelo CHECK) cai em NULL = indeterminado, nunca "virou"
-                WHEN i.preco_liq IS NOT NULL                 THEN i.preco_liq >= i.preco_alvo * 0.99
-                                                                  AND i.preco_liq > i.preco_anterior
-                WHEN i.preco_bruto < i.preco_alvo * 0.99
-                  OR i.preco_bruto <= i.preco_anterior       THEN false   -- desconto só abaixa
-                ELSE NULL                                                -- desconto não apurado
-           END AS qualifica
+  -- Preço: o PEDIDO é a unidade (média ponderada do SKU no pedido, sem bonificação de líquido 0).
+  pedido_preco AS (
+    SELECT i.sug_id, i.so_id, i.data_pedido, min(i.preco_alvo) AS preco_alvo, min(i.preco_anterior) AS preco_anterior,
+           CASE WHEN bool_and(i.valor_liq IS NOT NULL) THEN sum(i.valor_liq) END            AS valor_liq,
+           bool_and(i.valor_liq IS NOT NULL)                                                AS liq_apurado,
+           sum(i.valor_liq) FILTER (WHERE i.preco_liq > 0)
+             / NULLIF(sum(i.qtd) FILTER (WHERE i.preco_liq > 0), 0)                         AS preco_medio_liq,
+           sum(i.qtd * i.preco_bruto) / NULLIF(sum(i.qtd), 0)                               AS preco_medio_bruto
       FROM item i
+     WHERE i.tipo = 'preco'
+     GROUP BY i.sug_id, i.so_id, i.data_pedido
+  ),
+  item_q AS (
+    SELECT i.sug_id, i.so_id, i.data_pedido, i.valor_liq, true AS qualifica
+      FROM item i
+     WHERE i.tipo <> 'preco'
+    UNION ALL
+    SELECT pp.sug_id, pp.so_id, pp.data_pedido, pp.valor_liq,
+           -- preco_anterior NULL (impossível pelo CHECK) cai em NULL = indeterminado, nunca "virou"
+           CASE WHEN pp.liq_apurado THEN COALESCE(pp.preco_medio_liq >= pp.preco_alvo * 0.99
+                                                  AND pp.preco_medio_liq > pp.preco_anterior, false)
+                WHEN pp.preco_medio_bruto < pp.preco_alvo * 0.99
+                  OR pp.preco_medio_bruto <= pp.preco_anterior THEN false   -- desconto só abaixa
+                ELSE NULL                                                  -- desconto não apurado
+           END
+      FROM pedido_preco pp
   ),
   agg AS (
     SELECT sug_id,
@@ -493,6 +517,7 @@ BEGIN
   decisao AS (
     SELECT a.id, g.so_id, g.valor,
            CASE
+             WHEN a.tipo <> 'recompra' AND a.mostrada_em IS NULL THEN 'nao_medivel'   -- a farmer não viu
              WHEN g.so_id IS NOT NULL THEN 'virou_pedido'
              WHEN g.indeterminado     THEN 'nao_medivel'
              WHEN a.fase = 'historico' THEN
@@ -514,6 +539,7 @@ BEGIN
              ELSE 'nao_virou'
            END AS desfecho,
            CASE
+             WHEN a.tipo <> 'recompra' AND a.mostrada_em IS NULL THEN 'nao_exibida'
              WHEN g.so_id IS NOT NULL THEN NULL
              WHEN g.indeterminado     THEN 'desconto_nao_apurado'
              WHEN a.fase = 'historico' THEN 'historico_incompleto'
@@ -525,7 +551,7 @@ BEGIN
   UPDATE public.venda_sugestao s
      SET desfecho        = d.desfecho,
          desfecho_motivo = CASE WHEN d.desfecho = 'nao_medivel' THEN d.motivo END,
-         sales_order_id  = d.so_id,
+         sales_order_id  = CASE WHEN d.desfecho = 'virou_pedido' THEN d.so_id END,
          valor_realizado = CASE WHEN d.desfecho = 'virou_pedido' THEN d.valor END,
          avaliado_em     = now()
     FROM decisao d
@@ -556,7 +582,7 @@ BEGIN
       FROM (VALUES
         ('public.venda_gerar_lista(date,text)',   '5abe897dbcaaf3b70351da896e35b566'),
         ('public.venda_minhas_sugestoes(date)',   'e38baeb57b7e19c815e45baa77a23810'),
-        ('public.venda_fechar_desfechos(date)',   '732f661febd3c3e3c0dde4eb18e90bdd')
+        ('public.venda_fechar_desfechos(date)',   '6c962e84f9b821d5612b555e10489616')
       ) AS x(alvo, este)
   LOOP
     IF r.vivo IS DISTINCT FROM r.este THEN

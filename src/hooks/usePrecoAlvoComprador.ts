@@ -24,5 +24,6 @@ export function usePrecoAlvoComprador(compradorId: string | null, habilitado: bo
       return lerPrecoAlvoComprador(raw);
     },
   });
-  return { alvos: data ?? null, loading: habilitado && !!compradorId && isLoading, erro: isError };
+  // Erro na revalidação NÃO mantém o dado do cache na tela (repasse revogado seguiria visível — Codex P1).
+  return { alvos: isError ? null : data ?? null, loading: habilitado && !!compradorId && isLoading, erro: isError };
 }

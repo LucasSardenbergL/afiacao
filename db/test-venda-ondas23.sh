@@ -16,8 +16,10 @@
 #   P0  onda_preco=true → `preco` só para repasse vigente de comprador da lista (revogado, vencido, tinta,
 #       último ≥ alvo, último ausente, 2 donos e comprador fora da lista ficam fora); preco_anterior =
 #       maior entre o da aprovação e o ao vivo; P1 2× não duplica
+#   P0c a farmer da linha tem de ser o dono único ATUAL (carteira transferida no meio do dia → sem preço)
 #   P2  desfecho de preço exige alta sobre o anterior (alvo a < 1% do último: pagar o preço velho = nao_virou)
-#       e bruto ≤ anterior com desconto não apurado = nao_virou; acima do anterior = nao_medivel
+#       e bruto ≤ anterior com desconto não apurado = nao_virou; acima do anterior = nao_medivel; P2e o pedido
+#       é a unidade (90 + 110 sobre 100 não "subiu"); P2f/C3 complemento/preço NÃO exibidos = nao_medivel
 #   O1  a lista de recompra continua idêntica a venda_lista_calc (a comparação da Onda 1)
 #   M   venda_minhas_sugestoes: ondas do servidor, total/motivo só da recompra, cadência; farmer nunca
 #       recebe custo/markup/piso/preco_anterior; não vê a lista de outra farmer
@@ -40,7 +42,7 @@ MIG_PROVA="$REPO_ROOT/supabase/migrations/20261020194332_venda_cliente_historico
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> (`!MARCA` = a postcondição da própria migration aborta com MARCA).
-  SABOTAGENS="sem_gate_complemento:C0 sem_gate_preco:C0 top4:C1 vendedor_errado:C1b dup_familia:C2b complemento_qualquer_dia:C4b preco_revogado:P0 preco_vencido:P0 preco_ultimo_acima:P0 preco_dois_donos:P0 preco_anterior_aprovacao:P0b desfecho_sem_alta:P2a desfecho_bruto:P2c total_misturado:M2 motivo_misturado:M3"
+  SABOTAGENS="sem_gate_complemento:C0 sem_gate_preco:C0 top4:C1 vendedor_errado:C1b dup_familia:C2b complemento_qualquer_dia:C4b preco_revogado:P0 preco_vencido:P0 preco_ultimo_acima:P0 preco_dois_donos:P0 preco_dono_farmer:P0c preco_anterior_aprovacao:P0b desfecho_sem_alta:P2a desfecho_bruto:P2c preco_item_isolado:P2e sem_exibicao:P2f total_misturado:M2 motivo_misturado:M3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-ondas23.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${LOCALE_TESTE:-C}) ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1 || ! grep -q "FIM-OK venda-ondas23" "$LOGDIR/controle.log"; then
@@ -111,10 +113,14 @@ case "${SABOTAGEM:-}" in
 " "
 " ;;
   preco_ultimo_acima)   sabotar "     AND b.ultimo_preco < r.preco_alvo" "" ;;
-  preco_dois_donos)     sabotar "JOIN dono d ON d.comprador_id = r.comprador_id AND d.n = 1" "JOIN dono d ON d.comprador_id = r.comprador_id" ;;
+  preco_dois_donos)     sabotar " AND d.n = 1 AND d.dono = r.farmer_user_id" "" ;;
+  preco_dono_farmer)    sabotar " AND d.n = 1 AND d.dono = r.farmer_user_id" " AND d.n = 1" ;;
   preco_anterior_aprovacao) sabotar "GREATEST(r.ultimo_preco_na_aprovacao, b.ultimo_preco)" "r.ultimo_preco_na_aprovacao" ;;
-  desfecho_sem_alta)    sabotar "AND i.preco_liq > i.preco_anterior" "" ;;
-  desfecho_bruto)       sabotar "OR i.preco_bruto <= i.preco_anterior" "" ;;
+  desfecho_sem_alta)    sabotar "AND pp.preco_medio_liq > pp.preco_anterior" "" ;;
+  desfecho_bruto)       sabotar "OR pp.preco_medio_bruto <= pp.preco_anterior" "" ;;
+  preco_item_isolado)   sabotar "sum(i.valor_liq) FILTER (WHERE i.preco_liq > 0)" "max(i.preco_liq) * sum(i.qtd) FILTER (WHERE i.preco_liq > 0)" ;;
+  sem_exibicao)         sabotar "             WHEN a.tipo <> 'recompra' AND a.mostrada_em IS NULL THEN 'nao_medivel'   -- a farmer não viu
+" "" ;;
   total_misturado)      sabotar "CASE WHEN bool_and(s.valor_ref IS NOT NULL) FILTER (WHERE s.tipo = 'recompra')" \
                                 "CASE WHEN bool_and(s.valor_ref IS NOT NULL)" ;;
   motivo_misturado)     sabotar "min(s.motivo_entrada) FILTER (WHERE s.tipo = 'recompra') AS motivo_entrada" "min(s.motivo_entrada) AS motivo_entrada" ;;
@@ -130,7 +136,7 @@ s = open(p, encoding="utf-8").read()
 for sig, tag, velho in (
     ("CREATE OR REPLACE FUNCTION public.venda_gerar_lista", "$fn$", "5abe897dbcaaf3b70351da896e35b566"),
     ("CREATE OR REPLACE FUNCTION public.venda_minhas_sugestoes", "$$", "e38baeb57b7e19c815e45baa77a23810"),
-    ("CREATE OR REPLACE FUNCTION public.venda_fechar_desfechos", "$$", "732f661febd3c3e3c0dde4eb18e90bdd"),
+    ("CREATE OR REPLACE FUNCTION public.venda_fechar_desfechos", "$$", "6c962e84f9b821d5612b555e10489616"),
 ):
     i = s.index(sig); j = s.index("AS " + tag + "\n", i) + len("AS " + tag); k = s.index(tag + ";", j)
     s = s.replace(velho, hashlib.md5(s[j:k].encode()).hexdigest())
@@ -162,6 +168,7 @@ C3=00000000-0000-0000-0000-000000000c03; C4=00000000-0000-0000-0000-000000000c04
 A4=00000000-0000-0000-0000-000000000a04; C5=00000000-0000-0000-0000-000000000c05
 C6=00000000-0000-0000-0000-000000000c06; C7=00000000-0000-0000-0000-000000000c07
 C8=00000000-0000-0000-0000-000000000c08; C9=00000000-0000-0000-0000-000000000c09
+C10=00000000-0000-0000-0000-000000000c10; C11=00000000-0000-0000-0000-000000000c11
 
 # ── Esquema mínimo com as colunas de prod usadas (o do test-venda-gerador.sh) + stubs das Tasks 5/6 ──
 P -q <<'SQL'
@@ -318,19 +325,20 @@ P -q -1 -f "$MIG_USADA"
 
 # ── Mundo: F1 e F2 farmers; D2 hunter (2º dono do grupo de C4); M master ────────────────────────────
 P -q -v F1="$F1" -v F2="$F2" -v M="$M" -v D2="$D2" -v C1="$C1" -v C2="$C2" -v C3="$C3" -v C4="$C4" -v A4="$A4" \
-     -v C5="$C5" -v C6="$C6" -v C7="$C7" -v C8="$C8" -v C9="$C9" <<'SQL'
+     -v C5="$C5" -v C6="$C6" -v C7="$C7" -v C8="$C8" -v C9="$C9" -v C10="$C10" -v C11="$C11" <<'SQL'
 INSERT INTO public.user_roles VALUES (:'F1','employee'), (:'F2','employee'), (:'M','master'), (:'D2','employee');
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES (:'F1','farmer'), (:'F2','farmer'), (:'D2','hunter');
 INSERT INTO public.customer_canonical_alias VALUES (:'A4', :'C4', 'active');
 INSERT INTO public.carteira_assignments (customer_user_id, owner_user_id) VALUES
   (:'C1', :'F1'), (:'C2', :'F1'), (:'C3', :'F1'), (:'C4', :'F1'), (:'A4', :'D2'),
-  (:'C5', :'F2'), (:'C6', :'F1'), (:'C7', :'F1'), (:'C8', :'F1'), (:'C9', :'F1');
+  (:'C5', :'F2'), (:'C6', :'F1'), (:'C7', :'F1'), (:'C8', :'F1'), (:'C9', :'F1'), (:'C10', :'F1'), (:'C11', :'F1');
 INSERT INTO public.profiles (user_id, name, phone) VALUES (:'C1', 'Cliente Um', '3199990001');
 INSERT INTO public.omie_products (omie_codigo_produto, descricao, familia, account) VALUES
   (101, 'Lixa 101', 'LIXA', 'oben'), (501, 'Verniz A', 'FAM_A', 'oben'), (502, 'Selador B', 'FAM_B', 'colacor');
 SELECT t_atrasado(:'C1', 101); SELECT t_atrasado(:'C2', 102, 20); SELECT t_atrasado(:'C3', 103);
 SELECT t_atrasado(:'C4', 112); SELECT t_atrasado(:'C6', 108); SELECT t_atrasado(:'C7', 109);
 SELECT t_atrasado(:'C8', 110); SELECT t_atrasado(:'C9', 111);
+SELECT t_atrasado(:'C10', 114, 100); SELECT t_atrasado(:'C11', 116);
 
 -- Gaps do Mix/Gap. C1: T(4,0) > A(1,5) > B(1,0; ev 9) = C(1,0; ev 9, perde por família) > D(0,6);
 -- S (5,0) suprimido pelo feedback da F1; T suprimido só pela F2 (não vale para a F1).
@@ -348,7 +356,8 @@ INSERT INTO public.t_gap VALUES
 -- Último preço AO VIVO (stub de _venda_repasse_base) e SKU de tinta.
 INSERT INTO public.t_base VALUES
   (:'C2',102,20), (:'C3',103,25), (:'C3',104,25), (:'C3',105,25), (:'C3',106,30), (:'C3',107,NULL),
-  (:'C4',112,10), (:'C5',113,10), (:'C6',108,10), (:'C7',109,10), (:'C8',110,10), (:'C9',111,10);
+  (:'C4',112,10), (:'C5',113,10), (:'C6',108,10), (:'C7',109,10), (:'C8',110,10), (:'C9',111,10),
+  (:'C10',114,100), (:'C11',116,10);
 INSERT INTO public.t_tinta VALUES (105);
 
 -- Repasses. Vigentes de comprador da lista: C2/102, C6/108, C7/109, C8/110, C9/111 (C2 vale até HOJE).
@@ -368,7 +377,9 @@ SELECT x.c::uuid, 'oben', x.sku, x.alvo, x.ap, (SELECT hoje FROM t_cfg) + x.dias
     (:'C6', 108, 10.05,  9.90, 30, false),    -- alvo a < 1% do último
     (:'C7', 109, 10.05,  9.90, 30, false),
     (:'C8', 110, 10.05,  9.90, 30, false),
-    (:'C9', 111, 11.00,  9.00, 30, false)
+    (:'C9', 111, 11.00,  9.00, 30, false),
+    (:'C10', 114, 105.00, 99.00, 30, false),  -- base = média ponderada do dia (100)
+    (:'C11', 116, 11.00,  9.00, 30, false)    -- a farmer nunca vê este alvo
   ) AS x(c, sku, alvo, ap, dias, rev);
 
 -- Sync de vendas completo todos os dias (desfecho medível).
@@ -385,13 +396,13 @@ conta() { Pq -c "SELECT count(*) FROM public.venda_sugestao WHERE dia_referencia
 gerar() { Pq -c "SELECT public.venda_gerar_lista('${2:-$HOJE}', '${1:-ativa}')"; }
 
 # ── C0 ondas 2/3 desligadas ────────────────────────────────────────────────────────────────────────
-eq "C0 lista ativa com ondas 2/3 desligadas: 8 recompra" "$(gerar)" "8"
+eq "C0 lista ativa com ondas 2/3 desligadas: 10 recompra" "$(gerar)" "10"
 eq "C0 nenhum complemento nem preço com as ondas desligadas" "$(conta complemento)|$(conta preco)" "0|0"
 
 P -q -c "UPDATE public.venda_config SET valor = 'true'::jsonb WHERE chave IN ('onda_complemento','onda_preco')"
 
 # ── C1/P0 ondas ligadas ────────────────────────────────────────────────────────────────────────────
-eq "C1 2ª rodada com ondas ligadas insere 3 complementos + 5 preços (recompra não duplica)" "$(gerar)" "8"
+eq "C1 2ª rodada com ondas ligadas insere 3 complementos + 7 preços (recompra não duplica)" "$(gerar)" "10"
 eq "C1 complemento de C1: top-3 por confidence × lift, empresa da linha mais forte" "$(Pq -c "
   SELECT string_agg(familia || ':' || empresa, ',' ORDER BY familia) FROM public.venda_sugestao
    WHERE tipo = 'complemento' AND comprador_id = '$C1' AND dia_referencia = '$HOJE'")" "FAM_A:oben,FAM_B:colacor,FAM_T:oben"
@@ -408,14 +419,14 @@ eq "C1c comprador fora da lista (C5, F2) não ganha complemento" "$(Pq -c "
 
 eq "P0 preço só para repasse vigente de comprador da lista" "$(Pq -c "
   SELECT string_agg(omie_codigo_produto || ':' || preco_alvo, ',' ORDER BY omie_codigo_produto)
-    FROM public.venda_sugestao WHERE tipo = 'preco' AND dia_referencia = '$HOJE'")" "102:21.00,108:10.05,109:10.05,110:10.05,111:11.00"
+    FROM public.venda_sugestao WHERE tipo = 'preco' AND dia_referencia = '$HOJE'")" "102:21.00,108:10.05,109:10.05,110:10.05,111:11.00,114:105.00,116:11.00"
 eq "P0b preco_anterior = maior entre aprovação e último ao vivo; empresa oben; farmer dona" "$(Pq -c "
   SELECT string_agg(omie_codigo_produto || ':' || preco_anterior::numeric(10,2) || ':' || empresa, ',' ORDER BY omie_codigo_produto)
-    FROM public.venda_sugestao WHERE tipo = 'preco' AND farmer_user_id = '$F1'")" "102:20.00:oben,108:10.00:oben,109:10.00:oben,110:10.00:oben,111:10.00:oben"
+    FROM public.venda_sugestao WHERE tipo = 'preco' AND farmer_user_id = '$F1'")" "102:20.00:oben,108:10.00:oben,109:10.00:oben,110:10.00:oben,111:10.00:oben,114:100.00:oben,116:10.00:oben"
 
 # ── C2/P1 idempotência ─────────────────────────────────────────────────────────────────────────────
 eq "C2 3ª rodada não insere nada" "$(gerar)" "0"
-eq "C2 contagens estáveis (recompra|complemento|preço)" "$(conta recompra)|$(conta complemento)|$(conta preco)" "8|3|5"
+eq "C2 contagens estáveis (recompra|complemento|preço)" "$(conta recompra)|$(conta complemento)|$(conta preco)" "10|3|7"
 P -q -c "INSERT INTO public.t_gap VALUES ('$C1','FAM_Z','oben', 3.0, 3.0, 9, NULL)"
 gerar >/dev/null
 eq "C2b família nova no meio do dia não vira a 4ª de quem já tem complemento" "$(Pq -c "
@@ -444,6 +455,14 @@ eq "C4b ativa de outro dia (ontem) não gera complemento/preço" "$(Pq -c "
   SELECT count(*) FILTER (WHERE tipo <> 'recompra') || '|' || (count(*) > 0)::text
     FROM public.venda_sugestao WHERE fase = 'ativa' AND dia_referencia = '$ONTEM'")" "0|true"
 
+# ── P0c carteira transferida no meio do dia: a linha de recompra é da F1, o dono único agora é a F2 ──
+P -q -c "UPDATE public.carteira_assignments SET owner_user_id = '$F2' WHERE customer_user_id = '$C2'"
+eq "P0c dono único ≠ farmer da linha → sem preço (a ficha dela recusaria)" "$(Pq -c "
+  SELECT count(*) FROM private.venda_lista_preco('$HOJE') WHERE comprador_id = '$C2'")" "0"
+P -q -c "UPDATE public.carteira_assignments SET owner_user_id = '$F1' WHERE customer_user_id = '$C2'"
+eq "P0c controle: com a carteira de volta, o preço de C2 volta" "$(Pq -c "
+  SELECT count(*) FROM private.venda_lista_preco('$HOJE') WHERE comprador_id = '$C2'")" "1"
+
 # ── M a lista da farmer ────────────────────────────────────────────────────────────────────────────
 MINHAS="$(Pq -c "$(como "$F1" "SELECT public.venda_minhas_sugestoes('$HOJE')")")"
 j() { Pq -c "SELECT $1 FROM (SELECT '$MINHAS'::jsonb AS r) x"; }
@@ -459,13 +478,22 @@ eq "M6 farmer nunca recebe custo/markup/piso/preço anterior" "$(j "(lower(r::te
 eq "M7 F2 não vê a lista da F1" "$(Pq -c "$(como "$F2" "SELECT jsonb_array_length(public.venda_minhas_sugestoes('$HOJE')->'compradores')")")" "0"
 
 # ── C3/P2 desfechos ────────────────────────────────────────────────────────────────────────────────
-P -q -v C1="$C1" -v C2="$C2" -v C6="$C6" -v C7="$C7" -v C8="$C8" -v C9="$C9" <<'SQL'
+# A farmer VÊ tudo de complemento/preço, menos FAM_T e o preço do SKU 116 (nunca exibidos).
+eq "C3 marca exibidas (8 = 2 complementos + 6 preços)" "$(Pq -c "$(como "$F1" "SELECT public.venda_marcar_mostrada(ARRAY(
+  SELECT id FROM public.venda_sugestao WHERE dia_referencia = '$HOJE' AND fase = 'ativa' AND tipo <> 'recompra'
+     AND familia IS DISTINCT FROM 'FAM_T' AND omie_codigo_produto IS DISTINCT FROM 116))")")" "8"
+P -q -v C1="$C1" -v C2="$C2" -v C6="$C6" -v C7="$C7" -v C8="$C8" -v C9="$C9" -v C10="$C10" -v C11="$C11" <<'SQL'
 SELECT t_ped(:'C1', (SELECT hoje FROM t_cfg) + 20, 501, 1, 50);              -- família FAM_A no dia 20
 SELECT t_ped(:'C2', (SELECT hoje FROM t_cfg) + 3, 102, 10, 20.95);            -- ≥ alvo×0,99 e > anterior
 SELECT t_ped(:'C6', (SELECT hoje FROM t_cfg) + 3, 108, 10, 10.00);            -- o preço VELHO
 SELECT t_ped(:'C7', (SELECT hoje FROM t_cfg) + 3, 109, 10, 10.02);            -- subiu, a < 1% do alvo
 SELECT t_ped(:'C8', (SELECT hoje FROM t_cfg) + 3, 110, 10, 10.00, NULL);      -- bruto = anterior, desconto ?
 SELECT t_ped(:'C9', (SELECT hoje FROM t_cfg) + 3, 111, 10, 11.50, NULL);      -- bruto acima, desconto ?
+SELECT t_ped(:'C10', (SELECT hoje FROM t_cfg) + 3, 114, 10, 90);              -- 2 linhas: 90 e 110 → média 100
+INSERT INTO public.order_items (sales_order_id, omie_codigo_produto, quantity, unit_price, desconto_valor)
+SELECT so.id, 114, 10, 110, 0 FROM public.sales_orders so
+ WHERE so.customer_user_id = :'C10' AND so.order_date_kpi = (SELECT hoje FROM t_cfg) + 3;
+SELECT t_ped(:'C11', (SELECT hoje FROM t_cfg) + 3, 116, 10, 11.50);           -- subiu, mas nunca exibido
 SQL
 P -q -c "SELECT public.venda_fechar_desfechos('$HOJE'::date + 29)"
 eq "C3 dia 29: complemento e preço ainda abertos (janela 30)" "$(Pq -c "
@@ -473,8 +501,8 @@ eq "C3 dia 29: complemento e preço ainda abertos (janela 30)" "$(Pq -c "
    WHERE dia_referencia = '$HOJE' AND fase = 'ativa' AND tipo IN ('complemento','preco')")" "0"
 P -q -c "SELECT public.venda_fechar_desfechos('$HOJE'::date + 30)"
 eq "C3 dia 30: complemento fecha — FAM_A virou, as outras não" "$(Pq -c "
-  SELECT string_agg(familia || ':' || desfecho, ',' ORDER BY familia) FROM public.venda_sugestao
-   WHERE tipo = 'complemento' AND dia_referencia = '$HOJE'")" "FAM_A:virou_pedido,FAM_B:nao_virou,FAM_T:nao_virou"
+  SELECT string_agg(familia || ':' || desfecho || COALESCE('/' || desfecho_motivo, ''), ',' ORDER BY familia) FROM public.venda_sugestao
+   WHERE tipo = 'complemento' AND dia_referencia = '$HOJE'")" "FAM_A:virou_pedido,FAM_B:nao_virou,FAM_T:nao_medivel/nao_exibida"
 desf() { Pq -c "SELECT desfecho || COALESCE('/' || desfecho_motivo, '') FROM public.venda_sugestao
                  WHERE tipo = 'preco' AND dia_referencia = '$HOJE' AND omie_codigo_produto = $1"; }
 eq "P2 acima do anterior e do alvo×0,99 → virou_pedido" "$(desf 102)" "virou_pedido"
@@ -482,6 +510,8 @@ eq "P2a alvo a < 1%: pagar o preço velho → nao_virou" "$(desf 108)" "nao_viro
 eq "P2b alvo a < 1%: preço subiu acima do anterior → virou_pedido" "$(desf 109)" "virou_pedido"
 eq "P2c desconto não apurado com bruto ≤ anterior → nao_virou (desconto só abaixa)" "$(desf 110)" "nao_virou"
 eq "P2d desconto não apurado com bruto acima → nao_medivel" "$(desf 111)" "nao_medivel/desconto_nao_apurado"
+eq "P2e pedido com 90 e 110 sobre anterior 100 → nao_virou (a média do pedido não subiu)" "$(desf 114)" "nao_virou"
+eq "P2f preço nunca exibido, mesmo com venda acima do alvo → nao_medivel/nao_exibida" "$(desf 116)" "nao_medivel/nao_exibida"
 
 # ── A ACL ──────────────────────────────────────────────────────────────────────────────────────────
 eq "A funções fechadas a anon/authenticated/PUBLIC" "$(Pq -c "

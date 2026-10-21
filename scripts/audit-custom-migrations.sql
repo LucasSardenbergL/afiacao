@@ -5780,7 +5780,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
-  ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', '8472bc5d9553f4623d06ea7146fa8e7a'),
+  ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),
   ('public', 'venda_minhas_sugestoes', 1, '20261020174221_venda_cliente_espinha.sql', 'b98d2eecbb1b24088c6bacd5f4d5fe01'),
   ('public', 'venda_minhas_sugestoes', 2, '20261021031000_venda_cliente_ondas23.sql', 'd09aac2957017213880f53e9253bd279'),
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),

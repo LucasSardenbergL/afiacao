@@ -12,7 +12,7 @@ SELECT CASE
     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_minhas_sugestoes(date)'))
          IS DISTINCT FROM 'e38baeb57b7e19c815e45baa77a23810'
     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_fechar_desfechos(date)'))
-         IS DISTINCT FROM '732f661febd3c3e3c0dde4eb18e90bdd'
+         IS DISTINCT FROM '6c962e84f9b821d5612b555e10489616'
     THEN '❌ corpo vivo divergente do da 20261021031000 (gerador, lista da farmer ou desfecho)'
   WHEN has_function_privilege('anon', 'public.venda_minhas_sugestoes(date)', 'EXECUTE')
     OR NOT has_function_privilege('authenticated', 'public.venda_minhas_sugestoes(date)', 'EXECUTE')

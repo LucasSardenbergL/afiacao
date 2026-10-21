@@ -25,5 +25,6 @@ export function useComplementoComprador(compradorId: string | null, habilitado: 
       return lerComplementoComprador(raw);
     },
   });
-  return { familias: data ?? null, loading: habilitado && !!compradorId && isLoading, erro: isError };
+  // Erro na revalidação NÃO mantém o dado do cache na tela (SKU que a regra já não indica seguiria visível — mesma regra do preço, Codex P1).
+  return { familias: isError ? null : data ?? null, loading: habilitado && !!compradorId && isLoading, erro: isError };
 }

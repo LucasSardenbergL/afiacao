@@ -21,6 +21,7 @@ import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { logger } from '@/lib/logger';
 import { formatPrecoOuAusente } from '@/lib/format';
 import { sugestoesDeComplemento, sugestoesDePreco, sugestoesDeRecompra } from '@/lib/venda-cliente/sugestoes';
+import { alvoDaSugestao } from '@/lib/venda-cliente/preco';
 import { LinkTelefone } from './LinkTelefone';
 import { SecaoRecomprar } from './SecaoRecomprar';
 import { SecaoComplemento } from './SecaoComplemento';
@@ -78,14 +79,11 @@ export function FichaLigacao({ compradorId, nome, telefone, motivo, onClose }: P
 
   // O que a farmer VÊ nesta abertura: recompra e complemento ao abrir; preço só quando o alvo
   // foi de fato exibido (repasse confirmado ao vivo) — "mostrada" sem alvo na tela seria falsa.
-  const idsExibidos = useMemo(() => {
-    const comAlvo = new Set((preco.alvos ?? []).map((a) => a.omieCodigoProduto));
-    return [
-      ...itens.map((s) => s.id),
-      ...complementos.map((s) => s.id),
-      ...precos.filter((s) => s.omieCodigoProduto != null && comAlvo.has(s.omieCodigoProduto)).map((s) => s.id),
-    ];
-  }, [itens, complementos, precos, preco.alvos]);
+  const idsExibidos = useMemo(() => [
+    ...itens.map((s) => s.id),
+    ...complementos.map((s) => s.id),
+    ...precos.filter((s) => alvoDaSugestao(s, preco.alvos) !== undefined).map((s) => s.id),
+  ], [itens, complementos, precos, preco.alvos]);
 
   // 1 sensor por ABERTURA (não por render) e cada id marcado 1× por abertura: a ref zera quando
   // a ficha fecha ou troca de comprador.

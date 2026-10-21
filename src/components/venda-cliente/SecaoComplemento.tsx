@@ -22,7 +22,8 @@ interface Props {
  */
 export function SecaoComplemento({ ondaLigada, itens, familias, loading, erro }: Props) {
   if (!ondaLigada || itens.length === 0) return null;
-  const porFamilia = new Map((familias ?? []).map((f) => [f.familia, f]));
+  // Família E empresa: o desfecho casa a compra na empresa GRAVADA na linha (Codex P2).
+  const porFamilia = new Map((familias ?? []).map((f) => [`${f.familia}|${f.empresa}`, f]));
   return (
     <section aria-labelledby="ficha-complemento">
       <div className="flex items-baseline justify-between">
@@ -36,7 +37,7 @@ export function SecaoComplemento({ ondaLigada, itens, familias, loading, erro }:
       )}
       <ul className="mt-2 divide-y divide-border rounded-md border">
         {itens.map((s) => {
-          const f = s.familia != null ? porFamilia.get(s.familia) : undefined;
+          const f = s.familia != null ? porFamilia.get(`${s.familia}|${s.empresa}`) : undefined;
           return (
             <li key={s.id} className="px-3 py-2.5">
               <p className="text-sm font-medium leading-snug">{s.familia}</p>
