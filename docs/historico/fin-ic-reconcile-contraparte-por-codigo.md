@@ -82,7 +82,7 @@ Antes, 2024-11 e 2025-05/06 mostravam um consolidado não nulo e inflado pelo IC
 - **Sonda:** `db/sonda-disparo-fin-ic-reconcile-v1.2.sql`, aplicada pelo `db:aplicar`. Request 125764 → `v1.2-contraparte-por-codigo-omie`, **DEPLOY CONFIRMADO**. `pendencias:deploy` voltou com exit 0.
 - **Simular:** `db/simular-fin-ic-reconcile-v1.2.sql`, request 125770.
   - As 6 consultas ao Omie responderam e nenhuma divergiu do mapa.
-  - A colagem **não tem** cadastro da colacor_sc. A consulta deu EOF legítimo, então não havia "par a mais" escondido.
+  - A colacor **não tem** cadastro da colacor_sc. A consulta deu EOF legítimo, então não havia "par a mais" escondido.
   - Resultado: 11 `auto_matched` e 10 `sem_contrapartida`, iguais à medição.
 - **1ª escrita:** `db/escrita-fin-ic-reconcile-v1.2.sql`, request 125772. Inseriu 21 linhas: 11 `auto_matched`, somando R$ 129.176,66, e 10 informativas.
 - **RPC na prod** (corpo de `pg_get_functiondef` em SELECT, porque o `claude_ro` não tem EXECUTE):
