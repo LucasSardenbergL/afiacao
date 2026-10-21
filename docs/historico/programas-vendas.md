@@ -244,3 +244,21 @@ com a Onda 2 ligada o Mix/Gap sai da fila (vive na ficha).
   do cache na tela (Codex código P1).
 - **Gerar complemento/preço para outro dia olharia o futuro**: o núcleo do Mix/Gap e o último preço ao vivo leem `now()`.
   Por isso sombra e histórico ficam só com recompra.
+
+## Venda por cliente — a lista da farmer na lente "Ver como" (2026-10-21)
+
+Migration `20261021070000_venda_lista_lente.sql` (TRAVA→PRE→CREATE→PÓS; prova `db/test-venda-lista-lente.sh`, no núcleo
+do CI, 26 asserts, 8 sabotagens vermelhas nos dois locales). A montagem do JSON saiu de `venda_minhas_sugestoes` para
+`private._venda_sugestoes_json(p_farmer, p_dia)` (não-definer, fechado a PUBLIC/anon/authenticated); a RPC da farmer virou
+gate de sessão + helper(`auth.uid()`), e `get_venda_sugestoes_for(p_farmer, p_dia)` é a variante master-only (42501 para
+qualquer outro, inclusive a farmer pedindo a própria). `useMinhasSugestoes` na lente chama a nova com o `effectiveUserId`;
+o estado `lente` (aviso "a lista não é exibida") saiu da fila. A ficha segue sem escrever na lente.
+
+- **Nome `get_` não é estética: é a regra do write-guard** (`isReadOnlyRpc` = prefixo `get_`/`list_` ou allowlist). O
+  `_for` sugerido na Task 8 (`venda_minhas_sugestoes_for`) seria bloqueado no cliente sob a lente.
+- **Byte-identidade provada duas vezes.** No PG17, contra um ORÁCULO: o bloco da função recortado do arquivo das Ondas 2–3
+  (md5 = o vivo em prod) e recriado como `_v0`. No apply, a PRE guarda o md5 da saída por (farmer, dia ativo) e a PÓS
+  exige o mesmo depois da troca — a prova roda contra os dados da prod, não só os do fixture.
+- **Sabotagem que não sabota é lacuna da prova.** Duas ficaram verdes na 1ª falsificação: "total sem a guarda de ausente"
+  (o fixture só tinha a recompra SEM valor — `sum` já dava NULL; faltava uma com e outra sem) e "helper sem REVOKE de
+  authenticated" (no-op: `private` não tem default ACL para authenticated, em prod também; a sabotagem certa deixa PUBLIC).

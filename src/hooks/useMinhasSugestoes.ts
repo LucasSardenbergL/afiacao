@@ -10,15 +10,12 @@ import { lerMinhasSugestoes, ONDAS_DESLIGADAS, type MinhasSugestoesResp, type On
  * Estado da lista de recompra do dia — cada caso tem UMA tela própria no Meu Dia:
  * - `onda_desligada`: a Onda 1 ainda não ligou no servidor (`venda_config.onda_recompra`)
  *   → "sua lista começa em breve", nunca uma lista vazia que afirma "nada a fazer".
- * - `lente`: na lente "Ver como" a lista NÃO é lida. A RPC é por `auth.uid()` (devolveria a
- *   lista do master, não a da vendedora) e o write-guard da lente bloqueia RPC fora de get_/list_.
  * - `erro`: falha de leitura (config ou RPC) — nunca vira "dia limpo".
  */
 export type EstadoRecompra =
   | { tipo: 'carregando' }
   | { tipo: 'erro'; erro: unknown }
   | { tipo: 'onda_desligada' }
-  | { tipo: 'lente' }
   | { tipo: 'pronta'; resp: MinhasSugestoesResp };
 
 /** Liga/desliga da Onda 1, no servidor (vale para o aparelho das farmers, não é flag local). */
@@ -44,17 +41,24 @@ function useOndaRecompra() {
 
 export function useMinhasSugestoes(): { estado: EstadoRecompra; refetch: () => void } {
   const { user } = useAuth();
-  const { isImpersonating } = useImpersonation();
+  // Lente "Ver como": a lista é a da pessoa VISTA (effectiveUserId), só LEITURA. A RPC da farmer é por
+  // auth.uid() (devolveria a do master); `get_venda_sugestoes_for` é master-only no banco (42501) e o
+  // prefixo get_ é o que o write-guard da lente deixa passar. A escrita (marcar mostrada, desfecho)
+  // segue bloqueada na ficha — useAuth() continua o real.
+  const { isImpersonating, effectiveUserId } = useImpersonation();
   const onda = useOndaRecompra();
   const dia = hojeSP();
+  const dono = isImpersonating ? effectiveUserId : user?.id ?? null;
 
   const lista = useQuery({
-    queryKey: ['venda-minhas-sugestoes', user?.id, dia],
-    enabled: !!user && onda.data === true && !isImpersonating,
+    queryKey: ['venda-minhas-sugestoes', dono, isImpersonating, dia],
+    enabled: !!user && !!dono && onda.data === true,
     staleTime: 60_000,
     queryFn: async (): Promise<MinhasSugestoesResp> => {
       // Sem p_dia: o dia é o do servidor (America/Sao_Paulo), o mesmo do gerador.
-      const { data, error } = await supabase.rpc('venda_minhas_sugestoes');
+      const { data, error } = isImpersonating
+        ? await supabase.rpc('get_venda_sugestoes_for', { p_farmer: dono as string })
+        : await supabase.rpc('venda_minhas_sugestoes');
       if (error) throw error;
       return lerMinhasSugestoes(data);
     },
@@ -71,11 +75,10 @@ export function useMinhasSugestoes(): { estado: EstadoRecompra; refetch: () => v
     if (onda.isError) return { tipo: 'erro', erro: onda.error };
     if (onda.data === undefined) return { tipo: 'carregando' };
     if (!onda.data) return { tipo: 'onda_desligada' };
-    if (isImpersonating) return { tipo: 'lente' };
     if (lista.isError) return { tipo: 'erro', erro: lista.error };
     if (!lista.data) return { tipo: 'carregando' };
     return { tipo: 'pronta', resp: lista.data };
-  }, [onda.isError, onda.error, onda.data, isImpersonating, lista.isError, lista.error, lista.data]);
+  }, [onda.isError, onda.error, onda.data, lista.isError, lista.error, lista.data]);
 
   return { estado, refetch };
 }
@@ -90,7 +93,7 @@ export function useSugestoesDoComprador(compradorId: string | null) {
 /**
  * Ondas 2–3 ligadas no servidor, lidas da MESMA resposta da lista (o gerador só cria linha de
  * complemento/preço com a onda ligada; a ficha também esconde a seção com ela desligada).
- * Lista ainda não pronta (carregando, erro, lente, Onda 1 desligada) → tudo desligado.
+ * Lista ainda não pronta (carregando, erro, Onda 1 desligada) → tudo desligado.
  */
 export function useOndasVenda(): OndasVenda {
   const { estado } = useMinhasSugestoes();

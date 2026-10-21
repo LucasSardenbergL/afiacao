@@ -712,3 +712,9 @@ db/test-venda-painel.sh                    19  falsificar=8
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
 db/test-venda-ondas23.sh                   44  falsificar=18
+
+# Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
+# vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo
+# recortado do arquivo das Ondas 2–3, md5 conferido), get_venda_sugestoes_for é só master (farmer para outra
+# ou para si → 42501, anon → 42501, helper direto → 42501), só fase ativa, ausente ≠ zero, sem chave de custo.
+db/test-venda-lista-lente.sh               26  falsificar=8
