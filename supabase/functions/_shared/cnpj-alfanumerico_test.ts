@@ -82,20 +82,29 @@ Deno.test("máscara exata: separador fora da posição da máscara NÃO cola um 
   assertEquals(ehCnpjAlfanumerico("AEG12345678909"), true);
 });
 
-Deno.test("máscara exata: documentoParaCadastro segue o mesmo contrato (CPF anotado cadastra como CPF)", () => {
-  assertEquals(documentoParaCadastro("aeg-123.456.789-09"), "12345678909");
-  let msg = "";
-  try {
-    documentoParaCadastro("12ABC.34501DE-35"); // letra depois do 1º dígito e máscara fora de posição → recusa
-  } catch (e) {
-    msg = (e as Error).message;
-  }
-  assertEquals(msg.includes("cadastro recusado"), true, `mensagem ${JSON.stringify(msg)}`);
+Deno.test("máscara exata: documentoParaCadastro NÃO herda o só-dígitos do normalizar (anotação ≠ rótulo)", () => {
+  // normalizarDocumento("aeg-123.456.789-09") segue "12345678909" (chave de comparação, acima); para
+  // CADASTRAR, "aeg-" não é rótulo da gramática → recusa (Codex ALTO 2026-10-20, rótulo heurístico).
+  assertEquals(marcaDaRecusa("aeg-123.456.789-09"), "DOC_LETRA_FORA_DO_ROTULO");
+  // letra depois do 1º dígito e máscara fora de posição → recusa
+  assertEquals(marcaDaRecusa("12ABC.34501DE-35"), "DOC_LETRA_FORA_DO_ROTULO");
   assertEquals(ehCnpjAlfanumerico("123450136"), false);
   assertEquals(ehCnpjAlfanumerico("12345678000190"), false); // numérico não é "alfanumérico"
 });
 
 // ── documentoParaCadastro: o ramo de IncluirCliente ────────────────────────────────────────────
+/** A marca do ramo que recusou (`DOC_…`), ou "PASSOU:<retorno>" — nunca "lançou algo". */
+function marcaDaRecusa(bruto: unknown): string {
+  try {
+    return `PASSOU:${documentoParaCadastro(bruto)}`;
+  } catch (e) {
+    const msg = (e as Error).message;
+    const marca = /^(DOC_[A-Z_]+):/.exec(msg)?.[1];
+    if (!marca || !msg.includes("cadastro recusado")) throw e; // erro que não é recusa do ramo → re-lança
+    return marca;
+  }
+}
+
 Deno.test("documentoParaCadastro: numérico passa como hoje; alfanumérico válido passa com letras", () => {
   assertEquals(documentoParaCadastro("12.345.678/0001-90"), "12345678000190");
   assertEquals(documentoParaCadastro("CPF: 123.456.789-09"), "12345678909");
@@ -106,12 +115,78 @@ Deno.test("documentoParaCadastro: letra DEPOIS do 1º dígito sem CNPJ alfanumé
   // 12ABC34501DE36 = DV errado → antes virava "CPF" de 9 dígitos; 123ABC45678909 = CNPJ inválido cujos
   // dígitos formam o CPF 12345678909 de OUTRA pessoa (Codex MÉDIO) — os dois têm de lançar.
   for (const bruto of ["12.ABC.345/01DE-36", "123ABC45678909", "1234567800019A"]) {
-    let msg = "";
-    try {
-      documentoParaCadastro(bruto);
-    } catch (e) {
-      msg = (e as Error).message;
-    }
-    assertEquals(msg.includes("cadastro recusado"), true, `bruto ${bruto}: mensagem ${JSON.stringify(msg)}`);
+    assertEquals(marcaDaRecusa(bruto), "DOC_LETRA_FORA_DO_ROTULO", `bruto ${bruto}`);
+  }
+});
+
+// ── Gramática de rótulo (Codex ALTO 2026-10-20: "ABC12345678909" virava o CPF 12345678909) ──────
+Deno.test("rótulo: letra antes do 1º dígito que NÃO é rótulo CPF/CNPJ recusa — nunca devolve o CPF alheio", () => {
+  for (const bruto of [
+    "ABC12345678909", // o achado
+    "abc123.456.789-09",
+    "AEG 123.456.789-09",
+    "Doc: 123.456.789-09",
+    "C.P.F. 123.456.789-09",
+    "CPF-123.456.789-09", // hífen não é separador de rótulo
+    "CPF12345678909", // rótulo colado não é rótulo
+    "CPFCNPJ: 12345678909",
+    "RG: 12345678909",
+    "ÇPF: 123.456.789-09", // letra acentuada também é letra
+    "CPF: CPF: 123.456.789-09", // só UM rótulo
+    "CPF: 123.456.789-09 (titular)", // letra DEPOIS também
+  ]) {
+    assertEquals(marcaDaRecusa(bruto), "DOC_LETRA_FORA_DO_ROTULO", `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("rótulo: CPF:/CNPJ:/CPF /CNPJ  em qualquer caixa são removidos", () => {
+  const casos: Array<[string, string]> = [
+    ["CPF: 123.456.789-09", "12345678909"],
+    ["CPF:123.456.789-09", "12345678909"],
+    ["cpf : 123.456.789-09", "12345678909"],
+    ["CPF 12345678909", "12345678909"],
+    ["  Cpf   123.456.789-09  ", "12345678909"],
+    ["CNPJ: 12.345.678/0001-90", "12345678000190"],
+    ["cnpj 12345678000190", "12345678000190"],
+    ["CNPJ: 12.ABC.345/01DE-35", "12ABC34501DE35"],
+    ["cnpj 12abc34501de35", "12ABC34501DE35"],
+  ];
+  for (const [bruto, esperado] of casos) {
+    assertEquals(marcaDaRecusa(bruto), `PASSOU:${esperado}`, `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("rótulo que contradiz o tamanho recusa (CPF ≠ 11, CNPJ ≠ 14)", () => {
+  for (const bruto of ["CPF: 12.345.678/0001-90", "CNPJ: 123.456.789-09", "CPF: 12.ABC.345/01DE-35", "CPF: 1234567890"]) {
+    assertEquals(marcaDaRecusa(bruto), "DOC_ROTULO_DIVERGENTE", `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("sem dígito recusa (ausente ≠ documento vazio)", () => {
+  for (const bruto of ["CPF:", "CNPJ: ", "---", "", null, undefined]) {
+    assertEquals(marcaDaRecusa(bruto), "DOC_SEM_DIGITO", `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("numérico com máscara e alfanumérico válido (cru, máscara, minúsculo) passam sem rótulo", () => {
+  const casos: Array<[unknown, string]> = [
+    ["123.456.789-09", "12345678909"],
+    ["12345678909", "12345678909"],
+    ["12.345.678/0001-90", "12345678000190"],
+    [" 12 345 678 0001 90 ", "12345678000190"], // numérico segue o `.replace(/\D/g, "")` de sempre
+    [12345678909, "12345678909"],
+    ["12ABC34501DE35", "12ABC34501DE35"],
+    ["12.ABC.345/01DE-35", "12ABC34501DE35"],
+    ["12abc34501de35", "12ABC34501DE35"],
+    ["12.abc.345/01de-35", "12ABC34501DE35"],
+  ];
+  for (const [bruto, esperado] of casos) {
+    assertEquals(marcaDaRecusa(bruto), `PASSOU:${esperado}`, `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("alfanumérico com DV errado ou letra no DV recusa, com ou sem rótulo", () => {
+  for (const bruto of ["12ABC34501DE36", "CNPJ: 12ABC34501DE36", "1234567800019A", "cnpj 12abc34501de36"]) {
+    assertEquals(marcaDaRecusa(bruto), "DOC_LETRA_FORA_DO_ROTULO", `bruto ${JSON.stringify(bruto)}`);
   }
 });

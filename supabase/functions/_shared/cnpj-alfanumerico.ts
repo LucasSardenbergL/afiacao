@@ -67,19 +67,50 @@ export function normalizarDocumento(bruto: unknown): string {
 }
 
 /**
+ * Rótulo aceito antes do documento: SÓ `CPF` ou `CNPJ` (sem diferenciar caixa) seguido de `:` ou de
+ * espaço — "CPF: 123…", "cnpj 12.345…". Gramática fechada: "AEG-", "Doc:", "C.P.F.", "CPF-" e
+ * "CPF123…" (sem separador) NÃO são rótulo.
+ */
+const ROTULO_RE = /^(CPF|CNPJ)(?:\s*:\s*|\s+)/i;
+const TAMANHO_DO_ROTULO: Record<string, number> = { CPF: 11, CNPJ: 14 };
+
+/**
  * Documento para CADASTRAR cliente no Omie (IncluirCliente). O ramo `pessoa_fisica = len <= 11`
  * dos chamadores tratava `12ABC34501DE36` (letra, DV errado) como "CPF" de 9 dígitos e cadastrava
  * ERRADO no ERP — e `123ABC45678909` como o CPF 12345678909 de OUTRA pessoa (Codex, 2026-10-19).
- * Regra: letra só é tolerada como RÓTULO antes do 1º dígito ("CPF: 123..."); letra DEPOIS do 1º
- * dígito só passa se o todo for um CNPJ alfanumérico válido — senão lança (precisão > recall: um
- * cadastro errado no ERP custa mais que um recusado). Numérico puro/com máscara segue byte-idêntico.
+ * A 1ª correção (#3180) tolerava QUALQUER letra antes do 1º dígito como rótulo, e
+ * `ABC12345678909` virava o mesmo CPF alheio (Codex ALTO, 2026-10-20). Regra agora:
+ *   1. o todo é CNPJ alfanumérico válido (cru ou máscara exata, qualquer caixa) → ele;
+ *   2. senão, tira no máximo UM rótulo da gramática `ROTULO_RE`;
+ *   3. sobrou letra (qualquer `\p{L}`, inclusive acentuada) → só passa se o resto for CNPJ
+ *      alfanumérico válido; senão LANÇA — nunca devolve o documento reduzido aos dígitos;
+ *   4. rótulo que contradiz o tamanho (CPF com ≠11 dígitos, CNPJ com ≠14 posições) → LANÇA;
+ *   5. sem nenhum dígito → LANÇA (ausente ≠ documento vazio).
+ * Numérico puro/com máscara, sem rótulo, segue byte-idêntico ao `.replace(/\D/g, "")` de sempre.
+ * Precisão > recall: um cadastro errado no ERP custa mais que um recusado. As mensagens levam a
+ * marca do ramo (`DOC_LETRA_FORA_DO_ROTULO`/`DOC_ROTULO_DIVERGENTE`/`DOC_SEM_DIGITO`) e "cadastro
+ * recusado".
  */
 export function documentoParaCadastro(bruto: unknown): string {
-  const doc = normalizarDocumento(bruto);
-  const s = String(bruto ?? "");
-  const corpo = s.slice(Math.max(0, s.search(/\d/)));
-  if (/[A-Za-z]/.test(corpo) && !ehCnpjAlfanumerico(doc)) {
-    throw new Error("Documento com letras não é um CNPJ alfanumérico válido (RFB jul/2026) — cadastro recusado");
+  const s = String(bruto ?? "").trim();
+  const inteiro = normalizarDocumento(s);
+  if (ehCnpjAlfanumerico(inteiro)) return inteiro;
+
+  const rotulo = ROTULO_RE.exec(s);
+  const corpo = rotulo ? s.slice(rotulo[0].length) : s;
+  const doc = normalizarDocumento(corpo);
+  if (/\p{L}/u.test(corpo) && !ehCnpjAlfanumerico(doc)) {
+    throw new Error(
+      "DOC_LETRA_FORA_DO_ROTULO: documento com letra fora do rótulo CPF/CNPJ não é um CNPJ alfanumérico válido (RFB jul/2026) — cadastro recusado",
+    );
+  }
+  if (!/\d/.test(doc)) {
+    throw new Error("DOC_SEM_DIGITO: documento sem nenhum dígito — cadastro recusado");
+  }
+  if (rotulo && doc.length !== TAMANHO_DO_ROTULO[rotulo[1].toUpperCase()]) {
+    throw new Error(
+      `DOC_ROTULO_DIVERGENTE: rótulo ${rotulo[1].toUpperCase()} com ${doc.length} posições — cadastro recusado`,
+    );
   }
   return doc;
 }
