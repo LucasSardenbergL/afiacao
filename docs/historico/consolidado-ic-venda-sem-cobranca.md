@@ -71,6 +71,12 @@ deixava uma linha informativa oben→colacor de 100, que é "CR aparecido" para 
 oben→colacor de 100. U14 e U16 pendiam pela trava errada (duas defesas no mesmo assert). Eles passaram
 para colacor_sc→colacor.
 
+**2º achado:** com o ramo DELETE do trigger desligado (`trg_delete`), o T10 seguiu VERDE. O DELETE caía no
+ramo SAI (`NEW` é NULL, então `NEW.status IS DISTINCT FROM 'intragrupo_sem_cobranca'`), que também levanta
+42501 ("so o master desfaz"). O T10 casava só a SQLSTATE, e dois ramos davam o mesmo código. Agora ele casa
+também a marca do ramo ("nao se apaga"). Final: 51 sabotagens vermelhas, 0 falhas, controle verde, nos dois
+locales.
+
 ## Lições
 
 - **Rota congelada é estado de PRODUTO a conferir antes de pedir ação ao founder.** As sessões anteriores
@@ -78,5 +84,7 @@ para colacor_sc→colacor.
   deixado de valer no mesmo dia.
 - **Escrita via PostgREST que devolve 0 linhas não é sucesso.** Com RLS, ou com a linha refeita por outro
   writer, `update().eq()` não dá erro. Peça `.select('id')` e exija a linha.
+- **Mesma SQLSTATE em dois ramos mascara um deles.** O assert negativo precisa casar a marca do ramo,
+  não só o código.
 - **Semente global contamina predicados por existência.** Um "existe linha X na mesma direção" vê todas
   as linhas da semente, não só as do cenário. A falsificação foi o que mostrou isso.
