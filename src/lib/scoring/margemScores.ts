@@ -29,12 +29,6 @@ export interface MargemScore {
   visivel: boolean;
 }
 
-interface LinhaMargem {
-  customer_user_id: string;
-  gross_margin_pct: number | string | null;
-  margem_visivel: boolean;
-}
-
 /**
  * Busca a margem dos clientes pedidos (ou de toda a carteira visível, sem `customerIds`), opcionalmente
  * recortada por `farmerId`. LANÇA em falha — "não consegui ler" nunca vira "margem desconhecida".
@@ -44,7 +38,7 @@ export async function buscarMargensScores(
   opts: { customerIds?: string[]; farmerId?: string } = {},
 ): Promise<Map<string, MargemScore>> {
   if (opts.customerIds && opts.customerIds.length === 0) return new Map();
-  const linhas = await fetchAllPages<LinhaMargem>(
+  const linhas = await fetchAllPages(
     (de, ate) =>
       supabase
         .rpc('get_scores_margem', {
@@ -52,7 +46,7 @@ export async function buscarMargensScores(
           p_farmer_id: opts.farmerId,
         })
         .order('customer_user_id', { ascending: true })
-        .range(de, ate) as unknown as PromiseLike<{ data: LinhaMargem[] | null; error: unknown }>,
+        .range(de, ate),
     'get_scores_margem',
   );
   const mapa = new Map<string, MargemScore>();

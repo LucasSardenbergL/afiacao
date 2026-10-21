@@ -1,8 +1,5 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-// Paginação canônica do PostgREST — lança em error E em `data:null` sem error (resposta
-// malformada ≠ fim da tabela). Substitui o laço à mão do carregarBaixaMapDRE, cujo
-// `data ?? []` produzia baixaMap PARCIAL → double-count/perda no DRE-caixa.
-import { fetchAll } from "../_shared/paginate.ts";
+import { type BancoTitulos, buscarTitulosCaixa, buscarTitulosCompetencia, carregarBaixaMap } from "./titulos-dre.ts";
 // Gate da SONDA, não da edge: o `validateCaller` do handler ACEITA `x-cron-secret`, mas exige o
 // client Supabase — que só nasce depois do ponto onde a sonda tem de responder. Por isso ela vem
 // antes, com gate próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
@@ -1463,29 +1460,6 @@ function dedupePorCodigo<T extends { omie_codigo_lancamento?: number | null }>(r
   return [...byCode.values(), ...semCodigo];
 }
 
-// Fase 3: baixa REAL derivada (v_titulo_baixas) por título, paginada. THROW em erro —
-// baixaMap parcial reintroduziria double-count/perda no DRE-caixa (codex). NUNCA degradar
-// silenciosamente pra vencimento aqui.
-async function carregarBaixaMapDRE(db: SupabaseClient, company: string, tipo: "CR" | "CP"): Promise<Map<number, string>> {
-  // Delegado ao fetchAll canônico: o laço à mão daqui coalescia `data ?? []`, então uma
-  // resposta malformada (data:null SEM error) encerrava a paginação e devolvia baixaMap
-  // PARCIAL — exatamente o double-count/perda que o comentário acima diz evitar.
-  const rows = await fetchAll<{ omie_codigo_lancamento: number | null; data_baixa_final: string | null }>(
-    (from, to) =>
-      db.from("v_titulo_baixas")
-        .select("omie_codigo_lancamento, data_baixa_final")
-        .eq("company", company).eq("tipo", tipo)
-        .order("omie_codigo_lancamento", { ascending: true })
-        .range(from, to),
-    `v_titulo_baixas ${tipo}/${company}`,
-  );
-  const map = new Map<number, string>();
-  for (const r of rows) {
-    if (r.omie_codigo_lancamento != null && r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
-  }
-  return map;
-}
-
 // Carrega títulos por lista de códigos, em chunks (PostgREST .in() estoura se a lista for grande).
 async function fetchTitulosPorCodigos(
   db: SupabaseClient, table: string, select: string, company: string, statuses: string[], codes: number[],
@@ -1795,8 +1769,8 @@ async function calcularDRE(
   // No caixa, a data de baixa derivada (v_titulo_baixas) é a data EFETIVA do título;
   // fallback p/ vencimento ("estimado") onde não houver. baixaMap throw em erro (parcial
   // reintroduz double-count). Competência não usa (bucketiza por emissão).
-  const baixaMapCR = regime === "caixa" ? await carregarBaixaMapDRE(db, company, "CR") : new Map<number, string>();
-  const baixaMapCP = regime === "caixa" ? await carregarBaixaMapDRE(db, company, "CP") : new Map<number, string>();
+  const baixaMapCR = regime === "caixa" ? await carregarBaixaMap(db as unknown as BancoTitulos, company, "CR") : new Map<number, string>();
+  const baixaMapCP = regime === "caixa" ? await carregarBaixaMap(db as unknown as BancoTitulos, company, "CP") : new Map<number, string>();
   const codigosNoMes = (map: Map<number, string>) =>
     [...map.entries()].filter(([, d]) => d >= inicioMes && d < fimMes).map(([c]) => c);
 
@@ -1809,43 +1783,34 @@ async function calcularDRE(
   const SEL_CP = "valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao, omie_codigo_lancamento";
   const ST_CR = ["RECEBIDO", "PARCIAL", "LIQUIDADO"];
   const ST_CP = ["PAGO", "PARCIAL", "LIQUIDADO"];
+  // Paginadas com teto (titulos-dre.ts): o select único daqui capava em 1.000 linhas EM SILÊNCIO.
+  const dbTitulos = db as unknown as BancoTitulos;
+  const periodo = { company, inicioMes, fimMes };
   async function buscarCR() {
     if (regime === "competencia") {
-      const { data, error } = await db.from("fin_contas_receber")
-        .select("valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao")
-        .eq("company", company).neq("status_titulo", "CANCELADO")
-        .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
-      if (error) throw error; // não silenciar falha de DB como DRE vazia
-      // Metade que faltava do MESMO guard: `data:null` SEM error é resposta malformada,
-      // e o `?? []` a convertia em "mês sem receita" — DRE zerado com cara de fato.
-      if (data == null) throw new Error(`CR competência ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
-      return data;
+      return await buscarTitulosCompetencia(dbTitulos, {
+        ...periodo, tabela: "fin_contas_receber",
+        select: "valor_documento, valor_recebido, data_recebimento, data_vencimento, categoria_codigo, categoria_descricao",
+      });
     }
-    const { data, error } = await db.from("fin_contas_receber").select(SEL_CR)
-      .eq("company", company).in("status_titulo", ST_CR)
-      .or(`and(data_recebimento.gte.${inicioMes},data_recebimento.lt.${fimMes}),and(data_recebimento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
-    if (error) throw error; // não silenciar falha de DB como DRE vazia
-    if (data == null) throw new Error(`CR caixa ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
+    const data = await buscarTitulosCaixa(dbTitulos, {
+      ...periodo, tabela: "fin_contas_receber", select: SEL_CR, statuses: ST_CR, colunaBaixa: "data_recebimento",
+    });
     const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_receber", SEL_CR, company, ST_CR, codigosNoMes(baixaMapCR));
-    return dedupePorCodigo([...data as Array<Record<string, unknown>>, ...porBaixa]);
+    return dedupePorCodigo([...data, ...porBaixa]);
   }
   async function buscarCP() {
     if (regime === "competencia") {
-      const { data, error } = await db.from("fin_contas_pagar")
-        .select("valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao")
-        .eq("company", company).neq("status_titulo", "CANCELADO")
-        .gte("data_emissao", inicioMes).lt("data_emissao", fimMes);
-      if (error) throw error; // não silenciar falha de DB como DRE vazia
-      if (data == null) throw new Error(`CP competência ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
-      return data;
+      return await buscarTitulosCompetencia(dbTitulos, {
+        ...periodo, tabela: "fin_contas_pagar",
+        select: "valor_documento, valor_pago, data_pagamento, data_vencimento, categoria_codigo, categoria_descricao",
+      });
     }
-    const { data, error } = await db.from("fin_contas_pagar").select(SEL_CP)
-      .eq("company", company).in("status_titulo", ST_CP)
-      .or(`and(data_pagamento.gte.${inicioMes},data_pagamento.lt.${fimMes}),and(data_pagamento.is.null,data_vencimento.gte.${inicioMes},data_vencimento.lt.${fimMes})`);
-    if (error) throw error; // não silenciar falha de DB como DRE vazia
-    if (data == null) throw new Error(`CP caixa ${mes}/${ano}: data null sem error (resposta malformada, não é mês vazio)`);
+    const data = await buscarTitulosCaixa(dbTitulos, {
+      ...periodo, tabela: "fin_contas_pagar", select: SEL_CP, statuses: ST_CP, colunaBaixa: "data_pagamento",
+    });
     const porBaixa = await fetchTitulosPorCodigos(db, "fin_contas_pagar", SEL_CP, company, ST_CP, codigosNoMes(baixaMapCP));
-    return dedupePorCodigo([...data as Array<Record<string, unknown>>, ...porBaixa]);
+    return dedupePorCodigo([...data, ...porBaixa]);
   }
   const receitas = await buscarCR();
   const despesas = await buscarCP();

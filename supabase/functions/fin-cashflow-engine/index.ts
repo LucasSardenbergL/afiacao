@@ -6,19 +6,22 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // malformada (data:null SEM error) virava página vazia → EOF falso → o acumulado PARCIAL
 // passava por tabela inteira. O canônico lança nos DOIS casos (money-path §6/§9).
 // Todo call-site DEVE encadear `.order()` numa coluna estável (gate paginacao-delegada).
-import { fetchAll } from "../_shared/paginate.ts";
+// v1.7: CR/CP saíram do `fetchAll` (offset, páginas EM SÉRIE) para `fetchAllParticionadoUuid`
+// (keyset em 8 faixas de uuid CONCORRENTES) — colacor levava 19–22 s em 31 idas e voltas.
+import { criarLimitador, fetchAllParticionadoUuid } from "../_shared/paginate-particionado.ts";
 // Irmã single-shot do mesmo defeito: as leituras NÃO paginadas do Promise.all abaixo
 // descartavam `error`, e o consumidor coalescia com `?? []`/`?? 0` — falha de transporte
 // (RLS, timeout 57014, 500) virava saldo/CMV/estoque = 0, e a projeção de 13 semanas saía
 // calculada sobre caixa zero sem NENHUM sinal na tela (money-path §2 "ausente ≠ zero").
-import { exigirLeitura, exigirLinhas, tolerarColunaAusente, tolerarLeitura } from "../_shared/leitura-critica.ts";
+import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/leitura-critica.ts";
 // E o terceiro lado da mesma moeda, no eixo da PERSISTÊNCIA: o supabase-js resolve normal
 // com `error` preenchido, então um `await ....insert()` cujo retorno é ignorado devolve
 // HTTP 200 sem ter gravado. Medido em prod: 8 de 9 snapshots em 2026-07-28. O par com o
 // contrato de leitura acima é o que fecha a engine — ler certo e não gravar é tão
 // silencioso quanto gravar lixo; nenhum dos dois basta sozinho.
 import { escritaCritica } from "../_shared/escrita-critica.ts";
-import { carregarBaixasCr } from "./baixas-cr.ts";
+import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
+import { lerPrazosEmpresa } from "./prazos-empresa.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -88,7 +91,10 @@ type Input = {
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
-  const auth = await authorizeCronOrStaff(req);
+  // Tempos por fase para o header Server-Timing (v1.9). Começa antes do gate para o `auth` entrar.
+  const tempos: Tempos = {};
+  const t0 = performance.now();
+  const auth = await medir(tempos, 'auth', authorizeCronOrStaff(req));
   if (!auth.ok) return auth.response;
 
   // ⚠️ SONDA DE VERSÃO — logo após o gate (que já aceita x-cron-secret) e ANTES do createClient e
@@ -136,7 +142,7 @@ Deno.serve(async (req: Request) => {
     // sinal. O que o registro acrescenta ao snapshot é a distinção diagnóstica entre
     // "nem começou" (linha ausente), "começou e morreu" (linha aberta sem finalizado_em)
     // e "falhou" (status erro) — precisamente o que faltou para diagnosticar 2026-07-28.
-    const executar = () => calcular(supabase, payload.company, cenario, horizon, save);
+    const executar = () => calcular(supabase, payload.company, cenario, horizon, save, tempos);
     const result = save
       ? await comRegistro(
         supabase as unknown as DbRegistro,
@@ -151,13 +157,34 @@ Deno.serve(async (req: Request) => {
         }),
       )
       : await executar();
-    return jsonResponse(result, 200);
+    tempos.total = performance.now() - t0;
+    return jsonResponse(result, 200, tempos);
   } catch (err) {
-    return jsonResponse({ error: String((err as Error).message ?? err) }, 500);
+    tempos.total = performance.now() - t0;
+    return jsonResponse({ error: String((err as Error).message ?? err) }, 500, tempos);
   }
 });
 
-function jsonResponse(body: unknown, status: number): Response {
+/**
+ * Tempos por fase (ms), expostos no header `Server-Timing` (v1.9) — a decomposição da latência que
+ * a v1.7 só conseguia INFERIR (colacor 5,2–7,2 s, sem saber quanto era paginação, baixas, prazos ou
+ * cálculo). Header e não corpo: o corpo vira snapshot no cron, e o diagnóstico não pode mudá-lo.
+ * As chaves são CONSTANTES do código (nome de fase), nunca dado da linha.
+ */
+type Tempos = Record<string, number>;
+
+function medir<R>(tempos: Tempos | undefined, fase: string, p: PromiseLike<R>): Promise<R> {
+  const inicio = performance.now();
+  return Promise.resolve(p).finally(() => {
+    if (tempos) tempos[fase] = performance.now() - inicio;
+  });
+}
+
+function serverTiming(tempos: Tempos): string {
+  return Object.entries(tempos).map(([fase, ms]) => `${fase};dur=${ms.toFixed(1)}`).join(', ');
+}
+
+function jsonResponse(body: unknown, status: number, tempos?: Tempos): Response {
   // `versao` em TODA resposta (sucesso e erro), não só na da sonda: a pergunta "essa correção
   // subiu?" quase sempre é feita sobre um snapshot que JÁ foi gravado — e o caso que mais importa
   // é o do run que devolveu número errado sem devolver erro.
@@ -169,7 +196,19 @@ function jsonResponse(body: unknown, status: number): Response {
     : body;
   return new Response(JSON.stringify(comVersao), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+      // `Timing-Allow-Origin` e `Access-Control-Expose-Headers`: sem os dois, o navegador da aba
+      // (outra origem) recebe o header mas esconde os tempos do `PerformanceResourceTiming`.
+      ...(tempos
+        ? {
+          'Server-Timing': serverTiming(tempos),
+          'Timing-Allow-Origin': '*',
+          'Access-Control-Expose-Headers': 'Server-Timing',
+        }
+        : {}),
+    },
   });
 }
 
@@ -332,7 +371,8 @@ type DadosBase = {
   eventos_rec: EventoRecorrente[];
   eventos_ev: EventoEventual[];
   curvas_aging: Record<Faixa, CurvaFaixa>;
-  // PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos, 1 linha/empresa).
+  // PMR/PMP + cobertura da baixa derivada (a linha de v_capital_giro_prazos da empresa, lida pela
+  // RPC fin_capital_giro_prazos_empresa — cópia da view travada por md5 e igualdade, A6).
   // Fonte ÚNICA do prazo (mesma do card client-side getCapitalDeGiro) → consistência.
   prazos: { pmr: number | null; pmp: number | null; pmr_cobertura: number | null; pmp_cobertura: number | null } | null;
   config: Config;
@@ -346,26 +386,47 @@ type DadosBase = {
 async function carregarDados(
   supabase: SupabaseClient,
   company: Company,
+  tempos?: Tempos,
 ): Promise<DadosBase> {
-  // CR/CP paginados (anti-truncamento, ver o import de fetchAll); o resto cabe em <1000
-  // e vai em Promise.all. Tudo em paralelo.
+  // CR/CP paginados (anti-truncamento, ver o import de fetchAllParticionadoUuid); o resto cabe
+  // em <1000 e vai em Promise.all. Tudo em paralelo. O build segue o contrato do helper: faixa
+  // por `.gte/.lt`, cursor por `.gt`, `.order('id')` ascendente e `.limit` — o helper LANÇA se
+  // uma linha voltar fora da faixa, então esquecer um filtro não duplica título em silêncio.
+  // `.order().limit()` no PRÓPRIO `let q =` (gate single-shot-truncado lê a expressão inicial);
+  // filtro encadeado depois do `limit` só acrescenta parâmetro na URL — a semântica é a mesma.
+  // Teto de 12 requisições em voo para CR + CP JUNTAS (não por tabela): o cron dispara os 3
+  // cenários da empresa no mesmo minuto. Era 8 na v1.7 (zero 500/503 medido); 12 na v1.9 porque a
+  // latência é por RODADA (~0,5 s, medido) e cada página segura o pool do PostgREST por ~2 ms.
+  // `count: 'exact'` em cada página: o helper encerra a faixa quando o servidor prova que não há
+  // nada além (rows === count no mesmo statement), sem a página vazia — 64 → 48 requisições na colacor.
+  const limitador = criarLimitador(12);
   const [crsData, cpsData, baixaCrData, [ccRes, recRes, evRes, configRes, estoqueRes, dreRes, folhaCatRes, prazosRes, estoqueOmieRes]] = await Promise.all([
-    fetchAll<Record<string, unknown>>((from, to) =>
+    medir(tempos, 'cr', fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_receber may not be in generated supabase types yet
-      supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    , 'fin_contas_receber'),
-    fetchAll<Record<string, unknown>>((from, to) =>
+      let q = supabase.from('fin_contas_receber').select('id, saldo, valor_documento, valor_recebido, data_emissao, data_vencimento, data_recebimento, status_titulo, omie_codigo_cliente, omie_codigo_lancamento, nome_cliente, categoria_codigo', { count: 'exact' })
+        .eq('company', company).neq('status_titulo', 'CANCELADO')
+        .order('id', { ascending: true }).limit(limite);
+      if (faixa.de !== null) q = q.gte('id', faixa.de);
+      if (faixa.ate !== null) q = q.lt('id', faixa.ate);
+      if (cursor !== null) q = q.gt('id', cursor);
+      return q;
+    }, (linha) => linha.id, 'fin_contas_receber', { limitador })),
+    medir(tempos, 'cp', fetchAllParticionadoUuid<Record<string, unknown>>((faixa, cursor, limite) => {
       // @ts-expect-error - fin_contas_pagar may not be in generated supabase types yet
-      supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo')
-        .eq('company', company).neq('status_titulo', 'CANCELADO').order('id', { ascending: true }).range(from, to)
-    , 'fin_contas_pagar'),
+      let q = supabase.from('fin_contas_pagar').select('id, saldo, valor_documento, valor_pago, data_emissao, data_vencimento, data_pagamento, status_titulo, categoria_codigo', { count: 'exact' })
+        .eq('company', company).neq('status_titulo', 'CANCELADO')
+        .order('id', { ascending: true }).limit(limite);
+      if (faixa.de !== null) q = q.gte('id', faixa.de);
+      if (faixa.ate !== null) q = q.lt('id', faixa.ate);
+      if (cursor !== null) q = q.gt('id', cursor);
+      return q;
+    }, (linha) => linha.id, 'fin_contas_pagar', { limitador })),
     // Fase 3: baixa REAL derivada (v_titulo_baixas, tipo CR) p/ calibrar o TIMING do
     // aging. UMA leitura via RPC (jsonb, fora do cap de 1000): paginar a view reavaliava-a
-    // inteira a cada página e estourou o statement_timeout na colacor (ver ./baixas-cr.ts).
+    // inteira a cada página e estourou o statement_timeout na colacor (ver _shared/baixas-cr.ts).
     // Usado SÓ na calibração, PMR/PMP/dias_cobertura do engine ficam intactos.
-    carregarBaixasCr(supabase, company),
-    Promise.all([
+    medir(tempos, 'baixas', carregarBaixasCr(supabase, company)),
+    medir(tempos, 'demais', Promise.all([
       // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
       supabase.from('fin_contas_correntes').select('saldo_atual')
         .eq('company', company).eq('ativo', true),
@@ -392,13 +453,13 @@ async function carregarDados(
       // guard de folha fica inerte (comportamento atual preservado, sem migration obrigatória).
       supabase.from('fin_config_cashflow').select('folha_categorias_codigos')
         .eq('company', company).maybeSingle(),
-      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada (view v_capital_giro_prazos).
-      // @ts-expect-error - v_capital_giro_prazos (view nova) não está nos types gerados
-      supabase.from('v_capital_giro_prazos').select('pmr, pmp, pmr_cobertura, pmp_cobertura')
-        .eq('company', company).maybeSingle(),
+      // Fase 3 (B): PMR/PMP + cobertura da baixa derivada — a linha de v_capital_giro_prazos
+      // desta empresa, via RPC com o filtro de empresa dentro do CTE (a view varria
+      // fin_movimentacoes inteira 2× por chamada; ver ./prazos-empresa.ts).
+      medir(tempos, 'prazos', supabase.rpc('fin_capital_giro_prazos_empresa', { p_company: company })),
       // Estoque de GIRO do Omie (inventory_position × cmc, classe por tipo SPED + família).
-      supabase.rpc('fin_estoque_giro_valor', { p_company: company }).maybeSingle(),
-    ]),
+      medir(tempos, 'estoque_giro', supabase.rpc('fin_estoque_giro_valor', { p_company: company }).maybeSingle()),
+    ])),
   ]);
 
   // ── Contrato das leituras single-shot: erro ≠ ausente ≠ zero ─────────────────────────
@@ -514,13 +575,13 @@ async function carregarDados(
   // (o "—" já é honesto), mas o motivo deixa de mentir: antes um erro de leitura era
   // logado como "sem linha", e a tela mostrava "—" indistinguível de empresa sem dado.
   const motivos_confianca: string[] = [...estoque.motivos, ...(cmv.motivo ? [cmv.motivo] : [])];
-  const prazosLeitura = tolerarLeitura(prazosRes, 'v_capital_giro_prazos');
-  const prazos = (prazosLeitura.dados as DadosBase['prazos']) ?? null;
+  const prazosLeitura = lerPrazosEmpresa(prazosRes);
+  const prazos = prazosLeitura.dados;
   if (prazosLeitura.motivo) {
     motivos_confianca.push(`${prazosLeitura.motivo} PMR/PMP/CCC ficam indisponíveis.`);
     console.error(`[Cashflow][${company}] ${prazosLeitura.motivo}`);
   } else if (!prazos) {
-    console.warn(`[Cashflow][${company}] v_capital_giro_prazos sem linha → PMR/PMP/CCC = null`);
+    console.warn(`[Cashflow][${company}] fin_capital_giro_prazos_empresa: existe=false → PMR/PMP/CCC = null`);
   }
 
   // Onda 2: curvas de cobrança por aging, calibradas POR EXPOSIÇÃO sobre todos os
@@ -1285,8 +1346,9 @@ async function calcular(
   cenario: Cenario,
   horizon: number,
   save: boolean,
+  tempos?: Tempos,
 ) {
-  const dados = await carregarDados(supabase, company);
+  const dados = await medir(tempos, 'dados', carregarDados(supabase, company, tempos));
   const taxas = calcularTaxasHistoricas(dados.crs);
   const premissas = aplicarCenario(taxas, cenario, dados.config, dados.curvas_aging);
   const { semanas, apos_horizonte, ar_impaired } = gerarSemanas(dados, premissas, horizon);

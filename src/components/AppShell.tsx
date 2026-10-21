@@ -115,8 +115,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     // vender (novo pedido) → acompanhar (pedidos). Secundários (telefone/hub) depois.
     // Enxugado p/ a vendedora não se perder (decisão Lucas, 2026-06-11):
     //  • "Lista de ligação" → "Quem ligar hoje" (nome auto-explicativo do trabalho do dia).
-    //  • "Chamadas pendentes" SAIU daqui → virou nudge condicional no Meu Dia
-    //    (FarmerDashboardV2) — é housekeeping, só aparece quando há o que vincular.
+    //  • "Chamadas pendentes" SAIU daqui → virou nudge no Meu Dia, que também saiu em
+    //    2026-10-20 (telefonia congelada pelo M-41; call_log parado desde 2026-06-09).
     //  • "Preview propostas" é tela TÉCNICA de inspeção das propostas que a IA gera
     //    no WhatsApp → restrita a gestor/master (a vendedora não a usa).
     items: [
@@ -160,6 +160,7 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
     title: 'Performance',
     items: [
       { icon: BarChart3, label: 'Performance', path: '/performance' },
+      { icon: Users, label: 'Venda por cliente', path: '/admin/venda-cliente', masterOnly: true },
     ],
   },
   {

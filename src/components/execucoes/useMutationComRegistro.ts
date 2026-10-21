@@ -5,24 +5,14 @@ import {
   type UseMutationResult,
 } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { logger } from "@/lib/logger";
 import { ULTIMA_EXECUCAO_QUERY_KEY } from "./tipos";
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
-// Escrita em acoes_execucoes fora do types.ts gerado (regen é do Lovable) → cast estrutural.
-interface EscritaExecucoes {
-  from(tabela: "acoes_execucoes"): {
-    insert(linha: Record<string, unknown>): {
-      select(colunas: "id"): {
-        single(): PromiseLike<{ data: { id: string } | null; error: { message: string } | null }>;
-      };
-    };
-    update(patch: Record<string, unknown>): {
-      eq(coluna: "id", valor: string): PromiseLike<{ error: { message: string } | null }>;
-    };
-  };
-}
+/** O que cabe em `acoes_execucoes.detalhes` (jsonb): resumo pequeno, já serializável. */
+type DetalhesExecucao = { [chave: string]: Json | undefined };
 
 /** Abre o registro da execução. FAIL-OPEN: qualquer falha → null (a ação real segue). */
 async function iniciarRegistro(acao: string, userId: string | null): Promise<string | null> {
@@ -30,10 +20,9 @@ async function iniciarRegistro(acao: string, userId: string | null): Promise<str
     let nome: string | null = null;
     if (userId) {
       const { data } = await supabase.from("profiles").select("name").eq("user_id", userId).maybeSingle();
-      nome = (data as { name?: string } | null)?.name ?? null;
+      nome = data?.name ?? null;
     }
-    const cliente = supabase as unknown as EscritaExecucoes;
-    const { data, error } = await cliente
+    const { data, error } = await supabase
       .from("acoes_execucoes")
       .insert({ acao, executado_por: userId, executado_por_nome: nome })
       .select("id")
@@ -53,12 +42,11 @@ async function iniciarRegistro(acao: string, userId: string | null): Promise<str
 async function fecharRegistro(
   registroId: string | null,
   status: "sucesso" | "erro",
-  detalhes: Record<string, unknown> | null,
+  detalhes: DetalhesExecucao | null,
 ): Promise<void> {
   if (!registroId) return;
   try {
-    const cliente = supabase as unknown as EscritaExecucoes;
-    const { error } = await cliente
+    const { error } = await supabase
       .from("acoes_execucoes")
       .update({ status, finalizado_em: new Date().toISOString(), detalhes })
       .eq("id", registroId);
@@ -76,7 +64,7 @@ type OpcoesMutationComRegistro<TData, TVariables> = Omit<
   acao: string;
   mutationFn: (variables: TVariables) => Promise<TData>;
   /** Resumo pequeno gravado em acoes_execucoes.detalhes no sucesso (contagens etc.). */
-  detalhes?: (data: TData) => Record<string, unknown>;
+  detalhes?: (data: TData) => DetalhesExecucao;
 };
 
 /**

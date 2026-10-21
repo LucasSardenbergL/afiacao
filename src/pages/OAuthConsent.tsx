@@ -13,19 +13,14 @@ import { Loader2 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 
-// Wrapper tipado local pro namespace `supabase.auth.oauth` (ainda em beta no
-// SDK — o tipo pode não existir; runtime existe). Sem `any` global.
-interface OAuthAuthorizationClient { name?: string; client_uri?: string; logo_uri?: string }
-interface OAuthAuthorizationDetails { client?: OAuthAuthorizationClient; redirect_url?: string; redirect_to?: string; scope?: string[] }
-interface OAuthAuthorizationResult { redirect_url?: string; redirect_to?: string }
-interface SupabaseAuthOAuthApi {
-  getAuthorizationDetails(id: string): Promise<{ data: OAuthAuthorizationDetails | null; error: { message: string } | null }>;
-  approveAuthorization(id: string): Promise<{ data: OAuthAuthorizationResult | null; error: { message: string } | null }>;
-  denyAuthorization(id: string): Promise<{ data: OAuthAuthorizationResult | null; error: { message: string } | null }>;
-}
-function oauthApi(): SupabaseAuthOAuthApi {
-  return (supabase.auth as unknown as { oauth: SupabaseAuthOAuthApi }).oauth;
-}
+// `supabase.auth.oauth` já é tipado pelo auth-js (≥ 2.95): antes, um wrapper local com
+// cast duplo lia campos que o SDK não conhece (`redirect_to`, `client.client_uri`) e por isso
+// nunca mostrava o site do cliente (o campo é `client.uri`). O SDK é a autoridade da forma: ele
+// próprio redireciona por `redirect_url` no approve.
+type OAuthAuthorizationDetails = Extract<
+  NonNullable<Awaited<ReturnType<typeof supabase.auth.oauth.getAuthorizationDetails>>['data']>,
+  { authorization_id: string }
+>;
 
 export default function OAuthConsent() {
   const [params] = useSearchParams();
@@ -45,11 +40,11 @@ export default function OAuthConsent() {
         window.location.href = '/auth?next=' + encodeURIComponent(next);
         return;
       }
-      const { data, error } = await oauthApi().getAuthorizationDetails(authorizationId);
+      const { data, error } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
       if (!active) return;
       if (error) return setError(error.message);
-      const immediate = data?.redirect_url ?? data?.redirect_to;
-      if (immediate && !data?.client) { window.location.href = immediate; return; }
+      // Já consentido antes: o servidor devolve só o redirect, sem detalhes.
+      if ('redirect_url' in data) { window.location.href = data.redirect_url; return; }
       setDetails(data);
     })();
     return () => { active = false; };
@@ -58,10 +53,10 @@ export default function OAuthConsent() {
   async function decide(approve: boolean) {
     setBusy(true);
     const { data, error } = approve
-      ? await oauthApi().approveAuthorization(authorizationId)
-      : await oauthApi().denyAuthorization(authorizationId);
+      ? await supabase.auth.oauth.approveAuthorization(authorizationId)
+      : await supabase.auth.oauth.denyAuthorization(authorizationId);
     if (error) { setBusy(false); return setError(error.message); }
-    const target = data?.redirect_url ?? data?.redirect_to;
+    const target = data?.redirect_url;
     if (!target) { setBusy(false); return setError('No redirect returned by the authorization server.'); }
     window.location.href = target;
   }
@@ -97,8 +92,8 @@ export default function OAuthConsent() {
           {clientName} poderá usar as ferramentas do Colacor em seu nome. Você pode
           revogar o acesso a qualquer momento.
         </p>
-        {details.client?.client_uri && (
-          <p className="text-xs text-muted-foreground break-all">{details.client.client_uri}</p>
+        {details.client?.uri && (
+          <p className="text-xs text-muted-foreground break-all">{details.client.uri}</p>
         )}
         <div className="flex gap-2 pt-2">
           <Button variant="outline" className="flex-1" disabled={busy} onClick={() => decide(false)}>

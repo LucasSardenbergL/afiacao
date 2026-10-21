@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { erroComCausa, mensagemDeErro } from '@/lib/erro-mensagem';
@@ -113,26 +114,6 @@ interface ClientScoreRow {
   whatsapp_reply_rate_60d: number | string | null;
 }
 
-interface ProductRow {
-  id: string;
-  codigo: string | null;
-  descricao: string;
-  valor_unitario: number | string | null;
-  metadata: unknown;
-  ativo: boolean | null;
-  omie_codigo_produto: number | string | null;
-  estoque: number | null;
-  /** Metade da chave de identidade do SKU (`UNIQUE (omie_codigo_produto, account)`). */
-  account: string | null;
-  /**
-   * A LINHA do SKU — o recorte que torna "linha superior" verificável no up-sell.
-   * Colunas DEDICADAS, não a cópia em `metadata->>'descricao_familia'`: divergência é zero
-   * em prod hoje, mas a coluna é a autoridade. Ver `@/lib/farmer/upsell-ordem`.
-   */
-  familia: string | null;
-  unidade: string | null;
-}
-
 interface SalesOrderItem {
   product_id?: string;
   omie_codigo_produto?: number | string;
@@ -155,25 +136,6 @@ interface HistoricoDoSku {
    * dizer se `price` foi escolhido por uuid — ver `referencia-ambigua.ts`.
    */
   topo: TopoDeReferencia;
-}
-
-interface SalesOrderRow {
-  /** PK. Entra no `select` só para DESEMPATAR `created_at` igual (ver `preco-referencia`). */
-  id: string;
-  customer_user_id: string;
-  items: SalesOrderItem[] | unknown;
-  total: number | string | null;
-  created_at: string;
-  /** A conta do PEDIDO — o lado do par que qualifica a resolução de cada item. */
-  account: string | null;
-}
-
-interface AssocRuleRow {
-  antecedent_product_ids: string[] | null;
-  consequent_product_ids: string[] | null;
-  confidence: number | string | null;
-  lift: number | string | null;
-  support: number | string | null;
 }
 
 interface ProfileRow {
@@ -345,13 +307,12 @@ export const useCrossSellEngine = () => {
       // vazia como "este farmer não tem carteira, deve ser super_admin" e RECARREGA SEM FILTRO
       // de farmer_id — uma falha de transporte trocava o escopo do cálculo.
       const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
-        fetchAllPages<ClientScoreRow>(
+        fetchAllPages(
           (de, ate) => {
             // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
             let q = supabase.from('farmer_client_scores').select('customer_user_id, health_score, answer_rate_60d, whatsapp_reply_rate_60d');
             if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
-              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+            return q.order('customer_user_id', { ascending: true }).range(de, ate);
           },
           'farmer_client_scores/cross-sell',
         );
@@ -393,13 +354,13 @@ export const useCrossSellEngine = () => {
       }
 
       // 2. Catálogo ativo, paginado (3.108 SKUs contra a capa de 1.000 do PostgREST).
-      const products = await fetchAllPages<ProductRow>((de, ate) =>
+      const products = await fetchAllPages((de, ate) =>
         supabase
           .from('omie_products')
           .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, estoque, account, familia, unidade')
           .eq('ativo', true)
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+          .range(de, ate),
         'omie_products/cross-sell',
       );
 
@@ -422,7 +383,7 @@ export const useCrossSellEngine = () => {
           supabase
             .rpc('get_skus_margem_positiva')
             .order('product_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
+            .range(de, ate),
         'get_skus_margem_positiva/cross-sell',
       ).then(
         (data) => ({ ok: true as const, data }),
@@ -488,7 +449,7 @@ export const useCrossSellEngine = () => {
       // regras de associação: menos pedidos = menos coocorrência = recomendação mais pobre,
       // sem nada na tela indicando que o universo encolheu. `.order('id')` (PK) é a ordem
       // estável; a coluna não precisa estar no `select`.
-      const salesOrders = await fetchAllPages<SalesOrderRow>(
+      const salesOrders = await fetchAllPages(
         (de, ate) =>
           supabase
             .from('sales_orders')
@@ -502,7 +463,7 @@ export const useCrossSellEngine = () => {
             .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
             .is('deleted_at', null)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+            .range(de, ate),
         'sales_orders/cross-sell',
       );
 
@@ -559,7 +520,7 @@ export const useCrossSellEngine = () => {
       // em horário comercial) — uma substituição no meio da paginação mistura duas gerações de
       // modelo e serve associação que NENHUMA das duas produziu. Aí a correção é ler o lote
       // inteiro num ÚNICO tuple (`jsonb_agg` numa RPC), atômico por construção.
-      const assocRules = await fetchAllPages<AssocRuleRow>(
+      const assocRules = await fetchAllPages(
         (de, ate) =>
           supabase
             .from('farmer_association_rules')
@@ -567,7 +528,7 @@ export const useCrossSellEngine = () => {
             .gte('confidence', 0.05)
             .gte('lift', 1.0)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: AssocRuleRow[] | null; error: unknown }>,
+            .range(de, ate),
         'farmer_association_rules/cross-sell',
       ).catch((erro: unknown) => {
         // Bug de CÓDIGO sobe CRU (#1782): rotular um `TypeError` de encadeamento quebrado como
@@ -621,10 +582,9 @@ export const useCrossSellEngine = () => {
           supabase
             .from('profiles')
             .select('user_id, name, customer_type, cnae')
-            // O cast declarava só `{ data }` e APAGAVA o `error` do tipo — o compilador
-            // deixava de cobrar a checagem, e um lote que falhasse virava "estes clientes
-            // não têm perfil" no cross-sell (segmento/CNAE ausentes = recomendação errada).
-            .in('user_id', batch) as unknown as Promise<{ data: ProfileRow[] | null; error: { message?: string } | null }>,
+            // O `error` de cada lote é checado abaixo: um lote que falhasse viraria "estes
+            // clientes não têm perfil" no cross-sell (segmento/CNAE ausentes = recomendação errada).
+            .in('user_id', batch),
         ),
       );
       const loteComFalha = batchResults.findIndex((r) => r.error);
@@ -1269,9 +1229,11 @@ export const useCrossSellEngine = () => {
         // com `error` preenchido — então o `await` solto devolveria sucesso SEM ter gravado.
         // Sem `throw`: o cálculo em memória é válido e já foi exibido — quem falhou foi só a
         // persistência, e derrubar a tela seria pior. Espelha o useBundleEngine (#1594).
+        // NULL semântico (conferido em prod): `p_geracao_vista` NULL = nenhuma geração anterior
+        // (sem DEFAULT); `p_motivo`/`p_head_visto` têm DEFAULT NULL.
         const { error: erroPersistencia } = await supabase.rpc(
-          'farmer_recomendacoes_substituir' as never,
-          {
+          'farmer_recomendacoes_substituir',
+          comNulo<'farmer_recomendacoes_substituir', 'p_geracao_vista' | 'p_motivo' | 'p_head_visto'>({
             p_farmer_id: effectiveUserId,
             p_run_id: runId,
             p_geracao_vista: geracaoVista,
@@ -1285,7 +1247,7 @@ export const useCrossSellEngine = () => {
             // o head consigo mesmo e um run vazio mais NOVO seria sobrescrito por este, que
             // leu snapshot mais velho (achado do challenge Codex xhigh).
             p_head_visto: headVisto ?? null,
-          } as never,
+          }),
         );
         if (erroPersistencia) {
           console.error('Falha ao substituir farmer_recommendations:', erroPersistencia);

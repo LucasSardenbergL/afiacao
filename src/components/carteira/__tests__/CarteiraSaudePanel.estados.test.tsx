@@ -29,8 +29,9 @@ vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 import { CarteiraSaudePanel } from '../CarteiraSaudePanel';
 
 const RESUMO = {
-  crons: [{ jobname: 'carteira-nightly', last_run_at: '2026-08-22T03:00:00Z', last_status: 'succeeded', age_hours: 2 }],
-  sync: { age_hours: 1, stale_count: 0 },
+  // As chaves que `get_carteira_saude` sempre monta (NULL explícito), como a borda exige.
+  crons: [{ jobname: 'carteira-nightly', last_run_at: '2026-08-22T03:00:00Z', last_status: 'succeeded', age_hours: 2, last_error: null }],
+  sync: { max_last_synced_at: null, age_hours: 1, stale_count: 0 },
   score_coverage: { carteira: 100, fcs_clientes: 90, cvs_clientes: 80 },
 };
 

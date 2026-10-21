@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
+import { Constants } from '@/integrations/supabase/types';
 import { eqText, orFilter, ilikeContainsPattern } from '@/lib/postgrest';
 import { normalizarDocumento } from '@/lib/omie/cnpj-alfanumerico';
 import { useAuth } from '@/contexts/AuthContext';
@@ -359,16 +360,24 @@ const FarmerCalls = () => {
         return;
       }
 
+      // `call_type`/`call_result` são enums no banco; o diálogo os guarda como texto. Confere o
+      // vocabulário aqui, na fronteira do insert (antes um cast mandava o que viesse).
+      const tipoLigacao = Constants.public.Enums.farmer_call_type.find((t) => t === callType);
+      const resultadoLigacao = Constants.public.Enums.farmer_call_result.find((r) => r === callResult);
+      if (!tipoLigacao || !resultadoLigacao) {
+        throw new Error(`Tipo/resultado de ligação fora do vocabulário (${callType}/${callResult})`);
+      }
+
       const { error } = await supabase.from('farmer_calls').insert({
         farmer_id: user.id, customer_user_id: customerUserId,
-        call_type: callType,
-        call_result: callResult,
+        call_type: tipoLigacao,
+        call_result: resultadoLigacao,
         started_at: callStartRef.current?.toISOString() || new Date().toISOString(),
         ended_at: new Date().toISOString(),
         duration_seconds: callSeconds, follow_up_duration_seconds: followUpSeconds,
         attempt_number: attemptNumber, notes: notes || null,
         revenue_generated: parseFloat(revenue) || 0, margin_generated: parseFloat(margin) || 0,
-      } as never);
+      });
       if (error) throw error;
 
       const rev = parseFloat(revenue) || 0;

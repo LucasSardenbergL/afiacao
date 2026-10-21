@@ -3,13 +3,17 @@
 // Junta 12 snapshots de DRE (competência) + a classificação fixo/variavel/misto/nao_operacional
 // (fin_dre_custo_tipo, master-only) e chama o helper PURO pontoEquilibrio. Overlay: NÃO reescreve
 // a DRE nem o edge. A classificação é master-only (RLS) → v1 o card é master-gated na UI; widen p/
-// staff via RPC SECURITY DEFINER é v2 (spec §7). fin_dre_custo_tipo não está nos tipos gerados →
-// cast via unknown (padrão verbatim de useFunding.ts).
+// staff via RPC SECURITY DEFINER é v2 (spec §7). Cliente tipado pelo types.ts; o vocabulário de
+// fin_dre_custo_tipo.tipo (CHECK) é conferido na borda (paraCustoTipo).
 import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { exigirColunas } from '@/lib/linha-view';
+import { numero, objeto, registro, type ObjetoJson } from '@/lib/financeiro/borda-json';
+import { paraCustoTipo, type CustoTipoRow } from '@/lib/financeiro/borda-tabelas';
+import { lerComposicaoDespesas } from '@/lib/financeiro/dre-borda';
 import {
   pontoEquilibrio,
   somaCodigosPorPrefixo,
@@ -40,41 +44,13 @@ export interface CustoRateioRow {
   updated_at: string;
 }
 
-export interface CustoTipoRow {
-  company: string;
-  categoria_codigo: string;
-  tipo: TipoCusto;
-  observacao: string | null;
-}
+export type { CustoTipoRow };
 
-/** Coerção defensiva do jsonb detalhamento.despesas → Record<codigo, number> (ausente ≠ zero: ignora não-finito). */
-function coerceDespesas(d: Record<string, unknown> | null | undefined): Record<string, number> {
-  const out: Record<string, number> = {};
-  if (d) {
-    for (const [k, v] of Object.entries(d)) {
-      const n = Number(v);
-      if (Number.isFinite(n)) out[k] = n;
-    }
-  }
-  return out;
-}
-
-/**
- * DRE fase 2: composição chave → linha → R$. Ausente ⇒ null (snapshot legado). Presente mas
- * malformada ⇒ objeto parcial/vazio, que o helper REJEITA (snapshot_inconsistente) — nunca some.
- */
-function coerceComposicao(c: unknown): Record<string, Record<string, number>> | null {
-  if (c === undefined || c === null) return null;
-  const out: Record<string, Record<string, number>> = {};
-  if (typeof c !== 'object') return out;
-  for (const [k, linhas] of Object.entries(c as Record<string, unknown>)) {
-    if (linhas == null || typeof linhas !== 'object') continue;
-    const l: Record<string, number> = {};
-    for (const [linha, v] of Object.entries(linhas as Record<string, unknown>)) l[linha] = Number(v);
-    out[k] = l;
-  }
-  return out;
-}
+/** Colunas da DRE que o ponto de equilíbrio soma: NULL LANÇA (ausente ≠ zero; em prod são 0 NULL). */
+const COLUNAS_PE = [
+  'receita_bruta', 'deducoes', 'cmv', 'despesas_operacionais', 'despesas_administrativas',
+  'despesas_comerciais', 'despesas_financeiras',
+] as const;
 
 /** Últimos 12 snapshots de DRE (competência), mapeados p/ MesDRE. */
 function useSnapshotsTTM(company: string | null) {
@@ -94,32 +70,26 @@ function useSnapshotsTTM(company: string | null) {
         .order('mes', { ascending: false })
         .limit(12);
       if (error) throw error;
-      return (data ?? []).map((r): MesDRE => {
-        const row = r as unknown as {
-          ano: number;
-          mes: number;
-          receita_bruta: number | null;
-          deducoes: number | null;
-          cmv: number | null;
-          despesas_operacionais: number | null;
-          despesas_administrativas: number | null;
-          despesas_comerciais: number | null;
-          despesas_financeiras: number | null;
-          detalhamento: { despesas?: Record<string, unknown>; composicao_despesas?: unknown } | null;
-          resultado_provisorio: boolean | null;
-        };
+      return (data ?? []).map((row): MesDRE => {
+        const onde = `fin_dre_snapshots ${company} ${row.ano}-${row.mes}`;
+        exigirColunas(row, COLUNAS_PE, onde);
+        // Só o que o PE lê do jsonb: despesas (obrigatório, R$ por código) e a composição (opcional).
+        const detalhamento: ObjetoJson = objeto(row.detalhamento, `${onde}.detalhamento`);
         return {
           ano: row.ano,
           mes: row.mes,
-          receita_bruta: Number(row.receita_bruta ?? 0),
-          deducoes_col: Number(row.deducoes ?? 0),
-          despesas: coerceDespesas(row.detalhamento?.despesas),
-          linha_cmv: Number(row.cmv ?? 0),
-          linha_operacionais: Number(row.despesas_operacionais ?? 0),
-          linha_administrativas: Number(row.despesas_administrativas ?? 0),
-          linha_comerciais: Number(row.despesas_comerciais ?? 0),
-          linha_financeiras: Number(row.despesas_financeiras ?? 0),
-          composicao_despesas: coerceComposicao(row.detalhamento?.composicao_despesas),
+          receita_bruta: row.receita_bruta,
+          deducoes_col: row.deducoes,
+          despesas: registro(numero)(detalhamento.despesas, `${onde}.detalhamento.despesas`),
+          linha_cmv: row.cmv,
+          linha_operacionais: row.despesas_operacionais,
+          linha_administrativas: row.despesas_administrativas,
+          linha_comerciais: row.despesas_comerciais,
+          linha_financeiras: row.despesas_financeiras,
+          composicao_despesas: lerComposicaoDespesas(
+            detalhamento.composicao_despesas,
+            `${onde}.detalhamento.composicao_despesas`,
+          ),
           resultado_provisorio: row.resultado_provisorio,
         };
       });
@@ -134,23 +104,12 @@ function useClassificacaoRows(company: string | null) {
     enabled: Boolean(company),
     staleTime: STALE,
     queryFn: async (): Promise<CustoTipoRow[]> => {
-      // cast via unknown: tabela master-only fora dos tipos gerados (padrão de useFunding.ts).
-      const client = supabase as unknown as {
-        from: (t: string) => {
-          select: (c: string) => {
-            in: (
-              col: string,
-              vals: string[],
-            ) => Promise<{ data: CustoTipoRow[] | null; error: { message: string } | null }>;
-          };
-        };
-      };
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('fin_dre_custo_tipo')
         .select('company,categoria_codigo,tipo,observacao')
         .in('company', [company!, '_default']);
       if (error) throw new Error(error.message);
-      return data ?? [];
+      return (data ?? []).map(paraCustoTipo);
     },
   });
 }
@@ -163,27 +122,14 @@ function resolverClassificacao(rows: CustoTipoRow[], company: string | null): Re
   return out;
 }
 
-/** Linha ativa de rateio (company + rotulo). fin_custo_rateio é master-only (cast unknown, fora dos tipos). */
+/** Linha ativa de rateio (company + rotulo). fin_custo_rateio é master-only (RLS). */
 function useCustoRateio(company: string | null, rotulo: string) {
   return useQuery({
     queryKey: ['custo_rateio', company, rotulo],
     enabled: Boolean(company),
     staleTime: STALE,
     queryFn: async (): Promise<CustoRateioRow | null> => {
-      const client = supabase as unknown as {
-        from: (t: string) => {
-          select: (c: string) => {
-            eq: (col: string, val: string) => {
-              eq: (col: string, val: string) => {
-                eq: (col: string, val: boolean) => {
-                  maybeSingle: () => Promise<{ data: CustoRateioRow | null; error: { message: string } | null }>;
-                };
-              };
-            };
-          };
-        };
-      };
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('fin_custo_rateio')
         .select('company,rotulo,valor_mensal_brl,origem_company,observacao,ativo,updated_at')
         .eq('company', company!)
@@ -250,7 +196,7 @@ export function useDreCategoriasClassificar(company: string | null): {
         .eq('company', company!);
       if (error) throw error;
       const out: Record<string, string> = {};
-      for (const r of (data ?? []) as unknown as { omie_codigo: string; descricao: string | null }[]) {
+      for (const r of data ?? []) {
         if (r.omie_codigo) out[r.omie_codigo] = r.descricao ?? '';
       }
       return out;
@@ -291,15 +237,7 @@ export function useSalvarDreClassificacao() {
       tipo: TipoCusto;
       observacao?: string | null;
     }) => {
-      const client = supabase as unknown as {
-        from: (t: string) => {
-          upsert: (
-            values: Record<string, unknown>,
-            options: { onConflict: string },
-          ) => Promise<{ error: { message: string } | null }>;
-        };
-      };
-      const { error } = await client.from('fin_dre_custo_tipo').upsert(
+      const { error } = await supabase.from('fin_dre_custo_tipo').upsert(
         {
           company: vars.company,
           categoria_codigo: vars.categoria_codigo,
@@ -335,15 +273,7 @@ export function useSalvarCustoRateio() {
       observacao: string;
       ativo?: boolean;
     }) => {
-      const client = supabase as unknown as {
-        from: (t: string) => {
-          upsert: (
-            values: Record<string, unknown>,
-            options: { onConflict: string },
-          ) => Promise<{ error: { message: string } | null }>;
-        };
-      };
-      const { error } = await client.from('fin_custo_rateio').upsert(
+      const { error } = await supabase.from('fin_custo_rateio').upsert(
         {
           company: vars.company,
           rotulo: vars.rotulo,
@@ -397,7 +327,7 @@ export function useFolhaReferencia(origem: string): {
       const { data, error } = await supabase.from('fin_categorias').select('omie_codigo,descricao').eq('company', origem);
       if (error) throw error;
       const out: Record<string, string> = {};
-      for (const r of (data ?? []) as unknown as { omie_codigo: string; descricao: string | null }[])
+      for (const r of data ?? [])
         if (r.omie_codigo) out[r.omie_codigo] = r.descricao ?? '';
       return out;
     },

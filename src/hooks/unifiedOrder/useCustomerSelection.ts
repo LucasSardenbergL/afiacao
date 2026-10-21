@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
@@ -20,13 +21,12 @@ interface SalesOrderItemSnapshot {
   product_code?: string;
   product_id?: string;
 }
-interface SalesOrderHistoryRow {
-  items: SalesOrderItemSnapshot[] | null;
-  created_at: string;
-}
-interface SalesPriceHistoryRow {
-  product_id: string;
-  created_at: string;
+
+/** Os códigos de um item do jsonb `sales_orders.items` — só os campos de texto que o histórico usa. */
+function codigosDoItem(item: Json): SalesOrderItemSnapshot {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) return {};
+  const texto = (v: Json | undefined) => (typeof v === 'string' ? v : undefined);
+  return { codigo: texto(item.codigo), product_code: texto(item.product_code), product_id: texto(item.product_id) };
 }
 
 /* Shapes returned by `supabase.functions.invoke()` calls used here. */
@@ -172,10 +172,9 @@ export function useCustomerSelection({
       const history: Record<string, string> = {};
 
       if (ordersSettled.status === 'fulfilled' && ordersSettled.value?.data) {
-        for (const order of ordersSettled.value.data as unknown as SalesOrderHistoryRow[]) {
-          const items = order.items as SalesOrderItemSnapshot[] | null;
-          if (Array.isArray(items)) {
-            for (const item of items) {
+        for (const order of ordersSettled.value.data) {
+          if (Array.isArray(order.items)) {
+            for (const item of order.items.map(codigosDoItem)) {
               const code = item.codigo || item.product_code || '';
               if (code && !history[code]) history[code] = order.created_at;
               const pid = item.product_id || '';
@@ -186,7 +185,7 @@ export function useCustomerSelection({
       }
 
       if (priceSettled.status === 'fulfilled' && priceSettled.value?.data) {
-        for (const row of priceSettled.value.data as unknown as SalesPriceHistoryRow[]) {
+        for (const row of priceSettled.value.data) {
           if (!history[`pid:${row.product_id}`]) history[`pid:${row.product_id}`] = row.created_at;
         }
       }

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface RadarKpis {
@@ -8,6 +9,25 @@ export interface RadarKpis {
   a_contatar: number;
   em_conversa: number;
   virou_cliente_mes: number;
+}
+
+/**
+ * O jsonb de `radar_kpis` (`jsonb_build_object` de 5 chaves na prod) lido por forma: contagem que
+ * não é número LANÇA — o card mostra "não consegui ler", nunca um 0 fabricado.
+ */
+function kpisDoJson(v: Json): RadarKpis {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new Error('radar_kpis: resposta não é objeto');
+  const { lote, novos, a_contatar, em_conversa, virou_cliente_mes } = v;
+  if (
+    !(lote === null || typeof lote === 'string') ||
+    typeof novos !== 'number' ||
+    typeof a_contatar !== 'number' ||
+    typeof em_conversa !== 'number' ||
+    typeof virou_cliente_mes !== 'number'
+  ) {
+    throw new Error('radar_kpis: resposta fora da forma {lote, novos, a_contatar, em_conversa, virou_cliente_mes}');
+  }
+  return { lote, novos, a_contatar, em_conversa, virou_cliente_mes };
 }
 
 /**
@@ -32,10 +52,9 @@ export function useRadarKpis() {
     queryKey: ['radar', 'kpis'],
     enabled: podeVer,
     queryFn: async (): Promise<RadarKpis> => {
-      // TODO: tipos regeneram após apply da migration da fatia 2
-      const { data, error } = await (supabase.rpc as (fn: string) => ReturnType<typeof supabase.rpc>)('radar_kpis');
+      const { data, error } = await supabase.rpc('radar_kpis');
       if (error) throw error;
-      return data as unknown as RadarKpis;
+      return kpisDoJson(data);
     },
     staleTime: 60_000,
   });

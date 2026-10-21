@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { canonicalizarRota } from '@/lib/analytics-rota-canonica';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
@@ -52,7 +53,18 @@ export type EventoLedger =
    * É o sinal que libera a fase seguinte do card (ranking normalizado) — e o PostHog é censurado no
    * Chrome do founder, o principal leitor (2026-10-12: boots em `telemetria_probes`, zero evento web).
    */
-  | 'dashboard.crescimento_comparavel_servido';
+  | 'dashboard.crescimento_comparavel_servido'
+  /**
+   * Programa "Venda por cliente" (spec 2026-10-20 §7 Fase 5): a farmer abriu a ficha da ligação,
+   * registrou o desfecho manual, tocou no telefone (`tel:` — o único rastro, a ligação sai do app),
+   * o founder abriu o painel de adoção. Chave = comprador (ou a semana, no painel). A verdade do
+   * desfecho é `venda_contato` — aqui fica o rastro de UI, imune ao bloqueador do PostHog.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'venda.ficha_aberta'
+  | 'venda.contato_registrado'
+  | 'venda.tel_clicado'
+  | 'venda.painel_aberto';
 
 /**
  * Registra um evento decisório no ledger server-side.
@@ -64,7 +76,7 @@ export type EventoLedger =
 export async function registrarNoLedger(
   evento: EventoLedger,
   chave: string,
-  props: Record<string, unknown> = {},
+  props: { [chave: string]: Json | undefined } = {},
 ): Promise<void> {
   // ⚠️ Gate na FONTE, não no client embrulhado: sob a lente "Ver como" o
   // `auth.uid()` continua sendo o do MASTER, então o evento sairia atribuído a
@@ -74,15 +86,11 @@ export async function registrarNoLedger(
   if (isLensActive()) return;
 
   try {
-    // `as never`: os tipos de `src/integrations/supabase/types.ts` são gerados
-    // pelo Lovable a partir do banco, e a migration desta RPC ainda é apply
-    // MANUAL — até ela rodar, a função não existe nos tipos. Mesmo padrão de
-    // `consolidar_demanda_sku` e `registrar_substituicao_sku`.
-    const { error } = await supabase.rpc('analytics_ledger_registrar' as never, {
+    const { error } = await supabase.rpc('analytics_ledger_registrar', {
       p_evento: evento,
       p_chave: chave,
       p_props: props,
-    } as never);
+    });
     if (error) {
       logger.warn('Ledger de analytics não registrou', {
         evento,

@@ -20,19 +20,7 @@ export function useUpdateRegimeInputs() {
     mutationFn: async ({ company, regime_inputs }: { company: string; regime_inputs: RegimeInputs }) => {
       // Tabela master-only dedicada (RLS exige role 'master'). upsert cobre o caso de a linha de seed
       // não existir; o form é pré-preenchido com os inputs atuais, então o replace é seguro.
-      // `fin_regime_inputs` é nova e ainda não está no types.ts gerado — e a versão de postgrest-js do
-      // dev-server do Lovable difere da do repo. O cast `as ReturnType<typeof supabase.from>` estourava
-      // TS2589 (deep instantiation) / TS2352 no postgrest-js novo. Acessamos por um shape MÍNIMO do
-      // client (cast através de `unknown`, sem `any`): independe da versão e de a tabela estar nos tipos.
-      const client = supabase as unknown as {
-        from: (table: string) => {
-          upsert: (
-            values: Record<string, unknown>,
-            options: { onConflict: string },
-          ) => Promise<{ error: { message: string } | null }>;
-        };
-      };
-      const { error } = await client.from('fin_regime_inputs').upsert(
+      const { error } = await supabase.from('fin_regime_inputs').upsert(
         { company, regime_inputs, updated_at: new Date().toISOString() },
         { onConflict: 'company' },
       );

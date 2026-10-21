@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { derivarMunicao, type Municao } from '@/lib/call/municao';
+import { derivarMunicao, type Municao } from '@/lib/venda-cliente/municao';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
 const PEDIDOS_DA_MUNICAO = 8;
@@ -16,8 +16,8 @@ const PEDIDOS_DA_MUNICAO = 8;
  */
 export function useMunicaoLigacao(
   customerUserId: string | null,
-): { municao: Municao | null; loading: boolean } {
-  const { data, isLoading } = useQuery({
+): { municao: Municao | null; loading: boolean; erro: boolean } {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['municao-ligacao', customerUserId],
     enabled: !!customerUserId,
     staleTime: 60_000,
@@ -47,5 +47,6 @@ export function useMunicaoLigacao(
     },
   });
 
-  return { municao: data ?? null, loading: isLoading };
+  // `erro` distingue "não consegui ler" de "sem compra" (a ficha da ligação mostra a diferença).
+  return { municao: data ?? null, loading: isLoading, erro: isError };
 }

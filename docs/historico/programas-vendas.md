@@ -161,3 +161,86 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
 - ✅ **Provas:** invariantes textuais no CI (`edge-money-path-invariants.test.ts` 18/18 + **falsificação** sabota→vermelho) · deno check · typecheck · lint · suíte 4.3k. **Gate provado mordendo em prod** (SQL Editor, superuser): `venda_gate_credito('colacor', 4421340383, …)` → `{"bloqueado":true,"titulos":42,"vencido":20170.75,"vencimento_mais_antigo":"2023-05-04"}`. Deploy verbatim (git diff origin/main vazio + Active).
 - ⏸️ **Adiados (aval Codex):** (b) UX pós-exceção na edição; (c) RPC "pedir aprovação" (gatilho de telemetria de atrito não satisfeito — 0 bloqueios). P2-4 (UX "pendente ERP" do throw) mantido — aceito como P2 (evita tocar frontend/Publish num caso raro).
 - **Lições money-path:** (1) **medir antes de codar** — 0/0 em prod reordenou 3 P2s cosméticos numa prova de deploy. (2) **canária de deploy > commit de deploy:** p/ um gate money-path no EDGE (deploy manual Lovable), uma action dry-run que exercita a RPC sem efeito colateral prova o DEPLOYADO; o commit de deploy é evidência fraca (Lovable pode reverter/"melhorar"). (3) **review adversarial revela dívida latente:** revisando o diff do log durável, o Codex achou um P1 de duplicação pré-existente no mesmo caminho — que morderia no 1º uso real da edição.
+
+## Venda por cliente — Task 1: espinha (2026-10-20)
+
+`venda_sugestao` (sugestão com identidade, `fase` historico|sombra|ativa) + `venda_contato` (desfecho manual, 1 escritor)
++ `venda_config` (ondas desligadas, teto 10, janelas 14/30/30) + job `venda_fechar_desfechos` (cron 09:30 UTC) e o cron
+`tactical-plans-batch-nightly` desligado. Migration `20261020174221_venda_cliente_espinha.sql`, aplicada por `db:aplicar`
+(recibo #592) e validada por psql-ro. Prova `db/test-venda-espinha.sh` (30 asserts, C e pt_BR, 12 sabotagens, no núcleo).
+
+- **O plano citava `vendas_sync_heartbeat`, que não existe.** O sinal do sync de vendas é `fin_sync_log`
+  (`sync_pedidos`, lookback de 5 dias) + `vendas_sync_cursor`. "Um sync OK depois da janela" NÃO prova a janela (cada
+  rodada só vê 5 dias): a prova é por DIA, e dia descoberto ainda cobrível deixa a linha aberta em vez de decidir.
+- **Carteira no id do alias:** 1.633 linhas de `carteira_assignments` estão no alias fiscal — gate de carteira resolve
+  alias dos dois lados.
+- **`desconto_valor` NULL = não apurado (80% dos itens):** preço com desconto desconhecido → `nao_medivel`, a menos que
+  o bruto já fique abaixo do alvo; `valor_realizado` NULL em vez do bruto.
+- **Buraco de prova na Oben (2025-07 → 2026-01-21):** o backfill não tem janela ali; a reconstrução histórica da Task 4
+  fecha esse trecho como `nao_medivel` até alguém semear a janela.
+
+## Venda por cliente — Task 4: gerador D-1, reconstrução histórica e ondas (2026-10-20)
+
+`venda_cidades_alvo` (porta de `resolvePrepForWorkday`) + `venda_gerar_lista` (UNIÃO: atrasados das cidades de amanhã
++ `teto` maiores atrasos fora delas; perdido fora; só farmer; idempotente) + `venda_reconstruir_historico` +
+`venda_avaliar_ondas`/`venda_onda_log` + `venda_gerador_execucao` + cron `venda-gerador` 08:15 UTC. Migration
+`20261020181743_venda_cliente_gerador.sql`, aplicada por `db:aplicar` (recibo #597) e validada por psql-ro. Prova
+`db/test-venda-gerador.sh` (59 asserts, C e pt_BR, 16 sabotagens, no núcleo). Carga e taxa semanal: PR #3255.
+
+- **"Próximo dia útil" do plano ≠ o TS.** `resolvePrepForWorkday` prepara D+1 de CALENDÁRIO; a porta segue o TS (a
+  paridade é o contrato). Com a rota de prod em ter–sex, sexta prepara sábado = só as diárias.
+- **`venda_fechar_desfechos` custa ~11 ms por linha** (medido em ensaio: 1.733 linhas = 18,9 s; a lista em si custa
+  0,85 s/dia). Com ~600 linhas/dia, um lote de 30 dias passava dos 300 s do `db:aplicar` — lotes de 20 dias. No cron
+  noturno são ~7 s; a otimização (casar pedido só dos compradores abertos) fica de follow-up.
+- **Sombra só vale ao vivo:** a Onda 1 conta um dia de sombra só se a 1ª execução foi NAQUELE dia (SP); gravar a
+  sombra depois não fabrica a evidência. 365 dias de `historico` registrados são exigidos, não "existe uma linha".
+- **Onda 3 lê a tabela da Task 6 por `to_regclass` + `EXECUTE`** e captura só 42P01/42703: tabela ausente ou com outra
+  forma = condição falsa sem derrubar o cron (o mesmo job gera a lista).
+- **Buraco de prova da Oben → prova POR DADOS** (migration `20261020194332`, recibo #627): para `historico`, dia sem
+  heartbeat/cursor conta como coberto se o mês tiver 100% dos pedidos com itens e volume ≥ 70% da mediana de 12 meses;
+  senão `nao_medivel/historico_incompleto`. Out/2025–jan/2026 passaram (Oben dez/2025 = 277 × mediana 354,5 = 78%).
+  O trecho só foi carregado DEPOIS da prova — fechado antes, viraria `nao_medivel` para sempre (o job não reabre).
+- **Linha de base (365 dias, 221.028 linhas, 0% `nao_medivel`):** ~7–8% das linhas (comprador × SKU) e ~19% dos
+  compradores-dia recompram em 14 dias; o vale é a 2ª quinzena de dezembro (1–3% / 3–9%). ~44–54 compradores por
+  farmer/dia, ~6 SKUs por comprador (p50 3, p90 13); compradores com 20+ SKUs são 7% e somam 45% das linhas.
+
+## Venda por cliente — Task 8: Meu Dia + ficha da ligação + desfecho, Onda 1 (2026-10-20)
+
+A fila do Meu Dia passou a ter a lista de recompra do servidor (`venda_minhas_sugestoes`, adapter
+`src/lib/fila/adapters/recompra.ts`, 1 ação por comprador) como fonte principal. `rota`/`tarefa`/`whatsappPendente`
+desligadas (M-41), `mixgap` segue até a Onda 2. O `FilaContextPanel` virou `FichaLigacao` (sem flag): telefone `tel:`,
+munição, Recomprar, Histórico, link 360 e `BotoesContato` (escritor único `venda_registrar_contato`). O Meu Dia perdeu o
+modo antigo, `SlaCardMeuDia`, `KpisToday` (chamadas) e o nudge de ligações sem vínculo. Munição e histórico re-hospedados
+em `farmer-inteligencia` (`src/lib/venda-cliente/{municao,historico}.ts`). Sensores `venda.*` no ledger: migration
+`20261020202720_analytics_ledger_venda_cliente.sql` (TRAVA→PRE→CREATE→PÓS; prova `db/test-analytics-ledger-venda-cliente.sh`).
+
+- **O ledger tem allowlist FECHADA no banco.** "Sensor no ledger" sem migration é sensor que volta 22023 e some
+  (fail-open). O plano dizia "sem migration" para a Task 8 — errado por esse motivo. A migration já inclui
+  `venda.painel_aberto` da Task 7, para as duas entregas não recriarem a função uma por cima da outra.
+- **A lente "Ver como" não mostra a lista da vendedora.** A RPC é por `auth.uid()` (devolveria a do master) e o write-guard
+  bloqueia RPC fora de `get_`/`list_`. A tela diz isso em vez de mostrar "ninguém hoje". Ver a lista dela exige uma variante
+  master-only `venda_minhas_sugestoes_for(p_farmer)`, no padrão de `get_meu_mixgap_for`.
+- **"Dias de atraso" não chega à farmer.** `venda_recompra` (cadência, `due_ratio`) não tem GRANT para `authenticated`, e
+  a RPC não expõe. A ficha mostra "última compra há N dias" e o último preço lidos do histórico de pedidos, com "—" quando
+  não há dado. Expor cadência e atraso é para a migration da Task 9, que já recria `venda_minhas_sugestoes`.
+
+## Venda por cliente — Task 9: "Oferecer também" e "Preço" na ficha, Ondas 2 e 3 (2026-10-21)
+
+Migration `20261021031000_venda_cliente_ondas23.sql` (TRAVA→PRE→CREATE→PÓS; prova `db/test-venda-ondas23.sh`, no núcleo
+do CI, 44 asserts, 18 sabotagens vermelhas nos dois locales). O gerador (`venda_gerar_lista`) põe `complemento` (até 3
+famílias por comprador da lista, régua da ficha) e `preco` (repasse vigente, SKU Oben não-tinta, último ao vivo abaixo do
+alvo, dono único = a farmer) **só na lista ativa de hoje**; a recompra da Onda 1 é byte-idêntica. `venda_minhas_sugestoes`
+expõe `ondas` e `cadencia_dias`. Ficha: `SecaoComplemento`/`SecaoPreco` entre Recomprar e Histórico, por onda do servidor;
+com a Onda 2 ligada o Mix/Gap sai da fila (vive na ficha).
+
+- **Desfecho de preço tinha de medir ALTA, não só "≥ alvo × 0,99".** Com alvo a < 1% do último preço, pagar o preço velho
+  contava como sucesso. A linha guarda `preco_anterior` (maior entre aprovação e ao vivo) e o pedido só qualifica acima dele.
+- **Unidade igual dos dois lados (Codex desenho P2).** O último preço da base é a média ponderada do DIA; comparar com um
+  item isolado fazia 90 + 110 "subir" sobre 100. O desfecho de preço passou a qualificar por PEDIDO (média ponderada do
+  SKU, sem bonificação).
+- **O que a farmer não viu não entra na medida.** `complemento`/`preco` sem `mostrada_em` fecham `nao_medivel/nao_exibida`,
+  com ou sem venda — contar só o sucesso do não-visto inflaria a taxa. O preço só é "visto" quando o alvo apareceu: a ficha
+  casa o alvo ao vivo com o da LINHA (repasse substituído no meio do dia não casa) e erro de revalidação não mantém o alvo
+  do cache na tela (Codex código P1).
+- **Gerar complemento/preço para outro dia olharia o futuro**: o núcleo do Mix/Gap e o último preço ao vivo leem `now()`.
+  Por isso sombra e histórico ficam só com recompra.

@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import type { Json } from '@/integrations/supabase/types';
+import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { buscarMargensScores, type MargemScore } from '@/lib/scoring/margemScores';
@@ -132,15 +132,6 @@ interface ProfileRow {
 interface SalesOrderItem {
   product_id?: string;
   omie_codigo_produto?: number | string;
-}
-
-interface SalesOrderRow {
-  customer_user_id: string;
-  items: SalesOrderItem[] | unknown;
-  total: number | string | null;
-  created_at: string;
-  /** A conta do PEDIDO — o lado do par que qualifica a resolução de cada item. */
-  account: string | null;
 }
 
 /** Uma linha da RPC `farmer_melhor_individual_por_cliente` — já é O melhor do cliente. */
@@ -310,14 +301,13 @@ export const useBundleEngine = () => {
       // E a página perdida trocava o ESCOPO: o caller abaixo lê lista vazia como "não tem
       // carteira, deve ser super_admin" e recarrega SEM filtro de farmer_id.
       const fetchAllScores = (filterFarmerId?: string): Promise<ClientScoreRow[]> =>
-        fetchAllPages<ClientScoreRow>(
+        fetchAllPages(
           (de, ate) => {
             // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F) —
             // a query inteira cairia com 42501. A margem vem da RPC com gate de projeção (margensDaCarteira).
             let q = supabase.from('farmer_client_scores').select('customer_user_id, health_score, answer_rate_60d, whatsapp_reply_rate_60d, avg_monthly_spend_180d, category_count, days_since_last_purchase');
             if (filterFarmerId) q = q.eq('farmer_id', filterFarmerId);
-            return q.order('customer_user_id', { ascending: true }).range(de, ate) as unknown as
-              PromiseLike<{ data: ClientScoreRow[] | null; error: unknown }>;
+            return q.order('customer_user_id', { ascending: true }).range(de, ate);
           },
           'farmer_client_scores/bundle',
         );
@@ -346,21 +336,21 @@ export const useBundleEngine = () => {
       // recebia bundle. A terceira leitura era `product_costs`, que saiu: o custo não chega mais
       // ao browser (a RPC abaixo responde só "este SKU é vendável?").
       const [products, profiles, vendaveisResult] = await Promise.all([
-        fetchAllPages<ProductRow>((de, ate) =>
+        fetchAllPages((de, ate) =>
           supabase
             .from('omie_products')
             .select('id, codigo, descricao, valor_unitario, metadata, ativo, omie_codigo_produto, account')
             .eq('ativo', true)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProductRow[] | null; error: unknown }>,
+            .range(de, ate),
           'omie_products/bundle',
         ),
-        fetchAllPages<ProfileRow>((de, ate) =>
+        fetchAllPages((de, ate) =>
           supabase
             .from('profiles')
             .select('user_id, name, customer_type, cnae')
             .order('user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ProfileRow[] | null; error: unknown }>,
+            .range(de, ate),
           'profiles/bundle',
         ),
         // Quais SKUs são VENDÁVEIS (margem canônica > 0) — o browser não vê mais custo.
@@ -388,7 +378,7 @@ export const useBundleEngine = () => {
               // reintroduziria em menor escala o próprio bug que este trecho corrige, e de
               // forma intermitente. `product_id` é a PK do catálogo: ordem total.
               .order('product_id', { ascending: true })
-              .range(de, ate) as unknown as PromiseLike<{ data: { product_id: string }[] | null; error: unknown }>,
+              .range(de, ate),
           'get_skus_margem_positiva/bundle',
         ).then(
           (data) => ({ ok: true as const, data }),
@@ -470,7 +460,7 @@ export const useBundleEngine = () => {
       // Mesmo defeito do loop manual acima — aqui a perda é do HISTÓRICO que alimenta as regras
       // de associação do bundle. `.order('id')` (PK) é a ordem estável; a coluna não precisa
       // estar no `select`.
-      const salesOrders = await fetchAllPages<SalesOrderRow>(
+      const salesOrders = await fetchAllPages(
         (de, ate) =>
           supabase
             .from('sales_orders')
@@ -484,7 +474,7 @@ export const useBundleEngine = () => {
             .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
             .is('deleted_at', null)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+            .range(de, ate),
         'sales_orders/bundle',
       );
 
@@ -803,13 +793,11 @@ export const useBundleEngine = () => {
         // coerência deixa de ser probabilística, e o cap de 1.000 some por construção (ele
         // conta LINHAS, e agora há uma) — o caminho sai da classe #1782/#1801 em vez de se
         // defender dela.
-        // `as never` no nome porque `types.ts` é gerado pelo Lovable e ainda não conhece esta
-        // RPC — mesmo idioma do `farmer_bundle_recomendacoes_substituir` logo abaixo. O contrato
-        // de verdade não é o tipo gerado e sim `validarRespostaMelhorIndividual`, que roda em
-        // RUNTIME: um tipo estático não teria detido resposta malformada de qualquer forma.
+        // O tipo gerado diz só `Json`; o contrato de verdade é `validarRespostaMelhorIndividual`,
+        // que roda em RUNTIME: um tipo estático não teria detido resposta malformada.
         const { data, error } = await supabase.rpc(
-          'farmer_melhores_individuais_por_cliente' as never,
-          { p_farmer_id: effectiveUserId } as never,
+          'farmer_melhores_individuais_por_cliente',
+          { p_farmer_id: effectiveUserId },
         );
         if (error) throw error;
         // Valida a resposta INTEIRA e LANÇA — nunca filtra. Descartar linha inválida daria um
@@ -1197,7 +1185,7 @@ export const useBundleEngine = () => {
             customer_user_id: bundle.customerId,
             // Sem `cost`/`margin` por SKU — o jsonb guardava o custo LITERAL (12/12 linhas em
             // prod). Só id/name/price, e `price` é público.
-            bundle_products: bundle.products as unknown as Json,
+            bundle_products: bundle.products,
             support: bundle.support,
             confidence: bundle.confidence,
             lift: bundle.lift,
@@ -1219,9 +1207,11 @@ export const useBundleEngine = () => {
           await registrarVazio();
         }
         if (recomendacoes.length > 0) {
+          // NULL semântico (conferido em prod): `p_geracao_vista` NULL = nenhuma geração
+          // anterior (sem DEFAULT); `p_motivo`/`p_head_visto` têm DEFAULT NULL.
           const { error: erroRecs } = await supabase.rpc(
-            'farmer_bundle_recomendacoes_substituir' as never,
-            {
+            'farmer_bundle_recomendacoes_substituir',
+            comNulo<'farmer_bundle_recomendacoes_substituir', 'p_geracao_vista' | 'p_motivo' | 'p_head_visto'>({
               p_farmer_id: effectiveUserId,
               p_run_id: runId,
               p_geracao_vista: geracaoVista,
@@ -1233,7 +1223,7 @@ export const useBundleEngine = () => {
               // Ver useCrossSellEngine: sem o head ORIGINAL, um run vazio mais novo seria
               // sobrescrito por este, que leu snapshot mais velho.
               p_head_visto: headVisto ?? null,
-            } as never,
+            }),
           );
           if (erroRecs) {
             console.error('Falha ao substituir farmer_bundle_recommendations:', erroRecs);

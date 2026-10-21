@@ -96,6 +96,18 @@ literais `on`/`true` e ACL das views intactos, smoke desfeito). Achado na atesta
 views agora os chamam. Entrou na migration um `GRANT … TO claude_ro` condicional à existência do papel (no harness
 não existe) e a PÓS o confere; re-aplicada (idempotente, PRE aceita "este").
 
-## Pendências do founder
+## Desfecho — no ar (2026-10-20)
 
-- 🖱️ Publish do Lovable após o merge; verificar com `.claude/skills/lovable-deploy-verify/scripts/monitor-deploy.sh`.
+PR #3219 mergeado às 16:23Z (squash `38c42215c`). Nenhum Publish disparado por esta sessão: quando o merge saiu, o ar
+já servia um build posterior — `__BUILD_SHA__="b85e4a82"`, com o squash na história dele. Prova: `monitor-deploy.sh --pr
+3219` → exit 0 `PR_NO_AR`, e por fora `git merge-base --is-ancestor 38c42215c b85e4a82` → rc 0. Sem edge nesta entrega.
+Conferido o sync do Lovable depois do merge: os 2 commits do bot (`d255802d0`, `2c8617ac8`) só acrescentaram 6 linhas
+em `src/integrations/supabase/types.ts`; nenhuma linha do PR foi removida da main.
+
+### A lição que custou dois ciclos de CI
+
+A prova passava no laptop e morria em **0 s** no runner: o boot copiado de provas antigas chamava `brew --prefix` e
+`/opt/homebrew/...`, e o `set -e` abortava antes do 1º assert (`provas-sql (1)` + `provas-sql-uniao` + `validate`
+vermelhos). Prova nova resolve o PGBIN por `. "$REPO_ROOT/db/lib/pg-harness.sh"` (com `export PGVER=17`), que confere a
+major e roda nos dois sistemas. E o `shellcheck -S warning` local não pega o que o gate do CI pega: o `lint:shell`
+reprovou um `A && B || C` (SC2015, severidade *note*) — rode `bun run lint:shell`, não o shellcheck cru.

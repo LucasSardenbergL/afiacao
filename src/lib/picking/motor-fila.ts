@@ -18,13 +18,11 @@ import {
 
 type Ouvinte = () => void;
 
-interface Locks {
-  request<T>(nome: string, opts: { mode?: "exclusive" | "shared"; ifAvailable?: boolean }, cb: (lock: unknown) => Promise<T>): Promise<T>;
-}
-
-function locks(): Locks | null {
-  const n = typeof navigator !== "undefined" ? (navigator as unknown as { locks?: Locks }).locks : undefined;
-  return n ?? null;
+// O lib.dom tipa `navigator.locks` como sempre presente; fora de contexto seguro (ou em navegador
+// antigo) ele não existe — por isso o `in`, não um cast.
+function locks(): LockManager | null {
+  if (typeof navigator === "undefined" || !("locks" in navigator)) return null;
+  return navigator.locks ?? null;
 }
 
 /** Exclusivo por nome entre abas (Web Locks); sem suporte, roda direto (a fila já é atômica). */

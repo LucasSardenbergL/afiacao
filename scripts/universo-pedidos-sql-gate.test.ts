@@ -83,7 +83,9 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
     // Redefinição POSTERIOR legítima de um corpo corrigido: a origem muda, o juízo do universo abaixo
     // continua valendo sobre o corpo NOVO (é ele que a prod executa).
     const POSTERIORES: Readonly<Record<string, RegExp>> = {
-      'public.get_defasagem_cliente': /^20261014211500_defasagem_desconto_valor\.sql$/,
+      // 20261020233000: a avaliação foi extraída para private._defasagem_item; a SELEÇÃO da âncora (e o filtro do
+      // universo) ficou idêntica à de 20261014211500 — o juízo abaixo continua sobre o corpo novo.
+      'public.get_defasagem_cliente': /^20261020233000_venda_cliente_repasse\.sql$/,
       // 20261020130000: as 3 views do universo recriadas com o corpo da prod + normalizar_documento() no documento
       // (CNPJ alfanumérico) — o filtro do universo é o MESMO; o juízo abaixo continua sobre o corpo novo.
       'public.v_grupo_comercial': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,

@@ -28,12 +28,9 @@ const STALE_MS = 30 * 60 * 1000; // 30min: quando começa a revalidar em backgro
 const cacheKey = (uid: string) => `radar-cidades-rota:v1:${uid}`;
 
 async function fetchCidadesRota(): Promise<CityOption[]> {
-  const { data, error } = await supabase.rpc(
-    'radar_contagem_por_municipio',
-    { p_limit: 500 } as never,
-  );
+  const { data, error } = await supabase.rpc('radar_contagem_por_municipio', { p_limit: 500 });
   if (error) throw error;
-  const rows = (data ?? []) as RawCidadeRow[];
+  const rows: RawCidadeRow[] = data ?? [];
   return rows.map((r) => ({
     codigo: r.municipio_codigo,
     nome: r.municipio_nome,

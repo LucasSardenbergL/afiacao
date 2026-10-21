@@ -43,8 +43,14 @@ export const respostaSonda = criarRespostaSonda("omie-nfe-recebimento-sync");
  * chave estacionada em nfe_importacao_falhas (≥3 falhas de dado); o botão "Importar NF-e" idem, sem o
  * DELETE de compensação (podia apagar em cascata itens de outro writer). ⚠️ Deploy SÓ depois da
  * migration: sem a RPC, cron e botão respondem erro nomeando-a (fail-closed), não o caminho antigo.
+ * v1.6: CT-e (modelo 57, frete, SEM itens) fora da fila nos três pontos de entrada — a triagem da
+ * listagem o pula com motivo `cte` (contado em `ctes` no `por_armazem`, antes de "já importada") e
+ * ele nunca gasta a consulta; o detalhe que revela um CT-e dá desfecho `cte` sem RPC (impedimento
+ * `CTE` no ledger); o botão "Importar NF-e" recusa chave 57 com 400 antes de consultar o Omie. O
+ * `ListarRecebimentos` mistura os dois modelos: até aqui 28 CT-e viraram cabeçalho sem itens em prod
+ * e a única consulta da rodada era gasta neles (NFE01 "lote sem itens", 2026-10-20).
  */
-export const VERSAO = "v1.5-rpc-transacional";
+export const VERSAO = "v1.6-ignora-cte";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

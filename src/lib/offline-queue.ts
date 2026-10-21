@@ -212,19 +212,15 @@ export interface ResultadoFlush {
 
 let rodadaEmCurso = false;
 
-type WebLocks = {
-  request: (nome: string, opts: { ifAvailable: boolean }, cb: (lock: unknown) => Promise<unknown>) => Promise<unknown>;
-};
-
 /** Uma rodada por vez: no módulo (sobrevive a remontagem do hook) e, com Web Locks, entre abas. */
 async function comExclusao(rodar: () => Promise<ResultadoFlush>): Promise<ResultadoFlush> {
   const emCurso: ResultadoFlush = { success: 0, failed: 0, retidos: 0, emCurso: true };
   if (rodadaEmCurso) return emCurso;
   rodadaEmCurso = true;
   try {
-    const locks = (typeof navigator !== 'undefined'
-      ? (navigator as unknown as { locks?: WebLocks }).locks
-      : undefined);
+    // O lib.dom tipa `navigator.locks` como sempre presente; fora de contexto seguro ele some —
+    // daí a guarda `in` (mesmo idioma de `src/lib/picking/motor-fila.ts`).
+    const locks = typeof navigator !== 'undefined' && 'locks' in navigator ? navigator.locks : undefined;
     if (!locks?.request) return await rodar();
     let resultado: ResultadoFlush = emCurso;
     await locks.request('offline_queue_flush', { ifAvailable: true }, async (lock) => {

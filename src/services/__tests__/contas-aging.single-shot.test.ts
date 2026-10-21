@@ -69,6 +69,12 @@ function titulos(n: number, extra: Partial<Row> = {}): Row[] {
     status_titulo: 'ABERTO',
     data_vencimento: `2026-${String((i % 12) + 1).padStart(2, '0')}-01`,
     valor_documento: 1,
+    // Colunas que o título EXIGE na borda (NULL lança — getContas* via linhasCom): dinheiro,
+    // status e categoria. A fixture antiga as omitia porque o cast as deixava passar.
+    valor_pago: 0,
+    valor_recebido: 0,
+    saldo: 1,
+    categoria_codigo: '1.01.01',
     ...extra,
   }));
 }

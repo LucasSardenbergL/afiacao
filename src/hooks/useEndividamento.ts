@@ -1,53 +1,17 @@
 // src/hooks/useEndividamento.ts
 // F1 Módulo de Endividamento — camada de dados (react-query).
-// As tabelas fin_dividas / fin_divida_parcelas / fin_divida_completude são master-only (RLS)
-// e NÃO estão nos tipos gerados do Supabase → cast through unknown (padrão verbatim de useFunding.ts;
-// shape mínimo por operação, sem `any` — o ESLint barra `any`).
+// As tabelas fin_dividas / fin_divida_parcelas / fin_divida_completude são master-only (RLS). Cliente
+// tipado pelo types.ts; o vocabulário de CHECK (company/tipo/cp_inclusion_status) é conferido na borda
+// (paraDivida), que LANÇA fora dele.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import type { TablesInsert } from '@/integrations/supabase/types';
 import type { Divida, Parcela, Company } from '@/lib/financeiro/endividamento-types';
+import { paraDivida } from '@/lib/financeiro/borda-tabelas';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const STALE = 60_000;
-
-// ─── Shapes mínimos do client (cast através de unknown) ──────────────────────────
-
-type SelectClient = {
-  from: (table: string) => {
-    select: (cols: string) => {
-      eq: (col: string, val: string) => {
-        order: (col: string) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
-        maybeSingle: () => Promise<{ data: unknown | null; error: { message: string } | null }>;
-      };
-      in: (col: string, vals: string[]) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
-    };
-  };
-};
-
-type UpsertClient = {
-  from: (table: string) => {
-    upsert: (
-      values: Record<string, unknown> | Record<string, unknown>[],
-      options?: { onConflict: string },
-    ) => Promise<{ error: { message: string } | null }>;
-  };
-};
-
-type DeleteClient = {
-  from: (table: string) => {
-    delete: () => {
-      eq: (col: string, val: string) => Promise<{ error: { message: string } | null }>;
-    };
-  };
-};
-
-type RpcClient = {
-  rpc: (
-    fn: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ error: { message: string } | null }>;
-};
 
 // ─── Queries ─────────────────────────────────────────────────────────────────────
 
@@ -58,14 +22,13 @@ export function useDividas(company: Company | string) {
     enabled: Boolean(company),
     staleTime: STALE,
     queryFn: async (): Promise<Divida[]> => {
-      const client = supabase as unknown as SelectClient;
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('fin_dividas')
         .select('*')
         .eq('company', company)
         .order('credor');
       if (error) throw new Error(error.message);
-      return (data ?? []) as Divida[];
+      return (data ?? []).map(paraDivida);
     },
   });
 }
@@ -77,13 +40,12 @@ export function useParcelas(dividaIds: string[]) {
     enabled: dividaIds.length > 0,
     staleTime: STALE,
     queryFn: async (): Promise<Parcela[]> => {
-      const client = supabase as unknown as SelectClient;
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('fin_divida_parcelas')
         .select('*')
         .in('divida_id', dividaIds);
       if (error) throw new Error(error.message);
-      return (data ?? []) as Parcela[];
+      return data ?? [];
     },
   });
 }
@@ -95,15 +57,13 @@ export function useCompletude(company: Company | string) {
     enabled: Boolean(company),
     staleTime: STALE,
     queryFn: async (): Promise<{ completo: boolean }> => {
-      const client = supabase as unknown as SelectClient;
-      const { data, error } = await client
+      const { data, error } = await supabase
         .from('fin_divida_completude')
         .select('completo')
         .eq('company', company)
         .maybeSingle();
       if (error) throw new Error(error.message);
-      const row = data as { completo?: boolean } | null;
-      return { completo: row?.completo === true };
+      return { completo: data?.completo === true };
     },
   });
 }
@@ -119,9 +79,8 @@ function invalidate(qc: ReturnType<typeof useQueryClient>, company: string) {
 export function useUpsertDivida() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (divida: Partial<Divida> & { company: Company }) => {
-      const client = supabase as unknown as UpsertClient;
-      const { error } = await client
+    mutationFn: async (divida: TablesInsert<'fin_dividas'> & { company: Company }) => {
+      const { error } = await supabase
         .from('fin_dividas')
         .upsert({ ...divida, updated_at: new Date().toISOString() }, { onConflict: 'id' });
       if (error) throw new Error(error.message);
@@ -143,8 +102,7 @@ export function useDeleteDivida() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id }: { id: string; company: Company }) => {
-      const client = supabase as unknown as DeleteClient;
-      const { error } = await client.from('fin_dividas').delete().eq('id', id);
+      const { error } = await supabase.from('fin_dividas').delete().eq('id', id);
       if (error) throw new Error(error.message);
     },
     onSuccess: (_data, vars) => {
@@ -175,10 +133,18 @@ export function useReplaceParcelas() {
       company: Company;
       parcelas: Array<Omit<Parcela, 'id' | 'divida_id'>>;
     }) => {
-      const client = supabase as unknown as RpcClient;
-      const { error } = await client.rpc('fin_divida_replace_parcelas', {
+      const { error } = await supabase.rpc('fin_divida_replace_parcelas', {
         p_divida_id: dividaId,
-        p_parcelas: parcelas,
+        // Parcela é interface (não cabe em Json): remonta o objeto com as MESMAS 7 chaves do tipo.
+        p_parcelas: parcelas.map((p) => ({
+          numero_parcela: p.numero_parcela,
+          data_vencimento: p.data_vencimento,
+          valor_amortizacao: p.valor_amortizacao,
+          valor_juros: p.valor_juros,
+          valor_total: p.valor_total,
+          estimado: p.estimado,
+          pago: p.pago,
+        })),
       });
       if (error) throw new Error(error.message);
     },
@@ -198,8 +164,7 @@ export function useSetCompletude() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ company, completo }: { company: Company; completo: boolean }) => {
-      const client = supabase as unknown as UpsertClient;
-      const { error } = await client.from('fin_divida_completude').upsert(
+      const { error } = await supabase.from('fin_divida_completude').upsert(
         { company, completo, validado_em: new Date().toISOString() },
         { onConflict: 'company' },
       );

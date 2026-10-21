@@ -3,7 +3,7 @@
 // com a futura tabela materializada `suggested_actions`.
 
 export type CategoriaAcao = 'prazo' | 'certo' | 'esperado' | 'risco';
-export type FonteAcao = 'tarefa' | 'rota' | 'whatsapp_pendente' | 'mixgap';
+export type FonteAcao = 'tarefa' | 'rota' | 'whatsapp_pendente' | 'mixgap' | 'recompra';
 type TipoValor = 'certo' | 'estimado' | 'sem_valor';
 export type TipoCta = 'ligar' | 'whatsapp' | 'pedido' | 'tarefa' | 'abrir_cliente';
 
@@ -11,7 +11,9 @@ export type AcaoPayload =
   | { kind: 'tarefa'; tarefaId: string }
   | { kind: 'rota'; customerUserId: string; dataRota: string; bucket: string | null; valor: number | null }
   | { kind: 'mixgap'; customerUserId: string; familia: string }
-  | { kind: 'whatsapp'; conversationId: string };
+  | { kind: 'whatsapp'; conversationId: string }
+  /** Lista de recompra gerada no servidor (venda_sugestao): 1 ação por comprador. */
+  | { kind: 'recompra'; compradorId: string; sugestaoIds: string[] };
 
 export interface AcaoSugerida {
   fonte: FonteAcao;

@@ -86,7 +86,7 @@ function makeQuote(account: string) {
     created_at: '2026-06-16T10:00:00Z',
     total: 100,
     notes: null,
-    items: [{ omie_codigo_produto: 'SKU1', quantidade: 1, valor_unitario: 10, descricao: 'Disco de Corte 7"' }],
+    items: [{ omie_codigo_produto: 1001, quantidade: 1, valor_unitario: 10, descricao: 'Disco de Corte 7"' }],
   };
 }
 

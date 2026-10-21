@@ -11,30 +11,33 @@ import {
 import type { Company } from '@/contexts/CompanyContext';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 
-type Linha = Record<string, unknown>;
-// As 3 RPCs nascem nesta migration e ainda não estão no types.ts gerado: builder mínimo tipado à mão.
-type BuilderRpc = {
-  select: (c: string) => BuilderRpc;
-  order: (c: string, o: { ascending: boolean }) => BuilderRpc;
-  range: (de: number, ate: number) => PromiseLike<{ data: Linha[] | null; error: unknown }>;
-};
-const rpcSemTipo = (nome: string) => (supabase as unknown as { rpc: (n: string) => BuilderRpc }).rpc(nome);
+/**
+ * .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre, com ordem estável:
+ * `company` + a chave única da linha, ou só `company` (fin_ciclo_cp_empresa: 1 linha por empresa).
+ */
+const lerCpTitulos = () =>
+  fetchAllPages((de, ate) =>
+    supabase.rpc('fin_ciclo_cp_titulos').select('*')
+      .order('company', { ascending: true }).order('omie_codigo_lancamento', { ascending: true })
+      .range(de, ate), 'fin_ciclo_cp_titulos');
 
-/** .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre, com ordem estável. */
-/** Ordem estável: `company` + a chave única da linha (`segunda`), ou só `company` (1 linha por empresa). */
-function lerRpc(nome: 'fin_ciclo_cp_titulos' | 'fin_ciclo_fornecedor_resumo' | 'fin_ciclo_cp_empresa', segunda: string | null) {
-  return fetchAllPages<Linha>((de, ate) => {
-    const q = rpcSemTipo(nome).select('*').order('company', { ascending: true });
-    return (segunda === null ? q : q.order(segunda, { ascending: true })).range(de, ate);
-  }, nome);
-}
+const lerFornecedorResumo = () =>
+  fetchAllPages((de, ate) =>
+    supabase.rpc('fin_ciclo_fornecedor_resumo').select('*')
+      .order('company', { ascending: true }).order('omie_codigo_fornecedor', { ascending: true })
+      .range(de, ate), 'fin_ciclo_fornecedor_resumo');
+
+const lerCpEmpresa = () =>
+  fetchAllPages((de, ate) =>
+    supabase.rpc('fin_ciclo_cp_empresa').select('*').order('company', { ascending: true }).range(de, ate),
+    'fin_ciclo_cp_empresa');
 
 export function useCicloCpTitulos() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'cp-titulos'],
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<TituloCp[]> => filaCiclo(async () => {
-      const linhas = await lerRpc('fin_ciclo_cp_titulos', 'omie_codigo_lancamento');
+      const linhas = await lerCpTitulos();
       return linhas
         .filter((l) => num(l.omie_codigo_fornecedor) !== null && num(l.omie_codigo_lancamento) !== null)
         .map(normalizarTituloCp);
@@ -47,7 +50,7 @@ export function useCicloFornecedorResumo() {
     queryKey: ['financeiro', 'ciclo', 'fornecedor-resumo'],
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<ResumoFornecedor[]> => filaCiclo(async () => {
-      const linhas = await lerRpc('fin_ciclo_fornecedor_resumo', 'omie_codigo_fornecedor');
+      const linhas = await lerFornecedorResumo();
       // Sem omie_codigo_fornecedor não há fornecedor: descarta (evita a chave -1 do normalizador).
       return linhas.filter((l) => num(l.omie_codigo_fornecedor) !== null).map(normalizarResumoFornecedor);
     }),
@@ -64,7 +67,7 @@ export function useCicloCpEmpresa() {
     queryKey: ['financeiro', 'ciclo', 'cp-empresa'],
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<Partial<Record<Company, CpEmpresa>>> => filaCiclo(async () => {
-      const linhas = await lerRpc('fin_ciclo_cp_empresa', null);
+      const linhas = await lerCpEmpresa();
       const out: Partial<Record<Company, CpEmpresa>> = {};
       for (const r of linhas) {
         out[r.company as Company] = {

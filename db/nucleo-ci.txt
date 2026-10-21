@@ -194,6 +194,15 @@ db/test-recusa-definitiva-portal-servidor.sh 64
 # Trigger da outbox: pedido INSERIDO já aprovado (importação do portal) emite criada E aprovada; o corpo de
 # prod entra pela migration de 2026-10-11 com md5 CONFERIDO; backfill só de importados; fail-open vivo.
 db/test-analytics-outbox-insert-ja-aprovado.sh 23
+# Allowlist do ledger ganha os 4 sensores `venda.*` (20261020202720): os 7 eventos gravam, fora da lista 22023,
+# anon 28000, ACL nas duas pontas; PRE por md5 (deriva alheia aborta e sobrevive) e PÓS por md5 + por evento,
+# 4 sabotagens inline com controle verde na mesma invocação.
+db/test-analytics-ledger-venda-cliente.sh  17
+# Canônica do mesmo trigger (I2 · plano v2, ciclo 2): restore só de migrations e prod (cadeia + envelope)
+# terminam no MESMO md5 da prod; reaplicar é no-op preservando oid/dono/ACL; 11 sabotagens (corpo, PRE,
+# atributos, owner, volatilidade, trigger por definição e por tgfoid, UNIQUE ausente e árbitro diferível, PÓS cega) com
+# controle verde na mesma invocação e rollback conferido por outra conexão.
+db/test-analytics-outbox-canonica.sh       19  falsificar=11
 db/test-apply-score-updates.sh             32
 db/test-sales_orders_omie_hash_unique.sh    5
 # O write-back da EDIÇÃO: cabeçalho E linhas do pedido na MESMA transação. O mínimo é 54 de
@@ -574,7 +583,18 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
-db/test-radar-score.sh                      18  falsificar=12
+db/test-radar-score.sh                      21  falsificar=14
+# Radar: ranking de cidades e mapa contam a FOTO VIGENTE (20261020120200). Defeito aqui = totalizador por
+# município contando quem saiu do dump (diverge da fila), lote mal formado contando zero em silêncio,
+# overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
+# VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
+db/test-radar-contagem-lote.sh              16  falsificar=12
+# Radar: AVISO AO GESTOR por lote fechado (20261020143000). Defeito aqui = e-mail repetido do mesmo lote,
+# e-mail retroativo do lote velho no 1º cron (ou pendência apagada por re-colada), "0 de N" com score de
+# outra foto (ausente ≠ zero), "0 de 0" sem cliente verificado, número sem denominador, lote running
+# avisado, "saíram" acumulando meses, ledger ausente, ou meio-estado após erro. Relógio controlado
+# (p_agora), esquema mínimo com os CHECKs de prod, cron de mentira.
+db/test-radar-avisar-lote.sh                23  falsificar=18
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
@@ -638,3 +658,53 @@ db/test-grupos-caca-cnpj-alfanumerico.sh    80  falsificar=7
 # referência→finalizado_em, janela, ledger sem filtro, fora do v_sources, fora do heartbeat, PRE, PÓS md5, REVOKE,
 # PÓS v_sources, PÓS IN-list, PÓS ACL.
 db/test-data-health-radar.sh               39  falsificar=12
+
+# Venda por cliente — ESPINHA (migration 20261020174221, Task 1 do plano 2026-10-20): venda_sugestao com
+# identidade + venda_contato + venda_config + job venda_fechar_desfechos. Autorização: farmer só vê as SUAS linhas
+# ATIVAS (RPC e RLS), contato só na própria carteira com alias resolvido, job fechado a authenticated. Ausente ≠ zero:
+# buraco de sync de vendas → nao_medivel (ou linha ABERTA enquanto cobrível), desconto não apurado → nao_medivel,
+# pedido do ALIAS conta para o canônico. 12 sabotagens: alias, sync→nao_virou, fecha cobrível, cursor ignorado,
+# desconto como zero, fase na RPC, 1ª marcação, carteira sem alias, RLS sombra, POST ACL, ACL sem POST, POST cron.
+db/test-venda-espinha.sh                   30  falsificar=12
+
+# Venda por cliente, Task 2 — recompra comprador × SKU × empresa e situação do comprador
+# (20261020150000). Paridade SQL × TS (oráculo src/lib/venda-cliente/recompra.ts via `bun`, sem deps)
+# sobre db/fixtures/venda-recompra.json em 3 datas; alias → canônico, cancelado/deleted fora, sem olhar
+# o futuro, Oben × Colacor separados, desconto não apurado → preço NULL, borda 1,5, perdido/sem_base,
+# ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
+db/test-venda-recompra.sh                  49  falsificar=15
+
+# Venda por cliente — REPASSE DE PREÇO (migration 20261020233000, Task 6 do plano 2026-10-20): núcleo da defasagem
+# extraído para private._defasagem_item com o cockpit IDÊNTICO (md5 do JSON antes/depois, com e sem cap, lote nos 14
+# motivos) + candidatos (master E cap) + aprovação (alvo ≤ último → 22023; tinta NULL/Colacor/dia sem preço → 22023;
+# tela velha → 40001) + leitura da farmer com o conjunto EXATO de 6 chaves (sem custo/markup/piso), dono ÚNICO da
+# carteira do grupo canônico, vencido/revogado/alvo já alcançado somem; último = média ponderada do líquido (116, não
+# MAX); CMC Infinity não vira custo; versão do trio (repetir criação após revogar → 40001). Falsificação exige o
+# conjunto EXATO de vermelhos. 15 sabotagens: vaza cmc, vaza c_now, sem recusa, tinta NULL, dono por união, sem
+# revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
+# gate de candidatos, POS ACL anon, POS RLS, autojunção (PERF: volume de prod sob o statement_timeout de 8 s — incidente
+# 2026-10-21, candidatos 500 na prod), POS janela, PRE config (search_path derivado).
+db/test-venda-repasse.sh                   54  falsificar=18
+
+# Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
+# atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
+# db/fixtures/venda-cidades-alvo.json) com os `teto` maiores atrasos fora da rota; perdido, founder e inelegível fora;
+# alias → canônico; idempotente; reconstrução sem olhar o futuro; ondas que ligam sozinhas e nunca desligam; ACL/RLS.
+# 16 sabotagens: perdido, teto, papel farmer, UF, alias, override, dia da rota, UF entre parênteses, ON CONFLICT,
+# 3 dias, divergência, sombra tardia, 365 dias, taxa 80%, captura 42703 da Onda 3, POST ACL; + prova por dados da
+# linha de base (20261020194332): sem itens, sem volume, limiar 70%.
+db/test-venda-gerador.sh                   66  falsificar=19
+
+# Venda por cliente, Task 7 — painel do founder (20261020235000). venda_painel: gate master (42501),
+# período (22023), contagens por comprador, taxa sem nao_medivel no denominador, complemento fora da
+# taxa, ausente ≠ zero, base da mesma semana do ano anterior, base_confiavel só pelo log da Onda 1,
+# sem chave de custo.
+db/test-venda-painel.sh                    19  falsificar=8
+
+# Venda por cliente, Task 9 — Ondas 2 e 3 (20261021031000): o gerador põe `complemento` (top-3 por família,
+# feedback da própria farmer, só na lista ativa de hoje) e `preco` (só repasse vigente, SKU Oben não-tinta,
+# último ao vivo abaixo do alvo, dono único) sem tocar a recompra da Onda 1; 2× não duplica; janela de 30 dias;
+# desfecho de preço exige alta sobre o preço anterior (alvo a < 1%: o preço velho é nao_virou); a lista da
+# farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
+# = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
+db/test-venda-ondas23.sh                   44  falsificar=18

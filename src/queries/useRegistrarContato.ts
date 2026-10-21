@@ -2,11 +2,10 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { lerDesfazer, lerRegistroComDedupe } from '@/lib/radar/borda-rpc';
 import type { OutcomeStatus } from '@/lib/route/route-outcome';
 
 // route_* não está no types.ts gerado → cast do client (mesmo padrão de useMyPositivacao).
-type RpcClient = { rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> };
-const rpc = () => supabase as unknown as RpcClient;
 
 export interface RegistrarContatoVars {
   customerUserId: string;
@@ -21,16 +20,19 @@ export function useRegistrarContato() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (v: RegistrarContatoVars): Promise<{ id: string; deduped: boolean }> => {
-      const { data, error } = await rpc().rpc('registrar_contato_rota', {
+      // `p_bucket`/`p_valor` têm DEFAULT NULL na prod: ausente sai do JSON e cai no mesmo NULL.
+      const { data, error } = await supabase.rpc('registrar_contato_rota', {
         p_customer_user_id: v.customerUserId,
         p_status: v.status,
         p_data_rota: v.dataRota,
-        p_bucket: v.bucket ?? null,
-        p_valor: v.valor ?? null,
+        p_bucket: v.bucket ?? undefined,
+        p_valor: v.valor ?? undefined,
       });
       if (error) throw new Error(error.message);
+      // Antes, resposta ausente virava `{id: '', deduped: false}` — um registro inventado. Agora lança.
+      const registro = lerRegistroComDedupe(data, 'registrar_contato_rota');
       track('rota.contato_registrado', { status: v.status });
-      return (data ?? { id: '', deduped: false }) as { id: string; deduped: boolean };
+      return registro;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['route-contact-list'] }),
     // O OutcomeMenu engole a falha num catch que só mostra toast: uma RPC
@@ -45,10 +47,11 @@ export function useDesfazerContato() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<{ deleted: boolean }> => {
-      const { data, error } = await rpc().rpc('desfazer_contato_rota', { p_id: id });
+      const { data, error } = await supabase.rpc('desfazer_contato_rota', { p_id: id });
       if (error) throw new Error(error.message);
+      const resultado = lerDesfazer(data, 'desfazer_contato_rota');
       track('rota.contato_desfeito', {});
-      return (data ?? { deleted: false }) as { deleted: boolean };
+      return resultado;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['route-contact-list'] }),
   });

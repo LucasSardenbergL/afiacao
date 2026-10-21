@@ -8,6 +8,24 @@ import { COMPANIES, type Company } from '@/contexts/CompanyContext';
 import type { CapitalDeGiro } from '@/services/financeiroService';
 import { fmtCompact } from './format';
 
+type CampoNumerico = {
+  [K in keyof CapitalDeGiro]: CapitalDeGiro[K] extends number | null ? K : never;
+}[keyof CapitalDeGiro];
+
+const LINHAS: ReadonlyArray<{ label: string; field: CampoNumerico; fmt: 'currency' | 'days' | 'pct' }> = [
+  { label: 'CR Aberto', field: 'total_cr_aberto', fmt: 'currency' },
+  { label: 'CP Aberto', field: 'total_cp_aberto', fmt: 'currency' },
+  { label: 'Saldo CC', field: 'saldo_cc', fmt: 'currency' },
+  { label: 'Capital de Giro', field: 'capital_giro', fmt: 'currency' },
+  { label: 'CG Líquido', field: 'capital_giro_liquido', fmt: 'currency' },
+  { label: 'PMR', field: 'pmr', fmt: 'days' },
+  { label: 'PMP', field: 'pmp', fmt: 'days' },
+  { label: 'Ciclo Financeiro', field: 'ciclo_financeiro', fmt: 'days' },
+  { label: 'Concentração CR (Top 5)', field: 'top5_cr_pct', fmt: 'pct' },
+  { label: 'Concentração CP (Top 5)', field: 'top5_cp_pct', fmt: 'pct' },
+  { label: 'Projeção 30d', field: 'saldo_projetado_30d', fmt: 'currency' },
+];
+
 export function ComparativoEmpresasCard({ data }: { data: CapitalDeGiro[] }) {
   return (
     <Card>
@@ -36,32 +54,21 @@ export function ComparativoEmpresasCard({ data }: { data: CapitalDeGiro[] }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {[
-                { label: 'CR Aberto', field: 'total_cr_aberto', fmt: 'currency' },
-                { label: 'CP Aberto', field: 'total_cp_aberto', fmt: 'currency' },
-                { label: 'Saldo CC', field: 'saldo_cc', fmt: 'currency' },
-                { label: 'Capital de Giro', field: 'capital_giro', fmt: 'currency' },
-                { label: 'CG Líquido', field: 'capital_giro_liquido', fmt: 'currency' },
-                { label: 'PMR', field: 'pmr', fmt: 'days' },
-                { label: 'PMP', field: 'pmp', fmt: 'days' },
-                { label: 'Ciclo Financeiro', field: 'ciclo_financeiro', fmt: 'days' },
-                { label: 'Concentração CR (Top 5)', field: 'top5_cr_pct', fmt: 'pct' },
-                { label: 'Concentração CP (Top 5)', field: 'top5_cp_pct', fmt: 'pct' },
-                { label: 'Projeção 30d', field: 'saldo_projetado_30d', fmt: 'currency' },
-              ].map(line => (
+              {LINHAS.map(line => (
                 <TableRow key={line.field}>
                   <TableCell className="sticky left-0 bg-background text-sm font-medium">
                     {line.label}
                   </TableCell>
                   {data.map(d => {
-                    const raw = (d as unknown as Record<string, unknown>)[line.field] as number | null;
-                    const val = raw ?? 0;
+                    const raw = d[line.field];
                     const isResult = ['capital_giro', 'capital_giro_liquido', 'saldo_projetado_30d'].includes(line.field);
-                    const color = isResult ? (val >= 0 ? 'text-status-success' : 'text-status-error') : '';
-                    let display = '';
-                    if (line.fmt === 'currency') display = fmtCompact(val);
-                    else if (line.fmt === 'days') display = raw == null ? '—' : `${raw}d`; // null = prazo sem dado de baixa
-                    else if (line.fmt === 'pct') display = `${val.toFixed(0)}%`;
+                    const color = isResult && raw != null ? (raw >= 0 ? 'text-status-success' : 'text-status-error') : '';
+                    // null só existe nos prazos (sem dado de baixa) e vira "—" em qualquer formato — nunca 0.
+                    const display =
+                      raw == null ? '—'
+                      : line.fmt === 'currency' ? fmtCompact(raw)
+                      : line.fmt === 'days' ? `${raw}d`
+                      : `${raw.toFixed(0)}%`;
                     return (
                       <TableCell key={d.company} className={`text-right text-sm font-medium ${color}`}>
                         {display}

@@ -447,11 +447,6 @@ const CHAVE_TOTAL_CR = [
   'centro_custo', 'vendedor_id', 'nome_cliente', 'cnpj_cpf', 'status_titulo',
 ] as const;
 
-/** O mínimo do builder do PostgREST que a paginação usa — o `.rpc()` daqui já entra por `as never`. */
-type LeituraOrdenavel = {
-  order: (coluna: string, opts: { ascending: boolean; nullsFirst: boolean }) => LeituraOrdenavel;
-  range: (de: number, ate: number) => PromiseLike<{ data: unknown; error: unknown }>;
-};
 
 /**
  * Encadeia um `.order()` por coluna da chave. `nullsFirst` é EXPLÍCITO de propósito: as colunas
@@ -459,11 +454,11 @@ type LeituraOrdenavel = {
  * classificação) e o posicionamento dos nulos precisa ser o mesmo em TODAS as páginas — deixá-lo
  * no default do servidor amarra a estabilidade da paginação a algo que não está escrito aqui.
  */
-function ordenarPorChaveTotal(builder: unknown, chave: readonly string[]): LeituraOrdenavel {
-  return chave.reduce<LeituraOrdenavel>(
-    (q, coluna) => q.order(coluna, { ascending: true, nullsFirst: false }),
-    builder as LeituraOrdenavel,
-  );
+function ordenarPorChaveTotal<B extends { order(coluna: string, opts: { ascending: boolean; nullsFirst: boolean }): B }>(
+  builder: B,
+  chave: readonly string[],
+): B {
+  return chave.reduce((q, coluna) => q.order(coluna, { ascending: true, nullsFirst: false }), builder);
 }
 
 export async function getAnaliseDimensional(
@@ -493,10 +488,11 @@ export async function getAnaliseDimensional(
 
   // Matviews têm REVOKE SELECT de `authenticated`; lemos via RPC SECURITY DEFINER
   // gated (fin_analise_c{r,p}_dimensoes_rpc), que retorna SETOF a matview (mesmo shape).
+  // Os 3 args têm DEFAULT NULL na prod (pg_get_function_arguments, 2026-10-20): omitir ≡ NULL.
   const rpcParams = {
-    p_company: company === 'all' ? null : company,
-    p_ano: ano ?? null,
-    p_mes: mes ?? null,
+    p_company: company === 'all' ? undefined : company,
+    p_ano: ano,
+    p_mes: mes,
   };
   // PAGINADAS, com ordem TOTAL antes do `.range` — a capa de 1.000 do PostgREST vale para
   // `.rpc()` e é SILENCIOSA (#1782, #1801). Medido em prod (2026-08-20, psql-ro, contando as
@@ -532,27 +528,15 @@ export async function getAnaliseDimensional(
   // escopo próprio, deliberadamente fora deste.
   let rows: DimRow[];
   if (tipo === 'cr') {
-    rows = await fetchAllPages<FinAnaliseCrDimensoesView>(
+    rows = await fetchAllPages(
       (de, ate) =>
-        ordenarPorChaveTotal(
-          supabase.rpc('fin_analise_cr_dimensoes_rpc' as never, rpcParams as never),
-          CHAVE_TOTAL_CR,
-        ).range(de, ate) as unknown as PromiseLike<{
-          data: FinAnaliseCrDimensoesView[] | null;
-          error: unknown;
-        }>,
+        ordenarPorChaveTotal(supabase.rpc('fin_analise_cr_dimensoes_rpc', rpcParams), CHAVE_TOTAL_CR).range(de, ate),
       'fin_analise_cr_dimensoes_rpc/analise-dimensional',
     );
   } else {
-    rows = await fetchAllPages<FinAnaliseCpDimensoesView>(
+    rows = await fetchAllPages(
       (de, ate) =>
-        ordenarPorChaveTotal(
-          supabase.rpc('fin_analise_cp_dimensoes_rpc' as never, rpcParams as never),
-          CHAVE_TOTAL_CP,
-        ).range(de, ate) as unknown as PromiseLike<{
-          data: FinAnaliseCpDimensoesView[] | null;
-          error: unknown;
-        }>,
+        ordenarPorChaveTotal(supabase.rpc('fin_analise_cp_dimensoes_rpc', rpcParams), CHAVE_TOTAL_CP).range(de, ate),
       'fin_analise_cp_dimensoes_rpc/analise-dimensional',
     );
   }
@@ -668,37 +652,52 @@ export async function getTitulosEntidadeRaw(
 ): Promise<{ rows: EntidadeRowRaw[]; truncado: boolean }> {
   if (codigos.length === 0 || meses.length === 0) return { rows: [], truncado: false };
   const tabela = fonte === 'cp' ? 'fin_contas_pagar' : 'fin_contas_receber';
-  const nomeCol = fonte === 'cp' ? 'nome_fornecedor' : 'nome_cliente';
   const maxMes = Math.max(...meses);
   const fimExcl =
     maxMes >= 12 ? `${ano + 1}-01-01` : `${ano}-${String(maxMes + 1).padStart(2, '0')}-01`;
+  // Um builder por tabela (o nome da entidade é coluna diferente; o alias `entidade_nome` iguala a
+  // forma) com os MESMOS filtros nos dois — mexeu num, mexa no outro.
+  const paginaCp = (lote: string[], de: number, ate: number) =>
+    supabase
+      .from('fin_contas_pagar')
+      .select('id, cnpj_cpf, entidade_nome:nome_fornecedor, data_emissao, valor_documento')
+      .eq('company', company)
+      .not('data_emissao', 'is', null)
+      .gte('data_emissao', `${ano}-01-01`)
+      .lt('data_emissao', fimExcl)
+      .neq('status_titulo', 'CANCELADO')
+      .in('categoria_codigo', lote)
+      .order('id', { ascending: true })
+      .range(de, ate);
+  const paginaCr = (lote: string[], de: number, ate: number) =>
+    supabase
+      .from('fin_contas_receber')
+      .select('id, cnpj_cpf, entidade_nome:nome_cliente, data_emissao, valor_documento')
+      .eq('company', company)
+      .not('data_emissao', 'is', null)
+      .gte('data_emissao', `${ano}-01-01`)
+      .lt('data_emissao', fimExcl)
+      .neq('status_titulo', 'CANCELADO')
+      .in('categoria_codigo', lote)
+      .order('id', { ascending: true })
+      .range(de, ate);
   return coletarTitulosEntidade({
     codigos,
     chunkCodigos: 100,
     pageSize: 1000,
     max: 20000,
     fetchPagina: async (lote, offset, limit) => {
-      const { data, error } = await supabase
-        .from(tabela)
-        .select(`id, cnpj_cpf, ${nomeCol}, data_emissao, valor_documento`)
-        .eq('company', company)
-        .not('data_emissao', 'is', null)
-        .gte('data_emissao', `${ano}-01-01`)
-        .lt('data_emissao', fimExcl)
-        .neq('status_titulo', 'CANCELADO')
-        .in('categoria_codigo', lote)
-        .order('id', { ascending: true })
-        .range(offset, offset + limit - 1);
+      const ate = offset + limit - 1;
+      const { data, error } = await (fonte === 'cp' ? paginaCp(lote, offset, ate) : paginaCr(lote, offset, ate));
       if (error) throw error;
       // data null SEM error = malformada, não página vazia (classe #1338→#1564): devolvê-la
       // ao coletarTitulosEntidade encerraria o lote como fim SEM ligar o flag `truncado`.
       if (data == null) throw new Error(`${tabela}: data null sem error — malformada, não é fim`);
-      const rows = data as unknown as Array<Record<string, unknown>>;
-      return rows.map((row) => ({
-        entidade_id: (row.cnpj_cpf as string | null) ?? null,
-        entidade_nome: (row[nomeCol] as string | null) ?? null,
-        mes: parseMesDataEmissao((row.data_emissao as string | null) ?? null),
-        valor: (row.valor_documento as number | null) ?? 0,
+      return data.map((row) => ({
+        entidade_id: row.cnpj_cpf,
+        entidade_nome: row.entidade_nome,
+        mes: parseMesDataEmissao(row.data_emissao),
+        valor: row.valor_documento,
       }));
     },
   });

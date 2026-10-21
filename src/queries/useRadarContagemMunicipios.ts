@@ -1,6 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comNulo } from '@/lib/rpc-args';
 import { presetParaParams, digitosCnae } from '@/lib/radar/ui-helpers';
+import { recorteDeLote } from '@/lib/radar/lote-vigente';
+import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
 import type { RadarFiltros } from '@/queries/useRadarLista';
 
 export interface RadarMunicipioContagem {
@@ -17,7 +20,13 @@ export interface RadarMunicipioContagem {
 // Agrega por município respeitando os filtros ESTRUTURAIS (não a busca textual livre —
 // busca por nome é p/ achar 1 empresa, não p/ ranking geográfico; omitir evita o ILIKE '%%' full-scan).
 // Alimenta ranking ("onde caçar") + totalizador + mapa — um backend, três usos.
+//
+// Universo = o da FILA: o recorte de lote (foto vigente / só inéditos / incluir quem saiu) é o
+// mesmo `recorteDeLote` de `useRadarLista`, sobre o lote lido por `lerLoteVigente` (mesma chave
+// e cache) — ranking e mapa não recomputam "qual é o lote". Sem isto o totalizador contava os
+// 52.011 que saíram do dump de 2026-08 (São Paulo 26.794 no ranking × 24.910 na fila).
 export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: string, enabled: boolean) {
+  const qc = useQueryClient();
   const p = presetParaParams(filtros.preset, hojeISO);
   const cnae = digitosCnae(filtros.cnae);
   const params = {
@@ -30,16 +39,29 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
     p_data_abertura_max: p.dataAberturaMax,
     p_limit: 500,
   };
+  const modoLote = { incluirSaiuDoDump: filtros.incluirSaiuDoDump, soIneditos: filtros.soIneditos };
   return useQuery({
-    queryKey: ['radar', 'contagem-municipios', params],
+    queryKey: ['radar', 'contagem-municipios', params, modoLote],
     enabled,
     queryFn: async (): Promise<RadarMunicipioContagem[]> => {
-      // TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
-      const { data, error } = await (
-        supabase.rpc as (fn: string, args: unknown) => ReturnType<typeof supabase.rpc>
-      )('radar_contagem_por_municipio', params);
+      // Se a leitura do lote falha, o ranking falha junto — contar sem saber o lote seria
+      // voltar a contar a foto velha.
+      const recorte = recorteDeLote(await lerLoteVigente(qc), modoLote);
+      // NULL explícito em todo filtro ausente (os testes do lote vigente fixam esse contrato: o
+      // recorte "sem lote" é NULL dito, não default implícito). Os args têm DEFAULT NULL na prod.
+      type FiltroNulo =
+        | 'p_uf' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_status'
+        | 'p_data_abertura_min' | 'p_data_abertura_max' | 'p_lote' | 'p_primeira_vista_min';
+      const { data, error } = await supabase.rpc(
+        'radar_contagem_por_municipio',
+        comNulo<'radar_contagem_por_municipio', FiltroNulo>({
+          ...params,
+          p_lote: recorte.ultimoLote,
+          p_primeira_vista_min: recorte.primeiraVistaMin,
+        }),
+      );
       if (error) throw error;
-      return (data ?? []) as unknown as RadarMunicipioContagem[];
+      return data ?? [];
     },
     staleTime: 60_000,
   });

@@ -184,8 +184,6 @@ export function useCustomerOrders(customerId: string | undefined) {
 const JANELA_12M_DIAS = 365;
 
 /** `total` é NOT NULL (default 0) em `sales_orders`. */
-type LinhaFaturamento = { total: number };
-
 /**
  * Faturamento dos últimos 12 meses no universo de VENDA da autoridade, datado por `order_date_kpi` —
  * o mesmo universo e o mesmo eixo do tile "90d" ao lado. Antes ele saía da lista de pedidos recentes:
@@ -208,7 +206,7 @@ export function useCustomerFaturamento12m(customerId: string | undefined) {
     queryFn: async () => {
       const hoje = hojeSP();
       const desde = addDias(hoje, -JANELA_12M_DIAS);
-      const linhas = await fetchAllPages<LinhaFaturamento>(
+      const linhas = await fetchAllPages(
         (de, ate) =>
           supabase
             .from('sales_orders')
@@ -219,7 +217,7 @@ export function useCustomerFaturamento12m(customerId: string | undefined) {
             .gte('order_date_kpi', desde)
             .lte('order_date_kpi', hoje)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: LinhaFaturamento[] | null; error: unknown }>,
+            .range(de, ate),
         'sales_orders/c360-faturamento-12m',
       );
       return {

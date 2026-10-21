@@ -3,6 +3,7 @@
 import { FileText, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import type { Json } from '@/integrations/supabase/types';
 import { getObjectiveLabel, type TacticalPlan } from '@/hooks/useTacticalPlan';
 
 interface ActivePlanCardProps {
@@ -11,9 +12,25 @@ interface ActivePlanCardProps {
   onToggle: () => void;
 }
 
-function nomesDoBundle(b: Record<string, unknown> | undefined): string[] {
-  const prods = (b?.bundle_products ?? b?.products) as Array<{ name?: string; nome?: string; descricao?: string }> | undefined;
-  return Array.isArray(prods) ? prods.map((p) => p.name || p.nome || p.descricao || '').filter(Boolean) : [];
+/** Nome de um produto do bundle (`{id, name, price}` na prod; `nome`/`descricao` em formas antigas). */
+function nomeDoProduto(p: Json): string {
+  if (typeof p !== 'object' || p === null || Array.isArray(p)) return '';
+  const nome = p.name ?? p.nome ?? p.descricao;
+  return typeof nome === 'string' ? nome : '';
+}
+
+/**
+ * Os dois writers do plano (o hook e a edge `generate-tactical-plan`) gravam em `top_bundle` o ARRAY
+ * `bundle_products`. Esta leitura procurava `{bundle_products|products}` num OBJETO — com bundle, o
+ * card nunca mostraria os produtos (latente: em 2026-10-20 os 1.017 planos têm `{}`). Lê as duas.
+ */
+function nomesDoBundle(b: Json): string[] {
+  const prods = Array.isArray(b)
+    ? b
+    : typeof b === 'object' && b !== null
+      ? (b.bundle_products ?? b.products)
+      : undefined;
+  return Array.isArray(prods) ? prods.map(nomeDoProduto).filter(Boolean) : [];
 }
 
 export function ActivePlanCard({ activePlan, showPlan, onToggle }: ActivePlanCardProps) {

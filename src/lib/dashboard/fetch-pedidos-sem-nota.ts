@@ -18,7 +18,7 @@ export interface PedidoSemNotaRow {
  * nota?", não "quanto vendemos?". Paginada por cursor; lança em qualquer falha.
  */
 export function fetchPedidosSemNota(selection: CompanySelection, janela: Janela): Promise<PedidoSemNotaRow[]> {
-  return paginarPorId<PedidoSemNotaRow>('sales_orders (sem nota)', (cursor) => {
+  return paginarPorId('sales_orders (sem nota)', (cursor) => {
     let q = supabase
       .from('sales_orders')
       .select('id, total, account')
@@ -29,9 +29,6 @@ export function fetchPedidosSemNota(selection: CompanySelection, janela: Janela)
       .lt('order_date_kpi', janela.ate);
     if (selection !== 'all') q = q.eq('account', selection);
     if (cursor != null) q = q.gt('id', cursor);
-    return q.order('id', { ascending: true }).limit(PAGINA_JANELA) as unknown as PromiseLike<{
-      data: PedidoSemNotaRow[] | null;
-      error: { message: string } | null;
-    }>;
+    return q.order('id', { ascending: true }).limit(PAGINA_JANELA);
   });
 }

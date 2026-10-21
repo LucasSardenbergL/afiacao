@@ -17502,6 +17502,57 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_config: {
+        Row: {
+          atualizado_em: string
+          chave: string
+          valor: Json
+        }
+        Insert: {
+          atualizado_em?: string
+          chave: string
+          valor: Json
+        }
+        Update: {
+          atualizado_em?: string
+          chave?: string
+          valor?: Json
+        }
+        Relationships: []
+      }
+      venda_contato: {
+        Row: {
+          atualizado_em: string
+          comprador_id: string
+          criado_em: string
+          dia: string
+          farmer_user_id: string
+          id: string
+          motivo: string | null
+          resultado: string
+        }
+        Insert: {
+          atualizado_em?: string
+          comprador_id: string
+          criado_em?: string
+          dia: string
+          farmer_user_id: string
+          id?: string
+          motivo?: string | null
+          resultado: string
+        }
+        Update: {
+          atualizado_em?: string
+          comprador_id?: string
+          criado_em?: string
+          dia?: string
+          farmer_user_id?: string
+          id?: string
+          motivo?: string | null
+          resultado?: string
+        }
+        Relationships: []
+      }
       venda_excecao_credito: {
         Row: {
           aprovado_por: string
@@ -17667,6 +17718,156 @@ export type Database = {
           quantidade?: number
           sku_codigo_omie?: string
           sku_descricao?: string | null
+        }
+        Relationships: []
+      }
+      venda_recompra: {
+        Row: {
+          atrasado: boolean
+          cadencia_dias: number
+          calculado_em: string
+          comprador_id: string
+          data_referencia: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id: string | null
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco: number | null
+          valor_esperado: number | null
+        }
+        Insert: {
+          atrasado: boolean
+          cadencia_dias: number
+          calculado_em?: string
+          comprador_id: string
+          data_referencia: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id?: string | null
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco?: number | null
+          valor_esperado?: number | null
+        }
+        Update: {
+          atrasado?: boolean
+          cadencia_dias?: number
+          calculado_em?: string
+          comprador_id?: string
+          data_referencia?: string
+          due_ratio?: number
+          empresa?: string
+          n_pedidos?: number
+          omie_codigo_produto?: number
+          product_id?: string | null
+          qtd_sugerida?: number
+          ultima_compra?: string
+          ultimo_preco?: number | null
+          valor_esperado?: number | null
+        }
+        Relationships: []
+      }
+      venda_situacao: {
+        Row: {
+          calculado_em: string
+          comprador_id: string
+          data_referencia: string
+          dias_sem_compra: number | null
+          situacao: string
+          valor_atrasado: number | null
+        }
+        Insert: {
+          calculado_em?: string
+          comprador_id: string
+          data_referencia: string
+          dias_sem_compra?: number | null
+          situacao: string
+          valor_atrasado?: number | null
+        }
+        Update: {
+          calculado_em?: string
+          comprador_id?: string
+          data_referencia?: string
+          dias_sem_compra?: number | null
+          situacao?: string
+          valor_atrasado?: number | null
+        }
+        Relationships: []
+      }
+      venda_sugestao: {
+        Row: {
+          avaliado_em: string | null
+          comprador_id: string
+          desfecho: string | null
+          desfecho_motivo: string | null
+          dia_referencia: string
+          empresa: string
+          familia: string | null
+          farmer_user_id: string
+          fase: string
+          gerada_em: string
+          id: string
+          mostrada_em: string | null
+          motivo_entrada: string
+          omie_codigo_produto: number | null
+          preco_alvo: number | null
+          preco_anterior: number | null
+          qtd_ref: number | null
+          sales_order_id: string | null
+          tipo: string
+          valor_realizado: number | null
+          valor_ref: number | null
+        }
+        Insert: {
+          avaliado_em?: string | null
+          comprador_id: string
+          desfecho?: string | null
+          desfecho_motivo?: string | null
+          dia_referencia: string
+          empresa: string
+          familia?: string | null
+          farmer_user_id: string
+          fase: string
+          gerada_em?: string
+          id?: string
+          mostrada_em?: string | null
+          motivo_entrada: string
+          omie_codigo_produto?: number | null
+          preco_alvo?: number | null
+          preco_anterior?: number | null
+          qtd_ref?: number | null
+          sales_order_id?: string | null
+          tipo: string
+          valor_realizado?: number | null
+          valor_ref?: number | null
+        }
+        Update: {
+          avaliado_em?: string | null
+          comprador_id?: string
+          desfecho?: string | null
+          desfecho_motivo?: string | null
+          dia_referencia?: string
+          empresa?: string
+          familia?: string | null
+          farmer_user_id?: string
+          fase?: string
+          gerada_em?: string
+          id?: string
+          mostrada_em?: string | null
+          motivo_entrada?: string
+          omie_codigo_produto?: number | null
+          preco_alvo?: number | null
+          preco_anterior?: number | null
+          qtd_ref?: number | null
+          sales_order_id?: string | null
+          tipo?: string
+          valor_realizado?: number | null
+          valor_ref?: number | null
         }
         Relationships: []
       }
@@ -21055,6 +21256,10 @@ export type Database = {
         Args: { p_ano: number; p_company: string; p_mes: number }
         Returns: Json
       }
+      fin_capital_giro_prazos_empresa: {
+        Args: { p_company: string }
+        Returns: Json
+      }
       fin_categorias_sem_mapping: {
         Args: { p_company: string; p_end: string; p_start: string }
         Returns: {
@@ -21580,6 +21785,7 @@ export type Database = {
           category_count: number
           customer_user_id: string
           days_since_last_purchase: number
+          intervalo_mediano_dias: number
           item_count: number
           revenue_180d: number
           total_revenue: number
@@ -22080,6 +22286,8 @@ export type Database = {
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
           p_limit?: number
+          p_lote?: string
+          p_primeira_vista_min?: string
           p_status?: string
           p_uf?: string
         }
@@ -22832,9 +23040,51 @@ export type Database = {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
+      venda_complemento_comprador: {
+        Args: { p_comprador: string }
+        Returns: Json
+      }
+      venda_fechar_desfechos: { Args: { p_hoje?: string }; Returns: number }
       venda_gate_credito: {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
+      }
+      venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
+      venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_preco_alvo_comprador: {
+        Args: { p_comprador: string }
+        Returns: Json
+      }
+      venda_recompra_atualizar: { Args: never; Returns: number }
+      venda_recompra_em: {
+        Args: { p_data: string }
+        Returns: {
+          atrasado: boolean
+          cadencia_dias: number
+          comprador_id: string
+          due_ratio: number
+          empresa: string
+          n_pedidos: number
+          omie_codigo_produto: number
+          product_id: string
+          qtd_sugerida: number
+          ultima_compra: string
+          ultimo_preco: number
+          valor_esperado: number
+        }[]
+      }
+      venda_registrar_contato: {
+        Args: { p_comprador: string; p_motivo?: string; p_resultado: string }
+        Returns: string
+      }
+      venda_situacao_em: {
+        Args: { p_data: string }
+        Returns: {
+          comprador_id: string
+          dias_sem_compra: number
+          situacao: string
+          valor_atrasado: number
+        }[]
       }
       vendas_sync_finish: {
         Args: {

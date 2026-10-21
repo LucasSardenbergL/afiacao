@@ -39,12 +39,7 @@ export function useEstoqueZone() {
           .select('id, razao_social_emitente, created_at, status')
           .eq('status', 'pendente');
         if (nf) {
-          const rows = nf as unknown as Array<{
-            id: string;
-            razao_social_emitente?: string | null;
-            created_at: string;
-            status?: string | null;
-          }>;
+          const rows = nf;
           nfPendentes = rows.length;
           nfPendentes24h = rows.filter((r) => r.created_at < cutoff24h).length;
           for (const r of rows.slice(0, 2)) {

@@ -13,6 +13,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { track } from '@/lib/analytics';
 
@@ -107,8 +108,8 @@ export function useFarmerDesfecho() {
       });
       try {
         const { error } = await supabase.rpc(
-          'farmer_recomendacao_registrar_desfecho' as never,
-          {
+          'farmer_recomendacao_registrar_desfecho',
+          comNulo<'farmer_recomendacao_registrar_desfecho', 'p_motivo'>({
             p_customer_user_id: alvo.customerId,
             p_product_id: alvo.productId,
             p_recommendation_type: alvo.type,
@@ -116,7 +117,7 @@ export function useFarmerDesfecho() {
             // `null` explícito, não `undefined`: a RPC recusa motivo em aceite, e
             // omitir a chave deixaria o default do Postgres decidir por nós.
             p_motivo: desfecho === 'rejeitado' ? (motivo ?? null) : null,
-          } as never,
+          }),
         );
         // O supabase-js NÃO lança em erro de banco — resolve com `error` preenchido.
         // Um `await` solto devolveria "sucesso" sem ter gravado nada, e o card

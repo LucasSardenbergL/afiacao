@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/integrations/supabase/client';
-import { visitasAgendadasTable, type VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
+import { visitaDaLinha, visitasAgendadasTable, type VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -33,7 +33,7 @@ export function useVisitasAgendadas() {
         .in('status', ['pendente'])
         .order('scheduled_date', { ascending: true });
       if (error) throw new Error(error.message);
-      return (data as unknown as VisitaAgendadaRow[]) ?? [];
+      return (data ?? []).map(visitaDaLinha);
     },
   });
 

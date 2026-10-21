@@ -1,5 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
+import { exigirColunas } from '@/lib/linha-view';
+import { comNulo } from '@/lib/rpc-args';
 import { invokeFunction } from '@/lib/invoke-function';
 import { selectObjective, clampRecencyCapDays, objetivoFinal } from '@/lib/scoring/objective';
 import { margemConhecida, mediaMargensConhecidas, valorMedido } from '@/lib/scoring/margin';
@@ -26,9 +29,24 @@ import { toast } from 'sonner';
 // ─── Types ───────────────────────────────────────────────────────────
 export type PlanType = 'essencial' | 'estrategico';
 
+/**
+ * `plan_type` é texto sem CHECK no banco; os writers só gravam os dois tipos (1.017 'estrategico' em
+ * 2026-10-20). NULL = plano legado (essencial, como antes); texto fora do vocabulário LANÇA em vez de
+ * virar rótulo inventado.
+ */
+function tipoDoPlano(v: string | null): PlanType {
+  if (v == null || v === '' || v === 'essencial') return 'essencial';
+  if (v === 'estrategico') return 'estrategico';
+  throw new Error(`farmer_tactical_plans: plan_type desconhecido (${v})`);
+}
+
 // JSON shape stored in top_bundle / second_bundle columns — schema is dynamic
 // (varies by bundle engine version), so kept as Record.
-export type BundleSnapshot = Record<string, unknown>;
+/**
+ * O jsonb `top_bundle`/`second_bundle` como os dois writers o gravam: o ARRAY `bundle_products` do
+ * bundle (`[{id, name, price}]`), ou `{}` sem bundle (1.017 de 1.017 planos na prod, 2026-10-20).
+ */
+export type BundleSnapshot = Json;
 
 export interface TacticalPlan {
   id: string;
@@ -107,7 +125,7 @@ export interface TacticalPlan {
 interface TacticalPlanRow {
   id: string;
   customer_user_id: string;
-  plan_type: PlanType | null;
+  plan_type: string | null;
   health_score: number | string | null;
   churn_risk: number | string | null;
   mix_gap: number | string | null;
@@ -115,7 +133,7 @@ interface TacticalPlanRow {
   // (FU4-F, 20261015120100). A margem do plano vem de `buscarMargensPlanos`.
   expansion_potential: number | string | null;
   strategic_objective: string;
-  customer_profile: string;
+  customer_profile: string | null;
   approach_strategy: string | null;
   approach_strategy_b: string | null;
   top_bundle: BundleSnapshot | null;
@@ -130,14 +148,14 @@ interface TacticalPlanRow {
   probable_objections: TacticalPlan['probableObjections'] | unknown;
   ltv_projection: TacticalPlan['ltvProjection'] | unknown;
   operational_risks: string[] | unknown;
-  status: string;
+  status: string | null;
   plan_followed?: boolean | null;
   call_result?: string | null;
   actual_margin?: number | string | null;
   call_duration_seconds?: number | null;
   objection_type?: string | null;
   notes?: string | null;
-  generated_at: string;
+  generated_at: string | null;
 }
 
 // Sem `gross_margin_pct`: a coluna é fechada para authenticated (FU4-F) e listá-la (ou `*`) derruba a
@@ -145,35 +163,11 @@ interface TacticalPlanRow {
 const COLUNAS_SCORE_PLANO =
   'farmer_id, health_score, churn_risk, avg_monthly_spend_180d, category_count, days_since_last_purchase, expansion_score, revenue_potential, sales_history_status';
 
-interface ClientScoreFull {
-  farmer_id: string | null; // dono da carteira-Omie (Opção A) — escopa o cluster de margem
-  health_score: number | string | null;
-  churn_risk: number | string | null;
-  avg_monthly_spend_180d: number | string | null;
-  category_count: number | string | null;
-  days_since_last_purchase: number | string | null;
-  expansion_score: number | string | null;
-  revenue_potential: number | string | null;
-  sales_history_status: string | null;
-}
-
-interface ProfileLite {
-  user_id?: string;
-  name: string | null;
-  customer_type?: string | null;
-  cnae?: string | null;
-}
-
-interface BundleRow {
-  id: string;
-  bundle_products: BundleSnapshot;
-  lie_bundle: number | string | null;
-  p_bundle: number | string | null;
-  m_bundle: number | string | null;
-}
-
-interface CopilotEventRow {
-  event_data: { intent?: string } | Record<string, unknown> | null;
+/** `event_data.intent` quando o jsonb é objeto e o intent é texto; qualquer outra forma = sem intent. */
+function intentDoEvento(eventData: Json | null): string | null {
+  if (typeof eventData !== 'object' || eventData === null || Array.isArray(eventData)) return null;
+  const { intent } = eventData;
+  return typeof intent === 'string' ? intent : null;
 }
 
 interface EffectivenessRow {
@@ -181,7 +175,7 @@ interface EffectivenessRow {
   plan_followed: boolean | null;
   actual_margin: number | string | null;
   call_duration_seconds: number | string | null;
-  plan_type: PlanType | null;
+  plan_type: string | null;
 }
 
 /**
@@ -345,6 +339,8 @@ export const useTacticalPlan = () => {
   const filtroAtual = useRef<FiltroFila>('pendentes');
 
   const parsePlan = (d: TacticalPlanRow, profileMap: Map<string, string>, margem: MargemPlano): TacticalPlan => {
+    // Nuláveis no banco, nunca nulos nos writers (0 em 1.017 na prod): lança em vez de inventar texto.
+    exigirColunas(d, ['customer_profile', 'status', 'generated_at'], 'farmer_tactical_plans');
     const topBundle: BundleSnapshot = d.top_bundle || {};
     const secondBundle: BundleSnapshot = d.second_bundle || {};
     const ltvProjection = d.ltv_projection;
@@ -364,7 +360,7 @@ export const useTacticalPlan = () => {
       id: d.id,
       customerId: d.customer_user_id,
       customerName: profileMap.get(d.customer_user_id) || 'Cliente',
-      planType: d.plan_type || 'essencial',
+      planType: tipoDoPlano(d.plan_type),
       healthScore: Number(d.health_score || 0),
       churnRisk: Number(d.churn_risk ?? 0), // ?? (não ||): churn=0 é valor real (cliente saudável), não ausência
       mixGap: Number(d.mix_gap || 0),
@@ -427,7 +423,7 @@ export const useTacticalPlan = () => {
       .from('carteira_coverage')
       .select('covered_user_id, valid_until')
       .eq('covering_user_id', baseId)
-      .eq('active', true)) as unknown as { data: { covered_user_id: string; valid_until: string | null }[] | null; error: unknown };
+      .eq('active', true));
     // Erro na cobertura degrada para [próprio] (fail-closed: não vaza carteira alheia) mas NÃO
     // silencioso — senão "a cobertura sumiu" passa despercebido (achado /codex challenge P2).
     if (error) console.error('fetchOwnerScope: falha lendo carteira_coverage; escopo cai p/ próprio', error);
@@ -478,7 +474,7 @@ export const useTacticalPlan = () => {
       )
         .order('churn_risk', { ascending: false })
         .order('generated_at', { ascending: false })
-        .limit(LIMITE_FILA)) as unknown as { data: TacticalPlanRow[] | null; error: unknown };
+        .limit(LIMITE_FILA));
 
       // Contagem sob o MESMO recorte. Sem ela a tela não tem como avisar que existe
       // plano além dos exibidos — foi exatamente assim que 383 de 533 sumiram sem
@@ -490,7 +486,7 @@ export const useTacticalPlan = () => {
           .in('farmer_id', owners),
         filtro,
         desdeIso,
-      )) as unknown as { count: number | null; error: unknown };
+      ));
       // ausente ≠ zero: contagem que falhou degrada para `null` (a UI omite o rótulo),
       // nunca para 0 — "0 pendentes" é indistinguível de "a query morreu", e some com
       // a fila inteira sem sinal. Mesma família do `Number(null) === 0`.
@@ -518,7 +514,7 @@ export const useTacticalPlan = () => {
       const { data: profiles } = (await supabase
         .from('profiles')
         .select('user_id, name')
-        .in('user_id', customerIds)) as unknown as { data: ProfileLite[] | null };
+        .in('user_id', customerIds));
 
       const profileMap = new Map<string, string>(
         (profiles || []).map((p) => [p.user_id ?? '', p.name ?? 'Cliente'])
@@ -550,9 +546,7 @@ export const useTacticalPlan = () => {
       // Opção A: 1 linha por cliente (customer_user_id único). NÃO filtrar por farmer_id —
       // quebrava sob a lente / cliente de outro dono → "sem score" falso; RLS gateia a visibilidade.
       .eq('customer_user_id', customerId)
-      .single()) as unknown as {
-        data: Pick<ClientScoreFull, 'revenue_potential' | 'avg_monthly_spend_180d'> | null;
-        error: unknown };
+      .single());
 
     // FALHA DE CONSULTA ≠ MARGEM NÃO APURADA. O `error` era descartado, então timeout/RLS/500
     // caíam no mesmo indecidível do cliente sem margem — e o diálogo então AFIRMA a causa
@@ -616,12 +610,12 @@ export const useTacticalPlan = () => {
       ] = await Promise.all([
         // Opção A: lookup por customer_user_id (único); sem farmer_id (RLS gateia). Ver checkEfficiency.
         // Lista explícita: `select('*')` inclui gross_margin_pct, fechada para authenticated (FU4-F).
-        supabase.from('farmer_client_scores').select(COLUNAS_SCORE_PLANO).eq('customer_user_id', customerId).single() as unknown as Promise<{ data: ClientScoreFull | null }>,
-        supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single() as unknown as Promise<{ data: ProfileLite | null }>,
+        supabase.from('farmer_client_scores').select(COLUNAS_SCORE_PLANO).eq('customer_user_id', customerId).single(),
+        supabase.from('profiles').select('name, customer_type, cnae').eq('user_id', customerId).single(),
         // Teto de recência (hs_recency_cap_days) — fronteira reativacao/recuperacao em selectObjective
         // ACOMPANHA o teto do modelo (não hardcode). Ausente → clampRecencyCapDays default 180. limit(1)
         // pra maybeSingle nunca lançar em chave duplicada (não quebrar a geração por quirk de config).
-        supabase.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle() as unknown as Promise<{ data: { value: number | string | null } | null }>,
+        supabase.from('farmer_algorithm_config').select('value').eq('key', 'hs_recency_cap_days').limit(1).maybeSingle(),
       ]);
 
       if (!score) {
@@ -720,7 +714,7 @@ export const useTacticalPlan = () => {
         // total (achado do challenge Codex xhigh).
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
-        .limit(2)) as unknown as { data: BundleRow[] | null };
+        .limit(2));
 
       const mixGap = Math.max(0, 8 - categoryCount);
       const customerProfile = classifyProfile(healthScore, avgSpend, marginPct, categoryCount);
@@ -734,14 +728,11 @@ export const useTacticalPlan = () => {
         .from('farmer_copilot_events')
         .select('event_data')
         .eq('event_type', 'suggestion')
-        .limit(20)) as unknown as { data: CopilotEventRow[] | null };
+        .limit(20));
 
       const historicalObjections = (objectionEvents || [])
-        .filter((e): e is CopilotEventRow & { event_data: { intent: string } } => {
-          const intent = (e.event_data as { intent?: unknown } | null)?.intent;
-          return typeof intent === 'string' && intent.startsWith('objecao');
-        })
-        .map((e) => e.event_data.intent)
+        .map((e) => intentDoEvento(e.event_data))
+        .filter((intent): intent is string => intent !== null && intent.startsWith('objecao'))
         .slice(0, 5);
 
       const bundleCtx = topBundle ? {
@@ -810,7 +801,7 @@ export const useTacticalPlan = () => {
         );
       }
 
-      const { error: rpcError } = await supabase.rpc('criar_plano_tatico' as never, {
+      const { error: rpcError } = await supabase.rpc('criar_plano_tatico', {
         _customer_user_id: customerId,
         _expected_owner: ownerId,
         _payload: {
@@ -842,7 +833,7 @@ export const useTacticalPlan = () => {
           expected_result: aiPlan?.expected_result || null,
           operational_risks: aiPlan?.operational_risks || [],
         },
-      } as never);
+      });
       if (rpcError) throw rpcError;
 
       toast.success(`Plano ${planType === 'estrategico' ? 'estratégico' : 'essencial'} gerado com sucesso`);
@@ -886,7 +877,7 @@ export const useTacticalPlan = () => {
       .eq('customer_user_id', customerId)
       .eq('status', 'gerado')
       .order('created_at', { ascending: false })
-      .limit(1)) as unknown as { data: TacticalPlanRow[] | null };
+      .limit(1));
 
     if (!data?.[0]) return null;
 
@@ -894,7 +885,7 @@ export const useTacticalPlan = () => {
       .from('profiles')
       .select('user_id, name')
       .eq('user_id', customerId)
-      .single()) as unknown as { data: ProfileLite | null };
+      .single());
 
     const profileMap = new Map<string, string>([[customerId, profile?.name || 'Cliente']]);
     const margens = await margensDosPlanos([data[0].id], 'plano_ativo');
@@ -918,15 +909,21 @@ export const useTacticalPlan = () => {
       // Via RPC-fronteira (#1037 + split de RLS): gateia carteira_visivel_para(cliente do plano)
       // e a RLS pós-split nega UPDATE direto — fecha o #1 (qualquer staff com o UUID concluía
       // plano de carteira que não enxerga). completed_at/status são server-side.
-      const { error } = await supabase.rpc('registrar_resultado_plano' as never, {
-        _plan_id: planId,
-        _plan_followed: result.planFollowed,
-        _call_result: result.callResult,
-        _actual_margin: result.actualMargin,
-        _call_duration_seconds: result.callDurationSeconds,
-        _objection_type: result.objectionType || null,
-        _notes: result.notes || null,
-      } as never);
+      // NULL semântico (conferido em prod): `_plan_followed`/`_actual_margin`/
+      // `_call_duration_seconds` aceitam NULL sem DEFAULT ("não informado", nunca 0/false);
+      // `_objection_type`/`_notes` têm DEFAULT NULL.
+      const { error } = await supabase.rpc(
+        'registrar_resultado_plano',
+        comNulo<'registrar_resultado_plano', '_plan_followed' | '_actual_margin' | '_call_duration_seconds'>({
+          _plan_id: planId,
+          _plan_followed: result.planFollowed,
+          _call_result: result.callResult,
+          _actual_margin: result.actualMargin,
+          _call_duration_seconds: result.callDurationSeconds,
+          _objection_type: result.objectionType || undefined,
+          _notes: result.notes || undefined,
+        }),
+      );
       if (error) throw error;
 
       toast.success('Resultado registrado');
@@ -961,7 +958,7 @@ export const useTacticalPlan = () => {
       .from('farmer_tactical_plans')
       .select('strategic_objective, plan_followed, actual_margin, call_duration_seconds, plan_type')
       .eq('farmer_id', effectiveUserId)
-      .eq('status', 'concluido')) as unknown as { data: EffectivenessRow[] | null };
+      .eq('status', 'concluido'));
 
     if (!data?.length) return null;
 
@@ -996,7 +993,7 @@ export const useTacticalPlan = () => {
 
     for (const d of data) {
       acumular(byObjective, d.strategic_objective, d);
-      acumular(byType, d.plan_type || 'essencial', d);
+      acumular(byType, tipoDoPlano(d.plan_type), d);
     }
 
     // Tri-estado em TODAS as três métricas: `null` = não apurado nesta fatia, e quem exibir

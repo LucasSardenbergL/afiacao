@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **673** custom migrations totais
-- **2156** objetos esperados (criados por estas migrations)
+- **689** custom migrations totais
+- **2222** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 785
-  - `rls_policy`: 477
-  - `index`: 282
-  - `cron_job`: 192
-  - `table`: 186
+  - `function`: 829
+  - `rls_policy`: 482
+  - `index`: 287
+  - `cron_job`: 196
+  - `table`: 194
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5433,6 +5433,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.data_health_watchdog` | — |
 | `function` | `public.fin_sync_heartbeat` | — |
 
+### `20261020120000_radar_score_lead_v2.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+
 ### `20261020120000_tint_watchdog_corante_v4_renotifica_e_vigia.sql`
 
 | Tipo | Objeto | Parent |
@@ -5449,6 +5455,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor` | — |
 | `cron_job` | `cron.fin-cashflow-snapshot-diario-colacor-sc` | — |
 
+### `20261020120200_radar_contagem_municipio_lote_vigente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
 ### `20261020130000_grupos_caca_cnpj_alfanumerico.sql`
 
 | Tipo | Objeto | Parent |
@@ -5459,6 +5471,140 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `view` | `public.v_grupo_contas_receber_por_doc` | — |
 | `view` | `public.v_caca_compradores` | — |
 | `view` | `public.v_caca_candidatos` | — |
+
+### `20261020143000_radar_avisar_lote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-avisar-lote-diario` | — |
+
+### `20261020143511_venda_cliente_complemento.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._mixgap_gaps_compradores` | — |
+| `function` | `public._carteira_mixgap_for_owner` | — |
+| `function` | `public.venda_complemento_comprador` | — |
+
+### `20261020150000_fin_capital_giro_prazos_empresa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_capital_giro_prazos_empresa` | — |
+
+### `20261020150000_venda_cliente_recompra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_mediana` | — |
+| `function` | `private.venda_linhas_pedido` | — |
+| `function` | `public.venda_recompra_em` | — |
+| `function` | `public.venda_situacao_em` | — |
+| `function` | `public.venda_recompra_atualizar` | — |
+| `table` | `public.venda_recompra` | — |
+| `table` | `public.venda_situacao` | — |
+| `index` | `public.idx_venda_recompra_atrasado` | `venda_recompra` |
+| `cron_job` | `cron.venda-recompra` | — |
+
+### `20261020151500_scores_intervalo_recompra.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.get_customer_sales_summary` | — |
+| `function` | `public.apply_score_updates` | — |
+
+### `20261020174221_venda_cliente_espinha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_sync_dia_coberto` | — |
+| `function` | `public.venda_fechar_desfechos` | — |
+| `function` | `public.venda_minhas_sugestoes` | — |
+| `function` | `public.venda_marcar_mostrada` | — |
+| `function` | `public.venda_registrar_contato` | — |
+| `table` | `public.venda_config` | — |
+| `table` | `public.venda_sugestao` | — |
+| `table` | `public.venda_contato` | — |
+| `index` | `public.venda_sugestao_chave_uq` | `venda_sugestao` |
+| `index` | `public.idx_venda_sugestao_farmer_dia_ativa` | `venda_sugestao` |
+| `index` | `public.idx_venda_sugestao_aberta` | `venda_sugestao` |
+| `cron_job` | `cron.venda-fechar-desfechos` | — |
+| `rls_policy` | `public.venda_config_select_staff` | `venda_config` |
+| `rls_policy` | `public.venda_sugestao_select` | `venda_sugestao` |
+| `rls_policy` | `public.venda_contato_select` | `venda_contato` |
+
+### `20261020181743_venda_cliente_gerador.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_city_uf` | — |
+| `function` | `public.venda_cidades_alvo` | — |
+| `function` | `private.venda_lista_calc` | — |
+| `function` | `public.venda_gerar_lista` | — |
+| `function` | `public.venda_reconstruir_historico` | — |
+| `function` | `public.venda_avaliar_ondas` | — |
+| `table` | `public.venda_gerador_execucao` | — |
+| `table` | `public.venda_onda_log` | — |
+| `cron_job` | `cron.venda-gerador` | — |
+| `rls_policy` | `public.venda_gerador_execucao_select_master` | `venda_gerador_execucao` |
+| `rls_policy` | `public.venda_onda_log_select_master` | `venda_onda_log` |
+
+### `20261020194332_venda_cliente_historico_prova_dados.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_mes_completo_por_dados` | — |
+| `function` | `public.venda_fechar_desfechos` | — |
+
+### `20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_outbox_pedido_compra` | — |
+
+### `20261020202720_analytics_ledger_venda_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261020233000_venda_cliente_repasse.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._defasagem_item` | — |
+| `function` | `public.get_defasagem_cliente` | — |
+| `function` | `private._venda_repasse_base` | — |
+| `function` | `private._venda_repasse_sku_ok` | — |
+| `function` | `public.venda_repasse_candidatos` | — |
+| `function` | `public.venda_aprovar_repasse` | — |
+| `function` | `public.venda_revogar_repasse` | — |
+| `function` | `public.venda_preco_alvo_comprador` | — |
+| `table` | `public.venda_repasse_aprovado` | — |
+| `index` | `public.venda_repasse_aprovado_vigente_uq` | `venda_repasse_aprovado` |
+
+### `20261020235000_venda_cliente_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_painel` | — |
+
+### `20261021021500_venda_repasse_base_desempenho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private._venda_repasse_base` | — |
+
+### `20261021031000_venda_cliente_ondas23.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.venda_lista_complemento` | — |
+| `function` | `private.venda_lista_preco` | — |
+| `function` | `public.venda_gerar_lista` | — |
+| `function` | `public.venda_minhas_sugestoes` | — |
+| `function` | `public.venda_fechar_desfechos` | — |
 
 ## Próximos passos por status
 
