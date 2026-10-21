@@ -985,6 +985,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/offline-flow-integration.test.tsx",
       "src/hooks/__tests__/useOffline*.test.tsx",
       "src/hooks/__tests__/useBreadcrumbs.test.ts",
+      "src/hooks/__tests__/usePushNotifications.topic.test.tsx",
       "src/hooks/__tests__/useDebouncedValue.test.tsx",
       "src/hooks/__tests__/useInfiniteScroll.test.ts",
       "src/hooks/__tests__/useDisplayAccess.test.tsx",
