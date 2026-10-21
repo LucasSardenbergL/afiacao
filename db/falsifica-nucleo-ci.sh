@@ -440,12 +440,29 @@ v="$(particao "$ESPELHO/db/roda-nucleo-ci.sh" 3)"
 if [ "$v" = COBRE ]; then ok "as 3 partes cobrem o manifesto, sem repetir prova"
 else bad "partição em 3 não cobre o manifesto: $v"; fi
 
+# A partição é BALANCEADA pelo custo (db/nucleo-ci-custo.txt, 2026-10-21). As fakes acima não estão na
+# tabela, pesam o default igual e dão o round-robin — então o LPT precisa de caso PRÓPRIO, com custo
+# desigual: a 1ª prova pesa como as outras 4 juntas e tem de ficar SOZINHA na parte 0 (o round-robin
+# daria 1,3,5). E a tabela é parte do contrato: linha malformada aborta, em vez de pesar calada.
+CUSTO_DESIGUAL="$ESPELHO/custo-desigual.txt"
+printf '# comentário\n\ndb/test-fake-parte-1.sh 40\n' > "$CUSTO_DESIGUAL"
+for n in 2 3 4 5; do printf 'db/test-fake-parte-%s.sh 10\n' "$n" >> "$CUSTO_DESIGUAL"; done
+env MANIFESTO="$MP" NUCLEO_CUSTO="$CUSTO_DESIGUAL" NUCLEO_PARTE=0/2 bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista \
+  > "$LOGS/parte-lpt.lst" 2>&1 && rc=0 || rc=$?
+lpt="$(tail -n +2 "$LOGS/parte-lpt.lst" | awk '{printf "%s ", $1}')"
+if [ "$rc" -eq 0 ] && [ "$lpt" = "db/test-fake-parte-1.sh " ]; then
+  ok "custo desigual: a prova cara fica SOZINHA na parte 0/2 (LPT, não round-robin)"
+else bad "custo desigual não balanceou (rc=$rc): parte 0/2 = '$lpt'"; fi
+printf 'db/test-fake-parte-1.sh quarenta\n' > "$ESPELHO/custo-podre.txt"
+exec_exige "tabela de custo com linha malformada ABORTA (não pesa calada)" "linha malformada" \
+  env MANIFESTO="$MP" NUCLEO_CUSTO="$ESPELHO/custo-podre.txt" NUCLEO_PARTE=0/2 bash "$ESPELHO/db/roda-nucleo-ci.sh" --lista
+
 if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-torto.sh" > "$LOGS/sabotagem-parte.log" 2>&1 <<'PY'
 import sys, pathlib
 t = pathlib.Path(sys.argv[1]).read_text()
-a = 'if [ $((k % p_n)) -eq "$p_i" ]; then'
+a = 'if [ "${alvo[$k]}" -eq "$p_i" ]; then'
 assert t.count(a) == 1, f"esperava 1 filtro de parte, achei {t.count(a)}"
-pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ $((k % p_n)) -eq 0 ]; then', 1))
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ "${alvo[$k]}" -eq 0 ]; then', 1))
 PY
 then
   v="$(particao "$ESPELHO/db/roda-nucleo-ci-torto.sh" 3)"
@@ -570,9 +587,9 @@ exec_exige "argumento desconhecido ABORTA (flag ignorada rodaria tudo)" "argumen
 if python3 - "$ESPELHO/db/roda-nucleo-ci.sh" "$ESPELHO/db/roda-nucleo-ci-perde.sh" > "$LOGS/sabotagem-recibo.log" 2>&1 <<'PY'
 import sys, pathlib
 t = pathlib.Path(sys.argv[1]).read_text()
-a = 'if [ $((k % p_n)) -eq "$p_i" ]; then'
+a = 'if [ "${alvo[$k]}" -eq "$p_i" ]; then'
 assert t.count(a) == 1, f"esperava 1 filtro de parte, achei {t.count(a)}"
-pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ "$k" -ne 2 ] && [ $((k % p_n)) -eq "$p_i" ]; then', 1))
+pathlib.Path(sys.argv[2]).write_text(t.replace(a, 'if [ "$k" -ne 2 ] && [ "${alvo[$k]}" -eq "$p_i" ]; then', 1))
 PY
 then
   DP="$ESPELHO/rec-perde"; rm -rf "$DP"; mkdir -p "$DP"
@@ -608,7 +625,7 @@ echo "FALSIFICACAO: OK=$OK XX=$XX"
 # (parecer Codex 2026-09-14). No CI quem decide é o step do `provas-sql`, que confere o recibo
 # acima com o piso FORA daqui — `HARNESS_OK_MINIMO` no ci.yml; mude os dois juntos.
 # 45 → 65 em 2026-10-01: os 20 casos do recibo das partes e da união.
-OK_MINIMO=65
+OK_MINIMO=67
 if [ "$OK" -lt "$OK_MINIMO" ]; then
   echo "❌ só $OK caso(s) ok, o piso é $OK_MINIMO — o harness encolheu (ou parou no meio)"; exit 1
 fi
