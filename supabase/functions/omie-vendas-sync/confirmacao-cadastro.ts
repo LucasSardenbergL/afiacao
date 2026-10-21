@@ -5,6 +5,7 @@
 //
 // Escopo = o do Radar: só conta Oben e só CNPJ (numérico de 14 ou alfanumérico RFB). CPF e Colacor não
 // entram (o ledger não guarda dado pessoal e a Colacor não lê dele).
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 /** Mesmo formato do CHECK de `radar_empresas.cnpj` e de `omie_cliente_confirmacoes.documento`. */
 const CNPJ_RE = /^[0-9A-Z]{12}[0-9]{2}$/;
@@ -75,7 +76,7 @@ export async function gravarConfirmacao(
     }
     return true;
   } catch (e) {
-    console.error(`[Omie Vendas][${linha.account}] confirmação de cadastro NÃO gravada: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`[Omie Vendas][${linha.account}] confirmação de cadastro NÃO gravada: ${mensagemDeErro(e) ?? "erro desconhecido"}`);
     return false;
   } finally {
     clearTimeout(timer);
