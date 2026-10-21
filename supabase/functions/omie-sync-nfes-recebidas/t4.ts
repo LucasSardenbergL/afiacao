@@ -11,8 +11,18 @@
 
 /** O pedaço do cliente Supabase que este UPDATE usa — estrutural, para o teste gravar a cadeia real. */
 export interface ClienteT4 {
-  // deno-lint-ignore no-explicit-any
-  from(tabela: string): any;
+  from(tabela: string): unknown;
+}
+
+/** A cadeia do PostgREST que este módulo emite (o builder real do supabase-js a satisfaz em runtime). */
+interface Consulta extends PromiseLike<{ data: unknown; count?: number | null; error: unknown }> {
+  update(valores: Record<string, unknown>): Consulta;
+  select(colunas: string, opcoes?: { count: "exact"; head: true }): Consulta;
+  eq(coluna: string, valor: unknown): Consulta;
+  is(coluna: string, valor: null): Consulta;
+  neq(coluna: string, valor: unknown): Consulta;
+  not(coluna: string, operador: string, valor: unknown): Consulta;
+  abortSignal(sinal: AbortSignal): Consulta;
 }
 
 export async function preencherT4PorChave(
@@ -24,20 +34,20 @@ export async function preencherT4PorChave(
   agoraIso: string,
   sinal: () => AbortSignal,
 ): Promise<{ preenchidas: number; nidDivergente: number }> {
-  // deno-lint-ignore no-explicit-any
-  const comuns = (q: any) =>
+  const tabela = () => db.from("purchase_orders_tracking") as Consulta;
+  const comuns = (q: Consulta) =>
     q.eq("empresa", empresa)
       .eq("nfe_chave_acesso", chave)
       .is("t4_data_recebimento", null)
       .neq("status", "CANCELADO");
 
-  const mesmoNid = await comuns(db.from("purchase_orders_tracking").update({ t4_data_recebimento: t4Iso, updated_at: agoraIso }))
+  const mesmoNid = await comuns(tabela().update({ t4_data_recebimento: t4Iso, updated_at: agoraIso }))
     .eq("nid_receb", nIdReceb)
     .select("id")
     .abortSignal(sinal());
   if (mesmoNid.error) throw mesmoNid.error;
 
-  const divergentes = await comuns(db.from("purchase_orders_tracking").select("id", { count: "exact", head: true }))
+  const divergentes = await comuns(tabela().select("id", { count: "exact", head: true }))
     .not("nid_receb", "is", null)
     .neq("nid_receb", nIdReceb)
     .abortSignal(sinal());
