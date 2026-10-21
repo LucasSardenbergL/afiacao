@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-20T23:33:08.447Z",
-  "sourceHead": "5a6e9f30f830229f72c91e866628c09e63f7f012",
+  "medidoEm": "2026-10-21T00:04:15.050Z",
+  "sourceHead": "19247ebf52163e6ede022caf7d954991a6c20806",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -58,21 +58,21 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 399 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@07dc8f834 (fetch ok) · prod 2026-10-20 23:33:44.142986Z",
-      "contratoFingerprint": "a7885d62ed31bc847deba854261b34b5825e91549193217aa75d8faac68c71b9",
-      "auditorFingerprint": "3cc56b71280e7d693fb4a65a767c24a5209a73e183e243de09672643b869185c",
+      "denominador": "🔎 deriva-corpo — 403 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@6a8b0eb51 (fetch ok) · prod 2026-10-21 00:04:39.463839Z",
+      "contratoFingerprint": "9e1dd4c0c56101e611224a87d6474d8a873c9551c75b4adafdca99c8310b0339",
+      "auditorFingerprint": "eddcb5363b26d40817a68c299a04e009adb1c80bd8e40c8b927ca1ab1561c080",
       "achados": [
         {
-          "id": "5450b96e2807a0f4",
-          "linha": "❌ [SEM_PAR] get_defasagem_cliente(jsonb,uuid): corpo que nenhuma das 4 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261014211500_defasagem_desconto_valor.sql (xmin 12435768)",
-          "primeiraVez": "2026-10-20",
-          "ultimaVez": "2026-10-20"
+          "id": "3490980a27605518",
+          "linha": "❌ [SEM_PAR] analytics_ledger_registrar(text,text,jsonb): corpo que nenhuma das 4 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261012233500_analytics_ledger_crescimento_comparavel.sql (xmin 12437609)",
+          "primeiraVez": "2026-10-21",
+          "ultimaVez": "2026-10-21"
         },
         {
           "id": "208aa302e4cfe0e1",
           "linha": "❌ [SEM_PAR] venda_fechar_desfechos(date): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020174221_venda_cliente_espinha.sql (xmin 12436943)",
-          "primeiraVez": "2026-10-20",
-          "ultimaVez": "2026-10-20"
+          "primeiraVez": "2026-10-21",
+          "ultimaVez": "2026-10-21"
         }
       ]
     }

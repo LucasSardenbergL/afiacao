@@ -209,16 +209,6 @@
       "desde": "2026-10-16"
     },
     {
-      "funcao": "analytics_outbox_pedido_compra",
-      "identidade": "",
-      "classe": "EDICAO_MANUAL",
-      "esperadaNoAceite": "20261011150000_reposicao_recusa_definitiva_portal_servidor.sql",
-      "motivo": "Aplicada em prod pelo ENVELOPE db/aplicar-analytics-outbox-insert-ja-aprovado.sql (db_aplicacoes #518, 2026-10-18, PR #3149): o ramo TG_OP='INSERT' passa a emitir criada E aprovada quando o pedido nasce com aprovado_em (importação do portal Sayerlack perdia 'aprovada', 3 de 3). TRAVA → PRE (md5 vivo = 049e1b52… da 20261011150000) → CREATE → backfill → PÓS; prova PG17 db/test-analytics-outbox-insert-ja-aprovado.sh (fixture = prod, md5 conferido). Corpo = o da 20261011150000 + ramo novo com array_append + INSERT ... SELECT FROM unnest. Histórico: docs/historico/outbox-insert-ja-aprovado.md.",
-      "md5": "ae665653674267a3613b015366375a33",
-      "md5Tokens": "83a4733748558d479b3c34d367c28cd8",
-      "desde": "2026-10-18"
-    },
-    {
       "funcao": "claim_nfe_efetivacao_lock",
       "identidade": "uuid,timestamp with time zone,timestamp with time zone",
       "classe": "EDICAO_MANUAL",

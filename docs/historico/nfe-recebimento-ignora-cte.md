@@ -77,3 +77,15 @@ Nada é apagado.
 `bun run sonda:sql omie-nfe-recebimento-sync` deve responder `v1.6-ignora-cte`. Depois, a contagem de
 modelo 57 em `nfe_recebimentos` deve ficar congelada em 28, o `por_armazem.OB.ctes` deve ser > 0 e
 `consulta.desfecho = "cte"` não deve repetir. O controle positivo é uma NF-e 55 nova chegando com itens.
+
+## Deploy (2026-10-20)
+
+- PR #3251 mergeado às 21:35Z. A v1.6 seguiu intacta na `main` (sem reversão pelo sync do Lovable).
+- O deploy saiu às 22:12Z numa leva de três edges colada por outra sessão (`fin-cashflow-engine`,
+  `omie-financeiro`, `omie-nfe-recebimento-sync`). O hash de `versao.ts` colado era o da `main`. O
+  agente respondeu "No files were edited", e os commits do bot depois disso tocaram só
+  `src/integrations/supabase/types.ts`. Não houve segundo envio desta edge.
+- Sonda pós-deploy pelo envelope (`db/2026-10-20-sonda-disparo-omie-nfe-recebimento-sync-v1.6.sql`,
+  tentativa #595, request 124925): HTTP 200, `v1.6-ignora-cte`, fonte
+  `8d2c9439d41bb87b141e91443d39980104d04ab0d6e764eb0085aaf0741f5b22`, **DEPLOY CONFIRMADO**. Ledger:
+  `CONFERE` desde 22:21Z.
