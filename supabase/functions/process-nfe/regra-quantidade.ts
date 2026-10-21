@@ -38,7 +38,7 @@ export interface ItemOmieBruto {
   [chave: string]: unknown;
 }
 
-export type RegraAplicada = "nf_igual_omie" | "conversao_do_omie" | "nf_sem_conversao";
+type RegraAplicada = "nf_igual_omie" | "conversao_do_omie" | "nf_sem_conversao";
 
 export interface ItemDecidido {
   sequencia: number;
@@ -54,7 +54,7 @@ export interface ItemDecidido {
   aviso: string | null;
 }
 
-export type MotivoRecusa =
+type MotivoRecusa =
   | "sequencia_ilegivel"
   | "quantidade_nf_ilegivel"
   | "conversao_sem_quantidade_do_omie"
@@ -63,7 +63,7 @@ export type MotivoRecusa =
   | "fator_no_item_nao_confirmado"
   | "unidade_ilegivel";
 
-export interface ItemRecusado {
+interface ItemRecusado {
   posicao: number;
   sequencia: number | null;
   codigo: string | null;
