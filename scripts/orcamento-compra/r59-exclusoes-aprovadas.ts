@@ -24,7 +24,8 @@ export interface ExclusaoR59Aprovada {
 // 2026-10-19: o founder conferiu no portal Sayerlack cada identificador dos 4 candidatos que a passada de encerrados
 // (v1.8, disparo #542) e o backtest apontaram. Entram os 3 CANCELADOS. Ficou de fora o 1230 (2790/12184846749):
 // 2130311 e 2130322 estão "Atendido total" — houve faturamento que o backtest NÃO enxerga (NF consolidada de
-// vários pedidos gravada na linha de outro, a cegueira do Codex 2026-10-19 P1). Ele segue no caixa, como pendente.
+// vários pedidos gravada na linha de outro, a cegueira do Codex 2026-10-19 P1). Ele segue no caixa — desde 2026-10-21
+// não mais como pendente: o cContrato composto o retém (retidosCompostoR59 em simular.ts).
 const CONFERENCIA = 'founder (Lucas) — conferência no portal Sayerlack, 2026-10-19';
 
 export const EXCLUSOES_R59_APROVADAS: readonly ExclusaoR59Aprovada[] = [
