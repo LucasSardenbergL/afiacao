@@ -26,13 +26,15 @@ Critério de ordem: **impacto em dinheiro/produção × evidência do defeito ÷
 
 ## 2. Top 5 — na ordem (1 item = 1 PR · 1 lote = 1 sessão)
 
-### 1 · NF-e: gravação completa e repetição após falha — **money-path, esforço M**
+> ✅ **Plano v2 concluído em 2026-10-21.** Os 5 itens do Top 5, o piloto N e os pontuais do §3 foram entregues. O resto do §3 (L, K1, K2) é regra de "quando tocar", não item de PR.
+
+### 1 · NF-e: gravação completa e repetição após falha — **money-path, esforço M** · ✅ **feito**: [#3142](https://github.com/LucasSardenbergL/afiacao/pull/3142) (reenvio completa os itens), deploy em [#3157](https://github.com/LucasSardenbergL/afiacao/pull/3157)/[#3165](https://github.com/LucasSardenbergL/afiacao/pull/3165) e leva RPC transacional em [#3171](https://github.com/LucasSardenbergL/afiacao/pull/3171)
 `omie-nfe-webhook/index.ts`: o cabeçalho é inserido (`:194`) antes dos itens; se os itens falham, a resposta é 500 e o cabeçalho fica; a repetição encontra o cabeçalho no duplicate-check (`:105`) e responde "já importada" **sem reparar os itens** ⚠️ (achado Codex; inserts conferidos, caminho de falha a confirmar no PR). Entrega: transação/compensação + teste Deno da sequência (falha nos itens → retry recupera). Ritual money-path completo (`RÉGUA:` + adversarial no diff).
 
-### 2 · H · Segurança replicada — **esforço P–M** (arquivo quente `_shared/auth.ts`)
+### 2 · H · Segurança replicada — **esforço P–M** (arquivo quente `_shared/auth.ts`) · ✅ **feito**: [#3143](https://github.com/LucasSardenbergL/afiacao/pull/3143) (testes negativos nos handlers antes da troca; 0 cópias locais na main em 2026-10-21) e prova de deploy em [#3156](https://github.com/LucasSardenbergL/afiacao/pull/3156)
 Ordem corrigida pelo Codex: **(a) testes negativos nos 13 HANDLERS** (sem token → 401 **e zero efeito**), **(b) só então** apagar as 13 cópias e importar `_shared/auth.ts`, trocando o teste booleano por `.ok` (`fin-cashflow-engine` já retorna `AuthResult`). Corrigir o comentário de `auth.ts:43`. `sonda:bump` em cada edge; deploy em 2 levas de ~7 (founder). Pronto: 0 cópias · 13 testes negativos verdes · `pendencias:deploy` zerado.
 
-### 3 · J · CI: corrigir dependência e encurtar sem perder a falsificação pré-merge — **esforço P–M** (arquivo quente `ci.yml`/`auto-merge.yml`)
+### 3 · J · CI: corrigir dependência e encurtar sem perder a falsificação pré-merge — **esforço P–M** (arquivo quente `ci.yml`/`auto-merge.yml`) · ✅ **feito**: [#3160](https://github.com/LucasSardenbergL/afiacao/pull/3160) (J0–J3)
 - **J0** Pós-merge depende indevidamente de `mutation-check` (informativo): uma falha dele cala o CI da main ✅. Corrigir a condição em `auto-merge.yml:65`.
 - **J1** Rebalancear as 4 fatias de `provas-sql` (15/8/13/8 → ~11).
 - **J2** `falsificacao` (16 min): fatiar em 2–3 jobs **obrigatórios** (todas no `needs` do `validate`), nunca mover para main/schedule — o próprio `ci.yml:899` registra falsificação vermelha pós-merge. `gates:rapidos` não substitui.
@@ -58,7 +60,7 @@ Residual em módulo ativo (2026-10-21, depois do PR de fecho do ciclo 2):
 - ~~`useRaioXMutacoes` (reposição, 2)~~ e ~~`useExcecoesGestor` (governança, 3)~~ saíram. O raio-X passou a usar `comNulo`, com as 4 chaves NULL conferidas na prod. O `useExcecoesGestor` é governança no manifesto (o card "Exceções" do MasterDashboard) e só LÊ as views da família tarefas, que já estão no `types.ts`: a borda exige `id`/`descricao`/`effective_due` com `linhasCom`, e `customer_metrics` passou a ser lido por forma (ausente ≠ 0). Detalhe em [plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md).
 
 Defeitos que os casts escondiam (detalhe nos docs): 3 queries 400 na reposição; 4 KPIs de /vendas/ferramentas sobre tabelas inexistentes; o DRE consolidado da tela Intercompany quebrava ao renderizar; a RPC intercompany aplica a eliminação ao CMV com o sinal trocado (correção SQL proposta em sessão própria).
-### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · 🧭
+### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · ✅ **feito**: decisão 🧭 #1 tomada (a para as 2 financeiras, b para o resto). Canônicas em [#3179](https://github.com/LucasSardenbergL/afiacao/pull/3179), aplicadas e validadas em [#3225](https://github.com/LucasSardenbergL/afiacao/pull/3225), ciclo 2 em [#3260](https://github.com/LucasSardenbergL/afiacao/pull/3260)/[#3261](https://github.com/LucasSardenbergL/afiacao/pull/3261), fecho medido em [#3267](https://github.com/LucasSardenbergL/afiacao/pull/3267) ([deriva-canonica-i2.md](../../../historico/deriva-canonica-i2.md))
 Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções financeiras aplicadas à mão que um `CREATE OR REPLACE` do repo **apagaria**). Copiar o corpo para `db/` não basta: o auditor reconstrói a expectativa das migrations de `origin/main` (`audit-deriva-corpo-prod.ts:245`) — e migrations são intocáveis (DR). Decisão 🧭 #1 abaixo.
 
 ## 3. Depois do Top 5 (quando tocar / piloto)
