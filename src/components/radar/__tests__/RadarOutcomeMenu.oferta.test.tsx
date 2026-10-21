@@ -127,6 +127,23 @@ describe('RadarOutcomeMenu — oferta de cadastro pós-sinal', () => {
     expect(cadastrar.mock.calls[1][0]).toEqual({ empresa, opcoes: { retentativa: true } });
   });
 
+  it('RPC sem confirmação do SERVIDOR vira aviso com "Tentar de novo" pela edge (retentativa), nunca "Gravar de novo"', async () => {
+    cadastrar.mockRejectedValue(new FalhaCadastro('omie', 'RADAR_SEM_CONFIRMACAO_OMIE: o servidor não confirmou o cliente 9090 no Omie/Oben para este CNPJ — o lead fica na fila'));
+    render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await screen.findByText(OFERTA);
+    fireEvent.click(screen.getByRole('button', { name: /cadastrar agora/i }));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1));
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(track).toHaveBeenCalledWith('radar.cadastro_pos_sinal_resultado', expect.objectContaining({ resultado: 'indeterminado' }));
+    const acao = (toast.warning.mock.calls[0][1] as { action: { label: string; onClick: () => void } }).action;
+    expect(acao.label).toMatch(/tentar de novo/i);
+    cadastrar.mockResolvedValue({ codigo: '9090', jaExistia: true, recuperado: true });
+    acao.onClick();
+    await waitFor(() => expect(cadastrar).toHaveBeenCalledTimes(2));
+    expect(cadastrar.mock.calls[1][0]).toEqual({ empresa, opcoes: { retentativa: true } });
+  });
+
   it('Omie confirmou mas o Radar não gravou: "Gravar de novo" repete SÓ a gravação (codigoConhecido)', async () => {
     cadastrar.mockRejectedValue(new FalhaCadastro('radar', 'RPC caiu', '9090'));
     render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);
