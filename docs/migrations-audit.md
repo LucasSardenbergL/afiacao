@@ -22,7 +22,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **696** custom migrations totais
-- **2240** objetos esperados (criados por estas migrations)
+- **2241** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 838
   - `rls_policy`: 483
@@ -30,7 +30,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
   - `table`: 196
   - `cron_job`: 196
   - `view`: 125
-  - `trigger`: 106
+  - `trigger`: 107
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5657,6 +5657,7 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_nfe_receb_manual_trilha_execucao` | `nfe_recebimento_manual_trilha` |
 | `index` | `public.idx_nfe_receb_manual_trilha_criado` | `nfe_recebimento_manual_trilha` |
 | `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_sem_truncate` | `nfe_recebimento_manual_trilha` |
 | `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
 
 ## Próximos passos por status

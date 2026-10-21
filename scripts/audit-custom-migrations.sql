@@ -2966,6 +2966,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'index', 'public', 'idx_nfe_receb_manual_trilha_execucao', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'index', 'public', 'idx_nfe_receb_manual_trilha_criado', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_append_only', 'nfe_recebimento_manual_trilha'),
+  ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha')
 ),
 obj_status AS (
@@ -5220,6 +5221,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'index', 'public', 'idx_nfe_receb_manual_trilha_execucao', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'index', 'public', 'idx_nfe_receb_manual_trilha_criado', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_append_only', 'nfe_recebimento_manual_trilha'),
+  ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha')
 )
 SELECT
