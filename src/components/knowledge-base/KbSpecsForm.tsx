@@ -108,8 +108,9 @@ export function KbSpecsForm({ initialValues, documentId, onSaved, onSubmitOverri
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<FormValues>({
-    resolver: zodResolver(schema) as unknown as import('react-hook-form').Resolver<FormValues>,
+  } = useForm<z.input<typeof schema>, unknown, FormValues>({
+    // entrada ≠ saída (os `z.preprocess` numéricos): os 3 genéricos dizem isso ao resolver, sem cast.
+    resolver: zodResolver(schema),
     defaultValues: {
       product_code: initialValues.product_code ?? '',
       product_name: initialValues.product_name ?? '',

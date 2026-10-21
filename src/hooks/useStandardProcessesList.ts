@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { StandardProcess, StandardProcessStatus } from '@/lib/standard-process/types';
+import { paraStandardProcess } from '@/lib/standard-process/borda';
 
 interface Filters {
   status?: StandardProcessStatus[];
@@ -20,7 +21,7 @@ export function useStandardProcessesList(filters: Filters = {}) {
       q = q.order('updated_at', { ascending: false }).limit(200);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as unknown as StandardProcess[];
+      return (data ?? []).map(paraStandardProcess);
     },
   });
 }

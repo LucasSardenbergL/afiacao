@@ -87,6 +87,48 @@ Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital <
 - **Provas:** `db/test-radar-irmaos-por-raiz.sh` (núcleo do CI, 13 asserts, `--falsificar` 11/11 com controle verde — gate sob `SET ROLE authenticated` + GUC, as três fontes de cliente, descartado e o próprio CNPJ fora da conta, teto, ACL); vitest de `selosFilial`/`textoFilialFicha` e da linha.
 - **Codex:** Caminho B. Não muda score, ordem nem dinheiro; o gate é o mesmo da policy da fila e está provado por falsificação. A cota estava acima do teto depois do adversarial do #3220.
 
+## v3 — atividade secundária prioritária (2026-10-21)
+
+**Medido antes (psql-ro):** a fatia de quem já é cliente sobe quando algum CNAE **secundário** é tier 1 (móveis, marmoraria, artefatos de madeira, restauração). O efeito sobrevive a três controles, um de cada vez:
+
+| Controle | Sem secundário tier 1 | Com secundário tier 1 |
+| --- | --- | --- |
+| MG, principal tier 2 | 1,29 % (9.515) | 7,96 % (1.106) |
+| MG, principal tier 3 | 0,34 % (28.781) | 5,29 % (1.173) |
+| MG, tier 2/3, mesmo nº de secundários | 0,27–3,00 % | 4,03–8,28 % (em toda faixa) |
+| MG, mesmo CNAE principal exato × município × porte × capital × nº de secundários | 0,88 % (padronizado) | 5,54 % (1.281 de 2.279 com comparação) |
+
+Nenhum dos 3.007 `ja_cliente` veio do próprio radar (`omie_codigo_cliente`/`virou_cliente` = 0): hoje não há auto-confirmação.
+
+**Regra (migration `20261021120000_radar_score_lead_v3_cnae_secundario.sql`, aplicada em prod: ensaio → apply → psql-ro `✅`, md5 `b8dd36f7…`):** principal tier 2 + secundário tier 1 → **+10**; tier 3 → **+7**; tier 1 → +0. Só soma; máximo continua 100. Motivo "atividade secundária prioritária (…)". O rótulo do principal tier 2 virou "CNAE intermediário (…)" para "secundário" designar só a atividade secundária real.
+
+**Simulado antes de aplicar:** 19.445 leads sobem; 81 cruzam 70 (852 → 933); 85 de 1.000 entram no top 1.000; sugeridos (`em_conversa`) 0 → 0 (só 1 lead em conversa hoje); inéditos ≥ 70 do aviso 275 → 283.
+
+**Codex (gpt-6-astra · max · 437 s · 162.478 tokens), 6 achados:**
+- ALTO — `ja_cliente` não prova compra e o cadastro pelo radar pode realimentar a medição. Medido: 0 dos 3.007 vieram do radar. Ficou a regra: **re-medir este peso excluindo `ja_cliente` originado no radar** e, quando houver volume de contato, por conversão por contato.
+- MÉDIO — controle só por UF. Atendido: controle por CNAE exato × município × porte × capital × nº de secundários (tabela acima).
+- MÉDIO — +10/+7 é hipótese de política comercial (ex.: secundário sem telefone passa à frente de telefone sem secundário). Registrado: sem dado de conversão (3 contatos registrados no radar), é a melhor tradução disponível; revisar com conversão por contato.
+- MÉDIO — efeito nos consumidores. Medido acima (sugeridos 0 → 0; aviso 275 → 283).
+- MÉDIO — prova não comparava v2 × v3 nos mesmos dados. Atendido: A19/A20 pontuam com a v2, trocam para a v3 e comparam linha a linha nas bordas de 70 (59→69, 60→70, 62→69, 63→70), com vários secundários e retirada do secundário.
+- BAIXO — "CNAE secundário" ambíguo. Atendido (rótulo "CNAE intermediário").
+
+**Provas:** `db/test-radar-score.sh` aplica v1 → v2 → v3, **24 asserts**, `--falsificar` **17/17**.
+
+**1ª rodada da v3:** cron 225, 03:30 BRT de 2026-10-22 (não pelo MCP: a chamada manual de ~100 s estoura o timeout do cliente).
+
+## Recalcular no fim da carga mensal — NÃO feito, por decisão medida (2026-10-21)
+
+O aviso ao gestor (06:45 UTC) já roda depois do score (06:30) e só usa o score quando a última rodada é do MESMO lote. Disparar o recálculo no `finalize` da edge `radar-ingest` anteciparia no máximo 1 dia, 1× por mês, ao custo de mexer na edge e de uma chamada síncrona de ~100 s. Reabrir se o atraso de um dia virar dor nomeada.
+
+## Proximidade por clientes ATIVOS — medida e NÃO trocada (2026-10-21)
+
+A proximidade conta `ja_cliente` no mesmo município (3.007 clientes cadastrados, 139 municípios). Testada a troca por "cliente ativo" (pedido nos últimos 12 meses):
+
+- **Fonte que existe:** `sales_orders` (pedidos do app) ligado a `profiles.document` pelo `customer_user_id` — o `customer_document` do pedido vem preenchido em só 2 casos em 12 meses. Dá **505** clientes ativos, **218** deles no radar (todos já `ja_cliente`), em **33** municípios. `venda_items_history` não serve: 7.594 linhas, só Oben, desde out/2025, e `cliente_cidade` vazio em todas.
+- **Efeito da troca na fila:** dos 53.913 leads que pontuam proximidade hoje, **53.459 perderiam pontos** e **49.609 perderiam tudo**; nenhum ganharia.
+- **Por que não trocar:** a fonte é PARCIAL, não a verdade sobre quem compra — Passos tem 276 clientes cadastrados e 2 com pedido no app; Divinópolis 290/27; Carmo do Cajuru 242/35. Ausência de pedido no app não é cliente inativo (outra empresa do grupo, venda direta no Omie): trocar seria fabricar "sem cliente ativo" (ausente ≠ zero).
+- **Reabrir quando** houver fonte de compra por CNPJ cobrindo as três empresas (Oben, Colacor, Colacor SC).
+
 ## Follow-ups (fora deste bloco)
 
 - Agrupar matriz/filiais (mesma razão social, CNPJs distintos) na fila — hoje 3 filiais da mesma metalúrgica ocupam 3 posições do topo.

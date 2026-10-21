@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 691
+-- Total de custom migrations: 695
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -755,7 +755,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021021500', 'venda_repasse_base_desempenho', '20261021021500_venda_repasse_base_desempenho.sql'),
   ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql'),
   ('20261021070000', 'venda_lista_lente', '20261021070000_venda_lista_lente.sql'),
-  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql')
+  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql'),
+  ('20261021120000', 'fin_consolidado_ic_sinal_cmv', '20261021120000_fin_consolidado_ic_sinal_cmv.sql'),
+  ('20261021120000', 'radar_cadastro_omie_confirmacao_servidor', '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql'),
+  ('20261021120000', 'radar_score_lead_v3_cnae_secundario', '20261021120000_radar_score_lead_v3_cnae_secundario.sql'),
+  ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2948,7 +2952,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
   ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
-  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
+  ('fin_consolidado_ic_sinal_cmv', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
+  ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5189,7 +5200,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
   ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
-  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
+  ('fin_consolidado_ic_sinal_cmv', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
+  ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
 )
 SELECT
   e.migration,
@@ -5253,6 +5271,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_consolidado_intercompany', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'cd4ea51faea13ce2c4d5c74ae64f71d0'),
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
   ('public', 'fin_consolidado_intercompany', 4, '20260525020001_fin_rpc_gate_auth_p1.sql', '824097bf424eac9f2ab2cf047890b5e4'),
+  ('public', 'fin_consolidado_intercompany', 5, '20261021120000_fin_consolidado_ic_sinal_cmv.sql', 'f06193c3761da73b68a31ade301d0a74'),
   ('public', 'tint_run_reconciliation', 1, '20260329163949_fcc70fb8-8e83-4f8f-946e-8bae2bfe17f1.sql', '99527ed12e8e9b836ccd33b9a5b6498d'),
   ('public', 'tint_run_reconciliation', 2, '20260329180758_acfdc7f9-2fa1-4f59-9da3-afa630297524.sql', '9c82ced3646ddb10a5a2dc666d68c9f3'),
   ('public', 'tint_run_reconciliation', 3, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '84b622a7be15ae3632c4cc4d70e317fb'),
@@ -5564,6 +5583,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
   ('public', 'radar_registrar_cadastro_omie', 1, '20260613190000_radar_fatia3.sql', '60becb171538c0fdf7a7cac32fb540b1'),
   ('public', 'radar_registrar_cadastro_omie', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '7610ed60036aa30ad49a881dec8d1429'),
+  ('public', 'radar_registrar_cadastro_omie', 3, '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql', '0565deae945b5bc1a132210db910a637'),
+  ('public', 'radar_registrar_cadastro_omie', 4, '20261021120500_radar_cadastro_omie_idempotente.sql', '3d60a2556942f44a899d4ded3a158efd'),
   ('public', 'radar_prospects_para_rota', 1, '20260613230000_roteirizador_prospects.sql', '5e60b8b20f0fb33d469b664c36b792a8'),
   ('public', 'radar_prospects_para_rota', 2, '20260614160000_roteirizador_campo_banco.sql', 'cba7b31d56e029925d06a13804fffeac'),
   ('public', 'radar_prospects_para_rota', 3, '20260615190000_geocoding_cep_geo.sql', '6c9e09329e90a7f5752de1c92e186047'),
@@ -5793,6 +5814,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
+  ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),

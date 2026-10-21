@@ -19,6 +19,36 @@ import type { CrossSellCand } from './cross-sell';
 /** Limite do body de template da Meta (corpo renderizado, incluindo params). */
 export const MAX_BODY_TEMPLATE_META = 1024;
 
+/**
+ * Linha da RPC como o `types.ts` a tipa. O gerador declara toda coluna de `RETURNS TABLE` como
+ * não-nula; o `CotacaoRow` abaixo é a forma honesta, que admite os NULL que a função devolve.
+ */
+type LinhaCotacaoRpc = {
+  omie_codigo_produto: number;
+  product_id: string | null;
+  codigo: string | null;
+  descricao: string | null;
+  unidade: string | null;
+  ativo: boolean;
+  estoque: number | null;
+  preco: number | null;
+  fonte_preco: string | null;
+};
+
+/**
+ * Borda da recotação: `fonte_preco` é o CASE 'praticado' | 'tabela' | NULL da RPC. Valor fora LANÇA
+ * (a proposta não sai com uma fonte de preço que ninguém conhece); o resto passa como veio.
+ */
+export function lerCotacao(linhas: readonly LinhaCotacaoRpc[]): CotacaoRow[] {
+  return linhas.map((l) => {
+    const f = l.fonte_preco;
+    if (f !== null && f !== 'praticado' && f !== 'tabela') {
+      throw new Error(`get_whatsapp_proposta_cotacao: "fonte_preco" = "${f}" fora do vocabulário`);
+    }
+    return { ...l, fonte_preco: f };
+  });
+}
+
 /** Uma linha do retorno da RPC de recotação (preco NULL = sem preço válido — NUNCA 0). */
 export interface CotacaoRow {
   omie_codigo_produto: number;

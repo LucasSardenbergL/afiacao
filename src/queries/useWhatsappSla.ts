@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { createLeadingTrailingThrottle } from '@/lib/leading-trailing-throttle';
+import { linhasCom } from '@/lib/linha-view';
 import type { SlaNivel } from '@/lib/whatsapp/sla-format';
 
 export interface WaSlaRow {
@@ -15,20 +16,30 @@ export interface WaSlaRow {
   nivel: SlaNivel;
 }
 
-// v_whatsapp_sla não está no types.ts gerado — mesmo cast de useWhatsappInbox.ts.
-function waSelectAll(view: string) {
-  const client = supabase as unknown as {
-    from: (t: string) => { select: (c: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> };
-  };
-  return client.from(view).select('*');
-}
+const NIVEIS = ['verde', 'amarelo', 'vermelho'] as const satisfies readonly SlaNivel[];
+const ehNivel = (v: string): v is SlaNivel => NIVEIS.some((n) => n === v);
 
 /** queryFn compartilhada: badge da sidebar e telas ricas usam a MESMA
- *  queryKey → 1 fetch deduplicado pro app inteiro (a view é scan-heavy). */
+ *  queryKey → 1 fetch deduplicado pro app inteiro (a view é scan-heavy).
+ *  A view perde o NOT NULL: a borda exige as colunas que a linha precisa (o `nivel` é CASE com
+ *  ELSE 'verde', nunca nulo na prod) e confere o vocabulário — fora dele, lança. */
 async function fetchWhatsappSla(): Promise<WaSlaRow[]> {
-  const res = await (waSelectAll('v_whatsapp_sla') as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+  const res = await supabase.from('v_whatsapp_sla').select('*');
   if (res.error) throw new Error(res.error.message);
-  return (res.data ?? []) as WaSlaRow[];
+  const linhas = linhasCom(res.data, ['conversation_id', 'aguardando_desde', 'minutos_uteis_aguardando', 'nivel'], 'v_whatsapp_sla');
+  return linhas.map((l) => {
+    if (!ehNivel(l.nivel)) throw new Error(`v_whatsapp_sla: "nivel" = "${l.nivel}" fora do vocabulário`);
+    return {
+      conversation_id: l.conversation_id,
+      customer_user_id: l.customer_user_id,
+      phone_e164: l.phone_e164,
+      contact_name: l.contact_name,
+      owner_user_id: l.owner_user_id,
+      aguardando_desde: l.aguardando_desde,
+      minutos_uteis_aguardando: l.minutos_uteis_aguardando,
+      nivel: l.nivel,
+    };
+  });
 }
 
 const SLA_QUERY_KEY = ['whatsapp', 'sla'] as const;

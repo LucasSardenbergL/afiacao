@@ -48,7 +48,7 @@ interface Props {
 }
 
 const splitCsv = (s: string | undefined) => (s ?? '').split(',').map((t) => t.trim()).filter(Boolean);
-const joinCsv = (a: string[] | undefined) => (a ?? []).join(', ');
+const joinCsv = (a: string[] | null | undefined) => (a ?? []).join(', ');
 
 export function StandardProcessForm({ initial, onSaved }: Props) {
   const save = useSaveStandardProcess();

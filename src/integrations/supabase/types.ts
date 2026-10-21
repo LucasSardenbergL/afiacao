@@ -8352,6 +8352,36 @@ export type Database = {
           },
         ]
       }
+      omie_cliente_confirmacoes: {
+        Row: {
+          account: string
+          codigo_cliente: string
+          confirmado_em: string
+          confirmado_por: string | null
+          documento: string
+          id: number
+          origem: string
+        }
+        Insert: {
+          account: string
+          codigo_cliente: string
+          confirmado_em?: string
+          confirmado_por?: string | null
+          documento: string
+          id?: never
+          origem: string
+        }
+        Update: {
+          account?: string
+          codigo_cliente?: string
+          confirmado_em?: string
+          confirmado_por?: string | null
+          documento?: string
+          id?: never
+          origem?: string
+        }
+        Relationships: []
+      }
       omie_clientes_nao_vinculados: {
         Row: {
           cidade: string | null

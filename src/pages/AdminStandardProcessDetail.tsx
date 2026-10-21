@@ -142,10 +142,10 @@ export default function AdminStandardProcessDetail() {
 
         <div className="flex items-center gap-2 flex-wrap text-2xs">
           <Badge variant="outline">{data.segmento}</Badge>
-          {data.porte_alvo.map((p) => (
+          {(data.porte_alvo ?? []).map((p) => (
             <Badge key={p} variant="outline">porte {p}</Badge>
           ))}
-          {data.tags.map((t) => (
+          {(data.tags ?? []).map((t) => (
             <Badge key={t} variant="outline" className="text-[10px]">{t}</Badge>
           ))}
         </div>
@@ -156,20 +156,20 @@ export default function AdminStandardProcessDetail() {
           </div>
         )}
 
-        {data.expected_outcomes.length > 0 && (
+        {(data.expected_outcomes ?? []).length > 0 && (
           <div>
             <div className="text-2xs uppercase tracking-wide text-muted-foreground mb-1">Resultados esperados</div>
             <ul className="text-xs space-y-0.5 ml-4 list-disc">
-              {data.expected_outcomes.map((o, i) => <li key={i}>{o}</li>)}
+              {(data.expected_outcomes ?? []).map((o, i) => <li key={i}>{o}</li>)}
             </ul>
           </div>
         )}
 
-        {data.prerequisites.length > 0 && (
+        {(data.prerequisites ?? []).length > 0 && (
           <div>
             <div className="text-2xs uppercase tracking-wide text-muted-foreground mb-1">Pré-requisitos</div>
             <ul className="text-xs space-y-0.5 ml-4 list-disc">
-              {data.prerequisites.map((p, i) => <li key={i}>{p}</li>)}
+              {(data.prerequisites ?? []).map((p, i) => <li key={i}>{p}</li>)}
             </ul>
           </div>
         )}

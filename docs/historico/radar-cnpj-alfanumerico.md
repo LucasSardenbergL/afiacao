@@ -171,9 +171,21 @@ fonte). O pacote trouxe também `omie-sync-nfes-recebidas` (P1, de outra entrega
 **Colisão:** o #3291 (confirmação server-side do cadastro) também subia `omie-vendas-sync` para v1.23 e ficou
 `DIRTY` depois deste merge. Ele precisa ir a v1.24 sobre a v1.23 daqui, com redeploy próprio.
 
-**Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
-buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
-entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
+**Residual — ✅ fechado em 2026-10-21 (`omie-sync` v1.8, `omie-vendas-sync` v1.25):** `buscar_cliente_por_documento`
+e `buscar_cliente` aceitavam o 1º registro do `ListarClientes` sem conferir o documento devolvido. Agora os dois
+conferem com `lookupDevolveuOMesmoDocumento`, movido de `omie-vendas-sync/` para `_shared/lookup-documento.ts`
+e usado pelas duas edges, a afiação inclusive (o inline saiu). Divergência → `OMIE_LOOKUP_DIVERGENTE`:
+em vendas, a action falha; em `omie-sync`, o erro é lançado FORA do `try` que lia falha como "não existe" e
+vira 500. No front, falha de lookup de código cai no caminho que já existia: código vazio, submit do pedido
+fail-closed naquela conta, e `criar_cliente` conferindo de novo. Falsificação do helper: "sempre true" e "sem
+guarda de vazio" ficam vermelhas, com controle verde. As duas guardas de vazio eram redundantes entre si: ficou
+uma, e o caso dos dois lados vazios ganhou teste. **Codex: barrado pelo guard local de cota (exit 79, 91%,
+janela reabre em 27/10) → Caminho B, REVISÃO INDEPENDENTE PENDENTE; Codex retroativo quando a cota voltar.**
+**Deploy — FEITO pela sessão (PR #3311 mergeado em `3e757a7`):** o ledger pediu só as 2 edges (P1). O
+`list_messages` não mostrou ninguém deployando-as. Colagem do `pendencias:prompt` via MCP: 34/34 hashes, 2×
+**Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope: relé para `omie-vendas-sync` (#683) e
+`--so-disparo` para `omie-sync` (#685, passo 2 no psql-ro: DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE**
+para `omie-sync` v1.8-busca-confere-documento e `omie-vendas-sync` v1.25-busca-confere-documento.
 
 ## Follow-up fechado — `radar_registrar_cadastro_omie` exige confirmação do SERVIDOR (2026-10-21)
 
@@ -187,5 +199,6 @@ entrada já é estrita). O `catch` do primeiro lê falha transitória como "não
 - **Ordem de deploy (Codex):** edge **antes** da migration (sem a tabela, o INSERT falha no prazo → `false`, inofensivo); depois a migration; Publish do front por último (a mudança do front só reclassifica o erro).
 - **Codex:** desenho `max` 342s · 92.710 tokens — 0 CRÍTICO/ALTO, 4 MÉDIOs incorporados (REVOKE do service_role/defaults; não adotar tabela preexistente; prazo no INSERT; idempotência), mais owner e tabela qualificada.
 - **Codex de código:** `max` 257s · 118.550 tokens — os 4 MÉDIOs do desenho **resolvidos**; 0 CRÍTICO/ALTO/MÉDIO novo; 1 BAIXO consertado: o `RadarOutcomeMenu` (oferta pós-sinal) caía no toast genérico sem ação para `RADAR_SEM_CONFIRMACAO_OMIE` → agora aviso com "Tentar de novo" pela edge (`retentativa`), teste no `RadarOutcomeMenu.oferta.test.tsx`.
+- **Estado em prod (2026-10-21, PR #3291 → `f4eae81f3`):** as 3 camadas no ar, com evidência. **Edge** `omie-vendas-sync` v1.24-confirmacao-cadastro-servidor (a `main` já tinha a v1.23 do #3289): pacote `358487844f79` via MCP às 12:51:59Z, 30 sha256 conferidos contra `d670fb3f`, ledger **CONFERE**, sensor de edição **SEM_EDICAO**. **Migration** `20261021120000` aplicada pelo envelope MCP (2 tentativas anteriores com `ENOTFOUND`/`ECONNRESET` não chegaram a aplicar nada, conferido por psql-ro entre elas); 2ª testemunha psql-ro: md5 `b537f95a…`, SECURITY DEFINER + `search_path=public` + VOLATILE, dono `postgres`, ACL da RPC intacto, tabela com RLS, 0 policy, escrita só `service_role:INSERT` (`claude_ro`/`sandbox_exec*` só SELECT), `authz:claude-ro:prod` exit 0. **Front**: o build servido `c0b76360` (13:00Z, Publish de outra sessão) contém o merge. Sensor de uso: a 1ª linha do ledger — `SELECT count(*), max(confirmado_em) FROM omie_cliente_confirmacoes` (psql-ro); hoje 0.
 - **Fora do escopo (registrado, não atacado):** `registrar_contato_radar(p_acao='virou_cliente')` segue mudando o **status** de prospecção sem confirmação do ERP — é marcação manual de funil, não `ja_cliente`; e a gramática de rótulo de `documentoParaCadastro` (`_shared/cnpj-alfanumerico.ts`) é outra sessão.
 

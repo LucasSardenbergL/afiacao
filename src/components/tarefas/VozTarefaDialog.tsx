@@ -138,14 +138,21 @@ export function VozTarefaDialog({ open, onOpenChange, vendedoras, empresa, clien
     setSalvando(true);
     try {
       // 1 insert ATÔMICO: criarTarefas aceita N linhas (cada uma com seu cliente e empresa derivada)
-      const linhas = rascunhos.map((r) => ({
-        descricao: r.descricao, categoria: r.categoria, customer_user_id: r.cliente!.customer_user_id,
-        assigned_to: r.vendedora.user_id, empresa: r.empresa, modo: r.data.modo,
+      const linhas = rascunhos.map((r) => {
+        // validarRascunho (acima) já recusa os dois; o estreitamento aqui é o que o tipo enxerga —
+        // `assigned_to` é NOT NULL na tabela, e um NULL voltaria 23502 do insert.
+        const vendedora = r.vendedora.user_id;
+        const cliente = r.cliente?.customer_user_id;
+        if (!vendedora || !cliente) throw new Error('Rascunho sem vendedora ou cliente passou da validação.');
+        return {
+        descricao: r.descricao, categoria: r.categoria, customer_user_id: cliente,
+        assigned_to: vendedora, empresa: r.empresa, modo: r.data.modo,
         due_date: r.data.modo === 'data' ? r.data.due_date : null,
         interacao_tipo: r.data.modo === 'interacao' ? (r.data.interacao_tipo ?? 'ligacao') : null,
         auto_satisfy_mode: autoSatisfyDaCategoria(r.categoria),
         target_texto: (r.categoria === 'oferecer' || r.categoria === 'preco') ? r.target_texto : null,
-      }));
+        };
+      });
       await criarTarefas(linhas, { transcricao, evidencias: rascunhos.map((r) => r.evidence_text) });
       onOpenChange(false);
     } finally { setSalvando(false); }

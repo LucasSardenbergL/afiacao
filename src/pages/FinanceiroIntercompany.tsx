@@ -16,7 +16,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado } from '@/lib/financeiro/dre-helpers';
-import { empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
+import { eliminacaoPendente, empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -194,6 +194,11 @@ const FinanceiroIntercompany = () => {
               {provisorioMes === 'erro' && (
                 <span className="text-xs font-normal text-muted-foreground">status de composição indisponível (leitura falhou)</span>
               )}
+              {eliminacaoPendente(consolidado) && (
+                <span className="text-xs font-normal text-status-warning">
+                  eliminação pendente — há conciliação intercompany confirmada que não fecha (sem contrapartida, valor ou mês divergente, ou fora de receita/CMV)
+                </span>
+              )}
               {exibicao === 'parcial' && semSnapshot && (
                 <span className="text-xs font-normal text-status-warning">
                   soma parcial — sem DRE do mês: {semSnapshot.map((c) => COMPANIES[c].shortName).join(', ')}
@@ -217,10 +222,10 @@ const FinanceiroIntercompany = () => {
                     ['lucro_bruto', 'resultado_operacional', 'resultado_liquido'].includes(row.conta) ? 'bg-muted/30 font-bold' : ''
                   }>
                     <TableCell className="text-sm">{dreLabels[row.conta] || row.conta}</TableCell>
-                    <TableCell className="text-right text-sm">{fmt(row.bruto)}</TableCell>
+                    <TableCell className="text-right text-sm">{row.bruto === null ? '—' : fmt(row.bruto)}</TableCell>
                     <TableCell
                       className={`text-right text-sm ${row.eliminacoes ? 'text-status-error font-medium' : ''}`}
-                      title={row.eliminacoes === null ? 'Eliminação do CMV com sinal invertido na RPC — em correção' : undefined}
+                      title={row.eliminacoes === null ? 'Eliminação pendente: conciliação intercompany confirmada que não fecha' : undefined}
                     >
                       {row.eliminacoes ? fmt(row.eliminacoes) : '—'}
                     </TableCell>

@@ -6,6 +6,8 @@ import {
   FalhaCadastro,
   ehThrottlingOmie,
   ehSemConfirmacaoDoServidor,
+  DivergenciaCadastro,
+  divergenciaDaRpc,
   type DepsCadastro,
 } from '../cadastro-omie';
 
@@ -170,5 +172,103 @@ describe('ehThrottlingOmie', () => {
     expect(ehThrottlingOmie(new FalhaCadastro('omie', 'FALHA_OMIE: Rate limit'))).toBe(true);
     expect(ehThrottlingOmie(new Error('CNPJ inválido'))).toBe(false);
     expect(ehThrottlingOmie('x')).toBe(false);
+  });
+});
+
+/**
+ * Codex ALTO 3 do bloco 5 (migration 20261021120500): a RPC passou a ser idempotente pelo vínculo e recusa
+ * conflito com SQLSTATE própria. Conflito de identidade Radar×Omie é TERMINAL — nunca sucesso, nunca o
+ * "Gravar de novo" (que releria o vínculo antigo e o devolveria como "recuperado").
+ */
+describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)', () => {
+  // O erro do PostgREST chega como objeto PLANO (não Error) — a classificação é pela SQLSTATE, não pela mensagem.
+  const RD001 = { message: 'RADAR_VINCULO_DIVERGENTE: CNPJ 12345678000195 já vinculado ao cliente Omie 555, recebido 777', code: 'RD001', details: null, hint: null };
+  const RD002 = { message: 'RADAR_CODIGO_DE_OUTRO_CNPJ: cliente Omie 777 já vinculado a outro CNPJ (recebido para 12345678000195)', code: 'RD002', details: null, hint: null };
+
+  it('RPC recusa com RD001 → DivergenciaCadastro vinculo_divergente, etapa radar, SEM código para "Gravar de novo"', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw RD001; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
+    expect(err.message).toContain('RADAR_VINCULO_DIVERGENTE:');
+  });
+
+  it('RPC recusa com RD002 → DivergenciaCadastro codigo_de_outro_cnpj', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw RD002; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'radar', motivo: 'codigo_de_outro_cnpj', codigo: null, codigoRecebido: '777' });
+  });
+
+  it('a classificação é pela SQLSTATE: mesma mensagem com outro code segue falha comum (etapa radar COM código)', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw { ...RD001, code: 'P0001' }; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).not.toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'radar', codigo: '777' });
+    expect(divergenciaDaRpc({ code: 'RD001' })).toBe('vinculo_divergente');
+    expect(divergenciaDaRpc({ code: 'RD002' })).toBe('codigo_de_outro_cnpj');
+    expect(divergenciaDaRpc(new Error('RD001'))).toBeNull();
+    expect(divergenciaDaRpc(null)).toBeNull();
+  });
+
+  it('retomada com código conhecido K e vínculo relido V ≠ K → conflito, NUNCA "recuperado" com V', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' }).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
+  it('retomada com código conhecido IGUAL ao vínculo (espaços à parte) → recuperado, sem tocar Omie nem RPC', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => ' 777 ') });
+    const r = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' });
+    expect(r).toMatchObject({ jaExistia: true, recuperado: true });
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
+  it('edge acusa OMIE_LOOKUP_DIVERGENTE (lança) → DivergenciaCadastro lookup_divergente, etapa omie, sem gravar', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('OMIE_LOOKUP_DIVERGENTE (oben): o ListarClientes devolveu um cliente com OUTRO documento'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente', codigo: null, codigoRecebido: null });
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
+  it('edge devolve success:false com OMIE_LOOKUP_DIVERGENTE no corpo → mesmo conflito terminal', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => ({ success: false, error: 'OMIE_LOOKUP_DIVERGENTE (oben): outro documento' })) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente' });
+  });
+
+  // Codex (revisão do código, ALTA): a recusa RADAR_SEM_CONFIRMACAO_OMIE descartava K; a retentativa relia um
+  // vínculo V ≠ K e devolvia "recuperado" com V. K agora vai como EVIDÊNCIA (codigoVisto), sem reabrir o atalho.
+  it('sem confirmação guarda K como evidência (codigoVisto), sem habilitar o atalho (codigo null)', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw { message: 'RADAR_SEM_CONFIRMACAO_OMIE: …', code: 'P0001' }; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null, codigoVisto: '777' });
+  });
+
+  it('retentativa com codigoVisto K e vínculo relido V ≠ K → conflito, NUNCA "recuperado" com V', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true, codigoVisto: '777' }).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
+  it('retentativa SEM evidência e vínculo existente → recuperado (não há com o que comparar)', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
+    expect(r).toMatchObject({ codigo: '555', recuperado: true });
+  });
+
+  it('falha comum do Omie (rede/timeout) NÃO vira conflito — segue retentável', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect(err).not.toBeInstanceOf(DivergenciaCadastro);
   });
 });

@@ -24,7 +24,9 @@ export interface Config {
 }
 export const CONFIG_PADRAO: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
-  intervaloOportunidadeDias: 1, horizonteDias: 91, horizontePromoDias: 90,
+  // horizonte 60 (era 91): decisão do founder 2026-10-21 — com 91 a base sozinha furava a reserva em 30 dos 127
+  // disparados; com 60, 9 (reserva 30d mantida; o lado do compromisso não muda)
+  intervaloOportunidadeDias: 1, horizonteDias: 60, horizontePromoDias: 90,
 };
 
 /** R28/R30: idade (dias, pedido→data do ciclo) a partir da qual pedido sem NF (ou com NF sem título) deixa de ser "a faturar" — p90 medido de pedido→faturamento. */
@@ -50,7 +52,7 @@ export const PREMISSAS: string[] = [
   'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
   'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
-  'disparado ENCERRADO no Omie, APROVADO por nome em r59-exclusoes-aprovadas.ts (R59 v2: o filtro do Omie devolve o ciclo concluído, não só o cancelado; candidato não aprovado fica no caixa e sai em pendentesR59), com identificador Sayerlack (cContrato ou protocolo) e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador, em qualquer data) sai do compromisso (R59); sem identificador nunca sai (o substituto R58 não prova ausência); evidência contrato↔NF = itensRecebimento + cabeçalho de linha com NF + recebimento_associacao_sombra (persistente só desde 2026-10-18): NF de vários pedidos gravada na linha de OUTRO pedido antes disso, cujo raw_data o completo reescreveu, não é vista — por isso cada exclusão sai listada em foraDoCaixaR59 para revisão; só vale com a ÚLTIMA tentativa da passada de encerrados PUBLICADA, habilitada (após os controles positivo/negativo) e de no máximo 48h; o conjunto vem da tabela de publicação ∩ a coluna. LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
+  'disparado ENCERRADO no Omie, APROVADO por nome em r59-exclusoes-aprovadas.ts (R59 v2: o filtro do Omie devolve o ciclo concluído, não só o cancelado; candidato não aprovado fica no caixa e sai em pendentesR59), com identificador Sayerlack (cContrato ou protocolo) e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador, em qualquer data) sai do compromisso (R59); sem identificador nunca sai (o substituto R58 não prova ausência); cContrato COMPOSTO do próprio pedido Omie (2130311/2130322, pedido desdobrado na Sayerlack) nunca sai — vínculo NF↔pedido cego, listado em retidosCompostoR59; identificador e evidência casam também por componente (separados por barra, ponto e vírgula ou vírgula); evidência contrato↔NF = itensRecebimento + cabeçalho de linha com NF + recebimento_associacao_sombra (persistente só desde 2026-10-18): NF de vários pedidos gravada na linha de OUTRO pedido antes disso, cujo raw_data o completo reescreveu, não é vista — por isso cada exclusão sai listada em foraDoCaixaR59 para revisão; só vale com a ÚLTIMA tentativa da passada de encerrados PUBLICADA, habilitada (após os controles positivo/negativo) e de no máximo 48h; o conjunto vem da tabela de publicação ∩ a coluna. LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'NF de disparado sem NF no tracking (R57/R58): por contrato só se TODO identificador Sayerlack do pedido (cContrato, protocolo do portal) tem NF — reenvio sem NF pode estar em aberto; por substituto só se o pedido não tem identificador Sayerlack, o manual tem itens idênticos em até 21 dias, NF por contrato e dono fora do motor, com unicidade; a NF só vale se faturada ANTES do dia do ciclo; conciliar continua exigindo título as-of',
   'obsolescência = 0 no custo de carregamento',
@@ -74,6 +76,8 @@ export interface Fatos {
   }[];
   linhas: { raiz: number; pedido_id: number; sku_codigo_omie: string; qtde: Num; fator_embalagem_portal: Num; preco_unitario: Num; estoque_atual: Num; estoque_fisico: Num; ponto_pedido: Num; modo_promocao: string | null; preco_sem_desconto: Num }[];
   demanda: { sku: string; data: DataISO; qtde: Num }[];
+  /** R61: venda FÍSICA do próprio SKU (venda_items_history crua: sem substituição nem malha) — reconstrução e replay. */
+  demanda_fisica: { sku: string; data: DataISO; qtde: Num }[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
@@ -144,6 +148,23 @@ export function dataLocalSP(instante: string): DataISO {
   return `${partes.year}-${partes.month}-${partes.day}`;
 }
 
+const FMT_HORA_SP = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23' });
+/** Hora (0–23) do instante em America/Sao_Paulo. */
+export function horaLocalSP(instante: string): number {
+  const t = ts(instante);
+  if (!Number.isFinite(t)) throw new Error(`instante inválido: ${instante}`);
+  return Number(FMT_HORA_SP.formatToParts(new Date(t)).find((x) => x.type === 'hour')?.value);
+}
+
+/**
+ * R60: instante do `estoque_fisico` gravado pelo motor. Ele é lido NA GERAÇÃO do ciclo: gerado a partir do
+ * meio-dia (SP), o estoque já descontou a venda do próprio dia → fecha contra o fim de `data`; de manhã, contra o
+ * fim de `data − 1` (spec §7). Medido 2026-10-21: 223 de 279 ciclos são gerados à tarde (a maioria ~17h15), e
+ * deslocar as janelas entre leituras para o fim do dia levou Σ|resíduo| de 760 para 419 e as janelas exatas de
+ * 583 para 756 de 902 (−1 dia: 845; +2 dias: 786).
+ */
+export const HORA_FECHAMENTO_NO_DIA = 12;
+
 function exigir(v: Num, nome: string): number {
   if (v == null || !Number.isFinite(Number(v))) throw new Error(`${nome} ausente — rode o preVoo`);
   return Number(v);
@@ -186,6 +207,8 @@ export function preVoo(f: Fatos): string[] {
     else if (!(idadeH >= 0 && idadeH <= ENCERRADOS_IDADE_MAX_H)) falhas.push(`publicação de encerrados do Omie fora de ${ENCERRADOS_IDADE_MAX_H}h (R59) — conjunto velho não vale como o de hoje`);
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
+  if (!Array.isArray(f.demanda_fisica)) falhas.push('demanda_fisica ausente — fatos.sql antigo (R61)');
+  else if (f.demanda_fisica.some((d) => d.qtde == null)) falhas.push('demanda_fisica com qtde nula — reconstrução de estoque inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
   if (f.disparados.some((p) => p.valor_total == null)) falhas.push('disparados com valor_total nulo — compromissos inválidos');
   if (f.titulos_sayerlack.some((t) => t.valor == null)) falhas.push('titulos_sayerlack com valor nulo — conciliação inválida');
@@ -197,20 +220,30 @@ export function preVoo(f: Fatos): string[] {
  * Série diária de demanda do SKU entre [de, ate], com censura pelos dias de estoque reconstruído ≤ 0.
  * A reconstrução ancora no estoque de HOJE: monta [de, hoje], reconstrói para trás e só então recorta até `ate`.
  * Estoque de hoje ausente → série toda censurada e estoque NaN (nunca 0 fabricado).
+ *
+ * R61: o estoque deste SKU só baixa pela venda DELE. A reconstrução (e a `serieFisica`, do replay) usa a venda física
+ * crua; a `serie` da decisão segue com a demanda efetiva (substituição + malha), que é o que o motor enxerga.
+ * Medido 2026-10-21: reconstruir com a efetiva punha no SKU novo a venda que baixou o estoque do antigo.
  */
-function serieDoSku(f: Fatos, sku: string, de: DataISO, ate: DataISO): { serie: SerieDiaria; estoqueFim: number[] } {
+function serieDoSku(f: Fatos, sku: string, de: DataISO, ate: DataISO): { serie: SerieDiaria; serieFisica: SerieDiaria; estoqueFim: number[] } {
   const hoje = f.meta.hoje;
   const nTotal = diffDias(de, hoje) + 1;
   const n = diffDias(de, ate) + 1;
   if (nTotal < 1 || n < 1 || n > nTotal) throw new Error(`janela inválida ${de}..${ate} (hoje ${hoje})`);
   const atual = numOuNull(f.estoque.find((e) => e.sku === sku)?.estoque_fisico ?? null);
-  if (atual == null) return { serie: new Array(n).fill(null), estoqueFim: new Array(n).fill(Number.NaN) };
+  if (atual == null) return { serie: new Array(n).fill(null), serieFisica: new Array(n).fill(null), estoqueFim: new Array(n).fill(Number.NaN) };
   const dem = new Array<number>(nTotal).fill(0);
+  const fis = new Array<number>(nTotal).fill(0);
   const rec = new Array<number>(nTotal).fill(0);
   for (const d of f.demanda) if (d.sku === sku && d.data >= de && d.data <= hoje) dem[diffDias(de, d.data)] += exigir(d.qtde, 'demanda.qtde');
+  for (const d of f.demanda_fisica) if (d.sku === sku && d.data >= de && d.data <= hoje) fis[diffDias(de, d.data)] += exigir(d.qtde, 'demanda_fisica.qtde');
   for (const r of f.recebimentos) if (r.sku === sku && r.data >= de && r.data <= hoje) rec[diffDias(de, r.data)] += exigir(r.qtde, 'recebimentos.qtde');
-  const estoqueFim = reconstruirEstoque(atual, dem, rec);
-  return { serie: marcarCensura(dem, estoqueFim).slice(0, n), estoqueFim: estoqueFim.slice(0, n) };
+  const estoqueFim = reconstruirEstoque(atual, fis, rec);
+  return {
+    serie: marcarCensura(dem, estoqueFim).slice(0, n),
+    serieFisica: marcarCensura(fis, estoqueFim).slice(0, n),
+    estoqueFim: estoqueFim.slice(0, n),
+  };
 }
 
 /** Média e desvio-padrão amostral dos dias NÃO censurados da série as-of (R22). */
@@ -306,16 +339,38 @@ export function identificadoresR59(f: Fatos, p: Fatos['disparados'][number]): st
 /** O critério do R59 v1 (encerrado + identificador Sayerlack + nenhuma evidência de NF), antes da aprovação. */
 export function candidatoR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
   if (p.encerrado_omie !== true) return false;
+  // contrato COMPOSTO ('2130311/2130322' = a Sayerlack desdobrou o pedido) → vínculo NF↔pedido estruturalmente
+  // cego (0 de 14 compostos com NF na própria linha; o 1230 "Atendido total" no portal sem NF nenhuma no banco):
+  // ausência de NF não prova nada → fica no caixa, listado em retidosCompostoR59 (abstenção, não prova de NF)
+  if (contratoCompostoR59(f, p)) return false;
   // (o vínculo R57/R58 não entra: por contrato ele é coberto pelos identificadores abaixo, e o substituto só
   // existe para pedido SEM identificador, que nunca sai — a falsificação mostrou a camada redundante)
   if ((p.nfs ?? []).length > 0) return false;
-  const ids = new Set(identificadoresR59(f, p));
+  const ids = new Set(identificadoresR59(f, p).flatMap(componentesR59));
   // sem identificador Sayerlack não há como provar ausência de NF (o substituto R58 pode ter faturado, com NF
   // sem data ou com o raw_data reescrito pelo completo) → fica no caixa (Codex 3ª rodada P1)
   if (ids.size === 0) return false;
-  // evidência = os dois exportadores: o da conciliação (com data) e o sem filtro (NF sem data / fora da janela)
-  const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
+  // evidência = os dois exportadores: o da conciliação (com data) e o sem filtro (NF sem data / fora da janela),
+  // por COMPONENTE: NF de vários pedidos traz '2097502/2097504' no nNumPedCompra/sombra
+  const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato), ...(f.evidencia_nf_contratos ?? [])].flatMap(componentesR59));
   return ![...ids].some((c) => comNf.has(c));
+}
+
+/** R59: o texto inteiro aparado + as partes por '/', ';' ou ','. Espaço NÃO separa ('lucas 220126' é texto livre).
+ *  Só acrescenta casamentos ao da string inteira — usado apenas para VETAR candidato (lado conservador). */
+export function componentesR59(id: string): string[] {
+  const inteiro = id.trim();
+  return [inteiro, ...inteiro.split(/[/;,]/).map((x) => x.trim())].filter((x) => x !== '');
+}
+
+/** R59: o cContrato do PRÓPRIO pedido Omie (qualquer das duas coleções) tem '/' — pedido desdobrado na Sayerlack. */
+export function contratoCompostoR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
+  if (p.omie_pedido == null) return false;
+  const contratos = [
+    ...(f.pedidos_omie_sayerlack ?? []).filter((o) => o.codigo === p.omie_pedido).map((o) => o.contrato ?? ''),
+    ...(f.contratos_pedidos_omie ?? []).filter((o) => o.codigo === p.omie_pedido).map((o) => o.contrato),
+  ];
+  return contratos.some((c) => c.includes('/'));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
@@ -425,6 +480,7 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const data = ciclo.data_ciclo;
   // R52: as-of = a decisão do motor (geração), não o disparo humano
   const momento = ciclo.horario_geracao;
+  const fechaNoDia = horaLocalSP(momento) >= HORA_FECHAMENTO_NO_DIA;
   const status = statusEfetivo(ciclo);
   const reserva = reservaDe(f, data, momento, cfg.reservaDias);
   const asOf = lagsAsOf(f, data);
@@ -460,11 +516,13 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
       precoCheioPromocao: l.modo_promocao ? precoOuNull(l.preco_sem_desconto) : null,
     };
     const embs = quebrarEmEmbalagens(linha, { fretePerc: cfg.fretePerc, dataPagamento });
-    const { serie, estoqueFim } = serieDoSku(f, linha.sku, addDias(data, -180), addDias(data, -1));
+    // Até `data` só para o fechamento (R60); a série de demanda as-of continua até data−1 (R22).
+    const ateDia = serieDoSku(f, linha.sku, addDias(data, -180), data);
+    const serie = ateDia.serie.slice(0, -1);
 
-    // Erro de fechamento (spec §7): reconstrução no fim de data−1 × estoque_fisico gravado pelo motor.
+    // Erro de fechamento (spec §7 + R60): reconstrução no instante da leitura × estoque_fisico gravado pelo motor.
     const gravado = numOuNull(l.estoque_fisico);
-    const reconstruido = estoqueFim[estoqueFim.length - 1];
+    const reconstruido = ateDia.estoqueFim[ateDia.estoqueFim.length - (fechaNoDia ? 1 : 2)];
     const erro = gravado != null && Number.isFinite(reconstruido) ? reconstruido - gravado : null;
     const ok = erro != null && Math.abs(erro) <= Math.max(passoDaLinha(linha), 0.1 * Math.abs(gravado as number));
     fechamento.push({ sku: linha.sku, erro, ok });
@@ -567,9 +625,10 @@ function chegadaDoSku(f: Fatos, cicloId: number, sku: string, data: DataISO, L: 
 
 /** Replay com e sem `qtde` removida no dia `diaChegada`, de `data` até `ate`. */
 function replayComSem(f: Fatos, sku: string, qtde: number, data: DataISO, ate: DataISO, diaChegada: number, leadTime: number, pontoPedido: number | null) {
-  const { serie, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
+  // R61: o replay simula o estoque FÍSICO do SKU — a demanda que o esvazia é a venda dele mesmo
+  const { serieFisica, estoqueFim } = serieDoSku(f, sku, addDias(data, -1), ate);
   const estoqueInicial = estoqueFim[0];
-  const demanda = serie.slice(1);
+  const demanda = serieFisica.slice(1);
   const recebimentos = f.recebimentos
     .filter((r) => r.sku === sku && r.data >= data && r.data <= ate)
     .map((r) => ({ dia: diffDias(data, r.data), qtde: exigir(r.qtde, 'recebimentos.qtde') }));
@@ -762,6 +821,10 @@ export function backtest(f: Fatos, cfg: Config) {
     /** R59 v2: candidatos (encerrado, identificador, sem NF) NÃO aprovados — ficaram no caixa; revisar e aprovar por PR */
     pendentesR59: f.disparados.filter((p) => candidatoR59(f, p) && !aprovadoR59(f, p))
       .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, momento: p.momento, valor_total: p.valor_total, identificadores: identificadoresR59(f, p) }))
+      .sort((a, b) => a.id - b.id),
+    /** R59: encerrados sem evidência de NF RETIDOS no caixa por contrato composto (abstenção — vínculo cego, não NF provada) */
+    retidosCompostoR59: f.disparados.filter((p) => p.encerrado_omie === true && (p.nfs ?? []).length === 0 && contratoCompostoR59(f, p))
+      .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, identificadores: identificadoresR59(f, p) }))
       .sort((a, b) => a.id - b.id),
     ciclos,
     resumo: {

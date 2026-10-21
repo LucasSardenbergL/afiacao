@@ -583,7 +583,7 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
-db/test-radar-score.sh                      21  falsificar=14
+db/test-radar-score.sh                      24  falsificar=17
 # Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
 # (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
 # cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.
@@ -648,6 +648,12 @@ db/test-radar-rpcs-cnpj-alfanumerico.sh     38  falsificar=9
 # de documento, nota do front, sem idempotência, ACL sem revogar default privileges, PRE adota ledger preexistente,
 # PÓS sem forma, PÓS de md5, PRE sem atributos, TRAVA sem volatilidade.
 db/test-radar-cadastro-omie-confirmacao.sh  41  falsificar=11
+# Radar: radar_registrar_cadastro_omie IDEMPOTENTE pelo vínculo (20261021120500, empilhada sobre a 20261021120000 —
+# Codex ALTO 3 do bloco 5). Defeito aqui = retentativa duplica histórico, código diferente sobrescreve o vínculo em
+# silêncio, ou lote × ficha concorrentes gravam duas vezes. Prova com DUAS sessões (bloqueio observado em
+# pg_stat_activity): X/X, X/Y, Y/X, ROLLBACK de A, (A,K)×(B,K). 10 sabotagens: sem no-op, sem fence RD001, sem FOR
+# UPDATE, sem mapa RD002, sem índice, PRE aceita PROD, PÓS de md5, PRE sem ACL, TRAVA sem volatilidade, PÓS sem índice.
+db/test-radar-cadastro-omie-idempotente.sh  38  falsificar=10
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
@@ -718,6 +724,12 @@ db/test-venda-painel.sh                    19  falsificar=8
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
 db/test-venda-ondas23.sh                   44  falsificar=18
+# DRE consolidado intercompany (20261021120000): receita e CMV caem pelo MESMO valor eliminado, resultado
+# intacto; só par PROVADO elegível pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo valor,
+# sem cancelado/sem status, uso único, teto da categoria, snapshot fiel aos títulos atuais); confirmado não
+# elegível ⇒ NULL nas 4 linhas; mês/coluna sem snapshot ⇒ bruto NULL; escopo da soma parcial; gate staff e
+# ACL. 19 sabotagens (md5 reassinado).
+db/test-fin-consolidado-ic.sh              34  falsificar=19
 
 # Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
 # vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo

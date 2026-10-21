@@ -8,7 +8,7 @@
  *  4. useConfirmarVinculo — confirmar vínculo boletim↔SKUs (master)
  *  5. useDesvincularBoletim — remover vínculo específico (master)
  *
- * ⚠️ View e RPCs novas NÃO estão no types.ts gerado → cast `as never`
+ * A view e as RPCs estão no types.ts (regeneração do Lovable); sem cast.
  * (lição §10 CLAUDE.md — não editar types.ts).
  */
 
@@ -26,9 +26,8 @@ import {
   type VinculoLinha,
   keyDeSku,
 } from '@/lib/knowledge-base/spec-link';
+import { linhasCom } from '@/lib/linha-view';
 
-// Alias para o cast de RPC não-tipada (mesma convenção de useRadarAcoesLead.ts)
-type RpcFn = typeof supabase.rpc;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. useCurrentSpecsMap
@@ -45,21 +44,13 @@ export function useCurrentSpecsMap(account?: string) {
     queryKey: ['kb-current-specs', account],
     staleTime: 5 * 60_000,
     queryFn: async () => {
-      // Cast pra `any` no builder não-tipado — única forma de encadear .eq()
-      // condicionalmente sem que o strict-mode rejeite a reatribuição.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let query: any = supabase
-        .from('v_omie_product_current_spec' as never)
-        .select('*');
-      if (account) {
-        query = query.eq('account', account);
-      }
-      const { data: rows, error } = (await query) as {
-        data: CurrentSpec[] | null;
-        error: { message: string } | null;
-      };
+      let query = supabase.from('v_omie_product_current_spec').select('*');
+      if (account) query = query.eq('account', account);
+      const { data: rows, error } = await query;
       if (error) throw new Error(error.message);
-      return rows ?? [];
+      // A view perde o NOT NULL: a chave da ficha (conta, SKU, spec) é EXIGIDA — linha sem ela não
+      // vira ficha de ninguém (precisão > recall, docs/agent/knowledge-base.md).
+      return linhasCom(rows, ['account', 'omie_codigo_produto', 'kb_product_spec_id'], 'v_omie_product_current_spec');
     },
   });
 
@@ -78,10 +69,6 @@ export function useCurrentSpecsMap(account?: string) {
 // 2. useSpecLinks
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface LinkRow {
-  account: string;
-  omie_codigo_produto: number;
-}
 
 interface ProdutoRow {
   account: string;
@@ -109,13 +96,10 @@ export function useSpecLinks(specId?: string) {
       // (a) buscar os links confirmados
       const { data: linkRows, error: linkErr } = await (
         supabase
-          .from('omie_product_spec_links' as never)
+          .from('omie_product_spec_links')
           .select('account, omie_codigo_produto')
           .eq('kb_product_spec_id', specId!)
-          .eq('status', 'confirmed') as unknown as Promise<{
-          data: LinkRow[] | null;
-          error: { message: string } | null;
-        }>
+          .eq('status', 'confirmed')
       );
       if (linkErr) throw new Error(linkErr.message);
       if (!linkRows || linkRows.length === 0) return [];
@@ -126,10 +110,7 @@ export function useSpecLinks(specId?: string) {
         supabase
           .from('omie_products')
           .select('account, omie_codigo_produto, codigo, descricao')
-          .in('omie_codigo_produto', codes) as unknown as Promise<{
-          data: ProdutoRow[] | null;
-          error: { message: string } | null;
-        }>
+          .in('omie_codigo_produto', codes)
       );
       if (prodErr) throw new Error(prodErr.message);
 
@@ -166,13 +147,10 @@ export function useBuscarSkusCandidatos() {
   return useMutation<SkuCandidato[], Error, string[]>({
     mutationFn: async (termos: string[]) => {
       const { data, error } = await (
-        (supabase.rpc as RpcFn)(
-          'buscar_skus_candidatos' as never,
-          { p_termos: termos } as never,
-        ) as unknown as Promise<{
-          data: SkuCandidato[] | null;
-          error: { message: string } | null;
-        }>
+        supabase.rpc(
+          'buscar_skus_candidatos',
+          { p_termos: termos },
+        )
       );
       if (error) throw new Error(error.message);
       return data ?? [];
@@ -203,16 +181,13 @@ export function useConfirmarVinculo() {
   return useMutation<number, Error, ConfirmarArgs>({
     mutationFn: async ({ specId, skus }: ConfirmarArgs) => {
       const { data, error } = await (
-        (supabase.rpc as RpcFn)(
-          'confirmar_vinculo_boletim' as never,
+        supabase.rpc(
+          'confirmar_vinculo_boletim',
           {
             p_kb_product_spec_id: specId,
             p_skus: skus,
-          } as never,
-        ) as unknown as Promise<{
-          data: number | null;
-          error: { message: string } | null;
-        }>
+          },
+        )
       );
       if (error) throw new Error(error.message);
       return data ?? 0;
@@ -255,17 +230,14 @@ export function useDesvincularBoletim() {
       expectedSpecId,
     }: DesvincularArgs) => {
       const { data, error } = await (
-        (supabase.rpc as RpcFn)(
-          'desvincular_boletim' as never,
+        supabase.rpc(
+          'desvincular_boletim',
           {
             p_account: account,
             p_omie_codigo_produto: omie_codigo_produto,
             p_expected_kb_product_spec_id: expectedSpecId,
-          } as never,
-        ) as unknown as Promise<{
-          data: number | null;
-          error: { message: string } | null;
-        }>
+          },
+        )
       );
       if (error) throw new Error(error.message);
       return data ?? 0;

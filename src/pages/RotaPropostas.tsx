@@ -19,12 +19,13 @@ import {
   avaliarCotacaoProposta,
   formatarPrazoEntrega,
   type CotacaoProposta,
-  type CotacaoRow,
+  lerCotacao,
   type MotivoTravaLinha,
   type MotivoTravaGeral,
 } from '@/lib/whatsapp/proposta-cotacao';
 import { waPhoneCandidates } from '@/lib/whatsapp/inbound';
-import { enviarProposta, TEMPLATE_PROPOSTA, type SupabaseWhatsappProposta } from '@/services/whatsappProposta';
+import { enviarProposta, TEMPLATE_PROPOSTA } from '@/services/whatsappProposta';
+import { comNulo } from '@/lib/rpc-args';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { hojeSP } from '@/lib/time/sp-day';
@@ -86,11 +87,15 @@ async function cotarProposta(
   ])];
   const phoneKey = waPhoneCandidates(cliente.phone)[0] ?? null;
   const [cotRes, tplRes, convRes] = await Promise.all([
-    supabase.rpc('get_whatsapp_proposta_cotacao' as never, {
-      p_customer_user_id: cliente.customerUserId,
-      p_account: preview.account,
-      p_skus: skus,
-    } as never),
+    // `p_account` NULL não casa linha nenhuma → cotação vazia → o avaliador TRAVA (fail-closed, como antes).
+    supabase.rpc(
+      'get_whatsapp_proposta_cotacao',
+      comNulo<'get_whatsapp_proposta_cotacao', 'p_account'>({
+        p_customer_user_id: cliente.customerUserId,
+        p_account: preview.account,
+        p_skus: skus,
+      }),
+    ),
     supabase.from('whatsapp_templates').select('corpo_referencia, ativo').eq('nome', TEMPLATE_PROPOSTA).maybeSingle(),
     // o elo não pode apontar conversa de OUTRO cliente (telefone compartilhado/reutilizado)
     phoneKey
@@ -117,7 +122,7 @@ async function cotarProposta(
     cesta: preview.cesta,
     maxSecundarios: 3,
     crossSell: preview.crossSell,
-    cotacao: (cotRes.data ?? []) as unknown as CotacaoRow[],
+    cotacao: lerCotacao(cotRes.data ?? []),
     nomesPorSku: preview.nomesPorSku,
     prazoEntrega: prazo,
     primeiroNome,
@@ -248,7 +253,7 @@ function PropostaRow({ cliente, prazo }: { cliente: RouteContactItem; prazo: Pra
     setEnviando(true);
     try {
       const r = await enviarProposta({
-        supabase: supabase as unknown as SupabaseWhatsappProposta,
+        supabase,
         customerUserId: rev.envio.customerUserId,
         account: rev.envio.account,
         phoneE164: rev.envio.phoneE164,

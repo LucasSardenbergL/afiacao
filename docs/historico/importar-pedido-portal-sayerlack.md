@@ -115,3 +115,19 @@ caso algum pedido esteja lançado no portal da Sayerlack e não exista no Omie, 
   vivo no Omie). Não usar `status` do tracking para NF: o sync de PO reescreve `FATURADO` com `CRIADO`.
 - **Contrato composto** "1998739/1998740" (15 POs em prod) passou a contar os dois protocolos na varredura. A RPC
   (IP006, `btrim(contrato) = protocolo`) ainda compara inteiro — o filtro da varredura é quem pega.
+
+## 2026-10-19/21 — 1ª semana do cron em produção (varredura v1.2)
+
+- **Fim de semana** (17/10 12:30 → 18/10 22:30): 6 rodadas puladas por portal fechado, registro `sucesso`.
+- **19/10 12:30**: 23 lidos — 16 no app, 5 no Omie, 1 cancelado (2140501), **2140762 em `carencia_primeira_vista`**
+  (vista gravada às 15:30:17 UTC). Nada importado — a carência funcionou.
+- **19/10 17:30 e 22:30**: carência vencida, o cron chamou a importadora e ela **recusou** (tudo-ou-nada, "nada
+  gravado"): NCM 32091020 sem alíquota de IPI conhecida. Rodadas com `erro`, `sayerlack_varredura_falha` com 2
+  tentativas e **1 e-mail** (`notificado_em` = 1ª falha) — fail-closed como desenhado, nenhum PO pela metade.
+- **19/10 22:36**: pedido entrou **fora do cron** (sem execução registrada; botão "Importar do portal") →
+  `pedido_compra_sugerido` #3752, PO Omie **1298** (R$ 954,64), espelho com `numero_contrato_fornecedor = 2140762`
+  numa linha só (sem 2º PO).
+- **20/10 12:30 em diante**: 2140762 em `ja_no_app`, falha marcada `resolvido_em` pela própria rodada; 20/10 17:30 e
+  22:30 sem candidatos (`importados: []`, `falhas: []`).
+- **Lição**: o 1º pedido "novo" do portal travou na alíquota de IPI do NCM, não na varredura — NCM novo de item
+  Sayerlack ainda depende de cadastro manual; o e-mail é o aviso.

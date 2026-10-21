@@ -108,6 +108,97 @@ Publicação dos encerrados: seq 155, de 2026-10-20, habilitada. Aprovados (#318
 - **O portão segue FECHADO** (abaixo): precisão 89,1% < 95%, cobertura 19,2% < 50%, 70 ciclos inviáveis e 9 indeterminados.
 - **Rodar:** `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro com o banco sob carga. Gerar o `fatos.sql` com `set statement_timeout = '10min'` na frente (75–90s) e passar o JSON ao `simular.ts`.
 
+### Rodada de 2026-10-21: horizonte de 60 dias (mesmos fatos de 2026-10-20)
+
+**Decisão do founder (2026-10-21):** a guarda verifica a reserva em **60 dias**, não mais em 91. A reserva continua de 30 dias e o cenário continua sem vendas novas. Foi a opção escolhida de uma grade horizonte × reserva rodada sobre os mesmos fatos:
+
+| Disparados (127) | 91d · reserva 30 | **60d · reserva 30** | 45d · reserva 30 | 91d · reserva 15 |
+|---|---|---|---|---|
+| viável · inviável · indeterminado | 92 · 30 · 6 | **113 · 9 · 6** | 117 · 5 · 6 | 88 · 13 · 27 |
+| Aceito com guarda | 31,8% | **36,2%** | 37,4% | 26,9% |
+
+- **Todos os 279 ciclos:** 250 viáveis · 20 inviáveis · 9 indeterminados (com 91 dias eram 200 · 70 · 9). Indeterminados nos disparados: 1 por compromisso não conciliado e 5 por falta de snapshot, os mesmos de antes.
+- **Baixar a reserva piora o veredito.** O limiar do compromisso não conciliado é 10% da reserva: com 15 dias, os indeterminados sobem de 6 para 27.
+- **Sensibilidade da reserva com 60 dias** (disparados, inviáveis · indeterminados): 15d 0 · 27 · 30d 9 · 6 · 45d 29 · 5.
+- Precisão por episódio 88,8% e cobertura de 19,4%: o portão segue **FECHADO**.
+
+### Caixa indeterminado e cobertura do replay: o t4 que nunca chega (2026-10-21)
+
+- **Os 13 pedidos de maio/junho sem NF estão resolvidos** (psql-ro, 2026-10-20). Dos 36 disparados de maio/junho, 33 têm NF no tracking. Os 3 sem NF (1005, 1014 e 1049) são os cancelados que o R59 v2 tira do caixa. O caixa indeterminado já tinha caído para 9 de 279 na rodada de 2026-10-20.
+- **A cobertura de 19% vem do fechamento do estoque, não do caixa.** Os 107 SKUs ruins erram para CIMA: em 431 de 480 fechamentos ruins, o estoque reconstruído fica acima do gravado. O erro anda em degraus. Exemplo: o SKU 12101724100 tem os pedidos 1161 (NF 947706) e 1221 (NF 951654) com NF e **sem t4**, e as 16 unidades somem da reconstrução.
+- **Causa na fonte:** o backfill da `omie-sync-nfes-recebidas` grava `nid_receb` antes do recebimento e nunca volta à linha. São 81 linhas OBEN de julho a outubro com NF e sem t4. Correção: PR #3284 (v1.10, a revisita grava o t4 da NF conhecida e recebida). Imputar o t4 (emissão + 7 dias) levou a cobertura de 19,1% para 38,4% e os SKUs ruins de 107 para 90. É experimento, não resultado: o número real sai depois do deploy e do catch-up.
+- **Resíduos menores medidos:** a consolidação de demanda por substituição de SKU (`sku_substituicao`, 7 SKUs) põe no SKU novo a venda que baixou o estoque do antigo, cerca de 35 unidades. A malha PCP pesa só 3 dos 108 SKUs ruins.
+
+### Rodada de 2026-10-21 depois do t4 (fatos de 2026-10-21; horizonte de 60 dias)
+
+**Fonte corrigida e catch-up feitos.** A `omie-sync-nfes-recebidas` v1.10 (#3284) está no ar: a sonda atestou às 12:37 UTC, com o hash igual ao da main. O catch-up rodou em duas invocações, ambas com HTTP 200 e `erros=0`:
+- janela de 01/06 a 25/09: `t4_preenchidos=75` e `t4_nid_divergente=1`;
+- `revisita_dias=30`: `t4_preenchidos=9`.
+
+Linhas OBEN com NF desde junho e sem t4: **86 → 2**. Uma é o pedido 1150, com o nid de outro recebimento, que fica intocado por desenho. A outra é uma órfã que o Omie ainda marca como não recebida. Nenhum t4 ficou antes da emissão ou no futuro, e o lag mediano é de 5 dias. Em 2 NFs o t4 cai às ~21h e o app efetivou na manhã seguinte (1 dia de diferença).
+
+| | antes do t4 (fatos de 20/10) | **depois do t4 (fatos de 21/10)** |
+|---|---|---|
+| SKUs com fechamento ruim | 107/155 | **90/155** |
+| Episódios classificados | 48 | **93** |
+| Cobertura por episódio | 19,4% | **38,8%** |
+| Precisão por episódio | 88,8% | **82,6%** |
+| Estados, 279 ciclos (viável · inviável · indeterminado) | 250 · 20 · 9 | 250 · 17 · 12 |
+| Disparados | 113 · 9 · 6 | 113 · 8 · 7 |
+| Aceito com guarda | 36,2% | 33,9% |
+
+- **A cobertura bateu com o experimento** de imputação (38,4% previstos).
+- **A precisão caiu porque a amostra deixou de ser viesada.** Os 88,8% vinham só dos SKUs cujo estoque fechava. Separando por motivo do corte (episódios dos disparados, `precisaoPorEpisodio` com `cortesDetalhe` filtrado por `motivo`):
+
+  | Episódios por motivo | Precisão | Classificados | Cobertura |
+  |---|---|---|---|
+  | **econômico** (ΔV ≤ 0) | **94,5%** | 85 | 37,6% |
+  | econômico, sem chegada aproximada (R33) | 98,1% | 83 | 44,4% |
+  | **financeiro** (guarda de caixa) | **43,8%** | 9 | 52,9% |
+
+  Em valor, dos cortes classificados: econômico R$ 3,1 mil teria rompido contra R$ 75,6 mil adiado ou eliminado; financeiro **R$ 9,7 mil teria rompido contra R$ 7,6 mil adiado**. **O gate econômico funciona. Quem rompe estoque é o corte por caixa:** o que a guarda tira para caber na reserva faz falta depois em mais da metade dos episódios. **Mas o financeiro é praticamente UM ciclo:** todo o R$ 9,7 mil que teria rompido está no ciclo 1277 (23/07), onde a guarda cortou R$ 18,8 mil de 11 SKUs de um mesmo pedido, e 2 deles (8689743956 e 8689776554) romperiam. Os outros 7 ciclos com corte financeiro (23–28/07) somam R$ 9,5 mil, quase tudo indeterminado. Desde 28/07, com o horizonte de 60 dias, a guarda não faz nenhum corte financeiro. É evidência de UM evento, não de um padrão. Decisão pendente do founder, sem urgência porque a guarda quase não corta: o que ela deve fazer quando o caixa não comporta o pedido (cortar, escalar para aprovação humana ou só alertar).
+- **Indeterminados:** 9 por falta de snapshot (inclui o ciclo de hoje, cujo snapshot ainda não foi tirado) e 3 por compromisso não conciliado.
+- **O portão segue FECHADO.**
+
+### R60: o fechamento do estoque no instante da leitura (2026-10-21)
+
+O `estoque_fisico` que o motor grava é lido **na geração** do ciclo. A spec §7 comparava a reconstrução com o fim de `data − 1`, mas 223 de 279 ciclos são gerados à tarde (a maioria por volta das 17h15 SP), quando o estoque já descontou a venda do próprio dia.
+
+- **Medido (fatos de 2026-10-21):** resíduo entre leituras consecutivas do estoque gravado (Δestoque + demanda − recebimento), com as janelas deslocadas:
+
+  | Deslocamento | −1 dia | 0 (spec) | **+1 dia** | +2 dias |
+  |---|---|---|---|---|
+  | Σ\|resíduo\| | 845 | 760 | **419** | 786 |
+  | Janelas exatas (de 902) | 583 | 583 | **756** | 656 |
+
+  O resíduo líquido vai de 102 para 12. Deslocar os **recebimentos** (t4) para trás ou para a frente piora tudo: o `dRec` está certo.
+- **Regra:** ciclo gerado a partir das 12h SP fecha contra o fim do próprio dia; antes disso, contra o fim de `data − 1`. A série de demanda as-of continua até `data − 1` (R22).
+- **Efeito (mesmos fatos):** SKUs com fechamento ruim de 90 para **40**/155; cobertura por episódio de 38,8% para **47,5%**; precisão por episódio de 82,6% para 83,6%. Por motivo: **econômico 95,4%** (n=105, cobertura 46,5%) e financeiro 40,6% (n=10, quase tudo o ciclo 1277).
+- **Ressalva (viés de seleção do conjunto medido):** os 71 cortes econômicos que a R60 passou a medir (R$ 13,3 mil) têm **zero** rupturas, contra 7,6% dos 343 já medidos. A chance disso por acaso é de cerca de 0,4%. A R60 não usa o resultado do corte (o fechamento compara com o estoque gravado no momento da decisão), mas o conjunto medido **não é aleatório**: os SKUs que fecham tendem a ser os que o corte não rompe. Os 95,4% valem para os 46,5% medidos, e é por isso que o portão exige cobertura ≥ 50%.
+- Falsificação: forçar d−1, forçar d, cortar às 13h e vazar o dia `d` na série de demanda deram 4 de 4 vermelhos, com controle verde.
+- Hipóteses descartadas nesta rodada: NF de venda sem título no contas a receber (50 de 1.220; tirá-las só leva a cobertura de 38,8% para 39,8%) e o deslocamento do t4.
+
+### R61: o estoque baixa pela venda FÍSICA do próprio SKU (2026-10-21)
+
+A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substituicao`) e soma os componentes da malha PCP. Isso está certo para **decidir** a reposição, mas o estoque deste SKU só baixa pela venda **dele mesmo**.
+
+- **Regra:** a reconstrução do estoque e o replay usam a `demanda_fisica` (`venda_items_history` crua). A série da decisão (média, amostras, proteção) continua com a `demanda` efetiva, que é o que o motor enxerga. `demanda_fisica` ausente ou com `qtde` nula reprova o pré-voo.
+- **Efeito (fatos de 2026-10-21, com a R60):**
+
+  | | R60 | **R60 + R61** |
+  |---|---|---|
+  | SKUs com fechamento ruim | 40/155 | **35/155** |
+  | Cobertura por episódio | 47,5% | **50,4%** |
+  | Precisão por episódio | 83,6% | 84,3% |
+  | ↳ econômico | 95,4% (n=105) | **96,2% (n=111, cobertura 49,6%)** |
+  | ↳ financeiro | 40,6% (n=10) | 40,0% (n=11) |
+
+- **Viés de seleção:** os 34 cortes econômicos que passaram a ser medidos têm zero rupturas, contra uma taxa de base de 4,1% (17 em 410). O esperado seria cerca de 1,4, e a chance de zero por acaso é de cerca de 24%: nada significativo. Dez cortes já medidos mudaram de classe, porque o replay agora usa a venda física.
+- **Falsificação:** reconstruir com a efetiva, desligar os dois pré-voos e a decisão passar a usar a física deram 4 de 4 vermelhos, com controle verde.
+- **Os 17 inviáveis e o corte financeiro são a MESMA semana:** todos os inviáveis são ciclos de 23 a 28/07, o aperto de caixa de julho; desde 29/07, todo ciclo com veredito é viável. A janela é de 90 dias, então essa semana sai dela por volta de 27/10. Aí os inviáveis vão a 0 e o acerto geral tende ao do econômico. **Leitura honesta:** o portão abriria porque a semana difícil envelheceu, não porque a guarda provou que lida com aperto de caixa. A decisão sobre o que a guarda faz quando o caixa não comporta o pedido continua de pé.
+- **Indeterminados por snapshot (14 a 20/10):** a `fin-cashflow-engine` estourava o tempo lendo `v_titulo_baixas` com os três cenários em paralelo (`acoes_execucoes`: `FalhaLeituraCritica` 57014). Corrigido pela v1.9 (#3252), no ar desde 21/10 às 02:08Z, e o cron de 21/10 rodou 9 de 9. Snapshot não se refaz retroativamente: esses ciclos ficam indeterminados até saírem da janela, por volta de meados de janeiro.
+- **Portão: FECHADO**, mas agora só por três critérios: a precisão geral (84,3%, puxada pelo corte financeiro, quase todo o ciclo 1277), os 17 inviáveis e os 12 indeterminados (9 sem snapshot). A cobertura (50,4%) e o volume (120 episódios) já passam.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
@@ -128,62 +219,10 @@ Na rodada R31, a base de caixa sozinha, sem nenhuma candidata, já furava a rese
 
 ## O que o backtest diz sobre o cenário-guarda
 
-- **Hoje a guarda quase não dá veredito:** 264 dos 268 ciclos são indeterminados, 262 deles por compromisso não conciliado. A primeira decisão é sobre os 13 pedidos de maio/junho sem NF (acima).
-- **Quando dava veredito (rodada R31), a base sozinha furava a reserva** em julho e parte de agosto. Nesse caso a condição de reserva **como especificada** reprova o ciclo qualquer que seja o pedido, e por isso não serve para decidir compras.
+- **Desde 2026-10-20 a guarda dá veredito** em 270 de 279 ciclos (R59 v2 e os 13 pedidos resolvidos, acima).
+- **Quando a base sozinha fura a reserva**, a condição de reserva **como especificada** reprova o ciclo qualquer que seja o pedido, e por isso não serve para decidir compras. Com 91 dias, isso acontecia em 30 dos 127 disparados.
 
-A próxima decisão é do founder. Primeiro os 13 pedidos sem NF; depois, entre três caminhos para o cenário-guarda (sem ordem de preferência):
-
-1. **Calibrar um cenário de entrada de vendas:** substituir o "zero venda nova" por uma entrada conservadora medida.
-2. **Encurtar o horizonte:** verificar a reserva numa janela menor que 91 dias.
-3. **Baixar a reserva:** exigir menos que 30 dias de saídas.
-
-### Leitura (o que NÃO concluir)
-
-- **A precisão de 84,9% cobre só 19,1% dos episódios.** Ruptura em período censurado vira indeterminado por construção. A amostra é enviesada para SKUs que fecham o estoque e não romperam de verdade. Não ler como "o corte rompe em 15% dos casos" nem como "rompe pouco".
-- **"Econômico" domina o corte** porque o intervalo de oportunidade é 1 dia (premissa R49). A embalagem marginal só compra 1 dia de cobertura extra e perde para o custo de carregamento.
-- **Sem score não é corte do orçamento** (R48). Ele é revisão humana: entra no replay (conservador), mas não no valor cortado nem na precisão.
-
-## Falsificação (2026-10-15, refeita após a onda final R32–R53)
-
-Regras do laço:
-- Uma camada por vez.
-- Controle verde **antes e depois** na mesma invocação.
-- Confere que o `sed` casou (`git diff` não vazio).
-- Restaura com `git checkout --`.
-
-Rodado com `LC_ALL=C` e `LC_ALL=pt_BR.UTF-8`: **12/12 vermelho nos dois** (24/24), `git status` limpo ao fim.
-
-Para refazer, rode, para cada linha da tabela abaixo:
-1. `bun run test -- <teste>` (tem de dar verde);
-2. `sed -i '' '<sed>' <arquivo>`;
-3. `bun run test -- <teste>` (tem de dar vermelho);
-4. `git checkout -- <arquivo>`;
-5. `bun run test -- <teste>` (verde de novo).
-
-`M/` = `src/lib/reposicao/orcamento-compra/`; `S/` = `scripts/orcamento-compra/`.
-
-| # | Intenção | Arquivo | `sed` | Teste | Resultado |
-|---|---|---|---|---|---|
-| 1 | conciliação sem descontar título | `M/camadas.ts` | `s/const residuo = c.valor - titulado;/const residuo = c.valor;/` | `M/caixa.test.ts` | 5 failed / 28 |
-| 2 | avaliarEstado sem violação | `M/caixa.ts` | `s/if (primeiraViolacao === null && p.saldo < reserva)/if (false)/` | `M/caixa.test.ts` | 2 failed / 28 |
-| 3 | corte sem checar caixa | `M/corte.ts` | `s/if (!temAnterior(c) \|\| !cabe(\[fluxoDe(c)\]))/if (!temAnterior(c))/` | `M/corte.test.ts` | 3 failed / 27 |
-| 4 | atendidas sem backlog | `M/valor.ts` | `s/return Math.min(Q, backlog) + /return /` | `M/valor.test.ts` | 2 failed / 12 |
-| 5 | classificarCorte sem `teria_rompido` | `M/replay.ts` | `s/  if (sem.unidadesPerdidas > com.unidadesPerdidas + 1e-9) return 'teria_rompido';//` | `M/replay.test.ts` | 2 failed / 21 |
-| 6 | R28/R30: nunca "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;/const aFaturar = false;/` | `M/caixa.test.ts` | 3 failed / 28 |
-| 7 | R30: só pedido sem NF pode ser "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && /const aFaturar = c.nfs.size === 0 \&\& /` | `M/caixa.test.ts` | 1 failed / 28 |
-| 8 | R32: replay de uma embalagem só | `S/simular.ts` | `s/const qtde = doSku.reduce((s, x) => s + x.c.qtde, 0);/const qtde = doSku[0].c.qtde;/` | `S/simular.test.ts` | 3 failed / 56 |
-| 9 | R35: título fora da base desconta | `S/simular.ts` | `s/^    return 0;$/    return valor;/` | `S/simular.test.ts` | 1 failed / 56 |
-| 10 | R36: indeterminado não fecha o portão | `S/pagina.ts` | `s/if (indeterminados > PORTAO.indeterminadosMax)/if (false)/` | `S/pagina.test.ts` | 2 failed / 13 |
-| 11 | R40: continuidade cumulativa | `M/corte.ts` | `s/lagDias, aceito)\]/lagDias, 0)]/` | `M/corte.test.ts` | 2 failed / 27 |
-| 12 | R47: `n` NaN passa no portão | `S/pagina.ts` | `s/if (!finito(pe?.n) \|\| pe.n < PORTAO.nMin)/if (pe.n < PORTAO.nMin)/` | `S/pagina.test.ts` | 1 failed / 13 |
-
-(Na tabela, `\|` é o `|` escapado do Markdown: no shell o `sed` usa `|` literal.)
-
-## Perguntas abertas (spec §10)
-
-1. **Mínimo da Sayerlack**: por pedido no portal ou por NF? Qual valor? (a v1 simula com mínimo = 0, i.e. não modelado).
-2. Tabela Sayerlack 28/42/56d (encargo, parcela única/parcelado, desconto de 2%) — não usada na v1; registrada para a v2.
-3. O CP Sayerlack liquidado fica ~33% acima da compra disparada pelo motor (por mês): compras fora do motor? O backtest só mede o que passa pelo motor; o caixa usa o CP real.
+**Decidido (2026-10-21):** encurtar o horizonte para 60 dias (rodada acima). Ficaram de fora o cenário de entrada de vendas (não implementado) e baixar a reserva (que aumenta os indeterminados).
 
 ## Portão da v2 (re-executável — não é recado)
 
