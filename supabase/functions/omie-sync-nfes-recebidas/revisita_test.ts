@@ -108,12 +108,13 @@ function banco(
       Object.assign(l, patch);
       return Promise.resolve(true);
     },
-    preencherRecebimentoSemT4: (chave, t4Iso) => {
+    preencherRecebimentoSemT4: (chave, nIdReceb, t4Iso) => {
       preenchimentos.push(chave);
-      // espelha o UPDATE do index.ts: mesma chave, t4 nulo, status ≠ CANCELADO
-      const alvo = linhas.filter((l) => l.nfe_chave_acesso === chave && !l.t4_data_recebimento && l.status !== "CANCELADO");
-      for (const l of alvo) l.t4_data_recebimento = t4Iso;
-      return Promise.resolve(alvo.length);
+      // Aproximação do UPDATE de t4.ts — os PREDICADOS reais são provados em t4_test.ts; aqui só o fluxo.
+      const base = linhas.filter((l) => l.nfe_chave_acesso === chave && !l.t4_data_recebimento && l.status !== "CANCELADO");
+      const alvo = base.filter((l) => l.nid_receb == null || l.nid_receb === nIdReceb);
+      for (const l of alvo) Object.assign(l, { t4_data_recebimento: t4Iso, nid_receb: nIdReceb });
+      return Promise.resolve({ preenchidas: alvo.length, nidDivergente: base.length - alvo.length });
     },
   };
   return { porta, consultas, orfas, linhas, preenchimentos };
@@ -269,13 +270,15 @@ Deno.test("(j) NF conhecida e recebida preenche o t4 só das linhas da MESMA cha
     { id: "comT4", contrato: "2110003", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, t4_data_recebimento: "2026-08-20T09:00:00-03:00" },
     { id: "canc", contrato: "2110004", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CANCELADO" },
     { id: "outra", contrato: "2110005", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_OUTRA },
+    // chave trocada pelo laço principal, nid do recebimento ANTERIOR: não ganha a data desta NF
+    { id: "nidOutro", contrato: "2110006", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, nid_receb: 101 },
   ], { conhecidas: [947706] });
   const d = doc(947706, CHAVE_0935816, "000947706", ["2110001", "2110002"]);
   (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = REC;
   const r = await rodar([d], b);
   assertEquals(b.consultas, [], "conhecida não consulta");
-  assertEquals(b.linhas.map((l) => l.t4_data_recebimento ?? null), [REC, REC, "2026-08-20T09:00:00-03:00", null, null]);
-  assertEquals(r.t4_preenchidos, 2);
+  assertEquals(b.linhas.map((l) => l.t4_data_recebimento ?? null), [REC, REC, "2026-08-20T09:00:00-03:00", null, null, null]);
+  assertEquals([r.t4_preenchidos, r.t4_nid_divergente], [2, 1]);
   const r2 = await rodar([d], b);
   assertEquals(r2.t4_preenchidos, 0, "rodar de novo é no-op");
 });

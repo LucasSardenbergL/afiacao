@@ -28,7 +28,9 @@
 // recebimento concluído depois nunca vira t4 (81 linhas OBEN de jul–out/2026 com NF e sem t4, 15 delas
 // `efetivado` no próprio recebimento do app). A listagem traz `infoCadastro.cRecebido`/`dRec`, então a
 // NF CONHECIDA e recebida preenche o t4 das linhas com a MESMA chave e t4 nulo — sem consulta à Omie,
-// nunca sobrescreve um t4 gravado, nunca marca linha CANCELADA.
+// nunca sobrescreve um t4 gravado, nunca marca linha CANCELADA, nunca escreve linha cujo `nid_receb`
+// é de outro recebimento (t4.ts). A data é `dRec` (conclusão do recebimento): medido 2026-10-21, bate com
+// a efetivação do recebimento do app em 3/3; `dRegistro` é a emissão em 11/15 (e uma vez, lançado à mão).
 
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
@@ -60,8 +62,10 @@ export interface PortaRevisita extends Pick<PortaReconciliacao, "linhasDoPedido"
   consultar(nIdReceb: number): Promise<unknown>;
   /** A mesma órfã que o laço principal grava (`omie_codigo_pedido = -nIdReceb`). */
   inserirOrfa(doc: DocumentoRevisita): Promise<void>;
-  /** Grava o t4 nas linhas com ESTA chave, t4 nulo e status ≠ CANCELADO (compare-and-set). Devolve quantas. */
-  preencherRecebimentoSemT4(chave: string, t4Iso: string, agoraIso: string): Promise<number>;
+  /** t4 nas linhas desta chave e deste recebimento (t4.ts, compare-and-set). LANÇA em erro. */
+  preencherRecebimentoSemT4(
+    chave: string, nIdReceb: number, t4Iso: string, agoraIso: string,
+  ): Promise<{ preenchidas: number; nidDivergente: number }>;
 }
 
 export interface RevisitaSummary extends ContagemVinculo {
@@ -82,6 +86,8 @@ export interface RevisitaSummary extends ContagemVinculo {
   orfas_inseridas: number;
   /** Linhas que ganharam o t4 de uma NF conhecida e recebida (v1.10). */
   t4_preenchidos: number;
+  /** Linhas da MESMA chave, sem t4, com `nid_receb` de OUTRO recebimento: não escritas (Codex P1). */
+  t4_nid_divergente: number;
   puladas_por_tempo: number;
   erros: number;
   listagem_incompleta?: boolean;
@@ -102,6 +108,7 @@ export function novaRevisitaSummary(janela: string): RevisitaSummary {
     consultadas: 0,
     orfas_inseridas: 0,
     t4_preenchidos: 0,
+    t4_nid_divergente: 0,
     linhas_vinculadas: 0,
     ja_vinculadas: 0,
     conflito_outra_nf: 0,
@@ -233,7 +240,9 @@ export async function revisitarJanela(
       // Antes do vínculo por contrato: a NF conhecida pode já estar em TODAS as suas linhas e só faltar o t4.
       // A desconhecida não tem linha com a chave — o vínculo abaixo já grava o t4 pelo montarPatchVinculo.
       if (conhecida && m.recebida && m.data_recebimento_iso) {
-        out.t4_preenchidos += await porta.preencherRecebimentoSemT4(doc.chave, m.data_recebimento_iso, opcoes.agoraIso());
+        const t4 = await porta.preencherRecebimentoSemT4(doc.chave, doc.nIdReceb, m.data_recebimento_iso, opcoes.agoraIso());
+        out.t4_preenchidos += t4.preenchidas;
+        out.t4_nid_divergente += t4.nidDivergente;
       }
       const contratos = extrairPedidosDoDetalhe(fonte);
       if (conhecida && contratos.length === 0) { out.conhecidas_sem_contrato++; continue; }
