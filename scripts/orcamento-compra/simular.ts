@@ -11,7 +11,7 @@ import { dataPagamentoPrevista, passoDaLinha, quebrarEmEmbalagens, type LinhaMot
 import { amostrasEmpiricas, amostrasGaussianas, historicoSuficiente, marcarCensura, reconstruirEstoque, type SerieDiaria } from '@/lib/reposicao/orcamento-compra/demanda';
 import { quantidadeProtegida, valorDasEmbalagens, type ParamsValor } from '@/lib/reposicao/orcamento-compra/valor';
 import { fluxosDeSemanaAgregada, type EstadoCaixa, type Fluxo } from '@/lib/reposicao/orcamento-compra/caixa';
-import { conciliarCompromissos, projetarRitmo, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
+import { conciliarCompromissos, normalizarNf, projetarRitmo, ritmoPorDiaDoMes } from '@/lib/reposicao/orcamento-compra/camadas';
 import { cortar, type BaseCaixa, type Candidata, type ResultadoCorte } from '@/lib/reposicao/orcamento-compra/corte';
 import { classificarCorte, replaySku, type ClasseCorte } from '@/lib/reposicao/orcamento-compra/replay';
 import { vincularNfs, type NfVinculada, type ViaNf } from '@/lib/reposicao/orcamento-compra/vinculo-nf';
@@ -89,6 +89,11 @@ export interface Fatos {
    * de todo ciclo anterior desses SKUs (medido 2026-10-21: 2 NFs à tarde → 35 para 60 SKUs com fechamento ruim).
    */
   recebimentos_sem_t4: string[];
+  /**
+   * R65: menor t4 (recebimento) conhecido de cada NF no tracking — só NF com t4 não nulo. O título do CP Sayerlack
+   * nasce no recebimento: NF recebida DEPOIS do snapshot sem título as-of não é "não conciliada", é a faturar.
+   */
+  t4_por_nf: { nf: string; t4: string }[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
@@ -224,6 +229,8 @@ export function preVoo(f: Fatos): string[] {
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (!Array.isArray(f.falhas_snapshot)) falhas.push('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  if (!Array.isArray(f.t4_por_nf)) falhas.push('t4_por_nf ausente — fatos.sql antigo (R65)');
+  else if (f.t4_por_nf.some((x) => typeof x.t4 !== 'string' || Number.isNaN(ts(x.t4)))) falhas.push('t4_por_nf com t4 nulo ou inválido (R65)');
   if (!Array.isArray(f.recebimentos_sem_t4)) falhas.push('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
   else if (f.recebimentos_sem_t4.length > 0) {
     falhas.push(`${f.recebimentos_sem_t4.length} NF efetivada(s) no recebimento sem t4 no tracking (${f.recebimentos_sem_t4.slice(0, 5).join(', ')}) — rode depois da revisita da omie-sync-nfes-recebidas (R64)`);
@@ -394,6 +401,16 @@ export function contratoCompostoR59(f: Fatos, p: Fatos['disparados'][number]): b
   return contratos.some((c) => c.includes('/'));
 }
 
+/** R65: NFs cujo MENOR t4 conhecido é posterior ao instante (normalizadas). NF sem t4 nunca entra (ausente ≠ depois). */
+function nfsRecebidasDepoisDe(f: Fatos, instante: string): Set<string> {
+  const menor = new Map<string, number>();
+  for (const x of f.t4_por_nf ?? []) {
+    const k = normalizarNf(x.nf);
+    if (k !== '') menor.set(k, Math.min(menor.get(k) ?? Infinity, ts(x.t4)));
+  }
+  return new Set([...menor].filter(([, t]) => t > ts(instante)).map(([k]) => k));
+}
+
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
   const ausencias: string[] = [];
   // as-of: só vale snapshot tirado ATÉ o momento do ciclo (o de 07h do próprio dia não vale para ciclo das 05h)
@@ -456,6 +473,7 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
     // título sem desconto entra com 0: a NF fica "sem título" — a faturar se recente, senão não conciliada
     titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: descontoDe(t) })),
     data, lagPagamento, IDADE_A_FATURAR_DIAS,
+    nfsRecebidasDepoisDe(f, snap.snapshot_at),
   );
   fluxos.push(...conc.fluxos);
   if (conc.naoConciliado > 0.1 * reserva) ausencias.push('compromisso_nao_conciliado');
