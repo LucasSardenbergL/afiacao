@@ -21,21 +21,20 @@ import { margemConhecida } from '@/lib/scoring/margin';
  */
 export type AcessoMargemPlano = 'concedida' | 'restrita' | 'indisponivel';
 
-/** Colunas de `farmer_tactical_plans` legíveis por authenticated depois da 20261015120100 (38 de 41). */
+/**
+ * Colunas de `farmer_tactical_plans` legíveis por authenticated depois da 20261015120100 (38 de 41).
+ * Literal ÚNICO (não concatenado com `+`): só assim o supabase-js infere a linha do `.select()`;
+ * a concatenação vira `string` e a linha cai em `GenericStringError`.
+ */
 export const COLUNAS_PLANO_TATICO =
-  'id, farmer_id, customer_user_id, bundle_recommendation_id, health_score, churn_risk, mix_gap, ' +
-  'expansion_potential, strategic_objective, customer_profile, top_bundle, bundle_lie, bundle_probability, ' +
-  'bundle_incremental_margin, best_individual_lie, diagnostic_questions, implication_question, ' +
-  'offer_transition, probable_objections, approach_strategy, plan_followed, call_result, actual_margin, ' +
-  'call_duration_seconds, objection_type, notes, effectiveness_score, status, generated_at, used_at, ' +
-  'completed_at, created_at, updated_at, plan_type, approach_strategy_b, second_bundle, ltv_projection, ' +
-  'operational_risks';
+  'id, farmer_id, customer_user_id, bundle_recommendation_id, health_score, churn_risk, mix_gap, expansion_potential, strategic_objective, customer_profile, top_bundle, bundle_lie, bundle_probability, bundle_incremental_margin, best_individual_lie, diagnostic_questions, implication_question, offer_transition, probable_objections, approach_strategy, plan_followed, call_result, actual_margin, call_duration_seconds, objection_type, notes, effectiveness_score, status, generated_at, used_at, completed_at, created_at, updated_at, plan_type, approach_strategy_b, second_bundle, ltv_projection, operational_risks';
 
-export interface CenariosMargem {
+// `type`, não `interface`: vai para o `_payload` (Json) da `criar_plano_tatico` sem cast.
+export type CenariosMargem = {
   best_case_margin: number | null;
   likely_margin: number | null;
   worst_case_margin: number | null;
-}
+};
 
 export interface MargemPlano {
   acesso: AcessoMargemPlano;
@@ -46,14 +45,6 @@ export interface MargemPlano {
 
 /** Sem leitura (falha) — usado quando a RPC não respondeu. */
 export const MARGEM_PLANO_INDISPONIVEL: MargemPlano = { acesso: 'indisponivel', atual: null, cluster: null, cenarios: null };
-
-interface LinhaMargemPlano {
-  plan_id: string;
-  current_margin_pct: number | string | null;
-  cluster_avg_margin_pct: number | string | null;
-  expected_result: unknown;
-  margem_visivel: boolean;
-}
 
 function cenariosDe(v: unknown): CenariosMargem | null {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
@@ -76,12 +67,12 @@ function cenariosDe(v: unknown): CenariosMargem | null {
  */
 export async function buscarMargensPlanos(planIds: string[]): Promise<Map<string, MargemPlano>> {
   if (planIds.length === 0) return new Map();
-  const linhas = await fetchAllPages<LinhaMargemPlano>(
+  const linhas = await fetchAllPages(
     (de, ate) =>
       supabase
         .rpc('get_planos_margem', { p_plan_ids: planIds })
         .order('plan_id', { ascending: true })
-        .range(de, ate) as unknown as PromiseLike<{ data: LinhaMargemPlano[] | null; error: unknown }>,
+        .range(de, ate),
     'get_planos_margem',
   );
   const mapa = new Map<string, MargemPlano>();

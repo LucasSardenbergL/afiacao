@@ -62,14 +62,15 @@ export function useFinanceiroZone() {
         // fin_projecao_13_semanas é function (RPC), não tabela. Retorna 13 linhas
         // com saldo_projetado por semana — pegamos o último (semana 13 = saldo
         // final projetado).
-        // p_company=null no modo 'all' = projeção consolidada (a função trata NULL).
-        // Cast: tipo gerado não inclui null, mas PostgREST aceita em runtime.
-        const rpcParams = (mode === 'all' ? { p_company: null } : { p_company: primary }) as unknown as { p_company?: string };
-        const { data: proj } = await supabase.rpc('fin_projecao_13_semanas', rpcParams);
-        if (Array.isArray(proj) && proj.length > 0) {
-          const last = proj[proj.length - 1] as { saldo_projetado?: number | null };
-          projecao13Total = Number(last.saldo_projetado ?? 0);
-        }
+        // Modo 'all' = projeção consolidada: `p_company` tem DEFAULT NULL na prod, então omitir a
+        // chave é o mesmo NULL que a função trata como "todas".
+        const { data: proj } = await supabase.rpc(
+          'fin_projecao_13_semanas',
+          mode === 'all' ? {} : { p_company: primary },
+        );
+        const last = proj?.[proj.length - 1];
+        // Saldo NULL fica NULL ("—" na tela): antes `Number(null ?? 0)` fabricava R$ 0,00.
+        if (last) projecao13Total = last.saldo_projetado ?? null;
       } catch { /* */ }
 
       try {

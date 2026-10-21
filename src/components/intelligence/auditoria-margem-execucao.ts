@@ -40,7 +40,8 @@ export type LinhaAuditoria = {
   margin_gap: number | string | null;
   gap_pct: number | string | null;
   calculated_at: string;
-  created_at: string;
+  /** Nulável no banco (DEFAULT now(), sem NOT NULL); NULL nunca é "formato antigo". */
+  created_at: string | null;
 };
 
 export type Execucao = {
@@ -215,7 +216,7 @@ export async function lerUltimaExecucaoAuditoria(): Promise<LeituraExecucao | nu
 
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     const antes = await contar();
-    const linhas = await fetchAllPages<LinhaAuditoria>(
+    const linhas = await fetchAllPages(
       (de, ate) =>
         supabase
           .from('margin_audit_log')
@@ -223,7 +224,7 @@ export async function lerUltimaExecucaoAuditoria(): Promise<LeituraExecucao | nu
           .gte('calculated_at', desde)
           .lte('calculated_at', carimboMax)
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: LinhaAuditoria[] | null; error: unknown }>,
+          .range(de, ate),
       'margin_audit_log/ultima-execucao',
     );
     const depois = await contar();

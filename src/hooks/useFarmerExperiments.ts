@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Tables } from '@/integrations/supabase/types';
+import { exigirColunas } from '@/lib/linha-view';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
@@ -48,53 +50,50 @@ const METRIC_LABELS: Record<string, string> = {
   receita_incremental: 'Receita Incremental',
 };
 
-// ─── Row types ─────────────────────────────────────────────────────
-interface ExperimentRow {
-  id: string;
-  farmer_id: string;
-  title: string;
-  hypothesis: string;
-  primary_metric: Experiment['primary_metric'];
-  min_duration_days: number;
-  min_sample_size: number;
-  min_significance: number;
-  status: Experiment['status'];
-  winner: Experiment['winner'];
-  control_description: string | null;
-  test_description: string | null;
-  control_metric_value: number;
-  test_metric_value: number;
-  lift_pct: number;
-  p_value: number | null;
-  started_at: string | null;
-  ended_at: string | null;
-  created_at: string;
+// ─── Borda: linhas do banco → tipos da tela ────────────────────────
+// O gerador entrega os CHECKs (`primary_metric`, `status`, `winner`, `group_type`) como `string` e as
+// métricas numéricas como nuláveis (DEFAULT 0, sem NOT NULL). Antes um cast afirmava tudo; agora
+// vocabulário fora do CHECK e métrica NULL LANÇAM (NULL não vira 0 por `Number(null)`).
+const METRICAS = ['margem_por_hora', 'ltv', 'churn', 'receita_incremental'] as const;
+const VENCEDORES = ['controle', 'teste', 'inconclusivo'] as const;
+const GRUPOS = ['controle', 'teste'] as const;
+
+function doVocabulario<T extends string>(lista: readonly T[], v: string, onde: string): T {
+  const achado = lista.find((x) => x === v);
+  if (!achado) throw new Error(`${onde}: valor fora do CHECK (${v})`);
+  return achado;
 }
 
-interface ExperimentClientRow {
-  id: string;
-  experiment_id: string;
-  customer_user_id: string;
-  group_type: 'controle' | 'teste';
-  metric_value: number;
-  revenue_generated: number;
-  margin_generated: number;
-  calls_count: number;
-  total_time_seconds: number;
+// `switch`, não lista: o vocabulário de status do EXPERIMENTO divide palavras com o de pedido de venda
+// ('rascunho', 'cancelado'), e uma lista literal delas é o que o gate G5 do universo de pedidos caça.
+function statusDoExperimento(v: string): Experiment['status'] {
+  switch (v) {
+    case 'rascunho':
+    case 'ativo':
+    case 'concluido':
+    case 'cancelado':
+      return v;
+  }
+  throw new Error(`farmer_experiments.status: valor fora do CHECK (${v})`);
 }
 
-interface ClientScoreLite {
-  customer_user_id: string;
-  health_score: number | string | null;
-  priority_score: number | string | null;
+function experimentoDaLinha(l: Tables<'farmer_experiments'>): Experiment {
+  exigirColunas(l, ['control_metric_value', 'test_metric_value', 'lift_pct', 'created_at'], 'farmer_experiments');
+  return {
+    ...l,
+    primary_metric: doVocabulario(METRICAS, l.primary_metric, 'farmer_experiments.primary_metric'),
+    status: statusDoExperimento(l.status),
+    winner: l.winner === null ? null : doVocabulario(VENCEDORES, l.winner, 'farmer_experiments.winner'),
+  };
 }
 
-interface FarmerCallLite {
-  customer_user_id: string;
-  revenue_generated: number | string | null;
-  margin_generated: number | string | null;
-  duration_seconds: number | string | null;
-  follow_up_duration_seconds: number | string | null;
+function clienteDoExperimentoDaLinha(l: Tables<'farmer_experiment_clients'>): ExperimentClient {
+  exigirColunas(
+    l,
+    ['metric_value', 'revenue_generated', 'margin_generated', 'calls_count', 'total_time_seconds'],
+    'farmer_experiment_clients',
+  );
+  return { ...l, group_type: doVocabulario(GRUPOS, l.group_type, 'farmer_experiment_clients.group_type') };
 }
 
 export const useFarmerExperiments = () => {
@@ -115,7 +114,7 @@ export const useFarmerExperiments = () => {
         .from('farmer_experiments')
         .select('*')
         .eq('farmer_id', effectiveUserId)
-        .order('created_at', { ascending: false })) as unknown as { data: ExperimentRow[] | null };
+        .order('created_at', { ascending: false }));
 
       if (data) {
         // Load client counts em 1 query (antes era N+1: 1 select por experimento)
@@ -124,7 +123,7 @@ export const useFarmerExperiments = () => {
           ? ((await supabase
               .from('farmer_experiment_clients')
               .select('experiment_id, group_type')
-              .in('experiment_id', expIds)) as unknown as { data: Array<{ experiment_id: string; group_type: string }> | null })
+              .in('experiment_id', expIds)))
           : { data: [] as Array<{ experiment_id: string; group_type: string }> };
 
         // Agrupa client-side: experiment_id → { controle, teste }
@@ -136,7 +135,8 @@ export const useFarmerExperiments = () => {
           counts.set(c.experiment_id, existing);
         }
 
-        const enriched: Experiment[] = data.map((exp) => {
+        const enriched: Experiment[] = data.map((linha) => {
+          const exp = experimentoDaLinha(linha);
           const c = counts.get(exp.id) || { controle: 0, teste: 0 };
           return { ...exp, control_count: c.controle, test_count: c.teste };
         });
@@ -181,7 +181,7 @@ export const useFarmerExperiments = () => {
     const { data: clients } = (await supabase
       .from('farmer_client_scores')
       .select('customer_user_id, health_score, priority_score')
-      .eq('farmer_id', user.id)) as unknown as { data: ClientScoreLite[] | null };
+      .eq('farmer_id', user.id));
 
     if (!clients || clients.length < 2) {
       toast.error('Não há clientes suficientes para o experimento');
@@ -218,18 +218,20 @@ export const useFarmerExperiments = () => {
 
   const measureExperiment = useCallback(async (experimentId: string) => {
     // Load experiment
-    const { data: exp } = (await supabase
+    const { data: linhaExp } = (await supabase
       .from('farmer_experiments')
       .select('*')
       .eq('id', experimentId)
-      .single()) as unknown as { data: ExperimentRow | null };
-    if (!exp || !exp.started_at) return;
+      .single());
+    if (!linhaExp) return;
+    const exp = experimentoDaLinha(linhaExp);
+    if (!exp.started_at) return;
 
     // Load experiment clients with their call data
     const { data: expClients } = (await supabase
       .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
+      .eq('experiment_id', experimentId));
 
     if (!expClients?.length) return;
 
@@ -241,11 +243,13 @@ export const useFarmerExperiments = () => {
       .from('farmer_calls')
       .select('*')
       .in('customer_user_id', clientIds)
-      .gte('created_at', startDate)) as unknown as { data: FarmerCallLite[] | null };
+      .gte('created_at', startDate));
 
     // Aggregate per client
     const clientMetrics = new Map<string, { revenue: number; margin: number; calls: number; time: number }>();
     for (const call of calls || []) {
+      // O `.in('customer_user_id', …)` já exclui NULL no SQL; a guarda só o torna visível ao tipo.
+      if (!call.customer_user_id) continue;
       const existing = clientMetrics.get(call.customer_user_id) || { revenue: 0, margin: 0, calls: 0, time: 0 };
       existing.revenue += Number(call.revenue_generated || 0);
       existing.margin += Number(call.margin_generated || 0);
@@ -279,12 +283,13 @@ export const useFarmerExperiments = () => {
     }
 
     // Reload clients after update
-    const { data: updatedClients } = (await supabase
+    const { data: linhasAtualizadas } = (await supabase
       .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
+      .eq('experiment_id', experimentId));
 
-    if (!updatedClients?.length) return;
+    if (!linhasAtualizadas?.length) return;
+    const updatedClients = linhasAtualizadas.map(clienteDoExperimentoDaLinha);
 
     const controlGroup = updatedClients.filter((c) => c.group_type === 'controle');
     const testGroup = updatedClients.filter((c) => c.group_type === 'teste');
@@ -351,7 +356,7 @@ export const useFarmerExperiments = () => {
     const { data } = (await supabase
       .from('farmer_experiment_clients')
       .select('*')
-      .eq('experiment_id', experimentId)) as unknown as { data: ExperimentClientRow[] | null };
+      .eq('experiment_id', experimentId));
 
     if (!data) return [];
 
@@ -362,10 +367,10 @@ export const useFarmerExperiments = () => {
       .in('user_id', clientIds);
     const nameMap = new Map<string, string | null>((profiles || []).map(p => [p.user_id, p.name]));
 
-    return data.map((c) => ({
-      ...c,
-      customer_name: nameMap.get(c.customer_user_id) || 'Desconhecido',
-    }));
+    return data.map((linha) => {
+      const c = clienteDoExperimentoDaLinha(linha);
+      return { ...c, customer_name: nameMap.get(c.customer_user_id) || 'Desconhecido' };
+    });
   }, []);
 
   return {

@@ -22,7 +22,7 @@ export interface PedidoJanelaRow {
  * própria (`./fetch-pedidos-sem-nota`) — o gate do universo julga a forma desta cadeia.
  */
 export function fetchPedidosJanela(selection: CompanySelection, janela: Janela): Promise<PedidoJanelaRow[]> {
-  return paginarPorId<PedidoJanelaRow>('sales_orders (janela)', (cursor) => {
+  return paginarPorId('sales_orders (janela)', (cursor) => {
     let q = supabase
       .from('sales_orders')
       .select('id, total, customer_user_id, account')
@@ -32,9 +32,6 @@ export function fetchPedidosJanela(selection: CompanySelection, janela: Janela):
       .lt('order_date_kpi', janela.ate);
     if (selection !== 'all') q = q.eq('account', selection);
     if (cursor != null) q = q.gt('id', cursor);
-    return q.order('id', { ascending: true }).limit(PAGINA_JANELA) as unknown as PromiseLike<{
-      data: PedidoJanelaRow[] | null;
-      error: { message: string } | null;
-    }>;
+    return q.order('id', { ascending: true }).limit(PAGINA_JANELA);
   });
 }

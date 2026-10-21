@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { comNulo } from '@/lib/rpc-args';
 import { presetParaParams, digitosCnae } from '@/lib/radar/ui-helpers';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
@@ -46,16 +47,21 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
       // Se a leitura do lote falha, o ranking falha junto — contar sem saber o lote seria
       // voltar a contar a foto velha.
       const recorte = recorteDeLote(await lerLoteVigente(qc), modoLote);
-      // TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
-      const { data, error } = await (
-        supabase.rpc as (fn: string, args: unknown) => ReturnType<typeof supabase.rpc>
-      )('radar_contagem_por_municipio', {
-        ...params,
-        p_lote: recorte.ultimoLote,
-        p_primeira_vista_min: recorte.primeiraVistaMin,
-      });
+      // NULL explícito em todo filtro ausente (os testes do lote vigente fixam esse contrato: o
+      // recorte "sem lote" é NULL dito, não default implícito). Os args têm DEFAULT NULL na prod.
+      type FiltroNulo =
+        | 'p_uf' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_status'
+        | 'p_data_abertura_min' | 'p_data_abertura_max' | 'p_lote' | 'p_primeira_vista_min';
+      const { data, error } = await supabase.rpc(
+        'radar_contagem_por_municipio',
+        comNulo<'radar_contagem_por_municipio', FiltroNulo>({
+          ...params,
+          p_lote: recorte.ultimoLote,
+          p_primeira_vista_min: recorte.primeiraVistaMin,
+        }),
+      );
       if (error) throw error;
-      return (data ?? []) as unknown as RadarMunicipioContagem[];
+      return data ?? [];
     },
     staleTime: 60_000,
   });

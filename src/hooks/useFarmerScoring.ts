@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -18,20 +19,22 @@ type FarmerCallRow = Pick<
   'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
 >;
 type ProfileRow = Pick<Tables<'profiles'>, 'user_id' | 'name' | 'phone'>;
-type SalesOrderRow = Pick<
-  Tables<'sales_orders'>,
-  'id' | 'customer_user_id' | 'items' | 'total' | 'created_at' | 'order_date_kpi' | 'status'
->;
-
 // O jsonb real de sales_orders.items é pt-BR (omie_codigo_produto/quantidade/valor_unitario);
 // as chaves em inglês existiam no tipo mas nunca no dado — mantidas por compatibilidade.
 interface SalesOrderItem {
   product_id?: string;
   omie_codigo_produto?: number | string;
-  quantity?: number | string;
-  quantidade?: number | string;
-  unit_price?: number | string;
-  valor_unitario?: number | string;
+}
+
+/** Só as chaves que a resolução de produto usa, lidas por forma no jsonb `items`; item não-objeto = sem produto. */
+function itemDeMargem(item: Json): SalesOrderItem {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) return {};
+  const { product_id, omie_codigo_produto } = item;
+  return {
+    product_id: typeof product_id === 'string' ? product_id : undefined,
+    omie_codigo_produto:
+      typeof omie_codigo_produto === 'number' || typeof omie_codigo_produto === 'string' ? omie_codigo_produto : undefined,
+  };
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -163,7 +166,7 @@ export const useFarmerScoring = (farmerId?: string) => {
       // 1. Load all customers with sales orders (paginado: 30.834 pedidos na denylist).
       // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
       // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
-      const salesOrders = await fetchAllPages<SalesOrderRow>((de, ate) =>
+      const salesOrders = await fetchAllPages((de, ate) =>
         supabase
           .from('sales_orders')
           .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
@@ -174,7 +177,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
           .is('deleted_at', null)
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: SalesOrderRow[] | null; error: unknown }>,
+          .range(de, ate),
         'sales_orders/scoring',
       );
 
@@ -200,7 +203,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .select('user_id')
           .eq('excluir_da_carteira', true)
           .order('user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: { user_id: string }[] | null; error: unknown }>,
+          .range(de, ate),
         'cliente_classificacao/scoring',
       );
       const flaggeds = new Set<string>(flaggedRows.map((r) => r.user_id));
@@ -228,7 +231,7 @@ export const useFarmerScoring = (farmerId?: string) => {
           .select('customer_user_id')
           .eq('eligible', true)
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: { customer_user_id: string }[] | null; error: unknown }>,
+          .range(de, ate),
         'carteira_assignments/scoring',
       );
       const carteira = new Set<string>(carteiraRows.map((r) => r.customer_user_id));
@@ -321,25 +324,12 @@ export const useFarmerScoring = (farmerId?: string) => {
       // NÃO se usa aqui o `ehFalhaDePagina` do #1798 (que separa falha de LEITURA de BUG DE CÓDIGO
       // na mensagem): este catch é genérico e já declara a falha. Aplicar a distinção neste hook é
       // melhoria de MENSAGEM, não de fail-closed — escopo próprio, deliberadamente fora daqui.
-      const faixasData = await fetchAllPages<{
-        customer_user_id: string;
-        faixa: string;
-        g: number | string | null;
-        margem_pct: number | string | null;
-      }>(
+      const faixasData = await fetchAllPages(
         (de, ate) =>
           supabase
             .rpc('get_carteira_margem_faixa')
             .order('customer_user_id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{
-            data: Array<{
-              customer_user_id: string;
-              faixa: string;
-              g: number | string | null;
-              margem_pct: number | string | null;
-            }> | null;
-            error: unknown;
-          }>,
+            .range(de, ate),
         'get_carteira_margem_faixa/scoring',
       );
       const margemPorCliente = new Map<string, { faixa: FaixaMargem; g: number | null; pct: number | null }>();
@@ -354,13 +344,12 @@ export const useFarmerScoring = (farmerId?: string) => {
       // 2b. Mapa omie_codigo_produto → UUID. Os itens de pedido em produção são pt-BR e trazem
       // `omie_codigo_produto`, não `product_id` — sem este mapa, TODO item era descartado e os
       // componentes de margem (G) e de mix (X) do health score ficavam zerados para todo cliente.
-      type ProdutoOmieRow = { id: string; omie_codigo_produto: number | string | null };
-      const produtos = await fetchAllPages<ProdutoOmieRow>((de, ate) =>
+      const produtos = await fetchAllPages((de, ate) =>
         supabase
           .from('omie_products')
           .select('id, omie_codigo_produto')
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: ProdutoOmieRow[] | null; error: unknown }>,
+          .range(de, ate),
         'omie_products/scoring',
       );
       const omieToProductId = new Map<number, string>();
@@ -425,9 +414,7 @@ export const useFarmerScoring = (farmerId?: string) => {
         if (orderTime >= sixMonthsAgo) cd.spend180d += Number(order.total || 0);
 
         // Parse items for categories and margin
-        const items: SalesOrderItem[] = Array.isArray(order.items)
-          ? (order.items as unknown as SalesOrderItem[])
-          : [];
+        const items: SalesOrderItem[] = Array.isArray(order.items) ? order.items.map(itemDeMargem) : [];
         for (const pid of resolveProductIdsFromItems(items, omieToProductId)) {
           cd.categories.add(pid);
         }

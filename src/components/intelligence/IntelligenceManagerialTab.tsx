@@ -24,11 +24,6 @@ interface ScoreLinha {
   sales_history_status: string | null;
 }
 
-interface RecoLinha {
-  farmer_id: string;
-  status: string | null;
-}
-
 /**
  * Único rótulo de aceitação que `farmer_recommendations.status` permite — o CHECK da tabela é
  * ('pendente','ofertado','aceito','rejeitado','expirado'). O código comparava com `'aceita'`,
@@ -57,7 +52,7 @@ function IntelligenceManagerialTabImpl() {
           .from('farmer_client_scores')
           .select('customer_user_id, farmer_id, health_score, health_class, category_count, sales_history_status')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>[] | null; error: unknown }>,
+          .range(de, ate),
         'farmer_client_scores/intel-gerencial',
       );
       return anexarMargens(linhas, await buscarMargensScores());
@@ -94,12 +89,12 @@ function IntelligenceManagerialTabImpl() {
     // pedidos idênticos podiam render taxas de adoção diferentes, sem nada na tela indicando
     // que o denominador era amostral. `id` é a PK: ordem estável para paginar.
     queryFn: () =>
-      fetchAllPages<RecoLinha>((de, ate) =>
+      fetchAllPages((de, ate) =>
         supabase
           .from('farmer_recommendations')
           .select('farmer_id, status')
           .order('id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: RecoLinha[] | null; error: unknown }>,
+          .range(de, ate),
         'farmer_recommendations/intel-adocao',
       ),
   });

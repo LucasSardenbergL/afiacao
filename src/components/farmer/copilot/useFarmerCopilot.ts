@@ -5,7 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
-import { useCopilotEngine, type CopilotContext } from '@/hooks/useCopilotEngine';
+import type { Json } from '@/integrations/supabase/types';
+import { useCopilotEngine } from '@/hooks/useCopilotEngine';
 import { useTacticalPlan, type TacticalPlan } from '@/hooks/useTacticalPlan';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -84,7 +85,7 @@ export function useFarmerCopilot() {
   const prepareSessionContext = useCallback(async () => {
     let customerContext: Record<string, unknown> | null = null;
     let customerName = '';
-    let bundleContext: CopilotContext | undefined = undefined;
+    let bundleContext: Json | undefined = undefined;
 
     if (selectedCustomer) {
       // Opção A: 1 linha por cliente; sem filtro de farmer_id — o dropdown segue effectiveUserId,

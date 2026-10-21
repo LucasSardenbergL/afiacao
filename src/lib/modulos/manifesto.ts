@@ -866,6 +866,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/invoke-function.ts",
       "src/lib/leading-trailing-throttle.ts",
       "src/lib/linha-view.ts",
+      "src/lib/json-forma.ts",
       "src/lib/logger.ts",
       "src/lib/logger-migration.md",
       "src/lib/offline-cliente-do-dono.ts",

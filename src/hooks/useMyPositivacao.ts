@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { positivacaoDoJson } from '@/lib/positivacao/borda';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { rankAPositivar } from '@/lib/positivacao/ranking';
 import { pctPositivacao, pctCobertura, ticketMedio } from '@/lib/positivacao/format';
-import type { PositivacaoResumo, ClienteAPositivar } from '@/lib/positivacao/types';
+import type { ClienteAPositivar } from '@/lib/positivacao/types';
 
 export interface PositivacaoKpis {
   mes: string;
@@ -40,15 +41,12 @@ export function useMyPositivacao() {
     staleTime: 60_000,
     queryFn: async (): Promise<PositivacaoKpis | null> => {
       if (!user) return null;
-      const client = supabase as unknown as {
-        rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>;
-      };
       const { data, error } = isImpersonating && effectiveUserId
-        ? await client.rpc('get_minha_positivacao_for', { p_target: effectiveUserId })
-        : await client.rpc('get_minha_positivacao');
+        ? await supabase.rpc('get_minha_positivacao_for', { p_target: effectiveUserId })
+        : await supabase.rpc('get_minha_positivacao');
       if (error) throw new Error(error.message);
-      if (!data) return null;
-      const r = data as PositivacaoResumo;
+      const r = positivacaoDoJson(data);
+      if (!r) return null;
       return {
         mes: r.mes,
         totalEligible: r.total_eligible,

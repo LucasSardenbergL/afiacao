@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { EdgeFunctionError, invokeFunction } from '@/lib/invoke-function';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -34,7 +35,8 @@ export interface CopilotSession {
   customerId?: string;
   customerName?: string;
   startedAt: Date;
-  bundleContext?: CopilotContext;
+  /** O `top_bundle` do plano ativo, cru (jsonb): array de produtos do bundle, ou `{}`. Só repassado à edge. */
+  bundleContext?: Json;
   customerContext?: CopilotContext;
 }
 
@@ -99,7 +101,7 @@ export const useCopilotEngine = () => {
   const startSession = useCallback(async (params: {
     customerId?: string;
     customerName?: string;
-    bundleContext?: CopilotContext;
+    bundleContext?: Json;
     customerContext?: CopilotContext;
   }) => {
     if (!user?.id) return;
