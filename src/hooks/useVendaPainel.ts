@@ -4,9 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { CandidatoRepasse, PainelVenda } from '@/lib/venda-cliente/painel';
 import { lerCandidatos, lerPainel } from '@/lib/venda-cliente/painel-rpc';
 
-// As 4 RPCs entraram no types.ts à mão, no formato do gerador (o Lovable só regenera quando ELE
-// aplica a migration — docs/agent/database.md §tipos). Os dois retornos `jsonb` passam pela borda
-// `painel-rpc.ts`, que lê por forma e lança fora dela, em vez do cast que os afirmava.
+// As 4 RPCs estão no types.ts gerado. Os dois retornos `jsonb` passam pela borda `painel-rpc.ts`,
+// que lê por forma e lança fora dela, em vez do cast que os afirmava.
 
 /**
  * Painel do founder (`venda_painel`, master). `useAuth()` = usuário REAL: o painel é do
