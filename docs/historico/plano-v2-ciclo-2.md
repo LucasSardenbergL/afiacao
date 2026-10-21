@@ -81,7 +81,7 @@ A sessão irmã entregou caça (#3268), financeiro (#3272) e farmer-inteligencia
 
 ## Módulos congelados (2026-10-21, a pedido do founder)
 
-Depois do fecho da Frente A, o founder pediu os congelados também (1 PR por módulo). Saíram 108 casts literais e de retorno, e **`casts:stale` chega a 0/0, com piso 0, com o #3322** (o último lote, aberto quando este registro foi escrito). Não sobra nenhum cast literal sobre nome tipado no `src/`. Os módulos seguem congelados até 2027-01-10; isto é só tipo e borda.
+Depois do fecho da Frente A, o founder pediu os congelados também (1 PR por módulo). Saíram 108 casts literais e de retorno, e **`casts:stale` chega a 0/0, com piso 0** (medido na main `75a3c33cd`, depois do merge do #3322, o último lote). Não sobra nenhum cast literal sobre nome tipado no `src/`. Os módulos seguem congelados até 2027-01-10; isto é só tipo e borda.
 
 | PR | Módulo | Casts | O que o cast escondia (prod via psql-ro) |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Além disso, o último cast em módulo ativo (`useVendaPainel`) saiu no #3297, d
 
 **Gate:** com 0 casts, o piso `castsLiterais` não vigia mais cegueira. Quem segura a varredura são os outros 3 pisos (tabelas, funções, arquivos lidos), e o teste "abaixo do piso é CEGO" passou a provar isso por eles.
 
-**Codex sem cota** (89%, guard local exit 79, janela reabre em 27/10): as partes money-path (#3303 e #3322) foram pelo Caminho B, com revisão adversarial independente (subagente lendo pela ref remota e pela prod) e `REVISÃO INDEPENDENTE PENDENTE` no corpo do PR, para o Codex retroativo.
+**Codex sem cota** (89%, guard local exit 79, janela reabre em 27/10): as partes money-path (#3303 e #3322) foram pelo Caminho B, com revisão adversarial independente (subagente lendo pela ref remota e pela prod via psql-ro; no #3322 ela rodou depois do merge) e `REVISÃO INDEPENDENTE PENDENTE` no corpo do PR, para o Codex retroativo. Nenhum P0/P1 nas duas. No #3322 a borda do Prime não fabrica número (franquia e mensalidade nulas lançam), os vocabulários batem com os CHECKs da prod, os payloads de escrita são idênticos e as tabelas Prime têm 0 linhas. Ficou um P2 anterior ao PR, registrado e não mudado (módulo congelado): `ProductionOrders` não confere o `error` do `update` de `in_progress` e mostra sucesso mesmo quando falha.
 
 **Registrado, não mudado:** `ProducaoBomExcecoes` manda `componente_codigo ?? 0` para `fn_pcp_dispor_excecao`. É ausente virando 0, mas trocar muda o comportamento da disposição; fica para quando o módulo for descongelado.
 
