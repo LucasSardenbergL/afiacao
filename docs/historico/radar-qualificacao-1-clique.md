@@ -101,7 +101,7 @@ ainda não cruzada".
 | Camada | Estado | Quem |
 | --- | --- | --- |
 | Migration / edge | nenhuma | — |
-| Publish do Lovable (front) | ✅ no ar — `monitor-deploy.sh --pr 3231` e `--pr 3233` em 2026-10-21 06:24 UTC: `PR_NO_AR`, ar = main `f9028b4b` | founder (Publish) |
+| Publish do Lovable (front) | ✅ no ar — `monitor-deploy.sh --pr 3231` e `--pr 3233` em 2026-10-21 06:24 UTC (`PR_NO_AR`, ar = main `f9028b4b`); `--pr 3280` (paginação presa ao lote) em 2026-10-21 10:10 UTC (`PR_NO_AR`, ar = main `b80db29e`) | founder (Publish) |
 
 ## Follow-ups (fora deste bloco)
 
