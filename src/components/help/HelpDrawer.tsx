@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -54,16 +54,6 @@ export function HelpDrawer({ anchor, module, trigger }: HelpDrawerProps) {
   const routeMapping = getHelpMappingForRoute(location.pathname);
   const resolvedModuleSlug = module ?? routeMapping?.module;
   const resolvedAnchor = anchor ?? routeMapping?.anchor;
-
-  // ESC closes (Sheet handles it natively, kept here for completeness)
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
 
   // Sem override de prop e sem ajuda mapeada p/ a rota atual → não há o que
   // mostrar: esconde o botão "?" em vez de abrir um drawer "nenhuma seção
