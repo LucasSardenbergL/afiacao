@@ -29,6 +29,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { COMPANIES } from '@/contexts/CompanyContext';
+import type { TablesInsert } from '@/integrations/supabase/types';
 import { useUpsertAntecipacao } from '@/hooks/useAntecipacoes';
 import { custoOperacao, motivoFluxoRegistro } from '@/lib/financeiro/antecipacao-helpers';
 import type { Antecipacao, Company, TipoAntecipacao } from '@/lib/financeiro/antecipacao-types';
@@ -186,7 +187,7 @@ export function AntecipacaoFormDialog({
 
   const onSubmit = async (v: AntecipFormValues) => {
     const id = antecipacao?.id ?? crypto.randomUUID();
-    const payload: Partial<Antecipacao> & { company: Company } = {
+    const payload: TablesInsert<'fin_antecipacoes'> & { company: Company } = {
       id,
       company: v.company,
       banco: v.banco.trim() || null,

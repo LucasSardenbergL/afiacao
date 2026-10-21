@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,20 +16,19 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado } from '@/lib/financeiro/dre-helpers';
+import { empresasSemSnapshot, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-interface ConsolidadoRow {
-  dre_linha: string;
-  valor_bruto: number;
-  eliminacoes: number;
-  valor_liquido: number;
-}
 
 const FinanceiroIntercompany = () => {
   const [regras, setRegras] = useState<EliminacaoRegra[]>([]);
   const [loading, setLoading] = useState(true);
-  const [consolidado, setConsolidado] = useState<ConsolidadoRow[]>([]);
+  const [consolidado, setConsolidado] = useState<LinhaConsolidado[]>([]);
+  // Cobertura do consolidado: empresas SEM snapshot no mês (a RPC soma com COALESCE e não distingue
+  // "sem dado" de zero). null = não deu para ler os snapshots.
+  const [semSnapshot, setSemSnapshot] = useState<Company[] | null>(null);
+  // Troca rápida de mês/ano: só a resposta da leitura MAIS RECENTE pode escrever no estado.
+  const leituraAtual = useRef(0);
   // DRE fase 2: a RPC soma resultado sem carregar a pendência — o estado vem dos snapshots do mês.
   // 'erro' = não deu para ler; null = snapshots pré-fase 2 (nada declarado) — nenhum dos dois é "sem pendência".
   const [provisorioMes, setProvisorioMes] = useState<boolean | null | 'erro'>(null);
@@ -53,29 +52,38 @@ const FinanceiroIntercompany = () => {
   });
 
   const load = useCallback(async () => {
+    const leitura = ++leituraAtual.current;
+    const vigente = () => leitura === leituraAtual.current;
     setLoading(true);
+    setConsolidado([]);
+    setSemSnapshot(null);
     try {
       const data = await getEliminacoes();
+      if (!vigente()) return;
       setRegras(data);
-      // Load consolidado via RPC
-      try {
-        const { data: cons } = await supabase.rpc(
-          'fin_consolidado_intercompany' as never,
-          { p_ano: ano, p_mes: mes } as never,
-        );
-        setConsolidado((cons as unknown as ConsolidadoRow[]) || []);
-      } catch { /* RPC may not exist */ }
-      const { data: snaps, error: snapsErr } = await supabase
-        .from('fin_dre_snapshots')
-        .select('company, resultado_provisorio')
-        .eq('ano', ano).eq('mes', mes).eq('regime', 'competencia')
-        .limit(3);
+      const [{ data: cons, error: consErr }, { data: snaps, error: snapsErr }] = await Promise.all([
+        supabase.rpc('fin_consolidado_intercompany', { p_ano: ano, p_mes: mes }),
+        supabase
+          .from('fin_dre_snapshots')
+          .select('company, resultado_provisorio')
+          .eq('ano', ano).eq('mes', mes).eq('regime', 'competencia')
+          .limit(3),
+      ]);
+      if (!vigente()) return;
+      if (consErr) {
+        // Sem consolidado a seção some — nunca vira tabela de zeros.
+        toast.error('Não foi possível carregar o DRE consolidado', { description: consErr.message });
+      } else {
+        setConsolidado(paraLinhasConsolidado(cons ?? []));
+      }
       setProvisorioMes(snapsErr || snaps == null ? 'erro' : provisorioConsolidado(snaps.map((r) => r.resultado_provisorio)));
+      setSemSnapshot(snapsErr || snaps == null ? null : empresasSemSnapshot(ALL_COMPANIES, snaps.map((r) => r.company)));
     } catch (e) {
+      if (!vigente()) return;
       const message = mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.';
       toast.error('Erro', { description: message });
     } finally {
-      setLoading(false);
+      if (vigente()) setLoading(false);
     }
   }, [ano, mes]);
 
@@ -160,7 +168,8 @@ const FinanceiroIntercompany = () => {
       </div>
 
       {/* Consolidado with eliminations */}
-      {consolidado.length > 0 && (
+      {/* Nenhuma empresa com DRE no mês ⇒ os zeros da RPC são COALESCE, não resultado: a seção não aparece. */}
+      {consolidado.length > 0 && (semSnapshot === null || semSnapshot.length < ALL_COMPANIES.length) && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -170,7 +179,12 @@ const FinanceiroIntercompany = () => {
                 <span className="text-xs font-normal text-status-warning">resultado provisório (fora do DRE com composição pendente)</span>
               )}
               {provisorioMes === 'erro' && (
-                <span className="text-xs font-normal text-muted-foreground">status de composição indisponível (leitura falhou)</span>
+                <span className="text-xs font-normal text-muted-foreground">status de composição e cobertura por empresa indisponíveis (leitura falhou)</span>
+              )}
+              {semSnapshot !== null && semSnapshot.length > 0 && (
+                <span className="text-xs font-normal text-status-warning">
+                  soma parcial — sem DRE do mês: {semSnapshot.map((c) => COMPANIES[c].shortName).join(', ')}
+                </span>
               )}
             </CardTitle>
           </CardHeader>
@@ -186,19 +200,22 @@ const FinanceiroIntercompany = () => {
               </TableHeader>
               <TableBody>
                 {consolidado.map((row) => (
-                  <TableRow key={row.dre_linha} className={
-                    ['lucro_bruto', 'resultado_operacional', 'resultado_liquido'].includes(row.dre_linha) ? 'bg-muted/30 font-bold' : ''
+                  <TableRow key={row.conta} className={
+                    ['lucro_bruto', 'resultado_operacional', 'resultado_liquido'].includes(row.conta) ? 'bg-muted/30 font-bold' : ''
                   }>
-                    <TableCell className="text-sm">{dreLabels[row.dre_linha] || row.dre_linha}</TableCell>
-                    <TableCell className="text-right text-sm">{fmt(row.valor_bruto)}</TableCell>
-                    <TableCell className={`text-right text-sm ${row.eliminacoes !== 0 ? 'text-status-error font-medium' : ''}`}>
-                      {row.eliminacoes !== 0 ? fmt(row.eliminacoes) : '—'}
+                    <TableCell className="text-sm">{dreLabels[row.conta] || row.conta}</TableCell>
+                    <TableCell className="text-right text-sm">{fmt(row.bruto)}</TableCell>
+                    <TableCell
+                      className={`text-right text-sm ${row.eliminacoes ? 'text-status-error font-medium' : ''}`}
+                      title={row.eliminacoes === null ? 'Eliminação do CMV com sinal invertido na RPC — em correção' : undefined}
+                    >
+                      {row.eliminacoes ? fmt(row.eliminacoes) : '—'}
                     </TableCell>
                     <TableCell className={`text-right text-sm font-medium ${
-                      row.dre_linha === 'resultado_liquido'
-                        ? (row.valor_liquido >= 0 ? 'text-status-success' : 'text-status-error')
+                      row.conta === 'resultado_liquido' && row.consolidado !== null
+                        ? (row.consolidado >= 0 ? 'text-status-success' : 'text-status-error')
                         : ''
-                    }`}>{fmt(row.valor_liquido)}</TableCell>
+                    }`}>{row.consolidado === null ? '—' : fmt(row.consolidado)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

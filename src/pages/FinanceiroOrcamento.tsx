@@ -141,9 +141,9 @@ const FinanceiroOrcamento = () => {
   const currentMonth = new Date().getMonth() + 1;
   const meses = Array.from({ length: 12 }, (_, i) => i + 1);
 
-  const getReal = (linha: string, mes: number): number => {
+  const getReal = (linha: LinhaInput, mes: number): number => {
     const d = dre.find(r => r.mes === mes);
-    return d ? ((d as unknown as Record<string, number>)[linha] || 0) : 0;
+    return d ? d[linha] : 0;
   };
 
   const getOrc = (linha: string, mes: number): number => {
@@ -180,7 +180,7 @@ const FinanceiroOrcamento = () => {
     return dre.map(d => {
       const row: MesDRE = { mes: d.mes };
       for (const l of LINHAS_INPUT) {
-        const v = (d as unknown as Record<string, number | undefined>)[l];
+        const v = d[l];
         if (typeof v === 'number') row[l] = v;
       }
       return row;
@@ -191,7 +191,7 @@ const FinanceiroOrcamento = () => {
     return dreAnoAnterior.map(d => {
       const row: MesDRE = { mes: d.mes };
       for (const l of LINHAS_INPUT) {
-        const v = (d as unknown as Record<string, number | undefined>)[l];
+        const v = d[l];
         if (typeof v === 'number') row[l] = v;
       }
       return row;

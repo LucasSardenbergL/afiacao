@@ -1,11 +1,13 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Company } from "@/contexts/CompanyContext";
+import { linhasCom } from "@/lib/linha-view";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
+import { paraFinDRE } from "@/lib/financeiro/dre-borda";
 import { fetchAllPagesComMensagem } from "@/lib/postgrest";
 import type {
   FinAgingPagarView,
@@ -35,9 +37,9 @@ export interface FinContaPagar {
   id: string;
   company: string;
   omie_codigo_lancamento: number;
-  nome_fornecedor: string;
-  cnpj_cpf: string;
-  numero_documento: string;
+  nome_fornecedor: string | null;
+  cnpj_cpf: string | null;
+  numero_documento: string | null;
   data_emissao: string | null;
   data_vencimento: string | null;
   data_pagamento: string | null;
@@ -46,7 +48,7 @@ export interface FinContaPagar {
   saldo: number;
   status_titulo: string;
   categoria_codigo: string;
-  categoria_descricao: string;
+  categoria_descricao: string | null;
   tipo_documento: string | null;
   observacao: string | null;
 }
@@ -55,9 +57,9 @@ export interface FinContaReceber {
   id: string;
   company: string;
   omie_codigo_lancamento: number;
-  nome_cliente: string;
-  cnpj_cpf: string;
-  numero_documento: string;
+  nome_cliente: string | null;
+  cnpj_cpf: string | null;
+  numero_documento: string | null;
   numero_pedido: string | null;
   data_emissao: string | null;
   data_vencimento: string | null;
@@ -67,7 +69,7 @@ export interface FinContaReceber {
   saldo: number;
   status_titulo: string;
   categoria_codigo: string;
-  categoria_descricao: string;
+  categoria_descricao: string | null;
   vendedor_id: number | null;
 }
 
@@ -292,26 +294,34 @@ export interface ContasPage<T> {
   total: number;
 }
 
-async function listarContas<T>(
-  tabela: "fin_contas_pagar" | "fin_contas_receber",
+/** O que `listarContas` usa do builder (PostgrestFilterBuilder já com `select("*", { count: "exact" })`). */
+type ConsultaContas<R> = {
+  order(coluna: string, opts: { ascending: boolean }): ConsultaContas<R>;
+  range(de: number, ate: number): PromiseLike<{ data: R[] | null; error: { message: string } | null; count: number | null }>;
+};
+type FiltravelContas<Q> = {
+  eq(coluna: string, valor: string): Q;
+  gte(coluna: string, valor: string): Q;
+  lte(coluna: string, valor: string): Q;
+};
+
+function filtrarContas<Q extends FiltravelContas<Q>>(query: Q, company: Company | 'all', filtros?: ContasFiltros): Q {
+  let q = query;
+  if (company !== 'all') q = q.eq("company", company);
+  if (filtros?.status) q = q.eq("status_titulo", filtros.status);
+  if (filtros?.dataInicio) q = q.gte("data_vencimento", filtros.dataInicio);
+  if (filtros?.dataFim) q = q.lte("data_vencimento", filtros.dataFim);
+  return q;
+}
+
+async function listarContas<R extends { id: string }>(
+  // Builder NOVO por chamada (reusar instância entre requests é bug do supabase-js).
+  base: () => ConsultaContas<R>,
   contexto: string,
-  company: Company | 'all',
   filtros?: ContasFiltros,
-): Promise<ContasPage<T>> {
-  // Builder NOVO por chamada (reusar instância entre requests é bug do supabase-js);
+): Promise<ContasPage<R>> {
   // `.order("id")` desempata `data_vencimento` repetida — sem ordem TOTAL o `.range()`
   // pode repetir/pular linhas entre páginas (a 2ª metade da classe, #1580).
-  const base = () => {
-    let query = supabase
-      .from(tabela)
-      .select("*", { count: "exact" });
-    if (company !== 'all') query = query.eq("company", company);
-    if (filtros?.status) query = query.eq("status_titulo", filtros.status);
-    if (filtros?.dataInicio) query = query.gte("data_vencimento", filtros.dataInicio);
-    if (filtros?.dataFim) query = query.lte("data_vencimento", filtros.dataFim);
-    return query;
-  };
-
   if (filtros?.limit) {
     // Truncagem HONESTA: janela limitada + count exato do filtro no MESMO request —
     // o caller distingue "acabou" de "tem mais" e avisa na tela/CSV.
@@ -321,24 +331,24 @@ async function listarContas<T>(
     if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
     if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
     if (count == null) throw new Error(`Falha ao carregar ${contexto}: count=null com count:'exact'`);
-    return { rows: data as unknown as T[], total: count };
+    return { rows: data, total: count };
   }
 
   // Sem limite: o filtro INTEIRO, paginado contra a capa de 1.000 do PostgREST
   // (oben sozinha tem ~11k títulos de CP; single-shot devolvia os 1.000 primeiros
   // por vencimento como se fossem tudo — lista E export CSV nasciam truncados).
-  const rows = (await lerTodasAsPaginas((from, to) =>
+  const rows = await lerTodasAsPaginas((from, to) =>
     base()
       .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
       .range(from, to),
     contexto,
-  )) as unknown as T[];
+  );
   // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
   // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
   // com o total. Este resultado alimenta o CSV anunciado como "o filtro inteiro"; ID repetido
   // é a prova da deriva, e aí a resposta honesta é falhar e pedir nova tentativa (achado Codex:
   // 1.500 linhas, 1.499 IDs, CSV somando R$ 1.500 contra R$ 101.499).
-  const ids = new Set(rows.map((r) => (r as { id?: unknown }).id));
+  const ids = new Set(rows.map((r) => r.id));
   if (ids.size !== rows.length) {
     throw new Error(
       `Falha ao carregar ${contexto}: os títulos mudaram durante a leitura (${rows.length - ids.size} repetido(s)) — tente de novo`,
@@ -347,18 +357,37 @@ async function listarContas<T>(
   return { rows, total: rows.length };
 }
 
+// Colunas nullable no schema que o título EXIGE: dinheiro, status e categoria entram em soma/filtro, então
+// NULL LANÇA (nunca vira 0 nem some do total). Texto descritivo (nome, documento, cnpj, descrição) é
+// anulável e a tela mostra "—". Medido em prod (psql-ro, 2026-10-20): 0 NULL nestas colunas em 16.248
+// títulos de CP e 45.334 de CR.
+const EXIGIDAS_CP = ["valor_pago", "saldo", "status_titulo", "categoria_codigo"] as const;
+const EXIGIDAS_CR = ["valor_recebido", "saldo", "status_titulo", "categoria_codigo"] as const;
+
 export async function getContasPagar(
   company: Company | 'all',
   filtros?: ContasFiltros
 ): Promise<ContasPage<FinContaPagar>> {
-  return listarContas<FinContaPagar>("fin_contas_pagar", `contas a pagar (${company})`, company, filtros);
+  const contexto = `contas a pagar (${company})`;
+  const { rows, total } = await listarContas(
+    () => filtrarContas(supabase.from("fin_contas_pagar").select("*", { count: "exact" }), company, filtros),
+    contexto,
+    filtros,
+  );
+  return { rows: linhasCom(rows, EXIGIDAS_CP, contexto), total };
 }
 
 export async function getContasReceber(
   company: Company | 'all',
   filtros?: ContasFiltros
 ): Promise<ContasPage<FinContaReceber>> {
-  return listarContas<FinContaReceber>("fin_contas_receber", `contas a receber (${company})`, company, filtros);
+  const contexto = `contas a receber (${company})`;
+  const { rows, total } = await listarContas(
+    () => filtrarContas(supabase.from("fin_contas_receber").select("*", { count: "exact" }), company, filtros),
+    contexto,
+    filtros,
+  );
+  return { rows: linhasCom(rows, EXIGIDAS_CR, contexto), total };
 }
 
 export async function getAgingReceber(company: Company | 'all'): Promise<AgingData> {
@@ -406,7 +435,7 @@ export async function getDRE(
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data || []) as unknown as FinDRE[];
+  return (data || []).map(paraFinDRE);
 }
 
 /**
@@ -723,11 +752,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // sempre NULL — ver v_titulo_baixas). A view agrega PMR/PMP ponderado por valor +
     // a cobertura (fração dos liquidados com baixa derivável) por empresa.
     const COBERTURA_MIN = 0.4;
-    // view nova ainda não nos tipos gerados → `as never` (padrão do repo p/ views).
     // Erro aqui NÃO lança (≠ CR/CP/CC): prazo é acessório e null = "—" na UI,
     // que é degradação honesta — não fabrica número.
     const { data: prazos } = await supabase
-      .from("v_capital_giro_prazos" as never)
+      .from("v_capital_giro_prazos")
       .select("pmr, pmp, pmr_cobertura, pmp_cobertura")
       .eq("company", co)
       .maybeSingle();
@@ -741,9 +769,9 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // uma amostra não-representativa (ex: colacor ~9% — liquida sem movimento `mf`).
     // oben/sc têm ~100% → mostram PMR/PMP reais. NULL (não 0) evita o falso
     // "recebimento instantâneo".
-    const p = (prazos ?? {}) as { pmr?: number | null; pmp?: number | null; pmr_cobertura?: number | null; pmp_cobertura?: number | null };
-    const pmr = Number(p.pmr_cobertura ?? 0) >= COBERTURA_MIN && p.pmr != null ? Number(p.pmr) : null;
-    const pmp = Number(p.pmp_cobertura ?? 0) >= COBERTURA_MIN && p.pmp != null ? Number(p.pmp) : null;
+    const cobre = (c: number | null | undefined) => c != null && c >= COBERTURA_MIN;
+    const pmr = cobre(prazos?.pmr_cobertura) && prazos?.pmr != null ? prazos.pmr : null;
+    const pmp = cobre(prazos?.pmp_cobertura) && prazos?.pmp != null ? prazos.pmp : null;
 
     // Concentração top 5
     const crByClient = new Map<string, number>();
@@ -938,7 +966,7 @@ export function exportContasPagarCSV(data: FinContaPagar[], procedencia: Procede
   ];
   const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
   const rows = data.map(cp => [
-    cp.company, cp.nome_fornecedor, cp.cnpj_cpf, cp.numero_documento,
+    cp.company, cp.nome_fornecedor ?? '', cp.cnpj_cpf ?? '', cp.numero_documento ?? '',
     cp.data_emissao || '', cp.data_vencimento || '', cp.data_pagamento || '',
     cp.valor_documento, celulaBaixa(cp.valor_pago), celulaBaixa(cp.saldo), cp.status_titulo,
     cp.categoria_descricao || cp.categoria_codigo
@@ -954,7 +982,7 @@ export function exportContasReceberCSV(data: FinContaReceber[], procedencia: Pro
   ];
   const celulaBaixa = (v: number) => baixaOuIndisponivel(v, procedencia) ?? procedencia.motivo ?? '';
   const rows = data.map(cr => [
-    cr.company, cr.nome_cliente, cr.cnpj_cpf, cr.numero_documento,
+    cr.company, cr.nome_cliente ?? '', cr.cnpj_cpf ?? '', cr.numero_documento ?? '',
     cr.numero_pedido || '', cr.data_emissao || '', cr.data_vencimento || '',
     cr.data_recebimento || '', cr.valor_documento, celulaBaixa(cr.valor_recebido),
     celulaBaixa(cr.saldo), cr.status_titulo, cr.categoria_descricao || cr.categoria_codigo
@@ -1124,14 +1152,14 @@ export async function getDsoDpoColacor(hoje: Date = new Date()): Promise<DsoDpoR
 
 // ═══════════════ A2 — Retorno & Valor (contrato com fin-valor-engine) ═══════════════
 
-interface ValorKeDecomposto {
+type ValorKeDecomposto = {
   ancora: number;
   premio_risco_equity: number;
   premio_tamanho_private: number;
   premio_iliquidez_controle: number;
-}
+};
 
-export interface ValorInputs {
+export type ValorInputs = {
   ativo_fixo?: { valor: number; data_ref: string | null; fonte: 'book' | 'avaliacao' | 'reposicao' | 'seguro' | null; base: 'reposicao' | 'book' | null; operacional: boolean } | null;
   ajustes?: number;
   divida?: number | null;
@@ -1142,7 +1170,7 @@ export interface ValorInputs {
   prolabore_mercado_mensal?: number | null;
   aluguel_mercado_mensal?: number | null;
   intercompany_giro?: number | null;
-}
+};
 
 export interface ValorEmpresaResult {
   company: string;
@@ -1315,7 +1343,7 @@ export interface ProximaAcaoResult {
 // ═══════════════ Custo Marginal de Funding (contrato com fin-funding) ═══════════════
 import type { DecisaoTitulo, PlanoCobertura } from '@/lib/financeiro/funding-helpers';
 
-export interface FundingInputs {
+export type FundingInputs = {
   fontes: {
     antecipacao: {
       taxa_desconto_mensal_perc: number;
@@ -1335,7 +1363,7 @@ export interface FundingInputs {
   };
   reserva_dias_min: number;
   gap_estrutural_semanas_min: number;
-}
+};
 
 export interface FundingResult {
   company: string;
@@ -1357,7 +1385,7 @@ export type RegimeNome = 'simples' | 'presumido' | 'real';
 type StatusElegibilidade = 'elegivel' | 'sublimite_excedido' | 'inelegivel';
 export type StatusRecomendacao = 'recomenda' | 'empate_tecnico' | 'manter' | 'incompleto';
 
-export interface RegimeInputs {
+export type RegimeInputs = {
   folha_cpp_anual: number | null;
   massa_fator_r_anual: number | null;
   encargo_patronal_pct: number | null;
@@ -1366,7 +1394,7 @@ export interface RegimeInputs {
   credito_pis_cofins_estimado: number | null;
   receita_tributavel_pis_cofins_pct: number | null;
   anexo_simples: 'I' | 'II' | 'III' | 'IV' | 'V' | null;
-}
+};
 
 export interface RegimeComparado {
   regime: RegimeNome;

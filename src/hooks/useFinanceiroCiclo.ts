@@ -4,7 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
-import { normalizarResumo, num, type ResumoCliente, type ResumoClienteRow } from '@/lib/financeiro/ciclo-cliente-helpers';
+import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
@@ -18,12 +18,12 @@ export function useCicloResumo() {
     queryKey: ['financeiro', 'ciclo', 'resumo'],
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<ResumoCliente[]> => filaCiclo(async () => {
-      const linhas = await fetchAllPages<ResumoClienteRow>(
+      const linhas = await fetchAllPages(
         (de, ate) =>
           supabase.rpc('fin_ciclo_cliente_resumo').select('*')
             .order('company', { ascending: true })
             .order('omie_codigo_cliente', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: ResumoClienteRow[] | null; error: unknown }>,
+            .range(de, ate),
         'v_ciclo_cliente_resumo',
       );
       // Linha sem omie_codigo_cliente é descartada (sem chave não há cliente; evita a chave -1 do normalizador).
@@ -43,16 +43,16 @@ export function useCicloCoorte() {
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<CoorteMes[]> => filaCiclo(async () => {
       // .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre.
-      const data = await fetchAllPages<Record<string, unknown>>(
+      const data = await fetchAllPages(
         (de, ate) =>
           supabase.rpc('fin_ciclo_empresa_coorte').select('*')
             .order('company', { ascending: true }).order('mes_vencimento', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+            .range(de, ate),
         'fin_ciclo_empresa_coorte',
       );
       // Linha com dinheiro/chave ausente é DESCARTADA (nunca default fabricado): as 3 colunas vêm de coalesce(…,0) na view.
       const out: CoorteMes[] = [];
-      for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
+      for (const r of data) {
         const valorVencido = num(r.valor_vencido_no_mes);
         const valorPago = num(r.valor_pago);
         const valorEmAberto = num(r.valor_em_aberto);
@@ -86,7 +86,7 @@ export function useReceitaDiariaTtm() {
       const [a, m] = hoje.split('-').map(Number);
       const fimExclusivo = a * 100 + m; // mês corrente (excluído)
       const inicio = (a - 1) * 100 + m; // mesmo mês do ano anterior (incluído)
-      const linhas = await fetchAllPages<Record<string, unknown>>(
+      const linhas = await fetchAllPages(
         (de, ate) =>
           supabase.from('fin_dre_competencia_base').select('company, ano, mes, categoria_codigo, valor_total')
             .eq('origem', 'CR').gte('ano', a - 1)
@@ -95,7 +95,7 @@ export function useReceitaDiariaTtm() {
             .order('mes', { ascending: true })
             .order('categoria_codigo', { ascending: true, nullsFirst: true })
             .order('categoria_descricao', { ascending: true, nullsFirst: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+            .range(de, ate),
         'fin_dre_competencia_base/ciclo-ttm',
       );
       const soma: Record<Company, number | null> = { oben: null, colacor: null, colacor_sc: null };
@@ -134,12 +134,12 @@ export function useCicloTitulosCliente(company: Company | null, cliente: number 
     enabled: company !== null && cliente !== null,
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<TituloCliente[]> => filaCiclo(async () => {
-      const linhas = await fetchAllPages<Record<string, unknown>>(
+      const linhas = await fetchAllPages(
         (de, ate) =>
           supabase.rpc('fin_ciclo_titulos_cliente', { p_company: company as string, p_cliente: cliente as number }).select('*')
             .order('data_vencimento', { ascending: false })
             .order('omie_codigo_lancamento', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+            .range(de, ate),
         'v_ciclo_cr_titulos/cliente',
       );
       // Título sem chave/valor/prazo concedido (a view garante, mas ausente ≠ zero) é DESCARTADO, nunca default fabricado.
@@ -170,12 +170,12 @@ export function useCicloGiroSku(company: Company) {
     retryDelay: retryDelayCiclo,
     queryFn: (): Promise<GiroSku[]> => filaCiclo(async () => {
       // .rpc() set-returning é capado em 1.000 linhas (colacor tem ~1.460 SKUs com saldo) → paginar sempre.
-      const linhas = await fetchAllPages<Record<string, unknown>>(
+      const linhas = await fetchAllPages(
         (de, ate) =>
           supabase.rpc('fin_ciclo_giro_sku', { p_company: company }).select('*')
             .order('valor_parado', { ascending: false, nullsFirst: false })
             .order('omie_codigo_produto', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: Record<string, unknown>[] | null; error: unknown }>,
+            .range(de, ate),
         'fin_ciclo_giro_sku',
       );
       return linhas.map(normalizarGiro).filter((l): l is GiroSku => l !== null);

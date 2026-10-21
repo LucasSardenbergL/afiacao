@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { paraAlerta } from '@/lib/financeiro/borda-tabelas';
 
 export type Alerta = {
   id: string;
@@ -29,7 +30,7 @@ export function useCashflowAlertas(company: string) {
         .is('dismissed_at', null)
         .order('criado_em', { ascending: false });
       if (error) throw error;
-      return (data ?? []) as unknown as Alerta[];
+      return (data ?? []).map(paraAlerta);
     },
   });
 }
