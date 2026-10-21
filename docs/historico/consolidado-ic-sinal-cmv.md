@@ -23,8 +23,16 @@ eliminação identificada", não "não houve operação intercompany"**. Esse de
   guarda `detalhamento.composicao_receitas/despesas` por chave de categoria (`categoria_descricao`, senão
   `categoria_codigo`, senão `Sem categoria`), com a linha do DRE em que cada uma caiu. O par só elimina se
   a categoria do CR compôs **só** `receita_bruta` na origem e a do CP **só** `cmv` no destino, CR e CP no
-  mês, mesma empresa do par, nenhum cancelado, `valor_documento` igual e > 0, títulos criados antes do
-  cálculo do snapshot, cada título num par só, e o total eliminado de uma categoria ≤ o que ela compôs.
+  mês, mesma empresa do par, nenhum cancelado ou sem status (o `.neq` do motor exclui os dois),
+  `valor_documento` igual e > 0, cada título num par só, e o total eliminado de uma categoria ≤ o que ela
+  compôs.
+- **Snapshot fiel aos títulos de hoje** (achado do Codex ADVERSARIAL, P1): composição + `created_at` não
+  provavam que o título, com o valor ATUAL, entrou no snapshot — o sync pode mudar o valor depois do
+  cálculo, ou um CP pode entrar entre a leitura do motor e o carimbo `calculated_at`. A RPC recalcula a
+  soma atual de cada categoria com o recorte do motor (empresa, emissão no mês, status <> CANCELADO) e
+  exige que bata com a composição (folga de meio centavo para o float); senão o par pende. O teste de
+  `created_at` saiu: ficou redundante (a sabotagem dele não ficava vermelha). `updated_at` não serve —
+  o sync o toca em 99% dos títulos.
 - Par confirmado que toca o mês e **não** é elegível ⇒ eliminação e consolidado **NULL nas 4 linhas**
   (precisão > recall). A tela mostra "—" e o aviso "eliminação pendente".
 - Escopo da soma parcial: par com a origem ou o destino sem snapshot no mês é transação com quem está
@@ -39,8 +47,12 @@ pede outro motor de CMV, não esta RPC.
 ## Prova
 
 `db/test-fin-consolidado-ic.sh` (no núcleo do CI): migration REAL sobre o predecessor REAL (md5 do
-corpo vivo da prod conferido no próprio teste), 31 asserts, 17 sabotagens vermelhas com controle verde
-na mesma invocação, nos locales `C` e `pt_BR.UTF-8`.
+corpo vivo da prod conferido no próprio teste), 34 asserts, 19 sabotagens vermelhas com controle verde
+na mesma invocação, nos locales `C` e `pt_BR.UTF-8`. Os snapshots da semente são CALCULADOS dos títulos
+com o recorte do motor — semear a composição à mão tornaria a consistência impossível de testar.
+
+Codex: desenho = 405s · 116.530 tokens (sinal certo; 5 P1 de elegibilidade, todos tratados) · código =
+239s · 145.109 tokens (P1 snapshot × títulos atuais e P2 status NULL, ambos tratados).
 
 ## Lições
 
