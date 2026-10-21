@@ -10,7 +10,7 @@
 // LANÇA — a edge aborta antes de tocar `fin_ic_matches` (mapa incompleto apagaria pares reais).
 import { chamarOmie, fimDePaginacao, type RespostaOmie } from "../_shared/omie-cliente.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
-import { MAX_PAGINAS_LISTAGEM, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
+import { avaliarPagina, MAX_PAGINAS_LISTAGEM, proximoTotalPaginas } from "../_shared/omie-paginacao.ts";
 
 const URL_CLIENTES = "https://app.omie.com.br/api/v1/geral/clientes/";
 const REGISTROS_POR_PAGINA = 50;
@@ -73,14 +73,17 @@ export async function consultarCodigos(chamar: Chamar, c: Consulta): Promise<Res
     }
     const lista = r.corpo?.clientes_cadastro;
     if (!r.ok || r.faultstring !== null || !Array.isArray(lista)) throw falha(c, pagina, r);
-    total = proximoTotalPaginas(total, Number(r.corpo?.total_de_paginas ?? 1), MAX_PAGINAS_LISTAGEM);
+    // Total ausente/lixo degrada para o piso já visto (nunca encolhe o teto).
+    total = proximoTotalPaginas(total, Number(r.corpo?.total_de_paginas), MAX_PAGINAS_LISTAGEM);
+    const veredito = avaliarPagina(lista.length, pagina, total);
+    if (veredito === "anomalia") throw falha(c, pagina, r);
+    if (veredito === "fim") break;
     for (const reg of lista as Array<Record<string, unknown>>) {
       const codigo = Number(reg?.codigo_cliente_omie);
       const doc = normalizarDocumento(reg?.cnpj_cpf);
       if (doc === c.cnpjAlvo && Number.isSafeInteger(codigo) && codigo > 0) codigos.add(codigo);
       else descartados++;
     }
-    if (lista.length === 0 && pagina < total) throw falha(c, pagina, r);
   }
   return { ...c, codigos: [...codigos].sort((a, b) => a - b), descartados };
 }

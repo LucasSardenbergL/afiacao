@@ -127,17 +127,17 @@ Deno.serve(async (req: Request) => {
     //    Omie) não pode conhecer um cadastro do grupo que o Omie "não devolveu" — isso é filtro
     //    quebrado/parcial, e seguir apagaria os pares desse cadastro em silêncio.
     const empresaDoCnpj = new Map([...cnpjDe].map(([e, c]) => [c, e]));
-    const { data: mapa, error: mapaErr } = await supabase
-      .from("omie_customer_account_map")
-      .select("account, omie_codigo_cliente, evidence_document_normalized")
-      .eq("source", "document")
-      .in("evidence_document_normalized", [...cnpjDe.values()])
-      .limit(1000);
-    if (mapaErr || !mapa) {
-      return json({ versao: VERSAO, error: `omie_customer_account_map: ${mapaErr?.message ?? "sem resposta"}` }, 500);
-    }
+    const mapa = await fetchAll<{ account: string; omie_codigo_cliente: number | null; evidence_document_normalized: string }>(
+      (de, ate) =>
+        supabase.from("omie_customer_account_map")
+          .select("id, account, omie_codigo_cliente, evidence_document_normalized")
+          .eq("source", "document")
+          .in("evidence_document_normalized", [...cnpjDe.values()])
+          .order("id").range(de, ate),
+      "omie_customer_account_map",
+    );
     const contradicoes: string[] = [];
-    for (const m of mapa as Array<{ account: string; omie_codigo_cliente: number | null; evidence_document_normalized: string }>) {
+    for (const m of mapa) {
       const alvo = empresaDoCnpj.get(m.evidence_document_normalized);
       if (!alvo || alvo === m.account || m.omie_codigo_cliente === null) continue;
       if (contraparte.get(chaveContraparte(m.account, Number(m.omie_codigo_cliente))) !== alvo) {
