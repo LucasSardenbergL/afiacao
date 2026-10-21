@@ -1,5 +1,8 @@
 // Tipos compartilhados do replay TSB (estoque de segurança Sayerlack). Datas = 'YYYY-MM-DD' (ISO, dia de São Paulo).
 // Ausente é `null`, nunca 0 (money-path: ausente != zero).
+// Imports só de TIPO (apagados na compilação): sem ciclo em runtime com simulador/metricas.
+import type { GradeCusto } from './metricas';
+import type { Celula, Falta } from './simulador';
 
 export type Data = string;
 export type Classe = 'A' | 'B' | 'C';
@@ -154,4 +157,77 @@ export interface Parado {
   compradoUltimos90d: boolean;
   /** Classe efetiva no corte (R2); null = sem classe reconstruível. */
   classe: Classe | null;
+}
+
+// ── Evidência da tabela de decisão (spec §6.1; consumida por `estatistica.ts#avaliarCriterios`) ──────────────────
+
+/** Tamanho do bloco do bootstrap, em semanas (spec §5.8: 4 e 8, sensibilidade). */
+export type BlocoBootstrap = 4 | 8;
+
+/** Ponto (amostra inteira) e limites unilaterais de 95% (quantis 5% e 95% do bootstrap). null = sem dado. */
+export interface Intervalo {
+  ponto: number | null;
+  li: number | null;
+  ls: number | null;
+}
+
+/** O mesmo indicador com blocos de 4 e de 8 semanas; a tabela usa LI = min(LI4, LI8) e LS = max(LS4, LS8). */
+export type IntervaloPorBloco = Record<BlocoBootstrap, Intervalo>;
+
+/** Critérios 1 e 2 num cenário de falta (fração; Δ = alternativa − F0). */
+export interface EvidenciaServico {
+  falta: Falta;
+  /** Piso por classe: fill rate da alternativa + as linhas para o Clopper-Pearson (atendidas podem ser média das reps). */
+  pisos: { classe: Classe; fill: IntervaloPorBloco; atendidas: number | null; demandadas: number | null }[];
+  /** Não inferioridade nas 6 células (A, B, C, A_alt, B_alt, C_alt). */
+  naoInferioridade: { celula: Celula; delta: IntervaloPorBloco }[];
+}
+
+/** Redução relativa do estoque médio contra F0 (fração: 0,10 = 10%). */
+export interface EvidenciaCapital {
+  falta: Falta;
+  reducao: IntervaloPorBloco;
+}
+
+/** Critério 5 numa célula da grade × cenário de falta. Custo em R$ (positivo = alternativa vantajosa). */
+export interface EvidenciaEconomia {
+  falta: Falta;
+  grade: GradeCusto;
+  custo: IntervaloPorBloco;
+  /** R24: linhas/valor de canceladas sem cmc cuja margem entrou pelo limite (pior caso para a alternativa). */
+  linhasMargemLimitada: number;
+  valorMargemLimitada: number;
+  /** Denominadores para mostrar o limite em % (nunca R$ absoluto no relatório). */
+  linhasDemandadas: number | null;
+  valorDemandado: number | null;
+}
+
+export type VereditoReplay = 'GO' | 'NO-GO' | 'INCONCLUSIVO';
+
+/** Tudo o que a tabela §6.1 lê. Listas vazias ou campos null viram INCERTO (sem dado ≠ aprovado). */
+export interface Evidencia {
+  /** Critérios 1 e 2: obrigatórios os dois extremos de falta (`CENARIOS_FALTA.servico`). */
+  servico: EvidenciaServico[];
+  /** Critério 3. */
+  capital: EvidenciaCapital[];
+  /** Critério 4: LT `max(LT,15)`, serviço como em 1 e 2 e redução de capital. */
+  estresse: { servico: EvidenciaServico[]; capital: EvidenciaCapital[] };
+  /** Critério 5: toda a grade em cada cenário de `CENARIOS_FALTA.economia`. */
+  economia: EvidenciaEconomia[];
+  /** Linhas da avaliação por célula de 1 e 2 (null = não medido). */
+  exposicao: { celula: Celula; linhas: number | null }[];
+  /** Meia largura MC (fração) com as replicações usadas; null = não medida. */
+  precisao: {
+    replicacoes: number;
+    teto: number;
+    meiaLarguraServico: number | null;
+    alvoServico: number;
+    meiaLarguraEstoque: number | null;
+    alvoEstoque: number;
+  };
+  /**
+   * Veredito em cada estado inicial plausível (§5.2: reconstruido+ajuste, piso_zero), cada um calculado SEM esta linha.
+   * null = não avaliado.
+   */
+  estadosIniciais: { rotulo: string; veredito: VereditoReplay | null }[] | null;
 }
