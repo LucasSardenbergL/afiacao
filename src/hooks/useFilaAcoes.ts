@@ -13,7 +13,8 @@ export type FonteFila = 'recompra' | 'mix-gap';
 
 /**
  * A fila única do Meu Dia. Fonte principal: `recompra` (lista gerada no servidor,
- * `venda_minhas_sugestoes`). `mix-gap` segue até a Onda 2 levá-lo para dentro da ficha.
+ * `venda_minhas_sugestoes`). `mix-gap` segue como item solto só até a Onda 2 ligar no servidor:
+ * aí o complemento vive DENTRO da ficha ("Oferecer também") e o item solto sai da fila.
  *
  * Desligadas enquanto vigorar o congelamento M-41 (telefonia/WhatsApp/rota/tarefas, até
  * 2027-01-10): `rota`, `tarefa` e `whatsappPendente` consultavam tabelas vazias e geravam
@@ -32,23 +33,24 @@ export function useFilaAcoes(): {
   const recompra = useMinhasSugestoes();
   const mixgap = useMyMixGap();
   const estado = recompra.estado;
+  const mixgapNaFicha = estado.tipo === 'pronta' && estado.resp.ondas.complemento;
 
   const acoes = useMemo(() => {
     const todas: AcaoSugerida[] = [
       ...adaptarRecompra(estado.tipo === 'pronta' ? estado.resp : null),
-      ...mixGapParaAcoes(mixgap.data ?? null),
+      ...(mixgapNaFicha ? [] : mixGapParaAcoes(mixgap.data ?? null)),
     ];
     return rankearFila(dedupe(todas));
-  }, [estado, mixgap.data]);
+  }, [estado, mixgap.data, mixgapNaFicha]);
 
   // Erro ≠ dia limpo: falha de RLS/rede em qualquer fonte NÃO vira lista vazia que afirma
   // "carteira em dia" (falso-verde num motor de receita).
   const fontesComErro = useMemo<FonteFila[]>(() => {
     const f: FonteFila[] = [];
     if (estado.tipo === 'erro') f.push('recompra');
-    if (mixgap.isError) f.push('mix-gap');
+    if (mixgap.isError && !mixgapNaFicha) f.push('mix-gap');
     return f;
-  }, [estado.tipo, mixgap.isError]);
+  }, [estado.tipo, mixgap.isError, mixgapNaFicha]);
   const isError = fontesComErro.length > 0;
 
   useEffect(() => {
@@ -67,7 +69,7 @@ export function useFilaAcoes(): {
 
   return {
     acoes,
-    isLoading: estado.tipo === 'carregando' || mixgap.isLoading,
+    isLoading: estado.tipo === 'carregando' || (!mixgapNaFicha && mixgap.isLoading),
     isError,
     fontesComErro,
     recompra: estado,

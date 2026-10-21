@@ -16,9 +16,10 @@ const pronta: EstadoRecompra = {
   tipo: 'pronta',
   resp: {
     dia: '2026-10-21',
+    ondas: { complemento: false, preco: false },
     compradores: [{
       compradorId: 'c1', nome: 'A', telefone: null, motivoEntrada: 'maior atraso da carteira', valorRefTotal: null,
-      sugestoes: [{ id: 's1', tipo: 'recompra', empresa: 'oben', omieCodigoProduto: 1, descricao: null, familia: null, qtdRef: null, valorRef: null, precoAlvo: null }],
+      sugestoes: [{ id: 's1', tipo: 'recompra', empresa: 'oben', omieCodigoProduto: 1, descricao: null, familia: null, qtdRef: null, valorRef: null, precoAlvo: null, cadenciaDias: null }],
     }],
   },
 };
@@ -61,4 +62,20 @@ describe('useFilaAcoes', () => {
     expect(result.current.isLoading).toBe(false);
     expect(result.current.recompra.tipo).toBe('onda_desligada');
   });
+
+  it('Onda 2 ligada no servidor: o Mix/Gap sai da fila (vive na ficha) e o erro dele não vira erro da fila', () => {
+    const ligada: EstadoRecompra = pronta.tipo === 'pronta'
+      ? { tipo: 'pronta', resp: { ...pronta.resp, ondas: { complemento: true, preco: false } } }
+      : pronta;
+    recompraMock.mockReturnValue({ estado: ligada, refetch: vi.fn() });
+    mixMock.mockReturnValue({
+      data: { total_com_gap: 1, lista: [{ customer_user_id: 'c9', nome: 'Z', familia_faltante: 'F', confidence: 0.5, lift: 2, evidence_count: 3, feedback_status: null }] },
+      isError: true, isLoading: true, error: new Error('x'), refetch: vi.fn(),
+    });
+    const { result } = renderHook(() => useFilaAcoes());
+    expect(result.current.acoes.map((a) => a.dedupeKey)).toEqual(['recompra:c1']);
+    expect(result.current.fontesComErro).toEqual([]);
+    expect(result.current.isLoading).toBe(false);
+  });
 });
+

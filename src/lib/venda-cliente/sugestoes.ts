@@ -5,7 +5,7 @@
 // lista vazia. Ausente ≠ zero: número ausente/ilegível vira `null`, nunca `0`.
 //
 // ⚠️ A farmer nunca vê custo: a RPC não devolve cmc/markup/piso, e este contrato também não
-// tem onde guardar. `preco_alvo` (Onda 3, só repasse aprovado) é lido mas a Onda 1 não exibe.
+// tem onde guardar. `preco_alvo` (Onda 3, só repasse aprovado) só aparece na seção Preço.
 
 export interface SugestaoItem {
   id: string;
@@ -19,6 +19,8 @@ export interface SugestaoItem {
   qtdRef: number | null;
   valorRef: number | null;
   precoAlvo: number | null;
+  /** Só recompra: a cada quantos dias o cliente costuma comprar este SKU (null = sem leitura). */
+  cadenciaDias: number | null;
 }
 
 export interface CompradorSugerido {
@@ -31,8 +33,17 @@ export interface CompradorSugerido {
   sugestoes: SugestaoItem[];
 }
 
+/** Liga/desliga das Ondas 2 e 3 no SERVIDOR (`venda_config`, avaliado por `venda_avaliar_ondas`). */
+export interface OndasVenda {
+  complemento: boolean;
+  preco: boolean;
+}
+
+export const ONDAS_DESLIGADAS: OndasVenda = { complemento: false, preco: false };
+
 export interface MinhasSugestoesResp {
   dia: string;
+  ondas: OndasVenda;
   compradores: CompradorSugerido[];
 }
 
@@ -57,6 +68,18 @@ function ehObjeto(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/**
+ * `ondas` ausente = servidor anterior à migration das Ondas 2–3 (o Publish pode chegar antes dela):
+ * seções novas DESLIGADAS — portão fechado, não número fabricado. Presente com forma errada lança.
+ */
+function lerOndas(v: unknown): OndasVenda {
+  if (v === undefined || v === null) return ONDAS_DESLIGADAS;
+  if (!ehObjeto(v) || typeof v.complemento !== 'boolean' || typeof v.preco !== 'boolean') {
+    throw new Error('venda_minhas_sugestoes: ondas malformadas');
+  }
+  return { complemento: v.complemento, preco: v.preco };
+}
+
 /** Lê a resposta crua da RPC. Lança se a forma não for a esperada (fail-closed). */
 export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
   if (!ehObjeto(raw) || !Array.isArray(raw.compradores)) {
@@ -64,6 +87,7 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
   }
   return {
     dia: exigirTexto(raw.dia, 'dia'),
+    ondas: lerOndas(raw.ondas),
     compradores: raw.compradores.map((c): CompradorSugerido => {
       if (!ehObjeto(c) || !Array.isArray(c.sugestoes)) {
         throw new Error('venda_minhas_sugestoes: comprador malformado');
@@ -86,6 +110,7 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
             qtdRef: numOuNull(s.qtd_ref),
             valorRef: numOuNull(s.valor_ref),
             precoAlvo: numOuNull(s.preco_alvo),
+            cadenciaDias: numOuNull(s.cadencia_dias),
           };
         }),
       };
@@ -96,4 +121,14 @@ export function lerMinhasSugestoes(raw: unknown): MinhasSugestoesResp {
 /** Só as sugestões de RECOMPRA (as outras ondas têm seção própria na ficha, sem score comum). */
 export function sugestoesDeRecompra(c: CompradorSugerido): SugestaoItem[] {
   return c.sugestoes.filter((s) => s.tipo === 'recompra');
+}
+
+/** "Oferecer também" (Onda 2): uma sugestão por família, gerada no servidor. */
+export function sugestoesDeComplemento(c: CompradorSugerido): SugestaoItem[] {
+  return c.sugestoes.filter((s) => s.tipo === 'complemento' && s.familia != null);
+}
+
+/** "Preço" (Onda 3): só SKU com repasse aprovado e vigente quando a lista foi gerada. */
+export function sugestoesDePreco(c: CompradorSugerido): SugestaoItem[] {
+  return c.sugestoes.filter((s) => s.tipo === 'preco' && s.omieCodigoProduto != null);
 }

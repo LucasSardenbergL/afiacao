@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { hojeSP } from '@/lib/time/sp-day';
-import { lerMinhasSugestoes, type MinhasSugestoesResp } from '@/lib/venda-cliente/sugestoes';
+import { lerMinhasSugestoes, ONDAS_DESLIGADAS, type MinhasSugestoesResp, type OndasVenda } from '@/lib/venda-cliente/sugestoes';
 
 /**
  * Estado da lista de recompra do dia — cada caso tem UMA tela própria no Meu Dia:
@@ -85,4 +85,14 @@ export function useSugestoesDoComprador(compradorId: string | null) {
   const { estado } = useMinhasSugestoes();
   if (!compradorId || estado.tipo !== 'pronta') return null;
   return estado.resp.compradores.find((c) => c.compradorId === compradorId) ?? null;
+}
+
+/**
+ * Ondas 2–3 ligadas no servidor, lidas da MESMA resposta da lista (o gerador só cria linha de
+ * complemento/preço com a onda ligada; a ficha também esconde a seção com ela desligada).
+ * Lista ainda não pronta (carregando, erro, lente, Onda 1 desligada) → tudo desligado.
+ */
+export function useOndasVenda(): OndasVenda {
+  const { estado } = useMinhasSugestoes();
+  return estado.tipo === 'pronta' ? estado.resp.ondas : ONDAS_DESLIGADAS;
 }

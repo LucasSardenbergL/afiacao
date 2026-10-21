@@ -359,12 +359,16 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useContatosDoDia.ts",
       "src/hooks/useMunicaoLigacao.ts",
       "src/hooks/useHistoricoCompras.ts",
+      // Ondas 2–3 da ficha (Task 9): SKUs de referência do complemento e preço alvo de repasse aprovado.
+      "src/hooks/useComplementoComprador.ts",
+      "src/hooks/usePrecoAlvoComprador.ts",
       "src/hooks/useDashboardCompany.ts",
       "src/hooks/useDashboardLayout.ts",
     ],
     testes: [
       "src/hooks/__tests__/municao-ligacao-universo.test.tsx",
       "src/hooks/__tests__/historico-compras-universo.test.tsx",
+      "src/hooks/__tests__/precoAlvoComprador-erro.test.tsx",
       "src/components/intelligence/__tests__/tabs-erro-honesto.test.tsx",
       "src/components/__tests__/recommendation-card-sim-indisponivel.test.tsx",
       "src/components/radar/__tests__/RadarKpis.estados.test.tsx",
