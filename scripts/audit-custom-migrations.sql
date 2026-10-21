@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 683
+-- Total de custom migrations: 684
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -747,7 +747,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
   ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql'),
   ('20261020200000', 'analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', '20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql'),
-  ('20261020202720', 'analytics_ledger_venda_cliente', '20261020202720_analytics_ledger_venda_cliente.sql')
+  ('20261020202720', 'analytics_ledger_venda_cliente', '20261020202720_analytics_ledger_venda_cliente.sql'),
+  ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2905,7 +2906,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
   ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
-  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_defasagem_item', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_venda_repasse_base', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_venda_repasse_sku_ok', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_repasse_candidatos', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_aprovar_repasse', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_revogar_repasse', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
+  ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
+  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5111,7 +5122,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
   ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
-  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_defasagem_item', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'get_defasagem_cliente', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_venda_repasse_base', ''),
+  ('venda_cliente_repasse', 'function', 'private', '_venda_repasse_sku_ok', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_repasse_candidatos', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_aprovar_repasse', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_revogar_repasse', ''),
+  ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
+  ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
+  ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado')
 )
 SELECT
   e.migration,
@@ -5562,6 +5583,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'get_defasagem_cliente', 2, '20260905225613_preco_ausente_nao_e_zero.sql', '7856c3052596d66a6f5ac8eb0a06c1c0'),
   ('public', 'get_defasagem_cliente', 3, '20261001014210_universo_pedidos_preco.sql', 'fbe6a5aa78a32deed6860218a9b68d7c'),
   ('public', 'get_defasagem_cliente', 4, '20261014211500_defasagem_desconto_valor.sql', '66bea8e4923ed3d289d72aae2e66c8b5'),
+  ('public', 'get_defasagem_cliente', 5, '20261020233000_venda_cliente_repasse.sql', '5ddadb96c8f00c736d8c339017085c4e'),
   ('public', 'venda_gate_credito', 1, '20260702233000_trava_credito_fase2.sql', '72e6d3ff4dd4a438d5ca84cb9d214ec8'),
   ('public', 'venda_gate_credito', 2, '20260703140000_trava_credito_gate_excecao_por_par.sql', '1fb9610a4c6f70fb2a67d5d01396c767'),
   ('public', 'fin_sync_kicks_perdidos', 1, '20260704102000_fin_sync_retry_kick_perdido.sql', '9f591fc2a7b823b7195085b816db6713'),

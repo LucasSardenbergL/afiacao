@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-20T21:05:23.641Z",
-  "sourceHead": "4c44cf7920cd111e5052b2a381017ebc3692511a",
+  "medidoEm": "2026-10-20T23:31:42.723Z",
+  "sourceHead": "07dc8f834a0f533d6f1d2d2c8052999ed5a22b66",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 365 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 370 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -56,12 +56,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 392 identidade(s) batem com o repo (319 em dia, 66 só cosméticas, 6 aceitas na baseline) e 20 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 392 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@7fbf28860 (fetch ok) · prod 2026-10-20 21:05:47.031793Z",
-      "contratoFingerprint": "5b542051f6215f0baca56e75e4b78074937ef84ebad05a7c004a1046d7ea2842",
-      "auditorFingerprint": "1b0c640a8a929b8cd1c4534b11faa82303072d94dad5a8184595b6f0ad13bddf",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 399 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@07dc8f834 (fetch ok) · prod 2026-10-20 23:32:12.985521Z",
+      "contratoFingerprint": "6b81c7fc0ca720f1722a0a5d868200d81bb5c8a144143173e123f1db8fc5bdab",
+      "auditorFingerprint": "59b1b9cc2e0e69785f9974608df07da10996a144a0bcc6df353c8003f0c37f99",
+      "achados": [
+        {
+          "id": "5450b96e2807a0f4",
+          "linha": "❌ [SEM_PAR] get_defasagem_cliente(jsonb,uuid): corpo que nenhuma das 4 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261014211500_defasagem_desconto_valor.sql (xmin 12435768)",
+          "primeiraVez": "2026-10-20",
+          "ultimaVez": "2026-10-20"
+        },
+        {
+          "id": "0435630f15a49866",
+          "linha": "❌ [SEM_PAR] claim_nfe_efetivacao_lock(uuid,timestamp with time zone,timestamp with time zone): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260704130000_claim_nfe_efetivacao_lock.sql (xmin 12436383)",
+          "primeiraVez": "2026-10-20",
+          "ultimaVez": "2026-10-20"
+        }
+      ]
     }
   }
 }
