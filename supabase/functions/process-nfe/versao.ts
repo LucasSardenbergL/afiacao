@@ -17,7 +17,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("process-nfe");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-reverte-bot-lovable";
+export const VERSAO = "v2.0-trilha-relogio-regra-quantidade";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

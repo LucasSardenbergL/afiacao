@@ -28,8 +28,9 @@ O v2 fechou os passivos estruturais (tipos, auth replicada, CI, deriva). Sobra p
 
 ## 2. Top 5 (são 4: o 5º caiu na medição) — na ordem (1 item = 1 PR · 1 lote = 1 sessão)
 
-### 1 · `process-nfe`: conclui recebimento no Omie sem conferência, sem relógio e sem trilha — **money-path/estoque, esforço P (trilha) → M (endurecer)**
+### 1 · ✅ `process-nfe`: conclui recebimento no Omie sem conferência, sem relógio e sem trilha — **money-path/estoque, esforço P (trilha) → M (endurecer)**
 `supabase/functions/process-nfe/index.ts` (554 linhas, sem `_test.ts`) faz `AlterarRecebimento` → `AlterarEtapaRecebimento` → **`ConcluirRecebimento`** (`:503`, a entrada de estoque no ERP) ✅ com `nQtdeRecebida = Math.round(qtdeNfe / fatorConversao)` (`:390`, fator caindo para `|| 1`) ✅ — quantidade da NF, não da contagem física. É a **única** edge que escreve no Omie sem `omie-chamada-relogio` (`fetch` sem timeout em `:90-110`) ✅ e **não grava nada no banco**: o histórico vive no `localStorage` (`NfeReceipt.tsx:17-20`). Fica na aba "Manual" de `/admin/estoque/recebimento`. O caminho principal **bloqueia NF-e com conversão** (`efetivacao-helpers.ts:287-298`) ✅ ⇒ a aba Manual é provavelmente a válvula de escape justamente desse caso, onde o `Math.round` mais erra (3,6 L → 4) ⚠️. O uso é desconhecido: o ledger só vê o `pathname`, não a aba.
+**✅ Entregue em #3334 (2026-10-21):** trilha append-only, Omie pelo relógio, guarda de estado/unicidade e regra de quantidade com caso real; migration aplicada, edge pendente de deploy. Detalhe em [process-nfe-trilha-relogio-regra-quantidade.md](../../../historico/process-nfe-trilha-relogio-regra-quantidade.md).
 **Entrega:** (a) trilha server-side por invocação (padrão `_shared/registro-execucao.ts`): quem, NF, itens, fator, quantidade enviada e resultado de cada passo. É sensor de produto **e** o mínimo para a opção "manter". (b) Com 2 semanas de sinal → 🧭 #1. (c) Só se mantida: Omie pelo relógio + teste Deno da sequência + caso real de conversão antes de mexer na regra.
 
 ### 2 · Saldo de conta corrente nulo **ou velho** entra como número no caixa — **money-path, esforço P**
