@@ -9,7 +9,7 @@
 #  T2  staff (master e employee) lê; customer lê 0 linhas
 #  T3  anon não lê (42501, ACL)
 #  T4  authenticated não insere — nem staff (42501, ACL)
-#  T5  UPDATE e DELETE recusados até para o service_role (P0001, trigger append-only)
+#  T5  UPDATE, DELETE e TRUNCATE recusados até para o service_role (42501 sem grant; P0001 do trigger como owner)
 #  T6  domínio fechado: resultado/passo/conta fora da lista → 23514
 #  T7  re-apply idempotente (a migration roda duas vezes sem erro)
 #  T8  privilégio por CATÁLOGO (has_table_privilege), as duas pontas: anon e authenticated
@@ -25,7 +25,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261021175441_nfe_recebimento_manual_trilha
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="policy_aberta:T2 sem_revoke:POST!A2_FALHOU sem_trigger:POST!A4_FALHOU trigger_so_update:T5 resultado_livre:T6 sem_grant_service:POST!A3_FALHOU"
+  SABOTAGENS="policy_aberta:T2 sem_revoke:POST!A2_FALHOU sem_trigger:POST!A4_FALHOU trigger_so_update:T5 resultado_livre:T6 sem_grant_service:POST!A3_FALHOU service_edita:POST!A6_FALHOU sem_trigger_truncate:POST!A4_FALHOU"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-nfe-trilha.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -88,6 +88,8 @@ case "${SABOTAGEM:-}" in
   trigger_so_update) sabotar "BEFORE UPDATE OR DELETE ON" "BEFORE UPDATE ON" ;;
   resultado_livre)   sabotar "'ok', 'aviso', 'erro', 'indeterminado', 'recusado', 'intencao', 'pulado'" \
                              "'ok', 'aviso', 'erro', 'indeterminado', 'recusado', 'intencao', 'pulado', 'qualquer'" ;;
+  service_edita)     sabotar "REVOKE UPDATE, DELETE, TRUNCATE ON public.nfe_recebimento_manual_trilha FROM service_role;" "" ;;
+  sem_trigger_truncate) sabotar "CREATE TRIGGER trg_nfe_receb_manual_trilha_sem_truncate" "CREATE TRIGGER trg_truncate_desligado" ;;
   sem_grant_service) sabotar "GRANT SELECT, INSERT ON public.nfe_recebimento_manual_trilha TO service_role;" \
                              "REVOKE ALL ON public.nfe_recebimento_manual_trilha FROM service_role;" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
@@ -149,8 +151,13 @@ eq "T2 customer le 0" "$(Pq -c "$(como "$C" "SELECT count(*) FROM public.nfe_rec
 eq "T3 anon select" "$(estado "SET ROLE anon; SELECT count(*) FROM public.nfe_recebimento_manual_trilha;")" "42501"
 eq "T4 master insere" "$(estado "$(como "$M" "$LINHA;")")" "42501"
 eq "T4 customer insere" "$(estado "$(como "$C" "$LINHA;")")" "42501"
-eq "T5 service_role update" "$(estado "SET ROLE service_role; UPDATE public.nfe_recebimento_manual_trilha SET resultado = 'ok';")" "P0001"
-eq "T5 service_role delete" "$(estado "SET ROLE service_role; DELETE FROM public.nfe_recebimento_manual_trilha;")" "P0001"
+eq "T5 service_role update" "$(estado "SET ROLE service_role; UPDATE public.nfe_recebimento_manual_trilha SET resultado = 'ok';")" "42501"
+eq "T5 service_role delete" "$(estado "SET ROLE service_role; DELETE FROM public.nfe_recebimento_manual_trilha;")" "42501"
+eq "T5 service_role truncate" "$(estado "SET ROLE service_role; TRUNCATE public.nfe_recebimento_manual_trilha;")" "42501"
+# O trigger é a 2ª camada: vale até para o OWNER (postgres), que tem todos os grants.
+eq "T5 owner update" "$(estado "UPDATE public.nfe_recebimento_manual_trilha SET resultado = 'ok';")" "P0001"
+eq "T5 owner delete" "$(estado "DELETE FROM public.nfe_recebimento_manual_trilha;")" "P0001"
+eq "T5 owner truncate" "$(estado "TRUNCATE public.nfe_recebimento_manual_trilha;")" "P0001"
 eq "T5 linha intacta" "$(Pq -c "SELECT count(*) || ':' || min(resultado) FROM public.nfe_recebimento_manual_trilha;")" "1:intencao"
 eq "T6 resultado fora" "$(estado "SET ROLE service_role; $(linha inicio qualquer oben);")" "23514"
 eq "T6 passo fora" "$(estado "SET ROLE service_role; $(linha outro intencao oben);")" "23514"

@@ -17,6 +17,7 @@ import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 import { fimDePaginacao, type RespostaOmie } from "../_shared/omie-cliente.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
+import { hojeSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 import { VERSAO } from "./versao.ts";
 import { decidirQuantidades, ehItemIgnorado, type ItemDecidido, type ItemOmieBruto, numeroOuNulo } from "./regra-quantidade.ts";
 import { type Conta, criarTrilha, type DbTrilha, type EventoTrilha, type PassoTrilha, type ResultadoTrilha } from "./trilha.ts";
@@ -33,6 +34,8 @@ export const ENDPOINT_RECEBIMENTO = "produtos/recebimentonfe/";
 export const ENDPOINT_DEPARTAMENTOS = "geral/departamentos/";
 const POR_PAGINA = 50;
 const MAX_PAGINAS = 30;
+/** Janela de emissão da busca: limita a varredura (que vai até o FIM, para provar que o número é único). */
+const JANELA_EMISSAO_DIAS = 180;
 const CONTAS: readonly Conta[] = ["oben", "colacor", "afiacao"];
 
 /** O `AuthResult` aprovado do `_shared/auth.ts` (o reprovado já respondeu no `index.ts`). */
@@ -45,6 +48,8 @@ export interface DepsProcessNfe {
   omie: ChamadaOmie;
   db: DbTrilha;
   novoId(): string;
+  /** Dia de hoje em SP (`AAAA-MM-DD`); injetável para teste. */
+  hoje?: () => string;
 }
 
 interface StepResult {
@@ -131,14 +136,16 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
     return json({ error: "process-nfe exige usuário staff — o recebimento fica registrado em nome de quem o executa", versao: VERSAO }, 403);
   }
 
+  // Erro de entrada volta 200 com `steps`/`error`: a tela lê `data`, e um 400 chegaria a ela só como
+  // "non-2xx". Hífen NÃO é removido: "1234-5" juntaria a série ao número e casaria com outra NF.
+  const entradaInvalida = (mensagem: string) =>
+    json({ steps: [{ step: 0, description: "Validar a NF informada", status: "error", detail: mensagem }], error: mensagem, desfecho: "recusado", versao: VERSAO });
   const nfBruto = texto(corpo.nf_number);
-  const nf = nfBruto?.replace(/[\s.-]/g, "") ?? "";
-  if (!/^\d{1,20}$/.test(nf)) {
-    return json({ error: "nf_number é obrigatório (só dígitos)", versao: VERSAO }, 400);
-  }
+  const nf = nfBruto?.replace(/[\s.]/g, "") ?? "";
+  if (!/^\d{1,20}$/.test(nf)) return entradaInvalida("Número da NF obrigatório, só dígitos (sem série)");
   const contaPedida = corpo.account === undefined || corpo.account === null || corpo.account === "" ? "oben" : corpo.account;
   if (typeof contaPedida !== "string" || !(CONTAS as readonly string[]).includes(contaPedida)) {
-    return json({ error: `account inválida — use ${CONTAS.join(", ")}`, versao: VERSAO }, 400);
+    return entradaInvalida(`Empresa inválida — use ${CONTAS.join(", ")}`);
   }
   const conta = contaPedida as Conta;
 
@@ -150,16 +157,18 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
   };
   const responder = (extra: Record<string, unknown>) =>
     json({ steps, ...extra, execucao_id: trilha.execucaoId, ...(trilhaIncompleta ? { trilha_incompleta: true } : {}), versao: VERSAO });
+  // `desfecho` é o resultado legível por máquina: `indeterminado` (pode ter gravado — conferir no Omie
+  // antes de repetir) não é `erro` (o Omie recusou, ou nada foi enviado) nem `recusado` (guarda daqui).
   const parar = async (passo: PassoTrilha, resultado: ResultadoTrilha, step: number, descricao: string, mensagem: string, detalhe: Record<string, unknown> = {}) => {
     steps.push({ step, description: descricao, status: "error", detail: mensagem });
     await registrarResultado({ passo, resultado, detalhe: { mensagem, ...detalhe } });
     await registrarResultado({ passo: "fim", resultado });
-    return responder({ error: mensagem });
+    return responder({ error: mensagem, desfecho: resultado });
   };
   const semTrilha = (step: number, descricao: string) => {
     const mensagem = "Não consegui gravar a trilha do recebimento — nada foi enviado ao Omie neste passo. Tente de novo.";
     steps.push({ step, description: descricao, status: "error", detail: mensagem });
-    return responder({ error: mensagem });
+    return responder({ error: mensagem, desfecho: "erro" });
   };
 
   console.log(`[process-nfe] Iniciando: NF="${nf}", conta="${conta}", execucao=${trilha.execucaoId}`);
@@ -167,17 +176,22 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
     return semTrilha(0, "Registrar a trilha do recebimento");
   }
 
-  // STEP 1 — achar a NF (ListarRecebimentos). Para no 1º recebimento com o número; o fornecedor e a
-  // chave vão para a tela e para a trilha.
+  // STEP 1 — achar a NF (ListarRecebimentos). A varredura vai até o FIM da janela de emissão: número
+  // de NF é por EMITENTE, então dois fornecedores podem ter o mesmo — e concluir o recebimento do
+  // outro dá entrada de mercadoria que não chegou. Mais de um recebimento não cancelado com o número
+  // → recusa. `cExibirDetalhes:'S'` traz o `infoCadastro` na listagem (omie-nfe-recebimento-sync).
   let nIdReceb: number | null = null;
   let chave: string | null = null;
   try {
+    const dtEmissaoDe = paraDataOmie(somarDias((deps.hoje ?? hojeSP)(), -JANELA_EMISSAO_DIAS));
+    const achados: { nIdReceb: number; chave: string | null; fornecedor: string; numero: string }[] = [];
+    let canceladas = 0;
     let fimReal = false;
     let pagina = 1;
-    let fornecedor = "Fornecedor";
-    let numeroOmie = nf;
-    for (; pagina <= MAX_PAGINAS && nIdReceb === null; pagina++) {
-      const r = await deps.omie(conta, ENDPOINT_RECEBIMENTO, "ListarRecebimentos", { nPagina: pagina, nRegistrosPorPagina: POR_PAGINA });
+    for (; pagina <= MAX_PAGINAS; pagina++) {
+      const r = await deps.omie(conta, ENDPOINT_RECEBIMENTO, "ListarRecebimentos", {
+        nPagina: pagina, nRegistrosPorPagina: POR_PAGINA, cOrdenarPor: "CODIGO", dtEmissaoDe, cExibirDetalhes: "S",
+      });
       if (fimDePaginacao(r)) { fimReal = true; break; }
       const falha = falhaOmie(r, "ListarRecebimentos");
       if (falha !== null) throw new Error(falha);
@@ -187,28 +201,35 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
         const cabec = registro(registro(rec).cabec);
         const numero = texto(cabec.cNumeroNFe);
         if (numero === null || semZeros(numero) !== semZeros(nf)) continue;
+        if (texto(registro(registro(rec).infoCadastro).cCancelada)?.toUpperCase() === "S") { canceladas++; continue; }
         const id = numeroOuNulo(cabec.nIdReceb);
         if (id === null) throw new Error(`Omie: recebimento da NF ${numero} sem nIdReceb legível`);
-        nIdReceb = id;
-        chave = texto(cabec.cChaveNfe);
-        fornecedor = texto(cabec.cNome) ?? texto(cabec.cRazaoSocial) ?? "Fornecedor";
-        numeroOmie = numero;
-        break;
+        achados.push({ nIdReceb: id, chave: texto(cabec.cChaveNfe), fornecedor: texto(cabec.cNome) ?? texto(cabec.cRazaoSocial) ?? "Fornecedor", numero });
       }
-      if (nIdReceb === null && recebimentos.length < POR_PAGINA) { fimReal = true; break; }
+      if (recebimentos.length < POR_PAGINA) { fimReal = true; break; }
     }
-    if (nIdReceb === null) {
-      const lidas = Math.min(pagina, MAX_PAGINAS);
-      return await parar("nf_localizada", "erro", 1, `Buscar NF ${nf}`, fimReal
-        ? `NF ${nf} não encontrada no Omie (${lidas} página(s) lidas até o fim)`
-        : `NF ${nf} não encontrada nas primeiras ${MAX_PAGINAS} páginas do Omie — busca incompleta, nada foi enviado`);
+    if (!fimReal) {
+      return await parar("nf_localizada", "recusado", 1, `Buscar NF ${nf}`,
+        `A busca passou de ${MAX_PAGINAS} páginas sem chegar ao fim — não dá para provar que a NF ${nf} é única; nada foi enviado`, { achados: achados.length });
     }
+    if (achados.length === 0) {
+      return await parar("nf_localizada", "erro", 1, `Buscar NF ${nf}`,
+        `NF ${nf} não encontrada no Omie entre as emitidas nos últimos ${JANELA_EMISSAO_DIAS} dias${canceladas > 0 ? ` (${canceladas} cancelada(s) ignorada(s))` : ""}`);
+    }
+    if (achados.length > 1) {
+      return await parar("nf_localizada", "recusado", 1, `Buscar NF ${nf}`,
+        `Há ${achados.length} recebimentos com o número ${nf} (${achados.map((a) => a.fornecedor).join("; ")}) — não sei qual é; nada foi enviado`,
+        { achados: achados.map((a) => ({ n_id_receb: a.nIdReceb, fornecedor: a.fornecedor })) });
+    }
+    const achado = achados[0];
+    nIdReceb = achado.nIdReceb;
+    chave = achado.chave;
     trilha.fixarNf(nIdReceb, chave);
     steps.push({
-      step: 1, description: `NF encontrada: ${fornecedor} (NF ${numeroOmie})`, status: "success",
+      step: 1, description: `NF encontrada: ${achado.fornecedor} (NF ${achado.numero})`, status: "success",
       detail: `nIdReceb: ${nIdReceb}, chave: ${chave ? chave.substring(0, 20) + "..." : "N/A"}`,
     });
-    await registrarResultado({ passo: "nf_localizada", resultado: "ok", detalhe: { fornecedor, numero_omie: numeroOmie, pagina } });
+    await registrarResultado({ passo: "nf_localizada", resultado: "ok", detalhe: { fornecedor: achado.fornecedor, numero_omie: achado.numero, paginas: pagina, canceladas } });
   } catch (e) {
     return await parar("nf_localizada", "erro", 1, `Buscar NF ${nf}`, mensagemDeErro(e) ?? "falha sem mensagem ao buscar a NF");
   }
@@ -226,10 +247,16 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
       return await parar("consulta", "recusado", 2, "Consultar detalhes da NF", `nIdReceb diverge na consulta (${idConsulta} ≠ ${nIdReceb}) — nada foi enviado`);
     }
     etapa = texto(cabec.cEtapa);
-    const recebido = texto(registro(det.infoCadastro).cRecebido)?.toUpperCase() ?? null;
-    if (recebido === "S" || etapa === "80") {
+    // "Aberta" exige EVIDÊNCIA (mesmo critério do `omie-nfe-recebimento-sync/estado.ts`): `cRecebido` e
+    // `cCancelada` explicitamente "N". Ausente/vazio é desconhecido, e desconhecido não recebe — é
+    // também o que impede a repetição de uma conclusão indeterminada de concluir duas vezes.
+    const info = registro(det.infoCadastro);
+    const recebido = texto(info.cRecebido)?.toUpperCase() ?? null;
+    const cancelada = texto(info.cCancelada)?.toUpperCase() ?? null;
+    if (recebido !== "N" || cancelada !== "N" || etapa === "80") {
+      const motivo = cancelada === "S" ? "NF cancelada no Omie" : recebido === "S" || etapa === "80" ? "NF já recebida no Omie" : "estado da NF no Omie desconhecido";
       return await parar("consulta", "recusado", 2, "Consultar detalhes da NF",
-        `NF já recebida no Omie (etapa ${etapa ?? "?"}, recebido ${recebido ?? "?"}) — nada foi enviado`, { etapa, recebido });
+        `${motivo} (etapa ${etapa ?? "?"}, recebido ${recebido ?? "?"}, cancelada ${cancelada ?? "?"}) — nada foi enviado`, { etapa, recebido, cancelada });
     }
     if (!Array.isArray(det.itensRecebimento) || det.itensRecebimento.length === 0) {
       return await parar("consulta", "recusado", 2, "Consultar detalhes da NF", "O Omie não devolveu itens para esta NF — nada foi enviado", { etapa, recebido });
@@ -332,5 +359,5 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
   await registrarResultado({ passo: "concluir_recebimento", resultado: "ok" });
   await registrarResultado({ passo: "fim", resultado: "ok" });
   steps.push({ step: 5, description: "Recebimento concluído com sucesso", status: "success" });
-  return responder({ success: true });
+  return responder({ success: true, desfecho: "ok" });
 }

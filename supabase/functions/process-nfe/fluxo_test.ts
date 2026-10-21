@@ -24,10 +24,10 @@ function resp(corpo: unknown, status = 200): RespostaOmie {
   return lerResposta(status, JSON.stringify(corpo));
 }
 
-function consultaReal(over: { etapa?: string; recebido?: string; itens?: unknown[] } = {}) {
+function consultaReal(over: { etapa?: string; info?: Record<string, unknown> | null; itens?: unknown[] } = {}) {
   return {
     cabec: { nIdReceb: 777, cChaveNfe: "4226", cEtapa: over.etapa ?? "20" },
-    infoCadastro: { cRecebido: over.recebido ?? "N" },
+    ...(over.info === null ? {} : { infoCadastro: over.info ?? { cRecebido: "N", cCancelada: "N" } }),
     itensRecebimento: over.itens ?? [
       { itensCabec: { nSequencia: 5, cCodigoProduto: "PRD03454", nIdProduto: 501, nQtdeNFe: 54, cUnidadeNfe: "L", cIgnorarItem: "N", nValorUnitario: 10 },
         itensAjustes: { nQtdeRecebida: 3, cUnidade: "UN" } },
@@ -44,7 +44,10 @@ function cenario(o: { auth?: AuthAprovado; roteiro?: Roteiro; falhaTrilha?: (pas
   const params: Record<string, unknown> = {};
   const linhas: Record<string, unknown>[] = [];
   const roteiro: Roteiro = {
-    ListarRecebimentos: () => resp({ recebimentos: [{ cabec: { nIdReceb: 777, cNumeroNFe: "000955811", cChaveNfe: "4226", cNome: "RENNER SAYERLACK" } }] }),
+    ListarRecebimentos: () => resp({ recebimentos: [
+      { cabec: { nIdReceb: 777, cNumeroNFe: "000955811", cChaveNfe: "4226", cNome: "RENNER SAYERLACK" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
+      { cabec: { nIdReceb: 778, cNumeroNFe: "000955812", cChaveNfe: "4227", cNome: "OUTRO" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
+    ] }),
     ConsultarRecebimento: () => resp(consultaReal()),
     ListarDepartamentos: () => resp({ departamentos: [{ codigo: "OPERA", descricao: "Operações" }] }),
     AlterarRecebimento: () => resp({ cCodStatus: "0" }),
@@ -73,6 +76,7 @@ function cenario(o: { auth?: AuthAprovado; roteiro?: Roteiro; falhaTrilha?: (pas
     },
     db,
     novoId: () => "11111111-1111-1111-1111-111111111111",
+    hoje: () => "2026-10-21",
   };
   const rodar = async (corpo: unknown = { nf_number: "955811", account: "oben" }) => {
     const res = await processarNfe(o.auth ?? STAFF, corpo, deps);
@@ -96,17 +100,20 @@ Deno.test("staff sem userId (forma impossível hoje, defesa): 403 e efeito ZERO"
   igual([(await c.rodar()).status, c.log], [403, []], "403 sem efeito");
 });
 
-Deno.test("entrada inválida (NF não numérica, conta desconhecida) → 400 sem efeito", async () => {
-  for (const corpo of [{ nf_number: "abc" }, {}, { nf_number: "955811", account: "xyz" }]) {
+Deno.test("entrada inválida (NF não numérica, com série/hífen, conta desconhecida) → erro legível na tela, sem efeito", async () => {
+  for (const corpo of [{ nf_number: "abc" }, {}, { nf_number: "1234-5" }, { nf_number: "955811", account: "xyz" }]) {
     const c = cenario();
-    igual([(await c.rodar(corpo)).status, c.log], [400, []], JSON.stringify(corpo));
+    const r = await c.rodar(corpo);
+    igual([r.status, r.corpo.desfecho, typeof r.corpo.error, c.log], [200, "recusado", "string", []], JSON.stringify(corpo));
   }
+  const pontos = cenario();
+  igual((await pontos.rodar({ nf_number: "955.811" })).corpo.success, true, "ponto de milhar é aceito");
 });
 
 Deno.test("caminho feliz: ordem exata, intenção antes de cada escrita, 3 UN (não 54) para o caso real", async () => {
   const c = cenario();
   const r = await c.rodar();
-  igual(r.corpo.success, true, "success");
+  igual([r.corpo.success, r.corpo.desfecho], [true, "ok"], "success");
   igual(c.log, [
     "trilha:inicio/intencao",
     "omie:ListarRecebimentos", "trilha:nf_localizada/ok",
@@ -131,21 +138,49 @@ Deno.test("etapa já 40 (repetição): não chama AlterarEtapaRecebimento", asyn
   igual(c.log.includes("trilha:alterar_etapa/pulado"), true, "pulado na trilha");
 });
 
-Deno.test("já recebida no Omie (cRecebido S ou etapa 80): para ANTES de escrever", async () => {
-  for (const over of [{ recebido: "S" }, { etapa: "80" }]) {
+Deno.test("NF não comprovadamente ABERTA (recebida, etapa 80, cancelada, infoCadastro ausente/vazio): para ANTES de escrever", async () => {
+  for (const over of [
+    { info: { cRecebido: "S", cCancelada: "N" } }, { etapa: "80" }, { info: { cRecebido: "N", cCancelada: "S" } },
+    { info: null }, { info: {} }, { info: { cRecebido: "", cCancelada: "N" } },
+  ]) {
     const c = cenario({ roteiro: { ConsultarRecebimento: () => resp(consultaReal(over)) } });
     const r = await c.rodar();
-    igual([r.corpo.success, c.escritas()], [undefined, []], JSON.stringify(over));
+    igual([r.corpo.success, r.corpo.desfecho, c.escritas()], [undefined, "recusado", []], JSON.stringify(over));
     igual(c.log.slice(-2), ["trilha:consulta/recusado", "trilha:fim/recusado"], "trilha recusada");
   }
 });
 
-Deno.test("regra de quantidade recusa (conversão sem número do Omie): nenhuma escrita", async () => {
-  const itens = [{ itensCabec: { nSequencia: 1, nQtdeNFe: 54, cUnidadeNfe: "L", cIgnorarItem: "N" }, itensAjustes: { cUnidade: "UN" } }];
-  const c = cenario({ roteiro: { ConsultarRecebimento: () => resp(consultaReal({ itens })) } });
+Deno.test("regra de quantidade recusa (sem número do Omie; NF = Omie com L→UN — o resíduo da v1): nenhuma escrita", async () => {
+  for (const aj of [{ cUnidade: "UN" }, { cUnidade: "UN", nQtdeRecebida: 54 }]) {
+    const itens = [{ itensCabec: { nSequencia: 1, nQtdeNFe: 54, cUnidadeNfe: "L", cIgnorarItem: "N" }, itensAjustes: aj }];
+    const c = cenario({ roteiro: { ConsultarRecebimento: () => resp(consultaReal({ itens })) } });
+    const r = await c.rodar();
+    igual([c.escritas(), c.log.includes("trilha:quantidades/recusado"), r.corpo.desfecho], [[], true, "recusado"], JSON.stringify(aj));
+    igual(String(r.corpo.error).includes("nada foi enviado ao Omie"), true, "mensagem");
+  }
+});
+
+Deno.test("número de NF repetido na listagem (outro fornecedor) → RECUSA sem escrever; cancelada não conta", async () => {
+  const dup = () => resp({ recebimentos: [
+    { cabec: { nIdReceb: 777, cNumeroNFe: "955811", cNome: "RENNER SAYERLACK" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
+    { cabec: { nIdReceb: 900, cNumeroNFe: "0955811", cNome: "PEQUENO FORNECEDOR" }, infoCadastro: { cRecebido: "S", cCancelada: "N" } },
+  ] });
+  const c = cenario({ roteiro: { ListarRecebimentos: dup } });
   const r = await c.rodar();
-  igual([c.escritas(), c.log.includes("trilha:quantidades/recusado")], [[], true], "recusado sem escrita");
-  igual(String(r.corpo.error).includes("nada foi enviado ao Omie"), true, "mensagem");
+  igual([c.omieChamados(), r.corpo.desfecho], [["ListarRecebimentos"], "recusado"], "duplicada");
+  igual(String(r.corpo.error).includes("PEQUENO FORNECEDOR"), true, "mostra os fornecedores");
+  const comCancelada = cenario({ roteiro: { ListarRecebimentos: () => resp({ recebimentos: [
+    { cabec: { nIdReceb: 777, cNumeroNFe: "955811", cChaveNfe: "4226" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
+    { cabec: { nIdReceb: 901, cNumeroNFe: "955811" }, infoCadastro: { cRecebido: "N", cCancelada: "S" } },
+  ] }) } });
+  igual((await comCancelada.rodar()).corpo.success, true, "cancelada ignorada");
+});
+
+Deno.test("listagem que não chega ao fim em 30 páginas → RECUSA (unicidade não provada)", async () => {
+  const cheia = () => resp({ recebimentos: Array.from({ length: 50 }, (_, i) => ({ cabec: { nIdReceb: i, cNumeroNFe: String(i === 0 ? 955811 : 1000 + i) }, infoCadastro: { cRecebido: "N", cCancelada: "N" } })) });
+  const c = cenario({ roteiro: { ListarRecebimentos: cheia } });
+  const r = await c.rodar();
+  igual([c.escritas(), c.omieChamados().length, r.corpo.desfecho], [[], 30, "recusado"], "teto");
 });
 
 Deno.test("trilha fora do ar no INÍCIO: nenhuma chamada ao Omie", async () => {
@@ -185,6 +220,7 @@ Deno.test("falha em cada escrita para a sequência ali, com o desfecho certo na 
     const r = await c.rodar();
     igual([c.escritas(), r.corpo.success], [esperadas, undefined], `${metodo}/${resultado}`);
     igual(c.log.slice(-1), [`trilha:fim/${resultado}`], `fim ${metodo}`);
+    igual(r.corpo.desfecho, resultado, `desfecho ${metodo}`);
     if (resultado === "indeterminado") igual(String(r.corpo.error).includes("confira no Omie antes de repetir"), true, "mensagem indeterminada");
   }
 });

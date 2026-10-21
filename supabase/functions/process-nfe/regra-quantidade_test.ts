@@ -26,22 +26,41 @@ Deno.test("caso real NF 000955811: 54 L → 3 UN do Omie (a regra antiga mandava
   igual(d.itens.map((i) => i.aviso), [null, null], "sem aviso");
 });
 
-Deno.test("conversão com fator multiplicativo no item NUNCA divide: 1 L com fator 0,055556 → 0,055556 UN do Omie, com aviso de fração", () => {
-  const d = decidirQuantidades([item(1, 1, "L", 0.055556, "UN", { cab: { nFatorConversao: 0.055556 } })]);
+Deno.test("recorte real de 14/10 (sem fator): 1 L → 0,055556 UN do Omie passa como ele calculou, com aviso de fração", () => {
+  const d = decidirQuantidades([item(1, 1, "L", 0.055556, "UN")]);
   if (!d.ok) throw new Error("recusou");
-  igual([d.itens[0].qtdEnviada, d.itens[0].fatorNoItem, d.itens[0].aviso !== null], [0.055556, 0.055556, true], "fração do Omie passa com aviso");
+  igual([d.itens[0].regra, d.itens[0].qtdEnviada, d.itens[0].aviso !== null], ["conversao_do_omie", 0.055556, true], "fração do Omie");
+});
+
+Deno.test("unidades diferentes e o Omie com o MESMO número da NF → RECUSA (THINNER DN.4260L5: 20 L entraram 20 UN)", () => {
+  const d = decidirQuantidades([item(1, 20, "L", 20, "UN")]);
+  if (d.ok) throw new Error("aceitou conversão não aplicada");
+  igual(d.recusas[0].motivo, "conversao_nao_aplicada_no_omie", "motivo");
+});
+
+Deno.test("fator explícito ≠ 1 no item → RECUSA (sentido não confirmado: 0,055556 dividindo daria 972)", () => {
+  for (const extra of [{ cab: { nFatorConversao: 0.055556 } }, { aj: { nFatorConv: 18 } }]) {
+    const d = decidirQuantidades([item(1, 54, "L", 3, "UN", extra)]);
+    if (d.ok) throw new Error(`aceitou fator ${JSON.stringify(extra)}`);
+    igual(d.recusas[0].motivo, "fator_no_item_nao_confirmado", JSON.stringify(extra));
+  }
+  const um = decidirQuantidades([item(1, 54, "L", 3, "UN", { cab: { nFatorConversao: 1 } })]);
+  igual(um.ok, true, "fator 1 não é sinal");
 });
 
 Deno.test("sem conversão: fração da NF vai EXATA (o Math.round antigo mandava 2)", () => {
   const d = decidirQuantidades([item(1, 2.43, "L", null, "L")]);
   if (!d.ok) throw new Error("recusou");
   igual([d.itens[0].regra, d.itens[0].qtdEnviada], ["nf_sem_conversao", 2.43], "2,43 L");
+  const igualOmie = decidirQuantidades([item(1, 2.43, "L", 2.43, "L")]);
+  if (!igualOmie.ok) throw new Error("recusou NF = Omie");
+  igual(igualOmie.itens[0].regra, "nf_igual_omie", "NF = Omie");
 });
 
-Deno.test("sem conversão e o Omie com outro número: vale a NF, com aviso", () => {
+Deno.test("mesma unidade e o Omie com outro número → RECUSA (o Omie sabe algo que a NF não diz)", () => {
   const d = decidirQuantidades([item(1, 10, "UN", 8, "UN")]);
-  if (!d.ok) throw new Error("recusou");
-  igual([d.itens[0].qtdEnviada, d.itens[0].aviso !== null], [10, true], "NF + aviso");
+  if (d.ok) throw new Error("sobrescreveu o número do Omie");
+  igual(d.recusas[0].motivo, "quantidade_omie_diverge", "motivo");
 });
 
 Deno.test("conversão sem a quantidade do Omie → RECUSA a NF inteira, mesmo com outro item bom", () => {
@@ -52,18 +71,12 @@ Deno.test("conversão sem a quantidade do Omie → RECUSA a NF inteira, mesmo co
   igual(zero.ok, false, "0 pré-preenchido é ausente, não quantidade");
 });
 
-Deno.test("fator ≠ 1 no item com unidades iguais: é sinal de conversão → usa o Omie", () => {
-  const d = decidirQuantidades([item(1, 36, "L", 2, "L", { aj: { nFatorConv: 18 } })]);
-  if (!d.ok) throw new Error("recusou");
-  igual([d.itens[0].regra, d.itens[0].qtdEnviada], ["conversao_do_omie", 2], "fator como sinal");
-});
-
-Deno.test("unidade ilegível: aceita só se NF = Omie; divergindo, RECUSA", () => {
-  const ok = decidirQuantidades([item(1, 4, undefined, 4, undefined)]);
-  igual(ok.ok, true, "iguais sem unidade");
-  const nao = decidirQuantidades([item(1, 54, "L", 3, undefined)]);
-  if (nao.ok) throw new Error("aceitou divergência sem unidade de estoque");
-  igual(nao.recusas[0].motivo, "unidade_ilegivel", "motivo");
+Deno.test("unidade ilegível → RECUSA, mesmo com NF = Omie", () => {
+  for (const [unNf, unEst] of [[undefined, undefined], ["L", undefined], [undefined, "UN"], ["  ", "UN"]] as const) {
+    const d = decidirQuantidades([item(1, 4, unNf, 4, unEst)]);
+    if (d.ok) throw new Error(`aceitou ${unNf}→${unEst}`);
+    igual(d.recusas[0].motivo, "unidade_ilegivel", `${unNf}→${unEst}`);
+  }
 });
 
 Deno.test("sequência ausente RECUSA (a versão antiga inventava i+1); quantidade da NF ilegível ou ≤ 0 RECUSA", () => {

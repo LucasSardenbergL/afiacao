@@ -18,11 +18,11 @@
 //
 // ── A regra explícita ───────────────────────────────────────────────────────────────────────
 // Esta edge NÃO calcula conversão — não há, do lado de cá, fonte confiável do fator. Por item:
-//  1. quantidade do Omie IGUAL à da NF → manda a da NF (não há o que decidir);
-//  2. sinal de conversão (unidade da NF ≠ unidade de estoque, ou fator ≠ 1 no item) → manda a
-//     quantidade que o OMIE converteu; se ele não a informou, RECUSA a NF;
-//  3. sem conversão, unidades legíveis e iguais → manda a quantidade da NF, EXATA (sem arredondar);
-//  4. unidade ilegível e as duas quantidades divergem → RECUSA (não dá para saber qual vale).
+//  1. unidade da NF ≠ unidade de estoque → manda a quantidade que o OMIE converteu; RECUSA se ele
+//     não a informou ou se ela é igual à da NF (conversão não aplicada, ou resíduo de escrita antiga);
+//  2. mesma unidade → manda a quantidade da NF, EXATA (sem arredondar), se o Omie não tem outra;
+//     RECUSA se o Omie tem outro número;
+//  3. unidade ilegível ou fator explícito ≠ 1 no item → RECUSA.
 // Qualquer recusa barra a NF INTEIRA antes de qualquer escrita (precisão > recall,
 // docs/agent/money-path.md §1). O número enviado é sempre um que já existia no Omie ou na NF —
 // nunca fabricado aqui. Fração da conversão do Omie (ex.: 14,0001 por fator de 6 casas) passa como
@@ -58,6 +58,9 @@ export type MotivoRecusa =
   | "sequencia_ilegivel"
   | "quantidade_nf_ilegivel"
   | "conversao_sem_quantidade_do_omie"
+  | "conversao_nao_aplicada_no_omie"
+  | "quantidade_omie_diverge"
+  | "fator_no_item_nao_confirmado"
   | "unidade_ilegivel";
 
 export interface ItemRecusado {
@@ -150,43 +153,49 @@ export function decidirQuantidades(itens: readonly ItemOmieBruto[]): DecisaoQuan
     const qtdOmieBruta = numeroOuNulo(aj.nQtdeRecebida);
     const qtdOmie = qtdOmieBruta !== null && qtdOmieBruta > 0 ? qtdOmieBruta : null;
     const fator = fatorNoItem(item);
-    const unidadesDiferem = unidadeNf !== null && unidadeEstoque !== null && unidadeNf !== unidadeEstoque;
-    const sinalConversao = unidadesDiferem || (fator !== null && Math.abs(fator - 1) > 1e-9);
     const base = { sequencia: seq, codigo, idProduto: numeroOuNulo(cab.nIdProduto), unidadeNf, unidadeEstoque, qtdNf, qtdOmie, fatorNoItem: fator };
     const par = `${unidadeNf ?? "?"}→${unidadeEstoque ?? "?"}`;
+    const recusar = (motivo: MotivoRecusa, detalhe: string) => recusas.push({ posicao, sequencia: seq, codigo, motivo, detalhe });
 
-    if (qtdOmie !== null && iguais(qtdOmie, qtdNf)) {
-      decididos.push({
-        ...base, regra: "nf_igual_omie", qtdEnviada: qtdNf,
-        aviso: sinalConversao ? `unidades ${par} e o Omie não converteu (${qtdNf}) — confira o cadastro de conversão do produto` : null,
-      });
+    // Fator explícito no item: o sentido (multiplica ou divide) não foi confirmado em payload real, e
+    // um fator lido ao contrário erra por fator² (0,055556 dividindo = 972 em vez de 3).
+    if (fator !== null && Math.abs(fator - 1) > 1e-9) {
+      recusar("fator_no_item_nao_confirmado", `fator de conversão ${fator} no item (${par}) — sentido não confirmado, não envio quantidade`);
       return;
     }
-    if (sinalConversao) {
+    if (unidadeNf === null || unidadeEstoque === null) {
+      recusar("unidade_ilegivel", `unidade ilegível (${par}) — não dá para saber se há conversão`);
+      return;
+    }
+    if (unidadeNf !== unidadeEstoque) {
       if (qtdOmie === null) {
-        recusas.push({
-          posicao, sequencia: seq, codigo, motivo: "conversao_sem_quantidade_do_omie",
-          detalhe: `conversão ${par} e o Omie não informou a quantidade convertida — confira o cadastro do produto no Omie`,
-        });
+        recusar("conversao_sem_quantidade_do_omie", `conversão ${par} e o Omie não informou a quantidade convertida — confira o cadastro do produto no Omie`);
+        return;
+      }
+      // Unidades diferentes e o MESMO número: o Omie não converteu (cadastro sem fator) ou o número é
+      // resíduo de uma escrita anterior (a v1 desta edge gravava a quantidade da NF). Medido em prod:
+      // "THINNER NITRO DN.4260L5" (lata de 5 L) entrou 20 L → 20 UN; "SELADORA …00LT" 90 L → 90 UN.
+      if (iguais(qtdOmie, qtdNf)) {
+        recusar("conversao_nao_aplicada_no_omie", `unidades ${par} e o Omie está com a quantidade da NF (${qtdNf}) — conversão não aplicada; confira o cadastro do produto no Omie`);
         return;
       }
       decididos.push({
         ...base, regra: "conversao_do_omie", qtdEnviada: qtdOmie,
-        aviso: Number.isInteger(qtdOmie) ? null : `quantidade convertida fracionária (${qtdOmie} ${unidadeEstoque ?? "?"}) — confira o fator no cadastro do Omie`,
+        aviso: Number.isInteger(qtdOmie) ? null : `quantidade convertida fracionária (${qtdOmie} ${unidadeEstoque}) — confira o fator no cadastro do Omie`,
       });
       return;
     }
-    if (unidadeNf !== null && unidadeEstoque !== null) {
-      decididos.push({
-        ...base, regra: "nf_sem_conversao", qtdEnviada: qtdNf,
-        aviso: qtdOmie !== null ? `o Omie tinha ${qtdOmie} pré-preenchido; vale a quantidade da NF (${qtdNf})` : null,
-      });
+    if (qtdOmie === null) {
+      decididos.push({ ...base, regra: "nf_sem_conversao", qtdEnviada: qtdNf, aviso: null });
       return;
     }
-    recusas.push({
-      posicao, sequencia: seq, codigo, motivo: "unidade_ilegivel",
-      detalhe: `unidade ilegível (${par}) e as quantidades divergem (NF ${qtdNf}, Omie ${qtdOmie ?? "—"})`,
-    });
+    if (iguais(qtdOmie, qtdNf)) {
+      decididos.push({ ...base, regra: "nf_igual_omie", qtdEnviada: qtdNf, aviso: null });
+      return;
+    }
+    // Mesma unidade e números diferentes: o Omie sabe algo que a NF não diz (falta registrada,
+    // conferência anterior, conversão com rótulo igual). Sobrescrever seria apagar isso.
+    recusar("quantidade_omie_diverge", `mesma unidade (${unidadeNf}) e o Omie tem ${qtdOmie} contra ${qtdNf} da NF — confira no Omie qual vale`);
   });
 
   decididos.sort((a, b) => a.sequencia - b.sequencia);
