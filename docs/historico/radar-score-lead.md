@@ -74,6 +74,12 @@ Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital <
 - `db/test-radar-score.sh` (no `nucleo-ci.txt`, aplica v1 → v2 como em prod, **21 asserts**, `--falsificar` **14/14** vermelhas com controle verde): determinismo (A5), monotonia por fator e nas bordas das faixas (A6/A6b), NULL honesto (A4/A14/A15), ja_cliente não pontua (A4/A12), idade pelo lote e não pelo relógio (A10), ledger do mesmo snapshot (A7), ACL (A8), cron (A9), erro propaga (A13), `updated_at` intocado (A11), **escritor concorrente em duas sessões (A17)**. Sob `CREATE OR REPLACE` tirar o `REVOKE` da v2 é inerte (medido: suíte verde); a sabotagem de ACL injeta um `GRANT` indevido.
 - `src/lib/radar/__tests__/ui-helpers.test.ts`: preset `score`, `scoreUI` (NULL ≠ 0, tons por faixa, motivos na ordem do banco) e `versaoDaFila`.
 
+## Follow-ups medidos depois da entrega (2026-10-21, psql-ro)
+
+- **Sensor da Sentinela para o cron do score: NÃO construído, por regra.** É máquina meta (`docs/agent/maquinas-meta.md`) e não há incidente: o cron nunca falhou (1ª rodada `succeeded`). Reabrir quando houver o 1º dano nomeado (rodada que não aconteceu e alguém viu fila ou aviso ao gestor com score velho).
+- **Filiais da mesma empresa no topo:** 5,4 % do top 1.000 (54 posições) e 6,9 % do top 5.000 (347) são a 2ª ou 3ª filial de uma raiz de CNPJ que já aparece acima. Na fila inteira são 4.142 filiais extras em 494.482 raízes. Agrupar é decisão de PRODUTO (esconder a filial, rebaixar ou só sinalizar "+N filiais") — não implementado.
+- **Filial de quem já é cliente:** **25** leads da fila têm a mesma raiz de CNPJ de um estabelecimento `ja_cliente`. O recruzamento casa por CNPJ completo, então eles pontuam como prospecção fria. Se são venda cruzada ou duplicata é decisão de produto — medido, não alterado.
+
 ## Follow-ups (fora deste bloco)
 
 - Agrupar matriz/filiais (mesma razão social, CNPJs distintos) na fila — hoje 3 filiais da mesma metalúrgica ocupam 3 posições do topo.
