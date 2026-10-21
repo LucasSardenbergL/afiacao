@@ -36,7 +36,7 @@ MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_rep
 MIG_DESEMP="$REPO_ROOT/supabase/migrations/20261021021500_venda_repasse_base_desempenho.sql"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=53
+TOTAL_ESPERADO=54
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -57,8 +57,9 @@ if [ "${1:-}" = "--falsificar" ]; then
               gate_candidatos:C2b:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
               pos_rls:MIG!POS_RLS
-              autojuncao:PERF:CAND1,C4b
-              pos_janela:MIG!POS_JANELA"
+              autojuncao:PERF:CAND1,C4b,PERFv
+              pos_janela:MIG!POS_JANELA
+              pre_config:MIG!PRE_CONFIG"
   falhas=0; sab_falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -407,10 +408,13 @@ case "${SABOTAGEM:-}" in
   # o corpo NOVO não chega ao banco (fica o da autojunção): só o PERF pode ficar vermelho
   autojuncao)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/'
                    sabotar_d "s/RAISE EXCEPTION 'POS/RAISE NOTICE 'POS/g" ;;
+  pre_config)      ;;   # age entre as duas migrations (abaixo)
   pos_janela)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/' ;;
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
 esac
-if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1; then
+# pre_config: deriva de search_path no helper ANTES da migration de desempenho — a PRE tem de recusar
+DERIVA=":"; [ "${SABOTAGEM:-}" = "pre_config" ] && DERIVA="P -q -c 'ALTER FUNCTION private._venda_repasse_base(uuid) SET search_path = pg_catalog, public'"
+if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && eval "$DERIVA" && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1; then
   ok "MIG migrations aplicaram (repasse + desempenho; PRE+CREATE+POS)"
 else
   bad "MIG migration não aplicou: $(grep -m1 -E 'ERROR' "$TMPD/mig.out" | cut -c1-200)"
@@ -567,7 +571,7 @@ INSERT INTO public.cmc_snapshot (omie_codigo_produto, account, data_posicao, cmc
   SELECT 600000+s, 'oben', (now() AT TIME ZONE 'America/Sao_Paulo')::date - d, 60, now()
     FROM generate_series(1,400) s, generate_series(1,400,3) d;
 CREATE TEMP TABLE ped AS
-  SELECT gen_random_uuid() AS id, md5('vol'||c)::uuid AS cli, 600000 + ((c*7 + k*13) % 400) + 1 AS cod,
+  SELECT gen_random_uuid() AS id, md5('vol'||c)::uuid AS cli, 600000 + ((c*7 + j*13) % 400) + 1 AS cod,
          (now() AT TIME ZONE 'America/Sao_Paulo')::date - (k*30 + (c % 20)) AS dia
     FROM generate_series(1,400) c, generate_series(1,20) j, generate_series(1,9) k;
 INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, order_date_kpi, omie_pedido_id, omie_numero_pedido, total, discount)
@@ -579,6 +583,9 @@ INSERT INTO public.venda_recompra (comprador_id, empresa, omie_codigo_produto, n
 SET session_replication_role = origin;
 ANALYZE;
 SQL
+eq PERFv "volume semeado: linhas, pares comprador×SKU e dias por par" \
+  "$(Pq -c "SELECT count(*)||'|'||count(DISTINCT (customer_user_id, omie_codigo_produto))||'|'||(SELECT min(n) FROM (SELECT count(DISTINCT so.order_date_kpi) n FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id WHERE oi.omie_codigo_produto > 600000 GROUP BY oi.customer_user_id, oi.omie_codigo_produto) x) FROM public.order_items WHERE omie_codigo_produto > 600000")" \
+  "72000|8000|9"
 PERF="$(Pq -c "SET test.uid='$MST'; SET ROLE authenticated; SET statement_timeout = '8s';" \
            -c "SELECT CASE WHEN jsonb_array_length(public.venda_repasse_candidatos()) >= 0 THEN 'PERF-OK' END" 2>&1 \
         | grep -oE 'PERF-OK|statement timeout' | head -1 || true)"

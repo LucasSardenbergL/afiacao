@@ -18,12 +18,19 @@ CREATE TEMP TABLE IF NOT EXISTS repasse_base_retrato (config text NOT NULL, acl 
 TRUNCATE pg_temp.repasse_base_retrato;
 
 DO $pre$
-DECLARE v_md5 text;
+DECLARE v_md5 text; v_cfg_antes text;
 BEGIN
   IF to_regprocedure('private._venda_repasse_base(uuid)') IS NULL THEN
     RAISE EXCEPTION 'PRE: private._venda_repasse_base ausente — aplique antes a 20261020233000';
   END IF;
-  -- trava a linha de pg_proc antes de medir (CREATE concorrente espera)
+  -- a config é lida ANTES da trava (que a escreve): deriva prévia de search_path não pode ser normalizada em
+  -- silêncio pelo ALTER abaixo (Codex P2). Medido na prod 2026-10-21: search_path=public, pg_temp.
+  SELECT coalesce(array_to_string(p.proconfig, ','), '-') INTO v_cfg_antes
+    FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('private._venda_repasse_base(uuid)');
+  IF v_cfg_antes IS DISTINCT FROM 'search_path=public, pg_temp' THEN
+    RAISE EXCEPTION 'PRE_CONFIG: _venda_repasse_base com config inesperada antes da trava: %', v_cfg_antes;
+  END IF;
+  -- trava a linha de pg_proc antes de medir (CREATE concorrente espera); reescreve o MESMO valor conferido acima
   ALTER FUNCTION private._venda_repasse_base(uuid) SET search_path = public, pg_temp;
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('private._venda_repasse_base(uuid)');
   IF v_md5 IS DISTINCT FROM 'f34e307fcfc5826a83f223d2244a1b9b' AND v_md5 IS DISTINCT FROM 'ef2a2e6ab2d35cfe8dd15e0f2cc5686e' THEN
