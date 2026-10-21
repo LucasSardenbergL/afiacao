@@ -223,3 +223,24 @@ em `farmer-inteligencia` (`src/lib/venda-cliente/{municao,historico}.ts`). Senso
 - **"Dias de atraso" não chega à farmer.** `venda_recompra` (cadência, `due_ratio`) não tem GRANT para `authenticated`, e
   a RPC não expõe. A ficha mostra "última compra há N dias" e o último preço lidos do histórico de pedidos, com "—" quando
   não há dado. Expor cadência e atraso é para a migration da Task 9, que já recria `venda_minhas_sugestoes`.
+
+## Venda por cliente — Task 9: "Oferecer também" e "Preço" na ficha, Ondas 2 e 3 (2026-10-21)
+
+Migration `20261021031000_venda_cliente_ondas23.sql` (TRAVA→PRE→CREATE→PÓS; prova `db/test-venda-ondas23.sh`, no núcleo
+do CI, 44 asserts, 18 sabotagens vermelhas nos dois locales). O gerador (`venda_gerar_lista`) põe `complemento` (até 3
+famílias por comprador da lista, régua da ficha) e `preco` (repasse vigente, SKU Oben não-tinta, último ao vivo abaixo do
+alvo, dono único = a farmer) **só na lista ativa de hoje**; a recompra da Onda 1 é byte-idêntica. `venda_minhas_sugestoes`
+expõe `ondas` e `cadencia_dias`. Ficha: `SecaoComplemento`/`SecaoPreco` entre Recomprar e Histórico, por onda do servidor;
+com a Onda 2 ligada o Mix/Gap sai da fila (vive na ficha).
+
+- **Desfecho de preço tinha de medir ALTA, não só "≥ alvo × 0,99".** Com alvo a < 1% do último preço, pagar o preço velho
+  contava como sucesso. A linha guarda `preco_anterior` (maior entre aprovação e ao vivo) e o pedido só qualifica acima dele.
+- **Unidade igual dos dois lados (Codex desenho P2).** O último preço da base é a média ponderada do DIA; comparar com um
+  item isolado fazia 90 + 110 "subir" sobre 100. O desfecho de preço passou a qualificar por PEDIDO (média ponderada do
+  SKU, sem bonificação).
+- **O que a farmer não viu não entra na medida.** `complemento`/`preco` sem `mostrada_em` fecham `nao_medivel/nao_exibida`,
+  com ou sem venda — contar só o sucesso do não-visto inflaria a taxa. O preço só é "visto" quando o alvo apareceu: a ficha
+  casa o alvo ao vivo com o da LINHA (repasse substituído no meio do dia não casa) e erro de revalidação não mantém o alvo
+  do cache na tela (Codex código P1).
+- **Gerar complemento/preço para outro dia olharia o futuro**: o núcleo do Mix/Gap e o último preço ao vivo leem `now()`.
+  Por isso sombra e histórico ficam só com recompra.
