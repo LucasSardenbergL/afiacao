@@ -183,6 +183,7 @@ SQL
 }
 linha() { como "$GESTOR" "$1" | tail -1; }
 
+# shellcheck disable=SC2016  # o '$function$' é literal do SQL, lido pelo Python — não é para o shell expandir
 eq "A0 corpo vivo = o do arquivo aplicado (a migration, ou a cópia sabotada)" \
    "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('public.radar_irmaos_por_raiz(text[])');")" \
    "$(python3 -I -c 'import sys,hashlib;s=open(sys.argv[1],encoding="utf-8").read();a=s.index("AS $function$")+13;print(hashlib.md5(s[a:s.index("$function$;",a)].encode()).hexdigest())' "$MIG_USADA")"
