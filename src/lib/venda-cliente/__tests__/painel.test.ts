@@ -124,7 +124,32 @@ function painelJson(linhas: Json[] = [linhaJson()], repasseVigente: Json = null)
   };
 }
 
+type OndaMutavel = {
+  condicao_ao_ligar: unknown;
+  prerequisitos: { [k: string]: unknown; semanas?: Array<Record<string, unknown>> };
+};
+type PainelMutavel = { ondas: Record<string, OndaMutavel> };
+
+/** Cópia do painel válido com UMA mutação — para provar que o desvio pontual lança. */
+function painelCom(mut: (p: PainelMutavel) => void): Json {
+  const copia: PainelMutavel & Json = JSON.parse(JSON.stringify(painelJson()));
+  mut(copia);
+  return copia;
+}
+
 describe('lerPainelVenda — forma do jsonb de venda_painel', () => {
+  it('condicao_ao_ligar que não é objeto nem NULL lança', () => {
+    expect(() => lerPainelVenda(painelCom((p) => { p.ondas.onda_recompra.condicao_ao_ligar = ['x']; })))
+      .toThrow('venda_painel.ondas.onda_recompra.condicao_ao_ligar: esperava objeto');
+  });
+
+  it('chave aninhada dos pré-requisitos ausente lança nomeando a onda', () => {
+    expect(() => lerPainelVenda(painelCom((p) => { delete p.ondas.onda_preco.prerequisitos.onda_complemento_ligada; })))
+      .toThrow('venda_painel.ondas.onda_preco.prerequisitos: "onda_complemento_ligada" fora da forma (booleano)');
+    expect(() => lerPainelVenda(painelCom((p) => { const [s0] = p.ondas.onda_complemento.prerequisitos.semanas ?? []; s0.ok = null; })))
+      .toThrow('"ok" fora da forma (booleano)');
+  });
+
   it('lê o painel inteiro e preserva os NULL de contrato (ausente ≠ zero)', () => {
     const p = lerPainelVenda(painelJson());
     expect(p.linhas).toHaveLength(1);
@@ -156,7 +181,7 @@ describe('lerPainelVenda — forma do jsonb de venda_painel', () => {
     expect(() => lerPainelVenda(painelJson([semVirou]))).toThrow('"virou" fora da forma (número)');
   });
 
-  it('taxa NULL onde a forma exige booleano lança', () => {
+  it('base_confiavel NULL (a forma exige booleano) lança', () => {
     expect(() => lerPainelVenda(painelJson([linhaJson({ base_confiavel: null })])))
       .toThrow('"base_confiavel" fora da forma (booleano)');
   });
@@ -188,6 +213,12 @@ describe('lerCandidatosRepasse — forma do jsonb de venda_repasse_candidatos', 
       repasse_atual: { id: 'r1', preco_alvo: 11, valido_ate: '2026-12-31', revogado: false, vigente: true },
     })]);
     expect(c.repasse_atual).toEqual({ id: 'r1', preco_alvo: 11, valido_ate: '2026-12-31', revogado: false, vigente: true });
+  });
+
+  it('repasse_atual com chave ausente lança', () => {
+    expect(() => lerCandidatosRepasse([candidatoJson({
+      repasse_atual: { id: 'r1', preco_alvo: 11, valido_ate: '2026-12-31', revogado: false },
+    })])).toThrow('venda_repasse_candidatos[].repasse_atual: "vigente" fora da forma (booleano)');
   });
 
   it('lista vazia é lista vazia; NULL ou objeto lança', () => {
