@@ -20,6 +20,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
+import { STATUS_NAO_VENDA_POSTGREST } from "@/lib/farmer/universo-pedidos";
+import { janelaQueryDiaCivil, pedidoNoDiaCivil } from "@/lib/pedido/dia-civil";
+import { fetchAllPages } from "@/lib/postgrest";
 
 const SalesQuotes = lazy(() => import("./SalesQuotes"));
 const SalesPrint = lazy(() => import("./SalesPrintDashboard"));
@@ -34,8 +37,8 @@ function KpiCards({ empresa }: { empresa: string }) {
   // Antes os 4 cards contavam `sales_quotes`, `farmer_bundles`, `farmer_bundle_rules` e
   // `sales_print_jobs` por um cliente com cast duplo para `{ from: (t: string) => any }`. NENHUMA dessas
   // tabelas existe na prod (conferido em 2026-10-20): o erro era engolido e o card mostrava 0 para
-  // sempre. Orçamentos agora conta a MESMA fonte da aba Orçamentos abaixo; os outros três não têm
-  // fonte definida e mostram "—" (ausente ≠ zero) até alguém decidir o que medem.
+  // sempre. Regra agora: cada card conta a MESMA fonte da aba que ele resume, logo abaixo. Falha de
+  // leitura deixa o card em "—" (a query lança; ausente ≠ zero).
   const { data: orcamentos } = useQuery({
     queryKey: ["vendas-ferramentas-kpis", "orcamentos"],
     queryFn: async (): Promise<number | null> => {
@@ -49,11 +52,75 @@ function KpiCards({ empresa }: { empresa: string }) {
     },
   });
 
+  // Aba Bundles: a geração VIGENTE é a `pendente` (as anteriores viram `expirado` na substituição).
+  const { data: bundlesAtivos } = useQuery({
+    queryKey: ["vendas-ferramentas-kpis", "bundles-ativos"],
+    queryFn: async (): Promise<number | null> => {
+      const { count, error } = await supabase
+        .from("farmer_bundle_recommendations")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pendente");
+      if (error) throw error;
+      return count;
+    },
+  });
+
+  // Aba Bundles: as regras de associação que o motor usa (tabela global).
+  const { data: regras } = useQuery({
+    queryKey: ["vendas-ferramentas-kpis", "regras-associacao"],
+    queryFn: async (): Promise<number | null> => {
+      const { count, error } = await supabase
+        .from("farmer_association_rules")
+        .select("id", { count: "exact", head: true });
+      if (error) throw error;
+      return count;
+    },
+  });
+
+  // Aba Impressão: o app não registra impressão (não há `sales_print_jobs`), então o card conta o
+  // que a aba LISTA para hoje — vendas do universo canônico + afiação não cancelada, na mesma
+  // janela e com o mesmo `pedidoNoDiaCivil` do SalesPrintDashboard.
+  const { data: pedidosHoje } = useQuery({
+    queryKey: ["vendas-ferramentas-kpis", "pedidos-hoje", new Date().toDateString()],
+    queryFn: async (): Promise<number> => {
+      const hoje = new Date();
+      const { inicioIso, fimIso } = janelaQueryDiaCivil(hoje);
+      const [vendas, afiacao] = await Promise.all([
+        fetchAllPages(
+          (de, ate) =>
+            supabase
+              .from("sales_orders")
+              .select("id, created_at")
+              .gte("created_at", inicioIso)
+              .lte("created_at", fimIso)
+              .not("status", "in", STATUS_NAO_VENDA_POSTGREST)
+              .is("deleted_at", null)
+              .order("id", { ascending: true })
+              .range(de, ate),
+          "sales_orders (kpi pedidos de hoje)",
+        ),
+        fetchAllPages(
+          (de, ate) =>
+            supabase
+              .from("orders")
+              .select("id, created_at")
+              .gte("created_at", inicioIso)
+              .lte("created_at", fimIso)
+              .neq("status", "cancelado")
+              .order("id", { ascending: true })
+              .range(de, ate),
+          "orders (kpi pedidos de hoje)",
+        ),
+      ]);
+      return [...vendas, ...afiacao].filter((p) => pedidoNoDiaCivil(p.created_at, hoje)).length;
+    },
+  });
+
   const cards = [
     { label: "Orçamentos Salvos", value: orcamentos ?? "—", icon: FileText },
-    { label: "Bundles Ativos", value: "—", icon: Package },
-    { label: "Regras de Associação", value: "—", icon: Network },
-    { label: "Impressões Hoje", value: "—", icon: Printer },
+    { label: "Bundles Ativos", value: bundlesAtivos ?? "—", icon: Package },
+    { label: "Regras de Associação", value: regras ?? "—", icon: Network },
+    { label: "Pedidos p/ Imprimir Hoje", value: pedidosHoje ?? "—", icon: Printer },
   ];
 
   return (

@@ -35,3 +35,14 @@ Conferido na PROD via `psql-ro` (`pg_get_function_arguments`, `pg_get_functionde
 
 - **Cast em contagem com `catch → 0` é o pior par:** o cast esconde que a tabela não existe e o fallback esconde o erro. O card fica verde, mostrando 0, para sempre.
 - **jsonb regravado exige borda que preserva o desconhecido.** Uma borda que só monta os campos tipados apaga dado na próxima edição.
+
+## Decisão posterior: os 3 KPIs sem fonte (2026-10-21)
+
+Delegada pelo founder. A regra é a mesma do card de orçamentos: **cada card conta a fonte da aba que ele resume**, na mesma página.
+
+- **Bundles Ativos:** `farmer_bundle_recommendations` com `status = 'pendente'`, a geração VIGENTE (a substituição marca as anteriores como `expirado`). Na prod: 1 pendente, 12 expirados.
+- **Regras de Associação:** `farmer_association_rules`, a tabela global que o motor de bundles usa (18 regras).
+- **Impressões Hoje → "Pedidos p/ Imprimir Hoje":** o app não registra impressão (`sales_print_jobs` nunca existiu), então o card não tem como contar impressões. Passa a contar o que a aba Impressão LISTA para hoje: vendas do universo canônico + afiação não cancelada, com a mesma janela (`janelaQueryDiaCivil`) e o mesmo `pedidoNoDiaCivil` do `SalesPrintDashboard`, paginado.
+
+Falha de leitura deixa o card em "—" (a query lança), nunca em 0.
+
