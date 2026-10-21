@@ -239,11 +239,12 @@ func TestShouldKeysSnapshot_invalidDate(t *testing.T) {
 // ─────────────────────────────────────────────────────────────
 
 func TestShouldFullRescan_notSunday(t *testing.T) {
-	// Terça-feira
+	// Terça-feira, com o re-scan do domingo (7/jun) já feito.
 	tuesday := time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC)
-	st := &State{HWM: make(map[string]string)}
+	st := &State{HWM: make(map[string]string),
+		LastFullRescan: time.Date(2026, 6, 7, 3, 0, 0, 0, time.UTC).Format(time.RFC3339)}
 	if shouldFullRescan(st, tuesday) {
-		t.Error("terça-feira não deve disparar full rescan")
+		t.Error("terça-feira com o re-scan do domingo feito não deve disparar")
 	}
 }
 
@@ -290,9 +291,9 @@ func TestShouldFullRescan_sundayNewWeek(t *testing.T) {
 	}
 }
 
-// Recuperação do domingo PERDIDO (prod, 2026-10: servidor desligado no fim de semana,
-// 0 runs em 11 de 12 domingos). Domingo 11/10 rescaneado; 17-18/10 desligado; liga na
-// segunda 19/10 07h. Linha do tempo esperada.
+// Recuperação do domingo PERDIDO (prod, 2026-10: o servidor liga ~07h e desliga
+// ~17h15 nos dias úteis e fica desligado no fim de semana). Domingo 11/10 rescaneado;
+// 17-18/10 desligado; liga na segunda 19/10 07h → o 1º ciclo recupera.
 func TestShouldFullRescan_recuperaDomingoPerdido(t *testing.T) {
 	st := &State{HWM: make(map[string]string),
 		LastFullRescan: time.Date(2026, 10, 11, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)}
@@ -301,21 +302,24 @@ func TestShouldFullRescan_recuperaDomingoPerdido(t *testing.T) {
 		quer   bool
 		porque string
 	}{
-		{time.Date(2026, 10, 19, 7, 0, 0, 0, time.UTC), false, "segunda 07h: devido, mas fora da madrugada (horário da loja)"},
-		{time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC), false, "segunda 17h: fora da madrugada"},
-		{time.Date(2026, 10, 20, 0, 5, 0, 0, time.UTC), true, "terça 00h05: recupera o domingo 18 perdido"},
-		{time.Date(2026, 10, 20, 5, 59, 0, 0, time.UTC), true, "terça 05h59: ainda na janela"},
-		{time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC), false, "terça 06h: janela fechou"},
+		{time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC), false, "sábado 17: a semana do domingo 11 já foi rescaneada"},
+		{time.Date(2026, 10, 19, 7, 0, 0, 0, time.UTC), true, "segunda 07h: 1º ciclo depois do domingo 18 perdido"},
+		{time.Date(2026, 10, 20, 15, 0, 0, 0, time.UTC), true, "terça 15h: segue devido enquanto não concluir"},
 	}
 	for _, c := range casos {
 		if got := shouldFullRescan(st, c.quando); got != c.quer {
 			t.Errorf("%s: shouldFullRescan=%v, queria %v", c.porque, got, c.quer)
 		}
 	}
+	// Concluído na segunda (LastFullRescan marcado), não repete na semana.
+	st.LastFullRescan = time.Date(2026, 10, 19, 8, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	if shouldFullRescan(st, time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)) {
+		t.Error("quarta após recuperação concluída na segunda não pode re-escanear")
+	}
 }
 
-// Depois do re-scan normal de domingo, a madrugada de segunda NÃO repete (a semana ISO
-// vira na segunda — por isso a âncora é o domingo, não a semana ISO).
+// Depois do re-scan normal de domingo, a segunda NÃO repete (a semana ISO vira na
+// segunda — por isso a âncora é o domingo, não a semana ISO).
 func TestShouldFullRescan_segundaAposDomingoNaoRepete(t *testing.T) {
 	st := &State{HWM: make(map[string]string),
 		LastFullRescan: time.Date(2026, 10, 11, 3, 0, 0, 0, time.UTC).Format(time.RFC3339)}
@@ -667,9 +671,9 @@ func TestIniciarFullRescan_retomaSemZerarDeNovo(t *testing.T) {
 	if st.HWM["produto"] == "" {
 		t.Error("HWM de entidade que já passou no re-scan foi perdido")
 	}
-	// Atravessa a meia-noite: segunda 00h da MESMA semana do re-scan também retoma.
-	if iniciarFullRescan(st, time.Date(2026, 10, 12, 0, 10, 0, 0, time.UTC)) {
-		t.Fatal("re-scan que atravessa a meia-noite não pode zerar de novo na segunda 00h")
+	// Servidor desligou no meio: o ciclo seguinte (outro dia, MESMA semana) retoma.
+	if iniciarFullRescan(st, time.Date(2026, 10, 12, 7, 10, 0, 0, time.UTC)) {
+		t.Fatal("re-scan retomado em outro dia da mesma semana não pode zerar de novo")
 	}
 	if !iniciarFullRescan(st, domingo.AddDate(0, 0, 7)) || len(st.HWM) != 0 {
 		t.Error("domingo seguinte deveria zerar de novo")
