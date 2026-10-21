@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, CircleDashed, Loader2, Building2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, CircleDashed, Loader2, Building2 } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -14,6 +14,7 @@ function IconeItem({ item }: { item: ItemLote }) {
   switch (item.estado.status) {
     case 'ok': return <CheckCircle2 className="w-4 h-4 text-status-success shrink-0" />;
     case 'falha': return <XCircle className="w-4 h-4 text-status-error shrink-0" />;
+    case 'divergente': return <AlertTriangle className="w-4 h-4 text-status-warning shrink-0" />;
     case 'nao_iniciado': return <CircleDashed className="w-4 h-4 text-muted-foreground shrink-0" />;
     default: return <Loader2 className="w-4 h-4 text-muted-foreground shrink-0 animate-spin" />;
   }
@@ -23,6 +24,7 @@ function detalheItem(item: ItemLote): string {
   const e = item.estado;
   if (e.status === 'ok') return e.jaExistia ? `já existia no Omie · cód. ${e.codigo}${e.recuperado ? ' (recuperado)' : ''}` : `cadastrado · cód. ${e.codigo}`;
   if (e.status === 'falha') return `${e.etapa === 'radar' ? 'Omie OK, falhou gravar no Radar' : 'falhou no Omie'}: ${e.erro}`;
+  if (e.status === 'divergente') return `conflito de vínculo — confira no Omie, nada foi regravado: ${e.erro}`;
   if (e.status === 'nao_iniciado') return 'não iniciado (lote parado)';
   return 'aguardando…';
 }
@@ -51,7 +53,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           <DialogDescription>
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
-              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)`}
+              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${progresso.divergentes ? ` · ${progresso.divergentes} conflito(s)` : ''}`}
           </DialogDescription>
         </DialogHeader>
 
@@ -62,13 +64,20 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           </p>
         )}
 
+        {progresso.divergentes > 0 && !rodando && (
+          <p className="text-xs text-status-warning">
+            {progresso.divergentes === 1 ? 'Um lead tem' : `${progresso.divergentes} leads têm`} conflito entre o Radar e o Omie
+            (CNPJ ou código já vinculados a outro cadastro). Retentar não resolve: confira no Omie. O lote fica guardado até você esquecê-lo.
+          </p>
+        )}
+
         <ul className="max-h-72 overflow-y-auto divide-y text-sm">
           {estado.itens.map((i) => (
             <li key={i.cnpj} className="flex items-start gap-2 py-1.5">
               <IconeItem item={i} />
               <div className="min-w-0">
                 <div className="truncate font-medium">{i.nome}</div>
-                <div className={cn('text-xs truncate', i.estado.status === 'falha' ? 'text-status-error' : 'text-muted-foreground')}>
+                <div className={cn('text-xs truncate', i.estado.status === 'falha' ? 'text-status-error' : i.estado.status === 'divergente' ? 'text-status-warning' : 'text-muted-foreground')}>
                   {detalheItem(i)}
                 </div>
               </div>
@@ -85,7 +94,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
                 <Button onClick={retomar}>Retentar {pendentes} pendente{pendentes === 1 ? '' : 's'}</Button>
               )}
               <Button variant="ghost" onClick={() => { esquecer(); onClose(); }}>
-                {pendentes > 0 ? 'Esquecer lote' : 'Fechar'}
+                {progresso.concluido ? 'Fechar' : 'Esquecer lote'}
               </Button>
             </>
           )}
