@@ -13,7 +13,9 @@
 //   - direção provada: CR da empresa A cuja contraparte é B, CP da empresa B cuja contraparte é A;
 //   - os dois vivos (status não nulo e ≠ CANCELADO), com emissão, valor > 0;
 //   - MESMO valor (numeric(…,2) chega como o mesmo double; a RPC exige igualdade exata);
-//   - emissão a ≤ 5 dias; e, se os DOIS têm NF, a MESMA NF (zeros à esquerda não contam);
+//   - emissão a ≤ 5 dias;
+//   - NF nos DOIS lados e a MESMA NF (zeros à esquerda de cada bloco não contam). Valor+data+
+//     unicidade NÃO provam que é a mesma operação; NF ausente de um lado vira informativo;
 //   - unicidade MÚTUA: o CR tem 1 candidato só E esse CP tem 1 candidato só. Ambíguo de qualquer
 //     lado → `duplicidade_possivel`, nunca um par escolhido.
 // Elegibilidade para ELIMINAR (mesmo mês, categoria que compôs receita/cmv, snapshot fiel) é da RPC:
@@ -24,9 +26,12 @@ const VALOR_TOLERANCIA_FROUXA = 0.05; // ±5%: só o informativo `divergencia_va
 const DATA_TOLERANCIA_DIAS = 5;
 const DATA_TOLERANCIA_FROUXA_DIAS = 30; // só o informativo `divergencia_data`
 
-/** Status que a edge apaga e regrava. Os demais (`manual_matched`, `desconsiderado`) são do humano. */
-export const STATUS_AUTOMATICOS = [
-  "auto_matched",
+/**
+ * Status que a edge APAGA e regrava a cada rodada — só os informativos, que a RPC ignora. O
+ * `auto_matched` a edge grava e NUNCA apaga (ver `publicarMatches`); `manual_matched` e
+ * `desconsiderado` são do humano.
+ */
+export const STATUS_INFORMATIVOS = [
   "divergencia_valor",
   "divergencia_data",
   "sem_contrapartida",
@@ -52,7 +57,7 @@ export interface LinhaMatch {
   valor_origem?: number;
   valor_destino?: number;
   diff_dias?: number | null;
-  status: (typeof STATUS_AUTOMATICOS)[number];
+  status: "auto_matched" | (typeof STATUS_INFORMATIVOS)[number];
   observacao?: string;
 }
 
@@ -61,10 +66,14 @@ export function chaveContraparte(empresa: string, codigo: number): string {
   return `${empresa}:${codigo}`;
 }
 
-/** NF só com dígitos e sem zeros à esquerda; vazia/sem dígito → null (ausente, não "0"). */
+/**
+ * NF por BLOCOS de dígitos, sem zeros à esquerda em cada bloco: `00023572` = `000023572`, mas
+ * `23572/1` (série/parcela) ≠ `235721` — concatenar os blocos fabricaria identidade. Sem dígito,
+ * ou só zeros → null (ausente, não "0").
+ */
 export function normalizarNf(nf: string | null | undefined): string | null {
-  const d = String(nf ?? "").replace(/\D/g, "").replace(/^0+/, "");
-  return d === "" ? null : d;
+  const blocos = (String(nf ?? "").match(/\d+/g) ?? []).map((b) => b.replace(/^0+/, "") || "0");
+  return blocos.every((b) => b === "0") ? null : blocos.join("/");
 }
 
 function diasEntre(a: string, b: string): number {
@@ -76,7 +85,14 @@ function vivo(t: Titulo): boolean {
     Number.isFinite(t.valor) && t.valor > 0;
 }
 
-function nfCompativel(cr: Titulo, cp: Titulo): boolean {
+/** Para o par AUTOMÁTICO: NF nos dois lados e igual. */
+function mesmaNf(cr: Titulo, cp: Titulo): boolean {
+  const a = normalizarNf(cr.nf);
+  return a !== null && a === normalizarNf(cp.nf);
+}
+
+/** Para os informativos: NF diferente exclui; ausente de um lado ainda é candidato a conferir. */
+function nfNaoConflita(cr: Titulo, cp: Titulo): boolean {
   const a = normalizarNf(cr.nf);
   const b = normalizarNf(cp.nf);
   return a === null || b === null || a === b;
@@ -90,8 +106,9 @@ interface Lado {
 
 /**
  * Casa os títulos. `contraparte` mapeia `chaveContraparte(empresa, código)` → empresa do grupo.
- * `travados` = ids de CR/CP que já estão numa linha do humano: saem do pool inteiro (nem candidato,
- * nem `sem_contrapartida`), senão o mesmo título apareceria em 2 pares e a RPC daria NULL.
+ * `travados` = ids de CR/CP que já estão numa linha do humano OU num `auto_matched` já gravado: saem
+ * do pool inteiro (nem candidato, nem `sem_contrapartida`). Senão o mesmo título apareceria em 2
+ * linhas, o UNIQUE recusaria o insert e a RPC daria NULL.
  */
 export function casar(input: {
   crs: ReadonlyArray<Titulo>;
@@ -122,7 +139,7 @@ export function casar(input: {
   const estrito = (r: Lado, p: Lado) =>
     r.t.valor === p.t.valor &&
     diasEntre(r.t.data_emissao!, p.t.data_emissao!) <= DATA_TOLERANCIA_DIAS &&
-    nfCompativel(r.t, p.t);
+    mesmaNf(r.t, p.t);
 
   const candidatosDoCr = new Map<string, Lado[]>();
   const candidatosDoCp = new Map<string, number>();
@@ -171,7 +188,7 @@ export function casar(input: {
   // 2) Informativos (a RPC ignora): só com candidato ÚNICO entre os CPs ainda livres.
   for (const r of crs) {
     if (crResolvido.has(r.t.id)) continue;
-    const livres = doMesmoPar(r).filter((p) => !cpUsado.has(p.t.id) && nfCompativel(r.t, p.t));
+    const livres = doMesmoPar(r).filter((p) => !cpUsado.has(p.t.id) && nfNaoConflita(r.t, p.t));
     const dias = (p: Lado) => diasEntre(r.t.data_emissao!, p.t.data_emissao!);
     const frouxoValor = livres.filter((p) =>
       Math.abs(p.t.valor - r.t.valor) / r.t.valor <= VALOR_TOLERANCIA_FROUXA && dias(p) <= DATA_TOLERANCIA_DIAS
@@ -179,8 +196,12 @@ export function casar(input: {
     const frouxoData = livres.filter((p) =>
       p.t.valor === r.t.valor && dias(p) > DATA_TOLERANCIA_DIAS && dias(p) <= DATA_TOLERANCIA_FROUXA_DIAS
     );
+    // Valor IGUAL a ≤ 5 dias aqui só sobra quando falta NF de um lado (com NF igual teria casado no
+    // passo 1): é candidato a confirmar à mão, não divergência de valor.
     const unico = frouxoValor.length === 1
-      ? { p: frouxoValor[0], status: "divergencia_valor" as const }
+      ? frouxoValor[0].t.valor === r.t.valor
+        ? { p: frouxoValor[0], status: "sem_contrapartida" as const, observacao: "candidato único com mesmo valor e data, mas sem NF de um dos lados — confirme manualmente" }
+        : { p: frouxoValor[0], status: "divergencia_valor" as const }
       : frouxoData.length === 1
       ? { p: frouxoData[0], status: "divergencia_data" as const }
       : null;
@@ -194,6 +215,7 @@ export function casar(input: {
         valor_destino: unico.p.t.valor,
         diff_dias: dias(unico.p),
         status: unico.status,
+        ...("observacao" in unico ? { observacao: unico.observacao } : {}),
       });
       cpUsado.add(unico.p.t.id);
     } else {
@@ -224,33 +246,40 @@ export function casar(input: {
 
 export interface Escritor {
   inserir(linhas: LinhaMatch[]): PromiseLike<{ error: { message: string } | null }>;
-  apagar(ids: string[]): PromiseLike<{ error: { message: string } | null }>;
+  /** Apaga pelos ids SÓ as linhas que ainda são informativas e não resolvidas (filtro no DELETE). */
+  apagarInformativos(ids: string[]): PromiseLike<{ error: { message: string } | null }>;
 }
 
 export type DesfechoEscrita =
-  | { ok: true; inseridas: number; apagadas: number }
+  | { ok: true; inseridas: number; informativas_apagadas: number }
   | { ok: false; etapa: "inserir" | "apagar"; erro: string };
 
 const LOTE_APAGAR = 200; // ids por `.in()` — cabe na URL do PostgREST
 
 /**
- * Troca as linhas automáticas SEM janela de "zero matches": INSERE as novas num statement só e
- * só então apaga as antigas (pelos ids lidos ANTES). Falha no insert → nada apagado (estado velho,
- * consistente). Falha no delete → antigas + novas convivem; o mesmo título em 2 pares leva a RPC a
- * NULL (fail-closed) até a próxima rodada. Nenhum caminho deixa a tabela vazia em silêncio.
+ * Publica a rodada sem NUNCA apagar `auto_matched`:
+ * - Par automático já gravado FICA, mesmo que os títulos mudem: é a evidência que leva a RPC a
+ *   NULL ("eliminação pendente") quando o par perde elegibilidade. Apagá-lo zeraria a eliminação
+ *   em silêncio. Quem desfaz um par é o humano (`desconsiderado`). O caller tira os títulos dele do
+ *   pool (`travados`), então a rodada não o recria.
+ * - Só os informativos (a RPC os ignora) são trocados: APAGA os antigos e depois INSERE. A ordem é
+ *   imposta pelos índices UNIQUE em `cr_id` e `cp_id` (inserir antes colidiria com o próprio título).
+ *   O DELETE refiltra status e `resolvido_em`, então linha que o humano mexeu depois da leitura
+ *   sobrevive, e o insert que colidir com ela falha inteiro (500, nada novo gravado).
+ * - Duas rodadas concorrentes: a 2ª colide nos UNIQUE e falha inteira, sem par duplicado.
  */
-export async function substituirMatches(
+export async function publicarMatches(
   db: Escritor,
   novas: LinhaMatch[],
-  idsAntigos: ReadonlyArray<string>,
+  idsInformativos: ReadonlyArray<string>,
 ): Promise<DesfechoEscrita> {
+  for (let i = 0; i < idsInformativos.length; i += LOTE_APAGAR) {
+    const { error } = await db.apagarInformativos(idsInformativos.slice(i, i + LOTE_APAGAR));
+    if (error) return { ok: false, etapa: "apagar", erro: error.message };
+  }
   if (novas.length > 0) {
     const { error } = await db.inserir(novas);
     if (error) return { ok: false, etapa: "inserir", erro: error.message };
   }
-  for (let i = 0; i < idsAntigos.length; i += LOTE_APAGAR) {
-    const { error } = await db.apagar(idsAntigos.slice(i, i + LOTE_APAGAR));
-    if (error) return { ok: false, etapa: "apagar", erro: error.message };
-  }
-  return { ok: true, inseridas: novas.length, apagadas: idsAntigos.length };
+  return { ok: true, inseridas: novas.length, informativas_apagadas: idsInformativos.length };
 }

@@ -5,7 +5,7 @@ import {
   chaveContraparte,
   type LinhaMatch,
   normalizarNf,
-  substituirMatches,
+  publicarMatches,
   type Titulo,
 } from "./casamento.ts";
 
@@ -37,9 +37,10 @@ function rodar(crs: Titulo[], cps: Titulo[], travados: string[] = []): LinhaMatc
 const auto = (l: LinhaMatch[]) => l.filter((x) => x.status === "auto_matched").map((x) => [x.cr_id, x.cp_id]);
 const status = (l: LinhaMatch[]) => l.map((x) => x.status).sort();
 
-Deno.test("normalizarNf — zeros à esquerda não contam; vazio é ausente (não '0')", () => {
+Deno.test("normalizarNf — zeros à esquerda não contam; blocos não se fundem; vazio é ausente", () => {
   assertEquals(normalizarNf("00023572"), "23572");
-  assertEquals(normalizarNf("000023572/1"), "235721");
+  assertEquals(normalizarNf("000023572/1"), "23572/1");
+  assertEquals(normalizarNf("235721") === normalizarNf("23572/1"), false);
   assertEquals(normalizarNf(""), null);
   assertEquals(normalizarNf("000"), null);
   assertEquals(normalizarNf(null), null);
@@ -52,9 +53,17 @@ Deno.test("par real da prod (NF 23572 colacor→oben) sai auto_matched com a dir
   assertEquals([l[0].empresa_origem, l[0].empresa_destino, l[0].diff_dias], ["colacor", "oben", 0]);
 });
 
-Deno.test("sem NF nos dois lados: valor + data bastam", () => {
-  const r = cr({ nf: null }), p = cp({ nf: "" });
-  assertEquals(auto(rodar([r], [p])), [[r.id, p.id]]);
+Deno.test("sem NF (nos dois lados ou num só) → NUNCA auto: valor+data não provam a operação", () => {
+  assertEquals(auto(rodar([cr({ nf: null })], [cp({ nf: "" })])), []);
+  const r = cr(), p = cp({ nf: null });
+  const l = rodar([r], [p]);
+  assertEquals(auto(l), []);
+  // Fica como candidato a conferir à mão (com o CP ligado), não como divergência de valor.
+  assertEquals(l.map((x) => [x.status, x.cr_id, x.cp_id]), [["sem_contrapartida", r.id, p.id]]);
+});
+
+Deno.test("NF que só coincide se fundir os blocos (23572/1 × 235721) → não casa", () => {
+  assertEquals(auto(rodar([cr({ nf: "23572/1" })], [cp({ nf: "235721" })])), []);
 });
 
 Deno.test("NF dos dois lados e DIFERENTE → não casa (nem informativo)", () => {
@@ -80,13 +89,13 @@ Deno.test("5 dias ainda casa (fronteira da tolerância)", () => {
 });
 
 Deno.test("unicidade MÚTUA: 2 CR para 1 CP → nenhum par, os dois duplicidade_possivel", () => {
-  const l = rodar([cr({ nf: null }), cr({ nf: null })], [cp({ nf: null })]);
+  const l = rodar([cr(), cr()], [cp()]);
   assertEquals(auto(l), []);
   assertEquals(status(l), ["duplicidade_possivel", "duplicidade_possivel"]);
 });
 
 Deno.test("unicidade MÚTUA: 1 CR para 2 CP → nenhum par; os CPs não viram sem_contrapartida", () => {
-  const l = rodar([cr({ nf: null })], [cp({ nf: null }), cp({ nf: null })]);
+  const l = rodar([cr()], [cp(), cp()]);
   assertEquals(auto(l), []);
   assertEquals(status(l), ["duplicidade_possivel"]);
 });
@@ -94,6 +103,11 @@ Deno.test("unicidade MÚTUA: 1 CR para 2 CP → nenhum par; os CPs não viram se
 Deno.test("parcelas iguais com a MESMA NF não são escolhidas a esmo", () => {
   const l = rodar([cr(), cr()], [cp(), cp()]);
   assertEquals(auto(l), []);
+});
+
+Deno.test("título num auto_matched JÁ gravado (travado) não é recasado nem vira informativo", () => {
+  const r = cr(), p = cp();
+  assertEquals(rodar([r], [p], [r.id, p.id]), []);
 });
 
 Deno.test("direção trocada: CP da oben cuja contraparte NÃO é a empresa do CR → não casa", () => {
@@ -128,7 +142,7 @@ Deno.test("cada título aparece em UMA linha só (a RPC dá NULL se aparecer em 
   assertEquals(ids.length, new Set(ids).size, "título repetido");
 });
 
-// ── substituirMatches: a ordem é o que fecha a janela de "zero matches" ──────────────────────
+// ── publicarMatches: auto_matched nunca é apagado; informativos saem ANTES do insert (UNIQUE) ───
 function escritorFake(falhaEm?: "inserir" | "apagar") {
   const log: string[] = [];
   return {
@@ -138,7 +152,7 @@ function escritorFake(falhaEm?: "inserir" | "apagar") {
         log.push(`inserir:${l.length}`);
         return Promise.resolve({ error: falhaEm === "inserir" ? { message: "x" } : null });
       },
-      apagar: (ids: string[]) => {
+      apagarInformativos: (ids: string[]) => {
         log.push(`apagar:${ids.length}`);
         return Promise.resolve({ error: falhaEm === "apagar" ? { message: "y" } : null });
       },
@@ -147,27 +161,26 @@ function escritorFake(falhaEm?: "inserir" | "apagar") {
 }
 const NOVA: LinhaMatch = { empresa_origem: "colacor", empresa_destino: "oben", cr_id: "a", status: "sem_contrapartida" };
 
-Deno.test("substituirMatches — insere ANTES de apagar", async () => {
+Deno.test("publicarMatches — apaga os informativos ANTES de inserir (o UNIQUE de cr_id/cp_id exige)", async () => {
   const f = escritorFake();
-  const d = await substituirMatches(f.db, [NOVA], ["v1", "v2"]);
-  assertEquals(f.log, ["inserir:1", "apagar:2"]);
-  assertEquals(d, { ok: true, inseridas: 1, apagadas: 2 });
+  const d = await publicarMatches(f.db, [NOVA], ["v1", "v2"]);
+  assertEquals(f.log, ["apagar:2", "inserir:1"]);
+  assertEquals(d, { ok: true, inseridas: 1, informativas_apagadas: 2 });
 });
 
-Deno.test("substituirMatches — insert falhou → NADA apagado", async () => {
-  const f = escritorFake("inserir");
-  const d = await substituirMatches(f.db, [NOVA], ["v1"]);
-  assertEquals(f.log, ["inserir:1"]);
-  assertEquals(d, { ok: false, etapa: "inserir", erro: "x" });
-});
-
-Deno.test("substituirMatches — delete falhou é reportado (não vira sucesso)", async () => {
+Deno.test("publicarMatches — delete falhou → nada inserido, falha reportada", async () => {
   const f = escritorFake("apagar");
-  assertEquals(await substituirMatches(f.db, [NOVA], ["v1"]), { ok: false, etapa: "apagar", erro: "y" });
+  assertEquals(await publicarMatches(f.db, [NOVA], ["v1"]), { ok: false, etapa: "apagar", erro: "y" });
+  assertEquals(f.log, ["apagar:1"]);
 });
 
-Deno.test("substituirMatches — apaga em lotes de 200 ids", async () => {
+Deno.test("publicarMatches — insert falhou é reportado (não vira sucesso)", async () => {
+  const f = escritorFake("inserir");
+  assertEquals(await publicarMatches(f.db, [NOVA], ["v1"]), { ok: false, etapa: "inserir", erro: "x" });
+});
+
+Deno.test("publicarMatches — apaga em lotes de 200 ids", async () => {
   const f = escritorFake();
-  await substituirMatches(f.db, [], Array.from({ length: 450 }, (_, i) => `v${i}`));
+  await publicarMatches(f.db, [], Array.from({ length: 450 }, (_, i) => `v${i}`));
   assertEquals(f.log, ["apagar:200", "apagar:200", "apagar:50"]);
 });

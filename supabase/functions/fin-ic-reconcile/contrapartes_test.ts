@@ -36,8 +36,9 @@ function omie(paginas: RespostaOmie[]): { chamar: Chamar; params: unknown[] } {
     },
   };
 }
-const pagina = (cadastros: unknown[], total = 1) =>
-  lerResposta(200, JSON.stringify({ pagina: 1, total_de_paginas: total, clientes_cadastro: cadastros }));
+// Página n de `total`, com o `total_de_registros` que o Omie declara (default: a própria lista).
+const pagina = (cadastros: unknown[], total = 1, n = 1, registros = cadastros.length) =>
+  lerResposta(200, JSON.stringify({ pagina: n, total_de_paginas: total, total_de_registros: registros, clientes_cadastro: cadastros }));
 const EOF = lerResposta(500, JSON.stringify({ faultstring: "ERROR: Não existem registros para a página [1]!", faultcode: "SOAP-ENV:Client-5113" }));
 
 Deno.test("só entra cadastro com o MESMO documento (com ou sem máscara); o resto é descartado", async () => {
@@ -58,7 +59,7 @@ Deno.test("EOF na 1ª página = nenhum cadastro com esse CNPJ (legítimo, sem er
 });
 
 Deno.test("pagina até o total declarado", async () => {
-  const o = omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2), pagina([{ codigo_cliente_omie: 2, cnpj_cpf: OBEN }], 2)]);
+  const o = omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2, 1, 2), pagina([{ codigo_cliente_omie: 2, cnpj_cpf: OBEN }], 2, 2, 2)]);
   assertEquals((await consultarCodigos(o.chamar, C)).codigos, [1, 2]);
   assertEquals(o.params.length, 2);
 });
@@ -67,8 +68,29 @@ Deno.test("EOF ANTES do total declarado → lança (retrato parcial não vira ma
   await assertRejeitaCom(consultarCodigos(omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 3), EOF]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
 });
 
+Deno.test("total de páginas AUSENTE com registros declarados a mais → lança (a 2ª página nunca foi pedida)", async () => {
+  const semTotal = lerResposta(200, JSON.stringify({ pagina: 1, total_de_registros: 2, clientes_cadastro: [{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }] }));
+  await assertRejeitaCom(consultarCodigos(omie([semTotal]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
+Deno.test("página REPETIDA não completa a contagem (cadastros distintos < declarados) → lança", async () => {
+  const p1 = pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2, 1, 2);
+  const p2 = pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2, 2, 2);
+  await assertRejeitaCom(consultarCodigos(omie([p1, p2]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
+Deno.test("eco de OUTRA página (pedi a 2, veio a 1) → lança", async () => {
+  const p1 = pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 2, 1, 2);
+  await assertRejeitaCom(consultarCodigos(omie([p1, p1]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
+Deno.test("sem total_de_registros → lança (completude não provada)", async () => {
+  const r = lerResposta(200, JSON.stringify({ pagina: 1, total_de_paginas: 1, clientes_cadastro: [{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }] }));
+  await assertRejeitaCom(consultarCodigos(omie([r]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
 Deno.test("página VAZIA antes do total declarado → lança (não é fim da lista)", async () => {
-  await assertRejeitaCom(consultarCodigos(omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 3), pagina([], 3)]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+  await assertRejeitaCom(consultarCodigos(omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 3, 1, 3), pagina([], 3, 2, 3)]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
 });
 
 Deno.test("fault de negócio / HTTP de erro / corpo sem lista → lança, nunca 'zero cadastros'", async () => {

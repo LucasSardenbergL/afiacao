@@ -5,8 +5,9 @@
 // Contexto: cron diário `fin-ic-reconcile-daily` (0 9 * * *), o único cron ativo da classe.
 // O gate (`authorizeCronOrStaff`) já aceita `x-cron-secret` ⇒ sem gate próprio.
 //
-// v1.2: contraparte pelo CÓDIGO Omie (o cnpj_cpf do título é vazio), pares com unicidade mútua,
-// escrita insert→delete e `{"simular":true}` sem escrita. Diário:
+// v1.2: contraparte pelo CÓDIGO Omie (o cnpj_cpf do título é vazio), pares com NF igual e unicidade
+// mútua, escrita monotônica (`auto_matched` nunca é apagado; só os informativos são trocados) e
+// `{"simular":true}` sem escrita. Diário:
 // docs/historico/fin-ic-reconcile-contraparte-por-codigo.md.
 //
 // ⚠️ SONDAR O BUNDLE PRÉ-SENSOR: CARA — o bundle velho não lê o corpo, então `{"probe":true}` roda a

@@ -2,14 +2,14 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { classificarFlag } from "../_shared/sonda-versao.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
-import { fetchAll } from "../_shared/paginate.ts";
+import { fetchAll, fetchAllKeyset } from "../_shared/paginate.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   casar,
   chaveContraparte,
   type LinhaMatch,
-  STATUS_AUTOMATICOS,
-  substituirMatches,
+  publicarMatches,
+  STATUS_INFORMATIVOS,
   type Titulo,
 } from "./casamento.ts";
 import { chamadorOmie, consultarCodigos, type ResultadoConsulta } from "./contrapartes.ts";
@@ -69,8 +69,18 @@ Deno.serve(async (req: Request) => {
   }
 
   // Sonda de versão (M-26; docs/agent/deploy.md): `{ probe: true }` responde a versão no ar sem tocar
-  // banco. O cron manda `{}` (= disparo).
-  const corpo = await req.json().catch(() => null);
+  // banco. O cron manda `{}` (= disparo). Corpo vazio = disparo; corpo que NÃO é JSON é recusado:
+  // `{"simular":true,}` não pode virar execução real por ter falhado o parse.
+  const texto = await req.text().catch(() => null);
+  if (texto === null) return json({ versao: VERSAO, error: "corpo ilegível" }, 400);
+  let corpo: unknown = null;
+  if (texto.trim() !== "") {
+    try {
+      corpo = JSON.parse(texto);
+    } catch {
+      return json({ versao: VERSAO, error: `corpo não é JSON válido. Recusado por segurança: ${EFEITO}.` }, 400);
+    }
+  }
   const decisaoSonda = classificarSonda(corpo);
   if (decisaoSonda.tipo === "sonda") {
     return json(respostaSonda(VERSAO), 200);
@@ -107,7 +117,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // 1) Código Omie → empresa do grupo, perguntando a CADA Omie pelos CNPJs das outras.
-    //    Qualquer falha aborta ANTES de tocar fin_ic_matches (mapa incompleto apagaria pares reais).
+    //    Qualquer falha (ou retrato incompleto) aborta ANTES de tocar fin_ic_matches.
     const consultas: ResultadoConsulta[] = [];
     for (const empresa of EMPRESAS) {
       const cred = credenciais(empresa);
@@ -125,7 +135,7 @@ Deno.serve(async (req: Request) => {
 
     // 2) Contraprova: o mapa de identidade (`omie_customer_account_map`, documento lido do mesmo
     //    Omie) não pode conhecer um cadastro do grupo que o Omie "não devolveu" — isso é filtro
-    //    quebrado/parcial, e seguir apagaria os pares desse cadastro em silêncio.
+    //    quebrado/parcial, e seguir deixaria os pares desse cadastro de fora em silêncio.
     const empresaDoCnpj = new Map([...cnpjDe].map(([e, c]) => [c, e]));
     const mapa = await fetchAll<{ account: string; omie_codigo_cliente: number | null; evidence_document_normalized: string }>(
       (de, ate) =>
@@ -154,23 +164,30 @@ Deno.serve(async (req: Request) => {
       }, 502);
     }
 
-    // 3) Linhas do humano (manual/desconsiderado, ou qualquer uma já resolvida) ficam; os títulos
-    //    delas saem do pool. As automáticas não resolvidas são as que serão trocadas.
-    const existentes = await fetchAll<{ id: string; status: string; cr_id: string | null; cp_id: string | null; resolvido_em: string | null }>(
-      (de, ate) =>
-        supabase.from("fin_ic_matches").select("id, status, cr_id, cp_id, resolvido_em").order("id").range(de, ate),
+    // 3) O que já está gravado. `auto_matched` não resolvido FICA (a edge nunca o apaga: é a
+    //    evidência da RPC) e, como as linhas do humano, tira os títulos do pool. Só os informativos
+    //    não resolvidos são trocados. Keyset: OFFSET com escrita concorrente repete/pula linha.
+    const existentes = await fetchAllKeyset<{ id: string; status: string; cr_id: string | null; cp_id: string | null; resolvido_em: string | null }, string>(
+      (cursor, limite) => {
+        let q = supabase.from("fin_ic_matches").select("id, status, cr_id, cp_id, resolvido_em");
+        if (cursor !== null) q = q.gt("id", cursor);
+        return q.order("id", { ascending: true }).limit(limite);
+      },
+      (m) => m.id,
       "fin_ic_matches",
     );
-    const automaticos = new Set<string>(STATUS_AUTOMATICOS);
+    const informativos = new Set<string>(STATUS_INFORMATIVOS);
     const travados = new Set<string>();
-    const idsAntigos: string[] = [];
+    const idsInformativos: string[] = [];
+    let autoPreservados = 0;
     for (const m of existentes) {
-      if (automaticos.has(m.status) && m.resolvido_em === null) {
-        idsAntigos.push(m.id);
-      } else {
-        if (m.cr_id) travados.add(m.cr_id);
-        if (m.cp_id) travados.add(m.cp_id);
+      if (informativos.has(m.status) && m.resolvido_em === null) {
+        idsInformativos.push(m.id);
+        continue;
       }
+      if (m.status === "auto_matched" && m.resolvido_em === null) autoPreservados++;
+      if (m.cr_id) travados.add(m.cr_id);
+      if (m.cp_id) travados.add(m.cp_id);
     }
 
     // 4) Só os títulos cuja contraparte é do grupo (poucos), paginados (capa de 1.000 do PostgREST).
@@ -179,45 +196,62 @@ Deno.serve(async (req: Request) => {
     for (const empresa of EMPRESAS) {
       const codigos = consultas.filter((c) => c.empresa === empresa).flatMap((c) => c.codigos);
       if (codigos.length === 0) continue;
-      const cr = await fetchAll<LinhaTitulo & { omie_codigo_cliente: number | null }>(
-        (de, ate) =>
-          supabase.from("fin_contas_receber")
+      const cr = await fetchAllKeyset<LinhaTitulo & { omie_codigo_cliente: number | null }, string>(
+        (cursor, limite) => {
+          let q = supabase.from("fin_contas_receber")
             .select("id, company, omie_codigo_cliente, valor_documento, data_emissao, numero_documento_fiscal, status_titulo")
-            .eq("company", empresa).in("omie_codigo_cliente", codigos).order("id").range(de, ate),
+            .eq("company", empresa).in("omie_codigo_cliente", codigos);
+          if (cursor !== null) q = q.gt("id", cursor);
+          return q.order("id", { ascending: true }).limit(limite);
+        },
+        (t) => t.id,
         `fin_contas_receber:${empresa}`,
       );
       for (const t of cr) crs.push(paraTitulo(t, t.omie_codigo_cliente));
-      const cp = await fetchAll<LinhaTitulo & { omie_codigo_cliente_fornecedor: number | null }>(
-        (de, ate) =>
-          supabase.from("fin_contas_pagar")
+      const cp = await fetchAllKeyset<LinhaTitulo & { omie_codigo_cliente_fornecedor: number | null }, string>(
+        (cursor, limite) => {
+          let q = supabase.from("fin_contas_pagar")
             .select("id, company, omie_codigo_cliente_fornecedor, valor_documento, data_emissao, numero_documento_fiscal, status_titulo")
-            .eq("company", empresa).in("omie_codigo_cliente_fornecedor", codigos).order("id").range(de, ate),
+            .eq("company", empresa).in("omie_codigo_cliente_fornecedor", codigos);
+          if (cursor !== null) q = q.gt("id", cursor);
+          return q.order("id", { ascending: true }).limit(limite);
+        },
+        (t) => t.id,
         `fin_contas_pagar:${empresa}`,
       );
       for (const t of cp) cps.push(paraTitulo(t, t.omie_codigo_cliente_fornecedor));
     }
 
     const linhas = casar({ crs, cps, contraparte, travados });
-    const resumo = resumir(linhas, crs, cps, consultas);
+    const resumo = { ...resumir(linhas, crs, cps, consultas), auto_preservados: autoPreservados };
 
     if (simular) {
       return json({ ok: true, versao: VERSAO, simulado: true, ...resumo, linhas }, 200);
     }
 
-    const desfecho = await substituirMatches({
+    const desfecho = await publicarMatches({
       inserir: (novas) => supabase.from("fin_ic_matches").insert(novas),
-      apagar: (ids) => supabase.from("fin_ic_matches").delete().in("id", ids),
-    }, linhas, idsAntigos);
+      apagarInformativos: (ids) =>
+        supabase.from("fin_ic_matches").delete().in("id", ids)
+          .in("status", [...STATUS_INFORMATIVOS]).is("resolvido_em", null),
+    }, linhas, idsInformativos);
     if (!desfecho.ok) {
       return json({
         versao: VERSAO,
         error: `fin_ic_matches (${desfecho.etapa}): ${desfecho.erro}`,
-        nota: desfecho.etapa === "apagar"
-          ? "linhas novas gravadas, antigas não apagadas: o DRE consolidado sai NULL até a próxima rodada"
-          : "nada gravado; os matches anteriores continuam",
+        nota: desfecho.etapa === "inserir"
+          ? "informativos antigos apagados e os novos não gravados; os pares automáticos e as linhas do humano estão intactos"
+          : "nada novo gravado; os pares automáticos e as linhas do humano estão intactos",
       }, 500);
     }
-    return json({ ok: true, versao: VERSAO, simulado: false, ...resumo, apagadas: desfecho.apagadas }, 200);
+    return json({
+      ok: true,
+      versao: VERSAO,
+      simulado: false,
+      ...resumo,
+      inseridas: desfecho.inseridas,
+      informativas_apagadas: desfecho.informativas_apagadas,
+    }, 200);
   } catch (e) {
     return json({ versao: VERSAO, error: mensagemDeErro(e) ?? "falha sem mensagem" }, 502);
   }
