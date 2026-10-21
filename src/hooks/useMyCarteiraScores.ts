@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { ajusteDoJson } from '@/lib/scoring/borda-ajuste';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useCarteirasQueEuCubro } from '@/hooks/useCoverage';
@@ -60,10 +61,10 @@ export function useMyCarteiraScores() {
         .order('priority_score', { ascending: false })
         .limit(200);
       if (error) throw error;
-      const rows = (data ?? []) as unknown as Array<CarteiraScoreRow & { farmer_id: string }>;
-      // signal_modifiers é coluna jsonb (Json nos tipos gerados): asserção Json→ScoreAdjustment no boundary
-      return rows.map(({ farmer_id, ...row }) => ({
+      return (data ?? []).map(({ farmer_id, signal_modifiers, ...row }) => ({
         ...row,
+        // jsonb `signal_modifiers` lido por forma (na prod é `{}` = sem ajuste → null).
+        signal_modifiers: ajusteDoJson(signal_modifiers),
         coberto_de: farmer_id !== baseId ? farmer_id : null,
       }));
     },

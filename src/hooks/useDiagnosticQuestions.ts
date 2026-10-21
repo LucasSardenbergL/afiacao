@@ -158,13 +158,7 @@ export const useDiagnosticQuestions = () => {
       .select('question_type, response_type, was_bundle_offered, bundle_result, margin_generated')
       .eq('farmer_id', effectiveUserId);
 
-    const rows = (data ?? []) as unknown as Array<{
-      question_type: string;
-      response_type: string | null;
-      was_bundle_offered: boolean | null;
-      bundle_result: string | null;
-      margin_generated: number | null;
-    }>;
+    const rows = data ?? [];
     if (!rows.length) return null;
 
     const stats: Record<string, { total: number; interesse: number; offered: number; accepted: number; totalMargin: number }> = {};

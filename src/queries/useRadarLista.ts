@@ -25,21 +25,6 @@ export interface RadarFiltros {
 
 const PAGE = 50;
 
-// acoes_execucoes não está no types.ts gerado (regen é do Lovable) → cast estrutural mínimo (idioma do useUltimaExecucao).
-interface SelectRodadaScore {
-  from(tabela: 'acoes_execucoes'): {
-    select(colunas: 'id'): {
-      eq(coluna: 'acao', valor: string): {
-        eq(coluna: 'status', valor: string): {
-          order(coluna: 'iniciado_em', opcoes: { ascending: boolean }): {
-            limit(n: number): PromiseLike<{ data: { id: string }[] | null; error: { message: string } | null }>;
-          };
-        };
-      };
-    };
-  };
-}
-
 /** Id da rodada mais recente do score (ledger `radar.score_recalcular`). Revisado a cada 10 min: a rodada
  *  diária (03:30 BRT) ou uma manual troca a versão da fila e reinicia a paginação. */
 function useRadarRodadaScore() {
@@ -48,8 +33,7 @@ function useRadarRodadaScore() {
     refetchInterval: 10 * 60_000,
     retry: 1,
     queryFn: async () => {
-      const cliente = supabase as unknown as SelectRodadaScore;
-      const { data, error } = await cliente
+      const { data, error } = await supabase
         .from('acoes_execucoes')
         .select('id')
         .eq('acao', 'radar.score_recalcular')

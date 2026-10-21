@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { mixGapDoJson } from '@/lib/mixgap/borda';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { rankGaps } from '@/lib/mixgap/format';
-import type { MixGapResumo, GapCliente } from '@/lib/mixgap/types';
+import type { GapCliente } from '@/lib/mixgap/types';
 
 export interface MixGap {
   totalComGap: number;
@@ -25,16 +26,13 @@ export function useMyMixGap() {
     staleTime: 60_000,
     queryFn: async (): Promise<MixGap | null> => {
       if (!user) return null;
-      const client = supabase as unknown as {
-        rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>;
-      };
       const { data, error } = isImpersonating && effectiveUserId
-        ? await client.rpc('get_meu_mixgap_for', { p_target: effectiveUserId })
-        : await client.rpc('get_meu_mixgap');
+        ? await supabase.rpc('get_meu_mixgap_for', { p_target: effectiveUserId })
+        : await supabase.rpc('get_meu_mixgap');
       if (error) throw new Error(error.message);
-      if (!data) return null;
-      const r = data as MixGapResumo;
-      return { totalComGap: r.total_com_gap, lista: rankGaps(r.lista ?? []) };
+      const r = mixGapDoJson(data);
+      if (!r) return null;
+      return { totalComGap: r.total_com_gap, lista: rankGaps(r.lista) };
     },
   });
 }

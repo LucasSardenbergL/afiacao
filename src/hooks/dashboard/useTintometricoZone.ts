@@ -104,9 +104,9 @@ export function useTintometricoZone() {
     queryKey: ['dashboard', 'tintometrico', 'adocao', applies],
     enabled: applies,
     queryFn: async () => {
-      const { data: linhas, error } = await supabase.rpc('tint_adocao_balcao' as never, { p_dias: 30 } as never);
+      const { data: linhas, error } = await supabase.rpc('tint_adocao_balcao', { p_dias: 30 });
       if (error) throw error;
-      const linha = (linhas as unknown as Array<{ pedidos_com_cor: number; pelo_app: number }> | null)?.[0];
+      const linha = linhas?.[0];
       if (!linha) throw new Error('tint_adocao_balcao: RPC não devolveu a linha de contagem');
       return { comCor: Number(linha.pedidos_com_cor), peloApp: Number(linha.pelo_app) };
     },

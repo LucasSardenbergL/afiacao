@@ -57,7 +57,7 @@ export function IntelligenceStrategicTab() {
           .from('farmer_client_scores')
           .select('customer_user_id, avg_monthly_spend_180d, avg_repurchase_interval, revenue_potential')
           .order('customer_user_id', { ascending: true })
-          .range(de, ate) as unknown as PromiseLike<{ data: Omit<ScoreLinha, 'gross_margin_pct' | 'margem_oculta'>[] | null; error: unknown }>,
+          .range(de, ate),
         'farmer_client_scores/intel-estrategico',
       );
       return anexarMargens(linhas, await buscarMargensScores());

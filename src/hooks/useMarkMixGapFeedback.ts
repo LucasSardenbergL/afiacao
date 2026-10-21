@@ -15,10 +15,7 @@ export function useMarkMixGapFeedback() {
   const key = ['my-mixgap', effectiveUserId];
   return useMutation({
     mutationFn: async ({ customerUserId, familia, status }: MarkArgs) => {
-      const client = supabase as unknown as {
-        rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }>;
-      };
-      const { error } = await client.rpc('mark_mixgap_feedback', {
+      const { error } = await supabase.rpc('mark_mixgap_feedback', {
         p_customer: customerUserId, p_familia: familia, p_status: status,
       });
       if (error) throw new Error(error.message);

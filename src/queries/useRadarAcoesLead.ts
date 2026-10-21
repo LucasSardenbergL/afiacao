@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeFunction } from '@/lib/invoke-function';
 import { track } from '@/lib/analytics';
+import { lerRegistroComDedupe } from '@/lib/radar/borda-rpc';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import {
   cadastrarEmpresaNoOmie,
@@ -10,8 +11,6 @@ import {
   type ResultadoCadastro,
 } from '@/lib/radar/cadastro-omie';
 
-// TODO: cast até o Lovable regenerar os tipos pós-migration (lição §10 CLAUDE.md)
-type RpcFn = typeof supabase.rpc;
 
 /** Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). */
 function montarPayloadCriarCliente(e: RadarEmpresa) {
@@ -42,10 +41,11 @@ export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
   // que PARA o lote) vem no corpo, e só o helper o lê (P1 do review Codex).
   criarNoOmie: (e) => invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e)),
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {
-    const { error } = await (supabase.rpc as RpcFn)(
-      'radar_registrar_cadastro_omie' as never,
-      { p_cnpj: cnpj, p_codigo_cliente: codigo, p_ja_existia: jaExistia } as never,
-    );
+    const { error } = await supabase.rpc('radar_registrar_cadastro_omie', {
+      p_cnpj: cnpj,
+      p_codigo_cliente: codigo,
+      p_ja_existia: jaExistia,
+    });
     if (error) throw error;
   },
   lerVinculo: async (cnpj) => {
@@ -93,12 +93,12 @@ export function useRadarCadastrarOmie() {
 
 /** RPC `radar_atribuir_tarefa` (SECURITY DEFINER gestor/master): { id, deduped }. */
 export async function atribuirTarefaRadar(v: { cnpj: string; diasRetomada?: number }) {
-  const { data, error } = await (supabase.rpc as RpcFn)(
-    'radar_atribuir_tarefa' as never,
-    { p_cnpj: v.cnpj, p_dias_retomada: v.diasRetomada ?? 7 } as never,
-  );
+  const { data, error } = await supabase.rpc('radar_atribuir_tarefa', {
+    p_cnpj: v.cnpj,
+    p_dias_retomada: v.diasRetomada ?? 7,
+  });
   if (error) throw error;
-  return data as unknown as { id: string; deduped: boolean };
+  return lerRegistroComDedupe(data, 'radar_atribuir_tarefa');
 }
 
 /**

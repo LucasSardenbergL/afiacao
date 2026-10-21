@@ -61,11 +61,6 @@ interface PerformanceScoreRow {
   total_time_seconds: number | string | null;
 }
 
-interface ProfileNameRow {
-  user_id: string;
-  name: string | null;
-}
-
 interface TacticalPlanRow {
   status: string | null;
   plan_followed: boolean | null;
@@ -137,14 +132,14 @@ export const useFarmerPerformance = () => {
         query = query.eq('farmer_id', farmerId);
       }
 
-      const { data } = (await query) as unknown as { data: PerformanceScoreRow[] | null };
+      const { data } = (await query);
       if (!data) { setScores([]); return; }
 
       const farmerIds = [...new Set(data.map((d) => d.farmer_id))];
       const { data: profiles } = (await supabase
         .from('profiles')
         .select('user_id, name')
-        .in('user_id', farmerIds)) as unknown as { data: ProfileNameRow[] | null };
+        .in('user_id', farmerIds));
 
       const nameMap = new Map<string, string>((profiles || []).map((p) => [p.user_id, p.name ?? 'Farmer']));
       setScores(data.map((d) => parseScore(d, nameMap)));
@@ -203,27 +198,27 @@ export const useFarmerPerformance = () => {
         // authenticated (FU4-F, 20261015120100) — a query inteira cairia com 42501.
         .select('status, plan_followed, bundle_recommendation_id, actual_margin, call_duration_seconds')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr)) as unknown as { data: TacticalPlanRow[] | null };
+        .gte('created_at', startStr));
 
       // Fetch calls for the period
       const { data: calls } = (await supabase
         .from('farmer_calls')
         .select('*')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr)) as unknown as { data: FarmerCallRow[] | null };
+        .gte('created_at', startStr));
 
       // Fetch client scores (current snapshot)
       const { data: clientScores } = (await supabase
         .from('farmer_client_scores')
         .select('churn_risk, category_count, avg_monthly_spend_180d, health_score')
-        .eq('farmer_id', farmerId)) as unknown as { data: ClientScoreRow[] | null };
+        .eq('farmer_id', farmerId));
 
       // Fetch copilot sessions
       const { data: copilotSessions } = (await supabase
         .from('farmer_copilot_sessions')
         .select('suggestions_shown, suggestions_used')
         .eq('farmer_id', farmerId)
-        .gte('created_at', startStr)) as unknown as { data: CopilotSessionRow[] | null };
+        .gte('created_at', startStr));
 
       const plansArr: TacticalPlanRow[] = plans || [];
       const callsArr: FarmerCallRow[] = calls || [];
