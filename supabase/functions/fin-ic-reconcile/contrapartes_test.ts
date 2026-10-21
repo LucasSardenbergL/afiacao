@@ -67,6 +67,10 @@ Deno.test("EOF ANTES do total declarado → lança (retrato parcial não vira ma
   await assertRejeitaCom(consultarCodigos(omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 3), EOF]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
 });
 
+Deno.test("página VAZIA antes do total declarado → lança (não é fim da lista)", async () => {
+  await assertRejeitaCom(consultarCodigos(omie([pagina([{ codigo_cliente_omie: 1, cnpj_cpf: OBEN }], 3), pagina([], 3)]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
 Deno.test("fault de negócio / HTTP de erro / corpo sem lista → lança, nunca 'zero cadastros'", async () => {
   const bloqueio = lerResposta(500, JSON.stringify({ faultstring: "Consumo redundante detectado", faultcode: "SOAP-ENV:Client-6" }));
   await assertRejeitaCom(consultarCodigos(omie([bloqueio]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");

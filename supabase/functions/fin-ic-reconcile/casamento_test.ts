@@ -66,6 +66,8 @@ Deno.test("1 centavo de diferença → não é auto_matched (a RPC exige valor i
   const l = rodar([cr({ valor: 9180 })], [cp({ valor: 9180.01 })]);
   assertEquals(auto(l), []);
   assertEquals(status(l), ["divergencia_valor"]);
+  // 10,00 × 10,01: |Δ| em double é 0,00999… — uma tolerância "≤ 0,01" casaria aqui.
+  assertEquals(auto(rodar([cr({ valor: 10 })], [cp({ valor: 10.01 })])), []);
 });
 
 Deno.test("6 dias de distância → divergencia_data, nunca auto", () => {
