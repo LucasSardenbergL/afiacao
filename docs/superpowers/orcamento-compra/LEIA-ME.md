@@ -129,6 +129,37 @@ Publicação dos encerrados: seq 155, de 2026-10-20, habilitada. Aprovados (#318
 - **Causa na fonte:** o backfill da `omie-sync-nfes-recebidas` grava `nid_receb` antes do recebimento e nunca volta à linha. São 81 linhas OBEN de julho a outubro com NF e sem t4. Correção: PR #3284 (v1.10, a revisita grava o t4 da NF conhecida e recebida). Imputar o t4 (emissão + 7 dias) levou a cobertura de 19,1% para 38,4% e os SKUs ruins de 107 para 90. É experimento, não resultado: o número real sai depois do deploy e do catch-up.
 - **Resíduos menores medidos:** a consolidação de demanda por substituição de SKU (`sku_substituicao`, 7 SKUs) põe no SKU novo a venda que baixou o estoque do antigo, cerca de 35 unidades. A malha PCP pesa só 3 dos 108 SKUs ruins.
 
+### Rodada de 2026-10-21 depois do t4 (fatos de 2026-10-21; horizonte de 60 dias)
+
+**Fonte corrigida e catch-up feitos.** A `omie-sync-nfes-recebidas` v1.10 (#3284) está no ar: a sonda atestou às 12:37 UTC, com o hash igual ao da main. O catch-up rodou em duas invocações, ambas com HTTP 200 e `erros=0`:
+- janela de 01/06 a 25/09: `t4_preenchidos=75` e `t4_nid_divergente=1`;
+- `revisita_dias=30`: `t4_preenchidos=9`.
+
+Linhas OBEN com NF desde junho e sem t4: **86 → 2**. Uma é o pedido 1150, com o nid de outro recebimento, que fica intocado por desenho. A outra é uma órfã que o Omie ainda marca como não recebida. Nenhum t4 ficou antes da emissão ou no futuro, e o lag mediano é de 5 dias. Em 2 NFs o t4 cai às ~21h e o app efetivou na manhã seguinte (1 dia de diferença).
+
+| | antes do t4 (fatos de 20/10) | **depois do t4 (fatos de 21/10)** |
+|---|---|---|
+| SKUs com fechamento ruim | 107/155 | **90/155** |
+| Episódios classificados | 48 | **93** |
+| Cobertura por episódio | 19,4% | **38,8%** |
+| Precisão por episódio | 88,8% | **82,6%** |
+| Estados, 279 ciclos (viável · inviável · indeterminado) | 250 · 20 · 9 | 250 · 17 · 12 |
+| Disparados | 113 · 9 · 6 | 113 · 8 · 7 |
+| Aceito com guarda | 36,2% | 33,9% |
+
+- **A cobertura bateu com o experimento** de imputação (38,4% previstos).
+- **A precisão caiu porque a amostra deixou de ser viesada.** Os 88,8% vinham só dos SKUs cujo estoque fechava. Separando por motivo do corte (episódios dos disparados, `precisaoPorEpisodio` com `cortesDetalhe` filtrado por `motivo`):
+
+  | Episódios por motivo | Precisão | Classificados | Cobertura |
+  |---|---|---|---|
+  | **econômico** (ΔV ≤ 0) | **94,5%** | 85 | 37,6% |
+  | econômico, sem chegada aproximada (R33) | 98,1% | 83 | 44,4% |
+  | **financeiro** (guarda de caixa) | **43,8%** | 9 | 52,9% |
+
+  Em valor, dos cortes classificados: econômico R$ 3,1 mil teria rompido contra R$ 75,6 mil adiado ou eliminado; financeiro **R$ 9,7 mil teria rompido contra R$ 7,6 mil adiado**. **O gate econômico funciona. Quem rompe estoque é o corte por caixa:** o que a guarda tira para caber na reserva faz falta depois em mais da metade dos episódios. **Mas o financeiro é praticamente UM ciclo:** todo o R$ 9,7 mil que teria rompido está no ciclo 1277 (23/07), onde a guarda cortou R$ 18,8 mil de 11 SKUs de um mesmo pedido, e 2 deles (8689743956 e 8689776554) romperiam. Os outros 7 ciclos com corte financeiro (23–28/07) somam R$ 9,5 mil, quase tudo indeterminado. Desde 28/07, com o horizonte de 60 dias, a guarda não faz nenhum corte financeiro. É evidência de UM evento, não de um padrão. Decisão pendente do founder, sem urgência porque a guarda quase não corta: o que ela deve fazer quando o caixa não comporta o pedido (cortar, escalar para aprovação humana ou só alertar).
+- **Indeterminados:** 9 por falta de snapshot (inclui o ciclo de hoje, cujo snapshot ainda não foi tirado) e 3 por compromisso não conciliado.
+- **O portão segue FECHADO.**
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
