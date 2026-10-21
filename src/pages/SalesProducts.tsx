@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json, Tables } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Search, RefreshCw, Package, ShoppingCart, BarChart3, Building2, ChevronLeft } from 'lucide-react';
@@ -17,15 +18,16 @@ import { desatualizado, estadoDeLeitura, naoConsegui } from '@/lib/leitura/estad
 
 type Account = 'oben' | 'colacor';
 
-interface Product {
-  id: string;
-  codigo: string;
-  descricao: string;
-  unidade: string;
-  valor_unitario: number;
-  estoque: number;
-  ativo: boolean;
-  metadata: Record<string, unknown>;
+type Product = Pick<
+  Tables<'omie_products'>,
+  'id' | 'codigo' | 'descricao' | 'unidade' | 'valor_unitario' | 'estoque' | 'ativo' | 'metadata'
+>;
+
+/** `metadata.marca` quando o jsonb é objeto e a marca é texto não-vazio; senão nada a mostrar. */
+function marcaDoProduto(metadata: Json | null): string | null {
+  if (typeof metadata !== 'object' || metadata === null || Array.isArray(metadata)) return null;
+  const marca = metadata.marca;
+  return typeof marca === 'string' && marca !== '' ? marca : null;
 }
 
 /** Só o que a tela mostra — `select('*')` puxava o `metadata` inteiro de ~4k SKUs à toa. */
@@ -41,7 +43,7 @@ const COLUNAS_CATALOGO = 'id, codigo, descricao, unidade, valor_unitario, estoqu
  * exibição (ativos primeiro, depois descrição) é aplicada no cliente, sobre o catálogo completo.
  */
 export async function buscarCatalogoVendas(account: Account): Promise<Product[]> {
-  const linhas = await fetchAllPages<Product>(
+  const linhas = await fetchAllPages(
     (de, ate) =>
       supabase
         .from('omie_products')
@@ -54,7 +56,7 @@ export async function buscarCatalogoVendas(account: Account): Promise<Product[]>
         .not('familia', 'ilike', 'jumbo%')
         .not('familia', 'ilike', '%material para tingimix%')
         .order('id')
-        .range(de, ate) as unknown as PromiseLike<{ data: Product[] | null; error: unknown }>,
+        .range(de, ate),
     'omie_products/catalogo-vendas',
   );
   // Um DELETE/INSERT entre páginas ainda pode reler uma linha: o mesmo `id` aparece uma vez só.
@@ -288,9 +290,9 @@ const SalesProducts = () => {
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Cód: {product.codigo} · {product.unidade}
                     </p>
-                    {!!product.metadata?.marca && (
+                    {marcaDoProduto(product.metadata) && (
                       <p className="text-xs text-muted-foreground">
-                        Marca: {String(product.metadata.marca)}
+                        Marca: {marcaDoProduto(product.metadata)}
                       </p>
                     )}
                   </div>
@@ -299,10 +301,14 @@ const SalesProducts = () => {
                       R$ {product.valor_unitario.toFixed(2)}
                     </p>
                     <Badge 
-                      variant={product.estoque > 10 ? 'secondary' : product.estoque > 0 ? 'outline' : 'destructive'}
+                      variant={
+                        product.estoque === null ? 'outline'
+                          : product.estoque > 10 ? 'secondary' : product.estoque > 0 ? 'outline' : 'destructive'
+                      }
                       className="text-[10px] mt-1"
                     >
-                      Est: {product.estoque}
+                      {/* estoque NULL = não sincronizado; "—", não "0" (ausente ≠ zero). */}
+                      Est: {product.estoque ?? '—'}
                     </Badge>
                   </div>
                 </div>

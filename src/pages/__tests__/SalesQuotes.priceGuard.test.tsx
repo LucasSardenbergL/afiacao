@@ -49,7 +49,7 @@ function makeQuote(valor_unitario: number) {
   return {
     id: 'q1', customer_user_id: 'c1', account: 'oben', status: 'orcamento',
     created_at: '2026-06-16T10:00:00Z', total: valor_unitario, notes: null,
-    items: [{ omie_codigo_produto: 'SKU1', quantidade: 1, valor_unitario, descricao: 'Disco de Corte 7"' }],
+    items: [{ omie_codigo_produto: 1001, quantidade: 1, valor_unitario, descricao: 'Disco de Corte 7"' }],
   };
 }
 

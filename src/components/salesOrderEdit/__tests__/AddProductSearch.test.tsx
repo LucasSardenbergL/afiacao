@@ -5,7 +5,7 @@ import type { OmieProduct } from '../types';
 
 const prod: OmieProduct = {
   id: 'p1', omie_codigo_produto: 100, codigo: 'C1', descricao: 'Verniz incolor',
-  unidade: 'UN', valor_unitario: 25, estoque: 8, ativo: true,
+  unidade: 'UN', valor_unitario: 25, estoque: 8, ativo: true, account: 'oben', is_tintometric: false, tint_type: null,
 };
 
 describe('AddProductSearch', () => {

@@ -3,7 +3,7 @@
 import { buildPrintData } from '@/components/sales/print/buildPrintHtml';
 import { openPrintOrder } from '@/components/OrderPrintLayout';
 import type { LeituraDescontosItens } from '@/components/sales/print/descontoCupom';
-import type { CompanyFilter, OmiePayload, OrderItem, SalesOrderRow } from '@/components/sales/print/types';
+import type { CompanyFilter, OmiePayload, SalesOrderRow } from '@/components/sales/print/types';
 import type { SalesOrder } from './types';
 import { totalLinhaOuAusente } from '@/lib/format';
 
@@ -48,7 +48,7 @@ export function buildSalesOrderPrintRow(
     id: order.id,
     customer_user_id: order.customer_user_id,
     // valor_total por item recalculado quando vem zerado (rascunhos).
-    items: (order.items ?? []).map((it) => ({ ...it, valor_total: itemTotal(it) })) as unknown as OrderItem[],
+    items: (order.items ?? []).map((it) => ({ ...it, valor_total: itemTotal(it) })),
     subtotal: order.subtotal ?? 0,
     total: order.total ?? 0,
     desconto: order.discount ?? 0,
