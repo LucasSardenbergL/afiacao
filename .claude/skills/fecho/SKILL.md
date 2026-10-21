@@ -526,8 +526,8 @@ do `$sha` ainda vai nascer, ou um mais novo o substitui: espere e repita a consu
 nenhum no `$sha` nem rodando/pendente. Nesse caso o `ci-na-main-pos-merge` falhou: veja
 `gh run list --workflow Auto-merge --event workflow_run --limit 5` e diga isso no fecho.
 
-Tempo: o `validate` sai em ~20 min; o run inteiro só conclui depois do `mutation-check`, que na main
-roda todos os contratos (até ~45 min).
+Tempo: o run do pós-merge é o `validate` (~20 min, mais a fila de runners). Desde 2026-10-21 ele NÃO
+roda o `mutation-check` (`mutcheck=false`): a rede de todos os contratos `.mut` é o cron diário.
 
 - `success` → ✅ pode fechar.
 - `failure` → ❌ **investigue antes de fechar.**

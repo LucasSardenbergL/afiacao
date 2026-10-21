@@ -92,6 +92,14 @@ on:
   # Desde o M-22 (2026-10-11) o `auto-merge.yml` dispara este gatilho SOZINHO depois de cada merge
   # de PR (job `ci-na-main-pos-merge`), e o cron diário fica como rede. Coalescência no `concurrency:`.
   workflow_dispatch:
+    # O pós-merge do `auto-merge.yml` passa `false` (2026-10-21): a rede de TODOS os contratos `.mut`
+    # custava ~56 min de runner POR MERGE, na fila dos jobs que barram o PR. Ela roda no `schedule`
+    # diário e em todo dispatch manual (o default). Medição: docs/historico/ci-fila-de-runners.md
+    inputs:
+      mutcheck:
+        description: 'Rodar o mutation-check (todos os contratos .mut)'
+        type: boolean
+        default: true
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
 # O `validate` era UM job serial de ~40 steps, com `timeout-minutes: 15`. Medido em 2026-09-07 sobre
@@ -1062,8 +1070,15 @@ jobs:
         # manifesto: N=5 dá MAX 14,6 min (pior: as caras se alinham), N=6 dá 6,4 / 6,8 / 8,9 / 7,5 /
         # 2,6 / 8,1 (MAX 8,9) e N=7 volta a 11,3. Reordenar o manifesto para balancear foi descartado:
         # a ordem lá é a dos EIXOS (ordem de dano), não de custo. Preâmbulo por parte é ~30 s
-        # (checkout + PGDG); custo da mudança: +2 runners curtos por run. Re-simule ao somar prova
-        # cara: `NUCLEO_PARTE=i/6 bash db/roda-nucleo-ci.sh --lista` diz em que parte ela cai.
+        # (checkout + PGDG); custo da mudança: +2 runners curtos por run.
+        #
+        # Round-robin → balanceada pelo CUSTO (2026-10-21). Em 3 dias o round-robin desandou: medido em
+        # 4 runs de PR (duração impressa por prova), as 6 partes somavam 10,9 / 14,2 / 4,8 / 10,2 / 6,3 /
+        # 10,1 min de núcleo, e a 2ª voltou a ser o caminho crítico do `validate`. A partição agora é LPT
+        # sobre db/nucleo-ci-custo.txt (o manifesto segue na ordem dos eixos): 9,5–9,6 min cada. Ficam
+        # 6 partes: com o preâmbulo medido em 29 s (p50, 1.283 jobs), 4 partes balanceadas (~14,3 min)
+        # poupariam ~1 min de runner por run e devolveriam o caminho crítico de hoje. Prova cara nova
+        # entra no default (30 s) até a tabela ser re-medida — receita no cabeçalho dela.
         parte: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read
@@ -1614,7 +1629,7 @@ jobs:
   mutcheck-escopo:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: github.event_name != 'schedule'
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mutcheck }}
     permissions:
       contents: read
     outputs:
@@ -1682,16 +1697,18 @@ jobs:
     permissions:
       contents: read
       issues: write
-    # FORA do `schedule` de propósito. O run diário existe para provar que a main passa nos gates
-    # BLOQUEANTES; este job é informativo, não-required, e pode ficar INVÁLIDO por refactor legítimo
-    # (ver o comentário acima). Rodando diário ele falharia sem abrir Issue nenhuma — os dois steps
-    # de alerta vivem no job `validate` —, virando exatamente o sinal vermelho que ninguém lê. Além
-    # de somar ~2m41s por dia sem leitor. Em push/dispatch roda TODOS os contratos; em PR, só os
-    # que o diff alcança (job `mutcheck-escopo`, acima).
+    # QUANDO roda (2026-10-21): em PR, só os contratos que o diff alcança (job `mutcheck-escopo`);
+    # na main, TODOS — no `schedule` diário, no push direto (Lovable, que não passa por PR) e no
+    # dispatch MANUAL. NÃO no dispatch do pós-merge (`auto-merge.yml` passa `mutcheck=false`): ali
+    # eram 3 partes de ~19 min a cada merge, 13% de todo o runner do repo (19–21/10), disputando os
+    # 20 jobs simultâneos com o `validate` dos PRs. Até 2026-10-21 era o contrário — fora do
+    # `schedule`, porque rodando lá ele falharia sem abrir Issue (o alarme vivia no `validate`); o
+    # `mutcheck-sensor` (2026-10-03) desfez esse motivo: a Issue `mutcheck-cobertura` abre de onde
+    # quer que a união da main falhe. Custo: a rede da main avisa no dia seguinte, não no merge.
     # Só pula com `roda` EXPLICITAMENTE 'false'. O `!cancelled()` troca o `success()` implícito do
     # `needs:`: se o job de escopo FALHAR, este roda mesmo assim, com todos os contratos.
     needs: mutcheck-escopo
-    if: ${{ !cancelled() && github.event_name != 'schedule' && needs.mutcheck-escopo.outputs.roda != 'false' }}
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.mutcheck) && needs.mutcheck-escopo.outputs.roda != 'false' }}
     # PARTES (2026-10-03): TODOS (main, ou PR com gatilho global) vira 3 partes equilibradas pelo
     # custo estimado de cada contrato — ~43 min em série viram ~15 por parte; o escopo de um PR cabe
     # numa. O vetor vem do job de escopo; sem ele (escopo quebrado), 1 parte com todos, como antes.
@@ -1793,7 +1810,7 @@ jobs:
   # "união incompleta" — abre a Issue como ausência de dado e não deixa fechar.
   mutcheck-sensor:
     needs: [mutcheck-escopo, mutation-check]
-    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'schedule' && needs.mutation-check.result != 'skipped' }}
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.mutation-check.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
