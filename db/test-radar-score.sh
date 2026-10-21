@@ -381,7 +381,7 @@ eq "A17b rodada seguinte recompõe a linha pulada: NULL 'já é cliente', 0 pula
 FN_V2="$(dirname "$DATA")/fn-v2.sql"; FN_V3="$(dirname "$DATA")/fn-v3.sql"
 awk '/^CREATE OR REPLACE FUNCTION public.radar_score_recalcular\(\)/{p=1} p{print} p && /^\$function\$;$/{exit}' "$MIG2" > "$FN_V2"
 awk '/^CREATE OR REPLACE FUNCTION public.radar_score_recalcular\(\)/{p=1} p{print} p && /^\$function\$;$/{exit}' "$MIG_USADA" > "$FN_V3"
-grep -q "lote em ingestão" "$FN_V2" && grep -q "atividade secundária prioritária" "$FN_V3" || { echo "não extraí os corpos da v2/v3"; exit 9; }
+if ! grep -q "lote em ingestão" "$FN_V2" || ! grep -q "atividade secundária prioritária" "$FN_V3"; then echo "não extraí os corpos da v2/v3"; exit 9; fi
 Pq -c "TRUNCATE public.radar_empresas;
 INSERT INTO public.radar_empresas (cnpj, municipio_codigo, uf, ja_cliente, ultimo_lote)
   SELECT 'BC' || lpad(g::text, 10, '0') || '01', CASE WHEN g <= 12 THEN 'M2' ELSE 'M9' END, 'MG', true, '2026-09' FROM generate_series(1, 112) g;
