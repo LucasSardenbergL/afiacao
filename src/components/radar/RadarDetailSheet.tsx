@@ -13,6 +13,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
   formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
+  selosFilial, textoFilialFicha, type IrmaosRaiz, type EstadoIrmaos,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -90,6 +91,8 @@ export function RadarDetailSheet({
   onClose,
   onProximo,
   lote = null,
+  irmaos = null,
+  irmaosEstado = 'carregando',
 }: {
   empresa: RadarEmpresa | null;
   hojeISO: string;
@@ -98,6 +101,9 @@ export function RadarDetailSheet({
   onProximo?: () => void;
   /** Lote vigente — selos "inédito" / "saiu do dump em <mês>" (só o fato; o motivo é outra entrega). */
   lote?: LoteIngest | null;
+  /** Outros estabelecimentos da mesma raiz de CNPJ e o estado da leitura (a ficha diz "não consegui verificar"). */
+  irmaos?: IrmaosRaiz | null;
+  irmaosEstado?: EstadoIrmaos;
 }) {
   if (!empresa) return null;
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
@@ -153,6 +159,19 @@ export function RadarDetailSheet({
             ) : (
               <span className="ml-2 text-xs text-muted-foreground">{score.detalhe}</span>
             )}
+          </Linha>
+          <Linha label="Mesma empresa">
+            {selosFilial(irmaosEstado === 'ok' ? irmaos : null).map((s) => (
+              <span
+                key={s.chave}
+                className={cn('mr-1.5 inline-block rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[s.tom])}
+              >
+                {s.texto}
+              </span>
+            ))}
+            <span className="text-xs text-muted-foreground" data-testid="radar-filial-ficha">
+              {textoFilialFicha(irmaosEstado, irmaos)}
+            </span>
           </Linha>
           {empresa.nome_fantasia && <Linha label="Fantasia">{empresa.nome_fantasia}</Linha>}
           <Linha label="CNPJ"><span className="font-tabular">{formatarCnpj(empresa.cnpj)}</span></Linha>

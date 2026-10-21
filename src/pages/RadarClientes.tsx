@@ -3,6 +3,7 @@ import { Radar, RotateCcw } from 'lucide-react';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
+import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
 import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
@@ -105,6 +106,8 @@ export default function RadarClientes() {
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), podePaginar);
 
   const empresas = useMemo(() => q.data?.pages.flat() ?? [], [q.data]);
+  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem).
+  const irmaos = useRadarIrmaos(q.data?.pages ?? []);
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const atual = empresas.find((e) => e.cnpj === abertaCnpj) ?? abertaSnapshot.current;
@@ -237,6 +240,7 @@ export default function RadarClientes() {
                   onAbrir={() => abrir(e)}
                   lote={lote}
                   mostrarMotivos={filtros.soSugeridos}
+                  irmaos={irmaos.dados.get(e.cnpj) ?? null}
                 />
               ))}
               <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
@@ -255,7 +259,15 @@ export default function RadarClientes() {
         onAbrirLote={() => setLoteAberto(true)}
       />
       <RadarLoteDialog lote={loteOmie} open={loteAberto} onClose={() => setLoteAberto(false)} />
-      <RadarDetailSheet empresa={aberta} hojeISO={hojeISO} onClose={() => setAbertaCnpj(null)} onProximo={proximo} lote={lote} />
+      <RadarDetailSheet
+        empresa={aberta}
+        hojeISO={hojeISO}
+        onClose={() => setAbertaCnpj(null)}
+        onProximo={proximo}
+        lote={lote}
+        irmaos={aberta ? irmaos.dados.get(aberta.cnpj) ?? null : null}
+        irmaosEstado={aberta ? irmaos.estadoDe(aberta.cnpj) : 'carregando'}
+      />
     </div>
   );
 }

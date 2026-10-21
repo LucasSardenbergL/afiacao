@@ -74,6 +74,14 @@ Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital <
 - `db/test-radar-score.sh` (no `nucleo-ci.txt`, aplica v1 → v2 como em prod, **21 asserts**, `--falsificar` **14/14** vermelhas com controle verde): determinismo (A5), monotonia por fator e nas bordas das faixas (A6/A6b), NULL honesto (A4/A14/A15), ja_cliente não pontua (A4/A12), idade pelo lote e não pelo relógio (A10), ledger do mesmo snapshot (A7), ACL (A8), cron (A9), erro propaga (A13), `updated_at` intocado (A11), **escritor concorrente em duas sessões (A17)**. Sob `CREATE OR REPLACE` tirar o `REVOKE` da v2 é inerte (medido: suíte verde); a sabotagem de ACL injeta um `GRANT` indevido.
 - `src/lib/radar/__tests__/ui-helpers.test.ts`: preset `score`, `scoreUI` (NULL ≠ 0, tons por faixa, motivos na ordem do banco) e `versaoDaFila`.
 
+## Selo de filial na fila (2026-10-21, decisão do founder: sinalizar, sem esconder nem mexer no score)
+
+- **Migration `20261021090000_radar_irmaos_por_raiz.sql`** (aplicada em prod pelo canal `postgres`: ensaio com `RAISE 'ENSAIO_OK'` → apply → psql-ro `✅`, md5 `15d1e703…`): índice `idx_radar_empresas_raiz` em `left(cnpj, 8)` e `radar_irmaos_por_raiz(p_cnpjs text[])`, que devolve por CNPJ os outros leads da mesma raiz na fila (não-cliente, não-descartado), os clientes da mesma raiz (`radar_docs_clientes()` — profiles + Omie não vinculado, mesma normalização do recruzamento — ∪ `radar_empresas.ja_cliente`, sem o próprio CNPJ) e um nome de cliente. Gate = o da leitura da fila (`private.cap_carteira_ler`, 42501); teto de 200 CNPJs (22023); `anon` sem EXECUTE.
+- **Front:** uma chamada por página da fila (chave estável por página); selos "filial de cliente" (tom de alerta, nome do cliente no `title`) e "+N da mesma empresa" na linha; item "Mesma empresa" na ficha, que distingue "verificando…", "não consegui verificar" e "nenhum outro estabelecimento". Sem dado, a linha não mostra selo — quem diz que falhou é a ficha.
+- **Medido na 1ª página da fila por score (50 leads):** 12 com outra filial na fila e 7 cuja raiz tem cliente no radar; a parte do radar da consulta leva ~180 ms.
+- **Provas:** `db/test-radar-irmaos-por-raiz.sh` (núcleo do CI, 13 asserts, `--falsificar` 11/11 com controle verde — gate sob `SET ROLE authenticated` + GUC, as três fontes de cliente, descartado e o próprio CNPJ fora da conta, teto, ACL); vitest de `selosFilial`/`textoFilialFicha` e da linha.
+- **Codex:** Caminho B. Não muda score, ordem nem dinheiro; o gate é o mesmo da policy da fila e está provado por falsificação. A cota estava acima do teto depois do adversarial do #3220.
+
 ## Follow-ups (fora deste bloco)
 
 - Agrupar matriz/filiais (mesma razão social, CNPJs distintos) na fila — hoje 3 filiais da mesma metalúrgica ocupam 3 posições do topo.
