@@ -185,7 +185,7 @@ export function AddToolDialog({ open, onOpenChange, onToolAdded, categories, tar
     setSavingOption(true);
     try {
       const { data, error } = await supabase
-        .rpc('adicionar_opcao_tool_spec' as never, { p_spec_id: spec.id, p_valor: novoValor } as never);
+        .rpc('adicionar_opcao_tool_spec', { p_spec_id: spec.id, p_valor: novoValor });
       if (error) throw error;
       // descarta resposta obsoleta (trocou de categoria/spec no meio)
       if (myReq !== reqIdRef.current || reqCategoria !== selectedCategoryRef.current) return;

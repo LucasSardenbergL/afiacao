@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Phone, MessageCircle, Copy, Check, RefreshCw, Loader2, AlertTriangle, ExternalLink } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { useState } from 'react';
+import type { Json } from '@/integrations/supabase/types';
 
 // Shape de cada item do pedido (jsonb em orders.items). Só campos consumidos no UI.
 interface OrderItemShape {
@@ -13,6 +14,33 @@ interface OrderItemShape {
   serviceType?: string;
   wearLevel?: string;
   notes?: string;
+}
+
+/**
+ * `orders.items` é jsonb (tipado `Json`). Todo campo do item é opcional por desenho: só entra o que
+ * vier com o tipo certo (texto/número finito); o resto fica ausente — nunca vira 0 nem "". Item que
+ * não é objeto é descartado. Antes, `as unknown as OrderItemShape[]` aceitava qualquer forma.
+ */
+function lerItensPedido(v: Json | null): OrderItemShape[] {
+  if (!Array.isArray(v)) return [];
+  const itens: OrderItemShape[] = [];
+  for (const x of v) {
+    if (x === null || typeof x !== 'object' || Array.isArray(x)) continue;
+    const texto = (k: string) => {
+      const t = x[k];
+      return typeof t === 'string' ? t : undefined;
+    };
+    const numero = (k: string) => {
+      const n = x[k];
+      return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+    };
+    itens.push({
+      id: texto('id'), category: texto('category'), brandModel: texto('brandModel'),
+      quantity: numero('quantity'), unitPrice: numero('unitPrice'), serviceType: texto('serviceType'),
+      wearLevel: texto('wearLevel'), notes: texto('notes'),
+    });
+  }
+  return itens;
 }
 import { OrderStatus } from '@/types';
 import { OrderTimeline } from '@/components/OrderTimeline';
@@ -85,7 +113,7 @@ const OrderDetail = () => {
         id: data.id,
         orderNumber: data.id.slice(0, 8).toUpperCase(),
         userId: data.user_id,
-        items: (data.items as unknown as OrderItemShape[]) || [],
+        items: lerItensPedido(data.items),
         status: data.status as string,
         deliveryOption: data.delivery_option,
         timeSlot: data.time_slot,

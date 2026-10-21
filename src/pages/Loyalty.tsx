@@ -83,9 +83,9 @@ export default function Loyalty() {
       // Resgate atômico server-side: a RPC SECURITY DEFINER valida saldo, cria o resgate e debita
       // os pontos (o preço vem do catálogo no servidor, não do cliente). Substitui os 2 inserts
       // diretos antigos — o de débito era bloqueado pela RLS (type='earn'-only) → saldo nunca caía.
-      const { error } = await supabase.rpc('resgatar_recompensa' as never, {
+      const { error } = await supabase.rpc('resgatar_recompensa', {
         p_reward_key: reward.key,
-      } as never);
+      });
       if (error) throw error;
 
       toast.success('Resgate realizado!', { description: `${reward.name} resgatado com sucesso. Aguarde processamento.` });

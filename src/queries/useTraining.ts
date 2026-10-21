@@ -3,6 +3,7 @@
 // do usuário e registro de tentativa de quiz.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json, Tables } from '@/integrations/supabase/types';
 
 interface QuizQuestion {
   question: string;
@@ -27,6 +28,35 @@ interface TrainingCompletion {
   quiz_score: number;
 }
 
+/**
+ * `quiz_questions` é jsonb (tipado `Json`). Pergunta fora da forma (sem texto, opções que não são
+ * textos, `correct` fora do intervalo das opções) é DESCARTADA — um quiz com pergunta impossível
+ * de responder certo daria nota errada. Antes, `as unknown as TrainingModule[]` aceitava qualquer forma.
+ */
+function lerQuiz(v: Json): QuizQuestion[] {
+  if (!Array.isArray(v)) return [];
+  const out: QuizQuestion[] = [];
+  for (const q of v) {
+    if (q === null || typeof q !== 'object' || Array.isArray(q)) continue;
+    const { question, options, correct } = q;
+    if (typeof question !== 'string' || !Array.isArray(options)) continue;
+    const textos = options.filter((o): o is string => typeof o === 'string');
+    if (textos.length !== options.length) continue;
+    if (typeof correct !== 'number' || !Number.isInteger(correct) || correct < 0 || correct >= textos.length) continue;
+    out.push({ question, options: textos, correct });
+  }
+  return out;
+}
+
+/** Linha de `training_modules` com o quiz lido por forma. */
+export function paraTrainingModule(l: Tables<'training_modules'>): TrainingModule {
+  return {
+    id: l.id, title: l.title, description: l.description, video_url: l.video_url,
+    quiz_questions: lerQuiz(l.quiz_questions), min_score: l.min_score,
+    points_reward: l.points_reward, is_active: l.is_active,
+  };
+}
+
 /** Módulos de treinamento ativos, na ordem de criação. */
 export function useTrainingModules() {
   return useQuery({
@@ -38,7 +68,7 @@ export function useTrainingModules() {
         .eq('is_active', true)
         .order('created_at');
       if (error) throw error;
-      return (data ?? []) as unknown as TrainingModule[];
+      return (data ?? []).map(paraTrainingModule);
     },
   });
 }

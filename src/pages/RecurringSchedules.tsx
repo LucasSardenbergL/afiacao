@@ -85,7 +85,7 @@ const RecurringSchedules = () => {
       ]);
 
       if (schedulesRes.data) setSchedules(schedulesRes.data as Schedule[]);
-      if (toolsRes.data) setUserTools(toolsRes.data as unknown as UserTool[]);
+      if (toolsRes.data) setUserTools(toolsRes.data);
       if (addressesRes.data) setAddresses(addressesRes.data as AddressData[]);
     } catch (error) {
       console.error('Error loading data:', error);
