@@ -14,4 +14,4 @@
 ## O que ficou
 
 - Teste novo: `src/lib/caca/__tests__/linha-view.test.ts` (coberto pelo glob `src/lib/caca/**` do manifesto).
-- Gate `casts:stale` inalterado (47 · `from 21 · rpc 26`): o cast era sobre o cliente, não sobre um literal `.from('x' as never)`.
+- Gate `casts:stale` inalterado (41 · `from 20 · rpc 21` na main de 2026-10-20): o cast era sobre o cliente, não sobre um literal `.from('x' as never)`.
