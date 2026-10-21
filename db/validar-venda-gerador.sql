@@ -21,8 +21,9 @@ SELECT CASE
     OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid = to_regclass('public.venda_onda_log'))
     THEN '❌ RLS desligada numa tabela nova'
   WHEN to_regprocedure('private.venda_mes_completo_por_dados(text,date)') IS NULL
+    -- d187… = corpo da 20261020194332; 732f… = evolução serial da 20261021031000 (desfecho de preço exige alta)
     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_fechar_desfechos(date)'))
-       IS DISTINCT FROM 'd187360234689981761b1cdfac225b2e'
+       NOT IN ('d187360234689981761b1cdfac225b2e', '732f661febd3c3e3c0dde4eb18e90bdd')
     THEN '❌ prova por dados (20261020194332) não aplicada'
   WHEN (SELECT count(*) FROM cron.job WHERE jobname = 'venda-gerador' AND schedule = '15 8 * * *' AND active) <> 1
     THEN '❌ cron venda-gerador ausente ou divergente'
