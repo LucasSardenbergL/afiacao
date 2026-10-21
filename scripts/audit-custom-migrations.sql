@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 691
+-- Total de custom migrations: 692
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -755,7 +755,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021021500', 'venda_repasse_base_desempenho', '20261021021500_venda_repasse_base_desempenho.sql'),
   ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql'),
   ('20261021070000', 'venda_lista_lente', '20261021070000_venda_lista_lente.sql'),
-  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql')
+  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql'),
+  ('20261021120000', 'radar_score_lead_v3_cnae_secundario', '20261021120000_radar_score_lead_v3_cnae_secundario.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2948,7 +2949,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
   ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
-  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
+  ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5189,7 +5191,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
   ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
-  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
+  ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', '')
 )
 SELECT
   e.migration,
@@ -5793,6 +5796,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
+  ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),
