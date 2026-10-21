@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import type { KbExtractedSpec, KbProductSpec } from '@/lib/knowledge-base/specs-types';
+import { comNulo } from '@/lib/rpc-args';
 
 interface SaveInput {
   specs: KbExtractedSpec;
@@ -21,16 +22,16 @@ export function useSaveProductSpecs() {
 
       // Aprovação passa pela RPC transacional (grava versão imutável + atualiza atual + deleta rascunho).
       // NÃO incluir document_id/approved_at/approved_by/extracted_by no p_payload — a RPC seta server-side.
-      // Cast `as never` no nome: aprovar_versao_boletim ainda não está em types.ts
-      // (Lovable regenera após apply da migration). NÃO adicionar à mão — lição §10.
+      // `p_document_id` NULL = ficha editada sem documento de origem; `p_change_note` NULL = sem nota
+      // (DEFAULT NULL). Os dois vão explícitos, como antes.
       const { error } = await supabase.rpc(
-        'aprovar_versao_boletim' as never,
-        {
+        'aprovar_versao_boletim',
+        comNulo<'aprovar_versao_boletim', 'p_document_id' | 'p_change_note'>({
           p_payload: input.specs,
           p_document_id: input.documentId ?? null,
           p_change_type: input.changeType ?? 'bulletin_revision',
           p_change_note: input.changeNote ?? null,
-        } as never,
+        }),
       );
 
       if (error) throw new Error(error.message);

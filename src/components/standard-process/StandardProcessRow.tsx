@@ -19,9 +19,9 @@ export function StandardProcessRow({ process }: { process: StandardProcess }) {
             <StandardProcessStatusBadge status={process.status} />
           </div>
           <div className="text-2xs text-muted-foreground mt-0.5">
-            {process.porte_alvo.length > 0 && <>portes: {process.porte_alvo.join(', ')} · </>}
+            {(process.porte_alvo ?? []).length > 0 && <>portes: {(process.porte_alvo ?? []).join(', ')} · </>}
             {process.etapas.length} etapas · atualizado {formatDistanceToNow(new Date(process.updated_at), { locale: ptBR, addSuffix: true })}
-            {process.tags.length > 0 && <> · {process.tags.slice(0, 3).join(' · ')}</>}
+            {(process.tags ?? []).length > 0 && <> · {(process.tags ?? []).slice(0, 3).join(' · ')}</>}
           </div>
         </div>
       </Card>

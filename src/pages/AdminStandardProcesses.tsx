@@ -30,7 +30,7 @@ export default function AdminStandardProcesses() {
     return (
       p.name.toLowerCase().includes(s)
       || p.segmento.toLowerCase().includes(s)
-      || p.tags.some((t) => t.toLowerCase().includes(s))
+      || (p.tags ?? []).some((t) => t.toLowerCase().includes(s))
     );
   });
 
