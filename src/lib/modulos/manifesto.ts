@@ -380,6 +380,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useMinhasSugestoes.lente.test.tsx",
       "src/lib/venda-cliente/__tests__/painel.test.ts",
       "src/components/dashboard/__tests__/ClosersMtdHero.estados.test.tsx",
+      "src/hooks/dashboard/__tests__/useCockpitChannel.topic.test.tsx",
       "src/components/dashboard/__tests__/MinhasVisitasResultadoCard.estados.test.tsx",
       "src/hooks/__tests__/bundle-argumento-gravacao-calada.test.tsx",
       "src/hooks/__tests__/bundle-custo-fora-do-browser.test.tsx",

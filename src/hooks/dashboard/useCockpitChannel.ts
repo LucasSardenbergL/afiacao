@@ -13,6 +13,14 @@ export interface UseCockpitChannelOptions {
   queryKeys: readonly (readonly unknown[])[];
 }
 
+// Topic GERACIONAL (mesma classe do 'wa-sla' em useWhatsappSla): o client
+// deduplica canal por topic e o removeChannel é async. Topic fixo → um 2º
+// mount da mesma zona (ou o efeito re-rodando antes do leave confirmar)
+// recebe a instância JÁ inscrita, e o `.on()` lança "cannot add
+// `postgres_changes` callbacks ... after `subscribe()`". Sufixo por criação
+// garante topic virgem.
+let cockpitChannelGen = 0;
+
 /**
  * Padrão de realtime do cockpit: subscreve postgres_changes na tabela,
  * invalida queries no evento, expõe estado de conexão pro LiveBadge,
@@ -23,7 +31,7 @@ export function useCockpitChannel({ zone, table, filter, queryKeys }: UseCockpit
   const [isLive, setIsLive] = useState(false);
 
   useEffect(() => {
-    const channelName = `dashboard-${zone}-${table}${filter ? `-${filter}` : ''}`;
+    const channelName = `dashboard-${zone}-${table}${filter ? `-${filter}` : ''}-${++cockpitChannelGen}`;
     const channel = supabase
       .channel(channelName)
       .on(
