@@ -48,17 +48,21 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 import { ProvasParaAuditar } from '../ProvasParaAuditar';
 
+// Linha COMPLETA de v_tarefas_estado: o hook passa cada linha pela borda (`paraTarefaInstancia`), que
+// exige as colunas que a prod garante e confere os vocabulários — fixture parcial seria recusada.
 const PROVA = {
-  id: 'prova-1',
-  descricao: 'Conferir estoque do balcão',
-  assigned_to: 'vendedora-1',
-  comprovacao_em: '2026-09-01T12:00:00Z',
-  comprovacao_url: null,
-  comprovacao_leitura: 42,
-  leitura_unidade: 'un',
-  leitura_min: null,
-  leitura_max: null,
-  requer_auditoria: true,
+  id: 'prova-1', descricao: 'Conferir estoque do balcão', categoria: 'outro', customer_user_id: null,
+  assigned_to: 'vendedora-1', created_by: 'master-1', empresa: 'oben', modo: 'data', due_date: '2026-09-01',
+  interacao_tipo: null, backstop_days: 7, tolerancia_dias: 0, adiada_para: null, motivo_adiamento: null,
+  auto_satisfy_mode: 'off', target_produto_id: null, target_texto: null, target_preco_centavos: null,
+  target_tags: null, status: 'concluida', concluida_em: '2026-09-01T12:00:00Z', concluida_por: 'vendedora-1',
+  conclusao_origem: 'comprovacao', nota_conclusao: null, escalado_em: null, effective_due: '2026-09-01',
+  responsavel_efetivo: 'vendedora-1', atrasada: false, escalavel: false, tem_sugestao_pendente: false,
+  created_at: null, updated_at: null, template_id: 'tpl-1', requer_comprovacao: true,
+  requer_auditoria: true, auditoria_status: 'pendente', auditoria_motivo: null, auditada_em: null,
+  auditada_por: null, tipo_comprovacao: 'foto_e_leitura',
+  comprovacao_em: '2026-09-01T12:00:00Z', comprovacao_url: null, comprovacao_leitura: 42,
+  leitura_unidade: 'un', leitura_min: null, leitura_max: null, janela_fim: null, supervisor_user_id: null,
 };
 
 const VAZIO = 'Nenhuma prova aguardando auditoria';
