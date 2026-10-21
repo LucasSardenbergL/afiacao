@@ -1,10 +1,12 @@
 // `process-nfe` — recebimento de NF-e pela aba "Manual" de /admin/estoque/recebimento: conclui o
-// recebimento NO OMIE (AlterarRecebimento → AlterarEtapaRecebimento → ConcluirRecebimento). O fluxo
-// mora em `fluxo.ts` (testado em `fluxo_test.ts`); aqui só se ligam as dependências reais.
+// recebimento NO OMIE (AlterarRecebimento → AlterarEtapaRecebimento → ConcluirRecebimento). Aqui
+// ficam o gate, a sonda e a ligação das dependências reais; o fluxo mora em `fluxo.ts` (testado em
+// `fluxo_test.ts`).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { chamarOmie } from "../_shared/omie-cliente.ts";
-import { type ChamadaOmie, tratarRequisicao } from "./fluxo.ts";
+import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { type ChamadaOmie, corsHeaders, json, processarNfe } from "./fluxo.ts";
 import type { Conta, DbTrilha } from "./trilha.ts";
 
 const OMIE_BASE = "https://app.omie.com.br/api/v1/";
@@ -33,8 +35,30 @@ const omie: ChamadaOmie = (conta, endpoint, metodo, param) => {
   );
 };
 
-const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
-  auth: { persistSession: false },
-}) as unknown as DbTrilha;
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  const __auth = await authorizeCronOrStaff(req);
+  if (!__auth.ok) return __auth.response;
 
-Deno.serve((req) => tratarRequisicao(req, { autorizar: authorizeCronOrStaff, omie, db, novoId: () => crypto.randomUUID() }));
+  // ⚠️ SONDA DE VERSÃO — antes de tudo, porque daqui pra frente a edge EFETIVA a NF-e no Omie
+  // (AlterarRecebimento → AlterarEtapaRecebimento etapa 40 → ConcluirRecebimento) e não existe
+  // dry_run neste código. Fica logo após o authorizeCronOrStaff e ANTES do gate de staff do fluxo
+  // (`processarNfe`) de propósito: é pelo SQL Editor (x-cron-secret) que a sonda é invocada em
+  // produção. O FLUXO REAL exige JWT de staff. Ver versao.ts / _shared/sonda-versao.ts.
+  //
+  // O corpo é consumido AQUI (req.json() só pode ser lido uma vez) e reaproveitado no fluxo real.
+  let corpoBruto: unknown = {};
+  try {
+    corpoBruto = await req.json();
+  } catch {
+    corpoBruto = {};
+  }
+  const decisaoSonda = classificarSonda(corpoBruto);
+  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO));
+  if (decisaoSonda.tipo === "ambiguo") return json({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }, 400);
+
+  const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
+    auth: { persistSession: false },
+  }) as unknown as DbTrilha;
+  return processarNfe(__auth, corpoBruto, { omie, db, novoId: () => crypto.randomUUID() });
+});

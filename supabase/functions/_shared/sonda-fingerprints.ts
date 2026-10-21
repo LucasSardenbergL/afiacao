@@ -74,7 +74,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "pedido-programado-extrair": "c44d3881d8e7b8170f51e94f4d10546d76ea220a4859356d8d21dddf034b9cbb",
   "picking-fila-omie": "6b176460a687ff08fe49e0709d5346d0c446aa2592292507496781ce0b6c08c9",
   "posthog-error-webhook": "817851fa67c009a177382ddfb5b5eef88e48ac17ccf6f7f6093f9fff4b7d34d5",
-  "process-nfe": "cbe8e05f3c7cb17b234b0f6000fed21cbce29ba3b1f3df901a67de065b9b7197",
+  "process-nfe": "90fb7c5d501ac9783488b0457e279b01fdfcb8bd7ed8456243e4f005c8a24dd5",
   "process-recurring-orders": "271b4f67552c97e75f5290f8f7b79fdb6b4db38c0a7b5852dd10ca3e68ccbb1c",
   "promocao-extrair-via-vision": "78512b290fbb9048e1d84b34c3fee89681f06d81fb254ab3d51ba9a7a6b248a0",
   "radar-ingest": "3e3fa6c7e522c00923de23e200ff8a97343d4564a1ac9eb4ca3f4f3d9ed964a2",

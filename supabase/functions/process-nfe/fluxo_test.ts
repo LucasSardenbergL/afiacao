@@ -1,14 +1,15 @@
 // Testa a SEQUÊNCIA DE ESCRITA da process-nfe (fluxo.ts) no runtime real (Deno), com Omie, banco e
 // auth falsos. Roda com: deno test --no-remote supabase/functions/process-nfe/fluxo_test.ts
 //
-// O que protege: (1) efeito ZERO sem auth / sem staff — nenhuma chamada ao Omie, nenhuma linha de
-// trilha; (2) a ordem — trilha de INTENÇÃO gravada antes de cada escrita, e sem ela a escrita não
+// O que protege: (1) efeito ZERO sem staff (cron/service_role/staff sem id) — nenhuma chamada ao
+// Omie, nenhuma linha de trilha. O gate reprovado (`!auth.ok`) e a sonda respondem no `index.ts`,
+// antes de qualquer dependência existir; a ordem deles é vigiada por `_shared/sonda-versao-contrato_test.ts`; (2) a ordem — trilha de INTENÇÃO gravada antes de cada escrita, e sem ela a escrita não
 // sai; (3) falha em cada passo para a sequência ali (Alterar → nada de Etapa/Concluir; Etapa → nada de
 // Concluir; Concluir indeterminado sai como tal); (4) guardas que param ANTES de escrever (já recebida,
 // regra de quantidade); (5) a quantidade enviada é a do caso real (3 UN, não 54).
 import { lerResposta, type RespostaOmie } from "../_shared/omie-cliente.ts";
 import { OmieEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
-import { type ResultadoAuth, tratarRequisicao } from "./fluxo.ts";
+import { type AuthAprovado, processarNfe } from "./fluxo.ts";
 import type { DbTrilha } from "./trilha.ts";
 
 function igual(a: unknown, b: unknown, msg: string) {
@@ -16,7 +17,7 @@ function igual(a: unknown, b: unknown, msg: string) {
   if (ja !== jb) throw new Error(`${msg}: esperado ${jb}, veio ${ja}`);
 }
 
-const STAFF: ResultadoAuth = { ok: true, via: "staff", userId: "00000000-0000-0000-0000-0000000000ee" };
+const STAFF: AuthAprovado = { ok: true, via: "staff", userId: "00000000-0000-0000-0000-0000000000ee" };
 const ESCRITAS = ["AlterarRecebimento", "AlterarEtapaRecebimento", "ConcluirRecebimento"];
 
 function resp(corpo: unknown, status = 200): RespostaOmie {
@@ -38,7 +39,7 @@ function consultaReal(over: { etapa?: string; recebido?: string; itens?: unknown
 
 type Roteiro = Record<string, () => RespostaOmie | Promise<RespostaOmie>>;
 
-function cenario(o: { auth?: ResultadoAuth; roteiro?: Roteiro; falhaTrilha?: (passo: string, resultado: string) => boolean } = {}) {
+function cenario(o: { auth?: AuthAprovado; roteiro?: Roteiro; falhaTrilha?: (passo: string, resultado: string) => boolean } = {}) {
   const log: string[] = [];
   const params: Record<string, unknown> = {};
   const linhas: Record<string, unknown>[] = [];
@@ -63,7 +64,6 @@ function cenario(o: { auth?: ResultadoAuth; roteiro?: Roteiro; falhaTrilha?: (pa
     }),
   };
   const deps = {
-    autorizar: () => Promise.resolve(o.auth ?? STAFF),
     omie: async (_c: string, _e: string, metodo: string, param: Record<string, unknown>) => {
       log.push(`omie:${metodo}`);
       params[metodo] = param;
@@ -75,19 +75,13 @@ function cenario(o: { auth?: ResultadoAuth; roteiro?: Roteiro; falhaTrilha?: (pa
     novoId: () => "11111111-1111-1111-1111-111111111111",
   };
   const rodar = async (corpo: unknown = { nf_number: "955811", account: "oben" }) => {
-    const res = await tratarRequisicao(new Request("http://x/process-nfe", { method: "POST", body: JSON.stringify(corpo) }), deps);
+    const res = await processarNfe(o.auth ?? STAFF, corpo, deps);
     return { status: res.status, corpo: await res.json() as Record<string, unknown> };
   };
   const omieChamados = () => log.filter((l) => l.startsWith("omie:")).map((l) => l.slice(5));
   const escritas = () => omieChamados().filter((m) => ESCRITAS.includes(m));
   return { log, params, linhas, rodar, omieChamados, escritas };
 }
-
-Deno.test("sem auth: devolve a resposta do gate e efeito ZERO (nenhum Omie, nenhuma trilha)", async () => {
-  const c = cenario({ auth: { ok: false, response: new Response("{}", { status: 401 }) } });
-  const r = await c.rodar();
-  igual([r.status, c.log], [401, []], "401 sem efeito");
-});
 
 Deno.test("cron sem usuário (x-cron-secret): 403 e efeito ZERO — o recebimento exige staff", async () => {
   const c = cenario({ auth: { ok: true, via: "cron" } });
@@ -97,10 +91,9 @@ Deno.test("cron sem usuário (x-cron-secret): 403 e efeito ZERO — o recebiment
   igual([(await s.rodar()).status, s.log], [403, []], "service_role também não");
 });
 
-Deno.test("sonda pelo cron responde a versão sem efeito", async () => {
-  const c = cenario({ auth: { ok: true, via: "cron" } });
-  const r = await c.rodar({ probe: true });
-  igual([r.status, c.log], [200, []], "sonda sem efeito");
+Deno.test("staff sem userId (forma impossível hoje, defesa): 403 e efeito ZERO", async () => {
+  const c = cenario({ auth: { ok: true, via: "staff" } });
+  igual([(await c.rodar()).status, c.log], [403, []], "403 sem efeito");
 });
 
 Deno.test("entrada inválida (NF não numérica, conta desconhecida) → 400 sem efeito", async () => {

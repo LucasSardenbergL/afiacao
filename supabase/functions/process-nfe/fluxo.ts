@@ -1,9 +1,9 @@
-// Fluxo da `process-nfe` com as dependências INJETADAS (auth, Omie, banco, id) — sem import remoto,
-// para o teste Deno (`fluxo_test.ts`, `--no-remote`) exercitar a sequência inteira de escrita.
-// `index.ts` só liga as dependências reais.
+// Fluxo da `process-nfe` DEPOIS do gate e da sonda (que ficam no `index.ts`, onde o contrato da
+// sonda os lê), com as dependências INJETADAS (Omie, banco, id) — sem import remoto, para o teste
+// Deno (`fluxo_test.ts`, `--no-remote`) exercitar a sequência inteira de escrita.
 //
 // Sequência (plano de melhoria v3, item 1 — a aba Manual virou caminho oficial do recebimento):
-//   auth → sonda → staff → trilha `inicio` [sem ela, nada vai ao Omie]
+//   [index.ts: auth → sonda] → staff → trilha `inicio` [sem ela, nada vai ao Omie]
 //   → ListarRecebimentos (acha a NF) → ConsultarRecebimento (itens + estado)
 //   → guarda: já recebida no Omie (cRecebido=S ou etapa 80) → para, sem escrever
 //   → regra de quantidade (regra-quantidade.ts) → qualquer recusa → para, sem escrever
@@ -17,7 +17,7 @@ import { ehEscritaIndeterminada } from "../_shared/omie-chamada-relogio.ts";
 import { fimDePaginacao, type RespostaOmie } from "../_shared/omie-cliente.ts";
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { redigirSegredo } from "../_shared/omie-falha.ts";
-import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { VERSAO } from "./versao.ts";
 import { decidirQuantidades, ehItemIgnorado, type ItemDecidido, type ItemOmieBruto, numeroOuNulo } from "./regra-quantidade.ts";
 import { type Conta, criarTrilha, type DbTrilha, type EventoTrilha, type PassoTrilha, type ResultadoTrilha } from "./trilha.ts";
 
@@ -35,15 +35,13 @@ const POR_PAGINA = 50;
 const MAX_PAGINAS = 30;
 const CONTAS: readonly Conta[] = ["oben", "colacor", "afiacao"];
 
-export type ResultadoAuth =
-  | { ok: true; via: "cron" | "service_role" | "staff"; userId?: string }
-  | { ok: false; response: Response };
+/** O `AuthResult` aprovado do `_shared/auth.ts` (o reprovado já respondeu no `index.ts`). */
+export type AuthAprovado = { ok: true; via: "cron" | "service_role" | "staff"; userId?: string };
 
 /** Uma chamada LÓGICA ao Omie (o adaptador real é o `chamarOmie` do núcleo). */
 export type ChamadaOmie = (conta: Conta, endpoint: string, metodo: string, param: Record<string, unknown>) => Promise<RespostaOmie>;
 
 export interface DepsProcessNfe {
-  autorizar(req: Request): Promise<ResultadoAuth>;
   omie: ChamadaOmie;
   db: DbTrilha;
   novoId(): string;
@@ -56,7 +54,7 @@ interface StepResult {
   detail?: string;
 }
 
-function json(corpo: unknown, status = 200): Response {
+export function json(corpo: unknown, status = 200): Response {
   return new Response(JSON.stringify(corpo), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 }
 
@@ -124,24 +122,7 @@ function itemNaTrilha(i: ItemDecidido): Record<string, unknown> {
   };
 }
 
-export async function tratarRequisicao(req: Request, deps: DepsProcessNfe): Promise<Response> {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-  const auth = await deps.autorizar(req);
-  if (!auth.ok) return auth.response;
-
-  // ⚠️ SONDA DE VERSÃO — logo após o authorizeCronOrStaff e ANTES do gate de staff, de propósito: é pelo
-  // SQL Editor (x-cron-secret) que a sonda é invocada em produção. O FLUXO REAL exige staff logo abaixo.
-  // O corpo é consumido AQUI (req.json() é one-shot) e reaproveitado no fluxo real.
-  let corpoBruto: unknown = {};
-  try {
-    corpoBruto = await req.json();
-  } catch {
-    corpoBruto = {};
-  }
-  const decisaoSonda = classificarSonda(corpoBruto);
-  if (decisaoSonda.tipo === "sonda") return json(respostaSonda(VERSAO));
-  if (decisaoSonda.tipo === "ambiguo") return json({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO), versao: VERSAO }, 400);
+export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps: DepsProcessNfe): Promise<Response> {
   const corpo = registro(corpoBruto);
 
   // O recebimento é ATRIBUÍDO a quem clicou: só JWT de staff. (Antes, x-cron-secret + qualquer JWT de

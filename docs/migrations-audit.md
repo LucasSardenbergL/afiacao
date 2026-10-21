@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **695** custom migrations totais
-- **2234** objetos esperados (criados por estas migrations)
+- **696** custom migrations totais
+- **2240** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 837
-  - `rls_policy`: 482
-  - `index`: 290
+  - `function`: 838
+  - `rls_policy`: 483
+  - `index`: 292
+  - `table`: 196
   - `cron_job`: 196
-  - `table`: 195
   - `view`: 125
-  - `trigger`: 105
+  - `trigger`: 106
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5647,6 +5647,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_registrar_cadastro_omie` | — |
 | `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
+
+### `20261021175441_nfe_recebimento_manual_trilha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.nfe_recebimento_manual_trilha_append_only` | — |
+| `table` | `public.nfe_recebimento_manual_trilha` | — |
+| `index` | `public.idx_nfe_receb_manual_trilha_execucao` | `nfe_recebimento_manual_trilha` |
+| `index` | `public.idx_nfe_receb_manual_trilha_criado` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
+| `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
 
 ## Próximos passos por status
 
