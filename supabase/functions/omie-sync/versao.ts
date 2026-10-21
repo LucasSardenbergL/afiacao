@@ -32,6 +32,8 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // letra fora dele recusa (antes "ABC12345678909" virava o CPF 12345678909 de outra pessoa — Codex ALTO, #3180).
 // Vale no criar_cliente_afiacao E nos lookups que dão o cliente do pedido (buscar_cliente_por_documento, que
 // agora falha 500 em vez de "não existe", e o autosserviço por profile.document — 0 profiles com letra).
+// Alfabeto fechado antes de normalizar (dígito Unicode/símbolo/ß recusam). criar_cliente_afiacao confere o
+// documento do cliente devolvido pelo lookup (OMIE_LOOKUP_DIVERGENTE → success:false, não reaproveita).
 // Nenhuma pré-condição de banco, nenhuma ordem de deploy.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
 export const VERSAO = "v1.7-rotulo-documento-explicito";

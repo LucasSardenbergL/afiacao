@@ -95,7 +95,8 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * v1.23 (2026-10-21) — `_shared/cnpj-alfanumerico.ts`: `documentoParaCadastro` só remove rótulo CPF/CNPJ
  * explícito; letra fora dele recusa (antes "ABC12345678909" virava o CPF 12345678909 de outra pessoa — Codex
  * ALTO, #3180). Vale no criar_cliente (antes do lookup anti-duplicata) e no buscar_cliente (o código vira o
- * cliente do pedido). Nenhuma pré-condição de banco, nenhuma ordem de deploy.
+ * cliente do pedido). Alfabeto fechado antes de normalizar (dígito Unicode/símbolo/ß recusam); o lookup do
+ * criar_cliente usa o docClean validado, não o texto cru. Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  */
 export const VERSAO = "v1.23-rotulo-documento-explicito";
 

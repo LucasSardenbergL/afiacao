@@ -130,6 +130,21 @@ sem rótulo×tamanho · sem vazio · rótulo case-sensitive) — todas vermelhas
 redundante (CNPJ válido inteiro antes do rótulo — nenhum CNPJ casa a gramática) e um caso que não cobria letra
 só acentuada; os dois corrigidos.
 
+**Codex de código (`gpt-6-astra` · max · 494s · 133.617 tokens) — 4 achados, todos corrigidos:**
+- **ALTO — Unicode sumia no `\D`:** `ⒶⒺⒼ12345678909` (símbolo, fora de `\p{L}`), `００６12345678909` (fullwidth —
+  `00612345678909` é CNPJ com DV certo) e `٠٠٦12345678909` viravam o CPF `12345678909`. **Corrigido:** alfabeto
+  fechado no corpo ANTES de normalizar (`[0-9A-Za-z./ \t-]`) → `DOC_CARACTERE_FORA_DO_ALFABETO`.
+- **ALTO — `toUpperCase()` fabrica posição:** `CNPJ: 12ßC34501DE33` (13 posições) → `12SSC34501DE33`, CNPJ válido.
+  Mesmo alfabeto fecha.
+- **MÉDIO — vendas consultava o texto cru:** `criar_cliente` chamava `buscarClienteVendas(docCriar)`;
+  `CNPJ: AEG12345678909` consultava `12345678909` e cadastrava `AEG12345678909`. **Corrigido:** lookup com `docClean`.
+- **ALTO condicionado (preexistente) — afiação reaproveitava sem conferir:** `criar_cliente_afiacao` aceitava o 1º
+  registro do `ListarClientes`. **Corrigido:** confere `normalizarDocumento(existing.cnpj_cpf) === docClean`
+  (espelho do `lookupDevolveuOMesmoDocumento` de vendas); divergência → `OMIE_LOOKUP_DIVERGENTE`, `success:false`.
+- Falsificação refeita: 8 sabotagens (rótulo heurístico · sem letra · sem alfabeto · alfabeto com `\s` Unicode ·
+  alfabeto aceitando qualquer não-letra · sem rótulo×tamanho · sem vazio · rótulo case-sensitive), todas
+  vermelhas com controle verde, em `LC_ALL=C` e `pt_BR.UTF-8`. 5.668 profiles com documento, 0 fora do alfabeto.
+
 **Edges:** `omie-sync` v1.7-rotulo-documento-explicito · `omie-vendas-sync` v1.23-rotulo-documento-explicito.
 Sem pré-condição de banco, sem ordem entre edges.
 
@@ -140,3 +155,8 @@ passam pela mesma gramática: com `normalizarDocumento`, `ABC12345678909` virava
 pessoa no pedido. **Fica com `normalizarDocumento` de propósito:** comparação doc-Omie × doc-profile
 (`docToUserMap`, `lookup-documento.ts`, `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`) — chave
 dos DOIS lados, não identidade de entrada.
+
+**Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
+buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
+entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
+
