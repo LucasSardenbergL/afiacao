@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { StandardProcess } from '@/lib/standard-process/types';
+import { paraStandardProcess } from '@/lib/standard-process/borda';
 
 export function useStandardProcess(id: string | null) {
   return useQuery({
@@ -12,7 +13,7 @@ export function useStandardProcess(id: string | null) {
       const { data, error } = await supabase.from('standard_processes')
         .select('*').eq('id', id).maybeSingle();
       if (error) throw error;
-      return (data as unknown as StandardProcess) ?? null;
+      return data === null ? null : paraStandardProcess(data);
     },
   });
 }

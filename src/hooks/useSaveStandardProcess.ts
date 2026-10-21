@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { slugify } from '@/lib/standard-process/types';
 import { useReindexRag } from './useReindexRag';
 import type { StandardProcess, StandardProcessEtapa, StandardProcessStatus } from '@/lib/standard-process/types';
-import type { Json } from '@/integrations/supabase/types';
+import { paraStandardProcess } from '@/lib/standard-process/borda';
 
 interface SaveInput {
   id?: string;  // se passar, UPDATE; senão INSERT
@@ -35,7 +35,7 @@ export function useSaveStandardProcess() {
         segmento: input.segmento,
         porte_alvo: input.porte_alvo,
         tags: input.tags,
-        etapas: input.etapas as unknown as Json,
+        etapas: input.etapas,
         expected_outcomes: input.expected_outcomes,
         target_audience: input.target_audience ?? null,
         prerequisites: input.prerequisites,
@@ -47,13 +47,13 @@ export function useSaveStandardProcess() {
         const { data, error } = await supabase.from('standard_processes')
           .update(payload).eq('id', input.id).select().single();
         if (error) throw error;
-        return data as unknown as StandardProcess;
+        return paraStandardProcess(data);
       }
        
       const { data, error } = await supabase.from('standard_processes')
         .insert({ ...payload, created_by: user.id }).select().single();
       if (error) throw error;
-      return data as unknown as StandardProcess;
+      return paraStandardProcess(data);
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ['standard-processes'] });

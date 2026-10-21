@@ -4,18 +4,6 @@ import { normalizeExtractedSpec } from '@/lib/knowledge-base/specs-types';
 import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
 
 /**
- * Rascunho salvo no banco — shape do SELECT em `kb_extraction_drafts`.
- * Tabela criada na Task 1; ainda não está em types.ts (gerado automaticamente pelo Lovable).
- * Cast via `as never` / `as any` é o padrão documentado no CLAUDE.md §10.
- */
-interface KbExtractionDraft {
-  document_id: string;
-  status: 'extracting' | 'ready' | 'failed';
-  // ⚠️ coluna SINGULAR `spec` (= migration 20260613160000 + a edge). NÃO `specs`.
-  spec: Record<string, unknown> | null;
-}
-
-/**
  * Busca rascunhos `status='ready'` de `kb_extraction_drafts` e os converte em
  * `ResultadoExtracao[]`, que é o formato consumido por `mesclarResultados` e
  * `particionarResultados`.
@@ -36,20 +24,17 @@ export function useExtractionDrafts(): {
   const query = useQuery({
     queryKey: ['kb-extraction-drafts'],
     queryFn: async (): Promise<ResultadoExtracao[]> => {
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const { data, error } = await (
-        supabase.from('kb_extraction_drafts' as never) as any
-      )
-        .select('document_id, status, spec')
+      // ⚠️ coluna SINGULAR `spec` (= migration 20260613160000 + a edge). NÃO `specs`.
+      const { data, error } = await supabase
+        .from('kb_extraction_drafts')
+        .select('document_id, spec')
         .eq('status', 'ready')
         .not('spec', 'is', null);
-      /* eslint-enable @typescript-eslint/no-explicit-any */
 
       if (error) throw error;
 
-      const rows: KbExtractionDraft[] = data ?? [];
-
-      return rows
+      // `spec` é `jsonb` (tipado `Json`); `normalizeExtractedSpec` é o leitor defensivo dele.
+      return (data ?? [])
         .filter((row) => row.spec != null)
         .map((row) => ({
           documentId: row.document_id,
