@@ -28,8 +28,8 @@
 // recebimento concluído depois nunca vira t4 (81 linhas OBEN de jul–out/2026 com NF e sem t4, 15 delas
 // `efetivado` no próprio recebimento do app). A listagem traz `infoCadastro.cRecebido`/`dRec`, então a
 // NF CONHECIDA e recebida preenche o t4 das linhas com a MESMA chave e t4 nulo — sem consulta à Omie,
-// nunca sobrescreve um t4 gravado, nunca marca linha CANCELADA, nunca escreve linha cujo `nid_receb`
-// é de outro recebimento (t4.ts). A data é `dRec` (conclusão do recebimento): medido 2026-10-21, bate com
+// nunca sobrescreve um t4 gravado, nunca marca linha CANCELADA, só escreve linha cujo `nid_receb` é o
+// DESTA NF (nulo fica com o backfill; de outro recebimento é contado, t4.ts). A data é `dRec` (conclusão do recebimento): medido 2026-10-21, bate com
 // a efetivação do recebimento do app em 3/3; `dRegistro` é a emissão em 11/15 (e uma vez, lançado à mão).
 
 import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
@@ -62,7 +62,7 @@ export interface PortaRevisita extends Pick<PortaReconciliacao, "linhasDoPedido"
   consultar(nIdReceb: number): Promise<unknown>;
   /** A mesma órfã que o laço principal grava (`omie_codigo_pedido = -nIdReceb`). */
   inserirOrfa(doc: DocumentoRevisita): Promise<void>;
-  /** t4 nas linhas desta chave e deste recebimento (t4.ts, compare-and-set). LANÇA em erro. */
+  /** t4 nas linhas desta chave com `nid_receb` deste recebimento (t4.ts, compare-and-set). LANÇA em erro. */
   preencherRecebimentoSemT4(
     chave: string, nIdReceb: number, t4Iso: string, agoraIso: string,
   ): Promise<{ preenchidas: number; nidDivergente: number }>;

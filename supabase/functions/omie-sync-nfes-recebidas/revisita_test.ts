@@ -112,9 +112,9 @@ function banco(
       preenchimentos.push(chave);
       // Aproximação do UPDATE de t4.ts — os PREDICADOS reais são provados em t4_test.ts; aqui só o fluxo.
       const base = linhas.filter((l) => l.nfe_chave_acesso === chave && !l.t4_data_recebimento && l.status !== "CANCELADO");
-      const alvo = base.filter((l) => l.nid_receb == null || l.nid_receb === nIdReceb);
-      for (const l of alvo) Object.assign(l, { t4_data_recebimento: t4Iso, nid_receb: nIdReceb });
-      return Promise.resolve({ preenchidas: alvo.length, nidDivergente: base.length - alvo.length });
+      const alvo = base.filter((l) => l.nid_receb === nIdReceb);
+      for (const l of alvo) l.t4_data_recebimento = t4Iso;
+      return Promise.resolve({ preenchidas: alvo.length, nidDivergente: base.filter((l) => l.nid_receb != null && l.nid_receb !== nIdReceb).length });
     },
   };
   return { porta, consultas, orfas, linhas, preenchimentos };
@@ -264,32 +264,34 @@ Deno.test("(j) NF conhecida e recebida preenche o t4 só das linhas da MESMA cha
   const REC = "2026-08-21T10:00:00-03:00";
   const b = banco([
     // NF de vários pedidos (1161 e 1162): as duas linhas sem t4 ganham o recebimento
-    { id: "p1161", contrato: "2110001", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO" },
-    { id: "p1162", contrato: "2110002", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO" },
+    { id: "p1161", contrato: "2110001", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO", nid_receb: 947706 },
+    { id: "p1162", contrato: "2110002", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CRIADO", nid_receb: 947706 },
     // t4 já gravado não é sobrescrito; cancelada não vira recebida; outra chave fica intocada
     { id: "comT4", contrato: "2110003", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, t4_data_recebimento: "2026-08-20T09:00:00-03:00" },
     { id: "canc", contrato: "2110004", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, status: "CANCELADO" },
     { id: "outra", contrato: "2110005", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_OUTRA },
     // chave trocada pelo laço principal, nid do recebimento ANTERIOR: não ganha a data desta NF
     { id: "nidOutro", contrato: "2110006", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, nid_receb: 101 },
+    // nid nulo: ainda na fila do backfill, que preenche raw_data/t2/transportadora — a revisita não toca
+    { id: "nidNulo", contrato: "2110007", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, nid_receb: null },
   ], { conhecidas: [947706] });
   const d = doc(947706, CHAVE_0935816, "000947706", ["2110001", "2110002"]);
   (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = REC;
   const r = await rodar([d], b);
   assertEquals(b.consultas, [], "conhecida não consulta");
-  assertEquals(b.linhas.map((l) => l.t4_data_recebimento ?? null), [REC, REC, "2026-08-20T09:00:00-03:00", null, null, null]);
+  assertEquals(b.linhas.map((l) => l.t4_data_recebimento ?? null), [REC, REC, "2026-08-20T09:00:00-03:00", null, null, null, null]);
   assertEquals([r.t4_preenchidos, r.t4_nid_divergente], [2, 1]);
   const r2 = await rodar([d], b);
   assertEquals(r2.t4_preenchidos, 0, "rodar de novo é no-op");
 });
 
 Deno.test("(j') NF ainda não recebida, ou listagem incompleta, não grava t4", async () => {
-  const linha = (): LinhaTabela => ({ id: "p", contrato: "1", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816 });
-  const b = banco([linha()], { conhecidas: [60] });
+  const linha = (nid: number): LinhaTabela => ({ id: "p", contrato: "1", fornecedor: SAYERLACK, nfe_chave_acesso: CHAVE_0935816, nid_receb: nid });
+  const b = banco([linha(60)], { conhecidas: [60] });
   const r = await rodar([doc(60, CHAVE_0935816, "60", ["1"])], b);
   assertEquals([b.linhas[0].t4_data_recebimento ?? null, r.t4_preenchidos], [null, 0]);
 
-  const b2 = banco([linha()], { conhecidas: [61] });
+  const b2 = banco([linha(61)], { conhecidas: [61] });
   const d = doc(61, CHAVE_0935816, "61", ["1"]);
   (d.bruto as { cabec: Record<string, unknown> }).cabec.recebidaEm = "2026-08-21T10:00:00-03:00";
   const r2 = await rodar([d], b2, [], { ...opcoes, listagemIncompleta: true });

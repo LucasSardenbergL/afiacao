@@ -4,9 +4,10 @@
 //   - mesma EMPRESA e mesma CHAVE: a data é desta NF, nunca de outra;
 //   - t4 NULO: nunca sobrescreve um recebimento gravado;
 //   - status ≠ CANCELADO (NULL-blind: status nulo também fica de fora — falha fechada);
-//   - `nid_receb` igual ao desta NF, ou nulo (e então ganha o desta NF). Linha com `nid_receb` de OUTRO
-//     recebimento (o laço principal trocou a chave e manteve o nid antigo, Codex 2026-10-20 P1) não é
-//     escrita: fica contada em `nidDivergente` para quem lê o resumo.
+//   - `nid_receb` IGUAL ao desta NF — é exatamente a linha que o backfill largou cedo demais. Linha com
+//     `nid_receb` NULO fica com o backfill (Codex r2 P2: gravar o nid aqui a tiraria da fila dele, que ainda
+//     preenche raw_data, t2 e transportadora). Linha com `nid_receb` de OUTRO recebimento (o laço principal
+//     trocou a chave e manteve o nid antigo, Codex r1 P1) não é escrita: fica contada em `nidDivergente`.
 
 /** O pedaço do cliente Supabase que este UPDATE usa — estrutural, para o teste gravar a cadeia real. */
 export interface ClienteT4 {
@@ -36,14 +37,6 @@ export async function preencherT4PorChave(
     .abortSignal(sinal());
   if (mesmoNid.error) throw mesmoNid.error;
 
-  const semNid = await comuns(
-    db.from("purchase_orders_tracking").update({ t4_data_recebimento: t4Iso, updated_at: agoraIso, nid_receb: nIdReceb }),
-  )
-    .is("nid_receb", null)
-    .select("id")
-    .abortSignal(sinal());
-  if (semNid.error) throw semNid.error;
-
   const divergentes = await comuns(db.from("purchase_orders_tracking").select("id", { count: "exact", head: true }))
     .not("nid_receb", "is", null)
     .neq("nid_receb", nIdReceb)
@@ -53,5 +46,5 @@ export async function preencherT4PorChave(
   if (typeof divergentes.count !== "number") throw new Error(`t4: contagem de nid divergente ausente (chave ${chave})`);
 
   const n = (d: unknown) => (Array.isArray(d) ? d.length : 0);
-  return { preenchidas: n(mesmoNid.data) + n(semNid.data), nidDivergente: divergentes.count };
+  return { preenchidas: n(mesmoNid.data), nidDivergente: divergentes.count };
 }

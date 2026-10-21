@@ -47,24 +47,16 @@ const filtrosComuns: Chamada[] = [
   ["neq", "status", "CANCELADO"],
 ];
 
-Deno.test("t4: UPDATE pela chave com o MESMO nid, depois pela chave com nid nulo (que ganha o nid), e conta divergentes", async () => {
-  const g = gravador([{ data: [{ id: "a" }] }, { data: [{ id: "b" }, { id: "c" }] }, { count: 1 }]);
+Deno.test("t4: UPDATE só pela chave com o MESMO nid (nid nulo fica com o backfill) e conta divergentes", async () => {
+  const g = gravador([{ data: [{ id: "a" }, { id: "b" }] }, { count: 1 }]);
   const r = await preencherT4PorChave(g.cliente, "OBEN", CHAVE, 947706, T4, AGORA, sinal);
-  assertEquals(r, { preenchidas: 3, nidDivergente: 1 });
+  assertEquals(r, { preenchidas: 2, nidDivergente: 1 });
   assertEquals(g.consultas, [
     [
       ["from", "purchase_orders_tracking"],
       ["update", { t4_data_recebimento: T4, updated_at: AGORA }],
       ...filtrosComuns,
       ["eq", "nid_receb", 947706],
-      ["select", "id"],
-      ["abortSignal", "<sinal>"],
-    ],
-    [
-      ["from", "purchase_orders_tracking"],
-      ["update", { t4_data_recebimento: T4, updated_at: AGORA, nid_receb: 947706 }],
-      ...filtrosComuns,
-      ["is", "nid_receb", null],
       ["select", "id"],
       ["abortSignal", "<sinal>"],
     ],
@@ -92,7 +84,7 @@ Deno.test("t4: erro do banco LANÇA (nunca vira 0 preenchidas)", async () => {
 });
 
 Deno.test("t4: contagem de divergentes ausente LANÇA (ausente ≠ zero)", async () => {
-  const g = gravador([{ data: [] }, { data: [] }, { count: null }]);
+  const g = gravador([{ data: [] }, { count: null }]);
   let lancou = "";
   try {
     await preencherT4PorChave(g.cliente, "OBEN", CHAVE, 1, T4, AGORA, sinal);

@@ -1092,7 +1092,7 @@ async function revisitarEmpresa(
       if (error) throw error;
       return Array.isArray(data) && data.length > 0;
     },
-    // v1.10: compare-and-set em t4.ts (chave, t4 nulo, ≠ CANCELADO, nid igual ou nulo). Status fica com a
+    // v1.10: compare-and-set em t4.ts (chave, t4 nulo, ≠ CANCELADO, nid igual ao desta NF). Status fica com a
     // sync de pedidos (ela o reescreve; o t4 está no PRESERVE_FIELDS dela).
     preencherRecebimentoSemT4: (chave, nIdReceb, t4Iso, agoraIso) => {
       if (Date.now() >= limiteIo) throw new Error("orçamento de I/O da revisita esgotado");
