@@ -411,8 +411,9 @@ export async function avaliarCandidata(
   const pc: PorCenario = {};
   for (const [k, v] of Object.entries(L.somas)) pc[k] = { f0: mediaSomas(v.f0, L.n), alt: mediaSomas(v.alt, L.n) };
   const precisao: Evidencia['precisao'] = {
-    replicacoes: L.n, teto: teto, meiaLarguraServico: meiaServ, alvoServico: PRECISAO.meiaLarguraServico,
-    meiaLarguraEstoque: meiaEst, alvoEstoque: PRECISAO.meiaLarguraEstoque,
+    // M-3: com menos que as replicações iniciais da spec (teto reduzido, só teste), a meia largura não é estimável: null ⇒ INCERTO
+    replicacoes: L.n, teto: teto, meiaLarguraServico: L.n >= PRECISAO.replicacoesIniciais ? meiaServ : null, alvoServico: PRECISAO.meiaLarguraServico,
+    meiaLarguraEstoque: L.n >= PRECISAO.replicacoesIniciais ? meiaEst : null, alvoEstoque: PRECISAO.meiaLarguraEstoque,
   };
   const nulos: Nulos[] = [];
   const porEstado = INICIAIS.map((inicial) => {
@@ -641,6 +642,28 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
   };
 }
 
+/**
+ * M-1: grava o relatório OFICIAL antes de tudo e só depois tenta a rodada informativa (R27). Uma exceção nela é
+ * registrada em `informativoErro` e regravada; nunca impede nem altera o veredito oficial.
+ */
+export async function anexarInformativa(
+  oficial: Rodada,
+  executar: () => Promise<NonNullable<Rodada['informativo']>>,
+  gravar: (r: Rodada) => void,
+): Promise<Rodada> {
+  gravar(oficial);
+  try {
+    const informativo = await executar();
+    const r = { ...oficial, informativo, informativoErro: null };
+    gravar(r);
+    return r;
+  } catch (e) {
+    const r = { ...oficial, informativo: null, informativoErro: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
+    gravar(r);
+    return r;
+  }
+}
+
 // ── gate de paridade do F0 (R19/R21; plano T5 Step 5: F0 infiel invalida o denominador → PARAR) ─────────────────
 export interface GateParidade {
   es: number | null;
@@ -725,21 +748,32 @@ async function principal(): Promise<number> {
   exigirGateParidade(gate); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   marca('paridade', t);
 
+  /** Grava o OFICIAL, depois roda a informativa (R27) e regrava; erro na informativa fica registrado (M-1). */
+  const finalizar = async (oficial: Rodada): Promise<void> => {
+    const gravar = (r: Rodada) => {
+      escreverRelatorio(r, saida);
+      writeFileSync(join(dirname(saida), 'rodada.json'), JSON.stringify(r, (_k, v: unknown) => (v instanceof Set ? [...v] : v instanceof Map ? [...v] : v)));
+    };
+    const ti = performance.now();
+    const temposInf: Record<string, number> = {};
+    const r = await anexarInformativa(oficial, () => rodadaInformativa(dados, dir, paralelo, temposInf), gravar);
+    for (const [k, v] of Object.entries(temposInf)) r.tempos[`informativo.${k}`] = v;
+    r.tempos.informativo = (performance.now() - ti) / 1000;
+    r.segundos = (performance.now() - t0) / 1000;
+    gravar(r);
+    if (r.informativoErro) log(`[informativo R27] FALHOU (o veredito oficial não é afetado): ${r.informativoErro}`);
+  };
+
   // 2. calibração OFICIAL (alvo na célula da classe)
   t = performance.now();
   const of = calibrarNoModo(dados, 'classe');
   const { base, resultados, candidata, fronteira } = of;
   marca('calibracao', t);
 
-  // R27: diagnóstico de plausibilidade e rodada INFORMATIVA NÃO OFICIAL (alvo nas células *_alt). Não toca o oficial.
+  // R27: diagnóstico de plausibilidade (parte do relatório oficial: a causa do veredito)
   t = performance.now();
   const diagnostico = diagnosticar(dados, base);
   marca('diagnostico', t);
-  t = performance.now();
-  const temposInf: Record<string, number> = {};
-  const informativo = await rodadaInformativa(dados, dir, paralelo, temposInf);
-  for (const [k, v] of Object.entries(temposInf)) tempos[`informativo.${k}`] = v;
-  marca('informativo', t);
 
   const comum = {
     geradoEm: new Date().toISOString(),
@@ -754,7 +788,8 @@ async function principal(): Promise<number> {
     calibracao: { alvo: base.alvo, fillF0: base.fillF0, resultados, candidata },
     fronteira,
     diagnostico,
-    informativo,
+    informativo: null,
+    informativoErro: null,
     excluidosDados: dados.excluidos,
     avisos: dados.avisos,
     parados: c.parados,
@@ -766,8 +801,8 @@ async function principal(): Promise<number> {
   if (candidata === 'NENHUMA' || vc?.veredito === 'NO-GO') {
     const v = vc ?? { veredito: 'NO-GO' as const, motivos: ['INVIAVEL_NA_CALIBRACAO'] };
     const rodada: Rodada = { ...comum, congelado: null, veredito: v, avaliacao: null, tempos, segundos: (performance.now() - t0) / 1000 };
-    escreverRelatorio(rodada, saida);
     log(`VEREDITO ${v.veredito} (${v.motivos.join('; ')}) → ${saida}`);
+    await finalizar(rodada);
     return 0;
   }
   const rc = resultados.find((x) => x.formula === candidata)!;
@@ -777,10 +812,9 @@ async function principal(): Promise<number> {
   const vf = av.veredito;
   const L = { n: av.avaliacao.reps };
   const rodada: Rodada = { ...comum, congelado: cg, veredito: vf, avaliacao: av.avaliacao, tempos, segundos: (performance.now() - t0) / 1000 };
-  escreverRelatorio(rodada, saida);
-  writeFileSync(join(dirname(saida), 'rodada.json'), JSON.stringify(rodada, (_k, v: unknown) => (v instanceof Set ? [...v] : v instanceof Map ? [...v] : v)));
   log(`VEREDITO ${vf.veredito} (${L.n} reps, ${((performance.now() - t0) / 1000).toFixed(1)} s) → ${saida}`);
   for (const m of vf.motivos.slice(0, 40)) log(`  motivo: ${m}`);
+  await finalizar(rodada);
   return 0;
 }
 

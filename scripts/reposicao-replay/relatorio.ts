@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CenarioLT } from './aleatorio';
+import { PISOS_SERVICO } from './config';
 import type { ResultadoCalibracao } from './calibracao';
 import type { Criterio } from './estatistica';
 import type { Formula, ParamsFormula, RelatorioParidade } from './formulas';
@@ -65,6 +66,8 @@ export interface Rodada {
   diagnostico: Diagnostico | null;
   /** Rodada INFORMATIVA NÃO OFICIAL (R27): alvo e tabela nas células *_alt. null = não rodada. */
   informativo: Pick<Rodada, 'veredito' | 'congelado' | 'calibracao' | 'fronteira' | 'avaliacao'> | null;
+  /** Mensagem da exceção da rodada informativa (M-1): não afeta o veredito oficial. null = sem erro. */
+  informativoErro: string | null;
   tempos: Record<string, number>;
   segundos: number;
 }
@@ -127,7 +130,7 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
   const H2 = `${o.h} ${o.prefixo}`;
   const H3 = `${o.h}# `;
   // 1. veredito
-  s(`${H2}1. Veredito: **${b.veredito.veredito}**`);
+  s(`${H2}${tituloVeredito(b.veredito.veredito, o.oficial)}`);
   if (b.congelado) s(`Candidata congelada na calibração: **${b.congelado.candidata}** — \`${JSON.stringify(b.congelado.params)}\`.`);
   if (o.oficial) s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
   for (const x of o.extrasVeredito ?? []) s(x);
@@ -285,13 +288,31 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
   }
 }
 
-/** Linhas da causa do veredito oficial (R27): o piso de A é inalcançável com os suaves presos no F0. */
-function causaOficial(r: Rodada): string[] {
+/** Título da seção 11 (R27), com o veredito OFICIAL real. */
+export function tituloSecaoInformativa(oficial: VereditoReplay): string {
+  return `11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito oficial é o ${oficial} acima`;
+}
+
+/** Título do veredito do bloco; o da rodada informativa diz NÃO OFICIAL (R27). */
+export function tituloVeredito(v: VereditoReplay, oficial: boolean): string {
+  return oficial ? `1. Veredito: **${v}**` : `1. Veredito NÃO OFICIAL (R27): **${v}**`;
+}
+
+/**
+ * Linhas da causa do veredito oficial (R27). Só atribui o NO-GO à régua se os suaves de A (presos no F0) ficam abaixo do
+ * piso de A; senão o texto é neutro (a inviabilidade não se explica pelos suaves).
+ */
+export function causaOficial(r: Pick<Rodada, 'veredito' | 'diagnostico'>): string[] {
   const d = r.diagnostico;
   if (!d || !r.veredito.motivos.includes('INVIAVEL_NA_CALIBRACAO')) return [];
-  return [
-    `**Causa (R27):** na calibração, o próprio F0 atende ${pct(d.fillF0A.total)} das linhas de A (piso ${pct(0.98, 0)}). Os SKUs SUAVES de A ficam no F0 em todas as variantes (spec §5.3) e atendem ${pct(d.fillF0A.suaves)} (${d.fillF0A.linhasSuaves} linhas); os alterados de A, ${pct(d.fillF0A.alterados)} (${d.fillF0A.linhasAlterados} linhas). Nenhum quantil mexe nos suaves, então nenhuma fórmula leva a célula A ao piso: o NO-GO decorre da régua (piso na célula da classe), não de uma comparação TSB × F0. Diagnóstico e rodada informativa na seção 11.`,
-  ];
+  const piso = PISOS_SERVICO.A;
+  const fills = `na calibração, o próprio F0 atende ${pct(d.fillF0A.total)} das linhas de A (piso ${pct(piso, 0)}); os SKUs SUAVES de A, que ficam no F0 em todas as variantes (spec §5.3), atendem ${pct(d.fillF0A.suaves)} (${d.fillF0A.linhasSuaves} linhas); os alterados de A, ${pct(d.fillF0A.alterados)} (${d.fillF0A.linhasAlterados} linhas).`;
+  if (d.fillF0A.suaves !== null && d.fillF0A.suaves < piso) {
+    return [
+      `**Causa (R27):** ${fills} Nenhum quantil mexe nos suaves, então nenhuma fórmula leva a célula A ao piso: o NO-GO decorre da régua (piso na célula da classe), não de uma comparação TSB × F0. Diagnóstico e rodada informativa na seção 11.`,
+    ];
+  }
+  return [`**Contexto (R27):** ${fills} O motivo do veredito é INVIAVEL_NA_CALIBRACAO (nenhum trio atingiu o alvo nas três classes). Diagnóstico e rodada informativa na seção 11.`];
 }
 
 export function montarRelatorio(r: Rodada): string {
@@ -364,7 +385,7 @@ export function montarRelatorio(r: Rodada): string {
   s(LIMITES.map((l) => `- ${l}`).join('\n'));
 
   // 11. rodada informativa (R27)
-  s('## 11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito oficial é o NO-GO acima');
+  s(`## ${tituloSecaoInformativa(r.veredito.veredito)}`);
   s('Alvo e tabela §6.1 SÓ nas células *_alt (alvo_alt = max(piso, fill do F0 em X_alt − 0,25 p.p.)): a simulação contém só a população ALTERADA (os intermitentes que trocam de fórmula), então as células A/B/C coincidem com A_alt/B_alt/C_alt e capital, estresse e economia são medidos nessa população. Mesma grade, descida, validação conjunta, regra de escolha, reps até a precisão e bootstrap 4/8. Não substitui nem relativiza o veredito oficial.');
   const d = r.diagnostico;
   if (d) {
@@ -376,8 +397,9 @@ export function montarRelatorio(r: Rodada): string {
     s(`LT nos pedidos de A desde ${d.lt.desde} (F0, rep 0, ${d.lt.pedidos} pedidos): sorteado médio ${d.lt.sorteadoMedio === null ? 'n/d' : num(d.lt.sorteadoMedio, 1)} du × parâmetro médio do F0 ${d.lt.parametroMedio === null ? 'n/d' : num(d.lt.parametroMedio, 1)} du.`);
     s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×); recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
   }
+  if (r.informativoErro) s(`**A rodada informativa falhou** (o veredito oficial acima não é afetado): ${r.informativoErro}`);
   if (r.informativo) secoesDoBloco(r, r.informativo, s, { h: '###', prefixo: '11.', oficial: false, extrasVeredito: ['**NÃO OFICIAL (R27)** — alvo e critérios nas células *_alt; população simulada = só os alterados.'] });
-  else s('Rodada informativa não executada.');
+  else if (!r.informativoErro) s('Rodada informativa não executada.');
   return out.join('\n');
 }
 

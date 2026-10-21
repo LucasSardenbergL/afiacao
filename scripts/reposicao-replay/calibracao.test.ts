@@ -5,7 +5,8 @@ import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import { coorte } from './parados';
-import { avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
+import { anexarInformativa, avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
+import { causaOficial, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
 import type { ParamsDia } from './formulas';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
@@ -188,8 +189,10 @@ describe('avaliação (rodar.ts)', () => {
     }
     expect(r.avaliacao.nulos.length).toBeGreaterThan(0);
     expect(['GO', 'NO-GO', 'INCONCLUSIVO']).toContain(r.veredito.veredito);
-    // a linha Precisão traz as replicações efetivamente rodadas
-    expect(r.avaliacao.criterios.find((c) => c.criterio === 'Precisão')?.motivo).toMatch(/^3 replicações/);
+    // M-3: teto de replicações reduzido ⇒ a linha Precisão NUNCA passa (rodada incompleta não aprova)
+    const prec = r.avaliacao.criterios.find((c) => c.criterio === 'Precisão');
+    expect(prec?.estado).toBe('INCERTO');
+    expect(prec?.motivo).toMatch(/^3 replicações/);
   }, 300_000);
 });
 
@@ -257,4 +260,39 @@ describe('R27 — modo informativo', () => {
     expect(soma(['A', 'B', 'C'])).toBe(lin);
     expect(soma(['A_alt', 'B_alt', 'C_alt'])).toBe(lin);
   }, 300_000);
+});
+
+describe('fix round 2 (relatório e orquestração)', () => {
+  const diag = (suaves: number) => ({
+    fillF0A: { total: 0.935, alterados: 0.95, suaves, linhasAlterados: 287, linhasSuaves: 416 },
+    semanalA: [], demandaA: [], lt: { desde: '2026-03-16', pedidos: 0, sorteadoMedio: null, parametroMedio: null },
+    real: { estoqueReal: 2, estoqueF0: 1, recebidoReal: 2, recebidoF0: 1 },
+  });
+  it('I-novo-1: o título da seção 11 interpola o veredito OFICIAL real', () => {
+    expect(tituloSecaoInformativa('NO-GO')).toContain('o veredito oficial é o NO-GO acima');
+    expect(tituloSecaoInformativa('INCONCLUSIVO')).toContain('o veredito oficial é o INCONCLUSIVO acima');
+    expect(tituloSecaoInformativa('GO')).not.toContain('NO-GO');
+  });
+  it('M-2: o subtítulo do veredito da rodada informativa diz NÃO OFICIAL', () => {
+    expect(tituloVeredito('NO-GO', false)).toMatch(/NÃO OFICIAL/);
+    expect(tituloVeredito('NO-GO', true)).not.toMatch(/NÃO OFICIAL/);
+  });
+  it('M-4: a causa só é atribuída à régua se os suaves ficam abaixo do piso de A; senão, texto neutro', () => {
+    const v = { veredito: 'NO-GO' as const, motivos: ['INVIAVEL_NA_CALIBRACAO'] };
+    expect(causaOficial({ veredito: v, diagnostico: diag(0.9249) }).join(' ')).toMatch(/decorre da régua/);
+    const neutro = causaOficial({ veredito: v, diagnostico: diag(0.985) }).join(' ');
+    expect(neutro).not.toMatch(/decorre da régua/);
+    expect(neutro).toMatch(/INVIAVEL_NA_CALIBRACAO/);
+    expect(causaOficial({ veredito: { veredito: 'GO', motivos: [] }, diagnostico: diag(0.9) })).toEqual([]);
+  });
+  it('M-1: exceção na informativa não impede o relatório oficial (gravado antes) e fica registrada', async () => {
+    const gravados: { informativo: unknown; informativoErro: string | null }[] = [];
+    const oficial = { informativo: null, informativoErro: null } as unknown as Rodada;
+    const r = await anexarInformativa(oficial, async () => { throw new Error('boom'); }, (x) => gravados.push({ informativo: x.informativo, informativoErro: x.informativoErro }));
+    expect(gravados[0]).toEqual({ informativo: null, informativoErro: null }); // oficial gravado ANTES da informativa
+    expect(r.informativoErro).toMatch(/boom/);
+    expect(gravados.at(-1)?.informativoErro).toMatch(/boom/);
+    const ok = await anexarInformativa({ informativo: null, informativoErro: null } as unknown as Rodada, async () => ({ marcador: 1 }) as never, () => {});
+    expect(ok.informativo).toEqual({ marcador: 1 });
+  });
 });
