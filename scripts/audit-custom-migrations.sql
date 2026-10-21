@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 682
+-- Total de custom migrations: 684
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -746,7 +746,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020150000', 'venda_cliente_recompra', '20261020150000_venda_cliente_recompra.sql'),
   ('20261020151500', 'scores_intervalo_recompra', '20261020151500_scores_intervalo_recompra.sql'),
   ('20261020174221', 'venda_cliente_espinha', '20261020174221_venda_cliente_espinha.sql'),
-  ('20261020200000', 'analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', '20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql')
+  ('20261020200000', 'analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', '20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql'),
+  ('20261020202720', 'analytics_ledger_venda_cliente', '20261020202720_analytics_ledger_venda_cliente.sql'),
+  ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2903,7 +2905,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
-  ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', '')
+  ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5108,7 +5112,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_config_select_staff', 'venda_config'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_sugestao_select', 'venda_sugestao'),
   ('venda_cliente_espinha', 'rls_policy', 'public', 'venda_contato_select', 'venda_contato'),
-  ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', '')
+  ('analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', 'function', 'public', 'analytics_outbox_pedido_compra', ''),
+  ('analytics_ledger_venda_cliente', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
 )
 SELECT
   e.migration,
@@ -5651,6 +5657,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 2, '20260907223901_analytics_ledger_navegacao_rota_servida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
+  ('public', 'analytics_ledger_registrar', 5, '20261020202720_analytics_ledger_venda_cliente.sql', 'e7e3ed81c939ba16a8fecb0c0619b7da'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),

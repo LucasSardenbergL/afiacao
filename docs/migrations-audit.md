@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **682** custom migrations totais
-- **2191** objetos esperados (criados por estas migrations)
+- **684** custom migrations totais
+- **2193** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 805
+  - `function`: 807
   - `rls_policy`: 480
   - `index`: 286
   - `cron_job`: 195
@@ -5539,6 +5539,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.analytics_outbox_pedido_compra` | — |
+
+### `20261020202720_analytics_ledger_venda_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261020235000_venda_cliente_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_painel` | — |
 
 ## Próximos passos por status
 

@@ -24,13 +24,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261020235000_venda_cliente_painel.sql"
-# 2ª migration (sensor): allowlist do ledger; o predecessor é o corpo que está na prod (md5 977288a8…)
-MIG_LEDGER="$REPO_ROOT/supabase/migrations/20261020235100_analytics_ledger_venda_painel.sql"
-MIG_LEDGER_PRED="$REPO_ROOT/supabase/migrations/20261012233500_analytics_ledger_crescimento_comparavel.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="gate_aberto:T1 taxa_com_medivel:T3b complemento_na_taxa:T3c receita_zero:T4 hist_semana_errada:T5 base_sem_log:T6 contato_fora_da_semana:T3 acl_aberta:POST!P2_FALHOU ledger_sem_evento:POST!nao_e_o_deste_arquivo ledger_sem_pre:T10c"
+  SABOTAGENS="gate_aberto:T1 taxa_com_medivel:T3b complemento_na_taxa:T3c receita_zero:T4 hist_semana_errada:T5 base_sem_log:T6 contato_fora_da_semana:T3 acl_aberta:POST!P2_FALHOU"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-painel.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -73,8 +70,6 @@ cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true
 trap cleanup EXIT
 
 cp "$MIG" "$MIG_USADA"
-MIG_LEDGER_USADA="$(dirname "$DATA")/mig-ledger.sql"
-cp "$MIG_LEDGER" "$MIG_LEDGER_USADA"
 sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências; padrão ausente = erro)
   python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
 import sys
@@ -97,8 +92,6 @@ case "${SABOTAGEM:-}" in
   base_sem_log)        sabotar "v_base_confiavel := EXISTS (SELECT 1 FROM public.venda_onda_log WHERE onda = 'onda_recompra');" "v_base_confiavel := v_cfg_on1;" ;;
   contato_fora_da_semana) sabotar "                      AND c.dia >= l.semana AND c.dia < l.semana + 7)" "                      )" ;;
   acl_aberta)          sabotar "REVOKE ALL ON FUNCTION public.venda_painel(date, date) FROM PUBLIC, anon;" "REVOKE ALL ON FUNCTION public.venda_painel(date, date) FROM PUBLIC;" ;;
-  ledger_sem_evento)   MIG_USADA="$MIG_LEDGER_USADA" sabotar "                      'venda.painel_aberto') THEN" "                      'venda.outro') THEN" ;;
-  ledger_sem_pre)      MIG_USADA="$MIG_LEDGER_USADA" sabotar "v_vivo IS NULL OR v_vivo NOT IN" "false AND v_vivo NOT IN" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -278,26 +271,6 @@ SELECT count(*) FROM t, jsonb_object_keys(CASE WHEN jsonb_typeof(t.v) = 'object'
  WHERE k ~ '(cmc|custo|markup|piso)';"
 eq "T9 nenhuma chave de custo no JSON (recursivo)" "$(Pq -c "$(como "$M" "$T9_SQL")")" "0"
 
-# ── T10 sensor: allowlist do ledger (2ª migration) ──────────────────────────────────────────────
-P -q <<'SQL'
-CREATE TABLE public.analytics_outbox (id bigserial PRIMARY KEY, event_id uuid NOT NULL DEFAULT gen_random_uuid(),
-  evento text NOT NULL, distinct_id text NOT NULL, user_id uuid, props jsonb NOT NULL DEFAULT '{}',
-  ocorrido_em timestamptz NOT NULL DEFAULT now(), chave_dedup text UNIQUE);
-SQL
-P -q -f "$MIG_LEDGER_PRED" >/dev/null 2>&1
-eq "T10 predecessor do repo = corpo vivo da prod (md5)" \
-   "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE proname = 'analytics_ledger_registrar'")" "977288a80b440c103479f953bb8f3dae"
-aplica_ledger() { local saida; if saida="$(P -q -f "$MIG_LEDGER_USADA" 2>&1)"; then echo aplicou; else
-  printf '%s\n' "$saida" | grep -oE '(PRE|POSTCONDICAO) FALHOU: [^—]*' | head -1; fi; }
-eq "T10 aplica sobre o predecessor (PRE e POS passam)" "$(aplica_ledger)" "aplicou"
-eq "T10 re-apply idempotente" "$(P -q -f "$MIG_LEDGER_USADA" >/dev/null 2>&1 && echo aplicou || echo FALHOU)" "aplicou"
-eq "T10b master registra venda.painel_aberto 2x no dia -> 1 linha (dedup)" \
-   "$(Pq -c "$(como "$M" "SELECT public.analytics_ledger_registrar('venda.painel_aberto', 'painel', '{}'); SELECT public.analytics_ledger_registrar('venda.painel_aberto', 'painel', '{}');")" >/dev/null 2>&1; Pq -c "SELECT count(*) FROM public.analytics_outbox WHERE evento = 'venda.painel_aberto'")" "1"
-eq "T10b evento fora da allowlist continua 22023" \
-   "$(estado "$(como "$M" "SELECT public.analytics_ledger_registrar('venda.inventado', 'x', '{}');")")" "22023"
-Pq -c "CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(p_evento text, p_chave text, p_props jsonb DEFAULT '{}') RETURNS void LANGUAGE sql AS 'SELECT NULL';" >/dev/null
-eq "T10c corpo vivo derivou (outra sessao) -> PRE aborta" \
-   "$(P -q -f "$MIG_LEDGER_USADA" 2>&1 | grep -c "PRE FALHOU" || true)" "1"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

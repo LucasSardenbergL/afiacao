@@ -55,10 +55,15 @@ export type EventoLedger =
    */
   | 'dashboard.crescimento_comparavel_servido'
   /**
-   * O painel do founder do programa Venda por cliente (`/admin/venda-cliente`) foi servido com
-   * dados, 1x por dia (dedup da RPC). É o sensor de uso da superfície que aprova repasses e lê a
-   * adoção das farmers — nasce com ela (fase-sem-sinal.md).
+   * Programa "Venda por cliente" (spec 2026-10-20 §7 Fase 5): a farmer abriu a ficha da ligação,
+   * registrou o desfecho manual, tocou no telefone (`tel:` — o único rastro, a ligação sai do app),
+   * o founder abriu o painel de adoção. Chave = comprador (ou a semana, no painel). A verdade do
+   * desfecho é `venda_contato` — aqui fica o rastro de UI, imune ao bloqueador do PostHog.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
+  | 'venda.ficha_aberta'
+  | 'venda.contato_registrado'
+  | 'venda.tel_clicado'
   | 'venda.painel_aberto';
 
 /**

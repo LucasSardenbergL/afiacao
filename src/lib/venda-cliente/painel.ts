@@ -6,6 +6,8 @@
  * "aguardando", nunca 0%; receita sem venda casada é "—", nunca R$ 0.
  */
 
+import { addDias } from '@/lib/dashboard/sp-date';
+
 export interface ContagemDesfecho {
   virou: number;
   nao_virou: number;
@@ -148,11 +150,8 @@ export interface CandidatoRepasse {
 
 export type ValidacaoAprovacao = { ok: true } | { ok: false; motivo: string };
 
-function somarDias(isoDia: string, dias: number): string {
-  const d = new Date(`${isoDia}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + dias);
-  return d.toISOString().slice(0, 10);
-}
+/** Aritmética de calendário (sem relógio/fuso) — o helper canônico do repo. */
+export const somarDias = addDias;
 
 /**
  * Espelha as recusas de `venda_aprovar_repasse` (22023) para o botão nunca prometer o que o
@@ -200,4 +199,3 @@ export function lerPreco(texto: string): number | null {
   return Number(normal);
 }
 
-export { somarDias };

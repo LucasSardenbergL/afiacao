@@ -14,14 +14,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useVendaPainel } from '@/hooks/useVendaPainel';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
+import { hojeSP } from '@/lib/dashboard/sp-date';
 import { somarDias } from '@/lib/venda-cliente/painel';
 
 const PERIODOS = [4, 12, 26, 52] as const;
 
-/** Hoje no calendário de São Paulo (o servidor alinha às semanas seg–dom). */
-function hojeSP(): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
-}
 
 /**
  * Painel do founder — Venda por cliente (Task 7). Adoção das farmers por semana (quantos tinham
@@ -32,6 +29,7 @@ export default function VendaClientePainel() {
   const { isMaster } = useAuth();
   const [url, setUrl] = useUrlState({ semanas: 12, aba: 'adocao' });
   const semanas = (PERIODOS as readonly number[]).includes(url.semanas) ? url.semanas : 12;
+  // hoje no calendário de São Paulo; o servidor alinha o período às semanas seg–dom
   const ate = hojeSP();
   const de = somarDias(ate, -(semanas * 7 - 1));
   const painel = useVendaPainel(de, ate);
