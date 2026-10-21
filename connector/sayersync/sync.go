@@ -636,11 +636,11 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		originNow = time.Now()
 	}
 
-	// Determina se é necessário full re-scan (todo domingo, uma vez por semana).
+	// Determina se é necessário full re-scan (1×/semana: domingo, ou a madrugada seguinte se o domingo foi perdido).
 	needFullRescan := shouldFullRescan(st, originNow)
 	if needFullRescan {
 		if iniciarFullRescan(st, originNow) {
-			logger.Infof("RunCycle: iniciando full re-scan semanal (domingo)")
+			logger.Infof("RunCycle: iniciando full re-scan semanal (domingo ou recuperação de domingo perdido)")
 		} else {
 			logger.Infof("RunCycle: retomando full re-scan de hoje — só re-extrai as entidades que ainda não passaram")
 		}
@@ -1410,11 +1410,29 @@ func shouldKeysSnapshot(st *State, originNow time.Time) bool {
 	return lastDate != nowDate
 }
 
+// janelaRecuperacaoRescan: horas (relógio da ORIGEM, [0, h)) em que um re-scan
+// semanal PERDIDO é recuperado fora do domingo.
+const janelaRecuperacaoRescan = 6
+
 // shouldFullRescan retorna true se o full re-scan semanal deve ocorrer.
-// Critério: dia é domingo (weekday==Sunday) E a semana ISO do último re-scan
-// é diferente da semana atual.
+//
+// DEVIDO: o último re-scan é anterior ao domingo mais recente (ou nunca houve).
+// DISPARA: no domingo (o dia preferido) OU na madrugada [00h, 06h) de qualquer dia
+// seguinte — recuperação do domingo perdido.
+//
+// Por que a recuperação existe (medido em prod via psql-ro, 2026-10-21): o servidor
+// da loja fica DESLIGADO no fim de semana — 0 runs em 11 de 12 domingos desde agosto.
+// Com o gatilho "só domingo", a rede de segurança semanal praticamente nunca rodava,
+// e o que só ela re-extrai (ex.: formulaperson enviada com a sentinela '0'/0 pelo
+// 0.2.0, que o delta por HWM nunca re-lê porque a fonte não mudou) ficava parado no
+// staging para sempre, barrado pelo Guard 4 a cada promote do par. Madrugada e não
+// "primeiro ciclo de segunda": o re-scan é pesado (~2,5k runs no domingo 11/10) e o
+// servidor fica ligado à noite nos dias úteis — fora do horário da loja.
+//
+// Ancorar no DOMINGO (e não em "≥7 dias desde o último") mantém o re-scan no domingo
+// depois de uma recuperação: recuperado na terça, o domingo seguinte já é devido.
 func shouldFullRescan(st *State, originNow time.Time) bool {
-	if originNow.Weekday() != time.Sunday {
+	if originNow.Weekday() != time.Sunday && originNow.Hour() >= janelaRecuperacaoRescan {
 		return false
 	}
 	if st.LastFullRescan == "" {
@@ -1424,23 +1442,28 @@ func shouldFullRescan(st *State, originNow time.Time) bool {
 	if err != nil {
 		return true
 	}
-	_, lastWeek := last.ISOWeek()
-	_, nowWeek := originNow.ISOWeek()
-	lastYear, _ := last.ISOWeek()
-	nowYear, _ := originNow.ISOWeek()
-	return lastWeek != nowWeek || lastYear != nowYear
+	return last.In(originNow.Location()).Format("2006-01-02") < domingoMaisRecente(originNow)
 }
 
-// iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan do dia; nos seguintes (o
-// re-scan não marcou porque alguma entidade falhou) não zera de novo — a entidade que
-// falhou não avançou o HWM, então já re-extrai tudo sozinha. Devolve true se zerou.
+// domingoMaisRecente devolve o DIA (YYYY-MM-DD, relógio da origem) do domingo mais
+// recente ≤ originNow — a âncora da semana do re-scan.
+func domingoMaisRecente(originNow time.Time) string {
+	return originNow.AddDate(0, 0, -int(originNow.Weekday())).Format("2006-01-02")
+}
+
+// iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan da SEMANA (âncora: o
+// domingo mais recente); nos seguintes (o re-scan não marcou porque alguma entidade
+// falhou) não zera de novo — a entidade que falhou não avançou o HWM, então já
+// re-extrai tudo sozinha. Semana e não dia: o re-scan que começa no domingo à noite
+// (ou na recuperação da madrugada) atravessa a meia-noite, e comparar por DIA zeraria
+// tudo de novo à 00h, re-extraindo as entidades que já tinham passado. Devolve true
+// se zerou.
 func iniciarFullRescan(st *State, originNow time.Time) bool {
-	hoje := originNow.Format("2006-01-02")
-	if st.FullRescanIniciado == hoje {
+	if st.FullRescanIniciado != "" && st.FullRescanIniciado >= domingoMaisRecente(originNow) {
 		return false
 	}
 	clearAllHWM(st)
-	st.FullRescanIniciado = hoje
+	st.FullRescanIniciado = originNow.Format("2006-01-02")
 	return true
 }
 
