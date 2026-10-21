@@ -153,9 +153,18 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   try {
     await deps.registrarNoRadar(e.cnpj, codigo, jaExistia);
   } catch (err) {
+    // A RPC exige a confirmação que a EDGE gravou (ledger `omie_cliente_confirmacoes`) — sem ela, repetir só a
+    // gravação (`codigoConhecido`) recusaria de novo, em laço. Vira falha na etapa omie SEM código: o "Tentar de
+    // novo" volta pela edge, cujo lookup confere o documento e grava a confirmação (migration 20261021120000).
+    if (ehSemConfirmacaoDoServidor(err)) throw new FalhaCadastro('omie', mensagem(err));
     throw new FalhaCadastro('radar', mensagem(err), codigo);
   }
   return { codigo, jaExistia, recuperado: retomada };
+}
+
+/** Marca da RPC `radar_registrar_cadastro_omie` quando o servidor não confirmou o par CNPJ↔código no Omie/Oben. */
+export function ehSemConfirmacaoDoServidor(e: unknown): boolean {
+  return (mensagemDeErro(e) ?? '').startsWith('RADAR_SEM_CONFIRMACAO_OMIE:');
 }
 
 /** Rate-limit persistente do Omie (a edge já fez retry com backoff): insistir só alonga o bloqueio. */

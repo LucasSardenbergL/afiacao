@@ -92,8 +92,12 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
  * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
+ * v1.23 (2026-10-21) — `criar_cliente` grava a CONFIRMAÇÃO DO SERVIDOR (ledger `omie_cliente_confirmacoes`,
+ * ./confirmacao-cadastro.ts) após o lookup idêntico ou o IncluirCliente com código: a RPC
+ * `radar_registrar_cadastro_omie` passa a exigi-la (migration 20261021120000). Ordem: edge ANTES da migration
+ * (sem a tabela o INSERT falha com prazo → `confirmacao_registrada:false`, inofensivo).
  */
-export const VERSAO = "v1.22-lookup-confere-documento";
+export const VERSAO = "v1.23-confirmacao-cadastro-servidor";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

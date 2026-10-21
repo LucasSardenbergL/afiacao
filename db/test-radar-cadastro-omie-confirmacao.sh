@@ -244,8 +244,21 @@ SQL
 
 echo "── A0 aplicação"
 eq A0p "predecessor radar_registrar_cadastro_omie (20261019225545) = PROD" "$(md5_de 'radar_registrar_cadastro_omie(text,text,boolean)')" "$MD5_PROD_CADASTRO"
-# 1ª instalação com um ledger de procedência desconhecida já criado → PRE aborta e nada muda.
-P -c "CREATE TABLE public.omie_cliente_confirmacoes (id int)"
+# 1ª instalação com um ledger de procedência desconhecida já criado — MESMA forma e uma linha forjada enquanto o
+# acesso era amplo (default privileges) → a PRE aborta: a linha viraria "prova" para a RPC nova (Codex MÉDIO 2).
+P <<'SQL'
+CREATE TABLE public.omie_cliente_confirmacoes (
+  id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  account text NOT NULL CHECK (account = 'oben'),
+  documento text NOT NULL CHECK (documento ~ '^[0-9A-Z]{12}[0-9]{2}$'),
+  codigo_cliente text NOT NULL CHECK (codigo_cliente ~ '^[1-9][0-9]{0,18}$'),
+  origem text NOT NULL CHECK (origem IN ('incluir', 'lookup')),
+  confirmado_por uuid,
+  confirmado_em timestamptz NOT NULL DEFAULT now());
+SET ROLE authenticated;
+INSERT INTO public.omie_cliente_confirmacoes (account, documento, codigo_cliente, origem) VALUES ('oben','12ABC34501DE35','4242','incluir');
+RESET ROLE;
+SQL
 if P -f "$MIG_USADA" > "$TMPD/pre.log" 2>&1; then bad A0q "PRE ADOTOU ledger preexistente na 1ª instalação";
 elif grep -q "PRE FALHOU: omie_cliente_confirmacoes já existe antes da 1ª instalação" "$TMPD/pre.log"; then ok A0q "PRE recusa ledger preexistente na 1ª instalação";
 else bad A0q "abortou fora do esperado: $(grep -m1 ERROR "$TMPD/pre.log" | cut -c1-140)"; fi
