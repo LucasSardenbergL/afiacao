@@ -31,7 +31,7 @@ const DATA_TOLERANCIA_FROUXA_DIAS = 30; // só o informativo `divergencia_data`
  * `auto_matched` a edge grava e NUNCA apaga (ver `publicarMatches`); `manual_matched` e
  * `desconsiderado` são do humano.
  */
-export const STATUS_INFORMATIVOS = [
+const STATUS_INFORMATIVOS = [
   "divergencia_valor",
   "divergencia_data",
   "sem_contrapartida",
