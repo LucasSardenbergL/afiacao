@@ -584,6 +584,10 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
 db/test-radar-score.sh                      21  falsificar=14
+# Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
+# (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
+# cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.
+db/test-radar-irmaos-por-raiz.sh            13  falsificar=11
 # Radar: ranking de cidades e mapa contam a FOTO VIGENTE (20261020120200). Defeito aqui = totalizador por
 # município contando quem saiu do dump (diverge da fila), lote mal formado contando zero em silêncio,
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo

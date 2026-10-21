@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 691
+-- Total de custom migrations: 692
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -754,6 +754,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql'),
   ('20261021021500', 'venda_repasse_base_desempenho', '20261021021500_venda_repasse_base_desempenho.sql'),
   ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql'),
+  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql'),
   ('20261021120000', 'radar_cadastro_omie_confirmacao_servidor', '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql'),
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql')
 ),
@@ -2944,6 +2945,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
   ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
   ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
   ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
@@ -5185,6 +5188,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas'),
   ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
   ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
   ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),

@@ -5,13 +5,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import type { Database } from '@/integrations/supabase/types';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { comNulo } from '@/lib/rpc-args';
 import type { DecidirArgs } from '@/lib/reposicao/raio-x/decisao';
 import type { Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
-
-type Fns = Database['public']['Functions'];
 
 const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
 const MSG_RX001_RESTAURAR = 'Este SKU não tem mais parâmetro de reposição — não há motor para restaurar';
@@ -37,10 +35,10 @@ export function useRaioXMutacoes(empresa: Empresa) {
 
   const mDecidir = useMutation({
     mutationFn: async ({ empresa, args }: { empresa: Empresa; args: DecidirArgs; acao: AcaoDecisao }) => {
-      // Cast RESIDUAL deliberado (plano v2 item 4): o gerador do Supabase declara todo Arg não-nulo, mas a
-      // RPC (migration 20261016120000, sem DEFAULT) aceita NULL em destino/observação/fornecedor/crédito.
-      // Não é cast sobre nome (o gate `casts:stale` não o conta) e não há forma tipada de passar NULL aqui.
-      const params = {
+      // O gerador declara todo Arg não-nulo, mas a RPC (migration 20261016120000, sem DEFAULT, não-STRICT —
+      // conferido na prod) aceita NULL em destino/observação/fornecedor/crédito: `comNulo` reabre só essas 4
+      // chaves e checa o resto contra o types.ts.
+      const params = comNulo<'raio_x_decidir', 'p_destino' | 'p_observacao' | 'p_fornecedor' | 'p_credito_troca'>({
         p_empresa: empresa,
         p_sku: args.sku,
         p_destino: args.destino,
@@ -51,10 +49,10 @@ export function useRaioXMutacoes(empresa: Empresa) {
         p_credito_troca: args.destino === 'trocar' ? args.creditoTroca : null,
         p_tirar_do_motor: args.tirarDoMotor,
         p_restaurar_motor: args.restaurarMotor,
-      } as unknown as Fns['raio_x_decidir']['Args'];
+      });
       const { data, error } = await supabase.rpc('raio_x_decidir', params);
       if (error) throw error;
-      return data as { tirou_do_motor?: boolean } | null;
+      return data;
     },
     onSuccess: (row, { empresa, args, acao }) => {
       void invalidar(empresa);
@@ -73,7 +71,8 @@ export function useRaioXMutacoes(empresa: Empresa) {
 
   const mContar = useMutation({
     mutationFn: async ({ empresa, sku, qtd }: { empresa: Empresa; sku: number; qtd: number | null }) => {
-      const params = { p_empresa: empresa, p_sku: sku, p_qtd: qtd } as unknown as Fns['raio_x_contar']['Args'];
+      // `p_qtd` NULL vai como NULL (a RPC, não-STRICT, grava o que vier — comportamento de antes).
+      const params = comNulo<'raio_x_contar', 'p_qtd'>({ p_empresa: empresa, p_sku: sku, p_qtd: qtd });
       const { error } = await supabase.rpc('raio_x_contar', params);
       if (error) throw error;
     },

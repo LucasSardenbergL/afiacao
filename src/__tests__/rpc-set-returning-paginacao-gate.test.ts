@@ -255,6 +255,8 @@ const BASELINE = new Map<string, Waiver>([
   //    `(supabase.rpc as RpcFn)('nome')`. Estavam no código o tempo todo, fora da baseline.
   ['radar_contagem_por_municipio @ src/queries/useRadarContagemMunicipios.ts',
     { tipo: 'estrutural', teto: 500, prova: 'mesma função da entrada acima, mesmo `LEAST(p_limit, 2000)`; este caller também passa a constante `p_limit: 500` (com os filtros do Radar, que só REDUZEM o conjunto)' }],
+  ['radar_irmaos_por_raiz @ src/queries/useRadarIrmaos.ts',
+    { tipo: 'estrutural', teto: 200, prova: '1 linha por CNPJ DISTINTO pedido (`SELECT … FROM pedidos`, `pedidos` = `DISTINCT unnest(p_cnpjs)`), e a função recusa com 22023 acima de 200 (`cardinality(p_cnpjs) > 200`, 20261021090000); o caller pede 1 página da fila (50)' }],
   ['buscar_skus_candidatos @ src/hooks/useProductSpecLink.ts',
     { tipo: 'estrutural', teto: 100, prova: '`LIMIT 100` constante no `RETURN QUERY` sobre `omie_products`' }],
 

@@ -77,7 +77,7 @@ ainda não cruzada".
 | 2 MÉDIO | "Gravar de novo" barrado pela própria releitura (recruzamento marcou `ja_cliente` antes da retomada) | Retomada (`codigoConhecido`/`retentativa`) não relê elegibilidade — a lib relê o vínculo e reconcilia; só cadastro NOVO é barrado |
 | 3 MÉDIO | Sem lote completo, "só sugeridos" mostrava a fila GERAL (e o teste canonizava o bug) | A lista FALHA com o motivo (inclusive vindo da URL); switch desabilitado sem lote; teste reescrito + controle sem o filtro |
 | 4 MÉDIO | Refetch do count falhava e o card seguia com o número velho, sem aviso | Estado composto: número fica + "desatualizado" (`desatualizado()` do painel) |
-| 5 MÉDIO | Paginação mistura lotes se o vigente vira no meio da rolagem (preexistente) | **Follow-up** — a chave da fila é o que o #3220 (versão da fila) está mudando |
+| 5 MÉDIO | Paginação mistura lotes se o vigente vira no meio da rolagem (preexistente) | Entregue em PR próprio (2026-10-21), depois do #3220: identidade do lote (`mes@iniciado_em`) na chave da fila e a página seguinte que relê OUTRO lote recusa; testes da troca e da corrida, cada camada sabotada em separado |
 | 6 BAIXO | Oferta abandonada (sair sem responder) não contava | `radar.cadastro_pos_sinal_exibida {oferta_id}` na exposição; resposta e resultado levam o mesmo `oferta_id` |
 
 ## Provas
@@ -101,7 +101,7 @@ ainda não cruzada".
 | Camada | Estado | Quem |
 | --- | --- | --- |
 | Migration / edge | nenhuma | — |
-| Publish do Lovable (front) | ⏳ após o merge | **founder** (Publish) |
+| Publish do Lovable (front) | ✅ no ar — `monitor-deploy.sh --pr 3231` e `--pr 3233` em 2026-10-21 06:24 UTC (`PR_NO_AR`, ar = main `f9028b4b`); `--pr 3280` (paginação presa ao lote) em 2026-10-21 10:10 UTC (`PR_NO_AR`, ar = main `b80db29e`) | founder (Publish) |
 
 ## Follow-ups (fora deste bloco)
 
@@ -109,6 +109,5 @@ ainda não cruzada".
   lote e clique individual (Codex #3)~~ → feito em [radar-cadastro-omie-idempotente.md](radar-cadastro-omie-idempotente.md).
 - Versão da fórmula do score (md5 do `prosrc`) no ledger e nos eventos; re-medir a distribuição ao mudar peso
   (Codex #11).
-- Paginação da fila com a identidade do lote na chave (Codex código #5; coordenar com o #3220).
 - Mapa/ranking de cidades vão por RPC e ignoram `soSugeridos` (como já ignoram `soIneditos`).
 - Oferta pós-sinal também no `RouteStopCard` (hoje só tem o CNPJ).

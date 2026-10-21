@@ -353,7 +353,9 @@ async function syncClienteOmie(
     throw new Error("CPF ou CNPJ é obrigatório para criar pedidos. Por favor, atualize seu perfil.");
   }
 
-  const documentClean = normalizarDocumento(profile.document);
+  // Gramática estrita do cadastro: o código achado vira o cliente do pedido, e o só-dígitos reduzia
+  // "ABC12345678909" ao CPF de OUTRA pessoa (Codex ALTO, #3180; 0 profiles com letra em 2026-10-21).
+  const documentClean = documentoParaCadastro(profile.document);
 
   // P0-B-bis: identidade Omie pela VIEW FRESCA account-correta (colacor_sc), NÃO o espelho poluído
   // omie_clientes (mix de contas, rótulo 'colacor' mentiroso). Ausência na view → fallback API
@@ -1060,7 +1062,10 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
-        const documentClean = normalizarDocumento(document);
+        // Mesma gramática estrita do cadastro, FORA do try (que lê falha como "não existe"): o código
+        // devolvido vira o cliente do pedido, e o só-dígitos do normalizarDocumento reduzia
+        // "ABC12345678909" ao CPF 12345678909 de OUTRA pessoa (Codex ALTO, #3180).
+        const documentClean = documentoParaCadastro(document);
         try {
           const searchResult = await callOmieApi(
             "geral/clientes/",
@@ -1107,6 +1112,13 @@ Deno.serve(async (req) => {
           ) as unknown as OmieListarClientesResponse;
           const existing = searchRes.clientes_cadastro?.[0];
           if (existing) {
+            // O Omie devolve o 1º registro da página: só é "já existe" se o documento dele for o PEDIDO —
+            // senão reaproveitaria o código de OUTRA pessoa (Codex 2026-10-21; espelho do
+            // `lookupDevolveuOMesmoDocumento` da omie-vendas-sync). Divergência cai no catch → success:false.
+            const devolvido = normalizarDocumento(existing.cnpj_cpf);
+            if (devolvido.length === 0 || devolvido !== docClean) {
+              throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade");
+            }
             result = {
               success: true,
               codigo_cliente: existing.codigo_cliente_omie,

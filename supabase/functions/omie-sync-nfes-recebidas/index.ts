@@ -25,6 +25,7 @@
 //   { "empresa": "OBEN" | "COLACOR" | "ALL", "dias": 30, "fornecedor_codigo_omie": 8689681266 }
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { preencherT4PorChave } from "./t4.ts";
 import { classificarSonda, EDGE, EFEITO, erroSondaAmbigua, FONTE, respostaSonda, VERSAO } from "./versao.ts";
 import { classifyOmieResponse, computeBackoffMs } from "./retry.ts";
 import { cabeEspera, timeoutRequestMs } from "../_shared/omie-deadline.ts";
@@ -1091,6 +1092,12 @@ async function revisitarEmpresa(
       if (error) throw error;
       return Array.isArray(data) && data.length > 0;
     },
+    // v1.10: compare-and-set em t4.ts (chave, t4 nulo, ≠ CANCELADO, nid igual ao desta NF). Status fica com a
+    // sync de pedidos (ela o reescreve; o t4 está no PRESERVE_FIELDS dela).
+    preencherRecebimentoSemT4: (chave, nIdReceb, t4Iso, agoraIso) => {
+      if (Date.now() >= limiteIo) throw new Error("orçamento de I/O da revisita esgotado");
+      return preencherT4PorChave(supabase, empresa, chave, nIdReceb, t4Iso, agoraIso, sinal);
+    },
   };
 
   await revisitarJanela(docs, processadasNoRun, porta, (raw) => mapNFe(raw as OmieConsultarRecebimentoResponse), {
@@ -1380,7 +1387,7 @@ Deno.serve(async (req) => {
           console.log(
             `[sync-nfes] ${c.s.empresa} revisita ${r.janela}: listados=${r.documentos_listados} conhecidas=${r.conhecidas} ` +
             `desconhecidas=${r.desconhecidas} consultadas=${r.consultadas} vinculadas=${r.linhas_vinculadas} ja=${r.ja_vinculadas} ` +
-            `conflito=${r.conflito_outra_nf} orfas=${r.orfas_inseridas} tempo=${r.puladas_por_tempo} erros=${r.erros} ` +
+            `conflito=${r.conflito_outra_nf} orfas=${r.orfas_inseridas} t4=${r.t4_preenchidos} t4_nid_divergente=${r.t4_nid_divergente} tempo=${r.puladas_por_tempo} erros=${r.erros} ` +
             `incompleta=${r.listagem_incompleta === true}`,
           );
         } catch (errRv) {

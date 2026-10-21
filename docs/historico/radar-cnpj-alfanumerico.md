@@ -82,7 +82,7 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **ALTO (os dois pareceres) — PRE só por md5 do corpo apaga ALTER/REVOKE concorrente:** `ALTER FUNCTION … SECURITY INVOKER` / `SET search_path` / `REVOKE EXECUTE` antes da TRAVA mantêm o `md5(prosrc)`; a PRE aceitava, o `CREATE OR REPLACE` + `GRANT` restauravam os atributos antigos e a PÓS aprovava. **Corrigido:** a TRAVA confere `provolatile = 'v'` ANTES do `ALTER … VOLATILE` (que a normalizaria), e a PRE, já sob a trava, exige `prosecdef`, `proconfig = {search_path=public}` e o ACL revisado (`has_function_privilege`: anon/PUBLIC sem, authenticated/service_role com). Provado em A6a/A6b/A6c (atributo mudado no predecessor → a migration ABORTA e o estado fica intacto, A6d) e falsificado (`pre_sem_atributos`, `pre_sem_acl`, `trava_sem_volatilidade`). Lição de prova: a 1ª versão de `pre_sem_acl` (`IF false AND a OR b OR NOT c`) deixava o ramo de `authenticated` vivo por precedência AND/OR — a falsificação pegou (suíte verde) e a sabotagem foi reescrita para apagar a condição inteira.
 - **ALTO (desenho) — o lookup anti-duplicata não confere identidade:** `buscarClienteVendas` aceitava o 1º registro da página sem comparar o `cnpj_cpf` ao pedido; se o Omie casar o filtro parcialmente ou ignorar letras, devolveria OUTRO cliente e o lead sairia da fila com `created:false` e código alheio. **Corrigido na edge `omie-vendas-sync` v1.22** (`lookup-documento.ts` + `_test.ts`, 4 Deno): `criar_cliente` exige `normalizarDocumento(retornado) === docClean` (máscara/minúscula conferem; mutilado, outro doc ou vazio não) — divergência lança `OMIE_LOOKUP_DIVERGENTE` (a action falha, a lib marca etapa `omie`, o lead FICA na fila). O numérico do acervo passa igual (documento idêntico após normalização). Deploy da edge é camada à parte (`pendencias:deploy`).
 - ✅ **FECHADO em 2026-10-21 (seção "Follow-up fechado — confirmação do servidor" abaixo).** **ALTO (preexistente, fora desta entrega) — `radar_registrar_cadastro_omie` aceita código nulo/inventado:** o gate prova autorização do gestor, não existência no ERP; a transição `ja_cliente` deveria depender de confirmação produzida pelo servidor (conta Omie + CNPJ + código). Registrado como follow-up, não atacado aqui (desenho de fluxo, não o guard).
-- **ALTO (preexistente, #3180) — `documentoParaCadastro("ABC12345678909") → "12345678909"`:** letras ANTES do 1º dígito são tratadas como rótulo (`CPF: …`), por desenho do #3180; a lib nova barra esse caso para o Radar (`documentoCadastravelNoOmie`), mas outros chamadores da edge seguem expostos. Follow-up: gramática explícita de rótulo (`CPF:`/`CNPJ:`).
+- **ALTO (preexistente, #3180) — `documentoParaCadastro("ABC12345678909") → "12345678909"`:** letras ANTES do 1º dígito são tratadas como rótulo (`CPF: …`), por desenho do #3180; a lib nova barra esse caso para o Radar (`documentoCadastravelNoOmie`), mas outros chamadores da edge seguem expostos. Follow-up: gramática explícita de rótulo (`CPF:`/`CNPJ:`). **✅ Fechado em 2026-10-21** — ver "Follow-up fechado — gramática explícita de rótulo" no fim.
 - **MÉDIO — `cliente:null` da sonda não distingue "Não existem registros" de resposta sem array/código:** aceito; a sonda prova "sem fault de validação", não a semântica do filtro — por isso a conferência de identidade acima é obrigatória, e a unicidade por documento no Omie é configurável (não medida). **MÉDIO — sabotagens faltantes:** curinga, não-gestor com CNPJ inválido e deriva de atributo entraram (acima); "falha na 3ª função → rollback integral" fica coberto por A6d (estado idêntico após 3 abortos). A checagem textual `position(guard IN prosrc)` da PÓS é redundante com o md5 — mantida como defesa em profundidade, sem assert próprio.
 
 ### (B) `criar_cliente` alfanumérico no Omie — bloqueio da lib cai (com evidência)
@@ -103,12 +103,69 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **Apply manual perde comentários:** função em PROD pode diferir do repo só em `--` — pré-flight por md5 pega; a PRE aceita os dois md5 em vez de "corrigir" o repo.
 - **Sonda read-only pelo caminho do cron** (`net.http_post` + segredo do vault) mede uma API de terceiro sem segredo no chat e sem cadastrar nada — serve quando a documentação cala sobre o método que o money-path chama de verdade (aqui o `ListarClientes` do lookup anti-duplicata).
 
+## Follow-up fechado — gramática explícita de rótulo em `documentoParaCadastro` (2026-10-21)
+
+**Achado (Codex ALTO, preexistente do #3180):** a regra "letra só é tolerada como RÓTULO antes do 1º dígito"
+era heurística — qualquer letra antes do 1º dígito contava como rótulo, e `ABC12345678909` virava o CPF
+`12345678909` de OUTRA pessoa no `IncluirCliente`. A lib do Radar já barrava (`documentoCadastravelNoOmie`);
+os outros chamadores da edge, não.
+
+**Chamadores mapeados.** `documentoParaCadastro`: só `omie-sync` (`criar_cliente_afiacao`) e
+`omie-vendas-sync` (`criar_cliente`) — os dois chamam ANTES do lookup anti-duplicata, então a recusa barra
+também o reaproveitamento. Importam o `_shared` sem chamar `documentoParaCadastro` (comportamento igual,
+fingerprint muda): `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`, `omie-vendas-sync/lookup-documento.ts`.
+
+**Regra nova (`_shared/cnpj-alfanumerico.ts`):** tira no máximo UM rótulo da gramática fechada
+`^(CPF|CNPJ)(\s*:\s*|\s+)` (sem caixa); qualquer letra que sobre (`\p{L}`, inclusive acentuada) só passa
+se o resto for CNPJ alfanumérico válido — senão lança `DOC_LETRA_FORA_DO_ROTULO`; rótulo que contradiz o
+tamanho (CPF ≠ 11, CNPJ ≠ 14) lança `DOC_ROTULO_DIVERGENTE`; sem dígito lança `DOC_SEM_DIGITO` (todas com
+"cadastro recusado"). Numérico com máscara e sem rótulo segue byte-idêntico. **Mudou de propósito:**
+`documentoParaCadastro("aeg-123.456.789-09")` agora recusa (antes `12345678909`, "CPF anotado") — anotação não
+é rótulo. `normalizarDocumento` NÃO mudou: segue chave de comparação (só-dígitos para o que não é alfanumérico
+válido).
+
+**Prova:** 17+ testes Deno casando a MARCA do ramo; falsificação com controle verde na mesma invocação, em
+`LC_ALL=C` e `pt_BR.UTF-8`: 6 sabotagens (rótulo heurístico antigo · sem checagem de letra · letra só ASCII ·
+sem rótulo×tamanho · sem vazio · rótulo case-sensitive) — todas vermelhas. A 1ª rodada achou um atalho
+redundante (CNPJ válido inteiro antes do rótulo — nenhum CNPJ casa a gramática) e um caso que não cobria letra
+só acentuada; os dois corrigidos.
+
+**Codex de código (`gpt-6-astra` · max · 494s · 133.617 tokens) — 4 achados, todos corrigidos:**
+- **ALTO — Unicode sumia no `\D`:** `ⒶⒺⒼ12345678909` (símbolo, fora de `\p{L}`), `００６12345678909` (fullwidth —
+  `00612345678909` é CNPJ com DV certo) e `٠٠٦12345678909` viravam o CPF `12345678909`. **Corrigido:** alfabeto
+  fechado no corpo ANTES de normalizar (`[0-9A-Za-z./ \t-]`) → `DOC_CARACTERE_FORA_DO_ALFABETO`.
+- **ALTO — `toUpperCase()` fabrica posição:** `CNPJ: 12ßC34501DE33` (13 posições) → `12SSC34501DE33`, CNPJ válido.
+  Mesmo alfabeto fecha.
+- **MÉDIO — vendas consultava o texto cru:** `criar_cliente` chamava `buscarClienteVendas(docCriar)`;
+  `CNPJ: AEG12345678909` consultava `12345678909` e cadastrava `AEG12345678909`. **Corrigido:** lookup com `docClean`.
+- **ALTO condicionado (preexistente) — afiação reaproveitava sem conferir:** `criar_cliente_afiacao` aceitava o 1º
+  registro do `ListarClientes`. **Corrigido:** confere `normalizarDocumento(existing.cnpj_cpf) === docClean`
+  (espelho do `lookupDevolveuOMesmoDocumento` de vendas); divergência → `OMIE_LOOKUP_DIVERGENTE`, `success:false`.
+- Falsificação refeita: 8 sabotagens (rótulo heurístico · sem letra · sem alfabeto · alfabeto com `\s` Unicode ·
+  alfabeto aceitando qualquer não-letra · sem rótulo×tamanho · sem vazio · rótulo case-sensitive), todas
+  vermelhas com controle verde, em `LC_ALL=C` e `pt_BR.UTF-8`. 5.668 profiles com documento, 0 fora do alfabeto.
+
+**Edges:** `omie-sync` v1.7-rotulo-documento-explicito · `omie-vendas-sync` v1.23-rotulo-documento-explicito.
+Sem pré-condição de banco, sem ordem entre edges.
+
+**Lookups que dão o cliente do PEDIDO também fechados:** `omie-sync buscar_cliente_por_documento` (fora do
+`try`, que lia falha como "não existe" → agora 500), o autosserviço de `omie-sync` por `profile.document`
+(0 profiles com letra em prod, psql-ro 2026-10-21 — não trava ninguém) e `omie-vendas-sync buscar_cliente`
+passam pela mesma gramática: com `normalizarDocumento`, `ABC12345678909` virava o código do cliente de OUTRA
+pessoa no pedido. **Fica com `normalizarDocumento` de propósito:** comparação doc-Omie × doc-profile
+(`docToUserMap`, `lookup-documento.ts`, `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`) — chave
+dos DOIS lados, não identidade de entrada.
+
+**Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
+buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
+entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
+
 ## Follow-up fechado — `radar_registrar_cadastro_omie` exige confirmação do SERVIDOR (2026-10-21)
 
 - **O defeito (Codex ALTO preexistente, acima):** a RPC marcava `ja_cliente = true` / `virou_cliente` com o `p_codigo_cliente` que o front mandasse — nulo (`COALESCE` com o antigo) ou inventado. O gate só provava que quem chama é gestor.
 - **Medido em prod antes (psql-ro):** 0 leads com `omie_codigo_cliente`/`omie_cadastrado_em` (o fluxo nunca foi usado, então não há acervo a reclassificar). Fontes server-side existentes avaliadas e **rejeitadas**: `omie_clientes_nao_vinculados` (snapshot reescrito em lote pelo `omie-analytics-sync`; cliente recém-criado só aparece no próximo sync; multi-writer) e `omie_customer_account_map` (exige user/profile; prospect não tem). Nenhum ledger de confirmação existia → tabela nova justificada.
 - **Desenho:** ledger append-only `omie_cliente_confirmacoes` (`account` só `oben`, `documento` só CNPJ no formato do Radar, `codigo_cliente ^[1-9][0-9]{0,18}$`, `origem` `incluir|lookup`, `confirmado_por`), **um escritor**: a edge `omie-vendas-sync` `criar_cliente` (service_role), depois do lookup que conferiu o documento (v1.22) **ou** do `IncluirCliente` que devolveu código. Código nulo (rate-limit) não confirma nada. A RPC exige a linha `(oben, p_cnpj, código)`; ausente → `RAISE 'RADAR_SEM_CONFIRMACAO_OMIE: …'` e o lead **fica na fila**. A nota do contato vem do ledger (houve `incluir` para o par?), não do `p_ja_existia` do front. Repetição com o mesmo código dentro da trava → `deduped`, sem 2º contato. Assinatura preservada (SW em cache ainda manda os 3 parâmetros).
-- **Edge v1.23** (`confirmacao-cadastro.ts` + `_test.ts`): INSERT com prazo de 5 s (AbortController); erro/exceção/prazo → `confirmacao_registrada:false`, **sem derrubar a action** (o cliente já existe no Omie; o fluxo Colacor da mesma action não regride). `null` = nada a confirmar.
+- **Edge v1.24** (`confirmacao-cadastro.ts` + `_test.ts`): INSERT com prazo de 5 s (AbortController); erro/exceção/prazo → `confirmacao_registrada:false`, **sem derrubar a action** (o cliente já existe no Omie; o fluxo Colacor da mesma action não regride). `null` = nada a confirmar.
 - **Front** (`cadastro-omie.ts`): a recusa `RADAR_SEM_CONFIRMACAO_OMIE:` vira `FalhaCadastro('omie')` **sem código** — o "Tentar de novo" volta pela edge (lookup grava a confirmação), nunca pelo atalho `codigoConhecido`, que recusaria em laço.
 - **Migration `20261021120000_radar_cadastro_omie_confirmacao_servidor.sql`** (envelope BEGIN/COMMIT): TRAVA (volatilidade antes do ALTER) → PRE (md5 de PROD `46717b26…` ou este; SECURITY/search_path/ACL; **ledger preexistente na 1ª instalação aborta** — linhas de procedência desconhecida virariam prova) → CREATE TABLE + RLS + ACL → CREATE OR REPLACE → PÓS (md5 este, atributos, exigência no `prosrc`, dono igual ao da RPC, **forma exata** da tabela — colunas/tipos/NOT NULL, 5 constraints validadas, zero policy — e **ACL efetivo** por `aclexplode`). Os default privileges de prod dão `arwdDxtm` a anon/authenticated/service_role e `ar` aos `sandbox_exec*`: um `GRANT` mínimo por cima não os remove, então a migration revoga a ESCRITA de todo grantee que não é o dono (SELECT do `claude_ro` fica — a sentinela exige "0 objetos sem SELECT").
 - **Prova PG17 `db/test-radar-cadastro-omie-confirmacao.sh`** (`nucleo-ci.txt`, `41 falsificar=11`): mundo com os default privileges de prod; predecessoras reais até a 20261019225545 (md5 = PROD). 11 sabotagens, uma camada por vez, cada uma vermelha no assert declarado. A sabotagem do guard de formato do código na RPC ficou **verde** (o CHECK do ledger já barra nulo/vazio/não numérico) → o guard saiu: camada redundante.
