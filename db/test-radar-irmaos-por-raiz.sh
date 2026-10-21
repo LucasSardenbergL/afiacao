@@ -17,7 +17,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261021090000_radar_irmaos_por_raiz.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta o apply.
   # Sabotagem no corpo muda o md5 (post:A2), então cada uma também cega o A2 (`cegar_md5`).
-  SABOTAGENS="sem_gate:A1 conta_descartado:A3 conta_o_proprio:A6 sem_teto:A9 sem_profiles:A4 sem_omie:A5 sem_radar_cliente:A7 conta_cliente_na_fila:A3 anon_executa:post:A3 anon_executa_sem_post:A10 corpo_divergente:post:A2"
+  SABOTAGENS="sem_gate:A1 conta_descartado:A3 conta_o_proprio:A6 sem_teto:A9 sem_profiles:A4 sem_omie:A5 sem_radar_cliente:A7 conta_cliente_na_fila:A7 anon_executa:post:A3 anon_executa_sem_post:A10 corpo_divergente:post:A2"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-irmaos.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -183,9 +183,9 @@ SQL
 }
 linha() { como "$GESTOR" "$1" | tail -1; }
 
-eq "A0 corpo vivo = o desta migration" \
+eq "A0 corpo vivo = o do arquivo aplicado (a migration, ou a cópia sabotada)" \
    "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid=to_regprocedure('public.radar_irmaos_por_raiz(text[])');")" \
-   "$(sed -n "s/.*IF v_md5 IS DISTINCT FROM '\([0-9a-f]\{32\}\)'.*/\1/p" "$MIG" | head -1)"
+   "$(python3 -I -c 'import sys,hashlib;s=open(sys.argv[1],encoding="utf-8").read();a=s.index("AS $function$")+13;print(hashlib.md5(s[a:s.index("$function$;",a)].encode()).hexdigest())' "$MIG_USADA")"
 
 SAIDA1="$(como "$VENDEDOR" "ARRAY['11111111000101']")"
 case "$SAIDA1" in *"forbidden: carteira"*) M1="negado";; *) M1="LIBEROU";; esac
