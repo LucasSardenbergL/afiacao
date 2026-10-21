@@ -9,7 +9,7 @@ export function useWhatsappFunil(dias = 30) {
     queryKey: ['whatsapp', 'funil', dias],
     queryFn: async (): Promise<WaFunil | null> => {
       // RPC nova ainda fora do types.ts gerado — mesmo padrão de useDataHealth.ts
-      const { data, error } = await supabase.rpc('get_whatsapp_funil' as never, { p_dias: dias } as never);
+      const { data, error } = await supabase.rpc('get_whatsapp_funil', { p_dias: dias });
       if (error) throw new Error(error.message);
       const row = Array.isArray(data) ? (data as unknown[])[0] : data;
       return mapFunilRow(row ?? null);

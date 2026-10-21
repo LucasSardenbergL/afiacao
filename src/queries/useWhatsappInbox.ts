@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 import { toast } from 'sonner';
 import {
   appendRealtimeMessage,
@@ -19,22 +20,18 @@ export interface WaMessage {
   body: string | null; status: string | null; created_at: string; wa_timestamp: string | null;
 }
 
-// Tabelas novas (whatsapp_conversations / whatsapp_messages) ainda não estão no
-// types.ts gerado — mesmo padrão de useClientesNaoVinculados.ts:
-// cast via `supabase as unknown as { from: (t: string) => PgConvBuilder }`.
-type OrderOpts = { ascending: boolean; nullsFirst?: boolean };
-interface PgConvBuilder {
-  select: (cols: string) => PgConvBuilder;
-  order: (col: string, opts: OrderOpts) => PgConvBuilder;
-  limit: (n: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-  eq: (col: string, val: string) => PgConvBuilder;
-  lte: (col: string, val: string) => PgConvBuilder;
-  then: PromiseLike<{ data: unknown; error: { message: string } | null }>['then'];
-}
+// whatsapp_conversations / whatsapp_messages estão no types.ts. `direction` é texto na tabela
+// (CHECK 'in'/'out' na prod): a mensagem passa por `paraWaMessage`, que lança fora do vocabulário.
+type LinhaMensagem = Database['public']['Tables']['whatsapp_messages']['Row'];
 
-function waFrom(table: string) {
-  const client = supabase as unknown as { from: (t: string) => PgConvBuilder };
-  return client.from(table);
+function paraWaMessage(l: LinhaMensagem): WaMessage {
+  if (l.direction !== 'in' && l.direction !== 'out') {
+    throw new Error(`whatsapp_messages: "direction" = "${l.direction}" fora do vocabulário`);
+  }
+  return {
+    id: l.id, conversation_id: l.conversation_id, direction: l.direction, type: l.type,
+    body: l.body, status: l.status, created_at: l.created_at, wa_timestamp: l.wa_timestamp,
+  };
 }
 
 export function useWhatsappConversations() {
@@ -42,12 +39,14 @@ export function useWhatsappConversations() {
   const q = useQuery({
     queryKey: ['whatsapp', 'conversations'],
     queryFn: async () => {
-      const res = await (waFrom('whatsapp_conversations')
+      const res = await supabase
+        .from('whatsapp_conversations')
         .select('*')
         .order('last_message_at', { ascending: false, nullsFirst: false })
-        .limit(200) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+        .limit(200);
       if (res.error) throw new Error(res.error.message);
-      return (res.data ?? []) as WaConversation[];
+      const conversas: WaConversation[] = res.data ?? [];
+      return conversas;
     },
   });
   useEffect(() => {
@@ -68,13 +67,14 @@ export function useWhatsappThread(conversationId: string | undefined) {
       // DESC + limit + reverse: as ÚLTIMAS 100 mensagens. A versão sem limit
       // em ordem asc estourava o cap de 1000 do PostgREST ficando com as 1000
       // mais ANTIGAS — em conversa longa, as mensagens novas SUMIAM da tela.
-      const res = await (waFrom('whatsapp_messages')
+      const res = await supabase
+        .from('whatsapp_messages')
         .select('*')
         .eq('conversation_id', conversationId!)
         .order('created_at', { ascending: false })
-        .limit(THREAD_LIMIT) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+        .limit(THREAD_LIMIT);
       if (res.error) throw new Error(res.error.message);
-      const janela = ((res.data ?? []) as WaMessage[]).reverse();
+      const janela = (res.data ?? []).map(paraWaMessage).reverse();
       // Merge com o cache anterior (helper testado): o refetch baixa só a
       // janela recente, mas o cache pode ter HISTÓRICO carregado via
       // "mensagens anteriores" — sem o merge, o invalidate de reconciliação
@@ -141,14 +141,15 @@ export function useLoadOlderWhatsappMessages(conversationId: string | undefined)
     if (!maisAntiga) return;
     setIsLoadingOlder(true);
     try {
-      const res = await (waFrom('whatsapp_messages')
+      const res = await supabase
+        .from('whatsapp_messages')
         .select('*')
         .eq('conversation_id', conversationId)
         .lte('created_at', maisAntiga.created_at)
         .order('created_at', { ascending: false })
-        .limit(THREAD_LIMIT) as PromiseLike<{ data: unknown; error: { message: string } | null }>);
+        .limit(THREAD_LIMIT);
       if (res.error) throw new Error(res.error.message);
-      const pagina = ((res.data ?? []) as WaMessage[]).reverse();
+      const pagina = (res.data ?? []).map(paraWaMessage).reverse();
       let added = 0;
       qc.setQueryData<WaMessage[]>(threadKey, (old) => {
         const r = prependOlderMessages(old, pagina);

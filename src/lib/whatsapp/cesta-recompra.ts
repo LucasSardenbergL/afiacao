@@ -6,7 +6,8 @@
 export interface PedidoLine {
   omie_codigo_produto: number;
   quantity: number;
-  unit_price: number;
+  /** NULL = item sem preço gravado (order_items.unit_price é nullable) — nunca vira 0. */
+  unit_price: number | null;
   order_date: string; // 'YYYY-MM-DD' (order_date_kpi — dia canônico)
   account: string;
   status: string;
@@ -30,7 +31,7 @@ export interface CestaItem {
   cadenciaDias: number | null;
   confidence: Confianca;
   motivo: 'recorrente_due' | 'frequente' | 'secundario';
-  ultimoPrecoRef: number; // SÓ observabilidade/debug — não usar em mensagem nem decisão
+  ultimoPrecoRef: number | null; // SÓ observabilidade/debug — não usar em mensagem nem decisão; NULL = sem preço (ausente ≠ zero)
 }
 export interface CestaResult {
   principal: CestaItem[];
@@ -125,7 +126,7 @@ export function montarCestaRecompra(lines: PedidoLine[], opts: CestaOpts): Cesta
     if (nPedidos < 3) confidence = 'baixa';
     if (fracionada) confidence = 'baixa';
 
-    const ultimoPrecoRef = slines.filter(l => l.order_date === lastDate).pop()?.unit_price ?? 0;
+    const ultimoPrecoRef = slines.filter(l => l.order_date === lastDate).pop()?.unit_price ?? null;
 
     const isDue = dueRatio >= dueP;
     const isFreq = fracPedidos >= freqF;

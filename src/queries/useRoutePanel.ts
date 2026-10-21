@@ -9,18 +9,34 @@ import type { SnapshotRow, ContatoRow, PainelAgregado } from '@/lib/route/painel
 // Pagina pelo canônico: página com error ou `data: null` sem error LANÇA (o painel somaria o valor
 // da ligação sobre um PREFIXO da janela) e a página perdida é medida pela fonte. `data_rota` não é
 // único → desempate por `id` (PK nas duas tabelas), senão o offset pula/duplica na fronteira.
-function lerTudo<T>(tabela: string, cols: string, desdeISO: string): Promise<T[]> {
-  return fetchAllPagesComMensagem<T>(
+// Uma função por tabela: o nome literal é o que deixa o types.ts checar as colunas do select.
+function lerSnapshots(desdeISO: string): Promise<SnapshotRow[]> {
+  return fetchAllPagesComMensagem(
     (de, ate) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (supabase.from(tabela as never) as any)
-        .select(cols)
+      supabase
+        .from('route_queue_snapshot')
+        .select('data_rota, farmer_id, customer_user_id, cliente_nome, cidade, bucket, valor_da_ligacao, rank')
         .gte('data_rota', desdeISO)
         .order('data_rota', { ascending: true })
         .order('id', { ascending: true })
         .range(de, ate),
-    `${tabela}/painel-rota`,
-    tabela,
+    'route_queue_snapshot/painel-rota',
+    'route_queue_snapshot',
+  );
+}
+
+function lerContatos(desdeISO: string): Promise<ContatoRow[]> {
+  return fetchAllPagesComMensagem(
+    (de, ate) =>
+      supabase
+        .from('route_contact_log')
+        .select('data_rota, farmer_id, customer_user_id, canal, status, valor_da_ligacao, bucket')
+        .gte('data_rota', desdeISO)
+        .order('data_rota', { ascending: true })
+        .order('id', { ascending: true })
+        .range(de, ate),
+    'route_contact_log/painel-rota',
+    'route_contact_log',
   );
 }
 
@@ -35,8 +51,8 @@ export function useRoutePanel(dias = 30) {
       d.setUTCDate(d.getUTCDate() - (dias - 1));
       const desde = spBusinessDate(d);
       const [snaps, contatos] = await Promise.all([
-        lerTudo<SnapshotRow>('route_queue_snapshot', 'data_rota, farmer_id, customer_user_id, cliente_nome, cidade, bucket, valor_da_ligacao, rank', desde),
-        lerTudo<ContatoRow>('route_contact_log', 'data_rota, farmer_id, customer_user_id, canal, status, valor_da_ligacao, bucket', desde),
+        lerSnapshots(desde),
+        lerContatos(desde),
       ]);
       return agregarPainel(snaps, contatos);
     },
