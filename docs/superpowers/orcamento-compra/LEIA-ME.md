@@ -108,6 +108,27 @@ Publicação dos encerrados: seq 155, de 2026-10-20, habilitada. Aprovados (#318
 - **O portão segue FECHADO** (abaixo): precisão 89,1% < 95%, cobertura 19,2% < 50%, 70 ciclos inviáveis e 9 indeterminados.
 - **Rodar:** `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro com o banco sob carga. Gerar o `fatos.sql` com `set statement_timeout = '10min'` na frente (75–90s) e passar o JSON ao `simular.ts`.
 
+### Rodada de 2026-10-21: horizonte de 60 dias (mesmos fatos de 2026-10-20)
+
+**Decisão do founder (2026-10-21):** a guarda verifica a reserva em **60 dias**, não mais em 91. A reserva continua de 30 dias e o cenário continua sem vendas novas. Foi a opção escolhida de uma grade horizonte × reserva rodada sobre os mesmos fatos:
+
+| Disparados (127) | 91d · reserva 30 | **60d · reserva 30** | 45d · reserva 30 | 91d · reserva 15 |
+|---|---|---|---|---|
+| viável · inviável · indeterminado | 92 · 30 · 6 | **113 · 9 · 6** | 117 · 5 · 6 | 88 · 13 · 27 |
+| Aceito com guarda | 31,8% | **36,2%** | 37,4% | 26,9% |
+
+- **Todos os 279 ciclos:** 250 viáveis · 20 inviáveis · 9 indeterminados (com 91 dias eram 200 · 70 · 9). Indeterminados nos disparados: 1 por compromisso não conciliado e 5 por falta de snapshot, os mesmos de antes.
+- **Baixar a reserva piora o veredito.** O limiar do compromisso não conciliado é 10% da reserva: com 15 dias, os indeterminados sobem de 6 para 27.
+- **Sensibilidade da reserva com 60 dias** (disparados, inviáveis · indeterminados): 15d 0 · 27 · 30d 9 · 6 · 45d 29 · 5.
+- Precisão por episódio 88,8% e cobertura de 19,4%: o portão segue **FECHADO**.
+
+### Caixa indeterminado e cobertura do replay: o t4 que nunca chega (2026-10-21)
+
+- **Os 13 pedidos de maio/junho sem NF estão resolvidos** (psql-ro, 2026-10-20). Dos 36 disparados de maio/junho, 33 têm NF no tracking. Os 3 sem NF (1005, 1014 e 1049) são os cancelados que o R59 v2 tira do caixa. O caixa indeterminado já tinha caído para 9 de 279 na rodada de 2026-10-20.
+- **A cobertura de 19% vem do fechamento do estoque, não do caixa.** Os 107 SKUs ruins erram para CIMA: em 431 de 480 fechamentos ruins, o estoque reconstruído fica acima do gravado. O erro anda em degraus. Exemplo: o SKU 12101724100 tem os pedidos 1161 (NF 947706) e 1221 (NF 951654) com NF e **sem t4**, e as 16 unidades somem da reconstrução.
+- **Causa na fonte:** o backfill da `omie-sync-nfes-recebidas` grava `nid_receb` antes do recebimento e nunca volta à linha. São 81 linhas OBEN de julho a outubro com NF e sem t4. Correção: PR #3284 (v1.10, a revisita grava o t4 da NF conhecida e recebida). Imputar o t4 (emissão + 7 dias) levou a cobertura de 19,1% para 38,4% e os SKUs ruins de 107 para 90. É experimento, não resultado: o número real sai depois do deploy e do catch-up.
+- **Resíduos menores medidos:** a consolidação de demanda por substituição de SKU (`sku_substituicao`, 7 SKUs) põe no SKU novo a venda que baixou o estoque do antigo, cerca de 35 unidades. A malha PCP pesa só 3 dos 108 SKUs ruins.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
@@ -128,62 +149,10 @@ Na rodada R31, a base de caixa sozinha, sem nenhuma candidata, já furava a rese
 
 ## O que o backtest diz sobre o cenário-guarda
 
-- **Hoje a guarda quase não dá veredito:** 264 dos 268 ciclos são indeterminados, 262 deles por compromisso não conciliado. A primeira decisão é sobre os 13 pedidos de maio/junho sem NF (acima).
-- **Quando dava veredito (rodada R31), a base sozinha furava a reserva** em julho e parte de agosto. Nesse caso a condição de reserva **como especificada** reprova o ciclo qualquer que seja o pedido, e por isso não serve para decidir compras.
+- **Desde 2026-10-20 a guarda dá veredito** em 270 de 279 ciclos (R59 v2 e os 13 pedidos resolvidos, acima).
+- **Quando a base sozinha fura a reserva**, a condição de reserva **como especificada** reprova o ciclo qualquer que seja o pedido, e por isso não serve para decidir compras. Com 91 dias, isso acontecia em 30 dos 127 disparados.
 
-A próxima decisão é do founder. Primeiro os 13 pedidos sem NF; depois, entre três caminhos para o cenário-guarda (sem ordem de preferência):
-
-1. **Calibrar um cenário de entrada de vendas:** substituir o "zero venda nova" por uma entrada conservadora medida.
-2. **Encurtar o horizonte:** verificar a reserva numa janela menor que 91 dias.
-3. **Baixar a reserva:** exigir menos que 30 dias de saídas.
-
-### Leitura (o que NÃO concluir)
-
-- **A precisão de 84,9% cobre só 19,1% dos episódios.** Ruptura em período censurado vira indeterminado por construção. A amostra é enviesada para SKUs que fecham o estoque e não romperam de verdade. Não ler como "o corte rompe em 15% dos casos" nem como "rompe pouco".
-- **"Econômico" domina o corte** porque o intervalo de oportunidade é 1 dia (premissa R49). A embalagem marginal só compra 1 dia de cobertura extra e perde para o custo de carregamento.
-- **Sem score não é corte do orçamento** (R48). Ele é revisão humana: entra no replay (conservador), mas não no valor cortado nem na precisão.
-
-## Falsificação (2026-10-15, refeita após a onda final R32–R53)
-
-Regras do laço:
-- Uma camada por vez.
-- Controle verde **antes e depois** na mesma invocação.
-- Confere que o `sed` casou (`git diff` não vazio).
-- Restaura com `git checkout --`.
-
-Rodado com `LC_ALL=C` e `LC_ALL=pt_BR.UTF-8`: **12/12 vermelho nos dois** (24/24), `git status` limpo ao fim.
-
-Para refazer, rode, para cada linha da tabela abaixo:
-1. `bun run test -- <teste>` (tem de dar verde);
-2. `sed -i '' '<sed>' <arquivo>`;
-3. `bun run test -- <teste>` (tem de dar vermelho);
-4. `git checkout -- <arquivo>`;
-5. `bun run test -- <teste>` (verde de novo).
-
-`M/` = `src/lib/reposicao/orcamento-compra/`; `S/` = `scripts/orcamento-compra/`.
-
-| # | Intenção | Arquivo | `sed` | Teste | Resultado |
-|---|---|---|---|---|---|
-| 1 | conciliação sem descontar título | `M/camadas.ts` | `s/const residuo = c.valor - titulado;/const residuo = c.valor;/` | `M/caixa.test.ts` | 5 failed / 28 |
-| 2 | avaliarEstado sem violação | `M/caixa.ts` | `s/if (primeiraViolacao === null && p.saldo < reserva)/if (false)/` | `M/caixa.test.ts` | 2 failed / 28 |
-| 3 | corte sem checar caixa | `M/corte.ts` | `s/if (!temAnterior(c) \|\| !cabe(\[fluxoDe(c)\]))/if (!temAnterior(c))/` | `M/corte.test.ts` | 3 failed / 27 |
-| 4 | atendidas sem backlog | `M/valor.ts` | `s/return Math.min(Q, backlog) + /return /` | `M/valor.test.ts` | 2 failed / 12 |
-| 5 | classificarCorte sem `teria_rompido` | `M/replay.ts` | `s/  if (sem.unidadesPerdidas > com.unidadesPerdidas + 1e-9) return 'teria_rompido';//` | `M/replay.test.ts` | 2 failed / 21 |
-| 6 | R28/R30: nunca "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;/const aFaturar = false;/` | `M/caixa.test.ts` | 3 failed / 28 |
-| 7 | R30: só pedido sem NF pode ser "a faturar" | `M/camadas.ts` | `s/const aFaturar = semComprovacao && /const aFaturar = c.nfs.size === 0 \&\& /` | `M/caixa.test.ts` | 1 failed / 28 |
-| 8 | R32: replay de uma embalagem só | `S/simular.ts` | `s/const qtde = doSku.reduce((s, x) => s + x.c.qtde, 0);/const qtde = doSku[0].c.qtde;/` | `S/simular.test.ts` | 3 failed / 56 |
-| 9 | R35: título fora da base desconta | `S/simular.ts` | `s/^    return 0;$/    return valor;/` | `S/simular.test.ts` | 1 failed / 56 |
-| 10 | R36: indeterminado não fecha o portão | `S/pagina.ts` | `s/if (indeterminados > PORTAO.indeterminadosMax)/if (false)/` | `S/pagina.test.ts` | 2 failed / 13 |
-| 11 | R40: continuidade cumulativa | `M/corte.ts` | `s/lagDias, aceito)\]/lagDias, 0)]/` | `M/corte.test.ts` | 2 failed / 27 |
-| 12 | R47: `n` NaN passa no portão | `S/pagina.ts` | `s/if (!finito(pe?.n) \|\| pe.n < PORTAO.nMin)/if (pe.n < PORTAO.nMin)/` | `S/pagina.test.ts` | 1 failed / 13 |
-
-(Na tabela, `\|` é o `|` escapado do Markdown: no shell o `sed` usa `|` literal.)
-
-## Perguntas abertas (spec §10)
-
-1. **Mínimo da Sayerlack**: por pedido no portal ou por NF? Qual valor? (a v1 simula com mínimo = 0, i.e. não modelado).
-2. Tabela Sayerlack 28/42/56d (encargo, parcela única/parcelado, desconto de 2%) — não usada na v1; registrada para a v2.
-3. O CP Sayerlack liquidado fica ~33% acima da compra disparada pelo motor (por mês): compras fora do motor? O backtest só mede o que passa pelo motor; o caixa usa o CP real.
+**Decidido (2026-10-21):** encurtar o horizonte para 60 dias (rodada acima). Ficaram de fora o cenário de entrada de vendas (não implementado) e baixar a reserva (que aumenta os indeterminados).
 
 ## Portão da v2 (re-executável — não é recado)
 
