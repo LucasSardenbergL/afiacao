@@ -65,6 +65,15 @@ em `text-status-warning` com o aviso "confira no Omie". Oferta pós-sinal: `toas
 - **Lição de shell:** `T="a.test.ts b.test.ts"; vitest run $T` no zsh é UM argumento → "no test files", exit 1 — o
   controle vermelho na mesma invocação pegou antes de qualquer sabotagem ser lida como "vermelha".
 
+## Revisão do código (Codex `-r max`, `82156f4fd..828cec686`) — AJUSTA, os 3 corrigidos
+
+- **ALTA** — integração com a irmã: a RPC devolve `RADAR_SEM_CONFIRMACAO_OMIE` ANTES de checar divergência; o front
+  descartava o código K que a edge devolveu e a retomada aceitava o vínculo V≠K como "recuperado" (reproduzido pelo
+  Codex executando a função real). Correção: `FalhaCadastro.codigoVisto` guarda K como EVIDÊNCIA (não habilita o atalho
+  do `codigo`) e a retomada compara V com ele → `DivergenciaCadastro`. Teste + sabotagem vermelha.
+- **MÉDIA** — build do índice sem limite de bloqueio → `SET LOCAL lock_timeout/statement_timeout` + janela medida (Deploy).
+- **MÉDIA** — `SC2034` no harness (`for i` sem uso) quebraria o `lint:shell` do CI → `for _`.
+
 ## Coordenação multi-sessão
 
 O hook `migration-collision-guard` barrou a escrita (🔴: a `20261021120000` em voo noutra worktree recria a mesma
@@ -76,10 +85,20 @@ não tem override; a ordem está garantida pela PRE, não pela disciplina).
 
 | Camada | Estado | Quem |
 |---|---|---|
-| Migration `20261021120000` (irmã) | pré-requisito — aplicar ANTES | sessão irmã |
-| Migration `20261021120500` | ⏳ envelope MCP após a irmã | esta sessão |
+| Migration `20261021120000` (irmã) | ✅ aplicada (md5 vivo `b537f95a…` lido por psql-ro antes desta) | sessão irmã |
+| Migration `20261021120500` | ✅ aplicada 2026-10-21 ~13:27 UTC pelo envelope MCP | esta sessão |
 | Publish do Lovable (front) | ⏳ após o merge | **founder** (Publish) |
 | Edge | nenhuma | — |
+
+**Pré-voo PROD (psql-ro, 13:07 UTC):** md5 vivo = o da irmã, `SECURITY DEFINER` + `search_path=public` + VOLATILE,
+EXECUTE só `authenticated`/`service_role`, ledger presente, índice ausente, **0** vínculos / **0** duplicatas em
+553.642 linhas, 0 escritores ativos e 0 locks em `radar_empresas`, fora da janela 06:15–06:45 UTC. Codex MÉDIA (build
+do índice sob `SHARE`) medido: `EXPLAIN ANALYZE` do seq scan completo (heap 583 MB) = **2,5 s** — o build cabe folgado
+nos limites locais (`lock_timeout 5s`, `statement_timeout 120s`), e passar deles aborta tudo sem efeito.
+
+**Validação por fora** (psql-ro, outra conexão, depois do COMMIT — 2026-10-21 13:27:52 UTC):
+`funcao_ok=t` (md5 `2b3dbe0d…` + atributos) · `indice_ok=t` (único, válido, pronto, definição exata) · `acl_ok=t` ·
+1 sobrecarga.
 
 Bundle antigo + banco novo (Codex achado 6): o banco fica protegido (não sobrescreve), mas o front velho mostra
 RD001 como "Omie OK, falhou gravar no Radar" com "Gravar de novo", que relê o vínculo e diz "reconciliado". Só o
