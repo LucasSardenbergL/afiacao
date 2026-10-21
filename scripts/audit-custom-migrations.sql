@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 695
+-- Total de custom migrations: 696
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -759,7 +759,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120000', 'fin_consolidado_ic_sinal_cmv', '20261021120000_fin_consolidado_ic_sinal_cmv.sql'),
   ('20261021120000', 'radar_cadastro_omie_confirmacao_servidor', '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql'),
   ('20261021120000', 'radar_score_lead_v3_cnae_secundario', '20261021120000_radar_score_lead_v3_cnae_secundario.sql'),
-  ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql')
+  ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
+  ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2959,7 +2960,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
   ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
-  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas'),
+  ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5207,7 +5210,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
   ('radar_score_lead_v3_cnae_secundario', 'function', 'public', 'radar_score_recalcular', ''),
   ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
-  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas'),
+  ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
 )
 SELECT
   e.migration,

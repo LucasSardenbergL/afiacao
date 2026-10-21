@@ -112,6 +112,17 @@
       "desde": "2026-10-13"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261021203000_tint_purge_staging_fora_do_promote.sql",
+      "efeito": "ALTERA",
+      "motivo": "o bloco PURGE (9 DELETEs de staging superseded >30d + keys_snapshots) sai do fim do promote para tint_staging_purge() + cron diário — varria tint_staging_formulas inteira a cada promoção, 98% da leitura de disco do banco (medido 2026-10-21). md5 = recorte do corpo de prod 42d09d51…, calculado via psql-ro antes do apply.",
+      "md5": "0e2a4169469eacb43e60eea224baad22",
+      "md5Tokens": "e2e6508c5af54461892c17da46c12605",
+      "desde": "2026-10-21"
+    },
+    {
       "funcao": "has_role",
       "identidade": "uuid,app_role",
       "classe": "PATCH",

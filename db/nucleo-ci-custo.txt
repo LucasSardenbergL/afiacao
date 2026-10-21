@@ -145,3 +145,4 @@ db/test-venda-ondas23.sh                                   33
 db/test-fin-consolidado-ic.sh                              32
 db/test-venda-lista-lente.sh                               12
 db/test-radar-cadastro-omie-idempotente.sh                 148
+db/test-tint-purge-staging-diario.sh                       45
