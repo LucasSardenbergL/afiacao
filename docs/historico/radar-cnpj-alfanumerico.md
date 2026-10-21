@@ -181,6 +181,11 @@ fail-closed naquela conta, e `criar_cliente` conferindo de novo. Falsificação 
 guarda de vazio" ficam vermelhas, com controle verde. As duas guardas de vazio eram redundantes entre si: ficou
 uma, e o caso dos dois lados vazios ganhou teste. **Codex: barrado pelo guard local de cota (exit 79, 91%,
 janela reabre em 27/10) → Caminho B, REVISÃO INDEPENDENTE PENDENTE; Codex retroativo quando a cota voltar.**
+**Deploy — FEITO pela sessão (PR #3311 mergeado em `3e757a7`):** o ledger pediu só as 2 edges (P1). O
+`list_messages` não mostrou ninguém deployando-as. Colagem do `pendencias:prompt` via MCP: 34/34 hashes, 2×
+**Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope: relé para `omie-vendas-sync` (#683) e
+`--so-disparo` para `omie-sync` (#685, passo 2 no psql-ro: DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE**
+para `omie-sync` v1.8-busca-confere-documento e `omie-vendas-sync` v1.25-busca-confere-documento.
 
 ## Follow-up fechado — `radar_registrar_cadastro_omie` exige confirmação do SERVIDOR (2026-10-21)
 
