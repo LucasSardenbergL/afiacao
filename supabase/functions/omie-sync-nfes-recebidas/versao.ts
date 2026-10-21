@@ -61,7 +61,9 @@ export const EDGE = "omie-sync-nfes-recebidas";
 // ConsultarRecebimento; só preenche linha sem NF. `results` ganha `revisita`.
 // v1.8: a janela explícita (`revisita_de`/`revisita_ate`) chegava à listagem SEM datas — `{de, ate}` lido como
 // `{dataDe, dataAte}`. O caminho diário (`revisita_dias`) não era afetado.
-export const VERSAO = "v1.9-gate-auth-canonico";
+// v1.10: a revisita preenche o t4 da NF CONHECIDA e recebida (mesma chave, t4 nulo, ≠ CANCELADO) — o backfill
+// grava `nid_receb` antes do recebimento e nunca mais volta à linha. `results.revisita` ganha `t4_preenchidos`.
+export const VERSAO = "v1.10-revisita-preenche-t4";
 
 /**
  * O fingerprint da FONTE, para o ECO carregá-lo também — não só a sonda.

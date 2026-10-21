@@ -126,3 +126,60 @@ describe('useRadarLista — filtro "só sugeridos para cadastro" (bloco 5)', () 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
   });
 });
+
+/**
+ * Paginação presa ao lote (Codex, código 2026-10-20, achado 5): a fila lia o lote DENTRO de cada
+ * página e a chave não tinha o lote — se o vigente virava no meio da rolagem, a página 2 vinha do
+ * lote novo e se juntava às de agosto (as antigas perdiam o selo). A identidade do lote entra na
+ * chave (troca de lote = fila recomeça do topo) e uma página seguinte que leia OUTRO lote recusa.
+ */
+describe('useRadarLista — paginação presa ao lote vigente', () => {
+  const LOTE_NOVO = { mes_referencia: '2026-09', status: 'complete', total_recebido: 503000, novos: 1200, iniciado_em: '2026-10-21T03:00:00+00:00' };
+  const LOTE_KEY = ['radar', 'lote-vigente'];
+  function comCliente() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const w = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    return { qc, w };
+  }
+  /** Cada consulta à fila começa num `select`: fatia a gravação plana em uma cadeia por consulta. */
+  const consultas = () => {
+    const out: Chamada[][] = [];
+    for (const c of chamadas.radar_empresas ?? []) {
+      if (c[0] === 'select') out.push([]);
+      out[out.length - 1]?.push(c);
+    }
+    return out;
+  };
+  const loteDa = (cadeia: Chamada[]) => cadeia.find((c) => c[0] === 'eq' && c[1] === 'ultimo_lote')?.[2];
+  const inicioDa = (cadeia: Chamada[]) => cadeia.find((c) => c[0] === 'range')?.[1];
+
+  it('o lote vigente TROCA: a fila recomeça do topo com o lote novo', async () => {
+    const { qc, w } = comCliente();
+    const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-21'), { wrapper: w });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(consultas().map(loteDa)).toEqual(['2026-08']);
+
+    respostas.radar_ingest_state = { data: [LOTE_NOVO, ...LOTES], error: null };
+    await qc.invalidateQueries({ queryKey: LOTE_KEY });
+
+    await waitFor(() => expect(consultas().map(loteDa)).toEqual(['2026-08', '2026-09']), { timeout: 2000 });
+    expect(inicioDa(consultas()[1]), 'não recomeçou do topo').toBe(0);
+    await waitFor(() => expect(result.current.data?.pages).toHaveLength(1));
+  });
+
+  it('corrida: a página seguinte lê um lote NOVO antes da chave mudar — nunca é montada com ele', async () => {
+    const { qc, w } = comCliente();
+    respostas.radar_empresas = { data: Array.from({ length: 50 }, (_, i) => ({ cnpj: String(i).padStart(14, '0') })), error: null };
+    const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-21'), { wrapper: w });
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true));
+
+    // lote fica velho no cache SEM refetch (ninguém observou a troca ainda) e a carga de setembro fecha
+    respostas.radar_ingest_state = { data: [LOTE_NOVO, ...LOTES], error: null };
+    await qc.invalidateQueries({ queryKey: LOTE_KEY, refetchType: 'none' });
+    await result.current.fetchNextPage();
+
+    await waitFor(() => expect(consultas().some((c) => loteDa(c) === '2026-09')).toBe(true), { timeout: 2000 });
+    const misturadas = consultas().filter((c) => (inicioDa(c) as number) > 0 && loteDa(c) === '2026-09');
+    expect(misturadas, 'página 2 montada com o lote novo, colada nas páginas do lote velho').toEqual([]);
+  });
+});

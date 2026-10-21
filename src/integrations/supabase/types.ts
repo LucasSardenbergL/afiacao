@@ -22309,6 +22309,15 @@ export type Database = {
           nome: string
         }[]
       }
+      radar_irmaos_por_raiz: {
+        Args: { p_cnpjs: string[] }
+        Returns: {
+          cliente_nome: string
+          cnpj: string
+          irmaos_clientes: number
+          irmaos_na_fila: number
+        }[]
+      }
       radar_kpis: { Args: never; Returns: Json }
       radar_prospects_para_rota: {
         Args: { p_limit?: number; p_municipio_codigo: string }

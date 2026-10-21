@@ -2,7 +2,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-quer
 import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, versaoDaFila, type PresetRadar } from '@/lib/radar/ui-helpers';
-import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
+import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
 import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
 import type { Database } from '@/integrations/supabase/types';
@@ -46,15 +46,26 @@ function useRadarRodadaScore() {
   });
 }
 
+/** Identidade de um lote para a paginação: mês E início da carga (recarga do mesmo mês é outra foto). */
+const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
+  l ? `${l.mes_referencia}@${l.iniciado_em}` : 'sem-lote';
+
 export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
   const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
   const versao = versaoDaFila(filtros.preset, rodada.data);
+  // A paginação é presa ao LOTE (Codex, código 2026-10-20, achado 5): o lote entra na chave, então
+  // quando o vigente vira a fila recomeça do topo em vez de colar páginas de setembro nas de agosto.
+  // Mesma chave/cache do `lerLoteVigente` — observar aqui não custa leitura extra.
+  const qLote = useRadarLoteVigente();
+  const loteDaChave = qLote.data === undefined ? 'sem-leitura' : identidadeDoLote(qLote.data);
   return useInfiniteQuery({
-    queryKey: ['radar', 'lista', filtros, hojeISO, versao],
+    queryKey: ['radar', 'lista', filtros, hojeISO, versao, loteDaChave],
     // Fila por score espera a versão (sucesso OU erro) para não buscar duas vezes na abertura; leitura do
     // ledger que falha degrada para 'sem-rodada' — a lista continua, só sem o reinício automático.
-    enabled: filtros.preset !== 'score' || !rodada.isPending,
+    // Idem o lote: espera a 1ª leitura assentar (sucesso OU erro — no erro a própria lista falha ao
+    // reler, como antes), senão a abertura buscaria a página 0 duas vezes.
+    enabled: (filtros.preset !== 'score' || !rodada.isPending) && !qLote.isPending,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       // Lote vigente ANTES de montar a query: mesma chave/cache do `useRadarLoteVigente`
@@ -62,6 +73,12 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       // mostrar a fila sem saber o lote seria mostrar a foto velha de novo (52.011 leads com
       // ultimo_lote=2026-05 na fila de 2026-08, medido 2026-10-19).
       const lote = await lerLoteVigente(qc);
+      // Corrida: a página SEGUINTE releu o lote (cache vencido) e ele já é outro, mas a chave ainda
+      // não mudou. Montá-la colaria o lote novo nas páginas do velho — recusa; a troca de chave que
+      // vem logo atrás recomeça a fila do topo.
+      if ((pageParam as number) > 0 && identidadeDoLote(lote) !== loteDaChave) {
+        throw new Error('O lote vigente da RFB mudou durante a rolagem — a fila recomeça do topo.');
+      }
       // "Só sugeridos" sem lote completo: não há foto, logo não há sugestão (`ehSugerido(e, null)`
       // recusa todos). Ignorar o toggle mostraria a fila GERAL sob o rótulo (Codex, código
       // 2026-10-20) — a lista FALHA com o motivo antes de montar a consulta, inclusive via URL.
