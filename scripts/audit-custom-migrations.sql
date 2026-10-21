@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 687
+-- Total de custom migrations: 688
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -751,7 +751,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020200000', 'analytics_outbox_pedido_compra_canonica_insert_ja_aprovado', '20261020200000_analytics_outbox_pedido_compra_canonica_insert_ja_aprovado.sql'),
   ('20261020202720', 'analytics_ledger_venda_cliente', '20261020202720_analytics_ledger_venda_cliente.sql'),
   ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql'),
-  ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql')
+  ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql'),
+  ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2933,7 +2934,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
   ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
   ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado'),
-  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', ''),
+  ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_complemento', ''),
+  ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5163,7 +5169,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_repasse', 'function', 'public', 'venda_preco_alvo_comprador', ''),
   ('venda_cliente_repasse', 'table', 'public', 'venda_repasse_aprovado', ''),
   ('venda_cliente_repasse', 'index', 'public', 'venda_repasse_aprovado_vigente_uq', 'venda_repasse_aprovado'),
-  ('venda_cliente_painel', 'function', 'public', 'venda_painel', '')
+  ('venda_cliente_painel', 'function', 'public', 'venda_painel', ''),
+  ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_complemento', ''),
+  ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
 )
 SELECT
   e.migration,
@@ -5191,7 +5202,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 152.
+-- Funções redefinidas com corpo extraível: 154.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5768,7 +5779,12 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
-  ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85')
+  ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
+  ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', '8472bc5d9553f4623d06ea7146fa8e7a'),
+  ('public', 'venda_minhas_sugestoes', 1, '20261020174221_venda_cliente_espinha.sql', 'b98d2eecbb1b24088c6bacd5f4d5fe01'),
+  ('public', 'venda_minhas_sugestoes', 2, '20261021031000_venda_cliente_ondas23.sql', 'd09aac2957017213880f53e9253bd279'),
+  ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
+  ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

@@ -17816,6 +17816,7 @@ export type Database = {
           motivo_entrada: string
           omie_codigo_produto: number | null
           preco_alvo: number | null
+          preco_anterior: number | null
           qtd_ref: number | null
           sales_order_id: string | null
           tipo: string
@@ -17838,6 +17839,7 @@ export type Database = {
           motivo_entrada: string
           omie_codigo_produto?: number | null
           preco_alvo?: number | null
+          preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
           tipo: string
@@ -17860,6 +17862,7 @@ export type Database = {
           motivo_entrada?: string
           omie_codigo_produto?: number | null
           preco_alvo?: number | null
+          preco_anterior?: number | null
           qtd_ref?: number | null
           sales_order_id?: string | null
           tipo?: string
@@ -23048,6 +23051,10 @@ export type Database = {
       }
       venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
       venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_preco_alvo_comprador: {
+        Args: { p_comprador: string }
+        Returns: Json
+      }
       venda_recompra_atualizar: { Args: never; Returns: number }
       venda_recompra_em: {
         Args: { p_data: string }

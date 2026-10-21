@@ -359,6 +359,9 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useContatosDoDia.ts",
       "src/hooks/useMunicaoLigacao.ts",
       "src/hooks/useHistoricoCompras.ts",
+      // Ondas 2–3 da ficha (Task 9): SKUs de referência do complemento e preço alvo de repasse aprovado.
+      "src/hooks/useComplementoComprador.ts",
+      "src/hooks/usePrecoAlvoComprador.ts",
       "src/hooks/useDashboardCompany.ts",
       "src/hooks/useDashboardLayout.ts",
     ],

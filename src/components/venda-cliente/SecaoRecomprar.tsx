@@ -51,6 +51,9 @@ export function SecaoRecomprar({ itens, produtos, historicoErro, agora = new Dat
                     {EMPRESA[s.empresa] ?? s.empresa}
                     {s.omieCodigoProduto != null && <span className="tabular-nums"> · cód. {s.omieCodigoProduto}</span>}
                     {dias != null && <span className="tabular-nums"> · última compra há {dias} {dias === 1 ? 'dia' : 'dias'}</span>}
+                    {s.cadenciaDias != null && s.cadenciaDias > 0 && (
+                      <span className="tabular-nums"> · compra a cada ~{s.cadenciaDias} {s.cadenciaDias === 1 ? 'dia' : 'dias'}</span>
+                    )}
                   </p>
                 </div>
                 <dl className="shrink-0 text-right">

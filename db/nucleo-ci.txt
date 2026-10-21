@@ -699,3 +699,10 @@ db/test-venda-gerador.sh                   66  falsificar=19
 # taxa, ausente ≠ zero, base da mesma semana do ano anterior, base_confiavel só pelo log da Onda 1,
 # sem chave de custo.
 db/test-venda-painel.sh                    19  falsificar=8
+
+# Venda por cliente, Task 9 — Ondas 2 e 3 (20261021031000): o gerador põe `complemento` (top-3 por família,
+# feedback da própria farmer, só na lista ativa de hoje) e `preco` (só repasse vigente, SKU Oben não-tinta,
+# último ao vivo abaixo do alvo, dono único) sem tocar a recompra da Onda 1; 2× não duplica; janela de 30 dias;
+# desfecho de preço exige alta sobre o preço anterior (alvo a < 1%: o preço velho é nao_virou); a lista da
+# farmer expõe as ondas, total/motivo só da recompra e nunca custo. 15 sabotagens (md5 reassinado).
+db/test-venda-ondas23.sh                   39  falsificar=15
