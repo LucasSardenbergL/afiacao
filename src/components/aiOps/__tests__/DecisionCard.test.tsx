@@ -19,6 +19,7 @@ function makeDecision(o: Partial<AIDecision> = {}): AIDecision {
       { label: "Queda", value: "30%", type: "warning" },
     ],
     explanation: "x",
+    executed_at: null,
     customer_metrics: { pedidos_90d: 5, faturamento_90d: 12000, ticket_medio_90d: 2400, intervalo_medio_dias: 22 },
     status: "pending",
     created_at: "2026-03-01T00:00:00Z",

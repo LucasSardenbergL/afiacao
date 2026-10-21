@@ -10,11 +10,10 @@ export function useImpersonationTargets() {
     enabled: isMaster,
     staleTime: 300_000,
     queryFn: async (): Promise<ImpersonationTarget[]> => {
-      const { data, error } = await (supabase as unknown as {
-        rpc(fn: string): Promise<{ data: unknown; error: { message: string } | null }>;
-      }).rpc('list_impersonation_targets');
+      const { data, error } = await supabase.rpc('list_impersonation_targets');
       if (error) throw new Error(error.message);
-      const rows = (data ?? []) as Array<{ user_id: string; nome: string; commercial_role: string | null }>;
+      const rows = data ?? [];
+      // `commercial_role` vem de LEFT JOIN na prod: o gerador diz `string`, mas chega NULL.
       const grupo = (cr: string | null): ImpersonationTarget['grupo'] =>
         cr === 'hunter' ? 'hunter' : cr === 'closer' ? 'closer' : cr ? 'farmer' : null;
       // Exclui o PRÓPRIO master da lista — a RPC `list_impersonation_targets` devolve todos

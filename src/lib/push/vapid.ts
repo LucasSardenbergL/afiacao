@@ -9,7 +9,9 @@ export const VAPID_PUBLIC_KEY =
   'BKN3yET55ssQxXVjmc_5D3ud1znzAIsOJOoYdUsElsFARyhyzQzA9WgVFtvZytJnKpigTvlqZKvoyDdwIdHGQn0';
 
 /** Converte a chave base64url pro Uint8Array que o pushManager.subscribe exige. */
-export function vapidKeyToUint8Array(base64url: string): Uint8Array {
+// `Uint8Array<ArrayBuffer>` (não o `ArrayBufferLike` padrão): é o que o `BufferSource` do lib.dom
+// aceita em `applicationServerKey` sem cast.
+export function vapidKeyToUint8Array(base64url: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
   const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
   const raw = atob(base64);

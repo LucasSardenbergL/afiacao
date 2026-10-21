@@ -19,7 +19,8 @@
 // `setItem`/`removeItem` (em vez de `typeof`) é deliberada e continua intacta.
 export function installStorageShim(name: "localStorage" | "sessionStorage") {
   try {
-    const existing = (globalThis as unknown as Record<string, Storage | undefined>)[name];
+    // O lib.dom diz `Storage` sempre; no ambiente node do vitest ele pode faltar — daí o `| undefined`.
+    const existing: Storage | undefined = globalThis[name];
     if (existing) {
       existing.setItem("__probe__", "1");
       existing.removeItem("__probe__");

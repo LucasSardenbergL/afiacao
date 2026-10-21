@@ -122,7 +122,9 @@ export function createLensGuardedClient<
           guardMethods((targetObj.from as (...a: unknown[]) => QB)(...args), BLOCKED_QUERY);
       }
       if (prop === 'storage') {
-        const storage = Reflect.get(targetObj, prop, receiver) as unknown as { from: (...a: unknown[]) => BK };
+        // `Reflect.get` (com o receiver) preserva o getter do supabase-js; o retorno é `any`, e a
+        // anotação o amarra ao tipo declarado em `T` em vez de a um formato inventado.
+        const storage: T['storage'] = Reflect.get(targetObj, prop, receiver);
         return new Proxy(storage, {
           get(sObj, sProp, sRecv) {
             if (sProp === 'from') {
