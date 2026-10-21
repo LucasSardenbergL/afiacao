@@ -177,10 +177,19 @@ Deno.test("número de NF repetido na listagem (outro fornecedor) → RECUSA sem 
 });
 
 Deno.test("listagem que não chega ao fim em 30 páginas → RECUSA (unicidade não provada)", async () => {
-  const cheia = () => resp({ recebimentos: Array.from({ length: 50 }, (_, i) => ({ cabec: { nIdReceb: i, cNumeroNFe: String(i === 0 ? 955811 : 1000 + i) }, infoCadastro: { cRecebido: "N", cCancelada: "N" } })) });
+  // A NF aparece UMA vez (1ª página): o que recusa tem de ser o teto, não a guarda de número repetido.
+  let pagina = 0;
+  const cheia = () => {
+    pagina++;
+    return resp({ recebimentos: Array.from({ length: 50 }, (_, i) => ({
+      cabec: { nIdReceb: pagina * 100 + i, cNumeroNFe: pagina === 1 && i === 0 ? "955811" : String(pagina * 1000 + i), cChaveNfe: "4226" },
+      infoCadastro: { cRecebido: "N", cCancelada: "N" },
+    })) });
+  };
   const c = cenario({ roteiro: { ListarRecebimentos: cheia } });
   const r = await c.rodar();
   igual([c.escritas(), c.omieChamados().length, r.corpo.desfecho], [[], 30, "recusado"], "teto");
+  igual(String(r.corpo.error).includes("sem chegar ao fim"), true, "recusa pelo teto");
 });
 
 Deno.test("trilha fora do ar no INÍCIO: nenhuma chamada ao Omie", async () => {
