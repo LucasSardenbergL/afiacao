@@ -171,9 +171,16 @@ fonte). O pacote trouxe também `omie-sync-nfes-recebidas` (P1, de outra entrega
 **Colisão:** o #3291 (confirmação server-side do cadastro) também subia `omie-vendas-sync` para v1.23 e ficou
 `DIRTY` depois deste merge. Ele precisa ir a v1.24 sobre a v1.23 daqui, com redeploy próprio.
 
-**Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
-buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
-entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
+**Residual — ✅ fechado em 2026-10-21 (`omie-sync` v1.8, `omie-vendas-sync` v1.25):** `buscar_cliente_por_documento`
+e `buscar_cliente` aceitavam o 1º registro do `ListarClientes` sem conferir o documento devolvido. Agora os dois
+conferem com `lookupDevolveuOMesmoDocumento`, movido de `omie-vendas-sync/` para `_shared/lookup-documento.ts`
+e usado pelas duas edges, a afiação inclusive (o inline saiu). Divergência → `OMIE_LOOKUP_DIVERGENTE`:
+em vendas, a action falha; em `omie-sync`, o erro é lançado FORA do `try` que lia falha como "não existe" e
+vira 500. No front, falha de lookup de código cai no caminho que já existia: código vazio, submit do pedido
+fail-closed naquela conta, e `criar_cliente` conferindo de novo. Falsificação do helper: "sempre true" e "sem
+guarda de vazio" ficam vermelhas, com controle verde. As duas guardas de vazio eram redundantes entre si: ficou
+uma, e o caso dos dois lados vazios ganhou teste. **Codex: barrado pelo guard local de cota (exit 79, 91%,
+janela reabre em 27/10) → Caminho B, REVISÃO INDEPENDENTE PENDENTE; Codex retroativo quando a cota voltar.**
 
 ## Follow-up fechado — `radar_registrar_cadastro_omie` exige confirmação do SERVIDOR (2026-10-21)
 

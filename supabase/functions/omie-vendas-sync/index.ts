@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
-import { lookupDevolveuOMesmoDocumento } from "./lookup-documento.ts";
+import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
@@ -2909,7 +2909,13 @@ Deno.serve(async (req) => {
         // de 200 com null, que o client lia como "não existe".
         // Documento pela gramática estrita do cadastro: o código devolvido vira o cliente do pedido, e o
         // só-dígitos reduzia "ABC12345678909" ao CPF 12345678909 de OUTRA pessoa (Codex ALTO, #3180).
-        const cliente = await buscarClienteVendas(documentoParaCadastro(document), account, { throwOnTransient: true });
+        const docBusca = documentoParaCadastro(document);
+        const cliente = await buscarClienteVendas(docBusca, account, { throwOnTransient: true });
+        // O código vira o cliente do pedido: registro com OUTRO documento é INDETERMINADO, não "achei" —
+        // falha alta (o client marca lookupFalhou e não segue com código alheio).
+        if (cliente && !lookupDevolveuOMesmoDocumento(docBusca, cliente.cnpj_cpf)) {
+          throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
+        }
         result = { success: true, cliente };
         break;
       }
