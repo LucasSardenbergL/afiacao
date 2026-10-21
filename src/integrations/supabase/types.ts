@@ -21881,6 +21881,10 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
       }
+      get_venda_sugestoes_for: {
+        Args: { p_dia?: string; p_farmer: string }
+        Returns: Json
+      }
       get_whatsapp_funil: {
         Args: { p_dias?: number }
         Returns: {

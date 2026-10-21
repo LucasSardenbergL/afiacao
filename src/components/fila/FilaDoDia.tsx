@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarClock, Eye } from 'lucide-react';
+import { CalendarClock } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -58,7 +58,7 @@ function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
   return null;
 }
 
-/** Aviso fixo acima da lista quando a recompra não está servindo (onda desligada / lente). */
+/** Aviso fixo acima da lista quando a recompra ainda não está servindo (onda desligada). */
 function AvisoRecompra({ estado }: { estado: EstadoRecompra }) {
   if (estado.tipo === 'onda_desligada') {
     return (
@@ -71,17 +71,6 @@ function AvisoRecompra({ estado }: { estado: EstadoRecompra }) {
             Ela liga sozinha quando estiver conferida; você não precisa fazer nada.
           </p>
         </div>
-      </Card>
-    );
-  }
-  if (estado.tipo === 'lente') {
-    return (
-      <Card className="p-4 flex gap-3 items-start">
-        <Eye className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-        <p className="text-2xs text-muted-foreground">
-          Na lente "Ver como", a lista de recompra da vendedora não é exibida — ela é lida pelo login de quem
-          usa. O que aparece abaixo são só as oportunidades.
-        </p>
       </Card>
     );
   }
@@ -159,8 +148,8 @@ export function FilaDoDia() {
         </Card>
       );
     }
-    // Onda desligada / lente: a mensagem própria, nunca "nada a fazer".
-    if (recompra.tipo === 'onda_desligada' || recompra.tipo === 'lente') {
+    // Onda desligada: a mensagem própria, nunca "nada a fazer".
+    if (recompra.tipo === 'onda_desligada') {
       return <AvisoRecompra estado={recompra} />;
     }
     return (
