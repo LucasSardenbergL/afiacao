@@ -508,6 +508,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/TintDashboard.leitura-falhou.test.tsx",
       "src/hooks/__tests__/useTintCoresDoClienteUmToque.test.tsx",
       "src/lib/tint/__tests__/preco-rpc.test.ts",
+      "src/lib/tint/__tests__/rejeicoes.test.ts",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },

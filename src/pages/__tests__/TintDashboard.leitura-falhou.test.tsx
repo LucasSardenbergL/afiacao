@@ -46,18 +46,36 @@ const CONTAGENS = {
 };
 
 /**
- * Linhas de `tint_sync_errors` do ÚLTIMO run de fórmulas — a cor `303U - BS` aparece 3 vezes
- * (uma por produto/embalagem) de propósito: o card tem que DEDUPLICAR por cor e contar.
+ * Linhas de `tint_sync_errors` da janela — a cor `303U - BS` aparece 3 vezes no MESMO run (uma por
+ * produto/embalagem) de propósito: o card tem que DEDUPLICAR por cor e contar. O `error_details`
+ * tem a forma real de prod (psql-ro 21/10/2026): é dele que sai o QUE está errado na receita.
  */
 const MSG_SEM_DOSE =
   'receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula/não-finita) + linha inválida sob protocolo declarado (1d-E) — fórmula PRETO/0,9L';
 const MSG_ORFAO =
   'receita corrompida: dose sem corante identificado (item órfão) + linha inválida sob protocolo declarado (1d-E) — fórmula 303U - BS/3,6L';
+const DET_ORFAO = {
+  cod_produto: 'FO10.6554', id_base: '15',
+  itens: [
+    { ordem: 1, id_corante: '2', qtd_ml: 12.7, viola: false },
+    { ordem: 4, id_corante: '', qtd_ml: 2.4645, viola: true },
+  ],
+};
+const DET_SLOT_LIVRE = {
+  cod_produto: 'FO10.6554', id_base: '15',
+  itens: [
+    { ordem: 1, id_corante: '3', qtd_ml: 25.1, viola: false },
+    ...[2, 3, 4, 5, 6].map((ordem) => ({ ordem, id_corante: '0', qtd_ml: 0, viola: true })),
+  ],
+};
+const erro = (entity_id: string, error_message: string, error_details: unknown) => ({
+  sync_run_id: 'run-1', entity_type: 'formula_promote', entity_id, error_message, error_details,
+});
 const errosDoRun = () => [
-  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
-  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
-  { entity_type: 'formula_promote', entity_id: '303U - BS', error_message: MSG_ORFAO },
-  { entity_type: 'formula_promote', entity_id: 'PRETO', error_message: MSG_SEM_DOSE },
+  erro('303U - BS', MSG_ORFAO, DET_ORFAO),
+  erro('303U - BS', MSG_ORFAO, DET_ORFAO),
+  erro('303U - BS', MSG_ORFAO, DET_ORFAO),
+  erro('PRETO', MSG_SEM_DOSE, DET_SLOT_LIVRE),
 ];
 const runComErro = (over: Record<string, unknown> = {}) => ({
   id: 'run-1', started_at: '2026-10-16T22:45:14Z', errors: 4, ...over,
@@ -77,9 +95,13 @@ const importacaoOk = () => ({
  */
 function resposta(tabela: string, chamados: Set<string>): Resposta {
   const vazio = { data: null, error: null, count: null };
-  // O card de rejeições lê DUAS tabelas: o último run de fórmulas e as linhas de erro dele.
+  // O card de rejeições lê DUAS tabelas: os runs de fórmulas da janela e as linhas de erro deles.
   // `falha === 'erros'` derruba a segunda — é a leitura que alimenta a lista.
-  if (tabela === 'tint_sync_runs') return { ...vazio, data: ultimoRun };
+  // `.maybeSingle()` é o último run (âncora da janela); sem ele é a lista de runs da janela.
+  if (tabela === 'tint_sync_runs') {
+    if (chamados.has('maybeSingle')) return { ...vazio, data: ultimoRun };
+    return { ...vazio, data: ultimoRun ? [ultimoRun] : [] };
+  }
   if (tabela === 'tint_sync_errors') {
     return falha === 'erros'
       ? { ...vazio, error: ERRO }
@@ -276,7 +298,7 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     expect(screen.queryByText(AVISO)).toBeNull();
   });
 
-  it('CONTROLE do vazio REAL: leu e o último run não rejeitou nada → o card some, e isso é HONESTO', async () => {
+  it('CONTROLE do vazio REAL: leu e a janela não rejeitou nada → o card some, e isso é HONESTO', async () => {
     listaErros = [];
     ultimoRun = runComErro({ errors: 0 });
     renderPagina();
@@ -331,16 +353,29 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     expect(screen.getAllByText('303U - BS')).toHaveLength(1);
     expect(screen.getByText('3 fórmulas')).toBeTruthy();
     expect(screen.getByText('1 fórmula')).toBeTruthy();
-    // 2 cores no último run — a contagem do cabeçalho é de CORES, não de linhas
+    // 2 cores na janela — a contagem do cabeçalho é de CORES, não de linhas
     expect(screen.getByText(/2 cores/)).toBeTruthy();
   });
 
-  it('o MOTIVO aparece curto — sem o sufixo técnico "(qtd_ml <= 0/...)" nem a fórmula no fim', async () => {
+  it('diz O QUE está errado: agrupa por tipo e mostra slot e dose — não só a classe do guard', async () => {
     renderPagina();
-    expect(await screen.findByText('receita corrompida: dose sem corante identificado')).toBeTruthy();
-    expect(screen.getByText('receita corrompida: corante presente sem dose válida')).toBeTruthy();
+    expect(await screen.findByText(TITULO_ERROS)).toBeTruthy();
+    const orfao = screen.getByTestId('rejeicao-grupo-dose_sem_corante');
+    expect(orfao.textContent).toContain('303U - BS');
+    expect(orfao.textContent).toContain('slot 4: 2,46 ml sem corante');
+    const livre = screen.getByTestId('rejeicao-grupo-slot_livre');
+    expect(livre.textContent).toContain('PRETO');
+    expect(livre.textContent).toContain('slots 2, 3, 4, 5 e 6 vazios');
+    expect(screen.queryByTestId('rejeicao-grupo-outro')).toBeNull();
     expect(screen.queryByText(/qtd_ml/)).toBeNull();
-    expect(screen.queryByText(/1d-E/)).toBeNull();
+  });
+
+  it('detalhe ilegível: cai em "outros" com o motivo CURTO do guard — nunca inventa o tipo', async () => {
+    listaErros = [erro('PRETO', MSG_SEM_DOSE, null)];
+    renderPagina();
+    const outro = await screen.findByTestId('rejeicao-grupo-outro');
+    expect(outro.textContent).toContain('receita corrompida: corante presente sem dose válida');
+    expect(outro.textContent).not.toContain('1d-E');
   });
 
   it('o card diz DE QUANDO é o run — a lista é um retrato do último sync, não um histórico', async () => {
@@ -348,7 +383,7 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     expect(await screen.findByText(/16\/10\/2026/)).toBeTruthy();
   });
 
-  it('run com errors>0 mas SEM linhas de detalhe: mostra a contagem do run e diz que o detalhe faltou — nunca "tudo certo"', async () => {
+  it('runs com errors>0 mas SEM linhas de detalhe: mostra a contagem dos runs e diz que o detalhe faltou — nunca "tudo certo"', async () => {
     listaErros = [];
     ultimoRun = runComErro({ errors: 4 });
     renderPagina();
