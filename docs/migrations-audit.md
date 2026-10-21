@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **695** custom migrations totais
-- **2234** objetos esperados (criados por estas migrations)
+- **696** custom migrations totais
+- **2236** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 837
+  - `function`: 838
   - `rls_policy`: 482
   - `index`: 290
-  - `cron_job`: 196
+  - `cron_job`: 197
   - `table`: 195
   - `view`: 125
   - `trigger`: 105
@@ -5647,6 +5647,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_registrar_cadastro_omie` | — |
 | `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
+
+### `20261021203000_tint_purge_staging_fora_do_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_staging_purge` | — |
+| `cron_job` | `cron.tint-staging-purge-diario` | — |
 
 ## Próximos passos por status
 

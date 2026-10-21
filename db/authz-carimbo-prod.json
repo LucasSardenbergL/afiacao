@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-21T00:04:15.050Z",
-  "sourceHead": "19247ebf52163e6ede022caf7d954991a6c20806",
+  "medidoEm": "2026-10-21T21:41:37.901Z",
+  "sourceHead": "f54e8736db3932f85f256264e47cbec5bf082037",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 370 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 371 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -56,25 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 403 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@6a8b0eb51 (fetch ok) · prod 2026-10-21 00:04:39.463839Z",
-      "contratoFingerprint": "9e1dd4c0c56101e611224a87d6474d8a873c9551c75b4adafdca99c8310b0339",
-      "auditorFingerprint": "eddcb5363b26d40817a68c299a04e009adb1c80bd8e40c8b927ca1ab1561c080",
-      "achados": [
-        {
-          "id": "3490980a27605518",
-          "linha": "❌ [SEM_PAR] analytics_ledger_registrar(text,text,jsonb): corpo que nenhuma das 4 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261012233500_analytics_ledger_crescimento_comparavel.sql (xmin 12437609)",
-          "primeiraVez": "2026-10-21",
-          "ultimaVez": "2026-10-21"
-        },
-        {
-          "id": "208aa302e4cfe0e1",
-          "linha": "❌ [SEM_PAR] venda_fechar_desfechos(date): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020174221_venda_cliente_espinha.sql (xmin 12436943)",
-          "primeiraVez": "2026-10-21",
-          "ultimaVez": "2026-10-21"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 410 identidade(s) batem com o repo (337 em dia, 66 só cosméticas, 6 aceitas na baseline) e 20 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 410 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@d51e25842 (fetch ok) · prod 2026-10-21 21:41:57.580884Z",
+      "contratoFingerprint": "e0bb69b12a5f4dc928de64a9d6928b1e8e9f18b741db9579f7dd65c6644bce22",
+      "auditorFingerprint": "cabde0a044caf687fc90485f8b569e8fdbcec22e6e12d9a3e840ce742bad9521",
+      "achados": []
     }
   }
 }
