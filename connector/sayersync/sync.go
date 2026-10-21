@@ -5,7 +5,7 @@
 //  2. Valida o schema (fail-closed se divergir)
 //  3. Para cada entidade, extrai o delta desde o HWM - 5min e envia em lotes ≤1000
 //  4. Diariamente: envia um keys-snapshot de todas as fórmulas
-//  5. Todo domingo de madrugada: full re-scan (ignora HWM)
+//  5. 1×/semana: full re-scan (ignora HWM) — domingo, ou o 1º ciclo depois dele
 //  6. Envia heartbeat ao final
 //
 // RunLoop chama RunCycle em loop com intervalo configurável (para o serviço).
@@ -636,7 +636,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		originNow = time.Now()
 	}
 
-	// Determina se é necessário full re-scan (1×/semana: domingo, ou a madrugada seguinte se o domingo foi perdido).
+	// Determina se é necessário full re-scan (1×/semana: domingo, ou o 1º ciclo depois se o domingo foi perdido).
 	needFullRescan := shouldFullRescan(st, originNow)
 	if needFullRescan {
 		if iniciarFullRescan(st, originNow) {
@@ -1410,31 +1410,23 @@ func shouldKeysSnapshot(st *State, originNow time.Time) bool {
 	return lastDate != nowDate
 }
 
-// janelaRecuperacaoRescan: horas (relógio da ORIGEM, [0, h)) em que um re-scan
-// semanal PERDIDO é recuperado fora do domingo.
-const janelaRecuperacaoRescan = 6
-
-// shouldFullRescan retorna true se o full re-scan semanal deve ocorrer.
+// shouldFullRescan retorna true se o full re-scan semanal deve ocorrer: quando o
+// último re-scan é anterior ao domingo mais recente (ou nunca houve). No domingo com
+// o servidor ligado, roda no domingo; senão, no 1º ciclo depois dele.
 //
-// DEVIDO: o último re-scan é anterior ao domingo mais recente (ou nunca houve).
-// DISPARA: no domingo (o dia preferido) OU na madrugada [00h, 06h) de qualquer dia
-// seguinte — recuperação do domingo perdido.
+// Por que não "só domingo" (medido em prod via psql-ro, 2026-10-21, histórico desde
+// março): o servidor da loja liga ~07h e desliga ~17h15 nos dias úteis e fica
+// DESLIGADO no fim de semana. Com o gatilho "só domingo" a rede de segurança semanal
+// praticamente nunca rodava, e o que só ela re-extrai (ex.: formulaperson enviada
+// com a sentinela '0'/0 pelo 0.2.0, que o delta por HWM nunca re-lê porque a fonte
+// não mudou) ficava parado no staging, barrado pelo Guard 4 a cada promote do par.
+// A 1ª correção (0.2.4) recuperava só na madrugada [00h, 06h) — com o servidor
+// desligado à noite, quase nunca abria. Sem janela: o re-scan não é visivelmente
+// mais pesado que um dia normal (domingo 11/10: mesmo ritmo de runs/hora).
 //
-// Por que a recuperação existe (medido em prod via psql-ro, 2026-10-21): o servidor
-// da loja fica DESLIGADO no fim de semana — 0 runs em 11 de 12 domingos desde agosto.
-// Com o gatilho "só domingo", a rede de segurança semanal praticamente nunca rodava,
-// e o que só ela re-extrai (ex.: formulaperson enviada com a sentinela '0'/0 pelo
-// 0.2.0, que o delta por HWM nunca re-lê porque a fonte não mudou) ficava parado no
-// staging para sempre, barrado pelo Guard 4 a cada promote do par. Madrugada e não
-// "primeiro ciclo de segunda": o re-scan é pesado (~2,5k runs no domingo 11/10) e o
-// servidor fica ligado à noite nos dias úteis — fora do horário da loja.
-//
-// Ancorar no DOMINGO (e não em "≥7 dias desde o último") mantém o re-scan no domingo
-// depois de uma recuperação: recuperado na terça, o domingo seguinte já é devido.
+// Ancorar no DOMINGO (e não em "≥7 dias desde o último") mantém o re-scan semanal
+// no início da semana: recuperado na segunda, o domingo seguinte já é devido.
 func shouldFullRescan(st *State, originNow time.Time) bool {
-	if originNow.Weekday() != time.Sunday && originNow.Hour() >= janelaRecuperacaoRescan {
-		return false
-	}
 	if st.LastFullRescan == "" {
 		return true
 	}
@@ -1454,10 +1446,9 @@ func domingoMaisRecente(originNow time.Time) string {
 // iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan da SEMANA (âncora: o
 // domingo mais recente); nos seguintes (o re-scan não marcou porque alguma entidade
 // falhou) não zera de novo — a entidade que falhou não avançou o HWM, então já
-// re-extrai tudo sozinha. Semana e não dia: o re-scan que começa no domingo à noite
-// (ou na recuperação da madrugada) atravessa a meia-noite, e comparar por DIA zeraria
-// tudo de novo à 00h, re-extraindo as entidades que já tinham passado. Devolve true
-// se zerou.
+// re-extrai tudo sozinha. Semana e não dia: o re-scan pode ser interrompido pelo
+// servidor desligando (~17h15) e retomar no dia seguinte, e comparar por DIA zeraria
+// tudo de novo, re-extraindo as entidades que já tinham passado. Devolve true se zerou.
 func iniciarFullRescan(st *State, originNow time.Time) bool {
 	if st.FullRescanIniciado != "" && st.FullRescanIniciado >= domingoMaisRecente(originNow) {
 		return false
