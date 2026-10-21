@@ -17,11 +17,16 @@ const lagObs = (fat: number, venc: number, cheg: number, n = 10, base: [number, 
 /** R50: disparado antigo (fora dos 180 dias dos compromissos e dos 90 da continuidade) = o motor já existia. */
 const HIST = { id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] as string[], encerrado_omie: false };
 
+const DEM200 = Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 }));
+/** R61: fixture em que a venda física do SKU é a própria demanda efetiva (sem substituição nem malha). */
+const fisicaIgual = (f: Fatos): Fatos => ({ ...f, demanda_fisica: f.demanda });
+
 const fatos: Fatos = {
   meta: { gerado_em: '2026-10-15T12:00:00Z', hoje: '2026-10-15', encerrados_publicacao: { status: 'publicado', publicado_em: '2026-10-15T04:20:00Z', habilitado: true } },
   ciclos: [{ id: 1, status: 'disparado', data_ciclo: '2026-10-01', horario_geracao: '2026-10-01T12:00:00Z', horario_disparo_real: null, valor_total: 40, omie_pedido_compra_id: null }],
   linhas: [{ raiz: 1, pedido_id: 1, sku_codigo_omie: '9', qtde: 4, fator_embalagem_portal: null, preco_unitario: 10, estoque_atual: 0, estoque_fisico: 0, ponto_pedido: 2, modo_promocao: null, preco_sem_desconto: null }],
-  demanda: Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
+  demanda: DEM200,
+  demanda_fisica: DEM200,
   recebimentos: [],
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
@@ -51,7 +56,7 @@ const cortavel = (estoqueFisicoDaLinha: number): Fatos => ({
 
 // Igual ao `cortavel`, mas HOJE = 15/11 (o ciclo tem 30 dias de horizonte para o ΔDIO). Estoque de hoje 19:
 // 19 + 46 (demanda de 01/10..15/11) = 65 no fim de 30/09 — fecha com a linha.
-const cortavelLongo = (): Fatos => ({
+const cortavelLongo = (): Fatos => fisicaIgual({
   ...cortavel(65),
   meta: { ...fatos.meta, hoje: '2026-11-15' },
   demanda: Array.from({ length: 250 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
@@ -169,12 +174,12 @@ describe('simularCiclo', () => {
     // 3 vendas de 1 un antes do ciclo; 5/dia DEPOIS (o params atual diria 5/dia → protegeria tudo)
     const antes = ['2026-06-01', '2026-07-01', '2026-08-01'].map((data) => ({ sku: '9', data, qtde: 1 }));
     const depois = Array.from({ length: 15 }, (_, i) => ({ sku: '9', data: dia([2026, 9, 1], i), qtde: 5 }));
-    const f: Fatos = {
+    const f: Fatos = fisicaIgual({
       ...fatos,
       demanda: [...antes, ...depois],
       linhas: [{ ...fatos.linhas[0], estoque_atual: 2 }],
       params: [{ ...fatos.params[0], demanda_media_diaria: 5, demanda_sigma_diario: 2 }],
-    };
+    });
     const r = simularCiclo(f, 1, cfg);
     expect(r.protegidas).toBe(0);
   });
@@ -201,7 +206,7 @@ describe('simularCiclo', () => {
   it('R60: ciclo gerado à tarde (SP) fecha contra o FIM do próprio dia; de manhã, contra o fim de d−1', () => {
     // 20 unidades a mais vendidas em 01/10: fim de 30/09 = 50 + 15 + 20 = 85; fim de 01/10 = 85 − 21 = 64
     const base = cortavel(64);
-    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    const f: Fatos = fisicaIgual({ ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] });
     const tarde = simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: '2026-10-01T20:15:00Z' }] }, 1, cfg);
     expect(tarde.fechamento).toEqual([{ sku: '9', erro: 0, ok: true }]);
     const manha = simularCiclo(f, 1, cfg); // 12:00Z = 09:00 SP
@@ -209,9 +214,22 @@ describe('simularCiclo', () => {
   });
   it('R60: a fronteira é meio-dia em SP (11:59 fecha em d−1; 12:00 fecha em d)', () => {
     const base = cortavel(64);
-    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    const f: Fatos = fisicaIgual({ ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] });
     const em = (h: string) => simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: h }] }, 1, cfg).fechamento[0].erro;
     expect([em('2026-10-01T14:59:00Z'), em('2026-10-01T15:00:00Z')]).toEqual([21, 0]);
+  });
+  it('R61: reconstrução e replay usam a venda FÍSICA do SKU; a decisão segue com a demanda efetiva', () => {
+    // 20 un "efetivas" em 01/10 que NÃO saíram do estoque deste SKU (venda do SKU antigo consolidada no novo):
+    // com a física igual à base, o fim de 30/09 continua 65 e a linha que grava 65 fecha.
+    const base = cortavel(65);
+    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    expect(simularCiclo(f, 1, cfg).fechamento).toEqual([{ sku: '9', erro: 0, ok: true }]);
+    // controle: se a física também tivesse as 20, o fim de 30/09 seria 85 e não fecharia com 65
+    expect(simularCiclo(fisicaIgual(f), 1, cfg).fechamento).toEqual([{ sku: '9', erro: 20, ok: false }]);
+  });
+  it('R61: demanda física com qtde nula reprova o pré-voo', () => {
+    expect(preVoo({ ...fatos, demanda_fisica: [{ sku: '9', data: '2026-10-01', qtde: null }] })).toContain('demanda_fisica com qtde nula — reconstrução de estoque inválida');
+    expect(preVoo({ ...fatos, demanda_fisica: undefined as unknown as Fatos['demanda_fisica'] })).toContain('demanda_fisica ausente — fatos.sql antigo (R61)');
   });
   it('R26: ciclo não disparado não roda replay (classe nula)', () => {
     const f = cortavel(65);
@@ -623,7 +641,7 @@ describe('onda final — base de caixa as-of (R34, R35, R38, R39, R41, R42, R45,
 describe('onda final — medição (R32, R33, R37, R46, R48, R51)', () => {
   // Codex P1-1: estoque 10 no fim de 30/09, recebimento de 3 em 03/10 (dia 2), demanda 2/dia de 01 a 06/10, PP 0, L 2.
   // Linha de 4 un: k=1 protegida, k=2..4 cortadas (caixa zerado). Tirar 1 un por vez → adiado; tirar as 3 juntas → 2 un perdidas.
-  const conjunto = (): Fatos => ({
+  const conjunto = (): Fatos => fisicaIgual({
     ...fatos,
     meta: { ...fatos.meta, hoje: '2026-10-08' },
     linhas: [{ ...fatos.linhas[0], estoque_fisico: 10, ponto_pedido: 0 }],
@@ -644,7 +662,7 @@ describe('onda final — medição (R32, R33, R37, R46, R48, R51)', () => {
   });
 
   // Codex P1-2: estoque 2 no fim de 30/09, compra de 5 recebida em 02/10 (dia 1), demanda 1/dia de 02 a 05/10, L = 5.
-  const chegadaReal = (t4: string | null): Fatos => ({
+  const chegadaReal = (t4: string | null): Fatos => fisicaIgual({
     ...fatos,
     meta: { ...fatos.meta, hoje: '2026-10-08' },
     linhas: [{ ...fatos.linhas[0], qtde: 5, estoque_atual: 100, estoque_fisico: 2, ponto_pedido: 0 }],
