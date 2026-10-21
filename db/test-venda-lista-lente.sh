@@ -108,7 +108,7 @@ case "${SABOTAGEM:-}" in
   acl_anon)          sabotar "REVOKE ALL ON FUNCTION public.get_venda_sugestoes_for(uuid, date) FROM PUBLIC, anon;" \
                              "REVOKE ALL ON FUNCTION public.get_venda_sugestoes_for(uuid, date) FROM PUBLIC;" ;;
   helper_aberto)     sabotar "REVOKE ALL ON FUNCTION private._venda_sugestoes_json(uuid, date) FROM PUBLIC, anon, authenticated;" \
-                             "REVOKE ALL ON FUNCTION private._venda_sugestoes_json(uuid, date) FROM PUBLIC, anon;" ;;
+                             "REVOKE ALL ON FUNCTION private._venda_sugestoes_json(uuid, date) FROM anon, authenticated;" ;;
   custo_no_json)     sabotar "'preco_alvo', s.preco_alvo, 'cadencia_dias'" "'preco_alvo', s.preco_alvo, 'custo_ref', s.qtd_ref, 'cadencia_dias'" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
@@ -218,10 +218,11 @@ INSERT INTO public.omie_products (omie_codigo_produto, account, descricao) VALUE
  (111,'oben','Seladora PU 3,6L'), (222,'colacor','Verniz Nitro 18L'), (333,'oben','Thinner 5L');
 INSERT INTO public.venda_recompra VALUES ('$C1','oben',111, 27.6), ('$C2','colacor',222, NULL);
 INSERT INTO public.venda_sugestao (tipo, fase, dia_referencia, farmer_user_id, comprador_id, empresa, omie_codigo_produto, familia, qtd_ref, valor_ref, preco_alvo, motivo_entrada) VALUES
- -- F1 hoje: C1 com 2 recompras + complemento; C2 com recompra SEM valor_ref (total ausente ≠ zero) + preço
+ -- F1 hoje: C1 com 2 recompras + complemento; C2 com uma recompra SEM valor_ref e outra com (total ausente ≠ zero) + preço
  ('recompra',   'ativa','$HOJE','$F1','$C1','oben',   333, NULL,        1,   80,   NULL, 'atraso'),
  ('complemento','ativa','$HOJE','$F1','$C1','oben',   NULL,'Seladora',  NULL,NULL, NULL, 'mixgap'),
  ('recompra',   'ativa','$HOJE','$F1','$C2','colacor',222, NULL,        3,   NULL, NULL, 'rota'),
+ ('recompra',   'ativa','$HOJE','$F1','$C2','oben',   111, NULL,        2,   70,   NULL, 'rota'),
  ('preco',      'ativa','$HOJE','$F1','$C2','oben',   333, NULL,        NULL,NULL, 42.5, 'repasse'),
  -- F1 hoje em sombra/histórico: NUNCA na lista
  ('recompra',   'sombra',   '$HOJE','$F1','$C3','oben',111, NULL,      1,   999,  NULL, 'atraso'),
@@ -239,8 +240,8 @@ for u in "$F1" "$F2" "$M" "$NINGUEM"; do
     eq "T1 venda_minhas_sugestoes = predecessor (uid ${u: -2}, dia $d)" "$novo" "$velho"
   done
 done
-eq "T1b o oráculo não é trivial: F1 hoje tem 2 compradores e 5 sugestões" \
-   "$(Pq -c "$(como "$F1" "SELECT jsonb_array_length(j->'compradores') || ' ' || (SELECT sum(jsonb_array_length(c->'sugestoes')) FROM jsonb_array_elements(j->'compradores') c) FROM (SELECT public.venda_minhas_sugestoes('$HOJE') j) x")")" "2 5"
+eq "T1b o oráculo não é trivial: F1 hoje tem 2 compradores e 6 sugestões" \
+   "$(Pq -c "$(como "$F1" "SELECT jsonb_array_length(j->'compradores') || ' ' || (SELECT sum(jsonb_array_length(c->'sugestoes')) FROM jsonb_array_elements(j->'compradores') c) FROM (SELECT public.venda_minhas_sugestoes('$HOJE') j) x")")" "2 6"
 eq "T1c sem sessão segue 42501 na lista da farmer" "$(estado "$(como "" "SELECT public.venda_minhas_sugestoes('$HOJE');")")" "42501"
 
 # T2 master lê a lista da farmer
@@ -252,7 +253,7 @@ eq "T2b master lê F2 = o que F2 lê (default p_dia = hoje SP)" \
    "$(Pq -c "$(como "$F2" "SELECT public.venda_minhas_sugestoes()::text")")"
 eq "T2c só fase ativa: o comprador da sombra/histórico (C3) não aparece em F1 hoje" \
    "$(Pq -c "$(como "$M" "SELECT count(*) FROM jsonb_array_elements(public.get_venda_sugestoes_for('$F1', '$HOJE')->'compradores') c WHERE c->>'comprador_id' = '$C3'")")" "0"
-eq "T2d ausente ≠ zero: total de C2 (recompra sem valor_ref) é null" \
+eq "T2d ausente ≠ zero: total de C2 (uma recompra sem valor_ref, outra com) é null" \
    "$(Pq -c "$(como "$M" "SELECT jsonb_typeof(c->'valor_ref_total') FROM jsonb_array_elements(public.get_venda_sugestoes_for('$F1', '$HOJE')->'compradores') c WHERE c->>'comprador_id' = '$C2'")")" "null"
 
 # T3 só master
@@ -276,7 +277,7 @@ T5_SQL="WITH RECURSIVE t(v) AS (
     SELECT value FROM jsonb_array_elements(CASE WHEN jsonb_typeof(t.v) = 'array' THEN t.v ELSE '[]' END)) e)
 SELECT count(*) FILTER (WHERE k ~ '(cmc|custo|markup|piso)') || ' de ' || count(*)
   FROM t, jsonb_object_keys(CASE WHEN jsonb_typeof(t.v) = 'object' THEN t.v ELSE '{}' END) k;"
-eq "T5 nenhuma chave de custo no JSON (recursivo, sobre 68 chaves)" "$(Pq -c "$(como "$M" "$T5_SQL")")" "0 de 68"
+eq "T5 nenhuma chave de custo no JSON (recursivo, sobre 78 chaves)" "$(Pq -c "$(como "$M" "$T5_SQL")")" "0 de 78"
 
 # T6 entrada inválida
 eq "T6 p_farmer NULL -> 22023" "$(estado "$(como "$M" "SELECT public.get_venda_sugestoes_for(NULL, '$HOJE');")")" "22023"
