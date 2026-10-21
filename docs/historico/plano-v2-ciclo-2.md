@@ -61,6 +61,12 @@ O trigger do pedido de compra roda desde 2026-10-18 o corpo do envelope `db/apli
   - Por fora (psql-ro): md5 `ae665653…`, `xmin` novo **12436730**, owner postgres, trigger com `tgfoid` certo e ACL idêntica à de antes.
 - **Follow-up (este PR):** a entrada saiu da baseline (**22**) e o carimbo foi regravado. Os 5 audits de authz deram exit 0. A deriva deu exit 1 só por 2 `SEM_PAR` de outras entregas em voo, aplicadas minutos antes: `get_defasagem_cliente` (#3259, migration já aplicada, resolve no merge) e `claim_nfe_efetivacao_lock` (envelope do #3258, sem baseline nem canônica; a sessão do NF-e foi avisada). Por isso a prova E (`db/test-deriva-baseline-prod.sh --repo-local`) abortou no controle, como deve. Ela roda de novo quando a prod voltar a bater.
 
+## Fecho medido (2026-10-21, main `578c79a3c`)
+
+- **Deriva:** `bun run deriva:corpo:prod` deu exit 0, com EM_DIA 335 · COSMETICO 66 · ACEITA 6 · NAO_MENSURAVEL 1 e **nenhum `SEM_PAR`**. Os dois alheios se resolveram: `get_defasagem_cliente` com o merge do #3259, e `claim_nfe_efetivacao_lock` virou entrada `EDICAO_MANUAL` no #3258. O #3258 e o #3261 conflitaram nos dois arquivos de contrato; quem mergeou por último manteve as duas mudanças e regravou o carimbo.
+- **Baseline: 23 entradas.** São as 22 justificadas acima mais a do #3258. A prova E (`db/test-deriva-baseline-prod.sh`), que tinha abortado no controle, deu **32 ok / 0 fail** contra a prod.
+- **Casts:** `casts:stale` = **20/21, piso 41** (plataforma #3257/#3262, vendas #3265). Faltam 15 em módulos ativos (farmer-inteligencia 9, financeiro 4, governanca 2), com a sessão irmã. Os 26 dos congelados ficam. A Frente A ainda **não** está pronta: o critério é 0 nos ativos.
+
 ## Lições
 
 - **Duas sessões no mesmo item: confira o artefato da irmã antes de cada PR, não só a lista de PRs.** O commit dela estava local, sem push nem PR. Só o `git log` do worktree dela mostrou a colisão.
