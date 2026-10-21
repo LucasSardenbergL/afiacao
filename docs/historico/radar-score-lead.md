@@ -67,6 +67,7 @@ Leitura: a distribuição é um sino centrado em 41 (94 % ME, 52 % com capital <
 
 - **Aplicação da v2 em prod:** pré-voo (vivo = md5 da v1, volátil, cron ativo) → ensaio com `RAISE 'ENSAIO_OK'` e rollback → apply como `postgres` → psql-ro `✅` (md5 `5413669a…`, ACL fechada, cron 225 intacto).
 - **A rodada manual da v2 NÃO persistiu:** desta vez o timeout do cliente MCP (~60 s) derrubou a transação de ~96 s (nenhuma linha nova no ledger). **Nada fica errado na fila:** sem lote em ingestão, 0 linhas acima do vigente, 0 já-cliente com score — os números da v1 são os mesmos da v2; só o texto do motivo de idade muda. O cron 225 grava a v2 às **03:30 BRT de 2026-10-21**. **Lição:** rodada manual longa não vai pelo MCP — use o cron, ou o SQL Editor.
+- **1ª rodada da v2 pelo cron (2026-10-21 06:30 UTC, jobid 225):** `job_run_details` `succeeded` em **107 s**; ledger `sucesso` com `avaliados` 553.642, `a_alterar` = `alterados` = **498.624**, **`pulados` 0**, `sem_score` = 3.007 já-clientes · 52.011 fora da foto · **0 lote em ingestão** · 0 sem lote. Faixas idênticas às da v1 (só o texto mudou). Conferido por psql-ro: **0** já-cliente com score e **498.624** motivos com "(ref. 2026-08)". Topo da fila: 90 pontos, "empresa com 3–10 anos (ref. 2026-08)".
 
 ## Provas
 
