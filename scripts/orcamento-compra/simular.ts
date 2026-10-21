@@ -24,7 +24,9 @@ export interface Config {
 }
 export const CONFIG_PADRAO: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
-  intervaloOportunidadeDias: 1, horizonteDias: 91, horizontePromoDias: 90,
+  // horizonte 60 (era 91): decisão do founder 2026-10-21 — com 91 a base sozinha furava a reserva em 30 dos 127
+  // disparados; com 60, 9 (reserva 30d mantida; o lado do compromisso não muda)
+  intervaloOportunidadeDias: 1, horizonteDias: 60, horizontePromoDias: 90,
 };
 
 /** R28/R30: idade (dias, pedido→data do ciclo) a partir da qual pedido sem NF (ou com NF sem título) deixa de ser "a faturar" — p90 medido de pedido→faturamento. */
