@@ -143,6 +143,18 @@ export function montarRelatorio(r: Rodada): string {
   );
   s(`Escolhida: **${r.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
 
+  // 3. fronteira
+  s('## 3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
+  s(
+    tabela(
+      ['Fórmula', 'Variante', 'Quantil', 'Fill total', 'Fill A', 'Fill B', 'Fill C', 'Redução de estoque vs F0'],
+      r.fronteira.map((f) => [
+        f.formula, f.params.beta !== undefined ? `β ${f.params.beta}` : `janela ${f.params.janelaDias ?? '—'} du`, String(f.params.quantil.A),
+        pct(f.fill.total), pct(f.fill.A), pct(f.fill.B), pct(f.fill.C), pct(f.reducao),
+      ]),
+    ),
+  );
+
   const a = r.avaliacao;
   if (a) {
     // 2. células
@@ -162,18 +174,6 @@ export function montarRelatorio(r: Rodada): string {
       ),
     );
     if (a.dio) s(`DIO Sayerlack (reconstruído/empírico/espera, CMV = Σ cmcLinha × qtd da coorte na avaliação): F0 ${num(a.dio.f0, 1)} dias · candidata ${num(a.dio.alt, 1)} dias (${a.dio.linhasSemCmc} linhas sem cmc fora do CMV).`);
-
-    // 3. fronteira
-    s('## 3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
-    s(
-      tabela(
-        ['Fórmula', 'Variante', 'Quantil', 'Fill total', 'Fill A', 'Fill B', 'Fill C', 'Redução de estoque vs F0'],
-        r.fronteira.map((f) => [
-          f.formula, f.params.beta !== undefined ? `β ${f.params.beta}` : `janela ${f.params.janelaDias ?? '—'} du`, String(f.params.quantil.A),
-          pct(f.fill.total), pct(f.fill.A), pct(f.fill.B), pct(f.fill.C), pct(f.reducao),
-        ]),
-      ),
-    );
 
     // 4. custo
     s('## 4. Grade de custo (economia líquida, positivo = candidata vantajosa) e custo de falta de equilíbrio');
