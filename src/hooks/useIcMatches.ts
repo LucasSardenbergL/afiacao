@@ -18,7 +18,10 @@ export type IcMatch = {
     | 'divergencia_data'
     | 'sem_contrapartida'
     | 'duplicidade_possivel'
-    | 'desconsiderado';
+    | 'desconsiderado'
+    // Venda intragrupo sem cobrança (migration 20261021190000): só o master marca/desfaz — o trigger
+    // do banco governa e carimba resolvido_por/resolvido_em.
+    | 'intragrupo_sem_cobranca';
   matched_at: string;
   observacao: string | null;
 };
@@ -52,7 +55,7 @@ export function useResolveIcMatch() {
       observacao?: string;
     }) => {
       const user = await supabase.auth.getUser();
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('fin_ic_matches')
         .update({
           status: input.status,
@@ -60,8 +63,14 @@ export function useResolveIcMatch() {
           resolvido_por: user.data.user?.id,
           resolvido_em: new Date().toISOString(),
         })
-        .eq('id', input.id);
+        .eq('id', input.id)
+        .select('id');
       if (error) throw error;
+      // 0 linhas não é sucesso: a RLS escondeu a linha ou a edge a refez entre a leitura e o clique (o id
+      // mudou). Sem isto o toast dizia "Aprovado" sobre uma decisão que não foi gravada.
+      if (!data || data.length !== 1) {
+        throw new Error('a linha não foi atualizada (sem permissão ou já recalculada) — recarregue a fila');
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fin_ic_matches'] }),
   });

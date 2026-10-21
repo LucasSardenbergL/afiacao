@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   eliminacaoPendente,
+  eliminacaoSemCobranca,
   empresasSemSnapshot,
   exibicaoConsolidado,
   paraLinhasConsolidado,
@@ -49,6 +50,29 @@ describe('paraLinhasConsolidado', () => {
     expect(() => paraLinhasConsolidado([{ ...rpc[0], eliminacoes: Number.NaN }])).toThrow(
       'consolidado[0].eliminacoes: esperava número',
     );
+  });
+});
+
+describe('eliminacaoSemCobranca (migration 20261021190000)', () => {
+  // Par de 200 + venda sem cobrança de 50: receita -200, CMV -250, resultado +50.
+  const rpc = [
+    { conta: 'receita_bruta', total_bruto: 1000, eliminacoes: -200, total_consolidado: 800 },
+    { conta: 'cmv', total_bruto: 650, eliminacoes: -250, total_consolidado: 400 },
+    { conta: 'despesas_operacionais', total_bruto: 100, eliminacoes: 0, total_consolidado: 100 },
+    { conta: 'resultado_liquido', total_bruto: 250, eliminacoes: 50, total_consolidado: 300 },
+  ];
+
+  it('é a eliminação do resultado: o CMV caiu 50 a mais que a receita', () => {
+    const linhas = paraLinhasConsolidado(rpc);
+    expect(eliminacaoSemCobranca(linhas)).toBe(50);
+    expect(linhas[1].eliminacoes! - linhas[0].eliminacoes!).toBe(-50);
+    expect(eliminacaoPendente(linhas)).toBe(false);
+  });
+
+  it('sem marcação = 0; pendente ou sem a linha do resultado = null (não dá para dizer)', () => {
+    expect(eliminacaoSemCobranca(paraLinhasConsolidado(rpc.map((l) => ({ ...l, eliminacoes: l.conta === 'resultado_liquido' ? 0 : l.eliminacoes }))))).toBe(0);
+    expect(eliminacaoSemCobranca(paraLinhasConsolidado(rpc.map((l) => ({ ...l, eliminacoes: null, total_consolidado: null }))))).toBeNull();
+    expect(eliminacaoSemCobranca(paraLinhasConsolidado(rpc.slice(0, 3)))).toBeNull();
   });
 });
 

@@ -508,10 +508,13 @@ mes "SELECT public.t_titulos(2028, 2); SELECT public.t_sc('colacor', 'oben', '20
 CR="$(Pq -c "SELECT public.t_cr_ic('colacor', 'oben', NULL, 37)")"
 eq "U12 CR aparecido sem data de emissão: não dá para afastar" "$(le_ec 2028 2)" "$PEND"
 mes "DELETE FROM public.fin_ic_matches WHERE id = '$CR'"
-mes "SELECT public.t_titulos(2028, 3); SELECT public.t_sc('oben', 'colacor', '2028-03-10'); SELECT public.t_calcular(2028, 3);
+# U14 e U16 ficam em colacor_sc→colacor de propósito: o S1 deixou uma linha informativa oben→colacor de
+# 100, que é "CR aparecido" para qualquer sem cobrança oben→colacor de 100 e mascararia a trava testada
+# (achado da falsificação: as duas sabotagens ficavam verdes).
+mes "SELECT public.t_titulos(2028, 3); SELECT public.t_sc('colacor_sc', 'colacor', '2028-03-10'); SELECT public.t_calcular(2028, 3);
      ALTER TABLE public.fin_ic_matches DISABLE TRIGGER fin_ic_matches_guarda_sem_cobranca;
      WITH r AS (INSERT INTO public.fin_contas_receber (company, valor_documento, data_emissao, status_titulo, categoria_descricao)
-                VALUES ('oben', 5, '2028-09-05', 'RECEBIDO', 'Venda') RETURNING id)
+                VALUES ('colacor_sc', 5, '2028-09-05', 'RECEBIDO', 'Venda') RETURNING id)
      UPDATE public.fin_ic_matches m SET cr_id = (SELECT id FROM r) FROM public.fin_contas_pagar cp
       WHERE cp.id = m.cp_id AND cp.data_emissao = '2028-03-10';
      ALTER TABLE public.fin_ic_matches ENABLE TRIGGER fin_ic_matches_guarda_sem_cobranca"
@@ -526,7 +529,7 @@ mes "SELECT public.t_titulos(2028, 4); SELECT public.t_par('oben', 'colacor', '2
        UPDATE public.fin_ic_matches SET status = 'intragrupo_sem_cobranca' WHERE id = v_m; END \$\$;
      SELECT public.t_calcular(2028, 4)"
 eq "U15 o CP marcado também está num par confirmado" "$(le_ec 2028 4)" "$PEND"
-mes "SELECT public.t_titulos(2028, 5); SELECT public.t_sc('oben', 'colacor', '2028-05-10', p_empresa_cp => 'colacor_sc'); SELECT public.t_calcular(2028, 5)"
+mes "SELECT public.t_titulos(2028, 5); SELECT public.t_sc('colacor_sc', 'colacor', '2028-05-10', p_empresa_cp => 'oben'); SELECT public.t_calcular(2028, 5)"
 eq "U16 CP marcado é de outra empresa que não o destino" "$(le_ec 2028 5)" "$PEND"
 mes "SELECT public.t_titulos(2028, 6); SELECT public.t_sc('colacor_sc', 'colacor', '2028-06-10', 0); SELECT public.t_calcular(2028, 6)"
 eq "U17 CP marcado de valor 0" "$(le_ec 2028 6)" "$PEND"
