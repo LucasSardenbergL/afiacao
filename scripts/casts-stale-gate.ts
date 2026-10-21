@@ -46,9 +46,9 @@ export const ARQ_BASELINE = 'scripts/casts-stale-baseline.json';
  * 2026-10-19: 58 (governança/DES sem cast); 2026-10-20: 54 (admin-crm + tintométrico sem cast);
  * 2026-10-20: 52 (estoque-recebimento sem cast); 2026-10-20: 47 (plataforma sem cast);
  * 2026-10-20: 42 (vendas sem cast); 2026-10-20: 41 (useWhatsappPendentes apagado — a fila do Meu Dia
- * deixou de consumi-lo, M-41).
+ * deixou de consumi-lo, M-41); 2026-10-21: 37 (financeiro sem cast).
  */
-export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 41 } as const;
+export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 37 } as const;
 
 export interface Nomes {
   relacoes: Set<string>; // Tables ∪ Views

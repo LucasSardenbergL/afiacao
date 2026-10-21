@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { paraEventoEventual } from '@/lib/financeiro/borda-tabelas';
 
 export type EventoEventual = {
   id: string;
@@ -31,7 +32,7 @@ export function useEventosEventuais(company: string, periodo?: { de: string; ate
       }
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as unknown as EventoEventual[];
+      return (data ?? []).map(paraEventoEventual);
     },
   });
 }
@@ -47,7 +48,7 @@ export function useCreateEventoEventual() {
         .select()
         .single();
       if (error) throw error;
-      return data as unknown as EventoEventual;
+      return paraEventoEventual(data);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fin_eventos_eventuais'] });

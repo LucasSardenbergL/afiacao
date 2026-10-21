@@ -1,7 +1,6 @@
 // src/hooks/useValor.ts
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import type { Json } from '@/integrations/supabase/types';
 import type { ValorEmpresaResult, ValorInputs } from '@/services/financeiroService';
 
 export function useValor(company: string) {
@@ -25,7 +24,7 @@ export function useUpdateValorInputs() {
       const { error } = await supabase
         .from('fin_valor_inputs')
         .upsert(
-          { company, valor_inputs: valor_inputs as unknown as Json, updated_at: new Date().toISOString() },
+          { company, valor_inputs, updated_at: new Date().toISOString() },
           { onConflict: 'company' },
         );
       if (error) throw error;

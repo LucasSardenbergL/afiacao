@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { paraEventoRecorrente } from '@/lib/financeiro/borda-tabelas';
 
 export type EventoRecorrente = {
   id: string;
@@ -29,7 +30,7 @@ export function useEventosRecorrentes(company: string) {
         .eq('company', company)
         .order('descricao');
       if (error) throw error;
-      return (data ?? []) as unknown as EventoRecorrente[];
+      return (data ?? []).map(paraEventoRecorrente);
     },
   });
 }
@@ -45,7 +46,7 @@ export function useCreateEventoRecorrente() {
         .select()
         .single();
       if (error) throw error;
-      return data as unknown as EventoRecorrente;
+      return paraEventoRecorrente(data);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fin_eventos_recorrentes'] });

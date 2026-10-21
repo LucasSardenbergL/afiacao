@@ -158,15 +158,15 @@ export function calibrarCurvas(
   const coberturaEmpresa = liqTotal > 0 ? liqComData / liqTotal : 0;
   const empresaCalibravel = coberturaEmpresa >= coberturaMinEmpresa;
 
-  const acc: Record<Faixa, {
+  type AcumuladorFaixa = {
     exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
     topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
-  }> = Object.fromEntries(
-    FAIXAS.map(f => [f, { exposicao: 0, pago: 0, aberto: 0, count: 0, countLiqData: 0, topValor: 0, lags: [], lagsRaw: [] }]),
-  ) as unknown as Record<Faixa, {
-    exposicao: number; pago: number; aberto: number; count: number; countLiqData: number;
-    topValor: number; lags: Array<{ valor: number; peso: number }>; lagsRaw: number[];
-  }>;
+  };
+  const novo = (): AcumuladorFaixa =>
+    ({ exposicao: 0, pago: 0, aberto: 0, count: 0, countLiqData: 0, topValor: 0, lags: [], lagsRaw: [] });
+  const acc: Record<Faixa, AcumuladorFaixa> = {
+    'a_vencer': novo(), '1-30': novo(), '31-60': novo(), '61-90': novo(), '+90': novo(),
+  };
 
   for (const t of titulos) {
     if (!t.data_vencimento) continue;
