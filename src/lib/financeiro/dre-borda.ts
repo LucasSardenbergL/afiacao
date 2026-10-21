@@ -14,7 +14,7 @@ import {
 export type DetalhamentoDre = FinDRE['detalhamento'];
 
 /** As colunas numéricas que o FinDRE declara `number` (não-nulas). */
-export const COLUNAS_NUMERICAS_DRE = [
+const COLUNAS_NUMERICAS_DRE = [
   'receita_bruta', 'deducoes', 'receita_liquida', 'cmv', 'lucro_bruto', 'despesas_operacionais',
   'despesas_administrativas', 'despesas_comerciais', 'despesas_financeiras', 'receitas_financeiras',
   'resultado_operacional', 'outras_receitas', 'outras_despesas', 'resultado_antes_impostos', 'impostos',

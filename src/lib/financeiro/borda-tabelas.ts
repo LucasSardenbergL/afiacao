@@ -84,8 +84,8 @@ export function paraAlerta<L extends Tables<'fin_alertas'>>(l: L) {
 
 // ─── fin_config_cashflow (jsonb por forma) ──────────────────────────────────────────────────────
 
-export type OverrideCenario = { recebimento_no_prazo_pct_delta: number; inadimplencia_pct_delta: number };
-export type ThresholdsCashflow = {
+type OverrideCenario = { recebimento_no_prazo_pct_delta: number; inadimplencia_pct_delta: number };
+type ThresholdsCashflow = {
   caixa_negativo_semanas: number;
   ncg_deficit_alerta: number;
   dias_cobertura_min: number;
