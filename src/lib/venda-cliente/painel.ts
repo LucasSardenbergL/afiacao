@@ -70,7 +70,7 @@ export interface PainelVenda {
 }
 
 /** Acima desta fração de `nao_medivel` entre as sugestões avaliadas, a taxa não é afirmável. */
-export const LIMITE_NAO_MEDIVEL = 0.2;
+const LIMITE_NAO_MEDIVEL = 0.2;
 
 export type EstadoTaxa =
   | { tipo: 'valor'; taxa: number }
