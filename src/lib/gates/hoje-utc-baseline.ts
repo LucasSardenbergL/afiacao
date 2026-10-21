@@ -34,8 +34,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'new Date(y,m-6,1) meia-noite LOCAL → 03:00Z mesmo dia (só vale em UTC−3)' },
   { arquivo: 'src/pages/FinanceiroDashboard.tsx', trecho: 'threeMonthsAhead.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
     motivo: 'new Date(y,m-6,1) meia-noite LOCAL → 03:00Z mesmo dia (só vale em UTC−3)' },
-  { arquivo: 'src/pages/VendasFerramentas.tsx', trecho: 'new Date().toISOString().slice(0, 10)', n: 1, veredito: 'latente',
-    motivo: 'sales_print_jobs ausente (safeQuery 0)' },
   { arquivo: 'src/queries/usePropostaPreview.ts', trecho: 'd.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
     motivo: 'addDays aritmética pura ancorada T12:00Z' },
   { arquivo: 'supabase/functions/_shared/dia-operacional.ts', trecho: 'emBrt.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',

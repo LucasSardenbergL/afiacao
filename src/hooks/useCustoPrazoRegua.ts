@@ -1,7 +1,7 @@
 // src/hooks/useCustoPrazoRegua.ts
 // F2 — resolve o PRAZO da régua: dias parseados da condição selecionada (RPC fin_regua_condicao_prazo
 // + parser TS puro). A RPC é SECURITY DEFINER (RLS-safe; o catálogo de condições é staff-only sem
-// grant a authenticated) e NÃO está nos tipos gerados → cast via unknown.
+// grant a authenticated).
 // Degrada honesto para null em TODA ausência (condição ausente, código nulo, texto não parseável).
 //
 // ⚠️ FU4-F fase 2: a TAXA de custo de capital saiu daqui. Ela só existia para alimentar
@@ -15,13 +15,6 @@ import { parsePrazoRecebimento } from '@/lib/regua-preco/prazo-helpers';
 
 const STALE = 5 * 60_000; // taxa e condição mudam raramente
 
-type RpcClient = {
-  rpc: (
-    fn: string,
-    args: Record<string, unknown>,
-  ) => Promise<{ data: unknown; error: { message: string } | null }>;
-};
-
 export interface CustoPrazoRegua {
   prazoDias: number[] | null;
 }
@@ -33,16 +26,14 @@ function useCondicaoPrazo(empresa: string | null, codigo: string | null) {
     enabled: Boolean(empresa) && Boolean(codigo),
     staleTime: STALE,
     queryFn: async (): Promise<{ descricao: string | null; num_parcelas: number | null }> => {
-      const client = supabase as unknown as RpcClient;
-      const { data, error } = await client.rpc('fin_regua_condicao_prazo', {
+      // `enabled` já barra os nulos; a guarda só os torna visíveis ao tipo.
+      if (!empresa || !codigo) return { descricao: null, num_parcelas: null };
+      const { data, error } = await supabase.rpc('fin_regua_condicao_prazo', {
         p_empresa: empresa,
         p_codigo: codigo,
       });
       if (error) throw new Error(error.message);
-      const rows = Array.isArray(data)
-        ? (data as { descricao?: string | null; num_parcelas?: number | null }[])
-        : [];
-      const row = rows[0];
+      const row = data?.[0];
       return { descricao: row?.descricao ?? null, num_parcelas: row?.num_parcelas ?? null };
     },
   });

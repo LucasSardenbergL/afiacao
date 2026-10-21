@@ -4,13 +4,17 @@
 // só enxergava as páginas baixadas).
 // mapSalesDetail/mapAfiacaoDetail: normalizam a linha crua do detalhe (select('*')
 // de sales_orders | orders) pro shape SalesOrder que painel/impressão/share consomem.
+import type { Json, Tables } from '@/integrations/supabase/types';
+import { exigirColunas } from '@/lib/linha-view';
 import {
+  COLUNAS_FEED_EXIGIDAS,
   decodeHtml,
   type Account,
   type AfiacaoItemRaw,
   type AfiacaoOrderRow,
   type OrderFeedRow,
   type SalesOrder,
+  type SalesOrderItem,
   type SalesOrderRow,
 } from './types';
 import { totalLinhaOuAusente, precoUtilizavel } from '@/lib/format';
@@ -42,6 +46,19 @@ export function filterFeedRows(
   return result;
 }
 
+const ORIGENS_FEED: readonly OrderFeedRow['origin'][] = ['sales', 'afiacao'];
+
+/**
+ * Borda da view `order_feed`: exige as colunas-chave (lança se vierem nulas — 0 em 31.955 linhas na
+ * prod em 2026-10-20) e estreita `origin`. Antes um cast duplo para `OrderFeedRow[]` afirmava tudo.
+ */
+export function feedRowDaLinha(linha: Tables<'order_feed'>): OrderFeedRow {
+  exigirColunas(linha, COLUNAS_FEED_EXIGIDAS, 'order_feed');
+  const origin = ORIGENS_FEED.find((o) => o === linha.origin);
+  if (!origin) throw new Error(`order_feed ${linha.id}: origin desconhecida (${linha.origin})`);
+  return { ...linha, origin };
+}
+
 // Dedupe por (origin, id) preservando a 1ª ocorrência. Defesa contra o caso raro
 // de escrita concorrente durante o fetch paginado por offset (uma inserção entre
 // as páginas pode deslocar e repetir uma linha — duplicata quebraria as keys do React).
@@ -57,18 +74,78 @@ export function dedupeFeedRows(rows: OrderFeedRow[]): OrderFeedRow[] {
   return out;
 }
 
-// sales_orders.* → SalesOrder. A linha já tem o shape (items jsonb compatível);
-// marca a origem e NORMALIZA items: jsonb malformado (objeto em vez de array)
-// quebraria o painel/impressão — ({} || []).map não existe (achado do codex).
-export function mapSalesDetail(row: SalesOrderRow): SalesOrder {
-  const base = row as unknown as SalesOrder;
-  return { ...base, items: Array.isArray(base.items) ? base.items : [], _source: 'sales' };
+type ObjetoJson = { [chave: string]: Json | undefined };
+
+function campoOpcional<T extends Json>(o: ObjetoJson, chave: string, ok: (v: Json) => v is T, onde: string): T | undefined {
+  const v = o[chave];
+  if (v === undefined) return undefined;
+  if (!ok(v)) throw new Error(`${onde}: "${chave}" fora da forma`);
+  return v;
+}
+const ehTexto = (v: Json): v is string => typeof v === 'string';
+const ehNumeroOuNulo = (v: Json): v is number | null => v === null || typeof v === 'number';
+
+/**
+ * Um item do jsonb lido para o PAINEL/IMPRESSÃO: só os campos que eles mostram, por forma; tipo
+ * trocado lança. Chaves que o tipo não conhece seguem no objeto (a impressão lê `codigo`/`tint_*`).
+ */
+function itemDetalheDoJson(item: Json, onde: string): SalesOrderItem {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error(`${onde}: item não é objeto`);
+  const { descricao, quantidade, valor_unitario } = item;
+  if (typeof descricao !== 'string' || typeof quantidade !== 'number' || !(valor_unitario === null || typeof valor_unitario === 'number')) {
+    throw new Error(`${onde}: item fora da forma {descricao, quantidade, valor_unitario}`);
+  }
+  const conhecido: SalesOrderItem = {
+    descricao,
+    quantidade,
+    valor_unitario,
+    valor_total: campoOpcional(item, 'valor_total', ehNumeroOuNulo, onde),
+    codigo: campoOpcional(item, 'codigo', ehTexto, onde),
+    unidade: campoOpcional(item, 'unidade', ehTexto, onde),
+    tint_cor_id: campoOpcional(item, 'tint_cor_id', ehTexto, onde),
+    tint_nome_cor: campoOpcional(item, 'tint_nome_cor', ehTexto, onde),
+  };
+  for (const chave of Object.keys(conhecido) as (keyof SalesOrderItem)[]) {
+    if (conhecido[chave] === undefined) delete conhecido[chave];
+  }
+  return { ...item, ...conhecido };
+}
+
+/** As colunas que `fetchOrderDetail` seleciona de `sales_orders` (omie_payload vem pelo canal staff). */
+export type LinhaDetalheVenda = Pick<
+  SalesOrderRow,
+  | 'id' | 'customer_user_id' | 'items' | 'subtotal' | 'discount' | 'total' | 'status' | 'notes' | 'account'
+  | 'omie_pedido_id' | 'omie_numero_pedido' | 'created_at' | 'customer_address' | 'customer_phone'
+>;
+
+// sales_orders → SalesOrder: marca a origem e lê `items` por forma. jsonb que NÃO é array (objeto no
+// lugar da lista) segue virando [] — o painel/impressão não podem crashar (achado do codex).
+export function mapSalesDetail(row: LinhaDetalheVenda): SalesOrder {
+  const items = Array.isArray(row.items)
+    ? row.items.map((it, i) => itemDetalheDoJson(it, `sales_orders ${row.id} item ${i}`))
+    : [];
+  return { ...row, discount: row.discount ?? undefined, items, _source: 'sales' };
+}
+
+const ehTextoOuNulo = (v: Json): v is string | null => v === null || typeof v === 'string';
+
+/** Item de `orders.items` (afiação): todos os campos opcionais/nuláveis; tipo trocado lança. */
+function itemAfiacaoDoJson(item: Json, onde: string): AfiacaoItemRaw {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error(`${onde}: item não é objeto`);
+  return {
+    category: campoOpcional(item, 'category', ehTextoOuNulo, onde),
+    name: campoOpcional(item, 'name', ehTextoOuNulo, onde),
+    quantity: campoOpcional(item, 'quantity', ehNumeroOuNulo, onde),
+    unitPrice: campoOpcional(item, 'unitPrice', ehNumeroOuNulo, onde),
+  };
 }
 
 // orders (afiação).* → SalesOrder. Mesma normalização que a listagem antiga fazia
 // inline (category||name → descricao; quantity default 1; account = entidade SC).
 export function mapAfiacaoDetail(row: AfiacaoOrderRow): SalesOrder {
-  const rawItems = Array.isArray(row.items) ? (row.items as unknown as AfiacaoItemRaw[]) : [];
+  const rawItems = Array.isArray(row.items)
+    ? row.items.map((it, i) => itemAfiacaoDoJson(it, `orders ${row.id} item ${i}`))
+    : [];
   return {
     id: row.id,
     customer_user_id: row.user_id,
