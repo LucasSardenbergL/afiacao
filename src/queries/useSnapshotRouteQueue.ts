@@ -23,8 +23,17 @@ export function useSnapshotRouteQueue(routeDate: string | null, callQueue: Route
       valor_da_ligacao: it.valorDaLigacao,
       rank: i + 1,
     }));
-    void supabase.from('route_queue_snapshot')
-      .upsert(rows, { onConflict: 'data_rota,farmer_id,customer_user_id', ignoreDuplicates: true })
-      .then(() => { /* best-effort */ }, () => { feito.current = null; /* permite retry numa próxima montagem */ });
+    // Best-effort, mas a falha não pode passar por sucesso: o supabase-js RESOLVE com `error` em erro de
+    // banco (RLS, timeout) — só rejeita em falha de transporte. Os dois caminhos liberam o retry; antes
+    // o `.then(() => {})` descartava o `error`, marcava o dia como gravado e o denominador do painel
+    // ficava sem a fila até a próxima montagem do dia seguinte.
+    const liberarRetry = () => { feito.current = null; };
+    const gravar = async () => {
+      const { error } = await supabase
+        .from('route_queue_snapshot')
+        .upsert(rows, { onConflict: 'data_rota,farmer_id,customer_user_id', ignoreDuplicates: true });
+      if (error) liberarRetry();
+    };
+    gravar().catch(liberarRetry);
   }, [user, routeDate, callQueue]);
 }
