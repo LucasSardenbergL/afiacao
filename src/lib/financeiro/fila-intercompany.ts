@@ -14,7 +14,7 @@ export type AcaoFilaIc = 'aprovar' | 'ignorar' | 'sem_cobranca' | 'desfazer_sem_
 
 export type LinhaFilaIc = { status: string; cr_id: string | null; cp_id: string | null };
 
-export const STATUS_SEM_COBRANCA = 'intragrupo_sem_cobranca';
+const STATUS_SEM_COBRANCA = 'intragrupo_sem_cobranca';
 
 export function acoesDaLinhaIc(linha: LinhaFilaIc, isMaster: boolean): AcaoFilaIc[] {
   if (linha.status === 'manual_matched' || linha.status === 'desconsiderado') return [];
