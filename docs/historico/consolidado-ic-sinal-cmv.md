@@ -31,8 +31,11 @@ eliminação identificada", não "não houve operação intercompany"**. Esse de
   cálculo, ou um CP pode entrar entre a leitura do motor e o carimbo `calculated_at`. A RPC recalcula a
   soma atual de cada categoria com o recorte do motor (empresa, emissão no mês, status <> CANCELADO) e
   exige que bata com a composição (folga de meio centavo para o float); senão o par pende. O teste de
-  `created_at` saiu: ficou redundante (a sabotagem dele não ficava vermelha). `updated_at` não serve —
+  `created_at` saiu: a consistência o cobre (título novo muda a soma atual). `updated_at` não serve —
   o sync o toca em 99% dos títulos.
+  Medido na prod (psql-ro 2026-10-21, 39 snapshots com composição): **888 de 892** categorias batem com a
+  soma atual dos títulos (814/814 de despesa, 74/78 de receita). A checagem não deixa tudo pendente, e as
+  4 que divergem são exatamente o caso que ela existe para pegar (snapshot que não reflete os títulos).
 - Par confirmado que toca o mês e **não** é elegível ⇒ eliminação e consolidado **NULL nas 4 linhas**
   (precisão > recall). A tela mostra "—" e o aviso "eliminação pendente".
 - Escopo da soma parcial: par com a origem ou o destino sem snapshot no mês é transação com quem está
