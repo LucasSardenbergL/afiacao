@@ -65,7 +65,7 @@ Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções
 - **L** · Edge money-path **tocada** sai do PR com `_test.ts` (26/49 sem teste; próximas: `fin-cashflow-engine`, `fin-valor-engine`, `omie-webhook`, `omie-cliente` ramos de escrita). Não é extrair monólito (M-58 segue cortado).
 - **K1** · Moeda: usar `formatPrecoOuAusente` (`src/lib/format.ts:149`) quando tocar; **não** criar sinônimo nem regra ESLint (barrar `style:'currency'` não corrige cálculo).
 - **K2** · `functions.invoke`: migrar só os **9** `if (error) throw error` que escondem o corpo do erro; `invokeFunction` exige sessão (`invoke-function.ts:31`), não é substituto universal.
-- **N** · `docs/agent/` — **piloto em 1 domínio** (sugestão: `money-path.md`, 195 KB; `deploy.md` não, pois `gates:frescura` o lê): regras vivas com condição · obrigação · exceções · ponteiro para a evidência; casos vão para `docs/historico/`. Medir contexto carregado e erros de execução antes de generalizar.
+- **N** · `docs/agent/` — **piloto em 1 domínio** (sugestão: `money-path.md`, 195 KB; `deploy.md` não, pois `gates:frescura` o lê): regras vivas com condição · obrigação · exceções · ponteiro para a evidência; casos vão para `docs/historico/`. Medir contexto carregado e erros de execução antes de generalizar. ✅ **feito** — reescrita no [#3185](https://github.com/LucasSardenbergL/afiacao/pull/3185) (2026-10-19, 194.593 → 73.038 bytes) + verificação pós-merge (2026-10-21: auditoria de cobertura, âncoras, proxy de grep e a regra do jsonb multi-writer que o CLAUDE.md apontava para cá e nunca esteve lá) → [money-path-regras-vivas-piloto-n.md](../../../historico/money-path-regras-vivas-piloto-n.md). Generalizar a outro doc de `docs/agent/` é decisão nova, com essa medição na mão.
 - **Pontuais sobreviventes do antigo lote M**: `FinanceiroGestao.tsx:64` mostra saldo bancário **0 fixo = informação falsa** ✅ → ocultar o indicador ou "indisponível" (não implementar a tela); `manifesto.ts` desatualizado (`caca` tem 11 testes, manifesto diz 0); 3 `keydown` redundantes (`HelpDrawer.tsx:64`, `CockpitGrid.tsx:56,66`, `ShortcutsDialog.tsx:43`).
 
 ## 4. Cortado (com motivo)
@@ -77,7 +77,7 @@ Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções
 
 ## 5. Decisões do founder 🧭
 1. **I2**: como fechar a representação reconstituível das 18 funções sem tocar `supabase/migrations/` (DR)? Opções: (a) migration "canônica" nova via Lovable com o corpo da prod + prova de comportamento; (b) baseline aceita + teste `db/test-*.sh` que falha se o corpo da prod mudar. Recomendo (a) para as 2 funções financeiras, (b) para o resto.
-2. **N**: aprovar o piloto em `money-path.md`?
+2. **N**: aprovar o piloto em `money-path.md`? ✅ **aprovado (2026-10-21)**: "reescrever o money-path.md como regras vivas (condição · obrigação · exceções · ponteiro), casos para docs/historico, medindo contexto antes e depois" — a reescrita já estava na main desde o #3185; a aprovação ratificou e pediu a medição, entregue na verificação pós-merge.
 3. **Saldo bancário**: ocultar o indicador em `FinanceiroGestao` até existir `fin_saldo_bancario`?
 
 ## 6. KPIs
