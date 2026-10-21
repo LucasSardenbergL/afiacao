@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { comNulo } from '@/lib/rpc-args';
-import { likePrefixPattern } from '@/lib/postgrest';
+import { fetchAllPages, likePrefixPattern } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae } from '@/lib/radar/ui-helpers';
 import { recorteDeLote, type LoteIngest, type RecorteLote } from '@/lib/radar/lote-vigente';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
@@ -81,8 +81,6 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
   });
 }
 
-const PAGINA_SUGERIDOS = 1000;      // o teto do PostgREST — paginar por `.range` com ordem estável
-const TETO_SUGERIDOS = 20_000;      // guarda: "sugerido" exige `em_conversa`; passar disto é defeito, não volume
 const LIMITE_MUNICIPIOS = 500;      // o mesmo p_limit da RPC
 
 interface FiltrosEstruturais {
@@ -95,37 +93,27 @@ interface FiltrosEstruturais {
 
 /** Ranking/mapa sob "só sugeridos": as linhas que `filtrarSugeridos` aceita (+ os filtros estruturais
  *  que a RPC aplica: UF, CNAE, datas do preset; + o recorte de inéditos), agregadas por município com a
- *  mesma forma e ordem da RPC (total desc, código). Erro em qualquer página LANÇA — contagem parcial
- *  seria um número menor fabricado. */
+ *  mesma forma e ordem da RPC (total desc, código). Leitura por `fetchAllPages` (ordem estável por
+ *  CNPJ): página perdida LANÇA — contagem parcial seria um número menor fabricado. */
 async function contarSugeridosPorMunicipio(
   lote: LoteIngest,
   recorte: RecorteLote,
   f: FiltrosEstruturais,
 ): Promise<RadarMunicipioContagem[]> {
-  type Linha = {
-    municipio_codigo: string | null; municipio_nome: string | null; uf: string | null;
-    telefone1: string | null; telefone2: string | null; prospeccao_status: string;
-  };
-  const linhas: Linha[] = [];
-  for (let de = 0; ; de += PAGINA_SUGERIDOS) {
-    if (de >= TETO_SUGERIDOS) throw new Error(`"só sugeridos" passou de ${TETO_SUGERIDOS} linhas — predicado suspeito, ranking não agregado`);
+  const prefixo = f.cnaePrefixo ? likePrefixPattern(f.cnaePrefixo) : null;
+  const linhas = await fetchAllPages((de, ate) => {
     let q = supabase
       .from('radar_empresas')
       .select('municipio_codigo,municipio_nome,uf,telefone1,telefone2,prospeccao_status');
     q = filtrarSugeridos(q, lote);
     if (f.uf) q = q.eq('uf', f.uf);
-    const prefixo = f.cnaePrefixo ? likePrefixPattern(f.cnaePrefixo) : null;
     if (f.cnaeExato) q = q.eq('cnae_principal', f.cnaeExato);
     else if (prefixo) q = q.like('cnae_principal', prefixo);
     if (f.dataAberturaMin) q = q.gte('data_abertura', f.dataAberturaMin);
     if (f.dataAberturaMax) q = q.lte('data_abertura', f.dataAberturaMax);
     if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
-    const { data, error } = await q.order('cnpj').range(de, de + PAGINA_SUGERIDOS - 1);
-    if (error) throw error;
-    if (!data) throw new Error('página de sugeridos sem dados na resposta');
-    linhas.push(...(data as Linha[]));
-    if (data.length < PAGINA_SUGERIDOS) break;
-  }
+    return q.order('cnpj').range(de, ate);
+  }, 'radar_empresas/ranking-sugeridos');
 
   const porMunicipio = new Map<string, RadarMunicipioContagem>();
   for (const l of linhas) {
@@ -140,18 +128,21 @@ async function contarSugeridosPorMunicipio(
     if (l.prospeccao_status === 'a_contatar') atual.a_contatar += 1;
     porMunicipio.set(chave, atual);
   }
-  const contagens = [...porMunicipio.values()];
-  const codigos = [...new Set(contagens.map((c) => c.municipio_codigo).filter(Boolean))];
+  // Corta ANTES de buscar coordenadas: no máximo 500 códigos no `.in()` (URL e leitura limitadas).
+  const topo = [...porMunicipio.values()]
+    .sort((a, b) => b.total - a.total || a.municipio_codigo.localeCompare(b.municipio_codigo))
+    .slice(0, LIMITE_MUNICIPIOS);
+  const codigos = [...new Set(topo.map((c) => c.municipio_codigo).filter(Boolean))];
   if (codigos.length > 0) {
-    const { data, error } = await supabase.from('radar_municipios').select('codigo,nome,lat,lng').in('codigo', codigos);
-    if (error) throw error;
-    const geo = new Map((data ?? []).map((m) => [m.codigo, m]));
-    for (const c of contagens) {
-      const m = geo.get(c.municipio_codigo);
+    const geo = await fetchAllPages(
+      (de, ate) => supabase.from('radar_municipios').select('codigo,nome,lat,lng').in('codigo', codigos).order('codigo').range(de, ate),
+      'radar_municipios/ranking-sugeridos',
+    );
+    const porCodigo = new Map(geo.map((m) => [m.codigo, m]));
+    for (const c of topo) {
+      const m = porCodigo.get(c.municipio_codigo);
       if (m) { c.municipio_nome = m.nome ?? c.municipio_nome; c.lat = m.lat; c.lng = m.lng; }
     }
   }
-  return contagens
-    .sort((a, b) => b.total - a.total || a.municipio_codigo.localeCompare(b.municipio_codigo))
-    .slice(0, LIMITE_MUNICIPIOS);
+  return topo;
 }

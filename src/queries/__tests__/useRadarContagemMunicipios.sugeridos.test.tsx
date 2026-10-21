@@ -20,9 +20,9 @@ function builder(tabela: string) {
   for (const m of ['select', 'eq', 'neq', 'gte', 'lte', 'like', 'is', 'or', 'filter', 'in', 'order', 'range', 'limit']) {
     b[m] = (...args: unknown[]) => { chamadas[tabela].push([m, ...args]); return b; };
   }
+  // Cada leitura consome a próxima resposta da tabela; esgotada, devolve a página vazia.
   b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => {
-    const fila = respostas[tabela] ?? [];
-    const r = fila.length > 1 ? fila.shift() : fila[0];
+    const r = (respostas[tabela] ?? []).shift() ?? { data: [], error: null };
     return Promise.resolve(r).then(res, rej);
   };
   return b;
@@ -97,7 +97,7 @@ describe('useRadarContagemMunicipios — "só sugeridos" usa o predicado da fila
     expect(filtrosEmpresas('gte', 'primeira_vista_em')).toEqual([['gte', 'primeira_vista_em', '2026-10-19T16:31:08.593+00:00']]);
   });
 
-  it('pagina por range até a página incompleta — não para no teto de 1.000 do PostgREST', async () => {
+  it('pagina por range (fetchAllPages) até a página incompleta — não para no teto de 1.000 do PostgREST', async () => {
     const cheia = Array.from({ length: 1000 }, () => linha('M1', 'SC', null));
     respostas.radar_empresas = [{ data: cheia, error: null }, { data: [linha('M2', 'MG', null)], error: null }];
     const { result } = renderHook(() => useRadarContagemMunicipios(FILTROS, '2026-10-21', true), { wrapper });
