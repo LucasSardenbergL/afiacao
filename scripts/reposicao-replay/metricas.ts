@@ -35,14 +35,6 @@ export function estoqueMedio(s: SomasSemanais, idx: readonly number[] = todas(s)
   return somar(s.estoqueCmcDias, idx) / dias;
 }
 
-/**
- * true se a margem cancelada das semanas `idx` está completa: nenhuma semana com margem null (todas as canceladas sem cmc)
- * nem PARCIAL (alguma cancelada sem cmc — somar a parte conhecida trataria a ausente como 0).
- */
-function margemCompleta(s: SomasSemanais, idx: readonly number[]): boolean {
-  return idx.every((i) => s.cancelada.margem[i] !== null && s.canceladaSemCmc.linhas[i] === 0);
-}
-
 function conferirPareados(base: SomasSemanais, alt: SomasSemanais): void {
   const n = base.semanas.length;
   const ok =
@@ -54,6 +46,16 @@ function conferirPareados(base: SomasSemanais, alt: SomasSemanais): void {
 const custoTerminal = (s: SomasSemanais, g: GradeCusto): number =>
   s.terminal.backlogValor * g.emergencialPerc + s.terminal.backlogDiasAtraso * g.atrasoPerc;
 
+/** Resultado de `custoLiquido`: o custo e quanto dele veio do LIMITE da margem desconhecida (os dois braços somados). */
+export interface ResultadoCusto {
+  /** R$; positivo = `alt` vantajosa. null só sem dado de capital (janela `idx` sem dias corridos). */
+  custo: number | null;
+  /** Σ canceladaSemCmc.linhas nas semanas `idx`, base + alt: linhas cuja margem entrou pelo limite, não medida. */
+  linhasMargemLimitada: number;
+  /** Σ canceladaSemCmc.valor nas semanas `idx`, base + alt. */
+  valorMargemLimitada: number;
+}
+
 /**
  * Economia líquida (R$) de trocar `base` (F0) por `alt`; positivo = `alt` vantajosa:
  *   (estoqueMedio_base − estoqueMedio_alt) × taxa × diasJanela/365
@@ -61,8 +63,10 @@ const custoTerminal = (s: SomasSemanais, g: GradeCusto): number =>
  * Δ = alt − base; diasJanela = Σ diasCorridos[idx]; custo terminal = backlogValor × emergencialPerc + backlogDiasAtraso ×
  * atrasoPerc (spec §5.9: backlog do fim custeado como compra emergencial no último dia + atraso até lá).
  *
- * Ausente ≠ zero: se QUALQUER semana de `idx`, em QUALQUER braço, tem a margem cancelada ausente (null) ou parcial
- * (`canceladaSemCmc.linhas > 0`), devolve null — a semana não é excluída nem tratada como 0. No §6.1 isso vira INCERTO.
+ * Margem de cancelada SEM cmc (Ruling R24): desconhecida, mas limitada a [0, valor]. Usa-se o PIOR CASO PARA A
+ * ALTERNATIVA — no braço `alt` entra com margem = valor (perda máxima), no `base` com margem = 0 — sobre a margem
+ * conhecida da semana (semana com margem null = conhecida 0 + o limite). Nada é fabricado a favor da fórmula nova: o
+ * erro só torna o GO mais difícil. Quanto do custo veio do limite sai em `linhasMargemLimitada`/`valorMargemLimitada`.
  *
  * O terminal é um valor da janela inteira (não semanal): entra uma vez, qualquer que seja `idx` (na reamostragem do
  * bootstrap ele é a parte não reamostrada, comum às réplicas).
@@ -72,21 +76,27 @@ export function custoLiquido(
   alt: SomasSemanais,
   g: GradeCusto,
   idx: readonly number[] = todas(base),
-): number | null {
+): ResultadoCusto {
   conferirPareados(base, alt);
   conferirIdx(base, idx);
-  if (!margemCompleta(base, idx) || !margemCompleta(alt, idx)) return null;
+  const limitadas = {
+    linhasMargemLimitada: somar(base.canceladaSemCmc.linhas, idx) + somar(alt.canceladaSemCmc.linhas, idx),
+    valorMargemLimitada: somar(base.canceladaSemCmc.valor, idx) + somar(alt.canceladaSemCmc.valor, idx),
+  };
   const diasJanela = somar(base.diasCorridos, idx);
+  if (!(diasJanela > 0)) return { custo: null, ...limitadas };
   const capital = (estoqueMedio(base, idx) - estoqueMedio(alt, idx)) * g.taxa * (diasJanela / 365);
   const delta = (f: (s: SomasSemanais) => number): number => f(alt) - f(base);
-  const margem = (s: SomasSemanais): number => idx.reduce((t, i) => t + (s.cancelada.margem[i] as number), 0);
-  return (
+  const conhecida = (s: SomasSemanais): number => idx.reduce((t, i) => t + (s.cancelada.margem[i] ?? 0), 0);
+  const margemAlt = conhecida(alt) + somar(alt.canceladaSemCmc.valor, idx); // limite superior: margem = valor
+  const margemBase = conhecida(base); // limite inferior: margem = 0
+  const custo =
     capital -
     delta((s) => somar(s.entregue.emergencial, idx)) * g.emergencialPerc -
     delta((s) => somar(s.valorDiasAtraso, idx)) * g.atrasoPerc -
-    delta(margem) -
-    delta((s) => custoTerminal(s, g))
-  );
+    (margemAlt - margemBase) -
+    delta((s) => custoTerminal(s, g));
+  return { custo, ...limitadas };
 }
 
 /**

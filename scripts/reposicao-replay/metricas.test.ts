@@ -62,14 +62,14 @@ describe('custoLiquido', () => {
     const base = somas(1);
     const alt = somas(1);
     alt.valorDiasAtraso = [1000 * 1 + 10 * 10];
-    expect(custoLiquido(base, alt, { taxa: 0.25, emergencialPerc: 0.1, atrasoPerc: 0.01 })).toBeCloseTo(-11, 9);
+    expect(custoLiquido(base, alt, { taxa: 0.25, emergencialPerc: 0.1, atrasoPerc: 0.01 }).custo).toBeCloseTo(-11, 9);
   });
   it('R$ 20k liberados a 25% em 365 d, sem falta → R$ 5k', () => {
     const base = somas(1, 365);
     const alt = somas(1, 365);
     base.estoqueCmcDias = [50_000 * 365];
     alt.estoqueCmcDias = [30_000 * 365];
-    expect(custoLiquido(base, alt, G)).toBeCloseTo(5000, 6);
+    expect(custoLiquido(base, alt, G).custo).toBeCloseTo(5000, 6);
   });
   it('políticas iguais → custo 0', () => {
     const base = somas(3);
@@ -79,7 +79,7 @@ describe('custoLiquido', () => {
     base.cancelada = { valor: [100, 0, 0], margem: [30, 0, 0] };
     base.terminal = { estoqueCmc: 1, abertasCmc: 2, backlogValor: 50, backlogDiasAtraso: 500 };
     const alt = structuredClone(base);
-    expect(custoLiquido(base, alt, G)).toBe(0);
+    expect(custoLiquido(base, alt, G)).toEqual({ custo: 0, linhasMargemLimitada: 0, valorMargemLimitada: 0 });
   });
   it('emergencial, margem cancelada e terminal entram como Δ (alt − base)', () => {
     const base = somas(1);
@@ -87,21 +87,33 @@ describe('custoLiquido', () => {
     alt.entregue.emergencial = [1000]; // 1000 × 10% = 100
     alt.cancelada = { valor: [500], margem: [200] }; // 200
     alt.terminal = { estoqueCmc: 0, abertasCmc: 0, backlogValor: 300, backlogDiasAtraso: 2000 }; // 30 + 20
-    expect(custoLiquido(base, alt, G)).toBeCloseTo(-350, 9);
+    expect(custoLiquido(base, alt, G).custo).toBeCloseTo(-350, 9);
   });
-  it('ramo null: margem cancelada ausente (ou parcial) em QUALQUER braço → null, nunca 0', () => {
+  it('sem cmc só no ALT: margem = valor (pior caso para a alternativa) e conta as linhas limitadas', () => {
     const base = somas(2);
     const alt = somas(2);
-    alt.cancelada = { valor: [0, 400], margem: [0, null] };
-    alt.canceladaSemCmc = { linhas: [0, 2], valor: [0, 400] };
-    expect(custoLiquido(base, alt, G)).toBeNull();
-    expect(custoLiquido(alt, base, G)).toBeNull(); // simétrico: o braço base também anula
-    expect(custoLiquido(base, alt, G, [0, 0])).toBe(0); // semana sem lacuna fora do idx → calcula
-    // semana mista (margem PARCIAL: parte das canceladas sem cmc) também anula: a parte ausente seria um 0 fabricado
-    const mista = somas(1);
-    mista.cancelada = { valor: [500], margem: [100] };
-    mista.canceladaSemCmc = { linhas: [1], valor: [200] };
-    expect(custoLiquido(somas(1), mista, G)).toBeNull();
+    // semana 0 mista (margem conhecida 100 + 1 linha sem cmc de 200); semana 1 toda sem cmc (margem null, 2 linhas, 400)
+    alt.cancelada = { valor: [500, 400], margem: [100, null] };
+    alt.canceladaSemCmc = { linhas: [1, 2], valor: [200, 400] };
+    const r = custoLiquido(base, alt, G);
+    expect(r.custo).toBeCloseTo(-(100 + 200 + 0 + 400), 9); // alt perde a margem máxima possível
+    expect(r.linhasMargemLimitada).toBe(3);
+    expect(r.valorMargemLimitada).toBe(600);
+    expect(custoLiquido(base, alt, G, [0]).custo).toBeCloseTo(-300, 9); // idx restringe o limite também
+  });
+  it('sem cmc só na BASE: margem = 0 (a base não ganha crédito pela perda desconhecida)', () => {
+    const base = somas(1);
+    const alt = somas(1);
+    base.cancelada = { valor: [700], margem: [null] };
+    base.canceladaSemCmc = { linhas: [3], valor: [700] };
+    const r = custoLiquido(base, alt, G);
+    expect(r.custo).toBe(0); // se a base contasse margem = valor, a alt ganharia +700 fabricado
+    expect(r.linhasMargemLimitada).toBe(3);
+    expect(r.valorMargemLimitada).toBe(700);
+  });
+  it('null só por falta de dado de capital (janela sem dias corridos)', () => {
+    const base = somas(1, 0);
+    expect(custoLiquido(base, structuredClone(base), G).custo).toBeNull();
   });
   it('braços não pareados → erro', () => {
     expect(() => custoLiquido(somas(2), somas(3), G)).toThrow(/pareados/);
