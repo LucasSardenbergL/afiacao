@@ -156,6 +156,21 @@ pessoa no pedido. **Fica com `normalizarDocumento` de propósito:** comparação
 (`docToUserMap`, `lookup-documento.ts`, `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`) — chave
 dos DOIS lados, não identidade de entrada.
 
+**Deploy — FEITO pela sessão (2026-10-21 11:39Z, PR #3289 mergeado 11:34Z em `5c0ec50`):** o ledger pôs
+`omie-sync`/`omie-vendas-sync` em P1 e `omie-cliente`/`omie-analytics-sync`/`analyze-unified-order` em P2 (só
+fonte). O pacote trouxe também `omie-sync-nfes-recebidas` (P1, de outra entrega), **tirada da leva**: o
+`list_messages` mostrou outra sessão deployando-a às 11:27Z. Colagem do `pendencias:prompt` das 5 via MCP:
+56/56 hashes, 5× **Active**, `No files were edited.`, 1,8 crédito. **1ª atestação pelo envelope**
+(`db:aplicar`, ensaio + real): relé `deploy_sonda_disparar` para `omie-vendas-sync`/`omie-analytics-sync`
+(tentativa #671) e `sonda:sql --so-disparo` para `omie-sync`/`omie-cliente`/`analyze-unified-order`
+(#673, passo 2 no `psql-ro`: **3× DEPLOY CONFIRMADO**). `pendencias:deploy`: as 5 em **CONFERE**
+(`omie-sync` v1.7, `omie-vendas-sync` v1.23). Sensor pós-envio: `EDICAO_DETECTADA` **só** pelo sinal
+`edit_id`/`commit_sha`. Os 2 commits do bot (`aafdc432b`, `b74f4d162`) tocam apenas `types.ts` (+129, tabela
+`venda_gerador_execucao` de outra migration), regenerado e tolerado, sem revert. Arquivos:
+`db/2026-10-21-sonda-*-rotulo-documento*.sql`.
+**Colisão:** o #3291 (confirmação server-side do cadastro) também subia `omie-vendas-sync` para v1.23 e ficou
+`DIRTY` depois deste merge. Ele precisa ir a v1.24 sobre a v1.23 daqui, com redeploy próprio.
+
 **Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
 buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
 entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
