@@ -192,6 +192,14 @@ estado() {
   if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
   printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':' || echo "sem-codigo"
 }
+# SQLSTATE + marca do ramo: o 42501 do DELETE e o do "so o master desfaz" são ramos distintos do mesmo
+# trigger — casar só o código deixa um mascarar o outro (a falsificação de trg_delete mostrou).
+estado_ramo() {
+  local saida c
+  if saida="$(P -qAt -v VERBOSITY=verbose -c "$1" 2>&1)"; then echo "verde"; return; fi
+  c="$(printf '%s\n' "$saida" | grep -oE '[A-Z]+: +[0-9A-Z]{5}:' | head -1 | grep -oE '[0-9A-Z]{5}:$' | tr -d ':')"
+  if printf '%s\n' "$saida" | grep -qF -- "$2"; then echo "${c:-sem-codigo}+ramo"; else echo "${c:-sem-codigo}-outro-ramo"; fi
+}
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
 
@@ -582,7 +590,7 @@ eq "T9a master desfaz" "$(upd "$MASTER" "$DESFAZ WHERE id = '$LA'")" "1"
 eq "T9 desfeito volta a sem_contrapartida NÃO resolvido (a edge refaz a linha)" \
    "$(Pq -c "SELECT status || ',' || (resolvido_por IS NULL) || ',' || (resolvido_em IS NULL) FROM public.fin_ic_matches WHERE id = '$LA'")" "sem_contrapartida,true,true"
 eq "T9b master marca de novo" "$(upd "$MASTER" "$MARCA WHERE id = '$LA'")" "1"
-eq "T10 DELETE da linha marcada (até como postgres) → 42501" "$(estado "DELETE FROM public.fin_ic_matches WHERE id = '$LA'")" "42501"
+eq "T10 DELETE da linha marcada (até como postgres) → 42501 do ramo DELETE" "$(estado_ramo "DELETE FROM public.fin_ic_matches WHERE id = '$LA'" "nao se apaga")" "42501+ramo"
 eq "T11 employee muda só a observação da linha marcada" "$(upd "$STAFF" "UPDATE public.fin_ic_matches SET observacao = 'nota' WHERE id = '$LA'")" "1"
 eq "T12 service_role (sem usuário) não marca → 42501" "$(estado "SET ROLE service_role; SET request.jwt.claim.role = 'service_role'; $MARCA WHERE id = '$LD'")" "42501"
 eq "T13 customer: a RLS não deixa tocar (0 linhas)" "$(upd "$CLIENTE" "UPDATE public.fin_ic_matches SET status = 'sem_contrapartida' WHERE id = '$LA'")" "0"
