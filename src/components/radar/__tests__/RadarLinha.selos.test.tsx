@@ -83,3 +83,29 @@ describe('RadarLinha — selo "sugerido" e motivos do score (bloco 5)', () => {
     expect(screen.getByTestId('radar-score').getAttribute('title')).toMatch(/CNAE tier 1/);
   });
 });
+
+describe('RadarLinha — selo de filial (mesma raiz de CNPJ)', () => {
+  const linha = (irmaos: { irmaos_na_fila: number; irmaos_clientes: number; cliente_nome: string | null } | null) =>
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} irmaos={irmaos} />);
+
+  it('filial de cliente e +N da mesma empresa aparecem com o detalhe no title', () => {
+    linha({ irmaos_na_fila: 2, irmaos_clientes: 1, cliente_nome: 'ACME SA' });
+    expect(screen.getByTestId('selo-filial-cliente').textContent).toBe('filial de cliente');
+    expect(screen.getByTestId('selo-filial-cliente').getAttribute('title')).toBe('Mesma raiz de CNPJ de 1 cliente: ACME SA');
+    expect(screen.getByTestId('selo-filial-fila').textContent).toBe('+2 da mesma empresa');
+  });
+
+  it('sem irmãos ou sem dado: nenhum selo de filial', () => {
+    const { unmount } = linha({ irmaos_na_fila: 0, irmaos_clientes: 0, cliente_nome: null });
+    expect(screen.queryByTestId('selo-filial-cliente')).toBeNull();
+    expect(screen.queryByTestId('selo-filial-fila')).toBeNull();
+    unmount();
+    linha(null);
+    expect(screen.queryByTestId('selo-filial-cliente')).toBeNull();
+  });
+
+  it('o score da linha não muda com o selo', () => {
+    render(<RadarLinha empresa={empresa({ score: 72, score_motivos: ['x'] })} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} irmaos={{ irmaos_na_fila: 3, irmaos_clientes: 1, cliente_nome: null }} />);
+    expect(screen.getByTestId('radar-score').textContent).toBe('72');
+  });
+});

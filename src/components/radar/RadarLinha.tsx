@@ -3,7 +3,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
-  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI,
+  idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI, selosFilial,
+  type IrmaosRaiz,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -21,6 +22,7 @@ export function RadarLinha({
   onAbrir,
   lote = null,
   mostrarMotivos = false,
+  irmaos = null,
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
@@ -31,6 +33,8 @@ export function RadarLinha({
   lote?: LoteIngest | null;
   /** Fila de qualificação ("só sugeridos"): os motivos do score viram TEXTO na linha, para justificar o cadastro. */
   mostrarMotivos?: boolean;
+  /** Outros estabelecimentos da mesma raiz de CNPJ (selo "filial de cliente" / "+N da mesma empresa"); sem dado, sem selo. */
+  irmaos?: IrmaosRaiz | null;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
@@ -38,6 +42,7 @@ export function RadarLinha({
   const rfb = seloRfb(empresa);
   const score = scoreUI(empresa.score, empresa.score_motivos);
   const sugerido = ehSugerido(empresa, lote);
+  const filial = selosFilial(irmaos);
   return (
     <div
       className={cn(
@@ -73,6 +78,16 @@ export function RadarLinha({
               sugerido p/ cadastro
             </Badge>
           )}
+          {filial.map((s) => (
+            <span
+              key={s.chave}
+              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[s.tom])}
+              title={s.titulo}
+              data-testid={`selo-filial-${s.chave}`}
+            >
+              {s.texto}
+            </span>
+          ))}
           {rfb && (
             <span
               className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM[rfb.tom])}

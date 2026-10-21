@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
-  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila,
+  formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila, selosFilial, textoFilialFicha,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -151,5 +151,34 @@ describe('seloRfb', () => {
   it('formatarDataIso não interpreta fuso e devolve o texto cru quando não é ISO', () => {
     expect(formatarDataIso('2026-01-01')).toBe('01/01/2026');
     expect(formatarDataIso('x')).toBe('x');
+  });
+});
+
+describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
+  const sem = { irmaos_na_fila: 0, irmaos_clientes: 0, cliente_nome: null };
+  it('sem dado (carregando/falhou) não fabrica selo', () => {
+    expect(selosFilial(null)).toEqual([]);
+    expect(selosFilial(undefined)).toEqual([]);
+  });
+  it('sem irmãos: nenhum selo, e a ficha diz que verificou', () => {
+    expect(selosFilial(sem)).toEqual([]);
+    expect(textoFilialFicha('ok', sem)).toBe('nenhum outro estabelecimento na fila nem cliente com a mesma raiz');
+  });
+  it('filial de cliente vem antes e nomeia o cliente', () => {
+    const s = selosFilial({ irmaos_na_fila: 2, irmaos_clientes: 1, cliente_nome: 'ACME SA' });
+    expect(s.map((x) => x.chave)).toEqual(['cliente', 'fila']);
+    expect(s[0]).toMatchObject({ texto: 'filial de cliente', tom: 'warning', titulo: 'Mesma raiz de CNPJ de 1 cliente: ACME SA' });
+    expect(s[1]).toMatchObject({ texto: '+2 da mesma empresa', tom: 'neutro', titulo: '2 outros estabelecimentos desta empresa na fila' });
+  });
+  it('singular e plural; cliente sem nome não inventa nome', () => {
+    expect(selosFilial({ irmaos_na_fila: 1, irmaos_clientes: 3, cliente_nome: null }).map((x) => x.titulo))
+      .toEqual(['Mesma raiz de CNPJ de 3 clientes', '1 outro estabelecimento desta empresa na fila']);
+  });
+  it('ficha distingue carregando, falha e resposta (ausente ≠ zero)', () => {
+    expect(textoFilialFicha('carregando', null)).toBe('verificando…');
+    expect(textoFilialFicha('falhou', null)).toBe('não consegui verificar');
+    expect(textoFilialFicha('falhou', sem)).toBe('não consegui verificar');
+    expect(textoFilialFicha('ok', { irmaos_na_fila: 1, irmaos_clientes: 0, cliente_nome: null }))
+      .toBe('1 outro estabelecimento desta empresa na fila');
   });
 });
