@@ -38,9 +38,27 @@ Ordem corrigida pelo Codex: **(a) testes negativos nos 13 HANDLERS** (sem token 
 - **J2** `falsificacao` (16 min): fatiar em 2–3 jobs **obrigatórios** (todas no `needs` do `validate`), nunca mover para main/schedule — o próprio `ci.yml:899` registra falsificação vermelha pós-merge. `gates:rapidos` não substitui.
 - **J3** Medir **no PR** (tempo até `validate`, fila, minutos de runner), antes/depois no corpo do PR. Pronto: `validate` ≤ 12 min no PR.
 
-### 4 · I1 · Casts que desligam o tipo — **esforço M**
+### 4 · I1 · Casts que desligam o tipo — **esforço M** · ✅ **feito (2026-10-21)**
 Começar pelos **caminhos ativos**: `usePedidosProgramados.ts:73` (inclui wrapper `from(name as never)`) e reposição; **não** por `useTarefas` (módulo `congelado` ✅). Cada PR: remove casts literais **e** de retorno (`data as X`), baixa a baseline **e o piso** (`castsLiterais: 40` → o que sobrar). Pronto: baseline = piso = contagem real, 0 nos módulos ativos.
 
+**Fecho (2026-10-21, medido na main `b79f1dfd8`):** 0 `as never`/`as unknown as` em código nos módulos ativos, exceto os residuais documentados abaixo. `casts:stale` termina em from/rpc **16/12**, com piso `castsLiterais` **28** = contagem real (`CASTS-STALE-OK`). O que sobra está todo em módulos congelados: knowledge-base 25, loja-afiacao 14, prime 1, producao 8, tarefas 26 e telefonia-whatsapp-rota 34 (contagem só de código, sem comentários). PRs, em ordem:
+1. #3158 pedidos programados ([casts-pedidos-programados.md](../../../historico/casts-pedidos-programados.md))
+2. #3162 reposição ([casts-reposicao.md](../../../historico/casts-reposicao.md))
+3. #3187 governança/DES ([casts-governanca-des.md](../../../historico/casts-governanca-des.md))
+4. #3228 admin-crm + tintométrico ([casts-admin-crm-tint.md](../../../historico/casts-admin-crm-tint.md))
+5. #3244 estoque-recebimento ([casts-estoque-recebimento.md](../../../historico/casts-estoque-recebimento.md))
+6. #3257 e #3262 plataforma, com `comNulo` em `src/lib/rpc-args.ts` ([casts-plataforma.md](../../../historico/casts-plataforma.md))
+7. #3265 vendas ([casts-vendas.md](../../../historico/casts-vendas.md))
+8. #3268 caça ([casts-caca.md](../../../historico/casts-caca.md))
+9. #3272 financeiro, money-path ([casts-financeiro.md](../../../historico/casts-financeiro.md))
+10. #3273 farmer-inteligencia, pela sessão-mãe ([casts-farmer-inteligencia.md](../../../historico/casts-farmer-inteligencia.md))
+
+Residuais deliberados em módulo ativo, cada um com o porquê no doc do módulo:
+- `useRaioXMutacoes` (reposição, 2): NULL semântico em arg de RPC sem DEFAULT. Nasceu antes do `comNulo`, que hoje cobre essa classe; candidato a sair quando o raio-X for revisitado.
+- `useVendaPainel` (farmer-inteligencia, 1): `venda_painel`/`venda_repasse_candidatos` ainda não estão no `types.ts`. Sai na próxima regeneração.
+- `useExcecoesGestor` (governança, 3): família tarefas, congelada por desenho.
+
+Defeitos que os casts escondiam (detalhe nos docs): 3 queries 400 na reposição; 4 KPIs de /vendas/ferramentas sobre tabelas inexistentes; o DRE consolidado da tela Intercompany quebrava ao renderizar; a RPC intercompany aplica a eliminação ao CMV com o sinal trocado (correção SQL proposta em sessão própria).
 ### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · 🧭
 Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções financeiras aplicadas à mão que um `CREATE OR REPLACE` do repo **apagaria**). Copiar o corpo para `db/` não basta: o auditor reconstrói a expectativa das migrations de `origin/main` (`audit-deriva-corpo-prod.ts:245`) — e migrations são intocáveis (DR). Decisão 🧭 #1 abaixo.
 
@@ -68,7 +86,7 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 
 | KPI | Baseline (2026-10-18) | Fim do ciclo 1 | Ciclo 2 (2026-10-20) |
 |---|---|---|---|
-| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **20/21 · 41** (2026-10-21: plataforma #3257/#3262, vendas #3265); faltam 15 em ativos (farmer-inteligencia 9, financeiro 4, governanca 2) com a sessão irmã; 26 em congelados ficam |
+| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **16/12 · 28** (2026-10-21, item 4 ✅: + vendas #3265, caça #3268, financeiro #3272, farmer #3273); em módulo ativo restam só os 6 residuais documentados em §2 item 4; o resto está em congelados |
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
