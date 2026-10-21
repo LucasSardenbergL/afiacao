@@ -11,8 +11,12 @@
 #   S   status não confirmado (divergencia_valor) é ignorado
 #   P   par confirmado que toca o mês e NÃO é elegível → eliminação/consolidado NULL nas 4 linhas:
 #       P1 sem contrapartida · P2 valor divergente · P3 CP no mês seguinte (os DOIS meses pendem) ·
-#       P4 CP fora do CMV · P5 CR cancelado · P6 CP criado depois do snapshot · P7 CR em 2 pares ·
-#       P8 eliminação acima do que a categoria compôs · P9 categoria com 2 linhas · P10 CR de outra empresa
+#       P4 CP fora do CMV · P5 CR cancelado · P13 CR sem status · P6/P11/P11b snapshot que não reflete
+#       os títulos de hoje (CP novo na categoria, CR alterado, o par alterado — parecer Codex adversarial) ·
+#       P7 CR em 2 pares · P8 eliminação acima do que a categoria compôs · P9 categoria com 2 linhas ·
+#       P10 CR de outra empresa
+#   Os snapshots da semente são CALCULADOS dos títulos com o recorte do motor (t_calcular), para que a
+#   consistência composição × títulos atuais seja testável.
 #   G   gate: authenticated sem papel → 42501; employee, master e service_role leem; anon sem EXECUTE
 #   MIG PRE aceita o predecessor; re-aplicar passa; PRE recusa corpo estranho; grant extra sobrevive
 #
@@ -28,7 +32,7 @@ MIG_PREDECESSOR="$REPO_ROOT/supabase/migrations/20260525020001_fin_rpc_gate_auth
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="sinal:A1 so_receita:A1 coalesce_bruto:N1 nulo_parcial:N2 sem_escopo:C1 sem_status:S1 sem_pendente:P1 valor_igual:P2 mesmo_mes:P3a sem_categoria:P4 multi_linha:P9 cancelado:P5 frescor:P6 uso_unico:P7 teto:P8 empresa_do_titulo:P10 sem_gate:G1"
+  SABOTAGENS="sinal:A1 so_receita:A1 coalesce_bruto:N1 nulo_parcial:N2 sem_escopo:C1 sem_status:S1 sem_pendente:P1 valor_igual:P2 mesmo_mes:P3a sem_categoria:P4 multi_linha:P9 cancelado:P5 status_nulo:P13 consist_d:P6 consist_r:P11 uso_unico:P7 teto:P8 empresa_do_titulo:P10 sem_gate:G1"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-fin-consolidado-ic.XXXXXX")"
   echo "══ CONTROLE (mesma invocação, locale ${LOCALE_TESTE:-C}) ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1 || ! grep -q "FIM-OK fin-consolidado-ic" "$LOGDIR/controle.log"; then
@@ -90,10 +94,14 @@ case "${SABOTAGEM:-}" in
   sem_pendente)   sabotar "count(*) FILTER (WHERE NOT j.ok) > 0 OR " "" ;;
   valor_igual)    sabotar " AND e.cr_valor = e.cp_valor" "" ;;
   mesmo_mes)      sabotar "AND e.cr_no_mes AND e.cp_no_mes" "AND e.cr_no_mes" ;;
-  sem_categoria)  sabotar "            AND e.comp_r_valor IS NOT NULL AND e.comp_d_valor IS NOT NULL" "            AND true" ;;
+  sem_categoria)  sabotar "THEN (x.comp_d ->> 'cmv')::numeric END AS comp_d_valor" \
+                          "THEN (x.comp_d ->> 'cmv')::numeric ELSE (SELECT sum(j.v::numeric) FROM jsonb_each_text(x.comp_d) AS j(k, v)) END AS comp_d_valor" ;;
   multi_linha)    sabotar "AND (x.comp_d - 'cmv') = '{}'::jsonb" "" ;;
-  cancelado)      sabotar "AND e.cr_status IS DISTINCT FROM 'CANCELADO' AND e.cp_status IS DISTINCT FROM 'CANCELADO'" "" ;;
-  frescor)        sabotar "AND e.cr_criado <= e.so_calc AND e.cp_criado <= e.sd_calc" "" ;;
+  cancelado)      sabotar "AND e.cr_status <> 'CANCELADO' AND e.cp_status <> 'CANCELADO'" "" ;;
+  status_nulo)    sabotar "AND e.cr_status <> 'CANCELADO' AND e.cp_status <> 'CANCELADO'" \
+                          "AND e.cr_status IS DISTINCT FROM 'CANCELADO' AND e.cp_status IS DISTINCT FROM 'CANCELADO'" ;;
+  consist_r)      sabotar "AND abs(e.cr_cat_atual - e.comp_r_valor) <= 0.005" "AND e.comp_r_valor IS NOT NULL" ;;
+  consist_d)      sabotar "AND abs(e.cp_cat_atual - e.comp_d_valor) <= 0.005" "AND e.comp_d_valor IS NOT NULL" ;;
   uso_unico)      sabotar "AND e.usos_cr = 1 AND e.usos_cp = 1" "" ;;
   teto)           sabotar " OR (SELECT t.ok FROM teto t) IS FALSE" "" ;;
   empresa_do_titulo) sabotar "AND e.cr_empresa = e.empresa_origem AND e.cp_empresa = e.empresa_destino" "" ;;
@@ -183,34 +191,59 @@ CREATE TABLE public.fin_ic_matches (
   CHECK (empresa_origem <> empresa_destino), CHECK (cr_id IS NOT NULL OR cp_id IS NOT NULL)
 );
 
--- Semente: as 3 empresas no mês, competência, calculadas em 1º do mês seguinte.
--- oben vende "Venda" (receita_bruta 1000); colacor compra "Compra mercadoria" (cmv 1500) e "Servicos"
--- (despesas 200); colacor_sc separado. Totais: receita 3500 · cmv 2400 · despesas 350 · resultado 750.
-CREATE FUNCTION public.t_seed_mes(p_ano int, p_mes int, p_empresas text[] DEFAULT ARRAY['oben','colacor','colacor_sc'],
-                                  p_comp_cmv jsonb DEFAULT '{"cmv": 1500}')
+-- Semente fiel ao motor: os snapshots são CALCULADOS a partir dos títulos (mesmo recorte de competência:
+-- emissão no mês, status <> 'CANCELADO'; mesma chave de composição), para que a consistência
+-- composição × títulos atuais seja testável. O mapa categoria → linha é o do motor, reduzido à semente.
+CREATE TABLE public.t_mapa (chave text PRIMARY KEY, linha text NOT NULL);
+INSERT INTO public.t_mapa VALUES ('Venda', 'receita_bruta'), ('Compra mercadoria', 'cmv'), ('Insumo', 'cmv'),
+  ('Aluguel', 'despesas_operacionais'), ('Servicos', 'despesas_operacionais');
+-- Títulos de base no dia 5. Sem par: receita 3400 · cmv 2300 · despesas 350 · resultado 750.
+CREATE FUNCTION public.t_titulos(p_ano int, p_mes int, p_compra_colacor numeric DEFAULT 1400)
 RETURNS void LANGUAGE sql AS $$
+  INSERT INTO public.fin_contas_receber (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
+  SELECT x.c, x.v, make_date(p_ano, p_mes, 5), 'RECEBIDO', 'Venda', make_date(p_ano, p_mes, 5)
+    FROM (VALUES ('oben', 900), ('colacor', 2000), ('colacor_sc', 500)) AS x(c, v);
+  INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
+  SELECT x.c, x.v, make_date(p_ano, p_mes, 5), 'PAGO', x.k, make_date(p_ano, p_mes, 5)
+    FROM (VALUES ('oben', 'Insumo', 600::numeric), ('oben', 'Aluguel', 100), ('colacor', 'Compra mercadoria', p_compra_colacor),
+                 ('colacor', 'Servicos', 200), ('colacor_sc', 'Compra mercadoria', 300), ('colacor_sc', 'Servicos', 50)) AS x(c, k, v);
+$$;
+CREATE FUNCTION public.t_calcular(p_ano int, p_mes int, p_empresas text[] DEFAULT ARRAY['oben','colacor','colacor_sc'])
+RETURNS void LANGUAGE sql AS $$
+  WITH t AS (
+    SELECT 'r' AS lado, company, COALESCE(NULLIF(categoria_descricao, ''), NULLIF(categoria_codigo, ''), 'Sem categoria') AS chave,
+           valor_documento AS v
+      FROM public.fin_contas_receber
+     WHERE status_titulo <> 'CANCELADO' AND date_trunc('month', data_emissao) = make_date(p_ano, p_mes, 1)
+    UNION ALL
+    SELECT 'd', company, COALESCE(NULLIF(categoria_descricao, ''), NULLIF(categoria_codigo, ''), 'Sem categoria'), valor_documento
+      FROM public.fin_contas_pagar
+     WHERE status_titulo <> 'CANCELADO' AND date_trunc('month', data_emissao) = make_date(p_ano, p_mes, 1)
+  ), c AS (
+    SELECT t.lado, t.company, t.chave, COALESCE(m.linha, 'despesas_operacionais') AS linha, sum(t.v) AS v
+      FROM t LEFT JOIN public.t_mapa m ON m.chave = t.chave GROUP BY 1, 2, 3, 4
+  )
   INSERT INTO public.fin_dre_snapshots (company, ano, mes, regime, receita_bruta, cmv, despesas_operacionais,
                                         resultado_liquido, detalhamento, calculated_at)
-  SELECT e.company, p_ano, p_mes, 'competencia', e.rb, e.cmv, e.desp, e.res,
-         jsonb_build_object('composicao_receitas', e.comp_r, 'composicao_despesas', e.comp_d),
+  SELECT e, p_ano, p_mes, 'competencia',
+         COALESCE(sum(c.v) FILTER (WHERE c.linha = 'receita_bruta'), 0),
+         COALESCE(sum(c.v) FILTER (WHERE c.linha = 'cmv'), 0),
+         COALESCE(sum(c.v) FILTER (WHERE c.linha = 'despesas_operacionais'), 0),
+         COALESCE(sum(c.v) FILTER (WHERE c.linha = 'receita_bruta'), 0) - COALESCE(sum(c.v) FILTER (WHERE c.linha = 'cmv'), 0)
+           - COALESCE(sum(c.v) FILTER (WHERE c.linha = 'despesas_operacionais'), 0),
+         jsonb_build_object(
+           'composicao_receitas', COALESCE(jsonb_object_agg(c.chave, jsonb_build_object(c.linha, c.v)) FILTER (WHERE c.lado = 'r'), '{}'::jsonb),
+           'composicao_despesas', COALESCE(jsonb_object_agg(c.chave, jsonb_build_object(c.linha, c.v)) FILTER (WHERE c.lado = 'd'), '{}'::jsonb)),
          (make_date(p_ano, p_mes, 1) + interval '1 month')::timestamptz
-    FROM (VALUES
-      ('oben',       1000, 600,  100, 300, '{"Venda": {"receita_bruta": 1000}}'::jsonb,
-                                            '{"Insumo": {"cmv": 600}, "Aluguel": {"despesas_operacionais": 100}}'::jsonb),
-      ('colacor',    2000, 1500, 200, 300, '{"Venda": {"receita_bruta": 2000}}'::jsonb,
-                     jsonb_build_object('Compra mercadoria', p_comp_cmv, 'Servicos', '{"despesas_operacionais": 200}'::jsonb)),
-      ('colacor_sc', 500,  300,  50,  150, '{"Venda": {"receita_bruta": 500}}'::jsonb,
-                                            '{"Compra mercadoria": {"cmv": 300}, "Servicos": {"despesas_operacionais": 50}}'::jsonb)
-    ) AS e(company, rb, cmv, desp, res, comp_r, comp_d)
-   WHERE e.company = ANY (p_empresas);
+    FROM unnest(p_empresas) AS e LEFT JOIN c ON c.company = e
+   GROUP BY e;
 $$;
--- Um par CR(origem)→CP(destino). Datas e criação controláveis; devolve nada (o teste lê pela RPC).
+-- Um par CR(origem)→CP(destino), criado na emissão.
 CREATE FUNCTION public.t_par(p_origem text, p_destino text, p_emis_cr date, p_emis_cp date,
                              p_valor_cr numeric DEFAULT 100, p_valor_cp numeric DEFAULT 100,
                              p_status text DEFAULT 'auto_matched', p_cat_cr text DEFAULT 'Venda',
                              p_cat_cp text DEFAULT 'Compra mercadoria', p_status_cr text DEFAULT 'RECEBIDO',
-                             p_criado_cp timestamptz DEFAULT NULL, p_com_cp boolean DEFAULT true,
-                             p_empresa_cr text DEFAULT NULL)
+                             p_com_cp boolean DEFAULT true, p_empresa_cr text DEFAULT NULL)
 RETURNS uuid LANGUAGE plpgsql AS $$
 DECLARE v_cr uuid; v_cp uuid;
 BEGIN
@@ -218,7 +251,7 @@ BEGIN
   VALUES (COALESCE(p_empresa_cr, p_origem), p_valor_cr, p_emis_cr, p_status_cr, p_cat_cr, p_emis_cr::timestamptz) RETURNING id INTO v_cr;
   IF p_com_cp THEN
     INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
-    VALUES (p_destino, p_valor_cp, p_emis_cp, 'PAGO', p_cat_cp, COALESCE(p_criado_cp, p_emis_cp::timestamptz)) RETURNING id INTO v_cp;
+    VALUES (p_destino, p_valor_cp, p_emis_cp, 'PAGO', p_cat_cp, p_emis_cp::timestamptz) RETURNING id INTO v_cp;
   END IF;
   INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, cp_id, valor_origem, valor_destino, status)
   VALUES (p_origem, p_destino, v_cr, v_cp, p_valor_cr, CASE WHEN p_com_cp THEN p_valor_cp END, p_status);
@@ -242,64 +275,87 @@ le() { Pq -c "SET request.jwt.claim.role = 'service_role';
   SELECT string_agg(r.conta || '=' || COALESCE(r.total_bruto::text, '(null)') || '/' || COALESCE(r.eliminacoes::text, '(null)')
                     || '/' || COALESCE(r.total_consolidado::text, '(null)'), ';' ORDER BY r.n)
     FROM public.fin_consolidado_intercompany($1, $2) WITH ORDINALITY AS r(conta, total_bruto, eliminacoes, total_consolidado, n)"; }
-BASE="receita_bruta=3500/0/3500;cmv=2400/0/2400;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
-PEND="receita_bruta=3500/(null)/(null);cmv=2400/(null)/(null);despesas_operacionais=350/(null)/(null);resultado_liquido=750/(null)/(null)"
+# Só eliminação/consolidado (os cenários de pendência têm brutos diferentes entre si).
+le_ec() { Pq -c "SET request.jwt.claim.role = 'service_role';
+  SELECT string_agg(r.conta || '=' || COALESCE(r.eliminacoes::text, '(null)') || '/' || COALESCE(r.total_consolidado::text, '(null)'), ';' ORDER BY r.n)
+    FROM public.fin_consolidado_intercompany($1, $2) WITH ORDINALITY AS r(conta, total_bruto, eliminacoes, total_consolidado, n)"; }
+PEND="receita_bruta=(null)/(null);cmv=(null)/(null);despesas_operacionais=(null)/(null);resultado_liquido=(null)/(null)"
+mes() { Pq -c "$1" >/dev/null; }   # semente de um cenário
 
 # ── A: par elegível ──
-Pq -c "SELECT public.t_seed_mes(2026, 1); SELECT public.t_par('oben', 'colacor', '2026-01-10', '2026-01-12')" >/dev/null
+mes "SELECT public.t_titulos(2026, 1); SELECT public.t_par('oben', 'colacor', '2026-01-10', '2026-01-12'); SELECT public.t_calcular(2026, 1)"
 eq "A1 receita e cmv caem pelo mesmo valor, despesas e resultado intactos" "$(le 2026 1)" \
    "receita_bruta=3500/-100/3400;cmv=2400/-100/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
-Pq -c "SELECT public.t_seed_mes(2026, 2)" >/dev/null
-eq "A2 mês com snapshots e sem par: eliminação 0" "$(le 2026 2)" "$BASE"
+mes "SELECT public.t_titulos(2026, 2); SELECT public.t_calcular(2026, 2)"
+eq "A2 mês com snapshots e sem par: eliminação 0" "$(le 2026 2)" \
+   "receita_bruta=3400/0/3400;cmv=2300/0/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
 
 # ── N: ausente ≠ zero ──
 eq "N1 mês sem snapshot: bruto e consolidado NULL" "$(le 2030 1)" \
    "receita_bruta=(null)/0/(null);cmv=(null)/0/(null);despesas_operacionais=(null)/0/(null);resultado_liquido=(null)/0/(null)"
-Pq -c "SELECT public.t_seed_mes(2026, 3); UPDATE public.fin_dre_snapshots SET cmv = NULL WHERE ano = 2026 AND mes = 3 AND company = 'oben'" >/dev/null
+mes "SELECT public.t_titulos(2026, 3); SELECT public.t_calcular(2026, 3);
+     UPDATE public.fin_dre_snapshots SET cmv = NULL WHERE ano = 2026 AND mes = 3 AND company = 'oben'"
 eq "N2 cmv NULL num snapshot: a conta cmv sai NULL, as outras não" "$(le 2026 3)" \
-   "receita_bruta=3500/0/3500;cmv=(null)/0/(null);despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
+   "receita_bruta=3400/0/3400;cmv=(null)/0/(null);despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
 
 # ── C: escopo da soma parcial ──
-Pq -c "SELECT public.t_seed_mes(2026, 4, ARRAY['oben','colacor']); SELECT public.t_par('oben', 'colacor_sc', '2026-04-10', '2026-04-10')" >/dev/null
+mes "SELECT public.t_titulos(2026, 4); SELECT public.t_par('oben', 'colacor_sc', '2026-04-10', '2026-04-10'); SELECT public.t_calcular(2026, 4, ARRAY['oben','colacor'])"
 eq "C1 destino sem snapshot: par fora da soma, nem elimina nem pende" "$(le 2026 4)" \
-   "receita_bruta=3000/0/3000;cmv=2100/0/2100;despesas_operacionais=300/0/300;resultado_liquido=600/0/600"
-Pq -c "SELECT public.t_seed_mes(2026, 5, ARRAY['oben','colacor']); SELECT public.t_par('colacor_sc', 'colacor', '2026-05-10', '2026-05-10')" >/dev/null
+   "receita_bruta=3000/0/3000;cmv=2000/0/2000;despesas_operacionais=300/0/300;resultado_liquido=700/0/700"
+mes "SELECT public.t_titulos(2026, 5); SELECT public.t_par('colacor_sc', 'colacor', '2026-05-10', '2026-05-10'); SELECT public.t_calcular(2026, 5, ARRAY['oben','colacor'])"
 eq "C2 origem sem snapshot: par fora da soma" "$(le 2026 5)" \
-   "receita_bruta=3000/0/3000;cmv=2100/0/2100;despesas_operacionais=300/0/300;resultado_liquido=600/0/600"
+   "receita_bruta=2900/0/2900;cmv=2100/0/2100;despesas_operacionais=300/0/300;resultado_liquido=500/0/500"
 
 # ── S: status não confirmado ──
-Pq -c "SELECT public.t_seed_mes(2026, 6); SELECT public.t_par('oben', 'colacor', '2026-06-10', '2026-06-10', p_status => 'divergencia_valor')" >/dev/null
-eq "S1 divergencia_valor não entra" "$(le 2026 6)" "$BASE"
+mes "SELECT public.t_titulos(2026, 6); SELECT public.t_par('oben', 'colacor', '2026-06-10', '2026-06-10', p_status => 'divergencia_valor'); SELECT public.t_calcular(2026, 6)"
+eq "S1 divergencia_valor não entra" "$(le 2026 6)" \
+   "receita_bruta=3500/0/3500;cmv=2400/0/2400;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
 
 # ── P: confirmado e não elegível → consolidado desconhecido ──
-Pq -c "SELECT public.t_seed_mes(2026, 7); SELECT public.t_par('oben', 'colacor', '2026-07-10', NULL, p_status => 'manual_matched', p_com_cp => false)" >/dev/null
-eq "P1 sem contrapartida aprovado à mão" "$(le 2026 7)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2026, 8); SELECT public.t_par('oben', 'colacor', '2026-08-10', '2026-08-10', p_valor_cp => 96, p_status => 'manual_matched')" >/dev/null
-eq "P2 valor divergente aprovado à mão" "$(le 2026 8)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2026, 9); SELECT public.t_seed_mes(2026, 10); SELECT public.t_par('oben', 'colacor', '2026-09-30', '2026-10-01')" >/dev/null
-eq "P3a CR no mês, CP no seguinte: o mês do CR pende" "$(le 2026 9)" "$PEND"
-eq "P3b ... e o mês do CP também" "$(le 2026 10)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2026, 11); SELECT public.t_par('oben', 'colacor', '2026-11-10', '2026-11-10', p_cat_cp => 'Servicos')" >/dev/null
-eq "P4 CP compôs despesas, não cmv" "$(le 2026 11)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2026, 12); SELECT public.t_par('oben', 'colacor', '2026-12-10', '2026-12-10', p_status_cr => 'CANCELADO')" >/dev/null
-eq "P5 CR cancelado (o motor não o somou)" "$(le 2026 12)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2025, 1); SELECT public.t_par('oben', 'colacor', '2025-01-10', '2025-01-10', p_criado_cp => '2025-02-05')" >/dev/null
-eq "P6 CP criado depois do cálculo do snapshot" "$(le 2025 1)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2025, 2)" >/dev/null
-Pq -c "DO \$\$ DECLARE v_cr uuid; v_cp uuid; BEGIN
-  v_cr := public.t_par('oben', 'colacor', '2025-02-10', '2025-02-10');
-  INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
-  VALUES ('colacor', 100, '2025-02-11', 'PAGO', 'Compra mercadoria', '2025-02-11') RETURNING id INTO v_cp;
-  INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, cp_id, valor_origem, valor_destino, status)
-  VALUES ('oben', 'colacor', v_cr, v_cp, 100, 100, 'manual_matched'); END \$\$" >/dev/null
-eq "P7a semente: o CR está em 2 pares confirmados" "$(Pq -c "SELECT count(*) FROM public.fin_ic_matches m JOIN public.fin_contas_receber cr ON cr.id = m.cr_id WHERE cr.data_emissao = '2025-02-10'")" "2"
-eq "P7 o mesmo CR em 2 pares" "$(le 2025 2)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2025, 3, p_comp_cmv => '{\"cmv\": 50}'); SELECT public.t_par('oben', 'colacor', '2025-03-10', '2025-03-10')" >/dev/null
-eq "P8 eliminação acima do que a categoria compôs" "$(le 2025 3)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2025, 4, p_comp_cmv => '{\"cmv\": 1400, \"despesas_operacionais\": 100}'); SELECT public.t_par('oben', 'colacor', '2025-04-10', '2025-04-10')" >/dev/null
-eq "P9 categoria do CP compôs 2 linhas" "$(le 2025 4)" "$PEND"
-Pq -c "SELECT public.t_seed_mes(2025, 5); SELECT public.t_par('oben', 'colacor', '2025-05-10', '2025-05-10', p_empresa_cr => 'colacor_sc')" >/dev/null
-eq "P10 CR de outra empresa que não a origem do par" "$(le 2025 5)" "$PEND"
+mes "SELECT public.t_titulos(2026, 7); SELECT public.t_par('oben', 'colacor', '2026-07-10', NULL, p_status => 'manual_matched', p_com_cp => false); SELECT public.t_calcular(2026, 7)"
+eq "P1 sem contrapartida aprovado à mão (o bruto segue)" "$(le 2026 7)" \
+   "receita_bruta=3500/(null)/(null);cmv=2300/(null)/(null);despesas_operacionais=350/(null)/(null);resultado_liquido=850/(null)/(null)"
+mes "SELECT public.t_titulos(2026, 8); SELECT public.t_par('oben', 'colacor', '2026-08-10', '2026-08-10', p_valor_cp => 96, p_status => 'manual_matched'); SELECT public.t_calcular(2026, 8)"
+eq "P2 valor divergente aprovado à mão" "$(le_ec 2026 8)" "$PEND"
+mes "SELECT public.t_titulos(2026, 9); SELECT public.t_titulos(2026, 10); SELECT public.t_par('oben', 'colacor', '2026-09-30', '2026-10-01');
+     SELECT public.t_calcular(2026, 9); SELECT public.t_calcular(2026, 10)"
+eq "P3a CR no mês, CP no seguinte: o mês do CR pende" "$(le_ec 2026 9)" "$PEND"
+eq "P3b ... e o mês do CP também" "$(le_ec 2026 10)" "$PEND"
+mes "SELECT public.t_titulos(2026, 11); SELECT public.t_par('oben', 'colacor', '2026-11-10', '2026-11-10', p_cat_cp => 'Servicos'); SELECT public.t_calcular(2026, 11)"
+eq "P4 CP compôs despesas, não cmv" "$(le_ec 2026 11)" "$PEND"
+mes "SELECT public.t_titulos(2026, 12); SELECT public.t_par('oben', 'colacor', '2026-12-10', '2026-12-10', p_status_cr => 'CANCELADO'); SELECT public.t_calcular(2026, 12)"
+eq "P5 CR cancelado (o motor não o somou)" "$(le_ec 2026 12)" "$PEND"
+mes "SELECT public.t_titulos(2025, 1); SELECT public.t_par('oben', 'colacor', '2025-01-10', '2025-01-10'); SELECT public.t_calcular(2025, 1);
+     INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
+     VALUES ('colacor', 50, '2025-01-20', 'PAGO', 'Compra mercadoria', '2025-01-20')"
+eq "P6 CP novo na categoria do destino depois do cálculo: snapshot velho" "$(le_ec 2025 1)" "$PEND"
+mes "SELECT public.t_titulos(2025, 2); SELECT public.t_par('oben', 'colacor', '2025-02-10', '2025-02-10'); SELECT public.t_calcular(2025, 2);
+     UPDATE public.fin_contas_receber SET valor_documento = 950 WHERE company = 'oben' AND data_emissao = '2025-02-05'"
+eq "P11 CR da categoria da origem mudou de valor depois do cálculo" "$(le_ec 2025 2)" "$PEND"
+mes "SELECT public.t_titulos(2025, 3); SELECT public.t_par('oben', 'colacor', '2025-03-10', '2025-03-10'); SELECT public.t_calcular(2025, 3);
+     UPDATE public.fin_contas_receber SET valor_documento = 200 WHERE company = 'oben' AND data_emissao = '2025-03-10';
+     UPDATE public.fin_contas_pagar SET valor_documento = 200 WHERE company = 'colacor' AND data_emissao = '2025-03-10'"
+eq "P11b o par inteiro mudou de valor depois do cálculo (cenário do Codex)" "$(le_ec 2025 3)" "$PEND"
+mes "SELECT public.t_titulos(2025, 4);
+     DO \$\$ DECLARE v_cr uuid; v_cp uuid; BEGIN
+       v_cr := public.t_par('oben', 'colacor', '2025-04-10', '2025-04-10');
+       INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, created_at)
+       VALUES ('colacor', 100, '2025-04-11', 'PAGO', 'Compra mercadoria', '2025-04-11') RETURNING id INTO v_cp;
+       INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, cp_id, valor_origem, valor_destino, status)
+       VALUES ('oben', 'colacor', v_cr, v_cp, 100, 100, 'manual_matched'); END \$\$;
+     SELECT public.t_calcular(2025, 4)"
+eq "P7a semente: o CR está em 2 pares confirmados" "$(Pq -c "SELECT count(*) FROM public.fin_ic_matches m JOIN public.fin_contas_receber cr ON cr.id = m.cr_id WHERE cr.data_emissao = '2025-04-10'")" "2"
+eq "P7 o mesmo CR em 2 pares" "$(le_ec 2025 4)" "$PEND"
+mes "SELECT public.t_titulos(2025, 5, p_compra_colacor => -150); SELECT public.t_par('oben', 'colacor', '2025-05-10', '2025-05-10'); SELECT public.t_calcular(2025, 5)"
+eq "P8 eliminação acima do que a categoria compôs (-150 + 100 = -50)" "$(le_ec 2025 5)" "$PEND"
+mes "SELECT public.t_titulos(2025, 6); SELECT public.t_par('oben', 'colacor', '2025-06-10', '2025-06-10'); SELECT public.t_calcular(2025, 6);
+     UPDATE public.fin_dre_snapshots SET detalhamento = jsonb_set(detalhamento, '{composicao_despesas,Compra mercadoria,despesas_operacionais}', '0')
+      WHERE ano = 2025 AND mes = 6 AND company = 'colacor'"
+eq "P9 categoria do CP compôs 2 linhas" "$(le_ec 2025 6)" "$PEND"
+mes "SELECT public.t_titulos(2025, 7); SELECT public.t_par('oben', 'colacor', '2025-07-10', '2025-07-10', p_empresa_cr => 'colacor_sc'); SELECT public.t_calcular(2025, 7)"
+eq "P10 CR de outra empresa que não a origem do par" "$(le_ec 2025 7)" "$PEND"
+mes "SELECT public.t_titulos(2025, 8); SELECT public.t_par('oben', 'colacor', '2025-08-10', '2025-08-10', p_status_cr => NULL); SELECT public.t_calcular(2025, 8)"
+eq "P13 CR sem status (o motor não o somou)" "$(le_ec 2025 8)" "$PEND"
 eq "P0 controle: o mês elegível segue elegível" "$(le 2026 1)" \
    "receita_bruta=3500/-100/3400;cmv=2400/-100/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
 

@@ -19,9 +19,11 @@
 --    o par com uma empresa ausente é transação com quem está FORA da soma — nem elimina, nem pende.
 --  • Elegível = PROVADO pelo próprio snapshot, sem espelhar o classificador do motor: a categoria do CR
 --    compôs SÓ receita_bruta na origem e a do CP SÓ cmv no destino (detalhamento.composicao_*), CR e CP
---    emitidos no mês, mesma empresa do par, nenhum CANCELADO (o motor os exclui), valor_documento igual e
---    > 0, criados antes do cálculo do snapshot, cada título em um único par, e a soma eliminada de uma
---    categoria ≤ o que ela compôs. E = valor_documento (o valor que o motor usa em competência).
+--    emitidos no mês, mesma empresa do par, nenhum CANCELADO ou sem status (o motor os exclui),
+--    valor_documento igual e > 0, cada título em um único par, a soma eliminada de uma categoria ≤ o que
+--    ela compôs, e o snapshot FIEL aos títulos de hoje: a soma atual da categoria (mesmo recorte do motor)
+--    bate com a composição — senão o valor mudou depois do cálculo ou o título entrou entre a leitura e o
+--    carimbo (parecer Codex adversarial). E = valor_documento (o valor que o motor usa em competência).
 --  • Par confirmado que toca o mês e NÃO é elegível (sem contrapartida, valor divergente, CP em outro
 --    mês, categoria fora de receita/CMV, snapshot anterior ao título) → consolidado DESCONHECIDO: as 4
 --    linhas saem com eliminacoes/total_consolidado NULL ("—" na tela). Precisão > recall.
@@ -48,7 +50,7 @@ DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                    WHERE p.oid = to_regprocedure('public.fin_consolidado_intercompany(integer,integer)'));
 BEGIN
-  IF v_vivo IS NULL OR v_vivo NOT IN ('c645a48b2803e122e770341d44b9aaaf', '7b86ac5105e6a50a622837c595bec750') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('c645a48b2803e122e770341d44b9aaaf', '11832f17b7551cabe02a2224cb495aaf') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_vivo;
   END IF;
 END
@@ -73,7 +75,7 @@ BEGIN
   RETURN QUERY
   WITH snap AS (
     SELECT s.company, s.receita_bruta, s.cmv, s.despesas_operacionais, s.resultado_liquido,
-           s.calculated_at, s.detalhamento
+           s.detalhamento
       FROM fin_dre_snapshots s
      WHERE s.ano = p_ano AND s.mes = p_mes AND s.regime = 'competencia'
   ),
@@ -103,15 +105,15 @@ BEGIN
   par AS (
     SELECT c.empresa_origem, c.empresa_destino, c.usos_cr, c.usos_cp,
            cr.id AS cr_id, cr.company AS cr_empresa, cr.valor_documento AS cr_valor,
-           cr.status_titulo AS cr_status, cr.created_at AS cr_criado,
+           cr.status_titulo AS cr_status,
            COALESCE(NULLIF(cr.categoria_descricao, ''), NULLIF(cr.categoria_codigo, ''), 'Sem categoria') AS cr_chave,
            (EXTRACT(YEAR FROM cr.data_emissao) = p_ano AND EXTRACT(MONTH FROM cr.data_emissao) = p_mes) AS cr_no_mes,
            cp.id AS cp_id, cp.company AS cp_empresa, cp.valor_documento AS cp_valor,
-           cp.status_titulo AS cp_status, cp.created_at AS cp_criado,
+           cp.status_titulo AS cp_status,
            COALESCE(NULLIF(cp.categoria_descricao, ''), NULLIF(cp.categoria_codigo, ''), 'Sem categoria') AS cp_chave,
            (EXTRACT(YEAR FROM cp.data_emissao) = p_ano AND EXTRACT(MONTH FROM cp.data_emissao) = p_mes) AS cp_no_mes,
-           so.calculated_at AS so_calc, so.detalhamento -> 'composicao_receitas' AS so_comp,
-           sd.calculated_at AS sd_calc, sd.detalhamento -> 'composicao_despesas' AS sd_comp
+           so.detalhamento -> 'composicao_receitas' AS so_comp,
+           sd.detalhamento -> 'composicao_despesas' AS sd_comp
       FROM confirmado c
       JOIN snap so ON so.company = c.empresa_origem
       JOIN snap sd ON sd.company = c.empresa_destino
@@ -123,10 +125,35 @@ BEGIN
       FROM par p
      WHERE p.cr_no_mes IS TRUE OR p.cp_no_mes IS TRUE
   ),
+  -- Soma ATUAL de cada categoria no mês, com o MESMO recorte do motor de competência (empresa, emissão no
+  -- mês, status <> 'CANCELADO' — o `.neq` do PostgREST também exclui NULL) e a MESMA chave da composição.
+  -- Se ela não bate com o que o snapshot compôs, o snapshot não reflete os títulos de hoje (valor mudou
+  -- depois do cálculo, título entrou entre a leitura e o carimbo): o par não prova que entrou no bruto.
+  atual AS (
+    SELECT 'r'::text AS lado, r.company,
+           COALESCE(NULLIF(r.categoria_descricao, ''), NULLIF(r.categoria_codigo, ''), 'Sem categoria') AS chave,
+           sum(r.valor_documento) AS soma
+      FROM fin_contas_receber r
+     WHERE r.company IN (SELECT s.company FROM snap s)
+       AND r.status_titulo <> 'CANCELADO'
+       AND EXTRACT(YEAR FROM r.data_emissao) = p_ano AND EXTRACT(MONTH FROM r.data_emissao) = p_mes
+     GROUP BY 1, 2, 3
+    UNION ALL
+    SELECT 'd', d.company,
+           COALESCE(NULLIF(d.categoria_descricao, ''), NULLIF(d.categoria_codigo, ''), 'Sem categoria'),
+           sum(d.valor_documento)
+      FROM fin_contas_pagar d
+     WHERE d.company IN (SELECT s.company FROM snap s)
+       AND d.status_titulo <> 'CANCELADO'
+       AND EXTRACT(YEAR FROM d.data_emissao) = p_ano AND EXTRACT(MONTH FROM d.data_emissao) = p_mes
+     GROUP BY 1, 2, 3
+  ),
   -- Elegível = PROVADO que o CR compôs SÓ receita_bruta da origem e o CP SÓ cmv do destino, no mesmo mês,
-  -- pelo mesmo valor, sem cancelamento, já existentes quando o snapshot foi calculado, cada título num par só.
+  -- pelo mesmo valor, sem cancelamento, com o snapshot fiel aos títulos atuais, cada título num par só.
   eleg AS (
     SELECT x.*,
+           (SELECT a.soma FROM atual a WHERE a.lado = 'r' AND a.company = x.empresa_origem AND a.chave = x.cr_chave) AS cr_cat_atual,
+           (SELECT a.soma FROM atual a WHERE a.lado = 'd' AND a.company = x.empresa_destino AND a.chave = x.cp_chave) AS cp_cat_atual,
            CASE WHEN jsonb_typeof(x.comp_r) = 'object' AND jsonb_typeof(x.comp_r -> 'receita_bruta') = 'number'
                      AND (x.comp_r - 'receita_bruta') = '{}'::jsonb
                 THEN (x.comp_r ->> 'receita_bruta')::numeric END AS comp_r_valor,
@@ -141,10 +168,11 @@ BEGIN
             AND e.usos_cr = 1 AND e.usos_cp = 1
             AND e.cr_empresa = e.empresa_origem AND e.cp_empresa = e.empresa_destino
             AND e.cr_no_mes AND e.cp_no_mes
-            AND e.cr_status IS DISTINCT FROM 'CANCELADO' AND e.cp_status IS DISTINCT FROM 'CANCELADO'
+            AND e.cr_status <> 'CANCELADO' AND e.cp_status <> 'CANCELADO'
             AND e.cr_valor > 0 AND e.cr_valor = e.cp_valor
-            AND e.cr_criado <= e.so_calc AND e.cp_criado <= e.sd_calc
-            AND e.comp_r_valor IS NOT NULL AND e.comp_d_valor IS NOT NULL) IS TRUE AS ok
+            -- composição ausente/fora da linha (comp_*_valor NULL) reprova aqui pelo IS TRUE
+            AND abs(e.cr_cat_atual - e.comp_r_valor) <= 0.005
+            AND abs(e.cp_cat_atual - e.comp_d_valor) <= 0.005) IS TRUE AS ok
       FROM eleg e
   ),
   -- O que se elimina de uma categoria não passa do que ela compôs no snapshot (folga de meio centavo
@@ -189,7 +217,7 @@ DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(f));
 BEGIN
   -- P1 corpo = o deste arquivo
-  IF v_vivo IS DISTINCT FROM '7b86ac5105e6a50a622837c595bec750' THEN
+  IF v_vivo IS DISTINCT FROM '11832f17b7551cabe02a2224cb495aaf' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_vivo;
   END IF;
 
