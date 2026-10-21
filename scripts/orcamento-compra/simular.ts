@@ -308,16 +308,38 @@ export function identificadoresR59(f: Fatos, p: Fatos['disparados'][number]): st
 /** O critério do R59 v1 (encerrado + identificador Sayerlack + nenhuma evidência de NF), antes da aprovação. */
 export function candidatoR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
   if (p.encerrado_omie !== true) return false;
+  // contrato COMPOSTO ('2130311/2130322' = a Sayerlack desdobrou o pedido) → vínculo NF↔pedido estruturalmente
+  // cego (0 de 14 compostos com NF na própria linha; o 1230 "Atendido total" no portal sem NF nenhuma no banco):
+  // ausência de NF não prova nada → fica no caixa, listado em retidosCompostoR59 (abstenção, não prova de NF)
+  if (contratoCompostoR59(f, p)) return false;
   // (o vínculo R57/R58 não entra: por contrato ele é coberto pelos identificadores abaixo, e o substituto só
   // existe para pedido SEM identificador, que nunca sai — a falsificação mostrou a camada redundante)
   if ((p.nfs ?? []).length > 0) return false;
-  const ids = new Set(identificadoresR59(f, p));
+  const ids = new Set(identificadoresR59(f, p).flatMap(componentesR59));
   // sem identificador Sayerlack não há como provar ausência de NF (o substituto R58 pode ter faturado, com NF
   // sem data ou com o raw_data reescrito pelo completo) → fica no caixa (Codex 3ª rodada P1)
   if (ids.size === 0) return false;
-  // evidência = os dois exportadores: o da conciliação (com data) e o sem filtro (NF sem data / fora da janela)
-  const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
+  // evidência = os dois exportadores: o da conciliação (com data) e o sem filtro (NF sem data / fora da janela),
+  // por COMPONENTE: NF de vários pedidos traz '2097502/2097504' no nNumPedCompra/sombra
+  const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato), ...(f.evidencia_nf_contratos ?? [])].flatMap(componentesR59));
   return ![...ids].some((c) => comNf.has(c));
+}
+
+/** R59: o texto inteiro aparado + as partes por '/', ';' ou ','. Espaço NÃO separa ('lucas 220126' é texto livre).
+ *  Só acrescenta casamentos ao da string inteira — usado apenas para VETAR candidato (lado conservador). */
+export function componentesR59(id: string): string[] {
+  const inteiro = id.trim();
+  return [inteiro, ...inteiro.split(/[/;,]/).map((x) => x.trim())].filter((x) => x !== '');
+}
+
+/** R59: o cContrato do PRÓPRIO pedido Omie (qualquer das duas coleções) tem '/' — pedido desdobrado na Sayerlack. */
+export function contratoCompostoR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
+  if (p.omie_pedido == null) return false;
+  const contratos = [
+    ...(f.pedidos_omie_sayerlack ?? []).filter((o) => o.codigo === p.omie_pedido).map((o) => o.contrato ?? ''),
+    ...(f.contratos_pedidos_omie ?? []).filter((o) => o.codigo === p.omie_pedido).map((o) => o.contrato),
+  ];
+  return contratos.some((c) => c.includes('/'));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
@@ -764,6 +786,10 @@ export function backtest(f: Fatos, cfg: Config) {
     /** R59 v2: candidatos (encerrado, identificador, sem NF) NÃO aprovados — ficaram no caixa; revisar e aprovar por PR */
     pendentesR59: f.disparados.filter((p) => candidatoR59(f, p) && !aprovadoR59(f, p))
       .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, momento: p.momento, valor_total: p.valor_total, identificadores: identificadoresR59(f, p) }))
+      .sort((a, b) => a.id - b.id),
+    /** R59: encerrados sem evidência de NF RETIDOS no caixa por contrato composto (abstenção — vínculo cego, não NF provada) */
+    retidosCompostoR59: f.disparados.filter((p) => p.encerrado_omie === true && (p.nfs ?? []).length === 0 && contratoCompostoR59(f, p))
+      .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, identificadores: identificadoresR59(f, p) }))
       .sort((a, b) => a.id - b.id),
     ciclos,
     resumo: {

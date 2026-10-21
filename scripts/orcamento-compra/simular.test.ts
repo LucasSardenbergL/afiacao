@@ -1,6 +1,6 @@
 // scripts/orcamento-compra/simular.test.ts
 import { describe, expect, it } from 'vitest';
-import { backtest, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
+import { backtest, candidatoR59, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
 
 const cfg: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
@@ -275,6 +275,75 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     // reenvio DEPOIS da aprovação: o mesmo pedido Omie ganhou um contrato sem NF → a aprovação não cobre → fica
     const reenviado = backtest({ ...com([{ disparado_id: 12, omie_pedido: '500', identificadores: ids }]), contratos_pedidos_omie: [{ codigo: '500', contrato: '2097111' }] }, cfg);
     expect([reenviado.foraDoCaixaR59, reenviado.pendentesR59.map((x) => x.id)]).toEqual([[], [12]]);
+  });
+  it('(c3c) R59: contrato COMPOSTO nunca é candidato; evidência composta vale por componente', () => {
+    // o 1230 (2026-10-21): cContrato '2130311/2130322' = a Sayerlack desdobrou o pedido em dois; a NF consolidada
+    // foi gravada na linha de outro pedido e nenhum identificador inteiro casa — mas o portal diz "Atendido total"
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2130311' as string | null, encerrado_omie: true };
+    const com = (f: Partial<Fatos>): Fatos => ({ ...semLinhas, disparados: [HIST, P], ...f });
+    const composto = com({ contratos_pedidos_omie: [{ codigo: '500', contrato: '2130311/2130322' }] });
+    expect(candidatoR59(composto, P)).toBe(false);
+    // fica no caixa mesmo APROVADO pelo conjunto revisado (a aprovação não supera a cegueira estrutural) e não é pendente
+    const aprovado = { ...composto, r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores: ['2130311', '2130311/2130322'] }] };
+    const e = simularCiclo(aprovado, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
+    const r = backtest(aprovado, cfg);
+    expect([r.foraDoCaixaR59, r.pendentesR59]).toEqual([[], []]);
+    // auditável: o backtest nomeia quem ficou no caixa por ser composto
+    expect(r.retidosCompostoR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2130311', identificadores: ['2130311', '2130311/2130322'] }]);
+    // o cContrato vem também de pedidos_omie_sayerlack; o veto é só do PRÓPRIO pedido Omie: o mesmo composto em
+    // OUTRO código não veta, e protocolo com '/' (não medido) não veta — cai na expansão por componente
+    expect(candidatoR59(com({ pedidos_omie_sayerlack: [{ codigo: '500', t1: '2026-09-10', contrato: '2130311/2130322', do_motor: true, itens: [] }] }), P)).toBe(false);
+    expect(candidatoR59(com({ contratos_pedidos_omie: [{ codigo: '501', contrato: '2130311/2130322' }] }), P)).toBe(true);
+    const pProtocolo = { ...P, protocolo: '2130311/2130322' };
+    expect(candidatoR59({ ...semLinhas, disparados: [HIST, pProtocolo] }, pProtocolo)).toBe(true);
+    expect(candidatoR59({ ...semLinhas, disparados: [HIST, pProtocolo], evidencia_nf_contratos: ['2130322'] }, pProtocolo)).toBe(false);
+    // identificador com ';' (sem veto) contra evidência simples: casa pelo componente
+    const pPontoVirgula = { ...P, protocolo: null, omie_pedido: '502' };
+    const pv = (evid: string[]): Fatos => ({ ...semLinhas, disparados: [HIST, pPontoVirgula], contratos_pedidos_omie: [{ codigo: '502', contrato: '2140001;2140002' }], evidencia_nf_contratos: evid });
+    expect(candidatoR59(pv([]), pPontoVirgula)).toBe(true);
+    expect(candidatoR59(pv(['2140002']), pPontoVirgula)).toBe(false);
+    // evidência composta ('2097502/2097504' no nNumPedCompra/sombra) vale para cada componente simples
+    const pSimples = { ...P, protocolo: '2097504' };
+    const ev = (evid: string[]): Fatos => ({ ...semLinhas, disparados: [HIST, pSimples], evidencia_nf_contratos: evid });
+    expect(candidatoR59(ev(['2097502/2097504']), pSimples)).toBe(false);
+    expect(candidatoR59({ ...ev([]), nfs_do_contrato: [{ contrato: '2097502 / 2097504', nf: '000940479', data: null }] }, pSimples)).toBe(false);
+    // controles: simples sem evidência segue candidato; espaço não é separador (texto livre 'lucas 2097504' não é
+    // evidência de 2097504 — fica candidato, e a aprovação/revisão humana decide)
+    expect(candidatoR59(ev([]), pSimples)).toBe(true);
+    expect(candidatoR59(ev(['lucas 2097504', '20975042', '2097502']), pSimples)).toBe(true);
+  });
+  it('(c3d) R59: a expansão por componente e o veto de composto só RETIRAM candidatos (candidato novo ⇒ antigo)', () => {
+    // oráculo = o candidatoR59 de antes (string inteira, sem veto) — Codex 2026-10-21: a mudança só pode vetar
+    const antigo = (f: Fatos, p: Fatos['disparados'][number]): boolean => {
+      if (p.encerrado_omie !== true || (p.nfs ?? []).length > 0) return false;
+      const ids = new Set<string>();
+      if (p.protocolo) ids.add(p.protocolo.trim());
+      for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
+      for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+      if (ids.size === 0) return false;
+      const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
+      return ![...ids].some((c) => comNf.has(c));
+    };
+    let semente = 20261021;
+    const rnd = (n: number) => { semente = (semente * 1103515245 + 12345) % 2 ** 31; return semente % n; };
+    const pecas = ['2130311', '2130322', '2097502', ' 2097504', 'lucas 220126', ''];
+    const texto = () => Array.from({ length: 1 + rnd(2) }, () => pecas[rnd(pecas.length)]).join(['/', ';', ',', ' '][rnd(4)]);
+    let candidatosAntigos = 0;
+    for (let i = 0; i < 2000; i++) {
+      const p = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: ['500', '501'][rnd(2)], protocolo: rnd(3) ? texto() : null, encerrado_omie: true };
+      const f: Fatos = {
+        ...semLinhas, disparados: [HIST, p],
+        contratos_pedidos_omie: rnd(2) ? [{ codigo: '500', contrato: texto() }] : [],
+        pedidos_omie_sayerlack: rnd(3) ? [] : [{ codigo: '500', t1: '2026-09-10', contrato: rnd(2) ? texto() : null, do_motor: true, itens: [] }],
+        evidencia_nf_contratos: Array.from({ length: rnd(3) }, texto),
+        nfs_do_contrato: rnd(2) ? [{ contrato: texto(), nf: '1', data: null }] : [],
+      };
+      if (antigo(f, p)) candidatosAntigos++;
+      if (candidatoR59(f, p)) expect(antigo(f, p)).toBe(true);
+    }
+    // a geração exercita os dois lados (senão a propriedade passa por vacuidade)
+    expect(candidatosAntigos).toBeGreaterThan(100);
   });
   it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
     // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)
