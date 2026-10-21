@@ -29,3 +29,9 @@ Deno.test("sem documento (vazio, null, undefined) nunca confere", () => {
   assertEquals(lookupDevolveuOMesmoDocumento("12345678000195", undefined), false);
   assertEquals(lookupDevolveuOMesmoDocumento("", ""), false);
 });
+
+Deno.test("os DOIS lados vazios não conferem (sem documento não se afirma identidade)", () => {
+  assertEquals(lookupDevolveuOMesmoDocumento("", ""), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("", null), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("", "---"), false);
+});

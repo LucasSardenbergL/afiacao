@@ -13,5 +13,5 @@ import { normalizarDocumento } from "./cnpj-alfanumerico.ts";
  */
 export function lookupDevolveuOMesmoDocumento(pedido: string, retornado: unknown): boolean {
   const r = normalizarDocumento(retornado);
-  return r.length > 0 && pedido.length > 0 && r === pedido;
+  return r.length > 0 && r === pedido; // r === pedido já implica pedido não-vazio
 }
