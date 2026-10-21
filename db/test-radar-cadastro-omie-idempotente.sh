@@ -183,8 +183,7 @@ SQL
 }
 # espera_estado NOME PREDICADO — até 10s pela sessão NOME em pg_stat_activity satisfazendo o predicado.
 espera_estado() {
-  local i
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'idem_$1' AND ($2)")" = "1" ] && return 0
     sleep 0.1
   done

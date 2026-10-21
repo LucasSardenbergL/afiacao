@@ -191,7 +191,14 @@ export function RadarOutcomeMenu({
         registrarResultado('indeterminado');
         toast.warning('Cadastro não confirmado pelo servidor', {
           description: 'O Radar não recebeu a confirmação do Omie para este CNPJ. O lead continua na fila.',
-          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
+          // o código que o Omie devolveu vai como EVIDÊNCIA: se o vínculo relido for outro, é conflito
+          action: {
+            label: 'Tentar de novo',
+            onClick: () => void executarCadastro(alvo, ofertaId, {
+              retentativa: true,
+              ...(e instanceof FalhaCadastro && e.codigoVisto ? { codigoVisto: e.codigoVisto } : {}),
+            }),
+          },
         });
       } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
         registrarResultado('erro');

@@ -18,6 +18,11 @@
 -- ============================================================================================
 
 BEGIN;
+-- O CREATE UNIQUE INDEX abaixo segura SHARE em radar_empresas (583 MB, 553k linhas) durante o build: escritores
+-- (ficha, crons radar-* das 06:15–06:45 UTC) esperam. Limites LOCAIS: se não pegar a trava em 5s, ou se o conjunto
+-- passar de 2 min, ABORTA inteiro (transacional) — re-aplicar fora da janela dos crons (Codex 2026-10-21).
+SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '120s';
 
 -- TRAVA, antes de ler: volatilidade conferida ANTES do ALTER sem efeito (ele a normalizaria).
 DO $trava$

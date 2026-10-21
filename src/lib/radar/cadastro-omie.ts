@@ -20,11 +20,17 @@ export class FalhaCadastro extends Error {
   etapa: EtapaCadastro;
   /** Código Omie já confirmado quando a falha foi na etapa 'radar' (permite retry só dela). */
   codigo: string | null;
-  constructor(etapa: EtapaCadastro, mensagem: string, codigo: string | null = null) {
+  /**
+   * Código que o Omie DEVOLVEU nesta tentativa, guardado como EVIDÊNCIA (não autoriza o atalho do `codigo`):
+   * a retomada o compara com o vínculo relido — vínculo diferente é conflito, nunca "recuperado" (Codex 2026-10-21).
+   */
+  codigoVisto: string | null;
+  constructor(etapa: EtapaCadastro, mensagem: string, codigo: string | null = null, codigoVisto: string | null = codigo) {
     super(mensagem);
     this.name = 'FalhaCadastro';
     this.etapa = etapa;
     this.codigo = codigo;
+    this.codigoVisto = codigoVisto;
   }
 }
 
@@ -45,7 +51,7 @@ export class DivergenciaCadastro extends FalhaCadastro {
   codigoRecebido: string | null;
   constructor(etapa: EtapaCadastro, motivo: MotivoDivergencia, mensagem: string, codigoRecebido: string | null) {
     // `codigo` (do pai) fica null de propósito: ele habilita o "Gravar de novo", que aqui recusaria em laço.
-    super(etapa, mensagem, null);
+    super(etapa, mensagem, null, codigoRecebido);
     this.name = 'DivergenciaCadastro';
     this.motivo = motivo;
     this.codigoRecebido = codigoRecebido;
@@ -117,6 +123,8 @@ export interface OpcoesCadastro {
   codigoConhecido?: string;
   /** Retry de uma falha anterior na etapa omie (resposta perdida): relê o vínculo antes de gravar. */
   retentativa?: boolean;
+  /** Código que o Omie devolveu numa tentativa anterior (evidência): vínculo relido ≠ dele é conflito. */
+  codigoVisto?: string;
 }
 
 export interface ResultadoCadastro {
@@ -168,7 +176,7 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
       throw new FalhaCadastro('radar', `não consegui reler o vínculo: ${mensagem(err)}`, opcoes.codigoConhecido ?? null);
     }
     if (vinculo) {
-      const conhecido = opcoes.codigoConhecido?.trim();
+      const conhecido = (opcoes.codigoConhecido ?? opcoes.codigoVisto)?.trim();
       if (conhecido && vinculo.trim() !== conhecido) {
         throw new DivergenciaCadastro(
           'radar',
@@ -209,7 +217,7 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
     // A RPC exige a confirmação que a EDGE gravou (ledger `omie_cliente_confirmacoes`) — sem ela, repetir só a
     // gravação (`codigoConhecido`) recusaria de novo, em laço. Vira falha na etapa omie SEM código: o "Tentar de
     // novo" volta pela edge, cujo lookup confere o documento e grava a confirmação (migration 20261021120000).
-    if (ehSemConfirmacaoDoServidor(err)) throw new FalhaCadastro('omie', mensagem(err));
+    if (ehSemConfirmacaoDoServidor(err)) throw new FalhaCadastro('omie', mensagem(err), null, codigo);
     const motivo = divergenciaDaRpc(err);
     if (motivo) throw new DivergenciaCadastro('radar', motivo, mensagem(err), codigo);
     throw new FalhaCadastro('radar', mensagem(err), codigo);

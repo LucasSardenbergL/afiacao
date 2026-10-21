@@ -10,7 +10,7 @@ import { CNPJ_RE } from '@/lib/radar/normalizar';
 export type EstadoItemLote =
   | { status: 'aguardando' }
   | { status: 'ok'; codigo: string; jaExistia: boolean; recuperado: boolean }
-  | { status: 'falha'; etapa: 'omie' | 'radar'; erro: string; codigo: string | null }
+  | { status: 'falha'; etapa: 'omie' | 'radar'; erro: string; codigo: string | null; codigoVisto?: string | null }
   // Conflito de identidade Radar×Omie (DivergenciaCadastro): TERMINAL — não é retentado (a retomada
   // releria o vínculo antigo e o devolveria como "recuperado") nem é ok (o lote não se apaga sozinho).
   | { status: 'divergente'; motivo: string; erro: string; codigo: string | null }

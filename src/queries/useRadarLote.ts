@@ -128,7 +128,7 @@ export function useRadarLoteOmie() {
             anterior.status === 'falha' && anterior.etapa === 'radar' && anterior.codigo
               ? { codigoConhecido: anterior.codigo }
               : retomada
-                ? { retentativa: true }
+                ? { retentativa: true, ...(anterior.status === 'falha' && anterior.codigoVisto ? { codigoVisto: anterior.codigoVisto } : {}) }
                 : {};
           try {
             const empresa = snapshots.current.get(item.cnpj);
@@ -144,7 +144,7 @@ export function useRadarLoteOmie() {
             if (e instanceof DivergenciaCadastro) {
               atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido });
             } else if (e instanceof FalhaCadastro) {
-              atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo });
+              atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo, codigoVisto: e.codigoVisto });
             } else {
               atualizarItem(item.cnpj, { status: 'falha', etapa: 'omie', erro: mensagemDeErro(e) ?? 'falha desconhecida', codigo: null });
             }

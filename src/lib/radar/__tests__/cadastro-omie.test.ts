@@ -242,6 +242,29 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
     expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente' });
   });
 
+  // Codex (revisão do código, ALTA): a recusa RADAR_SEM_CONFIRMACAO_OMIE descartava K; a retentativa relia um
+  // vínculo V ≠ K e devolvia "recuperado" com V. K agora vai como EVIDÊNCIA (codigoVisto), sem reabrir o atalho.
+  it('sem confirmação guarda K como evidência (codigoVisto), sem habilitar o atalho (codigo null)', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw { message: 'RADAR_SEM_CONFIRMACAO_OMIE: …', code: 'P0001' }; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null, codigoVisto: '777' });
+  });
+
+  it('retentativa com codigoVisto K e vínculo relido V ≠ K → conflito, NUNCA "recuperado" com V', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true, codigoVisto: '777' }).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
+  it('retentativa SEM evidência e vínculo existente → recuperado (não há com o que comparar)', async () => {
+    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
+    expect(r).toMatchObject({ codigo: '555', recuperado: true });
+  });
+
   it('falha comum do Omie (rede/timeout) NÃO vira conflito — segue retentável', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
     const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
