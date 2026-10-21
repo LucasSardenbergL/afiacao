@@ -290,6 +290,64 @@ func TestShouldFullRescan_sundayNewWeek(t *testing.T) {
 	}
 }
 
+// Recuperação do domingo PERDIDO (prod, 2026-10: servidor desligado no fim de semana,
+// 0 runs em 11 de 12 domingos). Domingo 11/10 rescaneado; 17-18/10 desligado; liga na
+// segunda 19/10 07h. Linha do tempo esperada.
+func TestShouldFullRescan_recuperaDomingoPerdido(t *testing.T) {
+	st := &State{HWM: make(map[string]string),
+		LastFullRescan: time.Date(2026, 10, 11, 4, 0, 0, 0, time.UTC).Format(time.RFC3339)}
+	casos := []struct {
+		quando time.Time
+		quer   bool
+		porque string
+	}{
+		{time.Date(2026, 10, 19, 7, 0, 0, 0, time.UTC), false, "segunda 07h: devido, mas fora da madrugada (horário da loja)"},
+		{time.Date(2026, 10, 19, 17, 0, 0, 0, time.UTC), false, "segunda 17h: fora da madrugada"},
+		{time.Date(2026, 10, 20, 0, 5, 0, 0, time.UTC), true, "terça 00h05: recupera o domingo 18 perdido"},
+		{time.Date(2026, 10, 20, 5, 59, 0, 0, time.UTC), true, "terça 05h59: ainda na janela"},
+		{time.Date(2026, 10, 20, 6, 0, 0, 0, time.UTC), false, "terça 06h: janela fechou"},
+	}
+	for _, c := range casos {
+		if got := shouldFullRescan(st, c.quando); got != c.quer {
+			t.Errorf("%s: shouldFullRescan=%v, queria %v", c.porque, got, c.quer)
+		}
+	}
+}
+
+// Depois do re-scan normal de domingo, a madrugada de segunda NÃO repete (a semana ISO
+// vira na segunda — por isso a âncora é o domingo, não a semana ISO).
+func TestShouldFullRescan_segundaAposDomingoNaoRepete(t *testing.T) {
+	st := &State{HWM: make(map[string]string),
+		LastFullRescan: time.Date(2026, 10, 11, 3, 0, 0, 0, time.UTC).Format(time.RFC3339)}
+	if shouldFullRescan(st, time.Date(2026, 10, 12, 1, 0, 0, 0, time.UTC)) {
+		t.Error("segunda 01h após re-scan de domingo não pode re-escanear")
+	}
+}
+
+// Recuperado na terça, o DOMINGO seguinte volta a ser o dia (ancorado no domingo,
+// não em "≥7 dias desde o último" — que empurraria o re-scan para terça para sempre).
+func TestShouldFullRescan_aposRecuperacaoVoltaAoDomingo(t *testing.T) {
+	st := &State{HWM: make(map[string]string),
+		LastFullRescan: time.Date(2026, 10, 20, 0, 30, 0, 0, time.UTC).Format(time.RFC3339)}
+	if shouldFullRescan(st, time.Date(2026, 10, 22, 2, 0, 0, 0, time.UTC)) {
+		t.Error("quinta 02h na mesma semana da recuperação não pode re-escanear")
+	}
+	if !shouldFullRescan(st, time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)) {
+		t.Error("domingo 25/10 deveria re-escanear (5 dias após a recuperação)")
+	}
+}
+
+// Fuso: LastFullRescan gravado com offset da origem (-03:00) é comparado no relógio
+// da origem — domingo 22h BRT (= segunda 01h UTC) conta como domingo.
+func TestShouldFullRescan_comparaNoRelogioDaOrigem(t *testing.T) {
+	brt := time.FixedZone("BRT", -3*3600)
+	st := &State{HWM: make(map[string]string),
+		LastFullRescan: time.Date(2026, 10, 11, 22, 0, 0, 0, brt).Format(time.RFC3339)}
+	if shouldFullRescan(st, time.Date(2026, 10, 12, 1, 0, 0, 0, brt)) {
+		t.Error("segunda 01h BRT após re-scan de domingo 22h BRT não pode re-escanear")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────
 // TestHWM helpers
 // ─────────────────────────────────────────────────────────────
@@ -591,7 +649,7 @@ func TestSendInBatchesRaw_loteNaoConfirmadoNaoChamaOnSuccess(t *testing.T) {
 	}
 }
 
-// Re-scan de domingo com uma entidade falhando (Codex P2): o 2º ciclo do MESMO dia
+// Re-scan de domingo com uma entidade falhando (Codex P2): o 2º ciclo da MESMA semana
 // não zera de novo os HWMs das entidades que já passaram; no domingo seguinte zera.
 func TestIniciarFullRescan_retomaSemZerarDeNovo(t *testing.T) {
 	domingo := time.Date(2026, 10, 11, 3, 0, 0, 0, time.UTC)
@@ -609,8 +667,24 @@ func TestIniciarFullRescan_retomaSemZerarDeNovo(t *testing.T) {
 	if st.HWM["produto"] == "" {
 		t.Error("HWM de entidade que já passou no re-scan foi perdido")
 	}
+	// Atravessa a meia-noite: segunda 00h da MESMA semana do re-scan também retoma.
+	if iniciarFullRescan(st, time.Date(2026, 10, 12, 0, 10, 0, 0, time.UTC)) {
+		t.Fatal("re-scan que atravessa a meia-noite não pode zerar de novo na segunda 00h")
+	}
 	if !iniciarFullRescan(st, domingo.AddDate(0, 0, 7)) || len(st.HWM) != 0 {
 		t.Error("domingo seguinte deveria zerar de novo")
+	}
+}
+
+// Recuperação na terça de um re-scan iniciado e NÃO concluído na semana anterior: é
+// semana nova → zera.
+func TestIniciarFullRescan_semanaNovaZera(t *testing.T) {
+	st := &State{HWM: map[string]string{"produto": "x"}, FullRescanIniciado: "2026-10-11"}
+	if !iniciarFullRescan(st, time.Date(2026, 10, 20, 0, 5, 0, 0, time.UTC)) || len(st.HWM) != 0 {
+		t.Errorf("recuperação de semana nova deveria zerar, HWM=%v", st.HWM)
+	}
+	if st.FullRescanIniciado != "2026-10-20" {
+		t.Errorf("FullRescanIniciado=%q, queria 2026-10-20", st.FullRescanIniciado)
 	}
 }
 
