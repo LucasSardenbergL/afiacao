@@ -230,7 +230,7 @@ export function preVoo(f: Fatos): string[] {
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (!Array.isArray(f.falhas_snapshot)) falhas.push('falhas_snapshot ausente — fatos.sql antigo (R63)');
   if (!Array.isArray(f.t4_por_nf)) falhas.push('t4_por_nf ausente — fatos.sql antigo (R65)');
-  else if (f.t4_por_nf.some((x) => typeof x.t4 !== 'string' || Number.isNaN(ts(x.t4)))) falhas.push('t4_por_nf com t4 nulo ou inválido (R65)');
+  else if (f.t4_por_nf.some((x) => Number.isNaN(ts(x.t4)))) falhas.push('t4_por_nf com t4 nulo ou inválido (R65)');
   if (!Array.isArray(f.recebimentos_sem_t4)) falhas.push('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
   else if (f.recebimentos_sem_t4.length > 0) {
     falhas.push(`${f.recebimentos_sem_t4.length} NF efetivada(s) no recebimento sem t4 no tracking (${f.recebimentos_sem_t4.slice(0, 5).join(', ')}) — rode depois da revisita da omie-sync-nfes-recebidas (R64)`);
