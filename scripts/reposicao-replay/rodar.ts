@@ -34,6 +34,7 @@ import {
   CLASSES,
   escolherCandidata,
   estoqueDaJanela,
+  vereditoDaCalibracao,
   fillDaCelula,
   mapaMisto,
   mediaSomas,
@@ -348,7 +349,8 @@ export async function avaliarCandidata(
   dados: Dados,
   dir: string,
   cg: Congelado,
-  naoObservaveis: readonly Classe[],
+  /** `vereditoDaCalibracao` (null = calibração sem ressalva; INCONCLUSIVO vira a linha INCERTO "Calibração"). */
+  vereditoCalibracao: { veredito: VereditoReplay; motivos: string[] } | null,
   opcoes: OpcoesAvaliacao,
 ): Promise<{ veredito: { veredito: VereditoReplay; motivos: string[] }; avaliacao: NonNullable<Rodada['avaliacao']> }> {
   const { paralelo } = opcoes;
@@ -356,7 +358,6 @@ export async function avaliarCandidata(
   const marca = (k: string, t0: number) => (tempos[k] = (performance.now() - t0) / 1000);
   const teto = opcoes.tetoReps ?? PRECISAO.tetoReplicacoes;
   const c = coorte(dados);
-  const rc = { naoObservaveis };
   let t: number;
   // 4–5. avaliação com replicações até a precisão
   t = performance.now();
@@ -416,9 +417,9 @@ export async function avaliarCandidata(
   const critTodos = semEstadoInicial(avaliarCriterios(todos.ev));
   const vTodos = veredito(critTodos);
   const extras: Criterio[] = [
-    rc.naoObservaveis.length > 0
-      ? { criterio: 'Calibração', estado: 'INCERTO', motivo: `classe não observável na calibração: ${rc.naoObservaveis.join(', ')}` }
-      : { criterio: 'Calibração', estado: 'PASSA', motivo: 'três classes observáveis; candidata viável' },
+    vereditoCalibracao === null
+      ? { criterio: 'Calibração', estado: 'PASSA', motivo: 'três classes observáveis; candidata viável' }
+      : { criterio: 'Calibração', estado: vereditoCalibracao.veredito === 'NO-GO' ? 'FALHA' : 'INCERTO', motivo: vereditoCalibracao.motivos.join('; ') },
     vTodos.veredito === principalEst.v.veredito
       ? { criterio: 'Coorte "todos os ativos"', estado: 'PASSA', motivo: `mesmo veredito (${vTodos.veredito})` }
       : { criterio: 'Coorte "todos os ativos"', estado: 'INCERTO', motivo: `veredito muda: coorte ${principalEst.v.veredito}, todos os ativos ${vTodos.veredito}` },
@@ -511,6 +512,29 @@ export async function avaliarCandidata(
   };
 }
 
+// ── gate de paridade do F0 (R19/R21; plano T5 Step 5: F0 infiel invalida o denominador → PARAR) ─────────────────
+export interface GateParidade {
+  es: number | null;
+  pp: number | null;
+  max: number | null;
+  /** Σ|Δmáximo|·cmc ÷ Σ máximo·cmc nas divergências da primária. */
+  valor: number | null;
+  /** Quantidade com PP/máximo gravados (R21: deve bater em todos). */
+  decisao: { n: number; de: number };
+  /** Quantidade com o estado do replay (informativo, R21). */
+  estado: { n: number; de: number };
+}
+/** ES/PP/máximo ≥ 95%, valor divergente ≤ 2% e decisão n = de (> 0). Ausente (null) = FALHA. */
+export function gateParidadePassa(g: GateParidade): boolean {
+  return [g.es, g.pp, g.max].every((x) => x !== null && x >= 0.95) && g.valor !== null && g.valor <= 0.02 && g.decisao.de > 0 && g.decisao.n === g.decisao.de;
+}
+/** Gate em FALHA ⇒ ErroDadosReplay (rc ≠ 0): nenhum veredito, muito menos GO, com o F0 infiel. */
+export function exigirGateParidade(g: GateParidade): void {
+  if (!gateParidadePassa(g)) throw new ErroDadosReplay(`GATE_PARIDADE_FALHA: ${JSON.stringify(g)}`);
+}
+/** Argumento de linha de comando inválido (rc 2; ≠ erro de dado). */
+export class ErroArgumento extends Error {}
+
 // ── principal ─────────────────────────────────────────────────────────────────────────────────────────────────────
 function args(argv: string[]): Record<string, string | true> {
   const out: Record<string, string | true> = {};
@@ -539,7 +563,8 @@ async function principal(): Promise<number> {
     return 0;
   }
   const saida = typeof a.saida === 'string' ? a.saida : join(dir, 'relatorio.md');
-  const paralelo = typeof a.paralelo === 'string' ? Math.max(1, Number(a.paralelo)) : 4;
+  const paralelo = a.paralelo === undefined ? 4 : Number(a.paralelo);
+  if (!(Number.isInteger(paralelo) && paralelo >= 1 && paralelo <= 64)) throw new ErroArgumento(`--paralelo deve ser inteiro entre 1 e 64 (veio ${String(a.paralelo)})`);
   const t0 = performance.now();
   const tempos: Record<string, number> = {};
   const marca = (k: string, t: number) => (tempos[k] = (performance.now() - t) / 1000);
@@ -558,7 +583,7 @@ async function principal(): Promise<number> {
   const parQtd = paridadeQuantidade(dados, (sku) => parametrosNoDia('F0', dados, sku, dados.dataExtracao, QUANTIL_NEUTRO, { calibracao: false }));
   const pct = (n: number, de: number) => (de > 0 ? n / de : null);
   const pr = parF0.primaria;
-  const gate = {
+  const gate: GateParidade = {
     es: pct(pr.dentro.es, pr.comparados.es),
     pp: pct(pr.dentro.pp, pr.comparados.pp),
     max: pct(pr.dentro.max, pr.comparados.max),
@@ -566,9 +591,9 @@ async function principal(): Promise<number> {
     decisao: parQtd.gravado,
     estado: parQtd.replay,
   };
-  const gatePassa =
-    [gate.es, gate.pp, gate.max].every((x) => x !== null && x >= 0.95) && gate.valor !== null && gate.valor <= 0.02 && gate.decisao.de > 0 && gate.decisao.n === gate.decisao.de;
+  const gatePassa = gateParidadePassa(gate);
   log(`GATE_PARIDADE ${gatePassa ? 'PASSA' : 'FALHA'}: ES ${gate.es} PP ${gate.pp} máx ${gate.max} valor ${gate.valor} decisão ${gate.decisao.n}/${gate.decisao.de} estado ${gate.estado.n}/${gate.estado.de}`);
+  exigirGateParidade(gate); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   marca('paridade', t);
 
   // 2. calibração
@@ -619,16 +644,18 @@ async function principal(): Promise<number> {
     estadoInicial: diagnosticoEstadoInicial(dados),
   };
 
-  if (candidata === 'NENHUMA') {
-    const rodada: Rodada = { ...comum, congelado: null, veredito: { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] }, avaliacao: null, tempos, segundos: (performance.now() - t0) / 1000 };
+  const vc = vereditoDaCalibracao(resultados);
+  if (candidata === 'NENHUMA' || vc?.veredito === 'NO-GO') {
+    const v = vc ?? { veredito: 'NO-GO' as const, motivos: ['INVIAVEL_NA_CALIBRACAO'] };
+    const rodada: Rodada = { ...comum, congelado: null, veredito: v, avaliacao: null, tempos, segundos: (performance.now() - t0) / 1000 };
     escreverRelatorio(rodada, saida);
-    log(`VEREDITO NO-GO (INVIAVEL_NA_CALIBRACAO) → ${saida}`);
+    log(`VEREDITO ${v.veredito} (${v.motivos.join('; ')}) → ${saida}`);
     return 0;
   }
   const rc = resultados.find((x) => x.formula === candidata)!;
   const cg: Congelado = Object.freeze({ candidata, params: structuredClone(rc.params) });
 
-  const av = await avaliarCandidata(dados, dir, cg, rc.naoObservaveis, { paralelo, tempos });
+  const av = await avaliarCandidata(dados, dir, cg, vc, { paralelo, tempos });
   const vf = av.veredito;
   const L = { n: av.avaliacao.reps };
   const rodada: Rodada = { ...comum, congelado: cg, veredito: vf, avaliacao: av.avaliacao, tempos, segundos: (performance.now() - t0) / 1000 };
@@ -645,8 +672,8 @@ if (import.meta.main) {
   principal().then(
     (rc) => process.exit(rc),
     (e: unknown) => {
-      console.error(e instanceof ErroDadosReplay ? `ERRO DE DADOS: ${e.message}` : e);
-      process.exit(1);
+      console.error(e instanceof ErroDadosReplay ? `ERRO DE DADOS: ${e.message}` : e instanceof ErroArgumento ? `ERRO DE ARGUMENTO: ${e.message}` : e);
+      process.exit(e instanceof ErroArgumento ? 2 : 1);
     },
   );
 }

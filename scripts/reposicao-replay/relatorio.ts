@@ -143,17 +143,20 @@ export function montarRelatorio(r: Rodada): string {
   );
   s(`Escolhida: **${r.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
 
-  // 3. fronteira
-  s('## 3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
-  s(
-    tabela(
-      ['Fórmula', 'Variante', 'Quantil', 'Fill total', 'Fill A', 'Fill B', 'Fill C', 'Redução de estoque vs F0'],
-      r.fronteira.map((f) => [
-        f.formula, f.params.beta !== undefined ? `β ${f.params.beta}` : `janela ${f.params.janelaDias ?? '—'} du`, String(f.params.quantil.A),
-        pct(f.fill.total), pct(f.fill.A), pct(f.fill.B), pct(f.fill.C), pct(f.reducao),
-      ]),
-    ),
-  );
+  // 3. fronteira (sempre: vem da calibração)
+  const secaoFronteira = (): void => {
+    s('## 3. Fronteira capital × fill rate (informativa; janela de calibração, quantil uniforme nas 3 classes, 50 reps)');
+    s('Varre o MESMO quantil nas três classes (0,90 a 0,999) com o β/janela calibrados; NÃO é a recalibração por alvo de fill de 90% a 99,5% da spec §5.3 (aproximação declarada).');
+    s(
+      tabela(
+        ['Fórmula', 'Variante', 'Quantil', 'Fill total', 'Fill A', 'Fill B', 'Fill C', 'Redução de estoque vs F0'],
+        r.fronteira.map((f) => [
+          f.formula, f.params.beta !== undefined ? `β ${f.params.beta}` : `janela ${f.params.janelaDias ?? '—'} du`, String(f.params.quantil.A),
+          pct(f.fill.total), pct(f.fill.A), pct(f.fill.B), pct(f.fill.C), pct(f.reducao),
+        ]),
+      ),
+    );
+  };
 
   const a = r.avaliacao;
   if (a) {
@@ -174,6 +177,8 @@ export function montarRelatorio(r: Rodada): string {
       ),
     );
     if (a.dio) s(`DIO Sayerlack (reconstruído/empírico/espera, CMV = Σ cmcLinha × qtd da coorte na avaliação): F0 ${num(a.dio.f0, 1)} dias · candidata ${num(a.dio.alt, 1)} dias (${a.dio.linhasSemCmc} linhas sem cmc fora do CMV).`);
+
+    secaoFronteira();
 
     // 4. custo
     s('## 4. Grade de custo (economia líquida, positivo = candidata vantajosa) e custo de falta de equilíbrio');
@@ -251,6 +256,15 @@ export function montarRelatorio(r: Rodada): string {
       ),
     );
     s(`Fórmula candidata aplicada também aos ${a.suaves.n} suaves/erráticos (informativo, 50 reps, empírico/espera): fill dos suaves F0 ${pct(a.suaves.f0.fill)} × candidata pura ${pct(a.suaves.fnPura.fill)} (${a.suaves.f0.linhas} linhas).`);
+  } else {
+    const naoAval = 'Não avaliado: sem candidata viável na calibração (o veredito sai na calibração).';
+    s('## 2. Células × fórmula × cenário');
+    s(naoAval);
+    secaoFronteira();
+    for (const t of ['4. Grade de custo e custo de falta de equilíbrio', '5. Balanço terminal e fechamento', '6. Sensibilidades']) {
+      s(`## ${t}`);
+      s(naoAval);
+    }
   }
 
   // 7. paridade

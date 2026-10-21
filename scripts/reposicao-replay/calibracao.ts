@@ -175,6 +175,10 @@ export interface ResultadoBusca {
 }
 
 const QMAX = GRADE_QUANTIS[GRADE_QUANTIS.length - 1];
+/** Ordem lexicográfica (A, B, C) dos quantis: negativo = `a` menor. */
+export function compararTrio(a: Trio, b: Trio): number {
+  return a.A - b.A || a.B - b.B || a.C - b.C;
+}
 const atinge = (a: AvaliacaoTrio, alvo: Record<Classe, number | null>, c: Classe): boolean => {
   const meta = alvo[c];
   if (meta === null) return true; // não observável: sem restrição (fica no quantil mais alto)
@@ -183,9 +187,11 @@ const atinge = (a: AvaliacaoTrio, alvo: Record<Classe, number | null>, c: Classe
 };
 
 /**
- * Descida por coordenada na grade fixa (2 rodadas, ordem A, B, C) e validação conjunta do trio final. Em cada classe,
- * entre os quantis da grade que atingem o alvo DELA (com as outras fixas), fica o de menor estoque; empate → menor
- * quantil. Nenhum atinge ⇒ mantém o atual (a validação conjunta decide). Começa no quantil mais alto em todas.
+ * Descida por coordenada na grade fixa (2 rodadas, ordem A, B, C) e validação conjunta. Em cada classe, entre os quantis
+ * da grade que atingem o alvo DELA (com as outras fixas), fica o de menor estoque; empate → menor quantil. Nenhum atinge
+ * ⇒ mantém o atual. Começa no quantil mais alto em todas. Ao fim, a escolha é, entre TODOS os trios avaliados que atingem
+ * o alvo nas três classes (validação conjunta), o de menor estoque; empate → menor quantil (lexicográfico A, B, C).
+ * Inviável só se NENHUM trio avaliado atinge (spec §5.9: "nenhum ponto atinge"; review I-2).
  */
 export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Classe, number | null>): ResultadoBusca {
   const memo = new Map<string, AvaliacaoTrio>();
@@ -209,9 +215,16 @@ export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Cla
       if (melhor !== null) trio[c] = melhor.q;
     }
   }
-  const final = aval(trio);
-  const inviavel = !CLASSES.every((c) => atinge(final, alvo, c));
-  return { quantil: { ...trio }, inviavel, avaliacao: final, naoObservaveis, avaliacoes: memo.size };
+  aval(trio);
+  let escolhido: { q: Trio; a: AvaliacaoTrio } | null = null;
+  for (const [k, a] of memo) {
+    if (!CLASSES.every((c) => atinge(a, alvo, c))) continue;
+    const [A, B, C] = k.split('|').map(Number);
+    const q: Trio = { A, B, C };
+    if (escolhido === null || a.estoque < escolhido.a.estoque - 1e-9 || (Math.abs(a.estoque - escolhido.a.estoque) <= 1e-9 && compararTrio(q, escolhido.q) < 0)) escolhido = { q, a };
+  }
+  if (escolhido === null) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size };
+  return { quantil: escolhido.q, inviavel: false, avaliacao: escolhido.a, naoObservaveis, avaliacoes: memo.size };
 }
 
 // ── avaliação simulada na janela de calibração ──────────────────────────────────────────────────────────────────
@@ -286,7 +299,7 @@ export interface ResultadoCalibracao {
 
 /**
  * Calibra F1, F2 (por β) ou F3 (por janela) na janela de calibração: grade de quantis, descida por coordenada e validação
- * conjunta. Entre os β/janelas viáveis fica o de menor estoque (empate: o primeiro da lista). Nenhum viável ⇒ inviável.
+ * conjunta. Entre os β/janelas viáveis fica o de menor estoque (empate: o menor quantil, lexicográfico). Nenhum viável ⇒ inviável.
  */
 export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}): ResultadoCalibracao {
   if (f === 'F0') throw new Error('CALIBRAR_F0: o F0 não é calibrado (só dá o alvo)');
@@ -307,8 +320,13 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
     const busca = buscarTrio(avaliar, base.alvo);
     const params: ParamsFormula = { ...v, quantil: busca.quantil };
     tentativas.push({ params, inviavel: busca.inviavel, estoqueMedio: busca.avaliacao.estoque, fill: busca.avaliacao.fill, avaliacoes: busca.avaliacoes });
-    if (!busca.inviavel && (escolhida === null || busca.avaliacao.estoque < escolhida.busca.avaliacao.estoque - 1e-9)) escolhida = { params, busca };
-    if (fallback === null || busca.avaliacao.estoque < fallback.busca.avaliacao.estoque - 1e-9) fallback = { params, busca };
+    // menor estoque; empate (≤ 1e-9) → menor quantil (lexicográfico), como dentro da busca
+    const melhor = (atual: { busca: ResultadoBusca } | null): boolean =>
+      atual === null ||
+      busca.avaliacao.estoque < atual.busca.avaliacao.estoque - 1e-9 ||
+      (Math.abs(busca.avaliacao.estoque - atual.busca.avaliacao.estoque) <= 1e-9 && compararTrio(busca.quantil, atual.busca.quantil) < 0);
+    if (!busca.inviavel && melhor(escolhida)) escolhida = { params, busca };
+    if (melhor(fallback)) fallback = { params, busca };
   }
   const r = (escolhida ?? fallback)!;
   return {

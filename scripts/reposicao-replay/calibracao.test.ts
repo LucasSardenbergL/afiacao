@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { addDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { alvoDaClasse, avaliarNaCalibracao, buscarTrio, calibrar, escolherCandidata, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
+import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import { coorte } from './parados';
-import { avaliarCandidata } from './rodar';
+import { avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
+import { ErroDadosReplay } from './tipos';
 import type { ParamsDia } from './formulas';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
 
@@ -116,9 +118,19 @@ function cenario(alterarAvaliacao: boolean): Dados {
     itens.push(item(`D${j}`, 'P', t1, ltFinal), item(`D${j}`, 'Q', t1, ltFinal + 1));
     receb.push({ sku: 'P', data: somarDiasUteis(t1, ltFinal), quantidade: 6 }, { sku: 'Q', data: somarDiasUteis(t1, ltFinal + 1), quantidade: 4 });
   }
+  // review I-1: documentos com t1 nos últimos du da calibração e t4 > 30/04 (sorteáveis por pedidos de abril se o filtro
+  // da calibração vazar); no cenário alterado o LT deles muda (continua > 30/04)
+  for (const [j, t1] of ['2026-04-20', '2026-04-22', '2026-04-24', '2026-04-27', '2026-04-28'].entries()) {
+    const lt = alterarAvaliacao ? 22 : 9;
+    itens.push(item(`L${j}`, 'P', t1, lt), item(`L${j}`, 'Q', t1, lt));
+    receb.push({ sku: 'P', data: somarDiasUteis(t1, lt), quantidade: 6 }, { sku: 'Q', data: somarDiasUteis(t1, lt), quantidade: 4 });
+  }
   if (alterarAvaliacao) receb.push({ sku: 'R', data: '2026-07-15', quantidade: 40 }); // recebimento novo na avaliação
+  // CMC da avaliação muda no cenário alterado (vendas posteriores a 30/04 e o cmc de hoje)
+  if (alterarAvaliacao) for (const v of vs) if (v.data > JANELAS.calibracaoFim) v.cmcLinha = 9;
   receb.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : 1));
-  const skus = [comAbertura(sku('P', { multiplo: 2 }), 12, vs, receb), comAbertura(sku('Q'), 8, vs, receb), comAbertura(sku('R'), 30, vs, receb)];
+  const cmc = alterarAvaliacao ? 7 : 4;
+  const skus = [comAbertura(sku('P', { multiplo: 2, cmc }), 12, vs, receb), comAbertura(sku('Q', { cmc }), 8, vs, receb), comAbertura(sku('R', { cmc }), 30, vs, receb)];
   return dados(skus, vs, itens, receb);
 }
 
@@ -137,6 +149,14 @@ describe('invariância', () => {
     expect(coorte(cenario(false)).alterados.size).toBeGreaterThan(0);
     expect(base.rs.some((r) => Object.values(r.params.quantil).some((q) => q < 0.999))).toBe(true);
     expect(cenario(true).vendas.length).toBeGreaterThan(cenario(false).vendas.length);
+    // os documentos tardios (t4 > 30/04) são alcançáveis pelo sorteio de abril se o filtro da calibração vazar
+    const dd = cenario(false);
+    let alcancado = false;
+    for (let d = '2026-04-13'; d <= JANELAS.calibracaoFim && !alcancado; d = addDias(d, 1)) {
+      if (!ehDiaUtil(d)) continue;
+      for (let rep = 0; rep < 3; rep++) if (documentoSorteado(rep, d, dd.itensLT).trackingId.startsWith('L')) alcancado = true;
+    }
+    expect(alcancado).toBe(true);
   }, 120_000);
 });
 
@@ -145,7 +165,7 @@ describe('avaliação (rodar.ts)', () => {
   it('R25: capital nos 3 cenários; R26: só a taxa de 25% no gate; Clopper-Pearson com as linhas OBSERVADAS', async () => {
     const dd = cenario(false);
     const reps = 3;
-    const r = await avaliarCandidata(dd, '/inexistente', { candidata: 'F1', params: { quantil: { A: 0.9, B: 0.9, C: 0.9 } } }, [], { paralelo: 1, tetoReps: reps, cacheDir: null });
+    const r = await avaliarCandidata(dd, '/inexistente', { candidata: 'F1', params: { quantil: { A: 0.9, B: 0.9, C: 0.9 } } }, null, { paralelo: 1, tetoReps: reps, cacheDir: null });
     const ev = r.avaliacao.blocos;
     expect(r.avaliacao.reps).toBe(reps);
     expect(ev.capital.map((c) => c.falta)).toEqual(['espera', 'cancelamento', 'misto']);
@@ -168,7 +188,33 @@ describe('avaliação (rodar.ts)', () => {
     }
     expect(r.avaliacao.nulos.length).toBeGreaterThan(0);
     expect(['GO', 'NO-GO', 'INCONCLUSIVO']).toContain(r.veredito.veredito);
-    // tetoReps < teto da spec ⇒ a linha Precisão nunca PASSA (rodada incompleta não aprova)
-    expect(r.avaliacao.criterios.find((c) => c.criterio === 'Precisão')?.estado).not.toBe('PASSA');
+    // a linha Precisão traz as replicações efetivamente rodadas
+    expect(r.avaliacao.criterios.find((c) => c.criterio === 'Precisão')?.motivo).toMatch(/^3 replicações/);
   }, 300_000);
+});
+
+describe('fix round 1', () => {
+  it('I-2: inviável só se NENHUM trio avaliado atinge as três classes (a descida pode terminar num trio que falha)', () => {
+    // baixar C derruba A (efeito cruzado); B e C sempre atingem; estoque = soma dos quantis
+    const avaliar = (q: { A: number; B: number; C: number }) => ({ fill: { A: q.C >= 0.9 ? 1 : 0.5, B: 1, C: 1 }, estoque: q.A + q.B + q.C });
+    const r = buscarTrio(avaliar, { A: 0.99, B: 0.99, C: 0.99 });
+    // a descida termina em (0,5; 0,5; 0,5), que falha em A; (0,5; 0,5; 0,9) foi avaliado e passa nas três
+    expect(r.inviavel).toBe(false);
+    expect(r.quantil).toEqual({ A: 0.5, B: 0.5, C: 0.9 });
+    expect(r.avaliacao.fill.A).toBe(1);
+  });
+  it('I-2: nenhum trio atinge → inviável', () => {
+    const r = buscarTrio(() => ({ fill: { A: 0.5, B: 1, C: 1 }, estoque: 1 }), { A: 0.99, B: 0.99, C: 0.99 });
+    expect(r.inviavel).toBe(true);
+  });
+  it('I-3: gate de paridade em FALHA lança erro de dado (rc ≠ 0), nunca segue para o veredito', () => {
+    const ok = { es: 1, pp: 0.975, max: 0.967, valor: 0.008, decisao: { n: 8, de: 8 }, estado: { n: 7, de: 8 } };
+    expect(gateParidadePassa(ok)).toBe(true);
+    expect(() => exigirGateParidade(ok)).not.toThrow();
+    for (const ruim of [{ ...ok, max: 0.94 }, { ...ok, valor: 0.021 }, { ...ok, valor: null }, { ...ok, decisao: { n: 7, de: 8 } }, { ...ok, decisao: { n: 0, de: 0 } }]) {
+      expect(gateParidadePassa(ruim)).toBe(false);
+      expect(() => exigirGateParidade(ruim)).toThrow(ErroDadosReplay);
+      expect(() => exigirGateParidade(ruim)).toThrow(/^GATE_PARIDADE_FALHA/);
+    }
+  });
 });
