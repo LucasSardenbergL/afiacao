@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { uniforme } from './aleatorio';
 import { somarDiasUteis } from './calendario';
-import { INICIO_AQUECIMENTO } from './config';
+import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { ParamsDia } from './formulas';
-import { convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
+import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
 import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
@@ -46,7 +46,7 @@ const params = (por: Record<string, ParamsDia | ((d: string) => ParamsDia)>, fim
 };
 const roda = (dd: Dados, p: Map<string, ParamsDia>, extra: Partial<EntradaSimulacao> = {}): SomasSemanais =>
   simular({ formula: 'F1', params: p, rep: 0, lt: 'empirico', falta: 'espera', inicial: 'reconstruido', janela: JANELA, dados: dd, ...extra });
-const soma = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+const soma = (xs: (number | null)[]) => xs.reduce<number>((a, b) => a + (b ?? 0), 0);
 
 describe('decidirCompra', () => {
   const f0 = (pp: number, max: number, cob: number | null = null, dem: number | null = null): ParamsDia => ({ tipo: 'F0', pp, max, coberturaTetoDias: cob, demandaDiariaLinha: dem });
@@ -157,7 +157,9 @@ describe('simular', () => {
     const vs = [venda('a1', 'P', '2026-05-05', 2, 20, null)];
     const r = roda(dados([comAbertura(sku('P'), 0, vs)], vs), params({ P: SEM }), { falta: 'cancelamento' });
     expect(soma(r.cancelada.valor)).toBe(20);
-    expect(soma(r.cancelada.margem)).toBe(0);
+    // M1: semana só com canceladas sem cmc ⇒ margem null (ausente ≠ zero); semana sem cancelada ⇒ 0 real
+    expect(r.cancelada.margem[0]).toBeNull();
+    expect(r.cancelada.margem.slice(1).every((m) => m === 0)).toBe(true);
     expect(soma(r.canceladaSemCmc.linhas)).toBe(1);
     expect(soma(r.canceladaSemCmc.valor)).toBe(20);
   });
@@ -294,5 +296,73 @@ describe('paridadeQuantidade', () => {
     expect(r.replay).toEqual({ n: 1, de: 2 });
     expect(r.gravado).toEqual({ n: 2, de: 2 });
     expect(r.linhas.find((l) => l.sku === 'NAO_EXISTE')!.fora).toBe('FORA_DOS_DADOS');
+  });
+});
+
+describe('fix round 1', () => {
+  it('I1: na calibração o capital usa o último cmcLinha <= fim da calibração, nunca o cmc de hoje', () => {
+    const vs = [venda('k1', 'P', '2026-03-10', 1, 10, 5), venda('k2', 'P', '2026-05-12', 1, 10, 7)];
+    const JC: [string, string] = ['2026-02-02', JANELAS.calibracaoFim];
+    const roda2 = (cmcHoje: number | null) =>
+      roda(dados([comAbertura(sku('P', { cmc: cmcHoje }), 10, vs), comAbertura(sku('SEMCMC', { cmc: 9 }), 4, vs)], vs), params({ P: SEM, SEMCMC: SEM }), { janela: JC });
+    const a = roda2(4);
+    const b = roda2(99);
+    expect(b.estoqueCmcDias).toEqual(a.estoqueCmcDias);
+    // P: 10 L até 03-09, 9 L de 03-10 ao fim, valorado a 5 (cmcLinha de 03-10; o de 05-12 é futuro)
+    const diasAntes = diffDias(JC[0], '2026-03-09') + 1;
+    const diasDepois = diffDias('2026-03-10', JC[1]) + 1;
+    expect(soma(a.estoqueCmcDias)).toBeCloseTo(5 * (10 * diasAntes + 9 * diasDepois), 9);
+    expect(a.terminal.estoqueCmc).toBe(5 * 9);
+    // SKU sem cmcLinha até o fim da calibração fica fora do capital, mesmo com cmc de hoje
+    expect(a.skusSemCmc).toEqual(['SEMCMC']);
+    // na avaliação continua o cmc de hoje (numerário constante, declarado)
+    const av = roda(dados([comAbertura(sku('P', { cmc: 4 }), 10, vs)], vs), params({ P: SEM }));
+    expect(av.terminal.estoqueCmc).toBe(4 * 8);
+  });
+
+  it('M2: marcas dos ramos fail-closed', () => {
+    expect(() => conferirFechamento('X', 10, 9)).toThrow(/^FECHAMENTO_VIOLADO:X:/);
+    expect(() => conferirFechamento('X', 10, 10 + 1e-12)).not.toThrow();
+    expect(() => conferirEstoque('X', 5, 3, 2, 7)).toThrow(/^ESTOQUE_NAO_FECHA:X$/);
+    expect(() => conferirEstoque('X', 5, 3, 2, 6)).not.toThrow();
+    const eqs: Equivalencia[] = [
+      { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+      { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+    ];
+    const dg = dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 1, []), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 1, [])], [], { equivalencias: eqs });
+    expect(() => roda(dg, params({ QT: { tipo: 'S', s: 1 }, GL: { tipo: 'S', s: 1 } }))).toThrow(/^GRUPO_MEMBRO_COM_DECISAO:GL\|/);
+    const dp = dados([comAbertura(sku('P'), 1, [])], []);
+    expect(() => roda(dp, params({ P: { tipo: 'S', s: 1 } }), { formula: 'F0' })).toThrow(/^FORMULA_INCOERENTE:P\|/);
+  });
+
+  it('M3: pareamento — F0 e Fn com a mesma rep sorteiam o mesmo LT no mesmo (d, sku) e o mesmo desfecho na mesma linha', () => {
+    const vs: LinhaVenda[] = [];
+    let n = 0;
+    for (let d = '2026-05-04'; d <= JANELA[1]; d = addDias(d, 1)) if (ehDiaUtil(d)) vs.push(venda(`m${n++}`, 'P', d, 2), venda(`m${n++}`, 'P', d, 1));
+    const its = [3, 5, 8, 13, 21].flatMap((lt, k) => [item(`D${k}`, 'X', addDias('2026-05-04', 3 * k), lt), item(`D${k}`, 'Y', addDias('2026-05-04', 3 * k), lt + 4)]);
+    const dd = dados([comAbertura(sku('P'), 2, vs)], vs, { itensLT: its });
+    const f0: ParamsDia = { tipo: 'F0', pp: 0, max: 3, coberturaTetoDias: null, demandaDiariaLinha: null };
+    const fn: ParamsDia = { tipo: 'S', s: 1 };
+    let comparados = 0;
+    let desfechosComuns = 0;
+    for (const rep of [0, 1, 2, 3]) {
+      const a = roda(dd, params({ P: f0 }), { formula: 'F0', rep, falta: 'misto', rastro: true });
+      const b = roda(dd, params({ P: fn }), { formula: 'F1', rep, falta: 'misto', rastro: true });
+      const chegB = new Map(b.pedidos!.map((p) => [`${p.dia}|${p.sku}`, p.chegada]));
+      for (const p of a.pedidos!) {
+        const k = `${p.dia}|${p.sku}`;
+        if (!chegB.has(k)) continue;
+        expect(chegB.get(k)).toBe(p.chegada);
+        comparados++;
+      }
+      const desB = new Map(b.desfechos!.map((x) => [x.linhaId, x.desfecho]));
+      for (const x of a.desfechos!) {
+        if (!desB.has(x.linhaId)) continue;
+        expect(desB.get(x.linhaId)).toBe(x.desfecho);
+        desfechosComuns++;
+      }
+    }
+    expect(comparados).toBeGreaterThan(0);
+    expect(desfechosComuns).toBeGreaterThan(0);
   });
 });

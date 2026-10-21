@@ -28,8 +28,9 @@
 //    restante for um número inteiro de embalagens do equivalente (unidades Omie por embalagem conhecidas); o estoque do
 //    equivalente é BAIXADO (o mesmo galão não salva duas linhas). Só no passo 3 (não nas obrigações).
 //  · Margem cancelada = valor − cmcLinha × quantidade; cmcLinha null ⇒ margem null: fica FORA de `cancelada.margem` e é
-//    contada em `canceladaSemCmc` (nunca 0 fabricado). Capital usa o CMC de hoje do SKU; SKU sem CMC fica fora do
-//    capital e listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas).
+//    contada em `canceladaSemCmc` (nunca 0 fabricado); semana só com canceladas sem cmc ⇒ margem null. Capital: na
+//    CALIBRAÇÃO, o último cmcLinha <= fim da calibração (o cmc de hoje seria futuro); na AVALIAÇÃO, o CMC de hoje como
+//    numerário constante. SKU sem CMC fica fora do capital e listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas).
 //  · Linha com quantidade <= 0 (4 no dado real, todas q = 0 e valor 0) não é demanda: ignorada e contada.
 //  · Fechamento verificado a cada chamada (fail-closed): por SKU, demanda medida = imediata + tardia + emergencial +
 //    cancelada + backlog terminal (unidades); estoque inicial + recebido − entregue = final. Violação lança.
@@ -65,8 +66,11 @@ export interface SomasSemanais {
   diasCorridos: number[];
   /** Valor (R$ da linha, pró-rata) entregue: imediata no dia; tardia por obrigação; emergencial por compra fora. */
   entregue: { imediata: number[]; tardia: number[]; emergencial: number[] };
-  /** `margem` só das linhas com cmcLinha; as sem cmc vão para `canceladaSemCmc`. */
-  cancelada: { valor: number[]; margem: number[] };
+  /**
+   * `margem` só das linhas com cmcLinha; as sem cmc vão para `canceladaSemCmc`. Semana em que TODAS as canceladas são sem
+   * cmc ⇒ null (ausente ≠ zero). Semana mista ⇒ margem PARCIAL: razão margem/valor exige excluir `canceladaSemCmc.valor`.
+   */
+  cancelada: { valor: number[]; margem: (number | null)[] };
   canceladaSemCmc: { linhas: number[]; valor: number[] };
   /** Σ valor entregue tardiamente × dias corridos de atraso, linha a linha, na semana da entrega. */
   valorDiasAtraso: number[];
@@ -78,6 +82,8 @@ export interface SomasSemanais {
   linhasIgnoradas: number;
   /** Só com `rastro: true` (testes/diagnóstico): os pedidos simulados, qtd na unidade de estoque. */
   pedidos?: { dia: Data; sku: string; qtd: number; chegada: Data | null }[];
+  /** Só com `rastro: true`: o desfecho de cada linha que falhou (medida ou não). */
+  desfechos?: { linhaId: string; desfecho: 'espera' | 'cancelamento' | 'emergencial' }[];
 }
 
 export interface EntradaSimulacao {
@@ -328,8 +334,19 @@ function montarPlano(dados: Dados, skusParams: string[], janela: [Data, Data], i
   const cmc = new Float64Array(nSku);
   const skusSemCmc: string[] = [];
   const inicialArr = new Float64Array(nSku);
+  // I1: na CALIBRAÇÃO, valora pelo último cmcLinha conhecido até o fim dela (o cmc de hoje é futuro para quem decide em
+  // 30/04); na avaliação, o cmc de hoje como numerário constante (declarado). Sem cmc ⇒ fora do capital (skusSemCmc).
+  const calibracao = janela[1] <= JANELAS.calibracaoFim;
+  const cmcCalib = new Map<string, { data: Data; cmc: number }>();
+  if (calibracao) {
+    for (const v of dados.vendas) {
+      if (v.cmcLinha === null || !(v.cmcLinha > 0) || v.data > JANELAS.calibracaoFim || !idxSku.has(v.sku)) continue;
+      const atual = cmcCalib.get(v.sku);
+      if (!atual || v.data > atual.data) cmcCalib.set(v.sku, { data: v.data, cmc: v.cmcLinha });
+    }
+  }
   for (let s = 0; s < nSku; s++) {
-    const c = skuObj[s].cmc;
+    const c = calibracao ? (cmcCalib.get(skus[s])?.cmc ?? null) : skuObj[s].cmc;
     cmc[s] = c === null ? NaN : c;
     if (c === null) skusSemCmc.push(skus[s]);
     inicialArr[s] = ini.get(skus[s])!;
@@ -390,6 +407,19 @@ function resolverParams(plano: Plano, params: Map<string, ParamsDia>, formula: F
   return arr;
 }
 
+/** Fechamento por SKU (unidades, linhas medidas): demanda = imediata + tardia + emergencial + cancelada + backlog. */
+export function conferirFechamento(sku: string, demanda: number, desfechos: number): void {
+  if (Math.abs(demanda - desfechos) > 1e-6 * Math.max(1, demanda)) throw new Error(`FECHAMENTO_VIOLADO:${sku}:${demanda}≠${desfechos}`);
+}
+/**
+ * Estoque inicial + recebido − entregue = final. Tautológico por construção (os 3 acumuladores andam junto com o estoque):
+ * só detecta deriva numérica ou um caminho futuro que mexa no estoque sem contabilizar.
+ */
+export function conferirEstoque(sku: string, inicial: number, recebido: number, entregue: number, final: number): void {
+  const esperado = inicial + recebido - entregue;
+  if (Math.abs(esperado - final) > 1e-6 * Math.max(1, Math.abs(esperado))) throw new Error(`ESTOQUE_NAO_FECHA:${sku}`);
+}
+
 // ── simulação ──────────────────────────────────────────────────────────────────────────────────────────────────
 export function simular(e: EntradaSimulacao): SomasSemanais {
   const { dados, janela, rep, falta } = e;
@@ -434,6 +464,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   const emergencial = new Float64Array(nSem);
   const cancV = new Float64Array(nSem);
   const cancM = new Float64Array(nSem);
+  const cancComCmc = new Float64Array(nSem);
   const semCmcL = new Float64Array(nSem);
   const semCmcV = new Float64Array(nSem);
   const atraso = new Float64Array(nSem);
@@ -453,6 +484,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     agendar(c.i, c.s, c.q);
   }
   const pedidos: NonNullable<SomasSemanais['pedidos']> | undefined = e.rastro ? [] : undefined;
+  const desfechos: NonNullable<SomasSemanais['desfechos']> | undefined = e.rastro ? [] : undefined;
 
   const somaCel = (arr: Float64Array, w: number, c: number, a: number, v: number) => {
     arr[c * nSem + w] += v;
@@ -543,6 +575,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
         const u = uniforme(rep, 'falta', P.linId[L]);
         desfecho = u < pEspera ? 0 : u < pCancel ? 1 : 2;
       }
+      if (desfechos) desfechos.push({ linhaId: P.linId[L], desfecho: desfecho === 0 ? 'espera' : desfecho === 1 ? 'cancelamento' : 'emergencial' });
       if (desfecho === 0) {
         saldo[L] = rem;
         fila[P.offFila[s] + tail[s]++] = L;
@@ -558,7 +591,10 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
           if (Number.isNaN(cm)) {
             semCmcL[w] += 1;
             semCmcV[w] += v;
-          } else cancM[w] += v - cm * rem;
+          } else {
+            cancM[w] += v - cm * rem;
+            cancComCmc[w] += 1;
+          }
           caU[s] += rem;
         }
       }
@@ -617,10 +653,8 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       backlogDiasAtraso += v * (iFim - P.linDia[L]);
       bkU += saldo[L];
     }
-    const desf = imU[s] + taU[s] + emU[s] + caU[s] + bkU;
-    if (Math.abs(demU[s] - desf) > 1e-6 * Math.max(1, demU[s])) throw new Error(`FECHAMENTO_VIOLADO:${P.skus[s]}:${demU[s]}≠${desf}`);
-    const fim = P.inicial[s] + recebido[s] - entregueEst[s];
-    if (Math.abs(fim - est[s]) > 1e-6 * Math.max(1, Math.abs(fim))) throw new Error(`ESTOQUE_NAO_FECHA:${P.skus[s]}`);
+    conferirFechamento(P.skus[s], demU[s], imU[s] + taU[s] + emU[s] + caU[s] + bkU);
+    conferirEstoque(P.skus[s], P.inicial[s], recebido[s], entregueEst[s], est[s]);
     bal.inicial += P.inicial[s];
     bal.recebido += recebido[s];
     bal.entregue += entregueEst[s];
@@ -638,7 +672,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     estoqueCmcDias: Array.from(capital),
     diasCorridos: [...P.diasPorSemana],
     entregue: { imediata: Array.from(imediata), tardia: Array.from(tardia), emergencial: Array.from(emergencial) },
-    cancelada: { valor: Array.from(cancV), margem: Array.from(cancM) },
+    cancelada: { valor: Array.from(cancV), margem: Array.from(cancM, (m, w) => (semCmcL[w] > 0 && cancComCmc[w] === 0 ? null : m)) },
     canceladaSemCmc: { linhas: Array.from(semCmcL), valor: Array.from(semCmcV) },
     valorDiasAtraso: Array.from(atraso),
     terminal: { estoqueCmc, abertasCmc, backlogValor, backlogDiasAtraso },
@@ -648,6 +682,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     linhasIgnoradas: P.linhasIgnoradas,
   };
   if (pedidos) out.pedidos = pedidos;
+  if (desfechos) out.desfechos = desfechos;
   return out;
 }
 
