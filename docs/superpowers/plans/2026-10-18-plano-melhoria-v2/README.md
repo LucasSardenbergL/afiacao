@@ -91,7 +91,8 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
-| tempo até `validate` no PR (p50) · edges money-path sem teste | 16–21 min · 26/49 | — | não medidos neste ciclo |
+| tempo até `validate` no PR (p50) | 16–21 min | — | **38,7 → 19,5 min** (2026-10-21, item J: 15 runs antes · 5 depois do #3313). A fila de runners era o gargalo, com a conta estacionada em 20 jobs simultâneos. O `mutation-check` saiu do pós-merge (148→102 min de runner por run da main) e o `provas-sql` foi balanceado por custo. Sem fila, o caminho crítico foi de 15,5 para 13,6 min. Ressalva: a carga de PRs caiu à metade na janela de depois; falta comparar num pico. `docs/historico/ci-fila-de-runners.md` |
+| edges money-path sem teste | 26/49 | — | não medido neste ciclo |
 
 ## 7. Calibração do parecer (separada do parecer cru)
 Conferido no código ✅: 1723 (booleano), piso 40, `auto-merge.yml:65`, `formatPrecoOuAusente`, `saldoBancario = 0`, `test-wt-*` no `test:hooks`, `tarefas` congelado, inserts da NF-e em 105/194. Não conferido ⚠️: caminho de falha dos itens da NF-e, contagem 18/21/4/1 da deriva, camadas `anthropic*`/`omie-*`, consumidor transitivo de `sonda-fingerprints`. Discordância: nenhuma de fundo; o Codex viu o rascunho **antes** da minha correção do lote J (que ele também apontou).
