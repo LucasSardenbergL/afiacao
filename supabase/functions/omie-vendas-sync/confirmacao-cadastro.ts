@@ -11,7 +11,7 @@ const CNPJ_RE = /^[0-9A-Z]{12}[0-9]{2}$/;
 /** Mesmo formato do CHECK de `omie_cliente_confirmacoes.codigo_cliente`. */
 const CODIGO_RE = /^[1-9][0-9]{0,18}$/;
 /** Prazo do INSERT: o cliente JÁ existe no Omie quando gravamos; um banco lento não pode estourar a action. */
-export const PRAZO_CONFIRMACAO_MS = 5000;
+const PRAZO_CONFIRMACAO_MS = 5000;
 
 export type OrigemConfirmacao = "incluir" | "lookup";
 
