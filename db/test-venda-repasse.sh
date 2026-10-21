@@ -33,9 +33,10 @@ PORT="${PGPORT_TEST:-5791}"
 SLUG="venda-repasse"
 export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_repasse.sql}"
+MIG_DESEMP="$REPO_ROOT/supabase/migrations/20261021021500_venda_repasse_base_desempenho.sql"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=52
+TOTAL_ESPERADO=54
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -55,7 +56,10 @@ if [ "${1:-}" = "--falsificar" ]; then
               paridade_markup:C1b:C1a,CAND1
               gate_candidatos:C2b:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
-              pos_rls:MIG!POS_RLS"
+              pos_rls:MIG!POS_RLS
+              autojuncao:PERF:CAND1,C4b,PERFv
+              pos_janela:MIG!POS_JANELA
+              pre_config:MIG!PRE_CONFIG"
   falhas=0; sab_falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -367,14 +371,23 @@ NSTAT="$(como "$MST" "SELECT count(DISTINCT e->>'motivo') FROM jsonb_array_eleme
 eq C0 "o lote de paridade passa por 14 motivos distintos" "$NSTAT" "14"
 
 # ZONA 3 — a migration REAL (cópia, onde a sabotagem age)
-MIGC="$TMPD/mig.sql"
-cp "$MIG_ORIG" "$MIGC"
-sabotar() { # $1 = sed; exige que o sed MUDE o arquivo (sabotagem que não casa = teatro)
-  local antes; antes="$(md5 -q "$MIGC" 2>/dev/null || md5sum "$MIGC" | cut -d' ' -f1)"
-  sed -i.bak -E "$1" "$MIGC"
-  local depois; depois="$(md5 -q "$MIGC" 2>/dev/null || md5sum "$MIGC" | cut -d' ' -f1)"
-  [ "$antes" != "$depois" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
+# Duas migrations: a original (20261020233000) e a de desempenho (20261021021500), que redefine o helper do
+# lote. A sabotagem age nas DUAS cópias (o helper existe nas duas); `sabotar_d` só na de desempenho.
+MIGC="$TMPD/mig.sql"; MIGD="$TMPD/mig-desempenho.sql"
+cp "$MIG_ORIG" "$MIGC"; cp "$MIG_DESEMP" "$MIGD"
+md5de() { cat "$@" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; }; }
+sabotar() { # $1 = sed; exige que o sed MUDE os arquivos (sabotagem que não casa = teatro)
+  local antes; antes="$(md5de "$MIGC" "$MIGD")"
+  sed -i.bak -E "$1" "$MIGC" "$MIGD"
+  [ "$antes" != "$(md5de "$MIGC" "$MIGD")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
 }
+sabotar_d() { # só na migration de desempenho
+  local antes; antes="$(md5de "$MIGD")"
+  sed -i.bak -E "$1" "$MIGD"
+  [ "$antes" != "$(md5de "$MIGD")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada (desempenho)"; exit 2; }
+}
+# sabotagem no CORPO do helper: a PRE/PÓS md5 da migration de desempenho viram NOTICE para o corpo chegar ao banco
+desliga_md5_d() { sabotar_d "s/RAISE EXCEPTION 'P(RE|OS): /RAISE NOTICE 'P\1: /g"; }
 case "${SABOTAGEM:-}" in
   "") ;;
   vaza_cmc)        sabotar "s/^( +)'valido_ate', +r\.valido_ate/\1'cmc', r.pct, 'valido_ate', r.valido_ate/" ;;
@@ -385,22 +398,29 @@ case "${SABOTAGEM:-}" in
   sem_revalidar)   sabotar 's/^( +)AND b\.ultimo_preco < ra\.preco_alvo$/\1AND true/' ;;
   paridade_markup) sabotar 's/^( +)markup_ant := \(p_p_last - p_c_last\) \/ p_c_last \* 100;/\1markup_ant := (p_p_last - p_c_last) \/ p_c_last * 101;/' ;;
   gate_candidatos) sabotar 's/^( +)OR NOT private\.cap_custo_ler\(v_uid\) THEN/\1THEN/' ;;
-  sem_finito)      sabotar "s/AND private\.regua_num_finito\(ip\.cmc\) AND ip\.cmc > 0 /AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric /" ;;
+  sem_finito)      sabotar "s/AND private\.regua_num_finito\(ip\.cmc\) AND ip\.cmc > 0 /AND ip.cmc > 0 AND ip.cmc <> 'NaN'::numeric /"; desliga_md5_d ;;
   ressuscita)      sabotar "s/^( +WHERE ra\.comprador_id = v_comprador AND ra\.empresa = 'oben' AND ra\.omie_codigo_produto = p_codigo)$/\1 AND ra.revogado_em IS NULL/" ;;
   retry_subst)     sabotar 's/AND v_atual\.substitui_id IS NOT DISTINCT FROM p_substitui THEN/AND p_substitui IS NULL THEN/' ;;
-  media_max)       sabotar 's/^( +)sum\(l\.preco_unit_liquido \* l\.quantidade\) FILTER \(WHERE l\.preco_unit_liquido > 0\) AS soma,/\1max(l.preco_unit_liquido) * sum(l.quantidade) FILTER (WHERE l.preco_unit_liquido > 0) AS soma,/' ;;
+  media_max)       sabotar 's/^( +)sum\(l\.preco_unit_liquido \* l\.quantidade\) FILTER \(WHERE l\.preco_unit_liquido > 0\) AS soma,/\1max(l.preco_unit_liquido) * sum(l.quantidade) FILTER (WHERE l.preco_unit_liquido > 0) AS soma,/'; desliga_md5_d ;;
   alvo_texto)      sabotar "s/^( +)'preco_alvo', +r\.preco_alvo,/\1'preco_alvo', r.preco_alvo::text,/" ;;
   pos_acl_anon)    sabotar '/^REVOKE ALL ON FUNCTION public\.venda_repasse_candidatos\(\) FROM PUBLIC, anon;/d' ;;
   pos_rls)         sabotar '/^ALTER TABLE public\.venda_repasse_aprovado ENABLE ROW LEVEL SECURITY;/d' ;;
+  # o corpo NOVO não chega ao banco (fica o da autojunção): só o PERF pode ficar vermelho
+  autojuncao)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/'
+                   sabotar_d "s/RAISE EXCEPTION 'POS/RAISE NOTICE 'POS/g" ;;
+  pre_config)      ;;   # age entre as duas migrations (abaixo)
+  pos_janela)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/' ;;
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
 esac
-if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1; then
-  ok "MIG migration aplicou (PRE+CREATE+POS)"
+# pre_config: deriva de search_path no helper ANTES da migration de desempenho — a PRE tem de recusar
+DERIVA=":"; [ "${SABOTAGEM:-}" = "pre_config" ] && DERIVA="P -q -c 'ALTER FUNCTION private._venda_repasse_base(uuid) SET search_path = pg_catalog, public'"
+if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && eval "$DERIVA" && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1; then
+  ok "MIG migrations aplicaram (repasse + desempenho; PRE+CREATE+POS)"
 else
   bad "MIG migration não aplicou: $(grep -m1 -E 'ERROR' "$TMPD/mig.out" | cut -c1-200)"
   echo "RESULTADO: $PASS ok / $FAIL fail"; exit 1
 fi
-if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar a migration é seguro (PRE aceita este corpo)"
+if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar as migrations é seguro (PRE aceita este corpo)"
 else bad "MIG2 re-colar falhou: $(grep -m1 ERROR "$TMPD/mig2.out" | cut -c1-200)"; fi
 eq H1 "get_defasagem_cliente: volatilidade/secdef/search_path/ACL preservados" \
   "$(Pq -c "SELECT provolatile::text||'|'||prosecdef::text||'|'||coalesce(array_to_string(proconfig,','),'-')||'|'||coalesce((SELECT string_agg(a::text, ',' ORDER BY a::text) FROM unnest(proacl) a),'NULL') FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")" \
@@ -538,6 +558,38 @@ neg ACL1 "authenticated não lê a tabela direto" "$FAR" insufficient_privilege 
 neg ACL2 "anon não executa a leitura de preço alvo" "" insufficient_privilege "" "PERFORM public.venda_preco_alvo_comprador('$CAN')"
 eq ACL3 "helpers privados fechados a authenticated" \
   "$(Pq -c "SELECT bool_or(has_function_privilege('authenticated', f, 'EXECUTE'))::text FROM unnest(ARRAY['private._defasagem_item(boolean,boolean,date,numeric,numeric,numeric,numeric,timestamptz,numeric,numeric)','private._venda_repasse_base(uuid)','private._venda_repasse_sku_ok(bigint)']) f")" "false"
+
+# PERF — volume de prod (72k linhas, 400 compradores × 20 SKUs × 9 pedidos) sob o statement_timeout da prod (8 s,
+# authenticated/authenticator). Incidente 2026-10-21: o corpo com autojunção levou 29 s aqui e deu 500 na prod.
+P -q <<'SQL' >/dev/null
+SET session_replication_role = replica;
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, is_tintometric)
+  SELECT 600000+s, (600000+s)::text, 'p'||s, 'oben', false FROM generate_series(1,400) s;
+INSERT INTO public.inventory_position (omie_codigo_produto, cmc, account, synced_at)
+  SELECT 600000+s, 80, 'oben', now() FROM generate_series(1,400) s;
+INSERT INTO public.cmc_snapshot (omie_codigo_produto, account, data_posicao, cmc, synced_at)
+  SELECT 600000+s, 'oben', (now() AT TIME ZONE 'America/Sao_Paulo')::date - d, 60, now()
+    FROM generate_series(1,400) s, generate_series(1,400,3) d;
+CREATE TEMP TABLE ped AS
+  SELECT gen_random_uuid() AS id, md5('vol'||c)::uuid AS cli, 600000 + ((c*7 + j*13) % 400) + 1 AS cod,
+         (now() AT TIME ZONE 'America/Sao_Paulo')::date - (k*30 + (c % 20)) AS dia
+    FROM generate_series(1,400) c, generate_series(1,20) j, generate_series(1,9) k;
+INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, status, order_date_kpi, omie_pedido_id, omie_numero_pedido, total, discount)
+  SELECT id, cli, cli, 'oben', 'faturado', dia, 9000000 + row_number() OVER (), 'x', 100, 0 FROM ped;
+INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_produto, quantity, unit_price, discount, desconto_valor)
+  SELECT id, cli, cod, 10, 100, 0, 0 FROM ped;
+INSERT INTO public.venda_recompra (comprador_id, empresa, omie_codigo_produto, n_pedidos, cadencia_dias, qtd_sugerida, ultima_compra, ultimo_preco, data_referencia, calculado_em)
+  SELECT DISTINCT ON (cli, cod) cli, 'oben', cod, 9, 30, 10, dia, 100, (now() AT TIME ZONE 'America/Sao_Paulo')::date, now() FROM ped LIMIT 1400;
+SET session_replication_role = origin;
+ANALYZE;
+SQL
+eq PERFv "volume semeado: linhas, pares comprador×SKU e dias por par" \
+  "$(Pq -c "SELECT count(*)||'|'||count(DISTINCT (customer_user_id, omie_codigo_produto))||'|'||(SELECT min(n) FROM (SELECT count(DISTINCT so.order_date_kpi) n FROM public.order_items oi JOIN public.sales_orders so ON so.id = oi.sales_order_id WHERE oi.omie_codigo_produto > 600000 GROUP BY oi.customer_user_id, oi.omie_codigo_produto) x) FROM public.order_items WHERE omie_codigo_produto > 600000")" \
+  "72000|8000|9"
+PERF="$(Pq -c "SET test.uid='$MST'; SET ROLE authenticated; SET statement_timeout = '8s';" \
+           -c "SELECT CASE WHEN jsonb_array_length(public.venda_repasse_candidatos()) >= 0 THEN 'PERF-OK' END" 2>&1 \
+        | grep -oE 'PERF-OK|statement timeout' | head -1 || true)"
+eq PERF "candidatos com volume de prod cabem no statement_timeout de 8 s da prod" "$PERF" "PERF-OK"
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail"
