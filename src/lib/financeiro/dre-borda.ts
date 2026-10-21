@@ -106,23 +106,12 @@ export function paraFinDRE(l: Tables<'fin_dre_snapshots'>): FinDRE {
 }
 
 /**
- * DRE fase 2: composição chave → linha → R$. Ausente ⇒ null (snapshot legado). Presente mas malformada —
- * inclusive valor que não é número de verdade (NULL, "", string numérica) — ⇒ objeto VAZIO, que o helper
- * REJEITA (snapshot_inconsistente) — nunca some, e nenhum valor vira 0 por coerção (`Number(null) === 0`).
+ * DRE fase 2: composição chave → linha → R$. Ausente ou NULL ⇒ null (snapshot legado). Presente mas
+ * malformada — inclusive valor que não é número de verdade (NULL, "", string numérica) — LANÇA. Não
+ * há marcador seguro para "inválida": o antigo `Number(null) === 0` às vezes fazia o helper rejeitar,
+ * e um `{}` sentinela colide com a composição vazia legítima (achado Codex adversarial: PE=0 aceito).
  */
-export function lerComposicaoDespesas(c: Json | undefined): Record<string, Record<string, number>> | null {
+export function lerComposicaoDespesas(c: Json | undefined, onde: string): Record<string, Record<string, number>> | null {
   if (c === undefined || c === null) return null;
-  const malformada = {};
-  if (typeof c !== 'object' || Array.isArray(c)) return malformada;
-  const out: Record<string, Record<string, number>> = {};
-  for (const [k, linhas] of Object.entries(c)) {
-    if (typeof linhas !== 'object' || linhas === null || Array.isArray(linhas)) return malformada;
-    const l: Record<string, number> = {};
-    for (const [linha, v] of Object.entries(linhas)) {
-      if (typeof v !== 'number' || !Number.isFinite(v)) return malformada;
-      l[linha] = v;
-    }
-    out[k] = l;
-  }
-  return out;
+  return registro(registro(numero))(c, onde);
 }

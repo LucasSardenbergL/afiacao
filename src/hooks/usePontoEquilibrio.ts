@@ -86,7 +86,10 @@ function useSnapshotsTTM(company: string | null) {
           linha_administrativas: row.despesas_administrativas,
           linha_comerciais: row.despesas_comerciais,
           linha_financeiras: row.despesas_financeiras,
-          composicao_despesas: lerComposicaoDespesas(detalhamento.composicao_despesas),
+          composicao_despesas: lerComposicaoDespesas(
+            detalhamento.composicao_despesas,
+            `${onde}.detalhamento.composicao_despesas`,
+          ),
           resultado_provisorio: row.resultado_provisorio,
         };
       });

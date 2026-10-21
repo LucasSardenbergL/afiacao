@@ -114,21 +114,22 @@ describe('lerDetalhamentoDre', () => {
 
 describe('lerComposicaoDespesas', () => {
   it('ausente ou NULL ⇒ null (snapshot legado)', () => {
-    expect(lerComposicaoDespesas(undefined)).toBeNull();
-    expect(lerComposicaoDespesas(null)).toBeNull();
+    expect(lerComposicaoDespesas(undefined, 'c')).toBeNull();
+    expect(lerComposicaoDespesas(null, 'c')).toBeNull();
   });
 
-  it('válida passa intacta', () => {
-    expect(lerComposicaoDespesas({ '2.01': { cmv: 10, despesas_operacionais: 0 } })).toEqual({
+  it('válida passa intacta; vazia legítima continua vazia', () => {
+    expect(lerComposicaoDespesas({ '2.01': { cmv: 10, despesas_operacionais: 0 } }, 'c')).toEqual({
       '2.01': { cmv: 10, despesas_operacionais: 0 },
     });
+    expect(lerComposicaoDespesas({}, 'c')).toEqual({});
   });
 
-  it('valor NULL, "" ou string numérica ⇒ objeto VAZIO (o helper rejeita); nunca 0 por coerção', () => {
-    expect(lerComposicaoDespesas({ '2.01': { cmv: null } })).toEqual({});
-    expect(lerComposicaoDespesas({ '2.01': { cmv: '' } })).toEqual({});
-    expect(lerComposicaoDespesas({ '2.01': { cmv: '10' } })).toEqual({});
-    expect(lerComposicaoDespesas({ '2.01': { cmv: 10 }, '2.02': 5 })).toEqual({});
-    expect(lerComposicaoDespesas([1])).toEqual({});
+  it('valor NULL, "" ou string numérica LANÇA — nunca 0 por coerção nem `{}` que passe por vazia', () => {
+    expect(() => lerComposicaoDespesas({ '2.01': { cmv: null } }, 'c')).toThrow('c.2.01.cmv: esperava número, veio null');
+    expect(() => lerComposicaoDespesas({ '2.01': { cmv: '' } }, 'c')).toThrow('c.2.01.cmv: esperava número, veio string');
+    expect(() => lerComposicaoDespesas({ '2.01': { cmv: '10' } }, 'c')).toThrow('c.2.01.cmv: esperava número, veio string');
+    expect(() => lerComposicaoDespesas({ '2.02': 5 }, 'c')).toThrow('c.2.02: esperava objeto, veio number');
+    expect(() => lerComposicaoDespesas([1], 'c')).toThrow('c: esperava objeto, veio array');
   });
 });

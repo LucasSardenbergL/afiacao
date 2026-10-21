@@ -29,6 +29,11 @@ const FinanceiroIntercompany = () => {
   const [semSnapshot, setSemSnapshot] = useState<Company[] | null>(null);
   // Troca rápida de mês/ano: só a resposta da leitura MAIS RECENTE pode escrever no estado.
   const leituraAtual = useRef(0);
+  // Período da TELA agora. Uma mutação de regra que termina depois de o usuário trocar o mês chama o
+  // `load` capturado do período antigo; sem esta conferência ele invalidaria a leitura do mês atual
+  // e escreveria o mês velho sob o cabeçalho novo (achado Codex adversarial).
+  const periodoTela = useRef({ ano, mes });
+  periodoTela.current = { ano, mes };
   // DRE fase 2: a RPC soma resultado sem carregar a pendência — o estado vem dos snapshots do mês.
   // 'erro' = não deu para ler; null = snapshots pré-fase 2 (nada declarado) — nenhum dos dois é "sem pendência".
   const [provisorioMes, setProvisorioMes] = useState<boolean | null | 'erro'>(null);
@@ -52,6 +57,7 @@ const FinanceiroIntercompany = () => {
   });
 
   const load = useCallback(async () => {
+    if (periodoTela.current.ano !== ano || periodoTela.current.mes !== mes) return;
     const leitura = ++leituraAtual.current;
     const vigente = () => leitura === leituraAtual.current;
     setLoading(true);
@@ -168,8 +174,14 @@ const FinanceiroIntercompany = () => {
       </div>
 
       {/* Consolidado with eliminations */}
-      {/* Nenhuma empresa com DRE no mês ⇒ os zeros da RPC são COALESCE, não resultado: a seção não aparece. */}
-      {consolidado.length > 0 && (semSnapshot === null || semSnapshot.length < ALL_COMPANIES.length) && (
+      {/* Cobertura desconhecida ou nenhuma empresa com DRE no mês ⇒ os zeros da RPC podem ser COALESCE,
+          não resultado: os valores não aparecem. */}
+      {!loading && consolidado.length > 0 && semSnapshot === null && (
+        <p className="text-sm text-muted-foreground">
+          DRE consolidado indisponível: não foi possível conferir quais empresas têm DRE no mês.
+        </p>
+      )}
+      {consolidado.length > 0 && semSnapshot !== null && semSnapshot.length < ALL_COMPANIES.length && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -179,7 +191,7 @@ const FinanceiroIntercompany = () => {
                 <span className="text-xs font-normal text-status-warning">resultado provisório (fora do DRE com composição pendente)</span>
               )}
               {provisorioMes === 'erro' && (
-                <span className="text-xs font-normal text-muted-foreground">status de composição e cobertura por empresa indisponíveis (leitura falhou)</span>
+                <span className="text-xs font-normal text-muted-foreground">status de composição indisponível (leitura falhou)</span>
               )}
               {semSnapshot !== null && semSnapshot.length > 0 && (
                 <span className="text-xs font-normal text-status-warning">
