@@ -53,7 +53,7 @@ describe('CockpitGrid — atalhos pelo registry', () => {
   it('tecla 2 rola até a 2ª zona e a destaca', () => {
     montar();
     act(() => {
-      fireEvent.keyDown(window, { key: '2' });
+      fireEvent.keyDown(document.body, { key: '2' });
     });
     expect(scroll).toHaveBeenCalledTimes(1);
     expect(scroll.mock.contexts[0]).toBe(zonaDe('EstoqueZone'));
@@ -63,7 +63,7 @@ describe('CockpitGrid — atalhos pelo registry', () => {
   it('tecla de zona sem zona montada não faz nada', () => {
     montar();
     act(() => {
-      fireEvent.keyDown(window, { key: '5' });
+      fireEvent.keyDown(document.body, { key: '5' });
     });
     expect(scroll).not.toHaveBeenCalled();
   });
@@ -76,23 +76,23 @@ describe('CockpitGrid — atalhos pelo registry', () => {
 
   it('Cmd/Ctrl+2 é do navegador (troca de aba), não do cockpit', () => {
     montar();
-    fireEvent.keyDown(window, { key: '2', metaKey: true });
-    fireEvent.keyDown(window, { key: '2', ctrlKey: true });
+    fireEvent.keyDown(document.body, { key: '2', metaKey: true });
+    fireEvent.keyDown(document.body, { key: '2', ctrlKey: true });
     expect(scroll).not.toHaveBeenCalled();
   });
 
   it('Esc fora do edit mode não chama exit', () => {
     montar();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(editMode.exit).not.toHaveBeenCalled();
   });
 
   it('em edit mode: Esc sai e as teclas de zona ficam desligadas', () => {
     editMode.isEditMode = true;
     montar();
-    fireEvent.keyDown(window, { key: '2' });
+    fireEvent.keyDown(document.body, { key: '2' });
     expect(scroll).not.toHaveBeenCalled();
-    fireEvent.keyDown(window, { key: 'Escape' });
+    fireEvent.keyDown(document.body, { key: 'Escape' });
     expect(editMode.exit).toHaveBeenCalledTimes(1);
   });
 });
