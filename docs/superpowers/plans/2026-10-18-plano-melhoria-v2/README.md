@@ -69,7 +69,7 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 | KPI | Baseline (2026-10-18) | Fim do ciclo 1 | Ciclo 2 (2026-10-20) |
 |---|---|---|---|
 | `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **21/26 · 47** (plataforma, #3257); o resto dos ativos com a sessão irmã; 27 em módulos congelados ficam |
-| entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23**: `analytics_outbox_pedido_compra` canonizada (→ 22 no follow-up que remove a entrada); as 22 restantes justificadas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
+| entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **22**: `analytics_outbox_pedido_compra` canonizada (#3260) e aplicada na prod; as 22 restantes justificadas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
 | tempo até `validate` no PR (p50) · edges money-path sem teste | 16–21 min · 26/49 | — | não medidos neste ciclo |

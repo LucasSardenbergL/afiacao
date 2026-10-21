@@ -670,6 +670,17 @@ db/test-venda-espinha.sh                   30  falsificar=12
 # ACL/RLS, cron. 15 sabotagens: cada uma vermelha COM a paridade (P) e, cegada a paridade, no caso isolado.
 db/test-venda-recompra.sh                  49  falsificar=15
 
+# Venda por cliente — REPASSE DE PREÇO (migration 20261020233000, Task 6 do plano 2026-10-20): núcleo da defasagem
+# extraído para private._defasagem_item com o cockpit IDÊNTICO (md5 do JSON antes/depois, com e sem cap, lote nos 14
+# motivos) + candidatos (master E cap) + aprovação (alvo ≤ último → 22023; tinta NULL/Colacor/dia sem preço → 22023;
+# tela velha → 40001) + leitura da farmer com o conjunto EXATO de 6 chaves (sem custo/markup/piso), dono ÚNICO da
+# carteira do grupo canônico, vencido/revogado/alvo já alcançado somem; último = média ponderada do líquido (116, não
+# MAX); CMC Infinity não vira custo; versão do trio (repetir criação após revogar → 40001). Falsificação exige o
+# conjunto EXATO de vermelhos. 15 sabotagens: vaza cmc, vaza c_now, sem recusa, tinta NULL, dono por união, sem
+# revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
+# gate de candidatos, POS ACL anon, POS RLS.
+db/test-venda-repasse.sh                   52  falsificar=15
+
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
 # db/fixtures/venda-cidades-alvo.json) com os `teto` maiores atrasos fora da rota; perdido, founder e inelegível fora;
