@@ -6,7 +6,7 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import type { AIDecision, CustomerProfileLite } from './types';
+import { decisaoDaLinha } from './borda';
 
 function useAIDecisions() {
   return useQuery({
@@ -18,7 +18,7 @@ function useAIDecisions() {
         .order('score_final', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return (data || []) as unknown as AIDecision[];
+      return (data ?? []).map(decisaoDaLinha);
     },
   });
 }
@@ -33,7 +33,7 @@ function useCustomerProfiles(customerIds: string[]) {
         .select('user_id, name, document, phone, email, customer_type')
         .in('user_id', customerIds);
       if (error) throw error;
-      return (data || []) as unknown as CustomerProfileLite[];
+      return data ?? [];
     },
     enabled: customerIds.length > 0,
   });

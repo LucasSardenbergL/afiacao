@@ -17,6 +17,7 @@ function makeDecision(o: Partial<AIDecision> = {}): AIDecision {
     primary_reason: "motivo",
     evidences: [],
     explanation: "x",
+    executed_at: null,
     customer_metrics: {},
     status: "pending",
     created_at: "2026-03-01T00:00:00Z",

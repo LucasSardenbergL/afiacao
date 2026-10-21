@@ -69,10 +69,9 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
     // Auditoria no client SEM guard: log_impersonation_start é write mutante. Se a lente
     // já estiver ativa (troca direta de alvo A→B pelo chip/banner), o guard de RPC a
     // bloquearia — por isso supabaseUnguarded. É bookkeeping do próprio master.
-    const { data } = await (supabaseUnguarded as unknown as {
-      rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
-    }).rpc('log_impersonation_start', { p_target: t.id, p_reason: reason ?? null });
-    setAuditId(typeof data === 'string' ? data : null);
+    // `p_reason` tem DEFAULT NULL na prod: sem motivo, a chave some do JSON e cai no mesmo NULL.
+    const { data } = await supabaseUnguarded.rpc('log_impersonation_start', { p_target: t.id, p_reason: reason });
+    setAuditId(data ?? null);
     setLensActive(true); // guard ANTES do target — sem janela "UI na lente + guard off"
     setTarget(t);
     persistTarget(t);
@@ -87,9 +86,7 @@ export function ImpersonationProvider({ children }: { children: ReactNode }) {
     // lançar (senão a lente ficaria presa).
     try {
       if (auditId) {
-        await (supabaseUnguarded as unknown as {
-          rpc(fn: string, params?: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
-        }).rpc('end_impersonation', { p_audit_id: auditId });
+        await supabaseUnguarded.rpc('end_impersonation', { p_audit_id: auditId });
       }
     } catch {
       /* falha de auditoria não pode travar a saída da lente */

@@ -6,6 +6,8 @@ import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { linhasCom } from '@/lib/linha-view';
+import { alertaDaLinha } from './borda';
 import { SELECT_COLUMNS } from './format';
 import type { AlertaRow } from './types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -29,7 +31,7 @@ export function useNotificacoes() {
         .order('criado_em', { ascending: false })
         .limit(200);
       if (error) throw error;
-      return data as unknown as AlertaRow[];
+      return data.map(alertaDaLinha);
     },
     refetchInterval: 30_000,
   });
@@ -47,7 +49,7 @@ export function useNotificacoes() {
         .order('notificado_em', { ascending: false, nullsFirst: false })
         .limit(500);
       if (error) throw error;
-      return data as unknown as AlertaRow[];
+      return data.map(alertaDaLinha);
     },
     refetchInterval: 60_000,
   });
@@ -63,7 +65,8 @@ export function useNotificacoes() {
         .gte('criado_em', since)
         .limit(5000);
       if (error) throw error;
-      return data as Array<{ id: number; status: string | null; criado_em: string; tentativas: number | null }>;
+      // `.gte` já descarta criado_em NULL no SQL; a borda só torna isso visível ao tipo.
+      return linhasCom(data, ['criado_em'], 'fornecedor_alerta');
     },
     refetchInterval: 60_000,
   });
