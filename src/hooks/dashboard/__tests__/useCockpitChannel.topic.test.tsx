@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderHook, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
-import { RealtimeClient } from '@supabase/realtime-js';
+import { RealtimeClient } from '@supabase/supabase-js';
 
 // Client REAL do realtime-js (não fake): é ele que deduplica canal por topic e
 // lança "cannot add `postgres_changes` callbacks ... after `subscribe()`".
