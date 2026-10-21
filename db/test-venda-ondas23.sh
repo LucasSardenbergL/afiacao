@@ -120,7 +120,24 @@ case "${SABOTAGEM:-}" in
   motivo_misturado)     sabotar "min(s.motivo_entrada) FILTER (WHERE s.tipo = 'recompra') AS motivo_entrada" "min(s.motivo_entrada) AS motivo_entrada" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
-[ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
+# Corpo sabotado = corpo NOVO: reassina o md5 "este" do PRE/PÓS (como faria quem mudasse a função e o
+# arquivo juntos). Sem isso o P1 da PÓS aborta o apply e o vermelho não chega ao assert de comportamento.
+reassinar() {
+  python3 -I - "$MIG_USADA" <<'PY2'
+import hashlib, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+for sig, tag, velho in (
+    ("CREATE OR REPLACE FUNCTION public.venda_gerar_lista", "$fn$", "5abe897dbcaaf3b70351da896e35b566"),
+    ("CREATE OR REPLACE FUNCTION public.venda_minhas_sugestoes", "$$", "e38baeb57b7e19c815e45baa77a23810"),
+    ("CREATE OR REPLACE FUNCTION public.venda_fechar_desfechos", "$$", "732f661febd3c3e3c0dde4eb18e90bdd"),
+):
+    i = s.index(sig); j = s.index("AS " + tag + "\n", i) + len("AS " + tag); k = s.index(tag + ";", j)
+    s = s.replace(velho, hashlib.md5(s[j:k].encode()).hexdigest())
+open(p, "w", encoding="utf-8").write(s)
+PY2
+}
+if [ -n "${SABOTAGEM:-}" ]; then reassinar; echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"; fi
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOC" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$WORK/pg.log" -w start >/dev/null
