@@ -25,7 +25,10 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
 import { interpretarImportacaoPorChave } from '@/lib/recebimento/importacao-resposta';
 
-type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial';
+// `descartado`: cabeçalho que não é recebimento de mercadoria (ex.: CT-e de frete importado como NF-e
+// até a v1.5 da omie-nfe-recebimento-sync). Fica no banco, com o motivo em `observacoes`, mas sai da
+// lista de conferência e de toda contagem de pendência (docs/historico/nfe-recebimento-ignora-cte.md).
+type NfeStatus = 'pendente' | 'em_conferencia' | 'divergencia' | 'conferido' | 'efetivado' | 'falha_efetivacao' | 'efetivacao_parcial' | 'descartado';
 
 type Warehouse = Tables<'warehouses'>;
 type NfeRecebimento = Tables<'nfe_recebimentos'>;
@@ -50,6 +53,7 @@ const STATUS_CONFIG: Record<NfeStatus, { label: string; className: string }> = {
   efetivado: { label: 'Efetivado', className: 'bg-muted text-muted-foreground' },
   falha_efetivacao: { label: 'Falha na efetivação', className: 'bg-status-error-bg text-status-error-foreground' },
   efetivacao_parcial: { label: 'Efetivação parcial', className: 'bg-status-warning-bg text-status-warning-foreground' },
+  descartado: { label: 'Descartado', className: 'bg-muted text-muted-foreground' },
 };
 
 function formatCurrency(value: number | null) {
@@ -113,6 +117,10 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
         .eq('warehouse_id', selectedWarehouse);
       if (statusFilter && statusFilter.length > 0) {
         query = query.in('status', statusFilter);
+      } else {
+        // Sem filtro, a lista mostra tudo MENOS o descartado: ele não é recebimento a conferir.
+        // `status` é NOT NULL, então o `neq` não esconde linha por NULL.
+        query = query.neq('status', 'descartado');
       }
       const { data, error } = await query.order('data_emissao', { ascending: true });
       if (error) throw error;
