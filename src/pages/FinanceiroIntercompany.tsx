@@ -29,16 +29,16 @@ const FinanceiroIntercompany = () => {
   const [semSnapshot, setSemSnapshot] = useState<Company[] | null>(null);
   // Troca rápida de mês/ano: só a resposta da leitura MAIS RECENTE pode escrever no estado.
   const leituraAtual = useRef(0);
-  // Período da TELA agora. Uma mutação de regra que termina depois de o usuário trocar o mês chama o
-  // `load` capturado do período antigo; sem esta conferência ele invalidaria a leitura do mês atual
-  // e escreveria o mês velho sob o cabeçalho novo (achado Codex adversarial).
-  const periodoTela = useRef({ ano, mes });
-  periodoTela.current = { ano, mes };
   // DRE fase 2: a RPC soma resultado sem carregar a pendência — o estado vem dos snapshots do mês.
   // 'erro' = não deu para ler; null = snapshots pré-fase 2 (nada declarado) — nenhum dos dois é "sem pendência".
   const [provisorioMes, setProvisorioMes] = useState<boolean | null | 'erro'>(null);
   const [ano, setAno] = useState(new Date().getFullYear());
   const [mes, setMes] = useState(new Date().getMonth() + 1);
+  // Período da TELA agora. Uma mutação de regra que termina depois de o usuário trocar o mês chama o
+  // `load` capturado do período antigo; sem esta conferência ele invalidaria a leitura do mês atual
+  // e escreveria o mês velho sob o cabeçalho novo (achado Codex adversarial).
+  const periodoTela = useRef({ ano, mes });
+  periodoTela.current = { ano, mes };
   const icDivQuery = useIcMatches('divergencia_valor');
   const icSemQuery = useIcMatches('sem_contrapartida');
   const totalIc = (icDivQuery.data?.length ?? 0) + (icSemQuery.data?.length ?? 0);
