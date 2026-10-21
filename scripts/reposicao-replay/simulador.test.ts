@@ -1,0 +1,298 @@
+import { describe, expect, it } from 'vitest';
+import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
+import { uniforme } from './aleatorio';
+import { somarDiasUteis } from './calendario';
+import { INICIO_AQUECIMENTO } from './config';
+import type { ParamsDia } from './formulas';
+import { convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
+import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
+
+const REGRAS: Record<string, string> = {
+  abc_base_valor: 'valor_total_90d', abc_corte_a_acumulado: '0.80', abc_corte_b_acumulado: '0.95', meses_descer: '3', meses_subir: '2',
+  ordem_prioridade: 'AX AY AZ BX BY BZ CX CY CZ', xyz_corte_x_cv: '0.4', xyz_corte_y_cv: '0.8', xyz_min_ordens: '2',
+};
+const sku = (codigo: string, extra: Partial<Sku> = {}): Sku => ({
+  sku: codigo, descricao: 'D', grupo: 'sayerlack_normal', classeAbcHoje: 'C', classeForcada: null, minimoForcado: null, minimoOperacional: null,
+  multiplo: null, cmc: 4, saldoHoje: 0, ativo: true, habilitado: true, unidadeNf: 'L', unidadeEstoque: 'L', fatorConversao: null,
+  grupoEmbalagemId: null, f0: { custoPedido: 3, custoCapitalPerc: 25.75 }, hoje: { es: null, pp: null, max: null }, ...extra,
+});
+const venda = (linhaId: string, s: string, data: string, quantidade: number, valor = quantidade * 10, cmcLinha: number | null = 6): LinhaVenda => ({
+  linhaId, sku: s, data, quantidade, valor, cmcLinha, noEscopo: true,
+});
+const item = (trackingId: string, s: string, t1: string, ltDu: number): ItemLT => ({
+  trackingId, sku: s, t1, t2: null, t4: somarDiasUteis(t1, ltDu), ltDu, aberto: false,
+});
+/** Estoque de ABERTURA desejado: saldoHoje = abertura − Σ vendas + Σ recebimentos (a reconstrução volta disso). */
+const comAbertura = (s: Sku, abertura: number, vendas: LinhaVenda[], receb: EventoRecebimento[] = []): Sku => ({
+  ...s,
+  saldoHoje: abertura - vendas.filter((v) => v.sku === s.sku).reduce((a, v) => a + v.quantidade, 0) + receb.filter((r) => r.sku === s.sku).reduce((a, r) => a + r.quantidade, 0),
+});
+const dados = (skus: Sku[], vendas: LinhaVenda[], extra: Partial<Dados> = {}): Dados => ({
+  vendas, itensLT: [item('DOC0', 'Q', '2026-05-04', 2)], recebimentos: [], skus: new Map(skus.map((s) => [s.sku, s])),
+  zPorClasse: { A: 1.65, B: 1.28, C: 0.84 }, teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
+  classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21',
+  hashDados: 'h', ...extra,
+});
+const JANELA: [string, string] = ['2026-05-04', '2026-05-29'];
+const SEM: ParamsDia = { tipo: 'SEM_DECISAO', motivo: 'F0_SEM_PARAMETRO' };
+/** Parâmetros em todo dia útil do início do aquecimento ao fim da janela. */
+const params = (por: Record<string, ParamsDia | ((d: string) => ParamsDia)>, fim = JANELA[1]): Map<string, ParamsDia> => {
+  const m = new Map<string, ParamsDia>();
+  for (let d = INICIO_AQUECIMENTO; d <= fim; d = addDias(d, 1)) {
+    if (!ehDiaUtil(d)) continue;
+    for (const [s, p] of Object.entries(por)) m.set(`${s}|${d}`, typeof p === 'function' ? p(d) : p);
+  }
+  return m;
+};
+const roda = (dd: Dados, p: Map<string, ParamsDia>, extra: Partial<EntradaSimulacao> = {}): SomasSemanais =>
+  simular({ formula: 'F1', params: p, rep: 0, lt: 'empirico', falta: 'espera', inicial: 'reconstruido', janela: JANELA, dados: dd, ...extra });
+const soma = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+describe('decidirCompra', () => {
+  const f0 = (pp: number, max: number, cob: number | null = null, dem: number | null = null): ParamsDia => ({ tipo: 'F0', pp, max, coberturaTetoDias: cob, demandaDiariaLinha: dem });
+
+  it('teto não se aplica com mínimo forçado', () => {
+    // posição 0, máximo 20, teto de 5 dias × 1/dia ⇒ cap 5; com mínimo forçado 2 o cap some ⇒ compra 20
+    expect(decidirCompra(f0(5, 20, 5, 1), 0, sku('M', { minimoForcado: 2 }))).toBe(20);
+    expect(decidirCompra(f0(5, 20, 5, 1), 0, sku('M'))).toBe(5);
+  });
+
+  it('teto B/C: max(floor(dias·d − posição), ceil(pp − posição)) sobre a posição realizada', () => {
+    // dias 10 × 0,35 = 3,5 − 1 = 2,5 → floor 2; piso ceil(4 − 1) = 3 ⇒ 3 (nunca abaixo do pp)
+    expect(decidirCompra(f0(4, 12, 10, 0.35), 1, sku('T'))).toBe(3);
+    // dias 60 × 0,35 = 21 − 1 = 20 → cap 20 > necessidade 11 ⇒ 11
+    expect(decidirCompra(f0(4, 12, 60, 0.35), 1, sku('T'))).toBe(11);
+    // demanda da linha ausente (null) ⇒ sem cap (COALESCE(…,0) > 0 do motor)
+    expect(decidirCompra(f0(4, 12, 10, null), 1, sku('T'))).toBe(11);
+  });
+
+  it('mínimo e múltiplo só com necessidade positiva', () => {
+    const s = sku('MM', { minimoForcado: 2, multiplo: 5 });
+    expect(decidirCompra(f0(3, 8), 4, s)).toBe(0); // posição > pp: nada, nem mínimo nem múltiplo
+    expect(decidirCompra({ tipo: 'S', s: 6 }, 6, s)).toBe(0); // posição = S: nada
+    expect(decidirCompra({ tipo: 'S', s: 6 }, 5, s)).toBe(5); // necessidade 1 → mínimo 2 → múltiplo 5
+    expect(decidirCompra(f0(3, 8), 3, s)).toBe(5); // necessidade 5 → já múltiplo
+    expect(decidirCompra(f0(3, 9), 3, s)).toBe(10); // necessidade 6 → 10
+    // cap ZERA a linha (pp 1, posição 1, cobertura 1 dia × 0,5): sem mínimo, o múltiplo não ressuscita a compra
+    expect(decidirCompra(f0(1, 10, 1, 0.5), 1, sku('Z', { multiplo: 5 }))).toBe(0);
+    expect(decidirCompra(SEM, -10, s)).toBe(0);
+  });
+
+  it('posição fracionária: ceil da necessidade (poeira decimal do Omie)', () => {
+    expect(decidirCompra(f0(3, 8), 2.5, sku('F'))).toBe(6);
+    expect(decidirCompra({ tipo: 'S', s: 4 }, 0.2, sku('F'))).toBe(4);
+  });
+
+  it('grupo de embalagem: decide na unidade-base, divide por conv, sem cap e sem múltiplo do portal', () => {
+    const anc = sku('QT', { grupoEmbalagemId: 'G', multiplo: 5 });
+    // (3 − 0,81) / 0,81 = 2,70 → 3 embalagens (o motor: ceil((máx − efetivo)/conv_ancora))
+    expect(decidirCompra(f0(2, 3, 60, 1), 0.81, anc, { conv: 0.81 })).toBe(3);
+    // mínimo forçado em unidades-âncora ANTES de dividir: max(0,19, 2) / 0,81 = 2,47 → 3
+    expect(decidirCompra(f0(2, 1, null, null), 0.81, { ...anc, minimoForcado: 2 }, { conv: 0.81 })).toBe(3);
+    // necessidade 0 (máximo = posição): o mínimo forçado não cria compra
+    expect(decidirCompra(f0(2, 0.81, null, null), 0.81, { ...anc, minimoForcado: 2 }, { conv: 0.81 })).toBe(0);
+    expect(decidirCompra({ tipo: 'S', s: 4 }, 0, anc, { conv: 0.81 })).toBe(5); // 4/0,81 = 4,94 → 5
+  });
+
+  it('convDoGrupo: u da âncora se o grupo inteiro é coerente (u/fator igual); senão o fator', () => {
+    const eq = (s: string, e: string, fs: number, fe: number, us: number | null, ue: number | null): Equivalencia => ({
+      sku: s, skuEquivalente: e, fator: fs / fe, grupoId: 'G1', fatorParaBaseSku: fs, fatorParaBaseEquivalente: fe, unidadesOmieSku: us, unidadesOmieEquivalente: ue,
+    });
+    const base = [eq('QT', 'GL', 1, 4, 0.81, 3.24), eq('GL', 'QT', 4, 1, 3.24, 0.81)];
+    const dd = dados([sku('QT'), sku('GL')], [], { equivalencias: base });
+    expect(convDoGrupo(dd, 'QT')).toBeCloseTo(0.81, 12);
+    expect(convDoGrupo(dd, 'GL')).toBeCloseTo(3.24, 12);
+    expect(convDoGrupo(dd, 'OUTRO')).toBeNull();
+    const incoerente = dados([sku('QT'), sku('GL')], [], { equivalencias: [eq('QT', 'GL', 1, 4, 0.81, 3.0), eq('GL', 'QT', 4, 1, 3.0, 0.81)] });
+    expect(convDoGrupo(incoerente, 'QT')).toBe(1);
+  });
+});
+
+describe('simular', () => {
+  it('linha parcial', () => {
+    const vs = [venda('a1', 'P', '2026-05-05', 2), venda('a2', 'P', '2026-05-05', 2)];
+    const r = roda(dados([comAbertura(sku('P'), 3, vs)], vs), params({ P: SEM }));
+    const t = r.porCelula.total;
+    expect(soma(t.demandadas)).toBe(2);
+    expect(soma(t.integrais)).toBe(1); // uma falha só
+    expect(soma(t.unidDem)).toBe(4);
+    expect(soma(t.unidAt)).toBe(3); // 2 + a unidade disponível
+    expect(soma(r.entregue.imediata)).toBe(30);
+    expect(r.terminal.backlogValor).toBe(10); // 1 unidade em obrigação
+    expect(r.terminal.backlogDiasAtraso).toBe(10 * diffDias('2026-05-05', JANELA[1]));
+  });
+
+  it('obrigação atendida depois não vira sucesso', () => {
+    const vs = [venda('a1', 'P', '2026-05-05', 2), venda('a2', 'P', '2026-05-05', 2)];
+    // S = 0: só compra quando a posição fica negativa (−1 depois das linhas), LT do documento = 2 du
+    const r = roda(dados([comAbertura(sku('P'), 3, vs)], vs), params({ P: { tipo: 'S', s: 0 } }), { rastro: true });
+    expect(r.pedidos).toEqual([{ dia: '2026-05-05', sku: 'P', qtd: 1, chegada: '2026-05-07' }]);
+    expect(soma(r.porCelula.total.integrais)).toBe(1);
+    expect(soma(r.porCelula.total.demandadas)).toBe(2);
+    expect(soma(r.entregue.tardia)).toBe(10);
+    expect(soma(r.valorDiasAtraso)).toBe(10 * 2); // 05-05 → 05-07
+    expect(r.terminal.backlogValor).toBe(0);
+  });
+
+  it('cancelamento e emergencial não geram backlog', () => {
+    const vs = [venda('a1', 'P', '2026-05-05', 2), venda('a2', 'P', '2026-05-05', 2)];
+    const dd = dados([comAbertura(sku('P'), 3, vs)], vs);
+    const c = roda(dd, params({ P: SEM }), { falta: 'cancelamento' });
+    expect(c.terminal.backlogValor).toBe(0);
+    expect(soma(c.cancelada.valor)).toBe(10);
+    expect(soma(c.cancelada.margem)).toBe(10 - 6); // valor − cmcLinha × quantidade
+    expect(soma(c.entregue.emergencial)).toBe(0);
+    // misto: linhaId cujo sorteio cai nos 10% de "outro" (emergencial)
+    let id = 0;
+    while (uniforme(0, 'falta', `e${id}`) < 0.9) id++;
+    const vm = [venda('a1', 'P', '2026-05-05', 2), venda(`e${id}`, 'P', '2026-05-05', 2)];
+    const m = roda(dados([comAbertura(sku('P'), 3, vm)], vm), params({ P: SEM }), { falta: 'misto' });
+    expect(m.terminal.backlogValor).toBe(0);
+    expect(soma(m.entregue.emergencial)).toBe(10);
+    expect(soma(m.cancelada.valor)).toBe(0);
+    expect(soma(m.porCelula.total.integrais)).toBe(1); // emergencial NÃO é sucesso
+  });
+
+  it('cancelamento com cmcLinha ausente: margem null contada à parte, nunca fabricada', () => {
+    const vs = [venda('a1', 'P', '2026-05-05', 2, 20, null)];
+    const r = roda(dados([comAbertura(sku('P'), 0, vs)], vs), params({ P: SEM }), { falta: 'cancelamento' });
+    expect(soma(r.cancelada.valor)).toBe(20);
+    expect(soma(r.cancelada.margem)).toBe(0);
+    expect(soma(r.canceladaSemCmc.linhas)).toBe(1);
+    expect(soma(r.canceladaSemCmc.valor)).toBe(20);
+  });
+
+  it('fechamento', () => {
+    const vs: LinhaVenda[] = [];
+    let n = 0;
+    for (let d = '2026-04-20'; d <= JANELA[1]; d = addDias(d, 1)) {
+      if (ehDiaUtil(d) || d === '2026-05-09') {
+        vs.push(venda(`f${n++}`, 'P', d, 1 + (n % 3), (1 + (n % 3)) * 10, n % 4 === 0 ? null : 6));
+        if (n % 2 === 0) vs.push(venda(`g${n++}`, 'Q', d, 0.5 + (n % 2), 7, 3));
+      }
+    }
+    const dd = dados([comAbertura(sku('P'), 6, vs), comAbertura(sku('Q', { cmc: null }), 2, vs)], vs, {
+      itensLT: [item('D1', 'P', '2026-04-20', 3), item('D1', 'Q', '2026-04-20', 9), item('D2', 'P', '2026-05-12', 0)],
+    });
+    for (const falta of ['espera', 'cancelamento', 'misto'] as const) {
+      const r = roda(dd, params({ P: { tipo: 'S', s: 5 }, Q: { tipo: 'F0', pp: 1, max: 3, coberturaTetoDias: null, demandaDiariaLinha: null } }), { falta, rep: 3 });
+      const dem = soma(r.porCelula.total.valorDem);
+      const desfechos = soma(r.entregue.imediata) + soma(r.entregue.tardia) + soma(r.entregue.emergencial) + soma(r.cancelada.valor) + r.terminal.backlogValor;
+      expect(desfechos).toBeCloseTo(dem, 9);
+      expect(dem).toBeGreaterThan(0);
+      const b = r.balanco;
+      expect(b.inicial + b.recebido - b.entregue).toBeCloseTo(b.final, 9);
+      expect(b.recebido).toBeGreaterThan(0);
+      expect(r.skusSemCmc).toEqual(['Q']); // capital sem fabricar CMC
+    }
+  });
+
+  it('sem compra em sábado', () => {
+    // venda de sábado derruba a posição abaixo de S; o pedido só sai na segunda
+    const vs = [venda('s1', 'P', '2026-05-09', 3)];
+    const r = roda(dados([comAbertura(sku('P'), 3, vs)], vs), params({ P: { tipo: 'S', s: 1 } }), { rastro: true });
+    expect(r.pedidos!.length).toBeGreaterThan(0);
+    for (const p of r.pedidos!) expect(ehDiaUtil(p.dia)).toBe(true);
+    expect(r.pedidos![0].dia).toBe('2026-05-11');
+  });
+
+  it('ltDu = 0 chega no próximo dia útil (LT efetivo mínimo de 1 du)', () => {
+    const vs = [venda('z1', 'P', '2026-05-08', 3)]; // sexta
+    const dd = dados([comAbertura(sku('P'), 3, vs)], vs, { itensLT: [item('D0', 'X', '2026-05-07', 0)] });
+    const r = roda(dd, params({ P: { tipo: 'S', s: 1 } }), { rastro: true });
+    expect(r.pedidos![0]).toEqual({ dia: '2026-05-08', sku: 'P', qtd: 1, chegada: '2026-05-11' });
+  });
+
+  it('compras abertas no início: pedido com t1 < início e chegada >= início entra como chegada programada', () => {
+    const chegada = '2025-10-23';
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: chegada, quantidade: 4 }];
+    const vs = [venda('o1', 'P', '2025-10-24', 4)];
+    const dd = dados([comAbertura(sku('P'), 0, vs, receb)], vs, {
+      recebimentos: receb,
+      itensLT: [{ trackingId: 'ANT', sku: 'P', t1: '2025-10-15', t2: null, t4: chegada, ltDu: 6, aberto: false }, item('DOC0', 'Q', '2026-05-04', 2)],
+    });
+    const r = roda(dd, params({ P: SEM }), { janela: ['2025-10-21', '2025-10-31'] });
+    expect(soma(r.porCelula.total.integrais)).toBe(1);
+    expect(r.balanco.recebido).toBe(4);
+    // um recebimento de pedido feito DEPOIS do início é substituído pelas compras simuladas: não entra
+    const dd2 = dados([comAbertura(sku('P'), 0, vs, receb)], vs, {
+      recebimentos: receb, itensLT: [{ trackingId: 'NOVO', sku: 'P', t1: '2025-10-21', t2: null, t4: chegada, ltDu: 2, aberto: false }],
+    });
+    const r2 = roda(dd2, params({ P: SEM }), { janela: ['2025-10-21', '2025-10-31'] });
+    expect(r2.balanco.recebido).toBe(0);
+    expect(soma(r2.porCelula.total.integrais)).toBe(0);
+  });
+
+  it('grupo de embalagem: a âncora decide pela posição do grupo; o galão não decide; atendimento por SKU', () => {
+    const eqs: Equivalencia[] = [
+      { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+      { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+    ];
+    const vs = [venda('q1', 'QT', '2026-05-05', 0.81)];
+    const dd = dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 0.81, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 3.24, vs)], vs, { equivalencias: eqs });
+    const p = params({ QT: { tipo: 'S', s: 4 }, GL: { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' } });
+    const r = roda(dd, p, { rastro: true });
+    // posição do grupo = 0,81 + 3,24 = 4,05 ≥ 4: não compra antes da venda; depois 3,24 < 4 ⇒ ceil(0,76/0,81) = 1 QT = 0,81 L
+    expect(r.pedidos!.map((x) => [x.dia, x.sku, x.qtd])).toEqual([['2026-05-05', 'QT', 0.81]]);
+    expect(r.pedidos!.every((x) => x.sku === 'QT')).toBe(true);
+  });
+
+  it('substituição usa a equivalência e BAIXA o estoque do equivalente (o mesmo galão não salva duas linhas)', () => {
+    const eqs: Equivalencia[] = [
+      { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+      { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+    ];
+    // duas linhas de 4 QT (3,24 L) sem QT em estoque; 1 galão (3,24 L)
+    const vs = [venda('s1', 'QT', '2026-05-05', 3.24), venda('s2', 'QT', '2026-05-05', 3.24)];
+    const dd = dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 0, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 3.24, vs)], vs, { equivalencias: eqs });
+    const p = params({ QT: SEM, GL: SEM });
+    const exato = roda(dd, p);
+    const sub = roda(dd, p, { substituicao: true });
+    expect(soma(exato.porCelula.total.integrais)).toBe(0);
+    expect(soma(sub.porCelula.total.integrais)).toBe(1);
+    expect(sub.balanco.final).toBeCloseTo(0, 12);
+    // 1 QT (0,81 L) não é galão inteiro: não substitui
+    const v1 = [venda('u1', 'QT', '2026-05-05', 0.81)];
+    const d1 = dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 0, v1), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 3.24, v1)], v1, { equivalencias: eqs });
+    expect(soma(roda(d1, p, { substituicao: true }).porCelula.total.integrais)).toBe(0);
+  });
+
+  it('células: total = A + B + C; capital ponderado por dias corridos', () => {
+    const vs = [venda('c1', 'P', '2026-05-05', 1)];
+    const r = roda(dados([comAbertura(sku('P', { cmc: 4 }), 3, vs)], vs), params({ P: SEM }));
+    const t = r.porCelula.total.demandadas;
+    const abc = ['A', 'B', 'C'] as const;
+    expect(soma(t)).toBe(abc.reduce((a, c) => a + soma(r.porCelula[c].demandadas), 0));
+    expect(soma(r.diasCorridos)).toBe(diffDias(JANELA[0], JANELA[1]) + 1);
+    // 3 L até 05-04 e 05-05 depois da venda 2 L: 4 × (3 × 1 dia + 2 × 25 dias)
+    expect(soma(r.estoqueCmcDias)).toBe(4 * (3 + 2 * 25));
+    expect(r.semanas[0]).toBe(JANELA[0]);
+  });
+
+  it('parâmetro ausente num dia útil lança (fail-closed)', () => {
+    const vs = [venda('c1', 'P', '2026-05-05', 1)];
+    const p = params({ P: SEM });
+    p.delete('P|2026-05-06');
+    expect(() => roda(dados([comAbertura(sku('P'), 3, vs)], vs), p)).toThrow(/^PARAMS_AUSENTES:P\|2026-05-06$/);
+  });
+});
+
+describe('paridadeQuantidade', () => {
+  it('compara a decisão com qtde_final na posição gravada; membro não-âncora e SKU fora são informativos', () => {
+    const s1 = sku('S1', { hoje: { es: 1, pp: 3, max: 8 } });
+    const s2 = sku('S2', { hoje: { es: 1, pp: 1, max: 2 } });
+    const dd = dados([s1, s2], [], {
+      sugestaoHoje: new Map([
+        ['S1', { posicao: 3, qtdeFinal: 5 }],
+        ['S2', { posicao: 1, qtdeFinal: 1 }],
+        ['NAO_EXISTE', { posicao: 0, qtdeFinal: 3 }],
+      ]),
+    });
+    const f0 = (pp: number, max: number): ParamsDia => ({ tipo: 'F0', pp, max, coberturaTetoDias: null, demandaDiariaLinha: null });
+    // replay: S1 igual ao gravado; S2 com estado diferente (pp 2 / máx 3 ⇒ compra 2 ≠ 1)
+    const r = paridadeQuantidade(dd, (s) => (s === 'S1' ? f0(3, 8) : f0(2, 3)));
+    expect(r.replay).toEqual({ n: 1, de: 2 });
+    expect(r.gravado).toEqual({ n: 2, de: 2 });
+    expect(r.linhas.find((l) => l.sku === 'NAO_EXISTE')!.fora).toBe('FORA_DOS_DADOS');
+  });
+});
