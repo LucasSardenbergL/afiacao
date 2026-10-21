@@ -38,12 +38,12 @@ const PARES: ReadonlyArray<readonly [string, string]> = [
   ['20260606170100_fornecedores_classificacao_rpcs.sql', 'public.aplicar_exclusao_fornecedores'],
   ['20260606170100_fornecedores_classificacao_rpcs.sql', 'public.classificar_clientes_fornecedores'],
   ['20260606170100_fornecedores_classificacao_rpcs.sql', 'public.reverter_exclusao_fornecedor'],
-  // 20260510235956 — as duas funções são DROP+CREATE (o CREATE reseta o ACL) com revoke nominal e
-  // sem `FROM PUBLIC` em nenhum ponto do corpus. Prod mede as duas fechadas (`anon=nao`, PUBLIC
-  // ausente do proacl) — o fecho veio de FORA do repo, o mesmo caso que a Parte E modela como
-  // `fechadaPor: null`. Baselinadas pela medição, não pelo texto.
+  // 20260510235956 — DROP+CREATE (o CREATE reseta o ACL) com revoke nominal e sem `FROM PUBLIC` em
+  // nenhum ponto do corpus. Prod mede fechada (`anon=nao`, PUBLIC ausente do proacl) — o fecho veio de
+  // FORA do repo, o mesmo caso que a Parte E modela como `fechadaPor: null`. Baselinada pela medição,
+  // não pelo texto. (A irmã `fin_consolidado_intercompany` saiu: a 20261021120000 reemite
+  // `REVOKE ... FROM PUBLIC, anon`, e o gate a resolve por FIX-FORWARD.)
   ['20260510235956_a5ace125-5cbf-43df-940b-0d517b819a49.sql', 'public.auto_assign_user_role'],
-  ['20260510235956_a5ace125-5cbf-43df-940b-0d517b819a49.sql', 'public.fin_consolidado_intercompany'],
 ];
 
 // NÃO entram aqui, porque o gate os resolve sozinho por FIX-FORWARD (o `FROM PUBLIC` chegou numa
