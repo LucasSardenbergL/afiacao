@@ -16,6 +16,9 @@
 --     principal tier 3 + secundário tier 1 → +7   (o fator CNAE iguala o de um tier 2:  8 +  7 = 15)
 --     principal tier 1 → +0 (já está no teto do fator; o máximo do score continua 100)
 -- Motivo legível: "atividade secundária prioritária (móveis de madeira)". Afeta 19.445 leads da fila.
+-- O rótulo do PRINCIPAL tier 2 deixa de ser "CNAE secundário (…)" e vira "CNAE intermediário (…)": "secundário"
+-- passa a designar só a atividade secundária real (Codex BAIXO 6 — o aviso mostra score_motivos[1:2] lado a lado).
+-- Codex adversarial (gpt-6-astra · max · 437 s · 162.478 tokens) e o que mudou: docs/historico/radar-score-lead.md.
 -- O resto da v2 é IDÊNTICO (lote exato, guarda de versão, ledger do mesmo snapshot, idade pela referência).
 --
 -- Recriação de função VIVA no molde TRAVA → PRE → CREATE → PÓS (sql-house-style). PRE aceita a v2 ou esta.
@@ -40,7 +43,7 @@ DECLARE
   v_vivo text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_proc p WHERE p.oid = to_regprocedure('public.radar_score_recalcular()');
-  IF v_vivo IS NULL OR v_vivo NOT IN ('5413669a9a67105b6c0a7e5037e2a80d', '0cfeac9aab698dd91c9315d2adebc01d') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('5413669a9a67105b6c0a7e5037e2a80d', 'b8dd36f772667fe517e3021636e4d147') THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_score_recalcular vivo (md5 %) não é a v2 revisada nem esta v3 — outra sessão mexeu; não sobrescrever', v_vivo;
   END IF;
 END
@@ -129,7 +132,7 @@ BEGIN
       COALESCE(pc.pontos, 0) AS p_cnae,
       CASE pc.tier
         WHEN 1 THEN 'CNAE prioritário (' || pc.rotulo || ')'
-        WHEN 2 THEN 'CNAE secundário (' || pc.rotulo || ')'
+        WHEN 2 THEN 'CNAE intermediário (' || pc.rotulo || ')'
         WHEN 3 THEN 'CNAE de apoio (' || pc.rotulo || ')'
       END AS m_cnae,
       -- atividade secundária prioritária (v3): principal tier 2/3 com algum secundário tier 1. Só soma.
@@ -270,7 +273,7 @@ DECLARE
   v_md5 text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_proc p WHERE p.oid = to_regprocedure('public.radar_score_recalcular()');
-  IF v_md5 IS DISTINCT FROM '0cfeac9aab698dd91c9315d2adebc01d' THEN
+  IF v_md5 IS DISTINCT FROM 'b8dd36f772667fe517e3021636e4d147' THEN
     RAISE EXCEPTION 'A4 FALHOU: radar_score_recalcular vivo (md5 %) não é o corpo desta v3 — colagem incompleta ou corpo divergente', v_md5;
   END IF;
   IF has_function_privilege('anon', 'public.radar_score_recalcular()', 'EXECUTE')

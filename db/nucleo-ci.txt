@@ -583,7 +583,7 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # já-cliente pontuando, saiu-do-dump com score), peso trocado em silêncio, idade pelo relógio da sessão, ou
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
-db/test-radar-score.sh                      22  falsificar=16
+db/test-radar-score.sh                      24  falsificar=17
 # Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
 # (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
 # cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.

@@ -23,7 +23,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # assert da suíte pega sozinho (uma camada por vez: a que fica verde é redundante ou inalcançada).
   # O md5 do prosrc (PRE + post:A4) pega TODA sabotagem no corpo da função — por isso cada sabotagem de corpo
   # também cega PRE e A4 (`cegar_md5`); `corpo_divergente` é a que prova o A4 sozinho.
-  SABOTAGENS="peso_capital_zero:A6 faixa_invertida:A6b null_vira_zero:A4 lote_running_pontua:A4 ja_cliente_pontua:A4 sem_bonus_secundario:A18 bonus_no_tier1:A18 relogio_sessao:A10 nao_deterministico:A5 sem_ledger:A7a engole_erro:A13 sem_guarda_versao:A17 acl_aberta:post:A3 acl_aberta_sem_post:A8 cron_sumiu_sem_post:A9 corpo_divergente:post:A4"
+  SABOTAGENS="peso_capital_zero:A6 faixa_invertida:A6b null_vira_zero:A4 lote_running_pontua:A4 ja_cliente_pontua:A4 sem_bonus_secundario:A18 bonus_no_tier1:A18 bonus_tier3_10:A19 relogio_sessao:A10 nao_deterministico:A5 sem_ledger:A7a engole_erro:A13 sem_guarda_versao:A17 acl_aberta:post:A3 acl_aberta_sem_post:A8 cron_sumiu_sem_post:A9 corpo_divergente:post:A4"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-score.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -88,6 +88,7 @@ case "${SABOTAGEM:-}" in
   null_vira_zero)      cegar_md5; sabotar "        WHEN e.ultimo_lote < v_vigente  THEN 'fora da foto vigente'" "        WHEN false THEN 'fora da foto vigente'" ;;
   lote_running_pontua) cegar_md5; sabotar "        WHEN e.ultimo_lote > v_vigente  THEN 'lote em ingestão'" "        WHEN false THEN 'lote em ingestão'" ;;
   sem_bonus_secundario) cegar_md5; sabotar "CASE pc.tier WHEN 2 THEN 10 WHEN 3 THEN 7 ELSE 0 END" "CASE pc.tier WHEN 2 THEN 0 WHEN 3 THEN 0 ELSE 0 END" ;;
+  bonus_tier3_10)      cegar_md5; sabotar "CASE pc.tier WHEN 2 THEN 10 WHEN 3 THEN 7 ELSE 0 END" "CASE pc.tier WHEN 2 THEN 10 WHEN 3 THEN 10 ELSE 0 END" ;;
   bonus_no_tier1)      cegar_md5; sabotar "CASE pc.tier WHEN 2 THEN 10 WHEN 3 THEN 7 ELSE 0 END" "CASE pc.tier WHEN 1 THEN 10 WHEN 2 THEN 10 WHEN 3 THEN 7 ELSE 0 END" ;;
   ja_cliente_pontua)   cegar_md5; sabotar "        WHEN e.ja_cliente               THEN 'já é cliente'" "        WHEN false THEN 'já é cliente'" ;;
   relogio_sessao)      cegar_md5; sabotar "  v_ref := CASE WHEN v_vigente IS NULL THEN NULL ELSE to_date(v_vigente || '-01', 'YYYY-MM-DD') END;" "  v_ref := current_date;" ;;
@@ -373,6 +374,36 @@ eq "A17 guarda de versão: linha que virou cliente DURANTE o recálculo é pulad
 R17B="$(rodar)"
 eq "A17b rodada seguinte recompõe a linha pulada: NULL 'já é cliente', 0 pulados" \
    "$(score_de L1900000000019) [$(motivos_de L1900000000019)] pulados=$(campo "$R17B" pulados)" "(null) [já é cliente] pulados=0"
+
+# ── v2 × v3 nos MESMOS dados (Codex MÉDIO 5): pontua com o corpo da v2, guarda, troca para o corpo da v3 (o
+#    arquivo aplicado — sabotado, se houver sabotagem) e compara linha a linha. Bordas do corte de 70 (sugeridos,
+#    aviso): tier 2 59→69 e 60→70, tier 3 62→69 e 63→70; vários secundários prioritários não somam em dobro.
+FN_V2="$(dirname "$DATA")/fn-v2.sql"; FN_V3="$(dirname "$DATA")/fn-v3.sql"
+awk '/^CREATE OR REPLACE FUNCTION public.radar_score_recalcular\(\)/{p=1} p{print} p && /^\$function\$;$/{exit}' "$MIG2" > "$FN_V2"
+awk '/^CREATE OR REPLACE FUNCTION public.radar_score_recalcular\(\)/{p=1} p{print} p && /^\$function\$;$/{exit}' "$MIG_USADA" > "$FN_V3"
+grep -q "lote em ingestão" "$FN_V2" && grep -q "atividade secundária prioritária" "$FN_V3" || { echo "não extraí os corpos da v2/v3"; exit 9; }
+Pq -c "TRUNCATE public.radar_empresas;
+INSERT INTO public.radar_empresas (cnpj, municipio_codigo, uf, ja_cliente, ultimo_lote)
+  SELECT 'BC' || lpad(g::text, 10, '0') || '01', CASE WHEN g <= 12 THEN 'M2' ELSE 'M9' END, 'MG', true, '2026-09' FROM generate_series(1, 112) g;
+INSERT INTO public.radar_empresas (cnpj, cnae_principal, porte, capital_social, municipio_codigo, uf, telefone1, email, cnaes_secundarios, ultimo_lote) VALUES
+  ('B0100000000001','1622699','05', 600000,'M8','MG','31999990000',NULL,   '{3101200}','2026-09'),
+  ('B0200000000002','1622699','05',2000000,'M1','SC','31999990000','a@b.c','{3101200}','2026-09'),
+  ('B0300000000003','2542000','05', 600000,'M2','MG','31999990000',NULL,   '{2391503}','2026-09'),
+  ('B0400000000004','2542000','03',2000000,'M2','MG','31999990000',NULL,   '{2391503}','2026-09'),
+  ('B0500000000005','2542000','01',   5000,'M1','SC',NULL,NULL,'{3101200,2391503,1629301}','2026-09'),
+  ('B0600000000006','1622699','01',   5000,'M1','SC',NULL,NULL,'{}','2026-09'),
+  ('B0700000000007','3101200','01',   5000,'M1','SC',NULL,NULL,'{1629301}','2026-09');" >/dev/null
+P -q -f "$FN_V2" >/dev/null; rodar >/dev/null
+Pq -c "CREATE TABLE public.snap_v2 AS SELECT cnpj, score FROM public.radar_empresas WHERE cnpj LIKE 'B0%';" >/dev/null
+P -q -f "$FN_V3" >/dev/null; rodar >/dev/null
+eq "A19 v2 → v3 nos mesmos dados: só os secundários prioritários de tier 2/3 mudam, nas bordas de 70 (59→69, 60→70, 62→69, 63→70); 3 secundários prioritários = um bônus só" \
+   "$(Pq -c "SELECT string_agg(e.cnpj||'='||s.score||'>'||e.score, ' ' ORDER BY e.cnpj) FROM public.radar_empresas e JOIN public.snap_v2 s USING (cnpj);")" \
+   "B0100000000001=59>69 B0200000000002=60>70 B0300000000003=62>69 B0400000000004=63>70 B0500000000005=21>28 B0600000000006=28>28 B0700000000007=38>38"
+Pq -c "UPDATE public.radar_empresas SET cnaes_secundarios = '{}', updated_at = now() WHERE cnpj = 'B0500000000005';" >/dev/null
+rodar >/dev/null
+eq "A20 retirar o último secundário prioritário devolve o score da v2 e tira o motivo; o tier 2 vira 'CNAE intermediário'" \
+   "$(score_de B0500000000005) [$(Pq -c "SELECT count(*) FROM unnest((SELECT score_motivos FROM public.radar_empresas WHERE cnpj='B0500000000005')) m WHERE m LIKE 'atividade secund%';")] [$(Pq -c "SELECT score_motivos[1] FROM public.radar_empresas WHERE cnpj='B0600000000006';")]" \
+   "21 [0] [CNAE intermediário (carpintaria para construção)]"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "RADAR_SCORE_PROVA_OK"
