@@ -53,10 +53,9 @@ Começar pelos **caminhos ativos**: `usePedidosProgramados.ts:73` (inclui wrappe
 9. #3272 financeiro, money-path ([casts-financeiro.md](../../../historico/casts-financeiro.md))
 10. #3273 farmer-inteligencia, pela sessão-mãe ([casts-farmer-inteligencia.md](../../../historico/casts-farmer-inteligencia.md))
 
-Residuais deliberados em módulo ativo, cada um com o porquê no doc do módulo:
-- `useRaioXMutacoes` (reposição, 2): NULL semântico em arg de RPC sem DEFAULT. Nasceu antes do `comNulo`, que hoje cobre essa classe; candidato a sair quando o raio-X for revisitado.
-- `useVendaPainel` (farmer-inteligencia, 1): `venda_painel`/`venda_repasse_candidatos` ainda não estão no `types.ts`. Sai na próxima regeneração.
-- `useExcecoesGestor` (governança, 3): família tarefas, congelada por desenho.
+Residual em módulo ativo (2026-10-21, depois do PR de fecho do ciclo 2):
+- `useVendaPainel` (farmer-inteligencia, 1): `venda_painel`/`venda_repasse_candidatos` ainda não estão no `types.ts`. É o uso legítimo do cast, sobre nome que o gerador não conhece, e o gate não o conta. Sai na próxima regeneração.
+- ~~`useRaioXMutacoes` (reposição, 2)~~ e ~~`useExcecoesGestor` (governança, 3)~~ saíram. O raio-X passou a usar `comNulo`, com as 4 chaves NULL conferidas na prod. O `useExcecoesGestor` é governança no manifesto (o card "Exceções" do MasterDashboard) e só LÊ as views da família tarefas, que já estão no `types.ts`: a borda exige `id`/`descricao`/`effective_due` com `linhasCom`, e `customer_metrics` passou a ser lido por forma (ausente ≠ 0). Detalhe em [plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md).
 
 Defeitos que os casts escondiam (detalhe nos docs): 3 queries 400 na reposição; 4 KPIs de /vendas/ferramentas sobre tabelas inexistentes; o DRE consolidado da tela Intercompany quebrava ao renderizar; a RPC intercompany aplica a eliminação ao CMV com o sinal trocado (correção SQL proposta em sessão própria).
 ### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · 🧭
@@ -86,7 +85,7 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 
 | KPI | Baseline (2026-10-18) | Fim do ciclo 1 | Ciclo 2 (2026-10-20) |
 |---|---|---|---|
-| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **16/12 · 28** (2026-10-21, item 4 ✅: + vendas #3265, caça #3268, financeiro #3272, farmer #3273); em módulo ativo restam só os 6 residuais documentados em §2 item 4; o resto está em congelados |
+| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **14/12 · 26** (2026-10-21, item 4 ✅: plataforma #3257/#3262, vendas #3265, caça #3268, financeiro #3272, farmer #3273, governança + raio-X no PR de fecho do ciclo 2); em módulo ativo resta só o `useVendaPainel` (nome ainda fora do `types.ts`); o resto está em congelados |
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
