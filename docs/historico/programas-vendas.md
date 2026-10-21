@@ -203,3 +203,23 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
 - **Linha de base (365 dias, 221.028 linhas, 0% `nao_medivel`):** ~7–8% das linhas (comprador × SKU) e ~19% dos
   compradores-dia recompram em 14 dias; o vale é a 2ª quinzena de dezembro (1–3% / 3–9%). ~44–54 compradores por
   farmer/dia, ~6 SKUs por comprador (p50 3, p90 13); compradores com 20+ SKUs são 7% e somam 45% das linhas.
+
+## Venda por cliente — Task 8: Meu Dia + ficha da ligação + desfecho, Onda 1 (2026-10-20)
+
+A fila do Meu Dia passou a ter a lista de recompra do servidor (`venda_minhas_sugestoes`, adapter
+`src/lib/fila/adapters/recompra.ts`, 1 ação por comprador) como fonte principal. `rota`/`tarefa`/`whatsappPendente`
+desligadas (M-41), `mixgap` segue até a Onda 2. O `FilaContextPanel` virou `FichaLigacao` (sem flag): telefone `tel:`,
+munição, Recomprar, Histórico, link 360 e `BotoesContato` (escritor único `venda_registrar_contato`). O Meu Dia perdeu o
+modo antigo, `SlaCardMeuDia`, `KpisToday` (chamadas) e o nudge de ligações sem vínculo. Munição e histórico re-hospedados
+em `farmer-inteligencia` (`src/lib/venda-cliente/{municao,historico}.ts`). Sensores `venda.*` no ledger: migration
+`20261020202720_analytics_ledger_venda_cliente.sql` (TRAVA→PRE→CREATE→PÓS; prova `db/test-analytics-ledger-venda-cliente.sh`).
+
+- **O ledger tem allowlist FECHADA no banco.** "Sensor no ledger" sem migration é sensor que volta 22023 e some
+  (fail-open). O plano dizia "sem migration" para a Task 8 — errado por esse motivo. A migration já inclui
+  `venda.painel_aberto` da Task 7, para as duas entregas não recriarem a função uma por cima da outra.
+- **A lente "Ver como" não mostra a lista da vendedora.** A RPC é por `auth.uid()` (devolveria a do master) e o write-guard
+  bloqueia RPC fora de `get_`/`list_`. A tela diz isso em vez de mostrar "ninguém hoje". Ver a lista dela exige uma variante
+  master-only `venda_minhas_sugestoes_for(p_farmer)`, no padrão de `get_meu_mixgap_for`.
+- **"Dias de atraso" não chega à farmer.** `venda_recompra` (cadência, `due_ratio`) não tem GRANT para `authenticated`, e
+  a RPC não expõe. A ficha mostra "última compra há N dias" e o último preço lidos do histórico de pedidos, com "—" quando
+  não há dado. Expor cadência e atraso é para a migration da Task 9, que já recria `venda_minhas_sugestoes`.

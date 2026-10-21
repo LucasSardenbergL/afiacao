@@ -108,7 +108,6 @@ vi.mock('@/contexts/ImpersonationContext', () => ({
 // abriria 4 vazamentos de fronteira para baselinar. Esses quatro montam de verdade contra o
 // mesmo dublê de supabase — custam um pouco de tempo e não custam uma exceção arquitetural.
 vi.mock('@/components/fila/FilaDoDia', () => ({ FilaDoDia: () => <div /> }));
-vi.mock('@/components/dashboard/KpisToday', () => ({ KpisToday: () => <div /> }));
 vi.mock('@/components/dashboard/AgendaTodayList', () => ({ AgendaTodayList: () => <div /> }));
 vi.mock('@/components/farmer/ChamadasPendentesNudge', () => ({ ChamadasPendentesNudge: () => <div /> }));
 // O aviso de pedidos sem nota lê a empresa do seletor (CompanyProvider) e tem teste próprio

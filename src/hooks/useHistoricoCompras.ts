@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { derivarHistorico, type Historico, type HistoricoItemInput, type HistoricoPedidoInput } from '@/lib/call/historico';
+import { derivarHistorico, type Historico, type HistoricoItemInput, type HistoricoPedidoInput } from '@/lib/venda-cliente/historico';
 import { precoUtilizavel } from '@/lib/format';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 
@@ -15,8 +15,8 @@ interface ProdutoRow { omie_codigo_produto: number; descricao: string | null; }
  * Lazy (só dispara com customerUserId). 3 queries fixas, sem N+1.
  * MANDATO: nunca escreve / nunca cria cadastro.
  */
-export function useHistoricoCompras(customerUserId: string | null): { historico: Historico | null; loading: boolean } {
-  const { data, isLoading } = useQuery({
+export function useHistoricoCompras(customerUserId: string | null): { historico: Historico | null; loading: boolean; erro: boolean } {
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['historico-compras', customerUserId],
     enabled: !!customerUserId,
     staleTime: 60_000,
@@ -35,7 +35,7 @@ export function useHistoricoCompras(customerUserId: string | null): { historico:
         .limit(MAX_PEDIDOS);
       if (e1) throw e1;
       const pedidos = (pedidosRaw ?? []) as PedidoRow[];
-      if (pedidos.length === 0) return { topProdutos: [], ultimosPedidos: [] };
+      if (pedidos.length === 0) return { topProdutos: [], produtos: [], ultimosPedidos: [] };
 
       const dataDoPedido = new Map(pedidos.map((p) => [p.id, p.order_date_kpi ?? p.created_at]));
       const ids = pedidos.map((p) => p.id);
@@ -87,5 +87,6 @@ export function useHistoricoCompras(customerUserId: string | null): { historico:
     },
   });
 
-  return { historico: data ?? null, loading: isLoading };
+  // `erro` distingue "não consegui ler" de "sem histórico" (a ficha da ligação mostra a diferença).
+  return { historico: data ?? null, loading: isLoading, erro: isError };
 }

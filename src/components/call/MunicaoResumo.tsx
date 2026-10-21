@@ -1,9 +1,13 @@
-import type { Municao } from '@/lib/call/municao';
+import type { Municao } from '@/lib/venda-cliente/municao';
 
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-/** Resumo da munição (última compra + ticket médio). Conteúdo puro — o container aplica padding. */
-export function MunicaoResumo({ municao }: { municao: Municao | null }) {
+/**
+ * Resumo da munição (última compra + ticket médio). Conteúdo puro — o container aplica padding.
+ * `erro` = leitura falhou: diz isso, em vez de sumir calado ou afirmar "sem compras".
+ */
+export function MunicaoResumo({ municao, erro = false }: { municao: Municao | null; erro?: boolean }) {
+  if (erro) return <div className="text-xs text-status-warning">Não consegui ler as compras deste cliente agora.</div>;
   if (!municao) return null;
   return (
     <div className="text-xs text-muted-foreground space-y-0.5">

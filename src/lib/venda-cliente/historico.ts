@@ -16,7 +16,7 @@ export interface HistoricoInput {
   pedidos: HistoricoPedidoInput[];
   agora: Date;
 }
-interface TopProduto {
+export interface TopProduto {
   codigo: number;
   nome: string;
   vezes: number;
@@ -31,6 +31,12 @@ interface PedidoResumo {
 }
 export interface Historico {
   topProdutos: TopProduto[];
+  /**
+   * TODOS os SKUs do histórico lido, na mesma ordem do top. A ficha da ligação busca
+   * aqui o último preço/data de cada SKU sugerido — o top 5 cortaria um SKU de recompra
+   * que o cliente compra pouco.
+   */
+  produtos: TopProduto[];
   ultimosPedidos: PedidoResumo[];
 }
 
@@ -70,17 +76,17 @@ export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): His
     }
   }
 
-  const topProdutos = [...porProduto.values()]
+  const produtos = [...porProduto.values()]
     .sort((a, b) =>
       b.vezes - a.vezes ||
       new Date(b.ultimaData).getTime() - new Date(a.ultimaData).getTime(),
-    )
-    .slice(0, 5);
+    );
+  const topProdutos = produtos.slice(0, 5);
 
   const ultimosPedidos = pedidos
     .filter((p) => naoFutura(p.data, hojeMs))
     .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())
     .slice(0, 3);
 
-  return { topProdutos, ultimosPedidos };
+  return { topProdutos, produtos, ultimosPedidos };
 }

@@ -1,20 +1,23 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { CalendarClock, Eye } from 'lucide-react';
 import { Card, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { track } from '@/lib/analytics';
-import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { useFilaAcoes, type FonteFila } from '@/hooks/useFilaAcoes';
 import { useCriticaFila } from '@/hooks/useCriticaFila';
+import { rotuloResultado } from '@/hooks/useRegistrarContato';
+import { useContatosDoDia } from '@/hooks/useContatosDoDia';
 import { PorQueAgora } from '@/components/fila/PorQueAgora';
 import type { AcaoSugerida, CategoriaAcao } from '@/lib/fila/types';
+import type { EstadoRecompra } from '@/hooks/useMinhasSugestoes';
 import { spBusinessDate } from '@/lib/time/sp-day';
 import { marcarSeNovoNoDia, chaveDiaExibida, resumoFontes } from '@/lib/fila/telemetria';
+import { LinkTelefone } from '@/components/venda-cliente/LinkTelefone';
+import { FichaLigacao } from '@/components/venda-cliente/FichaLigacao';
 import { AcaoOutcomeMenu } from './AcaoOutcomeMenu';
-import { useFeatureFlag } from '@/hooks/useFeatureFlag';
-import { FilaContextPanel } from './FilaContextPanel';
 
 const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   prazo: { label: 'Prazo', cls: 'text-status-warning' },
@@ -23,53 +26,76 @@ const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   risco: { label: 'Risco', cls: 'text-status-error' },
 };
 
-/** Rótulos das fontes na linguagem da vendedora (rota = a lista de ligação; mix-gap = oportunidades). */
+/** Rótulo do badge por fonte (a recompra é "Recompra", não a categoria genérica). */
+function rotuloBadge(a: AcaoSugerida): { label: string; cls: string } {
+  if (a.fonte === 'recompra') return { label: 'Recompra', cls: 'text-status-info' };
+  return CATEGORIA_UI[a.categoria];
+}
+
+/** Rótulos das fontes na linguagem da vendedora. */
 const ROTULO_FONTE: Record<FonteFila, string> = {
-  tarefas: 'tarefas',
-  rota: 'lista de ligação',
+  recompra: 'lista de recompra',
   'mix-gap': 'oportunidades',
-  whatsapp: 'WhatsApp',
 };
 const rotularFontes = (fontes: FonteFila[]) => fontes.map((f) => ROTULO_FONTE[f]).join(', ');
 
-function clienteHref(a: AcaoSugerida): string | null {
-  return a.clienteUserId ? `/admin/customers/${a.clienteUserId}/360` : null;
-}
-
-/** CTA "Fazer": tel/wa abrem o app nativo; pedido/abrir navegam interno. Sem persistir nada (render mínimo). */
+/** CTA "Fazer": ligar abre o discador (`tel:`); pedido navega interno. M-41: nada de WebRTC. */
 function AcaoCta({ a, temCritica }: { a: AcaoSugerida; temCritica: boolean }) {
   const onClick = () => {
     track('fila.acao_fazer', { fonte: a.fonte, cta: a.cta, categoria: a.categoria });
     if (temCritica) track('fila.critica_acted', { cliente: a.clienteUserId, cta: a.cta });
   };
-  const tel = a.telefone?.replace(/\D/g, '');
-  if (a.cta === 'ligar' && tel) {
-    return <BotaoLigar telefone={a.telefone} nomeCliente={a.clienteNome ?? a.titulo} onLigar={onClick} />;
-  }
-  // Conversa pendente abre a INBOX interna na conversa (contexto/thread/SLA);
-  // wa.me fica pros CTAs sem conversa aberta (ex.: contato da rota).
-  if (a.payload.kind === 'whatsapp') {
-    return <Button asChild size="sm" variant="outline"><Link to={`/whatsapp?conversa=${a.payload.conversationId}`} onClick={onClick}>Responder</Link></Button>;
-  }
-  if (a.cta === 'whatsapp' && tel) {
-    return <Button asChild size="sm" variant="outline"><a href={`https://wa.me/${tel}`} target="_blank" rel="noopener noreferrer" onClick={onClick}>WhatsApp</a></Button>;
+  if (a.cta === 'ligar' && a.clienteUserId) {
+    return (
+      <span onClickCapture={onClick}>
+        <LinkTelefone telefone={a.telefone} compradorId={a.clienteUserId} origem="lista" />
+      </span>
+    );
   }
   if (a.cta === 'pedido') {
     return <Button asChild size="sm" variant="outline"><Link to="/sales/new" onClick={onClick}>Montar pedido</Link></Button>;
   }
-  const href = clienteHref(a);
-  if (href) return <Button asChild size="sm" variant="outline"><Link to={href} onClick={onClick}>Abrir</Link></Button>;
+  return null;
+}
+
+/** Aviso fixo acima da lista quando a recompra não está servindo (onda desligada / lente). */
+function AvisoRecompra({ estado }: { estado: EstadoRecompra }) {
+  if (estado.tipo === 'onda_desligada') {
+    return (
+      <Card className="p-5 flex gap-3 items-start">
+        <CalendarClock className="w-5 h-5 text-status-info shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-medium">Sua lista de quem ligar começa em breve.</p>
+          <p className="text-2xs text-muted-foreground mt-1">
+            Todo dia ela vai trazer os clientes da sua carteira com recompra atrasada — e quem tem entrega amanhã.
+            Ela liga sozinha quando estiver conferida; você não precisa fazer nada.
+          </p>
+        </div>
+      </Card>
+    );
+  }
+  if (estado.tipo === 'lente') {
+    return (
+      <Card className="p-4 flex gap-3 items-start">
+        <Eye className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-2xs text-muted-foreground">
+          Na lente "Ver como", a lista de recompra da vendedora não é exibida — ela é lida pelo login de quem
+          usa. O que aparece abaixo são só as oportunidades.
+        </p>
+      </Card>
+    );
+  }
   return null;
 }
 
 /**
- * Fila única do dia (G1). Consome useFilaAcoes() e mostra as ações ranqueadas; lidera o "Meu dia".
- * Fase 2: outcome inline + esconder-na-sessão + telemetria. Crítica da fila: PorQueAgora (contradições).
- * Fase 3 (flag `filaContextPanel`): clicar no item abre o FilaContextPanel (painel de contexto).
+ * Fila única do dia. Fonte principal: lista de recompra (servidor). Clicar no cliente abre a
+ * FichaLigacao (telefone, munição, Recomprar, Histórico, desfecho em 1 toque).
  */
 export function FilaDoDia() {
-  const { acoes, isLoading, isError, fontesComErro, retry } = useFilaAcoes();
+  const { acoes, isLoading, isError, fontesComErro, recompra, retry } = useFilaAcoes();
   const packs = useCriticaFila(acoes);
+  const contatos = useContatosDoDia();
   const shownRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -85,9 +111,8 @@ export function FilaDoDia() {
   const ocultar = (k: string) => setEscondidos((s) => { const n = new Set(s); n.add(k); return n; });
   const visiveis = useMemo(() => acoes.filter((a) => !escondidos.has(a.dedupeKey)), [acoes, escondidos]);
 
-  const [painelOn] = useFeatureFlag('filaContextPanel', false);
   const [itemAtivo, setItemAtivo] = useState<AcaoSugerida | null>(null);
-  const abrirPainel = (a: AcaoSugerida) => {
+  const abrirFicha = (a: AcaoSugerida) => {
     setItemAtivo(a);
     track('fila.painel_aberto', { fonte: a.fonte, dedupeKey: a.dedupeKey });
   };
@@ -110,6 +135,16 @@ export function FilaDoDia() {
     );
   }
 
+  const ficha = (
+    <FichaLigacao
+      compradorId={itemAtivo?.clienteUserId ?? null}
+      nome={itemAtivo?.clienteNome}
+      telefone={itemAtivo?.telefone}
+      motivo={itemAtivo?.motivo}
+      onClose={() => setItemAtivo(null)}
+    />
+  );
+
   if (visiveis.length === 0) {
     // Erro ≠ dia limpo: sem isto, RLS negada/rede ruim virava "carteira em
     // dia" — falso-verde num motor de receita (a vendedora deixava de ligar).
@@ -124,27 +159,33 @@ export function FilaDoDia() {
         </Card>
       );
     }
+    // Onda desligada / lente: a mensagem própria, nunca "nada a fazer".
+    if (recompra.tipo === 'onda_desligada' || recompra.tipo === 'lente') {
+      return <AvisoRecompra estado={recompra} />;
+    }
     return (
       <Card className="p-6">
-        <p className="text-sm font-medium">Nada prioritário na fila agora.</p>
+        <p className="text-sm font-medium">Ninguém na sua lista hoje.</p>
         <p className="text-2xs text-muted-foreground mt-1">
-          Sua carteira está em dia. Se quiser adiantar, veja a lista completa de ligações da rota ou seus clientes.
+          Nenhum cliente da sua carteira está com recompra atrasada para hoje. Se quiser adiantar, veja seus clientes.
         </p>
-        <div className="flex gap-2 mt-3">
-          <Button asChild size="sm" variant="outline"><Link to="/rota/ligacoes">Ver rota completa</Link></Button>
-          <Button asChild size="sm" variant="ghost"><Link to="/admin/customers">Ver clientes</Link></Button>
-        </div>
+        <Button asChild size="sm" variant="ghost" className="mt-3"><Link to="/admin/customers">Ver clientes</Link></Button>
       </Card>
     );
   }
 
+  const nRecompra = visiveis.filter((a) => a.fonte === 'recompra').length;
+
   return (
     <>
+      <AvisoRecompra estado={recompra} />
       <Card>
         <CardHeader className="pb-2">
-          <h2 className="text-base font-medium">O que fazer agora</h2>
+          <h2 className="text-base font-medium">Quem ligar hoje</h2>
           <p className="text-2xs text-muted-foreground">
-            {visiveis.length} ações priorizadas — tarefas, rota e oportunidades, do mais urgente ao menos.
+            {nRecompra > 0
+              ? `${nRecompra} ${nRecompra === 1 ? 'cliente' : 'clientes'} com recompra atrasada, do maior valor ao menor. Toque no nome para abrir a ficha.`
+              : `${visiveis.length} oportunidades na sua carteira.`}
           </p>
           {isError && (
             <p className="text-2xs text-status-warning">
@@ -155,21 +196,20 @@ export function FilaDoDia() {
         </CardHeader>
         <div className="divide-y divide-border">
           {visiveis.slice(0, 30).map((a, i) => {
-            const cat = CATEGORIA_UI[a.categoria];
-            const href = clienteHref(a);
+            const badge = rotuloBadge(a);
             const pack = a.clienteUserId ? packs.get(a.clienteUserId) : undefined;
+            const contato = a.clienteUserId ? contatos.data?.get(a.clienteUserId) : undefined;
             return (
               <div key={`${a.dedupeKey}:${i}`} className="p-3 flex items-start justify-between gap-3 hover:bg-muted/30">
                 <div className="min-w-0">
-                  {painelOn ? (
-                    <button type="button" onClick={() => abrirPainel(a)} className="block w-full text-left text-sm font-medium truncate hover:underline">{a.titulo}</button>
-                  ) : href ? (
-                    <Link to={href} className="block text-sm font-medium truncate hover:underline">{a.titulo}</Link>
+                  {a.clienteUserId ? (
+                    <button type="button" onClick={() => abrirFicha(a)} className="block w-full text-left text-sm font-medium truncate hover:underline">{a.titulo}</button>
                   ) : (
                     <div className="text-sm font-medium truncate">{a.titulo}</div>
                   )}
                   <div className="text-2xs text-muted-foreground flex gap-2 flex-wrap items-center mt-0.5">
-                    <Badge variant="outline" className={`text-2xs ${cat.cls}`}>{cat.label}</Badge>
+                    <Badge variant="outline" className={`text-2xs ${badge.cls}`}>{badge.label}</Badge>
+                    {contato && <Badge variant="secondary" className="text-2xs">{rotuloResultado(contato)}</Badge>}
                     <span className="truncate">{a.motivo}</span>
                     {a.valorEsperado != null && (
                       <span className="font-tabular">~R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado</span>
@@ -186,7 +226,7 @@ export function FilaDoDia() {
           })}
         </div>
       </Card>
-      {painelOn && <FilaContextPanel acao={itemAtivo} onClose={() => setItemAtivo(null)} onNaoUtilAgora={ocultar} />}
+      {ficha}
     </>
   );
 }

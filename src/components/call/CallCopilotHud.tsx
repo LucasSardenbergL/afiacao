@@ -21,7 +21,7 @@ export function CallCopilotHud() {
   const ctx = useWebRTCCallContextOptional();
   const navigate = useNavigate();
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const { municao } = useMunicaoLigacao(ctx?.currentCustomerUserId ?? null);
+  const { municao, erro: erroMunicao } = useMunicaoLigacao(ctx?.currentCustomerUserId ?? null);
 
   if (!ctx || ctx.callState !== 'established') return null;
 
@@ -81,9 +81,9 @@ export function CallCopilotHud() {
           </div>
         </header>
 
-        {municao && (
+        {(municao || erroMunicao) && (
           <div className="px-3 py-2 border-b border-border">
-            <MunicaoResumo municao={municao} />
+            <MunicaoResumo municao={municao} erro={erroMunicao} />
           </div>
         )}
 
