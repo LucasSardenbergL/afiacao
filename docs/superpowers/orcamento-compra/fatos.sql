@@ -52,6 +52,16 @@ falhas_snapshot as (
                     where s.company = 'oben' and s.cenario = 'pessimista'
                       and (s.snapshot_at at time zone 'America/Sao_Paulo')::date = (e.iniciado_em at time zone 'America/Sao_Paulo')::date)
 ),
+-- R64: NF efetivada no recebimento do app nas últimas 30h (até a próxima revisita das 04:15 UTC, com folga) cuja
+-- chave não tem t4 no tracking — o estoque de hoje já tem a entrada e os recebimentos dos fatos ainda não. O pré-voo
+-- recusa a rodada. Mais antiga que isso e ainda sem t4 é NF fora do tracking (resíduo persistente, não sincronia).
+receb_sem_t4 as (
+  select r.numero_nfe as nf
+  from nfe_recebimentos r
+  where r.status = 'efetivado' and r.efetivado_at >= now() - interval '30 hours'
+    and not exists (select 1 from purchase_orders_tracking t
+                    where t.nfe_chave_acesso = r.chave_acesso and t.t4_data_recebimento is not null)
+),
 -- Recebimentos reais = tracking t4_data_recebimento × quantidades do pedido Omie (spec §7).
 -- (nfe_recebimento_itens só existe desde 2026-07 e quantidade_convertida veio 100% nula — não serve.)
 -- Pedido recebido sem t4/sem produtos some daqui; o erro de fechamento por SKU pega o buraco.
@@ -196,6 +206,7 @@ select 'json|' || jsonb_build_object(
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),
+  'recebimentos_sem_t4', (select coalesce(json_agg(x.nf order by x.nf), '[]') from receb_sem_t4 x),
   'falhas_snapshot', (select coalesce(json_agg(x.dia order by x.dia), '[]') from falhas_snapshot x),
   'demanda_fisica', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda_fisica d),
   'recebimentos', (select coalesce(json_agg(r order by r.sku, r.data), '[]') from receb r),

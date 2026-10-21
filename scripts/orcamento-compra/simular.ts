@@ -83,6 +83,12 @@ export interface Fatos {
    * e o snapshot pessimista da Oben NÃO existe — falha de infraestrutura comprovada, não falta de caixa.
    */
   falhas_snapshot: DataISO[];
+  /**
+   * R64: NFs efetivadas no recebimento do app nas últimas 30h cuja chave NÃO tem t4 no tracking. O estoque de HOJE
+   * (âncora da reconstrução) já contém a entrada, mas os recebimentos dos fatos não: rodar agora quebra o fechamento
+   * de todo ciclo anterior desses SKUs (medido 2026-10-21: 2 NFs à tarde → 35 para 60 SKUs com fechamento ruim).
+   */
+  recebimentos_sem_t4: string[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
@@ -218,6 +224,10 @@ export function preVoo(f: Fatos): string[] {
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
   if (!Array.isArray(f.falhas_snapshot)) falhas.push('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  if (!Array.isArray(f.recebimentos_sem_t4)) falhas.push('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
+  else if (f.recebimentos_sem_t4.length > 0) {
+    falhas.push(`${f.recebimentos_sem_t4.length} NF efetivada(s) no recebimento sem t4 no tracking (${f.recebimentos_sem_t4.slice(0, 5).join(', ')}) — rode depois da revisita da omie-sync-nfes-recebidas (R64)`);
+  }
   if (!Array.isArray(f.demanda_fisica)) falhas.push('demanda_fisica ausente — fatos.sql antigo (R61)');
   else if (f.demanda_fisica.some((d) => d.qtde == null)) falhas.push('demanda_fisica com qtde nula — reconstrução de estoque inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');

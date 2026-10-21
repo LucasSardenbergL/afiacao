@@ -28,6 +28,7 @@ const fatos: Fatos = {
   demanda: DEM200,
   demanda_fisica: DEM200,
   falhas_snapshot: [],
+  recebimentos_sem_t4: [],
   recebimentos: [],
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
@@ -261,6 +262,11 @@ describe('simularCiclo', () => {
   });
   it('R63: falhas_snapshot ausente reprova o pré-voo', () => {
     expect(preVoo({ ...fatos, falhas_snapshot: undefined as unknown as Fatos['falhas_snapshot'] })).toContain('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  });
+  it('R64: NF efetivada no recebimento do app SEM t4 no tracking reprova o pré-voo (estoque de hoje à frente dos fatos)', () => {
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: ['000956019'] })).toContain('1 NF efetivada(s) no recebimento sem t4 no tracking (000956019) — rode depois da revisita da omie-sync-nfes-recebidas (R64)');
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: undefined as unknown as Fatos['recebimentos_sem_t4'] })).toContain('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
+    expect(preVoo(fatos).filter((x) => x.includes('R64'))).toEqual([]);
   });
   it('R61: demanda física com qtde nula reprova o pré-voo', () => {
     expect(preVoo({ ...fatos, demanda_fisica: [{ sku: '9', data: '2026-10-01', qtde: null }] })).toContain('demanda_fisica com qtde nula — reconstrução de estoque inválida');
