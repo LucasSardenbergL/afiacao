@@ -43,3 +43,15 @@ export function numeroOuNuloJson(o: ObjetoJson, chave: string, fonte: string): n
   if (v === null || typeof v === 'number') return v;
   throw forma(fonte, chave, 'número ou null');
 }
+
+export function booleanoJson(o: ObjetoJson, chave: string, fonte: string): boolean {
+  const v = o[chave];
+  if (typeof v !== 'boolean') throw forma(fonte, chave, 'booleano');
+  return v;
+}
+
+export function booleanoOuNuloJson(o: ObjetoJson, chave: string, fonte: string): boolean | null {
+  const v = o[chave];
+  if (v === null || typeof v === 'boolean') return v;
+  throw forma(fonte, chave, 'booleano ou null');
+}

@@ -1,11 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import type { CandidatoRepasse, PainelVenda } from '@/lib/venda-cliente/painel';
+import { comNulo } from '@/lib/rpc-args';
+import {
+  lerCandidatosRepasse,
+  lerPainelVenda,
+  type CandidatoRepasse,
+  type PainelVenda,
+} from '@/lib/venda-cliente/painel';
 
-// RPCs novas ainda não estão em types.ts (Lovable regenera pós-migration; NÃO adicionar à mão).
-type Rpc<A, R> = (fn: string, args: A) => Promise<{ data: R | null; error: unknown }>;
-const rpc = <A, R>(fn: string, args: A) => (supabase.rpc as never as Rpc<A, R>)(fn, args);
+// As 4 RPCs estão no types.ts desde a regeneração do Lovable de 2026-10-21. As duas de leitura
+// devolvem `jsonb` (tipado `Json`): a forma é conferida em `lerPainelVenda`/`lerCandidatosRepasse`.
 
 /**
  * Painel do founder (`venda_painel`, master). `useAuth()` = usuário REAL: o painel é do
@@ -18,13 +23,9 @@ export function useVendaPainel(de: string, ate: string) {
     enabled: isMaster,
     staleTime: 60_000,
     queryFn: async (): Promise<PainelVenda> => {
-      const { data, error } = await rpc<{ p_de: string; p_ate: string }, PainelVenda>('venda_painel', {
-        p_de: de,
-        p_ate: ate,
-      });
+      const { data, error } = await supabase.rpc('venda_painel', { p_de: de, p_ate: ate });
       if (error) throw error;
-      if (!data) throw new Error('venda_painel devolveu vazio');
-      return data;
+      return lerPainelVenda(data);
     },
   });
 }
@@ -40,10 +41,9 @@ export function useRepasseCandidatos(disponivel: boolean) {
     enabled: isMaster && disponivel,
     staleTime: 60_000,
     queryFn: async (): Promise<CandidatoRepasse[]> => {
-      const { data, error } = await rpc<Record<string, never>, CandidatoRepasse[]>('venda_repasse_candidatos', {});
+      const { data, error } = await supabase.rpc('venda_repasse_candidatos');
       if (error) throw error;
-      if (!Array.isArray(data)) throw new Error('venda_repasse_candidatos devolveu formato inesperado');
-      return data;
+      return lerCandidatosRepasse(data);
     },
   });
 }
@@ -87,14 +87,18 @@ export function useAprovarRepasse() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (a: AprovarRepasseArgs): Promise<string> => {
-      const { data, error } = await rpc<Record<string, unknown>, string>('venda_aprovar_repasse', {
-        p_comprador: a.comprador,
-        p_empresa: 'oben',
-        p_codigo: a.codigo,
-        p_preco_alvo: a.precoAlvo,
-        p_valido_ate: a.validoAte,
-        p_substitui: a.substitui,
-      });
+      // `p_substitui` NULL = trio sem histórico (DEFAULT NULL na prod): vai explícito, como antes.
+      const { data, error } = await supabase.rpc(
+        'venda_aprovar_repasse',
+        comNulo<'venda_aprovar_repasse', 'p_substitui'>({
+          p_comprador: a.comprador,
+          p_empresa: 'oben',
+          p_codigo: a.codigo,
+          p_preco_alvo: a.precoAlvo,
+          p_valido_ate: a.validoAte,
+          p_substitui: a.substitui,
+        }),
+      );
       if (error) throw error;
       if (!data) throw new Error('venda_aprovar_repasse não devolveu o id');
       return data;
@@ -107,7 +111,7 @@ export function useRevogarRepasse() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string): Promise<void> => {
-      const { error } = await rpc<{ p_id: string }, null>('venda_revogar_repasse', { p_id: id });
+      const { error } = await supabase.rpc('venda_revogar_repasse', { p_id: id });
       if (error) throw error;
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['venda-repasse-candidatos'] }),
