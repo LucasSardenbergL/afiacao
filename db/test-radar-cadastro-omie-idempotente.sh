@@ -96,8 +96,18 @@ open(p, "w", encoding="utf-8").write(s)
 PY
 }
 ESTE="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG" | grep -oE '[0-9a-f]{32}' | grep -v "$MD5_CONF" | head -1)"
+# Régua "este" → md5 do corpo SABOTADO (calculado do arquivo, como o PG o guardará). Trocar por uma subconsulta
+# do vivo faria a PRE aceitar QUALQUER predecessor — e o A0r deixaria de medir a PRE.
 neutralizar() {
-  sabotar "$MIG_USADA" "'$ESTE' /* este:radar_registrar_cadastro_omie */" "(SELECT md5(q.prosrc) FROM pg_catalog.pg_proc q WHERE q.oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)'))"
+  local novo
+  novo="$(python3 -I - "$MIG_USADA" <<'PY2'
+import hashlib, sys
+s = open(sys.argv[1], encoding="utf-8").read()
+ini = s.index("AS $function$") + len("AS $function$")
+print(hashlib.md5(s[ini:s.index("$function$;", ini)].encode("utf-8")).hexdigest())
+PY2
+)"
+  sabotar "$MIG_USADA" "'$ESTE' /* este:radar_registrar_cadastro_omie */" "'$novo' /* este:radar_registrar_cadastro_omie */"
 }
 POS_INDICE="  IF v_idx IS NULL OR NOT EXISTS ("
 case "${SABOTAGEM:-}" in
@@ -117,6 +127,7 @@ case "${SABOTAGEM:-}" in
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
+ESTE_USADO="$(grep -oE "'[0-9a-f]{32}' /\* este:radar_registrar_cadastro_omie \*/" "$MIG_USADA" | grep -oE '[0-9a-f]{32}' | head -1)"
 
 "$PGBIN/initdb" -D "$DATA" -U postgres -A trust -E UTF8 --locale=C >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
@@ -271,7 +282,7 @@ eq A0p2 "predecessor = 'este' da 20261021120000" "$(md5_de 'radar_registrar_cada
 if P -f "$MIG_USADA" >"$TMPD/apply.log" 2>&1; then ok A0a "migration aplica (TRAVA → PRE → índice → CREATE → PÓS)"; else bad A0a "migration abortou: $(grep -m1 -E 'ERROR|ERRO' "$TMPD/apply.log" | cut -c1-200)"; fi
 if P -f "$MIG_USADA" >"$TMPD/apply2.log" 2>&1; then ok A0b "re-aplicar é no-op (PRE aceita 'este')"; else bad A0b "re-aplicar abortou: $(grep -m1 -E 'ERROR|ERRO' "$TMPD/apply2.log" | cut -c1-200)"; fi
 eq A0c "RPC = 'este', SECURITY DEFINER + search_path=public + VOLATILE" \
-  "$(Pq -c "SELECT md5(prosrc)||':'||prosecdef||':'||proconfig[1]||':'||provolatile::text FROM pg_proc WHERE oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')")" "$ESTE:true:search_path=public:v"
+  "$(Pq -c "SELECT md5(prosrc)||':'||prosecdef||':'||proconfig[1]||':'||provolatile::text FROM pg_proc WHERE oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')")" "$ESTE_USADO:true:search_path=public:v"
 eq A0d "ACL: anon/PUBLIC sem EXECUTE; authenticated/service_role com" \
   "$(Pq -c "SELECT has_function_privilege('anon',p.oid,'EXECUTE')||'/'||has_function_privilege('public',p.oid,'EXECUTE')||'/'||has_function_privilege('authenticated',p.oid,'EXECUTE')||'/'||has_function_privilege('service_role',p.oid,'EXECUTE') FROM pg_proc p WHERE oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')")" "false/false/true/true"
 
@@ -350,7 +361,7 @@ aborta_em A6d "índice homônimo NÃO-unique (o IF NOT EXISTS pula) → PÓS FAL
 P -c "DROP INDEX public.radar_empresas_omie_codigo_cliente_uniq"
 if P -f "$MIG_USADA" >"$TMPD/apply3.log" 2>&1; then ok A6e "sem o homônimo, re-aplicar recria o índice"; else bad A6e "re-aplicar abortou: $(grep -m1 ERROR "$TMPD/apply3.log" | cut -c1-160)"; fi
 eq A6f "estado final: RPC 'este' + índice UNIQUE parcial válido" \
-  "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')")/$(Pq -c "SELECT indisunique::text||indisvalid::text FROM pg_index WHERE indexrelid = 'public.radar_empresas_omie_codigo_cliente_uniq'::regclass")" "$ESTE/truetrue"
+  "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)')")/$(Pq -c "SELECT indisunique::text||indisvalid::text FROM pg_index WHERE indexrelid = 'public.radar_empresas_omie_codigo_cliente_uniq'::regclass")" "$ESTE_USADO/truetrue"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "✅ test-radar-cadastro-omie-idempotente: todos os asserts passaram"

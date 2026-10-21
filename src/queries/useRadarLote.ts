@@ -6,10 +6,11 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { depsCadastroSupabase } from '@/queries/useRadarAcoesLead';
-import { cadastrarEmpresaNoOmie, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
+import { cadastrarEmpresaNoOmie, DivergenciaCadastro, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
 import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, TETO_LOTE, type ResultadoItem } from '@/lib/radar/lote';
 import {
   chaveLotePersistido,
+  itensDivergentes,
   itensPendentes,
   loteConcluido,
   parsearLote,
@@ -140,7 +141,9 @@ export function useRadarLoteOmie() {
             atualizarItem(item.cnpj, { status: 'ok', ...r });
             return r;
           } catch (e) {
-            if (e instanceof FalhaCadastro) {
+            if (e instanceof DivergenciaCadastro) {
+              atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido });
+            } else if (e instanceof FalhaCadastro) {
               atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo });
             } else {
               atualizarItem(item.cnpj, { status: 'falha', etapa: 'omie', erro: mensagemDeErro(e) ?? 'falha desconhecida', codigo: null });
@@ -160,7 +163,8 @@ export function useRadarLoteOmie() {
       const resumo = resumirLote(resultados as ResultadoItem<ItemLote, { jaExistia: boolean }>[], (v) => v.jaExistia);
       track('radar.lote_cadastrado_omie', {
         total: itens.length, criados: resumo.criados, ja_existiam: resumo.ja_existiam,
-        falhas: resumo.falhas + indisponiveis.size, nao_iniciados: resumo.cancelados, retomada,
+        falhas: resumo.falhas + indisponiveis.size,
+        divergentes_no_lote: loteRef.current ? itensDivergentes(loteRef.current).length : 0, nao_iniciados: resumo.cancelados, retomada,
         parou_por_throttling: resultados.some((r) => r.status === 'falha' && ehThrottlingOmie(new Error(r.erro))),
       });
 
@@ -178,7 +182,8 @@ export function useRadarLoteOmie() {
     [uid, garantirSnapshots, atualizarItem, qc],
   );
 
-  const temPendencias = !!lote && itensPendentes(lote).length > 0;
+  // Conflito de vínculo também segura o lote (não é retentável, mas só sai por "Esquecer lote").
+  const temPendencias = !!lote && !loteConcluido(lote);
 
   /**
    * Inicia um lote NOVO. Recusa (false) se há lote rodando ou com pendências — o anterior
@@ -200,7 +205,7 @@ export function useRadarLoteOmie() {
     [uid, rodando, temPendencias, gravar, executar],
   );
 
-  /** Retoma o que não está ok (aguardando, falha, não iniciado) — sempre relendo o vínculo. */
+  /** Retoma o que não está ok nem em conflito (aguardando, falha, não iniciado) — sempre relendo o vínculo. */
   const retomar = useCallback(() => {
     const atual = loteRef.current;
     if (!atual || rodando) return;
@@ -223,7 +228,11 @@ export function useRadarLoteOmie() {
     const ok = lote.itens.filter((i) => i.estado.status === 'ok').length;
     const falhas = lote.itens.filter((i) => i.estado.status === 'falha').length;
     const naoIniciados = lote.itens.filter((i) => i.estado.status === 'nao_iniciado').length;
-    return { total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, pendentes: total - ok };
+    const divergentes = itensDivergentes(lote).length;
+    return {
+      total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, divergentes,
+      pendentes: itensPendentes(lote).length, concluido: loteConcluido(lote),
+    };
   }, [lote]);
 
   return { lote, rodando, progresso, temPendencias, iniciar, retomar, parar, esquecer };

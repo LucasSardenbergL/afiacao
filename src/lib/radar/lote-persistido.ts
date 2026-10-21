@@ -11,6 +11,9 @@ export type EstadoItemLote =
   | { status: 'aguardando' }
   | { status: 'ok'; codigo: string; jaExistia: boolean; recuperado: boolean }
   | { status: 'falha'; etapa: 'omie' | 'radar'; erro: string; codigo: string | null }
+  // Conflito de identidade Radar×Omie (DivergenciaCadastro): TERMINAL — não é retentado (a retomada
+  // releria o vínculo antigo e o devolveria como "recuperado") nem é ok (o lote não se apaga sozinho).
+  | { status: 'divergente'; motivo: string; erro: string; codigo: string | null }
   | { status: 'nao_iniciado' };
 
 export interface ItemLote {
@@ -32,7 +35,7 @@ export function serializarLote(lote: LotePersistido): string {
   return JSON.stringify(lote);
 }
 
-const STATUS = new Set(['aguardando', 'ok', 'falha', 'nao_iniciado']);
+const STATUS = new Set(['aguardando', 'ok', 'falha', 'nao_iniciado', 'divergente']);
 
 /** Devolve null em JSON inválido, versão diferente ou shape estranho — nunca lança. */
 export function parsearLote(raw: string | null): LotePersistido | null {
@@ -55,12 +58,17 @@ export function parsearLote(raw: string | null): LotePersistido | null {
   }
 }
 
-/** Itens que uma retomada ainda precisa tratar (não-ok). */
+/** Itens que uma retomada ainda pode RETENTAR (nem ok, nem conflito terminal). */
 export function itensPendentes(lote: LotePersistido): ItemLote[] {
-  return lote.itens.filter((i) => i.estado.status !== 'ok');
+  return lote.itens.filter((i) => i.estado.status !== 'ok' && i.estado.status !== 'divergente');
 }
 
-/** Lote "acabado" = tudo ok → pode ser esquecido. */
+/** Conflitos de vínculo que pedem um humano no Omie — ficam até o usuário esquecer o lote. */
+export function itensDivergentes(lote: LotePersistido): ItemLote[] {
+  return lote.itens.filter((i) => i.estado.status === 'divergente');
+}
+
+/** Lote "acabado" = TUDO ok → pode ser esquecido sozinho. Um conflito só sai por descarte explícito. */
 export function loteConcluido(lote: LotePersistido): boolean {
-  return itensPendentes(lote).length === 0;
+  return lote.itens.every((i) => i.estado.status === 'ok');
 }
