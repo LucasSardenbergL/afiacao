@@ -120,6 +120,15 @@ Nenhum dos 3.007 `ja_cliente` veio do próprio radar (`omie_codigo_cliente`/`vir
 
 O aviso ao gestor (06:45 UTC) já roda depois do score (06:30) e só usa o score quando a última rodada é do MESMO lote. Disparar o recálculo no `finalize` da edge `radar-ingest` anteciparia no máximo 1 dia, 1× por mês, ao custo de mexer na edge e de uma chamada síncrona de ~100 s. Reabrir se o atraso de um dia virar dor nomeada.
 
+## Proximidade por clientes ATIVOS — medida e NÃO trocada (2026-10-21)
+
+A proximidade conta `ja_cliente` no mesmo município (3.007 clientes cadastrados, 139 municípios). Testada a troca por "cliente ativo" (pedido nos últimos 12 meses):
+
+- **Fonte que existe:** `sales_orders` (pedidos do app) ligado a `profiles.document` pelo `customer_user_id` — o `customer_document` do pedido vem preenchido em só 2 casos em 12 meses. Dá **505** clientes ativos, **218** deles no radar (todos já `ja_cliente`), em **33** municípios. `venda_items_history` não serve: 7.594 linhas, só Oben, desde out/2025, e `cliente_cidade` vazio em todas.
+- **Efeito da troca na fila:** dos 53.913 leads que pontuam proximidade hoje, **53.459 perderiam pontos** e **49.609 perderiam tudo**; nenhum ganharia.
+- **Por que não trocar:** a fonte é PARCIAL, não a verdade sobre quem compra — Passos tem 276 clientes cadastrados e 2 com pedido no app; Divinópolis 290/27; Carmo do Cajuru 242/35. Ausência de pedido no app não é cliente inativo (outra empresa do grupo, venda direta no Omie): trocar seria fabricar "sem cliente ativo" (ausente ≠ zero).
+- **Reabrir quando** houver fonte de compra por CNPJ cobrindo as três empresas (Oben, Colacor, Colacor SC).
+
 ## Follow-ups (fora deste bloco)
 
 - Agrupar matriz/filiais (mesma razão social, CNPJs distintos) na fila — hoje 3 filiais da mesma metalúrgica ocupam 3 posições do topo.
