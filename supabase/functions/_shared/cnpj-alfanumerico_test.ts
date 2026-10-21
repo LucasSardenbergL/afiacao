@@ -125,16 +125,14 @@ Deno.test("rótulo: letra antes do 1º dígito que NÃO é rótulo CPF/CNPJ recu
     "ABC12345678909", // o achado
     "abc123.456.789-09",
     "AEG 123.456.789-09",
-    "Doc: 123.456.789-09",
+    "Doc 123.456.789-09",
     "C.P.F. 123.456.789-09",
     "CPF-123.456.789-09", // hífen não é separador de rótulo
     "CPF12345678909", // rótulo colado não é rótulo
-    "CPFCNPJ: 12345678909",
-    "RG: 12345678909",
-    "ÇPF: 123.456.789-09",
-    "ÉÇ 123.456.789-09", // SÓ letra acentuada — também é letra (não só [A-Za-z])
-    "CPF: CPF: 123.456.789-09", // só UM rótulo
-    "CPF: 123.456.789-09 (titular)", // letra DEPOIS também
+    "CPFCNPJ 12345678909",
+    "RG 12345678909",
+    "CPF CPF 123.456.789-09", // só UM rótulo
+    "CPF: 123.456.789-09 titular", // letra DEPOIS também
   ]) {
     assertEquals(marcaDaRecusa(bruto), "DOC_LETRA_FORA_DO_ROTULO", `bruto ${JSON.stringify(bruto)}`);
   }
@@ -190,4 +188,33 @@ Deno.test("alfanumérico com DV errado ou letra no DV recusa, com ou sem rótulo
   for (const bruto of ["12ABC34501DE36", "CNPJ: 12ABC34501DE36", "1234567800019A", "cnpj 12abc34501de36"]) {
     assertEquals(marcaDaRecusa(bruto), "DOC_LETRA_FORA_DO_ROTULO", `bruto ${JSON.stringify(bruto)}`);
   }
+});
+
+// ── Alfabeto fechado ANTES de normalizar (Codex código 2026-10-21) ─────────────────────────────
+Deno.test("caractere fora de [0-9A-Za-z./ -] recusa — Unicode não some no \\D nem expande no toUpperCase", () => {
+  for (const bruto of [
+    "ⒶⒺⒼ12345678909", // símbolo (fora de \p{L}) que o \D apagava → CPF alheio
+    "CPF: ⒶⒺⒼ12345678909",
+    "００６12345678909", // dígito fullwidth: 00612345678909 é CNPJ com DV certo, virava o CPF 12345678909
+    "٠٠٦12345678909", // dígito arábico-índico
+    "12ßC34501DE33", // ß → SS no toUpperCase: 13 posições viravam um CNPJ válido de 14
+    "CNPJ: 12ßC34501DE33",
+    "ÇPF: 123.456.789-09",
+    "ÉÇ 123.456.789-09", // SÓ letra acentuada
+    "CPF::12345678909", // o 2º ":" sumia no \D
+    "Doc: 123.456.789-09", // rótulo fora da gramática: o ":" fica no corpo
+    "RG: 12345678909",
+    "CPF: CPF: 123.456.789-09", // só UM rótulo: o 2º ":" fica no corpo
+    "CPF: 123.456.789-09 (titular)",
+    "123\u00a0456\u00a0789\u002d09", // NBSP interno
+    "(12) 345.678/0001-90",
+  ]) {
+    assertEquals(marcaDaRecusa(bruto), "DOC_CARACTERE_FORA_DO_ALFABETO", `bruto ${JSON.stringify(bruto)}`);
+  }
+});
+
+Deno.test("prova de que os casos Unicode eram reais: normalizarDocumento (chave) segue reduzindo", () => {
+  assertEquals(normalizarDocumento("ⒶⒺⒼ12345678909"), "12345678909");
+  assertEquals(normalizarDocumento("12ßC34501DE33"), "12SSC34501DE33");
+  assertEquals(ehCnpjAlfanumerico("12SSC34501DE33"), true);
 });

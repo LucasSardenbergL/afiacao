@@ -92,8 +92,12 @@ export const respostaSonda = criarRespostaSonda("omie-vendas-sync");
  * Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  * v1.12/13/15/16 (ATP 3.1–3.3) — write-back atômico; PV reconciliado divergente LANÇA; excluir só após o
  * cancelamento feito no Omie (o app não cancela). Migrations antes do edge. v1.17 (M-33 p3): relógio 140s; escrita = INDETERMINADA. v1.19: lease CERCADO + falha honesta (./cursor-lease.ts) — migrations 20261015221600+221700 ANTES do edge.
+ * v1.23 (2026-10-21) — `_shared/cnpj-alfanumerico.ts`: `documentoParaCadastro` só remove rótulo CPF/CNPJ
+ * explícito; letra fora dele recusa (antes "ABC12345678909" virava o CPF 12345678909 de outra pessoa — Codex
+ * ALTO, #3180). Vale no criar_cliente (antes do lookup anti-duplicata) e no buscar_cliente (o código vira o
+ * cliente do pedido). Nenhuma pré-condição de banco, nenhuma ordem de deploy.
  */
-export const VERSAO = "v1.22-lookup-confere-documento";
+export const VERSAO = "v1.23-rotulo-documento-explicito";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

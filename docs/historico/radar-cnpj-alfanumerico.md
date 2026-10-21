@@ -82,7 +82,7 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **ALTO (os dois pareceres) — PRE só por md5 do corpo apaga ALTER/REVOKE concorrente:** `ALTER FUNCTION … SECURITY INVOKER` / `SET search_path` / `REVOKE EXECUTE` antes da TRAVA mantêm o `md5(prosrc)`; a PRE aceitava, o `CREATE OR REPLACE` + `GRANT` restauravam os atributos antigos e a PÓS aprovava. **Corrigido:** a TRAVA confere `provolatile = 'v'` ANTES do `ALTER … VOLATILE` (que a normalizaria), e a PRE, já sob a trava, exige `prosecdef`, `proconfig = {search_path=public}` e o ACL revisado (`has_function_privilege`: anon/PUBLIC sem, authenticated/service_role com). Provado em A6a/A6b/A6c (atributo mudado no predecessor → a migration ABORTA e o estado fica intacto, A6d) e falsificado (`pre_sem_atributos`, `pre_sem_acl`, `trava_sem_volatilidade`). Lição de prova: a 1ª versão de `pre_sem_acl` (`IF false AND a OR b OR NOT c`) deixava o ramo de `authenticated` vivo por precedência AND/OR — a falsificação pegou (suíte verde) e a sabotagem foi reescrita para apagar a condição inteira.
 - **ALTO (desenho) — o lookup anti-duplicata não confere identidade:** `buscarClienteVendas` aceitava o 1º registro da página sem comparar o `cnpj_cpf` ao pedido; se o Omie casar o filtro parcialmente ou ignorar letras, devolveria OUTRO cliente e o lead sairia da fila com `created:false` e código alheio. **Corrigido na edge `omie-vendas-sync` v1.22** (`lookup-documento.ts` + `_test.ts`, 4 Deno): `criar_cliente` exige `normalizarDocumento(retornado) === docClean` (máscara/minúscula conferem; mutilado, outro doc ou vazio não) — divergência lança `OMIE_LOOKUP_DIVERGENTE` (a action falha, a lib marca etapa `omie`, o lead FICA na fila). O numérico do acervo passa igual (documento idêntico após normalização). Deploy da edge é camada à parte (`pendencias:deploy`).
 - **ALTO (preexistente, fora desta entrega) — `radar_registrar_cadastro_omie` aceita código nulo/inventado:** o gate prova autorização do gestor, não existência no ERP; a transição `ja_cliente` deveria depender de confirmação produzida pelo servidor (conta Omie + CNPJ + código). Registrado como follow-up, não atacado aqui (desenho de fluxo, não o guard).
-- **ALTO (preexistente, #3180) — `documentoParaCadastro("ABC12345678909") → "12345678909"`:** letras ANTES do 1º dígito são tratadas como rótulo (`CPF: …`), por desenho do #3180; a lib nova barra esse caso para o Radar (`documentoCadastravelNoOmie`), mas outros chamadores da edge seguem expostos. Follow-up: gramática explícita de rótulo (`CPF:`/`CNPJ:`).
+- **ALTO (preexistente, #3180) — `documentoParaCadastro("ABC12345678909") → "12345678909"`:** letras ANTES do 1º dígito são tratadas como rótulo (`CPF: …`), por desenho do #3180; a lib nova barra esse caso para o Radar (`documentoCadastravelNoOmie`), mas outros chamadores da edge seguem expostos. Follow-up: gramática explícita de rótulo (`CPF:`/`CNPJ:`). **✅ Fechado em 2026-10-21** — ver "Follow-up fechado — gramática explícita de rótulo" no fim.
 - **MÉDIO — `cliente:null` da sonda não distingue "Não existem registros" de resposta sem array/código:** aceito; a sonda prova "sem fault de validação", não a semântica do filtro — por isso a conferência de identidade acima é obrigatória, e a unicidade por documento no Omie é configurável (não medida). **MÉDIO — sabotagens faltantes:** curinga, não-gestor com CNPJ inválido e deriva de atributo entraram (acima); "falha na 3ª função → rollback integral" fica coberto por A6d (estado idêntico após 3 abortos). A checagem textual `position(guard IN prosrc)` da PÓS é redundante com o md5 — mantida como defesa em profundidade, sem assert próprio.
 
 ### (B) `criar_cliente` alfanumérico no Omie — bloqueio da lib cai (com evidência)
@@ -102,3 +102,41 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 - **Comentário `--` depois da linha engole a vírgula do VALUES**: marcador de md5 na migration vai em `/* … */` inline.
 - **Apply manual perde comentários:** função em PROD pode diferir do repo só em `--` — pré-flight por md5 pega; a PRE aceita os dois md5 em vez de "corrigir" o repo.
 - **Sonda read-only pelo caminho do cron** (`net.http_post` + segredo do vault) mede uma API de terceiro sem segredo no chat e sem cadastrar nada — serve quando a documentação cala sobre o método que o money-path chama de verdade (aqui o `ListarClientes` do lookup anti-duplicata).
+
+## Follow-up fechado — gramática explícita de rótulo em `documentoParaCadastro` (2026-10-21)
+
+**Achado (Codex ALTO, preexistente do #3180):** a regra "letra só é tolerada como RÓTULO antes do 1º dígito"
+era heurística — qualquer letra antes do 1º dígito contava como rótulo, e `ABC12345678909` virava o CPF
+`12345678909` de OUTRA pessoa no `IncluirCliente`. A lib do Radar já barrava (`documentoCadastravelNoOmie`);
+os outros chamadores da edge, não.
+
+**Chamadores mapeados.** `documentoParaCadastro`: só `omie-sync` (`criar_cliente_afiacao`) e
+`omie-vendas-sync` (`criar_cliente`) — os dois chamam ANTES do lookup anti-duplicata, então a recusa barra
+também o reaproveitamento. Importam o `_shared` sem chamar `documentoParaCadastro` (comportamento igual,
+fingerprint muda): `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`, `omie-vendas-sync/lookup-documento.ts`.
+
+**Regra nova (`_shared/cnpj-alfanumerico.ts`):** tira no máximo UM rótulo da gramática fechada
+`^(CPF|CNPJ)(\s*:\s*|\s+)` (sem caixa); qualquer letra que sobre (`\p{L}`, inclusive acentuada) só passa
+se o resto for CNPJ alfanumérico válido — senão lança `DOC_LETRA_FORA_DO_ROTULO`; rótulo que contradiz o
+tamanho (CPF ≠ 11, CNPJ ≠ 14) lança `DOC_ROTULO_DIVERGENTE`; sem dígito lança `DOC_SEM_DIGITO` (todas com
+"cadastro recusado"). Numérico com máscara e sem rótulo segue byte-idêntico. **Mudou de propósito:**
+`documentoParaCadastro("aeg-123.456.789-09")` agora recusa (antes `12345678909`, "CPF anotado") — anotação não
+é rótulo. `normalizarDocumento` NÃO mudou: segue chave de comparação (só-dígitos para o que não é alfanumérico
+válido).
+
+**Prova:** 17+ testes Deno casando a MARCA do ramo; falsificação com controle verde na mesma invocação, em
+`LC_ALL=C` e `pt_BR.UTF-8`: 6 sabotagens (rótulo heurístico antigo · sem checagem de letra · letra só ASCII ·
+sem rótulo×tamanho · sem vazio · rótulo case-sensitive) — todas vermelhas. A 1ª rodada achou um atalho
+redundante (CNPJ válido inteiro antes do rótulo — nenhum CNPJ casa a gramática) e um caso que não cobria letra
+só acentuada; os dois corrigidos.
+
+**Edges:** `omie-sync` v1.7-rotulo-documento-explicito · `omie-vendas-sync` v1.23-rotulo-documento-explicito.
+Sem pré-condição de banco, sem ordem entre edges.
+
+**Lookups que dão o cliente do PEDIDO também fechados:** `omie-sync buscar_cliente_por_documento` (fora do
+`try`, que lia falha como "não existe" → agora 500), o autosserviço de `omie-sync` por `profile.document`
+(0 profiles com letra em prod, psql-ro 2026-10-21 — não trava ninguém) e `omie-vendas-sync buscar_cliente`
+passam pela mesma gramática: com `normalizarDocumento`, `ABC12345678909` virava o código do cliente de OUTRA
+pessoa no pedido. **Fica com `normalizarDocumento` de propósito:** comparação doc-Omie × doc-profile
+(`docToUserMap`, `lookup-documento.ts`, `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`) — chave
+dos DOIS lados, não identidade de entrada.
