@@ -3,13 +3,14 @@ export type TarefaModo = 'data' | 'interacao';
 export type TarefaInteracaoTipo = 'ligacao' | 'visita' | 'entrega';
 export type TarefaAutoSatisfy = 'off' | 'interacao' | 'conteudo';
 type TarefaStatus = 'aberta' | 'concluida' | 'cancelada';
-type TarefaConclusaoOrigem = 'manual' | 'auto_interacao' | 'sugestao_confirmada' | 'whatsapp';
+type TarefaConclusaoOrigem = 'manual' | 'auto_interacao' | 'sugestao_confirmada' | 'whatsapp' | 'comprovacao';
 
 export interface TarefaEstado {
   id: string;
   descricao: string;
   categoria: TarefaCategoria;
-  customer_user_id: string;
+  /** NULL na instância recorrente que nasce de template sem cliente (nullable na base). */
+  customer_user_id: string | null;
   assigned_to: string;
   created_by: string;
   empresa: string;

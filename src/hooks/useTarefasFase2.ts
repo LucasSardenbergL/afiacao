@@ -2,8 +2,7 @@
  * Hooks da Fase 2 das Tarefas (enforcement: recorrência + trava de comprovação).
  *
  * Padrão: mesmo estilo de `useTarefas.ts`:
- *   - supabase.from('tabela' as never) as any — tabelas ainda não estão nos tipos gerados
- *   - supabase.rpc('fn' as never, {...} as never) — RPCs idem
+ *   - tabelas, view e RPCs tipadas pelo types.ts; linhas lidas pela borda (`@/lib/tarefas/borda`)
  *   - toast de sonner + track de analytics + invalidação de query
  */
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,16 +11,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
+import { comNulo } from '@/lib/rpc-args';
+import { paraTarefaInstancia, paraTarefaTemplate } from '@/lib/tarefas/borda';
 import type { TarefaTemplate, TarefaInstancia } from '@/lib/tarefas/templates-types';
 
 // ---------------------------------------------------------------------------
-// Helpers de acesso (casts necessários até os tipos gerados serem regenerados)
+// Helpers de acesso
 // ---------------------------------------------------------------------------
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const selView = () => (supabase.from('v_tarefas_estado' as never) as any);
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const selTemplates = () => (supabase.from('tarefa_templates' as never) as any);
+const selView = () => supabase.from('v_tarefas_estado');
+const selTemplates = () => supabase.from('tarefa_templates');
 
 // Chaves de query compartilhadas com useTarefas para invalidação cruzada
 const QUERY_KEYS = {
@@ -50,7 +49,7 @@ export function useTemplates() {
         .order('ativo', { ascending: false })
         .order('descricao', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as TarefaTemplate[];
+      return (data ?? []).map(paraTarefaTemplate);
     },
   });
 }
@@ -70,7 +69,7 @@ export function useTemplateMutations() {
 
   const criarTemplate = async (row: Omit<TarefaTemplate, 'id' | 'created_at' | 'updated_at'>) => {
     const { data, error } = await selTemplates()
-      .insert({ ...row, created_by: user!.id } as never)
+      .insert({ ...row, created_by: user!.id })
       .select('id')
       .single();
     if (error) {
@@ -85,7 +84,7 @@ export function useTemplateMutations() {
 
   const editarTemplate = async (id: string, patch: Partial<TarefaTemplate>) => {
     const { error } = await selTemplates()
-      .update({ ...patch, updated_at: new Date().toISOString() } as never)
+      .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) {
       toast.error('Erro ao editar template', { description: error.message });
@@ -98,7 +97,7 @@ export function useTemplateMutations() {
 
   const toggleTemplateAtivo = async (id: string, ativo: boolean) => {
     const { error } = await selTemplates()
-      .update({ ativo, updated_at: new Date().toISOString() } as never)
+      .update({ ativo, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) {
       toast.error(`Erro ao ${ativo ? 'ativar' : 'desativar'} template`, { description: error.message });
@@ -137,7 +136,7 @@ export function useMinhasRecorrentesHoje() {
         .order('effective_due', { ascending: true });
       if (error) throw error;
       // Filtro client-side de responsavel_efetivo (mesma lógica de useMinhasTarefas)
-      return ((data ?? []) as TarefaInstancia[]).filter(
+      return (data ?? []).map(paraTarefaInstancia).filter(
         (t) => t.responsavel_efetivo === targetId,
       );
     },
@@ -164,11 +163,11 @@ export function useConcluirComComprovacao() {
     url: string | null,
     leitura: number | null,
   ) => {
-    const { error } = await supabase.rpc('concluir_com_comprovacao' as never, {
-      p_tarefa_id: tarefaId,
-      p_url: url,
-      p_leitura: leitura,
-    } as never);
+    // `p_url`/`p_leitura` NULL = conclusão sem foto/leitura (DEFAULT NULL na prod): vão explícitos, como antes.
+    const { error } = await supabase.rpc(
+      'concluir_com_comprovacao',
+      comNulo<'concluir_com_comprovacao', 'p_url' | 'p_leitura'>({ p_tarefa_id: tarefaId, p_url: url, p_leitura: leitura }),
+    );
     if (error) {
       toast.error('Erro ao concluir tarefa', { description: error.message });
       throw error;
@@ -199,7 +198,7 @@ export function useProvasParaAuditar() {
         .eq('requer_auditoria', true)
         .order('comprovacao_em', { ascending: true });
       if (error) throw error;
-      return (data ?? []) as TarefaInstancia[];
+      return (data ?? []).map(paraTarefaInstancia);
     },
   });
 }
@@ -218,11 +217,11 @@ export function useAuditarTarefa() {
   };
 
   const auditarTarefa = async (tarefaId: string, aprovar: boolean, motivo: string) => {
-    const { error } = await supabase.rpc('auditar_tarefa' as never, {
+    const { error } = await supabase.rpc('auditar_tarefa', {
       p_tarefa_id: tarefaId,
       p_aprovar: aprovar,
       p_motivo: motivo,
-    } as never);
+    });
     if (error) {
       toast.error('Erro ao auditar tarefa', { description: error.message });
       throw error;

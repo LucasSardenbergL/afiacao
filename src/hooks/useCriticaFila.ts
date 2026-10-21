@@ -71,12 +71,17 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
           ultimoContatoRealHaDias: c.ultimoContatoRealHaDias,
         }));
 
-    const tarefaSinais: TarefaSinalCliente[] = (tarefas.data ?? []).map(t => ({
-      customerUserId: t.customer_user_id,
-      atrasada: t.atrasada,
-      temSugestaoPendente: t.tem_sugestao_pendente,
-      descricao: t.descricao,
-    }));
+    // Tarefa sem cliente (recorrente nascida de template sem cliente) não é sinal DE CLIENTE: fica fora.
+    const tarefaSinais: TarefaSinalCliente[] = (tarefas.data ?? []).flatMap(t =>
+      t.customer_user_id === null
+        ? []
+        : [{
+            customerUserId: t.customer_user_id,
+            atrasada: t.atrasada,
+            temSugestaoPendente: t.tem_sugestao_pendente,
+            descricao: t.descricao,
+          }],
+    );
 
     const waSlaSinais: WaSlaSinalCliente[] = (slaQ.data ?? [])
       .filter(r => r.customer_user_id != null && donoEfetivo != null && r.owner_user_id === donoEfetivo)
