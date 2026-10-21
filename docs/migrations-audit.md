@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **693** custom migrations totais
-- **2232** objetos esperados (criados por estas migrations)
+- **695** custom migrations totais
+- **2234** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 835
+  - `function`: 837
   - `rls_policy`: 482
   - `index`: 290
   - `cron_job`: 196
@@ -5621,6 +5621,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_irmaos_por_raiz` | — |
 | `index` | `public.idx_radar_empresas_raiz` | `radar_empresas` |
 
+### `20261021120000_fin_consolidado_ic_sinal_cmv.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_consolidado_intercompany` | — |
+
 ### `20261021120000_radar_cadastro_omie_confirmacao_servidor.sql`
 
 | Tipo | Objeto | Parent |
@@ -5628,6 +5634,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_registrar_cadastro_omie` | — |
 | `table` | `public.omie_cliente_confirmacoes` | — |
 | `index` | `public.omie_cliente_confirmacoes_doc_idx` | `omie_cliente_confirmacoes` |
+
+### `20261021120000_radar_score_lead_v3_cnae_secundario.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
 
 ### `20261021120500_radar_cadastro_omie_idempotente.sql`
 
