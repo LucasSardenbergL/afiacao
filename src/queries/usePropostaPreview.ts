@@ -78,7 +78,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
             .is('deleted_at', null)
             .gte('created_at', desde)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: PreviewOrder[] | null; error: unknown }>,
+            .range(de, ate),
         'sales_orders/proposta-preview',
       );
       if (orders.length === 0) return VAZIO;
@@ -90,7 +90,7 @@ export function usePropostaPreview(customerUserId: string | undefined, opts?: { 
             .select('omie_codigo_produto, quantity, unit_price, sales_order_id')
             .eq('customer_user_id', customerUserId!)
             .order('id', { ascending: true })
-            .range(de, ate) as unknown as PromiseLike<{ data: PreviewItem[] | null; error: unknown }>,
+            .range(de, ate),
         'order_items/proposta-preview',
       );
 

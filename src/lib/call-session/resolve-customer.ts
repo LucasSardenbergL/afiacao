@@ -54,9 +54,9 @@ export async function resolveCustomerByPhone(rawPhone: string): Promise<Resolved
   }
 
   try {
-    const { data, error } = await supabase.rpc('resolver_cliente_por_telefone' as never, {
+    const { data, error } = await supabase.rpc('resolver_cliente_por_telefone', {
       p_telefone: phoneDialed,
-    } as never);
+    });
     if (error) {
       console.error('[resolveCustomerByPhone] resolver_cliente_por_telefone falhou:', mensagemDeErro(error));
       return desconhecido;

@@ -71,24 +71,13 @@ const MARGEM_MEDIA_V1 = 0.22;
 const PAGE = 1000;
 const IN_CHUNK = 200;
 
-// route_* ainda não estão no types.ts gerado → cast (mesmo padrão de useWhatsappInbox).
-type PgRes = { data: unknown; error: { message: string } | null };
-interface RouteBuilder {
-  select: (cols: string) => RouteBuilder;
-  eq: (col: string, val: unknown) => RouteBuilder;
-  in: (col: string, vals: unknown[]) => RouteBuilder;
-  gte: (col: string, val: unknown) => RouteBuilder;
-  order: (col: string, opts?: { ascending?: boolean }) => RouteBuilder;
-  range: (from: number, to: number) => RouteBuilder;
-  maybeSingle: () => PromiseLike<PgRes>;
-  then: PromiseLike<PgRes>['then'];
-}
-function routeFrom(table: string): RouteBuilder {
-  return (supabase as unknown as { from: (t: string) => RouteBuilder }).from(table);
-}
-
-interface ContactLogRow { customer_user_id: string; status: string; created_at: string; data_rota: string; }
+// route_* estão no types.ts. `status` é texto livre e nullable em route_contact_log (sem CHECK na
+// prod): só os 4 desfechos que a cadência lê entram (`ehOutcome`); NULL e status legados
+// ('enviado') ficam fora — o derivarSinaisContato já não reagia a eles.
 const LOG_SEL = 'customer_user_id, status, created_at, data_rota';
+const OUTCOMES = ['convertido', 'respondido', 'sem_resposta', 'opt_out'] as const satisfies readonly OutcomeStatus[];
+const ehOutcome = (v: string | null): v is OutcomeStatus => OUTCOMES.some((o) => o === v);
+type ContactLogRow = { customer_user_id: string | null; status: string | null; created_at: string; data_rota: string };
 
 /**
  * Pagina uma query de route_contact_log pelo canônico (re-monta o builder por página). Página com
@@ -97,17 +86,11 @@ const LOG_SEL = 'customer_user_id, status, created_at, data_rota';
  * página perdida é medida pela fonte.
  */
 async function paginarLog(
-  build: (de: number, ate: number) => PromiseLike<PgRes>,
+  build: (de: number, ate: number) => PromiseLike<{ data: ContactLogRow[] | null; error: unknown }>,
   fonte: string,
   sink: ContactLogRow[],
 ): Promise<void> {
-  sink.push(
-    ...(await fetchAllPagesComMensagem(
-      build as (de: number, ate: number) => PromiseLike<{ data: ContactLogRow[] | null; error: unknown }>,
-      fonte,
-      'route_contact_log',
-    )),
-  );
+  sink.push(...(await fetchAllPagesComMensagem(build, fonte, 'route_contact_log')));
 }
 
 /**
@@ -127,24 +110,26 @@ async function fetchContactLog(ids: string[]): Promise<Map<string, ContatoLog[]>
     // (já era intercalada por ramo na versão serial); o dedupe abaixo cobre.
     await Promise.all([
       // `created_at` não é único → desempate por `id` (PK): sem ordem total o offset pula/duplica.
-      paginarLog((de, ate) => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+      paginarLog((de, ate) => supabase.from('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
         .in('customer_user_id', chunk).eq('status', 'opt_out')
         .order('created_at', { ascending: true }).order('id', { ascending: true })
-        .range(de, ate) as PromiseLike<PgRes>, 'route_contact_log/fila-opt-out', rows),
-      paginarLog((de, ate) => routeFrom('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
+        .range(de, ate), 'route_contact_log/fila-opt-out', rows),
+      paginarLog((de, ate) => supabase.from('route_contact_log').select(LOG_SEL).eq('canal', 'ligacao')
         .in('customer_user_id', chunk).gte('created_at', cutoff90)
         .order('created_at', { ascending: true }).order('id', { ascending: true })
-        .range(de, ate) as PromiseLike<PgRes>, 'route_contact_log/fila-cadencia', rows),
+        .range(de, ate), 'route_contact_log/fila-cadencia', rows),
     ]);
   }
   // dedup por (cliente|created_at|status) — opt_out recente aparece nas 2 queries
   const seen = new Set<string>();
   const byCustomer = new Map<string, ContatoLog[]>();
   for (const r of rows) {
+    // `customer_user_id` vem do `.in()` da própria query (nunca NULL aqui); status fora dos 4 desfechos não é sinal.
+    if (r.customer_user_id === null || !ehOutcome(r.status)) continue;
     const k = `${r.customer_user_id}|${r.created_at}|${r.status}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    const log: ContatoLog = { status: r.status as OutcomeStatus, dataNegocio: spBusinessDate(r.created_at), dataRota: r.data_rota };
+    const log: ContatoLog = { status: r.status, dataNegocio: spBusinessDate(r.created_at), dataRota: r.data_rota };
     const arr = byCustomer.get(r.customer_user_id);
     if (arr) arr.push(log); else byCustomer.set(r.customer_user_id, [log]);
   }
@@ -167,7 +152,7 @@ async function fetchVisitScoresByCityNorm(cityNorms: string[], farmerId: string 
     let q = supabase
       .from('customer_visit_scores')
       .select('customer_user_id, farmer_id, city, visit_score', withCount ? { count: 'exact' } : undefined)
-      .in('city_norm' as never, cityNorms);
+      .in('city_norm', cityNorms);
     // Lente "Ver como": escopa à carteira do ALVO NO SERVIDOR. O master lê
     // customer_visit_scores sem o filtro de RLS → sem isto a rota traria TODAS
     // as carteiras (infiel ao alvo). Fora da lente farmerId=null → a RLS escopa
@@ -233,9 +218,9 @@ export function useRouteContactList(workdayIso: string) {
     queryFn: async () => {
       // 1) agenda + override + config → cidades D-1
       const [schedRes, ovrRes, cfgRes] = await Promise.all([
-        routeFrom('route_schedule').select('weekday, city, uf, is_daily, ativo') as PromiseLike<PgRes>,
-        routeFrom('route_calendar_override').select('data, cancela_rota') as PromiseLike<PgRes>,
-        routeFrom('route_disparo_config')
+        supabase.from('route_schedule').select('weekday, city, uf, is_daily, ativo'),
+        supabase.from('route_calendar_override').select('data, cancela_rota'),
+        supabase.from('route_disparo_config')
           .select('win_back_reserva_pct, cold_start_piso_dia, capacidade_ligacoes_dia, cadencia_min_dias')
           .eq('id', true).maybeSingle(),
       ]);
@@ -246,9 +231,9 @@ export function useRouteContactList(workdayIso: string) {
       if (schedRes.error) throw schedRes.error;
       if (ovrRes.error) throw ovrRes.error;
       if (cfgRes.error) throw cfgRes.error;
-      const sched = (schedRes.data ?? []) as RouteScheduleRow[];
-      const ovr = (ovrRes.data ?? []) as RouteOverrideRow[];
-      const cfgRow = (cfgRes.data ?? null) as RouteConfigRow | null;
+      const sched: RouteScheduleRow[] = schedRes.data ?? [];
+      const ovr: RouteOverrideRow[] = ovrRes.data ?? [];
+      const cfgRow: RouteConfigRow | null = cfgRes.data;
 
       const prep = resolvePrepForWorkday(workdayIso, sched, ovr);
       const vazia = (motivoFilaVazia: MotivoFilaVazia): RouteContactListData => ({

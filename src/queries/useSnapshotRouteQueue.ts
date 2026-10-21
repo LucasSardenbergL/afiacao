@@ -23,9 +23,8 @@ export function useSnapshotRouteQueue(routeDate: string | null, callQueue: Route
       valor_da_ligacao: it.valorDaLigacao,
       rank: i + 1,
     }));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    void (supabase.from('route_queue_snapshot' as never) as any)
-      .upsert(rows as never, { onConflict: 'data_rota,farmer_id,customer_user_id', ignoreDuplicates: true })
+    void supabase.from('route_queue_snapshot')
+      .upsert(rows, { onConflict: 'data_rota,farmer_id,customer_user_id', ignoreDuplicates: true })
       .then(() => { /* best-effort */ }, () => { feito.current = null; /* permite retry numa próxima montagem */ });
   }, [user, routeDate, callQueue]);
 }

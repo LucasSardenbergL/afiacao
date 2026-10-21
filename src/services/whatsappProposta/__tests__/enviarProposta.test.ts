@@ -56,9 +56,11 @@ function edgeErrorCtx(status: number, body: unknown) {
 
 function mkSb(cfg: MockCfg): { sb: SupabaseWhatsappProposta; calls: Calls } {
   const calls: Calls = { invokes: [], inserts: [] };
-  const sb: SupabaseWhatsappProposta = {
+  // Dublê só do que o serviço usa; o tipo da porta é o cliente REAL (SupabaseClient<Database>), então o
+  // cast mora aqui, no teste — nunca no código de produção.
+  const duble = {
     functions: {
-      invoke: async (name, opts) => {
+      invoke: async (name: string, opts: { body: Record<string, unknown> }) => {
         calls.invokes.push({ name, body: opts.body });
         return cfg.invoke ?? { data: { ok: true, conversationId: 'conv-9' }, error: null };
       },
@@ -83,7 +85,7 @@ function mkSb(cfg: MockCfg): { sb: SupabaseWhatsappProposta; calls: Calls } {
       return chain;
     },
   };
-  return { sb, calls };
+  return { sb: duble as unknown as SupabaseWhatsappProposta, calls };
 }
 
 const baseParams = (sb: SupabaseWhatsappProposta) => ({
