@@ -34,16 +34,6 @@ export function ShortcutsDialog() {
     ),
   );
 
-  // Esc fecha o dialog (Radix já trata, mas garantimos parando propagação)
-  useEffect(() => {
-    if (!open) return;
-    const onEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, [open]);
-
   // Permite abrir programaticamente via custom event (botões em páginas que querem o affordance visual).
   useEffect(() => {
     const onOpen = () => setOpen(true);
