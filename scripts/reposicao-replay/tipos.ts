@@ -177,7 +177,11 @@ export type IntervaloPorBloco = Record<BlocoBootstrap, Intervalo>;
 /** Critérios 1 e 2 num cenário de falta (fração; Δ = alternativa − F0). */
 export interface EvidenciaServico {
   falta: Falta;
-  /** Piso por classe: fill rate da alternativa + as linhas para o Clopper-Pearson (atendidas podem ser média das reps). */
+  /**
+   * Piso por classe: fill rate da alternativa + as linhas para o Clopper-Pearson. `demandadas` = contagem OBSERVADA de
+   * linhas da célula na janela (cada linha uma vez, NUNCA a soma sobre as reps); `atendidas` na mesma base (pode ser a
+   * média das reps).
+   */
   pisos: { classe: Classe; fill: IntervaloPorBloco; atendidas: number | null; demandadas: number | null }[];
   /** Não inferioridade nas 6 células (A, B, C, A_alt, B_alt, C_alt). */
   naoInferioridade: { celula: Celula; delta: IntervaloPorBloco }[];
@@ -208,11 +212,14 @@ export type VereditoReplay = 'GO' | 'NO-GO' | 'INCONCLUSIVO';
 export interface Evidencia {
   /** Critérios 1 e 2: obrigatórios os dois extremos de falta (`CENARIOS_FALTA.servico`). */
   servico: EvidenciaServico[];
-  /** Critério 3. */
+  /** Critério 3: obrigatórios os cenários de `CENARIOS_FALTA.economia` (R25). */
   capital: EvidenciaCapital[];
-  /** Critério 4: LT `max(LT,15)`, serviço como em 1 e 2 e redução de capital. */
+  /** Critério 4: LT `max(LT,15)`, serviço como em 1 e 2 e redução de capital (capital nos cenários da economia, R25). */
   estresse: { servico: EvidenciaServico[]; capital: EvidenciaCapital[] };
-  /** Critério 5: toda a grade em cada cenário de `CENARIOS_FALTA.economia`. */
+  /**
+   * Critério 5: toda a grade na taxa base em cada cenário de `CENARIOS_FALTA.economia`. Taxas de 20%/30% = só
+   * sensibilidade (R26), não são gate.
+   */
   economia: EvidenciaEconomia[];
   /** Linhas da avaliação por célula de 1 e 2 (null = não medido). */
   exposicao: { celula: Celula; linhas: number | null }[];

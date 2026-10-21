@@ -188,6 +188,7 @@ const servicoOk = (falta: 'espera' | 'cancelamento'): EvidenciaServico => ({
   })),
   naoInferioridade: CEL6.map((celula) => ({ celula, delta: iv(0, -0.002, 0.002) })),
 });
+const FALTAS3 = ['espera', 'cancelamento', 'misto'] as const;
 function evidenciaGo(): Evidencia {
   const grade = [];
   for (const falta of ['espera', 'cancelamento', 'misto'] as const) {
@@ -207,10 +208,10 @@ function evidenciaGo(): Evidencia {
   }
   return {
     servico: [servicoOk('espera'), servicoOk('cancelamento')],
-    capital: [{ falta: 'espera', reducao: iv(0.2, 0.15, 0.25) }],
+    capital: FALTAS3.map((falta) => ({ falta, reducao: iv(0.2, 0.15, 0.25) })),
     estresse: {
       servico: [servicoOk('espera'), servicoOk('cancelamento')],
-      capital: [{ falta: 'espera', reducao: iv(0.1, 0.05, 0.15) }],
+      capital: FALTAS3.map((falta) => ({ falta, reducao: iv(0.1, 0.05, 0.15) })),
     },
     economia: grade,
     exposicao: CEL6.map((celula) => ({ celula, linhas: 5000 })),
@@ -329,6 +330,27 @@ describe('avaliarCriterios + veredito', () => {
     ev2.estresse.servico[1].naoInferioridade[0] = { celula: 'A', delta: iv(-0.02, -0.03, -0.01) };
     expect(estadoDe(ev2, '4 Estresse 2 Não inferioridade A [cancelamento]')).toBe('FALHA');
     expect(veredito(avaliarCriterios(ev2)).veredito).toBe('NO-GO');
+  });
+
+  it('cenário de capital ausente → INCERTO (R25: espera, cancelamento e misto obrigatórios)', () => {
+    const ev = evidenciaGo();
+    ev.capital = ev.capital.filter((c) => c.falta !== 'misto');
+    expect(estadoDe(ev, '3 Capital [misto]')).toBe('INCERTO');
+    expect(veredito(avaliarCriterios(ev)).veredito).toBe('INCONCLUSIVO');
+    const ev2 = evidenciaGo();
+    ev2.estresse.capital = ev2.estresse.capital.filter((c) => c.falta !== 'cancelamento');
+    expect(estadoDe(ev2, '4 Estresse [cancelamento]')).toBe('INCERTO');
+    expect(veredito(avaliarCriterios(ev2)).veredito).toBe('INCONCLUSIVO');
+    const ev3 = evidenciaGo();
+    ev3.capital = [];
+    expect(estadoDe(ev3, '3 Capital [espera]')).toBe('INCERTO');
+  });
+
+  it('capital: FALHA em qualquer cenário → NO-GO', () => {
+    const ev = evidenciaGo();
+    ev.capital[2].reducao = iv(0.05, 0.02, 0.08);
+    expect(estadoDe(ev, '3 Capital [misto]')).toBe('FALHA');
+    expect(veredito(avaliarCriterios(ev)).veredito).toBe('NO-GO');
   });
 
   it('veredito diverge entre estados iniciais → INCONCLUSIVO', () => {

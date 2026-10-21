@@ -228,7 +228,9 @@ function betaReg(a: number, b: number, x: number): number {
 
 /**
  * Limite inferior UNILATERAL exato (Clopper-Pearson) da proporção, ao nível `conf`: o p tal que
- * I_p(sucessos, n − sucessos + 1) = 1 − conf. `sucessos` pode ser não inteiro (média das replicações). 0 sucessos ⇒ 0.
+ * I_p(sucessos, n − sucessos + 1) = 1 − conf. `n` = contagem OBSERVADA de linhas da célula na janela (cada linha uma vez,
+ * NUNCA a soma sobre as replicações, que inflaria a confiança); `sucessos` = atendidas nessa base (pode ser não inteiro:
+ * média das replicações). 0 sucessos ⇒ 0.
  * Ex.: 100/100 a 95% = 0,05^(1/100) ≈ 97,05%.
  */
 export function clopperPearsonInferior(sucessos: number, n: number, conf = 0.95): number {
@@ -325,9 +327,16 @@ function criteriosServico(servico: readonly EvidenciaServico[], prefixo: string)
   return out;
 }
 
+/** Cenários obrigatórios do capital (R25: os mesmos da economia); cada um ausente vira uma linha INCERTO. */
+function capitalAusente(capital: readonly EvidenciaCapital[], prefixo: string): Criterio[] {
+  return CENARIOS_FALTA.economia
+    .filter((falta) => !capital.some((c) => c.falta === falta))
+    .map((falta) => ({ criterio: `${prefixo} [${falta}]`, estado: 'INCERTO' as const, motivo: 'cenário de falta sem evidência' }));
+}
+
+/** Critério 3 em cada cenário de `CENARIOS_FALTA.economia` (R25); qualquer FALHA ⇒ NO-GO, ausente ⇒ INCERTO. */
 function criteriosCapital(capital: readonly EvidenciaCapital[]): Criterio[] {
-  if (capital.length === 0) return [{ criterio: '3 Capital', estado: 'INCERTO', motivo: 'sem evidência' }];
-  return capital.map((c) => {
+  return [...capitalAusente(capital, '3 Capital'), ...capital.map((c): Criterio => {
     const nome = `3 Capital [${c.falta}]`;
     const iv = combinar(c.reducao);
     const motivo = `redução ${limites(iv)}; exige ponto ≥ ${pct(CAPITAL_REDUCAO_MINIMA, 0)} e LI ≥ ${pct(CAPITAL_LI_MINIMO, 0)}`;
@@ -336,12 +345,12 @@ function criteriosCapital(capital: readonly EvidenciaCapital[]): Criterio[] {
       return { criterio: nome, estado: 'PASSA', motivo };
     }
     return { criterio: nome, estado: 'INCERTO', motivo };
-  });
+  })];
 }
 
 function criteriosEstresse(ev: Evidencia['estresse']): Criterio[] {
   const out = criteriosServico(ev.servico, '4 Estresse ');
-  if (ev.capital.length === 0) out.push({ criterio: '4 Estresse', estado: 'INCERTO', motivo: 'capital sem evidência' });
+  out.push(...capitalAusente(ev.capital, '4 Estresse'));
   for (const c of ev.capital) {
     const nome = `4 Estresse [${c.falta}]`;
     const iv = combinar(c.reducao);
@@ -359,7 +368,8 @@ const fracao = (num: number, den: number | null): number | null => (den !== null
 
 /**
  * Critério 5: cada célula fornecida é avaliada; exige, em cada cenário de `CENARIOS_FALTA.economia`, toda a grade na
- * taxa base (emergencial × atraso). O motivo NÃO traz R$ absoluto (repo público): só o sinal exigido e o peso do
+ * taxa base (emergencial × atraso). As taxas de 20% e 30% são SÓ sensibilidade (R26): não são gate e a T9 não as passa;
+ * se vierem, são avaliadas como as demais (código mantido). O motivo NÃO traz R$ absoluto (repo público): só o sinal exigido e o peso do
  * limite de margem (R24) em % das linhas e do valor demandados.
  */
 function criteriosEconomia(economia: Evidencia['economia']): Criterio[] {
