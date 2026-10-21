@@ -28,8 +28,15 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // adiante (a à vista, amanhã). Prazos e percentuais iguais; nenhuma pré-condição de banco.
 // v1.3 (2026-10-12) — teto de relógio de 140s no fetch ao Omie (M-33 p3, `_shared/omie-chamada-relogio.ts`):
 // falha de ESCRITA sai como OMIE_ESCRITA_INDETERMINADA (o Omie pode ter gravado). Nenhuma pré-condição de banco.
+// v1.7 (2026-10-21) — `_shared/cnpj-alfanumerico.ts`: `documentoParaCadastro` só remove rótulo CPF/CNPJ explícito;
+// letra fora dele recusa (antes "ABC12345678909" virava o CPF 12345678909 de outra pessoa — Codex ALTO, #3180).
+// Vale no criar_cliente_afiacao E nos lookups que dão o cliente do pedido (buscar_cliente_por_documento, que
+// agora falha 500 em vez de "não existe", e o autosserviço por profile.document — 0 profiles com letra).
+// Alfabeto fechado antes de normalizar (dígito Unicode/símbolo/ß recusam). criar_cliente_afiacao confere o
+// documento do cliente devolvido pelo lookup (OMIE_LOOKUP_DIVERGENTE → success:false, não reaproveita).
+// Nenhuma pré-condição de banco, nenhuma ordem de deploy.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.6-cnpj-mascara-exata";
+export const VERSAO = "v1.7-rotulo-documento-explicito";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

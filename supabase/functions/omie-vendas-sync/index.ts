@@ -2906,7 +2906,9 @@ Deno.serve(async (req) => {
         // Estrito: transient esgotado vira ERRO da action (o invoke do client
         // rejeita → o tri-state marca lookupFalhou e NÃO cria às cegas) em vez
         // de 200 com null, que o client lia como "não existe".
-        const cliente = await buscarClienteVendas(document, account, { throwOnTransient: true });
+        // Documento pela gramática estrita do cadastro: o código devolvido vira o cliente do pedido, e o
+        // só-dígitos reduzia "ABC12345678909" ao CPF 12345678909 de OUTRA pessoa (Codex ALTO, #3180).
+        const cliente = await buscarClienteVendas(documentoParaCadastro(document), account, { throwOnTransient: true });
         result = { success: true, cliente };
         break;
       }
@@ -2919,7 +2921,9 @@ Deno.serve(async (req) => {
         // ambíguo, um flake do Omie pós-retries era lido como "não existe" e
         // o IncluirCliente abaixo criava DUPLICATA no ERP. Transient → throw
         // → a action falha honesta e o client não cria.
-        const existingCliente = await buscarClienteVendas(docCriar, account, { throwOnTransient: true });
+        // O lookup usa o documento VALIDADO (docClean), o mesmo que vai ao IncluirCliente — com o cru,
+        // "CNPJ: AEG12345678909" consultava 12345678909 e cadastrava AEG12345678909 (Codex 2026-10-21).
+        const existingCliente = await buscarClienteVendas(docClean, account, { throwOnTransient: true });
         if (existingCliente) {
           // O lookup pega o 1º registro da página SEM conferir o documento. Se o Omie casar o filtro
           // parcialmente ou ignorar letras (CNPJ alfanumérico, RFB jul/2026), devolveria OUTRO cliente e o
