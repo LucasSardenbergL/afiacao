@@ -90,8 +90,11 @@ Antes, 2024-11 e 2025-05/06 mostravam um consolidado não nulo e inflado pelo IC
   - 2026-03 e 2026-06: eliminação 0.
   - 2025-09 (controle sem IC): 0.
 
-**Pendências de produto** (decisão humana, não da edge):
-- Confirmar ou desconsiderar os 3 candidatos sem NF.
-- Recalcular os snapshots de 2024 e 2025-05/06 para que tenham `detalhamento.composicao_*`.
-- Entender o CR da colacor_sc→colacor (R$ 3.605,67): a colacor não tem cadastro da colacor_sc, então o CP correspondente não é identificável.
-
+**Pendências de produto** (decisão humana, não da edge), investigadas em 2026-10-21:
+- **Os 3 candidatos sem NF** são lançamentos manuais nos dois lados (`id_origem` MANR/MANP), no mesmo dia e com o mesmo valor, todos liquidados. A CR está em 1.01.03 (Revenda de Mercadoria). Têm cara de intercompany real. A confirmação é humana, em `/financeiro/intercompany/fila` (botão Manual):
+  - **R$ 342,00 (2026-03) e R$ 700,00 (2026-06), oben→colacor.** A colacor lançou o pagamento em **2.09.05 "Devolução de Clientes"**, que o motor manda para `deducoes`. Confirmado assim, o mês vai a NULL. O conserto é recategorizar no Omie da colacor para 2.01.01 (Compras de Mercadorias para Revenda) e recalcular o DRE.
+  - **R$ 1.314,50 (2026-06), colacor→oben.** A oben lançou o pagamento em 2.01.01, que vai para `cmv`. Este par é elegível, mas 2026-06 também tem o de R$ 700,00.
+- **Recalcular os snapshots de 2024-11 e 2025-05/06** (`omie-financeiro`, `calcular_dre`, regime competência) para que tenham `detalhamento.composicao_*`.
+  - Os 9 snapshots são de 2026-03-29 e 2026-05-30, e esses meses não têm linha em `fin_fechamentos`.
+  - O recálculo reescreve o DRE histórico com o motor atual, e os totais podem mudar. Na sessão, o classificador de permissão bloqueou o disparo, então a decisão segue com o founder: botão "Recalcular DRE" da tela, ou uma sessão autorizada.
+- **CR colacor_sc→colacor de R$ 3.605,67 (2025-01-02)** fica em **1.04.04 "Empréstimos/Financiamentos"**: é mútuo, não venda. Fica fora de receita e CMV, então não pesa na eliminação. A colacor não tem cadastro da colacor_sc e nenhum CP de mesmo valor; a saída, se houve, não passou por contas a pagar.
