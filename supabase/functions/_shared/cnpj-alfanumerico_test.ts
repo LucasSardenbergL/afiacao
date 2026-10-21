@@ -131,7 +131,8 @@ Deno.test("rótulo: letra antes do 1º dígito que NÃO é rótulo CPF/CNPJ recu
     "CPF12345678909", // rótulo colado não é rótulo
     "CPFCNPJ: 12345678909",
     "RG: 12345678909",
-    "ÇPF: 123.456.789-09", // letra acentuada também é letra
+    "ÇPF: 123.456.789-09",
+    "ÉÇ 123.456.789-09", // SÓ letra acentuada — também é letra (não só [A-Za-z])
     "CPF: CPF: 123.456.789-09", // só UM rótulo
     "CPF: 123.456.789-09 (titular)", // letra DEPOIS também
   ]) {

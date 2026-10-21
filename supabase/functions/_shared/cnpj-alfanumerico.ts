@@ -80,12 +80,13 @@ const TAMANHO_DO_ROTULO: Record<string, number> = { CPF: 11, CNPJ: 14 };
  * ERRADO no ERP — e `123ABC45678909` como o CPF 12345678909 de OUTRA pessoa (Codex, 2026-10-19).
  * A 1ª correção (#3180) tolerava QUALQUER letra antes do 1º dígito como rótulo, e
  * `ABC12345678909` virava o mesmo CPF alheio (Codex ALTO, 2026-10-20). Regra agora:
- *   1. o todo é CNPJ alfanumérico válido (cru ou máscara exata, qualquer caixa) → ele;
- *   2. senão, tira no máximo UM rótulo da gramática `ROTULO_RE`;
- *   3. sobrou letra (qualquer `\p{L}`, inclusive acentuada) → só passa se o resto for CNPJ
- *      alfanumérico válido; senão LANÇA — nunca devolve o documento reduzido aos dígitos;
- *   4. rótulo que contradiz o tamanho (CPF com ≠11 dígitos, CNPJ com ≠14 posições) → LANÇA;
- *   5. sem nenhum dígito → LANÇA (ausente ≠ documento vazio).
+ *   1. tira no máximo UM rótulo da gramática `ROTULO_RE` (nenhum CNPJ válido casa com ela: o cru
+ *      não tem `:`/espaço e a máscara tem `.` na 3ª posição);
+ *   2. sobrou letra (qualquer `\p{L}`, inclusive acentuada) → só passa se o resto for CNPJ
+ *      alfanumérico válido (cru ou máscara exata, qualquer caixa); senão LANÇA — nunca devolve o
+ *      documento reduzido aos dígitos;
+ *   3. sem nenhum dígito → LANÇA (ausente ≠ documento vazio);
+ *   4. rótulo que contradiz o tamanho (CPF com ≠11 dígitos, CNPJ com ≠14 posições) → LANÇA.
  * Numérico puro/com máscara, sem rótulo, segue byte-idêntico ao `.replace(/\D/g, "")` de sempre.
  * Precisão > recall: um cadastro errado no ERP custa mais que um recusado. As mensagens levam a
  * marca do ramo (`DOC_LETRA_FORA_DO_ROTULO`/`DOC_ROTULO_DIVERGENTE`/`DOC_SEM_DIGITO`) e "cadastro
@@ -93,9 +94,6 @@ const TAMANHO_DO_ROTULO: Record<string, number> = { CPF: 11, CNPJ: 14 };
  */
 export function documentoParaCadastro(bruto: unknown): string {
   const s = String(bruto ?? "").trim();
-  const inteiro = normalizarDocumento(s);
-  if (ehCnpjAlfanumerico(inteiro)) return inteiro;
-
   const rotulo = ROTULO_RE.exec(s);
   const corpo = rotulo ? s.slice(rotulo[0].length) : s;
   const doc = normalizarDocumento(corpo);
