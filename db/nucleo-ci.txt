@@ -642,6 +642,12 @@ db/test-radar-cnpj-alfanumerico.sh          25  falsificar=5
 # Predecessoras REAIS com md5 = PROD; 9 sabotagens: 3× guard numérico de volta (uma por RPC), [a-z] aceito,
 # search_path perdido, PÓS, PRE sem atributos, PRE sem ACL, TRAVA sem volatilidade.
 db/test-radar-rpcs-cnpj-alfanumerico.sh     38  falsificar=9
+# Radar: radar_registrar_cadastro_omie só marca ja_cliente com CONFIRMAÇÃO DO SERVIDOR (ledger append-only
+# omie_cliente_confirmacoes, 1 escritor = edge criar_cliente; 20261021120000 — Codex ALTO preexistente). Defeito
+# aqui = lead sai da fila com código nulo/inventado. 11 sabotagens: sem exigência, sem filtro de código, sem filtro
+# de documento, nota do front, sem idempotência, ACL sem revogar default privileges, PRE adota ledger preexistente,
+# PÓS sem forma, PÓS de md5, PRE sem atributos, TRAVA sem volatilidade.
+db/test-radar-cadastro-omie-confirmacao.sh  41  falsificar=11
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

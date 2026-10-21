@@ -28,7 +28,7 @@ import { useRadarCadastrarOmie, lerLeadParaCadastro } from '@/queries/useRadarAc
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
-import { FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
+import { ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -176,6 +176,14 @@ export function RadarOutcomeMenu({
         registrarResultado('indeterminado');
         toast.warning('Cadastro não confirmado pelo Omie', {
           description: 'O Omie não devolveu o código do cliente. O lead continua na fila.',
+          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
+        });
+      } else if (ehSemConfirmacaoDoServidor(e)) {
+        // A RPC não achou a confirmação que a EDGE grava (ledger omie_cliente_confirmacoes) — o lead segue na
+        // fila. A retentativa volta pela edge (o lookup confere o documento e grava), nunca pelo "Gravar de novo".
+        registrarResultado('indeterminado');
+        toast.warning('Cadastro não confirmado pelo servidor', {
+          description: 'O Radar não recebeu a confirmação do Omie para este CNPJ. O lead continua na fila.',
           action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
         });
       } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {

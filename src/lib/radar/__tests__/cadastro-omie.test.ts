@@ -5,6 +5,7 @@ import {
   documentoCadastravelNoOmie,
   FalhaCadastro,
   ehThrottlingOmie,
+  ehSemConfirmacaoDoServidor,
   type DepsCadastro,
 } from '../cadastro-omie';
 
@@ -93,6 +94,34 @@ describe('cadastrarEmpresaNoOmie', () => {
     const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
     expect(err).toBeInstanceOf(FalhaCadastro);
     expect(err).toMatchObject({ etapa: 'radar', codigo: '777' });
+  });
+
+  // A RPC exige a confirmação que a EDGE gravou (migration 20261021120000). Sem ela, "Gravar de novo" com o mesmo
+  // código recusaria em laço: a falha volta para a etapa omie SEM código, e o retry passa pela edge (lookup).
+  const SEM_CONFIRMACAO = {
+    message: 'RADAR_SEM_CONFIRMACAO_OMIE: o servidor não confirmou o cliente 777 no Omie/Oben para este CNPJ — o lead fica na fila',
+    code: 'P0001',
+  };
+  it('RPC recusa por falta de confirmação do servidor → etapa omie SEM código (retry pela edge, não pelo atalho)', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw SEM_CONFIRMACAO; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null });
+    expect(err.message).toContain('RADAR_SEM_CONFIRMACAO_OMIE:');
+  });
+
+  it('o mesmo vale no retry do atalho (codigoConhecido): a recusa não devolve o código para outro atalho', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => { throw SEM_CONFIRMACAO; }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' }).catch((e) => e);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null });
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+  });
+
+  it('ehSemConfirmacaoDoServidor: só a marca no INÍCIO da mensagem (outro P0001 segue etapa radar)', () => {
+    expect(ehSemConfirmacaoDoServidor(SEM_CONFIRMACAO)).toBe(true);
+    expect(ehSemConfirmacaoDoServidor(new Error('cnpj inválido'))).toBe(false);
+    expect(ehSemConfirmacaoDoServidor({ message: 'falhou: RADAR_SEM_CONFIRMACAO_OMIE: eco' })).toBe(false);
+    expect(ehSemConfirmacaoDoServidor(null)).toBe(false);
   });
 
   it('retomada só do Radar (codigoConhecido): não chama o Omie, relê o vínculo e grava se faltar', async () => {

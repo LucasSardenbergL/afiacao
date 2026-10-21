@@ -3,6 +3,7 @@ import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-co
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "./lookup-documento.ts";
+import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
@@ -2932,12 +2933,16 @@ Deno.serve(async (req) => {
           if (!lookupDevolveuOMesmoDocumento(docClean, existingCliente.cnpj_cpf)) {
             throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
           }
+          // Confirmação do SERVIDOR (ledger omie_cliente_confirmacoes): é o que a RPC do Radar exige para marcar
+          // ja_cliente — o código que o front repassa deixou de bastar. null = nada a confirmar (outra conta/CPF).
+          const linhaLookup = linhaConfirmacao(account, docClean, existingCliente.codigo_cliente, "lookup", userId);
           result = {
             success: true,
             codigo_cliente: existingCliente.codigo_cliente,
             razao_social: existingCliente.razao_social,
             codigo_vendedor: existingCliente.codigo_vendedor,
             created: false,
+            confirmacao_registrada: linhaLookup ? await gravarConfirmacao(supabaseAdmin, linhaLookup) : null,
           };
           break;
         }
@@ -2963,12 +2968,16 @@ Deno.serve(async (req) => {
         console.log(`[Omie Vendas][${account}] Criando cliente (${docClean.length === 11 ? "CPF" : "CNPJ"})`); // sem nome/documento: PII (M-36)
         const createRes = await callOmieVendasApi("geral/clientes/", "IncluirCliente", clienteParams, account);
         const createResTyped = createRes as { codigo_cliente_omie?: number; nCodCli?: number } | null;
+        const codigoCriado = createResTyped?.codigo_cliente_omie ?? createResTyped?.nCodCli ?? null;
+        // Código null (rate-limit esgotado) = INDETERMINADO: não confirma nada (linhaConfirmacao devolve null).
+        const linhaIncluir = linhaConfirmacao(account, docClean, codigoCriado, "incluir", userId);
         result = {
           success: true,
-          codigo_cliente: createResTyped?.codigo_cliente_omie ?? createResTyped?.nCodCli ?? null,
+          codigo_cliente: codigoCriado,
           razao_social,
           codigo_vendedor: null,
           created: true,
+          confirmacao_registrada: linhaIncluir ? await gravarConfirmacao(supabaseAdmin, linhaIncluir) : null,
         };
         break;
       }
