@@ -80,6 +80,13 @@ O candidato era o `cron-jobs-snapshot.tsv` defasado. Prod tem **115 jobs** e o s
 4. **ROIC incremental (cockpit de valor):** você lê esse número? **Recomendo:** se lê, o item 3 fica, P e antes de 2027-03-26; se não, ele vai para "quando tocar", com data de checagem (query) em 2027-03-26.
 5. **Piloto N → `database.md`:** generalizar? **Recomendo:** sim, depois do Top 5 e com as lições do piloto como condição de merge: 2º leitor independente auditando o TEXTO das regras, regressão de âncoras (`git grep "database.md"` × `§"..."`) e setas do CLAUDE.md conferidas ([money-path-regras-vivas-piloto-n.md](../../../historico/money-path-regras-vivas-piloto-n.md)). `deploy.md` segue fora, porque o `gates:frescura` lê o texto dele.
 
+### Respostas do founder (2026-10-21, no chat) ✅
+1. **`process-nfe`: MANTER e melhorar**, nas palavras do founder: "não vou deixar ser feito isso mais pelo omie". O recebimento deixa de ser feito direto no Omie, e a aba Manual passa a ser caminho oficial, não válvula. Por isso o item 1 vira **M completo**: trilha server-side, Omie pelo relógio, teste Deno da sequência e tratamento correto da conversão de unidade (o `Math.round(qtdeNfe / fator)` de `:390` precisa de caso real e regra explícita). Consequência: o `omie-nfe-reconcile` ("entrada direto no Omie") perde a razão de ser e deve ser revisto na mesma sessão. Desligar o reconcile é decisão de produto e deve ser dita ao founder, nunca feita em silêncio.
+2. **26 NF-e sem itens: resolver** pela recomendação, com rótulo "recebida fora do app" na tela, sem backfill.
+3. **Ciclo: fazer**, com 1 evento `financeiro.ciclo_aberto` no ledger (allowlist de `analytics_ledger_registrar` via `db/*.sql` no ritual lovable-db-operator) e só isso.
+4. **ROIC incremental: o founder lê** → o item 3 fica no Top (P, antes de 2027-03-26).
+5. **Piloto N → `database.md`: fazer**, depois do Top e com as condições de merge listadas acima.
+
 ## 6. KPIs
 
 | KPI | Baseline (2026-10-21) | Como medir |
