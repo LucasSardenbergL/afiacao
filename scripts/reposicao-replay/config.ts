@@ -80,3 +80,40 @@ export const CSVS_REPLAY = [
   'teto',
   'vendas',
 ] as const;
+
+// ── F0 (motor atual), medido na PRODUÇÃO em 2026-10-21 via psql-ro (pg_get_viewdef/pg_get_functiondef) ──────────────
+/** Mínimo operacional por classe ABC PROPOSTA (CTE `minimo_operacional` de v_sku_parametros_sugeridos). */
+export const MINIMO_OPERACIONAL_POR_CLASSE: Record<Classe, number> = { A: 2, B: 1, C: 0 };
+/**
+ * LT teórico (du) por grupo de produção = v_sku_lt_teorico: lt_producao (fornecedor_grupo_producao, unidade 'uteis') +
+ * logística (v_fornecedor_lt_logistica_total, Sayerlack = 2 du): rápido 5+2, normal 8+2. Config de HOJE (sem histórico de
+ * vigência). Grupo fora deste mapa = sem LT teórico (null), como o LEFT JOIN da view.
+ */
+export const LT_TEORICO_DU: Record<string, number> = { sayerlack_rapido: 7, sayerlack_normal: 10 };
+/** Fusível de atualizar_parametros_numericos_skus: company_config.param_auto_fusivel_mult (3 em prod). */
+export const FUSIVEL_PARAM_MULT = 3;
+export const F0 = {
+  janelaDemandaDias: 90,
+  janelaSigmaDias: 180,
+  /** v_sku_leadtime_estatisticas: t2_data_faturamento >= hoje - 180 dias (o replay usa t4 como proxy de t2). */
+  janelaLtDias: 180,
+  /** SKU com >= 3 observações usa o próprio LT; senão o do fornecedor. */
+  minObsLtSku: 3,
+  ltPadrao: 10,
+  fatorSigmaLtPadrao: 0.3,
+  diasAnoEoq: 252,
+  fatorPrecoVenda: 0.55,
+  /**
+   * O motor só começa a rodar no replay depois de 28 dias corridos observados: a janela de 90/180 dias anterior ao início
+   * do extrato não existe (não é zero), e com 1–2 dias a média seria ruído puro. Antes disso: SEM_DECISAO.
+   */
+  diasMinObservados: 28,
+} as const;
+
+/** Grade fixa de quantis da calibração (spec §5.9 "Calibração"). */
+export const GRADE_QUANTIS = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.925, 0.95, 0.96, 0.97, 0.98, 0.985, 0.99, 0.995, 0.999] as const;
+/**
+ * Fallback do cold start (reposicao_cold_start_parametros: estoque_minimo 1, ponto_pedido 1, estoque_maximo 2,
+ * estoque_seguranca 0): o parâmetro do SKU antes da 1ª sugestão OK. A 1ª sugestão OK o substitui (preencher/graduar).
+ */
+export const COLD_START = { es: 0, pp: 1, max: 2 } as const;
