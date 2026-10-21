@@ -48,13 +48,6 @@ describe('FilaDoDia — estados', () => {
     expect(screen.queryByText(/carteira está em dia/i)).toBeNull();
   });
 
-  it('lente "Ver como" → aviso de que a lista da vendedora não é lida, não "ninguém hoje"', () => {
-    filaMock.mockReturnValue(fila({ recompra: { tipo: 'lente' } }));
-    renderFila();
-    expect(screen.getByText(/lista de recompra da vendedora não é exibida/)).toBeInTheDocument();
-    expect(screen.queryByText(/Ninguém na sua lista hoje/)).toBeNull();
-  });
-
   it('erro da recompra ≠ dia limpo', () => {
     filaMock.mockReturnValue(fila({ isError: true, fontesComErro: ['recompra'], recompra: { tipo: 'erro', erro: new Error('x') } }));
     renderFila();

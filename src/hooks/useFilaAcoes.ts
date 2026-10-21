@@ -26,7 +26,7 @@ export function useFilaAcoes(): {
   isError: boolean;
   /** Quais fontes falharam (vazio = todas OK). Distingue p/ a UI e o log. */
   fontesComErro: FonteFila[];
-  /** Estado da lista de recompra — a UI tem uma tela para "onda desligada" e para a lente. */
+  /** Estado da lista de recompra — a UI tem uma tela para "onda desligada" (na lente, é a lista da pessoa vista). */
   recompra: EstadoRecompra;
   retry: () => void;
 } {

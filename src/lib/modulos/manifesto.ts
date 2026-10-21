@@ -377,6 +377,7 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/__tests__/useRadarContagemMunicipios.sugeridos.test.tsx",
       "src/components/radar/__tests__/RadarLinha.selos.test.tsx",
       "src/components/venda-cliente/painel/__tests__/painel.estados.test.tsx",
+      "src/hooks/__tests__/useMinhasSugestoes.lente.test.tsx",
       "src/lib/venda-cliente/__tests__/painel.test.ts",
       "src/components/dashboard/__tests__/ClosersMtdHero.estados.test.tsx",
       "src/components/dashboard/__tests__/MinhasVisitasResultadoCard.estados.test.tsx",
