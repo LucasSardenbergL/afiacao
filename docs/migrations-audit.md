@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **696** custom migrations totais
-- **2241** objetos esperados (criados por estas migrations)
+- **697** custom migrations totais
+- **2243** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 838
+  - `function`: 839
   - `rls_policy`: 483
   - `index`: 292
+  - `cron_job`: 197
   - `table`: 196
-  - `cron_job`: 196
   - `view`: 125
   - `trigger`: 107
   - `enum_value`: 4
@@ -5659,6 +5659,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
 | `trigger` | `public.trg_nfe_receb_manual_trilha_sem_truncate` | `nfe_recebimento_manual_trilha` |
 | `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
+
+### `20261021203000_tint_purge_staging_fora_do_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_staging_purge` | — |
+| `cron_job` | `cron.tint-staging-purge-diario` | — |
 
 ## Próximos passos por status
 
