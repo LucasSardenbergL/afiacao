@@ -101,7 +101,7 @@ copy (
          op.unidade as unidade_estoque,
          sfe.fator_conversao,
          case when inv.cmc > 0 then inv.cmc end as cmc,
-         case when inv.sku is null and sea.sku_codigo_omie is null then null
+         case when inv.saldo is null and sea.estoque_fisico is null then null   -- ausente != 0
               else greatest(coalesce(inv.saldo, 0), coalesce(sea.estoque_fisico, 0)) end as saldo_hoje,
          (e.habilitado_reposicao_automatica is true and coalesce(e.tipo_reposicao, 'automatica') = 'automatica') as habilitado,
          (coalesce(e.ativo, true) and coalesce(op.ativo, true) and coalesce(sso.ativo_no_omie, true)) as ativo,
@@ -259,7 +259,7 @@ inv as (
 ),
 est as (
   select e.sku,
-         greatest(coalesce(inv.saldo, 0), coalesce(sea.estoque_fisico, 0)) * case when inv.cmc > 0 then inv.cmc else 0 end as valor_estoque
+         greatest(coalesce(inv.saldo, 0), coalesce(sea.estoque_fisico, 0)) * case when inv.cmc > 0 then inv.cmc end as valor_estoque   -- sem cmc: fica de fora da soma (NULL), não vira 0
   from escopo e
   left join inv on inv.sku = e.sku
   left join sku_estoque_atual sea on sea.empresa = 'OBEN' and sea.sku_codigo_omie = e.sku

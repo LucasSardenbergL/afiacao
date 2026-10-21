@@ -8,7 +8,7 @@
 # Saída em ${REPLAY_DADOS:-$HOME/.cache/afiacao/reposicao-replay} (NUNCA no repositório).
 # Contrato dos CSVs: separador `|`, cabeçalho, ÚLTIMA linha `fim|ok`. Fail-closed: falta de arquivo, de cabeçalho
 # ou de marcador => exit != 0 (2 = arquivo ausente/vazio, 3 = marcador `fim|ok` ausente, 1 = psql falhou,
-# 4 = gate §5.1.1 reprovado: outras empresas > 5% das linhas ou do valor — pare e fale com o founder).
+# 5 = skus.csv duplicado ou contagem de recebimentos falhou, 4 = gate §5.1.1 reprovado: outras empresas > 5% das linhas ou do valor — pare e fale com o founder).
 # Variáveis: REPLAY_DADOS (pasta), PSQL_RO (default ~/.config/afiacao/psql-ro).
 set -uo pipefail
 
@@ -29,7 +29,9 @@ conferir() {
     [[ -s "$f" ]] || falha 2 "faltando ou vazio: $f"
     ult="$(tail -n 1 "$f")"
     [[ "$ult" == "fim|ok" ]] || falha 3 "marcador fim|ok ausente na última linha de $f (última: '$ult')"
-    [[ "$(wc -l < "$f" | tr -d ' ')" -ge 2 ]] || falha 2 "sem cabeçalho (só o marcador) em $f"
+    # cabeçalho + >=1 linha de dados + marcador (3 linhas); só equivalencias.csv pode vir sem dados (grupos opcionais)
+    minimo=3; [[ "$n" == "equivalencias" ]] && minimo=2
+    [[ "$(wc -l < "$f" | tr -d ' ')" -ge "$minimo" ]] || falha 2 "sem linhas de dados (só cabeçalho/marcador) em $f"
   done
   for n in "${TXTS[@]}"; do
     f="$DIR/$n.txt"
@@ -73,6 +75,11 @@ done
 for n in "${CSVS[@]}"; do echo 'fim|ok' >>"$DIR/$n.csv"; done
 conferir
 
+# skus.csv: 1 linha por SKU (join duplicado fabricaria SKU em dobro)
+total_skus="$(awk 'NR>1 && $0!="fim|ok"' "$DIR/skus.csv" | wc -l | tr -d ' ')"
+unicos_skus="$(awk -F'|' 'NR>1 && $0!="fim|ok"{print $1}' "$DIR/skus.csv" | sort -u | wc -l | tr -d ' ')"
+[[ "$total_skus" -gt 0 && "$total_skus" == "$unicos_skus" ]] || falha 5 "skus.csv com SKU duplicado ou vazio (linhas=$total_skus, únicos=$unicos_skus)"
+
 # ── extracao.log ─────────────────────────────────────────────────────────────
 LOG="$DIR/extracao.log"
 cont() { echo $(( $(wc -l <"$1" | tr -d ' ') - 2 )); }   # linhas de dados (sem cabeçalho e sem fim|ok)
@@ -100,6 +107,10 @@ select 'recebimentos_v_sku_leadtime_efetivo', count(*) from v_sku_leadtime_efeti
  where v.empresa = 'OBEN' and v.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%');
 SQL
 rc=$?
+if [[ "$rc" -ne 0 ]]; then
+  echo "FALHA: contagem de recebimentos contra v_sku_leadtime_efetivo (rc=$rc)" | tee -a "$LOG" >&2
+  exit 5
+fi
 echo "contagem de recebimentos: rc=$rc" >>"$LOG"
 
 # ── Gate §5.1.1 ──────────────────────────────────────────────────────────────
