@@ -41,3 +41,19 @@ export function empresasSemSnapshot<C extends string>(todas: readonly C[], comSn
   const tem = new Set(comSnapshot);
   return todas.filter((c) => !tem.has(c));
 }
+
+/**
+ * O que a tela pode mostrar do consolidado. `semSnapshot` null = a leitura da cobertura falhou: os zeros
+ * da RPC podem ser COALESCE, então os valores NÃO aparecem (achado Codex adversarial). Nenhuma empresa
+ * com DRE no mês também esconde; parte delas exibe com aviso de soma parcial.
+ */
+export function exibicaoConsolidado(
+  linhas: number,
+  semSnapshot: readonly string[] | null,
+  totalEmpresas: number,
+): 'nada' | 'indisponivel' | 'parcial' | 'completo' {
+  if (linhas === 0) return 'nada';
+  if (semSnapshot === null) return 'indisponivel';
+  if (semSnapshot.length >= totalEmpresas) return 'nada';
+  return semSnapshot.length > 0 ? 'parcial' : 'completo';
+}

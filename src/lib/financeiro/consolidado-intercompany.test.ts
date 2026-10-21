@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { empresasSemSnapshot, paraLinhasConsolidado } from './consolidado-intercompany';
+import { empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado } from './consolidado-intercompany';
 
 describe('paraLinhasConsolidado', () => {
   // Colunas REAIS da RPC (conta/total_bruto/eliminacoes/total_consolidado) — o cast antigo lia
@@ -34,5 +34,19 @@ describe('empresasSemSnapshot', () => {
     expect(empresasSemSnapshot(todas, ['oben', 'colacor', 'colacor_sc'])).toEqual([]);
     expect(empresasSemSnapshot(todas, ['oben'])).toEqual(['colacor', 'colacor_sc']);
     expect(empresasSemSnapshot(todas, [])).toEqual(['oben', 'colacor', 'colacor_sc']);
+  });
+});
+
+describe('exibicaoConsolidado', () => {
+  it('cobertura DESCONHECIDA bloqueia os valores (os zeros podem ser COALESCE)', () => {
+    expect(exibicaoConsolidado(4, null, 3)).toBe('indisponivel');
+  });
+  it('nenhuma empresa com DRE no mês ⇒ nada; parte ⇒ parcial; todas ⇒ completo', () => {
+    expect(exibicaoConsolidado(4, ['oben', 'colacor', 'colacor_sc'], 3)).toBe('nada');
+    expect(exibicaoConsolidado(4, ['colacor'], 3)).toBe('parcial');
+    expect(exibicaoConsolidado(4, [], 3)).toBe('completo');
+  });
+  it('RPC sem linhas (erro tratado) ⇒ nada', () => {
+    expect(exibicaoConsolidado(0, [], 3)).toBe('nada');
   });
 });

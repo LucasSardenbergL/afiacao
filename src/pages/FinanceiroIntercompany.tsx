@@ -16,7 +16,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado } from '@/lib/financeiro/dre-helpers';
-import { empresasSemSnapshot, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
+import { empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -94,6 +94,7 @@ const FinanceiroIntercompany = () => {
   }, [ano, mes]);
 
   useEffect(() => { load(); }, [load]);
+  const exibicao = exibicaoConsolidado(consolidado.length, semSnapshot, ALL_COMPANIES.length);
 
   const handleAdd = async () => {
     if (!newRegra.descricao) { toast.success('Preencha a descrição'); return; }
@@ -176,12 +177,12 @@ const FinanceiroIntercompany = () => {
       {/* Consolidado with eliminations */}
       {/* Cobertura desconhecida ou nenhuma empresa com DRE no mês ⇒ os zeros da RPC podem ser COALESCE,
           não resultado: os valores não aparecem. */}
-      {!loading && consolidado.length > 0 && semSnapshot === null && (
+      {!loading && exibicao === 'indisponivel' && (
         <p className="text-sm text-muted-foreground">
           DRE consolidado indisponível: não foi possível conferir quais empresas têm DRE no mês.
         </p>
       )}
-      {consolidado.length > 0 && semSnapshot !== null && semSnapshot.length < ALL_COMPANIES.length && (
+      {(exibicao === 'parcial' || exibicao === 'completo') && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -193,7 +194,7 @@ const FinanceiroIntercompany = () => {
               {provisorioMes === 'erro' && (
                 <span className="text-xs font-normal text-muted-foreground">status de composição indisponível (leitura falhou)</span>
               )}
-              {semSnapshot !== null && semSnapshot.length > 0 && (
+              {exibicao === 'parcial' && semSnapshot && (
                 <span className="text-xs font-normal text-status-warning">
                   soma parcial — sem DRE do mês: {semSnapshot.map((c) => COMPANIES[c].shortName).join(', ')}
                 </span>
