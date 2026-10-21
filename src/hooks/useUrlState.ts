@@ -27,19 +27,22 @@ function serialize(value: Primitive | Primitive[]): string | null {
   return String(value);
 }
 
-function deserialize<T extends Primitive | Primitive[]>(raw: string | null, fallback: T): T {
-  if (raw === null || raw === '') return fallback;
-  if (Array.isArray(fallback)) {
-    return raw.split('|') as unknown as T;
-  }
-  if (typeof fallback === 'boolean') {
-    return (raw === '1') as unknown as T;
-  }
+function lerPrimitivo(raw: string, fallback: Primitive | Primitive[]): Primitive | Primitive[] {
+  if (Array.isArray(fallback)) return raw.split('|');
+  if (typeof fallback === 'boolean') return raw === '1';
   if (typeof fallback === 'number') {
     const n = Number(raw);
-    return (Number.isFinite(n) ? n : fallback) as unknown as T;
+    return Number.isFinite(n) ? n : fallback;
   }
-  return raw as unknown as T;
+  return raw;
+}
+
+function deserialize<T extends Primitive | Primitive[]>(raw: string | null, fallback: T): T {
+  if (raw === null || raw === '') return fallback;
+  // Residual deliberado, e estreito: o valor tem a mesma FAMÍLIA do fallback (texto/número/booleano/
+  // lista), mas a URL não prova a união literal que `T` pode ser (`'abertos' | 'todos'`) — validar
+  // isso é de quem conhece o vocabulário, não deste parser genérico.
+  return lerPrimitivo(raw, fallback) as T;
 }
 
 export function useUrlState<S extends StateShape>(

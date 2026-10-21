@@ -1,5 +1,6 @@
 // Tipos, constantes e helpers da Impressão de Pedidos (SalesPrintDashboard).
 // Extraídos de src/pages/SalesPrintDashboard.tsx (god-component split).
+import type { Json } from '@/integrations/supabase/types';
 import { ehDataPuraUtc } from '@/lib/pedido/data-pedido';
 
 export type CompanyFilter = 'oben' | 'colacor' | 'afiacao';
@@ -92,4 +93,20 @@ export function getPeriod(dateStr: string): 'manha' | 'tarde' {
   // o dia civil UTC usado no filtro do dia (pedidoNoDiaCivil).
   const h = ehDataPuraUtc(d) ? d.getUTCHours() : d.getHours();
   return h < 12 ? 'manha' : 'tarde';
+}
+
+/**
+ * `items` (jsonb) como a impressão o consome: cada item é objeto livre — o `OrderItem` acima é
+ * frouxo de propósito, porque a folha imprime pedido de venda e pedido de AFIAÇÃO (`orders.items`,
+ * outra forma: category/name/quantity/unitPrice). NULL = sem itens; não-array ou item não-objeto lança.
+ */
+export function itensImpressaoDoJson(v: Json | null, fonte: string): OrderItem[] {
+  if (v === null) return [];
+  if (!Array.isArray(v)) throw new Error(`${fonte}: items não é array`);
+  return v.map((item, i) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw new Error(`${fonte}: item ${i} não é objeto`);
+    }
+    return item;
+  });
 }

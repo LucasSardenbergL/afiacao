@@ -39,13 +39,13 @@ export type SituacaoIndividual =
   | 'ordem_indisponivel'
   | 'referencia_ambigua';
 
-const SITUACOES = new Set<string>([
+const SITUACOES: readonly SituacaoIndividual[] = [
   'eleito',
   'empatado',
   'unico_registrado',
   'ordem_indisponivel',
   'referencia_ambigua',
-]);
+];
 
 /** Os três estados que nomeiam o GRUPO INTEIRO — para eles `produtos` tem de cobrir tudo. */
 const NOMEIAM_O_GRUPO = new Set<string>([
@@ -61,7 +61,8 @@ export interface LinhaMelhorIndividual {
   produtos: string[];
   produto_eleito: string | null;
   candidatos: number;
-  affinity_score: number | null;
+  /** Validado como número OU texto (numeric pode chegar serializado como string) — não convertido aqui. */
+  affinity_score: number | string | null;
   run_id: string | null;
 }
 
@@ -99,16 +100,17 @@ export function validarRespostaMelhorIndividual(data: unknown): LinhaMelhorIndiv
     if (typeof l.customer_user_id !== 'string' || !UUID.test(l.customer_user_id)) {
       throw new Error(`${onde}: customer_user_id não é uuid`);
     }
-    if (!TIPOS_INDIVIDUAIS.includes(l.recommendation_type as TipoIndividual)) {
+    const tipo = TIPOS_INDIVIDUAIS.find((t) => t === l.recommendation_type);
+    if (!tipo) {
       throw new Error(`${onde}: tipo desconhecido ${String(l.recommendation_type)}`);
     }
     const chave = `${l.customer_user_id}:${l.recommendation_type}`;
     if (vistos.has(chave)) throw new Error(`${onde}: (cliente,tipo) duplicado`);
     vistos.add(chave);
 
-    const situacao = l.situacao;
-    if (typeof situacao !== 'string' || !SITUACOES.has(situacao)) {
-      throw new Error(`${onde}: situacao inválida ${String(situacao)}`);
+    const situacao = SITUACOES.find((s) => s === l.situacao);
+    if (!situacao) {
+      throw new Error(`${onde}: situacao inválida ${String(l.situacao)}`);
     }
     const candidatos = l.candidatos;
     if (typeof candidatos !== 'number' || !Number.isInteger(candidatos) || candidatos < 1) {
@@ -118,7 +120,7 @@ export function validarRespostaMelhorIndividual(data: unknown): LinhaMelhorIndiv
     if (!Array.isArray(produtos) || produtos.length < 1) {
       throw new Error(`${onde}: produtos precisa ser array não-vazio`);
     }
-    if (!produtos.every((p) => typeof p === 'string' && UUID.test(p))) {
+    if (!produtos.every((p): p is string => typeof p === 'string' && UUID.test(p))) {
       throw new Error(`${onde}: produtos contém item que não é uuid`);
     }
     if (new Set(produtos).size !== produtos.length) {
@@ -159,11 +161,24 @@ export function validarRespostaMelhorIndividual(data: unknown): LinhaMelhorIndiv
     if (l.run_id != null && (typeof l.run_id !== 'string' || !UUID.test(l.run_id))) {
       throw new Error(`${onde}: run_id presente mas não é uuid`);
     }
-    if (l.affinity_score != null && typeof l.affinity_score !== 'number' && typeof l.affinity_score !== 'string') {
+    const afinidade = l.affinity_score ?? null;
+    if (afinidade !== null && typeof afinidade !== 'number' && typeof afinidade !== 'string') {
       throw new Error(`${onde}: affinity_score em formato inesperado`);
     }
 
-    return l as unknown as LinhaMelhorIndividual;
+    // Montada campo a campo do que foi validado acima (antes: um cast duplo, que aceitaria
+    // qualquer chave a mais ou a menos que a validação não olhasse).
+    return {
+      customer_user_id: l.customer_user_id,
+      recommendation_type: tipo,
+      situacao,
+      produtos,
+      // Pelas checagens acima: string exatamente no estado `eleito`, NULL/ausente fora dele.
+      produto_eleito: typeof l.produto_eleito === 'string' ? l.produto_eleito : null,
+      candidatos,
+      affinity_score: afinidade,
+      run_id: typeof l.run_id === 'string' ? l.run_id : null,
+    };
   });
 }
 

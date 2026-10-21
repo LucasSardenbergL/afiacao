@@ -179,6 +179,31 @@ Fecha o "débito separado" da 2d (🚫 acima: dedup do `sph` exigia "análise de
 - **Buraco de prova na Oben (2025-07 → 2026-01-21):** o backfill não tem janela ali; a reconstrução histórica da Task 4
   fecha esse trecho como `nao_medivel` até alguém semear a janela.
 
+## Venda por cliente — Task 4: gerador D-1, reconstrução histórica e ondas (2026-10-20)
+
+`venda_cidades_alvo` (porta de `resolvePrepForWorkday`) + `venda_gerar_lista` (UNIÃO: atrasados das cidades de amanhã
++ `teto` maiores atrasos fora delas; perdido fora; só farmer; idempotente) + `venda_reconstruir_historico` +
+`venda_avaliar_ondas`/`venda_onda_log` + `venda_gerador_execucao` + cron `venda-gerador` 08:15 UTC. Migration
+`20261020181743_venda_cliente_gerador.sql`, aplicada por `db:aplicar` (recibo #597) e validada por psql-ro. Prova
+`db/test-venda-gerador.sh` (59 asserts, C e pt_BR, 16 sabotagens, no núcleo). Carga e taxa semanal: PR #3255.
+
+- **"Próximo dia útil" do plano ≠ o TS.** `resolvePrepForWorkday` prepara D+1 de CALENDÁRIO; a porta segue o TS (a
+  paridade é o contrato). Com a rota de prod em ter–sex, sexta prepara sábado = só as diárias.
+- **`venda_fechar_desfechos` custa ~11 ms por linha** (medido em ensaio: 1.733 linhas = 18,9 s; a lista em si custa
+  0,85 s/dia). Com ~600 linhas/dia, um lote de 30 dias passava dos 300 s do `db:aplicar` — lotes de 20 dias. No cron
+  noturno são ~7 s; a otimização (casar pedido só dos compradores abertos) fica de follow-up.
+- **Sombra só vale ao vivo:** a Onda 1 conta um dia de sombra só se a 1ª execução foi NAQUELE dia (SP); gravar a
+  sombra depois não fabrica a evidência. 365 dias de `historico` registrados são exigidos, não "existe uma linha".
+- **Onda 3 lê a tabela da Task 6 por `to_regclass` + `EXECUTE`** e captura só 42P01/42703: tabela ausente ou com outra
+  forma = condição falsa sem derrubar o cron (o mesmo job gera a lista).
+- **Buraco de prova da Oben → prova POR DADOS** (migration `20261020194332`, recibo #627): para `historico`, dia sem
+  heartbeat/cursor conta como coberto se o mês tiver 100% dos pedidos com itens e volume ≥ 70% da mediana de 12 meses;
+  senão `nao_medivel/historico_incompleto`. Out/2025–jan/2026 passaram (Oben dez/2025 = 277 × mediana 354,5 = 78%).
+  O trecho só foi carregado DEPOIS da prova — fechado antes, viraria `nao_medivel` para sempre (o job não reabre).
+- **Linha de base (365 dias, 221.028 linhas, 0% `nao_medivel`):** ~7–8% das linhas (comprador × SKU) e ~19% dos
+  compradores-dia recompram em 14 dias; o vale é a 2ª quinzena de dezembro (1–3% / 3–9%). ~44–54 compradores por
+  farmer/dia, ~6 SKUs por comprador (p50 3, p90 13); compradores com 20+ SKUs são 7% e somam 45% das linhas.
+
 ## Venda por cliente — Task 8: Meu Dia + ficha da ligação + desfecho, Onda 1 (2026-10-20)
 
 A fila do Meu Dia passou a ter a lista de recompra do servidor (`venda_minhas_sugestoes`, adapter

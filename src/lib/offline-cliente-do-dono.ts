@@ -59,5 +59,5 @@ export function criarClienteDoDono(accessToken: string): ClienteSupabase {
     import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
     { accessToken: async () => accessToken },
   );
-  return createLensGuardedClient(cru) as unknown as ClienteSupabase;
+  return createLensGuardedClient(cru);
 }

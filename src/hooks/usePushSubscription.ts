@@ -30,7 +30,8 @@ function detectarIosForaDoPwa(): boolean {
   if (!isIos) return false;
   const standalone =
     window.matchMedia('(display-mode: standalone)').matches ||
-    (navigator as unknown as { standalone?: boolean }).standalone === true;
+    // `navigator.standalone` é só do Safari iOS — fora do lib.dom, daí a guarda `in`.
+    ('standalone' in navigator && navigator.standalone === true);
   return !standalone;
 }
 
@@ -41,9 +42,12 @@ function detectarIosForaDoPwa(): boolean {
  * neste device (P1 da revisão adversarial).
  */
 async function salvarAssinatura(sub: PushSubscription): Promise<boolean> {
+  // `PushSubscriptionJSON` é interface do lib.dom (sem assinatura de índice, não cabe em `Json`):
+  // remontada com as MESMAS três chaves que o `toJSON()` serializa.
+  const { endpoint, expirationTime, keys } = sub.toJSON();
   const { error } = await supabase.rpc('upsert_push_subscription', {
     p_endpoint: sub.endpoint,
-    p_subscription: sub.toJSON() as unknown as import('@/integrations/supabase/types').Json,
+    p_subscription: { endpoint, expirationTime, keys },
     p_user_agent: navigator.userAgent.slice(0, 256),
   });
   if (error) {
@@ -109,8 +113,7 @@ export function usePushSubscription(): {
         (await reg.pushManager.getSubscription()) ??
         (await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          // Uint8Array satisfaz BufferSource; cast explícito pro lib.dom aceitar.
-          applicationServerKey: vapidKeyToUint8Array(VAPID_PUBLIC_KEY) as unknown as ArrayBuffer,
+          applicationServerKey: vapidKeyToUint8Array(VAPID_PUBLIC_KEY),
         }));
       const ok = await salvarAssinatura(sub);
       if (ok) {

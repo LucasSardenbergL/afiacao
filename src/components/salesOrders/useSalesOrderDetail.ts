@@ -4,13 +4,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  decodeHtml,
-  type AfiacaoOrderRow,
-  type OrderDetail,
-  type OrderFeedRow,
-  type SalesOrderRow,
-} from './types';
+import { omiePayloadDoJson } from '@/lib/pedido/itens-json';
+import { decodeHtml, type OrderDetail, type OrderFeedRow } from './types';
 import { mapAfiacaoDetail, mapSalesDetail } from './feed';
 
 // Key compartilhada entre o painel (useQuery) e as ações imperativas
@@ -39,26 +34,23 @@ export async function fetchOrderDetail(
       .maybeSingle();
     if (error) throw error;
     if (!data) throw new Error('Pedido não encontrado');
-    order = mapSalesDetail(data as unknown as SalesOrderRow);
+    order = mapSalesDetail(data);
     // A impressão do cupom lê cabecalho.codigo_parcela do payload — recupera pelo canal staff
     // SECDEF. Degrada honestamente (impressão sem parcela detalhada) se indisponível; não
     // bloqueia o painel de detalhe por causa da impressão. supabase.rpc RETORNA o erro (não
     // lança) → checa explicitamente e SINALIZA (não silencioso — money-path: ausente ≠ silêncio).
-    const { data: pl, error: plErr } = await supabase.rpc(
-      'staff_get_sales_order_payload' as never,
-      { p_order_ids: [id] } as never,
-    );
+    const { data: pl, error: plErr } = await supabase.rpc('staff_get_sales_order_payload', { p_order_ids: [id] });
     if (plErr) {
       console.warn('[useSalesOrderDetail] payload staff indisponível (impressão sem parcela):', plErr);
     } else {
-      const payload = (pl as unknown as Array<{ omie_payload: unknown }> | null)?.[0]?.omie_payload;
+      const payload = omiePayloadDoJson(pl?.[0]?.omie_payload ?? null, `sales_orders ${id}`);
       if (payload) order.omie_payload = payload;
     }
   } else {
     const { data, error } = await supabase.from('orders').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!data) throw new Error('Pedido não encontrado');
-    order = mapAfiacaoDetail(data as AfiacaoOrderRow);
+    order = mapAfiacaoDetail(data);
   }
 
   const { data: prof, error: profError } = await supabase

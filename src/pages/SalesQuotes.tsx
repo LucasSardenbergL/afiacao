@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
+import { itensPedidoDoJson, type ItemPedidoJson } from '@/lib/pedido/itens-json';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,23 +28,11 @@ import { formatPrecoOuAusente } from '@/lib/format';
 // ser null (o Omie nem sempre informa preço), isso lançava TypeError no RENDER da lista, e o
 // ErrorBoundary global levava a página de orçamentos inteira junto. Ausente agora vira "—".
 
-type SalesOrder = Tables<'sales_orders'>;
-
-interface QuoteItem {
-  omie_codigo_produto?: string;
-  quantidade: number;
-  /** `null` = preço NÃO SABIDO (o Omie não informou). Nunca exibir como R$ 0,00. */
-  valor_unitario: number | null;
-  descricao: string;
-  tint_cor_id?: string;
-  tint_nome_cor?: string;
-  // Fase 3: metadados de precificação persistidos no orçamento (podem estar
-  // ausentes em orçamento legado — o gate usa o piso min(fontes) nesse caso)
-  tint_formula_id?: string;
-  tint_price_source?: string;
-  tint_discount_pct?: number;
-  tint_preco_sem_desconto?: number;
-}
+/** O orçamento como a tela o usa: as colunas do select, com `items` já lido pela borda. */
+type Orcamento = Omit<
+  Pick<Tables<'sales_orders'>, 'id' | 'customer_user_id' | 'account' | 'items' | 'total' | 'notes' | 'created_at' | 'status'>,
+  'items'
+> & { items: ItemPedidoJson[] };
 
 const SalesQuotes = () => {
   const { user } = useAuth();
@@ -66,7 +55,9 @@ const SalesQuotes = () => {
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
       if (error) throw error;
-      return (data ?? []) as unknown as SalesOrder[];
+      // Os itens são lidos AQUI, uma vez: item fora da forma vira erro da query (a tela mostra o
+      // erro), não exceção no meio do render.
+      return (data ?? []).map((q): Orcamento => ({ ...q, items: itensPedidoDoJson(q.items, `sales_orders ${q.id}`) }));
     },
     enabled: !!user,
   });
@@ -100,7 +91,7 @@ const SalesQuotes = () => {
     onError: (e: Error) => toast.error('Erro ao excluir: ' + e.message),
   });
 
-  const convertToOrder = async (quote: SalesOrder) => {
+  const convertToOrder = async (quote: Orcamento) => {
     // ── Guard money-path (4ª via) ──
     // A conversão orçamento→pedido NÃO passa por submitOrder/submitQuote — vai direto ao
     // edge omie-vendas-sync (criar_pedido). Um orçamento com produto a preço ≤ 0 (criado
@@ -108,7 +99,7 @@ const SalesQuotes = () => {
     // ANTES do update de status e da chamada ao edge (fail-closed). O edge também rejeita
     // (defense-in-depth). Orçamento só tem produto (afiação tem fluxo próprio), então
     // preço ≤ 0 / NaN / Infinity é sempre erro — mesmo predicado do guard do carrinho.
-    const quoteItems = (quote.items as unknown as QuoteItem[]) || [];
+    const quoteItems = quote.items;
     const invalidPriced = findInvalidPricedOmieItems(quoteItems);
     if (invalidPriced.length > 0) {
       setInvalidQuoteId(quote.id);
@@ -124,7 +115,7 @@ const SalesQuotes = () => {
       // ao fallback customer_user_id. Passamos só sales_order_id + account + items; o fail-closed vive no
       // edge. Await (não fire-and-forget) p/ saber o desfecho e NÃO deixar status órfão numa falha.
       const account = quote.account || 'oben';
-      const items = ((quote.items as unknown as QuoteItem[]) || []).map((i: QuoteItem) => ({
+      const items = quote.items.map((i) => ({
         omie_codigo_produto: i.omie_codigo_produto,
         quantidade: i.quantidade,
         valor_unitario: i.valor_unitario,
@@ -240,7 +231,7 @@ const SalesQuotes = () => {
       ) : (
         <div className="space-y-3">
           {quotes.map(q => {
-            const items = (q.items as unknown as QuoteItem[]) || [];
+            const items = q.items;
             const itemCount = items.length;
             return (
               <Card key={q.id} className={cn(invalidQuoteId === q.id && 'border-status-error ring-1 ring-status-error')}>
@@ -258,7 +249,7 @@ const SalesQuotes = () => {
                         {' · '}{itemCount} {itemCount === 1 ? 'item' : 'itens'}
                       </p>
                       <div className="mt-1 text-xs text-muted-foreground space-y-0.5">
-                        {items.slice(0, 3).map((item: QuoteItem, idx: number) => (
+                        {items.slice(0, 3).map((item, idx) => (
                           <div key={idx} className="truncate">
                             {item.quantidade}x {item.descricao} – {formatPrecoOuAusente(item.valor_unitario)}
                           </div>

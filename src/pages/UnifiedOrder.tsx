@@ -386,7 +386,7 @@ const UnifiedOrder = () => {
           {/* AI Assistant — staff only */}
           {showAIAssistant && (
             <UnifiedAIAssistant
-              products={[...h.obenProducts, ...h.colacorProducts] as unknown as { id: string; codigo: string; descricao: string; valor_unitario: number; estoque: number; account?: string }[]}
+              products={[...h.obenProducts, ...h.colacorProducts]}
               userTools={h.userTools}
               onItemsIdentified={h.handleUnifiedAIResult}
               onCustomerIdentified={h.handleAICustomerSelect}

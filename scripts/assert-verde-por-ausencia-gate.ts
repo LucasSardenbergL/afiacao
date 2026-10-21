@@ -106,6 +106,17 @@ export const PISOS = {
  * apply/reparo/diagnóstico já executados — o conserto deles é o próximo arquivo nascer limpo.
  */
 export const CATRACA_SQL: Readonly<Record<string, number>> = {
+  'db/2026-10-20-venda-reconstrucao-historica-lote-01.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-02.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-03.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-04.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-05.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-06.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-07.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-10d-01.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-10d-02.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-10d-03.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
+  'db/2026-10-20-venda-reconstrucao-historica-lote-10d-04.sql': 2,   // aplicado (db:aplicar) — venda por cliente, reconstrução histórica
   'db/aplicar-cancelar-orfa-4c19af2a.sql': 7,
   'db/aplicar-data-health-sync-reprocess-saude.sql': 8,
   'db/aplicar-desconto-escritores.sql': 1,

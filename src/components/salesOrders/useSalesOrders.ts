@@ -20,7 +20,7 @@ import {
   type OrderFeedCache,
   type OrderFeedRow,
 } from './types';
-import { dedupeFeedRows, filterFeedRows } from './feed';
+import { dedupeFeedRows, feedRowDaLinha, filterFeedRows } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
@@ -67,7 +67,7 @@ export function useSalesOrders() {
         for (let page = 0; page < FEED_MAX_PAGES; page++) {
           const from = page * FEED_PAGE_SIZE;
           const { data, error, count } = await supabase
-            .from('order_feed' as never)
+            .from('order_feed')
             // count só na 1ª página (o total não muda entre as páginas do drain).
             .select('*', { count: page === 0 ? 'exact' : undefined })
             .order('created_at', { ascending: false, nullsFirst: false })
@@ -75,7 +75,7 @@ export function useSalesOrders() {
             .order('id', { ascending: true })
             .range(from, from + FEED_PAGE_SIZE - 1);
           if (error) throw error;
-          const rows = (data ?? []) as unknown as OrderFeedRow[];
+          const rows = (data ?? []).map(feedRowDaLinha);
           all.push(...rows);
           if (page === 0) total = count ?? rows.length;
           // Fim real: alcançou o count ou a página veio parcial/vazia.

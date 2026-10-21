@@ -320,7 +320,7 @@ self.addEventListener('fetch', (e) => {
     manterPreparo(e);
     return;
   }
-  const resposta = router.handleRequest({ request: req, event: e as never });
+  const resposta = router.handleRequest({ request: req, event: e });
   if (resposta) e.respondWith(resposta);
   manterPreparo(e);
 });

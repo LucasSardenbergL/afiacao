@@ -207,6 +207,16 @@
       "efeito": "SO_CITA",
       "motivo": "O 'patch' é a própria migration do CREATE: a postcondição POS5 lê pg_get_functiondef e procura 'cap_custo_ler'. md5(prosrc) de prod (xmin 12050366) = md5 do corpo do CREATE = 3f7e2616681ecdd48e9d3bd8555b2b61, conferido via psql-ro em 2026-10-16.",
       "desde": "2026-10-16"
+    },
+    {
+      "funcao": "claim_nfe_efetivacao_lock",
+      "identidade": "uuid,timestamp with time zone,timestamp with time zone",
+      "classe": "EDICAO_MANUAL",
+      "esperadaNoAceite": "20260704130000_claim_nfe_efetivacao_lock.sql",
+      "motivo": "Aplicada em prod pelo ENVELOPE db/2026-10-20-claim-nfe-efetivacao-recusa-descartado.sql (db_aplicacoes #623, 2026-10-20, PR #3258): o claim do lock de efetivação passa a recusar o recebimento `descartado` (`AND n.status IS DISTINCT FROM 'descartado'`) — um \"Reconciliar\" de aba velha devolveria à fila os 2 CT-e descartados (parecer Codex P1). TRAVA → PRE (md5 vivo = 7b537d9e… da 20260704130000) → CREATE OR REPLACE (ACL preservado: só service_role) → PÓS; prova PG17 db/test-claim-nfe-efetivacao-lock.sh (zona 6, 17 ok). Corpo = o da 20260704130000 + o predicado novo. Histórico: docs/historico/nfe-recebimento-ignora-cte.md.",
+      "md5": "1b66e565a608d3336038846363728b33",
+      "md5Tokens": "475c4553252d6ee98bed0be01bfd7021",
+      "desde": "2026-10-20"
     }
   ]
 }

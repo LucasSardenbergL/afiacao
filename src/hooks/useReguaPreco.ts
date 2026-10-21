@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { avaliarReguaPreco } from '@/lib/regua-preco/regua-preco-helpers';
 import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { fetchDataReguaDoJson } from '@/lib/regua-preco/borda-rpc';
 import {
   dedupeFetchItens, montarInputRegua, chaveFetch,
   type ReguaCartItem, type FetchDataRegua, type PrazoRegua,
@@ -17,9 +18,13 @@ type RpcArgs = {
   p_preco_atual: number;
   p_prazo_dias: number[] | null;
 };
-type RpcResult = { data: FetchDataRegua | null; error: unknown };
-const callRpc = (args: RpcArgs) =>
-  (supabase.rpc as never as (fn: string, a: RpcArgs) => Promise<RpcResult>)('get_regua_preco', args);
+/** Rejeita em erro do banco OU pacote fora da forma — o `allSettled` abaixo isola o item. */
+const callRpc = async ({ p_prazo_dias, ...args }: RpcArgs): Promise<FetchDataRegua> => {
+  // `p_prazo_dias` tem DEFAULT NULL na prod: sem prazo, a chave some do JSON e cai no mesmo NULL.
+  const { data, error } = await supabase.rpc('get_regua_preco', { ...args, p_prazo_dias: p_prazo_dias ?? undefined });
+  if (error) throw error;
+  return fetchDataReguaDoJson(data);
+};
 
 /**
  * Régua de Preço por linha do carrinho. 1 useQuery dispara a RPC N× em paralelo
@@ -83,7 +88,7 @@ export function useReguaPreco(
       );
       const m = new Map<string, FetchDataRegua>();
       settled.forEach((res, i) => {
-        if (res.status === 'fulfilled' && res.value.data) m.set(chaveFetch(alvo[i]), res.value.data);
+        if (res.status === 'fulfilled') m.set(chaveFetch(alvo[i]), res.value);
       });
       return m;
     },

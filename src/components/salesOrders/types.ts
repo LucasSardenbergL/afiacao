@@ -28,20 +28,20 @@ export const decodeHtml = (s: string): string =>
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>');
 
-// Item do pedido como vive no jsonb sales_orders.items. Os campos extras
-// (codigo/unidade/tint) só aparecem em alguns itens (ex.: bases tintométricas).
-interface SalesOrderItem {
+// Item do pedido como o painel/impressão o leem do jsonb sales_orders.items (`itemDetalheDoJson`).
+// Os campos extras (codigo/unidade/tint) só aparecem em alguns itens (ex.: bases tintométricas).
+export type SalesOrderItem = {
   descricao: string;
   quantidade: number;
   /** `null` = preco NAO SABIDO (o Omie nao informou valor_unitario). Nunca R$ 0,00. */
   valor_unitario: number | null;
-  /** `null` = nao ha total: sem preco unitario, `qtd * null` seria 0 fabricado. */
-  valor_total: number | null;
+  /** Ausente na quase totalidade dos itens gravados (o total é derivado); `null` = sem preço, sem total. */
+  valor_total?: number | null;
   codigo?: string;
   unidade?: string;
   tint_cor_id?: string;
   tint_nome_cor?: string;
-}
+};
 
 export interface SalesOrder {
   id: string;
@@ -66,23 +66,18 @@ export interface SalesOrder {
 }
 
 // Linha da view order_feed (read model da listagem — migration 20260606210000).
-// A view ainda não está nos tipos gerados do Supabase (o Lovable regenera no
-// deploy); tipo manual espelhando o contrato do SQL.
-export interface OrderFeedRow {
-  origin: 'sales' | 'afiacao';
-  id: string;
-  created_at: string;
-  account: string;
-  order_number: string | null;
-  omie_pedido_id: number | null;
-  customer_user_id: string;
-  customer_name: string | null;
-  item_names: string[];
-  item_quantity: number;
-  status: string;
-  subtotal: number;
-  total: number;
-}
+type LinhaOrderFeed = Tables<'order_feed'>;
+
+/** Colunas sem as quais a linha do feed não faz sentido (view: o gerador as dá todas `| null`). */
+export const COLUNAS_FEED_EXIGIDAS = [
+  'origin', 'id', 'created_at', 'account', 'customer_user_id',
+  'item_names', 'item_quantity', 'status', 'subtotal', 'total',
+] as const satisfies readonly (keyof LinhaOrderFeed)[];
+
+/** Linha da view `order_feed` com as colunas-chave exigidas e `origin` estreitado (`feedRowDaLinha`). */
+export type OrderFeedRow = Omit<LinhaOrderFeed, (typeof COLUNAS_FEED_EXIGIDAS)[number]> & {
+  [K in Exclude<(typeof COLUNAS_FEED_EXIGIDAS)[number], 'origin'>]: NonNullable<LinhaOrderFeed[K]>;
+} & { origin: 'sales' | 'afiacao' };
 
 // Cache da query única da listagem (['order-feed', userId]) — rollbacks optimistic.
 export interface OrderFeedCache {

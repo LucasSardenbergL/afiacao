@@ -14,8 +14,9 @@ import { openPrintOrder } from '@/components/OrderPrintLayout';
 import {
   COMPANY_LABELS, COMPANY_COLORS, getPeriod,
   type CompanyFilter, type SalesOrderRow, type ProfileLite, type AddressLite,
-  type EnrichedOrder,
+  type EnrichedOrder, itensImpressaoDoJson,
 } from '@/components/sales/print/types';
+import { omiePayloadDoJson } from '@/lib/pedido/itens-json';
 import { lerRespostaFormas } from '@/services/orderSubmission/formasDegradacao';
 import { AvisoFormasPagamento } from '@/components/sales/AvisoFormasPagamento';
 import { buildPrintData, buildSingleOrderHtml, buildPrintDocument } from '@/components/sales/print/buildPrintHtml';
@@ -98,25 +99,28 @@ const SalesPrintDashboard = () => {
         .is('deleted_at', null)
         .order('created_at', { ascending: true });
       if (error) throw error;
-      const rows = (data ?? []) as unknown as SalesOrderRow[];
+      const rows: SalesOrderRow[] = (data ?? []).map((r) => ({
+        ...r,
+        items: itensImpressaoDoJson(r.items, `sales_orders ${r.id}`),
+        customer_document: r.customer_document ?? undefined,
+        customer_phone: r.customer_phone ?? undefined,
+        customer_address: r.customer_address ?? undefined,
+      }));
       // A impressão lê cabecalho.codigo_parcela e cabecalho.codigo_cliente do payload —
       // recupera em LOTE pelo canal staff SECDEF e re-injeta em cada linha.
       const ids = rows.map((r) => r.id);
       if (ids.length === 0) return rows;
-      const { data: pl, error: plErr } = await supabase.rpc(
-        'staff_get_sales_order_payload' as never,
-        { p_order_ids: ids } as never,
-      );
+      const { data: pl, error: plErr } = await supabase.rpc('staff_get_sales_order_payload', { p_order_ids: ids });
       if (plErr) {
         // Degrada honestamente: impressão sem codigo_parcela/codigo_cliente, mas SINALIZA
         // (supabase.rpc RETORNA o erro, não lança). Uma regressão de gate/grant apareceria aqui.
         console.warn('[SalesPrintDashboard] payload staff indisponível (impressão sem parcela):', plErr);
         return rows;
       }
-      const payloadMap = new Map<string, unknown>(
-        ((pl as unknown as Array<{ id: string; omie_payload: unknown }> | null) ?? []).map((p) => [p.id, p.omie_payload]),
+      const payloadMap = new Map(
+        (pl ?? []).map((p) => [p.id, omiePayloadDoJson(p.omie_payload, `sales_orders ${p.id}`)]),
       );
-      return rows.map((r) => ({ ...r, omie_payload: payloadMap.get(r.id) ?? undefined })) as SalesOrderRow[];
+      return rows.map((r) => ({ ...r, omie_payload: payloadMap.get(r.id) ?? undefined }));
     },
   });
 
@@ -132,14 +136,17 @@ const SalesPrintDashboard = () => {
         .neq('status', 'cancelado')
         .order('created_at', { ascending: true });
       if (error) throw error;
-      return (data || []).map((o) => {
-        const row = o as unknown as SalesOrderRow;
-        return {
-          ...row,
-          account: 'afiacao',
-          subtotal: row.total || 0,
-        };
-      }) as SalesOrderRow[];
+      // `orders` (afiação) NÃO tem `customer_user_id` nem `omie_numero_pedido`: antes um cast a
+      // vestia de `SalesOrderRow` e os dois chegavam `undefined`. O cliente é `user_id` (os
+      // consumidores já liam `customer_user_id || user_id`).
+      return (data || []).map((o): SalesOrderRow => ({
+        ...o,
+        customer_user_id: o.user_id,
+        omie_numero_pedido: null,
+        items: itensImpressaoDoJson(o.items, `orders ${o.id}`),
+        account: 'afiacao',
+        subtotal: o.total || 0,
+      }));
     },
   });
 
@@ -245,7 +252,7 @@ const SalesPrintDashboard = () => {
       const custId = o.customer_user_id || o.user_id;
       if (custId && !m.has(custId)) {
         const cc = o.omie_payload?.cabecalho?.codigo_cliente;
-        if (cc) m.set(custId, cc);
+        if (typeof cc === 'number' && cc) m.set(custId, cc);
       }
     });
     return m;

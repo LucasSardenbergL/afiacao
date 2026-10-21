@@ -38,7 +38,6 @@ const OBJETOS_MIGRATIONS_RECENTES = new Set(
  */
 const BASELINE: Record<string, string> = {
   call_logs: "PerformanceHub 'Ligações Hoje' — safeQuery cai em 0 (a tabela real é call_log)",
-  sales_print_jobs: "VendasFerramentas — KPI de impressões, safeQuery cai em 0",
 };
 
 /** Identificador imediatamente antes do `.from`/`.rpc` — `storage`/`Array` não são tabela. */

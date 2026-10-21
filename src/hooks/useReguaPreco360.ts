@@ -4,13 +4,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { avaliarReguaPreco } from '@/lib/regua-preco/regua-preco-helpers';
 import type { ReguaPrecoResult } from '@/lib/regua-preco/types';
+import { fetchDatas360DoJson } from '@/lib/regua-preco/borda-rpc';
 import { montarInputRegua, type FetchData360, type FetchDataRegua } from '@/lib/regua-preco/regua-preco-ui';
-
-type Rpc360Result = { data: FetchData360[] | null; error: unknown };
-const callRpc360 = (args: { p_customer: string; p_omie_codigos: number[] }) =>
-  (supabase.rpc as never as (fn: string, a: typeof args) => Promise<Rpc360Result>)(
-    'get_regua_preco_customer360', args,
-  );
 
 /** Régua avaliada + o contexto (preço/qty) que a alimentou — pro componente readonly do 360. */
 export interface Regua360Entry {
@@ -39,9 +34,12 @@ export function useReguaPreco360(
     enabled: enabled && !!customerId && omieCodigos.length > 0,
     staleTime: 60_000,
     queryFn: async (): Promise<FetchData360[]> => {
-      const { data, error } = await callRpc360({ p_customer: customerId!, p_omie_codigos: omieCodigos });
+      const { data, error } = await supabase.rpc('get_regua_preco_customer360', {
+        p_customer: customerId!,
+        p_omie_codigos: omieCodigos,
+      });
       if (error) throw error;
-      return data ?? [];
+      return fetchDatas360DoJson(data);
     },
   });
 

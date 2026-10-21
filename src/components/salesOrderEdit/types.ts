@@ -1,37 +1,15 @@
 // Tipos da tela de edição de pedido de venda.
 // Extraídos verbatim de src/pages/SalesOrderEdit.tsx (god-component split).
+import type { Tables } from '@/integrations/supabase/types';
+import type { ItemPedidoJson, OmiePayloadJson } from '@/lib/pedido/itens-json';
 
-export interface OrderItem {
-  product_id?: string;
-  omie_codigo_produto: number;
-  codigo?: string;
-  descricao: string;
-  unidade?: string;
-  quantidade: number;
-  /** `null` = preco NAO SABIDO (veio assim do Omie). O guard de fronteira
-   *  (invalidPricedOrderItemIndices) ja o trata como invalido e BLOQUEIA o salvar:
-   *  quem edita precisa informar o preco, e nao herdar um R$ 0,00 fabricado. */
-  valor_unitario: number | null;
-  /** `null` enquanto nao ha preco unitario — `qtd * null` seria 0 fabricado. */
-  valor_total: number | null;
-  tint_cor_id?: string;
-  tint_nome_cor?: string;
-  tint_formula_id?: string;
-  // Fase 3: metadados de precificação (fonte escolhida + desconto declarado).
-  // Editar o valor_unitario de um item tint MANUALMENTE os limpa (o item vira
-  // "legado" e o gate da fronteira valida pelo piso min(fontes atuais)).
-  tint_price_source?: string;
-  tint_discount_pct?: number;
-  tint_preco_sem_desconto?: number;
-}
-
-export interface OmiePayload {
-  cabecalho?: {
-    codigo_parcela?: string;
-    [key: string]: unknown;
-  };
-  [key: string]: unknown;
-}
+/**
+ * Item do pedido como vive no jsonb `sales_orders.items` — lido pela borda `itensPedidoDoJson`.
+ * `valor_unitario` `null` = preço NÃO SABIDO: o guard de fronteira (invalidPricedOrderItemIndices)
+ * já o trata como inválido e BLOQUEIA o salvar. Editar o `valor_unitario` de um item tint à mão limpa
+ * os metadados `tint_*` de precificação (o item vira "legado" e o gate valida pelo piso).
+ */
+export type OrderItem = ItemPedidoJson;
 
 export interface SalesOrder {
   id: string;
@@ -44,7 +22,7 @@ export interface SalesOrder {
   account: string;
   omie_pedido_id: number | null;
   omie_numero_pedido: string | null;
-  omie_payload: OmiePayload | null;
+  omie_payload: OmiePayloadJson | null;
   created_at: string;
 }
 
@@ -60,18 +38,11 @@ export interface FormasPagamentoResponse {
   motivo?: string | null;
 }
 
-export interface OmieProduct {
-  id: string;
-  omie_codigo_produto: number;
-  codigo: string;
-  descricao: string;
-  unidade: string;
-  valor_unitario: number;
-  estoque: number;
-  ativo: boolean;
-  account?: string;
-  is_tintometric?: boolean;
-  tint_type?: string;
-}
+/** Linha do catálogo de edição (as colunas do select em `useSalesOrderEdit`). `estoque` NULL = não sincronizado. */
+export type OmieProduct = Pick<
+  Tables<'omie_products'>,
+  | 'id' | 'omie_codigo_produto' | 'codigo' | 'descricao' | 'unidade' | 'valor_unitario' | 'estoque' | 'ativo'
+  | 'account' | 'is_tintometric' | 'tint_type'
+>;
 
 export const BLOCKED_STATUSES = ['cancelado', 'entregue', 'faturado'];
