@@ -75,3 +75,23 @@ Antes, 2024-11 e 2025-05/06 mostravam um consolidado não nulo e inflado pelo IC
   - Página vazia antes do total declarado.
   - Eco de outra página: a contagem truncada pegava o caso antes.
 - Gates de baseline quitados: `escrita-critica` (1→0) e `single-shot-truncado` (2→0).
+
+## Deploy e 1ª escrita (2026-10-21)
+
+- **Deploy:** feito pela sessão via MCP do Lovable, com a colagem do `pendencias:pacote` (`ce50ed6797a8`, `origin/main@4218caf1d`). Os 17 hashes bateram. O commit do bot só regenerou `types.ts`.
+- **Sonda:** `db/sonda-disparo-fin-ic-reconcile-v1.2.sql`, aplicada pelo `db:aplicar`. Request 125764 → `v1.2-contraparte-por-codigo-omie`, **DEPLOY CONFIRMADO**. `pendencias:deploy` voltou com exit 0.
+- **Simular:** `db/simular-fin-ic-reconcile-v1.2.sql`, request 125770.
+  - As 6 consultas ao Omie responderam e nenhuma divergiu do mapa.
+  - A colagem **não tem** cadastro da colacor_sc. A consulta deu EOF legítimo, então não havia "par a mais" escondido.
+  - Resultado: 11 `auto_matched` e 10 `sem_contrapartida`, iguais à medição.
+- **1ª escrita:** `db/escrita-fin-ic-reconcile-v1.2.sql`, request 125772. Inseriu 21 linhas: 11 `auto_matched`, somando R$ 129.176,66, e 10 informativas.
+- **RPC na prod** (corpo de `pg_get_functiondef` em SELECT, porque o `claude_ro` não tem EXECUTE):
+  - 2024-11, 2025-05 e 2025-06: receita e CMV consolidados **NULL**.
+  - 2026-03 e 2026-06: eliminação 0.
+  - 2025-09 (controle sem IC): 0.
+
+**Pendências de produto** (decisão humana, não da edge):
+- Confirmar ou desconsiderar os 3 candidatos sem NF.
+- Recalcular os snapshots de 2024 e 2025-05/06 para que tenham `detalhamento.composicao_*`.
+- Entender o CR da colacor_sc→colacor (R$ 3.605,67): a colacor não tem cadastro da colacor_sc, então o CP correspondente não é identificável.
+
