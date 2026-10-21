@@ -20,9 +20,9 @@
 // par real que ela reprova leva o mês a NULL ("eliminação pendente") — esconder o par deixaria o
 // consolidado superestimado e calado.
 
-export const VALOR_TOLERANCIA_FROUXA = 0.05; // ±5%: só o informativo `divergencia_valor`
-export const DATA_TOLERANCIA_DIAS = 5;
-export const DATA_TOLERANCIA_FROUXA_DIAS = 30; // só o informativo `divergencia_data`
+const VALOR_TOLERANCIA_FROUXA = 0.05; // ±5%: só o informativo `divergencia_valor`
+const DATA_TOLERANCIA_DIAS = 5;
+const DATA_TOLERANCIA_FROUXA_DIAS = 30; // só o informativo `divergencia_data`
 
 /** Status que a edge apaga e regrava. Os demais (`manual_matched`, `desconsiderado`) são do humano. */
 export const STATUS_AUTOMATICOS = [
