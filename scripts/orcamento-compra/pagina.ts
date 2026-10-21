@@ -102,7 +102,6 @@ export function secaoCenarioGuarda(r: Resultado): string {
   const fracInv = r.ciclos.length ? inv.length / r.ciclos.length : null;
   const h = num(r.config.horizonteDias);
   const res = num(r.config.reservaDias);
-  const outras = r.sensibilidade.filter((s) => s.reservaDias !== r.config.reservaDias).map((s) => `${num(s.reservaDias)}`).join(' e ');
   return `<h2>O que o backtest diz sobre o cenário-guarda</h2>
 <p>Sem nenhuma venda nova, a guarda de caixa olha ${h} dias à frente e exige que o saldo fique acima de ${res} dias de saídas em todos os dias. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, no período de ${faixa}. Entre os disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
 ${modoPublico ? '' : `<div class="diag"><p class="rot">Diagnóstico datado 2026-10-15, não recalculado</p>
