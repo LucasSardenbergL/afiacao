@@ -20,13 +20,60 @@ export class FalhaCadastro extends Error {
   etapa: EtapaCadastro;
   /** Código Omie já confirmado quando a falha foi na etapa 'radar' (permite retry só dela). */
   codigo: string | null;
-  constructor(etapa: EtapaCadastro, mensagem: string, codigo: string | null = null) {
+  /**
+   * Código que o Omie DEVOLVEU nesta tentativa, guardado como EVIDÊNCIA (não autoriza o atalho do `codigo`):
+   * a retomada o compara com o vínculo relido — vínculo diferente é conflito, nunca "recuperado" (Codex 2026-10-21).
+   */
+  codigoVisto: string | null;
+  constructor(etapa: EtapaCadastro, mensagem: string, codigo: string | null = null, codigoVisto: string | null = codigo) {
     super(mensagem);
     this.name = 'FalhaCadastro';
     this.etapa = etapa;
     this.codigo = codigo;
+    this.codigoVisto = codigoVisto;
   }
 }
+
+/**
+ * Conflito de IDENTIDADE entre o Radar e o Omie — terminal: repetir não resolve, só um humano conferindo o
+ * Omie. Nunca vira sucesso (nem na retomada, que releria o vínculo antigo e o devolveria como "recuperado").
+ *  - `vinculo_divergente`: o CNPJ já está vinculado a OUTRO código (RPC → SQLSTATE RD001, ou retomada com
+ *    código conhecido ≠ vínculo relido);
+ *  - `codigo_de_outro_cnpj`: o código já está vinculado a OUTRO CNPJ (RPC → SQLSTATE RD002, UNIQUE parcial);
+ *  - `lookup_divergente`: a edge achou no Omie um cliente com OUTRO documento (`OMIE_LOOKUP_DIVERGENTE`).
+ * Migration 20261021120500 (Codex ALTO 3 do bloco 5).
+ */
+export type MotivoDivergencia = 'vinculo_divergente' | 'codigo_de_outro_cnpj' | 'lookup_divergente';
+
+export class DivergenciaCadastro extends FalhaCadastro {
+  motivo: MotivoDivergencia;
+  /** Código que o Omie devolveu nesta tentativa (null quando a divergência veio antes dele). */
+  codigoRecebido: string | null;
+  constructor(etapa: EtapaCadastro, motivo: MotivoDivergencia, mensagem: string, codigoRecebido: string | null) {
+    // `codigo` (do pai) fica null de propósito: ele habilita o "Gravar de novo", que aqui recusaria em laço.
+    super(etapa, mensagem, null, codigoRecebido);
+    this.name = 'DivergenciaCadastro';
+    this.motivo = motivo;
+    this.codigoRecebido = codigoRecebido;
+  }
+}
+
+/** SQLSTATE do erro do PostgREST (objeto plano, não `Error`) — null quando não há. */
+function sqlstateDe(e: unknown): string | null {
+  if (!e || typeof e !== 'object' || !('code' in e)) return null;
+  const c = (e as { code: unknown }).code;
+  return typeof c === 'string' ? c : null;
+}
+
+/** Classifica a recusa da RPC pela SQLSTATE (nunca pela mensagem): RD001/RD002 são terminais. */
+export function divergenciaDaRpc(e: unknown): MotivoDivergencia | null {
+  const c = sqlstateDe(e);
+  if (c === 'RD001') return 'vinculo_divergente';
+  if (c === 'RD002') return 'codigo_de_outro_cnpj';
+  return null;
+}
+
+const ehLookupDivergente = (e: unknown): boolean => (mensagemDeErro(e) ?? '').includes('OMIE_LOOKUP_DIVERGENTE');
 
 export interface RespostaValidada {
   codigo: string;
@@ -76,6 +123,8 @@ export interface OpcoesCadastro {
   codigoConhecido?: string;
   /** Retry de uma falha anterior na etapa omie (resposta perdida): relê o vínculo antes de gravar. */
   retentativa?: boolean;
+  /** Código que o Omie devolveu numa tentativa anterior (evidência): vínculo relido ≠ dele é conflito. */
+  codigoVisto?: string;
 }
 
 export interface ResultadoCadastro {
@@ -100,10 +149,11 @@ export function documentoCadastravelNoOmie(cnpj: string): boolean {
 }
 
 /**
- * Omie primeiro, Radar depois. A RPC não é idempotente de verdade (atualiza a data e
- * insere OUTRO contato a cada chamada), então TODA retomada relê o vínculo ANTES de
- * qualquer chamada — se já está gravado, termina sem tocar Omie nem Radar (um throttling
- * no Omie não pode esconder um cadastro que já tinha concluído).
+ * Omie primeiro, Radar depois. A RPC é idempotente pelo vínculo (igual = no-op; diferente = RD001) e é a
+ * trava partilhada por lote e ficha (FOR UPDATE na linha do CNPJ — migration 20261021120500). A retomada
+ * ainda relê o vínculo ANTES de qualquer chamada para não tocar o Omie à toa (um throttling no Omie não
+ * pode esconder um cadastro que já tinha concluído) — mas, com código conhecido, um vínculo DIFERENTE é
+ * conflito, nunca "recuperado".
  */
 export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   e: E,
@@ -125,7 +175,18 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
     } catch (err) {
       throw new FalhaCadastro('radar', `não consegui reler o vínculo: ${mensagem(err)}`, opcoes.codigoConhecido ?? null);
     }
-    if (vinculo) return { codigo: vinculo, jaExistia: true, recuperado: true };
+    if (vinculo) {
+      const conhecido = (opcoes.codigoConhecido ?? opcoes.codigoVisto)?.trim();
+      if (conhecido && vinculo.trim() !== conhecido) {
+        throw new DivergenciaCadastro(
+          'radar',
+          'vinculo_divergente',
+          `RADAR_VINCULO_DIVERGENTE: CNPJ ${e.cnpj} já vinculado ao cliente Omie ${vinculo.trim()}, o Omie confirmou ${conhecido}`,
+          conhecido,
+        );
+      }
+      return { codigo: vinculo, jaExistia: true, recuperado: true };
+    }
   }
 
   let codigo: string;
@@ -138,13 +199,13 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
     try {
       data = await deps.criarNoOmie(e);
     } catch (err) {
-      throw new FalhaCadastro('omie', mensagem(err));
+      throw falhaNoOmie(err);
     }
     let validada: RespostaValidada;
     try {
       validada = validarRespostaCriarCliente(data);
     } catch (err) {
-      throw new FalhaCadastro('omie', mensagem(err));
+      throw falhaNoOmie(err);
     }
     codigo = validada.codigo;
     jaExistia = validada.jaExistia;
@@ -156,10 +217,19 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
     // A RPC exige a confirmação que a EDGE gravou (ledger `omie_cliente_confirmacoes`) — sem ela, repetir só a
     // gravação (`codigoConhecido`) recusaria de novo, em laço. Vira falha na etapa omie SEM código: o "Tentar de
     // novo" volta pela edge, cujo lookup confere o documento e grava a confirmação (migration 20261021120000).
-    if (ehSemConfirmacaoDoServidor(err)) throw new FalhaCadastro('omie', mensagem(err));
+    if (ehSemConfirmacaoDoServidor(err)) throw new FalhaCadastro('omie', mensagem(err), null, codigo);
+    const motivo = divergenciaDaRpc(err);
+    if (motivo) throw new DivergenciaCadastro('radar', motivo, mensagem(err), codigo);
     throw new FalhaCadastro('radar', mensagem(err), codigo);
   }
   return { codigo, jaExistia, recuperado: retomada };
+}
+
+/** Falha na etapa omie; o lookup que devolveu OUTRO documento é conflito terminal, não falha retentável. */
+function falhaNoOmie(err: unknown): FalhaCadastro {
+  return ehLookupDivergente(err)
+    ? new DivergenciaCadastro('omie', 'lookup_divergente', mensagem(err), null)
+    : new FalhaCadastro('omie', mensagem(err));
 }
 
 /** Marca da RPC `radar_registrar_cadastro_omie` quando o servidor não confirmou o par CNPJ↔código no Omie/Oben. */

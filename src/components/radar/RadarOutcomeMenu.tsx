@@ -28,7 +28,7 @@ import { useRadarCadastrarOmie, lerLeadParaCadastro } from '@/queries/useRadarAc
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
-import { ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
+import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -47,7 +47,7 @@ const LABEL_OK: Record<AcaoContato, string> = {
   descartado: 'Lead descartado',
 };
 
-type ResultadoPosSinal = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'lead_mudou';
+type ResultadoPosSinal = 'sucesso' | 'ja_existia' | 'indeterminado' | 'erro' | 'lead_mudou' | 'divergente';
 
 /** A oferta aberta: o lead (SNAPSHOT) e o id do toast "Marcado: em conversa" (para tirar o Desfazer). */
 /** `id` correlaciona exposição → resposta → resultado(s) e retries nos sensores (sem PII). */
@@ -178,13 +178,27 @@ export function RadarOutcomeMenu({
           description: 'O Omie não devolveu o código do cliente. O lead continua na fila.',
           action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
         });
+      } else if (e instanceof DivergenciaCadastro) {
+        // Conflito de identidade Radar×Omie (RD001/RD002/lookup divergente): nada foi regravado e repetir não
+        // resolve — sem botão de retentar (ele releria o vínculo antigo e mostraria "reconciliado").
+        registrarResultado('divergente');
+        toast.error('Conflito de vínculo com o Omie — nada foi gravado', {
+          description: `${msg} Confira o cadastro no Omie.`,
+        });
       } else if (ehSemConfirmacaoDoServidor(e)) {
         // A RPC não achou a confirmação que a EDGE grava (ledger omie_cliente_confirmacoes) — o lead segue na
         // fila. A retentativa volta pela edge (o lookup confere o documento e grava), nunca pelo "Gravar de novo".
         registrarResultado('indeterminado');
         toast.warning('Cadastro não confirmado pelo servidor', {
           description: 'O Radar não recebeu a confirmação do Omie para este CNPJ. O lead continua na fila.',
-          action: { label: 'Tentar de novo', onClick: () => void executarCadastro(alvo, ofertaId, { retentativa: true }) },
+          // o código que o Omie devolveu vai como EVIDÊNCIA: se o vínculo relido for outro, é conflito
+          action: {
+            label: 'Tentar de novo',
+            onClick: () => void executarCadastro(alvo, ofertaId, {
+              retentativa: true,
+              ...(e instanceof FalhaCadastro && e.codigoVisto ? { codigoVisto: e.codigoVisto } : {}),
+            }),
+          },
         });
       } else if (e instanceof FalhaCadastro && e.etapa === 'radar' && e.codigo) {
         registrarResultado('erro');

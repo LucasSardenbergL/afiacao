@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsearLote, serializarLote, itensPendentes, loteConcluido, type LotePersistido } from '../lote-persistido';
+import { parsearLote, serializarLote, itensPendentes, itensDivergentes, loteConcluido, type LotePersistido } from '../lote-persistido';
 
 const lote: LotePersistido = {
   v: 1,
@@ -26,5 +26,20 @@ describe('lote-persistido', () => {
     expect(itensPendentes(lote).map((i) => i.cnpj)).toEqual(['12345678000276', '12345678000357']);
     expect(loteConcluido(lote)).toBe(false);
     expect(loteConcluido({ ...lote, itens: [lote.itens[0]] })).toBe(true);
+  });
+  // Codex ALTO 3 do bloco 5: conflito de vínculo é TERMINAL — não é retentável (a retomada releria o vínculo
+  // antigo e o devolveria como "recuperado") e não conclui o lote (senão o storage o apagaria e a evidência sumiria).
+  it('divergente: fora dos retentáveis, mas segura o lote até o descarte explícito', () => {
+    const comConflito: LotePersistido = {
+      ...lote,
+      itens: [
+        lote.itens[0],
+        { cnpj: '12345678000438', nome: 'D', estado: { status: 'divergente', motivo: 'vinculo_divergente', erro: 'RADAR_VINCULO_DIVERGENTE: …', codigo: '9' } },
+      ],
+    };
+    expect(itensPendentes(comConflito)).toEqual([]);
+    expect(itensDivergentes(comConflito).map((i) => i.cnpj)).toEqual(['12345678000438']);
+    expect(loteConcluido(comConflito)).toBe(false);
+    expect(parsearLote(serializarLote(comConflito))).toEqual(comConflito);
   });
 });

@@ -31,7 +31,7 @@ vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 vi.mock('sonner', () => ({ toast }));
 
 import { RadarOutcomeMenu } from '../RadarOutcomeMenu';
-import { FalhaCadastro } from '@/lib/radar/cadastro-omie';
+import { DivergenciaCadastro, FalhaCadastro } from '@/lib/radar/cadastro-omie';
 
 const empresa = {
   cnpj: '12345678000195',
@@ -157,6 +157,21 @@ describe('RadarOutcomeMenu — oferta de cadastro pós-sinal', () => {
     acao.onClick();
     await waitFor(() => expect(cadastrar).toHaveBeenCalledTimes(2));
     expect(cadastrar.mock.calls[1][0]).toEqual({ empresa, opcoes: { codigoConhecido: '9090' } });
+  });
+
+  it('conflito de vínculo (RD001) é TERMINAL: toast de conflito SEM ação de retentar e resultado "divergente"', async () => {
+    cadastrar.mockRejectedValue(new DivergenciaCadastro('radar', 'vinculo_divergente', 'RADAR_VINCULO_DIVERGENTE: CNPJ x já vinculado ao cliente Omie 555, recebido 9090', '9090'));
+    render(<RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} />);
+    await abrirMenuEClicar(/em conversa/i);
+    await screen.findByText(OFERTA);
+    fireEvent.click(screen.getByRole('button', { name: /cadastrar agora/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(toast.error.mock.calls[0][0]).toMatch(/Conflito de vínculo/);
+    expect(toast.error.mock.calls[0][1]).not.toHaveProperty('action');
+    // o único success é o do SINAL ("Marcado: em conversa"), nunca o de cadastro/reconciliação
+    expect(toast.success.mock.calls.map(([t]) => String(t))).toEqual(['Marcado: em conversa']);
+    const resultado = track.mock.calls.find(([n]) => n === 'radar.cadastro_pos_sinal_resultado');
+    expect(resultado?.[1]).toMatchObject({ resultado: 'divergente' });
   });
 
   it('"Gravar de novo" depois que o recruzamento marcou ja_cliente: a RETOMADA não é barrada pela releitura', async () => {
