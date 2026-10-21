@@ -24,11 +24,18 @@ export interface LinhaVenda {
   noEscopo: boolean;
 }
 
+/** Recebimento físico (chegada em t4) na unidade de ESTOQUE; alimenta a reconstrução do estoque inicial. */
+export interface EventoRecebimento {
+  sku: string;
+  data: Data;
+  quantidade: number;
+}
+
 export interface ItemLT {
   trackingId: string;
   sku: string;
   t1: Data;
-  /** t4 do recebimento que completa >= 95% do pedido; null = aberto. */
+  /** t4 do documento-SKU (1 recebimento por documento-SKU, ruling R7; sem checagem de >= 95% do pedido); null = aberto. */
   t4: Data | null;
   /** Dias úteis de t1 até t4; aberto: max(du de t1 até a extração, 15). */
   ltDu: number;
@@ -105,6 +112,8 @@ export interface AvisoDados {
 export interface Dados {
   vendas: LinhaVenda[];
   itensLT: ItemLT[];
+  /** Chegadas (t4 não nulo, quantidade_recebida > 0) dos SKUs do contrato de unidade, ordenadas por (data, sku). */
+  recebimentos: EventoRecebimento[];
   skus: Map<string, Sku>;
   zPorClasse: Record<Classe, number>;
   teto: TetoConfig;
@@ -113,7 +122,7 @@ export interface Dados {
   sugestaoHoje: Map<string, { posicao: number; qtdeFinal: number }>;
   excluidos: { sku: string; motivo: string }[];
   classificacaoHist: ClassificacaoHist;
-  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1, QTD_PEDIDA_INVALIDA). */
+  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; SEM_T4_REGISTRADO = documento sem t4 e com mais du que o LT máximo, fora da amostra de LT). */
   avisos: AvisoDados[];
   dataExtracao: Data;
   hashDados: string;

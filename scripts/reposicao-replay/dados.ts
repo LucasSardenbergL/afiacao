@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CSVS_REPLAY, LT_ABERTO_MIN_DU, LT_MAX_OBSERVADO_DU } from './config';
-import { duEntre } from './du';
+import { duEntre } from './calendario';
 import {
   ErroDadosReplay,
   type AvisoDados,
@@ -14,6 +14,7 @@ import {
   type Dados,
   type Data,
   type Equivalencia,
+  type EventoRecebimento,
   type ItemLT,
   type LinhaVenda,
   type Sku,
@@ -151,7 +152,7 @@ export function divisorDeUnidade(
 }
 
 // ── LT documental (§5.9) ─────────────────────────────────────────────────────────────────────────────────────────
-interface RecebLinha {
+export interface RecebLinha {
   trackingId: string;
   sku: string;
   t1: Data;
@@ -204,6 +205,32 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
   if (t4AntesT1 > 0) avisos.push({ codigo: 'T4_ANTES_DE_T1', n: t4AntesT1 });
   if (semT4 > 0) avisos.push({ codigo: 'SEM_T4_REGISTRADO', n: semT4 });
   return { itens, avisos };
+}
+
+/**
+ * Chegadas físicas para a reconstrução do estoque: uma por linha com `t4` e `quantidade_recebida` > 0, só de SKUs que
+ * ficaram no contrato de unidade (`divisor` tem o SKU). Linha com t4 < t1 é dado suspeito (aviso T4_ANTES_DE_T1) e fica
+ * de fora, como no LT. `quantidade_recebida` é a quantidade que o Omie deu entrada no estoque, já na unidade de ESTOQUE
+ * (a `quantidade_pedida` é que vem na unidade do portal, R7): por isso entra SEM dividir pelo divisor NF→estoque, que
+ * vale só para a quantidade de venda da NF. Ausente (vazio) ou <= 0 não vira evento (nunca vira 0 fabricado).
+ * DEDUP FÍSICO por (sku, t4, quantidade): o mesmo embarque aparece sob vários tracking_id (no dado real, 65% das linhas
+ * repetem (sku, t4, qtd) de outro tracking; sem isto o recebido dobra e o estoque inicial reconstruído fica negativo).
+ * Diferente do LT, que é DOCUMENTAL (tracking_id + sku): aqui o que importa é o evento físico no estoque. Dois
+ * recebimentos legítimos idênticos no mesmo dia e SKU seriam fundidos (subestima a entrada; raro e documentado).
+ */
+export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): EventoRecebimento[] {
+  const out: EventoRecebimento[] = [];
+  const vistos = new Set<string>();
+  for (const l of linhas) {
+    if (l.t4 === null || l.recebida === null || !(l.recebida > 0) || l.t4 < l.t1) continue;
+    if (!divisor.has(l.sku)) continue;
+    const chave = `${l.sku}\u0000${l.t4}\u0000${l.recebida}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    out.push({ sku: l.sku, data: l.t4, quantidade: l.recebida });
+  }
+  out.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.quantidade - b.quantidade));
+  return out;
 }
 
 // ── carga ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -337,17 +364,16 @@ export function carregarDados(dir: string): Dados {
 
   // recebimentos -> LT documental
   const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida'], false);
-  const { itens: itensLT, avisos } = montarItensLT(
-    rc.linhas.map((r) => ({
-      trackingId: r[rc.col('tracking_id')],
-      sku: r[rc.col('sku')],
-      t1: data(rc.arquivo, 't1', r[rc.col('t1')]),
-      t4: dataOuNull(rc.arquivo, 't4', r[rc.col('t4')]),
-      pedida: numOuNull(rc.arquivo, 'quantidade_pedida', r[rc.col('quantidade_pedida')]),
-      recebida: numOuNull(rc.arquivo, 'quantidade_recebida', r[rc.col('quantidade_recebida')]),
-    })),
-    dataExtracao,
-  );
+  const recLinhas: RecebLinha[] = rc.linhas.map((r) => ({
+    trackingId: r[rc.col('tracking_id')],
+    sku: r[rc.col('sku')],
+    t1: data(rc.arquivo, 't1', r[rc.col('t1')]),
+    t4: dataOuNull(rc.arquivo, 't4', r[rc.col('t4')]),
+    pedida: numOuNull(rc.arquivo, 'quantidade_pedida', r[rc.col('quantidade_pedida')]),
+    recebida: numOuNull(rc.arquivo, 'quantidade_recebida', r[rc.col('quantidade_recebida')]),
+  }));
+  const { itens: itensLT, avisos } = montarItensLT(recLinhas, dataExtracao);
+  const recebimentos = eventosDeRecebimento(recLinhas, divisor);
 
   // equivalencias (vazia é aceita)
   const eq = lerTabela(dir, 'equivalencias', ['sku', 'sku_equivalente', 'fator', 'grupo_id', 'fator_para_base_sku', 'fator_para_base_equivalente', 'unidades_omie_sku', 'unidades_omie_equivalente'], true);
@@ -396,5 +422,5 @@ export function carregarDados(dir: string): Dados {
     } else invalido(ch.arquivo, `tipo desconhecido: '${tipo}'`);
   }
 
-  return { vendas, itensLT, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, avisos, dataExtracao, hashDados };
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, avisos, dataExtracao, hashDados };
 }

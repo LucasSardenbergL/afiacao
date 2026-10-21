@@ -2,8 +2,8 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { carregarDados } from './dados';
-import { duEntre } from './du';
+import { carregarDados, eventosDeRecebimento } from './dados';
+import { duEntre } from './calendario';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
@@ -207,5 +207,18 @@ describe('LT documental (§5.9)', () => {
     );
     expect(d.itensLT.map((i) => i.trackingId)).toEqual(['B']);
     expect(d.avisos).toContainEqual({ codigo: 'T4_ANTES_DE_T1', n: 1 });
+  });
+});
+
+describe('eventosDeRecebimento (estoque físico)', () => {
+  const l = (trackingId: string, sku: string, t1: string, t4: string | null, recebida: number | null) => ({ trackingId, sku, t1, t4, pedida: 99, recebida });
+  const div = new Map([['S1', 1]]);
+  it('dedup físico por (sku, t4, quantidade) entre tracking_id; quantidade diferente é parcial e fica', () => {
+    const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 10), l('b', 'S1', '2026-01-06', '2026-01-12', 10), l('c', 'S1', '2026-01-05', '2026-01-12', 4)], div);
+    expect(ev).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 4 }, { sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
+  });
+  it('sem t4, quantidade vazia/<=0, t4 antes de t1 ou SKU fora do contrato de unidade não viram evento', () => {
+    const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', null, 3), l('b', 'S1', '2026-01-05', '2026-01-12', null), l('c', 'S1', '2026-01-05', '2026-01-12', 0), l('d', 'S1', '2026-01-20', '2026-01-12', 5), l('e', 'S9', '2026-01-05', '2026-01-12', 5)], div);
+    expect(ev).toEqual([]);
   });
 });

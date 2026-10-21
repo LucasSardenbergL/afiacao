@@ -3,6 +3,9 @@ import type { Classe, Data } from './tipos';
 
 export const CORTE_COORTE: Data = '2026-05-01';
 
+/** Início do aquecimento = primeira data das vendas OBEN no extrato (confira com o dado real). */
+export const INICIO_AQUECIMENTO: Data = '2025-10-21';
+
 export const JANELAS = {
   aquecimentoFim: '2026-01-31',
   calibracaoIni: '2026-02-01',
