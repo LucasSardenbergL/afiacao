@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **695** custom migrations totais
-- **2234** objetos esperados (criados por estas migrations)
+- **696** custom migrations totais
+- **2237** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 837
+  - `function`: 839
   - `rls_policy`: 482
   - `index`: 290
   - `cron_job`: 196
   - `table`: 195
   - `view`: 125
-  - `trigger`: 105
+  - `trigger`: 106
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5647,6 +5647,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_registrar_cadastro_omie` | — |
 | `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
+
+### `20261021190000_fin_ic_venda_sem_cobranca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ic_matches_guarda_sem_cobranca` | — |
+| `function` | `public.fin_consolidado_intercompany` | — |
+| `trigger` | `public.fin_ic_matches_guarda_sem_cobranca` | `fin_ic_matches` |
 
 ## Próximos passos por status
 

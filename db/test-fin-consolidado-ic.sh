@@ -143,7 +143,8 @@ case "${SABOTAGEM:-}" in
   sc_multi_linha) sabotar "AND ((u.sd_comp -> u.cp_chave) - 'cmv') = '{}'::jsonb" "" ;;
   sc_pendente)    sabotar "SELECT count(*) FILTER (WHERE NOT v.ok) > 0 AS pendente" "SELECT false AS pendente" ;;
   sc_mes)         sabotar "FROM sem_cobranca u\n     WHERE u.cp_no_mes IS TRUE" "FROM sem_cobranca u\n     WHERE true" ;;
-  trg_master)     sabotar "  v_master boolean := COALESCE(" "  v_master boolean := true OR COALESCE(" ;;
+  trg_master)     sabotar "IF NOT v_master THEN\n      RAISE EXCEPTION 'venda sem cobranca: so o master marca'" \
+                          "IF false THEN\n      RAISE EXCEPTION 'venda sem cobranca: so o master marca'" ;;
   trg_carimbo)    sabotar "NEW.resolvido_por := auth.uid();" "NEW.resolvido_por := NEW.resolvido_por;" ;;
   trg_insert)     sabotar "IF TG_OP = 'INSERT' THEN" "IF TG_OP = 'INSERT' AND false THEN" ;;
   trg_cr)         sabotar "OR NEW.cr_id IS NOT NULL OR NEW.cp_id IS NULL" "OR NEW.cp_id IS NULL" ;;
@@ -585,6 +586,16 @@ eq "T10 DELETE da linha marcada (até como postgres) → 42501" "$(estado "DELET
 eq "T11 employee muda só a observação da linha marcada" "$(upd "$STAFF" "UPDATE public.fin_ic_matches SET observacao = 'nota' WHERE id = '$LA'")" "1"
 eq "T12 service_role (sem usuário) não marca → 42501" "$(estado "SET ROLE service_role; SET request.jwt.claim.role = 'service_role'; $MARCA WHERE id = '$LD'")" "42501"
 eq "T13 customer: a RLS não deixa tocar (0 linhas)" "$(upd "$CLIENTE" "UPDATE public.fin_ic_matches SET status = 'sem_contrapartida' WHERE id = '$LA'")" "0"
+# A edge escreve como service_role, sem usuário: o trigger não pode atrapalhar o INSERT e o DELETE dela.
+EDGE="SET ROLE service_role; SET request.jwt.claim.role = 'service_role';"
+eq "T15 a edge (service_role) insere linha informativa com o trigger ligado" "$(Pq -c "$EDGE WITH i AS (INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cp_id, status)
+   SELECT 'colacor', 'oben', cp_id, 'sem_contrapartida' FROM public.fin_ic_matches WHERE id = '$LC' RETURNING 1) SELECT count(*) FROM i")" "1"
+# Como a edge apaga: pelos ids lidos antes (aqui, todas as linhas de 2029, a marcada inclusive), refiltrando
+# status informativo e resolvido_em no próprio DELETE (casamento.ts, apagarInformativos).
+IDS2029="$(Pq -c "SELECT string_agg(quote_literal(m.id::text), ',') FROM public.fin_ic_matches m JOIN public.fin_contas_pagar cp ON cp.id = m.cp_id WHERE cp.data_emissao BETWEEN '2029-01-01' AND '2029-12-31'")"
+eq "T16 ... e apaga as informativas não resolvidas pelos ids, como a edge faz (a marcada fica)" "$(Pq -c "$EDGE WITH d AS (DELETE FROM public.fin_ic_matches
+   WHERE id IN ($IDS2029) AND status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
+   AND resolvido_em IS NULL RETURNING 1) SELECT count(*) FROM d")" "4"
 eq "T14 a linha marcada sobreviveu a tudo" "$(Pq -c "SELECT status || ',' || observacao FROM public.fin_ic_matches WHERE id = '$LA'")" "intragrupo_sem_cobranca,nota"
 
 # ── MIG7: re-aplicar com linhas marcadas passa e não as toca ──

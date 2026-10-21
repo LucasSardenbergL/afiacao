@@ -57,7 +57,7 @@ BEGIN
   IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '93632843a0f32c133994323d69d715c7') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
-  IF v_trg IS NOT NULL AND v_trg <> 'f7054405455b2805472412e7dbb256ea' THEN
+  IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_ic_matches_guarda_sem_cobranca viva (md5 %) nao e esta', v_trg;
   END IF;
   IF v_chk IS NULL OR v_chk NOT IN (
@@ -81,7 +81,9 @@ LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_temp'
 AS $g$
 DECLARE
-  v_master boolean := COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false);
+  -- Só lido nas transições do status: as escritas da edge (INSERT/DELETE de outros status) não tocam
+  -- auth.uid() nem has_role.
+  v_master boolean;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     IF OLD.status = 'intragrupo_sem_cobranca' THEN
@@ -99,6 +101,7 @@ BEGIN
 
   IF NEW.status = 'intragrupo_sem_cobranca' AND OLD.status IS DISTINCT FROM 'intragrupo_sem_cobranca' THEN
     -- ENTRA: decisão do founder, sobre um CP sem CR que a edge classificou sem contrapartida.
+    v_master := COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false);
     IF NOT v_master THEN
       RAISE EXCEPTION 'venda sem cobranca: so o master marca' USING ERRCODE = '42501';
     END IF;
@@ -112,6 +115,7 @@ BEGIN
     NEW.resolvido_em := now();
   ELSIF OLD.status = 'intragrupo_sem_cobranca' AND NEW.status IS DISTINCT FROM 'intragrupo_sem_cobranca' THEN
     -- SAI: só de volta para a edge recalcular (sem_contrapartida não resolvido).
+    v_master := COALESCE(public.has_role(auth.uid(), 'master'::public.app_role), false);
     IF NOT v_master THEN
       RAISE EXCEPTION 'venda sem cobranca: so o master desfaz' USING ERRCODE = '42501';
     END IF;
@@ -371,7 +375,7 @@ BEGIN
   IF v_rpc IS DISTINCT FROM '93632843a0f32c133994323d69d715c7' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
-  IF v_trg IS DISTINCT FROM 'f7054405455b2805472412e7dbb256ea' THEN
+  IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', g, v_trg;
   END IF;
 

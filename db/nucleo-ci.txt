@@ -724,12 +724,14 @@ db/test-venda-painel.sh                    19  falsificar=8
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
 db/test-venda-ondas23.sh                   44  falsificar=18
-# DRE consolidado intercompany (20261021120000): receita e CMV caem pelo MESMO valor eliminado, resultado
-# intacto; só par PROVADO elegível pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo valor,
-# sem cancelado/sem status, uso único, teto da categoria, snapshot fiel aos títulos atuais); confirmado não
-# elegível ⇒ NULL nas 4 linhas; mês/coluna sem snapshot ⇒ bruto NULL; escopo da soma parcial; gate staff e
-# ACL. 19 sabotagens (md5 reassinado).
-db/test-fin-consolidado-ic.sh              34  falsificar=19
+# DRE consolidado intercompany (20261021120000 → 20261021190000): par CR↔CP — receita e CMV caem pelo MESMO
+# valor, resultado intacto, só par PROVADO pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo
+# valor, sem cancelado/sem status, uso único, teto, snapshot fiel aos títulos atuais); venda intragrupo SEM
+# COBRANÇA (marcada pelo master) — só o CMV do destino cai e o resultado sobe, com as mesmas provas + sem
+# "CR aparecido" na mesma direção; teto soma par + sem cobrança; não elegível ⇒ NULL nas 4 linhas; trigger
+# (só master marca/desfaz, forma, carimbo, INSERT/DELETE recusados); gate staff e ACL. 51 sabotagens (md5
+# das 2 funções reassinado).
+db/test-fin-consolidado-ic.sh              79  falsificar=51
 
 # Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
 # vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo
