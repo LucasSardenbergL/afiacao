@@ -227,6 +227,14 @@ describe('simularCiclo', () => {
     // controle: se a física também tivesse as 20, o fim de 30/09 seria 85 e não fecharia com 65
     expect(simularCiclo(fisicaIgual(f), 1, cfg).fechamento).toEqual([{ sku: '9', erro: 20, ok: false }]);
   });
+  it('R61: a DECISÃO (proteção) usa a demanda efetiva, não a física', () => {
+    // efetiva 5/dia (substituição consolidada no SKU) × física 1/dia: a proteção segue a efetiva
+    const efetiva5 = Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 5 }));
+    const f: Fatos = { ...fatos, demanda: efetiva5, demanda_fisica: DEM200, linhas: [{ ...fatos.linhas[0], estoque_atual: 2 }] };
+    const comEfetiva = simularCiclo(f, 1, cfg).protegidas;
+    const soFisica = simularCiclo({ ...f, demanda: DEM200 }, 1, cfg).protegidas;
+    expect(comEfetiva).toBeGreaterThan(soFisica);
+  });
   it('R61: demanda física com qtde nula reprova o pré-voo', () => {
     expect(preVoo({ ...fatos, demanda_fisica: [{ sku: '9', data: '2026-10-01', qtde: null }] })).toContain('demanda_fisica com qtde nula — reconstrução de estoque inválida');
     expect(preVoo({ ...fatos, demanda_fisica: undefined as unknown as Fatos['demanda_fisica'] })).toContain('demanda_fisica ausente — fatos.sql antigo (R61)');
