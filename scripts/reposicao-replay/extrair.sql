@@ -32,9 +32,10 @@ copy (
 
 -- ── recebimentos.csv: sku_leadtime_history deduplicado por (tracking_id, empresa, sku, t4, qtde_recebida) ──────
 -- Recebimento parcial (mesma tracking, quantidade_recebida diferente) é PRESERVADO. Pedido sem t4 sai com t4 vazio.
+-- t2 (faturamento, data SP; vazio se NULL) vai no FIM: a edge grava t1 = t2 quando não casa o pedido ("t1 fabricado").
 -- t1/t4 em data de São Paulo. Empate na chave: fica a linha atualizada mais recentemente.
 copy (
-  select d.tracking_id, d.sku, d.t1, d.t4, d.quantidade_pedida, d.quantidade_recebida
+  select d.tracking_id, d.sku, d.t1, d.t4, d.quantidade_pedida, d.quantidade_recebida, d.t2
   from (
     select distinct on (h.tracking_id, h.empresa, h.sku_codigo_omie, h.t4_data_recebimento, h.quantidade_recebida)
            h.tracking_id,
@@ -42,7 +43,8 @@ copy (
            (h.t1_data_pedido at time zone 'America/Sao_Paulo')::date as t1,
            (h.t4_data_recebimento at time zone 'America/Sao_Paulo')::date as t4,
            h.quantidade_pedida,
-           h.quantidade_recebida
+           h.quantidade_recebida,
+           (h.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as t2   -- R17 (coluna no FIM): t1 = t2 => t1 fabricado
     from sku_leadtime_history h
     where h.empresa = 'OBEN'
       and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
@@ -294,5 +296,37 @@ select k, val from (
   union all select 10, 'pct_valor_venda_em_grupo', round(100.0 * em.vv / nullif(tot.vv, 0), 2)::text from em, tot
 ) t order by o
 \g :dir/grupos_embalagem.txt
+
+-- ── demanda_insumo.csv (R16): fração da demanda via ficha técnica, por SKU do escopo ──────────────────────────────
+-- Fonte: a 2ª perna do UNION de v_sku_demanda_efetiva (o que o motor soma e vendas.csv NÃO traz): venda OBEN do pai
+-- (quantidade > 0, CFOP de venda) × v_pcp_malha_oben.quantidade, creditada ao componente (comp_oben). share = insumo /
+-- (insumo + venda direta), na mesma janela de vendas.csv (todo o histórico OBEN). Só SKUs com insumo > 0; pode vir vazio.
+-- Unidades: a do insumo e a da NF podem diferir; o share é um GATE de exclusão (> 10%), não entra em conta de estoque.
+copy (
+  with escopo as (
+    select sp.sku_codigo_omie::text as sku from sku_parametros sp
+     where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%'
+  ),
+  ins as (
+    select mo.comp_oben::text as sku, sum(v.quantidade * mo.quantidade) as q
+    from v_venda_items_history_efetivo v
+    join v_pcp_malha_oben mo on mo.pai_oben = v.sku_codigo_omie
+    join omie_products p on p.omie_codigo_produto = mo.comp_oben and p.account = 'oben'
+    where v.empresa = 'OBEN' and v.quantidade > 0
+      and v.cfop in ('5101','5102','5107','5108','6101','6102','6107','6108')
+      and mo.comp_oben::text in (select sku from escopo)
+    group by 1
+  ),
+  dir as (
+    select v.sku_codigo_omie::text as sku, sum(v.quantidade) as q
+    from v_venda_items_history_efetivo v
+    where v.empresa = 'OBEN' and v.sku_codigo_omie::text in (select sku from ins)
+    group by 1
+  )
+  select i.sku, round(i.q / (i.q + greatest(coalesce(d.q, 0), 0)), 6) as share_insumo
+  from ins i left join dir d on d.sku = i.sku
+  where i.q > 0
+  order by i.sku
+) to stdout with (format csv, delimiter '|', header true) \g :dir/demanda_insumo.csv
 
 select 'fim', 'ok';

@@ -159,6 +159,8 @@ export interface RecebLinha {
   t4: Data | null;
   pedida: number | null;
   recebida: number | null;
+  /** Faturamento (t2); null = ausente. */
+  t2: Data | null;
 }
 
 /**
@@ -169,8 +171,17 @@ export interface RecebLinha {
  * acima disso é faturado sem recebimento registrado => FORA da amostra (aviso SEM_T4_REGISTRADO).
  */
 export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens: ItemLT[]; avisos: AvisoDados[] } {
+  // R17 — t1 FABRICADO: a edge grava `t1 = pedidoCasado?.t1 ?? nfe.t2_data_faturamento` (docs/agent/reposicao.md, "presente
+  // ≠ confiável"), e a produção deixa lt_bruto_dias_uteis NULL nesse caso, que v_sku_leadtime_estatisticas descarta. Com t2
+  // presente e t1 = t2 o "LT" seria só a logística (curto, otimista): a linha sai do LT. Continua valendo como chegada FÍSICA
+  // (eventosDeRecebimento não passa por aqui).
+  let t1Fabricado = 0;
   const grupos = new Map<string, RecebLinha[]>();
   for (const l of linhas) {
+    if (l.t2 !== null && l.t1 === l.t2) {
+      t1Fabricado++;
+      continue;
+    }
     const k = `${l.trackingId}\u0000${l.sku}`;
     const g = grupos.get(k);
     if (g) g.push(l);
@@ -188,9 +199,11 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
     }
     const t4s = g.map((l) => l.t4).filter((t): t is Data => t !== null).sort();
     const { trackingId, sku } = g[0];
+    const t2s = g.map((l) => l.t2).filter((t): t is Data => t !== null).sort();
+    const t2 = t2s.length ? t2s[t2s.length - 1] : null;
     if (t4s.length > 0) {
       const t4 = t4s[t4s.length - 1];
-      itens.push({ trackingId, sku, t1, t4, ltDu: duEntre(t1, t4), aberto: false });
+      itens.push({ trackingId, sku, t1, t2, t4, ltDu: duEntre(t1, t4), aberto: false });
       continue;
     }
     const decorrido = duEntre(t1, dataExtracao);
@@ -198,11 +211,12 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
       semT4 += g.length;
       continue;
     }
-    itens.push({ trackingId, sku, t1, t4: null, ltDu: Math.max(decorrido, LT_ABERTO_MIN_DU), aberto: true });
+    itens.push({ trackingId, sku, t1, t2, t4: null, ltDu: Math.max(decorrido, LT_ABERTO_MIN_DU), aberto: true });
   }
   itens.sort((a, b) => (a.t1 < b.t1 ? -1 : a.t1 > b.t1 ? 1 : a.trackingId < b.trackingId ? -1 : a.trackingId > b.trackingId ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
   const avisos: AvisoDados[] = [];
   if (t4AntesT1 > 0) avisos.push({ codigo: 'T4_ANTES_DE_T1', n: t4AntesT1 });
+  if (t1Fabricado > 0) avisos.push({ codigo: 'T1_FABRICADO', n: t1Fabricado });
   if (semT4 > 0) avisos.push({ codigo: 'SEM_T4_REGISTRADO', n: semT4 });
   return { itens, avisos };
 }
@@ -363,7 +377,7 @@ export function carregarDados(dir: string): Dados {
   });
 
   // recebimentos -> LT documental
-  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida'], false);
+  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2'], false);
   const recLinhas: RecebLinha[] = rc.linhas.map((r) => ({
     trackingId: r[rc.col('tracking_id')],
     sku: r[rc.col('sku')],
@@ -371,6 +385,7 @@ export function carregarDados(dir: string): Dados {
     t4: dataOuNull(rc.arquivo, 't4', r[rc.col('t4')]),
     pedida: numOuNull(rc.arquivo, 'quantidade_pedida', r[rc.col('quantidade_pedida')]),
     recebida: numOuNull(rc.arquivo, 'quantidade_recebida', r[rc.col('quantidade_recebida')]),
+    t2: dataOuNull(rc.arquivo, 't2', r[rc.col('t2')]),
   }));
   const { itens: itensLT, avisos } = montarItensLT(recLinhas, dataExtracao);
   const recebimentos = eventosDeRecebimento(recLinhas, divisor);
@@ -422,5 +437,16 @@ export function carregarDados(dir: string): Dados {
     } else invalido(ch.arquivo, `tipo desconhecido: '${tipo}'`);
   }
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, avisos, dataExtracao, hashDados };
+  // demanda_insumo (R16): fração em [0, 1]; arquivo só com cabeçalho é válido (nenhum SKU com insumo)
+  const di = lerTabela(dir, 'demanda_insumo', ['sku', 'share_insumo'], true);
+  const shareInsumo = new Map<string, number>();
+  for (const r of di.linhas) {
+    const sku = r[di.col('sku')];
+    const v = num(di.arquivo, 'share_insumo', r[di.col('share_insumo')]);
+    if (!(v >= 0 && v <= 1)) invalido(di.arquivo, `share_insumo fora de [0,1] em ${sku}: ${v}`);
+    if (shareInsumo.has(sku)) invalido(di.arquivo, `sku duplicado: ${sku}`);
+    shareInsumo.set(sku, v);
+  }
+
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, avisos, dataExtracao, hashDados };
 }

@@ -8,8 +8,11 @@
 // ADI > 1,32 e CV² > 0,49 (estritos). `sem_dado` = menos de 2 semanas com venda (CV² não estimável).
 import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { classeEfetiva, type DadosClasse } from './classe';
-import { CORTE_COORTE, INICIO_AQUECIMENTO, MAX_SEMANAS_COM_VENDA_PARADO, SEMANAS_PARADO } from './config';
-import type { Classe, Data, PadraoSB, Parado } from './tipos';
+import { CORTE_COORTE, INICIO_AQUECIMENTO, LIMITE_SHARE_INSUMO, MAX_SEMANAS_COM_VENDA_PARADO, SEMANAS_PARADO } from './config';
+import type { Classe, Dados, Data, PadraoSB, Parado } from './tipos';
+
+/** Dados da coorte: os da classe + a fração de demanda via insumo (R16). */
+export type DadosCoorte = DadosClasse & Pick<Dados, 'shareInsumo'>;
 
 export const SB_ADI_CORTE = 1.32;
 export const SB_CV2_CORTE = 0.49;
@@ -58,14 +61,17 @@ export interface Coorte {
   populacao: Set<string>;
   alterados: Set<string>;
   parados: Parado[];
+  /** Fora da coorte por desenho (R16): demanda > LIMITE_SHARE_INSUMO via ficha técnica, que o extrato de vendas não traz. */
+  excluidos: { sku: string; motivo: 'DEMANDA_INSUMO'; shareInsumo: number }[];
 }
 
-function montar(dados: DadosClasse, soHabilitados: boolean): Coorte {
+function montar(dados: DadosCoorte, soHabilitados: boolean): Coorte {
   const corte = CORTE_COORTE;
   const efetiva = classeEfetiva(dados, corte);
   const parados: Parado[] = [];
   const populacao = new Set<string>();
   const alterados = new Set<string>();
+  const excluidos: Coorte['excluidos'] = [];
   const ini90 = addDias(corte, -90);
   for (const s of [...dados.skus.values()].filter((x) => x.ativo).sort((a, b) => (a.sku < b.sku ? -1 : 1))) {
     const serie = serieSemanal(dados, corte, s.sku, SEMANAS_PARADO);
@@ -85,19 +91,24 @@ function montar(dados: DadosClasse, soHabilitados: boolean): Coorte {
       continue;
     }
     if (soHabilitados && !s.habilitado) continue;
+    const share = dados.shareInsumo.get(s.sku);
+    if (share !== undefined && share > LIMITE_SHARE_INSUMO) {
+      excluidos.push({ sku: s.sku, motivo: 'DEMANDA_INSUMO', shareInsumo: share });
+      continue;
+    }
     populacao.add(s.sku);
     const sb = padraoSB(dados, corte, s.sku);
     if (sb === 'intermitente' || sb === 'lumpy') alterados.add(s.sku);
   }
-  return { populacao, alterados, parados };
+  return { populacao, alterados, parados, excluidos };
 }
 
 /** Coorte do replay: ativo + reposição automática habilitada − parados (todos com dados < corte). Contrato de unidade já filtrado em `dados.skus`. */
-export function coorte(dados: DadosClasse): Coorte {
+export function coorte(dados: DadosCoorte): Coorte {
   return montar(dados, true);
 }
 
 /** Sensibilidade (spec §5.1.1): todos os ativos, sem o filtro de reposição automática. Parados continuam fora (sem evidência para cauda, §7). */
-export function coorteTodosAtivos(dados: DadosClasse): Coorte {
+export function coorteTodosAtivos(dados: DadosCoorte): Coorte {
   return montar(dados, false);
 }

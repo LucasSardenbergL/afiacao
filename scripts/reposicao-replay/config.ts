@@ -73,6 +73,7 @@ export const NOME_METRICA_SERVICO = 'atendimento das linhas faturadas observadas
 export const CSVS_REPLAY = [
   'classificacao_hist',
   'config_custos',
+  'demanda_insumo',
   'equivalencias',
   'recebimentos',
   'skus',
@@ -95,7 +96,7 @@ export const FUSIVEL_PARAM_MULT = 3;
 export const F0 = {
   janelaDemandaDias: 90,
   janelaSigmaDias: 180,
-  /** v_sku_leadtime_estatisticas: t2_data_faturamento >= hoje - 180 dias (o replay usa t4 como proxy de t2). */
+  /** v_sku_leadtime_estatisticas: t2_data_faturamento >= hoje - 180 dias (t4 só quando t2 ausente). */
   janelaLtDias: 180,
   /** SKU com >= 3 observações usa o próprio LT; senão o do fornecedor. */
   minObsLtSku: 3,
@@ -117,3 +118,9 @@ export const GRADE_QUANTIS = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.925, 0.95, 0.96, 
  * estoque_seguranca 0): o parâmetro do SKU antes da 1ª sugestão OK. A 1ª sugestão OK o substitui (preencher/graduar).
  */
 export const COLD_START = { es: 0, pp: 1, max: 2 } as const;
+
+/**
+ * R16: SKU cuja demanda vem mais de 10% via ficha técnica (insumo de v_sku_demanda_efetiva, que o motor usa e o extrato de
+ * vendas não traz) sai da coorte: a demanda simulada dele estaria errada nas quatro fórmulas e no estoque.
+ */
+export const LIMITE_SHARE_INSUMO = 0.1;

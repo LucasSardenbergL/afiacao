@@ -35,6 +35,8 @@ export interface ItemLT {
   trackingId: string;
   sku: string;
   t1: Data;
+  /** Faturamento (t2) do documento-SKU; null = ausente. Com t4, aproxima a identidade da NFe no LT do motor. */
+  t2: Data | null;
   /** t4 do documento-SKU (1 recebimento por documento-SKU, ruling R7; sem checagem de >= 95% do pedido); null = aberto. */
   t4: Data | null;
   /** Dias úteis de t1 até t4; aberto: max(du de t1 até a extração, 15). */
@@ -122,7 +124,9 @@ export interface Dados {
   sugestaoHoje: Map<string, { posicao: number; qtdeFinal: number }>;
   excluidos: { sku: string; motivo: string }[];
   classificacaoHist: ClassificacaoHist;
-  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; SEM_T4_REGISTRADO = documento sem t4 e com mais du que o LT máximo, fora da amostra de LT). */
+  /** R16: fração da demanda do SKU via ficha técnica (insumo), em [0, 1]; SKU ausente = sem demanda de insumo. */
+  shareInsumo: Map<string, number>;
+  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; T1_FABRICADO = t1 igual a t2, fallback sem pedido casado, fora do LT; SEM_T4_REGISTRADO = documento sem t4 e com mais du que o LT máximo, fora da amostra de LT). */
   avisos: AvisoDados[];
   dataExtracao: Data;
   hashDados: string;

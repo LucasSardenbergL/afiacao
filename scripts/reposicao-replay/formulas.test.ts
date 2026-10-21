@@ -33,12 +33,12 @@ const venda = (s: string, data: string, quantidade: number, valor = quantidade):
   linhaId: `L${seq++}`, sku: s, data, quantidade, valor, cmcLinha: null, noEscopo: true,
 });
 const item = (s: string, t1: string, ltDu: number, tracking = `T${seq++}`): ItemLT => ({
-  trackingId: tracking, sku: s, t1, t4: somarDiasUteis(t1, ltDu), ltDu, aberto: false,
+  trackingId: tracking, sku: s, t1, t2: null, t4: somarDiasUteis(t1, ltDu), ltDu, aberto: false,
 });
 const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[] = [], extra: Partial<Dados> = {}): Dados => ({
   vendas, itensLT, recebimentos: [], skus: new Map(skus.map((s) => [s.sku, s])), zPorClasse: { A: 1.65, B: 1.28, C: 0.84 },
   teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
-  classificacaoHist: { regras: REGRAS, porSku: new Map() }, avisos: [], dataExtracao: '2026-10-21', hashDados: 'h1', ...extra,
+  classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), avisos: [], dataExtracao: '2026-10-21', hashDados: 'h1', ...extra,
 });
 const diasCorridos = (ini: string, fim: string): string[] => {
   const out: string[] = [];
@@ -117,6 +117,24 @@ describe('F0 — fiel à fonte (v_sku_sigma_demanda / v_sku_parametros_sugeridos
     expect(g.gravacao).toBe('semeado');
     expect(g.coldStart).toBe(false);
     expect(g.pp).toBe(g.ppSugerido);
+  });
+
+  it('LT do motor: NFe ≈ (sku, t2, t4) — duas NFes no mesmo dia contam 2 obs; cópias da mesma NFe com LT igual contam 1', () => {
+    const d = '2026-05-04';
+    const v = diasCorridos('2026-02-02', addDias(d, -1)).filter((_, i) => i % 3 === 0).map((dia) => venda('X', dia, 1));
+    const t4 = '2026-04-20';
+    const nfe = (tracking: string, t1: string, t2: string, ltDu: number): ItemLT => ({ trackingId: tracking, sku: 'X', t1, t2, t4, ltDu, aberto: false });
+    const its = [
+      nfe('A', '2026-04-08', '2026-04-15', 8), // NFe 1
+      nfe('B', '2026-03-31', '2026-04-16', 14), // NFe 2, mesmo t4
+      nfe('C', '2026-04-07', '2026-04-15', 9), // cópia da NFe 1 (mesmo t2 e t4) com LT diferente => a NFe 1 sai (LT NULL)
+      { ...nfe('C2', '2026-03-20', '2026-03-25', 9), t4: '2026-04-02' }, // NFe 3, cópia 1
+      { ...nfe('C3', '2026-03-20', '2026-03-25', 9), t4: '2026-04-02' }, // NFe 3, cópia 2 (mesmo LT) => 1 obs
+    ];
+    const dd = dados([sku('X', { grupo: 'sayerlack_rapido' })], v, its);
+    // (sku,t2,t4): A+C divergem (mesma NFe 04-15, LT 8 vs 9) => fora; B (14); C2/C3 => 1 obs (9) => 2 obs < 3 => fornecedor = as mesmas 2 => média 11,5
+    const g = diagnosticoF0(dd, 'X', d, CTX);
+    expect(g.lt).toBe(11.5);
   });
 
   it('grupo de embalagem: o galão (fator_para_base > 1) não decide; a âncora decide sem teto', () => {

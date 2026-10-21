@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
-import { coorte, coorteTodosAtivos, padraoSB } from './parados';
-import type { DadosClasse } from './classe';
+import { coorte, coorteTodosAtivos, padraoSB, type DadosCoorte } from './parados';
 import type { LinhaVenda, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
@@ -15,8 +14,13 @@ const sku = (codigo: string, extra: Partial<Sku> = {}): Sku => ({
 });
 let seq = 0;
 const venda = (s: string, data: string, quantidade: number): LinhaVenda => ({ linhaId: `L${seq++}`, sku: s, data, quantidade, valor: quantidade, cmcLinha: null, noEscopo: true });
-const dados = (skus: Sku[], vendas: LinhaVenda[], recebimentos: { sku: string; data: string; quantidade: number }[] = []): DadosClasse => ({
-  vendas, skus: new Map(skus.map((s) => [s.sku, s])), recebimentos, dataExtracao: '2026-10-21', classificacaoHist: { regras: REGRAS, porSku: new Map() },
+const dados = (
+  skus: Sku[],
+  vendas: LinhaVenda[],
+  recebimentos: { sku: string; data: string; quantidade: number }[] = [],
+  shareInsumo = new Map<string, number>(),
+): DadosCoorte => ({
+  vendas, skus: new Map(skus.map((s) => [s.sku, s])), recebimentos, dataExtracao: '2026-10-21', classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo,
 });
 
 // d = 2025-12-23: 9 blocos de 7 dias alinhados em d (k=1 é o mais recente); o bloco k cobre [d-7k, d-7k+7).
@@ -90,6 +94,16 @@ describe('coorte (tudo calculado com dados < 2026-05-01)', () => {
     expect(pc).toMatchObject({ ultimaCompra: '2026-03-15', compradoUltimos90d: true, estoqueCmc: null }); // cmc ausente => null, não 0
     const n = c.parados.find((x) => x.sku === 'NUNCA')!;
     expect(n).toMatchObject({ semanasComVenda: 0, ultimaVenda: null, ultimaCompra: null });
+  });
+
+  it('R16: SKU com demanda de insumo > 10% sai da coorte (as duas), listado com motivo DEMANDA_INSUMO', () => {
+    const share = new Map([['INTERM', 0.82], ['SUAVE', 0.1]]); // 0,10 fica (limite estrito)
+    for (const c of [coorte(dados(ativos(), vendasCorte(), recs, share)), coorteTodosAtivos(dados(ativos(), vendasCorte(), recs, share))]) {
+      expect(c.populacao.has('INTERM')).toBe(false);
+      expect(c.alterados.has('INTERM')).toBe(false);
+      expect(c.populacao.has('SUAVE')).toBe(true);
+      expect(c.excluidos).toEqual([{ sku: 'INTERM', motivo: 'DEMANDA_INSUMO', shareInsumo: 0.82 }]);
+    }
   });
 
   it('todos os ativos: sensibilidade sem o filtro de reposição automática', () => {

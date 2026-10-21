@@ -20,7 +20,7 @@
 //  · grupo de embalagem: a âncora (fator_para_base = 1) decide com os PRÓPRIOS parâmetros (demanda só dela — é o motor) e
 //    sem teto; o membro com fator > 1 nunca é âncora (SEM_DECISAO). O estoque consolidado é da Task 6.
 // LIMITAÇÕES do F0 (relatório): sem preço de compra real (o extrato não traz valor do recebimento: cmc de hoje → venda×0,55);
-// t4 como proxy de t2 na janela de LT; NFe aproximada por (SKU, t4); origem_compra não filtrada; nº de ordens = nº de
+// janela de LT por t2 (t4 só se t2 ausente); NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
 // linhas; t1 "fabricado" (= t2, lt_bruto NULL em prod) não é identificável no extrato; demanda de insumo da ficha técnica
 // (v_sku_demanda_efetiva) não está no extrato. O estado ANTES do replay não existe: até a 1ª sugestão OK vale o fallback
 // do cold start (pp 1 / máx. 2 / ES 0, a regra do motor para SKU sem demanda); a 1ª sugestão OK o substitui sem fusível
@@ -149,6 +149,8 @@ interface Grupo {
 interface ObsLtMotor {
   sku: string;
   t4: Data;
+  /** Data da janela de 180 d da view (t2; sem t2, t4). */
+  tJanela: Data;
   lt: number;
 }
 interface Indice {
@@ -245,18 +247,19 @@ function indice(dados: Dados): Indice {
     for (const m of ms) grupoDe.set(m.sku, g);
   }
   // LT do motor: v_sku_leadtime_efetivo deduplica por NFe e anula o LT quando as cópias divergem. Sem a chave da NFe no
-  // extrato, a NFe é aproximada por (SKU, t4): cópias com o MESMO LT viram 1 observação; com LTs diferentes, nenhuma.
+  // extrato, a NFe é aproximada por (SKU, t2, t4) — faturamento + chegada: cópias com o MESMO LT viram 1 observação; com
+  // LTs diferentes, nenhuma. Duas NFes que chegam no mesmo dia têm t2 diferentes e contam separadas.
   const porChave = new Map<string, ObsLtMotor & { ok: boolean }>();
   let maxLtDu = 0;
   for (const it of dados.itensLT) {
     if (it.aberto || it.t4 === null) continue;
     if (it.ltDu > maxLtDu) maxLtDu = it.ltDu;
-    const k = `${it.sku}\u0000${it.t4}`;
+    const k = `${it.sku}\u0000${it.t2 ?? ''}\u0000${it.t4}`;
     const o = porChave.get(k);
-    if (!o) porChave.set(k, { sku: it.sku, t4: it.t4, lt: it.ltDu, ok: true });
+    if (!o) porChave.set(k, { sku: it.sku, t4: it.t4, tJanela: it.t2 ?? it.t4, lt: it.ltDu, ok: true });
     else if (o.lt !== it.ltDu) o.ok = false;
   }
-  const obsMotor = [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, lt }) => ({ sku, t4, lt }));
+  const obsMotor = [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, tJanela, lt }) => ({ sku, t4, tJanela, lt }));
   obsMotor.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : 1));
   const obsMotorPorSku = new Map<string, ObsLtMotor[]>();
   for (const o of obsMotor) {
@@ -314,7 +317,7 @@ function fornecedorLt(ix: Indice, d: Data, calib: boolean): { media: number | nu
   let r = ix.fornecedorPorDia.get(k);
   if (!r) {
     const ini = addDias(d, -F0.janelaLtDias);
-    const xs = ix.obsMotor.filter((o) => o.t4 < d && o.t4 >= ini && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
+    const xs = ix.obsMotor.filter((o) => o.t4 < d && o.tJanela >= ini && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
     const dp = desvioAmostral(xs);
     r = { media: xs.length ? arred(media(xs), 2) : null, desvio: dp === null ? null : arred(dp, 2) };
     ix.fornecedorPorDia.set(k, r);
@@ -376,7 +379,7 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): 
   const sigmaD = sigmaJanela(ix, s.sku, d);
   // LT (v_sku_leadtime_estatisticas + v_sku_lt_teorico)
   const iniLt = addDias(d, -F0.janelaLtDias);
-  const obs = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => o.t4 < d && o.t4 >= iniLt && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
+  const obs = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => o.t4 < d && o.tJanela >= iniLt && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
   const teorico = s.grupo !== null && s.grupo in LT_TEORICO_DU ? LT_TEORICO_DU[s.grupo] : null;
   let ltHist: number | null = null;
   let desvioHist: number | null = null;

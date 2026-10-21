@@ -7,7 +7,7 @@ import { duEntre } from './calendario';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
-  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida',
+  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2',
   skus:
     'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
   config_custos:
@@ -18,6 +18,7 @@ const H = {
   equivalencias:
     'sku|sku_equivalente|fator|grupo_id|fator_para_base_sku|fator_para_base_equivalente|unidades_omie_sku|unidades_omie_equivalente',
   sugestao_hoje: 'sku|posicao|qtde_final',
+  demanda_insumo: 'sku|share_insumo',
 } as const;
 
 type Nome = keyof typeof H;
@@ -42,6 +43,7 @@ function base(): Record<Nome, string[]> {
     ],
     equivalencias: [],
     sugestao_hoje: ['S1|2|3'],
+    demanda_insumo: [],
   };
 }
 
@@ -50,6 +52,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   const dir = mkdtempSync(join(tmpdir(), 'replay-dados-'));
   dirs.push(dir);
   const b = { ...base(), ...ov };
+  // linha de recebimento sem a 7ª coluna (t2) ganha t2 vazio: os testes antigos não dependem dela
+  b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 6 ? `${l}|` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -166,7 +170,7 @@ describe('LT documental (§5.9)', () => {
   it('um recebimento por documento-SKU: pedido 10, recebe 4 no du 9 → ltDu 9, fechado', () => {
     const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|10|4'] }));
     expect(d.itensLT).toEqual([
-      { trackingId: 'T', sku: 'S1', t1: '2026-01-05', t4: '2026-01-16', ltDu: 9, aberto: false },
+      { trackingId: 'T', sku: 'S1', t1: '2026-01-05', t2: null, t4: '2026-01-16', ltDu: 9, aberto: false },
     ]);
   });
 
@@ -174,7 +178,7 @@ describe('LT documental (§5.9)', () => {
     // extração 2026-10-21 (quarta); t1 = 2026-10-12 (segunda) → 7 du
     const d = carregarDados(monta({ recebimentos: ['T|S1|2026-10-12||10|'] }));
     expect(duEntre('2026-10-12', '2026-10-21')).toBe(7);
-    expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-10-12', t4: null, ltDu: 15, aberto: true }]);
+    expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-10-12', t2: null, t4: null, ltDu: 15, aberto: true }]);
   });
 
   it('faturado sem t4 há 40 du → fora da amostra, aviso SEM_T4_REGISTRADO', () => {
@@ -211,7 +215,7 @@ describe('LT documental (§5.9)', () => {
 });
 
 describe('eventosDeRecebimento (estoque físico)', () => {
-  const l = (trackingId: string, sku: string, t1: string, t4: string | null, recebida: number | null) => ({ trackingId, sku, t1, t4, pedida: 99, recebida });
+  const l = (trackingId: string, sku: string, t1: string, t4: string | null, recebida: number | null) => ({ trackingId, sku, t1, t2: null, t4, pedida: 99, recebida });
   const div = new Map([['S1', 1]]);
   it('dedup físico por (sku, t4, quantidade) entre tracking_id; quantidade diferente é parcial e fica', () => {
     const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 10), l('b', 'S1', '2026-01-06', '2026-01-12', 10), l('c', 'S1', '2026-01-05', '2026-01-12', 4)], div);
@@ -220,5 +224,24 @@ describe('eventosDeRecebimento (estoque físico)', () => {
   it('sem t4, quantidade vazia/<=0, t4 antes de t1 ou SKU fora do contrato de unidade não viram evento', () => {
     const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', null, 3), l('b', 'S1', '2026-01-05', '2026-01-12', null), l('c', 'S1', '2026-01-05', '2026-01-12', 0), l('d', 'S1', '2026-01-20', '2026-01-12', 5), l('e', 'S9', '2026-01-05', '2026-01-12', 5)], div);
     expect(ev).toEqual([]);
+  });
+
+  it('R17: t1 fabricado (t2 presente e t1 = t2) sai do LT com aviso, mas segue como recebimento físico', () => {
+    // produção: lt_bruto_dias_uteis fica NULL quando o t1 é o fallback t2 (pedidoCasado?.t1 ?? nfe.t2), docs/agent/reposicao.md
+    const d = carregarDados(
+      monta({ recebimentos: ['A|S1|2026-01-05|2026-01-12|10|10|2026-01-05', 'B|S1|2026-01-06|2026-01-14|10|7|2026-01-08', 'C|S1|2026-01-07|2026-01-15|10|5|'] }),
+    );
+    expect(d.itensLT.map((i) => i.trackingId).sort()).toEqual(['B', 'C']);
+    expect(d.avisos).toContainEqual({ codigo: 'T1_FABRICADO', n: 1 });
+    expect(d.recebimentos.map((r) => r.data).sort()).toEqual(['2026-01-12', '2026-01-14', '2026-01-15']);
+  });
+
+  it('R16: demanda_insumo.csv vira o mapa shareInsumo (vazio é válido; fora de [0,1] reprova)', () => {
+    expect(carregarDados(monta()).shareInsumo.size).toBe(0);
+    const d = carregarDados(monta({ demanda_insumo: ['S1|0.82', 'S9|1'] }));
+    expect(d.shareInsumo.get('S1')).toBeCloseTo(0.82, 12);
+    expect(d.shareInsumo.get('S9')).toBe(1);
+    expect(() => carregarDados(monta({ demanda_insumo: ['S1|1.5'] }))).toThrow(/CSV_INVALIDO:demanda_insumo\.csv/);
+    expect(() => carregarDados(monta({ demanda_insumo: ['S1|'] }))).toThrow(/CSV_INVALIDO:demanda_insumo\.csv/);
   });
 });
