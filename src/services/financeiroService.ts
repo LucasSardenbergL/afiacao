@@ -294,11 +294,13 @@ export interface ContasPage<T> {
   total: number;
 }
 
-/** O que `listarContas` usa do builder (PostgrestFilterBuilder já com `select("*", { count: "exact" })`). */
-type ConsultaContas<R> = {
-  order(coluna: string, opts: { ascending: boolean }): ConsultaContas<R>;
-  range(de: number, ate: number): PromiseLike<{ data: R[] | null; error: { message: string } | null; count: number | null }>;
-};
+/** Uma página [de, ate] do filtro, com `count: "exact"`. Builder NOVO por chamada (reusar instância entre
+ * requests é bug do supabase-js), ordem TOTAL antes do `.range()`: `.order("id")` desempata
+ * `data_vencimento` repetida — sem ela o `.range()` repete/pula linhas entre páginas (#1580). */
+type PaginaContas<R> = (
+  de: number,
+  ate: number,
+) => PromiseLike<{ data: R[] | null; error: { message: string } | null; count: number | null }>;
 type FiltravelContas<Q> = {
   eq(coluna: string, valor: string): Q;
   gte(coluna: string, valor: string): Q;
@@ -315,19 +317,14 @@ function filtrarContas<Q extends FiltravelContas<Q>>(query: Q, company: Company 
 }
 
 async function listarContas<R extends { id: string }>(
-  // Builder NOVO por chamada (reusar instância entre requests é bug do supabase-js).
-  base: () => ConsultaContas<R>,
+  pagina: PaginaContas<R>,
   contexto: string,
   filtros?: ContasFiltros,
 ): Promise<ContasPage<R>> {
-  // `.order("id")` desempata `data_vencimento` repetida — sem ordem TOTAL o `.range()`
-  // pode repetir/pular linhas entre páginas (a 2ª metade da classe, #1580).
   if (filtros?.limit) {
     // Truncagem HONESTA: janela limitada + count exato do filtro no MESMO request —
     // o caller distingue "acabou" de "tem mais" e avisa na tela/CSV.
-    const { data, error, count } = await base()
-      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
-      .range(0, filtros.limit - 1);
+    const { data, error, count } = await pagina(0, filtros.limit - 1);
     if (error) throw new Error(`Falha ao carregar ${contexto}: ${error.message}`);
     if (data == null) throw new Error(`Falha ao carregar ${contexto}: data=null sem error`);
     if (count == null) throw new Error(`Falha ao carregar ${contexto}: count=null com count:'exact'`);
@@ -337,12 +334,7 @@ async function listarContas<R extends { id: string }>(
   // Sem limite: o filtro INTEIRO, paginado contra a capa de 1.000 do PostgREST
   // (oben sozinha tem ~11k títulos de CP; single-shot devolvia os 1.000 primeiros
   // por vencimento como se fossem tudo — lista E export CSV nasciam truncados).
-  const rows = await lerTodasAsPaginas((from, to) =>
-    base()
-      .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
-      .range(from, to),
-    contexto,
-  );
+  const rows = await lerTodasAsPaginas(pagina, contexto);
   // K páginas são K instantes (§14): se um título muda de vencimento durante a leitura, o
   // offset desliza — um título é PULADO e outro REPETIDO, e `rows.length` continua batendo
   // com o total. Este resultado alimenta o CSV anunciado como "o filtro inteiro"; ID repetido
@@ -370,7 +362,10 @@ export async function getContasPagar(
 ): Promise<ContasPage<FinContaPagar>> {
   const contexto = `contas a pagar (${company})`;
   const { rows, total } = await listarContas(
-    () => filtrarContas(supabase.from("fin_contas_pagar").select("*", { count: "exact" }), company, filtros),
+    (de, ate) =>
+      filtrarContas(supabase.from("fin_contas_pagar").select("*", { count: "exact" }), company, filtros)
+        .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+        .range(de, ate),
     contexto,
     filtros,
   );
@@ -383,7 +378,10 @@ export async function getContasReceber(
 ): Promise<ContasPage<FinContaReceber>> {
   const contexto = `contas a receber (${company})`;
   const { rows, total } = await listarContas(
-    () => filtrarContas(supabase.from("fin_contas_receber").select("*", { count: "exact" }), company, filtros),
+    (de, ate) =>
+      filtrarContas(supabase.from("fin_contas_receber").select("*", { count: "exact" }), company, filtros)
+        .order("data_vencimento", { ascending: true }).order("id", { ascending: true })
+        .range(de, ate),
     contexto,
     filtros,
   );

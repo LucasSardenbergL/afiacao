@@ -655,37 +655,40 @@ export async function getTitulosEntidadeRaw(
   const maxMes = Math.max(...meses);
   const fimExcl =
     maxMes >= 12 ? `${ano + 1}-01-01` : `${ano}-${String(maxMes + 1).padStart(2, '0')}-01`;
+  // Um builder por tabela (o nome da entidade é coluna diferente; o alias `entidade_nome` iguala a
+  // forma) com os MESMOS filtros nos dois — mexeu num, mexa no outro.
+  const paginaCp = (lote: string[], de: number, ate: number) =>
+    supabase
+      .from('fin_contas_pagar')
+      .select('id, cnpj_cpf, entidade_nome:nome_fornecedor, data_emissao, valor_documento')
+      .eq('company', company)
+      .not('data_emissao', 'is', null)
+      .gte('data_emissao', `${ano}-01-01`)
+      .lt('data_emissao', fimExcl)
+      .neq('status_titulo', 'CANCELADO')
+      .in('categoria_codigo', lote)
+      .order('id', { ascending: true })
+      .range(de, ate);
+  const paginaCr = (lote: string[], de: number, ate: number) =>
+    supabase
+      .from('fin_contas_receber')
+      .select('id, cnpj_cpf, entidade_nome:nome_cliente, data_emissao, valor_documento')
+      .eq('company', company)
+      .not('data_emissao', 'is', null)
+      .gte('data_emissao', `${ano}-01-01`)
+      .lt('data_emissao', fimExcl)
+      .neq('status_titulo', 'CANCELADO')
+      .in('categoria_codigo', lote)
+      .order('id', { ascending: true })
+      .range(de, ate);
   return coletarTitulosEntidade({
     codigos,
     chunkCodigos: 100,
     pageSize: 1000,
     max: 20000,
     fetchPagina: async (lote, offset, limit) => {
-      // Um ramo por tabela (o nome da entidade é coluna diferente; o alias `entidade_nome` iguala a
-      // forma) com os MESMOS filtros nos dois — mexeu num, mexa no outro.
-      const { data, error } = fonte === 'cp'
-        ? await supabase
-            .from('fin_contas_pagar')
-            .select('id, cnpj_cpf, entidade_nome:nome_fornecedor, data_emissao, valor_documento')
-            .eq('company', company)
-            .not('data_emissao', 'is', null)
-            .gte('data_emissao', `${ano}-01-01`)
-            .lt('data_emissao', fimExcl)
-            .neq('status_titulo', 'CANCELADO')
-            .in('categoria_codigo', lote)
-            .order('id', { ascending: true })
-            .range(offset, offset + limit - 1)
-        : await supabase
-            .from('fin_contas_receber')
-            .select('id, cnpj_cpf, entidade_nome:nome_cliente, data_emissao, valor_documento')
-            .eq('company', company)
-            .not('data_emissao', 'is', null)
-            .gte('data_emissao', `${ano}-01-01`)
-            .lt('data_emissao', fimExcl)
-            .neq('status_titulo', 'CANCELADO')
-            .in('categoria_codigo', lote)
-            .order('id', { ascending: true })
-            .range(offset, offset + limit - 1);
+      const ate = offset + limit - 1;
+      const { data, error } = await (fonte === 'cp' ? paginaCp(lote, offset, ate) : paginaCr(lote, offset, ate));
       if (error) throw error;
       // data null SEM error = malformada, não página vazia (classe #1338→#1564): devolvê-la
       // ao coletarTitulosEntidade encerraria o lote como fim SEM ligar o flag `truncado`.

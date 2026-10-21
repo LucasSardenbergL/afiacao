@@ -100,9 +100,12 @@ export type CashflowConfig = {
   adiantamento_categorias_codigos: string[];
 };
 
+// O ConfigCashflowDialog REGRAVA thresholds/overrides_cenario: chave desconhecida é PRESERVADA (`...o`),
+// senão a próxima edição apagaria o que o writer acrescentou (lição do jsonb `sales_orders.items`).
 const lerOverride: Leitor<OverrideCenario> = (v, onde) => {
   const o = objeto(v, onde);
   return {
+    ...o,
     recebimento_no_prazo_pct_delta: campo(o, 'recebimento_no_prazo_pct_delta', numero, onde),
     inadimplencia_pct_delta: campo(o, 'inadimplencia_pct_delta', numero, onde),
   };
@@ -111,6 +114,7 @@ const lerOverride: Leitor<OverrideCenario> = (v, onde) => {
 const lerThresholds: Leitor<ThresholdsCashflow> = (v, onde) => {
   const o = objeto(v, onde);
   return {
+    ...o,
     caixa_negativo_semanas: campo(o, 'caixa_negativo_semanas', numero, onde),
     ncg_deficit_alerta: campo(o, 'ncg_deficit_alerta', numero, onde),
     dias_cobertura_min: campo(o, 'dias_cobertura_min', numero, onde),
@@ -127,6 +131,7 @@ export function paraCashflowConfig(l: Tables<'fin_config_cashflow'>): CashflowCo
   return {
     company: l.company,
     overrides_cenario: {
+      ...cen,
       otimista: campo(cen, 'otimista', lerOverride, `${onde}.overrides_cenario`),
       pessimista: campo(cen, 'pessimista', lerOverride, `${onde}.overrides_cenario`),
     },

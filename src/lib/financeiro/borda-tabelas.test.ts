@@ -106,6 +106,16 @@ describe('paraCashflowConfig', () => {
     expect(c.overrides_cenario.pessimista.recebimento_no_prazo_pct_delta).toBe(-15);
   });
 
+  it('chave desconhecida é PRESERVADA (o dialog regrava o jsonb inteiro)', () => {
+    const c = paraCashflowConfig({
+      ...cfg,
+      thresholds: { ...(cfg.thresholds as Record<string, number>), novo_limite: 7 },
+      overrides_cenario: { ...(cfg.overrides_cenario as Record<string, object>), base: { x: 1 } },
+    });
+    expect(c.thresholds).toMatchObject({ novo_limite: 7, dias_cobertura_min: 30 });
+    expect(c.overrides_cenario).toMatchObject({ base: { x: 1 } });
+  });
+
   it('limite ausente LANÇA (o dialog não edita um limite inventado)', () => {
     const { dias_cobertura_min: _omitido, ...semDias } = cfg.thresholds as Record<string, number>;
     expect(() => paraCashflowConfig({ ...cfg, thresholds: semDias })).toThrow(
