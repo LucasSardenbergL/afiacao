@@ -127,3 +127,22 @@ export interface Dados {
   dataExtracao: Data;
   hashDados: string;
 }
+
+/** Padrão de demanda de Syntetos-Boylan (série semanal; ADI > 1,32; CV² > 0,49). `sem_dado` = menos de 2 semanas com venda. */
+export type PadraoSB = 'suave' | 'erratico' | 'intermitente' | 'lumpy' | 'sem_dado';
+
+/** SKU "parado" no corte da coorte (spec §5.1.1/§7): <= 1 semana com venda nas 27 semanas observadas antes do corte. */
+export interface Parado {
+  sku: string;
+  semanasComVenda: number;
+  ultimaVenda: Data | null;
+  /** Última chegada física (recebimento, R9) antes do corte; null = nenhuma. */
+  ultimaCompra: Data | null;
+  /** saldoHoje x cmc de HOJE (não há estoque/CMC histórico no corte); null se qualquer um faltar. */
+  estoqueCmc: number | null;
+  habilitado: boolean;
+  /** Houve recebimento físico nos 90 dias anteriores ao corte. */
+  compradoUltimos90d: boolean;
+  /** Classe efetiva no corte (R2); null = sem classe reconstruível. */
+  classe: Classe | null;
+}
