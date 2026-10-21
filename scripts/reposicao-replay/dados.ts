@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CSVS_REPLAY, FRACAO_RECEBIMENTO_COMPLETO, LT_ABERTO_MIN_DU } from './config';
+import { CSVS_REPLAY, LT_ABERTO_MIN_DU, LT_MAX_OBSERVADO_DU } from './config';
 import { duEntre } from './du';
 import {
   ErroDadosReplay,
@@ -160,7 +160,13 @@ interface RecebLinha {
   recebida: number | null;
 }
 
-/** Agrupa por (tracking_id, sku); ltDu = du de t1 até o t4 do recebimento que leva o acumulado a >= 95% do pedido. */
+/**
+ * Agrupa por (tracking_id, sku). LIMITAÇÃO (R7): `quantidade_pedida` e `quantidade_recebida` não estão em unidades
+ * comparáveis (razão espalhada mesmo com o fator), então NÃO se aplica a regra de >= 95% da spec §5.9: com `t4` o item
+ * é fechado, `ltDu = duEntre(t1, t4)` (se houver mais de uma linha no grupo, vale o último t4).
+ * Sem `t4`: decorrido (du de t1 até a extração) <= LT_MAX_OBSERVADO_DU => aberto, `ltDu = max(decorrido, 15)`;
+ * acima disso é faturado sem recebimento registrado => FORA da amostra (aviso SEM_T4_REGISTRADO).
+ */
 export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens: ItemLT[]; avisos: AvisoDados[] } {
   const grupos = new Map<string, RecebLinha[]>();
   for (const l of linhas) {
@@ -171,7 +177,7 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
   }
   const itens: ItemLT[] = [];
   let t4AntesT1 = 0;
-  let pedidaInvalida = 0;
+  let semT4 = 0;
   for (const g of grupos.values()) {
     const t1 = g.map((l) => l.t1).sort()[0];
     const antes = g.filter((l) => l.t4 !== null && l.t4 < l.t1).length;
@@ -179,30 +185,24 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
       t4AntesT1 += antes;
       continue;
     }
-    const pedidas = g.map((l) => l.pedida).filter((p): p is number => p !== null);
-    const pedida = pedidas.length ? Math.max(...pedidas) : null;
-    if (pedida === null || !(pedida > 0)) {
-      pedidaInvalida += g.length;
+    const t4s = g.map((l) => l.t4).filter((t): t is Data => t !== null).sort();
+    const { trackingId, sku } = g[0];
+    if (t4s.length > 0) {
+      const t4 = t4s[t4s.length - 1];
+      itens.push({ trackingId, sku, t1, t4, ltDu: duEntre(t1, t4), aberto: false });
       continue;
     }
-    const recs = g.filter((l) => l.t4 !== null).sort((a, b) => ((a.t4 as string) < (b.t4 as string) ? -1 : (a.t4 as string) > (b.t4 as string) ? 1 : 0));
-    let acum = 0;
-    let t4Completo: Data | null = null;
-    for (const r of recs) {
-      acum += r.recebida ?? 0;
-      if (acum >= FRACAO_RECEBIMENTO_COMPLETO * pedida - 1e-9) {
-        t4Completo = r.t4;
-        break;
-      }
+    const decorrido = duEntre(t1, dataExtracao);
+    if (decorrido > LT_MAX_OBSERVADO_DU) {
+      semT4 += g.length;
+      continue;
     }
-    const { trackingId, sku } = g[0];
-    if (t4Completo !== null) itens.push({ trackingId, sku, t1, t4: t4Completo, ltDu: duEntre(t1, t4Completo), aberto: false });
-    else itens.push({ trackingId, sku, t1, t4: null, ltDu: Math.max(duEntre(t1, dataExtracao), LT_ABERTO_MIN_DU), aberto: true });
+    itens.push({ trackingId, sku, t1, t4: null, ltDu: Math.max(decorrido, LT_ABERTO_MIN_DU), aberto: true });
   }
   itens.sort((a, b) => (a.t1 < b.t1 ? -1 : a.t1 > b.t1 ? 1 : a.trackingId < b.trackingId ? -1 : a.trackingId > b.trackingId ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
   const avisos: AvisoDados[] = [];
   if (t4AntesT1 > 0) avisos.push({ codigo: 'T4_ANTES_DE_T1', n: t4AntesT1 });
-  if (pedidaInvalida > 0) avisos.push({ codigo: 'QTD_PEDIDA_INVALIDA', n: pedidaInvalida });
+  if (semT4 > 0) avisos.push({ codigo: 'SEM_T4_REGISTRADO', n: semT4 });
   return { itens, avisos };
 }
 

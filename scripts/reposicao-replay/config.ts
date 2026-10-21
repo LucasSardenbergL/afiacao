@@ -15,8 +15,8 @@ export const JANELAS = {
 export const SEMANAS_PARADO = 27;
 export const MAX_SEMANAS_COM_VENDA_PARADO = 1;
 
-/** Fração do pedido recebida para o item contar como completo (LT documental). */
-export const FRACAO_RECEBIMENTO_COMPLETO = 0.95;
+/** LT máximo observado (du): documento sem t4 com mais du decorridos que isso sai da amostra (SEM_T4_REGISTRADO). */
+export const LT_MAX_OBSERVADO_DU = 29;
 /** Piso do LT imputado a pedido aberto (du). */
 export const LT_ABERTO_MIN_DU = 15;
 /** Sorteio de documento de LT: janela de t1 em du em torno do dia. */

@@ -163,23 +163,11 @@ describe('LT documental (§5.9)', () => {
     expect(duEntre('2026-01-05', '2026-01-05')).toBe(0);
   });
 
-  it('recebimento parcial: pedido de 10, recebe 4 no du 5 e 6 no du 9 → ltDu = 9', () => {
-    const d = carregarDados(
-      monta({ recebimentos: ['T|S1|2026-01-05|2026-01-12|10|4', 'T|S1|2026-01-05|2026-01-16|10|6'] }),
-    );
+  it('um recebimento por documento-SKU: pedido 10, recebe 4 no du 9 → ltDu 9, fechado', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|10|4'] }));
     expect(d.itensLT).toEqual([
       { trackingId: 'T', sku: 'S1', t1: '2026-01-05', t4: '2026-01-16', ltDu: 9, aberto: false },
     ]);
-  });
-
-  it('95% basta para completar', () => {
-    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-12|100|95'] }));
-    expect(d.itensLT[0]).toMatchObject({ ltDu: 5, aberto: false });
-  });
-
-  it('nunca completou → aberto', () => {
-    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-12|10|4'] }));
-    expect(d.itensLT[0]).toMatchObject({ aberto: true, t4: null });
   });
 
   it('pedido aberto entra com LT conservador: aberto há 7 du → ltDu = 15', () => {
@@ -189,10 +177,21 @@ describe('LT documental (§5.9)', () => {
     expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-10-12', t4: null, ltDu: 15, aberto: true }]);
   });
 
-  it('aberto há muito tempo usa os du decorridos (> 15)', () => {
-    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-06-01||10|'] }));
-    expect(d.itensLT[0].ltDu).toBe(duEntre('2026-06-01', '2026-10-21'));
-    expect(d.itensLT[0].ltDu).toBeGreaterThan(15);
+  it('faturado sem t4 há 40 du → fora da amostra, aviso SEM_T4_REGISTRADO', () => {
+    // 2026-08-26 (quarta) → 2026-10-21: 40 du
+    expect(duEntre('2026-08-26', '2026-10-21')).toBe(40);
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-08-26||10|'] }));
+    expect(d.itensLT).toEqual([]);
+    expect(d.avisos).toContainEqual({ codigo: 'SEM_T4_REGISTRADO', n: 1 });
+  });
+
+  it('sem t4 no limite (29 du) ainda é aberto', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-09-09||10|'] }));
+    expect(duEntre('2026-09-09', '2026-10-21')).toBe(30);
+    const d2 = carregarDados(monta({ recebimentos: ['T|S1|2026-09-10||10|'] }));
+    expect(duEntre('2026-09-10', '2026-10-21')).toBe(29);
+    expect(d.itensLT).toEqual([]);
+    expect(d2.itensLT[0]).toMatchObject({ aberto: true, ltDu: 29 });
   });
 
   it('dedup preserva documentos distintos: mesmo (sku, t1, qtd), 2 tracking_id → 2 itens', () => {
@@ -208,11 +207,5 @@ describe('LT documental (§5.9)', () => {
     );
     expect(d.itensLT.map((i) => i.trackingId)).toEqual(['B']);
     expect(d.avisos).toContainEqual({ codigo: 'T4_ANTES_DE_T1', n: 1 });
-  });
-
-  it('quantidade pedida inválida é excluída e avisada, não vira LT', () => {
-    const d = carregarDados(monta({ recebimentos: ['A|S1|2026-01-05|2026-01-12|0|0'] }));
-    expect(d.itensLT).toEqual([]);
-    expect(d.avisos).toContainEqual({ codigo: 'QTD_PEDIDA_INVALIDA', n: 1 });
   });
 });
