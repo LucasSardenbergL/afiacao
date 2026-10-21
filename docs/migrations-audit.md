@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **685** custom migrations totais
-- **2214** objetos esperados (criados por estas migrations)
+- **687** custom migrations totais
+- **2216** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 821
+  - `function`: 823
   - `rls_policy`: 482
   - `index`: 287
   - `cron_job`: 196
@@ -5563,6 +5563,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.analytics_outbox_pedido_compra` | — |
 
+### `20261020202720_analytics_ledger_venda_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
 ### `20261020233000_venda_cliente_repasse.sql`
 
 | Tipo | Objeto | Parent |
@@ -5577,6 +5583,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.venda_preco_alvo_comprador` | — |
 | `table` | `public.venda_repasse_aprovado` | — |
 | `index` | `public.venda_repasse_aprovado_vigente_uq` | `venda_repasse_aprovado` |
+
+### `20261020235000_venda_cliente_painel.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_painel` | — |
 
 ## Próximos passos por status
 
