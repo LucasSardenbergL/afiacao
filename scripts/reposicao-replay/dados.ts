@@ -448,5 +448,18 @@ export function carregarDados(dir: string): Dados {
     shareInsumo.set(sku, v);
   }
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, avisos, dataExtracao, hashDados };
+  // parametros_view (R19): a sugestão da view de produção no instante da extração (referência primária da paridade)
+  const pv = lerTabela(dir, 'parametros_view', ['sku', 'es', 'pp', 'max', 'status'], false);
+  const parametrosView: Dados['parametrosView'] = new Map();
+  for (const r of pv.linhas) {
+    const sku = r[pv.col('sku')];
+    const status = r[pv.col('status')];
+    if (ehVazio(status)) invalido(pv.arquivo, `status vazio em ${sku}`);
+    if (parametrosView.has(sku)) invalido(pv.arquivo, `sku duplicado: ${sku}`);
+    const v = { es: numOuNull(pv.arquivo, 'es', r[pv.col('es')]), pp: numOuNull(pv.arquivo, 'pp', r[pv.col('pp')]), max: numOuNull(pv.arquivo, 'max', r[pv.col('max')]), status };
+    if (status === 'OK' && (v.es === null || v.pp === null || v.max === null)) invalido(pv.arquivo, `status OK sem parâmetro em ${sku}`);
+    parametrosView.set(sku, v);
+  }
+
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, hashDados };
 }

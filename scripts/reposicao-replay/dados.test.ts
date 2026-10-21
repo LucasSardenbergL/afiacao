@@ -19,6 +19,7 @@ const H = {
     'sku|sku_equivalente|fator|grupo_id|fator_para_base_sku|fator_para_base_equivalente|unidades_omie_sku|unidades_omie_equivalente',
   sugestao_hoje: 'sku|posicao|qtde_final',
   demanda_insumo: 'sku|share_insumo',
+  parametros_view: 'sku|es|pp|max|status',
 } as const;
 
 type Nome = keyof typeof H;
@@ -44,6 +45,7 @@ function base(): Record<Nome, string[]> {
     equivalencias: [],
     sugestao_hoje: ['S1|2|3'],
     demanda_insumo: [],
+    parametros_view: ['S1|1|2|4|OK'],
   };
 }
 
@@ -243,5 +245,13 @@ describe('eventosDeRecebimento (estoque físico)', () => {
     expect(d.shareInsumo.get('S9')).toBe(1);
     expect(() => carregarDados(monta({ demanda_insumo: ['S1|1.5'] }))).toThrow(/CSV_INVALIDO:demanda_insumo\.csv/);
     expect(() => carregarDados(monta({ demanda_insumo: ['S1|'] }))).toThrow(/CSV_INVALIDO:demanda_insumo\.csv/);
+  });
+
+  it('R19: parametros_view.csv vira o mapa da view de produção (status OK exige os 3 parâmetros)', () => {
+    const d = carregarDados(monta({ parametros_view: ['S1|1|2|4|OK', 'S2||||AGUARDANDO_SEGUNDA_ORDEM', 'S3||||SEM_PRECO'] }));
+    expect(d.parametrosView.get('S1')).toEqual({ es: 1, pp: 2, max: 4, status: 'OK' });
+    expect(d.parametrosView.get('S3')).toEqual({ es: null, pp: null, max: null, status: 'SEM_PRECO' });
+    expect(() => carregarDados(monta({ parametros_view: ['S1|1||4|OK'] }))).toThrow(/CSV_INVALIDO:parametros_view\.csv/);
+    expect(() => carregarDados(monta({ parametros_view: ['S1|1|2|4|'] }))).toThrow(/CSV_INVALIDO:parametros_view\.csv/);
   });
 });

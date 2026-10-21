@@ -300,7 +300,8 @@ select k, val from (
 -- ── demanda_insumo.csv (R16): fração da demanda via ficha técnica, por SKU do escopo ──────────────────────────────
 -- Fonte: a 2ª perna do UNION de v_sku_demanda_efetiva (o que o motor soma e vendas.csv NÃO traz): venda OBEN do pai
 -- (quantidade > 0, CFOP de venda) × v_pcp_malha_oben.quantidade, creditada ao componente (comp_oben). share = insumo /
--- (insumo + venda direta), na mesma janela de vendas.csv (todo o histórico OBEN). Só SKUs com insumo > 0; pode vir vazio.
+-- (insumo + venda direta), só com venda ANTES do corte da coorte (2026-05-01): a coorte não pode olhar a avaliação. Só SKUs
+-- com insumo > 0; pode vir vazio.
 -- Unidades: a do insumo e a da NF podem diferir; o share é um GATE de exclusão (> 10%), não entra em conta de estoque.
 copy (
   with escopo as (
@@ -315,12 +316,14 @@ copy (
     where v.empresa = 'OBEN' and v.quantidade > 0
       and v.cfop in ('5101','5102','5107','5108','6101','6102','6107','6108')
       and mo.comp_oben::text in (select sku from escopo)
+      and v.data_emissao < date '2026-05-01'   -- só o que se sabia no corte da coorte (CORTE_COORTE)
     group by 1
   ),
   dir as (
     select v.sku_codigo_omie::text as sku, sum(v.quantidade) as q
     from v_venda_items_history_efetivo v
     where v.empresa = 'OBEN' and v.sku_codigo_omie::text in (select sku from ins)
+      and v.data_emissao < date '2026-05-01'
     group by 1
   )
   select i.sku, round(i.q / (i.q + greatest(coalesce(d.q, 0), 0)), 6) as share_insumo
@@ -328,5 +331,21 @@ copy (
   where i.q > 0
   order by i.sku
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/demanda_insumo.csv
+
+-- ── parametros_view.csv (R19): v_sku_parametros_sugeridos no INSTANTE da extração (OBEN, escopo Sayerlack) ───────────
+-- Referência primária da paridade do F0 (a fórmula contra a fórmula, sem o estado gravado nem a defasagem da passada das
+-- ~01:15). es = estoque_seguranca_sugerido; pp/max = ponto_pedido/estoque_maximo_sugerido; vazios quando status <> 'OK'.
+copy (
+  select v.sku_codigo_omie::text as sku,
+         v.estoque_seguranca_sugerido as es,
+         v.ponto_pedido_sugerido as pp,
+         v.estoque_maximo_sugerido as max,
+         v.status_sugestao as status
+  from v_sku_parametros_sugeridos v
+  where v.empresa = 'OBEN'
+    and v.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
+                                     where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')
+  order by 1
+) to stdout with (format csv, delimiter '|', header true) \g :dir/parametros_view.csv
 
 select 'fim', 'ok';

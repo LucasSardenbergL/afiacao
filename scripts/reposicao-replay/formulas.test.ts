@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { uniforme } from './aleatorio';
+import { classeEfetiva } from './classe';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import {
@@ -38,7 +39,7 @@ const item = (s: string, t1: string, ltDu: number, tracking = `T${seq++}`): Item
 const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[] = [], extra: Partial<Dados> = {}): Dados => ({
   vendas, itensLT, recebimentos: [], skus: new Map(skus.map((s) => [s.sku, s])), zPorClasse: { A: 1.65, B: 1.28, C: 0.84 },
   teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
-  classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), avisos: [], dataExtracao: '2026-10-21', hashDados: 'h1', ...extra,
+  classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21', hashDados: 'h1', ...extra,
 });
 const diasCorridos = (ini: string, fim: string): string[] => {
   const out: string[] = [];
@@ -46,6 +47,8 @@ const diasCorridos = (ini: string, fim: string): string[] => {
   return out;
 };
 const QUANTIL: ParamsFormula['quantil'] = { A: 0.9, B: 0.9, C: 0.9 };
+/** Quantis DISTINTOS por classe: um teste de vazamento com o mesmo quantil nas 3 classes é cego à classe do quantil. */
+const QUANTIL_POR_CLASSE: ParamsFormula['quantil'] = { A: 0.5, B: 0.85, C: 0.99 };
 const CTX = { calibracao: false };
 const SEM_CACHE = { cacheDir: null };
 
@@ -185,10 +188,14 @@ describe('F1–F3 (spec §5.9 "Equações")', () => {
     const dd = dados([sku('X'), sku('Y')], [...base, ...outro], its);
     // futuro: duplica as vendas de d em diante, acrescenta vendas novas e recebimentos com t4 >= d
     const futuro = [...base, ...outro].filter((x) => x.data >= d).map((x) => venda(x.sku, x.data, x.quantidade * 7, x.valor * 7));
+    // ...e o Y passa a vender muito valor depois de d: no início da avaliação o X deixa de ser A (vira C)
+    const yGrande = dias.filter((x) => x >= d).map((dia) => venda('Y', dia, 1, 1000));
     const itsFuturo = [...its, item('X', d, 25), item('X', addDias(d, 10), 28), item('OUTRO', addDias(d, -3), 29)];
-    const dd2 = dados([sku('X'), sku('Y')], [...base, ...outro, ...futuro], itsFuturo);
+    const dd2 = dados([sku('X'), sku('Y')], [...base, ...outro, ...futuro, ...yGrande], itsFuturo);
+    // controle: o futuro muda a classe do X no início da janela (senão o teste não enxergaria a classe do quantil)
+    expect(classeEfetiva(dd2, JANELAS.avaliacaoIni).get('X')).not.toBe(classeEfetiva(dd2, d).get('X'));
     for (const f of ['F0', 'F1', 'F2', 'F3'] as const) {
-      const p: ParamsFormula = { beta: 0.01, janelaDias: 90, quantil: QUANTIL };
+      const p: ParamsFormula = { beta: 0.01, janelaDias: 90, quantil: QUANTIL_POR_CLASSE };
       expect(parametrosNoDia(f, dd2, 'X', d, p, CTX), f).toEqual(parametrosNoDia(f, dd, 'X', d, p, CTX));
     }
   });
@@ -227,6 +234,65 @@ describe('F1–F3 (spec §5.9 "Equações")', () => {
     expect(quantilTipo7([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5, 12);
     expect(quantilTipo7([10], 0.9)).toBe(10);
     expect(quantilTipo7([0, 10], 0.95)).toBeCloseTo(9.5, 12);
+  });
+});
+
+describe('contas à mão e preço do EOQ', () => {
+  // X vende em TODO dia útil, alternando 1 e 3 (sem fim de semana); 5 LTs próprios [2,3,4,5,6] (t4 bem antes de d)
+  const montar = (lts: number[], sk: Sku = sku('X')) => {
+    const d = '2026-04-07';
+    const dus = diasCorridos(INICIO_AQUECIMENTO, addDias(d, -1)).filter((x) => ehDiaUtil(x));
+    const v = dus.map((dia, i) => venda('X', dia, i % 2 === 0 ? 1 : 3));
+    const its = lts.map((lt, i) => item(sk.sku, addDias('2025-11-03', 7 * i), lt));
+    return { d, dus, dd: dados([sk], v, its), serie: dus.map((_, i) => (i % 2 === 0 ? 1 : 3)) };
+  };
+
+  it('F1: S = ceil(H·d̄ + z·√(H·σd² + d̄²·σLT²)) feito à mão', () => {
+    const { d, dd, serie } = montar([2, 3, 4, 5, 6]);
+    const j = serie.slice(-63); // 63 du antes de d
+    const m = j.reduce((a, b) => a + b, 0) / 63;
+    const sd2 = j.reduce((a, b) => a + (b - m) ** 2, 0) / 62;
+    const ltBar = 4;
+    const sLt2 = (4 + 1 + 0 + 1 + 4) / 4; // stddev_samp² de [2..6] = 2,5
+    const H = ltBar + 1;
+    const z90 = 1.2815515655446004; // Φ⁻¹(0,90)
+    const esperado = Math.ceil(H * m + z90 * Math.sqrt(H * sd2 + m * m * sLt2));
+    expect(parametrosNoDia('F1', dd, 'X', d, { quantil: QUANTIL }, CTX)).toEqual({ tipo: 'S', s: esperado });
+  });
+
+  it('F1: σLT com 1 observação segue o COALESCE da produção (teórico·0,3), nunca 0', () => {
+    // amostra da Sayerlack toda com 1 LT (X tem < 5): σLT = LT teórico (normal = 10)·0,3 = 3
+    const { d, dd, serie } = montar([4]);
+    const j = serie.slice(-63);
+    const m = j.reduce((a, b) => a + b, 0) / 63;
+    const sd2 = j.reduce((a, b) => a + (b - m) ** 2, 0) / 62;
+    const z90 = 1.2815515655446004;
+    const esperado = Math.ceil(5 * m + z90 * Math.sqrt(5 * sd2 + m * m * 9));
+    expect(parametrosNoDia('F1', dd, 'X', d, { quantil: QUANTIL }, CTX)).toEqual({ tipo: 'S', s: esperado });
+  });
+
+  it('F3: blocos de H = ceil(LT̄)+1 du na janela, quantil tipo 7, feito à mão', () => {
+    // LT̄ = 4 => H = 5; somas de 5 du alternando 1/3 = 9 ou 11, 28 de cada nos 56 blocos dos últimos 60 du
+    const { d, dd } = montar([2, 3, 4, 5, 6]);
+    // q 0,90: h = 55·0,9 = 49,5 => x[49] = x[50] = 11 => S = 11; q 0,50: h = 27,5 => (9 + 11)/2 = 10 => S = 10
+    expect(parametrosNoDia('F3', dd, 'X', d, { janelaDias: 60, quantil: QUANTIL }, CTX)).toEqual({ tipo: 'S', s: 11 });
+    expect(parametrosNoDia('F3', dd, 'X', d, { janelaDias: 60, quantil: { A: 0.5, B: 0.5, C: 0.5 } }, CTX)).toEqual({ tipo: 'S', s: 10 });
+  });
+
+  it('EOQ do F0 usa o cmc do último snapshot ANTERIOR a d; o de hoje só sem snapshot', () => {
+    const d = '2026-04-07';
+    const dias = diasCorridos('2025-12-01', addDias(d, -1)).filter((_, i) => i % 2 === 0);
+    // cmc histórico 50 até 03/2026; HOJE o cmc é 2 (dado do futuro para d)
+    const v = dias.map((dia) => ({ ...venda('X', dia, 1), cmcLinha: dia >= '2026-01-15' ? 50 : null }));
+    const dd = dados([sku('X', { cmc: 2 })], v, ltSayerlack());
+    const g = diagnosticoF0(dd, 'X', d, CTX);
+    expect(g.fontePreco).toBe('cmc_anterior');
+    expect(g.precoEoq).toBe(50);
+    // a conta do EOQ com 50: ceil(√(2·d·252·3 / (0,2575·50)))
+    const qc = Math.ceil(Math.sqrt((2 * (g.demanda ?? 0) * 252 * 3) / (0.2575 * 50)));
+    expect(g.maxSugerido).toBe((g.ppSugerido ?? 0) + Math.max(qc, 1));
+    // antes do 1º snapshot (aquecimento): fallback declarado no cmc de hoje
+    expect(diagnosticoF0(dd, 'X', '2026-01-10', CTX)).toMatchObject({ fontePreco: 'cmc_hoje_fallback', precoEoq: 2 });
   });
 });
 

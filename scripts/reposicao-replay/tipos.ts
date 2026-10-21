@@ -126,6 +126,11 @@ export interface Dados {
   classificacaoHist: ClassificacaoHist;
   /** R16: fração da demanda do SKU via ficha técnica (insumo), em [0, 1]; SKU ausente = sem demanda de insumo. */
   shareInsumo: Map<string, number>;
+  /**
+   * R19: v_sku_parametros_sugeridos (OBEN, Sayerlack) no INSTANTE da extração — a referência primária da paridade do F0.
+   * SKU ausente = fora da view (sem venda em 90 d). es/pp/max null = status_sugestao <> 'OK'.
+   */
+  parametrosView: Map<string, { es: number | null; pp: number | null; max: number | null; status: string }>;
   /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; T1_FABRICADO = t1 igual a t2, fallback sem pedido casado, fora do LT; SEM_T4_REGISTRADO = documento sem t4 e com mais du que o LT máximo, fora da amostra de LT). */
   avisos: AvisoDados[];
   dataExtracao: Data;

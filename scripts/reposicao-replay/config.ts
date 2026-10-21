@@ -75,6 +75,7 @@ export const CSVS_REPLAY = [
   'config_custos',
   'demanda_insumo',
   'equivalencias',
+  'parametros_view',
   'recebimentos',
   'skus',
   'sugestao_hoje',

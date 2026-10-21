@@ -19,10 +19,10 @@
 //    forçado; demanda da linha = sp.demanda_media_diaria gravada.
 //  · grupo de embalagem: a âncora (fator_para_base = 1) decide com os PRÓPRIOS parâmetros (demanda só dela — é o motor) e
 //    sem teto; o membro com fator > 1 nunca é âncora (SEM_DECISAO). O estoque consolidado é da Task 6.
-// LIMITAÇÕES do F0 (relatório): sem preço de compra real (o extrato não traz valor do recebimento: cmc de hoje → venda×0,55);
-// janela de LT por t2 (t4 só se t2 ausente); NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
-// linhas; t1 "fabricado" (= t2, lt_bruto NULL em prod) não é identificável no extrato; demanda de insumo da ficha técnica
-// (v_sku_demanda_efetiva) não está no extrato. O estado ANTES do replay não existe: até a 1ª sugestão OK vale o fallback
+// LIMITAÇÕES do F0 (relatório): sem preço de compra real (o extrato não traz valor do recebimento: cmc anterior a d → cmc de
+// hoje só sem snapshot → venda×0,55); NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
+// linhas; t1 fabricado sai do LT pela regra t1 = t2 (R17, aproxima o lt_bruto NULL da produção); SKU com demanda de insumo
+// (> 10%) sai da coorte (R16), porque o extrato de vendas não a traz. O estado ANTES do replay não existe: até a 1ª sugestão OK vale o fallback
 // do cold start (pp 1 / máx. 2 / ES 0, a regra do motor para SKU sem demanda); a 1ª sugestão OK o substitui sem fusível
 // (graduação revisada); antes de 28 dias observados o motor não roda (vale o cold start).
 //
@@ -164,6 +164,8 @@ interface Indice {
   diasPositivos: Map<string, number[]>;
   /** Linhas (preço de venda) por SKU, ordenadas por data. */
   linhas: Map<string, { i: number; preco: number }[]>;
+  /** cmc_linha (snapshot point-in-time, extrair.sql) por SKU, dia corrido crescente; só > 0. */
+  cmcHist: Map<string, { i: number; cmc: number }[]>;
   /** Dias úteis do início do aquecimento ao horizonte e o "balde" de cada dia corrido (fim de semana → dia útil anterior). */
   du: Data[];
   baldeDoDia: Int32Array;
@@ -192,6 +194,7 @@ function indice(dados: Dados): Indice {
   const totalDia = new Map<string, Float64Array>();
   const linhasN = new Map<string, Float64Array>();
   const linhas = new Map<string, { i: number; preco: number }[]>();
+  const cmcHist = new Map<string, { i: number; cmc: number }[]>();
   for (const v of dados.vendas) {
     if (!v.noEscopo || !dados.skus.has(v.sku) || v.data < INICIO_AQUECIMENTO) continue;
     const i = idx(v.data);
@@ -204,7 +207,13 @@ function indice(dados: Dados): Indice {
     t[i] += v.quantidade;
     linhasN.get(v.sku)![i] += 1;
     if (v.quantidade > 0) linhas.get(v.sku)!.push({ i, preco: v.valor / v.quantidade });
+    if (v.cmcLinha !== null && v.cmcLinha > 0) {
+      const h = cmcHist.get(v.sku) ?? [];
+      h.push({ i, cmc: v.cmcLinha });
+      cmcHist.set(v.sku, h);
+    }
   }
+  for (const h of cmcHist.values()) h.sort((a, b) => a.i - b.i);
   const pref = (a: Float64Array) => {
     const p = new Float64Array(a.length + 1);
     for (let i = 0; i < a.length; i++) p[i + 1] = p[i] + a[i];
@@ -268,7 +277,7 @@ function indice(dados: Dados): Indice {
     obsMotorPorSku.set(o.sku, l);
   }
   const ix: Indice = {
-    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, maxLtDu,
+    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, cmcHist, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, maxLtDu,
     propostaPorDia: new Map(), efetivaPorDia: new Map(), fornecedorPorDia: new Map(), serieDu: new Map(), trajF0: new Map(), aleatoriosF2: new Map(),
   };
   indices.set(dados, ix);
@@ -292,6 +301,21 @@ export function grupoDeEmbalagem(dados: Dados, sku: string): { grupoId: string; 
 }
 
 // ── F0 ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+/** cmc do último snapshot com data < d (busca binária); null se não há. */
+function cmcAntes(ix: Indice, sku: string, d: Data): number | null {
+  const h = ix.cmcHist.get(sku);
+  if (!h || h.length === 0) return null;
+  const iD = idx(d);
+  let lo = 0;
+  let hi = h.length; // primeiro índice com i >= iD
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (h[m].i < iD) lo = m + 1;
+    else hi = m;
+  }
+  return lo === 0 ? null : h[lo - 1].cmc;
+}
+
 /** σ diário de v_sku_sigma_demanda em d: 180 dias corridos [d-180, d-1] COM zeros (só os observados), round 4. */
 export function sigmaDemanda180(dados: Dados, sku: string, d: Data): number | null {
   return sigmaJanela(indice(dados), sku, d);
@@ -337,6 +361,9 @@ export interface DiagnosticoF0 {
   sigmaLt: number | null;
   z: number | null;
   minimoOperacional: number | null;
+  /** Preço usado no EOQ e de onde veio (null = sem preço: SEM_PRECO). */
+  precoEoq: number | null;
+  fontePreco: 'cmc_anterior' | 'cmc_hoje_fallback' | 'venda_x055' | null;
   ssCalculado: number | null;
   ppSugerido: number | null;
   maxSugerido: number | null;
@@ -366,7 +393,7 @@ interface TrajetoriaF0 {
 
 /** Sugestão de v_sku_parametros_sugeridos para o SKU no dia d (dados < d). */
 function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): Omit<DiagnosticoF0, 'gravacao' | 'coldStart' | 'es' | 'pp' | 'max' | 'demandaGravada'> {
-  const vazio = { naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null, ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null };
+  const vazio = { naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null, precoEoq: null, fontePreco: null, ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null };
   const classe = propostaDoDia(dados, ix, d).get(s.sku) ?? null;
   const pT = ix.prefTotal.get(s.sku);
   const pL = ix.prefLinhas.get(s.sku);
@@ -398,12 +425,21 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): 
   }
   const lt = teorico === null ? ltHist : ltHist === null ? teorico : Math.max(teorico, ltHist);
   const sigmaLt = desvioHist ?? desvioForn ?? (teorico ?? F0.ltPadrao) * F0.fatorSigmaLtPadrao;
-  // preço do EOQ: cmc (hoje) → [preço de compra real: não extraído] → preço médio de venda 180 d × 0,55
-  let preco: number | null = s.cmc !== null && s.cmc > 0 ? s.cmc : null;
+  // preço do EOQ (cadeia da produção, migration 20260930230623 ~L1126: COALESCE(cmc, preco_compra_real, venda×0,55)):
+  // cmc do ÚLTIMO snapshot ANTERIOR a d (cmc_linha, point-in-time) → cmc de HOJE só no aquecimento sem snapshot (fallback
+  // declarado: não existe cmc histórico antes de 2026-01-15) → [preço de compra real: não extraído] → venda 180 d × 0,55.
+  let fontePreco: DiagnosticoF0['fontePreco'] = 'cmc_anterior';
+  let preco: number | null = cmcAntes(ix, s.sku, d);
+  if (preco === null && s.cmc !== null && s.cmc > 0) {
+    preco = s.cmc;
+    fontePreco = 'cmc_hoje_fallback';
+  }
   if (preco === null) {
+    fontePreco = 'venda_x055';
     const iniP = idx(d) - 180;
     const ps = (ix.linhas.get(s.sku) ?? []).filter((l) => l.i >= iniP && l.i < idx(d)).map((l) => l.preco);
     preco = ps.length ? media(ps) * F0.fatorPrecoVenda : null;
+    if (preco === null) fontePreco = null;
   }
   const status: StatusSugestao =
     numOrdens < 2 ? 'AGUARDANDO_SEGUNDA_ORDEM'
@@ -413,7 +449,7 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): 
     : 'OK';
   const z = dados.zPorClasse[classe];
   const minimoOperacional = MINIMO_OPERACIONAL_POR_CLASSE[classe];
-  const base = { naView: true, classeProposta: classe, numOrdens, demanda, sigmaD, lt, sigmaLt, z, minimoOperacional };
+  const base = { naView: true, classeProposta: classe, numOrdens, demanda, sigmaD, lt, sigmaLt, z, minimoOperacional, precoEoq: preco, fontePreco };
   if (status !== 'OK' || lt === null || preco === null) return { ...base, ssCalculado: null, ppSugerido: null, maxSugerido: null, status };
   const sd = sigmaD ?? demanda * 0.5;
   const sigmaLtD = Math.sqrt(lt * sd ** 2 + demanda ** 2 * sigmaLt ** 2);
@@ -466,7 +502,7 @@ export function diagnosticoF0(dados: Dados, sku: string, d: Data, ctx: { calibra
   return (
     t.dias.get(d) ?? {
       naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null,
-      ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null, gravacao: null, coldStart: true, es: null, pp: null, max: null, demandaGravada: null,
+      precoEoq: null, fontePreco: null, ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null, gravacao: null, coldStart: true, es: null, pp: null, max: null, demandaGravada: null,
     }
   );
 }
@@ -528,13 +564,18 @@ function amostraLt(dados: Dados, ix: Indice, sku: string, d: Data, calib: boolea
 
 type Grade = ParamsF0 | SemDecisao | { tipo: 'GRADE'; valores: number[] } | { tipo: 'GRADE_BETA'; porBeta: number[][] };
 
-function gradeF1(serie: Float64Array, n: number, lts: number[]): number[] {
+/**
+ * σLT com 1 observação (stddev_samp NULL): segue a cadeia da produção para o desvio de LT (migration 20260930230623
+ * ~L1101-1102: COALESCE(desvio do SKU, desvio do fornecedor, COALESCE(LT teórico, 10)·0,3)). Aqui a amostra já é a da
+ * Sayerlack (o SKU tem < 5), então o próximo elo é o teórico·0,3 — nunca 0.
+ */
+function gradeF1(serie: Float64Array, n: number, lts: number[], sigmaLtFallback: number): number[] {
   const ini = Math.max(0, n - F1_JANELA_DU);
   const janela = serie.subarray(ini, n);
   const dBar = media(janela);
   const sd = desvioAmostral(janela) ?? 0;
   const ltBar = media(lts);
-  const sLt = desvioAmostral(lts) ?? 0;
+  const sLt = desvioAmostral(lts) ?? sigmaLtFallback;
   const H = ltBar + 1;
   const mu = H * dBar;
   const dp = Math.sqrt(H * sd * sd + dBar * dBar * sLt * sLt);
@@ -634,7 +675,11 @@ function gradeNoDia(f: Formula, dados: Dados, sku: string, d: Data, janelaDias: 
   for (let i = 0; i < n && positivos < 2; i++) if (serie[i] > 0) positivos++;
   const lts = positivos < 2 ? null : amostraLt(dados, ix, sku, d, calib);
   if (lts === null) return paramsF0(dados, sku, d, calib);
-  if (f === 'F1') return { tipo: 'GRADE', valores: gradeF1(serie, n, lts) };
+  if (f === 'F1') {
+    const grupo = dados.skus.get(g ? g.ancora : sku)?.grupo ?? null;
+    const teorico = grupo !== null && grupo in LT_TEORICO_DU ? LT_TEORICO_DU[grupo] : null;
+    return { tipo: 'GRADE', valores: gradeF1(serie, n, lts, (teorico ?? F0.ltPadrao) * F0.fatorSigmaLtPadrao) };
+  }
   if (f === 'F3') {
     if (janelaDias === undefined) throw new Error('F3_SEM_JANELA');
     const v = gradeF3(serie, n, lts, janelaDias);
@@ -643,11 +688,16 @@ function gradeNoDia(f: Formula, dados: Dados, sku: string, d: Data, janelaDias: 
   return { tipo: 'GRADE_BETA', porBeta: gradeF2(ix, sku, serie, n, lts) };
 }
 
-/** Classe que escolhe o quantil: classe efetiva no INÍCIO da janela medida (R2); sem classe → C (R13). */
-function classeDoQuantil(dados: Dados, sku: string, calib: boolean): Classe {
+/**
+ * Classe que escolhe o quantil: para d >= início da janela medida, a classe efetiva no INÍCIO dela (R2, fixa na janela);
+ * para d ANTES (aquecimento, e calibração vista do contexto de avaliação), a classe efetiva do PRÓPRIO d — usar a do início
+ * seria olhar dados >= d. Sem classe → C (R13).
+ */
+function classeDoQuantil(dados: Dados, sku: string, d: Data, calib: boolean): Classe {
   const ix = indice(dados);
   const g = ix.grupoDe.get(sku);
-  return efetivaDoDia(dados, ix, calib ? JANELAS.calibracaoIni : JANELAS.avaliacaoIni).get(g ? g.ancora : sku) ?? 'C';
+  const inicio = calib ? JANELAS.calibracaoIni : JANELAS.avaliacaoIni;
+  return efetivaDoDia(dados, ix, d < inicio ? d : inicio).get(g ? g.ancora : sku) ?? 'C';
 }
 
 function resolver(grade: Grade, p: ParamsFormula, classe: Classe): ParamsDia {
@@ -667,7 +717,7 @@ function resolver(grade: Grade, p: ParamsFormula, classe: Classe): ParamsDia {
 /** Parâmetros da fórmula no dia d do SKU, vendo só dados < d (e, com ctx.calibracao, só LT com t4 <= fim da calibração). */
 export function parametrosNoDia(f: Formula, dados: Dados, sku: string, d: Data, p: ParamsFormula, ctx: { calibracao: boolean }): ParamsDia {
   const grade = gradeNoDia(f, dados, sku, d, p.janelaDias, ctx.calibracao);
-  return resolver(grade, p, classeDoQuantil(dados, sku, ctx.calibracao));
+  return resolver(grade, p, classeDoQuantil(dados, sku, d, ctx.calibracao));
 }
 
 // ── preComputar + cache em disco ──────────────────────────────────────────────────────────────────────────────────
@@ -769,12 +819,9 @@ export function preComputarComOrigem(
   }
   porChave.set(chave, grades);
   const mapa = new Map<string, ParamsDia>();
-  const classes = new Map<string, Classe>();
   for (const [k, g] of grades) {
-    const s = k.slice(0, k.indexOf('|'));
-    let c = classes.get(s);
-    if (!c) classes.set(s, (c = classeDoQuantil(dados, s, ctx.calibracao)));
-    mapa.set(k, resolver(g, p, c));
+    const corte = k.indexOf('|');
+    mapa.set(k, resolver(g, p, classeDoQuantil(dados, k.slice(0, corte), k.slice(corte + 1), ctx.calibracao)));
   }
   return { mapa, origem, chave };
 }
@@ -784,8 +831,8 @@ export function preComputar(f: Formula, dados: Dados, p: ParamsFormula, ctx: Ctx
   return preComputarComOrigem(f, dados, p, ctx).mapa;
 }
 
-// ── paridade do F0 contra o gravado hoje (R14: ES, PP e máximo; a quantidade comprada fica na Task 6) ─────────────────
-/** |calculado − hoje| <= max(1, 5% de hoje). Ausente de qualquer lado = fora. */
+// ── paridade do F0 (R14 + R19: ES, PP e máximo; a quantidade comprada fica na Task 6) ─────────────────────────────────
+/** |calculado − referência| <= max(1, 5% da referência). Ausente de qualquer lado = fora. */
 export function dentroDaTolerancia(hoje: number | null, calculado: number | null): boolean {
   if (hoje === null || calculado === null) return false;
   return Math.abs(calculado - hoje) <= Math.max(1, 0.05 * Math.abs(hoje));
@@ -795,37 +842,94 @@ export type CampoParidade = 'es' | 'pp' | 'max';
 export interface DivergenciaParidade {
   sku: string;
   campo: CampoParidade;
-  hoje: number;
+  referencia: number;
   calculado: number | null;
   /** |Δ| × cmc de hoje (R$); null sem cmc. Absoluto: só em $REPLAY_DADOS. */
   impactoValor: number | null;
-  causa: 'F0_COLD_START' | 'FUSIVEL_SEGURADO' | 'CONGELADO_FORA_DA_VIEW' | 'NUMERICA';
+  causa: 'F0_COLD_START' | 'FUSIVEL_SEGURADO' | 'CONGELADO_FORA_DA_VIEW' | 'STATUS_DIVERGENTE' | 'NUMERICA';
+}
+export interface BlocoParidade {
+  referencia: string;
+  /** Dia de corte dos dados do replay (vê dados < dia). */
+  dia: Data;
+  skusComparaveis: number;
+  comparados: Record<CampoParidade, number>;
+  dentro: Record<CampoParidade, number>;
+  /** SKUs com os 3 campos comparáveis e todos dentro da tolerância. */
+  skusTodosDentro: { n: number; de: number };
+  /** Concordância do status OK (só na primária). */
+  statusConcorda: { n: number; de: number } | null;
+  valorMaximoTotal: number;
+  /** Σ |Δmáximo| × cmc nas divergências de máximo. */
+  valorDeltaMaximoDivergente: number;
+  /** Σ máximo de referência × cmc dos SKUs com qualquer divergência. */
+  valorMaximoDosDivergentes: number;
+  divergencias: DivergenciaParidade[];
 }
 export interface RelatorioParidade {
   data: Data;
   populacao: number;
   excluidos: { sku: string; motivo: string }[];
-  comparados: Record<CampoParidade, number>;
-  dentro: Record<CampoParidade, number>;
-  /** SKUs com os 3 campos comparáveis e todos dentro da tolerância. */
-  skusTodosDentro: { n: number; de: number };
-  valorMaximoTotal: number;
-  /** Σ |Δmáximo| × cmc nas divergências de máximo. */
-  valorDeltaMaximoDivergente: number;
-  /** Σ máximo_hoje × cmc dos SKUs com qualquer divergência. */
-  valorMaximoDosDivergentes: number;
+  /** PRIMÁRIA (R19): a SUGESTÃO do replay contra v_sku_parametros_sugeridos no instante da extração (fórmula × fórmula). */
+  primaria: BlocoParidade;
+  /** SECUNDÁRIA: o estado GRAVADO do replay contra sku_parametros de hoje (inclui cold start, fusível e a defasagem da passada das ~01:15). */
+  secundaria: BlocoParidade;
   gravacaoNoDia: Record<string, number>;
-  divergencias: DivergenciaParidade[];
 }
 
-/** Recalcula o F0 para o dia da extração (dados < extração) e compara com `sku.hoje`. Padrão: a coorte. */
+const novoBloco = (referencia: string, dia: Data, comStatus: boolean): BlocoParidade => ({
+  referencia, dia, skusComparaveis: 0, comparados: { es: 0, pp: 0, max: 0 }, dentro: { es: 0, pp: 0, max: 0 }, skusTodosDentro: { n: 0, de: 0 },
+  statusConcorda: comStatus ? { n: 0, de: 0 } : null, valorMaximoTotal: 0, valorDeltaMaximoDivergente: 0, valorMaximoDosDivergentes: 0, divergencias: [],
+});
+
+function comparar(
+  b: BlocoParidade, sku: string, cmc: number | null,
+  ref: Record<CampoParidade, number | null>, calc: Record<CampoParidade, number | null>, causa: DivergenciaParidade['causa'],
+): void {
+  b.skusComparaveis++;
+  if (ref.max !== null && cmc !== null) b.valorMaximoTotal += ref.max * cmc;
+  let todos = 0;
+  let algumFora = false;
+  for (const campo of ['es', 'pp', 'max'] as const) {
+    const r = ref[campo];
+    if (r === null) continue;
+    b.comparados[campo]++;
+    const c = calc[campo];
+    if (dentroDaTolerancia(r, c)) {
+      b.dentro[campo]++;
+      todos++;
+      continue;
+    }
+    algumFora = true;
+    const impacto = c === null || cmc === null ? null : Math.abs(c - r) * cmc;
+    if (campo === 'max' && impacto !== null) b.valorDeltaMaximoDivergente += impacto;
+    b.divergencias.push({ sku, campo, referencia: r, calculado: c, impactoValor: impacto, causa });
+  }
+  if (ref.es !== null && ref.pp !== null && ref.max !== null) {
+    b.skusTodosDentro.de++;
+    if (todos === 3) b.skusTodosDentro.n++;
+  }
+  if (algumFora && ref.max !== null && cmc !== null) b.valorMaximoDosDivergentes += ref.max * cmc;
+}
+
+/**
+ * Paridade do F0 com o dado real. Padrão: a coorte.
+ *  · PRIMÁRIA: a view do instante da extração já vê a venda do próprio dia, então o replay é avaliado em d = extração + 1
+ *    (dados <= extração). A borda inferior das janelas de 90/180 d fica 1 dia mais curta que a da view (`>= hoje - 90 dias`
+ *    inclui 91 dias corridos) — limitação declarada. Só compara os campos quando os DOIS têm status OK; a concordância do
+ *    status é medida à parte.
+ *  · SECUNDÁRIA: o estado gravado do replay depois da passada de d = extração (dados < extração) contra `sku.hoje`.
+ */
 export function paridadeF0(dados: Dados, skus: Iterable<string> = coorte(dados).populacao): RelatorioParidade {
   const d = dados.dataExtracao;
+  const dView = addDias(d, 1);
   const ix = indice(dados);
   const lista = [...skus].sort();
   const rel: RelatorioParidade = {
-    data: d, populacao: lista.length, excluidos: [], comparados: { es: 0, pp: 0, max: 0 }, dentro: { es: 0, pp: 0, max: 0 },
-    skusTodosDentro: { n: 0, de: 0 }, valorMaximoTotal: 0, valorDeltaMaximoDivergente: 0, valorMaximoDosDivergentes: 0, gravacaoNoDia: {}, divergencias: [],
+    data: d, populacao: lista.length, excluidos: [],
+    primaria: novoBloco('v_sku_parametros_sugeridos no instante da extração (parametros_view.csv)', dView, true),
+    secundaria: novoBloco('sku_parametros gravado hoje (skus.csv es/pp/max_hoje)', d, false),
+    gravacaoNoDia: {},
   };
   for (const sku of lista) {
     const s = dados.skus.get(sku);
@@ -838,36 +942,26 @@ export function paridadeF0(dados: Dados, skus: Iterable<string> = coorte(dados).
       rel.excluidos.push({ sku, motivo: 'MEMBRO_GRUPO_NAO_ANCORA' });
       continue;
     }
+    // primária: fórmula × fórmula
+    const v = dados.parametrosView.get(sku);
+    const sug = diagnosticoF0(dados, sku, dView, { calibracao: false });
+    if (v) {
+      const st = rel.primaria.statusConcorda!;
+      st.de++;
+      if ((v.status === 'OK') === (sug.status === 'OK')) st.n++;
+      if (v.status === 'OK' && sug.status === 'OK') {
+        comparar(rel.primaria, sku, s.cmc, { es: v.es, pp: v.pp, max: v.max }, { es: sug.ssCalculado, pp: sug.ppSugerido, max: sug.maxSugerido }, 'NUMERICA');
+      } else if (v.status === 'OK') {
+        comparar(rel.primaria, sku, s.cmc, { es: v.es, pp: v.pp, max: v.max }, { es: null, pp: null, max: null }, 'STATUS_DIVERGENTE');
+      }
+    }
+    // secundária: estado gravado × hoje
     const diag = diagnosticoF0(dados, sku, d, { calibracao: false });
     const t = trajetoriaF0(dados, sku, d, false);
     rel.gravacaoNoDia[diag.gravacao ?? 'sem_passada'] = (rel.gravacaoNoDia[diag.gravacao ?? 'sem_passada'] ?? 0) + 1;
-    if (s.hoje.max !== null && s.cmc !== null) rel.valorMaximoTotal += s.hoje.max * s.cmc;
     const segurado = [...t.dias.values()].some((x) => x.gravacao === 'segurado');
-    let todos = 0;
-    let algumFora = false;
-    for (const campo of ['es', 'pp', 'max'] as const) {
-      const hoje = s.hoje[campo];
-      if (hoje === null) continue;
-      rel.comparados[campo]++;
-      const calc = diag[campo];
-      if (dentroDaTolerancia(hoje, calc)) {
-        rel.dentro[campo]++;
-        todos++;
-        continue;
-      }
-      algumFora = true;
-      const impacto = calc === null || s.cmc === null ? null : Math.abs(calc - hoje) * s.cmc;
-      if (campo === 'max' && impacto !== null) rel.valorDeltaMaximoDivergente += impacto;
-      rel.divergencias.push({
-        sku, campo, hoje, calculado: calc, impactoValor: impacto,
-        causa: diag.coldStart ? 'F0_COLD_START' : segurado ? 'FUSIVEL_SEGURADO' : !diag.naView ? 'CONGELADO_FORA_DA_VIEW' : 'NUMERICA',
-      });
-    }
-    if (s.hoje.es !== null && s.hoje.pp !== null && s.hoje.max !== null) {
-      rel.skusTodosDentro.de++;
-      if (todos === 3) rel.skusTodosDentro.n++;
-    }
-    if (algumFora && s.hoje.max !== null && s.cmc !== null) rel.valorMaximoDosDivergentes += s.hoje.max * s.cmc;
+    const causa = diag.coldStart ? 'F0_COLD_START' : segurado ? 'FUSIVEL_SEGURADO' : !diag.naView ? 'CONGELADO_FORA_DA_VIEW' : 'NUMERICA';
+    comparar(rel.secundaria, sku, s.cmc, { es: s.hoje.es, pp: s.hoje.pp, max: s.hoje.max }, { es: diag.es, pp: diag.pp, max: diag.max }, causa);
   }
   return rel;
 }
