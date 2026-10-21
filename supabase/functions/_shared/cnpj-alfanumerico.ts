@@ -67,19 +67,59 @@ export function normalizarDocumento(bruto: unknown): string {
 }
 
 /**
- * Documento para CADASTRAR cliente no Omie (IncluirCliente). O ramo `pessoa_fisica = len <= 11`
- * dos chamadores tratava `12ABC34501DE36` (letra, DV errado) como "CPF" de 9 dígitos e cadastrava
- * ERRADO no ERP — e `123ABC45678909` como o CPF 12345678909 de OUTRA pessoa (Codex, 2026-10-19).
- * Regra: letra só é tolerada como RÓTULO antes do 1º dígito ("CPF: 123..."); letra DEPOIS do 1º
- * dígito só passa se o todo for um CNPJ alfanumérico válido — senão lança (precisão > recall: um
- * cadastro errado no ERP custa mais que um recusado). Numérico puro/com máscara segue byte-idêntico.
+ * Rótulo aceito antes do documento: SÓ `CPF` ou `CNPJ` (sem diferenciar caixa) seguido de `:` ou de
+ * espaço/tab ASCII — "CPF: 123…", "cnpj 12.345…". Gramática fechada: "AEG-", "Doc:", "C.P.F.", "CPF-" e
+ * "CPF123…" (sem separador) NÃO são rótulo.
+ */
+const ROTULO_RE = /^(CPF|CNPJ)(?:[ \t]*:[ \t]*|[ \t]+)/i;
+const TAMANHO_DO_ROTULO: Record<string, number> = { CPF: 11, CNPJ: 14 };
+/**
+ * Alfabeto do corpo (depois do rótulo), conferido ANTES de qualquer normalização: dígito e letra ASCII,
+ * `.`, `-`, `/`, espaço e tab. Fora dele, o `\D` apagava dígito Unicode (`００６…`, `٠٠٦…`) e símbolo
+ * (`Ⓐ…`) e o `toUpperCase()` expandia `ß`→`SS` — os dois fabricavam OUTRO documento (Codex, 2026-10-21).
+ */
+const ALFABETO_DO_CORPO_RE = /^[0-9A-Za-z./ \t-]*$/;
+
+/**
+ * Documento para CADASTRAR cliente no Omie (IncluirCliente) — e para os lookups cujo código vira o
+ * cliente de um pedido. O ramo `pessoa_fisica = len <= 11` dos chamadores tratava `12ABC34501DE36`
+ * (letra, DV errado) como "CPF" de 9 dígitos e cadastrava ERRADO no ERP — e `123ABC45678909` como o CPF
+ * 12345678909 de OUTRA pessoa (Codex, 2026-10-19). A 1ª correção (#3180) tolerava QUALQUER letra antes do
+ * 1º dígito como rótulo, e `ABC12345678909` virava o mesmo CPF alheio (Codex ALTO, 2026-10-20). Regra:
+ *   1. tira no máximo UM rótulo da gramática `ROTULO_RE` (nenhum CNPJ válido casa com ela: o cru não
+ *      tem `:`/espaço e a máscara tem `.` na 3ª posição);
+ *   2. o corpo tem caractere fora de `ALFABETO_DO_CORPO_RE` → LANÇA (`DOC_CARACTERE_FORA_DO_ALFABETO`);
+ *   3. o corpo tem letra → só passa se for CNPJ alfanumérico válido (cru ou máscara exata, qualquer
+ *      caixa); senão LANÇA (`DOC_LETRA_FORA_DO_ROTULO`) — nunca devolve o documento reduzido aos dígitos;
+ *   4. sem nenhum dígito → LANÇA (`DOC_SEM_DIGITO`: ausente ≠ documento vazio);
+ *   5. rótulo que contradiz o tamanho (CPF ≠ 11 dígitos, CNPJ ≠ 14 posições) → LANÇA
+ *      (`DOC_ROTULO_DIVERGENTE`).
+ * Numérico com máscara usual, sem rótulo, segue byte-idêntico ao `.replace(/\D/g, "")` de sempre
+ * (5.668 profiles com documento, 0 fora do alfabeto — psql-ro 2026-10-21). Precisão > recall: um
+ * cadastro errado no ERP custa mais que um recusado. Toda recusa diz "cadastro recusado".
  */
 export function documentoParaCadastro(bruto: unknown): string {
-  const doc = normalizarDocumento(bruto);
-  const s = String(bruto ?? "");
-  const corpo = s.slice(Math.max(0, s.search(/\d/)));
+  const s = String(bruto ?? "").trim();
+  const rotulo = ROTULO_RE.exec(s);
+  const corpo = rotulo ? s.slice(rotulo[0].length) : s;
+  if (!ALFABETO_DO_CORPO_RE.test(corpo)) {
+    throw new Error(
+      "DOC_CARACTERE_FORA_DO_ALFABETO: documento com caractere fora de [0-9A-Za-z./ -] — cadastro recusado",
+    );
+  }
+  const doc = normalizarDocumento(corpo);
   if (/[A-Za-z]/.test(corpo) && !ehCnpjAlfanumerico(doc)) {
-    throw new Error("Documento com letras não é um CNPJ alfanumérico válido (RFB jul/2026) — cadastro recusado");
+    throw new Error(
+      "DOC_LETRA_FORA_DO_ROTULO: documento com letra fora do rótulo CPF/CNPJ não é um CNPJ alfanumérico válido (RFB jul/2026) — cadastro recusado",
+    );
+  }
+  if (!/[0-9]/.test(doc)) {
+    throw new Error("DOC_SEM_DIGITO: documento sem nenhum dígito — cadastro recusado");
+  }
+  if (rotulo && doc.length !== TAMANHO_DO_ROTULO[rotulo[1].toUpperCase()]) {
+    throw new Error(
+      `DOC_ROTULO_DIVERGENTE: rótulo ${rotulo[1].toUpperCase()} com ${doc.length} posições — cadastro recusado`,
+    );
   }
   return doc;
 }

@@ -17607,6 +17607,30 @@ export type Database = {
           },
         ]
       }
+      venda_gerador_execucao: {
+        Row: {
+          dia_referencia: string
+          fase: string
+          linhas: number
+          primeira_em: string
+          ultima_em: string
+        }
+        Insert: {
+          dia_referencia: string
+          fase: string
+          linhas: number
+          primeira_em?: string
+          ultima_em?: string
+        }
+        Update: {
+          dia_referencia?: string
+          fase?: string
+          linhas?: number
+          primeira_em?: string
+          ultima_em?: string
+        }
+        Relationships: []
+      }
       venda_items_history: {
         Row: {
           cfop: string | null
@@ -17679,6 +17703,24 @@ export type Database = {
           sku_unidade?: string | null
           valor_total?: number | null
           valor_unitario?: number | null
+        }
+        Relationships: []
+      }
+      venda_onda_log: {
+        Row: {
+          condicao: Json
+          ligada_em: string
+          onda: string
+        }
+        Insert: {
+          condicao: Json
+          ligada_em?: string
+          onda: string
+        }
+        Update: {
+          condicao?: Json
+          ligada_em?: string
+          onda?: string
         }
         Relationships: []
       }
@@ -17771,6 +17813,59 @@ export type Database = {
           valor_esperado?: number | null
         }
         Relationships: []
+      }
+      venda_repasse_aprovado: {
+        Row: {
+          aprovado_em: string
+          aprovado_por: string
+          comprador_id: string
+          empresa: string
+          id: string
+          omie_codigo_produto: number
+          preco_alvo: number
+          revogado_em: string | null
+          revogado_por: string | null
+          substitui_id: string | null
+          ultimo_preco_na_aprovacao: number
+          valido_ate: string
+        }
+        Insert: {
+          aprovado_em?: string
+          aprovado_por: string
+          comprador_id: string
+          empresa: string
+          id?: string
+          omie_codigo_produto: number
+          preco_alvo: number
+          revogado_em?: string | null
+          revogado_por?: string | null
+          substitui_id?: string | null
+          ultimo_preco_na_aprovacao: number
+          valido_ate: string
+        }
+        Update: {
+          aprovado_em?: string
+          aprovado_por?: string
+          comprador_id?: string
+          empresa?: string
+          id?: string
+          omie_codigo_produto?: number
+          preco_alvo?: number
+          revogado_em?: string | null
+          revogado_por?: string | null
+          substitui_id?: string | null
+          ultimo_preco_na_aprovacao?: number
+          valido_ate?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_repasse_aprovado_substitui_id_fkey"
+            columns: ["substitui_id"]
+            isOneToOne: false
+            referencedRelation: "venda_repasse_aprovado"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       venda_situacao: {
         Row: {
@@ -21881,6 +21976,10 @@ export type Database = {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
       }
+      get_venda_sugestoes_for: {
+        Args: { p_dia?: string; p_farmer: string }
+        Returns: Json
+      }
       get_whatsapp_funil: {
         Args: { p_dias?: number }
         Returns: {
@@ -22307,6 +22406,15 @@ export type Database = {
         Returns: {
           doc: string
           nome: string
+        }[]
+      }
+      radar_irmaos_por_raiz: {
+        Args: { p_cnpjs: string[] }
+        Returns: {
+          cliente_nome: string
+          cnpj: string
+          irmaos_clientes: number
+          irmaos_na_fila: number
         }[]
       }
       radar_kpis: { Args: never; Returns: Json }
@@ -23040,6 +23148,25 @@ export type Database = {
         Args: { p_empresa: string; p_sku: string }
         Returns: Json
       }
+      venda_aprovar_repasse: {
+        Args: {
+          p_codigo: number
+          p_comprador: string
+          p_empresa: string
+          p_preco_alvo: number
+          p_substitui?: string
+          p_valido_ate: string
+        }
+        Returns: string
+      }
+      venda_avaliar_ondas: { Args: { p_hoje?: string }; Returns: Json }
+      venda_cidades_alvo: {
+        Args: { p_dia: string }
+        Returns: {
+          city_norm: string
+          uf: string
+        }[]
+      }
       venda_complemento_comprador: {
         Args: { p_comprador: string }
         Returns: Json
@@ -23049,8 +23176,13 @@ export type Database = {
         Args: { p_codigo: number; p_company: string; p_sales_order_id: string }
         Returns: Json
       }
+      venda_gerar_lista: {
+        Args: { p_dia: string; p_fase: string }
+        Returns: number
+      }
       venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
       venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
       venda_preco_alvo_comprador: {
         Args: { p_comprador: string }
         Returns: Json
@@ -23073,10 +23205,16 @@ export type Database = {
           valor_esperado: number
         }[]
       }
+      venda_reconstruir_historico: {
+        Args: { p_ate: string; p_de: string }
+        Returns: number
+      }
       venda_registrar_contato: {
         Args: { p_comprador: string; p_motivo?: string; p_resultado: string }
         Returns: string
       }
+      venda_repasse_candidatos: { Args: never; Returns: Json }
+      venda_revogar_repasse: { Args: { p_id: string }; Returns: undefined }
       venda_situacao_em: {
         Args: { p_data: string }
         Returns: {

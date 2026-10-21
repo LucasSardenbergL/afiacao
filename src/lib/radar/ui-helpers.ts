@@ -126,6 +126,47 @@ export function scoreUI(score: number | null | undefined, motivos: string[] | nu
   return { texto: String(score), tom, detalhe: motivos && motivos.length > 0 ? motivos.join(' · ') : 'sem fatores pontuados' };
 }
 
+// ── Selo de FILIAL: outros estabelecimentos da mesma raiz de CNPJ (radar_irmaos_por_raiz) ──────────
+export interface IrmaosRaiz {
+  irmaos_na_fila: number;       // outros leads da mesma raiz (não-cliente, não-descartado)
+  irmaos_clientes: number;      // clientes da mesma raiz (profiles · Omie · radar.ja_cliente), sem o próprio
+  cliente_nome: string | null;  // um nome de cliente da raiz
+}
+export interface SeloFilial { texto: string; tom: TomStatus; titulo: string; chave: 'cliente' | 'fila' }
+export type EstadoIrmaos = 'carregando' | 'falhou' | 'ok';
+
+const plural = (n: number, s: string, p: string) => (n === 1 ? s : p);
+
+/** Selos da linha. Sem dado (carregando/falhou) não há selo: a FICHA é quem diz "não consegui verificar".
+ *  Só SINALIZA — não esconde lead nem mexe em score/ordem (decisão do founder, 2026-10-21). */
+export function selosFilial(i: IrmaosRaiz | null | undefined): SeloFilial[] {
+  if (!i) return [];
+  const selos: SeloFilial[] = [];
+  if (i.irmaos_clientes > 0) {
+    selos.push({
+      chave: 'cliente', texto: 'filial de cliente', tom: 'warning',
+      titulo: `Mesma raiz de CNPJ de ${i.irmaos_clientes} ${plural(i.irmaos_clientes, 'cliente', 'clientes')}`
+        + (i.cliente_nome ? `: ${i.cliente_nome}` : ''),
+    });
+  }
+  if (i.irmaos_na_fila > 0) {
+    selos.push({
+      chave: 'fila', texto: `+${i.irmaos_na_fila} da mesma empresa`, tom: 'neutro',
+      titulo: `${i.irmaos_na_fila} ${plural(i.irmaos_na_fila, 'outro estabelecimento', 'outros estabelecimentos')} desta empresa na fila`,
+    });
+  }
+  return selos;
+}
+
+/** Texto da ficha — distingue "não tem" de "não consegui ler" (ausente ≠ zero). */
+export function textoFilialFicha(estado: EstadoIrmaos, i: IrmaosRaiz | null | undefined): string {
+  if (estado === 'carregando') return 'verificando…';
+  if (estado === 'falhou' || !i) return 'não consegui verificar';
+  const selos = selosFilial(i);
+  if (selos.length === 0) return 'nenhum outro estabelecimento na fila nem cliente com a mesma raiz';
+  return selos.map((s) => s.titulo).join(' · ');
+}
+
 /** Primeiro telefone utilizável (telefone1, senão telefone2) — o botão Ligar da linha. */
 export function telefonePrincipal(e: { telefone1: string | null; telefone2: string | null }): string | null {
   return e.telefone1 || e.telefone2 || null;

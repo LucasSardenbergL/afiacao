@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 689
+-- Total de custom migrations: 691
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -753,7 +753,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql'),
   ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql'),
   ('20261021021500', 'venda_repasse_base_desempenho', '20261021021500_venda_repasse_base_desempenho.sql'),
-  ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql')
+  ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql'),
+  ('20261021070000', 'venda_lista_lente', '20261021070000_venda_lista_lente.sql'),
+  ('20261021090000', 'radar_irmaos_por_raiz', '20261021090000_radar_irmaos_por_raiz.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2941,7 +2943,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
-  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('venda_lista_lente', 'function', 'private', '_venda_sugestoes_json', ''),
+  ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
+  ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5177,7 +5184,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
-  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('venda_lista_lente', 'function', 'private', '_venda_sugestoes_json', ''),
+  ('venda_lista_lente', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_lista_lente', 'function', 'public', 'get_venda_sugestoes_for', ''),
+  ('radar_irmaos_por_raiz', 'function', 'public', 'radar_irmaos_por_raiz', ''),
+  ('radar_irmaos_por_raiz', 'index', 'public', 'idx_radar_empresas_raiz', 'radar_empresas')
 )
 SELECT
   e.migration,
@@ -5786,6 +5798,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),
   ('public', 'venda_minhas_sugestoes', 1, '20261020174221_venda_cliente_espinha.sql', 'b98d2eecbb1b24088c6bacd5f4d5fe01'),
   ('public', 'venda_minhas_sugestoes', 2, '20261021031000_venda_cliente_ondas23.sql', 'd09aac2957017213880f53e9253bd279'),
+  ('public', 'venda_minhas_sugestoes', 3, '20261021070000_venda_lista_lente.sql', '063e2a5233f9d0ccb47a1b6612f96d37'),
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),

@@ -584,6 +584,10 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
 db/test-radar-score.sh                      21  falsificar=14
+# Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
+# (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
+# cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.
+db/test-radar-irmaos-por-raiz.sh            13  falsificar=11
 # Radar: ranking de cidades e mapa contam a FOTO VIGENTE (20261020120200). Defeito aqui = totalizador por
 # município contando quem saiu do dump (diverge da fila), lote mal formado contando zero em silêncio,
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
@@ -714,3 +718,9 @@ db/test-venda-ondas23.sh                   44  falsificar=18
 # elegível ⇒ NULL nas 4 linhas; mês/coluna sem snapshot ⇒ bruto NULL; escopo da soma parcial; gate staff e
 # ACL. 19 sabotagens (md5 reassinado).
 db/test-fin-consolidado-ic.sh              34  falsificar=19
+
+# Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
+# vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo
+# recortado do arquivo das Ondas 2–3, md5 conferido), get_venda_sugestoes_for é só master (farmer para outra
+# ou para si → 42501, anon → 42501, helper direto → 42501), só fase ativa, ausente ≠ zero, sem chave de custo.
+db/test-venda-lista-lente.sh               26  falsificar=8

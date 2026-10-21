@@ -9,8 +9,10 @@ SELECT CASE
     THEN '❌ FALTANDO — migration 20261021031000 não aplicada'
   WHEN (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_gerar_lista(date,text)'))
          IS DISTINCT FROM '5abe897dbcaaf3b70351da896e35b566'
-    OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_minhas_sugestoes(date)'))
-         IS DISTINCT FROM 'e38baeb57b7e19c815e45baa77a23810'
+    -- e38b… = corpo da 20261021031000; 9c70… = evolução serial da 20261021070000 (lista na lente: corpo virou
+    -- gate + private._venda_sugestoes_json, saída byte-idêntica). COALESCE: função ausente segue ❌, não NULL.
+    OR COALESCE((SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_minhas_sugestoes(date)')), '')
+         NOT IN ('e38baeb57b7e19c815e45baa77a23810', '9c70ff552bd324d8ecde698ef5127f66')
     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = to_regprocedure('public.venda_fechar_desfechos(date)'))
          IS DISTINCT FROM '6c962e84f9b821d5612b555e10489616'
     THEN '❌ corpo vivo divergente do da 20261021031000 (gerador, lista da farmer ou desfecho)'

@@ -67,6 +67,18 @@ O trigger do pedido de compra roda desde 2026-10-18 o corpo do envelope `db/apli
 - **Baseline: 23 entradas.** São as 22 justificadas acima mais a do #3258. A prova E (`db/test-deriva-baseline-prod.sh`), que tinha abortado no controle, deu **32 ok / 0 fail** contra a prod.
 - **Casts:** `casts:stale` = **20/21, piso 41** (plataforma #3257/#3262, vendas #3265). Faltam 15 em módulos ativos (farmer-inteligencia 9, financeiro 4, governanca 2), com a sessão irmã. Os 26 dos congelados ficam. A Frente A ainda **não** está pronta: o critério é 0 nos ativos.
 
+## Fecho da Frente A (2026-10-21)
+
+A sessão irmã entregou caça (#3268), financeiro (#3272) e farmer-inteligencia (#3273) e registrou o item 4 como feito (#3275), com 6 casts "residuais deliberados" em módulos ativos. Pelo critério deste ciclo (0 em todo módulo ativo), 5 deles saíram num PR desta sessão:
+
+- **`useExcecoesGestor` (governança, 3).** O ciclo 1 o deixou de fora porque o briefing congelava a família `useTarefas*` junto com o módulo `tarefas`. Mas o manifesto o dá a governança: é o card "Exceções" do MasterDashboard, ativo. Ele só LÊ `v_tarefas_estado` e `tarefa_satisfacao_candidatos`, que já estavam no `types.ts`.
+  - A view perde o NOT NULL, então a borda exige `id`/`descricao`/`effective_due` com `linhasCom`. Na prod a view tem 0 linhas; `id`/`descricao` são NOT NULL na base, e `effective_due` é um COALESCE que termina em `created_at + backstop_days`.
+  - `customer_metrics` (`Json`) era fingido como `Record<string, number | null>`. Agora é lido por forma: chave ausente ou não-numérica vira `null`, nunca 0.
+- **`useRaioXMutacoes` (reposição, 2; money-path, decide sobre `sku_parametros`).** Passou a usar `comNulo`, reabrindo destino/observação/fornecedor/crédito e `p_qtd`. Na prod as duas RPCs são não-STRICT e sem DEFAULT. O payload não muda. O `data as { tirou_do_motor?: boolean }` caiu porque o tipo gerado já devolve a linha com `tirou_do_motor: boolean`.
+- **Fica `useVendaPainel` (1):** as RPCs dele ainda não estão no `types.ts`, que é o uso legítimo do cast.
+
+`casts:stale` = **14/12, piso 26**, igual à contagem real. Em módulo ativo, **0** casts sobre nome tipado. Os 26 restantes estão em módulos congelados (tarefas 9, telefonia 7, knowledge-base 5, loja-afiacao 3, produção 2).
+
 ## Lições
 
 - **Duas sessões no mesmo item: confira o artefato da irmã antes de cada PR, não só a lista de PRs.** O commit dela estava local, sem push nem PR. Só o `git log` do worktree dela mostrou a colisão.
