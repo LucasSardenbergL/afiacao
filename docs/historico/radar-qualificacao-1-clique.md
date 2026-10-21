@@ -105,8 +105,8 @@ ainda não cruzada".
 
 ## Follow-ups (fora deste bloco)
 
-- RPC `radar_registrar_cadastro_omie` idempotente por vínculo idêntico + exclusão `(conta, CNPJ)` partilhada entre
-  lote e clique individual (Codex #3) — exige migration.
+- ~~RPC `radar_registrar_cadastro_omie` idempotente por vínculo idêntico + exclusão `(conta, CNPJ)` partilhada entre
+  lote e clique individual (Codex #3)~~ → feito em [radar-cadastro-omie-idempotente.md](radar-cadastro-omie-idempotente.md).
 - Versão da fórmula do score (md5 do `prosrc`) no ledger e nos eventos; re-medir a distribuição ao mudar peso
   (Codex #11).
 - Paginação da fila com a identidade do lote na chave (Codex código #5; coordenar com o #3220).

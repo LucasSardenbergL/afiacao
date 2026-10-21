@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **689** custom migrations totais
-- **2222** objetos esperados (criados por estas migrations)
+- **691** custom migrations totais
+- **2227** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 829
+  - `function`: 831
   - `rls_policy`: 482
-  - `index`: 287
+  - `index`: 289
   - `cron_job`: 196
-  - `table`: 194
+  - `table`: 195
   - `view`: 125
   - `trigger`: 105
   - `enum_value`: 4
@@ -5605,6 +5605,21 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.venda_gerar_lista` | — |
 | `function` | `public.venda_minhas_sugestoes` | — |
 | `function` | `public.venda_fechar_desfechos` | — |
+
+### `20261021120000_radar_cadastro_omie_confirmacao_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+| `table` | `public.omie_cliente_confirmacoes` | — |
+| `index` | `public.omie_cliente_confirmacoes_doc_idx` | `omie_cliente_confirmacoes` |
+
+### `20261021120500_radar_cadastro_omie_idempotente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+| `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
 
 ## Próximos passos por status
 

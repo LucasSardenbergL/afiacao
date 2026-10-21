@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 689
+-- Total de custom migrations: 691
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -753,7 +753,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261020233000', 'venda_cliente_repasse', '20261020233000_venda_cliente_repasse.sql'),
   ('20261020235000', 'venda_cliente_painel', '20261020235000_venda_cliente_painel.sql'),
   ('20261021021500', 'venda_repasse_base_desempenho', '20261021021500_venda_repasse_base_desempenho.sql'),
-  ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql')
+  ('20261021031000', 'venda_cliente_ondas23', '20261021031000_venda_cliente_ondas23.sql'),
+  ('20261021120000', 'radar_cadastro_omie_confirmacao_servidor', '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql'),
+  ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2941,7 +2943,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
-  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
+  ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5177,7 +5184,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_cliente_ondas23', 'function', 'private', 'venda_lista_preco', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_gerar_lista', ''),
   ('venda_cliente_ondas23', 'function', 'public', 'venda_minhas_sugestoes', ''),
-  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', '')
+  ('venda_cliente_ondas23', 'function', 'public', 'venda_fechar_desfechos', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'table', 'public', 'omie_cliente_confirmacoes', ''),
+  ('radar_cadastro_omie_confirmacao_servidor', 'index', 'public', 'omie_cliente_confirmacoes_doc_idx', 'omie_cliente_confirmacoes'),
+  ('radar_cadastro_omie_idempotente', 'function', 'public', 'radar_registrar_cadastro_omie', ''),
+  ('radar_cadastro_omie_idempotente', 'index', 'public', 'radar_empresas_omie_codigo_cliente_uniq', 'radar_empresas')
 )
 SELECT
   e.migration,
@@ -5552,6 +5564,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
   ('public', 'radar_registrar_cadastro_omie', 1, '20260613190000_radar_fatia3.sql', '60becb171538c0fdf7a7cac32fb540b1'),
   ('public', 'radar_registrar_cadastro_omie', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '7610ed60036aa30ad49a881dec8d1429'),
+  ('public', 'radar_registrar_cadastro_omie', 3, '20261021120000_radar_cadastro_omie_confirmacao_servidor.sql', '0565deae945b5bc1a132210db910a637'),
+  ('public', 'radar_registrar_cadastro_omie', 4, '20261021120500_radar_cadastro_omie_idempotente.sql', '3d60a2556942f44a899d4ded3a158efd'),
   ('public', 'radar_prospects_para_rota', 1, '20260613230000_roteirizador_prospects.sql', '5e60b8b20f0fb33d469b664c36b792a8'),
   ('public', 'radar_prospects_para_rota', 2, '20260614160000_roteirizador_campo_banco.sql', 'cba7b31d56e029925d06a13804fffeac'),
   ('public', 'radar_prospects_para_rota', 3, '20260615190000_geocoding_cep_geo.sql', '6c9e09329e90a7f5752de1c92e186047'),
