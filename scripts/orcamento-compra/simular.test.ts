@@ -198,6 +198,21 @@ describe('simularCiclo', () => {
     expect(r.cortesDetalhe.map((x) => [x.motivo, x.classe])).toEqual(Array(3).fill(['financeiro', 'indeterminado']));
     expect(r.fechamento).toEqual([{ sku: '9', erro: 65, ok: false }]);
   });
+  it('R60: ciclo gerado à tarde (SP) fecha contra o FIM do próprio dia; de manhã, contra o fim de d−1', () => {
+    // 20 unidades a mais vendidas em 01/10: fim de 30/09 = 50 + 15 + 20 = 85; fim de 01/10 = 85 − 21 = 64
+    const base = cortavel(64);
+    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    const tarde = simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: '2026-10-01T20:15:00Z' }] }, 1, cfg);
+    expect(tarde.fechamento).toEqual([{ sku: '9', erro: 0, ok: true }]);
+    const manha = simularCiclo(f, 1, cfg); // 12:00Z = 09:00 SP
+    expect(manha.fechamento).toEqual([{ sku: '9', erro: 21, ok: false }]);
+  });
+  it('R60: a fronteira é meio-dia em SP (11:59 fecha em d−1; 12:00 fecha em d)', () => {
+    const base = cortavel(64);
+    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    const em = (h: string) => simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: h }] }, 1, cfg).fechamento[0].erro;
+    expect([em('2026-10-01T14:59:00Z'), em('2026-10-01T15:00:00Z')]).toEqual([21, 0]);
+  });
   it('R26: ciclo não disparado não roda replay (classe nula)', () => {
     const f = cortavel(65);
     const r = simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], status: 'expirado_sem_aprovacao' }] }, 1, cfg);

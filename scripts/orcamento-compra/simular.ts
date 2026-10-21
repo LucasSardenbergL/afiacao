@@ -146,6 +146,23 @@ export function dataLocalSP(instante: string): DataISO {
   return `${partes.year}-${partes.month}-${partes.day}`;
 }
 
+const FMT_HORA_SP = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23' });
+/** Hora (0–23) do instante em America/Sao_Paulo. */
+export function horaLocalSP(instante: string): number {
+  const t = ts(instante);
+  if (!Number.isFinite(t)) throw new Error(`instante inválido: ${instante}`);
+  return Number(FMT_HORA_SP.formatToParts(new Date(t)).find((x) => x.type === 'hour')?.value);
+}
+
+/**
+ * R60: instante do `estoque_fisico` gravado pelo motor. Ele é lido NA GERAÇÃO do ciclo: gerado a partir do
+ * meio-dia (SP), o estoque já descontou a venda do próprio dia → fecha contra o fim de `data`; de manhã, contra o
+ * fim de `data − 1` (spec §7). Medido 2026-10-21: 223 de 279 ciclos são gerados à tarde (a maioria ~17h15), e
+ * deslocar as janelas entre leituras para o fim do dia levou Σ|resíduo| de 760 para 419 e as janelas exatas de
+ * 583 para 756 de 902 (−1 dia: 845; +2 dias: 786).
+ */
+export const HORA_FECHAMENTO_NO_DIA = 12;
+
 function exigir(v: Num, nome: string): number {
   if (v == null || !Number.isFinite(Number(v))) throw new Error(`${nome} ausente — rode o preVoo`);
   return Number(v);
@@ -427,6 +444,7 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
   const data = ciclo.data_ciclo;
   // R52: as-of = a decisão do motor (geração), não o disparo humano
   const momento = ciclo.horario_geracao;
+  const fechaNoDia = horaLocalSP(momento) >= HORA_FECHAMENTO_NO_DIA;
   const status = statusEfetivo(ciclo);
   const reserva = reservaDe(f, data, momento, cfg.reservaDias);
   const asOf = lagsAsOf(f, data);
@@ -462,11 +480,13 @@ export function simularCiclo(f: Fatos, cicloId: number, cfg: Config): ResultadoC
       precoCheioPromocao: l.modo_promocao ? precoOuNull(l.preco_sem_desconto) : null,
     };
     const embs = quebrarEmEmbalagens(linha, { fretePerc: cfg.fretePerc, dataPagamento });
-    const { serie, estoqueFim } = serieDoSku(f, linha.sku, addDias(data, -180), addDias(data, -1));
+    // Até `data` só para o fechamento (R60); a série de demanda as-of continua até data−1 (R22).
+    const ateDia = serieDoSku(f, linha.sku, addDias(data, -180), data);
+    const serie = ateDia.serie.slice(0, -1);
 
-    // Erro de fechamento (spec §7): reconstrução no fim de data−1 × estoque_fisico gravado pelo motor.
+    // Erro de fechamento (spec §7 + R60): reconstrução no instante da leitura × estoque_fisico gravado pelo motor.
     const gravado = numOuNull(l.estoque_fisico);
-    const reconstruido = estoqueFim[estoqueFim.length - 1];
+    const reconstruido = ateDia.estoqueFim[ateDia.estoqueFim.length - (fechaNoDia ? 1 : 2)];
     const erro = gravado != null && Number.isFinite(reconstruido) ? reconstruido - gravado : null;
     const ok = erro != null && Math.abs(erro) <= Math.max(passoDaLinha(linha), 0.1 * Math.abs(gravado as number));
     fechamento.push({ sku: linha.sku, erro, ok });
