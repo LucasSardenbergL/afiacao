@@ -152,7 +152,6 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/hooks/useRoutePlanner.ts", para: "src/lib/visitas/agenda-to-stop.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/hooks/useUnifiedOrder.ts", para: "src/hooks/useClienteTier.ts", deModulo: "vendas", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/hooks/useUnifiedOrder.ts", para: "src/hooks/useRecommendationEngine.ts", deModulo: "vendas", paraModulo: "farmer-inteligencia", kind: "type" },
-  { de: "src/hooks/useWhatsappPendentes.ts", para: "src/lib/fila/adapters/whatsappPendente.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/lib/__tests__/offline-cliente-do-dono.test.tsx", para: "src/services/recebimento-confirm.ts", deModulo: "plataforma", paraModulo: "estoque-recebimento", kind: "runtime" },
   { de: "src/lib/__tests__/offline-handlers.test.ts", para: "src/services/pcp-apontamento.ts", deModulo: "plataforma", paraModulo: "producao", kind: "runtime" },
   { de: "src/lib/__tests__/offline-handlers.test.ts", para: "src/services/picking-confirm.ts", deModulo: "plataforma", paraModulo: "estoque-recebimento", kind: "runtime" },

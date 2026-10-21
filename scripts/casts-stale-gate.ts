@@ -44,9 +44,10 @@ export const ARQ_BASELINE = 'scripts/casts-stale-baseline.json';
  * literais `as never` no src/ — remover cast exige baixar o piso no MESMO PR (senão o gate acusa
  * varredura cega), e o piso nunca sobe. 2026-10-18: 65 (reposição + pedidos programados sem cast);
  * 2026-10-19: 58 (governança/DES sem cast); 2026-10-20: 54 (admin-crm + tintométrico sem cast);
- * 2026-10-20: 52 (estoque-recebimento sem cast); 2026-10-20: 47 (plataforma sem cast).
+ * 2026-10-20: 52 (estoque-recebimento sem cast); 2026-10-20: 47 (plataforma sem cast);
+ * 2026-10-20: 46 (useWhatsappPendentes apagado — a fila do Meu Dia deixou de consumi-lo, M-41).
  */
-export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 47 } as const;
+export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 46 } as const;
 
 export interface Nomes {
   relacoes: Set<string>; // Tables ∪ Views

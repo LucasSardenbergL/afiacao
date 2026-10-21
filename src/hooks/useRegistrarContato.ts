@@ -4,7 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
-export const RESULTADOS_CONTATO = [
+const RESULTADOS_CONTATO = [
   { valor: 'vendeu', rotulo: 'Vendeu' },
   { valor: 'vai_pedir', rotulo: 'Vai pedir' },
   { valor: 'sem_interesse', rotulo: 'Sem interesse' },
@@ -17,7 +17,7 @@ export const rotuloResultado = (r: string): string =>
   RESULTADOS_CONTATO.find((x) => x.valor === r)?.rotulo ?? r;
 
 /** Traduz a SQLSTATE de `venda_registrar_contato` para o que a vendedora precisa FAZER. */
-export function mensagemDoErroContato(codigo: string | undefined, fallback: string): string {
+function mensagemDoErroContato(codigo: string | undefined, fallback: string): string {
   switch (codigo) {
     case '42501': return 'Este cliente não está na sua carteira — o contato não foi registrado.';
     case '22023': return 'Desfecho inválido — avise a equipe, isto é um bug.';

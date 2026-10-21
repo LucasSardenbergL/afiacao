@@ -760,7 +760,6 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useLinkCallToCustomer.ts",
       "src/hooks/useCustomerCalls.ts",
       "src/hooks/useSendWhatsapp.ts",
-      "src/hooks/useWhatsappPendentes.ts",
       "src/hooks/useWhatsappFunil.ts",
       "src/hooks/useRoutePlanner.ts",
       "src/hooks/useCatalisadorLink.ts",
