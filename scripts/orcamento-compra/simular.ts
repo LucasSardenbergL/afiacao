@@ -78,6 +78,17 @@ export interface Fatos {
   demanda: { sku: string; data: DataISO; qtde: Num }[];
   /** R61: venda FÍSICA do próprio SKU (venda_items_history crua: sem substituição nem malha) — reconstrução e replay. */
   demanda_fisica: { sku: string; data: DataISO; qtde: Num }[];
+  /**
+   * R63: dias (SP) em que o job de snapshot de caixa registrou ERRO (`acoes_execucoes`, fin_cashflow.snapshot_diario)
+   * e o snapshot pessimista da Oben NÃO existe — falha de infraestrutura comprovada, não falta de caixa.
+   */
+  falhas_snapshot: DataISO[];
+  /**
+   * R64: NFs efetivadas no recebimento do app nas últimas 30h cuja chave NÃO tem t4 no tracking. O estoque de HOJE
+   * (âncora da reconstrução) já contém a entrada, mas os recebimentos dos fatos não: rodar agora quebra o fechamento
+   * de todo ciclo anterior desses SKUs (medido 2026-10-21: 2 NFs à tarde → 35 para 60 SKUs com fechamento ruim).
+   */
+  recebimentos_sem_t4: string[];
   recebimentos: { sku: string; data: DataISO; qtde: Num }[];
   estoque: { sku: string; estoque_fisico: Num }[];
   params: { sku: string; preco_venda_medio: Num; demanda_media_diaria: Num; demanda_sigma_diario: Num }[];
@@ -135,6 +146,11 @@ export interface ResultadoCiclo {
   /** erro = estoque reconstruído no fim de data−1 − estoque_fisico gravado na linha; null = não avaliável */
   fechamento: { sku: string; erro: number | null; ok: boolean }[];
   cortesDetalhe: DetalheCorte[];
+  /**
+   * R63: ciclo fora do portão por falha de infraestrutura comprovada (indeterminado SÓ por snapshot, com o job de
+   * snapshot em erro no dia ou na véspera). Continua listado e contado como indeterminado no resumo.
+   */
+  exclusaoPortao?: 'falha_infra_snapshot' | null;
 }
 
 const ts = (s: string) => Date.parse(s);
@@ -207,6 +223,11 @@ export function preVoo(f: Fatos): string[] {
     else if (!(idadeH >= 0 && idadeH <= ENCERRADOS_IDADE_MAX_H)) falhas.push(`publicação de encerrados do Omie fora de ${ENCERRADOS_IDADE_MAX_H}h (R59) — conjunto velho não vale como o de hoje`);
   }
   if (f.demanda.some((d) => d.qtde == null)) falhas.push('demanda com qtde nula — série inválida');
+  if (!Array.isArray(f.falhas_snapshot)) falhas.push('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  if (!Array.isArray(f.recebimentos_sem_t4)) falhas.push('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
+  else if (f.recebimentos_sem_t4.length > 0) {
+    falhas.push(`${f.recebimentos_sem_t4.length} NF efetivada(s) no recebimento sem t4 no tracking (${f.recebimentos_sem_t4.slice(0, 5).join(', ')}) — rode depois da revisita da omie-sync-nfes-recebidas (R64)`);
+  }
   if (!Array.isArray(f.demanda_fisica)) falhas.push('demanda_fisica ausente — fatos.sql antigo (R61)');
   else if (f.demanda_fisica.some((d) => d.qtde == null)) falhas.push('demanda_fisica com qtde nula — reconstrução de estoque inválida');
   if (f.recebimentos.some((r) => r.qtde == null)) falhas.push('recebimentos com qtde nula — reconstrução de estoque inválida');
@@ -767,15 +788,30 @@ function dioPorEpisodio(f: Fatos, efetivos: ResultadoCiclo[], noCmv: Set<string>
   return { custoCom, custoSem, n, semHorizonte, indeterminados, custoComCmv, custoSemCmv, nCmv };
 }
 
+/** R63: só a camada 'snapshot' e o job de snapshot em erro no dia do ciclo ou na véspera (os snapshots que o serviriam). */
+export function exclusaoPortao(c: ResultadoCiclo, falhas: ReadonlySet<DataISO>): ResultadoCiclo['exclusaoPortao'] {
+  if (c.estado.tipo !== 'indeterminado') return null;
+  if (c.estado.camadas.length !== 1 || c.estado.camadas[0] !== 'snapshot') return null;
+  return falhas.has(c.data) || falhas.has(addDias(c.data, -1)) ? 'falha_infra_snapshot' : null;
+}
+
 export function backtest(f: Fatos, cfg: Config) {
-  const ciclos = f.ciclos.map((c) => simularCiclo(f, c.id, cfg));
+  const falhasSnapshot = new Set(f.falhas_snapshot ?? []);
+  const ciclos = f.ciclos.map((c) => {
+    const r = simularCiclo(f, c.id, cfg);
+    return { ...r, exclusaoPortao: exclusaoPortao(r, falhasSnapshot) };
+  });
   const efetivos = ciclos.filter((c) => c.status === 'disparado');
   const naoEfetivos = ciclos.filter((c) => c.status !== 'disparado');
   const itensClasse = efetivos.flatMap((c) => c.cortesDetalhe
     .filter((x) => x.classe && corteMedido(x))
     .map((x) => ({ classe: x.classe as ClasseCorte, valor: x.valor as number })));
   const episodios = deduplicarEpisodios(cortesPorCicloSku(efetivos), 7);
-  const precEp = precisaoPorEpisodio(efetivos);
+  // R62 (decisão do founder 2026-10-21): num aperto de caixa a guarda NÃO corta — escala ao humano com a proposta.
+  // O portão mede só os cortes AUTOMÁTICOS; o corte financeiro segue medido à parte (o que a proposta teria feito).
+  const soMotivo = (manter: (x: DetalheCorte) => boolean) => efetivos.map((c) => ({ ...c, cortesDetalhe: c.cortesDetalhe.filter(manter) }));
+  const precEp = precisaoPorEpisodio(soMotivo((x) => x.motivo !== 'financeiro'));
+  const precEpEscalados = precisaoPorEpisodio(soMotivo((x) => x.motivo === 'financeiro'));
 
   const cmv = cmvDiarioDoUniverso(f);
   const dio = dioPorEpisodio(f, efetivos, cmv.completos);
@@ -853,6 +889,10 @@ export function backtest(f: Fatos, cfg: Config) {
       precisao: precisaoDoCorte(itensClasse),
       precisaoEpisodios: { precisao: precEp.precisao, valorCortado: precEp.valorCortado, n: precEp.n, indeterminados: precEp.indeterminados },
       coberturaEpisodios: precEp.cobertura,
+      /** R62: o corte por falta de caixa, que vira proposta ao humano — informativo, fora do portão */
+      precisaoEpisodiosEscalados: { precisao: precEpEscalados.precisao, valorCortado: precEpEscalados.valorCortado, n: precEpEscalados.n, indeterminados: precEpEscalados.indeterminados, cobertura: precEpEscalados.cobertura },
+      /** R63: ciclos indeterminados fora do portão por falha de infraestrutura comprovada */
+      excluidosPortao: ciclos.filter((c) => c.exclusaoPortao != null).map((c) => ({ cicloId: c.cicloId, data: c.data, motivo: c.exclusaoPortao })),
       episodios: episodios.length,
       sensiveisAoModelo: ciclos.reduce((s, c) => s + c.sensiveisAoModelo, 0),
       /** rótulo: "CMV diário do universo do motor" */
