@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { fetchAllPages } from '@/lib/postgrest';
 import { track } from '@/lib/analytics';
 import { parsearConflito, parsearResolucao, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -7,25 +8,16 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
 // Conflitos de cadastro Radar×Omie guardados no SERVIDOR (migration 20261027160000). A tela lê daqui — o
 // localStorage do lote deixa de ser a única evidência. Erro de leitura é `isError`, nunca "zero conflitos".
 const CHAVE = ['radar', 'conflitos-cadastro'] as const;
-const PAGINA = 1000;
-const MAX_PAGINAS = 20;
 
 /**
- * Lê TODAS as páginas (PostgREST capa em 1.000 calado): um recorte faria um conflito aberto depois de 1.000 linhas
- * parecer ausência de pendência (Codex, código P2-4). Passar do teto LANÇA — nunca devolve parcial.
+ * Lê TODAS as páginas pelo helper canônico (PostgREST capa em 1.000 calado; página com erro LANÇA): um recorte faria um
+ * conflito aberto depois de 1.000 linhas parecer ausência de pendência (Codex, código P2-4).
  */
 export async function lerTodas(
   pagina: (de: number, ate: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+  fonte: string,
 ): Promise<ConflitoCadastro[]> {
-  const todas: ConflitoCadastro[] = [];
-  for (let p = 0; p < MAX_PAGINAS; p++) {
-    const { data, error } = await pagina(p * PAGINA, (p + 1) * PAGINA - 1);
-    if (error) throw error;
-    const linhas = data ?? [];
-    for (const c of linhas) todas.push(parsearConflito(c));
-    if (linhas.length < PAGINA) return todas;
-  }
-  throw new Error(`RADAR_RESPOSTA_INDETERMINADA: mais de ${MAX_PAGINAS * PAGINA} conflitos — leitura recusada em vez de truncada`);
+  return (await fetchAllPages(pagina, fonte)).map((c) => parsearConflito(c));
 }
 
 /** Conflitos ABERTOS (todos os CNPJs) — o indicador "N CNPJs com pendência Omie". Ordem estável + range (G7). */
@@ -37,7 +29,7 @@ export function useRadarConflitosAbertos() {
       .select('*')
       .is('resolvido_em', null)
       .order('id', { ascending: true })
-      .range(de, ate)),
+      .range(de, ate), 'radar_cadastro_conflitos/abertos'),
   });
 }
 
@@ -55,7 +47,7 @@ export function useRadarConflitosDosCnpjs(cnpjs: string[]) {
       .select('*')
       .in('cnpj', ordenados)
       .order('id', { ascending: true })
-      .range(de, ate)),
+      .range(de, ate), 'radar_cadastro_conflitos/cnpjs'),
   });
 }
 
