@@ -577,6 +577,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/AdminEstoquePicking.kpis-nao-fabricam-zero.test.tsx",
       "src/pages/__tests__/RecebimentoConferencia.estados.test.tsx",
       "src/pages/__tests__/RecebimentoConferencia.descricao-do-item.test.tsx",
+      "src/pages/__tests__/Recebimento.recebida-fora-do-app.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: true, authSensitive: false },
   },

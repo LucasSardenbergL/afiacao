@@ -6,7 +6,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import {
   ArrowLeft, Truck, Plus, Loader2, ScanLine, Keyboard, Copy,
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, PackageCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,14 @@ import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
 import { estadoDeRegistro, naoConsegui } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { EmptyState } from '@/components/EmptyState';
+import { RotuloItensDaNf } from '@/components/recebimento/RotuloItensDaNf';
+import {
+  EXPLICACAO_RECEBIDA_FORA_DO_APP,
+  ROTULO_ITENS_NAO_CARREGADOS,
+  ROTULO_RECEBIDA_FORA_DO_APP,
+  situacaoItensNf,
+} from '@/lib/recebimento/itens-da-nf';
 
 type ItemStatus = 'pendente' | 'em_conferencia' | 'conferido' | 'divergencia';
 
@@ -189,6 +197,8 @@ export default function RecebimentoConferencia() {
   // Compute globals
   const nfeTyped = nfe as NfeRecebimento | undefined;
   const items = (nfeTyped?.nfe_recebimento_itens ?? []) as NfeItem[];
+  // Sem item no app não há progresso a mostrar: "0 de 0 unidades" afirmaria uma nota vazia.
+  const situacaoItens = situacaoItensNf(nfeTyped?.status, items);
   const totalEsperada = items.reduce((s: number, i) => s + (i.quantidade_esperada ?? 0), 0);
   const totalConferida = items.reduce((s: number, i) => s + (i.quantidade_conferida ?? 0), 0);
   const progressPct = totalEsperada > 0 ? Math.round((totalConferida / totalEsperada) * 100) : 0;
@@ -498,13 +508,19 @@ export default function RecebimentoConferencia() {
         </div>
 
         {/* Global progress */}
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="font-medium text-foreground">{totalConferida} de {totalEsperada} unidades</span>
-            <span className="text-muted-foreground">{progressPct}%</span>
+        {situacaoItens === 'com_itens' ? (
+          <div className="space-y-1">
+            <div className="flex justify-between text-sm">
+              <span className="font-medium text-foreground">{totalConferida} de {totalEsperada} unidades</span>
+              <span className="text-muted-foreground">{progressPct}%</span>
+            </div>
+            <Progress value={progressPct} className="h-3" />
           </div>
-          <Progress value={progressPct} className="h-3" />
-        </div>
+        ) : (
+          <div className="text-sm">
+            <RotuloItensDaNf situacao={situacaoItens} />
+          </div>
+        )}
       </div>
 
       <div className="px-4 space-y-4 mt-4">
@@ -542,8 +558,27 @@ export default function RecebimentoConferencia() {
         {/* Items */}
         <div>
           <h2 className="text-sm font-semibold text-muted-foreground mb-2">
-            Itens ({items.length})
+            {situacaoItens === 'com_itens' ? `Itens (${items.length})` : 'Itens'}
           </h2>
+          {situacaoItens !== 'com_itens' && (
+            <Card>
+              <CardContent className="p-0">
+                {situacaoItens === 'recebida_fora_do_app' ? (
+                  <EmptyState
+                    icon={PackageCheck}
+                    title={ROTULO_RECEBIDA_FORA_DO_APP}
+                    description={EXPLICACAO_RECEBIDA_FORA_DO_APP}
+                  />
+                ) : (
+                  <EmptyState
+                    icon={PackageCheck}
+                    title={ROTULO_ITENS_NAO_CARREGADOS}
+                    description='Os itens desta NF-e ainda não vieram do Omie. Use "Sincronizar Omie" na lista de recebimento antes de conferir.'
+                  />
+                )}
+              </CardContent>
+            </Card>
+          )}
           <div className="space-y-3">
             {items.map((item) => {
               const esperada = item.quantidade_esperada ?? 0;
