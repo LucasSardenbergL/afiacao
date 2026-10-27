@@ -79,6 +79,14 @@ Deno.test("MALFORMADO → INDETERMINADO, nunca 'não existe'", async () => {
     ["sem cnpj_cpf", pg(1, { codigo_cliente_omie: 777, razao_social: "ACME" })],
     ["cnpj_cpf não-string", pg(1, cli(777, 12345678000195))],
     ["eco de página errado", pg(2, cli(777))],
+    // eco tipado (Codex): Number(true) === 1 e Number([1]) === 1 não podem passar por página 1
+    ["eco de página booleano", { pagina: true, clientes_cadastro: [] }],
+    ["eco de página array", { pagina: [1], clientes_cadastro: [] }],
+    ["eco de página null", { pagina: null, clientes_cadastro: [] }],
+    // vazio contraditório (Codex): a contagem da página desmente o array
+    ["vazio com registros:1", { pagina: 1, registros: 1, clientes_cadastro: [] }],
+    ["array mais curto que a contagem", { pagina: 1, registros: 2, clientes_cadastro: [cli(777)] }],
+    ["contagem malformada", { pagina: 1, registros: "dois", clientes_cadastro: [] }],
   ];
   for (const [nome, resp] of malformadas) {
     await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", omie([resp]).listar), "OMIE_LOOKUP_INDETERMINADO").catch((e) => {
@@ -90,6 +98,34 @@ Deno.test("MALFORMADO → INDETERMINADO, nunca 'não existe'", async () => {
 Deno.test("guard: paginação que nunca esvazia → INDETERMINADO (não confia em total_de_paginas)", async () => {
   const sempreCheia: ListarPagina = (pagina) => Promise.resolve(pg(pagina, cli(777)));
   await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", sempreCheia, { maxPaginas: 3 }), "OMIE_LOOKUP_INDETERMINADO");
+});
+
+Deno.test("campos de controle bem-formados passam: eco e contagem como string decimal", async () => {
+  const o = omie([{ pagina: "1", registros: "1", clientes_cadastro: [cli(777)] }, { pagina: 2, registros: 0, clientes_cadastro: [] }]);
+  assertEquals((await buscarClienteEstrito(DOC, "oben", o.listar))?.codigo_cliente, 777);
+});
+
+Deno.test("AMBÍGUO sai na hora: transitório na página seguinte não o rebaixa a retentável (Codex)", async () => {
+  let chamadas = 0;
+  const listar: ListarPagina = (pagina) => {
+    chamadas++;
+    return pagina === 1 ? Promise.resolve(pg(1, cli(777), cli(778))) : Promise.reject(new Error("OMIE_TRANSIENT (oben): caiu"));
+  };
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", listar), "OMIE_LOOKUP_AMBIGUO");
+  assertEquals(chamadas, 1);
+});
+
+Deno.test("documento devolvido com letra fora da gramática não casa pelos dígitos → DIVERGENTE (#3359)", async () => {
+  await assertRejeitaCom(buscarClienteEstrito("12345678909", "oben", omie([pg(1, cli(777, "123ABC45678909"))]).listar), "OMIE_LOOKUP_DIVERGENTE");
+});
+
+Deno.test("orçamento total esgotado antes da próxima página → INDETERMINADO, sem usar o parcial", async () => {
+  let t = 0;
+  const lento: ListarPagina = (pagina) => {
+    t += 40_000;
+    return Promise.resolve(pg(pagina, cli(777)));
+  };
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", lento, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_INDETERMINADO");
 });
 
 Deno.test("transitório do Omie (throw do fetch) propaga — não vira ausência", async () => {
