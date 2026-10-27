@@ -72,3 +72,16 @@ Aumentar o limite só adia (o teto é o EIXO, [roteirizador-corte-cidades.md](ro
 `acharCapitalGiroAnterior` (intocado, espelho do `src`) escolhe a mais próxima e aplica a tolerância: é o mesmo vencedor da varredura do histórico inteiro. Erro no ponto atual → **500**, como a DRE logo acima no mesmo handler. Erro em qualquer vizinha → só o ponto atual + motivo "Falha ao ler o NCG do ponto −12m", e o incremental fica indisponível sem dizer "histórico insuficiente". O teste Deno prova com 1.260 linhas que o −12m é lido, e que as 400 mais recentes não o contêm.
 
 Diferença aceita: um NCG `NaN` no ponto mais recente agora deixa o giro indisponível (antes caía no anterior válido). Hoje há 0 NaN, e o efeito é fail-closed.
+
+## Deploy (2026-10-27)
+
+- **Merge:** #3347, `8d901e947`, 02:22Z. O "Lovable update" seguinte não tocou nenhum arquivo da entrega (`git diff --stat 8d901e947 origin/main` vazio nos caminhos dela).
+- **Edges:** `pendencias:deploy` acusou exatamente as duas (`DIVERGE_P1`; as outras 81 conferiam).
+  - Pacote `626ab9a9d9ae`, colado pela sessão via MCP às 13:59:10Z. Custou 1,8 crédito.
+  - O agente rodou `sha256sum -c` dos 19 arquivos contra `19d07a628` (exit 0). As duas edges ficaram **Active** (401 com credencial inválida), e a resposta terminou com `No files were edited.`.
+  - O `lovable-sensor-edicao` 6,5 min depois deu `SEM_EDICAO` (0 commits `gpt-engineer-app`).
+- **Sonda:** `db/2026-10-27-sonda-disparo-fin-cashflow-v2.0-fin-valor-v1.1.sql`, pelo envelope (`--ensaio` ok, recibo #722). O Passo 2, lido pelo psql-ro, deu **DEPLOY CONFIRMADO** nas duas, HTTP 200: `v2.0-saldo-cc-fresco` e `v1.1-ncg-leitura-pontual`.
+  - `bun run pendencias:deploy` saiu com **exit 0** ("✅ confere — 83").
+- **Publish:** pendente. O workspace estava em `669aa9c62` (= `origin/main`, contém o #3347), mas o `deploy_project` pela sessão foi negado pelo classificador do modo auto ("Production Deploy"). O bundle de produção antes do Publish é `/assets/index-DD-kF4y9.js`.
+  - Prova depois do Publish: esse nome tem de mudar no HTML de `steu.lovable.app`.
+  - Até o Publish, a Posição Agora, o Cockpit, o drill-down e o aviso das 13 semanas servem o build velho. As edges já servem a regra nova: a resposta da engine traz `confianca_dados.saldo_inicial`, que o build velho só ignora.
