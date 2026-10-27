@@ -22,5 +22,5 @@ export function lookupDevolveuOMesmoDocumento(pedido: string, retornado: unknown
   } catch {
     return false;
   }
-  return r.length > 0 && r === pedido; // r === pedido já implica pedido não-vazio
+  return r === pedido; // documentoParaCadastro lança sem dígito (DOC_SEM_DIGITO): r nunca é vazio
 }
