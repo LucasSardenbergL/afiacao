@@ -10,6 +10,7 @@ import {
   divergenciaDaRpc,
   type DepsCadastro,
 } from '../cadastro-omie';
+import type { ConflitoCadastro, EstadoCadastro } from '../conflito-cadastro';
 
 /**
  * Money-path (escrita no ERP + mudança de funil): o P0 do consult Codex (2026-10-18) era
@@ -19,11 +20,24 @@ import {
  */
 const empresa = { cnpj: '12345678000195', razao_social: 'ACME' };
 
-function deps(over: Partial<DepsCadastro> = {}): DepsCadastro & { criarNoOmie: ReturnType<typeof vi.fn>; registrarNoRadar: ReturnType<typeof vi.fn>; lerVinculo: ReturnType<typeof vi.fn> } {
+type Fn = ReturnType<typeof vi.fn>;
+/** Conflito como o servidor devolve (já parseado). */
+function conflito(over: Partial<ConflitoCadastro> = {}): ConflitoCadastro {
+  return {
+    id: 41, cnpj: '12345678000195', motivo: 'vinculo_divergente', codigoRecebido: '777', codigoVinculado: '555', cnpjDoCodigo: null,
+    detalhe: 'RADAR_VINCULO_DIVERGENTE: …', ocorrencias: 1, versao: 1, ultimaEm: '2026-10-27T15:00:00Z', resolvidoEm: null, notaResolucao: null,
+    ...over,
+  };
+}
+/** `lerEstado` com o vínculo V e os conflitos ABERTOS dados. */
+const estado = (vinculo: string | null, conflitos: ConflitoCadastro[] = []) => vi.fn(async (): Promise<EstadoCadastro> => ({ vinculo, conflitos }));
+
+function deps(over: Partial<DepsCadastro> = {}): DepsCadastro & { criarNoOmie: Fn; registrarNoRadar: Fn; lerEstado: Fn; registrarConflito: Fn } {
   return {
     criarNoOmie: vi.fn(async () => ({ success: true, created: true, codigo_cliente: 777 })),
-    registrarNoRadar: vi.fn(async () => undefined),
-    lerVinculo: vi.fn(async () => null),
+    registrarNoRadar: vi.fn(async () => ({ ok: true, deduped: false })),
+    lerEstado: estado(null),
+    registrarConflito: vi.fn(async (_c: string, motivo: ConflitoCadastro['motivo'], codigo: string | null) => conflito({ id: 99, motivo, codigoRecebido: codigo })),
     ...over,
   } as never;
 }
@@ -130,20 +144,20 @@ describe('cadastrarEmpresaNoOmie', () => {
     const d = deps();
     const r = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' });
     expect(d.criarNoOmie).not.toHaveBeenCalled();
-    expect(d.lerVinculo).toHaveBeenCalledWith('12345678000195');
+    expect(d.lerEstado).toHaveBeenCalledWith('12345678000195');
     expect(d.registrarNoRadar).toHaveBeenCalledWith('12345678000195', '777', true);
     expect(r).toEqual({ codigo: '777', jaExistia: true, recuperado: true });
   });
 
   it('retomada com vínculo JÁ gravado: não repete a RPC (ela insere outro contato a cada chamada)', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => '777') });
+    const d = deps({ lerEstado: estado('777') });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' });
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
     expect(r).toEqual({ codigo: '777', jaExistia: true, recuperado: true });
   });
 
   it('retentativa (resposta perdida): relê o vínculo ANTES da edge — já gravado → não toca Omie nem Radar', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const d = deps({ lerEstado: estado('555') });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
     expect(d.criarNoOmie).not.toHaveBeenCalled();
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
@@ -153,7 +167,7 @@ describe('cadastrarEmpresaNoOmie', () => {
   it('retentativa sem vínculo: segue pela edge (anti-dup pelo CNPJ) e grava', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => ({ success: true, created: false, codigo_cliente: 9 })) });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
-    expect(d.lerVinculo).toHaveBeenCalledTimes(1);
+    expect(d.lerEstado).toHaveBeenCalledTimes(1);
     expect(d.criarNoOmie).toHaveBeenCalledTimes(1);
     expect(d.registrarNoRadar).toHaveBeenCalledWith('12345678000195', '9', true);
     expect(r).toEqual({ codigo: '9', jaExistia: true, recuperado: true });
@@ -185,12 +199,14 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
   const RD001 = { message: 'RADAR_VINCULO_DIVERGENTE: CNPJ 12345678000195 já vinculado ao cliente Omie 555, recebido 777', code: 'RD001', details: null, hint: null };
   const RD002 = { message: 'RADAR_CODIGO_DE_OUTRO_CNPJ: cliente Omie 777 já vinculado a outro CNPJ (recebido para 12345678000195)', code: 'RD002', details: null, hint: null };
 
-  it('RPC recusa com RD001 → DivergenciaCadastro vinculo_divergente, etapa radar, SEM código para "Gravar de novo"', async () => {
+  it('RD001 CRU (ex.: a v1 respondendo) → DivergenciaCadastro vinculo_divergente, SEM código para "Gravar de novo", registrado à parte', async () => {
     const d = deps({ registrarNoRadar: vi.fn(async () => { throw RD001; }) });
     const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
     expect(err).toBeInstanceOf(DivergenciaCadastro);
-    expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
+    expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777', bloqueio: false });
     expect(err.message).toContain('RADAR_VINCULO_DIVERGENTE:');
+    expect(d.registrarConflito).toHaveBeenCalledWith('12345678000195', 'vinculo_divergente', '777', RD001.message);
+    expect(err.conflito).toMatchObject({ id: 99 });
   });
 
   it('RPC recusa com RD002 → DivergenciaCadastro codigo_de_outro_cnpj', async () => {
@@ -212,7 +228,7 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
   });
 
   it('retomada com código conhecido K e vínculo relido V ≠ K → conflito, NUNCA "recuperado" com V', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const d = deps({ lerEstado: estado('555') });
     const err = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' }).catch((e) => e);
     expect(err).toBeInstanceOf(DivergenciaCadastro);
     expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
@@ -220,8 +236,8 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
   });
 
-  it('retomada com código conhecido IGUAL ao vínculo (espaços à parte) → recuperado, sem tocar Omie nem RPC', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => ' 777 ') });
+  it('retomada com código conhecido IGUAL ao vínculo (o parser já apara) → recuperado, sem tocar Omie nem RPC', async () => {
+    const d = deps({ lerEstado: estado('777') });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' });
     expect(r).toMatchObject({ jaExistia: true, recuperado: true });
     expect(d.registrarNoRadar).not.toHaveBeenCalled();
@@ -251,7 +267,7 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
   });
 
   it('retentativa com codigoVisto K e vínculo relido V ≠ K → conflito, NUNCA "recuperado" com V', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const d = deps({ lerEstado: estado('555') });
     const err = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true, codigoVisto: '777' }).catch((e) => e);
     expect(err).toBeInstanceOf(DivergenciaCadastro);
     expect(err).toMatchObject({ motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777' });
@@ -260,7 +276,7 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
   });
 
   it('retentativa SEM evidência e vínculo existente → recuperado (não há com o que comparar)', async () => {
-    const d = deps({ lerVinculo: vi.fn(async () => '555') });
+    const d = deps({ lerEstado: estado('555') });
     const r = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true });
     expect(r).toMatchObject({ codigo: '555', recuperado: true });
   });
@@ -270,5 +286,87 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
     const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
     expect(err).toBeInstanceOf(FalhaCadastro);
     expect(err).not.toBeInstanceOf(DivergenciaCadastro);
+  });
+});
+
+/**
+ * Achado 3 do Codex no PR #3293 (migration 20261027160000): o aviso de conflito mora no SERVIDOR. A aba A, cujo
+ * lote local perdeu o `divergente` da aba B, NÃO pode devolver "recuperado" com o vínculo antigo — o conflito
+ * aberto, lido JUNTO com o vínculo, barra o CNPJ em todo caminho. Bloqueio não é observação nova.
+ */
+describe('cadastrarEmpresaNoOmie — conflito registrado no servidor', () => {
+  it.each([
+    ['cadastro novo (ficha/oferta/lote)', {}],
+    ['retentativa sem evidência — a aba A do defeito', { retentativa: true }],
+    ['retentativa com codigoVisto', { retentativa: true, codigoVisto: '777' }],
+    ['atalho codigoConhecido', { codigoConhecido: '777' }],
+  ])('conflito ABERTO no servidor barra %s: nem Omie, nem RPC, nem registro novo', async (_n, opcoes) => {
+    const aberto = conflito({ id: 7, codigoVinculado: '555' });
+    const d = deps({ lerEstado: estado('555', [aberto]) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, opcoes).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ bloqueio: true, conflito: { id: 7 }, codigo: null });
+    expect(err.message).toMatch(/^RADAR_CONFLITO_ABERTO: /);
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+    expect(d.registrarConflito).not.toHaveBeenCalled();
+  });
+
+  it('leitura do estado FALHA → bloqueia (nunca "zero conflitos"): não chama o Omie', async () => {
+    const d = deps({ lerEstado: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect(err).not.toBeInstanceOf(DivergenciaCadastro);
+    expect(err.message).toMatch(/^não consegui ler o vínculo e os conflitos no Radar — nada foi feito: /);
+    expect(d.criarNoOmie).not.toHaveBeenCalled();
+  });
+
+  it('leitura falha numa retomada com K: guarda K como evidência para a próxima comparação', async () => {
+    const d = deps({ lerEstado: vi.fn(async () => { throw new Error('timeout'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true, codigoVisto: '777' }).catch((e) => e);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null, codigoVisto: '777' });
+  });
+
+  it('v2 devolve {ok:false} (RD001 JÁ registrado pelo servidor) → DivergenciaCadastro com o conflito, sem registrar de novo', async () => {
+    const c = conflito({ id: 12 });
+    const d = deps({ registrarNoRadar: vi.fn(async () => ({ ok: false as const, bloqueado: false, conflito: c })) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'radar', motivo: 'vinculo_divergente', codigo: null, codigoRecebido: '777', bloqueio: false, conflito: { id: 12 } });
+    expect(d.registrarConflito).not.toHaveBeenCalled();
+  });
+
+  it('v2 devolve bloqueado (conflito apareceu entre a leitura e a gravação) → bloqueio, não observação', async () => {
+    const d = deps({ registrarNoRadar: vi.fn(async () => ({ ok: false as const, bloqueado: true, conflito: conflito({ id: 13, motivo: 'codigo_de_outro_cnpj' }) })) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toMatchObject({ bloqueio: true, motivo: 'codigo_de_outro_cnpj', conflito: { id: 13 } });
+    expect(err.message).toMatch(/^RADAR_CONFLITO_ABERTO: /);
+  });
+
+  it('retomada K≠V observada no front → registra no servidor (vinculo_divergente, K) e lança com o registro', async () => {
+    const d = deps({ lerEstado: estado('555') });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { codigoConhecido: '777' }).catch((e) => e);
+    expect(d.registrarConflito).toHaveBeenCalledWith('12345678000195', 'vinculo_divergente', '777', expect.stringMatching(/^RADAR_VINCULO_DIVERGENTE: /));
+    expect(err).toMatchObject({ bloqueio: false, conflito: { id: 99 }, erroRegistro: null });
+  });
+
+  it('registro do conflito FALHA → o conflito continua (local, não sincronizado), nunca sucesso', async () => {
+    const d = deps({ lerEstado: estado('555'), registrarConflito: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d, { retentativa: true, codigoVisto: '777' }).catch((e) => e);
+    expect(err).toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ conflito: null, erroRegistro: 'Failed to fetch', motivo: 'vinculo_divergente' });
+  });
+
+  it('lookup divergente da edge → registrado como lookup_divergente sem código', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('OMIE_LOOKUP_DIVERGENTE (oben): outro documento'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(d.registrarConflito).toHaveBeenCalledWith('12345678000195', 'lookup_divergente', null, expect.stringContaining('OMIE_LOOKUP_DIVERGENTE'));
+    expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente', conflito: { id: 99 } });
+  });
+
+  it('falha comum do Omie NÃO registra conflito', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
+    await cadastrarEmpresaNoOmie(empresa, d).catch(() => undefined);
+    expect(d.registrarConflito).not.toHaveBeenCalled();
   });
 });

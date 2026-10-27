@@ -10,6 +10,7 @@ import {
   type OpcoesCadastro,
   type ResultadoCadastro,
 } from '@/lib/radar/cadastro-omie';
+import { parsearConflito, parsearEstadoCadastro, parsearRegistroV2 } from '@/lib/radar/conflito-cadastro';
 
 
 /** Payload da edge `omie-vendas-sync` action `criar_cliente` (conta Oben). */
@@ -31,9 +32,10 @@ function montarPayloadCriarCliente(e: RadarEmpresa) {
 }
 
 /**
- * I/O real do cadastro (edge + RPC + leitura do vínculo). A DECISÃO mora em
- * `@/lib/radar/cadastro-omie` (pura, testada): resposta sem código é INDETERMINADA e não
- * grava no Radar; retomada relê o vínculo antes de repetir a RPC.
+ * I/O real do cadastro (edge + RPCs do Radar). A DECISÃO mora em `@/lib/radar/cadastro-omie`
+ * (pura, testada): resposta sem código é INDETERMINADA e não grava no Radar; vínculo e conflitos
+ * abertos são lidos JUNTOS no servidor antes de qualquer chamada (migration 20261027160000).
+ * Toda resposta jsonb tem a forma CONFERIDA (`conflito-cadastro.ts`) — desvio lança.
  */
 export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
   // invokeFunction (não `supabase.functions.invoke` cru): em HTTP 500 o `error.message` do
@@ -41,21 +43,29 @@ export const depsCadastroSupabase: DepsCadastro<RadarEmpresa> = {
   // que PARA o lote) vem no corpo, e só o helper o lê (P1 do review Codex).
   criarNoOmie: (e) => invokeFunction<unknown>('omie-vendas-sync', montarPayloadCriarCliente(e)),
   registrarNoRadar: async (cnpj, codigo, jaExistia) => {
-    const { error } = await supabase.rpc('radar_registrar_cadastro_omie', {
+    const { data, error } = await supabase.rpc('radar_registrar_cadastro_omie_v2', {
       p_cnpj: cnpj,
       p_codigo_cliente: codigo,
       p_ja_existia: jaExistia,
     });
     if (error) throw error;
+    return parsearRegistroV2(data);
   },
-  lerVinculo: async (cnpj) => {
-    const { data, error } = await supabase
-      .from('radar_empresas')
-      .select('omie_codigo_cliente')
-      .eq('cnpj', cnpj)
-      .maybeSingle();
+  lerEstado: async (cnpj) => {
+    const { data, error } = await supabase.rpc('radar_estado_cadastro_omie', { p_cnpj: cnpj });
     if (error) throw error;
-    return data?.omie_codigo_cliente ?? null;
+    return parsearEstadoCadastro(data);
+  },
+  registrarConflito: async (cnpj, motivo, codigoRecebido, detalhe) => {
+    // '' = sem código (o servidor faz NULLIF): o gerador tipa o parâmetro text como string.
+    const { data, error } = await supabase.rpc('radar_registrar_conflito_cadastro', {
+      p_cnpj: cnpj,
+      p_motivo: motivo,
+      p_codigo_recebido: codigoRecebido ?? '',
+      p_detalhe: detalhe,
+    });
+    if (error) throw error;
+    return parsearConflito(data, 'radar_registrar_conflito_cadastro');
   },
 };
 

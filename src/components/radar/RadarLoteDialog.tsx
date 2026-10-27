@@ -1,4 +1,5 @@
-import { AlertTriangle, CheckCircle2, XCircle, CircleDashed, Loader2, Building2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { AlertTriangle, CheckCircle2, XCircle, CircleDashed, Loader2, Building2, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -7,10 +8,14 @@ import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import type { useRadarLoteOmie } from '@/queries/useRadarLote';
 import type { ItemLote } from '@/lib/radar/lote-persistido';
+import { resumoConflito, situacaoConflito, type SituacaoConflito } from '@/lib/radar/conflito-cadastro';
+import { porCnpj, useRadarConflitosDosCnpjs } from '@/queries/useRadarConflitosCadastro';
 
 type Lote = ReturnType<typeof useRadarLoteOmie>;
 
-function IconeItem({ item }: { item: ItemLote }) {
+function IconeItem({ item, sit }: { item: ItemLote; sit: SituacaoConflito }) {
+  if (sit.tipo === 'aberto') return <AlertTriangle className="w-4 h-4 text-status-warning shrink-0" />;
+  if (sit.tipo === 'conferido') return <ShieldCheck className="w-4 h-4 text-muted-foreground shrink-0" />;
   switch (item.estado.status) {
     case 'ok': return <CheckCircle2 className="w-4 h-4 text-status-success shrink-0" />;
     case 'falha': return <XCircle className="w-4 h-4 text-status-error shrink-0" />;
@@ -20,8 +25,12 @@ function IconeItem({ item }: { item: ItemLote }) {
   }
 }
 
-function detalheItem(item: ItemLote): string {
+/** O servidor manda no aviso (aberto/conferido); o local só fala quando o servidor não tem o registro. */
+function detalheItem(item: ItemLote, sit: SituacaoConflito): string {
+  if (sit.tipo === 'aberto') return `conflito aberto — confira no Omie e marque como conferido na ficha: ${sit.conflitos.map(resumoConflito).join('; ')}`;
+  if (sit.tipo === 'conferido') return `conflito conferido no Omie por um gestor${sit.conflito.notaResolucao ? `: ${sit.conflito.notaResolucao}` : ''} (não é cadastro)`;
   const e = item.estado;
+  if (e.status === 'divergente' && sit.tipo === 'nao_sincronizado') return `conflito de vínculo — confira no Omie, nada foi regravado (aviso só nesta aba, não chegou ao servidor): ${e.erro}`;
   if (e.status === 'ok') return e.jaExistia ? `já existia no Omie · cód. ${e.codigo}${e.recuperado ? ' (recuperado)' : ''}` : `cadastrado · cód. ${e.codigo}`;
   if (e.status === 'falha') return `${e.etapa === 'radar' ? 'Omie OK, falhou gravar no Radar' : 'falhou no Omie'}: ${e.erro}`;
   if (e.status === 'divergente') return `conflito de vínculo — confira no Omie, nada foi regravado: ${e.erro}`;
@@ -36,7 +45,27 @@ function detalheItem(item: ItemLote): string {
  */
 export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boolean; onClose: () => void }) {
   const { lote: estado, rodando, progresso, retomar, parar, esquecer } = lote;
+  // O aviso de conflito é do SERVIDOR (migration 20261027160000): outra aba pode ter regravado este lote local.
+  const srv = useRadarConflitosDosCnpjs(estado?.itens.map((i) => i.cnpj) ?? []);
   if (!estado || !progresso) return null;
+  const doServidor = srv.isSuccess ? porCnpj(srv.data) : null;
+  const situacao = (i: ItemLote) => situacaoConflito(
+    { divergente: i.estado.status === 'divergente', conflitoId: i.estado.status === 'divergente' ? i.estado.conflitoId ?? null : null },
+    doServidor ? doServidor.get(i.cnpj) ?? [] : null,
+  );
+  const comConflito = estado.itens.filter((i) => {
+    const t = situacao(i).tipo;
+    return t === 'aberto' || (i.estado.status === 'divergente' && t !== 'conferido');
+  }).length;
+  const doEsquecer = async () => {
+    const r = await esquecer();
+    if (r.esquecido) { onClose(); return; }
+    if (r.falhas.length > 0) {
+      toast.error('O lote ficou guardado', {
+        description: `${r.falhas.length} conflito(s) ainda não chegaram ao servidor — apagar o lote perderia o aviso. Tente de novo em instantes.`,
+      });
+    }
+  };
   const pct = progresso.total ? Math.round((progresso.feitos / progresso.total) * 100) : 0;
   const pendentes = progresso.pendentes;
   const parouPorThrottling = estado.itens.some(
@@ -53,7 +82,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           <DialogDescription>
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
-              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${progresso.divergentes ? ` · ${progresso.divergentes} conflito(s)` : ''}`}
+              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
           </DialogDescription>
         </DialogHeader>
 
@@ -64,21 +93,31 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           </p>
         )}
 
-        {progresso.divergentes > 0 && !rodando && (
+        {comConflito > 0 && !rodando && (
           <p className="text-xs text-status-warning">
-            {progresso.divergentes === 1 ? 'Um lead tem' : `${progresso.divergentes} leads têm`} conflito entre o Radar e o Omie
-            (CNPJ ou código já vinculados a outro cadastro). Retentar não resolve: confira no Omie. O lote fica guardado até você esquecê-lo.
+            {comConflito === 1 ? 'Um lead tem' : `${comConflito} leads têm`} conflito entre o Radar e o Omie
+            (CNPJ ou código já vinculados a outro cadastro). Retentar não resolve: confira no Omie e marque como conferido na ficha do lead.
+            O aviso fica guardado no servidor — esquecer o lote não o apaga.
+          </p>
+        )}
+        {srv.isError && (
+          <p className="text-xs text-status-error">
+            Não consegui ler os conflitos guardados no servidor — os avisos abaixo são só os desta aba.
           </p>
         )}
 
         <ul className="max-h-72 overflow-y-auto divide-y text-sm">
           {estado.itens.map((i) => (
             <li key={i.cnpj} className="flex items-start gap-2 py-1.5">
-              <IconeItem item={i} />
+              <IconeItem item={i} sit={situacao(i)} />
               <div className="min-w-0">
                 <div className="truncate font-medium">{i.nome}</div>
-                <div className={cn('text-xs truncate', i.estado.status === 'falha' ? 'text-status-error' : i.estado.status === 'divergente' ? 'text-status-warning' : 'text-muted-foreground')}>
-                  {detalheItem(i)}
+                <div className={cn('text-xs truncate',
+                  situacao(i).tipo === 'aberto' ? 'text-status-warning'
+                    : situacao(i).tipo === 'conferido' ? 'text-muted-foreground'
+                      : i.estado.status === 'falha' ? 'text-status-error' : i.estado.status === 'divergente' ? 'text-status-warning' : 'text-muted-foreground')}
+                  title={detalheItem(i, situacao(i))}>
+                  {detalheItem(i, situacao(i))}
                 </div>
               </div>
             </li>
@@ -93,7 +132,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
               {pendentes > 0 && (
                 <Button onClick={retomar}>Retentar {pendentes} pendente{pendentes === 1 ? '' : 's'}</Button>
               )}
-              <Button variant="ghost" onClick={() => { esquecer(); onClose(); }}>
+              <Button variant="ghost" onClick={() => { void doEsquecer(); }}>
                 {progresso.concluido ? 'Fechar' : 'Esquecer lote'}
               </Button>
             </>

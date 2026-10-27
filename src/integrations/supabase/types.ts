@@ -11829,6 +11829,60 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_cadastro_conflitos: {
+        Row: {
+          cnpj: string
+          cnpj_do_codigo: string | null
+          codigo_recebido: string | null
+          codigo_vinculado: string | null
+          criado_em: string
+          criado_por: string
+          detalhe: string
+          id: number
+          nota_resolucao: string | null
+          ocorrencias: number
+          resolvido_em: string | null
+          resolvido_por: string | null
+          ultima_em: string
+          ultimo_por: string
+          versao: number
+        }
+        Insert: {
+          cnpj: string
+          cnpj_do_codigo?: string | null
+          codigo_recebido?: string | null
+          codigo_vinculado?: string | null
+          criado_em?: string
+          criado_por: string
+          detalhe: string
+          id?: number
+          nota_resolucao?: string | null
+          ocorrencias?: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          ultima_em?: string
+          ultimo_por: string
+          versao?: number
+        }
+        Update: {
+          cnpj?: string
+          cnpj_do_codigo?: string | null
+          codigo_recebido?: string | null
+          codigo_vinculado?: string | null
+          criado_em?: string
+          criado_por?: string
+          detalhe?: string
+          id?: number
+          nota_resolucao?: string | null
+          ocorrencias?: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          ultima_em?: string
+          ultimo_por?: string
+          versao?: number
+        }
+        Relationships: []
+      }
       radar_contatos: {
         Row: {
           acao: string
@@ -22575,6 +22629,7 @@ export type Database = {
           nome: string
         }[]
       }
+      radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
         Returns: {
@@ -22615,6 +22670,27 @@ export type Database = {
           p_codigo_cliente: string
           p_ja_existia?: boolean
         }
+        Returns: Json
+      }
+      radar_registrar_cadastro_omie_v2: {
+        Args: {
+          p_cnpj: string
+          p_codigo_cliente: string
+          p_ja_existia?: boolean
+        }
+        Returns: Json
+      }
+      radar_registrar_conflito_cadastro: {
+        Args: {
+          p_cnpj: string
+          p_codigo_recebido: string
+          p_detalhe: string
+          p_motivo: string
+        }
+        Returns: Json
+      }
+      radar_resolver_conflito_cadastro: {
+        Args: { p_id: number; p_nota: string; p_versao_vista: number }
         Returns: Json
       }
       radar_rfb_descricao: {

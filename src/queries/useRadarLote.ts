@@ -8,13 +8,16 @@ import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { depsCadastroSupabase } from '@/queries/useRadarAcoesLead';
 import { cadastrarEmpresaNoOmie, DivergenciaCadastro, ehThrottlingOmie, FalhaCadastro } from '@/lib/radar/cadastro-omie';
 import { executarEmLote, resumirLote, CONCORRENCIA_LOTE, TETO_LOTE, type ResultadoItem } from '@/lib/radar/lote';
+import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
 import {
   chaveLotePersistido,
+  divergentesNaoSincronizados,
   itensDivergentes,
   itensPendentes,
   loteConcluido,
   parsearLote,
   serializarLote,
+  sincronizarDivergentes,
   type EstadoItemLote,
   type ItemLote,
   type LotePersistido,
@@ -142,7 +145,7 @@ export function useRadarLoteOmie() {
             return r;
           } catch (e) {
             if (e instanceof DivergenciaCadastro) {
-              atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido });
+              atualizarItem(item.cnpj, { status: 'divergente', motivo: e.motivo, erro: e.message, codigo: e.codigoRecebido, conflitoId: e.conflito?.id ?? null });
             } else if (e instanceof FalhaCadastro) {
               atualizarItem(item.cnpj, { status: 'falha', etapa: e.etapa, erro: e.message, codigo: e.codigo, codigoVisto: e.codigoVisto });
             } else {
@@ -175,6 +178,7 @@ export function useRadarLoteOmie() {
       qc.invalidateQueries({ queryKey: ['radar', 'sugeridos'] }); // os cadastrados saem do "sugeridos" (Codex 2026-10-20)
       qc.invalidateQueries({ queryKey: ['radar', 'contagem-municipios'] });
       qc.invalidateQueries({ queryKey: ['radar', 'contatos'] });
+      qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] });
       abortRef.current = null;
       execucoesEmVoo.delete(uid);
       setRodando(false);
@@ -215,11 +219,25 @@ export function useRadarLoteOmie() {
   /** Para novos disparos; o item em voo termina (não há como desfazer a chamada ao Omie). */
   const parar = useCallback(() => abortRef.current?.abort(), []);
 
-  const esquecer = useCallback(() => {
-    if (rodando) return;
+  /**
+   * Esquece o lote — mas antes envia ao servidor os conflitos que só esta aba conhece. Se algum não subir, o lote
+   * FICA (devolve as falhas): apagá-lo perderia a única evidência. Resolver um conflito é na ficha, não aqui.
+   */
+  const esquecer = useCallback(async (): Promise<{ esquecido: boolean; falhas: { cnpj: string; erro: string }[] }> => {
+    const atual = loteRef.current;
+    if (rodando || !atual) return { esquecido: false, falhas: [] };
+    if (divergentesNaoSincronizados(atual).length > 0) {
+      const r = await sincronizarDivergentes(atual, depsCadastroSupabase.registrarConflito, (e) => sqlstateDe(e) === 'RD003');
+      qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] });
+      if (r.falhas.length > 0) {
+        gravar(r.lote);
+        return { esquecido: false, falhas: r.falhas };
+      }
+    }
     gravar(null);
     snapshots.current = new Map();
-  }, [rodando, gravar]);
+    return { esquecido: true, falhas: [] };
+  }, [rodando, gravar, qc]);
 
   const progresso = useMemo(() => {
     if (!lote) return null;
@@ -231,6 +249,7 @@ export function useRadarLoteOmie() {
     const divergentes = itensDivergentes(lote).length;
     return {
       total, feitos: total - aguardando, ok, falhas, naoIniciados, aguardando, divergentes,
+      naoSincronizados: divergentesNaoSincronizados(lote).length,
       pendentes: itensPendentes(lote).length, concluido: loteConcluido(lote),
     };
   }, [lote]);
