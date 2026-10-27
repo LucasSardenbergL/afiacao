@@ -165,9 +165,9 @@ export async function gravarContrapartes(
 export const FOLGA_MARCO_MS = 5 * 60_000;
 
 /**
- * O marco que a RPC lê: "o mapa cobre os cadastros que existiam até `mapa_lido_em`". É o instante em que
- * a rodada COMEÇOU a ler o Omie, menos a folga — CR criado depois disso pode ser de cadastro novo do grupo
- * que esta leitura não viu, e a RPC o trata como contraparte desconhecida (pende).
+ * O marco da rodada: "o mapa foi gravado a partir do que o Omie respondeu em `mapa_lido_em`" (o início da
+ * leitura, menos a folga). A RPC o usa como trava de bootstrap: sem marco nenhum, a venda sem cobrança não
+ * elimina (o mapa durável ainda não foi alimentado pela edge).
  */
 export function marcoDaRodada(inicioMs: number): { mapa_lido_em: string } {
   return { mapa_lido_em: new Date(inicioMs - FOLGA_MARCO_MS).toISOString() };

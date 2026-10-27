@@ -24,7 +24,7 @@
 #       U8/U9/U12 CR aparecido (mesmo valor / ≤30 dias / sem data) · U10 CR desconsiderado e U10b na outra
 #       direção e U11 longe e de outro valor não bloqueiam · U14 marca com CR · U15 CP também num par ·
 #       U16 CP de outra empresa · U17 valor 0 · U18 categoria com 2 linhas · Z1 mês sem marca intacto
-#       U19–U24 CR aparecido pelo MAPA de identidade, sem linha informativa (apagada pela edge / CR sem
+#       U26 sem marco de rodada (antes da 1ª rodada da edge v1.3) nada elimina · U19–U24 CR aparecido pelo MAPA de identidade, sem linha informativa (apagada pela edge / CR sem
 #       emissão) pende; cancelado, outro destino, outra origem, desconsiderado e vínculo não-documento não ·
 #       U10c informativa para outro destino não bloqueia
 #   T   trigger: só master marca e desfaz; só de sem_contrapartida CP-only; carimbo do trigger; INSERT e
@@ -50,7 +50,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10c sc_marca_cr:U14 sc_uso:U15
     sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_par_orfao:U23b sc_mapa_fonte:U24 sc_contrapartes:U25 sc_fc_alvo:U25b
     acl_mapa_update:T17b acl_mapa_delete:T17c acl_mapa_app:T17d acl_mapa_sandbox:T17e acl_p7:MIG1
-    sc_marco:U26 sc_novo:U27 sc_novo_marco:U27b sc_novo_fc:U27c mig_semente_cr:MIG9a mig_semente_cp:MIG9b p7_default:MIG8
+    sc_marco:U26 mig_semente_cr:MIG9a mig_semente_cp:MIG9b p7_default:MIG8
     sc_empresa:U16 sc_valor:U17 sc_multi_linha:U18 sc_pendente:U4 sc_mes:Z1
     trg_master:T1 trg_carimbo:T2 trg_insert:T3 trg_cr:T4 trg_origem:T5 trg_fica:T6 trg_sai_master:T7 trg_sai_destino:T8
     trg_sai_limpa:T9 trg_delete:T10 trg_sem_delete:MIG1 check_sem_status:MIG1"
@@ -156,12 +156,9 @@ case "${SABOTAGEM:-}" in
   acl_mapa_sandbox) sabotar "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND a.grantee <> 0" "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'sandbox_exec_teste' AND a.grantee <> 0"; sabotar "RAISE EXCEPTION 'P7 FALHOU: ACL" "RAISE NOTICE 'P7 FALHOU: ACL" ;;
   acl_p7)         sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, UPDATE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
   sc_marco)       sabotar "            AND v.mapa_lido_em IS NOT NULL\n" "" ;;
-  sc_novo)        sabotar "OR (COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" "OR (false AND COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" ;;
-  sc_novo_marco)  sabotar "COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" "COALESCE(r3.created_at, 'infinity'::timestamptz) > '-infinity'::timestamptz" ;;
-  sc_novo_fc)     sabotar "WHERE fc2.empresa = r3.company" "WHERE false AND fc2.empresa = r3.company" ;;
   mig_semente_cr) sabotar "WHERE r.omie_codigo_cliente IS NOT NULL AND" "WHERE false AND" ;;
   mig_semente_cp) sabotar "WHERE p.omie_codigo_cliente_fornecedor IS NOT NULL AND" "WHERE false AND" ;;
-  p7_default)     sabotar "ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em SET DEFAULT now();\n" ""; sabotar "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()'" "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM pg_get_expr(d.adbin, d.adrelid)" ;;
+  p7_default)     sabotar "ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em SET DEFAULT now();\n" ""; sabotar "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()'" "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()' AND false" ;;
   sc_mapa_fonte)  sabotar "WHERE om.source = 'document' AND om.account = r3.company" "WHERE om.account = r3.company" ;;
   sc_direcao)     sabotar "AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino" "" ;;
   sc_marca_cr)    sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.usos_cp = 1" ;;
@@ -170,7 +167,7 @@ case "${SABOTAGEM:-}" in
   sc_valor)       sabotar "            AND v.cp_valor > 0" "" ;;
   sc_multi_linha) sabotar "AND ((u.sd_comp -> u.cp_chave) - 'cmv') = '{}'::jsonb" "" ;;
   sc_pendente)    sabotar "SELECT count(*) FILTER (WHERE NOT v.ok) > 0 AS pendente" "SELECT false AS pendente" ;;
-  sc_mes)         sabotar "FROM sem_cobranca u\n     WHERE u.cp_no_mes IS TRUE" "FROM sem_cobranca u\n     WHERE true" ;;
+  sc_mes)         sabotar "     WHERE u.cp_no_mes IS TRUE" "     WHERE true" ;;
   trg_master)     sabotar "IF NOT v_master THEN\n      RAISE EXCEPTION 'venda sem cobranca: so o master marca'" \
                           "IF false THEN\n      RAISE EXCEPTION 'venda sem cobranca: so o master marca'" ;;
   trg_carimbo)    sabotar "NEW.resolvido_por := auth.uid();" "NEW.resolvido_por := NEW.resolvido_por;" ;;
@@ -441,8 +438,8 @@ eq "MIG2 re-aplicar passa (idempotente)" "$(estado "$(cat "$MIG_USADA")")" "verd
 eq "MIG3 grant extra sobrevive ao replace" "$(Pq -c "SELECT has_function_privilege('sandbox_exec_teste', 'public.fin_consolidado_intercompany(integer,integer)', 'EXECUTE')")" "t"
 eq "MIG9a semente: o código do CR de uma linha da fila entra no mapa durável" "$(Pq -c "SELECT count(*) FROM public.fin_ic_contrapartes WHERE (empresa, omie_codigo_cliente, empresa_alvo) = ('colacor', 990, 'oben')")" "1"
 eq "MIG9b semente: e o do fornecedor do CP, com a origem como alvo" "$(Pq -c "SELECT count(*) FROM public.fin_ic_contrapartes WHERE (empresa, omie_codigo_cliente, empresa_alvo) = ('oben', 991, 'colacor')")" "1"
-# Marco no futuro: o ramo da contraparte desconhecida fica inerte nos cenários que não são dele (U26/U27
-# o põem no passado de propósito e o devolvem).
+# Marco de rodada presente: sem ele nenhuma venda sem cobrança elimina (trava de bootstrap; o U26 o tira e
+# o devolve).
 Pq -c "INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-01')" >/dev/null
 
 # Leitura padrão: como service_role, em uma linha "conta=bruto/elim/consolidado;..." na ordem devolvida.
@@ -665,20 +662,8 @@ mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '
 mes "SELECT public.t_titulos(2031, 10); SELECT public.t_sc('colacor_sc', 'colacor', '2031-10-10'); SELECT public.t_calcular(2031, 10);
      DELETE FROM public.fin_ic_reconcile_rodadas"
 eq "U26 sem marco nenhum (antes da 1ª rodada da edge v1.3) nada elimina" "$(le_ec 2031 10)" "$PEND"
-# Datas EXPLÍCITAS: o t_titulos grava created_at = emissão (2031), então "depois do marco" se mede contra
-# um marco em 31/12/2031 — com o relógio de agora (2026) todo título-base de 2031 ficaria "depois".
-mes "INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2031-12-31')"
-CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 9999)")"
-mes "UPDATE public.fin_contas_receber SET created_at = '2032-01-15' WHERE id = '$CR'"
-eq "U27 CR criado depois do marco, com código que nenhum mapa conhece: contraparte desconhecida, pende" "$(le_ec 2031 10)" "$PEND"
-mes "UPDATE public.fin_contas_receber SET created_at = '2031-12-30' WHERE id = '$CR'"
-eq "U27b ... o mesmo CR criado ANTES do marco o mapa já classificou (não é do grupo): não bloqueia" "$(le 2031 10)" "$UOK"
-mes "UPDATE public.fin_contas_receber SET created_at = '2032-01-15', omie_codigo_cliente = 782 WHERE id = '$CR'"
-eq "U27c ... criado depois, mas com código que o mapa dá a OUTRA empresa do grupo: não bloqueia" "$(le 2031 10)" "$UOK"
-mes "UPDATE public.fin_contas_receber SET omie_codigo_cliente = NULL WHERE id = '$CR'"
-eq "U27d ... criado depois e SEM código de cliente: desconhecida, pende" "$(le_ec 2031 10)" "$PEND"
-mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '$CR';
-     DELETE FROM public.fin_ic_reconcile_rodadas; INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-01')"
+mes "INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-01')"
+eq "U26b ... com o marco, o mesmo mês volta a eliminar" "$(le 2031 10)" "$UOK"
 eq "U0 controle: o mês elegível segue elegível" "$(le 2027 1)" "$UOK"
 eq "Z1 mês sem venda sem cobrança: nada muda" "$(le 2026 2)" \
    "receita_bruta=3400/0/3400;cmv=2300/0/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"

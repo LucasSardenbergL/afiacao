@@ -33,7 +33,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "enviar-push": "38302707026818b24e43f4936dea80f7648c68b2c1351385c7ddd5e396bdd9d5",
   "fin-cashflow-engine": "8ca76e879f5ab0ca199878feda288072b6f26af1d636c24dab97ca276dffe01b",
   "fin-funding": "2ae9a29464b2a55d6f9b799c9f9d6ef95a3469e2eb17ad9163ffcc7718904ee7",
-  "fin-ic-reconcile": "35b8a50881facd273d34e16aa416fdd6afe89ea3c9354d2a9d65a35dd792e0da",
+  "fin-ic-reconcile": "6587292db08f78c98b22395e5502b3d348fcd60e2bf15008bce4b2cdb59819e2",
   "fin-next-best-action": "f7d209a4a903d00951be930c00dfb6920e5bc24ebac3fa3b7e8942b6757130d3",
   "fin-period-override": "5099e1ecf11cad8a60d5c87fa1c8a95cfd92fd8c34513f475de0033a1aa1354e",
   "fin-regime-tributario": "ed6e256a6bdf938bf789ce2ad2cc2378c375a6d6b425bfc220de6ed2aaa19a6e",

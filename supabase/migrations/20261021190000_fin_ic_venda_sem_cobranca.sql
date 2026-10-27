@@ -54,7 +54,7 @@ DECLARE
   v_chk text := (SELECT pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c
                   WHERE c.conrelid = 'public.fin_ic_matches'::regclass AND c.conname = 'fin_ic_matches_status_check');
 BEGIN
-  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', 'faf8f97bdc9b9c5246f154775adb34aa') THEN
+  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', 'b47040c0d2ad7701a5644fd778d7ec58') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
   IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -90,9 +90,11 @@ CREATE TABLE IF NOT EXISTS public.fin_ic_contrapartes (
 );
 ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em SET DEFAULT now();
 ALTER TABLE public.fin_ic_contrapartes ENABLE ROW LEVEL SECURITY;
--- Marco de cobertura: a cada rodada a edge grava QUANDO leu o Omie (com folga). CR criado DEPOIS do último
--- marco pode ser de um cadastro do grupo que o mapa ainda não viu: com código fora dos mapas, a RPC o trata
--- como contraparte desconhecida (pende). Sem marco nenhum (antes da 1ª rodada da v1.3), nada elimina.
+-- Marco de rodada: a cada rodada a edge grava QUANDO leu o Omie (com folga), depois de gravar o mapa. É a
+-- trava de bootstrap da RPC: sem marco nenhum (antes da 1ª rodada da v1.3, com o mapa só com a semente),
+-- nenhuma venda sem cobrança elimina. Resíduo aceito pelo founder (2026-10-27): um CR que contradiz a
+-- marcação, de cadastro que nenhum mapa conhece ainda, só é visto na rodada seguinte — a mesma latência
+-- que o par CR↔CP já tem.
 CREATE TABLE IF NOT EXISTS public.fin_ic_reconcile_rodadas (
   id bigint GENERATED ALWAYS AS IDENTITY,
   mapa_lido_em timestamptz NOT NULL,
@@ -379,17 +381,7 @@ BEGIN
                                              JOIN company_cnpjs cc ON cc.cnpj_normalized = om.evidence_document_normalized
                                             WHERE om.source = 'document' AND om.account = r3.company
                                               AND om.omie_codigo_cliente = r3.omie_codigo_cliente
-                                              AND cc.company = u.empresa_destino)
-                                -- (c) contraparte DESCONHECIDA: CR criado depois do último marco, com código que
-                                -- nenhum mapa classifica (pode ser cadastro novo do grupo que a edge não viu).
-                                OR (COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido
-                                    AND NOT EXISTS (SELECT 1 FROM fin_ic_contrapartes fc2
-                                                     WHERE fc2.empresa = r3.company
-                                                       AND fc2.omie_codigo_cliente IS NOT DISTINCT FROM r3.omie_codigo_cliente)
-                                    AND NOT EXISTS (SELECT 1 FROM omie_customer_account_map om2
-                                                      JOIN company_cnpjs cc2 ON cc2.cnpj_normalized = om2.evidence_document_normalized
-                                                     WHERE om2.source = 'document' AND om2.account = r3.company
-                                                       AND om2.omie_codigo_cliente IS NOT DISTINCT FROM r3.omie_codigo_cliente)))
+                                              AND cc.company = u.empresa_destino))
                                AND NOT EXISTS (SELECT 1 FROM fin_ic_matches m4
                                                 WHERE m4.cr_id = r3.id
                                                   AND (m4.status = 'desconsiderado'
@@ -472,7 +464,7 @@ DECLARE
   v_trg  text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(g));
 BEGIN
   -- P1 corpos = os deste arquivo
-  IF v_rpc IS DISTINCT FROM 'faf8f97bdc9b9c5246f154775adb34aa' THEN
+  IF v_rpc IS DISTINCT FROM 'b47040c0d2ad7701a5644fd778d7ec58' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
   IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
