@@ -53,7 +53,7 @@ Deno.test("vendas: o prazo nasce FORA do laço e o relógio envolve a trava inte
     "teto da espera pela trava",
     "opções do relógio com o deadline",
   ], [
-    "const deadline = prazoDaChamadaOmie(Date.now());",
+    "const deadline = Math.min(prazoDaChamadaOmie(Date.now()), opts?.deadline ?? Number.POSITIVE_INFINITY);",
     "for (let attempt = 0;",
     "await chamarComRelogio(",
     "comVezOmie(",

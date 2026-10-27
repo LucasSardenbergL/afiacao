@@ -75,11 +75,42 @@ Agora a página é lida inteira, a multiplicidade é decidida primeiro e o defei
   os dois só entraram os commits do #3364 e do #3363; nenhum commit "Changes" reverteu algo. Com isso,
   `OMIE_LOOKUP_AMBIGUO` chega ao Radar como `lookup_ambiguo` terminal.
 
+## v1.28: identidade do `criar_pedido` pelo mesmo lookup (2026-10-27)
+
+O 1º risco aberto abaixo foi fechado. `buscarClienteVendasMatches`, a identidade que `deriveOmieAccountIdentity`
+passa ao `decideAccountIdentity`, tinha três furos:
+
+- usava `registros_por_pagina:2` e `?? []`, então uma resposta malformada virava ausência;
+- `.filter(c => c.codigo_cliente_omie)` descartava calado o 2º registro sem código, e o que sobrava virava candidato
+  único;
+- não conferia o documento: um registro de OUTRO documento virava o cliente do pedido.
+
+Agora ela usa `matchesDoPedido`, o mesmo `buscarClienteEstrito`, com 0 ou 1 match. `erroDeIdentidadeDoPedido`
+converte as marcas em `Pedido rejeitado: … (OMIE_LOOKUP_*)`, o prefixo que `submitOrder`, `SalesQuotes` e
+`pedido-programado-enviar` já tratam como recusa. `OMIE_TRANSIENT` passa intacto.
+
+**Codex** (`-r max` e depois `-r high`): APROVADO COM AJUSTES e, na 2ª rodada, **APROVADO**. Os três ajustes:
+
+- **P2, tempo:** o orçamento era conferido só depois de cada resposta, e cada chamada tinha o próprio teto de 140 s.
+  Duas `ListarClientes` mais o `IncluirPedido` passavam dos 150 s da edge. Agora `callOmieVendasApi` aceita
+  `opts.deadline`, aplicado como `min` com o teto. `ListarPagina` recebe o prazo absoluto do lookup, e o orçamento
+  caiu de 90 s para 40 s. Ao estourar, a leitura dá `OMIE_TRANSIENT`, nunca ausência. Limite residual: os 40 s
+  limitam o lookup, não o lookup somado à escrita.
+- **ALTO anterior a este PR, entrada do pedido:** `normalizarDocumento('123ABC45678909')` virava o CPF
+  `12345678909`, de outra pessoa. `docDoPedido` passa o documento pela gramática estrita (`documentoParaCadastro`);
+  vazio mantém o fallback de `profiles`. Medido em PROD: 0 documentos com letra em `sales_orders` e em `profiles`,
+  e 5.668 de 5.668 `profiles` estão na gramática numérica. 32.066 de 32.068 pedidos têm `customer_document` vazio
+  e usam esse fallback.
+- **Teste:** a conversão das marcas virou função pura testada.
+
+O documento devolvido pelo Omie já passava pela gramática estrita (#3359). Medido em PROD: 10.167 de 10.167
+`cnpj_cpf` de clientes Omie são numéricos limpos, então a conferência não barra cliente legítimo. O teste de fiação
+`omie-chamada-relogio-fiacao_test.ts` passou a fixar a nova forma do prazo, que continua nascendo FORA do laço.
+Falsificação: 21/21 sabotagens vermelhas, com controle verde, em `LC_ALL=C` e `pt_BR.UTF-8`.
+
 ## Riscos abertos (fora deste PR)
 
-- **`buscarClienteVendasMatches`** (identidade do `criar_pedido`, `registros_por_pagina:2`) descarta registro sem
-  código (`filter`) e não confere o documento. Um registro válido somado a um malformado vira candidato único.
-  O cadastro não fecha essa fronteira do envio de pedido (Codex).
+- ~~**`buscarClienteVendasMatches`** (identidade do `criar_pedido`)~~ → fechado na v1.28 (seção acima).
 - **`buscarContextoComercialCliente`** (leitura do contexto comercial, colacor) ainda usa o 1º registro.
 - **Corrida** entre o lookup e o `IncluirCliente`: a paginação não é um snapshot. A chave determinística protege
   concorrentes que usam a mesma chave, não um cadastro manual feito entre as duas chamadas. Uma chave já ocupada
