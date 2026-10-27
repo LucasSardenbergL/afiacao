@@ -340,6 +340,6 @@ BEGIN
     RAISE EXCEPTION 'P5 FALHOU: semente incompleta — % linha(s) de staging com chave sem versão', v_n_staging;
   END IF;
   SELECT count(*) INTO v_n_versao FROM tint_receita_versoes WHERE evento = 'receita';
-  RAISE NOTICE 'receita-versoes OK: % chaves com versão', v_n_versao;
+  RAISE NOTICE 'receita-versoes OK: % versões de receita, nenhuma chave do staging sem versão', v_n_versao;
 END
 $post$;
