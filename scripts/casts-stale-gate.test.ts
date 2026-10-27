@@ -84,7 +84,10 @@ describe('ehVelho + julgar', () => {
   });
 
   it('varredura abaixo do piso é CEGO, mesmo com a contagem batendo', () => {
-    const v = julgar([], { from: 0, rpc: 0 }, { ...MEDIDAS_OK, castsLiterais: 0 });
-    expect(v.tipo).toBe('cego');
+    // Com 0 cast no src/ (2026-10-21) o piso de `castsLiterais` é 0: quem guarda a cegueira são os
+    // pisos da varredura (arquivos, tabelas, funções). Zero arquivo lido não é "nada a reprovar".
+    expect(julgar([], { from: 0, rpc: 0 }, { ...MEDIDAS_OK, arquivos: 0 }).tipo).toBe('cego');
+    expect(julgar([], { from: 0, rpc: 0 }, { ...MEDIDAS_OK, relacoes: 0 }).tipo).toBe('cego');
+    expect(julgar([], { from: 0, rpc: 0 }, MEDIDAS_OK).tipo).toBe('ok');
   });
 });

@@ -146,7 +146,6 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-webhook/index.ts', 2],
   ['supabase/functions/pedido-programado-enviar/index.ts', 1],
   ['supabase/functions/pedido-programado-extrair/index.ts', 1],
-  ['supabase/functions/process-nfe/index.ts', 7],
   ['supabase/functions/promocao-extrair-via-vision/index.ts', 2],
   ['supabase/functions/reposicao-depara-sayerlack-auto/index.ts', 1],
   // QUITADO (3→0) no PR do pós-login Sayerlack: os 3 sítios do lado Deno passaram a usar

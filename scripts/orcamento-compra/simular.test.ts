@@ -27,6 +27,8 @@ const fatos: Fatos = {
   linhas: [{ raiz: 1, pedido_id: 1, sku_codigo_omie: '9', qtde: 4, fator_embalagem_portal: null, preco_unitario: 10, estoque_atual: 0, estoque_fisico: 0, ponto_pedido: 2, modo_promocao: null, preco_sem_desconto: null }],
   demanda: DEM200,
   demanda_fisica: DEM200,
+  falhas_snapshot: [],
+  recebimentos_sem_t4: [],
   recebimentos: [],
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
@@ -234,6 +236,37 @@ describe('simularCiclo', () => {
     const comEfetiva = simularCiclo(f, 1, cfg).protegidas;
     const soFisica = simularCiclo({ ...f, demanda: DEM200 }, 1, cfg).protegidas;
     expect(comEfetiva).toBeGreaterThan(soFisica);
+  });
+  it('R62: corte por falta de caixa é ESCALADO ao humano — fora da precisão do portão, medido à parte', () => {
+    // cortavel(65): as 3 embalagens saem por 'financeiro' (caixa zerado) e o replay as classifica 'eliminado'
+    const r = backtest(cortavel(65), cfg);
+    expect(r.resumo.precisaoEpisodios.n).toBe(0);
+    expect(r.resumo.precisaoEpisodiosEscalados.n).toBe(1);
+    expect(r.resumo.precisaoEpisodiosEscalados.precisao).toBe(1);
+  });
+  it('R63: indeterminado SÓ por snapshot sai do portão quando o job de snapshot falhou no dia (ou na véspera)', () => {
+    // snapshot de 29/09 (2 dias antes do ciclo de 01/10) → camada 'snapshot'
+    const semSnap: Fatos = { ...fatos, snapshots: [{ ...fatos.snapshots[0], dia: '2026-09-29', snapshot_at: '2026-09-29T10:00:00Z' }] };
+    const exclusao = (falhas: string[]) => backtest({ ...semSnap, falhas_snapshot: falhas }, cfg).ciclos[0].exclusaoPortao;
+    expect(backtest(semSnap, cfg).ciclos[0].estado).toMatchObject({ tipo: 'indeterminado', camadas: ['snapshot'] });
+    expect([exclusao(['2026-10-01']), exclusao(['2026-09-30']), exclusao(['2026-09-29']), exclusao([])])
+      .toEqual(['falha_infra_snapshot', 'falha_infra_snapshot', null, null]);
+  });
+  it('R63: indeterminado com OUTRA camada além do snapshot nunca sai do portão', () => {
+    // sem disparado anterior: 'continuidade_sem_historico' entra DEPOIS da base sem snapshot
+    const f: Fatos = { ...fatos, disparados: [], falhas_snapshot: ['2026-10-01'],
+      snapshots: [{ ...fatos.snapshots[0], dia: '2026-09-29', snapshot_at: '2026-09-29T10:00:00Z' }] };
+    const c = backtest(f, cfg).ciclos[0];
+    expect(c.estado).toMatchObject({ tipo: 'indeterminado', camadas: ['snapshot', 'continuidade_sem_historico'] });
+    expect(c.exclusaoPortao).toBeNull();
+  });
+  it('R63: falhas_snapshot ausente reprova o pré-voo', () => {
+    expect(preVoo({ ...fatos, falhas_snapshot: undefined as unknown as Fatos['falhas_snapshot'] })).toContain('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  });
+  it('R64: NF efetivada no recebimento do app SEM t4 no tracking reprova o pré-voo (estoque de hoje à frente dos fatos)', () => {
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: ['000956019'] })).toContain('1 NF efetivada(s) no recebimento sem t4 no tracking (000956019) — rode depois da revisita da omie-sync-nfes-recebidas (R64)');
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: undefined as unknown as Fatos['recebimentos_sem_t4'] })).toContain('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
+    expect(preVoo(fatos).filter((x) => x.includes('R64'))).toEqual([]);
   });
   it('R61: demanda física com qtde nula reprova o pré-voo', () => {
     expect(preVoo({ ...fatos, demanda_fisica: [{ sku: '9', data: '2026-10-01', qtde: null }] })).toContain('demanda_fisica com qtde nula — reconstrução de estoque inválida');
@@ -626,7 +659,9 @@ describe('R31 — precisão por episódio (portão da v2)', () => {
   });
   it('backtest expõe precisaoEpisodios e coberturaEpisodios no resumo', () => {
     const b = backtest(cortavelLongo(), cfg);
-    expect(b.resumo.precisaoEpisodios.n + b.resumo.precisaoEpisodios.indeterminados).toBe(b.resumo.episodios);
+    // R62: os episódios se dividem entre o portão (automáticos) e os escalados (falta de caixa) — nenhum some
+    const pe = b.resumo.precisaoEpisodios, esc = b.resumo.precisaoEpisodiosEscalados;
+    expect(pe.n + pe.indeterminados + esc.n + esc.indeterminados).toBe(b.resumo.episodios);
     expect(b.resumo.coberturaEpisodios).not.toBeUndefined();
   });
 });

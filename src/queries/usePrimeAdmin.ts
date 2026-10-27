@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
 import { ilikeOr, isSearchablePostgrestTerm } from '@/lib/postgrest';
 import { traduzirErroPrime } from '@/lib/prime/erros';
+import { paraPrimeAssinatura, paraPrimeBeneficioUso, paraPrimeExtrato, paraPrimePlano } from '@/lib/prime/borda';
 import type {
   PrimeAssinatura,
   PrimeBeneficioTipo,
@@ -22,11 +23,6 @@ import type {
  * bônus 1/mês ≤50. Aqui: queries + mutations que traduzem os erros (P0001/
  * 23505/23514) via traduzirErroPrime — a UI nunca contorna o guard.
  */
-// Cast TEMPORÁRIO até a regen de tipos: as tabelas prime_* ainda não estão nos
-// tipos gerados do Supabase (mesmo idioma de useClienteGrupos). Quando os tipos
-// forem regenerados, trocar `db` por `supabase` e usar Tables<'prime_planos'>.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = supabase as unknown as { from: (table: string) => any };
 
 const KEY_PLANOS = ['prime', 'planos'] as const;
 const KEY_ASSINATURAS = ['prime', 'assinaturas'] as const;
@@ -56,14 +52,14 @@ export function usePrimePlanos() {
   return useQuery({
     queryKey: KEY_PLANOS,
     queryFn: async (): Promise<PrimePlano[]> => {
-      const { data, error } = await db
+      const { data, error } = await supabase
         .from('prime_planos')
         .select('id, nome, preco_mensal, franquia_dentes, beneficios, ativo, created_at, updated_at')
         .order('ativo', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      return (data ?? []) as PrimePlano[];
+      return (data ?? []).map(paraPrimePlano);
     },
   });
 }
@@ -72,13 +68,13 @@ export function usePrimeAssinaturas() {
   return useQuery({
     queryKey: KEY_ASSINATURAS,
     queryFn: async (): Promise<PrimeAssinaturaComCliente[]> => {
-      const { data, error } = await db
+      const { data, error } = await supabase
         .from('prime_assinaturas')
         .select(COLS_ASSINATURA)
         .order('created_at', { ascending: false })
         .limit(500);
       if (error) throw error;
-      const assinaturas = (data ?? []) as PrimeAssinatura[];
+      const assinaturas = (data ?? []).map(paraPrimeAssinatura);
 
       const ids = [...new Set(assinaturas.map((a) => a.customer_user_id))];
       const clientes: Record<string, ClienteResumo> = {};
@@ -103,7 +99,7 @@ export function usePrimeUsos(incluirEstornados: boolean) {
   return useQuery({
     queryKey: [...KEY_USOS, { incluirEstornados }],
     queryFn: async (): Promise<PrimeBeneficioUso[]> => {
-      let query = db
+      let query = supabase
         .from('prime_beneficio_uso')
         .select(COLS_USO)
         .order('created_at', { ascending: false })
@@ -111,7 +107,7 @@ export function usePrimeUsos(incluirEstornados: boolean) {
       if (!incluirEstornados) query = query.is('estornado_em', null);
       const { data, error } = await query;
       if (error) throw error;
-      return (data ?? []) as PrimeBeneficioUso[];
+      return (data ?? []).map(paraPrimeBeneficioUso);
     },
   });
 }
@@ -128,7 +124,8 @@ export function usePrimeExtratoCompetencia(
     queryKey: [...KEY_EXTRATO, assinaturaId ?? '', competencia ?? ''],
     enabled: Boolean(assinaturaId && competencia),
     queryFn: async (): Promise<PrimeExtratoMensal | null> => {
-      const { data, error } = await db
+      if (!assinaturaId || !competencia) return null; // `enabled` já barra; estreita o tipo
+      const { data, error } = await supabase
         .from('v_prime_extrato_mensal')
         .select(
           'assinatura_id, customer_user_id, status, competencia, mensalidade_contratada, monetizado_total, dentes_usados, dentes_bonus, franquia_total, dentes_restantes, dentes_excedentes, usos_operacionais, n_registros',
@@ -137,7 +134,7 @@ export function usePrimeExtratoCompetencia(
         .eq('competencia', competencia)
         .maybeSingle();
       if (error) throw error;
-      return (data ?? null) as PrimeExtratoMensal | null;
+      return data === null ? null : paraPrimeExtrato(data);
     },
   });
 }
@@ -175,7 +172,7 @@ export function useCriarPlano() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (plano: NovoPlano) => {
-      const { error } = await db.from('prime_planos').insert(plano);
+      const { error } = await supabase.from('prime_planos').insert(plano);
       if (error) throw error;
     },
     onSuccess: (_d, plano) => {
@@ -191,7 +188,7 @@ export function useTogglePlanoAtivo() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ativo }: { id: string; ativo: boolean }) => {
-      const { error } = await db.from('prime_planos').update({ ativo }).eq('id', id);
+      const { error } = await supabase.from('prime_planos').update({ ativo }).eq('id', id);
       if (error) throw error;
     },
     onSuccess: (_d, { ativo }) => {
@@ -217,7 +214,7 @@ export function useCriarAssinatura() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (assinatura: NovaAssinatura) => {
-      const { error } = await db.from('prime_assinaturas').insert(assinatura);
+      const { error } = await supabase.from('prime_assinaturas').insert(assinatura);
       if (error) throw error;
     },
     onSuccess: (_d, assinatura) => {
@@ -233,7 +230,7 @@ export function useSuspenderAssinatura() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, suspensaEm }: { id: string; suspensaEm: string }) => {
-      const { error } = await db
+      const { error } = await supabase
         .from('prime_assinaturas')
         .update({ status: 'suspensa', suspensa_em: suspensaEm })
         .eq('id', id);
@@ -257,7 +254,7 @@ export function useReativarAssinatura() {
       // estruturado de suspensão — o rastro fica na observacao (apensada pelo
       // caller). Meses do período suspenso voltam ao extrato como "sem uso
       // registrado" (fato: o banco barrava uso; nunca fabrica R$).
-      const { error } = await db
+      const { error } = await supabase
         .from('prime_assinaturas')
         .update({ status: 'ativa', suspensa_em: null, observacao })
         .eq('id', id);
@@ -279,7 +276,7 @@ export function useCancelarAssinatura() {
     mutationFn: async ({ id, dataFim }: { id: string; dataFim: string }) => {
       // Cancelar suspensa NÃO limpa suspensa_em: a janela do extrato para no
       // que congelou na suspensão (a view usa LEAST — manter é o honesto).
-      const { error } = await db
+      const { error } = await supabase
         .from('prime_assinaturas')
         .update({ status: 'cancelada', data_fim: dataFim })
         .eq('id', id);
@@ -299,7 +296,7 @@ export function useRegistrarUso() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (uso: PrimeBeneficioUsoInsert) => {
-      const { error } = await db.from('prime_beneficio_uso').insert(uso);
+      const { error } = await supabase.from('prime_beneficio_uso').insert(uso);
       if (error) throw error;
     },
     onSuccess: (_d, uso) => {
@@ -326,7 +323,7 @@ export function useEstornarUso() {
     }) => {
       // Único UPDATE permitido pelo banco (trigger prime_uso_so_estorno):
       // estornado_por PRECISA ser o auth.uid() do caller.
-      const { error } = await db
+      const { error } = await supabase
         .from('prime_beneficio_uso')
         .update({ estornado_em: new Date().toISOString(), estornado_por: userId })
         .eq('id', id);

@@ -20,6 +20,8 @@ import {
   snapshotEnfileirado,
   updateConfirmou,
 } from "./promocao-fila.ts";
+// Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
+import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -357,8 +359,12 @@ Deno.serve(async (req) => {
       const body = await req.json();
 
       // Change 3+4: also validate precos_base batch size
-      const batchErr = validateBatchSize(body, ["produtos", "bases", "embalagens", "skus", "corantes", "precos_base"]);
+      const batchErr = validateBatchSize(body, [...ENTIDADES_CATALOGO]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
+
+      // Só padracores/colecoes/subcolecoes/personcores (que esta rota não grava): antes abria run +
+      // promoção vazia, ~700/dia (medido 2026-10-21). Mesmo ack, sem run.
+      if (itensGravaveis(body) === 0) return json(ackSemRun(idempotencyKey));
 
       const runId = await createSyncRun(agent, "catalogs");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);

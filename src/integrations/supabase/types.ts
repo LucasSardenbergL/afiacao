@@ -8198,6 +8198,51 @@ export type Database = {
           },
         ]
       }
+      nfe_recebimento_manual_trilha: {
+        Row: {
+          chave_nfe: string | null
+          conta: string
+          criado_em: string
+          detalhe: Json
+          execucao_id: string
+          executado_por: string
+          id: string
+          n_id_receb: number | null
+          nf_numero: string
+          passo: string
+          resultado: string
+          versao: string
+        }
+        Insert: {
+          chave_nfe?: string | null
+          conta: string
+          criado_em?: string
+          detalhe?: Json
+          execucao_id: string
+          executado_por: string
+          id?: string
+          n_id_receb?: number | null
+          nf_numero: string
+          passo: string
+          resultado: string
+          versao: string
+        }
+        Update: {
+          chave_nfe?: string | null
+          conta?: string
+          criado_em?: string
+          detalhe?: Json
+          execucao_id?: string
+          executado_por?: string
+          id?: string
+          n_id_receb?: number | null
+          nf_numero?: string
+          passo?: string
+          resultado?: string
+          versao?: string
+        }
+        Relationships: []
+      }
       nfe_recebimentos: {
         Row: {
           alterar_etapa_ok: boolean
@@ -23154,6 +23199,7 @@ export type Database = {
         Args: { p_sync_run_id: string }
         Returns: Json
       }
+      tint_staging_purge: { Args: never; Returns: Json }
       tint_ultimo_preco_cliente: {
         Args: {
           p_cor_id: string

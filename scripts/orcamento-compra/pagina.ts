@@ -63,7 +63,8 @@ export function avaliarPortao(r: Resultado): { aberto: boolean; motivos: string[
   const pe = r.resumo.precisaoEpisodios;
   const cob = r.resumo.coberturaEpisodios;
   const inviaveis = r.ciclos.filter((c) => c.estado.tipo === 'inviavel').length;
-  const indeterminados = r.ciclos.filter((c) => c.estado.tipo === 'indeterminado').length;
+  // R63: indeterminado por falha de infraestrutura comprovada fica fora do critério (listado na página)
+  const indeterminados = r.ciclos.filter((c) => c.estado.tipo === 'indeterminado' && !(c as { exclusaoPortao?: string | null }).exclusaoPortao).length;
   const motivos: string[] = [];
   // R47: todo critério é fail-closed — undefined/NaN (resultado.json antigo) nunca passa
   if (!finito(pe?.precisao) || pe.precisao < PORTAO.precisaoMin) motivos.push(`precisão por episódio ${pct(pe?.precisao)} < ${pct(PORTAO.precisaoMin)}`);

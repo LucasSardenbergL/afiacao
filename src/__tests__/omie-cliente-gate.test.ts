@@ -38,7 +38,6 @@ const LEGADO: Record<string, number> = {
   'supabase/functions/omie-sync/index.ts': 1,
   'supabase/functions/omie-vendas-sync/index.ts': 1,
   'supabase/functions/picking-fila-omie/index.ts': 1,
-  'supabase/functions/process-nfe/index.ts': 1,
   'supabase/functions/sync-reprocess/index.ts': 1,
   'supabase/functions/tint-omie-sync/index.ts': 1,
 };

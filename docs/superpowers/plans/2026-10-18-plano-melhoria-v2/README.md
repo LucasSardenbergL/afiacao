@@ -1,5 +1,7 @@
 # Plano de melhoria do código — v2 (2026-10-18)
 
+> **Sucedido pelo [plano v3](../2026-10-21-plano-melhoria-v3/README.md) (2026-10-21).**
+
 > Sucede o [plano de 2026-09-05](../2026-09-05-plano-melhorias-codebase/README.md), cujos lotes A–G fecharam em 2026-10-13. Herda as decisões do §0.3/§0.5 daquele plano (5 usuários · 1 dev · **"canônico quando tocar"** · motores/monólitos cortados salvo incidente · 1 lote = 1 sessão · arquivo quente = 1 dono). Não reabre o que foi cortado.
 >
 > **Método:** 2 varreduras (Fable) + health stack local + 2ª opinião adversária do **Codex** (gpt-6-astra · reasoning max · 307 s · 160k tokens) sobre o rascunho — parecer cru em [anexos/parecer-codex-2026-10-18.md](anexos/parecer-codex-2026-10-18.md). O Codex derrubou ~40% do rascunho; o que ele afirmou e foi **conferido no código** está marcado ✅, o que ficou plausível sem conferência, ⚠️.
@@ -26,13 +28,15 @@ Critério de ordem: **impacto em dinheiro/produção × evidência do defeito ÷
 
 ## 2. Top 5 — na ordem (1 item = 1 PR · 1 lote = 1 sessão)
 
-### 1 · NF-e: gravação completa e repetição após falha — **money-path, esforço M**
+> ✅ **Plano v2 concluído em 2026-10-21.** Os 5 itens do Top 5, o piloto N e os pontuais do §3 foram entregues. O resto do §3 (L, K1, K2) é regra de "quando tocar", não item de PR.
+
+### 1 · NF-e: gravação completa e repetição após falha — **money-path, esforço M** · ✅ **feito**: [#3142](https://github.com/LucasSardenbergL/afiacao/pull/3142) (reenvio completa os itens), deploy em [#3157](https://github.com/LucasSardenbergL/afiacao/pull/3157)/[#3165](https://github.com/LucasSardenbergL/afiacao/pull/3165) e leva RPC transacional em [#3171](https://github.com/LucasSardenbergL/afiacao/pull/3171)
 `omie-nfe-webhook/index.ts`: o cabeçalho é inserido (`:194`) antes dos itens; se os itens falham, a resposta é 500 e o cabeçalho fica; a repetição encontra o cabeçalho no duplicate-check (`:105`) e responde "já importada" **sem reparar os itens** ⚠️ (achado Codex; inserts conferidos, caminho de falha a confirmar no PR). Entrega: transação/compensação + teste Deno da sequência (falha nos itens → retry recupera). Ritual money-path completo (`RÉGUA:` + adversarial no diff).
 
-### 2 · H · Segurança replicada — **esforço P–M** (arquivo quente `_shared/auth.ts`)
+### 2 · H · Segurança replicada — **esforço P–M** (arquivo quente `_shared/auth.ts`) · ✅ **feito**: [#3143](https://github.com/LucasSardenbergL/afiacao/pull/3143) (testes negativos nos handlers antes da troca; 0 cópias locais na main em 2026-10-21) e prova de deploy em [#3156](https://github.com/LucasSardenbergL/afiacao/pull/3156)
 Ordem corrigida pelo Codex: **(a) testes negativos nos 13 HANDLERS** (sem token → 401 **e zero efeito**), **(b) só então** apagar as 13 cópias e importar `_shared/auth.ts`, trocando o teste booleano por `.ok` (`fin-cashflow-engine` já retorna `AuthResult`). Corrigir o comentário de `auth.ts:43`. `sonda:bump` em cada edge; deploy em 2 levas de ~7 (founder). Pronto: 0 cópias · 13 testes negativos verdes · `pendencias:deploy` zerado.
 
-### 3 · J · CI: corrigir dependência e encurtar sem perder a falsificação pré-merge — **esforço P–M** (arquivo quente `ci.yml`/`auto-merge.yml`)
+### 3 · J · CI: corrigir dependência e encurtar sem perder a falsificação pré-merge — **esforço P–M** (arquivo quente `ci.yml`/`auto-merge.yml`) · ✅ **feito**: [#3160](https://github.com/LucasSardenbergL/afiacao/pull/3160) (J0–J3)
 - **J0** Pós-merge depende indevidamente de `mutation-check` (informativo): uma falha dele cala o CI da main ✅. Corrigir a condição em `auto-merge.yml:65`.
 - **J1** Rebalancear as 4 fatias de `provas-sql` (15/8/13/8 → ~11).
 - **J2** `falsificacao` (16 min): fatiar em 2–3 jobs **obrigatórios** (todas no `needs` do `validate`), nunca mover para main/schedule — o próprio `ci.yml:899` registra falsificação vermelha pós-merge. `gates:rapidos` não substitui.
@@ -58,7 +62,7 @@ Residual em módulo ativo (2026-10-21, depois do PR de fecho do ciclo 2):
 - ~~`useRaioXMutacoes` (reposição, 2)~~ e ~~`useExcecoesGestor` (governança, 3)~~ saíram. O raio-X passou a usar `comNulo`, com as 4 chaves NULL conferidas na prod. O `useExcecoesGestor` é governança no manifesto (o card "Exceções" do MasterDashboard) e só LÊ as views da família tarefas, que já estão no `types.ts`: a borda exige `id`/`descricao`/`effective_due` com `linhasCom`, e `customer_metrics` passou a ser lido por forma (ausente ≠ 0). Detalhe em [plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md).
 
 Defeitos que os casts escondiam (detalhe nos docs): 3 queries 400 na reposição; 4 KPIs de /vendas/ferramentas sobre tabelas inexistentes; o DRE consolidado da tela Intercompany quebrava ao renderizar; a RPC intercompany aplica a eliminação ao CMV com o sinal trocado (correção SQL proposta em sessão própria).
-### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · 🧭
+### 5 · I2 · Deriva prod ≠ repo em SQL — **esforço M** · ✅ **feito**: decisão 🧭 #1 tomada (a para as 2 financeiras, b para o resto). Canônicas em [#3179](https://github.com/LucasSardenbergL/afiacao/pull/3179), aplicadas e validadas em [#3225](https://github.com/LucasSardenbergL/afiacao/pull/3225), ciclo 2 em [#3260](https://github.com/LucasSardenbergL/afiacao/pull/3260)/[#3261](https://github.com/LucasSardenbergL/afiacao/pull/3261), fecho medido em [#3267](https://github.com/LucasSardenbergL/afiacao/pull/3267) ([deriva-canonica-i2.md](../../../historico/deriva-canonica-i2.md))
 Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções financeiras aplicadas à mão que um `CREATE OR REPLACE` do repo **apagaria**). Copiar o corpo para `db/` não basta: o auditor reconstrói a expectativa das migrations de `origin/main` (`audit-deriva-corpo-prod.ts:245`) — e migrations são intocáveis (DR). Decisão 🧭 #1 abaixo.
 
 ## 3. Depois do Top 5 (quando tocar / piloto)
@@ -76,20 +80,21 @@ Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções
 - Continuam cortados: M-57 motores · M-58 monólitos · M-50 paginação em massa · gate novo sem incidente (`maquinas-meta.md:11`) · majors.
 
 ## 5. Decisões do founder 🧭
-1. **I2**: como fechar a representação reconstituível das 18 funções sem tocar `supabase/migrations/` (DR)? Opções: (a) migration "canônica" nova via Lovable com o corpo da prod + prova de comportamento; (b) baseline aceita + teste `db/test-*.sh` que falha se o corpo da prod mudar. Recomendo (a) para as 2 funções financeiras, (b) para o resto.
+1. **I2**: como fechar a representação reconstituível das 18 funções sem tocar `supabase/migrations/` (DR)? Opções: (a) migration "canônica" nova via Lovable com o corpo da prod + prova de comportamento; (b) baseline aceita + teste `db/test-*.sh` que falha se o corpo da prod mudar. Recomendo (a) para as 2 funções financeiras, (b) para o resto. ✅ **tomada**: (a) para as 2 financeiras, (b) para o resto (ver item 5).
 2. **N**: aprovar o piloto em `money-path.md`? ✅ **aprovado (2026-10-21)**: "reescrever o money-path.md como regras vivas (condição · obrigação · exceções · ponteiro), casos para docs/historico, medindo contexto antes e depois" — a reescrita já estava na main desde o #3185; a aprovação ratificou e pediu a medição, entregue na verificação pós-merge.
-3. **Saldo bancário**: ocultar o indicador em `FinanceiroGestao` até existir `fin_saldo_bancario`?
+3. **Saldo bancário**: ocultar o indicador em `FinanceiroGestao` até existir `fin_saldo_bancario`? ✅ **tomada**: indicador oculto em 19/10 (ver pontuais do §3).
 
 ## 6. KPIs
 tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `casts:stale` from/rpc e piso · entradas de deriva (por função) · edges money-path sem teste · bytes de `money-path.md` (piloto N).
 
 | KPI | Baseline (2026-10-18) | Fim do ciclo 1 | Ciclo 2 (2026-10-20) |
 |---|---|---|---|
-| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **14/12 · 26** (2026-10-21, item 4 ✅: plataforma #3257/#3262, vendas #3265, caça #3268, financeiro #3272, farmer #3273, governança + raio-X no PR de fecho do ciclo 2); em módulo ativo resta só o `useVendaPainel` (nome ainda fora do `types.ts`); o resto está em congelados |
+| `casts:stale` from/rpc · piso `castsLiterais` | 49/47 · 40 | 23/29 · 52 | **0/0 · 0** (2026-10-21, medido na main `75a3c33cd` depois do #3322): item 4 ✅ nos ativos (plataforma #3257/#3262, vendas #3265, caça #3268, financeiro #3272, farmer #3273/#3297, governança + raio-X #3282) e **também nos congelados**, a pedido do founder (tarefas #3299, telefonia #3303, knowledge-base #3320, loja-afiacao + produção + prime #3322). Nenhum cast literal sobre nome tipado no `src/` |
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
-| tempo até `validate` no PR (p50) · edges money-path sem teste | 16–21 min · 26/49 | — | não medidos neste ciclo |
+| tempo até `validate` no PR (p50) | 16–21 min | — | **38,7 → 19,5 min** (2026-10-21, item J: 15 runs antes · 5 depois do #3313). A fila de runners era o gargalo, com a conta estacionada em 20 jobs simultâneos. O `mutation-check` saiu do pós-merge (148→102 min de runner por run da main) e o `provas-sql` foi balanceado por custo. Sem fila, o caminho crítico foi de 15,5 para 13,6 min. Ressalva: a carga de PRs caiu à metade na janela de depois; falta comparar num pico. `docs/historico/ci-fila-de-runners.md` |
+| edges money-path sem teste | 26/49 | — | não medido neste ciclo |
 
 ## 7. Calibração do parecer (separada do parecer cru)
 Conferido no código ✅: 1723 (booleano), piso 40, `auto-merge.yml:65`, `formatPrecoOuAusente`, `saldoBancario = 0`, `test-wt-*` no `test:hooks`, `tarefas` congelado, inserts da NF-e em 105/194. Não conferido ⚠️: caminho de falha dos itens da NF-e, contagem 18/21/4/1 da deriva, camadas `anthropic*`/`omie-*`, consumidor transitivo de `sonda-fingerprints`. Discordância: nenhuma de fundo; o Codex viu o rascunho **antes** da minha correção do lote J (que ele também apontou).

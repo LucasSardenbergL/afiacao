@@ -19,6 +19,13 @@ const resultado = (o: { precisao: number | null | undefined; n: number | undefin
   }) as unknown as Resultado;
 
 describe('R31 — portão da v2 derivado do resultado', () => {
+  it('R63: indeterminado excluído por falha de infra não fecha o portão; os demais fecham', () => {
+    const r = resultado({ precisao: 0.96, n: 30, cobertura: 0.5, estados: ['viavel', 'indeterminado'] });
+    (r.ciclos[1] as { exclusaoPortao?: string | null }).exclusaoPortao = 'falha_infra_snapshot';
+    expect(avaliarPortao(r).aberto).toBe(true);
+    (r.ciclos[1] as { exclusaoPortao?: string | null }).exclusaoPortao = null;
+    expect(avaliarPortao(r).motivos).toContain('1 ciclos indeterminados (exige 0)');
+  });
   it('abre só com todos os critérios', () => {
     expect(avaliarPortao(resultado({ precisao: 0.96, n: 30, cobertura: 0.5, estados: ['viavel'] }))).toEqual({ aberto: true, motivos: [] });
   });
