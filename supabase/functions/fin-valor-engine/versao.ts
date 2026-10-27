@@ -16,7 +16,10 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-valor-engine");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+// v1.0 → v1.1: NCG lido por DUAS leituras pontuais (o snapshot mais recente + os vizinhos do alvo
+// −12m) em vez de `order desc limit 400` sem janela e com o `error` descartado — o limite cortava o
+// ponto −12m do ROIC incremental para sempre; falha de leitura agora é 500/motivo (plano v3, item 3).
+export const VERSAO = "v1.1-ncg-leitura-pontual";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =

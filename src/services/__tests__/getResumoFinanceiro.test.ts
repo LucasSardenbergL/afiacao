@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spBusinessDate } from '@/lib/time/sp-day';
+
+// Saldo de extrato de HOJE em SP: conta sem `saldo_data` fresco é indisponível (plano v3, item 2).
+const HOJE_SP = spBusinessDate(new Date());
 
 /**
  * Teste de contrato do getResumoFinanceiro (resumo do FinanceiroDashboard /
@@ -132,10 +136,10 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
 
   it('contas correntes: soma só as ativas da empresa e normaliza campos null', async () => {
     state.db.fin_contas_correntes = [
-      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, banco: '341' },
-      { company: 'oben', ativo: true, descricao: null, saldo_atual: 20, banco: null },
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, saldo_data: HOJE_SP, banco: '341' },
+      { company: 'oben', ativo: true, descricao: null, saldo_atual: 20, saldo_data: HOJE_SP, banco: null },
       { company: 'oben', ativo: false, descricao: 'Encerrada', saldo_atual: 999, banco: '237' },
-      { company: 'colacor', ativo: true, descricao: 'Outra', saldo_atual: 55, banco: '001' },
+      { company: 'colacor', ativo: true, descricao: 'Outra', saldo_atual: 55, saldo_data: HOJE_SP, banco: '001' },
     ];
 
     const resumo = await getResumoFinanceiro(['oben']);
@@ -152,8 +156,8 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   // e para a âncora da projeção de fluxo.
   it('conta ativa com saldo DESCONHECIDO torna o total indisponível, não menor', async () => {
     state.db.fin_contas_correntes = [
-      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, banco: '341' },
-      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: null, banco: '237' },
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, saldo_data: HOJE_SP, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: null, saldo_data: HOJE_SP, banco: '237' },
     ];
 
     const resumo = await getResumoFinanceiro(['oben']);
@@ -174,10 +178,32 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     expect(resumo.oben.saldo_total_cc).toBeNull();
   });
 
+  it('conta com saldo VELHO (mais velho que ontem) → saldo_total_cc null, não a soma com cara de hoje', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, saldo_data: HOJE_SP, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: 900, saldo_data: '2026-01-02', banco: '237' },
+    ];
+
+    const resumo = await getResumoFinanceiro(['oben']);
+
+    expect(resumo.oben.saldo_total_cc).toBeNull();
+  });
+
+  it('conta sem saldo_data (DEFAULT 0 de conta cujo 1º extrato falhou) → saldo_total_cc null', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, saldo_data: HOJE_SP, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Nova', saldo_atual: 0, saldo_data: null, banco: '260' },
+    ];
+
+    const resumo = await getResumoFinanceiro(['oben']);
+
+    expect(resumo.oben.saldo_total_cc).toBeNull();
+  });
+
   it('contas que somam ZERO de verdade continuam sendo zero — fato medido, não ausência', async () => {
     state.db.fin_contas_correntes = [
-      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 500, banco: '341' },
-      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: -500, banco: '237' },
+      { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 500, saldo_data: HOJE_SP, banco: '341' },
+      { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: -500, saldo_data: HOJE_SP, banco: '237' },
     ];
 
     const resumo = await getResumoFinanceiro(['oben']);

@@ -85,6 +85,7 @@ export function PosicaoAgora() {
           {active && (
             <StressTest
               saldoCC={active.saldo_cc}
+              saldoCCMotivo={active.saldo_cc_motivo}
               entradas30={active.entradas_30d}
               saidas30={active.saidas_30d}
               totalCR={active.total_cr_aberto}
