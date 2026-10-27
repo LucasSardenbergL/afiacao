@@ -20,15 +20,15 @@ export interface ClienteEncontrado {
 /** Página crua do ListarClientes; `null` = fault "Não existem registros para a página" (fim REAL do Omie). */
 export type ListarPagina = (pagina: number, porPagina: number) => Promise<unknown>;
 
-export const LOOKUP_POR_PAGINA = 50;
-export const LOOKUP_MAX_PAGINAS = 10;
+const LOOKUP_POR_PAGINA = 50;
+const LOOKUP_MAX_PAGINAS = 10;
 /**
  * Orçamento do lookup inteiro, conferido depois de CADA resposta: cada chamada tem o próprio relógio de 140s
  * (rate-limit com espera incluso), mas a action não cabe em N deles. Estourou = INDETERMINADO, retentável.
  */
-export const LOOKUP_ORCAMENTO_MS = 90_000;
+const LOOKUP_ORCAMENTO_MS = 90_000;
 
-const indeterminado = (account: string, motivo: string) =>
+const lookupIndeterminado = (account: string, motivo: string) =>
   new Error(`OMIE_LOOKUP_INDETERMINADO (${account}): ${motivo} — não dá pra afirmar que o cliente não existe`);
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -57,9 +57,9 @@ interface PaginaLida {
  */
 function lerPagina(resp: unknown, pagina: number, docClean: string, account: string): PaginaLida {
   if (resp === null) return { registros: [], vazia: true, erro: null };
-  if (!ehObjeto(resp)) throw indeterminado(account, `página ${pagina} não é um objeto`);
+  if (!ehObjeto(resp)) throw lookupIndeterminado(account, `página ${pagina} não é um objeto`);
   const arr = resp.clientes_cadastro;
-  if (!Array.isArray(arr)) throw indeterminado(account, `página ${pagina} sem clientes_cadastro`);
+  if (!Array.isArray(arr)) throw lookupIndeterminado(account, `página ${pagina} sem clientes_cadastro`);
   let erro: Error | null = null;
   const anotar = (e: Error) => {
     erro ??= e;
@@ -67,23 +67,23 @@ function lerPagina(resp: unknown, pagina: number, docClean: string, account: str
   // O eco da página, quando vem, tem de ser a pedida: um Omie que ignora `pagina` repetiria a 1ª até o guard.
   const eco = inteiroDeControle(resp.pagina);
   if (eco !== undefined && eco !== pagina) {
-    anotar(indeterminado(account, `pedi a página ${pagina} e veio a ${JSON.stringify(resp.pagina)}`));
+    anotar(lookupIndeterminado(account, `pedi a página ${pagina} e veio a ${JSON.stringify(resp.pagina)}`));
   }
   // A contagem da própria página, quando vem, não pode contradizer o array: `{registros:1, clientes_cadastro:[]}`
   // não é ausência provada (e um array mais curto que a contagem esconderia um 2º código).
   const contagem = inteiroDeControle(resp.registros);
   if (contagem !== undefined && contagem !== arr.length) {
-    anotar(indeterminado(account, `página ${pagina} diz ${JSON.stringify(resp.registros)} registro(s) e traz ${arr.length}`));
+    anotar(lookupIndeterminado(account, `página ${pagina} diz ${JSON.stringify(resp.registros)} registro(s) e traz ${arr.length}`));
   }
   const registros: ClienteEncontrado[] = [];
   arr.forEach((c, i) => {
-    if (!ehObjeto(c)) return anotar(indeterminado(account, `registro ${i} da página ${pagina} não é um objeto`));
+    if (!ehObjeto(c)) return anotar(lookupIndeterminado(account, `registro ${i} da página ${pagina} não é um objeto`));
     const codigo = c.codigo_cliente_omie;
     if (typeof codigo !== "number" || !Number.isSafeInteger(codigo) || codigo <= 0) {
-      return anotar(indeterminado(account, `registro ${i} da página ${pagina} sem codigo_cliente_omie inteiro positivo`));
+      return anotar(lookupIndeterminado(account, `registro ${i} da página ${pagina} sem codigo_cliente_omie inteiro positivo`));
     }
     if (typeof c.cnpj_cpf !== "string") {
-      return anotar(indeterminado(account, `registro ${i} da página ${pagina} sem cnpj_cpf`));
+      return anotar(lookupIndeterminado(account, `registro ${i} da página ${pagina} sem cnpj_cpf`));
     }
     // O helper aplica a gramática ESTRITA ao documento devolvido (letra fora do CNPJ alfanumérico não casa
     // pelos dígitos — #3359): documento malformado nunca prova identidade.
@@ -136,10 +136,10 @@ export async function buscarClienteEstrito(
       );
     }
     if (agora() - inicio > orcamentoMs) {
-      throw indeterminado(account, `o lookup passou de ${orcamentoMs / 1000}s (página ${pagina})`);
+      throw lookupIndeterminado(account, `o lookup passou de ${orcamentoMs / 1000}s (página ${pagina})`);
     }
     if (lida.erro) throw lida.erro;
     if (lida.vazia) return porCodigo.size === 1 ? [...porCodigo.values()][0] : null;
   }
-  throw indeterminado(account, `a paginação não chegou à página vazia em ${maxPaginas} páginas`);
+  throw lookupIndeterminado(account, `a paginação não chegou à página vazia em ${maxPaginas} páginas`);
 }
