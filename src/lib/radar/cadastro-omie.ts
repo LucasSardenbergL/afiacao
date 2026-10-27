@@ -78,7 +78,13 @@ export function divergenciaDaRpc(e: unknown): MotivoDivergencia | null {
   return null;
 }
 
-const ehLookupDivergente = (e: unknown): boolean => (mensagemDeErro(e) ?? '').includes('OMIE_LOOKUP_DIVERGENTE');
+/** Conflito de identidade que a edge acusou no lookup do Omie (marca no texto do erro), ou null. */
+function divergenciaDoLookup(e: unknown): MotivoDivergencia | null {
+  const m = mensagemDeErro(e) ?? '';
+  if (m.includes('OMIE_LOOKUP_DIVERGENTE')) return 'lookup_divergente';
+  if (m.includes('OMIE_LOOKUP_AMBIGUO')) return 'lookup_ambiguo';
+  return null;
+}
 
 export interface RespostaValidada {
   codigo: string;
@@ -276,11 +282,10 @@ async function divergenciaObservada(
   }
 }
 
-/** Falha na etapa omie; o lookup que devolveu OUTRO documento é conflito terminal, não falha retentável. */
+/** Falha na etapa omie; o lookup com OUTRO documento ou com 2+ códigos é conflito terminal (registrado), não falha retentável. */
 async function falhaNoOmie(deps: Pick<DepsCadastro, 'registrarConflito'>, cnpj: string, err: unknown): Promise<FalhaCadastro> {
-  return ehLookupDivergente(err)
-    ? divergenciaObservada(deps, cnpj, 'omie', 'lookup_divergente', mensagem(err), null)
-    : new FalhaCadastro('omie', mensagem(err));
+  const motivo = divergenciaDoLookup(err);
+  return motivo ? divergenciaObservada(deps, cnpj, 'omie', motivo, mensagem(err), null) : new FalhaCadastro('omie', mensagem(err));
 }
 
 /** Marca da RPC `radar_registrar_cadastro_omie` quando o servidor não confirmou o par CNPJ↔código no Omie/Oben. */
