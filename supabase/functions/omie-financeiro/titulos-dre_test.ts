@@ -261,6 +261,9 @@ Deno.test("baixaMap: envelope fora de forma é MALFORMADA", async () => {
     { total: 1, pares: [["1", "2026-09-01"]] },
     { total: 1, pares: [[1, "01/09/2026"]] },
     { total: 1, pares: [[1, null]] },
+    { total: 1, pares: [[1, "2026-99-99"]] },
+    { total: 1, pares: [[1, "2026-02-30"]] },
+    { total: 2, pares: [[7, "2026-09-01"], [7, "2026-10-01"]] },
   ];
   for (const data of casos) {
     const { db } = rpcFake({ data, error: null });

@@ -113,6 +113,11 @@ const FONTE_BAIXAS = {
 
 const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+/** 'YYYY-MM-DD' que existe no calendário — a regex sozinha aceita '2026-99-99'. */
+function dataDeCalendario(s: string): boolean {
+  return DATA_ISO.test(s) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
+}
+
 /**
  * Mapa `omie_codigo_lancamento → data_baixa_final` (v_titulo_baixas) da empresa INTEIRA, para o
  * DRE-caixa, numa ÚNICA chamada: RPC `fin_titulo_baixas_cr_mapa` (migration 20261019110100) ou
@@ -163,7 +168,10 @@ export async function carregarBaixaMap(
     if (
       !Array.isArray(par) || par.length !== 2 ||
       typeof par[0] !== "number" || !Number.isSafeInteger(par[0]) ||
-      typeof par[1] !== "string" || !DATA_ISO.test(par[1])
+      typeof par[1] !== "string" || !dataDeCalendario(par[1]) ||
+      // Código repetido: o keyset antigo já recusava (chave estritamente crescente); um Map
+      // last-wins escolheria uma das baixas em silêncio (Codex, P3 desta entrega).
+      map.has(par[0])
     ) {
       throw new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
     }
