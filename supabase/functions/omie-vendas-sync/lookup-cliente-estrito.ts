@@ -8,6 +8,7 @@
 //   - 2+ códigos distintos para o documento → OMIE_LOOKUP_AMBIGUO (terminal: só um humano no Omie resolve).
 // PURO: o fetch da página é INJETADO (index.ts passa o callOmieVendasApi com throwOnTransient) → testável com
 // `--no-remote` (lookup-cliente-estrito_test.ts). Diário docs/historico/omie-lookup-cliente-estrito.md.
+import { documentoParaCadastro } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
 
 export interface ClienteEncontrado {
@@ -17,16 +18,20 @@ export interface ClienteEncontrado {
   cnpj_cpf: string;
 }
 
-/** Página crua do ListarClientes; `null` = fault "Não existem registros para a página" (fim REAL do Omie). */
-export type ListarPagina = (pagina: number, porPagina: number) => Promise<unknown>;
+/**
+ * Página crua do ListarClientes; `null` = fault "Não existem registros para a página" (fim REAL do Omie). `prazo` é o
+ * fim ABSOLUTO do lookup inteiro (ms, mesmo relógio de `agora`): o transporte não pode passar dele (Codex P2).
+ */
+export type ListarPagina = (pagina: number, porPagina: number, prazo: number) => Promise<unknown>;
 
 const LOOKUP_POR_PAGINA = 50;
 const LOOKUP_MAX_PAGINAS = 10;
 /**
- * Orçamento do lookup inteiro, conferido depois de CADA resposta: cada chamada tem o próprio relógio de 140s
- * (rate-limit com espera incluso), mas a action não cabe em N deles. Estourou = INDETERMINADO, retentável.
+ * Orçamento do lookup INTEIRO. Vai ao transporte como prazo absoluto (cada ListarClientes para nele, em vez do teto
+ * próprio de 140s) e é conferido de novo depois de cada resposta. 40s deixam ~110s dos 150s da edge para o
+ * IncluirCliente/IncluirPedido que vem depois (Codex P2, v1.28). Estourou = INDETERMINADO/TRANSIENT, retentável.
  */
-const LOOKUP_ORCAMENTO_MS = 90_000;
+const LOOKUP_ORCAMENTO_MS = 40_000;
 
 const lookupIndeterminado = (account: string, motivo: string) =>
   new Error(`OMIE_LOOKUP_INDETERMINADO (${account}): ${motivo} — não dá pra afirmar que o cliente não existe`);
@@ -127,7 +132,7 @@ export async function buscarClienteEstrito(
   const inicio = agora();
   const porCodigo = new Map<string, ClienteEncontrado>();
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
-    const lida = lerPagina(await listarPagina(pagina, porPagina), pagina, docClean, account);
+    const lida = lerPagina(await listarPagina(pagina, porPagina, inicio + orcamentoMs), pagina, docClean, account);
     // O mesmo código repetido entre páginas é o MESMO cliente; ambíguo é código DISTINTO.
     for (const r of lida.registros) if (!porCodigo.has(String(r.codigo_cliente))) porCodigo.set(String(r.codigo_cliente), r);
     if (porCodigo.size > 1) {
@@ -161,7 +166,35 @@ export async function matchesDoPedido(
 }
 
 /** Marca do lookup estrito no erro (`OMIE_LOOKUP_AMBIGUO`/`_DIVERGENTE`/`_INDETERMINADO`), ou null — transitório não é. */
-export function marcaDoLookup(e: unknown): string | null {
+function marcaDoLookup(e: unknown): string | null {
   const m = e instanceof Error ? /^(OMIE_LOOKUP_(?:AMBIGUO|DIVERGENTE|INDETERMINADO)) \(/.exec(e.message) : null;
   return m ? m[1] : null;
+}
+
+/**
+ * O que o `criar_pedido` lança quando o lookup da identidade falha: marca do lookup estrito → `Pedido rejeitado: …
+ * (marca)` (o prefixo que os chamadores já tratam como recusa); o resto — `OMIE_TRANSIENT` incluso — passa INTACTO.
+ */
+export function erroDeIdentidadeDoPedido(e: unknown, account: string): unknown {
+  const marca = marcaDoLookup(e);
+  if (!marca) return e;
+  return new Error(
+    `Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${marca}) — envio bloqueado para não registrar no cliente errado. ${(e as Error).message}`,
+  );
+}
+
+/**
+ * Documento do pedido (sales_orders.customer_document ou o fallback profiles.document) pela gramática ESTRITA.
+ * Vazio → "" (o chamador cai no fallback/recusa como antes); fora da gramática → `Pedido rejeitado`, nunca o
+ * documento reduzido aos dígitos (`123ABC45678909` era o CPF 12345678909 de OUTRA pessoa — Codex ALTO, v1.28).
+ */
+export function docDoPedido(bruto: unknown): string {
+  if (String(bruto ?? "").trim() === "") return "";
+  try {
+    return documentoParaCadastro(bruto);
+  } catch (e) {
+    throw new Error(
+      `Pedido rejeitado: documento do cliente fora da gramática CPF/CNPJ (${(e as Error).message}) — envio bloqueado para não derivar a identidade de OUTRO documento`,
+    );
+  }
 }

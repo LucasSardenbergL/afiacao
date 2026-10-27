@@ -13,7 +13,7 @@ async function assertRejeitaCom(p: Promise<unknown>, marca: string) {
   if (!(erro instanceof Error)) throw new Error(`esperado erro ${marca}, mas resolveu`);
   if (!erro.message.startsWith(`${marca} (`)) throw new Error(`esperado ${marca}, veio: ${erro.message}`);
 }
-import { buscarClienteEstrito, type ListarPagina, marcaDoLookup, matchesDoPedido } from "./lookup-cliente-estrito.ts";
+import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 
 const DOC = "12345678000195";
 const cli = (codigo: unknown, doc: unknown = "12.345.678/0001-95", extra: Record<string, unknown> = {}) => ({
@@ -201,11 +201,46 @@ Deno.test("pedido: 2 códigos → AMBIGUO (o decideAccountIdentity antigo só vi
   await assertRejeitaCom(matchesDoPedido(DOC, "oben", omie([pg(1, cli(777)), pg(2, cli(778))]).listar), "OMIE_LOOKUP_AMBIGUO");
 });
 
-Deno.test("marcaDoLookup: só as três marcas no INÍCIO da mensagem; transitório e o resto ficam de fora", () => {
-  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_AMBIGUO (oben): x")), "OMIE_LOOKUP_AMBIGUO");
-  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_DIVERGENTE (colacor): x")), "OMIE_LOOKUP_DIVERGENTE");
-  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_INDETERMINADO (oben): x")), "OMIE_LOOKUP_INDETERMINADO");
-  assertEquals(marcaDoLookup(new Error("OMIE_TRANSIENT (oben): rate limit")), null);
-  assertEquals(marcaDoLookup(new Error("falhou: OMIE_LOOKUP_AMBIGUO (oben)")), null);
-  assertEquals(marcaDoLookup("OMIE_LOOKUP_AMBIGUO (oben): string, não Error"), null);
+Deno.test("erroDeIdentidadeDoPedido: marca → 'Pedido rejeitado: … (marca)'; transitório e o resto passam INTACTOS", () => {
+  for (const marca of ["OMIE_LOOKUP_AMBIGUO", "OMIE_LOOKUP_DIVERGENTE", "OMIE_LOOKUP_INDETERMINADO"]) {
+    const e = erroDeIdentidadeDoPedido(new Error(`${marca} (oben): detalhe`), "oben") as Error;
+    if (!e.message.startsWith(`Pedido rejeitado: identidade Omie do cliente na conta oben não pôde ser provada (${marca})`)) {
+      throw new Error(`${marca} sem o prefixo de recusa: ${e.message}`);
+    }
+  }
+  const transitorio = new Error("OMIE_TRANSIENT (oben): rate limit");
+  assertEquals(erroDeIdentidadeDoPedido(transitorio, "oben") === transitorio, true, "OMIE_TRANSIENT tem de passar intacto");
+  const marcaNoMeio = new Error("falhou: OMIE_LOOKUP_AMBIGUO (oben)");
+  assertEquals(erroDeIdentidadeDoPedido(marcaNoMeio, "oben") === marcaNoMeio, true, "marca fora do início não é do lookup");
+  const naoError = "OMIE_LOOKUP_AMBIGUO (oben): string";
+  assertEquals(erroDeIdentidadeDoPedido(naoError, "oben") === naoError, true);
+});
+
+Deno.test("docDoPedido: gramática estrita — letra fora do CNPJ alfanumérico RECUSA, nunca vira o CPF de outra pessoa", () => {
+  assertEquals(docDoPedido("123.456.789-09"), "12345678909");
+  assertEquals(docDoPedido("12.345.678/0001-95"), "12345678000195");
+  assertEquals(docDoPedido(""), "");
+  assertEquals(docDoPedido(null), "");
+  assertEquals(docDoPedido("   "), "");
+  for (const ruim of ["123ABC45678909", "ABC12345678909", "12ABC34501DE36", "-", "CPF: 12345678000195"]) {
+    let msg = "";
+    try {
+      docDoPedido(ruim);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    if (!msg.startsWith("Pedido rejeitado: documento do cliente fora da gramática CPF/CNPJ (DOC_")) {
+      throw new Error(`${ruim} deveria ser recusado, veio: ${msg || "(aceitou)"}`);
+    }
+  }
+});
+
+Deno.test("prazo absoluto do lookup chega ao transporte em TODA página (Codex P2)", async () => {
+  const prazos: number[] = [];
+  const listar: ListarPagina = (pagina, _porPagina, prazo) => {
+    prazos.push(prazo);
+    return Promise.resolve(pagina === 1 ? pg(1, cli(777)) : null);
+  };
+  await buscarClienteEstrito(DOC, "oben", listar, { orcamentoMs: 40_000, agora: () => 1_000 });
+  assertEquals(prazos, [41_000, 41_000]);
 });
