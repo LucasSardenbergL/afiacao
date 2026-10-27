@@ -97,7 +97,7 @@ escritor (relato da edge, como o `lookup_divergente`); o merge portou o `diverge
 | Camada | Estado | Quem |
 |---|---|---|
 | Migration `20261027160000` | ✅ aplicada 2026-10-27 ~16:50 UTC pelo envelope MCP (`query_database`) | esta sessão |
-| Publish do Lovable (front) | ⏳ — o front novo chama a v2; só depois da migration (já aplicada) | **founder** (Publish) |
+| Publish do Lovable (front) | ✅ no ar — `monitor-deploy.sh --pr 3363` → `PR_NO_AR` (ar carimba `2c9b8197`, o squash do PR), 2026-10-27 ~17:55 UTC | **founder** (Publish) |
 | Edge | nenhuma | — |
 
 **Pré-voo PROD (psql-ro, colado ao apply, 16:49 UTC):** v1 = `2b3dbe0d…` com SECURITY DEFINER + `search_path=public` +
@@ -111,6 +111,12 @@ PÓS passaram; rollback conferido por psql-ro (tabela ausente, v2 ausente). Depo
 `2b3dbe0d…`, escritor INVOKER sem EXECUTE para anon/PUBLIC/authenticated/service_role, as 4 RPCs DEFINER com EXECUTE só
 `authenticated`/`service_role`; RLS ligada, 1 policy (SELECT, `authenticated`, `private.cap_carteira_ler`); ACL só
 SELECT; índice parcial único válido com a definição exata; os 7 CHECKs e as 16 colunas como no arquivo; **0** linhas.
+
+**Pós-Publish (psql-ro, 2026-10-27 ~17:55 UTC):** os 5 corpos seguem com o md5 do arquivo, v1 `2b3dbe0d…` intacta,
+RLS ligada; **0** conflitos e **0** vínculos — o fluxo ainda não foi usado em PROD. Bytes no ar = disponibilidade, não
+adoção: o SW troca de build quando cada cliente recarrega. **Quando medir uso** (query, não recado):
+`SELECT count(*), count(*) FILTER (WHERE resolvido_em IS NULL) FROM public.radar_cadastro_conflitos;` junto de
+`SELECT count(*) FROM public.radar_empresas WHERE omie_codigo_cliente IS NOT NULL;` — denominador = vínculos gravados.
 
 Bundle antigo + banco novo: o front velho segue na v1 (RD001/RD002 como erro, sem registro no servidor) até o Publish
 + adoção — o servidor não regride nada para ele.
