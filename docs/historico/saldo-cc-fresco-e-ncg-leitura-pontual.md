@@ -20,18 +20,33 @@ O `omie-financeiro` lê o saldo de cada conta pelo extrato (`ListarExtrato`). Qu
 
 ### A regra
 
-`classificarSaldoConta` (espelho verbatim `src/lib/financeiro/saldo-contas.ts` ↔ `fin-cashflow-engine/saldo-contas.ts`, paridade no vitest):
+`classificarSaldoConta` (espelho verbatim `src/lib/financeiro/saldo-contas.ts` ↔ `fin-cashflow-engine/saldo-contas.ts`, paridade no vitest) recebe a referência `{ hoje, minimo }` em dias de SP, com `minimo` = o dia de SP de (agora − 4 h):
 
-- **fresca**: `saldo_data` de hoje ou de ontem (SP). O plano falou em 36 h; com coluna DATE e sync às 03h, o eixo é o dia-calendário. "Hoje ou ontem" tolera até ~45 h desde o último extrato bom, e anteontem significa ≥1 sync diário perdido.
-- **velha**: anteontem ou antes.
+- **fresca**: `saldo_data ≥ minimo`. Das 04h SP em diante só o saldo de HOJE vale; antes das 04h, o de ontem ainda é o último possível (o sync de base roda às 03h).
+- **velha**: anterior a `minimo`.
 - **desconhecida**: `saldo_data`/`saldo_atual` nulo, valor ilegível, data ilegível ou futura.
+
+**A 1ª versão estava errada**, e quem pegou foi o revisor adversário: "hoje ou ontem" aceitava o caso mais comum, UM sync perdido, por ~21 h do dia. A engine de caixa (`fin-cashflow-snapshot-diario`, `0 10 * * *` = 07h SP) gravava sobre o saldo de ontem sem marca. O plano falou em 36 h; com a coluna DATE e o sync às 03h, o eixo certo é "o sync de hoje já devia ter rodado".
 
 Consumidores:
 
-- **Tela** (`resumirSaldoContas`): qualquer conta não fresca, ou nenhuma conta ativa → `null` + motivo. Vale para `getCapitalDeGiro` (`saldo_cc`, `capital_giro_liquido`, `saldo_projetado_30d` passam a `number | null`, e `saldo_cc_motivo` é novo) e para `getResumoFinanceiro` (`saldo_total_cc`, cujos consumidores já tratavam `null`; agora ele também pega conta velha e a do DEFAULT 0). O consolidado fica `null` se UMA empresa estiver indisponível. KPIs/Projeção/Stress Test mostram "—" e o motivo, sem alerta de déficit.
-- **Edge** (`saldoInicialDasContas`): conta desconhecida **lança**, como a lista vazia já lançava (`exigirLinhas`): o saldo é o ponto de partida de todas as semanas e não há "—" possível. Conta velha **entra datada**, com motivo em `confianca_dados.motivos` (a NCG e o Ciclo já exibem). Lançar derrubaria a projeção inteira por uma conta cujo extrato o Omie parou de responder, e o snapshot anterior ficaria no lugar sem aviso.
+- **Tela** (`resumirSaldoContas`): qualquer conta não fresca, ou nenhuma conta ativa → `null` + motivo. Vale para:
+  - `getCapitalDeGiro`: `saldo_cc`, `capital_giro_liquido` e `saldo_projetado_30d` passam a `number | null`; `saldo_cc_motivo` é novo;
+  - `getResumoFinanceiro`: `saldo_total_cc`, cujos consumidores já tratavam `null`. Agora ele também pega a conta velha e a do DEFAULT 0;
+  - o drill-down de Caixa (`CockpitDrillDown`), que antes dizia "Total: R$ X" ao lado do KPI "—".
+
+  O consolidado fica `null` se UMA empresa estiver indisponível. KPIs, Projeção e Stress Test mostram "—" e o motivo, sem alerta de déficit. No cockpit, o `catch` do resumo devolvia `{}`, e o `reduce` dava R$ 0 de caixa: agora o resumo vazio também é indisponível.
+- **Edge** (`saldoInicialDasContas`): a conta desconhecida **lança**, como a lista vazia já lançava (`exigirLinhas`). A conta velha **entra datada até 7 dias** e, além disso, lança. Conta parada há semanas não é "datada", é morta. O motivo vai para:
+  - `confianca_dados.motivos` (NCG e Ciclo);
+  - `confianca_dados.saldo_inicial`, exibido na tela das 13 semanas, onde é verdade;
+  - `premissas.saldo_cc_parcial` do snapshot, para a marca não ficar só na resposta.
+
+  O texto não diz que a NCG usa o saldo: ela é ACO − PCO. Lançar por UMA conta derrubaria a NCG e o Ciclo, que nem a usam.
 
 ### Fora do escopo (registrado, não mexido)
+
+- **RPC SQL `fin_projecao_13_semanas`** (achado do revisor, conferido no `pg_proc` de prod): `COALESCE(SUM(saldo_atual), 0) … WHERE ativo`, sem `saldo_data`. Lista vazia vira R$ 0, conta nula sai da soma e saldo velho conta como de hoje. Consumidores: `CaixaCompraCard` (decisão de compra) e `useFinanceiroZone`. Pede migration (`CREATE OR REPLACE` com pré-voo `pg_get_functiondef`), e por isso é follow-up próprio.
+- Os alertas `fin_alertas` gerados no mesmo run não carregam o motivo do saldo datado (o snapshot carrega).
 
 - O data-health por empresa usa `max(saldo_data)` (`db/aplicar-sync-reprocess-degradado-vigiadas.sql:37-38`): uma conta fresca esconde as velhas. A tela e a engine agora olham conta a conta, então a lacuna sobra só no sensor.
 - O produtor: `DROP DEFAULT` de `saldo_atual` (gravar NULL de verdade) seria migration. O consumidor já trata `saldo_data` NULL como ausente, então o DEFAULT não chega mais à soma.

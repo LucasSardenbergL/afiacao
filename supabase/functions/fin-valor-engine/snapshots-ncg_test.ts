@@ -52,7 +52,19 @@ Deno.test("histórico de 1.260 linhas: o ponto −12m (dia 365) é lido — o li
   assertEq(registro, ["recente", `antes:${iso(AGORA - JANELA_ANTERIOR_DIAS * DIA)}`, `depois:${iso(AGORA - JANELA_ANTERIOR_DIAS * DIA)}`], "leituras");
 });
 
-Deno.test("NCG nulo nunca é o ponto atual (o filtro not-null mora na leitura)", async () => {
+// O fake acima aplica o not-null como o banco; o que prova que a LEITURA REAL o pede é a fonte.
+Deno.test("o builder real do index.ts filtra NCG nulo nas três leituras (base comum)", async () => {
+  const fonte = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const linha = fonte.split("\n").find((l) => l.includes("const snapsNcg = () =>"));
+  if (!linha?.includes('.eq("company", company).not("ncg", "is", null)')) {
+    throw new Error(`snapsNcg sem o filtro not-null: ${linha}`);
+  }
+  for (const uso of ["recente: () => snapsNcg()", '? snapsNcg().lte("snapshot_at"', ': snapsNcg().gte("snapshot_at"']) {
+    if (!fonte.includes(uso)) throw new Error(`leitura fora da base comum: ${uso}`);
+  }
+});
+
+Deno.test("contrato do fake: NCG nulo nunca é o ponto atual", async () => {
   const r = await lerSnapshotsNcg(buscasSobre([
     { ncg: null, snapshot_at: iso(AGORA) },
     { ncg: 77, snapshot_at: iso(AGORA - DIA) },

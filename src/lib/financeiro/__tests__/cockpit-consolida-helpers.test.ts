@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { consolidarCockpit, compararCaixaInicial, ncgCompleta, parseSnapshotSemanas, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
+import { caixaDoGrupo, consolidarCockpit, compararCaixaInicial, ncgCompleta, parseSnapshotSemanas, type SnapshotEmpresa } from '../cockpit-consolida-helpers';
 
 const sem = (inicio: string, ent: number, sai: number, saldo: number, saldo_inicial: number | null = null) =>
   ({ inicio, total_entradas: ent, total_saidas: sai, saldo_final: saldo, saldo_inicial });
@@ -276,5 +276,17 @@ describe('consolidarCockpit — coorte vazia não fabrica caixa', () => {
     const r = consolidarCockpit({ esperadas: ESP, snapshots: [] });
     expect(r.caixa_inicial_projecao).toBeNull();
     expect(r.caixa_inicial_parcial).toBe(true);
+  });
+});
+
+describe('caixaDoGrupo', () => {
+  it('soma os CNPJs quando todos têm saldo (0 é fato)', () => {
+    expect(caixaDoGrupo({ oben: { saldo_total_cc: 100 }, colacor: { saldo_total_cc: 0 } })).toBe(100);
+  });
+  it('UM CNPJ sem saldo → indisponível', () => {
+    expect(caixaDoGrupo({ oben: { saldo_total_cc: 100 }, colacor: { saldo_total_cc: null } })).toBeNull();
+  });
+  it('resumo VAZIO (o catch da leitura devolve {}) → indisponível, nunca R$ 0', () => {
+    expect(caixaDoGrupo({})).toBeNull();
   });
 });

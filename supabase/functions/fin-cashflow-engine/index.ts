@@ -22,7 +22,7 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/le
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import { lerPrazosEmpresa } from "./prazos-empresa.ts";
-import { saldoInicialDasContas, type ContaComSaldo } from "./saldo-contas.ts";
+import { referenciaFrescorSaldo, saldoInicialDasContas, type ContaComSaldo } from "./saldo-contas.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -361,6 +361,8 @@ type DadosBase = {
   crs: CR[];
   cps: CP[];
   saldo_cc: number;
+  // Não-null quando alguma conta entrou com saldo datado (./saldo-contas.ts) — vai para o snapshot.
+  saldo_cc_motivo: string | null;
   // null = sem fonte (nem manual recente nem estoque de giro com custo no Omie) — nunca 0.
   estoque_valor: number | null;
   estoque_data_ref: string | null;
@@ -481,7 +483,7 @@ async function carregarDados(
   // Conta sem saldo do extrato LANÇA (o `Number(c.saldo_atual ?? 0)` a somava como zero) e conta
   // com saldo VELHO entra datada, com motivo em `motivos_confianca` — ver ./saldo-contas.ts.
   // Medido em 2026-10-26: 40 contas ativas, 0 nulas, todas com saldo_data de hoje.
-  const saldoInicial = saldoInicialDasContas(exigirLinhas(ccRes, 'fin_contas_correntes') as ContaComSaldo[], hojeSP());
+  const saldoInicial = saldoInicialDasContas(exigirLinhas(ccRes, 'fin_contas_correntes') as ContaComSaldo[], referenciaFrescorSaldo(new Date()));
   const saldo_cc = saldoInicial.saldo;
 
   // Estoque: entra no ACO da NCG e no PME. Antes, sem LINHA em fin_estoque_valor (nunca
@@ -614,6 +616,7 @@ async function carregarDados(
     crs,
     cps,
     saldo_cc,
+    saldo_cc_motivo: saldoInicial.motivo,
     estoque_valor: estoque.valor,
     estoque_data_ref: estoque.data_ref,
     estoque_fonte: estoque.fonte,
@@ -1376,6 +1379,8 @@ async function calcular(
     // estoque persistia com cara de completa. Snapshot sem a chave = completude desconhecida.
     ncg_parcial: ncg.parcial,
     estoque_fonte: dados.estoque_fonte,
+    // Saldo inicial datado (conta cujo extrato falhou): o snapshot carrega a marca, não só a resposta.
+    saldo_cc_parcial: dados.saldo_cc_motivo,
   };
 
   // ⚠️ ORDEM DELIBERADA: o SNAPSHOT grava ANTES dos alertas (invertido em 2026-07-28).
@@ -1493,7 +1498,8 @@ async function calcular(
     // Degradação honesta: leitura que falhou mas não derruba o cálculo entra aqui com o
     // motivo (fonte + código). Vazio = nenhuma degradação. O que NÃO pode virar zero
     // lança e não chega a este ponto — a resposta 200 nunca carrega número fabricado.
-    confianca_dados: { motivos: dados.motivos_confianca },
+    // `saldo_inicial`: o motivo do saldo datado, à parte, para a tela das 13 semanas (que parte dele).
+    confianca_dados: { motivos: dados.motivos_confianca, saldo_inicial: dados.saldo_cc_motivo },
     metadados: {
       cenario,
       horizon,

@@ -41,8 +41,9 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // v1.8 → v1.9: CR/CP encerram cada faixa quando o servidor prova o fim (count exato = linhas da
 // página, mesmo statement) em vez de buscar a página vazia; teto 8 → 12; header Server-Timing.
 // v1.9 → v2.0: saldo inicial por `saldo-contas.ts` — conta ativa sem saldo do extrato (saldo_data
-// NULL; o DEFAULT 0 a fazia "R$ 0") LANÇA em vez de somar zero, e conta com saldo mais velho que
-// ontem entra datada com motivo em confianca_dados.motivos (plano v3, item 2).
+// NULL; o DEFAULT 0 a fazia "R$ 0") LANÇA em vez de somar zero; conta cujo saldo não é de hoje
+// (das 04h SP em diante — o sync de base roda às 03h) entra datada, até 7 dias, com motivo em
+// confianca_dados (motivos + saldo_inicial) e em premissas.saldo_cc_parcial (plano v3, item 2).
 export const VERSAO = "v2.0-saldo-cc-fresco";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */

@@ -178,7 +178,7 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     expect(resumo.oben.saldo_total_cc).toBeNull();
   });
 
-  it('conta com saldo VELHO (mais velho que ontem) → saldo_total_cc null, não a soma com cara de hoje', async () => {
+  it('conta com saldo VELHO (extrato que não atualizou) → saldo_total_cc null, não a soma com cara de hoje', async () => {
     state.db.fin_contas_correntes = [
       { company: 'oben', ativo: true, descricao: 'Itaú', saldo_atual: 100, saldo_data: HOJE_SP, banco: '341' },
       { company: 'oben', ativo: true, descricao: 'Bradesco', saldo_atual: 900, saldo_data: '2026-01-02', banco: '237' },

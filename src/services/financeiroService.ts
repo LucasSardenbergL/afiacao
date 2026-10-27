@@ -6,7 +6,7 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
-import { resumirSaldoContas } from "@/lib/financeiro/saldo-contas";
+import { referenciaFrescorSaldo, resumirSaldoContas } from "@/lib/financeiro/saldo-contas";
 import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
 import { paraFinDRE } from "@/lib/financeiro/dre-borda";
 import { fetchAllPagesComMensagem } from "@/lib/postgrest";
@@ -257,7 +257,7 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     // fluxo como âncora que a empresa não tem. Conta ativa com `saldo_atual` NULL contamina
     // igual: a soma sairia INCOMPLETA, com cara de completa. E saldo VELHO (extrato que falhou e
     // deixou o saldo de dias atrás, sem `saldo_data` novo) também: ver `resumirSaldoContas`.
-    const saldoContas = resumirSaldoContas(contasBrutas, spBusinessDate(new Date()));
+    const saldoContas = resumirSaldoContas(contasBrutas, referenciaFrescorSaldo(new Date()));
 
     const contasNorm = contasBrutas.map((c) => ({
       descricao: c.descricao ?? "",
@@ -764,7 +764,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     const totalCP = cpAberto.reduce((s, r) => s + (r.saldo ?? 0), 0);
     // Ausente OU velho ≠ R$ 0: o `|| 0` somava conta sem saldo como zero e saldo de dias atrás
     // como de hoje, e os dois desciam para o CG Líquido e a Projeção 30d (plano v3, item 2).
-    const saldoCC = resumirSaldoContas(ccs ?? [], today);
+    const saldoCC = resumirSaldoContas(ccs ?? [], referenciaFrescorSaldo(new Date()));
     const totalCC = saldoCC.total;
 
     // Gate de confiança por empresa: prazo só quando a cobertura é suficiente.

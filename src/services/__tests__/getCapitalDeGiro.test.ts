@@ -252,7 +252,7 @@ describe('getCapitalDeGiro (Posição Agora)', () => {
     expect(giro.saldo_cc).toBeNull();
     expect(giro.capital_giro_liquido).toBeNull();
     expect(giro.saldo_projetado_30d).toBeNull();
-    expect(giro.saldo_cc_motivo).toContain('1 de 2 conta(s) com saldo de 2026-01-02 (mais velho que ontem)');
+    expect(giro.saldo_cc_motivo).toContain('1 de 2 conta(s) com saldo de 2026-01-02 (anterior a');
     // O que não depende do saldo bancário continua de pé.
     expect(giro.capital_giro).toBe(10);
   });

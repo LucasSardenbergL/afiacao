@@ -8,33 +8,50 @@
 // (o writer só grava os dois JUNTOS, no extrato que respondeu). money-path §2: ausente ≠ zero.
 //
 // Eixo de "velho": `saldo_data` é DATE (o dia de SP em que o extrato respondeu) e o sync de base
-// (`fin-sync-base-diario`) roda todo dia às 03h SP — hoje ou ontem é fresco; anteontem ou antes
-// significa ≥1 sync diário perdido. Medido em 2026-10-26: 40 contas ativas, todas de hoje.
+// (`fin-sync-base-diario`, jobid 75) roda todo dia às 03h SP. "Hoje ou ontem" deixava passar o caso
+// mais comum — UM sync perdido — por ~21h do dia (a engine de caixa roda às 07h SP: ontem ainda
+// valia). Então: das 04h SP em diante só o saldo de HOJE é fresco; antes das 04h, o de ontem.
+// Medido em 2026-10-26: 40 contas ativas, todas com saldo_data de hoje.
+
+import { spBusinessDate } from '@/lib/time/sp-day';
 
 // MIRROR-START saldo-conta — espelhado verbatim em supabase/functions/fin-cashflow-engine/saldo-contas.ts
 export type EstadoSaldoConta = 'fresca' | 'velha' | 'desconhecida';
 
-/** Idade máxima (dias-calendário de SP) de um saldo de extrato para valer como saldo de hoje. */
-export const SALDO_IDADE_MAX_DIAS = 1;
+/**
+ * O sync de base (`fin-sync-base-diario`, 03h SP) é o único que grava o extrato de toda conta todo
+ * dia. Da hora 04h SP em diante o saldo tem de ser de HOJE; antes dela, o de ontem é o último possível.
+ */
+export const HORAS_TOLERANCIA_SYNC_BASE = 4;
 
 const DIA_ISO_SALDO = /^\d{4}-\d{2}-\d{2}$/;
 
-/** `hoje` = dia de negócio de SP (`YYYY-MM-DD`). Dado incoerente (data futura, ilegível) é desconhecido. */
+/** Dias de SP (`YYYY-MM-DD`): `hoje` e `minimo` = o dia de SP de (agora − HORAS_TOLERANCIA_SYNC_BASE). */
+export type ReferenciaFrescor = { hoje: string; minimo: string };
+
+/** Dado incoerente (data futura, ilegível) é desconhecido. */
 export function classificarSaldoConta(
   conta: { saldo_atual?: number | string | null; saldo_data?: string | null },
-  hoje: string,
+  ref: ReferenciaFrescor,
 ): EstadoSaldoConta {
   if (conta.saldo_atual == null || conta.saldo_data == null) return 'desconhecida';
   if (typeof conta.saldo_atual === 'string' && conta.saldo_atual.trim() === '') return 'desconhecida';
   if (!Number.isFinite(Number(conta.saldo_atual))) return 'desconhecida';
-  if (!DIA_ISO_SALDO.test(conta.saldo_data) || !DIA_ISO_SALDO.test(hoje)) return 'desconhecida';
-  const idade = Math.round((Date.parse(`${hoje}T00:00:00Z`) - Date.parse(`${conta.saldo_data}T00:00:00Z`)) / 86_400_000);
-  if (!Number.isFinite(idade) || idade < 0) return 'desconhecida';
-  return idade <= SALDO_IDADE_MAX_DIAS ? 'fresca' : 'velha';
+  if (![conta.saldo_data, ref.hoje, ref.minimo].every((d) => DIA_ISO_SALDO.test(d))) return 'desconhecida';
+  if (conta.saldo_data > ref.hoje) return 'desconhecida';
+  return conta.saldo_data >= ref.minimo ? 'fresca' : 'velha';
 }
 // MIRROR-END
 
 export type ContaComSaldo = { saldo_atual?: number | string | null; saldo_data?: string | null };
+
+/** A referência de frescor de um instante (dias de SP). */
+export function referenciaFrescorSaldo(agora: Date): ReferenciaFrescor {
+  return {
+    hoje: spBusinessDate(agora),
+    minimo: spBusinessDate(new Date(agora.getTime() - HORAS_TOLERANCIA_SYNC_BASE * 3_600_000)),
+  };
+}
 
 /**
  * Soma o saldo das contas ativas SÓ quando todas são frescas. Lista vazia, conta sem saldo de
@@ -43,7 +60,7 @@ export type ContaComSaldo = { saldo_atual?: number | string | null; saldo_data?:
  */
 export function resumirSaldoContas(
   contas: readonly ContaComSaldo[],
-  hoje: string,
+  ref: ReferenciaFrescor,
 ): { total: number | null; motivo: string | null } {
   if (contas.length === 0) {
     return { total: null, motivo: 'Nenhuma conta corrente ativa — saldo bancário indisponível.' };
@@ -53,7 +70,7 @@ export function resumirSaldoContas(
   let velhas = 0;
   let maisAntiga: string | null = null;
   for (const c of contas) {
-    const estado = classificarSaldoConta(c, hoje);
+    const estado = classificarSaldoConta(c, ref);
     if (estado === 'desconhecida') desconhecidas++;
     else if (estado === 'velha') {
       velhas++;
@@ -62,7 +79,7 @@ export function resumirSaldoContas(
   }
   const partes: string[] = [];
   if (desconhecidas > 0) partes.push(`${desconhecidas} de ${contas.length} conta(s) sem saldo do extrato`);
-  if (velhas > 0) partes.push(`${velhas} de ${contas.length} conta(s) com saldo de ${maisAntiga} (mais velho que ontem)`);
+  if (velhas > 0) partes.push(`${velhas} de ${contas.length} conta(s) com saldo de ${maisAntiga} (anterior a ${ref.minimo}: o extrato do sync diário não atualizou)`);
   if (partes.length > 0) {
     return { total: null, motivo: `Saldo bancário indisponível: ${partes.join('; ')}.` };
   }

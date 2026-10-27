@@ -62,7 +62,9 @@ export type CashflowResult = {
   // ausente = nenhuma degradação. Fonte que não pode virar zero faz a engine responder
   // 500 — cai no `error` do react-query, não aqui. Opcional: snapshots/edges antigas
   // respondem sem o campo.
-  confianca_dados?: { motivos: string[] };
+  // `saldo_inicial`: não-null quando alguma conta entrou com saldo DATADO (extrato que falhou) —
+  // as semanas partem dele. Também está em `motivos`.
+  confianca_dados?: { motivos: string[]; saldo_inicial?: string | null };
   // Onda 2: ponte de horizonte + curvas de aging calibradas (timing + confiança)
   apos_horizonte?: number;
   ar_impaired?: number;
