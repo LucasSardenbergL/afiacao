@@ -106,7 +106,10 @@ case "${SABOTAGEM:-}" in
                    sabotar "  IF v_pend IS DISTINCT FROM 0 THEN" "  IF false THEN" ;;
   acl_aberta)      sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM anon;" ;;
   acl_aberta_sem_post) sabotar "FROM PUBLIC, anon, authenticated, service_role;" "FROM anon;"
-                   sabotar "  IF has_function_privilege('anon', f_pend, 'EXECUTE')" "  IF false AND has_function_privilege('anon', f_pend, 'EXECUTE')" ;;
+                   sabotar "  IF has_function_privilege('anon', f_pend, 'EXECUTE')
+     OR has_function_privilege('authenticated', f_pend, 'EXECUTE')
+     OR has_function_privilege('public', f_pend, 'EXECUTE')
+     OR has_function_privilege('service_role', f_pend, 'EXECUTE') THEN" "  IF false THEN" ;;
   cron_sem_timeout) sabotar "$CRON_OK" "$CRON_RUIM" ;;
   cron_sem_timeout_sem_post) sabotar "$CRON_OK" "$CRON_RUIM"
                    sabotar "  IF NOT EXISTS (SELECT 1 FROM cron.job
@@ -338,7 +341,7 @@ BEGIN
   END;
   SELECT coalesce(situacao_aplicada_fechamento::text, 'null') INTO v_estado FROM public.radar_ingest_state WHERE mes_referencia = '2027-01';
   RAISE NOTICE 'C11 PROPAGOU marca=%', v_estado;
-END \$t\$;" 2>&1 | sed -n 's/.*NOTICE:  //p')"
+END \$t\$;" 2>&1 | grep -o 'C11 .*')"   # só o conteúdo: o prefixo NOTICE/AVISO muda com o locale
 eq "C11a erro propaga com a marca do ramo e o lote fica pendente" "$C11" "C11 PROPAGOU marca=null"
 eq "C11b ledger não ganha linha de sucesso falsa" "$(n_ledger)" "3"
 
