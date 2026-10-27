@@ -30,7 +30,7 @@ O v2 fechou os passivos estruturais (tipos, auth replicada, CI, deriva). Sobra p
 
 ### 1 · ✅ `process-nfe`: conclui recebimento no Omie sem conferência, sem relógio e sem trilha — **money-path/estoque, esforço P (trilha) → M (endurecer)**
 `supabase/functions/process-nfe/index.ts` (554 linhas, sem `_test.ts`) faz `AlterarRecebimento` → `AlterarEtapaRecebimento` → **`ConcluirRecebimento`** (`:503`, a entrada de estoque no ERP) ✅ com `nQtdeRecebida = Math.round(qtdeNfe / fatorConversao)` (`:390`, fator caindo para `|| 1`) ✅ — quantidade da NF, não da contagem física. É a **única** edge que escreve no Omie sem `omie-chamada-relogio` (`fetch` sem timeout em `:90-110`) ✅ e **não grava nada no banco**: o histórico vive no `localStorage` (`NfeReceipt.tsx:17-20`). Fica na aba "Manual" de `/admin/estoque/recebimento`. O caminho principal **bloqueia NF-e com conversão** (`efetivacao-helpers.ts:287-298`) ✅ ⇒ a aba Manual é provavelmente a válvula de escape justamente desse caso, onde o `Math.round` mais erra (3,6 L → 4) ⚠️. O uso é desconhecido: o ledger só vê o `pathname`, não a aba.
-**✅ Entregue em #3334 (2026-10-21):** trilha append-only, Omie pelo relógio, guarda de estado/unicidade e regra de quantidade com caso real; migration aplicada, edge pendente de deploy. Detalhe em [process-nfe-trilha-relogio-regra-quantidade.md](../../../historico/process-nfe-trilha-relogio-regra-quantidade.md).
+**✅ Entregue em #3334 (2026-10-21):** trilha append-only, Omie pelo relógio, guarda de estado/unicidade e regra de quantidade com caso real; migration aplicada; edge v2.0 no ar (deploy atestado no #3341). Detalhe em [process-nfe-trilha-relogio-regra-quantidade.md](../../../historico/process-nfe-trilha-relogio-regra-quantidade.md).
 **Entrega:** (a) trilha server-side por invocação (padrão `_shared/registro-execucao.ts`): quem, NF, itens, fator, quantidade enviada e resultado de cada passo. É sensor de produto **e** o mínimo para a opção "manter". (b) Com 2 semanas de sinal → 🧭 #1. (c) Só se mantida: Omie pelo relógio + teste Deno da sequência + caso real de conversão antes de mexer na regra.
 
 ### 2 · Saldo de conta corrente nulo **ou velho** entra como número no caixa — **money-path, esforço P**
@@ -87,6 +87,7 @@ O candidato era o `cron-jobs-snapshot.tsv` defasado. Prod tem **115 jobs** e o s
 3. **Ciclo: fazer**, com 1 evento `financeiro.ciclo_aberto` no ledger (allowlist de `analytics_ledger_registrar` via `db/*.sql` no ritual lovable-db-operator) e só isso.
 4. **ROIC incremental: o founder lê** → o item 3 fica no Top (P, antes de 2027-03-26).
 5. **Piloto N → `database.md`: fazer**, depois do Top e com as condições de merge listadas acima.
+6. **`omie-nfe-reconcile`: MANTER ligado** (founder, 2026-10-26). A `process-nfe` não atualiza `nfe_recebimentos`, e é o reconcile (cron de hora em hora, seg–sáb) que fecha no painel a NF recebida pela aba Manual ([process-nfe-trilha-relogio-regra-quantidade.md](../../../historico/process-nfe-trilha-relogio-regra-quantidade.md)). Desligá-lo só volta a ser pauta se a `process-nfe` passar a gravar o próprio desfecho.
 
 ## 6. KPIs
 
