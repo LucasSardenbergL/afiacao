@@ -18,15 +18,15 @@ export function KpiCards({ active }: { active: CapitalDeGiro }) {
       <MetricCard
         title="CG Líquido"
         value={active.capital_giro_liquido}
-        subtitle="CR + CC - CP"
-        positive={active.capital_giro_liquido >= 0}
+        subtitle={active.capital_giro_liquido == null ? 'saldo CC indisponível' : 'CR + CC - CP'}
+        positive={active.capital_giro_liquido != null && active.capital_giro_liquido >= 0}
         icon={Wallet}
       />
       <MetricCard
         title="Projeção 30 dias"
         value={active.saldo_projetado_30d}
         subtitle={`+${fmtCompact(active.entradas_30d)} / -${fmtCompact(active.saidas_30d)}`}
-        positive={active.saldo_projetado_30d >= 0}
+        positive={active.saldo_projetado_30d != null && active.saldo_projetado_30d >= 0}
         icon={Target}
       />
       <div className="p-4 rounded-lg border bg-card">

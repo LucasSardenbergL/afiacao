@@ -232,3 +232,14 @@ export function compararCaixaInicial(input: {
       : null,
   };
 }
+
+/**
+ * Caixa do grupo a partir do resumo por CNPJ: indisponível se faltar o saldo de QUALQUER CNPJ (caixa é
+ * por-CNPJ, não-fungível) ou se o resumo vier VAZIO — o catch da leitura devolve `{}`, e o `reduce`
+ * de lista vazia dava R$ 0 de caixa (o "erro LANÇA" do serviço desfeito no consumidor).
+ */
+export function caixaDoGrupo(resumo: Record<string, { saldo_total_cc: number | null }>): number | null {
+  const porCnpj = Object.values(resumo);
+  if (porCnpj.length === 0 || porCnpj.some((r) => r.saldo_total_cc === null)) return null;
+  return porCnpj.reduce((s, r) => s + (r.saldo_total_cc as number), 0);
+}

@@ -63,7 +63,8 @@ export function ComparativoEmpresasCard({ data }: { data: CapitalDeGiro[] }) {
                     const raw = d[line.field];
                     const isResult = ['capital_giro', 'capital_giro_liquido', 'saldo_projetado_30d'].includes(line.field);
                     const color = isResult && raw != null ? (raw >= 0 ? 'text-status-success' : 'text-status-error') : '';
-                    // null só existe nos prazos (sem dado de baixa) e vira "—" em qualquer formato — nunca 0.
+                    // null (prazo sem dado de baixa; saldo CC indisponível e o que dele deriva) vira "—"
+                    // em qualquer formato — nunca 0.
                     const display =
                       raw == null ? '—'
                       : line.fmt === 'currency' ? fmtCompact(raw)
