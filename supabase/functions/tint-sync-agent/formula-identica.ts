@@ -19,21 +19,25 @@
 //     gravada por uma versão antiga da edge, ex. is_base_pura antes da Fase 1d);
 //   · os itens gravados (id_corante, ordem, qtd_ml) idênticos, como multiconjunto, aos que seriam gravados;
 //   · o run dessa linha com promocao_status = 'promovido' (fila pendente ou run fora da fila → caminho normal);
-//   · as linhas OFICIAIS da chave (tint_formulas, subcolecao_id NULL) existindo, TODAS ativas e TODAS escritas
-//     DEPOIS dessa staging — o upsert da promoção grava updated_at = now() e desativada_em = NULL, então isso
-//     prova que uma promoção posterior aceitou a chave. Pega a fórmula desativada por keys-snapshot e recriada
-//     idêntica na fonte, a expansão rejeitada e o run "promovido" que não aplicou esta linha;
+//   · as linhas OFICIAIS da chave (tint_formulas, subcolecao_id NULL) existindo, TODAS ativas, escritas DEPOIS
+//     dessa staging e com a RECEITA também gravada depois dela: a promoção apaga e reinsere os itens de cada
+//     fórmula aceita (tint_formula_itens.created_at = now()), e o recálculo de preço não toca neles — ao
+//     contrário do updated_at, que ele também avança (Codex P1, 2ª rodada). Pega a fórmula desativada por
+//     keys-snapshot e recriada idêntica na fonte, a expansão rejeitada e o run "promovido" que não aplicou esta
+//     linha (guard, cap de limpeza);
 //   · nenhum keys-snapshot de fórmulas recebido depois dessa staging (o filtro de fantasma da promoção compara
 //     `sf.created_at < snapshot recebido`): o 1º reenvio após cada snapshot diário segue o caminho normal;
 //   · a conta com UMA loja só: o oficial é por conta e a staging por loja (outra loja poderia ter sobrescrito).
-// Fica de fora, de propósito: fórmula com subcoleção, lote vazio, inválido ou maior que MAX_FORMULAS_CHECADAS.
+// Elegível só a fórmula PERSONALIZADA, sem subcoleção e com itens — é o laço medido (o HWM com margem é da
+// `formulaperson`). Fica de fora: base pura (sem item não há receita que prove a promoção), a não-personalizada
+// (o /simulate grava staging dela, Codex P2), lote vazio, inválido ou maior que MAX_FORMULAS_CHECADAS.
 // Resíduo aceito: mudar volume_ml de embalagem não reexpande as doses — limitação conhecida da promoção, que
 // já vale para as ~135 mil fórmulas cujo hash o conector cacheou (docs/agent/tintometrico.md).
 //
 // Testável com `deno test --no-remote` (formula-identica_test.ts) — não reimplementar inline no index.
 import { montarStagingFormulaRow, montarStagingItemRows, type TintFormulaPayload } from "./staging-rows.ts";
 
-/** Teto de fórmulas checadas (6 consultas cada). O laço medido é de 1; lote maior segue o caminho normal. */
+/** Teto de fórmulas checadas (7 consultas cada). O laço medido é de 1; lote maior segue o caminho normal. */
 export const MAX_FORMULAS_CHECADAS = 5;
 
 /** Quantas linhas mais recentes da chave sem subcoleção ler; a 1ª da subcoleção certa é a última dela. */
@@ -82,8 +86,8 @@ export function jsonCanonico(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** O lote é candidato: array de 1..MAX fórmulas, todas com os campos que o caminho normal exige e sem
- *  subcoleção. */
+/** O lote é candidato: array de 1..MAX fórmulas, todas com os campos que o caminho normal exige,
+ *  personalizadas, sem subcoleção e com itens. */
 export function loteElegivel(formulas: unknown): formulas is TintFormulaPayload[] {
   if (!Array.isArray(formulas) || formulas.length === 0 || formulas.length > MAX_FORMULAS_CHECADAS) return false;
   return formulas.every((f) =>
@@ -91,7 +95,9 @@ export function loteElegivel(formulas: unknown): formulas is TintFormulaPayload[
     !!(f as TintFormulaPayload).cor_id && !!(f as TintFormulaPayload).cod_produto &&
     !!(f as TintFormulaPayload).id_base && !!(f as TintFormulaPayload).id_embalagem &&
     // O oficial é conferido por subcolecao_id IS NULL: com subcoleção, caminho normal.
-    !(f as TintFormulaPayload).subcolecao
+    !(f as TintFormulaPayload).subcolecao &&
+    (f as TintFormulaPayload).personalizada === true &&
+    Array.isArray((f as TintFormulaPayload).itens) && (f as TintFormulaPayload).itens!.length > 0
   );
 }
 
@@ -134,20 +140,33 @@ export function formulaIdentica(
 
 /** Linha de tint_formulas (oficial) da chave, como o PostgREST a devolve. */
 export interface LinhaOficial {
+  id: string;
   updated_at: unknown;
   desativada_em: unknown;
+}
+
+/** Item oficial (tint_formula_itens) de uma das linhas oficiais da chave. */
+export interface ItemOficial {
+  formula_id: string;
+  created_at: unknown;
 }
 
 function instante(v: unknown): number {
   return typeof v === "string" ? Date.parse(v) : NaN;
 }
 
-/** O oficial da chave reflete a staging: ≥1 linha, todas ativas e todas escritas DEPOIS dela.
- *  Data ilegível ou resultado no teto da capa → false. Empate no milissegundo → false. */
-export function oficialReflete(ultima: LinhaStaging, oficiais: LinhaOficial[]): boolean {
+/** O oficial da chave reflete a staging: ≥1 linha, todas ativas, escritas DEPOIS dela e com ≥1 item, e TODO
+ *  item oficial gravado DEPOIS dela. Data ilegível ou resultado no teto da capa → false. Empate no
+ *  milissegundo → false. */
+export function oficialReflete(ultima: LinhaStaging, oficiais: LinhaOficial[], itensOficiais: ItemOficial[]): boolean {
   const desde = instante(ultima.created_at);
   if (Number.isNaN(desde) || oficiais.length === 0 || oficiais.length >= CAPA_POSTGREST) return false;
-  return oficiais.every((o) => o.desativada_em === null && instante(o.updated_at) > desde);
+  if (itensOficiais.length >= CAPA_POSTGREST) return false;
+  return oficiais.every((o) => {
+    const seus = itensOficiais.filter((i) => i.formula_id === o.id);
+    return o.desativada_em === null && instante(o.updated_at) > desde &&
+      seus.length > 0 && seus.every((i) => instante(i.created_at) > desde);
+  });
 }
 
 /** Nenhum keys-snapshot de fórmulas recebido depois da staging (null = nunca houve snapshot).
@@ -166,6 +185,7 @@ export interface ContextoChave {
   itens: ItemStaging[];
   promocaoStatus: unknown;
   oficiais: LinhaOficial[];
+  itensOficiais: ItemOficial[];
   snapshotRecebidoEm: unknown;
 }
 
@@ -173,6 +193,6 @@ export interface ContextoChave {
  *  snapshot depois. Só com as três o ack sem run sai. */
 export function reenvioDescartavel(f: TintFormulaPayload, account: string, storeCode: string, c: ContextoChave): boolean {
   return formulaIdentica(f, account, storeCode, c.ultima, c.itens, c.promocaoStatus) &&
-    oficialReflete(c.ultima, c.oficiais) &&
+    oficialReflete(c.ultima, c.oficiais, c.itensOficiais) &&
     semSnapshotDepois(c.ultima, c.snapshotRecebidoEm);
 }

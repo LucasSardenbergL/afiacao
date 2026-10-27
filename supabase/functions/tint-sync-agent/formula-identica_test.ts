@@ -200,6 +200,10 @@ Deno.test("loteElegivel: só 1..MAX fórmulas, todas com os campos obrigatórios
   assertEq(loteElegivel([payload(), null]), false, "item null");
   assertEq(loteElegivel([{ ...payload(), subcolecao: "SL" }]), false, "com subcoleção (oficial é por subcolecao_id NULL)");
   assertEq(loteElegivel([{ ...payload(), subcolecao: null }]), true, "subcoleção null");
+  assertEq(loteElegivel([{ ...payload(), personalizada: false }]), false, "não-personalizada (/simulate grava staging dela)");
+  assertEq(loteElegivel([{ ...payload(), personalizada: undefined }]), false, "personalizada ausente");
+  assertEq(loteElegivel([{ ...payload(), itens: [] }]), false, "sem item (base pura: nada prova a promoção)");
+  assertEq(loteElegivel([{ ...payload(), itens: undefined }]), false, "itens ausente");
   for (const campo of ["cor_id", "cod_produto", "id_base", "id_embalagem"] as const) {
     const f = payload();
     delete f[campo];
@@ -221,9 +225,13 @@ Deno.test("itens gravados no teto da capa do PostgREST → caminho normal (podem
   assertEq(identica(f, u, gravados.slice(0, -1)), true, "999 itens (controle)");
 });
 
-// Oficial da ERVA MATE em 2026-10-27: 4 embalagens, ativas, escritas pela promoção 13:56:50 UTC.
+// Oficial da ERVA MATE em 2026-10-27: 4 embalagens, ativas, escritas pela promoção 13:56:50 UTC, 5 itens cada.
+const PROMOCAO = "2026-10-27T13:56:50.302369+00:00";
 function oficiais() {
-  return Array.from({ length: 4 }, () => ({ updated_at: "2026-10-27T13:56:50.302369+00:00", desativada_em: null }));
+  return Array.from({ length: 4 }, (_, k) => ({ id: `of-${k}`, updated_at: PROMOCAO, desativada_em: null as unknown }));
+}
+function itensOficiais() {
+  return oficiais().flatMap((o) => Array.from({ length: 5 }, () => ({ formula_id: o.id, created_at: PROMOCAO as unknown })));
 }
 
 function contexto(): ContextoChave {
@@ -232,6 +240,7 @@ function contexto(): ContextoChave {
     itens: itens(),
     promocaoStatus: "promovido",
     oficiais: oficiais(),
+    itensOficiais: itensOficiais(),
     snapshotRecebidoEm: "2026-10-27T10:04:53.523537+00:00",
   };
 }
@@ -252,12 +261,32 @@ Deno.test("oficial que NÃO reflete a staging → caminho normal", () => {
   for (const [nome, mutar] of Object.entries(casos)) {
     const c = contexto();
     c.oficiais = mutar(oficiais()) as ContextoChave["oficiais"];
-    assertEq(oficialReflete(c.ultima, c.oficiais), false, nome);
+    assertEq(oficialReflete(c.ultima, c.oficiais, c.itensOficiais), false, nome);
     assertEq(reenvioDescartavel(payload(), ACC, LOJA, c), false, `decisão: ${nome}`);
   }
   const u = ultima();
   u.created_at = "não é data";
-  assertEq(oficialReflete(u, oficiais()), false, "created_at da staging ilegível");
+  assertEq(oficialReflete(u, oficiais(), itensOficiais()), false, "created_at da staging ilegível");
+});
+
+Deno.test("receita oficial NÃO reinserida depois da staging → caminho normal (preço mexe no updated_at, não nos itens)", () => {
+  const ANTES = "2026-10-27T13:40:00+00:00";
+  const casos: Record<string, (it: ReturnType<typeof itensOficiais>) => unknown[]> = {
+    "recálculo de preço: updated_at novo, receita velha (Codex P1 2ª rodada)": (it) =>
+      it.map((i) => ({ ...i, created_at: ANTES })),
+    "um item velho numa embalagem": (it) => [...it.slice(1), { ...it[0], created_at: ANTES }],
+    "embalagem sem item oficial": (it) => it.filter((i) => i.formula_id !== "of-2"),
+    "item no MESMO milissegundo da staging": (it) => [...it.slice(1), { ...it[0], created_at: "2026-10-27T13:45:17.649+00:00" }],
+    "created_at de item ilegível": (it) => [...it.slice(1), { ...it[0], created_at: null }],
+    "itens oficiais no teto da capa": (it) => Array.from({ length: CAPA_POSTGREST }, () => it[0]),
+    "sem item oficial nenhum": () => [],
+  };
+  for (const [nome, mutar] of Object.entries(casos)) {
+    const c = contexto();
+    c.itensOficiais = mutar(itensOficiais()) as ContextoChave["itensOficiais"];
+    assertEq(oficialReflete(c.ultima, c.oficiais, c.itensOficiais), false, nome);
+    assertEq(reenvioDescartavel(payload(), ACC, LOJA, c), false, `decisão: ${nome}`);
+  }
 });
 
 Deno.test("keys-snapshot recebido depois da staging → caminho normal; nunca houve → segue", () => {

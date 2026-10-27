@@ -26,6 +26,7 @@ import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.
 // (formula-identica_test.ts) — NÃO reimplementar inline.
 import {
   CAPA_POSTGREST,
+  type ItemOficial,
   type ItemStaging,
   JANELA_ULTIMAS,
   type LinhaOficial,
@@ -336,7 +337,7 @@ Deno.serve(async (req) => {
         .limit(2);
       if (errBase || !bases || bases.length !== 1) return false;
       const { data: oficiais, error: errOf } = await sb.from("tint_formulas")
-        .select("updated_at, desativada_em")
+        .select("id, updated_at, desativada_em")
         .eq("account", agent.account)
         .eq("cor_id", f.cor_id)
         .eq("produto_id", produtos[0].id)
@@ -344,12 +345,19 @@ Deno.serve(async (req) => {
         .eq("personalizada", f.personalizada || false)
         .is("subcolecao_id", null)
         .limit(CAPA_POSTGREST);
-      if (errOf || !oficiais) return false;
+      if (errOf || !oficiais || oficiais.length === 0) return false;
+      // Receita oficial: a promoção reinsere os itens de cada fórmula aceita; o recálculo de preço não.
+      const { data: itensOficiais, error: errItOf } = await sb.from("tint_formula_itens")
+        .select("formula_id, created_at")
+        .in("formula_id", oficiais.map((o) => o.id))
+        .limit(CAPA_POSTGREST);
+      if (errItOf || !itensOficiais) return false;
       const ctx = {
         ultima,
         itens: itens as ItemStaging[],
         promocaoStatus: run.promocao_status,
         oficiais: oficiais as LinhaOficial[],
+        itensOficiais: itensOficiais as ItemOficial[],
         snapshotRecebidoEm,
       };
       if (!reenvioDescartavel(f, agent.account, agent.storeCode, ctx)) return false;
