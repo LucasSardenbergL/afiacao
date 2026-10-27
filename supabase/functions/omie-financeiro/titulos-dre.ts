@@ -151,7 +151,12 @@ export async function carregarBaixaMap(
   const fonte = FONTE_BAIXAS[tipo];
   let res: RespostaLeitura<unknown>;
   try {
-    res = await db.rpc(fonte, { p_company: company });
+    // Nome LITERAL em cada call-site, não `db.rpc(fonte, …)`: o pré-flight de RPCs do deploy
+    // (`pendencias:pacote` → scripts/lib/edge-rpcs.ts) só enxerga literal e recusa a edge com
+    // indireção — e é ele que confere que a RPC existe em prod antes de a edge subir.
+    res = tipo === "CR"
+      ? await db.rpc("fin_titulo_baixas_cr_mapa", { p_company: company })
+      : await db.rpc("fin_titulo_baixas_cp_mapa", { p_company: company });
   } catch (e) {
     throw new FalhaLeituraCritica(fonte, {
       code: "REJEITADA",
