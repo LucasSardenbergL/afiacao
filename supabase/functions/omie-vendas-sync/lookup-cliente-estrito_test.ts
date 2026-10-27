@@ -129,6 +129,49 @@ Deno.test("orçamento total esgotado antes da próxima página → INDETERMINADO
   await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", lento, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_INDETERMINADO");
 });
 
+Deno.test("orçamento conferido DEPOIS de cada resposta: vazio que chegou tarde não prova nada (Codex, código)", async () => {
+  // 1ª página vazia aos 70s → antes viraria null e seguiria ao IncluirCliente
+  let t = 0;
+  const vazioTarde: ListarPagina = () => {
+    t += 70_000;
+    return Promise.resolve(null);
+  };
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", vazioTarde, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_INDETERMINADO");
+  // 777 aos 59s, página 2 vazia aos 198s → antes aceitava 777
+  t = 0;
+  const unicoTarde: ListarPagina = (pagina) => {
+    t += pagina === 1 ? 59_000 : 139_000;
+    return Promise.resolve(pagina === 1 ? pg(1, cli(777)) : null);
+  };
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", unicoTarde, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_INDETERMINADO");
+});
+
+Deno.test("ambiguidade provada vence registro malformado, divergente e relógio estourado (Codex, código)", async () => {
+  const semCodigo = { cnpj_cpf: DOC, razao_social: "X" };
+  const casos: Array<[string, unknown[]]> = [
+    ["malformado depois", [pg(1, cli(777), cli(778), semCodigo)]],
+    ["malformado antes", [pg(1, semCodigo, cli(777), cli(778))]],
+    ["2º código na página 2 junto de malformado", [pg(1, cli(777)), pg(2, cli(778), semCodigo)]],
+    ["divergente junto", [pg(1, cli(777), cli(778, "98765432000110"), cli(779))]],
+    ["contagem contraditória junto", [{ pagina: 1, registros: 5, clientes_cadastro: [cli(777), cli(778)] }]],
+  ];
+  for (const [nome, paginas] of casos) {
+    await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", omie(paginas).listar), "OMIE_LOOKUP_AMBIGUO").catch((e) => {
+      throw new Error(`${nome}: ${(e as Error).message}`);
+    });
+  }
+  let t = 0;
+  const ambiguoTarde: ListarPagina = () => {
+    t += 100_000;
+    return Promise.resolve(pg(1, cli(777), cli(778)));
+  };
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", ambiguoTarde, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_AMBIGUO");
+});
+
+Deno.test("1 código válido + registro malformado na mesma página → INDETERMINADO (unicidade não provada)", async () => {
+  await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", omie([pg(1, cli(777), { cnpj_cpf: DOC })]).listar), "OMIE_LOOKUP_INDETERMINADO");
+});
+
 Deno.test("transitório do Omie (throw do fetch) propaga — não vira ausência", async () => {
   const caiu: ListarPagina = () => Promise.reject(new Error("OMIE_TRANSIENT (oben): rate limit persistiu"));
   await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", caiu), "OMIE_TRANSIENT");

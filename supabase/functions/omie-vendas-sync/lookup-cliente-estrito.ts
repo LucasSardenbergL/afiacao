@@ -22,8 +22,11 @@ export type ListarPagina = (pagina: number, porPagina: number) => Promise<unknow
 
 export const LOOKUP_POR_PAGINA = 50;
 export const LOOKUP_MAX_PAGINAS = 10;
-/** Orçamento do lookup inteiro: cada chamada tem o próprio relógio de 140s, mas a action não cabe em N deles. */
-export const LOOKUP_ORCAMENTO_MS = 60_000;
+/**
+ * Orçamento do lookup inteiro, conferido depois de CADA resposta: cada chamada tem o próprio relógio de 140s
+ * (rate-limit com espera incluso), mas a action não cabe em N deles. Estourou = INDETERMINADO, retentável.
+ */
+export const LOOKUP_ORCAMENTO_MS = 90_000;
 
 const indeterminado = (account: string, motivo: string) =>
   new Error(`OMIE_LOOKUP_INDETERMINADO (${account}): ${motivo} — não dá pra afirmar que o cliente não existe`);
@@ -38,54 +41,78 @@ function inteiroDeControle(v: unknown): number | undefined | "invalido" {
   return "invalido"; // null, boolean, array, objeto: `Number(true) === 1` não pode virar eco válido (Codex)
 }
 
-/** Valida UMA página; devolve os registros (vazio = fim real). Lança INDETERMINADO/DIVERGENTE. */
-function registrosDaPagina(resp: unknown, pagina: number, docClean: string, account: string): ClienteEncontrado[] {
-  if (resp === null) return [];
+interface PaginaLida {
+  /** Registros VÁLIDOS da página (com o documento pedido). */
+  registros: ClienteEncontrado[];
+  /** Fim real: `null` do Omie ou `clientes_cadastro: []` sem contradição. */
+  vazia: boolean;
+  /** 1º defeito da página (INDETERMINADO/DIVERGENTE) — lançado só DEPOIS de conferir a multiplicidade (Codex). */
+  erro: Error | null;
+}
+
+/**
+ * Lê UMA página sem lançar no 1º defeito de registro: dois códigos válidos distintos com o documento pedido já
+ * provam a ambiguidade (terminal), e um registro malformado ao lado deles não pode rebaixá-la a INDETERMINADO
+ * (retentável). Só o que impede ler os registros (não-objeto, sem array) lança aqui.
+ */
+function lerPagina(resp: unknown, pagina: number, docClean: string, account: string): PaginaLida {
+  if (resp === null) return { registros: [], vazia: true, erro: null };
   if (!ehObjeto(resp)) throw indeterminado(account, `página ${pagina} não é um objeto`);
+  const arr = resp.clientes_cadastro;
+  if (!Array.isArray(arr)) throw indeterminado(account, `página ${pagina} sem clientes_cadastro`);
+  let erro: Error | null = null;
+  const anotar = (e: Error) => {
+    erro ??= e;
+  };
   // O eco da página, quando vem, tem de ser a pedida: um Omie que ignora `pagina` repetiria a 1ª até o guard.
   const eco = inteiroDeControle(resp.pagina);
   if (eco !== undefined && eco !== pagina) {
-    throw indeterminado(account, `pedi a página ${pagina} e veio a ${JSON.stringify(resp.pagina)}`);
+    anotar(indeterminado(account, `pedi a página ${pagina} e veio a ${JSON.stringify(resp.pagina)}`));
   }
-  const arr = resp.clientes_cadastro;
-  if (!Array.isArray(arr)) throw indeterminado(account, `página ${pagina} sem clientes_cadastro`);
   // A contagem da própria página, quando vem, não pode contradizer o array: `{registros:1, clientes_cadastro:[]}`
   // não é ausência provada (e um array mais curto que a contagem esconderia um 2º código).
   const contagem = inteiroDeControle(resp.registros);
   if (contagem !== undefined && contagem !== arr.length) {
-    throw indeterminado(account, `página ${pagina} diz ${JSON.stringify(resp.registros)} registro(s) e traz ${arr.length}`);
+    anotar(indeterminado(account, `página ${pagina} diz ${JSON.stringify(resp.registros)} registro(s) e traz ${arr.length}`));
   }
-  return arr.map((c, i) => {
-    if (!ehObjeto(c)) throw indeterminado(account, `registro ${i} da página ${pagina} não é um objeto`);
+  const registros: ClienteEncontrado[] = [];
+  arr.forEach((c, i) => {
+    if (!ehObjeto(c)) return anotar(indeterminado(account, `registro ${i} da página ${pagina} não é um objeto`));
     const codigo = c.codigo_cliente_omie;
     if (typeof codigo !== "number" || !Number.isSafeInteger(codigo) || codigo <= 0) {
-      throw indeterminado(account, `registro ${i} da página ${pagina} sem codigo_cliente_omie inteiro positivo`);
+      return anotar(indeterminado(account, `registro ${i} da página ${pagina} sem codigo_cliente_omie inteiro positivo`));
     }
     if (typeof c.cnpj_cpf !== "string") {
-      throw indeterminado(account, `registro ${i} da página ${pagina} sem cnpj_cpf`);
+      return anotar(indeterminado(account, `registro ${i} da página ${pagina} sem cnpj_cpf`));
     }
     // O helper aplica a gramática ESTRITA ao documento devolvido (letra fora do CNPJ alfanumérico não casa
     // pelos dígitos — #3359): documento malformado nunca prova identidade.
     if (!lookupDevolveuOMesmoDocumento(docClean, c.cnpj_cpf)) {
-      throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
+      return anotar(new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`));
     }
     const rec = ehObjeto(c.recomendacoes) ? c.recomendacoes : {};
     const vendedor = rec.codigo_vendedor || c.codigo_vendedor || null;
-    return {
+    registros.push({
       codigo_cliente: codigo,
       razao_social: typeof c.razao_social === "string" ? c.razao_social : null,
       codigo_vendedor: typeof vendedor === "number" ? vendedor : null,
       cnpj_cpf: c.cnpj_cpf,
-    };
+    });
   });
+  return { registros, vazia: arr.length === 0, erro };
 }
 
 /**
  * `null` = ausência PROVADA. Pagina até a página vazia (não confia em `total_de_paginas`) com guard de
  * `maxPaginas` e de `orcamentoMs`; erro transitório do Omie já vem como throw do `listarPagina`
- * (throwOnTransient). Página vazia é exigida para concluir ausência ou UNICIDADE; a MULTIPLICIDADE já está
- * provada na página que a mostrou — AMBIGUO sai na hora, sem uma página seguinte transitória rebaixá-lo a
- * erro retentável (Codex). Código repetido = o mesmo cliente (vale o 1º registro dele, vendedor incluso).
+ * (throwOnTransient). Ordem da decisão em cada página:
+ *   1. MULTIPLICIDADE: 2+ códigos válidos distintos → AMBIGUO na hora — nem uma página seguinte transitória,
+ *      nem um registro malformado, nem o relógio o rebaixam a erro retentável (Codex);
+ *   2. ORÇAMENTO: conferido DEPOIS de cada resposta, inclusive a 1ª página vazia — página que chegou tarde
+ *      nunca prova ausência nem unicidade (o relógio de 140s de cada chamada não limita o lookup inteiro);
+ *   3. defeito da página → INDETERMINADO/DIVERGENTE;
+ *   4. página vazia → fim real (ausência ou unicidade); senão, próxima página.
+ * Código repetido = o mesmo cliente (vale o 1º registro dele, vendedor incluso).
  */
 export async function buscarClienteEstrito(
   docClean: string,
@@ -99,24 +126,20 @@ export async function buscarClienteEstrito(
   const agora = opts.agora ?? Date.now;
   const inicio = agora();
   const porCodigo = new Map<string, ClienteEncontrado>();
-  let fimReal = false;
   for (let pagina = 1; pagina <= maxPaginas; pagina++) {
-    if (pagina > 1 && agora() - inicio > orcamentoMs) {
-      throw indeterminado(account, `o lookup passou de ${orcamentoMs / 1000}s antes da página ${pagina}`);
-    }
-    const registros = registrosDaPagina(await listarPagina(pagina, porPagina), pagina, docClean, account);
-    if (registros.length === 0) {
-      fimReal = true;
-      break;
-    }
+    const lida = lerPagina(await listarPagina(pagina, porPagina), pagina, docClean, account);
     // O mesmo código repetido entre páginas é o MESMO cliente; ambíguo é código DISTINTO.
-    for (const r of registros) if (!porCodigo.has(String(r.codigo_cliente))) porCodigo.set(String(r.codigo_cliente), r);
+    for (const r of lida.registros) if (!porCodigo.has(String(r.codigo_cliente))) porCodigo.set(String(r.codigo_cliente), r);
     if (porCodigo.size > 1) {
       throw new Error(
         `OMIE_LOOKUP_AMBIGUO (${account}): o Omie tem 2+ clientes com este documento (códigos ${[...porCodigo.keys()].join(", ")}) — confira o cadastro no Omie antes de vincular`,
       );
     }
+    if (agora() - inicio > orcamentoMs) {
+      throw indeterminado(account, `o lookup passou de ${orcamentoMs / 1000}s (página ${pagina})`);
+    }
+    if (lida.erro) throw lida.erro;
+    if (lida.vazia) return porCodigo.size === 1 ? [...porCodigo.values()][0] : null;
   }
-  if (!fimReal) throw indeterminado(account, `a paginação não chegou à página vazia em ${maxPaginas} páginas`);
-  return porCodigo.size === 1 ? [...porCodigo.values()][0] : null;
+  throw indeterminado(account, `a paginação não chegou à página vazia em ${maxPaginas} páginas`);
 }
