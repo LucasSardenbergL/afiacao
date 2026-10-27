@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **699** custom migrations totais
-- **2247** objetos esperados (criados por estas migrations)
+- **701** custom migrations totais
+- **2258** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 842
-  - `rls_policy`: 483
-  - `index`: 292
-  - `cron_job`: 198
-  - `table`: 196
+  - `function`: 844
+  - `rls_policy`: 484
+  - `index`: 296
+  - `cron_job`: 199
+  - `table`: 197
   - `view`: 125
-  - `trigger`: 107
+  - `trigger`: 109
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5666,6 +5666,26 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_staging_purge` | — |
 | `cron_job` | `cron.tint-staging-purge-diario` | — |
+
+### `20261026214720_tint_receita_versoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_receita_versoes_append_only` | — |
+| `function` | `public.tint_receita_versoes_capturar` | — |
+| `table` | `public.tint_receita_versoes` | — |
+| `index` | `public.uq_tint_receita_versoes_staging` | `tint_receita_versoes` |
+| `index` | `public.uq_tint_receita_versoes_saida` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_chave` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_receita_recebido` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only_trunc` | `tint_receita_versoes` |
+| `cron_job` | `cron.tint-receita-versoes-diario` | — |
+| `rls_policy` | `public.Staff can view tint_receita_versoes` | `tint_receita_versoes` |
+
+### `20261026214721_tint_arquivar_staging_fantasma.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261026220000_fin_titulo_baixas_cp_mapa.sql`
 

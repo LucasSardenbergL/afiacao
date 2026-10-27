@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 699
+-- Total de custom migrations: 701
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -762,6 +762,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
   ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
+  ('20261026214720', 'tint_receita_versoes', '20261026214720_tint_receita_versoes.sql'),
+  ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql'),
   ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
   ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql')
 ),
@@ -2973,6 +2975,17 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_capturar', ''),
+  ('tint_receita_versoes', 'table', 'public', 'tint_receita_versoes', ''),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_staging', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_saida', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_chave', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_receita_recebido', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
   ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
@@ -5234,6 +5247,17 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_capturar', ''),
+  ('tint_receita_versoes', 'table', 'public', 'tint_receita_versoes', ''),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_staging', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_saida', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_chave', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_receita_recebido', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
   ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
