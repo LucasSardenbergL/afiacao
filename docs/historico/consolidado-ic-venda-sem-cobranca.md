@@ -96,6 +96,32 @@ empresas sem código no mapa (hoje colacor→colacor_sc) só bloqueia por (a).
 Na implantação, a ordem é: migration, merge, deploy da edge, uma rodada da edge, e conferir o mapa
 populado antes do founder marcar.
 
+**3ª rodada do Codex:**
+- Um código intragrupo novo, ainda não gravado, ficava invisível até a próxima rodada.
+- No bootstrap, um código que só uma informativa antiga conhecia podia sumir.
+- Havia defeitos de falsificação e o P7 não conferia o default.
+
+O conserto trouxe:
+- a semente do mapa no apply, com os códigos das linhas da fila;
+- o marco de rodada `fin_ic_reconcile_rodadas`, gravado pela edge depois do mapa;
+- um ramo (c) de "contraparte desconhecida": CR criado depois do marco, com código fora dos mapas, pendia.
+
+**4ª rodada e decisão do founder (2026-10-27): parar a escalada.**
+
+O ramo (c) tinha brechas próprias:
+- um CR sem código deixava de bloquear quando o marco avançava;
+- um CR antigo que troca de cadastro passava.
+
+E criava um problema operacional: um CR de terceiro com o mesmo valor, ou sem emissão, pendurava o mês
+sem aparecer na fila. O ramo (c) saiu. O marco ficou só como **trava de bootstrap**: sem nenhuma rodada
+da v1.3, nada elimina.
+
+**Resíduo aceito:** um CR que contradiz a marcação, de cadastro que nenhum mapa conhece ainda, só é
+visto na rodada seguinte da edge. É a mesma latência que o par CR↔CP já tem. CR sem código de cliente
+não é classificado, e a prod tinha 0 em 2026-10-27.
+
+Prova final: 102 asserts, 70 sabotagens, 47 testes Deno.
+
 ## Medição na prod (psql-ro, corpo como SELECT, 46 meses com snapshot competência)
 
 - O corpo novo dá o mesmo resultado que o vivo (md5 11832f17…) nos 46 meses: 184 linhas iguais e nenhum
@@ -110,7 +136,7 @@ populado antes do founder marcar.
 
 `db/test-fin-consolidado-ic.sh` aplica a migration REAL sobre o predecessor REAL (o corpo vivo
 11832f17…). Os cenários A–P da versão anterior são re-exercidos sob a versão nova, mais U (venda sem
-cobrança), T (trigger) e MIG5/MIG7: 95 asserts e 65 sabotagens, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
+cobrança), T (trigger) e MIG5/MIG7: 102 asserts e 70 sabotagens, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
 
 **Achado da falsificação:** `sc_marca_cr` e `sc_empresa` ficaram VERDES na 1ª rodada. O cenário S1
 deixava uma linha informativa oben→colacor de 100, que é "CR aparecido" para qualquer sem cobrança
