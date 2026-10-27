@@ -70,9 +70,10 @@ Agora a página é lida inteira, a multiplicidade é decidida primeiro e o defei
   o deploy. O sensor de edição deu `SEM_EDICAO`: 0 commits `gpt-engineer-app` e `No files were edited.`
 - **Atestação:** a sonda por cron (job 184, 16:37Z) viu `v1.27-lookup-cliente-estrito`, e o `pendencias:deploy`
   deu **exit 0**, com 83/83 edges em `CONFERE`.
-- **Front:** `src/lib/radar/cadastro-omie.ts` mudou, então falta o **Publish**, que é do founder. Até ele sair,
-  o front velho trata `OMIE_LOOKUP_AMBIGUO` como falha retentável. Isso continua bloqueando o cadastro, mas sem
-  o rótulo de conflito.
+- **Front no ar (Publish do founder):** `monitor-deploy.sh --pr 3362 https://steu.lovable.app` deu exit 0 com
+  `PR_NO_AR`. O ar serve `2c9b8197`, o squash do #3363, e o squash `01cb04a62` do #3362 está na história dele. Entre
+  os dois só entraram os commits do #3364 e do #3363; nenhum commit "Changes" reverteu algo. Com isso,
+  `OMIE_LOOKUP_AMBIGUO` chega ao Radar como `lookup_ambiguo` terminal.
 
 ## Riscos abertos (fora deste PR)
 
