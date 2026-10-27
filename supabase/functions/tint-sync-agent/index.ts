@@ -22,6 +22,17 @@ import {
 } from "./promocao-fila.ts";
 // Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+// Lote de /formulas que só reenvia fórmula idêntica à última staging: mesmo ack, sem run
+// (formula-identica_test.ts) — NÃO reimplementar inline.
+import {
+  formulaIdentica,
+  type ItemStaging,
+  JANELA_ULTIMAS,
+  type LinhaStaging,
+  loteElegivel,
+  SELECT_ULTIMA,
+  ultimaDaChave,
+} from "./formula-identica.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -266,6 +277,41 @@ Deno.serve(async (req) => {
     return json(body, status);
   }
 
+  /** true só se TODA fórmula do lote é idêntica à última staging da chave, com o run dela promovido
+   *  (formula-identica.ts). Qualquer erro de consulta ou ausência → false, e o lote segue o caminho normal. */
+  async function reenvioIdentico(agent: { account: string; storeCode: string }, formulas: unknown): Promise<boolean> {
+    if (!loteElegivel(formulas)) return false;
+    for (const f of formulas) {
+      const { data: linhas, error: errLinhas } = await sb.from("tint_staging_formulas")
+        .select(SELECT_ULTIMA)
+        .eq("account", agent.account)
+        .eq("store_code", agent.storeCode)
+        .eq("cor_id", f.cor_id)
+        .eq("cod_produto", f.cod_produto)
+        .eq("id_base", f.id_base)
+        .eq("personalizada", f.personalizada || false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(JANELA_ULTIMAS);
+      if (errLinhas || !linhas) return false;
+      const ultima = ultimaDaChave(linhas as unknown as LinhaStaging[], f);
+      if (!ultima) return false;
+      const { data: itens, error: errItens } = await sb.from("tint_staging_formula_itens")
+        .select("id_corante, ordem, qtd_ml")
+        .eq("staging_formula_id", ultima.id);
+      if (errItens || !itens) return false;
+      const { data: run, error: errRun } = await sb.from("tint_sync_runs")
+        .select("promocao_status")
+        .eq("id", ultima.sync_run_id)
+        .maybeSingle();
+      if (errRun || !run) return false;
+      if (!formulaIdentica(f, agent.account, agent.storeCode, ultima, itens as ItemStaging[], run.promocao_status)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown) {
     await sb.from("tint_sync_errors").insert({
       sync_run_id: runId,
@@ -466,6 +512,13 @@ Deno.serve(async (req) => {
 
       const batchErr = validateBatchSize(body, ["formulas"]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
+
+      // Reenvio da personalizada mais recente a cada ciclo do conector 0.2.5 (HWM com margem): antes
+      // abria run de 1 registro + promoção do par inteiro (~320 MB lidos), ~130/dia (medido 2026-10-27).
+      // Só com TODA fórmula idêntica à última staging da chave; mesmo ack, sem run.
+      if (await reenvioIdentico(agent, body.formulas)) {
+        return json(ackSemRun(idempotencyKey, "fórmula idêntica à última staging da chave", body.formulas.length));
+      }
 
       const runId = await createSyncRun(agent, "formulas");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
