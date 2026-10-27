@@ -3,6 +3,7 @@ import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-co
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
+import { buscarClienteEstrito } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
@@ -2930,15 +2931,19 @@ Deno.serve(async (req) => {
         // → a action falha honesta e o client não cria.
         // O lookup usa o documento VALIDADO (docClean), o mesmo que vai ao IncluirCliente — com o cru,
         // "CNPJ: AEG12345678909" consultava 12345678909 e cadastrava AEG12345678909 (Codex 2026-10-21).
-        const existingCliente = await buscarClienteVendas(docClean, account, { throwOnTransient: true });
+        // Lookup ESTRITO (achado 4 do Codex no #3293, lookup-cliente-estrito.ts): pagina até a página vazia e
+        // confere TODOS os registros — resposta inválida = OMIE_LOOKUP_INDETERMINADO, registro com outro
+        // documento = OMIE_LOOKUP_DIVERGENTE (Codex ALTO 2026-10-20), 2+ códigos para o documento =
+        // OMIE_LOOKUP_AMBIGUO. Só a ausência PROVADA (1ª página vazia e válida) segue para o IncluirCliente.
+        const existingCliente = await buscarClienteEstrito(docClean, account, (pagina, porPagina) =>
+          callOmieVendasApi(
+            "geral/clientes/",
+            "ListarClientes",
+            { pagina, registros_por_pagina: porPagina, clientesFiltro: { cnpj_cpf: docClean } },
+            account,
+            { throwOnTransient: true },
+          ));
         if (existingCliente) {
-          // O lookup pega o 1º registro da página SEM conferir o documento. Se o Omie casar o filtro
-          // parcialmente ou ignorar letras (CNPJ alfanumérico, RFB jul/2026), devolveria OUTRO cliente e o
-          // lead sairia da fila com `created:false` e código alheio. Divergência = INDETERMINADO: falha
-          // alta, o lead fica na fila (Codex ALTO 2026-10-20; precisão > recall).
-          if (!lookupDevolveuOMesmoDocumento(docClean, existingCliente.cnpj_cpf)) {
-            throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
-          }
           // Confirmação do SERVIDOR (ledger omie_cliente_confirmacoes): é o que a RPC do Radar exige para marcar
           // ja_cliente — o código que o front repassa deixou de bastar. null = nada a confirmar (outra conta/CPF).
           const linhaLookup = linhaConfirmacao(account, docClean, existingCliente.codigo_cliente, "lookup", userId);

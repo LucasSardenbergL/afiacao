@@ -40,10 +40,13 @@ export class FalhaCadastro extends Error {
  *  - `vinculo_divergente`: o CNPJ já está vinculado a OUTRO código (RPC → SQLSTATE RD001, ou retomada com
  *    código conhecido ≠ vínculo relido);
  *  - `codigo_de_outro_cnpj`: o código já está vinculado a OUTRO CNPJ (RPC → SQLSTATE RD002, UNIQUE parcial);
- *  - `lookup_divergente`: a edge achou no Omie um cliente com OUTRO documento (`OMIE_LOOKUP_DIVERGENTE`).
+ *  - `lookup_divergente`: a edge achou no Omie um cliente com OUTRO documento (`OMIE_LOOKUP_DIVERGENTE`);
+ *  - `lookup_ambiguo`: o Omie tem 2+ códigos para o mesmo documento (`OMIE_LOOKUP_AMBIGUO`, edge
+ *    omie-vendas-sync v1.27 — achado 4 do Codex no #3293). `OMIE_LOOKUP_INDETERMINADO` (resposta inválida)
+ *    NÃO é conflito: segue retentável.
  * Migration 20261021120500 (Codex ALTO 3 do bloco 5).
  */
-export type MotivoDivergencia = 'vinculo_divergente' | 'codigo_de_outro_cnpj' | 'lookup_divergente';
+export type MotivoDivergencia = 'vinculo_divergente' | 'codigo_de_outro_cnpj' | 'lookup_divergente' | 'lookup_ambiguo';
 
 export class DivergenciaCadastro extends FalhaCadastro {
   motivo: MotivoDivergencia;
@@ -73,7 +76,13 @@ export function divergenciaDaRpc(e: unknown): MotivoDivergencia | null {
   return null;
 }
 
-const ehLookupDivergente = (e: unknown): boolean => (mensagemDeErro(e) ?? '').includes('OMIE_LOOKUP_DIVERGENTE');
+/** Conflito de identidade que a edge acusou no lookup do Omie (marca no texto do erro), ou null. */
+function divergenciaDoLookup(e: unknown): MotivoDivergencia | null {
+  const m = mensagemDeErro(e) ?? '';
+  if (m.includes('OMIE_LOOKUP_DIVERGENTE')) return 'lookup_divergente';
+  if (m.includes('OMIE_LOOKUP_AMBIGUO')) return 'lookup_ambiguo';
+  return null;
+}
 
 export interface RespostaValidada {
   codigo: string;
@@ -225,11 +234,10 @@ export async function cadastrarEmpresaNoOmie<E extends EmpresaCadastravel>(
   return { codigo, jaExistia, recuperado: retomada };
 }
 
-/** Falha na etapa omie; o lookup que devolveu OUTRO documento é conflito terminal, não falha retentável. */
+/** Falha na etapa omie; o lookup com OUTRO documento ou com 2+ códigos é conflito terminal, não falha retentável. */
 function falhaNoOmie(err: unknown): FalhaCadastro {
-  return ehLookupDivergente(err)
-    ? new DivergenciaCadastro('omie', 'lookup_divergente', mensagem(err), null)
-    : new FalhaCadastro('omie', mensagem(err));
+  const motivo = divergenciaDoLookup(err);
+  return motivo ? new DivergenciaCadastro('omie', motivo, mensagem(err), null) : new FalhaCadastro('omie', mensagem(err));
 }
 
 /** Marca da RPC `radar_registrar_cadastro_omie` quando o servidor não confirmou o par CNPJ↔código no Omie/Oben. */

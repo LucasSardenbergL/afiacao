@@ -242,6 +242,27 @@ describe('cadastrarEmpresaNoOmie — conflito de vínculo (RD001/RD002/lookup)',
     expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente' });
   });
 
+  // Achado 4 do Codex no #3293 (edge v1.27): 2+ códigos Omie para o documento é conflito terminal, como o divergente.
+  it('edge acusa OMIE_LOOKUP_AMBIGUO (lança ou no corpo) → DivergenciaCadastro lookup_ambiguo, etapa omie, sem gravar', async () => {
+    const msg = 'OMIE_LOOKUP_AMBIGUO (oben): o Omie tem 2 clientes com este documento (códigos 777, 778)';
+    for (const criarNoOmie of [vi.fn(async () => { throw new Error(msg); }), vi.fn(async () => ({ success: false, error: msg }))]) {
+      const d = deps({ criarNoOmie });
+      const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+      expect(err).toBeInstanceOf(DivergenciaCadastro);
+      expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_ambiguo', codigo: null, codigoRecebido: null });
+      expect(d.registrarNoRadar).not.toHaveBeenCalled();
+    }
+  });
+
+  it('edge acusa OMIE_LOOKUP_INDETERMINADO (resposta inválida) → falha RETENTÁVEL, não conflito', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('OMIE_LOOKUP_INDETERMINADO (oben): página 1 sem clientes_cadastro'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(err).toBeInstanceOf(FalhaCadastro);
+    expect(err).not.toBeInstanceOf(DivergenciaCadastro);
+    expect(err).toMatchObject({ etapa: 'omie', codigo: null, message: expect.stringContaining('OMIE_LOOKUP_INDETERMINADO') });
+    expect(d.registrarNoRadar).not.toHaveBeenCalled();
+  });
+
   // Codex (revisão do código, ALTA): a recusa RADAR_SEM_CONFIRMACAO_OMIE descartava K; a retentativa relia um
   // vínculo V ≠ K e devolvia "recuperado" com V. K agora vai como EVIDÊNCIA (codigoVisto), sem reabrir o atalho.
   it('sem confirmação guarda K como evidência (codigoVisto), sem habilitar o atalho (codigo null)', async () => {
