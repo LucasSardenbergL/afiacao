@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
-import { buscarClienteEstrito, type ListarPagina } from "./lookup-cliente-estrito.ts";
+import { buscarClienteEstrito, type ListarPagina, marcaDoLookup, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
@@ -2148,24 +2148,12 @@ function aplicarProvaPositivaNoCache(
 }
 // MIRROR-END
 
-// Resolve os matches de cliente por documento na conta (registros_por_pagina:2 p/ detectar duplicata-CNPJ).
-// throwOnTransient: erro Omie transitório LANÇA (ausência só como array vazio confirmado, nunca timeout).
+// Resolve os matches de cliente por documento na conta pelo lookup ESTRITO (./lookup-cliente-estrito.ts): pagina até
+// a página vazia e confere o documento de TODO registro. 0 ou 1 match; ambíguo/divergente/resposta inválida LANÇAM com a
+// marca (o chamador rejeita o envio); transitório segue lançando OMIE_TRANSIENT (ausência só como página vazia válida).
 async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
   const documentClean = normalizarDocumento(document);
-  const result = await callOmieVendasApi(
-    "geral/clientes/",
-    "ListarClientes",
-    { pagina: 1, registros_por_pagina: 2, clientesFiltro: { cnpj_cpf: documentClean } },
-    account,
-    { throwOnTransient: true },
-  );
-  const arr = (result?.clientes_cadastro as OmieClienteCadastro[] | undefined) ?? [];
-  return arr
-    .filter((c) => c.codigo_cliente_omie)
-    .map((c) => ({
-      codigo_cliente: c.codigo_cliente_omie as number,
-      codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
-    }));
+  return await matchesDoPedido(documentClean, account, listarClientesPorDocumento(documentClean, account));
 }
 
 // Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
@@ -2204,7 +2192,14 @@ async function deriveOmieAccountIdentity(
   //    do caminho de dinheiro — e a proof-table account-correta é `omie_customer_account_map`.
   // Sobra UMA fonte autoritativa: documento (âncora) + API Omie, com divergência advisory×derivado,
   // ambiguidade, ausência e bigint fora de range todos fail-closed em decideAccountIdentity.
-  const omieMatches = await buscarClienteVendasMatches(doc, account);
+  let omieMatches: OmieMatch[];
+  try {
+    omieMatches = await buscarClienteVendasMatches(doc, account);
+  } catch (e) {
+    const marca = marcaDoLookup(e);
+    if (!marca) throw e;
+    throw new Error(`Pedido rejeitado: identidade Omie do cliente na conta ${account} não pôde ser provada (${marca}) — envio bloqueado para não registrar no cliente errado. ${(e as Error).message}`);
+  }
   const decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows: [], omieMatches });
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";

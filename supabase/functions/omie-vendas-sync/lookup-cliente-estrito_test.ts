@@ -13,7 +13,7 @@ async function assertRejeitaCom(p: Promise<unknown>, marca: string) {
   if (!(erro instanceof Error)) throw new Error(`esperado erro ${marca}, mas resolveu`);
   if (!erro.message.startsWith(`${marca} (`)) throw new Error(`esperado ${marca}, veio: ${erro.message}`);
 }
-import { buscarClienteEstrito, type ListarPagina } from "./lookup-cliente-estrito.ts";
+import { buscarClienteEstrito, type ListarPagina, marcaDoLookup, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 
 const DOC = "12345678000195";
 const cli = (codigo: unknown, doc: unknown = "12.345.678/0001-95", extra: Record<string, unknown> = {}) => ({
@@ -175,4 +175,37 @@ Deno.test("1 código válido + registro malformado na mesma página → INDETERM
 Deno.test("transitório do Omie (throw do fetch) propaga — não vira ausência", async () => {
   const caiu: ListarPagina = () => Promise.reject(new Error("OMIE_TRANSIENT (oben): rate limit persistiu"));
   await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", caiu), "OMIE_TRANSIENT");
+});
+
+// ── identidade do criar_pedido (matchesDoPedido) — os três furos do lookup antigo (registros_por_pagina:2) ──
+Deno.test("pedido: 0 ou 1 match no formato de decideAccountIdentity", async () => {
+  assertEquals(await matchesDoPedido(DOC, "oben", omie([]).listar), []);
+  assertEquals(await matchesDoPedido(DOC, "oben", omie([pg(1, cli(777, DOC, { codigo_vendedor: 4 }))]).listar), [
+    { codigo_cliente: 777, codigo_vendedor: 4 },
+  ]);
+});
+
+Deno.test("pedido: registro de OUTRO documento não vira o cliente do pedido → DIVERGENTE (antes: usado)", async () => {
+  await assertRejeitaCom(matchesDoPedido(DOC, "oben", omie([pg(1, cli(777, "98765432000110"))]).listar), "OMIE_LOOKUP_DIVERGENTE");
+});
+
+Deno.test("pedido: válido + registro sem código não vira candidato único → INDETERMINADO (antes: filter descartava)", async () => {
+  await assertRejeitaCom(matchesDoPedido(DOC, "oben", omie([pg(1, cli(777), { cnpj_cpf: DOC })]).listar), "OMIE_LOOKUP_INDETERMINADO");
+});
+
+Deno.test("pedido: resposta malformada não vira ausência → INDETERMINADO (antes: ?? [])", async () => {
+  await assertRejeitaCom(matchesDoPedido(DOC, "oben", omie([{ pagina: 1 }]).listar), "OMIE_LOOKUP_INDETERMINADO");
+});
+
+Deno.test("pedido: 2 códigos → AMBIGUO (o decideAccountIdentity antigo só via com os 2 na MESMA página de 2)", async () => {
+  await assertRejeitaCom(matchesDoPedido(DOC, "oben", omie([pg(1, cli(777)), pg(2, cli(778))]).listar), "OMIE_LOOKUP_AMBIGUO");
+});
+
+Deno.test("marcaDoLookup: só as três marcas no INÍCIO da mensagem; transitório e o resto ficam de fora", () => {
+  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_AMBIGUO (oben): x")), "OMIE_LOOKUP_AMBIGUO");
+  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_DIVERGENTE (colacor): x")), "OMIE_LOOKUP_DIVERGENTE");
+  assertEquals(marcaDoLookup(new Error("OMIE_LOOKUP_INDETERMINADO (oben): x")), "OMIE_LOOKUP_INDETERMINADO");
+  assertEquals(marcaDoLookup(new Error("OMIE_TRANSIENT (oben): rate limit")), null);
+  assertEquals(marcaDoLookup(new Error("falhou: OMIE_LOOKUP_AMBIGUO (oben)")), null);
+  assertEquals(marcaDoLookup("OMIE_LOOKUP_AMBIGUO (oben): string, não Error"), null);
 });

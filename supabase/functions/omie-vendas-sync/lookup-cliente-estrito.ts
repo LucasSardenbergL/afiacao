@@ -143,3 +143,25 @@ export async function buscarClienteEstrito(
   }
   throw lookupIndeterminado(account, `a paginação não chegou à página vazia em ${maxPaginas} páginas`);
 }
+
+/**
+ * Identidade do `criar_pedido` (`decideAccountIdentity`): o MESMO lookup estrito, no formato de 0 ou 1 match. O
+ * lookup antigo (`registros_por_pagina:2`, `?? []`, `filter` sem código, sem conferir documento) lia malformado como
+ * ausência, descartava calado um 2º registro sem código e roteava o pedido para um cliente de OUTRO documento.
+ * Aqui ambíguo/divergente/indeterminado LANÇAM (com a marca) e o chamador rejeita o envio.
+ */
+export async function matchesDoPedido(
+  docClean: string,
+  account: string,
+  listarPagina: ListarPagina,
+  opts?: Parameters<typeof buscarClienteEstrito>[3],
+): Promise<Array<{ codigo_cliente: number; codigo_vendedor: number | null }>> {
+  const c = await buscarClienteEstrito(docClean, account, listarPagina, opts);
+  return c ? [{ codigo_cliente: c.codigo_cliente, codigo_vendedor: c.codigo_vendedor }] : [];
+}
+
+/** Marca do lookup estrito no erro (`OMIE_LOOKUP_AMBIGUO`/`_DIVERGENTE`/`_INDETERMINADO`), ou null — transitório não é. */
+export function marcaDoLookup(e: unknown): string | null {
+  const m = e instanceof Error ? /^(OMIE_LOOKUP_(?:AMBIGUO|DIVERGENTE|INDETERMINADO)) \(/.exec(e.message) : null;
+  return m ? m[1] : null;
+}
