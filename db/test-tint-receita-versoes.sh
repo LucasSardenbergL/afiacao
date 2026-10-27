@@ -204,12 +204,13 @@ suite() {
   local g="g_$2"
   fixture_db "$g"
   aplica "$g" "$dir/h1.sql" h1 || cai APPLY_H1_G
-  # VOLTOU: a chave do 4602081 reaparece no S1
-  q "$g" "UPDATE tint_keys_snapshots SET keys = keys || '[\"4602081|FO10.6554|14|true\"]'::jsonb
+  # VOLTOU (banco próprio: sem esta guarda a A aplica de verdade e contaminaria as outras)
+  local v="v_$2"
+  fixture_db "$v"
+  aplica "$v" "$dir/h1.sql" h1 || cai APPLY_H1_G
+  q "$v" "UPDATE tint_keys_snapshots SET keys = keys || '[\"4602081|FO10.6554|14|true\"]'::jsonb
            WHERE snapshot_id = '55555555-0000-0000-0000-000000000001' AND chunk_index = 0" >/dev/null
-  if aplica "$g" "$dir/a.sql" voltou || ! grep -qF "VOLTOU para a fonte" "$TMP/$g.voltou.log"; then cai ARQ_GUARDA_VOLTOU; fi
-  q "$g" "UPDATE tint_keys_snapshots SET keys = keys - '4602081|FO10.6554|14|true'
-           WHERE snapshot_id = '55555555-0000-0000-0000-000000000001' AND chunk_index = 0" >/dev/null
+  if aplica "$v" "$dir/a.sql" voltou || ! grep -qF "VOLTOU para a fonte" "$TMP/$v.voltou.log"; then cai ARQ_GUARDA_VOLTOU; fi
   # LATEST: chega linha mais nova da chave do 4602092
   q "$g" "SELECT teste.stg('4602092', '2 days', ARRAY['AX:1:1'], 1, true, 'FO10.6554', '14', 'eeeeeeee-0000-0000-0000-000000000001')" >/dev/null
   if aplica "$g" "$dir/a.sql" latest || ! grep -qF "latest da chave" "$TMP/$g.latest.log"; then cai ARQ_GUARDA_LATEST; fi
@@ -258,7 +259,17 @@ t = open(src).read()
 n = t.count(busca)
 if n != 1:
     sys.exit(f"busca casou {n} vezes (esperado 1): {busca[:80]!r}")
-open(dst, 'w').write(t.replace(busca, troca))
+t = t.replace(busca, troca)
+# A cópia sabotada é um arquivo COERENTE: se a troca mexeu no corpo da captura, o md5 da guarda
+# anti-reversão acompanha (como faria quem editasse a migration) — senão a REAPLICA cairia por
+# artefato da sabotagem, não pela camada sabotada.
+import hashlib, re
+m = re.search(r"c_captura constant text := '([0-9a-f]{32})'", t)
+if m:
+    i = t.index('CREATE OR REPLACE FUNCTION public.tint_receita_versoes_capturar()')
+    a = t.index('$function$', i) + len('$function$'); b = t.index('$function$', a)
+    t = t.replace(m.group(0), m.group(0).replace(m.group(1), hashlib.md5(t[a:b].encode()).hexdigest()))
+open(dst, 'w').write(t)
 PYTROCA
 
 N=0; SAB_FALHAS=0
