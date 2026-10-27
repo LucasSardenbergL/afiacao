@@ -278,7 +278,9 @@ Deno.test("receita oficial NÃO reinserida depois da staging → caminho normal 
     "embalagem sem item oficial": (it) => it.filter((i) => i.formula_id !== "of-2"),
     "item no MESMO milissegundo da staging": (it) => [...it.slice(1), { ...it[0], created_at: "2026-10-27T13:45:17.649+00:00" }],
     "created_at de item ilegível": (it) => [...it.slice(1), { ...it[0], created_at: null }],
-    "itens oficiais no teto da capa": (it) => Array.from({ length: CAPA_POSTGREST }, () => it[0]),
+    // Itens frescos em TODAS as embalagens: só a capa pode derrubar (resultado possivelmente truncado).
+    "itens oficiais no teto da capa": (it) =>
+      Array.from({ length: CAPA_POSTGREST }, (_, k) => ({ ...it[0], formula_id: `of-${k % 4}` })),
     "sem item oficial nenhum": () => [],
   };
   for (const [nome, mutar] of Object.entries(casos)) {
