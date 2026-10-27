@@ -160,7 +160,7 @@ Deno.test("regra de quantidade recusa (sem número do Omie; NF = Omie com L→UN
   }
 });
 
-Deno.test("número de NF repetido na listagem (outro fornecedor) → RECUSA sem escrever; cancelada não conta", async () => {
+Deno.test("número de NF repetido na listagem (outro fornecedor, cancelada inclusive) → RECUSA sem escrever", async () => {
   const dup = () => resp({ recebimentos: [
     { cabec: { nIdReceb: 777, cNumeroNFe: "955811", cNome: "RENNER SAYERLACK" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
     { cabec: { nIdReceb: 900, cNumeroNFe: "0955811", cNome: "PEQUENO FORNECEDOR" }, infoCadastro: { cRecebido: "S", cCancelada: "N" } },
@@ -173,7 +173,14 @@ Deno.test("número de NF repetido na listagem (outro fornecedor) → RECUSA sem 
     { cabec: { nIdReceb: 777, cNumeroNFe: "955811", cChaveNfe: "4226" }, infoCadastro: { cRecebido: "N", cCancelada: "N" } },
     { cabec: { nIdReceb: 901, cNumeroNFe: "955811" }, infoCadastro: { cRecebido: "N", cCancelada: "S" } },
   ] }) } });
-  igual((await comCancelada.rodar()).corpo.success, true, "cancelada ignorada");
+  // Codex P1-3: a cancelada de A conta — sem isso, digitar o número dela concluía a NF aberta de B.
+  const rCanc = await comCancelada.rodar();
+  igual([comCancelada.escritas(), rCanc.corpo.desfecho], [[], "recusado"], "cancelada conta na ambiguidade");
+  const soCancelada = cenario({ roteiro: { ListarRecebimentos: () => resp({ recebimentos: [
+    { cabec: { nIdReceb: 901, cNumeroNFe: "955811", cNome: "A" }, infoCadastro: { cRecebido: "N", cCancelada: "S" } },
+  ] }) } });
+  const rSo = await soCancelada.rodar();
+  igual([soCancelada.escritas(), rSo.corpo.desfecho, String(rSo.corpo.error).includes("cancelada")], [[], "recusado", true], "só a cancelada");
 });
 
 Deno.test("listagem que não chega ao fim em 30 páginas → RECUSA (unicidade não provada)", async () => {
