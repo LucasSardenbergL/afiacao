@@ -136,3 +136,19 @@ Prova com os fatos reais de 21/10 (189 disparados, 160 encerrados): candidatos d
 idêntico (80/1005, 91/1014, 194/1049), `pendentesR59` vazio, `retidosCompostoR59` = 2790. `vinculosNf`,
 ciclos e resumo são idênticos byte a byte. Propriedade testada: candidato novo ⇒ candidato antigo (2000 casos).
 Falsificação: 7 sabotagens, todas vermelhas.
+
+### Codex retroativo do #3312 (2026-10-26)
+
+A revisão de código ficou pendente por cota e rodou em 26/10 (164s, 86.823 tokens). Não houve P1. Os achados
+foram consertados num PR curto:
+- **P2:** `retidosCompostoR59` listava composto mesmo COM evidência de NF. Agora lista só quem seria candidato
+  sem o veto (encerrado, com identificador, sem evidência).
+- **P2:** o gerador da propriedade (um LCG acima da precisão inteira do JS) degenerava e produzia **zero**
+  vetos por composto. Trocado por mulberry32, com contadores exigidos de sobreviventes, vetos por composto e
+  vetos por componente. A guarda antiga deixava passar uma implementação sempre-false.
+- **P3:** a expansão descartava o identificador inteiro vazio e perdia um casamento antigo (protocolo `" "` com
+  evidência `""`), que é contraexemplo de "só retira candidatos". O fatos.sql filtra vazio, então não havia
+  risco nos dados reais. O inteiro aparado agora fica sempre.
+- **P3:** o texto de PREMISSAS dizia "nunca sai". Agora diz "nunca é candidato à exclusão R59; a conciliação
+  normal segue".
+Falsificação: 5 sabotagens, todas vermelhas.
