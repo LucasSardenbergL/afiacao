@@ -174,10 +174,9 @@ Deno.serve(async (req) => {
       if (eSt || !st) return json({ error: "lote não iniciado" }, 400);
       const { error: eRe } = await admin.rpc("radar_recruzar_ja_cliente");
       if (eRe) throw eRe;
-      // DEPOIS do recruzar (ja_cliente fresco): foto RFB → radar_empresas, lead 03/04/08 → descartado,
-      // cliente irregular novo → 1 fornecedor_alerta por lote. Erro propaga: lote vira 'error'.
-      const { data: situacao, error: eSit } = await admin.rpc("radar_aplicar_situacao", { p_lote: mes });
-      if (eSit) throw eSit;
+      // A situação cadastral NÃO é aplicada aqui: radar_aplicar_situacao regrava ~553k linhas (minutos) e o
+      // PostgREST corta em 8s (57014 no lote 2026-09). O job radar-aplicar-situacao-diario (06:05 UTC,
+      // migration 20261027010000) aplica o lote `complete` pendente — a pendência é o finalizado_em abaixo.
       const { count: total, error: eT } = await admin.from("radar_empresas")
         .select("cnpj", { count: "exact", head: true }).eq("ultimo_lote", mes);
       if (eT) throw eT;
@@ -190,7 +189,7 @@ Deno.serve(async (req) => {
         finalizado_em: new Date().toISOString(), erro: null,
       }).eq("mes_referencia", mes);
       if (eUp) throw eUp;
-      return json({ ok: true, mes, total, novos, situacao });
+      return json({ ok: true, mes, total, novos, situacao_aplicacao: "cron" });
     }
 
     if (action === "status") {

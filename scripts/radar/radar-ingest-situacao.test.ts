@@ -5,7 +5,8 @@ import { removerComentarios } from "../../src/lib/gates/limpeza-fonte";
 
 // Invariantes da edge `radar-ingest` lidas como TEXTO (a edge roda em Deno, fora do vitest; o deploy pelo
 // chat do Lovable pode reverter um merge e commitar a reversão — docs/agent/deploy.md). Vigia o WIRING da
-// situação cadastral: as duas ações existem, o finalize aplica a situação DEPOIS do recruzar e propaga erro,
+// situação cadastral: as duas ações existem, o finalize recruza e NÃO aplica a situação (o job pg_cron
+// radar-aplicar-situacao-diario aplica — o PostgREST corta em 8s, 57014 no lote 2026-09),
 // o upsert do chunk_situacao conflita em (cnpj, lote) e NÃO manda `alertado_em` (1 escritor: a função SQL),
 // e a versão servida pela sonda mudou junto com o comportamento.
 
@@ -44,21 +45,20 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
     expect(bloco).toContain("descartadas_por_motivo");
   });
 
-  it("[E4] finalize chama radar_aplicar_situacao DEPOIS de radar_recruzar_ja_cliente, propaga o erro e devolve o resultado", () => {
+  it("[E4] finalize recruza (propagando o erro), NÃO chama radar_aplicar_situacao e anuncia a aplicação pelo cron", () => {
     const bloco = entre(edge, 'action === "finalize"', 'action === "status"');
-    const iRe = bloco.indexOf('admin.rpc("radar_recruzar_ja_cliente")');
-    const iSit = bloco.indexOf('admin.rpc("radar_aplicar_situacao", { p_lote: mes })');
-    expect(iRe).toBeGreaterThan(-1);
-    expect(iSit).toBeGreaterThan(iRe);
-    expect(bloco).toContain("if (eSit) throw eSit;");
-    expect(bloco).toContain("situacao });");
-    // Ordem de FATO: a foto só é aplicada depois do ja_cliente fresco — é o que impede cliente virar lead descartado.
-    expect(bloco.indexOf("if (eRe) throw eRe;")).toBeLessThan(iSit);
+    expect(bloco).toContain('admin.rpc("radar_recruzar_ja_cliente")');
+    expect(bloco).toContain("if (eRe) throw eRe;");
+    // Request da edge = 8s do PostgREST; a aplicação (minutos) é do job. Nenhuma chamada, em lugar nenhum da edge.
+    expect(edge).not.toContain("radar_aplicar_situacao");
+    expect(bloco).toContain('situacao_aplicacao: "cron"');
+    // O job lê a pendência pelo finalizado_em: o finalize continua gravando-o junto com o complete.
+    expect(bloco).toMatch(/status: "complete"[^}]*finalizado_em: new Date\(\)\.toISOString\(\)/);
   });
 
-  it("[E5] VERSAO bumpada para a situação cadastral e EFEITO cita o alerta ao gestor", () => {
-    expect(versao).toContain('export const VERSAO = "v1.2-situacao-cadastral";');
-    expect(versao).toContain("radar_aplicar_situacao");
+  it("[E5] VERSAO bumpada para a aplicação por cron e EFEITO diz que a edge não aplica", () => {
+    expect(versao).toContain('export const VERSAO = "v1.3-situacao-por-cron";');
+    expect(versao).toContain("radar-aplicar-situacao-diario");
   });
 
   it("[E6] carga: pede a lista à edge ANTES dos zips, aborta em resposta sem cnpjs (ausente ≠ vazio) e envia chunk_situacao antes do finalize", () => {
@@ -72,6 +72,8 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
     expect(iChunk).toBeLessThan(iFin);
     expect(carga).toContain("if (!r?.cnpjs) throw new Error(");
     expect(carga).toContain("if (!resp?.descartadas_por_motivo) throw new Error(");
+    // Contrato novo do finalize: a carga reconhece a aplicação pelo cron e só acusa edge antiga sem nenhum dos dois.
+    expect(carga).toContain('fin?.situacao_aplicacao === "cron"');
     // Um scan só por zip: as duas condições no mesmo read_csv, nunca uma segunda passada.
     expect(carga).toContain("WHERE (${filtroUniverso}) OR ${filtroConhecidos};");
     expect((carga.match(/read_csv\('\$\{WORK\}\/est\/\*'/g) ?? []).length).toBe(1);
