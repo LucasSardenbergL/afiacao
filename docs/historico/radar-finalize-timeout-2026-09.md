@@ -34,6 +34,12 @@ O passo (a) grava `rfb_situacao_lote` em **toda** empresa a cada lote (o lote mu
 
 O caminho de recuperação manual acima (2 metades da foto + finalize) continua válido se o job falhar: hoje basta re-rodar `SELECT public.radar_aplicar_situacao_pendente();` como `postgres` com `statement_timeout` folgado.
 
+### No ar (2026-10-27)
+
+- Migration aplicada pelo `db:aplicar` (recibo #714, ensaio antes); 2ª testemunha `psql-ro`: cron 241 `5 6 * * *` ativo `postgres` com o comando exato, md5 vivo = repo (`a99fd7db…` job, `0c52be46…` aviso), ACL do job só owner, 2026-05/08/09 marcados pelo bootstrap. (Esperou ~45 min a trava do `db:aplicar`, presa por um backend zumbi de outra sessão — não foi contornada.)
+- Edge `radar-ingest` v1.3 deployada pelo pacote `64466fb3e7d1` (só esta edge: as 3 financeiras pendentes na mesma hora são de outras entregas e uma delas tinha pré-condição não medida). Agente: 7/7 hashes de `7c25454cc`, 401 com credencial falsa. Sonda (`db/2026-10-27-sonda-disparo-radar-ingest-v1.3.sql`, recibo #720): **DEPLOY CONFIRMADO**, `v1.3-situacao-por-cron`, fonte `cac28750…`; `pendencias:deploy` → `radar-ingest CONFERE`.
+- Sensor de edição: `EDICAO_DETECTADA` só porque a resposta trouxe `edit_id`/`commit_sha` — o commit (`0b836c1f5`, e o `02b4d7d57`) é a regeneração de `src/integrations/supabase/types.ts` com as 3 colunas novas de `radar_ingest_state`, arquivo GERADO da lista tolerada (0 commits fora dela). Não revertido: reverter deixaria o tipo atrás do banco.
+
 ### Lote 2026-10 (segunda 26/10) — caiu ANTES da edge, por outro motivo
 
 A Action `radar-carga-mensal` (run 40321590205, agendada 06:00, iniciou 12:18 UTC) falhou no `unzip` de `Estabelecimentos4.zip`: download truncado (1 min contra ~9 min dos anteriores; "End-of-central-directory signature not found"). O lote 2026-10 nem foi aberto na edge (`status` só lista 2026-05/08/09) — o 57014 não chegou a acontecer. Re-disparar a carga só depois do deploy da edge v1.3.
