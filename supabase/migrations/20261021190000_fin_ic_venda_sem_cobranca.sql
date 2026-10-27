@@ -54,7 +54,7 @@ DECLARE
   v_chk text := (SELECT pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c
                   WHERE c.conrelid = 'public.fin_ic_matches'::regclass AND c.conname = 'fin_ic_matches_status_check');
 BEGIN
-  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '93632843a0f32c133994323d69d715c7') THEN
+  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', 'efe12b0db31edbb06a6e1c5158cd9eda') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
   IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -284,8 +284,13 @@ BEGIN
      WHERE m.status = 'intragrupo_sem_cobranca'
   ),
   -- Elegível = PROVADO que o CP compôs SÓ cmv do destino, com o snapshot fiel aos títulos atuais, e que
-  -- nada contradiz a marcação: uma linha informativa da edge com CR na mesma direção, de mesmo valor ou
-  -- emitido a até 30 dias do CP (ou sem data), pode ser a cobrança que a marcação diz não existir.
+  -- nada contradiz a marcação: um CR não cancelado da origem PARA o destino, de mesmo valor ou emitido a
+  -- até 30 dias do CP (ou sem data), pode ser a cobrança que a marcação diz não existir. O CR é do
+  -- destino quando (a) a edge o pôs numa linha informativa na mesma direção, ou (b) o mapa de identidade
+  -- (omie_customer_account_map por documento + company_cnpjs, que a edge confere contra o Omie) diz que
+  -- o cliente dele é o destino. (b) não depende das informativas: a edge as APAGA e reinsere em duas
+  -- requisições (janela, e INSERT que falha deixa a evidência sumida) e descarta CR sem emissão. Só tira o
+  -- CR de cena uma decisão sobre ele: par confirmado (é cobrança de OUTRO CP) ou desconsiderado.
   sc_eleg AS (
     SELECT u.*,
            (SELECT a.soma FROM atual a WHERE a.lado = 'd' AND a.company = u.empresa_destino AND a.chave = u.cp_chave) AS cp_cat_atual,
@@ -293,11 +298,23 @@ BEGIN
                      AND jsonb_typeof(u.sd_comp -> u.cp_chave -> 'cmv') = 'number'
                      AND ((u.sd_comp -> u.cp_chave) - 'cmv') = '{}'::jsonb
                 THEN (u.sd_comp -> u.cp_chave ->> 'cmv')::numeric END AS comp_d_valor,
-           EXISTS (SELECT 1 FROM fin_ic_matches m3 JOIN fin_contas_receber r3 ON r3.id = m3.cr_id
-                    WHERE m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
-                      AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino
+           EXISTS (SELECT 1 FROM fin_contas_receber r3
+                    WHERE r3.company = u.empresa_origem
+                      AND r3.status_titulo IS DISTINCT FROM 'CANCELADO'
                       AND (r3.valor_documento = u.cp_valor OR r3.data_emissao IS NULL
-                           OR abs(r3.data_emissao - u.cp_emissao) <= 30)) AS cr_aparecido
+                           OR abs(r3.data_emissao - u.cp_emissao) <= 30)
+                      AND (EXISTS (SELECT 1 FROM fin_ic_matches m3
+                                    WHERE m3.cr_id = r3.id
+                                      AND m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
+                                      AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino)
+                           OR (EXISTS (SELECT 1 FROM omie_customer_account_map om
+                                         JOIN company_cnpjs cc ON cc.cnpj_normalized = om.evidence_document_normalized
+                                        WHERE om.source = 'document' AND om.account = r3.company
+                                          AND om.omie_codigo_cliente = r3.omie_codigo_cliente
+                                          AND cc.company = u.empresa_destino)
+                               AND NOT EXISTS (SELECT 1 FROM fin_ic_matches m4
+                                                WHERE m4.cr_id = r3.id
+                                                  AND m4.status IN ('auto_matched', 'manual_matched', 'desconsiderado'))))) AS cr_aparecido
       FROM sem_cobranca u
      WHERE u.cp_no_mes IS TRUE
   ),
@@ -372,7 +389,7 @@ DECLARE
   v_trg  text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(g));
 BEGIN
   -- P1 corpos = os deste arquivo
-  IF v_rpc IS DISTINCT FROM '93632843a0f32c133994323d69d715c7' THEN
+  IF v_rpc IS DISTINCT FROM 'efe12b0db31edbb06a6e1c5158cd9eda' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
   IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN

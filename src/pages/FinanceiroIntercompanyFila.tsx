@@ -80,12 +80,12 @@ export default function FinanceiroIntercompanyFila() {
   };
 
   const handleResolve = async (
-    id: string,
+    m: IcMatch,
     status: IcMatch['status'],
     obs?: string
   ) => {
     try {
-      await resolve.mutateAsync({ id, status, observacao: obs });
+      await resolve.mutateAsync({ id: m.id, statusAtual: m.status, status, observacao: obs });
       toast.success(TOAST_ACAO[status] ?? 'Atualizado');
     } catch (err) {
       toast.error(`Erro: ${String((err as Error).message ?? err)}`);
@@ -218,7 +218,7 @@ export default function FinanceiroIntercompanyFila() {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    onClick={() => handleResolve(m.id, 'manual_matched')}
+                                    onClick={() => handleResolve(m, 'manual_matched')}
                                     disabled={resolve.isPending}
                                     className="h-7 text-xs"
                                   >
@@ -232,7 +232,7 @@ export default function FinanceiroIntercompanyFila() {
                                     variant="outline"
                                     onClick={() =>
                                       handleResolve(
-                                        m.id,
+                                        m,
                                         'intragrupo_sem_cobranca',
                                         'venda intragrupo sem cobrança (decisão do founder)'
                                       )
@@ -249,7 +249,7 @@ export default function FinanceiroIntercompanyFila() {
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    onClick={() => handleResolve(m.id, 'desconsiderado')}
+                                    onClick={() => handleResolve(m, 'desconsiderado')}
                                     disabled={resolve.isPending}
                                     className="h-7 text-xs"
                                   >
@@ -261,7 +261,7 @@ export default function FinanceiroIntercompanyFila() {
                                   <Button
                                     size="sm"
                                     variant="ghost"
-                                    onClick={() => handleResolve(m.id, 'sem_contrapartida')}
+                                    onClick={() => handleResolve(m, 'sem_contrapartida')}
                                     disabled={resolve.isPending}
                                     className="h-7 text-xs"
                                   >

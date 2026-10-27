@@ -24,6 +24,9 @@
 #       U8/U9/U12 CR aparecido (mesmo valor / ≤30 dias / sem data) · U10 CR desconsiderado e U10b na outra
 #       direção e U11 longe e de outro valor não bloqueiam · U14 marca com CR · U15 CP também num par ·
 #       U16 CP de outra empresa · U17 valor 0 · U18 categoria com 2 linhas · Z1 mês sem marca intacto
+#       U19–U24 CR aparecido pelo MAPA de identidade, sem linha informativa (apagada pela edge / CR sem
+#       emissão) pende; cancelado, outro destino, outra origem, desconsiderado e vínculo não-documento não ·
+#       U10c informativa para outro destino não bloqueia
 #   T   trigger: só master marca e desfaz; só de sem_contrapartida CP-only; carimbo do trigger; INSERT e
 #       DELETE recusados; títulos imutáveis; desfazer só para sem_contrapartida não resolvido
 #   G   gate: authenticated sem papel → 42501; employee, master e service_role leem; anon sem EXECUTE
@@ -44,7 +47,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
   SABOTAGENS="sinal:A1 so_receita:A1 coalesce_bruto:N1 nulo_parcial:N2 sem_escopo:C1 sem_status:S1 sem_pendente:P1 valor_igual:P2 mesmo_mes:P3a sem_categoria:P4 multi_linha:P9 cancelado:P5 status_nulo:P13 consist_d:P6 consist_r:P11 uso_unico:P7 teto:P8 empresa_do_titulo:P10 sem_gate:G1
     sc_resultado:U1 sc_cmv:U1 sc_teto:U3 sc_categoria:U4 sc_cancelado:U5 sc_status_nulo:U5b sc_consist:U6 sc_escopo:U7
-    sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10b sc_marca_cr:U14 sc_uso:U15
+    sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10c sc_marca_cr:U14 sc_uso:U15
+    sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_mapa_fonte:U24
     sc_empresa:U16 sc_valor:U17 sc_multi_linha:U18 sc_pendente:U4 sc_mes:Z1
     trg_master:T1 trg_carimbo:T2 trg_insert:T3 trg_cr:T4 trg_origem:T5 trg_fica:T6 trg_sai_master:T7 trg_sai_destino:T8
     trg_sai_limpa:T9 trg_delete:T10 trg_sem_delete:MIG1 check_sem_status:MIG1"
@@ -134,7 +138,14 @@ case "${SABOTAGEM:-}" in
   sc_cr_aparecido) sabotar "            AND NOT v.cr_aparecido" "" ;;
   sc_janela)      sabotar "OR abs(r3.data_emissao - u.cp_emissao) <= 30" "OR abs(r3.data_emissao - u.cp_emissao) <= 90" ;;
   sc_sem_data)    sabotar "OR r3.data_emissao IS NULL" "OR false" ;;
-  sc_informativos) sabotar "WHERE m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')" "WHERE m3.status IS NOT NULL" ;;
+  sc_informativos) sabotar "AND m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')" "AND m3.status IS NOT NULL" ;;
+  sc_mapa)        sabotar "                           OR (EXISTS (SELECT 1 FROM omie_customer_account_map om" "                           OR (false AND EXISTS (SELECT 1 FROM omie_customer_account_map om" ;;
+  sc_mapa_sem_data) sabotar "OR r3.data_emissao IS NULL" "OR false" ;;
+  sc_mapa_cancelado) sabotar "AND r3.status_titulo IS DISTINCT FROM 'CANCELADO'" "" ;;
+  sc_mapa_destino) sabotar "AND cc.company = u.empresa_destino" "AND cc.company IS NOT NULL" ;;
+  sc_origem_cr)   sabotar "WHERE r3.company = u.empresa_origem" "WHERE true" ;;
+  sc_mapa_decisao) sabotar "AND m4.status IN ('auto_matched', 'manual_matched', 'desconsiderado')" "AND false" ;;
+  sc_mapa_fonte)  sabotar "WHERE om.source = 'document' AND om.account = r3.company" "WHERE om.account = r3.company" ;;
   sc_direcao)     sabotar "AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino" "" ;;
   sc_marca_cr)    sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.usos_cp = 1" ;;
   sc_uso)         sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.marca_cr_id IS NULL" ;;
@@ -237,8 +248,22 @@ CREATE TABLE public.fin_dre_snapshots (
 CREATE TABLE public.fin_contas_receber (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company text NOT NULL,
   valor_documento numeric, data_emissao date, status_titulo text,
-  categoria_codigo text, categoria_descricao text, created_at timestamptz DEFAULT now()
+  categoria_codigo text, categoria_descricao text, created_at timestamptz DEFAULT now(),
+  omie_codigo_cliente bigint
 );
+-- Mapa de identidade (código Omie do cliente → documento) e CNPJs do grupo, com as colunas que a RPC lê
+-- (prod, psql-ro 2026-10-26). É a fonte do "CR aparecido" que NÃO depende das linhas informativas da edge.
+CREATE TABLE public.company_cnpjs (company text PRIMARY KEY, cnpj_normalized text NOT NULL);
+CREATE TABLE public.omie_customer_account_map (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text NOT NULL, omie_codigo_cliente bigint NOT NULL,
+  source text NOT NULL DEFAULT 'document', evidence_document_normalized text
+);
+INSERT INTO public.company_cnpjs VALUES ('colacor', '11111111000111'), ('colacor_sc', '22222222000122'), ('oben', '33333333000133');
+-- 777: cliente colacor no Omie da colacor_sc · 778: cliente oben no Omie da colacor_sc · 779: cliente
+-- colacor no Omie da oben · 780: cliente colacor, mas vínculo que não veio de documento.
+INSERT INTO public.omie_customer_account_map (account, omie_codigo_cliente, source, evidence_document_normalized) VALUES
+  ('colacor_sc', 777, 'document', '11111111000111'), ('colacor_sc', 778, 'document', '33333333000133'),
+  ('oben', 779, 'document', '11111111000111'), ('colacor_sc', 780, 'manual', '11111111000111');
 CREATE TABLE public.fin_contas_pagar (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company text NOT NULL,
   valor_documento numeric, data_emissao date, status_titulo text,
@@ -353,6 +378,14 @@ BEGIN
   END IF;
   RETURN v_m;
 END $$;
+-- CR com código de cliente e SEM linha em fin_ic_matches: a evidência que a edge apagou e não reinseriu
+-- (publicação DELETE→INSERT em 2 requisições) ou que nunca gravou (CR sem emissão sai do pool).
+CREATE FUNCTION public.t_cr_mapa(p_empresa text, p_emis date, p_valor numeric, p_codigo bigint,
+                                 p_status text DEFAULT 'RECEBIDO')
+RETURNS uuid LANGUAGE sql AS $$
+  INSERT INTO public.fin_contas_receber (company, valor_documento, data_emissao, status_titulo, categoria_descricao, omie_codigo_cliente)
+  VALUES (p_empresa, p_valor, p_emis, p_status, 'Venda', p_codigo) RETURNING id
+$$;
 -- CR intragrupo que a edge gravou sem CP (linha CR-only), na origem, fora do recorte se a data cair fora.
 CREATE FUNCTION public.t_cr_ic(p_origem text, p_destino text, p_emis date, p_valor numeric,
                                p_status text DEFAULT 'sem_contrapartida')
@@ -546,6 +579,42 @@ mes "SELECT public.t_titulos(2028, 7); SELECT public.t_sc('colacor_sc', 'colacor
      UPDATE public.fin_dre_snapshots SET detalhamento = jsonb_set(detalhamento, '{composicao_despesas,Compra mercadoria,despesas_operacionais}', '0')
       WHERE ano = 2028 AND mes = 7 AND company = 'colacor'"
 eq "U18 categoria do CP marcado compôs 2 linhas" "$(le_ec 2028 7)" "$PEND"
+# U19–U24: "CR aparecido" pelo mapa de identidade, sem linha informativa (achados 1 e 2 do Codex). Cada
+# CR sai da tabela depois do cenário: o critério "mesmo valor" não tem janela de data e contaminaria o resto.
+# O CR é emitido em 2032 (fora dos meses lidos) para não mexer na soma das categorias dos snapshots.
+mes "SELECT public.t_titulos(2031, 1); SELECT public.t_sc('colacor_sc', 'colacor', '2031-01-10'); SELECT public.t_calcular(2031, 1)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 777)")"
+eq "U19 CR do destino pelo mapa, sem linha na fila (a edge apagou e não reinseriu): pende" "$(le_ec 2031 1)" "$PEND"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 2); SELECT public.t_sc('colacor_sc', 'colacor', '2031-02-10'); SELECT public.t_calcular(2031, 2)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', NULL, 37, 777)")"
+eq "U20 CR do destino sem emissão (a edge o descarta, nunca vira linha): pende" "$(le_ec 2031 2)" "$PEND"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 3); SELECT public.t_sc('colacor_sc', 'colacor', '2031-03-10'); SELECT public.t_calcular(2031, 3)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 777, 'CANCELADO')")"
+eq "U21 CR do destino CANCELADO não é cobrança: não bloqueia" "$(le 2031 3)" "$UOK"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 4); SELECT public.t_sc('colacor_sc', 'colacor', '2031-04-10'); SELECT public.t_calcular(2031, 4)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 778)")"
+eq "U22 CR da origem para OUTRA empresa do grupo não bloqueia" "$(le 2031 4)" "$UOK"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 5); SELECT public.t_sc('colacor_sc', 'colacor', '2031-05-10'); SELECT public.t_calcular(2031, 5)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('oben', '2032-06-01', 100, 779)")"
+eq "U22b CR de OUTRA empresa para o destino não bloqueia" "$(le 2031 5)" "$UOK"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 6); SELECT public.t_sc('colacor_sc', 'colacor', '2031-06-10'); SELECT public.t_calcular(2031, 6)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 777)")"
+mes "INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, valor_origem, status) VALUES ('colacor_sc', 'colacor', '$CR', 100, 'desconsiderado')"
+eq "U23 CR do destino que o founder desconsiderou não bloqueia" "$(le 2031 6)" "$UOK"
+mes "DELETE FROM public.fin_ic_matches WHERE cr_id = '$CR'; DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 7); SELECT public.t_sc('colacor_sc', 'colacor', '2031-07-10'); SELECT public.t_calcular(2031, 7)"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 780)")"
+eq "U24 vínculo do mapa que não veio de documento não conta" "$(le 2031 7)" "$UOK"
+mes "DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 8); SELECT public.t_sc('colacor_sc', 'colacor', '2031-08-10'); SELECT public.t_calcular(2031, 8)"
+CR="$(Pq -c "SELECT public.t_cr_ic('colacor_sc', 'oben', '2032-06-01', 100)")"
+eq "U10c CR da origem numa informativa para OUTRO destino não bloqueia" "$(le 2031 8)" "$UOK"
+mes "DELETE FROM public.fin_ic_matches WHERE id = '$CR'"
 eq "U0 controle: o mês elegível segue elegível" "$(le 2027 1)" "$UOK"
 eq "Z1 mês sem venda sem cobrança: nada muda" "$(le 2026 2)" \
    "receita_bruta=3400/0/3400;cmv=2300/0/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
@@ -596,8 +665,10 @@ eq "T12 service_role (sem usuário) não marca → 42501" "$(estado "SET ROLE se
 eq "T13 customer: a RLS não deixa tocar (0 linhas)" "$(upd "$CLIENTE" "UPDATE public.fin_ic_matches SET status = 'sem_contrapartida' WHERE id = '$LA'")" "0"
 # A edge escreve como service_role, sem usuário: o trigger não pode atrapalhar o INSERT e o DELETE dela.
 EDGE="SET ROLE service_role; SET request.jwt.claim.role = 'service_role';"
+# CP próprio: na prod o UNIQUE parcial em cp_id recusaria uma 2ª linha com o CP de $LC.
+CPN="$(Pq -c "INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao) VALUES ('oben', 100, '2029-03-11', 'PAGO', 'Compra mercadoria') RETURNING id")"
 eq "T15 a edge (service_role) insere linha informativa com o trigger ligado" "$(Pq -c "$EDGE WITH i AS (INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cp_id, status)
-   SELECT 'colacor', 'oben', cp_id, 'sem_contrapartida' FROM public.fin_ic_matches WHERE id = '$LC' RETURNING 1) SELECT count(*) FROM i")" "1"
+   VALUES ('colacor', 'oben', '$CPN', 'sem_contrapartida') RETURNING 1) SELECT count(*) FROM i")" "1"
 # Como a edge apaga: pelos ids lidos antes (aqui, todas as linhas de 2029, a marcada inclusive), refiltrando
 # status informativo e resolvido_em no próprio DELETE (casamento.ts, apagarInformativos).
 IDS2029="$(Pq -c "SELECT string_agg(quote_literal(m.id::text), ',') FROM public.fin_ic_matches m JOIN public.fin_contas_pagar cp ON cp.id = m.cp_id WHERE cp.data_emissao BETWEEN '2029-01-01' AND '2029-12-31'")"

@@ -14,13 +14,15 @@ let linhas: unknown[] = [];
 let respostaUpdate: Resposta = { data: [{ id: 'm1' }], error: null };
 let isMaster = true;
 const updates: unknown[] = [];
+const filtrosUpdate: Array<[string, unknown]> = [];
 const toastSucesso = vi.fn();
 const toastErro = vi.fn();
 
 function builder() {
   let emUpdate = false;
   const q: Record<string, unknown> = {};
-  for (const m of ['select', 'order', 'limit', 'eq']) q[m] = () => q;
+  for (const m of ['select', 'order', 'limit']) q[m] = () => q;
+  q.eq = (coluna: string, valor: unknown) => { if (emUpdate) filtrosUpdate.push([coluna, valor]); return q; };
   q.update = (payload: unknown) => { emUpdate = true; updates.push(payload); return q; };
   q.then = (ok: (r: Resposta) => unknown) =>
     Promise.resolve(emUpdate ? respostaUpdate : { data: linhas, error: null }).then(ok);
@@ -61,6 +63,7 @@ beforeEach(() => {
   respostaUpdate = { data: [{ id: 'm1' }], error: null };
   isMaster = true;
   updates.length = 0;
+  filtrosUpdate.length = 0;
   toastSucesso.mockClear();
   toastErro.mockClear();
 });
@@ -111,5 +114,8 @@ describe('FinanceiroIntercompanyFila — venda sem cobrança', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Desfazer/ }));
     await waitFor(() => expect(toastSucesso).toHaveBeenCalledTimes(1));
     expect(updates).toEqual([expect.objectContaining({ status: 'sem_contrapartida' })]);
+    // Só desfaz se a linha AINDA está marcada: um 2º "Desfazer" (outra aba) atualiza 0 linhas e vira erro,
+    // em vez de regravar sem_contrapartida resolvido (que a edge trava para sempre).
+    expect(filtrosUpdate).toEqual([['id', 'm1'], ['status', 'intragrupo_sem_cobranca']]);
   });
 });

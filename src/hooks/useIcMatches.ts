@@ -62,6 +62,8 @@ export function useResolveIcMatch() {
   return useMutation({
     mutationFn: async (input: {
       id: string;
+      /** Status que a tela leu: a escrita só vale se a linha ainda estiver nele. */
+      statusAtual: IcMatch['status'];
       status: IcMatch['status'];
       observacao?: string;
     }) => {
@@ -75,10 +77,13 @@ export function useResolveIcMatch() {
           resolvido_em: new Date().toISOString(),
         })
         .eq('id', input.id)
+        // Sem o status lido, um 2º "Desfazer" (outra aba) regravava sem_contrapartida JÁ resolvido, e a
+        // edge trata linha resolvida como travada: o CP nunca mais casaria com um CR que aparecesse.
+        .eq('status', input.statusAtual)
         .select('id');
       if (error) throw error;
-      // 0 linhas não é sucesso: a RLS escondeu a linha ou a edge a refez entre a leitura e o clique (o id
-      // mudou). Sem isto o toast dizia "Aprovado" sobre uma decisão que não foi gravada.
+      // 0 linhas não é sucesso: a RLS escondeu a linha, a edge a refez entre a leitura e o clique (o id
+      // mudou) ou outra aba já mudou o status. Sem isto o toast dizia "Aprovado" sobre uma decisão que não foi gravada.
       if (!data || data.length !== 1) {
         throw new Error('a linha não foi atualizada (sem permissão ou já recalculada) — recarregue a fila');
       }
