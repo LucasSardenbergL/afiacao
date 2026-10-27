@@ -6,6 +6,7 @@
 // Vocabulário PRÓPRIO (aguardando/nao_iniciado, não pendente/cancelado): o gate G5 do
 // universo de pedidos caça cópias da lista de status de VENDA, e colidir com ela é ruído.
 import { CNPJ_RE } from '@/lib/radar/normalizar';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { ehMotivoDivergencia, type MotivoDivergencia } from '@/lib/radar/conflito-cadastro';
 
 export type EstadoItemLote =
@@ -102,7 +103,7 @@ export async function sincronizarDivergentes(
       ids.set(item.cnpj, (await registrar(item.cnpj, e.motivo, e.codigo, e.erro)).id);
     } catch (err) {
       if (ehDesmentido(err)) desmentidos.push(item.cnpj);
-      else falhas.push({ cnpj: item.cnpj, erro: err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err) });
+      else falhas.push({ cnpj: item.cnpj, erro: mensagemDeErro(err) ?? 'falha desconhecida' });
     }
   }
   const itens = lote.itens.map((i) =>

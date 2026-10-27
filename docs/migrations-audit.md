@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **701** custom migrations totais
-- **2258** objetos esperados (criados por estas migrations)
+- **702** custom migrations totais
+- **2266** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 844
-  - `rls_policy`: 484
-  - `index`: 296
+  - `function`: 849
+  - `rls_policy`: 485
+  - `index`: 297
   - `cron_job`: 199
-  - `table`: 197
+  - `table`: 198
   - `view`: 125
   - `trigger`: 109
   - `enum_value`: 4
@@ -5700,6 +5700,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_aplicar_situacao_pendente` | — |
 | `function` | `public.radar_avisar_lote` | — |
 | `cron_job` | `cron.radar-aplicar-situacao-diario` | — |
+
+### `20261027160000_radar_cadastro_conflitos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._radar_cadastro_conflito_gravar` | — |
+| `function` | `public.radar_registrar_cadastro_omie_v2` | — |
+| `function` | `public.radar_estado_cadastro_omie` | — |
+| `function` | `public.radar_registrar_conflito_cadastro` | — |
+| `function` | `public.radar_resolver_conflito_cadastro` | — |
+| `table` | `public.radar_cadastro_conflitos` | — |
+| `index` | `public.radar_cadastro_conflitos_aberto_uniq` | `radar_cadastro_conflitos` |
+| `rls_policy` | `public.radar_cadastro_conflitos_select_gestor` | `radar_cadastro_conflitos` |
 
 ## Próximos passos por status
 
