@@ -6,13 +6,18 @@
 // O CONTROLE é a linha real da ERVA MATE (prod, 2026-10-27): ele tem de dar true, senão a entrega não corta nada.
 import { ackSemRun } from "./catalogo-vazio.ts";
 import {
+  CAPA_POSTGREST,
   COLUNAS_HEADER,
+  type ContextoChave,
   formulaIdentica,
   type ItemStaging,
   type LinhaStaging,
   loteElegivel,
   MAX_FORMULAS_CHECADAS,
+  oficialReflete,
+  reenvioDescartavel,
   SELECT_ULTIMA,
+  semSnapshotDepois,
   ultimaDaChave,
 } from "./formula-identica.ts";
 import type { TintFormulaPayload } from "./staging-rows.ts";
@@ -193,11 +198,87 @@ Deno.test("loteElegivel: só 1..MAX fórmulas, todas com os campos obrigatórios
   assertEq(loteElegivel(undefined), false, "ausente");
   assertEq(loteElegivel({ 0: payload() }), false, "não-array");
   assertEq(loteElegivel([payload(), null]), false, "item null");
+  assertEq(loteElegivel([{ ...payload(), subcolecao: "SL" }]), false, "com subcoleção (oficial é por subcolecao_id NULL)");
+  assertEq(loteElegivel([{ ...payload(), subcolecao: null }]), true, "subcoleção null");
   for (const campo of ["cor_id", "cod_produto", "id_base", "id_embalagem"] as const) {
     const f = payload();
     delete f[campo];
     assertEq(loteElegivel([payload(), f]), false, `sem ${campo}`);
   }
+});
+
+Deno.test("itens gravados no teto da capa do PostgREST → caminho normal (podem estar truncados)", () => {
+  const f = payload();
+  f.itens = Array.from({ length: CAPA_POSTGREST }, (_, i) => ({ ordem: i + 1, qtd_ml: 0.1, id_corante: String(i) }));
+  const u = ultima();
+  u.raw_data = JSON.parse(JSON.stringify(f));
+  u.expected_item_count = CAPA_POSTGREST;
+  const gravados = f.itens.map((i) => ({ id_corante: i.id_corante, ordem: i.ordem, qtd_ml: i.qtd_ml }));
+  assertEq(identica(f, u, gravados), false, "1000 itens");
+  f.itens.pop();
+  u.raw_data = JSON.parse(JSON.stringify(f));
+  u.expected_item_count = CAPA_POSTGREST - 1;
+  assertEq(identica(f, u, gravados.slice(0, -1)), true, "999 itens (controle)");
+});
+
+// Oficial da ERVA MATE em 2026-10-27: 4 embalagens, ativas, escritas pela promoção 13:56:50 UTC.
+function oficiais() {
+  return Array.from({ length: 4 }, () => ({ updated_at: "2026-10-27T13:56:50.302369+00:00", desativada_em: null }));
+}
+
+function contexto(): ContextoChave {
+  return {
+    ultima: ultima(),
+    itens: itens(),
+    promocaoStatus: "promovido",
+    oficiais: oficiais(),
+    snapshotRecebidoEm: "2026-10-27T10:04:53.523537+00:00",
+  };
+}
+
+Deno.test("CONTROLE: decisão inteira da ERVA MATE (staging + oficial + snapshot) → descartável", () => {
+  assertEq(reenvioDescartavel(payload(), ACC, LOJA, contexto()), true, "controle");
+});
+
+Deno.test("oficial que NÃO reflete a staging → caminho normal", () => {
+  const casos: Record<string, (o: ReturnType<typeof oficiais>) => unknown[]> = {
+    "sem linha oficial (expansão rejeitada)": () => [],
+    "uma desativada (fantasma por snapshot, recriada idêntica)": (o) => [...o.slice(1), { ...o[0], desativada_em: "2026-10-27T11:00:00+00:00" }],
+    "uma escrita ANTES da staging (run promovido sem aplicar esta linha)": (o) => [...o.slice(1), { ...o[0], updated_at: "2026-10-27T13:40:00+00:00" }],
+    "escrita no MESMO milissegundo da staging": (o) => [...o.slice(1), { ...o[0], updated_at: "2026-10-27T13:45:17.649+00:00" }],
+    "updated_at ilegível": (o) => [...o.slice(1), { ...o[0], updated_at: null }],
+    "no teto da capa": (o) => Array.from({ length: CAPA_POSTGREST }, () => o[0]),
+  };
+  for (const [nome, mutar] of Object.entries(casos)) {
+    const c = contexto();
+    c.oficiais = mutar(oficiais()) as ContextoChave["oficiais"];
+    assertEq(oficialReflete(c.ultima, c.oficiais), false, nome);
+    assertEq(reenvioDescartavel(payload(), ACC, LOJA, c), false, `decisão: ${nome}`);
+  }
+  const u = ultima();
+  u.created_at = "não é data";
+  assertEq(oficialReflete(u, oficiais()), false, "created_at da staging ilegível");
+});
+
+Deno.test("keys-snapshot recebido depois da staging → caminho normal; nunca houve → segue", () => {
+  const u = ultima(); // created_at 13:45:17.649149
+  assertEq(semSnapshotDepois(u, "2026-10-27T10:04:53.523537+00:00"), true, "snapshot antes");
+  assertEq(semSnapshotDepois(u, null), true, "nenhum snapshot");
+  assertEq(semSnapshotDepois(u, "2026-10-27T14:00:00+00:00"), false, "snapshot depois");
+  assertEq(semSnapshotDepois(u, "2026-10-27T13:45:17.649+00:00"), false, "mesmo milissegundo");
+  assertEq(semSnapshotDepois(u, undefined), false, "snapshot ilegível");
+  const c = contexto();
+  c.snapshotRecebidoEm = "2026-10-27T14:00:00+00:00";
+  assertEq(reenvioDescartavel(payload(), ACC, LOJA, c), false, "decisão com snapshot depois");
+});
+
+Deno.test("decisão: staging diferente ou run não promovido derruba mesmo com oficial ok", () => {
+  const c = contexto();
+  c.promocaoStatus = "pendente";
+  assertEq(reenvioDescartavel(payload(), ACC, LOJA, c), false, "pendente");
+  const f = payload();
+  f.volume_final_ml = 3600;
+  assertEq(reenvioDescartavel(f, ACC, LOJA, contexto()), false, "volume");
 });
 
 Deno.test("select da última staging traz o run, a ordem e todas as colunas comparadas", () => {

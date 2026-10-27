@@ -25,11 +25,13 @@ import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.
 // Lote de /formulas que só reenvia fórmula idêntica à última staging: mesmo ack, sem run
 // (formula-identica_test.ts) — NÃO reimplementar inline.
 import {
-  formulaIdentica,
+  CAPA_POSTGREST,
   type ItemStaging,
   JANELA_ULTIMAS,
+  type LinhaOficial,
   type LinhaStaging,
   loteElegivel,
+  reenvioDescartavel,
   SELECT_ULTIMA,
   ultimaDaChave,
 } from "./formula-identica.ts";
@@ -277,10 +279,25 @@ Deno.serve(async (req) => {
     return json(body, status);
   }
 
-  /** true só se TODA fórmula do lote é idêntica à última staging da chave, com o run dela promovido
+  /** true só se TODA fórmula do lote é idêntica à última staging da chave E o oficial já a reflete
    *  (formula-identica.ts). Qualquer erro de consulta ou ausência → false, e o lote segue o caminho normal. */
   async function reenvioIdentico(agent: { account: string; storeCode: string }, formulas: unknown): Promise<boolean> {
     if (!loteElegivel(formulas)) return false;
+    // O oficial é por conta e a staging por loja: com 2+ lojas, outra poderia ter sobrescrito a chave.
+    const { data: lojas, error: errLojas } = await sb.from("tint_integration_settings")
+      .select("id")
+      .eq("account", agent.account)
+      .limit(2);
+    if (errLojas || !lojas || lojas.length !== 1) return false;
+    const { data: snaps, error: errSnaps } = await sb.from("tint_keys_snapshots")
+      .select("created_at")
+      .eq("account", agent.account)
+      .eq("entity", "formulas")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (errSnaps || !snaps) return false;
+    const snapshotRecebidoEm = snaps.length > 0 ? snaps[0].created_at : null;
+
     for (const f of formulas) {
       const { data: linhas, error: errLinhas } = await sb.from("tint_staging_formulas")
         .select(SELECT_ULTIMA)
@@ -305,9 +322,37 @@ Deno.serve(async (req) => {
         .eq("id", ultima.sync_run_id)
         .maybeSingle();
       if (errRun || !run) return false;
-      if (!formulaIdentica(f, agent.account, agent.storeCode, ultima, itens as ItemStaging[], run.promocao_status)) {
-        return false;
-      }
+      // Chave oficial: produto e base resolvidos como na promoção (account + código Sayersystem).
+      const { data: produtos, error: errProd } = await sb.from("tint_produtos")
+        .select("id")
+        .eq("account", agent.account)
+        .eq("cod_produto", f.cod_produto)
+        .limit(2);
+      if (errProd || !produtos || produtos.length !== 1) return false;
+      const { data: bases, error: errBase } = await sb.from("tint_bases")
+        .select("id")
+        .eq("account", agent.account)
+        .eq("id_base_sayersystem", f.id_base)
+        .limit(2);
+      if (errBase || !bases || bases.length !== 1) return false;
+      const { data: oficiais, error: errOf } = await sb.from("tint_formulas")
+        .select("updated_at, desativada_em")
+        .eq("account", agent.account)
+        .eq("cor_id", f.cor_id)
+        .eq("produto_id", produtos[0].id)
+        .eq("base_id", bases[0].id)
+        .eq("personalizada", f.personalizada || false)
+        .is("subcolecao_id", null)
+        .limit(CAPA_POSTGREST);
+      if (errOf || !oficiais) return false;
+      const ctx = {
+        ultima,
+        itens: itens as ItemStaging[],
+        promocaoStatus: run.promocao_status,
+        oficiais: oficiais as LinhaOficial[],
+        snapshotRecebidoEm,
+      };
+      if (!reenvioDescartavel(f, agent.account, agent.storeCode, ctx)) return false;
     }
     return true;
   }
@@ -515,7 +560,7 @@ Deno.serve(async (req) => {
 
       // Reenvio da personalizada mais recente a cada ciclo do conector 0.2.5 (HWM com margem): antes
       // abria run de 1 registro + promoção do par inteiro (~320 MB lidos), ~130/dia (medido 2026-10-27).
-      // Só com TODA fórmula idêntica à última staging da chave; mesmo ack, sem run.
+      // Só com TODA fórmula idêntica à última staging da chave e o oficial já refletindo; mesmo ack, sem run.
       if (await reenvioIdentico(agent, body.formulas)) {
         return json(ackSemRun(idempotencyKey, "fórmula idêntica à última staging da chave", body.formulas.length));
       }

@@ -10,26 +10,37 @@
 // Esse lote agora recebe o MESMO ack do catálogo vazio (catalogo-vazio.ts), sem run e sem fila.
 //
 // Money-path (precisão > recall): o conector cacheia o hash no 200, então um falso "idêntico" seria um dado
-// perdido calado; um falso "diferente" custa só I/O. Por isso o descarte exige, para CADA fórmula do lote:
+// perdido calado; um falso "diferente" custa só I/O. Igualdade de STAGING não basta (Codex, 2026-10-27): o que
+// importa é o OFICIAL já refletir aquela staging. Por isso o descarte exige, para CADA fórmula do lote:
 //   · a última staging da MESMA chave da promoção — (account, store_code, cor_id, cod_produto, id_base,
 //     COALESCE(subcolecao,''), personalizada), ordem created_at DESC, id DESC (= `_formulas_latest`);
 //   · raw_data idêntico ao payload (comparação canônica, ordem de chave irrelevante, ausente ≠ null);
 //   · cada coluna do header que a promoção lê idêntica à que o builder de HOJE gravaria (pega linha
 //     gravada por uma versão antiga da edge, ex. is_base_pura antes da Fase 1d);
 //   · os itens gravados (id_corante, ordem, qtd_ml) idênticos, como multiconjunto, aos que seriam gravados;
-//   · o run dessa linha com promocao_status = 'promovido' (fila pendente ou run fora da fila → caminho normal).
-// Lote com fórmula inválida, vazio ou maior que MAX_FORMULAS_CHECADAS segue o caminho normal.
-// Com tudo igual, o estado após o descarte é o mesmo de uma fórmula cujo hash o conector cacheou (o caminho
-// das outras ~135 mil): a staging da chave fica como está e a promoção seguinte do par a relê.
+//   · o run dessa linha com promocao_status = 'promovido' (fila pendente ou run fora da fila → caminho normal);
+//   · as linhas OFICIAIS da chave (tint_formulas, subcolecao_id NULL) existindo, TODAS ativas e TODAS escritas
+//     DEPOIS dessa staging — o upsert da promoção grava updated_at = now() e desativada_em = NULL, então isso
+//     prova que uma promoção posterior aceitou a chave. Pega a fórmula desativada por keys-snapshot e recriada
+//     idêntica na fonte, a expansão rejeitada e o run "promovido" que não aplicou esta linha;
+//   · nenhum keys-snapshot de fórmulas recebido depois dessa staging (o filtro de fantasma da promoção compara
+//     `sf.created_at < snapshot recebido`): o 1º reenvio após cada snapshot diário segue o caminho normal;
+//   · a conta com UMA loja só: o oficial é por conta e a staging por loja (outra loja poderia ter sobrescrito).
+// Fica de fora, de propósito: fórmula com subcoleção, lote vazio, inválido ou maior que MAX_FORMULAS_CHECADAS.
+// Resíduo aceito: mudar volume_ml de embalagem não reexpande as doses — limitação conhecida da promoção, que
+// já vale para as ~135 mil fórmulas cujo hash o conector cacheou (docs/agent/tintometrico.md).
 //
 // Testável com `deno test --no-remote` (formula-identica_test.ts) — não reimplementar inline no index.
 import { montarStagingFormulaRow, montarStagingItemRows, type TintFormulaPayload } from "./staging-rows.ts";
 
-/** Teto de fórmulas checadas (3 consultas cada). O laço medido é de 1; lote maior segue o caminho normal. */
+/** Teto de fórmulas checadas (6 consultas cada). O laço medido é de 1; lote maior segue o caminho normal. */
 export const MAX_FORMULAS_CHECADAS = 5;
 
 /** Quantas linhas mais recentes da chave sem subcoleção ler; a 1ª da subcoleção certa é a última dela. */
 export const JANELA_ULTIMAS = 20;
+
+/** Capa silenciosa do PostgREST: um resultado desse tamanho pode estar truncado → caminho normal. */
+export const CAPA_POSTGREST = 1000;
 
 /** Colunas do header que a promoção lê de tint_staging_formulas (`_formulas_latest`), além do raw_data. */
 export const COLUNAS_HEADER = [
@@ -71,13 +82,16 @@ export function jsonCanonico(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** O lote é candidato: array de 1..MAX fórmulas, todas com os campos que o caminho normal exige. */
+/** O lote é candidato: array de 1..MAX fórmulas, todas com os campos que o caminho normal exige e sem
+ *  subcoleção. */
 export function loteElegivel(formulas: unknown): formulas is TintFormulaPayload[] {
   if (!Array.isArray(formulas) || formulas.length === 0 || formulas.length > MAX_FORMULAS_CHECADAS) return false;
   return formulas.every((f) =>
     f !== null && typeof f === "object" && !Array.isArray(f) &&
     !!(f as TintFormulaPayload).cor_id && !!(f as TintFormulaPayload).cod_produto &&
-    !!(f as TintFormulaPayload).id_base && !!(f as TintFormulaPayload).id_embalagem
+    !!(f as TintFormulaPayload).id_base && !!(f as TintFormulaPayload).id_embalagem &&
+    // O oficial é conferido por subcolecao_id IS NULL: com subcoleção, caminho normal.
+    !(f as TintFormulaPayload).subcolecao
   );
 }
 
@@ -110,9 +124,55 @@ export function formulaIdentica(
   }
 
   const itensEsperados = montarStagingItemRows(f, ultima.id, "").map((r) => projetarItem(r as unknown as ItemStaging));
+  if (itensGravados.length >= CAPA_POSTGREST) return false;
   const gravados = itensGravados.map(projetarItem);
   if (itensEsperados.length !== gravados.length) return false;
   itensEsperados.sort();
   gravados.sort();
   return itensEsperados.every((x, i) => x === gravados[i]);
+}
+
+/** Linha de tint_formulas (oficial) da chave, como o PostgREST a devolve. */
+export interface LinhaOficial {
+  updated_at: unknown;
+  desativada_em: unknown;
+}
+
+function instante(v: unknown): number {
+  return typeof v === "string" ? Date.parse(v) : NaN;
+}
+
+/** O oficial da chave reflete a staging: ≥1 linha, todas ativas e todas escritas DEPOIS dela.
+ *  Data ilegível ou resultado no teto da capa → false. Empate no milissegundo → false. */
+export function oficialReflete(ultima: LinhaStaging, oficiais: LinhaOficial[]): boolean {
+  const desde = instante(ultima.created_at);
+  if (Number.isNaN(desde) || oficiais.length === 0 || oficiais.length >= CAPA_POSTGREST) return false;
+  return oficiais.every((o) => o.desativada_em === null && instante(o.updated_at) > desde);
+}
+
+/** Nenhum keys-snapshot de fórmulas recebido depois da staging (null = nunca houve snapshot).
+ *  Empate no milissegundo conta como "depois" → false. */
+export function semSnapshotDepois(ultima: LinhaStaging, snapshotRecebidoEm: unknown): boolean {
+  const desde = instante(ultima.created_at);
+  if (Number.isNaN(desde)) return false;
+  if (snapshotRecebidoEm === null) return true;
+  const snap = instante(snapshotRecebidoEm);
+  return !Number.isNaN(snap) && snap < desde;
+}
+
+/** Tudo que a edge leu sobre UMA chave para decidir o descarte. */
+export interface ContextoChave {
+  ultima: LinhaStaging;
+  itens: ItemStaging[];
+  promocaoStatus: unknown;
+  oficiais: LinhaOficial[];
+  snapshotRecebidoEm: unknown;
+}
+
+/** A decisão inteira de uma fórmula: idêntica à última staging E o oficial já a reflete E nenhum
+ *  snapshot depois. Só com as três o ack sem run sai. */
+export function reenvioDescartavel(f: TintFormulaPayload, account: string, storeCode: string, c: ContextoChave): boolean {
+  return formulaIdentica(f, account, storeCode, c.ultima, c.itens, c.promocaoStatus) &&
+    oficialReflete(c.ultima, c.oficiais) &&
+    semSnapshotDepois(c.ultima, c.snapshotRecebidoEm);
 }
