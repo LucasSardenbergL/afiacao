@@ -1,6 +1,6 @@
 -- ============================================================
 -- fin_titulo_baixas_cp_mapa(p_company) — baixa REAL derivada (v_titulo_baixas, tipo CP) numa
--- ÚNICA avaliação, irmã da fin_titulo_baixas_cp_mapa (migration 20261026220000), para o
+-- ÚNICA avaliação, irmã da fin_titulo_baixas_cr_mapa (migration 20261019110100), para o
 -- DRE-caixa da omie-financeiro (carregarBaixaMap).
 --
 -- Medido em prod (psql-ro, 2026-10-26): a omie-financeiro lia v_titulo_baixas por keyset em
