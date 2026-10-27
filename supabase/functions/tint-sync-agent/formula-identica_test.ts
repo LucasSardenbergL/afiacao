@@ -140,6 +140,8 @@ Deno.test("itens gravados diferentes do payload → caminho normal", () => {
   const mutacoes: Record<string, (it: ItemStaging[]) => ItemStaging[]> = {
     "item faltando (insert parcial)": (it) => it.slice(1),
     "item sobrando": (it) => [...it, { id_corante: "12", ordem: 6, qtd_ml: 0.1 }],
+    // "9" ordena DEPOIS de todos: só a contagem o pega (o every percorre os esperados).
+    "item sobrando no fim da ordenação": (it) => [...it, { id_corante: "9", ordem: 6, qtd_ml: 0.1 }],
     "qtd gravada diferente": (it) => it.map((i) => (i.id_corante === "8" ? { ...i, qtd_ml: 36.2 } : i)),
     "corante gravado vazio": (it) => it.map((i) => (i.id_corante === "8" ? { ...i, id_corante: "" } : i)),
     "ordem gravada null": (it) => it.map((i) => (i.id_corante === "8" ? { ...i, ordem: null } : i)),
@@ -168,6 +170,9 @@ Deno.test("raw_data: ordem de chave é irrelevante, ausente ≠ null", () => {
   const u2 = ultima();
   (u2.raw_data as Record<string, unknown>).extra = null;
   assertEq(identica(payload(), u2), false, "raw_data com chave a mais");
+  const u3 = ultima();
+  (u3.raw_data as Record<string, unknown>).preco_final = null;
+  assertEq(identica(payload(), u3), false, "null gravado vs ausente no payload");
 });
 
 Deno.test("ultimaDaChave: 1ª linha (DESC) da MESMA COALESCE(subcolecao,'')", () => {

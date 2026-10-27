@@ -59,7 +59,8 @@ export interface ItemStaging {
   qtd_ml: unknown;
 }
 
-/** JSON com chaves ordenadas em todo nível; `undefined` vira null (o banco grava ausente como NULL). */
+/** JSON com chaves ordenadas em todo nível; `undefined` vira null (coluna ausente no builder = NULL no banco).
+ *  Chave AUSENTE continua ≠ chave com null: o conjunto de chaves entra na string (raw_data jsonb preserva). */
 export function jsonCanonico(v: unknown): string {
   if (v === undefined || v === null) return "null";
   if (Array.isArray(v)) return `[${v.map(jsonCanonico).join(",")}]`;
@@ -68,16 +69,6 @@ export function jsonCanonico(v: unknown): string {
     return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${jsonCanonico(o[k])}`).join(",")}}`;
   }
   return JSON.stringify(v);
-}
-
-/** raw_data é jsonb: preserva chave ausente vs null. Aqui ausente ≠ null (na dúvida, caminho normal). */
-function jsonCanonicoEstrito(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(jsonCanonicoEstrito).join(",")}]`;
-  if (v !== null && typeof v === "object") {
-    const o = v as Record<string, unknown>;
-    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${jsonCanonicoEstrito(o[k])}`).join(",")}}`;
-  }
-  return v === undefined ? "undefined" : JSON.stringify(v);
 }
 
 /** O lote é candidato: array de 1..MAX fórmulas, todas com os campos que o caminho normal exige. */
@@ -111,7 +102,7 @@ export function formulaIdentica(
   promocaoStatus: unknown,
 ): boolean {
   if (promocaoStatus !== "promovido") return false;
-  if (jsonCanonicoEstrito(ultima.raw_data) !== jsonCanonicoEstrito(f)) return false;
+  if (jsonCanonico(ultima.raw_data) !== jsonCanonico(f)) return false;
 
   const esperado = montarStagingFormulaRow(f, "", account, storeCode);
   for (const col of COLUNAS_HEADER) {
