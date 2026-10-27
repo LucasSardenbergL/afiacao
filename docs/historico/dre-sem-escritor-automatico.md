@@ -180,3 +180,26 @@ A mudança:
   lançava RangeError fora do domínio fechado.
 - Ordem de deploy: migration → edge. A v1.8 sem a RPC fecharia em `PGRST202`/`42883`, sem gravar
   nada.
+
+#### Deploy (v1.9, 2026-10-27) e prova de DRE-caixa idêntico
+
+- O `pendencias:pacote omie-financeiro` **recusou a v1.8** com exit 3: o nome da RPC era indireto
+  (`db.rpc(fonte, …)`), e o pré-flight só enxerga `.rpc("literal")`. A recusa é fail-closed. O
+  #3349 trocou para um nome literal por ramo, com VERSAO `v1.9-baixa-map-rpc-literal`; a v1.8 nunca
+  foi servida. Lição: **nome de RPC em edge é sempre literal no call-site.**
+- Linha de base B0, com a v1.7 no ar: 6 recálculos de caixa disparados como o cron (set/out × 3
+  empresas), todos `complete`. Depois, o deploy pelo pacote: o Lovable conferiu 13/13 hashes e não
+  editou nada. O `lovable-sensor-edicao` acusou `commit_sha` porque o único commit é a regeneração
+  tolerada do `types.ts`; nenhum arquivo de `supabase/` mudou. A sonda devolveu **DEPLOY
+  CONFIRMADO** (`v1.9-baixa-map-rpc-literal`, fonte `107566e8…`). Em seguida, B1 com o mesmo
+  disparo.
+
+| | colacor | oben | colacor_sc |
+|---|---|---|---|
+| v1.7 (keyset), por chamada | 39 s | 25 s | 9 s |
+| v1.9 (RPC), por chamada | 2,1 s | 1,7 s | 0,9 s |
+
+- **Resultado idêntico:** nas 6 linhas os 20 campos numéricos do snapshot são iguais. O `detalhamento`
+  difere só em `contrato.motor` (a versão da edge): com `motor` de volta para a v1.7, o md5 dele bate
+  com o B0 nas 6 linhas. As fontes não mudaram entre B0 e B1 (`count` e `max(updated_at)` de
+  `fin_movimentacoes`, `fin_contas_receber` e `fin_contas_pagar`).
