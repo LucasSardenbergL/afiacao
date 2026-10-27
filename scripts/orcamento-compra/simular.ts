@@ -52,7 +52,7 @@ export const PREMISSAS: string[] = [
   'títulos Sayerlack identificados pelo fornecedor (todos os ids do CP, sem janela de data) não abatem o ritmo não-Sayerlack (R34)',
   'semana do snapshot com total_saidas maior que o detalhe: a diferença sai no 1º dia da semana (R42)',
   'continuidade do motor = compra disparada × (1 + frete) por dia útil nos 90 dias anteriores (R54); se o 1º disparado é mais recente, média por dia útil desde ele; sem disparado anterior = ausência continuidade_sem_historico (R50); a compra aceita consome a provisão, mais cedo primeiro (R40)',
-  'disparado ENCERRADO no Omie, APROVADO por nome em r59-exclusoes-aprovadas.ts (R59 v2: o filtro do Omie devolve o ciclo concluído, não só o cancelado; candidato não aprovado fica no caixa e sai em pendentesR59), com identificador Sayerlack (cContrato ou protocolo) e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador, em qualquer data) sai do compromisso (R59); sem identificador nunca sai (o substituto R58 não prova ausência); cContrato COMPOSTO do próprio pedido Omie (2130311/2130322, pedido desdobrado na Sayerlack) nunca sai — vínculo NF↔pedido cego, listado em retidosCompostoR59; identificador e evidência casam também por componente (separados por barra, ponto e vírgula ou vírgula); evidência contrato↔NF = itensRecebimento + cabeçalho de linha com NF + recebimento_associacao_sombra (persistente só desde 2026-10-18): NF de vários pedidos gravada na linha de OUTRO pedido antes disso, cujo raw_data o completo reescreveu, não é vista — por isso cada exclusão sai listada em foraDoCaixaR59 para revisão; só vale com a ÚLTIMA tentativa da passada de encerrados PUBLICADA, habilitada (após os controles positivo/negativo) e de no máximo 48h; o conjunto vem da tabela de publicação ∩ a coluna. LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
+  'disparado ENCERRADO no Omie, APROVADO por nome em r59-exclusoes-aprovadas.ts (R59 v2: o filtro do Omie devolve o ciclo concluído, não só o cancelado; candidato não aprovado fica no caixa e sai em pendentesR59), com identificador Sayerlack (cContrato ou protocolo) e sem evidência de NF (tracking, vínculo R57/R58 ou NF de qualquer identificador, em qualquer data) sai do compromisso (R59); sem identificador nunca sai (o substituto R58 não prova ausência); cContrato COMPOSTO do próprio pedido Omie (2130311/2130322, pedido desdobrado na Sayerlack) nunca é candidato à exclusão R59 — vínculo NF↔pedido cego, listado em retidosCompostoR59; a conciliação normal (R57) segue valendo para ele; identificador e evidência casam também por componente (separados por barra, ponto e vírgula ou vírgula), e o componente só serve para VETAR; evidência contrato↔NF = itensRecebimento + cabeçalho de linha com NF + recebimento_associacao_sombra (persistente só desde 2026-10-18): NF de vários pedidos gravada na linha de OUTRO pedido antes disso, cujo raw_data o completo reescreveu, não é vista — por isso cada exclusão sai listada em foraDoCaixaR59 para revisão; só vale com a ÚLTIMA tentativa da passada de encerrados PUBLICADA, habilitada (após os controles positivo/negativo) e de no máximo 48h; o conjunto vem da tabela de publicação ∩ a coluna. LOOK-AHEAD: o sinal é o de HOJE (encerrado_omie_em é quando a passada de encerrados do sync o viu, não a data real do encerramento, que o Omie não expõe) — o ciclo anterior ao encerramento já o trata como fora do caixa; com NF segue a conciliação normal; a continuidade do motor (R54) segue contando o encerrado (conservador)',
   'pai split_em_filhos com filho disparado conta como disparado (R45); momento as-of do ciclo = horario_geracao (R52)',
   'NF de disparado sem NF no tracking (R57/R58): por contrato só se TODO identificador Sayerlack do pedido (cContrato, protocolo do portal) tem NF — reenvio sem NF pode estar em aberto; por substituto só se o pedido não tem identificador Sayerlack, o manual tem itens idênticos em até 21 dias, NF por contrato e dono fora do motor, com unicidade; a NF só vale se faturada ANTES do dia do ciclo; conciliar continua exigindo título as-of',
   'obsolescência = 0 no custo de carregamento',
@@ -364,6 +364,12 @@ export function candidatoR59(f: Fatos, p: Fatos['disparados'][number]): boolean 
   // cego (0 de 14 compostos com NF na própria linha; o 1230 "Atendido total" no portal sem NF nenhuma no banco):
   // ausência de NF não prova nada → fica no caixa, listado em retidosCompostoR59 (abstenção, não prova de NF)
   if (contratoCompostoR59(f, p)) return false;
+  return semEvidenciaNfR59(f, p);
+}
+
+/** R59: encerrado, com identificador Sayerlack e sem NENHUMA evidência de NF — o critério antes do veto de composto. */
+function semEvidenciaNfR59(f: Fatos, p: Fatos['disparados'][number]): boolean {
+  if (p.encerrado_omie !== true) return false;
   // (o vínculo R57/R58 não entra: por contrato ele é coberto pelos identificadores abaixo, e o substituto só
   // existe para pedido SEM identificador, que nunca sai — a falsificação mostrou a camada redundante)
   if ((p.nfs ?? []).length > 0) return false;
@@ -377,11 +383,12 @@ export function candidatoR59(f: Fatos, p: Fatos['disparados'][number]): boolean 
   return ![...ids].some((c) => comNf.has(c));
 }
 
-/** R59: o texto inteiro aparado + as partes por '/', ';' ou ','. Espaço NÃO separa ('lucas 220126' é texto livre).
- *  Só acrescenta casamentos ao da string inteira — usado apenas para VETAR candidato (lado conservador). */
+/** R59: o texto inteiro aparado (SEMPRE, mesmo vazio — preserva o casamento da string inteira de antes; Codex
+ *  retroativo 2026-10-26 P3) + as partes não vazias por '/', ';' ou ','. Espaço NÃO separa ('lucas 220126' é texto
+ *  livre). Só acrescenta casamentos ao da string inteira — usado apenas para VETAR candidato (lado conservador). */
 export function componentesR59(id: string): string[] {
   const inteiro = id.trim();
-  return [inteiro, ...inteiro.split(/[/;,]/).map((x) => x.trim())].filter((x) => x !== '');
+  return [inteiro, ...inteiro.split(/[/;,]/).map((x) => x.trim()).filter((x) => x !== '')];
 }
 
 /** R59: o cContrato do PRÓPRIO pedido Omie (qualquer das duas coleções) tem '/' — pedido desdobrado na Sayerlack. */
@@ -858,8 +865,8 @@ export function backtest(f: Fatos, cfg: Config) {
     pendentesR59: f.disparados.filter((p) => candidatoR59(f, p) && !aprovadoR59(f, p))
       .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, momento: p.momento, valor_total: p.valor_total, identificadores: identificadoresR59(f, p) }))
       .sort((a, b) => a.id - b.id),
-    /** R59: encerrados sem evidência de NF RETIDOS no caixa por contrato composto (abstenção — vínculo cego, não NF provada) */
-    retidosCompostoR59: f.disparados.filter((p) => p.encerrado_omie === true && (p.nfs ?? []).length === 0 && contratoCompostoR59(f, p))
+    /** R59: encerrados que seriam candidatos (identificador, nenhuma evidência de NF) RETIDOS no caixa por contrato composto (abstenção — vínculo cego, não NF provada) */
+    retidosCompostoR59: f.disparados.filter((p) => contratoCompostoR59(f, p) && semEvidenciaNfR59(f, p))
       .map((p) => ({ id: p.id, omie_pedido: p.omie_pedido ?? null, protocolo: p.protocolo ?? null, identificadores: identificadoresR59(f, p) }))
       .sort((a, b) => a.id - b.id),
     ciclos,
