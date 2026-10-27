@@ -223,3 +223,9 @@ A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
   - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
     O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
 
+
+**Deploy da correção — FEITO pela sessão (PR #3359 mergeado 15:46Z em `75dbcc8`):** colagem do
+`pendencias:prompt`, 34/34 hashes, 2× **Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope:
+relé `omie-vendas-sync` (#729) e `--so-disparo` `omie-sync` (#731, DEPLOY CONFIRMADO). `pendencias:deploy`:
+**CONFERE** para `omie-sync` v1.9-retorno-documento-estrito e `omie-vendas-sync` v1.26-retorno-documento-estrito.
+Sensor: SEM_EDICAO. **A revisão independente do #3311 está fechada.**
