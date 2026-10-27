@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 699
+-- Total de custom migrations: 701
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -763,7 +763,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
   ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
   ('20261026214720', 'tint_receita_versoes', '20261026214720_tint_receita_versoes.sql'),
-  ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql')
+  ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql'),
+  ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
+  ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2983,7 +2985,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
   ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
   ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
-  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes')
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5251,7 +5257,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
   ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
   ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
-  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes')
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
 )
 SELECT
   e.migration,
@@ -5279,7 +5289,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 155.
+-- Funções redefinidas com corpo extraível: 156.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5859,6 +5869,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
+  ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
+  ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),

@@ -12007,6 +12007,9 @@ export type Database = {
           iniciado_em: string
           mes_referencia: string
           novos: number | null
+          situacao_aplicada_em: string | null
+          situacao_aplicada_fechamento: string | null
+          situacao_resultado: Json | null
           status: string
           total_recebido: number
         }
@@ -12017,6 +12020,9 @@ export type Database = {
           iniciado_em?: string
           mes_referencia: string
           novos?: number | null
+          situacao_aplicada_em?: string | null
+          situacao_aplicada_fechamento?: string | null
+          situacao_resultado?: Json | null
           status?: string
           total_recebido?: number
         }
@@ -12027,6 +12033,9 @@ export type Database = {
           iniciado_em?: string
           mes_referencia?: string
           novos?: number | null
+          situacao_aplicada_em?: string | null
+          situacao_aplicada_fechamento?: string | null
+          situacao_resultado?: Json | null
           status?: string
           total_recebido?: number
         }
@@ -21702,6 +21711,7 @@ export type Database = {
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_sync_watchdog_diario: { Args: { p_agora?: string }; Returns: string }
+      fin_titulo_baixas_cp_mapa: { Args: { p_company: string }; Returns: Json }
       fin_titulo_baixas_cr_mapa: { Args: { p_company: string }; Returns: Json }
       fin_user_can_access: {
         Args: { check_company?: string }
@@ -22441,6 +22451,10 @@ export type Database = {
       push_sla_tick: { Args: never; Returns: undefined }
       radar_aplicar_situacao: {
         Args: { p_agora?: string; p_lote: string }
+        Returns: Json
+      }
+      radar_aplicar_situacao_pendente: {
+        Args: { p_agora?: string }
         Returns: Json
       }
       radar_atribuir_tarefa: {

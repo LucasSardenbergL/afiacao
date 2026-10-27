@@ -27,6 +27,7 @@ const giro = (company: string): CapitalDeGiro => ({
   total_cr_aberto: 100,
   total_cp_aberto: 50,
   saldo_cc: 10,
+  saldo_cc_motivo: null,
   capital_giro: 50,
   capital_giro_liquido: 60,
   pmr: null,

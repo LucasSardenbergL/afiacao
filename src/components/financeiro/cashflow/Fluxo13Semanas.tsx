@@ -46,6 +46,14 @@ export function Fluxo13Semanas() {
 
       <AlertasStack />
 
+      {/* Saldo inicial datado: a conta cujo extrato falhou entra com o saldo preservado — todas as
+          semanas partem dele, então o aviso mora AQUI, não só na NCG (que nem o usa). */}
+      {data.confianca_dados?.saldo_inicial && (
+        <div className="rounded-md border border-status-warning-fg/30 bg-status-warning-bg px-3 py-2 text-xs text-status-warning">
+          ⚠ {data.confianca_dados.saldo_inicial}
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Projeção 13 semanas — {cenario}</CardTitle>

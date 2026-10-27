@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **699** custom migrations totais
-- **2254** objetos esperados (criados por estas migrations)
+- **701** custom migrations totais
+- **2258** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 841
+  - `function`: 844
   - `rls_policy`: 484
   - `index`: 296
-  - `cron_job`: 198
+  - `cron_job`: 199
   - `table`: 197
   - `view`: 125
   - `trigger`: 109
@@ -5686,6 +5686,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261026214721_tint_arquivar_staging_fantasma.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261026220000_fin_titulo_baixas_cp_mapa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_titulo_baixas_cp_mapa` | — |
+
+### `20261027010000_radar_situacao_por_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_aplicar_situacao_pendente` | — |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-aplicar-situacao-diario` | — |
 
 ## Próximos passos por status
 
