@@ -202,3 +202,24 @@ para `omie-sync` v1.8-busca-confere-documento e `omie-vendas-sync` v1.25-busca-c
 - **Estado em prod (2026-10-21, PR #3291 → `f4eae81f3`):** as 3 camadas no ar, com evidência. **Edge** `omie-vendas-sync` v1.24-confirmacao-cadastro-servidor (a `main` já tinha a v1.23 do #3289): pacote `358487844f79` via MCP às 12:51:59Z, 30 sha256 conferidos contra `d670fb3f`, ledger **CONFERE**, sensor de edição **SEM_EDICAO**. **Migration** `20261021120000` aplicada pelo envelope MCP (2 tentativas anteriores com `ENOTFOUND`/`ECONNRESET` não chegaram a aplicar nada, conferido por psql-ro entre elas); 2ª testemunha psql-ro: md5 `b537f95a…`, SECURITY DEFINER + `search_path=public` + VOLATILE, dono `postgres`, ACL da RPC intacto, tabela com RLS, 0 policy, escrita só `service_role:INSERT` (`claude_ro`/`sandbox_exec*` só SELECT), `authz:claude-ro:prod` exit 0. **Front**: o build servido `c0b76360` (13:00Z, Publish de outra sessão) contém o merge. Sensor de uso: a 1ª linha do ledger — `SELECT count(*), max(confirmado_em) FROM omie_cliente_confirmacoes` (psql-ro); hoje 0.
 - **Fora do escopo (registrado, não atacado):** `registrar_contato_radar(p_acao='virou_cliente')` segue mudando o **status** de prospecção sem confirmação do ERP — é marcação manual de funil, não `ja_cliente`; e a gramática de rótulo de `documentoParaCadastro` (`_shared/cnpj-alfanumerico.ts`) é outra sessão.
 
+## Codex retroativo do #3311 (2026-10-27, `gpt-6-astra` · max · 3219s · 156.653 tokens)
+
+A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
+
+- **ALTO (confirmado e corrigido, `omie-sync` v1.9 / `omie-vendas-sync` v1.26):** o helper normalizava o documento
+  DEVOLVIDO com `normalizarDocumento` (só-dígitos). Entrada válida `CPF: 123.456.789-09` com retorno simulado
+  `{"codigo_cliente_omie":777,"cnpj_cpf":"123ABC45678909"}` → as duas actions respondiam 200 com `777`. A gramática
+  estrita protegia só a ENTRADA. **Correção:** `lookupDevolveuOMesmoDocumento` passa o retorno por
+  `documentoParaCadastro` (não-string ou recusa → `false`). Testes: retornos com letra, símbolo e dígito fullwidth não
+  casam; retornos válidos (máscara, rótulo, alfanumérico minúsculo) seguem casando. Falsificação com controle verde
+  em `LC_ALL=C` e `pt_BR.UTF-8`: só-dígitos, sem `typeof`, `catch → true` ficam vermelhos. A guarda `r.length > 0`
+  ficou verde, porque `documentoParaCadastro` já lança sem dígito, e saiu.
+- **Confirmado sem regressão:** o 500 fora do `try` preserva CORS e contrato; o consumidor (`getResult`) trata a
+  divergência como falha e não chama criação; o caminho novo do helper passa no `deno check` e no `test:edges`.
+- **Pré-existentes, fora deste PR (registrados):**
+  - `useUnifiedOrder.ts:573` (fluxo IA, Oben) lê `omieResult.codigo_cliente`, mas a action devolve
+    `omieResult.cliente.codigo_cliente`. Com isso, até um lookup Oben bem-sucedido vira código `0` e o pedido Oben
+    fica bloqueado no submit (falha FECHADA, não código errado).
+  - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
+    O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
+
