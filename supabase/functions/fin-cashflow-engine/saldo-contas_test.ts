@@ -1,5 +1,5 @@
 // deno test supabase/functions/fin-cashflow-engine/saldo-contas_test.ts
-import { classificarSaldoConta, saldoInicialDasContas } from "./saldo-contas.ts";
+import { classificarSaldoConta, SALDO_IDADE_MAX_DIAS, saldoInicialDasContas } from "./saldo-contas.ts";
 
 const HOJE = "2026-10-26";
 
@@ -62,6 +62,7 @@ Deno.test("conta velha entra DATADA, com motivo que cita a data mais antiga", ()
 });
 
 Deno.test("classificação: ontem fresco, anteontem velho, futuro desconhecido", () => {
+  assertEq(SALDO_IDADE_MAX_DIAS, 1, "limiar (o sync de base roda às 03h SP: hoje ou ontem)");
   assertEq(classificarSaldoConta({ saldo_atual: 1, saldo_data: "2026-10-25" }, HOJE), "fresca");
   assertEq(classificarSaldoConta({ saldo_atual: 1, saldo_data: "2026-10-24" }, HOJE), "velha");
   assertEq(classificarSaldoConta({ saldo_atual: 1, saldo_data: "2026-10-27" }, HOJE), "desconhecida");
