@@ -184,8 +184,9 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
   let chave: string | null = null;
   try {
     const dtEmissaoDe = paraDataOmie(somarDias((deps.hoje ?? hojeSP)(), -JANELA_EMISSAO_DIAS));
-    const achados: { nIdReceb: number; chave: string | null; fornecedor: string; numero: string }[] = [];
-    let canceladas = 0;
+    // Cancelada CONTA para a ambiguidade (Codex retroativo do #3334, P1-3): se o operador digitou o número
+    // da NF cancelada de A, descartá-la antes da unicidade concluiria a NF aberta de B com o mesmo número.
+    const achados: { nIdReceb: number | null; chave: string | null; fornecedor: string; numero: string; cancelada: boolean }[] = [];
     let fimReal = false;
     let pagina = 1;
     for (; pagina <= MAX_PAGINAS; pagina++) {
@@ -201,10 +202,10 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
         const cabec = registro(registro(rec).cabec);
         const numero = texto(cabec.cNumeroNFe);
         if (numero === null || semZeros(numero) !== semZeros(nf)) continue;
-        if (texto(registro(registro(rec).infoCadastro).cCancelada)?.toUpperCase() === "S") { canceladas++; continue; }
+        const cancelada = texto(registro(registro(rec).infoCadastro).cCancelada)?.toUpperCase() === "S";
         const id = numeroOuNulo(cabec.nIdReceb);
-        if (id === null) throw new Error(`Omie: recebimento da NF ${numero} sem nIdReceb legível`);
-        achados.push({ nIdReceb: id, chave: texto(cabec.cChaveNfe), fornecedor: texto(cabec.cNome) ?? texto(cabec.cRazaoSocial) ?? "Fornecedor", numero });
+        if (id === null && !cancelada) throw new Error(`Omie: recebimento da NF ${numero} sem nIdReceb legível`);
+        achados.push({ nIdReceb: id, chave: texto(cabec.cChaveNfe), fornecedor: texto(cabec.cNome) ?? texto(cabec.cRazaoSocial) ?? "Fornecedor", numero, cancelada });
       }
       if (recebimentos.length < POR_PAGINA) { fimReal = true; break; }
     }
@@ -214,14 +215,17 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
     }
     if (achados.length === 0) {
       return await parar("nf_localizada", "erro", 1, `Buscar NF ${nf}`,
-        `NF ${nf} não encontrada no Omie entre as emitidas nos últimos ${JANELA_EMISSAO_DIAS} dias${canceladas > 0 ? ` (${canceladas} cancelada(s) ignorada(s))` : ""}`);
+        `NF ${nf} não encontrada no Omie entre as emitidas nos últimos ${JANELA_EMISSAO_DIAS} dias`);
     }
     if (achados.length > 1) {
       return await parar("nf_localizada", "recusado", 1, `Buscar NF ${nf}`,
-        `Há ${achados.length} recebimentos com o número ${nf} (${achados.map((a) => a.fornecedor).join("; ")}) — não sei qual é; nada foi enviado`,
-        { achados: achados.map((a) => ({ n_id_receb: a.nIdReceb, fornecedor: a.fornecedor })) });
+        `Há ${achados.length} recebimentos com o número ${nf} (${achados.map((a) => `${a.fornecedor}${a.cancelada ? " [cancelada]" : ""}`).join("; ")}) — não sei qual é; nada foi enviado`,
+        { achados: achados.map((a) => ({ n_id_receb: a.nIdReceb, fornecedor: a.fornecedor, cancelada: a.cancelada })) });
     }
     const achado = achados[0];
+    if (achado.cancelada || achado.nIdReceb === null) {
+      return await parar("nf_localizada", "recusado", 1, `Buscar NF ${nf}`, `NF ${nf} (${achado.fornecedor}) está cancelada no Omie — nada foi enviado`);
+    }
     nIdReceb = achado.nIdReceb;
     chave = achado.chave;
     trilha.fixarNf(nIdReceb, chave);
@@ -229,7 +233,7 @@ export async function processarNfe(auth: AuthAprovado, corpoBruto: unknown, deps
       step: 1, description: `NF encontrada: ${achado.fornecedor} (NF ${achado.numero})`, status: "success",
       detail: `nIdReceb: ${nIdReceb}, chave: ${chave ? chave.substring(0, 20) + "..." : "N/A"}`,
     });
-    await registrarResultado({ passo: "nf_localizada", resultado: "ok", detalhe: { fornecedor: achado.fornecedor, numero_omie: achado.numero, paginas: pagina, canceladas } });
+    await registrarResultado({ passo: "nf_localizada", resultado: "ok", detalhe: { fornecedor: achado.fornecedor, numero_omie: achado.numero, paginas: pagina } });
   } catch (e) {
     return await parar("nf_localizada", "erro", 1, `Buscar NF ${nf}`, mensagemDeErro(e) ?? "falha sem mensagem ao buscar a NF");
   }

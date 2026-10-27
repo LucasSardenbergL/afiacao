@@ -150,8 +150,9 @@ export function decidirQuantidades(itens: readonly ItemOmieBruto[]): DecisaoQuan
 
     const unidadeNf = unidade(cab.cUnidadeNfe);
     const unidadeEstoque = unidade(aj.cUnidade);
-    const qtdOmieBruta = numeroOuNulo(aj.nQtdeRecebida);
-    const qtdOmie = qtdOmieBruta !== null && qtdOmieBruta > 0 ? qtdOmieBruta : null;
+    // Zero EXPLÍCITO é um número do Omie (falta total registrada, conferência anterior), não ausência:
+    // só o campo ausente/ilegível é `null` (Codex retroativo do #3334, P1-1).
+    const qtdOmie = numeroOuNulo(aj.nQtdeRecebida);
     const fator = fatorNoItem(item);
     const base = { sequencia: seq, codigo, idProduto: numeroOuNulo(cab.nIdProduto), unidadeNf, unidadeEstoque, qtdNf, qtdOmie, fatorNoItem: fator };
     const par = `${unidadeNf ?? "?"}→${unidadeEstoque ?? "?"}`;
@@ -168,7 +169,7 @@ export function decidirQuantidades(itens: readonly ItemOmieBruto[]): DecisaoQuan
       return;
     }
     if (unidadeNf !== unidadeEstoque) {
-      if (qtdOmie === null) {
+      if (qtdOmie === null || qtdOmie <= 0) {
         recusar("conversao_sem_quantidade_do_omie", `conversão ${par} e o Omie não informou a quantidade convertida — confira o cadastro do produto no Omie`);
         return;
       }
