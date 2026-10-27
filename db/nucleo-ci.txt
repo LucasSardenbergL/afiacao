@@ -738,3 +738,8 @@ db/test-fin-consolidado-ic.sh              79  falsificar=51
 # recortado do arquivo das Ondas 2–3, md5 conferido), get_venda_sugestoes_for é só master (farmer para outra
 # ou para si → 42501, anon → 42501, helper direto → 42501), só fase ativa, ausente ≠ zero, sem chave de custo.
 db/test-venda-lista-lente.sh               26  falsificar=8
+# Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
+# (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
+# corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
+# latest-por-chave e espera a lock do tick. 7 falsificações (conjunto exato) rodam em TODA execução.
+db/test-tint-purge-staging-diario.sh        13

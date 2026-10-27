@@ -33,6 +33,35 @@ demanda as (
     and d.data_emissao >= current_date - 270
   group by 1, 2
 ),
+-- R61: venda FÍSICA do próprio SKU (sem a consolidação de substituição nem a malha PCP da v_sku_demanda_efetiva):
+-- é ela que baixa o estoque deste SKU — reconstrução e replay. A decisão segue com a `demanda` efetiva.
+demanda_fisica as (
+  select v.sku_codigo_omie::text as sku, v.data_emissao as data, sum(v.quantidade) as qtde
+  from venda_items_history v
+  where upper(v.empresa) = 'OBEN' and v.sku_codigo_omie::text in (select sku_codigo_omie from skus)
+    and v.data_emissao >= current_date - 270
+  group by 1, 2
+),
+-- R63: dias com falha de infraestrutura COMPROVADA no snapshot de caixa — o job registrou erro (acoes_execucoes) E o
+-- snapshot pessimista da Oben não existe. Sem registro de erro, a falta de snapshot NÃO é excluída (fail-closed).
+falhas_snapshot as (
+  select distinct (e.iniciado_em at time zone 'America/Sao_Paulo')::date as dia
+  from acoes_execucoes e
+  where e.acao = 'fin_cashflow.snapshot_diario' and e.status = 'erro' and e.iniciado_em >= current_date - 100
+    and not exists (select 1 from fin_projecao_snapshots s
+                    where s.company = 'oben' and s.cenario = 'pessimista'
+                      and (s.snapshot_at at time zone 'America/Sao_Paulo')::date = (e.iniciado_em at time zone 'America/Sao_Paulo')::date)
+),
+-- R64: NF efetivada no recebimento do app nas últimas 30h (até a próxima revisita das 04:15 UTC, com folga) cuja
+-- chave não tem t4 no tracking — o estoque de hoje já tem a entrada e os recebimentos dos fatos ainda não. O pré-voo
+-- recusa a rodada. Mais antiga que isso e ainda sem t4 é NF fora do tracking (resíduo persistente, não sincronia).
+receb_sem_t4 as (
+  select r.numero_nfe as nf
+  from nfe_recebimentos r
+  where r.status = 'efetivado' and r.efetivado_at >= now() - interval '30 hours'
+    and not exists (select 1 from purchase_orders_tracking t
+                    where t.nfe_chave_acesso = r.chave_acesso and t.t4_data_recebimento is not null)
+),
 -- Recebimentos reais = tracking t4_data_recebimento × quantidades do pedido Omie (spec §7).
 -- (nfe_recebimento_itens só existe desde 2026-07 e quantidade_convertida veio 100% nula — não serve.)
 -- Pedido recebido sem t4/sem produtos some daqui; o erro de fechamento por SKU pega o buraco.
@@ -177,6 +206,9 @@ select 'json|' || jsonb_build_object(
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),
+  'recebimentos_sem_t4', (select coalesce(json_agg(x.nf order by x.nf), '[]') from receb_sem_t4 x),
+  'falhas_snapshot', (select coalesce(json_agg(x.dia order by x.dia), '[]') from falhas_snapshot x),
+  'demanda_fisica', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda_fisica d),
   'recebimentos', (select coalesce(json_agg(r order by r.sku, r.data), '[]') from receb r),
   'estoque', (select coalesce(json_agg(e order by e.sku), '[]') from estoque e),
   'params', (select coalesce(json_agg(p order by p.sku), '[]') from params p),

@@ -1,12 +1,15 @@
 import type { ProcessEtapa } from '@/lib/customer-process/types';
 
-/** Etapa do processo padrão estende ProcessEtapa do PR-P1 + vincula produtos do KB */
-export interface StandardProcessEtapa extends ProcessEtapa {
+/**
+ * Etapa do processo padrão estende ProcessEtapa do PR-P1 + vincula produtos do KB.
+ * `type` (não `interface`) de propósito: só alias é atribuível a `Json` (vai cru para `etapas jsonb`).
+ */
+export type StandardProcessEtapa = ProcessEtapa & {
   /** Códigos de kb_product_specs.product_code recomendados pra essa etapa */
   produtos_kb: string[];
   /** Texto livre adicional explicando por que esse produto/abordagem */
   rationale?: string;
-}
+};
 
 export type StandardProcessStatus = 'draft' | 'in_review' | 'published' | 'archived';
 
@@ -16,12 +19,13 @@ export interface StandardProcess {
   slug: string | null;
   description: string | null;
   segmento: string;
-  porte_alvo: string[];
-  tags: string[];
+  /** As 4 listas são nullable em `standard_processes` — NULL é "não informado", não lista vazia. */
+  porte_alvo: string[] | null;
+  tags: string[] | null;
   etapas: StandardProcessEtapa[];
-  expected_outcomes: string[];
+  expected_outcomes: string[] | null;
   target_audience: string | null;
-  prerequisites: string[];
+  prerequisites: string[] | null;
   status: StandardProcessStatus;
   status_notes: string | null;
   version: number;

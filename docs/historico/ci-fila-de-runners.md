@@ -21,7 +21,7 @@ pesa são os minutos de runner, não o número de jobs. Também não ajuda troca
 por 4 equilibradas: dá ~14,3 min, o mesmo caminho crítico de hoje, e poupa ~1 min por run. O
 `cancel-in-progress` de PR já existia (2026-10-02).
 
-**O que mudou (#PR).**
+**O que mudou (#3313).**
 1. O `mutation-check` sai do pós-merge (`auto-merge.yml` passa `mutcheck=false`). A rede de todos os
    contratos `.mut` fica no `schedule` diário, no push direto e no dispatch manual. O motivo antigo
    para excluir o `schedule` (o alarme vivia no `validate`) caiu com o `mutcheck-sensor`.
@@ -31,7 +31,22 @@ por 4 equilibradas: dá ~14,3 min, o mesmo caminho crítico de hoje, e poupa ~1 
    prova cara por último; tabela malformada aborta), falsificados com controle verde na mesma
    invocação, e o piso subiu de 65 para 67.
 
-**Depois.** Ver o corpo do PR. A tabela de antes/depois usa os mesmos 3 números em ≥5 runs.
+**Depois** (5 runs de PR verdes, 16:12–17:02 UTC, após o merge do #3313 às 16:04:57Z): p50 até o
+`validate` **38,7 → 19,5 min** (13,6–29,1). Fila até o 1º job: 1,3 → 0,1 min. Espera por job: p50
+6,8–15,1 → 0,1–5,8 min. **Ressalva:** a carga caiu à metade (~9,5 → ~4,3 runs de PR/h), então parte do
+ganho é a tarde calma. Os efeitos da mudança que independem da carga: o pós-merge da main foi de
+**148 → 102 min de runner por run** (o mutcheck sai `skipped`), e o caminho crítico sem fila foi de
+15,5 → 13,6 min.
+
+**Tropeço:** uma prova nova (`test-radar-cadastro-omie-idempotente`, 148 s) entrou na main depois da
+medição e pesou o default (30 s). A parte 1 foi a 13,1 min em vez de ~10. Ela entrou na tabela no PR
+seguinte. Prova cara nova desequilibra até a tabela ser re-medida: confira com
+`comm -23 <(grep -oE '^db/test-[^ ]+' db/nucleo-ci.txt | sort -u) <(grep -oE '^db/test-[^ ]+' db/nucleo-ci-custo.txt | sort -u)`.
+
+**Re-medir num pico** (comparação com carga equivalente, ainda em aberto): liste os runs `CI` de
+`pull_request` verdes e com `run_attempt=1` (`gh api repos/LucasSardenbergL/afiacao/actions/runs`).
+Para cada um, baixe `runs/<id>/jobs?filter=all`. Conte `validate.completed_at − run.created_at` e, por
+job, `started_at − created_at`.
 
 **Lição.** Quando o tempo até o veredito cresce e a execução não, meça `started_at − created_at` por
 job e a concorrência da conta antes de mexer no grafo de jobs. Reparticionar só move o gargalo de

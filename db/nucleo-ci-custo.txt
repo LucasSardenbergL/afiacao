@@ -7,7 +7,8 @@
 # equilíbrio — nunca abre buraco nem repete prova.
 #
 # Origem: mediana de 4 runs de PR verdes de 2026-10-21 (39598218272, 39601659878, 39602693619,
-# 39606235376), a duração que o runner imprime por prova (`✅ test-… Ns`). Re-meça quando a pior
+# 39606235376), a duração que o runner imprime por prova (`✅ test-… Ns`); a última linha veio depois
+# (mediana de 3 runs de 2026-10-21 16:24–16:47, prova que entrou na main após a medição). Re-meça quando a pior
 # parte destoar das outras: para cada job `provas-sql (i)` de um run verde,
 #   gh run view -R LucasSardenbergL/afiacao --job <id> --log \
 #     | sed -nE 's/.*✅ (test-[A-Za-z0-9_-]+)( --falsificar)? .* ([0-9]+)s[[:space:]]*$/db\/\1.sh \3/p'
@@ -143,3 +144,5 @@ db/test-venda-painel.sh                                    12
 db/test-venda-ondas23.sh                                   33
 db/test-fin-consolidado-ic.sh                              32
 db/test-venda-lista-lente.sh                               12
+db/test-radar-cadastro-omie-idempotente.sh                 148
+db/test-tint-purge-staging-diario.sh                       45

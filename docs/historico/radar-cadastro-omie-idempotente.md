@@ -87,7 +87,7 @@ não tem override; a ordem está garantida pela PRE, não pela disciplina).
 |---|---|---|
 | Migration `20261021120000` (irmã) | ✅ aplicada (md5 vivo `b537f95a…` lido por psql-ro antes desta) | sessão irmã |
 | Migration `20261021120500` | ✅ aplicada 2026-10-21 ~13:27 UTC pelo envelope MCP | esta sessão |
-| Publish do Lovable (front) | ⏳ após o merge | **founder** (Publish) |
+| Publish do Lovable (front) | ✅ no ar 2026-10-21 (PR mergeado 13:54 UTC, squash `a279eaeba`) | **founder** (Publish) |
 | Edge | nenhuma | — |
 
 **Pré-voo PROD (psql-ro, 13:07 UTC):** md5 vivo = o da irmã, `SECURITY DEFINER` + `search_path=public` + VOLATILE,
@@ -99,6 +99,12 @@ nos limites locais (`lock_timeout 5s`, `statement_timeout 120s`), e passar deles
 **Validação por fora** (psql-ro, outra conexão, depois do COMMIT — 2026-10-21 13:27:52 UTC):
 `funcao_ok=t` (md5 `2b3dbe0d…` + atributos) · `indice_ok=t` (único, válido, pronto, definição exata) · `acl_ok=t` ·
 1 sobrecarga.
+
+**Publish provado pelos bytes** (`lovable-deploy-verify`): `monitor-deploy.sh --pr 3293` → `PR_NO_AR` (squash
+`a279eaeba` na história de `a5299dbd`, o commit carimbado no ar; entry `index-CAGPsqCW` → `index-C7krZFEm`).
+`verify-frontend.sh --pai a279eaeba^` com a sentinela `Conflito de vínculo com o Omie` (exclusiva: 0 no pai, 0 na
+lib) → em `RadarOutcomeMenu-C_Mk2Cu6.js` e `RadarClientes-CC-KNlt0.js`, varridos 375 chunks, controle negativo OK.
+Bytes no ar = disponibilidade, não adoção: o SW troca de build quando cada cliente recarrega.
 
 Bundle antigo + banco novo (Codex achado 6): o banco fica protegido (não sobrescreve), mas o front velho mostra
 RD001 como "Omie OK, falhou gravar no Radar" com "Gravar de novo", que relê o vínculo e diz "reconciliado". Só o

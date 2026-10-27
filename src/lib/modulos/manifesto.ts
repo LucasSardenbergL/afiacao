@@ -87,6 +87,7 @@ export const MODULOS: ModuloApp[] = [
       motivo: "0 linha em prime_assinaturas/prime_planos/prime_beneficio_uso (psql-ro 2026-10-12)",
     },
     codigo: [
+      "src/lib/prime/borda.ts",
       "src/lib/prime/competencia.ts",
       "src/lib/prime/erros.ts",
       "src/lib/prime/format.ts",
@@ -96,7 +97,7 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/usePrimeAdmin.ts",
       "src/types/prime.ts",
     ],
-    testes: ["src/lib/prime/prime.test.ts"],
+    testes: ["src/lib/prime/prime.test.ts", "src/lib/prime/borda.test.ts"],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
   {

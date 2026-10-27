@@ -9,7 +9,8 @@ export type IcMatch = {
   cp_id: string | null;
   valor_origem: number | null;
   valor_destino: number | null;
-  diff_valor: number;
+  /** NULL quando não há contrapartida para comparar — nunca 0 (ausente ≠ zero). */
+  diff_valor: number | null;
   diff_dias: number | null;
   status:
     | 'auto_matched'
@@ -26,6 +27,12 @@ export type IcMatch = {
   observacao: string | null;
 };
 
+const STATUS_IC = [
+  'auto_matched', 'manual_matched', 'divergencia_valor', 'divergencia_data',
+  'sem_contrapartida', 'duplicidade_possivel', 'desconsiderado', 'intragrupo_sem_cobranca',
+] as const satisfies readonly IcMatch['status'][];
+const ehStatusIc = (v: string): v is IcMatch['status'] => STATUS_IC.some((s) => s === v);
+
 export function useIcMatches(filterStatus?: IcMatch['status']) {
   return useQuery({
     queryKey: ['fin_ic_matches', filterStatus ?? 'all'],
@@ -41,7 +48,11 @@ export function useIcMatches(filterStatus?: IcMatch['status']) {
       if (filterStatus) q = q.eq('status', filterStatus);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as unknown as IcMatch[];
+      // `status` é texto com CHECK: confere o vocabulário em vez de afirmá-lo (fora dele, lança).
+      return (data ?? []).map((m) => {
+        if (!ehStatusIc(m.status)) throw new Error(`fin_ic_matches: "status" = "${m.status}" fora do vocabulário`);
+        return { ...m, status: m.status };
+      });
     },
   });
 }

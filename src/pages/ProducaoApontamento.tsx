@@ -66,7 +66,7 @@ export default function ProducaoApontamento() {
         .order('created_at', { ascending: true })
         .limit(80);
       if (error) throw error;
-      return (data ?? []) as unknown as OP[];
+      return data ?? [];
     },
     refetchInterval: 30000,
   });

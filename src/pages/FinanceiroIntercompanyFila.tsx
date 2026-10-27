@@ -188,10 +188,10 @@ export default function FinanceiroIntercompanyFila() {
                           }) ?? '—'}
                         </TableCell>
                         <TableCell className="font-tabular text-sm">
-                          {m.diff_valor.toLocaleString('pt-BR', {
+                          {m.diff_valor?.toLocaleString('pt-BR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          })}
+                          }) ?? '—'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[m.status]}>

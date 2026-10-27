@@ -32,7 +32,7 @@ type State struct {
 
 	// FullRescanIniciado é o DIA (YYYY-MM-DD, relógio da origem) em que o full re-scan
 	// em curso zerou os HWMs. Se uma entidade falha, LastFullRescan não marca e o
-	// próximo ciclo do mesmo domingo RETOMA o re-scan sem zerar de novo: as entidades
+	// próximo ciclo da mesma semana (âncora: domingo) RETOMA o re-scan sem zerar de novo: as entidades
 	// que já passaram seguem em delta e só a que falhou (HWM ainda zerado) re-extrai
 	// tudo. Antes, cada ciclo do domingo re-extraía e reenviava TODO o catálogo.
 	FullRescanIniciado string `json:"full_rescan_iniciado,omitempty"`

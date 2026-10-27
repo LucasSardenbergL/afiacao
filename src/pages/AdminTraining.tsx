@@ -13,6 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, BookOpen, Edit, GripVertical } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
+import { paraTrainingModule } from '@/queries/useTraining';
 
 interface QuizQuestion {
   question: string;
@@ -66,7 +67,7 @@ const AdminTraining = () => {
       .from('training_modules')
       .select('*')
       .order('created_at', { ascending: false });
-    setModules((data || []) as unknown as TrainingModule[]);
+    setModules((data ?? []).map((l) => ({ ...paraTrainingModule(l), created_at: l.created_at })));
     setLoading(false);
   };
 

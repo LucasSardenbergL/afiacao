@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **696** custom migrations totais
-- **2237** objetos esperados (criados por estas migrations)
+- **698** custom migrations totais
+- **2246** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 839
-  - `rls_policy`: 482
-  - `index`: 290
-  - `cron_job`: 196
-  - `table`: 195
+  - `function`: 841
+  - `rls_policy`: 483
+  - `index`: 292
+  - `cron_job`: 197
+  - `table`: 196
   - `view`: 125
-  - `trigger`: 106
+  - `trigger`: 108
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5648,6 +5648,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_registrar_cadastro_omie` | — |
 | `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
 
+### `20261021175441_nfe_recebimento_manual_trilha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.nfe_recebimento_manual_trilha_append_only` | — |
+| `table` | `public.nfe_recebimento_manual_trilha` | — |
+| `index` | `public.idx_nfe_receb_manual_trilha_execucao` | `nfe_recebimento_manual_trilha` |
+| `index` | `public.idx_nfe_receb_manual_trilha_criado` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_sem_truncate` | `nfe_recebimento_manual_trilha` |
+| `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
+
 ### `20261021190000_fin_ic_venda_sem_cobranca.sql`
 
 | Tipo | Objeto | Parent |
@@ -5655,6 +5667,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.fin_ic_matches_guarda_sem_cobranca` | — |
 | `function` | `public.fin_consolidado_intercompany` | — |
 | `trigger` | `public.fin_ic_matches_guarda_sem_cobranca` | `fin_ic_matches` |
+
+### `20261021203000_tint_purge_staging_fora_do_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_staging_purge` | — |
+| `cron_job` | `cron.tint-staging-purge-diario` | — |
 
 ## Próximos passos por status
 
