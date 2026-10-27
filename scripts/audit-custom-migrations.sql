@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 701
+-- Total de custom migrations: 702
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -765,7 +765,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261026214720', 'tint_receita_versoes', '20261026214720_tint_receita_versoes.sql'),
   ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql'),
   ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
-  ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql')
+  ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql'),
+  ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2989,7 +2990,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', '_radar_cadastro_conflito_gravar', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_cadastro_omie_v2', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_estado_cadastro_omie', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
+  ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5261,7 +5270,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
-  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', '_radar_cadastro_conflito_gravar', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_cadastro_omie_v2', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_estado_cadastro_omie', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
+  ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos')
 )
 SELECT
   e.migration,

@@ -660,6 +660,14 @@ db/test-radar-cadastro-omie-confirmacao.sh  41  falsificar=11
 # pg_stat_activity): X/X, X/Y, Y/X, ROLLBACK de A, (A,K)×(B,K). 10 sabotagens: sem no-op, sem fence RD001, sem FOR
 # UPDATE, sem mapa RD002, sem índice, PRE aceita PROD, PÓS de md5, PRE sem ACL, TRAVA sem volatilidade, PÓS sem índice.
 db/test-radar-cadastro-omie-idempotente.sh  38  falsificar=10
+# Radar: CONFLITO de cadastro Omie persistido no SERVIDOR (20261027160000 — achado 3 do Codex no #3293). Defeito aqui
+# = o aviso de conflito some com o localStorage de uma aba, a retomada fabrica "recuperado" com o vínculo antigo, ou um
+# conflito é encerrado sem ninguém ter visto a ocorrência nova. Prova com DUAS sessões (bloqueio observado): v2×estado,
+# v2×v2, registrar×registrar, resolver×registrar nas duas ordens, ROLLBACK, TRAVA × recriação. 15 sabotagens: v2 sem
+# `ok`, v2 relança, v2 sem trava externa, estado sem FOR SHARE, sem bloqueio, sem re-conferência (2), sem dedupe,
+# resolver sem versão, RLS aberta, PÓS de ACL, INSERT direto aberto, PRE aceita qualquer v1, TRAVA sem volatilidade,
+# TRAVA sem lock.
+db/test-radar-cadastro-conflitos.sh  56  falsificar=15
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
