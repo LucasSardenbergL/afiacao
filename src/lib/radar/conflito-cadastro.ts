@@ -94,6 +94,12 @@ export function parsearRegistroV2(v: unknown): ResultadoRegistroRadar {
   return forma(fonte, '{ok, deduped} | {ok:false, bloqueado, conflito}');
 }
 
+/** `radar_resolver_conflito_cadastro`: `{ok:true, versao}` — sem isso NÃO se anuncia "conferido". */
+export function parsearResolucao(v: unknown): { versao: number } {
+  if (!ehObj(v) || v.ok !== true || !inteiro(v.versao)) forma('radar_resolver_conflito_cadastro', '{ok:true, versao}');
+  return { versao: v.versao };
+}
+
 function rotuloMotivo(m: MotivoDivergencia): string {
   if (m === 'vinculo_divergente') return 'CNPJ já vinculado a outro código Omie';
   if (m === 'codigo_de_outro_cnpj') return 'código Omie já vinculado a outro CNPJ';

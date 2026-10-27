@@ -3,6 +3,7 @@ import {
   parsearConflito,
   parsearEstadoCadastro,
   parsearRegistroV2,
+  parsearResolucao,
   situacaoConflito,
   type ConflitoCadastro,
 } from '../conflito-cadastro';
@@ -42,6 +43,16 @@ describe('parse das respostas do servidor', () => {
     expect(() => parsearRegistroV2({ ok: false, bloqueado: false })).toThrow(/^RADAR_RESPOSTA_INDETERMINADA: /);
     expect(() => parsearRegistroV2(null)).toThrow(/^RADAR_RESPOSTA_INDETERMINADA: /);
   });
+});
+
+describe('parsearResolucao — "conferido" só com a prova do servidor (Codex, código P2-5)', () => {
+  it('{ok:true, versao} passa', () => {
+    expect(parsearResolucao({ ok: true, versao: 2 })).toEqual({ versao: 2 });
+  });
+  it.each([['null', null], ['sem versão', { ok: true }], ['ok false', { ok: false, versao: 2 }], ['versão texto', { ok: true, versao: '2' }]])(
+    '%s → RADAR_RESPOSTA_INDETERMINADA', (_n, v) => {
+      expect(() => parsearResolucao(v)).toThrow(/^RADAR_RESPOSTA_INDETERMINADA: /);
+    });
 });
 
 describe('situacaoConflito — local × servidor (Codex 2026-10-27, g)', () => {

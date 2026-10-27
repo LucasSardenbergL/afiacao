@@ -1,28 +1,43 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
-import { parsearConflito, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
+import { parsearConflito, parsearResolucao, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 // Conflitos de cadastro Radar×Omie guardados no SERVIDOR (migration 20261027160000). A tela lê daqui — o
 // localStorage do lote deixa de ser a única evidência. Erro de leitura é `isError`, nunca "zero conflitos".
 const CHAVE = ['radar', 'conflitos-cadastro'] as const;
-const TETO = 1000;
+const PAGINA = 1000;
+const MAX_PAGINAS = 20;
+
+/**
+ * Lê TODAS as páginas (PostgREST capa em 1.000 calado): um recorte faria um conflito aberto depois de 1.000 linhas
+ * parecer ausência de pendência (Codex, código P2-4). Passar do teto LANÇA — nunca devolve parcial.
+ */
+export async function lerTodas(
+  pagina: (de: number, ate: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+): Promise<ConflitoCadastro[]> {
+  const todas: ConflitoCadastro[] = [];
+  for (let p = 0; p < MAX_PAGINAS; p++) {
+    const { data, error } = await pagina(p * PAGINA, (p + 1) * PAGINA - 1);
+    if (error) throw error;
+    const linhas = data ?? [];
+    for (const c of linhas) todas.push(parsearConflito(c));
+    if (linhas.length < PAGINA) return todas;
+  }
+  throw new Error(`RADAR_RESPOSTA_INDETERMINADA: mais de ${MAX_PAGINAS * PAGINA} conflitos — leitura recusada em vez de truncada`);
+}
 
 /** Conflitos ABERTOS (todos os CNPJs) — o indicador "N CNPJs com pendência Omie". Ordem estável + range (G7). */
 export function useRadarConflitosAbertos() {
   return useQuery({
     queryKey: [...CHAVE, 'abertos'],
-    queryFn: async (): Promise<ConflitoCadastro[]> => {
-      const { data, error } = await supabase
-        .from('radar_cadastro_conflitos')
-        .select('*')
-        .is('resolvido_em', null)
-        .order('id', { ascending: true })
-        .range(0, TETO - 1);
-      if (error) throw error;
-      return (data ?? []).map((c) => parsearConflito(c));
-    },
+    queryFn: () => lerTodas((de, ate) => supabase
+      .from('radar_cadastro_conflitos')
+      .select('*')
+      .is('resolvido_em', null)
+      .order('id', { ascending: true })
+      .range(de, ate)),
   });
 }
 
@@ -35,16 +50,12 @@ export function useRadarConflitosDosCnpjs(cnpjs: string[]) {
   return useQuery({
     queryKey: [...CHAVE, 'cnpjs', ordenados],
     enabled: ordenados.length > 0,
-    queryFn: async (): Promise<ConflitoCadastro[]> => {
-      const { data, error } = await supabase
-        .from('radar_cadastro_conflitos')
-        .select('*')
-        .in('cnpj', ordenados)
-        .order('id', { ascending: true })
-        .range(0, TETO - 1);
-      if (error) throw error;
-      return (data ?? []).map((c) => parsearConflito(c));
-    },
+    queryFn: () => lerTodas((de, ate) => supabase
+      .from('radar_cadastro_conflitos')
+      .select('*')
+      .in('cnpj', ordenados)
+      .order('id', { ascending: true })
+      .range(de, ate)),
   });
 }
 
@@ -70,12 +81,13 @@ export function useRadarResolverConflito() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (v: { conflito: ConflitoCadastro; nota: string }) => {
-      const { error } = await supabase.rpc('radar_resolver_conflito_cadastro', {
+      const { data, error } = await supabase.rpc('radar_resolver_conflito_cadastro', {
         p_id: v.conflito.id,
         p_versao_vista: v.conflito.versao,
         p_nota: v.nota,
       });
       if (error) throw error;
+      return parsearResolucao(data); // resposta fora da forma LANÇA: nada de "conferido" sem prova (Codex, código P2-5)
     },
     onSuccess: (_r, v) => track('radar.conflito_cadastro_resolvido', { motivo: v.conflito.motivo, ocorrencias: v.conflito.ocorrencias }),
     onSettled: () => qc.invalidateQueries({ queryKey: [...CHAVE] }),

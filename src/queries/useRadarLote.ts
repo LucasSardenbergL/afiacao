@@ -59,6 +59,7 @@ export function useRadarLoteOmie() {
   const [lote, setLote] = useState<LotePersistido | null>(null);
   const loteRef = useRef<LotePersistido | null>(null);
   const [rodando, setRodando] = useState(false);
+  const [descartando, setDescartando] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const snapshots = useRef<Map<string, RadarEmpresa>>(new Map());
 
@@ -195,7 +196,7 @@ export function useRadarLoteOmie() {
    */
   const iniciar = useCallback(
     (empresas: RadarEmpresa[]): boolean => {
-      if (!uid || rodando || empresas.length === 0 || temPendencias) return false;
+      if (!uid || rodando || empresas.length === 0 || temPendencias || execucoesEmVoo.has(uid)) return false;
       snapshots.current = new Map(empresas.map((e) => [e.cnpj, e]));
       const itens: ItemLote[] = empresas.map((e) => ({
         cnpj: e.cnpj,
@@ -212,9 +213,9 @@ export function useRadarLoteOmie() {
   /** Retoma o que não está ok nem em conflito (aguardando, falha, não iniciado) — sempre relendo o vínculo. */
   const retomar = useCallback(() => {
     const atual = loteRef.current;
-    if (!atual || rodando) return;
+    if (!atual || rodando || descartando) return;
     void executar(itensPendentes(atual), true);
-  }, [rodando, executar]);
+  }, [rodando, descartando, executar]);
 
   /** Para novos disparos; o item em voo termina (não há como desfazer a chamada ao Omie). */
   const parar = useCallback(() => abortRef.current?.abort(), []);
@@ -225,19 +226,28 @@ export function useRadarLoteOmie() {
    */
   const esquecer = useCallback(async (): Promise<{ esquecido: boolean; falhas: { cnpj: string; erro: string }[] }> => {
     const atual = loteRef.current;
-    if (rodando || !atual) return { esquecido: false, falhas: [] };
-    if (divergentesNaoSincronizados(atual).length > 0) {
-      const r = await sincronizarDivergentes(atual, depsCadastroSupabase.registrarConflito, (e) => sqlstateDe(e) === 'RD003');
-      qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] });
-      if (r.falhas.length > 0) {
-        gravar(r.lote);
-        return { esquecido: false, falhas: r.falhas };
+    // A MESMA trava do runner (por usuário, fora do React) cobre o descarte INTEIRO: sem ela, uma retomada no meio
+    // da sincronização registraria outro conflito local que o `gravar(null)` do fim apagaria (Codex, código P1).
+    if (!uid || rodando || !atual || execucoesEmVoo.has(uid)) return { esquecido: false, falhas: [] };
+    execucoesEmVoo.add(uid);
+    setDescartando(true);
+    try {
+      if (divergentesNaoSincronizados(atual).length > 0) {
+        const r = await sincronizarDivergentes(atual, depsCadastroSupabase.registrarConflito, (e) => sqlstateDe(e) === 'RD003');
+        qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] });
+        if (r.falhas.length > 0) {
+          gravar(r.lote);
+          return { esquecido: false, falhas: r.falhas };
+        }
       }
+      gravar(null);
+      snapshots.current = new Map();
+      return { esquecido: true, falhas: [] };
+    } finally {
+      execucoesEmVoo.delete(uid);
+      setDescartando(false);
     }
-    gravar(null);
-    snapshots.current = new Map();
-    return { esquecido: true, falhas: [] };
-  }, [rodando, gravar, qc]);
+  }, [uid, rodando, gravar, qc]);
 
   const progresso = useMemo(() => {
     if (!lote) return null;
@@ -254,7 +264,7 @@ export function useRadarLoteOmie() {
     };
   }, [lote]);
 
-  return { lote, rodando, progresso, temPendencias, iniciar, retomar, parar, esquecer };
+  return { lote, rodando, descartando, progresso, temPendencias, iniciar, retomar, parar, esquecer };
 }
 
 /**

@@ -26,11 +26,13 @@ function IconeItem({ item, sit }: { item: ItemLote; sit: SituacaoConflito }) {
 }
 
 /** O servidor manda no aviso (aberto/conferido); o local só fala quando o servidor não tem o registro. */
-function detalheItem(item: ItemLote, sit: SituacaoConflito): string {
+function detalheItem(item: ItemLote, sit: SituacaoConflito, servidorIndisponivel: boolean): string {
   if (sit.tipo === 'aberto') return `conflito aberto — confira no Omie e marque como conferido na ficha: ${sit.conflitos.map(resumoConflito).join('; ')}`;
   if (sit.tipo === 'conferido') return `conflito conferido no Omie por um gestor${sit.conflito.notaResolucao ? `: ${sit.conflito.notaResolucao}` : ''} (não é cadastro)`;
   const e = item.estado;
   if (e.status === 'divergente' && sit.tipo === 'nao_sincronizado') return `conflito de vínculo — confira no Omie, nada foi regravado (aviso só nesta aba, não chegou ao servidor): ${e.erro}`;
+  // Leitura do servidor falhou: um ok local NÃO prova que não há conflito aberto (Codex, código P2-3).
+  if (e.status === 'ok' && servidorIndisponivel) return `cód. ${e.codigo} — não consegui conferir conflitos no servidor`;
   if (e.status === 'ok') return e.jaExistia ? `já existia no Omie · cód. ${e.codigo}${e.recuperado ? ' (recuperado)' : ''}` : `cadastrado · cód. ${e.codigo}`;
   if (e.status === 'falha') return `${e.etapa === 'radar' ? 'Omie OK, falhou gravar no Radar' : 'falhou no Omie'}: ${e.erro}`;
   if (e.status === 'divergente') return `conflito de vínculo — confira no Omie, nada foi regravado: ${e.erro}`;
@@ -44,7 +46,7 @@ function detalheItem(item: ItemLote, sit: SituacaoConflito): string {
  * o item em voo termina (não há como desfazer uma chamada ao Omie já feita).
  */
 export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boolean; onClose: () => void }) {
-  const { lote: estado, rodando, progresso, retomar, parar, esquecer } = lote;
+  const { lote: estado, rodando, descartando, progresso, retomar, parar, esquecer } = lote;
   // O aviso de conflito é do SERVIDOR (migration 20261027160000): outra aba pode ter regravado este lote local.
   const srv = useRadarConflitosDosCnpjs(estado?.itens.map((i) => i.cnpj) ?? []);
   if (!estado || !progresso) return null;
@@ -53,6 +55,9 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
     { divergente: i.estado.status === 'divergente', conflitoId: i.estado.status === 'divergente' ? i.estado.conflitoId ?? null : null },
     doServidor ? doServidor.get(i.cnpj) ?? [] : null,
   );
+  const servidorIndisponivel = doServidor === null;
+  // "Confirmado" = ok local SEM conflito aberto no servidor; com a leitura fora, não se afirma confirmação.
+  const confirmados = servidorIndisponivel ? null : estado.itens.filter((i) => i.estado.status === 'ok' && situacao(i).tipo !== 'aberto').length;
   const comConflito = estado.itens.filter((i) => {
     const t = situacao(i).tipo;
     return t === 'aberto' || (i.estado.status === 'divergente' && t !== 'conferido');
@@ -82,7 +87,7 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           <DialogDescription>
             {rodando
               ? `Cadastrando ${progresso.feitos + 1 > progresso.total ? progresso.total : progresso.feitos + 1} de ${progresso.total}…`
-              : `${progresso.ok} de ${progresso.total} confirmados · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
+              : `${confirmados === null ? `${progresso.ok} ok nesta aba (conflitos não conferidos)` : `${confirmados} de ${progresso.total} confirmados`} · ${progresso.falhas} falha(s) · ${progresso.naoIniciados} não iniciado(s)${comConflito ? ` · ${comConflito} conflito(s)` : ''}`}
           </DialogDescription>
         </DialogHeader>
 
@@ -116,8 +121,8 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
                   situacao(i).tipo === 'aberto' ? 'text-status-warning'
                     : situacao(i).tipo === 'conferido' ? 'text-muted-foreground'
                       : i.estado.status === 'falha' ? 'text-status-error' : i.estado.status === 'divergente' ? 'text-status-warning' : 'text-muted-foreground')}
-                  title={detalheItem(i, situacao(i))}>
-                  {detalheItem(i, situacao(i))}
+                  title={detalheItem(i, situacao(i), servidorIndisponivel)}>
+                  {detalheItem(i, situacao(i), servidorIndisponivel)}
                 </div>
               </div>
             </li>
@@ -130,9 +135,9 @@ export function RadarLoteDialog({ lote, open, onClose }: { lote: Lote; open: boo
           ) : (
             <>
               {pendentes > 0 && (
-                <Button onClick={retomar}>Retentar {pendentes} pendente{pendentes === 1 ? '' : 's'}</Button>
+                <Button onClick={retomar} disabled={descartando}>Retentar {pendentes} pendente{pendentes === 1 ? '' : 's'}</Button>
               )}
-              <Button variant="ghost" onClick={() => { void doEsquecer(); }}>
+              <Button variant="ghost" disabled={descartando} onClick={() => { void doEsquecer(); }}>
                 {progresso.concluido ? 'Fechar' : 'Esquecer lote'}
               </Button>
             </>

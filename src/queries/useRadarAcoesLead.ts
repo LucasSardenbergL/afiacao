@@ -98,6 +98,9 @@ export function useRadarCadastrarOmie() {
       track('radar.lead_cadastrado_omie', { ja_existia: r.jaExistia, recuperado: r.recuperado });
       qc.invalidateQueries({ queryKey: ['radar'] });
     },
+    // A v2 grava o conflito e a lib LANÇA DivergenciaCadastro: sem isto a ficha e o indicador seguiriam em zero
+    // com 1 conflito no servidor (Codex, código P2-2).
+    onError: () => qc.invalidateQueries({ queryKey: ['radar', 'conflitos-cadastro'] }),
   });
 }
 
