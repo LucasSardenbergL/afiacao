@@ -220,6 +220,16 @@ A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
   - `useUnifiedOrder.ts:573` (fluxo IA, Oben) lê `omieResult.codigo_cliente`, mas a action devolve
     `omieResult.cliente.codigo_cliente`. Com isso, até um lookup Oben bem-sucedido vira código `0` e o pedido Oben
     fica bloqueado no submit (falha FECHADA, não código errado).
+    **Corrigido (front, só Publish):** helper puro `codigoObenDoBuscarCliente`
+    (`src/hooks/unifiedOrder/codigo-oben-busca.ts`) lê `cliente.codigo_cliente`; `error` do invoke (inclusive
+    `OMIE_LOOKUP_DIVERGENTE`), `cliente: null`, código plano ou não inteiro positivo → `null`, e o submit segue
+    fail-closed. O erro do invoke agora é logado (antes era descartado em silêncio: o `invoke` não lança).
+    `codigo_vendedor` ficou `null` (como antes): no `criar_pedido` ele é advisory, porque a edge usa o
+    `ident.codigo_vendedor` derivado do documento (`deriveOmieAccountIdentity`). Preencher não muda o PV e só
+    mexeria na atribuição do `criar_perfil_local`, fora do escopo. Os outros consumidores conferem: `useCustomerSelection` lê
+    `data.cliente.codigo_cliente` (colacor), e `criar_cliente` / `buscar_cliente_por_documento` são planos de fato.
+    Teste: helper + amarração (hook usa o helper; edge devolve `{ success, cliente }`). Falsificação com controle
+    verde: acesso antigo no helper, acesso antigo no hook e `error` ignorado ficam vermelhos.
   - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
     O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
 
