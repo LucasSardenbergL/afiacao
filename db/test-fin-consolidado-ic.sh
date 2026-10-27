@@ -49,7 +49,8 @@ if [ "${1:-}" = "--falsificar" ]; then
     sc_resultado:U1 sc_cmv:U1 sc_teto:U3 sc_categoria:U4 sc_cancelado:U5 sc_status_nulo:U5b sc_consist:U6 sc_escopo:U7
     sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10c sc_marca_cr:U14 sc_uso:U15
     sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_par_orfao:U23b sc_mapa_fonte:U24 sc_contrapartes:U25 sc_fc_alvo:U25b
-    acl_mapa_update:T17b acl_mapa_delete:T17c acl_mapa_app:T17d acl_mapa_sandbox:T17e
+    acl_mapa_update:T17b acl_mapa_delete:T17c acl_mapa_app:T17d acl_mapa_sandbox:T17e acl_p7:MIG1
+    sc_marco:U26 sc_novo:U27 sc_novo_marco:U27b sc_novo_fc:U27c mig_semente_cr:MIG9a mig_semente_cp:MIG9b p7_default:MIG8
     sc_empresa:U16 sc_valor:U17 sc_multi_linha:U18 sc_pendente:U4 sc_mes:Z1
     trg_master:T1 trg_carimbo:T2 trg_insert:T3 trg_cr:T4 trg_origem:T5 trg_fica:T6 trg_sai_master:T7 trg_sai_destino:T8
     trg_sai_limpa:T9 trg_delete:T10 trg_sem_delete:MIG1 check_sem_status:MIG1"
@@ -140,19 +141,27 @@ case "${SABOTAGEM:-}" in
   sc_janela)      sabotar "OR abs(r3.data_emissao - u.cp_emissao) <= 30" "OR abs(r3.data_emissao - u.cp_emissao) <= 90" ;;
   sc_sem_data)    sabotar "OR r3.data_emissao IS NULL" "OR false" ;;
   sc_informativos) sabotar "AND m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')" "AND m3.status IS NOT NULL" ;;
-  sc_mapa)        sabotar "                           OR (EXISTS (SELECT 1 FROM omie_customer_account_map om" "                           OR (false AND EXISTS (SELECT 1 FROM omie_customer_account_map om" ;;
+  sc_mapa)        sabotar "                                OR EXISTS (SELECT 1 FROM omie_customer_account_map om\n" "                                OR false AND EXISTS (SELECT 1 FROM omie_customer_account_map om\n" ;;
   sc_mapa_sem_data) sabotar "OR r3.data_emissao IS NULL" "OR false" ;;
   sc_mapa_cancelado) sabotar "AND r3.status_titulo IS DISTINCT FROM 'CANCELADO'" "" ;;
   sc_mapa_destino) sabotar "AND cc.company = u.empresa_destino" "AND cc.company IS NOT NULL" ;;
   sc_origem_cr)   sabotar "WHERE r3.company = u.empresa_origem" "WHERE true" ;;
   sc_mapa_decisao) sabotar "AND (m4.status = 'desconsiderado'" "AND (false" ;;
-  sc_par_orfao)   sabotar "AND m4.cp_id IS NOT NULL" "" ;;
+  sc_par_orfao)   sabotar "AND m4.cp_id IS NOT NULL\n                                                           AND m4.cp_id <> u.cp_id" "AND m4.cp_id IS DISTINCT FROM u.cp_id" ;;
   sc_contrapartes) sabotar "OR ((EXISTS (SELECT 1 FROM fin_ic_contrapartes fc" "OR ((false AND EXISTS (SELECT 1 FROM fin_ic_contrapartes fc" ;;
   sc_fc_alvo)     sabotar "AND fc.empresa_alvo = u.empresa_destino" "" ;;
-  acl_mapa_update) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, UPDATE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
-  acl_mapa_delete) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, DELETE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
-  acl_mapa_app)   sabotar "AND a.grantee <> c.relowner AND a.grantee <> 0" "AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'authenticated' AND a.grantee <> 0" ;;
-  acl_mapa_sandbox) sabotar "AND a.grantee <> c.relowner AND a.grantee <> 0" "AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'sandbox_exec_teste' AND a.grantee <> 0" ;;
+  acl_mapa_update) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, UPDATE ON TABLE public.fin_ic_contrapartes TO service_role;"; sabotar "RAISE EXCEPTION 'P7 FALHOU: ACL" "RAISE NOTICE 'P7 FALHOU: ACL" ;;
+  acl_mapa_delete) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, DELETE ON TABLE public.fin_ic_contrapartes TO service_role;"; sabotar "RAISE EXCEPTION 'P7 FALHOU: ACL" "RAISE NOTICE 'P7 FALHOU: ACL" ;;
+  acl_mapa_app)   sabotar "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND a.grantee <> 0" "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'authenticated' AND a.grantee <> 0"; sabotar "RAISE EXCEPTION 'P7 FALHOU: ACL" "RAISE NOTICE 'P7 FALHOU: ACL" ;;
+  acl_mapa_sandbox) sabotar "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND a.grantee <> 0" "WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'sandbox_exec_teste' AND a.grantee <> 0"; sabotar "RAISE EXCEPTION 'P7 FALHOU: ACL" "RAISE NOTICE 'P7 FALHOU: ACL" ;;
+  acl_p7)         sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, UPDATE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
+  sc_marco)       sabotar "            AND v.mapa_lido_em IS NOT NULL\n" "" ;;
+  sc_novo)        sabotar "OR (COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" "OR (false AND COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" ;;
+  sc_novo_marco)  sabotar "COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido" "COALESCE(r3.created_at, 'infinity'::timestamptz) > '-infinity'::timestamptz" ;;
+  sc_novo_fc)     sabotar "WHERE fc2.empresa = r3.company" "WHERE false AND fc2.empresa = r3.company" ;;
+  mig_semente_cr) sabotar "WHERE r.omie_codigo_cliente IS NOT NULL AND" "WHERE false AND" ;;
+  mig_semente_cp) sabotar "WHERE p.omie_codigo_cliente_fornecedor IS NOT NULL AND" "WHERE false AND" ;;
+  p7_default)     sabotar "ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em SET DEFAULT now();\n" ""; sabotar "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()'" "WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM pg_get_expr(d.adbin, d.adrelid)" ;;
   sc_mapa_fonte)  sabotar "WHERE om.source = 'document' AND om.account = r3.company" "WHERE om.account = r3.company" ;;
   sc_direcao)     sabotar "AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino" "" ;;
   sc_marca_cr)    sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.usos_cp = 1" ;;
@@ -275,7 +284,8 @@ INSERT INTO public.omie_customer_account_map (account, omie_codigo_cliente, sour
 CREATE TABLE public.fin_contas_pagar (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), company text NOT NULL,
   valor_documento numeric, data_emissao date, status_titulo text,
-  categoria_codigo text, categoria_descricao text, created_at timestamptz DEFAULT now()
+  categoria_codigo text, categoria_descricao text, created_at timestamptz DEFAULT now(),
+  omie_codigo_cliente_fornecedor bigint
 );
 -- fin_ic_matches como na prod (psql-ro 2026-10-21): CHECK de status com o NOME e a definição de lá, RLS
 -- com as 2 policies de staff (SELECT/UPDATE), sem INSERT/DELETE para authenticated. Os UNIQUE parciais
@@ -415,6 +425,13 @@ eq "MIG0 predecessor = md5 da prod" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WH
 Pq -c "GRANT EXECUTE ON FUNCTION public.fin_consolidado_intercompany(integer,integer) TO sandbox_exec_teste"
 
 # ── Aplicar a migration REAL sobre o predecessor (a PRE tem de aceitá-lo) ──
+# Semente do mapa durável: linhas que a fila já tinha ANTES da migration (valor e data fora de todo cenário).
+Pq -c "WITH r AS (INSERT INTO public.fin_contas_receber (company, valor_documento, data_emissao, status_titulo, categoria_descricao, omie_codigo_cliente)
+                  VALUES ('colacor', 12345.67, '2020-01-01', 'RECEBIDO', 'Venda', 990) RETURNING id)
+       INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, valor_origem, status) SELECT 'colacor', 'oben', id, 12345.67, 'sem_contrapartida' FROM r;
+       WITH c AS (INSERT INTO public.fin_contas_pagar (company, valor_documento, data_emissao, status_titulo, categoria_descricao, omie_codigo_cliente_fornecedor)
+                  VALUES ('oben', 12345.67, '2020-01-01', 'PAGO', 'Compra mercadoria', 991) RETURNING id)
+       INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cp_id, valor_destino, status) SELECT 'colacor', 'oben', id, 12345.67, 'sem_contrapartida' FROM c" >/dev/null
 # Default privileges como na prod (psql-ro 2026-10-27): tabela nova nasce com ALL para anon/authenticated/
 # service_role e SELECT+INSERT para o sandbox_exec — é o que o REVOKE do mapa durável tem de desfazer.
 Pq -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
@@ -422,6 +439,11 @@ Pq -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, au
 eq "MIG1 aplica sobre o predecessor" "$(estado "$(cat "$MIG_USADA")")" "verde"
 eq "MIG2 re-aplicar passa (idempotente)" "$(estado "$(cat "$MIG_USADA")")" "verde"
 eq "MIG3 grant extra sobrevive ao replace" "$(Pq -c "SELECT has_function_privilege('sandbox_exec_teste', 'public.fin_consolidado_intercompany(integer,integer)', 'EXECUTE')")" "t"
+eq "MIG9a semente: o código do CR de uma linha da fila entra no mapa durável" "$(Pq -c "SELECT count(*) FROM public.fin_ic_contrapartes WHERE (empresa, omie_codigo_cliente, empresa_alvo) = ('colacor', 990, 'oben')")" "1"
+eq "MIG9b semente: e o do fornecedor do CP, com a origem como alvo" "$(Pq -c "SELECT count(*) FROM public.fin_ic_contrapartes WHERE (empresa, omie_codigo_cliente, empresa_alvo) = ('oben', 991, 'colacor')")" "1"
+# Marco no futuro: o ramo da contraparte desconhecida fica inerte nos cenários que não são dele (U26/U27
+# o põem no passado de propósito e o devolvem).
+Pq -c "INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-01')" >/dev/null
 
 # Leitura padrão: como service_role, em uma linha "conta=bruto/elim/consolidado;..." na ordem devolvida.
 le() { Pq -c "SET request.jwt.claim.role = 'service_role';
@@ -640,6 +662,23 @@ eq "U25 CR do destino só no mapa durável da edge (fora do mapa de identidade):
 mes "UPDATE public.fin_contas_receber SET omie_codigo_cliente = 782 WHERE id = '$CR'"
 eq "U25b ... e o mesmo CR com código que o mapa durável dá a OUTRA empresa não bloqueia" "$(le 2031 9)" "$UOK"
 mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '$CR'"
+mes "SELECT public.t_titulos(2031, 10); SELECT public.t_sc('colacor_sc', 'colacor', '2031-10-10'); SELECT public.t_calcular(2031, 10);
+     DELETE FROM public.fin_ic_reconcile_rodadas"
+eq "U26 sem marco nenhum (antes da 1ª rodada da edge v1.3) nada elimina" "$(le_ec 2031 10)" "$PEND"
+# Datas EXPLÍCITAS: o t_titulos grava created_at = emissão (2031), então "depois do marco" se mede contra
+# um marco em 31/12/2031 — com o relógio de agora (2026) todo título-base de 2031 ficaria "depois".
+mes "INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2031-12-31')"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 9999)")"
+mes "UPDATE public.fin_contas_receber SET created_at = '2032-01-15' WHERE id = '$CR'"
+eq "U27 CR criado depois do marco, com código que nenhum mapa conhece: contraparte desconhecida, pende" "$(le_ec 2031 10)" "$PEND"
+mes "UPDATE public.fin_contas_receber SET created_at = '2031-12-30' WHERE id = '$CR'"
+eq "U27b ... o mesmo CR criado ANTES do marco o mapa já classificou (não é do grupo): não bloqueia" "$(le 2031 10)" "$UOK"
+mes "UPDATE public.fin_contas_receber SET created_at = '2032-01-15', omie_codigo_cliente = 782 WHERE id = '$CR'"
+eq "U27c ... criado depois, mas com código que o mapa dá a OUTRA empresa do grupo: não bloqueia" "$(le 2031 10)" "$UOK"
+mes "UPDATE public.fin_contas_receber SET omie_codigo_cliente = NULL WHERE id = '$CR'"
+eq "U27d ... criado depois e SEM código de cliente: desconhecida, pende" "$(le_ec 2031 10)" "$PEND"
+mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '$CR';
+     DELETE FROM public.fin_ic_reconcile_rodadas; INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-01')"
 eq "U0 controle: o mês elegível segue elegível" "$(le 2027 1)" "$UOK"
 eq "Z1 mês sem venda sem cobrança: nada muda" "$(le 2026 2)" \
    "receita_bruta=3400/0/3400;cmv=2300/0/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
@@ -705,7 +744,9 @@ eq "T17a a edge insere no mapa durável, e repetir não duplica" "$(Pq -c "$EDGE
 eq "T17b a edge não altera o mapa durável" "$(estado "$EDGE UPDATE public.fin_ic_contrapartes SET empresa_alvo = 'colacor_sc' WHERE omie_codigo_cliente = 900")" "42501"
 eq "T17c a edge não apaga do mapa durável" "$(estado "$EDGE DELETE FROM public.fin_ic_contrapartes WHERE omie_codigo_cliente = 900")" "42501"
 eq "T17d o app (authenticated) não lê o mapa durável" "$(estado "SET ROLE authenticated; SELECT count(*) FROM public.fin_ic_contrapartes")" "42501"
-eq "T17e o sandbox_exec (default privileges da prod) não escreve no mapa durável" "$(estado "SET ROLE sandbox_exec_teste; INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo) VALUES ('oben', 901, 'colacor')")" "42501"
+eq "T17e o sandbox_exec (default privileges da prod) não tem INSERT no mapa durável (privilégio, não a RLS)" "$(Pq -c "SELECT has_table_privilege('sandbox_exec_teste', 'public.fin_ic_contrapartes', 'INSERT')")" "f"
+eq "T17f a edge grava o marco" "$(Pq -c "$EDGE WITH i AS (INSERT INTO public.fin_ic_reconcile_rodadas (mapa_lido_em) VALUES ('2100-01-02') RETURNING 1) SELECT count(*) FROM i")" "1"
+eq "T17g ... e não altera marco (só acrescenta)" "$(estado "$EDGE UPDATE public.fin_ic_reconcile_rodadas SET mapa_lido_em = now()")" "42501"
 eq "T16 ... e apaga as informativas não resolvidas pelos ids, como a edge faz (a marcada fica)" "$(Pq -c "$EDGE WITH d AS (DELETE FROM public.fin_ic_matches
    WHERE id IN ($IDS2029) AND status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
    AND resolvido_em IS NULL RETURNING 1) SELECT count(*) FROM d")" "4"
@@ -715,6 +756,8 @@ eq "T14 a linha marcada sobreviveu a tudo" "$(Pq -c "SELECT status || ',' || obs
 antes="$(Pq -c "SELECT count(*) FROM public.fin_ic_matches WHERE status = 'intragrupo_sem_cobranca'")"
 eq "MIG7 re-aplicar com linhas marcadas passa" "$(estado "$(cat "$MIG_USADA")")" "verde"
 eq "MIG7b ... e as linhas marcadas seguem lá" "$(Pq -c "SELECT count(*) FROM public.fin_ic_matches WHERE status = 'intragrupo_sem_cobranca'")" "$antes"
+Pq -c "ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em DROP DEFAULT" >/dev/null
+eq "MIG8 re-aplicar restaura o default de gravado_em (a edge não o envia)" "$(estado "$(cat "$MIG_USADA")")|$(Pq -c "SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum WHERE d.adrelid = 'public.fin_ic_contrapartes'::regclass AND a.attname = 'gravado_em'")" "verde|now()"
 
 # ── MIG5: a PRE recusa função de trigger estranha ──
 Pq -c "CREATE OR REPLACE FUNCTION public.fin_ic_matches_guarda_sem_cobranca() RETURNS trigger LANGUAGE plpgsql AS \$f\$ BEGIN RETURN NEW; END \$f\$"

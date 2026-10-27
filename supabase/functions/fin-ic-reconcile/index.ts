@@ -19,6 +19,7 @@ import {
   consultarCodigos,
   escritorContrapartes,
   gravarContrapartes,
+  marcoDaRodada,
   type ResultadoConsulta,
 } from "./contrapartes.ts";
 
@@ -106,6 +107,8 @@ Deno.serve(async (req: Request) => {
   }
   const simular = decisaoSimular.tipo === "sonda";
 
+  // Antes de qualquer leitura do Omie: é o instante que o marco de cobertura declara (`marcoDaRodada`).
+  const inicioMs = Date.now();
   try {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -236,6 +239,15 @@ Deno.serve(async (req: Request) => {
         versao: VERSAO,
         error: `fin_ic_contrapartes: ${mapaGravado.erro}`,
         nota: "nada gravado em fin_ic_matches; a rodada anterior está intacta",
+      }, 500);
+    }
+    // O marco só depois do mapa gravado: ele afirma que o mapa cobre os cadastros até aquele instante.
+    const { error: marcoErr } = await supabase.from("fin_ic_reconcile_rodadas").insert(marcoDaRodada(inicioMs));
+    if (marcoErr) {
+      return json({
+        versao: VERSAO,
+        error: `fin_ic_reconcile_rodadas: ${marcoErr.message}`,
+        nota: "mapa gravado, marco não; nada gravado em fin_ic_matches",
       }, 500);
     }
 

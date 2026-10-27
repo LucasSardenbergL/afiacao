@@ -54,7 +54,7 @@ DECLARE
   v_chk text := (SELECT pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c
                   WHERE c.conrelid = 'public.fin_ic_matches'::regclass AND c.conname = 'fin_ic_matches_status_check');
 BEGIN
-  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '0cc2fff5e75f674c0bfbba26dc6608f5') THEN
+  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', 'faf8f97bdc9b9c5246f154775adb34aa') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
   IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -88,25 +88,53 @@ CREATE TABLE IF NOT EXISTS public.fin_ic_contrapartes (
   CONSTRAINT fin_ic_contrapartes_pkey PRIMARY KEY (empresa, omie_codigo_cliente, empresa_alvo),
   CONSTRAINT fin_ic_contrapartes_outra_empresa CHECK (empresa <> empresa_alvo)
 );
+ALTER TABLE public.fin_ic_contrapartes ALTER COLUMN gravado_em SET DEFAULT now();
 ALTER TABLE public.fin_ic_contrapartes ENABLE ROW LEVEL SECURITY;
+-- Marco de cobertura: a cada rodada a edge grava QUANDO leu o Omie (com folga). CR criado DEPOIS do último
+-- marco pode ser de um cadastro do grupo que o mapa ainda não viu: com código fora dos mapas, a RPC o trata
+-- como contraparte desconhecida (pende). Sem marco nenhum (antes da 1ª rodada da v1.3), nada elimina.
+CREATE TABLE IF NOT EXISTS public.fin_ic_reconcile_rodadas (
+  id bigint GENERATED ALWAYS AS IDENTITY,
+  mapa_lido_em timestamptz NOT NULL,
+  gravado_em timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT fin_ic_reconcile_rodadas_pkey PRIMARY KEY (id)
+);
+ALTER TABLE public.fin_ic_reconcile_rodadas ALTER COLUMN gravado_em SET DEFAULT now();
+ALTER TABLE public.fin_ic_reconcile_rodadas ENABLE ROW LEVEL SECURITY;
 -- O default privileges da prod concede ALL a anon/authenticated/service_role e SELECT+INSERT aos papéis
 -- sandbox_exec* em tabela nova: revoga de TODO grantee que não seja o dono (nominal não pega papel novo).
 DO $acl$
-DECLARE r record;
+DECLARE r record; t text;
 BEGIN
-  FOR r IN SELECT DISTINCT a.grantee FROM pg_class c, aclexplode(c.relacl) a
-            WHERE c.oid = 'public.fin_ic_contrapartes'::regclass AND a.grantee <> c.relowner AND a.grantee <> 0
-  LOOP
-    EXECUTE format('REVOKE ALL ON TABLE public.fin_ic_contrapartes FROM %I', pg_get_userbyid(r.grantee));
+  FOREACH t IN ARRAY ARRAY['public.fin_ic_contrapartes', 'public.fin_ic_reconcile_rodadas'] LOOP
+    FOR r IN SELECT DISTINCT a.grantee FROM pg_class c, aclexplode(c.relacl) a
+              WHERE c.oid = t::regclass AND a.grantee <> c.relowner AND a.grantee <> 0
+    LOOP
+      EXECUTE format('REVOKE ALL ON TABLE %s FROM %I', t, pg_get_userbyid(r.grantee));
+    END LOOP;
+    EXECUTE format('REVOKE ALL ON TABLE %s FROM PUBLIC', t);
+    -- claude_ro: a leitura de diagnóstico (wrapper psql-ro) que confere as tabelas depois do apply.
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+      EXECUTE format('GRANT SELECT ON TABLE %s TO claude_ro', t);
+    END IF;
   END LOOP;
-  REVOKE ALL ON TABLE public.fin_ic_contrapartes FROM PUBLIC;
-  -- claude_ro: a leitura de diagnóstico (wrapper psql-ro) que confere esta tabela depois do apply.
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
-    GRANT SELECT ON TABLE public.fin_ic_contrapartes TO claude_ro;
-  END IF;
 END
 $acl$;
 GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;
+GRANT SELECT, INSERT ON TABLE public.fin_ic_reconcile_rodadas TO service_role;
+
+-- Semente: os códigos que as linhas da fila JÁ provaram ser do grupo (a edge só as grava com o Omie
+-- dizendo que o cadastro é de outra empresa do grupo). Sem isto, um código que só uma informativa antiga
+-- conhecia sumiria na 1ª rodada da v1.3 se o Omie deixasse de devolvê-lo. Só acrescenta.
+INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo)
+SELECT DISTINCT r.company, r.omie_codigo_cliente, m.empresa_destino
+  FROM public.fin_ic_matches m JOIN public.fin_contas_receber r ON r.id = m.cr_id
+ WHERE r.omie_codigo_cliente IS NOT NULL AND r.company = m.empresa_origem AND r.company <> m.empresa_destino
+UNION
+SELECT DISTINCT p.company, p.omie_codigo_cliente_fornecedor, m.empresa_origem
+  FROM public.fin_ic_matches m JOIN public.fin_contas_pagar p ON p.id = m.cp_id
+ WHERE p.omie_codigo_cliente_fornecedor IS NOT NULL AND p.company = m.empresa_destino AND p.company <> m.empresa_origem
+ON CONFLICT DO NOTHING;
 
 -- ── 4. O trigger: só o founder (master) põe e tira a marcação ───────────────────────────────────
 CREATE OR REPLACE FUNCTION public.fin_ic_matches_guarda_sem_cobranca()
@@ -333,6 +361,7 @@ BEGIN
                      AND jsonb_typeof(u.sd_comp -> u.cp_chave -> 'cmv') = 'number'
                      AND ((u.sd_comp -> u.cp_chave) - 'cmv') = '{}'::jsonb
                 THEN (u.sd_comp -> u.cp_chave ->> 'cmv')::numeric END AS comp_d_valor,
+           marco.lido AS mapa_lido_em,
            EXISTS (SELECT 1 FROM fin_contas_receber r3
                     WHERE r3.company = u.empresa_origem
                       AND r3.status_titulo IS DISTINCT FROM 'CANCELADO'
@@ -350,7 +379,17 @@ BEGIN
                                              JOIN company_cnpjs cc ON cc.cnpj_normalized = om.evidence_document_normalized
                                             WHERE om.source = 'document' AND om.account = r3.company
                                               AND om.omie_codigo_cliente = r3.omie_codigo_cliente
-                                              AND cc.company = u.empresa_destino))
+                                              AND cc.company = u.empresa_destino)
+                                -- (c) contraparte DESCONHECIDA: CR criado depois do último marco, com código que
+                                -- nenhum mapa classifica (pode ser cadastro novo do grupo que a edge não viu).
+                                OR (COALESCE(r3.created_at, 'infinity'::timestamptz) > marco.lido
+                                    AND NOT EXISTS (SELECT 1 FROM fin_ic_contrapartes fc2
+                                                     WHERE fc2.empresa = r3.company
+                                                       AND fc2.omie_codigo_cliente IS NOT DISTINCT FROM r3.omie_codigo_cliente)
+                                    AND NOT EXISTS (SELECT 1 FROM omie_customer_account_map om2
+                                                      JOIN company_cnpjs cc2 ON cc2.cnpj_normalized = om2.evidence_document_normalized
+                                                     WHERE om2.source = 'document' AND om2.account = r3.company
+                                                       AND om2.omie_codigo_cliente IS NOT DISTINCT FROM r3.omie_codigo_cliente)))
                                AND NOT EXISTS (SELECT 1 FROM fin_ic_matches m4
                                                 WHERE m4.cr_id = r3.id
                                                   AND (m4.status = 'desconsiderado'
@@ -358,11 +397,13 @@ BEGIN
                                                            AND m4.cp_id IS NOT NULL
                                                            AND m4.cp_id <> u.cp_id)))))) AS cr_aparecido
       FROM sem_cobranca u
+     CROSS JOIN (SELECT max(rr.mapa_lido_em) AS lido FROM fin_ic_reconcile_rodadas rr) marco
      WHERE u.cp_no_mes IS TRUE
   ),
   sc_julgado AS (
     SELECT v.*,
            (v.marca_cr_id IS NULL AND v.usos_cp = 1
+            AND v.mapa_lido_em IS NOT NULL
             AND v.cp_empresa = v.empresa_destino
             AND v.cp_status <> 'CANCELADO'
             AND v.cp_valor > 0
@@ -431,7 +472,7 @@ DECLARE
   v_trg  text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(g));
 BEGIN
   -- P1 corpos = os deste arquivo
-  IF v_rpc IS DISTINCT FROM '0cc2fff5e75f674c0bfbba26dc6608f5' THEN
+  IF v_rpc IS DISTINCT FROM 'faf8f97bdc9b9c5246f154775adb34aa' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
   IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -485,13 +526,23 @@ BEGIN
      OR (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
           WHERE c.conrelid = to_regclass('public.fin_ic_contrapartes') AND c.contype = 'p')
         IS DISTINCT FROM 'PRIMARY KEY (empresa, omie_codigo_cliente, empresa_alvo)'
-     OR NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass('public.fin_ic_contrapartes')) THEN
-    RAISE EXCEPTION 'P7 FALHOU: fin_ic_contrapartes com outra forma, sem a PK ou sem RLS';
+     OR NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass('public.fin_ic_contrapartes'))
+     OR (SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+          WHERE d.adrelid = to_regclass('public.fin_ic_contrapartes') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()'
+     OR (SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull, ',' ORDER BY a.attnum)
+           FROM pg_attribute a WHERE a.attrelid = to_regclass('public.fin_ic_reconcile_rodadas') AND a.attnum > 0 AND NOT a.attisdropped)
+        IS DISTINCT FROM 'id:bigint:true,mapa_lido_em:timestamp with time zone:true,gravado_em:timestamp with time zone:true'
+     OR (SELECT pg_get_expr(d.adbin, d.adrelid) FROM pg_attrdef d JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+          WHERE d.adrelid = to_regclass('public.fin_ic_reconcile_rodadas') AND a.attname = 'gravado_em') IS DISTINCT FROM 'now()'
+     OR NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass('public.fin_ic_reconcile_rodadas')) THEN
+    RAISE EXCEPTION 'P7 FALHOU: fin_ic_contrapartes/fin_ic_reconcile_rodadas com outra forma, sem PK/default ou sem RLS';
   END IF;
   IF NOT has_table_privilege('service_role', 'public.fin_ic_contrapartes', 'SELECT')
      OR NOT has_table_privilege('service_role', 'public.fin_ic_contrapartes', 'INSERT')
+     OR NOT has_table_privilege('service_role', 'public.fin_ic_reconcile_rodadas', 'INSERT')
      OR EXISTS (SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
-                 WHERE c.oid = 'public.fin_ic_contrapartes'::regclass AND a.grantee <> c.relowner
+                 WHERE c.oid IN ('public.fin_ic_contrapartes'::regclass, 'public.fin_ic_reconcile_rodadas'::regclass)
+                   AND a.grantee <> c.relowner
                    AND NOT ((a.grantee <> 0 AND pg_get_userbyid(a.grantee) = 'service_role' AND a.privilege_type IN ('SELECT', 'INSERT'))
                          OR (a.grantee <> 0 AND pg_get_userbyid(a.grantee) = 'claude_ro' AND a.privilege_type = 'SELECT'))) THEN
     RAISE EXCEPTION 'P7 FALHOU: ACL de fin_ic_contrapartes não é só-acrescenta (service_role SELECT+INSERT, claude_ro SELECT, mais ninguém)';

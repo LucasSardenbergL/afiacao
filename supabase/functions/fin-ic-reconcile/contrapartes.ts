@@ -160,3 +160,15 @@ export async function gravarContrapartes(
   const { error } = await gravar(linhas);
   return error ? { ok: false, erro: error.message } : { ok: true, linhas: linhas.length };
 }
+
+/** Folga do marco: o relógio da edge e o do banco não são o mesmo (o `created_at` do CR é do banco). */
+export const FOLGA_MARCO_MS = 5 * 60_000;
+
+/**
+ * O marco que a RPC lê: "o mapa cobre os cadastros que existiam até `mapa_lido_em`". É o instante em que
+ * a rodada COMEÇOU a ler o Omie, menos a folga — CR criado depois disso pode ser de cadastro novo do grupo
+ * que esta leitura não viu, e a RPC o trata como contraparte desconhecida (pende).
+ */
+export function marcoDaRodada(inicioMs: number): { mapa_lido_em: string } {
+  return { mapa_lido_em: new Date(inicioMs - FOLGA_MARCO_MS).toISOString() };
+}

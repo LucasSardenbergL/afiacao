@@ -76,6 +76,26 @@ Na prod, o mapa cobre os 15 CR que já estão em linhas da fila. O "Desfazer" gr
 (CR só na tabela, sem linha na fila), e o T15 passou a usar um CP próprio. Resíduo conhecido: par de
 empresas sem código no mapa (hoje colacor→colacor_sc) só bloqueia por (a).
 
+**2ª rodada do Codex (mesmo dia):**
+- **P0, cobertura:** o mapa de identidade depende de um usuário vinculado ao cadastro, e o
+  `omie-analytics-sync` apaga o vínculo quando acha 2 códigos para o mesmo documento. "15/15 da fila"
+  não prova completude.
+- **P1, par órfão:** um par auto/manual com `cp_id` NULL tirava o CR de cena.
+- **P2, bloqueio sem botão:** um CR do grupo sem emissão pendura o mês e não aparece na fila. Ficou
+  como resíduo, porque falha para o lado seguro, e a prod não tem nenhum caso.
+
+**Conserto, por decisão do founder (a edge muda):**
+- Tabela `fin_ic_contrapartes` (empresa, código Omie, empresa alvo), só-acrescenta. A ACL dá à edge
+  SELECT e INSERT, ao `claude_ro` SELECT, e mais nada. O REVOKE vale para todo grantee não-dono,
+  porque o default privileges da prod dá ALL a anon/authenticated e SELECT+INSERT ao `sandbox_exec`.
+- A `fin-ic-reconcile` v1.3 grava ali o mapa que já monta do Omie (ListarClientes por CNPJ, fail-closed),
+  antes de publicar. Se a gravação falha, a edge devolve 500 sem tocar a fila.
+- A RPC aceita esse mapa ou o de identidade.
+- Um par só tira o CR de cena com um CP de verdade e diferente do marcado.
+
+Na implantação, a ordem é: migration, merge, deploy da edge, uma rodada da edge, e conferir o mapa
+populado antes do founder marcar.
+
 ## Medição na prod (psql-ro, corpo como SELECT, 46 meses com snapshot competência)
 
 - O corpo novo dá o mesmo resultado que o vivo (md5 11832f17…) nos 46 meses: 184 linhas iguais e nenhum
@@ -90,7 +110,7 @@ empresas sem código no mapa (hoje colacor→colacor_sc) só bloqueia por (a).
 
 `db/test-fin-consolidado-ic.sh` aplica a migration REAL sobre o predecessor REAL (o corpo vivo
 11832f17…). Os cenários A–P da versão anterior são re-exercidos sob a versão nova, mais U (venda sem
-cobrança), T (trigger) e MIG5/MIG7: 87 asserts e 58 sabotagens, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
+cobrança), T (trigger) e MIG5/MIG7: 95 asserts e 65 sabotagens, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
 
 **Achado da falsificação:** `sc_marca_cr` e `sc_empresa` ficaram VERDES na 1ª rodada. O cenário S1
 deixava uma linha informativa oben→colacor de 100, que é "CR aparecido" para qualquer sem cobrança
@@ -112,6 +132,9 @@ locales.
   writer, `update().eq()` não dá erro. Peça `.select('id')` e exija a linha.
 - **Mesma SQLSTATE em dois ramos mascara um deles.** O assert negativo precisa casar a marca do ramo,
   não só o código.
+- **Evidência de dinheiro só cresce.** Se outro writer apaga e recria a fonte, ou ela depende de um
+  vínculo que outra edge pode apagar, ela não serve. A fonte certa é uma tabela só-acrescenta, alimentada
+  por quem tem a verdade (o Omie).
 - **Linha que outro writer apaga e recria não é evidência de dinheiro.** Se a decisão depende da
   AUSÊNCIA de uma linha, a fonte tem de ser durável (a tabela de títulos), não o espelho descartável.
 - **Semente global contamina predicados por existência.** Um "existe linha X na mesma direção" vê todas

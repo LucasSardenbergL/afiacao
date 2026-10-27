@@ -7,6 +7,7 @@ import {
   gravarContrapartes,
   type LinhaContraparte,
   linhasDeContraparte,
+  marcoDaRodada,
 } from "./contrapartes.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -145,4 +146,8 @@ Deno.test("mapa durável: sem código nenhum não chama o banco", async () => {
 Deno.test("mapa durável: erro do banco vira {ok:false} com a mensagem (o caller aborta antes de publicar)", async () => {
   const r = await gravarContrapartes(() => Promise.resolve({ error: { message: "permission denied" } }), [R("colacor", "oben", [10])]);
   assertEquals(r, { ok: false, erro: "permission denied" });
+});
+
+Deno.test("marco: o instante em que a rodada começou a ler o Omie, menos 5 min de folga (relógios distintos)", () => {
+  assertEquals(marcoDaRodada(Date.parse("2026-10-27T09:00:00.000Z")), { mapa_lido_em: "2026-10-27T08:55:00.000Z" });
 });
