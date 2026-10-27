@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 697
+-- Total de custom migrations: 698
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -761,7 +761,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120000', 'radar_score_lead_v3_cnae_secundario', '20261021120000_radar_score_lead_v3_cnae_secundario.sql'),
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
-  ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql')
+  ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
+  ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2970,7 +2971,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
-  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5227,7 +5229,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
-  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', '')
 )
 SELECT
   e.migration,

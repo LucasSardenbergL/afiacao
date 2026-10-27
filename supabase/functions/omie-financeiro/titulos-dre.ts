@@ -20,7 +20,13 @@
 // A comparação de cursor do helper é de STRING em JS; para uuid em texto (hex minúsculo, hífens
 // em posições fixas) ela coincide com a ordem do `uuid` no Postgres.
 import { fetchAllKeyset } from "../_shared/paginate.ts";
-import { FalhaLeituraCritica, type ErroPostgrest } from "../_shared/leitura-critica.ts";
+import {
+  exigirLeitura,
+  FalhaLeituraCritica,
+  type ErroPostgrest,
+  type RespostaLeitura,
+} from "../_shared/leitura-critica.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 
 /**
  * Teto de títulos num ÚNICO mês/empresa/tabela. 20.000 ≈ 30× o pior mês medido (655).
@@ -95,44 +101,86 @@ async function paginarComTeto(
   );
 }
 
+/** Cliente mínimo para as RPCs de mapa de baixas — o supabase-js real satisfaz. */
+export interface ClienteRpcBaixas {
+  rpc(fn: string, args: Record<string, unknown>): PromiseLike<RespostaLeitura<unknown>>;
+}
+
+const FONTE_BAIXAS = {
+  CR: "fin_titulo_baixas_cr_mapa",
+  CP: "fin_titulo_baixas_cp_mapa",
+} as const;
+
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 'YYYY-MM-DD' que existe no calendário — a regex sozinha aceita '2026-99-99'. */
+function dataDeCalendario(s: string): boolean {
+  if (!DATA_ISO.test(s)) return false;
+  const [a, m, d] = s.split("-").map(Number);
+  // `Date.UTC` rola o excedente (30/02 → 02/03; mês 99 → anos adiante): só é data de verdade se
+  // os componentes voltam iguais.
+  const t = new Date(Date.UTC(a, m - 1, d));
+  return t.getUTCFullYear() === a && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
 /**
  * Mapa `omie_codigo_lancamento → data_baixa_final` (v_titulo_baixas) da empresa INTEIRA, para o
- * DRE-caixa. Até o #3234 era `fetchAll` por OFFSET sobre a view agregada (~29 páginas na colacor
- * CR, 28.908 linhas em 2026-10-20): um movimento novo do sync entre duas páginas desloca o offset
- * e PULA uma baixa — mapa parcial = título contado no mês errado (ressalva do Codex no #3234).
- * Keyset pela própria chave: medido único e não-nulo por (company, tipo) na view (psql-ro,
- * 2026-10-20), e a view agrupa por ela. Sem teto: é o histórico todo e cresce; a chave
- * estritamente crescente (validada pelo helper) já impede laço que não converge.
+ * DRE-caixa, numa ÚNICA chamada: RPC `fin_titulo_baixas_cr_mapa` (migration 20261019110100) ou
+ * `fin_titulo_baixas_cp_mapa` (20261026220000) — o ramo da view, verbatim, com a empresa dentro
+ * do CTE `mov`, igualdade com a view provada na postcondição de cada migration.
+ *
+ * Até aqui era keyset sobre a view em páginas de 1.000 (#3234, que trocou o OFFSET que PULAVA
+ * baixa). Medido em prod (psql-ro, 2026-10-26): cada página reavaliava a view INTEIRA — o CTE
+ * `mov` é materializado sobre fin_movimentacoes sem pushdown de company —, 512–619 ms por página
+ * no EXPLAIN ANALYZE, 41 páginas na colacor (29 CR + 12 CP). O cron gravava o caixa da colacor
+ * 47 s após o disparo. Uma chamada também é UMA leitura consistente: nenhum movimento do sync
+ * entra entre páginas.
+ *
+ * Fail-closed (ausente ≠ zero), no contrato do `_shared/baixas-cr.ts` do fin-cashflow-engine:
+ * erro/rejeição → FalhaLeituraCritica; fora do envelope {total, pares}, pares.length ≠ total ou par
+ * fora de forma → MALFORMADA. O envelope existe porque o supabase-js converte HTTP 404 com corpo
+ * `[]` em {data: [], error: null} — um mapa vazio FABRICADO contaria todo título no mês errado.
+ * Não reusa aquele módulo de propósito: generalizá-lo mudaria o fingerprint do engine e do
+ * valor-cockpit (2 deploys sem mudança de comportamento) por um caso só desta edge.
  */
 export async function carregarBaixaMap(
-  db: BancoTitulos,
+  db: ClienteRpcBaixas,
   company: string,
   tipo: "CR" | "CP",
 ): Promise<Map<number, string>> {
-  type LinhaBaixa = { omie_codigo_lancamento: number; data_baixa_final: string | null };
-  const rows = await fetchAllKeyset<LinhaBaixa, number>(
-    (cursor, limite) => {
-      let q = db.from<LinhaBaixa>("v_titulo_baixas")
-        .select("omie_codigo_lancamento, data_baixa_final")
-        .eq("company", company).eq("tipo", tipo);
-      if (cursor !== null) q = q.gt("omie_codigo_lancamento", cursor);
-      return q.order("omie_codigo_lancamento", { ascending: true }).limit(limite);
-    },
-    (l) => {
-      // bigint chega como número JSON: acima de 2^53 ele ARREDONDA, e o `.gt` seguinte pularia
-      // o código vizinho sem lançar (reproduzido pelo Codex). Maior código em prod: 1,2e10
-      // (psql-ro, 2026-10-20) — longe, mas a guarda é o que torna o limite visível.
-      const k = l.omie_codigo_lancamento;
-      if (typeof k === "number" && !Number.isSafeInteger(k)) {
-        throw new FalhaLeituraCritica(`v_titulo_baixas ${tipo}/${company}`, { code: "MALFORMADA" });
-      }
-      return k;
-    },
-    `v_titulo_baixas ${tipo}/${company}`,
-  );
+  const fonte = FONTE_BAIXAS[tipo];
+  let res: RespostaLeitura<unknown>;
+  try {
+    res = await db.rpc(fonte, { p_company: company });
+  } catch (e) {
+    throw new FalhaLeituraCritica(fonte, {
+      code: "REJEITADA",
+      message: mensagemDeErro(e) ?? "rejeição sem mensagem utilizável",
+    });
+  }
+  const dados = exigirLeitura(res, fonte) as { total?: unknown; pares?: unknown } | null;
+  if (
+    dados == null || typeof dados !== "object" || Array.isArray(dados) ||
+    !Array.isArray(dados.pares) || typeof dados.total !== "number" ||
+    dados.pares.length !== dados.total
+  ) {
+    throw new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
+  }
   const map = new Map<number, string>();
-  for (const r of rows) {
-    if (r.data_baixa_final) map.set(Number(r.omie_codigo_lancamento), r.data_baixa_final);
+  for (const par of dados.pares as unknown[]) {
+    // bigint chega como número JSON: acima de 2^53 ele ARREDONDA e casaria o título vizinho.
+    // Maior código em prod: 1,2e10 (psql-ro, 2026-10-20) — a guarda torna o limite visível.
+    if (
+      !Array.isArray(par) || par.length !== 2 ||
+      typeof par[0] !== "number" || !Number.isSafeInteger(par[0]) ||
+      typeof par[1] !== "string" || !dataDeCalendario(par[1]) ||
+      // Código repetido: o keyset antigo já recusava (chave estritamente crescente); um Map
+      // last-wins escolheria uma das baixas em silêncio (Codex, P3 desta entrega).
+      map.has(par[0])
+    ) {
+      throw new FalhaLeituraCritica(fonte, { code: "MALFORMADA" });
+    }
+    map.set(par[0], par[1]);
   }
   return map;
 }

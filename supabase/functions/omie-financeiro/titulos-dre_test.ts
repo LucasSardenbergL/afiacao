@@ -9,6 +9,7 @@ import {
   carregarBaixaMap,
   buscarTitulosCompetencia,
   type BancoTitulos,
+  type ClienteRpcBaixas,
   type QueryTitulos,
   TETO_TITULOS_MES,
   TetoTitulosExcedido,
@@ -182,61 +183,98 @@ Deno.test("mês de 2.500 títulos com INSERT no meio da leitura: todos os pré-e
   assertEquals(rows.length, 2500);
 });
 
-// Ressalva do Codex no #3234: o mapa de baixas era OFFSET sobre a view inteira (~29 páginas na
-// colacor CR). Um movimento novo do sync entre páginas deslocava o offset e PULAVA uma baixa.
-Deno.test("baixaMap: 2.500 baixas com INSERT entre páginas — nenhuma pré-existente some", async () => {
-  const { db, chamadas } = bancoFake(2500, {
-    antesDoRequest: (n, linhas) => {
-      if (n === 2) linhas.push({ id: "id-novo", omie_codigo_lancamento: 5, data_baixa_final: "2026-09-01" });
+// Desde a v1.8 o mapa de baixas é UMA chamada de RPC por (empresa, tipo), não keyset sobre a view
+// (cada página reavaliava a view inteira — medido em 2026-10-26, ver titulos-dre.ts). O que estes
+// testes travam é o contrato fail-closed da resposta: mapa vazio FABRICADO = todo título do mês
+// contado pela data de vencimento, em silêncio.
+type RespostaRpc = { data: unknown; error: { code?: string; message?: string } | null };
+function rpcFake(resposta: RespostaRpc | (() => never)) {
+  const chamadas: { fn: string; args: Record<string, unknown> }[] = [];
+  const db: ClienteRpcBaixas = {
+    rpc(fn, args) {
+      chamadas.push({ fn, args });
+      if (typeof resposta === "function") return Promise.resolve().then(resposta);
+      return Promise.resolve(resposta as never);
     },
-  });
-  const mapa = await carregarBaixaMap(db, "colacor", "CR");
-  for (let i = 0; i < 2500; i++) {
-    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa pré-existente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
-  }
-  const q = chamadas[0];
-  for (const passo of ["from:v_titulo_baixas", "eq:company=colacor", "eq:tipo=CR", "order:omie_codigo_lancamento:asc"]) {
-    if (!q.includes(passo)) throw new Error(`baixaMap perdeu ${passo}: ${q.join(" · ")}`);
-  }
-});
+  };
+  return { db, chamadas };
+}
 
-Deno.test("baixaMap: chave numérica ordena como NÚMERO (9 < 10), não como texto", async () => {
-  const { db } = bancoFake(0, {
-    antesDoRequest: (n, linhas) => {
-      if (n === 1) for (const c of [9, 10, 100, 1000]) linhas.push({ id: `x${c}`, omie_codigo_lancamento: c, data_baixa_final: "2026-09-01" });
-    },
-  });
-  const mapa = await carregarBaixaMap(db, "oben", "CP");
-  assertEquals([...mapa.keys()], [9, 10, 100, 1000]);
-});
-
-// Codex (P2): o INSERT acima não separa OFFSET de keyset — a duplicata do offset some no Map.
-// O que separa é uma baixa que SAI do recorte atrás do cursor: o offset pula uma sobrevivente.
-Deno.test("baixaMap: baixa que sai do recorte entre páginas não faz nenhuma sobrevivente sumir", async () => {
-  const { db } = bancoFake(2500, {
-    antesDoRequest: (n, linhas) => {
-      if (n === 2) linhas.splice(0, 1); // a de menor código (já lida) sai antes da 2ª página
-    },
-  });
-  const mapa = await carregarBaixaMap(db, "colacor", "CR");
-  for (let i = 1; i < 2500; i++) {
-    if (!mapa.has(1_000_000 + i * 10)) throw new Error(`baixa sobrevivente ${1_000_000 + i * 10} sumiu do mapa (${mapa.size} no mapa)`);
-  }
-});
-
-Deno.test("baixaMap: código acima de 2^53 LANÇA em vez de arredondar e pular o vizinho", async () => {
-  const { db } = bancoFake(0, {
-    antesDoRequest: (n, linhas) => {
-      if (n === 1) linhas.push({ id: "x", omie_codigo_lancamento: 9007199254740996, data_baixa_final: "2026-09-01" });
-    },
-  });
-  let pego: unknown = null;
+async function capturar(p: Promise<unknown>): Promise<unknown> {
   try {
-    await carregarBaixaMap(db, "oben", "CR");
+    await p;
   } catch (e) {
-    pego = e;
+    return e;
   }
-  if (!(pego instanceof FalhaLeituraCritica) || pego.codigo !== "MALFORMADA") {
-    throw new Error(`esperava FalhaLeituraCritica MALFORMADA, veio ${String(pego)}`);
+  return null;
+}
+
+function exigirFalha(pego: unknown, codigo: string, fonte: string) {
+  if (!(pego instanceof FalhaLeituraCritica) || pego.codigo !== codigo || pego.fonte !== fonte) {
+    throw new Error(`esperava FalhaLeituraCritica ${codigo} de ${fonte}, veio ${String(pego)}`);
   }
+}
+
+Deno.test("baixaMap: CR e CP chamam a RPC do PRÓPRIO ramo, com a empresa", async () => {
+  for (const [tipo, fn] of [["CR", "fin_titulo_baixas_cr_mapa"], ["CP", "fin_titulo_baixas_cp_mapa"]] as const) {
+    const { db, chamadas } = rpcFake({ data: { total: 2, pares: [[10, "2026-09-01"], [9, "2026-08-31"]] }, error: null });
+    const mapa = await carregarBaixaMap(db, "colacor", tipo);
+    assertEquals(chamadas, [{ fn, args: { p_company: "colacor" } }]);
+    assertEquals([...mapa.entries()], [[10, "2026-09-01"], [9, "2026-08-31"]]);
+  }
+});
+
+Deno.test("baixaMap: empresa sem baixa = envelope com total 0 → mapa vazio legítimo", async () => {
+  const { db } = rpcFake({ data: { total: 0, pares: [] }, error: null });
+  assertEquals((await carregarBaixaMap(db, "colacor_sc", "CP")).size, 0);
+});
+
+Deno.test("baixaMap: erro do PostgREST (57014, P0001 da guarda de deriva) LANÇA, não vira mapa vazio", async () => {
+  for (const code of ["57014", "P0001", "42501"]) {
+    const { db } = rpcFake({ data: null, error: { code, message: "x" } });
+    const pego = await capturar(carregarBaixaMap(db, "colacor", "CP"));
+    if (!(pego instanceof FalhaLeituraCritica) || pego.fonte !== "fin_titulo_baixas_cp_mapa") {
+      throw new Error(`erro ${code}: esperava FalhaLeituraCritica da cp_mapa, veio ${String(pego)}`);
+    }
+  }
+});
+
+Deno.test("baixaMap: rejeição crua do cliente vira REJEITADA em domínio fechado", async () => {
+  const { db } = rpcFake(() => {
+    throw new Error("socket hang up");
+  });
+  exigirFalha(await capturar(carregarBaixaMap(db, "oben", "CR")), "REJEITADA", "fin_titulo_baixas_cr_mapa");
+});
+
+Deno.test("baixaMap: array cru vazio (404 que o supabase-js converte em data: []) é MALFORMADA", async () => {
+  const { db } = rpcFake({ data: [], error: null });
+  exigirFalha(await capturar(carregarBaixaMap(db, "colacor", "CR")), "MALFORMADA", "fin_titulo_baixas_cr_mapa");
+});
+
+Deno.test("baixaMap: envelope fora de forma é MALFORMADA", async () => {
+  const casos: unknown[] = [
+    null,
+    { pares: [] },
+    { total: 1, pares: [] },
+    { total: "0", pares: [] },
+    { total: 1, pares: [[1]] },
+    { total: 1, pares: [["1", "2026-09-01"]] },
+    { total: 1, pares: [[1, "01/09/2026"]] },
+    { total: 1, pares: [[1, null]] },
+    { total: 1, pares: [[1, "2026-99-99"]] },
+    { total: 1, pares: [[1, "2026-02-30"]] },
+    { total: 2, pares: [[7, "2026-09-01"], [7, "2026-10-01"]] },
+  ];
+  for (const data of casos) {
+    const { db } = rpcFake({ data, error: null });
+    const pego = await capturar(carregarBaixaMap(db, "oben", "CP"));
+    if (!(pego instanceof FalhaLeituraCritica) || pego.codigo !== "MALFORMADA") {
+      throw new Error(`${JSON.stringify(data)}: esperava MALFORMADA, veio ${String(pego)}`);
+    }
+  }
+});
+
+Deno.test("baixaMap: código acima de 2^53 LANÇA em vez de arredondar e casar o título vizinho", async () => {
+  const { db } = rpcFake({ data: { total: 1, pares: [[9007199254740996, "2026-09-01"]] }, error: null });
+  exigirFalha(await capturar(carregarBaixaMap(db, "oben", "CR")), "MALFORMADA", "fin_titulo_baixas_cr_mapa");
 });

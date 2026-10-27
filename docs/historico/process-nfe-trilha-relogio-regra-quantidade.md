@@ -65,6 +65,7 @@ Ficaram de fora: a trava contra reenviar o `Concluir` depois de um indeterminado
 
 - **Reenvio depois de um indeterminado** (P2 do revisor): a guarda N/N barra a repetição quando o Omie já marcou `cRecebido = S`, mas não se ele demorar a marcar. Falta recusar quando a trilha tem `concluir_recebimento/intencao` sem desfecho para o mesmo `n_id_receb`. Também falta a reconsulta de confirmação depois do `Concluir`, como a gêmea faz.
 - **Rótulos de unidade sinônimos** (L × LT, UN × UND) caem em "conversão com NF = Omie" e são recusados. Se aparecer na trilha, o conserto é uma lista de sinônimos na regra.
+- **Decisão do founder (2026-10-27): o `omie-nfe-reconcile` fica LIGADO.**
 - **`nfe_recebimentos` não é atualizada** pela `process-nfe`. Quem fecha no painel a NF recebida pela aba Manual é o `omie-nfe-reconcile` (cron de hora em hora, seg–sáb), por isso desligá-lo não é neutro.
 - O histórico da tela continua no `localStorage`. Ler a trilha na tela fica para depois.
 - O rateio de departamento (`nQtdeNFe × (nValorUnitario || nValorTotal)`) foi mantido como estava.
