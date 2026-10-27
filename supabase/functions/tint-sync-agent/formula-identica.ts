@@ -76,7 +76,7 @@ export interface ItemStaging {
 
 /** JSON com chaves ordenadas em todo nível; `undefined` vira null (coluna ausente no builder = NULL no banco).
  *  Chave AUSENTE continua ≠ chave com null: o conjunto de chaves entra na string (raw_data jsonb preserva). */
-export function jsonCanonico(v: unknown): string {
+function jsonCanonico(v: unknown): string {
   if (v === undefined || v === null) return "null";
   if (Array.isArray(v)) return `[${v.map(jsonCanonico).join(",")}]`;
   if (typeof v === "object") {
