@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 698
+-- Total de custom migrations: 699
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -762,6 +762,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
   ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
+  ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
   ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -2972,6 +2973,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
   ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
@@ -5232,6 +5234,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
   ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
   ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', '')
