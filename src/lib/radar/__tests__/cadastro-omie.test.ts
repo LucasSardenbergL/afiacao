@@ -385,6 +385,13 @@ describe('cadastrarEmpresaNoOmie — conflito registrado no servidor', () => {
     expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_divergente', conflito: { id: 99 } });
   });
 
+  it('lookup AMBÍGUO da edge (v1.27, #3362) → registrado como lookup_ambiguo sem código', async () => {
+    const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('OMIE_LOOKUP_AMBIGUO (oben): 2 códigos para o documento'); }) });
+    const err = await cadastrarEmpresaNoOmie(empresa, d).catch((e) => e);
+    expect(d.registrarConflito).toHaveBeenCalledWith('12345678000195', 'lookup_ambiguo', null, expect.stringContaining('OMIE_LOOKUP_AMBIGUO'));
+    expect(err).toMatchObject({ etapa: 'omie', motivo: 'lookup_ambiguo', conflito: { id: 99 } });
+  });
+
   it('falha comum do Omie NÃO registra conflito', async () => {
     const d = deps({ criarNoOmie: vi.fn(async () => { throw new Error('Failed to fetch'); }) });
     await cadastrarEmpresaNoOmie(empresa, d).catch(() => undefined);
