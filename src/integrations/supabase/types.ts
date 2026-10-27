@@ -11839,6 +11839,7 @@ export type Database = {
           criado_por: string
           detalhe: string
           id: number
+          motivo: string
           nota_resolucao: string | null
           ocorrencias: number
           resolvido_em: string | null
@@ -11855,7 +11856,8 @@ export type Database = {
           criado_em?: string
           criado_por: string
           detalhe: string
-          id?: number
+          id?: never
+          motivo: string
           nota_resolucao?: string | null
           ocorrencias?: number
           resolvido_em?: string | null
@@ -11872,7 +11874,8 @@ export type Database = {
           criado_em?: string
           criado_por?: string
           detalhe?: string
-          id?: number
+          id?: never
+          motivo?: string
           nota_resolucao?: string | null
           ocorrencias?: number
           resolvido_em?: string | null
@@ -20941,6 +20944,16 @@ export type Database = {
           p_user_ids: string[]
         }
         Returns: undefined
+      }
+      _radar_cadastro_conflito_gravar: {
+        Args: {
+          p_cnpj: string
+          p_codigo_recebido: string
+          p_detalhe: string
+          p_motivo: string
+          p_uid: string
+        }
+        Returns: Json
       }
       _registrar_ciclo_oportunidade: {
         Args: { p_detalhes: Json; p_inicio: string }
