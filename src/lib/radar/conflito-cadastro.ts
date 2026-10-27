@@ -92,7 +92,7 @@ export function parsearRegistroV2(v: unknown): ResultadoRegistroRadar {
   return forma(fonte, '{ok, deduped} | {ok:false, bloqueado, conflito}');
 }
 
-export function rotuloMotivo(m: MotivoDivergencia): string {
+function rotuloMotivo(m: MotivoDivergencia): string {
   if (m === 'vinculo_divergente') return 'CNPJ já vinculado a outro código Omie';
   if (m === 'codigo_de_outro_cnpj') return 'código Omie já vinculado a outro CNPJ';
   return 'o Omie achou um cliente com outro documento (relato da integração, não verificável pelo Radar)';
