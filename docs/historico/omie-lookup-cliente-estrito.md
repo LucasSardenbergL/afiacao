@@ -49,9 +49,10 @@ Módulo PURO `supabase/functions/omie-vendas-sync/lookup-cliente-estrito.ts`. O 
 - **Vitest** (`cadastro-omie.test.ts`): AMBIGUO lançado ou no corpo vira `lookup_ambiguo` terminal sem gravar;
   INDETERMINADO fica retentável.
 - **Falsificação** com controle verde (deno + vitest) na mesma invocação, em `LC_ALL=C` e `pt_BR.UTF-8`:
-  10/10 sabotagens vermelhas. Sabotagens: malformado vira vazio · sem ambiguidade · 1º registro · sem guard ·
-  código 0 aceito · sem divergente · sem eco de página · só página 1 · front AMBIGUO retentável · front
-  INDETERMINADO terminal.
+  14/14 sabotagens vermelhas. Sabotagens: malformado vira vazio · sem ambiguidade · 1º registro · sem guard ·
+  código 0 aceito · sem divergente · sem eco de página · eco permissivo (`Number()`) · sem contagem · AMBIGUO
+  nunca · sem orçamento · só página 1 · front AMBIGUO retentável · front INDETERMINADO terminal. (A 1ª rodada
+  pegou o teste de orçamento verde sob sabotagem — o guard de páginas mascarava; o fake passou a esvaziar a página 2.)
 
 ## Riscos abertos (fora deste PR)
 
