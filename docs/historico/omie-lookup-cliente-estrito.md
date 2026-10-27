@@ -25,9 +25,9 @@ Módulo PURO `supabase/functions/omie-vendas-sync/lookup-cliente-estrito.ts`. O 
 |---|---|
 | 1ª página vazia e válida (fault "Não existem registros" ou `clientes_cadastro: []`) | `null`: ausência **provada** → `IncluirCliente` |
 | 1 código distinto, depois uma página vazia | esse cliente (`created:false` + confirmação no ledger) |
-| 2+ códigos distintos | `OMIE_LOOKUP_AMBIGUO`, **na hora**, na página que os mostrou (um transitório na página seguinte não o rebaixa a falha retentável) |
+| 2+ códigos válidos distintos | `OMIE_LOOKUP_AMBIGUO`, **na hora**, na página que os mostrou — vence registro malformado/divergente na mesma página, relógio estourado e transitório na página seguinte (nada o rebaixa a falha retentável) |
 | registro com OUTRO documento, inclusive atrás do certo | `OMIE_LOOKUP_DIVERGENTE` (contrato de antes, agora aplicado a todos os registros) |
-| sem `clientes_cadastro` · registro sem código inteiro seguro > 0 · `cnpj_cpf` não-string · eco `pagina` ≠ pedida ou de tipo inválido (`true`/`[1]`/`null`) · `registros` que contradiz o array (`{registros:1, clientes_cadastro:[]}`) · nenhuma página vazia em 10 páginas · mais de 60 s antes da próxima página | `OMIE_LOOKUP_INDETERMINADO` (nunca "não existe") |
+| sem `clientes_cadastro` · registro sem código inteiro seguro > 0 · `cnpj_cpf` não-string · eco `pagina` ≠ pedida ou de tipo inválido (`true`/`[1]`/`null`) · `registros` que contradiz o array (`{registros:1, clientes_cadastro:[]}`) · nenhuma página vazia em 10 páginas · resposta que chegou depois de 90 s do início do lookup (conferido após CADA resposta, inclusive a 1ª vazia) | `OMIE_LOOKUP_INDETERMINADO` (nunca "não existe") |
 | transitório esgotado | `OMIE_TRANSIENT` (propaga como antes; o lote usa essa marca para parar) |
 
 - **Paginação até a página vazia**, como manda o CLAUDE.md. Cliente ausente continua custando 1 `ListarClientes`;
@@ -40,6 +40,15 @@ Módulo PURO `supabase/functions/omie-vendas-sync/lookup-cliente-estrito.ts`. O 
   `DivergenciaCadastro('omie', 'lookup_ambiguo')`, terminal como o `lookup_divergente`. `OMIE_LOOKUP_INDETERMINADO`
   continua `FalhaCadastro` retentável: falta evidência, não há conflito provado.
 
+**Revisão de código do Codex** (`-r max`): APROVADO COM AJUSTES. Os dois MÉDIOS foram corrigidos neste PR:
+
+- o orçamento só era conferido antes da próxima página. Uma 1ª página vazia aos 70 s virava `null`, e uma
+  página 2 vazia aos 198 s aceitava o código;
+- `arr.map` lançava no 1º registro malformado, então `[777, 778, malformado]` saía INDETERMINADO, retentável, em
+  vez de AMBIGUO.
+
+Agora a página é lida inteira, a multiplicidade é decidida primeiro e o defeito da página é lançado depois.
+
 ## Prova
 
 - **Deno** (`lookup-cliente-estrito_test.ts`, `--no-remote`), negativos casando a marca do ramo (`startsWith`):
@@ -49,9 +58,9 @@ Módulo PURO `supabase/functions/omie-vendas-sync/lookup-cliente-estrito.ts`. O 
 - **Vitest** (`cadastro-omie.test.ts`): AMBIGUO lançado ou no corpo vira `lookup_ambiguo` terminal sem gravar;
   INDETERMINADO fica retentável.
 - **Falsificação** com controle verde (deno + vitest) na mesma invocação, em `LC_ALL=C` e `pt_BR.UTF-8`:
-  14/14 sabotagens vermelhas. Sabotagens: malformado vira vazio · sem ambiguidade · 1º registro · sem guard ·
+  16/16 sabotagens vermelhas. Sabotagens: malformado vira vazio · sem ambiguidade · 1º registro · sem guard ·
   código 0 aceito · sem divergente · sem eco de página · eco permissivo (`Number()`) · sem contagem · AMBIGUO
-  nunca · sem orçamento · só página 1 · front AMBIGUO retentável · front INDETERMINADO terminal. (A 1ª rodada
+  nunca · sem orçamento · defeito antes da ambiguidade · defeito ignorado · só página 1 · front AMBIGUO retentável · front INDETERMINADO terminal. (A 1ª rodada
   pegou o teste de orçamento verde sob sabotagem — o guard de páginas mascarava; o fake passou a esvaziar a página 2.)
 
 ## Riscos abertos (fora deste PR)
