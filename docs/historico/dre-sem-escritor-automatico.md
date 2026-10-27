@@ -126,3 +126,22 @@ o offset pular uma sobrevivente, e o título ia para o mês errado no DRE-caixa.
 - Resíduo, citado pelo Codex e bem abaixo do teto: `fin_categoria_dre_mapping` (157 linhas) e o
   histórico de `fin_dre_snapshots` (≤ ~50 meses) seguem single-shot. Keyset não é snapshot: uma
   baixa nova atrás do cursor pode ficar para a apuração seguinte.
+
+### Deploy e prova da v1.7 (#3250, 2026-10-21)
+
+- Deploy: o merge foi às 21:30Z de 20/10, e a sonda atestou `v1.7-baixa-map-keyset` às 02:08Z de 21/10
+  com `fonte` `0d8b064d…`, igual ao fingerprint da main. Nenhum commit do bot tocou
+  `omie-financeiro`/`_shared` depois disso. O `pendencias:deploy` já não lista a edge.
+- Prova sem escrita: a rodada do cron das 15:30Z de 21/10 (jobid 215 `succeeded`) foi a primeira com a v1.7.
+  `fin_sync_log` registra **12/12 `calcular_dre` `complete`** (a mais lenta, 37 s), com 45 snapshots.
+  Comparados com os 45 da v1.6 (prova de 20/10 ~17:50Z), **38 são iguais**. As 7 diferenças:
+  - 6 são de outubro, o mês corrente, com dado novo do sync entre as duas leituras;
+  - 1 é de mês fechado: **Oben caixa 09/2026, receita +R$ 4.682,10**. Na janela entraram 25
+    movimentos `E` de setembro da Oben (R$ 797 + R$ 5.929,20), ligados a 23 títulos CR sem
+    `data_recebimento`. Para esses títulos o caixa usa justamente a `data_baixa_final` do mapa,
+    e os movimentos novos mudaram essa data. Com a fonte parada, keyset e offset devolvem o mesmo
+    conjunto (testes de 20/10), então a diferença vem do dado. Não reconciliei centavo a centavo,
+    porque isso exigiria replicar a regra do caixa em SQL. A competência de setembro da Oben ficou
+    igual, coerente com uma mudança que só afeta baixas.
+- O `net._http_response` da rodada já tinha sido limpo pelo TTL do pg_net quando li. A evidência
+  HTTP é o `fin_sync_log` `complete`, gravado pela própria edge.
