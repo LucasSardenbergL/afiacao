@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **697** custom migrations totais
-- **2243** objetos esperados (criados por estas migrations)
+- **698** custom migrations totais
+- **2244** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 839
+  - `function`: 840
   - `rls_policy`: 483
   - `index`: 292
   - `cron_job`: 197
@@ -5666,6 +5666,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_staging_purge` | — |
 | `cron_job` | `cron.tint-staging-purge-diario` | — |
+
+### `20261026220000_fin_titulo_baixas_cp_mapa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_titulo_baixas_cp_mapa` | — |
 
 ## Próximos passos por status
 
