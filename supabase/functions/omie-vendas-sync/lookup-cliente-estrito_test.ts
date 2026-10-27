@@ -120,10 +120,11 @@ Deno.test("documento devolvido com letra fora da gramática não casa pelos díg
 });
 
 Deno.test("orçamento total esgotado antes da próxima página → INDETERMINADO, sem usar o parcial", async () => {
+  // A página 2 viria vazia (lookup resolvido em 777): só o orçamento, não o guard de páginas, pode barrar.
   let t = 0;
   const lento: ListarPagina = (pagina) => {
-    t += 40_000;
-    return Promise.resolve(pg(pagina, cli(777)));
+    t += 70_000;
+    return Promise.resolve(pagina === 1 ? pg(1, cli(777)) : null);
   };
   await assertRejeitaCom(buscarClienteEstrito(DOC, "oben", lento, { orcamentoMs: 60_000, agora: () => t }), "OMIE_LOOKUP_INDETERMINADO");
 });
