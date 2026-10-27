@@ -16106,6 +16106,84 @@ export type Database = {
         }
         Relationships: []
       }
+      tint_receita_versoes: {
+        Row: {
+          account: string
+          agent_version: string | null
+          capturado_em: string
+          cod_produto: string
+          cor_id: string
+          evento: string
+          id: string
+          id_base: string
+          id_embalagem: string | null
+          itens: Json | null
+          motivo: string | null
+          nome_cor: string | null
+          personalizada: boolean
+          preco_final: number | null
+          recebido_em: string
+          receita_hash: string | null
+          snapshot_id: string | null
+          staging_formula_id: string | null
+          staging_linha: Json | null
+          store_code: string
+          subcolecao: string
+          sync_run_id: string | null
+          volume_final_ml: number | null
+        }
+        Insert: {
+          account: string
+          agent_version?: string | null
+          capturado_em?: string
+          cod_produto: string
+          cor_id: string
+          evento: string
+          id?: string
+          id_base: string
+          id_embalagem?: string | null
+          itens?: Json | null
+          motivo?: string | null
+          nome_cor?: string | null
+          personalizada: boolean
+          preco_final?: number | null
+          recebido_em: string
+          receita_hash?: string | null
+          snapshot_id?: string | null
+          staging_formula_id?: string | null
+          staging_linha?: Json | null
+          store_code: string
+          subcolecao?: string
+          sync_run_id?: string | null
+          volume_final_ml?: number | null
+        }
+        Update: {
+          account?: string
+          agent_version?: string | null
+          capturado_em?: string
+          cod_produto?: string
+          cor_id?: string
+          evento?: string
+          id?: string
+          id_base?: string
+          id_embalagem?: string | null
+          itens?: Json | null
+          motivo?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean
+          preco_final?: number | null
+          recebido_em?: string
+          receita_hash?: string | null
+          snapshot_id?: string | null
+          staging_formula_id?: string | null
+          staging_linha?: Json | null
+          store_code?: string
+          subcolecao?: string
+          sync_run_id?: string | null
+          volume_final_ml?: number | null
+        }
+        Relationships: []
+      }
       tint_reconciliation_items: {
         Row: {
           created_at: string
@@ -23209,6 +23287,7 @@ export type Database = {
         }
         Returns: number
       }
+      tint_receita_versoes_capturar: { Args: never; Returns: Json }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json
