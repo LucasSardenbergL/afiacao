@@ -91,3 +91,33 @@ A sessão irmã do lookup estrito (#3362, edge v1.27) mergeou no meio desta entr
 `lookup_ambiguo`, no mesmo `cadastro-omie.ts`. A migration (ainda não aplicada) passou a aceitá-lo no CHECK e no
 escritor (relato da edge, como o `lookup_divergente`); o merge portou o `divergenciaDoLookup` dela para o
 `falhaNoOmie` async, que registra o conflito — teste próprio.
+
+## Deploy
+
+| Camada | Estado | Quem |
+|---|---|---|
+| Migration `20261027160000` | ✅ aplicada 2026-10-27 ~16:50 UTC pelo envelope MCP (`query_database`) | esta sessão |
+| Publish do Lovable (front) | ⏳ — o front novo chama a v2; só depois da migration (já aplicada) | **founder** (Publish) |
+| Edge | nenhuma | — |
+
+**Pré-voo PROD (psql-ro, colado ao apply, 16:49 UTC):** v1 = `2b3dbe0d…` com SECURITY DEFINER + `search_path=public` +
+VOLATILE, tabela e as 5 funções ausentes, `private.cap_carteira_ler(uuid)` com EXECUTE para `authenticated`, fora da
+janela 06:15–06:45 UTC. Conector confirmado no banco certo (mesmo md5 da v1, 573.021 empresas).
+
+**Ensaio** (mesma SQL terminando em `RAISE 'ENSAIO_OK …'`): TRAVA, PRE, tabela, as 5 funções com os md5 do arquivo e
+PÓS passaram; rollback conferido por psql-ro (tabela ausente, v2 ausente). Depois, o apply com `COMMIT`.
+
+**Validação por fora** (psql-ro, outra conexão, depois do COMMIT): as 5 funções com md5 = arquivo, v1 intacta
+`2b3dbe0d…`, escritor INVOKER sem EXECUTE para anon/PUBLIC/authenticated/service_role, as 4 RPCs DEFINER com EXECUTE só
+`authenticated`/`service_role`; RLS ligada, 1 policy (SELECT, `authenticated`, `private.cap_carteira_ler`); ACL só
+SELECT; índice parcial único válido com a definição exata; os 7 CHECKs e as 16 colunas como no arquivo; **0** linhas.
+
+Bundle antigo + banco novo: o front velho segue na v1 (RD001/RD002 como erro, sem registro no servidor) até o Publish
++ adoção — o servidor não regride nada para ele.
+
+## Follow-ups (fora deste PR)
+
+- **Via de reparo auditada do vínculo** (Codex, desenho b): resolver o conflito só encerra o aviso; um vínculo V errado
+  continua precisando de correção manual no banco.
+- **`lookup_divergente`/`lookup_ambiguo` gravados pela própria edge** (service_role) em vez do front — hoje um bundle que
+  perde a resposta da edge perde também o relato.
