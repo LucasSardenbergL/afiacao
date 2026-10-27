@@ -116,10 +116,11 @@ const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 /** 'YYYY-MM-DD' que existe no calendário — a regex sozinha aceita '2026-99-99'. */
 function dataDeCalendario(s: string): boolean {
   if (!DATA_ISO.test(s)) return false;
-  const d = new Date(`${s}T00:00:00Z`);
-  // Mês 99 vira Invalid Date (e `toISOString` LANÇARIA RangeError, fora do domínio fechado);
-  // 30/02 rola para 02/03 — os dois têm de sair como "não é data".
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  const [a, m, d] = s.split("-").map(Number);
+  // `Date.UTC` rola o excedente (30/02 → 02/03; mês 99 → anos adiante): só é data de verdade se
+  // os componentes voltam iguais.
+  const t = new Date(Date.UTC(a, m - 1, d));
+  return t.getUTCFullYear() === a && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
 }
 
 /**
