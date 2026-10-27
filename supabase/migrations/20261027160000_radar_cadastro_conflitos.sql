@@ -67,7 +67,7 @@ BEGIN
         ('public.radar_estado_cadastro_omie(text)', '79dea3224bbf32ad725a83d22b29aaac' /* este:radar_estado_cadastro_omie */),
         ('public.radar_registrar_conflito_cadastro(text,text,text,text)', '366ae6f80c6a9f032b8a0ebec3ca5ea0' /* este:radar_registrar_conflito_cadastro */),
         ('public.radar_resolver_conflito_cadastro(bigint,integer,text)', 'bd0848dc353f27e459818ed5402c2533' /* este:radar_resolver_conflito_cadastro */),
-        ('public._radar_cadastro_conflito_gravar(text,text,text,text,uuid)', '079f28b6c1e52e73a06068f7971b972c' /* este:_radar_cadastro_conflito_gravar */)
+        ('public._radar_cadastro_conflito_gravar(text,text,text,text,uuid)', '3665c7f932ba0cea00ce19200534678b' /* este:_radar_cadastro_conflito_gravar */)
       ) AS f(assinatura, este)
       LEFT JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure(f.assinatura)
   LOOP
@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS public.radar_cadastro_conflitos (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   cnpj text NOT NULL CONSTRAINT radar_cadastro_conflitos_cnpj_chk CHECK (cnpj ~ '^[0-9A-Z]{12}[0-9]{2}$'),
   motivo text NOT NULL CONSTRAINT radar_cadastro_conflitos_motivo_chk
-    CHECK (motivo IN ('vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente')),
+    CHECK (motivo IN ('vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente', 'lookup_ambiguo')),
   -- O que o Omie disse (só o Omie/edge/front sabem); NULL quando a divergência veio antes do código.
   codigo_recebido text CONSTRAINT radar_cadastro_conflitos_codigo_chk CHECK (codigo_recebido ~ '^[1-9][0-9]{0,18}$'),
   -- O que o SERVIDOR tinha na última observação (lido sob a trava, nunca alegado pelo cliente).
@@ -152,7 +152,7 @@ DECLARE
   v_linha public.radar_cadastro_conflitos;
 BEGIN
   IF p_uid IS NULL THEN RAISE EXCEPTION 'autor obrigatório'; END IF;
-  IF p_motivo IS NULL OR p_motivo NOT IN ('vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente') THEN
+  IF p_motivo IS NULL OR p_motivo NOT IN ('vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente', 'lookup_ambiguo') THEN
     RAISE EXCEPTION 'motivo inválido: %', p_motivo;
   END IF;
   IF v_codigo IS NOT NULL AND v_codigo !~ '^[1-9][0-9]{0,18}$' THEN RAISE EXCEPTION 'código Omie inválido: %', v_codigo; END IF;
@@ -174,7 +174,8 @@ BEGIN
     RAISE EXCEPTION 'RADAR_CONFLITO_NAO_CONFIRMADO: cliente Omie % não está vinculado a outro CNPJ', COALESCE(v_codigo, '∅')
       USING ERRCODE = 'RD003';
   END IF;
-  -- lookup_divergente: só a edge viu o Omie — relato do gestor, não verificável pelo banco (a tela diz isso).
+  -- lookup_divergente / lookup_ambiguo (Omie com 2+ códigos para o documento — edge omie-vendas-sync v1.27, #3362): só a
+  -- edge viu o Omie — relato do gestor, não verificável pelo banco (a tela diz isso).
 
   INSERT INTO public.radar_cadastro_conflitos AS t
     (cnpj, motivo, codigo_recebido, codigo_vinculado, cnpj_do_codigo, detalhe, criado_por, ultimo_por)
@@ -332,7 +333,7 @@ BEGIN
         ('public.radar_estado_cadastro_omie(text)', '79dea3224bbf32ad725a83d22b29aaac' /* este:radar_estado_cadastro_omie */, true),
         ('public.radar_registrar_conflito_cadastro(text,text,text,text)', '366ae6f80c6a9f032b8a0ebec3ca5ea0' /* este:radar_registrar_conflito_cadastro */, true),
         ('public.radar_resolver_conflito_cadastro(bigint,integer,text)', 'bd0848dc353f27e459818ed5402c2533' /* este:radar_resolver_conflito_cadastro */, true),
-        ('public._radar_cadastro_conflito_gravar(text,text,text,text,uuid)', '079f28b6c1e52e73a06068f7971b972c' /* este:_radar_cadastro_conflito_gravar */, false)
+        ('public._radar_cadastro_conflito_gravar(text,text,text,text,uuid)', '3665c7f932ba0cea00ce19200534678b' /* este:_radar_cadastro_conflito_gravar */, false)
       ) AS f(assinatura, este, publica)
       LEFT JOIN pg_catalog.pg_proc p ON p.oid = to_regprocedure(f.assinatura)
   LOOP

@@ -7,10 +7,12 @@
  *  - `vinculo_divergente`: o CNPJ já está vinculado a OUTRO código (v2 em RD001, ou retomada com código ≠ vínculo);
  *  - `codigo_de_outro_cnpj`: o código já está vinculado a OUTRO CNPJ (v2 em RD002);
  *  - `lookup_divergente`: a edge achou no Omie um cliente com OUTRO documento (`OMIE_LOOKUP_DIVERGENTE`) — relato
- *    que o banco não consegue verificar.
+ *    que o banco não consegue verificar;
+ *  - `lookup_ambiguo`: o Omie tem 2+ códigos para o mesmo documento (`OMIE_LOOKUP_AMBIGUO`, edge omie-vendas-sync
+ *    v1.27 — achado 4 do Codex no #3293). `OMIE_LOOKUP_INDETERMINADO` (resposta inválida) NÃO é conflito.
  */
-export type MotivoDivergencia = 'vinculo_divergente' | 'codigo_de_outro_cnpj' | 'lookup_divergente';
-const MOTIVOS: ReadonlySet<string> = new Set<MotivoDivergencia>(['vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente']);
+export type MotivoDivergencia = 'vinculo_divergente' | 'codigo_de_outro_cnpj' | 'lookup_divergente' | 'lookup_ambiguo';
+const MOTIVOS: ReadonlySet<string> = new Set<MotivoDivergencia>(['vinculo_divergente', 'codigo_de_outro_cnpj', 'lookup_divergente', 'lookup_ambiguo']);
 
 export const ehMotivoDivergencia = (v: unknown): v is MotivoDivergencia => typeof v === 'string' && MOTIVOS.has(v);
 
@@ -95,6 +97,7 @@ export function parsearRegistroV2(v: unknown): ResultadoRegistroRadar {
 function rotuloMotivo(m: MotivoDivergencia): string {
   if (m === 'vinculo_divergente') return 'CNPJ já vinculado a outro código Omie';
   if (m === 'codigo_de_outro_cnpj') return 'código Omie já vinculado a outro CNPJ';
+  if (m === 'lookup_ambiguo') return 'o Omie tem mais de um cliente para este documento (relato da integração, não verificável pelo Radar)';
   return 'o Omie achou um cliente com outro documento (relato da integração, não verificável pelo Radar)';
 }
 

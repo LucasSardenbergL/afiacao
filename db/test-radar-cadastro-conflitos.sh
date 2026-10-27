@@ -375,6 +375,8 @@ eq B5b "codigo_de_outro_cnpj com código de ninguém → RD003" "$(chamada $GEST
 eq B5c "K≠V SEM ledger (ramo codigoVisto) é guardado — o ledger autoriza vínculo, não censura evidência" "$(chamada $GESTOR "$(reg 12ABC34501DE35 vinculo_divergente "'9090'")")" "REG:vinculo_divergente:1:1"
 eq B5d "lookup_divergente sem código é aceito (relato da edge)" "$(chamada $GESTOR "$(reg 44444444000144 lookup_divergente NULL)")" "REG:lookup_divergente:1:1"
 eq B5e "mesma chave de novo → MESMO registro, ocorrências e versão sobem" "$(chamada $GESTOR "$(reg 44444444000144 lookup_divergente "''")")/$(Pq -c "SELECT count(*) FROM public.radar_cadastro_conflitos WHERE cnpj='44444444000144'")" "REG:lookup_divergente:2:2/1"
+eq B5g "lookup_ambiguo (Omie com 2+ códigos, edge v1.27) é aceito como relato" "$(chamada $GESTOR "$(reg 44444444000144 lookup_ambiguo NULL)")" "REG:lookup_ambiguo:1:1"
+eq B5h "motivo fora da lista → recusa" "$(Pq -c "SET test.uid='$GESTOR'; DO \$x\$ BEGIN PERFORM $(reg 44444444000144 inventado NULL); EXCEPTION WHEN raise_exception THEN RAISE NOTICE 'RECUSOU %', SQLERRM; END \$x\$;" 2>&1 | grep -c 'RECUSOU motivo inválido: inventado')" "1"
 eq B5f "código malformado → recusa sem gravar" "$(Pq -c "SET test.uid='$GESTOR'; DO \$x\$ BEGIN PERFORM $(reg 55555555000155 lookup_divergente "'0123'"); EXCEPTION WHEN raise_exception THEN RAISE NOTICE 'RECUSOU %', SQLERRM; END \$x\$;" 2>&1 | grep -c 'RECUSOU código Omie inválido')/$(conflitos 55555555000155)" "1/nenhum"
 
 echo "── B6 estado = vínculo + conflitos abertos juntos"
