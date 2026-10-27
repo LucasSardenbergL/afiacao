@@ -26,7 +26,9 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
--- TRAVA: as funções deste arquivo, se já existem, têm de ser VOLATILE (conferido ANTES de qualquer recriação).
+-- TRAVA: as funções vivas que esta migration lê (a v1) ou recria têm de ser VOLATILE (conferido ANTES do ALTER, que a
+-- normalizaria); o ALTER sem efeito toma a trava da linha em pg_proc até o COMMIT — outra sessão que recrie uma delas
+-- espera, e não passa entre a PRE e o CREATE (Codex, revisão do código 2026-10-27, P2-6).
 DO $trava$
 DECLARE
   r record;
@@ -34,7 +36,8 @@ BEGIN
   FOR r IN
     SELECT p.oid::regprocedure AS fn, p.provolatile
       FROM pg_catalog.pg_proc p
-     WHERE p.oid IN (to_regprocedure('public.radar_registrar_cadastro_omie_v2(text,text,boolean)'),
+     WHERE p.oid IN (to_regprocedure('public.radar_registrar_cadastro_omie(text,text,boolean)'),
+                     to_regprocedure('public.radar_registrar_cadastro_omie_v2(text,text,boolean)'),
                      to_regprocedure('public.radar_estado_cadastro_omie(text)'),
                      to_regprocedure('public.radar_registrar_conflito_cadastro(text,text,text,text)'),
                      to_regprocedure('public.radar_resolver_conflito_cadastro(bigint,integer,text)'),
@@ -43,7 +46,11 @@ BEGIN
     IF r.provolatile <> 'v' THEN
       RAISE EXCEPTION 'TRAVA FALHOU: % não é VOLATILE (%) — revise antes de recriar', r.fn, r.provolatile;
     END IF;
+    EXECUTE format('ALTER FUNCTION %s VOLATILE', r.fn);
   END LOOP;
+  IF to_regclass('public.radar_cadastro_conflitos') IS NOT NULL THEN
+    LOCK TABLE public.radar_cadastro_conflitos IN SHARE ROW EXCLUSIVE MODE;
+  END IF;
 END
 $trava$;
 

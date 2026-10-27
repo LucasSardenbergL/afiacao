@@ -36,7 +36,7 @@ MD5_CONF="b537f95a00b83aab6bac3a5019ba380a" # "este" da 20261021120000
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>
-  SABOTAGENS="v2_relanca:B2a v2_sem_trava:B9b estado_sem_share:B9a v2_sem_bloqueio:B3a sem_reconf_vinculo:B5a sem_reconf_outro:B5b sem_dedupe:B5e resolver_sem_versao:B7b rls_aberta:B8d pos_sem_acl_tabela:B0a tabela_insert_aberto:B8e pre_aceita_v1_qualquer:B0r trava_sem_volatilidade:B10a"
+  SABOTAGENS="v2_sem_ok:B1a v2_relanca:B2a v2_sem_trava:B9b estado_sem_share:B9a v2_sem_bloqueio:B3a sem_reconf_vinculo:B5a sem_reconf_outro:B5b sem_dedupe:B5e resolver_sem_versao:B7b rls_aberta:B8d pos_sem_acl_tabela:B0a tabela_insert_aberto:B8e pre_aceita_v1_qualquer:B0r trava_sem_volatilidade:B10a trava_sem_lock:B10c"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-conflitos.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -68,7 +68,10 @@ export PGVER=17
 PORT="${PGPORT_TEST:-5515}"
 TMPD="$(mktemp -d "/tmp/pgtest-radar-conflitos.XXXXXX")"
 DATA="$TMPD/data"
-export LC_ALL="${LC_ALL_TESTE:-C}" LANG="${LC_ALL_TESTE:-C}"
+# Locale do CLIENTE: LC_ALL_TESTE > LC_ALL recebido > C (o cluster é sempre --locale=C). Rodar nos dois:
+#   bash db/test-radar-cadastro-conflitos.sh  e  LC_ALL=pt_BR.UTF-8 bash db/test-radar-cadastro-conflitos.sh
+LOCALE_CLIENTE="${LC_ALL_TESTE:-${LC_ALL:-C}}"
+export LC_ALL="$LOCALE_CLIENTE" LANG="$LOCALE_CLIENTE"
 MIG_USADA="$TMPD/mig.sql"
 TAREFA_VIVA="$TMPD/tarefa-viva.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
@@ -115,6 +118,9 @@ PY
 POS_ACL_TABELA="    RAISE EXCEPTION 'POS FALHOU: ACL de radar_cadastro_conflitos divergente"
 case "${SABOTAGEM:-}" in
   "") ;;
+  v2_sem_ok)              sabotar "$MIG_USADA" "    r := public.radar_registrar_cadastro_omie(p_cnpj, p_codigo_cliente, p_ja_existia);
+    RETURN r;" "    r := public.radar_registrar_cadastro_omie(p_cnpj, p_codigo_cliente, p_ja_existia);
+    RETURN r - 'ok';"; neutralizar ;;
   v2_relanca)             sabotar "$MIG_USADA" "  RETURN jsonb_build_object('ok', false, 'bloqueado', false,
     'conflito', public._radar_cadastro_conflito_gravar(p_cnpj, v_motivo, p_codigo_cliente, v_msg, v_uid));" "  PERFORM public._radar_cadastro_conflito_gravar(p_cnpj, v_motivo, p_codigo_cliente, v_msg, v_uid);
   RAISE EXCEPTION '%', v_msg USING ERRCODE = 'RD001';"; neutralizar ;;
@@ -142,6 +148,8 @@ case "${SABOTAGEM:-}" in
   pre_aceita_v1_qualquer) sabotar "$MIG_USADA" "  IF v_md5 IS DISTINCT FROM '$MD5_V1' THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_registrar_cadastro_omie vivo" "  IF false THEN
     RAISE EXCEPTION 'PRE FALHOU: radar_registrar_cadastro_omie vivo" ;;
+  trava_sem_lock)         sabotar "$MIG_USADA" "    EXECUTE format('ALTER FUNCTION %s VOLATILE', r.fn);
+" "" ;;
   trava_sem_volatilidade) sabotar "$MIG_USADA" "    IF r.provolatile <> 'v' THEN
       RAISE EXCEPTION 'TRAVA FALHOU" "    IF false THEN
       RAISE EXCEPTION 'TRAVA FALHOU" ;;
@@ -170,11 +178,11 @@ classifica() { # $1 = expressão SQL que devolve jsonb
 DO \$x\$ DECLARE r jsonb; BEGIN
   r := $1;
   INSERT INTO pg_temp.res VALUES (CASE
-    WHEN r ? 'conflito' THEN 'CONF:' || (r->>'bloqueado') || ':' || (r->'conflito'->>'motivo') || ':' || (r->'conflito'->>'ocorrencias') || ':' || (r->'conflito'->>'versao')
+    WHEN r ? 'conflito' AND r->'ok' = 'false'::jsonb AND jsonb_typeof(r->'bloqueado') = 'boolean' THEN 'CONF:' || (r->>'bloqueado') || ':' || (r->'conflito'->>'motivo') || ':' || (r->'conflito'->>'ocorrencias') || ':' || (r->'conflito'->>'versao')
     WHEN r ? 'vinculo' THEN 'EST:' || COALESCE(r->>'vinculo', '-') || ':' || jsonb_array_length(r->'conflitos')
     WHEN r ? 'id' THEN 'REG:' || (r->>'motivo') || ':' || (r->>'ocorrencias') || ':' || (r->>'versao')
-    WHEN r ? 'deduped' THEN 'OK:' || (r->>'deduped')
-    WHEN r ? 'versao' THEN 'RES:' || (r->>'versao')
+    WHEN r->'ok' = 'true'::jsonb AND jsonb_typeof(r->'deduped') = 'boolean' THEN 'OK:' || (r->>'deduped')
+    WHEN r->'ok' = 'true'::jsonb AND jsonb_typeof(r->'versao') = 'number' THEN 'RES:' || (r->>'versao')
     ELSE 'FORMA:' || r::text END);
 EXCEPTION
   WHEN SQLSTATE 'RD001' THEN INSERT INTO pg_temp.res VALUES ('RD001');
@@ -446,6 +454,29 @@ aborta_em() {
 P -c "ALTER FUNCTION public.radar_estado_cadastro_omie(text) STABLE"
 aborta_em B10a "estado STABLE no vivo → TRAVA FALHOU" "TRAVA FALHOU: radar_estado_cadastro_omie(text) não é VOLATILE"
 P -c "ALTER FUNCTION public.radar_estado_cadastro_omie(text) VOLATILE"
+# B10c: a TRAVA segura as funções vivas até o COMMIT — uma recriação concorrente ESPERA (não passa entre PRE e CREATE).
+python3 -I - "$MIG_USADA" "$TMPD/trava.sql" <<'PY2'
+import sys
+src, dst = sys.argv[1:]
+s = open(src, encoding="utf-8").read()
+ini = s.index("DO $trava$"); fim = s.index("$trava$;", ini + 10) + len("$trava$;")
+open(dst, "w", encoding="utf-8").write(s[ini:fim] + "\n")
+PY2
+"$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA > "$TMPD/travaA.out" 2>&1 <<SQL &
+SET application_name = 'conf_travaA';
+BEGIN;
+\\i $TMPD/trava.sql
+SELECT pg_sleep(2);
+ROLLBACK;
+SQL
+if espera_estado travaA "$EM_SLEEP"; then
+  "$PGBIN/psql" -X -h /tmp -p "$PORT" -U postgres -d prova -v ON_ERROR_STOP=1 -qtA -c "SET application_name = 'conf_travaB'; ALTER FUNCTION public.radar_estado_cadastro_omie(text) VOLATILE" > "$TMPD/travaB.out" 2>&1 &
+  B_ESPEROU=nao; espera_estado travaB "$EM_LOCK" && B_ESPEROU=sim
+  wait
+  eq B10c "recriação concorrente de uma função viva ESPERA a TRAVA da migration" "$B_ESPEROU" "sim"
+else
+  wait; bad B10c "a sessão da TRAVA não chegou ao sleep: $(head -c 200 "$TMPD/travaA.out")"
+fi
 P -c "DROP FUNCTION public.radar_resolver_conflito_cadastro(bigint,integer,text)"
 aborta_em B10b "tabela sem o resolver → PRE FALHOU (procedência desconhecida)" "PRE FALHOU: radar_cadastro_conflitos já existe sem public.radar_resolver_conflito_cadastro"
 
