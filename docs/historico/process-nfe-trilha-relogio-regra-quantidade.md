@@ -62,7 +62,15 @@ O parecer achou 3 P1, sem P0, e disse "reverter/corrigir já". Cada um, com o qu
   - A correção precisa provar a origem do valor, por exemplo cruzando com a razão histórica do produto. Um guarda pela assinatura `Math.round(NF)` recusaria latas legítimas de 0,9 L (2,7 L → 3 UN).
 - **"Reverter": não.** A v1 é pior em todos os eixos.
 
-## Provas
+## Deploy
+
+- **v2.0** (#3334): no ar em 2026-10-27 00:29Z, conferida pela sonda.
+- **v2.1** (#3354): enviada pela sessão via MCP às 14:30Z, com o pacote `6a992d5eb664` (15/15 hashes).
+  - O agente respondeu "No files were edited." e recusou as duas tentativas da plataforma de "consertar" o `src/sw/releases.ts`.
+  - O `lovable-sensor-edicao` deu SEM_EDICAO.
+  - A sonda (`db/2026-10-27-sonda-disparo-process-nfe-v21.sql`, `db:aplicar` #724) respondeu DEPLOY CONFIRMADO às 14:37:59Z, e o `pendencias:deploy` mostra a `process-nfe` conferindo na v2.1.
+
+
 
 - `db/test-nfe-recebimento-manual-trilha.sh` (PG17, default privileges reproduzido): 19 asserts verdes. `--falsificar` deu 8/8 sabotagens vermelhas no assert declarado, em `LC_ALL=C` e em `pt_BR.UTF-8`.
 - `process-nfe/fluxo_test.ts` + `regra-quantidade_test.ts` (Deno `--no-remote`): 25 testes. 15/15 sabotagens ficaram vermelhas no teste delas:
