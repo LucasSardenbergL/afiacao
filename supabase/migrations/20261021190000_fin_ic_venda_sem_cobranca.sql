@@ -54,7 +54,7 @@ DECLARE
   v_chk text := (SELECT pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c
                   WHERE c.conrelid = 'public.fin_ic_matches'::regclass AND c.conname = 'fin_ic_matches_status_check');
 BEGIN
-  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', 'efe12b0db31edbb06a6e1c5158cd9eda') THEN
+  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '410a04656428a042f366bed582c3f783') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
   IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -290,7 +290,8 @@ BEGIN
   -- (omie_customer_account_map por documento + company_cnpjs, que a edge confere contra o Omie) diz que
   -- o cliente dele é o destino. (b) não depende das informativas: a edge as APAGA e reinsere em duas
   -- requisições (janela, e INSERT que falha deixa a evidência sumida) e descarta CR sem emissão. Só tira o
-  -- CR de cena uma decisão sobre ele: par confirmado (é cobrança de OUTRO CP) ou desconsiderado.
+  -- CR de cena uma decisão sobre ele: desconsiderado, ou par confirmado com OUTRO CP (par órfão, sem CP,
+  -- não prova que a cobrança é de outra compra).
   sc_eleg AS (
     SELECT u.*,
            (SELECT a.soma FROM atual a WHERE a.lado = 'd' AND a.company = u.empresa_destino AND a.chave = u.cp_chave) AS cp_cat_atual,
@@ -314,7 +315,10 @@ BEGIN
                                           AND cc.company = u.empresa_destino)
                                AND NOT EXISTS (SELECT 1 FROM fin_ic_matches m4
                                                 WHERE m4.cr_id = r3.id
-                                                  AND m4.status IN ('auto_matched', 'manual_matched', 'desconsiderado'))))) AS cr_aparecido
+                                                  AND (m4.status = 'desconsiderado'
+                                                       OR (m4.status IN ('auto_matched', 'manual_matched')
+                                                           AND m4.cp_id IS NOT NULL
+                                                           AND m4.cp_id <> u.cp_id)))))) AS cr_aparecido
       FROM sem_cobranca u
      WHERE u.cp_no_mes IS TRUE
   ),
@@ -389,7 +393,7 @@ DECLARE
   v_trg  text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(g));
 BEGIN
   -- P1 corpos = os deste arquivo
-  IF v_rpc IS DISTINCT FROM 'efe12b0db31edbb06a6e1c5158cd9eda' THEN
+  IF v_rpc IS DISTINCT FROM '410a04656428a042f366bed582c3f783' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
   IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN

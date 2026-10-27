@@ -48,7 +48,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sinal:A1 so_receita:A1 coalesce_bruto:N1 nulo_parcial:N2 sem_escopo:C1 sem_status:S1 sem_pendente:P1 valor_igual:P2 mesmo_mes:P3a sem_categoria:P4 multi_linha:P9 cancelado:P5 status_nulo:P13 consist_d:P6 consist_r:P11 uso_unico:P7 teto:P8 empresa_do_titulo:P10 sem_gate:G1
     sc_resultado:U1 sc_cmv:U1 sc_teto:U3 sc_categoria:U4 sc_cancelado:U5 sc_status_nulo:U5b sc_consist:U6 sc_escopo:U7
     sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10c sc_marca_cr:U14 sc_uso:U15
-    sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_mapa_fonte:U24
+    sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_par_orfao:U23b sc_mapa_fonte:U24
     sc_empresa:U16 sc_valor:U17 sc_multi_linha:U18 sc_pendente:U4 sc_mes:Z1
     trg_master:T1 trg_carimbo:T2 trg_insert:T3 trg_cr:T4 trg_origem:T5 trg_fica:T6 trg_sai_master:T7 trg_sai_destino:T8
     trg_sai_limpa:T9 trg_delete:T10 trg_sem_delete:MIG1 check_sem_status:MIG1"
@@ -144,7 +144,8 @@ case "${SABOTAGEM:-}" in
   sc_mapa_cancelado) sabotar "AND r3.status_titulo IS DISTINCT FROM 'CANCELADO'" "" ;;
   sc_mapa_destino) sabotar "AND cc.company = u.empresa_destino" "AND cc.company IS NOT NULL" ;;
   sc_origem_cr)   sabotar "WHERE r3.company = u.empresa_origem" "WHERE true" ;;
-  sc_mapa_decisao) sabotar "AND m4.status IN ('auto_matched', 'manual_matched', 'desconsiderado')" "AND false" ;;
+  sc_mapa_decisao) sabotar "AND (m4.status = 'desconsiderado'" "AND (false" ;;
+  sc_par_orfao)   sabotar "AND m4.cp_id IS NOT NULL" "" ;;
   sc_mapa_fonte)  sabotar "WHERE om.source = 'document' AND om.account = r3.company" "WHERE om.account = r3.company" ;;
   sc_direcao)     sabotar "AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino" "" ;;
   sc_marca_cr)    sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.usos_cp = 1" ;;
@@ -606,7 +607,11 @@ mes "SELECT public.t_titulos(2031, 6); SELECT public.t_sc('colacor_sc', 'colacor
 CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 777)")"
 mes "INSERT INTO public.fin_ic_matches (empresa_origem, empresa_destino, cr_id, valor_origem, status) VALUES ('colacor_sc', 'colacor', '$CR', 100, 'desconsiderado')"
 eq "U23 CR do destino que o founder desconsiderou não bloqueia" "$(le 2031 6)" "$UOK"
-mes "DELETE FROM public.fin_ic_matches WHERE cr_id = '$CR'; DELETE FROM public.fin_contas_receber WHERE id = '$CR'"
+mes "UPDATE public.fin_ic_matches SET status = 'manual_matched' WHERE cr_id = '$CR'"
+eq "U23b ... mas num par aprovado SEM CP (órfão) segue bloqueando" "$(le_ec 2031 6)" "$PEND"
+# Neutraliza em vez de apagar: sob a sabotagem trg_delete o DELETE na fila vira no-op, e apagar o CR (FK
+# SET NULL) deixaria a linha sem CR nem CP — o CHECK abortaria a suíte antes do T10.
+mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '$CR'"
 mes "SELECT public.t_titulos(2031, 7); SELECT public.t_sc('colacor_sc', 'colacor', '2031-07-10'); SELECT public.t_calcular(2031, 7)"
 CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 780)")"
 eq "U24 vínculo do mapa que não veio de documento não conta" "$(le 2031 7)" "$UOK"

@@ -50,6 +50,32 @@ reflete dinheiro movido. A RPC usa `valor_documento` (competência).
   com a rota voltando para `/`. O reconcile gravou 21 linhas hoje e a fila é onde o founder decide, então
   o prefixo saiu de `rotasCongeladas` no manifesto.
 
+## Achados do Codex adversarial (2026-10-26) e o conserto
+
+O 1º desenho só via o "CR aparecido" pelas linhas informativas da edge. O Codex mostrou que isso fazia
+de linhas DESCARTÁVEIS uma evidência de dinheiro:
+
+1. **P0:** a edge apaga as informativas e reinsere em outra requisição (`publicarMatches`). Na janela, ou
+   se o INSERT falha (UNIQUE, 500, "nada novo gravado"), o CR que contradiz a marcação some, e a RPC
+   eliminava o CP.
+2. **P0:** `vivo()` descarta CR sem `data_emissao`, que nunca vira linha. Na prod são 37 CR assim (de
+   45.470).
+3. **P1:** um 2º "Desfazer" (outra aba) regravava `sem_contrapartida` JÁ resolvido. A edge trata linha
+   resolvida como travada, e o CP nunca mais casaria.
+4. **P2:** o T15 reusava o CP de outra linha, o que o UNIQUE parcial da prod recusaria.
+
+**Conserto, sem mexer na edge:** o "CR aparecido" parte de `fin_contas_receber` (CR da origem, não
+cancelado, mesmo valor, sem emissão ou a ≤30 dias) e conta se:
+- (a) há informativa da edge na mesma direção, ou
+- (b) o mapa de identidade (`omie_customer_account_map` por documento + `company_cnpjs`, que a edge
+  confere contra o Omie) diz que o cliente é o destino, e o CR não está num par confirmado nem
+  desconsiderado.
+
+Na prod, o mapa cobre os 15 CR que já estão em linhas da fila. O "Desfazer" grava com
+`.eq('status', <lido>)`, e o 2º clique atualiza 0 linhas e vira erro. A prova ganhou U19–U24 e U10c
+(CR só na tabela, sem linha na fila), e o T15 passou a usar um CP próprio. Resíduo conhecido: par de
+empresas sem código no mapa (hoje colacor→colacor_sc) só bloqueia por (a).
+
 ## Medição na prod (psql-ro, corpo como SELECT, 46 meses com snapshot competência)
 
 - O corpo novo dá o mesmo resultado que o vivo (md5 11832f17…) nos 46 meses: 184 linhas iguais e nenhum
@@ -64,7 +90,7 @@ reflete dinheiro movido. A RPC usa `valor_documento` (competência).
 
 `db/test-fin-consolidado-ic.sh` aplica a migration REAL sobre o predecessor REAL (o corpo vivo
 11832f17…). Os cenários A–P da versão anterior são re-exercidos sob a versão nova, mais U (venda sem
-cobrança), T (trigger) e MIG5/MIG7: 79 asserts, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
+cobrança), T (trigger) e MIG5/MIG7: 87 asserts e 58 sabotagens, nos locales `C` e `pt_BR.UTF-8`, com `--falsificar`.
 
 **Achado da falsificação:** `sc_marca_cr` e `sc_empresa` ficaram VERDES na 1ª rodada. O cenário S1
 deixava uma linha informativa oben→colacor de 100, que é "CR aparecido" para qualquer sem cobrança
@@ -86,5 +112,7 @@ locales.
   writer, `update().eq()` não dá erro. Peça `.select('id')` e exija a linha.
 - **Mesma SQLSTATE em dois ramos mascara um deles.** O assert negativo precisa casar a marca do ramo,
   não só o código.
+- **Linha que outro writer apaga e recria não é evidência de dinheiro.** Se a decisão depende da
+  AUSÊNCIA de uma linha, a fonte tem de ser durável (a tabela de títulos), não o espelho descartável.
 - **Semente global contamina predicados por existência.** Um "existe linha X na mesma direção" vê todas
   as linhas da semente, não só as do cenário. A falsificação foi o que mostrou isso.

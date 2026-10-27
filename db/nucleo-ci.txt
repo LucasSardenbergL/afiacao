@@ -730,8 +730,8 @@ db/test-venda-ondas23.sh                   44  falsificar=18
 # COBRANÇA (marcada pelo master) — só o CMV do destino cai e o resultado sobe, com as mesmas provas + sem
 # "CR aparecido" na mesma direção (informativa da edge OU mapa de identidade, sem depender da edge); teto
 # soma par + sem cobrança; não elegível ⇒ NULL nas 4 linhas; trigger (só master marca/desfaz, forma,
-# carimbo, INSERT/DELETE recusados); gate staff e ACL. 58 sabotagens (md5 das 2 funções reassinado).
-db/test-fin-consolidado-ic.sh              87  falsificar=58
+# carimbo, INSERT/DELETE recusados); gate staff e ACL. 59 sabotagens (md5 das 2 funções reassinado).
+db/test-fin-consolidado-ic.sh              88  falsificar=59
 
 # Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
 # vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo
