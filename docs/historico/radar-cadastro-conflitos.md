@@ -49,14 +49,15 @@ corrige um vínculo errado — uma via de reparo auditada é follow-up.
 
 ## Prova
 
-- `db/test-radar-cadastro-conflitos.sh` (núcleo do CI, **53 asserts**; verde em `LC_ALL=C` e `pt_BR.UTF-8`;
-  `--falsificar` **13/13** vermelhas com controle verde na mesma invocação): predecessoras reais até a v1 de PROD;
+- `db/test-radar-cadastro-conflitos.sh` (núcleo do CI, **56 asserts**; verde em `LC_ALL=C` e `LC_ALL=pt_BR.UTF-8`;
+  `--falsificar` **15/15** vermelhas com controle verde na mesma invocação): predecessoras reais até a v1 de PROD;
   PRE recusa a v1 sem RD001/RD002 sem deixar rastro; v2 em RD001/RD002 deixa o conflito legível de OUTRA sessão
   (resposta perdida); bloqueio sem ocorrência nova; RD003/RD004; nova observação após resolver = outro id; gate gestor
   nas 4 RPCs; RLS sob `SET ROLE authenticated`; INSERT direto e escritor interno negados (42501). **Duas sessões** com o
   bloqueio OBSERVADO em `pg_stat_activity`: v2×estado (B espera e já vê o conflito), v2×v2 (B sai bloqueado, 1
   ocorrência), registrar×registrar (1 registro, 2 ocorrências), resolver vence × registrar (outro id), registrar vence ×
-  resolver (RD004, segue aberto), ROLLBACK de A (B não vê conflito).
+  resolver (RD004, segue aberto), ROLLBACK de A (B não vê conflito), e a TRAVA da migration segurando as funções vivas
+  (uma recriação concorrente ESPERA).
 - **A trava fora do bloco é load-bearing:** a sabotagem `v2_sem_trava` fica vermelha no v2×v2 — sem ela o rollback do
   bloco de exceção solta a trava da v1 e B grava uma 2ª ocorrência (confirma o argumento do Codex).
 - Lição de harness: o 1º `--falsificar` deu `tabela_insert_aberto` vermelho pelo motivo ERRADO (o INSERT forjado batia
@@ -64,4 +65,29 @@ corrige um vínculo errado — uma via de reparo auditada é follow-up.
   (`GRAVOU/1`). Vermelho não basta — confira o PORQUÊ.
 - Vitest: lib (bloqueio em 4 caminhos sem tocar Omie/RPC/registro, leitura que falha bloqueia, v2 `{ok:false}`/bloqueado,
   observação registrada, registro que falha = não sincronizado, lookup), parse estrito, sobreposição local×servidor,
-  sincronização do "Esquecer". Falsificação do front **8/8** vermelhas com controle verde, árvore restaurada.
+  sincronização do "Esquecer", resolver com forma conferida, paginação sem recorte e o HOOK do lote (descarte com
+  retomada de closure velha e 2º "Esquecer" concorrente). Falsificação do front **12/12** vermelhas com controle verde
+  (77 testes), árvore restaurada.
+
+## Revisão do código (Codex `-r max`, `ae2494daa..1ef44db2a`) — AJUSTA, os 8 corrigidos
+
+- **P1 (reproduzido)** — "Esquecer lote" concorria com a retomada: enquanto o envio de A aguardava, "Retentar"
+  processava B, cujo conflito local o `gravar(null)` do fim apagava. Correção: o descarte segura a MESMA trava por
+  usuário do runner (`execucoesEmVoo`) do início ao fim + estado `descartando` que desabilita os botões. Prova no hook
+  com um `retomar` capturado ANTES do descarte (a camada da trava; o `descartando` sozinho não pega closure velha).
+- P2 — conflito gravado pela v2 na ficha não invalidava as queries (a lib LANÇA): `onError` invalida.
+- P2 — resumo do lote contava "confirmado" um item `ok` com conflito aberto, e leitura falha voltava a dizer
+  "(recuperado)": confirmados = ok SEM conflito aberto; sem leitura, "ok nesta aba (conflitos não conferidos)".
+- P2 — teto de 1.000 linhas escondia conflito aberto: leitura pagina até a página curta e LANÇA acima de 20 páginas.
+- P2 — resolver anunciava "conferido" com resposta indeterminada: `parsearResolucao` exige `{ok:true, versao}`.
+- P2 — a TRAVA só lia `pg_proc`: agora faz o `ALTER … VOLATILE` sem efeito em cada função viva (inclusive a v1) e
+  `LOCK TABLE` se a tabela existe — prova B10c + sabotagem `trava_sem_lock`.
+- P2 — o classificador do harness ignorava `ok`: casa o discriminante (sabotagem `v2_sem_ok`, `RETURN r - 'ok'`).
+- P2 — `LC_ALL` do chamador era sobrescrito por `C`: agora `LC_ALL_TESTE` > `LC_ALL` recebido > `C`.
+
+## Coordenação multi-sessão
+
+A sessão irmã do lookup estrito (#3362, edge v1.27) mergeou no meio desta entrega com um 4º motivo,
+`lookup_ambiguo`, no mesmo `cadastro-omie.ts`. A migration (ainda não aplicada) passou a aceitá-lo no CHECK e no
+escritor (relato da edge, como o `lookup_divergente`); o merge portou o `divergenciaDoLookup` dela para o
+`falhaNoOmie` async, que registra o conflito — teste próprio.
