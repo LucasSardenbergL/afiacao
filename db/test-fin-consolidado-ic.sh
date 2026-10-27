@@ -48,7 +48,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sinal:A1 so_receita:A1 coalesce_bruto:N1 nulo_parcial:N2 sem_escopo:C1 sem_status:S1 sem_pendente:P1 valor_igual:P2 mesmo_mes:P3a sem_categoria:P4 multi_linha:P9 cancelado:P5 status_nulo:P13 consist_d:P6 consist_r:P11 uso_unico:P7 teto:P8 empresa_do_titulo:P10 sem_gate:G1
     sc_resultado:U1 sc_cmv:U1 sc_teto:U3 sc_categoria:U4 sc_cancelado:U5 sc_status_nulo:U5b sc_consist:U6 sc_escopo:U7
     sc_cr_aparecido:U8 sc_janela:U11 sc_sem_data:U12 sc_informativos:U10 sc_direcao:U10c sc_marca_cr:U14 sc_uso:U15
-    sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_par_orfao:U23b sc_mapa_fonte:U24
+    sc_mapa:U19 sc_mapa_sem_data:U20 sc_mapa_cancelado:U21 sc_mapa_destino:U22 sc_origem_cr:U22b sc_mapa_decisao:U23 sc_par_orfao:U23b sc_mapa_fonte:U24 sc_contrapartes:U25 sc_fc_alvo:U25b
+    acl_mapa_update:T17b acl_mapa_delete:T17c acl_mapa_app:T17d acl_mapa_sandbox:T17e
     sc_empresa:U16 sc_valor:U17 sc_multi_linha:U18 sc_pendente:U4 sc_mes:Z1
     trg_master:T1 trg_carimbo:T2 trg_insert:T3 trg_cr:T4 trg_origem:T5 trg_fica:T6 trg_sai_master:T7 trg_sai_destino:T8
     trg_sai_limpa:T9 trg_delete:T10 trg_sem_delete:MIG1 check_sem_status:MIG1"
@@ -146,6 +147,12 @@ case "${SABOTAGEM:-}" in
   sc_origem_cr)   sabotar "WHERE r3.company = u.empresa_origem" "WHERE true" ;;
   sc_mapa_decisao) sabotar "AND (m4.status = 'desconsiderado'" "AND (false" ;;
   sc_par_orfao)   sabotar "AND m4.cp_id IS NOT NULL" "" ;;
+  sc_contrapartes) sabotar "OR ((EXISTS (SELECT 1 FROM fin_ic_contrapartes fc" "OR ((false AND EXISTS (SELECT 1 FROM fin_ic_contrapartes fc" ;;
+  sc_fc_alvo)     sabotar "AND fc.empresa_alvo = u.empresa_destino" "" ;;
+  acl_mapa_update) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, UPDATE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
+  acl_mapa_delete) sabotar "GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;" "GRANT SELECT, INSERT, DELETE ON TABLE public.fin_ic_contrapartes TO service_role;" ;;
+  acl_mapa_app)   sabotar "AND a.grantee <> c.relowner AND a.grantee <> 0" "AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'authenticated' AND a.grantee <> 0" ;;
+  acl_mapa_sandbox) sabotar "AND a.grantee <> c.relowner AND a.grantee <> 0" "AND a.grantee <> c.relowner AND pg_get_userbyid(a.grantee) <> 'sandbox_exec_teste' AND a.grantee <> 0" ;;
   sc_mapa_fonte)  sabotar "WHERE om.source = 'document' AND om.account = r3.company" "WHERE om.account = r3.company" ;;
   sc_direcao)     sabotar "AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino" "" ;;
   sc_marca_cr)    sabotar "(v.marca_cr_id IS NULL AND v.usos_cp = 1" "(v.usos_cp = 1" ;;
@@ -408,6 +415,10 @@ eq "MIG0 predecessor = md5 da prod" "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WH
 Pq -c "GRANT EXECUTE ON FUNCTION public.fin_consolidado_intercompany(integer,integer) TO sandbox_exec_teste"
 
 # ── Aplicar a migration REAL sobre o predecessor (a PRE tem de aceitá-lo) ──
+# Default privileges como na prod (psql-ro 2026-10-27): tabela nova nasce com ALL para anon/authenticated/
+# service_role e SELECT+INSERT para o sandbox_exec — é o que o REVOKE do mapa durável tem de desfazer.
+Pq -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT ON TABLES TO sandbox_exec_teste" >/dev/null
 eq "MIG1 aplica sobre o predecessor" "$(estado "$(cat "$MIG_USADA")")" "verde"
 eq "MIG2 re-aplicar passa (idempotente)" "$(estado "$(cat "$MIG_USADA")")" "verde"
 eq "MIG3 grant extra sobrevive ao replace" "$(Pq -c "SELECT has_function_privilege('sandbox_exec_teste', 'public.fin_consolidado_intercompany(integer,integer)', 'EXECUTE')")" "t"
@@ -620,6 +631,15 @@ mes "SELECT public.t_titulos(2031, 8); SELECT public.t_sc('colacor_sc', 'colacor
 CR="$(Pq -c "SELECT public.t_cr_ic('colacor_sc', 'oben', '2032-06-01', 100)")"
 eq "U10c CR da origem numa informativa para OUTRO destino não bloqueia" "$(le 2031 8)" "$UOK"
 mes "DELETE FROM public.fin_ic_matches WHERE id = '$CR'"
+# U25: o cadastro NÃO está em omie_customer_account_map (sem usuário, ou vínculo apagado por outra edge),
+# mas a edge gravou o que o Omie respondeu em fin_ic_contrapartes — é o que fecha a cobertura do mapa.
+mes "SELECT public.t_titulos(2031, 9); SELECT public.t_sc('colacor_sc', 'colacor', '2031-09-10'); SELECT public.t_calcular(2031, 9);
+     INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo) VALUES ('colacor_sc', 781, 'colacor'), ('colacor_sc', 782, 'oben')"
+CR="$(Pq -c "SELECT public.t_cr_mapa('colacor_sc', '2032-06-01', 100, 781)")"
+eq "U25 CR do destino só no mapa durável da edge (fora do mapa de identidade): pende" "$(le_ec 2031 9)" "$PEND"
+mes "UPDATE public.fin_contas_receber SET omie_codigo_cliente = 782 WHERE id = '$CR'"
+eq "U25b ... e o mesmo CR com código que o mapa durável dá a OUTRA empresa não bloqueia" "$(le 2031 9)" "$UOK"
+mes "UPDATE public.fin_contas_receber SET company = 'fora_do_grupo' WHERE id = '$CR'"
 eq "U0 controle: o mês elegível segue elegível" "$(le 2027 1)" "$UOK"
 eq "Z1 mês sem venda sem cobrança: nada muda" "$(le 2026 2)" \
    "receita_bruta=3400/0/3400;cmv=2300/0/2300;despesas_operacionais=350/0/350;resultado_liquido=750/0/750"
@@ -677,6 +697,15 @@ eq "T15 a edge (service_role) insere linha informativa com o trigger ligado" "$(
 # Como a edge apaga: pelos ids lidos antes (aqui, todas as linhas de 2029, a marcada inclusive), refiltrando
 # status informativo e resolvido_em no próprio DELETE (casamento.ts, apagarInformativos).
 IDS2029="$(Pq -c "SELECT string_agg(quote_literal(m.id::text), ',') FROM public.fin_ic_matches m JOIN public.fin_contas_pagar cp ON cp.id = m.cp_id WHERE cp.data_emissao BETWEEN '2029-01-01' AND '2029-12-31'")"
+# T17: o mapa durável só acrescenta — a edge insere (e repetir é no-op, como o upsert ignoreDuplicates),
+# mas não altera nem apaga; o app (authenticated) nem lê.
+eq "T17a a edge insere no mapa durável, e repetir não duplica" "$(Pq -c "$EDGE INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo) VALUES ('oben', 900, 'colacor') ON CONFLICT DO NOTHING;
+   INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo) VALUES ('oben', 900, 'colacor') ON CONFLICT DO NOTHING;
+   SELECT count(*) FROM public.fin_ic_contrapartes WHERE omie_codigo_cliente = 900")" "1"
+eq "T17b a edge não altera o mapa durável" "$(estado "$EDGE UPDATE public.fin_ic_contrapartes SET empresa_alvo = 'colacor_sc' WHERE omie_codigo_cliente = 900")" "42501"
+eq "T17c a edge não apaga do mapa durável" "$(estado "$EDGE DELETE FROM public.fin_ic_contrapartes WHERE omie_codigo_cliente = 900")" "42501"
+eq "T17d o app (authenticated) não lê o mapa durável" "$(estado "SET ROLE authenticated; SELECT count(*) FROM public.fin_ic_contrapartes")" "42501"
+eq "T17e o sandbox_exec (default privileges da prod) não escreve no mapa durável" "$(estado "SET ROLE sandbox_exec_teste; INSERT INTO public.fin_ic_contrapartes (empresa, omie_codigo_cliente, empresa_alvo) VALUES ('oben', 901, 'colacor')")" "42501"
 eq "T16 ... e apaga as informativas não resolvidas pelos ids, como a edge faz (a marcada fica)" "$(Pq -c "$EDGE WITH d AS (DELETE FROM public.fin_ic_matches
    WHERE id IN ($IDS2029) AND status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
    AND resolvido_em IS NULL RETURNING 1) SELECT count(*) FROM d")" "4"

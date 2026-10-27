@@ -54,7 +54,7 @@ DECLARE
   v_chk text := (SELECT pg_get_constraintdef(c.oid) FROM pg_catalog.pg_constraint c
                   WHERE c.conrelid = 'public.fin_ic_matches'::regclass AND c.conname = 'fin_ic_matches_status_check');
 BEGIN
-  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '410a04656428a042f366bed582c3f783') THEN
+  IF v_rpc IS NULL OR v_rpc NOT IN ('11832f17b7551cabe02a2224cb495aaf', '0cc2fff5e75f674c0bfbba26dc6608f5') THEN
     RAISE EXCEPTION 'PRE FALHOU: fin_consolidado_intercompany vivo (md5 %) nao e o predecessor revisado nem este', v_rpc;
   END IF;
   IF v_trg IS NOT NULL AND v_trg <> '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -73,6 +73,40 @@ ALTER TABLE public.fin_ic_matches DROP CONSTRAINT IF EXISTS fin_ic_matches_statu
 ALTER TABLE public.fin_ic_matches ADD CONSTRAINT fin_ic_matches_status_check CHECK (status IN (
   'auto_matched', 'manual_matched', 'divergencia_valor', 'divergencia_data', 'sem_contrapartida',
   'duplicidade_possivel', 'desconsiderado', 'intragrupo_sem_cobranca'));
+
+-- ── 3b. Mapa de contraparte DURÁVEL (só acrescenta) ───────────────────────────────────────────
+-- A edge fin-ic-reconcile (v1.3) grava aqui o que o Omie de cada empresa responde: "o cadastro N é a
+-- empresa X do grupo". É a fonte do "CR aparecido" que não depende das informativas (que a edge apaga e
+-- reinsere) nem do vínculo usuário↔cadastro de omie_customer_account_map (que outra edge apaga quando
+-- acha 2 códigos por documento). Só acrescenta: código a mais deixa a RPC mais conservadora (pende), e
+-- apagar reabriria o furo. A edge (service_role) tem só SELECT e INSERT; ninguém mais lê nem escreve.
+CREATE TABLE IF NOT EXISTS public.fin_ic_contrapartes (
+  empresa text NOT NULL,
+  omie_codigo_cliente bigint NOT NULL,
+  empresa_alvo text NOT NULL,
+  gravado_em timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT fin_ic_contrapartes_pkey PRIMARY KEY (empresa, omie_codigo_cliente, empresa_alvo),
+  CONSTRAINT fin_ic_contrapartes_outra_empresa CHECK (empresa <> empresa_alvo)
+);
+ALTER TABLE public.fin_ic_contrapartes ENABLE ROW LEVEL SECURITY;
+-- O default privileges da prod concede ALL a anon/authenticated/service_role e SELECT+INSERT aos papéis
+-- sandbox_exec* em tabela nova: revoga de TODO grantee que não seja o dono (nominal não pega papel novo).
+DO $acl$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT DISTINCT a.grantee FROM pg_class c, aclexplode(c.relacl) a
+            WHERE c.oid = 'public.fin_ic_contrapartes'::regclass AND a.grantee <> c.relowner AND a.grantee <> 0
+  LOOP
+    EXECUTE format('REVOKE ALL ON TABLE public.fin_ic_contrapartes FROM %I', pg_get_userbyid(r.grantee));
+  END LOOP;
+  REVOKE ALL ON TABLE public.fin_ic_contrapartes FROM PUBLIC;
+  -- claude_ro: a leitura de diagnóstico (wrapper psql-ro) que confere esta tabela depois do apply.
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'claude_ro') THEN
+    GRANT SELECT ON TABLE public.fin_ic_contrapartes TO claude_ro;
+  END IF;
+END
+$acl$;
+GRANT SELECT, INSERT ON TABLE public.fin_ic_contrapartes TO service_role;
 
 -- ── 4. O trigger: só o founder (master) põe e tira a marcação ───────────────────────────────────
 CREATE OR REPLACE FUNCTION public.fin_ic_matches_guarda_sem_cobranca()
@@ -287,8 +321,8 @@ BEGIN
   -- nada contradiz a marcação: um CR não cancelado da origem PARA o destino, de mesmo valor ou emitido a
   -- até 30 dias do CP (ou sem data), pode ser a cobrança que a marcação diz não existir. O CR é do
   -- destino quando (a) a edge o pôs numa linha informativa na mesma direção, ou (b) o mapa de identidade
-  -- (omie_customer_account_map por documento + company_cnpjs, que a edge confere contra o Omie) diz que
-  -- o cliente dele é o destino. (b) não depende das informativas: a edge as APAGA e reinsere em duas
+  -- (fin_ic_contrapartes, que a edge grava do Omie só acrescentando; ou omie_customer_account_map por
+  -- documento + company_cnpjs) diz que o cliente dele é o destino. (b) não depende das informativas: a edge as APAGA e reinsere em duas
   -- requisições (janela, e INSERT que falha deixa a evidência sumida) e descarta CR sem emissão. Só tira o
   -- CR de cena uma decisão sobre ele: desconsiderado, ou par confirmado com OUTRO CP (par órfão, sem CP,
   -- não prova que a cobrança é de outra compra).
@@ -308,11 +342,15 @@ BEGIN
                                     WHERE m3.cr_id = r3.id
                                       AND m3.status IN ('divergencia_valor', 'divergencia_data', 'sem_contrapartida', 'duplicidade_possivel')
                                       AND m3.empresa_origem = u.empresa_origem AND m3.empresa_destino = u.empresa_destino)
-                           OR (EXISTS (SELECT 1 FROM omie_customer_account_map om
-                                         JOIN company_cnpjs cc ON cc.cnpj_normalized = om.evidence_document_normalized
-                                        WHERE om.source = 'document' AND om.account = r3.company
-                                          AND om.omie_codigo_cliente = r3.omie_codigo_cliente
-                                          AND cc.company = u.empresa_destino)
+                           OR ((EXISTS (SELECT 1 FROM fin_ic_contrapartes fc
+                                          WHERE fc.empresa = r3.company
+                                            AND fc.omie_codigo_cliente = r3.omie_codigo_cliente
+                                            AND fc.empresa_alvo = u.empresa_destino)
+                                OR EXISTS (SELECT 1 FROM omie_customer_account_map om
+                                             JOIN company_cnpjs cc ON cc.cnpj_normalized = om.evidence_document_normalized
+                                            WHERE om.source = 'document' AND om.account = r3.company
+                                              AND om.omie_codigo_cliente = r3.omie_codigo_cliente
+                                              AND cc.company = u.empresa_destino))
                                AND NOT EXISTS (SELECT 1 FROM fin_ic_matches m4
                                                 WHERE m4.cr_id = r3.id
                                                   AND (m4.status = 'desconsiderado'
@@ -393,7 +431,7 @@ DECLARE
   v_trg  text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(g));
 BEGIN
   -- P1 corpos = os deste arquivo
-  IF v_rpc IS DISTINCT FROM '410a04656428a042f366bed582c3f783' THEN
+  IF v_rpc IS DISTINCT FROM '0cc2fff5e75f674c0bfbba26dc6608f5' THEN
     RAISE EXCEPTION 'P1 FALHOU: % vivo md5 % (esperado o deste arquivo)', f, v_rpc;
   END IF;
   IF v_trg IS DISTINCT FROM '1a3a3cc94fda97a7c618c8c5dfb78074' THEN
@@ -437,6 +475,26 @@ BEGIN
   -- P6 RLS ligada na tabela da marcação
   IF NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = 'public.fin_ic_matches'::regclass) THEN
     RAISE EXCEPTION 'P6 FALHOU: RLS desligada em fin_ic_matches';
+  END IF;
+
+  -- P7 mapa durável: forma exata (um CREATE IF NOT EXISTS sobre tabela velha passaria calado), RLS, e
+  -- ACL só-acrescenta — a edge lê e insere; UPDATE/DELETE de ninguém; anon/authenticated nada.
+  IF (SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod) || ':' || a.attnotnull, ',' ORDER BY a.attnum)
+        FROM pg_attribute a WHERE a.attrelid = to_regclass('public.fin_ic_contrapartes') AND a.attnum > 0 AND NOT a.attisdropped)
+     IS DISTINCT FROM 'empresa:text:true,omie_codigo_cliente:bigint:true,empresa_alvo:text:true,gravado_em:timestamp with time zone:true'
+     OR (SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+          WHERE c.conrelid = to_regclass('public.fin_ic_contrapartes') AND c.contype = 'p')
+        IS DISTINCT FROM 'PRIMARY KEY (empresa, omie_codigo_cliente, empresa_alvo)'
+     OR NOT (SELECT c.relrowsecurity FROM pg_class c WHERE c.oid = to_regclass('public.fin_ic_contrapartes')) THEN
+    RAISE EXCEPTION 'P7 FALHOU: fin_ic_contrapartes com outra forma, sem a PK ou sem RLS';
+  END IF;
+  IF NOT has_table_privilege('service_role', 'public.fin_ic_contrapartes', 'SELECT')
+     OR NOT has_table_privilege('service_role', 'public.fin_ic_contrapartes', 'INSERT')
+     OR EXISTS (SELECT 1 FROM pg_class c, aclexplode(c.relacl) a
+                 WHERE c.oid = 'public.fin_ic_contrapartes'::regclass AND a.grantee <> c.relowner
+                   AND NOT ((a.grantee <> 0 AND pg_get_userbyid(a.grantee) = 'service_role' AND a.privilege_type IN ('SELECT', 'INSERT'))
+                         OR (a.grantee <> 0 AND pg_get_userbyid(a.grantee) = 'claude_ro' AND a.privilege_type = 'SELECT'))) THEN
+    RAISE EXCEPTION 'P7 FALHOU: ACL de fin_ic_contrapartes não é só-acrescenta (service_role SELECT+INSERT, claude_ro SELECT, mais ninguém)';
   END IF;
 END
 $post$;
