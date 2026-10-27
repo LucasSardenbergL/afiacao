@@ -63,6 +63,17 @@ Agora a página é lida inteira, a multiplicidade é decidida primeiro e o defei
   nunca · sem orçamento · defeito antes da ambiguidade · defeito ignorado · só página 1 · front AMBIGUO retentável · front INDETERMINADO terminal. (A 1ª rodada
   pegou o teste de orçamento verde sob sabotagem — o guard de páginas mascarava; o fake passou a esvaziar a página 2.)
 
+## Deploy (2026-10-27)
+
+- **Edge `omie-vendas-sync` v1.27:** a sessão enviou pelo MCP do Lovable às 16:35:58Z o pacote `7ce1206b7df5`
+  (`origin/main@01cb04a6`, closure de 31 arquivos). O agente conferiu **31/31 hashes** (`sha256sum` exit 0) e fez
+  o deploy. O sensor de edição deu `SEM_EDICAO`: 0 commits `gpt-engineer-app` e `No files were edited.`
+- **Atestação:** a sonda por cron (job 184, 16:37Z) viu `v1.27-lookup-cliente-estrito`, e o `pendencias:deploy`
+  deu **exit 0**, com 83/83 edges em `CONFERE`.
+- **Front:** `src/lib/radar/cadastro-omie.ts` mudou, então falta o **Publish**, que é do founder. Até ele sair,
+  o front velho trata `OMIE_LOOKUP_AMBIGUO` como falha retentável. Isso continua bloqueando o cadastro, mas sem
+  o rótulo de conflito.
+
 ## Riscos abertos (fora deste PR)
 
 - **`buscarClienteVendasMatches`** (identidade do `criar_pedido`, `registros_por_pagina:2`) descarta registro sem
