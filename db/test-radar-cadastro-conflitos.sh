@@ -402,7 +402,7 @@ SET test.uid = '$GESTOR';
 SET ROLE authenticated;
 CREATE TEMP TABLE res (k text);
 DO \$x\$ BEGIN
-  INSERT INTO public.radar_cadastro_conflitos (cnpj, motivo, detalhe, criado_por, ultimo_por) VALUES ('44444444000144','lookup_divergente','forjado','$GESTOR','$GESTOR');
+  INSERT INTO public.radar_cadastro_conflitos (cnpj, motivo, detalhe, criado_por, ultimo_por) VALUES ('55555555000155','lookup_divergente','forjado','$GESTOR','$GESTOR');
   INSERT INTO pg_temp.res VALUES ('GRAVOU');
 EXCEPTION WHEN insufficient_privilege THEN INSERT INTO pg_temp.res VALUES ('NEGADO');
 END \$x\$;
