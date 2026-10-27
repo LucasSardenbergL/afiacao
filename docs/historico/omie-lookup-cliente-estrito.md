@@ -108,6 +108,12 @@ O documento devolvido pelo Omie já passava pela gramática estrita (#3359). Med
 `omie-chamada-relogio-fiacao_test.ts` passou a fixar a nova forma do prazo, que continua nascendo FORA do laço.
 Falsificação: 21/21 sabotagens vermelhas, com controle verde, em `LC_ALL=C` e `pt_BR.UTF-8`.
 
+**Deploy da v1.28 (2026-10-27):** pacote `0e0201fd65a0`, de `origin/main@e0f60cc5`, enviado pelo MCP às 18:32:44Z.
+O agente do Lovable conferiu 31/31 hashes (`sha256sum` exit 0) e fez o deploy. O sensor de edição deu
+`SEM_EDICAO`: os 2 commits `gpt-engineer-app` só regeneraram `src/integrations/supabase/types.ts`, que é tolerado. A
+sonda por cron das 18:37Z viu `v1.28-identidade-pedido-estrita`, e o `pendencias:deploy` deu **exit 0**, com 83/83
+edges em `CONFERE`. Não mudou nada em `src/`, então não há Publish.
+
 ## Riscos abertos (fora deste PR)
 
 - ~~**`buscarClienteVendasMatches`** (identidade do `criar_pedido`)~~ → fechado na v1.28 (seção acima).
