@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCount, formatImportStatus } from '../format';
+import { descreverImportacaoTint, formatCount, formatImportStatus } from '../format';
 
 describe('formatCount', () => {
   it('renders small counts raw', () => {
@@ -49,5 +49,27 @@ describe('formatImportStatus', () => {
   it('truncates unknown long statuses with ellipsis', () => {
     expect(formatImportStatus('algumarararara')).toBe('algumarar…');
     expect(formatImportStatus('curto')).toBe('curto');
+  });
+});
+
+describe('descreverImportacaoTint', () => {
+  it('sync automático: troca o "sync:<uuid>" por nome e data legíveis, e diz que são fórmulas BARRADAS', () => {
+    const d = descreverImportacaoTint({
+      arquivo_nome: 'sync:5cd153de-57b8-41ee-b8f9-1d34685950f2', registros_erro: 5, created_at: '2026-10-27T15:21:06Z',
+    });
+    expect(d.ehSync).toBe(true);
+    expect(d.titulo).toMatch(/^Sync de fórmulas · \d{2}\/\d{2}/);
+    expect(d.titulo).not.toContain('5cd153de');
+    expect(d.detalhe).toBe('5 fórmulas barradas pela fonte');
+  });
+
+  it('singular e contagem ausente — ausente não vira "0"', () => {
+    expect(descreverImportacaoTint({ arquivo_nome: 'sync:x', registros_erro: 1 }).detalhe).toBe('1 fórmula barrada pela fonte');
+    expect(descreverImportacaoTint({ arquivo_nome: 'sync:x', registros_erro: null }).detalhe).not.toMatch(/\b0\b/);
+  });
+
+  it('importação de arquivo: mantém o nome do arquivo e "erro(s)"', () => {
+    const d = descreverImportacaoTint({ arquivo_nome: 'formulas.csv', registros_erro: 3 });
+    expect(d).toEqual({ titulo: 'formulas.csv', detalhe: '3 erro(s)', ehSync: false });
   });
 });

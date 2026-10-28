@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agruparPorCor, classificarRejeicao, descreverSlots, motivoCurto, type LinhaDeErro } from '../rejeicoes';
+import { agruparPorCor, classificarRejeicao, descreverSlots, motivoCurto, origemPorCor, type LinhaDeErro } from '../rejeicoes';
 
 // Formas REAIS de `tint_sync_errors.error_details` (psql-ro, run de 21/10/2026 10:37).
 const item = (ordem: number, id_corante: string, qtd_ml: number, viola: boolean) => ({
@@ -98,5 +98,33 @@ describe('agruparPorCor', () => {
 describe('motivoCurto', () => {
   it('tira o sufixo técnico e a fórmula', () => {
     expect(motivoCurto(MSG)).toBe('receita corrompida: corante presente sem dose válida');
+  });
+});
+
+describe('origemPorCor', () => {
+  it('uma marca só por cor → personalizada ou fábrica', () => {
+    const o = origemPorCor([
+      { cor_id: 'KL PALHA', personalizada: true },
+      { cor_id: 'KL PALHA', personalizada: true },
+      { cor_id: '26.2275.CK.FB', personalizada: false },
+    ]);
+    expect(o.get('KL PALHA')).toBe('personalizada');
+    expect(o.get('26.2275.CK.FB')).toBe('fabrica');
+  });
+
+  it('as DUAS marcas na mesma cor → fica fora do mapa ("não sei"), nunca um lado por padrão', () => {
+    const o = origemPorCor([
+      { cor_id: 'BRANCO', personalizada: true },
+      { cor_id: 'BRANCO', personalizada: false },
+    ]);
+    expect(o.has('BRANCO')).toBe(false);
+  });
+
+  it('marca nula não decide — sem nenhuma marca legível a cor fica fora do mapa', () => {
+    const o = origemPorCor([
+      { cor_id: 'ZAMBALD', personalizada: null },
+      { cor_id: null, personalizada: true },
+    ]);
+    expect(o.size).toBe(0);
   });
 });
