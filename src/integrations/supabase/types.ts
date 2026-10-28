@@ -19274,6 +19274,37 @@ export type Database = {
         }
         Relationships: []
       }
+      v_corante_giro: {
+        Row: {
+          capacidade_confirmada: boolean | null
+          capital_parado: number | null
+          cmc_l: number | null
+          coberto_ate: string | null
+          confianca: string | null
+          consumo_ml_dia: number | null
+          consumo_ml_dia_60d: number | null
+          demanda_motor_l_dia: number | null
+          descricao: string | null
+          dias_cobertos: number | null
+          estoque_fechado_l: number | null
+          excesso_l: number | null
+          faixa: string | null
+          faixa_ultimo_calculo: string | null
+          fresco: boolean | null
+          giro_mudando: boolean | null
+          k_latas: number | null
+          lt_dias_corridos: number | null
+          lt_fonte: string | null
+          maior_dosagem_ml: number | null
+          motivo: string | null
+          ponto_pedido_ml: number | null
+          recarga_ml: number | null
+          teto_l: number | null
+          tint_corante_id: string | null
+          wp_codigo: string | null
+        }
+        Relationships: []
+      }
       v_cron_jobs_falhas: {
         Row: {
           duracao_segundos: number | null
