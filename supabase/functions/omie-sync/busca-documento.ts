@@ -4,12 +4,12 @@
 // ou uma credencial recusada eram lidos como "o cliente não existe" e o front tentava
 // `criar_cliente_afiacao` sobre uma falsa ausência (Codex retroativo do #3311, 2026-10-27).
 // Agora só o EOF é ausência; transitório, permanente e indeterminado falham alto (500).
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { classificarFaultstring } from "../_shared/omie-falha.ts";
 
 /** true só quando o erro é o EOF do Omie, a única falha que significa "não há cliente com esse documento". */
 export function buscaPorDocumentoNaoAchou(erro: unknown): boolean {
-  const texto = erro instanceof Error ? erro.message : String(erro);
-  return classificarFaultstring(texto) === "fim_de_pagina";
+  return classificarFaultstring(mensagemDeErro(erro)) === "fim_de_pagina"; // null → "indeterminada"
 }
 
 /**
