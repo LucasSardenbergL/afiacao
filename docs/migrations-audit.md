@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **702** custom migrations totais
-- **2266** objetos esperados (criados por estas migrations)
+- **703** custom migrations totais
+- **2267** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 849
+  - `function`: 850
   - `rls_policy`: 485
   - `index`: 297
   - `cron_job`: 199
@@ -5713,6 +5713,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `table` | `public.radar_cadastro_conflitos` | — |
 | `index` | `public.radar_cadastro_conflitos_aberto_uniq` | `radar_cadastro_conflitos` |
 | `rls_policy` | `public.radar_cadastro_conflitos_select_gestor` | `radar_cadastro_conflitos` |
+
+### `20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 
