@@ -136,6 +136,14 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -10_000, camada: 'compromisso_a_faturar' }]);
     expect(r.naoConciliado).toBe(0);
   });
+  it('R65 (Codex P1): o isento pela R65 sai no 1º dia, nunca em dataPedido + lag (o vencimento real é desconhecido)', () => {
+    // pedido de 11/09 + lag 30 cairia em 11/10; recebido depois da base, o vencimento pode ser amanhã
+    const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 40_000, dataPedido: '2026-09-11', nfs: ['88'] }], [], '2026-10-01', 30, 15, new Set(['88']));
+    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -40_000, camada: 'compromisso_a_faturar' }]);
+    // o a faturar por IDADE continua na data estimada (R28/R30 inalterado)
+    const novo = conciliarCompromissos([{ pedidoId: 9, valorTotal: 40_000, dataPedido: '2026-09-28', nfs: ['88'] }], [], '2026-10-01', 30, 15, new Set(['88']));
+    expect(novo.fluxos[0].data).toBe('2026-10-28');
+  });
   it('R65: componente com uma NF recebida depois da base e outra não → continua não conciliado (todas, nunca alguma)', () => {
     const r = conciliarCompromissos(
       [

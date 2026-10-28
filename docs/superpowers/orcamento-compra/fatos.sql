@@ -64,10 +64,12 @@ receb_sem_t4 as (
 ),
 -- R65: menor t4 de cada NF do tracking. Só NF com t4 em TODAS as linhas (linha sem t4 = parte não recebida → a NF
 -- inteira fica fora: sem isenção). O título do CP Sayerlack nasce no recebimento (112/113 medidos em 2026-10-21).
+-- (Codex P2) mesma normalização do TS ANTES de agregar (trim + zeros à esquerda) e só NF da Sayerlack na Oben.
 t4_por_nf as (
-  select ltrim(t.nfe_numero, '0') as nf, min(t.t4_data_recebimento) as t4
+  select ltrim(btrim(t.nfe_numero), '0') as nf, min(t.t4_data_recebimento) as t4
   from purchase_orders_tracking t
-  where nullif(ltrim(t.nfe_numero, '0'), '') is not null
+  where t.empresa = 'OBEN' and t.fornecedor_nome ilike '%sayerlack%'
+    and nullif(ltrim(btrim(t.nfe_numero), '0'), '') is not null
   group by 1
   having count(*) = count(t.t4_data_recebimento)
 ),

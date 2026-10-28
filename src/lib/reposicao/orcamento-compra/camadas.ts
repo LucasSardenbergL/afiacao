@@ -68,13 +68,16 @@ export function conciliarCompromissos(
     const titulado = [...c.nfs].reduce((s, nf) => s + (titulosPorNf.get(nf) ?? 0), 0);
     const residuo = c.valor - titulado;
     if (residuo <= 0) continue;
-    const dataPrevista = addDias(c.data, lagDias);
-    const data = dataPrevista < inicio ? inicio : dataPrevista;
+
     // Sem NF válida, ou NF sem nenhum título casado: nada comprova o faturamento (spec §6.2) …
     const semComprovacao = c.nfs.size === 0 || titulado === 0;
     // … mas recente = ainda não faturou/titulou (R28/R30) → a faturar, entra inteiro sem contar no limiar.
     const aindaSemRecebimento = c.nfs.size > 0 && [...c.nfs].every((nf) => !titulosPorNf.has(nf) && recebidasDepois.has(nf));
-    const aFaturar = semComprovacao && (diffDias(c.data, inicio) < idadeLimiteDias || aindaSemRecebimento);
+    const recente = diffDias(c.data, inicio) < idadeLimiteDias;
+    const aFaturar = semComprovacao && (recente || aindaSemRecebimento);
+    // R65 (Codex P1): o isento pela R65 (velho, recebido depois da base) tem vencimento desconhecido → 1º dia
+    const dataPrevista = addDias(c.data, lagDias);
+    const data = semComprovacao && !recente && aindaSemRecebimento ? inicio : dataPrevista < inicio ? inicio : dataPrevista;
     const naoConc = semComprovacao && !aFaturar;
     if (naoConc) naoConciliado += residuo;
     const camada = aFaturar ? 'compromisso_a_faturar' : naoConc ? 'compromisso_nao_conciliado' : 'compromisso_conciliado';

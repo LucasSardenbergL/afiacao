@@ -408,14 +408,17 @@ export function contratoCompostoR59(f: Fatos, p: Fatos['disparados'][number]): b
   return contratos.some((c) => c.includes('/'));
 }
 
-/** R65: NFs cujo MENOR t4 conhecido é posterior ao instante (normalizadas). NF sem t4 nunca entra (ausente ≠ depois). */
-function nfsRecebidasDepoisDe(f: Fatos, instante: string): Set<string> {
+/**
+ * R65: NFs cujo MENOR t4 conhecido é posterior à base e NÃO posterior ao momento do ciclo (Codex P2: a evidência tem
+ * de existir na decisão), normalizadas. NF sem t4 nunca entra (ausente ≠ depois).
+ */
+function nfsRecebidasDepoisDe(f: Fatos, base: string, momento: string): Set<string> {
   const menor = new Map<string, number>();
   for (const x of f.t4_por_nf ?? []) {
     const k = normalizarNf(x.nf);
     if (k !== '') menor.set(k, Math.min(menor.get(k) ?? Infinity, ts(x.t4)));
   }
-  return new Set([...menor].filter(([, t]) => t > ts(instante)).map(([k]) => k));
+  return new Set([...menor].filter(([, t]) => t > ts(base) && t <= ts(momento)).map(([k]) => k));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {
@@ -480,7 +483,7 @@ function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, rese
     // título sem desconto entra com 0: a NF fica "sem título" — a faturar se recente, senão não conciliada
     titulosAteSnap.map((t) => ({ nf: t.nf as string, valor: descontoDe(t) })),
     data, lagPagamento, IDADE_A_FATURAR_DIAS,
-    nfsRecebidasDepoisDe(f, snap.snapshot_at),
+    nfsRecebidasDepoisDe(f, snap.snapshot_at, momento),
   );
   fluxos.push(...conc.fluxos);
   if (conc.naoConciliado > 0.1 * reserva) ausencias.push('compromisso_nao_conciliado');

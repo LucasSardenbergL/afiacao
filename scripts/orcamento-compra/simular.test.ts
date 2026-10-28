@@ -314,6 +314,9 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     // NF com duas linhas de tracking: vale o MENOR t4 (a 947706 do ciclo 2083 tem uma linha de 20/08 antes da base)
     const doisT4 = simularCiclo(comT4(['2026-10-01T11:00:00Z', '2026-09-30T08:00:00Z']), 1, cfg).estado;
     expect(doisT4.tipo === 'indeterminado' && doisT4.camadas).toEqual(['compromisso_nao_conciliado']);
+    // (Codex P2) t4 DEPOIS do momento do ciclo: a evidência não existia na decisão → sem isenção
+    const depoisDoMomento = simularCiclo(comT4(['2026-10-01T12:30:00Z']), 1, cfg).estado;
+    expect(depoisDoMomento.tipo === 'indeterminado' && depoisDoMomento.camadas).toEqual(['compromisso_nao_conciliado']);
     // t4 desconhecido → sem isenção (ausente ≠ recebida depois)
     const semT4 = simularCiclo(comT4([]), 1, cfg).estado;
     expect(semT4.tipo === 'indeterminado' && semT4.camadas).toEqual(['compromisso_nao_conciliado']);
