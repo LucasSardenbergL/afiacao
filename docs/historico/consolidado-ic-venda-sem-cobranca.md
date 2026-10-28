@@ -149,6 +149,23 @@ ramo SAI (`NEW` é NULL, então `NEW.status IS DISTINCT FROM 'intragrupo_sem_cob
 também a marca do ramo ("nao se apaga"). Final: 51 sabotagens vermelhas, 0 falhas, controle verde, nos dois
 locales.
 
+## Deploy (2026-10-27/28)
+
+- **Migration:** aplicada pelo `db:aplicar`, recibo da tentativa #736. Postcondição por psql-ro:
+  - md5 do RPC `b47040c0…` e do trigger `1a3a3cc9…`;
+  - CHECK com o status novo, trigger tgtype 31 ligado;
+  - as 2 tabelas com RLS e ACL `claude_ro=r`/`service_role=ar`;
+  - semente com 5 linhas.
+- **PR #3381:** mergeado em 2026-10-28 02:06Z.
+- **Edge `fin-ic-reconcile` v1.3:** colada pelo MCP às 02:11Z, por outra sessão. O agente conferiu 17/17 hashes contra `0e15d81c`. Os commits do bot que vieram depois só tocaram `types.ts`.
+  - Sonda `db/sonda-disparo-fin-ic-reconcile-v1.3.sql` (#739, request 135067): **DEPLOY CONFIRMADO**, fonte `ebc3e399…`. `pendencias:deploy` passou a sair 0.
+- **Simular** (#740, request 135068): HTTP 200, 10 `sem_contrapartida`, 11 pares preservados. O mapa do Omie devolveu os mesmos 5 códigos da semente.
+- **1ª escrita** (#741, request 135069): HTTP 200.
+  - `fin_ic_reconcile_rodadas` ganhou o marco id=1 (`mapa_lido_em` 02:37:35Z), e a trava de bootstrap abriu.
+  - O mapa segue com 5 linhas, porque o upsert só acrescenta e os códigos eram os mesmos.
+  - A fila tem 11 `auto_matched` e 10 `sem_contrapartida`, e entre elas os 3 CP da oben.
+- **Falta:** o Publish e a marcação "Sem cobrança" nas 3 linhas, ambos do founder. Depois disso, a conferência de jan e fev por psql-ro, com o corpo como SELECT, porque `claude_ro` não tem EXECUTE na RPC.
+
 ## Lições
 
 - **Rota congelada é estado de PRODUTO a conferir antes de pedir ação ao founder.** As sessões anteriores
