@@ -10,6 +10,10 @@
 // `{"simular":true}` sem escrita. Diário:
 // docs/historico/fin-ic-reconcile-contraparte-por-codigo.md.
 //
+// v1.3: grava o mapa de contraparte (código Omie → empresa do grupo) em `fin_ic_contrapartes`, só
+// acrescentando, ANTES de publicar — fonte durável do "CR aparecido" da venda sem cobrança na RPC do
+// consolidado. Diário: docs/historico/consolidado-ic-venda-sem-cobranca.md.
+//
 // ⚠️ SONDAR O BUNDLE PRÉ-SENSOR: CARA — o bundle velho não lê o corpo, então `{"probe":true}` roda a
 // conciliação intercompany inteira (lê CR/CP e regrava os matches). Use `--caro` só sabendo disso.
 
@@ -20,7 +24,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-ic-reconcile");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.2-contraparte-por-codigo-omie";
+export const VERSAO = "v1.3-mapa-de-contraparte-duravel";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

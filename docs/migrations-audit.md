@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **704** custom migrations totais
-- **2268** objetos esperados (criados por estas migrations)
+- **705** custom migrations totais
+- **2273** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 851
+  - `function`: 853
   - `rls_policy`: 485
   - `index`: 297
+  - `table`: 200
   - `cron_job`: 199
-  - `table`: 198
   - `view`: 125
-  - `trigger`: 109
+  - `trigger`: 110
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5659,6 +5659,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
 | `trigger` | `public.trg_nfe_receb_manual_trilha_sem_truncate` | `nfe_recebimento_manual_trilha` |
 | `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
+
+### `20261021190000_fin_ic_venda_sem_cobranca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ic_matches_guarda_sem_cobranca` | — |
+| `function` | `public.fin_consolidado_intercompany` | — |
+| `table` | `public.fin_ic_contrapartes` | — |
+| `table` | `public.fin_ic_reconcile_rodadas` | — |
+| `trigger` | `public.fin_ic_matches_guarda_sem_cobranca` | `fin_ic_matches` |
 
 ### `20261021203000_tint_purge_staging_fora_do_promote.sql`
 
