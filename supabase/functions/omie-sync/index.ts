@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
+import { buscaPorDocumentoNaoAchou } from "./busca-documento.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
@@ -1090,7 +1091,9 @@ Deno.serve(async (req) => {
             result = { success: true, codigo_cliente: null };
           }
         } catch (e) {
-          console.log("[Omie] Erro ao buscar cliente por documento:", e);
+          // Só o EOF do Omie é "não existe"; 503, credencial, timeout falham alto (500) — senão o front lia
+          // falsa ausência e tentava criar_cliente_afiacao (Codex retroativo do #3311).
+          if (!buscaPorDocumentoNaoAchou(e)) throw e;
           result = { success: true, codigo_cliente: null };
         }
         // FORA do try (que lê falha como "não existe"): o código vira o cliente do pedido, e registro com
