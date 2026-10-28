@@ -198,6 +198,7 @@ PY2
 # Corpo sabotado = corpo NOVO: reassina o "este" do PRE/PÓS (como faria quem mudasse a função e o
 # arquivo juntos). Sem isso o P1 da PÓS aborta o apply e o vermelho não chega ao assert de comportamento.
 if [ -n "${SABOTAGEM:-}" ]; then
+  # shellcheck disable=SC2016  # $$ e $g$ são os delimitadores literais dos corpos, não expansão
   for alvo in 'public.fin_consolidado_intercompany:$$' 'public.fin_ic_matches_guarda_sem_cobranca:$g$'; do
     ESTE_ARQ="$(md5_corpo "$MIG" "${alvo%%:*}" "${alvo#*:}")"; ESTE_SAB="$(md5_corpo "$MIG_USADA" "${alvo%%:*}" "${alvo#*:}")"
     [ "$ESTE_ARQ" = "$ESTE_SAB" ] || sabotar "$ESTE_ARQ" "$ESTE_SAB"
