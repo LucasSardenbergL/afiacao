@@ -33,7 +33,7 @@ export LC_ALL=C LANG=C          # o CLIENTE fica em C (o postmaster aborta sem i
 # ══════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="sem_tolerancia:A6,A7,A10 sla_estoque_12h:A7 sem_guarda_carimbo:A13 eixo1_sem_null:A14
-              estoque_fora_da_lista:A6,A9 pre_sem_identidade:A20 sem_revoke:A22"
+              estoque_fora_da_lista:A6,A7,A9 pre_sem_identidade:A20 sem_revoke:A22"
   LOGDIR="$(mktemp -d "/tmp/falsifica-${SLUG}.XXXXXX")"
   porta=$PORT
   executados() { sed -n 's/^PASS=\([0-9][0-9]*\)  FAIL=\([0-9][0-9]*\)$/\1 \2/p' "$1" | awk '{ print $1 + $2 }'; }
@@ -269,8 +269,7 @@ case "${SABOTAGEM:-}" in
     MIG_USADA="$TMP/mig.sql"; echo "⚠️  SABOTAGEM ATIVA em corpo (eixo 1 sem o ramo last_sync_at NULL, md5 recalculado) — a suíte abaixo DEVE ficar vermelha" ;;
   estoque_fora_da_lista)
     sabotar_corpo "$TMP/mig.sql" _data_health_compute "            ('inventory',       'servicos',              6), -- sync-inventory-servicos-1h         25 * * * *" \
-      "            ('inventory',       'servicos',              6)  -- sync-inventory-servicos-1h         25 * * * *
-            , ('reposicao_estoque_full_X','oben',           16)" \
+      "            ('inventory',       'servicos',              6)  -- sync-inventory-servicos-1h         25 * * * *" \
       || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o fim da lista não ocorre exatamente 1×"; exit 9; }
     sabotar_corpo "$TMP/mig.sql" _data_health_compute "            ('reposicao_estoque_full','oben',           16)  --" "            --" \
       || { echo "❌ SABOTAGEM NÃO APLICÁVEL — o par do estoque não ocorre exatamente 1×"; exit 9; }
