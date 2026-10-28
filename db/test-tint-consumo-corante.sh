@@ -119,16 +119,19 @@ PA -q -d postgres -c "CREATE DATABASE tpl TEMPLATE tpl0 STRATEGY FILE_COPY" >/de
 cen_C1() { PA -d "$1" -q <<'SQL'
 INSERT INTO tint_consumo_preparacao (account, store_code, preparacao_id, data_dosagem, situacao,
                                      versao_fonte_em, run_criado_em, sync_run_id)
-VALUES ('oben', 'M01', 'P1', '2026-10-01 10:00-03', 'valida', now(), now(), 'c0000000-0000-0000-0000-000000000001');
-CREATE TEMP TABLE _c1 (ordem int, q text, esperado text);
+SELECT 'oben', 'M01', 'P' || n, '2026-10-01 10:00-03'::timestamptz, 'valida', now(), now(),
+       'c0000000-0000-0000-0000-000000000001'::uuid FROM generate_series(1, 7) n;
+-- Uma preparação por valor: um valor aceito por engano não colide com o seguinte (a sabotagem
+-- fica vermelha SÓ no assert dela, não no cenário inteiro).
+CREATE TEMP TABLE _c1 (n int, q text, esperado text);
 INSERT INTO _c1 VALUES (1, '0', '23514'), (2, '-1', '23514'), (3, '''NaN''', '23514'), (4, '''Infinity''', '23514'),
-                       (5, '18000.001', '23514'), (6, '18000', 'OK'), (1, '0.01', 'OK');
+                       (5, '18000.001', '23514'), (6, '18000', 'OK'), (7, '0.01', 'OK');
 SELECT _t_assert('C1.qtd_' || replace(replace(q, '''', ''), '.', '_'),
                  _t_sqlstate(format($f$INSERT INTO tint_consumo_corante (account, store_code, preparacao_id, ordem,
                    id_corante_origem, qtd_ml, data_dosagem, sync_run_id, run_criado_em)
-                   VALUES ('oben','M01','P1',%s,'1',%s,'2026-10-01 10:00-03','c0000000-0000-0000-0000-000000000001',now())$f$,
-                   ordem, q)) = esperado, q)
-  FROM _c1 ORDER BY ordem, q;
+                   VALUES ('oben','M01','P%s',1,'1',%s,'2026-10-01 10:00-03','c0000000-0000-0000-0000-000000000001',now())$f$,
+                   n, q)) = esperado, q)
+  FROM _c1 ORDER BY n;
 SQL
 }
 
@@ -343,11 +346,13 @@ sabmig "$TMP/f1.sql" 's/qtd_ml > 0 AND qtd_ml <= 18000/qtd_ml >= 0 AND qtd_ml <=
 fals "F1 qtd_ml aceita zero" "C1.qtd_0" "$TMP/f1.sql" ""
 
 printf '%s\n' "GRANT INSERT ON public.tint_consumo_corante TO authenticated;" > "$TMP/f2.sql"
-fals "F2 fato gravável por authenticated" "C5.sem_escrita_authenticated_tint_consumo_corante_INSERT" "$MIG" "$TMP/f2.sql"
+# F2/F3 derrubam TAMBÉM o C6.reapply_mesmo_estado: re-aplicar a migration sobre o drift o DESFAZ
+# (o REVOKE e a policy voltam) — é desenho, não efeito colateral.
+fals "F2 fato gravável por authenticated" "C5.sem_escrita_authenticated_tint_consumo_corante_INSERT C6.reapply_mesmo_estado" "$MIG" "$TMP/f2.sql"
 
 printf '%s\n' "DROP POLICY IF EXISTS tint_consumo_preparacao_staff_le ON public.tint_consumo_preparacao;
 CREATE POLICY tint_consumo_preparacao_todos_leem ON public.tint_consumo_preparacao FOR SELECT TO authenticated USING (true);" > "$TMP/f3.sql"
-fals "F3 RLS aberta a qualquer autenticado" "C5.customer_le_zero" "$MIG" "$TMP/f3.sql"
+fals "F3 RLS aberta a qualquer autenticado" "C5.customer_le_zero C6.reapply_mesmo_estado" "$MIG" "$TMP/f3.sql"
 
 sabmig "$TMP/f4.sql" 's/   AND capacidade_canister_ml IS NULL;  -- seed não pisa em capacidade já gravada/;/'
 fals "F4 seed pisa na capacidade confirmada" "C6.capacidade_confirmada_preservada C6.reapply_mesmo_estado" "$TMP/f4.sql" ""
