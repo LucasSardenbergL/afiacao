@@ -765,3 +765,11 @@ db/test-venda-lista-lente.sh               26  falsificar=8
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
 # latest-por-chave e espera a lock do tick. 7 falsificações (conjunto exato) rodam em TODA execução.
 db/test-tint-purge-staging-diario.sh        13
+# Giro de corante, Fase 1 (20261028100000/100100/100200): o fato de consumo dosado só a promoção escreve, sem
+# cliente no staging; a cobertura é DERIVADA das extrações completas (ilha recente, dias SP inteiros, desde a 1ª
+# dosagem), o buraco de qualquer idade se cura, a versão é a CHEGADA, o consumidor das preparações não segura o
+# tick dos catálogos; o giro (faixas, teto, excesso) nunca vira 0 o que é desconhecido; a reconciliação da Fase 2
+# reprova feed zerado e unidade ×1,95 (as falsificações obrigatórias da spec).
+db/test-tint-consumo-corante.sh           170  falsificar=fora-do-ci  # 15 sabotagens × suíte de ~40 s (simulação P19) ≈ 10 min; rodado local em C e pt_BR no PR
+db/test-tint-corante-giro.sh               34  falsificar=fora-do-ci  # 8 sabotagens × suíte de ~140 s no runner (medido: controle 141 s) estoura a parte; rodado local em C e pt_BR no PR
+db/test-reconciliacao-corante.sh           11  falsificar=fora-do-ci  # 7 sabotagens × suíte inteira (9 bancos clonados do snapshot); rodado local em C e pt_BR no PR
