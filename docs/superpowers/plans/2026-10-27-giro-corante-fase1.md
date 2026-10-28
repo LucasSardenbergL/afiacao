@@ -47,6 +47,10 @@ P0 cobertura fabricada → correção 9 + P16/G9 · P1#2 re-scan não cura → p
 
 #1 edição antiga nunca relida → revisita 7 d/30 d (correção 9, P19) · #2 regressão do relógio → versão pela chegada (correção 3, P3) · #3 lotes incoerentes e idempotência cega → faixa de ids por lote + `lotes_sobrepostos` + chave idempotente com hash (P13) · #4 `fila_cheia` não limita → `extracao_id` do servidor + `em_andamento` + `max_lotes` (P17) · #5 tick global → consumidor próprio (correção 10, P18 com lock segurado por outra sessão) · #6 rescan > 35 d → termina na meia-noite de hoje (P17 às 15h) · P2 piso móvel e custo → P15 + compactação (correção 12, P20) · teatro de P15/P17/P3/P18 → aninhados, simulação ponta a ponta (P19), regressão do relógio, lock real.
 
+## Parecer Codex pré-merge do PR A (2026-10-28, `logs/giro-corante/codex-pra.out`)
+
+Recebido somava `quantidade_nfe` (prod: as 4 NF de WP têm `quantidade_conferida = 0`) → só NF conferida por inteiro conta, senão o WP não é medido (R8) · elegibilidade desconhecida aprovava o gate → `nao_medido` (R7) · `capacidade_confirmada` com capacidade NULL virava 810 ml → CHECK `confirmada ⇒ capacidade` + gate · compactação destruía o replay → recibo durável `tint_consumo_runs_aplicados` (P20.replay) · esperados das falsificações do giro preenchidos · P2: P90 discriminante (G16) e desvios opostos (R6).
+
 ## Foco de revisão (falhas que nenhum teste "natural" pegaria)
 
 1. Um lote da extração falha na promoção, e a lacuna envelhece além de 35 dias → a cobertura para para sempre, ou uma extração posterior "pula" o buraco. Esperado: a ilha recente não atravessa o buraco, e o plano manda uma janela de cura do buraco mais antigo, de qualquer idade dentro do piso, até ele fechar. Prova P15/P17 (Task 2).
@@ -119,7 +123,7 @@ Allowlist: qualquer outra chave, em qualquer nível, é descartada antes de vali
 **Arquivos:**
 - Criar: `supabase/migrations/20261028100000_tint_consumo_corante.sql` (Tasks 1 e 2 no mesmo arquivo: deploy atômico)
 - Criar: `db/test-tint-consumo-corante.sh`
-- Modificar: `scripts/authz-tabelas-fechadas.ts` (registrar as 4 tabelas `tint_consumo_*`, padrão `20261011120000`)
+- **Depois do apply em prod** (PR próprio, carimbo regravado — registrar antes trava o CI em `CARIMBO_CONTRATO_MUDOU`, #2199): `scripts/authz-tabelas-fechadas.ts` + `scripts/authz-grants.test.ts` com as 6 `tint_consumo_*` e `tint_staging_preparacao_manifestos`
 
 **Interfaces produzidas:**
 - `tint_corante_constantes() RETURNS TABLE(validade_dias int, lata_ml numeric, lata_l numeric, horizonte_dias int, frescor_dias int, cobertura_min_dias int, cobertura_plena_dias int, limite_ausencia numeric, regime_janela_dias int, regime_fator numeric, piso_dias int, janela_max_dias int, rescan_janela_dias int, rescan_intervalo_dias int, fila_max_pendentes int, relogio_tolerancia interval)` mais `janela_inicial_dias int, lotes_alvo int, max_lotes_extracao int, revisita_recente_janela_dias int, revisita_recente_dias int, revisita_antiga_dias int, plano_validade interval, compactacao_idade interval` no lugar de `rescan_janela_dias`/`rescan_intervalo_dias`, `IMMUTABLE`, valores das Restrições globais (`lata_l = 0.81`, `relogio_tolerancia = '10 minutes'`, `plano_validade = '30 minutes'`, `compactacao_idade = '2 days'`).
