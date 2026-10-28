@@ -10,7 +10,7 @@
 - **Informativo, não oficial (R27, decisão do Lucas): NO-GO.** Calibrando e avaliando só nos intermitentes, a candidata é a F1 (quantis 0,995 / 0,97 / 0,925):
   - A sobe +3,01 p.p. (LI +1,94) e B +1,43 p.p.; C fica em −0,81 p.p., INCERTO.
   - O capital piora 15,2% (LI −17,4%, LS −12,9%), FALHA nos três cenários de falta.
-  - A economia a 25% a.a. é negativa em espera e no misto 60/30/10 (7 de 9 células da grade com FALHA; as 2 de emergencial 20% com atraso ficam incertas) e positiva só no cancelamento puro.
+  - A economia a 25% a.a. é negativa em espera e no misto (60% espera, 30% compra emergencial, 10% cancelamento; 7 de 9 células da grade com FALHA; as 2 de emergencial 20% com atraso ficam incertas) e positiva só no cancelamento puro.
   - Leitura: nos intermitentes, a F1 compra serviço com capital, e a taxa não paga a troca.
 
 ## O que vale levar adiante

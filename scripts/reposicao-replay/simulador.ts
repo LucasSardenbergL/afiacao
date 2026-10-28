@@ -17,7 +17,7 @@
 //  · Compras abertas no início = recebimentos físicos (R9) de (sku, t4) cujo documento de LT tem t1 < início <= t4. Elas
 //    entram como chegadas programadas e contam na posição. Os demais recebimentos históricos são SUBSTITUÍDOS pelas
 //    compras simuladas. (No dado real o 1º recebimento é de 2026-01-28: o conjunto é vazio — reportado.)
-//  · Células (R2): classe efetiva do SKU no INÍCIO da janela medida (sem classe → C, como R13); `*_alt` = coorte.alterados;
+//  · Células (R2): classe efetiva do SKU no INÍCIO da janela medida (sem classe → C, como R13); `*_alt` = e.alterados (padrão: coorte.alterados);
 //    `total` = todas as linhas medidas.
 //  · Grupo de embalagem: a âncora decide na unidade-base do grupo (posição = soma dos membros simulados, todos na mesma
 //    unidade de estoque — formulas.ts barra unidade mista) e compra embalagens da âncora: ceil(necessidade / conv), que
