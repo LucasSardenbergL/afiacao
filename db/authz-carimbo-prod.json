@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-27T12:53:02.227Z",
-  "sourceHead": "7d4cdccb62bde2b306028c1410bfd8d5b5e99eec",
+  "medidoEm": "2026-10-28T10:42:40.038Z",
+  "sourceHead": "74bf228379d143a5b54bf49915cf99c3d7ff9106",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -21,9 +21,9 @@
     "grants": {
       "script": "authz:grants:prod",
       "exit": 0,
-      "resumo": "✅ audit-grants — 10 tabela(s) conferida(s); prod bate com o contrato.",
+      "resumo": "✅ audit-grants — 17 tabela(s) conferida(s); prod bate com o contrato.",
       "denominador": null,
-      "contratoFingerprint": "e66cbeb1ce3678179eb3fb971ccd5e69e662088804c3d6e5b4998db551f5a1f7",
+      "contratoFingerprint": "be54243ad61a4f697fff87fe948ba63cafdfc298bb990381225916b67f061446",
       "auditorFingerprint": "b55db338c6c26db92938511d5e8f118e5013c3bffcb770401655e1b7aecac3fe",
       "achados": []
     },
@@ -47,20 +47,33 @@
     },
     "rls": {
       "script": "authz:rls:prod",
-      "exit": 0,
-      "resumo": "✅ audit-rls — 372 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 4 grupo(s) de lacuna conferido(s) — 78 tabela(s) distinta(s) no grafo, 8 ",
+      "exit": 1,
+      "resumo": "audit-rls — 2 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
       "denominador": null,
       "contratoFingerprint": "17fa8cf4e2b0e4ce9986e9022d732b2e0076f9b04d08cc8aa08a1ccc0cf87943",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
-      "achados": []
+      "achados": [
+        {
+          "id": "25eea13df0d48a5a",
+          "linha": "❌ [LACUNA_GRUPO_MUDOU] private.cap_carteira_ler: o grupo CRESCEU — 23 tabela(s) em prod contra 22 declarada(s) (medido em 2026-08-28). 2 curada(s), 21 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: customer_canonical_alias, customer_visit_scores, farmer_bundle_recommendations, farmer_calls, farmer_client_scores, farmer_copilot_sessions, farmer_geracao_execucoes, farmer_geracao_vigente, farmer_recommendations, omie_clientes_nao_vinculados, omie_nao_vinculados_state, radar_cadastro_conflitos, radar_contatos, radar_empresas, radar_ingest_state, radar_municipios, route_visits, selfservice_cliente_allowlist, tarefa_eventos, tarefa_satisfacao_candidatos, tarefa_templates, tarefas, visitas_agendadas.",
+          "primeiraVez": "2026-10-28",
+          "ultimaVez": "2026-10-28"
+        },
+        {
+          "id": "22239733bf533413",
+          "linha": "❌ [LACUNA_GRUPO_MUDOU] fin_*: o grupo CRESCEU — 43 tabela(s) em prod contra 41 declarada(s) (medido em 2026-08-28). 5 curada(s), 38 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: fin_alertas, fin_antecipacoes, fin_audit_log, fin_balanco_inputs, fin_categoria_dre_mapping, fin_categorias, fin_conciliacao, fin_confiabilidade, fin_config_cashflow, fin_contas_correntes, fin_contas_pagar, fin_contas_receber, fin_custo_rateio, fin_divida_completude, fin_divida_parcelas, fin_dividas, fin_dre_custo_tipo, fin_dre_snapshots, fin_eliminacoes_intercompany, fin_eliminacoes_log, fin_estoque_valor, fin_eventos_eventuais, fin_eventos_recorrentes, fin_fechamento_log, fin_fechamentos, fin_forecast, fin_funding_inputs, fin_ic_contrapartes, fin_ic_matches, fin_ic_reconcile_rodadas, fin_kpi_tributario, fin_movimentacoes, fin_orcamento, fin_period_overrides, fin_permissoes, fin_projecao_snapshots, fin_regime_inputs, fin_sync_checkpoint, fin_sync_cursor, fin_sync_kick_retry, fin_sync_lease, fin_sync_log, fin_valor_inputs.",
+          "primeiraVez": "2026-10-28",
+          "ultimaVez": "2026-10-28"
+        }
+      ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 414 identidade(s) batem com o repo (341 em dia, 66 só cosméticas, 6 aceitas na baseline) e 20 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 414 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@7c25454cc (fetch ok) · prod 2026-10-27 12:53:27.021833Z",
-      "contratoFingerprint": "5b76b5a7515b8dbd08c8fc61932485e19969f6b53ff6ec5bf21130dadadcf0b1",
-      "auditorFingerprint": "db3aa01b47ed575a85b417e4fd34576ee089a21747335546b533f1342a4fbd8d",
+      "resumo": "✅ deriva-corpo — 430 identidade(s) batem com o repo (356 em dia, 66 só cosméticas, 7 aceitas na baseline) e 20 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 430 identidade(s) conferida(s) · 20 aposentada(s) · ref origin/main@74bf22837 (fetch ok) · prod 2026-10-28 10:43:09.839281Z",
+      "contratoFingerprint": "ebb5ff278caf4065b771143e59435bc08b8cc42e7c595fd4e4dcbfa29f2c781a",
+      "auditorFingerprint": "d9e8e2954e1297c31fb78a847116abdf585b57ee5bfbf8101d7271b18facf015",
       "achados": []
     }
   }
