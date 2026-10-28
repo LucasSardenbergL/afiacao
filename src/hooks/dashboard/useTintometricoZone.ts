@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
-import { formatCount, formatImportStatus } from '@/lib/dashboard/format';
+import { descreverImportacaoTint, formatCount, formatImportStatus } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
@@ -81,15 +81,20 @@ export function useTintometricoZone() {
         registros_erro?: number | null;
         created_at?: string | null;
       }>;
-      const topItems: TopListItem[] = rows.map((e) => ({
-        id: e.id,
-        icon: AlertTriangle,
-        title: e.arquivo_nome ?? 'Importação',
-        subtitle: `${e.registros_erro ?? 0} erro(s)`,
-        path: '/tintometrico',
-        itemType: 'tint_import_error',
-        badge: { label: 'erro', intent: 'error' as const },
-      }));
+      const topItems: TopListItem[] = rows.map((e) => {
+        const d = descreverImportacaoTint(e);
+        return {
+          id: e.id,
+          icon: AlertTriangle,
+          title: d.titulo,
+          subtitle: d.detalhe,
+          path: '/tintometrico',
+          itemType: 'tint_import_error',
+          badge: d.ehSync
+            ? { label: 'barrada', intent: 'warning' as const }
+            : { label: 'erro', intent: 'error' as const },
+        };
+      });
 
       return { skusMapped, skusTotal, lastImport, topItems };
     },
@@ -132,7 +137,8 @@ export function useTintometricoZone() {
   const priority: PriorityCandidate | null = useMemo(() => {
     if (!data) return null;
     const errCount = Number(data.lastImport?.registros_erro ?? 0);
-    if (errCount > 0) {
+    if (errCount > 0 && data.lastImport) {
+      const d = descreverImportacaoTint(data.lastImport);
       const score = 95;
       return {
         zone: 'tintometrico',
@@ -141,8 +147,10 @@ export function useTintometricoZone() {
           id: 'tint_import_error',
           variant: variantFromScore(score),
           icon: AlertTriangle,
-          title: `Última importação com ${errCount} erro(s)`,
-          description: `${data.lastImport?.arquivo_nome ?? 'Importação'} requer revisão.`,
+          title: d.ehSync ? `Último sync: ${d.detalhe}` : `Última importação com ${errCount} erro(s)`,
+          description: d.ehSync
+            ? 'A receita anterior segue valendo — veja quais cores no tintométrico.'
+            : `${d.titulo} requer revisão.`,
           cta: { label: 'Abrir tintométrico', path: '/tintometrico' },
           metadata: { source: 'tintometrico.import_error' },
         },

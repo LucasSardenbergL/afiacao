@@ -242,3 +242,37 @@ A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
 relé `omie-vendas-sync` (#729) e `--so-disparo` `omie-sync` (#731, DEPLOY CONFIRMADO). `pendencias:deploy`:
 **CONFERE** para `omie-sync` v1.9-retorno-documento-estrito e `omie-vendas-sync` v1.26-retorno-documento-estrito.
 Sensor: SEM_EDICAO. **A revisão independente do #3311 está fechada.**
+
+## Busca por documento da Afiação: só o EOF é ausência (2026-10-27, `omie-sync` v1.10)
+
+Fecha o item pré-existente que o Codex retroativo do #3311 deixou: `buscar_cliente_por_documento` transformava
+todo erro em `codigo_cliente: null`, então um 503 ou uma credencial recusada viravam "não existe".
+`./busca-documento.ts` decide o desfecho das DUAS leituras de `ListarClientes` por documento da edge:
+
+- EOF do Omie ("Não existem registros para a página", `classificarFaultstring` = `fim_de_pagina`) ou página
+  vazia → ausência;
+- resposta sem `clientes_cadastro` em lista (`{}`, `{"error":…}`, objeto) → `OMIE_RESPOSTA_MALFORMADA`
+  (antes: "não existe");
+- qualquer outro erro → relança (500 na busca, `success:false` no cadastro).
+
+**Codex (`gpt-6-astra` · max · 209s · 100.979 tokens):** nenhum ALTO nem regressão. O 500 novo não induz
+autocadastro: `getResult` marca a falha e o preflight do envio bloqueia o pedido sem código de Afiação. Dois
+MÉDIOS pré-existentes, os dois reproduzidos e **corrigidos aqui**:
+
+1. resposta malformada virava ausência;
+2. a reconsulta do `criar_cliente_afiacao` recebia o EOF, caía no `catch` e devolvia `success:false`, então
+   **cliente realmente novo nunca era cadastrado na Afiação**. Agora o EOF segue para o `IncluirCliente`.
+
+**Prova:** 5 testes Deno do helper, com a chamada injetada, casando a marca do erro. Falsificação: 4
+sabotagens vermelhas com controle verde em `LC_ALL=C` e `pt_BR.UTF-8` (sem checagem de lista, EOF engolindo
+tudo, sem EOF, classe errada).
+
+**BAIXO registrado:** não há teste de handler; o helper concentra a decisão para que restaurar o `catch`
+antigo exija desfazer a chamada a ele.
+
+**Deploy — FEITO pela sessão (PR #3372 mergeado 00:43Z em `9934baf`):** só a `omie-sync`; a `omie-vendas-sync`
+v1.29 do #3371 já tinha sido deployada às 00:41Z por outra sessão (`list_messages`). Colagem do
+`pendencias:prompt`: 14/14 hashes, **Active**, `No files were edited.`, 1,9 crédito. Sonda pelo envelope:
+`--so-disparo` (#735, DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE** `omie-sync`
+v1.10-busca-transitorio-nao-e-ausencia. **Roadmap do CNPJ alfanumérico fechado:** não sobra item pré-existente
+aberto deste programa.

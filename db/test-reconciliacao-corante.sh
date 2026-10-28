@@ -235,9 +235,10 @@ VALUES ('c0000000-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-0000000
 SQL
 # A migration-base (Tasks 1–2: o fato de consumo) entra no TEMPLATE; a do ledger entra na suíte.
 T0 -q --single-transaction -f "$BASE" >/dev/null
-# O snapshot vivo traz o ledger de ANTES da 20261020 (md5 9772…); a PROD está nela (6eaf…, psql-ro
-# 2026-10-28). Aplicá-la aqui põe o template no estado da prod antes da migration sob prova.
+# O snapshot vivo traz o ledger de ANTES da 20261020 (md5 9772…); a PROD está na 20261028031612 (7eeebf3c…,
+# psql-ro 2026-10-28). Aplicar as duas aqui põe o template no estado da prod antes da migration sob prova.
 T0 -q -f "$REPO_ROOT/supabase/migrations/20261020202720_analytics_ledger_venda_cliente.sql" >/dev/null
+T0 -q -f "$REPO_ROOT/supabase/migrations/20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql" >/dev/null
 T0 -q <<'SQL' >/dev/null
 -- Os 14 WP da linha de base (§3 da spec), pelos códigos reais.
 UPDATE omie_products op SET descricao = c.wp || '.3900QT CORANTE'
@@ -414,7 +415,7 @@ PA -d "$db" -q -c "SELECT _t_assert('R8.conferencia_parcial_nao_medido', '$v' = 
 # desconhecido volta 22023.
 cen_L() { PA -d "$1" -q <<'SQL'
 SELECT _t_assert('L.corpo_novo', (SELECT md5(prosrc) FROM pg_proc
-  WHERE oid = 'public.analytics_ledger_registrar(text,text,jsonb)'::regprocedure) = 'ca71354bee7c0fe4252ddb5368ef98de');
+  WHERE oid = 'public.analytics_ledger_registrar(text,text,jsonb)'::regprocedure) = 'b9f9b6cb56f40e9f44fd247f69133e24');
 SET request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000001';
 SET ROLE authenticated;
 CREATE TEMP TABLE _l AS
@@ -432,7 +433,7 @@ NESP=11   # nº EXATO de asserts: assert que some (cenário que parou no meio) �
 
 # PRE do ledger: o snapshot vivo traz o predecessor revisado (asserção, não suposição).
 PRED="$(PA -d tpl -tA -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.analytics_ledger_registrar(text,text,jsonb)'::regprocedure")"
-[ "$PRED" = "6eaf1d41626ece3a6fe6b51617788f21" ] || { echo "INFRA: ledger do snapshot não é o predecessor revisado ($PRED)"; exit 1; }
+[ "$PRED" = "7eeebf3cbab6a16c30d430737a57b955" ] || { echo "INFRA: ledger do snapshot não é o predecessor revisado ($PRED)"; exit 1; }
 
 suite() {
   local mig=$1 sab=$2 c db
@@ -505,7 +506,7 @@ falsq "Fr3 elegível sem medida não derruba o veredito" "R5.capacidade_desconhe
 falsq "Fr4 sem a tolerância individual" "R6.desvios_opostos_reprovou" 's/              ELSE abs(p.dosado_l - p.retirado_l) <= p.capacidade_canister_ml \/ 1000 + 0.81$/              ELSE true/; s/                   AND abs(p.dosado_l - p.retirado_l) <= 0.25 \* p.retirado_l END AS passa/                   END AS passa/'
 falsq "Fr5 elegibilidade desconhecida ignorada" "R7.estoque_ausente_nao_medido R8.conferencia_parcial_nao_medido" 's/bool_or(elegivel IS NULL OR (elegivel AND passa IS NULL)) AS algum_sem_medida/bool_or(elegivel AND passa IS NULL) AS algum_sem_medida/'
 falsq "Fr6 recebido pela NF, sem exigir a conferência" "R8.conferencia_parcial_nao_medido" 's/                           OR n.quantidade_conferida IS DISTINCT FROM n.quantidade_esperada)/                           )/'
-perl -0pe "s/'venda.painel_aberto',\n\s+'reposicao.corantes_aberta'\) THEN/'venda.painel_aberto') THEN/" "$MIG" > "$TMP/fl.sql"
+perl -0pe "s/'financeiro.ciclo_aberto', 'reposicao.corantes_aberta'\) THEN/'financeiro.ciclo_aberto') THEN/" "$MIG" > "$TMP/fl.sql"
 if cmp -s "$MIG" "$TMP/fl.sql"; then echo "✗ sabotagem no-op (allowlist)"; exit 1; fi
 fals "Fl ledger sem o evento novo (a PÓS do md5 aborta o apply)" "APPLY" "$TMP/fl.sql" ""
 

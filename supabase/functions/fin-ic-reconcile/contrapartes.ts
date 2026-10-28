@@ -112,3 +112,63 @@ export async function consultarCodigos(chamar: Chamar, c: Consulta): Promise<Res
   }
   return { ...c, codigos: [...codigos].sort((a, b) => a - b), descartados };
 }
+
+/** Linha do mapa durável `fin_ic_contrapartes`: no Omie de `empresa`, o cadastro `omie_codigo_cliente` é `empresa_alvo`. */
+export interface LinhaContraparte {
+  empresa: string;
+  omie_codigo_cliente: number;
+  empresa_alvo: string;
+}
+
+export function linhasDeContraparte(consultas: ReadonlyArray<ResultadoConsulta>): LinhaContraparte[] {
+  const vistas = new Set<string>();
+  const linhas: LinhaContraparte[] = [];
+  for (const c of consultas) {
+    for (const codigo of c.codigos) {
+      const chave = `${c.empresa}:${codigo}:${c.alvo}`;
+      if (vistas.has(chave)) continue;
+      vistas.add(chave);
+      linhas.push({ empresa: c.empresa, omie_codigo_cliente: codigo, empresa_alvo: c.alvo });
+    }
+  }
+  return linhas;
+}
+
+/** O mínimo do PostgREST para gravar o mapa: INSERT ... ON CONFLICT DO NOTHING. */
+export type GravarContrapartes = (linhas: LinhaContraparte[]) => PromiseLike<{ error: { message: string } | null }>;
+
+export function escritorContrapartes(tabela: () => {
+  upsert(linhas: LinhaContraparte[], opcoes: { onConflict: string; ignoreDuplicates: boolean }): PromiseLike<{ error: { message: string } | null }>;
+}): GravarContrapartes {
+  return (linhas) =>
+    tabela().upsert(linhas, { onConflict: "empresa,omie_codigo_cliente,empresa_alvo", ignoreDuplicates: true });
+}
+
+/**
+ * Grava o mapa de contraparte SÓ ACRESCENTANDO (o banco nem concede UPDATE/DELETE à edge). É a fonte
+ * durável do "CR aparecido" da RPC `fin_consolidado_intercompany`: ela acha ali o CR do destino que
+ * contradiz uma venda sem cobrança, sem depender das linhas informativas — que esta edge apaga e
+ * reinsere em duas requisições, e que nunca nascem para CR sem emissão. Código a mais só deixa a RPC
+ * mais conservadora (pende), nunca elimina; por isso acrescentar é seguro e apagar não é.
+ */
+export async function gravarContrapartes(
+  gravar: GravarContrapartes,
+  consultas: ReadonlyArray<ResultadoConsulta>,
+): Promise<{ ok: true; linhas: number } | { ok: false; erro: string }> {
+  const linhas = linhasDeContraparte(consultas);
+  if (linhas.length === 0) return { ok: true, linhas: 0 };
+  const { error } = await gravar(linhas);
+  return error ? { ok: false, erro: error.message } : { ok: true, linhas: linhas.length };
+}
+
+/** Folga do marco: o relógio da edge e o do banco não são o mesmo (o `created_at` do CR é do banco). */
+const FOLGA_MARCO_MS = 5 * 60_000;
+
+/**
+ * O marco da rodada: "o mapa foi gravado a partir do que o Omie respondeu em `mapa_lido_em`" (o início da
+ * leitura, menos a folga). A RPC o usa como trava de bootstrap: sem marco nenhum, a venda sem cobrança não
+ * elimina (o mapa durável ainda não foi alimentado pela edge).
+ */
+export function marcoDaRodada(inicioMs: number): { mapa_lido_em: string } {
+  return { mapa_lido_em: new Date(inicioMs - FOLGA_MARCO_MS).toISOString() };
+}

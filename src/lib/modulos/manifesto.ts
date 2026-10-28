@@ -137,13 +137,15 @@ export const MODULOS: ModuloApp[] = [
         "/financeiro/antecipacao",
         "/financeiro/fechamento",
         "/financeiro/conciliacao",
-        "/financeiro/intercompany",
+        // /financeiro/intercompany DESCONGELADA em 2026-10-21: fin_ic_matches deixou de ter 0 linha (o
+        // fin-ic-reconcile gravou 21 em 2026-10-21, #3294) e a fila é onde o founder decide os pares e
+        // a venda intragrupo sem cobrança que o DRE consolidado elimina (migration 20261021190000).
         "/financeiro/regime-tributario",
         "/financeiro/funding",
       ],
       desde: "2026-10-12",
       ate: "2027-01-10",
-      motivo: "telas de INPUT: 0 linha em fin_dividas/fin_orcamento/fin_forecast/fin_antecipacoes/fin_fechamentos/fin_conciliacao/fin_ic_matches; fin_funding_inputs e fin_regime_inputs parados desde 2026-05 (psql-ro 2026-10-12). A leitura segue ativa",
+      motivo: "telas de INPUT: 0 linha em fin_dividas/fin_orcamento/fin_forecast/fin_antecipacoes/fin_fechamentos/fin_conciliacao (e fin_ic_matches, até 2026-10-21); fin_funding_inputs e fin_regime_inputs parados desde 2026-05 (psql-ro 2026-10-12). A leitura segue ativa",
     },
     codigo: [
       "src/lib/financeiro/**",
@@ -176,6 +178,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FinanceiroGestao.saldo-bancario-oculto.test.tsx",
       "src/pages/__tests__/FinanceiroFechamento.provisorio.test.tsx",
       "src/pages/__tests__/FinanceiroIc.leitura-falhou.test.tsx",
+      "src/pages/__tests__/FinanceiroIntercompanyFila.sem-cobranca.test.tsx",
       "src/pages/__tests__/FinanceiroSync.erro-honesto.test.tsx",
       "src/hooks/__tests__/useFinanceiro.erros-carga.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
@@ -638,7 +641,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/Producao*.tsx",
       "src/pages/ProductionOrders.tsx",
     ],
-    testes: [],
+    testes: ["src/pages/__tests__/Producao.escrita-calada.test.tsx"],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {

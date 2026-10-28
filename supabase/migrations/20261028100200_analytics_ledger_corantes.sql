@@ -7,11 +7,11 @@
 -- Spec:  docs/superpowers/specs/2026-10-27-giro-corante-reposicao-design.md §11.3
 -- Plano: docs/superpowers/plans/2026-10-27-giro-corante-fase1.md (Task 4)
 --
--- O corpo é o da 20261020202720_analytics_ledger_venda_cliente.sql; muda SÓ a linha da allowlist
--- (o teste de paridade src/lib/__tests__/analytics-ledger-paridade.test.ts lê ESTE arquivo). Molde
--- TRAVA → PRE → CREATE → PÓS: a PRE aborta se o corpo vivo não for o predecessor revisado (md5
--- 6eaf1d41626ece3a6fe6b51617788f21, lido da PROD em 2026-10-28 via psql-ro) nem este (ca71354b…).
--- A PÓS exige os 8 eventos: recriação que esquece um antigo é o modo de falha do REPLACE.
+-- O corpo é o da 20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql (outra sessão, mergeada e
+-- APLICADA antes desta: md5 7eeebf3cbab6a16c30d430737a57b955 lido da PROD em 2026-10-28 via psql-ro); muda SÓ
+-- a linha da allowlist (o teste de paridade src/lib/__tests__/analytics-ledger-paridade.test.ts lê ESTE
+-- arquivo). Molde TRAVA → PRE → CREATE → PÓS: a PRE aborta se o corpo vivo não for esse nem este (b9f9b6cb…).
+-- A PÓS exige os 9 eventos: recriação que esquece um antigo é o modo de falha do REPLACE.
 --
 -- Aplicação: `bun run db:aplicar supabase/migrations/20261028100200_analytics_ledger_corantes.sql`
 -- (sem BEGIN/COMMIT: o executor fornece a transação).
@@ -30,13 +30,13 @@ DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                    WHERE p.oid = to_regprocedure('public.analytics_ledger_registrar(text,text,jsonb)'));
 BEGIN
-  IF v_vivo IS NULL OR v_vivo NOT IN ('6eaf1d41626ece3a6fe6b51617788f21', 'ca71354bee7c0fe4252ddb5368ef98de') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('7eeebf3cbab6a16c30d430737a57b955', 'b9f9b6cb56f40e9f44fd247f69133e24') THEN
     RAISE EXCEPTION 'PRE FALHOU: analytics_ledger_registrar vivo (md5 %) não é o predecessor revisado nem este — outra sessão mexeu na allowlist; reconcilie antes', v_vivo;
   END IF;
 END
 $pre$;
 
--- Corpo = o da 20261020202720 (o predecessor revisado); muda SÓ a allowlist.
+-- Corpo = o da 20261028031612 (o predecessor revisado); muda SÓ a allowlist.
 CREATE OR REPLACE FUNCTION public.analytics_ledger_registrar(
   p_evento text,
   p_chave  text,
@@ -60,7 +60,7 @@ BEGIN
   -- Allowlist FECHADA: o ledger não é canal genérico de escrita no banco.
   IF p_evento NOT IN ('carteira.mixgap_servido', 'navegacao.rota_servida', 'dashboard.crescimento_comparavel_servido',
                       'venda.ficha_aberta', 'venda.contato_registrado', 'venda.tel_clicado', 'venda.painel_aberto',
-                      'reposicao.corantes_aberta') THEN
+                      'financeiro.ciclo_aberto', 'reposicao.corantes_aberta') THEN
     RAISE EXCEPTION 'analytics_ledger_registrar: evento % fora da allowlist', p_evento
       USING ERRCODE = '22023';
   END IF;
@@ -104,14 +104,14 @@ DECLARE
   v_def text;
   v_ev  text;
 BEGIN
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) IS DISTINCT FROM 'ca71354bee7c0fe4252ddb5368ef98de' THEN
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_oid) IS DISTINCT FROM 'b9f9b6cb56f40e9f44fd247f69133e24' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo vivo não é o desta migration';
   END IF;
   v_def := pg_get_functiondef(v_oid);
   FOREACH v_ev IN ARRAY ARRAY['carteira.mixgap_servido', 'navegacao.rota_servida',
                               'dashboard.crescimento_comparavel_servido', 'venda.ficha_aberta',
                               'venda.contato_registrado', 'venda.tel_clicado', 'venda.painel_aberto',
-                              'reposicao.corantes_aberta'] LOOP
+                              'financeiro.ciclo_aberto', 'reposicao.corantes_aberta'] LOOP
     IF position(v_ev in v_def) = 0 THEN
       RAISE EXCEPTION 'POSTCONDICAO FALHOU: allowlist sem %', v_ev;
     END IF;

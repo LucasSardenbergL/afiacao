@@ -117,7 +117,17 @@ edges em `CONFERE`. Não mudou nada em `src/`, então não há Publish.
 ## Riscos abertos (fora deste PR)
 
 - ~~**`buscarClienteVendasMatches`** (identidade do `criar_pedido`)~~ → fechado na v1.28 (seção acima).
-- **`buscarContextoComercialCliente`** (leitura do contexto comercial, colacor) ainda usa o 1º registro.
+- ~~**`buscarContextoComercialCliente`** (leitura do contexto comercial, colacor) ainda usa o 1º registro.~~ →
+  fechado na **v1.29**. A action `buscar_contexto_comercial_cliente` tem **zero** consumidores (`git grep` no repo e
+  `cron.job`: 0), então o risco estava dormente. Mesmo assim ela passou a usar `buscarClienteEstrito` com `docDoPedido`:
+  ambíguo, divergente, resposta inválida e transitório LANÇAM, e só a ausência provada devolve o contexto vazio. A
+  `buscarClienteVendas`, que pegava o 1º registro, ficou sem chamadores e foi **removida**. Nenhum lookup por
+  documento da `omie-vendas-sync` usa mais o 1º registro.
+  **Deploy da v1.29 (2026-10-28):** pacote `11be5e272ba9`, de `origin/main@24b9eb60`, enviado pelo MCP às 00:39:38Z.
+  O agente do Lovable conferiu 31/31 hashes (`sha256sum` exit 0) e fez o deploy. O sensor de edição deu `SEM_EDICAO`.
+  Como a sonda por cron das 00:37Z tinha passado dois minutos antes do deploy, o founder disparou uma sonda humana pelo
+  relé `deploy_sonda_disparar` (tick `a52b7f5c`). Às 01:07Z o `pendencias:deploy` deu **exit 0**, com 83/83 edges em
+  `CONFERE` e a `omie-vendas-sync` em `v1.29-contexto-comercial-estrito`. **Roadmap do lookup estrito encerrado.**
 - **Corrida** entre o lookup e o `IncluirCliente`: a paginação não é um snapshot. A chave determinística protege
   concorrentes que usam a mesma chave, não um cadastro manual feito entre as duas chamadas. Uma chave já ocupada
   por outro documento continua falhando sem confirmação.

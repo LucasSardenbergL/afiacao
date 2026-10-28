@@ -45,7 +45,7 @@ Consumidores:
 
 ### Fora do escopo (registrado, não mexido)
 
-- **RPC SQL `fin_projecao_13_semanas`** (achado do revisor, conferido no `pg_proc` de prod): `COALESCE(SUM(saldo_atual), 0) … WHERE ativo`, sem `saldo_data`. Lista vazia vira R$ 0, conta nula sai da soma e saldo velho conta como de hoje. Consumidores: `CaixaCompraCard` (decisão de compra) e `useFinanceiroZone`. Pede migration (`CREATE OR REPLACE` com pré-voo `pg_get_functiondef`), e por isso é follow-up próprio.
+- **RPC SQL `fin_projecao_13_semanas`** (achado do revisor, conferido no `pg_proc` de prod): `COALESCE(SUM(saldo_atual), 0) … WHERE ativo`, sem `saldo_data`. Lista vazia vira R$ 0, conta nula sai da soma e saldo velho conta como de hoje. Consumidores: `CaixaCompraCard` (decisão de compra) e `useFinanceiroZone`. Pede migration (`CREATE OR REPLACE` com pré-voo `pg_get_functiondef`), e por isso é follow-up próprio. → **Resolvido** na seção "Item 2, na RPC" abaixo.
 - Os alertas `fin_alertas` gerados no mesmo run não carregam o motivo do saldo datado (o snapshot carrega).
 
 - O data-health por empresa usa `max(saldo_data)` (`db/aplicar-sync-reprocess-degradado-vigiadas.sql:37-38`): uma conta fresca esconde as velhas. A tela e a engine agora olham conta a conta, então a lacuna sobra só no sensor.
@@ -82,6 +82,88 @@ Diferença aceita: um NCG `NaN` no ponto mais recente agora deixa o giro indispo
   - O `lovable-sensor-edicao` 6,5 min depois deu `SEM_EDICAO` (0 commits `gpt-engineer-app`).
 - **Sonda:** `db/2026-10-27-sonda-disparo-fin-cashflow-v2.0-fin-valor-v1.1.sql`, pelo envelope (`--ensaio` ok, recibo #722). O Passo 2, lido pelo psql-ro, deu **DEPLOY CONFIRMADO** nas duas, HTTP 200: `v2.0-saldo-cc-fresco` e `v1.1-ncg-leitura-pontual`.
   - `bun run pendencias:deploy` saiu com **exit 0** ("✅ confere — 83").
-- **Publish:** pendente. O workspace estava em `669aa9c62` (= `origin/main`, contém o #3347), mas o `deploy_project` pela sessão foi negado pelo classificador do modo auto ("Production Deploy"). O bundle de produção antes do Publish é `/assets/index-DD-kF4y9.js`.
+- **Publish:** feito pelo founder no editor (o da sessão tinha sido negado). Conferido em 2026-10-28 01:03Z: o HTML de `steu.lovable.app` trocou `/assets/index-DD-kF4y9.js` → `/assets/index-Bicgy1Ig.js`. Bytes = disponibilidade, não adoção: o PWA troca de build quando o cliente aceita a atualização. Histórico da tentativa: O workspace estava em `669aa9c62` (= `origin/main`, contém o #3347), mas o `deploy_project` pela sessão foi negado pelo classificador do modo auto ("Production Deploy"). O bundle de produção antes do Publish é `/assets/index-DD-kF4y9.js`.
   - Prova depois do Publish: esse nome tem de mudar no HTML de `steu.lovable.app`.
   - Até o Publish, a Posição Agora, o Cockpit, o drill-down e o aviso das 13 semanas servem o build velho. As edges já servem a regra nova: a resposta da engine traz `confianca_dados.saldo_inicial`, que o build velho só ignora.
+
+## Item 2, na RPC — `fin_projecao_13_semanas` (2026-10-28)
+
+### Por que
+
+Era o "Fora do escopo" acima. A RPC SQL somava `COALESCE(SUM(saldo_atual), 0) … WHERE ativo` sem olhar
+`saldo_data`, e alimenta o `CaixaCompraCard` (piso das 13 semanas × fila de compras). Corpo de prod
+conferido em 2026-10-28 01:45Z: md5 do `prosrc` `ec1db10e…` = o da `20260927202603` (repo == prod). ACL
+`authenticated, service_role` (= `db/lib/corpo-vivo-acl.sql:149`), dono `postgres`.
+
+### A regra
+
+Migration `20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql`, molde TRAVA → PRE (md5 exato) →
+`CREATE OR REPLACE` → POS (md5, `STABLE`, `SECURITY DEFINER`, não-`STRICT`, `search_path=public`, 2
+defaults, dono, EXECUTE só de `authenticated`/`service_role`). Só o ramo `p_saldo_inicial IS NULL` muda:
+
+- o saldo inicial é a soma das contas ativas do escopo (`p_company`, ou todas) **só** quando todas são
+  frescas. Senão é `NULL`, e o `saldo_projetado` das 13 semanas sai `NULL`. `entradas_previstas`,
+  `saidas_previstas` e `fluxo_liquido` seguem;
+- `NULL` quando não há conta ativa, quando alguma tem `saldo_data`/`saldo_atual` `NULL`, NaN ou ±Infinity,
+  ou quando alguma tem `saldo_data` fora de `[minimo, hoje]`;
+- a régua é a de `classificarSaldoConta`: `hoje` = dia de SP de `now()`, `minimo` = dia de SP de
+  `now() − 4 h`. As 4 h são subtraídas **antes** da conversão de fuso, como o TS faz com milissegundos;
+- `now()` (a função é `STABLE`). Via PostgREST cada RPC é a própria transação, então `now()` é o instante
+  da chamada.
+
+`saldo_atual` em prod é `numeric(15,2)`, que não guarda ±Infinity. O filtro de infinito é defensivo.
+
+Consumidores conferidos antes do apply: `pisoProjecao` pula a linha `NULL` (nenhuma válida → "projeção
+indisponível"); `useFinanceiroZone` mostra "—". Ninguém no repo passa `p_saldo_inicial`.
+
+### Prova
+
+`db/test-projecao-13s-saldo-fresco.sh`, no núcleo do CI (46 asserts, `falsificar=16`):
+
+- PG17, relógio controlado (`public.now()` lendo `test.agora`, TRIPWIRE sem ela), sessão UTC e SP;
+- predecessor = corpo de prod (md5 conferido), PRE recusa deriva (K1), re-apply idempotente, ACL
+  preservado, `4 h` da SQL = `HORAS_TOLERANCIA_SYNC_BASE` do TS;
+- 18 casos × 2 sessões. Destaques: 03:59:59 × 04:00:00 SP; 22h SP, quando o UTC já é amanhã; consolidado
+  contaminado só sem `p_company`; `p_saldo_inicial = 0` e `NULL` explícito; saldo zero e negativo;
+- gate: `authenticated` não-staff e sem uid caem no 42501 do gate, `anon` cai no ACL;
+- 16 sabotagens num espelho, com o md5 literal recalculado para a POS não as barrar, e controle verde na
+  mesma invocação. Medidas em `lc_messages` `C` e `pt_BR.UTF-8`: 16/16 vermelhas nas duas.
+
+O Codex apontou um mutante equivalente: tirar só o `v_contas = 0` não muda nada, porque `SUM` do vazio já
+é `NULL`. A sabotagem do vazio tira a condição **e** põe o `COALESCE(…, 0)`.
+
+### Codex (desenho, 126 s, 91,5k tokens): "OK com ajustes"
+
+Entraram: o mutante equivalente acima, a soma parcial como mutante, a POS mais larga, o typmod real da
+coluna na fixture, as 13 linhas exigidas em todo caso e o gate testado como `authenticated` não-staff.
+
+Ficaram de fora, todos anteriores a esta entrega:
+
+- **Piso semanal ≠ piso de caixa.** O mínimo dos fechamentos semanais não é o mínimo intrassemanal: uma
+  compra à vista hoje pode furar o caixa antes de um recebimento na sexta da mesma semana. O card afirma
+  "não rompe os fechamentos semanais projetados", não "não fura o caixa".
+- **`staleTime` do `CaixaCompraCard`** (5 min, sem refetch periódico nem no foco): uma leitura feita às
+  03:59 pode continuar na tela depois das 04h. É o mesmo regime de toda tela TS do item 2.
+- **`search_path = public` sem `pg_temp` no fim** em `SECURITY DEFINER`: uma tabela temporária homônima
+  precederia `public`. Para explorar, o chamador precisaria de SQL cru. É padrão de dezenas de funções do
+  repo, não desta.
+- `types.ts` declara `saldo_projetado: number` (gerado pelo Lovable).
+
+### Apply (2026-10-28)
+
+- **Merge:** #3383, squash `cd21d4cc7`, 02:52Z. O 1º CI reprovou no contrafactual de
+  `scripts/fuso-da-sessao-em-migrations-e-skills-gate.test.ts`: tirar só a migration do fuso já não
+  ressuscitava a `fin_projecao_13_semanas` morta, porque esta migration a redefine depois. O conserto foi
+  tirar também a sucessora no contrafactual (`SUCESSORAS_DO_FIX`), sem afrouxar a asserção.
+- **Pré-voo** às 03:10Z: corpo vivo `ec1db10e…`, o predecessor.
+- **`bun run db:aplicar`** da `main` (`f03a8d89c`), sha256 `62bb53a5…`: tentativa **#742** virou recibo,
+  exit 0. Antes do merge, o `--ensaio` tinha passado.
+- **2ª testemunha** (`psql-ro`, 03:11Z): md5 `dc22fe016ea307694ea1426cd75e011f`. Seguem como estavam
+  `STABLE`, `SECURITY DEFINER`, não-`STRICT`, `{search_path=public}` e o dono `postgres`. O ACL também,
+  com EXECUTE só para `authenticated` e `service_role` (anon e PUBLIC `f`).
+- **`bun run deriva:corpo:prod`:** exit 0, 422 identidades batem com `origin/main@f03a8d89c`.
+- **Dado real no instante do apply** (00:11 SP): 40 contas ativas, todas com `saldo_data` 27/10. A
+  janela ainda aceita ontem antes das 04h, então havia 0 inválidas e a projeção seguia numérica. Das 04h SP
+  em diante o saldo de hoje passa a ser exigido: se o `fin-sync-base-diario` das 03h falhar, o card mostra
+  "projeção indisponível" em vez do saldo de ontem.
+- Nenhuma edge nem Publish: a mudança é só de banco, e os consumidores já tratavam NULL desde o #3347.

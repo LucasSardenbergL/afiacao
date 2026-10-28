@@ -5224,6 +5224,27 @@ export type Database = {
         }
         Relationships: []
       }
+      fin_ic_contrapartes: {
+        Row: {
+          empresa: string
+          empresa_alvo: string
+          gravado_em: string
+          omie_codigo_cliente: number
+        }
+        Insert: {
+          empresa: string
+          empresa_alvo: string
+          gravado_em?: string
+          omie_codigo_cliente: number
+        }
+        Update: {
+          empresa?: string
+          empresa_alvo?: string
+          gravado_em?: string
+          omie_codigo_cliente?: number
+        }
+        Relationships: []
+      }
       fin_ic_matches: {
         Row: {
           cp_id: string | null
@@ -5289,6 +5310,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      fin_ic_reconcile_rodadas: {
+        Row: {
+          gravado_em: string
+          id: number
+          mapa_lido_em: string
+        }
+        Insert: {
+          gravado_em?: string
+          id?: never
+          mapa_lido_em: string
+        }
+        Update: {
+          gravado_em?: string
+          id?: never
+          mapa_lido_em?: string
+        }
+        Relationships: []
       }
       fin_kpi_tributario: {
         Row: {

@@ -66,6 +66,12 @@ export type EventoLedger =
   | 'venda.tel_clicado'
   | 'venda.painel_aberto'
   /**
+   * A aba Ciclo (Capital de giro) montou, 1x por titular e dia (chave fixa `aba`). É o sinal que
+   * libera a fase seguinte do ciclo financeiro (plano v3, decisão 3 do founder) — e o único leitor
+   * da aba é o founder, cujo Chrome censura o PostHog. Um evento só: o sensor por seção foi cortado.
+   */
+  | 'financeiro.ciclo_aberto'
+  /**
    * Giro de corante, Fase 1 (spec 2026-10-27 §11.3): a aba "Corantes" do baixo giro abriu com a
    * leitura pronta. Chave = a empresa (OBEN). A Fase 2 (consumo dosado no motor) é decidida por este
    * sinal com denominador, nunca por "ninguém reclamou".

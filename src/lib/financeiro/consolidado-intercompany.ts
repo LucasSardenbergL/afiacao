@@ -11,6 +11,10 @@
 //  • `eliminacoes`/`total_consolidado` NULL nas 4 linhas = eliminação PENDENTE: há par intercompany
 //    confirmado que não dá para eliminar (sem contrapartida, valor divergente, CP em outro mês, categoria
 //    fora de receita/CMV...). A tela mostra "—" e diz por quê; nunca um número.
+// Desde a migration 20261021190000 (docs/historico/consolidado-ic-venda-sem-cobranca.md): a venda
+// intragrupo SEM COBRANÇA (marcada pelo founder na fila) elimina o CP só do CMV do destino. Não há receita
+// a eliminar, então o CMV cai mais que a receita e o resultado sobe pelo mesmo valor: a eliminação do
+// resultado_liquido é exatamente o total sem cobrança do mês (0 sem marcação; NULL se pendente).
 // Os tipos gerados dizem `number` para as colunas de RETURNS TABLE, mas o banco devolve NULL: a entrada
 // aceita qualquer JSON nas colunas de valor e lê com leitor anulável, que recusa string/NaN.
 import type { Json } from '@/integrations/supabase/types';
@@ -47,6 +51,15 @@ export function paraLinhasConsolidado(linhas: readonly LinhaRpcConsolidado[]): L
 /** Há par intercompany confirmado que a RPC não conseguiu eliminar: o consolidado do mês é desconhecido. */
 export function eliminacaoPendente(linhas: readonly LinhaConsolidado[]): boolean {
   return linhas.some((l) => l.eliminacoes === null);
+}
+
+/**
+ * Quanto do mês é venda intragrupo sem cobrança eliminada só do CMV (o resultado sobe esse valor). A RPC o
+ * devolve como a eliminação do `resultado_liquido`; `null` = pendente ou linha ausente (não dá para dizer).
+ */
+export function eliminacaoSemCobranca(linhas: readonly LinhaConsolidado[]): number | null {
+  const resultado = linhas.find((l) => l.conta === 'resultado_liquido');
+  return resultado ? resultado.eliminacoes : null;
 }
 
 /** Empresas sem snapshot de competência no mês (cobertura do consolidado). */

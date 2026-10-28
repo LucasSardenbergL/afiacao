@@ -32,7 +32,9 @@ const ERRO = { message: 'permission denied' };
  * COUNT da `.maybeSingle()` da última importação — sem isso o `throw` do `lastImport.error`
  * cobriria o guard de `contagem()` e a camada passaria verde por REDUNDÂNCIA, não por desenho.
  */
-let falha: 'nenhuma' | 'metricas' | 'erros' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' = 'nenhuma';
+let falha: 'nenhuma' | 'metricas' | 'erros' | 'origem' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' = 'nenhuma';
+/** Marcas `personalizada` por cor — o que as 3 leituras de origem (formulas/versões/staging) devolvem. */
+let marcasOrigem: Record<string, Array<{ cor_id: string; personalizada: boolean }>> = {};
 let listaErros: unknown[] = [];
 let ultimoRun: unknown = null;
 let ultimaImportacao: unknown = null;
@@ -106,6 +108,12 @@ function resposta(tabela: string, chamados: Set<string>): Resposta {
     return falha === 'erros'
       ? { ...vazio, error: ERRO }
       : { ...vazio, data: listaErros };
+  }
+  // A separação personalizada × fábrica lê `cor_id, personalizada` por `.in('cor_id', …)` — o
+  // `in` é o que a distingue das contagens de `tint_formulas`.
+  if (chamados.has('in')) {
+    if (falha === 'origem') return { ...vazio, error: ERRO };
+    return { ...vazio, data: chamados.has('range') && marcasOrigem[tabela] ? marcasOrigem[tabela] : [] };
   }
   if (falha === 'metricas') return { ...vazio, error: ERRO };
   const ehContagem = tabela === 'tint_formulas' || tabela === 'tint_skus' || tabela === 'tint_corantes';
@@ -183,6 +191,12 @@ beforeEach(() => {
   listaErros = errosDoRun();
   ultimoRun = runComErro();
   ultimaImportacao = importacaoOk();
+  // 303U - BS é de fábrica (só na formulas atual); PRETO é personalizada e só a staging a conhece.
+  marcasOrigem = {
+    tint_formulas: [{ cor_id: '303U - BS', personalizada: false }],
+    tint_receita_versoes: [],
+    tint_staging_formulas: [{ cor_id: 'PRETO', personalizada: true }],
+  };
 });
 afterEach(() => { onlineManager.setOnline(true); });
 
@@ -389,5 +403,39 @@ describe('TintDashboard — o card de erros de importação NÃO pode sumir cala
     renderPagina();
     expect(await screen.findByText(TITULO_ERROS)).toBeTruthy();
     expect(screen.getByText(/4 rejeições sem detalhe/)).toBeTruthy();
+  });
+
+  it('SEPARA o que é da loja do que é da fábrica — cada cor no lado de quem corrige', async () => {
+    renderPagina();
+    const personalizadas = await screen.findByTestId('rejeicao-origem-personalizada');
+    const fabrica = screen.getByTestId('rejeicao-origem-fabrica');
+    expect(personalizadas.textContent).toContain('PRETO');
+    expect(personalizadas.textContent).not.toContain('303U - BS');
+    expect(fabrica.textContent).toContain('303U - BS');
+    expect(fabrica.textContent).not.toContain('PRETO');
+    expect(screen.queryByTestId('rejeicao-origem-nao_sei')).toBeNull();
+    expect(screen.queryByTestId('origem-nao-lida')).toBeNull();
+  });
+
+  it('lado sem cor diz "nenhuma" (leu e não há); cor sem marca ou com as DUAS vai para "não identificada"', async () => {
+    marcasOrigem = {
+      tint_formulas: [{ cor_id: '303U - BS', personalizada: true }, { cor_id: '303U - BS', personalizada: false }],
+      tint_receita_versoes: [],
+      tint_staging_formulas: [{ cor_id: 'PRETO', personalizada: true }],
+    };
+    renderPagina();
+    const naoSei = await screen.findByTestId('rejeicao-origem-nao_sei');
+    expect(naoSei.textContent).toContain('303U - BS');
+    expect(screen.getByTestId('rejeicao-origem-fabrica').textContent).toMatch(/Nenhuma nas últimas 24h/);
+  });
+
+  it('origem ILEGÍVEL: a lista fica de pé, sem separação, e AVISA — nunca joga tudo num lado', async () => {
+    falha = 'origem';
+    renderPagina();
+    expect(await screen.findByTestId('origem-nao-lida')).toBeTruthy();
+    expect(screen.getByText('303U - BS')).toBeTruthy();
+    expect(screen.getByText('PRETO')).toBeTruthy();
+    expect(screen.queryByTestId('rejeicao-origem-personalizada')).toBeNull();
+    expect(screen.queryByTestId('rejeicao-origem-fabrica')).toBeNull();
   });
 });

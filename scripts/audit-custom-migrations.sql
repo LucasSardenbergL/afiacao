@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 702
+-- Total de custom migrations: 706
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -761,12 +761,16 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120000', 'radar_score_lead_v3_cnae_secundario', '20261021120000_radar_score_lead_v3_cnae_secundario.sql'),
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
+  ('20261021190000', 'fin_ic_venda_sem_cobranca', '20261021190000_fin_ic_venda_sem_cobranca.sql'),
   ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
   ('20261026214720', 'tint_receita_versoes', '20261026214720_tint_receita_versoes.sql'),
   ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql'),
   ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
   ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql'),
-  ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql')
+  ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql'),
+  ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql'),
+  ('20261028014827', 'projecao_13s_saldo_inicial_fresco_ou_nulo', '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql'),
+  ('20261028031612', 'analytics_ledger_financeiro_ciclo_aberto', '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2974,6 +2978,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_append_only', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
+  ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_ic_matches_guarda_sem_cobranca', ''),
+  ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_contrapartes', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
+  ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
   ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
@@ -2998,7 +3007,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
   ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
-  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos')
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5254,6 +5266,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_append_only', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'trigger', 'public', 'trg_nfe_receb_manual_trilha_sem_truncate', 'nfe_recebimento_manual_trilha'),
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
+  ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_ic_matches_guarda_sem_cobranca', ''),
+  ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_contrapartes', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
+  ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
   ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
@@ -5278,7 +5295,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
   ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
-  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos')
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -5338,11 +5358,13 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_projecao_13_semanas', 2, '20260329161846_ef165ca0-5e29-4b16-8c40-9e14396fdc7b.sql', '9dede1b56c8a2c125ec4f6c20d1051be'),
   ('public', 'fin_projecao_13_semanas', 3, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', '5780d220bb9d6109fd51de63d4e79fba'),
   ('public', 'fin_projecao_13_semanas', 4, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '5eda772f6a71cfee714aa0a363552f35'),
+  ('public', 'fin_projecao_13_semanas', 5, '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql', 'e2d7147a6c9a37763fad0d5257004cee'),
   ('public', 'fin_consolidado_intercompany', 1, '20260328200600_financeiro_v3_backend.sql', 'c77fe935eab2b0b9e22b2323cd6a1df1'),
   ('public', 'fin_consolidado_intercompany', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'cd4ea51faea13ce2c4d5c74ae64f71d0'),
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
   ('public', 'fin_consolidado_intercompany', 4, '20260525020001_fin_rpc_gate_auth_p1.sql', '824097bf424eac9f2ab2cf047890b5e4'),
   ('public', 'fin_consolidado_intercompany', 5, '20261021120000_fin_consolidado_ic_sinal_cmv.sql', 'f06193c3761da73b68a31ade301d0a74'),
+  ('public', 'fin_consolidado_intercompany', 6, '20261021190000_fin_ic_venda_sem_cobranca.sql', 'd0956363fa1943169153d528274086a8'),
   ('public', 'tint_run_reconciliation', 1, '20260329163949_fcc70fb8-8e83-4f8f-946e-8bae2bfe17f1.sql', '99527ed12e8e9b836ccd33b9a5b6498d'),
   ('public', 'tint_run_reconciliation', 2, '20260329180758_acfdc7f9-2fa1-4f59-9da3-afa630297524.sql', '9c82ced3646ddb10a5a2dc666d68c9f3'),
   ('public', 'tint_run_reconciliation', 3, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '84b622a7be15ae3632c4cc4d70e317fb'),
@@ -5526,6 +5548,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
   ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
   ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
+  ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -5826,6 +5849,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
   ('public', 'analytics_ledger_registrar', 5, '20261020202720_analytics_ledger_venda_cliente.sql', 'e7e3ed81c939ba16a8fecb0c0619b7da'),
+  ('public', 'analytics_ledger_registrar', 6, '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql', '743d4d9478fac9a98ea1907778b905ee'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),

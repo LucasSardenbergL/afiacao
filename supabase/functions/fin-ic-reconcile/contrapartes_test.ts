@@ -1,7 +1,14 @@
 // Testa o CÓDIGO REAL de contrapartes.ts (código Omie → empresa do grupo), com o Omie falso.
 // Roda com: deno test --no-remote --allow-read=supabase/functions supabase/functions/fin-ic-reconcile/
 import { lerResposta, type RespostaOmie } from "../_shared/omie-cliente.ts";
-import { type Chamar, consultarCodigos } from "./contrapartes.ts";
+import {
+  type Chamar,
+  consultarCodigos,
+  gravarContrapartes,
+  type LinhaContraparte,
+  linhasDeContraparte,
+  marcoDaRodada,
+} from "./contrapartes.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
   if (JSON.stringify(a) !== JSON.stringify(b)) {
@@ -100,4 +107,47 @@ Deno.test("fault de negócio / HTTP de erro / corpo sem lista → lança, nunca 
   await assertRejeitaCom(consultarCodigos(omie([lerResposta(200, "{}")]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
   await assertRejeitaCom(consultarCodigos(omie([lerResposta(200, "<html>")]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
   await assertRejeitaCom(consultarCodigos(omie([lerResposta(403, JSON.stringify({ clientes_cadastro: [] }))]).chamar, C), "OMIE_CONTRAPARTE_FALHOU");
+});
+
+// ── Mapa durável (fin_ic_contrapartes) ──
+
+const R = (empresa: string, alvo: string, codigos: number[]) => ({ empresa, alvo, cnpjAlvo: "x", codigos, descartados: 0 });
+
+Deno.test("mapa durável: uma linha por (empresa, código, alvo), sem repetir", () => {
+  assertEquals(
+    linhasDeContraparte([R("colacor", "oben", [10, 11, 10]), R("oben", "colacor", [7]), R("colacor_sc", "oben", [])]),
+    [
+      { empresa: "colacor", omie_codigo_cliente: 10, empresa_alvo: "oben" },
+      { empresa: "colacor", omie_codigo_cliente: 11, empresa_alvo: "oben" },
+      { empresa: "oben", omie_codigo_cliente: 7, empresa_alvo: "colacor" },
+    ],
+  );
+});
+
+Deno.test("mapa durável: grava as linhas e devolve quantas", async () => {
+  const gravadas: LinhaContraparte[][] = [];
+  const r = await gravarContrapartes((l) => {
+    gravadas.push(l);
+    return Promise.resolve({ error: null });
+  }, [R("colacor", "oben", [10])]);
+  assertEquals(r, { ok: true, linhas: 1 });
+  assertEquals(gravadas, [[{ empresa: "colacor", omie_codigo_cliente: 10, empresa_alvo: "oben" }]]);
+});
+
+Deno.test("mapa durável: sem código nenhum não chama o banco", async () => {
+  let chamadas = 0;
+  const r = await gravarContrapartes(() => {
+    chamadas++;
+    return Promise.resolve({ error: null });
+  }, [R("colacor", "oben", [])]);
+  assertEquals([r, chamadas], [{ ok: true, linhas: 0 }, 0]);
+});
+
+Deno.test("mapa durável: erro do banco vira {ok:false} com a mensagem (o caller aborta antes de publicar)", async () => {
+  const r = await gravarContrapartes(() => Promise.resolve({ error: { message: "permission denied" } }), [R("colacor", "oben", [10])]);
+  assertEquals(r, { ok: false, erro: "permission denied" });
+});
+
+Deno.test("marco: o instante em que a rodada começou a ler o Omie, menos 5 min de folga (relógios distintos)", () => {
+  assertEquals(marcoDaRodada(Date.parse("2026-10-27T09:00:00.000Z")), { mapa_lido_em: "2026-10-27T08:55:00.000Z" });
 });
