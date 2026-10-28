@@ -177,13 +177,15 @@ elif sab == "saldo_nulo_ignorado":
 elif sab == "informado_ignorado":
     corpo = troca(corpo, "IF p_saldo_inicial IS NOT NULL THEN", "IF false THEN")
 elif sab == "pre_aceita_tudo":
-    s = s.replace("IF v_vivo IS NULL OR v_vivo NOT IN (", "IF false AND v_vivo NOT IN (", 1)
-    if "IF false AND v_vivo" not in s: sys.exit("PRE não achada")
+    pass   # mexe fora do corpo: aplicada depois de remontar o arquivo (os índices são do original)
 else:
     sys.exit("sabotagem desconhecida: " + sab)
 novo = hashlib.md5(corpo.encode()).hexdigest()
 s = s[:ini] + corpo + s[fim:]
-if sab != "pre_aceita_tudo":
+if sab == "pre_aceita_tudo":
+    if s.count("IF v_vivo IS NULL OR v_vivo NOT IN (") != 1: sys.exit("PRE não achada")
+    s = s.replace("IF v_vivo IS NULL OR v_vivo NOT IN (", "IF false AND v_vivo NOT IN (")
+else:
     if s.count(md5_novo) != 2: sys.exit("md5 literal do corpo não aparece 2x (PRE e POS)")
     s = s.replace(md5_novo, novo)
 open(dst, "w", encoding="utf-8").write(s)
