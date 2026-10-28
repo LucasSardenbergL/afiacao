@@ -55,6 +55,8 @@ vi.mock('@/services/financeiroV2Service', () => ({
 }));
 vi.mock('@/services/financeiroService', () => ({ triggerFinanceiroSync: () => Promise.resolve() }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// A fila lê `isMaster` (botão "Sem cobrança"); este guard não é sobre papel.
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ isMaster: false }) }));
 
 import FinanceiroFechamento from '../FinanceiroFechamento';
 import FinanceiroIntercompany from '../FinanceiroIntercompany';

@@ -16,7 +16,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { Link } from 'react-router-dom';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado } from '@/lib/financeiro/dre-helpers';
-import { eliminacaoPendente, empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
+import { eliminacaoPendente, eliminacaoSemCobranca, empresasSemSnapshot, exibicaoConsolidado, paraLinhasConsolidado, type LinhaConsolidado } from '@/lib/financeiro/consolidado-intercompany';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -95,6 +95,8 @@ const FinanceiroIntercompany = () => {
 
   useEffect(() => { load(); }, [load]);
   const exibicao = exibicaoConsolidado(consolidado.length, semSnapshot, ALL_COMPANIES.length);
+  // Venda intragrupo sem cobrança do mês (eliminada só do CMV; o resultado sobe esse valor). null = pendente.
+  const semCobranca = eliminacaoSemCobranca(consolidado);
 
   const handleAdd = async () => {
     if (!newRegra.descricao) { toast.success('Preencha a descrição'); return; }
@@ -196,7 +198,12 @@ const FinanceiroIntercompany = () => {
               )}
               {eliminacaoPendente(consolidado) && (
                 <span className="text-xs font-normal text-status-warning">
-                  eliminação pendente — há conciliação intercompany confirmada que não fecha (sem contrapartida, valor ou mês divergente, ou fora de receita/CMV)
+                  eliminação pendente — há conciliação intercompany confirmada que não fecha (sem contrapartida, valor ou mês divergente, fora de receita/CMV, ou venda sem cobrança que não se prova)
+                </span>
+              )}
+              {semCobranca !== null && semCobranca > 0 && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  inclui {fmt(semCobranca)} de venda intragrupo sem cobrança: eliminada só do CMV do destino, o resultado do grupo sobe esse valor
                 </span>
               )}
               {exibicao === 'parcial' && semSnapshot && (
@@ -224,7 +231,7 @@ const FinanceiroIntercompany = () => {
                     <TableCell className="text-sm">{dreLabels[row.conta] || row.conta}</TableCell>
                     <TableCell className="text-right text-sm">{row.bruto === null ? '—' : fmt(row.bruto)}</TableCell>
                     <TableCell
-                      className={`text-right text-sm ${row.eliminacoes ? 'text-status-error font-medium' : ''}`}
+                      className={`text-right text-sm ${row.eliminacoes ? `${row.eliminacoes < 0 ? 'text-status-error' : 'text-status-success'} font-medium` : ''}`}
                       title={row.eliminacoes === null ? 'Eliminação pendente: conciliação intercompany confirmada que não fecha' : undefined}
                     >
                       {row.eliminacoes ? fmt(row.eliminacoes) : '—'}
