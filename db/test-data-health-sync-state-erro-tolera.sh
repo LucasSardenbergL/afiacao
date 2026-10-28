@@ -179,8 +179,11 @@ DHV_GUARDADAS=(_data_health_compute data_health_watchdog fin_sync_heartbeat)
 # shellcheck disable=SC2034  # lida por dhv_cadeia, na lib
 DHV_INICIO=20260918200000
 MIGDIR_ANTES="$TMP/migrations-antes"; mkdir -p "$MIGDIR_ANTES"
+# "Antes" = estritamente ANTERIOR à migration desta entrega: uma posterior que recrie o trio com trava
+# de identidade (PRE por md5) recusaria, com razão, o corpo de antes desta — e a prova quebraria na
+# chegada da migration seguinte, não por defeito desta (#3373: a 20261028000116 derrubou esta prova).
 for f in "$REPO_ROOT"/supabase/migrations/*.sql; do
-  [ "$f" = "$MIG" ] && continue
+  [[ "$(basename "$f")" < "$(basename "$MIG")" ]] || continue
   ln -s "$f" "$MIGDIR_ANTES/$(basename "$f")"
 done
 
