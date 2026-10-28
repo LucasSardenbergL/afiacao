@@ -63,7 +63,7 @@ O candidato era o `cron-jobs-snapshot.tsv` defasado. Prod tem **115 jobs** e o s
 - 11 `@ts-expect-error` "tabela não está nos types" em `fin-cashflow-engine` (`:405-456,1392,1456`): somem na regeneração dos tipos das edges.
 - `AdminReposicaoCadastros.tsx:252-253`: `.limit(2000)` (a capa é 1.000) + `if (error) return []`.
 - `omie-sync/index.ts:1633-1636` (`sync_deleted_orders`): select sem paginação que descarta `error`. Benigno (sem chamador; deleção exige prova positiva).
-- **N**: generalizar as regras vivas para `database.md` (195 KB). Ver 🧭 #5.
+- ✅ **N**: generalizar as regras vivas para `database.md` (195 KB). Ver 🧭 #5. **Feito em 2026-10-27** (195 KB → ~121 KB; condições de merge comprovadas): [database-regras-vivas-piloto-n.md](../../../historico/database-regras-vivas-piloto-n.md).
 
 ## 4. Cortado (com motivo)
 - **L′, a lista versionada de edges money-path**: lista sem consumidor cujo único uso é um KPI. É máquina meta disfarçada de dado e ímã de conflito. O `EFEITO` do `versao.ts` já existe (revisor ✅).
@@ -89,7 +89,7 @@ O candidato era o `cron-jobs-snapshot.tsv` defasado. Prod tem **115 jobs** e o s
 2. **26 NF-e sem itens: resolver** pela recomendação, com rótulo "recebida fora do app" na tela, sem backfill.
 3. **Ciclo: fazer**, com 1 evento `financeiro.ciclo_aberto` no ledger (allowlist de `analytics_ledger_registrar` via `db/*.sql` no ritual lovable-db-operator) e só isso.
 4. **ROIC incremental: o founder lê** → o item 3 fica no Top (P, antes de 2027-03-26).
-5. **Piloto N → `database.md`: fazer**, depois do Top e com as condições de merge listadas acima.
+5. **Piloto N → `database.md`: fazer**, depois do Top e com as condições de merge listadas acima. ✅ Feito em 2026-10-27 — ver §3, item N.
 6. **`omie-nfe-reconcile`: MANTER ligado** (founder, 2026-10-26). A `process-nfe` não atualiza `nfe_recebimentos`, e é o reconcile (cron de hora em hora, seg–sáb) que fecha no painel a NF recebida pela aba Manual ([process-nfe-trilha-relogio-regra-quantidade.md](../../../historico/process-nfe-trilha-relogio-regra-quantidade.md)). Desligá-lo só volta a ser pauta se a `process-nfe` passar a gravar o próprio desfecho.
 
 ## 6. KPIs
