@@ -39,6 +39,8 @@ type fakeExtractor struct {
 	childItemsHasOrdem *bool
 	// originNow é o valor retornado por OriginNow().
 	originNow time.Time
+	// originNowErr: se definido, OriginNow falha (relógio da origem indisponível).
+	originNowErr error
 	// err: se definido, todas as chamadas retornam esse erro.
 	err error
 	// errByEntity: se definido para uma entidade, Extract dela retorna esse erro
@@ -108,6 +110,9 @@ func (f *fakeExtractor) ExtractFormulasComItens(ctx context.Context, entity stri
 }
 
 func (f *fakeExtractor) OriginNow(_ context.Context) (time.Time, error) {
+	if f.originNowErr != nil {
+		return time.Time{}, f.originNowErr
+	}
 	if f.err != nil {
 		return time.Time{}, f.err
 	}

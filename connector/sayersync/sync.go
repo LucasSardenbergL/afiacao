@@ -551,6 +551,29 @@ func extractAllFormulasForSnapshot(ctx context.Context, db *sql.DB, rm *Resolved
 // RunCycle — ciclo de sync principal
 // ──────────────────────────────────────────────────────────────
 
+// Seams de pacote: os testes do RunCycle trocam a conexão, a consulta ao information_schema e o
+// extrator, e mantêm REAL o resto (resolveMapping, runEntityCycles, HTTP).
+var (
+	conectar      = Connect
+	validar       = Validate
+	novoExtractor = func(db *sql.DB, rm *ResolvedMapping) Extractor { return &pgExtractor{db: db, rm: rm} }
+)
+
+// preparacoesBloqueadas devolve ["vendas_item"] quando as preparações NÃO podem rodar neste ciclo:
+// schema da entidade isolada incompleto, ou sem o relógio da origem. Vazio = liberadas.
+func preparacoesBloqueadas(rm *ResolvedMapping, nowErr error) []string {
+	est := rm.Isoladas["vendas_item"]
+	if nowErr != nil {
+		logger.Warnf("RunCycle: vendas_item NÃO roda — sem o relógio da origem: %v", nowErr)
+		return []string{"vendas_item"}
+	}
+	if !est.OK {
+		logger.Warnf("RunCycle: vendas_item NÃO roda — schema incompleto (tabela=%q faltando=%v)", est.Tabela, est.Faltando)
+		return []string{"vendas_item"}
+	}
+	return nil
+}
+
 // RunCycle executa um ciclo completo de sync.
 // Se o schema divergir, grava sayersystem-schema.txt e envia heartbeat com schema_mismatch.
 //
@@ -588,7 +611,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	}
 
 	// Conecta ao PG.
-	db, err := Connect(ctx, cfg.PGConn)
+	db, err := conectar(ctx, cfg.PGConn)
 	if err != nil {
 		logger.Errorf("RunCycle: falha ao conectar ao PG: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, false, "", "")
@@ -597,7 +620,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	defer db.Close()
 
 	// Valida schema.
-	rm, diff, err := Validate(ctx, db)
+	rm, diff, err := validar(ctx, db)
 	if err != nil {
 		logger.Errorf("RunCycle: erro ao validar schema: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, true, "", "")
@@ -629,12 +652,16 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	logger.Infof("RunCycle: schema OK — fp=%s shape=%s", fp, rm.FormulaShape)
 
 	// Obtém now() do PG de origem (para comparações de data).
-	ex := &pgExtractor{db: db, rm: rm}
+	ex := novoExtractor(db, rm)
 	originNow, nowErr := ex.OriginNow(ctx)
 	if nowErr != nil {
 		logger.Warnf("RunCycle: falha ao obter now() da origem, usando hora local: %v", nowErr)
 		originNow = time.Now()
 	}
+	// Preparações (giro de corante): entidade ISOLADA. O catálogo tolera o time.Now() acima; as
+	// preparações NÃO — a janela delas é cortada no relógio da ORIGEM, e um relógio local
+	// adiantado declararia coberto um trecho que a origem ainda não viveu (Codex P1 #4).
+	falhasIsoladas := preparacoesBloqueadas(rm, nowErr)
 
 	// Determina se é necessário full re-scan (1×/semana: domingo, ou o 1º ciclo depois se o domingo foi perdido).
 	needFullRescan := shouldFullRescan(st, originNow)
@@ -713,7 +740,9 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
 		hb := buildHeartbeat(st, true, fp, "")
 		hb.LastCycleCounts = counts
-		hb.LastCycleErrors = failed
+		// A falha de entidade isolada aparece no heartbeat, mas NÃO entra em `success`: senão um
+		// vendas_item quebrado impediria marcar o full re-scan semanal do catálogo.
+		hb.LastCycleErrors = append(append([]string(nil), failed...), falhasIsoladas...)
 		if hbErr := cli.Heartbeat(ctx, hb); hbErr != nil {
 			logger.Warnf("RunCycle: falha ao enviar heartbeat: %v", hbErr)
 		}
