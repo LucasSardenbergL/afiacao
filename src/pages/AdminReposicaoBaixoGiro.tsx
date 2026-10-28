@@ -10,6 +10,7 @@ import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEm
 import { DesovaMissaoDialog } from "@/components/reposicao/baixoGiro/DesovaMissaoDialog";
 import type { AlvoDesova } from "@/lib/reposicao/desova-helpers";
 import { RaioXTab } from "@/components/reposicao/raioX/RaioXTab";
+import { CorantesTab } from "@/components/reposicao/corantes/CorantesTab";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -116,6 +117,8 @@ export default function AdminReposicaoBaixoGiro() {
           <TabsTrigger value="baixo-giro">Baixo giro</TabsTrigger>
           <TabsTrigger value="excesso">Excesso de estoque{excesso.kpis.skusN > 0 ? ` (${excesso.kpis.skusN})` : ""}</TabsTrigger>
           <TabsTrigger value="raio-x">Raio-X</TabsTrigger>
+          {/* Giro de corante (Fase 1, advisory): a máquina tintométrica é só da OBEN. */}
+          {empresa === "OBEN" && <TabsTrigger value="corantes">Corantes</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="baixo-giro" className="space-y-4">
@@ -255,6 +258,12 @@ export default function AdminReposicaoBaixoGiro() {
         <TabsContent value="raio-x" className="space-y-4">
           <RaioXTab />
         </TabsContent>
+
+        {empresa === "OBEN" && (
+          <TabsContent value="corantes" className="space-y-4">
+            <CorantesTab />
+          </TabsContent>
+        )}
       </Tabs>
 
       <DesovaMissaoDialog
