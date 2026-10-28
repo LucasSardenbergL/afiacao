@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **706** custom migrations totais
-- **2274** objetos esperados (criados por estas migrations)
+- **710** custom migrations totais
+- **2307** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 854
-  - `rls_policy`: 485
-  - `index`: 297
-  - `table`: 200
-  - `cron_job`: 199
-  - `view`: 125
+  - `function`: 864
+  - `rls_policy`: 493
+  - `index`: 301
+  - `table`: 208
+  - `cron_job`: 200
+  - `view`: 127
   - `trigger`: 110
   - `enum_value`: 4
 
@@ -5741,6 +5741,59 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261028100000_tint_consumo_corante.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_corante_constantes` | — |
+| `function` | `public.tint_consumo_cobertura_em` | — |
+| `function` | `public.tint_consumo_plano_extracao` | — |
+| `function` | `public.tint_promote_preparacoes` | — |
+| `function` | `public.tint_consumo_compactar` | — |
+| `function` | `public.tint_preparacoes_tick` | — |
+| `table` | `public.tint_staging_preparacao_manifestos` | — |
+| `table` | `public.tint_consumo_preparacao` | — |
+| `table` | `public.tint_consumo_corante` | — |
+| `table` | `public.tint_consumo_planos` | — |
+| `table` | `public.tint_consumo_extracoes` | — |
+| `table` | `public.tint_consumo_extracao_lotes` | — |
+| `table` | `public.tint_consumo_runs_aplicados` | — |
+| `index` | `public.idx_tint_consumo_preparacao_dosagem` | `tint_consumo_preparacao` |
+| `index` | `public.idx_tint_consumo_corante_giro` | `tint_consumo_corante` |
+| `index` | `public.idx_tint_consumo_planos_loja` | `tint_consumo_planos` |
+| `index` | `public.idx_tint_consumo_extracoes_completas` | `tint_consumo_extracoes` |
+| `cron_job` | `cron.tint-preparacoes-tick` | — |
+| `rls_policy` | `public.tint_consumo_preparacao_staff_le` | `tint_consumo_preparacao` |
+| `rls_policy` | `public.tint_consumo_corante_staff_le` | `tint_consumo_corante` |
+| `rls_policy` | `public.tint_consumo_planos_staff_le` | `tint_consumo_planos` |
+| `rls_policy` | `public.tint_consumo_extracoes_staff_le` | `tint_consumo_extracoes` |
+| `rls_policy` | `public.tint_consumo_extracao_lotes_staff_le` | `tint_consumo_extracao_lotes` |
+| `rls_policy` | `public.tint_consumo_runs_aplicados_staff_le` | `tint_consumo_runs_aplicados` |
+| `rls_policy` | `public.tint_staging_preparacao_manifestos_staff_le` | `tint_staging_preparacao_manifestos` |
+
+### `20261028100100_tint_corante_giro.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_corante_consumo_diario_em` | — |
+| `function` | `public.tint_corante_giro_em` | — |
+| `view` | `public.v_corante_consumo_diario` | — |
+| `view` | `public.v_corante_giro` | — |
+
+### `20261028100200_analytics_ledger_corantes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261028220003_venda_lista_acesso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_minhas_sugestoes` | — |
+| `table` | `public.venda_lista_acesso` | — |
+| `rls_policy` | `public.venda_lista_acesso_select_master` | `venda_lista_acesso` |
 
 ## Próximos passos por status
 

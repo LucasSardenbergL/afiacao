@@ -760,6 +760,12 @@ db/test-fin-consolidado-ic.sh             102  falsificar=70
 # recortado do arquivo das Ondas 2–3, md5 conferido), get_venda_sugestoes_for é só master (farmer para outra
 # ou para si → 42501, anon → 42501, helper direto → 42501), só fase ativa, ausente ≠ zero, sem chave de custo.
 db/test-venda-lista-lente.sh               26  falsificar=8
+
+# Venda por cliente — SENSOR de abertura da lista do Meu Dia (20261028220003): venda_minhas_sugestoes grava
+# venda_lista_acesso (farmer × dia, upsert) só para employee não-master; lente/master/customer não gravam;
+# n_compradores = a última leitura; READ ONLY não derruba a lista (só 25006 é engolido; 23514 sobe); RLS só
+# master; saída byte-idêntica ao oráculo das Ondas 2–3; a PÓS prova a escrita na prod em subtransação desfeita.
+db/test-venda-lista-acesso.sh              38  falsificar=11
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
