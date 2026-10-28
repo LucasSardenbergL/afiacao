@@ -19,4 +19,13 @@ Medir o consumo real de corante dosado no SayerSystem (OBEN/M01) e mostrar, por 
 
 ## PRs B (edge), C (app), D (conector)
 
-Em andamento noutra sessão — registrar aqui ao entregar.
+- **B — edge `tint-sync-agent` v1.3** (#3391, mergeado 2026-10-28 11:23Z): `/preparations` com manifesto, saneado por allowlist (`cliente` nunca chega a staging, log ou resposta) e tudo-ou-nada (lote inválido → nada gravado, run `error`, 422 `{preparacao_id, motivo}`); `/preparations/plano` repassa `tint_consumo_plano_extracao`. Codex: 1 P1 (200 sem enfileiramento em loja fora de `automatic_primary` → 422 `modo_sem_promocao` antes de escrever) + 4 P2, todos corrigidos; falsificação com 13 sabotagens. **Deploy: chat Lovable, quem decide é `pendencias:deploy`.**
+- **C — aba "Corantes"** (#3392): lê `v_corante_giro`, vocabulário fechado (valor desconhecido = aviso de leitura), `null → "—"`, dado parado mostra o último cálculo sem a regra, sensor `reposicao.corantes_aberta` no ledger 1× por montagem e só com leitura pronta. Codex: 3 P1 + 1 P2 tratados; falsificação com 9 sabotagens. **Publish depois da edge e do conector.**
+- **D — conector, Tasks 9–10** (#3394): cliente do plano (200 exato, contrato estrito, nunca "zero janelas" por erro), janela cortada no relógio da ORIGEM, `vendas_item` isolada (não derruba o catálogo, fingerprint idêntico ao 0.2.x provado por hash), `test-pg17.sh`. Codex: 4 P2 corrigidos; falsificação com 10 sabotagens. **🚧 Tasks 11–12 aguardam o passo 0 do founder**; sem elas não há release 0.3.0.
+
+### Lições (B/C/D)
+
+- **Sabotagem que fica verde pode ser INALCANÇÁVEL, não redundante.** No D, a sabotagem "a isolada vaza para o fingerprint" passou verde porque o laço isolado rodava antes do laço do catálogo, que recriava a entrada. Refeita depois do laço, ficou vermelha. Antes de concluir "o teste não pega", confira se a sabotagem chega a executar.
+- **Compatibilidade de identificador se prova contra o binário anterior, não contra a intenção.** O fingerprint do conector é fixado por hashes medidos em `origin/main` (via `git archive` num diretório temporário), para 3 schemas.
+- **`Date.parse` normaliza data inexistente (`02-30` → março) e o Postgres arredonda além do µs.** Fronteira de janela comparada em JS precisa de parser de calendário estrito e de recusar fração além de 6 dígitos.
+- **Gate de empresa por contexto sem provider é decorativo.** `AdminReposicaoBaixoGiro` lê sempre o default `OBEN` (vale para a página inteira). A aba é segura porque a view é só OBEN por construção; ligar a página ao seletor global é outra entrega.
