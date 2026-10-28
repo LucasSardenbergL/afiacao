@@ -57,7 +57,9 @@ custo medido, e uma delas (`test-radar-cadastro-conflitos`, ~6 min) pesava o def
 `test-fin-consolidado-ic` também tinha crescido de 32 para 218 s. A tabela foi re-medida inteira
 (mediana de 4 runs de 28/10). Com ela, `--lista` dá 12,0 min de custo em cada uma das 6 partes,
 contra uma pior parte de 15,3 min com a tabela velha. Lição repetida: prova cara nova sem custo vira
-o caminho crítico em dias. A receita do `comm` acima pega isso antes.
+o caminho crítico em dias. A receita do `comm` acima pega isso antes. Depois da re-medição (#3389,
+merge 10:59Z): as 6 partes executaram em p50 11,7–13,7 min (antes 10–16), e o p50 até o `validate`
+foi de **14,5 min** (14,0–15,1) com fila ~0. São só 3 runs verdes, todos às 11h UTC, com pouca carga.
 
 **Pico (ainda em aberto).** A comparação justa com a linha de base pede ~9,5 runs de PR/h. Desde o
 #3313 nenhuma hora passou de 5. A tarefa agendada de 2026-10-22 falhou pelo limite semanal de uso, e a de
