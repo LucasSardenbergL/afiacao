@@ -64,7 +64,14 @@ export type EventoLedger =
   | 'venda.ficha_aberta'
   | 'venda.contato_registrado'
   | 'venda.tel_clicado'
-  | 'venda.painel_aberto';
+  | 'venda.painel_aberto'
+  /**
+   * Giro de corante, Fase 1 (spec 2026-10-27 §11.3): a aba "Corantes" do baixo giro abriu com a
+   * leitura pronta. Chave = a empresa (OBEN). A Fase 2 (consumo dosado no motor) é decidida por este
+   * sinal com denominador, nunca por "ninguém reclamou".
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'reposicao.corantes_aberta';
 
 /**
  * Registra um evento decisório no ledger server-side.

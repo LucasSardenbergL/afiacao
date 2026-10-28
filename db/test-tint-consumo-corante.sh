@@ -823,7 +823,7 @@ SQL
 # P18 — isolamento de EXECUÇÃO: outra sessão segura o lock do consumidor de preparações e uma linha do
 # fato; o tick atual promove o catálogo sem esperar, e o consumidor pula (try-lock).
 cen_P18() { local db=$1 bg
-PA -d "$db" -q <<'SQL'
+PA -d "$db" -q <<'SQL' || return 1
 CREATE TABLE _t_cont (run_id uuid);
 DROP FUNCTION public.tint_promote_sync_run(uuid);
 CREATE FUNCTION public.tint_promote_sync_run(p_sync_run_id uuid) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
@@ -971,7 +971,7 @@ FP_SQL="SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
 
 # C6 — re-apply: a migration inteira de novo é no-op, e não pisa numa capacidade já confirmada.
 cen_C6() { local db=$1 mig=$2 fp1 fp2 rc=0
-PA -d "$db" -q -c "UPDATE tint_corantes SET capacidade_canister_ml = 400, capacidade_confirmada = true WHERE id_corante_sayersystem = '3'"
+PA -d "$db" -q -c "UPDATE tint_corantes SET capacidade_canister_ml = 400, capacidade_confirmada = true WHERE id_corante_sayersystem = '3'" || return 1
 fp1="$(PA -d "$db" -tA -c "$FP_SQL")"
 PA -d "$db" -q --single-transaction -f "$mig" >/dev/null 2>"$TMP/$db.reapply.err" || rc=$?
 fp2="$(PA -d "$db" -tA -c "$FP_SQL")"
