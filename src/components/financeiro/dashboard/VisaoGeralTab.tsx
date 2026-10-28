@@ -39,6 +39,8 @@ export function VisaoGeralTab({
   // Esconde contas com saldo zerado por padrão (ruído numa lista de ~40 contas).
   // Se TODAS estiverem zeradas, mostra mesmo assim (senão o card ficaria vazio).
   const contasCorrentes = activeResumo?.contas_correntes ?? [];
+  // Só a conta com saldo FRESCO igual a zero é "zerada". A sem saldo do extrato (`saldo_atual`
+  // null) fica sempre visível: escondê-la entre as zeradas era o mesmo `?? 0` com outra roupa.
   const contasComSaldo = contasCorrentes.filter((cc) => cc.saldo_atual !== 0);
   const qtdZeradas = contasCorrentes.length - contasComSaldo.length;
   const contasVisiveis =
@@ -321,9 +323,16 @@ export function VisaoGeralTab({
                     <p className="font-medium text-sm">{cc.descricao}</p>
                     <p className="text-xs text-muted-foreground">{cc.banco}</p>
                   </div>
-                  <span className={`font-bold text-sm ${cc.saldo_atual >= 0 ? 'text-status-success' : 'text-status-error'}`}>
-                    {fmt(cc.saldo_atual)}
-                  </span>
+                  {cc.saldo_atual === null ? (
+                    <div className="text-right">
+                      <span className="font-bold text-sm text-muted-foreground">—</span>
+                      <p className="text-xs text-status-warning">{cc.saldo_motivo ?? 'Saldo indisponível'}</p>
+                    </div>
+                  ) : (
+                    <span className={`font-bold text-sm ${cc.saldo_atual >= 0 ? 'text-status-success' : 'text-status-error'}`}>
+                      {fmt(cc.saldo_atual)}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
