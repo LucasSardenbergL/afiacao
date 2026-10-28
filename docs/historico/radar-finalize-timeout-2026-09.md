@@ -44,6 +44,12 @@ O caminho de recuperação manual acima (2 metades da foto + finalize) continua 
 
 A Action `radar-carga-mensal` (run 40321590205, agendada 06:00, iniciou 12:18 UTC) falhou no `unzip` de `Estabelecimentos4.zip`: download truncado (1 min contra ~9 min dos anteriores; "End-of-central-directory signature not found"). O lote 2026-10 nem foi aberto na edge (`status` só lista 2026-05/08/09) — o 57014 não chegou a acontecer. Re-disparar a carga só depois do deploy da edge v1.3.
 
+### Lote 2026-10 pela v1.3 — 1º ciclo completo do job (27–28/10)
+
+- Carga re-disparada pelo founder (run 40508604105, 13:02 → 16:39 UTC, verde; download inteiro desta vez). `finalize`: 503.929 empresas, 8.587 novas, 576.486 linhas de situação (0 descartadas pela edge), `"situacao_aplicacao":"cron"` — sem 57014. Uma 2ª run (40512976257, `mes=2026-10` sem `--forcar`) viu o lote `complete` e não fez nada.
+- **06:05 UTC 28/10** — `radar-aplicar-situacao-diario` `succeeded` em **3 min 14 s** (dentro dos 30 min): `situacao_aplicada_fechamento = finalizado_em`; 564.438 fotos, 7.347 leads descartados, 15.061 clientes verificados, 2.981 irregulares, 192 alertados novos → alerta **575** (`atencao`); ledger `radar.aplicar_situacao` `sucesso`, `aplicados=1`.
+- Na sequência, sem atraso: recruzar 06:15, score 06:30 (509.644 alterados) e **aviso 06:45** → alerta **576** `info`, `situacao_aplicada=true`, `avisado_em` preenchido. Os dois alertas `notificado`.
+
 ## Lições
 
 - **Prova sem o limite de produção não prova o caminho de produção.** O PG17 local não tem o 8s do `authenticator`; função set-based chamada por `.rpc()` precisa ser medida com o volume real ou sair do request.
