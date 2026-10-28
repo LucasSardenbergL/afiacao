@@ -15784,10 +15784,253 @@ export type Database = {
         }
         Relationships: []
       }
+      tint_consumo_corante: {
+        Row: {
+          account: string
+          codigo_corante_origem: string | null
+          data_dosagem: string
+          id_corante_origem: string
+          ordem: number
+          peso_especifico: number | null
+          preparacao_id: string
+          qtd_ml: number
+          run_criado_em: string
+          store_code: string
+          sync_run_id: string
+          tint_corante_id: string | null
+        }
+        Insert: {
+          account: string
+          codigo_corante_origem?: string | null
+          data_dosagem: string
+          id_corante_origem: string
+          ordem: number
+          peso_especifico?: number | null
+          preparacao_id: string
+          qtd_ml: number
+          run_criado_em: string
+          store_code: string
+          sync_run_id: string
+          tint_corante_id?: string | null
+        }
+        Update: {
+          account?: string
+          codigo_corante_origem?: string | null
+          data_dosagem?: string
+          id_corante_origem?: string
+          ordem?: number
+          peso_especifico?: number | null
+          preparacao_id?: string
+          qtd_ml?: number
+          run_criado_em?: string
+          store_code?: string
+          sync_run_id?: string
+          tint_corante_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_consumo_corante_account_store_code_preparacao_id_fkey"
+            columns: ["account", "store_code", "preparacao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_consumo_preparacao"
+            referencedColumns: ["account", "store_code", "preparacao_id"]
+          },
+          {
+            foreignKeyName: "tint_consumo_corante_tint_corante_id_fkey"
+            columns: ["tint_corante_id"]
+            isOneToOne: false
+            referencedRelation: "tint_corantes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tint_consumo_extracao_lotes: {
+        Row: {
+          extracao_id: string
+          lote: number
+          n_itens: number
+          n_preparacoes: number
+          n_rejeitadas: number
+          primeira_preparacao_id: string | null
+          promovido_em: string
+          sync_run_id: string
+          ultima_preparacao_id: string | null
+        }
+        Insert: {
+          extracao_id: string
+          lote: number
+          n_itens: number
+          n_preparacoes: number
+          n_rejeitadas: number
+          primeira_preparacao_id?: string | null
+          promovido_em: string
+          sync_run_id: string
+          ultima_preparacao_id?: string | null
+        }
+        Update: {
+          extracao_id?: string
+          lote?: number
+          n_itens?: number
+          n_preparacoes?: number
+          n_rejeitadas?: number
+          primeira_preparacao_id?: string | null
+          promovido_em?: string
+          sync_run_id?: string
+          ultima_preparacao_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_consumo_extracao_lotes_extracao_id_fkey"
+            columns: ["extracao_id"]
+            isOneToOne: false
+            referencedRelation: "tint_consumo_extracoes"
+            referencedColumns: ["extracao_id"]
+          },
+        ]
+      }
+      tint_consumo_extracoes: {
+        Row: {
+          account: string
+          completa_em: string | null
+          consultado_em: string
+          criada_em: string
+          extracao_id: string
+          janela_ate: string
+          janela_desde: string
+          modo: string
+          store_code: string
+          total_lotes: number
+        }
+        Insert: {
+          account: string
+          completa_em?: string | null
+          consultado_em: string
+          criada_em: string
+          extracao_id: string
+          janela_ate: string
+          janela_desde: string
+          modo: string
+          store_code: string
+          total_lotes: number
+        }
+        Update: {
+          account?: string
+          completa_em?: string | null
+          consultado_em?: string
+          criada_em?: string
+          extracao_id?: string
+          janela_ate?: string
+          janela_desde?: string
+          modo?: string
+          store_code?: string
+          total_lotes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_consumo_extracoes_extracao_id_fkey"
+            columns: ["extracao_id"]
+            isOneToOne: true
+            referencedRelation: "tint_consumo_planos"
+            referencedColumns: ["extracao_id"]
+          },
+        ]
+      }
+      tint_consumo_planos: {
+        Row: {
+          account: string
+          criado_em: string
+          expira_em: string
+          extracao_id: string
+          janela_ate: string
+          janela_desde: string
+          modo: string
+          store_code: string
+        }
+        Insert: {
+          account: string
+          criado_em: string
+          expira_em: string
+          extracao_id?: string
+          janela_ate: string
+          janela_desde: string
+          modo: string
+          store_code: string
+        }
+        Update: {
+          account?: string
+          criado_em?: string
+          expira_em?: string
+          extracao_id?: string
+          janela_ate?: string
+          janela_desde?: string
+          modo?: string
+          store_code?: string
+        }
+        Relationships: []
+      }
+      tint_consumo_preparacao: {
+        Row: {
+          account: string
+          data_dosagem: string
+          motivo_rejeicao: string | null
+          preparacao_id: string
+          run_criado_em: string
+          situacao: string
+          store_code: string
+          sync_run_id: string
+          versao_fonte_em: string
+        }
+        Insert: {
+          account: string
+          data_dosagem: string
+          motivo_rejeicao?: string | null
+          preparacao_id: string
+          run_criado_em: string
+          situacao: string
+          store_code: string
+          sync_run_id: string
+          versao_fonte_em: string
+        }
+        Update: {
+          account?: string
+          data_dosagem?: string
+          motivo_rejeicao?: string | null
+          preparacao_id?: string
+          run_criado_em?: string
+          situacao?: string
+          store_code?: string
+          sync_run_id?: string
+          versao_fonte_em?: string
+        }
+        Relationships: []
+      }
+      tint_consumo_runs_aplicados: {
+        Row: {
+          aplicado_em: string
+          extracao_id: string
+          lote: number
+          sync_run_id: string
+        }
+        Insert: {
+          aplicado_em: string
+          extracao_id: string
+          lote: number
+          sync_run_id: string
+        }
+        Update: {
+          aplicado_em?: string
+          extracao_id?: string
+          lote?: number
+          sync_run_id?: string
+        }
+        Relationships: []
+      }
       tint_corantes: {
         Row: {
           account: string
           ativo: boolean | null
+          capacidade_canister_ml: number | null
+          capacidade_confirmada: boolean
           codigo_barras: string | null
           created_at: string | null
           descricao: string
@@ -15801,6 +16044,8 @@ export type Database = {
         Insert: {
           account?: string
           ativo?: boolean | null
+          capacidade_canister_ml?: number | null
+          capacidade_confirmada?: boolean
           codigo_barras?: string | null
           created_at?: string | null
           descricao: string
@@ -15814,6 +16059,8 @@ export type Database = {
         Update: {
           account?: string
           ativo?: boolean | null
+          capacidade_canister_ml?: number | null
+          capacidade_confirmada?: boolean
           codigo_barras?: string | null
           created_at?: string | null
           descricao?: string
@@ -16893,28 +17140,34 @@ export type Database = {
       }
       tint_staging_preparacao_itens: {
         Row: {
+          codigo_corante: string | null
           created_at: string
           id: string
           id_corante: string
           ordem: number | null
+          peso_especifico: number | null
           qtd_ml: number | null
           staging_preparacao_id: string | null
           sync_run_id: string
         }
         Insert: {
+          codigo_corante?: string | null
           created_at?: string
           id?: string
           id_corante: string
           ordem?: number | null
+          peso_especifico?: number | null
           qtd_ml?: number | null
           staging_preparacao_id?: string | null
           sync_run_id: string
         }
         Update: {
+          codigo_corante?: string | null
           created_at?: string
           id?: string
           id_corante?: string
           ordem?: number | null
+          peso_especifico?: number | null
           qtd_ml?: number | null
           staging_preparacao_id?: string | null
           sync_run_id?: string
@@ -16936,6 +17189,71 @@ export type Database = {
           },
         ]
       }
+      tint_staging_preparacao_manifestos: {
+        Row: {
+          account: string
+          consultado_em: string
+          created_at: string
+          extracao_id: string
+          janela_ate: string
+          janela_desde: string
+          lote: number
+          modo: string
+          n_itens: number
+          n_preparacoes: number
+          n_rejeitadas: number
+          primeira_preparacao_id: string | null
+          store_code: string
+          sync_run_id: string
+          total_lotes: number
+          ultima_preparacao_id: string | null
+        }
+        Insert: {
+          account: string
+          consultado_em: string
+          created_at?: string
+          extracao_id: string
+          janela_ate: string
+          janela_desde: string
+          lote: number
+          modo: string
+          n_itens: number
+          n_preparacoes: number
+          n_rejeitadas: number
+          primeira_preparacao_id?: string | null
+          store_code: string
+          sync_run_id: string
+          total_lotes: number
+          ultima_preparacao_id?: string | null
+        }
+        Update: {
+          account?: string
+          consultado_em?: string
+          created_at?: string
+          extracao_id?: string
+          janela_ate?: string
+          janela_desde?: string
+          lote?: number
+          modo?: string
+          n_itens?: number
+          n_preparacoes?: number
+          n_rejeitadas?: number
+          primeira_preparacao_id?: string | null
+          store_code?: string
+          sync_run_id?: string
+          total_lotes?: number
+          ultima_preparacao_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tint_staging_preparacao_manifestos_sync_run_id_fkey"
+            columns: ["sync_run_id"]
+            isOneToOne: true
+            referencedRelation: "tint_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tint_staging_preparacoes: {
         Row: {
           account: string
@@ -16952,6 +17270,7 @@ export type Database = {
           preco: number | null
           preparacao_id: string
           raw_data: Json | null
+          rejeicao_motivo: string | null
           staging_status: string
           store_code: string
           sync_run_id: string
@@ -16972,6 +17291,7 @@ export type Database = {
           preco?: number | null
           preparacao_id: string
           raw_data?: Json | null
+          rejeicao_motivo?: string | null
           staging_status?: string
           store_code: string
           sync_run_id: string
@@ -16992,6 +17312,7 @@ export type Database = {
           preco?: number | null
           preparacao_id?: string
           raw_data?: Json | null
+          rejeicao_motivo?: string | null
           staging_status?: string
           store_code?: string
           sync_run_id?: string
@@ -19271,6 +19592,15 @@ export type Database = {
           razao_social: string | null
           synced_at: string | null
           uf: string | null
+        }
+        Relationships: []
+      }
+      v_corante_consumo_diario: {
+        Row: {
+          dia: string | null
+          qtd_ml: number | null
+          tint_corante_id: string | null
+          wp_codigo: string | null
         }
         Relationships: []
       }
@@ -23417,6 +23747,91 @@ export type Database = {
         }
         Returns: number
       }
+      tint_consumo_cobertura_em: {
+        Args: { p_agora: string }
+        Returns: {
+          account: string
+          ilha_ate: string
+          ilha_desde: string
+          lacuna_desde: string
+          primeira_dosagem_dia: string
+          primeiro_dia_coberto: string
+          store_code: string
+          ultimo_dia_coberto: string
+        }[]
+      }
+      tint_consumo_compactar: { Args: { p_agora: string }; Returns: number }
+      tint_consumo_plano_extracao: {
+        Args: { p_account: string; p_agora: string; p_store_code: string }
+        Returns: Json
+      }
+      tint_corante_constantes: {
+        Args: never
+        Returns: {
+          cobertura_min_dias: number
+          cobertura_plena_dias: number
+          compactacao_idade: string
+          fila_max_pendentes: number
+          frescor_dias: number
+          horizonte_dias: number
+          janela_inicial_dias: number
+          janela_max_dias: number
+          lata_l: number
+          lata_ml: number
+          limite_ausencia: number
+          lotes_alvo: number
+          max_lotes_extracao: number
+          piso_dias: number
+          plano_validade: string
+          regime_fator: number
+          regime_janela_dias: number
+          relogio_tolerancia: string
+          revisita_antiga_dias: number
+          revisita_recente_dias: number
+          revisita_recente_janela_dias: number
+          validade_dias: number
+        }[]
+      }
+      tint_corante_consumo_diario_em: {
+        Args: { p_agora: string }
+        Returns: {
+          dia: string
+          qtd_ml: number
+          tint_corante_id: string
+          wp_codigo: string
+        }[]
+      }
+      tint_corante_giro_em: {
+        Args: { p_agora: string }
+        Returns: {
+          capacidade_confirmada: boolean
+          capital_parado: number
+          cmc_l: number
+          coberto_ate: string
+          confianca: string
+          consumo_ml_dia: number
+          consumo_ml_dia_60d: number
+          demanda_motor_l_dia: number
+          descricao: string
+          dias_cobertos: number
+          estoque_fechado_l: number
+          excesso_l: number
+          faixa: string
+          faixa_ultimo_calculo: string
+          fresco: boolean
+          giro_mudando: boolean
+          k_latas: number
+          lt_dias_corridos: number
+          lt_fonte: string
+          maior_dosagem_ml: number
+          motivo: string
+          ponto_pedido_ml: number
+          recarga_ml: number
+          teto_l: number
+          tint_corante_id: string
+          wp_codigo: string
+        }[]
+      }
       tint_ensure_corante_stub: {
         Args: { p_account: string; p_id_corante: string }
         Returns: string
@@ -23432,8 +23847,10 @@ export type Database = {
         Returns: Json
       }
       tint_marcar_bases_mixmachine: { Args: never; Returns: number }
+      tint_preparacoes_tick: { Args: never; Returns: Json }
       tint_promocao_tick: { Args: never; Returns: Json }
       tint_promocao_watchdog: { Args: never; Returns: Json }
+      tint_promote_preparacoes: { Args: { p_run_id: string }; Returns: Json }
       tint_promote_sync_run: { Args: { p_sync_run_id: string }; Returns: Json }
       tint_recalc_preco_oficial: {
         Args: {
