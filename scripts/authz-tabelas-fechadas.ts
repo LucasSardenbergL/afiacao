@@ -243,4 +243,59 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN de anon e authenticated. Sem exceção de coluna: ' +
       'ninguém trava linha desta tabela como invoker.',
   },
+  // Giro de corante, Fase 1 (#3387). Registradas DEPOIS do apply (db:aplicar, recibo #746, 2026-10-28) e da
+  // 2ª testemunha por psql-ro (anon nada, authenticated só SELECT, RLS ligada com SELECT de staff), na ordem
+  // do #2199. O consumo dosado DECIDE a reposição na Fase 2 (money-path): escrita só pelos writers do banco.
+  'public.tint_consumo_preparacao': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'cabeçalho do fato de consumo dosado (uma linha por preparação do SayerSystem, sem cliente — LGPD). ' +
+      'Único writer: tint_promote_preparacoes (SECURITY DEFINER, via tint_preparacoes_tick). Escrita pela API ' +
+      'fabricaria consumo e moveria o giro e, na Fase 2, a compra.',
+  },
+  'public.tint_consumo_corante': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'fato por item de dosagem (qtd_ml por corante) — a grandeza que o giro soma. Único writer: ' +
+      'tint_promote_preparacoes (SECURITY DEFINER); cascade do cabeçalho. Escrita pela API fabricaria consumo.',
+  },
+  'public.tint_consumo_planos': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'planos de extração emitidos pelo SERVIDOR (tint_consumo_plano_extracao, SECURITY DEFINER, só service_role). ' +
+      'Um plano forjado mandaria o conector extrair a janela errada e a cobertura derivada alegaria dias falsos.',
+  },
+  'public.tint_consumo_extracoes': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'extrações com metadados imutáveis — a cobertura derivada (tint_consumo_cobertura_em) é a união das ' +
+      'completas. Writers: tint_consumo_plano_extracao e tint_promote_preparacoes (SECURITY DEFINER); compactação ' +
+      'por tint_consumo_compactar. Extração inserida pela API fabricaria cobertura.',
+  },
+  'public.tint_consumo_extracao_lotes': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'lotes de cada extração (faixa de ids, contagens) — é o que torna uma extração "completa". Único writer: ' +
+      'tint_promote_preparacoes (SECURITY DEFINER); cascade da extração.',
+  },
+  'public.tint_consumo_runs_aplicados': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'recibo durável de run já aplicado (replay após compactação). Único writer: tint_promote_preparacoes. ' +
+      'Um recibo forjado faria um run legítimo ser descartado como replay; um apagado reabriria o replay.',
+  },
+  'public.tint_staging_preparacao_manifestos': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'manifesto do lote do conector (janela, consultado_em, contagens, faixa de ids) — a promoção confere o ' +
+      'lote contra ele antes de gravar. Writer: a edge tint-sync-agent com service_role. Manifesto forjado ' +
+      'faria um lote incompleto passar por coerente.',
+  },
 };
