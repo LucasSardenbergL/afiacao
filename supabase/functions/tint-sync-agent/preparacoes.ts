@@ -16,12 +16,12 @@
 export const QTD_ML_MAX = 18000;
 
 /** Teto de preparações (válidas + rejeitadas) por lote — o mesmo `MAX_BATCH_ITEMS` das outras rotas. */
-export const MAX_LOTE = 1000;
+const MAX_LOTE = 1000;
 
-export const MODOS = ["backfill", "incremental", "rescan", "cura"] as const;
-export type ModoExtracao = typeof MODOS[number];
+const MODOS = ["backfill", "incremental", "rescan", "cura"] as const;
+type ModoExtracao = typeof MODOS[number];
 
-export const MOTIVOS_REJEICAO = [
+const MOTIVOS_REJEICAO = [
   "slot_parcial",
   "corante_nao_resolvido",
   "unidade",
@@ -29,7 +29,7 @@ export const MOTIVOS_REJEICAO = [
   "qtd_fora_da_faixa",
 ] as const;
 
-export type ManifestoExtracao = {
+type ManifestoExtracao = {
   extracao_id: string;
   lote: number;
   total_lotes: number;
@@ -43,15 +43,15 @@ export type ManifestoExtracao = {
   primeira_preparacao_id: string | null;
   ultima_preparacao_id: string | null;
 };
-export type ItemPreparacao = {
+type ItemPreparacao = {
   ordem: number;
   id_corante_origem: string;
   codigo_corante_origem: string | null;
   qtd_ml: number;
   peso_especifico: number | null;
 };
-export type PreparacaoSaneada = { preparacao_id: string; data_dosagem: string; itens: ItemPreparacao[] };
-export type RejeitadaSaneada = { preparacao_id: string; data_dosagem: string; motivo: string };
+type PreparacaoSaneada = { preparacao_id: string; data_dosagem: string; itens: ItemPreparacao[] };
+type RejeitadaSaneada = { preparacao_id: string; data_dosagem: string; motivo: string };
 export type LotePreparacoes = {
   manifesto: ManifestoExtracao;
   preparacoes: PreparacaoSaneada[];
@@ -99,7 +99,7 @@ const codificador = new TextEncoder();
 
 /** Ordem de BYTES (UTF-8) = a do Go e a do `COLLATE "C"`. A comparação nativa do JS é por
  *  unidade UTF-16 e diverge fora do BMP. */
-export function compararBytes(a: string, b: string): number {
+function compararBytes(a: string, b: string): number {
   const x = codificador.encode(a);
   const y = codificador.encode(b);
   const n = Math.min(x.length, y.length);
