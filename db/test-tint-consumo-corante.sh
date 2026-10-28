@@ -63,6 +63,8 @@ T0 -q <<'SQL' >/dev/null
 -- fura RLS. O dump não carrega isso; sem o espelho, a prova de ACL/RLS não morderia.
 ALTER ROLE service_role BYPASSRLS;
 GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+-- auth.uid() num corpo de função é resolvido na EXECUÇÃO (a policy já vem resolvida): o Supabase dá USAGE em auth.
+GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
@@ -1069,25 +1071,25 @@ fals "F4 seed pisa na capacidade confirmada" "C6.capacidade_confirmada_preservad
 
 # ── Task 2 ──
 sabmig "$TMP/fa.sql" 's/(h.run_criado_em, h.sync_run_id) < (r.started_at, r.id)/h.versao_fonte_em < m.consultado_em/'
-fals "Fa versão pelo relógio da origem" "FA_ESPERADO" "$TMP/fa.sql" ""
+fals "Fa versão pelo relógio da origem" "P2.itens_exatos P2.soma P3.cura_vence P3.regressao_relogio P4.permutacoes_iguais P8.valida_depois" "$TMP/fa.sql" ""
 
 sabmig "$TMP/fb.sql" 's/AND cc.preparacao_id = ANY (v_ids);/AND cc.preparacao_id = ANY (v_ids) AND EXISTS (SELECT 1 FROM public.tint_staging_preparacao_itens i2 JOIN public.tint_staging_preparacoes s2 ON s2.id = i2.staging_preparacao_id WHERE s2.sync_run_id = p_run_id AND s2.preparacao_id = cc.preparacao_id AND i2.ordem = cc.ordem);/'
-fals "Fb upsert de itens (slot que sumiu fica)" "FB_ESPERADO" "$TMP/fb.sql" ""
+fals "Fb upsert de itens (slot que sumiu fica)" "P2.itens_exatos P2.soma" "$TMP/fb.sql" ""
 
 sabmig "$TMP/fc.sql" 's/  IF v_lotes = m.total_lotes THEN/  IF true THEN/'
-fals "Fc completa sem conferir total_lotes" "FC_ESPERADO" "$TMP/fc.sql" ""
+fals "Fc completa sem conferir total_lotes" "P13.nunca_completa P6.incompleta" "$TMP/fc.sql" ""
 
 sabmig "$TMP/fd.sql" "s/        THEN 'lotes_sobrepostos'/        AND false THEN 'lotes_sobrepostos'/"
-fals "Fd sem o teste de sobreposição" "FD_ESPERADO" "$TMP/fd.sql" ""
+fals "Fd sem o teste de sobreposição" "P13.nunca_completa P13.sobrepostos" "$TMP/fd.sql" ""
 
 sabmig "$TMP/fe.sql" 's/ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING/ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING/'
-fals "Fe união por LAG(ate)" "FE_ESPERADO" "$TMP/fe.sql" ""
+fals "Fe união por LAG(ate)" "P15.aninhados" "$TMP/fe.sql" ""
 
 sabmig "$TMP/ff.sql" "s/                         ELSE (r.d AT TIME ZONE 'America\/Sao_Paulo')::date + 1 END,/                         ELSE (r.d AT TIME ZONE 'America\/Sao_Paulo')::date END,/"
-fals "Ff dia parcial contado como coberto" "FF_ESPERADO" "$TMP/ff.sql" ""
+fals "Ff dia parcial contado como coberto" "P16.meio_dia" "$TMP/ff.sql" ""
 
 sabmig "$TMP/fg.sql" 's/WHERE pl.account = p_account AND pl.store_code = p_store_code AND pl.expira_em > p_agora/WHERE false/'
-fals "Fg plano sem a admissão em_andamento" "FG_ESPERADO" "$TMP/fg.sql" ""
+fals "Fg plano sem a admissão em_andamento" "P17.em_andamento" "$TMP/fg.sql" ""
 
 cat > "$TMP/fh.sql" <<'SQL'
 DO $s$
@@ -1098,13 +1100,13 @@ BEGIN
   EXECUTE replace(v, a, E'     WHERE sr.promocao_status = \'pendente\'\n    UNION ALL');
 END $s$;
 SQL
-fals "Fh tick atual sem o filtro de preparações" "FH_ESPERADO" "$MIG" "$TMP/fh.sql"
+fals "Fh tick atual sem o filtro de preparações" "C6.reapply_mesmo_estado P10.patch_so_predicado P10.tick_ignora_prep" "$MIG" "$TMP/fh.sql"
 
 sabmig "$TMP/fi.sql" 's/  ELSIF c.primeiro_dia_coberto IS NOT NULL THEN/  ELSIF false THEN/'
-fals "Fi revisita desligada" "FI_ESPERADO" "$TMP/fi.sql" ""
+fals "Fi revisita desligada" "P17.rescan_meia_noite P19.edicao_convergiu P19.fato_igual_fonte" "$TMP/fi.sql" ""
 
 sabmig "$TMP/fj.sql" 's/                    AND o.janela_desde <= e.janela_desde AND o.janela_ate >= e.janela_ate$/                    AND true/'
-fals "Fj compactação sem exigir contida" "FJ_ESPERADO" "$TMP/fj.sql" ""
+fals "Fj compactação sem exigir contida" "P20.cobertura_igual P20.revisita_igual" "$TMP/fj.sql" ""
 
 echo ""
 echo "SABOTAGENS: $VERM vermelhas / $FALSOS falhas"   # recibo ÚNICO lido pelo db/roda-nucleo-ci.sh
