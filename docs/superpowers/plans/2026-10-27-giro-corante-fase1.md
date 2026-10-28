@@ -59,6 +59,12 @@ Recebido somava `quantidade_nfe` (prod: as 4 NF de WP têm `quantidade_conferida
 
 3 P1 + 1 P2, nenhum P0; as 26 colunas/tipos à mão conferem com o SQL. P1 `motivo`/`confianca`/`lt_fonte` com vocabulário aberto deixavam a aba "pronta" → `paraGiroCorante` lança (aviso de leitura, sensor não dispara) · P1 regra da faixa rápida sem unidade de `k` → "latas QT; GL conta pelo equivalente em QT" · P1 gate de empresa: `AdminReposicaoBaixoGiro` não tem `ReposicaoEmpresaProvider` (vale para a página inteira, que lê sempre o default `OBEN`); a view é só OBEN por construção, então a aba rotula "OBEN" e não mostra dado de outra empresa — ligar a página ao seletor global é outra entrega · P2 capital nulo com excesso conhecido sem teste → teste novo. Falsificação: 9 sabotagens vermelhas, controle verde.
 
+## Parecer Codex PR D, Tasks 9–10 (2026-10-28, `logs/giro-corante/codex-prd.out`, gpt-6-astra · max · 352 s)
+
+Sem P0/P1; 4 P2. Plano aceitava qualquer 2xx (um 202 com zero janelas virava "nada a fazer") → exige 200 exato · `motivo`/cardinalidade/UUID do plano não validados → vocabulário, ≤ 2 janelas, UUID · o `continue` da entidade isolada tirava a entrada legada da `vendas_item` do fingerprint (mudava a identificação do schema em prod) → a entrada LEGADA volta intocada ao `expectedMappings` e a isolada é resolvida num laço à parte; teste fixa os hashes do 0.2.x (origin/main 083d25745) em 3 schemas · falha isolada sumia do resultado (`once` saía 0) → sucesso do catálogo governa o full re-scan, sucesso global exige as isoladas. Falsificação: 10 sabotagens vermelhas, controle verde. Follow-up: a edge não persiste `last_cycle_errors` do heartbeat; até lá, uma `vendas_item` quebrada aparece como `dado_desatualizado` na aba (fail-closed).
+
+Tasks 11–12: 🚧 aguardam o passo 0 do founder (não entregues neste PR).
+
 ## Foco de revisão (falhas que nenhum teste "natural" pegaria)
 
 1. Um lote da extração falha na promoção, e a lacuna envelhece além de 35 dias → a cobertura para para sempre, ou uma extração posterior "pula" o buraco. Esperado: a ilha recente não atravessa o buraco, e o plano manda uma janela de cura do buraco mais antigo, de qualquer idade dentro do piso, até ele fechar. Prova P15/P17 (Task 2).
