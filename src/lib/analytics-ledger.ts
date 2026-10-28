@@ -64,7 +64,13 @@ export type EventoLedger =
   | 'venda.ficha_aberta'
   | 'venda.contato_registrado'
   | 'venda.tel_clicado'
-  | 'venda.painel_aberto';
+  | 'venda.painel_aberto'
+  /**
+   * A aba Ciclo (Capital de giro) montou, 1x por titular e dia (chave fixa `aba`). É o sinal que
+   * libera a fase seguinte do ciclo financeiro (plano v3, decisão 3 do founder) — e o único leitor
+   * da aba é o founder, cujo Chrome censura o PostHog. Um evento só: o sensor por seção foi cortado.
+   */
+  | 'financeiro.ciclo_aberto';
 
 /**
  * Registra um evento decisório no ledger server-side.

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 705
+-- Total de custom migrations: 706
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -769,7 +769,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql'),
   ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql'),
   ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql'),
-  ('20261028014827', 'projecao_13s_saldo_inicial_fresco_ou_nulo', '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql')
+  ('20261028014827', 'projecao_13s_saldo_inicial_fresco_ou_nulo', '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql'),
+  ('20261028031612', 'analytics_ledger_financeiro_ciclo_aberto', '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3008,7 +3009,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
   ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
-  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', '')
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5295,7 +5297,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
   ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
-  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', '')
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
 )
 SELECT
   e.migration,
@@ -5846,6 +5849,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 3, '20260908055405_analytics_ledger_navegacao_postcondicao_corrigida.sql', '49fadd1175a717f40fc4430e7bb670dd'),
   ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
   ('public', 'analytics_ledger_registrar', 5, '20261020202720_analytics_ledger_venda_cliente.sql', 'e7e3ed81c939ba16a8fecb0c0619b7da'),
+  ('public', 'analytics_ledger_registrar', 6, '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql', '743d4d9478fac9a98ea1907778b905ee'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),

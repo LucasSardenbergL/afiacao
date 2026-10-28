@@ -58,6 +58,23 @@ PROVA-CICLO-CLIENTE-OK
 
 Query de uso do evento `financeiro.ciclo_aberto` com denominador (nº de sessões master no período). Sem ≥1 sinal positivo de uso em prod, a fase seguinte é instalar/ler o sensor, não construir mais tela.
 
+**Sensor instalado no LEDGER (2026-10-28, plano v3 decisão 3).** Até aqui o evento só ia ao PostHog, censurado no Chrome do founder, que é o único leitor da aba. Agora a aba também grava `financeiro.ciclo_aberto` em `analytics_outbox` pela RPC `analytics_ledger_registrar` (chave fixa `aba`, ou seja, 1 linha por titular e dia). Migration `20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql` · prova `db/test-analytics-ledger-financeiro-ciclo.sh`. É um evento só: o sensor por seção foi cortado no plano. **Quando medir** é esta query (`psql-ro`). Denominador de base, medido em 2026-10-28: **0 / 9** dias de app do master em 30 dias, já que o evento nascia ali.
+
+```sql
+WITH master AS (SELECT user_id FROM public.user_roles WHERE role = 'master'),
+dias AS (
+  SELECT o.evento, o.user_id, (o.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia
+  FROM public.analytics_outbox o JOIN master m USING (user_id)
+  WHERE o.evento IN ('financeiro.ciclo_aberto', 'navegacao.rota_servida')
+    AND o.ocorrido_em >= now() - interval '30 days'
+)
+SELECT count(DISTINCT (user_id, dia)) FILTER (WHERE evento = 'financeiro.ciclo_aberto') AS dias_com_ciclo,
+       count(DISTINCT (user_id, dia)) FILTER (WHERE evento = 'navegacao.rota_servida')  AS dias_com_app
+FROM dias;
+```
+
+A fase seguinte (alerta de vencimento com desconto, piloto desconto/degrau) só começa com `dias_com_ciclo ≥ 1` **depois do Publish**. Antes do Publish, o 0 é ausência de dado, não falta de uso.
+
 ## Frente 3 — giro de estoque por SKU e o PME = 0d (2026-10-18)
 
 Spec `docs/superpowers/specs/2026-10-18-ciclo-giro-sku-design.md` · plano `docs/superpowers/plans/2026-10-18-ciclo-giro-sku.md` · prova `db/test-fin-ciclo-giro-sku.sh` (15 sabotagens, C e pt_BR) · migration `20261018200000_fin_ciclo_giro_sku.sql` (aplicada pela sessão, validada por psql-ro, corpo idêntico ao arquivo).

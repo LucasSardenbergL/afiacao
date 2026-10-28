@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { track } from '@/lib/analytics';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import type { ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { CHAVE_CUSTO } from './ciclo-format';
 import { CicloEmpresaCard } from './CicloEmpresaCards';
@@ -36,7 +37,12 @@ export function CicloTab() {
   const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloCustoOben: '', cicloCustoColacor: '', cicloCustoColacorSc: '', cicloGiroAcao: 'todos' });
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
-  useEffect(() => { track('financeiro.ciclo_aberto'); }, []);
+  // Sensor de uso no LEDGER (o PostHog é censurado no Chrome do founder, o leitor da aba); a RPC
+  // deduplica por titular/dia, então o duplo efeito do StrictMode não infla nada.
+  useEffect(() => {
+    track('financeiro.ciclo_aberto');
+    void registrarNoLedger('financeiro.ciclo_aberto', 'aba');
+  }, []);
 
   const empresa = (filtros.cicloEmpresa === 'all' || ALL_COMPANIES.includes(filtros.cicloEmpresa as Company)
     ? filtros.cicloEmpresa : 'oben') as Company | 'all';

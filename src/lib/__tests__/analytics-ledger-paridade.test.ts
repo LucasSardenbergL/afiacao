@@ -51,4 +51,9 @@ describe('ledger de analytics — paridade banco × front', () => {
     expect(allowlistDaUltimaMigration().eventos.filter((e) => e.startsWith('venda.'))).toEqual(venda);
     expect(eventosDoTipo().filter((e) => e.startsWith('venda.'))).toEqual(venda);
   });
+
+  it('o sensor da aba Ciclo (plano v3, decisão 3) está nos dois lados', () => {
+    expect(allowlistDaUltimaMigration().eventos.filter((e) => e.startsWith('financeiro.'))).toEqual(['financeiro.ciclo_aberto']);
+    expect(eventosDoTipo().filter((e) => e.startsWith('financeiro.'))).toEqual(['financeiro.ciclo_aberto']);
+  });
 });
