@@ -133,3 +133,30 @@ export function agruparPorCor(linhas: LinhaDeErro[]): CorRejeitada[] {
     .map(({ run: _run, ...cor }) => cor)
     .sort((a, b) => b.formulas - a.formulas || a.cor.localeCompare(b.cor));
 }
+
+/**
+ * De ONDE é a cor: criada no balcão (`personalizada`) ou do catálogo da fábrica. A rejeição só grava
+ * o nome da cor (`entity_id`) — a marca vem das linhas da MESMA cor em `tint_formulas`,
+ * `tint_receita_versoes` e `tint_staging_formulas` (a rejeitada pode nunca ter sido promovida).
+ */
+export type OrigemCor = 'personalizada' | 'fabrica';
+
+/**
+ * Funde as marcas `personalizada` de todas as linhas lidas por cor. Uma marca só → ela; nenhuma ou
+ * as DUAS (o mesmo `cor_id` nos dois mundos — 1 em 9.340 em 2026-10-27) → a cor fica FORA do mapa:
+ * "não sei", nunca um lado escolhido por padrão.
+ */
+export function origemPorCor(linhas: Array<{ cor_id: string | null; personalizada: boolean | null }>): Map<string, OrigemCor> {
+  const marcas = new Map<string, Set<boolean>>();
+  for (const l of linhas) {
+    if (l.cor_id == null || l.personalizada == null) continue;
+    const s = marcas.get(l.cor_id) ?? new Set<boolean>();
+    s.add(l.personalizada);
+    marcas.set(l.cor_id, s);
+  }
+  const origem = new Map<string, OrigemCor>();
+  for (const [cor, s] of marcas) {
+    if (s.size === 1) origem.set(cor, s.has(true) ? 'personalizada' : 'fabrica');
+  }
+  return origem;
+}
