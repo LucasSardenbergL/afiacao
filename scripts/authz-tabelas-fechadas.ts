@@ -243,4 +243,46 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN de anon e authenticated. Sem exceção de coluna: ' +
       'ninguém trava linha desta tabela como invoker.',
   },
+  'public.tint_consumo_preparacao': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'cabeçalho do fato de consumo dosado (giro de corante, Fase 1): a versão por chegada mora aqui. Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
+      'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
+  },
+  'public.tint_consumo_corante': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'fato de consumo dosado por corante: alimenta faixa, teto e excesso do giro e, na Fase 2, a demanda do motor. Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
+      'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
+  },
+  'public.tint_consumo_planos': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'planos de extração emitidos pelo servidor (identidade das extrações). Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
+      'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
+  },
+  'public.tint_consumo_extracoes': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'extrações completas: a cobertura é DERIVADA daqui (escrever fabricaria dias cobertos). Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
+      'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
+  },
+  'public.tint_consumo_extracao_lotes': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'lotes promovidos (replay ja_aplicado e faixa de ids por lote). Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
+      'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
+  },
+  'public.tint_staging_preparacao_manifestos': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'manifesto do lote de preparações: quem escreve é a edge tint-sync-agent com service_role (fora desta ' +
+      'allowlist, que vigia anon/authenticated). Um manifesto forjado certificaria contagens e janela de cobertura.',
+  },
 };
