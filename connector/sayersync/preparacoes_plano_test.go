@@ -67,7 +67,13 @@ func TestPlano_CorpoForaDoContratoEhErro(t *testing.T) {
 			map[string]any{"extracao_id": extracaoTeste, "modo": "cura", "desde": "2026-10-21T03:00:00Z", "ate": "2026-10-21T03:00:00Z"}}},
 		"sem extracao_id": map[string]any{"ok": true, "max_lotes": 20, "janelas": []any{
 			map[string]any{"modo": "cura", "desde": "2026-10-20T03:00:00Z", "ate": "2026-10-21T03:00:00Z"}}},
-		"sem ok": map[string]any{"janelas": []any{}, "max_lotes": 20},
+		"sem ok":          map[string]any{"janelas": []any{}, "max_lotes": 20},
+		"motivo estranho": map[string]any{"ok": true, "janelas": []any{}, "max_lotes": 20, "motivo": "erro_interno"},
+		"extracao_id x":   map[string]any{"ok": true, "max_lotes": 20, "janelas": []any{map[string]any{"extracao_id": "x", "modo": "cura", "desde": "2026-10-20T03:00:00Z", "ate": "2026-10-21T03:00:00Z"}}},
+		"três janelas": map[string]any{"ok": true, "max_lotes": 20, "janelas": []any{
+			map[string]any{"extracao_id": extracaoTeste, "modo": "cura", "desde": "2026-10-20T03:00:00Z", "ate": "2026-10-21T03:00:00Z"},
+			map[string]any{"extracao_id": extracaoTeste, "modo": "cura", "desde": "2026-10-20T03:00:00Z", "ate": "2026-10-21T03:00:00Z"},
+			map[string]any{"extracao_id": extracaoTeste, "modo": "cura", "desde": "2026-10-20T03:00:00Z", "ate": "2026-10-21T03:00:00Z"}}},
 	}
 	for nome, corpo := range casos {
 		t.Run(nome, func(t *testing.T) {
@@ -76,6 +82,15 @@ func TestPlano_CorpoForaDoContratoEhErro(t *testing.T) {
 				t.Fatalf("%s: tinha de ser erro, veio %+v", nome, p)
 			}
 		})
+	}
+}
+
+func TestPlano_2xxQueNaoEh200EhErro(t *testing.T) {
+	for _, st := range []int{201, 202, 204} {
+		_, cli := planoServer(t, st, map[string]any{"ok": true, "janelas": []any{}, "max_lotes": 20, "motivo": "em_andamento"})
+		if p, err := cli.PlanoPreparacoes(context.Background()); err == nil {
+			t.Fatalf("HTTP %d tem de ser erro, veio plano %+v", st, p)
+		}
 	}
 }
 

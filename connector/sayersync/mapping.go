@@ -96,11 +96,15 @@ type ResolvedMapping struct {
 	Isoladas map[string]EstadoIsolada
 }
 
-// entidadesIsoladas são as entidades cuja tabela/coluna ausente desliga SÓ a própria entidade:
-// nunca entram em SchemaDiff.Missing nem derrubam SchemaDiff.OK. vendas_item (as dosagens do
-// giro de corante) é nova e o schema dela ainda não foi provado em todas as lojas — um palpite
-// errado de nome não pode parar o preço do balcão.
-var entidadesIsoladas = map[string]bool{"vendas_item": true}
+// mapeamentosIsolados são as entidades cuja tabela/coluna ausente desliga SÓ a própria entidade:
+// resolvidas num laço à PARTE, nunca entram em SchemaDiff nem em Resolved (logo, nem no
+// fingerprint). vendas_item (as dosagens do giro de corante) é nova e o schema dela ainda não foi
+// provado em todas as lojas — um palpite errado de nome não pode parar o preço do balcão.
+// ⚠️ PROVISÓRIO até o passo 0 do founder (spec giro de corante §6): a chave, a coluna de data e
+// a unidade são confirmadas lá (Task 11 do plano).
+func mapeamentosIsolados() []TableMapping {
+	return []TableMapping{{Table: "vendas_item", Columns: colunasVendasItem()}}
+}
 
 // EstadoIsolada é a resolução de uma entidade isolada. OK=false → a entidade não roda no ciclo.
 type EstadoIsolada struct {
@@ -334,10 +338,13 @@ func expectedMappings() []TableMapping {
 			"id_emb":       colOpt("id_emb"),
 			"id_padraocor": colOpt("id_padraocor"),
 		}},
-		// vendas_item é ISOLADA (entidadesIsoladas): colunas obrigatórias aqui só desligam a
-		// própria entidade. ⚠️ PROVISÓRIO até o passo 0 do founder (spec giro de corante §6):
-		// a chave, a coluna de data e a unidade são confirmadas lá (Task 11 do plano).
-		{Table: "vendas_item", Columns: colunasVendasItem()},
+		// Entrada LEGADA, intocada: entra no fingerprint do catálogo como no binário 0.2.x. A
+		// entidade de verdade (as dosagens) está em mapeamentosIsolados().
+		{Table: "vendas_item", Columns: map[string]ColMapping{
+			"id_venda":   colOpt("id_venda"),
+			"id_corante": colOpt("id_corante"),
+			"qtd_ml":     colOpt("qtd_ml"),
+		}},
 	}
 }
 
@@ -443,11 +450,11 @@ func resolveMapping(cols map[string]map[string]bool) (*ResolvedMapping, *SchemaD
 		Isoladas:        make(map[string]EstadoIsolada),
 	}
 
+	for _, tm := range mapeamentosIsolados() {
+		rm.Isoladas[tm.Table] = resolverIsolada(cols, tm)
+	}
+
 	for _, tm := range expectedMappings() {
-		if entidadesIsoladas[tm.Table] {
-			rm.Isoladas[tm.Table] = resolverIsolada(cols, tm)
-			continue
-		}
 		// ── Resolve o nome FÍSICO da tabela (primeiro candidato existente vence) ──
 		tableCands := tm.TableCandidates
 		if len(tableCands) == 0 {

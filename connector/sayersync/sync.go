@@ -715,13 +715,16 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		}
 	}
 
-	success := len(failed) == 0
+	// Sucesso do CATÁLOGO governa o full re-scan semanal; o sucesso GLOBAL (retorno, exit do `once`)
+	// também exige as entidades isoladas — falha isolada não trava o catálogo, mas não some (Codex PR D).
+	sucessoCatalogo := len(failed) == 0
+	success := sucessoCatalogo && len(falhasIsoladas) == 0
 
 	// F7: marca o full re-scan como concluído SOMENTE se TODAS as entidades passaram.
 	// Antes marcava mesmo com erro parcial → a rede de segurança semanal se perdia
 	// silenciosamente quando uma entidade falhava no domingo.
 	if needFullRescan {
-		if success {
+		if sucessoCatalogo {
 			st.LastFullRescan = originNow.Format(time.RFC3339)
 		} else {
 			logger.Warnf("RunCycle: full re-scan NÃO marcado como concluído — falhas em: %v (re-tenta no próximo domingo)", failed)
@@ -751,7 +754,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	if success {
 		logger.Infof("RunCycle: concluído com sucesso — %v", counts)
 	} else {
-		logger.Warnf("RunCycle: concluído COM FALHAS em %v — %v", failed, counts)
+		logger.Warnf("RunCycle: concluído COM FALHAS em %v — %v", append(append([]string(nil), failed...), falhasIsoladas...), counts)
 	}
 	return success
 }

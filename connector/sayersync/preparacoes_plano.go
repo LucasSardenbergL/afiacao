@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"time"
 )
 
@@ -33,7 +34,11 @@ type PlanoPreparacoes struct {
 	Motivo string
 }
 
-var modosDoPlano = map[string]bool{"backfill": true, "incremental": true, "rescan": true, "cura": true}
+var (
+	modosDoPlano   = map[string]bool{"backfill": true, "incremental": true, "rescan": true, "cura": true}
+	motivosDoPlano = map[string]bool{"em_andamento": true, "fila_cheia": true}
+	uuidRe         = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+)
 
 type planoBruto struct {
 	OK       *bool         `json:"ok"`
@@ -48,18 +53,25 @@ func (c *Client) PlanoPreparacoes(ctx context.Context) (*PlanoPreparacoes, error
 	if err != nil {
 		return nil, fmt.Errorf("plano de preparações: %w", err)
 	}
+	// 200 EXATO: o Post aceita qualquer < 400, e um 202 com "zero janelas" seria lido como "nada a fazer".
+	if bruto.Status != 200 {
+		return nil, fmt.Errorf("plano de preparações: HTTP %d (esperado 200)", bruto.Status)
+	}
 	var p planoBruto
-	if err := json.Unmarshal(bruto, &p); err != nil {
+	if err := json.Unmarshal(bruto.Corpo, &p); err != nil {
 		return nil, fmt.Errorf("plano de preparações: resposta não é JSON do contrato: %w", err)
 	}
 	if p.OK == nil || !*p.OK {
 		return nil, fmt.Errorf("plano de preparações: servidor respondeu ok:false")
 	}
-	if p.Janelas == nil || p.MaxLotes == nil || *p.MaxLotes < 1 {
+	if p.Janelas == nil || len(p.Janelas) > 2 || p.MaxLotes == nil || *p.MaxLotes < 1 {
 		return nil, fmt.Errorf("plano de preparações: resposta sem janelas/max_lotes válidos")
 	}
+	if p.Motivo != nil && !motivosDoPlano[*p.Motivo] {
+		return nil, fmt.Errorf("plano de preparações: motivo fora do vocabulário")
+	}
 	for i, j := range p.Janelas {
-		if j.ExtracaoID == "" || !modosDoPlano[j.Modo] || j.Desde.IsZero() || !j.Desde.Before(j.Ate) {
+		if !uuidRe.MatchString(j.ExtracaoID) || !modosDoPlano[j.Modo] || j.Desde.IsZero() || !j.Desde.Before(j.Ate) {
 			return nil, fmt.Errorf("plano de preparações: janela %d fora do contrato", i)
 		}
 	}
