@@ -24,7 +24,7 @@ import {
 import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
 // Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
 // e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
-import { type DepsPreparacoes, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
+import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 // Lote de /formulas que só reenvia fórmula idêntica à última staging: mesmo ack, sem run
 // (formula-identica_test.ts) — NÃO reimplementar inline.
@@ -686,6 +686,8 @@ Deno.serve(async (req) => {
     if (path === "plano" && url.pathname.split("/").at(-2) === "preparations" && req.method === "POST") {
       const agent = await validateAgent();
       if (!agent) return json({ ok: false, error: "Invalid token or store" }, 401);
+      // Sem promoção (modo ≠ automatic_primary) nenhuma extração completaria: não planeja.
+      if (!modoPromove(agent.integrationMode)) return json({ ok: false, error: "modo_sem_promocao" }, 422);
       const { data, error } = await sb.rpc("tint_consumo_plano_extracao", {
         p_account: agent.account,
         p_store_code: agent.storeCode,
@@ -715,7 +717,7 @@ Deno.serve(async (req) => {
             }
           },
           logError: (runId, tipo, id, msg, det) => logError(runId, tipo, id, msg, det),
-          completeSyncRun: (runId, stats, status, resp) => completeSyncRun(runId, stats, status, resp),
+          completeSyncRun: (runId, stats, status, resp, extra) => completeSyncRun(runId, stats, status, resp, extra),
           concluirEEnfileirar: async (runId, stats, resp) => {
             const r = await concluirEEnfileirarCorpo(agent, runId, stats, resp);
             return { status: r.status, corpo: r.body };

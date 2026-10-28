@@ -11,6 +11,8 @@
 //
 // Testável com `deno test --no-remote` (preparacoes_test.ts) — o index.ts só monta as deps.
 
+import { camposDeEnfileiramento } from "./promocao-fila.ts";
+
 /** Espelho do CHECK `qtd_ml > 0 AND qtd_ml <= 18000` de `tint_consumo_corante`
  *  (migration 20261028100000) e do `qtdMlMax` do conector — teste de paridade no Go. */
 export const QTD_ML_MAX = 18000;
@@ -62,6 +64,13 @@ export type ErroLote = { preparacao_id: string | null; motivo: string };
 
 export type AgentCtx = { settingId: string; account: string; storeCode: string; integrationMode: string };
 
+/** A loja promove? Só `automatic_primary` enfileira (promocao-fila.ts). Nos outros modos um lote
+ *  seria gravado, respondido 200 e NUNCA promovido — a extração ficaria incompleta para sempre e o
+ *  conector acharia que confirmou (Codex PR B, P1). Então: recusa ANTES de qualquer escrita. */
+export function modoPromove(integrationMode: string): boolean {
+  return camposDeEnfileiramento(integrationMode) !== undefined;
+}
+
 // ─── helpers de forma ───
 
 type Obj = Record<string, unknown>;
@@ -81,18 +90,32 @@ function ehTextoNaoVazio(v: unknown): v is string {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // RFC3339 COM fuso obrigatório: um timestamp sem fuso o Postgres leria no fuso da sessão.
-const RFC3339 = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(?:Z|([+-])(\d{2}):(\d{2}))$/;
 
-/** Instante em NANOssegundos desde a época, ou null se não for RFC3339 com fuso.
- *  `Date` só tem milissegundo; o conector manda µs/ns, e a fronteira `< janela_ate` precisa
- *  da precisão inteira (a mesma que o Postgres compara). */
+/** Instante em NANOssegundos desde a época, ou null se não for RFC3339 com fuso e data de
+ *  calendário real. `Date` só tem milissegundo; a fronteira `< janela_ate` precisa da precisão
+ *  do Postgres, que é o MICROssegundo: fração além de 6 dígitos é recusada (o Postgres a
+ *  ARREDONDARIA, e `…59.9999999` viraria o próprio `ate` — Codex PR B, P2). `Date.parse`
+ *  normaliza `02-30` para março; aqui a data tem de existir. */
 export function instanteNs(s: unknown): bigint | null {
   if (typeof s !== "string") return null;
   const m = RFC3339.exec(s);
   if (!m) return null;
-  const ms = Date.parse(m[1] + m[3]);
-  if (Number.isNaN(ms)) return null;
-  return BigInt(ms) * 1_000_000n + BigInt((m[2] ?? "").padEnd(9, "0"));
+  const [y, mo, d, h, mi, se] = m.slice(1, 7).map(Number);
+  const frac = m[7] ?? "";
+  if (y < 1900 || h > 23 || mi > 59 || se > 59) return null;
+  if (/[1-9]/.test(frac.slice(6))) return null;
+  const base = Date.UTC(y, mo - 1, d, h, mi, se);
+  const dt = new Date(base);
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  let offsetMin = 0;
+  if (m[8]) {
+    const oh = Number(m[9]);
+    const om = Number(m[10]);
+    if (oh > 23 || om > 59) return null;
+    offsetMin = (m[8] === "-" ? -1 : 1) * (oh * 60 + om);
+  }
+  return BigInt(base - offsetMin * 60_000) * 1_000_000n + BigInt(frac.padEnd(9, "0"));
 }
 
 const codificador = new TextEncoder();
@@ -275,17 +298,18 @@ export function sanearLotePreparacoes(
     erro(null, "manifesto_contagem");
   }
 
-  // Faixa do lote: nula só no lote vazio; senão contém todo id (ordem de bytes), como o banco confere.
+  // Faixa do lote: nula só no lote vazio; senão os extremos são EXATAMENTE o menor e o maior id
+  // (ordem de bytes, válidas e rejeitadas juntas) — é o que a promoção confere, e uma faixa mais
+  // larga que o lote seria confirmada aqui e recusada lá (Codex PR B, P2).
   if (ids.length === 0) {
     if (manifesto.primeira_preparacao_id !== null) erro(null, "manifesto_faixa");
-  } else if (manifesto.primeira_preparacao_id === null || manifesto.ultima_preparacao_id === null) {
-    erro(null, "manifesto_faixa");
   } else {
-    const ini = manifesto.primeira_preparacao_id;
-    const fim = manifesto.ultima_preparacao_id;
-    if (compararBytes(ini, fim) > 0) erro(null, "manifesto_faixa");
-    for (const id of ids) {
-      if (compararBytes(id, ini) < 0 || compararBytes(id, fim) > 0) erro(id, "preparacao_fora_da_faixa_do_lote");
+    const ordenados = [...ids].sort(compararBytes);
+    if (
+      manifesto.primeira_preparacao_id !== ordenados[0] ||
+      manifesto.ultima_preparacao_id !== ordenados[ordenados.length - 1]
+    ) {
+      erro(null, "manifesto_faixa");
     }
   }
 
@@ -357,7 +381,13 @@ export type DepsPreparacoes = {
   /** LANÇA se o banco recusar (escritaCritica). */
   inserir: (tabela: string, linhas: Record<string, unknown>[]) => Promise<void>;
   logError: (runId: string, tipo: string, id: string | null, msg: string, det: Record<string, unknown>) => Promise<void>;
-  completeSyncRun: (runId: string, stats: Stats, status: string, resp: Record<string, unknown>) => Promise<boolean>;
+  completeSyncRun: (
+    runId: string,
+    stats: Stats,
+    status: string,
+    resp: Record<string, unknown>,
+    extra?: Record<string, unknown>,
+  ) => Promise<boolean>;
   concluirEEnfileirar: (runId: string, stats: Stats, resp: Record<string, unknown>) => Promise<RespostaRota>;
   novoId: () => string;
 };
@@ -383,6 +413,9 @@ export async function processarPreparacoes(
   deps: DepsPreparacoes,
 ): Promise<RespostaRota> {
   const inicio = Date.now();
+  if (!modoPromove(agent.integrationMode)) {
+    return { status: 422, corpo: { ok: false, error: "modo_sem_promocao" } };
+  }
   let body: unknown;
   try {
     body = JSON.parse(corpoTexto);
@@ -437,10 +470,13 @@ export async function processarPreparacoes(
   } catch (e) {
     const nome = e instanceof Error ? e.name : "desconhecido";
     await deps.logError(runId, "preparacao", null, `falha ao gravar o staging (${nome})`, {}).catch(() => {});
+    // Libera a chave: o run em `error` com a chave reservada devolveria 409 a todo reenvio do
+    // MESMO lote, e a janela só destravaria quando o plano expirasse (Codex PR B, P2). O staging
+    // parcial fica preso a ESTE run, que nunca é enfileirado.
     await deps.completeSyncRun(runId, { duration_ms: Date.now() - inicio, total: recebidos, errors: 1 }, "error", {
       ok: false,
       error: "erro_interno",
-    }).catch(() => false);
+    }, { idempotency_key: null }).catch(() => false);
     return { status: 500, corpo: { ok: false, error: "erro_interno", retry: true } };
   }
 
@@ -469,16 +505,20 @@ export async function processarPreparacoes(
  *  ou um corpo fora do contrato, é 500 — NUNCA "zero janelas" (o conector leria "nada a fazer"). */
 export function respostaDoPlano(data: unknown, error: unknown): RespostaRota {
   if (error) return { status: 500, corpo: { ok: false, error: "plano_indisponivel" } };
-  if (!ehObjeto(data) || data.ok !== true || !Array.isArray(data.janelas) || !ehInteiro(data.max_lotes)) {
-    return { status: 500, corpo: { ok: false, error: "plano_fora_do_contrato" } };
+  const fora = { status: 500, corpo: { ok: false, error: "plano_fora_do_contrato" } };
+  if (
+    !ehObjeto(data) || data.ok !== true || !Array.isArray(data.janelas) || data.janelas.length > 2 ||
+    !ehInteiro(data.max_lotes) || data.max_lotes < 1 ||
+    !(data.motivo === null || data.motivo === "em_andamento" || data.motivo === "fila_cheia")
+  ) {
+    return fora;
   }
   for (const j of data.janelas) {
-    if (
-      !ehObjeto(j) || typeof j.extracao_id !== "string" || !UUID.test(j.extracao_id) ||
-      !(MODOS as readonly unknown[]).includes(j.modo) || instanteNs(j.desde) === null || instanteNs(j.ate) === null
-    ) {
-      return { status: 500, corpo: { ok: false, error: "plano_fora_do_contrato" } };
-    }
+    if (!ehObjeto(j) || typeof j.extracao_id !== "string" || !UUID.test(j.extracao_id)) return fora;
+    if (!(MODOS as readonly unknown[]).includes(j.modo)) return fora;
+    const desde = instanteNs(j.desde);
+    const ate = instanteNs(j.ate);
+    if (desde === null || ate === null || desde >= ate) return fora;
   }
   return { status: 200, corpo: data };
 }

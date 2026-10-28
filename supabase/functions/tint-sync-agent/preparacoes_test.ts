@@ -126,7 +126,10 @@ Deno.test("faixa do lote: nula só no lote vazio e contém todo id", () => {
   assert(motivos(sanearLotePreparacoes(corpo([], [], { primeira_preparacao_id: "A", ultima_preparacao_id: "B" })))
     .includes("manifesto_faixa"), "faixa em lote vazio");
   assert(motivos(sanearLotePreparacoes(corpo([prep("A"), prep("M")], [], { ultima_preparacao_id: "K" })))
-    .includes("preparacao_fora_da_faixa_do_lote"), "id fora da faixa");
+    .includes("manifesto_faixa"), "id fora da faixa");
+  // Faixa MAIS LARGA que o lote: a promoção exige min/max exatos (Codex PR B, P2).
+  assert(motivos(sanearLotePreparacoes(corpo([prep("B")], [], { primeira_preparacao_id: "A", ultima_preparacao_id: "C" })))
+    .includes("manifesto_faixa"), "faixa [A,C] com só B");
   // Ordem de BYTES, não de UTF-16: "\u{1F600}" (F0 9F…) > "�" (EF BF BD) em bytes; o JS nativo diz o contrário.
   const r = sanearLotePreparacoes(corpo([prep("�"), prep("\u{1F600}")], [], {
     primeira_preparacao_id: "�",
@@ -228,6 +231,14 @@ Deno.test("linhasDeStaging não tem cliente e grava raw_data saneado", () => {
   assertEq(l.itens[0].peso_especifico, 1.95, "peso específico");
 });
 
+Deno.test("instanteNs: µs no máximo e calendário real (o Postgres arredondaria / Date normalizaria)", () => {
+  assertEq(instanteNs("2026-10-21T02:59:59.9999999Z"), null, "7º dígito não-zero");
+  assert(instanteNs("2026-10-21T02:59:59.999999000Z") !== null, "zeros além do µs são aceitos");
+  assertEq(instanteNs("2026-02-30T03:00:00Z"), null, "30 de fevereiro");
+  assertEq(instanteNs("2026-10-21T24:00:00Z"), null, "24h");
+  assertEq(instanteNs("2026-10-21T03:00:00+24:00"), null, "offset 24h");
+});
+
 Deno.test("instanteNs: precisão de ns e fuso obrigatório", () => {
   assertEq(instanteNs("2026-10-21T03:00:00Z")! - instanteNs("2026-10-21T02:59:59.999999Z")!, 1000n, "1 µs");
   assertEq(instanteNs("2026-10-21T00:00:00-03:00"), instanteNs("2026-10-21T03:00:00Z"), "offset");
@@ -257,12 +268,13 @@ type Captura = {
   runs: (string | null)[];
   inserts: { tabela: string; linhas: Record<string, unknown>[] }[];
   logs: unknown[];
-  completes: { status: string; resp: unknown }[];
+  completes: { status: string; resp: unknown; extra?: Record<string, unknown> }[];
   enfileirados: unknown[];
   idem: string[];
 };
 
 function depsFalsas(opts: { cached?: RespostaRota; falhaInsert?: string; key?: string | null } = {}): { deps: DepsPreparacoes; cap: Captura } {
+  // ⚠️ concluirEEnfileirar daqui SEMPRE enfileira: o modo sem promoção é barrado ANTES (teste próprio).
   const cap: Captura = { runs: [], inserts: [], logs: [], completes: [], enfileirados: [], idem: [] };
   let n = 0;
   const deps: DepsPreparacoes = {
@@ -284,8 +296,8 @@ function depsFalsas(opts: { cached?: RespostaRota; falhaInsert?: string; key?: s
       cap.logs.push(args);
       return Promise.resolve();
     },
-    completeSyncRun: (_run, _stats, status, resp) => {
-      cap.completes.push({ status, resp });
+    completeSyncRun: (_run, _stats, status, resp, extra) => {
+      cap.completes.push({ status, resp, extra });
       return Promise.resolve(true);
     },
     concluirEEnfileirar: (_run, _stats, resp) => {
@@ -354,7 +366,18 @@ Deno.test("handler: falha de escrita → 500 erro_interno, run error, sem fila e
   assertEq(r.corpo.error, "erro_interno", "erro_interno");
   assertEq(cap.enfileirados.length, 0, "não enfileira");
   assertEq(cap.completes[0]?.status, "error", "run error");
+  assertEq(cap.completes[0]?.extra?.idempotency_key, null, "chave liberada: o reenvio do mesmo lote não cai em 409");
   semSentinela(cap, r, "falha de escrita");
+});
+
+Deno.test("handler: loja sem promoção (shadow/csv) é recusada antes de qualquer escrita", async () => {
+  for (const modo of ["shadow_mode", "csv_only"]) {
+    const { deps, cap } = depsFalsas();
+    const r = await processarPreparacoes(JSON.stringify(corpo([prep("A")])), { ...AGENTE, integrationMode: modo }, deps);
+    assertEq(r.status, 422, `${modo}: 422`);
+    assertEq(r.corpo.error, "modo_sem_promocao", `${modo}: motivo`);
+    assertEq(cap.runs.length + cap.inserts.length + cap.enfileirados.length, 0, `${modo}: nada escrito`);
+  }
 });
 
 Deno.test("handler: replay idempotente devolve a resposta gravada sem novo run", async () => {
@@ -387,7 +410,13 @@ Deno.test("plano: corpo fora do contrato é 500", () => {
   assertEq(respostaDoPlano({ ok: false, janelas: [] }, null).status, 500, "ok:false");
   assertEq(respostaDoPlano({ ok: true, max_lotes: 20 }, null).status, 500, "sem janelas");
   assertEq(respostaDoPlano({ ok: true, janelas: [], max_lotes: null }, null).status, 500, "sem max_lotes");
-  assertEq(respostaDoPlano({ ok: true, janelas: [{ extracao_id: EXTRACAO, modo: "x", desde: DESDE, ate: ATE }], max_lotes: 20 }, null).status, 500, "modo");
+  assertEq(respostaDoPlano({ ok: true, janelas: [{ extracao_id: EXTRACAO, modo: "x", desde: DESDE, ate: ATE }], max_lotes: 20, motivo: null }, null).status, 500, "modo");
+  assertEq(respostaDoPlano({ ok: true, janelas: [], max_lotes: 0, motivo: "em_andamento" }, null).status, 500, "max_lotes 0");
+  assertEq(respostaDoPlano({ ok: true, janelas: [], max_lotes: 20, motivo: "erro" }, null).status, 500, "motivo fora do vocabulário");
+  assertEq(respostaDoPlano({ ok: true, janelas: [], max_lotes: 20 }, null).status, 500, "sem a chave motivo");
+  const j = { extracao_id: EXTRACAO, modo: "cura", desde: DESDE, ate: ATE };
+  assertEq(respostaDoPlano({ ok: true, janelas: [j, j, j], max_lotes: 20, motivo: null }, null).status, 500, "3 janelas");
+  assertEq(respostaDoPlano({ ok: true, janelas: [{ ...j, desde: ATE, ate: DESDE }], max_lotes: 20, motivo: null }, null).status, 500, "desde > ate");
 });
 
 Deno.test("plano: em_andamento com zero janelas é 200 e repassa o corpo", () => {
