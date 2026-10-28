@@ -2972,6 +2972,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_ic_matches_guarda_sem_cobranca', ''),
   ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_contrapartes', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
   ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
@@ -5232,6 +5234,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nfe_recebimento_manual_trilha', 'rls_policy', 'public', 'nfe_receb_manual_trilha_select_staff', 'nfe_recebimento_manual_trilha'),
   ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_ic_matches_guarda_sem_cobranca', ''),
   ('fin_ic_venda_sem_cobranca', 'function', 'public', 'fin_consolidado_intercompany', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_contrapartes', ''),
+  ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
   ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
   ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
@@ -5299,7 +5303,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
   ('public', 'fin_consolidado_intercompany', 4, '20260525020001_fin_rpc_gate_auth_p1.sql', '824097bf424eac9f2ab2cf047890b5e4'),
   ('public', 'fin_consolidado_intercompany', 5, '20261021120000_fin_consolidado_ic_sinal_cmv.sql', 'f06193c3761da73b68a31ade301d0a74'),
-  ('public', 'fin_consolidado_intercompany', 6, '20261021190000_fin_ic_venda_sem_cobranca.sql', '2478047f9d24eaa7c02276eb56527114'),
+  ('public', 'fin_consolidado_intercompany', 6, '20261021190000_fin_ic_venda_sem_cobranca.sql', 'd0956363fa1943169153d528274086a8'),
   ('public', 'tint_run_reconciliation', 1, '20260329163949_fcc70fb8-8e83-4f8f-946e-8bae2bfe17f1.sql', '99527ed12e8e9b836ccd33b9a5b6498d'),
   ('public', 'tint_run_reconciliation', 2, '20260329180758_acfdc7f9-2fa1-4f59-9da3-afa630297524.sql', '9c82ced3646ddb10a5a2dc666d68c9f3'),
   ('public', 'tint_run_reconciliation', 3, '20260512101346_632761fc-2bd6-4caa-9c61-d35f872c2489.sql', '84b622a7be15ae3632c4cc4d70e317fb'),

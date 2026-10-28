@@ -22,13 +22,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 ## Resumo
 
 - **698** custom migrations totais
-- **2246** objetos esperados (criados por estas migrations)
+- **2248** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 841
   - `rls_policy`: 483
   - `index`: 292
+  - `table`: 198
   - `cron_job`: 197
-  - `table`: 196
   - `view`: 125
   - `trigger`: 108
   - `enum_value`: 4
@@ -5666,6 +5666,8 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_ic_matches_guarda_sem_cobranca` | — |
 | `function` | `public.fin_consolidado_intercompany` | — |
+| `table` | `public.fin_ic_contrapartes` | — |
+| `table` | `public.fin_ic_reconcile_rodadas` | — |
 | `trigger` | `public.fin_ic_matches_guarda_sem_cobranca` | `fin_ic_matches` |
 
 ### `20261021203000_tint_purge_staging_fora_do_promote.sql`

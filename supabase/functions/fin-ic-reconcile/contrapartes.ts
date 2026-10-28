@@ -162,7 +162,7 @@ export async function gravarContrapartes(
 }
 
 /** Folga do marco: o relógio da edge e o do banco não são o mesmo (o `created_at` do CR é do banco). */
-export const FOLGA_MARCO_MS = 5 * 60_000;
+const FOLGA_MARCO_MS = 5 * 60_000;
 
 /**
  * O marco da rodada: "o mapa foi gravado a partir do que o Omie respondeu em `mapa_lido_em`" (o início da
