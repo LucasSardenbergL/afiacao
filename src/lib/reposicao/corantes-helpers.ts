@@ -4,7 +4,7 @@
 // Spec: docs/superpowers/specs/2026-10-27-giro-corante-reposicao-design.md §5.2.
 import type { Tables } from '@/integrations/supabase/types';
 
-export const FAIXAS_CORANTE = ['sem_recomendacao', 'parado', 'muito_pouco', 'devagar', 'rapido'] as const;
+const FAIXAS_CORANTE = ['sem_recomendacao', 'parado', 'muito_pouco', 'devagar', 'rapido'] as const;
 export type FaixaCorante = (typeof FAIXAS_CORANTE)[number];
 
 const ROTULO_MOTIVO = {
