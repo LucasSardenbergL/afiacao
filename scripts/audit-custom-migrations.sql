@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 703
+-- Total de custom migrations: 704
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -767,7 +767,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
   ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql'),
   ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql'),
-  ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql')
+  ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql'),
+  ('20261028014827', 'projecao_13s_saldo_inicial_fresco_ou_nulo', '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3000,7 +3001,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
-  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', '')
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5281,7 +5283,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
   ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
-  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', '')
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
+  ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', '')
 )
 SELECT
   e.migration,
@@ -5341,6 +5344,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'fin_projecao_13_semanas', 2, '20260329161846_ef165ca0-5e29-4b16-8c40-9e14396fdc7b.sql', '9dede1b56c8a2c125ec4f6c20d1051be'),
   ('public', 'fin_projecao_13_semanas', 3, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', '5780d220bb9d6109fd51de63d4e79fba'),
   ('public', 'fin_projecao_13_semanas', 4, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '5eda772f6a71cfee714aa0a363552f35'),
+  ('public', 'fin_projecao_13_semanas', 5, '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql', 'e2d7147a6c9a37763fad0d5257004cee'),
   ('public', 'fin_consolidado_intercompany', 1, '20260328200600_financeiro_v3_backend.sql', 'c77fe935eab2b0b9e22b2323cd6a1df1'),
   ('public', 'fin_consolidado_intercompany', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'cd4ea51faea13ce2c4d5c74ae64f71d0'),
   ('public', 'fin_consolidado_intercompany', 3, '20260518004300_fin_consolidado_v2.sql', '63da5e26146917b95a323938b202c435'),
