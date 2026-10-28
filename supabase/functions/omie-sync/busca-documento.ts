@@ -11,3 +11,28 @@ export function buscaPorDocumentoNaoAchou(erro: unknown): boolean {
   const texto = erro instanceof Error ? erro.message : String(erro);
   return classificarFaultstring(texto) === "fim_de_pagina";
 }
+
+/**
+ * 1º cliente de um `ListarClientes` por documento, com o desfecho decidido num lugar só (as duas
+ * leituras da edge, `buscar_cliente_por_documento` e a reconsulta do `criar_cliente_afiacao`):
+ *   · EOF do Omie ("Não existem registros") ou página vazia → `undefined` (ausência);
+ *   · resposta sem `clientes_cadastro` em array (`{}`, `{"error":…}`, objeto no lugar da lista) → LANÇA
+ *     `OMIE_RESPOSTA_MALFORMADA` — virava "não existe" e liberava cadastro sobre falsa ausência;
+ *   · qualquer outro erro → relança.
+ * A reconsulta do criar_cliente_afiacao lia o EOF como falha e devolvia success:false: cliente novo
+ * nunca era cadastrado na Afiação (Codex 2026-10-27).
+ */
+export async function primeiroClientePorDocumento<T>(chamar: () => Promise<unknown>): Promise<T | undefined> {
+  let resposta: unknown;
+  try {
+    resposta = await chamar();
+  } catch (erro) {
+    if (buscaPorDocumentoNaoAchou(erro)) return undefined;
+    throw erro;
+  }
+  const lista = (resposta as { clientes_cadastro?: unknown } | null | undefined)?.clientes_cadastro;
+  if (!Array.isArray(lista)) {
+    throw new Error("OMIE_RESPOSTA_MALFORMADA: ListarClientes sem clientes_cadastro em lista — não dá pra afirmar ausência");
+  }
+  return lista[0] as T | undefined;
+}

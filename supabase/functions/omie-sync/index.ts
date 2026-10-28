@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
-import { buscaPorDocumentoNaoAchou } from "./busca-documento.ts";
+import { primeiroClientePorDocumento } from "./busca-documento.ts";
 import { classificarFaultstring, redigirSegredo } from "../_shared/omie-falha.ts";
 import { chamarComRelogio, prazoDaChamadaOmie } from "../_shared/omie-chamada-relogio.ts";
 import { montarParcelasOS } from "./parcelas-os.ts";
@@ -1068,36 +1068,26 @@ Deno.serve(async (req) => {
         // devolvido vira o cliente do pedido, e o só-dígitos do normalizarDocumento reduzia
         // "ABC12345678909" ao CPF 12345678909 de OUTRA pessoa (Codex ALTO, #3180).
         const documentClean = documentoParaCadastro(document);
-        let devolvido: OmieClienteCadastro | undefined;
-        try {
-          const searchResult = await callOmieApi(
-            "geral/clientes/",
-            "ListarClientes",
-            {
-              pagina: 1,
-              registros_por_pagina: 1,
-              clientesFiltro: { cnpj_cpf: documentClean },
-            }
-          ) as unknown as OmieListarClientesResponse;
-          const cliente = searchResult.clientes_cadastro?.[0];
-          devolvido = cliente;
-          if (cliente && lookupDevolveuOMesmoDocumento(documentClean, cliente.cnpj_cpf)) {
-            result = {
-              success: true,
-              codigo_cliente: cliente.codigo_cliente_omie,
-              codigo_vendedor: cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null,
-            };
-          } else {
-            result = { success: true, codigo_cliente: null };
-          }
-        } catch (e) {
-          // Só o EOF do Omie é "não existe"; 503, credencial, timeout falham alto (500) — senão o front lia
-          // falsa ausência e tentava criar_cliente_afiacao (Codex retroativo do #3311).
-          if (!buscaPorDocumentoNaoAchou(e)) throw e;
+        // EOF = ausência; resposta malformada ou outro erro falham alto (500) — nunca falsa ausência
+        // (Codex retroativo do #3311 e 2026-10-27; `./busca-documento.ts`).
+        const devolvido = await primeiroClientePorDocumento<OmieClienteCadastro>(() =>
+          callOmieApi("geral/clientes/", "ListarClientes", {
+            pagina: 1,
+            registros_por_pagina: 1,
+            clientesFiltro: { cnpj_cpf: documentClean },
+          })
+        );
+        if (devolvido && lookupDevolveuOMesmoDocumento(documentClean, devolvido.cnpj_cpf)) {
+          result = {
+            success: true,
+            codigo_cliente: devolvido.codigo_cliente_omie,
+            codigo_vendedor: devolvido.recomendacoes?.codigo_vendedor || devolvido.codigo_vendedor || null,
+          };
+        } else {
           result = { success: true, codigo_cliente: null };
         }
-        // FORA do try (que lê falha como "não existe"): o código vira o cliente do pedido, e registro com
-        // OUTRO documento é INDETERMINADO — 500, nunca o código alheio nem "não existe" (Codex 2026-10-21).
+        // O código vira o cliente do pedido: registro com OUTRO documento é INDETERMINADO — 500, nunca o
+        // código alheio nem "não existe" (Codex 2026-10-21).
         if (devolvido && !lookupDevolveuOMesmoDocumento(documentClean, devolvido.cnpj_cpf)) {
           throw new Error("OMIE_LOOKUP_DIVERGENTE: o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade");
         }
@@ -1116,12 +1106,11 @@ Deno.serve(async (req) => {
         const docClean = documentoParaCadastro(docCriar);
         try {
           // First check if already exists
-          const searchRes = await callOmieApi(
-            "geral/clientes/",
-            "ListarClientes",
-            { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } }
-          ) as unknown as OmieListarClientesResponse;
-          const existing = searchRes.clientes_cadastro?.[0];
+          // EOF = não existe → segue para o IncluirCliente (antes o EOF caía no catch e o cliente novo
+          // nunca era cadastrado); resposta malformada ou outro erro → catch → success:false.
+          const existing = await primeiroClientePorDocumento<OmieClienteCadastro>(() =>
+            callOmieApi("geral/clientes/", "ListarClientes", { pagina: 1, registros_por_pagina: 1, clientesFiltro: { cnpj_cpf: docClean } })
+          );
           if (existing) {
             // O Omie devolve o 1º registro da página: só é "já existe" se o documento dele for o PEDIDO —
             // senão reaproveitaria o código de OUTRA pessoa (Codex 2026-10-21). Divergência cai no catch →
