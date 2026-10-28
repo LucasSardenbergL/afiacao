@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { classificarSaldoConta, HORAS_TOLERANCIA_SYNC_BASE, referenciaFrescorSaldo, resumirSaldoContas } from '../saldo-contas';
+import { classificarSaldoConta, HORAS_TOLERANCIA_SYNC_BASE, referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from '../saldo-contas';
 
 // Plano v3, item 2: saldo de conta corrente ausente OU velho nunca entra no caixa como número.
 describe('referenciaFrescorSaldo — o sync de base roda às 03h SP', () => {
@@ -98,6 +98,31 @@ function blocoMirror(caminho: string): string {
     .filter((l) => l.length > 0 && !l.startsWith('//'))
     .join('\n');
 }
+
+describe('saldoExibivelDaConta — a lista por conta', () => {
+  it('fresca → o número (inclusive zero e negativo, e string numérica)', () => {
+    expect(saldoExibivelDaConta({ saldo_atual: 0, saldo_data: '2026-10-26' }, DIA)).toEqual({ saldo: 0, motivo: null });
+    expect(saldoExibivelDaConta({ saldo_atual: -50.5, saldo_data: '2026-10-26' }, DIA)).toEqual({ saldo: -50.5, motivo: null });
+    expect(saldoExibivelDaConta({ saldo_atual: '12.30', saldo_data: '2026-10-26' }, DIA)).toEqual({ saldo: 12.3, motivo: null });
+  });
+
+  it('velha → null + a data do saldo em dd/mm/aaaa', () => {
+    expect(saldoExibivelDaConta({ saldo_atual: 900, saldo_data: '2026-10-25' }, DIA)).toEqual({
+      saldo: null,
+      motivo: 'Saldo de 25/10/2026: o extrato não atualizou',
+    });
+  });
+
+  it('sem saldo do extrato (nulo, DEFAULT 0 sem data, data futura) → null, nunca 0', () => {
+    for (const conta of [
+      { saldo_atual: null, saldo_data: '2026-10-26' },
+      { saldo_atual: 0, saldo_data: null },
+      { saldo_atual: 10, saldo_data: '2026-10-27' },
+    ]) {
+      expect(saldoExibivelDaConta(conta, DIA)).toEqual({ saldo: null, motivo: 'Sem saldo do extrato' });
+    }
+  });
+});
 
 describe('paridade TS ↔ edge (fin-cashflow-engine/saldo-contas.ts)', () => {
   it('a classificação por conta é a MESMA nos dois leitores', () => {

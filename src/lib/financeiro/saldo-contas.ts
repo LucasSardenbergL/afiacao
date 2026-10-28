@@ -54,6 +54,24 @@ export function referenciaFrescorSaldo(agora: Date): ReferenciaFrescor {
 }
 
 /**
+ * O saldo de UMA conta como a lista por conta o exibe: o número só quando fresco. Sem saldo do
+ * extrato (inclui o DEFAULT 0 com `saldo_data` NULL) ou com saldo velho → `saldo: null` + motivo.
+ * A lista não pode mostrar "R$ 0,00" nem esconder a conta entre as "zeradas".
+ */
+export function saldoExibivelDaConta(
+  conta: ContaComSaldo,
+  ref: ReferenciaFrescor,
+): { saldo: number | null; motivo: string | null } {
+  const estado = classificarSaldoConta(conta, ref);
+  if (estado === 'fresca') return { saldo: Number(conta.saldo_atual), motivo: null };
+  if (estado === 'velha') {
+    const [ano, mes, dia] = (conta.saldo_data as string).split('-');
+    return { saldo: null, motivo: `Saldo de ${dia}/${mes}/${ano}: o extrato não atualizou` };
+  }
+  return { saldo: null, motivo: 'Sem saldo do extrato' };
+}
+
+/**
  * Soma o saldo das contas ativas SÓ quando todas são frescas. Lista vazia, conta sem saldo de
  * extrato ou conta com saldo velho → `total: null` + motivo (a tela mostra "—", nunca R$ 0 nem
  * uma soma parcial com cara de completa).

@@ -6,7 +6,7 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
-import { referenciaFrescorSaldo, resumirSaldoContas } from "@/lib/financeiro/saldo-contas";
+import { referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from "@/lib/financeiro/saldo-contas";
 import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
 import { paraFinDRE } from "@/lib/financeiro/dre-borda";
 import { fetchAllPagesComMensagem } from "@/lib/postgrest";
@@ -18,7 +18,11 @@ import type {
 // ═══════════════ TYPES ═══════════════
 
 export interface FinResumo {
-  contas_correntes: { descricao: string; saldo_atual: number; banco: string }[];
+  /**
+   * Lista por conta. `saldo_atual` é `null` quando a conta não tem saldo FRESCO do extrato
+   * (`saldoExibivelDaConta`): ausente ou velho ≠ R$ 0. `saldo_motivo` diz qual dos dois.
+   */
+  contas_correntes: { descricao: string; saldo_atual: number | null; saldo_motivo: string | null; banco: string }[];
   /**
    * Soma dos saldos das contas ativas — `null` quando INDISPONÍVEL (nenhuma conta ativa,
    * ou alguma conta com saldo desconhecido). Ausente ≠ zero: o `reduce` devolvia `0` tanto
@@ -257,13 +261,20 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     // fluxo como âncora que a empresa não tem. Conta ativa com `saldo_atual` NULL contamina
     // igual: a soma sairia INCOMPLETA, com cara de completa. E saldo VELHO (extrato que falhou e
     // deixou o saldo de dias atrás, sem `saldo_data` novo) também: ver `resumirSaldoContas`.
-    const saldoContas = resumirSaldoContas(contasBrutas, referenciaFrescorSaldo(new Date()));
+    const refSaldo = referenciaFrescorSaldo(new Date());
+    const saldoContas = resumirSaldoContas(contasBrutas, refSaldo);
 
-    const contasNorm = contasBrutas.map((c) => ({
-      descricao: c.descricao ?? "",
-      saldo_atual: c.saldo_atual ?? 0,
-      banco: c.banco ?? "",
-    }));
+    // A lista por conta segue a MESMA régua do total: o `saldo_atual ?? 0` exibia a conta sem
+    // extrato como "R$ 0,00" (e a escondia entre as "zeradas") e a velha com o valor de dias atrás.
+    const contasNorm = contasBrutas.map((c) => {
+      const { saldo, motivo } = saldoExibivelDaConta(c, refSaldo);
+      return {
+        descricao: c.descricao ?? "",
+        saldo_atual: saldo,
+        saldo_motivo: motivo,
+        banco: c.banco ?? "",
+      };
+    });
 
     resumo[company] = {
       contas_correntes: contasNorm,
