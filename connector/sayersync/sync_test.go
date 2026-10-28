@@ -39,6 +39,8 @@ type fakeExtractor struct {
 	childItemsHasOrdem *bool
 	// originNow é o valor retornado por OriginNow().
 	originNow time.Time
+	// originNowErr: se definido, OriginNow falha (relógio da origem indisponível).
+	originNowErr error
 	// err: se definido, todas as chamadas retornam esse erro.
 	err error
 	// errByEntity: se definido para uma entidade, Extract dela retorna esse erro
@@ -108,6 +110,9 @@ func (f *fakeExtractor) ExtractFormulasComItens(ctx context.Context, entity stri
 }
 
 func (f *fakeExtractor) OriginNow(_ context.Context) (time.Time, error) {
+	if f.originNowErr != nil {
+		return time.Time{}, f.originNowErr
+	}
 	if f.err != nil {
 		return time.Time{}, f.err
 	}
@@ -150,6 +155,8 @@ type captureServer struct {
 	requests []capturedRequest
 	response AgentResponse
 	statusFn func(path string) int // se nil, retorna 200
+	// bodyFn, se não-nil e devolvendo não-nil, substitui o corpo (rotas fora do AgentResponse).
+	bodyFn func(path string) any
 }
 
 type capturedRequest struct {
@@ -174,6 +181,12 @@ func (cs *captureServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	if cs.bodyFn != nil {
+		if b := cs.bodyFn(r.URL.Path); b != nil {
+			_ = json.NewEncoder(w).Encode(b)
+			return
+		}
+	}
 	resp := cs.response
 	resp.OK = status < 300
 	_ = json.NewEncoder(w).Encode(resp)

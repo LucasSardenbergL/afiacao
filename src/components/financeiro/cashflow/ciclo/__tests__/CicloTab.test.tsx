@@ -26,6 +26,8 @@ vi.mock('@/hooks/useCashflowProjection', () => ({
   useCashflowProjection: (company: string) => projMock(company),
 }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+const ledgerMock = vi.fn();
+vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: (...a: unknown[]) => ledgerMock(...a) }));
 
 import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
 import { montarSerieTendencia, nomeExibido } from '@/components/financeiro/cashflow/ciclo/ciclo-format';
@@ -50,6 +52,14 @@ beforeEach(() => {
 });
 
 describe('CicloTab', () => {
+  it('abrir a aba registra financeiro.ciclo_aberto no ledger (chave fixa: 1 por titular/dia)', () => {
+    ledgerMock.mockClear();
+    resumoMock.mockReturnValue(ok([]));
+    renderTab();
+    expect(ledgerMock).toHaveBeenCalledTimes(1);
+    expect(ledgerMock).toHaveBeenCalledWith('financeiro.ciclo_aberto', 'aba');
+  });
+
   it('erro de leitura do resumo mostra erro, não estado vazio', () => {
     resumoMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom') });
     renderTab();

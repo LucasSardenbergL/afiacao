@@ -182,6 +182,10 @@ db/test-sayerlack-ipi-po.sh                95
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
 db/test-sayerlack-importar-pedido-portal.sh 51
+# Saldo inicial da projeção de 13 semanas (20261028014827): conta ausente/velha/NaN ou lista vazia → saldo_projetado
+# NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
+# controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
+db/test-projecao-13s-saldo-fresco.sh       46  falsificar=16
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -198,6 +202,10 @@ db/test-analytics-outbox-insert-ja-aprovado.sh 23
 # anon 28000, ACL nas duas pontas; PRE por md5 (deriva alheia aborta e sobrevive) e PÓS por md5 + por evento,
 # 4 sabotagens inline com controle verde na mesma invocação.
 db/test-analytics-ledger-venda-cliente.sh  17
+# Allowlist do ledger ganha `financeiro.ciclo_aberto` (20261028031612, plano v3 decisão 3): os 8 eventos
+# gravam, a aba reaberta no dia dedupa, fora da lista 22023, anon 28000, ACL; PRE/PÓS por md5 + por evento,
+# 4 sabotagens inline com controle verde na mesma invocação.
+db/test-analytics-ledger-financeiro-ciclo.sh  17
 # Canônica do mesmo trigger (I2 · plano v2, ciclo 2): restore só de migrations e prod (cadeia + envelope)
 # terminam no MESMO md5 da prod; reaplicar é no-op preservando oid/dono/ACL; 11 sabotagens (corpo, PRE,
 # atributos, owner, volatilidade, trigger por definição e por tgfoid, UNIQUE ausente e árbitro diferível, PÓS cega) com
@@ -738,12 +746,14 @@ db/test-venda-painel.sh                    19  falsificar=8
 # farmer expõe as ondas, total/motivo só da recompra e nunca custo; o pedido é a unidade do preço; dono único
 # = a farmer; complemento/preço não exibidos = nao_medivel. 18 sabotagens (md5 reassinado).
 db/test-venda-ondas23.sh                   44  falsificar=18
-# DRE consolidado intercompany (20261021120000): receita e CMV caem pelo MESMO valor eliminado, resultado
-# intacto; só par PROVADO elegível pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo valor,
-# sem cancelado/sem status, uso único, teto da categoria, snapshot fiel aos títulos atuais); confirmado não
-# elegível ⇒ NULL nas 4 linhas; mês/coluna sem snapshot ⇒ bruto NULL; escopo da soma parcial; gate staff e
-# ACL. 19 sabotagens (md5 reassinado).
-db/test-fin-consolidado-ic.sh              34  falsificar=19
+# DRE consolidado intercompany (20261021120000 → 20261021190000): par CR↔CP — receita e CMV caem pelo MESMO
+# valor, resultado intacto, só par PROVADO pela composição do snapshot (receita_bruta/cmv, mesmo mês, mesmo
+# valor, sem cancelado/sem status, uso único, teto, snapshot fiel aos títulos atuais); venda intragrupo SEM
+# COBRANÇA (marcada pelo master) — só o CMV do destino cai e o resultado sobe, com as mesmas provas + sem
+# "CR aparecido" na mesma direção (informativa da edge OU mapa de identidade, sem depender da edge); teto
+# soma par + sem cobrança; não elegível ⇒ NULL nas 4 linhas; trigger (só master marca/desfaz, forma,
+# carimbo, INSERT/DELETE recusados); gate staff e ACL. 70 sabotagens (md5 das 2 funções reassinado).
+db/test-fin-consolidado-ic.sh             102  falsificar=70
 
 # Venda por cliente — a lista da farmer na lente "Ver como" (20261021070000): o corpo de venda_minhas_sugestoes
 # vira o helper private._venda_sugestoes_json; a RPC da farmer sai byte-idêntica ao predecessor vivo (oráculo
@@ -755,3 +765,11 @@ db/test-venda-lista-lente.sh               26  falsificar=8
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
 # latest-por-chave e espera a lock do tick. 7 falsificações (conjunto exato) rodam em TODA execução.
 db/test-tint-purge-staging-diario.sh        13
+# Giro de corante, Fase 1 (20261028100000/100100/100200): o fato de consumo dosado só a promoção escreve, sem
+# cliente no staging; a cobertura é DERIVADA das extrações completas (ilha recente, dias SP inteiros, desde a 1ª
+# dosagem), o buraco de qualquer idade se cura, a versão é a CHEGADA, o consumidor das preparações não segura o
+# tick dos catálogos; o giro (faixas, teto, excesso) nunca vira 0 o que é desconhecido; a reconciliação da Fase 2
+# reprova feed zerado e unidade ×1,95 (as falsificações obrigatórias da spec).
+db/test-tint-consumo-corante.sh           170  falsificar=fora-do-ci  # 15 sabotagens × suíte de ~40 s (simulação P19) ≈ 10 min; rodado local em C e pt_BR no PR
+db/test-tint-corante-giro.sh               34  falsificar=fora-do-ci  # 8 sabotagens × suíte de ~140 s no runner (medido: controle 141 s) estoura a parte; rodado local em C e pt_BR no PR
+db/test-reconciliacao-corante.sh           11  falsificar=fora-do-ci  # 7 sabotagens × suíte inteira (9 bancos clonados do snapshot); rodado local em C e pt_BR no PR

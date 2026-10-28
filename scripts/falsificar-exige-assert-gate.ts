@@ -250,6 +250,44 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
   },
   // Pré-registrado para o #2605, que o põe no núcleo com `falsificar=12` (o registro de arquivo lido e
   // ancorado vale mesmo antes da linha do manifesto existir).
+  'db/test-reconciliacao-corante.sh': {
+    motivo:
+      'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); a sabotagem da CONSULTA (falsq) e a da migration abortam se o sed/perl não mudou nada (cmp)',
+    mede: ['got'],
+    ancoras: [
+      [
+        'local nome=$1 esperado=$2 mig=$3 sab=$4 got',
+        'got="$(suite "$mig" "$sab" | falhas_de)"',
+        'if [ "$got" = "$esperado" ]; then',
+        'echo "…"',
+        'VERM=$((VERM + 1))',
+        'else',
+        'echo "…"',
+        'FALSOS=$((FALSOS + 1))',
+        'fi',
+      ],
+      'if cmp -s "$orig" "$TMP/q.sql"; then echo "…"; exit 1; fi',
+    ],
+  },
+  'db/test-tint-corante-giro.sh': {
+    motivo:
+      'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration)',
+    mede: ['got'],
+    ancoras: [
+      [
+        'local nome=$1 esperado=$2 mig=$3 sab=$4 got',
+        'got="$(suite "$mig" "$sab" | falhas_de)"',
+        'if [ "$got" = "$esperado" ]; then',
+        'echo "…"',
+        'VERM=$((VERM + 1))',
+        'else',
+        'echo "…"',
+        'FALSOS=$((FALSOS + 1))',
+        'fi',
+      ],
+      'if cmp -s "$MIG" "$1"; then echo "…"; exit 1; fi',
+    ],
+  },
   'db/test-tint-promocao-assincrona.sh': {
     motivo:
       'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration, RAISE no corpo do promote)',
@@ -1172,6 +1210,8 @@ export const REGISTRO_FECHADO: readonly string[] = [
   'db/test-oportunidade-erro-terminal.sh',
   'db/test-pedido-edicao-atomica.sh',
   'db/test-pedido-total-liquido-acervo.sh',
+  'db/test-reconciliacao-corante.sh',
+  'db/test-tint-corante-giro.sh',
   'db/test-tint-promocao-assincrona.sh',
   'db/test-tint-promote.sh',
   'db/test-transporte-nuvem.sh',

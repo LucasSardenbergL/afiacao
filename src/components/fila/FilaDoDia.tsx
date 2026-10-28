@@ -26,6 +26,9 @@ const CATEGORIA_UI: Record<CategoriaAcao, { label: string; cls: string }> = {
   risco: { label: 'Risco', cls: 'text-status-error' },
 };
 
+// Linhas na 1ª dobra. O resto fica atrás de "Ver todos (N)" — nunca some calado (o cabeçalho conta N).
+const LIMITE_INICIAL = 30;
+
 /** Rótulo do badge por fonte (a recompra é "Recompra", não a categoria genérica). */
 function rotuloBadge(a: AcaoSugerida): { label: string; cls: string } {
   if (a.fonte === 'recompra') return { label: 'Recompra', cls: 'text-status-info' };
@@ -99,6 +102,7 @@ export function FilaDoDia() {
   const [escondidos, setEscondidos] = useState<Set<string>>(() => new Set());
   const ocultar = (k: string) => setEscondidos((s) => { const n = new Set(s); n.add(k); return n; });
   const visiveis = useMemo(() => acoes.filter((a) => !escondidos.has(a.dedupeKey)), [acoes, escondidos]);
+  const [verTodos, setVerTodos] = useState(false);
 
   const [itemAtivo, setItemAtivo] = useState<AcaoSugerida | null>(null);
   const abrirFicha = (a: AcaoSugerida) => {
@@ -184,7 +188,7 @@ export function FilaDoDia() {
           )}
         </CardHeader>
         <div className="divide-y divide-border">
-          {visiveis.slice(0, 30).map((a, i) => {
+          {(verTodos ? visiveis : visiveis.slice(0, LIMITE_INICIAL)).map((a, i) => {
             const badge = rotuloBadge(a);
             const pack = a.clienteUserId ? packs.get(a.clienteUserId) : undefined;
             const contato = a.clienteUserId ? contatos.data?.get(a.clienteUserId) : undefined;
@@ -201,7 +205,10 @@ export function FilaDoDia() {
                     {contato && <Badge variant="secondary" className="text-2xs">{rotuloResultado(contato)}</Badge>}
                     <span className="truncate">{a.motivo}</span>
                     {a.valorEsperado != null && (
-                      <span className="font-tabular">~R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado</span>
+                      <span className="font-tabular">
+                        {a.tipoValor === 'piso' ? '≥ ' : '~'}R$ {Math.round(a.valorEsperado).toLocaleString('pt-BR')} estimado
+                        {a.tipoValor === 'piso' && ' (item sem preço)'}
+                      </span>
                     )}
                   </div>
                   {pack && <PorQueAgora pack={pack} />}
@@ -214,6 +221,13 @@ export function FilaDoDia() {
             );
           })}
         </div>
+        {!verTodos && visiveis.length > LIMITE_INICIAL && (
+          <div className="p-3 border-t border-border">
+            <Button size="sm" variant="ghost" onClick={() => setVerTodos(true)}>
+              Ver todos ({visiveis.length}) — mostrando {LIMITE_INICIAL}
+            </Button>
+          </div>
+        )}
       </Card>
       {ficha}
     </>

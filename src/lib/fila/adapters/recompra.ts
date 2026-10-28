@@ -10,7 +10,9 @@ function itensAtrasados(n: number): string {
  * Lista de recompra (gerada no servidor, `venda_minhas_sugestoes`) → ações da fila.
  * 1 ação por COMPRADOR (a ligação é por cliente, não por SKU). Quem entra e em que ordem
  * o servidor já decidiu; aqui só se traduz para o contrato da fila.
- * Ausente ≠ zero: comprador sem valor de referência → `valorEsperado: null` (vai por último).
+ * Ausente ≠ zero: o servidor zera o total (null) se QUALQUER item não tem valor. Aí a ação usa o
+ * PISO — a soma só dos itens com valor, `tipoValor: 'piso'` (exibido "≥") — para não afundar quem
+ * mais compra só porque um item está sem preço. Nenhum item com valor → `valorEsperado: null`.
  */
 export function adaptarRecompra(resp: MinhasSugestoesResp | null): AcaoSugerida[] {
   if (!resp) return [];
@@ -19,7 +21,10 @@ export function adaptarRecompra(resp: MinhasSugestoesResp | null): AcaoSugerida[
     const itens = sugestoesDeRecompra(c);
     if (itens.length === 0) continue;
     const nome = c.nome ?? 'cliente';
-    const valor = c.valorRefTotal != null && Number.isFinite(c.valorRefTotal) ? c.valorRefTotal : null;
+    const total = c.valorRefTotal != null && Number.isFinite(c.valorRefTotal) ? c.valorRefTotal : null;
+    const conhecidos = itens.map((s) => s.valorRef).filter((v): v is number => v != null && Number.isFinite(v));
+    const piso = total == null && conhecidos.length > 0 ? conhecidos.reduce((a, v) => a + v, 0) : null;
+    const valor = total ?? piso;
     out.push({
       fonte: 'recompra',
       entidadeId: c.compradorId,
@@ -33,7 +38,7 @@ export function adaptarRecompra(resp: MinhasSugestoesResp | null): AcaoSugerida[
       // a ordem dentro da categoria vem do valor; o score só desempata (mais itens primeiro).
       score: Math.min(1, itens.length / 10),
       valorEsperado: valor,
-      tipoValor: valor != null ? 'estimado' : 'sem_valor',
+      tipoValor: total != null ? 'estimado' : piso != null ? 'piso' : 'sem_valor',
       cta: 'ligar',
       dedupeKey: `recompra:${c.compradorId}`,
       payload: {
