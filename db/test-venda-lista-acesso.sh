@@ -6,7 +6,7 @@
 # O que prova EXECUTANDO (PL/pgSQL é late-bound):
 #  T0  o predecessor montado aqui é o vivo em prod (md5 9c70ff55…, PR #3290)
 #  T2  farmer lendo grava; 2 leituras no mesmo dia = 1 linha com n_leituras 2; n_compradores = a ÚLTIMA leitura
-#  T3  master (a própria lista e a lente get_venda_sugestoes_for), customer e uid sem papel NÃO gravam
+#  T3  master (só-master e master+employee; a própria lista e a lente), customer e uid sem papel NÃO gravam
 #  T4  dia = p_dia (lista de ontem → linha de ontem); lista vazia → linha com n_compradores 0 (≠ sem linha)
 #  T5  transação READ ONLY: a lista sai igual e o acesso só não é registrado (só 25006 é engolido)
 #  T6  outro erro do upsert (23514) SOBE — o sensor não mede em silêncio
@@ -28,7 +28,7 @@ MIG_ONDAS="$REPO_ROOT/supabase/migrations/20261021031000_venda_cliente_ondas23.s
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la>; `POST!<marca>` = a postcondição da migration aborta com a marca exata.
-  SABOTAGENS="grava_master:POST!P5_FALHOU grava_customer:POST!P4_FALHOU sem_contador:T2b engole_tudo:T6 n_da_primeira:T2c stable:POST!P3_FALHOU rls_off:POST!P3_FALHOU acl_anon:POST!P2_FALHOU tabela_insert_auth:POST!P2_FALHOU saida_mudou:POST!P4_FALHOU dia_do_servidor:T4"
+  SABOTAGENS="grava_master:POST!P5_FALHOU grava_customer:POST!P4_FALHOU sem_contador:T2b engole_tudo:T6 n_da_primeira:T2c stable:POST!P3_FALHOU rls_off:POST!P3_FALHOU abre_anon:POST!P2_FALHOU tabela_insert_auth:POST!P2_FALHOU saida_mudou:POST!P4_FALHOU dia_do_servidor:T4"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-venda-lista-acesso.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -99,8 +99,8 @@ PY
 }
 case "${SABOTAGEM:-}" in
   "") ;;
-  grava_master)       sabotar "  IF public.has_role(v_uid, 'employee'::public.app_role)
-     AND NOT public.has_role(v_uid, 'master'::public.app_role) THEN" "  IF public.has_role(v_uid, 'employee'::public.app_role) OR true THEN" ;;
+  grava_master)       sabotar "
+     AND NOT public.has_role(v_uid, 'master'::public.app_role) THEN" " THEN" ;;
   grava_customer)     sabotar "  IF public.has_role(v_uid, 'employee'::public.app_role)
      AND NOT" "  IF NOT" ;;
   sem_contador)       sabotar "n_leituras    = a.n_leituras + 1," "n_leituras    = a.n_leituras," ;;
@@ -110,8 +110,10 @@ case "${SABOTAGEM:-}" in
 VOLATILE" "LANGUAGE plpgsql
 STABLE" ;;
   rls_off)            sabotar "ALTER TABLE public.venda_lista_acesso ENABLE ROW LEVEL SECURITY;" "" ;;
-  acl_anon)           sabotar "REVOKE ALL ON FUNCTION public.venda_minhas_sugestoes(date) FROM PUBLIC, anon;" \
-                              "REVOKE ALL ON FUNCTION public.venda_minhas_sugestoes(date) FROM PUBLIC;" ;;
+  # CREATE OR REPLACE preserva o ACL: tirar o anon do REVOKE fica VERDE (medido) — o anon já estava fechado
+  # pelo #3290. Quem guarda o ACL é a P2; a sabotagem que a alcança é ABRIR o anon.
+  abre_anon)          sabotar "REVOKE ALL ON FUNCTION public.venda_minhas_sugestoes(date) FROM PUBLIC, anon;" \
+                              "GRANT EXECUTE ON FUNCTION public.venda_minhas_sugestoes(date) TO anon;" ;;
   tabela_insert_auth) sabotar "GRANT SELECT ON public.venda_lista_acesso TO authenticated;" \
                               "GRANT SELECT, INSERT ON public.venda_lista_acesso TO authenticated;" ;;
   saida_mudou)        sabotar "  RETURN v_out;" "  RETURN v_out || '{\"sensor\": true}'::jsonb;" ;;
@@ -144,7 +146,7 @@ estado() {
 }
 
 F1=00000000-0000-0000-0000-0000000000f1; F2=00000000-0000-0000-0000-0000000000f2; F3=00000000-0000-0000-0000-0000000000f3
-M=00000000-0000-0000-0000-0000000000ee; CUST=00000000-0000-0000-0000-0000000000cc
+M=00000000-0000-0000-0000-0000000000ee; ME=00000000-0000-0000-0000-0000000000e0; CUST=00000000-0000-0000-0000-0000000000cc
 C1=00000000-0000-0000-0000-0000000000c1; C2=00000000-0000-0000-0000-0000000000c2; C3=00000000-0000-0000-0000-0000000000c3
 NINGUEM=00000000-0000-0000-0000-000000000099
 como() { # $1 = uid ('' = sem sessão), $2 = SQL — executa como authenticated com o sub do JWT
@@ -193,7 +195,7 @@ CREATE TABLE public.venda_sugestao (id uuid PRIMARY KEY DEFAULT gen_random_uuid(
 
 INSERT INTO public.venda_config VALUES
   ('onda_recompra','true'), ('onda_complemento','true'), ('onda_preco','false'), ('teto_maiores_atrasos','10');
-INSERT INTO public.user_roles VALUES ('$M','master'), ('$F1','employee'), ('$F2','employee'), ('$F3','employee'), ('$CUST','customer');
+INSERT INTO public.user_roles VALUES ('$M','master'), ('$ME','master'), ('$ME','employee'), ('$F1','employee'), ('$F2','employee'), ('$F3','employee'), ('$CUST','customer');
 INSERT INTO public.profiles (user_id, name, razao_social, phone) VALUES
   ('$F1','Regina',NULL,NULL), ('$F2','Tatyana',NULL,NULL), ('$M','Lucas',NULL,NULL),
   ('$C1','Marcenaria Um',NULL,'4899990001'), ('$C2',NULL,'Moveis Dois Ltda','4899990002');
@@ -253,11 +255,12 @@ eq "T2c n_compradores = a ÚLTIMA leitura (F2: 1 → 2 compradores)" "$(linha "$
 # T3 master (própria lista e lente), customer e sem papel não gravam
 ANTES="$(total)"
 ler "$M" "$HOJE" >/dev/null
+ler "$ME" "$HOJE" >/dev/null
 Pq -c "$(como "$M" "SELECT public.get_venda_sugestoes_for('$F1', '$HOJE')")" >/dev/null
 Pq -c "$(como "$M" "SELECT public.get_venda_sugestoes_for('$F2')")" >/dev/null
 ler "$CUST" "$HOJE" >/dev/null
 ler "$NINGUEM" "$HOJE" >/dev/null
-eq "T3 master/lente/customer/sem papel: nenhuma linha nova" "$(total)" "$ANTES"
+eq "T3 master, master+employee, lente, customer, sem papel: nenhuma linha nova" "$(total)" "$ANTES"
 eq "T3b F1 intocada pela lente" "$(linha "$F1" "$HOJE")" "2 2"
 
 # T4 dia = p_dia; lista vazia grava 0 (≠ sem linha)
@@ -300,7 +303,7 @@ eq "T8b privilégios da tabela: anon nenhum, authenticated só SELECT" "$(Pq -c 
          has_table_privilege('authenticated', 'public.venda_lista_acesso', 'SELECT')::text")" "false|false|true"
 
 # T1 saída byte-idêntica ao oráculo (Ondas 2–3), como cada usuário e em cada dia
-for u in "$F1" "$F2" "$F3" "$M" "$CUST" "$NINGUEM"; do
+for u in "$F1" "$F2" "$F3" "$M" "$ME" "$CUST" "$NINGUEM"; do
   for d in "$HOJE" "$ONTEM"; do
     eq "T1 venda_minhas_sugestoes = oráculo (uid ${u: -2}, dia $d)" "$(ler "$u" "$d")" \
        "$(Pq -c "$(como "$u" "SELECT public.venda_minhas_sugestoes_v0('$d')::text")")"

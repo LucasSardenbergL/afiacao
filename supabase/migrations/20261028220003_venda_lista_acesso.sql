@@ -242,9 +242,11 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- P5 master lendo a própria lista e a de uma farmer (lente) não grava
+  -- P5 master lendo a própria lista e a de uma farmer (lente) não grava. Prefere o master que TAMBÉM é
+  -- employee: só nele a exclusão do master é a única barreira (o master só-master já cai no filtro employee).
   SELECT ur.user_id INTO v_master FROM public.user_roles ur
-   WHERE ur.role = 'master'::public.app_role ORDER BY ur.user_id LIMIT 1;
+   WHERE ur.role = 'master'::public.app_role
+   ORDER BY public.has_role(ur.user_id, 'employee'::public.app_role) DESC, ur.user_id LIMIT 1;
   IF v_master IS NULL THEN
     RAISE EXCEPTION 'P5 FALHOU: nenhum master em user_roles para executar a RPC';
   END IF;
