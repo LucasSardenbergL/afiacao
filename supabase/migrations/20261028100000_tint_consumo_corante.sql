@@ -205,22 +205,42 @@ CREATE TABLE IF NOT EXISTS public.tint_consumo_runs_aplicados (
 );
 
 -- ── 6. RLS + ACL: staff lê; só a promoção (SECURITY DEFINER) escreve o fato ─────────────────────
-DO $rls$
-DECLARE t text;
-BEGIN
-  FOREACH t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos', 'tint_consumo_extracoes',
-                           'tint_consumo_extracao_lotes', 'tint_consumo_runs_aplicados',
-                           'tint_staging_preparacao_manifestos'] LOOP
-    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
-                                              AND policyname = t || '_staff_le') THEN
-      EXECUTE format($p$CREATE POLICY %I ON public.%I FOR SELECT TO authenticated
-        USING (public.has_role(auth.uid(), 'master'::public.app_role)
-               OR public.has_role(auth.uid(), 'employee'::public.app_role))$p$, t || '_staff_le', t);
-    END IF;
-  END LOOP;
-END
-$rls$;
+-- Policies ESTÁTICAS (o inventário de policies do repo extrai CREATE POLICY literal; DROP IF EXISTS = re-apply).
+ALTER TABLE public.tint_consumo_preparacao ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_preparacao_staff_le ON public.tint_consumo_preparacao;
+CREATE POLICY tint_consumo_preparacao_staff_le ON public.tint_consumo_preparacao FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_consumo_corante ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_corante_staff_le ON public.tint_consumo_corante;
+CREATE POLICY tint_consumo_corante_staff_le ON public.tint_consumo_corante FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_consumo_planos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_planos_staff_le ON public.tint_consumo_planos;
+CREATE POLICY tint_consumo_planos_staff_le ON public.tint_consumo_planos FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_consumo_extracoes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_extracoes_staff_le ON public.tint_consumo_extracoes;
+CREATE POLICY tint_consumo_extracoes_staff_le ON public.tint_consumo_extracoes FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_consumo_extracao_lotes ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_extracao_lotes_staff_le ON public.tint_consumo_extracao_lotes;
+CREATE POLICY tint_consumo_extracao_lotes_staff_le ON public.tint_consumo_extracao_lotes FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_consumo_runs_aplicados ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_consumo_runs_aplicados_staff_le ON public.tint_consumo_runs_aplicados;
+CREATE POLICY tint_consumo_runs_aplicados_staff_le ON public.tint_consumo_runs_aplicados FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
+ALTER TABLE public.tint_staging_preparacao_manifestos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tint_staging_preparacao_manifestos_staff_le ON public.tint_staging_preparacao_manifestos;
+CREATE POLICY tint_staging_preparacao_manifestos_staff_le ON public.tint_staging_preparacao_manifestos FOR SELECT TO authenticated
+  USING (public.has_role(auth.uid(), 'master'::public.app_role)
+         OR public.has_role(auth.uid(), 'employee'::public.app_role));
 
 REVOKE ALL ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_planos,
               public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes, public.tint_consumo_runs_aplicados
