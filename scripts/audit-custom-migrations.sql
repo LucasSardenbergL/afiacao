@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 706
+-- Total de custom migrations: 710
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -770,7 +770,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql'),
   ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql'),
   ('20261028014827', 'projecao_13s_saldo_inicial_fresco_ou_nulo', '20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql'),
-  ('20261028031612', 'analytics_ledger_financeiro_ciclo_aberto', '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql')
+  ('20261028031612', 'analytics_ledger_financeiro_ciclo_aberto', '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql'),
+  ('20261028100000', 'tint_consumo_corante', '20261028100000_tint_consumo_corante.sql'),
+  ('20261028100100', 'tint_corante_giro', '20261028100100_tint_corante_giro.sql'),
+  ('20261028100200', 'analytics_ledger_corantes', '20261028100200_analytics_ledger_corantes.sql'),
+  ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3010,7 +3014,40 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
   ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
   ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
-  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_corante_constantes', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_cobertura_em', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_plano_extracao', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_promote_preparacoes', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_compactar', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_preparacoes_tick', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_staging_preparacao_manifestos', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_preparacao', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_corante', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_planos', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_extracoes', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_extracao_lotes', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_runs_aplicados', ''),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_preparacao_dosagem', 'tint_consumo_preparacao'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_corante_giro', 'tint_consumo_corante'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_planos_loja', 'tint_consumo_planos'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_extracoes_completas', 'tint_consumo_extracoes'),
+  ('tint_consumo_corante', 'cron_job', 'cron', 'tint-preparacoes-tick', ''),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_preparacao_staff_le', 'tint_consumo_preparacao'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_corante_staff_le', 'tint_consumo_corante'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_planos_staff_le', 'tint_consumo_planos'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_extracoes_staff_le', 'tint_consumo_extracoes'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_extracao_lotes_staff_le', 'tint_consumo_extracao_lotes'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_runs_aplicados_staff_le', 'tint_consumo_runs_aplicados'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_staging_preparacao_manifestos_staff_le', 'tint_staging_preparacao_manifestos'),
+  ('tint_corante_giro', 'function', 'public', 'tint_corante_consumo_diario_em', ''),
+  ('tint_corante_giro', 'function', 'public', 'tint_corante_giro_em', ''),
+  ('tint_corante_giro', 'view', 'public', 'v_corante_consumo_diario', ''),
+  ('tint_corante_giro', 'view', 'public', 'v_corante_giro', ''),
+  ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5298,7 +5335,40 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
   ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', ''),
   ('projecao_13s_saldo_inicial_fresco_ou_nulo', 'function', 'public', 'fin_projecao_13_semanas', ''),
-  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', '')
+  ('analytics_ledger_financeiro_ciclo_aberto', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_corante_constantes', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_cobertura_em', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_plano_extracao', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_promote_preparacoes', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_consumo_compactar', ''),
+  ('tint_consumo_corante', 'function', 'public', 'tint_preparacoes_tick', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_staging_preparacao_manifestos', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_preparacao', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_corante', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_planos', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_extracoes', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_extracao_lotes', ''),
+  ('tint_consumo_corante', 'table', 'public', 'tint_consumo_runs_aplicados', ''),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_preparacao_dosagem', 'tint_consumo_preparacao'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_corante_giro', 'tint_consumo_corante'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_planos_loja', 'tint_consumo_planos'),
+  ('tint_consumo_corante', 'index', 'public', 'idx_tint_consumo_extracoes_completas', 'tint_consumo_extracoes'),
+  ('tint_consumo_corante', 'cron_job', 'cron', 'tint-preparacoes-tick', ''),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_preparacao_staff_le', 'tint_consumo_preparacao'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_corante_staff_le', 'tint_consumo_corante'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_planos_staff_le', 'tint_consumo_planos'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_extracoes_staff_le', 'tint_consumo_extracoes'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_extracao_lotes_staff_le', 'tint_consumo_extracao_lotes'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_consumo_runs_aplicados_staff_le', 'tint_consumo_runs_aplicados'),
+  ('tint_consumo_corante', 'rls_policy', 'public', 'tint_staging_preparacao_manifestos_staff_le', 'tint_staging_preparacao_manifestos'),
+  ('tint_corante_giro', 'function', 'public', 'tint_corante_consumo_diario_em', ''),
+  ('tint_corante_giro', 'function', 'public', 'tint_corante_giro_em', ''),
+  ('tint_corante_giro', 'view', 'public', 'v_corante_consumo_diario', ''),
+  ('tint_corante_giro', 'view', 'public', 'v_corante_giro', ''),
+  ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
+  ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
 )
 SELECT
   e.migration,
@@ -5850,6 +5920,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 4, '20261012233500_analytics_ledger_crescimento_comparavel.sql', '70af721a1852fa66b67ebadff5c5b57e'),
   ('public', 'analytics_ledger_registrar', 5, '20261020202720_analytics_ledger_venda_cliente.sql', 'e7e3ed81c939ba16a8fecb0c0619b7da'),
   ('public', 'analytics_ledger_registrar', 6, '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql', '743d4d9478fac9a98ea1907778b905ee'),
+  ('public', 'analytics_ledger_registrar', 7, '20261028100200_analytics_ledger_corantes.sql', '1007fd19696f6fcd8c8e5029a8f80de9'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
@@ -5918,6 +5989,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_minhas_sugestoes', 1, '20261020174221_venda_cliente_espinha.sql', 'b98d2eecbb1b24088c6bacd5f4d5fe01'),
   ('public', 'venda_minhas_sugestoes', 2, '20261021031000_venda_cliente_ondas23.sql', 'd09aac2957017213880f53e9253bd279'),
   ('public', 'venda_minhas_sugestoes', 3, '20261021070000_venda_lista_lente.sql', '063e2a5233f9d0ccb47a1b6612f96d37'),
+  ('public', 'venda_minhas_sugestoes', 4, '20261028220003_venda_lista_acesso.sql', 'c9836f94bbf7abf50b4f5b574eb919f4'),
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),
