@@ -148,3 +148,22 @@ Ficaram de fora, todos anteriores a esta entrega:
   precederia `public`. Para explorar, o chamador precisaria de SQL cru. É padrão de dezenas de funções do
   repo, não desta.
 - `types.ts` declara `saldo_projetado: number` (gerado pelo Lovable).
+
+### Apply (2026-10-28)
+
+- **Merge:** #3383, squash `cd21d4cc7`, 02:52Z. O 1º CI reprovou no contrafactual de
+  `scripts/fuso-da-sessao-em-migrations-e-skills-gate.test.ts`: tirar só a migration do fuso já não
+  ressuscitava a `fin_projecao_13_semanas` morta, porque esta migration a redefine depois. O conserto foi
+  tirar também a sucessora no contrafactual (`SUCESSORAS_DO_FIX`), sem afrouxar a asserção.
+- **Pré-voo** às 03:10Z: corpo vivo `ec1db10e…`, o predecessor.
+- **`bun run db:aplicar`** da `main` (`f03a8d89c`), sha256 `62bb53a5…`: tentativa **#742** virou recibo,
+  exit 0. Antes do merge, o `--ensaio` tinha passado.
+- **2ª testemunha** (`psql-ro`, 03:11Z): md5 `dc22fe016ea307694ea1426cd75e011f`. Seguem como estavam
+  `STABLE`, `SECURITY DEFINER`, não-`STRICT`, `{search_path=public}` e o dono `postgres`. O ACL também,
+  com EXECUTE só para `authenticated` e `service_role` (anon e PUBLIC `f`).
+- **`bun run deriva:corpo:prod`:** exit 0, 422 identidades batem com `origin/main@f03a8d89c`.
+- **Dado real no instante do apply** (00:11 SP): 40 contas ativas, todas com `saldo_data` 27/10. A
+  janela ainda aceita ontem antes das 04h, então havia 0 inválidas e a projeção seguia numérica. Das 04h SP
+  em diante o saldo de hoje passa a ser exigido: se o `fin-sync-base-diario` das 03h falhar, o card mostra
+  "projeção indisponível" em vez do saldo de ontem.
+- Nenhuma edge nem Publish: a mudança é só de banco, e os consumidores já tratavam NULL desde o #3347.
