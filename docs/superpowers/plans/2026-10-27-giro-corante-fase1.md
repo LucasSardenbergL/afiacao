@@ -55,6 +55,12 @@ Recebido somava `quantidade_nfe` (prod: as 4 NF de WP têm `quantidade_conferida
 
 1 P1 + 4 P2, nenhum P0; sem vazamento de `cliente` demonstrado. P1 200 sem enfileiramento em loja `shadow_mode`/`csv_only` → `modoPromove` recusa (422 `modo_sem_promocao`) antes de qualquer escrita, também no plano · P2 falha transitória prendia a chave em 409 até o plano expirar → a falha de escrita libera `idempotency_key` do run em `error` · P2 ns × µs do Postgres (`…59.9999999` arredonda para o `ate`) e `Date.parse` normalizando `02-30` → `instanteNs` recusa fração além do µs e data inexistente · P2 faixa mais larga que o lote passava na edge e caía na promoção → extremos = min/max exatos · P2 plano com `max_lotes: 0`, `motivo` fora do vocabulário ou `desde > ate` → 500. Cada correção tem teste que fica vermelho sob a sabotagem correspondente (falsificação com 13 sabotagens, controle verde na mesma invocação). Prod (2026-10-28): a única loja (`oben/M01`) está em `automatic_primary`.
 
+## Parecer Codex PR D, Tasks 9–10 (2026-10-28, `logs/giro-corante/codex-prd.out`, gpt-6-astra · max · 352 s)
+
+Sem P0/P1; 4 P2. Plano aceitava qualquer 2xx (um 202 com zero janelas virava "nada a fazer") → exige 200 exato · `motivo`/cardinalidade/UUID do plano não validados → vocabulário, ≤ 2 janelas, UUID · o `continue` da entidade isolada tirava a entrada legada da `vendas_item` do fingerprint (mudava a identificação do schema em prod) → a entrada LEGADA volta intocada ao `expectedMappings` e a isolada é resolvida num laço à parte; teste fixa os hashes do 0.2.x (origin/main 083d25745) em 3 schemas · falha isolada sumia do resultado (`once` saía 0) → sucesso do catálogo governa o full re-scan, sucesso global exige as isoladas. Falsificação: 10 sabotagens vermelhas, controle verde. Follow-up: a edge não persiste `last_cycle_errors` do heartbeat; até lá, uma `vendas_item` quebrada aparece como `dado_desatualizado` na aba (fail-closed).
+
+Tasks 11–12: 🚧 aguardam o passo 0 do founder (não entregues neste PR).
+
 ## Foco de revisão (falhas que nenhum teste "natural" pegaria)
 
 1. Um lote da extração falha na promoção, e a lacuna envelhece além de 35 dias → a cobertura para para sempre, ou uma extração posterior "pula" o buraco. Esperado: a ilha recente não atravessa o buraco, e o plano manda uma janela de cura do buraco mais antigo, de qualquer idade dentro do piso, até ele fechar. Prova P15/P17 (Task 2).
