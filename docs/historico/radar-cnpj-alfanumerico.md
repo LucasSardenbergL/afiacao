@@ -269,3 +269,10 @@ tudo, sem EOF, classe errada).
 
 **BAIXO registrado:** não há teste de handler; o helper concentra a decisão para que restaurar o `catch`
 antigo exija desfazer a chamada a ele.
+
+**Deploy — FEITO pela sessão (PR #3372 mergeado 00:43Z em `9934baf`):** só a `omie-sync`; a `omie-vendas-sync`
+v1.29 do #3371 já tinha sido deployada às 00:41Z por outra sessão (`list_messages`). Colagem do
+`pendencias:prompt`: 14/14 hashes, **Active**, `No files were edited.`, 1,9 crédito. Sonda pelo envelope:
+`--so-disparo` (#735, DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE** `omie-sync`
+v1.10-busca-transitorio-nao-e-ausencia. **Roadmap do CNPJ alfanumérico fechado:** não sobra item pré-existente
+aberto deste programa.
