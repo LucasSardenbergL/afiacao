@@ -312,6 +312,8 @@ SELECT _t_assert('C4.seed_14',
 SELECT _t_assert('C4.pu_null',
   (SELECT capacidade_canister_ml IS NULL AND capacidade_confirmada IS FALSE
      FROM tint_corantes WHERE id_corante_sayersystem = '15'));
+SELECT _t_assert('C4.confirmada_exige_capacidade', _t_sqlstate($s$UPDATE tint_corantes
+  SET capacidade_confirmada = true WHERE id_corante_sayersystem = '15'$s$) = '23514');
 SELECT _t_assert('C4.constantes',
   (SELECT validade_dias = 365 AND lata_ml = 810 AND lata_l = 0.81 AND horizonte_dias = 180 AND frescor_dias = 4
       AND cobertura_min_dias = 60 AND cobertura_plena_dias = 180 AND limite_ausencia = 0.01
@@ -345,7 +347,7 @@ VALUES ('e0000000-0000-0000-0000-000000000001', 1, 'c0000000-0000-0000-0000-0000
 SELECT _t_assert('C5.sem_escrita_' || r || '_' || t || '_' || p, NOT has_table_privilege(r, 'public.' || t, p), r)
   FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) r,
        unnest(ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos', 'tint_consumo_extracoes',
-                    'tint_consumo_extracao_lotes']) t,
+                    'tint_consumo_extracao_lotes', 'tint_consumo_runs_aplicados']) t,
        unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) p
  ORDER BY r, t, p;
 SELECT _t_assert('C5.manifesto_service_insert', has_table_privilege('service_role', 'public.tint_staging_preparacao_manifestos', 'INSERT'));
@@ -938,6 +940,15 @@ SELECT _t_assert('P20.compactou', (SELECT count(*) FROM tint_consumo_extracoes) 
 SELECT _t_assert('P20.cobertura_igual', (SELECT row(c.*)::text FROM tint_consumo_cobertura_em((SELECT fim FROM _k)) c
   WHERE store_code = 'M01') = (SELECT row(c.*)::text FROM _cob c));
 SELECT _t_assert('P20.revisita_igual', pg_temp.revisita() = (SELECT rev FROM _p20));
+-- replay de um run cujo plano/extração/lotes a compactação apagou: o recibo durável ainda o reconhece
+CREATE TEMP TABLE _p20r AS SELECT ra.sync_run_id AS run, _t_estado() AS e FROM tint_consumo_runs_aplicados ra
+ WHERE NOT EXISTS (SELECT 1 FROM tint_consumo_extracao_lotes l WHERE l.sync_run_id = ra.sync_run_id) LIMIT 1;
+UPDATE tint_sync_runs SET promocao_status = 'pendente', promocao_tentativas = 0 WHERE id = (SELECT run FROM _p20r);
+TRUNCATE _t_ticks;
+SELECT _t_drenar();
+SELECT _t_assert('P20.replay_pos_compactacao', (SELECT run FROM _p20r) IS NOT NULL
+  AND EXISTS (SELECT 1 FROM _t_ticks WHERE r ->> 'acao' = 'promovido' AND r -> 'resultado' ->> 'acao' = 'ja_aplicado')
+  AND (SELECT e FROM _p20r) = _t_estado());
 SELECT _t_assert('P20.fixpoint', NOT EXISTS (SELECT 1 FROM tint_consumo_extracoes e
   WHERE e.completa_em IS NOT NULL AND e.consultado_em < (SELECT fim FROM _k) - interval '2 days'
     AND EXISTS (SELECT 1 FROM tint_consumo_extracoes o WHERE o.store_code = e.store_code AND o.completa_em IS NOT NULL
@@ -984,7 +995,7 @@ SQL
 }
 
 CENARIOS="C1 C2 C3 C4 C5 C6 P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 P11 P12 P13 P14 P15 P16 P17 P18 P19"
-NESP=159   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+NESP=170   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
 
 # suite <migration> <sabotagem-sql-ou-vazio> → imprime RES|nome|ok|detalhe de todos os asserts
 suite() {
@@ -1104,6 +1115,9 @@ fals "Fh tick atual sem o filtro de preparações" "C6.reapply_mesmo_estado P10.
 
 sabmig "$TMP/fi.sql" 's/  ELSIF c.primeiro_dia_coberto IS NOT NULL THEN/  ELSIF false THEN/'
 fals "Fi revisita desligada" "P17.rescan_meia_noite P19.edicao_convergiu P19.fato_igual_fonte" "$TMP/fi.sql" ""
+
+sabmig "$TMP/fk.sql" 's/  IF EXISTS (SELECT 1 FROM public.tint_consumo_runs_aplicados ra WHERE ra.sync_run_id = p_run_id) THEN/  IF EXISTS (SELECT 1 FROM public.tint_consumo_extracao_lotes ra WHERE ra.sync_run_id = p_run_id) THEN/'
+fals "Fk replay reconhecido só pelos lotes (que a compactação apaga)" "P20.replay_pos_compactacao" "$TMP/fk.sql" ""
 
 sabmig "$TMP/fj.sql" 's/                    AND o.janela_desde <= e.janela_desde AND o.janela_ate >= e.janela_ate$/                    AND true/'
 fals "Fj compactação sem exigir contida" "P20.cobertura_igual P20.revisita_igual" "$TMP/fj.sql" ""

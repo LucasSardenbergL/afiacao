@@ -278,6 +278,13 @@ export const AUTHZ_TABELAS_FECHADAS: Record<string, TabelaFechada> = {
       'lotes promovidos (replay ja_aplicado e faixa de ids por lote). Só a promoção (tint_promote_preparacoes, SECURITY DEFINER) e a compactação escrevem; o REVOKE ALL ' +
       'tira também o TRUNCATE do grant default, que não passa por RLS. Leitura de staff pela policy *_staff_le.',
   },
+  'public.tint_consumo_runs_aplicados': {
+    fechadaPor: '20261028100000_tint_consumo_corante.sql',
+    permitido: { anon: [], authenticated: ['SELECT'] },
+    motivo:
+      'recibo durável de run aplicado (replay ja_aplicado depois da compactação). Só a promoção (SECURITY ' +
+      'DEFINER) escreve; apagar uma linha faria um run reenfileirado ser recusado como sem_manifesto.',
+  },
   'public.tint_staging_preparacao_manifestos': {
     fechadaPor: '20261028100000_tint_consumo_corante.sql',
     permitido: { anon: [], authenticated: ['SELECT'] },

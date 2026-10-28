@@ -47,6 +47,11 @@ BEGIN
       CHECK (capacidade_canister_ml IS NULL
              OR (capacidade_canister_ml > 0 AND capacidade_canister_ml < 'Infinity'));
   END IF;
+  -- Confirmar exige saber a capacidade: least(810, NULL) = 810 liberaria a faixa com um canister desconhecido.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tint_corantes_capacidade_confirmada_conhecida') THEN
+    ALTER TABLE public.tint_corantes ADD CONSTRAINT tint_corantes_capacidade_confirmada_conhecida
+      CHECK (NOT capacidade_confirmada OR capacidade_canister_ml IS NOT NULL);
+  END IF;
 END
 $c$;
 -- 2.300 ml nos 14 WP (os corantes com produto Omie), NÃO confirmada: um canister mostrou
@@ -190,12 +195,22 @@ CREATE TABLE IF NOT EXISTS public.tint_consumo_extracao_lotes (
     AND (primeira_preparacao_id IS NULL OR primeira_preparacao_id COLLATE "C" <= ultima_preparacao_id COLLATE "C"))
 );
 
+-- Recibo DURÁVEL de run aplicado (sem FK): a compactação apaga plano/extração/lotes, e um run reenfileirado
+-- depois disso ainda tem de ser reconhecido como `ja_aplicado` (o staging dele já foi podado).
+CREATE TABLE IF NOT EXISTS public.tint_consumo_runs_aplicados (
+  sync_run_id  uuid PRIMARY KEY,
+  extracao_id  uuid NOT NULL,
+  lote         int NOT NULL,
+  aplicado_em  timestamptz NOT NULL
+);
+
 -- ── 6. RLS + ACL: staff lê; só a promoção (SECURITY DEFINER) escreve o fato ─────────────────────
 DO $rls$
 DECLARE t text;
 BEGIN
   FOREACH t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos', 'tint_consumo_extracoes',
-                           'tint_consumo_extracao_lotes', 'tint_staging_preparacao_manifestos'] LOOP
+                           'tint_consumo_extracao_lotes', 'tint_consumo_runs_aplicados',
+                           'tint_staging_preparacao_manifestos'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
                                               AND policyname = t || '_staff_le') THEN
@@ -208,10 +223,11 @@ END
 $rls$;
 
 REVOKE ALL ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_planos,
-              public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes
+              public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes, public.tint_consumo_runs_aplicados
   FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_planos,
-                public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes TO authenticated, service_role;
+                public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes, public.tint_consumo_runs_aplicados
+  TO authenticated, service_role;
 REVOKE ALL ON public.tint_staging_preparacao_manifestos FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.tint_staging_preparacao_manifestos TO authenticated;
 GRANT SELECT, INSERT, DELETE ON public.tint_staging_preparacao_manifestos TO service_role;
@@ -237,7 +253,8 @@ BEGIN
     END IF;
   END LOOP;
   FOREACH v_t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos',
-                             'tint_consumo_extracoes', 'tint_consumo_extracao_lotes'] LOOP
+                             'tint_consumo_extracoes', 'tint_consumo_extracao_lotes',
+                             'tint_consumo_runs_aplicados'] LOOP
     FOREACH v_r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       FOREACH v_p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
         IF has_table_privilege(v_r, 'public.' || v_t, v_p) THEN
@@ -472,7 +489,7 @@ BEGIN
   IF r.id IS NULL OR r.sync_type IS DISTINCT FROM 'preparations' THEN
     RETURN jsonb_build_object('ok', false, 'motivo', 'tipo_errado');
   END IF;
-  IF EXISTS (SELECT 1 FROM public.tint_consumo_extracao_lotes l WHERE l.sync_run_id = p_run_id) THEN
+  IF EXISTS (SELECT 1 FROM public.tint_consumo_runs_aplicados ra WHERE ra.sync_run_id = p_run_id) THEN
     RETURN jsonb_build_object('ok', true, 'acao', 'ja_aplicado');
   END IF;
   SELECT * INTO m FROM public.tint_staging_preparacao_manifestos sm WHERE sm.sync_run_id = p_run_id;
@@ -587,6 +604,8 @@ BEGIN
                                                   promovido_em)
   VALUES (m.extracao_id, m.lote, p_run_id, m.n_preparacoes, m.n_rejeitadas, m.n_itens,
           m.primeira_preparacao_id, m.ultima_preparacao_id, clock_timestamp());
+  INSERT INTO public.tint_consumo_runs_aplicados (sync_run_id, extracao_id, lote, aplicado_em)
+  VALUES (p_run_id, m.extracao_id, m.lote, clock_timestamp());
   SELECT count(*) INTO v_lotes FROM public.tint_consumo_extracao_lotes l WHERE l.extracao_id = m.extracao_id;
   IF v_lotes = m.total_lotes THEN
     UPDATE public.tint_consumo_extracoes e SET completa_em = clock_timestamp()

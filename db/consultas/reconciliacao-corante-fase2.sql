@@ -35,10 +35,16 @@ WITH params AS (
       ON op.account = 'oben' AND op.descricao ~ ('^' || wp.wp_codigo || '\.3900(QT|GL)')
 ), recebido AS (   -- só NF EFETIVADA no período; WP sem NF no período = 0 recebido (legítimo)
   SELECT s.wp_codigo,
-         CASE WHEN bool_or(n.unidade_nfe IS DISTINCT FROM 'L') FILTER (WHERE n.item_id IS NOT NULL) THEN NULL
-              ELSE COALESCE(sum(n.quantidade_nfe), 0) END AS recebido_l   -- unidade ≠ L: não mede
+         -- Só NF conferida POR INTEIRO (conferida = esperada) prova o que entrou: a efetivação usa a quantidade
+         -- conferida, e entrega parcial ou conferência zerada (medido em prod, 2026-10-28) faria o quantidade_nfe
+         -- fabricar retirada. Unidade ≠ L ou conferência incompleta → o WP não é medido.
+         CASE WHEN bool_or(n.unidade_nfe IS DISTINCT FROM 'L'
+                           OR n.quantidade_conferida IS DISTINCT FROM n.quantidade_esperada)
+                     FILTER (WHERE n.item_id IS NOT NULL) THEN NULL
+              ELSE COALESCE(sum(n.quantidade_nfe), 0) END AS recebido_l
     FROM skus s
-    LEFT JOIN (SELECT i.id AS item_id, i.produto_omie_id, i.unidade_nfe, i.quantidade_nfe
+    LEFT JOIN (SELECT i.id AS item_id, i.produto_omie_id, i.unidade_nfe, i.quantidade_nfe,
+                      i.quantidade_conferida, i.quantidade_esperada
                  FROM nfe_recebimento_itens i
                  JOIN nfe_recebimentos r ON r.id = i.nfe_recebimento_id
                  CROSS JOIN params
@@ -80,7 +86,8 @@ WITH params AS (
     FROM por_wp p
 ), agregado AS (
   SELECT count(*) FILTER (WHERE elegivel) AS n_elegiveis,
-         bool_or(elegivel AND passa IS NULL) AS algum_sem_medida,
+         -- elegibilidade DESCONHECIDA (retirado NULL) também derruba: o WP ausente podia ser o que reprovaria
+         bool_or(elegivel IS NULL OR (elegivel AND passa IS NULL)) AS algum_sem_medida,
          bool_and(passa) FILTER (WHERE elegivel) AS todos_passam,
          sum(dosado_l) FILTER (WHERE elegivel) / NULLIF(sum(retirado_l) FILTER (WHERE elegivel), 0) AS razao
     FROM avaliado

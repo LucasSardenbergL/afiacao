@@ -486,6 +486,17 @@ SELECT _t_assert('G13.rejeitadas_acima', (SELECT count(*) = 14 AND bool_and(moti
 SQL
 }
 
+# G16 — o P90 decide quando o consumo se concentra: 50 ml/dia só nos últimos 60 dias da janela.
+# d = 3000/180 ≈ 16,67 → d·LTc(11) ≈ 183,3; maior dosagem 50; janelas de 11 dias inteiras no bloco = 550, e os
+# 10% maiores das 170 janelas são todas 550 → P90 = 550 > os dois pisos → s = 550.
+cen_G16() { G "$1" <<'SQL'
+DO $$ BEGIN FOR i IN 1 .. 60 LOOP PERFORM _g_dose('13', _g_dia(-i) + interval '10 hours', 50); END LOOP; END $$;
+SELECT _t_assert('G16.p90_decide', (SELECT ponto_pedido_ml = 550 AND maior_dosagem_ml = 50
+  FROM tint_corante_giro_em('2027-06-20 15:00-03') WHERE wp_codigo = 'WP13'),
+  (SELECT ponto_pedido_ml::text FROM tint_corante_giro_em('2027-06-20 15:00-03') WHERE wp_codigo = 'WP13'));
+SQL
+}
+
 # G14 — RLS pela view (security_invoker): customer 0 linhas; staff as 14.
 cen_G14() { PA -d "$1" -q <<'SQL'
 SET request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000002';
@@ -508,8 +519,8 @@ SELECT _t_assert('G15.' || v, (SELECT reloptions @> ARRAY['security_invoker=on']
 SQL
 }
 
-CENARIOS="G1 G2 G3 G4 G5 G6 G7 G8 G9 G10 G11 G12 G13 G14 G15"
-NESP=33   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+CENARIOS="G1 G2 G3 G4 G5 G6 G7 G8 G9 G10 G11 G12 G13 G14 G15 G16"
+NESP=34   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
 
 # suite <migration> <sabotagem-sql-ou-vazio> → imprime RES|nome|ok|detalhe de todos os asserts
 suite() {
@@ -594,6 +605,9 @@ fals "Fg6 denominador fixo de 180 dias" "GF_ESPERADO" "$TMP/g6.sql" ""
 
 sabmig "$TMP/g7.sql" 's/greatest(c.d \* lt.ltc, p90.v, m.m) AS s/greatest(c.d * lt.ltc, p90.v) AS s/'
 fals "Fg7 sem o piso da maior dosagem" "GG_ESPERADO" "$TMP/g7.sql" ""
+
+sabmig "$TMP/g8.sql" 's/greatest(c.d \* lt.ltc, p90.v, m.m) AS s/greatest(c.d * lt.ltc, m.m) AS s/'
+fals "Fg8 sem o P90 das janelas" "GH_ESPERADO" "$TMP/g8.sql" ""
 
 echo ""
 echo "SABOTAGENS: $VERM vermelhas / $FALSOS falhas"   # recibo ÚNICO lido pelo db/roda-nucleo-ci.sh

@@ -263,8 +263,8 @@ BEGIN
     VALUES (v_nf, '99999999-0000-0000-0000-000000000001', left(v_prep, 20), lpad(left(replace(v_prep, '-', ''), 30), 44, '0'),
             '00000000000191', 'efetivado', '2026-11-15 10:00-03');
     INSERT INTO nfe_recebimento_itens (nfe_recebimento_id, sequencia, descricao, codigo_produto, unidade_nfe,
-                                       quantidade_nfe, quantidade_esperada, produto_omie_id)
-    VALUES (v_nf, 1, p_wp || ' QT', 'PRD', p_unid, p_rec, 1, _r_cod(p_wp));
+                                       quantidade_nfe, quantidade_esperada, quantidade_conferida, produto_omie_id)
+    VALUES (v_nf, 1, p_wp || ' QT', 'PRD', p_unid, p_rec, 1, 1, _r_cod(p_wp));   -- conferida = esperada
   END IF;
   UPDATE sku_estoque_atual SET estoque_fisico = p_fis WHERE sku_codigo_omie = _r_cod(p_wp)::text;
   -- dosado em preparações de até 1 L (o teto físico de 18 L por preparação vale também na fixture)
@@ -356,11 +356,58 @@ SELECT _r_wp('WP03', 4, 2.67, 5);
 SELECT _r_wp('WP08', 2, 3.48, 4);
 SELECT _r_wp('WP12', 3, 6.91, 4);
 SELECT _r_wp('WP87', 0, 5.34, 3);
-UPDATE tint_corantes SET capacidade_canister_ml = NULL
+UPDATE tint_corantes SET capacidade_canister_ml = NULL, capacidade_confirmada = false
  WHERE omie_product_id = (SELECT id FROM omie_products WHERE descricao = 'WP87.3900QT CORANTE');
 SQL
 v="$(veredito "$db")" || return 1
 PA -d "$db" -q -c "SELECT _t_assert('R5.capacidade_desconhecida_nao_medido', '$v' = 'nao_medido', '$v')"
+}
+
+# R6 — desvios OPOSTOS: razão agregada = 1, mas dois WP fora da tolerância individual → reprovou.
+# WP01: retirado 13, dosado 17,2 (|Δ| 4,2 > 2,3 + 0,81); WP02: retirado 6, dosado 1,8 (|Δ| 4,2). Σ = 35 / 35.
+cen_R6() { local db=$1 v
+PA -d "$db" -q <<'SQL' || return 1
+SELECT _r_wp('WP01', 10, 4.11, 17.2);
+SELECT _r_wp('WP02', 5, 1.43, 1.8);
+SELECT _r_wp('WP03', 4, 2.67, 5);
+SELECT _r_wp('WP08', 2, 3.48, 4);
+SELECT _r_wp('WP12', 3, 6.91, 4);
+SELECT _r_wp('WP87', 0, 5.34, 3);
+SQL
+v="$(veredito "$db")" || return 1
+PA -d "$db" -q -c "SELECT _t_assert('R6.desvios_opostos_reprovou', '$v' = 'reprovou', '$v')"
+}
+
+# R7 — o físico de um WP da linha de base sumiu (sem linha de estoque): a elegibilidade dele é DESCONHECIDA e o
+# gate não pode passar com os outros seis bons → nao_medido.
+cen_R7() { local db=$1 v
+PA -d "$db" -q <<'SQL' || return 1
+SELECT _r_wp('WP01', 10, 4.11, 13);
+SELECT _r_wp('WP02', 5, 1.43, 6);
+SELECT _r_wp('WP03', 4, 2.67, 5);
+SELECT _r_wp('WP08', 2, 3.48, 4);
+SELECT _r_wp('WP12', 3, 6.91, 4);
+SELECT _r_wp('WP87', 0, 5.34, 3);
+DELETE FROM sku_estoque_atual WHERE sku_codigo_omie = _r_cod('WP04')::text;
+SQL
+v="$(veredito "$db")" || return 1
+PA -d "$db" -q -c "SELECT _t_assert('R7.estoque_ausente_nao_medido', '$v' = 'nao_medido', '$v')"
+}
+
+# R8 — NF efetivada com conferência PARCIAL (conferida 0 de 1, como as 4 de WP em prod): o recebido não está
+# provado → o WP não é medido → nao_medido (nunca somar o quantidade_nfe como se tivesse entrado).
+cen_R8() { local db=$1 v
+PA -d "$db" -q <<'SQL' || return 1
+SELECT _r_wp('WP01', 10, 4.11, 13);
+SELECT _r_wp('WP02', 5, 1.43, 6);
+SELECT _r_wp('WP03', 4, 2.67, 5);
+SELECT _r_wp('WP08', 2, 3.48, 4);
+SELECT _r_wp('WP12', 3, 6.91, 4);
+SELECT _r_wp('WP87', 0, 5.34, 3);
+UPDATE nfe_recebimento_itens SET quantidade_conferida = 0 WHERE produto_omie_id = _r_cod('WP01');
+SQL
+v="$(veredito "$db")" || return 1
+PA -d "$db" -q -c "SELECT _t_assert('R8.conferencia_parcial_nao_medido', '$v' = 'nao_medido', '$v')"
 }
 
 # L — o sensor da aba no ledger: o corpo vivo do snapshot é o predecessor; o evento novo é aceito; o
@@ -380,8 +427,8 @@ SELECT _t_assert('L.fora_da_allowlist_22023', (SELECT fora FROM _l) = '22023', (
 SQL
 }
 
-CENARIOS="R1 R2 R3 R4 R5 L"
-NESP=8   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+CENARIOS="R1 R2 R3 R4 R5 R6 R7 R8 L"
+NESP=11   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
 
 # PRE do ledger: o snapshot vivo traz o predecessor revisado (asserção, não suposição).
 PRED="$(PA -d tpl -tA -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.analytics_ledger_registrar(text,text,jsonb)'::regprocedure")"
@@ -455,6 +502,9 @@ echo "════ FALSIFICAÇÕES ════"
 falsq "Fr1 sem o piso de elegibilidade (2 L)" "R4.quatro_elegiveis_nao_medido" 's/(p.retirado_l >= 2) AS elegivel/(p.retirado_l IS NOT NULL) AS elegivel/'
 falsq "Fr2 dosado em ml (sem ÷ 1000)" "R1.consistente_passou" 's/COALESCE(sum(c.qtd_ml), 0) \/ 1000 AS dosado_l/COALESCE(sum(c.qtd_ml), 0) AS dosado_l/'
 falsq "Fr3 elegível sem medida não derruba o veredito" "R5.capacidade_desconhecida_nao_medido" 's/WHEN a.n_elegiveis < 5 OR a.algum_sem_medida THEN/WHEN a.n_elegiveis < 5 THEN/'
+falsq "Fr4 sem a tolerância individual" "R6.desvios_opostos_reprovou" 's/              ELSE abs(p.dosado_l - p.retirado_l) <= p.capacidade_canister_ml \/ 1000 + 0.81$/              ELSE true/; s/                   AND abs(p.dosado_l - p.retirado_l) <= 0.25 \* p.retirado_l END AS passa/                   END AS passa/'
+falsq "Fr5 elegibilidade desconhecida ignorada" "R7.estoque_ausente_nao_medido R8.conferencia_parcial_nao_medido" 's/bool_or(elegivel IS NULL OR (elegivel AND passa IS NULL)) AS algum_sem_medida/bool_or(elegivel AND passa IS NULL) AS algum_sem_medida/'
+falsq "Fr6 recebido pela NF, sem exigir a conferência" "R8.conferencia_parcial_nao_medido" 's/                           OR n.quantidade_conferida IS DISTINCT FROM n.quantidade_esperada)/                           )/'
 perl -0pe "s/'venda.painel_aberto',\n\s+'reposicao.corantes_aberta'\) THEN/'venda.painel_aberto') THEN/" "$MIG" > "$TMP/fl.sql"
 if cmp -s "$MIG" "$TMP/fl.sql"; then echo "✗ sabotagem no-op (allowlist)"; exit 1; fi
 fals "Fl ledger sem o evento novo (a PÓS do md5 aborta o apply)" "APPLY" "$TMP/fl.sql" ""
