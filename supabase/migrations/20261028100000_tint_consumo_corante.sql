@@ -766,7 +766,7 @@ DECLARE
   v_novo  constant text := 'e5f375b0bff05600fe66f3f6d79d513c';
   v_ancora_velha constant text := E'     WHERE sr.promocao_status = \'pendente\'\n    UNION ALL';
   v_ancora_nova  constant text := E'     WHERE sr.promocao_status = \'pendente\'\n'
-                                  E'       AND sr.sync_type IS DISTINCT FROM \'preparations\'\n    UNION ALL';
+                                  || E'       AND sr.sync_type IS DISTINCT FROM \'preparations\'\n    UNION ALL';
   v_md5   text := (SELECT md5(p.prosrc) FROM pg_proc p WHERE p.oid = 'public.tint_promocao_tick()'::regprocedure);
   v_def   text;
 BEGIN
@@ -783,6 +783,8 @@ BEGIN
   END IF;
 END
 $tick$;
+-- O REPLACE preserva o ACL; reafirmar o fechamento (idempotente) não depende disso.
+REVOKE EXECUTE ON FUNCTION public.tint_promocao_tick() FROM PUBLIC, anon, authenticated;
 
 -- ── 13. Cron do consumidor (statement_timeout no COMANDO: o SET na função não vale pro statement) ─
 SELECT cron.unschedule('tint-preparacoes-tick')

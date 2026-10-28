@@ -637,7 +637,11 @@ SELECT _t_assert('P12.' || m, _t_recusou(('c2000000-0000-0000-0000-00000000000' 
  ORDER BY i;
 SELECT _t_assert('P12.nada_gravado', (SELECT count(*) FROM tint_consumo_preparacao) = 0
   AND (SELECT count(*) FROM tint_consumo_extracoes) = 0
-  AND (SELECT count(*) FROM tint_sync_runs WHERE sync_type = 'preparations' AND promocao_tentativas <> 1) = 0);
+  AND (SELECT count(*) FROM tint_sync_runs WHERE sync_type = 'preparations' AND promocao_status IS NOT NULL
+         AND promocao_tentativas <> 1) = 0,
+  (SELECT count(*) FROM tint_consumo_preparacao)::text || '/' || (SELECT count(*) FROM tint_consumo_extracoes)::text
+  || '/' || (SELECT string_agg(id::text || ':' || promocao_tentativas || ':' || COALESCE(promocao_status, '-'), ' ')
+               FROM tint_sync_runs WHERE sync_type = 'preparations' AND promocao_tentativas <> 1));
 SQL
 }
 
