@@ -1,5 +1,11 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { type BancoTitulos, buscarTitulosCaixa, buscarTitulosCompetencia, carregarBaixaMap } from "./titulos-dre.ts";
+import {
+  type BancoTitulos,
+  buscarTitulosCaixa,
+  buscarTitulosCompetencia,
+  carregarBaixaMap,
+  type ClienteRpcBaixas,
+} from "./titulos-dre.ts";
 // Gate da SONDA, não da edge: o `validateCaller` do handler ACEITA `x-cron-secret`, mas exige o
 // client Supabase — que só nasce depois do ponto onde a sonda tem de responder. Por isso ela vem
 // antes, com gate próprio (ver versao.ts, lista GATE_PROPRIO do gate de contrato).
@@ -1769,8 +1775,8 @@ async function calcularDRE(
   // No caixa, a data de baixa derivada (v_titulo_baixas) é a data EFETIVA do título;
   // fallback p/ vencimento ("estimado") onde não houver. baixaMap throw em erro (parcial
   // reintroduz double-count). Competência não usa (bucketiza por emissão).
-  const baixaMapCR = regime === "caixa" ? await carregarBaixaMap(db as unknown as BancoTitulos, company, "CR") : new Map<number, string>();
-  const baixaMapCP = regime === "caixa" ? await carregarBaixaMap(db as unknown as BancoTitulos, company, "CP") : new Map<number, string>();
+  const baixaMapCR = regime === "caixa" ? await carregarBaixaMap(db as unknown as ClienteRpcBaixas, company, "CR") : new Map<number, string>();
+  const baixaMapCP = regime === "caixa" ? await carregarBaixaMap(db as unknown as ClienteRpcBaixas, company, "CP") : new Map<number, string>();
   const codigosNoMes = (map: Map<number, string>) =>
     [...map.entries()].filter(([, d]) => d >= inicioMes && d < fimMes).map(([c]) => c);
 

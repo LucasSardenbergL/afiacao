@@ -145,3 +145,61 @@ o offset pular uma sobrevivente, e o título ia para o mês errado no DRE-caixa.
     igual, coerente com uma mudança que só afeta baixas.
 - O `net._http_response` da rodada já tinha sido limpo pelo TTL do pg_net quando li. A evidência
   HTTP é o `fin_sync_log` `complete`, gravado pela própria edge.
+
+### Mapa de baixas por RPC única (v1.8, 2026-10-26)
+
+O keyset da v1.7 deixou de pular baixa, mas cada página ainda reavaliava `v_titulo_baixas`
+INTEIRA: o CTE `mov` é materializado sobre `fin_movimentacoes` sem pushdown de company.
+Medido em prod (psql-ro, 2026-10-26):
+
+- Na view: colacor 28.931 CR + 11.566 CP (29 + 12 páginas), oben 13.155 + 2.827, colacor_sc
+  1.040 + 836. O EXPLAIN ANALYZE dá 512–619 ms por página, inclusive na colacor_sc, que paga a varredura
+  de todas as empresas.
+- No `fin_sync_log` (`calcular_dre`, regime caixa), o máximo por dia da colacor foi de 37–52 s, com **73 s
+  em 25/10**. Em **22/10, 4 das 6 chamadas de caixa falharam** com
+  `FalhaLeituraCritica: v_titulo_baixas CR/<empresa> falhou (código 57014)` nas três empresas.
+  O DRE-caixa daquele dia não foi gravado (fail-closed funcionou, mas o snapshot ficou velho).
+- O corpo das RPCs, rodado inline para a colacor, leva 0,91 s no CR e 0,75 s no CP, contra ~25 s
+  das 41 páginas.
+
+A mudança:
+
+- A CR passa a ser lida pela `fin_titulo_baixas_cr_mapa`, já em prod desde o #3237.
+- A CP ganhou a irmã `fin_titulo_baixas_cp_mapa` (migration `20261026220000`), com o ramo CP verbatim
+  do viewdef (md5 `57e98392…`) e `company` dentro do `mov`. Leva LOCK, PRE por md5, guarda P0001
+  em runtime, A6 de igualdade com a view e EXECUTE só para service_role. A prova PG17 em
+  `db/test-fin-titulo-baixas-cp-mapa.sh` passou em C e pt_BR, com 9 sabotagens vermelhas.
+- Aplicada no envelope em 2026-10-26. Validação por fora, via psql-ro: o `md5(prosrc)` bate com o
+  arquivo, a função é INVOKER, anon/authenticated ficaram sem EXECUTE e service_role tem, e o corpo
+  inline é idêntico à view nas 3 empresas (11.566 / 2.827 / 836 linhas, 0 de diferença).
+- `carregarBaixaMap` faz uma chamada por (empresa, tipo) e valida o envelope fail-closed. Não reusa
+  `_shared/baixas-cr.ts` para não mudar o fingerprint do cashflow-engine e do valor-cockpit (seriam
+  2 deploys sem mudança de comportamento). O challenge do Codex não trouxe achado de semântica nem de
+  cópia. Os dois P3 foram adotados: código repetido virou MALFORMADA (o keyset já recusava) e a data
+  passou a ser validada no calendário. O teste de data pegou um bug real, porque `toISOString`
+  lançava RangeError fora do domínio fechado.
+- Ordem de deploy: migration → edge. A v1.8 sem a RPC fecharia em `PGRST202`/`42883`, sem gravar
+  nada.
+
+#### Deploy (v1.9, 2026-10-27) e prova de DRE-caixa idêntico
+
+- O `pendencias:pacote omie-financeiro` **recusou a v1.8** com exit 3: o nome da RPC era indireto
+  (`db.rpc(fonte, …)`), e o pré-flight só enxerga `.rpc("literal")`. A recusa é fail-closed. O
+  #3349 trocou para um nome literal por ramo, com VERSAO `v1.9-baixa-map-rpc-literal`; a v1.8 nunca
+  foi servida. Lição: **nome de RPC em edge é sempre literal no call-site.**
+- Linha de base B0, com a v1.7 no ar: 6 recálculos de caixa disparados como o cron (set/out × 3
+  empresas), todos `complete`. Depois, o deploy pelo pacote: o Lovable conferiu 13/13 hashes e não
+  editou nada. O `lovable-sensor-edicao` acusou `commit_sha` porque o único commit é a regeneração
+  tolerada do `types.ts`; nenhum arquivo de `supabase/` mudou. A sonda devolveu **DEPLOY
+  CONFIRMADO** (`v1.9-baixa-map-rpc-literal`, fonte `107566e8…`). Em seguida, B1 com o mesmo
+  disparo.
+
+| | colacor | oben | colacor_sc |
+|---|---|---|---|
+| v1.7 (keyset), por chamada | 39 s | 25 s | 9 s |
+| v1.9 (RPC), por chamada | 2,1 s | 1,7 s | 0,9 s |
+
+- **Resultado idêntico:** nas 6 linhas os 20 campos numéricos do snapshot são iguais. O `detalhamento`
+  difere só em `contrato.motor` (a versão da edge): com `motor` de volta para a v1.7, o md5 dele bate
+  com o B0 nas 6 linhas. As fontes não mudaram entre B0 e B1 (`count` e `max(updated_at)` de
+  `fin_movimentacoes`, `fin_contas_receber` e `fin_contas_pagar`).

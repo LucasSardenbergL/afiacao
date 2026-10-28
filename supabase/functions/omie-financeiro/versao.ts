@@ -24,7 +24,7 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("omie-financeiro");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.7-baixa-map-keyset";
+export const VERSAO = "v1.9-baixa-map-rpc-literal";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

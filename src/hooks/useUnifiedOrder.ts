@@ -9,6 +9,7 @@ import { usePricingEngine } from '@/hooks/usePricingEngine';
 import { usePriceHistory } from '@/hooks/usePriceHistory';
 import { useCart } from '@/hooks/unifiedOrder/useCart';
 import { nascerItemProduto } from '@/hooks/unifiedOrder/nascimento-item';
+import { codigoObenDoBuscarCliente } from '@/hooks/unifiedOrder/codigo-oben-busca';
 import { useCustomerSelection } from '@/hooks/unifiedOrder/useCustomerSelection';
 import { useProductCatalog } from '@/hooks/unifiedOrder/useProductCatalog';
 import { useClienteTier, useTierPrecoConfig } from '@/hooks/useClienteTier';
@@ -567,10 +568,20 @@ export function useUnifiedOrder() {
     let codigoCliente: number | null = null;
     if (customer.cnpj_cpf) {
       try {
-        const { data: omieResult } = await supabase.functions.invoke('omie-vendas-sync', {
+        const resposta = await supabase.functions.invoke('omie-vendas-sync', {
           body: { action: 'buscar_cliente', document: customer.cnpj_cpf, account: 'oben' },
         });
-        if (omieResult?.codigo_cliente) codigoCliente = omieResult.codigo_cliente;
+        // Contrato aninhado (`cliente.codigo_cliente`); erro do invoke — inclusive
+        // OMIE_LOOKUP_DIVERGENTE — mantém o código vazio e o submit segue fail-closed.
+        codigoCliente = codigoObenDoBuscarCliente(resposta);
+        if (resposta.error) {
+          logger.error('Omie customer lookup failed (AI flow)', {
+            mode: 'staff',
+            stage: 'ai_resolve_customer_omie',
+            customerCnpjCpf: maskDocument(customer.cnpj_cpf),
+            error: resposta.error,
+          });
+        }
       } catch (e) {
         logger.error('Failed to resolve customer via Omie (AI flow)', {
           mode: 'staff',

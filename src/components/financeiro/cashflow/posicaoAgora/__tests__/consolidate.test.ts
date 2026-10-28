@@ -8,6 +8,7 @@ function mk(o: Partial<CapitalDeGiro>): CapitalDeGiro {
     total_cr_aberto: 0,
     total_cp_aberto: 0,
     saldo_cc: 0,
+    saldo_cc_motivo: null,
     capital_giro: 0,
     capital_giro_liquido: 0,
     pmr: 0,
@@ -69,5 +70,18 @@ describe("buildConsolidated", () => {
     expect(c.pmr).toBe(10); // só a 1ª empresa pondera (a 2ª é null)
     expect(c.pmp).toBe(20);
     expect(c.ciclo_financeiro).toBe(-10);
+  });
+
+  // Plano v3, item 2: somar só as empresas com saldo seria um caixa parcial com cara de total.
+  it("UMA empresa com saldo CC indisponível → saldo, CG Líquido e Projeção consolidados indisponíveis, com o motivo", () => {
+    const c = buildConsolidated([
+      mk({ company: "oben", saldo_cc: 1000, capital_giro_liquido: 1500, saldo_projetado_30d: 900 }),
+      mk({ company: "colacor", saldo_cc: null, saldo_cc_motivo: "Saldo bancário indisponível: 1 de 15 conta(s) sem saldo do extrato.", capital_giro_liquido: null, saldo_projetado_30d: null, capital_giro: 40 }),
+    ])!;
+    expect(c.saldo_cc).toBeNull();
+    expect(c.capital_giro_liquido).toBeNull();
+    expect(c.saldo_projetado_30d).toBeNull();
+    expect(c.saldo_cc_motivo).toBe("colacor: Saldo bancário indisponível: 1 de 15 conta(s) sem saldo do extrato.");
+    expect(c.capital_giro).toBe(40); // CR − CP não depende do saldo bancário
   });
 });

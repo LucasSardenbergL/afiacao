@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **698** custom migrations totais
-- **2248** objetos esperados (criados por estas migrations)
+- **704** custom migrations totais
+- **2272** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 841
-  - `rls_policy`: 483
-  - `index`: 292
-  - `table`: 198
-  - `cron_job`: 197
+  - `function`: 852
+  - `rls_policy`: 485
+  - `index`: 297
+  - `table`: 200
+  - `cron_job`: 199
   - `view`: 125
-  - `trigger`: 108
+  - `trigger`: 110
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5676,6 +5676,59 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_staging_purge` | — |
 | `cron_job` | `cron.tint-staging-purge-diario` | — |
+
+### `20261026214720_tint_receita_versoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_receita_versoes_append_only` | — |
+| `function` | `public.tint_receita_versoes_capturar` | — |
+| `table` | `public.tint_receita_versoes` | — |
+| `index` | `public.uq_tint_receita_versoes_staging` | `tint_receita_versoes` |
+| `index` | `public.uq_tint_receita_versoes_saida` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_chave` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_receita_recebido` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only_trunc` | `tint_receita_versoes` |
+| `cron_job` | `cron.tint-receita-versoes-diario` | — |
+| `rls_policy` | `public.Staff can view tint_receita_versoes` | `tint_receita_versoes` |
+
+### `20261026214721_tint_arquivar_staging_fantasma.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261026220000_fin_titulo_baixas_cp_mapa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_titulo_baixas_cp_mapa` | — |
+
+### `20261027010000_radar_situacao_por_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_aplicar_situacao_pendente` | — |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-aplicar-situacao-diario` | — |
+
+### `20261027160000_radar_cadastro_conflitos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._radar_cadastro_conflito_gravar` | — |
+| `function` | `public.radar_registrar_cadastro_omie_v2` | — |
+| `function` | `public.radar_estado_cadastro_omie` | — |
+| `function` | `public.radar_registrar_conflito_cadastro` | — |
+| `function` | `public.radar_resolver_conflito_cadastro` | — |
+| `table` | `public.radar_cadastro_conflitos` | — |
+| `index` | `public.radar_cadastro_conflitos_aberto_uniq` | `radar_cadastro_conflitos` |
+| `rls_policy` | `public.radar_cadastro_conflitos_select_gestor` | `radar_cadastro_conflitos` |
+
+### `20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
 
 ## Próximos passos por status
 

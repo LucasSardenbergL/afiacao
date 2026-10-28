@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 698
+-- Total de custom migrations: 704
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -762,7 +762,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261021120500', 'radar_cadastro_omie_idempotente', '20261021120500_radar_cadastro_omie_idempotente.sql'),
   ('20261021175441', 'nfe_recebimento_manual_trilha', '20261021175441_nfe_recebimento_manual_trilha.sql'),
   ('20261021190000', 'fin_ic_venda_sem_cobranca', '20261021190000_fin_ic_venda_sem_cobranca.sql'),
-  ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql')
+  ('20261021203000', 'tint_purge_staging_fora_do_promote', '20261021203000_tint_purge_staging_fora_do_promote.sql'),
+  ('20261026214720', 'tint_receita_versoes', '20261026214720_tint_receita_versoes.sql'),
+  ('20261026214721', 'tint_arquivar_staging_fantasma', '20261026214721_tint_arquivar_staging_fantasma.sql'),
+  ('20261026220000', 'fin_titulo_baixas_cp_mapa', '20261026220000_fin_titulo_baixas_cp_mapa.sql'),
+  ('20261027010000', 'radar_situacao_por_cron', '20261027010000_radar_situacao_por_cron.sql'),
+  ('20261027160000', 'radar_cadastro_conflitos', '20261027160000_radar_cadastro_conflitos.sql'),
+  ('20261028000116', 'data_health_sync_state_erro_tolera_um_ciclo', '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -2976,7 +2982,31 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
   ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
-  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_capturar', ''),
+  ('tint_receita_versoes', 'table', 'public', 'tint_receita_versoes', ''),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_staging', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_saida', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_chave', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_receita_recebido', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', '_radar_cadastro_conflito_gravar', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_cadastro_omie_v2', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_estado_cadastro_omie', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
+  ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5238,7 +5268,31 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('fin_ic_venda_sem_cobranca', 'table', 'public', 'fin_ic_reconcile_rodadas', ''),
   ('fin_ic_venda_sem_cobranca', 'trigger', 'public', 'fin_ic_matches_guarda_sem_cobranca', 'fin_ic_matches'),
   ('tint_purge_staging_fora_do_promote', 'function', 'public', 'tint_staging_purge', ''),
-  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', '')
+  ('tint_purge_staging_fora_do_promote', 'cron_job', 'cron', 'tint-staging-purge-diario', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_append_only', ''),
+  ('tint_receita_versoes', 'function', 'public', 'tint_receita_versoes_capturar', ''),
+  ('tint_receita_versoes', 'table', 'public', 'tint_receita_versoes', ''),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_staging', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'uq_tint_receita_versoes_saida', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_chave', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'index', 'public', 'idx_tint_receita_versoes_receita_recebido', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'trigger', 'public', 'trg_tint_receita_versoes_append_only_trunc', 'tint_receita_versoes'),
+  ('tint_receita_versoes', 'cron_job', 'cron', 'tint-receita-versoes-diario', ''),
+  ('tint_receita_versoes', 'rls_policy', 'public', 'Staff can view tint_receita_versoes', 'tint_receita_versoes'),
+  ('fin_titulo_baixas_cp_mapa', 'function', 'public', 'fin_titulo_baixas_cp_mapa', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_aplicar_situacao_pendente', ''),
+  ('radar_situacao_por_cron', 'function', 'public', 'radar_avisar_lote', ''),
+  ('radar_situacao_por_cron', 'cron_job', 'cron', 'radar-aplicar-situacao-diario', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', '_radar_cadastro_conflito_gravar', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_cadastro_omie_v2', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_estado_cadastro_omie', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_registrar_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'function', 'public', 'radar_resolver_conflito_cadastro', ''),
+  ('radar_cadastro_conflitos', 'table', 'public', 'radar_cadastro_conflitos', ''),
+  ('radar_cadastro_conflitos', 'index', 'public', 'radar_cadastro_conflitos_aberto_uniq', 'radar_cadastro_conflitos'),
+  ('radar_cadastro_conflitos', 'rls_policy', 'public', 'radar_cadastro_conflitos_select_gestor', 'radar_cadastro_conflitos'),
+  ('data_health_sync_state_erro_tolera_um_ciclo', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -5266,7 +5320,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 155.
+-- Funções redefinidas com corpo extraível: 156.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5487,6 +5541,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 35, '20261005150000_data_health_vendas_empurradas_v2.sql', '5a8d9ac5032ebba773f3a986d742bcc3'),
   ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
   ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
+  ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -5847,6 +5902,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
+  ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
+  ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
   ('public', 'venda_fechar_desfechos', 2, '20261020194332_venda_cliente_historico_prova_dados.sql', '937c0dbb6bfb3428fcdbd64b25382f85'),
   ('public', 'venda_fechar_desfechos', 3, '20261021031000_venda_cliente_ondas23.sql', 'b054bddb2e0a53e18c2a6c19f6d2727c'),

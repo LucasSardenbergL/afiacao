@@ -599,6 +599,12 @@ db/test-radar-contagem-lote.sh              16  falsificar=12
 # avisado, "saíram" acumulando meses, ledger ausente, ou meio-estado após erro. Relógio controlado
 # (p_agora), esquema mínimo com os CHECKs de prod, cron de mentira.
 db/test-radar-avisar-lote.sh                23  falsificar=18
+# Radar: situação RFB aplicada por JOB, fora do request da edge (20261027010000; incidente 57014 do lote
+# 2026-09, #3321). Defeito aqui = lote aplicado 2× ou nunca re-aplicado após re-finalize, lote velho pendente
+# descartando lead que o mais novo diz ativo, erro engolido com marca de sucesso, aviso do lote saindo antes
+# dos descartes ou mudo para sempre se o job falha, bootstrap reaplicando lote já aplicado, job executável
+# fora do owner, cron sem statement_timeout. Aplica as 3 migrations inteiras; relógio controlado (p_agora).
+db/test-radar-situacao-por-cron.sh          31  falsificar=14
 # Tintométrico, watchdog da Fase 5 v4 (20261013210000): S2 vira RETIRADA NOVA pela fonte (chave-fonte
 # num snapshot APLICADO dos últimos 7 dias, ausente do último), S5 novo de FANTASMA (fórmula ativa que
 # a fonte não tem, sem staging posterior — cor nova não conta; relógio = created_at, nunca aplicado_em),
@@ -654,6 +660,14 @@ db/test-radar-cadastro-omie-confirmacao.sh  41  falsificar=11
 # pg_stat_activity): X/X, X/Y, Y/X, ROLLBACK de A, (A,K)×(B,K). 10 sabotagens: sem no-op, sem fence RD001, sem FOR
 # UPDATE, sem mapa RD002, sem índice, PRE aceita PROD, PÓS de md5, PRE sem ACL, TRAVA sem volatilidade, PÓS sem índice.
 db/test-radar-cadastro-omie-idempotente.sh  38  falsificar=10
+# Radar: CONFLITO de cadastro Omie persistido no SERVIDOR (20261027160000 — achado 3 do Codex no #3293). Defeito aqui
+# = o aviso de conflito some com o localStorage de uma aba, a retomada fabrica "recuperado" com o vínculo antigo, ou um
+# conflito é encerrado sem ninguém ter visto a ocorrência nova. Prova com DUAS sessões (bloqueio observado): v2×estado,
+# v2×v2, registrar×registrar, resolver×registrar nas duas ordens, ROLLBACK, TRAVA × recriação. 15 sabotagens: v2 sem
+# `ok`, v2 relança, v2 sem trava externa, estado sem FOR SHARE, sem bloqueio, sem re-conferência (2), sem dedupe,
+# resolver sem versão, RLS aberta, PÓS de ACL, INSERT direto aberto, PRE aceita qualquer v1, TRAVA sem volatilidade,
+# TRAVA sem lock.
+db/test-radar-cadastro-conflitos.sh  56  falsificar=15
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

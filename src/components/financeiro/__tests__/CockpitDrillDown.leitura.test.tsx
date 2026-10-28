@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { spBusinessDate } from '@/lib/time/sp-day';
 
 // M-05: o drill-down do cockpit lia com `.limit(500)`, somava no cliente e DESCARTAVA o `error`.
 // Falha virava "0 registros · Total: R$ 0,00", e 659 títulos atrasados viravam "500 registros" com
@@ -35,8 +36,9 @@ const cr = (i: number) => ({
   id: `cr-${i}`, company: 'colacor', nome_cliente: `Cliente ${i}`, numero_documento: `NF-${i}`,
   data_vencimento: '2026-02-01', status_titulo: 'ATRASADO', valor_documento: 1_000, valor_recebido: 0,
 });
-const conta = (i: number, saldo: number | null) => ({
-  id: `cc-${i}`, company: 'oben', banco: 'Banco', descricao: `Conta ${i}`, saldo_atual: saldo,
+// Saldo de extrato de HOJE em SP por padrão — a regra do total é a do KPI (`resumirSaldoContas`).
+const conta = (i: number, saldo: number | null, saldo_data: string | null = spBusinessDate(new Date())) => ({
+  id: `cc-${i}`, company: 'oben', banco: 'Banco', descricao: `Conta ${i}`, saldo_atual: saldo, saldo_data,
 });
 const TIMEOUT = { message: 'canceling statement due to statement timeout', code: '57014' };
 
@@ -105,6 +107,18 @@ describe('CockpitDrillDown — a leitura que falha ou não cabe na janela não v
     unmount();
 
     respostas = [{ data: [conta(1, 100), conta(2, null)], error: null, count: 2 }];
+    render(<CockpitDrillDown type="caixa" onClose={() => {}} />);
+    expect(await screen.findByText('2 registros · Total: —')).toBeTruthy();
+  });
+
+  // Plano v3, item 2: o drill dizia "Total: R$ X" ao lado do KPI "—" (o KPI já olhava saldo_data).
+  it('caixa com conta de saldo VELHO ou sem saldo_data (DEFAULT 0) tira o total — mesma regra do KPI', async () => {
+    respostas = [{ data: [conta(1, 100), conta(2, 50, '2026-01-02')], error: null, count: 2 }];
+    const { unmount } = render(<CockpitDrillDown type="caixa" onClose={() => {}} />);
+    expect(await screen.findByText('2 registros · Total: —')).toBeTruthy();
+    unmount();
+
+    respostas = [{ data: [conta(1, 100), conta(2, 0, null)], error: null, count: 2 }];
     render(<CockpitDrillDown type="caixa" onClose={() => {}} />);
     expect(await screen.findByText('2 registros · Total: —')).toBeTruthy();
   });

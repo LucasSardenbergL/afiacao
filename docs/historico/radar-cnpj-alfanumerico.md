@@ -202,3 +202,70 @@ para `omie-sync` v1.8-busca-confere-documento e `omie-vendas-sync` v1.25-busca-c
 - **Estado em prod (2026-10-21, PR #3291 → `f4eae81f3`):** as 3 camadas no ar, com evidência. **Edge** `omie-vendas-sync` v1.24-confirmacao-cadastro-servidor (a `main` já tinha a v1.23 do #3289): pacote `358487844f79` via MCP às 12:51:59Z, 30 sha256 conferidos contra `d670fb3f`, ledger **CONFERE**, sensor de edição **SEM_EDICAO**. **Migration** `20261021120000` aplicada pelo envelope MCP (2 tentativas anteriores com `ENOTFOUND`/`ECONNRESET` não chegaram a aplicar nada, conferido por psql-ro entre elas); 2ª testemunha psql-ro: md5 `b537f95a…`, SECURITY DEFINER + `search_path=public` + VOLATILE, dono `postgres`, ACL da RPC intacto, tabela com RLS, 0 policy, escrita só `service_role:INSERT` (`claude_ro`/`sandbox_exec*` só SELECT), `authz:claude-ro:prod` exit 0. **Front**: o build servido `c0b76360` (13:00Z, Publish de outra sessão) contém o merge. Sensor de uso: a 1ª linha do ledger — `SELECT count(*), max(confirmado_em) FROM omie_cliente_confirmacoes` (psql-ro); hoje 0.
 - **Fora do escopo (registrado, não atacado):** `registrar_contato_radar(p_acao='virou_cliente')` segue mudando o **status** de prospecção sem confirmação do ERP — é marcação manual de funil, não `ja_cliente`; e a gramática de rótulo de `documentoParaCadastro` (`_shared/cnpj-alfanumerico.ts`) é outra sessão.
 
+## Codex retroativo do #3311 (2026-10-27, `gpt-6-astra` · max · 3219s · 156.653 tokens)
+
+A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
+
+- **ALTO (confirmado e corrigido, `omie-sync` v1.9 / `omie-vendas-sync` v1.26):** o helper normalizava o documento
+  DEVOLVIDO com `normalizarDocumento` (só-dígitos). Entrada válida `CPF: 123.456.789-09` com retorno simulado
+  `{"codigo_cliente_omie":777,"cnpj_cpf":"123ABC45678909"}` → as duas actions respondiam 200 com `777`. A gramática
+  estrita protegia só a ENTRADA. **Correção:** `lookupDevolveuOMesmoDocumento` passa o retorno por
+  `documentoParaCadastro` (não-string ou recusa → `false`). Testes: retornos com letra, símbolo e dígito fullwidth não
+  casam; retornos válidos (máscara, rótulo, alfanumérico minúsculo) seguem casando. Falsificação com controle verde
+  em `LC_ALL=C` e `pt_BR.UTF-8`: só-dígitos, sem `typeof`, `catch → true` ficam vermelhos. A guarda `r.length > 0`
+  ficou verde, porque `documentoParaCadastro` já lança sem dígito, e saiu.
+- **Confirmado sem regressão:** o 500 fora do `try` preserva CORS e contrato; o consumidor (`getResult`) trata a
+  divergência como falha e não chama criação; o caminho novo do helper passa no `deno check` e no `test:edges`.
+- **Pré-existentes, fora deste PR (registrados):**
+  - `useUnifiedOrder.ts:573` (fluxo IA, Oben) lê `omieResult.codigo_cliente`, mas a action devolve
+    `omieResult.cliente.codigo_cliente`. Com isso, até um lookup Oben bem-sucedido vira código `0` e o pedido Oben
+    fica bloqueado no submit (falha FECHADA, não código errado).
+    **Corrigido (front, só Publish):** helper puro `codigoObenDoBuscarCliente`
+    (`src/hooks/unifiedOrder/codigo-oben-busca.ts`) lê `cliente.codigo_cliente`; `error` do invoke (inclusive
+    `OMIE_LOOKUP_DIVERGENTE`), `cliente: null`, código plano ou não inteiro positivo → `null`, e o submit segue
+    fail-closed. O erro do invoke agora é logado (antes era descartado em silêncio: o `invoke` não lança).
+    `codigo_vendedor` ficou `null` (como antes): no `criar_pedido` ele é advisory, porque a edge usa o
+    `ident.codigo_vendedor` derivado do documento (`deriveOmieAccountIdentity`). Preencher não muda o PV e só
+    mexeria na atribuição do `criar_perfil_local`, fora do escopo. Os outros consumidores conferem: `useCustomerSelection` lê
+    `data.cliente.codigo_cliente` (colacor), e `criar_cliente` / `buscar_cliente_por_documento` são planos de fato.
+    Teste: helper + amarração (hook usa o helper; edge devolve `{ success, cliente }`). Falsificação com controle
+    verde: acesso antigo no helper, acesso antigo no hook e `error` ignorado ficam vermelhos.
+    **No ar (#3366, squash `118733313`):** Publish feito pelo founder em 2026-10-27;
+    `monitor-deploy.sh --pr 3366` exit 0 `PR_NO_AR`, com o ar carimbando `b4b32d74` (= `origin/main`). O
+    `git log 118733313..origin/main` dos dois arquivos veio vazio: o sync do Lovable não reverteu nada.
+  - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
+    O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
+
+
+**Deploy da correção — FEITO pela sessão (PR #3359 mergeado 15:46Z em `75dbcc8`):** colagem do
+`pendencias:prompt`, 34/34 hashes, 2× **Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope:
+relé `omie-vendas-sync` (#729) e `--so-disparo` `omie-sync` (#731, DEPLOY CONFIRMADO). `pendencias:deploy`:
+**CONFERE** para `omie-sync` v1.9-retorno-documento-estrito e `omie-vendas-sync` v1.26-retorno-documento-estrito.
+Sensor: SEM_EDICAO. **A revisão independente do #3311 está fechada.**
+
+## Busca por documento da Afiação: só o EOF é ausência (2026-10-27, `omie-sync` v1.10)
+
+Fecha o item pré-existente que o Codex retroativo do #3311 deixou: `buscar_cliente_por_documento` transformava
+todo erro em `codigo_cliente: null`, então um 503 ou uma credencial recusada viravam "não existe".
+`./busca-documento.ts` decide o desfecho das DUAS leituras de `ListarClientes` por documento da edge:
+
+- EOF do Omie ("Não existem registros para a página", `classificarFaultstring` = `fim_de_pagina`) ou página
+  vazia → ausência;
+- resposta sem `clientes_cadastro` em lista (`{}`, `{"error":…}`, objeto) → `OMIE_RESPOSTA_MALFORMADA`
+  (antes: "não existe");
+- qualquer outro erro → relança (500 na busca, `success:false` no cadastro).
+
+**Codex (`gpt-6-astra` · max · 209s · 100.979 tokens):** nenhum ALTO nem regressão. O 500 novo não induz
+autocadastro: `getResult` marca a falha e o preflight do envio bloqueia o pedido sem código de Afiação. Dois
+MÉDIOS pré-existentes, os dois reproduzidos e **corrigidos aqui**:
+
+1. resposta malformada virava ausência;
+2. a reconsulta do `criar_cliente_afiacao` recebia o EOF, caía no `catch` e devolvia `success:false`, então
+   **cliente realmente novo nunca era cadastrado na Afiação**. Agora o EOF segue para o `IncluirCliente`.
+
+**Prova:** 5 testes Deno do helper, com a chamada injetada, casando a marca do erro. Falsificação: 4
+sabotagens vermelhas com controle verde em `LC_ALL=C` e `pt_BR.UTF-8` (sem checagem de lista, EOF engolindo
+tudo, sem EOF, classe errada).
+
+**BAIXO registrado:** não há teste de handler; o helper concentra a decisão para que restaurar o `catch`
+antigo exija desfazer a chamada a ele.

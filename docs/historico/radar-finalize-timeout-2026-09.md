@@ -21,9 +21,28 @@
 
 2ª testemunha (psql-ro, outra conexão): lote `complete`; 56.952 `descartado` = 56.952 linhas de `radar_contatos` do usuário de sistema `…ad0f`; foto 2026-09: 02=496.430 · 04=42.943 · 08=14.183 · 03=79 · 01=9; 2.815 linhas com `alertado_em`; alerta 554 `pendente_notificacao` (o `dispatch-notifications` envia). O aviso do lote 2026-09 (`radar_avisar_lote`) sai no cron das 06:45 UTC seguinte, depois do score das 06:30.
 
-## Pendência — o próximo lote cai do mesmo jeito
+## Pendência — o próximo lote cai do mesmo jeito → **resolvida (2026-10-27)**
 
-O passo (a) grava `rfb_situacao_lote` em **toda** empresa a cada lote (o lote muda mesmo quando a situação não muda) → ~550k UPDATEs por mês dentro do request da edge. O lote 2026-10 (cron de segunda 26/10 06:00 UTC) vai repetir o 57014. Correção a decidir (não feita aqui): tirar `radar_aplicar_situacao` do request da edge (finalize só enfileira; um job pg_cron, que roda como `postgres` com `statement_timeout` explícito, aplica) e/ou aplicar em fatias por faixa de CNPJ. Até lá, o caminho de recuperação é este: as 2 metades da foto + o finalize, trocando o lote nos arquivos.
+O passo (a) grava `rfb_situacao_lote` em **toda** empresa a cada lote (o lote muda mesmo quando a situação não muda) → ~550k UPDATEs por mês dentro do request da edge. Correção escolhida pelo founder (opção 1): a aplicação saiu do request.
+
+- **Migration `20261027010000_radar_situacao_por_cron.sql`** (corpo de apply `db/2026-10-27-radar-situacao-por-cron.sql`): `radar_ingest_state.situacao_aplicada_fechamento/_em/_resultado` (1 escritor) + `radar_aplicar_situacao_pendente(p_agora)` + cron `radar-aplicar-situacao-diario` `5 6 * * *` com `SET statement_timeout = '30min'` (≈ 6× o medido; roda como `postgres`, sem o 8s do PostgREST). Pendente ⇔ `complete` e `situacao_aplicada_fechamento ≠ finalizado_em` — chave por IGUALDADE do valor que a edge grava, nunca comparação de relógios Deno × banco.
+- **Edge `radar-ingest` v1.3-situacao-por-cron**: o `finalize` recruza, conta e fecha (`complete`), devolve `situacao_aplicacao: "cron"`; não chama mais `radar_aplicar_situacao`.
+- **`radar_avisar_lote`** espera a aplicação: o e-mail não sai antes dos descartes/alerta. Se a aplicação não vier em 30 h do fechamento (job falhando OU desativado; ≥ 1 retentativa), o aviso sai assim mesmo, severidade `atencao`, dizendo que a situação NÃO foi aplicada — a pendência nunca fica muda (sem sensor novo, sem tocar o trio da Sentinela).
+- Consequência aceita: descarte de lead baixado e alerta de cliente irregular saem na manhã **seguinte** ao finalize (06:05 UTC; a carga de segunda fecha ~08:00–14:00 UTC). Locks de linha em `radar_empresas` por ~5 min, de madrugada de propósito.
+- **Codex (challenge, 2026-10-27) — incorporado:** (P1) com 2 lotes pendentes, aplicar o mais velho primeiro descartaria lead que o mais novo diz ativo (a guarda `vigente` compara com a foto já aplicada) → só o lote **mais novo** é aplicado; o pendente mais velho é marcado `superado_por`. (P1) job falhando todo dia deixaria o aviso preso e a saúde verde → o aviso de 30 h acima. (P2) relógios distintos → a chave por igualdade. **Medido e não trocado:** "recruzar no finalize passa de 8s" — o tick leva 12,6s, mas são 2 `count(*)` (~4,8s cada) + o recruzar (~3,3s de leitura); as 2 contagens do finalize medem 1,4s e 2,2s. Cabem, com margem ~2× — risco conhecido, não bloqueio; se um dia estourar, o lote vira `error` ALTO (não silencioso) e o finalize re-roda.
+- Prova PG17 `db/test-radar-situacao-por-cron.sh` (nucleo-ci, 31 asserts, `--falsificar` 14/14, `LC_ALL=C` e `pt_BR.UTF-8` — o 1º `pt_BR` pegou um `sed` casando o prefixo `NOTICE:` que vira `AVISO:`).
+
+O caminho de recuperação manual acima (2 metades da foto + finalize) continua válido se o job falhar: hoje basta re-rodar `SELECT public.radar_aplicar_situacao_pendente();` como `postgres` com `statement_timeout` folgado.
+
+### No ar (2026-10-27)
+
+- Migration aplicada pelo `db:aplicar` (recibo #714, ensaio antes); 2ª testemunha `psql-ro`: cron 241 `5 6 * * *` ativo `postgres` com o comando exato, md5 vivo = repo (`a99fd7db…` job, `0c52be46…` aviso), ACL do job só owner, 2026-05/08/09 marcados pelo bootstrap. (Esperou ~45 min a trava do `db:aplicar`, presa por um backend zumbi de outra sessão — não foi contornada.)
+- Edge `radar-ingest` v1.3 deployada pelo pacote `64466fb3e7d1` (só esta edge: as 3 financeiras pendentes na mesma hora são de outras entregas e uma delas tinha pré-condição não medida). Agente: 7/7 hashes de `7c25454cc`, 401 com credencial falsa. Sonda (`db/2026-10-27-sonda-disparo-radar-ingest-v1.3.sql`, recibo #720): **DEPLOY CONFIRMADO**, `v1.3-situacao-por-cron`, fonte `cac28750…`; `pendencias:deploy` → `radar-ingest CONFERE`.
+- Sensor de edição: `EDICAO_DETECTADA` só porque a resposta trouxe `edit_id`/`commit_sha` — o commit (`0b836c1f5`, e o `02b4d7d57`) é a regeneração de `src/integrations/supabase/types.ts` com as 3 colunas novas de `radar_ingest_state`, arquivo GERADO da lista tolerada (0 commits fora dela). Não revertido: reverter deixaria o tipo atrás do banco.
+
+### Lote 2026-10 (segunda 26/10) — caiu ANTES da edge, por outro motivo
+
+A Action `radar-carga-mensal` (run 40321590205, agendada 06:00, iniciou 12:18 UTC) falhou no `unzip` de `Estabelecimentos4.zip`: download truncado (1 min contra ~9 min dos anteriores; "End-of-central-directory signature not found"). O lote 2026-10 nem foi aberto na edge (`status` só lista 2026-05/08/09) — o 57014 não chegou a acontecer. Re-disparar a carga só depois do deploy da edge v1.3.
 
 ## Lições
 

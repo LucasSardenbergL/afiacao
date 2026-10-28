@@ -51,7 +51,26 @@ Um subagente Opus revisou o diff com a `RÉGUA:` escrita. Achados que entraram:
 
 Ficaram de fora: a trava contra reenviar o `Concluir` depois de um indeterminado (P2) e a reconsulta de confirmação depois do `Concluir` (P2). A falsificação da correção D achou um teste verde pelo motivo errado: no teste do teto, a NF repetia em todas as páginas, então quem recusava era a guarda de duplicata. O fixture foi corrigido.
 
-## Provas
+## Codex retroativo (2026-10-27, gpt-6-astra · max · 391s · 147.418 tokens)
+
+O parecer achou 3 P1, sem P0, e disse "reverter/corrigir já". Cada um, com o que foi feito:
+
+- **P1-1, procede, corrigido na v2.1.** Com a mesma unidade, um `nQtdeRecebida = 0` explícito virava "ausente" e a edge mandava a NF inteira. Zero agora é número, e a divergência recusa.
+- **P1-3, procede, corrigido na v2.1.** A NF cancelada era descartada antes do teste de unicidade. Quem digitasse o número da cancelada de A concluía a NF aberta de B. A cancelada agora conta para a ambiguidade, e uma cancelada sozinha recusa.
+- **P1-2, follow-up.** `nQtdeRecebida` é um campo mutável com mais de um escritor (a v1 desta edge e a gêmea `omie-nfe-recebimento`, que não enxerga a conversão porque o importador grava `unidade_estoque` nulo). Um número diferente do da NF, portanto, não prova que a conversão veio do cadastro.
+  - Exposição medida no dia: 0 recebimentos da gêmea com `Alterar` feito e sem conclusão, e 0 linhas na trilha.
+  - A correção precisa provar a origem do valor, por exemplo cruzando com a razão histórica do produto. Um guarda pela assinatura `Math.round(NF)` recusaria latas legítimas de 0,9 L (2,7 L → 3 UN).
+- **"Reverter": não.** A v1 é pior em todos os eixos.
+
+## Deploy
+
+- **v2.0** (#3334): no ar em 2026-10-27 00:29Z, conferida pela sonda.
+- **v2.1** (#3354): enviada pela sessão via MCP às 14:30Z, com o pacote `6a992d5eb664` (15/15 hashes).
+  - O agente respondeu "No files were edited." e recusou as duas tentativas da plataforma de "consertar" o `src/sw/releases.ts`.
+  - O `lovable-sensor-edicao` deu SEM_EDICAO.
+  - A sonda (`db/2026-10-27-sonda-disparo-process-nfe-v21.sql`, `db:aplicar` #724) respondeu DEPLOY CONFIRMADO às 14:37:59Z, e o `pendencias:deploy` mostra a `process-nfe` conferindo na v2.1.
+
+
 
 - `db/test-nfe-recebimento-manual-trilha.sh` (PG17, default privileges reproduzido): 19 asserts verdes. `--falsificar` deu 8/8 sabotagens vermelhas no assert declarado, em `LC_ALL=C` e em `pt_BR.UTF-8`.
 - `process-nfe/fluxo_test.ts` + `regra-quantidade_test.ts` (Deno `--no-remote`): 25 testes. 15/15 sabotagens ficaram vermelhas no teste delas:
@@ -64,7 +83,9 @@ Ficaram de fora: a trava contra reenviar o `Concluir` depois de um indeterminado
 ## Fora do escopo (follow-ups)
 
 - **Reenvio depois de um indeterminado** (P2 do revisor): a guarda N/N barra a repetição quando o Omie já marcou `cRecebido = S`, mas não se ele demorar a marcar. Falta recusar quando a trilha tem `concluir_recebimento/intencao` sem desfecho para o mesmo `n_id_receb`. Também falta a reconsulta de confirmação depois do `Concluir`, como a gêmea faz.
+- **Origem da quantidade convertida** (P1-2 do Codex retroativo): cruzar com a razão histórica do produto (`sku_leadtime_history`) antes de aceitar `conversao_do_omie`. Junto, a cegueira de conversão da gêmea (`detectarConversao` lê `unidade_estoque` nulo).
 - **Rótulos de unidade sinônimos** (L × LT, UN × UND) caem em "conversão com NF = Omie" e são recusados. Se aparecer na trilha, o conserto é uma lista de sinônimos na regra.
+- **Decisão do founder (2026-10-27): o `omie-nfe-reconcile` fica LIGADO.**
 - **`nfe_recebimentos` não é atualizada** pela `process-nfe`. Quem fecha no painel a NF recebida pela aba Manual é o `omie-nfe-reconcile` (cron de hora em hora, seg–sáb), por isso desligá-lo não é neutro.
 - O histórico da tela continua no `localStorage`. Ler a trilha na tela fica para depois.
 - O rateio de departamento (`nQtdeNFe × (nValorUnitario || nValorTotal)`) foi mantido como estava.

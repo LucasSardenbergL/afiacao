@@ -25,19 +25,24 @@ export function itensGravaveis(body: Record<string, unknown>): number {
   return n;
 }
 
-/** O ack de um lote sem item gravável: o mesmo corpo de antes, sem sync_run_id. */
-export function ackSemRun(idempotencyKey: string | null): Record<string, unknown> {
+/** O ack de um lote sem run: o mesmo corpo de antes, sem sync_run_id. Também o do reenvio idêntico de
+ *  /formulas (formula-identica.ts), com `recebidos` = ignorados e o motivo próprio. */
+export function ackSemRun(
+  idempotencyKey: string | null,
+  motivo = "nenhuma entidade gravável no lote",
+  recebidos = 0,
+): Record<string, unknown> {
   return {
     ok: true,
     sync_run_id: null,
     batch_id: idempotencyKey || null,
     idempotent_replay: false,
-    received_count: 0,
+    received_count: recebidos,
     inserted_count: 0,
     updated_count: 0,
-    ignored_count: 0,
+    ignored_count: recebidos,
     error_count: 0,
     errors: [],
-    sem_run: "nenhuma entidade gravável no lote",
+    sem_run: motivo,
   };
 }

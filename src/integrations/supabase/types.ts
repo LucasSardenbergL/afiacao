@@ -11829,6 +11829,63 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_cadastro_conflitos: {
+        Row: {
+          cnpj: string
+          cnpj_do_codigo: string | null
+          codigo_recebido: string | null
+          codigo_vinculado: string | null
+          criado_em: string
+          criado_por: string
+          detalhe: string
+          id: number
+          motivo: string
+          nota_resolucao: string | null
+          ocorrencias: number
+          resolvido_em: string | null
+          resolvido_por: string | null
+          ultima_em: string
+          ultimo_por: string
+          versao: number
+        }
+        Insert: {
+          cnpj: string
+          cnpj_do_codigo?: string | null
+          codigo_recebido?: string | null
+          codigo_vinculado?: string | null
+          criado_em?: string
+          criado_por: string
+          detalhe: string
+          id?: never
+          motivo: string
+          nota_resolucao?: string | null
+          ocorrencias?: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          ultima_em?: string
+          ultimo_por: string
+          versao?: number
+        }
+        Update: {
+          cnpj?: string
+          cnpj_do_codigo?: string | null
+          codigo_recebido?: string | null
+          codigo_vinculado?: string | null
+          criado_em?: string
+          criado_por?: string
+          detalhe?: string
+          id?: never
+          motivo?: string
+          nota_resolucao?: string | null
+          ocorrencias?: number
+          resolvido_em?: string | null
+          resolvido_por?: string | null
+          ultima_em?: string
+          ultimo_por?: string
+          versao?: number
+        }
+        Relationships: []
+      }
       radar_contatos: {
         Row: {
           acao: string
@@ -12007,6 +12064,9 @@ export type Database = {
           iniciado_em: string
           mes_referencia: string
           novos: number | null
+          situacao_aplicada_em: string | null
+          situacao_aplicada_fechamento: string | null
+          situacao_resultado: Json | null
           status: string
           total_recebido: number
         }
@@ -12017,6 +12077,9 @@ export type Database = {
           iniciado_em?: string
           mes_referencia: string
           novos?: number | null
+          situacao_aplicada_em?: string | null
+          situacao_aplicada_fechamento?: string | null
+          situacao_resultado?: Json | null
           status?: string
           total_recebido?: number
         }
@@ -12027,6 +12090,9 @@ export type Database = {
           iniciado_em?: string
           mes_referencia?: string
           novos?: number | null
+          situacao_aplicada_em?: string | null
+          situacao_aplicada_fechamento?: string | null
+          situacao_resultado?: Json | null
           status?: string
           total_recebido?: number
         }
@@ -16094,6 +16160,84 @@ export type Database = {
           created_at?: string | null
           descricao?: string
           id?: string
+        }
+        Relationships: []
+      }
+      tint_receita_versoes: {
+        Row: {
+          account: string
+          agent_version: string | null
+          capturado_em: string
+          cod_produto: string
+          cor_id: string
+          evento: string
+          id: string
+          id_base: string
+          id_embalagem: string | null
+          itens: Json | null
+          motivo: string | null
+          nome_cor: string | null
+          personalizada: boolean
+          preco_final: number | null
+          recebido_em: string
+          receita_hash: string | null
+          snapshot_id: string | null
+          staging_formula_id: string | null
+          staging_linha: Json | null
+          store_code: string
+          subcolecao: string
+          sync_run_id: string | null
+          volume_final_ml: number | null
+        }
+        Insert: {
+          account: string
+          agent_version?: string | null
+          capturado_em?: string
+          cod_produto: string
+          cor_id: string
+          evento: string
+          id?: string
+          id_base: string
+          id_embalagem?: string | null
+          itens?: Json | null
+          motivo?: string | null
+          nome_cor?: string | null
+          personalizada: boolean
+          preco_final?: number | null
+          recebido_em: string
+          receita_hash?: string | null
+          snapshot_id?: string | null
+          staging_formula_id?: string | null
+          staging_linha?: Json | null
+          store_code: string
+          subcolecao?: string
+          sync_run_id?: string | null
+          volume_final_ml?: number | null
+        }
+        Update: {
+          account?: string
+          agent_version?: string | null
+          capturado_em?: string
+          cod_produto?: string
+          cor_id?: string
+          evento?: string
+          id?: string
+          id_base?: string
+          id_embalagem?: string | null
+          itens?: Json | null
+          motivo?: string | null
+          nome_cor?: string | null
+          personalizada?: boolean
+          preco_final?: number | null
+          recebido_em?: string
+          receita_hash?: string | null
+          snapshot_id?: string | null
+          staging_formula_id?: string | null
+          staging_linha?: Json | null
+          store_code?: string
+          subcolecao?: string
+          sync_run_id?: string | null
+          volume_final_ml?: number | null
         }
         Relationships: []
       }
@@ -20801,6 +20945,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      _radar_cadastro_conflito_gravar: {
+        Args: {
+          p_cnpj: string
+          p_codigo_recebido: string
+          p_detalhe: string
+          p_motivo: string
+          p_uid: string
+        }
+        Returns: Json
+      }
       _registrar_ciclo_oportunidade: {
         Args: { p_detalhes: Json; p_inicio: string }
         Returns: undefined
@@ -21702,6 +21856,7 @@ export type Database = {
       fin_sync_retry_tick: { Args: never; Returns: undefined }
       fin_sync_watchdog_check: { Args: never; Returns: undefined }
       fin_sync_watchdog_diario: { Args: { p_agora?: string }; Returns: string }
+      fin_titulo_baixas_cp_mapa: { Args: { p_company: string }; Returns: Json }
       fin_titulo_baixas_cr_mapa: { Args: { p_company: string }; Returns: Json }
       fin_user_can_access: {
         Args: { check_company?: string }
@@ -22443,6 +22598,10 @@ export type Database = {
         Args: { p_agora?: string; p_lote: string }
         Returns: Json
       }
+      radar_aplicar_situacao_pendente: {
+        Args: { p_agora?: string }
+        Returns: Json
+      }
       radar_atribuir_tarefa: {
         Args: { p_cnpj: string; p_dias_retomada?: number }
         Returns: Json
@@ -22483,6 +22642,7 @@ export type Database = {
           nome: string
         }[]
       }
+      radar_estado_cadastro_omie: { Args: { p_cnpj: string }; Returns: Json }
       radar_irmaos_por_raiz: {
         Args: { p_cnpjs: string[] }
         Returns: {
@@ -22523,6 +22683,27 @@ export type Database = {
           p_codigo_cliente: string
           p_ja_existia?: boolean
         }
+        Returns: Json
+      }
+      radar_registrar_cadastro_omie_v2: {
+        Args: {
+          p_cnpj: string
+          p_codigo_cliente: string
+          p_ja_existia?: boolean
+        }
+        Returns: Json
+      }
+      radar_registrar_conflito_cadastro: {
+        Args: {
+          p_cnpj: string
+          p_codigo_recebido: string
+          p_detalhe: string
+          p_motivo: string
+        }
+        Returns: Json
+      }
+      radar_resolver_conflito_cadastro: {
+        Args: { p_id: number; p_nota: string; p_versao_vista: number }
         Returns: Json
       }
       radar_rfb_descricao: {
@@ -23195,6 +23376,7 @@ export type Database = {
         }
         Returns: number
       }
+      tint_receita_versoes_capturar: { Args: never; Returns: Json }
       tint_run_reconciliation: {
         Args: { p_sync_run_id: string }
         Returns: Json

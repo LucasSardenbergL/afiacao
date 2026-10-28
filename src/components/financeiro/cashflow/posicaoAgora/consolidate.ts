@@ -18,15 +18,21 @@ export function buildConsolidated(data: CapitalDeGiro[]): CapitalDeGiro | null {
     return w > 0 ? Math.round(elig.reduce((s, d) => s + (d[valKey] as number) * d[wKey], 0) / w) : null;
   };
   const pmrWeighted = weighted('pmr', 'total_cr_aberto');
+  // Saldo CC: UMA empresa indisponível torna o consolidado indisponível — somar só as outras
+  // seria um caixa parcial com cara de total (ausente ≠ zero). Os motivos vêm juntos.
+  const somaOuNull = (key: 'saldo_cc' | 'capital_giro_liquido' | 'saldo_projetado_30d'): number | null =>
+    data.some((d) => d[key] == null) ? null : data.reduce((s, d) => s + (d[key] as number), 0);
+  const motivosCC = data.filter((d) => d.saldo_cc_motivo).map((d) => `${d.company}: ${d.saldo_cc_motivo}`);
   const pmpWeighted = weighted('pmp', 'total_cp_aberto');
 
   return {
     company: 'consolidado',
     total_cr_aberto: totalCR,
     total_cp_aberto: totalCP,
-    saldo_cc: data.reduce((s, d) => s + d.saldo_cc, 0),
+    saldo_cc: somaOuNull('saldo_cc'),
+    saldo_cc_motivo: motivosCC.length > 0 ? motivosCC.join(' ') : null,
     capital_giro: data.reduce((s, d) => s + d.capital_giro, 0),
-    capital_giro_liquido: data.reduce((s, d) => s + d.capital_giro_liquido, 0),
+    capital_giro_liquido: somaOuNull('capital_giro_liquido'),
     pmr: pmrWeighted,
     pmp: pmpWeighted,
     ciclo_financeiro: pmrWeighted !== null && pmpWeighted !== null ? pmrWeighted - pmpWeighted : null,
@@ -34,6 +40,6 @@ export function buildConsolidated(data: CapitalDeGiro[]): CapitalDeGiro | null {
     top5_cp_pct: 0,
     entradas_30d: data.reduce((s, d) => s + d.entradas_30d, 0),
     saidas_30d: data.reduce((s, d) => s + d.saidas_30d, 0),
-    saldo_projetado_30d: data.reduce((s, d) => s + d.saldo_projetado_30d, 0),
+    saldo_projetado_30d: somaOuNull('saldo_projetado_30d'),
   };
 }

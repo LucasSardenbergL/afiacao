@@ -63,12 +63,23 @@ Deno.test("mesma unidade e o Omie com outro número → RECUSA (o Omie sabe algo
   igual(d.recusas[0].motivo, "quantidade_omie_diverge", "motivo");
 });
 
+Deno.test("zero EXPLÍCITO no Omie com a mesma unidade → RECUSA (antes virava ausente e mandava a NF inteira — Codex P1-1)", () => {
+  for (const zero of [0, "0", "0.0"]) {
+    const d = decidirQuantidades([item(1, 10, "UN", zero, "UN")]);
+    if (d.ok) throw new Error(`mandou a NF sobre o zero ${JSON.stringify(zero)}`);
+    igual(d.recusas[0].motivo, "quantidade_omie_diverge", `zero ${JSON.stringify(zero)}`);
+  }
+  const ausente = decidirQuantidades([item(1, 10, "UN", undefined, "UN")]);
+  if (!ausente.ok) throw new Error("campo ausente deveria mandar a NF");
+  igual(ausente.itens[0].regra, "nf_sem_conversao", "ausente ≠ zero");
+});
+
 Deno.test("conversão sem a quantidade do Omie → RECUSA a NF inteira, mesmo com outro item bom", () => {
   const d = decidirQuantidades([item(1, 54, "L", null, "UN"), item(2, 2, "L", 2, "L")]);
   if (d.ok) throw new Error("aceitou conversão sem número do Omie");
   igual(d.recusas.map((r) => [r.sequencia, r.motivo]), [[1, "conversao_sem_quantidade_do_omie"]], "motivo");
   const zero = decidirQuantidades([item(1, 54, "L", 0, "UN")]);
-  igual(zero.ok, false, "0 pré-preenchido é ausente, não quantidade");
+  igual(zero.ok, false, "0 na conversão não é quantidade convertida");
 });
 
 Deno.test("unidade ilegível → RECUSA, mesmo com NF = Omie", () => {
