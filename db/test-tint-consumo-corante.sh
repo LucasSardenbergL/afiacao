@@ -151,8 +151,13 @@ SQL
 
 # C3 — manifesto: coerência local por CHECK.
 cen_C3() { PA -d "$1" -q <<'SQL'
-CREATE TEMP TABLE _c3 (nome text, lote text, total text, desde text, ate text, cons text, n_itens text, modo text, esperado text);
-INSERT INTO _c3 VALUES
+CREATE TEMP TABLE _c3 (nome text, lote text, total text, desde text, ate text, cons text, n_itens text, modo text,
+                       esperado text, ini text DEFAULT NULL, fim text DEFAULT NULL);
+INSERT INTO _c3 (nome, lote, total, desde, ate, cons, n_itens, modo, esperado, ini, fim) VALUES
+  ('faixa_ok',      '1', '1', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', 'OK', 'A1', 'a0'),
+  ('faixa_invertida','1','1', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', '23514', 'a0', 'A1'),
+  ('faixa_meia',    '1', '1', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', '23514', 'A1', NULL);
+INSERT INTO _c3 (nome, lote, total, desde, ate, cons, n_itens, modo, esperado) VALUES
   ('base',          '1', '1', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', 'OK'),
   ('lote_zero',     '0', '1', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', '23514'),
   ('lote_maior',    '3', '2', '2026-10-01 00:00-03', '2026-10-02 00:00-03', '2026-10-02 00:00-03', '0',  'incremental', '23514'),
@@ -163,9 +168,10 @@ INSERT INTO _c3 VALUES
 SELECT _t_assert('C3.' || nome, _t_sqlstate(format($f$
   DELETE FROM tint_staging_preparacao_manifestos;
   INSERT INTO tint_staging_preparacao_manifestos (sync_run_id, account, store_code, extracao_id, lote, total_lotes,
-    modo, janela_desde, janela_ate, consultado_em, n_preparacoes, n_rejeitadas, n_itens)
-  VALUES ('c0000000-0000-0000-0000-000000000001','oben','M01',gen_random_uuid(),%s,%s,%L,%L,%L,%L,0,0,%s)$f$,
-  lote, total, modo, desde, ate, cons, n_itens)) = esperado, nome)
+    modo, janela_desde, janela_ate, consultado_em, n_preparacoes, n_rejeitadas, n_itens,
+    primeira_preparacao_id, ultima_preparacao_id)
+  VALUES ('c0000000-0000-0000-0000-000000000001','oben','M01',gen_random_uuid(),%s,%s,%L,%L,%L,%L,0,0,%s,%L,%L)$f$,
+  lote, total, modo, desde, ate, cons, n_itens, ini, fim)) = esperado, nome)
   FROM _c3 ORDER BY nome;
 SQL
 }
@@ -182,8 +188,10 @@ SELECT _t_assert('C4.constantes',
   (SELECT validade_dias = 365 AND lata_ml = 810 AND lata_l = 0.81 AND horizonte_dias = 180 AND frescor_dias = 4
       AND cobertura_min_dias = 60 AND cobertura_plena_dias = 180 AND limite_ausencia = 0.01
       AND regime_janela_dias = 60 AND regime_fator = 2 AND piso_dias = 400 AND janela_max_dias = 35
-      AND rescan_janela_dias = 35 AND rescan_intervalo_dias = 7 AND fila_max_pendentes = 6
-      AND relogio_tolerancia = interval '10 minutes'
+      AND janela_inicial_dias = 7 AND lotes_alvo = 10 AND max_lotes_extracao = 20
+      AND revisita_recente_janela_dias = 35 AND revisita_recente_dias = 7 AND revisita_antiga_dias = 30
+      AND fila_max_pendentes = 6 AND plano_validade = interval '30 minutes'
+      AND compactacao_idade = interval '2 days' AND relogio_tolerancia = interval '10 minutes'
      FROM tint_corante_constantes()));
 SQL
 }
@@ -196,6 +204,9 @@ VALUES ('oben', 'M01', 'P1', '2026-10-01 10:00-03', 'valida', now(), now(), 'c00
 INSERT INTO tint_consumo_corante (account, store_code, preparacao_id, ordem, id_corante_origem, qtd_ml,
                                   data_dosagem, sync_run_id, run_criado_em)
 VALUES ('oben', 'M01', 'P1', 1, '1', 10, '2026-10-01 10:00-03', 'c0000000-0000-0000-0000-000000000001', now());
+INSERT INTO tint_consumo_planos (extracao_id, account, store_code, modo, janela_desde, janela_ate, criado_em, expira_em)
+VALUES ('e0000000-0000-0000-0000-000000000001', 'oben', 'M01', 'incremental', '2026-10-01 00:00-03',
+        '2026-10-02 00:00-03', now(), now() + interval '30 minutes');
 INSERT INTO tint_consumo_extracoes (extracao_id, account, store_code, modo, janela_desde, janela_ate, consultado_em,
                                     total_lotes, criada_em, completa_em)
 VALUES ('e0000000-0000-0000-0000-000000000001', 'oben', 'M01', 'incremental', '2026-10-01 00:00-03',
@@ -205,7 +216,7 @@ VALUES ('e0000000-0000-0000-0000-000000000001', 1, 'c0000000-0000-0000-0000-0000
 
 SELECT _t_assert('C5.sem_escrita_' || r || '_' || t || '_' || p, NOT has_table_privilege(r, 'public.' || t, p), r)
   FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) r,
-       unnest(ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_extracoes',
+       unnest(ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos', 'tint_consumo_extracoes',
                     'tint_consumo_extracao_lotes']) t,
        unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) p
  ORDER BY r, t, p;
@@ -217,13 +228,14 @@ SET ROLE authenticated;
 CREATE TEMP TABLE _c5_cli AS
 SELECT (SELECT count(*) FROM tint_consumo_preparacao) + (SELECT count(*) FROM tint_consumo_corante)
      + (SELECT count(*) FROM tint_consumo_extracoes) + (SELECT count(*) FROM tint_consumo_extracao_lotes)
-     + (SELECT count(*) FROM tint_staging_preparacao_manifestos) AS n;
+     + (SELECT count(*) FROM tint_consumo_planos) + (SELECT count(*) FROM tint_staging_preparacao_manifestos) AS n;
 RESET ROLE;
 SET request.jwt.claim.sub = 'bbbbbbbb-0000-0000-0000-000000000001';
 SET ROLE authenticated;
 CREATE TEMP TABLE _c5_staff AS
 SELECT (SELECT count(*) FROM tint_consumo_preparacao) AS p, (SELECT count(*) FROM tint_consumo_corante) AS c,
-       (SELECT count(*) FROM tint_consumo_extracoes) AS e, (SELECT count(*) FROM tint_consumo_extracao_lotes) AS l;
+       (SELECT count(*) FROM tint_consumo_extracoes) AS e, (SELECT count(*) FROM tint_consumo_extracao_lotes) AS l,
+       (SELECT count(*) FROM tint_consumo_planos) AS pl;
 CREATE TEMP TABLE _c5_ins AS
 SELECT _t_sqlstate($s$INSERT INTO tint_consumo_corante (account, store_code, preparacao_id, ordem, id_corante_origem,
   qtd_ml, data_dosagem, sync_run_id, run_criado_em) VALUES ('oben','M01','P1',2,'1',5,now(),
@@ -231,7 +243,7 @@ SELECT _t_sqlstate($s$INSERT INTO tint_consumo_corante (account, store_code, pre
 RESET ROLE;
 RESET request.jwt.claim.sub;
 SELECT _t_assert('C5.customer_le_zero', (SELECT n FROM _c5_cli) = 0, (SELECT n FROM _c5_cli)::text);
-SELECT _t_assert('C5.staff_le', (SELECT p = 1 AND c = 1 AND e = 1 AND l = 1 FROM _c5_staff));
+SELECT _t_assert('C5.staff_le', (SELECT p = 1 AND c = 1 AND e = 1 AND l = 1 AND pl = 1 FROM _c5_staff));
 SELECT _t_assert('C5.staff_insert_negado', (SELECT st FROM _c5_ins) = '42501', (SELECT st FROM _c5_ins));
 SQL
 }
@@ -272,7 +284,7 @@ SQL
 }
 
 CENARIOS="C1 C2 C3 C4 C5 C6"
-NESP=64   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
+NESP=76   # nº EXATO de asserts: assert que some (cenário que parou no meio) é falha, não verde
 
 # suite <migration> <sabotagem-sql-ou-vazio> → imprime RES|nome|ok|detalhe de todos os asserts
 suite() {

@@ -20,7 +20,9 @@ CREATE OR REPLACE FUNCTION public.tint_corante_constantes()
 RETURNS TABLE (validade_dias int, lata_ml numeric, lata_l numeric, horizonte_dias int, frescor_dias int,
                cobertura_min_dias int, cobertura_plena_dias int, limite_ausencia numeric,
                regime_janela_dias int, regime_fator numeric, piso_dias int, janela_max_dias int,
-               rescan_janela_dias int, rescan_intervalo_dias int, fila_max_pendentes int,
+               janela_inicial_dias int, lotes_alvo int, max_lotes_extracao int,
+               revisita_recente_janela_dias int, revisita_recente_dias int, revisita_antiga_dias int,
+               fila_max_pendentes int, plano_validade interval, compactacao_idade interval,
                relogio_tolerancia interval)
 LANGUAGE sql
 IMMUTABLE
@@ -29,7 +31,9 @@ AS $fn$
   SELECT 365, 810::numeric, 0.81::numeric, 180, 4,
          60, 180, 0.01::numeric,
          60, 2::numeric, 400, 35,
-         35, 7, 6,
+         7, 10, 20,
+         35, 7, 30,
+         6, interval '30 minutes', interval '2 days',
          interval '10 minutes'
 $fn$;
 
@@ -84,8 +88,14 @@ CREATE TABLE IF NOT EXISTS public.tint_staging_preparacao_manifestos (
   n_preparacoes   int NOT NULL CHECK (n_preparacoes >= 0),
   n_rejeitadas    int NOT NULL CHECK (n_rejeitadas >= 0),
   n_itens         int NOT NULL CHECK (n_itens >= 0),
+  -- Faixa de ids do lote (ordem de bytes = a do Go): lotes da mesma extração não se sobrepõem.
+  primeira_preparacao_id text NULL,
+  ultima_preparacao_id   text NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT tint_staging_prep_manifesto_lote CHECK (1 <= lote AND lote <= total_lotes),
+  CONSTRAINT tint_staging_prep_manifesto_faixa CHECK (
+    (primeira_preparacao_id IS NULL) = (ultima_preparacao_id IS NULL)
+    AND (primeira_preparacao_id IS NULL OR primeira_preparacao_id COLLATE "C" <= ultima_preparacao_id COLLATE "C")),
   CONSTRAINT tint_staging_prep_manifesto_janela CHECK (janela_desde < janela_ate),
   CONSTRAINT tint_staging_prep_manifesto_consulta CHECK (janela_ate <= consultado_em)
 );
@@ -131,9 +141,25 @@ CREATE TABLE IF NOT EXISTS public.tint_consumo_corante (
 CREATE INDEX IF NOT EXISTS idx_tint_consumo_corante_giro
   ON public.tint_consumo_corante (account, tint_corante_id, data_dosagem);
 
--- ── 5. Extrações (metadados IMUTÁVEIS) e lotes: a cobertura é DERIVADA daqui ─────────────────────
+-- ── 5. Planos (o SERVIDOR emite o extracao_id), extrações (metadados IMUTÁVEIS) e lotes ──────────
+-- A cobertura é DERIVADA das extrações completas (tint_consumo_cobertura_em). Compactar um plano
+-- apaga a extração e os lotes em cascata.
+CREATE TABLE IF NOT EXISTS public.tint_consumo_planos (
+  extracao_id   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account       text NOT NULL,
+  store_code    text NOT NULL,
+  modo          text NOT NULL CHECK (modo IN ('backfill', 'incremental', 'rescan', 'cura')),
+  janela_desde  timestamptz NOT NULL,
+  janela_ate    timestamptz NOT NULL,
+  criado_em     timestamptz NOT NULL,
+  expira_em     timestamptz NOT NULL,
+  CONSTRAINT tint_consumo_planos_janela CHECK (janela_desde < janela_ate)
+);
+CREATE INDEX IF NOT EXISTS idx_tint_consumo_planos_loja
+  ON public.tint_consumo_planos (account, store_code, expira_em);
+
 CREATE TABLE IF NOT EXISTS public.tint_consumo_extracoes (
-  extracao_id    uuid PRIMARY KEY,
+  extracao_id    uuid PRIMARY KEY REFERENCES public.tint_consumo_planos(extracao_id) ON DELETE CASCADE,
   account        text NOT NULL,
   store_code     text NOT NULL,
   modo           text NOT NULL CHECK (modo IN ('backfill', 'incremental', 'rescan', 'cura')),
@@ -149,21 +175,26 @@ CREATE INDEX IF NOT EXISTS idx_tint_consumo_extracoes_completas
   ON public.tint_consumo_extracoes (account, store_code, janela_ate) WHERE completa_em IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.tint_consumo_extracao_lotes (
-  extracao_id    uuid NOT NULL REFERENCES public.tint_consumo_extracoes(extracao_id),
+  extracao_id    uuid NOT NULL REFERENCES public.tint_consumo_extracoes(extracao_id) ON DELETE CASCADE,
   lote           int NOT NULL CHECK (lote >= 1),
   sync_run_id    uuid NOT NULL UNIQUE,
   n_preparacoes  int NOT NULL,
   n_rejeitadas   int NOT NULL,
   n_itens        int NOT NULL,
+  primeira_preparacao_id text NULL,
+  ultima_preparacao_id   text NULL,
   promovido_em   timestamptz NOT NULL,
-  PRIMARY KEY (extracao_id, lote)
+  PRIMARY KEY (extracao_id, lote),
+  CONSTRAINT tint_consumo_extracao_lotes_faixa CHECK (
+    (primeira_preparacao_id IS NULL) = (ultima_preparacao_id IS NULL)
+    AND (primeira_preparacao_id IS NULL OR primeira_preparacao_id COLLATE "C" <= ultima_preparacao_id COLLATE "C"))
 );
 
 -- ── 6. RLS + ACL: staff lê; só a promoção (SECURITY DEFINER) escreve o fato ─────────────────────
 DO $rls$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_extracoes',
+  FOREACH t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos', 'tint_consumo_extracoes',
                            'tint_consumo_extracao_lotes', 'tint_staging_preparacao_manifestos'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = t
@@ -176,10 +207,11 @@ BEGIN
 END
 $rls$;
 
-REVOKE ALL ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_extracoes,
-              public.tint_consumo_extracao_lotes FROM PUBLIC, anon, authenticated, service_role;
-GRANT SELECT ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_extracoes,
-                public.tint_consumo_extracao_lotes TO authenticated, service_role;
+REVOKE ALL ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_planos,
+              public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.tint_consumo_preparacao, public.tint_consumo_corante, public.tint_consumo_planos,
+                public.tint_consumo_extracoes, public.tint_consumo_extracao_lotes TO authenticated, service_role;
 REVOKE ALL ON public.tint_staging_preparacao_manifestos FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON public.tint_staging_preparacao_manifestos TO authenticated;
 GRANT SELECT, INSERT, DELETE ON public.tint_staging_preparacao_manifestos TO service_role;
@@ -194,8 +226,9 @@ BEGIN
   IF to_regprocedure('public.tint_corante_constantes()') IS NULL THEN
     RAISE EXCEPTION 'POS FALHOU: tint_corante_constantes ausente';
   END IF;
-  FOREACH v_t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_extracoes',
-                             'tint_consumo_extracao_lotes', 'tint_staging_preparacao_manifestos'] LOOP
+  FOREACH v_t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos',
+                             'tint_consumo_extracoes', 'tint_consumo_extracao_lotes',
+                             'tint_staging_preparacao_manifestos'] LOOP
     IF to_regclass('public.' || v_t) IS NULL THEN
       RAISE EXCEPTION 'POS FALHOU: tabela % ausente', v_t;
     END IF;
@@ -203,8 +236,8 @@ BEGIN
       RAISE EXCEPTION 'POS FALHOU: RLS desligada em %', v_t;
     END IF;
   END LOOP;
-  FOREACH v_t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_extracoes',
-                             'tint_consumo_extracao_lotes'] LOOP
+  FOREACH v_t IN ARRAY ARRAY['tint_consumo_preparacao', 'tint_consumo_corante', 'tint_consumo_planos',
+                             'tint_consumo_extracoes', 'tint_consumo_extracao_lotes'] LOOP
     FOREACH v_r IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
       FOREACH v_p IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
         IF has_table_privilege(v_r, 'public.' || v_t, v_p) THEN
