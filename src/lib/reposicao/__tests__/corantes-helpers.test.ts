@@ -21,8 +21,9 @@ describe('regraDaFaixa — texto da §5.2 da spec', () => {
   it('devagar: 1 lata no máximo, pedida ao abrir a última', () => {
     expect(regraDaFaixa('devagar', null)).toBe('No máximo 1 lata fechada. Pedir 1 QT ao abrir a última.');
   });
-  it('rápido: cita k', () => {
-    expect(regraDaFaixa('rapido', 2)).toContain('2 ou menos');
+  it('rápido: cita k em latas QT e a equivalência do GL', () => {
+    expect(regraDaFaixa('rapido', 2)).toContain('2 ou menos latas QT fechadas');
+    expect(regraDaFaixa('rapido', 2)).toContain('GL conta pelo equivalente em QT');
     expect(regraDaFaixa('rapido', null)).toBe('—');
   });
   it('sem recomendação: "—", nunca uma regra', () => {
@@ -44,6 +45,13 @@ describe('paraGiroCorante — vocabulário fechado', () => {
   it('lança com faixa_ultimo_calculo fora do vocabulário', () => {
     expect(() => paraGiroCorante(linha({ faixa_ultimo_calculo: 'y' }))).toThrow(/faixa_ultimo_calculo fora do vocabulário: y/);
   });
+  it.each([
+    ['motivo', { motivo: 'novo_motivo' }],
+    ['confianca', { confianca: 'certeza_total' }],
+    ['lt_fonte', { lt_fonte: 'estimado' }],
+  ] as const)('lança com %s fora do vocabulário', (coluna, p) => {
+    expect(() => paraGiroCorante(linha(p))).toThrow(new RegExp(`${coluna} fora do vocabulário`));
+  });
   it('lança sem as chaves', () => {
     expect(() => paraGiroCorante(linha({ wp_codigo: null }))).toThrow(/sem tint_corante_id\/wp_codigo/);
   });
@@ -58,16 +66,13 @@ describe('rotuloMotivo — os 9 motivos do banco', () => {
   const NOVE = [
     'mais_de_uma_loja', 'sem_cobertura', 'dado_desatualizado', 'cobertura_insuficiente', 'capacidade_nao_confirmada',
     'lt_sem_fonte', 'dosagens_sem_ponte', 'preparacoes_rejeitadas', 'sem_consumo_cobertura_parcial',
-  ];
+  ] as const;
   it('cobre exatamente o vocabulário da migration 20261028100100', () => {
     expect([...MOTIVOS_CORANTE].sort()).toEqual([...NOVE].sort());
   });
   it.each(NOVE)('%s tem rótulo próprio (≠ código)', (m) => {
     expect(rotuloMotivo(m)).not.toBe(m);
     expect(rotuloMotivo(m).length).toBeGreaterThan(5);
-  });
-  it('motivo desconhecido aparece cru', () => {
-    expect(rotuloMotivo('novo_motivo')).toBe('novo_motivo');
   });
 });
 

@@ -90,6 +90,22 @@ describe('aba Corantes', () => {
     expect(screen.queryByText(/^0,00 L$/)).toBeNull();
   });
 
+  it('capital nulo com excesso conhecido vira —, nunca R$ 0,00', async () => {
+    resposta = { data: [linha({ excesso_l: 0.81, capital_parado: null })], error: null };
+    renderAba();
+    const cel = await screen.findByTestId('celula-excesso');
+    expect(cel.textContent).toContain('0,81 L');
+    expect(cel.textContent).toContain('—');
+    expect(cel.textContent).not.toMatch(/R\$/);
+  });
+
+  it('motivo fora do vocabulário é falha de leitura, não aba pronta', async () => {
+    resposta = { data: [linha({ faixa: 'sem_recomendacao', motivo: 'novo_motivo' })], error: null };
+    renderAba();
+    expect(await screen.findByTestId('aviso-leitura-falhou')).toBeTruthy();
+    expect(registrarNoLedger).not.toHaveBeenCalled();
+  });
+
   it('desatualizado mostra o último cálculo', async () => {
     resposta = { data: [linha({ fresco: false, faixa: 'sem_recomendacao', faixa_ultimo_calculo: 'devagar', motivo: 'dado_desatualizado' })], error: null };
     renderAba();

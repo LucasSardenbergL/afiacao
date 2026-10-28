@@ -41,7 +41,7 @@ export function CorantesTab() {
   return (
     <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        Consumo medido nas dosagens da máquina tintométrica, por WP. <strong>Sugestão</strong>: o pedido automático
+        <strong>OBEN</strong> · consumo medido nas dosagens da máquina tintométrica, por WP. <strong>Sugestão</strong>: o pedido automático
         não muda.
       </p>
       <CorantesTable linhas={linhas} />
