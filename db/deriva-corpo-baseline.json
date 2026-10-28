@@ -112,6 +112,26 @@
       "desde": "2026-10-13"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261021203000_tint_purge_staging_fora_do_promote.sql",
+      "efeito": "ALTERA",
+      "motivo": "o bloco PURGE (9 DELETEs de staging superseded >30d + keys_snapshots) sai do fim do promote para tint_staging_purge() + cron diário — varria tint_staging_formulas inteira a cada promoção, 98% da leitura de disco do banco (medido 2026-10-21). md5 = recorte do corpo de prod 42d09d51…, calculado via psql-ro antes do apply.",
+      "md5": "0e2a4169469eacb43e60eea224baad22",
+      "md5Tokens": "e2e6508c5af54461892c17da46c12605",
+      "desde": "2026-10-21"
+    },
+    {
+      "funcao": "tint_staging_purge",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261021203000_tint_purge_staging_fora_do_promote.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — comando do cron, postcondição P2 e has_function_privilege; o recorte por âncora reescreve tint_promote_sync_run, não esta. Conferido em prod em 2026-10-27: md5(prosrc) = 50e2c853611d115394e17c143dc3164c = c_purge da migration.",
+      "desde": "2026-10-27"
+    },
+    {
       "funcao": "has_role",
       "identidade": "uuid,app_role",
       "classe": "PATCH",
@@ -217,6 +237,71 @@
       "md5": "1b66e565a608d3336038846363728b33",
       "md5Tokens": "475c4553252d6ee98bed0be01bfd7021",
       "desde": "2026-10-20"
+    },
+    {
+      "funcao": "tint_promocao_tick",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "ALTERA",
+      "motivo": "giro de corante Fase 1 (#3387): o recorte por âncora acrescenta UM predicado (`AND sr.sync_type IS DISTINCT FROM 'preparations'`) — preparações vão ao consumidor próprio tint_preparacoes_tick. PRE de dois ramos (predecessor d0e3beb3… → substitui; este → no-op); prova PG17 db/test-tint-consumo-corante.sh P10 (\"só o predicado\"). Aplicada por db:aplicar (recibo #746, 2026-10-28); md5 conferido em prod por psql-ro.",
+      "md5": "e5f375b0bff05600fe66f3f6d79d513c",
+      "md5Tokens": "432bab17a48f59641b8e4e474c6036d3",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_corante_constantes",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — chamada pelas funções seguintes e pela postcondição; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_consumo_cobertura_em",
+      "identidade": "timestamp with time zone",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE, has_function_privilege e chamada pelo plano; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_consumo_plano_extracao",
+      "identidade": "text,text,timestamp with time zone",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE/GRANT service_role e postcondição; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_promote_preparacoes",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE, chamada pelo tint_preparacoes_tick e postcondição; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_consumo_compactar",
+      "identidade": "timestamp with time zone",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE e chamada pelo tint_preparacoes_tick; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
+    },
+    {
+      "funcao": "tint_preparacoes_tick",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261028100000_tint_consumo_corante.sql",
+      "efeito": "SO_CITA",
+      "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE, comando do cron tint-preparacoes-tick e postcondição; o recorte por âncora reescreve tint_promocao_tick, não esta.",
+      "desde": "2026-10-28"
     }
   ]
 }

@@ -14,7 +14,14 @@ import {
   separarExistentes,
   type Titulo,
 } from "./casamento.ts";
-import { chamadorOmie, consultarCodigos, type ResultadoConsulta } from "./contrapartes.ts";
+import {
+  chamadorOmie,
+  consultarCodigos,
+  escritorContrapartes,
+  gravarContrapartes,
+  marcoDaRodada,
+  type ResultadoConsulta,
+} from "./contrapartes.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -100,6 +107,8 @@ Deno.serve(async (req: Request) => {
   }
   const simular = decisaoSimular.tipo === "sonda";
 
+  // Antes de qualquer leitura do Omie: é o instante que o marco de cobertura declara (`marcoDaRodada`).
+  const inicioMs = Date.now();
   try {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -219,6 +228,29 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, versao: VERSAO, simulado: true, ...resumo, linhas }, 200);
     }
 
+    // Mapa de contraparte durável ANTES de publicar: falhou → aborta com a rodada anterior de pé (as
+    // informativas antigas seguem como evidência). Ver `gravarContrapartes`.
+    const mapaGravado = await gravarContrapartes(
+      escritorContrapartes(() => supabase.from("fin_ic_contrapartes")),
+      consultas,
+    );
+    if (!mapaGravado.ok) {
+      return json({
+        versao: VERSAO,
+        error: `fin_ic_contrapartes: ${mapaGravado.erro}`,
+        nota: "nada gravado em fin_ic_matches; a rodada anterior está intacta",
+      }, 500);
+    }
+    // O marco só depois do mapa gravado: ele afirma que o mapa cobre os cadastros até aquele instante.
+    const { error: marcoErr } = await supabase.from("fin_ic_reconcile_rodadas").insert(marcoDaRodada(inicioMs));
+    if (marcoErr) {
+      return json({
+        versao: VERSAO,
+        error: `fin_ic_reconcile_rodadas: ${marcoErr.message}`,
+        nota: "mapa gravado, marco não; nada gravado em fin_ic_matches",
+      }, 500);
+    }
+
     const desfecho = await publicarMatches(
       escritorPostgrest(() => supabase.from("fin_ic_matches")),
       linhas,
@@ -238,6 +270,7 @@ Deno.serve(async (req: Request) => {
       versao: VERSAO,
       simulado: false,
       ...resumo,
+      contrapartes_gravadas: mapaGravado.linhas,
       inseridas: desfecho.inseridas,
       informativas_apagadas: desfecho.informativas_apagadas,
     }, 200);

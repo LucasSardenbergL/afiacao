@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { BAIXA_OMIE_LIST, baixaOuIndisponivel } from '@/lib/financeiro/procedencia-baixa';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
+import { referenciaFrescorSaldo, resumirSaldoContas } from '@/lib/financeiro/saldo-contas';
 import type {
   FinContaCorrenteRow,
   FinContaPagarRow,
@@ -217,8 +218,10 @@ const saldoPagar = (r: FinContaPagarRow) => (r.valor_documento || 0) - (r.valor_
 
 async function loadData(type: DrillDownType): Promise<Leitura> {
   if (type === 'caixa') {
-    // ~40 contas ativas: sem janela. O `count` confirma que a soma cobre todas as linhas, e uma
-    // conta sem `saldo_atual` (coluna nullable) tira o total — somá-la como 0 seria fabricar.
+    // ~40 contas ativas: sem janela. O `count` confirma que a soma cobre todas as linhas, e o total
+    // segue a MESMA regra do KPI (`resumirSaldoContas`): conta sem saldo do extrato (saldo_data NULL —
+    // o DEFAULT 0 não é fato) ou com saldo velho tira o total. Antes o drill dizia "Total: R$ X"
+    // ao lado de um KPI "—".
     const r = await supabase
       .from('fin_contas_correntes')
       .select('*', { count: 'exact' })
@@ -230,10 +233,7 @@ async function loadData(type: DrillDownType): Promise<Leitura> {
     return {
       rows,
       universo,
-      total:
-        universo === rows.length && rows.every((row) => row.saldo_atual !== null)
-          ? rows.reduce((s, row) => s + (row.saldo_atual as number), 0)
-          : null,
+      total: universo === rows.length ? resumirSaldoContas(rows, referenciaFrescorSaldo(new Date())).total : null,
     };
   }
 

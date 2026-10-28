@@ -262,3 +262,34 @@ o estado `lente` (aviso "a lista não é exibida") saiu da fila. A ficha segue s
 - **Sabotagem que não sabota é lacuna da prova.** Duas ficaram verdes na 1ª falsificação: "total sem a guarda de ausente"
   (o fixture só tinha a recompra SEM valor — `sum` já dava NULL; faltava uma com e outra sem) e "helper sem REVOKE de
   authenticated" (no-op: `private` não tem default ACL para authenticated, em prod também; a sabotagem certa deixa PUBLIC).
+
+### Meu Dia escondia os maiores compradores — piso "≥" + "Ver todos (N)" (2026-10-28)
+
+Achado ao conferir a lente com a lista real: o servidor zera `valor_ref_total` (null) se 1 item está sem preço
+(ausente ≠ zero, correto), o ranking da fila põe null por último, e o `FilaDoDia` fazia `slice(0, 30)` calado.
+Regina em 28/10: cabeçalho "53", tela 30; os 13 de total parcial (≥ R$ 82,9 mil) fora, o maior (75 itens,
+≥ R$ 34,2 mil) abaixo de todos os 30. Tatyana: 42 → 30, os 10 parciais (≥ R$ 66,5 mil) fora.
+Correção (só front): total parcial vira **piso** = soma dos itens com valor, `tipoValor: 'piso'`, exibido
+"≥ R$ X estimado (item sem preço)" e ranqueado por ele; o corte em 30 vira 1ª dobra + "Ver todos (N)".
+É a armadilha "Corte por ranking: o teto é o EIXO" — o eixo errado era tratar parcial como ausente.
+
+## Venda por cliente — sensor durável de abertura da lista do Meu Dia (2026-10-28)
+
+Migration `20261028220003_venda_lista_acesso.sql` (TRAVA→PRE→CREATE→PÓS, aplicada por `db:aplicar`, recibo #752;
+prova `db/test-venda-lista-acesso.sh` no núcleo do CI, 38 asserts, 11 sabotagens vermelhas nos dois locales).
+Motivo: 3.455 sugestões ativas desde 24/10, 0 fichas abertas, 0 contatos — e nada distinguia "não abriu" de "abriu e
+não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor único) grava `venda_lista_acesso`
+(farmer × dia da lista: primeira/última leitura, nº de leituras, nº de compradores da ÚLTIMA leitura) só quando quem chama
+é employee e NÃO master; RLS só master; authenticated só SELECT. Sem Publish nem edge (a UI não muda).
+
+- **STABLE não grava.** A RPC virou VOLATILE: INSERT em função não-volátil é erro, e o PostgREST roda função STABLE em
+  transação READ ONLY. Se o cache do PostgREST ainda a vir STABLE, o upsert levanta 25006 e é SÓ esse SQLSTATE que vira
+  WARNING (a lista da farmer nunca cai pelo sensor); qualquer outro erro sobe (T6, sabotagem `engole_tudo`).
+- **A PÓS prova a escrita na prod sem sujar o sensor**: executa a RPC nova dentro de subtransação desfeita por SQLSTATE
+  próprio (`VLA00`) — as variáveis PL/pgSQL sobrevivem ao rollback, as linhas não. P6 confere que o total não mudou.
+- **`n_compradores` é o que a RPC devolveu, não o que coube na tela** (a fila mostra a 1ª dobra + "Ver todos (N)").
+- **Falsificação achou duas sabotagens que não sabotavam**: tirar o anon do `REVOKE` fica verde (`CREATE OR REPLACE`
+  preserva o ACL — quem guarda é a P2; a sabotagem certa ABRE o anon) e a exclusão do master só é alcançável com um
+  master que também é employee (o da prod é só-master e já cai no filtro employee) — a P5 passa a preferir esse.
+- **Medição** (psql-ro; `claude_ro` tem BYPASSRLS, então 0 é 0): a query está no PR; sem linha = não leu; `n_compradores
+  = 0` = leu lista vazia.

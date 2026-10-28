@@ -14,6 +14,8 @@ import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
 import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { RadarAcoesLote } from '@/components/radar/RadarAcoesLote';
 import { RadarLoteDialog } from '@/components/radar/RadarLoteDialog';
+import { RadarConflitosIndicador } from '@/components/radar/RadarConflitosCadastro';
+import { lerEmpresaRadar } from '@/queries/useRadarConflitosCadastro';
 import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
@@ -116,6 +118,12 @@ export default function RadarClientes() {
   }, [abertaCnpj, empresas]);
 
   const abrir = useCallback((e: RadarEmpresa) => { abertaSnapshot.current = e; setAbertaCnpj(e.cnpj); }, []);
+  // Ficha de um CNPJ que pode não estar na fila (já-cliente, descartado): lê o lead inteiro antes de abrir.
+  const abrirPorCnpj = useCallback(async (cnpj: string) => {
+    const e = empresas.find((x) => x.cnpj === cnpj) ?? await lerEmpresaRadar(cnpj);
+    if (!e) throw new Error('lead não encontrado no Radar');
+    abrir(e);
+  }, [empresas, abrir]);
   const proximo = useCallback(() => {
     if (!abertaCnpj) return;
     const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
@@ -177,6 +185,8 @@ export default function RadarClientes() {
       <Filtros filtros={filtros} set={set} lote={lote} />
       <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
+      {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
+      <RadarConflitosIndicador onAbrir={abrirPorCnpj} />
       {/* Lote interrompido (aba fechada, parada, falhas): oferece retomar em vez de fingir que nada aconteceu. */}
       {loteOmie.lote && !loteOmie.rodando && pendentesDoLote > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-sm">

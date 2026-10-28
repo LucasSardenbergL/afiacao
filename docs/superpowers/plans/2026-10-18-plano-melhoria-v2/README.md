@@ -1,5 +1,7 @@
 # Plano de melhoria do código — v2 (2026-10-18)
 
+> **Sucedido pelo [plano v3](../2026-10-21-plano-melhoria-v3/README.md) (2026-10-21).**
+
 > Sucede o [plano de 2026-09-05](../2026-09-05-plano-melhorias-codebase/README.md), cujos lotes A–G fecharam em 2026-10-13. Herda as decisões do §0.3/§0.5 daquele plano (5 usuários · 1 dev · **"canônico quando tocar"** · motores/monólitos cortados salvo incidente · 1 lote = 1 sessão · arquivo quente = 1 dono). Não reabre o que foi cortado.
 >
 > **Método:** 2 varreduras (Fable) + health stack local + 2ª opinião adversária do **Codex** (gpt-6-astra · reasoning max · 307 s · 160k tokens) sobre o rascunho — parecer cru em [anexos/parecer-codex-2026-10-18.md](anexos/parecer-codex-2026-10-18.md). O Codex derrubou ~40% do rascunho; o que ele afirmou e foi **conferido no código** está marcado ✅, o que ficou plausível sem conferência, ⚠️.
@@ -78,9 +80,9 @@ Focar `reconciliar_pedidos_omie` e `pedido_total_liquido_converter` (correções
 - Continuam cortados: M-57 motores · M-58 monólitos · M-50 paginação em massa · gate novo sem incidente (`maquinas-meta.md:11`) · majors.
 
 ## 5. Decisões do founder 🧭
-1. **I2**: como fechar a representação reconstituível das 18 funções sem tocar `supabase/migrations/` (DR)? Opções: (a) migration "canônica" nova via Lovable com o corpo da prod + prova de comportamento; (b) baseline aceita + teste `db/test-*.sh` que falha se o corpo da prod mudar. Recomendo (a) para as 2 funções financeiras, (b) para o resto.
+1. **I2**: como fechar a representação reconstituível das 18 funções sem tocar `supabase/migrations/` (DR)? Opções: (a) migration "canônica" nova via Lovable com o corpo da prod + prova de comportamento; (b) baseline aceita + teste `db/test-*.sh` que falha se o corpo da prod mudar. Recomendo (a) para as 2 funções financeiras, (b) para o resto. ✅ **tomada**: (a) para as 2 financeiras, (b) para o resto (ver item 5).
 2. **N**: aprovar o piloto em `money-path.md`? ✅ **aprovado (2026-10-21)**: "reescrever o money-path.md como regras vivas (condição · obrigação · exceções · ponteiro), casos para docs/historico, medindo contexto antes e depois" — a reescrita já estava na main desde o #3185; a aprovação ratificou e pediu a medição, entregue na verificação pós-merge.
-3. **Saldo bancário**: ocultar o indicador em `FinanceiroGestao` até existir `fin_saldo_bancario`?
+3. **Saldo bancário**: ocultar o indicador em `FinanceiroGestao` até existir `fin_saldo_bancario`? ✅ **tomada**: indicador oculto em 19/10 (ver pontuais do §3).
 
 ## 6. KPIs
 tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `casts:stale` from/rpc e piso · entradas de deriva (por função) · edges money-path sem teste · bytes de `money-path.md` (piloto N).
@@ -91,7 +93,7 @@ tempo até `validate` **no PR** (p50) · cópias de `authorizeCronOrStaff` · `c
 | entradas de deriva (`deriva-corpo-baseline.json`) | 26 | 24 | **23** (2026-10-21) = as 22 do ciclo 2 + `claim_nfe_efetivacao_lock` (#3258, outra entrega); `analytics_outbox_pedido_compra` canonizada (#3260), aplicada na prod e fora da baseline (#3261); auditor exit 0 e prova E 32/0 contra a prod; justificativas por entrada ([plano-v2-ciclo-2.md](../../../historico/plano-v2-ciclo-2.md)) |
 | cópias locais de `authorizeCronOrStaff` | 13 | 0 | 0 |
 | bytes de `money-path.md` | ≈190 KB | — | 73 KB |
-| tempo até `validate` no PR (p50) | 16–21 min | — | **38,7 → 19,5 min** (2026-10-21, item J: 15 runs antes · 5 depois do #3313). A fila de runners era o gargalo, com a conta estacionada em 20 jobs simultâneos. O `mutation-check` saiu do pós-merge (148→102 min de runner por run da main) e o `provas-sql` foi balanceado por custo. Sem fila, o caminho crítico foi de 15,5 para 13,6 min. Ressalva: a carga de PRs caiu à metade na janela de depois; falta comparar num pico. `docs/historico/ci-fila-de-runners.md` |
+| tempo até `validate` no PR (p50) | 16–21 min | — | **38,7 → 19,5 min** (2026-10-21, item J: 15 runs antes · 5 depois do #3313). A fila de runners era o gargalo, com a conta estacionada em 20 jobs simultâneos. O `mutation-check` saiu do pós-merge (148→102 min de runner por run da main) e o `provas-sql` foi balanceado por custo. Sem fila, o caminho crítico foi de 15,5 para 13,6 min. Ressalva: a carga de PRs caiu à metade na janela de depois. Com carga moderada (2026-10-27, 4,7 runs de PR/h, 11 runs): **16,8 min**. A comparação num pico (~9,5/h) segue em aberto. `docs/historico/ci-fila-de-runners.md` |
 | edges money-path sem teste | 26/49 | — | não medido neste ciclo |
 
 ## 7. Calibração do parecer (separada do parecer cru)

@@ -6,6 +6,7 @@ import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/d
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
+import { referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from "@/lib/financeiro/saldo-contas";
 import { linhasDreMapeaveis } from "@/lib/financeiro/dre-helpers";
 import { paraFinDRE } from "@/lib/financeiro/dre-borda";
 import { fetchAllPagesComMensagem } from "@/lib/postgrest";
@@ -17,7 +18,11 @@ import type {
 // ═══════════════ TYPES ═══════════════
 
 export interface FinResumo {
-  contas_correntes: { descricao: string; saldo_atual: number; banco: string }[];
+  /**
+   * Lista por conta. `saldo_atual` é `null` quando a conta não tem saldo FRESCO do extrato
+   * (`saldoExibivelDaConta`): ausente ou velho ≠ R$ 0. `saldo_motivo` diz qual dos dois.
+   */
+  contas_correntes: { descricao: string; saldo_atual: number | null; saldo_motivo: string | null; banco: string }[];
   /**
    * Soma dos saldos das contas ativas — `null` quando INDISPONÍVEL (nenhuma conta ativa,
    * ou alguma conta com saldo desconhecido). Ausente ≠ zero: o `reduce` devolvia `0` tanto
@@ -232,7 +237,7 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     // Saldos CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
     const { data: contas, error: ccError } = await supabase
       .from("fin_contas_correntes")
-      .select("descricao, saldo_atual, banco")
+      .select("descricao, saldo_atual, saldo_data, banco")
       .eq("company", company)
       .eq("ativo", true);
     if (ccError) throw new Error(`Falha ao carregar contas correntes (${company}): ${ccError.message}`);
@@ -254,21 +259,26 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     // vazia sem erro) e "as contas somam zero". Esse zero fabricado desce para a divisão de
     // cobertura de caixa (`financeiroAlerts`) como alerta crítico falso, e para a projeção de
     // fluxo como âncora que a empresa não tem. Conta ativa com `saldo_atual` NULL contamina
-    // igual: a soma sairia INCOMPLETA, com cara de completa.
-    const saldoIndisponivel =
-      contasBrutas.length === 0 || contasBrutas.some((c) => c.saldo_atual == null);
+    // igual: a soma sairia INCOMPLETA, com cara de completa. E saldo VELHO (extrato que falhou e
+    // deixou o saldo de dias atrás, sem `saldo_data` novo) também: ver `resumirSaldoContas`.
+    const refSaldo = referenciaFrescorSaldo(new Date());
+    const saldoContas = resumirSaldoContas(contasBrutas, refSaldo);
 
-    const contasNorm = contasBrutas.map((c) => ({
-      descricao: c.descricao ?? "",
-      saldo_atual: c.saldo_atual ?? 0,
-      banco: c.banco ?? "",
-    }));
+    // A lista por conta segue a MESMA régua do total: o `saldo_atual ?? 0` exibia a conta sem
+    // extrato como "R$ 0,00" (e a escondia entre as "zeradas") e a velha com o valor de dias atrás.
+    const contasNorm = contasBrutas.map((c) => {
+      const { saldo, motivo } = saldoExibivelDaConta(c, refSaldo);
+      return {
+        descricao: c.descricao ?? "",
+        saldo_atual: saldo,
+        saldo_motivo: motivo,
+        banco: c.banco ?? "",
+      };
+    });
 
     resumo[company] = {
       contas_correntes: contasNorm,
-      saldo_total_cc: saldoIndisponivel
-        ? null
-        : contasNorm.reduce((s, c) => s + c.saldo_atual, 0),
+      saldo_total_cc: saldoContas.total,
       total_a_receber: totalAReceber,
       total_a_pagar: totalAPagar,
       total_vencido_receber: vencidoReceber,
@@ -677,9 +687,12 @@ export interface CapitalDeGiro {
   // Posição
   total_cr_aberto: number;      // Contas a Receber em aberto
   total_cp_aberto: number;      // Contas a Pagar em aberto
-  saldo_cc: number;             // Saldo bancário
+  // Saldo bancário. NULL = indisponível (sem conta ativa, conta sem saldo do extrato ou saldo
+  // mais velho que ontem — `resumirSaldoContas`); o motivo vem em `saldo_cc_motivo`. Nunca 0.
+  saldo_cc: number | null;
+  saldo_cc_motivo: string | null;
   capital_giro: number;         // CR - CP
-  capital_giro_liquido: number; // CR + CC - CP
+  capital_giro_liquido: number | null; // CR + CC - CP (null com o saldo CC indisponível)
   // Prazos médios (dias). NULL = sem dado de baixa (data_recebimento/pagamento NULL no
   // sync → não dá pra calcular). Antes era 0, que parecia "conversão instantânea" e
   // enganava o CFO. UI mostra "—/sem dados" quando null. Ver §10 (auditoria 2026-05-27).
@@ -692,7 +705,7 @@ export interface CapitalDeGiro {
   // Projeção 30 dias
   entradas_30d: number;
   saidas_30d: number;
-  saldo_projetado_30d: number;
+  saldo_projetado_30d: number | null; // CC + entradas − saídas (null com o saldo CC indisponível)
 }
 
 export async function getCapitalDeGiro(company: Company | 'all'): Promise<CapitalDeGiro[]> {
@@ -740,7 +753,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
     // Saldo CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
     const { data: ccs, error: ccError } = await supabase
       .from("fin_contas_correntes")
-      .select("saldo_atual")
+      .select("saldo_atual, saldo_data")
       .eq("company", co)
       .eq("ativo", true);
     if (ccError) throw new Error(`Falha ao carregar contas correntes (${co}): ${ccError.message}`);
@@ -760,7 +773,10 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
 
     const totalCR = crAberto.reduce((s, r) => s + (r.saldo ?? 0), 0);
     const totalCP = cpAberto.reduce((s, r) => s + (r.saldo ?? 0), 0);
-    const totalCC = (ccs || []).reduce((s, c) => s + (c.saldo_atual || 0), 0);
+    // Ausente OU velho ≠ R$ 0: o `|| 0` somava conta sem saldo como zero e saldo de dias atrás
+    // como de hoje, e os dois desciam para o CG Líquido e a Projeção 30d (plano v3, item 2).
+    const saldoCC = resumirSaldoContas(ccs ?? [], referenciaFrescorSaldo(new Date()));
+    const totalCC = saldoCC.total;
 
     // Gate de confiança por empresa: prazo só quando a cobertura é suficiente.
     // Cobertura baixa → NULL (= "—", degradação honesta) pra não mostrar o prazo de
@@ -801,8 +817,9 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       total_cr_aberto: totalCR,
       total_cp_aberto: totalCP,
       saldo_cc: totalCC,
+      saldo_cc_motivo: saldoCC.motivo,
       capital_giro: totalCR - totalCP,
-      capital_giro_liquido: totalCR + totalCC - totalCP,
+      capital_giro_liquido: totalCC == null ? null : totalCR + totalCC - totalCP,
       pmr,
       pmp,
       ciclo_financeiro: pmr !== null && pmp !== null ? pmr - pmp : null,
@@ -810,7 +827,7 @@ export async function getCapitalDeGiro(company: Company | 'all'): Promise<Capita
       top5_cp_pct: totalCP > 0 ? (top5CPSum / totalCP) * 100 : 0,
       entradas_30d: entradas30,
       saidas_30d: saidas30,
-      saldo_projetado_30d: totalCC + entradas30 - saidas30,
+      saldo_projetado_30d: totalCC == null ? null : totalCC + entradas30 - saidas30,
     });
   }
 

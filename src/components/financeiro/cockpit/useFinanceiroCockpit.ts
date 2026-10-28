@@ -7,7 +7,7 @@ import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
 import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgNaJanela, type BalancoInputRow } from '@/services/financeiroV2Service';
-import { consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
+import { caixaDoGrupo, consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { classificarFleurietEmpresa, type ClassificacaoFleurietEmpresa } from '@/lib/financeiro/fleuriet-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
@@ -148,9 +148,7 @@ export function useFinanceiroCockpit() {
   // Computed
   // Consolidado do grupo: indisponível se faltar o saldo de qualquer CNPJ (caixa é
   // por-CNPJ, não-fungível — a parcela que falta não se estima pelas outras).
-  const totalCC: number | null = Object.values(resumo).some((r) => r.saldo_total_cc === null)
-    ? null
-    : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0);
+  const totalCC = caixaDoGrupo(resumo);
   const totalCR = Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0);
   const totalCP = Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0);
   const totalVencidoCR = Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0);

@@ -66,7 +66,7 @@ const post = async (body: unknown) => {
 };
 
 // ── 0. CNPJs conhecidos (radar ∪ clientes): a situação cadastral RFB é extraída para TODOS eles, em
-//      qualquer situação (02/03/04/08), e aplicada no finalize (radar_aplicar_situacao). A lista vem da
+//      qualquer situação (02/03/04/08), e aplicada pelo job radar-aplicar-situacao-diario. A lista vem da
 //      edge (ação cnpjs_conhecidos, keyset) ANTES de ler os zips — é a 2ª condição do scan do passo 3.
 //      Edge antiga (sem a ação) → o POST falha alto e a carga aborta: deploy da edge antes da carga.
 const CONHECIDOS = `${WORK}/conhecidos.csv`;
@@ -315,7 +315,7 @@ if (temConhecidos) {
     porSituacao.set(n.linha.situacao, (porSituacao.get(n.linha.situacao) ?? 0) + 1);
   }
   const resumo = [...porSituacao.entries()].sort().map(([k, v]) => `${k}: ${v}`).join(" · ");
-  // Ausente ≠ baixa: quem não está no dump fica SEM linha de situação (e sem mudança de estado no finalize).
+  // Ausente ≠ baixa: quem não está no dump fica SEM linha de situação (e sem mudança de estado na aplicação).
   console.log(`📇 situação cadastral: ${situacoes.length} de ${nConhecidos} CNPJs conhecidos encontrados no dump (${resumo || "nenhum"}) · ausentes do dump: ${nConhecidos - situacoes.length}`
     + (rejeitadasSituacao.cnpj + rejeitadasSituacao.situacao > 0 ? ` · ⚠️ rejeitadas: ${JSON.stringify(rejeitadasSituacao)}` : ""));
 }
@@ -374,7 +374,7 @@ const totalRejeitadas = rejeitadasLocal.cnpj + rejeitadasLocal.cnae
 console.log(`${totalRejeitadas > 0 ? "⚠️" : "📋"} rejeições — local: ${JSON.stringify(rejeitadasLocal)}`
   + ` · edge: ${JSON.stringify(descartadasEdge)} · duplicadas no chunk: ${duplicadasNoChunk}`
   + (totalRejeitadas > 0 ? " — confira antes de confiar no lote (CNPJ fora do formato RFB/DV, CNAE ≠ 7 dígitos)" : ""));
-// Situação cadastral dos conhecidos: a edge só grava (radar_situacao_cadastral); quem decide é o finalize.
+// Situação cadastral dos conhecidos: a edge só grava (radar_situacao_cadastral); quem decide é o job radar-aplicar-situacao-diario.
 const descartadasSituacao: Record<string, number> = {};
 for (let i = 0; i < situacoes.length; i += 1000) {
   const resp = (await post({ action: "chunk_situacao", mes: MES, linhas: situacoes.slice(i, i + 1000) })) as
@@ -387,8 +387,10 @@ if (temConhecidos) {
   const rej = Object.values(descartadasSituacao).reduce((a, b) => a + b, 0);
   console.log(`${rej > 0 ? "⚠️" : "📋"} situação cadastral enviada: ${situacoes.length} linhas · descartadas pela edge: ${JSON.stringify(descartadasSituacao)}`);
 }
-const fin = (await post({ action: "finalize", mes: MES })) as { situacao?: unknown } | undefined;
+const fin = (await post({ action: "finalize", mes: MES })) as { situacao_aplicacao?: unknown; situacao?: unknown } | undefined;
 console.log(`\n🏁 finalize:`, JSON.stringify(fin));
-if (temConhecidos && fin && !("situacao" in fin)) {
-  console.warn("⚠️ finalize sem `situacao`: a edge não aplicou radar_aplicar_situacao (edge/migration antigas?) — leads baixados e alerta ao gestor NÃO aconteceram neste lote");
+if (temConhecidos && fin?.situacao_aplicacao === "cron") {
+  console.log("📅 situação cadastral: aplicada pelo job radar-aplicar-situacao-diario (06:05 UTC) — descartes e alerta ao gestor saem na próxima manhã, o aviso do lote às 06:45 depois disso");
+} else if (temConhecidos && fin && !("situacao" in fin)) {
+  console.warn("⚠️ finalize sem `situacao_aplicacao` nem `situacao`: edge antiga (v1.1) — a situação cadastral deste lote NÃO será aplicada");
 }

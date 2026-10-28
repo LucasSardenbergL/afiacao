@@ -30,6 +30,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -90,6 +91,28 @@ type ResolvedMapping struct {
 	// dos itens não a seleciona (evita "column ordem does not exist") e deriva a
 	// ordem pela sequência de leitura. Só relevante no shape child.
 	ChildHasOrdem bool
+
+	// Isoladas: entidades que NUNCA derrubam o ciclo do catálogo (ver entidadesIsoladas).
+	Isoladas map[string]EstadoIsolada
+}
+
+// mapeamentosIsolados são as entidades cuja tabela/coluna ausente desliga SÓ a própria entidade:
+// resolvidas num laço à PARTE, nunca entram em SchemaDiff nem em Resolved (logo, nem no
+// fingerprint). vendas_item (as dosagens do giro de corante) é nova e o schema dela ainda não foi
+// provado em todas as lojas — um palpite errado de nome não pode parar o preço do balcão.
+// ⚠️ PROVISÓRIO até o passo 0 do founder (spec giro de corante §6): a chave, a coluna de data e
+// a unidade são confirmadas lá (Task 11 do plano).
+func mapeamentosIsolados() []TableMapping {
+	return []TableMapping{{Table: "vendas_item", Columns: colunasVendasItem()}}
+}
+
+// EstadoIsolada é a resolução de uma entidade isolada. OK=false → a entidade não roda no ciclo.
+type EstadoIsolada struct {
+	OK       bool
+	Faltando []string
+	// Tabela é o nome físico; Colunas: lógico → físico (só com OK=true é completo).
+	Tabela  string
+	Colunas map[string]string
 }
 
 // TableFor retorna o nome FÍSICO da tabela de uma entidade lógica
@@ -315,12 +338,26 @@ func expectedMappings() []TableMapping {
 			"id_emb":       colOpt("id_emb"),
 			"id_padraocor": colOpt("id_padraocor"),
 		}},
+		// Entrada LEGADA, intocada: entra no fingerprint do catálogo como no binário 0.2.x. A
+		// entidade de verdade (as dosagens) está em mapeamentosIsolados().
 		{Table: "vendas_item", Columns: map[string]ColMapping{
 			"id_venda":   colOpt("id_venda"),
 			"id_corante": colOpt("id_corante"),
 			"qtd_ml":     colOpt("qtd_ml"),
 		}},
 	}
+}
+
+// colunasVendasItem: data da dosagem + os 6 pares de slot corante/qtd (mesmos candidatos da
+// fórmula flat). Todas obrigatórias: preparação sem algum slot resolvido não é medível.
+func colunasVendasItem() map[string]ColMapping {
+	cols := map[string]ColMapping{
+		"data_dosagem": col("data_dosagem"),
+	}
+	for slot, cands := range flatFormulaSlotCandidates() {
+		cols[slot] = candidates(cands...)
+	}
+	return cols
 }
 
 // flatFormulaSlotCandidates descreve os candidatos para cada slot de corante/qtd
@@ -410,6 +447,11 @@ func resolveMapping(cols map[string]map[string]bool) (*ResolvedMapping, *SchemaD
 		Tables:          make(map[string]string),
 		FormulaShape:    FormulaShapeUnknown,
 		FlatColsByTable: make(map[string]map[string]string),
+		Isoladas:        make(map[string]EstadoIsolada),
+	}
+
+	for _, tm := range mapeamentosIsolados() {
+		rm.Isoladas[tm.Table] = resolverIsolada(cols, tm)
 	}
 
 	for _, tm := range expectedMappings() {
@@ -474,6 +516,40 @@ func resolveMapping(cols map[string]map[string]bool) (*ResolvedMapping, *SchemaD
 	noteFormulationAmbiguity(cols, "formulaperson", diff)
 
 	return rm, diff
+}
+
+// resolverIsolada resolve uma entidade isolada sem tocar no SchemaDiff do catálogo.
+func resolverIsolada(cols map[string]map[string]bool, tm TableMapping) EstadoIsolada {
+	tableCands := tm.TableCandidates
+	if len(tableCands) == 0 {
+		tableCands = []string{tm.Table}
+	}
+	est := EstadoIsolada{Colunas: make(map[string]string)}
+	for _, cand := range tableCands {
+		if _, ok := cols[strings.ToLower(cand)]; ok {
+			est.Tabela = strings.ToLower(cand)
+			break
+		}
+	}
+	for logicName, cm := range tm.Columns {
+		resolved := ""
+		if est.Tabela != "" {
+			for _, cand := range cm.Candidates {
+				if cols[est.Tabela][strings.ToLower(cand)] {
+					resolved = strings.ToLower(cand)
+					break
+				}
+			}
+		}
+		if resolved != "" {
+			est.Colunas[logicName] = resolved
+		} else if cm.Required {
+			est.Faltando = append(est.Faltando, logicName)
+		}
+	}
+	sort.Strings(est.Faltando)
+	est.OK = est.Tabela != "" && len(est.Faltando) == 0
+	return est
 }
 
 // noteFormulationAmbiguity grava um aviso em SchemaDiff.ExtraInfo quando a tabela

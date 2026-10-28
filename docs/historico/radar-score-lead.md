@@ -116,9 +116,21 @@ Nenhum dos 3.007 `ja_cliente` veio do próprio radar (`omie_codigo_cliente`/`vir
 
 **1ª rodada da v3:** cron 225, 03:30 BRT de 2026-10-22 (não pelo MCP: a chamada manual de ~100 s estoura o timeout do cliente).
 
+## v3 em produção (medido 2026-10-27, psql-ro)
+
+| Rodada (cron 06:30 UTC) | Lote | Alterados | Pulados | Com score | Duração |
+| --- | --- | --- | --- | --- | --- |
+| 21/10 (v2) | 2026-08 | 498.624 | 0 | 498.624 | 107 s |
+| 22/10 (1ª v3 + lote novo) | 2026-09 | 510.721 | 0 | 500.040 | 115 s |
+| 23–27/10 | 2026-09 | 0 | 0 | 500.040 | 19–20 s |
+
+Com score: 19.528 motivos "atividade secundária prioritária" e 77.693 "CNAE intermediário"; 0 já-cliente com score; máximo 90; 776 leads ≥ 70 (lote 2026-09). A rodada sem mudança cai de ~110 s para ~20 s — o UPDATE só toca linha cujo score mudou.
+
 ## Recalcular no fim da carga mensal — NÃO feito, por decisão medida (2026-10-21)
 
 O aviso ao gestor (06:45 UTC) já roda depois do score (06:30) e só usa o score quando a última rodada é do MESMO lote. Disparar o recálculo no `finalize` da edge `radar-ingest` anteciparia no máximo 1 dia, 1× por mês, ao custo de mexer na edge e de uma chamada síncrona de ~100 s. Reabrir se o atraso de um dia virar dor nomeada.
+
+**Confirmado com o lote 2026-09 (o 1º depois da decisão):** a carga terminou em 2026-10-21 17:10 UTC; a rodada do score de 22/10 06:30 UTC (13h20 depois) já avaliou o lote 2026-09, e o aviso ao gestor de 06:45 saiu com `score: calculado` para ele (112 de 10.792 inéditos com score ≥ 70). Ninguém viu a fila nova sem score além da madrugada.
 
 ## Proximidade por clientes ATIVOS — medida e NÃO trocada (2026-10-21)
 

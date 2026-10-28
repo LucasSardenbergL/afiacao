@@ -20,6 +20,26 @@ import {
   snapshotEnfileirado,
   updateConfirmou,
 } from "./promocao-fila.ts";
+// Lote de /catalogs sem entidade gravável: ack sem run (catalogo-vazio_test.ts) — NÃO reimplementar inline.
+import { ackSemRun, ENTIDADES_CATALOGO, itensGravaveis } from "./catalogo-vazio.ts";
+// Giro de corante (Fase 1, PR B): /preparations com manifesto, saneado (sem `cliente`) e tudo-ou-nada,
+// e /preparations/plano (preparacoes_test.ts) — NÃO reimplementar inline.
+import { type DepsPreparacoes, modoPromove, processarPreparacoes, respostaDoPlano } from "./preparacoes.ts";
+import { escritaCritica } from "../_shared/escrita-critica.ts";
+// Lote de /formulas que só reenvia fórmula idêntica à última staging: mesmo ack, sem run
+// (formula-identica_test.ts) — NÃO reimplementar inline.
+import {
+  CAPA_POSTGREST,
+  type ItemOficial,
+  type ItemStaging,
+  JANELA_ULTIMAS,
+  type LinhaOficial,
+  type LinhaStaging,
+  loteElegivel,
+  reenvioDescartavel,
+  SELECT_ULTIMA,
+  ultimaDaChave,
+} from "./formula-identica.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -57,22 +77,6 @@ interface TintPrecosBaseItem {
 }
 
 // TintFormulaItem / TintFormulaPayload migraram para ./staging-rows.ts (Fase 1d).
-
-/** Preparação (mistura de tinta concreta) bruta enviada pelo agente */
-interface TintPreparacaoPayload {
-  preparacao_id?: string;
-  cor_id?: string;
-  nome_cor?: string;
-  cod_produto?: string;
-  id_base?: string;
-  id_embalagem?: string;
-  volume_ml?: number;
-  preco?: number;
-  cliente?: string;
-  data_preparacao?: string;
-  personalizada?: boolean;
-  itens?: TintFormulaItem[];
-}
 
 /** Linha resultante do join tint_formulas + tint_produtos/bases/embalagens (modo simulate/real_data) */
 interface TintFormulaJoinRow {
@@ -169,11 +173,22 @@ Deno.serve(async (req) => {
   // ─── Change 2: checkIdempotency returns 409 for incomplete/running runs ───
   /** Check if a sync_run with this idempotency_key already exists. Returns its saved response or null. */
   async function checkIdempotency(agent: { settingId: string }, syncType: string): Promise<Response | null> {
-    if (!idempotencyKey) return null;
+    const r = await consultarIdempotencia(agent, syncType, idempotencyKey);
+    return r ? json(r.body, r.status) : null;
+  }
+
+  /** Núcleo do checkIdempotency com a chave explícita: /preparations usa a chave EFETIVA
+   *  (`<cabeçalho>:<sha256 do lote saneado>`), não o cabeçalho cru. */
+  async function consultarIdempotencia(
+    agent: { settingId: string },
+    syncType: string,
+    chave: string | null,
+  ): Promise<{ status: number; body: Record<string, unknown> } | null> {
+    if (!chave) return null;
     const { data } = await sb.from("tint_sync_runs")
       .select("id, status, total_records, inserts, updates, errors, idempotency_response")
       .eq("setting_id", agent.settingId)
-      .eq("idempotency_key", idempotencyKey)
+      .eq("idempotency_key", chave)
       .eq("sync_type", syncType)
       .maybeSingle();
     if (!data) return null;
@@ -181,11 +196,11 @@ Deno.serve(async (req) => {
     // no stored response → 409 retry. An error run with a stored success response would otherwise
     // replay fake success and the connector would advance its high-water mark past the failed batch.
     if (data.status === "running" || data.status === "error" || data.idempotency_response == null) {
-      return json({ ok: false, error: "previous attempt incomplete, retry later", retry: true }, 409);
+      return { status: 409, body: { ok: false, error: "previous attempt incomplete, retry later", retry: true } };
     }
     // Return the stored response deterministically
     const stored = data.idempotency_response as Record<string, unknown>;
-    return json({
+    return { status: 200, body: {
       ok: true,
       sync_run_id: data.id,
       idempotent_replay: true,
@@ -197,10 +212,14 @@ Deno.serve(async (req) => {
       error_count: data.errors || 0,
       errors: [],
       ...stored,
-    });
+    } };
   }
 
-  async function createSyncRun(agent: { settingId: string; account: string; storeCode: string }, syncType: string) {
+  async function createSyncRun(
+    agent: { settingId: string; account: string; storeCode: string },
+    syncType: string,
+    chave: string | null = idempotencyKey,
+  ) {
     const row: Record<string, unknown> = {
       setting_id: agent.settingId,
       account: agent.account,
@@ -209,7 +228,7 @@ Deno.serve(async (req) => {
       source: "agent",
       status: "running",
     };
-    if (idempotencyKey) row.idempotency_key = idempotencyKey;
+    if (chave) row.idempotency_key = chave;
     // Fase 1d: versão do binário do conector (header x-agent-version) fica no rastro do
     // run — auditoria do estado misto do rollout (binário velho filtra inválidos antes
     // do POST; sem a versão não dá para saber QUEM alimentou cada run).
@@ -254,14 +273,108 @@ Deno.serve(async (req) => {
     stats: Record<string, number>,
     resp: Record<string, unknown>,
   ): Promise<Response> {
+    const { status, body } = await concluirEEnfileirarCorpo(agent, runId, stats, resp);
+    return json(body, status);
+  }
+
+  async function concluirEEnfileirarCorpo(
+    agent: { integrationMode: string },
+    runId: string,
+    stats: Record<string, number>,
+    resp: Record<string, unknown>,
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
     const extra = camposDeEnfileiramento(agent.integrationMode);
     const corpo = corpoDeConclusao(resp, extra !== undefined);
     const gravou = await completeSyncRun(runId, stats, "complete", corpo, extra);
     if (!gravou) {
       await logError(runId, "promotion", null, "falha ao concluir/enfileirar o run — lote NÃO confirmado ao conector").catch(() => {});
     }
-    const { status, body } = respostaDeConclusao(gravou, corpo);
-    return json(body, status);
+    return respostaDeConclusao(gravou, corpo);
+  }
+
+  /** true só se TODA fórmula do lote é idêntica à última staging da chave E o oficial já a reflete
+   *  (formula-identica.ts). Qualquer erro de consulta ou ausência → false, e o lote segue o caminho normal. */
+  async function reenvioIdentico(agent: { account: string; storeCode: string }, formulas: unknown): Promise<boolean> {
+    if (!loteElegivel(formulas)) return false;
+    // O oficial é por conta e a staging por loja: com 2+ lojas, outra poderia ter sobrescrito a chave.
+    const { data: lojas, error: errLojas } = await sb.from("tint_integration_settings")
+      .select("id")
+      .eq("account", agent.account)
+      .limit(2);
+    if (errLojas || !lojas || lojas.length !== 1) return false;
+    const { data: snaps, error: errSnaps } = await sb.from("tint_keys_snapshots")
+      .select("created_at")
+      .eq("account", agent.account)
+      .eq("entity", "formulas")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (errSnaps || !snaps) return false;
+    const snapshotRecebidoEm = snaps.length > 0 ? snaps[0].created_at : null;
+
+    for (const f of formulas) {
+      const { data: linhas, error: errLinhas } = await sb.from("tint_staging_formulas")
+        .select(SELECT_ULTIMA)
+        .eq("account", agent.account)
+        .eq("store_code", agent.storeCode)
+        .eq("cor_id", f.cor_id)
+        .eq("cod_produto", f.cod_produto)
+        .eq("id_base", f.id_base)
+        .eq("personalizada", f.personalizada || false)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(JANELA_ULTIMAS);
+      if (errLinhas || !linhas) return false;
+      const ultima = ultimaDaChave(linhas as unknown as LinhaStaging[], f);
+      if (!ultima) return false;
+      const { data: itens, error: errItens } = await sb.from("tint_staging_formula_itens")
+        .select("id_corante, ordem, qtd_ml")
+        .eq("staging_formula_id", ultima.id);
+      if (errItens || !itens) return false;
+      const { data: run, error: errRun } = await sb.from("tint_sync_runs")
+        .select("promocao_status")
+        .eq("id", ultima.sync_run_id)
+        .maybeSingle();
+      if (errRun || !run) return false;
+      // Chave oficial: produto e base resolvidos como na promoção (account + código Sayersystem).
+      const { data: produtos, error: errProd } = await sb.from("tint_produtos")
+        .select("id")
+        .eq("account", agent.account)
+        .eq("cod_produto", f.cod_produto)
+        .limit(2);
+      if (errProd || !produtos || produtos.length !== 1) return false;
+      const { data: bases, error: errBase } = await sb.from("tint_bases")
+        .select("id")
+        .eq("account", agent.account)
+        .eq("id_base_sayersystem", f.id_base)
+        .limit(2);
+      if (errBase || !bases || bases.length !== 1) return false;
+      const { data: oficiais, error: errOf } = await sb.from("tint_formulas")
+        .select("id, updated_at, desativada_em")
+        .eq("account", agent.account)
+        .eq("cor_id", f.cor_id)
+        .eq("produto_id", produtos[0].id)
+        .eq("base_id", bases[0].id)
+        .eq("personalizada", f.personalizada || false)
+        .is("subcolecao_id", null)
+        .limit(CAPA_POSTGREST);
+      if (errOf || !oficiais || oficiais.length === 0) return false;
+      // Receita oficial: a promoção reinsere os itens de cada fórmula aceita; o recálculo de preço não.
+      const { data: itensOficiais, error: errItOf } = await sb.from("tint_formula_itens")
+        .select("formula_id, created_at")
+        .in("formula_id", oficiais.map((o) => o.id))
+        .limit(CAPA_POSTGREST);
+      if (errItOf || !itensOficiais) return false;
+      const ctx = {
+        ultima,
+        itens: itens as ItemStaging[],
+        promocaoStatus: run.promocao_status,
+        oficiais: oficiais as LinhaOficial[],
+        itensOficiais: itensOficiais as ItemOficial[],
+        snapshotRecebidoEm,
+      };
+      if (!reenvioDescartavel(f, agent.account, agent.storeCode, ctx)) return false;
+    }
+    return true;
   }
 
   async function logError(runId: string, entityType: string, entityId: string | null, msg: string, details?: unknown, raw?: unknown) {
@@ -357,8 +470,12 @@ Deno.serve(async (req) => {
       const body = await req.json();
 
       // Change 3+4: also validate precos_base batch size
-      const batchErr = validateBatchSize(body, ["produtos", "bases", "embalagens", "skus", "corantes", "precos_base"]);
+      const batchErr = validateBatchSize(body, [...ENTIDADES_CATALOGO]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
+
+      // Só padracores/colecoes/subcolecoes/personcores (que esta rota não grava): antes abria run +
+      // promoção vazia, ~700/dia (medido 2026-10-21). Mesmo ack, sem run.
+      if (itensGravaveis(body) === 0) return json(ackSemRun(idempotencyKey));
 
       const runId = await createSyncRun(agent, "catalogs");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
@@ -461,6 +578,13 @@ Deno.serve(async (req) => {
       const batchErr = validateBatchSize(body, ["formulas"]);
       if (batchErr) return json({ ok: false, error: batchErr }, 400);
 
+      // Reenvio da personalizada mais recente a cada ciclo do conector 0.2.5 (HWM com margem): antes
+      // abria run de 1 registro + promoção do par inteiro (~320 MB lidos), ~130/dia (medido 2026-10-27).
+      // Só com TODA fórmula idêntica à última staging da chave e o oficial já refletindo; mesmo ack, sem run.
+      if (await reenvioIdentico(agent, body.formulas)) {
+        return json(ackSemRun(idempotencyKey, "fórmula idêntica à última staging da chave", body.formulas.length));
+      }
+
       const runId = await createSyncRun(agent, "formulas");
       if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
 
@@ -557,93 +681,56 @@ Deno.serve(async (req) => {
         { duration_ms: Date.now() - start, total: received, inserts, updates: 0, errors }, resp);
     }
 
-    // ============ SYNC PREPARATIONS ============
+    // ============ PLANO DE EXTRAÇÃO DAS PREPARAÇÕES (giro de corante) ============
+    // O SERVIDOR planeja: o conector só executa as janelas devolvidas (sem HWM local).
+    if (path === "plano" && url.pathname.split("/").at(-2) === "preparations" && req.method === "POST") {
+      const agent = await validateAgent();
+      if (!agent) return json({ ok: false, error: "Invalid token or store" }, 401);
+      // Sem promoção (modo ≠ automatic_primary) nenhuma extração completaria: não planeja.
+      if (!modoPromove(agent.integrationMode)) return json({ ok: false, error: "modo_sem_promocao" }, 422);
+      const { data, error } = await sb.rpc("tint_consumo_plano_extracao", {
+        p_account: agent.account,
+        p_store_code: agent.storeCode,
+        p_agora: new Date().toISOString(),
+      });
+      if (error) console.error("[tint-sync-agent] plano: RPC falhou", { code: error.code ?? null });
+      const r = respostaDoPlano(data, error);
+      return json(r.corpo, r.status);
+    }
+
+    // ============ SYNC PREPARATIONS (giro de corante) ============
+    // Lote de UMA extração com manifesto, saneado (sem `cliente`) e tudo-ou-nada: preparacoes.ts.
     if (path === "preparations" && req.method === "POST") {
       const agent = await validateAgent();
       if (!agent) return json({ ok: false, error: "Invalid token or store" }, 401);
-
-      const cached = await checkIdempotency(agent, "preparations");
-      if (cached) return cached;
-
-      const start = Date.now();
-      const body = await req.json();
-
-      const batchErr = validateBatchSize(body, ["preparacoes"]);
-      if (batchErr) return json({ ok: false, error: batchErr }, 400);
-
-      const runId = await createSyncRun(agent, "preparations");
-      if (!runId) return json({ ok: false, error: "Failed to create sync run" }, 500);
-
-      let inserts = 0, errors = 0;
-      const ignored = 0;
-      const errorDetails: { entity_type: string; entity_id: string | null; message: string }[] = [];
-      const preps: TintPreparacaoPayload[] = (body.preparacoes as TintPreparacaoPayload[] | undefined) || [];
-      const received = preps.length;
-
-      // /preparations kept as row-by-row (v2 per spec) but item errors are now surfaced
-      for (const p of preps) {
-        try {
-          if (!p.preparacao_id) {
-            errors++;
-            errorDetails.push({ entity_type: "preparacao", entity_id: null, message: "Missing required field: preparacao_id" });
-            await logError(runId, "preparacao", null, "Missing preparacao_id", null, p);
-            continue;
-          }
-
-          const { data: prepRow, error: pErr } = await sb.from("tint_staging_preparacoes").insert({
-            sync_run_id: runId,
-            account: agent.account,
-            store_code: agent.storeCode,
-            preparacao_id: p.preparacao_id,
-            cor_id: p.cor_id,
-            nome_cor: p.nome_cor,
-            cod_produto: p.cod_produto,
-            id_base: p.id_base,
-            id_embalagem: p.id_embalagem,
-            volume_ml: p.volume_ml,
-            preco: p.preco,
-            cliente: p.cliente,
-            data_preparacao: p.data_preparacao,
-            personalizada: p.personalizada || false,
-            raw_data: p,
-            staging_status: "pending",
-          }).select("id").single();
-
-          if (pErr) {
-            errors++;
-            errorDetails.push({ entity_type: "preparacao", entity_id: p.preparacao_id, message: pErr.message });
-            await logError(runId, "preparacao", p.preparacao_id, pErr.message, pErr, p);
-            continue;
-          }
-
-          const itens: TintFormulaItem[] = p.itens || [];
-          for (const item of itens) {
-            // Fix §3.1.3 applied to /preparations as well: surface item errors
-            const { error: itemErr } = await sb.from("tint_staging_preparacao_itens").insert({
-              sync_run_id: runId,
-              staging_preparacao_id: prepRow?.id,
-              id_corante: item.id_corante || "",
-              ordem: item.ordem || 0,
-              qtd_ml: item.qtd_ml,
-            });
-            if (itemErr) {
-              errors++;
-              errorDetails.push({ entity_type: "preparacao_item", entity_id: p.preparacao_id, message: itemErr.message });
-              await logError(runId, "preparacao_item", p.preparacao_id, itemErr.message, itemErr, item);
+      try {
+        const deps: DepsPreparacoes = {
+          idempotencyKey,
+          checkIdempotency: async (chave) => {
+            const r = await consultarIdempotencia(agent, "preparations", chave);
+            return r ? { status: r.status, corpo: r.body } : null;
+          },
+          createSyncRun: (chave) => createSyncRun(agent, "preparations", chave),
+          inserir: async (tabela, linhas) => {
+            for (let i = 0; i < linhas.length; i += MAX_BATCH_ITEMS) {
+              await escritaCritica(`${tabela}.insert`, sb.from(tabela).insert(linhas.slice(i, i + MAX_BATCH_ITEMS)));
             }
-          }
-          inserts++;
-        } catch (e) {
-          errors++;
-          const msg = e instanceof Error ? e.message : String(e);
-          errorDetails.push({ entity_type: "preparacao", entity_id: p.preparacao_id ?? null, message: msg });
-          await logError(runId, "preparacao", p.preparacao_id ?? null, msg, null, p);
-        }
+          },
+          logError: (runId, tipo, id, msg, det) => logError(runId, tipo, id, msg, det),
+          completeSyncRun: (runId, stats, status, resp, extra) => completeSyncRun(runId, stats, status, resp, extra),
+          concluirEEnfileirar: async (runId, stats, resp) => {
+            const r = await concluirEEnfileirarCorpo(agent, runId, stats, resp);
+            return { status: r.status, corpo: r.body };
+          },
+          novoId: () => crypto.randomUUID(),
+        };
+        const r = await processarPreparacoes(await req.text(), agent, deps);
+        return json(r.corpo, r.status);
+      } catch (e) {
+        // Só o NOME da exceção: a mensagem pode citar o corpo.
+        console.error("[tint-sync-agent] preparations: erro interno", { nome: e instanceof Error ? e.name : "desconhecido" });
+        return json({ ok: false, error: "erro_interno", retry: true }, 500);
       }
-
-      const resp = buildResponse(runId, { received, inserts, updates: 0, ignored, errors, errorDetails });
-      await completeSyncRun(runId, { duration_ms: Date.now() - start, total: received, inserts, updates: 0, errors }, "complete", resp);
-      return json(resp);
     }
 
     // ============ KEYS SNAPSHOT (Change 4 — new endpoint) ============

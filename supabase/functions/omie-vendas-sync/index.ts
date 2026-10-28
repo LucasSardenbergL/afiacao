@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { identidadeDistinta, normalizarCodigoItemOmie } from "../_shared/omie-codigo-item.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { documentoParaCadastro, normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
-import { lookupDevolveuOMesmoDocumento } from "../_shared/lookup-documento.ts";
+import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type ListarPagina, matchesDoPedido } from "./lookup-cliente-estrito.ts";
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
@@ -259,7 +259,10 @@ async function callOmieVendasApi(
   // ar") — e no caminho de criação de cliente a ambiguidade vira DUPLICATA
   // no ERP (lookup falho lido como ausência → IncluirCliente). Usar nos
   // lookups de identidade; syncs paginados continuam tratando null como fim.
-  opts?: { throwOnTransient?: boolean },
+  // deadline: fim ABSOLUTO (ms) imposto pelo chamador, quando ele cabe antes do teto de 140s desta chamada — o
+  // lookup estrito do cliente divide UM prazo entre as páginas e deixa tempo para o Incluir* que vem depois
+  // (Codex P2, v1.28). Estourou numa leitura → OMIE_TRANSIENT (nunca ausência).
+  opts?: { throwOnTransient?: boolean; deadline?: number },
 ): Promise<OmieGenericResponse | null> {
   const { APP_KEY, APP_SECRET } = getCredentials(account);
 
@@ -277,7 +280,7 @@ async function callOmieVendasApi(
   // marcada como indeterminada (o Omie pode ter gravado) e nunca entra no retry deste laço, que
   // só reage a faultstring de uma resposta RECEBIDA — e, numa escrita, só repete o rate-limit (ou
   // um SET Alterar*/Totalizar*) — ver _shared/omie-chamada-relogio.ts.
-  const deadline = prazoDaChamadaOmie(Date.now());
+  const deadline = Math.min(prazoDaChamadaOmie(Date.now()), opts?.deadline ?? Number.POSITIVE_INFINITY);
   // Uma tentativa anterior desta ESCRITA recebeu fault transitória ambígua (pode ter gravado):
   // a partir daí, "esgotou"/"sem tempo" é desfecho INDETERMINADO, nunca "não foi feita".
   let envioAmbiguo = false;
@@ -753,45 +756,17 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Buscar cliente na empresa de vendas pelo CPF/CNPJ.
-// opts.throwOnTransient: falha transitória do Omie LANÇA em vez de retornar
-// null (null = ausência CONFIRMADA) — obrigatório nos caminhos de decisão de
-// criação (anti-duplicata); enriquecimentos best-effort ficam sem.
-async function buscarClienteVendas(
-  document: string,
-  account: Account = "oben",
-  opts?: { throwOnTransient?: boolean },
-) {
-  const documentClean = normalizarDocumento(document);
-
-  const result = await callOmieVendasApi(
-    "geral/clientes/",
-    "ListarClientes",
-    {
-      pagina: 1,
-      registros_por_pagina: 1,
-      clientesFiltro: { cnpj_cpf: documentClean },
-    },
-    account,
-    opts
-  );
-
-  const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
-  if (!result || !clientesArr?.[0]?.codigo_cliente_omie) {
-    return null;
-  }
-
-  const cliente = clientesArr[0];
-  const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
-  console.log(`[Omie Vendas][${account}] Cliente ${cliente.codigo_cliente_omie} vendedor: recomendacoes=${cliente.recomendacoes?.codigo_vendedor}, root=${cliente.codigo_vendedor}, resolved=${codigoVendedor}`);
-  return {
-    codigo_cliente: cliente.codigo_cliente_omie,
-    razao_social: cliente.razao_social,
-    codigo_vendedor: codigoVendedor,
-    // Documento do registro devolvido, para o chamador conferir IDENTIDADE (o Omie devolve o 1º da
-    // página; `criar_cliente` exige que seja o documento pedido — Codex ALTO 2026-10-20).
-    cnpj_cpf: cliente.cnpj_cpf ?? null,
-  };
+// Página do ListarClientes filtrado pelo documento, para o lookup ESTRITO (./lookup-cliente-estrito.ts).
+// throwOnTransient: transitório esgotado LANÇA; `null` só no fault "Não existem registros" (página vazia).
+function listarClientesPorDocumento(docClean: string, account: Account): ListarPagina {
+  return (pagina, porPagina, prazo) =>
+    callOmieVendasApi(
+      "geral/clientes/",
+      "ListarClientes",
+      { pagina, registros_por_pagina: porPagina, clientesFiltro: { cnpj_cpf: docClean } },
+      account,
+      { throwOnTransient: true, deadline: prazo },
+    );
 }
 
 // Buscar histórico de preços no Omie (pedidos anteriores do cliente)
@@ -980,10 +955,15 @@ async function buscarContextoComercialCliente(
   let codigoVendedor: number | null = null;
 
   if (!codigoCliente && opts.document) {
-    const cli = await buscarClienteVendas(opts.document, account);
-    if (cli?.codigo_cliente) {
+    // Lookup ESTRITO (./lookup-cliente-estrito.ts, v1.29): o 1º registro do ListarClientes trazia o histórico de preço
+    // e a parcela de OUTRO cliente quando o Omie devolvia outro documento ou dois códigos. Ambíguo/divergente/resposta
+    // inválida e transitório LANÇAM (a action falha) — contexto de outro cliente é pior que nenhum; ausência provada
+    // segue devolvendo o contexto vazio, como antes.
+    const docCtx = docDoPedido(opts.document);
+    const cli = docCtx ? await buscarClienteEstrito(docCtx, account, listarClientesPorDocumento(docCtx, account)) : null;
+    if (cli) {
       codigoCliente = cli.codigo_cliente;
-      codigoVendedor = cli.codigo_vendedor ?? null;
+      codigoVendedor = cli.codigo_vendedor;
     }
   }
 
@@ -2135,24 +2115,12 @@ function aplicarProvaPositivaNoCache(
 }
 // MIRROR-END
 
-// Resolve os matches de cliente por documento na conta (registros_por_pagina:2 p/ detectar duplicata-CNPJ).
-// throwOnTransient: erro Omie transitório LANÇA (ausência só como array vazio confirmado, nunca timeout).
+// Resolve os matches de cliente por documento na conta pelo lookup ESTRITO (./lookup-cliente-estrito.ts): pagina até
+// a página vazia e confere o documento de TODO registro. 0 ou 1 match; ambíguo/divergente/resposta inválida LANÇAM com a
+// marca (o chamador rejeita o envio); transitório segue lançando OMIE_TRANSIENT (ausência só como página vazia válida).
 async function buscarClienteVendasMatches(document: string, account: Account = "oben"): Promise<OmieMatch[]> {
   const documentClean = normalizarDocumento(document);
-  const result = await callOmieVendasApi(
-    "geral/clientes/",
-    "ListarClientes",
-    { pagina: 1, registros_por_pagina: 2, clientesFiltro: { cnpj_cpf: documentClean } },
-    account,
-    { throwOnTransient: true },
-  );
-  const arr = (result?.clientes_cadastro as OmieClienteCadastro[] | undefined) ?? [];
-  return arr
-    .filter((c) => c.codigo_cliente_omie)
-    .map((c) => ({
-      codigo_cliente: c.codigo_cliente_omie as number,
-      codigo_vendedor: c.recomendacoes?.codigo_vendedor ?? c.codigo_vendedor ?? null,
-    }));
+  return await matchesDoPedido(documentClean, account, listarClientesPorDocumento(documentClean, account));
 }
 
 // Deriva a identidade Omie AUTORITATIVA de (documento do pedido, conta) — money-path P0-B. Âncora = documento
@@ -2165,13 +2133,16 @@ async function deriveOmieAccountIdentity(
   suppliedCodigo: number | null,
 ): Promise<{ codigo_cliente: number; codigo_vendedor: number | null }> {
   const rawDoc = (soRow.customer_document || "").trim();
-  let doc = normalizarDocumento(rawDoc);
+  // Gramática ESTRITA (documentoParaCadastro, via docDoPedido): `123ABC45678909` virava o CPF 12345678909 de
+  // OUTRA pessoa pelo só-dígitos (Codex ALTO, v1.28). PROD 2026-10-27: 0 documentos com letra em sales_orders e
+  // profiles; 5.668/5.668 profiles na gramática numérica.
+  let doc = docDoPedido(rawDoc);
   // Fallback p/ profiles.document SÓ quando customer_user_id é CONFIÁVEL (≠ created_by). O submit faz
   // customer_user_id = customerUserId || created_by → quando cai no created_by (staff sem cliente local),
   // derivar do doc do VENDEDOR rotearia o PV pro vendedor (Codex P1 #1). Sem doc confiável → fail-closed.
   if (!doc && soRow.customer_user_id && soRow.customer_user_id !== soRow.created_by) {
     const { data: prof } = await supabase.from("profiles").select("document").eq("user_id", soRow.customer_user_id).maybeSingle();
-    doc = normalizarDocumento(prof?.document);
+    doc = docDoPedido(prof?.document);
   }
   if (!doc) {
     throw new Error(`Pedido rejeitado: sem documento CONFIÁVEL do cliente para provar a identidade Omie na conta ${account} — envio bloqueado (não roteia pelo vendedor).`);
@@ -2191,7 +2162,12 @@ async function deriveOmieAccountIdentity(
   //    do caminho de dinheiro — e a proof-table account-correta é `omie_customer_account_map`.
   // Sobra UMA fonte autoritativa: documento (âncora) + API Omie, com divergência advisory×derivado,
   // ambiguidade, ausência e bigint fora de range todos fail-closed em decideAccountIdentity.
-  const omieMatches = await buscarClienteVendasMatches(doc, account);
+  let omieMatches: OmieMatch[];
+  try {
+    omieMatches = await buscarClienteVendasMatches(doc, account);
+  } catch (e) {
+    throw erroDeIdentidadeDoPedido(e, account);
+  }
   const decision = decideAccountIdentity({ account, suppliedCodigo, mirrorRows: [], omieMatches });
   if (!decision.ok) {
     const reason = "reason" in decision ? decision.reason : "unknown";
@@ -2910,12 +2886,10 @@ Deno.serve(async (req) => {
         // Documento pela gramática estrita do cadastro: o código devolvido vira o cliente do pedido, e o
         // só-dígitos reduzia "ABC12345678909" ao CPF 12345678909 de OUTRA pessoa (Codex ALTO, #3180).
         const docBusca = documentoParaCadastro(document);
-        const cliente = await buscarClienteVendas(docBusca, account, { throwOnTransient: true });
-        // O código vira o cliente do pedido: registro com OUTRO documento é INDETERMINADO, não "achei" —
-        // falha alta (o client marca lookupFalhou e não segue com código alheio).
-        if (cliente && !lookupDevolveuOMesmoDocumento(docBusca, cliente.cnpj_cpf)) {
-          throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
-        }
+        // O código vira o cliente do pedido: mesmo lookup ESTRITO do criar_cliente (lookup-cliente-estrito.ts) —
+        // OUTRO documento (DIVERGENTE), 2+ códigos (AMBIGUO) ou resposta inválida (INDETERMINADO) lançam, e o
+        // client marca lookupFalhou em vez de seguir com código alheio ou com o 1º de vários (Codex, #3293).
+        const cliente = await buscarClienteEstrito(docBusca, account, listarClientesPorDocumento(docBusca, account));
         result = { success: true, cliente };
         break;
       }
@@ -2930,15 +2904,12 @@ Deno.serve(async (req) => {
         // → a action falha honesta e o client não cria.
         // O lookup usa o documento VALIDADO (docClean), o mesmo que vai ao IncluirCliente — com o cru,
         // "CNPJ: AEG12345678909" consultava 12345678909 e cadastrava AEG12345678909 (Codex 2026-10-21).
-        const existingCliente = await buscarClienteVendas(docClean, account, { throwOnTransient: true });
+        // Lookup ESTRITO (achado 4 do Codex no #3293, lookup-cliente-estrito.ts): pagina até a página vazia e
+        // confere TODOS os registros — resposta inválida = OMIE_LOOKUP_INDETERMINADO, registro com outro
+        // documento = OMIE_LOOKUP_DIVERGENTE (Codex ALTO 2026-10-20), 2+ códigos para o documento =
+        // OMIE_LOOKUP_AMBIGUO. Só a ausência PROVADA (1ª página vazia e válida) segue para o IncluirCliente.
+        const existingCliente = await buscarClienteEstrito(docClean, account, listarClientesPorDocumento(docClean, account));
         if (existingCliente) {
-          // O lookup pega o 1º registro da página SEM conferir o documento. Se o Omie casar o filtro
-          // parcialmente ou ignorar letras (CNPJ alfanumérico, RFB jul/2026), devolveria OUTRO cliente e o
-          // lead sairia da fila com `created:false` e código alheio. Divergência = INDETERMINADO: falha
-          // alta, o lead fica na fila (Codex ALTO 2026-10-20; precisão > recall).
-          if (!lookupDevolveuOMesmoDocumento(docClean, existingCliente.cnpj_cpf)) {
-            throw new Error(`OMIE_LOOKUP_DIVERGENTE (${account}): o ListarClientes devolveu um cliente com OUTRO documento — não dá pra afirmar identidade`);
-          }
           // Confirmação do SERVIDOR (ledger omie_cliente_confirmacoes): é o que a RPC do Radar exige para marcar
           // ja_cliente — o código que o front repassa deixou de bastar. null = nada a confirmar (outra conta/CPF).
           const linhaLookup = linhaConfirmacao(account, docClean, existingCliente.codigo_cliente, "lookup", userId);

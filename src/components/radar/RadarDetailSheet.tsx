@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { MapPin, Mail, MessageSquare, ChevronRight, History } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
+import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { isCellphone, whatsappLink } from '@/lib/phone';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
@@ -144,7 +145,8 @@ export function RadarDetailSheet({
           ) : <span />}
           <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
         </div>
-        <div className="mt-3">
+        <div className="mt-3 space-y-2">
+          <RadarConflitosDoLead cnpj={empresa.cnpj} />
           <RadarAcoesLead empresa={empresa} />
         </div>
         <div className="mt-4 divide-y">

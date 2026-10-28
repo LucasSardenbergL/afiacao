@@ -1,6 +1,6 @@
 // scripts/orcamento-compra/simular.test.ts
 import { describe, expect, it } from 'vitest';
-import { backtest, candidatoR59, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
+import { backtest, candidatoR59, componentesR59, identificadoresR59, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
 
 const cfg: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
@@ -410,6 +410,47 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     expect(candidatoR59(ev([]), pSimples)).toBe(true);
     expect(candidatoR59(ev(['lucas 2097504', '20975042', '2097502']), pSimples)).toBe(true);
   });
+  it('(c3e) R59: aprovação casa o conjunto EXATO (sem colisão de separador) e identificador vazio não existe (Codex 2026-10-21)', () => {
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: null as string | null, encerrado_omie: true };
+    const com = (contrato: string, identificadores: string[]): Fatos => ({
+      ...semLinhas, disparados: [HIST, P], contratos_pedidos_omie: [{ codigo: '500', contrato }],
+      r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores }],
+    });
+    // P2-1: um identificador com '|' dentro NÃO é o conjunto de dois identificadores (o join('|') os confundia)
+    expect(backtest(com('2093559|2096771', ['2093559', '2096771']), cfg).foraDoCaixaR59).toEqual([]);
+    expect(backtest(com('2093559|2096771', ['2093559|2096771']), cfg).foraDoCaixaR59.map((x) => x.id)).toEqual([12]);
+    // a aprovação aceita a mesma lista em outra ordem, com espaço nas bordas ou repetida — e só isso
+    expect(backtest(com('2096999', [' 2096999 ', '2096999']), cfg).foraDoCaixaR59.map((x) => x.id)).toEqual([12]);
+    expect(backtest(com('2096999', ['2096999', '2096998']), cfg).foraDoCaixaR59).toEqual([]);
+    // P2-3: identificador vazio não existe — contrato em branco não vira identificador, e aprovação com '' nunca casa
+    const pProt = { ...P, protocolo: '2096999' };
+    const branco: Fatos = { ...semLinhas, disparados: [HIST, pProt], contratos_pedidos_omie: [{ codigo: '500', contrato: ' ' }] };
+    expect(identificadoresR59(branco, pProt)).toEqual(['2096999']);
+    expect(backtest({ ...branco, r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores: ['', '2096999'] }] }, cfg).foraDoCaixaR59).toEqual([]);
+    // evidência em branco não é evidência de nada (nem de um identificador vazio)
+    expect(candidatoR59({ ...branco, evidencia_nf_contratos: [' ', ''] }, pProt)).toBe(true);
+  });
+  it('(c3f) R59: separadores por caso — / ; , separam; " e ", "-", "|" e espaço NÃO (determinístico, Codex 2026-10-21)', () => {
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '502', protocolo: null as string | null, encerrado_omie: true };
+    const cand = (contrato: string, evid: string[]) => candidatoR59({
+      ...semLinhas, disparados: [HIST, P], contratos_pedidos_omie: [{ codigo: '502', contrato }], evidencia_nf_contratos: evid,
+    }, P);
+    // ';' e ',' (sem veto estrutural): evidência de UM componente veta o candidato
+    for (const sep of [';', ',']) {
+      expect(cand(`2140001${sep}2140002`, []), `sem evidência, separador ${sep}`).toBe(true);
+      expect(cand(`2140001${sep}2140002`, ['2140002']), `componente, separador ${sep}`).toBe(false);
+      // e a evidência composta pelo mesmo separador vale para o identificador simples
+      expect(cand('2140002', [`2140001${sep}2140002`]), `evidência composta, separador ${sep}`).toBe(false);
+    }
+    // '/' no contrato próprio é composto → veto estrutural (nunca candidato), com ou sem evidência
+    expect(cand('2140001/2140002', [])).toBe(false);
+    expect(cand('2140002', ['2140001/2140002'])).toBe(false);
+    // NÃO separam: o componente não casa (fica candidato; quem decide é a aprovação nominal)
+    for (const junta of [' e ', '-', '|', ' ']) {
+      expect(cand(`2140001${junta}2140002`, ['2140002']), `não separa: "${junta}"`).toBe(true);
+    }
+    expect(componentesR59(' 2140001 ; 2140002 ,2140003/ ')).toEqual(['2140001 ; 2140002 ,2140003/', '2140001', '2140002', '2140003']);
+  });
   it('(c3d) R59: a expansão por componente e o veto de composto só RETIRAM candidatos (candidato novo ⇒ antigo)', () => {
     // oráculo = o candidatoR59 de antes (string inteira, sem veto) — Codex 2026-10-21: a mudança só pode vetar
     const antigo = (f: Fatos, p: Fatos['disparados'][number]): boolean => {
@@ -418,15 +459,20 @@ describe('R27 — integração da base de caixa (money-path)', () => {
       if (p.protocolo) ids.add(p.protocolo.trim());
       for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
       for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+      // domínio: identificador NÃO vazio (Codex 2026-10-21: o vazio fazia o oráculo casar evidência em branco com
+      // contrato em branco — a propriedade só tem sentido sobre identificadores reais)
+      ids.delete('');
       if (ids.size === 0) return false;
       const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
       return ![...ids].some((c) => comNf.has(c));
     };
     let semente = 20261021;
     const rnd = (n: number) => { semente = (semente * 1103515245 + 12345) % 2 ** 31; return semente % n; };
-    const pecas = ['2130311', '2130322', '2097502', ' 2097504', 'lucas 220126', ''];
-    const texto = () => Array.from({ length: 1 + rnd(2) }, () => pecas[rnd(pecas.length)]).join(['/', ';', ',', ' '][rnd(4)]);
+    const pecas = ['2130311', '2130322', '2097502', ' 2097504', 'lucas 220126', '', '2140001', '2140002 ', 'AFI26050780', '1'];
+    const texto = () => Array.from({ length: 1 + rnd(3) }, () => pecas[rnd(pecas.length)]).join(['/', ';', ',', ' ', ' e ', '-', '|'][rnd(7)]);
     let candidatosAntigos = 0;
+    let candidatosNovos = 0;
+    const entradas = new Set<string>();
     for (let i = 0; i < 2000; i++) {
       const p = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: ['500', '501'][rnd(2)], protocolo: rnd(3) ? texto() : null, encerrado_omie: true };
       const f: Fatos = {
@@ -436,11 +482,15 @@ describe('R27 — integração da base de caixa (money-path)', () => {
         evidencia_nf_contratos: Array.from({ length: rnd(3) }, texto),
         nfs_do_contrato: rnd(2) ? [{ contrato: texto(), nf: '1', data: null }] : [],
       };
+      entradas.add(JSON.stringify([p.protocolo, p.omie_pedido, f.contratos_pedidos_omie, f.pedidos_omie_sayerlack, f.evidencia_nf_contratos, f.nfs_do_contrato]));
       if (antigo(f, p)) candidatosAntigos++;
-      if (candidatoR59(f, p)) expect(antigo(f, p)).toBe(true);
+      if (candidatoR59(f, p)) { candidatosNovos++; expect(antigo(f, p)).toBe(true); }
     }
-    // a geração exercita os dois lados (senão a propriedade passa por vacuidade)
+    // a geração exercita os dois lados (senão a propriedade passa por vacuidade): candidatos antigos E novos, e
+    // entradas DISTINTAS bastantes (Codex 2026-10-21: o gerador antigo dava só 149 entradas distintas)
     expect(candidatosAntigos).toBeGreaterThan(100);
+    expect(candidatosNovos).toBeGreaterThan(50);
+    expect(entradas.size).toBeGreaterThan(1000);
   });
   it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
     // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)

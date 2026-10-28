@@ -112,9 +112,9 @@ Publish + adoção fecha a UI.
 
 ## Follow-ups (fora deste PR)
 
-- **Lookup da edge `criar_cliente`** (Codex achado 4): pega o 1º registro do `ListarClientes` e trata resposta
+- ~~**Lookup da edge `criar_cliente`** (Codex achado 4): pega o 1º registro do `ListarClientes` e trata resposta
   malformada como "não existe" → `IncluirCliente`. Dois códigos Omie para o mesmo documento passam calados; a chave
-  determinística só barra a MESMA chave. Exigir um único código válido e distinguir ausência de resposta inválida.
-- **Evidência de conflito entre abas** (Codex achado 3): o lote vive no `localStorage` por usuário; a aba A pode
+  determinística só barra a MESMA chave. Exigir um único código válido e distinguir ausência de resposta inválida.~~ → feito em [omie-lookup-cliente-estrito.md](omie-lookup-cliente-estrito.md) (v1.27).
+- ~~**Evidência de conflito entre abas** (Codex achado 3)~~ → feito em [radar-cadastro-conflitos.md](radar-cadastro-conflitos.md): o lote vive no `localStorage` por usuário; a aba A pode
   regravar o lote inteiro por cima do `divergente` que a aba B persistiu. O estado autoritativo (vínculo) está no
   servidor e nunca é sobrescrito; perder o AVISO pede um registro de conflito no servidor.

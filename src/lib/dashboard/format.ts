@@ -44,3 +44,34 @@ export function formatImportStatus(status: string | null | undefined): string {
       return status.length > 10 ? `${status.slice(0, 9)}…` : status;
   }
 }
+
+/**
+ * Como uma linha de `tint_importacoes` com erro aparece no cockpit. O sync automático do balcão
+ * grava `arquivo_nome = 'sync:<uuid do run>'` — o uuid não diz nada a quem lê. E o "erro" desse run
+ * é fórmula que o guard BARROU (a receita anterior segue valendo), não falha do sync: por isso
+ * `barrada`, e não `erro`. Contagem ausente não vira "0" (ausente ≠ zero).
+ */
+export function descreverImportacaoTint(linha: {
+  arquivo_nome?: string | null;
+  registros_erro?: number | null;
+  created_at?: string | null;
+}): { titulo: string; detalhe: string; ehSync: boolean } {
+  const n = linha.registros_erro;
+  if (linha.arquivo_nome?.startsWith('sync:')) {
+    const quando = linha.created_at
+      ? new Date(linha.created_at).toLocaleString('pt-BR', {
+          day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+        })
+      : null;
+    return {
+      titulo: quando ? `Sync de fórmulas · ${quando}` : 'Sync de fórmulas',
+      detalhe: n == null ? 'fórmulas barradas (sem contagem)' : `${n} ${n === 1 ? 'fórmula barrada' : 'fórmulas barradas'} pela fonte`,
+      ehSync: true,
+    };
+  }
+  return {
+    titulo: linha.arquivo_nome ?? 'Importação',
+    detalhe: n == null ? 'erros (sem contagem)' : `${n} erro(s)`,
+    ehSync: false,
+  };
+}

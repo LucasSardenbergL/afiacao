@@ -24,6 +24,8 @@ import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { interpretarRespostaEfetivacao } from '@/lib/recebimento/efetivacao-resposta';
 import { interpretarImportacaoPorChave } from '@/lib/recebimento/importacao-resposta';
+import { situacaoItensNf } from '@/lib/recebimento/itens-da-nf';
+import { RotuloItensDaNf } from '@/components/recebimento/RotuloItensDaNf';
 
 // `descartado`: cabeçalho que não é recebimento de mercadoria (ex.: CT-e de frete importado como NF-e
 // até a v1.5 da omie-nfe-recebimento-sync). Fica no banco, com o motivo em `observacoes`, mas sai da
@@ -354,6 +356,7 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
             const itens: NfeItem[] = nfe.nfe_recebimento_itens ?? [];
             const totalItens = itens.length;
             const conferidos = itens.filter((i: NfeItem) => i.status_item === 'conferido').length;
+            const situacaoItens = situacaoItensNf(nfe.status, itens);
             const ctes: CteAssociado[] = nfe.cte_associados ?? [];
             const totalFrete = ctes.reduce((s: number, c: CteAssociado) => s + (c.valor_frete ?? 0), 0);
             const status = nfe.status as NfeStatus;
@@ -400,13 +403,17 @@ export default function Recebimento({ statusFilter }: { statusFilter?: string[] 
                       <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                         <span>{formatDate(nfe.data_emissao)}</span>
                         <span className="font-medium text-foreground">{formatCurrency(nfe.valor_total)}</span>
-                        <span>{totalItens} {totalItens === 1 ? 'item' : 'itens'}</span>
-                        {totalItens > 0 && (
-                          <span className={cn(
-                            conferidos === totalItens ? 'text-status-success' : 'text-status-warning'
-                          )}>
-                            {conferidos} de {totalItens} conferidos
-                          </span>
+                        {situacaoItens === 'com_itens' ? (
+                          <>
+                            <span>{totalItens} {totalItens === 1 ? 'item' : 'itens'}</span>
+                            <span className={cn(
+                              conferidos === totalItens ? 'text-status-success' : 'text-status-warning'
+                            )}>
+                              {conferidos} de {totalItens} conferidos
+                            </span>
+                          </>
+                        ) : (
+                          <RotuloItensDaNf situacao={situacaoItens} />
                         )}
                         {ctes.length > 0 && (
                           <span className="flex items-center gap-1">

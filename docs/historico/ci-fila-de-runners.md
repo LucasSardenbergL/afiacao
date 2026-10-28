@@ -43,9 +43,29 @@ medição e pesou o default (30 s). A parte 1 foi a 13,1 min em vez de ~10. Ela 
 seguinte. Prova cara nova desequilibra até a tabela ser re-medida: confira com
 `comm -23 <(grep -oE '^db/test-[^ ]+' db/nucleo-ci.txt | sort -u) <(grep -oE '^db/test-[^ ]+' db/nucleo-ci-custo.txt | sort -u)`.
 
-**Re-medir num pico** (comparação com carga equivalente, ainda em aberto): liste os runs `CI` de
-`pull_request` verdes e com `run_attempt=1` (`gh api repos/LucasSardenbergL/afiacao/actions/runs`).
-Para cada um, baixe `runs/<id>/jobs?filter=all`. Conte `validate.completed_at − run.created_at` e, por
+**Carga moderada** (2026-10-27 14:00–17:00 UTC: 14 runs de PR, 4,7/h; 11 verdes no attempt 1): p50 até o
+`validate` de **16,8 min** (12,4–23,0). Fila até o 1º job: 0,1 min. Espera por job: p50 0,1–2,8 min
+(máx. 11,2). A conta ficou com ≥19 jobs simultâneos durante 70 dos 180 min. As 6 partes do `provas-sql`
+executaram em 10,1–11,5 min (p50), já com a tabela de custo completa. Sem fila, o caminho crítico foi de
+12,4 min.
+
+**Rajada e tabela velha** (2026-10-28 00:00–03:00 UTC: 17 runs de PR, 5,7/h; 14 verdes no attempt 1):
+p50 até o `validate` de **22,1 min** (16,3–38,0). A hora 01:00 teve 8 runs de PR, e os 7 verdes entre 01:03
+e 01:42 deram p50 de 28,8 min. Fila até o 1º job: 0,7 min. Mas parte da piora não era fila: a
+`provas-sql (6)` executou em p50 16,3 min contra 10–12 das outras. Seis provas tinham entrado sem
+custo medido, e uma delas (`test-radar-cadastro-conflitos`, ~6 min) pesava o default de 30 s. A
+`test-fin-consolidado-ic` também tinha crescido de 32 para 218 s. A tabela foi re-medida inteira
+(mediana de 4 runs de 28/10). Com ela, `--lista` dá 12,0 min de custo em cada uma das 6 partes,
+contra uma pior parte de 15,3 min com a tabela velha. Lição repetida: prova cara nova sem custo vira
+o caminho crítico em dias. A receita do `comm` acima pega isso antes. Depois da re-medição (#3389,
+merge 10:59Z): as 6 partes executaram em p50 11,7–13,7 min (antes 10–16), e o p50 até o `validate`
+foi de **14,5 min** (14,0–15,1) com fila ~0. São só 3 runs verdes, todos às 11h UTC, com pouca carga.
+
+**Pico (ainda em aberto).** A comparação justa com a linha de base pede ~9,5 runs de PR/h. Desde o
+#3313 nenhuma hora passou de 5. A tarefa agendada de 2026-10-22 falhou pelo limite semanal de uso, e a de
+2026-10-27 parou no portão de ≥8 runs/h. Quando houver um dia com muitas sessões em paralelo: liste os
+runs `CI` de `pull_request` verdes e com `run_attempt=1` (`gh api repos/LucasSardenbergL/afiacao/actions/runs`),
+baixe `runs/<id>/jobs?filter=all` de cada um e conte `validate.completed_at − run.created_at` e, por
 job, `started_at − created_at`.
 
 **Lição.** Quando o tempo até o veredito cresce e a execução não, meça `started_at − created_at` por
