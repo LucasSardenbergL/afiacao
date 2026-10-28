@@ -56,6 +56,7 @@ db/test-cancelar-pedido-guard-atomico.sh                   3
 db/test-recusa-definitiva-portal-servidor.sh               2
 db/test-analytics-outbox-insert-ja-aprovado.sh             1
 db/test-analytics-ledger-venda-cliente.sh                  2
+db/test-analytics-ledger-financeiro-ciclo.sh               2
 db/test-analytics-outbox-canonica.sh                       21
 db/test-apply-score-updates.sh                             1
 db/test-sales_orders_omie_hash_unique.sh                   1
