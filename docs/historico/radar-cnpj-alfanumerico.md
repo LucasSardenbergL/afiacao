@@ -230,6 +230,9 @@ A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
     `data.cliente.codigo_cliente` (colacor), e `criar_cliente` / `buscar_cliente_por_documento` são planos de fato.
     Teste: helper + amarração (hook usa o helper; edge devolve `{ success, cliente }`). Falsificação com controle
     verde: acesso antigo no helper, acesso antigo no hook e `error` ignorado ficam vermelhos.
+    **No ar (#3366, squash `118733313`):** Publish feito pelo founder em 2026-10-27;
+    `monitor-deploy.sh --pr 3366` exit 0 `PR_NO_AR`, com o ar carimbando `b4b32d74` (= `origin/main`). O
+    `git log 118733313..origin/main` dos dois arquivos veio vazio: o sync do Lovable não reverteu nada.
   - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
     O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
 
