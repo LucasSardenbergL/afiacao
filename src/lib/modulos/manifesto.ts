@@ -971,6 +971,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/erro-colapsado-em-vazio-gate.test.ts",
       "src/__tests__/sinal-de-falha-ignorado-gate.test.ts",
       "src/__tests__/import-tint-formulas-aposentada-gate.test.ts",
+      "src/__tests__/tint-preparacoes-sem-cliente.test.ts",
       "src/__tests__/ia-paga-sem-cota-gate.test.ts",
       "src/__tests__/hoje-utc-gate.test.ts",
       "src/__tests__/universo-pedidos-ts-gate.test.ts",

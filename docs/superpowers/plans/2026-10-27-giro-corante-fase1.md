@@ -51,6 +51,10 @@ P0 cobertura fabricada → correção 9 + P16/G9 · P1#2 re-scan não cura → p
 
 Recebido somava `quantidade_nfe` (prod: as 4 NF de WP têm `quantidade_conferida = 0`) → só NF conferida por inteiro conta, senão o WP não é medido (R8) · elegibilidade desconhecida aprovava o gate → `nao_medido` (R7) · `capacidade_confirmada` com capacidade NULL virava 810 ml → CHECK `confirmada ⇒ capacidade` + gate · compactação destruía o replay → recibo durável `tint_consumo_runs_aplicados` (P20.replay) · esperados das falsificações do giro preenchidos · P2: P90 discriminante (G16) e desvios opostos (R6).
 
+## Parecer Codex PR B (2026-10-28, `logs/giro-corante/codex-prb.out`, gpt-6-astra · max · 627 s)
+
+1 P1 + 4 P2, nenhum P0; sem vazamento de `cliente` demonstrado. P1 200 sem enfileiramento em loja `shadow_mode`/`csv_only` → `modoPromove` recusa (422 `modo_sem_promocao`) antes de qualquer escrita, também no plano · P2 falha transitória prendia a chave em 409 até o plano expirar → a falha de escrita libera `idempotency_key` do run em `error` · P2 ns × µs do Postgres (`…59.9999999` arredonda para o `ate`) e `Date.parse` normalizando `02-30` → `instanteNs` recusa fração além do µs e data inexistente · P2 faixa mais larga que o lote passava na edge e caía na promoção → extremos = min/max exatos · P2 plano com `max_lotes: 0`, `motivo` fora do vocabulário ou `desde > ate` → 500. Cada correção tem teste que fica vermelho sob a sabotagem correspondente (falsificação com 13 sabotagens, controle verde na mesma invocação). Prod (2026-10-28): a única loja (`oben/M01`) está em `automatic_primary`.
+
 ## Foco de revisão (falhas que nenhum teste "natural" pegaria)
 
 1. Um lote da extração falha na promoção, e a lacuna envelhece além de 35 dias → a cobertura para para sempre, ou uma extração posterior "pula" o buraco. Esperado: a ilha recente não atravessa o buraco, e o plano manda uma janela de cura do buraco mais antigo, de qualquer idade dentro do piso, até ele fechar. Prova P15/P17 (Task 2).
