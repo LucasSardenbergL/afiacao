@@ -6,11 +6,11 @@
 
 ## Veredito
 
-- **Oficial: NO-GO `INVIAVEL_NA_CALIBRACAO`.** O próprio F0 atende 93,49% das linhas de A na calibração, abaixo do piso de 98%. Os 13 SKUs suaves de A ficam no F0 em todas as variantes (§5.3) e atendem 92,49%. Como o piso e o alvo são medidos na célula da classe inteira, nenhum quantil chega lá: com quantil 0,999, a F1 vai a 95,36% e a F2 a 95,5%. A régua não foi afrouxada.
+- **Oficial: NO-GO `INVIAVEL_NA_CALIBRACAO`.** O próprio F0 atende 93,49% das linhas de A na calibração, abaixo do piso de 98%. Os SKUs suaves e erráticos (12 na coorte) ficam no F0 em todas as variantes (§5.3); os de A atendem 92,49%. Como o piso e o alvo são medidos na célula da classe inteira, nenhum quantil chega lá: com quantil 0,999, a F1 vai a 95,36% e a F2 a 95,5%. A régua não foi afrouxada.
 - **Informativo, não oficial (R27, decisão do Lucas): NO-GO.** Calibrando e avaliando só nos intermitentes, a candidata é a F1 (quantis 0,995 / 0,97 / 0,925):
   - A sobe +3,01 p.p. (LI +1,94) e B +1,43 p.p.; C fica em −0,81 p.p., INCERTO.
   - O capital piora 15,2% (LI −17,4%, LS −12,9%), FALHA nos três cenários de falta.
-  - A economia a 25% a.a. é negativa em espera, positiva em cancelamento e incerta no misto.
+  - A economia a 25% a.a. é negativa em espera e no misto 60/30/10 (7 de 9 células da grade com FALHA; as 2 de emergencial 20% com atraso ficam incertas) e positiva só no cancelamento puro.
   - Leitura: nos intermitentes, a F1 compra serviço com capital, e a taxa não paga a troca.
 
 ## O que vale levar adiante
@@ -22,7 +22,7 @@
 
 ## Método (rulings no ledger da sessão; os que mudam a leitura)
 
-- **R7, R9, R17:** LT por documento único (sku, t4, qtd), sem o t1 "fabricado" (t1 = t2), que a produção anula.
+- **R7, R9, R17:** o LT vem de um recebimento por documento (R7); o recebimento físico é deduplicado por (sku, t4, qtd) (R9); e o t1 "fabricado" (t1 = t2), que a produção anula, sai da amostra (R17).
 - **R16:** os SKUs com demanda via ficha técnica saem da coorte.
 - **R24:** numa cancelada sem CMC, a margem entra no pior caso para a alternativa (0% das linhas nesta rodada).
 - **R25:** o capital é exigido nos três cenários de falta.
@@ -34,4 +34,4 @@
 - Suíte `scripts/reposicao-replay`, typecheck, lint, knip e lint:shell com rc=0.
 - Falsificação por camada em cada task, com controle verde na mesma invocação.
 - Revisão de spec e qualidade por task, com fix rounds.
-- O Codex adversarial do código não rodou: a cota estava em 99% (exit 79). O PR fica DRAFT até a janela reabrir (`money-path.md`).
+- Codex adversarial do código: ver o corpo do PR.
