@@ -620,6 +620,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/reposicao/__tests__/etapa-desconhecida-edge.test.ts",
       "src/lib/reposicao/__tests__/sombra-associacao-edge.test.ts",
       "src/lib/reposicao/__tests__/linha-view.test.ts",
+      "src/lib/reposicao/__tests__/corantes-helpers.test.ts",
+      "src/components/reposicao/corantes/__tests__/CorantesTab.test.tsx",
     ],
     risco: { moneyPath: true, offlineFirst: false, authSensitive: false },
   },
