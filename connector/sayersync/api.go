@@ -105,6 +105,9 @@ type Client struct {
 }
 
 // NewClient cria um Client com timeout de 60s.
+// backoffsPost são as esperas entre as tentativas do Post (variável só para os testes encurtarem).
+var backoffsPost = []time.Duration{1 * time.Second, 4 * time.Second, 16 * time.Second}
+
 func NewClient(baseURL, token, storeCode string) *Client {
 	return &Client{
 		baseURL:   baseURL,
@@ -125,12 +128,19 @@ func NewClient(baseURL, token, storeCode string) *Client {
 //
 // idempotencyKey é enviado no header x-idempotency-key (pode ser vazio).
 func (c *Client) Post(ctx context.Context, path string, body any, idempotencyKey string) (*AgentResponse, error) {
+	ar, _, err := c.postBruto(ctx, path, body, idempotencyKey)
+	return ar, err
+}
+
+// postBruto é o Post com o corpo CRU da resposta junto: rotas cujo contrato não cabe no
+// AgentResponse (ex.: /preparations/plano) decodificam o próprio corpo. Mesmo retry/backoff.
+func (c *Client) postBruto(ctx context.Context, path string, body any, idempotencyKey string) (*AgentResponse, []byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("Post %s: falha ao serializar payload: %w", path, err)
+		return nil, nil, fmt.Errorf("Post %s: falha ao serializar payload: %w", path, err)
 	}
 
-	backoffs := []time.Duration{1 * time.Second, 4 * time.Second, 16 * time.Second}
+	backoffs := backoffsPost
 	var lastErr error
 
 	for attempt := 0; attempt <= len(backoffs); attempt++ {
@@ -139,13 +149,13 @@ func (c *Client) Post(ctx context.Context, path string, body any, idempotencyKey
 			wait := backoffs[attempt-1]
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			case <-time.After(wait):
 			}
 			logger.Infof("api: retry %d/%d para %s", attempt, len(backoffs), path)
 		}
 
-		ar, reqErr := c.singlePost(ctx, path, data, idempotencyKey)
+		ar, bruto, reqErr := c.singlePost(ctx, path, data, idempotencyKey)
 		if reqErr == nil {
 			// Sucesso de transporte — verifica se é 409+retry (retentável).
 			if ar != nil && ar.Retry {
@@ -153,9 +163,9 @@ func (c *Client) Post(ctx context.Context, path string, body any, idempotencyKey
 				if attempt < len(backoffs) {
 					continue
 				}
-				return nil, lastErr
+				return nil, nil, lastErr
 			}
-			return ar, nil
+			return ar, bruto, nil
 		}
 
 		// Classifica o erro.
@@ -165,7 +175,7 @@ func (c *Client) Post(ctx context.Context, path string, body any, idempotencyKey
 				continue
 			}
 			// 4xx permanente ou esgotou tentativas.
-			return nil, reqErr
+			return nil, nil, reqErr
 		}
 
 		// Erro de transporte/rede.
@@ -175,17 +185,17 @@ func (c *Client) Post(ctx context.Context, path string, body any, idempotencyKey
 		}
 	}
 
-	return nil, lastErr
+	return nil, nil, lastErr
 }
 
 // singlePost executa uma única requisição HTTP POST sem retry.
 // Retorna (nil, *HTTPError) para respostas HTTP >= 400, exceto 409+retry
 // que retorna (*AgentResponse, nil) para que o caller decida retentar.
-func (c *Client) singlePost(ctx context.Context, path string, data []byte, idempotencyKey string) (*AgentResponse, error) {
+func (c *Client) singlePost(ctx context.Context, path string, data []byte, idempotencyKey string) (*AgentResponse, []byte, error) {
 	url := c.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("singlePost: erro ao criar request para %s: %w", path, err)
+		return nil, nil, fmt.Errorf("singlePost: erro ao criar request para %s: %w", path, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-sync-token", c.token)
@@ -201,13 +211,13 @@ func (c *Client) singlePost(ctx context.Context, path string, data []byte, idemp
 
 	httpResp, err := c.httpCli.Do(req)
 	if err != nil {
-		return nil, err // erro de transporte
+		return nil, nil, err // erro de transporte
 	}
 	defer httpResp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(httpResp.Body, 1<<20)) // 1 MB máx
 	if err != nil {
-		return nil, fmt.Errorf("singlePost: falha ao ler resposta de %s: %w", path, err)
+		return nil, nil, fmt.Errorf("singlePost: falha ao ler resposta de %s: %w", path, err)
 	}
 
 	// Tenta decodificar o JSON de resposta (tolerante).
@@ -219,19 +229,19 @@ func (c *Client) singlePost(ctx context.Context, path string, data []byte, idemp
 
 	// 409 + retry:true → retorna o AgentResponse para que o caller retente.
 	if httpResp.StatusCode == 409 && ar.Retry {
-		return &ar, nil
+		return &ar, bodyBytes, nil
 	}
 
 	// Qualquer status >= 400 vira HTTPError.
 	if httpResp.StatusCode >= 400 {
-		return nil, &HTTPError{
+		return nil, nil, &HTTPError{
 			StatusCode: httpResp.StatusCode,
 			Body:       string(bodyBytes),
 			Path:       path,
 		}
 	}
 
-	return &ar, nil
+	return &ar, bodyBytes, nil
 }
 
 // Heartbeat envia o payload de heartbeat para POST /heartbeat.

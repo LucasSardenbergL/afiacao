@@ -150,6 +150,8 @@ type captureServer struct {
 	requests []capturedRequest
 	response AgentResponse
 	statusFn func(path string) int // se nil, retorna 200
+	// bodyFn, se não-nil e devolvendo não-nil, substitui o corpo (rotas fora do AgentResponse).
+	bodyFn func(path string) any
 }
 
 type capturedRequest struct {
@@ -174,6 +176,12 @@ func (cs *captureServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	if cs.bodyFn != nil {
+		if b := cs.bodyFn(r.URL.Path); b != nil {
+			_ = json.NewEncoder(w).Encode(b)
+			return
+		}
+	}
 	resp := cs.response
 	resp.OK = status < 300
 	_ = json.NewEncoder(w).Encode(resp)
