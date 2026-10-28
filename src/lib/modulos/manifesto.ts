@@ -638,7 +638,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/Producao*.tsx",
       "src/pages/ProductionOrders.tsx",
     ],
-    testes: [],
+    testes: ["src/pages/__tests__/Producao.escrita-calada.test.tsx"],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
   },
   {
