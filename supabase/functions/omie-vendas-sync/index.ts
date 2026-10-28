@@ -756,47 +756,6 @@ async function listarClientesVendas(searchTerm: string, account: Account = "oben
   return results;
 }
 
-// Buscar cliente na empresa de vendas pelo CPF/CNPJ.
-// opts.throwOnTransient: falha transitória do Omie LANÇA em vez de retornar
-// null (null = ausência CONFIRMADA) — obrigatório nos caminhos de decisão de
-// criação (anti-duplicata); enriquecimentos best-effort ficam sem.
-async function buscarClienteVendas(
-  document: string,
-  account: Account = "oben",
-  opts?: { throwOnTransient?: boolean },
-) {
-  const documentClean = normalizarDocumento(document);
-
-  const result = await callOmieVendasApi(
-    "geral/clientes/",
-    "ListarClientes",
-    {
-      pagina: 1,
-      registros_por_pagina: 1,
-      clientesFiltro: { cnpj_cpf: documentClean },
-    },
-    account,
-    opts
-  );
-
-  const clientesArr = result?.clientes_cadastro as OmieClienteCadastro[] | undefined;
-  if (!result || !clientesArr?.[0]?.codigo_cliente_omie) {
-    return null;
-  }
-
-  const cliente = clientesArr[0];
-  const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
-  console.log(`[Omie Vendas][${account}] Cliente ${cliente.codigo_cliente_omie} vendedor: recomendacoes=${cliente.recomendacoes?.codigo_vendedor}, root=${cliente.codigo_vendedor}, resolved=${codigoVendedor}`);
-  return {
-    codigo_cliente: cliente.codigo_cliente_omie,
-    razao_social: cliente.razao_social,
-    codigo_vendedor: codigoVendedor,
-    // Documento do registro devolvido (o Omie devolve o 1º da página). Só o contexto comercial (leitura)
-    // usa esta busca; criar_cliente/buscar_cliente usam o lookup ESTRITO (./lookup-cliente-estrito.ts).
-    cnpj_cpf: cliente.cnpj_cpf ?? null,
-  };
-}
-
 // Página do ListarClientes filtrado pelo documento, para o lookup ESTRITO (./lookup-cliente-estrito.ts).
 // throwOnTransient: transitório esgotado LANÇA; `null` só no fault "Não existem registros" (página vazia).
 function listarClientesPorDocumento(docClean: string, account: Account): ListarPagina {
@@ -996,10 +955,15 @@ async function buscarContextoComercialCliente(
   let codigoVendedor: number | null = null;
 
   if (!codigoCliente && opts.document) {
-    const cli = await buscarClienteVendas(opts.document, account);
-    if (cli?.codigo_cliente) {
+    // Lookup ESTRITO (./lookup-cliente-estrito.ts, v1.29): o 1º registro do ListarClientes trazia o histórico de preço
+    // e a parcela de OUTRO cliente quando o Omie devolvia outro documento ou dois códigos. Ambíguo/divergente/resposta
+    // inválida e transitório LANÇAM (a action falha) — contexto de outro cliente é pior que nenhum; ausência provada
+    // segue devolvendo o contexto vazio, como antes.
+    const docCtx = docDoPedido(opts.document);
+    const cli = docCtx ? await buscarClienteEstrito(docCtx, account, listarClientesPorDocumento(docCtx, account)) : null;
+    if (cli) {
       codigoCliente = cli.codigo_cliente;
-      codigoVendedor = cli.codigo_vendedor ?? null;
+      codigoVendedor = cli.codigo_vendedor;
     }
   }
 
