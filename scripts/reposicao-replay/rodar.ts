@@ -112,9 +112,10 @@ export interface Congelado {
   /** Ausente/'classe' = rodada OFICIAL; 'alt' = rodada INFORMATIVA NÃO OFICIAL (R27): só a população alterada é simulada. */
   celulasAlvo?: CelulasAlvo;
 }
+/** Por população: os mapas e o conjunto `alterados` que troca a fórmula — o MESMO que define as células *_alt (revisão final I2). */
 interface Mapas {
-  coorte: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia> };
-  todos: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia> };
+  coorte: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia>; alterados: Set<string> };
+  todos: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia>; alterados: Set<string> };
 }
 const QUANTIL_NEUTRO: ParamsFormula = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
 
@@ -132,8 +133,8 @@ function mapasDaAvaliacao(dados: Dados, cg: Congelado, cacheDir?: string | null)
   const pc = populacaoDoModo(c, modo);
   const pt = populacaoDoModo(t, modo);
   return {
-    coorte: { f0: mapaMisto(f0, null, pc, c.alterados), alt: mapaMisto(f0, fn, pc, c.alterados) },
-    todos: { f0: mapaMisto(f0, null, pt, t.alterados), alt: mapaMisto(f0, fn, pt, t.alterados) },
+    coorte: { f0: mapaMisto(f0, null, pc, c.alterados), alt: mapaMisto(f0, fn, pc, c.alterados), alterados: c.alterados },
+    todos: { f0: mapaMisto(f0, null, pt, t.alterados), alt: mapaMisto(f0, fn, pt, t.alterados), alterados: t.alterados },
   };
 }
 
@@ -154,7 +155,7 @@ export function rodarLote(dados: Dados, cg: Congelado, reps: readonly number[], 
   for (const rep of reps) {
     for (const c of cens) {
       const m = mapas[c.pop];
-      const base = { rep, lt: c.lt, falta: c.falta, inicial: c.inicial, janela, dados, substituicao: c.sub };
+      const base = { rep, lt: c.lt, falta: c.falta, inicial: c.inicial, janela, dados, substituicao: c.sub, alterados: m.alterados };
       const s0 = simular({ ...base, formula: 'F0', params: m.f0 });
       const s1 = simular({ ...base, formula: cg.candidata, params: m.alt });
       const k = chaveCenario(c);

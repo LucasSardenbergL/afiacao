@@ -6,7 +6,7 @@ import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import { coorte } from './parados';
 import { anexarInformativa, avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
-import { causaOficial, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
+import { causaOficial, LIMITES, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
 import type { ParamsDia } from './formulas';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
@@ -294,5 +294,17 @@ describe('fix round 2 (relatório e orquestração)', () => {
     expect(gravados.at(-1)?.informativoErro).toMatch(/boom/);
     const ok = await anexarInformativa({ informativo: null, informativoErro: null } as unknown as Rodada, async () => ({ marcador: 1 }) as never, () => {});
     expect(ok.informativo).toEqual({ marcador: 1 });
+  });
+});
+
+describe('revisão final (relatório)', () => {
+  it('I1: o texto do gate do critério 5 descreve o misto 60% espera / 30% emergencial / 10% cancelamento', () => {
+    expect(TEXTO_GATE_ECONOMIA).toContain('60% espera');
+    expect(TEXTO_GATE_ECONOMIA).toContain('30% compra emergencial');
+    expect(TEXTO_GATE_ECONOMIA).toContain('10% cancelamento');
+  });
+  it('Minor 3: os limites declaram R10, R11, R17 e as compras abertas vazias no início', () => {
+    const t = LIMITES.join('\n');
+    for (const x of ['R10', 'R11', '312/238', '373/276', 'R17', '14 legítimos', '36 órfãos', 'compras abertas no início']) expect(t).toContain(x);
   });
 });

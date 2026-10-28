@@ -59,7 +59,8 @@ export const GRADE_CUSTO = {
 export const CENARIOS_FALTA = {
   servico: ['espera', 'cancelamento'],
   economia: ['espera', 'cancelamento', 'misto'],
-  misto: { espera: 0.6, cancelamento: 0.3, outro: 0.1 },
+  /** Spec §6: 60% espera, 30% compra EMERGENCIAL, 10% cancelamento (nomes explícitos; revisão final I1). */
+  misto: { espera: 0.6, emergencial: 0.3, cancelamento: 0.1 },
 } as const;
 export const CENARIOS_LT = ['empirico', 'estresse15', 'choque29'] as const;
 /** Choque de LT: semanas 9–12 da avaliação. */

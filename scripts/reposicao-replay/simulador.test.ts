@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { uniforme } from './aleatorio';
 import { somarDiasUteis } from './calendario';
-import { INICIO_AQUECIMENTO, JANELAS } from './config';
+import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { ParamsDia } from './formulas';
 import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
 import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
@@ -142,9 +142,9 @@ describe('simular', () => {
     expect(soma(c.cancelada.valor)).toBe(10);
     expect(soma(c.cancelada.margem)).toBe(10 - 6); // valor − cmcLinha × quantidade
     expect(soma(c.entregue.emergencial)).toBe(0);
-    // misto: linhaId cujo sorteio cai nos 10% de "outro" (emergencial)
+    // misto: linhaId cujo sorteio cai na faixa da compra emergencial ([0,6; 0,9) — spec §6: 60/30/10)
     let id = 0;
-    while (uniforme(0, 'falta', `e${id}`) < 0.9) id++;
+    for (let u = uniforme(0, 'falta', `e${id}`); !(u >= 0.6 && u < 0.9); u = uniforme(0, 'falta', `e${id}`)) id++;
     const vm = [venda('a1', 'P', '2026-05-05', 2), venda(`e${id}`, 'P', '2026-05-05', 2)];
     const m = roda(dados([comAbertura(sku('P'), 3, vm)], vm), params({ P: SEM }), { falta: 'misto' });
     expect(m.terminal.backlogValor).toBe(0);
@@ -364,5 +364,29 @@ describe('fix round 1', () => {
     }
     expect(comparados).toBeGreaterThan(0);
     expect(desfechosComuns).toBeGreaterThan(0);
+  });
+});
+
+describe('revisão final da branch', () => {
+  it('I1: misto = 60% espera, 30% compra EMERGENCIAL, 10% cancelamento (spec §6)', () => {
+    expect(CENARIOS_FALTA.misto).toEqual({ espera: 0.6, emergencial: 0.3, cancelamento: 0.1 });
+    // 10k linhas sem estoque nem compra: toda linha falha e segue o desfecho do misto
+    const vs: LinhaVenda[] = [];
+    for (let i = 0; i < 10_000; i++) vs.push(venda(`m${i}`, 'P', addDias(JANELA[0], i % 20), 1));
+    const r = roda(dados([comAbertura(sku('P'), 0, vs)], vs), params({ P: SEM }), { falta: 'misto', rastro: true });
+    const n = r.desfechos!.length;
+    expect(n).toBe(10_000);
+    const fr = (d: string) => r.desfechos!.filter((x) => x.desfecho === d).length / n;
+    expect(Math.abs(fr('espera') - 0.6)).toBeLessThan(0.02);
+    expect(Math.abs(fr('emergencial') - 0.3)).toBeLessThan(0.02);
+    expect(Math.abs(fr('cancelamento') - 0.1)).toBeLessThan(0.02);
+  });
+  it('I2: as células *_alt seguem o conjunto `alterados` passado (a mesma fonte que troca a fórmula)', () => {
+    const vs = [venda('a1', 'P', '2026-05-05', 1), venda('a2', 'P', '2026-05-12', 1)];
+    const dd = dados([comAbertura(sku('P'), 5, vs)], vs);
+    const soma2 = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+    expect(soma2(roda(dd, params({ P: SEM })).porCelula.C_alt.demandadas)).toBe(0); // P não é alterado na coorte
+    const r = roda(dd, params({ P: SEM }), { alterados: new Set(['P']) });
+    expect(soma2(r.porCelula.C_alt.demandadas)).toBe(2);
   });
 });

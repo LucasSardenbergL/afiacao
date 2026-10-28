@@ -8,8 +8,8 @@
 //   1. chegadas (compras simuladas e as compras abertas no início);
 //   2. obrigações FIFO por SKU (saldo por linha; entrega tardia; NÃO reentram no denominador);
 //   3. linhas do dia em ordem de (data, linhaId): integral = sucesso; senão UMA falha — a parte disponível é entregue e
-//      o resto segue o desfecho (espera → obrigação; cancelamento; misto = uniforme(rep,'falta',linhaId) em 60/30/10,
-//      o 10% "outro" = compra emergencial, que sai do sistema sem backlog);
+//      o resto segue o desfecho (espera → obrigação; cancelamento; misto = uniforme(rep,'falta',linhaId) em 60% espera,
+//      30% compra emergencial (sai do sistema sem backlog) e 10% cancelamento — config.CENARIOS_FALTA.misto);
 //   4. compra com `decidirCompra`, só em dia útil, sobre posição = físico + abertas − obrigações.
 //
 // DECISÕES DOCUMENTADAS (controlador, Task 6):
@@ -99,6 +99,11 @@ export interface EntradaSimulacao {
   /** Amostra de LT; padrão: `itensLtPermitidos(dados.itensLT, janela termina na calibração)`. */
   itensLT?: readonly ItemLT[];
   rastro?: boolean;
+  /**
+   * SKUs "alterados" que definem as células *_alt — devem ser os MESMOS que trocam de fórmula no mapa (revisão final I2).
+   * Padrão: coorte(dados).alterados.
+   */
+  alterados?: ReadonlySet<string>;
 }
 
 // ── decisão de compra (db/embalagem-motor-rpc.sql ~L400-520) ────────────────────────────────────────────────────
@@ -242,7 +247,14 @@ function itensPadrao(dados: Dados, calibracao: boolean): ItemLT[] {
   return it;
 }
 
-function montarPlano(dados: Dados, skusParams: string[], janela: [Data, Data], inicial: CenarioInicial, itens: readonly ItemLT[]): Plano {
+function montarPlano(
+  dados: Dados,
+  skusParams: string[],
+  janela: [Data, Data],
+  inicial: CenarioInicial,
+  itens: readonly ItemLT[],
+  altPassado: ReadonlySet<string> | undefined,
+): Plano {
   if (!(janela[0] >= INICIO_AQUECIMENTO && janela[0] <= janela[1])) throw new Error(`JANELA_INVALIDA:${janela.join('..')}`);
   const ini = estoqueInicial(dados, inicial);
   const excluidos: Plano['excluidos'] = [];
@@ -285,7 +297,7 @@ function montarPlano(dados: Dados, skusParams: string[], janela: [Data, Data], i
   }
   // linhas
   const classe = classeNoDia(dados, janela[0]);
-  const alt = alterados(dados);
+  const alt = altPassado ?? alterados(dados);
   let linhasIgnoradas = 0;
   const vs = dados.vendas
     .filter((v) => {
@@ -426,19 +438,20 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   const calib = janela[1] <= JANELAS.calibracaoFim;
   const itens = e.itensLT ?? itensPadrao(dados, calib);
   const skusP = skusDoMapa(e.params);
-  const chave = `${skusP.join(',')}|${janela[0]}|${janela[1]}|${e.inicial}`;
+  const chave = `${skusP.join(',')}|${janela[0]}|${janela[1]}|${e.inicial}|${e.alterados ? [...e.alterados].sort().join(',') : 'coorte'}`;
   let porDados = memoPlanos.get(dados);
   if (!porDados) memoPlanos.set(dados, (porDados = new Map()));
   let plano = porDados.get(chave);
-  if (!plano || plano.itens !== itens) porDados.set(chave, (plano = montarPlano(dados, skusP, janela, e.inicial, itens)));
+  if (!plano || plano.itens !== itens) porDados.set(chave, (plano = montarPlano(dados, skusP, janela, e.inicial, itens, e.alterados)));
   const pArr = resolverParams(plano, e.params, e.formula);
   const P = plano;
   const nSku = P.skus.length;
   const nDu = P.duPos.length;
   const nSem = P.semanas.length;
   const sub = e.substituicao === true;
+  // misto (spec §6): [0, espera) espera · [espera, espera+emergencial) emergencial · resto cancelamento
   const pEspera = CENARIOS_FALTA.misto.espera;
-  const pCancel = CENARIOS_FALTA.misto.espera + CENARIOS_FALTA.misto.cancelamento;
+  const pEmerg = CENARIOS_FALTA.misto.espera + CENARIOS_FALTA.misto.emergencial;
 
   // estado
   const est = Float64Array.from(P.inicial);
@@ -573,7 +586,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       else if (falta === 'cancelamento') desfecho = 1;
       else {
         const u = uniforme(rep, 'falta', P.linId[L]);
-        desfecho = u < pEspera ? 0 : u < pCancel ? 1 : 2;
+        desfecho = u < pEspera ? 0 : u < pEmerg ? 2 : 1;
       }
       if (desfechos) desfechos.push({ linhaId: P.linId[L], desfecho: desfecho === 0 ? 'espera' : desfecho === 1 ? 'cancelamento' : 'emergencial' });
       if (desfecho === 0) {

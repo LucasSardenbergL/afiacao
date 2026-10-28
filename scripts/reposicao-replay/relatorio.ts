@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CenarioLT } from './aleatorio';
-import { PISOS_SERVICO } from './config';
+import { CENARIOS_FALTA, PISOS_SERVICO } from './config';
 import type { ResultadoCalibracao } from './calibracao';
 import type { Criterio } from './estatistica';
 import type { Formula, ParamsFormula, RelatorioParidade } from './formulas';
@@ -103,6 +103,12 @@ const rotCen = (c: CenarioR) => `${c.pop === 'todos' ? 'todos-ativos ' : ''}${c.
 const tabela = (cab: string[], linhas: string[][]): string =>
   [`| ${cab.join(' | ')} |`, `|${cab.map(() => '---').join('|')}|`, ...linhas.map((l) => `| ${l.join(' | ')} |`)].join('\n');
 
+const pc0 = (x: number) => `${Math.round(x * 100)}%`;
+/** Texto do gate do critério 5 (o misto vem de config, com nomes explícitos — spec §6). */
+export const TEXTO_GATE_ECONOMIA =
+  `Gate (critério 5, R26): taxa 25% a.a.; emergencial 5/10/20% × atraso 0/0,5/1% por linha-dia; cenários espera, cancelamento e misto ` +
+  `(${pc0(CENARIOS_FALTA.misto.espera)} espera, ${pc0(CENARIOS_FALTA.misto.emergencial)} compra emergencial, ${pc0(CENARIOS_FALTA.misto.cancelamento)} cancelamento).`;
+
 /** Limitações a DECLARAR (spec §10 + rulings do controlador). */
 export const LIMITES: readonly string[] = [
   '**12 meses de histórico** (spec §10): 6 meses de avaliação, poucos blocos longos; intervalos largos → INCONCLUSIVO é desfecho legítimo.',
@@ -121,6 +127,10 @@ export const LIMITES: readonly string[] = [
   '**LT exógeno**: as fórmulas aprendem LT só de recebimentos históricos com t4 < d, nunca de chegadas simuladas (permite pré-computar os níveis).',
   '**Sem feriados** no calendário de LT/revisão (como `dias_uteis_entre` da produção).',
   '**O replay não mede a operação real** (spec §10): separação, aceitação de troca — cabe à sombra e ao piloto. Um GO autoriza sombra/piloto, não a troca do motor.',
+  '**R10** — a âncora da reconstrução do estoque inicial é o saldo de HOJE (única medição física); o fluxo da avaliação entra só como instrumento de medição do estado de out/25, não como informação de decisão (o teste de invariância compensa o saldo).',
+  '**R11** — "ativo" e "habilitado" seguem a definição composta do motor: 312/238 (ativos/habilitados), contra 373/276 da contagem frouxa da spec; a coorte é menor e fiel ao escopo real do motor.',
+  '**R17** — LT com t1 "fabricado" (t1 = t2) sai da amostra (T1_FABRICADO), aproximando o lt_bruto NULL da produção: 14 legítimos caem e 36 órfãos ficam (aproximação declarada).',
+  '**Estado de partida — compras abertas no início do aquecimento**: o conjunto é VAZIO no dado real (o 1º recebimento é de 2026-01-28); o estado inicial não tem pedidos em trânsito.',
   '**Duplicatas de LT** (spec §10): o motor de produção deduplica por NFe/tracking (`v_sku_leadtime_efetivo`, verificado na Task 5) — sem item separado.',
 ];
 
@@ -202,7 +212,7 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
 
     // 4. custo
     s(H2 + '4. Grade de custo (economia líquida, positivo = candidata vantajosa) e custo de falta de equilíbrio');
-    s('Gate (critério 5, R26): taxa 25% a.a.; emergencial 5/10/20% × atraso 0/0,5/1% por linha-dia; cenários espera, cancelamento e misto (60/30/10).');
+    s(TEXTO_GATE_ECONOMIA);
     s(
       tabela(
         ['Falta', 'Emergencial', 'Atraso/dia', 'Custo ponto', 'LI', 'LS', 'Linhas com margem limitada (R24)', 'Valor com margem limitada'],
