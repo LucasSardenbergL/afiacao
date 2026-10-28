@@ -50,7 +50,7 @@ Consumidores:
 
 - O data-health por empresa usa `max(saldo_data)` (`db/aplicar-sync-reprocess-degradado-vigiadas.sql:37-38`): uma conta fresca esconde as velhas. A tela e a engine agora olham conta a conta, então a lacuna sobra só no sensor.
 - O produtor: `DROP DEFAULT` de `saldo_atual` (gravar NULL de verdade) seria migration. O consumidor já trata `saldo_data` NULL como ausente, então o DEFAULT não chega mais à soma.
-- A lista `contas_correntes` do resumo ainda exibe `saldo_atual ?? 0` por conta.
+- ~~A lista `contas_correntes` do resumo ainda exibe `saldo_atual ?? 0` por conta.~~ Fechado em 2026-10-28 (seção "Item 2, na lista por conta").
 
 ## Item 3 — o cockpit de valor lia os snapshots de NCG com o eixo errado
 
@@ -167,3 +167,12 @@ Ficaram de fora, todos anteriores a esta entrega:
   em diante o saldo de hoje passa a ser exigido: se o `fin-sync-base-diario` das 03h falhar, o card mostra
   "projeção indisponível" em vez do saldo de ontem.
 - Nenhuma edge nem Publish: a mudança é só de banco, e os consumidores já tratavam NULL desde o #3347.
+
+## Item 2, na lista por conta da Visão Geral (2026-10-28)
+
+O resumo (`getResumoFinanceiro`) já devolvia `saldo_total_cc: null` pela régua, mas a lista `contas_correntes` normalizava `saldo_atual ?? 0`. A aba Visão Geral exibia a conta sem extrato como "R$ 0,00". Pior: o filtro de "zeradas" (`saldo_atual !== 0`) a escondia atrás do botão "Mostrar N contas zeradas". E a conta velha aparecia com o valor de dias atrás.
+
+- `saldoExibivelDaConta` (`src/lib/financeiro/saldo-contas.ts`, fora do bloco espelhado) aplica `classificarSaldoConta` conta a conta. Fresca → o número, inclusive 0. Velha → `null` + "Saldo de dd/mm/aaaa: o extrato não atualizou". Desconhecida (nula, DEFAULT 0 sem `saldo_data`, data futura) → `null` + "Sem saldo do extrato".
+- `FinResumo.contas_correntes[].saldo_atual` passa a `number | null`, com `saldo_motivo` novo. A aba mostra "—" + motivo. Só o saldo FRESCO igual a zero conta como zerada, e a indisponível fica sempre visível.
+- Prova: os testes de helper, serviço e aba. A falsificação teve controle verde na mesma invocação e depois 5 sabotagens, todas vermelhas no teste delas: serviço de volta ao `?? 0`, velha com o valor antigo, desconhecida → 0, aba escondendo a indisponível, aba exibindo `fmt`.
+- Deploy: só **Publish** (`src/`), pelo founder. Sem edge, sem migration. Hoje nenhum número muda: as 40 contas estão frescas.
