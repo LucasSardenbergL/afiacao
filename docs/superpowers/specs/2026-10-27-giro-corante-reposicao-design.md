@@ -1,6 +1,6 @@
 # Giro de corante (WP) → política de estoque por corante — Fase 1
 
-> **Status:** rascunho revisado (revisor-construtor + Codex, §12), aguardando aprovação do founder.
+> **Status:** aprovado pelo founder em 2026-10-27 (modelo, fasagem e regra do "gira devagar"), após revisor-construtor + Codex (§12). Próximo: plano de implementação; bloqueio de execução = passo 0.
 > **Domínio:** reposição (money-path) × tintométrico. Ler antes: `docs/agent/reposicao.md`, `docs/agent/money-path.md`, `docs/agent/tintometrico.md`, `docs/agent/database.md` §1/§4, `docs/historico/ci-testes-edge-deno.md`.
 > **Marcação:** _(founder)_ = decidido pelo Lucas nesta conversa · _(minha)_ = decisão do autor, revisável · _(medido)_ = psql-ro em prod, 2026-10-27.
 
@@ -85,7 +85,7 @@ Ninguém sabe o nível do canister, mas todo mundo vê **o momento de abrir uma 
 | 1 | **Sem recomendação** | dado não fresco, cobertura < 60 dias, `C` não confirmada, LT sem fonte, ou dosagens sem ponte acima do limite (§5.3) | "—" com o motivo. Nunca zero, nunca faixa. |
 | 2 | **Parado** | `d = 0` com cobertura completa de `H`, ou uma recarga leva mais de um ano: `u/d > V` | **Não manter lata fechada; avaliar tirar a cor da máquina / sob encomenda.** |
 | 3 | **Gira muito pouco** | a lata de reserva venceria: `2u/d − LTc > V` | **Nenhuma lata fechada.** Ao abrir a última, não há reserva: pedir 1 QT quando o alarme tocar e aceitar até `LTc` dias sem a cor. Recarregar sempre com QT. |
-| 4 | **Gira devagar** | `s ≤ u` | **No máximo 1 lata fechada.** Pedir 1 QT **ao abrir a última** (a recarga cobre o lead time). |
+| 4 | **Gira devagar** | `s ≤ u` | **No máximo 1 lata fechada.** Pedir 1 QT **ao abrir a última** (a recarga cobre o lead time). _(founder, 2026-10-27: aceita 1 lata no lugar de zero — sem o nível do canister, zero lata = ficar até `LTc` dias sem a cor a cada esvaziamento.)_ |
 | 5 | **Gira rápido** | `s > u` | Ponto de pedido do fechado `k = ⌈(s − u)/u⌉` latas QT (ou o equivalente em GL): pedir quando, ao abrir uma lata, sobrarem `k` ou menos fechadas (contando o que já está a caminho). |
 
 A condição da faixa 3 é a idade da lata de reserva quando acaba: ela chega `LTc` dias depois de abrir a anterior, espera a recarga atual acabar (`u/d`) e é consumida em mais `u/d`. Na faixa 5, `s > u` implica `d > u/LTc` (≥ ~58 ml/dia para 14 dias), e a lata gira em semanas: não vence por construção.
