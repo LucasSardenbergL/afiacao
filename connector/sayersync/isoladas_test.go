@@ -130,10 +130,15 @@ func TestRunCycle_VendasItemQuebradoCatalogoSegue(t *testing.T) {
 	delete(s, "vendas_item")
 	c := prepararCiclo(t, s)
 
-	RunCycle(context.Background(), c.cfg)
+	ok := RunCycle(context.Background(), c.cfg)
 
 	if c.srv.countPathPrefix("/catalogs") == 0 {
 		t.Fatal("o catálogo tem de seguir com vendas_item quebrada")
+	}
+	// Falha ISOLADA não derruba o ciclo do catálogo: senão o full re-scan semanal nunca seria
+	// marcado concluído enquanto a vendas_item estivesse quebrada.
+	if !ok {
+		t.Fatal("RunCycle deveria ter sucesso com só a entidade isolada quebrada")
 	}
 	if erros := c.errosDoHeartbeat(t); !slices.Contains(erros, "vendas_item") {
 		t.Fatalf("vendas_item quebrada tem de aparecer no heartbeat, veio %v", erros)
@@ -145,7 +150,9 @@ func TestRunCycle_VendasItemQuebradoCatalogoSegue(t *testing.T) {
 
 func TestRunCycle_VendasItemOkSemFalhaIsolada(t *testing.T) {
 	c := prepararCiclo(t, schemaComVendasItem())
-	RunCycle(context.Background(), c.cfg)
+	if !RunCycle(context.Background(), c.cfg) {
+		t.Fatal("ciclo saudável deveria ter sucesso (controle do teste da entidade quebrada)")
+	}
 	if erros := c.errosDoHeartbeat(t); slices.Contains(erros, "vendas_item") {
 		t.Fatalf("com schema e relógio OK, vendas_item não falha: %v", erros)
 	}
