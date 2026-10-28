@@ -760,6 +760,6 @@ db/test-tint-purge-staging-diario.sh        13
 # dosagem), o buraco de qualquer idade se cura, a versão é a CHEGADA, o consumidor das preparações não segura o
 # tick dos catálogos; o giro (faixas, teto, excesso) nunca vira 0 o que é desconhecido; a reconciliação da Fase 2
 # reprova feed zerado e unidade ×1,95 (as falsificações obrigatórias da spec).
-db/test-tint-consumo-corante.sh           170  falsificar=fora-do-ci  # 14 sabotagens × suíte de ~40 s (simulação P19) ≈ 10 min; rodado local em C e pt_BR no PR
+db/test-tint-consumo-corante.sh           170  falsificar=fora-do-ci  # 15 sabotagens × suíte de ~40 s (simulação P19) ≈ 10 min; rodado local em C e pt_BR no PR
 db/test-tint-corante-giro.sh               34  falsificar=8
 db/test-reconciliacao-corante.sh           11  falsificar=7

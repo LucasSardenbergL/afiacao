@@ -586,28 +586,28 @@ sabmig() {  # sabmig <arquivo-saida> <sed-expr> — falha se o sed não mudou na
 
 echo "════ FALSIFICAÇÕES ════"
 sabmig "$TMP/g1.sql" 's/WHEN b.d > 0 AND 2 \* b.u \/ b.d - b.ltc > b.validade_dias/WHEN b.d > 0 AND 2 * b.u \/ b.d - b.ltc >= b.validade_dias/'
-fals "Fg1 muito_pouco com >= na borda" "GA_ESPERADO" "$TMP/g1.sql" ""
+fals "Fg1 muito_pouco com >= na borda" "G2.borda_nao_muito_pouco" "$TMP/g1.sql" ""
 
 sabmig "$TMP/g2.sql" 's/              ELSE greatest(0, f.fechado_l - t.teto) \* f.cmc END,/              ELSE greatest(0, f.fechado_l - t.teto) * f.cmc \/ 0.81 END,/'
-fals "Fg2 capital com ÷ 0,81 de volta" "GB_ESPERADO" "$TMP/g2.sql" ""
+fals "Fg2 capital com ÷ 0,81 de volta" "G12.capital" "$TMP/g2.sql" ""
 
 sabmig "$TMP/g3.sql" '/WHEN eg.estoque_fisico IS NULL THEN NULL /d; s/ELSE eq.estoque_fisico + eg.estoque_fisico END AS fechado_l/ELSE eq.estoque_fisico + COALESCE(eg.estoque_fisico, 0) END AS fechado_l/'
-fals "Fg3 GL sem estoque somado como 0" "GC_ESPERADO" "$TMP/g3.sql" ""
+fals "Fg3 GL sem estoque somado como 0" "G11.gl_sem_estoque_null" "$TMP/g3.sql" ""
 
 sabmig "$TMP/g4.sql" 's/         CASE WHEN f.fechado_l IS NULL OR t.teto IS NULL THEN NULL ELSE greatest(0, f.fechado_l - t.teto) END,/         greatest(0, f.fechado_l - t.teto),/'
-fals "Fg4 excesso sem o CASE (greatest(0, NULL) = 0)" "GD_ESPERADO" "$TMP/g4.sql" ""
+fals "Fg4 excesso sem o CASE (greatest(0, NULL) = 0)" "G11.gl_sem_estoque_null G8.desatualizado" "$TMP/g4.sql" ""
 
 sabmig "$TMP/g5.sql" 's/(cob.ilha_ate > p_agora - make_interval(days => k.frescor_dias))/(cob.ilha_ate >= p_agora - make_interval(days => k.frescor_dias))/'
-fals "Fg5 frescor com >= (4 dias exatos ainda fresco)" "GE_ESPERADO" "$TMP/g5.sql" ""
+fals "Fg5 frescor com >= (4 dias exatos ainda fresco)" "G8.desatualizado" "$TMP/g5.sql" ""
 
 sabmig "$TMP/g6.sql" 's/           sum(d.qtd_ml) \/ NULLIF(count(d.dia), 0) AS d,/           sum(d.qtd_ml) \/ 180.0 AS d,/'
-fals "Fg6 denominador fixo de 180 dias" "GF_ESPERADO" "$TMP/g6.sql" ""
+fals "Fg6 denominador fixo de 180 dias" "G9.fora_nao_zero G9.meio_dia_fora" "$TMP/g6.sql" ""
 
 sabmig "$TMP/g7.sql" 's/greatest(c.d \* lt.ltc, p90.v, m.m) AS s/greatest(c.d * lt.ltc, p90.v) AS s/'
-fals "Fg7 sem o piso da maior dosagem" "GG_ESPERADO" "$TMP/g7.sql" ""
+fals "Fg7 sem o piso da maior dosagem" "G5.piso_maior_dosagem" "$TMP/g7.sql" ""
 
 sabmig "$TMP/g8.sql" 's/greatest(c.d \* lt.ltc, p90.v, m.m) AS s/greatest(c.d * lt.ltc, m.m) AS s/'
-fals "Fg8 sem o P90 das janelas" "GH_ESPERADO" "$TMP/g8.sql" ""
+fals "Fg8 sem o P90 das janelas" "G16.p90_decide" "$TMP/g8.sql" ""
 
 echo ""
 echo "SABOTAGENS: $VERM vermelhas / $FALSOS falhas"   # recibo ÚNICO lido pelo db/roda-nucleo-ci.sh

@@ -499,9 +499,9 @@ falsq() {
 }
 
 echo "════ FALSIFICAÇÕES ════"
-falsq "Fr1 sem o piso de elegibilidade (2 L)" "R4.quatro_elegiveis_nao_medido" 's/(p.retirado_l >= 2) AS elegivel/(p.retirado_l IS NOT NULL) AS elegivel/'
+falsq "Fr1 sem o piso de elegibilidade (2 L)" "R4.quatro_elegiveis_nao_medido R7.estoque_ausente_nao_medido R8.conferencia_parcial_nao_medido" 's/(p.retirado_l >= 2) AS elegivel/(p.retirado_l IS NOT NULL) AS elegivel/'
 falsq "Fr2 dosado em ml (sem ÷ 1000)" "R1.consistente_passou" 's/COALESCE(sum(c.qtd_ml), 0) \/ 1000 AS dosado_l/COALESCE(sum(c.qtd_ml), 0) AS dosado_l/'
-falsq "Fr3 elegível sem medida não derruba o veredito" "R5.capacidade_desconhecida_nao_medido" 's/WHEN a.n_elegiveis < 5 OR a.algum_sem_medida THEN/WHEN a.n_elegiveis < 5 THEN/'
+falsq "Fr3 elegível sem medida não derruba o veredito" "R5.capacidade_desconhecida_nao_medido R7.estoque_ausente_nao_medido R8.conferencia_parcial_nao_medido" 's/WHEN a.n_elegiveis < 5 OR a.algum_sem_medida THEN/WHEN a.n_elegiveis < 5 THEN/'
 falsq "Fr4 sem a tolerância individual" "R6.desvios_opostos_reprovou" 's/              ELSE abs(p.dosado_l - p.retirado_l) <= p.capacidade_canister_ml \/ 1000 + 0.81$/              ELSE true/; s/                   AND abs(p.dosado_l - p.retirado_l) <= 0.25 \* p.retirado_l END AS passa/                   END AS passa/'
 falsq "Fr5 elegibilidade desconhecida ignorada" "R7.estoque_ausente_nao_medido R8.conferencia_parcial_nao_medido" 's/bool_or(elegivel IS NULL OR (elegivel AND passa IS NULL)) AS algum_sem_medida/bool_or(elegivel AND passa IS NULL) AS algum_sem_medida/'
 falsq "Fr6 recebido pela NF, sem exigir a conferência" "R8.conferencia_parcial_nao_medido" 's/                           OR n.quantidade_conferida IS DISTINCT FROM n.quantidade_esperada)/                           )/'
