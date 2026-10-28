@@ -232,13 +232,37 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 
 **O 2083 continua indeterminado, e é o fail-closed funcionando.** A NF 947706 tem uma linha de tracking (pedido Omie 1172, mesma chave) com t2 = 17/08 e t4 = 20/08 00:14 UTC, **antes da emissão da própria NF** (20/08). É sujeira do tracking. O menor t4 cai antes do snapshot, então não há isenção. Como o snapshot não se refaz, o 2083 só sai do portão quando sair da janela (~23/11), a não ser que a linha do 1172 seja corrigida na fonte (outra entrega: investigar como essa linha recebeu t2/t4 de outra NF).
 
-**Auto-challenge (Codex sem cota até 27/10 07:46, exit 79 → PR em DRAFT, `REVISÃO INDEPENDENTE PENDENTE`).** Em cada cenário o valor sai inteiro, então o erro possível é só pessimismo:
+**Codex (2026-10-28, gpt-6-astra · high · 78s): 1 P1 + 2 P2, todos corrigidos no mesmo PR.**
+- **P1:** "sai inteiro" não garante que saia na data certa. O isento continuava em `dataPedido + lag`, e o vencimento real pode ser antes. Agora o componente isento pela R65 (velho, recebido depois da base) sai no **1º dia**. O "a faturar" por idade (R28/R30) não muda.
+- **P2:** o SQL agregava por `ltrim` e o TS normalizava com `trim`. Agora os dois normalizam igual antes de agregar, e o `t4_por_nf` só considera tracking da Sayerlack na Oben.
+- **P2:** t4 conhecido só depois do momento do ciclo era evidência que a decisão não tinha. Agora a NF exige `snapshot < t4 ≤ momento`.
+
+A falsificação ficou em 8 de 8 sabotagens vermelhas, com controle verde.
+
+**Auto-challenge original (2026-10-21, antes do Codex).** Em cada cenário o valor sai inteiro, então o erro possível é só pessimismo:
 - título lançado com outro número de NF: conta em dobro;
 - NF paga por fora: já saiu do saldo e sai de novo;
 - t4 gravado com atraso: o título, se existir as-of, tem chave e veta a isenção;
 - t4 de hoje (look-ahead): só **restringe** a isenção, porque NF que nunca foi recebida não ganha nada.
 
 Nenhum desses cenários aprova compra que o caixa não suporta.
+
+### Rodada de 2026-10-28, depois de julho sair da janela (fatos de 2026-10-28 23:51 UTC; R60–R65)
+
+- **Pré-voo aprovado:** nenhuma NF pendente de t4 (R64).
+- **Estados:** 199 viáveis · **0 inviáveis** (a semana de 23 a 28/07 saiu da janela) · 90 indeterminados (81 por compromisso não conciliado; 9 excluídos pela R63, falha de snapshot).
+- **Medidas:** precisão por episódio dos automáticos **99,0%** (n=126) ✅ · cobertura **51,0%** ✅.
+- **Portão, pelo jq e pelo `avaliarPortao`, que concordam:** `FECHADO: 81 ciclos indeterminados`.
+- **Honestidade sobre o inviável zerado:** os inviáveis sumiram porque **a semana do aperto de caixa de julho envelheceu**, não porque a guarda provou que lida com aperto. Pela R62, no aperto ela escala ao humano.
+
+**Os 81 indeterminados vêm de um mecanismo novo, nos ciclos de 05/10 em diante: título Sayerlack ATRASADO fica fora da base.** Medido nos ciclos 3935 (27/10), 3343 e 3356 (06/10): os componentes que estouram o limiar têm título no CP as-of, mas **desconto 0**. O título não está nas saídas do snapshot e não está baixado. Exemplos:
+- 951810: venceu em 30/09, pago em 23/10;
+- 954782, 954853, 955072 e 955263: venceram em 21 e 23/10 e seguem ATRASADOS;
+- 945097: ATRASADO desde 31/07.
+
+O snapshot **só carrega título vencido da semana corrente**: em toda segunda-feira o número de atrasados nas saídas zera (07/09, 14/09, 21/09, 28/09, 05/10, 12/10, 26/10). Assim, o título vencido em semana anterior e não baixado some da base. Para a Sayerlack, a conciliação pega o buraco e marca indeterminado. Isso é o fail-closed funcionando, e **não deve ser afrouxado**: ou o valor ainda é devido, ou foi pago sem baixa.
+
+**Achado money-path fora desta entrega:** o mesmo buraco vale para **todo** fornecedor. Hoje há **132 títulos ATRASADOS não-Sayerlack, R$ 519 mil**, quase todos de semanas anteriores (o mais antigo vence em 19/11/2025), mais 8 da Sayerlack (R$ 77 mil). Nenhum entra na base do snapshot (`fin_cashflow.snapshot_diario`). Sem conciliação para esses fornecedores, a base de caixa fica **otimista e calada**: um fail-open. Ou é dívida vencida real que a guarda não enxerga, ou é status velho no CP. Decidir e corrigir é do domínio financeiro (o gerador do snapshot), em sessão própria.
 
 ### Conferências de sanidade
 
@@ -292,6 +316,8 @@ jq -r '
   | if length == 0 then "ABERTO" else "FECHADO: " + join(" · ") end' "$R" > /tmp/oc-portao.txt; rc=$?
 cat /tmp/oc-portao.txt; [ "$rc" -eq 0 ] && grep -qx 'ABERTO' /tmp/oc-portao.txt   # exit 0 = portão aberto
 ```
+
+**Estado em 2026-10-28 (R60–R65, fatos de 28/10 23:51 UTC):** portão **FECHADO só por 81 indeterminados** (título Sayerlack atrasado fora da base, ver "Rodada de 2026-10-28"). Precisão 99,0% (n=126), cobertura 51,0% e 0 inviáveis passam.
 
 **Estado em 2026-10-20 (R59 v2):** portão **FECHADO** por precisão (89,1%), cobertura (19,2%), 70 inviáveis e 9 indeterminados — o R59 tirou 30 indeterminados, mas não mexe nos outros três motivos.
 
