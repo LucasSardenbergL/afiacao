@@ -226,9 +226,11 @@ BEGIN
   IF v_pen IS NULL OR v_pub IS NULL THEN
     RAISE EXCEPTION 'P1 FALHOU: função ausente (penetracao=%, publicar=%)', v_pen, v_pub;
   END IF;
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pen) <> 'f52a86ce536d773eb5af88c0f4fb1c37'
-     OR (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pub) <> 'baeb6ff1bd63bb9193d24473d7bcbe47' THEN
-    RAISE EXCEPTION 'P2 FALHOU: corpo vivo não é o deste arquivo';
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pen) <> 'f52a86ce536d773eb5af88c0f4fb1c37' THEN
+    RAISE EXCEPTION 'P2 FALHOU: corpo vivo da penetração não é o deste arquivo';
+  END IF;
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pub) <> 'baeb6ff1bd63bb9193d24473d7bcbe47' THEN
+    RAISE EXCEPTION 'P2 FALHOU: corpo vivo da publicar não é o deste arquivo';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE oid IN (v_pen, v_pub)
               AND NOT (prosecdef AND proconfig @> ARRAY['search_path=public'])) THEN

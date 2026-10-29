@@ -93,6 +93,7 @@ PY
 # da suíte tem dente sozinho, cega o md5 junto (a PRE só compara no 2º apply, cegada também).
 cegar_md5() {
   sabotar "  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pen) <> '" "  IF false AND (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pen) <> '"
+  sabotar "  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pub) <> '" "  IF false AND (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_pub) <> '"
   sabotar "  IF v_pen IS NOT NULL AND v_pen <> '" "  IF false AND v_pen <> '"
   sabotar "  IF v_pub IS NOT NULL AND v_pub <> '" "  IF false AND v_pub <> '"
 }
@@ -157,6 +158,10 @@ P()  { PD base "$@"; }
 Pq() { P -qAt "$@"; }
 
 PD postgres -q -c "CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;" -c "CREATE DATABASE base;"
+# Default privileges como no Supabase: objeto novo em public nasce com tudo para anon/authenticated.
+# Sem isto, um REVOKE esquecido na migration passaria aqui e abriria em prod.
+P -q -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon, authenticated, service_role;"
 
 GESTOR='00000000-0000-0000-0000-0000000000a1'
 OUTRO='00000000-0000-0000-0000-0000000000b2'
