@@ -15,14 +15,20 @@
 // DECISÕES DOCUMENTADAS (controlador, Task 6):
 //  · ltDu = 0 chega no PRÓXIMO dia útil depois do pedido (LT efetivo mínimo de 1 du).
 //  · Compras abertas no início = recebimentos físicos (dedup documental) de (sku, t4) cujo documento de LT tem t1 < início <= t4. Elas
-//    entram como chegadas programadas e contam na posição. Os demais recebimentos históricos são SUBSTITUÍDOS pelas
-//    compras simuladas. (No dado real o 1º recebimento é de 2026-01-28: o conjunto é vazio — reportado.)
-//  · Células (R2): classe efetiva do SKU no INÍCIO da janela medida (sem classe → C, como R13); `*_alt` = e.alterados (padrão: coorte.alterados);
-//    `total` = todas as linhas medidas.
+//    entram como chegadas programadas e contam na posição, mesmo quando chegam depois do fim da janela (o pedido já existia
+//    no início; achado 3). Os demais recebimentos históricos são SUBSTITUÍDOS pelas compras simuladas.
+//  · LT por FASE do calendário (achado 3, §5.9 "Calibração"): pedido feito até o fim da calibração sorteia só entre
+//    documentos com t4 (ou a extração, se aberto) <= fim da calibração, nos DOIS ambientes; depois dele, a amostra inteira.
+//    Assim a trajetória da avaliação até 30/04 é a mesma da calibração (mesma rep, mesmos parâmetros).
+//  · Células (achado 7, §5.1.1): classe efetiva do SKU no DIA da linha, calculada com dados até a véspera (sem classe → C,
+//    R13); `*_alt` = classe do dia ∩ e.alterados (padrão: coorte.alterados, fixada no corte); `total` = todas as linhas medidas.
+//  · Obrigações entre janelas (achado 13): a linha anterior à janela que segue em espera é carregada inteira. A entrega
+//    tardia, o valor × dias de atraso que correm depois da véspera da janela e o backlog terminal entram nas somas
+//    econômicas; o denominador de serviço (células) e o fechamento por SKU continuam só com as linhas originadas na janela.
+//    O atraso é contado a partir da véspera da janela, que é onde o terminal da janela anterior parou de contar.
 //  · Grupo de embalagem: a âncora decide na unidade-base do grupo (posição = soma dos membros simulados, todos na mesma
 //    unidade de estoque — formulas.ts barra unidade mista) e compra embalagens da âncora: ceil(necessidade / conv), que
-//    chegam como embalagens × conv na unidade de estoque. Sem troca para o galão (o replay não tem o preço-app histórico
-//    que decide a troca — limitação declarada). O galão (SEM_DECISAO) não decide; o ATENDIMENTO é por SKU.
+//    chegam como embalagens × conv na unidade de estoque. O galão (SEM_DECISAO) não decide; o ATENDIMENTO é por SKU.
 //  · Substituição (`substituicao = true`) é outra coisa: só para a métrica "com substituição". Uma linha que o próprio
 //    estoque não cobre pode ser completada pelo estoque de um equivalente do grupo, se ele cobrir TODO o restante e o
 //    restante for um número inteiro de embalagens do equivalente (unidades Omie por embalagem conhecidas); o estoque do
@@ -74,6 +80,12 @@ export interface SomasSemanais {
   canceladaSemCmc: { linhas: number[]; valor: number[] };
   /** Σ valor entregue tardiamente × dias corridos de atraso, linha a linha, na semana da entrega. */
   valorDiasAtraso: number[];
+  /**
+   * Obrigações herdadas de antes da janela (achado 13), em unidades de estoque e valor: o que estava em espera na abertura
+   * da janela = o entregue tarde dentro dela + o que sobra no backlog terminal. Já incluídas em `entregue.tardia`,
+   * `valorDiasAtraso` e `terminal`; nunca nas células de serviço.
+   */
+  herdadas?: { abertura: { unidades: number; valor: number }; entregue: { unidades: number; valor: number }; terminal: { unidades: number; valor: number } };
   terminal: { estoqueCmc: number; abertasCmc: number; backlogValor: number; backlogDiasAtraso: number };
   /** Unidades de estoque no horizonte inteiro (do início do aquecimento ao fim da janela), todos os SKUs simulados. */
   balanco: { inicial: number; recebido: number; entregue: number; final: number };
@@ -96,7 +108,10 @@ export interface EntradaSimulacao {
   janela: [Data, Data];
   dados: Dados;
   substituicao?: boolean;
-  /** Amostra de LT; padrão: `itensLtPermitidos(dados.itensLT, janela termina na calibração)`. */
+  /**
+   * Amostra de LT; padrão: `dados.itensLT`. Pedido feito até o fim da calibração sorteia só entre os documentos dela com
+   * t4 (ou a extração) <= fim da calibração (achado 3), qualquer que seja a janela.
+   */
   itensLT?: readonly ItemLT[];
   rastro?: boolean;
   /**
@@ -209,13 +224,17 @@ interface Plano {
   excluidos: SomasSemanais['excluidos'];
   linhasIgnoradas: number;
   itens: readonly ItemLT[];
+  /** Amostra dos pedidos feitos até o fim da calibração (achado 3). */
+  itensPre: readonly ItemLT[];
+  /** Índice (dia corrido) do fim da calibração no horizonte (-1 = antes do início; >= nDias = depois do fim). */
+  iFimCalib: number;
 }
 
 const memoPlanos = new WeakMap<Dados, Map<string, Plano>>();
 const memoSkusDoMapa = new WeakMap<Map<string, ParamsDia>, string[]>();
 const memoClasse = new WeakMap<Dados, Map<Data, Map<string, Classe>>>();
 const memoAlterados = new WeakMap<Dados, Set<string>>();
-const memoItens = new WeakMap<Dados, Map<string, ItemLT[]>>();
+const memoItensPre = new WeakMap<readonly ItemLT[], ItemLT[]>();
 
 function skusDoMapa(params: Map<string, ParamsDia>): string[] {
   let s = memoSkusDoMapa.get(params);
@@ -238,12 +257,10 @@ function alterados(dados: Dados): Set<string> {
   if (!a) memoAlterados.set(dados, (a = coorte(dados).alterados));
   return a;
 }
-function itensPadrao(dados: Dados, calibracao: boolean): ItemLT[] {
-  let m = memoItens.get(dados);
-  if (!m) memoItens.set(dados, (m = new Map()));
-  const k = calibracao ? 'c' : 'a';
-  let it = m.get(k);
-  if (!it) m.set(k, (it = itensLtPermitidos(dados.itensLT, calibracao, dados.dataExtracao)));
+/** Amostra da fase pré-corte (memo pela identidade da amostra: o sorteio de documentos memoiza pela identidade também). */
+function itensPreCorte(itens: readonly ItemLT[], dataExtracao: Data): ItemLT[] {
+  let it = memoItensPre.get(itens);
+  if (!it) memoItensPre.set(itens, (it = itensLtPermitidos(itens, true, dataExtracao)));
   return it;
 }
 
@@ -295,8 +312,7 @@ function montarPlano(
       diasPorSemana[w]++;
     }
   }
-  // linhas
-  const classe = classeNoDia(dados, janela[0]);
+  // linhas (achado 7: célula pela classe efetiva do DIA da linha)
   const alt = altPassado ?? alterados(dados);
   let linhasIgnoradas = 0;
   const vs = dados.vendas
@@ -332,7 +348,7 @@ function montarPlano(
     linCmc[L] = v.cmcLinha === null ? NaN : v.cmcLinha;
     linId[L] = v.linhaId;
     linDia[L] = i;
-    const c = ORD[classe.get(v.sku) ?? 'C'];
+    const c = ORD[classeNoDia(dados, v.data).get(v.sku) ?? 'C'];
     linCel[L] = c;
     linAlt[L] = alt.has(v.sku) ? 3 + c : -1;
     linMedida[L] = i >= iJanela ? 1 : 0;
@@ -369,7 +385,7 @@ function montarPlano(
   const chegIni: Plano['chegIni'] = [];
   for (const r of dados.recebimentos) {
     const s = idxSku.get(r.sku);
-    if (s === undefined || r.data > janela[1] || !abertasNoInicio.has(`${r.sku}|${r.data}`)) continue;
+    if (s === undefined || !abertasNoInicio.has(`${r.sku}|${r.data}`)) continue;
     chegIni.push({ i: diffDias(INICIO_AQUECIMENTO, r.data), s, q: r.quantidade });
   }
   // grupos de embalagem
@@ -395,6 +411,7 @@ function montarPlano(
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
     linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, offFila, cmc, skusSemCmc, inicial: inicialArr,
     chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
+    itensPre: itensPreCorte(itens, dados.dataExtracao), iFimCalib: diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim),
   };
 }
 
@@ -435,8 +452,7 @@ export function conferirEstoque(sku: string, inicial: number, recebido: number, 
 // ── simulação ──────────────────────────────────────────────────────────────────────────────────────────────────
 export function simular(e: EntradaSimulacao): SomasSemanais {
   const { dados, janela, rep, falta } = e;
-  const calib = janela[1] <= JANELAS.calibracaoFim;
-  const itens = e.itensLT ?? itensPadrao(dados, calib);
+  const itens = e.itensLT ?? dados.itensLT;
   const skusP = skusDoMapa(e.params);
   const chave = `${skusP.join(',')}|${janela[0]}|${janela[1]}|${e.inicial}|${e.alterados ? [...e.alterados].sort().join(',') : 'coorte'}`;
   let porDados = memoPlanos.get(dados);
@@ -481,6 +497,10 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   const semCmcL = new Float64Array(nSem);
   const semCmcV = new Float64Array(nSem);
   const atraso = new Float64Array(nSem);
+  let herEntU = 0;
+  let herEntV = 0;
+  let herAbU = 0;
+  let herAbV = 0;
   // chegadas: listas encadeadas por dia
   const chHead = new Int32Array(P.nDias).fill(-1);
   const chNext: number[] = [];
@@ -494,7 +514,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   };
   for (const c of P.chegIni) {
     abertas[c.s] += c.q;
-    agendar(c.i, c.s, c.q);
+    if (c.i < P.nDias) agendar(c.i, c.s, c.q); // chegada depois do fim da janela: segue aberta (conta na posição)
   }
   const pedidos: NonNullable<SomasSemanais['pedidos']> | undefined = e.rastro ? [] : undefined;
   const desfechos: NonNullable<SomasSemanais['desfechos']> | undefined = e.rastro ? [] : undefined;
@@ -507,6 +527,16 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
 
   for (let i = 0; i < P.nDias; i++) {
     const w = P.semana[i];
+    if (i === P.iJanela) {
+      // abertura da janela: obrigações em espera que vêm de antes dela (achado 13)
+      for (let s = 0; s < nSku; s++) {
+        for (let h = head[s]; h < tail[s]; h++) {
+          const L = fila[P.offFila[s] + h];
+          herAbU += saldo[L];
+          herAbV += saldo[L] * P.linVu[L];
+        }
+      }
+    }
     // 1. chegadas
     for (let k = chHead[i]; k >= 0; k = chNext[k]) {
       const s = chSku[k];
@@ -530,6 +560,13 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
           tardia[w] += v;
           atraso[w] += v * (i - P.linDia[L]);
           taU[s] += q;
+        } else if (w >= 0) {
+          // achado 13: obrigação herdada entregue dentro da janela — conta econômica, nunca serviço
+          const v = q * P.linVu[L];
+          tardia[w] += v;
+          atraso[w] += v * (i - Math.max(P.linDia[L], P.iJanela - 1));
+          herEntU += q;
+          herEntV += v;
         }
         if (saldo[L] === 0) head[s]++;
       }
@@ -626,7 +663,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
         const qMotor = decidirCompra(p, pos, P.skuObj[s], g);
         if (qMotor <= 0) continue;
         const q = g === null ? qMotor : qMotor * g.conv;
-        const lt = ltRealizado(rep, P.dias[i], P.skus[s], e.lt, P.itens);
+        const lt = ltRealizado(rep, P.dias[i], P.skus[s], e.lt, i <= P.iFimCalib ? P.itensPre : P.itens);
         const kk = k + Math.max(1, lt);
         abertas[s] += q;
         let chegada: Data | null = null;
@@ -651,6 +688,8 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   let abertasCmc = 0;
   let backlogValor = 0;
   let backlogDiasAtraso = 0;
+  let herTerU = 0;
+  let herTerV = 0;
   const bal = { inicial: 0, recebido: 0, entregue: 0, final: 0 };
   for (let s = 0; s < nSku; s++) {
     if (!Number.isNaN(P.cmc[s])) {
@@ -660,9 +699,15 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     let bkU = 0;
     for (let h = head[s]; h < tail[s]; h++) {
       const L = fila[P.offFila[s] + h];
-      if (!P.linMedida[L]) continue;
       const v = saldo[L] * P.linVu[L];
       backlogValor += v;
+      if (!P.linMedida[L]) {
+        // achado 13: herdada que segue no backlog terminal, com o atraso desde a véspera da janela
+        backlogDiasAtraso += v * (iFim - Math.max(P.linDia[L], P.iJanela - 1));
+        herTerU += saldo[L];
+        herTerV += v;
+        continue;
+      }
       backlogDiasAtraso += v * (iFim - P.linDia[L]);
       bkU += saldo[L];
     }
@@ -674,6 +719,8 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     bal.final += est[s];
   }
 
+  // fechamento das herdadas: abertura = entregue tarde na janela + backlog terminal (unidades)
+  conferirFechamento('HERDADAS', herAbU, herEntU + herTerU);
   const fatia = (arr: Float64Array, c: number) => Array.from(arr.subarray(c * nSem, (c + 1) * nSem));
   const porCelula = {} as Record<Celula, SomasCelula>;
   CELULAS.forEach((nome, c) => {
@@ -688,6 +735,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     cancelada: { valor: Array.from(cancV), margem: Array.from(cancM, (m, w) => (semCmcL[w] > 0 && cancComCmc[w] === 0 ? null : m)) },
     canceladaSemCmc: { linhas: Array.from(semCmcL), valor: Array.from(semCmcV) },
     valorDiasAtraso: Array.from(atraso),
+    herdadas: { abertura: { unidades: herAbU, valor: herAbV }, entregue: { unidades: herEntU, valor: herEntV }, terminal: { unidades: herTerU, valor: herTerV } },
     terminal: { estoqueCmc, abertasCmc, backlogValor, backlogDiasAtraso },
     balanco: bal,
     skusSemCmc: [...P.skusSemCmc],

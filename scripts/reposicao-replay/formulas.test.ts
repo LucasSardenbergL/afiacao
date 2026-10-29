@@ -200,6 +200,26 @@ describe('F1–F3 (spec §5.9 "Equações")', () => {
     }
   });
 
+  // Achado 7: um SKU promovido de C para A continuava julgado no quantil de C (classe do início da janela).
+  it('o quantil sai da classe efetiva do DIA (dados até a véspera), não da do início da janela', () => {
+    const dias = diasCorridos(INICIO_AQUECIMENTO, '2026-08-31').filter((x) => ehDiaUtil(x));
+    // X vende pouco até junho e muito a partir de 01/06; Z* compõem o Pareto
+    const vx = dias.map((dia) => venda('X', dia, 1, dia >= '2026-06-01' ? 100000 : 10));
+    const vz = ['Z1', 'Z2', 'Z3', 'Z4'].flatMap((z) => dias.map((dia) => venda(z, dia, 1, 1000)));
+    const its = [...ltSayerlack(), ...[0, 1, 2, 3, 4, 5].map((i) => item('X', addDias('2025-11-03', 14 * i), 4 + i))];
+    const dd = dados([sku('X'), sku('Z1'), sku('Z2'), sku('Z3'), sku('Z4')], [...vx, ...vz], its);
+    const d = '2026-07-06';
+    const doDia = classeEfetiva(dd, d).get('X') ?? 'C';
+    expect(doDia).not.toBe(classeEfetiva(dd, JANELAS.avaliacaoIni).get('X') ?? 'C'); // controle: a classe mudou na janela
+    const q = QUANTIL_POR_CLASSE[doDia];
+    for (const f of ['F1', 'F3'] as const) {
+      const p: ParamsFormula = { janelaDias: 90, quantil: QUANTIL_POR_CLASSE };
+      const soDoDia: ParamsFormula = { janelaDias: 90, quantil: { A: q, B: q, C: q } };
+      expect(parametrosNoDia(f, dd, 'X', d, p, CTX), f).toEqual(parametrosNoDia(f, dd, 'X', d, soDoDia, CTX));
+      expect(parametrosNoDia(f, dd, 'X', d, p, { calibracao: true }), f).toEqual(parametrosNoDia(f, dd, 'X', d, soDoDia, { calibracao: true }));
+    }
+  });
+
   it('calibração não vê LT posterior ao corte', () => {
     const d = '2026-05-15'; // depois do fim da calibração: só aqui o filtro t4 <= FIM_CALIBRACAO morde
     const dias = diasCorridos(INICIO_AQUECIMENTO, d).filter((x) => ehDiaUtil(x));

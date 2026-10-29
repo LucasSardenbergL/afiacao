@@ -720,15 +720,14 @@ function gradeNoDia(f: Formula, dados: Dados, sku: string, d: Data, janelaDias: 
 }
 
 /**
- * Classe que escolhe o quantil: para d >= início da janela medida, a classe efetiva no INÍCIO dela (R2, fixa na janela);
- * para d ANTES (aquecimento, e calibração vista do contexto de avaliação), a classe efetiva do PRÓPRIO d — usar a do início
- * seria olhar dados >= d. Sem classe → C (R13).
+ * Classe que escolhe o quantil (achado 7, §5.1.1): a classe efetiva do PRÓPRIO dia d, calculada com dados até a véspera,
+ * em qualquer janela e nos dois contextos (a mesma classe na calibração e na avaliação até 30/04). Sem classe → C (R13).
+ * No grupo, a da âncora.
  */
-function classeDoQuantil(dados: Dados, sku: string, d: Data, calib: boolean): Classe {
+function classeDoQuantil(dados: Dados, sku: string, d: Data): Classe {
   const ix = indice(dados);
   const g = ix.grupoDe.get(sku);
-  const inicio = calib ? JANELAS.calibracaoIni : JANELAS.avaliacaoIni;
-  return efetivaDoDia(dados, ix, d < inicio ? d : inicio).get(g ? g.ancora : sku) ?? 'C';
+  return efetivaDoDia(dados, ix, d).get(g ? g.ancora : sku) ?? 'C';
 }
 
 function resolver(grade: Grade, p: ParamsFormula, classe: Classe): ParamsDia {
@@ -748,7 +747,7 @@ function resolver(grade: Grade, p: ParamsFormula, classe: Classe): ParamsDia {
 /** Parâmetros da fórmula no dia d do SKU, vendo só dados < d (e, com ctx.calibracao, só LT com t4 <= fim da calibração). */
 export function parametrosNoDia(f: Formula, dados: Dados, sku: string, d: Data, p: ParamsFormula, ctx: { calibracao: boolean }): ParamsDia {
   const grade = gradeNoDia(f, dados, sku, d, p.janelaDias, ctx.calibracao);
-  return resolver(grade, p, classeDoQuantil(dados, sku, d, ctx.calibracao));
+  return resolver(grade, p, classeDoQuantil(dados, sku, d));
 }
 
 // ── preComputar + cache em disco ──────────────────────────────────────────────────────────────────────────────────
@@ -852,7 +851,7 @@ export function preComputarComOrigem(
   const mapa = new Map<string, ParamsDia>();
   for (const [k, g] of grades) {
     const corte = k.indexOf('|');
-    mapa.set(k, resolver(g, p, classeDoQuantil(dados, k.slice(0, corte), k.slice(corte + 1), ctx.calibracao)));
+    mapa.set(k, resolver(g, p, classeDoQuantil(dados, k.slice(0, corte), k.slice(corte + 1))));
   }
   return { mapa, origem, chave };
 }

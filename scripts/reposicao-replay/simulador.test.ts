@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addDias, diffDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { uniforme } from './aleatorio';
 import { somarDiasUteis } from './calendario';
+import { classeEfetiva } from './classe';
 import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { ParamsDia } from './formulas';
 import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
@@ -179,8 +180,11 @@ describe('simular', () => {
     for (const falta of ['espera', 'cancelamento', 'misto'] as const) {
       const r = roda(dd, params({ P: { tipo: 'S', s: 5 }, Q: { tipo: 'F0', pp: 1, max: 3, coberturaTetoDias: null, demandaDiariaLinha: null } }), { falta, rep: 3 });
       const dem = soma(r.porCelula.total.valorDem);
+      // achado 13: tardia e terminal incluem as obrigações herdadas de antes da janela (valor), que fecham à parte
+      const h = r.herdadas!;
       const desfechos = soma(r.entregue.imediata) + soma(r.entregue.tardia) + soma(r.entregue.emergencial) + soma(r.cancelada.valor) + r.terminal.backlogValor;
-      expect(desfechos).toBeCloseTo(dem, 9);
+      expect(desfechos - h.entregue.valor - h.terminal.valor).toBeCloseTo(dem, 9);
+      expect(h.entregue.valor + h.terminal.valor).toBeCloseTo(h.abertura.valor, 9);
       expect(dem).toBeGreaterThan(0);
       const b = r.balanco;
       expect(b.inicial + b.recebido - b.entregue).toBeCloseTo(b.final, 9);
@@ -390,3 +394,105 @@ describe('revisão final da branch', () => {
     expect(soma2(r.porCelula.C_alt.demandadas)).toBe(2);
   });
 });
+
+describe('Fix Codex leva B', () => {
+  const diasUteis = (ini: string, fim: string): string[] => {
+    const out: string[] = [];
+    for (let d = ini; d <= fim; d = addDias(d, 1)) if (ehDiaUtil(d)) out.push(d);
+    return out;
+  };
+  const CALIB: [string, string] = [JANELAS.calibracaoIni, JANELAS.calibracaoFim];
+  const AVAL: [string, string] = [JANELAS.avaliacaoIni, '2026-05-29'];
+
+  // Achado 3 (contraprova): o MESMO pedido de 20/04, mesma rep e mesmos parâmetros, chegava em 21/04 na calibração e em
+  // 04/05 na avaliação, porque a avaliação sorteava entre documentos que só terminaram depois de 30/04.
+  it('achado 3: pedido de 20/04 chega no mesmo dia na calibração e na avaliação (restrição por fase do calendário)', () => {
+    const vs = [venda('v1', 'P', '2026-05-20', 1)];
+    const its: ItemLT[] = [
+      { trackingId: 'A', sku: 'Q', t1: '2026-04-17', t2: null, t4: '2026-04-21', ltDu: 2, aberto: false },
+      { trackingId: 'B', sku: 'Q', t1: '2026-04-20', t2: null, t4: '2026-05-04', ltDu: 10, aberto: false },
+      { trackingId: 'C', sku: 'Q', t1: '2026-04-21', t2: null, t4: null, ltDu: 15, aberto: true },
+    ];
+    const dd = dados([comAbertura(sku('P'), 0, vs)], vs, { itensLT: its });
+    const p = params({ P: (d: string) => (d === '2026-04-20' ? { tipo: 'S', s: 3 } : SEM) }, AVAL[1]);
+    let comDocPosterior = 0;
+    for (let rep = 0; rep < 30; rep++) {
+      const c = roda(dd, p, { rep, janela: CALIB, rastro: true }).pedidos!;
+      const a = roda(dd, p, { rep, janela: AVAL, rastro: true }).pedidos!;
+      expect(c).toEqual([{ dia: '2026-04-20', sku: 'P', qtd: 3, chegada: '2026-04-22' }]);
+      expect(a.filter((x) => x.dia <= JANELAS.calibracaoFim), `rep ${rep}`).toEqual(c);
+      if (uniforme(rep, 'doc', '2026-04-20') >= 1 / 3) comDocPosterior++;
+    }
+    expect(comDocPosterior).toBeGreaterThan(5); // controle: sem a fase, essas reps sorteariam B ou C na avaliação
+  });
+
+  it('achado 3: compra aberta no início que chega depois de 30/04 conta na posição dos dois ambientes', () => {
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-05-12', quantidade: 4 }];
+    const vs = [venda('v1', 'P', '2026-05-20', 1)];
+    const dd = dados([comAbertura(sku('P'), 0, vs, receb)], vs, {
+      recebimentos: receb,
+      itensLT: [
+        { trackingId: 'ANT', sku: 'P', t1: '2025-10-15', t2: null, t4: '2026-05-12', ltDu: 149, aberto: false },
+        { trackingId: 'A', sku: 'Q', t1: '2025-10-22', t2: null, t4: '2025-10-24', ltDu: 2, aberto: false },
+      ],
+    });
+    const p = params({ P: { tipo: 'S', s: 4 } }, AVAL[1]);
+    const c = roda(dd, p, { janela: CALIB, rastro: true });
+    const a = roda(dd, p, { janela: AVAL, rastro: true });
+    expect(c.pedidos).toEqual([]); // posição = 0 + 4 abertas: não compra
+    expect(a.pedidos!.filter((x) => x.dia <= JANELAS.calibracaoFim)).toEqual(c.pedidos);
+  });
+
+  // Achado 7: célula e quantil pela classe do DIA (dados até a véspera), não pela do início da janela.
+  it('achado 7: cada linha cai na célula A/B/C da classe efetiva do seu dia', () => {
+    const dus = diasUteis(INICIO_AQUECIMENTO, AVAL[1]);
+    // X é B até 11/05; Y passa a vender muito a partir de 11/05 e X cai para C (Z* só compõem o Pareto do universo)
+    const vx = dus.map((d, i) => venda(`x${i}`, 'X', d, 1, 1000));
+    const vy = dus.filter((d) => d >= '2026-05-11').map((d, i) => venda(`y${i}`, 'Y', d, 1, 100000));
+    const vz = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5', 'Z6'].flatMap((z) => dus.map((d, i) => venda(`${z}${i}`, z, d, 1, 10)));
+    const vs = [...vx, ...vy, ...vz];
+    const dd = dados([comAbertura(sku('X'), 10000, vs), comAbertura(sku('Y'), 10000, vs)], vs);
+    const r = roda(dd, params({ X: SEM, Y: SEM }), { janela: AVAL });
+    const esperado = { A: 0, B: 0, C: 0 };
+    let mudaram = 0;
+    const inicio = classeEfetiva(dd, AVAL[0]);
+    for (const v of [...vx, ...vy].filter((x) => x.data >= AVAL[0] && x.data <= AVAL[1])) {
+      const c = classeEfetiva(dd, v.data).get(v.sku) ?? 'C';
+      esperado[c]++;
+      if (c !== (inicio.get(v.sku) ?? 'C')) mudaram++;
+    }
+    expect(mudaram).toBeGreaterThan(3); // controle: a classe muda dentro da janela
+    expect({ A: soma(r.porCelula.A.demandadas), B: soma(r.porCelula.B.demandadas), C: soma(r.porCelula.C.demandadas) }).toEqual(esperado);
+    // *_alt = classe do dia ∩ coorte alterada
+    const ra = roda(dd, params({ X: SEM, Y: SEM }), { janela: AVAL, alterados: new Set(['X']) });
+    const altX = { A: 0, B: 0, C: 0 };
+    for (const v of vx.filter((x) => x.data >= AVAL[0])) altX[classeEfetiva(dd, v.data).get('X') ?? 'C']++;
+    expect({ A: soma(ra.porCelula.A_alt.demandadas), B: soma(ra.porCelula.B_alt.demandadas), C: soma(ra.porCelula.C_alt.demandadas) }).toEqual(altX);
+  });
+
+  // Achado 13 (contraprova): falta de 30/04 atendida em 21/05 dava ZERO entrega tardia e ZERO valor×dias na avaliação.
+  it('achado 13: obrigação de antes da janela entra na conta econômica e no backlog terminal, não no serviço', () => {
+    const vs = [venda('v1', 'P', '2026-04-30', 1, 10)];
+    const its: ItemLT[] = [
+      { trackingId: 'A', sku: 'Q', t1: '2026-04-01', t2: null, t4: '2026-04-03', ltDu: 2, aberto: false },
+      { trackingId: 'D', sku: 'Q', t1: '2026-05-19', t2: null, t4: '2026-05-21', ltDu: 2, aberto: false },
+    ];
+    const dd = dados([comAbertura(sku('P'), 0, vs)], vs, { itensLT: its });
+    const comCompra = params({ P: (d: string) => (d === '2026-05-19' ? { tipo: 'S', s: 1 } : SEM) }, AVAL[1]);
+    const r = roda(dd, comCompra, { janela: AVAL, rastro: true, inicial: 'piso_zero' });
+    expect(r.pedidos).toEqual([{ dia: '2026-05-19', sku: 'P', qtd: 2, chegada: '2026-05-21' }]);
+    expect(soma(r.porCelula.total.demandadas)).toBe(0); // o denominador de serviço segue só com as linhas da janela
+    expect(soma(r.entregue.tardia)).toBe(10);
+    expect(soma(r.valorDiasAtraso)).toBe(10 * 21); // 30/04 → 21/05: os dias depois do fim da calibração
+    expect(r.terminal.backlogValor).toBe(0);
+    // sem a compra: a obrigação fica no backlog terminal da avaliação, com o atraso contado desde o fim da calibração
+    const sem = roda(dd, params({ P: SEM }, AVAL[1]), { janela: AVAL, inicial: 'piso_zero' });
+    expect(sem.terminal.backlogValor).toBe(10);
+    expect(sem.terminal.backlogDiasAtraso).toBe(10 * 29);
+    // a calibração mede a linha e custeia o terminal no seu último dia (0 dias); a avaliação não a conta de novo no serviço
+    const cal = roda(dd, params({ P: SEM }, AVAL[1]), { janela: CALIB, inicial: 'piso_zero' });
+    expect(soma(cal.porCelula.total.demandadas)).toBe(1);
+    expect(cal.terminal).toMatchObject({ backlogValor: 10, backlogDiasAtraso: 0 });
+  });
+});
+
