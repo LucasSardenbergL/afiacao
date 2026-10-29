@@ -40,7 +40,7 @@ export interface ItemLT {
   t1: Data;
   /** Faturamento (t2) do documento-SKU; null = ausente. Com t4, aproxima a identidade da NFe no LT do motor. */
   t2: Data | null;
-  /** t4 do documento-SKU (1 recebimento por documento-SKU, ruling R7; sem checagem de >= 95% do pedido); null = aberto. */
+  /** t4 do recebimento que leva o acumulado a >= 95% do pedido (§5.9; ou o último, se encerrado no Omie); null = aberto. */
   t4: Data | null;
   /** Dias úteis de t1 até t4; aberto: max(du de t1 até a extração, 15). */
   ltDu: number;
@@ -134,7 +134,7 @@ export interface Dados {
    * SKU ausente = fora da view (sem venda em 90 d). es/pp/max null = status_sugestao <> 'OK'.
    */
   parametrosView: Map<string, { es: number | null; pp: number | null; max: number | null; status: string }>;
-  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; T1_FABRICADO = t1 igual a t2, fallback sem pedido casado, fora do LT; SEM_T4_REGISTRADO = documento sem t4 e com mais du que o LT máximo, fora da amostra de LT). */
+  /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; T1_FABRICADO; RECEBIMENTO_PARCIAL; CONVERSAO_INDETERMINADA; SEM_T4_ENCERRADO_OMIE; SEM_T4_STATUS_RECEBIDO; PARCIAL_ENCERRADO_OMIE; COPIAS_DO_DOCUMENTO_FUNDIDAS; DOCUMENTO_COM_LINHAS_DIVERGENTES; T4_DIVERGENTE_NO_DOCUMENTO), contados. */
   avisos: AvisoDados[];
   dataExtracao: Data;
   hashDados: string;
@@ -148,7 +148,7 @@ export interface Parado {
   sku: string;
   semanasComVenda: number;
   ultimaVenda: Data | null;
-  /** Última chegada física (recebimento, R9) antes do corte; null = nenhuma. */
+  /** Última chegada física (recebimento, dedup documental) antes do corte; null = nenhuma. */
   ultimaCompra: Data | null;
   /** saldoHoje x cmc de HOJE (não há estoque/CMC histórico no corte); null se qualquer um faltar. */
   estoqueCmc: number | null;

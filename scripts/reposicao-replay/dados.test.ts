@@ -7,7 +7,7 @@ import { duEntre } from './calendario';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
-  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2',
+  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking',
   skus:
     'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
   config_custos:
@@ -56,6 +56,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   const b = { ...base(), ...ov };
   // linha de recebimento sem a 7ª coluna (t2) ganha t2 vazio: os testes antigos não dependem dela
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 6 ? `${l}|` : l));
+  // linha sem as 4 colunas documentais ganha: documento = o próprio tracking, unidade da NF = UN (a do skuLinha), não encerrado
+  b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 7 ? `${l}|tracking:${l.split('|')[0]}|UN|f|FATURADO` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -169,11 +171,41 @@ describe('LT documental (§5.9)', () => {
     expect(duEntre('2026-01-05', '2026-01-05')).toBe(0);
   });
 
-  it('um recebimento por documento-SKU: pedido 10, recebe 4 no du 9 → ltDu 9, fechado', () => {
-    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|10|4'] }));
+  // Achado 4 do Codex (contraprova): pedido de 100, recebimento de 10 depois de 2 du NÃO fecha o item (§5.9: ≥ 95%).
+  it('recebimento parcial (100 pedidos, 10 recebidos) deixa o item ABERTO: ltDu = max(du até a extração, 15)', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-07|100|10'] }));
     expect(d.itensLT).toEqual([
-      { trackingId: 'T', sku: 'S1', t1: '2026-01-05', t2: null, t4: '2026-01-16', ltDu: 9, aberto: false },
+      { trackingId: 'T', sku: 'S1', t1: '2026-01-05', t2: null, t4: null, ltDu: duEntre('2026-01-05', '2026-10-21'), aberto: true },
     ]);
+    expect(d.avisos).toContainEqual({ codigo: 'RECEBIMENTO_PARCIAL', n: 1 });
+  });
+
+  it('fronteira dos 95%: 95 de 100 fecha; 94 de 100 fica aberto', () => {
+    const fecha = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|100|95'] }));
+    expect(fecha.itensLT[0]).toMatchObject({ aberto: false, t4: '2026-01-16', ltDu: 9 });
+    const abre = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|100|94'] }));
+    expect(abre.itensLT[0]).toMatchObject({ aberto: true, t4: null });
+  });
+
+  it('acumula recebimentos documentais: o LT é o t4 do documento que leva o acumulado a ≥ 95%', () => {
+    const d = carregarDados(
+      monta({ recebimentos: ['T|S1|2026-01-05|2026-01-09|50|30||docA|UN|f|FATURADO', 'T|S1|2026-01-05|2026-01-16|40|66||docB|UN|f|FATURADO', 'T|S1|2026-01-05|2026-01-23|10|4||docC|UN|f|FATURADO'] }),
+    );
+    expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-01-05', t2: null, t4: '2026-01-16', ltDu: 9, aberto: false }]);
+  });
+
+  it('converte o pedido para a unidade de estoque: NF em L, estoque em UN, fator documental do SKU (0,9 L/UN)', () => {
+    // 3 documentos completos (2,7 L → 3 UN) dão o fator 3/2,7; o 4º (2,7 L → 1 UN) é parcial e fica aberto
+    const r = (t: string, t4: string, q: string) => `${t}|S1|2026-01-05|${t4}|2.7|${q}||doc${t}|L|f|FATURADO`;
+    const d = carregarDados(monta({ recebimentos: [r('A', '2026-01-09', '3'), r('B', '2026-01-12', '3'), r('C', '2026-01-13', '3'), r('D', '2026-01-14', '1')] }));
+    expect(d.itensLT.filter((i) => !i.aberto).map((i) => i.trackingId)).toEqual(['A', 'B', 'C']);
+    expect(d.itensLT.find((i) => i.trackingId === 'D')).toMatchObject({ aberto: true, t4: null });
+  });
+
+  it('sem fator documental confiável (NF ≠ estoque e < 3 documentos): CONVERSAO_INDETERMINADA, item aberto (fail-closed)', () => {
+    const d = carregarDados(monta({ recebimentos: ['A|S1|2026-01-05|2026-01-09|2.7|3||docA|L|f|FATURADO'] }));
+    expect(d.itensLT[0]).toMatchObject({ aberto: true, t4: null });
+    expect(d.avisos).toContainEqual({ codigo: 'CONVERSAO_INDETERMINADA', n: 1 });
   });
 
   it('pedido aberto entra com LT conservador: aberto há 7 du → ltDu = 15', () => {
@@ -183,21 +215,26 @@ describe('LT documental (§5.9)', () => {
     expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-10-12', t2: null, t4: null, ltDu: 15, aberto: true }]);
   });
 
-  it('faturado sem t4 há 40 du → fora da amostra, aviso SEM_T4_REGISTRADO', () => {
-    // 2026-08-26 (quarta) → 2026-10-21: 40 du
+  // Achado 5 do Codex: o aberto há 40 du representa um LT de 40 du, nunca sai da amostra por ser atrasado.
+  it('sem t4 há 40 du continua na amostra como aberto (ltDu = 40); sem corte de 29 du', () => {
     expect(duEntre('2026-08-26', '2026-10-21')).toBe(40);
     const d = carregarDados(monta({ recebimentos: ['T|S1|2026-08-26||10|'] }));
-    expect(d.itensLT).toEqual([]);
-    expect(d.avisos).toContainEqual({ codigo: 'SEM_T4_REGISTRADO', n: 1 });
+    expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-08-26', t2: null, t4: null, ltDu: 40, aberto: true }]);
   });
 
-  it('sem t4 no limite (29 du) ainda é aberto', () => {
-    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-09-09||10|'] }));
-    expect(duEntre('2026-09-09', '2026-10-21')).toBe(30);
-    const d2 = carregarDados(monta({ recebimentos: ['T|S1|2026-09-10||10|'] }));
-    expect(duEntre('2026-09-10', '2026-10-21')).toBe(29);
-    expect(d.itensLT).toEqual([]);
-    expect(d2.itensLT[0]).toMatchObject({ aberto: true, ltDu: 29 });
+  it('exclusão só com evidência documental: encerrado no Omie ou status RECEBIDO sem t4, com aviso contado', () => {
+    const d = carregarDados(
+      monta({ recebimentos: ['A|S1|2026-08-26||10|||docA|UN|t|CRIADO', 'B|S1|2026-08-26||10|||docB|UN|f|RECEBIDO', 'C|S1|2026-08-26||10|||docC|UN|f|FATURADO'] }),
+    );
+    expect(d.itensLT.map((i) => i.trackingId)).toEqual(['C']);
+    expect(d.avisos).toContainEqual({ codigo: 'SEM_T4_ENCERRADO_OMIE', n: 1 });
+    expect(d.avisos).toContainEqual({ codigo: 'SEM_T4_STATUS_RECEBIDO', n: 1 });
+  });
+
+  it('parcial encerrado no Omie fecha no último t4 (o saldo não vem mais), com aviso', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-07|100|10||docA|UN|t|CRIADO'] }));
+    expect(d.itensLT[0]).toMatchObject({ aberto: false, t4: '2026-01-07', ltDu: 2 });
+    expect(d.avisos).toContainEqual({ codigo: 'PARCIAL_ENCERRADO_OMIE', n: 1 });
   });
 
   it('dedup preserva documentos distintos: mesmo (sku, t1, qtd), 2 tracking_id → 2 itens', () => {
@@ -217,15 +254,33 @@ describe('LT documental (§5.9)', () => {
 });
 
 describe('eventosDeRecebimento (estoque físico)', () => {
-  const l = (trackingId: string, sku: string, t1: string, t4: string | null, recebida: number | null) => ({ trackingId, sku, t1, t2: null, t4, pedida: 99, recebida });
+  const l = (trackingId: string, sku: string, t1: string, t4: string | null, recebida: number | null, docId = `tracking:${trackingId}`) => ({
+    trackingId, sku, t1, t2: null, t4, pedida: 99, recebida, docId, unidadeNfe: 'UN', encerrado: false, status: 'FATURADO',
+  });
   const div = new Map([['S1', 1]]);
-  it('dedup físico por (sku, t4, quantidade) entre tracking_id; quantidade diferente é parcial e fica', () => {
-    const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 10), l('b', 'S1', '2026-01-06', '2026-01-12', 10), l('c', 'S1', '2026-01-05', '2026-01-12', 4)], div);
-    expect(ev).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 4 }, { sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
+  // Achado 6 do Codex (contraprova): dois documentos distintos, 10 cada no mesmo dia → DOIS eventos.
+  it('dois documentos distintos com a mesma quantidade no mesmo dia são dois eventos', () => {
+    const { eventos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 10, 'nfe1'), l('b', 'S1', '2026-01-06', '2026-01-12', 10, 'nfe2')], div);
+    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 10 }, { sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
+  });
+  it('o mesmo documento sob vários tracking_id (cópias idênticas) é UM evento', () => {
+    const { eventos, avisos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 10, 'nfe1'), l('b', 'S1', '2026-01-06', '2026-01-12', 10, 'nfe1'), l('c', 'S1', '2026-01-05', '2026-01-12', 10, 'nfe1')], div);
+    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
+    expect(avisos).toContainEqual({ codigo: 'COPIAS_DO_DOCUMENTO_FUNDIDAS', n: 2 });
+  });
+  it('o mesmo documento com quantidades diferentes por pedido soma as linhas (cada pedido é uma linha da NF)', () => {
+    const { eventos, avisos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-12', 3, 'nfe1'), l('b', 'S1', '2026-01-06', '2026-01-12', 1, 'nfe1')], div);
+    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 4 }]);
+    expect(avisos).toContainEqual({ codigo: 'DOCUMENTO_COM_LINHAS_DIVERGENTES', n: 1 });
+  });
+  it('o mesmo documento com t4 divergente entre cópias entra no 1º t4, com aviso', () => {
+    const { eventos, avisos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-14', 10, 'nfe1'), l('b', 'S1', '2026-01-05', '2026-01-12', 10, 'nfe1')], div);
+    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
+    expect(avisos).toContainEqual({ codigo: 'T4_DIVERGENTE_NO_DOCUMENTO', n: 1 });
   });
   it('sem t4, quantidade vazia/<=0, t4 antes de t1 ou SKU fora do contrato de unidade não viram evento', () => {
-    const ev = eventosDeRecebimento([l('a', 'S1', '2026-01-05', null, 3), l('b', 'S1', '2026-01-05', '2026-01-12', null), l('c', 'S1', '2026-01-05', '2026-01-12', 0), l('d', 'S1', '2026-01-20', '2026-01-12', 5), l('e', 'S9', '2026-01-05', '2026-01-12', 5)], div);
-    expect(ev).toEqual([]);
+    const { eventos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', null, 3), l('b', 'S1', '2026-01-05', '2026-01-12', null), l('c', 'S1', '2026-01-05', '2026-01-12', 0), l('d', 'S1', '2026-01-20', '2026-01-12', 5), l('e', 'S9', '2026-01-05', '2026-01-12', 5)], div);
+    expect(eventos).toEqual([]);
   });
 
   it('R17: t1 fabricado (t2 presente e t1 = t2) sai do LT com aviso, mas segue como recebimento físico', () => {

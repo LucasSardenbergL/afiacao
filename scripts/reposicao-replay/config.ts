@@ -18,8 +18,15 @@ export const JANELAS = {
 export const SEMANAS_PARADO = 27;
 export const MAX_SEMANAS_COM_VENDA_PARADO = 1;
 
-/** LT máximo observado (du): documento sem t4 com mais du decorridos que isso sai da amostra (SEM_T4_REGISTRADO). */
-export const LT_MAX_OBSERVADO_DU = 29;
+/** §5.9: o item fecha no t4 do recebimento que leva o acumulado recebido a >= esta fração da quantidade pedida. */
+export const LT_FRACAO_COMPLETA = 0.95;
+/**
+ * Fator documental NF → estoque de um SKU (quando a unidade da NF difere da de estoque e o cadastro não tem o fator):
+ * a razão recebida/pedida MODAL dos documentos recebidos do SKU, aceita só com >= FATOR_DOC_MIN_DOCUMENTOS documentos e a
+ * moda cobrindo >= FATOR_DOC_MIN_PARTICIPACAO deles. Fora disso a conversão é indeterminada e o item não prova que fechou.
+ */
+export const FATOR_DOC_MIN_DOCUMENTOS = 3;
+export const FATOR_DOC_MIN_PARTICIPACAO = 0.6;
 /** Piso do LT imputado a pedido aberto (du). */
 export const LT_ABERTO_MIN_DU = 15;
 /** Sorteio de documento de LT: janela de t1 em du em torno do dia. */

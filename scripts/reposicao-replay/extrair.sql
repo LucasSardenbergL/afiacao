@@ -30,29 +30,33 @@ copy (
   order by v.data_emissao, v.id
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/vendas.csv
 
--- ── recebimentos.csv: sku_leadtime_history deduplicado por (tracking_id, empresa, sku, t4, qtde_recebida) ──────
--- Recebimento parcial (mesma tracking, quantidade_recebida diferente) é PRESERVADO. Pedido sem t4 sai com t4 vazio.
--- t2 (faturamento, data SP; vazio se NULL) vai no FIM: a edge grava t1 = t2 quando não casa o pedido ("t1 fabricado").
--- t1/t4 em data de São Paulo. Empate na chave: fica a linha atualizada mais recentemente.
+-- ── recebimentos.csv: sku_leadtime_history, 1 linha por (tracking_id, sku) — a chave única da tabela ─────────────────
+-- Pedido sem t4 sai com t4 vazio. t1/t4/t2 em data de São Paulo; t2 vazio se NULL (R17: t1 = t2 => t1 fabricado).
+-- quantidade_pedida = nQtdeNFe (unidade da NF, `unidade_nfe`); quantidade_recebida = nQtdeRecebida (unidade de ESTOQUE).
+-- doc_md5 = identidade DOCUMENTAL canônica do recebimento, a mesma de v_sku_leadtime_efetivo: empresa + SKU +
+-- coalesce(nfe_chave_acesso, 'tracking:'||tracking_id), em md5 (a chave da NF carrega o CNPJ do emitente: não sai crua).
+-- Uma NF que fatura N pedidos aparece sob N tracking_id com o MESMO doc_md5 (dedup física em dados.ts).
+-- encerrado_omie = pedido encerrado no Omie (evidência documental de que não está aberto); status_tracking = status do
+-- purchase_orders_tracking (ex.: RECEBIDO sem t4).
 copy (
-  select d.tracking_id, d.sku, d.t1, d.t4, d.quantidade_pedida, d.quantidade_recebida, d.t2
-  from (
-    select distinct on (h.tracking_id, h.empresa, h.sku_codigo_omie, h.t4_data_recebimento, h.quantidade_recebida)
-           h.tracking_id,
-           h.sku_codigo_omie::text as sku,
-           (h.t1_data_pedido at time zone 'America/Sao_Paulo')::date as t1,
-           (h.t4_data_recebimento at time zone 'America/Sao_Paulo')::date as t4,
-           h.quantidade_pedida,
-           h.quantidade_recebida,
-           (h.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as t2   -- R17 (coluna no FIM): t1 = t2 => t1 fabricado
-    from sku_leadtime_history h
-    where h.empresa = 'OBEN'
-      and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
-                                       where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')
-    order by h.tracking_id, h.empresa, h.sku_codigo_omie, h.t4_data_recebimento, h.quantidade_recebida,
-             h.updated_at desc nulls last, h.id desc
-  ) d
-  order by d.t1, d.tracking_id, d.sku, d.t4
+  select h.tracking_id,
+         h.sku_codigo_omie::text as sku,
+         (h.t1_data_pedido at time zone 'America/Sao_Paulo')::date as t1,
+         (h.t4_data_recebimento at time zone 'America/Sao_Paulo')::date as t4,
+         h.quantidade_pedida,
+         h.quantidade_recebida,
+         (h.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as t2,
+         md5(h.empresa || '|' || h.sku_codigo_omie::text || '|' ||
+             coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text)) as doc_md5,
+         h.sku_unidade as unidade_nfe,
+         (pot.encerrado_omie_em is not null) as encerrado_omie,
+         coalesce(pot.status, '') as status_tracking
+  from sku_leadtime_history h
+  left join purchase_orders_tracking pot on pot.id = h.tracking_id
+  where h.empresa = 'OBEN'
+    and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
+                                     where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')
+  order by 3, 1, 2, 4
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/recebimentos.csv
 
 -- ── skus.csv: 1 linha por SKU da coorte, estado "hoje" do motor ────────────────────────────────────────────────

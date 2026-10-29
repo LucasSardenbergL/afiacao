@@ -14,7 +14,7 @@
 //
 // DECISÕES DOCUMENTADAS (controlador, Task 6):
 //  · ltDu = 0 chega no PRÓXIMO dia útil depois do pedido (LT efetivo mínimo de 1 du).
-//  · Compras abertas no início = recebimentos físicos (R9) de (sku, t4) cujo documento de LT tem t1 < início <= t4. Elas
+//  · Compras abertas no início = recebimentos físicos (dedup documental) de (sku, t4) cujo documento de LT tem t1 < início <= t4. Elas
 //    entram como chegadas programadas e contam na posição. Os demais recebimentos históricos são SUBSTITUÍDOS pelas
 //    compras simuladas. (No dado real o 1º recebimento é de 2026-01-28: o conjunto é vazio — reportado.)
 //  · Células (R2): classe efetiva do SKU no INÍCIO da janela medida (sem classe → C, como R13); `*_alt` = e.alterados (padrão: coorte.alterados);

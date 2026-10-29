@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CSVS_REPLAY, LT_ABERTO_MIN_DU, LT_MAX_OBSERVADO_DU } from './config';
+import { CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
 import { duEntre } from './calendario';
 import {
   ErroDadosReplay,
@@ -157,24 +157,102 @@ export interface RecebLinha {
   sku: string;
   t1: Data;
   t4: Data | null;
+  /** Quantidade da linha da NF (`nQtdeNFe`), na unidade da NF (`unidadeNfe`); null = ausente. */
   pedida: number | null;
+  /** Quantidade que o Omie deu entrada (`nQtdeRecebida`), na unidade de ESTOQUE; null = ausente. */
   recebida: number | null;
   /** Faturamento (t2); null = ausente. */
   t2: Data | null;
+  /**
+   * Identidade documental canônica do recebimento (md5 de empresa + SKU + `nfe_chave_acesso`, ou `tracking:<id>` sem
+   * chave), a mesma de `v_sku_leadtime_efetivo`. Uma NF que fatura N pedidos aparece sob N tracking_id com o mesmo docId.
+   */
+  docId: string;
+  /** Unidade da NF de entrada (`sku_leadtime_history.sku_unidade`); null = ausente. */
+  unidadeNfe: string | null;
+  /** Pedido encerrado no Omie (`purchase_orders_tracking.encerrado_omie_em` presente): evidência documental de que não está aberto. */
+  encerrado: boolean;
+  /** `purchase_orders_tracking.status` (ex.: CRIADO, FATURADO, RECEBIDO). */
+  status: string;
+}
+
+const normUn = (u: string | null): string | null => (u === null ? null : u.trim().toUpperCase() || null);
+
+/**
+ * Fator NF → estoque por (SKU, unidade da NF). Unidades iguais: 1 (contrato §5.6). Diferentes: fator DOCUMENTAL = a razão
+ * recebida/pedida modal dos documentos recebidos do SKU (o `fator_conversao` do portal é 1 em quase toda a coorte e não
+ * converte), aceita só com >= FATOR_DOC_MIN_DOCUMENTOS documentos e a moda cobrindo >= FATOR_DOC_MIN_PARTICIPACAO deles;
+ * senão null (indeterminado). Um recebimento parcial tem razão ABAIXO da moda, por isso fica detectável.
+ */
+export function fatoresNfParaEstoque(linhas: RecebLinha[], unidadeEstoque: Map<string, string | null>): Map<string, number | null> {
+  const chave = (l: RecebLinha) => `${l.sku}\u0000${normUn(l.unidadeNfe) ?? ''}`;
+  const razoes = new Map<string, Map<string, number[]>>(); // chave -> (docId -> razões)
+  for (const l of linhas) {
+    if (l.t4 === null || l.t4 < l.t1 || l.pedida === null || !(l.pedida > 0) || l.recebida === null || !(l.recebida > 0)) continue;
+    const k = chave(l);
+    let m = razoes.get(k);
+    if (!m) razoes.set(k, (m = new Map()));
+    const doc = `${l.docId}\u0000${l.trackingId}`;
+    const a = m.get(doc);
+    if (a) a.push(l.recebida / l.pedida);
+    else m.set(doc, [l.recebida / l.pedida]);
+  }
+  const out = new Map<string, number | null>();
+  for (const l of linhas) {
+    const k = chave(l);
+    if (out.has(k)) continue;
+    const nf = normUn(l.unidadeNfe);
+    const est = normUn(unidadeEstoque.get(l.sku) ?? null);
+    if (nf !== null && est !== null && nf === est) {
+      out.set(k, 1);
+      continue;
+    }
+    const docs = [...(razoes.get(k)?.values() ?? [])].map((r) => r.reduce((x, y) => x + y, 0) / r.length);
+    if (docs.length < FATOR_DOC_MIN_DOCUMENTOS) {
+      out.set(k, null);
+      continue;
+    }
+    const baldes = new Map<string, number[]>();
+    for (const r of docs) {
+      const b = r.toPrecision(3);
+      const a = baldes.get(b);
+      if (a) a.push(r);
+      else baldes.set(b, [r]);
+    }
+    const moda = [...baldes.values()].sort((x, y) => y.length - x.length)[0];
+    if (moda.length / docs.length < FATOR_DOC_MIN_PARTICIPACAO) {
+      out.set(k, null);
+      continue;
+    }
+    const ord = [...moda].sort((x, y) => x - y);
+    out.set(k, ord[Math.floor((ord.length - 1) / 2)]);
+  }
+  return out;
 }
 
 /**
- * Agrupa por (tracking_id, sku). LIMITAÇÃO (R7): `quantidade_pedida` e `quantidade_recebida` não estão em unidades
- * comparáveis (razão espalhada mesmo com o fator), então NÃO se aplica a regra de >= 95% da spec §5.9: com `t4` o item
- * é fechado, `ltDu = duEntre(t1, t4)` (se houver mais de uma linha no grupo, vale o último t4).
- * Sem `t4`: decorrido (du de t1 até a extração) <= LT_MAX_OBSERVADO_DU => aberto, `ltDu = max(decorrido, 15)`;
- * acima disso é faturado sem recebimento registrado => FORA da amostra (aviso SEM_T4_REGISTRADO).
+ * Itens de LT por documento-SKU (tracking_id + sku), §5.9:
+ *  - FECHA no t4 do recebimento documental que leva o acumulado recebido (unidade de estoque) a >= 95% da quantidade
+ *    pedida convertida para a unidade de estoque (Σ pedida × fator NF→estoque). `ltDu = duEntre(t1, esse t4)`.
+ *  - Nunca chega a 95% => ABERTO (aviso RECEBIMENTO_PARCIAL); conversão indeterminada => não prova que fechou, ABERTO
+ *    (aviso CONVERSAO_INDETERMINADA). Exceção documental: pedido ENCERRADO no Omie fecha no último t4 (o saldo não vem
+ *    mais; aviso PARCIAL_ENCERRADO_OMIE).
+ *  - Sem t4: SEMPRE na amostra como aberto, `ltDu = max(du de t1 até a extração, 15)` — sem corte por atraso (achado 5
+ *    do Codex). Só sai com evidência documental de que não é pedido aberto: encerrado no Omie (SEM_T4_ENCERRADO_OMIE) ou
+ *    status RECEBIDO (SEM_T4_STATUS_RECEBIDO), contados.
+ * Limitação: a "quantidade pedida" é a da linha da NF (`nQtdeNFe`); a do pedido de compra não está no histórico.
  */
-export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens: ItemLT[]; avisos: AvisoDados[] } {
+export function montarItensLT(
+  linhas: RecebLinha[],
+  dataExtracao: Data,
+  unidadeEstoque: Map<string, string | null> = new Map(),
+): { itens: ItemLT[]; avisos: AvisoDados[] } {
   // R17 — t1 FABRICADO: a edge grava `t1 = pedidoCasado?.t1 ?? nfe.t2_data_faturamento` (docs/agent/reposicao.md, "presente
   // ≠ confiável"), e a produção deixa lt_bruto_dias_uteis NULL nesse caso, que v_sku_leadtime_estatisticas descarta. Com t2
   // presente e t1 = t2 o "LT" seria só a logística (curto, otimista): a linha sai do LT. Continua valendo como chegada FÍSICA
   // (eventosDeRecebimento não passa por aqui).
+  const fatores = fatoresNfParaEstoque(linhas, unidadeEstoque);
+  const fatorDe = (l: RecebLinha): number | null => fatores.get(`${l.sku}\u0000${normUn(l.unidadeNfe) ?? ''}`) ?? null;
   let t1Fabricado = 0;
   const grupos = new Map<string, RecebLinha[]>();
   for (const l of linhas) {
@@ -188,63 +266,118 @@ export function montarItensLT(linhas: RecebLinha[], dataExtracao: Data): { itens
     else grupos.set(k, [l]);
   }
   const itens: ItemLT[] = [];
-  let t4AntesT1 = 0;
-  let semT4 = 0;
+  const cont = { t4AntesT1: 0, encerradoSemT4: 0, recebidoSemT4: 0, parcial: 0, indeterminada: 0, parcialEncerrado: 0 };
   for (const g of grupos.values()) {
     const t1 = g.map((l) => l.t1).sort()[0];
     const antes = g.filter((l) => l.t4 !== null && l.t4 < l.t1).length;
     if (antes > 0) {
-      t4AntesT1 += antes;
+      cont.t4AntesT1 += antes;
       continue;
     }
-    const t4s = g.map((l) => l.t4).filter((t): t is Data => t !== null).sort();
     const { trackingId, sku } = g[0];
     const t2s = g.map((l) => l.t2).filter((t): t is Data => t !== null).sort();
     const t2 = t2s.length ? t2s[t2s.length - 1] : null;
-    if (t4s.length > 0) {
-      const t4 = t4s[t4s.length - 1];
+    const encerrado = g.some((l) => l.encerrado);
+    const aberto = (): ItemLT => ({ trackingId, sku, t1, t2, t4: null, ltDu: Math.max(duEntre(t1, dataExtracao), LT_ABERTO_MIN_DU), aberto: true });
+    const recebidas = g.filter((l): l is RecebLinha & { t4: Data } => l.t4 !== null).sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : 0));
+    if (recebidas.length === 0) {
+      if (encerrado) cont.encerradoSemT4++;
+      else if (g.some((l) => l.status.trim().toUpperCase() === 'RECEBIDO')) cont.recebidoSemT4++;
+      else itens.push(aberto());
+      continue;
+    }
+    // quantidade pedida na unidade de estoque (todas as linhas do documento-SKU; qualquer ausência => indeterminada)
+    let pedidaEst: number | null = 0;
+    for (const l of g) {
+      const f = fatorDe(l);
+      if (pedidaEst === null || l.pedida === null || !(l.pedida > 0) || f === null) pedidaEst = null;
+      else pedidaEst += l.pedida * f;
+    }
+    let t4Completo: Data | null = null;
+    if (pedidaEst !== null) {
+      let acum = 0;
+      for (const l of recebidas) {
+        if (l.recebida !== null && l.recebida > 0) acum += l.recebida;
+        if (acum >= LT_FRACAO_COMPLETA * pedidaEst - 1e-9) {
+          t4Completo = l.t4;
+          break;
+        }
+      }
+    }
+    if (t4Completo !== null) {
+      itens.push({ trackingId, sku, t1, t2, t4: t4Completo, ltDu: duEntre(t1, t4Completo), aberto: false });
+      continue;
+    }
+    if (pedidaEst === null) cont.indeterminada++;
+    else cont.parcial++;
+    if (encerrado) {
+      const t4 = recebidas[recebidas.length - 1].t4;
+      cont.parcialEncerrado++;
       itens.push({ trackingId, sku, t1, t2, t4, ltDu: duEntre(t1, t4), aberto: false });
-      continue;
-    }
-    const decorrido = duEntre(t1, dataExtracao);
-    if (decorrido > LT_MAX_OBSERVADO_DU) {
-      semT4 += g.length;
-      continue;
-    }
-    itens.push({ trackingId, sku, t1, t2, t4: null, ltDu: Math.max(decorrido, LT_ABERTO_MIN_DU), aberto: true });
+    } else itens.push(aberto());
   }
   itens.sort((a, b) => (a.t1 < b.t1 ? -1 : a.t1 > b.t1 ? 1 : a.trackingId < b.trackingId ? -1 : a.trackingId > b.trackingId ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0));
   const avisos: AvisoDados[] = [];
-  if (t4AntesT1 > 0) avisos.push({ codigo: 'T4_ANTES_DE_T1', n: t4AntesT1 });
-  if (t1Fabricado > 0) avisos.push({ codigo: 'T1_FABRICADO', n: t1Fabricado });
-  if (semT4 > 0) avisos.push({ codigo: 'SEM_T4_REGISTRADO', n: semT4 });
+  const add = (codigo: string, n: number) => {
+    if (n > 0) avisos.push({ codigo, n });
+  };
+  add('T4_ANTES_DE_T1', cont.t4AntesT1);
+  add('T1_FABRICADO', t1Fabricado);
+  add('SEM_T4_ENCERRADO_OMIE', cont.encerradoSemT4);
+  add('SEM_T4_STATUS_RECEBIDO', cont.recebidoSemT4);
+  add('RECEBIMENTO_PARCIAL', cont.parcial);
+  add('CONVERSAO_INDETERMINADA', cont.indeterminada);
+  add('PARCIAL_ENCERRADO_OMIE', cont.parcialEncerrado);
   return { itens, avisos };
 }
 
 /**
- * Chegadas físicas para a reconstrução do estoque: uma por linha com `t4` e `quantidade_recebida` > 0, só de SKUs que
- * ficaram no contrato de unidade (`divisor` tem o SKU). Linha com t4 < t1 é dado suspeito (aviso T4_ANTES_DE_T1) e fica
- * de fora, como no LT. `quantidade_recebida` é a quantidade que o Omie deu entrada no estoque, já na unidade de ESTOQUE
- * (a `quantidade_pedida` é que vem na unidade do portal, R7): por isso entra SEM dividir pelo divisor NF→estoque, que
- * vale só para a quantidade de venda da NF. Ausente (vazio) ou <= 0 não vira evento (nunca vira 0 fabricado).
- * DEDUP FÍSICO por (sku, t4, quantidade): o mesmo embarque aparece sob vários tracking_id (no dado real, 65% das linhas
- * repetem (sku, t4, qtd) de outro tracking; sem isto o recebido dobra e o estoque inicial reconstruído fica negativo).
- * Diferente do LT, que é DOCUMENTAL (tracking_id + sku): aqui o que importa é o evento físico no estoque. Dois
- * recebimentos legítimos idênticos no mesmo dia e SKU seriam fundidos (subestima a entrada; raro e documentado).
+ * Chegadas físicas para a reconstrução do estoque, deduplicadas pela IDENTIDADE DOCUMENTAL canônica do recebimento
+ * (`docId` + SKU; achado 6 do Codex — revoga a chave (sku, t4, quantidade) da R9). Só linhas com `t4`, `recebida` > 0,
+ * t4 >= t1 e SKU no contrato de unidade. `recebida` já está na unidade de ESTOQUE (o Omie converte na entrada): entra sem
+ * o divisor NF→estoque da venda. Por documento:
+ *  - todas as linhas com a mesma quantidade = cópias do mesmo recebimento sob vários tracking_id => UM evento
+ *    (COPIAS_DO_DOCUMENTO_FUNDIDAS conta as cópias descartadas);
+ *  - quantidades diferentes = linhas de pedidos distintos da mesma NF => soma (DOCUMENTO_COM_LINHAS_DIVERGENTES);
+ *  - t4 divergente entre as linhas: entra no 1º (T4_DIVERGENTE_NO_DOCUMENTO).
+ * Documentos distintos com a mesma quantidade no mesmo dia são eventos distintos.
+ * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU são indistinguíveis de cópias (viram 1).
  */
-export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): EventoRecebimento[] {
-  const out: EventoRecebimento[] = [];
-  const vistos = new Set<string>();
+export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): { eventos: EventoRecebimento[]; avisos: AvisoDados[] } {
+  const docs = new Map<string, (RecebLinha & { t4: Data; recebida: number })[]>();
   for (const l of linhas) {
     if (l.t4 === null || l.recebida === null || !(l.recebida > 0) || l.t4 < l.t1) continue;
     if (!divisor.has(l.sku)) continue;
-    const chave = `${l.sku}\u0000${l.t4}\u0000${l.recebida}`;
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
-    out.push({ sku: l.sku, data: l.t4, quantidade: l.recebida });
+    const k = `${l.sku}\u0000${l.docId}`;
+    const g = docs.get(k);
+    const v = l as RecebLinha & { t4: Data; recebida: number };
+    if (g) g.push(v);
+    else docs.set(k, [v]);
   }
-  out.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.quantidade - b.quantidade));
-  return out;
+  const eventos: EventoRecebimento[] = [];
+  let copias = 0;
+  let divergentes = 0;
+  let t4Divergente = 0;
+  for (const g of docs.values()) {
+    const t4s = [...new Set(g.map((l) => l.t4))].sort();
+    if (t4s.length > 1) t4Divergente++;
+    const qtds = new Set(g.map((l) => l.recebida));
+    let quantidade: number;
+    if (qtds.size === 1) {
+      quantidade = g[0].recebida;
+      copias += g.length - 1;
+    } else {
+      divergentes++;
+      quantidade = g.reduce((s, l) => s + l.recebida, 0);
+    }
+    eventos.push({ sku: g[0].sku, data: t4s[0], quantidade });
+  }
+  eventos.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.quantidade - b.quantidade));
+  const avisos: AvisoDados[] = [];
+  if (copias > 0) avisos.push({ codigo: 'COPIAS_DO_DOCUMENTO_FUNDIDAS', n: copias });
+  if (divergentes > 0) avisos.push({ codigo: 'DOCUMENTO_COM_LINHAS_DIVERGENTES', n: divergentes });
+  if (t4Divergente > 0) avisos.push({ codigo: 'T4_DIVERGENTE_NO_DOCUMENTO', n: t4Divergente });
+  return { eventos, avisos };
 }
 
 // ── carga ────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -376,19 +509,29 @@ export function carregarDados(dir: string): Dados {
     return v.noEscopo ? { ...v, quantidade: v.quantidade / d } : v;
   });
 
-  // recebimentos -> LT documental
-  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2'], false);
-  const recLinhas: RecebLinha[] = rc.linhas.map((r) => ({
-    trackingId: r[rc.col('tracking_id')],
-    sku: r[rc.col('sku')],
-    t1: data(rc.arquivo, 't1', r[rc.col('t1')]),
-    t4: dataOuNull(rc.arquivo, 't4', r[rc.col('t4')]),
-    pedida: numOuNull(rc.arquivo, 'quantidade_pedida', r[rc.col('quantidade_pedida')]),
-    recebida: numOuNull(rc.arquivo, 'quantidade_recebida', r[rc.col('quantidade_recebida')]),
-    t2: dataOuNull(rc.arquivo, 't2', r[rc.col('t2')]),
-  }));
-  const { itens: itensLT, avisos } = montarItensLT(recLinhas, dataExtracao);
-  const recebimentos = eventosDeRecebimento(recLinhas, divisor);
+  // recebimentos -> LT documental e chegadas físicas
+  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking'], false);
+  const recLinhas: RecebLinha[] = rc.linhas.map((r) => {
+    const docId = r[rc.col('doc_md5')];
+    if (ehVazio(docId)) invalido(rc.arquivo, `doc_md5 vazio em ${r[rc.col('tracking_id')]}`);
+    return {
+      trackingId: r[rc.col('tracking_id')],
+      sku: r[rc.col('sku')],
+      t1: data(rc.arquivo, 't1', r[rc.col('t1')]),
+      t4: dataOuNull(rc.arquivo, 't4', r[rc.col('t4')]),
+      pedida: numOuNull(rc.arquivo, 'quantidade_pedida', r[rc.col('quantidade_pedida')]),
+      recebida: numOuNull(rc.arquivo, 'quantidade_recebida', r[rc.col('quantidade_recebida')]),
+      t2: dataOuNull(rc.arquivo, 't2', r[rc.col('t2')]),
+      docId,
+      unidadeNfe: textoOuNull(r[rc.col('unidade_nfe')]),
+      encerrado: bool(rc.arquivo, 'encerrado_omie', r[rc.col('encerrado_omie')]),
+      status: r[rc.col('status_tracking')],
+    };
+  });
+  const unidadeEstoque = new Map([...skusBrutos].map(([k, s]) => [k, s.unidadeEstoque] as const));
+  const { itens: itensLT, avisos: avisosLT } = montarItensLT(recLinhas, dataExtracao, unidadeEstoque);
+  const { eventos: recebimentos, avisos: avisosFisicos } = eventosDeRecebimento(recLinhas, divisor);
+  const avisos = [...avisosLT, ...avisosFisicos];
 
   // equivalencias (vazia é aceita)
   const eq = lerTabela(dir, 'equivalencias', ['sku', 'sku_equivalente', 'fator', 'grupo_id', 'fator_para_base_sku', 'fator_para_base_equivalente', 'unidades_omie_sku', 'unidades_omie_equivalente'], true);

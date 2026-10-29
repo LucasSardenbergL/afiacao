@@ -103,6 +103,8 @@ select 'recebimentos_fonte_crua_sku_leadtime_history', count(*) from sku_leadtim
  where h.empresa = 'OBEN' and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%');
 select 'recebimentos_chave_distinta', count(*) from (select distinct h.tracking_id, h.empresa, h.sku_codigo_omie, h.t4_data_recebimento, h.quantidade_recebida from sku_leadtime_history h
  where h.empresa = 'OBEN' and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')) x;
+select 'recebimentos_documentos_distintos_nfe_ou_tracking', count(*) from (select distinct h.empresa, h.sku_codigo_omie, coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text) from sku_leadtime_history h left join purchase_orders_tracking pot on pot.id = h.tracking_id
+ where h.empresa = 'OBEN' and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')) x;
 select 'recebimentos_v_sku_leadtime_efetivo', count(*) from v_sku_leadtime_efetivo v
  where v.empresa = 'OBEN' and v.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%');
 SQL
