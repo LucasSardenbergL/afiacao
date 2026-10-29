@@ -59,10 +59,21 @@ CV_TABELAS=(radar_atendimentos)
 # shellcheck disable=SC2329  # chamada pelo cv_montar (db/lib/corpo-vivo.sh), que o shellcheck sem -x não segue
 cv_antes_da_cadeia() {
   P -v ON_ERROR_STOP=1 -q -f "$FIXTURE" > /dev/null || return 1
+  # O snapshot de 15/10 ainda tem a assinatura de 8 parâmetros da contagem; em prod (psql-ro, 29/10) só existe a de 10.
+  # Com as duas, a chamada sem argumentos é AMBÍGUA (42725) — artefato do harness, não de prod.
+  P -v ON_ERROR_STOP=1 -q -c "DROP FUNCTION IF EXISTS public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer)" > /dev/null || return 1
   P -v ON_ERROR_STOP=1 -q <<'SQL'
 DO $md5$
-DECLARE r record; v text;
+DECLARE r record; v text; n int;
 BEGIN
+  -- Overloads: como em prod, exatamente 1 assinatura por RPC sob prova.
+  FOR r IN SELECT x.nome FROM (VALUES ('radar_kpis'),('radar_contagem_por_municipio'),('radar_estado_cadastro_omie'),
+      ('radar_irmaos_por_raiz'),('radar_prospects_para_rota'),('radar_registrar_cadastro_omie'),
+      ('radar_registrar_cadastro_omie_v2'),('registrar_contato_radar')) AS x(nome)
+  LOOP
+    SELECT count(*) INTO n FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = r.nome;
+    IF n <> 1 THEN RAISE EXCEPTION 'OVERLOAD FORA DE PROD: % tem % assinaturas (prod: 1)', r.nome, n; END IF;
+  END LOOP;
   FOR r IN SELECT * FROM (VALUES
     ('public.radar_kpis()', '19d4b2c33d5c6749b522147aae09c969'),
     ('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone)', '321d07f0c0003cc0fc9cf269ba944883'),
