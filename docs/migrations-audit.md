@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **711** custom migrations totais
-- **2307** objetos esperados (criados por estas migrations)
+- **712** custom migrations totais
+- **2309** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 864
+  - `function`: 865
   - `rls_policy`: 493
   - `index`: 301
   - `table`: 208
   - `cron_job`: 200
   - `view`: 127
-  - `trigger`: 110
+  - `trigger`: 111
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5798,6 +5798,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261029095257_tint_arquivar_staging_fantasma_lote2.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261029165429_reposicao_trava_reativar_sku_consolidado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.trg_sku_parametros_trava_reativar_consolidado` | — |
+| `trigger` | `public.sku_parametros_trava_reativar_consolidado` | `sku_parametros` |
 
 ## Próximos passos por status
 

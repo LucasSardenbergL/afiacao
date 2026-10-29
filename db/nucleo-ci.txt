@@ -431,6 +431,11 @@ db/test-data-health-carteira-rebuild.sh    20  falsificar=13
 # mesma invocação, + security_invoker/anon/RLS e o dente das postcondições A1–A3. Autocontida:
 # initdb + db/stubs-supabase.sql + a migration. docs/historico/sku-fora-do-motor-em-silencio.md.
 db/test-v-sku-fora-do-motor.sh             33
+# Reposição: SKU ANTIGO de consolidação de demanda não volta ao motor (incidente DFA.4128LT, religado pela
+# UI depois de consolidado em 12101724100 → 7 pedidos disparados do antigo, demanda contada nos dois). Trava
+# de TRANSIÇÃO em sku_parametros, SECURITY DEFINER (o escritor sem visão de sku_substituicao não a cega),
+# cada filtro sabotado sozinho + a postcondição como camada própria. Autocontida: snapshot + a migration.
+db/test-reposicao-trava-reativar-consolidado.sh 17  falsificar=10
 # Reposição: o motor desconta o vendido em pedido de venda aberto no Omie (20261010210000) — cada filtro do
 # comprometido (status, hash, deletado, conta, janela 36 h, tipo/sinal da quantidade, parcial por número
 # repetido, items não-array, sem número), o grupo WP intocado, efetivo negativo, teto/mínimo/gate, desligador
