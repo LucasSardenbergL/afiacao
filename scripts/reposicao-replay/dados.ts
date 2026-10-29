@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA, CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, JANELAS, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
+import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { duEntre } from './calendario';
 import {
   ErroDadosReplay,
@@ -370,33 +371,57 @@ export function montarItensLT(
 }
 
 /**
- * preco_compra_real por documento, como v_sku_leadtime_efetivo (achado 2 do Codex), consolidado NO CORTE TEMPORAL (N3): em
- * d, só as cópias com t4 < d existem — uma cópia futura não apaga nem adia um preço que já se conhecia. As cópias do
- * conjunto só dão preço se concordam em quantidade recebida e valor (a view anula o campo quando divergem); preço =
- * valor ÷ recebida, só com os dois > 0 (o FILTER da produção). Saída: um trecho por prefixo coerente das cópias em ordem
- * de t4, válido para `desde < d ≤ ate` (sem `ate` = daí em diante). Cópia sem t4 nunca entra (não chegou em d nenhum).
- * Ordenada por (sku, desde). Linha sem `valor` (ausente) não fabrica preço.
+ * R51 (I2/M4): a consolidação de `v_sku_leadtime_efetivo` NO CORTE do dia d, ao pé da letra. Em d existem as cópias do
+ * documento já CRIADAS (t1 < d; sem t1, sempre); se QUALQUER uma delas não tem t4 < d (inclusive sem t4 nenhum), o
+ * `count(t4) = count(*)` da view falha e o documento está ANULADO em d. Senão, `avaliar` consolida as cópias existentes
+ * (cada campo com um único valor). Saída: os trechos `desde < d ≤ ate` (sem `ate` = daí em diante) em que o documento dá
+ * valor, com trechos vizinhos de valor igual fundidos. Os pontos de mudança são os dias de t1 e de t4 das cópias.
+ * Cópias da mesma NF pertencem a pedidos faturados por ela: todas têm t1 antes do 1º t4, então, na prática, em d > 1º t4
+ * todas existem (a regra coincide com a da view lida hoje, exceto antes de a NF chegar).
+ */
+export function trechosNoCorte<C extends { t1: Data | null; t4: Data | null }, R>(copias: readonly C[], avaliar: (existentes: readonly C[]) => R | null): { desde: Data; ate?: Data; valor: R }[] {
+  const pontos = [...new Set(copias.flatMap((c) => [c.t1, c.t4]).filter((x): x is Data => x !== null))].sort();
+  const out: { desde: Data; ate?: Data; valor: R }[] = [];
+  for (let k = 0; k < pontos.length; k++) {
+    const d = k + 1 < pontos.length ? pontos[k + 1] : addDias(pontos[k], 1); // o estado é o mesmo em (pontos[k], pontos[k+1]]
+    const existentes = copias.filter((c) => c.t1 === null || c.t1 < d);
+    if (existentes.length === 0 || existentes.some((c) => c.t4 === null || !(c.t4 < d))) continue; // anulado em d
+    const v = avaliar(existentes);
+    if (v === null) continue;
+    const ult = out[out.length - 1];
+    if (ult && ult.ate === pontos[k] && JSON.stringify(ult.valor) === JSON.stringify(v)) {
+      if (k + 1 < pontos.length) ult.ate = pontos[k + 1];
+      else delete ult.ate;
+      continue;
+    }
+    out.push({ desde: pontos[k], ...(k + 1 < pontos.length ? { ate: pontos[k + 1] } : {}), valor: v });
+  }
+  return out;
+}
+
+/**
+ * preco_compra_real por documento, como v_sku_leadtime_efetivo (achado 2 do Codex), consolidado NO CORTE TEMPORAL (N3,
+ * R51): em d, o documento só dá preço se todas as cópias existentes têm t4 < d e concordam em quantidade recebida e valor
+ * (a view anula o campo quando divergem ou faltam); preço = valor ÷ recebida, só com os dois > 0 (o FILTER da produção).
+ * Saída: um trecho por intervalo de validade, `desde < d ≤ ate`. Ordenada por (sku, desde). Sem `valor`, sem preço.
  */
 export function precosCompraPorDocumento(linhas: readonly RecebLinha[]): PrecoCompraDoc[] {
-  const porDoc = new Map<string, (RecebLinha & { t4: Data })[]>();
+  const porDoc = new Map<string, RecebLinha[]>();
   for (const l of linhas) {
-    if (l.t4 === null) continue;
     const g = porDoc.get(l.docId);
-    if (g) g.push(l as RecebLinha & { t4: Data });
-    else porDoc.set(l.docId, [l as RecebLinha & { t4: Data }]);
+    if (g) g.push(l);
+    else porDoc.set(l.docId, [l]);
   }
   const out: PrecoCompraDoc[] = [];
   for (const ls of porDoc.values()) {
-    const datas = [...new Set(ls.map((l) => l.t4))].sort();
-    const r0 = ls.find((l) => l.t4 === datas[0])!.recebida;
-    const v0 = ls.find((l) => l.t4 === datas[0])!.valor ?? null;
-    if (r0 === null || v0 === null || !(r0 > 0) || !(v0 > 0)) continue;
-    for (let k = 0; k < datas.length; k++) {
-      // prefixo: as cópias com t4 <= datas[k] (o conjunto visto em datas[k] < d <= datas[k+1])
-      const coerente = ls.every((l) => l.t4 > datas[k] || (l.recebida === r0 && (l.valor ?? null) === v0 && l.sku === ls[0].sku));
-      if (!coerente) break; // uma divergência não se desfaz com mais cópias
-      out.push({ sku: ls[0].sku, desde: datas[k], ...(k + 1 < datas.length ? { ate: datas[k + 1] } : {}), preco: v0 / r0 });
-    }
+    const tr = trechosNoCorte(ls, (ex) => {
+      const r0 = ex[0].recebida;
+      const v0 = ex[0].valor ?? null;
+      if (r0 === null || v0 === null || !(r0 > 0) || !(v0 > 0)) return null;
+      if (!ex.every((l) => l.recebida === r0 && (l.valor ?? null) === v0 && l.sku === ex[0].sku)) return null;
+      return { sku: ex[0].sku, preco: v0 / r0 };
+    });
+    for (const t of tr) out.push({ sku: t.valor.sku, desde: t.desde, ...(t.ate !== undefined ? { ate: t.ate } : {}), preco: t.valor.preco });
   }
   return out.sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.desde < b.desde ? -1 : a.desde > b.desde ? 1 : a.preco - b.preco));
 }
@@ -445,15 +470,14 @@ function lerPrecosEmbalagem(dir: string): PrecosEmbalagem | null {
  * Chegadas físicas para a reconstrução do estoque, deduplicadas pela IDENTIDADE DOCUMENTAL canônica do recebimento
  * (`docId` + SKU; achado 6 do Codex — revoga a chave (sku, t4, quantidade) da R9). Só linhas com `t4`, `recebida` > 0,
  * t4 >= t1 e SKU no contrato de unidade. `recebida` já está na unidade de ESTOQUE (o Omie converte na entrada): entra sem
- * o divisor NF→estoque da venda. Por documento (P2a do re-Codex):
- *  - cópia IDÊNTICA (mesmo t4 e mesma quantidade) sob outro tracking_id = o mesmo recebimento => UM evento
- *    (COPIAS_DO_DOCUMENTO_FUNDIDAS conta as cópias descartadas);
- *  - recebimentos em DATAS diferentes são eventos distintos, cada um na sua data (T4_DIVERGENTE_NO_DOCUMENTO conta os
- *    documentos) — nunca se soma tudo na primeira data;
- *  - quantidades diferentes na MESMA data = linhas de pedidos distintos da mesma NF => eventos distintos
- *    (DOCUMENTO_COM_LINHAS_DIVERGENTES conta os documentos).
+ * o divisor NF→estoque da venda. Por documento (a chave da NF; R52, revoga R49):
+ *  - cópias com a MESMA quantidade são a MESMA entrada física (uma NF entra uma vez; t4 diferente entre elas é atraso de
+ *    registro sob outro tracking_id) => UM evento, no MENOR t4 (COPIAS_DO_DOCUMENTO_FUNDIDAS conta as descartadas;
+ *    T4_DIVERGENTE_NO_DOCUMENTO conta os documentos com cópias da mesma quantidade em datas diferentes);
+ *  - quantidades DIFERENTES = linhas de pedidos distintos da mesma NF => eventos distintos, cada um na sua data, nunca
+ *    somados na primeira (P2a; DOCUMENTO_COM_LINHAS_DIVERGENTES conta os documentos).
  * Documentos distintos com a mesma quantidade no mesmo dia são eventos distintos.
- * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU no mesmo dia são indistinguíveis de cópias (viram 1).
+ * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU são indistinguíveis de cópias (viram 1).
  */
 export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): { eventos: EventoRecebimento[]; avisos: AvisoDados[] } {
   const docs = new Map<string, (RecebLinha & { t4: Data; recebida: number })[]>();
@@ -471,13 +495,16 @@ export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, 
   let divergentes = 0;
   let t4Divergente = 0;
   for (const g of docs.values()) {
-    const pares = new Map<string, { data: Data; quantidade: number }>();
-    for (const l of g) pares.set(`${l.t4}\u0000${l.recebida}`, { data: l.t4, quantidade: l.recebida });
-    copias += g.length - pares.size;
-    const datas = new Set(g.map((l) => l.t4));
-    if (datas.size > 1) t4Divergente++;
-    if (pares.size > datas.size) divergentes++;
-    for (const p of pares.values()) eventos.push({ sku: g[0].sku, data: p.data, quantidade: p.quantidade });
+    const porQtd = new Map<number, Data[]>();
+    for (const l of g) {
+      const a = porQtd.get(l.recebida) ?? [];
+      a.push(l.t4);
+      porQtd.set(l.recebida, a);
+    }
+    copias += g.length - porQtd.size;
+    if (porQtd.size > 1) divergentes++;
+    if ([...porQtd.values()].some((ds) => new Set(ds).size > 1)) t4Divergente++;
+    for (const [quantidade, ds] of porQtd) eventos.push({ sku: g[0].sku, data: [...ds].sort()[0], quantidade });
   }
   eventos.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.quantidade - b.quantidade));
   const avisos: AvisoDados[] = [];
@@ -523,12 +550,14 @@ function lerMotor(dir: string, dataExtracao: Data): NonNullable<Dados['motor']> 
   return { horarioGeracao, ultimaPassada };
 }
 
-/** Linha CRUA de v_sku_leadtime_history_normal (cópia de um documento), para a consolidação point-in-time (N3). */
+/** Linha CRUA de v_sku_leadtime_history_normal (cópia de um documento), para a consolidação point-in-time (N3, R51). */
 export interface LinhaLtMotorCrua {
   /** md5 de empresa + SKU + dedup_key (a chave do GROUP BY da view). */
   doc: string;
   sku: string;
   fornecedor: number | null;
+  /** R51: dia de SP do pedido da cópia (t1_data_pedido): a cópia existe em d > t1; null = existe sempre. */
+  t1: Data | null;
   /** Instantes exatos de SP (a view compara timestamps no `count(DISTINCT ...)`); null = ausente. */
   t2: string | null;
   t4: string | null;
@@ -536,42 +565,46 @@ export interface LinhaLtMotorCrua {
 }
 
 /**
- * N3/R43: reconstrói `v_sku_leadtime_efetivo` NO CORTE TEMPORAL a partir das cópias cruas. Em d, só as cópias com t4 < d
- * (dia de SP) existem; sobre elas vale a regra da view (pg_get_viewdef, db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql
- * ~L337): cada campo só sobrevive se TODAS as cópias o têm e com um único valor distinto (t2/t4 comparados pelo instante);
- * a linha só entra na amostra (como v_sku_leadtime_estatisticas a lê) com lt, t2 e t4. Uma cópia futura não apaga uma
- * observação passada: cada saída vale para `t4 < d ≤ ate` (`ate` = o dia da próxima cópia; sem `ate` = daí em diante).
- * Como o t4 consolidado exige um único instante, só o 1º grupo de cópias (o do menor t4) pode dar observação.
+ * N3/R43/R51: reconstrói `v_sku_leadtime_efetivo` NO CORTE TEMPORAL a partir das cópias cruas, ao pé da letra (pg_get_viewdef,
+ * db/fixtures/hoje-sp-data-ciclo-prod-20261001.sql ~L337, idêntica à produção): em d, as cópias existentes (t1 < d) têm de
+ * ter todas t4 < d — uma cópia sem t4 (ou com t4 ≥ d) anula o documento, como `count(t4) = count(*)`; cada campo só
+ * sobrevive com um único valor (t2/t4 comparados pelo instante); a linha entra na amostra com lt, t2 e t4. Saída: a
+ * observação com o trecho de validade `desde < d ≤ ate`.
  */
 export function consolidarLtMotor(linhas: readonly LinhaLtMotorCrua[]): ObsLtMotorBruta[] {
-  const porDoc = new Map<string, (LinhaLtMotorCrua & { t4: string })[]>();
+  const porDoc = new Map<string, LinhaLtMotorCrua[]>();
   for (const l of linhas) {
-    if (l.t4 === null) continue; // sem t4 não existe em d nenhum
     const g = porDoc.get(l.doc);
-    if (g) g.push(l as LinhaLtMotorCrua & { t4: string });
-    else porDoc.set(l.doc, [l as LinhaLtMotorCrua & { t4: string }]);
+    if (g) g.push(l);
+    else porDoc.set(l.doc, [l]);
   }
   const dia = (ts: string): Data => ts.slice(0, 10);
   const unico = <T>(xs: (T | null)[]): T | null => (xs.every((x) => x !== null) && new Set(xs).size === 1 ? xs[0] : null);
   const out: ObsLtMotorBruta[] = [];
   for (const g of porDoc.values()) {
-    const dias = [...new Set(g.map((l) => dia(l.t4)))].sort();
-    const s0 = g.filter((l) => dia(l.t4) === dias[0]); // cópias vistas em dias[0] < d <= dias[1]
-    const t4 = unico(s0.map((l) => l.t4));
-    const t2 = unico(s0.map((l) => l.t2));
-    const lt = unico(s0.map((l) => l.lt));
-    const sku = unico(s0.map((l) => l.sku));
-    if (t4 === null || t2 === null || lt === null || sku === null) continue;
-    out.push({ sku, fornecedor: unico(s0.map((l) => l.fornecedor)), t2: dia(t2), t4: dia(t4), lt, ...(dias.length > 1 ? { ate: dias[1] } : {}) });
+    const copias = g.map((l) => ({ ...l, t4dia: l.t4 === null ? null : dia(l.t4) }));
+    const tr = trechosNoCorte(
+      copias.map((c) => ({ t1: c.t1, t4: c.t4dia, c })),
+      (ex) => {
+        const s0 = ex.map((x) => x.c);
+        const t4 = unico(s0.map((l) => l.t4));
+        const t2 = unico(s0.map((l) => l.t2));
+        const lt = unico(s0.map((l) => l.lt));
+        const sku = unico(s0.map((l) => l.sku));
+        if (t4 === null || t2 === null || lt === null || sku === null) return null;
+        return { sku, fornecedor: unico(s0.map((l) => l.fornecedor)), t2: dia(t2), t4: dia(t4), lt };
+      },
+    );
+    for (const t of tr) out.push({ ...t.valor, desde: t.desde, ...(t.ate !== undefined ? { ate: t.ate } : {}) });
   }
-  return out.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.t2 < b.t2 ? -1 : a.t2 > b.t2 ? 1 : a.lt - b.lt));
+  return out.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.t2 < b.t2 ? -1 : a.t2 > b.t2 ? 1 : (a.desde ?? '') < (b.desde ?? '') ? -1 : (a.desde ?? '') > (b.desde ?? '') ? 1 : a.lt - b.lt));
 }
 
 /** Instante de SP do extrator para t2/t4 do lt_motor (`YYYY-MM-DD HH:MM:SS[.ffffff]`). */
 const INSTANTE_LT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,6})?$/;
 /** N3/R43: lt_motor.csv = as cópias CRUAS da view normal, consolidadas aqui no corte temporal. */
 function lerLtMotor(dir: string): ObsLtMotorBruta[] {
-  const t = lerTabela(dir, 'lt_motor', ['doc', 'sku', 'fornecedor', 't2', 't4', 'lt'], false);
+  const t = lerTabela(dir, 'lt_motor', ['doc', 'sku', 'fornecedor', 't1', 't2', 't4', 'lt'], false);
   const inst = (nome: string, v: string): string | null => {
     if (ehVazio(v)) return null;
     if (!INSTANTE_LT.test(v.trim()) || Number.isNaN(Date.parse(`${v.trim().slice(0, 10)}T00:00:00Z`))) return invalido(t.arquivo, `instante inválido em ${nome}: '${v}'`);
@@ -586,6 +619,7 @@ function lerLtMotor(dir: string): ObsLtMotorBruta[] {
         doc,
         sku: r[t.col('sku')],
         fornecedor: ehVazio(f) ? null : num(t.arquivo, 'fornecedor', f),
+        t1: dataOuNull(t.arquivo, 't1', r[t.col('t1')]),
         t2: inst('t2', r[t.col('t2')]),
         t4: inst('t4', r[t.col('t4')]),
         lt: numOuNull(t.arquivo, 'lt', r[t.col('lt')]),

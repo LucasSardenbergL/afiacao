@@ -186,7 +186,9 @@ export interface ObsLtMotorBruta {
   t2: Data;
   t4: Data;
   lt: number;
-  /** N3: a observação some em d > ate (a próxima cópia do documento a anula, como a view); ausente = vale daí em diante. */
+  /** R51: a observação existe em `desde < d ≤ ate` (a consolidação da view no corte do dia); ausente = desde o t4. */
+  desde?: Data;
+  /** N3: a observação some em d > ate (outra cópia do documento a anula, como a view); ausente = vale daí em diante. */
   ate?: Data;
 }
 

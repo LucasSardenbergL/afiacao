@@ -24,7 +24,7 @@ const H = {
   parametros_view: 'sku|es|pp|max|status',
   precos_app: 'grupo_id|sku|fator_para_base|capturado_em|preco|elegivel_catalogo|stale_dias',
   motor: 'horario_geracao|ultima_passada',
-  lt_motor: "doc|sku|fornecedor|t2|t4|lt",
+  lt_motor: "doc|sku|fornecedor|t1|t2|t4|lt",
 } as const;
 
 type Nome = keyof typeof H;
@@ -54,7 +54,7 @@ function base(): Record<Nome, string[]> {
     precos_app: [],
     // execução do motor às 07:00 de SP, depois da passada das 01:16 de SP, no MESMO dia da extração (09:57 de SP)
     motor: ['2026-10-21T10:00:00Z|2026-10-21T04:16:00Z'],
-    lt_motor: ["d1|S1|77|2026-01-06 10:00:00|2026-01-12 09:00:00|5"],
+    lt_motor: ["d1|S1|77|2026-01-05|2026-01-06 10:00:00|2026-01-12 09:00:00|5"],
   };
 }
 
@@ -364,11 +364,13 @@ describe('eventosDeRecebimento (estoque físico)', () => {
     expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 1 }, { sku: 'S1', data: '2026-01-12', quantidade: 3 }]);
     expect(avisos).toContainEqual({ codigo: 'DOCUMENTO_COM_LINHAS_DIVERGENTES', n: 1 });
   });
-  // P2a do re-Codex: datas diferentes no mesmo documento são recebimentos distintos, cada um na sua data
-  it('o mesmo documento com recebimentos em datas diferentes vira um evento por data, com aviso', () => {
+  // R52 (I3, contraprova do revisor): a MESMA NF com a MESMA quantidade sob tracking_id distintos e t4 diferente é UMA
+  // entrada física (atraso de registro) — fica a de menor t4, nunca duas.
+  it('R52: cópias da mesma quantidade com t4 diferente (tracking_id distintos) são UMA entrada, no menor t4, com aviso', () => {
     const { eventos, avisos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', '2026-01-14', 10, 'nfe1'), l('b', 'S1', '2026-01-05', '2026-01-12', 10, 'nfe1')], div);
-    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 10 }, { sku: 'S1', data: '2026-01-14', quantidade: 10 }]);
+    expect(eventos).toEqual([{ sku: 'S1', data: '2026-01-12', quantidade: 10 }]);
     expect(avisos).toContainEqual({ codigo: 'T4_DIVERGENTE_NO_DOCUMENTO', n: 1 });
+    expect(avisos).toContainEqual({ codigo: 'COPIAS_DO_DOCUMENTO_FUNDIDAS', n: 1 });
   });
   it('sem t4, quantidade vazia/<=0, t4 antes de t1 ou SKU fora do contrato de unidade não viram evento', () => {
     const { eventos } = eventosDeRecebimento([l('a', 'S1', '2026-01-05', null, 3), l('b', 'S1', '2026-01-05', '2026-01-12', null), l('c', 'S1', '2026-01-05', '2026-01-12', 0), l('d', 'S1', '2026-01-20', '2026-01-12', 5), l('e', 'S9', '2026-01-05', '2026-01-12', 5)], div);
@@ -415,11 +417,9 @@ describe('preços point-in-time (achados 2 e 9 do Codex)', () => {
       l('f', null, 5, 30, 'nfe4'), // sem t4
       l('g', '2026-01-22', 0, 30, 'nfe5'), // recebida 0: fora do FILTER da produção
     ]);
-    // N3: a cópia de 12/01 já dá o preço até 14/01; com a de 14/01 (coerente) segue daí em diante. A cópia sem t4 nunca existe.
-    expect(p).toEqual([
-      { sku: 'S1', desde: '2026-01-12', ate: '2026-01-14', preco: 5 },
-      { sku: 'S1', desde: '2026-01-14', preco: 5 },
-    ]);
+    // R51: as duas cópias de nfe1 existem desde 05/01; entre 12/01 e 14/01 a de 14/01 ainda não tem t4 (count(t4) ≠
+    // count(*)): o preço só vale depois de 14/01. A cópia sem t4 (nfe4) nunca dá preço.
+    expect(p).toEqual([{ sku: 'S1', desde: '2026-01-14', preco: 5 }]);
   });
   it('carrega valor_total e precos_app (stale, elegibilidade e capturas ordenadas)', () => {
     const d = carregarDados(
@@ -472,14 +472,14 @@ describe('Fix Codex leva C round 1 — R40 (data de SP e passada do motor) e R43
   });
   it('R43: lt_motor.csv (cópias cruas da view normal) vira a amostra do LT do F0, consolidada por documento, com fornecedor', () => {
     const d = carregarDados(
-      monta({ lt_motor: ['d1|S1|77|2026-01-06 10:00:00|2026-01-12 09:00:00|5', 'd2|S9|77|2026-02-02 08:00:00|2026-02-09 08:00:00|7', 'd3|S1||2026-03-02 08:00:00|2026-03-05 08:00:00|3'] }),
+      monta({ lt_motor: ['d1|S1|77|2026-01-05|2026-01-06 10:00:00|2026-01-12 09:00:00|5', 'd2|S9|77|2026-02-02|2026-02-02 08:00:00|2026-02-09 08:00:00|7', 'd3|S1|||2026-03-02 08:00:00|2026-03-05 08:00:00|3'] }),
     );
     expect(d.ltMotor).toEqual([
-      { sku: 'S1', fornecedor: 77, t2: '2026-01-06', t4: '2026-01-12', lt: 5 },
-      { sku: 'S9', fornecedor: 77, t2: '2026-02-02', t4: '2026-02-09', lt: 7 },
-      { sku: 'S1', fornecedor: null, t2: '2026-03-02', t4: '2026-03-05', lt: 3 },
+      { sku: 'S1', fornecedor: 77, t2: '2026-01-06', t4: '2026-01-12', lt: 5, desde: '2026-01-12' },
+      { sku: 'S9', fornecedor: 77, t2: '2026-02-02', t4: '2026-02-09', lt: 7, desde: '2026-02-09' },
+      { sku: 'S1', fornecedor: null, t2: '2026-03-02', t4: '2026-03-05', lt: 3, desde: '2026-03-05' },
     ]);
-    expect(() => carregarDados(monta({ lt_motor: ['d1|S1|77|2026-01-06|2026-01-12 09:00:00|5'] }))).toThrow(/lt_motor\.csv/); // instante sem hora: inválido
+    expect(() => carregarDados(monta({ lt_motor: ['d1|S1|77|2026-01-05|2026-01-06|2026-01-12 09:00:00|5'] }))).toThrow(/lt_motor\.csv/); // instante sem hora: inválido
   });
 });
 
@@ -521,33 +521,43 @@ describe('Fix Codex leva D — N1 (R46/R47), N3, P2a e P2b', () => {
     expect(d.avisos).toContainEqual({ codigo: 'PEDIDA_DA_NF', n: 1 });
   });
 
-  // Contraprova N3 do Codex (preço): documento de janeiro + cópia com t4 = 10/05 — o preço de fevereiro continua o de janeiro.
-  it('N3: uma cópia futura do documento não apaga nem adia o preço conhecido antes dela', () => {
-    const l = (tr: string, t4: string, valor: number): RecebLinha => ({
-      trackingId: tr, sku: 'S1', t1: '2026-01-05', t2: null, t4, pedida: 10, recebida: 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor,
+  // Contraprova N3 do Codex (preço) + R51 (I2/M4): a cópia que ainda NÃO EXISTIA em d (t1 ≥ d) não apaga o preço de d; a
+  // que já existia em d sem t4 < d (inclusive sem t4 nenhum) anula o documento em d, como o count(t4) = count(*) da view.
+  it('N3/R51: no corte d, a cópia criada depois de d não muda o preço; a existente sem t4 < d anula o documento', () => {
+    const l = (tr: string, t4: string | null, valor: number, t1 = '2026-01-05'): RecebLinha => ({
+      trackingId: tr, sku: 'S1', t1, t2: null, t4, pedida: 10, recebida: t4 === null ? null : 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor,
     });
+    const em = (ps: ReturnType<typeof precosCompraPorDocumento>, d: string) => ps.filter((p) => precoValeEm(p, d)).map((p) => p.preco);
     const so = precosCompraPorDocumento([l('a', '2026-01-12', 10)]);
-    const com = precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', '2026-05-10', 10)]);
-    const em = (ps: typeof so, d: string) => ps.filter((p) => precoValeEm(p, d)).map((p) => p.preco);
     expect(em(so, '2026-02-10')).toEqual([1]);
-    expect(em(com, '2026-02-10')).toEqual([1]);
-    // cópia futura DIVERGENTE: anula só a partir do dia seguinte a ela (como a view, no corte)
-    const div = precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', '2026-05-10', 12)]);
-    expect(em(div, '2026-02-10')).toEqual([1]);
-    expect(em(div, '2026-05-10')).toEqual([1]);
-    expect(em(div, '2026-05-11')).toEqual([]);
+    // cópia criada em 20/04 (outro pedido) e recebida em 10/05: fevereiro intacto; de 21/04 a 10/05 anulado; depois, de volta
+    const tarde = precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', '2026-05-10', 10, '2026-04-20')]);
+    expect([em(tarde, '2026-02-10'), em(tarde, '2026-04-20'), em(tarde, '2026-04-21'), em(tarde, '2026-05-10'), em(tarde, '2026-05-11')]).toEqual([[1], [1], [], [], [1]]);
+    // a mesma cópia já existindo em fevereiro (t1 de janeiro) sem t4 < d: anulado em fevereiro (a view no corte)
+    expect(em(precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', '2026-05-10', 10)]), '2026-02-10')).toEqual([]);
+    // contraprova do revisor (M4): cópia SEM t4 nenhum anula o documento sempre
+    const semT4 = precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', null, 10)]);
+    expect(semT4).toEqual([]);
+    // cópia futura DIVERGENTE: anula a partir do dia em que existe
+    const div = precosCompraPorDocumento([l('a', '2026-01-12', 10), l('b', '2026-05-10', 12, '2026-04-20')]);
+    expect([em(div, '2026-02-10'), em(div, '2026-05-11')]).toEqual([[1], []]);
   });
 
-  // Contraprova N3 do Codex (LT do F0): a cópia de maio mudava o LT de fevereiro de 40 para 10 du.
-  it('N3: a consolidação da view é refeita no corte — a cópia de maio não muda a observação de fevereiro', () => {
-    const jan = { doc: 'D', sku: 'S1', fornecedor: 77, t2: '2026-01-02 10:00:00', t4: '2026-01-20 09:00:00', lt: 40 };
-    const mai = { doc: 'D', sku: 'S1', fornecedor: 77, t2: '2026-05-01 10:00:00', t4: '2026-05-12 09:00:00', lt: 10 };
-    expect(consolidarLtMotor([jan])).toEqual([{ sku: 'S1', fornecedor: 77, t2: '2026-01-02', t4: '2026-01-20', lt: 40 }]);
-    expect(consolidarLtMotor([jan, mai])).toEqual([{ sku: 'S1', fornecedor: 77, t2: '2026-01-02', t4: '2026-01-20', lt: 40, ate: '2026-05-12' }]);
-    // cópias divergentes no MESMO dia: a view anula (nenhuma observação); cópia sem t4 nunca existe
+  // Contraprova N3 do Codex (LT do F0): a cópia de maio mudava o LT de fevereiro de 40 para 10 du. R51/I2 (contraprova do
+  // revisor): a cópia SEM t4 (tracking de outro pedido da mesma NF, existente desde o t1) anula a observação, como a view.
+  it('N3/R51: a consolidação da view é refeita no corte, ao pé da letra (count(t4) = count(*))', () => {
+    const jan = { doc: 'D', sku: 'S1', fornecedor: 77, t1: '2026-01-02', t2: '2026-01-02 10:00:00', t4: '2026-01-20 09:00:00', lt: 40 };
+    const mai = { doc: 'D', sku: 'S1', fornecedor: 77, t1: '2026-04-25', t2: '2026-05-01 10:00:00', t4: '2026-05-12 09:00:00', lt: 10 };
+    const obsJan = { sku: 'S1', fornecedor: 77, t2: '2026-01-02', t4: '2026-01-20', lt: 40 };
+    expect(consolidarLtMotor([jan])).toEqual([{ ...obsJan, desde: '2026-01-20' }]);
+    // a cópia de maio (criada em 25/04) não toca fevereiro; existe sem t4 de 26/04 em diante e, com t4, diverge: some
+    expect(consolidarLtMotor([jan, mai])).toEqual([{ ...obsJan, desde: '2026-01-20', ate: '2026-04-25' }]);
+    // cópia sem t4 existente desde o t1: o documento nunca dá observação (a view anula hoje e anulava em d)
+    expect(consolidarLtMotor([jan, { ...jan, t4: null, lt: null }])).toEqual([]);
+    // cópia sem t4 criada só em junho: fevereiro a maio valem; depois, anulado
+    expect(consolidarLtMotor([jan, { ...jan, t1: '2026-06-01', t4: null, lt: null }])).toEqual([{ ...obsJan, desde: '2026-01-20', ate: '2026-06-01' }]);
+    // cópias divergentes no MESMO dia, ou instante diferente no mesmo dia: a view anula
     expect(consolidarLtMotor([jan, { ...jan, lt: 41 }])).toEqual([]);
-    expect(consolidarLtMotor([jan, { ...jan, t4: null }])).toHaveLength(1);
-    // instante diferente no mesmo dia também é distinto para a view
     expect(consolidarLtMotor([jan, { ...jan, t4: '2026-01-20 15:00:00' }])).toEqual([]);
   });
 
@@ -558,6 +568,9 @@ describe('Fix Codex leva D — N1 (R46/R47), N3, P2a e P2b', () => {
     });
     const { eventos } = eventosDeRecebimento([l('a', '2026-04-03', 10), l('b', '2026-04-06', 20), l('c', '2026-04-03', 10)], new Map([['S1', 1]]));
     expect(eventos).toEqual([{ sku: 'S1', data: '2026-04-03', quantidade: 10 }, { sku: 'S1', data: '2026-04-06', quantidade: 20 }]);
+    // R52: a cópia de 10 registrada de novo em 08/04 sob outro tracking continua sendo a mesma entrada (fica 03/04)
+    const r = eventosDeRecebimento([l('a', '2026-04-03', 10), l('b', '2026-04-06', 20), l('d', '2026-04-08', 10)], new Map([['S1', 1]]));
+    expect(r.eventos).toEqual(eventos);
   });
 
   // P2b do re-Codex: o extrator ordenava por preço dentro do dia; a carga ordena pelo instante.

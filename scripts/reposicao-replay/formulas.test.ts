@@ -469,9 +469,10 @@ describe('Fix Codex leva D — N3 (consolidação no corte temporal)', () => {
     const l = (tr: string, t4: string): RecebLinha => ({
       trackingId: tr, sku: 'X', t1: '2026-01-02', t2: null, t4, pedida: 10, recebida: 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor: 10,
     });
-    const lt = (t2: string, t4: string, v: number): LinhaLtMotorCrua => ({ doc: 'D', sku: 'X', fornecedor: 7, t2, t4, lt: v });
-    const jan = { rec: [l('a', '2026-01-12')], lt: [lt('2026-01-02 10:00:00', '2026-01-12 09:00:00', 40)] };
-    const mai = { rec: [...jan.rec, l('b', '2026-05-10')], lt: [...jan.lt, lt('2026-05-01 10:00:00', '2026-05-12 09:00:00', 10)] };
+    const lt = (t1: string, t2: string, t4: string, v: number): LinhaLtMotorCrua => ({ doc: 'D', sku: 'X', fornecedor: 7, t1, t2, t4, lt: v });
+    // R51: a cópia de maio é de um pedido criado em 25/04 (não existia em fevereiro)
+    const jan = { rec: [l('a', '2026-01-12')], lt: [lt('2026-01-02', '2026-01-02 10:00:00', '2026-01-12 09:00:00', 40)] };
+    const mai = { rec: [...jan.rec, { ...l('b', '2026-05-10'), t1: '2026-04-25' }], lt: [...jan.lt, lt('2026-04-25', '2026-05-01 10:00:00', '2026-05-12 09:00:00', 10)] };
     const dd = (x: typeof jan) => dados([sku('X', { grupo: 'outro' })], vs, [], { precosCompra: precosCompraPorDocumento(x.rec), ltMotor: consolidarLtMotor(x.lt) });
     const a = diagnosticoF0(dd(jan), 'X', D, CTX);
     const b = diagnosticoF0(dd(mai), 'X', D, CTX);

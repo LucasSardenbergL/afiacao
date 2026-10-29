@@ -428,8 +428,9 @@ copy (
 
 -- ── lt_motor.csv (R43 + N3): as CÓPIAS CRUAS de v_sku_leadtime_history_normal, por documento (a chave do GROUP BY de
 -- v_sku_leadtime_efetivo: empresa + dedup_key + SKU, em md5 — a chave da NF carrega o CNPJ do emitente). A consolidação da
--- view (cada campo só sobrevive com um único valor entre as cópias) é refeita em dados.ts NO CORTE TEMPORAL: em d só as
--- cópias com t4 < d existem (uma cópia futura não apaga uma observação passada). t2/t4 = instante de SP com microssegundos
+-- view (cada campo só sobrevive com um único valor entre as cópias) é refeita em dados.ts NO CORTE TEMPORAL, ao pé da letra
+-- (R51): em d existem as cópias com t1 < d, e qualquer uma sem t4 < d (inclusive sem t4) anula o documento, como o
+-- count(t4) = count(*) da view. t1 = dia de SP do pedido da cópia; t2/t4 = instante de SP com microssegundos
 -- (a view compara timestamps no count(DISTINCT)); lt = lt_bruto_dias_uteis da cópia. Escopo: os documentos dos SKUs Sayerlack
 -- e dos fornecedores deles (a média do fornecedor da view agrupa por fornecedor_codigo_omie), com TODAS as cópias de cada um.
 copy (
@@ -440,7 +441,7 @@ copy (
     select h.sku_codigo_omie::text as sku,
            h.fornecedor_codigo_omie as fornecedor,
            coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text) as dedup_key,
-           h.t2_data_faturamento, h.t4_data_recebimento, h.lt_bruto_dias_uteis
+           h.t1_data_pedido, h.t2_data_faturamento, h.t4_data_recebimento, h.lt_bruto_dias_uteis
     from v_sku_leadtime_history_normal h
     left join purchase_orders_tracking pot on pot.id = h.tracking_id
     where h.empresa = 'OBEN'
@@ -453,12 +454,13 @@ copy (
   select md5('OBEN|' || b.sku || '|' || b.dedup_key) as doc,
          b.sku,
          b.fornecedor,
+         (b.t1_data_pedido at time zone 'America/Sao_Paulo')::date as t1,
          to_char(b.t2_data_faturamento at time zone 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI:SS.US') as t2,
          to_char(b.t4_data_recebimento at time zone 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI:SS.US') as t4,
          b.lt_bruto_dias_uteis as lt
   from base b
   join docs d on d.dedup_key = b.dedup_key and d.sku = b.sku
-  order by 1, 5, 4, 6
+  order by 1, 6, 5, 4, 7
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/lt_motor.csv
 
 select 'fim', 'ok';

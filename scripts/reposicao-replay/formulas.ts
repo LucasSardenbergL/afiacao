@@ -155,12 +155,13 @@ interface ObsLtMotor {
   lt: number;
   /** fornecedor_codigo_omie (R43; null = sem, ou amostra documental das fixtures antigas). */
   forn: number | null;
-  /** N3: a observação só vale até d ≤ ate (uma cópia posterior do documento a anula); ausente = sem fim. */
+  /** R51: a observação só existe em `desde < d ≤ ate` (ausente: desde o t4 / sem fim). */
+  desde?: Data;
   ate?: Data;
 }
 const DIA_POS_CALIBRACAO = addDias(JANELAS.calibracaoFim, 1);
 /** N3: a observação é conhecida no corte `dc` (t4 < dc ≤ ate). */
-const obsValeEm = (o: ObsLtMotor, dc: Data): boolean => o.t4 < dc && (o.ate === undefined || dc <= o.ate);
+const obsValeEm = (o: ObsLtMotor, dc: Data): boolean => o.t4 < dc && (o.desde === undefined || o.desde < dc) && (o.ate === undefined || dc <= o.ate);
 /** Corte do conhecimento: d, ou o dia seguinte ao fim da calibração no contexto dela. */
 const corte = (d: Data, calib: boolean): Data => (calib && d > DIA_POS_CALIBRACAO ? DIA_POS_CALIBRACAO : d);
 interface Indice {
@@ -293,7 +294,7 @@ function indice(dados: Dados): Indice {
   // contado pelo banco), o F0 usa ELA; a aproximação documental acima só sobra para fixtures sem ltMotor.
   const ltDaView = dados.ltMotor !== undefined;
   const obsMotor: ObsLtMotor[] = ltDaView
-    ? dados.ltMotor!.map((o) => ({ sku: o.sku, t4: o.t4, tJanela: o.t2, lt: o.lt, forn: o.fornecedor, ...(o.ate !== undefined ? { ate: o.ate } : {}) }))
+    ? dados.ltMotor!.map((o) => ({ sku: o.sku, t4: o.t4, tJanela: o.t2, lt: o.lt, forn: o.fornecedor, ...(o.desde !== undefined ? { desde: o.desde } : {}), ...(o.ate !== undefined ? { ate: o.ate } : {}) }))
     : [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, tJanela, lt }) => ({ sku, t4, tJanela, lt, forn: null }));
   obsMotor.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : 1));
   const obsMotorPorSku = new Map<string, ObsLtMotor[]>();
