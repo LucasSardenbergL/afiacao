@@ -231,7 +231,7 @@ export function resumoImportacao(httpStatus: number, corpo: unknown): { ok: bool
 // lido UMA vez. Qualquer outra coisa (vivo, atendido, não achado, repetido, situação sem código) só RELATA.
 
 /** Até quantos dias de emissão a leitura se estende para alcançar um pedido a reconciliar (teto de páginas do portal). */
-export const JANELA_RECONCILIACAO_MAX_DIAS = 30;
+const JANELA_RECONCILIACAO_MAX_DIAS = 30;
 
 /** Linha de `pedido_compra_sugerido` que a reconciliação lê. */
 export interface PedidoDisparadoLido {
@@ -253,7 +253,7 @@ export interface MarcadorPo {
 
 /** Idade máxima do marcador para AUTORIZAR encerramento — o mesmo limiar de frescor do card (`po-sumido.ts`, 26 h).
  *  Ausência apurada por detector parado é evidência velha (Codex P1): o pedido segue no card, com o humano. */
-export const MARCADOR_MAX_IDADE_MS = 26 * 3600_000;
+const MARCADOR_MAX_IDADE_MS = 26 * 3600_000;
 
 export function marcadorFresco(marcador: MarcadorPo, agoraMs: number): boolean {
   const fim = Date.parse(marcador.finalizado_em);
