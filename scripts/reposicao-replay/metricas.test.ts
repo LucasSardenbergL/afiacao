@@ -25,6 +25,7 @@ function somas(n: number, dias = 7): SomasSemanais {
     valorDiasAtraso: zeros(n),
     terminal: { estoqueCmc: 0, abertasCmc: 0, backlogValor: 0, backlogDiasAtraso: 0 },
     balanco: { inicial: 0, recebido: 0, entregue: 0, final: 0 },
+    servicoExtras: { linhas: 0, integrais: 0, valorDem: 0, valorAt: 0 },
     skusSemCmc: [],
     skusCompraReal: [],
     skusCmcOmie: [],

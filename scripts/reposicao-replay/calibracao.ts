@@ -80,6 +80,7 @@ export function somarSomas(acc: SomasSemanais | null, s: SomasSemanais): SomasSe
   acc.balanco.recebido += s.balanco.recebido;
   acc.balanco.entregue += s.balanco.entregue;
   acc.balanco.final += s.balanco.final;
+  for (const k of ['linhas', 'integrais', 'valorDem', 'valorAt'] as const) acc.servicoExtras[k] += s.servicoExtras[k];
   if (acc.herdadas && s.herdadas) {
     for (const k of ['abertura', 'entregue', 'terminal'] as const) {
       acc.herdadas[k].unidades += s.herdadas[k].unidades;
@@ -126,6 +127,7 @@ export function mediaSomas(soma: SomasSemanais, n: number): SomasSemanais {
   div(m.valorDiasAtraso);
   for (const k of ['estoqueCmc', 'abertasCmc', 'backlogValor', 'backlogDiasAtraso'] as const) m.terminal[k] /= n;
   for (const k of ['inicial', 'recebido', 'entregue', 'final'] as const) m.balanco[k] /= n;
+  for (const k of ['linhas', 'integrais', 'valorDem', 'valorAt'] as const) m.servicoExtras[k] /= n;
   if (m.herdadas) {
     for (const k of ['abertura', 'entregue', 'terminal'] as const) {
       m.herdadas[k].unidades /= n;
@@ -208,7 +210,10 @@ export interface ResultadoBusca {
   naoObservaveis: Classe[];
   /** Trios distintos avaliados. */
   avaliacoes: number;
-  /** I2: algum trio avaliado tinha estoque sem CMC — a busca parou no quantil mais alto, sem ordenar por subtotal. */
+  /**
+   * I2 + N4: há trio que atinge o alvo, mas o caminho teve estoque sem preço — nenhuma escolha por capital (nem por
+   * subtotal); a fórmula fica INDETERMINADA, nunca inviável por isso.
+   */
   capitalIndeterminado: boolean;
 }
 
@@ -230,6 +235,12 @@ const atinge = (a: AvaliacaoTrio, alvo: Record<Classe, number | null>, c: Classe
  * ⇒ mantém o atual. Começa no quantil mais alto em todas. Ao fim, a escolha é, entre TODOS os trios avaliados que atingem
  * o alvo nas três classes (validação conjunta), o de menor estoque; empate → menor quantil (lexicográfico A, B, C).
  * Inviável só se NENHUM trio avaliado atinge (spec §5.9: "nenhum ponto atinge"; review I-2).
+ *
+ * N4 (capital desconhecido): um estoque null NUNCA interrompe a busca. Na varredura de uma classe, se algum quantil que
+ * atinge o alvo dela tem estoque null, a ordenação por capital é impossível: a classe fica onde está (não se escolhe por
+ * subtotal) e a busca segue, visitando todos os pontos do caminho. No fim: algum trio que atinge as três classes e
+ * qualquer estoque null no caminho ⇒ INDETERMINADA (`capitalIndeterminado`, nunca inviável); nenhum trio que atinge, com
+ * o caminho inteiro visitado ⇒ inviável (o capital não importa: nenhum ponto atinge).
  */
 export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Classe, number | null>): ResultadoBusca {
   const memo = new Map<string, AvaliacaoTrio>();
@@ -241,39 +252,42 @@ export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Cla
   };
   const naoObservaveis = CLASSES.filter((c) => alvo[c] === null);
   const trio: Trio = { A: QMAX, B: QMAX, C: QMAX };
-  // I2: estoque não comparável (sem CMC) ⇒ nenhuma ordenação por capital; fica no quantil mais alto e marca
-  const indeterminado = (): ResultadoBusca => {
-    const a = aval(trio);
-    return { quantil: { ...trio }, inviavel: !CLASSES.every((c) => atinge(a, alvo, c)), avaliacao: a, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: true };
-  };
-  if (aval(trio).estoque === null) return indeterminado();
+  let semCapital = aval(trio).estoque === null;
   for (let rodada = 0; rodada < 2; rodada++) {
     for (const c of CLASSES) {
       if (alvo[c] === null) continue;
       let melhor: { q: number; estoque: number } | null = null;
+      let indeterminada = false;
       for (const q of GRADE_QUANTIS) {
         const a = aval({ ...trio, [c]: q });
-        if (a.estoque === null) {
-          for (const x of CLASSES) trio[x] = QMAX;
-          return indeterminado();
-        }
+        if (a.estoque === null) semCapital = true;
         if (!atinge(a, alvo, c)) continue;
+        if (a.estoque === null) {
+          indeterminada = true; // atinge, mas sem capital: não se ordena por subtotal
+          continue;
+        }
         if (melhor === null || a.estoque < melhor.estoque - 1e-9) melhor = { q, estoque: a.estoque }; // grade crescente: empate fica no menor
       }
-      if (melhor !== null) trio[c] = melhor.q;
+      if (melhor !== null && !indeterminada) trio[c] = melhor.q;
     }
   }
   aval(trio);
+  const atingem = [...memo].filter(([, a]) => CLASSES.every((c) => atinge(a, alvo, c)));
+  if (atingem.length === 0) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
+  if (semCapital || atingem.some(([, a]) => a.estoque === null)) {
+    // N4: há trio viável, mas o caminho teve capital desconhecido — nenhuma escolha por capital (nem por subtotal)
+    const [k, a] = atingem[0];
+    const [A, B, C] = k.split('|').map(Number);
+    return { quantil: { A, B, C }, inviavel: false, avaliacao: { ...a, estoque: null }, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: true };
+  }
   let escolhido: { q: Trio; a: AvaliacaoTrio; e: number } | null = null;
-  for (const [k, a] of memo) {
-    if (!CLASSES.every((c) => atinge(a, alvo, c))) continue;
-    if (a.estoque === null) return indeterminado(); // inalcançável: a descida já parou no 1º null
+  for (const [k, a] of atingem) {
     const [A, B, C] = k.split('|').map(Number);
     const q: Trio = { A, B, C };
-    if (escolhido === null || a.estoque < escolhido.e - 1e-9 || (Math.abs(a.estoque - escolhido.e) <= 1e-9 && compararTrio(q, escolhido.q) < 0)) escolhido = { q, a, e: a.estoque };
+    const e = a.estoque as number;
+    if (escolhido === null || e < escolhido.e - 1e-9 || (Math.abs(e - escolhido.e) <= 1e-9 && compararTrio(q, escolhido.q) < 0)) escolhido = { q, a, e };
   }
-  if (escolhido === null) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
-  return { quantil: escolhido.q, inviavel: false, avaliacao: escolhido.a, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
+  return { quantil: escolhido!.q, inviavel: false, avaliacao: escolhido!.a, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
 }
 
 // ── avaliação simulada na janela de calibração ──────────────────────────────────────────────────────────────────

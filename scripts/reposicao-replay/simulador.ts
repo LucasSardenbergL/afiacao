@@ -38,21 +38,27 @@
 //    restante for um número inteiro de embalagens do equivalente (unidades Omie por embalagem conhecidas); o estoque do
 //    equivalente é BAIXADO (o mesmo galão não salva duas linhas). Só no passo 3 (não nas obrigações).
 //  · Margem cancelada = valor − cmcLinha × quantidade; cmcLinha null ⇒ margem null: fica FORA de `cancelada.margem` e é
-//    contada em `canceladaSemCmc` (nunca 0 fabricado); semana só com canceladas sem cmc ⇒ margem null. Capital: na
-//    CALIBRAÇÃO, o último cmcLinha <= fim da calibração (o cmc de hoje seria futuro); na AVALIAÇÃO, o CMC de hoje como
-//    numerário constante. SKU sem CMC é listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas) e o estoque dele NÃO
-//    some (achado 10 do Codex): vai para `estoqueNaoValoradoDias` (unidades × dias), e métricas.ts devolve null para a
+//    contada em `canceladaSemCmc` (nunca 0 fabricado); semana só com canceladas sem cmc ⇒ margem null. Capital (N2): o
+//    preço de CADA DIA, com o que se sabia nele — cmcLinha anterior ao dia → nCMC da posição Omie com data ≤ dia →
+//    preco_compra_real consolidado no corte do dia → sem preço; nunca um cmc fixo da janela nem o de hoje. SKU sem preço em
+//    algum dia da janela é listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas) e o estoque dele NÃO some
+//    (achado 10 do Codex): vai para `estoqueNaoValoradoDias` (unidades × dias), e métricas.ts devolve null para a
 //    redução de capital e a economia de qualquer recorte de semanas que o contenha (nunca a redução do subtotal valorado).
+//  · Membro EXTRA de grupo (o galão fora da população, R37 + N7): o estoque dele entra no capital e as linhas dele entram
+//    no FECHAMENTO ECONÔMICO como as de qualquer SKU (emergencial, cancelamento, entrega tardia/atraso, herdadas e backlog
+//    terminal, nos dois braços); só ficam fora das CÉLULAS de serviço (o denominador da coorte não muda) — o serviço dele
+//    sai à parte, informativo, em `servicoExtras`.
 //  · Linha com quantidade <= 0 (4 no dado real, todas q = 0 e valor 0) não é demanda: ignorada e contada.
 //  · Fechamento verificado a cada chamada (fail-closed): por SKU, demanda medida = imediata + tardia + emergencial +
 //    cancelada + backlog terminal (unidades); estoque inicial + recebido − entregue = final. Violação lança.
 import { diffDias, ehDiaUtil, addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
-import { itensLtPermitidos, ltRealizado, uniforme, type CenarioLT } from './aleatorio';
+import { amostraDoSorteio, itensLtPermitidos, ltRealizado, uniforme, type CenarioLT } from './aleatorio';
 import { classeEfetiva } from './classe';
 import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import { grupoDeEmbalagem, type Formula, type ParamsDia } from './formulas';
 import { coorte } from './parados';
 import { estoqueInicial, type CenarioInicial } from './reconstrucao';
+import { precoValeEm } from './dados';
 import type { Classe, Dados, Data, ItemLT, Sku } from './tipos';
 
 // ── tipos públicos ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -108,6 +114,8 @@ export interface SomasSemanais {
   terminal: { estoqueCmc: number; abertasCmc: number; backlogValor: number; backlogDiasAtraso: number };
   /** Unidades de estoque no horizonte inteiro (do início do aquecimento ao fim da janela), todos os SKUs simulados. */
   balanco: { inicial: number; recebido: number; entregue: number; final: number };
+  /** N7: serviço das linhas dos membros EXTRAS de grupo na janela (informativo: fora das células e do denominador). */
+  servicoExtras: { linhas: number; integrais: number; valorDem: number; valorAt: number };
   /** SKUs SEM PREÇO de capital em algum dia da janela (nem cmc, nem nCMC Omie, nem preco_compra_real; R44/R45). */
   skusSemCmc: string[];
   /** R44: SKUs sem cmc valorados pelo preco_compra_real em algum dia da janela. */
@@ -133,7 +141,7 @@ export interface EntradaSimulacao {
   dados: Dados;
   substituicao?: boolean;
   /**
-   * Amostra de LT; padrão: `dados.itensLT`. Pedido feito até o fim da calibração sorteia só entre os documentos dela com
+   * Amostra de LT; padrão (R46): `dados.itensLT` sem os itens `pedidaDaNf`. Pedido feito até o fim da calibração sorteia só entre os documentos dela com
    * t4 (ou a extração) <= fim da calibração (achado 3), qualquer que seja a janela.
    */
   itensLT?: readonly ItemLT[];
@@ -271,15 +279,14 @@ interface Plano {
   linCel: Int8Array;
   linAlt: Int8Array;
   linMedida: Uint8Array;
-  /** Linha de SKU extra (membro de grupo fora da população, achado 9): simulada, nunca medida nem herdada. */
+  /** Linha de SKU extra (membro de grupo fora da população, achado 9): fora das CÉLULAS de serviço; economia e fechamento como as demais (N7). */
   linFora: Uint8Array;
   /** SKU extra (membro de grupo fora da população): sem decisão, fora das medidas. */
   extra: Uint8Array;
   offFila: Int32Array;
-  cmc: Float64Array;
-  /** R44/R45: por SKU sem cmc da janela, o preço de capital de cada dia corrido (NaN = sem preço) e a fonte (1 = preco_compra_real, 2 = nCMC Omie, -1 = sem). */
-  precoDia: (Float64Array | null)[];
-  fonteDia: (Int8Array | null)[];
+  /** N2: por SKU, o preço de capital de cada dia corrido (NaN = sem preço) e a fonte (0 = cmcLinha anterior ao dia, 1 = preco_compra_real, 2 = nCMC Omie, -1 = sem). */
+  precoDia: Float64Array[];
+  fonteDia: Int8Array[];
   skusCompraReal: string[];
   skusCmcOmie: string[];
   skusSemCmc: string[];
@@ -312,6 +319,13 @@ const memoClasse = new WeakMap<Dados, Map<Data, Map<string, Classe>>>();
 const memoAlterados = new WeakMap<Dados, Set<string>>();
 const memoItensPre = new WeakMap<readonly ItemLT[], ItemLT[]>();
 
+const idsAmostra = new WeakMap<readonly ItemLT[], number>();
+let proxIdAmostra = 0;
+function idDaAmostra(itens: readonly ItemLT[]): number {
+  let id = idsAmostra.get(itens);
+  if (id === undefined) idsAmostra.set(itens, (id = proxIdAmostra++));
+  return id;
+}
 function skusDoMapa(params: Map<string, ParamsDia>): string[] {
   let s = memoSkusDoMapa.get(params);
   if (!s) {
@@ -358,9 +372,9 @@ function montarPlano(
     else skus.push(s);
   }
   // achado 9: o membro do grupo que a âncora simulada pode comprar entra no plano mesmo fora da população (o motor
-  // consolida o estoque do grupo inteiro e a compra pode cair nele). Ele é EXTRA: sem decisão, linhas simuladas (consomem
-  // o estoque dele e geram obrigação na posição) mas fora de toda medida (células, conta econômica, herdadas, terminal);
-  // o estoque dele entra no capital, porque é a compra da âncora que o forma.
+  // consolida o estoque do grupo inteiro e a compra pode cair nele). Ele é EXTRA: sem decisão; o estoque dele entra no
+  // capital (é a compra da âncora que o forma) e, N7, as faltas dele custam como as de qualquer SKU (conta econômica,
+  // herdadas, terminal, fechamento). Só as CÉLULAS de serviço o excluem: o denominador da coorte não muda.
   const nPop = skus.length;
   const naPop = new Set(skus);
   for (let x = 0; x < nPop; x++) {
@@ -444,7 +458,7 @@ function montarPlano(
     const c = ORD[classeNoDia(dados, v.data).get(v.sku) ?? 'C'];
     linCel[L] = c;
     linAlt[L] = alt.has(v.sku) ? 3 + c : -1;
-    linMedida[L] = i >= iJanela && !extra[s] ? 1 : 0;
+    linMedida[L] = i >= iJanela ? 1 : 0; // N7: o extra também é medido na conta econômica (as células o excluem por linFora)
     linFora[L] = extra[s];
     linIni[i + 1]++;
     porSku[s]++;
@@ -452,49 +466,34 @@ function montarPlano(
   for (let i = 0; i < nDias; i++) linIni[i + 1] += linIni[i];
   const offFila = new Int32Array(nSku + 1);
   for (let s = 0; s < nSku; s++) offFila[s + 1] = offFila[s] + porSku[s];
-  // CMC e estoque inicial
-  const cmc = new Float64Array(nSku);
+  // estoque inicial e preço do capital POR DIA (N2): cmcLinha anterior ao dia → nCMC da posição Omie com data ≤ dia →
+  // preco_compra_real dos documentos consolidados no corte do dia (N3) → sem preço (NaN). Nada de cmc fixo da janela nem
+  // do cmc de HOJE: o capital de um dia só usa o que se sabia nele. Sem preço em algum dia da janela ⇒ skusSemCmc (o
+  // estoque vai para estoqueNaoValoradoDias e o capital do recorte vira null).
   const skusSemCmc: string[] = [];
   const inicialArr = new Float64Array(nSku);
-  // I1: na CALIBRAÇÃO, valora pelo último cmcLinha conhecido até o fim dela (o cmc de hoje é futuro para quem decide em
-  // 30/04); na avaliação, o cmc de hoje como numerário constante (declarado). R44: sem cmc, o preco_compra_real dos
-  // documentos com t4 antes do corte (a mesma cadeia documental da produção, sem venda × 0,55). Sem os dois ⇒ sem preço
-  // (skusSemCmc): o estoque vai para estoqueNaoValoradoDias e o capital do recorte vira null.
-  const calibracao = janela[1] <= JANELAS.calibracaoFim;
-  const cmcCalib = new Map<string, { data: Data; cmc: number }>();
-  if (calibracao) {
-    for (const v of dados.vendas) {
-      if (v.cmcLinha === null || !(v.cmcLinha > 0) || v.data > JANELAS.calibracaoFim || !idxSku.has(v.sku)) continue;
-      const atual = cmcCalib.get(v.sku);
-      if (!atual || v.data > atual.data) cmcCalib.set(v.sku, { data: v.data, cmc: v.cmcLinha });
-    }
-  }
-  // R44/R45: sem cmc da janela, o preço do DIA: nCMC da posição Omie mais recente com data ≤ dia → preco_compra_real dos
-  // documentos com t4 < dia → sem preço (NaN naquele dia).
-  const precoDia: (Float64Array | null)[] = new Array(nSku).fill(null);
-  const fonteDia: (Int8Array | null)[] = new Array(nSku).fill(null);
+  const precoDia: Float64Array[] = new Array(nSku);
+  const fonteDia: Int8Array[] = new Array(nSku);
   const skusCompraReal: string[] = [];
   const skusCmcOmie: string[] = [];
   for (let s = 0; s < nSku; s++) {
-    const c = calibracao ? (cmcCalib.get(skus[s])?.cmc ?? null) : skuObj[s].cmc;
-    cmc[s] = c === null ? NaN : c;
     inicialArr[s] = ini.get(skus[s])!;
-    if (c !== null) continue;
     const pd = new Float64Array(nDias).fill(NaN);
     const fd = new Int8Array(nDias).fill(-1);
     let semPreco = false;
     let usaCompra = false;
     let usaOmie = false;
     for (let i = 0; i < nDias; i++) {
-      const v = precoDocumentalNoDia(dados, skus[s], dias[i]);
+      const c = precoCapitalNoDia(dados, skus[s], dias[i]);
+      const v = c === null ? null : { preco: c.preco, fonte: c.fonte === 'cmc' ? 0 : c.fonte === 'compra_real' ? 1 : 2 };
       if (v !== null) {
         pd[i] = v.preco;
-        fd[i] = v.fonte === 'cmc_omie' ? 2 : 1;
+        fd[i] = v.fonte;
       }
       if (i >= iJanela) {
         if (v === null) semPreco = true;
-        else if (v.fonte === 'cmc_omie') usaOmie = true;
-        else usaCompra = true;
+        else if (v.fonte === 2) usaOmie = true;
+        else if (v.fonte === 1) usaCompra = true;
       }
     }
     precoDia[s] = pd;
@@ -548,7 +547,7 @@ function montarPlano(
   return {
     escolha,
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
-    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, cmc, precoDia, fonteDia, skusCompraReal, skusCmcOmie, skusSemCmc, inicial: inicialArr,
+    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, precoDia, fonteDia, skusCompraReal, skusCmcOmie, skusSemCmc, inicial: inicialArr,
     chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
     itensPre: itensPreCorte(itens, dados.dataExtracao), iFimCalib: diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim),
   };
@@ -592,9 +591,11 @@ export function conferirEstoque(sku: string, inicial: number, recebido: number, 
 // ── simulação ──────────────────────────────────────────────────────────────────────────────────────────────────
 export function simular(e: EntradaSimulacao): SomasSemanais {
   const { dados, janela, rep, falta } = e;
-  const itens = e.itensLT ?? dados.itensLT;
+  // R46: a amostra padrão é sem os itens PEDIDA_DA_NF; a sensibilidade (`empirico_com_nf`) usa a lista inteira
+  const itens = e.itensLT ?? (e.lt === 'empirico_com_nf' ? dados.itensLT : amostraDoSorteio(dados.itensLT));
   const skusP = skusDoMapa(e.params);
-  const chave = `${skusP.join(',')}|${janela[0]}|${janela[1]}|${e.inicial}|${e.alterados ? [...e.alterados].sort().join(',') : 'coorte'}`;
+  // a amostra de LT entra na chave (R46: a padrão e a da sensibilidade alternam no mesmo lote; sem isso o plano seria refeito)
+  const chave = `${skusP.join(',')}|${janela[0]}|${janela[1]}|${e.inicial}|${e.alterados ? [...e.alterados].sort().join(',') : 'coorte'}|${idDaAmostra(itens)}`;
   let porDados = memoPlanos.get(dados);
   if (!porDados) memoPlanos.set(dados, (porDados = new Map()));
   let plano = porDados.get(chave);
@@ -644,6 +645,10 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   const semCmcL = new Float64Array(nSem);
   const semCmcV = new Float64Array(nSem);
   const atraso = new Float64Array(nSem);
+  let exL = 0;
+  let exI = 0;
+  let exVD = 0;
+  let exVA = 0;
   let herEntU = 0;
   let herEntV = 0;
   let herAbU = 0;
@@ -679,7 +684,6 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       for (let s = 0; s < nSku; s++) {
         for (let h = head[s]; h < tail[s]; h++) {
           const L = fila[P.offFila[s] + h];
-          if (P.linFora[L]) continue;
           herAbU += saldo[L];
           herAbV += saldo[L] * P.linVu[L];
         }
@@ -708,7 +712,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
           tardia[w] += v;
           atraso[w] += v * (i - P.linDia[L]);
           taU[s] += q;
-        } else if (w >= 0 && !P.linFora[L]) {
+        } else if (w >= 0) {
           // achado 13: obrigação herdada entregue dentro da janela — conta econômica, nunca serviço
           const v = q * P.linVu[L];
           tardia[w] += v;
@@ -752,14 +756,22 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       const medida = P.linMedida[L] === 1;
       const vu = P.linVu[L];
       if (medida) {
-        const c = P.linCel[L];
-        const a = P.linAlt[L];
-        somaCel(cel.dem, w, c, a, 1);
-        if (integral) somaCel(cel.int, w, c, a, 1);
-        somaCel(cel.uDem, w, c, a, q);
-        somaCel(cel.uAt, w, c, a, ent);
-        somaCel(cel.vDem, w, c, a, q * vu);
-        somaCel(cel.vAt, w, c, a, ent * vu);
+        if (P.linFora[L]) {
+          // N7: o extra fica fora das células (denominador da coorte); serviço dele à parte, informativo
+          exL += 1;
+          if (integral) exI += 1;
+          exVD += q * vu;
+          exVA += ent * vu;
+        } else {
+          const c = P.linCel[L];
+          const a = P.linAlt[L];
+          somaCel(cel.dem, w, c, a, 1);
+          if (integral) somaCel(cel.int, w, c, a, 1);
+          somaCel(cel.uDem, w, c, a, q);
+          somaCel(cel.uAt, w, c, a, ent);
+          somaCel(cel.vDem, w, c, a, q * vu);
+          somaCel(cel.vAt, w, c, a, ent * vu);
+        }
         imediata[w] += ent * vu;
         demU[s] += q;
         imU[s] += ent;
@@ -841,16 +853,14 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       let uom = 0;
       for (let s = 0; s < nSku; s++) {
         u += est[s];
-        const pd = P.precoDia[s];
-        const preco = pd === null ? P.cmc[s] : pd[i];
+        const preco = P.precoDia[s][i];
         if (Number.isNaN(preco)) {
           if (est[s] > EPS) nv += est[s]; // achado 10: sem preço não vira 0, fica contado à parte (poeira < EPS não conta)
           continue;
         }
-        if (pd !== null) {
-          if (P.fonteDia[s]![i] === 2) uom += est[s];
-          else ucr += est[s];
-        }
+        const fonte = P.fonteDia[s][i];
+        if (fonte === 2) uom += est[s];
+        else if (fonte === 1) ucr += est[s];
         const x = est[s] * preco;
         v += x;
         if (emGrupo[s]) vg += x;
@@ -874,8 +884,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   let herTerV = 0;
   const bal = { inicial: 0, recebido: 0, entregue: 0, final: 0 };
   for (let s = 0; s < nSku; s++) {
-    const pdT = P.precoDia[s];
-    const precoT = pdT === null ? P.cmc[s] : pdT[iFim];
+    const precoT = P.precoDia[s][iFim];
     if (!Number.isNaN(precoT)) {
       estoqueCmc += est[s] * precoT;
       abertasCmc += abertas[s] * precoT;
@@ -883,7 +892,6 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     let bkU = 0;
     for (let h = head[s]; h < tail[s]; h++) {
       const L = fila[P.offFila[s] + h];
-      if (P.linFora[L]) continue; // SKU extra: fora das medidas
       const v = saldo[L] * P.linVu[L];
       backlogValor += v;
       if (!P.linMedida[L]) {
@@ -928,6 +936,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     herdadas: { abertura: { unidades: herAbU, valor: herAbV }, entregue: { unidades: herEntU, valor: herEntV }, terminal: { unidades: herTerU, valor: herTerV } },
     terminal: { estoqueCmc, abertasCmc, backlogValor, backlogDiasAtraso },
     balanco: bal,
+    servicoExtras: { linhas: exL, integrais: exI, valorDem: exVD, valorAt: exVA },
     skusSemCmc: [...P.skusSemCmc],
     skusCompraReal: [...P.skusCompraReal],
     skusCmcOmie: [...P.skusCmcOmie],
@@ -940,6 +949,43 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
 }
 
 // ── valoração do capital (R44, R45) ───────────────────────────────────────────────────────────────────────────────
+/**
+ * N2: preço do capital do SKU no dia d, com o que se sabia nele: o cmcLinha (snapshot da venda) da última venda ANTERIOR a
+ * d → o nCMC da posição Omie com data ≤ d (R45) → o preco_compra_real consolidado no corte d (R44, N3) → null (sem preço).
+ * Nunca o cmc de hoje nem um cmc fixo da janela. A mesma cadeia no simulador e no diagnóstico da operação real.
+ */
+export function precoCapitalNoDia(dados: Dados, sku: string, d: Data): { preco: number; fonte: 'cmc' | 'cmc_omie' | 'compra_real' } | null {
+  const h = historicoCmcLinha(dados).get(sku);
+  if (h && h.length > 0) {
+    let lo = 0;
+    let hi = h.length; // 1º snapshot com data >= d
+    while (lo < hi) {
+      const m = (lo + hi) >> 1;
+      if (h[m].data < d) lo = m + 1;
+      else hi = m;
+    }
+    if (lo > 0) return { preco: h[lo - 1].cmc, fonte: 'cmc' };
+  }
+  return precoDocumentalNoDia(dados, sku, d);
+}
+
+const memoHistCmc = new WeakMap<Dados, Map<string, { data: Data; cmc: number }[]>>();
+/** N2: cmcLinha (snapshot point-in-time da venda) por SKU, por data crescente; só > 0. */
+function historicoCmcLinha(dados: Dados): Map<string, { data: Data; cmc: number }[]> {
+  let m = memoHistCmc.get(dados);
+  if (m) return m;
+  m = new Map();
+  for (const v of dados.vendas) {
+    if (v.cmcLinha === null || !(v.cmcLinha > 0)) continue;
+    const l = m.get(v.sku) ?? [];
+    l.push({ data: v.data, cmc: v.cmcLinha });
+    m.set(v.sku, l);
+  }
+  for (const l of m.values()) l.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0)); // estável: no mesmo dia, a ordem do arquivo
+  memoHistCmc.set(dados, m);
+  return m;
+}
+
 /**
  * Preço DOCUMENTAL do capital no dia d para SKU sem cmc da janela (R45, R44): o nCMC (CMC contábil do ERP) da posição
  * datada do Omie mais recente com data ≤ d; senão o preco_compra_real dos documentos com t4 < d; senão null.
@@ -962,7 +1008,7 @@ export function precoCompraRealAte(dados: Pick<Dados, 'precosCompra'>, sku: stri
   let soma = 0;
   let n = 0;
   for (const p of dados.precosCompra ?? []) {
-    if (p.sku !== sku || !(p.desde < d) || !(Number.isFinite(p.preco) && p.preco > 0)) continue;
+    if (p.sku !== sku || !precoValeEm(p, d) || !(Number.isFinite(p.preco) && p.preco > 0)) continue;
     soma += p.preco;
     n++;
   }
