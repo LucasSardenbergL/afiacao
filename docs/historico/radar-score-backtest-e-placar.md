@@ -113,21 +113,25 @@ não foi validado: qualidade da ordenação e escolha do corte são decisões di
 
 ## 3. Provas
 
-`db/test-radar-placar.sh` (no `nucleo-ci.txt`, **22 asserts**). Aplica score v1 → v2 → v3 → as duas migrations
+`db/test-radar-placar.sh` (no `nucleo-ci.txt`, **25 asserts**). Aplica score v1 → v2 → v3 → as duas migrations
 (cada uma 2×, por idempotência). Executa os **corpos reais** de `registrar_contato_radar` e
 `desfazer_contato_radar` sob `SET ROLE authenticated` + GUC de JWT. Os default privileges imitam prod (anon e
 authenticated com tudo), para os REVOKE terem o que revogar.
 
-- `--falsificar`: **15/15** sabotagens vermelhas no assert declarado, com controle verde, em `LC_ALL=C` **e**
+- `--falsificar`: **19/19** sabotagens vermelhas no assert declarado, com controle verde, em `LC_ALL=C` **e**
   `pt_BR.UTF-8`:
   - na M1: versão fora do UPDATE e versão fora do resumo;
   - na leitura: origem pela sessão no backfill, nota relida do score atual, apagado contado como toque, cadastro
-    virando toque;
-  - na captura: contato automático lendo nota, outbox sem filtro de rota, trigger fail-closed;
+    virando toque, conversão sem cliente, coorte sem cliente novo, cadastro fora da reconciliação;
+  - na captura: contato automático gravando nota (com a origem intacta), confirmação mais recente no lugar do
+    `bool_or`, outbox sem filtro de rota, trigger fail-closed;
   - na coorte: sorteio sem a guarda de versão, sorteio não determinístico, sorteio sem trava, denominador por contato;
   - no ACL: anon lendo o ledger, anon executando o placar.
 - Pontos que a prova cobre por cenário: nota congelada quando o lead cruza 70 depois do toque (A5); sorteio
-  concorrente em duas sessões reais (A17); falha do ledger que não derruba o contato (A12).
+  concorrente em duas sessões reais (A17); falha do ledger que não derruba o contato (A12) nem o cadastro (A12b);
+  `incluir → lookup` segue cliente novo (A10); conversão em cliente na faixa do toque (A5b) e na coorte (A18b).
+- **O que a prova não cobre:** a lente "Ver como" (é do cliente, sem teste nesta entrega) e o tempo do apply em
+  prod (medido no ensaio, abaixo).
 
 ## 4. Codex
 
@@ -142,13 +146,21 @@ authenticated com tudo), para os REVOKE terem o que revogar.
   - ordem dos `CREATE TRIGGER` (o do outbox, tabela quente, por último).
 
   O P2 do corte de 30 clientes foi refeito com 31 (AUC igual, 0,882).
-- **Código:** (preenchido no PR).
+- **Código:** gpt-6-astra · max · 479 s · 180.895 tokens. Nenhum P0. Os achados e o que mudou:
+  - **P1:** a origem do cadastro pegava a confirmação MAIS RECENTE. Um `IncluirCliente` seguido de retentativa
+    `lookup` virava "vínculo". Agora usa o mesmo `bool_or(origem='incluir')` da RPC, no trigger e no backfill (A10).
+  - **P2:** cadastro perdido pelo fail-open não aparecia na reconciliação. Entrou `cadastros_sem_evento` (A12b).
+  - **P2:** a cobertura de aberturas era a 1ª abertura. Agora é o nascimento do ledger, e
+    `aberturas_janela_completa` diz se o "0" da janela é dado ou ausência dele (A11).
+  - **P2:** `DROP TRIGGER` numa reaplicação pegaria ACCESS EXCLUSIVE até o COMMIT. Virou `CREATE OR REPLACE TRIGGER`.
+  - **P2:** nenhum assert cobria a conversão em cliente. Entraram A5b e A18b, cada um com sabotagem.
+  - **P2:** a sabotagem do caminho automático também trocava a origem. Agora grava nota mantendo a origem `automatica`.
 
 ## 5. Camadas de deploy
 
 | Camada | Quem | Quando |
 | --- | --- | --- |
-| Migration `20261029150000` (versão da fórmula) | sessão, no envelope (ensaio → apply → psql-ro) | fora da janela 03:30 BRT |
+| Migration `20261029150000` (versão da fórmula) | ✅ sessão, 2026-10-29 ~21:00 BRT, pelo MCP: ensaio (`ENSAIO_OK`, rollback conferido) → apply → psql-ro ✅ (corpo `c31dfcac…`, coluna, ACL, cron 225) | — |
 | 1ª rodada do cron com versão | cron 225 | 03:30 BRT seguinte; conferir que `pulados` = 0 e que toda linha com score tem `v3` |
 | Migration `20261029150100` (ledger, coortes, placar) | sessão, no envelope | depois da 1ª; pode ser no mesmo dia |
 | `SELECT public.radar_coorte_sortear(50);` | sessão (MCP) ou founder (SQL Editor) | **só depois** da 1ª rodada com versão (a função recusa antes) |
