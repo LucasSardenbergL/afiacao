@@ -29,6 +29,9 @@
 //  · Grupo de embalagem: a âncora decide na unidade-base do grupo (posição = soma dos membros simulados, todos na mesma
 //    unidade de estoque — formulas.ts barra unidade mista) e compra embalagens da âncora: ceil(necessidade / conv), que
 //    chegam como embalagens × conv na unidade de estoque. O galão (SEM_DECISAO) não decide; o ATENDIMENTO é por SKU.
+//  · Escolha de embalagem (achado 9, §5.3): em cada dia, a compra da âncora pode cair no membro mais barato por
+//    unidade-base, como o motor (`embalagemEscolhida`). A compra é ceil(necessidade / conv do escolhido) embalagens dele
+//    e chega no estoque DELE (embalagens × conv). Vale para todas as fórmulas (a mesma regra do motor converte a compra).
 //  · Substituição (`substituicao = true`) é outra coisa: só para a métrica "com substituição". Uma linha que o próprio
 //    estoque não cobre pode ser completada pelo estoque de um equivalente do grupo, se ele cobrir TODO o restante e o
 //    restante for um número inteiro de embalagens do equivalente (unidades Omie por embalagem conhecidas); o estoque do
@@ -179,6 +182,44 @@ export function convDoGrupo(dados: Pick<Dados, 'equivalencias'>, sku: string): n
   return coerente ? m.u! : m.fpb;
 }
 
+// ── escolha de embalagem (db/embalagem-motor-rpc.sql: preco_app, membro_elegivel, embalagem_escolhida, trocou) ────
+/**
+ * SKU que o motor compra quando a âncora `ancora` dispara no dia d, e o conv dele (unidades de estoque por embalagem).
+ * null = `ancora` não é âncora de grupo. Reproduz o motor com o que se sabia antes de d:
+ *  · preço-app = a captura MAIS RECENTE com data < d (DISTINCT ON), aceita só se data >= d − stale_dias;
+ *  · elegível = esse preço fresco + catálogo/portal ok (estado de HOJE: não há histórico — limitação declarada);
+ *  · escolhida = menor preço/fator_para_base (empate: embalagem maior; depois o código, para ser determinístico);
+ *  · troca só se a escolhida ≠ âncora, a âncora é elegível e a escolhida é ESTRITAMENTE mais barata por base.
+ * Sem `precosEmbalagem` (ausente) nunca troca: sem preço o motor não troca.
+ */
+export function embalagemEscolhida(dados: Dados, ancora: string, d: Data): { sku: string; conv: number } | null {
+  const g = grupoDeEmbalagem(dados, ancora);
+  if (!g || g.ancora !== ancora) return null;
+  const convA = convDoGrupo(dados, ancora);
+  if (convA === null) return null;
+  const pe = dados.precosEmbalagem ?? null;
+  if (pe === null) return { sku: ancora, conv: convA };
+  const fresco = addDias(d, -pe.staleDias);
+  const membros = new Map<string, number>();
+  for (const e of dados.equivalencias ?? []) if (e.grupoId === g.grupoId && !membros.has(e.sku)) membros.set(e.sku, e.fatorParaBaseSku);
+  let melhor: { sku: string; custo: number; fpb: number } | null = null;
+  let custoAncora: number | null = null;
+  for (const [m, fpb] of [...membros].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (!(fpb > 0) || pe.elegivel.get(m) !== true) continue;
+    const caps = pe.capturas.get(m) ?? [];
+    let ult: { data: Data; preco: number } | null = null;
+    for (const c of caps) if (c.data < d) ult = c; // crescente: fica a mais recente antes de d
+    if (ult === null || ult.data < fresco || !(ult.preco > 0)) continue;
+    const custo = ult.preco / fpb;
+    if (m === ancora) custoAncora = custo;
+    if (melhor === null || custo < melhor.custo || (custo === melhor.custo && fpb > melhor.fpb)) melhor = { sku: m, custo, fpb };
+  }
+  if (melhor === null || melhor.sku === ancora || custoAncora === null || !(melhor.custo < custoAncora)) return { sku: ancora, conv: convA };
+  const convE = convDoGrupo(dados, melhor.sku);
+  if (convE === null || !(convE > 0)) throw new Error(`CONV_INVALIDO:${melhor.sku}`);
+  return { sku: melhor.sku, conv: convE };
+}
+
 // ── plano (pré-computado por dados × SKUs × janela × estado inicial; reaproveitado entre replicações) ─────────────
 const EPS = 1e-9;
 const NC = CELULAS.length; // 7: A B C A_alt B_alt C_alt total
@@ -218,6 +259,11 @@ interface Plano {
   membros: (Int32Array | null)[];
   /** Por SKU âncora: { conv }; null fora de grupo. */
   grupo: ({ conv: number } | null)[];
+  /**
+   * Por SKU âncora e dia útil k (achado 9): índice no plano do SKU comprado (a âncora ou o galão escolhido; -1 = escolhido
+   * fora da simulação, erro se houver compra) e o conv dele. null fora de grupo.
+   */
+  escolha: ({ j: Int32Array; conv: Float64Array; sku: string[] } | null)[];
   ehMembroNaoAncora: Uint8Array;
   /** Por SKU: equivalentes simulados para substituição (u = unidades Omie por embalagem do equivalente). */
   equivs: { j: number; u: number }[][];
@@ -407,7 +453,22 @@ function montarPlano(
       equivs[s].push({ j, u: e.unidadesOmieSku });
     }
   }
+  // escolha de embalagem por dia útil (achado 9)
+  const escolha: Plano['escolha'] = new Array(nSku).fill(null);
+  for (let s = 0; s < nSku; s++) {
+    if (grupo[s] === null) continue;
+    const nDu = duLista.length;
+    const e = { j: new Int32Array(nDu), conv: new Float64Array(nDu), sku: new Array<string>(nDu) };
+    for (let k = 0; k < nDu; k++) {
+      const x = embalagemEscolhida(dados, skus[s], dias[duLista[k]])!;
+      e.j[k] = idxSku.get(x.sku) ?? -1;
+      e.conv[k] = x.conv;
+      e.sku[k] = x.sku;
+    }
+    escolha[s] = e;
+  }
   return {
+    escolha,
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
     linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, offFila, cmc, skusSemCmc, inicial: inicialArr,
     chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
@@ -659,19 +720,26 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
         const ms = P.membros[s];
         if (ms) for (let x = 0; x < ms.length; x++) pos += est[ms[x]] + abertas[ms[x]] - backlog[ms[x]];
         else pos = est[s] + abertas[s] - backlog[s];
-        const g = P.grupo[s];
-        const qMotor = decidirCompra(p, pos, P.skuObj[s], g);
+        const esc = P.escolha[s];
+        const conv = esc === null ? null : esc.conv[k];
+        const qMotor = decidirCompra(p, pos, P.skuObj[s], conv === null ? null : { conv });
         if (qMotor <= 0) continue;
-        const q = g === null ? qMotor : qMotor * g.conv;
-        const lt = ltRealizado(rep, P.dias[i], P.skus[s], e.lt, i <= P.iFimCalib ? P.itensPre : P.itens);
+        // achado 9: a compra cai no SKU escolhido (âncora ou galão) e chega no estoque DELE
+        let alvo = s;
+        if (esc !== null) {
+          alvo = esc.j[k];
+          if (alvo < 0) throw new Error(`GRUPO_ESCOLHA_FORA_DA_SIMULACAO:${esc.sku[k]}|${P.dias[i]}`);
+        }
+        const q = conv === null ? qMotor : r9(qMotor * conv);
+        const lt = ltRealizado(rep, P.dias[i], P.skus[alvo], e.lt, i <= P.iFimCalib ? P.itensPre : P.itens);
         const kk = k + Math.max(1, lt);
-        abertas[s] += q;
+        abertas[alvo] += q;
         let chegada: Data | null = null;
         if (kk < nDu) {
-          agendar(P.duPos[kk], s, q);
+          agendar(P.duPos[kk], alvo, q);
           chegada = P.dias[P.duPos[kk]];
         }
-        if (pedidos) pedidos.push({ dia: P.dias[i], sku: P.skus[s], qtd: q, chegada });
+        if (pedidos) pedidos.push({ dia: P.dias[i], sku: P.skus[alvo], qtd: q, chegada });
       }
     }
     // capital (fim do dia, por dia corrido)
@@ -756,8 +824,8 @@ export interface LinhaParidadeQtd {
   replay: number | null;
   /** decidirCompra com o PP/máximo GRAVADOS hoje em produção (sku.hoje): isola a DECISÃO do estado dos parâmetros. */
   gravado: number | null;
-  /** null = comparável; senão por que ficou fora (informativo, R20). */
-  fora: 'FORA_DOS_DADOS' | 'MEMBRO_GRUPO_NAO_ANCORA' | null;
+  /** null = comparável; senão por que ficou fora (informativo, R20). O galão escolhido pela produção é comparável (achado 9). */
+  fora: 'FORA_DOS_DADOS' | null;
 }
 export interface ParidadeQuantidade {
   linhas: LinhaParidadeQtd[];
@@ -768,24 +836,29 @@ export interface ParidadeQuantidade {
 /**
  * R20: para cada SKU da última execução do motor (sugestao_hoje), a decisão do replay sobre a posição GRAVADA lá deve dar a
  * `qtde_final`. Duas leituras: com os parâmetros do replay (fórmula + estado) e com o PP/máximo gravados (só a decisão).
+ * Achado 9: a linha do grupo pode ser a âncora OU o galão escolhido. A decisão usa os parâmetros da âncora e a escolha de
+ * embalagem do replay na execução de hoje (vê as capturas até a extração): se o replay escolheria outro SKU, compra 0 dele.
  */
 export function paridadeQuantidade(dados: Dados, paramsF0Hoje: (sku: string) => ParamsDia): ParidadeQuantidade {
   const out: ParidadeQuantidade = { linhas: [], replay: { n: 0, de: 0 }, gravado: { n: 0, de: 0 } };
   const bate = (a: number, b: number) => Math.abs(a - b) <= 1e-6;
   for (const [sku, { posicao, qtdeFinal }] of [...dados.sugestaoHoje].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    const s = dados.skus.get(sku);
-    const g = s ? grupoDeEmbalagem(dados, sku) : null;
-    const fora = !s ? 'FORA_DOS_DADOS' : g && g.ancora !== sku ? 'MEMBRO_GRUPO_NAO_ANCORA' : null;
+    const g = dados.skus.has(sku) ? grupoDeEmbalagem(dados, sku) : null;
+    const dono = g ? g.ancora : sku; // quem decide: a âncora do grupo
+    const s = dados.skus.get(dono);
+    const fora = !dados.skus.has(sku) || !s ? 'FORA_DOS_DADOS' : null;
     const linha: LinhaParidadeQtd = { sku, posicao, qtdeFinal, replay: null, gravado: null, fora };
     out.linhas.push(linha);
     if (fora !== null || !s) continue;
-    const grupo = g ? { conv: convDoGrupo(dados, sku)! } : null;
-    const p = paramsF0Hoje(sku);
-    linha.replay = decidirCompra(p, posicao, s, grupo);
+    const esc = g ? embalagemEscolhida(dados, dono, addDias(dados.dataExtracao, 1)) : null;
+    const grupo = esc ? { conv: esc.conv } : null;
+    const mesmoSku = esc === null || esc.sku === sku; // o replay escolheria outro SKU do grupo: compra 0 deste
+    const p = paramsF0Hoje(dono);
+    linha.replay = mesmoSku ? decidirCompra(p, posicao, s, grupo) : 0;
     out.replay.de++;
     if (bate(linha.replay, qtdeFinal)) out.replay.n++;
     if (p.tipo === 'F0' && s.hoje.pp !== null && s.hoje.max !== null) {
-      linha.gravado = decidirCompra({ ...p, pp: s.hoje.pp, max: s.hoje.max }, posicao, s, grupo);
+      linha.gravado = mesmoSku ? decidirCompra({ ...p, pp: s.hoje.pp, max: s.hoje.max }, posicao, s, grupo) : 0;
       out.gravado.de++;
       if (bate(linha.gravado, qtdeFinal)) out.gravado.n++;
     }

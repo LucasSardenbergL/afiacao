@@ -5,8 +5,8 @@ import { somarDiasUteis } from './calendario';
 import { classeEfetiva } from './classe';
 import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { ParamsDia } from './formulas';
-import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
-import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
+import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, embalagemEscolhida, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
+import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, PrecosEmbalagem, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
   abc_base_valor: 'valor_total_90d', abc_corte_a_acumulado: '0.80', abc_corte_b_acumulado: '0.95', meses_descer: '3', meses_subir: '2',
@@ -493,6 +493,69 @@ describe('Fix Codex leva B', () => {
     const cal = roda(dd, params({ P: SEM }, AVAL[1]), { janela: CALIB, inicial: 'piso_zero' });
     expect(soma(cal.porCelula.total.demandadas)).toBe(1);
     expect(cal.terminal).toMatchObject({ backlogValor: 10, backlogDiasAtraso: 0 });
+  });
+});
+
+// Achado 9: a produção pode comprar o membro do grupo (galão) mais barato por unidade-base (db/embalagem-motor-rpc.sql,
+// CTEs preco_app/membro_elegivel/embalagem_escolhida e o "trocou"); o replay sempre comprava a âncora.
+describe('achado 9: escolha de embalagem do grupo', () => {
+  const eqs: Equivalencia[] = [
+    { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+    { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+  ];
+  const precos = (cap: Record<string, [string, number][]>, elegivel: Record<string, boolean> = { QT: true, GL: true }): PrecosEmbalagem => ({
+    staleDias: 45,
+    elegivel: new Map(Object.entries(elegivel)),
+    capturas: new Map(Object.entries(cap).map(([k, v]) => [k, v.map(([data, preco]) => ({ data, preco }))])),
+  });
+  const grupo = (pe: PrecosEmbalagem | null, vs: LinhaVenda[] = [], abQT = 0, abGL = 0, extra: Partial<Dados> = {}) =>
+    dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), abQT, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), abGL, vs)], vs, { equivalencias: eqs, precosEmbalagem: pe, ...extra });
+
+  it('troca para o galão só com preço-app conhecido (captura < d), fresco (<= 45 d), elegível e ESTRITAMENTE mais barato por base', () => {
+    const barato = precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }); // GL: 36/4 = 9 < 10
+    const dd = grupo(barato);
+    expect(embalagemEscolhida(dd, 'QT', '2026-06-05')).toEqual({ sku: 'QT', conv: 0.81 }); // captura do próprio dia: ainda não
+    expect(embalagemEscolhida(dd, 'QT', '2026-06-08')).toEqual({ sku: 'GL', conv: 3.24 });
+    expect(embalagemEscolhida(dd, 'QT', '2026-07-20')).toEqual({ sku: 'GL', conv: 3.24 }); // 45 dias depois: ainda fresco
+    expect(embalagemEscolhida(dd, 'QT', '2026-07-21')).toEqual({ sku: 'QT', conv: 0.81 }); // velho: não troca
+    // a captura MAIS RECENTE decide (DISTINCT ON): GL ficou caro em 10/06
+    const subiu = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36], ['2026-06-10', 44]] }));
+    expect(embalagemEscolhida(subiu, 'QT', '2026-06-15')?.sku).toBe('QT');
+    expect(embalagemEscolhida(grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }, { QT: true, GL: false })), 'QT', '2026-06-08')?.sku).toBe('QT');
+    expect(embalagemEscolhida(grupo(precos({ GL: [['2026-06-05', 36]] })), 'QT', '2026-06-08')?.sku).toBe('QT'); // âncora sem preço: estrito
+    expect(embalagemEscolhida(grupo(precos({ QT: [['2026-06-05', 9]], GL: [['2026-06-05', 36]] })), 'QT', '2026-06-08')?.sku).toBe('QT'); // empate
+    expect(embalagemEscolhida(grupo(null), 'QT', '2026-06-08')).toEqual({ sku: 'QT', conv: 0.81 });
+    expect(embalagemEscolhida(grupo(barato), 'GL', '2026-06-08')).toBeNull(); // galão não é âncora
+  });
+
+  it('simular: a compra cai no galão escolhido, com a conversão completa, e chega no estoque dele', () => {
+    const vs = [venda('q1', 'QT', '2026-06-09', 0.81)];
+    const dd = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }), vs, 0.81, 0, {
+      itensLT: [item('A', 'Q', '2026-04-01', 2), item('B', 'Q', '2026-06-09', 2)],
+    });
+    const fim = '2026-06-30';
+    const p = params({ QT: (d: string) => (d === '2026-06-09' ? { tipo: 'S', s: 4 } : SEM), GL: { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' } }, fim);
+    const r = roda(dd, p, { janela: ['2026-06-01', fim], rastro: true });
+    // posição do grupo 0 < 4: ceil(4 / 3,24) = 2 galões = 6,48 L no estoque do GL
+    expect(r.pedidos).toEqual([{ dia: '2026-06-09', sku: 'GL', qtd: 6.48, chegada: '2026-06-11' }]);
+    expect(r.balanco.recebido).toBeCloseTo(6.48, 9);
+  });
+
+  it('paridadeQuantidade inclui o membro escolhido pela produção (o galão) e compara a escolha', () => {
+    const pe = precos({ QT: [['2026-10-01', 10]], GL: [['2026-10-01', 36]] });
+    const sQT = sku('QT', { grupoEmbalagemId: 'G', hoje: { es: 1, pp: 3, max: 8 } });
+    const sGL = sku('GL', { grupoEmbalagemId: 'G' });
+    const f0 = (pp: number, max: number): ParamsDia => ({ tipo: 'F0', pp, max, coberturaTetoDias: null, demandaDiariaLinha: null });
+    const comGL = dados([sQT, sGL], [], { equivalencias: eqs, precosEmbalagem: pe, sugestaoHoje: new Map([['GL', { posicao: 1, qtdeFinal: 3 }]]) });
+    const r = paridadeQuantidade(comGL, (s) => (s === 'QT' ? f0(3, 8) : { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' }));
+    // (8 − 1) / 3,24 = 2,16 → 3 galões, com os parâmetros da âncora
+    expect(r.linhas).toEqual([{ sku: 'GL', posicao: 1, qtdeFinal: 3, replay: 3, gravado: 3, fora: null }]);
+    expect(r.replay).toEqual({ n: 1, de: 1 });
+    // a produção comprou a âncora, mas o replay escolheria o galão: não bate
+    const comQT = dados([sQT, sGL], [], { equivalencias: eqs, precosEmbalagem: pe, sugestaoHoje: new Map([['QT', { posicao: 1, qtdeFinal: 9 }]]) });
+    const r2 = paridadeQuantidade(comQT, () => f0(3, 8));
+    expect(r2.linhas[0]).toMatchObject({ sku: 'QT', replay: 0, fora: null });
+    expect(r2.replay).toEqual({ n: 0, de: 1 });
   });
 });
 
