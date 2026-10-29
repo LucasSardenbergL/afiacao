@@ -703,7 +703,10 @@ export interface GateParidade {
   status: { n: number; de: number } | null;
   /** Cobertura: presença na view replay × produção; e linhas de sugestao_hoje comparáveis (sem FORA_DOS_DADOS). */
   cobertura: { view: { n: number; de: number }; decisao: { n: number; de: number } };
-  /** Os parâmetros do gate = os do mapa F0 que o baseline simulado usou (último dia útil da avaliação), por SKU. */
+  /**
+   * Os parâmetros do gate = os do mapa F0 que o baseline simulado usou (último dia útil da avaliação), por SKU decidido
+   * em sugestao_hoje que está na população simulada (os de fora não têm parâmetro de baseline a conferir).
+   */
   paramsBaseline: { n: number; de: number };
 }
 
@@ -760,6 +763,31 @@ export function conferirParamsDoBaseline(dados: Dados, mapa: ReadonlyMap<string,
     if (m !== undefined && JSON.stringify(m) === JSON.stringify(parametrosNoDia('F0', dados, sku, ultimo, p, { calibracao: false }))) out.n++;
   }
   return out;
+}
+
+/** Monta o gate de paridade do F0 a partir dos dados (achado 8): paridade de ES/PP/máximo, quantidade e cobertura. */
+export function montarGate(dados: Dados): { parF0: ReturnType<typeof paridadeF0>; parQtd: ReturnType<typeof paridadeQuantidade>; gate: GateParidade } {
+  const parF0 = paridadeF0(dados);
+  const parQtd = paridadeQuantidade(dados, (sku) => parametrosNoDia('F0', dados, sku, dados.dataExtracao, QUANTIL_NEUTRO, { calibracao: false }));
+  const pct = (n: number, de: number) => (de > 0 ? n / de : null);
+  const pr = parF0.primaria;
+  const decididas = parQtd.linhas.filter((l) => l.fora === null);
+  // só os donos que o baseline simula (população de preAval = todos os ativos); os de fora não têm parâmetro de baseline
+  const simulados = coorteTodosAtivos(dados).populacao;
+  const donos = [...new Set(decididas.map((l) => grupoDeEmbalagem(dados, l.sku)?.ancora ?? l.sku))].filter((s) => simulados.has(s)).sort();
+  const gate: GateParidade = {
+    es: pct(pr.dentro.es, pr.comparados.es),
+    pp: pct(pr.dentro.pp, pr.comparados.pp),
+    max: pct(pr.dentro.max, pr.comparados.max),
+    valor: pr.valorMaximoTotal > 0 ? pr.valorDeltaMaximoDivergente / pr.valorMaximoTotal : null,
+    decisao: parQtd.gravado,
+    estado: { ...parQtd.replay, divergentes: decididas.filter((l) => l.replay === null || Math.abs(l.replay - l.qtdeFinal) > 1e-6).map((l) => l.sku) },
+    status: pr.statusConcorda,
+    cobertura: { view: parF0.presencaNaView, decisao: { n: decididas.length, de: parQtd.linhas.length } },
+    // o MESMO mapa (e cache) que mapasDaAvaliacao entrega ao F0 do baseline
+    paramsBaseline: conferirParamsDoBaseline(dados, preAval('F0', dados, QUANTIL_NEUTRO, undefined), donos, QUANTIL_NEUTRO),
+  };
+  return { parF0, parQtd, gate };
 }
 
 // ── gate de classe (achado 14, §5.1.1) e âncora (R30) ───────────────────────────────────────────────────────────────
@@ -842,24 +870,7 @@ async function principal(): Promise<number> {
 
   // paridade do F0 (gate R19/R21 + achado 8)
   t = performance.now();
-  const parF0 = paridadeF0(dados);
-  const parQtd = paridadeQuantidade(dados, (sku) => parametrosNoDia('F0', dados, sku, dados.dataExtracao, QUANTIL_NEUTRO, { calibracao: false }));
-  const pct = (n: number, de: number) => (de > 0 ? n / de : null);
-  const pr = parF0.primaria;
-  const decididas = parQtd.linhas.filter((l) => l.fora === null);
-  const donos = [...new Set(decididas.map((l) => grupoDeEmbalagem(dados, l.sku)?.ancora ?? l.sku))].sort();
-  const gate: GateParidade = {
-    es: pct(pr.dentro.es, pr.comparados.es),
-    pp: pct(pr.dentro.pp, pr.comparados.pp),
-    max: pct(pr.dentro.max, pr.comparados.max),
-    valor: pr.valorMaximoTotal > 0 ? pr.valorDeltaMaximoDivergente / pr.valorMaximoTotal : null,
-    decisao: parQtd.gravado,
-    estado: { ...parQtd.replay, divergentes: decididas.filter((l) => l.replay === null || Math.abs(l.replay - l.qtdeFinal) > 1e-6).map((l) => l.sku) },
-    status: pr.statusConcorda,
-    cobertura: { view: parF0.presencaNaView, decisao: { n: decididas.length, de: parQtd.linhas.length } },
-    // o MESMO mapa (e cache) que mapasDaAvaliacao entrega ao F0 do baseline
-    paramsBaseline: conferirParamsDoBaseline(dados, preAval('F0', dados, QUANTIL_NEUTRO, undefined), donos, QUANTIL_NEUTRO),
-  };
+  const { parF0, parQtd, gate } = montarGate(dados);
   const falhasGate = falhasDoGate(gate);
   const gatePassa = falhasGate.length === 0;
   log(`GATE_PARIDADE ${gatePassa ? 'PASSA' : `FALHA (${falhasGate.join('; ')})`}: ES ${gate.es} PP ${gate.pp} máx ${gate.max} valor ${gate.valor} decisão ${gate.decisao.n}/${gate.decisao.de} estado ${gate.estado.n}/${gate.estado.de} [${gate.estado.divergentes.join(', ')}] status ${gate.status?.n}/${gate.status?.de} view ${gate.cobertura.view.n}/${gate.cobertura.view.de} params ${gate.paramsBaseline.n}/${gate.paramsBaseline.de}`);
