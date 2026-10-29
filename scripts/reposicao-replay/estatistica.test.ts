@@ -30,6 +30,7 @@ function somas(n: number, dias = 7): SomasSemanais {
     estoqueNaoValoradoDias: zeros(n),
     estoqueUnidadesDias: zeros(n),
     estoqueCmcDiasGrupos: zeros(n),
+    estoqueUnidadesDiasCompraReal: zeros(n),
     diasCorridos: Array.from({ length: n }, () => dias),
     entregue: { imediata: zeros(n), tardia: zeros(n), emergencial: zeros(n) },
     cancelada: { valor: zeros(n), margem: zeros(n) },
@@ -38,6 +39,7 @@ function somas(n: number, dias = 7): SomasSemanais {
     terminal: { estoqueCmc: 0, abertasCmc: 0, backlogValor: 0, backlogDiasAtraso: 0 },
     balanco: { inicial: 0, recebido: 0, entregue: 0, final: 0 },
     skusSemCmc: [],
+    skusCompraReal: [],
     excluidos: [],
     linhasIgnoradas: 0,
   };

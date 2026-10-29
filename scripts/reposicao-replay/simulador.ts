@@ -84,6 +84,8 @@ export interface SomasSemanais {
   estoqueUnidadesDias: number[];
   /** R37: a parte de `estoqueCmcDias` dos SKUs de grupo de embalagem (âncora, membros e galões extras). */
   estoqueCmcDiasGrupos: number[];
+  /** R44: Σ unidades de fim de dia dos SKUs valorados pelo preco_compra_real (sem cmc) — a fonte do capital à parte. */
+  estoqueUnidadesDiasCompraReal: number[];
   diasCorridos: number[];
   /** Valor (R$ da linha, pró-rata) entregue: imediata no dia; tardia por obrigação; emergencial por compra fora. */
   entregue: { imediata: number[]; tardia: number[]; emergencial: number[] };
@@ -104,7 +106,10 @@ export interface SomasSemanais {
   terminal: { estoqueCmc: number; abertasCmc: number; backlogValor: number; backlogDiasAtraso: number };
   /** Unidades de estoque no horizonte inteiro (do início do aquecimento ao fim da janela), todos os SKUs simulados. */
   balanco: { inicial: number; recebido: number; entregue: number; final: number };
+  /** SKUs SEM PREÇO de capital (nem cmc nem preco_compra_real, R44). */
   skusSemCmc: string[];
+  /** R44: SKUs sem cmc valorados pelo preco_compra_real (t4 antes do corte). */
+  skusCompraReal: string[];
   excluidos: { sku: string; motivo: 'FORA_DOS_DADOS' | 'SEM_ESTOQUE_INICIAL' }[];
   linhasIgnoradas: number;
   /** Só com `rastro: true` (testes/diagnóstico): os pedidos simulados, qtd na unidade de estoque. */
@@ -268,6 +273,9 @@ interface Plano {
   extra: Uint8Array;
   offFila: Int32Array;
   cmc: Float64Array;
+  /** R44: fonte do preço de capital por SKU (0 = cmc, 1 = preco_compra_real, -1 = sem preço). */
+  fonteCapital: Int8Array;
+  skusCompraReal: string[];
   skusSemCmc: string[];
   inicial: Float64Array;
   chegIni: { i: number; s: number; q: number }[];
@@ -443,7 +451,9 @@ function montarPlano(
   const skusSemCmc: string[] = [];
   const inicialArr = new Float64Array(nSku);
   // I1: na CALIBRAÇÃO, valora pelo último cmcLinha conhecido até o fim dela (o cmc de hoje é futuro para quem decide em
-  // 30/04); na avaliação, o cmc de hoje como numerário constante (declarado). Sem cmc ⇒ fora do capital (skusSemCmc).
+  // 30/04); na avaliação, o cmc de hoje como numerário constante (declarado). R44: sem cmc, o preco_compra_real dos
+  // documentos com t4 antes do corte (a mesma cadeia documental da produção, sem venda × 0,55). Sem os dois ⇒ sem preço
+  // (skusSemCmc): o estoque vai para estoqueNaoValoradoDias e o capital do recorte vira null.
   const calibracao = janela[1] <= JANELAS.calibracaoFim;
   const cmcCalib = new Map<string, { data: Data; cmc: number }>();
   if (calibracao) {
@@ -453,10 +463,15 @@ function montarPlano(
       if (!atual || v.data > atual.data) cmcCalib.set(v.sku, { data: v.data, cmc: v.cmcLinha });
     }
   }
+  const fonteCapital = new Int8Array(nSku); // 0 = cmc, 1 = preco_compra_real (R44), -1 = sem preço
+  const skusCompraReal: string[] = [];
   for (let s = 0; s < nSku; s++) {
     const c = calibracao ? (cmcCalib.get(skus[s])?.cmc ?? null) : skuObj[s].cmc;
-    cmc[s] = c === null ? NaN : c;
-    if (c === null) skusSemCmc.push(skus[s]);
+    const v = c !== null ? { preco: c, fonte: 'cmc' as const } : precoCompraRealAte(dados, skus[s], corteCapital(dados, calibracao));
+    cmc[s] = v === null ? NaN : v.preco;
+    fonteCapital[s] = v === null ? -1 : v.fonte === 'cmc' ? 0 : 1;
+    if (v === null) skusSemCmc.push(skus[s]);
+    else if (v.fonte === 'compra_real') skusCompraReal.push(skus[s]);
     inicialArr[s] = ini.get(skus[s])!;
   }
   // compras abertas no início: recebimento físico (sku, t4) de documento com t1 < início <= t4
@@ -504,7 +519,7 @@ function montarPlano(
   return {
     escolha,
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
-    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, cmc, skusSemCmc, inicial: inicialArr,
+    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, cmc, fonteCapital, skusCompraReal, skusSemCmc, inicial: inicialArr,
     chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
     itensPre: itensPreCorte(itens, dados.dataExtracao), iFimCalib: diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim),
   };
@@ -587,6 +602,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   const naoValorado = new Float64Array(nSem);
   const unidades = new Float64Array(nSem);
   const capitalGrupos = new Float64Array(nSem);
+  const unidCompraReal = new Float64Array(nSem);
   const emGrupo = new Uint8Array(nSku);
   for (let s = 0; s < nSku; s++) if (P.membros[s] !== null || P.ehMembroNaoAncora[s]) emGrupo[s] = 1;
   const imediata = new Float64Array(nSem);
@@ -791,8 +807,10 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       let nv = 0;
       let u = 0;
       let vg = 0;
+      let ucr = 0;
       for (let s = 0; s < nSku; s++) {
         u += est[s];
+        if (P.fonteCapital[s] === 1) ucr += est[s];
         if (Number.isNaN(P.cmc[s])) {
           if (est[s] > EPS) nv += est[s]; // achado 10: sem CMC não vira 0, fica contado à parte (poeira < EPS não conta)
           continue;
@@ -805,6 +823,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       naoValorado[w] += nv;
       unidades[w] += u;
       capitalGrupos[w] += vg;
+      unidCompraReal[w] += ucr;
     }
   }
 
@@ -860,6 +879,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     estoqueNaoValoradoDias: Array.from(naoValorado),
     estoqueUnidadesDias: Array.from(unidades),
     estoqueCmcDiasGrupos: Array.from(capitalGrupos),
+    estoqueUnidadesDiasCompraReal: Array.from(unidCompraReal),
     diasCorridos: [...P.diasPorSemana],
     entregue: { imediata: Array.from(imediata), tardia: Array.from(tardia), emergencial: Array.from(emergencial) },
     cancelada: { valor: Array.from(cancV), margem: Array.from(cancM, (m, w) => (semCmcL[w] > 0 && cancComCmc[w] === 0 ? null : m)) },
@@ -869,12 +889,34 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     terminal: { estoqueCmc, abertasCmc, backlogValor, backlogDiasAtraso },
     balanco: bal,
     skusSemCmc: [...P.skusSemCmc],
+    skusCompraReal: [...P.skusCompraReal],
     excluidos: [...P.excluidos],
     linhasIgnoradas: P.linhasIgnoradas,
   };
   if (pedidos) out.pedidos = pedidos;
   if (desfechos) out.desfechos = desfechos;
   return out;
+}
+
+// ── valoração do capital (R44) ────────────────────────────────────────────────────────────────────────────────────
+/** Corte da valoração: na calibração, o que se sabia em 30/04 (t4 < 01/05); na avaliação, o que se sabe na extração. */
+export function corteCapital(dados: Pick<Dados, 'dataExtracao'>, calibracao: boolean): Data {
+  return addDias(calibracao ? JANELAS.calibracaoFim : dados.dataExtracao, 1);
+}
+
+/**
+ * R44: preco_compra_real point-in-time — média do preço dos documentos coerentes (origem normal, garantida na carga, R38)
+ * com t4 < `d`, como a CTE precos_compra da produção. Sem documento ⇒ null (nunca venda × 0,55, que não é valoração).
+ */
+export function precoCompraRealAte(dados: Pick<Dados, 'precosCompra'>, sku: string, d: Data): { preco: number; fonte: 'compra_real' } | null {
+  let soma = 0;
+  let n = 0;
+  for (const p of dados.precosCompra ?? []) {
+    if (p.sku !== sku || !(p.desde < d) || !(Number.isFinite(p.preco) && p.preco > 0)) continue;
+    soma += p.preco;
+    n++;
+  }
+  return n > 0 ? { preco: soma / n, fonte: 'compra_real' } : null;
 }
 
 // ── paridade de QUANTIDADE (R20) ──────────────────────────────────────────────────────────────────────────────────

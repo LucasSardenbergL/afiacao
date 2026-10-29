@@ -619,3 +619,40 @@ describe('Fix Codex leva C', () => {
     expect(soma(r.estoqueCmcDias)).toBeCloseTo((2 * 0.81 + 3 * 3.24 + 4 * 5) * dias, 9);
   });
 });
+
+describe('Fix Codex leva C round 2 — R44 (capital sem cmc pelo preco_compra_real point-in-time)', () => {
+  const JC: [string, string] = ['2026-02-02', JANELAS.calibracaoFim];
+  it('R44: sem cmc até 30/04, o preco_compra_real com t4 < 01/05 valora o capital; só com documento posterior, segue sem preço', () => {
+    const vs = [venda('k1', 'P', '2026-03-10', 1, 10, 5), venda('a1', 'A1', '2026-03-11', 1, 10, null), venda('a2', 'A2', '2026-03-11', 1, 10, null)];
+    const dd = dados(
+      [comAbertura(sku('P', { cmc: 4 }), 10, vs), comAbertura(sku('A1', { cmc: 9 }), 6, vs), comAbertura(sku('A2', { cmc: 9 }), 8, vs)],
+      vs,
+      { precosCompra: [{ sku: 'A1', desde: '2026-02-20', preco: 3 }, { sku: 'A1', desde: '2026-04-29', preco: 5 }, { sku: 'A1', desde: '2026-06-01', preco: 99 }, { sku: 'A2', desde: '2026-05-10', preco: 7 }] },
+    );
+    const r = roda(dd, params({ P: SEM, A1: SEM, A2: SEM }), { janela: JC });
+    const diasAntes = diffDias(JC[0], '2026-03-09') + 1;
+    const diasDepois = diffDias('2026-03-10', JC[1]) + 1;
+    const diasA = diffDias(JC[0], '2026-03-10') + 1;
+    const diasB = diffDias('2026-03-11', JC[1]) + 1;
+    // A1: média dos documentos com t4 < 01/05 = (3 + 5) / 2 = 4 (o de 01/06 é futuro); A2: só documento futuro ⇒ sem preço
+    expect(r.skusCompraReal).toEqual(['A1']);
+    expect(r.skusSemCmc).toEqual(['A2']);
+    expect(soma(r.estoqueCmcDias)).toBeCloseTo(5 * (10 * diasAntes + 9 * diasDepois) + 4 * (6 * diasA + 5 * diasB), 9);
+    expect(soma(r.estoqueUnidadesDiasCompraReal)).toBeCloseTo(6 * diasA + 5 * diasB, 9);
+    expect(soma(r.estoqueNaoValoradoDias)).toBeCloseTo(8 * diasA + 7 * diasB, 9); // A2 continua null ⇒ capital INCERTO
+  });
+  it('R44: na avaliação, sem cmc hoje, vale o preco_compra_real conhecido na extração; venda × 0,55 nunca entra', () => {
+    const vs = [venda('b1', 'B', '2026-05-06', 1, 10, null)];
+    const comDoc = dados([comAbertura(sku('B', { cmc: null }), 4, vs)], vs, { precosCompra: [{ sku: 'B', desde: '2026-03-02', preco: 2 }] });
+    const r = roda(comDoc, params({ B: SEM }));
+    expect(r.skusCompraReal).toEqual(['B']);
+    expect(soma(r.estoqueNaoValoradoDias)).toBe(0);
+    expect(soma(r.estoqueCmcDias)).toBeGreaterThan(0);
+    // só documento depois da extração (o conhecido hoje não existe): sem preço; a venda (valor 10) não vira preço
+    const posterior = dados([comAbertura(sku('B', { cmc: null }), 4, vs)], vs, { precosCompra: [{ sku: 'B', desde: '2026-11-15', preco: 2 }] });
+    const r2 = roda(posterior, params({ B: SEM }));
+    expect(r2.skusSemCmc).toEqual(['B']);
+    expect(soma(r2.estoqueCmcDias)).toBe(0);
+    expect(soma(r2.estoqueNaoValoradoDias)).toBeGreaterThan(0);
+  });
+});

@@ -40,7 +40,10 @@ export interface Rodada {
   modoAncora: ModoAncora;
   /** Achado 14 (§5.1.1): classe recalculada × classe de hoje, ponderada por valor (a rodada para acima de 5% do valor A). */
   validacaoClasse: ValidacaoClasse;
-  calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' | 'INDETERMINADA' };
+  calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' | 'INDETERMINADA';
+    /** R44: frações do capital do F0 na calibração por fonte de preço e SKUs sem preço / pelo preco_compra_real. */
+    capitalF0?: { fontes: { cmc: number; compraReal: number; semPreco: number } | null; skusSemPreco: number; skusCompraReal: number };
+  };
   fronteira: { formula: Formula; params: ParamsFormula; fill: Record<Classe | 'total', number | null>; reducao: number | null }[];
   excluidosDados: { sku: string; motivo: string }[];
   avisos: AvisoDados[];
@@ -67,13 +70,18 @@ export interface Rodada {
       naoValorado: { f0: number | null; alt: number | null };
       /** R37: fração do capital nos grupos de embalagem (null = sem capital valorado). */
       grupos: { f0: number | null; alt: number | null };
+      /** R44: frações das unidades × dias por fonte do preço de capital. */
+      fontes: { f0: FontesCapital | null; alt: FontesCapital | null };
     }[];
     terminal: { cenario: CenarioR; f0: Pick<SomasSemanais, 'terminal' | 'balanco'>; alt: Pick<SomasSemanais, 'terminal' | 'balanco'> }[];
     equilibrio: { falta: Falta; valor: number | null }[];
     dio: { f0: number; alt: number; linhasSemCmc: number } | null;
     suaves: { n: number; f0: { linhas: number; fill: number | null }; fnPura: { linhas: number; fill: number | null } };
     nulos: { cenario: string; item: string; nulos: Record<4 | 8, number> }[];
+    /** SKUs sem preço de capital (nem cmc nem preco_compra_real, R44). */
     skusSemCmc: string[];
+    /** R44: SKUs valorados pelo preco_compra_real. */
+    skusCompraReal: string[];
     excluidosSimulacao: { sku: string; motivo: string }[];
     linhasIgnoradas: number;
   } | null;
@@ -86,6 +94,15 @@ export interface Rodada {
   tempos: Record<string, number>;
   segundos: number;
 }
+
+/** R44: frações das unidades × dias de estoque por fonte do preço de capital. */
+export interface FontesCapital {
+  cmc: number;
+  compraReal: number;
+  semPreco: number;
+}
+const textoFontes = (f: FontesCapital | null | undefined): string =>
+  f ? `cmc ${pct(f.cmc)} · preco_compra_real ${pct(f.compraReal)} · sem preço ${pct(f.semPreco)}` : 'n/d';
 
 export interface Diagnostico {
   /** F0 na calibração (50 reps, LT empírico, espera): fill de A, A-alterados e A-suaves, com as linhas observadas. */
@@ -145,7 +162,7 @@ export const LIMITES: readonly string[] = [
   '**Terminal nas somas semanais (achado 12)** — o custo terminal (backlog do fim custeado como emergencial + atraso) é soma da ÚLTIMA semana: só entra na reamostragem que a sorteia.',
   '**R25** — critério 3 (capital) e a redução do estresse avaliados nos TRÊS cenários de falta; qualquer FALHA → NO-GO.',
   '**R26** — critério 5 no gate só com a taxa de 25% a.a. (grade 3×3 × 3 cenários); 20% e 30% são sensibilidade (tabela à parte).',
-  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). Estoque de SKU sem CMC NÃO some (achado 10): se houver, capital, estresse e economia daquele recorte viram INCERTO e a fração não valorada aparece.',
+  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). **R44:** SKU sem CMC é valorado pelo preco_compra_real point-in-time (documentos coerentes, origem normal, t4 antes do corte: 01/05 na calibração, a extração na avaliação), a cadeia documental da produção sem a venda × 0,55 — preço de compra ≠ CMC contábil, igual nos dois braços; a fração do capital por fonte aparece. O que segue sem preço NÃO some (achado 10): capital, estresse e economia daquele recorte viram INCERTO. A margem da cancelada sem CMC (achado 11) não muda: margem não é capital.',
   '**LT exógeno**: as fórmulas aprendem LT só de recebimentos históricos com t4 < d, nunca de chegadas simuladas (permite pré-computar os níveis).',
   '**Sem feriados** no calendário de LT/revisão (como `dias_uteis_entre` da produção).',
   '**O replay não mede a operação real** (spec §10): separação, aceitação de troca — cabe à sombra e ao piloto. Um GO autoriza sombra/piloto, não a troca do motor.',
@@ -206,6 +223,8 @@ function secoesDoBloco(
       ),
     ),
   );
+  const cf = b.calibracao.capitalF0;
+  if (cf) s(`Capital do F0 na calibração por fonte do preço (R44; unidades × dias): ${textoFontes(cf.fontes)}. SKUs pelo preco_compra_real: ${cf.skusCompraReal}; SKUs sem preço: ${cf.skusSemPreco} (com estoque sem preço, a calibração fica INCONCLUSIVA — I2).`);
   s(`Escolhida: **${b.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
 
   // 3. fronteira (sempre: vem da calibração)
@@ -237,10 +256,11 @@ function secoesDoBloco(
     s(H3 + 'Capital (estoque físico médio a CMC, ponderado por dias corridos)');
     s(
       tabela(
-        ['Cenário', 'Estoque médio F0 (só o valorado)', 'Estoque médio cand. (só o valorado)', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)'],
+        ['Cenário', 'Estoque médio F0 (só o valorado)', 'Estoque médio cand. (só o valorado)', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)', 'Fonte do preço, unid.×dias F0 (R44)', 'Fonte do preço, unid.×dias cand. (R44)'],
         a.capital.map((c) => [
           rotCen(c.cenario), brl(c.estoqueF0), brl(c.estoqueAlt), ivPct(comb(c.reducao)),
           `${pct(c.naoValorado.f0)} / ${pct(c.naoValorado.alt)}`, `${pct(c.grupos.f0)} / ${pct(c.grupos.alt)}`,
+          textoFontes(c.fontes.f0), textoFontes(c.fontes.alt),
         ]),
       ),
     );
@@ -433,7 +453,7 @@ export function montarRelatorio(r: Rodada): string {
   s(`Fora do contrato de unidade/dados: ${[...porMotivo].map(([m, n]) => `${m} ${n}`).join(' · ') || 'nenhum'}.`);
   s(`Demanda via insumo (R16): ${r.coorte.excluidosInsumo.map((e) => `${e.sku} (${pct(e.shareInsumo, 0)})`).join(', ') || 'nenhum'}.`);
   if (a) {
-    s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem CMC (fora do capital): ${a.skusSemCmc.join(', ') || 'nenhum'}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
+    s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem preço de capital (nem cmc nem preco_compra_real; R44): ${a.skusSemCmc.join(', ') || 'nenhum'}. SKUs valorados pelo preco_compra_real (R44): ${a.skusCompraReal.length}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);
   {

@@ -66,11 +66,11 @@ import {
   type EstatisticaPareada,
 } from './estatistica';
 import { diagnosticoF0, grupoDeEmbalagem, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
-import { custoFaltaEquilibrio, custoLiquido, fracaoGrupos, fracaoNaoValorada, type GradeCusto } from './metricas';
+import { custoFaltaEquilibrio, custoLiquido, fracaoGrupos, fracaoNaoValorada, fracoesPorFonte, type GradeCusto } from './metricas';
 import { coorte, coorteTodosAtivos } from './parados';
 import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
-import { CELULAS, paridadeQuantidade, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
+import { CELULAS, corteCapital, paridadeQuantidade, precoCompraRealAte, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
 import {
   ErroDadosReplay,
   type BlocoBootstrap,
@@ -473,6 +473,7 @@ export async function avaliarCandidata(
       cenario: cen, estoqueF0: estoqueDaJanela(m.f0), estoqueAlt: estoqueDaJanela(m.alt), reducao: intervalo(m, estatReducaoCapital),
       naoValorado: { f0: fracaoNaoValorada(m.f0), alt: fracaoNaoValorada(m.alt) },
       grupos: { f0: fracaoGrupos(m.f0), alt: fracaoGrupos(m.alt) },
+      fontes: { f0: fracoesPorFonte(m.f0), alt: fracoesPorFonte(m.alt) },
     });
     terminal.push({ cenario: cen, f0: { terminal: m.f0.terminal, balanco: m.f0.balanco }, alt: { terminal: m.alt.terminal, balanco: m.alt.balanco } });
   }
@@ -536,6 +537,7 @@ export async function avaliarCandidata(
       suaves: { n: suaves.size, f0: fillSuaves(accB!), fnPura: fillSuaves(accP!) },
       nulos,
       skusSemCmc: mBase.f0.skusSemCmc,
+      skusCompraReal: mBase.f0.skusCompraReal,
       excluidosSimulacao: mBase.f0.excluidos,
       linhasIgnoradas: mBase.f0.linhasIgnoradas,
     },
@@ -584,7 +586,7 @@ async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, te
   let t = performance.now();
   const cal = calibrarNoModo(dados, 'alt');
   tempos.calibracao = (performance.now() - t) / 1000;
-  const calibracao = { alvo: cal.base.alvo, fillF0: cal.base.fillF0, resultados: cal.resultados, candidata: cal.candidata };
+  const calibracao = { alvo: cal.base.alvo, fillF0: cal.base.fillF0, resultados: cal.resultados, candidata: cal.candidata, capitalF0: capitalDaBase(cal.base) };
   if (cal.candidata === 'NENHUMA' || cal.candidata === 'INDETERMINADA' || cal.vc?.veredito === 'NO-GO') {
     return { veredito: cal.vc ?? { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] }, congelado: null, calibracao, fronteira: cal.fronteira, avaliacao: null };
   }
@@ -595,6 +597,11 @@ async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, te
   tempos.total = (performance.now() - t) / 1000;
   log(`[informativo R27] VEREDITO ${av.veredito.veredito} (${av.avaliacao.reps} reps)`);
   return { veredito: av.veredito, congelado: cg, calibracao, fronteira: cal.fronteira, avaliacao: av.avaliacao };
+}
+
+/** R44: de onde vem o preço do capital do F0 na calibração (frações de unidades × dias e contagem de SKUs). */
+function capitalDaBase(base: ReturnType<typeof baseDaCalibracao>): NonNullable<Rodada['calibracao']['capitalF0']> {
+  return { fontes: fracoesPorFonte(base.somasF0), skusSemPreco: base.somasF0.skusSemCmc.length, skusCompraReal: base.somasF0.skusCompraReal.length };
 }
 
 /** Diagnóstico de plausibilidade da calibração oficial (R27): A-suaves × A-alterados, semanas, demanda, LT e operação real. */
@@ -633,13 +640,19 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
       nPar++;
     }
   }
-  // operação real: estoque reconstruído (com ajuste) valorado como na calibração e recebido até 30/04
+  // operação real: estoque reconstruído (com ajuste) valorado como na calibração (cmc ≤ 30/04, senão preco_compra_real
+  // com t4 < 01/05 — R44) e recebido até 30/04
   const rec = reconstruirSkus(dados);
   const cmc = new Map<string, { d: Data; c: number }>();
   for (const v of dados.vendas) {
     if (v.cmcLinha === null || !(v.cmcLinha > 0) || v.data > JANELAS.calibracaoFim || !c.populacao.has(v.sku)) continue;
     const x = cmc.get(v.sku);
     if (!x || v.data > x.d) cmc.set(v.sku, { d: v.data, c: v.cmcLinha });
+  }
+  for (const s of c.populacao) {
+    if (cmc.has(s)) continue;
+    const pc = precoCompraRealAte(dados, s, corteCapital(dados, true));
+    if (pc) cmc.set(s, { d: JANELAS.calibracaoFim, c: pc.preco });
   }
   let soma = 0;
   let dias = 0;
@@ -1033,7 +1046,7 @@ async function principal(): Promise<number> {
     paridade: { f0: parF0, quantidade: parQtd, gate, gatePassa, allowlistEstado: ESTADO_DIVERGENTE_PERMITIDO },
     modoAncora,
     validacaoClasse,
-    calibracao: { alvo: base.alvo, fillF0: base.fillF0, resultados, candidata },
+    calibracao: { alvo: base.alvo, fillF0: base.fillF0, resultados, candidata, capitalF0: capitalDaBase(base) },
     fronteira,
     diagnostico,
     informativo: null,

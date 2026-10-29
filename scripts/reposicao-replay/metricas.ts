@@ -59,6 +59,19 @@ export function fracaoNaoValorada(s: SomasSemanais, idx: readonly number[] = tod
   return u > 0 ? somar(s.estoqueNaoValoradoDias, idx) / u : null;
 }
 
+/**
+ * R44: fração das unidades × dias de estoque por FONTE do preço de capital — cmc, preco_compra_real (sem cmc) e sem preço.
+ * Sem unidade nenhuma ⇒ null (ausente ≠ 0).
+ */
+export function fracoesPorFonte(s: SomasSemanais, idx: readonly number[] = todas(s)): { cmc: number; compraReal: number; semPreco: number } | null {
+  conferirIdx(s, idx);
+  const u = somar(s.estoqueUnidadesDias, idx);
+  if (!(u > 0)) return null;
+  const cr = somar(s.estoqueUnidadesDiasCompraReal, idx) / u;
+  const sp = somar(s.estoqueNaoValoradoDias, idx) / u;
+  return { cmc: 1 - cr - sp, compraReal: cr, semPreco: sp };
+}
+
 /** R37: fração do capital (estoque × CMC × dias) nos SKUs de grupo de embalagem; sem capital valorado ⇒ null. */
 export function fracaoGrupos(s: SomasSemanais, idx: readonly number[] = todas(s)): number | null {
   conferirIdx(s, idx);
