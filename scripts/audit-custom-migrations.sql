@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 711
+-- Total de custom migrations: 712
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -775,7 +775,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261028100100', 'tint_corante_giro', '20261028100100_tint_corante_giro.sql'),
   ('20261028100200', 'analytics_ledger_corantes', '20261028100200_analytics_ledger_corantes.sql'),
   ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql'),
-  ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql')
+  ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
+  ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3048,7 +3049,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
-  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5369,7 +5371,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
-  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', '')
 )
 SELECT
   e.migration,

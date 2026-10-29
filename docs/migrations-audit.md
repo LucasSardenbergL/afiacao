@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **711** custom migrations totais
-- **2307** objetos esperados (criados por estas migrations)
+- **712** custom migrations totais
+- **2308** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 864
+  - `function`: 865
   - `rls_policy`: 493
   - `index`: 301
   - `table`: 208
@@ -5798,6 +5798,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261029095257_tint_arquivar_staging_fantasma_lote2.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261029200343_cliente_situacao_receita.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_situacao_receita` | — |
 
 ## Próximos passos por status
 
