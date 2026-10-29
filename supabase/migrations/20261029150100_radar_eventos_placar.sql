@@ -40,7 +40,8 @@
 -- Backfill: contatos e aberturas já existentes entram como retroativo=true, SEM nota (o score do instante não é
 -- conhecido: ausente, nunca zero; e nunca reconstruído pelo score atual).
 --
--- Locks: CREATE TRIGGER pega SHARE ROW EXCLUSIVE na tabela-fonte até o COMMIT. Por isso as tabelas e funções vêm
+-- Locks: CREATE OR REPLACE TRIGGER pega SHARE ROW EXCLUSIVE na tabela-fonte até o COMMIT (nunca DROP TRIGGER,
+-- que pegaria ACCESS EXCLUSIVE e travaria também os leitores numa reaplicação). Por isso as tabelas e funções vêm
 -- antes, e cada trigger é criado junto do backfill da sua tabela, com o do outbox (tabela quente) por ÚLTIMO.
 --
 -- Depende de 20261029150000 (radar_empresas.score_versao). DONO: aplicar como `postgres` (SQL Editor do Lovable
@@ -179,12 +180,14 @@ DECLARE
 BEGIN
   BEGIN
     -- Cliente NOVO ('incluir') ou já existente ('lookup'): só a confirmação do servidor diz; sem ela, NULL.
+    -- Mesmo predicado de radar_registrar_cadastro_omie (bool_or): IncluirCliente seguido de retentativa que só achou
+    -- o cliente ('lookup') continua sendo cliente NOVO (Codex de código, P1).
     INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, acao, fonte_id)
     SELECT 'cadastrou', CASE WHEN v_uid IS NULL THEN 'automatica' ELSE 'humano' END,
            NEW.omie_cadastrado_em, v_uid, NEW.cnpj,
-           (SELECT c.origem FROM public.omie_cliente_confirmacoes c
-             WHERE c.documento = NEW.cnpj AND c.codigo_cliente = NEW.omie_codigo_cliente
-             ORDER BY c.confirmado_em DESC, c.id DESC LIMIT 1),
+           (SELECT CASE WHEN bool_or(c.origem = 'incluir') THEN 'incluir' WHEN count(*) > 0 THEN 'lookup' END
+              FROM public.omie_cliente_confirmacoes c
+             WHERE c.documento = NEW.cnpj AND c.codigo_cliente = NEW.omie_codigo_cliente),
            'cadastro:' || NEW.cnpj
     ON CONFLICT (fonte_id) DO NOTHING;
   EXCEPTION WHEN OTHERS THEN
@@ -330,8 +333,9 @@ CREATE OR REPLACE FUNCTION public.radar_placar_uso()
    tocaram integer, toques integer, em_conversa integer, descartes integer, devolvidos integer, desfeitos integer,
    cadastraram integer, cadastros_novos integer, vinculos_existentes integer,
    eventos_automaticos integer,
-   contatos_sem_evento integer, apagados_sem_desfeito integer, aberturas_outbox_sem_evento integer,
-   aberturas_cobertas_desde timestamptz)
+   contatos_sem_evento integer, apagados_sem_desfeito integer, cadastros_sem_evento integer,
+   aberturas_outbox_sem_evento integer,
+   aberturas_cobertas_desde timestamptz, aberturas_janela_completa boolean)
  LANGUAGE plpgsql
  STABLE
  SECURITY DEFINER
@@ -343,6 +347,7 @@ DECLARE
   v_sem_ct   integer;
   v_apagados integer;
   v_sem_ab   integer;
+  v_sem_cad  integer;
   v_ab_desde timestamptz;
 BEGIN
   -- Autorizados AGORA = capability da frente 2, resolvida TARDE: ausente ⇒ NULL com motivo, nunca 0.
@@ -363,12 +368,19 @@ BEGIN
    WHERE e.evento = 'contato'
      AND NOT EXISTS (SELECT 1 FROM public.radar_contatos c WHERE c.id = e.contato_id)
      AND NOT EXISTS (SELECT 1 FROM public.radar_eventos d WHERE d.fonte_id = 'desfeito:' || e.contato_id);
+  SELECT count(*)::integer INTO v_sem_cad
+    FROM public.radar_empresas re
+   WHERE re.omie_cadastrado_em IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM public.radar_eventos e WHERE e.fonte_id = 'cadastro:' || re.cnpj);
   SELECT count(*)::integer INTO v_sem_ab
     FROM public.analytics_outbox o
    WHERE o.evento = 'navegacao.rota_servida' AND o.props ->> 'rota' = '/radar' AND o.user_id IS NOT NULL
      AND NOT EXISTS (SELECT 1 FROM public.radar_eventos e WHERE e.fonte_id = 'outbox:' || o.event_id);
-  -- Abertura só existe desde o que o outbox ainda retinha no backfill: antes disso, "0" é ausência de dado.
-  SELECT min(e.ocorrido_em) INTO v_ab_desde FROM public.radar_eventos e WHERE e.evento = 'abriu';
+  -- Cobertura de aberturas = nascimento do ledger (o backfill grava todos os contatos existentes no apply), ou
+  -- antes, se o outbox ainda retinha abertura então. Janela que começa antes disso é PARCIAL: o "0" dela é
+  -- ausência de dado, não falta de uso (Codex de código, P2 — min(abriu) era a 1ª abertura, não a cobertura).
+  SELECT least(min(e.gravado_em), min(e.ocorrido_em) FILTER (WHERE e.evento = 'abriu'))
+    INTO v_ab_desde FROM public.radar_eventos e;
 
   RETURN QUERY
   WITH j(janela, desde, ordem) AS (VALUES
@@ -394,7 +406,7 @@ BEGIN
          (count(*) FILTER (WHERE ev.evento = 'cadastrou' AND ev.origem = 'humano' AND ev.acao = 'incluir'))::integer,
          (count(*) FILTER (WHERE ev.evento = 'cadastrou' AND ev.origem = 'humano' AND ev.acao = 'lookup'))::integer,
          (count(*) FILTER (WHERE ev.origem = 'automatica'))::integer,
-         v_sem_ct, v_apagados, v_sem_ab, v_ab_desde
+         v_sem_ct, v_apagados, v_sem_cad, v_sem_ab, v_ab_desde, (j.desde >= v_ab_desde)
     FROM j
     LEFT JOIN ev ON ev.ocorrido_em >= j.desde
    GROUP BY j.janela, j.desde, j.ordem
@@ -512,11 +524,9 @@ $ro$;
 -- ------------------------------------------------------------
 -- 5. Triggers + backfill, tabela por tabela (o outbox, quente, por último: cauda curta até o COMMIT)
 -- ------------------------------------------------------------
-DROP TRIGGER IF EXISTS trg_radar_evento_contato_ins ON public.radar_contatos;
-CREATE TRIGGER trg_radar_evento_contato_ins AFTER INSERT ON public.radar_contatos
+CREATE OR REPLACE TRIGGER trg_radar_evento_contato_ins AFTER INSERT ON public.radar_contatos
   FOR EACH ROW EXECUTE FUNCTION private.radar_evento_contato();
-DROP TRIGGER IF EXISTS trg_radar_evento_contato_del ON public.radar_contatos;
-CREATE TRIGGER trg_radar_evento_contato_del AFTER DELETE ON public.radar_contatos
+CREATE OR REPLACE TRIGGER trg_radar_evento_contato_del AFTER DELETE ON public.radar_contatos
   FOR EACH ROW EXECUTE FUNCTION private.radar_evento_contato();
 -- Retroativo: origem pela linha histórica (criado_por), nunca pelo auth.uid() da migration. Sem nota.
 INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, contato_id, acao, retroativo, fonte_id)
@@ -527,8 +537,7 @@ SELECT 'contato',
 ON CONFLICT (fonte_id) DO NOTHING;
 
 -- UPDATE OF: só dispara quando o SET cita a coluna (o recálculo do score e a ingestão não a citam).
-DROP TRIGGER IF EXISTS trg_radar_evento_cadastro ON public.radar_empresas;
-CREATE TRIGGER trg_radar_evento_cadastro AFTER UPDATE OF omie_cadastrado_em ON public.radar_empresas
+CREATE OR REPLACE TRIGGER trg_radar_evento_cadastro AFTER UPDATE OF omie_cadastrado_em ON public.radar_empresas
   FOR EACH ROW WHEN (OLD.omie_cadastrado_em IS NULL AND NEW.omie_cadastrado_em IS NOT NULL)
   EXECUTE FUNCTION private.radar_evento_cadastro();
 -- Retroativo: o autor é quem gravou o 'virou_cliente' do cadastro (mesmo instante); sem ele, automática.
@@ -537,9 +546,9 @@ SELECT 'cadastrou',
        CASE WHEN a.criado_por IS NULL OR a.criado_por = '00000000-0000-0000-0000-00000000ad0f'::uuid
             THEN 'automatica' ELSE 'humano' END,
        e.omie_cadastrado_em, a.criado_por, e.cnpj,
-       (SELECT c.origem FROM public.omie_cliente_confirmacoes c
-         WHERE c.documento = e.cnpj AND c.codigo_cliente = e.omie_codigo_cliente
-         ORDER BY c.confirmado_em DESC, c.id DESC LIMIT 1),
+       (SELECT CASE WHEN bool_or(c.origem = 'incluir') THEN 'incluir' WHEN count(*) > 0 THEN 'lookup' END
+          FROM public.omie_cliente_confirmacoes c
+         WHERE c.documento = e.cnpj AND c.codigo_cliente = e.omie_codigo_cliente),
        true, 'cadastro:' || e.cnpj
   FROM public.radar_empresas e
   LEFT JOIN LATERAL (SELECT rc.criado_por FROM public.radar_contatos rc
@@ -548,8 +557,7 @@ SELECT 'cadastrou',
  WHERE e.omie_cadastrado_em IS NOT NULL
 ON CONFLICT (fonte_id) DO NOTHING;
 
-DROP TRIGGER IF EXISTS trg_radar_evento_abertura ON public.analytics_outbox;
-CREATE TRIGGER trg_radar_evento_abertura AFTER INSERT ON public.analytics_outbox
+CREATE OR REPLACE TRIGGER trg_radar_evento_abertura AFTER INSERT ON public.analytics_outbox
   FOR EACH ROW WHEN (NEW.evento = 'navegacao.rota_servida' AND NEW.props ->> 'rota' = '/radar')
   EXECUTE FUNCTION private.radar_evento_abertura();
 INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, retroativo, fonte_id)

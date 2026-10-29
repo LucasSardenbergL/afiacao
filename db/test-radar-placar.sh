@@ -24,7 +24,7 @@ MIG_DESF="$MIGS/20260612130000_radar_rpcs_contato.sql"            # corpo de des
 
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:A3` = a POSTCONDIÇÃO da migration aborta o apply.
-  SABOTAGENS="versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_le_nota:A6 backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
+  SABOTAGENS="versao_fora_do_update:A1 versao_fora_do_resumo:A2 automatico_grava_nota:A6 confirmacao_mais_recente:A10 conversao_sem_cliente:A5b coorte_sem_cliente_novo:A18b cadastro_fora_da_reconciliacao:A12b backfill_origem_da_sessao:A7 nota_relida_na_conversao:A5 apagado_conta_como_toque:A9 cadastro_vira_toque:A10 outbox_sem_filtro_de_rota:A11 trigger_fail_closed:A12 sorteio_congela_sem_versao:A15 sorteio_nao_deterministico:A16 sorteio_sem_trava:A17 coorte_denominador_por_contato:A18 anon_le_eventos:post:A3 anon_executa_placar:post:A4"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-placar.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -92,7 +92,16 @@ case "${SABOTAGEM:-}" in
   versao_fora_do_resumo)
     cegar_md5
     sabotar "$VER_USADA" "           'a_alterar', count(*) FILTER (WHERE (c.score_novo, c.motivos_novos, c.versao_formula_nova) IS DISTINCT FROM (c.score_atual, c.motivos_atuais, c.versao_formula_atual))," "           'a_alterar', count(*) FILTER (WHERE (c.score_novo, c.motivos_novos) IS DISTINCT FROM (c.score_atual, c.motivos_atuais))," ;;
-  automatico_le_nota)        sabotar "$EVT_USADA" "      IF NEW.criado_por = c_sistema THEN" "      IF false THEN" ;;
+  automatico_grava_nota)     sabotar "$EVT_USADA" "        INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, contato_id, acao, fonte_id)
+        VALUES ('contato', 'automatica', NEW.created_at, NEW.criado_por, NEW.cnpj, NEW.id, NEW.acao, 'contato:' || NEW.id)" "        INSERT INTO public.radar_eventos (evento, origem, ocorrido_em, user_id, cnpj, contato_id, acao, nota_capturada, score, fonte_id)
+        SELECT 'contato', 'automatica', NEW.created_at, NEW.criado_por, NEW.cnpj, NEW.id, NEW.acao, true, e.score, 'contato:' || NEW.id
+          FROM public.radar_empresas e WHERE e.cnpj = NEW.cnpj" ;;
+  confirmacao_mais_recente)  sabotar "$EVT_USADA" "(SELECT CASE WHEN bool_or(c.origem = 'incluir') THEN 'incluir' WHEN count(*) > 0 THEN 'lookup' END
+              FROM public.omie_cliente_confirmacoes c
+             WHERE c.documento = NEW.cnpj AND c.codigo_cliente = NEW.omie_codigo_cliente)" "(SELECT c.origem FROM public.omie_cliente_confirmacoes c WHERE c.documento = NEW.cnpj AND c.codigo_cliente = NEW.omie_codigo_cliente ORDER BY c.confirmado_em DESC, c.id DESC LIMIT 1)" ;;
+  conversao_sem_cliente)     sabotar "$EVT_USADA" "         (count(*) FILTER (WHERE l.virou))::integer," "         0::integer," ;;
+  coorte_sem_cliente_novo)   sabotar "$EVT_USADA" "         (count(*) FILTER (WHERE p.novo))::integer," "         0::integer," ;;
+  cadastro_fora_da_reconciliacao) sabotar "$EVT_USADA" "     AND NOT EXISTS (SELECT 1 FROM public.radar_eventos e WHERE e.fonte_id = 'cadastro:' || re.cnpj);" "     AND false;" ;;
   backfill_origem_da_sessao) sabotar "$EVT_USADA" "SELECT 'contato',
        CASE WHEN c.criado_por = '00000000-0000-0000-0000-00000000ad0f'::uuid THEN 'automatica' ELSE 'humano' END," "SELECT 'contato',
        CASE WHEN auth.uid() IS NULL THEN 'automatica' ELSE 'humano' END," ;;
@@ -321,12 +330,20 @@ eq "A9 contato apagado sem evento de desfazer: fora dos toques e exposto na reco
    "$(placar toques)/$(placar apagados_sem_desfeito)" "3/1"
 
 # ── Cadastro no Omie: o UPDATE + INSERT da RPC, um cliente novo e um que já existia ──
-Pq -c "INSERT INTO public.omie_cliente_confirmacoes (documento, codigo_cliente, origem) VALUES ('MD000000000701', '701', 'incluir'), ('MD000000000801', '801', 'lookup');" >/dev/null
+# 701: IncluirCliente e depois a retentativa que só achou o cliente ('lookup') — continua cliente NOVO (bool_or da RPC).
+Pq -c "INSERT INTO public.omie_cliente_confirmacoes (documento, codigo_cliente, origem) VALUES ('MD000000000701', '701', 'incluir'), ('MD000000000701', '701', 'lookup'), ('MD000000000801', '801', 'lookup');" >/dev/null
 for c in 701 801; do
   como "$GESTOR" "SELECT public._teste_cadastro('MD000000000${c}', '$c');" >/dev/null
 done
-eq "A10 cadastro: humano, novo × vínculo distinguidos, e o 'virou_cliente' do cadastro não vira toque" \
+eq "A10 cadastro: humano, novo × vínculo distinguidos (incluir→lookup segue novo), e o 'virou_cliente' do cadastro não vira toque" \
    "$(placar cadastraram)/$(placar cadastros_novos)/$(placar vinculos_existentes)/$(placar toques)" "1/1/1/3"
+
+# O lead tocado em A4/A5 vira cliente NOVO depois do toque: a conversão conta na faixa da nota do toque.
+Pq -c "INSERT INTO public.omie_cliente_confirmacoes (documento, codigo_cliente, origem) VALUES ('BORDA000000101', '1011', 'incluir');" >/dev/null
+como "$GESTOR" "SELECT public._teste_cadastro('BORDA000000101', '1011');" >/dev/null
+eq "A5b conversão por faixa conta o cliente novo depois do toque (faixa:tocados:conversa:cliente:novo)" \
+   "$(Pq -c "SELECT string_agg(faixa||':'||leads_tocados||':'||em_conversa||':'||virou_cliente||':'||cadastros_novos, ' ') FROM public.radar_conversao_por_faixa() WHERE leads_tocados > 0;")" \
+   "40-69:1:1:1:1"
 
 # ── Abertura: outbox ──
 Pq -c "INSERT INTO public.analytics_outbox (evento, user_id, props, chave_dedup) VALUES
@@ -334,8 +351,8 @@ Pq -c "INSERT INTO public.analytics_outbox (evento, user_id, props, chave_dedup)
   ('navegacao.rota_servida', 'cccccccc-cccc-cccc-cccc-cccccccccccc', '{\"rota\":\"/radar\"}', 'a2'),
   ('navegacao.rota_servida', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{\"rota\":\"/\"}', 'a3'),
   ('dashboard.crescimento_comparavel_servido', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '{\"rota\":\"/radar\"}', 'a4');" >/dev/null
-eq "A11 só a rota /radar servida vira 'abriu'; 2 titulares, 2 aberturas, reconciliação zerada" \
-   "$(placar abriram 7d)/$(placar aberturas 7d)/$(placar aberturas_outbox_sem_evento)" "2/2/0"
+eq "A11 só a rota /radar servida vira 'abriu'; 2 titulares, 2 aberturas, reconciliação zerada; janela de 7d PARCIAL (ledger acabou de nascer)" \
+   "$(placar abriram 7d)/$(placar aberturas 7d)/$(placar aberturas_outbox_sem_evento)/$(placar aberturas_janela_completa 7d)/$(placar "(aberturas_cobertas_desde IS NOT NULL)")" "2/2/0/f/t"
 
 # ── Fail-open: o ledger recusa e o contato passa mesmo assim ──
 Pq -c "ALTER TABLE public.radar_eventos ADD CONSTRAINT trava_teste CHECK (evento <> 'contato') NOT VALID;" >/dev/null
@@ -343,6 +360,12 @@ S12="$(como "$GESTOR" "SELECT (public.registrar_contato_radar('MD000000000901', 
 Pq -c "ALTER TABLE public.radar_eventos DROP CONSTRAINT trava_teste;" >/dev/null
 eq "A12 falha do ledger não derruba o contato, e a perda aparece em contatos_sem_evento" \
    "$S12/$(Pq -c "SELECT count(*) FROM public.radar_contatos WHERE cnpj='MD000000000901';")/$(placar contatos_sem_evento)" "false/1/1"
+
+Pq -c "ALTER TABLE public.radar_eventos ADD CONSTRAINT trava_teste CHECK (evento <> 'cadastrou') NOT VALID;" >/dev/null
+como "$GESTOR" "SELECT public._teste_cadastro('MD000000001101', '1101');" >/dev/null
+Pq -c "ALTER TABLE public.radar_eventos DROP CONSTRAINT trava_teste;" >/dev/null
+eq "A12b cadastro cujo evento falhou: o vínculo fica e a perda aparece em cadastros_sem_evento" \
+   "$(Pq -c "SELECT (omie_cadastrado_em IS NOT NULL)::text FROM public.radar_empresas WHERE cnpj='MD000000001101';")/$(placar cadastros_sem_evento)" "true/1"
 
 # ── Autorizados: capability da frente 2 resolvida tarde ──
 eq "A13a sem a capability: autorizados NULL com motivo (nunca 0)" \
@@ -380,6 +403,11 @@ ALVO="$(Pq -c "SELECT cnpj FROM public.radar_coorte_controle WHERE sorteio='coor
 como "$GESTOR" "SELECT public.registrar_contato_radar('$ALVO', 'em_conversa');" >/dev/null
 eq "A18 resultado da coorte começa pelo registro: 5 sorteados, 1 tocado, 1 em conversa" \
    "$(Pq -c "SELECT sorteados||'/'||tocados||'/'||em_conversa FROM public.radar_coorte_resultado() WHERE sorteio='coorte-2026-10' AND grupo='amostra';")" "5/1/1"
+
+Pq -c "INSERT INTO public.omie_cliente_confirmacoes (documento, codigo_cliente, origem) VALUES ('$ALVO', '2001', 'incluir');" >/dev/null
+como "$GESTOR" "SELECT public._teste_cadastro('$ALVO', '2001');" >/dev/null
+eq "A18b a coorte conta o cliente novo depois do sorteio (sorteados/tocados/conversa/cliente/novo)" \
+   "$(Pq -c "SELECT sorteados||'/'||tocados||'/'||em_conversa||'/'||virou_cliente||'/'||cadastros_novos FROM public.radar_coorte_resultado() WHERE sorteio='coorte-2026-10' AND grupo='amostra';")" "5/1/1/1/1"
 
 # ── ACL efetiva ──
 eq "A19 nenhum papel de API escreve/trunca as tabelas novas; anon/authenticated não executam as funções" \
