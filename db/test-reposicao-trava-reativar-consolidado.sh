@@ -230,7 +230,7 @@ fals pos_revoke      "MIGRATION"  -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sab
 fals sem_definer     "A17_escritor_sem_rls_barrado" \
   -e 's/^SECURITY DEFINER$/SECURITY INVOKER/' -e 's/AND p\.prosecdef/AND true/'
 fals sem_revoke      "A15_acl_fechada" \
-  -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/' -e "s/^  IF has_function_privilege\('anon'/  IF false AND has_function_privilege('anon'/"
+  -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/' -e "s/RAISE EXCEPTION 'A2 FALHOU/RAISE NOTICE 'A2 FALHOU/"
 fals sem_old         "A07_ja_ativo_nao_e_transicao"         -e 's/RETURN NEW;   -- já estava no motor/NULL;   -- já estava no motor/'
 fals sem_upper       "A08_empresa_caixa_diferente_barrada"  -e 's/WHERE upper\(s\.empresa\) = upper\(NEW\.empresa\)/WHERE s.empresa = NEW.empresa/'
 fals sem_status      "A05_mapa_pendente_reativa"            -e "s/AND s\.status = 'aplicada'/AND true/"
