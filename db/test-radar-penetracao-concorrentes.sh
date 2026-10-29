@@ -26,7 +26,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   # nome:VERMELHOS — asserts (unidos por ',') que TÊM de ficar vermelhos; ou `APPLY!MARCA` quando a
   # postcondição/PRE da própria migration TEM de abortar o apply com aquela marca (`_` vira espaço).
   # As variantes `_sem_post` cegam essa camada para provar que o assert da suíte pega sozinho.
-  SABOTAGENS="sem_recorte_lote:A1a,A1b denominador_sem_descartado:A1a ordem_invertida:A2a sem_filtro_uf:A2b concorrente_zero_inventado:A3a penetracao_zero_inventada:A3c sem_validacao_lote:A4a,A4b gate_aberto:A5 policy_aberta:APPLY!P8_FALHOU policy_aberta_sem_post:A6b sem_reconciliacao:A7a aceita_total_zero:A7b aceita_cnae_fora:A7c publicar_duplica:A7d publicar_aberto:APPLY!P5_FALHOU publicar_aberto_sem_post:A7f pre_sem_gate:A8a pre_cega:A8b,A8c corpo_divergente:APPLY!P2_FALHOU"
+  SABOTAGENS="sem_recorte_lote:A1a,A1b denominador_sem_descartado:A1a ordem_invertida:A2a sem_filtro_uf:A2b concorrente_zero_inventado:A1a,A3b penetracao_zero_inventada:A3c sem_validacao_lote:A4a,A4b gate_aberto:A5 policy_aberta:APPLY!P8_FALHOU policy_aberta_sem_post:A6b sem_reconciliacao:A7a aceita_total_zero:A7b aceita_cnae_fora:A7c publicar_duplica:A7d publicar_aberto:APPLY!P5_FALHOU publicar_aberto_sem_post:A7f pre_sem_gate:A8a pre_cega:A8b,A8c corpo_divergente:APPLY!P2_FALHOU"
   LOGDIR="$(mktemp -d "/tmp/falsifica-radar-penetracao.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
