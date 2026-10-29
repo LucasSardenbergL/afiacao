@@ -8,13 +8,18 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { podeGerirRadar } from '@/lib/radar/acesso';
 import { DivergenciaCadastro } from '@/lib/radar/cadastro-omie';
 import { useRadarCadastrarOmie, useRadarAtribuirTarefa } from '@/queries/useRadarAcoesLead';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
   const { isImpersonating } = useImpersonation();
+  const { role, commercialRole } = useAuth();
+  // radar_atribuir_tarefa segue gestor/master (migration 20261029201200): para o vendedor o botão só daria erro.
+  const gestor = podeGerirRadar({ role, commercialRole });
   const cadastrar = useRadarCadastrarOmie();
   const tarefa = useRadarAtribuirTarefa();
   const [confirmOmie, setConfirmOmie] = useState(false);
@@ -53,7 +58,7 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
         {cadastrar.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Building2 className="w-4 h-4 mr-1" />}
         {jaNoOmie ? `No Omie · cód. ${empresa.omie_codigo_cliente}` : 'Cadastrar no Omie (Oben)'}
       </Button>
-      <div className="flex items-center gap-1">
+      {gestor && <div className="flex items-center gap-1">
         <Button size="sm" variant="outline" disabled={disabled || tarefa.isPending} onClick={doTarefa}
           title={disabled ? 'Indisponível em modo Ver como' : undefined}>
           {tarefa.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ClipboardPlus className="w-4 h-4 mr-1" />}
@@ -62,7 +67,7 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
         <Label htmlFor="radar-dias" className="text-xs text-muted-foreground">retomar em</Label>
         <Input id="radar-dias" value={dias} onChange={(e) => setDias(e.target.value)} className="w-14 h-8" inputMode="numeric" />
         <span className="text-xs text-muted-foreground">dias</span>
-      </div>
+      </div>}
 
       <AlertDialog open={confirmOmie} onOpenChange={setConfirmOmie}>
         <AlertDialogContent>

@@ -23002,6 +23002,17 @@ export type Database = {
         Args: { p_agora?: string }
         Returns: Json
       }
+      radar_atendimentos_ativos: {
+        Args: never
+        Returns: {
+          assumido_em: string
+          cnpj: string
+          dono_nome: string | null
+          dono_user_id: string
+          eh_meu: boolean
+          expira_em: string
+        }[]
+      }
       radar_atribuir_tarefa: {
         Args: { p_cnpj: string; p_dias_retomada?: number }
         Returns: Json
@@ -23034,6 +23045,10 @@ export type Database = {
           total: number
           uf: string
         }[]
+      }
+      radar_definir_atendimento: {
+        Args: { p_acao: string; p_cnpj: string }
+        Returns: Json
       }
       radar_docs_clientes: {
         Args: never
@@ -23125,6 +23140,10 @@ export type Database = {
         Returns: Json
       }
       radar_score_recalcular: { Args: never; Returns: Json }
+      radar_telefone_compartilhado: {
+        Args: { p_cnpj: string }
+        Returns: { outras_raizes: number; telefone: string }[]
+      }
       raio_x_classificar: {
         Args: {
           p_categoria: string

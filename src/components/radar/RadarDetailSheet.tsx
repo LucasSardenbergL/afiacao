@@ -2,10 +2,16 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { MapPin, Mail, MessageSquare, ChevronRight, History } from 'lucide-react';
+import { useState } from 'react';
+import { MapPin, Mail, MessageSquare, ChevronRight, History, PhoneCall } from 'lucide-react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
 import { RadarConflitosDoLead } from './RadarConflitosCadastro';
+import { RadarAtendimentoLead } from './RadarAtendimentoLead';
+import { RadarModoDiscagem, lerModoDiscagem, gravarModoDiscagem } from './RadarModoDiscagem';
+import { avisoTelefoneCompartilhado } from '@/lib/radar/atendimento';
+import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
+import { track } from '@/lib/analytics';
 import { isCellphone, whatsappLink } from '@/lib/phone';
 import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
@@ -28,8 +34,10 @@ function Linha({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function Telefone({ numero, nome }: { numero: string; nome: string }) {
+/** `outras`: em quantas OUTRAS raízes de CNPJ o número aparece; undefined = não consegui verificar (sem aviso). */
+function Telefone({ numero, nome, outras }: { numero: string; nome: string; outras?: number }) {
   const wa = isCellphone(numero) ? whatsappLink(numero) : null;
+  const aviso = outras != null ? avisoTelefoneCompartilhado(outras) : null;
   return (
     <span className="inline-flex items-center gap-1.5 flex-wrap">
       <span className="font-tabular">{numero}</span>
@@ -39,6 +47,7 @@ function Telefone({ numero, nome }: { numero: string; nome: string }) {
           <MessageSquare className="w-3 h-3" /> WhatsApp
         </a>
       )}
+      {aviso && <span className="basis-full text-xs text-status-warning" data-testid="radar-telefone-compartilhado">{aviso}</span>}
     </span>
   );
 }
@@ -106,7 +115,16 @@ export function RadarDetailSheet({
   irmaos?: IrmaosRaiz | null;
   irmaosEstado?: EstadoIrmaos;
 }) {
+  const [discagem, setDiscagem] = useState(lerModoDiscagem);
+  const compartilhado = useRadarTelefoneCompartilhado(empresa?.cnpj ?? null);
   if (!empresa) return null;
+  const alternarDiscagem = () => {
+    const v = !discagem;
+    setDiscagem(v);
+    gravarModoDiscagem(v);
+    track('radar.modo_discagem', { ligado: v });
+  };
+  const outras = (tel: string) => compartilhado.data?.get(tel);
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
     .filter(Boolean)
     .join(', ');
@@ -137,14 +155,27 @@ export function RadarDetailSheet({
             )}
           </SheetTitle>
         </SheetHeader>
-        <div className="mt-4 flex items-center justify-between gap-2">
-          {onProximo ? (
-            <Button variant="ghost" size="sm" onClick={onProximo} title="Pular para o próximo lead da lista">
-              Próximo <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          ) : <span />}
-          <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
+        <div className="mt-3 flex items-center justify-between gap-2">
+          <RadarAtendimentoLead cnpj={empresa.cnpj} jaCliente={empresa.ja_cliente} />
+          <Button variant={discagem ? 'secondary' : 'ghost'} size="sm" onClick={alternarDiscagem} aria-pressed={discagem}
+            title="Telefone grande, Ligar, desfechos e Próximo num painel só">
+            <PhoneCall className="w-4 h-4 mr-1" /> Modo discagem
+          </Button>
         </div>
+        {discagem ? (
+          <div className="mt-3">
+            <RadarModoDiscagem empresa={empresa} nome={nome} compartilhado={compartilhado.data} onProximo={onProximo} />
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center justify-between gap-2">
+            {onProximo ? (
+              <Button variant="ghost" size="sm" onClick={onProximo} title="Pular para o próximo lead da lista">
+                Próximo <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            ) : <span />}
+            <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
+          </div>
+        )}
         <div className="mt-3 space-y-2">
           <RadarConflitosDoLead cnpj={empresa.cnpj} />
           <RadarAcoesLead empresa={empresa} />
@@ -187,10 +218,10 @@ export function RadarDetailSheet({
           <Linha label="Porte">{rotuloPorte(empresa.porte)}</Linha>
           <Linha label="Capital">{formatarCapital(empresa.capital_social)}</Linha>
           <Linha label="Telefone">
-            {empresa.telefone1 ? <Telefone numero={empresa.telefone1} nome={nome} /> : '—'}
+            {empresa.telefone1 ? <Telefone numero={empresa.telefone1} nome={nome} outras={outras(empresa.telefone1)} /> : '—'}
           </Linha>
           {empresa.telefone2 && (
-            <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} nome={nome} /></Linha>
+            <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} nome={nome} outras={outras(empresa.telefone2)} /></Linha>
           )}
           <Linha label="E-mail">
             {empresa.email ? (

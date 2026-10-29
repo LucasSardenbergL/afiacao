@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 /**
@@ -9,6 +9,12 @@ import { render, screen } from '@testing-library/react';
  */
 // Sem mock do BotaoLigar: os fixtures não têm telefone, então o botão nunca monta — e um
 // `vi.mock` por caminho seria uma aresta radar→telefonia nova no gate de fronteiras.
+
+// O chip "em atendimento por X" lê uma query compartilhada (RPC radar_atendimentos_ativos): aqui ela é um Map fixo.
+let atendimentos = new Map<string, unknown>();
+vi.mock('@/queries/useRadarAtendimentos', () => ({
+  useRadarAtendimentosAtivos: () => ({ data: atendimentos, isError: false, isSuccess: true, isLoading: false }),
+}));
 
 import { RadarLinha } from '../RadarLinha';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -107,5 +113,27 @@ describe('RadarLinha — selo de filial (mesma raiz de CNPJ)', () => {
   it('o score da linha não muda com o selo', () => {
     render(<RadarLinha empresa={empresa({ score: 72, score_motivos: ['x'] })} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} irmaos={{ irmaos_na_fila: 3, irmaos_clientes: 1, cliente_nome: null }} />);
     expect(screen.getByTestId('radar-score').textContent).toBe('72');
+  });
+});
+
+describe('RadarLinha — em atendimento', () => {
+  const posse = (ehMeu: boolean) => ({
+    cnpj: '12345678000195', donoUserId: 'u1', donoNome: 'Vendedor Um', assumidoEm: '2026-10-29T12:00:00Z',
+    expiraEm: '2026-11-05T12:00:00Z', ehMeu,
+  });
+  it('lead de outro vendedor mostra o dono e o prazo', () => {
+    atendimentos = new Map([['12345678000195', posse(false)]]);
+    renderLinha(empresa({}), null);
+    expect(screen.getByTestId('radar-atendimento').textContent).toBe('em atendimento por Vendedor Um até 05/11');
+  });
+  it('lead meu mostra "com você"', () => {
+    atendimentos = new Map([['12345678000195', posse(true)]]);
+    renderLinha(empresa({}), null);
+    expect(screen.getByTestId('radar-atendimento').textContent).toBe('com você até 05/11');
+  });
+  it('lead livre não ganha chip', () => {
+    atendimentos = new Map();
+    renderLinha(empresa({}), null);
+    expect(screen.queryByTestId('radar-atendimento')).toBeNull();
   });
 });
