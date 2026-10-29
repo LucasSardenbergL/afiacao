@@ -266,6 +266,12 @@ O snapshot **só carrega título vencido da semana corrente**: em toda segunda-f
 
 **Achado money-path fora desta entrega:** o mesmo buraco vale para **todo** fornecedor. Hoje há **132 títulos ATRASADOS não-Sayerlack, R$ 519 mil**, quase todos de semanas anteriores (o mais antigo vence em 19/11/2025), mais 8 da Sayerlack (R$ 77 mil). Nenhum entra na base do snapshot (`fin_cashflow.snapshot_diario`). Sem conciliação para esses fornecedores, a base de caixa fica **otimista e calada**: um fail-open. Ou é dívida vencida real que a guarda não enxerga, ou é status velho no CP. Decidir e corrigir é do domínio financeiro (o gerador do snapshot), em sessão própria.
 
+**Como o limiar estourou (medido pela sessão do #3404, mesmos fatos).** A main de 21/10, sem a R65, dá o mesmo resultado sobre estes fatos, então a mudança está no dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). O que empurra é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763), vencida em 30/09 e só paga em 23/10. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a NF 945097. Esses ciclos saem da janela por volta de 03/01/2027.
+
+**Duas perguntas para o founder:**
+1. A **NF 945097 está mesmo em aberto**, ou o pagamento não chegou ao CP? Se foi paga, é falha de sync e a correção é na fonte.
+2. A projeção pessimista **deve carregar título vencido e não pago** como saída imediata? Hoje ela o perde, o que deixa o caixa otimista justamente quando há atraso (o achado acima).
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
