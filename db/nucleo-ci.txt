@@ -680,10 +680,10 @@ db/test-radar-cadastro-conflitos.sh  56  falsificar=15
 # pode_ver_carteira_completa. Defeito aqui = operacional/customer entra, farmer fica de fora, vendedor fabrica conflito
 # global ou vê cliente só-Omie pela RPC de irmãos, v1 do cadastro direta reabre, situação RFB vaza, posse vencida
 # ressuscita, dois "assumir" simultâneos dão 23505, telefone conta a própria raiz. Retrato de prod com md5 conferido.
-# 15 sabotagens: cap aceita operacional, policy volta à carteira, situação aberta, v1 reaberta, irmãos sem projeção,
+# 16 sabotagens: cap aceita operacional, policy volta à carteira, situação aberta, v1 reaberta, irmãos sem projeção,
 # expiração ressuscita, sem trava, liberar de qualquer um, definir sem gate, já-cliente assume, telefone mesma raiz,
-# ativos sem cap do dono, sem trava por dono (teto sob corrida), escrita ignora dono sem acesso, renovação curta.
-db/test-radar-acesso-vendedor.sh     81  falsificar=15
+# ativos sem cap do dono, sem trava por dono (teto sob corrida), escrita ignora dono sem acesso, renovação ignorada, renovação como toque (o algoritmo antigo).
+db/test-radar-acesso-vendedor.sh     81  falsificar=16
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

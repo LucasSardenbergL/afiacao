@@ -353,7 +353,11 @@ sabotagem() {
     telefone_mesma_raiz)    cv_sabotar 'public.radar_telefone_compartilhado(text)' "AND left(o.cnpj, 8) <> left(p_cnpj, 8))" ")" ;;
     sem_trava_dono)         cv_sabotar 'public.radar_definir_atendimento(text,text)' "PERFORM pg_advisory_xact_lock(hashtextextended('radar_atendimento_dono:' || v_uid::text, 0));" "" ;;
     escrita_ignora_cap_dono) cv_sabotar 'public.radar_definir_atendimento(text,text)' "ELSIF NOT (COALESCE(private.cap_radar_prospectar(v_aberto.dono_user_id), false)) THEN" "ELSIF false THEN" ;;
-    renovacao_curta)        cv_sabotar 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)' "v_inicio timestamptz := GREATEST(p_assumido_em, p_renovado_em);" "v_inicio timestamptz := p_assumido_em;" ;;
+    renovacao_ignorada)     cv_sabotar 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)' "v_inicio timestamptz := GREATEST(p_assumido_em, p_renovado_em);" "v_inicio timestamptz := p_assumido_em;" ;;
+    # O algoritmo ANTERIOR ao parecer do Codex: a cadeia parte do assumido e a renovação entra como mais um toque.
+    renovacao_como_toque)   cv_sabotar 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)' "v_inicio timestamptz := GREATEST(p_assumido_em, p_renovado_em);" "v_inicio timestamptz := p_assumido_em;" \
+                              && cv_sabotar 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)' "     ORDER BY c.created_at" "    UNION ALL SELECT p_renovado_em WHERE p_renovado_em IS NOT NULL
+     ORDER BY 1" ;;
     ativos_sem_cap_dono)    cv_sabotar 'public.radar_atendimentos_ativos()' "AND private.cap_radar_prospectar(a.dono_user_id)" "" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
@@ -373,7 +377,8 @@ telefone_mesma_raiz:F1,F2:F3
 ativos_sem_cap_dono:E21:E5
 sem_trava_dono:E26:E25
 escrita_ignora_cap_dono:E21b,E21c:E21
-renovacao_curta:E28:E27"
+renovacao_ignorada:E27
+renovacao_como_toque:E28:E27"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4
