@@ -77,7 +77,11 @@ if de not in s:
 open(p, "w", encoding="utf-8").write(s.replace(de, para, 1))
 PY
 }
-cegar_md5() { sabotar "$VER_USADA" "  IF v_md5 IS DISTINCT FROM '" "  IF false AND v_md5 IS DISTINCT FROM '"; }
+# Sabotagem no corpo muda o md5: cega a postcondição E a PRE (a 2ª aplicação, de idempotência, cairia nela).
+cegar_md5() {
+  sabotar "$VER_USADA" "  IF v_md5 IS DISTINCT FROM '" "  IF false AND v_md5 IS DISTINCT FROM '"
+  sabotar "$VER_USADA" "  IF v_vivo IS NULL OR v_vivo NOT IN (" "  IF false AND v_vivo NOT IN ("
+}
 case "${SABOTAGEM:-}" in
   "") ;;
   versao_fora_do_update)
