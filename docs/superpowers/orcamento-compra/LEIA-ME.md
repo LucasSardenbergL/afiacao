@@ -207,6 +207,25 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 - **Resíduo conhecido:** 3 NFs efetivadas em 15 e 16/10 **nunca entraram no tracking** (Sayerlack 000132472 e 000132477, de outra série; e uma pessoa física). São entradas de estoque que a reconstrução não vê.
 - **Rodada (fatos de 2026-10-21 15:54 UTC, R60–R63):** precisão dos automáticos **96,2%** (n=111) ✅ · cobertura **49,6%** · 17 inviáveis (23 a 28/07) · **3** indeterminados (compromisso não conciliado; 9 excluídos pela R63). Portão: `FECHADO: cobertura 49,6% < 50% · 17 inviáveis · 3 indeterminados`. Os inviáveis saem da janela por volta de 27/10.
 
+### Rodada OFICIAL pós-julho (fatos de 2026-10-28 23:51 UTC; ciclos de 30/07 a 28/10; main com R60–R64, sem R65)
+
+Pré-voo limpo: `recebimentos_sem_t4=[]`, e `falhas_snapshot` com os 5 dias de 14 a 20/10.
+
+| Critério | Valor | |
+|---|---|---|
+| Precisão por episódio (cortes automáticos) | **99,0%** (n=126) | ✅ |
+| Cobertura | **51,0%** | ✅ |
+| Inviáveis | **0** (a semana de 23 a 28/07 saiu da janela) | ✅ |
+| Indeterminados | **81** (9 excluídos pela R63) | ❌ |
+
+`avaliarPortao` e o jq concordam: **FECHADO, 81 ciclos indeterminados**. Escalados (R62): nenhum episódio.
+
+**Por que 81 indeterminados, todos `compromisso_nao_conciliado`, de 05/10 em diante.** O código não mudou: o código da main de 21/10 dá o mesmo resultado sobre estes fatos. O que muda é o dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). No mesmo intervalo, os títulos Sayerlack representados na foto de caixa caem de 5 para 3. A causa é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763): ela **venceu em 30/09 e só foi paga em 23/10**. Vencida e sem pagamento, ficou fora da foto de caixa, e pela R35 título fora da projeção não desconta o compromisso. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a **NF 945097 (R$ 10,8 mil, ATRASADO desde 31/07 e ainda sem baixa)**.
+
+**Leitura:** o fail-closed está certo. Uma dívida vencida e não paga que não aparece na projeção é um compromisso real que a guarda não consegue reconciliar. Esses ciclos saem da janela por volta de 03/01/2027. Duas perguntas para o founder:
+1. A **NF 945097 está mesmo em aberto**, ou o pagamento não chegou ao CP? Se foi paga, é falha de sync e a correção é na fonte.
+2. A projeção pessimista **deve carregar título vencido e não pago** como saída imediata? Hoje ela o perde, o que deixa o caixa otimista justamente quando há atraso.
+
 ### Conferências de sanidade
 
 - `nDisparados` = 119; nenhum pai `split_em_filhos` na janela (R45 sem efeito nesta rodada, coberto por teste) ✅
