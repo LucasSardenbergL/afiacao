@@ -1,7 +1,7 @@
 # Tintométrico — histórico de receitas (H1) e as 7 cores-fantasma do card (A) — 2026-10-26
 
 Migrations `20261026214720_tint_receita_versoes.sql` e `20261026214721_tint_arquivar_staging_fantasma.sql`.
-Prova executada: `db/test-tint-receita-versoes.sh` (PG17; 21 asserções + 19 sabotagens, verde em C e pt_BR.UTF-8).
+Prova executada: `db/test-tint-receita-versoes.sh` (PG17; 21 asserções + 19 sabotagens no lote 1; 28 + 26 com o lote 2 — verde em C e pt_BR.UTF-8).
 
 ## O problema
 
@@ -86,3 +86,33 @@ o slot livre gravado como corante `'0'`: `4602081`, `4602092`, `4602093`, `46021
   recusada pelo classificador do harness — corrigir no SQL Editor).
 - Lição: depois de exit 5, **"tabela ausente" num instante não fecha a questão** enquanto houver
   backend com a trava do apply; espere a trava soltar antes de concluir "não aplicou".
+
+## Lote 2 (2026-10-29) — o lote 1 cortou pelo CARD, não pela CLASSE
+
+Migration `20261029095257_tint_arquivar_staging_fantasma_lote2.sql` (mesmo molde do lote 1, que é
+imutável; troca só ids, cores e motivo). `db:aplicar`: ensaio ✅, apply com recibo **#758**.
+
+- **O defeito do recorte.** As 7 do lote 1 eram as que o card mostrava nas últimas 24h. O card só
+  mostra a cor cujo `(cod_produto, id_base)` foi tocado por um promote naquele dia, e uma chave
+  fantasma pode ficar dias sem logar (`4602104`, `885J COLA` e `CINZA LENADRO MICRO METALIZADA`
+  estavam sem log desde 24/10). Medida a **CLASSE** no staging (latest da chave com item de corante
+  `'0'` e dose 0 × último snapshot de chaves completo e aplicado, `667a154c…` de 28/10 10:00, com
+  controle positivo `ESTOJO DE COURO ` vivo), sobravam exatamente mais 7: `4602104`, `885J COLA`,
+  `CINZA LENADRO MICRO METALIZADA`, `KL ` (espaço no fim), `KL PALHA`, `MARILIES PALHA` e
+  `OVELHA MATHEUS`. Todas do 0.2.0, conta `oben`, personalizadas, 1 linha de staging e 6 itens cada,
+  ausentes da fonte e anteriores ao snapshot.
+- **Prova** (`db/test-tint-receita-versoes.sh`, a mesma do lote 1, estendida): fixture com os 7 ids de
+  prod; `ARQ2`, `ARQ2_REAPLICA`, guardas `VOLTOU`/`LATEST`/`TRAVA` do lote 2 (a chave que volta é
+  `KL |FO20.6501|19|true`, de cor com espaço no fim) e `CLASSE_ZERADA` (a classe vai de 14 para 7 e
+  depois para 0: a medida não é vazia, e cada lote só tira as suas 7). São 28 asserts e 26
+  sabotagens, verdes em C e em pt_BR.UTF-8. Entre as sabotagens novas: `A2_COR_SEM_ESPACO` (`'KL '`
+  vira `'KL'` e a guarda aborta tudo) e `A2_POST_P1`/`A2_POST_P2` (a pós-condição aborta com o
+  staging intacto). A P3 (itens órfãos) não tem sabotagem: o CASCADE a torna inalcançável sem mexer na FK.
+- **2ª testemunha (psql-ro, depois do commit):** 7 `staging_arquivado` íntegros (`raw_data`, 6 itens),
+  0 dos 7 ids no staging, 0 itens órfãos, 14 arquivadas no total e a **classe com 0 chaves**.
+  Controle do efeito: as 3 do lote 1 que ainda logavam pararam depois do apply de 27/10. No momento
+  do apply, o card mostrava 4 do lote 2 (último log em 28/10 17:56) e esvazia em até 24h.
+- **Fora desta entrega (só reporte):** `ZAMBALD` (viva, 0.2.4, "staging vazio sem declaração de base
+  pura"), `ESTOJO DE COURO ` (corante 13 com 0 ml, correção no balcão) e `303U - BS` (aguarda a Sayerlack).
+- **Lição:** para limpar uma classe, meça a CLASSE na tabela onde o defeito mora, nunca a vitrine. Um card
+  com janela de tempo é amostra, não censo.

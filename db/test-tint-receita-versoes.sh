@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════════════════╗
-# ║  PROVA PG17 — histórico de receitas do tintométrico + arquivo das 7 cores-fantasma         ║
+# ║  PROVA PG17 — histórico de receitas do tintométrico + arquivo das 14 cores-fantasma        ║
 # ║    20261026214720_tint_receita_versoes.sql      (tabela append-only + captura + cron)      ║
-# ║    20261026214721_tint_arquivar_staging_fantasma.sql (arquiva e remove 7 linhas de staging)║
+# ║    20261026214721_tint_arquivar_staging_fantasma.sql (lote 1: 7 linhas de staging)         ║
+# ║    20261029095257_tint_arquivar_staging_fantasma_lote2.sql (lote 2: fecha a classe)        ║
 # ║  bash db/test-tint-receita-versoes.sh > log 2>&1; echo "exit=$?"                           ║
 # ║  bash db/test-tint-receita-versoes.sh --falsificar > log 2>&1; echo "exit=$?"              ║
 # ║  (NÃO pipe pra tail — engole o exit≠0.)                                                    ║
@@ -26,12 +27,13 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-receita.XXXXXX")"
 DATA="$TMP/data"
 MIG_H1="$REPO_ROOT/supabase/migrations/20261026214720_tint_receita_versoes.sql"
 MIG_A="$REPO_ROOT/supabase/migrations/20261026214721_tint_arquivar_staging_fantasma.sql"
+MIG_A2="$REPO_ROOT/supabase/migrations/20261029095257_tint_arquivar_staging_fantasma_lote2.sql"
 FALSIFICAR=0; [ "${1:-}" = "--falsificar" ] && FALSIFICAR=1
 # Sem locale válido o postmaster do macOS aborta ("became multithreaded"). C por padrão; quem chama
 # pode passar LC_ALL=pt_BR.UTF-8 — as marcas casadas abaixo são ASCII e vêm do RAISE, não do psql.
 export LC_ALL="${LC_ALL:-C}" LANG="${LANG:-C}"
 
-for f in "$MIG_H1" "$MIG_A"; do
+for f in "$MIG_H1" "$MIG_A" "$MIG_A2"; do
   [ -f "$f" ] || { echo "migration ausente: $f"; exit 1; }
 done
 
@@ -122,6 +124,16 @@ SELECT teste.stg(c, '30 days', ARRAY['0:0:5','AX:1:1'], 2, true, 'FO10.6554', '1
                ('2ef39afc-3ce4-477d-8bcd-35878c603541','CAFELATTE ARAUCO ZAMBALD'),
                ('d9237a8e-53ad-431e-8093-419300d0a894','CHOCOLATE AMARGO '),
                ('d720a669-f558-4b37-a04a-95bafda747b8','Y149 VERDE')) v(id, c);
+-- as 7 do lote 2 (ids, cores, produto e base de prod; 6 itens com os slots livres como '0'/0)
+SELECT teste.stg(c, '60 days', ARRAY['1:12.322:1','12:1.925:2','13:17.713:3','16:1.463:4','0:0:5','0:0:6'], 6,
+                 true, prod, base, id::uuid)
+  FROM (VALUES ('71770a2f-7e45-406a-a329-b39080f41402','4602104','JO05.7796','90'),
+               ('77439be5-8fec-40b9-81c9-a411bfbe64dc','885J COLA','JO20.7666','49'),
+               ('00f2bf42-fb87-410d-a3ef-a44830206056','CINZA LENADRO MICRO METALIZADA','JO05.7796','91'),
+               ('31eeb240-cfd2-4b2d-9300-72bc374fa3ab','KL ','FO20.6501','19'),
+               ('4eacc77b-33d4-449d-845d-06a6e085c24d','KL PALHA','FO20.6501','19'),
+               ('bdf481d6-7d5b-4627-a076-b99c477b7c82','MARILIES PALHA','FO20.6501','19'),
+               ('79cce452-75f1-4382-97bb-a4dffd973256','OVELHA MATHEUS','FB.6045','1')) v(id, c, prod, base);
 -- S1: completo e aplicado (o de verdade) — 1 dia atrás, 2 chunks
 INSERT INTO tint_keys_snapshots (setting_id, account, store_code, snapshot_id, entity, generated_at, total_chunks,
                                  chunk_index, keys, created_at, aplicacao_status, aplicado_em)
@@ -141,6 +153,22 @@ SQL
 }
 
 nrec() { q "$1" "SELECT count(*) FROM tint_receita_versoes WHERE cor_id = '$2' AND evento = '$3'"; }
+IDS_A="ARRAY['66cbebc0-2c21-481c-a420-eee00aa1c71c','1f2ed55f-4bf7-44a1-b354-d6f139870ad9','c7e4fa46-5b9c-4715-9801-f06dc0294e46',
+'8292ba62-aa72-4586-9faa-4bdf7db1fccf','2ef39afc-3ce4-477d-8bcd-35878c603541','d9237a8e-53ad-431e-8093-419300d0a894',
+'d720a669-f558-4b37-a04a-95bafda747b8']::uuid[]"
+IDS_A2="ARRAY['71770a2f-7e45-406a-a329-b39080f41402','77439be5-8fec-40b9-81c9-a411bfbe64dc','00f2bf42-fb87-410d-a3ef-a44830206056',
+'31eeb240-cfd2-4b2d-9300-72bc374fa3ab','4eacc77b-33d4-449d-845d-06a6e085c24d','bdf481d6-7d5b-4627-a076-b99c477b7c82',
+'79cce452-75f1-4382-97bb-a4dffd973256']::uuid[]"
+narq() { q "$1" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado' AND staging_formula_id = ANY ($2)"; }
+# a CLASSE (a mesma medida da prod): chaves cuja latest de staging tem item de corante '0' com dose 0
+classe() {
+  q "$1" "SELECT count(*) FROM (SELECT DISTINCT ON (account, store_code, cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada) id
+                                 FROM tint_staging_formulas
+                                ORDER BY account, store_code, cor_id, cod_produto, id_base, COALESCE(subcolecao, ''), personalizada,
+                                         created_at DESC, id DESC) l
+           WHERE EXISTS (SELECT 1 FROM tint_staging_formula_itens i
+                          WHERE i.staging_formula_id = l.id AND i.id_corante = '0' AND COALESCE(i.qtd_ml, 0) = 0)"
+}
 fixture_db() {   # $1 = banco novo com fixture
   PA -q -d postgres -c "CREATE DATABASE $1 TEMPLATE tpl" >/dev/null
   fixture "$1"
@@ -185,15 +213,31 @@ suite() {
   local antes; antes="$(q "$db" "SELECT count(*) FROM tint_receita_versoes")"
   if ! aplica "$db" "$dir/h1.sql" h1b || [ "$(q "$db" "SELECT count(*) FROM tint_receita_versoes")" != "$antes" ]; then cai REAPLICA; fi
 
-  # ── migration A ──
+  # ── migration A (lote 1) — e não toca as linhas do lote 2 ──
+  local classe_ini; classe_ini="$(classe "$db")"
   if aplica "$db" "$dir/a.sql" a \
      && [ "$(q "$db" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado'
                        AND staging_linha->'raw_data' ? 'fonte' AND jsonb_array_length(itens) = 2")" = "7" ] \
-     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formulas WHERE personalizada")" = "0" ] \
-     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formula_itens WHERE id_corante = '0'")" = "0" ]; then :; else cai ARQ; fi
-  if ! aplica "$db" "$dir/a.sql" a2 || [ "$(q "$db" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado'")" != "7" ]; then
+     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formulas WHERE id = ANY ($IDS_A)")" = "0" ] \
+     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formula_itens WHERE staging_formula_id = ANY ($IDS_A)")" = "0" ] \
+     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formulas WHERE id = ANY ($IDS_A2)")" = "7" ]; then :; else cai ARQ; fi
+  if ! aplica "$db" "$dir/a.sql" a_bis || [ "$(q "$db" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado'")" != "7" ]; then
     cai ARQ_REAPLICA
   fi
+  local classe_a1; classe_a1="$(classe "$db")"
+
+  # ── migration A2 (lote 2) ──
+  if aplica "$db" "$dir/a2.sql" a2 \
+     && [ "$(q "$db" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado' AND staging_formula_id = ANY ($IDS_A2)
+                       AND (staging_linha->>'id')::uuid = staging_formula_id AND staging_linha->'raw_data' ? 'fonte'
+                       AND jsonb_array_length(itens) = 6 AND itens @> '[{\"id_corante\":\"0\"}]'")" = "7" ] \
+     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formulas WHERE id = ANY ($IDS_A2)")" = "0" ] \
+     && [ "$(q "$db" "SELECT count(*) FROM tint_staging_formula_itens WHERE staging_formula_id = ANY ($IDS_A2)")" = "0" ]; then :; else cai ARQ2; fi
+  if ! aplica "$db" "$dir/a2.sql" a2_bis || [ "$(narq "$db" "$IDS_A2")" != "7" ]; then
+    cai ARQ2_REAPLICA
+  fi
+  # a classe sai de 14 → 7 (lote 1) → 0 (lote 2): a medida não é vazia e cada lote tira só os seus
+  [ "$classe_ini:$classe_a1:$(classe "$db")" = "14:7:0" ] || cai CLASSE_ZERADA
 
   # GUARDA_MD5: corpo vivo diferente → re-aplicar H1 ABORTA
   q "$db" "DO \$d\$ BEGIN EXECUTE replace(pg_get_functiondef('public.tint_receita_versoes_capturar()'::regprocedure),
@@ -211,10 +255,17 @@ suite() {
   q "$v" "UPDATE tint_keys_snapshots SET keys = keys || '[\"4602081|FO10.6554|14|true\"]'::jsonb
            WHERE snapshot_id = '55555555-0000-0000-0000-000000000001' AND chunk_index = 0" >/dev/null
   if aplica "$v" "$dir/a.sql" voltou || ! grep -qF "VOLTOU para a fonte" "$TMP/$v.voltou.log"; then cai ARQ_GUARDA_VOLTOU; fi
+  # lote 2: a chave que volta é a de cor com espaço no fim (a chave do conector não apara a cor)
+  q "$v" "UPDATE tint_keys_snapshots SET keys = keys || '[\"KL |FO20.6501|19|true\"]'::jsonb
+           WHERE snapshot_id = '55555555-0000-0000-0000-000000000001' AND chunk_index = 1" >/dev/null
+  if aplica "$v" "$dir/a2.sql" voltou2 || ! grep -qF "VOLTOU para a fonte" "$TMP/$v.voltou2.log"; then cai ARQ2_GUARDA_VOLTOU; fi
   # LATEST: chega linha mais nova da chave do 4602092
   q "$g" "SELECT teste.stg('4602092', '2 days', ARRAY['AX:1:1'], 1, true, 'FO10.6554', '14', 'eeeeeeee-0000-0000-0000-000000000001')" >/dev/null
   if aplica "$g" "$dir/a.sql" latest || ! grep -qF "latest da chave" "$TMP/$g.latest.log"; then cai ARQ_GUARDA_LATEST; fi
   q "$g" "DELETE FROM tint_staging_formulas WHERE id = 'eeeeeeee-0000-0000-0000-000000000001'" >/dev/null
+  q "$g" "SELECT teste.stg('MARILIES PALHA', '2 days', ARRAY['AX:1:1'], 1, true, 'FO20.6501', '19', 'eeeeeeee-0000-0000-0000-000000000002')" >/dev/null
+  if aplica "$g" "$dir/a2.sql" latest2 || ! grep -qF "latest da chave" "$TMP/$g.latest2.log"; then cai ARQ2_GUARDA_LATEST; fi
+  q "$g" "DELETE FROM tint_staging_formulas WHERE id = 'eeeeeeee-0000-0000-0000-000000000002'" >/dev/null
   # TRAVA: uma promoção segura a trava do tick
   PA -q -d "$g" -c "SELECT pg_advisory_lock(hashtext('tint_promocao_tick')); SELECT pg_sleep(6)" >/dev/null 2>&1 &
   local pid=$! i=0
@@ -222,18 +273,22 @@ suite() {
     sleep 0.1; i=$((i + 1))
   done
   if aplica "$g" "$dir/a.sql" trava || ! grep -qF "trava do tick ocupada" "$TMP/$g.trava.log"; then cai ARQ_TRAVA; fi
+  if aplica "$g" "$dir/a2.sql" trava2 || ! grep -qF "trava do tick ocupada" "$TMP/$g.trava2.log"; then cai ARQ2_TRAVA; fi
   wait "$pid" || true
-  # e, sem nenhum dos três, a A passa nesse mesmo banco (as guardas abortaram LIMPO)
-  if ! aplica "$g" "$dir/a.sql" final || [ "$(q "$g" "SELECT count(*) FROM tint_receita_versoes WHERE evento = 'staging_arquivado'")" != "7" ]; then
+  # e, sem nenhum dos três, a A e a A2 passam nesse mesmo banco (as guardas abortaram LIMPO)
+  if ! aplica "$g" "$dir/a.sql" final || [ "$(narq "$g" "$IDS_A")" != "7" ]; then
     cai ARQ_GUARDAS_LIMPAS
+  fi
+  if ! aplica "$g" "$dir/a2.sql" final2 || [ "$(narq "$g" "$IDS_A2")" != "7" ]; then
+    cai ARQ2_GUARDAS_LIMPAS
   fi
 
   echo "FIM:${caidos# }"
 }
 
-TODOS="MUDANCA ORDEM ESCALA INCOMPLETA RECENTE SAIDA SNAP_PARCIAL COR_NOVA IDEMP VOLTOU APPEND_ONLY GRANTS CRON REAPLICA ARQ ARQ_REAPLICA GUARDA_MD5 ARQ_GUARDA_VOLTOU ARQ_GUARDA_LATEST ARQ_TRAVA ARQ_GUARDAS_LIMPAS"
+TODOS="MUDANCA ORDEM ESCALA INCOMPLETA RECENTE SAIDA SNAP_PARCIAL COR_NOVA IDEMP VOLTOU APPEND_ONLY GRANTS CRON REAPLICA ARQ ARQ_REAPLICA ARQ2 ARQ2_REAPLICA CLASSE_ZERADA GUARDA_MD5 ARQ_GUARDA_VOLTOU ARQ2_GUARDA_VOLTOU ARQ_GUARDA_LATEST ARQ2_GUARDA_LATEST ARQ_TRAVA ARQ2_TRAVA ARQ_GUARDAS_LIMPAS ARQ2_GUARDAS_LIMPAS"
 
-mkdir -p "$TMP/real"; cp "$MIG_H1" "$TMP/real/h1.sql"; cp "$MIG_A" "$TMP/real/a.sql"
+mkdir -p "$TMP/real"; cp "$MIG_H1" "$TMP/real/h1.sql"; cp "$MIG_A" "$TMP/real/a.sql"; cp "$MIG_A2" "$TMP/real/a2.sql"
 PASSOU=0; FALHAS=0
 echo "════ CONTROLE — migrations reais ════"
 CAIDOS="$(suite "$TMP/real" ctl)" || true
@@ -273,9 +328,9 @@ open(dst, 'w').write(t)
 PYTROCA
 
 N=0; SAB_FALHAS=0
-sabota() {   # nome  arquivo(h1|a)  busca  troca  esperado
+sabota() {   # nome  arquivo(h1|a|a2)  busca  troca  esperado
   local nome="$1" alvo="$2" d="$TMP/sab_$1"
-  N=$((N + 1)); mkdir -p "$d"; cp "$TMP/real/h1.sql" "$TMP/real/a.sql" "$d/"
+  N=$((N + 1)); mkdir -p "$d"; cp "$TMP/real/h1.sql" "$TMP/real/a.sql" "$TMP/real/a2.sql" "$d/"
   if ! python3 "$TMP/troca.py" "$TMP/real/$alvo.sql" "$d/$alvo.sql" "$3" "$4"; then
     echo "  ✗ $nome: sabotagem inválida"; SAB_FALHAS=$((SAB_FALHAS + 1)); return
   fi
@@ -295,6 +350,19 @@ sabota_post() {   # nome  busca  troca  marca — o apply da H1 tem de ABORTAR c
   elif grep -qF "$4" "$TMP/p$N.h1.log" && [ -z "$(q "p$N" "SELECT to_regclass('public.tint_receita_versoes')")" ]; then
     echo "  ✓ $nome → abortou com '$4' e não deixou a tabela"
   else echo "  ✗ $nome: abortou pelo motivo errado: $(head -c 300 "$TMP/p$N.h1.log")"; SAB_FALHAS=$((SAB_FALHAS + 1)); fi
+}
+sabota_post_a2() {   # nome  busca  troca  marca — a A2 tem de ABORTAR com a marca e não tirar nada do staging
+  local nome="$1" d="$TMP/sab_$1"
+  N=$((N + 1)); mkdir -p "$d"
+  if ! python3 "$TMP/troca.py" "$TMP/real/a2.sql" "$d/a2.sql" "$2" "$3"; then
+    echo "  ✗ $nome: sabotagem inválida"; SAB_FALHAS=$((SAB_FALHAS + 1)); return
+  fi
+  fixture_db "p$N"
+  aplica "p$N" "$TMP/real/h1.sql" h1 || { echo "  ✗ $nome: a H1 não aplicou"; SAB_FALHAS=$((SAB_FALHAS + 1)); return; }
+  if aplica "p$N" "$d/a2.sql" a2; then echo "  ✗ $nome: a A2 aplicou"; SAB_FALHAS=$((SAB_FALHAS + 1))
+  elif grep -qF "$4" "$TMP/p$N.a2.log" && [ "$(q "p$N" "SELECT count(*) FROM tint_staging_formulas WHERE id = ANY ($IDS_A2)")" = "7" ]; then
+    echo "  ✓ $nome → abortou com '$4' e o staging ficou intacto"
+  else echo "  ✗ $nome: abortou pelo motivo errado: $(head -c 300 "$TMP/p$N.a2.log")"; SAB_FALHAS=$((SAB_FALHAS + 1)); fi
 }
 
 echo "════ FALSIFICAÇÕES ════"
@@ -321,7 +389,20 @@ sabota A_SEM_GUARDA_LATEST a "THEN 'não é mais a latest da chave'" "AND false 
 sabota A_SEM_TRAVA a "IF NOT pg_try_advisory_xact_lock(hashtext('tint_promocao_tick')) THEN" "IF false THEN" "ARQ_TRAVA"
 sabota A_SEM_ARQUIVO a "     WHERE s.id = ANY (c_ids)
     ON CONFLICT DO NOTHING;" "     WHERE s.id = ANY (c_ids) AND false
-    ON CONFLICT DO NOTHING;" "ARQ ARQ_REAPLICA ARQ_GUARDAS_LIMPAS"
+    ON CONFLICT DO NOTHING;" "ARQ ARQ_REAPLICA CLASSE_ZERADA ARQ_GUARDAS_LIMPAS"
+sabota A2_SEM_GUARDA_VOLTOU a2 "THEN 'a chave VOLTOU para a fonte'" "AND false THEN 'a chave VOLTOU para a fonte'" "ARQ2_GUARDA_VOLTOU"
+sabota A2_SEM_GUARDA_LATEST a2 "THEN 'não é mais a latest da chave'" "AND false THEN 'não é mais a latest da chave'" "ARQ2_GUARDA_LATEST"
+sabota A2_SEM_TRAVA a2 "IF NOT pg_try_advisory_xact_lock(hashtext('tint_promocao_tick')) THEN" "IF false THEN" "ARQ2_TRAVA"
+sabota A2_SEM_ARQUIVO a2 "     WHERE s.id = ANY (c_ids)
+    ON CONFLICT DO NOTHING;" "     WHERE s.id = ANY (c_ids) AND false
+    ON CONFLICT DO NOTHING;" "ARQ2 ARQ2_REAPLICA CLASSE_ZERADA ARQ2_GUARDAS_LIMPAS"
+sabota A2_COR_SEM_ESPACO a2 "'KL '," "'KL'," "ARQ2 ARQ2_REAPLICA CLASSE_ZERADA ARQ2_GUARDA_VOLTOU ARQ2_GUARDAS_LIMPAS"
+sabota_post_a2 A2_POST_P1 "     WHERE s.id = ANY (c_ids)
+    ON CONFLICT DO NOTHING;" "     WHERE s.id = ANY (c_ids) AND false
+    ON CONFLICT DO NOTHING;" "P1 FALHOU"
+sabota_post_a2 A2_POST_P2 "    DELETE FROM tint_staging_formulas s
+     WHERE s.id = ANY (c_ids)" "    DELETE FROM tint_staging_formulas s
+     WHERE s.id = ANY (c_ids) AND false" "P2 FALHOU"
 sabota_post SEM_REVOKE "REVOKE ALL ON public.tint_receita_versoes FROM PUBLIC, anon, authenticated;" "" "P3 FALHOU"
 sabota_post SEM_SEMENTE "SELECT public.tint_receita_versoes_capturar();
 " "" "P5 FALHOU"
