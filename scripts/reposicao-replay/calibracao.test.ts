@@ -224,9 +224,10 @@ describe('R27 — modo informativo', () => {
     const dd = cenario(false);
     const rs = (['F1', 'F2', 'F3'] as const).map((f) => calibrar(dd, f, { reps: 3, cacheDir: null }));
     const got = { rs: rs.map((r) => ({ f: r.formula, params: r.params, inviavel: r.inviavel, estoque: r.estoqueMedio, alvo: r.alvo })), cand: escolherCandidata(rs), v: vereditoDaCalibracao(rs) };
-    // capturado em bcc467753 (pós fix round 1), ANTES do modo informativo
+    // recapturado no achado 7 do Codex (leva B): célula e quantil pela classe do DIA mudam o trio (causa isolada revertendo
+    // só a classe do dia); o modo informativo continua sem mexer no caminho oficial
     expect(got).toEqual(JSON.parse(
-      "{\"rs\":[{\"f\":\"F1\",\"params\":{\"quantil\":{\"A\":0.95,\"B\":0.999,\"C\":0.5}},\"inviavel\":false,\"estoque\":188.62921348314606,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F2\",\"params\":{\"beta\":0.005,\"quantil\":{\"A\":0.95,\"B\":0.999,\"C\":0.5}},\"inviavel\":false,\"estoque\":190.1123595505618,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F3\",\"params\":{\"janelaDias\":90,\"quantil\":{\"A\":0.999,\"B\":0.999,\"C\":0.8}},\"inviavel\":true,\"estoque\":183.8426966292135,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}}],\"cand\":\"F1\",\"v\":{\"veredito\":\"INCONCLUSIVO\",\"motivos\":[\"CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:B\"]}}",
+      "{\"rs\":[{\"f\":\"F1\",\"params\":{\"quantil\":{\"A\":0.5,\"B\":0.999,\"C\":0.999}},\"inviavel\":false,\"estoque\":208.02247191011236,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F2\",\"params\":{\"beta\":0.005,\"quantil\":{\"A\":0.5,\"B\":0.999,\"C\":0.995}},\"inviavel\":false,\"estoque\":206.76404494382024,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}},{\"f\":\"F3\",\"params\":{\"janelaDias\":90,\"quantil\":{\"A\":0.999,\"B\":0.999,\"C\":0.8}},\"inviavel\":true,\"estoque\":180.47191011235955,\"alvo\":{\"A\":0.9975,\"B\":null,\"C\":0.9975}}],\"cand\":\"F1\",\"v\":{\"veredito\":\"INCONCLUSIVO\",\"motivos\":[\"CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:B\"]}}"
     ));
   }, 120_000);
 
