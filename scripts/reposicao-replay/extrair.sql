@@ -50,7 +50,7 @@ copy (
              coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text)) as doc_md5,
          h.sku_unidade as unidade_nfe,
          (pot.encerrado_omie_em is not null) as encerrado_omie,
-         coalesce(pot.status, '') as status_tracking
+         coalesce(pot.status::text, '') as status_tracking
   from sku_leadtime_history h
   left join purchase_orders_tracking pot on pot.id = h.tracking_id
   where h.empresa = 'OBEN'
