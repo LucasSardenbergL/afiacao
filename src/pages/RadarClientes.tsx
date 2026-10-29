@@ -7,7 +7,9 @@ import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
 import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
-import { RadarKpis } from '@/components/radar/RadarKpis';
+import { RadarKpis, RadarChipsLote } from '@/components/radar/RadarKpis';
+import { RadarFavoritos } from '@/components/radar/RadarFavoritos';
+import type { FiltrosSalvos } from '@/lib/radar/favoritos';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
@@ -20,7 +22,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import type { PresetRadar } from '@/lib/radar/ui-helpers';
+import type { PresetRadar, RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
 
@@ -46,6 +48,8 @@ type RadarUrlState = {
   soIneditos: boolean;
   soSugeridos: boolean;
   preset: string;
+  regiao: string;
+  incluirSemContato: boolean;
   vista: string;
   [k: string]: string | boolean;
 };
@@ -62,16 +66,28 @@ const DEFAULTS: RadarUrlState = {
   soIneditos: false,
   soSugeridos: false,
   preset: 'score',
+  // Abre onde a carteira está (MG e vizinhos); "Brasil" é 1 clique e fica na URL.
+  regiao: 'atuacao',
+  // Lead sem telefone E sem e-mail fica fora por padrão (o toggle "incluir sem contato" traz de volta).
+  incluirSemContato: false,
   vista: 'lista',
 };
+
+/** O que um favorito guarda: os filtros da URL, sem a vista (lista/mapa é navegação, não filtro). */
+const { vista: _vista, ...PADRAO_FILTROS } = DEFAULTS;
+const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
 
 function narrowPreset(v: string): PresetRadar {
   return v === 'estabelecidas' || v === 'novas' ? v : 'score';
 }
+function narrowRegiao(v: string): RegiaoRadar {
+  return v === 'brasil' ? 'brasil' : 'atuacao';
+}
 
 export default function RadarClientes() {
   const [raw, set] = useUrlState<RadarUrlState>(DEFAULTS);
-  const filtros: RadarFiltros = { ...raw, preset: narrowPreset(raw.preset) };
+  const filtros: RadarFiltros = { ...raw, preset: narrowPreset(raw.preset), regiao: narrowRegiao(raw.regiao) };
+  const { vista: _v, ...filtrosAtuais } = raw;
 
   const hojeISO = useMemo(() => {
     const d = new Date();
@@ -176,13 +192,19 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
-      <RadarKpis
+      <RadarKpis />
+      <Filtros
+        filtros={filtros}
+        set={set}
+        lote={lote}
+        acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
+      />
+      <RadarChipsLote
         soIneditos={filtros.soIneditos}
         onSoIneditos={(v) => set({ soIneditos: v })}
         soSugeridos={filtros.soSugeridos}
         onSoSugeridos={(v) => set({ soSugeridos: v })}
       />
-      <Filtros filtros={filtros} set={set} lote={lote} />
       <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
