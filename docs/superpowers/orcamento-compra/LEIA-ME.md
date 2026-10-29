@@ -207,7 +207,7 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 - **Resíduo conhecido:** 3 NFs efetivadas em 15 e 16/10 **nunca entraram no tracking** (Sayerlack 000132472 e 000132477, de outra série; e uma pessoa física). São entradas de estoque que a reconstrução não vê.
 - **Rodada (fatos de 2026-10-21 15:54 UTC, R60–R63):** precisão dos automáticos **96,2%** (n=111) ✅ · cobertura **49,6%** · 17 inviáveis (23 a 28/07) · **3** indeterminados (compromisso não conciliado; 9 excluídos pela R63). Portão: `FECHADO: cobertura 49,6% < 50% · 17 inviáveis · 3 indeterminados`. Os inviáveis saem da janela por volta de 27/10.
 
-### R65: NF recebida depois do snapshot não é "não conciliada" (diagnóstico dos 3 indeterminados, 2026-10-21)
+### Diagnóstico dos 3 indeterminados e a R65 REJEITADA (2026-10-21 a 2026-10-29)
 
 **Por que eram indeterminados.** Nos três casos, quase todo o valor "não conciliado" vem de **uma NF consolidada da Sayerlack, sem título no CP as-of**, cujo pedido mais antigo tem **exatamente 15 dias** (o limite da R28/R30 é `< 15`):
 
@@ -218,38 +218,18 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 
 3787 e 3788 **não existem mais**: o motor regerou os pendentes do dia como **3793 e 3794** (18:16 UTC). O diagnóstico da tabela foi medido nos sucessores, com a mesma NF dominante. O resto do não conciliado é pequeno: a NF 945097 (R$ 1.895), com título aberto desde 01/08 que o snapshot não representa (a ambiguidade de verdade da R35), e o pedido 2790 (R$ 976, contrato composto retido pela R59).
 
-**A causa é o relógio, não a fonte.** O título do CP Sayerlack nasce no **recebimento**, não no faturamento. Medido sobre os 119 títulos dos fatos de 21/10: dos 113 com t4, **112 nasceram depois do t4**; a exceção (951497) nasceu 22h antes. Do faturamento (t2) até o título passam 8 dias na mediana e 52 no p90. NF faturada e ainda não recebida **não tem** título: isso é o esperado, não uma falha de conciliação.
+**A causa é o relógio, não a fonte.** O título do CP Sayerlack nasce no **recebimento**, não no faturamento. Medido sobre os 119 títulos dos fatos de 21/10: dos 113 com t4, **112 nasceram depois do t4**; a exceção (951497) nasceu 22h antes. Do faturamento (t2) até o título passam 8 dias na mediana e 52 no p90. NF faturada e ainda não recebida não tem título.
 
-**R65.** Um componente cujas NFs **não têm título nenhum** as-of e **todas** têm menor t4 conhecido **posterior ao snapshot** vai para `compromisso_a_faturar`, qualquer que seja a idade. O **valor não muda**: o pedido sai inteiro do caixa nos dois casos. Muda só a classe (sai do limiar de indeterminação). Fica tudo fail-closed:
-- NF sem t4, ou com **alguma** linha de tracking sem t4, fica fora (`t4_por_nf` no `fatos.sql` só exporta NF com t4 em todas as linhas);
-- vale o **menor** t4 da NF;
-- título existente que não desconta (não representado na base) **não** ganha a isenção;
-- o componente precisa de **todas** as NFs nessa condição.
+**O 2083 é sujeira do tracking.** A NF 947706 tem uma linha (pedido Omie 1172, mesma chave) com t2 = 17/08 e t4 = 20/08 00:14 UTC, **antes da emissão da própria NF** (20/08). Como o snapshot não se refaz, ele só sai do portão quando deixar a janela (~23/11), a não ser que a linha do 1172 seja corrigida na fonte (outra entrega).
 
-**Efeito medido** (fatos de 21/10 ~19h UTC; diagnóstico com o pré-voo R64 ignorado, **não** é rodada):
-- comparada com a main, a R65 não muda nenhum ciclo hoje;
-- com a hipótese de a revisita gravar t4 = efetivação (16:10) na 955263, mudam **só** 3793 e 3794 (indeterminado → viável), com o **mesmo** valor aceito e os mesmos cortes.
+**R65 proposta e REJEITADA (não está no código).** A proposta: NF sem título as-of e recebida depois do snapshot iria para "a faturar", sem contar no limiar de indeterminação. Foram três revisões do Codex, cada uma com P1:
+1. **1ª (high, 78 s):** a data de saída continuava estimada (`dataPedido + lag`); havia também duas falhas de evidência (normalização entre SQL e TS, t4 conhecido só depois do momento).
+2. **2ª (max, 358 s):** um título criado entre o snapshot e o momento não vetava a isenção (R$ 175 escondidos no exemplo).
+3. **3ª (max, 248 s):** o veto devolvia o débito à data estimada; um título cancelado e relançado depois do ciclo apagava a evidência (o `fatos.sql` filtra por status de HOJE e por janela de 270 dias); e título sem número de NF virava "sem título". Os três cenários foram reproduzidos com o pré-voo passando.
 
-**O 2083 continua indeterminado, e é o fail-closed funcionando.** A NF 947706 tem uma linha de tracking (pedido Omie 1172, mesma chave) com t2 = 17/08 e t4 = 20/08 00:14 UTC, **antes da emissão da própria NF** (20/08). É sujeira do tracking. O menor t4 cai antes do snapshot, então não há isenção. Como o snapshot não se refaz, o 2083 só sai do portão quando sair da janela (~23/11), a não ser que a linha do 1172 seja corrigida na fonte (outra entrega: investigar como essa linha recebeu t2/t4 de outra NF).
+**Por que rejeitar em vez de corrigir:** a isenção depende de provar a **ausência** de título na decisão, e a extração de títulos foi feita para conciliar, não para provar ausência histórica. Além disso, a R65 **não muda nenhum ciclo** da rodada oficial de 28/10: os pendentes de 21/10 que ela destravaria seguem indeterminados pelos títulos atrasados (abaixo). No money-path, precisão vem antes de recall. Se um dia valer retomar, o pré-requisito é uma extração própria e histórica dos títulos, sem filtro de status, e um tratamento explícito para título sem NF.
 
-**Codex (2026-10-28, gpt-6-astra · high · 78s): 1 P1 + 2 P2, todos corrigidos no mesmo PR.**
-- **P1:** "sai inteiro" não garante que saia na data certa. O isento continuava em `dataPedido + lag`, e o vencimento real pode ser antes. Agora o componente isento pela R65 (velho, recebido depois da base) sai no **1º dia**. O "a faturar" por idade (R28/R30) não muda.
-- **P2:** o SQL agregava por `ltrim` e o TS normalizava com `trim`. Agora os dois normalizam igual antes de agregar, e o `t4_por_nf` só considera tracking da Sayerlack na Oben.
-- **P2:** t4 conhecido só depois do momento do ciclo era evidência que a decisão não tinha. Agora a NF exige `snapshot < t4 ≤ momento`.
-
-**Codex, 2ª revisão (max, 358s): 1 P1, corrigido.** Um título criado **entre o snapshot e o momento** do ciclo não vetava a isenção, porque os títulos são filtrados por `created_at ≤ snapshot_at`. Com o título nascendo no recebimento e `t4 ≤ momento`, o caso ficou mais provável. Exemplo: snapshot às 10h, recebimento às 11h, título de R$ 1.200 às 11h30, ciclo ao meio-dia, pedido de R$ 1.025 → viável, escondendo R$ 175. Agora qualquer título criado até o momento veta a isenção, mesmo com desconto 0; representação e liquidação continuam pelo snapshot. Na rodada de 28/10 isso não muda nenhum ciclo.
-
-Falsificação no TS: 9 de 9 sabotagens vermelhas, com controle verde. O produtor SQL (`t4_por_nf`) foi exercitado read-only com o texto exato da CTE sobre linhas literais: o controle devolveu só `88|2026-10-01`, e as 5 sabotagens (HAVING, MIN→MAX, sem `btrim`, sem filtro de fornecedor, sem filtro de empresa) ficaram vermelhas.
-
-**Auto-challenge original (2026-10-21, antes do Codex).** Em cada cenário o valor sai inteiro, então o erro possível é só pessimismo:
-- título lançado com outro número de NF: conta em dobro;
-- NF paga por fora: já saiu do saldo e sai de novo;
-- t4 gravado com atraso: o título, se existir as-of, tem chave e veta a isenção;
-- t4 de hoje (look-ahead): só **restringe** a isenção, porque NF que nunca foi recebida não ganha nada.
-
-Nenhum desses cenários aprova compra que o caixa não suporta.
-
-### Rodada de 2026-10-28, depois de julho sair da janela (fatos de 2026-10-28 23:51 UTC; R60–R65)
+### Rodada de 2026-10-28, depois de julho sair da janela (fatos de 2026-10-28 23:51 UTC; R60–R64)
 
 - **Pré-voo aprovado:** nenhuma NF pendente de t4 (R64).
 - **Estados:** 199 viáveis · **0 inviáveis** (a semana de 23 a 28/07 saiu da janela) · 90 indeterminados (81 por compromisso não conciliado; 9 excluídos pela R63, falha de snapshot).
@@ -266,7 +246,7 @@ O snapshot **só carrega título vencido da semana corrente**: em toda segunda-f
 
 **Achado money-path fora desta entrega:** o mesmo buraco vale para **todo** fornecedor. Hoje há **132 títulos ATRASADOS não-Sayerlack, R$ 519 mil**, quase todos de semanas anteriores (o mais antigo vence em 19/11/2025), mais 8 da Sayerlack (R$ 77 mil). Nenhum entra na base do snapshot (`fin_cashflow.snapshot_diario`). Sem conciliação para esses fornecedores, a base de caixa fica **otimista e calada**: um fail-open. Ou é dívida vencida real que a guarda não enxerga, ou é status velho no CP. Decidir e corrigir é do domínio financeiro (o gerador do snapshot), em sessão própria.
 
-**Como o limiar estourou (medido pela sessão do #3404, mesmos fatos).** A main de 21/10, sem a R65, dá o mesmo resultado sobre estes fatos, então a mudança está no dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). O que empurra é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763), vencida em 30/09 e só paga em 23/10. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a NF 945097. Esses ciclos saem da janela por volta de 03/01/2027.
+**Como o limiar estourou (medido pela sessão do #3404, mesmos fatos).** O código da main de 21/10 dá o mesmo resultado sobre estes fatos, então a mudança está no dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). O que empurra é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763), vencida em 30/09 e só paga em 23/10. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a NF 945097. Esses ciclos saem da janela por volta de 03/01/2027.
 
 **Duas perguntas para o founder:**
 1. A **NF 945097 está mesmo em aberto**, ou o pagamento não chegou ao CP? Se foi paga, é falha de sync e a correção é na fonte.
@@ -325,7 +305,7 @@ jq -r '
 cat /tmp/oc-portao.txt; [ "$rc" -eq 0 ] && grep -qx 'ABERTO' /tmp/oc-portao.txt   # exit 0 = portão aberto
 ```
 
-**Estado em 2026-10-28 (R60–R65, fatos de 28/10 23:51 UTC):** portão **FECHADO só por 81 indeterminados** (título Sayerlack atrasado fora da base, ver "Rodada de 2026-10-28"). Precisão 99,0% (n=126), cobertura 51,0% e 0 inviáveis passam.
+**Estado em 2026-10-28 (R60–R64, fatos de 28/10 23:51 UTC):** portão **FECHADO só por 81 indeterminados** (título Sayerlack atrasado fora da base, ver "Rodada de 2026-10-28"). Precisão 99,0% (n=126), cobertura 51,0% e 0 inviáveis passam.
 
 **Estado em 2026-10-20 (R59 v2):** portão **FECHADO** por precisão (89,1%), cobertura (19,2%), 70 inviáveis e 9 indeterminados — o R59 tirou 30 indeterminados, mas não mexe nos outros três motivos.
 

@@ -131,37 +131,6 @@ describe('conciliação pedido → NF → CP (spec §8 teste 3)', () => {
     const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 10_000, dataPedido: '2026-09-30', nfs: ['88'] }], [{ nf: '88', valor: 4_000 }], '2026-10-01', 0, 15);
     expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -6_000, camada: 'compromisso_conciliado' }]);
   });
-  it('R65: NF sem título com 20 dias, mas recebida DEPOIS da base → a faturar (o título nasce no recebimento), inteira', () => {
-    const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 10_000, dataPedido: '2026-09-11', nfs: ['88'] }], [], '2026-10-01', 0, 15, new Set(['000088']));
-    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -10_000, camada: 'compromisso_a_faturar' }]);
-    expect(r.naoConciliado).toBe(0);
-  });
-  it('R65 (Codex P1): o isento pela R65 sai no 1º dia, nunca em dataPedido + lag (o vencimento real é desconhecido)', () => {
-    // pedido de 11/09 + lag 30 cairia em 11/10; recebido depois da base, o vencimento pode ser amanhã
-    const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 40_000, dataPedido: '2026-09-11', nfs: ['88'] }], [], '2026-10-01', 30, 15, new Set(['88']));
-    expect(r.fluxos).toEqual([{ data: '2026-10-01', valor: -40_000, camada: 'compromisso_a_faturar' }]);
-    // o a faturar por IDADE continua na data estimada (R28/R30 inalterado)
-    const novo = conciliarCompromissos([{ pedidoId: 9, valorTotal: 40_000, dataPedido: '2026-09-28', nfs: ['88'] }], [], '2026-10-01', 30, 15, new Set(['88']));
-    expect(novo.fluxos[0].data).toBe('2026-10-28');
-  });
-  it('R65: componente com uma NF recebida depois da base e outra não → continua não conciliado (todas, nunca alguma)', () => {
-    const r = conciliarCompromissos(
-      [
-        { pedidoId: 1, valorTotal: 6_000, dataPedido: '2026-09-11', nfs: ['88'] },
-        { pedidoId: 2, valorTotal: 4_000, dataPedido: '2026-09-11', nfs: ['88', '99'] },
-      ],
-      [], '2026-10-01', 0, 15, new Set(['88']),
-    );
-    expect(r.naoConciliado).toBe(10_000);
-  });
-  it('R65: pedido sem NF não se beneficia (nada a receber prova o faturamento)', () => {
-    const r = conciliarCompromissos([{ pedidoId: 7, valorTotal: 8_000, dataPedido: '2026-09-11', nfs: [] }], [], '2026-10-01', 3, 15, new Set(['88']));
-    expect(r.naoConciliado).toBe(8_000);
-  });
-  it('R65: NF com título (mesmo descontando 0) segue a regra antiga — a isenção é só para título AUSENTE', () => {
-    const r = conciliarCompromissos([{ pedidoId: 9, valorTotal: 10_000, dataPedido: '2026-09-11', nfs: ['88'] }], [{ nf: '88', valor: 0 }], '2026-10-01', 0, 15, new Set(['88']));
-    expect(r.naoConciliado).toBe(10_000);
-  });
   it('idadeLimiteDias inválida é rejeitada (fail-closed, mesmo sem pedidos)', () => {
     expect(() => conciliarCompromissos([], [], '2026-10-01', 0, Number.NaN)).toThrow('idadeLimiteDias inválida');
     expect(() => conciliarCompromissos([], [], '2026-10-01', 0, -1)).toThrow('idadeLimiteDias inválida');

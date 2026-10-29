@@ -17,10 +17,6 @@ export function normalizarNf(nf: string): string {
  * 'compromisso_a_faturar' e NÃO conta em `naoConciliado` (a lista de NFs do pedido é a de hoje — look-ahead;
  * NF recente sem título as-of é só "ainda não titulada"). Os mesmos casos com idade ≥ limite →
  * 'compromisso_nao_conciliado'.
- * R65: componente cujas NFs NÃO têm título nenhum e TODAS estão em `nfsRecebidasDepoisDaBase` (t4 conhecido posterior
- * ao snapshot) também está "a faturar", qualquer que seja a idade: o título do CP só nasce no recebimento (medido
- * 2026-10-21: 112 de 113 títulos Sayerlack com t4 nasceram depois dele), então ausência de título é o esperado.
- * Título existente que não desconta (não representado na base) NÃO ganha a isenção — é a ambiguidade de verdade.
  */
 export function conciliarCompromissos(
   pedidos: PedidoDisparado[],
@@ -28,7 +24,6 @@ export function conciliarCompromissos(
   inicio: DataISO,
   lagDias: number,
   idadeLimiteDias: number,
-  nfsRecebidasDepoisDaBase: ReadonlySet<string> = new Set(),
 ): { fluxos: Fluxo[]; naoConciliado: number } {
   if (!Number.isFinite(idadeLimiteDias) || idadeLimiteDias < 0) throw new Error('idadeLimiteDias inválida');
   const titulosPorNf = new Map<string, number>();
@@ -37,7 +32,6 @@ export function conciliarCompromissos(
     if (k === '') continue; // NF vazia/zero não identifica nada (coringa fail-open)
     titulosPorNf.set(k, (titulosPorNf.get(k) ?? 0) + t.valor);
   }
-  const recebidasDepois = new Set([...nfsRecebidasDepoisDaBase].map(normalizarNf).filter((x) => x !== ''));
   const pai = new Map<string, string>();
   const achar = (x: string): string => {
     while (pai.get(x) !== x) x = pai.get(x)!;
@@ -68,16 +62,12 @@ export function conciliarCompromissos(
     const titulado = [...c.nfs].reduce((s, nf) => s + (titulosPorNf.get(nf) ?? 0), 0);
     const residuo = c.valor - titulado;
     if (residuo <= 0) continue;
-
+    const dataPrevista = addDias(c.data, lagDias);
+    const data = dataPrevista < inicio ? inicio : dataPrevista;
     // Sem NF válida, ou NF sem nenhum título casado: nada comprova o faturamento (spec §6.2) …
     const semComprovacao = c.nfs.size === 0 || titulado === 0;
     // … mas recente = ainda não faturou/titulou (R28/R30) → a faturar, entra inteiro sem contar no limiar.
-    const aindaSemRecebimento = c.nfs.size > 0 && [...c.nfs].every((nf) => !titulosPorNf.has(nf) && recebidasDepois.has(nf));
-    const recente = diffDias(c.data, inicio) < idadeLimiteDias;
-    const aFaturar = semComprovacao && (recente || aindaSemRecebimento);
-    // R65 (Codex P1): o isento pela R65 (velho, recebido depois da base) tem vencimento desconhecido → 1º dia
-    const dataPrevista = addDias(c.data, lagDias);
-    const data = semComprovacao && !recente && aindaSemRecebimento ? inicio : dataPrevista < inicio ? inicio : dataPrevista;
+    const aFaturar = semComprovacao && diffDias(c.data, inicio) < idadeLimiteDias;
     const naoConc = semComprovacao && !aFaturar;
     if (naoConc) naoConciliado += residuo;
     const camada = aFaturar ? 'compromisso_a_faturar' : naoConc ? 'compromisso_nao_conciliado' : 'compromisso_conciliado';

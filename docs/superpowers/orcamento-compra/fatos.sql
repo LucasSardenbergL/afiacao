@@ -62,17 +62,6 @@ receb_sem_t4 as (
     and not exists (select 1 from purchase_orders_tracking t
                     where t.nfe_chave_acesso = r.chave_acesso and t.t4_data_recebimento is not null)
 ),
--- R65: menor t4 de cada NF do tracking. Só NF com t4 em TODAS as linhas (linha sem t4 = parte não recebida → a NF
--- inteira fica fora: sem isenção). O título do CP Sayerlack nasce no recebimento (112/113 medidos em 2026-10-21).
--- (Codex P2) mesma normalização do TS ANTES de agregar (trim + zeros à esquerda) e só NF da Sayerlack na Oben.
-t4_por_nf as (
-  select ltrim(btrim(t.nfe_numero), '0') as nf, min(t.t4_data_recebimento) as t4
-  from purchase_orders_tracking t
-  where t.empresa = 'OBEN' and t.fornecedor_nome ilike '%sayerlack%'
-    and nullif(ltrim(btrim(t.nfe_numero), '0'), '') is not null
-  group by 1
-  having count(*) = count(t.t4_data_recebimento)
-),
 -- Recebimentos reais = tracking t4_data_recebimento × quantidades do pedido Omie (spec §7).
 -- (nfe_recebimento_itens só existe desde 2026-07 e quantidade_convertida veio 100% nula — não serve.)
 -- Pedido recebido sem t4/sem produtos some daqui; o erro de fechamento por SKU pega o buraco.
@@ -217,7 +206,6 @@ select 'json|' || jsonb_build_object(
   'ciclos', (select coalesce(json_agg(c order by c.id), '[]') from ciclos c),
   'linhas', (select coalesce(json_agg(l order by l.raiz, l.pedido_id, l.sku_codigo_omie), '[]') from linhas l),
   'demanda', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda d),
-  't4_por_nf', (select coalesce(json_agg(x order by x.nf), '[]') from t4_por_nf x),
   'recebimentos_sem_t4', (select coalesce(json_agg(x.nf order by x.nf), '[]') from receb_sem_t4 x),
   'falhas_snapshot', (select coalesce(json_agg(x.dia order by x.dia), '[]') from falhas_snapshot x),
   'demanda_fisica', (select coalesce(json_agg(d order by d.sku, d.data), '[]') from demanda_fisica d),
