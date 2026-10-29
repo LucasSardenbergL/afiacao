@@ -376,8 +376,10 @@ export function montarItensLT(
  * `count(t4) = count(*)` da view falha e o documento está ANULADO em d. Senão, `avaliar` consolida as cópias existentes
  * (cada campo com um único valor). Saída: os trechos `desde < d ≤ ate` (sem `ate` = daí em diante) em que o documento dá
  * valor, com trechos vizinhos de valor igual fundidos. Os pontos de mudança são os dias de t1 e de t4 das cópias.
- * Cópias da mesma NF pertencem a pedidos faturados por ela: todas têm t1 antes do 1º t4, então, na prática, em d > 1º t4
- * todas existem (a regra coincide com a da view lida hoje, exceto antes de a NF chegar).
+ * O t1 (data do pedido) é um substituto da data em que a cópia passou a existir; não há histórico de criação. Medido em
+ * 28/10: em 31 documentos alguma cópia tem t1 depois do 1º t4, mas a leitura literal (todas as cópias existem sempre)
+ * diverge desta regra em só 1 trecho de 1 SKU (abril). Pendência do Codex (N3): uma cópia criada depois com t1 antigo
+ * ainda apaga o passado.
  */
 export function trechosNoCorte<C extends { t1: Data | null; t4: Data | null }, R>(copias: readonly C[], avaliar: (existentes: readonly C[]) => R | null): { desde: Data; ate?: Data; valor: R }[] {
   const pontos = [...new Set(copias.flatMap((c) => [c.t1, c.t4]).filter((x): x is Data => x !== null))].sort();

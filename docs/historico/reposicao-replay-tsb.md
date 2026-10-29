@@ -1,37 +1,64 @@
-# Replay TSB do estoque de segurança — NO-GO pela régua, e o que ele ensinou (2026-10-21)
+# Replay TSB do estoque de segurança — simulador consertado pela revisão do Codex, rodada oficial pendente (2026-10-29)
 
 **Entrega:** o simulador walk-forward `scripts/reposicao-replay/` (projeto 3; spec `docs/superpowers/specs/2026-10-20-tsb-estoque-seguranca-design.md`, plano `docs/superpowers/plans/2026-10-21-tsb-estoque-seguranca-replay.md`). Ele compara o motor atual (F0) com F1 (gaussiana em 63 du), F2 (TSB com tamanhos empíricos) e F3 (quantil de blocos) na coorte Sayerlack/OBEN fixada em 2026-05-01 (153 SKUs, 141 intermitentes). Janelas: aquecimento até 31/01, calibração de 01/02 a 30/04 e avaliação de 01/05 a 20/10/2026. Banco só lido via `psql-ro`; dados em `$REPLAY_DADOS`, fora do repositório.
 
-**Relatório completo (privado, com valores absolutos):** https://claude.ai/artifact/NwMRPYBcCHdcwnP5BZQ1Ts
+**Relatório da rodada de 28/10 (privado, anterior aos consertos e substituído pela rodada oficial pendente):** https://claude.ai/artifact/NwMRPYBcCHdcwnP5BZQ1Ts
 
 ## Veredito
 
-- **Oficial: NO-GO `INVIAVEL_NA_CALIBRACAO`.** O próprio F0 atende 93,49% das linhas de A na calibração, abaixo do piso de 98%. Os SKUs suaves e erráticos (12 na coorte) ficam no F0 em todas as variantes (§5.3); os de A atendem 92,49%. Como o piso e o alvo são medidos na célula da classe inteira, nenhum quantil chega lá: com quantil 0,999, a F1 vai a 95,36% e a F2 a 95,5%. A régua não foi afrouxada.
-- **Informativo, não oficial (R27, decisão do Lucas): NO-GO.** Calibrando e avaliando só nos intermitentes, a candidata é a F1 (quantis 0,995 / 0,97 / 0,925):
-  - A sobe +3,01 p.p. (LI +1,94) e B +1,43 p.p.; C fica em −0,81 p.p., INCERTO.
-  - O capital piora 15,2% (LI −17,4%, LS −12,9%), FALHA nos três cenários de falta.
-  - A economia a 25% a.a. é negativa em espera e no misto (60% espera, 30% compra emergencial, 10% cancelamento; 7 de 9 células da grade com FALHA; as 2 de emergencial 20% com atraso ficam incertas) e positiva só no cancelamento puro.
-  - Leitura: nos intermitentes, a F1 compra serviço com capital, e a taxa não paga a troca.
+**Pendente: a rodada oficial não foi refeita depois dos consertos do Codex.** Os números da rodada de 28/10, inclusive o NO-GO `INVIAVEL_NA_CALIBRACAO`, foram calculados com o código anterior e **não valem mais**. Os consertos mudam a abertura, o LT, a classe da célula, a escolha de embalagem, a valoração do capital e o gate.
+
+A rodada oficial depende de duas coisas fora do código:
+- a posição de estoque datada do Omie (`extrair-omie-posicao.ts`, com a credencial OBEN em `~/.config/afiacao/omie-oben.env`), que é a âncora da abertura (R31) e dá o CMC datado (R45);
+- uma extração limpa entre o motor do dia e a passada seguinte, por volta de 19:00 a 22:15 em São Paulo (R40).
+
+Sem a âncora, a rodada para com `ANCORA_OMIE_AUSENTE`, e o modo `--informativo-saldo-hoje` sai rotulado NÃO OFICIAL.
+
+## Revisão adversarial do Codex (3 consultas de código)
+
+1. **REPROVA, 14 P1.** O founder mandou consertar os 14. Os rulings R2, R7, R9, R10, R22 e o piso 0 da R24 foram revogados onde contrariavam a §5.9.
+2. **REPROVA.** 6 dos 14 fechados, 8 parciais e 7 P1 novos introduzidos pelos consertos.
+3. **REPROVA, a última consulta por decisão do founder.** Tudo fechado, exceto três P1, que ficam como **pendência**:
+   - **N1:** um pedido encerrado no Omie abaixo de 95% do recebido ainda fecha, e a quantidade pedida vem do `raw_data` atual;
+   - **N3:** a data do pedido (`t1`) é usada como data de existência da cópia na consolidação point-in-time;
+   - **N5:** valor gravado ausente reduz o denominador do gate em vez de bloquear.
 
 ## O que vale levar adiante
 
-- **O gargalo de serviço em A é o F0 nos suaves e a defasagem da média de 90 dias.** O fill semanal de A no F0 cai de cerca de 97% para 79–93% em abril, quando a demanda de A sobe 1,27× em março e 1,56× em abril sobre fevereiro. O LT sorteado médio nos pedidos de A, 11,1 du, também fica acima dos 9,2 du do parâmetro.
-- **A operação real compra acima do motor:** estoque médio real ≈ 1,80× o do F0 simulado, e unidades recebidas ≈ 1,72×. Como a paridade de ES/PP/máximo passa, o F0 simulado é o motor ao pé da letra; a diferença está em quem compra.
-- **Paridade do F0 com a produção (R19 e R21):** ES 100%, PP 97,5%, máximo 96,7% (0,76% do valor) contra a view. A decisão de compra bate em 8/8 com o PP e o máximo gravados. O único 7/8 de estado é uma edição humana fora da fórmula.
-- **Duplicatas em `sku_leadtime_history`:** a produção já deduplica (`v_sku_leadtime_efetivo`), então não houve chip. A nota está em [reposicao.md](../agent/reposicao.md).
+- **Paridade do F0 com a produção depois dos consertos** (dado composto de 28/10, declarado):
+  - ES 100%, PP 99,16% e máximo 99,16%;
+  - decisão 14/14;
+  - parâmetros conferidos para os 181 donos.
+
+  Isso depende de dois pontos:
+  - a data da extração em São Paulo, já que a extração noturna em UTC simulava uma passada que ainda não tinha rodado (R40);
+  - a janela da demanda igual à da view, de hoje−90 até hoje (R41).
+
+  O máximo contra o valor gravado ficou em 95,18%, a 1 SKU do limiar.
+- **O LT do F0 replica `v_sku_leadtime_efetivo` point-in-time (R43, R51).** A amostra do replay só coincide com a de produção (949 observações) se o replay anular os documentos em que alguma cópia não tem t4, como faz a view.
+- **Entradas da mesma NF:** cópias com a mesma quantidade sob `tracking_id` distintos são uma entrada física só (R52). Contá-las em separado inflava em 6,7% as unidades recebidas.
+- **Achado de produto:** o motor ainda sugere compra de SKU já substituído (11892839175 → 12101724100, consolidado em 05/07), com parâmetros congelados.
+- **Duplicatas em `sku_leadtime_history`:** a produção já deduplica (`v_sku_leadtime_efetivo`). A nota está em [reposicao.md](../agent/reposicao.md).
 
 ## Método (rulings no ledger da sessão; os que mudam a leitura)
 
-- **R7, R9, R17:** o LT vem de um recebimento por documento (R7); o recebimento físico é deduplicado por (sku, t4, qtd) (R9); e o t1 "fabricado" (t1 = t2), que a produção anula, sai da amostra (R17).
+- **Revogados pela revisão do Codex:**
+  - R2 (classe da célula fixa; passa a ser a classe do dia);
+  - R7 (corte de 29 du e fechamento por qualquer t4);
+  - R9 (dedup por (sku, t4, qtd));
+  - R10 (âncora no saldo de hoje);
+  - R22 (galão fora da simulação);
+  - o piso 0 da margem na R24.
+- **R31 e R45:** a abertura é a posição Omie medida, sem ajuste. O capital é valorado por dia: cmc_linha anterior, depois nCMC Omie datado, depois preco_compra_real, depois null. Sem preço, o resultado é INCONCLUSIVO.
+- **R46 e R47:** linhas sem a quantidade do pedido saem do sorteio de LT, com sensibilidade, por decisão do founder. O encerramento no Omie só vale a partir da sua data.
 - **R16:** os SKUs com demanda via ficha técnica saem da coorte.
-- **R24:** numa cancelada sem CMC, a margem entra no pior caso para a alternativa (0% das linhas nesta rodada).
 - **R25:** o capital é exigido nos três cenários de falta.
-- **R26:** o gate de economia usa só 25% a.a.; 20% e 30% são sensibilidade.
-- **R23:** o LT sai levemente otimista no fim da calibração (censura à direita), igual nos dois braços.
+- **R26:** o gate de economia usa só 25% a.a.; 20% e 30% ficam como sensibilidade.
+- **R50:** capital null nunca vira INVIAVEL.
 
 ## Validação
 
 - Suíte `scripts/reposicao-replay`, typecheck, lint, knip e lint:shell com rc=0.
 - Falsificação por camada em cada task, com controle verde na mesma invocação.
 - Revisão de spec e qualidade por task, com fix rounds.
-- Codex adversarial do código: ver o corpo do PR.
+- Codex adversarial do código: 3 consultas, ver acima e o corpo do PR.
