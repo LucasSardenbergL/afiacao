@@ -164,6 +164,11 @@ export interface Dados {
    * fixture sintética (aí o F0 aproxima pelos itens de LT documentais, como antes).
    */
   ltMotor?: ObsLtMotorBruta[];
+  /**
+   * R45: CMC contábil do ERP (`nCMC` de ListarPosEstoque) nas posições datadas do Omie (20/10, 31/01, 30/04), por data
+   * crescente; o capital usa a mais recente com data ≤ d. Ausente/vazio = sem posição extraída.
+   */
+  cmcOmie?: { data: Data; cmc: Map<string, number> }[];
   hashDados: string;
 }
 

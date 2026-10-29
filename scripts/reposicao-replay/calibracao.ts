@@ -63,6 +63,7 @@ export function somarSomas(acc: SomasSemanais | null, s: SomasSemanais): SomasSe
   mais(acc.estoqueUnidadesDias, s.estoqueUnidadesDias);
   mais(acc.estoqueCmcDiasGrupos, s.estoqueCmcDiasGrupos);
   mais(acc.estoqueUnidadesDiasCompraReal, s.estoqueUnidadesDiasCompraReal);
+  mais(acc.estoqueUnidadesDiasCmcOmie, s.estoqueUnidadesDiasCmcOmie);
   mais(acc.entregue.imediata, s.entregue.imediata);
   mais(acc.entregue.tardia, s.entregue.tardia);
   mais(acc.entregue.emergencial, s.entregue.emergencial);
@@ -114,6 +115,7 @@ export function mediaSomas(soma: SomasSemanais, n: number): SomasSemanais {
   div(m.estoqueUnidadesDias);
   div(m.estoqueCmcDiasGrupos);
   div(m.estoqueUnidadesDiasCompraReal);
+  div(m.estoqueUnidadesDiasCmcOmie);
   div(m.entregue.imediata);
   div(m.entregue.tardia);
   div(m.entregue.emergencial);

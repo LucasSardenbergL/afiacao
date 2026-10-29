@@ -135,24 +135,24 @@ describe('posição datada do Omie (âncora do estado inicial, §5.9)', () => {
     const sem = carregarDados(dir);
     expect(sem.posicaoAbertura).toBeNull();
     expect(sem.posicaoConferencia).toBeNull();
-    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3.5\n12|"B|x"|\n13|C|0\nfim|ok\n');
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|3.5|\n12|"B|x"||\n13|C|0|\nfim|ok\n');
     const com = carregarDados(dir);
     expect([...(com.posicaoAbertura ?? [])]).toEqual([['11', 3.5], ['13', 0]]);
     expect(com.posicaoConferencia).toBeNull();
     expect(com.hashDados).not.toBe(sem.hashDados);
-    writeFileSync(join(dir, 'posicao_omie_2026-04-30.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|1\nfim|ok\n');
+    writeFileSync(join(dir, 'posicao_omie_2026-04-30.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|1|\nfim|ok\n');
     expect([...(carregarDados(dir).posicaoConferencia ?? [])]).toEqual([['11', 1]]);
     expect(carregarDados(dir).posicaoAquecimentoFim).toBeNull();
-    writeFileSync(join(dir, 'posicao_omie_2026-01-31.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|2\nfim|ok\n');
+    writeFileSync(join(dir, 'posicao_omie_2026-01-31.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|2|\nfim|ok\n');
     const tres = carregarDados(dir);
     expect([...(tres.posicaoAquecimentoFim ?? [])]).toEqual([['11', 2]]);
     expect(tres.hashDados).not.toBe(com.hashDados);
   });
   it('posição sem marcador ou com nCodProd duplicado é CSV inválido', () => {
     const dir = monta();
-    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3\n');
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|3|\n');
     expect(() => carregarDados(dir)).toThrow(/CSV_INVALIDO:posicao_omie_2025-10-20\.csv/);
-    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3\n11|A|4\nfim|ok\n');
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|3|\n11|A|4|\nfim|ok\n');
     expect(() => carregarDados(dir)).toThrow(/nCodProd duplicado/);
   });
 });
@@ -467,5 +467,21 @@ describe('Fix Codex leva C round 1 — R40 (data de SP e passada do motor) e R43
       { sku: 'S1', fornecedor: null, t2: '2026-03-02', t4: '2026-03-05', lt: 3 },
     ]);
     expect(() => carregarDados(monta({ lt_motor: ['S1|77|2026-01-06||5'] }))).toThrow(/lt_motor\.csv/); // sem t4: inválido
+  });
+});
+
+describe('Fix Codex leva C round 3 — R45 (nCMC da posição datada do Omie)', () => {
+  it('R45: o nCMC de cada posição datada vira cmcOmie (por data, crescente); vazio fica fora (nunca 0)', () => {
+    const dir = monta();
+    expect(carregarDados(dir).cmcOmie).toEqual([]);
+    writeFileSync(join(dir, 'posicao_omie_2026-04-30.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|1|7.5\n12|B|2|\nfim|ok\n');
+    writeFileSync(join(dir, 'posicao_omie_2026-01-31.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|2|6\nfim|ok\n');
+    const d = carregarDados(dir);
+    expect(d.cmcOmie!.map((x) => [x.data, [...x.cmc]])).toEqual([
+      ['2026-01-31', [['11', 6]]],
+      ['2026-04-30', [['11', 7.5]]],
+    ]);
+    writeFileSync(join(dir, 'posicao_omie_2026-01-31.csv'), 'nCodProd|cCodigo|nSaldo|nCMC\n11|A|2|0\nfim|ok\n');
+    expect(() => carregarDados(dir)).toThrow(/nCMC ≤ 0/); // o extrator grava vazio; 0 no arquivo é fabricação
   });
 });

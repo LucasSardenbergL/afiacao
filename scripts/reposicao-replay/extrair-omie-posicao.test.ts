@@ -58,7 +58,7 @@ describe('extrair-omie-posicao', () => {
       return { corpo: { produtos: p === 1 ? [{ nCodProd: 7, cCodigo: 'X', nSaldo: 2 }] : [] } };
     });
     const r = await paginarPosicao(criarChamada(CRED, t, async (ms) => void esperas.push(ms)), '2025-10-20');
-    expect(r.linhas).toEqual([{ nCodProd: 7, cCodigo: 'X', nSaldo: 2 }]);
+    expect(r.linhas).toEqual([{ nCodProd: 7, cCodigo: 'X', nSaldo: 2, nCMC: null }]);
     expect(esperas).toEqual([1000, 2000]);
   });
 
@@ -92,7 +92,20 @@ describe('extrair-omie-posicao', () => {
   });
 
   it('CSV: nSaldo ausente fica vazio (nunca 0), ordenado por nCodProd, com marcador fim|ok', () => {
-    expect(paraCsv([{ nCodProd: 20, cCodigo: 'B|1', nSaldo: null }, { nCodProd: 10, cCodigo: 'A', nSaldo: 0 }])).toBe('nCodProd|cCodigo|nSaldo\n10|A|0\n20|"B|1"|\nfim|ok\n');
+    expect(paraCsv([{ nCodProd: 20, cCodigo: 'B|1', nSaldo: null, nCMC: null }, { nCodProd: 10, cCodigo: 'A', nSaldo: 0, nCMC: 3.5 }])).toBe('nCodProd|cCodigo|nSaldo|nCMC\n10|A|0|3.5\n20|"B|1"||\nfim|ok\n');
+  });
+  it('R45: o nCMC da posição datada é gravado; ausente, não numérico ou ≤ 0 vira vazio (nunca 0)', async () => {
+    const produtos = [
+      { nCodProd: 1, cCodigo: 'a', nSaldo: 5, nCMC: 12.5 },
+      { nCodProd: 2, cCodigo: 'b', nSaldo: 5, nCMC: 0 },
+      { nCodProd: 3, cCodigo: 'c', nSaldo: 5, nCMC: -1 },
+      { nCodProd: 4, cCodigo: 'd', nSaldo: 5 },
+      { nCodProd: 5, cCodigo: 'e', nSaldo: 5, nCMC: Number.NaN },
+    ];
+    const { t } = falso((p) => ({ corpo: { produtos: p === 1 ? produtos : [] } }));
+    const r = await paginarPosicao(criarChamada(CRED, t, semEspera), '2026-01-31');
+    expect(r.linhas.map((l) => l.nCMC)).toEqual([12.5, null, null, null, null]);
+    expect(paraCsv(r.linhas)).toBe('nCodProd|cCodigo|nSaldo|nCMC\n1|a|5|12.5\n2|b|5|\n3|c|5|\n4|d|5|\n5|e|5|\nfim|ok\n');
   });
 
   it('datas padrão (R31): véspera do aquecimento (abertura), fim do aquecimento e fim da calibração (conferência)', () => {

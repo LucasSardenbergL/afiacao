@@ -532,9 +532,10 @@ function hashDosCsvs(dir: string): string {
  * Posição datada do Omie (`nCodProd|cCodigo|nSaldo`, marcador fim|ok) → mapa SKU → saldo. `nCodProd` = sku_codigo_omie.
  * Arquivo ausente => null (opcional). nSaldo vazio fica fora do mapa (ausente ≠ 0). nCodProd repetido => CSV inválido.
  */
-function lerPosicaoOmie(dir: string, nome: string): Map<string, number> | null {
+/** Saldos (`nSaldo`) do CSV de posição; os CMCs (`nCMC`, R45) vão para `cmcs` se fornecido. Vazio fica fora (nunca 0). */
+function lerPosicaoOmie(dir: string, nome: string, cmcs?: Map<string, number>): Map<string, number> | null {
   if (!existsSync(join(dir, `${nome}.csv`))) return null;
-  const t = lerTabela(dir, nome, ['nCodProd', 'cCodigo', 'nSaldo'], false);
+  const t = lerTabela(dir, nome, ['nCodProd', 'cCodigo', 'nSaldo', 'nCMC'], false);
   const out = new Map<string, number>();
   const vistos = new Set<string>();
   for (const r of t.linhas) {
@@ -544,8 +545,22 @@ function lerPosicaoOmie(dir: string, nome: string): Map<string, number> | null {
     vistos.add(cod);
     const v = numOuNull(t.arquivo, 'nSaldo', r[t.col('nSaldo')]);
     if (v !== null) out.set(cod, v);
+    const c = numOuNull(t.arquivo, 'nCMC', r[t.col('nCMC')]);
+    if (c !== null && !(c > 0)) invalido(t.arquivo, `nCMC ≤ 0 em ${cod} (o extrator grava vazio)`);
+    if (c !== null && cmcs) cmcs.set(cod, c);
   }
   return out;
+}
+
+/** R45: o nCMC das posições datadas do Omie (as três da âncora/conferência), por data crescente. */
+function lerCmcOmie(dir: string): NonNullable<Dados['cmcOmie']> {
+  const out: NonNullable<Dados['cmcOmie']> = [];
+  for (const nome of [CSV_POSICAO_ABERTURA, CSV_POSICAO_AQUECIMENTO_FIM, CSV_POSICAO_CONFERENCIA]) {
+    const cmc = new Map<string, number>();
+    if (lerPosicaoOmie(dir, nome, cmc) === null) continue;
+    if (cmc.size > 0) out.push({ data: nome.slice('posicao_omie_'.length), cmc });
+  }
+  return out.sort((a, b) => (a.data < b.data ? -1 : 1));
 }
 
 /** `dataExtracao` vem da 1ª linha de extracao.log (carimbo UTC do extrair.sh). */
@@ -777,6 +792,7 @@ export function carregarDados(dir: string): DadosCarregados {
   const precosEmbalagem = lerPrecosEmbalagem(dir);
 
   const motor = lerMotor(dir, dataExtracao);
+  const cmcOmie = lerCmcOmie(dir);
   const ltMotor = lerLtMotor(dir);
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, motor, ltMotor, hashDados };
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, motor, ltMotor, cmcOmie, hashDados };
 }

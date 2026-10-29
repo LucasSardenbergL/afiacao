@@ -8,7 +8,8 @@
 //   (2026-01-31) e o fim da calibração (2026-04-30) — as duas últimas só para a CONFERÊNCIA (R31).
 // Credenciais: ~/.config/afiacao/omie-oben.env (OMIE_OBEN_APP_KEY, OMIE_OBEN_APP_SECRET). A chave NUNCA é impressa,
 // logada nem gravada: toda mensagem de erro passa por `redigir`.
-// Saída: $REPLAY_DADOS/posicao_omie_<data>.csv — `nCodProd|cCodigo|nSaldo`, cabeçalho, última linha `fim|ok`.
+// Saída: $REPLAY_DADOS/posicao_omie_<data>.csv — `nCodProd|cCodigo|nSaldo|nCMC`, cabeçalho, última linha `fim|ok`.
+// R45: `nCMC` = CMC contábil do ERP na data (valoração point-in-time do capital); ausente ou ≤ 0 fica VAZIO.
 // `nCodProd` é o `omie_codigo_produto` = `sku_codigo_omie` (a chave `sku` do replay), como a edge grava em cmc_snapshot.
 // Saldo ausente na resposta fica VAZIO (ausente ≠ zero).
 // Exit: 0 ok · 2 sem arquivo de credenciais (nenhuma chamada feita) · 3 credencial ilegível ou pasta de saída DENTRO do
@@ -66,6 +67,8 @@ export interface ProdutoPosicao {
   nCodProd?: number;
   cCodigo?: string;
   nSaldo?: number;
+  /** CMC contábil do ERP na data da posição (R45). */
+  nCMC?: number;
 }
 export interface RespostaPosicao {
   produtos?: ProdutoPosicao[];
@@ -120,6 +123,8 @@ export interface LinhaPosicao {
   nCodProd: number;
   cCodigo: string;
   nSaldo: number | null;
+  /** R45: CMC na data; ausente, não numérico ou ≤ 0 ⇒ null (nunca 0). */
+  nCMC: number | null;
 }
 
 /** AAAA-MM-DD → DD/MM/AAAA. */
@@ -151,7 +156,9 @@ export async function paginarPosicao(chamar: Chamada, dataIso: string, maxPagina
       if (!Number.isSafeInteger(cod) || cod <= 0) throw new Error(`nCodProd inválido na página ${pagina} (${dataIso})`);
       if (vistos.has(cod)) throw new Error(`nCodProd ${cod} repetido entre páginas (${dataIso}) — abortando`);
       vistos.add(cod);
-      linhas.push({ nCodProd: cod, cCodigo: typeof p.cCodigo === 'string' ? p.cCodigo : '', nSaldo: typeof p.nSaldo === 'number' && Number.isFinite(p.nSaldo) ? p.nSaldo : null });
+      linhas.push({ nCodProd: cod, cCodigo: typeof p.cCodigo === 'string' ? p.cCodigo : '', nSaldo: typeof p.nSaldo === 'number' && Number.isFinite(p.nSaldo) ? p.nSaldo : null,
+        nCMC: typeof p.nCMC === 'number' && Number.isFinite(p.nCMC) && p.nCMC > 0 ? p.nCMC : null,
+      });
     }
   }
 }
@@ -161,8 +168,8 @@ const campoCsv = (s: string): string => (/[|"\r\n]/.test(s) ? `"${s.replace(/"/g
 export function paraCsv(linhas: LinhaPosicao[]): string {
   const corpo = [...linhas]
     .sort((a, b) => a.nCodProd - b.nCodProd)
-    .map((l) => `${l.nCodProd}|${campoCsv(l.cCodigo)}|${l.nSaldo === null ? '' : String(l.nSaldo)}`);
-  return ['nCodProd|cCodigo|nSaldo', ...corpo, 'fim|ok'].join('\n') + '\n';
+    .map((l) => `${l.nCodProd}|${campoCsv(l.cCodigo)}|${l.nSaldo === null ? '' : String(l.nSaldo)}|${l.nCMC === null ? '' : String(l.nCMC)}`);
+  return ['nCodProd|cCodigo|nSaldo|nCMC', ...corpo, 'fim|ok'].join('\n') + '\n';
 }
 
 /** Datas padrão (R31): véspera do aquecimento (fim do dia = abertura de INICIO_AQUECIMENTO); fim do aquecimento e fim da

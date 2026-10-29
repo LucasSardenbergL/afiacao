@@ -42,7 +42,7 @@ export interface Rodada {
   validacaoClasse: ValidacaoClasse;
   calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' | 'INDETERMINADA';
     /** R44: frações do capital do F0 na calibração por fonte de preço e SKUs sem preço / pelo preco_compra_real. */
-    capitalF0?: { fontes: { cmc: number; compraReal: number; semPreco: number } | null; skusSemPreco: number; skusCompraReal: number };
+    capitalF0?: { fontes: FontesCapital | null; skusSemPreco: number; skusCompraReal: number; skusCmcOmie: number };
   };
   fronteira: { formula: Formula; params: ParamsFormula; fill: Record<Classe | 'total', number | null>; reducao: number | null }[];
   excluidosDados: { sku: string; motivo: string }[];
@@ -82,6 +82,8 @@ export interface Rodada {
     skusSemCmc: string[];
     /** R44: SKUs valorados pelo preco_compra_real. */
     skusCompraReal: string[];
+    /** R45: SKUs valorados pelo nCMC da posição Omie datada. */
+    skusCmcOmie: string[];
     excluidosSimulacao: { sku: string; motivo: string }[];
     linhasIgnoradas: number;
   } | null;
@@ -98,11 +100,13 @@ export interface Rodada {
 /** R44: frações das unidades × dias de estoque por fonte do preço de capital. */
 export interface FontesCapital {
   cmc: number;
+  /** R45: nCMC da posição datada do Omie ("cmc Omie datado"). */
+  cmcOmie: number;
   compraReal: number;
   semPreco: number;
 }
 const textoFontes = (f: FontesCapital | null | undefined): string =>
-  f ? `cmc ${pct(f.cmc)} · preco_compra_real ${pct(f.compraReal)} · sem preço ${pct(f.semPreco)}` : 'n/d';
+  f ? `cmc ${pct(f.cmc)} · cmc Omie datado ${pct(f.cmcOmie)} · preco_compra_real ${pct(f.compraReal)} · sem preço ${pct(f.semPreco)}` : 'n/d';
 
 export interface Diagnostico {
   /** F0 na calibração (50 reps, LT empírico, espera): fill de A, A-alterados e A-suaves, com as linhas observadas. */
@@ -162,7 +166,7 @@ export const LIMITES: readonly string[] = [
   '**Terminal nas somas semanais (achado 12)** — o custo terminal (backlog do fim custeado como emergencial + atraso) é soma da ÚLTIMA semana: só entra na reamostragem que a sorteia.',
   '**R25** — critério 3 (capital) e a redução do estresse avaliados nos TRÊS cenários de falta; qualquer FALHA → NO-GO.',
   '**R26** — critério 5 no gate só com a taxa de 25% a.a. (grade 3×3 × 3 cenários); 20% e 30% são sensibilidade (tabela à parte).',
-  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). **R44:** SKU sem CMC é valorado pelo preco_compra_real point-in-time (documentos coerentes, origem normal, t4 antes do corte: 01/05 na calibração, a extração na avaliação), a cadeia documental da produção sem a venda × 0,55 — preço de compra ≠ CMC contábil, igual nos dois braços; a fração do capital por fonte aparece. O que segue sem preço NÃO some (achado 10): capital, estresse e economia daquele recorte viram INCERTO. A margem da cancelada sem CMC (achado 11) não muda: margem não é capital.',
+  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). **R45/R44:** SKU sem esse CMC é valorado, dia a dia, pelo nCMC (CMC contábil do ERP) da posição datada do Omie mais recente com data ≤ o dia (20/10, 31/01, 30/04) e, sem ela, pelo preco_compra_real dos documentos coerentes (origem normal) com t4 < o dia — a cadeia documental da produção, sem a venda × 0,55; preço de compra ≠ CMC contábil, igual nos dois braços; a fração do capital por fonte aparece. O que segue sem preço NÃO some (achado 10): capital, estresse e economia daquele recorte viram INCERTO. A margem da cancelada sem CMC (achado 11) não muda: margem não é capital.',
   '**LT exógeno**: as fórmulas aprendem LT só de recebimentos históricos com t4 < d, nunca de chegadas simuladas (permite pré-computar os níveis).',
   '**Sem feriados** no calendário de LT/revisão (como `dias_uteis_entre` da produção).',
   '**O replay não mede a operação real** (spec §10): separação, aceitação de troca — cabe à sombra e ao piloto. Um GO autoriza sombra/piloto, não a troca do motor.',
@@ -224,7 +228,7 @@ function secoesDoBloco(
     ),
   );
   const cf = b.calibracao.capitalF0;
-  if (cf) s(`Capital do F0 na calibração por fonte do preço (R44; unidades × dias): ${textoFontes(cf.fontes)}. SKUs pelo preco_compra_real: ${cf.skusCompraReal}; SKUs sem preço: ${cf.skusSemPreco} (com estoque sem preço, a calibração fica INCONCLUSIVA — I2).`);
+  if (cf) s(`Capital do F0 na calibração por fonte do preço (R44; unidades × dias): ${textoFontes(cf.fontes)}. SKUs pelo cmc Omie datado: ${cf.skusCmcOmie}; SKUs pelo preco_compra_real: ${cf.skusCompraReal}; SKUs sem preço em algum dia: ${cf.skusSemPreco} (com estoque sem preço, a calibração fica INCONCLUSIVA — I2).`);
   s(`Escolhida: **${b.calibracao.candidata}** (menor estoque viável; uma mais simples, F1 < F3 < F2, a ≤ 1 p.p. de capital fica com a vaga).`);
 
   // 3. fronteira (sempre: vem da calibração)
@@ -453,7 +457,7 @@ export function montarRelatorio(r: Rodada): string {
   s(`Fora do contrato de unidade/dados: ${[...porMotivo].map(([m, n]) => `${m} ${n}`).join(' · ') || 'nenhum'}.`);
   s(`Demanda via insumo (R16): ${r.coorte.excluidosInsumo.map((e) => `${e.sku} (${pct(e.shareInsumo, 0)})`).join(', ') || 'nenhum'}.`);
   if (a) {
-    s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem preço de capital (nem cmc nem preco_compra_real; R44): ${a.skusSemCmc.join(', ') || 'nenhum'}. SKUs valorados pelo preco_compra_real (R44): ${a.skusCompraReal.length}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
+    s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem preço de capital em algum dia (nem cmc, nem cmc Omie datado, nem preco_compra_real; R44/R45): ${a.skusSemCmc.join(', ') || 'nenhum'}. SKUs valorados pelo cmc Omie datado (R45): ${a.skusCmcOmie.length}; pelo preco_compra_real (R44): ${a.skusCompraReal.length}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);
   {

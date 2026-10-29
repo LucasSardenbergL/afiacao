@@ -28,7 +28,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { mensagemDeErro } from '../../src/lib/erro-mensagem';
-import { diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
+import { addDias, diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { duAte, type CenarioLT } from './aleatorio';
 import {
   avaliarNaCalibracao,
@@ -70,7 +70,7 @@ import { custoFaltaEquilibrio, custoLiquido, fracaoGrupos, fracaoNaoValorada, fr
 import { coorte, coorteTodosAtivos } from './parados';
 import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
-import { CELULAS, corteCapital, paridadeQuantidade, precoCompraRealAte, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
+import { CELULAS, paridadeQuantidade, precoDocumentalNoDia, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
 import {
   ErroDadosReplay,
   type BlocoBootstrap,
@@ -538,6 +538,7 @@ export async function avaliarCandidata(
       nulos,
       skusSemCmc: mBase.f0.skusSemCmc,
       skusCompraReal: mBase.f0.skusCompraReal,
+      skusCmcOmie: mBase.f0.skusCmcOmie,
       excluidosSimulacao: mBase.f0.excluidos,
       linhasIgnoradas: mBase.f0.linhasIgnoradas,
     },
@@ -601,7 +602,7 @@ async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, te
 
 /** R44: de onde vem o preço do capital do F0 na calibração (frações de unidades × dias e contagem de SKUs). */
 function capitalDaBase(base: ReturnType<typeof baseDaCalibracao>): NonNullable<Rodada['calibracao']['capitalF0']> {
-  return { fontes: fracoesPorFonte(base.somasF0), skusSemPreco: base.somasF0.skusSemCmc.length, skusCompraReal: base.somasF0.skusCompraReal.length };
+  return { fontes: fracoesPorFonte(base.somasF0), skusSemPreco: base.somasF0.skusSemCmc.length, skusCompraReal: base.somasF0.skusCompraReal.length, skusCmcOmie: base.somasF0.skusCmcOmie.length };
 }
 
 /** Diagnóstico de plausibilidade da calibração oficial (R27): A-suaves × A-alterados, semanas, demanda, LT e operação real. */
@@ -640,8 +641,8 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
       nPar++;
     }
   }
-  // operação real: estoque reconstruído (com ajuste) valorado como na calibração (cmc ≤ 30/04, senão preco_compra_real
-  // com t4 < 01/05 — R44) e recebido até 30/04
+  // operação real: estoque reconstruído (com ajuste) valorado como na calibração (cmc ≤ 30/04, senão o preço documental
+  // do dia — R44/R45) e recebido até 30/04
   const rec = reconstruirSkus(dados);
   const cmc = new Map<string, { d: Data; c: number }>();
   for (const v of dados.vendas) {
@@ -649,18 +650,15 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
     const x = cmc.get(v.sku);
     if (!x || v.data > x.d) cmc.set(v.sku, { d: v.data, c: v.cmcLinha });
   }
-  for (const s of c.populacao) {
-    if (cmc.has(s)) continue;
-    const pc = precoCompraRealAte(dados, s, corteCapital(dados, true));
-    if (pc) cmc.set(s, { d: JANELAS.calibracaoFim, c: pc.preco });
-  }
+
   let soma = 0;
   let dias = 0;
   for (let i = diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoIni); i <= diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim); i++) {
     for (const s of c.populacao) {
       const it = rec.itens.get(s);
-      const cc = cmc.get(s);
-      if (it && cc) soma += (it.fimDia[i] + it.ajuste) * cc.c;
+      // R44/R45: sem cmc ≤ 30/04, o preço documental do dia (nCMC Omie datado → preco_compra_real), como no simulador
+      const cc = cmc.get(s)?.c ?? precoDocumentalNoDia(dados, s, addDias(INICIO_AQUECIMENTO, i))?.preco;
+      if (it && cc !== undefined) soma += (it.fimDia[i] + it.ajuste) * cc;
     }
     dias++;
   }

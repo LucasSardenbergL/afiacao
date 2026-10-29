@@ -622,7 +622,7 @@ describe('Fix Codex leva C', () => {
 
 describe('Fix Codex leva C round 2 — R44 (capital sem cmc pelo preco_compra_real point-in-time)', () => {
   const JC: [string, string] = ['2026-02-02', JANELAS.calibracaoFim];
-  it('R44: sem cmc até 30/04, o preco_compra_real com t4 < 01/05 valora o capital; só com documento posterior, segue sem preço', () => {
+  it('R44: sem cmc até 30/04, o preco_compra_real vale DIA A DIA (t4 < dia); só com documento posterior, segue sem preço', () => {
     const vs = [venda('k1', 'P', '2026-03-10', 1, 10, 5), venda('a1', 'A1', '2026-03-11', 1, 10, null), venda('a2', 'A2', '2026-03-11', 1, 10, null)];
     const dd = dados(
       [comAbertura(sku('P', { cmc: 4 }), 10, vs), comAbertura(sku('A1', { cmc: 9 }), 6, vs), comAbertura(sku('A2', { cmc: 9 }), 8, vs)],
@@ -630,16 +630,16 @@ describe('Fix Codex leva C round 2 — R44 (capital sem cmc pelo preco_compra_re
       { precosCompra: [{ sku: 'A1', desde: '2026-02-20', preco: 3 }, { sku: 'A1', desde: '2026-04-29', preco: 5 }, { sku: 'A1', desde: '2026-06-01', preco: 99 }, { sku: 'A2', desde: '2026-05-10', preco: 7 }] },
     );
     const r = roda(dd, params({ P: SEM, A1: SEM, A2: SEM }), { janela: JC });
-    const diasAntes = diffDias(JC[0], '2026-03-09') + 1;
-    const diasDepois = diffDias('2026-03-10', JC[1]) + 1;
-    const diasA = diffDias(JC[0], '2026-03-10') + 1;
-    const diasB = diffDias('2026-03-11', JC[1]) + 1;
-    // A1: média dos documentos com t4 < 01/05 = (3 + 5) / 2 = 4 (o de 01/06 é futuro); A2: só documento futuro ⇒ sem preço
+    const n = (a: string, b: string) => diffDias(a, b) + 1;
+    // A1: sem preço até 20/02 (t4 < dia); 3 de 21/02 a 29/04; (3 + 5) / 2 = 4 em 30/04; o documento de 01/06 nunca entra
+    const capP = 5 * (10 * n(JC[0], '2026-03-09') + 9 * n('2026-03-10', JC[1]));
+    const capA1 = 3 * (6 * n('2026-02-21', '2026-03-10') + 5 * n('2026-03-11', '2026-04-29')) + 4 * 5;
+    expect(soma(r.estoqueCmcDias)).toBeCloseTo(capP + capA1, 9);
+    expect(soma(r.estoqueUnidadesDiasCompraReal)).toBeCloseTo(6 * n('2026-02-21', '2026-03-10') + 5 * n('2026-03-11', JC[1]), 9);
+    // A2 (só documento futuro) segue sem preço; A1 sem preço nos dias antes do 1º documento
+    expect(soma(r.estoqueNaoValoradoDias)).toBeCloseTo(6 * n(JC[0], '2026-02-20') + 8 * n(JC[0], '2026-03-10') + 7 * n('2026-03-11', JC[1]), 9);
     expect(r.skusCompraReal).toEqual(['A1']);
-    expect(r.skusSemCmc).toEqual(['A2']);
-    expect(soma(r.estoqueCmcDias)).toBeCloseTo(5 * (10 * diasAntes + 9 * diasDepois) + 4 * (6 * diasA + 5 * diasB), 9);
-    expect(soma(r.estoqueUnidadesDiasCompraReal)).toBeCloseTo(6 * diasA + 5 * diasB, 9);
-    expect(soma(r.estoqueNaoValoradoDias)).toBeCloseTo(8 * diasA + 7 * diasB, 9); // A2 continua null ⇒ capital INCERTO
+    expect(r.skusSemCmc).toEqual(['A1', 'A2']);
   });
   it('R44: na avaliação, sem cmc hoje, vale o preco_compra_real conhecido na extração; venda × 0,55 nunca entra', () => {
     const vs = [venda('b1', 'B', '2026-05-06', 1, 10, null)];
@@ -654,5 +654,40 @@ describe('Fix Codex leva C round 2 — R44 (capital sem cmc pelo preco_compra_re
     expect(r2.skusSemCmc).toEqual(['B']);
     expect(soma(r2.estoqueCmcDias)).toBe(0);
     expect(soma(r2.estoqueNaoValoradoDias)).toBeGreaterThan(0);
+  });
+});
+
+describe('Fix Codex leva C round 3 — R45 (nCMC da posição Omie datada no capital)', () => {
+  const n = (a: string, b: string) => diffDias(a, b) + 1;
+  const cmcOmie = (data: string, por: Record<string, number>) => ({ data, cmc: new Map(Object.entries(por)) });
+  it('R45: sem cmc_linha, o nCMC de 31/01 valora o capital a partir de 31/01; antes, sem outra fonte, fica sem preço', () => {
+    const J: [string, string] = ['2026-01-20', '2026-02-10'];
+    const dd = dados([comAbertura(sku('O', { cmc: 9 }), 5, [])], [], { cmcOmie: [cmcOmie('2026-01-31', { O: 6 })] });
+    const r = roda(dd, params({ O: SEM }, J[1]), { janela: J });
+    expect(soma(r.estoqueNaoValoradoDias)).toBeCloseTo(5 * n(J[0], '2026-01-30'), 9);
+    expect(soma(r.estoqueCmcDias)).toBeCloseTo(6 * 5 * n('2026-01-31', J[1]), 9);
+    expect(soma(r.estoqueUnidadesDiasCmcOmie)).toBeCloseTo(5 * n('2026-01-31', J[1]), 9);
+    expect(r.skusCmcOmie).toEqual(['O']);
+    expect(r.terminal.estoqueCmc).toBe(6 * 5);
+  });
+  it('R45: o nCMC de 30/04 não vale em 15/04 (só em datas ≥ 30/04)', () => {
+    const dd = dados([comAbertura(sku('O', { cmc: 9 }), 5, [])], [], { cmcOmie: [cmcOmie('2026-04-30', { O: 9 })] });
+    const meio = roda(dd, params({ O: SEM }, '2026-04-17'), { janela: ['2026-04-13', '2026-04-17'] });
+    expect(soma(meio.estoqueCmcDias)).toBe(0);
+    expect(soma(meio.estoqueNaoValoradoDias)).toBeCloseTo(5 * 5, 9);
+    const fim = roda(dd, params({ O: SEM }, '2026-04-30'), { janela: ['2026-04-27', '2026-04-30'] });
+    expect(soma(fim.estoqueCmcDias)).toBeCloseTo(9 * 5, 9); // só 30/04
+    expect(soma(fim.estoqueNaoValoradoDias)).toBeCloseTo(5 * 3, 9);
+  });
+  it('R45: precedência — cmc_linha da janela > nCMC Omie datado > preco_compra_real', () => {
+    const J: [string, string] = ['2026-02-02', '2026-02-13'];
+    const extra = { cmcOmie: [cmcOmie('2026-01-31', { O: 6, L: 6 })], precosCompra: [{ sku: 'O', desde: '2026-01-05', preco: 2 }, { sku: 'L', desde: '2026-01-05', preco: 2 }] };
+    const vs = [venda('l1', 'L', '2026-02-03', 1, 10, 8)];
+    const dd = dados([comAbertura(sku('O', { cmc: 9 }), 5, vs), comAbertura(sku('L', { cmc: 9 }), 4, vs)], vs, extra);
+    const r = roda(dd, params({ O: SEM, L: SEM }, J[1]), { janela: J });
+    // O: nCMC 6 (não o preço de compra 2); L: o cmcLinha 8 da janela (não o nCMC)
+    expect(soma(r.estoqueCmcDias)).toBeCloseTo(6 * 5 * n(J[0], J[1]) + 8 * (4 * 1 + 3 * n('2026-02-03', J[1])), 9);
+    expect(r.skusCmcOmie).toEqual(['O']);
+    expect(r.skusCompraReal).toEqual([]);
   });
 });
