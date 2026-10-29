@@ -9,7 +9,7 @@ import { classeEfetiva, validarClasse } from './classe';
 import { diagnosticoEstadoInicial } from './reconstrucao';
 import {
   anexarInformativa, avaliarCandidata, conferirParamsDoBaseline, ESTADO_DIVERGENTE_PERMITIDO, etapasPreCalibracao, exigirAncoraOmie, exigirGateParidade,
-  exigirValidacaoClasse, falhasDoGate, gateParidadePassa, linhaVeredito, montarGate, skusQueExigemAncora, vereditoComModo, type DivergenciaEstado, type GateParidade,
+  diagnosticar, exigirValidacaoClasse, falhasDoGate, gateParidadePassa, linhaVeredito, montarGate, skusQueExigemAncora, vereditoComModo, type DivergenciaEstado, type GateParidade,
 } from './rodar';
 import { avisoAncora, causaOficial, LIMITES, montarRelatorio, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
@@ -111,9 +111,10 @@ const gateOk = (): GateParidade => ({
   estadoPopulacao: {
     donos: 152,
     gravado: { es: { n: 150, de: 152 }, pp: { n: 150, de: 152 }, max: { n: 150, de: 152 } },
+    semGravado: { es: 15, pp: 15, max: 15 },
     view: { es: { n: 133, de: 134 }, pp: { n: 133, de: 134 }, max: { n: 133, de: 134 } },
   },
-  naoComprar: { n: 146, de: 146, divergentes: [] },
+  naoComprar: { n: 146, de: 146, divergentes: [], ppAcima: 0, semGravado: 0, naoF0: 0 },
   status: { n: 134, de: 134 },
   cobertura: { view: { n: 151, de: 152 }, decisao: { n: 14, de: 14 } },
   paramsBaseline: { n: 6, de: 6 },
@@ -609,12 +610,40 @@ describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da
     // a indeterminada não é descartada: uma valorada não vence por ela ter sido "inviável"
     expect(escolherCandidata([{ formula: 'F1', inviavel: false, estoqueMedio: 900, estoqueF0: 1000 }, res[1]])).toBe('INDETERMINADA');
   });
-  it('N4: inviável só com o caminho inteiro visitado e nenhum ponto atingindo (com ou sem capital)', () => {
+  it('N4 + R50: inviável só com o caminho inteiro VALORADO e nenhum ponto atingindo; com capital null, INDETERMINADA', () => {
     let n = 0;
-    const nunca = buscarTrio(() => (n++, { fill: { A: 0.9, B: 1, C: 1 }, estoque: null }), ALVO);
-    expect(nunca.inviavel).toBe(true);
-    expect(nunca.capitalIndeterminado).toBe(false);
-    expect(n).toBe(1 + 3 * (GRADE_QUANTIS.length - 1));
+    const valorado = buscarTrio((q) => (n++, { fill: { A: 0.9, B: 1, C: 1 }, estoque: q.A + q.B + q.C }), ALVO);
+    expect(valorado.inviavel).toBe(true);
+    expect(valorado.capitalIndeterminado).toBe(false);
+    expect(n).toBeGreaterThanOrEqual(1 + 3 * (GRADE_QUANTIS.length - 1)); // a cruz inteira (B e C se movem pelo capital)
+    const nulo = buscarTrio(() => ({ fill: { A: 0.9, B: 1, C: 1 }, estoque: null }), ALVO);
+    expect(nulo.inviavel).toBe(false);
+    expect(nulo.capitalIndeterminado).toBe(true);
+  });
+  // Contraprova I1 do revisor (R50): interação entre classes — A só atinge com A = 0,5; com A = 0,5, B só atinge com B = 0,9;
+  // com A no topo, B só atinge no topo. Serviço idêntico nos dois casos: valorado ⇒ viável; capital null ⇒ a descida não
+  // se move e nenhum trio atinge, mas isso dependeu do capital ⇒ INDETERMINADA, nunca INVIAVEL (nem NO-GO com 3 fórmulas).
+  it('R50 (contraprova do revisor): capital null não vira INVIAVEL quando o caminho dependeu do capital', () => {
+    const fill = (q: { A: number; B: number; C: number }) => ({
+      A: q.A === 0.5 ? 1 : 0.9,
+      B: q.A === 0.5 ? (q.B === 0.9 ? 1 : 0.9) : q.B === 0.999 ? 1 : 0.9,
+      C: 1,
+    });
+    const conhecido = buscarTrio((q) => ({ fill: fill(q), estoque: q.A + q.B + q.C }), ALVO);
+    expect(conhecido).toMatchObject({ inviavel: false, capitalIndeterminado: false, quantil: { A: 0.5, B: 0.9, C: 0.5 } });
+    const nulo = buscarTrio((q) => ({ fill: fill(q), estoque: null }), ALVO);
+    expect(nulo.inviavel).toBe(false);
+    expect(nulo.capitalIndeterminado).toBe(true);
+    const res = (['F1', 'F2', 'F3'] as const).map((formula) => ({ formula, inviavel: nulo.inviavel, estoqueMedio: nulo.avaliacao.estoque, estoqueF0: 1000, naoObservaveis: [] as ('A' | 'B' | 'C')[] }));
+    expect(vereditoDaCalibracao(res)).toEqual({ veredito: 'INCONCLUSIVO', motivos: ['CAPITAL_NAO_VALORADO_NA_CALIBRACAO'] });
+  });
+  // M1: o null num ponto que NÃO atinge também torna o caminho dependente do capital — sem o termo semCapital, a busca
+  // escolheria pelo capital um trio valorado.
+  it('M1: null só em ponto que não atinge, com trio viável valorado ⇒ INDETERMINADA (o termo semCapital)', () => {
+    const r = buscarTrio((q) => (q.C === 0.5 ? { fill: { A: 1, B: 1, C: 0 }, estoque: null } : { fill: { A: 1, B: 1, C: 1 }, estoque: q.A + q.B + q.C }), ALVO);
+    expect(r.inviavel).toBe(false);
+    expect(r.capitalIndeterminado).toBe(true);
+    expect(r.avaliacao.estoque).toBeNull();
   });
   it('N4: capital conhecido nos pontos que atingem, mas null em outro ponto do caminho ⇒ indeterminada (não escolhe por subtotal)', () => {
     const r = buscarTrio((q) => ({ fill: { A: 1, B: 1, C: 1 }, estoque: q.C === 0.5 ? null : q.A + q.B + q.C }), ALVO);
@@ -635,7 +664,7 @@ describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da
     expect(falhasDoGate(ruimV).some((f) => f.startsWith('ESTADO_POPULACAO_VIEW_MAX'))).toBe(true);
     // "não comprar" provado é informativo (a posição do motor não é gravada para quem não compra): não reprova sozinho
     const div = { sku: 'X1', dono: 'X1', replay: null, qtdeFinal: 0, estado: { pp: 5, max: 9 }, gravado: { pp: 2, max: 9 } };
-    expect(falhasDoGate({ ...g, naoComprar: { n: 145, de: 146, divergentes: [div] } })).toEqual([]);
+    expect(falhasDoGate({ ...g, naoComprar: { n: 145, de: 146, divergentes: [div], ppAcima: 1, semGravado: 0, naoF0: 0 } })).toEqual([]);
   });
   // Contraprova N5 do Codex: alterar ES/PP/máximo dos SKUs SEM sugestão não mudava falhasDoGate().
   it('N5: montarGate cobre os donos sem sugestão positiva — alterar o estado gravado deles reprova', () => {
@@ -655,7 +684,7 @@ describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da
     const { dd: ok, r0 } = base();
     expect([...r0.paramsDecisao.keys()].sort()).toEqual(['P', 'Q', 'R']); // Q e R sem sugestão também decidem no gate
     const gOk = montarGate(ok, { cacheDir: null }).gate;
-    expect(gOk.naoComprar).toEqual({ n: 2, de: 2, divergentes: [] });
+    expect(gOk.naoComprar).toMatchObject({ n: 2, de: 2, divergentes: [], ppAcima: 0, semGravado: 0, naoF0: 0 });
     expect(falhasDoGate(gOk).filter((f) => f.startsWith('ESTADO_POPULACAO_GRAVADO'))).toEqual([]);
     // estado gravado de Q e R (SEM sugestão) longe do replay: o estado da população sai do limiar e o gate reprova
     const { dd: ruim } = base();
@@ -663,11 +692,23 @@ describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da
       const s = ruim.skus.get(k)!;
       ruim.skus.set(k, { ...s, hoje: { es: s.hoje.es! + 10, pp: s.hoje.pp! - 3, max: s.hoje.max! + 10 } });
     }
+    // M2: PP empatado e máximo gravado +1 (dentro da tolerância da paridade) ⇒ a decisão de não comprar segue provada
+    const { dd: folga } = base();
+    const sq = folga.skus.get('Q')!;
+    folga.skus.set('Q', { ...sq, hoje: { ...sq.hoje, max: sq.hoje.max! + 1 } });
+    // M3: ES gravado ausente em R sai do denominador, com contagem visível
+    const sr = folga.skus.get('R')!;
+    folga.skus.set('R', { ...sr, hoje: { ...sr.hoje, es: null } });
+    const gf = montarGate(folga, { cacheDir: null }).gate;
+    expect(gf.naoComprar).toMatchObject({ n: 2, de: 2, ppAcima: 0 });
+    expect(gf.estadoPopulacao.semGravado).toEqual({ es: 1, pp: 0, max: 0 });
+    expect(gf.estadoPopulacao.gravado.es.de).toBe(2);
     const gr = montarGate(ruim, { cacheDir: null }).gate;
     const f = falhasDoGate(gr);
     expect(f.some((x) => x.startsWith('ESTADO_POPULACAO_GRAVADO_ES'))).toBe(true);
     expect(f.some((x) => x.startsWith('ESTADO_POPULACAO_GRAVADO_MAX'))).toBe(true);
-    expect(gr.naoComprar).toMatchObject({ n: 0, de: 2 }); // informativo: PP gravado abaixo do replay ⇒ não provado
+    expect(gr.naoComprar).toMatchObject({ n: 0, de: 2, ppAcima: 2 }); // informativo (R48): PP gravado abaixo do replay ⇒ não provado, contado
+    expect(gr.estadoPopulacao.semGravado).toEqual({ es: 0, pp: 0, max: 0 });
   });
 
   // Contraprova N6 do Codex: exigirAncoraOmie({ posicaoAbertura: new Map() }, false) devolvia 'oficial'.
@@ -682,4 +723,17 @@ describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da
     const semLog = { informativoSaldoHoje: false, cacheDir: null, log: () => {} };
     expect(() => etapasPreCalibracao({ ...dd, posicaoAbertura: semR }, semLog)).toThrow(/^ANCORA_OMIE_INCOMPLETA/);
   });
+});
+
+describe('Fix Codex leva D, fix round 1 — M5 (diagnóstico "operação real × F0")', () => {
+  it('M5: estoque sem preço em algum dia da calibração ⇒ estoqueReal null (nunca o subtotal valorado); controle valorado', () => {
+    const ok = cenario(false);
+    const rOk = diagnosticar(ok, baseDaCalibracao(ok, { reps: 2, cacheDir: null })).real;
+    expect(rOk.estoqueReal).not.toBeNull();
+    expect(rOk.estoqueReal!).toBeGreaterThan(0);
+    const dd = cenario(false);
+    for (const v of dd.vendas) if (v.sku === 'R') v.cmcLinha = null;
+    dd.cmcOmie = dd.cmcOmie!.map((p) => ({ ...p, cmc: new Map([...p.cmc].filter(([s]) => s !== 'R')) }));
+    expect(diagnosticar(dd, baseDaCalibracao(dd, { reps: 2, cacheDir: null })).real.estoqueReal).toBeNull();
+  }, 300_000);
 });

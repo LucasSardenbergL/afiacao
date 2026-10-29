@@ -238,9 +238,9 @@ const atinge = (a: AvaliacaoTrio, alvo: Record<Classe, number | null>, c: Classe
  *
  * N4 (capital desconhecido): um estoque null NUNCA interrompe a busca. Na varredura de uma classe, se algum quantil que
  * atinge o alvo dela tem estoque null, a ordenação por capital é impossível: a classe fica onde está (não se escolhe por
- * subtotal) e a busca segue, visitando todos os pontos do caminho. No fim: algum trio que atinge as três classes e
- * qualquer estoque null no caminho ⇒ INDETERMINADA (`capitalIndeterminado`, nunca inviável); nenhum trio que atinge, com
- * o caminho inteiro visitado ⇒ inviável (o capital não importa: nenhum ponto atinge).
+ * subtotal) e a busca segue, visitando todos os pontos do caminho. No fim (R50): qualquer estoque null no caminho ⇒
+ * INDETERMINADA (`capitalIndeterminado`, nunca inviável), haja ou não trio que atinja — o caminho dependeu do capital;
+ * inviável só com o caminho inteiro valorado e nenhum trio que atinja.
  */
 export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Classe, number | null>): ResultadoBusca {
   const memo = new Map<string, AvaliacaoTrio>();
@@ -273,13 +273,14 @@ export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Cla
   }
   aval(trio);
   const atingem = [...memo].filter(([, a]) => CLASSES.every((c) => atinge(a, alvo, c)));
-  if (atingem.length === 0) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
   if (semCapital || atingem.some(([, a]) => a.estoque === null)) {
-    // N4: há trio viável, mas o caminho teve capital desconhecido — nenhuma escolha por capital (nem por subtotal)
-    const [k, a] = atingem[0];
+    // N4 + R50: o caminho teve capital desconhecido. Ele DEPENDE do capital (a classe não se move onde o estoque é null),
+    // então nem a escolha nem a inviabilidade estão provadas: INDETERMINADA, nunca INVIAVEL — haja ou não trio que atinja.
+    const [k, a] = atingem[0] ?? [`${trio.A}|${trio.B}|${trio.C}`, memo.get(`${trio.A}|${trio.B}|${trio.C}`)!];
     const [A, B, C] = k.split('|').map(Number);
     return { quantil: { A, B, C }, inviavel: false, avaliacao: { ...a, estoque: null }, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: true };
   }
+  if (atingem.length === 0) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
   let escolhido: { q: Trio; a: AvaliacaoTrio; e: number } | null = null;
   for (const [k, a] of atingem) {
     const [A, B, C] = k.split('|').map(Number);

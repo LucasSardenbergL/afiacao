@@ -614,7 +614,7 @@ function capitalDaBase(base: ReturnType<typeof baseDaCalibracao>): NonNullable<R
 }
 
 /** Diagnóstico de plausibilidade da calibração oficial (R27): A-suaves × A-alterados, semanas, demanda, LT e operação real. */
-function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): Diagnostico {
+export function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): Diagnostico {
   const c = coorte(dados);
   const m = base.somasF0;
   const sm = (x: readonly number[]) => x.reduce((a, b) => a + b, 0);
@@ -767,15 +767,19 @@ export interface GateParidade {
   estadoPopulacao: {
     donos: number;
     gravado: Record<'es' | 'pp' | 'max', { n: number; de: number }>;
+    /** M3: donos sem o campo gravado (null em sku_parametros), fora do denominador de `gravado` — contagem visível. */
+    semGravado: Record<'es' | 'pp' | 'max', number>;
     view: Record<'es' | 'pp' | 'max', { n: number; de: number }>;
   };
   /**
    * N5 (INFORMATIVO): as decisões de NÃO comprar — donos da população sem sugestão positiva. Elas entram no gate pelo ESTADO
    * (`estadoPopulacao`, limiares da paridade); aqui só se mede quantas são PROVADAS sem a posição do motor (que não é gravada
    * para quem não compra): PP do replay < PP gravado, ou PP e máximo iguais (no F0 da produção, não comprar ⇒ posição ≥ PP
-   * gravado). As não provadas (estado gravado ausente, máximo ±1, PP acima) são listadas no relatório, não reprovam.
+   * gravado; M2: com PP empatado, o máximo dentro da tolerância da paridade; `tipo ≠ F0` NÃO conta como provado). As não
+   * provadas são listadas no relatório, não reprovam (R48); `ppAcima` (PP do replay > gravado: o caso que pode virar uma
+   * compra que a produção não fez), `semGravado` e `naoF0` têm contagem própria.
    */
-  naoComprar: { n: number; de: number; divergentes: DivergenciaEstado[] };
+  naoComprar: { n: number; de: number; divergentes: DivergenciaEstado[]; ppAcima: number; semGravado: number; naoF0: number };
   /** Concordância do status OK replay × view (primária). null = não medida ⇒ FALHA. */
   status: { n: number; de: number } | null;
   /** Cobertura: presença na view replay × produção; e linhas de sugestao_hoje comparáveis (sem FORA_DOS_DADOS). */
@@ -915,14 +919,17 @@ export function montarGate(dados: Dados, opcoes: { cacheDir?: string | null } = 
   };
   // N5: estado (replay × gravado) e sugestão (replay × view) em todos os donos da população; decisões de não comprar
   const contagem = () => ({ es: { n: 0, de: 0 }, pp: { n: 0, de: 0 }, max: { n: 0, de: 0 } });
-  const estadoPopulacao: GateParidade['estadoPopulacao'] = { donos: donosPop.length, gravado: contagem(), view: contagem() };
+  const estadoPopulacao: GateParidade['estadoPopulacao'] = { donos: donosPop.length, gravado: contagem(), semGravado: { es: 0, pp: 0, max: 0 }, view: contagem() };
   for (const dono of donosPop) {
     const p = paramsHoje(dono);
     const s = dados.skus.get(dono)!;
     const es = diagnosticoF0(dados, dono, d, { calibracao: false }).es ?? (p.tipo === 'F0' ? COLD_START.es : null);
     const rep = { es, pp: p.tipo === 'F0' ? p.pp : null, max: p.tipo === 'F0' ? p.max : null };
     for (const k of ['es', 'pp', 'max'] as const) {
-      if (s.hoje[k] === null) continue;
+      if (s.hoje[k] === null) {
+        estadoPopulacao.semGravado[k]++;
+        continue;
+      }
       estadoPopulacao.gravado[k].de++;
       if (dentroDaTolerancia(s.hoje[k], rep[k])) estadoPopulacao.gravado[k].n++;
     }
@@ -930,14 +937,18 @@ export function montarGate(dados: Dados, opcoes: { cacheDir?: string | null } = 
   const prPop = paridadeF0(dados, donosPop).primaria;
   for (const k of ['es', 'pp', 'max'] as const) estadoPopulacao.view[k] = { n: prPop.dentro[k], de: prPop.comparados[k] };
   const comSugestao = new Set(decididas.map((l) => donoDe(l.sku)));
-  const naoComprar: GateParidade['naoComprar'] = { n: 0, de: 0, divergentes: [] };
+  const naoComprar: GateParidade['naoComprar'] = { n: 0, de: 0, divergentes: [], ppAcima: 0, semGravado: 0, naoF0: 0 };
   for (const dono of donosPop) {
     if (comSugestao.has(dono)) continue;
     const p = paramsHoje(dono);
     const s = dados.skus.get(dono)!;
     naoComprar.de++;
     const gp = s.hoje.pp;
-    const provado = p.tipo !== 'F0' || (gp !== null && (p.pp < gp || (p.pp === gp && p.max === s.hoje.max)));
+    if (p.tipo !== 'F0') naoComprar.naoF0++;
+    else if (gp === null) naoComprar.semGravado++;
+    else if (p.pp > gp) naoComprar.ppAcima++;
+    // M2: sem evidência (tipo ≠ F0) não é provado; com PP empatado, basta o máximo dentro da tolerância da paridade
+    const provado = p.tipo === 'F0' && gp !== null && (p.pp < gp || (p.pp === gp && dentroDaTolerancia(s.hoje.max, p.max)));
     if (provado) naoComprar.n++;
     else naoComprar.divergentes.push({ sku: dono, dono, replay: null, qtdeFinal: 0, estado: p.tipo === 'F0' ? { pp: p.pp, max: p.max } : null, gravado: { pp: s.hoje.pp, max: s.hoje.max } });
   }
@@ -981,9 +992,9 @@ export function etapasPreCalibracao(
     `GATE_PARIDADE ${falhas.length === 0 ? 'PASSA' : `FALHA (${falhas.join('; ')})`}: ES ${g.es} PP ${g.pp} máx ${g.max} valor ${g.valor} decisão ${g.decisao.n}/${g.decisao.de} ` +
       `estado ${g.estado.n}/${g.estado.de} [${g.estado.divergentes.map((x) => x.sku).join(', ')}] fora da população ${fora.n}/${fora.de} [${fora.divergentes.map((x) => x.sku).join(', ')}] ` +
       `status ${g.status?.n}/${g.status?.de} view ${g.cobertura.view.n}/${g.cobertura.view.de} params ${g.paramsBaseline.n}/${g.paramsBaseline.de} ` +
-      `população ${g.estadoPopulacao.donos} donos: gravado ES ${g.estadoPopulacao.gravado.es.n}/${g.estadoPopulacao.gravado.es.de} PP ${g.estadoPopulacao.gravado.pp.n}/${g.estadoPopulacao.gravado.pp.de} máx ${g.estadoPopulacao.gravado.max.n}/${g.estadoPopulacao.gravado.max.de} · ` +
+      `população ${g.estadoPopulacao.donos} donos (sem gravado ES/PP/máx ${g.estadoPopulacao.semGravado.es}/${g.estadoPopulacao.semGravado.pp}/${g.estadoPopulacao.semGravado.max}): gravado ES ${g.estadoPopulacao.gravado.es.n}/${g.estadoPopulacao.gravado.es.de} PP ${g.estadoPopulacao.gravado.pp.n}/${g.estadoPopulacao.gravado.pp.de} máx ${g.estadoPopulacao.gravado.max.n}/${g.estadoPopulacao.gravado.max.de} · ` +
       `view ES ${g.estadoPopulacao.view.es.n}/${g.estadoPopulacao.view.es.de} PP ${g.estadoPopulacao.view.pp.n}/${g.estadoPopulacao.view.pp.de} máx ${g.estadoPopulacao.view.max.n}/${g.estadoPopulacao.view.max.de} · ` +
-      `não comprar ${g.naoComprar.n}/${g.naoComprar.de} [${g.naoComprar.divergentes.map((x) => x.sku).join(', ')}]`,
+      `não comprar provadas ${g.naoComprar.n}/${g.naoComprar.de} (PP do replay > gravado ${g.naoComprar.ppAcima}, sem gravado ${g.naoComprar.semGravado}, não F0 ${g.naoComprar.naoF0}) [${g.naoComprar.divergentes.map((x) => x.sku).join(', ')}]`,
   );
   exigirGateParidade(g); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   return { ...r, modoAncora, validacaoClasse, gatePassa: falhas.length === 0 };
