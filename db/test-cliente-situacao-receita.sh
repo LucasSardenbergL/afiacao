@@ -119,7 +119,7 @@ case "${SABOTAGEM:-}" in
   invoker_sem_post)     sabotar "STABLE SECURITY DEFINER" "STABLE SECURITY INVOKER"
                         sabotar "  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = f) THEN" "  IF false THEN" ;;
   dono_sem_bypass)      sabotar "$DONO_DE" "$DONO_PARA" ;;
-  dono_sem_bypass_sem_post) sabotar "$DONO_DE" "$DONO_PARA"; sabotar "$POS7_DE" "     WHERE false) THEN" ;;
+  dono_sem_bypass_sem_post) sabotar "$DONO_DE" "$DONO_PARA"; sabotar "$POS7_DE" "     WHERE true) THEN" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
