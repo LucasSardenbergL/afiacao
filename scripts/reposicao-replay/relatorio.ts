@@ -11,7 +11,7 @@ import type { Formula, ParamsFormula, RelatorioParidade } from './formulas';
 import type { GradeCusto } from './metricas';
 import type { DiagnosticoEstadoInicial } from './reconstrucao';
 import type { ValidacaoClasse } from './classe';
-import type { GateParidade, ModoAncora } from './rodar';
+import type { DivergenciaPermitida, GateParidade, ModoAncora } from './rodar';
 import type { Celula, Falta, ParidadeQuantidade, SomasSemanais } from './simulador';
 import type { AvisoDados, Classe, Data, Evidencia, Intervalo, IntervaloPorBloco, Parado, VereditoReplay } from './tipos';
 
@@ -34,7 +34,7 @@ export interface Rodada {
     gate: GateParidade;
     gatePassa: boolean;
     /** Achado 8: a allowlist nomeada da divergência de estado, com a justificativa (o texto da R21 sai daqui, não fixo). */
-    allowlistEstado: Readonly<Record<string, string>>;
+    allowlistEstado: Readonly<Record<string, DivergenciaPermitida>>;
   };
   /** R30: 'oficial' (âncora Omie) ou o modo legado do saldo de hoje, só com --informativo-saldo-hoje (NÃO OFICIAL). */
   modoAncora: ModoAncora;
@@ -48,7 +48,8 @@ export interface Rodada {
   negativos: { sku: string; data: Data; valor: number }[];
   estadoInicial: DiagnosticoEstadoInicial;
   congelado: { candidata: Formula; params: ParamsFormula } | null;
-  veredito: { veredito: VereditoReplay; motivos: string[] };
+  /** I1: `modo` (R30) — 'oficial' ou o legado NÃO OFICIAL; ausente só no bloco informativo (R27, sempre não oficial). */
+  veredito: { veredito: VereditoReplay; motivos: string[]; modo?: ModoAncora };
   avaliacao: {
     reps: number;
     meiaLarguraServico: number | null;
@@ -394,11 +395,25 @@ export function montarRelatorio(r: Rodada): string {
     `Gate (achado 8): status OK ${g.status ? `${g.status.n}/${g.status.de}` : 'n/d'} · presença na view replay × produção ${g.cobertura.view.n}/${g.cobertura.view.de} · ` +
       `linhas de sugestao_hoje comparáveis ${g.cobertura.decisao.n}/${g.cobertura.decisao.de} · parâmetros do gate = os do mapa do baseline ${g.paramsBaseline.n}/${g.paramsBaseline.de}.`,
   );
+  const linhaDiv = (d: GateParidade['estado']['divergentes'][number]) =>
+    `- ${d.sku}${d.dono !== d.sku ? ` (dono ${d.dono})` : ''}: replay ${d.replay ?? 'n/d'} × prod ${d.qtdeFinal}; PP/máx do replay ${d.estado ? `${d.estado.pp}/${d.estado.max}` : 'n/d'} × gravados ${d.gravado.pp ?? 'n/d'}/${d.gravado.max ?? 'n/d'}`;
   s(
     g.estado.divergentes.length === 0
-      ? 'Divergência de estado: nenhuma.'
-      : ['Divergência de estado (só passa na allowlist nomeada):', ...g.estado.divergentes.map((sku) => `- ${sku}: ${r.paridade.allowlistEstado[sku] ?? '**FORA DA ALLOWLIST**'}`)].join('\n'),
+      ? 'Divergência de estado (donos na população simulada): nenhuma.'
+      : [
+          'Divergência de estado (donos na população simulada; só passa a divergência PROVADA da allowlist — M2):',
+          ...g.estado.divergentes.map((d) => {
+            const p = r.paridade.allowlistEstado[d.sku];
+            return `${linhaDiv(d)} — ${p ? `allowlist: ${p.justificativa}` : '**FORA DA ALLOWLIST**'}`;
+          }),
+        ].join('\n'),
   );
+  const fora = g.estadoForaDaPopulacao;
+  s(
+    `Estado nos donos FORA da população simulada (R42, informativo; o baseline não usa esses parâmetros): ${fora.n}/${fora.de}` +
+      (fora.divergentes.length === 0 ? '.' : ['; divergentes:', ...fora.divergentes.map(linhaDiv)].join('\n')),
+  );
+  s('Parâmetros do gate (M3): o preComputar do F0 do baseline estendido até a data da decisão (a da extração, dia de SP — R40); a coluna "parâmetros do baseline" confere que ele é idêntico ao mapa simulado em todos os dias úteis da avaliação.');
   s(
     tabela(
       ['Bloco', 'SKU', 'Campo', 'Referência', 'Calculado', 'Impacto (R$)', 'Causa'],
