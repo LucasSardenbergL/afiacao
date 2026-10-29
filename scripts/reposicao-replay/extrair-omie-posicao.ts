@@ -13,9 +13,9 @@
 // Saldo ausente na resposta fica VAZIO (ausente ≠ zero).
 // Exit: 0 ok · 2 sem arquivo de credenciais (nenhuma chamada feita) · 3 credencial ilegível ou pasta de saída DENTRO do
 // repositório (nenhuma chamada feita) · 1 falha da API/paginação (nada parcial gravado).
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mensagemDeErro } from '../../src/lib/erro-mensagem';
 import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
@@ -170,9 +170,25 @@ export function paraCsv(linhas: LinhaPosicao[]): string {
 export const DATAS_PADRAO = [addDias(INICIO_AQUECIMENTO, -1), JANELAS.aquecimentoFim, JANELAS.calibracaoFim];
 
 /** `dir` é `raiz` ou está abaixo dela (caminhos absolutos já resolvidos). */
+/**
+ * Caminho CANÔNICO (N2): `realpath` do ancestral existente mais profundo + o resto ainda não criado. Assim um symlink fora
+ * do repositório que aponta para dentro dele não fura a guarda.
+ */
+function canonico(p: string): string {
+  let atual = resolve(p);
+  const resto: string[] = [];
+  while (!existsSync(atual)) {
+    const pai = dirname(atual);
+    if (pai === atual) break;
+    resto.unshift(basename(atual));
+    atual = pai;
+  }
+  return existsSync(atual) ? join(realpathSync(atual), ...resto) : resolve(p);
+}
+
 export function dentroDe(dir: string, raiz: string): boolean {
-  const d = resolve(dir);
-  const r = resolve(raiz);
+  const d = canonico(dir);
+  const r = canonico(raiz);
   return d === r || d.startsWith(r + sep);
 }
 

@@ -1,4 +1,5 @@
-// Orquestração do replay TSB (plano, Task 9): `bun scripts/reposicao-replay/rodar.ts [--dados DIR] [--saida ARQ] [--paralelo N]`.
+// Orquestração do replay TSB (plano, Task 9): `bun scripts/reposicao-replay/rodar.ts [--dados DIR] [--saida ARQ] [--paralelo N]
+// [--informativo-saldo-hoje]`. Antes da calibração: âncora Omie (R30), validação de classe (achado 14) e gate de paridade (achado 8).
 //   1. carrega os dados e monta a coorte;
 //   2. calibra o F0 (só o alvo) e F1–F3 (calibracao.ts);
 //   3. escolhe e CONGELA a candidata (os parâmetros saem da calibração e não são tocados depois);
@@ -46,7 +47,7 @@ import {
   type CelulasAlvo,
   type ResultadoCalibracao,
 } from './calibracao';
-import { classeEfetiva } from './classe';
+import { classeEfetiva, validarClasse, type ValidacaoClasse } from './classe';
 import { CENARIOS_FALTA, GRADE_CUSTO, GRADE_QUANTIS, INICIO_AQUECIMENTO, JANELAS, NOME_METRICA_SERVICO, PRECISAO, TSB } from './config';
 import { carregarDados } from './dados';
 import {
@@ -62,8 +63,8 @@ import {
   type Criterio,
   type EstatisticaPareada,
 } from './estatistica';
-import { diagnosticoF0, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
-import { custoFaltaEquilibrio, custoLiquido, fracaoNaoValorada, type GradeCusto } from './metricas';
+import { diagnosticoF0, grupoDeEmbalagem, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
+import { custoFaltaEquilibrio, custoLiquido, fracaoGrupos, fracaoNaoValorada, type GradeCusto } from './metricas';
 import { coorte, coorteTodosAtivos } from './parados';
 import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
@@ -118,6 +119,7 @@ interface Mapas {
   coorte: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia>; alterados: Set<string> };
   todos: { f0: Map<string, ParamsDia>; alt: Map<string, ParamsDia>; alterados: Set<string> };
 }
+/** Parâmetros do F0 no baseline simulado (o quantil não entra no F0); os MESMOS no gate de paridade (achado 8). */
 const QUANTIL_NEUTRO: ParamsFormula = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
 
 /** Parâmetros na avaliação (todos os ativos, até o fim da avaliação). cacheDir: null = sem disco; ausente = $REPLAY_DADOS/cache. */
@@ -461,7 +463,11 @@ export async function avaliarCandidata(
         delta: intervalo(m, estatDeltaFillRate(celula)),
       });
     }
-    capitalT.push({ cenario: cen, estoqueF0: estoqueDaJanela(m.f0), estoqueAlt: estoqueDaJanela(m.alt), reducao: intervalo(m, estatReducaoCapital) });
+    capitalT.push({
+      cenario: cen, estoqueF0: estoqueDaJanela(m.f0), estoqueAlt: estoqueDaJanela(m.alt), reducao: intervalo(m, estatReducaoCapital),
+      naoValorado: { f0: fracaoNaoValorada(m.f0), alt: fracaoNaoValorada(m.alt) },
+      grupos: { f0: fracaoGrupos(m.f0), alt: fracaoGrupos(m.alt) },
+    });
     terminal.push({ cenario: cen, f0: { terminal: m.f0.terminal, balanco: m.f0.balanco }, alt: { terminal: m.alt.terminal, balanco: m.alt.balanco } });
   }
   const mBase = pegar(pc, { pop: 'coorte', inicial: 'reconstruido', lt: 'empirico', falta: 'espera', sub: false });
@@ -672,7 +678,17 @@ function nomeDoErro(e: unknown): string {
   return typeof n === 'string' && n.length > 0 ? n : 'Erro';
 }
 
-// ── gate de paridade do F0 (R19/R21; plano T5 Step 5: F0 infiel invalida o denominador → PARAR) ─────────────────
+// ── gate de paridade do F0 (R19/R21 + achado 8; plano T5 Step 5: F0 infiel invalida o denominador → PARAR) ─────────
+/**
+ * Achado 8: divergência de ESTADO (decisão com os parâmetros do replay ≠ produção) só passa nesta allowlist NOMEADA e
+ * justificada — nunca por limiar. Hoje: a edição humana provada na R21.
+ */
+export const ESTADO_DIVERGENTE_PERMITIDO: Readonly<Record<string, string>> = Object.freeze({
+  '8689783095': 'R21: edição humana fora da fórmula — edicao_manual 2026-05-15 e aprovacao_humana 2026-05-22/05-27 em sku_parametros_historico',
+});
+/** Mínimo de concordância de ES/PP/máximo (R19), do status OK e da presença na view (achado 8). */
+export const PARIDADE_MINIMA = 0.95;
+
 export interface GateParidade {
   es: number | null;
   pp: number | null;
@@ -681,17 +697,93 @@ export interface GateParidade {
   valor: number | null;
   /** Quantidade com PP/máximo gravados (R21: deve bater em todos). */
   decisao: { n: number; de: number };
-  /** Quantidade com o estado do replay (informativo, R21). */
-  estado: { n: number; de: number };
+  /** Achado 8: quantidade com o ESTADO do replay (os parâmetros que o baseline usa); divergentes só na allowlist. */
+  estado: { n: number; de: number; divergentes: string[] };
+  /** Concordância do status OK replay × view (primária). null = não medida ⇒ FALHA. */
+  status: { n: number; de: number } | null;
+  /** Cobertura: presença na view replay × produção; e linhas de sugestao_hoje comparáveis (sem FORA_DOS_DADOS). */
+  cobertura: { view: { n: number; de: number }; decisao: { n: number; de: number } };
+  /** Os parâmetros do gate = os do mapa F0 que o baseline simulado usou (último dia útil da avaliação), por SKU. */
+  paramsBaseline: { n: number; de: number };
 }
-/** ES/PP/máximo ≥ 95%, valor divergente ≤ 2% e decisão n = de (> 0). Ausente (null) = FALHA. */
+
+const fracao = (x: { n: number; de: number } | null): number | null => (x !== null && x.de > 0 ? x.n / x.de : null);
+
+/** Falhas do gate, cada uma com a MARCA do ramo no início. Lista vazia = passa. Ausente (null, de = 0) = FALHA. */
+export function falhasDoGate(g: GateParidade): string[] {
+  const f: string[] = [];
+  for (const k of ['es', 'pp', 'max'] as const) {
+    const x = g[k];
+    if (x === null || !(x >= PARIDADE_MINIMA)) f.push(`PARIDADE_${k.toUpperCase()}: ${x}`);
+  }
+  if (g.valor === null || !(g.valor <= 0.02)) f.push(`VALOR_DIVERGENTE: ${g.valor}`);
+  if (!(g.decisao.de > 0 && g.decisao.n === g.decisao.de)) f.push(`DECISAO: ${g.decisao.n}/${g.decisao.de}`);
+  const e = g.estado;
+  if (!(e.de > 0) || e.de - e.n !== e.divergentes.length) f.push(`ESTADO_INCOERENTE: ${e.n}/${e.de} com ${e.divergentes.length} divergente(s) listado(s)`);
+  const fora = e.divergentes.filter((sku) => !(sku in ESTADO_DIVERGENTE_PERMITIDO));
+  if (fora.length > 0) f.push(`ESTADO_DIVERGENTE_FORA_DA_ALLOWLIST: ${fora.join(', ')}`);
+  const st = fracao(g.status);
+  if (st === null || !(st >= PARIDADE_MINIMA)) f.push(`STATUS: ${g.status ? `${g.status.n}/${g.status.de}` : 'não medido'}`);
+  const cv = fracao(g.cobertura.view);
+  if (cv === null || !(cv >= PARIDADE_MINIMA)) f.push(`COBERTURA_VIEW: ${g.cobertura.view.n}/${g.cobertura.view.de}`);
+  const cd = g.cobertura.decisao;
+  if (!(cd.de > 0 && cd.n === cd.de)) f.push(`COBERTURA_DECISAO: ${cd.n}/${cd.de}`);
+  const pb = g.paramsBaseline;
+  if (!(pb.de > 0 && pb.n === pb.de)) f.push(`PARAMS_BASELINE: ${pb.n}/${pb.de}`);
+  return f;
+}
+/** R19/R21 + achado 8: ES/PP/máximo ≥ 95%, valor ≤ 2%, decisão e estado (allowlist), status, cobertura e parâmetros do baseline. */
 export function gateParidadePassa(g: GateParidade): boolean {
-  return [g.es, g.pp, g.max].every((x) => x !== null && x >= 0.95) && g.valor !== null && g.valor <= 0.02 && g.decisao.de > 0 && g.decisao.n === g.decisao.de;
+  return falhasDoGate(g).length === 0;
 }
 /** Gate em FALHA ⇒ ErroDadosReplay (rc ≠ 0): nenhum veredito, muito menos GO, com o F0 infiel. */
 export function exigirGateParidade(g: GateParidade): void {
-  if (!gateParidadePassa(g)) throw new ErroDadosReplay(`GATE_PARIDADE_FALHA: ${JSON.stringify(g)}`);
+  const f = falhasDoGate(g);
+  if (f.length > 0) throw new ErroDadosReplay(`GATE_PARIDADE_FALHA: ${f.join('; ')}`);
 }
+
+/**
+ * Achado 8: confere, SKU a SKU, que `parametrosNoDia` (a função que o gate usa no dia da extração) dá, no último dia útil
+ * da avaliação, EXATAMENTE o que está no mapa F0 que o baseline simulou. SKU ausente do mapa conta como divergente.
+ */
+export function conferirParamsDoBaseline(dados: Dados, mapa: ReadonlyMap<string, ParamsDia>, skus: Iterable<string>, p: ParamsFormula): { n: number; de: number } {
+  let ultimo: Data | null = null;
+  for (const k of mapa.keys()) {
+    const d = k.slice(k.indexOf('|') + 1);
+    if (d <= JANELAS.avaliacaoFim && (ultimo === null || d > ultimo)) ultimo = d;
+  }
+  const out = { n: 0, de: 0 };
+  for (const sku of skus) {
+    out.de++;
+    if (ultimo === null) continue;
+    const m = mapa.get(`${sku}|${ultimo}`);
+    if (m !== undefined && JSON.stringify(m) === JSON.stringify(parametrosNoDia('F0', dados, sku, ultimo, p, { calibracao: false }))) out.n++;
+  }
+  return out;
+}
+
+// ── gate de classe (achado 14, §5.1.1) e âncora (R30) ───────────────────────────────────────────────────────────────
+/** §5.1.1: divergência da classe recalculada × a de hoje acima de 5% do valor A (ou não mensurável) interrompe o trabalho. */
+export const CLASSE_DIVERGENCIA_MAXIMA_PCT = 5;
+export function exigirValidacaoClasse(v: ValidacaoClasse): void {
+  if (v.valorADivergente === null || !(v.valorADivergente <= CLASSE_DIVERGENCIA_MAXIMA_PCT)) {
+    throw new ErroDadosReplay(`CLASSE_DIVERGENTE: ${v.valorADivergente === null ? 'sem valor A hoje (não mensurável)' : `${v.valorADivergente.toFixed(2)}%`} do valor A diverge (máximo ${CLASSE_DIVERGENCIA_MAXIMA_PCT}%); ${JSON.stringify(v.detalhe)}`);
+  }
+}
+
+/**
+ * R30: a rodada OFICIAL exige a âncora do Omie (posicao_omie_<abertura>.csv). Sem ela, só com a flag explícita
+ * `--informativo-saldo-hoje` (modo legado, ancorado no saldo de hoje), e o relatório a rotula NÃO OFICIAL.
+ */
+export type ModoAncora = 'oficial' | 'nao_oficial_saldo_hoje';
+export function exigirAncoraOmie(dados: Pick<Dados, 'posicaoAbertura'>, informativoSaldoHoje: boolean): ModoAncora {
+  if (dados.posicaoAbertura) return 'oficial';
+  if (informativoSaldoHoje) return 'nao_oficial_saldo_hoje';
+  throw new ErroDadosReplay(
+    'ANCORA_OMIE_AUSENTE: falta a posição datada do Omie na véspera do aquecimento (rode extrair-omie-posicao.ts); o modo legado ancorado no saldo de hoje só roda com --informativo-saldo-hoje e sai NÃO OFICIAL',
+  );
+}
+
 /** Argumento de linha de comando inválido (rc 2; ≠ erro de dado). */
 export class ErroArgumento extends Error {}
 
@@ -737,22 +829,40 @@ async function principal(): Promise<number> {
   log(`dados: ${dados.vendas.length} linhas, coorte ${c.populacao.size} (alterados ${c.alterados.size}), todos os ativos ${ct.populacao.size}`);
   marca('carga', t);
 
-  // paridade do F0 (gate R19/R21)
+  // R30: a rodada oficial exige a âncora do Omie; o legado só com a flag e rotulado NÃO OFICIAL
+  const modoAncora = exigirAncoraOmie(dados, a['informativo-saldo-hoje'] === true);
+  if (modoAncora !== 'oficial') log('ÂNCORA: saldo de hoje (modo legado, --informativo-saldo-hoje) — rodada NÃO OFICIAL');
+
+  // achado 14 (§5.1.1): classe recalculada × classe de hoje, antes de tudo o que usa classe
+  t = performance.now();
+  const validacaoClasse = validarClasse(dados);
+  log(`VALIDAÇÃO DE CLASSE: ${validacaoClasse.valorADivergente === null ? 'n/d' : validacaoClasse.valorADivergente.toFixed(2)}% do valor A diverge (máximo ${CLASSE_DIVERGENCIA_MAXIMA_PCT}%)`);
+  exigirValidacaoClasse(validacaoClasse);
+  marca('classe', t);
+
+  // paridade do F0 (gate R19/R21 + achado 8)
   t = performance.now();
   const parF0 = paridadeF0(dados);
   const parQtd = paridadeQuantidade(dados, (sku) => parametrosNoDia('F0', dados, sku, dados.dataExtracao, QUANTIL_NEUTRO, { calibracao: false }));
   const pct = (n: number, de: number) => (de > 0 ? n / de : null);
   const pr = parF0.primaria;
+  const decididas = parQtd.linhas.filter((l) => l.fora === null);
+  const donos = [...new Set(decididas.map((l) => grupoDeEmbalagem(dados, l.sku)?.ancora ?? l.sku))].sort();
   const gate: GateParidade = {
     es: pct(pr.dentro.es, pr.comparados.es),
     pp: pct(pr.dentro.pp, pr.comparados.pp),
     max: pct(pr.dentro.max, pr.comparados.max),
     valor: pr.valorMaximoTotal > 0 ? pr.valorDeltaMaximoDivergente / pr.valorMaximoTotal : null,
     decisao: parQtd.gravado,
-    estado: parQtd.replay,
+    estado: { ...parQtd.replay, divergentes: decididas.filter((l) => l.replay === null || Math.abs(l.replay - l.qtdeFinal) > 1e-6).map((l) => l.sku) },
+    status: pr.statusConcorda,
+    cobertura: { view: parF0.presencaNaView, decisao: { n: decididas.length, de: parQtd.linhas.length } },
+    // o MESMO mapa (e cache) que mapasDaAvaliacao entrega ao F0 do baseline
+    paramsBaseline: conferirParamsDoBaseline(dados, preAval('F0', dados, QUANTIL_NEUTRO, undefined), donos, QUANTIL_NEUTRO),
   };
-  const gatePassa = gateParidadePassa(gate);
-  log(`GATE_PARIDADE ${gatePassa ? 'PASSA' : 'FALHA'}: ES ${gate.es} PP ${gate.pp} máx ${gate.max} valor ${gate.valor} decisão ${gate.decisao.n}/${gate.decisao.de} estado ${gate.estado.n}/${gate.estado.de}`);
+  const falhasGate = falhasDoGate(gate);
+  const gatePassa = falhasGate.length === 0;
+  log(`GATE_PARIDADE ${gatePassa ? 'PASSA' : `FALHA (${falhasGate.join('; ')})`}: ES ${gate.es} PP ${gate.pp} máx ${gate.max} valor ${gate.valor} decisão ${gate.decisao.n}/${gate.decisao.de} estado ${gate.estado.n}/${gate.estado.de} [${gate.estado.divergentes.join(', ')}] status ${gate.status?.n}/${gate.status?.de} view ${gate.cobertura.view.n}/${gate.cobertura.view.de} params ${gate.paramsBaseline.n}/${gate.paramsBaseline.de}`);
   exigirGateParidade(gate); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   marca('paridade', t);
 
@@ -792,7 +902,9 @@ async function principal(): Promise<number> {
       precisao: { trajetoriasF2: TSB.trajetorias, bootstrap: PRECISAO.bootstrapReamostragens, repsCalibracao: REPS_CALIBRACAO, ...PRECISAO },
     },
     coorte: { populacao: c.populacao.size, alterados: c.alterados.size, todos: ct.populacao.size, excluidosInsumo: c.excluidos },
-    paridade: { f0: parF0, quantidade: parQtd, gate, gatePassa },
+    paridade: { f0: parF0, quantidade: parQtd, gate, gatePassa, allowlistEstado: ESTADO_DIVERGENTE_PERMITIDO },
+    modoAncora,
+    validacaoClasse,
     calibracao: { alvo: base.alvo, fillF0: base.fillF0, resultados, candidata },
     fronteira,
     diagnostico,

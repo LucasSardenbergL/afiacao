@@ -189,10 +189,13 @@ export function classeEfetiva(dados: DadosClasse, d: Data, cad: Cadencia = CADEN
 }
 
 export interface ValidacaoClasse {
-  /** % do valor (90d) dos SKUs cuja classe de HOJE é c e cuja efetiva recalculada difere (ou não existe). */
-  porClasse: Record<Classe, number>;
-  /** % do valor A: soma do valor dos SKUs em que a classe de hoje ou a recalculada é A e diferem, sobre o valor da classe A de hoje. */
-  valorADivergente: number;
+  /** % do valor (90d) dos SKUs cuja classe de HOJE é c e cuja efetiva recalculada difere (ou não existe). null = sem valor na classe. */
+  porClasse: Record<Classe, number | null>;
+  /**
+   * % do valor A: soma do valor dos SKUs em que a classe de hoje ou a recalculada é A e diferem, sobre o valor da classe A
+   * de hoje. null = sem valor A hoje (não mensurável; nunca 0% fabricado).
+   */
+  valorADivergente: number | null;
   detalhe: { skusComparados: number; skusSemClasseReconstruida: number; skusDivergentes: number; skusDivergentesNaClasseA: number };
 }
 
@@ -223,7 +226,7 @@ export function validarClasse(dados: DadosClasse, cad: Cadencia = CADENCIA_PRODU
       }
     }
   }
-  const pct = (x: number, b: number) => (b > 0 ? (100 * x) / b : 0);
+  const pct = (x: number, b: number): number | null => (b > 0 ? (100 * x) / b : null);
   return {
     porClasse: { A: pct(dif.A, base.A), B: pct(dif.B, base.B), C: pct(dif.C, base.C) },
     valorADivergente: pct(divA, base.A),

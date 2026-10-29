@@ -10,6 +10,8 @@ import type { Criterio } from './estatistica';
 import type { Formula, ParamsFormula, RelatorioParidade } from './formulas';
 import type { GradeCusto } from './metricas';
 import type { DiagnosticoEstadoInicial } from './reconstrucao';
+import type { ValidacaoClasse } from './classe';
+import type { GateParidade, ModoAncora } from './rodar';
 import type { Celula, Falta, ParidadeQuantidade, SomasSemanais } from './simulador';
 import type { AvisoDados, Classe, Data, Evidencia, Intervalo, IntervaloPorBloco, Parado, VereditoReplay } from './tipos';
 
@@ -29,9 +31,15 @@ export interface Rodada {
   paridade: {
     f0: RelatorioParidade;
     quantidade: ParidadeQuantidade;
-    gate: { es: number | null; pp: number | null; max: number | null; valor: number | null; decisao: { n: number; de: number }; estado: { n: number; de: number } };
+    gate: GateParidade;
     gatePassa: boolean;
+    /** Achado 8: a allowlist nomeada da divergência de estado, com a justificativa (o texto da R21 sai daqui, não fixo). */
+    allowlistEstado: Readonly<Record<string, string>>;
   };
+  /** R30: 'oficial' (âncora Omie) ou o modo legado do saldo de hoje, só com --informativo-saldo-hoje (NÃO OFICIAL). */
+  modoAncora: ModoAncora;
+  /** Achado 14 (§5.1.1): classe recalculada × classe de hoje, ponderada por valor (a rodada para acima de 5% do valor A). */
+  validacaoClasse: ValidacaoClasse;
   calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' };
   fronteira: { formula: Formula; params: ParamsFormula; fill: Record<Classe | 'total', number | null>; reducao: number }[];
   excluidosDados: { sku: string; motivo: string }[];
@@ -52,7 +60,13 @@ export interface Rodada {
     /** Evidência do estado reconstruído (para a sensibilidade de blocos 4 × 8 e a grade de custo). */
     blocos: Evidencia;
     celulas: { cenario: CenarioR; celula: Celula; linhas: number; f0: Intervalo | null; alt: Intervalo | null; delta: IntervaloPorBloco | null }[];
-    capital: { cenario: CenarioR; estoqueF0: number; estoqueAlt: number; reducao: IntervaloPorBloco }[];
+    capital: {
+      cenario: CenarioR; estoqueF0: number; estoqueAlt: number; reducao: IntervaloPorBloco;
+      /** Achado 10: fração das unidades × dias sem CMC (null = sem unidade). */
+      naoValorado: { f0: number | null; alt: number | null };
+      /** R37: fração do capital nos grupos de embalagem (null = sem capital valorado). */
+      grupos: { f0: number | null; alt: number | null };
+    }[];
     terminal: { cenario: CenarioR; f0: Pick<SomasSemanais, 'terminal' | 'balanco'>; alt: Pick<SomasSemanais, 'terminal' | 'balanco'> }[];
     equilibrio: { falta: Falta; valor: number | null }[];
     dio: { f0: number; alt: number; linhasSemCmc: number } | null;
@@ -113,26 +127,40 @@ export const TEXTO_GATE_ECONOMIA =
 export const LIMITES: readonly string[] = [
   '**12 meses de histórico** (spec §10): 6 meses de avaliação, poucos blocos longos; intervalos largos → INCONCLUSIVO é desfecho legítimo.',
   '**Demanda censurada** (spec §10): a métrica é o atendimento das linhas FATURADAS; espera, substituição e venda perdida originais não aparecem.',
-  '**Estado inicial** (spec §5.2/§10): parte dos SKUs não fecha a reconstrução; o veredito é recomputado com `piso_zero` (linha "Estado inicial").',
+  '**Estado inicial** (spec §5.2/§10): o veredito é recomputado com `piso_zero` (linha "Estado inicial").',
   '**Seleção retrospectiva da coorte** (spec §5.1.1): o flag de reposição automática é o de hoje; a conclusão vale para a coorte habilitada hoje e não é confirmatória. "Todos os ativos" é sensibilidade (R11: definição composta do motor, menor que a contagem frouxa da spec).',
   '**R19** — a paridade primária do F0 é contra a VIEW de produção no instante da extração (fórmula × fórmula); o gravado em `sku_parametros` é paridade secundária (defasagem da passada das ~01:15, cold start e fusível = estado irredutível).',
-  '**R21** — paridade da DECISÃO de compra 8/8 com o PP/máximo gravados; a paridade de ESTADO é 7/8: o SKU 8689783095 teve edição humana (edicao_manual 2026-05-15, aprovacao_humana 05-22/05-27), fora da fórmula. Afeta igualmente os dois braços.',
-  '**R22** — galões não ativos ficam fora da simulação; "com substituição" é exata na coorte e a posição do grupo só soma os membros simulados (grupos = 3,12% do estoque). A métrica de substituição tem pouca informação.',
+  '**Gate de paridade (achado 8)** — exige decisão E estado (os parâmetros do replay, os mesmos do mapa que o baseline simula), status OK e presença na view ≥ 95%, e todas as linhas de sugestao_hoje comparáveis. Divergência de estado só passa na allowlist nomeada da seção 7 (justificativa por SKU), nunca por limiar.',
+  '**R10 (revogada pelo achado 1)** — a âncora oficial é a posição datada do Omie (R31); o modo legado (saldo de hoje) só roda com `--informativo-saldo-hoje` e sai NÃO OFICIAL (R30).',
+  '**R29/R34 — encerramento com o estado de HOJE do Omie** — `PARCIAL_ENCERRADO_OMIE` (parcial que nunca chegou a 95% fecha no último t4), `SEM_T4_ENCERRADO_OMIE` e `SEM_T4_STATUS_RECEBIDO` (sem t4, saem da amostra) usam o encerramento/status de hoje: é look-ahead para pedidos que ainda estavam abertos na calibração. LT levemente otimista nesses itens, igual nos dois braços.',
+  '**R35 — tracking contaminado pesa igual nos dois braços** — o pedido casa em ~1/4 das linhas; as demais são o item gravado sob o tracking de OUTRO pedido da mesma NF (writer antigo), com t1 alheio e quantidade pedida da NF (`PEDIDA_DA_NF`). Ficam no LT como na produção (`v_sku_leadtime_efetivo`); o sorteio é comum aos dois braços, então o ruído é o mesmo em F0 e na candidata.',
   '**R23** — viés de LT por censura à direita (só documentos com t4 ≤ fim da janela perto de 30/04) e o aquecimento (out–dez/25) sorteia documentos de jan/26: LT levemente otimista no fim da calibração, igual nos dois braços.',
-  '**R24** — cancelada sem CMC: margem desconhecida limitada a [0, valor] e custo no PIOR CASO PARA A ALTERNATIVA (margem = valor na alternativa, 0 no F0); o piso 0 do F0 supõe margem ≥ 0. A fração limitada aparece em % nas linhas do critério 5.',
-  '**Terminal constante no bootstrap** (Task 7): o custo terminal (backlog do fim custeado como emergencial + atraso) entra uma vez, não é reamostrado — estreita levemente o IC do custo.',
+  '**R36** — a elegibilidade de catálogo e portal do galão (escolha de embalagem, achado 9) é a de HOJE (não há histórico desses filtros).',
+  '**R37** — o estoque do galão extra (membro de grupo fora da coorte) entra no capital das duas políticas; a fração dos grupos no capital sai à parte na tabela de capital.',
+  '**R39** — a posição do grupo segue a produção: físico + a caminho dos membros, SEM descontar o comprometido (`embalagem-motor-rpc.sql`, "[COMPROMETIDO] só sem grupo"). O galão extra entra na posição do grupo desde o início do aquecimento (estoque de abertura dele).',
+  '**Paridade do galão (M3 da revisão B)** — a escolha de embalagem na paridade de quantidade vê as capturas de preço-app até a extração; a execução gravada em sugestao_hoje pode ser anterior (efeito hoje nulo: a última captura é de 14/07).',
+  '**R38** — LT e preço de compra só com `origem_compra = normal` (como `v_sku_leadtime_history_normal`); outra origem PARA a carga (hoje 100% normal).',
+  '**Margem desconhecida (achado 11; R24 revogada)** — cancelada sem CMC tem margem sem limite inferior comprovado: em qualquer braço, a economia daquela célula vira INCERTO (null). A fração aparece em % nas linhas do critério 5.',
+  '**Terminal nas somas semanais (achado 12)** — o custo terminal (backlog do fim custeado como emergencial + atraso) é soma da ÚLTIMA semana: só entra na reamostragem que a sorteia.',
   '**R25** — critério 3 (capital) e a redução do estresse avaliados nos TRÊS cenários de falta; qualquer FALHA → NO-GO.',
   '**R26** — critério 5 no gate só com a taxa de 25% a.a. (grade 3×3 × 3 cenários); 20% e 30% são sensibilidade (tabela à parte).',
-  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04); SKU sem CMC fica fora do capital (listado).',
+  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). Estoque de SKU sem CMC NÃO some (achado 10): se houver, capital, estresse e economia daquele recorte viram INCERTO e a fração não valorada aparece.',
   '**LT exógeno**: as fórmulas aprendem LT só de recebimentos históricos com t4 < d, nunca de chegadas simuladas (permite pré-computar os níveis).',
   '**Sem feriados** no calendário de LT/revisão (como `dias_uteis_entre` da produção).',
   '**O replay não mede a operação real** (spec §10): separação, aceitação de troca — cabe à sombra e ao piloto. Um GO autoriza sombra/piloto, não a troca do motor.',
-  '**R10** — a âncora da reconstrução do estoque inicial é o saldo de HOJE (única medição física); o fluxo da avaliação entra só como instrumento de medição do estado de out/25, não como informação de decisão (o teste de invariância compensa o saldo).',
   '**R11** — "ativo" e "habilitado" seguem a definição composta do motor: 312/238 (ativos/habilitados), contra 373/276 da contagem frouxa da spec; a coorte é menor e fiel ao escopo real do motor.',
   '**R17** — LT com t1 "fabricado" (t1 = t2) sai da amostra (T1_FABRICADO), aproximando o lt_bruto NULL da produção: 14 legítimos caem e 36 órfãos ficam (aproximação declarada).',
   '**Estado de partida — compras abertas no início do aquecimento**: o conjunto é VAZIO no dado real (o 1º recebimento é de 2026-01-28); o estado inicial não tem pedidos em trânsito.',
-  '**Duplicatas de LT** (spec §10): o motor de produção deduplica por NFe/tracking (`v_sku_leadtime_efetivo`, verificado na Task 5) — sem item separado.',
+  '**Duplicatas de LT** (spec §10): dedup pela identidade documental, como `v_sku_leadtime_efetivo` (achado 6) — sem item separado.',
 ];
+
+/** R30: linhas do aviso de rodada NÃO OFICIAL (modo legado do saldo de hoje); vazio na rodada oficial. */
+export function avisoAncora(modo: ModoAncora): string[] {
+  if (modo === 'oficial') return [];
+  return [
+    '**RODADA NÃO OFICIAL (R30)** — sem a posição datada do Omie, a abertura foi ancorada no saldo de HOJE (modo legado, `--informativo-saldo-hoje`): o estado inicial depende da avaliação (§5.9 não atendida). Nenhum veredito desta rodada vale como oficial.',
+  ];
+}
 
 /** O bloco que se repete entre a rodada oficial e a informativa (R27): veredito, calibração, células, fronteira, custo, terminal e sensibilidades. */
 type BlocoRodada = Pick<Rodada, 'veredito' | 'congelado' | 'calibracao' | 'fronteira' | 'avaliacao'>;
@@ -202,8 +230,11 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
     s(H3 + 'Capital (estoque físico médio a CMC, ponderado por dias corridos)');
     s(
       tabela(
-        ['Cenário', 'Estoque médio F0', 'Estoque médio cand.', 'Redução ponto', 'LI', 'LS'],
-        a.capital.map((c) => [rotCen(c.cenario), brl(c.estoqueF0), brl(c.estoqueAlt), ivPct(comb(c.reducao))]),
+        ['Cenário', 'Estoque médio F0', 'Estoque médio cand.', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)'],
+        a.capital.map((c) => [
+          rotCen(c.cenario), brl(c.estoqueF0), brl(c.estoqueAlt), ivPct(comb(c.reducao)),
+          `${pct(c.naoValorado.f0)} / ${pct(c.naoValorado.alt)}`, `${pct(c.grupos.f0)} / ${pct(c.grupos.alt)}`,
+        ]),
       ),
     );
     if (a.dio) s(`DIO Sayerlack (reconstruído/empírico/espera, CMV = Σ cmcLinha × qtd da coorte na avaliação): F0 ${num(a.dio.f0, 1)} dias · candidata ${num(a.dio.alt, 1)} dias (${a.dio.linhasSemCmc} linhas sem cmc fora do CMV).`);
@@ -239,7 +270,7 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
 
     // 5. terminal
     s(H2 + '5. Balanço terminal e fechamento (média das reps)');
-    s('O fechamento por SKU (demanda = imediata + tardia + emergencial + cancelada + backlog; estoque inicial + recebido − entregue = final) é verificado em CADA simulação (fail-closed): a rodada não termina se violar.');
+    s('O fechamento por SKU (demanda medida = imediata + tardia + emergencial + cancelada + backlog, em UNIDADES das linhas originadas na janela; estoque inicial + recebido − entregue = final) é verificado em CADA simulação (fail-closed): a rodada não termina se violar. As obrigações herdadas de antes da janela (achado 13) fecham à parte (abertura = entregue tarde + backlog terminal) e entram nos VALORES de tardia, atraso e backlog abaixo — por isso, em valor, a soma não reproduz a demanda da janela.');
     s(
       tabela(
         ['Cenário', 'Fórmula', 'Estoque final', 'Compras abertas', 'Backlog (valor)', 'Unid. inicial', 'Unid. recebidas', 'Unid. entregues', 'Unid. finais'],
@@ -275,7 +306,7 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
       ),
     );
     const subs = a.celulas.filter((c) => c.cenario.sub);
-    s('Substituição de embalagem (reconstruído/empírico; R22: pouca informação):');
+    s('Substituição de embalagem (reconstruído/empírico; pouca informação):');
     s(
       tabela(
         ['Falta', 'Célula', 'F0 exato', 'F0 com subst.', 'Cand. exato', 'Cand. com subst.'],
@@ -328,10 +359,11 @@ export function causaOficial(r: Pick<Rodada, 'veredito' | 'diagnostico'>): strin
 export function montarRelatorio(r: Rodada): string {
   const out: string[] = [];
   const s = (x: string) => out.push(x, '');
-  s(`# Replay TSB — ${r.nomeMetrica} (Sayerlack, OBEN)`);
+  s(`# Replay TSB — ${r.nomeMetrica} (Sayerlack, OBEN)${r.modoAncora === 'oficial' ? '' : ' — NÃO OFICIAL (saldo de hoje)'}`);
   s(`Gerado em ${r.geradoEm}. Arquivo LOCAL (contém R$ absolutos): não copiar para o repositório.`);
+  for (const x of avisoAncora(r.modoAncora)) s(x);
 
-  secoesDoBloco(r, r, s, { h: '##', prefixo: '', oficial: true, extrasVeredito: causaOficial(r) });
+  secoesDoBloco(r, r, s, { h: '##', prefixo: '', oficial: true, extrasVeredito: [...avisoAncora(r.modoAncora), ...causaOficial(r)] });
 
   const a = r.avaliacao;
 
@@ -346,6 +378,15 @@ export function montarRelatorio(r: Rodada): string {
       `Secundária (gravado): ES ${pct(p2.comparados.es ? p2.dentro.es / p2.comparados.es : null, 1)} · PP ${pct(p2.comparados.pp ? p2.dentro.pp / p2.comparados.pp : null, 1)} · máximo ${pct(p2.comparados.max ? p2.dentro.max / p2.comparados.max : null, 1)}; valor ${pct(p2.valorMaximoTotal > 0 ? p2.valorDeltaMaximoDivergente / p2.valorMaximoTotal : null)}.`,
   );
   s(`Quantidade (R21): decisão com PP/máximo gravados ${g.decisao.n}/${g.decisao.de}; com o estado do replay ${g.estado.n}/${g.estado.de}.`);
+  s(
+    `Gate (achado 8): status OK ${g.status ? `${g.status.n}/${g.status.de}` : 'n/d'} · presença na view replay × produção ${g.cobertura.view.n}/${g.cobertura.view.de} · ` +
+      `linhas de sugestao_hoje comparáveis ${g.cobertura.decisao.n}/${g.cobertura.decisao.de} · parâmetros do gate = os do mapa do baseline ${g.paramsBaseline.n}/${g.paramsBaseline.de}.`,
+  );
+  s(
+    g.estado.divergentes.length === 0
+      ? 'Divergência de estado: nenhuma.'
+      : ['Divergência de estado (só passa na allowlist nomeada):', ...g.estado.divergentes.map((sku) => `- ${sku}: ${r.paridade.allowlistEstado[sku] ?? '**FORA DA ALLOWLIST**'}`)].join('\n'),
+  );
   s(
     tabela(
       ['Bloco', 'SKU', 'Campo', 'Referência', 'Calculado', 'Impacto (R$)', 'Causa'],
@@ -368,6 +409,14 @@ export function montarRelatorio(r: Rodada): string {
     s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem CMC (fora do capital): ${a.skusSemCmc.join(', ') || 'nenhum'}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);
+  {
+    // achado 14 (§5.1.1): a rodada só chega aqui com a divergência ≤ 5% do valor A
+    const vc = r.validacaoClasse;
+    s(
+      `Validação de classe (§5.1.1, efetiva recalculada na extração × classe de hoje, ponderada pelo valor de 90 dias): A ${pct(vc.porClasse.A === null ? null : vc.porClasse.A / 100)} · B ${pct(vc.porClasse.B === null ? null : vc.porClasse.B / 100)} · C ${pct(vc.porClasse.C === null ? null : vc.porClasse.C / 100)} do valor diverge; ` +
+        `valor A divergente ${pct(vc.valorADivergente === null ? null : vc.valorADivergente / 100)} (máximo 5%). ${vc.detalhe.skusDivergentes}/${vc.detalhe.skusComparados} SKUs divergentes (${vc.detalhe.skusDivergentesNaClasseA} envolvendo A); ${vc.detalhe.skusSemClasseReconstruida} sem classe reconstruída.`,
+    );
+  }
   {
     // Âncora do estado inicial (R31, revisão M3): de onde vem a abertura e a conferência 31/01 → 30/04 contra o Omie.
     const ei = r.estadoInicial;

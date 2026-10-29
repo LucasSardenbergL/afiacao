@@ -107,7 +107,7 @@ describe('validarClasse (efetiva recalculada hoje contra classe_abc_hoje)', () =
     const hoje: Record<string, Classe> = { X: 'A', Y: 'A', Z: 'C' };
     const ok = validarClasse(dados(Object.entries(hoje).map(([s, c]) => sku(s, { classeAbcHoje: c })), v, REGRAS, '2025-10-22'));
     expect(ok.valorADivergente).toBe(0);
-    expect(ok.porClasse).toEqual({ A: 0, B: 0, C: 0 });
+    expect(ok.porClasse).toEqual({ A: 0, B: null, C: 0 }); // sem B hoje: não mensurável (null), nunca 0% fabricado
     // hoje diz que Y é B (valor 30 de 80 no A de hoje = X): peso divergente 30 / peso A-hoje 50
     const dv = validarClasse(dados([sku('X', { classeAbcHoje: 'A' }), sku('Y', { classeAbcHoje: 'B' }), sku('Z', { classeAbcHoje: 'C' })], v, REGRAS, '2025-10-22'));
     expect(dv.valorADivergente).toBeCloseTo(100 * 30 / 50, 6);

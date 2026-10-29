@@ -5,10 +5,13 @@ import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import { coorte } from './parados';
-import { anexarInformativa, avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
-import { causaOficial, LIMITES, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
+import {
+  anexarInformativa, avaliarCandidata, conferirParamsDoBaseline, ESTADO_DIVERGENTE_PERMITIDO, exigirAncoraOmie, exigirGateParidade, exigirValidacaoClasse,
+  falhasDoGate, gateParidadePassa, type GateParidade,
+} from './rodar';
+import { avisoAncora, causaOficial, LIMITES, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
-import { preComputarComOrigem, type ParamsDia } from './formulas';
+import { diagnosticoF0, paridadeF0, preComputarComOrigem, type ParamsDia } from './formulas';
 import { simular } from './simulador';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
 
@@ -90,6 +93,15 @@ describe('escolha da candidata', () => {
     expect(escolherCandidata([res('F1', false, 760), res('F2', true, 600), res('F3', false, 740)])).toBe('F3');
     expect(vereditoDaCalibracao([res('F1', false, 760)])).toBeNull();
   });
+});
+
+/** Gate de paridade como o do dado real (R21): estado 7/8 com a única divergência na allowlist nomeada. */
+const gateOk = (): GateParidade => ({
+  es: 1, pp: 0.975, max: 0.967, valor: 0.008, decisao: { n: 8, de: 8 },
+  estado: { n: 7, de: 8, divergentes: ['8689783095'] },
+  status: { n: 133, de: 134 },
+  cobertura: { view: { n: 151, de: 152 }, decisao: { n: 8, de: 8 } },
+  paramsBaseline: { n: 8, de: 8 },
 });
 
 // ── ponta a ponta: alterar a avaliação não muda nada da calibração (spec §5.9), modo âncora, saldoHoje NÃO compensado ───
@@ -208,7 +220,7 @@ describe('fix round 1', () => {
     expect(r.inviavel).toBe(true);
   });
   it('I-3: gate de paridade em FALHA lança erro de dado (rc ≠ 0), nunca segue para o veredito', () => {
-    const ok = { es: 1, pp: 0.975, max: 0.967, valor: 0.008, decisao: { n: 8, de: 8 }, estado: { n: 7, de: 8 } };
+    const ok = gateOk();
     expect(gateParidadePassa(ok)).toBe(true);
     expect(() => exigirGateParidade(ok)).not.toThrow();
     for (const ruim of [{ ...ok, max: 0.94 }, { ...ok, valor: 0.021 }, { ...ok, valor: null }, { ...ok, decisao: { n: 7, de: 8 } }, { ...ok, decisao: { n: 0, de: 0 } }]) {
@@ -345,4 +357,86 @@ describe('Fix Codex leva C (minors da revisão B)', () => {
     expect(med.estoqueNaoValoradoDias.every((x) => x === 3)).toBe(true);
     expect(med.estoqueCmcDias).toEqual(s0.estoqueCmcDias.map((x) => (x + x) / 2));
   }, 120_000);
+});
+
+describe('Fix Codex leva C — gate de paridade (achado 8), classe (achado 14) e âncora (R30)', () => {
+  it('achado 8: estado {n:0, de:8} reprova (contraprova do Codex)', () => {
+    const g = { ...gateOk(), estado: { n: 0, de: 8, divergentes: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] } };
+    expect(gateParidadePassa(g)).toBe(false);
+    expect(() => exigirGateParidade(g)).toThrow(/^GATE_PARIDADE_FALHA/);
+    expect(falhasDoGate(g).join(' ')).toMatch(/ESTADO_DIVERGENTE_FORA_DA_ALLOWLIST/);
+  });
+  it('achado 8: divergência de estado só passa na allowlist nomeada e justificada (nunca por limiar)', () => {
+    expect(Object.keys(ESTADO_DIVERGENTE_PERMITIDO)).toEqual(['8689783095']);
+    expect(ESTADO_DIVERGENTE_PERMITIDO['8689783095']).toMatch(/R21/);
+    expect(gateParidadePassa(gateOk())).toBe(true);
+    // 7/8 com OUTRO SKU divergente reprova, mesmo com a mesma taxa
+    expect(gateParidadePassa({ ...gateOk(), estado: { n: 7, de: 8, divergentes: ['1234'] } })).toBe(false);
+    // lista de divergentes incoerente com n/de reprova
+    expect(gateParidadePassa({ ...gateOk(), estado: { n: 6, de: 8, divergentes: ['8689783095'] } })).toBe(false);
+    expect(gateParidadePassa({ ...gateOk(), estado: { n: 0, de: 0, divergentes: [] } })).toBe(false);
+  });
+  it('achado 8: status, cobertura e os parâmetros do baseline também reprovam', () => {
+    const casos: [string, Partial<GateParidade>][] = [
+      ['STATUS', { status: { n: 120, de: 134 } }],
+      ['STATUS', { status: null }],
+      ['COBERTURA_VIEW', { cobertura: { view: { n: 140, de: 152 }, decisao: { n: 8, de: 8 } } }],
+      ['COBERTURA_DECISAO', { cobertura: { view: { n: 151, de: 152 }, decisao: { n: 7, de: 8 } } }],
+      ['PARAMS_BASELINE', { paramsBaseline: { n: 7, de: 8 } }],
+      ['PARAMS_BASELINE', { paramsBaseline: { n: 0, de: 0 } }],
+    ];
+    for (const [marca, ruim] of casos) {
+      const g = { ...gateOk(), ...ruim };
+      expect(falhasDoGate(g).some((f) => f.startsWith(marca))).toBe(true);
+      expect(() => exigirGateParidade(g)).toThrow(ErroDadosReplay);
+    }
+  });
+  it('achado 8: os parâmetros do gate são os do mapa que o baseline simulou (no último dia útil da avaliação)', () => {
+    const dd = cenario(false);
+    const p = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
+    const mapa = preComputarComOrigem('F0', dd, p, { calibracao: false }, { cacheDir: null }).mapa;
+    const skus = ['P', 'Q', 'R'];
+    expect(conferirParamsDoBaseline(dd, mapa, skus, p)).toEqual({ n: 3, de: 3 });
+    const ult = [...mapa.keys()].filter((k) => k.startsWith('Q|')).sort().at(-1)!;
+    const adulterado = new Map(mapa);
+    adulterado.set(ult, { tipo: 'S', s: 999 });
+    expect(conferirParamsDoBaseline(dd, adulterado, skus, p)).toEqual({ n: 2, de: 3 });
+    adulterado.delete(ult);
+    expect(conferirParamsDoBaseline(dd, adulterado, skus, p)).toEqual({ n: 2, de: 3 }); // ausente no mapa = diverge
+  });
+  it('achado 8: a cobertura da view compara a presença do SKU na view de produção com a do replay', () => {
+    const dd = cenario(false);
+    const r = paridadeF0(dd);
+    const dView = addDias(dd.dataExtracao, 1);
+    const esperado = [...coorte(dd).populacao].filter((s) => !diagnosticoF0(dd, s, dView, { calibracao: false }).naView).length;
+    expect(r.presencaNaView).toEqual({ n: esperado, de: coorte(dd).populacao.size });
+    expect(esperado).toBeLessThan(coorte(dd).populacao.size); // a fixture não tem view: só concorda quem o replay tira dela
+  });
+  it('achado 14: divergência de classe > 5% do valor A interrompe; sem valor A também (ausente ≠ 0)', () => {
+    const v = (a: number | null) => ({ porClasse: { A: a, B: 0, C: 0 }, valorADivergente: a, detalhe: { skusComparados: 10, skusSemClasseReconstruida: 0, skusDivergentes: 1, skusDivergentesNaClasseA: 1 } });
+    expect(() => exigirValidacaoClasse(v(4.99))).not.toThrow();
+    expect(() => exigirValidacaoClasse(v(5))).not.toThrow();
+    expect(() => exigirValidacaoClasse(v(5.01))).toThrow(/^CLASSE_DIVERGENTE/);
+    expect(() => exigirValidacaoClasse(v(5.01))).toThrow(ErroDadosReplay);
+    expect(() => exigirValidacaoClasse(v(null))).toThrow(/^CLASSE_DIVERGENTE/);
+  });
+  it('N1: os limites declaram por extenso R29, R34 e R35 (encerramento de hoje; tracking contaminado igual nos dois braços) e os rulings da leva B', () => {
+    const t = LIMITES.join('\n');
+    for (const x of ['R29', 'R34', 'estado de HOJE do Omie', 'R35', 'pesa igual nos dois braços', 'R36', 'R37', 'R38', 'R39', 'desde o início do aquecimento', 'capturas de preço-app até a extração', 'achado 11', 'achado 12', 'achado 10']) {
+      expect(t).toContain(x);
+    }
+    expect(t).not.toContain('limitada a [0, valor]'); // R24 revogada
+    expect(t).not.toContain('entra uma vez, não é reamostrado'); // achado 12
+  });
+  it('R30: sem a posição Omie a rodada oficial para; o legado só com --informativo-saldo-hoje e rotulado não oficial', () => {
+    const ancorado = cenario(false);
+    const legado = { ...cenario(false), posicaoAbertura: null };
+    expect(exigirAncoraOmie(ancorado, false)).toBe('oficial');
+    expect(exigirAncoraOmie(ancorado, true)).toBe('oficial');
+    expect(() => exigirAncoraOmie(legado, false)).toThrow(/^ANCORA_OMIE_AUSENTE/);
+    expect(() => exigirAncoraOmie(legado, false)).toThrow(ErroDadosReplay);
+    expect(exigirAncoraOmie(legado, true)).toBe('nao_oficial_saldo_hoje');
+    expect(avisoAncora('nao_oficial_saldo_hoje').join(' ')).toMatch(/NÃO OFICIAL/);
+    expect(avisoAncora('oficial')).toEqual([]);
+  });
 });

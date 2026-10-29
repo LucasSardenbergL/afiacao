@@ -59,6 +59,13 @@ export function fracaoNaoValorada(s: SomasSemanais, idx: readonly number[] = tod
   return u > 0 ? somar(s.estoqueNaoValoradoDias, idx) / u : null;
 }
 
+/** R37: fração do capital (estoque × CMC × dias) nos SKUs de grupo de embalagem; sem capital valorado ⇒ null. */
+export function fracaoGrupos(s: SomasSemanais, idx: readonly number[] = todas(s)): number | null {
+  conferirIdx(s, idx);
+  const c = somar(s.estoqueCmcDias, idx);
+  return c > 0 ? somar(s.estoqueCmcDiasGrupos, idx) / c : null;
+}
+
 /** Resultado de `custoLiquido`: o custo e, quando null, quanto dado faltou (os dois braços somados). */
 export interface ResultadoCusto {
   /**

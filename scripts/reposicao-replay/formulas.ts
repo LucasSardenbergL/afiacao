@@ -905,6 +905,11 @@ export interface RelatorioParidade {
   /** SECUNDÁRIA: o estado GRAVADO do replay contra sku_parametros de hoje (inclui cold start, fusível e a defasagem da passada das ~01:15). */
   secundaria: BlocoParidade;
   gravacaoNoDia: Record<string, number>;
+  /**
+   * Achado 8 (cobertura): SKUs comparáveis (fora os excluídos) em que a PRESENÇA na view de produção (parametros_view.csv)
+   * coincide com a presença na view do replay (`naView` em d = extração + 1).
+   */
+  presencaNaView: { n: number; de: number };
 }
 
 const novoBloco = (referencia: string, dia: Data, comStatus: boolean): BlocoParidade => ({
@@ -960,6 +965,7 @@ export function paridadeF0(dados: Dados, skus: Iterable<string> = coorte(dados).
     primaria: novoBloco('v_sku_parametros_sugeridos no instante da extração (parametros_view.csv)', dView, true),
     secundaria: novoBloco('sku_parametros gravado hoje (skus.csv es/pp/max_hoje)', d, false),
     gravacaoNoDia: {},
+    presencaNaView: { n: 0, de: 0 },
   };
   for (const sku of lista) {
     const s = dados.skus.get(sku);
@@ -975,6 +981,8 @@ export function paridadeF0(dados: Dados, skus: Iterable<string> = coorte(dados).
     // primária: fórmula × fórmula
     const v = dados.parametrosView.get(sku);
     const sug = diagnosticoF0(dados, sku, dView, { calibracao: false });
+    rel.presencaNaView.de++;
+    if ((v !== undefined) === sug.naView) rel.presencaNaView.n++;
     if (v) {
       const st = rel.primaria.statusConcorda!;
       st.de++;

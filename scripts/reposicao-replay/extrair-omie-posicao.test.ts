@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { criarChamada, DATAS_PADRAO, dentroDe, lerCredenciais, paginarPosicao, paraCsv, redigir, type Transporte } from './extrair-omie-posicao';
 
@@ -101,5 +104,21 @@ describe('extrair-omie-posicao', () => {
     expect(dentroDe('/repo/x', '/repo/x')).toBe(true);
     expect(dentroDe('/repo/x2/dados', '/repo/x')).toBe(false);
     expect(dentroDe('/home/u/.cache/afiacao/reposicao-replay', '/repo/x')).toBe(false);
+  });
+
+  it('guarda (N2): compara caminhos CANÔNICOS — um symlink fora do repositório que aponta para dentro é recusado', () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'guarda-')));
+    try {
+      const repo = join(base, 'repo');
+      mkdirSync(join(repo, 'dados'), { recursive: true });
+      symlinkSync(repo, join(base, 'atalho'));
+      expect(dentroDe(join(base, 'atalho', 'dados'), repo)).toBe(true); // existente, via symlink
+      expect(dentroDe(join(base, 'atalho', 'ainda-nao-existe', 'x'), repo)).toBe(true); // ainda não criada, via symlink
+      expect(dentroDe(join(base, 'fora'), repo)).toBe(false);
+      // a raiz também é canonizada (repo aberto pelo atalho)
+      expect(dentroDe(join(repo, 'dados'), join(base, 'atalho'))).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
