@@ -410,15 +410,18 @@ export function contratoCompostoR59(f: Fatos, p: Fatos['disparados'][number]): b
 
 /**
  * R65: NFs cujo MENOR t4 conhecido é posterior à base e NÃO posterior ao momento do ciclo (Codex P2: a evidência tem
- * de existir na decisão), normalizadas. NF sem t4 nunca entra (ausente ≠ depois).
+ * de existir na decisão) e SEM título criado até o momento, normalizadas. NF sem t4 nunca entra (ausente ≠ depois).
  */
 function nfsRecebidasDepoisDe(f: Fatos, base: string, momento: string): Set<string> {
+  // (Codex 2ª rodada P1) NF com título criado até o MOMENTO já tem a obrigação conhecida na decisão (pode valer mais
+  // que o pedido) → nunca isenta, mesmo que o título não desconte (representação/liquidação seguem pelo snapshot)
+  const comTitulo = new Set(f.titulos_sayerlack.filter((t) => t.nf && ts(t.created_at) <= ts(momento)).map((t) => normalizarNf(t.nf as string)));
   const menor = new Map<string, number>();
   for (const x of f.t4_por_nf ?? []) {
     const k = normalizarNf(x.nf);
     if (k !== '') menor.set(k, Math.min(menor.get(k) ?? Infinity, ts(x.t4)));
   }
-  return new Set([...menor].filter(([, t]) => t > ts(base) && t <= ts(momento)).map(([k]) => k));
+  return new Set([...menor].filter(([k, t]) => t > ts(base) && t <= ts(momento) && !comTitulo.has(k)).map(([k]) => k));
 }
 
 function baseDeCaixa(f: Fatos, data: DataISO, momento: string, cfg: Config, reserva: number, lagPagamento: number, idsSay: Set<string>): BaseCaixa {

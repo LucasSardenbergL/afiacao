@@ -303,8 +303,13 @@ describe('R27 — integração da base de caixa (money-path)', () => {
   });
   it('R65: NF de pedido velho recebida DEPOIS do snapshot (menor t4 da NF) → título ainda não podia existir: viável, com o pedido inteiro', () => {
     // a forma do ciclo 2083 (25/08) e dos pendentes de 21/10: NF consolidada, título nasce no recebimento
-    const velho = { ...com({ ...T1, created_at: '2026-10-01T10:30:00Z' }), disparados: [HIST, { ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
+    // título só DEPOIS do momento do ciclo (12:00): não existia na decisão
+    const velho = { ...com({ ...T1, created_at: '2026-10-01T12:30:00Z' }), disparados: [HIST, { ...P1, momento: '2026-09-10T12:00:00Z' }, P2] };
     const comT4 = (t4: string[]): Fatos => ({ ...velho, t4_por_nf: t4.map((x) => ({ nf: '123', t4: x })) });
+    // (Codex 2ª rodada P1) título criado entre o snapshot (10:00) e o momento (12:00) existe na decisão e pode valer
+    // mais que o pedido → veta a isenção, mesmo sem descontar (representação/liquidação seguem pelo snapshot)
+    const tituloNaJanela = simularCiclo({ ...comT4(['2026-10-01T11:00:00Z']), titulos_sayerlack: [{ ...T1, created_at: '2026-10-01T11:30:00Z' }] }, 1, cfg).estado;
+    expect(tituloNaJanela.tipo === 'indeterminado' && tituloNaJanela.camadas).toEqual(['compromisso_nao_conciliado']);
     expect(simularCiclo(comT4(['2026-10-01T11:00:00Z']), 1, cfg).estado.tipo).toBe('viavel');
     // pedido inteiro (1000 + frete) sai do caixa — a isenção muda a CLASSE, nunca o valor
     expect(pisoDe(comT4(['2026-10-01T11:00:00Z']))).toBeCloseTo(pisoDe(comT4([])), 6);
