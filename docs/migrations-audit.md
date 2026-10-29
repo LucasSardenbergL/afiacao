@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **711** custom migrations totais
-- **2307** objetos esperados (criados por estas migrations)
+- **712** custom migrations totais
+- **2313** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 864
-  - `rls_policy`: 493
+  - `function`: 866
+  - `rls_policy`: 495
   - `index`: 301
-  - `table`: 208
+  - `table`: 210
   - `cron_job`: 200
   - `view`: 127
   - `trigger`: 110
@@ -5798,6 +5798,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261029095257_tint_arquivar_staging_fantasma_lote2.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261029170140_radar_penetracao_e_concorrentes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_concorrentes_publicar` | — |
+| `function` | `public.radar_penetracao_por_municipio` | — |
+| `table` | `public.radar_concorrentes_lote` | — |
+| `table` | `public.radar_concorrentes_municipio` | — |
+| `rls_policy` | `public.radar_concorrentes_lote_select_prospectar` | `radar_concorrentes_lote` |
+| `rls_policy` | `public.radar_concorrentes_municipio_select_prospectar` | `radar_concorrentes_municipio` |
 
 ## Próximos passos por status
 
