@@ -144,6 +144,12 @@ describe('custoLiquido', () => {
     expect(custoLiquido(base, alt, G, [0, 1, 2]).custo).toBe(0);
     expect(custoLiquido(base, alt, G, [3, 3]).custo).toBeCloseTo(60, 9);
   });
+  it('M4: margem semanal null sem cancelada sem cmc (invariante do simulador quebrado) lança, nunca vira 0', () => {
+    const base = somas(1);
+    const alt = somas(1);
+    alt.cancelada = { valor: [100], margem: [null] }; // e canceladaSemCmc.linhas = 0
+    expect(() => custoLiquido(base, alt, G)).toThrow(/margem null na semana 0/);
+  });
   it('null só por falta de dado de capital (janela sem dias corridos)', () => {
     const base = somas(1, 0);
     expect(custoLiquido(base, structuredClone(base), G).custo).toBeNull();
