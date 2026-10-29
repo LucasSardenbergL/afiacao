@@ -37,7 +37,8 @@ copy (
 -- coalesce(nfe_chave_acesso, 'tracking:'||tracking_id), em md5 (a chave da NF carrega o CNPJ do emitente: não sai crua).
 -- Uma NF que fatura N pedidos aparece sob N tracking_id com o MESMO doc_md5 (dedup física em dados.ts).
 -- encerrado_omie = pedido encerrado no Omie (evidência documental de que não está aberto); status_tracking = status do
--- purchase_orders_tracking (ex.: RECEBIDO sem t4).
+-- purchase_orders_tracking (ex.: RECEBIDO sem t4). valor_total = R$ da linha (preco_compra_real do EOQ = valor ÷ recebida,
+-- só por documento coerente, como v_sku_leadtime_efetivo; fica em $REPLAY_DADOS, nunca no repositório).
 copy (
   select h.tracking_id,
          h.sku_codigo_omie::text as sku,
@@ -50,7 +51,8 @@ copy (
              coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text)) as doc_md5,
          h.sku_unidade as unidade_nfe,
          (pot.encerrado_omie_em is not null) as encerrado_omie,
-         coalesce(pot.status::text, '') as status_tracking
+         coalesce(pot.status::text, '') as status_tracking,
+         h.valor_total
   from sku_leadtime_history h
   left join purchase_orders_tracking pot on pot.id = h.tracking_id
   where h.empresa = 'OBEN'
@@ -184,6 +186,48 @@ copy (
   where a.empresa = 'oben' and a.ativo = true and a.fator_para_base > 0
   order by a.grupo_id, a.sku_codigo_omie, b.sku_codigo_omie
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/equivalencias.csv
+
+-- ── precos_app.csv: histórico do preço-app dos membros de grupo de embalagem (achado 9 do Codex) ─────────────────────
+-- A escolha QT↔GL do motor (db/embalagem-motor-rpc.sql, CTEs preco_app/membro_elegivel/embalagem_escolhida) compara
+-- preco/fator_para_base entre os membros com preço-app FRESCO (capturado_em >= now() - stale_dias). O replay refaz a
+-- escolha no dia d com as capturas de data < d. Uma linha por captura (status ok, preço > 0). elegivel_catalogo = os
+-- filtros de catálogo e de portal do membro_elegivel no estado de HOJE (não há histórico deles: limitação declarada).
+-- stale_dias = a mesma leitura do motor (company_config, padrão 45). preco fica em $REPLAY_DADOS, nunca no repositório.
+copy (
+  with membros as (
+    select e.grupo_id, e.sku_codigo_omie::text as sku, e.fator_para_base
+    from sku_embalagem_equivalencia e
+    where e.empresa = 'oben' and e.ativo = true and e.fator_para_base > 0
+  ),
+  elegivel as (
+    select m.sku,
+           (exists (select 1 from sku_fornecedor_externo f
+                    where f.empresa = 'OBEN' and f.ativo = true and f.sku_omie::text = m.sku
+                      and f.sku_portal is not null and btrim(f.sku_portal) <> '')
+            and exists (select 1 from omie_products opm
+                        left join sku_status_omie ssom on ssom.empresa = 'OBEN' and ssom.sku_codigo_omie = m.sku
+                        left join familia_nao_comprada fncm on fncm.empresa = 'OBEN' and fncm.familia = opm.familia
+                        where opm.omie_codigo_produto::text = m.sku and opm.account = 'oben'
+                          and coalesce(opm.ativo, true) = true
+                          and coalesce(ssom.ativo_no_omie, true) = true
+                          and fncm.id is null
+                          and coalesce(opm.tipo_produto, opm.metadata->>'tipo_produto', '') <> '04'
+                          and coalesce(opm.descricao, '') not ilike '%450ML'
+                          and coalesce(opm.descricao, '') not ilike '%405ML')) as ok
+    from membros m
+  )
+  select m.grupo_id, m.sku, m.fator_para_base,
+         (p.capturado_em at time zone 'America/Sao_Paulo')::date as capturado_em,
+         p.preco,
+         el.ok as elegivel_catalogo,
+         coalesce((select nullif(btrim(value), '')::int from company_config
+                   where key = 'embalagem_preco_motor_stale_dias' limit 1), 45) as stale_dias
+  from membros m
+  join elegivel el on el.sku = m.sku
+  left join sku_preco_fornecedor_capturado p
+         on p.empresa = 'oben' and p.sku_codigo_omie::text = m.sku and p.status = 'ok' and p.preco > 0
+  order by m.grupo_id, m.sku, 4, p.preco
+) to stdout with (format csv, delimiter '|', header true) \g :dir/precos_app.csv
 
 -- ── sugestao_hoje.csv: última execução do gerar_pedidos_sugeridos_ciclo (OBEN, Sayerlack) ─────────────────────
 -- Persistida em pedido_compra_sugerido/pedido_compra_item. "Última execução" = pedidos da MESMA hora de geração

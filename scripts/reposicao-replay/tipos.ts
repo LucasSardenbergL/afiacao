@@ -145,7 +145,33 @@ export interface Dados {
   posicaoAbertura: Map<string, number> | null;
   /** Posição do Omie no fim da calibração (30/04), só para CONFERÊNCIA da reconstrução; null = não extraída. */
   posicaoConferencia: Map<string, number> | null;
+  /**
+   * preco_compra_real do EOQ (achado 2): R$ por unidade recebida de cada DOCUMENTO coerente (as cópias concordam em
+   * quantidade, valor e t4, como v_sku_leadtime_efetivo), conhecido a partir do dia seguinte a `desde` (= t4).
+   * Ausente (fixture antiga) = sem preço de compra: a cadeia segue para a venda × 0,55, nunca 0.
+   */
+  precosCompra?: PrecoCompraDoc[];
+  /** Preço-app dos membros de grupo de embalagem (achado 9). Ausente/null = sem preço: nunca troca de embalagem. */
+  precosEmbalagem?: PrecosEmbalagem | null;
   hashDados: string;
+}
+
+export interface PrecoCompraDoc {
+  sku: string;
+  /** t4 do documento (o maior entre as cópias); o preço vale para d > desde. */
+  desde: Data;
+  /** valor_total ÷ quantidade_recebida (R$ por unidade recebida). Absoluto: só em memória/$REPLAY_DADOS. */
+  preco: number;
+}
+
+/** Capturas do preço-app (sku_preco_fornecedor_capturado) e a elegibilidade de catálogo dos membros de grupo. */
+export interface PrecosEmbalagem {
+  /** Janela de frescor do motor (embalagem_preco_motor_stale_dias, padrão 45). */
+  staleDias: number;
+  /** Elegibilidade de catálogo + portal (CTE membro_elegivel sem o preço) no estado de HOJE, por SKU membro. */
+  elegivel: Map<string, boolean>;
+  /** Capturas por SKU, data (dia de SP) crescente. */
+  capturas: Map<string, { data: Data; preco: number }[]>;
 }
 
 /** Padrão de demanda de Syntetos-Boylan (série semanal; ADI > 1,32; CV² > 0,49). `sem_dado` = menos de 2 semanas com venda. */

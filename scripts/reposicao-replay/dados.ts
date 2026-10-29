@@ -17,6 +17,8 @@ import {
   type EventoRecebimento,
   type ItemLT,
   type LinhaVenda,
+  type PrecoCompraDoc,
+  type PrecosEmbalagem,
   type Sku,
   type TetoConfig,
 } from './tipos';
@@ -174,6 +176,8 @@ export interface RecebLinha {
   encerrado: boolean;
   /** `purchase_orders_tracking.status` (ex.: CRIADO, FATURADO, RECEBIDO). */
   status: string;
+  /** `sku_leadtime_history.valor_total` (R$ da linha); null/ausente = sem valor. Só alimenta o preco_compra_real do EOQ. */
+  valor?: number | null;
 }
 
 const normUn = (u: string | null): string | null => (u === null ? null : u.trim().toUpperCase() || null);
@@ -343,6 +347,65 @@ export function montarItensLT(
  * Documentos distintos com a mesma quantidade no mesmo dia são eventos distintos.
  * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU são indistinguíveis de cópias (viram 1).
  */
+/**
+ * preco_compra_real por documento, como v_sku_leadtime_efetivo (achado 2 do Codex): as cópias de um documento só dão
+ * preço se concordam em quantidade recebida e valor (a view anula o campo quando divergem) e todas têm t4; preço =
+ * valor ÷ recebida, só com os dois > 0 (o FILTER da produção). `desde` = maior t4 das cópias (o preço é conhecido em
+ * d > desde). Saída ordenada por (sku, desde). Linha sem `valor` (ausente) não fabrica preço.
+ */
+export function precosCompraPorDocumento(linhas: readonly RecebLinha[]): PrecoCompraDoc[] {
+  const porDoc = new Map<string, RecebLinha[]>();
+  for (const l of linhas) {
+    const g = porDoc.get(l.docId);
+    if (g) g.push(l);
+    else porDoc.set(l.docId, [l]);
+  }
+  const out: PrecoCompraDoc[] = [];
+  for (const ls of porDoc.values()) {
+    const r0 = ls[0].recebida;
+    const v0 = ls[0].valor ?? null;
+    if (r0 === null || v0 === null || !(r0 > 0) || !(v0 > 0)) continue;
+    if (!ls.every((l) => l.recebida === r0 && (l.valor ?? null) === v0 && l.t4 !== null && l.sku === ls[0].sku)) continue;
+    let desde = ls[0].t4!;
+    for (const l of ls) if (l.t4! > desde) desde = l.t4!;
+    out.push({ sku: ls[0].sku, desde, preco: v0 / r0 });
+  }
+  return out.sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.desde < b.desde ? -1 : a.desde > b.desde ? 1 : a.preco - b.preco));
+}
+
+/**
+ * precos_app.csv (achado 9): uma linha por captura (capturado_em/preco vazios = membro sem captura). staleDias é o
+ * mesmo em todas as linhas; elegivel_catalogo é por SKU. Arquivo só com cabeçalho => null (sem grupo, sem troca).
+ */
+function lerPrecosEmbalagem(dir: string): PrecosEmbalagem | null {
+  const t = lerTabela(dir, 'precos_app', ['grupo_id', 'sku', 'fator_para_base', 'capturado_em', 'preco', 'elegivel_catalogo', 'stale_dias'], true);
+  if (t.linhas.length === 0) return null;
+  let staleDias: number | null = null;
+  const elegivel = new Map<string, boolean>();
+  const capturas = new Map<string, { data: Data; preco: number }[]>();
+  for (const r of t.linhas) {
+    const sku = r[t.col('sku')];
+    if (ehVazio(sku)) invalido(t.arquivo, 'sku vazio');
+    const st = num(t.arquivo, 'stale_dias', r[t.col('stale_dias')]);
+    if (!(st > 0) || !Number.isInteger(st)) invalido(t.arquivo, `stale_dias inválido: ${st}`);
+    if (staleDias !== null && st !== staleDias) invalido(t.arquivo, 'stale_dias divergente entre linhas');
+    staleDias = st;
+    const el = bool(t.arquivo, 'elegivel_catalogo', r[t.col('elegivel_catalogo')]);
+    if (elegivel.has(sku) && elegivel.get(sku) !== el) invalido(t.arquivo, `elegivel_catalogo divergente em ${sku}`);
+    elegivel.set(sku, el);
+    const d = dataOuNull(t.arquivo, 'capturado_em', r[t.col('capturado_em')]);
+    const p = numOuNull(t.arquivo, 'preco', r[t.col('preco')]);
+    if ((d === null) !== (p === null)) invalido(t.arquivo, `captura incompleta em ${sku}`);
+    if (d === null || p === null) continue;
+    if (!(p > 0)) invalido(t.arquivo, `preco <= 0 em ${sku}`);
+    const l = capturas.get(sku) ?? [];
+    l.push({ data: d, preco: p });
+    capturas.set(sku, l);
+  }
+  for (const l of capturas.values()) l.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : 0));
+  return { staleDias: staleDias!, elegivel, capturas };
+}
+
 export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): { eventos: EventoRecebimento[]; avisos: AvisoDados[] } {
   const docs = new Map<string, (RecebLinha & { t4: Data; recebida: number })[]>();
   for (const l of linhas) {
@@ -531,7 +594,7 @@ export function carregarDados(dir: string): Dados {
   });
 
   // recebimentos -> LT documental e chegadas físicas
-  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking'], false);
+  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking', 'valor_total'], false);
   const recLinhas: RecebLinha[] = rc.linhas.map((r) => {
     const docId = r[rc.col('doc_md5')];
     if (ehVazio(docId)) invalido(rc.arquivo, `doc_md5 vazio em ${r[rc.col('tracking_id')]}`);
@@ -547,6 +610,7 @@ export function carregarDados(dir: string): Dados {
       unidadeNfe: textoOuNull(r[rc.col('unidade_nfe')]),
       encerrado: bool(rc.arquivo, 'encerrado_omie', r[rc.col('encerrado_omie')]),
       status: r[rc.col('status_tracking')],
+      valor: numOuNull(rc.arquivo, 'valor_total', r[rc.col('valor_total')]),
     };
   });
   const unidadeEstoque = new Map([...skusBrutos].map(([k, s]) => [k, s.unidadeEstoque] as const));
@@ -627,6 +691,8 @@ export function carregarDados(dir: string): Dados {
 
   const posicaoAbertura = lerPosicaoOmie(dir, CSV_POSICAO_ABERTURA);
   const posicaoConferencia = lerPosicaoOmie(dir, CSV_POSICAO_CONFERENCIA);
+  const precosCompra = precosCompraPorDocumento(recLinhas);
+  const precosEmbalagem = lerPrecosEmbalagem(dir);
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, hashDados };
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, precosCompra, precosEmbalagem, hashDados };
 }

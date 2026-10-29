@@ -15,7 +15,7 @@ set -uo pipefail
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIR="${REPLAY_DADOS:-$HOME/.cache/afiacao/reposicao-replay}"
 PSQL_RO="${PSQL_RO:-$HOME/.config/afiacao/psql-ro}"
-CSVS=(vendas recebimentos skus config_custos classificacao_hist teto equivalencias sugestao_hoje demanda_insumo parametros_view)
+CSVS=(vendas recebimentos skus config_custos classificacao_hist teto equivalencias sugestao_hoje demanda_insumo parametros_view precos_app)
 TXTS=(outras_empresas grupos_embalagem)
 LIMITE_GATE="5"
 
@@ -30,7 +30,7 @@ conferir() {
     ult="$(tail -n 1 "$f")"
     [[ "$ult" == "fim|ok" ]] || falha 3 "marcador fim|ok ausente na última linha de $f (última: '$ult')"
     # cabeçalho + >=1 linha de dados + marcador (3 linhas); equivalencias.csv e demanda_insumo.csv podem vir sem dados
-    minimo=3; [[ "$n" == "equivalencias" || "$n" == "demanda_insumo" ]] && minimo=2
+    minimo=3; [[ "$n" == "equivalencias" || "$n" == "demanda_insumo" || "$n" == "precos_app" ]] && minimo=2
     [[ "$(wc -l < "$f" | tr -d ' ')" -ge "$minimo" ]] || falha 2 "sem linhas de dados (só cabeçalho/marcador) em $f"
   done
   for n in "${TXTS[@]}"; do

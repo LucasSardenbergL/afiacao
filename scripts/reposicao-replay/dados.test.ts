@@ -2,12 +2,12 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { carregarDados, eventosDeRecebimento } from './dados';
+import { carregarDados, eventosDeRecebimento, precosCompraPorDocumento, type RecebLinha } from './dados';
 import { duEntre } from './calendario';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
-  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking',
+  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking|valor_total',
   skus:
     'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
   config_custos:
@@ -20,6 +20,7 @@ const H = {
   sugestao_hoje: 'sku|posicao|qtde_final',
   demanda_insumo: 'sku|share_insumo',
   parametros_view: 'sku|es|pp|max|status',
+  precos_app: 'grupo_id|sku|fator_para_base|capturado_em|preco|elegivel_catalogo|stale_dias',
 } as const;
 
 type Nome = keyof typeof H;
@@ -46,6 +47,7 @@ function base(): Record<Nome, string[]> {
     sugestao_hoje: ['S1|2|3'],
     demanda_insumo: [],
     parametros_view: ['S1|1|2|4|OK'],
+    precos_app: [],
   };
 }
 
@@ -58,6 +60,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 6 ? `${l}|` : l));
   // linha sem as 4 colunas documentais ganha: documento = o próprio tracking, unidade da NF = UN (a do skuLinha), não encerrado
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 7 ? `${l}|tracking:${l.split('|')[0]}|UN|f|FATURADO` : l));
+  // valor_total (achado 2) vazio quando o teste não o informa: sem valor, sem preço de compra
+  b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 11 ? `${l}|` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -331,5 +335,37 @@ describe('eventosDeRecebimento (estoque físico)', () => {
     expect(d.parametrosView.get('S3')).toEqual({ es: null, pp: null, max: null, status: 'SEM_PRECO' });
     expect(() => carregarDados(monta({ parametros_view: ['S1|1||4|OK'] }))).toThrow(/CSV_INVALIDO:parametros_view\.csv/);
     expect(() => carregarDados(monta({ parametros_view: ['S1|1|2|4|'] }))).toThrow(/CSV_INVALIDO:parametros_view\.csv/);
+  });
+});
+
+describe('preços point-in-time (achados 2 e 9 do Codex)', () => {
+  const l = (trackingId: string, t4: string | null, recebida: number | null, valor: number | null, docId: string): RecebLinha => ({
+    trackingId, sku: 'S1', t1: '2026-01-05', t2: null, t4, pedida: 10, recebida, docId, unidadeNfe: 'UN', encerrado: false, status: 'FATURADO', valor,
+  });
+  it('preco_compra_real por documento: valor ÷ recebida; cópias divergentes, sem valor ou sem t4 não dão preço', () => {
+    const p = precosCompraPorDocumento([
+      l('a', '2026-01-12', 10, 50, 'nfe1'), l('b', '2026-01-14', 10, 50, 'nfe1'), // cópias coerentes: desde = maior t4
+      l('c', '2026-01-20', 4, 20, 'nfe2'), l('d', '2026-01-20', 4, 22, 'nfe2'), // valor divergente: a view anula
+      l('e', '2026-01-21', 5, null, 'nfe3'), // sem valor: ausente, nunca 0
+      l('f', null, 5, 30, 'nfe4'), // sem t4
+      l('g', '2026-01-22', 0, 30, 'nfe5'), // recebida 0: fora do FILTER da produção
+    ]);
+    expect(p).toEqual([{ sku: 'S1', desde: '2026-01-14', preco: 5 }]);
+  });
+  it('carrega valor_total e precos_app (stale, elegibilidade e capturas ordenadas)', () => {
+    const d = carregarDados(
+      monta({
+        recebimentos: ['T|S1|2026-01-05|2026-01-12|10|10||docA|UN|f|FATURADO|35'],
+        precos_app: ['G|S1|1|2026-06-10|12|t|45', 'G|S1|1|2026-06-05|11|t|45', 'G|S2|4|||f|45'],
+      }),
+    );
+    expect(d.precosCompra).toEqual([{ sku: 'S1', desde: '2026-01-12', preco: 3.5 }]);
+    expect(d.precosEmbalagem?.staleDias).toBe(45);
+    expect(d.precosEmbalagem?.capturas.get('S1')).toEqual([{ data: '2026-06-05', preco: 11 }, { data: '2026-06-10', preco: 12 }]);
+    expect(d.precosEmbalagem?.capturas.has('S2')).toBe(false);
+    expect([...(d.precosEmbalagem?.elegivel ?? [])]).toEqual([['S1', true], ['S2', false]]);
+    expect(carregarDados(monta()).precosEmbalagem).toBeNull();
+    expect(() => carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10||t|45'] }))).toThrow(/CSV_INVALIDO:precos_app\.csv: captura incompleta/);
+    expect(() => carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10|0|t|45'] }))).toThrow(/CSV_INVALIDO:precos_app\.csv: preco <= 0/);
   });
 });
