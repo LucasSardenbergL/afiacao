@@ -115,6 +115,29 @@ describe('carregarDados — validação dos CSVs', () => {
   });
 });
 
+describe('posição datada do Omie (âncora do estado inicial, §5.9)', () => {
+  it('ausente => null; presente => mapa SKU → nSaldo (vazio fica fora, nunca 0), e entra no hash', () => {
+    const dir = monta();
+    const sem = carregarDados(dir);
+    expect(sem.posicaoAbertura).toBeNull();
+    expect(sem.posicaoConferencia).toBeNull();
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3.5\n12|"B|x"|\n13|C|0\nfim|ok\n');
+    const com = carregarDados(dir);
+    expect([...(com.posicaoAbertura ?? [])]).toEqual([['11', 3.5], ['13', 0]]);
+    expect(com.posicaoConferencia).toBeNull();
+    expect(com.hashDados).not.toBe(sem.hashDados);
+    writeFileSync(join(dir, 'posicao_omie_2026-04-30.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|1\nfim|ok\n');
+    expect([...(carregarDados(dir).posicaoConferencia ?? [])]).toEqual([['11', 1]]);
+  });
+  it('posição sem marcador ou com nCodProd duplicado é CSV inválido', () => {
+    const dir = monta();
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3\n');
+    expect(() => carregarDados(dir)).toThrow(/CSV_INVALIDO:posicao_omie_2025-10-20\.csv/);
+    writeFileSync(join(dir, 'posicao_omie_2025-10-20.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|3\n11|A|4\nfim|ok\n');
+    expect(() => carregarDados(dir)).toThrow(/nCodProd duplicado/);
+  });
+});
+
 describe('contrato de unidade (§5.6)', () => {
   it('exclui SKU com unidade incoerente', () => {
     const dir = monta({

@@ -36,7 +36,7 @@ const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[], recebimento
   vendas, itensLT, recebimentos, skus: new Map(skus.map((s) => [s.sku, s])),
   zPorClasse: { A: 1.65, B: 1.28, C: 0.84 }, teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
   classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21',
-  hashDados: 'h',
+  posicaoAbertura: null, posicaoConferencia: null, hashDados: 'h',
 });
 
 describe('alvo da calibração', () => {

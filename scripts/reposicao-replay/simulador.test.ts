@@ -31,7 +31,7 @@ const dados = (skus: Sku[], vendas: LinhaVenda[], extra: Partial<Dados> = {}): D
   vendas, itensLT: [item('DOC0', 'Q', '2026-05-04', 2)], recebimentos: [], skus: new Map(skus.map((s) => [s.sku, s])),
   zPorClasse: { A: 1.65, B: 1.28, C: 0.84 }, teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
   classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21',
-  hashDados: 'h', ...extra,
+  posicaoAbertura: null, posicaoConferencia: null, hashDados: 'h', ...extra,
 });
 const JANELA: [string, string] = ['2026-05-04', '2026-05-29'];
 const SEM: ParamsDia = { tipo: 'SEM_DECISAO', motivo: 'F0_SEM_PARAMETRO' };

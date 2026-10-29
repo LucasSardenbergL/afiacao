@@ -1,24 +1,27 @@
-// Estado inicial do replay (spec §5.2 e §5.9 "Estado inicial"): reconstrução contábil retroativa do estoque físico.
-//   estoque_fim(d) = saldo_hoje − Σ eventos após d,  eventos = −vendas(no escopo) + recebimentos (chegada em t4).
-// Reaproveita `reconstruirEstoque` do orçamento de compra (mesma conta, mesma convenção de fim de dia).
+// Estado inicial do replay (spec §5.2 e §5.9 "Estado inicial").
+// ÂNCORA (achado 1 do Codex, revoga a R10): a posição de estoque DATADA do Omie no fim da véspera do aquecimento
+// (`posicao_omie_<INICIO_AQUECIMENTO − 1>.csv`, extrair-omie-posicao.ts) É o saldo de abertura de INICIO_AQUECIMENTO, e o
+// caminho é reconstruído PARA A FRENTE: fim(d) = abertura + Σ recebimentos − Σ vendas(no escopo) até d. A abertura não
+// usa nenhum evento, então nada posterior a 30/04 a altera. SKU sem posição fica FORA (motivo POSICAO_OMIE_AUSENTE), nunca
+// 0 nem saldo de hoje. A posição de 30/04 é só CONFERÊNCIA (`conferirPosicao`).
+// Sem a âncora (CSV ainda não extraído) cai no modo legado `saldo_hoje` (reconstrução retroativa a partir do saldo de
+// HOJE, via `reconstruirEstoque` do orçamento de compra): esse modo DEPENDE da avaliação e é reportado em `ancora`.
 // Horizonte = TODOS os dias corridos de INICIO_AQUECIMENTO até a data da extração (venda de sábado e recebimento de
 // fim de semana contam). `estoqueInicial` é o saldo de ABERTURA do 1º dia (antes dos eventos de INICIO_AQUECIMENTO).
 //
 // Cenários:
-//  - 'reconstruido': abertura reconstruída + ajuste mínimo que evita negativo, calculado SÓ com o caminho até
-//    FIM_CALIBRACAO (abertura e fim de cada dia). Um negativo que só aparece na avaliação NÃO é ajustado: é reportado
-//    por `negativosNaAvaliacao` (erro medido do simulador).
-//  - 'piso_zero': abertura reconstruída sem o ajuste, com negativo truncado em 0 (= max(0, cru)).
-// Honestidade sobre o que NÃO é independente da avaliação: a âncora é o saldo de HOJE (fim da avaliação); o fluxo líquido
-// da avaliação entra na abertura. O que a regra garante é que o AJUSTE não olha o caminho da avaliação.
-// SKU sem `saldoHoje` não tem como ser reconstruído: fica FORA do mapa (nunca 0) e vai para `diagnostico.semSaldo`.
+//  - 'reconstruido': abertura + ajuste mínimo que evita negativo, calculado SÓ com o caminho até FIM_CALIBRACAO
+//    (abertura e fim de cada dia). Um negativo que só aparece na avaliação NÃO é ajustado: é reportado por
+//    `negativosNaAvaliacao` (erro medido do simulador).
+//  - 'piso_zero': abertura sem o ajuste, com negativo truncado em 0 (= max(0, cru)).
 import { addDias, diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { reconstruirEstoque } from '../../src/lib/reposicao/orcamento-compra/demanda';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { Dados, Data } from './tipos';
 
 export type CenarioInicial = 'reconstruido' | 'piso_zero';
-export type DadosReconstrucao = Pick<Dados, 'vendas' | 'recebimentos' | 'skus' | 'dataExtracao'>;
+export type DadosReconstrucao = Pick<Dados, 'vendas' | 'recebimentos' | 'skus' | 'dataExtracao'> & { posicaoAbertura?: Map<string, number> | null };
+export type Ancora = 'posicao_omie' | 'saldo_hoje';
 
 /** Folga numérica: abaixo disso o "negativo" é ruído de ponto flutuante. */
 const EPS = 1e-9;
@@ -36,6 +39,7 @@ export interface ReconstrucaoSku {
 }
 
 export interface Reconstrucao {
+  ancora: Ancora;
   itens: Map<string, ReconstrucaoSku>;
   semSaldo: { sku: string; motivo: string }[];
 }
@@ -61,17 +65,32 @@ export function reconstruirSkus(dados: DadosReconstrucao): Reconstrucao {
     if (i >= 0 && i < n) slot(rcb, r.sku)[i] += r.quantidade;
   }
 
+  const posicao = dados.posicaoAbertura ?? null;
   const itens = new Map<string, ReconstrucaoSku>();
   const semSaldo: { sku: string; motivo: string }[] = [];
   for (const s of [...dados.skus.values()].sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : 0))) {
-    if (s.saldoHoje === null) {
-      semSaldo.push({ sku: s.sku, motivo: 'SALDO_HOJE_AUSENTE' });
-      continue;
-    }
     const d = dem.get(s.sku) ?? new Array<number>(n).fill(0);
     const r = rcb.get(s.sku) ?? new Array<number>(n).fill(0);
-    const fimDia = reconstruirEstoque(s.saldoHoje, d, r);
-    const aberturaCrua = fimDia[0] - r[0] + d[0];
+    let fimDia: number[];
+    let aberturaCrua: number;
+    if (posicao) {
+      const a = posicao.get(s.sku);
+      if (a === undefined) {
+        semSaldo.push({ sku: s.sku, motivo: 'POSICAO_OMIE_AUSENTE' });
+        continue;
+      }
+      aberturaCrua = a;
+      fimDia = new Array<number>(n);
+      let x = a;
+      for (let t = 0; t < n; t++) fimDia[t] = x = x + r[t] - d[t];
+    } else {
+      if (s.saldoHoje === null) {
+        semSaldo.push({ sku: s.sku, motivo: 'SALDO_HOJE_AUSENTE' });
+        continue;
+      }
+      fimDia = reconstruirEstoque(s.saldoHoje, d, r);
+      aberturaCrua = fimDia[0] - r[0] + d[0];
+    }
     let minCalib = aberturaCrua;
     for (let t = 0; t <= idxCalibFim; t++) minCalib = Math.min(minCalib, fimDia[t]);
     let minTudo = minCalib;
@@ -84,7 +103,7 @@ export function reconstruirSkus(dados: DadosReconstrucao): Reconstrucao {
       fecha: minTudo >= -EPS,
     });
   }
-  return { itens, semSaldo };
+  return { ancora: posicao ? 'posicao_omie' : 'saldo_hoje', itens, semSaldo };
 }
 
 /** Estoque físico de abertura de INICIO_AQUECIMENTO por SKU. SKU sem saldo de hoje fica ausente. */
@@ -121,6 +140,8 @@ export function negativosNaAvaliacao(dados: DadosReconstrucao): { sku: string; d
 }
 
 export interface DiagnosticoEstadoInicial {
+  /** De onde vem a abertura: posição datada do Omie (§5.9) ou o modo legado saldo de hoje (depende da avaliação). */
+  ancora: Ancora;
   /** SKUs reconstruíveis (com saldo de hoje). */
   total: number;
   /** Destes, quantos não ficam negativos em nenhum dia do horizonte inteiro. */
@@ -133,14 +154,43 @@ export interface DiagnosticoEstadoInicial {
 }
 
 export function diagnosticoEstadoInicial(dados: DadosReconstrucao): DiagnosticoEstadoInicial {
-  const { itens, semSaldo } = reconstruirSkus(dados);
+  const { ancora, itens, semSaldo } = reconstruirSkus(dados);
   const lista = [...itens.values()];
   const fecham = lista.filter((i) => i.fecha).length;
   return {
+    ancora,
     total: lista.length,
     fecham,
     pctFecham: lista.length === 0 ? null : fecham / lista.length,
     semSaldo,
     ajustes: lista.filter((i) => i.ajuste > 0).map((i) => ({ sku: i.sku, ajuste: i.ajuste })),
   };
+}
+
+export interface ConferenciaPosicao {
+  data: Data;
+  /** SKUs reconstruídos que têm posição do Omie na data de conferência. */
+  total: number;
+  /** Destes, quantos têm o fim do dia reconstruído (cru, sem ajuste) igual à posição do Omie (tolerância 1e-6). */
+  batem: number;
+  /** batem / total; null se total = 0. */
+  pctBatem: number | null;
+  divergentes: { sku: string; reconstruido: number; omie: number }[];
+}
+
+/** Conferência da reconstrução PARA A FRENTE contra a posição do Omie numa data (ex.: 30/04). Não altera nada. */
+export function conferirPosicao(dados: DadosReconstrucao, posicaoNaData: Map<string, number>, dataConf: Data): ConferenciaPosicao {
+  const idx = diffDias(INICIO_AQUECIMENTO, dataConf);
+  const divergentes: ConferenciaPosicao['divergentes'] = [];
+  let total = 0;
+  let batem = 0;
+  for (const it of reconstruirSkus(dados).itens.values()) {
+    const omie = posicaoNaData.get(it.sku);
+    if (omie === undefined || idx < 0 || idx >= it.fimDia.length) continue;
+    total++;
+    const rec = it.fimDia[idx];
+    if (Math.abs(rec - omie) <= 1e-6) batem++;
+    else divergentes.push({ sku: it.sku, reconstruido: rec, omie });
+  }
+  return { data: dataConf, total, batem, pctBatem: total === 0 ? null : batem / total, divergentes };
 }

@@ -1,4 +1,5 @@
 // Constantes do replay TSB (spec 2026-10-20-tsb-estoque-seguranca-design.md §5.9 e plano, Global Constraints).
+import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import type { Classe, Data } from './tipos';
 
 export const CORTE_COORTE: Data = '2026-05-01';
@@ -78,6 +79,10 @@ export const EXPOSICAO_MINIMA_LINHAS = 300;
 export const NOME_METRICA_SERVICO = 'atendimento das linhas faturadas observadas';
 
 /** Arquivos CSV obrigatórios (ordem estável por nome para o hash). */
+/** Posições datadas do Omie (extrair-omie-posicao.ts): OPCIONAIS na carga; quando presentes entram no hash dos dados. */
+export const CSV_POSICAO_ABERTURA = `posicao_omie_${addDias(INICIO_AQUECIMENTO, -1)}`;
+export const CSV_POSICAO_CONFERENCIA = `posicao_omie_${JANELAS.calibracaoFim}`;
+
 export const CSVS_REPLAY = [
   'classificacao_hist',
   'config_custos',

@@ -137,6 +137,14 @@ export interface Dados {
   /** Diagnósticos da carga (ex.: T4_ANTES_DE_T1; T1_FABRICADO; RECEBIMENTO_PARCIAL; CONVERSAO_INDETERMINADA; SEM_T4_ENCERRADO_OMIE; SEM_T4_STATUS_RECEBIDO; PARCIAL_ENCERRADO_OMIE; COPIAS_DO_DOCUMENTO_FUNDIDAS; DOCUMENTO_COM_LINHAS_DIVERGENTES; T4_DIVERGENTE_NO_DOCUMENTO), contados. */
   avisos: AvisoDados[];
   dataExtracao: Data;
+  /**
+   * Âncora do estado inicial (§5.9, achado 1): nSaldo do Omie no fim da véspera do aquecimento, por SKU
+   * (`posicao_omie_<data>.csv`); null = arquivo ainda não extraído (a reconstrução cai no modo legado `saldo_hoje`).
+   * nSaldo vazio fica fora do mapa (ausente ≠ 0).
+   */
+  posicaoAbertura: Map<string, number> | null;
+  /** Posição do Omie no fim da calibração (30/04), só para CONFERÊNCIA da reconstrução; null = não extraída. */
+  posicaoConferencia: Map<string, number> | null;
   hashDados: string;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { carregarDados } from './dados';
-import { diagnosticoEstadoInicial, estoqueInicial, negativosNaAvaliacao, type DadosReconstrucao } from './reconstrucao';
+import { conferirPosicao, diagnosticoEstadoInicial, estoqueInicial, negativosNaAvaliacao, type DadosReconstrucao } from './reconstrucao';
 import type { LinhaVenda, Sku } from './tipos';
 
 const sku = (codigo: string, saldoHoje: number | null): Sku => ({
@@ -77,6 +77,49 @@ describe('estado inicial (spec §5.2 e §5.9)', () => {
     expect(dg.total).toBe(1);
     expect(dg.fecham).toBe(1);
     expect(dg.pctFecham).toBe(1);
+  });
+});
+
+// Achado 1 do Codex: com a âncora DATADA do Omie (posição no fim da véspera do aquecimento), a abertura não pode depender de
+// nada posterior a 30/04. O teste perturba vendas e recebimentos da avaliação SEM compensar `saldoHoje` (a R10 compensava).
+describe('estado inicial ancorado na posição do Omie (§5.9, achado 1)', () => {
+  const comAncora = (d: DadosReconstrucao, pos: Record<string, number>): DadosReconstrucao => ({ ...d, posicaoAbertura: new Map(Object.entries(pos)) });
+
+  it('abertura = posição do Omie na véspera; o caminho é reconstruído para a frente', () => {
+    // posição 7 no fim de 20/10; recebe 4 em 21/10 e vende 3 em 22/10 => fim de 22/10 = 8
+    const d = comAncora(dados('2025-10-23', [sku('S1', 999)], [venda('S1', '2025-10-22', 3)], [rec('S1', '2025-10-21', 4)]), { S1: 7 });
+    expect(estoqueInicial(d, 'reconstruido').get('S1')).toBe(7);
+    expect(diagnosticoEstadoInicial(d).ancora).toBe('posicao_omie');
+  });
+
+  it('invariância: multiplicar as vendas e somar recebimentos depois de 30/04, saldoHoje FIXO, não muda a abertura', () => {
+    const vendas = [venda('S1', '2026-03-02', 2), venda('S1', '2026-05-04', 3), venda('S1', '2026-09-01', 1)];
+    const base = comAncora(dados('2026-10-21', [sku('S1', 4), sku('S2', 0)], vendas, [rec('S1', '2026-02-10', 5)]), { S1: 6, S2: 1 });
+    const perturbado = comAncora(
+      dados(
+        '2026-10-21',
+        [sku('S1', 4), sku('S2', 0)],
+        vendas.map((v) => (v.data > '2026-04-30' ? { ...v, quantidade: v.quantidade * 10 } : v)).concat([venda('S2', '2026-06-01', 50)]),
+        [rec('S1', '2026-02-10', 5), rec('S1', '2026-07-01', 80), rec('S2', '2026-05-02', 9)],
+      ),
+      { S1: 6, S2: 1 },
+    );
+    for (const c of ['reconstruido', 'piso_zero'] as const) {
+      expect(estoqueInicial(perturbado, c)).toEqual(estoqueInicial(base, c));
+    }
+  });
+
+  it('SKU sem posição do Omie fica FORA (nunca 0, nunca cai para o saldo de hoje), com motivo', () => {
+    const d = comAncora(dados('2026-01-10', [sku('S1', 5), sku('S2', 3)]), { S1: 2 });
+    expect([...estoqueInicial(d, 'reconstruido')]).toEqual([['S1', 2]]);
+    expect(diagnosticoEstadoInicial(d).semSaldo).toEqual([{ sku: 'S2', motivo: 'POSICAO_OMIE_AUSENTE' }]);
+  });
+
+  it('conferência em 30/04: fração dos SKUs em que a reconstrução para a frente bate com a posição do Omie', () => {
+    // S1: 6 + 5 (fev) − 2 (mar) = 9 em 30/04 (bate); S2: 1 (não bate com 4); S3 sem posição de conferência
+    const d = comAncora(dados('2026-10-21', [sku('S1', 0), sku('S2', 0), sku('S3', 0)], [venda('S1', '2026-03-02', 2)], [rec('S1', '2026-02-10', 5)]), { S1: 6, S2: 1, S3: 0 });
+    const c = conferirPosicao(d, new Map([['S1', 9], ['S2', 4]]), '2026-04-30');
+    expect(c).toEqual({ data: '2026-04-30', total: 2, batem: 1, pctBatem: 0.5, divergentes: [{ sku: 'S2', reconstruido: 1, omie: 4 }] });
   });
 });
 

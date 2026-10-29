@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
+import { CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA, CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
 import { duEntre } from './calendario';
 import {
   ErroDadosReplay,
@@ -390,7 +390,8 @@ function lerDataExtracao(dir: string): Data {
 
 function hashDosCsvs(dir: string): string {
   const h = createHash('sha256');
-  for (const nome of [...CSVS_REPLAY].sort()) {
+  const opcionais = [CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA].filter((n) => existsSync(join(dir, `${n}.csv`)));
+  for (const nome of [...CSVS_REPLAY, ...opcionais].sort()) {
     const arq = `${nome}.csv`;
     if (!existsSync(join(dir, arq))) return invalido(arq, 'ausente');
     h.update(`${arq}\u0000`);
@@ -398,6 +399,26 @@ function hashDosCsvs(dir: string): string {
     h.update('\u0000');
   }
   return h.digest('hex');
+}
+
+/**
+ * Posição datada do Omie (`nCodProd|cCodigo|nSaldo`, marcador fim|ok) → mapa SKU → saldo. `nCodProd` = sku_codigo_omie.
+ * Arquivo ausente => null (opcional). nSaldo vazio fica fora do mapa (ausente ≠ 0). nCodProd repetido => CSV inválido.
+ */
+function lerPosicaoOmie(dir: string, nome: string): Map<string, number> | null {
+  if (!existsSync(join(dir, `${nome}.csv`))) return null;
+  const t = lerTabela(dir, nome, ['nCodProd', 'cCodigo', 'nSaldo'], false);
+  const out = new Map<string, number>();
+  const vistos = new Set<string>();
+  for (const r of t.linhas) {
+    const cod = r[t.col('nCodProd')].trim();
+    if (!/^\d+$/.test(cod)) invalido(t.arquivo, `nCodProd inválido: '${cod}'`);
+    if (vistos.has(cod)) invalido(t.arquivo, `nCodProd duplicado: ${cod}`);
+    vistos.add(cod);
+    const v = numOuNull(t.arquivo, 'nSaldo', r[t.col('nSaldo')]);
+    if (v !== null) out.set(cod, v);
+  }
+  return out;
 }
 
 /** `dataExtracao` vem da 1ª linha de extracao.log (carimbo UTC do extrair.sh). */
@@ -604,5 +625,8 @@ export function carregarDados(dir: string): Dados {
     parametrosView.set(sku, v);
   }
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, hashDados };
+  const posicaoAbertura = lerPosicaoOmie(dir, CSV_POSICAO_ABERTURA);
+  const posicaoConferencia = lerPosicaoOmie(dir, CSV_POSICAO_CONFERENCIA);
+
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, hashDados };
 }
