@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 710
+-- Total de custom migrations: 711
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -774,7 +774,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261028100000', 'tint_consumo_corante', '20261028100000_tint_consumo_corante.sql'),
   ('20261028100100', 'tint_corante_giro', '20261028100100_tint_corante_giro.sql'),
   ('20261028100200', 'analytics_ledger_corantes', '20261028100200_analytics_ledger_corantes.sql'),
-  ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql')
+  ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql'),
+  ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
