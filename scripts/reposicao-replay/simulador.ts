@@ -250,6 +250,10 @@ interface Plano {
   linCel: Int8Array;
   linAlt: Int8Array;
   linMedida: Uint8Array;
+  /** Linha de SKU extra (membro de grupo fora da população, achado 9): simulada, nunca medida nem herdada. */
+  linFora: Uint8Array;
+  /** SKU extra (membro de grupo fora da população): sem decisão, fora das medidas. */
+  extra: Uint8Array;
   offFila: Int32Array;
   cmc: Float64Array;
   skusSemCmc: string[];
@@ -327,7 +331,23 @@ function montarPlano(
     else if (!ini.has(s)) excluidos.push({ sku: s, motivo: 'SEM_ESTOQUE_INICIAL' });
     else skus.push(s);
   }
+  // achado 9: o membro do grupo que a âncora simulada pode comprar entra no plano mesmo fora da população (o motor
+  // consolida o estoque do grupo inteiro e a compra pode cair nele). Ele é EXTRA: sem decisão, linhas simuladas (consomem
+  // o estoque dele e geram obrigação na posição) mas fora de toda medida (células, conta econômica, herdadas, terminal);
+  // o estoque dele entra no capital, porque é a compra da âncora que o forma.
+  const nPop = skus.length;
+  const naPop = new Set(skus);
+  for (let x = 0; x < nPop; x++) {
+    const g = grupoDeEmbalagem(dados, skus[x]);
+    if (!g || g.ancora !== skus[x]) continue;
+    for (const m of g.membros) if (!naPop.has(m) && dados.skus.has(m) && ini.has(m)) {
+      naPop.add(m);
+      skus.push(m);
+    }
+  }
   const nSku = skus.length;
+  const extra = new Uint8Array(nSku);
+  for (let s = nPop; s < nSku; s++) extra[s] = 1;
   const idxSku = new Map(skus.map((s, i) => [s, i]));
   const skuObj = skus.map((s) => dados.skus.get(s)!);
   // calendário do horizonte
@@ -382,6 +402,7 @@ function montarPlano(
   const linCel = new Int8Array(nL);
   const linAlt = new Int8Array(nL);
   const linMedida = new Uint8Array(nL);
+  const linFora = new Uint8Array(nL);
   const porSku = new Int32Array(nSku);
   const ORD: Record<Classe, number> = { A: 0, B: 1, C: 2 };
   for (let L = 0; L < nL; L++) {
@@ -397,7 +418,8 @@ function montarPlano(
     const c = ORD[classeNoDia(dados, v.data).get(v.sku) ?? 'C'];
     linCel[L] = c;
     linAlt[L] = alt.has(v.sku) ? 3 + c : -1;
-    linMedida[L] = i >= iJanela ? 1 : 0;
+    linMedida[L] = i >= iJanela && !extra[s] ? 1 : 0;
+    linFora[L] = extra[s];
     linIni[i + 1]++;
     porSku[s]++;
   }
@@ -470,7 +492,7 @@ function montarPlano(
   return {
     escolha,
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
-    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, offFila, cmc, skusSemCmc, inicial: inicialArr,
+    linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, cmc, skusSemCmc, inicial: inicialArr,
     chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
     itensPre: itensPreCorte(itens, dados.dataExtracao), iFimCalib: diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim),
   };
@@ -484,6 +506,7 @@ function resolverParams(plano: Plano, params: Map<string, ParamsDia>, formula: F
   const nDu = plano.duPos.length;
   const arr: (ParamsDia | null)[] = new Array(plano.skus.length * nDu).fill(null);
   for (let s = 0; s < plano.skus.length; s++) {
+    if (plano.extra[s]) continue; // membro extra do grupo: nunca decide (fica null)
     for (let k = 0; k < nDu; k++) {
       const chave = `${plano.skus[s]}|${plano.dias[plano.duPos[k]]}`;
       const p = params.get(chave);
@@ -593,6 +616,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       for (let s = 0; s < nSku; s++) {
         for (let h = head[s]; h < tail[s]; h++) {
           const L = fila[P.offFila[s] + h];
+          if (P.linFora[L]) continue;
           herAbU += saldo[L];
           herAbV += saldo[L] * P.linVu[L];
         }
@@ -621,7 +645,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
           tardia[w] += v;
           atraso[w] += v * (i - P.linDia[L]);
           taU[s] += q;
-        } else if (w >= 0) {
+        } else if (w >= 0 && !P.linFora[L]) {
           // achado 13: obrigação herdada entregue dentro da janela — conta econômica, nunca serviço
           const v = q * P.linVu[L];
           tardia[w] += v;
@@ -767,6 +791,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     let bkU = 0;
     for (let h = head[s]; h < tail[s]; h++) {
       const L = fila[P.offFila[s] + h];
+      if (P.linFora[L]) continue; // SKU extra: fora das medidas
       const v = saldo[L] * P.linVu[L];
       backlogValor += v;
       if (!P.linMedida[L]) {

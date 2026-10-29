@@ -539,6 +539,14 @@ describe('achado 9: escolha de embalagem do grupo', () => {
     // posição do grupo 0 < 4: ceil(4 / 3,24) = 2 galões = 6,48 L no estoque do GL
     expect(r.pedidos).toEqual([{ dia: '2026-06-09', sku: 'GL', qtd: 6.48, chegada: '2026-06-11' }]);
     expect(r.balanco.recebido).toBeCloseTo(6.48, 9);
+    // o galão fora da população (sem parâmetros no mapa) entra no plano como EXTRA: recebe a compra, não é medido
+    const vs2 = [...vs, venda('g1', 'GL', '2026-06-16', 3.24)];
+    const dd2 = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }), vs2, 0.81, 0, { itensLT: dd.itensLT });
+    const pSoQT = params({ QT: (d: string) => (d === '2026-06-09' ? { tipo: 'S', s: 4 } : SEM) }, fim);
+    const r2 = roda(dd2, pSoQT, { janela: ['2026-06-01', fim], rastro: true });
+    expect(r2.pedidos).toEqual(r.pedidos);
+    expect(soma(r2.porCelula.total.demandadas)).toBe(1); // só a linha do QT
+    expect(r2.balanco.entregue).toBeCloseTo(0.81 + 3.24, 9); // a linha do galão consumiu o estoque comprado
   });
 
   it('paridadeQuantidade inclui o membro escolhido pela produção (o galão) e compara a escolha', () => {
