@@ -866,6 +866,8 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/omie/**",
       "src/lib/posthog-error/**",
       "src/lib/push/**",
+      "src/lib/receita/**",
+      "src/components/receita/**",
       "src/lib/time/**",
       "src/lib/modulos/**",
       "src/lib/agruparPorMes.ts",
