@@ -17,6 +17,7 @@ import {
   type EventoRecebimento,
   type ItemLT,
   type LinhaVenda,
+  type ObsLtMotorBruta,
   type PrecoCompraDoc,
   type PrecosEmbalagem,
   type Sku,
@@ -464,11 +465,54 @@ export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, 
 }
 
 // ── carga ────────────────────────────────────────────────────────────────────────────────────────────────────────
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const FMT_SP = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' });
+/** Dia de São Paulo de um instante UTC (`YYYY-MM-DDTHH:MM:SSZ`). */
+export function dataSP(isoUtc: string): Data {
+  if (!ISO_UTC.test(isoUtc) || Number.isNaN(Date.parse(isoUtc))) throw new ErroDadosReplay(`INSTANTE_INVALIDO:${isoUtc}`);
+  return FMT_SP.format(new Date(isoUtc));
+}
+
+/**
+ * R40: data da extração = o dia de SÃO PAULO do carimbo UTC do extracao.log (o "hoje" da produção). O dia UTC simulava
+ * uma passada do dia seguinte quando a extração rodava depois das 21:00 de SP.
+ */
 function lerDataExtracao(dir: string): Data {
   const f = join(dir, 'extracao.log');
   if (!existsSync(f)) return invalido('extracao.log', 'ausente');
-  const m = /^extracao em (\d{4}-\d{2}-\d{2})T/m.exec(readFileSync(f, 'utf8'));
-  return m ? m[1] : invalido('extracao.log', 'linha "extracao em <data>T..." ausente');
+  const m = /^extracao em (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)/m.exec(readFileSync(f, 'utf8'));
+  return m ? dataSP(m[1]) : invalido('extracao.log', 'linha "extracao em <YYYY-MM-DDTHH:MM:SSZ>" ausente');
+}
+
+/** R40: a execução do motor de sugestao_hoje é do dia (SP) da extração e não houve passada de sku_parametros depois dela. */
+function lerMotor(dir: string, dataExtracao: Data): NonNullable<Dados['motor']> {
+  const t = lerTabela(dir, 'motor', ['horario_geracao', 'ultima_passada'], false);
+  if (t.linhas.length !== 1) return invalido(t.arquivo, `esperada 1 linha, veio ${t.linhas.length}`);
+  const horarioGeracao = t.linhas[0][t.col('horario_geracao')];
+  const ultimaPassada = t.linhas[0][t.col('ultima_passada')];
+  if (!ISO_UTC.test(horarioGeracao) || !ISO_UTC.test(ultimaPassada)) return invalido(t.arquivo, `instante fora do formato UTC: ${horarioGeracao} / ${ultimaPassada}`);
+  if (ultimaPassada > horarioGeracao) {
+    throw new ErroDadosReplay(`PASSADA_ENTRE_MOTOR_E_EXTRACAO: a passada de ${ultimaPassada} é posterior à execução do motor de ${horarioGeracao} — re-extraia depois de uma nova execução do motor`);
+  }
+  if (dataSP(horarioGeracao) !== dataExtracao) {
+    throw new ErroDadosReplay(`MOTOR_DE_OUTRO_DIA: a execução do motor (${horarioGeracao}, dia ${dataSP(horarioGeracao)} em SP) não é do dia da extração (${dataExtracao} em SP)`);
+  }
+  return { horarioGeracao, ultimaPassada };
+}
+
+/** R43: linhas de v_sku_leadtime_efetivo para o LT do F0 (t2, t4 e lt obrigatórios; fornecedor pode faltar). */
+function lerLtMotor(dir: string): ObsLtMotorBruta[] {
+  const t = lerTabela(dir, 'lt_motor', ['sku', 'fornecedor', 't2', 't4', 'lt'], false);
+  return t.linhas.map((r) => {
+    const f = r[t.col('fornecedor')];
+    return {
+      sku: r[t.col('sku')],
+      fornecedor: ehVazio(f) ? null : num(t.arquivo, 'fornecedor', f),
+      t2: data(t.arquivo, 't2', r[t.col('t2')]),
+      t4: data(t.arquivo, 't4', r[t.col('t4')]),
+      lt: num(t.arquivo, 'lt', r[t.col('lt')]),
+    };
+  });
 }
 
 function hashDosCsvs(dir: string): string {
@@ -732,5 +776,7 @@ export function carregarDados(dir: string): DadosCarregados {
   const precosCompra = precosCompraPorDocumento(recLinhas);
   const precosEmbalagem = lerPrecosEmbalagem(dir);
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, hashDados };
+  const motor = lerMotor(dir, dataExtracao);
+  const ltMotor = lerLtMotor(dir);
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, motor, ltMotor, hashDados };
 }

@@ -152,6 +152,8 @@ interface ObsLtMotor {
   /** Data da janela de 180 d da view (t2; sem t2, t4). */
   tJanela: Data;
   lt: number;
+  /** fornecedor_codigo_omie (R43; null = sem, ou amostra documental das fixtures antigas). */
+  forn: number | null;
 }
 interface Indice {
   nDias: number;
@@ -174,6 +176,8 @@ interface Indice {
   grupoDe: Map<string, Grupo>;
   obsMotor: ObsLtMotor[];
   obsMotorPorSku: Map<string, ObsLtMotor[]>;
+  /** R43: true = obsMotor veio de v_sku_leadtime_efetivo (dados.ltMotor); a média do fornecedor é POR fornecedor. */
+  ltDaView: boolean;
   maxLtDu: number;
   propostaPorDia: Map<Data, Map<string, Classe>>;
   efetivaPorDia: Map<Data, Map<string, Classe>>;
@@ -281,10 +285,15 @@ function indice(dados: Dados): Indice {
     if (it.ltDu > maxLtDu) maxLtDu = it.ltDu;
     const k = `${it.sku}\u0000${it.t2 ?? ''}\u0000${it.t4}`;
     const o = porChave.get(k);
-    if (!o) porChave.set(k, { sku: it.sku, t4: it.t4, tJanela: it.t2 ?? it.t4, lt: it.ltDu, ok: true });
+    if (!o) porChave.set(k, { sku: it.sku, t4: it.t4, tJanela: it.t2 ?? it.t4, lt: it.ltDu, forn: null, ok: true });
     else if (o.lt !== it.ltDu) o.ok = false;
   }
-  const obsMotor = [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, tJanela, lt }) => ({ sku, t4, tJanela, lt }));
+  // R43: com a amostra da produção (v_sku_leadtime_efetivo: dedup por NFe, LT nulo nas cópias divergentes, lt_bruto
+  // contado pelo banco), o F0 usa ELA; a aproximação documental acima só sobra para fixtures sem ltMotor.
+  const ltDaView = dados.ltMotor !== undefined;
+  const obsMotor: ObsLtMotor[] = ltDaView
+    ? dados.ltMotor!.map((o) => ({ sku: o.sku, t4: o.t4, tJanela: o.t2, lt: o.lt, forn: o.fornecedor }))
+    : [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, tJanela, lt }) => ({ sku, t4, tJanela, lt, forn: null }));
   obsMotor.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : 1));
   const obsMotorPorSku = new Map<string, ObsLtMotor[]>();
   for (const o of obsMotor) {
@@ -293,7 +302,7 @@ function indice(dados: Dados): Indice {
     obsMotorPorSku.set(o.sku, l);
   }
   const ix: Indice = {
-    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, cmcHist, compraHist, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, maxLtDu,
+    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, cmcHist, compraHist, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, ltDaView, maxLtDu,
     propostaPorDia: new Map(), efetivaPorDia: new Map(), fornecedorPorDia: new Map(), serieDu: new Map(), trajF0: new Map(), aleatoriosF2: new Map(),
   };
   indices.set(dados, ix);
@@ -367,12 +376,19 @@ function sigmaJanela(ix: Indice, sku: string, d: Data): number | null {
   return arred(Math.sqrt(ss / (n - 1)), 4);
 }
 
-function fornecedorLt(ix: Indice, d: Data, calib: boolean): { media: number | null; desvio: number | null } {
-  const k = `${d}|${calib ? 1 : 0}`;
+/**
+ * Média/desvio do LT do fornecedor (fornecedor_stats de v_sku_leadtime_estatisticas) em d. R43: com a amostra da view,
+ * só as observações do fornecedor `forn` (null ⇒ sem média, como o LEFT JOIN com NULL); sem ela (fixture), a amostra toda.
+ */
+function fornecedorLt(ix: Indice, d: Data, calib: boolean, forn: number | null): { media: number | null; desvio: number | null } {
+  if (ix.ltDaView && forn === null) return { media: null, desvio: null };
+  const k = `${d}|${calib ? 1 : 0}|${ix.ltDaView ? forn : '*'}`;
   let r = ix.fornecedorPorDia.get(k);
   if (!r) {
     const ini = addDias(d, -F0.janelaLtDias);
-    const xs = ix.obsMotor.filter((o) => o.t4 < d && o.tJanela >= ini && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
+    const xs = ix.obsMotor
+      .filter((o) => o.t4 < d && o.tJanela >= ini && (!calib || o.t4 <= JANELAS.calibracaoFim) && (!ix.ltDaView || o.forn === forn))
+      .map((o) => o.lt);
     const dp = desvioAmostral(xs);
     r = { media: xs.length ? arred(media(xs), 2) : null, desvio: dp === null ? null : arred(dp, 2) };
     ix.fornecedorPorDia.set(k, r);
@@ -423,27 +439,35 @@ interface TrajetoriaF0 {
 }
 
 /** Sugestão de v_sku_parametros_sugeridos para o SKU no dia d (dados < d). */
-function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): Omit<DiagnosticoF0, 'gravacao' | 'coldStart' | 'es' | 'pp' | 'max' | 'demandaGravada'> {
+/**
+ * Sugestão de v_sku_parametros_sugeridos para o SKU no dia d (dados < d). `janelaView` (R41, só a paridade primária): a
+ * view VIVA consultada no dia E = d − 1 lê a demanda e as ordens de E − 90 até E (91 dias) ÷ 90; o cron (padrão) roda de
+ * madrugada, sem venda do dia, e lê [d − 90, d).
+ */
+function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, janelaView = false): Omit<DiagnosticoF0, 'gravacao' | 'coldStart' | 'es' | 'pp' | 'max' | 'demandaGravada'> {
   const vazio = { naView: false, classeProposta: null, numOrdens: 0, demanda: null, sigmaD: null, lt: null, sigmaLt: null, z: null, minimoOperacional: null, precoEoq: null, fontePreco: null, ssCalculado: null, ppSugerido: null, maxSugerido: null, status: null };
   const classe = propostaDoDia(dados, ix, d).get(s.sku) ?? null;
   const pT = ix.prefTotal.get(s.sku);
   const pL = ix.prefLinhas.get(s.sku);
   const iD = Math.min(idx(d), ix.nDias);
   if (classe === null || !pT || !pL || iD <= 0) return vazio;
-  const ini = Math.max(0, iD - F0.janelaDemandaDias);
-  const nObs = iD - ini;
+  const ini = Math.max(0, iD - F0.janelaDemandaDias - (janelaView ? 1 : 0));
+  const nObs = janelaView ? F0.janelaDemandaDias : iD - ini;
   const numOrdens = pL[iD] - pL[ini];
   const demanda = arred((pT[iD] - pT[ini]) / nObs, 4);
   const sigmaD = sigmaJanela(ix, s.sku, d);
   // LT (v_sku_leadtime_estatisticas + v_sku_lt_teorico)
   const iniLt = addDias(d, -F0.janelaLtDias);
-  const obs = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => o.t4 < d && o.tJanela >= iniLt && (!calib || o.t4 <= JANELAS.calibracaoFim)).map((o) => o.lt);
+  const naJanela = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => o.t4 < d && o.tJanela >= iniLt && (!calib || o.t4 <= JANELAS.calibracaoFim));
+  const obs = naJanela.map((o) => o.lt);
+  // R43: o fornecedor do SKU na view é max(fornecedor_codigo_omie) das observações dele na janela
+  const fornSku = naJanela.reduce<number | null>((m, o) => (o.forn !== null && (m === null || o.forn > m) ? o.forn : m), null);
   const teorico = s.grupo !== null && s.grupo in LT_TEORICO_DU ? LT_TEORICO_DU[s.grupo] : null;
   let ltHist: number | null = null;
   let desvioHist: number | null = null;
   let desvioForn: number | null = null;
   if (obs.length > 0) {
-    const forn = fornecedorLt(ix, d, calib);
+    const forn = fornecedorLt(ix, d, calib, fornSku);
     desvioForn = forn.desvio;
     if (obs.length >= F0.minObsLtSku) {
       ltHist = arred(media(obs), 2);
@@ -525,6 +549,13 @@ function trajetoriaF0(dados: Dados, sku: string, ate: Data, calib: boolean): Tra
     t.ate = d;
   }
   return t;
+}
+
+/** R41: a sugestão que a view VIVA mostra quando consultada no dia E (a primária da paridade). */
+export function sugestaoDaView(dados: Dados, sku: string, E: Data): ReturnType<typeof sugestaoF0> {
+  const s = dados.skus.get(sku);
+  if (!s) throw new Error(`SKU_FORA_DOS_DADOS:${sku}`);
+  return sugestaoF0(dados, indice(dados), s, addDias(E, 1), false, true);
 }
 
 /** Diagnóstico do F0 no dia d (a sugestão da view e o gravado depois da passada do dia). */
@@ -949,9 +980,8 @@ function comparar(
 
 /**
  * Paridade do F0 com o dado real. Padrão: a coorte.
- *  · PRIMÁRIA: a view do instante da extração já vê a venda do próprio dia, então o replay é avaliado em d = extração + 1
- *    (dados <= extração). A borda inferior das janelas de 90/180 d fica 1 dia mais curta que a da view (`>= hoje - 90 dias`
- *    inclui 91 dias corridos) — limitação declarada. Só compara os campos quando os DOIS têm status OK; a concordância do
+ *  · PRIMÁRIA: a view do instante da extração já vê a venda do próprio dia (dados <= extração, d = extração em SP, R40).
+ *    Demanda e ordens de hoje − 90 até hoje (91 dias) ÷ 90, como a view (R41). Só compara os campos quando os DOIS têm status OK; a concordância do
  *    status é medida à parte.
  *  · SECUNDÁRIA: o estado gravado do replay depois da passada de d = extração (dados < extração) contra `sku.hoje`.
  */
@@ -980,7 +1010,8 @@ export function paridadeF0(dados: Dados, skus: Iterable<string> = coorte(dados).
     }
     // primária: fórmula × fórmula
     const v = dados.parametrosView.get(sku);
-    const sug = diagnosticoF0(dados, sku, dView, { calibracao: false });
+    // R41: a view viva no dia da extração (demanda e ordens de hoje − 90 até hoje ÷ 90)
+    const sug = sugestaoDaView(dados, sku, d);
     rel.presencaNaView.de++;
     if ((v !== undefined) === sug.naView) rel.presencaNaView.n++;
     if (v) {

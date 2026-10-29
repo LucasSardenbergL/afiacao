@@ -22,6 +22,8 @@ const H = {
   demanda_insumo: 'sku|share_insumo',
   parametros_view: 'sku|es|pp|max|status',
   precos_app: 'grupo_id|sku|fator_para_base|capturado_em|preco|elegivel_catalogo|stale_dias',
+  motor: 'horario_geracao|ultima_passada',
+  lt_motor: 'sku|fornecedor|t2|t4|lt',
 } as const;
 
 type Nome = keyof typeof H;
@@ -49,6 +51,9 @@ function base(): Record<Nome, string[]> {
     demanda_insumo: [],
     parametros_view: ['S1|1|2|4|OK'],
     precos_app: [],
+    // execução do motor às 07:00 de SP, depois da passada das 01:16 de SP, no MESMO dia da extração (09:57 de SP)
+    motor: ['2026-10-21T10:00:00Z|2026-10-21T04:16:00Z'],
+    lt_motor: ['S1|77|2026-01-06|2026-01-12|5'],
   };
 }
 
@@ -430,5 +435,37 @@ describe('Fix Codex leva C — R38 (origem_compra)', () => {
     expect(() => carregarDados(monta({ recebimentos: rec('oportunidade_promo') }))).toThrow(/^ORIGEM_COMPRA_NAO_NORMAL:/);
     expect(() => carregarDados(monta({ recebimentos: rec('') }))).toThrow(/^ORIGEM_COMPRA_NAO_NORMAL:/);
     expect(() => carregarDados(monta({ recebimentos: rec('oportunidade_promo') }))).toThrow(ErroDadosReplay);
+  });
+});
+
+describe('Fix Codex leva C round 1 — R40 (data de SP e passada do motor) e R43 (LT do F0 da view)', () => {
+  it('R40: a data da extração é a de São Paulo, não a de UTC', () => {
+    // 02:12Z de 29/10 = 23:12 de 28/10 em SP; motor às 21:57Z de 28 e passada às 04:16Z de 28
+    const d = carregarDados(monta({ motor: ['2026-10-28T21:57:00Z|2026-10-28T04:16:00Z'] }, 'extracao em 2026-10-29T02:12:28Z  dir=x\n'));
+    expect(d.dataExtracao).toBe('2026-10-28');
+    expect(d.motor).toEqual({ horarioGeracao: '2026-10-28T21:57:00Z', ultimaPassada: '2026-10-28T04:16:00Z' });
+  });
+  it('R40: passada do motor entre a execução gravada e a extração para a carga', () => {
+    const log = 'extracao em 2026-10-29T12:00:00Z  dir=x\n';
+    expect(() => carregarDados(monta({ motor: ['2026-10-29T09:00:00Z|2026-10-29T10:16:00Z'] }, log))).toThrow(/^PASSADA_ENTRE_MOTOR_E_EXTRACAO/);
+    expect(() => carregarDados(monta({ motor: ['2026-10-29T09:00:00Z|2026-10-29T04:16:00Z'] }, log))).not.toThrow();
+  });
+  it('R40: execução do motor de outro dia (SP) que o da extração para a carga', () => {
+    // motor às 20:00 de SP de 28/10 e extração às 00:30 de SP de 29/10, sem passada no meio: a decisão é de outro dia
+    const log = 'extracao em 2026-10-29T03:30:00Z  dir=x\n';
+    expect(() => carregarDados(monta({ motor: ['2026-10-28T23:00:00Z|2026-10-28T04:16:00Z'] }, log))).toThrow(/^MOTOR_DE_OUTRO_DIA/);
+  });
+  it('R40: motor.csv sem linha ou com mais de uma para a carga (fail-closed)', () => {
+    expect(() => carregarDados(monta({ motor: [] }))).toThrow(/motor\.csv/);
+    expect(() => carregarDados(monta({ motor: ['2026-10-21T10:00:00Z|2026-10-21T04:16:00Z', '2026-10-21T11:00:00Z|2026-10-21T04:16:00Z'] }))).toThrow(/motor\.csv/);
+  });
+  it('R43: lt_motor.csv vira a amostra do LT do F0 (lt_bruto da view de produção), com fornecedor', () => {
+    const d = carregarDados(monta({ lt_motor: ['S1|77|2026-01-06|2026-01-12|5', 'S9|77|2026-02-02|2026-02-09|7', 'S1||2026-03-02|2026-03-05|3'] }));
+    expect(d.ltMotor).toEqual([
+      { sku: 'S1', fornecedor: 77, t2: '2026-01-06', t4: '2026-01-12', lt: 5 },
+      { sku: 'S9', fornecedor: 77, t2: '2026-02-02', t4: '2026-02-09', lt: 7 },
+      { sku: 'S1', fornecedor: null, t2: '2026-03-02', t4: '2026-03-05', lt: 3 },
+    ]);
+    expect(() => carregarDados(monta({ lt_motor: ['S1|77|2026-01-06||5'] }))).toThrow(/lt_motor\.csv/); // sem t4: inválido
   });
 });

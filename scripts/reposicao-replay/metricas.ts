@@ -116,7 +116,13 @@ export function custoLiquido(
   if (!(diasJanela > 0) || faltas.linhasMargemDesconhecida > 0 || faltas.estoqueNaoValoradoDias > 0) return { custo: null, ...faltas };
   const capital = (estoqueMedio(base, idx) - estoqueMedio(alt, idx)) * g.taxa * (diasJanela / 365);
   const delta = (f: (s: SomasSemanais) => number): number => f(alt) - f(base);
-  const margem = (s: SomasSemanais): number => idx.reduce((t, i) => t + (s.cancelada.margem[i] ?? 0), 0);
+  const margem = (s: SomasSemanais): number =>
+    idx.reduce((t, i) => {
+      const m = s.cancelada.margem[i];
+      // margem null só existe com cancelada sem cmc, que já devolveu null acima; se o invariante quebrar, nunca vira 0
+      if (m === null) throw new Error(`metricas: margem null na semana ${i} sem cancelada sem cmc (invariante do simulador)`);
+      return t + m;
+    }, 0);
   const ultima = base.semanas.length - 1;
   const k = idx.reduce((t, i) => t + (i === ultima ? 1 : 0), 0);
   const custo =

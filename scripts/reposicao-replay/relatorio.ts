@@ -154,6 +154,9 @@ export const LIMITES: readonly string[] = [
   '**Duplicatas de LT** (spec §10): dedup pela identidade documental, como `v_sku_leadtime_efetivo` (achado 6) — sem item separado.',
 ];
 
+/** R30: rótulo do modo legado (âncora no saldo de hoje) nos títulos. */
+export const ROTULO_R30 = 'R30, âncora no saldo de hoje';
+
 /** R30: linhas do aviso de rodada NÃO OFICIAL (modo legado do saldo de hoje); vazio na rodada oficial. */
 export function avisoAncora(modo: ModoAncora): string[] {
   if (modo === 'oficial') return [];
@@ -164,13 +167,16 @@ export function avisoAncora(modo: ModoAncora): string[] {
 
 /** O bloco que se repete entre a rodada oficial e a informativa (R27): veredito, calibração, células, fronteira, custo, terminal e sensibilidades. */
 type BlocoRodada = Pick<Rodada, 'veredito' | 'congelado' | 'calibracao' | 'fronteira' | 'avaliacao'>;
-function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h: '##' | '###'; prefixo: string; oficial: boolean; extrasVeredito?: string[] }): void {
+function secoesDoBloco(
+  r: Rodada, b: BlocoRodada, s: (x: string) => void,
+  o: { h: '##' | '###'; prefixo: string; oficial: boolean; rotuloNaoOficial?: string; extrasVeredito?: string[] },
+): void {
   const H2 = `${o.h} ${o.prefixo}`;
   const H3 = `${o.h}# `;
   // 1. veredito
-  s(`${H2}${tituloVeredito(b.veredito.veredito, o.oficial)}`);
+  s(`${H2}${tituloVeredito(b.veredito.veredito, o.oficial, o.rotuloNaoOficial)}`);
   if (b.congelado) s(`Candidata congelada na calibração: **${b.congelado.candidata}** — \`${JSON.stringify(b.congelado.params)}\`.`);
-  if (o.oficial) s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
+  if (o.h === '##') s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
   for (const x of o.extrasVeredito ?? []) s(x);
   if (b.veredito.motivos.length > 0) s(['Motivos (FALHAs, ou INCERTOs se não há FALHA):', ...b.veredito.motivos.map((m) => `- ${m}`)].join('\n'));
   if (b.avaliacao) {
@@ -330,13 +336,15 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
 }
 
 /** Título da seção 11 (R27), com o veredito OFICIAL real. */
-export function tituloSecaoInformativa(oficial: VereditoReplay): string {
-  return `11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito oficial é o ${oficial} acima`;
+export function tituloSecaoInformativa(principal: VereditoReplay, modo: ModoAncora = 'oficial'): string {
+  // R30 (I1): no modo legado nada nesta página é veredito oficial
+  if (modo !== 'oficial') return `11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito da rodada principal, também NÃO OFICIAL (${ROTULO_R30}), é o ${principal} acima`;
+  return `11. RODADA INFORMATIVA — NÃO OFICIAL (R27); o veredito oficial é o ${principal} acima`;
 }
 
 /** Título do veredito do bloco; o da rodada informativa diz NÃO OFICIAL (R27). */
-export function tituloVeredito(v: VereditoReplay, oficial: boolean): string {
-  return oficial ? `1. Veredito: **${v}**` : `1. Veredito NÃO OFICIAL (R27): **${v}**`;
+export function tituloVeredito(v: VereditoReplay, oficial: boolean, rotuloNaoOficial = 'R27'): string {
+  return oficial ? `1. Veredito: **${v}**` : `1. Veredito NÃO OFICIAL (${rotuloNaoOficial}): **${v}**`;
 }
 
 /**
@@ -363,7 +371,11 @@ export function montarRelatorio(r: Rodada): string {
   s(`Gerado em ${r.geradoEm}. Arquivo LOCAL (contém R$ absolutos): não copiar para o repositório.`);
   for (const x of avisoAncora(r.modoAncora)) s(x);
 
-  secoesDoBloco(r, r, s, { h: '##', prefixo: '', oficial: true, extrasVeredito: [...avisoAncora(r.modoAncora), ...causaOficial(r)] });
+  const principalOficial = r.modoAncora === 'oficial';
+  secoesDoBloco(r, r, s, {
+    h: '##', prefixo: '', oficial: principalOficial, rotuloNaoOficial: ROTULO_R30,
+    extrasVeredito: [...avisoAncora(r.modoAncora), ...causaOficial(r)],
+  });
 
   const a = r.avaliacao;
 
@@ -459,8 +471,8 @@ export function montarRelatorio(r: Rodada): string {
   s(LIMITES.map((l) => `- ${l}`).join('\n'));
 
   // 11. rodada informativa (R27)
-  s(`## ${tituloSecaoInformativa(r.veredito.veredito)}`);
-  s('Alvo e tabela §6.1 SÓ nas células *_alt (alvo_alt = max(piso, fill do F0 em X_alt − 0,25 p.p.)): a simulação contém só a população ALTERADA (os intermitentes que trocam de fórmula), então as células A/B/C coincidem com A_alt/B_alt/C_alt e capital, estresse e economia são medidos nessa população. Mesma grade, descida, validação conjunta, regra de escolha, reps até a precisão e bootstrap 4/8. Não substitui nem relativiza o veredito oficial.');
+  s(`## ${tituloSecaoInformativa(r.veredito.veredito, r.modoAncora)}`);
+  s(`Alvo e tabela §6.1 SÓ nas células *_alt (alvo_alt = max(piso, fill do F0 em X_alt − 0,25 p.p.)): a simulação contém só a população ALTERADA (os intermitentes que trocam de fórmula), então as células A/B/C coincidem com A_alt/B_alt/C_alt e capital, estresse e economia são medidos nessa população. Mesma grade, descida, validação conjunta, regra de escolha, reps até a precisão e bootstrap 4/8. Não substitui nem relativiza o veredito ${principalOficial ? 'oficial' : 'da rodada principal'}.`);
   const d = r.diagnostico;
   if (d) {
     s('### 11.0 Diagnóstico de plausibilidade (calibração, F0)');
@@ -471,7 +483,7 @@ export function montarRelatorio(r: Rodada): string {
     s(`LT nos pedidos de A desde ${d.lt.desde} (F0, rep 0, ${d.lt.pedidos} pedidos): sorteado médio ${d.lt.sorteadoMedio === null ? 'n/d' : num(d.lt.sorteadoMedio, 1)} du × parâmetro médio do F0 ${d.lt.parametroMedio === null ? 'n/d' : num(d.lt.parametroMedio, 1)} du.`);
     s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×); recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
   }
-  if (r.informativoErro) s(`**A rodada informativa falhou** (o veredito oficial acima não é afetado): ${r.informativoErro}`);
+  if (r.informativoErro) s(`**A rodada informativa falhou** (o veredito ${principalOficial ? 'oficial' : 'da rodada principal'} acima não é afetado): ${r.informativoErro}`);
   if (r.informativo) secoesDoBloco(r, r.informativo, s, { h: '###', prefixo: '11.', oficial: false, extrasVeredito: ['**NÃO OFICIAL (R27)** — alvo e critérios nas células *_alt; população simulada = só os alterados.'] });
   else if (!r.informativoErro) s('Rodada informativa não executada.');
   return out.join('\n');

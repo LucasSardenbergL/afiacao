@@ -412,4 +412,41 @@ copy (
   order by 1
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/parametros_view.csv
 
+-- ── motor.csv (R40): a execução do motor que gerou sugestao_hoje e a última passada de sku_parametros, em UTC ─────────
+-- dados.ts para a carga se a passada for POSTERIOR à execução (o estado de hoje já não é o que o motor usou) ou se a
+-- execução for de outro dia de SP que o da extração.
+copy (
+  select to_char(max(p.horario_geracao) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as horario_geracao,
+         (select to_char(max(sp.ultima_atualizacao_calculo) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+            from sku_parametros sp
+           where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%') as ultima_passada
+  from pedido_compra_sugerido p
+  where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%'
+    and p.status not in ('cancelado', 'cancelado_humano', 'expirado_sem_aprovacao')
+) to stdout with (format csv, delimiter '|', header true) \g :dir/motor.csv
+
+-- ── lt_motor.csv (R43): a amostra de LT do F0 é a da PRODUÇÃO — v_sku_leadtime_efetivo (dedup por NFe, LT nulo quando as
+-- cópias divergem, lt_bruto_dias_uteis contado pelo banco), como v_sku_leadtime_estatisticas a lê: com lt_bruto e t2.
+-- Escopo: os SKUs Sayerlack e os fornecedores deles (a média do fornecedor da view agrupa por fornecedor_codigo_omie).
+-- O point-in-time (t4 < d, t2 >= d − 180) é aplicado em formulas.ts.
+copy (
+  with escopo as (
+    select sp.sku_codigo_omie::text as sku from sku_parametros sp
+     where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%'
+  ), forn as (
+    select distinct e.fornecedor_codigo_omie from v_sku_leadtime_efetivo e
+     where e.empresa = 'OBEN' and e.sku_codigo_omie::text in (select sku from escopo) and e.fornecedor_codigo_omie is not null
+  )
+  select e.sku_codigo_omie::text as sku,
+         e.fornecedor_codigo_omie as fornecedor,
+         (e.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as t2,
+         (e.t4_data_recebimento at time zone 'America/Sao_Paulo')::date as t4,
+         e.lt_bruto_dias_uteis as lt
+  from v_sku_leadtime_efetivo e
+  where e.empresa = 'OBEN' and e.lt_bruto_dias_uteis is not null
+    and e.t2_data_faturamento is not null and e.t4_data_recebimento is not null
+    and (e.sku_codigo_omie::text in (select sku from escopo) or e.fornecedor_codigo_omie in (select fornecedor_codigo_omie from forn))
+  order by 4, 1, 3, 5
+) to stdout with (format csv, delimiter '|', header true) \g :dir/lt_motor.csv
+
 select 'fim', 'ok';

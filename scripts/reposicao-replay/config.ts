@@ -88,6 +88,8 @@ export const CSVS_REPLAY = [
   'config_custos',
   'demanda_insumo',
   'equivalencias',
+  'lt_motor',
+  'motor',
   'parametros_view',
   'precos_app',
   'recebimentos',

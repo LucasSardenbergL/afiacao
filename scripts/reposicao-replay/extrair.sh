@@ -15,7 +15,7 @@ set -uo pipefail
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIR="${REPLAY_DADOS:-$HOME/.cache/afiacao/reposicao-replay}"
 PSQL_RO="${PSQL_RO:-$HOME/.config/afiacao/psql-ro}"
-CSVS=(vendas recebimentos skus config_custos classificacao_hist teto equivalencias sugestao_hoje demanda_insumo parametros_view precos_app)
+CSVS=(vendas recebimentos skus config_custos classificacao_hist teto equivalencias sugestao_hoje demanda_insumo parametros_view precos_app motor lt_motor)
 TXTS=(outras_empresas grupos_embalagem)
 LIMITE_GATE="5"
 

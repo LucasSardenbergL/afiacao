@@ -10,6 +10,7 @@ import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import {
   chaveCache,
   diagnosticoF0,
+  sugestaoDaView,
   fontesDoCodigo,
   parametrosNoDia,
   preComputarComOrigem,
@@ -410,5 +411,49 @@ describe('cache, paridade e aleatoriedade', () => {
     expect(a).toBeGreaterThanOrEqual(0);
     expect(a).toBeLessThan(1);
     expect(uniforme('X', 3, 'c')).not.toBe(a);
+  });
+});
+
+describe('Fix Codex leva C round 1 — R41 (janela da view) e R43 (LT do F0 da view de produção)', () => {
+  const E = '2026-06-01';
+  it('R41: a primária lê a view viva — demanda e ordens de hoje−90 até hoje (91 dias) ÷ 90; o cron segue [d−90, d)', () => {
+    const vs = [venda('X', addDias(E, -90), 9, 90), venda('X', addDias(E, -10), 3, 30), venda('X', E, 6, 60), venda('X', addDias(E, -200), 1, 10)];
+    const dd = dados([sku('X', { grupo: 'outro' })], vs, ltSayerlack());
+    const v = sugestaoDaView(dd, 'X', E);
+    expect(v.demanda).toBeCloseTo((9 + 3 + 6) / 90, 4);
+    expect(v.numOrdens).toBe(3);
+    // a passada do dia seguinte (cron, dados < E+1) não vê o dia E−90
+    const cron = diagnosticoF0(dd, 'X', addDias(E, 1), CTX);
+    expect(cron.demanda).toBeCloseTo((3 + 6) / 90, 4);
+    expect(cron.numOrdens).toBe(2);
+  });
+  it('R43: com ltMotor, o LT do SKU é a média do lt_bruto da produção (t4 < d e t2 >= d − 180), não o dos itens documentais', () => {
+    const vs = [venda('X', addDias(E, -30), 2, 20), venda('X', addDias(E, -20), 2, 20), venda('X', addDias(E, -5), 2, 20)];
+    const ltMotor = [
+      { sku: 'X', fornecedor: 7, t2: '2026-03-02', t4: '2026-03-09', lt: 4 },
+      { sku: 'X', fornecedor: 7, t2: '2026-04-01', t4: '2026-04-08', lt: 5 },
+      { sku: 'X', fornecedor: 7, t2: '2026-05-04', t4: '2026-05-11', lt: 6 },
+      { sku: 'X', fornecedor: 7, t2: '2026-05-25', t4: E, lt: 40 }, // t4 = d: ainda não aconteceu
+      { sku: 'X', fornecedor: 7, t2: '2025-11-01', t4: '2025-11-20', lt: 30 }, // t2 antes da janela de 180 d
+    ];
+    const itens = [3, 3, 3, 3].map((lt, i) => item('X', addDias('2026-02-02', 14 * i), lt)); // documentais: média 3
+    const dd = dados([sku('X', { grupo: 'outro' })], vs, itens, { ltMotor });
+    expect(diagnosticoF0(dd, 'X', E, CTX).lt).toBe(5);
+    // sem ltMotor (fixture antiga), cai nos documentais
+    expect(diagnosticoF0(dados([sku('X', { grupo: 'outro' })], vs, itens), 'X', E, CTX).lt).toBe(3);
+  });
+  it('R43: com < 3 observações do SKU, vale a média do FORNECEDOR do SKU (o maior código na janela), como a view', () => {
+    const vs = [venda('Y', addDias(E, -30), 2, 20), venda('Y', addDias(E, -20), 2, 20), venda('Y', addDias(E, -5), 2, 20)];
+    const ltMotor = [
+      { sku: 'Y', fornecedor: 7, t2: '2026-04-01', t4: '2026-04-08', lt: 5 },
+      { sku: 'Z1', fornecedor: 7, t2: '2026-04-02', t4: '2026-04-10', lt: 9 },
+      { sku: 'Z2', fornecedor: 7, t2: '2026-04-03', t4: '2026-04-11', lt: 10 },
+      { sku: 'W', fornecedor: 8, t2: '2026-04-03', t4: '2026-04-11', lt: 50 }, // outro fornecedor: fora da média
+    ];
+    const dd = dados([sku('Y', { grupo: 'outro' })], vs, [], { ltMotor });
+    expect(diagnosticoF0(dd, 'Y', E, CTX).lt).toBe(8); // (5 + 9 + 10) / 3
+    // sem fornecedor no SKU: a view não acha a média do fornecedor (LEFT JOIN com NULL) ⇒ sem LT
+    const semForn = ltMotor.map((o) => (o.sku === 'Y' ? { ...o, fornecedor: null } : o));
+    expect(diagnosticoF0(dados([sku('Y', { grupo: 'outro' })], vs, [], { ltMotor: semForn }), 'Y', E, CTX).lt).toBeNull();
   });
 });

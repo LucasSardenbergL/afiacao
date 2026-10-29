@@ -153,7 +153,27 @@ export interface Dados {
   precosCompra?: PrecoCompraDoc[];
   /** Preço-app dos membros de grupo de embalagem (achado 9). Ausente/null = sem preço: nunca troca de embalagem. */
   precosEmbalagem?: PrecosEmbalagem | null;
+  /**
+   * R40: a execução do motor que gerou `sugestaoHoje` (UTC) e a última passada de `sku_parametros` (UTC). A carga garante
+   * que não houve passada entre as duas e que a execução é do mesmo dia de SP da extração. Ausente só em fixture sintética.
+   */
+  motor?: { horarioGeracao: string; ultimaPassada: string };
+  /**
+   * R43: amostra do LT do F0 = linhas de `v_sku_leadtime_efetivo` (produção) com `lt_bruto_dias_uteis` e t2, do escopo
+   * OBEN Sayerlack e dos fornecedores dela; o filtro point-in-time (t4 < d, t2 na janela) é do formulas.ts. Ausente só em
+   * fixture sintética (aí o F0 aproxima pelos itens de LT documentais, como antes).
+   */
+  ltMotor?: ObsLtMotorBruta[];
   hashDados: string;
+}
+
+/** Linha de `v_sku_leadtime_efetivo` para o LT do F0 (R43): datas de SP; `fornecedor` = fornecedor_codigo_omie (null = sem). */
+export interface ObsLtMotorBruta {
+  sku: string;
+  fornecedor: number | null;
+  t2: Data;
+  t4: Data;
+  lt: number;
 }
 
 export interface PrecoCompraDoc {
