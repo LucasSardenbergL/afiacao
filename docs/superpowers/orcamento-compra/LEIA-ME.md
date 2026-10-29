@@ -207,24 +207,50 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 - **Resíduo conhecido:** 3 NFs efetivadas em 15 e 16/10 **nunca entraram no tracking** (Sayerlack 000132472 e 000132477, de outra série; e uma pessoa física). São entradas de estoque que a reconstrução não vê.
 - **Rodada (fatos de 2026-10-21 15:54 UTC, R60–R63):** precisão dos automáticos **96,2%** (n=111) ✅ · cobertura **49,6%** · 17 inviáveis (23 a 28/07) · **3** indeterminados (compromisso não conciliado; 9 excluídos pela R63). Portão: `FECHADO: cobertura 49,6% < 50% · 17 inviáveis · 3 indeterminados`. Os inviáveis saem da janela por volta de 27/10.
 
-### Rodada OFICIAL pós-julho (fatos de 2026-10-28 23:51 UTC; ciclos de 30/07 a 28/10; main com R60–R64, sem R65)
+### Diagnóstico dos 3 indeterminados e a R65 REJEITADA (2026-10-21 a 2026-10-29)
 
-Pré-voo limpo: `recebimentos_sem_t4=[]`, e `falhas_snapshot` com os 5 dias de 14 a 20/10.
+**Por que eram indeterminados.** Nos três casos, quase todo o valor "não conciliado" vem de **uma NF consolidada da Sayerlack, sem título no CP as-of**, cujo pedido mais antigo tem **exatamente 15 dias** (o limite da R28/R30 é `< 15`):
 
-| Critério | Valor | |
-|---|---|---|
-| Precisão por episódio (cortes automáticos) | **99,0%** (n=126) | ✅ |
-| Cobertura | **51,0%** | ✅ |
-| Inviáveis | **0** (a semana de 23 a 28/07 saiu da janela) | ✅ |
-| Indeterminados | **81** (9 excluídos pela R63) | ❌ |
+| ciclo | não conciliado / limiar (10% da reserva) | NF dominante | o que aconteceu |
+|---|---|---|---|
+| 2083 (25/08) | R$ 33.562 / R$ 23.575 | 947706 (R$ 31.667, 8 pedidos de 10–17/08) | emitida em 20/08, recebida em 24/08 15:30; o título nasceu em 25/08 08:00, depois do snapshot de 24/08 10:00 |
+| 3787 e 3788 (21/10) | R$ 20.601 / R$ 20.097 | 955263 (R$ 17.730, 4 pedidos de 06–13/10) | emitida em 15/10, efetivada em 21/10 16:10, depois do snapshot das 10:00; ainda sem título |
 
-`avaliarPortao` e o jq concordam: **FECHADO, 81 ciclos indeterminados**. Escalados (R62): nenhum episódio.
+3787 e 3788 **não existem mais**: o motor regerou os pendentes do dia como **3793 e 3794** (18:16 UTC). O diagnóstico da tabela foi medido nos sucessores, com a mesma NF dominante. O resto do não conciliado é pequeno: a NF 945097 (R$ 1.895), com título aberto desde 01/08 que o snapshot não representa (a ambiguidade de verdade da R35), e o pedido 2790 (R$ 976, contrato composto retido pela R59).
 
-**Por que 81 indeterminados, todos `compromisso_nao_conciliado`, de 05/10 em diante.** O código não mudou: o código da main de 21/10 dá o mesmo resultado sobre estes fatos. O que muda é o dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). No mesmo intervalo, os títulos Sayerlack representados na foto de caixa caem de 5 para 3. A causa é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763): ela **venceu em 30/09 e só foi paga em 23/10**. Vencida e sem pagamento, ficou fora da foto de caixa, e pela R35 título fora da projeção não desconta o compromisso. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a **NF 945097 (R$ 10,8 mil, ATRASADO desde 31/07 e ainda sem baixa)**.
+**A causa é o relógio, não a fonte.** O título do CP Sayerlack nasce no **recebimento**, não no faturamento. Medido sobre os 119 títulos dos fatos de 21/10: dos 113 com t4, **112 nasceram depois do t4**; a exceção (951497) nasceu 22h antes. Do faturamento (t2) até o título passam 8 dias na mediana e 52 no p90. NF faturada e ainda não recebida não tem título.
 
-**Leitura:** o fail-closed está certo. Uma dívida vencida e não paga que não aparece na projeção é um compromisso real que a guarda não consegue reconciliar. Esses ciclos saem da janela por volta de 03/01/2027. Duas perguntas para o founder:
+**O 2083 é sujeira do tracking.** A NF 947706 tem uma linha (pedido Omie 1172, mesma chave) com t2 = 17/08 e t4 = 20/08 00:14 UTC, **antes da emissão da própria NF** (20/08). Como o snapshot não se refaz, ele só sai do portão quando deixar a janela (~23/11), a não ser que a linha do 1172 seja corrigida na fonte (outra entrega).
+
+**R65 proposta e REJEITADA (não está no código).** A proposta: NF sem título as-of e recebida depois do snapshot iria para "a faturar", sem contar no limiar de indeterminação. Foram três revisões do Codex, cada uma com P1:
+1. **1ª (high, 78 s):** a data de saída continuava estimada (`dataPedido + lag`); havia também duas falhas de evidência (normalização entre SQL e TS, t4 conhecido só depois do momento).
+2. **2ª (max, 358 s):** um título criado entre o snapshot e o momento não vetava a isenção (R$ 175 escondidos no exemplo).
+3. **3ª (max, 248 s):** o veto devolvia o débito à data estimada; um título cancelado e relançado depois do ciclo apagava a evidência (o `fatos.sql` filtra por status de HOJE e por janela de 270 dias); e título sem número de NF virava "sem título". Os três cenários foram reproduzidos com o pré-voo passando.
+
+**Por que rejeitar em vez de corrigir:** a isenção depende de provar a **ausência** de título na decisão, e a extração de títulos foi feita para conciliar, não para provar ausência histórica. Além disso, a R65 **não muda nenhum ciclo** da rodada oficial de 28/10: os pendentes de 21/10 que ela destravaria seguem indeterminados pelos títulos atrasados (abaixo). No money-path, precisão vem antes de recall. Se um dia valer retomar, o pré-requisito é uma extração própria e histórica dos títulos, sem filtro de status, e um tratamento explícito para título sem NF.
+
+### Rodada de 2026-10-28, depois de julho sair da janela (fatos de 2026-10-28 23:51 UTC; R60–R64)
+
+- **Pré-voo aprovado:** nenhuma NF pendente de t4 (R64).
+- **Estados:** 199 viáveis · **0 inviáveis** (a semana de 23 a 28/07 saiu da janela) · 90 indeterminados (81 por compromisso não conciliado; 9 excluídos pela R63, falha de snapshot).
+- **Medidas:** precisão por episódio dos automáticos **99,0%** (n=126) ✅ · cobertura **51,0%** ✅.
+- **Portão, pelo jq e pelo `avaliarPortao`, que concordam:** `FECHADO: 81 ciclos indeterminados`.
+- **Honestidade sobre o inviável zerado:** os inviáveis sumiram porque **a semana do aperto de caixa de julho envelheceu**, não porque a guarda provou que lida com aperto. Pela R62, no aperto ela escala ao humano.
+
+**Os 81 indeterminados vêm de um mecanismo novo, nos ciclos de 05/10 em diante: título Sayerlack ATRASADO fica fora da base.** Medido nos ciclos 3935 (27/10), 3343 e 3356 (06/10): os componentes que estouram o limiar têm título no CP as-of, mas **desconto 0**. O título não está nas saídas do snapshot e não está baixado. Exemplos:
+- 951810: venceu em 30/09, pago em 23/10;
+- 954782, 954853, 955072 e 955263: venceram em 21 e 23/10 e seguem ATRASADOS;
+- 945097: ATRASADO desde 31/07.
+
+O snapshot **só carrega título vencido da semana corrente**: em toda segunda-feira o número de atrasados nas saídas zera (07/09, 14/09, 21/09, 28/09, 05/10, 12/10, 26/10). Assim, o título vencido em semana anterior e não baixado some da base. Para a Sayerlack, a conciliação pega o buraco e marca indeterminado. Isso é o fail-closed funcionando, e **não deve ser afrouxado**: ou o valor ainda é devido, ou foi pago sem baixa.
+
+**Achado money-path fora desta entrega:** o mesmo buraco vale para **todo** fornecedor. Hoje há **132 títulos ATRASADOS não-Sayerlack, R$ 519 mil**, quase todos de semanas anteriores (o mais antigo vence em 19/11/2025), mais 8 da Sayerlack (R$ 77 mil). Nenhum entra na base do snapshot (`fin_cashflow.snapshot_diario`). Sem conciliação para esses fornecedores, a base de caixa fica **otimista e calada**: um fail-open. Ou é dívida vencida real que a guarda não enxerga, ou é status velho no CP. Decidir e corrigir é do domínio financeiro (o gerador do snapshot), em sessão própria.
+
+**Como o limiar estourou (medido pela sessão do #3404, mesmos fatos).** O código da main de 21/10 dá o mesmo resultado sobre estes fatos, então a mudança está no dado. No ciclo de 02/10 o não conciliado é de R$ 9,8 mil; no de 05/10, de **R$ 23,1 mil**, acima do limiar de R$ 22,6 mil (10% da reserva). O que empurra é a **NF 951810** (R$ 28,8 mil; pedidos 2661, 2662 e 2763), vencida em 30/09 e só paga em 23/10. Somam-se resíduos antigos: o pedido 69 (R$ 26,7 mil contra uma NF de R$ 9,6 mil, entrega parcial de maio) e a NF 945097. Esses ciclos saem da janela por volta de 03/01/2027.
+
+**Duas perguntas para o founder:**
 1. A **NF 945097 está mesmo em aberto**, ou o pagamento não chegou ao CP? Se foi paga, é falha de sync e a correção é na fonte.
-2. A projeção pessimista **deve carregar título vencido e não pago** como saída imediata? Hoje ela o perde, o que deixa o caixa otimista justamente quando há atraso.
+2. A projeção pessimista **deve carregar título vencido e não pago** como saída imediata? Hoje ela o perde, o que deixa o caixa otimista justamente quando há atraso (o achado acima).
 
 ### Conferências de sanidade
 
@@ -278,6 +304,8 @@ jq -r '
   | if length == 0 then "ABERTO" else "FECHADO: " + join(" · ") end' "$R" > /tmp/oc-portao.txt; rc=$?
 cat /tmp/oc-portao.txt; [ "$rc" -eq 0 ] && grep -qx 'ABERTO' /tmp/oc-portao.txt   # exit 0 = portão aberto
 ```
+
+**Estado em 2026-10-28 (R60–R64, fatos de 28/10 23:51 UTC):** portão **FECHADO só por 81 indeterminados** (título Sayerlack atrasado fora da base, ver "Rodada de 2026-10-28"). Precisão 99,0% (n=126), cobertura 51,0% e 0 inviáveis passam.
 
 **Estado em 2026-10-20 (R59 v2):** portão **FECHADO** por precisão (89,1%), cobertura (19,2%), 70 inviáveis e 9 indeterminados — o R59 tirou 30 indeterminados, mas não mexe nos outros três motivos.
 
