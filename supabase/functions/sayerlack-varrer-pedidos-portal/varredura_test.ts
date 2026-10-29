@@ -17,7 +17,9 @@ import {
   resumoImportacao,
   situacaoCancelada,
   desfechoNoPortal,
+  idDoPo,
   janelaDeLeitura,
+  marcadorFresco,
   pedidosAReconciliar,
   type PedidoDisparadoLido,
 } from "./varredura.ts";
@@ -153,7 +155,7 @@ Deno.test("carência: 1ª vista espera; visto antes sem sync complete depois esp
 });
 
 // ── Reconciliação do PO a reconciliar (v1.3) — o caso real é o pedido 3666 / protocolo 2141466 ──
-const MARCADOR = { run_id: "run-172", finalizado_em: "2026-10-28T18:17:04Z" };
+const MARCADOR = { run_id: "run-172", seq: 172, finalizado_em: "2026-10-28T18:17:04Z" };
 function pedido(over: Partial<PedidoDisparadoLido> = {}): PedidoDisparadoLido {
   return {
     id: 3666, status: "disparado", canal_usado: "portal_sayerlack", data_ciclo: "2026-10-16",
@@ -202,4 +204,21 @@ Deno.test("desfecho: só situação 6 EXATA num protocolo único encerra; o rest
   assertEquals(classe([]), "nao_encontrado");
   assertEquals(classe([listado("6 - Cancelado", "6")], ["2141466"]), "protocolo_repetido");
   assertEquals(classe([listado("6 - Cancelado", "6"), listado("1 - Aberto", "1")]), "protocolo_repetido");
+});
+
+Deno.test("identidade do PO: forma canônica de bigint (zeros à esquerda caem), fora da faixa segura = ilegível", () => {
+  assertEquals(idDoPo("00101"), "101");
+  assertEquals(idDoPo(12199229881), "12199229881");
+  assertEquals(idDoPo("9007199254740993"), null); // > MAX_SAFE_INTEGER: o number do PostgREST já viria arredondado
+  assertEquals(idDoPo("0"), null);
+  assertEquals(idDoPo(" 12 "), "12");
+  // Visto como "101" no run ⇒ o pedido com "00101" está PRESENTE (Codex P1: antes entrava como ausente).
+  assertEquals(pedidosAReconciliar([pedido({ omie_pedido_compra_id: "00101" })], MARCADOR, new Set(["101"])), []);
+});
+
+Deno.test("marcador: só autoriza encerrar até 26 h do fim do run válido", () => {
+  const fim = Date.parse(MARCADOR.finalizado_em);
+  assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000), true);
+  assertEquals(marcadorFresco(MARCADOR, fim + 26 * 3600_000 + 1), false);
+  assertEquals(marcadorFresco({ ...MARCADOR, finalizado_em: "lixo" }, fim), false);
 });

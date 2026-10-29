@@ -247,7 +247,17 @@ export interface PedidoDisparadoLido {
 /** Último run VÁLIDO do detector de PO (`reposicao_pedidos_compra_run`: status ok + volume_ok, maior seq). */
 export interface MarcadorPo {
   run_id: string;
+  seq: number;
   finalizado_em: string;
+}
+
+/** Idade máxima do marcador para AUTORIZAR encerramento — o mesmo limiar de frescor do card (`po-sumido.ts`, 26 h).
+ *  Ausência apurada por detector parado é evidência velha (Codex P1): o pedido segue no card, com o humano. */
+export const MARCADOR_MAX_IDADE_MS = 26 * 3600_000;
+
+export function marcadorFresco(marcador: MarcadorPo, agoraMs: number): boolean {
+  const fim = Date.parse(marcador.finalizado_em);
+  return Number.isFinite(fim) && agoraMs - fim <= MARCADOR_MAX_IDADE_MS;
 }
 
 export interface PedidoAReconciliar {
@@ -257,21 +267,28 @@ export interface PedidoAReconciliar {
   data_ciclo: string;
 }
 
-/** Id do PO como o detector o compara: só dígitos. Outra forma = identidade não interpretável ⇒ fora. */
-function idDoPo(v: string | number | null): string | null {
+/** Id do PO na forma CANÔNICA de bigint (o detector compara bigint: "00101" = 101). Fora da faixa segura do JS
+ *  (a coluna volta como number do PostgREST) ou não numérico = identidade não interpretável ⇒ fora (Codex P1). */
+export function idDoPo(v: string | number | null | undefined): string | null {
   const s = v === null || v === undefined ? "" : String(v).trim();
-  return /^\d+$/.test(s) ? s : null;
+  if (!/^\d{1,19}$/.test(s)) return null;
+  const n = BigInt(s);
+  return n > 0n && n <= BigInt(Number.MAX_SAFE_INTEGER) ? n.toString() : null;
 }
 
 /**
  * Pedidos do PORTAL cujo PO NÃO apareceu no último run válido — o espelho de `reposicao_pos_candidatos`, restrito a
  * `disparado` (a porta `corrigir_cancelamento_pos_disparo` não aceita outro) e ao canal do portal. Sem marcador ⇒ nada:
  * sem run válido não há como afirmar ausência. Guard causal: PO criado depois do run não teve chance de ser visto.
+ *
+ * `posVistosDesdeOMarcador` = POs com `visto_seq >= marcador.seq` (ids canônicos). NÃO é `run_id = marcador`: um run
+ * novo publicado entre ler o marcador e ler `last_seen` sobrescreve o carimbo, e o PO presente pareceria ausente
+ * (Codex P1). Visto no marcador OU depois = presente.
  */
 export function pedidosAReconciliar(
   pedidos: PedidoDisparadoLido[],
   marcador: MarcadorPo | null,
-  posVistosNoMarcador: ReadonlySet<string>,
+  posVistosDesdeOMarcador: ReadonlySet<string>,
 ): PedidoAReconciliar[] {
   if (!marcador) return [];
   const fim = Date.parse(marcador.finalizado_em);
@@ -282,7 +299,7 @@ export function pedidosAReconciliar(
     const protocolo = (p.portal_protocolo ?? "").trim();
     const po = idDoPo(p.omie_pedido_compra_id);
     if (!PROTOCOLO_RE.test(protocolo) || !po) continue;
-    if (posVistosNoMarcador.has(po)) continue;
+    if (posVistosDesdeOMarcador.has(po)) continue;
     if (p.omie_po_inexistente_antes_de !== null) {
       const antes = Date.parse(p.omie_po_inexistente_antes_de);
       if (!Number.isFinite(antes) || antes > fim) continue;

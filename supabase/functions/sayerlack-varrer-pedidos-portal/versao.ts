@@ -32,6 +32,8 @@ export const respostaSonda = criarRespostaSonda("sayerlack-varrer-pedidos-portal
  * run válido do detector, guard causal) e cujo protocolo está "6 - Cancelado" no portal é ENCERRADO pela porta auditada
  * `corrigir_cancelamento_pos_disparo` (motivo cancelado_junto_ao_fornecedor, autor sistema:varredura_portal). A leitura
  * se estende até 30 dias só quando há pedido a alcançar; importar segue em 7. Vivo/atendido/não achado só relata.
+ * Codex (3 P1 + 2 P2): id do PO canônico (bigint); visto = `visto_seq >= seq` do marcador (corrida com run novo);
+ * marcador > 26 h não encerra; leitura estendida é OUTRA chamada, depois das importações, e falha dela só relata.
  */
 export const VERSAO = "v1.3-reconcilia-po-cancelado-no-portal";
 
