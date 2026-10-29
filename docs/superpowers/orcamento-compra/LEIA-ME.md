@@ -237,7 +237,9 @@ A `v_sku_demanda_efetiva` consolida no SKU novo a venda do antigo (`sku_substitu
 - **P2:** o SQL agregava por `ltrim` e o TS normalizava com `trim`. Agora os dois normalizam igual antes de agregar, e o `t4_por_nf` só considera tracking da Sayerlack na Oben.
 - **P2:** t4 conhecido só depois do momento do ciclo era evidência que a decisão não tinha. Agora a NF exige `snapshot < t4 ≤ momento`.
 
-A falsificação ficou em 8 de 8 sabotagens vermelhas, com controle verde.
+**Codex, 2ª revisão (max, 358s): 1 P1, corrigido.** Um título criado **entre o snapshot e o momento** do ciclo não vetava a isenção, porque os títulos são filtrados por `created_at ≤ snapshot_at`. Com o título nascendo no recebimento e `t4 ≤ momento`, o caso ficou mais provável. Exemplo: snapshot às 10h, recebimento às 11h, título de R$ 1.200 às 11h30, ciclo ao meio-dia, pedido de R$ 1.025 → viável, escondendo R$ 175. Agora qualquer título criado até o momento veta a isenção, mesmo com desconto 0; representação e liquidação continuam pelo snapshot. Na rodada de 28/10 isso não muda nenhum ciclo.
+
+Falsificação no TS: 9 de 9 sabotagens vermelhas, com controle verde. O produtor SQL (`t4_por_nf`) foi exercitado read-only com o texto exato da CTE sobre linhas literais: o controle devolveu só `88|2026-10-01`, e as 5 sabotagens (HAVING, MIN→MAX, sem `btrim`, sem filtro de fornecedor, sem filtro de empresa) ficaram vermelhas.
 
 **Auto-challenge original (2026-10-21, antes do Codex).** Em cada cenário o valor sai inteiro, então o erro possível é só pessimismo:
 - título lançado com outro número de NF: conta em dobro;
