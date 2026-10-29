@@ -26,10 +26,10 @@ BEGIN
   FROM public.omie_products
   WHERE account = 'oben' AND codigo = 'PRD00221';
 
-  IF v_total <> 1 THEN
+  IF v_total IS DISTINCT FROM 1 THEN
     RAISE EXCEPTION 'postcondição: esperava 1 linha PRD00221/oben, achei %', v_total;
   END IF;
-  IF v_ruins <> 0 THEN
+  IF v_ruins IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'postcondição: PRD00221 continua marcado como tintométrico (família MixMachine?)';
   END IF;
 END
