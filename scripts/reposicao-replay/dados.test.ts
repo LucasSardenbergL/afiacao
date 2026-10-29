@@ -4,10 +4,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { carregarDados, eventosDeRecebimento, precosCompraPorDocumento, type RecebLinha } from './dados';
 import { duEntre } from './calendario';
+import { ErroDadosReplay } from './tipos';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
-  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking|valor_total|pedido_qtd|pedido_unidade',
+  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking|valor_total|pedido_qtd|pedido_unidade|origem_compra',
   skus:
     'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
   config_custos:
@@ -64,6 +65,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 11 ? `${l}|` : l));
   // sem as 2 colunas do pedido (R32): pedido não casado => fallback para a quantidade da NF
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 12 ? `${l}||` : l));
+  // origem_compra (R38): normal quando o teste não informa
+  b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 14 ? `${l}|normal` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -417,5 +420,15 @@ describe('preços point-in-time (achados 2 e 9 do Codex)', () => {
     expect(carregarDados(monta()).precosEmbalagem).toBeNull();
     expect(() => carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10||t|45'] }))).toThrow(/CSV_INVALIDO:precos_app\.csv: captura incompleta/);
     expect(() => carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10|0|t|45'] }))).toThrow(/CSV_INVALIDO:precos_app\.csv: preco <= 0/);
+  });
+});
+
+describe('Fix Codex leva C — R38 (origem_compra)', () => {
+  it('LT e preço só com origem_compra = normal: outra origem, vazia ou coluna ausente param a carga (fail-closed)', () => {
+    const rec = (origem: string) => [`T9|S1|2026-03-02|2026-03-09|5|5||tracking:T9|UN|f|FATURADO|50|||${origem}`];
+    expect(() => carregarDados(monta({ recebimentos: rec('normal') }))).not.toThrow();
+    expect(() => carregarDados(monta({ recebimentos: rec('oportunidade_promo') }))).toThrow(/^ORIGEM_COMPRA_NAO_NORMAL:/);
+    expect(() => carregarDados(monta({ recebimentos: rec('') }))).toThrow(/^ORIGEM_COMPRA_NAO_NORMAL:/);
+    expect(() => carregarDados(monta({ recebimentos: rec('oportunidade_promo') }))).toThrow(ErroDadosReplay);
   });
 });

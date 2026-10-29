@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
-import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, fillDaCelula, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
+import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, fillDaCelula, mediaSomas, somarSomas, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
 import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
@@ -8,7 +8,8 @@ import { coorte } from './parados';
 import { anexarInformativa, avaliarCandidata, exigirGateParidade, gateParidadePassa } from './rodar';
 import { causaOficial, LIMITES, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
-import type { ParamsDia } from './formulas';
+import { preComputarComOrigem, type ParamsDia } from './formulas';
+import { simular } from './simulador';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
@@ -304,4 +305,44 @@ describe('revisão final (relatório)', () => {
     const t = LIMITES.join('\n');
     for (const x of ['R10', 'R11', '312/238', '373/276', 'R17', '14 legítimos', '36 órfãos', 'compras abertas no início']) expect(t).toContain(x);
   });
+});
+
+describe('Fix Codex leva C (minors da revisão B)', () => {
+  it('M5 (achado 3 ponta a ponta): preComputar × simular — os pedidos até 30/04 são os mesmos na calibração e na avaliação', () => {
+    const calib = cenario(false);
+    const aval = cenario(true); // a avaliação ainda muda vendas, LT e CMC depois de 30/04
+    for (const [f, p] of [['F0', { quantil: { A: 0.95, B: 0.95, C: 0.95 } }], ['F1', { quantil: { A: 0.9, B: 0.95, C: 0.97 } }]] as const) {
+      const mc = preComputarComOrigem(f, calib, p, { calibracao: true }, { cacheDir: null }).mapa;
+      const ma = preComputarComOrigem(f, aval, p, { calibracao: false }, { cacheDir: null }).mapa;
+      for (let rep = 0; rep < 3; rep++) {
+        const base = { formula: f, rep, lt: 'empirico' as const, falta: 'espera' as const, inicial: 'reconstruido' as const, rastro: true };
+        const c = simular({ ...base, params: mc, janela: [JANELAS.calibracaoIni, JANELAS.calibracaoFim], dados: calib });
+        const a = simular({ ...base, params: ma, janela: [JANELAS.avaliacaoIni, JANELAS.avaliacaoFim], dados: aval });
+        const ate = (x: typeof c) => (x.pedidos ?? []).filter((q) => q.dia <= JANELAS.calibracaoFim);
+        const pc = ate(c);
+        const pa = ate(a);
+        expect(pc.length).toBeGreaterThan(5); // senão o teste é cego
+        expect(pa.map((q) => [q.dia, q.sku, q.qtd])).toEqual(pc.map((q) => [q.dia, q.sku, q.qtd]));
+        // a chegada é a mesma; na calibração, a que cai depois de 30/04 fica fora do horizonte (null)
+        pc.forEach((q, i) => expect(q.chegada === null ? pa[i].chegada! > JANELAS.calibracaoFim : pa[i].chegada === q.chegada).toBe(true));
+        expect(pc.some((q) => q.dia >= '2026-04-01')).toBe(true);
+      }
+    }
+  }, 300_000);
+
+  it('M4: somarSomas e mediaSomas agregam as obrigações herdadas (média das reps, não a rep 0)', () => {
+    const dd = cenario(false);
+    const m = preComputarComOrigem('F0', dd, { quantil: { A: 0.95, B: 0.95, C: 0.95 } }, { calibracao: false }, { cacheDir: null }).mapa;
+    const s0 = simular({ formula: 'F0', params: m, rep: 0, lt: 'empirico', falta: 'espera', inicial: 'reconstruido', janela: [JANELAS.avaliacaoIni, JANELAS.avaliacaoFim], dados: dd });
+    const a = structuredClone(s0);
+    const b = structuredClone(s0);
+    a.herdadas = { abertura: { unidades: 2, valor: 20 }, entregue: { unidades: 1, valor: 10 }, terminal: { unidades: 1, valor: 10 } };
+    b.herdadas = { abertura: { unidades: 6, valor: 60 }, entregue: { unidades: 6, valor: 60 }, terminal: { unidades: 0, valor: 0 } };
+    a.estoqueNaoValoradoDias = a.estoqueNaoValoradoDias.map(() => 2);
+    b.estoqueNaoValoradoDias = b.estoqueNaoValoradoDias.map(() => 4);
+    const med = mediaSomas(somarSomas(somarSomas(null, a), b), 2);
+    expect(med.herdadas).toEqual({ abertura: { unidades: 4, valor: 40 }, entregue: { unidades: 3.5, valor: 35 }, terminal: { unidades: 0.5, valor: 5 } });
+    expect(med.estoqueNaoValoradoDias.every((x) => x === 3)).toBe(true);
+    expect(med.estoqueCmcDias).toEqual(s0.estoqueCmcDias.map((x) => (x + x) / 2));
+  }, 120_000);
 });

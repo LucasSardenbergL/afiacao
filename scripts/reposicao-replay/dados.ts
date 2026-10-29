@@ -356,18 +356,6 @@ export function montarItensLT(
 }
 
 /**
- * Chegadas físicas para a reconstrução do estoque, deduplicadas pela IDENTIDADE DOCUMENTAL canônica do recebimento
- * (`docId` + SKU; achado 6 do Codex — revoga a chave (sku, t4, quantidade) da R9). Só linhas com `t4`, `recebida` > 0,
- * t4 >= t1 e SKU no contrato de unidade. `recebida` já está na unidade de ESTOQUE (o Omie converte na entrada): entra sem
- * o divisor NF→estoque da venda. Por documento:
- *  - todas as linhas com a mesma quantidade = cópias do mesmo recebimento sob vários tracking_id => UM evento
- *    (COPIAS_DO_DOCUMENTO_FUNDIDAS conta as cópias descartadas);
- *  - quantidades diferentes = linhas de pedidos distintos da mesma NF => soma (DOCUMENTO_COM_LINHAS_DIVERGENTES);
- *  - t4 divergente entre as linhas: entra no 1º (T4_DIVERGENTE_NO_DOCUMENTO).
- * Documentos distintos com a mesma quantidade no mesmo dia são eventos distintos.
- * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU são indistinguíveis de cópias (viram 1).
- */
-/**
  * preco_compra_real por documento, como v_sku_leadtime_efetivo (achado 2 do Codex): as cópias de um documento só dão
  * preço se concordam em quantidade recebida e valor (a view anula o campo quando divergem) e todas têm t4; preço =
  * valor ÷ recebida, só com os dois > 0 (o FILTER da produção). `desde` = maior t4 das cópias (o preço é conhecido em
@@ -426,6 +414,18 @@ function lerPrecosEmbalagem(dir: string): PrecosEmbalagem | null {
   return { staleDias: staleDias!, elegivel, capturas };
 }
 
+/**
+ * Chegadas físicas para a reconstrução do estoque, deduplicadas pela IDENTIDADE DOCUMENTAL canônica do recebimento
+ * (`docId` + SKU; achado 6 do Codex — revoga a chave (sku, t4, quantidade) da R9). Só linhas com `t4`, `recebida` > 0,
+ * t4 >= t1 e SKU no contrato de unidade. `recebida` já está na unidade de ESTOQUE (o Omie converte na entrada): entra sem
+ * o divisor NF→estoque da venda. Por documento:
+ *  - todas as linhas com a mesma quantidade = cópias do mesmo recebimento sob vários tracking_id => UM evento
+ *    (COPIAS_DO_DOCUMENTO_FUNDIDAS conta as cópias descartadas);
+ *  - quantidades diferentes = linhas de pedidos distintos da mesma NF => soma (DOCUMENTO_COM_LINHAS_DIVERGENTES);
+ *  - t4 divergente entre as linhas: entra no 1º (T4_DIVERGENTE_NO_DOCUMENTO).
+ * Documentos distintos com a mesma quantidade no mesmo dia são eventos distintos.
+ * Limitação: dois pedidos da MESMA NF com a mesma quantidade do mesmo SKU são indistinguíveis de cópias (viram 1).
+ */
 export function eventosDeRecebimento(linhas: RecebLinha[], divisor: Map<string, number>): { eventos: EventoRecebimento[]; avisos: AvisoDados[] } {
   const docs = new Map<string, (RecebLinha & { t4: Data; recebida: number })[]>();
   for (const l of linhas) {
@@ -619,7 +619,7 @@ export function carregarDados(dir: string): DadosCarregados {
   });
 
   // recebimentos -> LT documental e chegadas físicas
-  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking', 'valor_total', 'pedido_qtd', 'pedido_unidade'], false);
+  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking', 'valor_total', 'pedido_qtd', 'pedido_unidade', 'origem_compra'], false);
   const recLinhas: RecebLinha[] = rc.linhas.map((r) => {
     const docId = r[rc.col('doc_md5')];
     if (ehVazio(docId)) invalido(rc.arquivo, `doc_md5 vazio em ${r[rc.col('tracking_id')]}`);
@@ -640,6 +640,16 @@ export function carregarDados(dir: string): DadosCarregados {
       pedidoUnidade: textoOuNull(r[rc.col('pedido_unidade')]),
     };
   });
+  // R38: a produção só usa `origem_compra = 'normal'` no LT e no preço de compra (v_sku_leadtime_efetivo →
+  // v_sku_leadtime_history_normal). Hoje 100% das linhas são normal; outra origem (ou vazia) PARA a carga (fail-closed) em vez
+  // de filtrar em silêncio: o recebimento físico dela continuaria no estoque e só o LT/preço sairiam — decisão a tomar quando
+  // aparecer, não por omissão.
+  const naoNormal = rc.linhas.filter((r) => r[rc.col('origem_compra')] !== 'normal');
+  if (naoNormal.length > 0) {
+    const porOrigem = new Map<string, number>();
+    for (const r of naoNormal) porOrigem.set(r[rc.col('origem_compra')] || '(vazia)', (porOrigem.get(r[rc.col('origem_compra')] || '(vazia)') ?? 0) + 1);
+    throw new ErroDadosReplay(`ORIGEM_COMPRA_NAO_NORMAL: ${naoNormal.length} linha(s) em ${rc.arquivo} (${[...porOrigem].map(([o, n]) => `${o} ${n}`).join(', ')})`);
+  }
   const unidadeEstoque = new Map([...skusBrutos].map(([k, s]) => [k, s.unidadeEstoque] as const));
   const { itens: itensLT, avisos: avisosLT } = montarItensLT(recLinhas, dataExtracao, unidadeEstoque);
   const { eventos: recebimentos, avisos: avisosFisicos } = eventosDeRecebimento(recLinhas, divisor);

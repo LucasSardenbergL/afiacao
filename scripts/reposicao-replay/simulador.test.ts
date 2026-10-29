@@ -583,6 +583,26 @@ describe('Fix Codex leva C', () => {
     expect(soma(ok.estoqueNaoValoradoDias)).toBe(0);
   });
 
+  it('R39: a posição do GRUPO segue a produção — físico + a caminho, sem descontar o comprometido (backlog)', () => {
+    // embalagem-motor-rpc.sql:361: [COMPROMETIDO] só sem grupo
+    const eqs: Equivalencia[] = [
+      { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+      { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+    ];
+    // QT sem estoque: a linha de 05-05 fica em espera (backlog 0,81); o grupo tem 3,24 L no galão
+    const vs = [venda('b1', 'QT', '2026-05-05', 0.81)];
+    const dd = dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 0, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 3.24, vs)], vs, { equivalencias: eqs });
+    const p = params({ QT: { tipo: 'S', s: 3 }, GL: { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' } });
+    const r = roda(dd, p, { rastro: true });
+    // posição do grupo = 0 + 3,24 ≥ 3 (sem descontar o backlog de 0,81): não compra; descontando daria 2,43 < 3 e compraria
+    expect(r.pedidos).toEqual([]);
+    // fora de grupo o comprometido continua descontado (posição = físico + abertas − backlog): com S = 0, só o backlog
+    // (posição −0,76 < 0) dispara a compra
+    const solo = dados([comAbertura(sku('S1'), 3.24, [venda('b2', 'S1', '2026-05-05', 4)])], [venda('b2', 'S1', '2026-05-05', 4)]);
+    const r2 = roda(solo, params({ S1: { tipo: 'S', s: 0 } }), { rastro: true });
+    expect(r2.pedidos!.map((x) => [x.dia, x.sku])).toEqual([['2026-05-05', 'S1']]);
+  });
+
   it('R37: o capital dos grupos de embalagem sai à parte (fração dos grupos no capital)', () => {
     const eqs: Equivalencia[] = [
       { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },

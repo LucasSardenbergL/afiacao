@@ -39,6 +39,8 @@ copy (
 -- encerrado_omie = pedido encerrado no Omie (evidência documental de que não está aberto); status_tracking = status do
 -- purchase_orders_tracking (ex.: RECEBIDO sem t4). valor_total = R$ da linha (preco_compra_real do EOQ = valor ÷ recebida,
 -- só por documento coerente, como v_sku_leadtime_efetivo; fica em $REPLAY_DADOS, nunca no repositório).
+-- origem_compra (R38): a produção só usa 'normal' no LT e no preço (v_sku_leadtime_history_normal); dados.ts para a carga
+-- (fail-closed) se aparecer outra.
 copy (
   select h.tracking_id,
          h.sku_codigo_omie::text as sku,
@@ -54,7 +56,8 @@ copy (
          coalesce(pot.status::text, '') as status_tracking,
          h.valor_total,
          ped.qtd as pedido_qtd,
-         ped.unidade as pedido_unidade
+         ped.unidade as pedido_unidade,
+         h.origem_compra
   from sku_leadtime_history h
   left join purchase_orders_tracking pot on pot.id = h.tracking_id
   -- R32: quantidade do PEDIDO de compra = Σ nQtde das linhas de raw_data.produtos_consulta com nCodProd = SKU; unidade só

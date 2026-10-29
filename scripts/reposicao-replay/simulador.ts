@@ -26,7 +26,8 @@
 //    tardia, o valor × dias de atraso que correm depois da véspera da janela e o backlog terminal entram nas somas
 //    econômicas; o denominador de serviço (células) e o fechamento por SKU continuam só com as linhas originadas na janela.
 //    O atraso é contado a partir da véspera da janela, que é onde o terminal da janela anterior parou de contar.
-//  · Grupo de embalagem: a âncora decide na unidade-base do grupo (posição = soma dos membros simulados, todos na mesma
+//  · Grupo de embalagem: a âncora decide na unidade-base do grupo (posição = físico + a caminho dos membros simulados, sem
+//    descontar o comprometido, como a produção — R39; todos na mesma
 //    unidade de estoque — formulas.ts barra unidade mista) e compra embalagens da âncora: ceil(necessidade / conv), que
 //    chegam como embalagens × conv na unidade de estoque. O galão (SEM_DECISAO) não decide; o ATENDIMENTO é por SKU.
 //  · Escolha de embalagem (achado 9, §5.3): em cada dia, a compra da âncora pode cair no membro mais barato por
@@ -758,7 +759,9 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
         if (p === null) continue;
         let pos = 0;
         const ms = P.membros[s];
-        if (ms) for (let x = 0; x < ms.length; x++) pos += est[ms[x]] + abertas[ms[x]] - backlog[ms[x]];
+        // R39: no grupo a posição é físico + a caminho, SEM descontar o comprometido (embalagem-motor-rpc.sql:361,
+        // "[COMPROMETIDO] só sem grupo"); fora de grupo, físico + abertas − backlog
+        if (ms) for (let x = 0; x < ms.length; x++) pos += est[ms[x]] + abertas[ms[x]];
         else pos = est[s] + abertas[s] - backlog[s];
         const esc = P.escolha[s];
         const conv = esc === null ? null : esc.conv[k];

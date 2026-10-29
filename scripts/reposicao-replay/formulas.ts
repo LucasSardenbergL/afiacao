@@ -20,7 +20,7 @@
 //  · grupo de embalagem: a âncora (fator_para_base = 1) decide com os PRÓPRIOS parâmetros (demanda só dela — é o motor) e
 //    sem teto; o membro com fator > 1 nunca é âncora (SEM_DECISAO). O estoque consolidado é da Task 6.
 // LIMITAÇÕES do F0 (relatório): preço do EOQ point-in-time (cmc anterior a d → preco_compra_real com t4 < d → venda×0,55;
-// o cmc de hoje nunca entra, achado 2); preco_compra_real sem o filtro origem_compra da view normal; NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
+// o cmc de hoje nunca entra, achado 2); origem_compra = 'normal' garantida na carga (R38: outra origem para o replay); NFe aproximada por (SKU, t2, t4); nº de ordens = nº de
 // linhas; t1 fabricado sai do LT pela regra t1 = t2 (R17, aproxima o lt_bruto NULL da produção); SKU com demanda de insumo
 // (> 10%) sai da coorte (R16), porque o extrato de vendas não a traz. O estado ANTES do replay não existe: até a 1ª sugestão OK vale o fallback
 // do cold start (pp 1 / máx. 2 / ES 0, a regra do motor para SKU sem demanda); a 1ª sugestão OK o substitui sem fusível
