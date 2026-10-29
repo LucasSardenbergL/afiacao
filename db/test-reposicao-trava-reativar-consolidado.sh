@@ -234,7 +234,8 @@ fals sem_upper       "A08_empresa_caixa_diferente_barrada"  -e 's/WHERE upper\(s
 fals sem_status      "A05_mapa_pendente_reativa"            -e "s/AND s\.status = 'aplicada'/AND true/"
 fals sem_acao        "A06_mapa_transferir_reativa"          -e "s/AND s\.acao_parametros = 'consolidar_demanda'/AND true/"
 fals so_tipo         "A14_tipo_sem_flag_fica_fora_e_passa"  -e 's/IF NOT \(COALESCE\(NEW\.habilitado_reposicao_automatica, false\)/IF NOT (true/'
-fals colunas_erradas "A01_reativar_antigo_barrado A08_empresa_caixa_diferente_barrada A10_redescontinuado_nao_volta A12_so_flag_barrado A13_so_tipo_barrado A17_escritor_sem_rls_barrado" \
+# Em cascata: com o A01 passando, o SKU 100 já está no motor quando o A02 o toca.
+fals colunas_erradas "A01_reativar_antigo_barrado A02_baixo_giro_lote_barrado A03_lote_atomico A08_empresa_caixa_diferente_barrada A10_redescontinuado_nao_volta A12_so_flag_barrado A13_so_tipo_barrado A17_escritor_sem_rls_barrado" \
   -e 's/UPDATE OF habilitado_reposicao_automatica, tipo_reposicao ON/UPDATE OF ponto_pedido ON/'
 echo "VERMELHOS=$VERM  SEM_DENTE=$FALSOS"
 [ "$FALSOS" -eq 0 ] || { echo "✗ falsificação sem dente"; exit 1; }
