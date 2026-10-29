@@ -36,8 +36,8 @@ copy (
 -- doc_md5 = identidade DOCUMENTAL canônica do recebimento, a mesma de v_sku_leadtime_efetivo: empresa + SKU +
 -- coalesce(nfe_chave_acesso, 'tracking:'||tracking_id), em md5 (a chave da NF carrega o CNPJ do emitente: não sai crua).
 -- Uma NF que fatura N pedidos aparece sob N tracking_id com o MESMO doc_md5 (dedup física em dados.ts).
--- encerrado_omie = pedido encerrado no Omie (evidência documental de que não está aberto); status_tracking = status do
--- purchase_orders_tracking (ex.: RECEBIDO sem t4). valor_total = R$ da linha (preco_compra_real do EOQ = valor ÷ recebida,
+-- encerrado_omie_em = DIA de SP do encerramento no Omie (R47: só fecha o item a partir dessa data; vazio = não encerrado —
+-- nunca reduzido a booleano, que seria o estado de hoje); status_tracking = status do purchase_orders_tracking (informativo). valor_total = R$ da linha (preco_compra_real do EOQ = valor ÷ recebida,
 -- só por documento coerente, como v_sku_leadtime_efetivo; fica em $REPLAY_DADOS, nunca no repositório).
 -- origem_compra (R38): a produção só usa 'normal' no LT e no preço (v_sku_leadtime_history_normal); dados.ts para a carga
 -- (fail-closed) se aparecer outra.
@@ -52,7 +52,7 @@ copy (
          md5(h.empresa || '|' || h.sku_codigo_omie::text || '|' ||
              coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text)) as doc_md5,
          h.sku_unidade as unidade_nfe,
-         (pot.encerrado_omie_em is not null) as encerrado_omie,
+         (pot.encerrado_omie_em at time zone 'America/Sao_Paulo')::date as encerrado_omie_em,
          coalesce(pot.status::text, '') as status_tracking,
          h.valor_total,
          ped.qtd as pedido_qtd,
@@ -206,7 +206,8 @@ copy (
 -- ── precos_app.csv: histórico do preço-app dos membros de grupo de embalagem (achado 9 do Codex) ─────────────────────
 -- A escolha QT↔GL do motor (db/embalagem-motor-rpc.sql, CTEs preco_app/membro_elegivel/embalagem_escolhida) compara
 -- preco/fator_para_base entre os membros com preço-app FRESCO (capturado_em >= now() - stale_dias). O replay refaz a
--- escolha no dia d com as capturas de data < d. Uma linha por captura (status ok, preço > 0). elegivel_catalogo = os
+-- escolha no dia d com as capturas de data < d. Uma linha por captura (status ok, preço > 0). P2b: capturado_em = o INSTANTE
+-- de SP (com hora; o dia sai dele) e a ordem é a do instante — nunca a do preço. elegivel_catalogo = os
 -- filtros de catálogo e de portal do membro_elegivel no estado de HOJE (não há histórico deles: limitação declarada).
 -- stale_dias = a mesma leitura do motor (company_config, padrão 45). preco fica em $REPLAY_DADOS, nunca no repositório.
 copy (
@@ -233,7 +234,7 @@ copy (
     from membros m
   )
   select m.grupo_id, m.sku, m.fator_para_base,
-         (p.capturado_em at time zone 'America/Sao_Paulo')::date as capturado_em,
+         to_char(p.capturado_em at time zone 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS.US') as capturado_em,
          p.preco,
          el.ok as elegivel_catalogo,
          coalesce((select nullif(btrim(value), '')::int from company_config
@@ -242,7 +243,7 @@ copy (
   join elegivel el on el.sku = m.sku
   left join sku_preco_fornecedor_capturado p
          on p.empresa = 'oben' and p.sku_codigo_omie::text = m.sku and p.status = 'ok' and p.preco > 0
-  order by m.grupo_id, m.sku, 4, p.preco
+  order by m.grupo_id, m.sku, p.capturado_em
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/precos_app.csv
 
 -- ── sugestao_hoje.csv: última execução do gerar_pedidos_sugeridos_ciclo (OBEN, Sayerlack) ─────────────────────
@@ -425,28 +426,39 @@ copy (
     and p.status not in ('cancelado', 'cancelado_humano', 'expirado_sem_aprovacao')
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/motor.csv
 
--- ── lt_motor.csv (R43): a amostra de LT do F0 é a da PRODUÇÃO — v_sku_leadtime_efetivo (dedup por NFe, LT nulo quando as
--- cópias divergem, lt_bruto_dias_uteis contado pelo banco), como v_sku_leadtime_estatisticas a lê: com lt_bruto e t2.
--- Escopo: os SKUs Sayerlack e os fornecedores deles (a média do fornecedor da view agrupa por fornecedor_codigo_omie).
--- O point-in-time (t4 < d, t2 >= d − 180) é aplicado em formulas.ts.
+-- ── lt_motor.csv (R43 + N3): as CÓPIAS CRUAS de v_sku_leadtime_history_normal, por documento (a chave do GROUP BY de
+-- v_sku_leadtime_efetivo: empresa + dedup_key + SKU, em md5 — a chave da NF carrega o CNPJ do emitente). A consolidação da
+-- view (cada campo só sobrevive com um único valor entre as cópias) é refeita em dados.ts NO CORTE TEMPORAL: em d só as
+-- cópias com t4 < d existem (uma cópia futura não apaga uma observação passada). t2/t4 = instante de SP com microssegundos
+-- (a view compara timestamps no count(DISTINCT)); lt = lt_bruto_dias_uteis da cópia. Escopo: os documentos dos SKUs Sayerlack
+-- e dos fornecedores deles (a média do fornecedor da view agrupa por fornecedor_codigo_omie), com TODAS as cópias de cada um.
 copy (
   with escopo as (
     select sp.sku_codigo_omie::text as sku from sku_parametros sp
      where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%'
+  ), base as (
+    select h.sku_codigo_omie::text as sku,
+           h.fornecedor_codigo_omie as fornecedor,
+           coalesce(pot.nfe_chave_acesso, 'tracking:' || h.tracking_id::text) as dedup_key,
+           h.t2_data_faturamento, h.t4_data_recebimento, h.lt_bruto_dias_uteis
+    from v_sku_leadtime_history_normal h
+    left join purchase_orders_tracking pot on pot.id = h.tracking_id
+    where h.empresa = 'OBEN'
   ), forn as (
-    select distinct e.fornecedor_codigo_omie from v_sku_leadtime_efetivo e
-     where e.empresa = 'OBEN' and e.sku_codigo_omie::text in (select sku from escopo) and e.fornecedor_codigo_omie is not null
+    select distinct b.fornecedor from base b where b.sku in (select sku from escopo) and b.fornecedor is not null
+  ), docs as (
+    select distinct b.dedup_key, b.sku from base b
+     where b.sku in (select sku from escopo) or b.fornecedor in (select fornecedor from forn)
   )
-  select e.sku_codigo_omie::text as sku,
-         e.fornecedor_codigo_omie as fornecedor,
-         (e.t2_data_faturamento at time zone 'America/Sao_Paulo')::date as t2,
-         (e.t4_data_recebimento at time zone 'America/Sao_Paulo')::date as t4,
-         e.lt_bruto_dias_uteis as lt
-  from v_sku_leadtime_efetivo e
-  where e.empresa = 'OBEN' and e.lt_bruto_dias_uteis is not null
-    and e.t2_data_faturamento is not null and e.t4_data_recebimento is not null
-    and (e.sku_codigo_omie::text in (select sku from escopo) or e.fornecedor_codigo_omie in (select fornecedor_codigo_omie from forn))
-  order by 4, 1, 3, 5
+  select md5('OBEN|' || b.sku || '|' || b.dedup_key) as doc,
+         b.sku,
+         b.fornecedor,
+         to_char(b.t2_data_faturamento at time zone 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI:SS.US') as t2,
+         to_char(b.t4_data_recebimento at time zone 'America/Sao_Paulo', 'YYYY-MM-DD HH24:MI:SS.US') as t4,
+         b.lt_bruto_dias_uteis as lt
+  from base b
+  join docs d on d.dedup_key = b.dedup_key and d.sku = b.sku
+  order by 1, 5, 4, 6
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/lt_motor.csv
 
 select 'fim', 'ok';

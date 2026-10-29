@@ -54,7 +54,8 @@ import {
   TSB,
 } from './config';
 import { coorte, coorteTodosAtivos } from './parados';
-import { ErroDadosReplay, type Classe, type Dados, type Data, type Sku } from './tipos';
+import { precoValeEm } from './dados';
+import { ErroDadosReplay, type Classe, type Dados, type Data, type PrecoCompraDoc, type Sku } from './tipos';
 
 // ── tipos públicos ───────────────────────────────────────────────────────────────────────────────────────────────
 export type Formula = 'F0' | 'F1' | 'F2' | 'F3';
@@ -154,7 +155,14 @@ interface ObsLtMotor {
   lt: number;
   /** fornecedor_codigo_omie (R43; null = sem, ou amostra documental das fixtures antigas). */
   forn: number | null;
+  /** N3: a observação só vale até d ≤ ate (uma cópia posterior do documento a anula); ausente = sem fim. */
+  ate?: Data;
 }
+const DIA_POS_CALIBRACAO = addDias(JANELAS.calibracaoFim, 1);
+/** N3: a observação é conhecida no corte `dc` (t4 < dc ≤ ate). */
+const obsValeEm = (o: ObsLtMotor, dc: Data): boolean => o.t4 < dc && (o.ate === undefined || dc <= o.ate);
+/** Corte do conhecimento: d, ou o dia seguinte ao fim da calibração no contexto dela. */
+const corte = (d: Data, calib: boolean): Data => (calib && d > DIA_POS_CALIBRACAO ? DIA_POS_CALIBRACAO : d);
 interface Indice {
   nDias: number;
   /** Total diário (unidade de estoque) por SKU, dia corrido i = diffDias(INICIO, data). Só vendas no escopo. */
@@ -168,8 +176,8 @@ interface Indice {
   linhas: Map<string, { i: number; preco: number }[]>;
   /** cmc_linha (snapshot point-in-time, extrair.sql) por SKU, dia corrido crescente; só > 0. */
   cmcHist: Map<string, { i: number; cmc: number }[]>;
-  /** preco_compra_real por SKU: dia corrido do t4 (crescente) e a soma acumulada dos preços (média dos docs com t4 < d). */
-  compraHist: Map<string, { i: Int32Array; acum: Float64Array }>;
+  /** preco_compra_real por SKU: os trechos point-in-time de cada documento (N3: desde < d ≤ ate). */
+  compraHist: Map<string, PrecoCompraDoc[]>;
   /** Dias úteis do início do aquecimento ao horizonte e o "balde" de cada dia corrido (fim de semana → dia útil anterior). */
   du: Data[];
   baldeDoDia: Int32Array;
@@ -220,19 +228,12 @@ function indice(dados: Dados): Indice {
     }
   }
   for (const h of cmcHist.values()) h.sort((a, b) => a.i - b.i);
-  const compraPorSku = new Map<string, { i: number; preco: number }[]>();
+  const compraHist = new Map<string, PrecoCompraDoc[]>();
   for (const pc of dados.precosCompra ?? []) {
     if (!(pc.preco > 0) || !Number.isFinite(pc.preco)) continue;
-    const l = compraPorSku.get(pc.sku) ?? [];
-    l.push({ i: idx(pc.desde), preco: pc.preco });
-    compraPorSku.set(pc.sku, l);
-  }
-  const compraHist = new Map<string, { i: Int32Array; acum: Float64Array }>();
-  for (const [s, l] of compraPorSku) {
-    l.sort((a, b) => a.i - b.i || a.preco - b.preco);
-    const acum = new Float64Array(l.length + 1);
-    l.forEach((x, k) => (acum[k + 1] = acum[k] + x.preco));
-    compraHist.set(s, { i: Int32Array.from(l.map((x) => x.i)), acum });
+    const l = compraHist.get(pc.sku) ?? [];
+    l.push(pc);
+    compraHist.set(pc.sku, l);
   }
   const pref = (a: Float64Array) => {
     const p = new Float64Array(a.length + 1);
@@ -292,7 +293,7 @@ function indice(dados: Dados): Indice {
   // contado pelo banco), o F0 usa ELA; a aproximação documental acima só sobra para fixtures sem ltMotor.
   const ltDaView = dados.ltMotor !== undefined;
   const obsMotor: ObsLtMotor[] = ltDaView
-    ? dados.ltMotor!.map((o) => ({ sku: o.sku, t4: o.t4, tJanela: o.t2, lt: o.lt, forn: o.fornecedor }))
+    ? dados.ltMotor!.map((o) => ({ sku: o.sku, t4: o.t4, tJanela: o.t2, lt: o.lt, forn: o.fornecedor, ...(o.ate !== undefined ? { ate: o.ate } : {}) }))
     : [...porChave.values()].filter((o) => o.ok).map(({ sku, t4, tJanela, lt }) => ({ sku, t4, tJanela, lt, forn: null }));
   obsMotor.sort((a, b) => (a.t4 < b.t4 ? -1 : a.t4 > b.t4 ? 1 : a.sku < b.sku ? -1 : 1));
   const obsMotorPorSku = new Map<string, ObsLtMotor[]>();
@@ -341,19 +342,16 @@ function cmcAntes(ix: Indice, sku: string, d: Data): number | null {
   return lo === 0 ? null : h[lo - 1].cmc;
 }
 
-/** preco_compra_real (CTE precos_compra) conhecido em d: média dos documentos com t4 < d; null se não há. */
+/** preco_compra_real (CTE precos_compra) conhecido em d: média dos documentos consolidados no corte d (N3); null se não há. */
 function compraRealAntes(ix: Indice, sku: string, d: Data): number | null {
-  const h = ix.compraHist.get(sku);
-  if (!h) return null;
-  const iD = idx(d);
-  let lo = 0;
-  let hi = h.i.length; // primeiro documento com t4 >= d
-  while (lo < hi) {
-    const m = (lo + hi) >> 1;
-    if (h.i[m] < iD) lo = m + 1;
-    else hi = m;
+  let soma = 0;
+  let n = 0;
+  for (const p of ix.compraHist.get(sku) ?? []) {
+    if (!precoValeEm(p, d)) continue;
+    soma += p.preco;
+    n++;
   }
-  return lo === 0 ? null : h.acum[lo] / lo;
+  return n > 0 ? soma / n : null;
 }
 
 /** σ diário de v_sku_sigma_demanda em d: 180 dias corridos [d-180, d-1] COM zeros (só os observados), round 4. */
@@ -387,7 +385,7 @@ function fornecedorLt(ix: Indice, d: Data, calib: boolean, forn: number | null):
   if (!r) {
     const ini = addDias(d, -F0.janelaLtDias);
     const xs = ix.obsMotor
-      .filter((o) => o.t4 < d && o.tJanela >= ini && (!calib || o.t4 <= JANELAS.calibracaoFim) && (!ix.ltDaView || o.forn === forn))
+      .filter((o) => obsValeEm(o, corte(d, calib)) && o.tJanela >= ini && (!ix.ltDaView || o.forn === forn))
       .map((o) => o.lt);
     const dp = desvioAmostral(xs);
     r = { media: xs.length ? arred(media(xs), 2) : null, desvio: dp === null ? null : arred(dp, 2) };
@@ -458,7 +456,7 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean, j
   const sigmaD = sigmaJanela(ix, s.sku, d);
   // LT (v_sku_leadtime_estatisticas + v_sku_lt_teorico)
   const iniLt = addDias(d, -F0.janelaLtDias);
-  const naJanela = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => o.t4 < d && o.tJanela >= iniLt && (!calib || o.t4 <= JANELAS.calibracaoFim));
+  const naJanela = (ix.obsMotorPorSku.get(s.sku) ?? []).filter((o) => obsValeEm(o, corte(d, calib)) && o.tJanela >= iniLt);
   const obs = naJanela.map((o) => o.lt);
   // R43: o fornecedor do SKU na view é max(fornecedor_codigo_omie) das observações dele na janela
   const fornSku = naJanela.reduce<number | null>((m, o) => (o.forn !== null && (m === null || o.forn > m) ? o.forn : m), null);
@@ -616,7 +614,7 @@ function amostraLt(dados: Dados, ix: Indice, sku: string, d: Data, calib: boolea
   const proprios: number[] = [];
   const todos: number[] = [];
   for (const it of dados.itensLT) {
-    if (it.aberto || !ok(it.t4)) continue;
+    if (it.aberto || !ok(it.conhecidoEm ?? it.t4)) continue; // R47: o parcial encerrado só conta depois do encerramento
     todos.push(it.ltDu);
     if (meus.has(it.sku)) proprios.push(it.ltDu);
   }

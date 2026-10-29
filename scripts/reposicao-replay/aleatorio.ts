@@ -90,7 +90,11 @@ export function uniformePar(...chave: (string | number)[]): [number, number] {
 // item DESSE documento por uniforme(rep,'item',d,sku). Distância em du = |nº de dias úteis até t1 − até d| (seg–sex).
 // O LT devolvido é o documental CRU (pode ser 0); o simulador impõe o mínimo efetivo de 1 du (chega no próximo du).
 
-export type CenarioLT = 'empirico' | 'estresse15' | 'choque29';
+/**
+ * `empirico_com_nf` (R46, SENSIBILIDADE): o mesmo sorteio empírico, mas na amostra INTEIRA — com os itens `pedidaDaNf`
+ * que a amostra padrão exclui. O LT sorteado não muda de regra; só a amostra (o simulador escolhe).
+ */
+export type CenarioLT = 'empirico' | 'estresse15' | 'choque29' | 'empirico_com_nf';
 const LT_ESTRESSE_DU = 15;
 const LT_CHOQUE_DU = 29;
 
@@ -184,10 +188,22 @@ export function ltRealizado(rep: number, d: Data, sku: string, cenario: CenarioL
 }
 
 /**
- * Amostra de LT permitida (spec §5.9 "Calibração"): na calibração só documentos com t4 (ou a data de extração, se
- * aberto) <= fim da calibração; na avaliação, todos.
+ * Amostra de LT permitida (spec §5.9 "Calibração"): na calibração só documentos FECHADOS e conhecidos até o fim dela —
+ * t4 (R47: ou o encerramento datado, `conhecidoEm`, se fechou por ele; a extração, se aberto) <= fim da calibração; na
+ * avaliação, todos.
  */
 export function itensLtPermitidos(itens: readonly ItemLT[], calibracao: boolean, dataExtracao: Data): ItemLT[] {
   if (!calibracao) return [...itens];
-  return itens.filter((i) => (i.aberto || i.t4 === null ? dataExtracao : i.t4) <= JANELAS.calibracaoFim);
+  return itens.filter((i) => (i.aberto || i.t4 === null ? dataExtracao : (i.conhecidoEm ?? i.t4)) <= JANELAS.calibracaoFim);
+}
+
+const memoSorteio = new WeakMap<readonly ItemLT[], ItemLT[]>();
+/**
+ * R46: amostra do SORTEIO de LT da simulação = os itens sem `pedidaDaNf` (pedido de compra sem quantidade casada: falta
+ * evidência de que fechou). Memo pela identidade da lista (o plano e o sorteio memoizam pela identidade também).
+ */
+export function amostraDoSorteio(itens: readonly ItemLT[]): ItemLT[] {
+  let a = memoSorteio.get(itens);
+  if (!a) memoSorteio.set(itens, (a = itens.filter((i) => i.pedidaDaNf !== true)));
+  return a;
 }

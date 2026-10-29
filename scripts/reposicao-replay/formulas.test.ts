@@ -19,6 +19,7 @@ import {
   dentroDaTolerancia,
   type ParamsFormula,
 } from './formulas';
+import { consolidarLtMotor, precosCompraPorDocumento, type LinhaLtMotorCrua, type RecebLinha } from './dados';
 import type { Dados, ItemLT, LinhaVenda, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
@@ -455,5 +456,28 @@ describe('Fix Codex leva C round 1 — R41 (janela da view) e R43 (LT do F0 da v
     // sem fornecedor no SKU: a view não acha a média do fornecedor (LEFT JOIN com NULL) ⇒ sem LT
     const semForn = ltMotor.map((o) => (o.sku === 'Y' ? { ...o, fornecedor: null } : o));
     expect(diagnosticoF0(dados([sku('Y', { grupo: 'outro' })], vs, [], { ltMotor: semForn }), 'Y', E, CTX).lt).toBeNull();
+  });
+});
+
+describe('Fix Codex leva D — N3 (consolidação no corte temporal)', () => {
+  // Contraprova N3 do Codex: documento de janeiro a preço 1 → máximo F0 de fevereiro 14; com uma cópia de t4 = 10/05 o
+  // preço de fevereiro caía no fallback e o máximo virava 7. E a cópia de maio mudava o LT de fevereiro de 40 para 10 du.
+  it('N3: a cópia futura de um documento não muda o preço nem o LT do F0 de fevereiro', () => {
+    const D = '2026-02-16';
+    const vs = [venda('X', '2026-01-08', 2, 20), venda('X', '2026-01-20', 2, 20), venda('X', '2026-02-05', 2, 20)];
+    const l = (tr: string, t4: string): RecebLinha => ({
+      trackingId: tr, sku: 'X', t1: '2026-01-02', t2: null, t4, pedida: 10, recebida: 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor: 10,
+    });
+    const lt = (t2: string, t4: string, v: number): LinhaLtMotorCrua => ({ doc: 'D', sku: 'X', fornecedor: 7, t2, t4, lt: v });
+    const jan = { rec: [l('a', '2026-01-12')], lt: [lt('2026-01-02 10:00:00', '2026-01-12 09:00:00', 40)] };
+    const mai = { rec: [...jan.rec, l('b', '2026-05-10')], lt: [...jan.lt, lt('2026-05-01 10:00:00', '2026-05-12 09:00:00', 10)] };
+    const dd = (x: typeof jan) => dados([sku('X', { grupo: 'outro' })], vs, [], { precosCompra: precosCompraPorDocumento(x.rec), ltMotor: consolidarLtMotor(x.lt) });
+    const a = diagnosticoF0(dd(jan), 'X', D, CTX);
+    const b = diagnosticoF0(dd(mai), 'X', D, CTX);
+    expect(a.fontePreco).toBe('compra_real');
+    expect(a.precoEoq).toBe(1);
+    expect(a.lt).toBe(40);
+    expect(a.maxSugerido).not.toBeNull();
+    expect({ preco: b.precoEoq, lt: b.lt, max: b.maxSugerido, fonte: b.fontePreco }).toEqual({ preco: a.precoEoq, lt: a.lt, max: a.maxSugerido, fonte: a.fontePreco });
   });
 });

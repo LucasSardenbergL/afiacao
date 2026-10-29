@@ -45,6 +45,13 @@ export interface ItemLT {
   /** Dias úteis de t1 até t4; aberto: max(du de t1 até a extração, 15). */
   ltDu: number;
   aberto: boolean;
+  /**
+   * R47: dia em que o FECHAMENTO ficou documentado, quando difere de t4 — o parcial encerrado no Omie fecha no último t4,
+   * mas só se sabe disso no encerramento datado. Ausente = t4. O corte da fase (sorteio) e o do dia (amostra) usam ele.
+   */
+  conhecidoEm?: Data;
+  /** R46: a quantidade pedida veio da NF (pedido de compra não casou): fora da amostra do sorteio; só na sensibilidade. */
+  pedidaDaNf?: true;
 }
 
 export interface Sku {
@@ -179,12 +186,16 @@ export interface ObsLtMotorBruta {
   t2: Data;
   t4: Data;
   lt: number;
+  /** N3: a observação some em d > ate (a próxima cópia do documento a anula, como a view); ausente = vale daí em diante. */
+  ate?: Data;
 }
 
 export interface PrecoCompraDoc {
   sku: string;
-  /** t4 do documento (o maior entre as cópias); o preço vale para d > desde. */
+  /** N3: t4 da cópia mais recente do prefixo coerente; o preço vale para d > desde. */
   desde: Data;
+  /** N3: t4 da próxima cópia do documento; o trecho vale até d ≤ ate (uma cópia divergente o encerra). Ausente = sem fim. */
+  ate?: Data;
   /** valor_total ÷ quantidade_recebida (R$ por unidade recebida). Absoluto: só em memória/$REPLAY_DADOS. */
   preco: number;
 }
@@ -195,8 +206,11 @@ export interface PrecosEmbalagem {
   staleDias: number;
   /** Elegibilidade de catálogo + portal (CTE membro_elegivel sem o preço) no estado de HOJE, por SKU membro. */
   elegivel: Map<string, boolean>;
-  /** Capturas por SKU, data (dia de SP) crescente. */
-  capturas: Map<string, { data: Data; preco: number }[]>;
+  /**
+   * Capturas por SKU em ordem do INSTANTE crescente (P2b: duas capturas no mesmo dia ficam na ordem da hora, nunca do
+   * preço). `data` = dia de SP; `instante` = o carimbo completo de SP (ausente só em fixture sintética).
+   */
+  capturas: Map<string, { data: Data; instante?: string; preco: number }[]>;
 }
 
 /** Padrão de demanda de Syntetos-Boylan (série semanal; ADI > 1,32; CV² > 0,49). `sem_dado` = menos de 2 semanas com venda. */
