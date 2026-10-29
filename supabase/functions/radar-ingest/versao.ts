@@ -15,11 +15,12 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("radar-ingest");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.3-situacao-por-cron";
+export const VERSAO = "v1.4-concorrentes";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =
   "esta edge recebe a carga mensal do radar de mercado e GRAVA radar_ingest_state, os registros do mês e a" +
   " situação cadastral RFB (radar_situacao_cadastral) e recruza quem já é cliente (radar_recruzar_ja_cliente) no" +
   " finalize; a situação (descarte de leads baixados e alerta ao gestor) é aplicada depois pelo job" +
-  " radar-aplicar-situacao-diario, não por esta edge";
+  " radar-aplicar-situacao-diario, não por esta edge; e publica a camada de concorrentes do mapa" +
+  " (radar_concorrentes_publicar, lote inteiro numa transação)";

@@ -81,6 +81,88 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
   });
 }
 
+export interface RadarMunicipioPenetracao {
+  municipio_codigo: string;
+  municipio_nome: string | null;
+  uf: string;
+  lat: number | null;
+  lng: number | null;
+  /** Empresas do LOTE VIGENTE no município (o mercado). null = município sem denominador. */
+  empresas_lote: number | null;
+  clientes: number | null;
+  /** clientes / empresas_lote. null quando não há denominador — nunca 0%. */
+  penetracao: number | null;
+  /** Revendas de tinta/verniz. null = lote sem camada de concorrentes publicada (≠ zero revendas). */
+  concorrentes: number | null;
+}
+
+/** Penetração por município (clientes ÷ empresas do lote vigente) + concorrentes, pela RPC
+ *  `radar_penetracao_por_municipio`. Segue só a UF dos filtros: o denominador é o mercado do lote
+ *  inteiro, não o recorte de CNAE/status da fila. Sem lote completo devolve null (camada indisponível),
+ *  nunca uma penetração calculada sobre a foto velha. */
+export function useRadarPenetracaoMunicipios(uf: string | null, enabled: boolean) {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: ['radar', 'penetracao-municipios', uf],
+    enabled,
+    queryFn: async (): Promise<RadarMunicipioPenetracao[] | null> => {
+      const lote = await lerLoteVigente(qc);
+      if (!lote) return null;
+      const { data, error } = await supabase.rpc(
+        'radar_penetracao_por_municipio',
+        comNulo<'radar_penetracao_por_municipio', 'p_uf'>({ p_lote: lote.mes_referencia, p_uf: uf, p_limit: 500 }),
+      );
+      if (error) throw error;
+      return (data ?? []) as RadarMunicipioPenetracao[];
+    },
+    staleTime: 60_000,
+  });
+}
+
+export type FaixaPenetracao = 'sem_cliente' | 'abaixo' | 'acima' | 'sem_dado';
+
+/** Penetração do conjunto, PONDERADA (Σ clientes ÷ Σ empresas), só sobre quem tem denominador.
+ *  null se ninguém tem — a média de nada não é 0%. */
+export function penetracaoMedia(dados: readonly RadarMunicipioPenetracao[]): number | null {
+  let clientes = 0;
+  let empresas = 0;
+  for (const m of dados) {
+    if (m.empresas_lote == null || m.empresas_lote <= 0 || m.clientes == null) continue;
+    clientes += m.clientes;
+    empresas += m.empresas_lote;
+  }
+  return empresas > 0 ? clientes / empresas : null;
+}
+
+/** Faixa de um município contra a média do conjunto. `sem_cliente` é zero COM denominador (mercado sem
+ *  nenhum cliente); `sem_dado` é ausência de denominador ou de média. */
+export function faixaPenetracao(m: RadarMunicipioPenetracao, media: number | null): FaixaPenetracao {
+  if (m.penetracao == null || media == null) return 'sem_dado';
+  if (m.penetracao === 0) return 'sem_cliente';
+  return m.penetracao < media ? 'abaixo' : 'acima';
+}
+
+/** "Onde o mercado é grande e a penetração é baixa": municípios com denominador e penetração abaixo da
+ *  média, do maior mercado para o menor. Quem não tem denominador fica de fora — não é oportunidade
+ *  medida, é ausência de dado. */
+export function oportunidadesPenetracao(
+  dados: readonly RadarMunicipioPenetracao[],
+  n: number,
+): RadarMunicipioPenetracao[] {
+  const media = penetracaoMedia(dados);
+  if (media == null) return [];
+  return dados
+    .filter((m) => m.penetracao != null && m.empresas_lote != null && m.penetracao < media)
+    .sort((a, b) => (b.empresas_lote ?? 0) - (a.empresas_lote ?? 0) || a.municipio_codigo.localeCompare(b.municipio_codigo))
+    .slice(0, n);
+}
+
+/** Penetração em % com 1 casa (pt-BR). null → '—' (sem denominador ≠ 0%). */
+export function formatarPenetracao(p: number | null): string {
+  if (p == null) return '—';
+  return `${(p * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
 const LIMITE_MUNICIPIOS = 500;      // o mesmo p_limit da RPC
 
 interface FiltrosEstruturais {

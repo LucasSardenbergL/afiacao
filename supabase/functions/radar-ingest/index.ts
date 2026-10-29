@@ -192,6 +192,29 @@ Deno.serve(async (req) => {
       return json({ ok: true, mes, total, novos, situacao_aplicacao: "cron" });
     }
 
+    if (action === "publicar_concorrentes") {
+      // Camada de concorrentes do mapa (revendas de tinta/verniz, agregadas por município): a RPC publica o
+      // lote INTEIRO numa transação e reconcilia a soma das linhas com `estabelecimentos`. Erro tratado AQUI,
+      // fora do catch geral: aquele marca o lote de leads como `error`, e a carga chama esta ação DEPOIS do
+      // finalize — uma falha da camada não pode derrubar a foto vigente da fila.
+      if (!MES_RE.test(mes)) return json({ error: "mes inválido" }, 400);
+      const { cnaes, linhas, estabelecimentos } = body;
+      if (!Array.isArray(cnaes) || !Array.isArray(linhas) || typeof estabelecimentos !== "number") {
+        return json({ error: "cnaes[], linhas[] e estabelecimentos (número) obrigatórios" }, 400);
+      }
+      try {
+        const { data, error } = await admin.rpc("radar_concorrentes_publicar", {
+          p_lote: mes, p_cnaes: cnaes, p_linhas: linhas, p_estabelecimentos: estabelecimentos,
+        });
+        if (error) throw error;
+        return json({ ok: true, publicado: data });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : JSON.stringify(e);
+        console.error(`radar-ingest publicar_concorrentes ${mes} falhou:`, msg);
+        return json({ error: msg }, 500);
+      }
+    }
+
     if (action === "status") {
       const { data, error } = await admin.from("radar_ingest_state")
         .select("*").order("mes_referencia", { ascending: false }).limit(3);
@@ -199,7 +222,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, lotes: data });
     }
 
-    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "status"] }, 400);
+    return json({ error: `ação desconhecida: ${action}`, acoes: ["begin_lote", "chunk", "chunk_municipios", "cnpjs_conhecidos", "chunk_situacao", "finalize", "publicar_concorrentes", "status"] }, 400);
   } catch (e) {
     // Erros do PostgREST são objetos planos (não Error) — String(e) viraria
     // "[object Object]" e mascararia o diagnóstico (mordeu na 1ª carga real).
