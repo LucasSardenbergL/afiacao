@@ -168,11 +168,9 @@ RESET ROLE;
 SQL
 NESP="$(grep -c "_t_assert('A" "$TMP/asserts.sql")"
 
-# suite <migration> → linhas RES|nome|t/f|detalhe
-N=0
+# suite <migration> <banco> → linhas RES|nome|t/f|detalhe (roda em $(…): o nome vem de fora)
 suite() {
-  local mig=$1 db
-  N=$((N + 1)); db="s_$N"
+  local mig=$1 db="s_$2"
   PA -q -d postgres -c "CREATE DATABASE $db TEMPLATE tpl0" >/dev/null
   if ! PA -q -d "$db" -f "$mig" >/dev/null 2>"$TMP/$db.mig.err"; then
     echo "RES|MIGRATION|f|$(head -c 300 "$TMP/$db.mig.err" | tr '\n' ' ')"
@@ -186,7 +184,7 @@ falhas_de() { grep '^RES|' | awk -F'|' '$3 != "t" {print $2}' | sort | tr '\n' '
 
 # ═════════════════════════════ CONTROLE (migration real) ══════════════════
 echo "════ CONTROLE — migration real ════"
-CTRL="$(suite "$MIG")"
+CTRL="$(suite "$MIG" controle)"
 printf '%s\n' "$CTRL" | grep '^RES|' | awk -F'|' '{ printf "  %s %s%s\n", ($3=="t"?"✓":"✗"), $2, ($3=="t"?"":"  ["$4"]") }'
 NTOT="$(printf '%s\n' "$CTRL" | grep -c '^RES|' || true)"
 FCTRL="$(printf '%s\n' "$CTRL" | falhas_de)"
@@ -213,7 +211,7 @@ fals() {
     echo "  ✗ $nome: o sed não mudou nada — sabotagem inerte"
     FALSOS=$((FALSOS + 1)); return
   fi
-  got="$(suite "$copia" | falhas_de)"
+  got="$(suite "$copia" "$nome" | falhas_de)"
   if [ "$got" = "$esperado" ]; then
     echo "  ✓ $nome: vermelho EXATO [$got]"
     VERM=$((VERM + 1))
