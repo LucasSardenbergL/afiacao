@@ -464,7 +464,8 @@ describe('Fix Codex leva D — N3 (consolidação no corte temporal)', () => {
   // preço de fevereiro caía no fallback e o máximo virava 7. E a cópia de maio mudava o LT de fevereiro de 40 para 10 du.
   it('N3: a cópia futura de um documento não muda o preço nem o LT do F0 de fevereiro', () => {
     const D = '2026-02-16';
-    const vs = [venda('X', '2026-01-08', 2, 20), venda('X', '2026-01-20', 2, 20), venda('X', '2026-02-05', 2, 20)];
+    // vendas também em maio/junho (o SKU segue na view em 15/06); nenhuma antes de 16/02 muda
+    const vs = [venda('X', '2026-01-08', 2, 20), venda('X', '2026-01-20', 2, 20), venda('X', '2026-02-05', 2, 20), venda('X', '2026-05-20', 2, 20), venda('X', '2026-06-01', 2, 20)];
     const l = (tr: string, t4: string): RecebLinha => ({
       trackingId: tr, sku: 'X', t1: '2026-01-02', t2: null, t4, pedida: 10, recebida: 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor: 10,
     });
@@ -479,5 +480,8 @@ describe('Fix Codex leva D — N3 (consolidação no corte temporal)', () => {
     expect(a.lt).toBe(40);
     expect(a.maxSugerido).not.toBeNull();
     expect({ preco: b.precoEoq, lt: b.lt, max: b.maxSugerido, fonte: b.fontePreco }).toEqual({ preco: a.precoEoq, lt: a.lt, max: a.maxSugerido, fonte: a.fontePreco });
+    // depois da cópia divergente (LT 10 ≠ 40), a view anula o documento: em junho ele não existe mais; sem ela, segue valendo
+    expect(diagnosticoF0(dd(mai), 'X', '2026-06-15', CTX).lt).toBeNull();
+    expect(diagnosticoF0(dd(jan), 'X', '2026-06-15', CTX).lt).toBe(40);
   });
 });
