@@ -147,7 +147,7 @@ describe('o corpo REAL do repo', () => {
     expect(r.sitios.length).toBeGreaterThanOrEqual(PISOS.sitios);
   });
 
-  it('o censo bate com o histórico: 18 consumidores executam o wrapper', () => {
+  it('o censo bate com o histórico: 21 consumidores executam o wrapper', () => {
     // O doc do #2167 contou 14 varrendo à mão "quem EXECUTA" (≠ as 200+ menções em prosa).
     // Se esta conta divergir, ou nasceu consumidor novo (atualize) ou o fiscal ficou cego.
     // 2026-09-07: 14 → 15, consumidor novo e legítimo — `scripts/pendencias-pacote.ts` mede a
@@ -169,12 +169,15 @@ describe('o corpo REAL do repo', () => {
     // 2026-10-19: 19 → 20, consumidor novo e legítimo — `db/test-deriva-baseline-prod.sh` (I2, plano v2 item 5)
     // embrulha o wrapper num proxy de CAPTURA para o auditor de deriva (`PSQL_RO` injetado): repassa os
     // argumentos do auditor (`-c`, já com `ON_ERROR_STOP`) e ainda o declara explícito na própria linha.
-    expect(r.arquivosComVinculo).toBe(20);
+    // 2026-10-28: 20 → 21, consumidor novo e legítimo — `scripts/reposicao-replay/extrair.sh` (replay TSB do estoque
+    // de segurança) exporta os CSVs por `-f` COM `-v ON_ERROR_STOP=1` e só aceita a extração com o marcador `fim|ok`.
+    // É sítio com `-f`, então entra na lista abaixo com a mesma exigência.
+    expect(r.arquivosComVinculo).toBe(21);
   });
 
-  it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev e o do orçamento de compra, e TODOS têm ON_ERROR_STOP', () => {
+  it('os sítios que leem por `-f` são o do #2167, a captura de cron.job do refresh-snapshot (M-37) o exportador do Jev, o do orçamento de compra e o extrator do replay TSB, e TODOS têm ON_ERROR_STOP', () => {
     const porArquivo = r.sitios.filter((s) => s.temF);
-    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'db/refresh-snapshot.sh', 'scripts/jev/exportar.ts', 'scripts/orcamento-compra/simular.ts']);
+    expect(porArquivo.map((s) => s.arquivo)).toEqual(['db/audit-anon-dml-bypass.sh', 'db/refresh-snapshot.sh', 'scripts/jev/exportar.ts', 'scripts/orcamento-compra/simular.ts', 'scripts/reposicao-replay/extrair.sh']);
     for (const s of porArquivo) expect(s.temErrorStop).toBe(true);
   });
 

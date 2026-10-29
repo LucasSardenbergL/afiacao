@@ -17,6 +17,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mensagemDeErro } from '../../src/lib/erro-mensagem';
 import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { classificarFaultstring, redigirSegredo } from '../../supabase/functions/_shared/omie-falha';
 import { MAX_PAGINAS_POS_ESTOQUE } from '../../supabase/functions/_shared/omie-paginacao';
@@ -105,7 +106,7 @@ export function criarChamada(c: Credenciais, transporte: Transporte, dormir: (ms
         }
         return res;
       } catch (e) {
-        ultimo = new Error(redigir(e instanceof Error ? e.message : String(e), c));
+        ultimo = new Error(redigir(mensagemDeErro(e) ?? 'erro sem mensagem', c));
         const d = decidirRetentativaCmcSnapshot(ultimo.message, tentativa);
         if (!d.retentar) throw ultimo;
         await dormir(d.atrasoMs);
@@ -210,7 +211,7 @@ async function main(): Promise<number> {
       const comSaldo = linhas.filter((l) => l.nSaldo !== null).length;
       console.log(`posicao ${d}: ${linhas.length} produtos (${comSaldo} com nSaldo), ${paginas} páginas -> ${destino}`);
     } catch (e) {
-      console.error(`posicao ${d}: FALHA: ${redigir(e instanceof Error ? e.message : String(e), cred)}`);
+      console.error(`posicao ${d}: FALHA: ${redigir(mensagemDeErro(e) ?? 'erro sem mensagem', cred)}`);
       return 1;
     }
   }

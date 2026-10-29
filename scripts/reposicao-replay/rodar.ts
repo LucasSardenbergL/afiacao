@@ -26,6 +26,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { mensagemDeErro } from '../../src/lib/erro-mensagem';
 import { diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { duAte, type CenarioLT } from './aleatorio';
 import {
@@ -659,10 +660,16 @@ export async function anexarInformativa(
     gravar(r);
     return r;
   } catch (e) {
-    const r = { ...oficial, informativo: null, informativoErro: e instanceof Error ? `${e.name}: ${e.message}` : String(e) };
+    const r = { ...oficial, informativo: null, informativoErro: `${nomeDoErro(e)}: ${mensagemDeErro(e) ?? 'erro sem mensagem'}` };
     gravar(r);
     return r;
   }
+}
+
+/** Nome do erro para o registro (sem `String(err)`: o gate "[object Object]" do repo barra o idiom). */
+function nomeDoErro(e: unknown): string {
+  const n = e !== null && typeof e === 'object' ? (e as { name?: unknown }).name : undefined;
+  return typeof n === 'string' && n.length > 0 ? n : 'Erro';
 }
 
 // ── gate de paridade do F0 (R19/R21; plano T5 Step 5: F0 infiel invalida o denominador → PARAR) ─────────────────
