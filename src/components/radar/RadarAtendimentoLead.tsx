@@ -9,9 +9,20 @@ import { CLASSE_TOM } from '@/lib/radar/ui-helpers';
 import { diaMes, mensagemRecusa, rotuloAtendimento } from '@/lib/radar/atendimento';
 import { useRadarAtendimentosAtivos, useRadarDefinirAtendimento } from '@/queries/useRadarAtendimentos';
 
-/** Chip "em atendimento por X até dd/mm" / "com você até dd/mm" — lista e ficha. Sem dado, sem chip. */
+/**
+ * Chip "em atendimento por X até dd/mm" / "com você até dd/mm" — lista e ficha. Lead livre: sem chip. Leitura que
+ * FALHOU vira chip "atendimento?" — nunca "livre", que é o retrabalho que o recurso existe para evitar.
+ */
 export function ChipAtendimento({ cnpj, className }: { cnpj: string; className?: string }) {
   const q = useRadarAtendimentosAtivos();
+  if (q.isError) {
+    return (
+      <span className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM.muted, className)}
+        title="Não consegui ver se alguém está atendendo este lead" data-testid="radar-atendimento-erro">
+        atendimento?
+      </span>
+    );
+  }
   const a = q.data?.get(cnpj);
   if (!a) return null;
   return (

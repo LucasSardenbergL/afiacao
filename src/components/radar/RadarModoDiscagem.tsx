@@ -22,12 +22,14 @@ export function gravarModoDiscagem(v: boolean): void {
  * pelo Supabase, então o write-guard não a vê); os desfechos são o `RadarOutcomeMenu`, que fica desligado na lente.
  */
 export function RadarModoDiscagem({
-  empresa, nome, compartilhado, onProximo,
+  empresa, nome, compartilhado, compartilhadoFalhou = false, onProximo,
 }: {
   empresa: RadarEmpresa;
   nome: string;
-  /** Telefone → em quantas OUTRAS raízes ele aparece (undefined = não consegui verificar). */
+  /** Telefone → em quantas OUTRAS raízes ele aparece (undefined = ainda não lido ou falhou). */
   compartilhado: Map<string, number> | undefined;
+  /** A leitura do aviso de telefone FALHOU: diz que não verificou, em vez de calar. */
+  compartilhadoFalhou?: boolean;
   onProximo?: () => void;
 }) {
   const tel = telefonePrincipal(empresa);
@@ -38,6 +40,9 @@ export function RadarModoDiscagem({
         <div className="space-y-1">
           <div className="text-2xl font-tabular tracking-wide" data-testid="radar-discagem-telefone">{tel}</div>
           {aviso && <p className="text-xs text-status-warning">{aviso}</p>}
+          {compartilhadoFalhou && (
+            <p className="text-xs text-muted-foreground">Não consegui verificar se este número aparece em outras empresas.</p>
+          )}
           {empresa.telefone2 && empresa.telefone2 !== tel && (
             <p className="text-xs text-muted-foreground font-tabular">também: {empresa.telefone2}</p>
           )}

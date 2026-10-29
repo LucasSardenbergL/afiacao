@@ -90,6 +90,7 @@ GER='00000000-0000-0000-0000-00000000a002'     # employee + gerencial
 FARM='00000000-0000-0000-0000-00000000a003'    # employee + farmer ("Vendedor Um")
 FARM2='00000000-0000-0000-0000-00000000a004'   # employee + farmer ("Vendedor Dois")
 FARM3='00000000-0000-0000-0000-00000000a005'   # employee + hunter (teto de 100)
+FARM4='00000000-0000-0000-0000-00000000a00a'   # employee + closer (teto sob corrida: 99 posses)
 OPER='00000000-0000-0000-0000-00000000a006'    # employee + operacional: fora
 EMP0='00000000-0000-0000-0000-00000000a007'    # employee sem cargo: fora
 CLI='00000000-0000-0000-0000-00000000a008'     # customer
@@ -99,18 +100,20 @@ CLICR='00000000-0000-0000-0000-00000000a009'   # customer com cargo comercial re
 L1='11111111000101'; L6='11111111000292'; L2='22222222000102'; L3='33333333000103'
 L4='44444444000104'; L7='44444444000295'; L5='55555555000105'; L8='88888888000108'; L9='99999999000109'
 SOOMIE='55555555000296'
+LA='12121212000112'; LB='13131313000113'; LC='14141414000114'   # cadastro do vendedor, do gestor; renovação
+LD="$(printf '%08d000199' 70000201)"; LE="$(printf '%08d000199' 70000202)"   # teto sob corrida
 TEL='(31) 11111111'
 
 echo "→ seed-base: papéis, leads, contatos, situação, conflito, cliente só-Omie…"
 P -v ON_ERROR_STOP=1 -q <<SQL
 BEGIN;
-INSERT INTO auth.users (id) VALUES ('$MASTER'),('$GER'),('$FARM'),('$FARM2'),('$FARM3'),('$OPER'),('$EMP0'),('$CLI'),('$CLICR');
+INSERT INTO auth.users (id) VALUES ('$MASTER'),('$GER'),('$FARM'),('$FARM2'),('$FARM3'),('$OPER'),('$EMP0'),('$CLI'),('$CLICR'),('$FARM4');
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('$MASTER','master'),('$GER','employee'),('$FARM','employee'),('$FARM2','employee'),('$FARM3','employee'),
-  ('$OPER','employee'),('$EMP0','employee'),('$CLI','customer'),('$CLICR','customer');
+  ('$OPER','employee'),('$EMP0','employee'),('$CLI','customer'),('$CLICR','customer'),('$FARM4','employee');
 INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
   ('$MASTER','master'),('$GER','gerencial'),('$FARM','farmer'),('$FARM2','farmer'),('$FARM3','hunter'),
-  ('$OPER','operacional'),('$CLICR','farmer');
+  ('$OPER','operacional'),('$CLICR','farmer'),('$FARM4','closer');
 INSERT INTO public.profiles (user_id, name) VALUES
   ('$FARM','Vendedor Um'),('$FARM2','Vendedor Dois'),('$FARM3','Vendedor Tres'),('$GER','Gestor');
 INSERT INTO public.radar_empresas (cnpj, razao_social, cnae_principal, ultimo_lote, municipio_codigo, municipio_nome, uf,
@@ -123,11 +126,17 @@ INSERT INTO public.radar_empresas (cnpj, razao_social, cnae_principal, ultimo_lo
   ('$L7','LEAD SETE','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 77777777',NULL,false),
   ('$L5','LEAD CINCO','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 55555555',NULL,false),
   ('$L8','LEAD OITO','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 88888888',NULL,false),
-  ('$L9','LEAD NOVE','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 99999999',NULL,false);
--- 100 leads extras para o teto por dono.
+  ('$L9','LEAD NOVE','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 99999999',NULL,false),
+  ('$LA','LEAD A','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 12121212',NULL,false),
+  ('$LB','LEAD B','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 13131313',NULL,false),
+  ('$LC','LEAD C','4744005','2026-10','3106200','BELO HORIZONTE','MG','(31) 14141414',NULL,false);
+-- O Omie confirmou (ledger do servidor) os clientes criados para LA e LB: sem isso a v1 recusa o vínculo.
+INSERT INTO public.omie_cliente_confirmacoes (account, documento, codigo_cliente, origem) VALUES
+  ('oben','$LA','555','incluir'), ('oben','$LB','556','incluir');
+-- Leads extras para o teto por dono: 1..100 do hunter, 102..200 (99) do closer, 101/201/202 livres.
 INSERT INTO public.radar_empresas (cnpj, razao_social, cnae_principal, ultimo_lote, ja_cliente)
 SELECT lpad((70000000 + g)::text, 8, '0') || '000199', 'EXTRA ' || g, '4744005', '2026-10', false
-  FROM generate_series(1, 101) g;
+  FROM generate_series(1, 202) g;
 INSERT INTO public.radar_situacao_cadastral (cnpj, lote, situacao) VALUES ('$L1', '2026-10', '08');
 INSERT INTO public.radar_cadastro_conflitos (cnpj, motivo, detalhe, criado_por, ultimo_por)
   VALUES ('$L9', 'lookup_ambiguo', 'seed', '$GER', '$GER');
@@ -152,15 +161,34 @@ q_como() {
 }
 # st_como <papel> <uid> <sql> — 'OK' ou a SQLSTATE (com a camada quando é 42501), via prova.sqlstate.
 st_como() { q_como "$1" "$2" "SELECT prova.sqlstate(\$cmd\$$3\$cmd\$);"; }
-# gate_como <uid> <sql> — 'NEGADO' se a recusa foi o gate do Radar/gestor, senão 'PASSOU' (o gate deixou seguir: o
-# que vier depois — sucesso ou erro de domínio — não é deste assert). Casa a mensagem ASCII exata do RAISE.
+# gate_como <uid> <sql> — 'NEGADO' se a recusa foi o gate do Radar/gestor; 'PASSOU' se a chamada terminou ou parou num
+# erro de DOMÍNIO depois do gate (validação 22023, não-encontrado P0002, RAISE de regra P0001 e os RD00x do cadastro).
+# Qualquer outro erro (42P01 tabela ausente, 42702 ambiguidade, 42501 de ACL interno) é 'TECNICO:<sqlstate>' — VERMELHO:
+# falha técnica não prova que o gate deixou passar (achado 6 do Codex no código).
 gate_como() {
   local out
-  out="$(q_como authenticated "$1" "DO \$g\$ BEGIN PERFORM $2; RAISE NOTICE 'PASSOU'; EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'forbidden: %' THEN RAISE EXCEPTION 'GATE_NEGOU'; END IF; END \$g\$; SELECT 'PASSOU';")"
-  case "$out" in *GATE_NEGOU*) printf 'NEGADO' ;; PASSOU) printf 'PASSOU' ;; *) printf '%s' "$out" ;; esac
+  out="$(q_como authenticated "$1" "DO \$g\$ BEGIN PERFORM $2; EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'forbidden: %' THEN RAISE EXCEPTION 'GATE_NEGOU'; END IF;
+    IF SQLSTATE NOT IN ('22023','P0002','P0001','RD001','RD002','RD003','RD004') THEN
+      RAISE EXCEPTION 'TECNICO:%:%', SQLSTATE, left(SQLERRM, 80);
+    END IF; END \$g\$; SELECT 'PASSOU';")"
+  case "$out" in *GATE_NEGOU*) printf 'NEGADO' ;; PASSOU) printf 'PASSOU' ;; *TECNICO:*) printf 'TECNICO:%s' "${out##*TECNICO:}" ;; *) printf '%s' "$out" ;; esac
 }
 cap() { P -tA -q -c "SELECT private.cap_radar_prospectar($1)"; }
+# corrida <uidA> <cnpjA> <uidB> <cnpjB> <campo de B> — A assume e segura a transação por 1,5 s; B assume no meio.
+# Devolve CORRIDA_A (o `ok` de A) e CORRIDA_B (o <campo> de B, ou o erro).
+corrida() {
+  local claimsA claimsB pidA
+  claimsA="{\"sub\":\"$1\",\"role\":\"authenticated\"}"; claimsB="{\"sub\":\"$3\",\"role\":\"authenticated\"}"
+  P -v ON_ERROR_STOP=1 -tA -q -c "BEGIN" -c "SET LOCAL ROLE authenticated" -c "SET LOCAL request.jwt.claims = '$claimsA'" \
+    -c "SELECT public.radar_definir_atendimento('$2','assumir')->>'ok'" -c "SELECT pg_sleep(1.5)" -c "COMMIT" > "$TMPD/corridaA.out" 2>&1 &
+  pidA=$!
+  sleep 0.5
+  CORRIDA_B="$(P -tA -q -c "SET ROLE authenticated" -c "SET request.jwt.claims = '$claimsB'" \
+    -c "SELECT public.radar_definir_atendimento('$4','assumir')->>'$5'" 2>&1 | tr '\n' ' ' | sed 's/ *$//' | cut -c1-120)"
+  wait "$pidA" || true
+  CORRIDA_A="$(tr -d '\n ' < "$TMPD/corridaA.out")"
+}
 definir() { q_como authenticated "$1" "SELECT public.radar_definir_atendimento('$2','$3')->>'$4'"; }
 
 cenario() {
@@ -187,7 +215,10 @@ cenario() {
   chk B6 "farmer: prospects da rota passa"      "$(gate_como "$FARM" "public.radar_prospects_para_rota('3106200', 5)")" "PASSOU"
   chk B7 "farmer: registrar contato passa"      "$(gate_como "$FARM" "public.registrar_contato_radar('$L8','em_conversa',NULL)")" "PASSOU"
   chk B8 "operacional: registrar contato negado" "$(gate_como "$OPER" "public.registrar_contato_radar('$L8','em_conversa',NULL)")" "NEGADO"
-  chk B9 "farmer: cadastro v2 passa o gate"     "$(gate_como "$FARM" "public.radar_registrar_cadastro_omie_v2('$L7','123',false)")" "PASSOU"
+  chk B9 "farmer: cadastro v2 COMPLETA (v1 por dentro)" "$(q_como authenticated "$FARM" "SELECT public.radar_registrar_cadastro_omie_v2('$LA','555',false)->>'ok'")" "true"
+  chk B9b "…e vincula o lead"                   "$(P -tA -q -c "SELECT omie_codigo_cliente || '|' || ja_cliente FROM public.radar_empresas WHERE cnpj='$LA'")" "555|true"
+  chk B9c "gerencial: cadastro v2 COMPLETA"     "$(q_como authenticated "$GER" "SELECT public.radar_registrar_cadastro_omie_v2('$LB','556',false)->>'ok'")" "true"
+  chk B9d "farmer: v2 sem confirmação do Omie recusa (domínio, não gate)" "$(gate_como "$FARM" "public.radar_registrar_cadastro_omie_v2('$L7','999',false)")" "PASSOU"
   chk B10 "operacional: cadastro v2 negado"     "$(gate_como "$OPER" "public.radar_registrar_cadastro_omie_v2('$L7','123',false)")" "NEGADO"
   chk B11 "farmer: v1 DIRETA sem EXECUTE"       "$(st_como authenticated "$FARM" "SELECT public.radar_registrar_cadastro_omie('$L7','123',false)")" "42501/acl-funcao:radar_registrar_cadastro_omie"
   chk B12 "master: v1 DIRETA sem EXECUTE"       "$(st_como authenticated "$MASTER" "SELECT public.radar_registrar_cadastro_omie('$L7','123',false)")" "42501/acl-funcao:radar_registrar_cadastro_omie"
@@ -200,7 +231,7 @@ cenario() {
   chk B19 "authenticated sem sub: radar_kpis negado" "$(gate_como "" "public.radar_kpis()")" "NEGADO"
 
   echo "── C. RLS de leitura ──"
-  chk C1 "farmer lê radar_empresas"             "$(q_como authenticated "$FARM" "SELECT count(*) FROM public.radar_empresas")" "110"
+  chk C1 "farmer lê radar_empresas"             "$(q_como authenticated "$FARM" "SELECT count(*) FROM public.radar_empresas")" "214"
   chk C2 "operacional lê 0 em radar_empresas"   "$(q_como authenticated "$OPER" "SELECT count(*) FROM public.radar_empresas")" "0"
   chk C3 "customer lê 0 em radar_empresas"      "$(q_como authenticated "$CLI" "SELECT count(*) FROM public.radar_empresas")" "0"
   chk C4 "farmer lê radar_contatos"             "$(q_como authenticated "$FARM" "SELECT count(*) > 0 FROM public.radar_contatos")" "t"
@@ -263,19 +294,24 @@ SQL
   # Dono que perde a capability some dos ativos.
   P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_atendimentos (cnpj, dono_user_id, assumido_em) VALUES ('$L5','$OPER', now())"
   chk E21 "posse de quem perdeu a capability não aparece" "$(q_como authenticated "$FARM" "SELECT count(*) FROM public.radar_atendimentos_ativos() WHERE cnpj='$L5'")" "0"
-  # Corrida: A segura a trava do L8 por 1,5 s; B assume no meio. Com a trava, B espera e recebe em_atendimento;
-  # sem ela, B bate no índice único e falha com 23505.
-  local claimsA claimsB outB
-  claimsA="{\"sub\":\"$FARM\",\"role\":\"authenticated\"}"; claimsB="{\"sub\":\"$FARM2\",\"role\":\"authenticated\"}"
-  P -v ON_ERROR_STOP=1 -tA -q -c "BEGIN" -c "SET LOCAL ROLE authenticated" -c "SET LOCAL request.jwt.claims = '$claimsA'" \
-    -c "SELECT public.radar_definir_atendimento('$L8','assumir')->>'ok'" -c "SELECT pg_sleep(1.5)" -c "COMMIT" > "$TMPD/corridaA.out" 2>&1 &
-  local pidA=$!
-  sleep 0.5
-  outB="$(P -tA -q -c "SET ROLE authenticated" -c "SET request.jwt.claims = '$claimsB'" \
-    -c "SELECT public.radar_definir_atendimento('$L8','assumir')->>'motivo'" 2>&1 | tr '\n' ' ' | sed 's/ *$//' | cut -c1-120)"
-  wait "$pidA" || true
-  chk E22 "corrida: o 1º assume"                 "$(tr -d '\n ' < "$TMPD/corridaA.out")" "true"
-  chk E23 "corrida: o 2º espera e recebe em_atendimento" "$outB" "em_atendimento"
+  chk E21b "…e não bloqueia: outro assume"       "$(definir "$FARM" "$L5" assumir ok)" "true"
+  chk E21c "…fechando a antiga como dono_sem_acesso" "$(P -tA -q -c "SELECT motivo_encerramento FROM public.radar_atendimentos WHERE cnpj='$L5' AND dono_user_id='$OPER'")" "dono_sem_acesso"
+  # Renovação NÃO encurta: assumido há 12 dias, renovado há 6 (ativo até amanhã). Renovar de novo agora tem de dar
+  # 7 dias a partir de agora — antes, a cadeia partia do assumido+7, batia na renovação nova e vencia retroativamente.
+  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_atendimentos (cnpj, dono_user_id, assumido_em, renovado_em) VALUES ('$LC','$FARM', now() - interval '12 days', now() - interval '6 days')"
+  chk E27 "renovar posse antiga"                 "$(definir "$FARM" "$LC" assumir renovado)" "true"
+  chk E28 "…segue ativa para os outros"          "$(definir "$FARM2" "$LC" assumir motivo)" "em_atendimento"
+  # Teto sob corrida: o closer tem 99 posses; duas sessões dele assumem CNPJs DIFERENTES ao mesmo tempo. Com a trava
+  # por dono, a 2ª espera e recebe 'limite'; sem ela, as duas contam 99 e ele fica com 101.
+  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_atendimentos (cnpj, dono_user_id, assumido_em)
+    SELECT lpad((70000000 + g)::text, 8, '0') || '000199', '$FARM4', now() FROM generate_series(102, 200) g"
+  corrida "$FARM4" "$LD" "$FARM4" "$LE" motivo
+  chk E25 "teto sob corrida: a 1ª assume"        "$CORRIDA_A" "true"
+  chk E26 "teto sob corrida: a 2ª recebe limite" "$CORRIDA_B" "limite"
+  # Corrida no MESMO CNPJ: com a trava, B espera e recebe em_atendimento; sem ela, B bate no índice único (23505).
+  corrida "$FARM" "$L8" "$FARM2" "$L8" motivo
+  chk E22 "corrida: o 1º assume"                 "$CORRIDA_A" "true"
+  chk E23 "corrida: o 2º espera e recebe em_atendimento" "$CORRIDA_B" "em_atendimento"
   chk E24 "corrida: 1 aberto só"                 "$(P -tA -q -c "SELECT count(*) FROM public.radar_atendimentos WHERE cnpj='$L8' AND encerrado_em IS NULL")" "1"
 
   echo "── F. telefone compartilhado ──"
@@ -304,6 +340,9 @@ sabotagem() {
     definir_sem_gate)       cv_sabotar 'public.radar_definir_atendimento(text,text)' "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false)) THEN" "IF false THEN" ;;
     ja_cliente_assume)      cv_sabotar 'public.radar_definir_atendimento(text,text)' "IF COALESCE(v_ja_cliente, false) THEN" "IF false THEN" ;;
     telefone_mesma_raiz)    cv_sabotar 'public.radar_telefone_compartilhado(text)' "AND left(o.cnpj, 8) <> left(p_cnpj, 8))" ")" ;;
+    sem_trava_dono)         cv_sabotar 'public.radar_definir_atendimento(text,text)' "PERFORM pg_advisory_xact_lock(hashtextextended('radar_atendimento_dono:' || v_uid::text, 0));" "" ;;
+    escrita_ignora_cap_dono) cv_sabotar 'public.radar_definir_atendimento(text,text)' "ELSIF NOT (COALESCE(private.cap_radar_prospectar(v_aberto.dono_user_id), false)) THEN" "ELSIF false THEN" ;;
+    renovacao_curta)        cv_sabotar 'private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz)' "v_inicio timestamptz := GREATEST(p_assumido_em, p_renovado_em);" "v_inicio timestamptz := p_assumido_em;" ;;
     ativos_sem_cap_dono)    cv_sabotar 'public.radar_atendimentos_ativos()' "AND private.cap_radar_prospectar(a.dono_user_id)" "" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
@@ -320,7 +359,10 @@ liberar_qualquer:E7:E8
 definir_sem_gate:E12:E1
 ja_cliente_assume:E11:E1
 telefone_mesma_raiz:F1,F2:F3
-ativos_sem_cap_dono:E21:E5"
+ativos_sem_cap_dono:E21:E5
+sem_trava_dono:E26:E25
+escrita_ignora_cap_dono:E21b,E21c:E21
+renovacao_curta:E28:E27"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4

@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS public.radar_atendimentos (
   encerrado_por uuid,
   motivo_encerramento text,
   CONSTRAINT radar_atendimentos_motivo_chk
-    CHECK (motivo_encerramento IN ('liberado', 'expirado', 'gestor_liberou')),
+    CHECK (motivo_encerramento IN ('liberado', 'expirado', 'gestor_liberou', 'dono_sem_acesso')),
   CONSTRAINT radar_atendimentos_encerramento_chk
     CHECK ((encerrado_em IS NULL) = (motivo_encerramento IS NULL)),
   CONSTRAINT radar_atendimentos_ordem_chk
@@ -240,9 +240,12 @@ COMMENT ON TABLE public.radar_atendimentos IS
   'Radar: "em atendimento por X". 1 aberto por CNPJ; expira 7 dias depois do último toque VÁLIDO do dono '
   '(calculado na leitura por private.radar_atendimento_expira_em). Único escritor: public.radar_definir_atendimento.';
 
--- Expiração pela CADEIA de toques: começa em assumido_em + 7 dias; cada contato do dono (ou renovação) ANTES de
--- expirar empurra para toque + 7 dias; o primeiro toque DEPOIS de expirar encerra a cadeia — contato tardio não
--- ressuscita a posse (achado 5 do Codex no desenho). O prazo vive SÓ aqui.
+-- Expiração pela CADEIA de toques: começa no último início válido (assumido_em, ou renovado_em — a renovação só é
+-- gravada com a posse ATIVA, então reiniciar a cadeia nela é monótono) + 7 dias; cada contato do dono ANTES de expirar
+-- empurra para contato + 7 dias; o primeiro contato DEPOIS de expirar encerra a cadeia — contato tardio não ressuscita
+-- a posse (achado 5 do Codex no desenho). Renovar sobrescrevendo renovado_em não encurta a posse (achado P1 do Codex
+-- no código: a renovação antiga entrava como toque e a nova, depois do assumido+7, cortava a cadeia). O prazo vive
+-- SÓ aqui.
 CREATE OR REPLACE FUNCTION private.radar_atendimento_expira_em(
   p_cnpj text, p_dono uuid, p_assumido_em timestamptz, p_renovado_em timestamptz)
  RETURNS timestamptz
@@ -251,16 +254,14 @@ CREATE OR REPLACE FUNCTION private.radar_atendimento_expira_em(
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 DECLARE
-  v_expira timestamptz := p_assumido_em + interval '7 days';
+  v_inicio timestamptz := GREATEST(p_assumido_em, p_renovado_em);
+  v_expira timestamptz := v_inicio + interval '7 days';
   v_toque timestamptz;
 BEGIN
   FOR v_toque IN
-    SELECT s.t FROM (
-      SELECT c.created_at AS t FROM public.radar_contatos c
-       WHERE c.cnpj = p_cnpj AND c.criado_por = p_dono AND c.created_at > p_assumido_em
-      UNION ALL
-      SELECT p_renovado_em WHERE p_renovado_em IS NOT NULL
-    ) s ORDER BY s.t
+    SELECT c.created_at FROM public.radar_contatos c
+     WHERE c.cnpj = p_cnpj AND c.criado_por = p_dono AND c.created_at > v_inicio
+     ORDER BY c.created_at
   LOOP
     EXIT WHEN v_toque >= v_expira;
     v_expira := GREATEST(v_expira, v_toque + interval '7 days');
@@ -271,8 +272,11 @@ $function$;
 REVOKE ALL ON FUNCTION private.radar_atendimento_expira_em(text,uuid,timestamptz,timestamptz) FROM PUBLIC, anon, authenticated;
 
 -- O ÚNICO escritor de radar_atendimentos. Trava por CNPJ com advisory (não a linha de radar_empresas: o recálculo
--- diário do score segura essas linhas). O relógio é lido DEPOIS da trava (clock_timestamp): now() é o início da
--- transação e, depois de esperar outra sessão, decidiria expiração com um instante velho (achado 6 do Codex).
+-- diário do score segura essas linhas) e, ao assumir, também por DONO (sem ela, duas sessões do mesmo vendedor em CNPJs
+-- diferentes contariam 99 e inseririam a 100ª e a 101ª). Ordem fixa: CNPJ, depois dono. O relógio é lido DEPOIS das
+-- travas (clock_timestamp): now() é o início da transação e, depois de esperar outra sessão, decidiria expiração com um
+-- instante velho (achado 6 do Codex). Posse ATIVA = não expirada E dono ainda na capability — a MESMA definição da
+-- leitura (radar_atendimentos_ativos): dono que perdeu o acesso não pode bloquear o lead que a tela mostra livre.
 CREATE OR REPLACE FUNCTION public.radar_definir_atendimento(p_cnpj text, p_acao text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -300,6 +304,9 @@ BEGIN
   END IF;
 
   PERFORM pg_advisory_xact_lock(hashtextextended('radar_atendimento:' || p_cnpj, 0));
+  IF p_acao = 'assumir' THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('radar_atendimento_dono:' || v_uid::text, 0));
+  END IF;
   v_agora := clock_timestamp();
 
   SELECT e.ja_cliente INTO v_ja_cliente FROM public.radar_empresas e WHERE e.cnpj = p_cnpj;
@@ -310,12 +317,16 @@ BEGIN
   SELECT * INTO v_aberto FROM public.radar_atendimentos a WHERE a.cnpj = p_cnpj AND a.encerrado_em IS NULL;
   IF FOUND THEN
     v_expira := private.radar_atendimento_expira_em(v_aberto.cnpj, v_aberto.dono_user_id, v_aberto.assumido_em, v_aberto.renovado_em);
-    IF v_expira > v_agora THEN
-      v_ativo := true;
-    ELSE
+    IF v_expira <= v_agora THEN
       UPDATE public.radar_atendimentos a
          SET encerrado_em = v_expira, motivo_encerramento = 'expirado'
        WHERE a.id = v_aberto.id;
+    ELSIF NOT (COALESCE(private.cap_radar_prospectar(v_aberto.dono_user_id), false)) THEN
+      UPDATE public.radar_atendimentos a
+         SET encerrado_em = v_agora, motivo_encerramento = 'dono_sem_acesso'
+       WHERE a.id = v_aberto.id;
+    ELSE
+      v_ativo := true;
     END IF;
   END IF;
 
@@ -507,10 +518,11 @@ BEGIN
       RAISE EXCEPTION 'C1 FALHOU: policy de leitura de % sem a capability nova', r.t;
     END IF;
   END LOOP;
-  IF (SELECT p.qual FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'radar_cadastro_conflitos'
-        AND p.policyname = 'radar_cadastro_conflitos_select_gestor') !~ 'cap_carteira_ler'
-     OR (SELECT p.qual FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'radar_situacao_cadastral'
-        AND p.policyname = 'radar_situacao_cadastral_select_gestor') !~ 'cap_carteira_ler' THEN
+  -- COALESCE: policy AUSENTE dá NULL, e `IF NULL` não entraria (achado 7 do Codex no código).
+  IF NOT COALESCE((SELECT p.qual FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'radar_cadastro_conflitos'
+        AND p.policyname = 'radar_cadastro_conflitos_select_gestor' AND p.cmd = 'SELECT') ~ 'cap_carteira_ler', false)
+     OR NOT COALESCE((SELECT p.qual FROM pg_policies p WHERE p.schemaname = 'public' AND p.tablename = 'radar_situacao_cadastral'
+        AND p.policyname = 'radar_situacao_cadastral_select_gestor' AND p.cmd = 'SELECT') ~ 'cap_carteira_ler', false) THEN
     RAISE EXCEPTION 'C2 FALHOU: radar_cadastro_conflitos e radar_situacao_cadastral deveriam seguir no gate do gestor';
   END IF;
 
@@ -524,14 +536,25 @@ BEGIN
      OR NOT has_table_privilege('service_role', 'public.radar_atendimentos', 'SELECT') THEN
     RAISE EXCEPTION 'D2 FALHOU: ACL de radar_atendimentos (JWT fechado; service_role só SELECT)';
   END IF;
+  -- Pela DEFINIÇÃO, não pelo nome: um índice homônimo sobre outra coluna (ou sem o predicado) não garante 1 aberto por CNPJ.
   IF NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = to_regclass('public.radar_atendimentos_aberto_uniq')
-                   AND i.indisunique AND i.indisvalid AND i.indpred IS NOT NULL) THEN
-    RAISE EXCEPTION 'D3 FALHOU: índice único parcial de atendimento aberto ausente ou inválido';
+                   AND i.indrelid = 'public.radar_atendimentos'::regclass AND i.indisunique AND i.indisvalid
+                   AND pg_get_indexdef(i.indexrelid) ~ '\(cnpj\) WHERE \(encerrado_em IS NULL\)$') THEN
+    RAISE EXCEPTION 'D3 FALHOU: índice único parcial (cnpj) WHERE encerrado_em IS NULL ausente, inválido ou com outra definição';
   END IF;
-  IF (SELECT count(*) FROM pg_constraint c WHERE c.conrelid = 'public.radar_atendimentos'::regclass
-        AND c.contype IN ('c', 'f') AND c.convalidated) <> 4 THEN
-    RAISE EXCEPTION 'D4 FALHOU: radar_atendimentos deveria ter 3 CHECK + 1 FK validados';
-  END IF;
+  FOR r IN SELECT * FROM (VALUES
+      ('radar_atendimentos_motivo_chk', 'c', 'dono_sem_acesso'),
+      ('radar_atendimentos_encerramento_chk', 'c', 'motivo_encerramento IS NULL'),
+      ('radar_atendimentos_ordem_chk', 'c', 'encerrado_em >= assumido_em'),
+      ('radar_atendimentos_cnpj_fkey', 'f', 'REFERENCES (public\.)?radar_empresas\(cnpj\)')
+    ) AS x(nome, tipo, trecho)
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = 'public.radar_atendimentos'::regclass
+                     AND c.conname = r.nome AND c.contype = r.tipo::"char" AND c.convalidated
+                     AND pg_get_constraintdef(c.oid) ~ r.trecho) THEN
+      RAISE EXCEPTION 'D4 FALHOU: constraint % ausente, não validada ou com outra definição', r.nome;
+    END IF;
+  END LOOP;
 
   -- RPCs novas: SECDEF, gate na forma reconhecida, ACL de duas pontas.
   FOR r IN SELECT * FROM (VALUES ('public.radar_definir_atendimento(text,text)'),

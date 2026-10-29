@@ -164,7 +164,8 @@ export function RadarDetailSheet({
         </div>
         {discagem ? (
           <div className="mt-3">
-            <RadarModoDiscagem empresa={empresa} nome={nome} compartilhado={compartilhado.data} onProximo={onProximo} />
+            <RadarModoDiscagem empresa={empresa} nome={nome} compartilhado={compartilhado.data}
+              compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
         ) : (
           <div className="mt-4 flex items-center justify-between gap-2">
@@ -220,6 +221,11 @@ export function RadarDetailSheet({
           <Linha label="Telefone">
             {empresa.telefone1 ? <Telefone numero={empresa.telefone1} nome={nome} outras={outras(empresa.telefone1)} /> : '—'}
           </Linha>
+          {compartilhado.isError && (empresa.telefone1 || empresa.telefone2) && (
+            <p className="py-1 text-xs text-muted-foreground" data-testid="radar-telefone-compartilhado-erro">
+              Não consegui verificar se o telefone aparece em outras empresas.
+            </p>
+          )}
           {empresa.telefone2 && (
             <Linha label="Telefone 2"><Telefone numero={empresa.telefone2} nome={nome} outras={outras(empresa.telefone2)} /></Linha>
           )}

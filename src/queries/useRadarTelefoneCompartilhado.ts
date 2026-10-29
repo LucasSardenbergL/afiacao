@@ -13,7 +13,11 @@ export function useRadarTelefoneCompartilhado(cnpj: string | null) {
     staleTime: 10 * 60_000,
     retry: 1,
     queryFn: async (): Promise<Map<string, number>> => {
-      const { data, error } = await supabase.rpc('radar_telefone_compartilhado', { p_cnpj: cnpj as string });
+      // No máximo 2 linhas (telefone1 e telefone2 distintos, ORDER BY telefone no servidor); o range explicita o teto.
+      const { data, error } = await supabase
+        .rpc('radar_telefone_compartilhado', { p_cnpj: cnpj as string })
+        .order('telefone', { ascending: true })
+        .range(0, 1);
       if (error) throw error;
       if (!Array.isArray(data)) throw new Error('radar_telefone_compartilhado: resposta fora da forma esperada (lista)');
       const m = new Map<string, number>();
