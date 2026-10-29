@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae, versaoDaFila, type PresetRadar } from '@/lib/radar/ui-helpers';
+import { presetParaParams, digitosCnae, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
 import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
@@ -21,6 +21,9 @@ export interface RadarFiltros {
   incluirSaiuDoDump: boolean; // default false: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente)
   soIneditos: boolean;        // só quem entrou no universo NESTE lote (primeira_vista_em >= iniciado_em)
   soSugeridos: boolean;       // só os "sugeridos para cadastro" (predicado do card: em conversa · não cliente · score ≥ limiar · foto vigente)
+  // Opcionais: quem monta RadarFiltros sem eles (ranking, mapa, testes antigos) recebe o recorte de antes.
+  regiao?: RegiaoRadar;        // 'atuacao' = MG e vizinhos (default da TELA); ausente/'brasil' = todas as UFs. UF escolhida vence.
+  incluirSemContato?: boolean; // false (default da tela) = esconde quem não tem telefone NEM e-mail
 }
 
 const PAGE = 50;
@@ -90,7 +93,9 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
 
       // só-wildcard (`*`/`%%`) sanitiza pra vazio → `.or()` match-all (#1062); pula o filtro (lista base)
       if (isSearchablePostgrestTerm(filtros.busca.trim())) q = q.or(ilikeOr(['razao_social', 'nome_fantasia'], filtros.busca.trim()));
-      if (filtros.uf) q = q.eq('uf', filtros.uf);
+      const recorteUf = recorteDeUf(filtros);
+      if (recorteUf.tipo === 'uf') q = q.eq('uf', recorteUf.uf);
+      else if (recorteUf.tipo === 'lista') q = q.in('uf', [...recorteUf.ufs]);
       // Município: o banco guarda em MAIÚSCULAS (dump RFB, "BELO HORIZONTE"); o usuário
       // digita como quiser → ilike (case-insensitive + parcial, sanitizado). Limitação
       // conhecida: ilike não é acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
@@ -120,6 +125,10 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
       // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
       if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
+      // "sem contato" = sem telefone E sem e-mail. Esconder é o default da tela (só `false` explícito
+      // esconde; ausente = recorte antigo). Positivo pelo mesmo motivo do de cima. Medido em prod
+      // (2026-10-29, nas 8 UFs da região): 0 strings vazias nessas colunas — NULL é a ausência.
+      if (filtros.incluirSemContato === false) q = q.or('telefone1.not.is.null,telefone2.not.is.null,email.not.is.null');
       if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);
       if (p.dataAberturaMin) q = q.gte('data_abertura', p.dataAberturaMin);
 

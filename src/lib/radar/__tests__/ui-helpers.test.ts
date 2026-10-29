@@ -182,3 +182,45 @@ describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
       .toBe('1 outro estabelecimento desta empresa na fila');
   });
 });
+
+describe('lista: rótulos, região e catálogo de CNAE', () => {
+  it('rótulos dos modos dizem a ordem que a fila tem', async () => {
+    const { ROTULO_PRESET } = await import('../ui-helpers');
+    expect(ROTULO_PRESET).toEqual({ score: 'Maior score', novas: 'Abertura mais recente', estabelecidas: 'Estabelecidas' });
+  });
+
+  it('UF escolhida vence a região; sem UF, a região decide', async () => {
+    const { recorteDeUf, UFS_ATUACAO } = await import('../ui-helpers');
+    expect(recorteDeUf({ uf: 'PR', regiao: 'atuacao' })).toEqual({ tipo: 'uf', uf: 'PR' });
+    expect(recorteDeUf({ uf: '', regiao: 'atuacao' })).toEqual({ tipo: 'lista', ufs: UFS_ATUACAO });
+    expect(recorteDeUf({ uf: '', regiao: 'brasil' })).toEqual({ tipo: 'todas' });
+    // sem o campo (chamador antigo): Brasil, como era antes
+    expect(recorteDeUf({ uf: '' })).toEqual({ tipo: 'todas' });
+    expect(UFS_ATUACAO[0]).toBe('MG');
+  });
+
+  it('o catálogo estático é a curadoria de scripts/radar/cnaes-alvo.txt, código e nome', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { CNAES_ALVO } = await import('../ui-helpers');
+    const txt = readFileSync('scripts/radar/cnaes-alvo.txt', 'utf-8');
+    const doTxt = txt.split('\n')
+      .map((l) => /^(\d{7})\t(.+)$/.exec(l.trim()))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => ({ codigo: m[1], nome: m[2].trim() }));
+    expect(doTxt.length).toBeGreaterThan(0);
+    expect(CNAES_ALVO.map(({ codigo, nome }) => ({ codigo, nome }))).toEqual(doTxt);
+  });
+
+  it('busca pelo nome da atividade, sem acento e sem caixa, e pelo código parcial', async () => {
+    const { buscarCnaesAlvo, nomeCnaeAlvo, CNAES_ALVO } = await import('../ui-helpers');
+    expect(buscarCnaesAlvo('marmore').map((c) => c.codigo)).toEqual(['2391503']);
+    expect(buscarCnaesAlvo('MÓVEIS predominancia MADEIRA').map((c) => c.codigo)).toEqual(['3101200']);
+    expect(buscarCnaesAlvo('serraria').map((c) => c.codigo)).toEqual(['1610203', '1610204']);
+    expect(buscarCnaesAlvo('3101-2').map((c) => c.codigo)).toEqual(['3101200']);
+    expect(buscarCnaesAlvo('vidro').length).toBe(3); // o grupo "Pedra e vidro" também casa (marmoraria entra)
+    expect(buscarCnaesAlvo('')).toHaveLength(CNAES_ALVO.length);
+    expect(buscarCnaesAlvo('padaria')).toEqual([]);
+    expect(nomeCnaeAlvo('2391-5/03')).toMatch(/marmorarias/);
+    expect(nomeCnaeAlvo('0000000')).toBeNull();
+  });
+});
