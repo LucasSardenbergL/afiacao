@@ -6,7 +6,7 @@ import type { PedidoLine } from './cesta-recompra';
 import type { CrossSellCand } from './cross-sell';
 
 export interface PreviewOrder { id: string; account: string; order_date_kpi: string | null; created_at: string; status: string }
-export interface PreviewItem { omie_codigo_produto: number | null; quantity: number; unit_price: number; sales_order_id: string }
+export interface PreviewItem { omie_codigo_produto: number | null; quantity: number; unit_price: number | null; sales_order_id: string }
 export interface PreviewRec { product_id: string | null; affinity_score: number | null; status: string | null; recommendation_type: string | null }
 export interface PreviewProdById { id: string; omie_codigo_produto: number; descricao: string; ativo: boolean }
 

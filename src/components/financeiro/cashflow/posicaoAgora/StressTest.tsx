@@ -7,8 +7,8 @@ import { AlertTriangle } from 'lucide-react';
 import { fmtCompact } from './format';
 import { SCENARIOS, computeStressRow } from './stress';
 
-export function StressTest({ saldoCC, entradas30, saidas30, pmr }: {
-  saldoCC: number; entradas30: number; saidas30: number; totalCR: number; pmr: number;
+export function StressTest({ saldoCC, saldoCCMotivo, entradas30, saidas30, pmr }: {
+  saldoCC: number | null; saldoCCMotivo?: string | null; entradas30: number; saidas30: number; totalCR: number; pmr: number;
 }) {
   return (
     <Card>
@@ -19,6 +19,12 @@ export function StressTest({ saldoCC, entradas30, saidas30, pmr }: {
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {saldoCC == null ? (
+          // Todo cenário parte do saldo de hoje: sem ele, "Saldo 30d" seria número sobre R$ 0 fabricado.
+          <p className="text-sm text-muted-foreground">
+            {saldoCCMotivo ?? 'Saldo bancário indisponível.'} O teste de estresse precisa do saldo de hoje.
+          </p>
+        ) : (
         <Table>
           <TableHeader>
             <TableRow>
@@ -54,6 +60,7 @@ export function StressTest({ saldoCC, entradas30, saidas30, pmr }: {
             })}
           </TableBody>
         </Table>
+        )}
       </CardContent>
     </Card>
   );

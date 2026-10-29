@@ -113,7 +113,8 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['src/pages/GovernanceMathParams.tsx', 3],
   ['src/pages/GovernancePermissions.tsx', 1],
   ['src/pages/GovernanceUsers.tsx', 1],
-  ['src/pages/ProductionOrders.tsx', 1],
+  // ProductionOrders.tsx QUITADO: o `.update` de `in_progress` passou a capturar `{ data, error }`
+  // e a exigir a linha devolvida — antes o toast "Produção iniciada!" saía mesmo sem gravar.
   ['src/pages/RecebimentoConferencia.tsx', 1],
   ['src/services/financeiroV2Service.ts', 2],
   ['supabase/functions/biometric-auth/index.ts', 3],
@@ -125,7 +126,6 @@ const E1_DIVIDA: ReadonlyMap<string, number> = new Map([
   // falhando calada, o silêncio do banco somava ao silêncio que o PR conserta.
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 7], // #PR captura de custo: 2 escritas passaram a capturar error (9→7)
   ['supabase/functions/extrair-sinais-ligacao/index.ts', 1],
-  ['supabase/functions/fin-ic-reconcile/index.ts', 1],
   ['supabase/functions/gerar-pedidos-diario/index.ts', 2],
   ['supabase/functions/gmail-webhook-receiver/index.ts', 5],
   ['supabase/functions/kb-extract-specs/index.ts', 2],

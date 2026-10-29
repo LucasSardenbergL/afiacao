@@ -47,9 +47,13 @@ export const ARQ_BASELINE = 'scripts/casts-stale-baseline.json';
  * 2026-10-20: 52 (estoque-recebimento sem cast); 2026-10-20: 47 (plataforma sem cast);
  * 2026-10-20: 42 (vendas sem cast); 2026-10-20: 41 (useWhatsappPendentes apagado — a fila do Meu Dia
  * deixou de consumi-lo, M-41); 2026-10-21: 37 (financeiro sem cast); 2026-10-21: 28 (farmer-inteligencia
- * sem cast); 2026-10-21: 26 (governança: useExcecoesGestor sem cast — 0 em módulo ativo).
+ * sem cast); 2026-10-21: 26 (governança: useExcecoesGestor sem cast — 0 em módulo ativo); 2026-10-21: 17 (congelado
+ * tarefas sem cast, a pedido do founder); 2026-10-21: 10 (congelado telefonia-whatsapp-rota sem cast);
+ * 2026-10-21: 5 (congelado knowledge-base sem cast); 2026-10-21: 0 (loja-afiacao, produção e prime sem
+ * cast — nenhum cast literal sobre nome tipado no src/). Com 0 o piso deixa de vigiar cegueira por
+ * contagem de casts; os outros 3 pisos (tabelas, funções, arquivos) seguem guardando a varredura.
  */
-export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 26 } as const;
+export const PISOS = { relacoes: 200, funcoes: 150, arquivos: 1000, castsLiterais: 0 } as const;
 
 export interface Nomes {
   relacoes: Set<string>; // Tables ∪ Views

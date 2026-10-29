@@ -22,6 +22,7 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/le
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import { lerPrazosEmpresa } from "./prazos-empresa.ts";
+import { referenciaFrescorSaldo, saldoInicialDasContas, type ContaComSaldo } from "./saldo-contas.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -360,6 +361,8 @@ type DadosBase = {
   crs: CR[];
   cps: CP[];
   saldo_cc: number;
+  // Não-null quando alguma conta entrou com saldo datado (./saldo-contas.ts) — vai para o snapshot.
+  saldo_cc_motivo: string | null;
   // null = sem fonte (nem manual recente nem estoque de giro com custo no Omie) — nunca 0.
   estoque_valor: number | null;
   estoque_data_ref: string | null;
@@ -428,7 +431,7 @@ async function carregarDados(
     medir(tempos, 'baixas', carregarBaixasCr(supabase, company)),
     medir(tempos, 'demais', Promise.all([
       // @ts-expect-error - fin_contas_correntes may not be in generated supabase types yet
-      supabase.from('fin_contas_correntes').select('saldo_atual')
+      supabase.from('fin_contas_correntes').select('saldo_atual, saldo_data')
         .eq('company', company).eq('ativo', true),
       // @ts-expect-error - fin_eventos_recorrentes not in generated supabase types yet (A1 table)
       supabase.from('fin_eventos_recorrentes').select('id, descricao, valor, tipo, categoria_dre, is_folha, dia_do_mes, inicio, fim')
@@ -477,8 +480,11 @@ async function carregarDados(
   // zero", e os dois disparam o mesmo alerta. Só linha existente prova saldo. Medido em
   // prod (2026-07-28): as 3 empresas têm conta ativa (colacor 14, colacor_sc 9, oben 14),
   // então nenhuma operação legítima depende do ramo vazio.
-  const saldo_cc = (exigirLinhas(ccRes, 'fin_contas_correntes') as Array<{ saldo_atual?: number | null }>)
-    .reduce((s: number, c) => s + Number(c.saldo_atual ?? 0), 0);
+  // Conta sem saldo do extrato LANÇA (o `Number(c.saldo_atual ?? 0)` a somava como zero) e conta
+  // com saldo VELHO entra datada, com motivo em `motivos_confianca` — ver ./saldo-contas.ts.
+  // Medido em 2026-10-26: 40 contas ativas, 0 nulas, todas com saldo_data de hoje.
+  const saldoInicial = saldoInicialDasContas(exigirLinhas(ccRes, 'fin_contas_correntes') as ContaComSaldo[], referenciaFrescorSaldo(new Date()));
+  const saldo_cc = saldoInicial.saldo;
 
   // Estoque: entra no ACO da NCG e no PME. Antes, sem LINHA em fin_estoque_valor (nunca
   // escrita em prod) virava 0 → PME 0d e NCG sem estoque nas 3 empresas. Agora: manual
@@ -574,7 +580,11 @@ async function carregarDados(
   // linha pra empresa → calcularIndicadores mostra "—" honesto. Esta leitura TOLERA o erro
   // (o "—" já é honesto), mas o motivo deixa de mentir: antes um erro de leitura era
   // logado como "sem linha", e a tela mostrava "—" indistinguível de empresa sem dado.
-  const motivos_confianca: string[] = [...estoque.motivos, ...(cmv.motivo ? [cmv.motivo] : [])];
+  const motivos_confianca: string[] = [
+    ...(saldoInicial.motivo ? [saldoInicial.motivo] : []),
+    ...estoque.motivos,
+    ...(cmv.motivo ? [cmv.motivo] : []),
+  ];
   const prazosLeitura = lerPrazosEmpresa(prazosRes);
   const prazos = prazosLeitura.dados;
   if (prazosLeitura.motivo) {
@@ -606,6 +616,7 @@ async function carregarDados(
     crs,
     cps,
     saldo_cc,
+    saldo_cc_motivo: saldoInicial.motivo,
     estoque_valor: estoque.valor,
     estoque_data_ref: estoque.data_ref,
     estoque_fonte: estoque.fonte,
@@ -1368,6 +1379,8 @@ async function calcular(
     // estoque persistia com cara de completa. Snapshot sem a chave = completude desconhecida.
     ncg_parcial: ncg.parcial,
     estoque_fonte: dados.estoque_fonte,
+    // Saldo inicial datado (conta cujo extrato falhou): o snapshot carrega a marca, não só a resposta.
+    saldo_cc_parcial: dados.saldo_cc_motivo,
   };
 
   // ⚠️ ORDEM DELIBERADA: o SNAPSHOT grava ANTES dos alertas (invertido em 2026-07-28).
@@ -1485,7 +1498,8 @@ async function calcular(
     // Degradação honesta: leitura que falhou mas não derruba o cálculo entra aqui com o
     // motivo (fonte + código). Vazio = nenhuma degradação. O que NÃO pode virar zero
     // lança e não chega a este ponto — a resposta 200 nunca carrega número fabricado.
-    confianca_dados: { motivos: dados.motivos_confianca },
+    // `saldo_inicial`: o motivo do saldo datado, à parte, para a tela das 13 semanas (que parte dele).
+    confianca_dados: { motivos: dados.motivos_confianca, saldo_inicial: dados.saldo_cc_motivo },
     metadados: {
       cenario,
       horizon,

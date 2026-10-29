@@ -4,13 +4,13 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { toast } from 'sonner';
 import { track } from '@/lib/analytics';
+import type { TablesInsert } from '@/integrations/supabase/types';
+import { paraTarefaEstado } from '@/lib/tarefas/borda';
 import type { TarefaEstado } from '@/lib/tarefas/types';
 
-// As tabelas/view de tarefas ainda não estão nos tipos gerados do Supabase
-// (migration aplicada manualmente via Lovable). Cast `as never`/`as any` é o
-// padrão do repo (ver FarmerCalls.tsx / useCallLog.ts) até os tipos regenerarem.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const sel = () => (supabase.from('v_tarefas_estado' as never) as any);
+// A view e as tabelas de tarefas estão no types.ts; a linha da view passa pela borda
+// (`paraTarefaEstado`), que exige as colunas garantidas e confere os vocabulários.
+const sel = () => supabase.from('v_tarefas_estado');
 
 /** Tarefas da vendedora logada (do responsável efetivo: assigned_to OU cobertura). A RLS já filtra. */
 export function useMinhasTarefas({ enabled = true }: { enabled?: boolean } = {}) {
@@ -31,7 +31,7 @@ export function useMinhasTarefas({ enabled = true }: { enabled?: boolean } = {})
         .order('atrasada', { ascending: false })
         .order('effective_due', { ascending: true });
       if (error) throw error;
-      return ((data ?? []) as TarefaEstado[]).filter(t => t.responsavel_efetivo === targetId);
+      return (data ?? []).map(paraTarefaEstado).filter(t => t.responsavel_efetivo === targetId);
     },
   });
 }
@@ -49,7 +49,7 @@ export function useTarefasQueCriei(filtroStatus: 'todas' | 'aberta' | 'concluida
       if (filtroStatus !== 'todas') q = q.eq('status', filtroStatus);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as TarefaEstado[];
+      return (data ?? []).map(paraTarefaEstado);
     },
   });
 }
@@ -61,8 +61,7 @@ export function useTarefaSugestoes(tarefaIds: string[]) {
     enabled: tarefaIds.length > 0,
     staleTime: 30_000,
     queryFn: async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cand = () => (supabase.from('tarefa_satisfacao_candidatos' as never) as any);
+      const cand = () => supabase.from('tarefa_satisfacao_candidatos');
       const { data, error } = await cand()
         .select('*').in('tarefa_id', tarefaIds).eq('status', 'pending');
       if (error) throw error;
@@ -74,12 +73,9 @@ export function useTarefaSugestoes(tarefaIds: string[]) {
 export function useTarefaMutations() {
   const qc = useQueryClient();
   const { user } = useAuth();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const tarefas = () => (supabase.from('tarefas' as never) as any);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const eventos = () => (supabase.from('tarefa_eventos' as never) as any);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const candidatos = () => (supabase.from('tarefa_satisfacao_candidatos' as never) as any);
+  const tarefas = () => supabase.from('tarefas');
+  const eventos = () => supabase.from('tarefa_eventos');
+  const candidatos = () => supabase.from('tarefa_satisfacao_candidatos');
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['minhas-tarefas'] });
     qc.invalidateQueries({ queryKey: ['tarefas-que-criei'] });
@@ -170,13 +166,13 @@ export function useTarefaMutations() {
 
   /** Cria N tarefas (cada linha carrega seu próprio cliente). Opcional: auditoria da origem por voz. */
   const criarTarefas = async (
-    linhas: Array<Record<string, unknown>>,
+    linhas: Array<Omit<TablesInsert<'tarefas'>, 'created_by'>>,
     auditVoz?: { transcricao: string; evidencias: string[] },
   ): Promise<{ ids: string[] }> => {
     const rows = linhas.map((l) => ({ ...l, created_by: user!.id }));
-    const { data, error } = await tarefas().insert(rows as never).select('id');
+    const { data, error } = await tarefas().insert(rows).select('id');
     if (error) { toast.error('Erro ao criar tarefa', { description: error.message }); throw error; }
-    const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+    const ids = (data ?? []).map((r) => r.id);
     track('tarefas.created', { qtd: rows.length, origem: auditVoz ? 'voz' : 'form' });
     if (auditVoz && ids.length > 0) {
       // best-effort: a auditoria NUNCA derruba a criação (as tarefas já foram inseridas acima).
@@ -186,7 +182,7 @@ export function useTarefaMutations() {
           tarefa_id: id, tipo_evento: 'criada_por_voz', ator: user!.id,
           payload: { transcricao: auditVoz.transcricao, evidence_text: auditVoz.evidencias[i] ?? null },
         }));
-        await eventos().insert(eventos_rows as never);
+        await eventos().insert(eventos_rows);
       } catch { /* best-effort — auditoria é nice-to-have, não bloqueia o fluxo */ }
     }
     toast.success(rows.length > 1 ? `${rows.length} tarefas criadas` : 'Tarefa criada');
@@ -200,12 +196,12 @@ export function useTarefaMutations() {
     const { error } = await tarefas()
       .update({ status: 'concluida', concluida_em: new Date().toISOString(),
                 concluida_por: user!.id, conclusao_origem: origem, nota_conclusao: nota ?? null,
-                updated_at: new Date().toISOString() } as never)
+                updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) { rollback(); toast.error('Erro ao concluir'); throw error; }
     await eventos().insert(
       { tarefa_id: id, tipo_evento: origem === 'whatsapp' ? 'concluida_whatsapp' : 'concluida_manual',
-        ator: user!.id } as never);
+        ator: user!.id });
     track('tarefas.completed', { origem });
     toast.success('Tarefa concluída');
     invalidate();
@@ -217,7 +213,7 @@ export function useTarefaMutations() {
     const rollbackTarefa = aceitar ? await removerTarefaOtimista(tarefaId) : null;
     const { error } = await candidatos()
       .update({ status: aceitar ? 'accepted' : 'rejected', resolved_at: new Date().toISOString(),
-                resolved_by: user!.id } as never).eq('id', candidatoId);
+                resolved_by: user!.id }).eq('id', candidatoId);
     if (error) {
       rollbackSugestao();
       rollbackTarefa?.();
@@ -227,7 +223,7 @@ export function useTarefaMutations() {
     if (aceitar) {
       const { error: tarefaErr } = await tarefas().update(
         { status: 'concluida', concluida_em: new Date().toISOString(), concluida_por: user!.id,
-          conclusao_origem: 'sugestao_confirmada', updated_at: new Date().toISOString() } as never)
+          conclusao_origem: 'sugestao_confirmada', updated_at: new Date().toISOString() })
         .eq('id', tarefaId);
       if (tarefaErr) {
         // O candidato JÁ está accepted no servidor (não reverter a sugestão);
@@ -241,11 +237,11 @@ export function useTarefaMutations() {
         throw tarefaErr;
       }
       const { error: evErr } = await eventos().insert(
-        { tarefa_id: tarefaId, tipo_evento: 'sugestao_confirmada', ator: user!.id } as never);
+        { tarefa_id: tarefaId, tipo_evento: 'sugestao_confirmada', ator: user!.id });
       if (evErr) console.warn('[tarefas] evento sugestao_confirmada falhou (trilha de auditoria):', evErr.message);
     } else {
       const { error: evErr } = await eventos().insert(
-        { tarefa_id: tarefaId, tipo_evento: 'sugestao_rejeitada', ator: user!.id } as never);
+        { tarefa_id: tarefaId, tipo_evento: 'sugestao_rejeitada', ator: user!.id });
       if (evErr) console.warn('[tarefas] evento sugestao_rejeitada falhou (trilha de auditoria):', evErr.message);
     }
     track('tarefas.suggestion_resolved', { aceitar });
@@ -258,12 +254,12 @@ export function useTarefaMutations() {
   const adiar = async (id: string, novaData: string, motivo: string) => {
     const rollback = await adiarOtimista(id, novaData);
     const { error } = await tarefas()
-      .update({ adiada_para: novaData, motivo_adiamento: motivo, updated_at: new Date().toISOString() } as never)
+      .update({ adiada_para: novaData, motivo_adiamento: motivo, updated_at: new Date().toISOString() })
       .eq('id', id);
     if (error) { rollback(); toast.error('Erro ao adiar'); throw error; }
     await eventos().insert(
       { tarefa_id: id, tipo_evento: 'adiada', ator: user!.id,
-        payload: { adiada_para: novaData, motivo } } as never);
+        payload: { adiada_para: novaData, motivo } });
     track('tarefas.snoozed', {});
     toast.success('Tarefa adiada');
     invalidate();
@@ -272,10 +268,10 @@ export function useTarefaMutations() {
   /** Cancelar (founder/gestor) com motivo. */
   const cancelar = async (id: string, motivo: string) => {
     const { error } = await tarefas()
-      .update({ status: 'cancelada', updated_at: new Date().toISOString() } as never).eq('id', id);
+      .update({ status: 'cancelada', updated_at: new Date().toISOString() }).eq('id', id);
     if (error) { toast.error('Erro ao cancelar'); throw error; }
     await eventos().insert(
-      { tarefa_id: id, tipo_evento: 'cancelada', ator: user!.id, payload: { motivo } } as never);
+      { tarefa_id: id, tipo_evento: 'cancelada', ator: user!.id, payload: { motivo } });
     track('tarefas.cancelled', {});
     toast.success('Tarefa cancelada');
     invalidate();

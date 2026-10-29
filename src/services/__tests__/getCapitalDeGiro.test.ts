@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spBusinessDate } from '@/lib/time/sp-day';
+
+// Saldo de extrato de HOJE em SP: conta sem `saldo_data` fresco é indisponível (plano v3, item 2).
+const HOJE_SP = spBusinessDate(new Date());
 
 /**
  * Teste de contrato do getCapitalDeGiro (tela Posição Agora em /financeiro).
@@ -110,7 +114,7 @@ describe('getCapitalDeGiro (Posição Agora)', () => {
   it('soma TODOS os títulos abertos mesmo acima do cap de 1000 do PostgREST', async () => {
     state.db.fin_contas_receber = muitos(2500, () => cr('oben', 10, foraDe30));
     state.db.fin_contas_pagar = muitos(1200, () => cp('oben', 5, foraDe30));
-    state.db.fin_contas_correntes = [{ company: 'oben', ativo: true, saldo_atual: 1000 }];
+    state.db.fin_contas_correntes = [{ company: 'oben', ativo: true, saldo_atual: 1000, saldo_data: HOJE_SP }];
 
     const [giro] = await getCapitalDeGiro('oben');
 
@@ -150,7 +154,7 @@ describe('getCapitalDeGiro (Posição Agora)', () => {
       ...muitos(1100, () => cp('oben', 3, foraDe30)),
       ...muitos(50, () => cp('oben', 4, dentroDe30)),
     ];
-    state.db.fin_contas_correntes = [{ company: 'oben', ativo: true, saldo_atual: 500 }];
+    state.db.fin_contas_correntes = [{ company: 'oben', ativo: true, saldo_atual: 500, saldo_data: HOJE_SP }];
 
     const [giro] = await getCapitalDeGiro('oben');
 
@@ -232,6 +236,46 @@ describe('getCapitalDeGiro (Posição Agora)', () => {
     state.db.fin_contas_receber = [cr('oben', 10, null)];
     state.errors.fin_contas_correntes = { message: 'tabela indisponível' };
     await expect(getCapitalDeGiro('oben')).rejects.toBeInstanceOf(Error);
+  });
+
+  // Plano v3, item 2: o `(c.saldo_atual || 0)` somava conta sem saldo como zero e saldo de dias
+  // atrás como de hoje — e os dois desciam para o CG Líquido e a Projeção 30d.
+  it('conta com saldo VELHO (extrato falhou, saldo preservado) → saldo CC, CG Líquido e Projeção 30d indisponíveis', async () => {
+    state.db.fin_contas_receber = [cr('oben', 10, foraDe30)];
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, saldo_atual: 1000, saldo_data: HOJE_SP },
+      { company: 'oben', ativo: true, saldo_atual: 5000, saldo_data: '2026-01-02' },
+    ];
+
+    const [giro] = await getCapitalDeGiro('oben');
+
+    expect(giro.saldo_cc).toBeNull();
+    expect(giro.capital_giro_liquido).toBeNull();
+    expect(giro.saldo_projetado_30d).toBeNull();
+    expect(giro.saldo_cc_motivo).toContain('1 de 2 conta(s) com saldo de 2026-01-02 (anterior a');
+    // O que não depende do saldo bancário continua de pé.
+    expect(giro.capital_giro).toBe(10);
+  });
+
+  it('conta sem saldo do extrato (saldo_data NULL — o DEFAULT 0 da coluna) → indisponível, não R$ 0', async () => {
+    state.db.fin_contas_correntes = [
+      { company: 'oben', ativo: true, saldo_atual: 1000, saldo_data: HOJE_SP },
+      { company: 'oben', ativo: true, saldo_atual: 0, saldo_data: null },
+    ];
+
+    const [giro] = await getCapitalDeGiro('oben');
+
+    expect(giro.saldo_cc).toBeNull();
+    expect(giro.saldo_cc_motivo).toContain('1 de 2 conta(s) sem saldo do extrato');
+  });
+
+  it('nenhuma conta ativa → indisponível (a lista vazia somava R$ 0)', async () => {
+    state.db.fin_contas_correntes = [];
+
+    const [giro] = await getCapitalDeGiro('oben');
+
+    expect(giro.saldo_cc).toBeNull();
+    expect(giro.saldo_cc_motivo).toContain('Nenhuma conta corrente ativa');
   });
 
   it('erro na view de prazos NÃO derruba a tela — pmr/pmp ficam null (dado acessório)', async () => {

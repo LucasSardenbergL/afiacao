@@ -5,6 +5,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { lerSnapshotsNcg } from "./snapshots-ncg.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -321,9 +322,18 @@ Deno.serve(async (req: Request) => {
 
   // 3) Capital de giro: snapshots crus da engine A1. Resolução (ausente ≠ R$0 + frescor + −12m) na
   // composta pura `resolverCapitalParaValor`, chamada na seção 6 (depende de ativo_fixo/ajustes).
-  const { data: snaps } = await db.from("fin_projecao_snapshots")
-    .select("ncg, snapshot_at").eq("company", company).order("snapshot_at", { ascending: false }).limit(400);
-  const snapRows = (snaps ?? []) as SnapNcg[];
+  // Duas leituras PONTUAIS (o ponto atual e os vizinhos do alvo −12m), não as N mais recentes: o
+  // `.limit(400)` antigo cortava o −12m para sempre (o teto é o EIXO) — ver ./snapshots-ncg.ts.
+  // Falha na leitura do ponto atual = 500, como a DRE acima (não é "sem snapshot").
+  const snapsNcg = () => db.from("fin_projecao_snapshots").select("ncg, snapshot_at").eq("company", company).not("ncg", "is", null);
+  const leituraSnaps = await lerSnapshotsNcg({
+    recente: () => snapsNcg().order("snapshot_at", { ascending: false }).limit(1),
+    vizinha: (lado, alvoIso) => lado === "antes"
+      ? snapsNcg().lte("snapshot_at", alvoIso).order("snapshot_at", { ascending: false }).limit(1)
+      : snapsNcg().gte("snapshot_at", alvoIso).order("snapshot_at", { ascending: true }).limit(1),
+  });
+  if (!leituraSnaps.ok) return jsonResponse({ error: leituraSnaps.erro }, 500);
+  const snapRows: SnapNcg[] = leituraSnaps.snaps;
 
   // 4) Inputs manuais (mensais → TTM via ×12)
   const numOrNull = (x: unknown): number | null => {
@@ -402,6 +412,9 @@ Deno.serve(async (req: Request) => {
   const nopat_normalizado_aproximado = cg.aplicado && (cg.ajuste_prolabore !== 0 || cg.ajuste_aluguel !== 0);
   // Motivo de NCG ausente/defasado vem estruturado de capRep.motivos / scoreConfiancaValor (não mais inline).
   const motivos = [...capRep.motivos, ...waccBase.motivos, ...cg.motivos];
+  // Falha na leitura do ponto −12m: o incremental sai null pelo `roicIncremental`, cujo aviso diz
+  // "histórico insuficiente" — o motivo diz a verdade (não consegui ler, não "não existe").
+  if (leituraSnaps.motivo_anterior) motivos.push(leituraSnaps.motivo_anterior);
   if (mesesProvisorios > 0) {
     motivos.push(`${mesesProvisorios} mês(es) de DRE com resultado provisório (saída fora do DRE com composição principal × juros pendente) — EBIT/ROIC são estimativa provisória.`);
   }

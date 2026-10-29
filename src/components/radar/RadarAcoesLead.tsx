@@ -9,6 +9,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { DivergenciaCadastro } from '@/lib/radar/cadastro-omie';
 import { useRadarCadastrarOmie, useRadarAtribuirTarefa } from '@/queries/useRadarAcoesLead';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
@@ -25,7 +26,10 @@ export function RadarAcoesLead({ empresa }: { empresa: RadarEmpresa }) {
       const r = await cadastrar.mutateAsync({ empresa });
       toast.success(r.jaExistia ? `Já era cliente no Omie (Oben) — reconciliado · cód. ${r.codigo}` : `Cadastrado no Omie (Oben) · cód. ${r.codigo}`);
     } catch (e) {
-      toast.error('Não foi possível cadastrar', { description: e instanceof Error ? e.message : undefined });
+      // Conflito de vínculo (RD001/RD002/lookup divergente) é terminal: dizer o que é, nunca "tente de novo".
+      toast.error(e instanceof DivergenciaCadastro ? 'Conflito de vínculo com o Omie — nada foi gravado' : 'Não foi possível cadastrar', {
+        description: e instanceof Error ? e.message : undefined,
+      });
     }
   };
 

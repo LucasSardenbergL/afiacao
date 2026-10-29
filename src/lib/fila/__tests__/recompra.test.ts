@@ -59,6 +59,22 @@ describe('adaptarRecompra', () => {
     expect(adaptarRecompra(r)).toEqual([]);
   });
 
+  it('total parcial (item sem preço) → piso = soma dos conhecidos, nunca null nem o item como 0', () => {
+    const r = lerMinhasSugestoes({
+      dia: '2026-10-28',
+      compradores: [{ comprador_id: 'c5', nome: 'Grande', telefone: null, motivo_entrada: 'm', valor_ref_total: null,
+        sugestoes: [
+          { id: 'p1', tipo: 'recompra', empresa: 'oben', omie_codigo_produto: 1, descricao: null, familia: null, qtd_ref: 1, valor_ref: 30000, preco_alvo: null },
+          { id: 'p2', tipo: 'recompra', empresa: 'oben', omie_codigo_produto: 2, descricao: null, familia: null, qtd_ref: 1, valor_ref: null, preco_alvo: null },
+          { id: 'p3', tipo: 'recompra', empresa: 'colacor', omie_codigo_produto: 3, descricao: null, familia: null, qtd_ref: 1, valor_ref: 4221, preco_alvo: null },
+          { id: 'p4', tipo: 'complemento', empresa: 'oben', omie_codigo_produto: null, descricao: null, familia: 'X', qtd_ref: null, valor_ref: 999, preco_alvo: null },
+        ] }],
+    });
+    const [a] = adaptarRecompra(r);
+    expect(a.valorEsperado).toBe(34221);
+    expect(a.tipoValor).toBe('piso');
+  });
+
   it('null → []', () => {
     expect(adaptarRecompra(null)).toEqual([]);
   });

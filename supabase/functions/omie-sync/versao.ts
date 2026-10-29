@@ -35,8 +35,12 @@ export const respostaSonda = criarRespostaSonda("omie-sync");
 // Alfabeto fechado antes de normalizar (dígito Unicode/símbolo/ß recusam). criar_cliente_afiacao confere o
 // documento do cliente devolvido pelo lookup (OMIE_LOOKUP_DIVERGENTE → success:false, não reaproveita).
 // Nenhuma pré-condição de banco, nenhuma ordem de deploy.
+// v1.8 (2026-10-21) — buscar_cliente_por_documento confere o documento do registro devolvido (fora do try: 500
+// OMIE_LOOKUP_DIVERGENTE, nunca código alheio nem "não existe"); helper em `_shared/lookup-documento.ts`.
+// v1.9 (2026-10-27) — o documento DEVOLVIDO pelo Omie também passa pela gramática estrita (Codex retroativo do #3311).
+// v1.10 (2026-10-27) — buscar_cliente_por_documento: só o EOF do Omie é "não existe"; 503/credencial/timeout falham 500.
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.7-rotulo-documento-explicito";
+export const VERSAO = "v1.10-busca-transitorio-nao-e-ausencia";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

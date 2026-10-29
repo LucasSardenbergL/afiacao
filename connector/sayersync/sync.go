@@ -5,7 +5,7 @@
 //  2. Valida o schema (fail-closed se divergir)
 //  3. Para cada entidade, extrai o delta desde o HWM - 5min e envia em lotes ≤1000
 //  4. Diariamente: envia um keys-snapshot de todas as fórmulas
-//  5. Todo domingo de madrugada: full re-scan (ignora HWM)
+//  5. 1×/semana: full re-scan (ignora HWM) — domingo, ou o 1º ciclo depois dele
 //  6. Envia heartbeat ao final
 //
 // RunLoop chama RunCycle em loop com intervalo configurável (para o serviço).
@@ -551,6 +551,29 @@ func extractAllFormulasForSnapshot(ctx context.Context, db *sql.DB, rm *Resolved
 // RunCycle — ciclo de sync principal
 // ──────────────────────────────────────────────────────────────
 
+// Seams de pacote: os testes do RunCycle trocam a conexão, a consulta ao information_schema e o
+// extrator, e mantêm REAL o resto (resolveMapping, runEntityCycles, HTTP).
+var (
+	conectar      = Connect
+	validar       = Validate
+	novoExtractor = func(db *sql.DB, rm *ResolvedMapping) Extractor { return &pgExtractor{db: db, rm: rm} }
+)
+
+// preparacoesBloqueadas devolve ["vendas_item"] quando as preparações NÃO podem rodar neste ciclo:
+// schema da entidade isolada incompleto, ou sem o relógio da origem. Vazio = liberadas.
+func preparacoesBloqueadas(rm *ResolvedMapping, nowErr error) []string {
+	est := rm.Isoladas["vendas_item"]
+	if nowErr != nil {
+		logger.Warnf("RunCycle: vendas_item NÃO roda — sem o relógio da origem: %v", nowErr)
+		return []string{"vendas_item"}
+	}
+	if !est.OK {
+		logger.Warnf("RunCycle: vendas_item NÃO roda — schema incompleto (tabela=%q faltando=%v)", est.Tabela, est.Faltando)
+		return []string{"vendas_item"}
+	}
+	return nil
+}
+
 // RunCycle executa um ciclo completo de sync.
 // Se o schema divergir, grava sayersystem-schema.txt e envia heartbeat com schema_mismatch.
 //
@@ -588,7 +611,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	}
 
 	// Conecta ao PG.
-	db, err := Connect(ctx, cfg.PGConn)
+	db, err := conectar(ctx, cfg.PGConn)
 	if err != nil {
 		logger.Errorf("RunCycle: falha ao conectar ao PG: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, false, "", "")
@@ -597,7 +620,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	defer db.Close()
 
 	// Valida schema.
-	rm, diff, err := Validate(ctx, db)
+	rm, diff, err := validar(ctx, db)
 	if err != nil {
 		logger.Errorf("RunCycle: erro ao validar schema: %v", err)
 		sendHeartbeatBestEffort(ctx, cfg, st, true, "", "")
@@ -629,18 +652,22 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	logger.Infof("RunCycle: schema OK — fp=%s shape=%s", fp, rm.FormulaShape)
 
 	// Obtém now() do PG de origem (para comparações de data).
-	ex := &pgExtractor{db: db, rm: rm}
+	ex := novoExtractor(db, rm)
 	originNow, nowErr := ex.OriginNow(ctx)
 	if nowErr != nil {
 		logger.Warnf("RunCycle: falha ao obter now() da origem, usando hora local: %v", nowErr)
 		originNow = time.Now()
 	}
+	// Preparações (giro de corante): entidade ISOLADA. O catálogo tolera o time.Now() acima; as
+	// preparações NÃO — a janela delas é cortada no relógio da ORIGEM, e um relógio local
+	// adiantado declararia coberto um trecho que a origem ainda não viveu (Codex P1 #4).
+	falhasIsoladas := preparacoesBloqueadas(rm, nowErr)
 
-	// Determina se é necessário full re-scan (todo domingo, uma vez por semana).
+	// Determina se é necessário full re-scan (1×/semana: domingo, ou o 1º ciclo depois se o domingo foi perdido).
 	needFullRescan := shouldFullRescan(st, originNow)
 	if needFullRescan {
 		if iniciarFullRescan(st, originNow) {
-			logger.Infof("RunCycle: iniciando full re-scan semanal (domingo)")
+			logger.Infof("RunCycle: iniciando full re-scan semanal (domingo ou recuperação de domingo perdido)")
 		} else {
 			logger.Infof("RunCycle: retomando full re-scan de hoje — só re-extrai as entidades que ainda não passaram")
 		}
@@ -688,13 +715,16 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		}
 	}
 
-	success := len(failed) == 0
+	// Sucesso do CATÁLOGO governa o full re-scan semanal; o sucesso GLOBAL (retorno, exit do `once`)
+	// também exige as entidades isoladas — falha isolada não trava o catálogo, mas não some (Codex PR D).
+	sucessoCatalogo := len(failed) == 0
+	success := sucessoCatalogo && len(falhasIsoladas) == 0
 
 	// F7: marca o full re-scan como concluído SOMENTE se TODAS as entidades passaram.
 	// Antes marcava mesmo com erro parcial → a rede de segurança semanal se perdia
 	// silenciosamente quando uma entidade falhava no domingo.
 	if needFullRescan {
-		if success {
+		if sucessoCatalogo {
 			st.LastFullRescan = originNow.Format(time.RFC3339)
 		} else {
 			logger.Warnf("RunCycle: full re-scan NÃO marcado como concluído — falhas em: %v (re-tenta no próximo domingo)", failed)
@@ -713,7 +743,9 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
 		hb := buildHeartbeat(st, true, fp, "")
 		hb.LastCycleCounts = counts
-		hb.LastCycleErrors = failed
+		// A falha de entidade isolada aparece no heartbeat, mas NÃO entra em `success`: senão um
+		// vendas_item quebrado impediria marcar o full re-scan semanal do catálogo.
+		hb.LastCycleErrors = append(append([]string(nil), failed...), falhasIsoladas...)
 		if hbErr := cli.Heartbeat(ctx, hb); hbErr != nil {
 			logger.Warnf("RunCycle: falha ao enviar heartbeat: %v", hbErr)
 		}
@@ -722,7 +754,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 	if success {
 		logger.Infof("RunCycle: concluído com sucesso — %v", counts)
 	} else {
-		logger.Warnf("RunCycle: concluído COM FALHAS em %v — %v", failed, counts)
+		logger.Warnf("RunCycle: concluído COM FALHAS em %v — %v", append(append([]string(nil), failed...), falhasIsoladas...), counts)
 	}
 	return success
 }
@@ -1410,13 +1442,23 @@ func shouldKeysSnapshot(st *State, originNow time.Time) bool {
 	return lastDate != nowDate
 }
 
-// shouldFullRescan retorna true se o full re-scan semanal deve ocorrer.
-// Critério: dia é domingo (weekday==Sunday) E a semana ISO do último re-scan
-// é diferente da semana atual.
+// shouldFullRescan retorna true se o full re-scan semanal deve ocorrer: quando o
+// último re-scan é anterior ao domingo mais recente (ou nunca houve). No domingo com
+// o servidor ligado, roda no domingo; senão, no 1º ciclo depois dele.
+//
+// Por que não "só domingo" (medido em prod via psql-ro, 2026-10-21, histórico desde
+// março): o servidor da loja liga ~07h e desliga ~17h15 nos dias úteis e fica
+// DESLIGADO no fim de semana. Com o gatilho "só domingo" a rede de segurança semanal
+// praticamente nunca rodava, e o que só ela re-extrai (ex.: formulaperson enviada
+// com a sentinela '0'/0 pelo 0.2.0, que o delta por HWM nunca re-lê porque a fonte
+// não mudou) ficava parado no staging, barrado pelo Guard 4 a cada promote do par.
+// A 1ª correção (0.2.4) recuperava só na madrugada [00h, 06h) — com o servidor
+// desligado à noite, quase nunca abria. Sem janela: o re-scan não é visivelmente
+// mais pesado que um dia normal (domingo 11/10: mesmo ritmo de runs/hora).
+//
+// Ancorar no DOMINGO (e não em "≥7 dias desde o último") mantém o re-scan semanal
+// no início da semana: recuperado na segunda, o domingo seguinte já é devido.
 func shouldFullRescan(st *State, originNow time.Time) bool {
-	if originNow.Weekday() != time.Sunday {
-		return false
-	}
 	if st.LastFullRescan == "" {
 		return true
 	}
@@ -1424,23 +1466,27 @@ func shouldFullRescan(st *State, originNow time.Time) bool {
 	if err != nil {
 		return true
 	}
-	_, lastWeek := last.ISOWeek()
-	_, nowWeek := originNow.ISOWeek()
-	lastYear, _ := last.ISOWeek()
-	nowYear, _ := originNow.ISOWeek()
-	return lastWeek != nowWeek || lastYear != nowYear
+	return last.In(originNow.Location()).Format("2006-01-02") < domingoMaisRecente(originNow)
 }
 
-// iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan do dia; nos seguintes (o
-// re-scan não marcou porque alguma entidade falhou) não zera de novo — a entidade que
-// falhou não avançou o HWM, então já re-extrai tudo sozinha. Devolve true se zerou.
+// domingoMaisRecente devolve o DIA (YYYY-MM-DD, relógio da origem) do domingo mais
+// recente ≤ originNow — a âncora da semana do re-scan.
+func domingoMaisRecente(originNow time.Time) string {
+	return originNow.AddDate(0, 0, -int(originNow.Weekday())).Format("2006-01-02")
+}
+
+// iniciarFullRescan zera os HWMs só no 1º ciclo do re-scan da SEMANA (âncora: o
+// domingo mais recente); nos seguintes (o re-scan não marcou porque alguma entidade
+// falhou) não zera de novo — a entidade que falhou não avançou o HWM, então já
+// re-extrai tudo sozinha. Semana e não dia: o re-scan pode ser interrompido pelo
+// servidor desligando (~17h15) e retomar no dia seguinte, e comparar por DIA zeraria
+// tudo de novo, re-extraindo as entidades que já tinham passado. Devolve true se zerou.
 func iniciarFullRescan(st *State, originNow time.Time) bool {
-	hoje := originNow.Format("2006-01-02")
-	if st.FullRescanIniciado == hoje {
+	if st.FullRescanIniciado != "" && st.FullRescanIniciado >= domingoMaisRecente(originNow) {
 		return false
 	}
 	clearAllHWM(st)
-	st.FullRescanIniciado = hoje
+	st.FullRescanIniciado = originNow.Format("2006-01-02")
 	return true
 }
 

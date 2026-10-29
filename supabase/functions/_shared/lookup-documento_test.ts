@@ -29,3 +29,25 @@ Deno.test("sem documento (vazio, null, undefined) nunca confere", () => {
   assertEquals(lookupDevolveuOMesmoDocumento("12345678000195", undefined), false);
   assertEquals(lookupDevolveuOMesmoDocumento("", ""), false);
 });
+
+Deno.test("os DOIS lados vazios não conferem (sem documento não se afirma identidade)", () => {
+  assertEquals(lookupDevolveuOMesmoDocumento("", ""), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("", null), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("", "---"), false);
+});
+
+Deno.test("retorno com letra fora do rótulo NÃO casa pelos dígitos (Codex retroativo #3311)", () => {
+  // O só-dígitos reduzia estes retornos a 12345678909 / 12345678000195 e o código alheio passava.
+  for (const retornado of ["123ABC45678909", "abc123.456.789-09", "1234567800019A", "ⒶⒷ12345678909", "１２３４５６７８９０９"]) {
+    assertEquals(lookupDevolveuOMesmoDocumento("12345678909", retornado), false, `retornado ${retornado}`);
+  }
+  assertEquals(lookupDevolveuOMesmoDocumento("12345678000195", "12ABC345678000195"), false);
+});
+
+Deno.test("retorno não-string não confere; retornos válidos seguem conferindo", () => {
+  assertEquals(lookupDevolveuOMesmoDocumento("12345678909", 12345678909), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("12345678909", undefined), false);
+  assertEquals(lookupDevolveuOMesmoDocumento("12345678909", "123.456.789-09"), true);
+  assertEquals(lookupDevolveuOMesmoDocumento("12345678909", "CPF: 123.456.789-09"), true);
+  assertEquals(lookupDevolveuOMesmoDocumento("12ABC34501DE35", "12.abc.345/01de-35"), true);
+});

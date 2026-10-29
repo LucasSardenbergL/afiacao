@@ -12,6 +12,13 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   entregue: 'Entregue',
 };
 
+// Topic GERACIONAL (mesma classe do useCockpitChannel/#3302): o client deduplica
+// canal por topic e o removeChannel é async. Aqui o caminho é DETERMINÍSTICO:
+// `user` é objeto e o AuthContext faz setUser a cada evento de auth (TOKEN_REFRESHED
+// ~1×/h) → o efeito re-roda no mesmo tick e, com topic fixo, recebia o canal em
+// 'leaving' (subscribe() vira no-op) → notificação morta calada após o 1º refresh.
+let pushChannelGen = 0;
+
 export function usePushNotifications() {
   const { user } = useAuth();
   const [permission, setPermission] = useState<NotificationPermission>('default');
@@ -76,7 +83,7 @@ export function usePushNotifications() {
     if (!user) return () => {};
 
     const channel = supabase
-      .channel('order-status-changes')
+      .channel(`order-status-changes-${++pushChannelGen}`)
       .on(
         'postgres_changes',
         {
@@ -115,7 +122,7 @@ export function usePushNotifications() {
     if (!user) return () => {};
 
     const channel = supabase
-      .channel('new-training-modules')
+      .channel(`new-training-modules-${++pushChannelGen}`)
       .on(
         'postgres_changes',
         {

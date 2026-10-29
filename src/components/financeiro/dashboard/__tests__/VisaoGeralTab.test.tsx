@@ -14,7 +14,7 @@ const renderWithClient = (ui: ReactElement) => {
 };
 
 const resumoCo: FinResumo = {
-  contas_correntes: [{ descricao: 'Conta BB', saldo_atual: 5000, banco: 'Banco do Brasil' }],
+  contas_correntes: [{ descricao: 'Conta BB', saldo_atual: 5000, saldo_motivo: null, banco: 'Banco do Brasil' }],
   saldo_total_cc: 5000,
   total_a_receber: 10000,
   total_a_pagar: 4000,
@@ -91,6 +91,38 @@ describe('VisaoGeralTab', () => {
     expect(screen.getByText('Cliente XPTO')).toBeTruthy();
     expect(screen.getByText('Contas Correntes')).toBeTruthy();
     expect(screen.getByText('Conta BB')).toBeTruthy();
+  });
+
+  // Ausente ≠ zero: a conta sem saldo fresco aparece como indisponível, nunca "R$ 0,00", e nunca
+  // fica escondida entre as "zeradas". Só a conta com saldo FRESCO igual a zero é zerada.
+  it('conta sem saldo fresco: "—" + motivo e sempre visível; a zerada de verdade segue oculta', () => {
+    const resumo: FinResumo = {
+      ...resumoCo,
+      saldo_total_cc: null,
+      contas_correntes: [
+        { descricao: 'Conta BB', saldo_atual: 5000, saldo_motivo: null, banco: 'Banco do Brasil' },
+        { descricao: 'Conta Sem Extrato', saldo_atual: null, saldo_motivo: 'Sem saldo do extrato', banco: 'Bradesco' },
+        { descricao: 'Conta Zerada', saldo_atual: 0, saldo_motivo: null, banco: 'Itaú' },
+      ],
+    };
+    renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={resumo}
+        resumo={{ colacor: resumo }}
+        view="colacor"
+        agingReceber={null}
+        agingPagar={null}
+        inadimplentes={[]}
+      />
+    );
+    const linha = screen.getByText('Conta Sem Extrato').closest('.flex') as HTMLElement;
+    expect(linha).toBeTruthy();
+    expect(linha.textContent).toContain('—');
+    expect(linha.textContent).toContain('Sem saldo do extrato');
+    expect(linha.textContent).not.toContain('R$');
+    expect(screen.queryByText('Conta Zerada')).toBeNull();
+    expect(screen.getByText('Mostrar 1 conta zerada')).toBeTruthy();
   });
 
   it('renderiza mensagens de alerta', () => {

@@ -110,3 +110,29 @@ Backtest (`simular.ts`, com fatos gerados pelo psql-ro): pré-voo verde e `fim|o
 ⚠️ `simular.ts --banco` estourou o `statement_timeout` de 2min do psql-ro uma vez (e caiu a conexão em
 outra), com o banco sob carga. Gerando o `fatos.sql` à parte com `set statement_timeout='10min'`, ele levou
 75s. Ficou perto do teto: se repetir, o `--banco` precisa do mesmo `set`.
+
+## Contrato composto e evidência por componente — o 1230 sai de `pendentesR59` (2026-10-21)
+
+O pendente 2790/1230 (Omie 12184846749, cContrato `2130311/2130322`) estava "Atendido total" no portal, mas o
+backtest não via NF. Medido por psql-ro:
+
+- **Não há evidência dele no banco.** Fora da própria linha (sem NF, sem t4, `nQtdeRec=0`), nenhuma linha do
+  tracking, nenhuma NF da `recebimento_associacao_sombra` (13 NFs, só desde 18/10) e nenhuma outra tabela
+  `public` (busca textual) cita 2130311 ou 2130322. As NFs de out/2026 com os produtos dele batem 1:1 com os
+  pedidos já ligados a elas (sem sobra de quantidade). A NF provável é de fim de set/2026 (o vizinho 2130312
+  saiu numa NF de 25/09 com outros 3 pedidos), sem itens no banco (`nfe_recebimentos` só desde 28/09, XML nulo).
+- **O composto é cego por estrutura:** 14 de 730 linhas Sayerlack OBEN têm cContrato com `/`, e **0 de 14** têm
+  NF na própria linha. Dos 9 encerrados, 3 têm NF provada por COMPONENTE (itensRecebimento de linha órfã e
+  sombra), que a comparação da string inteira não via. Só 1 dos 14 é disparado do motor: o 1230.
+
+Correção (só no `candidatoR59`, `simular.ts`; Codex desenho, 128s):
+- cContrato do PRÓPRIO pedido Omie com `/` ⇒ nunca candidato. Fica no caixa e sai em `retidosCompostoR59`
+  (é abstenção, não prova de NF).
+- Identificador e evidência casam também por componente (`/`, `;` e `,`; espaço não separa, porque
+  `nNumPedCompra` tem texto livre). Os componentes só servem para VETAR.
+- `identificadoresR59`/`aprovadoR59` (identidade revisada), `vincularNfs` (R57) e `fatos.sql` intocados.
+
+Prova com os fatos reais de 21/10 (189 disparados, 160 encerrados): candidatos de 4 para 3. `foraDoCaixaR59`
+idêntico (80/1005, 91/1014, 194/1049), `pendentesR59` vazio, `retidosCompostoR59` = 2790. `vinculosNf`,
+ciclos e resumo são idênticos byte a byte. Propriedade testada: candidato novo ⇒ candidato antigo (2000 casos).
+Falsificação: 7 sabotagens, todas vermelhas.

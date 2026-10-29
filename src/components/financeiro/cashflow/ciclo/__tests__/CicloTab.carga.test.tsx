@@ -42,6 +42,7 @@ vi.mock('@/integrations/supabase/client', () => {
   };
 });
 vi.mock('@/lib/analytics', () => ({ track: vi.fn() }));
+vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: vi.fn() }));
 
 type Observado = { cb: IntersectionObserverCallback; el: Element; io: IntersectionObserver };
 const observados: Observado[] = [];

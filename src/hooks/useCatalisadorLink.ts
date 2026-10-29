@@ -7,7 +7,7 @@
  *  4. useDesvincularCatalisador— remover um SKU do catalisador (master, anti-stale)
  *
  * Busca de candidatos: reusa `useBuscarSkusCandidatos` de useProductSpecLink (mesma RPC).
- * ⚠️ Tabela/RPCs novas NÃO estão no types.ts → cast `as never` (lição §10 — não editar types.ts).
+ * A tabela e as RPCs estão no types.ts (regeneração do Lovable); sem cast.
  */
 
 import { useMemo } from 'react';
@@ -26,10 +26,6 @@ type RpcFn = typeof supabase.rpc;
 
 interface MapRow {
   catalisador_codigo_norm: string;
-  account: string;
-  omie_codigo_produto: number;
-}
-interface LinkRow {
   account: string;
   omie_codigo_produto: number;
 }
@@ -54,11 +50,11 @@ export function useCatalisadorLinksMap() {
       return fetchAllPagesComMensagem<MapRow>(
         (de, ate) =>
           supabase
-            .from('kb_catalisador_links' as never)
+            .from('kb_catalisador_links')
             .select('catalisador_codigo_norm, account, omie_codigo_produto')
             .eq('status', 'confirmed')
             .order('id')
-            .range(de, ate) as unknown as PromiseLike<{ data: MapRow[] | null; error: unknown }>,
+            .range(de, ate),
         'kb_catalisador_links/selo-venda-assistida',
         'kb_catalisador_links',
       );
@@ -104,25 +100,19 @@ export function useCatalisadorLinks(codigoRaw?: string | null) {
     queryKey: ['kb-catalisador-links', norm],
     enabled: norm !== '',
     queryFn: async (): Promise<CatalisadorLink[]> => {
-      const { data: linkRows, error: linkErr } = (await supabase
-        .from('kb_catalisador_links' as never)
+      const { data: linkRows, error: linkErr } = await supabase
+        .from('kb_catalisador_links')
         .select('account, omie_codigo_produto')
         .eq('catalisador_codigo_norm', norm)
-        .eq('status', 'confirmed')) as {
-        data: LinkRow[] | null;
-        error: { message: string } | null;
-      };
+        .eq('status', 'confirmed');
       if (linkErr) throw new Error(linkErr.message);
       if (!linkRows || linkRows.length === 0) return [];
 
       const codes = linkRows.map((r) => r.omie_codigo_produto);
-      const { data: prodRows, error: prodErr } = (await supabase
+      const { data: prodRows, error: prodErr } = await supabase
         .from('omie_products')
         .select('account, omie_codigo_produto, codigo, descricao')
-        .in('omie_codigo_produto', codes)) as unknown as {
-        data: ProdutoRow[] | null;
-        error: { message: string } | null;
-      };
+        .in('omie_codigo_produto', codes);
       if (prodErr) throw new Error(prodErr.message);
 
       const prodMap = new Map<string, ProdutoRow>();
@@ -157,8 +147,8 @@ export function useConfirmarCatalisador() {
   return useMutation<number, Error, ConfirmarArgs>({
     mutationFn: async ({ codigo, skus }: ConfirmarArgs) => {
       const { data, error } = (await (supabase.rpc as RpcFn)(
-        'confirmar_catalisador_vinculo' as never,
-        { p_catalisador_codigo: codigo, p_skus: skus } as never,
+        'confirmar_catalisador_vinculo',
+        { p_catalisador_codigo: codigo, p_skus: skus },
       )) as { data: number | null; error: { message: string } | null };
       if (error) throw new Error(error.message);
       return data ?? 0;
@@ -186,12 +176,12 @@ export function useDesvincularCatalisador() {
   return useMutation<number, Error, DesvincularArgs>({
     mutationFn: async ({ account, omie_codigo_produto, expectedNorm }: DesvincularArgs) => {
       const { data, error } = (await (supabase.rpc as RpcFn)(
-        'desvincular_catalisador' as never,
+        'desvincular_catalisador',
         {
           p_account: account,
           p_omie_codigo_produto: omie_codigo_produto,
           p_expected_norm: expectedNorm,
-        } as never,
+        },
       )) as { data: number | null; error: { message: string } | null };
       if (error) throw new Error(error.message);
       return data ?? 0;

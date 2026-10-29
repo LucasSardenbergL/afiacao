@@ -64,7 +64,7 @@ const getResumoFinanceiro = vi.fn(async (companies: string[]) =>
       co,
       co === 'oben'
         ? {
-            contas_correntes: [{ descricao: 'CC', saldo_atual: saldoBanco, banco: 'Banco' }],
+            contas_correntes: [{ descricao: 'CC', saldo_atual: saldoBanco, saldo_motivo: null, banco: 'Banco' }],
             saldo_total_cc: saldoBanco,
             total_a_receber: previstoFuturo,
             ...SEM_MOVIMENTO,

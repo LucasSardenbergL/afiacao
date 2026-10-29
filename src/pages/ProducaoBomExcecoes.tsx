@@ -9,25 +9,12 @@ import { Loader2, AlertTriangle, Search, CheckCircle2, Wrench, ListChecks, Packa
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { toast } from 'sonner';
 import { decodeHtmlEntities } from '@/lib/utils';
+import { comNulo } from '@/lib/rpc-args';
+import type { Tables } from '@/integrations/supabase/types';
 
 // Fila de revisão da BOM destilada (Fase 1A). Lê `pcp_bom_excecoes` — divergências
 // entre a malha do Omie e o modelo paramétrico destilado por linha de abrasivo.
-// A tabela é nova (aplicada via SQL Editor); ainda não está nos types gerados do
-// Supabase → cast `as never`/`as unknown as` no acesso (mesmo padrão de ProductionOrders).
-interface Excecao {
-  pai_codigo: number;
-  componente_codigo: number | null;
-  papel: string;
-  pai_descricao: string | null;
-  componente_descricao: string | null;
-  observado: number | null;
-  esperado: number | null;
-  unidade: string | null;
-  status: string;
-  materializado_em: string;
-  disposicao: string | null;
-  disposicao_nota: string | null;
-}
+type Excecao = Tables<'pcp_bom_excecoes'>;
 
 type PapelFilter = 'todos' | 'abrasivo_base' | 'fita' | 'cola' | 'catalisador';
 
@@ -89,31 +76,39 @@ const ProducaoBomExcecoes = () => {
   const loadExcecoes = async () => {
     setLoading(true);
     const { data, error } = await supabase
-      .from('pcp_bom_excecoes' as never)
+      .from('pcp_bom_excecoes')
       .select('*')
       .order('materializado_em', { ascending: false });
     if (error) {
       toast.error('Erro ao carregar exceções: ' + error.message);
     } else if (data) {
-      setRows(data as unknown as Excecao[]);
+      setRows(data);
     }
     setLoading(false);
   };
 
-  const rowKey = (e: Excecao) => `${e.pai_codigo}|${e.papel}|${e.componente_codigo ?? 0}`;
+  const rowKey = (e: Excecao) => `${e.pai_codigo}|${e.papel}|${e.componente_codigo}`;
 
   const dispor = async (e: Excecao, disposicao: string) => {
     const key = rowKey(e);
     setDispondo(key);
     try {
-      const { error } = await supabase.rpc('fn_pcp_dispor_excecao' as never, {
+      // `p_nota` NULL = sem nota (DEFAULT NULL na prod): vai explícito, como antes.
+      const { data: gravou, error } = await supabase.rpc('fn_pcp_dispor_excecao', comNulo<'fn_pcp_dispor_excecao', 'p_nota'>({
         p_pai: e.pai_codigo,
         p_papel: e.papel,
-        p_componente: e.componente_codigo ?? 0,
+        p_componente: e.componente_codigo,
         p_disposicao: disposicao,
         p_nota: null,
-      } as never);
+      }));
       if (error) throw error;
+      // A RPC devolve FOUND: `false` = o UPDATE não achou a linha (ela saiu da fila depois
+      // do carregamento). Nada foi gravado — recarrega em vez de mostrar sucesso.
+      if (gravou !== true) {
+        toast.error('Exceção não encontrada: a fila mudou desde o carregamento. Recarregando.');
+        loadExcecoes();
+        return;
+      }
       // Reflete localmente (evita novo round-trip): materializar não roda aqui, a disposição persiste.
       setRows(prev => prev.map(r => (rowKey(r) === key ? { ...r, disposicao } : r)));
       toast.success(`Marcada como "${disposicaoLabel[disposicao]?.label ?? disposicao}"`);

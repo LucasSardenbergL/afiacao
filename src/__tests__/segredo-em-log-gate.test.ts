@@ -284,7 +284,7 @@ describe('gate estrutural: segredo publicado em log (classe do omie-sync, achada
       'supabase/functions/omie-analytics-sync/index.ts',
       'supabase/functions/omie-vendas-sync/index.ts',
       'supabase/functions/omie-cliente/index.ts',
-      'supabase/functions/process-nfe/index.ts',
+      'supabase/functions/omie-financeiro/index.ts',
     ]) {
       expect(comCredencial, `o detector parou de enxergar a credencial em ${irma}`).toContain(irma);
     }

@@ -4,6 +4,7 @@ import {
   montarParamsProposta,
   formatarPrazoEntrega,
   MAX_BODY_TEMPLATE_META,
+  lerCotacao,
   type CotacaoRow,
 } from './proposta-cotacao';
 import type { CestaItem, CestaResult } from './cesta-recompra';
@@ -265,5 +266,26 @@ describe('formatarPrazoEntrega — determinístico, fail-closed (nunca fabrica p
   it('routeDate ≠ amanhã (defensivo) → só a data, sem "amanhã"', () => {
     expect(formatarPrazoEntrega('2026-07-13', '2026-07-16', false))
       .toEqual({ iso: '2026-07-16', label: '16/07' });
+  });
+});
+
+describe('lerCotacao — borda da recotação (get_whatsapp_proposta_cotacao)', () => {
+  const linha = {
+    omie_codigo_produto: 1, product_id: 'p1', codigo: 'C1', descricao: 'Verniz', unidade: 'UN',
+    ativo: true, estoque: 3, preco: 10.5, fonte_preco: 'praticado',
+  };
+
+  it('fonte praticado/tabela passa e o resto da linha vem como está', () => {
+    expect(lerCotacao([linha, { ...linha, fonte_preco: 'tabela' }]).map((l) => l.fonte_preco)).toEqual(['praticado', 'tabela']);
+  });
+
+  it('fonte NULL (sem preço válido) passa como NULL, e o preço NULL também — nunca vira 0', () => {
+    const [l] = lerCotacao([{ ...linha, fonte_preco: null, preco: null }]);
+    expect(l.fonte_preco).toBeNull();
+    expect(l.preco).toBeNull();
+  });
+
+  it('fonte fora do vocabulário lança — a proposta não sai com fonte de preço desconhecida', () => {
+    expect(() => lerCotacao([{ ...linha, fonte_preco: 'chute' }])).toThrow('"fonte_preco" = "chute" fora do vocabulário');
   });
 });

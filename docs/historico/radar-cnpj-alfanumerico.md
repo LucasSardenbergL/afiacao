@@ -81,7 +81,7 @@ Revisão independente **cumprida**; o rótulo `REVISÃO INDEPENDENTE PENDENTE` d
 
 - **ALTO (os dois pareceres) — PRE só por md5 do corpo apaga ALTER/REVOKE concorrente:** `ALTER FUNCTION … SECURITY INVOKER` / `SET search_path` / `REVOKE EXECUTE` antes da TRAVA mantêm o `md5(prosrc)`; a PRE aceitava, o `CREATE OR REPLACE` + `GRANT` restauravam os atributos antigos e a PÓS aprovava. **Corrigido:** a TRAVA confere `provolatile = 'v'` ANTES do `ALTER … VOLATILE` (que a normalizaria), e a PRE, já sob a trava, exige `prosecdef`, `proconfig = {search_path=public}` e o ACL revisado (`has_function_privilege`: anon/PUBLIC sem, authenticated/service_role com). Provado em A6a/A6b/A6c (atributo mudado no predecessor → a migration ABORTA e o estado fica intacto, A6d) e falsificado (`pre_sem_atributos`, `pre_sem_acl`, `trava_sem_volatilidade`). Lição de prova: a 1ª versão de `pre_sem_acl` (`IF false AND a OR b OR NOT c`) deixava o ramo de `authenticated` vivo por precedência AND/OR — a falsificação pegou (suíte verde) e a sabotagem foi reescrita para apagar a condição inteira.
 - **ALTO (desenho) — o lookup anti-duplicata não confere identidade:** `buscarClienteVendas` aceitava o 1º registro da página sem comparar o `cnpj_cpf` ao pedido; se o Omie casar o filtro parcialmente ou ignorar letras, devolveria OUTRO cliente e o lead sairia da fila com `created:false` e código alheio. **Corrigido na edge `omie-vendas-sync` v1.22** (`lookup-documento.ts` + `_test.ts`, 4 Deno): `criar_cliente` exige `normalizarDocumento(retornado) === docClean` (máscara/minúscula conferem; mutilado, outro doc ou vazio não) — divergência lança `OMIE_LOOKUP_DIVERGENTE` (a action falha, a lib marca etapa `omie`, o lead FICA na fila). O numérico do acervo passa igual (documento idêntico após normalização). Deploy da edge é camada à parte (`pendencias:deploy`).
-- **ALTO (preexistente, fora desta entrega) — `radar_registrar_cadastro_omie` aceita código nulo/inventado:** o gate prova autorização do gestor, não existência no ERP; a transição `ja_cliente` deveria depender de confirmação produzida pelo servidor (conta Omie + CNPJ + código). Registrado como follow-up, não atacado aqui (desenho de fluxo, não o guard).
+- ✅ **FECHADO em 2026-10-21 (seção "Follow-up fechado — confirmação do servidor" abaixo).** **ALTO (preexistente, fora desta entrega) — `radar_registrar_cadastro_omie` aceita código nulo/inventado:** o gate prova autorização do gestor, não existência no ERP; a transição `ja_cliente` deveria depender de confirmação produzida pelo servidor (conta Omie + CNPJ + código). Registrado como follow-up, não atacado aqui (desenho de fluxo, não o guard).
 - **ALTO (preexistente, #3180) — `documentoParaCadastro("ABC12345678909") → "12345678909"`:** letras ANTES do 1º dígito são tratadas como rótulo (`CPF: …`), por desenho do #3180; a lib nova barra esse caso para o Radar (`documentoCadastravelNoOmie`), mas outros chamadores da edge seguem expostos. Follow-up: gramática explícita de rótulo (`CPF:`/`CNPJ:`). **✅ Fechado em 2026-10-21** — ver "Follow-up fechado — gramática explícita de rótulo" no fim.
 - **MÉDIO — `cliente:null` da sonda não distingue "Não existem registros" de resposta sem array/código:** aceito; a sonda prova "sem fault de validação", não a semântica do filtro — por isso a conferência de identidade acima é obrigatória, e a unicidade por documento no Omie é configurável (não medida). **MÉDIO — sabotagens faltantes:** curinga, não-gestor com CNPJ inválido e deriva de atributo entraram (acima); "falha na 3ª função → rollback integral" fica coberto por A6d (estado idêntico após 3 abortos). A checagem textual `position(guard IN prosrc)` da PÓS é redundante com o md5 — mantida como defesa em profundidade, sem assert próprio.
 
@@ -156,7 +156,123 @@ pessoa no pedido. **Fica com `normalizarDocumento` de propósito:** comparação
 (`docToUserMap`, `lookup-documento.ts`, `omie-cliente`, `omie-analytics-sync`, `analyze-unified-order`) — chave
 dos DOIS lados, não identidade de entrada.
 
-**Residual (registrado, não atacado):** os lookups `omie-sync buscar_cliente_por_documento` e `omie-vendas-sync
-buscar_cliente` ainda aceitam o 1º registro sem conferir o documento devolvido (mesma classe do achado 4; a
-entrada já é estrita). O `catch` do primeiro lê falha transitória como "não existe" (desenho anterior).
+**Deploy — FEITO pela sessão (2026-10-21 11:39Z, PR #3289 mergeado 11:34Z em `5c0ec50`):** o ledger pôs
+`omie-sync`/`omie-vendas-sync` em P1 e `omie-cliente`/`omie-analytics-sync`/`analyze-unified-order` em P2 (só
+fonte). O pacote trouxe também `omie-sync-nfes-recebidas` (P1, de outra entrega), **tirada da leva**: o
+`list_messages` mostrou outra sessão deployando-a às 11:27Z. Colagem do `pendencias:prompt` das 5 via MCP:
+56/56 hashes, 5× **Active**, `No files were edited.`, 1,8 crédito. **1ª atestação pelo envelope**
+(`db:aplicar`, ensaio + real): relé `deploy_sonda_disparar` para `omie-vendas-sync`/`omie-analytics-sync`
+(tentativa #671) e `sonda:sql --so-disparo` para `omie-sync`/`omie-cliente`/`analyze-unified-order`
+(#673, passo 2 no `psql-ro`: **3× DEPLOY CONFIRMADO**). `pendencias:deploy`: as 5 em **CONFERE**
+(`omie-sync` v1.7, `omie-vendas-sync` v1.23). Sensor pós-envio: `EDICAO_DETECTADA` **só** pelo sinal
+`edit_id`/`commit_sha`. Os 2 commits do bot (`aafdc432b`, `b74f4d162`) tocam apenas `types.ts` (+129, tabela
+`venda_gerador_execucao` de outra migration), regenerado e tolerado, sem revert. Arquivos:
+`db/2026-10-21-sonda-*-rotulo-documento*.sql`.
+**Colisão:** o #3291 (confirmação server-side do cadastro) também subia `omie-vendas-sync` para v1.23 e ficou
+`DIRTY` depois deste merge. Ele precisa ir a v1.24 sobre a v1.23 daqui, com redeploy próprio.
 
+**Residual — ✅ fechado em 2026-10-21 (`omie-sync` v1.8, `omie-vendas-sync` v1.25):** `buscar_cliente_por_documento`
+e `buscar_cliente` aceitavam o 1º registro do `ListarClientes` sem conferir o documento devolvido. Agora os dois
+conferem com `lookupDevolveuOMesmoDocumento`, movido de `omie-vendas-sync/` para `_shared/lookup-documento.ts`
+e usado pelas duas edges, a afiação inclusive (o inline saiu). Divergência → `OMIE_LOOKUP_DIVERGENTE`:
+em vendas, a action falha; em `omie-sync`, o erro é lançado FORA do `try` que lia falha como "não existe" e
+vira 500. No front, falha de lookup de código cai no caminho que já existia: código vazio, submit do pedido
+fail-closed naquela conta, e `criar_cliente` conferindo de novo. Falsificação do helper: "sempre true" e "sem
+guarda de vazio" ficam vermelhas, com controle verde. As duas guardas de vazio eram redundantes entre si: ficou
+uma, e o caso dos dois lados vazios ganhou teste. **Codex: barrado pelo guard local de cota (exit 79, 91%,
+janela reabre em 27/10) → Caminho B, REVISÃO INDEPENDENTE PENDENTE; Codex retroativo quando a cota voltar.**
+**Deploy — FEITO pela sessão (PR #3311 mergeado em `3e757a7`):** o ledger pediu só as 2 edges (P1). O
+`list_messages` não mostrou ninguém deployando-as. Colagem do `pendencias:prompt` via MCP: 34/34 hashes, 2×
+**Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope: relé para `omie-vendas-sync` (#683) e
+`--so-disparo` para `omie-sync` (#685, passo 2 no psql-ro: DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE**
+para `omie-sync` v1.8-busca-confere-documento e `omie-vendas-sync` v1.25-busca-confere-documento.
+
+## Follow-up fechado — `radar_registrar_cadastro_omie` exige confirmação do SERVIDOR (2026-10-21)
+
+- **O defeito (Codex ALTO preexistente, acima):** a RPC marcava `ja_cliente = true` / `virou_cliente` com o `p_codigo_cliente` que o front mandasse — nulo (`COALESCE` com o antigo) ou inventado. O gate só provava que quem chama é gestor.
+- **Medido em prod antes (psql-ro):** 0 leads com `omie_codigo_cliente`/`omie_cadastrado_em` (o fluxo nunca foi usado, então não há acervo a reclassificar). Fontes server-side existentes avaliadas e **rejeitadas**: `omie_clientes_nao_vinculados` (snapshot reescrito em lote pelo `omie-analytics-sync`; cliente recém-criado só aparece no próximo sync; multi-writer) e `omie_customer_account_map` (exige user/profile; prospect não tem). Nenhum ledger de confirmação existia → tabela nova justificada.
+- **Desenho:** ledger append-only `omie_cliente_confirmacoes` (`account` só `oben`, `documento` só CNPJ no formato do Radar, `codigo_cliente ^[1-9][0-9]{0,18}$`, `origem` `incluir|lookup`, `confirmado_por`), **um escritor**: a edge `omie-vendas-sync` `criar_cliente` (service_role), depois do lookup que conferiu o documento (v1.22) **ou** do `IncluirCliente` que devolveu código. Código nulo (rate-limit) não confirma nada. A RPC exige a linha `(oben, p_cnpj, código)`; ausente → `RAISE 'RADAR_SEM_CONFIRMACAO_OMIE: …'` e o lead **fica na fila**. A nota do contato vem do ledger (houve `incluir` para o par?), não do `p_ja_existia` do front. Repetição com o mesmo código dentro da trava → `deduped`, sem 2º contato. Assinatura preservada (SW em cache ainda manda os 3 parâmetros).
+- **Edge v1.24** (`confirmacao-cadastro.ts` + `_test.ts`): INSERT com prazo de 5 s (AbortController); erro/exceção/prazo → `confirmacao_registrada:false`, **sem derrubar a action** (o cliente já existe no Omie; o fluxo Colacor da mesma action não regride). `null` = nada a confirmar.
+- **Front** (`cadastro-omie.ts`): a recusa `RADAR_SEM_CONFIRMACAO_OMIE:` vira `FalhaCadastro('omie')` **sem código** — o "Tentar de novo" volta pela edge (lookup grava a confirmação), nunca pelo atalho `codigoConhecido`, que recusaria em laço.
+- **Migration `20261021120000_radar_cadastro_omie_confirmacao_servidor.sql`** (envelope BEGIN/COMMIT): TRAVA (volatilidade antes do ALTER) → PRE (md5 de PROD `46717b26…` ou este; SECURITY/search_path/ACL; **ledger preexistente na 1ª instalação aborta** — linhas de procedência desconhecida virariam prova) → CREATE TABLE + RLS + ACL → CREATE OR REPLACE → PÓS (md5 este, atributos, exigência no `prosrc`, dono igual ao da RPC, **forma exata** da tabela — colunas/tipos/NOT NULL, 5 constraints validadas, zero policy — e **ACL efetivo** por `aclexplode`). Os default privileges de prod dão `arwdDxtm` a anon/authenticated/service_role e `ar` aos `sandbox_exec*`: um `GRANT` mínimo por cima não os remove, então a migration revoga a ESCRITA de todo grantee que não é o dono (SELECT do `claude_ro` fica — a sentinela exige "0 objetos sem SELECT").
+- **Prova PG17 `db/test-radar-cadastro-omie-confirmacao.sh`** (`nucleo-ci.txt`, `41 falsificar=11`): mundo com os default privileges de prod; predecessoras reais até a 20261019225545 (md5 = PROD). 11 sabotagens, uma camada por vez, cada uma vermelha no assert declarado. A sabotagem do guard de formato do código na RPC ficou **verde** (o CHECK do ledger já barra nulo/vazio/não numérico) → o guard saiu: camada redundante.
+- **Ordem de deploy (Codex):** edge **antes** da migration (sem a tabela, o INSERT falha no prazo → `false`, inofensivo); depois a migration; Publish do front por último (a mudança do front só reclassifica o erro).
+- **Codex:** desenho `max` 342s · 92.710 tokens — 0 CRÍTICO/ALTO, 4 MÉDIOs incorporados (REVOKE do service_role/defaults; não adotar tabela preexistente; prazo no INSERT; idempotência), mais owner e tabela qualificada.
+- **Codex de código:** `max` 257s · 118.550 tokens — os 4 MÉDIOs do desenho **resolvidos**; 0 CRÍTICO/ALTO/MÉDIO novo; 1 BAIXO consertado: o `RadarOutcomeMenu` (oferta pós-sinal) caía no toast genérico sem ação para `RADAR_SEM_CONFIRMACAO_OMIE` → agora aviso com "Tentar de novo" pela edge (`retentativa`), teste no `RadarOutcomeMenu.oferta.test.tsx`.
+- **Estado em prod (2026-10-21, PR #3291 → `f4eae81f3`):** as 3 camadas no ar, com evidência. **Edge** `omie-vendas-sync` v1.24-confirmacao-cadastro-servidor (a `main` já tinha a v1.23 do #3289): pacote `358487844f79` via MCP às 12:51:59Z, 30 sha256 conferidos contra `d670fb3f`, ledger **CONFERE**, sensor de edição **SEM_EDICAO**. **Migration** `20261021120000` aplicada pelo envelope MCP (2 tentativas anteriores com `ENOTFOUND`/`ECONNRESET` não chegaram a aplicar nada, conferido por psql-ro entre elas); 2ª testemunha psql-ro: md5 `b537f95a…`, SECURITY DEFINER + `search_path=public` + VOLATILE, dono `postgres`, ACL da RPC intacto, tabela com RLS, 0 policy, escrita só `service_role:INSERT` (`claude_ro`/`sandbox_exec*` só SELECT), `authz:claude-ro:prod` exit 0. **Front**: o build servido `c0b76360` (13:00Z, Publish de outra sessão) contém o merge. Sensor de uso: a 1ª linha do ledger — `SELECT count(*), max(confirmado_em) FROM omie_cliente_confirmacoes` (psql-ro); hoje 0.
+- **Fora do escopo (registrado, não atacado):** `registrar_contato_radar(p_acao='virou_cliente')` segue mudando o **status** de prospecção sem confirmação do ERP — é marcação manual de funil, não `ja_cliente`; e a gramática de rótulo de `documentoParaCadastro` (`_shared/cnpj-alfanumerico.ts`) é outra sessão.
+
+## Codex retroativo do #3311 (2026-10-27, `gpt-6-astra` · max · 3219s · 156.653 tokens)
+
+A REVISÃO INDEPENDENTE PENDENTE do #3311 (Caminho B) foi feita. Resultado:
+
+- **ALTO (confirmado e corrigido, `omie-sync` v1.9 / `omie-vendas-sync` v1.26):** o helper normalizava o documento
+  DEVOLVIDO com `normalizarDocumento` (só-dígitos). Entrada válida `CPF: 123.456.789-09` com retorno simulado
+  `{"codigo_cliente_omie":777,"cnpj_cpf":"123ABC45678909"}` → as duas actions respondiam 200 com `777`. A gramática
+  estrita protegia só a ENTRADA. **Correção:** `lookupDevolveuOMesmoDocumento` passa o retorno por
+  `documentoParaCadastro` (não-string ou recusa → `false`). Testes: retornos com letra, símbolo e dígito fullwidth não
+  casam; retornos válidos (máscara, rótulo, alfanumérico minúsculo) seguem casando. Falsificação com controle verde
+  em `LC_ALL=C` e `pt_BR.UTF-8`: só-dígitos, sem `typeof`, `catch → true` ficam vermelhos. A guarda `r.length > 0`
+  ficou verde, porque `documentoParaCadastro` já lança sem dígito, e saiu.
+- **Confirmado sem regressão:** o 500 fora do `try` preserva CORS e contrato; o consumidor (`getResult`) trata a
+  divergência como falha e não chama criação; o caminho novo do helper passa no `deno check` e no `test:edges`.
+- **Pré-existentes, fora deste PR (registrados):**
+  - `useUnifiedOrder.ts:573` (fluxo IA, Oben) lê `omieResult.codigo_cliente`, mas a action devolve
+    `omieResult.cliente.codigo_cliente`. Com isso, até um lookup Oben bem-sucedido vira código `0` e o pedido Oben
+    fica bloqueado no submit (falha FECHADA, não código errado).
+    **Corrigido (front, só Publish):** helper puro `codigoObenDoBuscarCliente`
+    (`src/hooks/unifiedOrder/codigo-oben-busca.ts`) lê `cliente.codigo_cliente`; `error` do invoke (inclusive
+    `OMIE_LOOKUP_DIVERGENTE`), `cliente: null`, código plano ou não inteiro positivo → `null`, e o submit segue
+    fail-closed. O erro do invoke agora é logado (antes era descartado em silêncio: o `invoke` não lança).
+    `codigo_vendedor` ficou `null` (como antes): no `criar_pedido` ele é advisory, porque a edge usa o
+    `ident.codigo_vendedor` derivado do documento (`deriveOmieAccountIdentity`). Preencher não muda o PV e só
+    mexeria na atribuição do `criar_perfil_local`, fora do escopo. Os outros consumidores conferem: `useCustomerSelection` lê
+    `data.cliente.codigo_cliente` (colacor), e `criar_cliente` / `buscar_cliente_por_documento` são planos de fato.
+    Teste: helper + amarração (hook usa o helper; edge devolve `{ success, cliente }`). Falsificação com controle
+    verde: acesso antigo no helper, acesso antigo no hook e `error` ignorado ficam vermelhos.
+    **No ar (#3366, squash `118733313`):** Publish feito pelo founder em 2026-10-27;
+    `monitor-deploy.sh --pr 3366` exit 0 `PR_NO_AR`, com o ar carimbando `b4b32d74` (= `origin/main`). O
+    `git log 118733313..origin/main` dos dois arquivos veio vazio: o sync do Lovable não reverteu nada.
+  - `omie-sync buscar_cliente_por_documento` lê transitório (503) como `200 / codigo_cliente:null` (falsa ausência).
+    O consumidor tenta `criar_cliente_afiacao`, que reconsulta e confere identidade. Duplicação não comprovada.
+
+
+**Deploy da correção — FEITO pela sessão (PR #3359 mergeado 15:46Z em `75dbcc8`):** colagem do
+`pendencias:prompt`, 34/34 hashes, 2× **Active**, `No files were edited.`, 2,6 créditos. Sonda pelo envelope:
+relé `omie-vendas-sync` (#729) e `--so-disparo` `omie-sync` (#731, DEPLOY CONFIRMADO). `pendencias:deploy`:
+**CONFERE** para `omie-sync` v1.9-retorno-documento-estrito e `omie-vendas-sync` v1.26-retorno-documento-estrito.
+Sensor: SEM_EDICAO. **A revisão independente do #3311 está fechada.**
+
+## Busca por documento da Afiação: só o EOF é ausência (2026-10-27, `omie-sync` v1.10)
+
+Fecha o item pré-existente que o Codex retroativo do #3311 deixou: `buscar_cliente_por_documento` transformava
+todo erro em `codigo_cliente: null`, então um 503 ou uma credencial recusada viravam "não existe".
+`./busca-documento.ts` decide o desfecho das DUAS leituras de `ListarClientes` por documento da edge:
+
+- EOF do Omie ("Não existem registros para a página", `classificarFaultstring` = `fim_de_pagina`) ou página
+  vazia → ausência;
+- resposta sem `clientes_cadastro` em lista (`{}`, `{"error":…}`, objeto) → `OMIE_RESPOSTA_MALFORMADA`
+  (antes: "não existe");
+- qualquer outro erro → relança (500 na busca, `success:false` no cadastro).
+
+**Codex (`gpt-6-astra` · max · 209s · 100.979 tokens):** nenhum ALTO nem regressão. O 500 novo não induz
+autocadastro: `getResult` marca a falha e o preflight do envio bloqueia o pedido sem código de Afiação. Dois
+MÉDIOS pré-existentes, os dois reproduzidos e **corrigidos aqui**:
+
+1. resposta malformada virava ausência;
+2. a reconsulta do `criar_cliente_afiacao` recebia o EOF, caía no `catch` e devolvia `success:false`, então
+   **cliente realmente novo nunca era cadastrado na Afiação**. Agora o EOF segue para o `IncluirCliente`.
+
+**Prova:** 5 testes Deno do helper, com a chamada injetada, casando a marca do erro. Falsificação: 4
+sabotagens vermelhas com controle verde em `LC_ALL=C` e `pt_BR.UTF-8` (sem checagem de lista, EOF engolindo
+tudo, sem EOF, classe errada).
+
+**BAIXO registrado:** não há teste de handler; o helper concentra a decisão para que restaurar o `catch`
+antigo exija desfazer a chamada a ele.
+
+**Deploy — FEITO pela sessão (PR #3372 mergeado 00:43Z em `9934baf`):** só a `omie-sync`; a `omie-vendas-sync`
+v1.29 do #3371 já tinha sido deployada às 00:41Z por outra sessão (`list_messages`). Colagem do
+`pendencias:prompt`: 14/14 hashes, **Active**, `No files were edited.`, 1,9 crédito. Sonda pelo envelope:
+`--so-disparo` (#735, DEPLOY CONFIRMADO). `pendencias:deploy`: **CONFERE** `omie-sync`
+v1.10-busca-transitorio-nao-e-ausencia. **Roadmap do CNPJ alfanumérico fechado:** não sobra item pré-existente
+aberto deste programa.

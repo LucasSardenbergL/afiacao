@@ -9,7 +9,8 @@ export type IcMatch = {
   cp_id: string | null;
   valor_origem: number | null;
   valor_destino: number | null;
-  diff_valor: number;
+  /** NULL quando não há contrapartida para comparar — nunca 0 (ausente ≠ zero). */
+  diff_valor: number | null;
   diff_dias: number | null;
   status:
     | 'auto_matched'
@@ -18,10 +19,19 @@ export type IcMatch = {
     | 'divergencia_data'
     | 'sem_contrapartida'
     | 'duplicidade_possivel'
-    | 'desconsiderado';
+    | 'desconsiderado'
+    // Venda intragrupo sem cobrança (migration 20261021190000): só o master marca/desfaz — o trigger
+    // do banco governa e carimba resolvido_por/resolvido_em.
+    | 'intragrupo_sem_cobranca';
   matched_at: string;
   observacao: string | null;
 };
+
+const STATUS_IC = [
+  'auto_matched', 'manual_matched', 'divergencia_valor', 'divergencia_data',
+  'sem_contrapartida', 'duplicidade_possivel', 'desconsiderado', 'intragrupo_sem_cobranca',
+] as const satisfies readonly IcMatch['status'][];
+const ehStatusIc = (v: string): v is IcMatch['status'] => STATUS_IC.some((s) => s === v);
 
 export function useIcMatches(filterStatus?: IcMatch['status']) {
   return useQuery({
@@ -38,7 +48,11 @@ export function useIcMatches(filterStatus?: IcMatch['status']) {
       if (filterStatus) q = q.eq('status', filterStatus);
       const { data, error } = await q;
       if (error) throw error;
-      return (data ?? []) as unknown as IcMatch[];
+      // `status` é texto com CHECK: confere o vocabulário em vez de afirmá-lo (fora dele, lança).
+      return (data ?? []).map((m) => {
+        if (!ehStatusIc(m.status)) throw new Error(`fin_ic_matches: "status" = "${m.status}" fora do vocabulário`);
+        return { ...m, status: m.status };
+      });
     },
   });
 }
@@ -48,11 +62,13 @@ export function useResolveIcMatch() {
   return useMutation({
     mutationFn: async (input: {
       id: string;
+      /** Status que a tela leu: a escrita só vale se a linha ainda estiver nele. */
+      statusAtual: IcMatch['status'];
       status: IcMatch['status'];
       observacao?: string;
     }) => {
       const user = await supabase.auth.getUser();
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('fin_ic_matches')
         .update({
           status: input.status,
@@ -60,8 +76,17 @@ export function useResolveIcMatch() {
           resolvido_por: user.data.user?.id,
           resolvido_em: new Date().toISOString(),
         })
-        .eq('id', input.id);
+        .eq('id', input.id)
+        // Sem o status lido, um 2º "Desfazer" (outra aba) regravava sem_contrapartida JÁ resolvido, e a
+        // edge trata linha resolvida como travada: o CP nunca mais casaria com um CR que aparecesse.
+        .eq('status', input.statusAtual)
+        .select('id');
       if (error) throw error;
+      // 0 linhas não é sucesso: a RLS escondeu a linha, a edge a refez entre a leitura e o clique (o id
+      // mudou) ou outra aba já mudou o status. Sem isto o toast dizia "Aprovado" sobre uma decisão que não foi gravada.
+      if (!data || data.length !== 1) {
+        throw new Error('a linha não foi atualizada (sem permissão ou já recalculada) — recarregue a fila');
+      }
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['fin_ic_matches'] }),
   });

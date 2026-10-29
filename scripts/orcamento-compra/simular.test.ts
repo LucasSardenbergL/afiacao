@@ -1,6 +1,6 @@
 // scripts/orcamento-compra/simular.test.ts
 import { describe, expect, it } from 'vitest';
-import { backtest, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
+import { backtest, candidatoR59, componentesR59, identificadoresR59, continuidadePorDiaUtil, dataLocalSP, extrairJson, lagsAsOf, precisaoPorEpisodio, preVoo, reservaDe, simularCiclo, type Config, type DetalheCorte, type Fatos, type ResultadoCiclo } from './simular';
 
 const cfg: Config = {
   reservaDias: 30, fretePerc: 0.025, minimoPedido: 0, minOcorrencias: 3,
@@ -17,11 +17,18 @@ const lagObs = (fat: number, venc: number, cheg: number, n = 10, base: [number, 
 /** R50: disparado antigo (fora dos 180 dias dos compromissos e dos 90 da continuidade) = o motor já existia. */
 const HIST = { id: 99, valor_total: 1_000, momento: '2026-03-01T12:00:00Z', nfs: [] as string[], encerrado_omie: false };
 
+const DEM200 = Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 }));
+/** R61: fixture em que a venda física do SKU é a própria demanda efetiva (sem substituição nem malha). */
+const fisicaIgual = (f: Fatos): Fatos => ({ ...f, demanda_fisica: f.demanda });
+
 const fatos: Fatos = {
   meta: { gerado_em: '2026-10-15T12:00:00Z', hoje: '2026-10-15', encerrados_publicacao: { status: 'publicado', publicado_em: '2026-10-15T04:20:00Z', habilitado: true } },
   ciclos: [{ id: 1, status: 'disparado', data_ciclo: '2026-10-01', horario_geracao: '2026-10-01T12:00:00Z', horario_disparo_real: null, valor_total: 40, omie_pedido_compra_id: null }],
   linhas: [{ raiz: 1, pedido_id: 1, sku_codigo_omie: '9', qtde: 4, fator_embalagem_portal: null, preco_unitario: 10, estoque_atual: 0, estoque_fisico: 0, ponto_pedido: 2, modo_promocao: null, preco_sem_desconto: null }],
-  demanda: Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
+  demanda: DEM200,
+  demanda_fisica: DEM200,
+  falhas_snapshot: [],
+  recebimentos_sem_t4: [],
   recebimentos: [],
   estoque: [{ sku: '9', estoque_fisico: 50 }],
   params: [{ sku: '9', preco_venda_medio: 15, demanda_media_diaria: 1, demanda_sigma_diario: 0.5 }],
@@ -51,7 +58,7 @@ const cortavel = (estoqueFisicoDaLinha: number): Fatos => ({
 
 // Igual ao `cortavel`, mas HOJE = 15/11 (o ciclo tem 30 dias de horizonte para o ΔDIO). Estoque de hoje 19:
 // 19 + 46 (demanda de 01/10..15/11) = 65 no fim de 30/09 — fecha com a linha.
-const cortavelLongo = (): Fatos => ({
+const cortavelLongo = (): Fatos => fisicaIgual({
   ...cortavel(65),
   meta: { ...fatos.meta, hoje: '2026-11-15' },
   demanda: Array.from({ length: 250 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 1 })),
@@ -169,12 +176,12 @@ describe('simularCiclo', () => {
     // 3 vendas de 1 un antes do ciclo; 5/dia DEPOIS (o params atual diria 5/dia → protegeria tudo)
     const antes = ['2026-06-01', '2026-07-01', '2026-08-01'].map((data) => ({ sku: '9', data, qtde: 1 }));
     const depois = Array.from({ length: 15 }, (_, i) => ({ sku: '9', data: dia([2026, 9, 1], i), qtde: 5 }));
-    const f: Fatos = {
+    const f: Fatos = fisicaIgual({
       ...fatos,
       demanda: [...antes, ...depois],
       linhas: [{ ...fatos.linhas[0], estoque_atual: 2 }],
       params: [{ ...fatos.params[0], demanda_media_diaria: 5, demanda_sigma_diario: 2 }],
-    };
+    });
     const r = simularCiclo(f, 1, cfg);
     expect(r.protegidas).toBe(0);
   });
@@ -197,6 +204,73 @@ describe('simularCiclo', () => {
     const r = simularCiclo(cortavel(0), 1, cfg);
     expect(r.cortesDetalhe.map((x) => [x.motivo, x.classe])).toEqual(Array(3).fill(['financeiro', 'indeterminado']));
     expect(r.fechamento).toEqual([{ sku: '9', erro: 65, ok: false }]);
+  });
+  it('R60: ciclo gerado à tarde (SP) fecha contra o FIM do próprio dia; de manhã, contra o fim de d−1', () => {
+    // 20 unidades a mais vendidas em 01/10: fim de 30/09 = 50 + 15 + 20 = 85; fim de 01/10 = 85 − 21 = 64
+    const base = cortavel(64);
+    const f: Fatos = fisicaIgual({ ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] });
+    const tarde = simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: '2026-10-01T20:15:00Z' }] }, 1, cfg);
+    expect(tarde.fechamento).toEqual([{ sku: '9', erro: 0, ok: true }]);
+    const manha = simularCiclo(f, 1, cfg); // 12:00Z = 09:00 SP
+    expect(manha.fechamento).toEqual([{ sku: '9', erro: 21, ok: false }]);
+  });
+  it('R60: a fronteira é meio-dia em SP (11:59 fecha em d−1; 12:00 fecha em d)', () => {
+    const base = cortavel(64);
+    const f: Fatos = fisicaIgual({ ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] });
+    const em = (h: string) => simularCiclo({ ...f, ciclos: [{ ...f.ciclos[0], horario_geracao: h }] }, 1, cfg).fechamento[0].erro;
+    expect([em('2026-10-01T14:59:00Z'), em('2026-10-01T15:00:00Z')]).toEqual([21, 0]);
+  });
+  it('R61: reconstrução e replay usam a venda FÍSICA do SKU; a decisão segue com a demanda efetiva', () => {
+    // 20 un "efetivas" em 01/10 que NÃO saíram do estoque deste SKU (venda do SKU antigo consolidada no novo):
+    // com a física igual à base, o fim de 30/09 continua 65 e a linha que grava 65 fecha.
+    const base = cortavel(65);
+    const f: Fatos = { ...base, demanda: [...base.demanda, { sku: '9', data: '2026-10-01', qtde: 20 }] };
+    expect(simularCiclo(f, 1, cfg).fechamento).toEqual([{ sku: '9', erro: 0, ok: true }]);
+    // controle: se a física também tivesse as 20, o fim de 30/09 seria 85 e não fecharia com 65
+    expect(simularCiclo(fisicaIgual(f), 1, cfg).fechamento).toEqual([{ sku: '9', erro: 20, ok: false }]);
+  });
+  it('R61: a DECISÃO (proteção) usa a demanda efetiva, não a física', () => {
+    // efetiva 5/dia (substituição consolidada no SKU) × física 1/dia: a proteção segue a efetiva
+    const efetiva5 = Array.from({ length: 200 }, (_, i) => ({ sku: '9', data: dia([2026, 3, 1], i), qtde: 5 }));
+    const f: Fatos = { ...fatos, demanda: efetiva5, demanda_fisica: DEM200, linhas: [{ ...fatos.linhas[0], estoque_atual: 2 }] };
+    const comEfetiva = simularCiclo(f, 1, cfg).protegidas;
+    const soFisica = simularCiclo({ ...f, demanda: DEM200 }, 1, cfg).protegidas;
+    expect(comEfetiva).toBeGreaterThan(soFisica);
+  });
+  it('R62: corte por falta de caixa é ESCALADO ao humano — fora da precisão do portão, medido à parte', () => {
+    // cortavel(65): as 3 embalagens saem por 'financeiro' (caixa zerado) e o replay as classifica 'eliminado'
+    const r = backtest(cortavel(65), cfg);
+    expect(r.resumo.precisaoEpisodios.n).toBe(0);
+    expect(r.resumo.precisaoEpisodiosEscalados.n).toBe(1);
+    expect(r.resumo.precisaoEpisodiosEscalados.precisao).toBe(1);
+  });
+  it('R63: indeterminado SÓ por snapshot sai do portão quando o job de snapshot falhou no dia (ou na véspera)', () => {
+    // snapshot de 29/09 (2 dias antes do ciclo de 01/10) → camada 'snapshot'
+    const semSnap: Fatos = { ...fatos, snapshots: [{ ...fatos.snapshots[0], dia: '2026-09-29', snapshot_at: '2026-09-29T10:00:00Z' }] };
+    const exclusao = (falhas: string[]) => backtest({ ...semSnap, falhas_snapshot: falhas }, cfg).ciclos[0].exclusaoPortao;
+    expect(backtest(semSnap, cfg).ciclos[0].estado).toMatchObject({ tipo: 'indeterminado', camadas: ['snapshot'] });
+    expect([exclusao(['2026-10-01']), exclusao(['2026-09-30']), exclusao(['2026-09-29']), exclusao([])])
+      .toEqual(['falha_infra_snapshot', 'falha_infra_snapshot', null, null]);
+  });
+  it('R63: indeterminado com OUTRA camada além do snapshot nunca sai do portão', () => {
+    // sem disparado anterior: 'continuidade_sem_historico' entra DEPOIS da base sem snapshot
+    const f: Fatos = { ...fatos, disparados: [], falhas_snapshot: ['2026-10-01'],
+      snapshots: [{ ...fatos.snapshots[0], dia: '2026-09-29', snapshot_at: '2026-09-29T10:00:00Z' }] };
+    const c = backtest(f, cfg).ciclos[0];
+    expect(c.estado).toMatchObject({ tipo: 'indeterminado', camadas: ['snapshot', 'continuidade_sem_historico'] });
+    expect(c.exclusaoPortao).toBeNull();
+  });
+  it('R63: falhas_snapshot ausente reprova o pré-voo', () => {
+    expect(preVoo({ ...fatos, falhas_snapshot: undefined as unknown as Fatos['falhas_snapshot'] })).toContain('falhas_snapshot ausente — fatos.sql antigo (R63)');
+  });
+  it('R64: NF efetivada no recebimento do app SEM t4 no tracking reprova o pré-voo (estoque de hoje à frente dos fatos)', () => {
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: ['000956019'] })).toContain('1 NF efetivada(s) no recebimento sem t4 no tracking (000956019) — rode depois da revisita da omie-sync-nfes-recebidas (R64)');
+    expect(preVoo({ ...fatos, recebimentos_sem_t4: undefined as unknown as Fatos['recebimentos_sem_t4'] })).toContain('recebimentos_sem_t4 ausente — fatos.sql antigo (R64)');
+    expect(preVoo(fatos).filter((x) => x.includes('R64'))).toEqual([]);
+  });
+  it('R61: demanda física com qtde nula reprova o pré-voo', () => {
+    expect(preVoo({ ...fatos, demanda_fisica: [{ sku: '9', data: '2026-10-01', qtde: null }] })).toContain('demanda_fisica com qtde nula — reconstrução de estoque inválida');
+    expect(preVoo({ ...fatos, demanda_fisica: undefined as unknown as Fatos['demanda_fisica'] })).toContain('demanda_fisica ausente — fatos.sql antigo (R61)');
   });
   it('R26: ciclo não disparado não roda replay (classe nula)', () => {
     const f = cortavel(65);
@@ -275,6 +349,125 @@ describe('R27 — integração da base de caixa (money-path)', () => {
     // reenvio DEPOIS da aprovação: o mesmo pedido Omie ganhou um contrato sem NF → a aprovação não cobre → fica
     const reenviado = backtest({ ...com([{ disparado_id: 12, omie_pedido: '500', identificadores: ids }]), contratos_pedidos_omie: [{ codigo: '500', contrato: '2097111' }] }, cfg);
     expect([reenviado.foraDoCaixaR59, reenviado.pendentesR59.map((x) => x.id)]).toEqual([[], [12]]);
+  });
+  it('(c3c) R59: contrato COMPOSTO nunca é candidato; evidência composta vale por componente', () => {
+    // o 1230 (2026-10-21): cContrato '2130311/2130322' = a Sayerlack desdobrou o pedido em dois; a NF consolidada
+    // foi gravada na linha de outro pedido e nenhum identificador inteiro casa — mas o portal diz "Atendido total"
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: '2130311' as string | null, encerrado_omie: true };
+    const com = (f: Partial<Fatos>): Fatos => ({ ...semLinhas, disparados: [HIST, P], ...f });
+    const composto = com({ contratos_pedidos_omie: [{ codigo: '500', contrato: '2130311/2130322' }] });
+    expect(candidatoR59(composto, P)).toBe(false);
+    // fica no caixa mesmo APROVADO pelo conjunto revisado (a aprovação não supera a cegueira estrutural) e não é pendente
+    const aprovado = { ...composto, r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores: ['2130311', '2130311/2130322'] }] };
+    const e = simularCiclo(aprovado, 1, cfg).estado;
+    expect(e.tipo === 'indeterminado' && e.camadas).toEqual(['compromisso_nao_conciliado']);
+    const r = backtest(aprovado, cfg);
+    expect([r.foraDoCaixaR59, r.pendentesR59]).toEqual([[], []]);
+    // auditável: o backtest nomeia quem ficou no caixa por ser composto
+    expect(r.retidosCompostoR59).toEqual([{ id: 12, omie_pedido: '500', protocolo: '2130311', identificadores: ['2130311', '2130311/2130322'] }]);
+    // o cContrato vem também de pedidos_omie_sayerlack; o veto é só do PRÓPRIO pedido Omie: o mesmo composto em
+    // OUTRO código não veta, e protocolo com '/' (não medido) não veta — cai na expansão por componente
+    expect(candidatoR59(com({ pedidos_omie_sayerlack: [{ codigo: '500', t1: '2026-09-10', contrato: '2130311/2130322', do_motor: true, itens: [] }] }), P)).toBe(false);
+    expect(candidatoR59(com({ contratos_pedidos_omie: [{ codigo: '501', contrato: '2130311/2130322' }] }), P)).toBe(true);
+    const pProtocolo = { ...P, protocolo: '2130311/2130322' };
+    expect(candidatoR59({ ...semLinhas, disparados: [HIST, pProtocolo] }, pProtocolo)).toBe(true);
+    expect(candidatoR59({ ...semLinhas, disparados: [HIST, pProtocolo], evidencia_nf_contratos: ['2130322'] }, pProtocolo)).toBe(false);
+    // identificador com ';' (sem veto) contra evidência simples: casa pelo componente
+    const pPontoVirgula = { ...P, protocolo: null, omie_pedido: '502' };
+    const pv = (evid: string[]): Fatos => ({ ...semLinhas, disparados: [HIST, pPontoVirgula], contratos_pedidos_omie: [{ codigo: '502', contrato: '2140001;2140002' }], evidencia_nf_contratos: evid });
+    expect(candidatoR59(pv([]), pPontoVirgula)).toBe(true);
+    expect(candidatoR59(pv(['2140002']), pPontoVirgula)).toBe(false);
+    // evidência composta ('2097502/2097504' no nNumPedCompra/sombra) vale para cada componente simples
+    const pSimples = { ...P, protocolo: '2097504' };
+    const ev = (evid: string[]): Fatos => ({ ...semLinhas, disparados: [HIST, pSimples], evidencia_nf_contratos: evid });
+    expect(candidatoR59(ev(['2097502/2097504']), pSimples)).toBe(false);
+    expect(candidatoR59({ ...ev([]), nfs_do_contrato: [{ contrato: '2097502 / 2097504', nf: '000940479', data: null }] }, pSimples)).toBe(false);
+    // controles: simples sem evidência segue candidato; espaço não é separador (texto livre 'lucas 2097504' não é
+    // evidência de 2097504 — fica candidato, e a aprovação/revisão humana decide)
+    expect(candidatoR59(ev([]), pSimples)).toBe(true);
+    expect(candidatoR59(ev(['lucas 2097504', '20975042', '2097502']), pSimples)).toBe(true);
+  });
+  it('(c3e) R59: aprovação casa o conjunto EXATO (sem colisão de separador) e identificador vazio não existe (Codex 2026-10-21)', () => {
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '500', protocolo: null as string | null, encerrado_omie: true };
+    const com = (contrato: string, identificadores: string[]): Fatos => ({
+      ...semLinhas, disparados: [HIST, P], contratos_pedidos_omie: [{ codigo: '500', contrato }],
+      r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores }],
+    });
+    // P2-1: um identificador com '|' dentro NÃO é o conjunto de dois identificadores (o join('|') os confundia)
+    expect(backtest(com('2093559|2096771', ['2093559', '2096771']), cfg).foraDoCaixaR59).toEqual([]);
+    expect(backtest(com('2093559|2096771', ['2093559|2096771']), cfg).foraDoCaixaR59.map((x) => x.id)).toEqual([12]);
+    // a aprovação aceita a mesma lista em outra ordem, com espaço nas bordas ou repetida — e só isso
+    expect(backtest(com('2096999', [' 2096999 ', '2096999']), cfg).foraDoCaixaR59.map((x) => x.id)).toEqual([12]);
+    expect(backtest(com('2096999', ['2096999', '2096998']), cfg).foraDoCaixaR59).toEqual([]);
+    // P2-3: identificador vazio não existe — contrato em branco não vira identificador, e aprovação com '' nunca casa
+    const pProt = { ...P, protocolo: '2096999' };
+    const branco: Fatos = { ...semLinhas, disparados: [HIST, pProt], contratos_pedidos_omie: [{ codigo: '500', contrato: ' ' }] };
+    expect(identificadoresR59(branco, pProt)).toEqual(['2096999']);
+    expect(backtest({ ...branco, r59_aprovadas: [{ disparado_id: 12, omie_pedido: '500', identificadores: ['', '2096999'] }] }, cfg).foraDoCaixaR59).toEqual([]);
+    // evidência em branco não é evidência de nada (nem de um identificador vazio)
+    expect(candidatoR59({ ...branco, evidencia_nf_contratos: [' ', ''] }, pProt)).toBe(true);
+  });
+  it('(c3f) R59: separadores por caso — / ; , separam; " e ", "-", "|" e espaço NÃO (determinístico, Codex 2026-10-21)', () => {
+    const P = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: '502', protocolo: null as string | null, encerrado_omie: true };
+    const cand = (contrato: string, evid: string[]) => candidatoR59({
+      ...semLinhas, disparados: [HIST, P], contratos_pedidos_omie: [{ codigo: '502', contrato }], evidencia_nf_contratos: evid,
+    }, P);
+    // ';' e ',' (sem veto estrutural): evidência de UM componente veta o candidato
+    for (const sep of [';', ',']) {
+      expect(cand(`2140001${sep}2140002`, []), `sem evidência, separador ${sep}`).toBe(true);
+      expect(cand(`2140001${sep}2140002`, ['2140002']), `componente, separador ${sep}`).toBe(false);
+      // e a evidência composta pelo mesmo separador vale para o identificador simples
+      expect(cand('2140002', [`2140001${sep}2140002`]), `evidência composta, separador ${sep}`).toBe(false);
+    }
+    // '/' no contrato próprio é composto → veto estrutural (nunca candidato), com ou sem evidência
+    expect(cand('2140001/2140002', [])).toBe(false);
+    expect(cand('2140002', ['2140001/2140002'])).toBe(false);
+    // NÃO separam: o componente não casa (fica candidato; quem decide é a aprovação nominal)
+    for (const junta of [' e ', '-', '|', ' ']) {
+      expect(cand(`2140001${junta}2140002`, ['2140002']), `não separa: "${junta}"`).toBe(true);
+    }
+    expect(componentesR59(' 2140001 ; 2140002 ,2140003/ ')).toEqual(['2140001 ; 2140002 ,2140003/', '2140001', '2140002', '2140003']);
+  });
+  it('(c3d) R59: a expansão por componente e o veto de composto só RETIRAM candidatos (candidato novo ⇒ antigo)', () => {
+    // oráculo = o candidatoR59 de antes (string inteira, sem veto) — Codex 2026-10-21: a mudança só pode vetar
+    const antigo = (f: Fatos, p: Fatos['disparados'][number]): boolean => {
+      if (p.encerrado_omie !== true || (p.nfs ?? []).length > 0) return false;
+      const ids = new Set<string>();
+      if (p.protocolo) ids.add(p.protocolo.trim());
+      for (const o of f.pedidos_omie_sayerlack ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido && o.contrato) ids.add(o.contrato.trim());
+      for (const o of f.contratos_pedidos_omie ?? []) if (p.omie_pedido != null && o.codigo === p.omie_pedido) ids.add(o.contrato.trim());
+      // domínio: identificador NÃO vazio (Codex 2026-10-21: o vazio fazia o oráculo casar evidência em branco com
+      // contrato em branco — a propriedade só tem sentido sobre identificadores reais)
+      ids.delete('');
+      if (ids.size === 0) return false;
+      const comNf = new Set([...(f.nfs_do_contrato ?? []).map((x) => x.contrato.trim()), ...(f.evidencia_nf_contratos ?? []).map((c) => c.trim())]);
+      return ![...ids].some((c) => comNf.has(c));
+    };
+    let semente = 20261021;
+    const rnd = (n: number) => { semente = (semente * 1103515245 + 12345) % 2 ** 31; return semente % n; };
+    const pecas = ['2130311', '2130322', '2097502', ' 2097504', 'lucas 220126', '', '2140001', '2140002 ', 'AFI26050780', '1'];
+    const texto = () => Array.from({ length: 1 + rnd(3) }, () => pecas[rnd(pecas.length)]).join(['/', ';', ',', ' ', ' e ', '-', '|'][rnd(7)]);
+    let candidatosAntigos = 0;
+    let candidatosNovos = 0;
+    const entradas = new Set<string>();
+    for (let i = 0; i < 2000; i++) {
+      const p = { id: 12, valor_total: 20, momento: '2026-09-10T12:00:00Z', nfs: [] as string[], omie_pedido: ['500', '501'][rnd(2)], protocolo: rnd(3) ? texto() : null, encerrado_omie: true };
+      const f: Fatos = {
+        ...semLinhas, disparados: [HIST, p],
+        contratos_pedidos_omie: rnd(2) ? [{ codigo: '500', contrato: texto() }] : [],
+        pedidos_omie_sayerlack: rnd(3) ? [] : [{ codigo: '500', t1: '2026-09-10', contrato: rnd(2) ? texto() : null, do_motor: true, itens: [] }],
+        evidencia_nf_contratos: Array.from({ length: rnd(3) }, texto),
+        nfs_do_contrato: rnd(2) ? [{ contrato: texto(), nf: '1', data: null }] : [],
+      };
+      entradas.add(JSON.stringify([p.protocolo, p.omie_pedido, f.contratos_pedidos_omie, f.pedidos_omie_sayerlack, f.evidencia_nf_contratos, f.nfs_do_contrato]));
+      if (antigo(f, p)) candidatosAntigos++;
+      if (candidatoR59(f, p)) { candidatosNovos++; expect(antigo(f, p)).toBe(true); }
+    }
+    // a geração exercita os dois lados (senão a propriedade passa por vacuidade): candidatos antigos E novos, e
+    // entradas DISTINTAS bastantes (Codex 2026-10-21: o gerador antigo dava só 149 entradas distintas)
+    expect(candidatosAntigos).toBeGreaterThan(100);
+    expect(candidatosNovos).toBeGreaterThan(50);
+    expect(entradas.size).toBeGreaterThan(1000);
   });
   it('(c3) R59: disparado ENCERRADO no Omie e sem NF sai do caixa; com NF (tracking ou vínculo de qualquer data) segue a conciliação', () => {
     // protocolo = identificador Sayerlack do pedido (sem identificador não há como provar ausência de NF)
@@ -466,7 +659,9 @@ describe('R31 — precisão por episódio (portão da v2)', () => {
   });
   it('backtest expõe precisaoEpisodios e coberturaEpisodios no resumo', () => {
     const b = backtest(cortavelLongo(), cfg);
-    expect(b.resumo.precisaoEpisodios.n + b.resumo.precisaoEpisodios.indeterminados).toBe(b.resumo.episodios);
+    // R62: os episódios se dividem entre o portão (automáticos) e os escalados (falta de caixa) — nenhum some
+    const pe = b.resumo.precisaoEpisodios, esc = b.resumo.precisaoEpisodiosEscalados;
+    expect(pe.n + pe.indeterminados + esc.n + esc.indeterminados).toBe(b.resumo.episodios);
     expect(b.resumo.coberturaEpisodios).not.toBeUndefined();
   });
 });
@@ -608,7 +803,7 @@ describe('onda final — base de caixa as-of (R34, R35, R38, R39, R41, R42, R45,
 describe('onda final — medição (R32, R33, R37, R46, R48, R51)', () => {
   // Codex P1-1: estoque 10 no fim de 30/09, recebimento de 3 em 03/10 (dia 2), demanda 2/dia de 01 a 06/10, PP 0, L 2.
   // Linha de 4 un: k=1 protegida, k=2..4 cortadas (caixa zerado). Tirar 1 un por vez → adiado; tirar as 3 juntas → 2 un perdidas.
-  const conjunto = (): Fatos => ({
+  const conjunto = (): Fatos => fisicaIgual({
     ...fatos,
     meta: { ...fatos.meta, hoje: '2026-10-08' },
     linhas: [{ ...fatos.linhas[0], estoque_fisico: 10, ponto_pedido: 0 }],
@@ -629,7 +824,7 @@ describe('onda final — medição (R32, R33, R37, R46, R48, R51)', () => {
   });
 
   // Codex P1-2: estoque 2 no fim de 30/09, compra de 5 recebida em 02/10 (dia 1), demanda 1/dia de 02 a 05/10, L = 5.
-  const chegadaReal = (t4: string | null): Fatos => ({
+  const chegadaReal = (t4: string | null): Fatos => fisicaIgual({
     ...fatos,
     meta: { ...fatos.meta, hoje: '2026-10-08' },
     linhas: [{ ...fatos.linhas[0], qtde: 5, estoque_atual: 100, estoque_fisico: 2, ponto_pedido: 0 }],

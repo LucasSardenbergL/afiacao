@@ -113,7 +113,9 @@ jobs:
             st="$(gh pr view "$pr" --repo "$REPO" --json state -q .state 2>/dev/null)" || st=""
             case "$st" in
               MERGED)
-                gh workflow run ci.yml --repo "$REPO" --ref main
+                # `mutcheck=false`: a rede de todos os contratos `.mut` roda no cron diário do ci.yml, não
+                # a cada merge (~56 min de runner por merge, na fila dos PRs — ci.yml, input `mutcheck`).
+                gh workflow run ci.yml --repo "$REPO" --ref main -f mutcheck=false
                 echo "✅ PR #$pr mergeado → CI disparado na main (workflow_dispatch)"
                 exit 0 ;;
               CLOSED)

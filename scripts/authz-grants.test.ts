@@ -19,6 +19,7 @@ describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
     // As 4 do catálogo tintométrico (PR #2941, 2026-10-11) entraram pelo mesmo caminho: depois do
     // apply (recibo #344 do db:aplicar) e da 2ª testemunha por psql-ro, com o carimbo regravado.
     // As 2 da margem (FU4-F, #3072/#3084, 2026-10-18) idem: recibos #505 e #506, fechadas por coluna.
+    // As 7 do giro de corante (#3387, 2026-10-28) idem: recibo #746, 2ª testemunha por psql-ro.
     expect(Object.keys(AUTHZ_TABELAS_FECHADAS).sort()).toEqual([
       'public.deploy_atestacoes',
       'public.farmer_client_scores',
@@ -26,9 +27,16 @@ describe('AUTHZ_TABELAS_FECHADAS — sanidade do contrato', () => {
       'public.omie_products',
       'public.product_costs',
       'public.sales_orders',
+      'public.tint_consumo_corante',
+      'public.tint_consumo_extracao_lotes',
+      'public.tint_consumo_extracoes',
+      'public.tint_consumo_planos',
+      'public.tint_consumo_preparacao',
+      'public.tint_consumo_runs_aplicados',
       'public.tint_corantes',
       'public.tint_formula_itens',
       'public.tint_formulas',
+      'public.tint_staging_preparacao_manifestos',
       'public.tint_subcolecoes',
     ]);
   });

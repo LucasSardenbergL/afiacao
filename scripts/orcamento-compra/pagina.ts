@@ -63,7 +63,8 @@ export function avaliarPortao(r: Resultado): { aberto: boolean; motivos: string[
   const pe = r.resumo.precisaoEpisodios;
   const cob = r.resumo.coberturaEpisodios;
   const inviaveis = r.ciclos.filter((c) => c.estado.tipo === 'inviavel').length;
-  const indeterminados = r.ciclos.filter((c) => c.estado.tipo === 'indeterminado').length;
+  // R63: indeterminado por falha de infraestrutura comprovada fica fora do critério (listado na página)
+  const indeterminados = r.ciclos.filter((c) => c.estado.tipo === 'indeterminado' && !(c as { exclusaoPortao?: string | null }).exclusaoPortao).length;
   const motivos: string[] = [];
   // R47: todo critério é fail-closed — undefined/NaN (resultado.json antigo) nunca passa
   if (!finito(pe?.precisao) || pe.precisao < PORTAO.precisaoMin) motivos.push(`precisão por episódio ${pct(pe?.precisao)} < ${pct(PORTAO.precisaoMin)}`);
@@ -102,17 +103,11 @@ export function secaoCenarioGuarda(r: Resultado): string {
   const fracInv = r.ciclos.length ? inv.length / r.ciclos.length : null;
   const h = num(r.config.horizonteDias);
   const res = num(r.config.reservaDias);
-  const outras = r.sensibilidade.filter((s) => s.reservaDias !== r.config.reservaDias).map((s) => `${num(s.reservaDias)}`).join(' e ');
   return `<h2>O que o backtest diz sobre o cenário-guarda</h2>
 <p>Sem nenhuma venda nova, a guarda de caixa olha ${h} dias à frente e exige que o saldo fique acima de ${res} dias de saídas em todos os dias. Nesta rodada, <b>${num(inv.length)} de ${num(r.ciclos.length)} ciclos (${pct(fracInv)}) ficaram inviáveis</b>, no período de ${faixa}. Entre os disparados foram ${num(invDisp.length)} de ${num(disp.length)}: o motor pediu ${brl(motorInv)} nesses ciclos e a guarda aceitaria ${brl(aceitoInv)}.</p>
 ${modoPublico ? '' : `<div class="diag"><p class="rot">Diagnóstico datado 2026-10-15, não recalculado</p>
 <p>Nos inviáveis da rodada de 2026-10-15, a base de caixa sozinha, sem nenhuma candidata, já furava a reserva (mediana: 72 dias à frente). Exemplo do ciclo de 20/07: a reserva era ~82% do saldo e, em 91 dias, a continuidade do motor somada às saídas não-Sayerlack tirava ~3,6× o que entrava de títulos a receber; o piso projetado ficava em ~16% do saldo, abaixo da reserva.</p></div>`}
-<p>Quando a base sozinha fura a reserva, a condição de reserva <b>como especificada não distingue um pedido de outro</b> e não serve para decidir compras. A próxima decisão é do founder, entre três caminhos (sem ordem de preferência):</p>
-<ul>
-<li><b>Calibrar um cenário de entrada de vendas</b>: substituir o “zero venda nova” por uma entrada conservadora medida.</li>
-<li><b>Encurtar o horizonte</b>: verificar a reserva numa janela menor que ${h} dias.</li>
-<li><b>Baixar a reserva</b>: exigir menos que ${res} dias de saídas${outras ? ` (a tabela de sensibilidade mostra ${outras} dias)` : ''}.</li>
-</ul>`;
+<p>Quando a base sozinha fura a reserva, a condição de reserva <b>como especificada não distingue um pedido de outro</b> e não serve para decidir compras. <b>Decisão do founder (2026-10-21): encurtar o horizonte para 60 dias</b>, mantendo a reserva de ${res} dias. Com os fatos de 2026-10-20, nos disparados, os inviáveis caíram de 30 (91 dias) para 9; baixar a reserva para 15 dias faria os indeterminados subirem de 6 para 27, porque o limiar do compromisso não conciliado acompanha a reserva. O cenário de entrada de vendas não foi implementado.</p>`;
 }
 
 export function gerarPagina(r: Resultado, opts: { publico?: boolean } = {}): string {

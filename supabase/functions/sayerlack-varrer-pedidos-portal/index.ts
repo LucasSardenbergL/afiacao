@@ -10,6 +10,8 @@
 //      `sayerlack-importar-pedido-portal` — o MESMO caminho do botão (relê o pedido, prova a leitura, RPC tudo-ou-nada
 //      idempotente por protocolo, IP006 contra PO já no Omie, PO pelo disparo de sempre). Modo "listar" só relata.
 //   4. falha de importação ⇒ `sayerlack_varredura_falha` + e-mail na 1ª vez do protocolo.
+//   5. (v1.3) pedido do APP com PO fora do Omie cujo protocolo está "6 - Cancelado" no portal ⇒ encerrado pela porta
+//      auditada `corrigir_cancelamento_pos_disparo` (é a pergunta que o card "PO a reconciliar" fazia ao founder).
 //
 // ⚠️ LEITURA PURA NO PORTAL: o script do navegador só usa menu, filtros, "Filtrar" e a paginação da tabela; recusa todo
 // diálogo nativo (dismiss — nunca confirma). Nada aqui grava no portal.
@@ -33,6 +35,14 @@ import {
   portalSayerlackFechado,
   resumoImportacao,
   SITUACOES_IMPORTAVEIS,
+  desfechoNoPortal,
+  janelaDeLeitura,
+  idDoPo,
+  type MarcadorPo,
+  marcadorFresco,
+  type PedidoAReconciliar,
+  type PedidoDisparadoLido,
+  pedidosAReconciliar,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -305,6 +315,88 @@ async function pedidosEmVoo(db: Db): Promise<{ id: number; status_envio_portal: 
   return (data ?? []) as { id: number; status_envio_portal: string | null }[];
 }
 
+/** Pedidos do portal com PO fora do último run válido do detector (mesmos filtros de `reposicao_pos_candidatos`, que
+ *  é gateada por master e não atende service-role). `apenas` restringe a releitura de um pedido antes de encerrá-lo.
+ *  Erro de leitura LANÇA (fail-closed: sem prova de ausência, nada se encerra). */
+async function carregarAReconciliar(db: Db, apenas?: number): Promise<{ lista: PedidoAReconciliar[]; marcador: MarcadorPo | null }> {
+  const { data: run, error: errRun } = await db.from("reposicao_pedidos_compra_run")
+    .select("run_id, seq, finalizado_em")
+    .eq("empresa", "OBEN").eq("status", "ok").eq("volume_ok", true)
+    .order("seq", { ascending: false }).limit(1).maybeSingle();
+  if (errRun) throw new Error(`Leitura do marcador de PO: ${errRun.message}`);
+  const r = run as MarcadorPo | null;
+  const marcador = r && r.run_id && r.finalizado_em && Number.isFinite(Number(r.seq)) ? { ...r, seq: Number(r.seq) } : null;
+  if (!marcador) return { lista: [], marcador: null };
+  const pedidos = await fetchAll<PedidoDisparadoLido>(
+    (de, ate) => {
+      let q = db.from("pedido_compra_sugerido")
+        .select("id, status, canal_usado, data_ciclo, portal_protocolo, omie_pedido_compra_id, omie_po_inexistente_antes_de")
+        .eq("empresa", "OBEN").eq("status", "disparado").eq("canal_usado", "portal_sayerlack");
+      if (apenas !== undefined) q = q.eq("id", apenas);
+      return q.order("id", { ascending: true }).range(de, ate);
+    },
+    "varrer-portal:a-reconciliar",
+  );
+  const poIds = [...new Set(pedidos.map((p) => idDoPo(p.omie_pedido_compra_id)).filter((s): s is string => s !== null))];
+  // Visto no run do marcador OU num posterior (`visto_seq >= seq`), nunca `run_id = marcador`: um run novo publicado no
+  // meio desta leitura sobrescreve o carimbo e faria um PO presente parecer ausente (Codex P1).
+  const vistos = poIds.length === 0 ? [] : await fetchAll<{ omie_codigo_pedido: number | string; visto_seq: number | string }>(
+    (de, ate) => db.from("reposicao_po_last_seen").select("omie_codigo_pedido, visto_seq")
+      .eq("empresa", "OBEN").in("omie_codigo_pedido", poIds)
+      .order("omie_codigo_pedido", { ascending: true }).range(de, ate),
+    "varrer-portal:po-vistos",
+  );
+  const vistosDesde = new Set(vistos.filter((v) => Number(v.visto_seq) >= Number(marcador.seq))
+    .map((v) => idDoPo(v.omie_codigo_pedido)).filter((s): s is string => s !== null));
+  return { lista: pedidosAReconciliar(pedidos, marcador, vistosDesde), marcador };
+}
+
+/** Uma leitura da Consulta Pedidos (Browserless) a partir de `emissaoDesde`. Não lança por resposta ruim: devolve
+ *  `success:false` com o tipo do erro (rede/abort lançam — quem chama decide). */
+async function lerPortal(emissaoDesde: string): Promise<BrowserlessData> {
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 185_000);
+  let envelope: BrowserlessData;
+  try {
+    const resp = await fetch(`https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=180000`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: ctrl.signal,
+      body: JSON.stringify({
+        code: BROWSERLESS_FUNCTION,
+        context: {
+          user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
+          clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, emissaoDesde,
+        },
+      }),
+    });
+    const txt = await resp.text();
+    try {
+      envelope = ((JSON.parse(txt) as { data?: BrowserlessData }).data) ?? {};
+    } catch {
+      envelope = { success: false, erroTipo: "RESPOSTA_INVALIDA", erro: `HTTP ${resp.status}: ${txt.slice(0, 200)}` };
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+  return envelope;
+}
+
+/** Encerra pela porta auditada (`corrigir_cancelamento_pos_disparo`: trava de status sob lock + trilha em
+ *  `reposicao_cancelamento_pos_disparo_audit`). Autor `sistema:*`, como `reposicao_encerrar_recusas_definitivas`. */
+async function encerrarCanceladoNoPortal(
+  db: Db, p: PedidoAReconciliar, situacao: string, marcador: MarcadorPo,
+): Promise<{ ok: boolean; mensagem: string }> {
+  const { error } = await db.rpc("corrigir_cancelamento_pos_disparo", {
+    p_pedido_id: p.pedido_id,
+    p_usuario: "sistema:varredura_portal",
+    p_motivo: "cancelado_junto_ao_fornecedor",
+    p_evidencia: `protocolo ${p.protocolo} — portal Sayerlack: "${situacao}"; PO ${p.omie_po_id} fora do Omie no run ${marcador.run_id} (fim ${marcador.finalizado_em})`,
+    p_justificativa: "Encerrado pela varredura do portal: o fornecedor cancelou o pedido e o PO não existe mais no Omie.",
+  });
+  return error ? { ok: false, mensagem: error.message } : { ok: true, mensagem: "encerrado" };
+}
+
 async function protocolosNoApp(db: Db, protocolos: string[]): Promise<Set<string>> {
   if (protocolos.length === 0) return new Set();
   const linhas = await fetchAll<{ portal_protocolo: string | null }>(
@@ -486,32 +578,9 @@ Deno.serve(async (req: Request) => {
       if (faltando.length > 0) throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
 
       // 1. Lê a lista no portal.
-      const emissaoDesde = inicioDaJanela(hojeSP());
-      const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 185_000);
-      let envelope: BrowserlessData;
-      try {
-        const resp = await fetch(`https://chrome.browserless.io/function?token=${BROWSERLESS_TOKEN}&timeout=180000`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: ctrl.signal,
-          body: JSON.stringify({
-            code: BROWSERLESS_FUNCTION,
-            context: {
-              user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
-              clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, emissaoDesde,
-            },
-          }),
-        });
-        const txt = await resp.text();
-        try {
-          envelope = ((JSON.parse(txt) as { data?: BrowserlessData }).data) ?? {};
-        } catch {
-          envelope = { success: false, erroTipo: "RESPOSTA_INVALIDA", erro: `HTTP ${resp.status}: ${txt.slice(0, 200)}` };
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
+      const hoje = hojeSP();
+      const emissaoDesde = inicioDaJanela(hoje);
+      const envelope = await lerPortal(emissaoDesde);
       console.log(`[varrer-portal] Browserless ${Date.now() - t0}ms tipo=${envelope.erroTipo ?? "-"} linhas=${envelope.linhas?.length ?? "-"}`);
       if (envelope.success !== true) {
         throw new Error(`Leitura do portal falhou (${envelope.erroTipo ?? "?"}): ${envelope.erro ?? "sem detalhe"}`);
@@ -555,7 +624,66 @@ Deno.serve(async (req: Request) => {
           avisados.push({ protocolo: p.protocolo, notificado });
         }
       }
-      if (modo === "listar" || candidatos.length === 0) return { ...base, avisados, importados: [], falhas: [], adiados: [] };
+      // 2b. Reconciliação do "PO a reconciliar": cancelado no portal + PO fora do Omie ⇒ encerra pela porta auditada.
+      //     Roda DEPOIS das importações e com leitura PRÓPRIA quando precisa de emissão além dos 7 dias: ampliar a
+      //     leitura principal poria a importação normal sob o teto de páginas/tempo de um pedido velho (Codex P2).
+      //     Falha da leitura estendida só RELATA (o pedido segue no card); encerramento que falhou é falha ALTA.
+      const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
+      const reconciliar = async (): Promise<Record<string, unknown>> => {
+        const aRec = await carregarAReconciliar(db);
+        if (aRec.lista.length === 0 || !aRec.marcador) return { a_reconciliar: aRec.lista.length };
+        const resumoRec: Record<string, unknown> = { a_reconciliar: aRec.lista.length, marcador_finalizado_em: aRec.marcador.finalizado_em };
+        if (!marcadorFresco(aRec.marcador, Date.now())) {
+          return { ...resumoRec, adiado: "detector de PO desatualizado (último run válido há mais de 26 h): ausência velha não encerra" };
+        }
+        const janela = janelaDeLeitura(hoje, aRec.lista);
+        resumoRec.fora_do_alcance = janela.foraDoAlcance.map((p) => ({ pedido_id: p.pedido_id, protocolo: p.protocolo, data_ciclo: p.data_ciclo }));
+        if (janela.alcancaveis.length === 0) return resumoRec;
+        let listaRec: { pedidos: typeof lista.pedidos; repetidos: string[] } = lista;
+        if (janela.emissaoDesde < emissaoDesde) {
+          if (Date.now() - t0 + FOLGA_POR_IMPORTACAO_MS > TETO_EDGE_MS) return { ...resumoRec, adiado: "sem tempo na rodada para a leitura estendida" };
+          const env = await lerPortal(janela.emissaoDesde)
+            .catch((e): BrowserlessData => ({ success: false, erroTipo: "REDE", erro: mensagemDeErro(e) ?? "erro de rede" }));
+          console.log(`[varrer-portal] leitura estendida desde ${janela.emissaoDesde}: tipo=${env.erroTipo ?? "-"} linhas=${env.linhas?.length ?? "-"}`);
+          // Lista incompleta NUNCA decide: success=false cobre paginação incompleta e página ilegível.
+          if (env.success !== true) return { ...resumoRec, leitura_falhou: `${env.erroTipo ?? "?"}: ${env.erro ?? "sem detalhe"}` };
+          listaRec = lerListaConsulta(env.linhas ?? []);
+          resumoRec.emissao_leitura = janela.emissaoDesde;
+        }
+        const desfechos = desfechoNoPortal(janela.alcancaveis, listaRec);
+        const encerrados: unknown[] = [];
+        if (modo === "importar") {
+          for (const d of desfechos) {
+            if (d.classe !== "cancelado_no_portal") continue;
+            // Relê o pedido (status + PO ainda fora + marcador fresco): a prova do começo da rodada não basta.
+            const agora = await carregarAReconciliar(db, d.pedido_id);
+            const ainda = agora.lista.find((p) => p.pedido_id === d.pedido_id && p.protocolo === d.protocolo && p.omie_po_id === d.omie_po_id);
+            if (!ainda || !agora.marcador || !marcadorFresco(agora.marcador, Date.now())) continue; // a próxima rodada decide
+            const r = await encerrarCanceladoNoPortal(db, ainda, d.situacao, agora.marcador);
+            console.log(`[varrer-portal] reconciliação #${d.pedido_id} (${d.protocolo}): ${r.mensagem}`);
+            if (r.ok) encerrados.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, situacao: d.situacao });
+            else falhasReconciliacao.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, mensagem: r.mensagem });
+          }
+        }
+        return {
+          ...resumoRec,
+          desfechos: desfechos.map((d) => ({ pedido_id: d.pedido_id, protocolo: d.protocolo, classe: d.classe, situacao: "situacao" in d ? d.situacao : null })),
+          encerrados,
+          falhas: falhasReconciliacao,
+        };
+      };
+      const falhaReconciliacao = () => {
+        if (falhasReconciliacao.length > 0) {
+          throw new Error(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
+            falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
+        }
+      };
+      if (modo === "listar" || candidatos.length === 0) {
+        resumoFinal = { ...base, avisados, importados: [], falhas: [], adiados: [] };
+        resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
+        falhaReconciliacao();
+        return resumoFinal;
+      }
 
       // 3. Importa, um por vez, reconferindo o banco antes de cada um.
       const importados: unknown[] = [];
@@ -600,6 +728,8 @@ Deno.serve(async (req: Request) => {
         }
       }
       resumoFinal = { ...base, avisados, importados, falhas, adiados, indeterminados };
+      resumoFinal = { ...resumoFinal, reconciliacao: await reconciliar() };
+      falhaReconciliacao();
       // Rodada com falha NÃO é sucesso no registro (Codex P2): o ✓ do UltimaExecucao esconderia o pedido que não entrou.
       if (falhas.length > 0) {
         throw new Error(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);

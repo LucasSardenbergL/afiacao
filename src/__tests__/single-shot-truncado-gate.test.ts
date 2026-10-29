@@ -97,7 +97,6 @@ const DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/calculate-scores/index.ts', 1], // 639:user_roles
   ['supabase/functions/disparar-pedidos-aprovados/index.ts', 1], // 1811:pedido_compra_sugerido
   ['supabase/functions/enviar-pedido-portal-sayerlack/index.ts', 1], // 2333:pedido_compra_sugerido
-  ['supabase/functions/fin-ic-reconcile/index.ts', 2], // 128:fin_contas_receber 135:fin_contas_pagar
   ['supabase/functions/fin-regime-tributario/index.ts', 1], // 392:fin_dre_snapshots
   ['supabase/functions/fin-suggest-mapping/index.ts', 1], // 124:fin_categoria_dre_mapping
   ['supabase/functions/fin-valor-engine/index.ts', 1], // 276:fin_dre_snapshots

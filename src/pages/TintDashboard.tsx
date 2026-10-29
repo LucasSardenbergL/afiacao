@@ -9,6 +9,11 @@ import {
   estadoDeLeitura, naoConsegui, desatualizado, type EstadoSemLeitura,
 } from '@/lib/leitura/estado-de-leitura';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { fetchAllPages } from '@/lib/postgrest';
+import {
+  agruparPorCor, descreverSlots, origemPorCor,
+  type CorRejeitada, type LinhaDeErro, type OrigemCor, type TipoRejeicao,
+} from '@/lib/tint/rejeicoes';
 
 const ACCOUNT = 'oben';
 
@@ -52,73 +57,200 @@ function contagem(r: { count: number | null; error: { message: string } | null }
   return r.count;
 }
 
-type CorRejeitada = { cor: string; formulas: number; motivo: string };
 type FormulasRejeitadas = {
-  /** Quando o último run de fórmulas começou — a lista é um RETRATO dele, não histórico. */
+  /** Quando o último run de fórmulas começou — a janela termina nele. */
   runEm: string | null;
-  /** O que o run contou (`tint_sync_runs.errors`) — pode ser >0 com a lista vazia (detalhe faltou). */
-  rejeicoesDoRun: number;
+  /** Soma de `tint_sync_runs.errors` na janela — pode ser >0 com a lista vazia (detalhe faltou). */
+  rejeicoesNaJanela: number;
   cores: CorRejeitada[];
 };
 
-/**
- * O motivo que `tint_promote_sync_run` grava vem com o sufixo técnico e a fórmula colada:
- * "receita corrompida: corante presente sem dose válida (qtd_ml <= 0/nula/não-finita) + linha
- * inválida sob protocolo declarado (1d-E) — fórmula PRETO/0,9L". O operador precisa só da cabeça.
- */
-function motivoCurto(msg: string): string {
-  return msg.split(' — ')[0].split(' + ')[0].replace(/\s*\(.*$/, '').trim();
-}
+/** Janela que o card cobre, ancorada no ÚLTIMO run (não em "agora": balcão desligado ≠ zero erro). */
+const JANELA_HORAS = 24;
 
 /**
- * Fórmulas que o guard REJEITOU no último run de fórmulas — deduplicadas por cor.
+ * Fórmulas que o guard REJEITOU nas 24h até o último run de fórmulas — deduplicadas por cor.
  *
  * Antes o card lia `tint_importacoes.erros_detalhe`, coluna que o writer vivo (`tint_promote_sync_run`)
- * NUNCA preenche (0 de 4.160 linhas com erro, psql-ro 2026-10-18): mostrava "5 erro(s)" sem dizer
- * quais, e uma entrada por run — o conector re-envia o mesmo lote a cada ciclo, então as MESMAS
- * 5 cores viravam 5 blocos idênticos. O detalhe vive em `tint_sync_errors`; a correção dessas
- * receitas é na máquina SayerSystem (`docs/agent/tintometrico.md`: dado da fonte, guard certo).
+ * NUNCA preenche (0 de 4.160 linhas com erro, psql-ro 2026-10-18). O detalhe vive em
+ * `tint_sync_errors`; a correção dessas receitas é na máquina SayerSystem / no re-scan do conector
+ * (`docs/agent/tintometrico.md`: dado da fonte, guard certo).
+ *
+ * Janela e não só o último run: o conector manda um LOTE diferente a cada ciclo (~11min), então o
+ * último run é um recorte — em 21/10/2026 ele mostrava 7 cores, as 24h tinham 51, e o run seguinte
+ * teve 0 (o card sumia sem nada ter mudado na fonte).
  */
 function useFormulasRejeitadas() {
   return useQuery({
     queryKey: ['tint-formulas-rejeitadas'],
     queryFn: async (): Promise<FormulasRejeitadas | null> => {
-      const run = await supabase
+      const ultimo = await supabase
         .from('tint_sync_runs')
-        .select('id, started_at, errors')
+        .select('started_at')
         .eq('account', ACCOUNT)
         .eq('sync_type', 'formulas')
         .order('started_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (run.error) throw run.error;
+      if (ultimo.error) throw ultimo.error;
       // Sem run nenhum não há o que listar — `null` aqui é "não existe", não "não li".
-      if (!run.data) return null;
+      if (!ultimo.data) return null;
 
-      // Teto do PostgREST é 1.000 linhas SILENCIOSO; o máximo visto por run foi 162. Pede mais que
-      // isso explicitamente para a dedup não contar errado se a fonte piorar.
-      const linhas = await supabase
-        .from('tint_sync_errors')
-        .select('entity_type, entity_id, error_message')
-        .eq('sync_run_id', run.data.id)
-        .order('entity_id')
-        .range(0, 1999);
-      if (linhas.error) throw linhas.error;
+      const inicio = new Date(new Date(ultimo.data.started_at).getTime() - JANELA_HORAS * 3_600_000).toISOString();
 
-      const porCor = new Map<string, CorRejeitada>();
-      for (const l of linhas.data ?? []) {
-        const chave = `${l.entity_type}:${l.entity_id}`;
-        const atual = porCor.get(chave);
-        if (atual) atual.formulas += 1;
-        else porCor.set(chave, { cor: l.entity_id ?? '—', formulas: 1, motivo: motivoCurto(l.error_message ?? '') });
-      }
+      // Teto do PostgREST é 1.000 linhas SILENCIOSO — as duas leituras paginam (`fetchAllPages`
+      // lança em página perdida em vez de devolver o parcial como se fosse tudo).
+      const runs = await fetchAllPages<{ errors: number | null }>(
+        (de, ate) => supabase
+          .from('tint_sync_runs')
+          .select('id, errors')
+          .eq('account', ACCOUNT)
+          .eq('sync_type', 'formulas')
+          .gte('started_at', inicio)
+          .order('started_at', { ascending: false })
+          .order('id')
+          .range(de, ate),
+        'tint_sync_runs/rejeitadas',
+      );
+
+      // Mais novo primeiro — `agruparPorCor` usa a 1ª ocorrência de cada cor como o run dela.
+      const linhas = await fetchAllPages<LinhaDeErro>(
+        (de, ate) => supabase
+          .from('tint_sync_errors')
+          .select('sync_run_id, entity_type, entity_id, error_message, error_details, tint_sync_runs!inner(account, sync_type, started_at)')
+          .eq('tint_sync_runs.account', ACCOUNT)
+          .eq('tint_sync_runs.sync_type', 'formulas')
+          .gte('tint_sync_runs.started_at', inicio)
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(de, ate),
+        'tint_sync_errors/rejeitadas',
+      );
+
       return {
-        runEm: run.data.started_at,
-        rejeicoesDoRun: run.data.errors ?? 0,
-        cores: [...porCor.values()].sort((a, b) => b.formulas - a.formulas || a.cor.localeCompare(b.cor)),
+        runEm: ultimo.data.started_at,
+        rejeicoesNaJanela: runs.reduce((s, r) => s + (r.errors ?? 0), 0),
+        cores: agruparPorCor(linhas),
       };
     },
   });
+}
+
+/**
+ * Personalizada (balcão) ou de fábrica, por cor rejeitada — quem corrige é diferente. Leitura
+ * SEPARADA de propósito: se falhar, a lista de rejeitadas continua de pé, só sem a separação
+ * (e a tela diz que não leu — nunca joga tudo num lado).
+ *
+ * Três fontes porque a rejeitada pode nunca ter sido promovida: `tint_formulas` (atual),
+ * `tint_receita_versoes` (histórico append-only) e, só para o que faltou, a staging.
+ */
+function useOrigemDasCores(cores: string[]) {
+  return useQuery({
+    queryKey: ['tint-origem-rejeitadas', cores],
+    enabled: cores.length > 0,
+    queryFn: async () => {
+      type Marca = { cor_id: string | null; personalizada: boolean | null };
+      const ler = (tabela: 'tint_formulas' | 'tint_receita_versoes' | 'tint_staging_formulas', lista: string[]) =>
+        fetchAllPages<Marca>(
+          (de, ate) => supabase
+            .from(tabela)
+            .select('cor_id, personalizada')
+            .eq('account', ACCOUNT)
+            .in('cor_id', lista)
+            .order('id')
+            .range(de, ate),
+          `${tabela}/origem-rejeitadas`,
+        );
+      const [atuais, versoes] = await Promise.all([ler('tint_formulas', cores), ler('tint_receita_versoes', cores)]);
+      const vistas = new Set([...atuais, ...versoes].map((l) => l.cor_id));
+      const faltam = cores.filter((c) => !vistas.has(c));
+      const staging = faltam.length > 0 ? await ler('tint_staging_formulas', faltam) : [];
+      return origemPorCor([...atuais, ...versoes, ...staging]);
+    },
+  });
+}
+
+const ORIGENS: Array<{ chave: OrigemCor | 'nao_sei'; titulo: string; explicacao: string }> = [
+  {
+    chave: 'personalizada',
+    titulo: 'Suas cores personalizadas',
+    explicacao: 'Cores criadas no balcão. A receita é da loja — a correção é na máquina do balcão.',
+  },
+  {
+    chave: 'fabrica',
+    titulo: 'Cores de fábrica',
+    explicacao: 'Cores do catálogo Sayerlack. A receita vem da fábrica — a correção é com a Sayerlack.',
+  },
+  {
+    chave: 'nao_sei',
+    titulo: 'Origem não identificada',
+    explicacao: 'A cor não aparece no cadastro, ou aparece como personalizada e de fábrica ao mesmo tempo.',
+  },
+];
+
+/** Ordem de leitura: o que pede AÇÃO primeiro, o resíduo que se cura sozinho por último. */
+const GRUPOS: Array<{ tipo: TipoRejeicao; titulo: string; explicacao: string }> = [
+  {
+    tipo: 'dose_sem_corante',
+    titulo: 'Dose sem corante identificado',
+    explicacao:
+      'A máquina tem uma dose sem dizer de qual corante. Só a Sayerlack/máquina diz se falta um corante na receita ou se é sujeira do cadastro. Até lá vale a receita anterior.',
+  },
+  {
+    tipo: 'outro',
+    titulo: 'Outros problemas na receita',
+    explicacao: 'Formato que não é nenhum dos dois casos conhecidos — vale olhar a cor na máquina.',
+  },
+  {
+    tipo: 'slot_livre',
+    titulo: 'Slot vazio gravado como corante “0”',
+    explicacao:
+      'Não é receita errada: é como o conector antigo (até 0.2.0) gravava slot vazio de cor personalizada. Some sozinho quando o re-scan completo de domingo rodar com o balcão LIGADO. A receita anterior segue valendo.',
+  },
+];
+
+const ml = (v: number) => `${v.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ml`;
+
+/** O que exatamente está errado na receita da cor, em uma linha. */
+function detalheDaCor(c: CorRejeitada): string {
+  const slots = descreverSlots(c.linhas);
+  if (c.tipo === 'dose_sem_corante') {
+    const doses = c.linhas.map((l) => (l.qtdMl !== null ? ml(l.qtdMl) : '?')).join(' + ');
+    return `${slots ?? 'linha'}: ${doses} sem corante`;
+  }
+  if (c.tipo === 'slot_livre') return slots ? `${slots} vazios` : 'slot vazio';
+  return slots ? `${c.motivo} (${slots})` : c.motivo;
+}
+
+/** As cores de UM recorte, agrupadas pelo tipo de problema (a ordem de `GRUPOS`). */
+function GruposPorTipo({ cores }: { cores: CorRejeitada[] }) {
+  return (
+    <div className="space-y-5">
+      {GRUPOS.map((g) => {
+        const doTipo = cores.filter((c) => c.tipo === g.tipo);
+        if (doTipo.length === 0) return null;
+        return (
+          <section key={g.tipo} data-testid={`rejeicao-grupo-${g.tipo}`}>
+            <h4 className="text-sm font-medium">
+              {g.titulo} <span className="text-muted-foreground font-normal">· {doTipo.length} {doTipo.length === 1 ? 'cor' : 'cores'}</span>
+            </h4>
+            <p className="text-xs text-muted-foreground mt-0.5">{g.explicacao}</p>
+            <ul className="divide-y mt-2">
+              {doTipo.map((c) => (
+                <li key={c.cor} className="flex items-center justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{c.cor}</p>
+                    <p className="text-xs text-muted-foreground">{detalheDaCor(c)}</p>
+                  </div>
+                  <Badge variant="outline" className="shrink-0">{c.formulas} {c.formulas === 1 ? 'fórmula' : 'fórmulas'}</Badge>
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 const statusColor: Record<string, string> = {
@@ -154,7 +286,12 @@ export default function TintDashboard() {
   const errosSemLeitura: EstadoSemLeitura | null =
     naoConsegui(estadoE) && rejeitadas === undefined ? estadoE : null;
   const errosVelhos = desatualizado(fatiaE, rejeitadas !== undefined);
-  const haRejeicao = Boolean(rejeitadas && (rejeitadas.cores.length > 0 || rejeitadas.rejeicoesDoRun > 0));
+  const haRejeicao = Boolean(rejeitadas && (rejeitadas.cores.length > 0 || rejeitadas.rejeicoesNaJanela > 0));
+  const { data: origem, status: statusO, fetchStatus: fetchO } = useOrigemDasCores(
+    (rejeitadas?.cores ?? []).map((c) => c.cor),
+  );
+  // Sem a origem a lista sai SEM separação e com o aviso — nunca tudo jogado num lado só.
+  const origemFalhou = naoConsegui(estadoDeLeitura({ status: statusO, fetchStatus: fetchO })) && !origem;
 
   if (estadoM === 'carregando') return <div className="space-y-4"><Skeleton className="h-8 w-64" /><div className="grid grid-cols-1 md:grid-cols-4 gap-4">{[1,2,3,4].map(i=><Skeleton key={i} className="h-28"/>)}</div></div>;
 
@@ -246,7 +383,7 @@ export default function TintDashboard() {
 
       {errosSemLeitura && (
         <AvisoLeituraFalhou
-          oque="as fórmulas rejeitadas no último sync"
+          oque="as fórmulas rejeitadas nas últimas 24h"
           estado={errosSemLeitura}
           variante="bloco"
           testId="aviso-leitura-erros"
@@ -269,28 +406,44 @@ export default function TintDashboard() {
               Fórmulas rejeitadas pela fonte
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Último sync de fórmulas em {rejeitadas.runEm ? new Date(rejeitadas.runEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
-              {' · '}{rejeitadas.cores.length} {rejeitadas.cores.length === 1 ? 'cor' : 'cores'} com receita incompleta no SayerSystem.
-              {' '}O guard não importa a receita; a correção é na máquina, não aqui.
+              Nas {JANELA_HORAS}h até o último sync de fórmulas ({rejeitadas.runEm ? new Date(rejeitadas.runEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'})
+              {' · '}{rejeitadas.cores.length} {rejeitadas.cores.length === 1 ? 'cor' : 'cores'} com receita barrada.
+              {' '}O guard não importa a receita barrada e mantém a anterior; a correção é na fonte, não aqui.
             </p>
           </CardHeader>
           <CardContent>
             {rejeitadas.cores.length === 0 ? (
               <p className="text-xs text-status-warning">
-                {rejeitadas.rejeicoesDoRun} rejeições sem detalhe gravado neste run — a contagem é do run, a lista não veio.
+                {rejeitadas.rejeicoesNaJanela} rejeições sem detalhe gravado nas últimas {JANELA_HORAS}h — a contagem é dos runs, a lista não veio.
               </p>
+            ) : !origem ? (
+              <div className="space-y-4">
+                {origemFalhou && (
+                  <p className="text-xs text-status-warning" data-testid="origem-nao-lida">
+                    Não consegui ler se estas cores são personalizadas ou de fábrica — a lista abaixo está sem essa separação.
+                  </p>
+                )}
+                <GruposPorTipo cores={rejeitadas.cores} />
+              </div>
             ) : (
-              <ul className="divide-y">
-                {rejeitadas.cores.map((c) => (
-                  <li key={c.cor} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium truncate">{c.cor}</p>
-                      <p className="text-xs text-muted-foreground">{c.motivo}</p>
-                    </div>
-                    <Badge variant="outline" className="shrink-0">{c.formulas} {c.formulas === 1 ? 'fórmula' : 'fórmulas'}</Badge>
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-6">
+                {ORIGENS.map((o) => {
+                  const cores = rejeitadas.cores.filter((c) => (origem.get(c.cor) ?? 'nao_sei') === o.chave);
+                  // "Nenhuma de fábrica" é resposta (leu e não há); "origem não identificada" vazia não diz nada.
+                  if (cores.length === 0 && o.chave === 'nao_sei') return null;
+                  return (
+                    <section key={o.chave} data-testid={`rejeicao-origem-${o.chave}`} className="rounded-md border p-4">
+                      <h3 className="text-sm font-semibold">
+                        {o.titulo} <span className="text-muted-foreground font-normal">· {cores.length} {cores.length === 1 ? 'cor' : 'cores'}</span>
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5 mb-3">{o.explicacao}</p>
+                      {cores.length === 0
+                        ? <p className="text-xs text-muted-foreground">Nenhuma nas últimas {JANELA_HORAS}h.</p>
+                        : <GruposPorTipo cores={cores} />}
+                    </section>
+                  );
+                })}
+              </div>
             )}
           </CardContent>
         </Card>

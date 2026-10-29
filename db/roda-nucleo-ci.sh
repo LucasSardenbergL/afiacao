@@ -206,9 +206,40 @@ if [ "$esperados" -lt 1 ]; then
   echo "::error::manifesto sem nenhuma prova — um gate que não executa nada não pode afirmar nada"; exit 1
 fi
 
+# atribui_partes <N> — preenche alvo[k] (a parte da prova de posição k) pela partição BALANCEADA da 1b.
+# Função porque as DUAS pontas precisam da MESMA resposta: a parte (1b) escolhe o que roda, e a união
+# (1a) confere que cada unidade veio da parte certa. Regras e medição no cabeçalho da 1b.
+atribui_partes() {
+  local p_n="$1" podre k p
+  CUSTO="${NUCLEO_CUSTO:-$REPO_ROOT/db/nucleo-ci-custo.txt}"
+  CUSTO_DEFAULT=30
+  if [ -f "$CUSTO" ]; then
+    podre="$(grep -vE '^[[:space:]]*(#|$)' "$CUSTO" | grep -vE '^db/test-[A-Za-z0-9_-]+\.sh[[:space:]]+[0-9]+[[:space:]]*$' | head -1 || true)"
+    if [ -n "$podre" ]; then
+      echo "::error::$CUSTO: linha malformada (esperado 'db/test-x.sh <segundos>'): $podre"; exit 1
+    fi
+  fi
+  # alvo[k] = a parte da prova de posição k. O `sort` ordena por custo DESC e posição ASC; o awk
+  # entrega cada uma à parte menos carregada. `FILENAME == ARGV[1]` e não `NR==FNR`: com a tabela
+  # vazia (ou ausente), o `NR==FNR` valeria também para o manifesto e engoliria todas as provas.
+  alvo=()
+  while read -r k p; do alvo[k]=$p; done < <(
+    awk -v def="$CUSTO_DEFAULT" '
+          FILENAME == ARGV[1] { if (NF > 0 && $1 !~ /^#/) c[$1] = $2; next }
+          { print (($1 in c) ? c[$1] : def), FNR - 1 }' \
+        <(if [ -f "$CUSTO" ]; then cat "$CUSTO"; fi) <(printf '%s\n' "${scripts[@]}") \
+      | LC_ALL=C sort -k1,1nr -k2,2n \
+      | awk -v n="$p_n" 'BEGIN { for (i = 0; i < n; i++) carga[i] = 0 }
+          { m = 0; for (i = 1; i < n; i++) if (carga[i] < carga[m]) m = i; carga[m] += $1; print $2, m }'
+  )
+  if [ "${#alvo[@]}" -ne "${#scripts[@]}" ]; then
+    echo "::error::partição: ${#alvo[@]} prova(s) atribuída(s) de ${#scripts[@]} no manifesto"; exit 1
+  fi
+}
+
 # ── 1a. A UNIÃO dos recibos das partes (sem Postgres; o manifesto INTEIRO) ─────────────────────
 # O job que junta as partes não sobe banco: confere que o CONJUNTO das unidades concluídas é o do
-# manifesto, pela mesma partição da 1b (prova de posição k → parte k mod N). Regras no cabeçalho
+# manifesto, pela mesma partição da 1b (`atribui_partes`, balanceada pelo custo). Regras no cabeçalho
 # (§Recibo e UNIÃO); cada uma tem caso no db/falsifica-nucleo-ci.sh.
 if [ -n "$dir_uniao" ]; then
   [ -d "$dir_uniao" ] || { echo "::error::diretório de recibos não existe: $dir_uniao"; exit 1; }
@@ -273,6 +304,8 @@ if [ -n "$dir_uniao" ]; then
     if [ "$vezes" -gt 1 ]; then echo "::error::a parte $i/$n_uniao apareceu $vezes vezes"; exit 1; fi
   done
 
+  atribui_partes "$n_uniao"
+
   # 2ª passada: cada unidade do recibo existe no manifesto, cai NESTA parte pela partição e não foi
   # vista antes. Depois, toda unidade do manifesto tem de ter sido vista — o conjunto, não a contagem.
   visto=()
@@ -290,15 +323,15 @@ if [ -n "$dir_uniao" ]; then
       done
       if [ -z "$achou" ]; then echo "::error::$f: unidade fora do manifesto: $u_cam $u_modo"; exit 1; fi
       if [ "${visto[achou]}" -ne 0 ]; then echo "::error::$f: unidade concluída DUAS vezes: $u_cam $u_modo"; exit 1; fi
-      if [ $(( id_k[achou] % n_uniao )) -ne "$r_i" ]; then
-        echo "::error::$f: $u_cam $u_modo está no recibo da parte $r_i, mas a partição a põe na $(( id_k[achou] % n_uniao )) — a parte rodou OUTRO conjunto"; exit 1
+      if [ "${alvo[${id_k[achou]}]}" -ne "$r_i" ]; then
+        echo "::error::$f: $u_cam $u_modo está no recibo da parte $r_i, mas a partição a põe na ${alvo[${id_k[achou]}]} — a parte rodou OUTRO conjunto"; exit 1
       fi
       visto[achou]=1
     done < "$f"
   done
   faltando=()
   for j in "${!id_cam[@]}"; do
-    if [ "${visto[j]}" -eq 0 ]; then faltando+=("${id_cam[$j]} ${id_modo[$j]} (parte $(( id_k[j] % n_uniao )))"); fi
+    if [ "${visto[j]}" -eq 0 ]; then faltando+=("${id_cam[$j]} ${id_modo[$j]} (parte ${alvo[${id_k[$j]}]})"); fi
   done
   if [ ${#faltando[@]} -ne 0 ]; then
     echo "=================================================="
@@ -322,10 +355,19 @@ fi
 # O job `provas-sql` roda em N partes paralelas (matriz do ci.yml): serial, o núcleo passou do teto de
 # 20 min quando o #2685 entrou (runs 36799444473 e 36802018807, `main` vermelha) — e o ci.yml já dizia
 # que a próxima prova a estourar pedia PARALELIZAR, não subir o teto de novo.
-#   · Partição round-robin sobre a ordem do manifesto: a prova de posição k vai para a parte k mod N.
+#   · Partição BALANCEADA PELO CUSTO (LPT, 2026-10-21): da prova mais cara para a mais barata, cada uma
+#     vai para a parte com menos segundos acumulados (empate: menor custo → menor posição no
+#     manifesto; parte → menor índice). O custo vem de db/nucleo-ci-custo.txt (medido no runner; prova
+#     ausente pesa CUSTO_DEFAULT). Era round-robin (posição k → parte k mod N), e o custo não segue a
+#     posição: medido em 4 runs de 2026-10-21, as 6 partes somavam 10,9/14,2/4,8/10,2/6,3/10,1 min de
+#     núcleo (a 2ª era o caminho crítico do `validate`); balanceadas, 9,5–9,6 cada. Com custos iguais
+#     (tabela vazia) o LPT reduz ao round-robin. Determinística: as N partes calculam a MESMA
+#     atribuição a partir dos mesmos dois arquivos do checkout.
 #     Nenhuma prova em duas partes e nenhuma fora de todas, DESDE QUE as N partes rodem — e quem diz
 #     i e N é o próprio GitHub (`strategy.job-index`/`job-total`), contados pela matriz real: mexer na
 #     lista da matriz não abre buraco nem repete parte.
+#   · A tabela de custo só pesa, não decide cobertura: linha MALFORMADA aborta (não apodrece calada);
+#     linha de prova que saiu do manifesto é ignorada.
 #   · O manifesto INTEIRO já foi validado acima, em toda parte: linha podre reprova as N.
 #   · Malformada ou fora da faixa ABORTA. Rodar tudo estouraria o teto em silêncio; rodar nada seria o
 #     verde vazio. Parte sem prova nenhuma (N maior que o manifesto) também aborta.
@@ -339,9 +381,10 @@ if [ -n "${NUCLEO_PARTE:-}" ]; then
   if [ "$p_n" -lt 1 ] || [ "$p_i" -ge "$p_n" ]; then
     echo "::error::NUCLEO_PARTE inválida: '$NUCLEO_PARTE' (formato i/N, com 0 ≤ i < N)"; exit 1
   fi
+  atribui_partes "$p_n"
   sel_s=(); sel_m=(); sel_f=(); sel_mf=()
   for k in "${!scripts[@]}"; do
-    if [ $((k % p_n)) -eq "$p_i" ]; then
+    if [ "${alvo[$k]}" -eq "$p_i" ]; then
       sel_s+=("${scripts[$k]}"); sel_m+=("${minimos[$k]}"); sel_f+=("${falsifs[$k]}"); sel_mf+=("${motivos_fora[$k]}")
     fi
   done

@@ -49,6 +49,23 @@ describe('acharSingleShots — calibração contra o fix real do #1471', () => {
     expect(acharSingleShots(delegado)).toEqual([]);
   });
 
+  it('NÃO casa callback de fetchAllKeyset (o `.limit()` do keyset mora em OUTRA instrução)', () => {
+    // Forma do fin-ic-reconcile: keyset porque OFFSET com escrita concorrente repete linha.
+    const delegado = `
+      const cr = await fetchAllKeyset<Row, string>(
+        (cursor, limite) => {
+          let q = supabase.from("fin_contas_receber").select("id, valor_documento").eq("company", empresa);
+          if (cursor !== null) q = q.gt("id", cursor);
+          return q.order("id", { ascending: true }).limit(limite);
+        },
+        (t) => t.id,
+        'fin_contas_receber',
+      );`;
+    expect(acharSingleShots(delegado)).toEqual([]);
+    // CONTROLE: a mesma leitura sem o helper continua sendo achado.
+    expect(acharSingleShots('const { data } = await supabase.from("fin_contas_receber").select("id");')).toHaveLength(1);
+  });
+
   it('NÃO casa delimitadores legítimos', () => {
     const legitimos = `
       const { data: um, error: e1 } = await supabase

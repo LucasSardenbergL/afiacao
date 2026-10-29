@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -62,6 +62,26 @@ describe('FilaDoDia — estados', () => {
     expect(screen.getByText(/2 itens atrasados/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Ligar para/ })).toHaveAttribute('href', 'tel:3732210000');
     expect(screen.getByText('Não atendeu')).toBeInTheDocument();
+  });
+
+  it('mais de 30 na lista: nenhum some calado — "Ver todos (N)" revela o resto', () => {
+    const acoes = Array.from({ length: 53 }, (_, i): AcaoSugerida => ({
+      ...acaoRecompra, entidadeId: `c${i}`, clienteUserId: `c${i}`, titulo: `Cliente ${i}`, dedupeKey: `recompra:c${i}`,
+    }));
+    filaMock.mockReturnValue(fila({ acoes }));
+    renderFila();
+    expect(screen.getByText(/53 clientes com recompra/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cliente 52' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Ver todos \(53\)/ }));
+    expect(screen.getByRole('button', { name: 'Cliente 52' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ver todos/ })).toBeNull();
+  });
+
+  it('total parcial aparece como piso "≥", nunca como "~" nem sumido', () => {
+    filaMock.mockReturnValue(fila({ acoes: [{ ...acaoRecompra, valorEsperado: 34221, tipoValor: 'piso' }] }));
+    renderFila();
+    expect(screen.getByText(/≥ R\$ 34\.221 estimado \(item sem preço\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/~R\$/)).toBeNull();
   });
 
   it.each([

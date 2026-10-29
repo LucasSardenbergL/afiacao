@@ -17,6 +17,8 @@
 //   SELECT-então-INSERT por conversa+status+janela criava 2 orçamentos sob concorrência).
 // Supabase INJETADO (testável) — mesmo padrão de services/orderSubmission.
 
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/integrations/supabase/types';
 import { isValidUnitPrice } from '@/lib/pricing/mergeCustomerPrices';
 import type { CotacaoProposta } from '@/lib/whatsapp/proposta-cotacao';
 import { montarParamsProposta } from '@/lib/whatsapp/proposta-cotacao';
@@ -28,20 +30,13 @@ export function dedupeKeyProposta(customerUserId: string, prazoIso: string): str
   return `proposta:${customerUserId}:${prazoIso}`;
 }
 
-/** Subconjunto do client usado aqui (injeção → teste puro; cast no chamador, padrão routeFrom). */
-interface PropostaQueryChain {
-  select(cols: string): PropostaQueryChain;
-  eq(col: string, v: string): PropostaQueryChain;
-  maybeSingle(): Promise<{ data: unknown; error: { message: string } | null }>;
-  insert(payload: Record<string, unknown>): PropostaQueryChain;
-  single(): Promise<{ data: { id: string } | null; error: { message: string; code?: string } | null }>;
-}
-export interface SupabaseWhatsappProposta {
-  functions: {
-    invoke(name: string, opts: { body: Record<string, unknown> }): Promise<{ data: unknown; error: unknown }>;
-  };
-  from(table: string): PropostaQueryChain;
-}
+/**
+ * Cliente injetado (teste puro), tipado pelo `types.ts` — mesmo idioma de `services/orderSubmission`
+ * (`SubmitClient`). A porta antiga declarava `from(table: string)` e `insert(Record<string, unknown>)`:
+ * o chamador fazia `supabase as unknown as …` e o INSERT do orçamento não era checado contra
+ * `sales_orders`. Só o mock do teste carrega cast agora.
+ */
+export type SupabaseWhatsappProposta = Pick<SupabaseClient<Database>, 'from' | 'functions'>;
 
 export interface EnviarPropostaParams {
   supabase: SupabaseWhatsappProposta;
@@ -137,7 +132,7 @@ export async function enviarProposta(params: EnviarPropostaParams): Promise<Envi
       // send mas não o orçamento (falha pós-envio), grava agora — com nota de pós-retry.
       const { data: send } = await supabase.from('whatsapp_template_sends')
         .select('conversation_id').eq('dedupe_key', dedupeKey).maybeSingle();
-      const conversationId = (send as { conversation_id?: string } | null)?.conversation_id;
+      const conversationId = send?.conversation_id;
       if (!conversationId) {
         return { ok: false, motivo: 'edge', detalhe: 'proposta já enviada, mas o envio original não foi localizado (dedupe sem send legível)' };
       }
@@ -170,17 +165,25 @@ async function garantirOrcamento(
 ): Promise<{ id: string | null; erro: string | null }> {
   const { supabase, cotacao, prazo } = params;
 
-  const items = cotacao.linhas.map(l => ({
-    product_id: l.product_id,
-    omie_codigo_produto: l.omie_codigo_produto,
-    codigo: l.codigo,
-    descricao: l.descricao ?? l.nome,
-    unidade: l.unidade,
-    quantidade: l.qtd,
-    // violacaoInvariantes já barrou linha sem preço/qtd — aqui é sempre número válido
-    valor_unitario: l.preco as number,
-    valor_total: l.qtd * (l.preco as number),
-  }));
+  // violacaoInvariantes (na entrada) já barrou total/preço nulos — o estreitamento aqui é o que o tipo
+  // enxerga (`total`/`subtotal` são NOT NULL em sales_orders). Se a invariante um dia afrouxar, o
+  // orçamento NÃO é gravado com zero inventado: devolve erro visível.
+  const total = cotacao.total;
+  if (total === null) return { id: null, erro: 'orçamento não gravado: total ausente (invariante violada)' };
+  const items = [];
+  for (const l of cotacao.linhas) {
+    if (l.preco === null) return { id: null, erro: `orçamento não gravado: linha sem preço (${l.nome})` };
+    items.push({
+      product_id: l.product_id,
+      omie_codigo_produto: l.omie_codigo_produto,
+      codigo: l.codigo,
+      descricao: l.descricao ?? l.nome,
+      unidade: l.unidade,
+      quantidade: l.qtd,
+      valor_unitario: l.preco,
+      valor_total: l.qtd * l.preco,
+    });
+  }
 
   const notes = opts.posRetry
     ? `Proposta WhatsApp — entrega ${prazo.label} (orçamento registrado após reenvio: preços desta recotação; a mensagem enviada não citava preços)`
@@ -190,8 +193,8 @@ async function garantirOrcamento(
     customer_user_id: params.customerUserId,
     created_by: params.createdBy,
     items,
-    subtotal: cotacao.total,
-    total: cotacao.total,
+    subtotal: total,
+    total,
     status: 'orcamento',
     account: params.account,
     customer_document: params.customerDocument,
@@ -207,7 +210,7 @@ async function garantirOrcamento(
     // Outra aba/tentativa já gravou — reusar (idempotente, sem duplicar).
     const { data: existente, error: selErr } = await supabase.from('sales_orders')
       .select('id').eq('whatsapp_proposta_dedupe', dedupeKey).maybeSingle();
-    const id = (existente as { id?: string } | null)?.id ?? null;
+    const id = existente?.id ?? null;
     if (id) return { id, erro: null };
     return { id: null, erro: `orçamento duplicado mas ilegível: ${selErr?.message ?? 'não encontrado'}` };
   }

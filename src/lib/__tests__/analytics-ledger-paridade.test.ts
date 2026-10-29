@@ -46,9 +46,19 @@ describe('ledger de analytics — paridade banco × front', () => {
     expect(eventosDoTipo()).toContain('dashboard.crescimento_comparavel_servido');
   });
 
+  it('o sensor da aba Corantes (giro de corante) está nos dois lados', () => {
+    expect(allowlistDaUltimaMigration().eventos).toContain('reposicao.corantes_aberta');
+    expect(eventosDoTipo()).toContain('reposicao.corantes_aberta');
+  });
+
   it('os 4 sensores do programa "Venda por cliente" estão nos dois lados', () => {
     const venda = ['venda.contato_registrado', 'venda.ficha_aberta', 'venda.painel_aberto', 'venda.tel_clicado'];
     expect(allowlistDaUltimaMigration().eventos.filter((e) => e.startsWith('venda.'))).toEqual(venda);
     expect(eventosDoTipo().filter((e) => e.startsWith('venda.'))).toEqual(venda);
+  });
+
+  it('o sensor da aba Ciclo (plano v3, decisão 3) está nos dois lados', () => {
+    expect(allowlistDaUltimaMigration().eventos.filter((e) => e.startsWith('financeiro.'))).toEqual(['financeiro.ciclo_aberto']);
+    expect(eventosDoTipo().filter((e) => e.startsWith('financeiro.'))).toEqual(['financeiro.ciclo_aberto']);
   });
 });

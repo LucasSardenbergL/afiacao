@@ -4,36 +4,62 @@
 // eliminacoes, valor_liquido}; a RPC devolve {conta, total_bruto, eliminacoes, total_consolidado} desde a
 // v2 (migration 20260518004300). A tela lia `undefined` e quebrava ao formatar.
 //
-// Dois cuidados de money-path ao voltar a exibir:
-//  1. A RPC soma com COALESCE(SUM(...), 0): mês sem snapshot de NENHUMA empresa sai como 4 linhas de zero.
-//     Por isso a cobertura vem dos snapshots do mês (lidos à parte pela tela): zero empresas ⇒ não há
-//     consolidado (ausente ≠ zero); menos que todas ⇒ soma PARCIAL, dita na tela.
-//  2. CMV é gravado POSITIVO nos snapshots (prod 2026-10-20: 91 linhas > 0, 23 = 0, nenhuma < 0), e a RPC
-//     SOMA a eliminação intercompany ao CMV (`cmv` → +valor_elim) — o consolidado do CMV sai inflado em vez de
-//     reduzido. Até a RPC ser corrigida, a eliminação e o líquido do CMV ficam `null` ("—") quando há
-//     eliminação; sem eliminação, o líquido é o próprio bruto e segue exibido.
-import type { Database } from '@/integrations/supabase/types';
+// Contrato desde a migration 20261021120000 (ver docs/historico/consolidado-ic-sinal-cmv.md):
+//  • Receita e CMV caem pelo MESMO valor eliminado (antes o CMV subia — o sinal estava trocado e a tela
+//    escondia o CMV consolidado com "—"). Despesas e resultado: eliminação 0.
+//  • `total_bruto` NULL = conta sem snapshot no mês (ausente ≠ zero; antes era COALESCE → 0).
+//  • `eliminacoes`/`total_consolidado` NULL nas 4 linhas = eliminação PENDENTE: há par intercompany
+//    confirmado que não dá para eliminar (sem contrapartida, valor divergente, CP em outro mês, categoria
+//    fora de receita/CMV...). A tela mostra "—" e diz por quê; nunca um número.
+// Desde a migration 20261021190000 (docs/historico/consolidado-ic-venda-sem-cobranca.md): a venda
+// intragrupo SEM COBRANÇA (marcada pelo founder na fila) elimina o CP só do CMV do destino. Não há receita
+// a eliminar, então o CMV cai mais que a receita e o resultado sobe pelo mesmo valor: a eliminação do
+// resultado_liquido é exatamente o total sem cobrança do mês (0 sem marcação; NULL se pendente).
+// Os tipos gerados dizem `number` para as colunas de RETURNS TABLE, mas o banco devolve NULL: a entrada
+// aceita qualquer JSON nas colunas de valor e lê com leitor anulável, que recusa string/NaN.
+import type { Json } from '@/integrations/supabase/types';
+import { anulavel, numero } from '@/lib/financeiro/borda-json';
 
-type LinhaRpc = Database['public']['Functions']['fin_consolidado_intercompany']['Returns'][number];
+type ValorBanco = Json | undefined;
+export type LinhaRpcConsolidado = {
+  conta: string;
+  total_bruto: ValorBanco;
+  eliminacoes: ValorBanco;
+  total_consolidado: ValorBanco;
+};
 
 export type LinhaConsolidado = {
   conta: string;
-  bruto: number;
-  /** `null` = valor conhecido como errado na RPC (ver cabeçalho) — exibir "—", nunca um número. */
+  /** `null` = conta sem snapshot no mês — exibir "—". */
+  bruto: number | null;
+  /** `null` = eliminação pendente (ver cabeçalho) — exibir "—", nunca um número. */
   eliminacoes: number | null;
   consolidado: number | null;
 };
 
-export function paraLinhasConsolidado(linhas: readonly LinhaRpc[]): LinhaConsolidado[] {
-  return linhas.map((l) => {
-    const cmvComEliminacao = l.conta === 'cmv' && l.eliminacoes !== 0;
-    return {
-      conta: l.conta,
-      bruto: l.total_bruto,
-      eliminacoes: cmvComEliminacao ? null : l.eliminacoes,
-      consolidado: cmvComEliminacao ? null : l.total_consolidado,
-    };
-  });
+const numeroOuNulo = anulavel(numero);
+
+export function paraLinhasConsolidado(linhas: readonly LinhaRpcConsolidado[]): LinhaConsolidado[] {
+  return linhas.map((l, i) => ({
+    conta: l.conta,
+    bruto: numeroOuNulo(l.total_bruto, `consolidado[${i}].total_bruto`),
+    eliminacoes: numeroOuNulo(l.eliminacoes, `consolidado[${i}].eliminacoes`),
+    consolidado: numeroOuNulo(l.total_consolidado, `consolidado[${i}].total_consolidado`),
+  }));
+}
+
+/** Há par intercompany confirmado que a RPC não conseguiu eliminar: o consolidado do mês é desconhecido. */
+export function eliminacaoPendente(linhas: readonly LinhaConsolidado[]): boolean {
+  return linhas.some((l) => l.eliminacoes === null);
+}
+
+/**
+ * Quanto do mês é venda intragrupo sem cobrança eliminada só do CMV (o resultado sobe esse valor). A RPC o
+ * devolve como a eliminação do `resultado_liquido`; `null` = pendente ou linha ausente (não dá para dizer).
+ */
+export function eliminacaoSemCobranca(linhas: readonly LinhaConsolidado[]): number | null {
+  const resultado = linhas.find((l) => l.conta === 'resultado_liquido');
+  return resultado ? resultado.eliminacoes : null;
 }
 
 /** Empresas sem snapshot de competência no mês (cobertura do consolidado). */
@@ -43,9 +69,10 @@ export function empresasSemSnapshot<C extends string>(todas: readonly C[], comSn
 }
 
 /**
- * O que a tela pode mostrar do consolidado. `semSnapshot` null = a leitura da cobertura falhou: os zeros
- * da RPC podem ser COALESCE, então os valores NÃO aparecem (achado Codex adversarial). Nenhuma empresa
- * com DRE no mês também esconde; parte delas exibe com aviso de soma parcial.
+ * O que a tela pode mostrar do consolidado. `semSnapshot` null = a leitura da cobertura falhou: sem saber
+ * quais empresas estão na soma, os valores NÃO aparecem (achado Codex adversarial; a RPC já devolve NULL
+ * no mês sem snapshot, e este gate segue como 2ª camada). Nenhuma empresa com DRE no mês também esconde;
+ * parte delas exibe com aviso de soma parcial.
  */
 export function exibicaoConsolidado(
   linhas: number,

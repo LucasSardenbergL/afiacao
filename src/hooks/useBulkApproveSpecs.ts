@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { ResultadoExtracao } from '@/lib/knowledge-base/aprovacao-fila';
+import { comNulo } from '@/lib/rpc-args';
 
 /** Resultado agregado da aprovação em lote. */
 export interface BulkApproveResult {
@@ -49,17 +50,15 @@ export function useBulkApproveSpecs(): {
       const erros: BulkApproveResult['erros'] = [];
 
       // Loop sequencial: garante que a RPC por `product_code` nunca corra consigo mesma.
-      // Cast `as never` no nome da RPC: aprovar_versao_boletim ainda não está em types.ts
-      // (Lovable regenera após apply da migration). NÃO adicionar ao types.ts à mão — lição §10.
       for (const { documentId, spec } of resultados) {
         const { error } = await supabase.rpc(
-          'aprovar_versao_boletim' as never,
-          {
+          'aprovar_versao_boletim',
+          comNulo<'aprovar_versao_boletim', 'p_change_note'>({
             p_payload: spec,
             p_document_id: documentId,
             p_change_type: 'bulletin_revision',
             p_change_note: null,
-          } as never,
+          }),
         );
 
         if (error) {

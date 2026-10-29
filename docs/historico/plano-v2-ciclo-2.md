@@ -79,7 +79,32 @@ A sessão irmã entregou caça (#3268), financeiro (#3272) e farmer-inteligencia
 
 `casts:stale` = **14/12, piso 26**, igual à contagem real. Em módulo ativo, **0** casts sobre nome tipado. Os 26 restantes estão em módulos congelados (tarefas 9, telefonia 7, knowledge-base 5, loja-afiacao 3, produção 2).
 
+## Módulos congelados (2026-10-21, a pedido do founder)
+
+Depois do fecho da Frente A, o founder pediu os congelados também (1 PR por módulo). Saíram 108 casts literais e de retorno, e **`casts:stale` chega a 0/0, com piso 0** (medido na main `75a3c33cd`, depois do merge do #3322, o último lote). Não sobra nenhum cast literal sobre nome tipado no `src/`. Os módulos seguem congelados até 2027-01-10; isto é só tipo e borda.
+
+| PR | Módulo | Casts | O que o cast escondia (prod via psql-ro) |
+|---|---|---|---|
+| [#3299](https://github.com/LucasSardenbergL/afiacao/pull/3299) | tarefas | 26 → 0 | `conclusao_origem = 'comprovacao'` está no CHECK, mas faltava no tipo; `customer_user_id` é nullable (recorrente sem cliente) e `useCriticaFila` propagava NULL como id de cliente; `criarTarefas` inseria `Record<string, unknown>` sem checar coluna. |
+| [#3303](https://github.com/LucasSardenbergL/afiacao/pull/3303) | telefonia-whatsapp-rota | 34 → 0 | **o snapshot da fila de ligação descartava o `error` do supabase-js**: tratava falha de banco como sucesso e não tentava de novo. Só o gate de escrita-crítica viu, depois que o cast saiu. `order_items.unit_price` nullable virava 0 (`ultimoPrecoRef`); o INSERT do orçamento em `sales_orders` (money-path) passou a ser checado contra a tabela. |
+| [#3320](https://github.com/LucasSardenbergL/afiacao/pull/3320) | knowledge-base | 25 → 0 | `porte_alvo`/`tags`/`expected_outcomes`/`prerequisites` são nullable, e a lista e o detalhe do processo padrão faziam `.map` em NULL; `fin_ic_matches.diff_valor` é nullable e era formatado sem checar. |
+| [#3322](https://github.com/LucasSardenbergL/afiacao/pull/3322) | loja-afiacao + produção + prime | 23 → 0 | **Prime (money-path)** lido por um cliente `any`: status e tipo sem conferência, view do extrato sem NOT NULL; a borda exige franquia e mensalidade. `quiz_questions` é jsonb livre; `production_orders.unidade` é nullable. |
+
+Além disso, o último cast em módulo ativo (`useVendaPainel`) saiu no #3297, de outra sessão. O meu #3298, com o mesmo conteúdo, foi fechado sem merge.
+
+**Gate:** com 0 casts, o piso `castsLiterais` não vigia mais cegueira. Quem segura a varredura são os outros 3 pisos (tabelas, funções, arquivos lidos), e o teste "abaixo do piso é CEGO" passou a provar isso por eles.
+
+**Codex sem cota, depois retroativo** (89%, guard local exit 79): as partes money-path (#3303 e #3322) foram pelo Caminho B, com revisão adversarial independente (subagente lendo pela ref remota e pela prod via psql-ro; no #3322 ela rodou depois do merge) e `REVISÃO INDEPENDENTE PENDENTE` no corpo do PR. Nenhum P0/P1 nas duas. **Pendência retirada em 26/10:** a janela reabriu antes do previsto e o Codex retroativo de código rodou nos dois (`gpt-6-astra·max`, 597s no #3303 e 584s no #3322), também sem P0/P1. Ele achou 3 regressões P2, todas latentes na prod (psql-ro): `lerEnderecoPedido` descarta `address.number` numérico (`orders=0`), e `lerQuiz` descarta pergunta malformada, o que sobe a nota e faz o editor regravar o quiz sem ela (1 módulo, 0 perguntas malformadas, 0 chaves extras). Nenhuma é de dinheiro, então os módulos congelados não foram mexidos. Triagem completa nos comentários dos PRs. No #3322 a borda do Prime não fabrica número (franquia e mensalidade nulas lançam), os vocabulários batem com os CHECKs da prod, os payloads de escrita são idênticos e as tabelas Prime têm 0 linhas. Ficou um P2 anterior ao PR: `ProductionOrders` não conferia o `error` do `update` de `in_progress` e mostrava sucesso mesmo quando falhava. Foi corrigido depois, a pedido do founder (ver abaixo).
+
+**Corrigido depois, a pedido do founder (módulo congelado, 2026-10-27):**
+- `ProducaoBomExcecoes` mandava `componente_codigo ?? 0`. Na prod a coluna é NOT NULL e faz parte da PK (223 linhas, nenhuma nula ou zero), então o `?? 0` era código morto, e o defeito era o tipo local dizer `number | null`. O tipo agora é o gerado. O bug real era outro: `fn_pcp_dispor_excecao` devolve `FOUND`, e a tela descartava o `false` (o UPDATE não achou a linha) e mostrava "Marcada como …". Agora mostra erro e recarrega.
+- `ProductionOrders`: o `update` de `in_progress` passou a conferir `error` e a exigir a linha devolvida. O arquivo saiu da dívida do gate de escrita-crítica.
+- O guard é `src/pages/__tests__/Producao.escrita-calada.test.tsx`, com falsificação: controle verde, 3 sabotagens vermelhas, verde depois de restaurar.
+
 ## Lições
+
+- **Tirar um cast pode acordar um gate que estava cego.** O `(supabase.from(x as never) as any)` escondia o upsert do snapshot da fila também do gate de escrita-crítica, e o bug apareceu só quando o tipo voltou. Sempre rode a suíte inteira depois de remover casts, não só os testes do módulo.
+- **`git reset --soft origin/main` depois de um `fetch` apaga o que a main ganhou.** O commit consolidado passa a "remover" os arquivos novos de outros PRs. Para juntar commits use a base exata do rebase (`git merge-base HEAD origin/main` ANTES do fetch), e confira `git diff --name-status <base> HEAD | grep ^D` antes do push.
 
 - **Duas sessões no mesmo item: confira o artefato da irmã antes de cada PR, não só a lista de PRs.** O commit dela estava local, sem push nem PR. Só o `git log` do worktree dela mostrou a colisão.
 - **Mapped type homomórfico preserva o `?`.** `{ [P in K]: … }` com `K extends keyof T` herda a opcionalidade. O helper que deveria obrigar o NULL explícito aceitava a chave omitida, e só o `@ts-expect-error` do teste (TS2578) mostrou isso. Precisa de `-?`.

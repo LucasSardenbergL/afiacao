@@ -105,6 +105,8 @@ scripts/orcamento-compra-simular.ts  → resultado.json → página Artifact
 
 ## 6. Guarda de caixa (diária, 91 dias, cenário-guarda)
 
+> **Emenda 2026-10-21 (founder):** horizonte de **60 dias** (reserva de 30 mantida). Medido no backtest de 2026-10-20: com 91 dias, 30 dos 127 disparados ficavam inviáveis só pela base; com 60, 9. Ver LEIA-ME, rodada de 2026-10-21.
+
 Trajetória diária como-de cada data de decisão:
 1. **Base** = snapshot **pessimista** da engine daquele dia (estresse da engine já aplicado; não reaplicar). Saldo inicial reconciliado com `fin_contas_correntes` — diferença vira linha "reconciliação", não é absorvida. Detalhe diário pelos títulos (`saidas`/`entradas` do snapshot têm data); onde só houver agregado, limite inferior conservador (saídas no 1º dia, entradas no último).
 2. **Compromissos não titulados** = pedido disparado − parte já titulada, por **pedido → `purchase_orders_tracking.omie_codigo_pedido` → `nfe_numero` → `fin_contas_pagar.numero_documento_fiscal` (fornecedor 8689681266)**. Faturamento parcial = título + resíduo (conserva o total). Sem NF conciliável → entra **inteiro**, marcado "não conciliado".

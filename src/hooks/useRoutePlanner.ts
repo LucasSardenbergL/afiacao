@@ -25,9 +25,8 @@ import type {
 import { enrichWithPriority } from '@/components/rota/planner/priority';
 import { semCompraHa30Dias } from '@/components/rota/planner/renderHelpers';
 import { STOP_DURATION_MIN } from '@/components/rota/planner/constants';
-import type { Tables } from '@/integrations/supabase/types';
-import { visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
-import type { VisitaAgendadaRow } from '@/integrations/supabase/visitasAgendadas';
+import type { Json, Tables } from '@/integrations/supabase/types';
+import { visitaDaLinha, visitasAgendadasTable } from '@/integrations/supabase/visitasAgendadas';
 import { agendaToRouteStop } from '@/lib/visitas/agenda-to-stop';
 import { prospectRowToStopDraft } from '@/lib/route/prospect-stop';
 import type { ProspectRow } from '@/lib/route/prospect-stop';
@@ -55,16 +54,6 @@ import { hojeSP } from '@/lib/time/sp-day';
 // 2026-08-20, 80 municípios têm ≥1.000 prospects elegíveis, São Paulo (7107) tem 25.512.
 const PROSPECTS_POR_CIDADE = 1000;
 
-/**
- * O mínimo do builder do PostgREST que a paginação usa. Existe porque as duas RPCs abaixo
- * entram por `as never` (tipos ainda não regenerados) e o `as never` apaga `.order`/`.range`
- * do tipo — mesmo recurso de `financeiroV2Service.ts`.
- */
-type LeituraOrdenavel<T> = {
-  order: (coluna: string, opts: { ascending: boolean }) => LeituraOrdenavel<T>;
-  range: (de: number, ate: number) => PromiseLike<{ data: T[] | null; error: unknown }>;
-};
-
 // Linha de route_visits enriquecida com o nome do cliente (resolvido via profiles).
 export type TodayVisitRow = Tables<'route_visits'> & { customerName: string };
 
@@ -79,8 +68,26 @@ type RawAddress = {
   complement?: string;
 };
 
+/**
+ * `orders.address` é `jsonb` (tipado `Json`). Só objeto vira endereço, e só os campos-texto contam:
+ * o cast antigo aceitava qualquer forma e um valor não-objeto passava como endereço "verdadeiro",
+ * bloqueando o fallback para o endereço padrão do cliente.
+ */
+function lerEnderecoPedido(v: Json | null): RawAddress | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const texto = (chave: keyof RawAddress): string | undefined => {
+    const x = v[chave];
+    return typeof x === 'string' ? x : undefined;
+  };
+  return {
+    street: texto('street'), number: texto('number'), neighborhood: texto('neighborhood'),
+    city: texto('city'), state: texto('state'), zip_code: texto('zip_code'), complement: texto('complement'),
+  };
+}
+
 // Projeção de customer_metrics_mv usada em loadManualCustomers (a última compra canônica).
-type UltimaCompraRow = { customer_user_id: string; ultima_compra_data: string | null };
+// `customer_user_id` vem nullable da view materializada: linha sem cliente não é "última compra de alguém" e fica fora do Map.
+type UltimaCompraRow = { customer_user_id: string | null; ultima_compra_data: string | null };
 
 // Projeção de user_tools + embed tool_categories(name) usada em loadCommercialStops.
 type OverdueToolRow = {
@@ -296,7 +303,7 @@ export function useRoutePlanner() {
 
       const stops: RouteStop[] = orders.map(order => {
         const profile = profiles?.find(p => p.user_id === order.user_id);
-        const orderAddress = order.address as unknown as RawAddress | null;
+        const orderAddress = lerEnderecoPedido(order.address);
         const defaultAddr = addresses?.find(a => a.user_id === order.user_id && a.is_default) || addresses?.find(a => a.user_id === order.user_id);
         const addr = orderAddress || defaultAddr;
 
@@ -378,10 +385,11 @@ export function useRoutePlanner() {
               .from('customer_metrics_mv')
               .select('customer_user_id, ultima_compra_data')
               .order('customer_user_id', { ascending: true })
-              .range(de, ate) as unknown as PromiseLike<{ data: UltimaCompraRow[] | null; error: unknown }>,
+              .range(de, ate),
           'customer_metrics_mv/roteirizador',
         );
-        ultimaCompra = new Map(linhas.map((l) => [l.customer_user_id, l.ultima_compra_data]));
+        ultimaCompra = new Map();
+        for (const l of linhas) if (l.customer_user_id !== null) ultimaCompra.set(l.customer_user_id, l.ultima_compra_data);
       } catch (error) {
         console.error('Error loading last purchases:', error);
         toast.error('Última compra dos clientes indisponível — o filtro "sem compra há 30 dias" não inclui ninguém');
@@ -655,7 +663,7 @@ export function useRoutePlanner() {
         return;
       }
 
-      const rows = (data as unknown as VisitaAgendadaRow[]) || [];
+      const rows = (data ?? []).map(visitaDaLinha);
       if (rows.length === 0) {
         setScheduledVisitStops([]);
         return;
@@ -747,7 +755,8 @@ export function useRoutePlanner() {
 
       // Group overdue tools by user
       const overdueByUser = new Map<string, string[]>();
-      ((overdueTools || []) as unknown as OverdueToolRow[]).forEach((t) => {
+      const ferramentas: OverdueToolRow[] = overdueTools ?? [];
+      ferramentas.forEach((t) => {
         const toolName = t.tool_categories?.name || 'Ferramenta';
         if (!overdueByUser.has(t.user_id)) overdueByUser.set(t.user_id, []);
         overdueByUser.get(t.user_id)!.push(toolName);
@@ -869,12 +878,8 @@ export function useRoutePlanner() {
         cities.map((city) =>
           fetchAllPages<ProspectRow>(
             (de, ate) =>
-              (
-                supabase.rpc(
-                  'radar_prospects_para_rota' as never,
-                  { p_municipio_codigo: city.codigo, p_limit: PROSPECTS_POR_CIDADE } as never,
-                ) as unknown as LeituraOrdenavel<ProspectRow>
-              )
+              supabase
+                .rpc('radar_prospects_para_rota', { p_municipio_codigo: city.codigo, p_limit: PROSPECTS_POR_CIDADE })
                 .order('cnpj', { ascending: true })
                 .range(de, ate),
             `radar_prospects_para_rota/${city.codigo}`,
@@ -943,11 +948,8 @@ export function useRoutePlanner() {
         cities.map(async (city) => {
           const rows = await fetchAllPages<CarteiraRow>(
             (de, ate) =>
-              (
-                supabase.rpc('carteira_por_municipio', {
-                  p_municipio_codigo: city.codigo,
-                }) as unknown as LeituraOrdenavel<CarteiraRow>
-              )
+              supabase
+                .rpc('carteira_por_municipio', { p_municipio_codigo: city.codigo })
                 .order('user_id', { ascending: true })
                 .range(de, ate),
             `carteira_por_municipio/${city.codigo}`,

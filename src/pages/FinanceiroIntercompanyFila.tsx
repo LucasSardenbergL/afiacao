@@ -18,9 +18,11 @@ import {
   type IcMatch,
 } from '@/hooks/useIcMatches';
 import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { acoesDaLinhaIc } from '@/lib/financeiro/fila-intercompany';
+import { useAuth } from '@/contexts/AuthContext';
 import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { toast } from 'sonner';
-import { RefreshCw, CheckCircle2, Ban } from 'lucide-react';
+import { RefreshCw, CheckCircle2, Ban, Gift, Undo2 } from 'lucide-react';
 
 const STATUS_LABELS: Record<IcMatch['status'], string> = {
   auto_matched: 'Auto',
@@ -30,6 +32,7 @@ const STATUS_LABELS: Record<IcMatch['status'], string> = {
   sem_contrapartida: 'Sem par',
   duplicidade_possivel: 'Duplicidade',
   desconsiderado: 'Ignorado',
+  intragrupo_sem_cobranca: 'Sem cobrança',
 };
 
 const STATUS_VARIANT: Record<
@@ -43,6 +46,14 @@ const STATUS_VARIANT: Record<
   sem_contrapartida: 'destructive',
   duplicidade_possivel: 'destructive',
   desconsiderado: 'outline',
+  intragrupo_sem_cobranca: 'secondary',
+};
+
+const TOAST_ACAO: Partial<Record<IcMatch['status'], string>> = {
+  manual_matched: 'Aprovado',
+  desconsiderado: 'Ignorado',
+  intragrupo_sem_cobranca: 'Marcado como venda sem cobrança — o DRE consolidado elimina o CP do CMV do destino',
+  sem_contrapartida: 'Marcação desfeita — a próxima reconciliação refaz a linha',
 };
 
 export default function FinanceiroIntercompanyFila() {
@@ -55,6 +66,8 @@ export default function FinanceiroIntercompanyFila() {
   const estadoFila = estadoDeLeitura(filaQuery);
   const resolve = useResolveIcMatch();
   const reconcile = useReconcileIcNow();
+  // A marcação "sem cobrança" é decisão do founder: o trigger do banco exige master; a tela só não oferece.
+  const { isMaster } = useAuth();
 
   const handleReconcile = async () => {
     try {
@@ -67,19 +80,13 @@ export default function FinanceiroIntercompanyFila() {
   };
 
   const handleResolve = async (
-    id: string,
+    m: IcMatch,
     status: IcMatch['status'],
     obs?: string
   ) => {
     try {
-      await resolve.mutateAsync({ id, status, observacao: obs });
-      const actionLabel =
-        status === 'manual_matched'
-          ? 'Aprovado'
-          : status === 'desconsiderado'
-            ? 'Ignorado'
-            : 'Atualizado';
-      toast.success(actionLabel);
+      await resolve.mutateAsync({ id: m.id, statusAtual: m.status, status, observacao: obs });
+      toast.success(TOAST_ACAO[status] ?? 'Atualizado');
     } catch (err) {
       toast.error(`Erro: ${String((err as Error).message ?? err)}`);
     }
@@ -117,6 +124,7 @@ export default function FinanceiroIntercompanyFila() {
           <TabsTrigger value="divergencia_data">Diff data</TabsTrigger>
           <TabsTrigger value="sem_contrapartida">Sem par</TabsTrigger>
           <TabsTrigger value="duplicidade_possivel">Duplicidade</TabsTrigger>
+          <TabsTrigger value="intragrupo_sem_cobranca">Sem cobrança</TabsTrigger>
           <TabsTrigger value="auto_matched">OK</TabsTrigger>
           <TabsTrigger value="all">Tudo</TabsTrigger>
         </TabsList>
@@ -180,10 +188,10 @@ export default function FinanceiroIntercompanyFila() {
                           }) ?? '—'}
                         </TableCell>
                         <TableCell className="font-tabular text-sm">
-                          {m.diff_valor.toLocaleString('pt-BR', {
+                          {m.diff_valor?.toLocaleString('pt-BR', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
-                          })}
+                          }) ?? '—'}
                         </TableCell>
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[m.status]}>
@@ -191,43 +199,79 @@ export default function FinanceiroIntercompanyFila() {
                           </Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          {m.status !== 'manual_matched' &&
-                            m.status !== 'desconsiderado' && (
+                          {(() => {
+                            const acoes = acoesDaLinhaIc(m, isMaster);
+                            if (acoes.length === 0) {
+                              return (
+                                <div className="text-xs text-muted-foreground">
+                                  {m.status === 'manual_matched'
+                                    ? 'Aprovado'
+                                    : m.status === 'intragrupo_sem_cobranca'
+                                      ? 'Sem cobrança (decisão do founder)'
+                                      : 'Ignorado'}
+                                </div>
+                              );
+                            }
+                            return (
                               <div className="flex gap-1 justify-end">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    handleResolve(m.id, 'manual_matched')
-                                  }
-                                  disabled={resolve.isPending}
-                                  className="h-7 text-xs"
-                                >
-                                  <CheckCircle2 className="mr-1 h-3 w-3" />
-                                  Aprovar
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() =>
-                                    handleResolve(m.id, 'desconsiderado')
-                                  }
-                                  disabled={resolve.isPending}
-                                  className="h-7 text-xs"
-                                >
-                                  <Ban className="mr-1 h-3 w-3" />
-                                  Ignorar
-                                </Button>
+                                {acoes.includes('aprovar') && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleResolve(m, 'manual_matched')}
+                                    disabled={resolve.isPending}
+                                    className="h-7 text-xs"
+                                  >
+                                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                                    Aprovar
+                                  </Button>
+                                )}
+                                {acoes.includes('sem_cobranca') && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() =>
+                                      handleResolve(
+                                        m,
+                                        'intragrupo_sem_cobranca',
+                                        'venda intragrupo sem cobrança (decisão do founder)'
+                                      )
+                                    }
+                                    disabled={resolve.isPending}
+                                    className="h-7 text-xs"
+                                    title="Venda entre empresas do grupo que não será cobrada: o DRE consolidado elimina este CP do CMV do destino e o resultado do grupo sobe esse valor"
+                                  >
+                                    <Gift className="mr-1 h-3 w-3" />
+                                    Sem cobrança
+                                  </Button>
+                                )}
+                                {acoes.includes('ignorar') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleResolve(m, 'desconsiderado')}
+                                    disabled={resolve.isPending}
+                                    className="h-7 text-xs"
+                                  >
+                                    <Ban className="mr-1 h-3 w-3" />
+                                    Ignorar
+                                  </Button>
+                                )}
+                                {acoes.includes('desfazer_sem_cobranca') && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleResolve(m, 'sem_contrapartida')}
+                                    disabled={resolve.isPending}
+                                    className="h-7 text-xs"
+                                  >
+                                    <Undo2 className="mr-1 h-3 w-3" />
+                                    Desfazer
+                                  </Button>
+                                )}
                               </div>
-                            )}
-                          {(m.status === 'manual_matched' ||
-                            m.status === 'desconsiderado') && (
-                            <div className="text-xs text-muted-foreground">
-                              {m.status === 'manual_matched'
-                                ? 'Aprovado'
-                                : 'Ignorado'}
-                            </div>
-                          )}
+                            );
+                          })()}
                         </TableCell>
                       </TableRow>
                     ))}

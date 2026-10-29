@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **691** custom migrations totais
-- **2227** objetos esperados (criados por estas migrations)
+- **711** custom migrations totais
+- **2307** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 833
-  - `rls_policy`: 482
-  - `index`: 288
-  - `cron_job`: 196
-  - `table`: 194
-  - `view`: 125
-  - `trigger`: 105
+  - `function`: 864
+  - `rls_policy`: 493
+  - `index`: 301
+  - `table`: 208
+  - `cron_job`: 200
+  - `view`: 127
+  - `trigger`: 110
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5620,6 +5620,184 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.radar_irmaos_por_raiz` | — |
 | `index` | `public.idx_radar_empresas_raiz` | `radar_empresas` |
+
+### `20261021120000_fin_consolidado_ic_sinal_cmv.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_consolidado_intercompany` | — |
+
+### `20261021120000_radar_cadastro_omie_confirmacao_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+| `table` | `public.omie_cliente_confirmacoes` | — |
+| `index` | `public.omie_cliente_confirmacoes_doc_idx` | `omie_cliente_confirmacoes` |
+
+### `20261021120000_radar_score_lead_v3_cnae_secundario.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+
+### `20261021120500_radar_cadastro_omie_idempotente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_registrar_cadastro_omie` | — |
+| `index` | `public.radar_empresas_omie_codigo_cliente_uniq` | `radar_empresas` |
+
+### `20261021175441_nfe_recebimento_manual_trilha.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.nfe_recebimento_manual_trilha_append_only` | — |
+| `table` | `public.nfe_recebimento_manual_trilha` | — |
+| `index` | `public.idx_nfe_receb_manual_trilha_execucao` | `nfe_recebimento_manual_trilha` |
+| `index` | `public.idx_nfe_receb_manual_trilha_criado` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_append_only` | `nfe_recebimento_manual_trilha` |
+| `trigger` | `public.trg_nfe_receb_manual_trilha_sem_truncate` | `nfe_recebimento_manual_trilha` |
+| `rls_policy` | `public.nfe_receb_manual_trilha_select_staff` | `nfe_recebimento_manual_trilha` |
+
+### `20261021190000_fin_ic_venda_sem_cobranca.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ic_matches_guarda_sem_cobranca` | — |
+| `function` | `public.fin_consolidado_intercompany` | — |
+| `table` | `public.fin_ic_contrapartes` | — |
+| `table` | `public.fin_ic_reconcile_rodadas` | — |
+| `trigger` | `public.fin_ic_matches_guarda_sem_cobranca` | `fin_ic_matches` |
+
+### `20261021203000_tint_purge_staging_fora_do_promote.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_staging_purge` | — |
+| `cron_job` | `cron.tint-staging-purge-diario` | — |
+
+### `20261026214720_tint_receita_versoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_receita_versoes_append_only` | — |
+| `function` | `public.tint_receita_versoes_capturar` | — |
+| `table` | `public.tint_receita_versoes` | — |
+| `index` | `public.uq_tint_receita_versoes_staging` | `tint_receita_versoes` |
+| `index` | `public.uq_tint_receita_versoes_saida` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_chave` | `tint_receita_versoes` |
+| `index` | `public.idx_tint_receita_versoes_receita_recebido` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only` | `tint_receita_versoes` |
+| `trigger` | `public.trg_tint_receita_versoes_append_only_trunc` | `tint_receita_versoes` |
+| `cron_job` | `cron.tint-receita-versoes-diario` | — |
+| `rls_policy` | `public.Staff can view tint_receita_versoes` | `tint_receita_versoes` |
+
+### `20261026214721_tint_arquivar_staging_fantasma.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261026220000_fin_titulo_baixas_cp_mapa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_titulo_baixas_cp_mapa` | — |
+
+### `20261027010000_radar_situacao_por_cron.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_aplicar_situacao_pendente` | — |
+| `function` | `public.radar_avisar_lote` | — |
+| `cron_job` | `cron.radar-aplicar-situacao-diario` | — |
+
+### `20261027160000_radar_cadastro_conflitos.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._radar_cadastro_conflito_gravar` | — |
+| `function` | `public.radar_registrar_cadastro_omie_v2` | — |
+| `function` | `public.radar_estado_cadastro_omie` | — |
+| `function` | `public.radar_registrar_conflito_cadastro` | — |
+| `function` | `public.radar_resolver_conflito_cadastro` | — |
+| `table` | `public.radar_cadastro_conflitos` | — |
+| `index` | `public.radar_cadastro_conflitos_aberto_uniq` | `radar_cadastro_conflitos` |
+| `rls_policy` | `public.radar_cadastro_conflitos_select_gestor` | `radar_cadastro_conflitos` |
+
+### `20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._data_health_compute` | — |
+
+### `20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_projecao_13_semanas` | — |
+
+### `20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261028100000_tint_consumo_corante.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_corante_constantes` | — |
+| `function` | `public.tint_consumo_cobertura_em` | — |
+| `function` | `public.tint_consumo_plano_extracao` | — |
+| `function` | `public.tint_promote_preparacoes` | — |
+| `function` | `public.tint_consumo_compactar` | — |
+| `function` | `public.tint_preparacoes_tick` | — |
+| `table` | `public.tint_staging_preparacao_manifestos` | — |
+| `table` | `public.tint_consumo_preparacao` | — |
+| `table` | `public.tint_consumo_corante` | — |
+| `table` | `public.tint_consumo_planos` | — |
+| `table` | `public.tint_consumo_extracoes` | — |
+| `table` | `public.tint_consumo_extracao_lotes` | — |
+| `table` | `public.tint_consumo_runs_aplicados` | — |
+| `index` | `public.idx_tint_consumo_preparacao_dosagem` | `tint_consumo_preparacao` |
+| `index` | `public.idx_tint_consumo_corante_giro` | `tint_consumo_corante` |
+| `index` | `public.idx_tint_consumo_planos_loja` | `tint_consumo_planos` |
+| `index` | `public.idx_tint_consumo_extracoes_completas` | `tint_consumo_extracoes` |
+| `cron_job` | `cron.tint-preparacoes-tick` | — |
+| `rls_policy` | `public.tint_consumo_preparacao_staff_le` | `tint_consumo_preparacao` |
+| `rls_policy` | `public.tint_consumo_corante_staff_le` | `tint_consumo_corante` |
+| `rls_policy` | `public.tint_consumo_planos_staff_le` | `tint_consumo_planos` |
+| `rls_policy` | `public.tint_consumo_extracoes_staff_le` | `tint_consumo_extracoes` |
+| `rls_policy` | `public.tint_consumo_extracao_lotes_staff_le` | `tint_consumo_extracao_lotes` |
+| `rls_policy` | `public.tint_consumo_runs_aplicados_staff_le` | `tint_consumo_runs_aplicados` |
+| `rls_policy` | `public.tint_staging_preparacao_manifestos_staff_le` | `tint_staging_preparacao_manifestos` |
+
+### `20261028100100_tint_corante_giro.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_corante_consumo_diario_em` | — |
+| `function` | `public.tint_corante_giro_em` | — |
+| `view` | `public.v_corante_consumo_diario` | — |
+| `view` | `public.v_corante_giro` | — |
+
+### `20261028100200_analytics_ledger_corantes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261028220003_venda_lista_acesso.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_minhas_sugestoes` | — |
+| `table` | `public.venda_lista_acesso` | — |
+| `rls_policy` | `public.venda_lista_acesso_select_master` | `venda_lista_acesso` |
+
+### `20261029095257_tint_arquivar_staging_fantasma_lote2.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

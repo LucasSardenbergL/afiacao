@@ -22,7 +22,7 @@ interface ProductionOrder {
   product_codigo: string | null;
   product_descricao: string | null;
   quantidade: number;
-  unidade: string;
+  unidade: string | null;
   status: string;
   omie_ordem_numero: string | null;
   ready_by_date: string | null;
@@ -54,7 +54,7 @@ const ProductionOrders = () => {
       .from('production_orders')
       .select('*')
       .order('created_at', { ascending: false });
-    if (!error && data) setOrders(data as unknown as ProductionOrder[]);
+    if (!error && data) setOrders(data);
     setLoading(false);
   };
 
@@ -80,11 +80,20 @@ const ProductionOrders = () => {
   };
 
   const handleStartProduction = async (orderId: string) => {
-    await supabase
+    // `.select` devolve as linhas atualizadas: 0 linhas sem erro (ordem sumiu ou RLS barrou)
+    // também é falha — antes o toast de sucesso saía mesmo sem nada gravado.
+    const { data, error } = await supabase
       .from('production_orders')
-      .update({ status: 'in_progress' } as never)
-      .eq('id', orderId);
-    toast.success('Produção iniciada!');
+      .update({ status: 'in_progress' })
+      .eq('id', orderId)
+      .select('id');
+    if (error) {
+      toast.error('Erro ao iniciar produção: ' + error.message);
+    } else if (!data?.length) {
+      toast.error('Produção não iniciada: a ordem não foi atualizada');
+    } else {
+      toast.success('Produção iniciada!');
+    }
     loadOrders();
   };
 
