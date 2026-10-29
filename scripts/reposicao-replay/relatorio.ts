@@ -5,7 +5,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { CenarioLT } from './aleatorio';
 import { CENARIOS_FALTA, PISOS_SERVICO } from './config';
-import type { ResultadoCalibracao } from './calibracao';
+import { reducaoRelativa, type ResultadoCalibracao } from './calibracao';
 import type { Criterio } from './estatistica';
 import type { Formula, ParamsFormula, RelatorioParidade } from './formulas';
 import type { GradeCusto } from './metricas';
@@ -40,8 +40,8 @@ export interface Rodada {
   modoAncora: ModoAncora;
   /** Achado 14 (§5.1.1): classe recalculada × classe de hoje, ponderada por valor (a rodada para acima de 5% do valor A). */
   validacaoClasse: ValidacaoClasse;
-  calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' };
-  fronteira: { formula: Formula; params: ParamsFormula; fill: Record<Classe | 'total', number | null>; reducao: number }[];
+  calibracao: { alvo: Record<Classe, number | null>; fillF0: Record<Classe, number | null>; resultados: ResultadoCalibracao[]; candidata: Formula | 'NENHUMA' | 'INDETERMINADA' };
+  fronteira: { formula: Formula; params: ParamsFormula; fill: Record<Classe | 'total', number | null>; reducao: number | null }[];
   excluidosDados: { sku: string; motivo: string }[];
   avisos: AvisoDados[];
   parados: Parado[];
@@ -97,7 +97,7 @@ export interface Diagnostico {
   /** LT (du) realizado nos pedidos de A do F0 (rep 0) a partir de `desde` × LT do parâmetro F0 no dia do pedido. */
   lt: { desde: Data; pedidos: number; sorteadoMedio: number | null; parametroMedio: number | null };
   /** Operação real × F0 simulado na calibração (R$ só aqui, local): estoque médio (mesma valoração) e unidades recebidas até 30/04. */
-  real: { estoqueReal: number; estoqueF0: number; recebidoReal: number; recebidoF0: number };
+  real: { estoqueReal: number; estoqueF0: number | null; recebidoReal: number; recebidoF0: number };
 }
 
 // ── formatação ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -200,7 +200,7 @@ function secoesDoBloco(
           `${t.params.quantil.A} / ${t.params.quantil.B} / ${t.params.quantil.C}`,
           t.inviavel ? 'sim' : 'não',
           `${pct(t.fill.A)} / ${pct(t.fill.B)} / ${pct(t.fill.C)}`,
-          pct(1 - t.estoqueMedio / x.estoqueF0),
+          pct(reducaoRelativa(t.estoqueMedio, x.estoqueF0)),
           String(t.avaliacoes),
         ]),
       ),
@@ -237,7 +237,7 @@ function secoesDoBloco(
     s(H3 + 'Capital (estoque físico médio a CMC, ponderado por dias corridos)');
     s(
       tabela(
-        ['Cenário', 'Estoque médio F0', 'Estoque médio cand.', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)'],
+        ['Cenário', 'Estoque médio F0 (só o valorado)', 'Estoque médio cand. (só o valorado)', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)'],
         a.capital.map((c) => [
           rotCen(c.cenario), brl(c.estoqueF0), brl(c.estoqueAlt), ivPct(comb(c.reducao)),
           `${pct(c.naoValorado.f0)} / ${pct(c.naoValorado.alt)}`, `${pct(c.grupos.f0)} / ${pct(c.grupos.alt)}`,
@@ -496,7 +496,7 @@ export function montarRelatorio(r: Rodada): string {
     const base = d.demandaA[0]?.unidades ?? 0;
     s(`Demanda de A por mês (unidades; razão contra o 1º mês): ${d.demandaA.map((m) => `${m.mes} ${num(m.unidades, 0)}${base > 0 ? ` (${num(m.unidades / base, 2)}×)` : ''}`).join(' · ')}. A média de 90 dias do F0 demora a acompanhar a alta.`);
     s(`LT nos pedidos de A desde ${d.lt.desde} (F0, rep 0, ${d.lt.pedidos} pedidos): sorteado médio ${d.lt.sorteadoMedio === null ? 'n/d' : num(d.lt.sorteadoMedio, 1)} du × parâmetro médio do F0 ${d.lt.parametroMedio === null ? 'n/d' : num(d.lt.parametroMedio, 1)} du.`);
-    s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×); recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
+    s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${d.real.estoqueF0 === null ? 'n/d (estoque sem CMC na calibração)' : `${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×)`}; recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
   }
   if (r.informativoErro) s(`**A rodada informativa falhou** (o veredito ${principalOficial ? 'oficial' : 'da rodada principal'} acima não é afetado): ${r.informativoErro}`);
   if (r.informativo) secoesDoBloco(r, r.informativo, s, { h: '###', prefixo: '11.', oficial: false, extrasVeredito: ['**NÃO OFICIAL (R27)** — alvo e critérios nas células *_alt; população simulada = só os alterados.'] });

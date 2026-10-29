@@ -144,6 +144,19 @@ export function estoqueDaJanela(s: SomasSemanais): number {
   return soma(s.estoqueCmcDias) / dias;
 }
 
+/**
+ * I2 (achado 10 na calibração): o estoque médio só é COMPARÁVEL se todo o estoque da janela é valorado. Com estoque sem
+ * CMC (unidades × dias > 0) ⇒ null: a redução do subtotal valorado nunca entra em escolha, fronteira nem precisão.
+ */
+export function estoqueComparavel(s: SomasSemanais): number | null {
+  return soma(s.estoqueNaoValoradoDias) > 0 ? null : estoqueDaJanela(s);
+}
+
+/** Redução relativa 1 − alt/base; null se algum lado não é comparável (I2) ou a base não tem estoque. */
+export function reducaoRelativa(alt: number | null, base: number | null): number | null {
+  return alt === null || base === null || !(base > 0) ? null : 1 - alt / base;
+}
+
 // ── mapa de parâmetros: Fn só nos alterados ───────────────────────────────────────────────────────────────────────
 
 /**
@@ -180,7 +193,8 @@ export function alvoDaClasse(classe: Classe, fillF0: number | null): number | nu
 export type Trio = Record<Classe, number>;
 export interface AvaliacaoTrio {
   fill: Record<Classe, number | null>;
-  estoque: number;
+  /** Estoque médio comparável; null = há estoque sem CMC na janela (I2: o trio não é ordenável por capital). */
+  estoque: number | null;
 }
 export interface ResultadoBusca {
   quantil: Trio;
@@ -190,6 +204,8 @@ export interface ResultadoBusca {
   naoObservaveis: Classe[];
   /** Trios distintos avaliados. */
   avaliacoes: number;
+  /** I2: algum trio avaliado tinha estoque sem CMC — a busca parou no quantil mais alto, sem ordenar por subtotal. */
+  capitalIndeterminado: boolean;
 }
 
 const QMAX = GRADE_QUANTIS[GRADE_QUANTIS.length - 1];
@@ -221,12 +237,22 @@ export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Cla
   };
   const naoObservaveis = CLASSES.filter((c) => alvo[c] === null);
   const trio: Trio = { A: QMAX, B: QMAX, C: QMAX };
+  // I2: estoque não comparável (sem CMC) ⇒ nenhuma ordenação por capital; fica no quantil mais alto e marca
+  const indeterminado = (): ResultadoBusca => {
+    const a = aval(trio);
+    return { quantil: { ...trio }, inviavel: !CLASSES.every((c) => atinge(a, alvo, c)), avaliacao: a, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: true };
+  };
+  if (aval(trio).estoque === null) return indeterminado();
   for (let rodada = 0; rodada < 2; rodada++) {
     for (const c of CLASSES) {
       if (alvo[c] === null) continue;
       let melhor: { q: number; estoque: number } | null = null;
       for (const q of GRADE_QUANTIS) {
         const a = aval({ ...trio, [c]: q });
+        if (a.estoque === null) {
+          for (const x of CLASSES) trio[x] = QMAX;
+          return indeterminado();
+        }
         if (!atinge(a, alvo, c)) continue;
         if (melhor === null || a.estoque < melhor.estoque - 1e-9) melhor = { q, estoque: a.estoque }; // grade crescente: empate fica no menor
       }
@@ -234,15 +260,16 @@ export function buscarTrio(avaliar: (q: Trio) => AvaliacaoTrio, alvo: Record<Cla
     }
   }
   aval(trio);
-  let escolhido: { q: Trio; a: AvaliacaoTrio } | null = null;
+  let escolhido: { q: Trio; a: AvaliacaoTrio; e: number } | null = null;
   for (const [k, a] of memo) {
     if (!CLASSES.every((c) => atinge(a, alvo, c))) continue;
+    if (a.estoque === null) return indeterminado(); // inalcançável: a descida já parou no 1º null
     const [A, B, C] = k.split('|').map(Number);
     const q: Trio = { A, B, C };
-    if (escolhido === null || a.estoque < escolhido.a.estoque - 1e-9 || (Math.abs(a.estoque - escolhido.a.estoque) <= 1e-9 && compararTrio(q, escolhido.q) < 0)) escolhido = { q, a };
+    if (escolhido === null || a.estoque < escolhido.e - 1e-9 || (Math.abs(a.estoque - escolhido.e) <= 1e-9 && compararTrio(q, escolhido.q) < 0)) escolhido = { q, a, e: a.estoque };
   }
-  if (escolhido === null) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size };
-  return { quantil: escolhido.q, inviavel: false, avaliacao: escolhido.a, naoObservaveis, avaliacoes: memo.size };
+  if (escolhido === null) return { quantil: { ...trio }, inviavel: true, avaliacao: memo.get(`${trio.A}|${trio.B}|${trio.C}`)!, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
+  return { quantil: escolhido.q, inviavel: false, avaliacao: escolhido.a, naoObservaveis, avaliacoes: memo.size, capitalIndeterminado: false };
 }
 
 // ── avaliação simulada na janela de calibração ──────────────────────────────────────────────────────────────────
@@ -280,7 +307,7 @@ export function avaliarNaCalibracao(
   }
   const m = mediaSomas(acc!, reps);
   const cel = (c: Classe): Celula => (celulas === 'alt' ? `${c}_alt` : c);
-  return { fill: { A: fillDaCelula(m, cel('A')), B: fillDaCelula(m, cel('B')), C: fillDaCelula(m, cel('C')) }, estoque: estoqueDaJanela(m), somas: m };
+  return { fill: { A: fillDaCelula(m, cel('A')), B: fillDaCelula(m, cel('B')), C: fillDaCelula(m, cel('C')) }, estoque: estoqueComparavel(m), somas: m };
 }
 
 const QUANTIL_NEUTRO: ParamsFormula = { quantil: { A: 0.95, B: 0.95, C: 0.95 } };
@@ -296,7 +323,8 @@ interface BaseCalibracao {
   /** Média das reps do F0 na calibração (diagnóstico). */
   somasF0: SomasSemanais;
   fillF0: Record<Classe, number | null>;
-  estoqueF0: number;
+  /** null = estoque sem CMC na calibração do F0 (I2). */
+  estoqueF0: number | null;
   alvo: Record<Classe, number | null>;
 }
 const memoBase = new WeakMap<Dados, Map<string, BaseCalibracao>>();
@@ -331,16 +359,18 @@ export interface ResultadoCalibracao {
   celulasAlvo: CelulasAlvo;
   params: ParamsFormula;
   inviavel: boolean;
-  /** Estoque médio da coorte no trio escolhido (no inviável: o do trio final da busca, só informativo). */
-  estoqueMedio: number;
-  /** Estoque médio do F0 na calibração (régua de 1 p.p. da escolha). */
-  estoqueF0: number;
+  /** Estoque médio da coorte no trio escolhido (no inviável: o do trio final da busca, só informativo). null = sem CMC (I2). */
+  estoqueMedio: number | null;
+  /** Estoque médio do F0 na calibração (régua de 1 p.p. da escolha). null = sem CMC (I2). */
+  estoqueF0: number | null;
+  /** I2: a escolha do trio (ou do β/janela) não pôde usar capital — estoque sem CMC na calibração. */
+  capitalIndeterminado: boolean;
   alvo: Record<Classe, number | null>;
   fillF0: Record<Classe, number | null>;
   fill: Record<Classe, number | null>;
   naoObservaveis: Classe[];
   /** Cada β (F2) ou janela (F3) tentado: o melhor viável vence. */
-  tentativas: { params: ParamsFormula; inviavel: boolean; estoqueMedio: number; fill: Record<Classe, number | null>; avaliacoes: number }[];
+  tentativas: { params: ParamsFormula; inviavel: boolean; estoqueMedio: number | null; fill: Record<Classe, number | null>; avaliacoes: number }[];
 }
 
 /**
@@ -357,6 +387,7 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
   const tentativas: ResultadoCalibracao['tentativas'] = [];
   let escolhida: { params: ParamsFormula; busca: ResultadoBusca } | null = null;
   let fallback: { params: ParamsFormula; busca: ResultadoBusca } | null = null;
+  let indeterminado = false;
   for (const v of variantes) {
     const avaliar = (q: Trio): AvaliacaoTrio => {
       const p: ParamsFormula = { ...v, quantil: q };
@@ -366,11 +397,15 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
     const busca = buscarTrio(avaliar, base.alvo);
     const params: ParamsFormula = { ...v, quantil: busca.quantil };
     tentativas.push({ params, inviavel: busca.inviavel, estoqueMedio: busca.avaliacao.estoque, fill: busca.avaliacao.fill, avaliacoes: busca.avaliacoes });
-    // menor estoque; empate (≤ 1e-9) → menor quantil (lexicográfico), como dentro da busca
-    const melhor = (atual: { busca: ResultadoBusca } | null): boolean =>
-      atual === null ||
-      busca.avaliacao.estoque < atual.busca.avaliacao.estoque - 1e-9 ||
-      (Math.abs(busca.avaliacao.estoque - atual.busca.avaliacao.estoque) <= 1e-9 && compararTrio(busca.quantil, atual.busca.quantil) < 0);
+    if (busca.capitalIndeterminado) indeterminado = true;
+    // menor estoque; empate (≤ 1e-9) → menor quantil (lexicográfico), como dentro da busca. Estoque null (I2) nunca vence.
+    const melhor = (atual: { busca: ResultadoBusca } | null): boolean => {
+      const e = busca.avaliacao.estoque;
+      if (atual === null) return true;
+      const ea = atual.busca.avaliacao.estoque;
+      if (e === null || ea === null) return false;
+      return e < ea - 1e-9 || (Math.abs(e - ea) <= 1e-9 && compararTrio(busca.quantil, atual.busca.quantil) < 0);
+    };
     if (!busca.inviavel && melhor(escolhida)) escolhida = { params, busca };
     if (melhor(fallback)) fallback = { params, busca };
   }
@@ -380,8 +415,9 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
     celulasAlvo: base.celulasAlvo,
     params: r.params,
     inviavel: escolhida === null,
-    estoqueMedio: r.busca.avaliacao.estoque,
+    estoqueMedio: indeterminado ? null : r.busca.avaliacao.estoque,
     estoqueF0: base.estoqueF0,
+    capitalIndeterminado: indeterminado || base.estoqueF0 === null,
     alvo: base.alvo,
     fillF0: base.fillF0,
     fill: r.busca.avaliacao.fill,
@@ -394,17 +430,23 @@ export function calibrar(dados: Dados, f: Formula, opcoes: OpcoesCalibracao = {}
 
 /**
  * Candidata = a viável de menor estoque; uma mais simples (F1 < F3 < F2) a ≤ 1 p.p. de capital (fração do estoque do F0
- * na calibração) dela fica com a vaga. Nenhuma viável ⇒ 'NENHUMA'.
+ * na calibração) dela fica com a vaga. Nenhuma viável ⇒ 'NENHUMA'. I2: alguma viável (ou o F0) com estoque não valorado
+ * ⇒ 'INDETERMINADA' — a escolha exigiria comparar subtotais valorados, e nenhuma fórmula vence por subtotal.
  */
-export function escolherCandidata(resultados: readonly Pick<ResultadoCalibracao, 'formula' | 'inviavel' | 'estoqueMedio' | 'estoqueF0'>[]): Formula | 'NENHUMA' {
+export function escolherCandidata(
+  resultados: readonly Pick<ResultadoCalibracao, 'formula' | 'inviavel' | 'estoqueMedio' | 'estoqueF0'>[],
+): Formula | 'NENHUMA' | 'INDETERMINADA' {
   const viaveis = resultados.filter((r) => !r.inviavel);
   if (viaveis.length === 0) return 'NENHUMA';
-  const melhor = viaveis.reduce((a, b) => (b.estoqueMedio < a.estoqueMedio - 1e-9 ? b : a));
+  if (viaveis.some((r) => r.estoqueMedio === null || r.estoqueF0 === null)) return 'INDETERMINADA';
+  const est = (r: (typeof viaveis)[number]) => r.estoqueMedio as number;
+  const melhor = viaveis.reduce((a, b) => (est(b) < est(a) - 1e-9 ? b : a));
   for (const f of ORDEM_SIMPLICIDADE) {
     const r = viaveis.find((x) => x.formula === f);
     if (!r) continue;
-    if (!(r.estoqueF0 > 0)) throw new Error('CALIBRACAO_ESTOQUE_F0_INVALIDO');
-    if ((r.estoqueMedio - melhor.estoqueMedio) / r.estoqueF0 <= TOLERANCIA_SIMPLICIDADE_PP + 1e-12) return f;
+    const e0 = r.estoqueF0 as number;
+    if (!(e0 > 0)) throw new Error('CALIBRACAO_ESTOQUE_F0_INVALIDO');
+    if ((est(r) - est(melhor)) / e0 <= TOLERANCIA_SIMPLICIDADE_PP + 1e-12) return f;
   }
   return melhor.formula;
 }
@@ -415,6 +457,7 @@ export function vereditoDaCalibracao(
 ): { veredito: 'NO-GO' | 'INCONCLUSIVO'; motivos: string[] } | null {
   const cand = escolherCandidata(resultados);
   if (cand === 'NENHUMA') return { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] };
+  if (cand === 'INDETERMINADA') return { veredito: 'INCONCLUSIVO', motivos: ['CAPITAL_NAO_VALORADO_NA_CALIBRACAO'] };
   const r = resultados.find((x) => x.formula === cand)!;
   if (r.naoObservaveis.length > 0) return { veredito: 'INCONCLUSIVO', motivos: [`CLASSE_NAO_OBSERVAVEL_NA_CALIBRACAO:${r.naoObservaveis.join(',')}`] };
   return null;

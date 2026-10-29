@@ -36,12 +36,14 @@ import {
   calibrar,
   CLASSES,
   escolherCandidata,
+  estoqueComparavel,
   estoqueDaJanela,
   vereditoDaCalibracao,
   fillDaCelula,
   mapaMisto,
   mediaSomas,
   populacaoDoModo,
+  reducaoRelativa,
   REPS_CALIBRACAO,
   somarSomas,
   type CelulasAlvo,
@@ -147,7 +149,7 @@ export interface Lote {
   /** Somas (não médias) por cenário. */
   somas: Record<string, { f0: SomasSemanais; alt: SomasSemanais }>;
   /** Por rep, nos cenários de `naPrecisao`: Δ fill das 6 células (null = célula sem linha) e redução de estoque. */
-  porRep: Record<string, { delta: Record<string, (number | null)[]>; reducao: number[] }>;
+  porRep: Record<string, { delta: Record<string, (number | null)[]>; reducao: (number | null)[] }>;
 }
 
 export function rodarLote(dados: Dados, cg: Congelado, reps: readonly number[], cacheDir?: string | null): Lote {
@@ -171,8 +173,8 @@ export function rodarLote(dados: Dados, cg: Congelado, reps: readonly number[], 
           const b = fillDaCelula(s0, cel);
           pr.delta[cel].push(a === null || b === null ? null : a - b);
         }
-        const e0 = estoqueDaJanela(s0);
-        pr.reducao.push(e0 > 0 ? 1 - estoqueDaJanela(s1) / e0 : NaN);
+        // I2: a redução do subtotal valorado não entra na precisão; estoque sem CMC ⇒ null (estoque fora da precisão)
+        pr.reducao.push(reducaoRelativa(estoqueComparavel(s1), estoqueComparavel(s0)));
       }
     }
     lote.n++;
@@ -384,13 +386,16 @@ export async function avaliarCandidata(
   let meiaEst: number | null = null;
   const medirPrecisao = (l: Lote) => {
     let s = 0;
-    let e = 0;
+    let e: number | null = 0;
     for (const v of Object.values(l.porRep)) {
       for (const cel of CELULAS_SERVICO) {
         const xs = v.delta[cel].filter((x): x is number => x !== null);
         if (xs.length === v.delta[cel].length && xs.length > 1) s = Math.max(s, meiaLarguraMC(xs));
       }
-      e = Math.max(e, meiaLarguraMC(v.reducao));
+      const rs = v.reducao.filter((x): x is number => x !== null);
+      // I2: alguma rep sem redução mensurável ⇒ a precisão do estoque não é medida (null), nunca do subtotal
+      if (rs.length !== v.reducao.length) e = null;
+      else if (e !== null) e = Math.max(e, meiaLarguraMC(rs));
     }
     return { s, e };
   };
@@ -403,8 +408,9 @@ export async function avaliarCandidata(
     const p = medirPrecisao(lote);
     meiaServ = p.s;
     meiaEst = p.e;
-    log(`reps ${reps}: meia largura serviço ${(meiaServ * 100).toFixed(3)} p.p., estoque ${(meiaEst * 100).toFixed(3)} p.p. (${((performance.now() - tl) / 1000).toFixed(1)} s)`);
-    if (meiaServ <= PRECISAO.meiaLarguraServico && meiaEst <= PRECISAO.meiaLarguraEstoque) break;
+    log(`reps ${reps}: meia largura serviço ${(meiaServ * 100).toFixed(3)} p.p., estoque ${meiaEst === null ? 'não mensurável (estoque sem CMC)' : `${(meiaEst * 100).toFixed(3)} p.p.`} (${((performance.now() - tl) / 1000).toFixed(1)} s)`);
+    // estoque não mensurável: não há precisão de estoque a perseguir (o critério de capital já é INCERTO e a linha Precisão também)
+    if (meiaServ <= PRECISAO.meiaLarguraServico && (meiaEst === null || meiaEst <= PRECISAO.meiaLarguraEstoque)) break;
   }
   marca('avaliacao', t);
   const L = lote!;
@@ -521,7 +527,12 @@ export async function avaliarCandidata(
       capital: capitalT,
       terminal,
       equilibrio,
-      dio: cmvDia === null ? null : { f0: estoqueDaJanela(mBase.f0) / cmvDia, alt: estoqueDaJanela(mBase.alt) / cmvDia, linhasSemCmc: semCmc },
+      // I2: DIO só com estoque todo valorado
+      dio: (() => {
+        const e0 = estoqueComparavel(mBase.f0);
+        const e1 = estoqueComparavel(mBase.alt);
+        return cmvDia === null || e0 === null || e1 === null ? null : { f0: e0 / cmvDia, alt: e1 / cmvDia, linhasSemCmc: semCmc };
+      })(),
       suaves: { n: suaves.size, f0: fillSuaves(accB!), fnPura: fillSuaves(accP!) },
       nulos,
       skusSemCmc: mBase.f0.skusSemCmc,
@@ -535,7 +546,7 @@ export async function avaliarCandidata(
 interface Calibracao {
   base: ReturnType<typeof baseDaCalibracao>;
   resultados: ResultadoCalibracao[];
-  candidata: Formula | 'NENHUMA';
+  candidata: Formula | 'NENHUMA' | 'INDETERMINADA';
   vc: ReturnType<typeof vereditoDaCalibracao>;
   fronteira: Rodada['fronteira'];
 }
@@ -550,7 +561,8 @@ function calibrarNoModo(dados: Dados, modo: CelulasAlvo): Calibracao {
     const tf = performance.now();
     const r = calibrar(dados, f, { celulasAlvo: modo });
     resultados.push(r);
-    log(`${rot}calibrar ${f}: ${JSON.stringify(r.params)} inviável=${r.inviavel} redução=${(1 - r.estoqueMedio / r.estoqueF0).toFixed(4)} (${((performance.now() - tf) / 1000).toFixed(1)} s)`);
+    const red = reducaoRelativa(r.estoqueMedio, r.estoqueF0);
+    log(`${rot}calibrar ${f}: ${JSON.stringify(r.params)} inviável=${r.inviavel} redução=${red === null ? 'não mensurável (estoque sem CMC)' : red.toFixed(4)} (${((performance.now() - tf) / 1000).toFixed(1)} s)`);
   }
   const candidata = escolherCandidata(resultados);
   log(`${rot}candidata: ${candidata}`);
@@ -561,7 +573,7 @@ function calibrarNoModo(dados: Dados, modo: CelulasAlvo): Calibracao {
       const p: ParamsFormula = { ...r.params, quantil: { A: q, B: q, C: q } };
       const mapa = mapaMisto(base.f0Mapa, preComputar(r.formula, dados, p, { calibracao: true }), populacaoDoModo(c0, modo), c0.alterados);
       const av = avaliarNaCalibracao(dados, r.formula, mapa, REPS_CALIBRACAO, modo);
-      fronteira.push({ formula: r.formula, params: p, fill: { ...av.fill, total: fillDaCelula(av.somas, 'total') }, reducao: 1 - av.estoque / base.estoqueF0 });
+      fronteira.push({ formula: r.formula, params: p, fill: { ...av.fill, total: fillDaCelula(av.somas, 'total') }, reducao: reducaoRelativa(av.estoque, base.estoqueF0) });
     }
   }
   return { base, resultados, candidata, vc: vereditoDaCalibracao(resultados), fronteira };
@@ -573,7 +585,7 @@ async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, te
   const cal = calibrarNoModo(dados, 'alt');
   tempos.calibracao = (performance.now() - t) / 1000;
   const calibracao = { alvo: cal.base.alvo, fillF0: cal.base.fillF0, resultados: cal.resultados, candidata: cal.candidata };
-  if (cal.candidata === 'NENHUMA' || cal.vc?.veredito === 'NO-GO') {
+  if (cal.candidata === 'NENHUMA' || cal.candidata === 'INDETERMINADA' || cal.vc?.veredito === 'NO-GO') {
     return { veredito: cal.vc ?? { veredito: 'NO-GO', motivos: ['INVIAVEL_NA_CALIBRACAO'] }, congelado: null, calibracao, fronteira: cal.fronteira, avaliacao: null };
   }
   const r = cal.resultados.find((x) => x.formula === cal.candidata)!;
@@ -1034,7 +1046,8 @@ async function principal(): Promise<number> {
   };
 
   const vc = vereditoDaCalibracao(resultados);
-  if (candidata === 'NENHUMA' || vc?.veredito === 'NO-GO') {
+  // I2: INDETERMINADA (capital não valorado na calibração) também para aqui, com o INCONCLUSIVO do vereditoDaCalibracao
+  if (candidata === 'NENHUMA' || candidata === 'INDETERMINADA' || vc?.veredito === 'NO-GO') {
     const v = vc ?? { veredito: 'NO-GO' as const, motivos: ['INVIAVEL_NA_CALIBRACAO'] };
     const rodada: Rodada = { ...comum, congelado: null, veredito: vereditoComModo(v, modoAncora), avaliacao: null, tempos, segundos: (performance.now() - t0) / 1000 };
     log(`${linhaVeredito(v.veredito, modoAncora)} (${v.motivos.join('; ')}) → ${saida}`);

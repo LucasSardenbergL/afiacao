@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { addDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/datas';
-import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, fillDaCelula, mediaSomas, somarSomas, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
+import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, estoqueDaJanela, fillDaCelula, mediaSomas, reducaoRelativa, somarSomas, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
 import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
 import { INICIO_AQUECIMENTO, JANELAS } from './config';
@@ -538,4 +538,46 @@ describe('Fix Codex leva C round 1 — I1 (legado nunca com cara de oficial) e M
     expect(iClasse).toBeGreaterThanOrEqual(0);
     expect(iGate).toBeGreaterThan(iClasse);
   });
+});
+
+describe('Fix Codex leva C round 1 — I2 (a calibração nunca escolhe pelo subtotal valorado)', () => {
+  it('I2: buscarTrio com estoque não comparável (null) para no quantil mais alto e marca capital indeterminado', () => {
+    let chamadas = 0;
+    const r = buscarTrio(() => (chamadas++, { fill: { A: 1, B: 1, C: 1 }, estoque: null }), { A: 0.98, B: 0.95, C: 0.9 });
+    expect(r.capitalIndeterminado).toBe(true);
+    expect(r.quantil).toEqual({ A: 0.999, B: 0.999, C: 0.999 });
+    expect(r.inviavel).toBe(false);
+    expect(chamadas).toBe(1); // nenhuma comparação por capital
+  });
+  it('I2: candidata com estoque não valorado nunca vence pelo subtotal — INDETERMINADA ⇒ INCONCLUSIVO', () => {
+    const r = (formula: 'F1' | 'F2' | 'F3', inviavel: boolean, estoqueMedio: number | null, estoqueF0: number | null = 1000) =>
+      ({ formula, inviavel, estoqueMedio, estoqueF0, naoObservaveis: [] });
+    expect(escolherCandidata([r('F1', false, 900), r('F2', false, null), r('F3', true, 100)])).toBe('INDETERMINADA');
+    expect(escolherCandidata([r('F1', false, 900, null)])).toBe('INDETERMINADA');
+    expect(escolherCandidata([r('F1', true, null), r('F2', false, 800)])).toBe('F2'); // a inviável não disputa
+    expect(vereditoDaCalibracao([r('F1', false, 900), r('F2', false, null)])).toEqual({ veredito: 'INCONCLUSIVO', motivos: ['CAPITAL_NAO_VALORADO_NA_CALIBRACAO'] });
+    expect(reducaoRelativa(null, 10)).toBeNull();
+    expect(reducaoRelativa(9, null)).toBeNull();
+    expect(reducaoRelativa(9, 10)).toBeCloseTo(0.1, 12);
+  });
+  it('I2 (contraprova do Codex no caminho da calibração): SKU sem CMC até 30/04 com estoque ⇒ calibração sem redução, nunca o subtotal', () => {
+    const dd = cenario(false);
+    for (const v of dd.vendas) if (v.sku === 'R' && v.data <= JANELAS.calibracaoFim) v.cmcLinha = null;
+    const base = baseDaCalibracao(dd, { reps: 2, cacheDir: null });
+    expect(base.estoqueF0).toBeNull();
+    expect(estoqueDaJanela(base.somasF0)).toBeGreaterThan(0); // o subtotal existe — e é exatamente o que não pode ser usado
+    const rs = (['F1', 'F2', 'F3'] as const).map((f) => calibrar(dd, f, { reps: 2, cacheDir: null }));
+    for (const x of rs) {
+      expect(x.estoqueMedio).toBeNull();
+      expect(x.capitalIndeterminado).toBe(true);
+    }
+    if (rs.some((x) => !x.inviavel)) {
+      expect(escolherCandidata(rs)).toBe('INDETERMINADA');
+      expect(vereditoDaCalibracao(rs)?.motivos).toEqual(['CAPITAL_NAO_VALORADO_NA_CALIBRACAO']);
+    } else expect(escolherCandidata(rs)).toBe('NENHUMA');
+    // controle: com o CMC, a mesma calibração tem estoque e escolhe por ele
+    const ok = calibrar(cenario(false), 'F1', { reps: 2, cacheDir: null });
+    expect(ok.estoqueMedio).not.toBeNull();
+    expect(ok.capitalIndeterminado).toBe(false);
+  }, 300_000);
 });
