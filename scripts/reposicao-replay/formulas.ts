@@ -19,8 +19,8 @@
 //    forçado; demanda da linha = sp.demanda_media_diaria gravada.
 //  · grupo de embalagem: a âncora (fator_para_base = 1) decide com os PRÓPRIOS parâmetros (demanda só dela — é o motor) e
 //    sem teto; o membro com fator > 1 nunca é âncora (SEM_DECISAO). O estoque consolidado é da Task 6.
-// LIMITAÇÕES do F0 (relatório): sem preço de compra real (o extrato não traz valor do recebimento: cmc anterior a d → cmc de
-// hoje só sem snapshot → venda×0,55); NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
+// LIMITAÇÕES do F0 (relatório): preço do EOQ point-in-time (cmc anterior a d → preco_compra_real com t4 < d → venda×0,55;
+// o cmc de hoje nunca entra, achado 2); preco_compra_real sem o filtro origem_compra da view normal; NFe aproximada por (SKU, t2, t4); origem_compra não filtrada; nº de ordens = nº de
 // linhas; t1 fabricado sai do LT pela regra t1 = t2 (R17, aproxima o lt_bruto NULL da produção); SKU com demanda de insumo
 // (> 10%) sai da coorte (R16), porque o extrato de vendas não a traz. O estado ANTES do replay não existe: até a 1ª sugestão OK vale o fallback
 // do cold start (pp 1 / máx. 2 / ES 0, a regra do motor para SKU sem demanda); a 1ª sugestão OK o substitui sem fusível
@@ -166,6 +166,8 @@ interface Indice {
   linhas: Map<string, { i: number; preco: number }[]>;
   /** cmc_linha (snapshot point-in-time, extrair.sql) por SKU, dia corrido crescente; só > 0. */
   cmcHist: Map<string, { i: number; cmc: number }[]>;
+  /** preco_compra_real por SKU: dia corrido do t4 (crescente) e a soma acumulada dos preços (média dos docs com t4 < d). */
+  compraHist: Map<string, { i: Int32Array; acum: Float64Array }>;
   /** Dias úteis do início do aquecimento ao horizonte e o "balde" de cada dia corrido (fim de semana → dia útil anterior). */
   du: Data[];
   baldeDoDia: Int32Array;
@@ -214,6 +216,20 @@ function indice(dados: Dados): Indice {
     }
   }
   for (const h of cmcHist.values()) h.sort((a, b) => a.i - b.i);
+  const compraPorSku = new Map<string, { i: number; preco: number }[]>();
+  for (const pc of dados.precosCompra ?? []) {
+    if (!(pc.preco > 0) || !Number.isFinite(pc.preco)) continue;
+    const l = compraPorSku.get(pc.sku) ?? [];
+    l.push({ i: idx(pc.desde), preco: pc.preco });
+    compraPorSku.set(pc.sku, l);
+  }
+  const compraHist = new Map<string, { i: Int32Array; acum: Float64Array }>();
+  for (const [s, l] of compraPorSku) {
+    l.sort((a, b) => a.i - b.i || a.preco - b.preco);
+    const acum = new Float64Array(l.length + 1);
+    l.forEach((x, k) => (acum[k + 1] = acum[k] + x.preco));
+    compraHist.set(s, { i: Int32Array.from(l.map((x) => x.i)), acum });
+  }
   const pref = (a: Float64Array) => {
     const p = new Float64Array(a.length + 1);
     for (let i = 0; i < a.length; i++) p[i + 1] = p[i] + a[i];
@@ -277,7 +293,7 @@ function indice(dados: Dados): Indice {
     obsMotorPorSku.set(o.sku, l);
   }
   const ix: Indice = {
-    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, cmcHist, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, maxLtDu,
+    nDias, totalDia, prefTotal, prefLinhas, diasPositivos, linhas, cmcHist, compraHist, du, baldeDoDia, grupoDe, obsMotor, obsMotorPorSku, maxLtDu,
     propostaPorDia: new Map(), efetivaPorDia: new Map(), fornecedorPorDia: new Map(), serieDu: new Map(), trajF0: new Map(), aleatoriosF2: new Map(),
   };
   indices.set(dados, ix);
@@ -314,6 +330,21 @@ function cmcAntes(ix: Indice, sku: string, d: Data): number | null {
     else hi = m;
   }
   return lo === 0 ? null : h[lo - 1].cmc;
+}
+
+/** preco_compra_real (CTE precos_compra) conhecido em d: média dos documentos com t4 < d; null se não há. */
+function compraRealAntes(ix: Indice, sku: string, d: Data): number | null {
+  const h = ix.compraHist.get(sku);
+  if (!h) return null;
+  const iD = idx(d);
+  let lo = 0;
+  let hi = h.i.length; // primeiro documento com t4 >= d
+  while (lo < hi) {
+    const m = (lo + hi) >> 1;
+    if (h.i[m] < iD) lo = m + 1;
+    else hi = m;
+  }
+  return lo === 0 ? null : h.acum[lo] / lo;
 }
 
 /** σ diário de v_sku_sigma_demanda em d: 180 dias corridos [d-180, d-1] COM zeros (só os observados), round 4. */
@@ -363,7 +394,7 @@ export interface DiagnosticoF0 {
   minimoOperacional: number | null;
   /** Preço usado no EOQ e de onde veio (null = sem preço: SEM_PRECO). */
   precoEoq: number | null;
-  fontePreco: 'cmc_anterior' | 'cmc_hoje_fallback' | 'venda_x055' | null;
+  fontePreco: 'cmc_anterior' | 'compra_real' | 'venda_x055' | null;
   ssCalculado: number | null;
   ppSugerido: number | null;
   maxSugerido: number | null;
@@ -425,14 +456,14 @@ function sugestaoF0(dados: Dados, ix: Indice, s: Sku, d: Data, calib: boolean): 
   }
   const lt = teorico === null ? ltHist : ltHist === null ? teorico : Math.max(teorico, ltHist);
   const sigmaLt = desvioHist ?? desvioForn ?? (teorico ?? F0.ltPadrao) * F0.fatorSigmaLtPadrao;
-  // preço do EOQ (cadeia da produção, migration 20260930230623 ~L1126: COALESCE(cmc, preco_compra_real, venda×0,55)):
-  // cmc do ÚLTIMO snapshot ANTERIOR a d (cmc_linha, point-in-time) → cmc de HOJE só no aquecimento sem snapshot (fallback
-  // declarado: não existe cmc histórico antes de 2026-01-15) → [preço de compra real: não extraído] → venda 180 d × 0,55.
+  // preço do EOQ (cadeia da produção, migration 20260930230623 ~L1126: COALESCE(cmc, preco_compra_real, venda×0,55)),
+  // só com o que se sabia ANTES de d (achado 2 do Codex): cmc do ÚLTIMO snapshot anterior a d (cmc_linha) → média do
+  // preco_compra_real dos documentos com t4 < d → venda 180 d × 0,55 → null (SEM_PRECO). O cmc de HOJE nunca entra.
   let fontePreco: DiagnosticoF0['fontePreco'] = 'cmc_anterior';
   let preco: number | null = cmcAntes(ix, s.sku, d);
-  if (preco === null && s.cmc !== null && s.cmc > 0) {
-    preco = s.cmc;
-    fontePreco = 'cmc_hoje_fallback';
+  if (preco === null) {
+    preco = compraRealAntes(ix, s.sku, d);
+    fontePreco = 'compra_real';
   }
   if (preco === null) {
     fontePreco = 'venda_x055';

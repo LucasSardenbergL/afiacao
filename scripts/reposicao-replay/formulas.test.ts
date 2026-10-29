@@ -291,8 +291,41 @@ describe('contas à mão e preço do EOQ', () => {
     // a conta do EOQ com 50: ceil(√(2·d·252·3 / (0,2575·50)))
     const qc = Math.ceil(Math.sqrt((2 * (g.demanda ?? 0) * 252 * 3) / (0.2575 * 50)));
     expect(g.maxSugerido).toBe((g.ppSugerido ?? 0) + Math.max(qc, 1));
-    // antes do 1º snapshot (aquecimento): fallback declarado no cmc de hoje
-    expect(diagnosticoF0(dd, 'X', '2026-01-10', CTX)).toMatchObject({ fontePreco: 'cmc_hoje_fallback', precoEoq: 2 });
+    // antes do 1º snapshot (aquecimento): a cadeia da produção sem preço futuro — venda 180 d × 0,55, nunca o cmc de hoje
+    expect(diagnosticoF0(dd, 'X', '2026-01-10', CTX)).toMatchObject({ fontePreco: 'venda_x055', precoEoq: 0.55 });
+  });
+
+  // Achado 2 do Codex (contraprova): em 02/02 os SKUs sem snapshot usavam o cmc de HOJE; dobrá-lo mudava o máximo gravado.
+  it('dobrar só o cmc de hoje não muda nenhum máximo (nem a sugestão) em dia nenhum', () => {
+    // vende de 2 em 2 dias até 10/01 (antes do 1º snapshot de cmc) e volta a vender em março: em fev/2026 não há snapshot
+    const dias = diasCorridos(INICIO_AQUECIMENTO, '2026-04-30').filter((x, i) => i % 2 === 0 && (x <= '2026-01-10' || x >= '2026-03-02'));
+    const v = dias.map((dia) => ({ ...venda('X', dia, 2, 6), cmcLinha: dia >= '2026-01-15' ? 3 : null }));
+    const its = ltSayerlack();
+    const a = dados([sku('X', { cmc: 2 })], v, its);
+    const b = dados([sku('X', { cmc: 4 })], v, its);
+    const dus = diasCorridos('2025-11-20', '2026-04-30').filter((x) => ehDiaUtil(x));
+    let comparados = 0;
+    for (const d of dus) {
+      const ga = diagnosticoF0(a, 'X', d, CTX);
+      const gb = diagnosticoF0(b, 'X', d, CTX);
+      expect(ga.fontePreco, d).not.toBe('cmc_hoje_fallback');
+      expect([gb.maxSugerido, gb.max], d).toEqual([ga.maxSugerido, ga.max]);
+      if (ga.maxSugerido !== null) comparados++;
+    }
+    // controle: há sugestão OK sem snapshot (fevereiro), que é onde o cmc de hoje entrava
+    expect(diagnosticoF0(a, 'X', '2026-02-02', CTX)).toMatchObject({ status: 'OK', fontePreco: 'venda_x055' });
+    expect(comparados).toBeGreaterThan(50);
+  });
+
+  it('preco_compra_real point-in-time: média dos documentos com t4 < d, depois do cmc e antes da venda × 0,55', () => {
+    const dias = diasCorridos('2025-12-01', '2026-01-10').filter((_, i) => i % 2 === 0);
+    const v = dias.map((dia) => venda('X', dia, 1, 10));
+    const dd = dados([sku('X', { cmc: 2 })], v, ltSayerlack(), {
+      precosCompra: [{ sku: 'X', desde: '2026-01-05', preco: 4 }, { sku: 'X', desde: '2026-01-08', preco: 6 }, { sku: 'Y', desde: '2026-01-01', preco: 99 }],
+    });
+    expect(diagnosticoF0(dd, 'X', '2026-01-05', CTX)).toMatchObject({ fontePreco: 'venda_x055', precoEoq: 5.5 }); // t4 = d ainda não é conhecido
+    expect(diagnosticoF0(dd, 'X', '2026-01-06', CTX)).toMatchObject({ fontePreco: 'compra_real', precoEoq: 4 });
+    expect(diagnosticoF0(dd, 'X', '2026-01-09', CTX)).toMatchObject({ fontePreco: 'compra_real', precoEoq: 5 });
   });
 });
 
