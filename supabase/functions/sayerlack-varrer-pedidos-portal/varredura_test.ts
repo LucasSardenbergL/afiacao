@@ -16,6 +16,10 @@ import {
   portalSayerlackFechado,
   resumoImportacao,
   situacaoCancelada,
+  desfechoNoPortal,
+  janelaDeLeitura,
+  pedidosAReconciliar,
+  type PedidoDisparadoLido,
 } from "./varredura.ts";
 import * as leituraOriginal from "../sayerlack-importar-pedido-portal/leitura.ts";
 import * as janelaOriginal from "../disparar-pedidos-aprovados/janela-portal.ts";
@@ -146,4 +150,56 @@ Deno.test("carência: 1ª vista espera; visto antes sem sync complete depois esp
   // Quem não é candidato não muda.
   const outro = classificar(lerListaConsulta([linha("100", "1 - Aberto", "15/10/2026")]).pedidos, ctxBase);
   assertEquals(aplicarCarencia(outro, new Map(), null)[0].classe, "ja_no_app");
+});
+
+// ── Reconciliação do PO a reconciliar (v1.3) — o caso real é o pedido 3666 / protocolo 2141466 ──
+const MARCADOR = { run_id: "run-172", finalizado_em: "2026-10-28T18:17:04Z" };
+function pedido(over: Partial<PedidoDisparadoLido> = {}): PedidoDisparadoLido {
+  return {
+    id: 3666, status: "disparado", canal_usado: "portal_sayerlack", data_ciclo: "2026-10-16",
+    portal_protocolo: "2141466", omie_pedido_compra_id: "12199229881",
+    omie_po_inexistente_antes_de: "2026-10-16T22:11:14Z", ...over,
+  };
+}
+
+Deno.test("a reconciliar: PO fora do run válido entra; visto, sem marcador, outro status/canal ou PO ilegível ficam fora", () => {
+  assertEquals(pedidosAReconciliar([pedido()], MARCADOR, new Set()).map((p) => p.pedido_id), [3666]);
+  assertEquals(pedidosAReconciliar([pedido()], MARCADOR, new Set(["12199229881"])), []);
+  assertEquals(pedidosAReconciliar([pedido()], null, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ status: "concluido_recebido" })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ canal_usado: "email" })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ omie_pedido_compra_id: "PO-1294" })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ omie_pedido_compra_id: null })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ portal_protocolo: null })], MARCADOR, new Set()), []);
+});
+
+Deno.test("a reconciliar: guard causal — PO criado DEPOIS do run não teve chance de ser visto", () => {
+  assertEquals(pedidosAReconciliar([pedido({ omie_po_inexistente_antes_de: "2026-10-28T19:00:00Z" })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ omie_po_inexistente_antes_de: "lixo" })], MARCADOR, new Set()), []);
+  assertEquals(pedidosAReconciliar([pedido({ omie_po_inexistente_antes_de: null })], MARCADOR, new Set()).length, 1);
+});
+
+Deno.test("janela: estende até 1 dia antes do ciclo mais antigo; além do teto de 30 dias fica fora do alcance", () => {
+  const [a] = pedidosAReconciliar([pedido()], MARCADOR, new Set());
+  const j = janelaDeLeitura("2026-10-28", [a]);
+  assertEquals(j.emissaoDesde, "2026-10-15");
+  assertEquals(j.alcancaveis.length, 1);
+  assertEquals(janelaDeLeitura("2026-10-28", []).emissaoDesde, inicioDaJanela("2026-10-28"));
+  const velho = { ...a, data_ciclo: "2026-09-20" };
+  const jv = janelaDeLeitura("2026-10-28", [velho]);
+  assertEquals([jv.emissaoDesde, jv.alcancaveis.length, jv.foraDoAlcance.length], [inicioDaJanela("2026-10-28"), 0, 1]);
+});
+
+Deno.test("desfecho: só situação 6 EXATA num protocolo único encerra; o resto só relata", () => {
+  const [a] = pedidosAReconciliar([pedido()], MARCADOR, new Set());
+  const listado = (situacao: string, codigo: string | null) => ({ protocolo: "2141466", situacao, situacao_codigo: codigo, emissao: "2026-10-16" });
+  const classe = (pedidos: ReturnType<typeof listado>[], repetidos: string[] = []) => desfechoNoPortal([a], { pedidos, repetidos })[0].classe;
+  assertEquals(classe([listado("6 - Cancelado", "6")]), "cancelado_no_portal");
+  assertEquals(classe([listado("1 - Aberto", "1")]), "vivo_ou_outro");
+  assertEquals(classe([listado("3 - Atendido Total", "3")]), "vivo_ou_outro");
+  // texto "Cancelado" sem o código fechado NÃO encerra (situação renomeada/ilegível não decide).
+  assertEquals(classe([listado("Cancelado", null)]), "vivo_ou_outro");
+  assertEquals(classe([]), "nao_encontrado");
+  assertEquals(classe([listado("6 - Cancelado", "6")], ["2141466"]), "protocolo_repetido");
+  assertEquals(classe([listado("6 - Cancelado", "6"), listado("1 - Aberto", "1")]), "protocolo_repetido");
 });

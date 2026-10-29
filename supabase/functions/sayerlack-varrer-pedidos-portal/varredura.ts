@@ -218,3 +218,126 @@ export function resumoImportacao(httpStatus: number, corpo: unknown): { ok: bool
   const mensagem = typeof b?.mensagem === "string" ? b.mensagem : `resposta HTTP ${httpStatus} sem mensagem`;
   return { ok: httpStatus >= 200 && httpStatus < 300 && b?.ok === true, mensagem };
 }
+
+// ── Reconciliação do "PO a reconciliar" pelo portal (v1.3) ──────────────────────────────────────────────────────────
+// O card "Pedidos com PO a reconciliar no Omie" lista pedido `disparado` cujo PO sumiu do Omie e pede ao humano que
+// confira com o fornecedor se o protocolo segue vivo (cancelar às cegas = o motor re-sugere = compra em dobro). Esta
+// varredura JÁ lê a situação de cada protocolo, mas `ja_no_app` vence antes de olhar a situação — o cancelamento que
+// responde a pergunta do card nunca era visto (pedido 3666 / protocolo 2141466, 2026-10-28: o founder ligou para saber
+// o que a rodada das 12:30 já tinha lido).
+//
+// Regra (precisão > recall): só encerra quando as DUAS pontas provam que a compra não existe — PO fora do Omie no último
+// run válido do detector (mesmos filtros de `reposicao_pos_candidatos`) E situação `6` EXATA no portal, num protocolo
+// lido UMA vez. Qualquer outra coisa (vivo, atendido, não achado, repetido, situação sem código) só RELATA.
+
+/** Até quantos dias de emissão a leitura se estende para alcançar um pedido a reconciliar (teto de páginas do portal). */
+export const JANELA_RECONCILIACAO_MAX_DIAS = 30;
+
+/** Linha de `pedido_compra_sugerido` que a reconciliação lê. */
+export interface PedidoDisparadoLido {
+  id: number;
+  status: string;
+  canal_usado: string | null;
+  data_ciclo: string; // AAAA-MM-DD
+  portal_protocolo: string | null;
+  omie_pedido_compra_id: string | number | null;
+  omie_po_inexistente_antes_de: string | null;
+}
+
+/** Último run VÁLIDO do detector de PO (`reposicao_pedidos_compra_run`: status ok + volume_ok, maior seq). */
+export interface MarcadorPo {
+  run_id: string;
+  finalizado_em: string;
+}
+
+export interface PedidoAReconciliar {
+  pedido_id: number;
+  protocolo: string;
+  omie_po_id: string;
+  data_ciclo: string;
+}
+
+/** Id do PO como o detector o compara: só dígitos. Outra forma = identidade não interpretável ⇒ fora. */
+function idDoPo(v: string | number | null): string | null {
+  const s = v === null || v === undefined ? "" : String(v).trim();
+  return /^\d+$/.test(s) ? s : null;
+}
+
+/**
+ * Pedidos do PORTAL cujo PO NÃO apareceu no último run válido — o espelho de `reposicao_pos_candidatos`, restrito a
+ * `disparado` (a porta `corrigir_cancelamento_pos_disparo` não aceita outro) e ao canal do portal. Sem marcador ⇒ nada:
+ * sem run válido não há como afirmar ausência. Guard causal: PO criado depois do run não teve chance de ser visto.
+ */
+export function pedidosAReconciliar(
+  pedidos: PedidoDisparadoLido[],
+  marcador: MarcadorPo | null,
+  posVistosNoMarcador: ReadonlySet<string>,
+): PedidoAReconciliar[] {
+  if (!marcador) return [];
+  const fim = Date.parse(marcador.finalizado_em);
+  if (!Number.isFinite(fim)) return [];
+  const out: PedidoAReconciliar[] = [];
+  for (const p of pedidos) {
+    if (p.status !== "disparado" || p.canal_usado !== "portal_sayerlack") continue;
+    const protocolo = (p.portal_protocolo ?? "").trim();
+    const po = idDoPo(p.omie_pedido_compra_id);
+    if (!PROTOCOLO_RE.test(protocolo) || !po) continue;
+    if (posVistosNoMarcador.has(po)) continue;
+    if (p.omie_po_inexistente_antes_de !== null) {
+      const antes = Date.parse(p.omie_po_inexistente_antes_de);
+      if (!Number.isFinite(antes) || antes > fim) continue;
+    }
+    out.push({ pedido_id: p.id, protocolo, omie_po_id: po, data_ciclo: p.data_ciclo });
+  }
+  return out;
+}
+
+/**
+ * Início da emissão a ler: a janela normal de importação, estendida (até o teto) para cobrir o pedido a reconciliar
+ * mais antigo — 1 dia antes do ciclo (o disparo noturno em SP pode cair no dia seguinte em UTC, e vice-versa). Pedido
+ * além do teto fica `fora_do_alcance` e segue com o humano.
+ */
+export function janelaDeLeitura(
+  hojeISO: string,
+  aReconciliar: PedidoAReconciliar[],
+): { emissaoDesde: string; alcancaveis: PedidoAReconciliar[]; foraDoAlcance: PedidoAReconciliar[] } {
+  const limite = inicioDaJanela(hojeISO, JANELA_RECONCILIACAO_MAX_DIAS);
+  let emissaoDesde = inicioDaJanela(hojeISO);
+  const alcancaveis: PedidoAReconciliar[] = [];
+  const foraDoAlcance: PedidoAReconciliar[] = [];
+  for (const p of aReconciliar) {
+    const precisa = somarDias(p.data_ciclo, -1);
+    if (precisa < limite) {
+      foraDoAlcance.push(p);
+      continue;
+    }
+    alcancaveis.push(p);
+    if (precisa < emissaoDesde) emissaoDesde = precisa;
+  }
+  return { emissaoDesde, alcancaveis, foraDoAlcance };
+}
+
+export type DesfechoReconciliacao =
+  | { classe: "cancelado_no_portal"; situacao: string }
+  | { classe: "vivo_ou_outro"; situacao: string }
+  | { classe: "nao_encontrado" }
+  | { classe: "protocolo_repetido" };
+
+/** O que o portal diz de cada pedido a reconciliar. Só `cancelado_no_portal` autoriza encerrar. */
+export function desfechoNoPortal(
+  alcancaveis: PedidoAReconciliar[],
+  lista: { pedidos: PedidoListado[]; repetidos: string[] },
+): (PedidoAReconciliar & DesfechoReconciliacao)[] {
+  const repetidos = new Set(lista.repetidos);
+  return alcancaveis.map((p) => {
+    if (repetidos.has(p.protocolo)) return { ...p, classe: "protocolo_repetido" as const };
+    const achados = lista.pedidos.filter((l) => l.protocolo === p.protocolo);
+    if (achados.length !== 1) {
+      return achados.length === 0 ? { ...p, classe: "nao_encontrado" as const } : { ...p, classe: "protocolo_repetido" as const };
+    }
+    const l = achados[0];
+    return l.situacao_codigo === "6"
+      ? { ...p, classe: "cancelado_no_portal" as const, situacao: l.situacao }
+      : { ...p, classe: "vivo_ou_outro" as const, situacao: l.situacao };
+  });
+}

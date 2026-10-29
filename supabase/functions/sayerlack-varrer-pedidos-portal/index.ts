@@ -10,6 +10,8 @@
 //      `sayerlack-importar-pedido-portal` — o MESMO caminho do botão (relê o pedido, prova a leitura, RPC tudo-ou-nada
 //      idempotente por protocolo, IP006 contra PO já no Omie, PO pelo disparo de sempre). Modo "listar" só relata.
 //   4. falha de importação ⇒ `sayerlack_varredura_falha` + e-mail na 1ª vez do protocolo.
+//   5. (v1.3) pedido do APP com PO fora do Omie cujo protocolo está "6 - Cancelado" no portal ⇒ encerrado pela porta
+//      auditada `corrigir_cancelamento_pos_disparo` (é a pergunta que o card "PO a reconciliar" fazia ao founder).
 //
 // ⚠️ LEITURA PURA NO PORTAL: o script do navegador só usa menu, filtros, "Filtrar" e a paginação da tabela; recusa todo
 // diálogo nativo (dismiss — nunca confirma). Nada aqui grava no portal.
@@ -33,6 +35,12 @@ import {
   portalSayerlackFechado,
   resumoImportacao,
   SITUACOES_IMPORTAVEIS,
+  desfechoNoPortal,
+  janelaDeLeitura,
+  type MarcadorPo,
+  type PedidoAReconciliar,
+  type PedidoDisparadoLido,
+  pedidosAReconciliar,
 } from "./varredura.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 
@@ -305,6 +313,52 @@ async function pedidosEmVoo(db: Db): Promise<{ id: number; status_envio_portal: 
   return (data ?? []) as { id: number; status_envio_portal: string | null }[];
 }
 
+/** Pedidos do portal com PO fora do último run válido do detector (mesmos filtros de `reposicao_pos_candidatos`, que
+ *  é gateada por master e não atende service-role). `apenas` restringe a releitura de um pedido antes de encerrá-lo.
+ *  Erro de leitura LANÇA (fail-closed: sem prova de ausência, nada se encerra). */
+async function carregarAReconciliar(db: Db, apenas?: number): Promise<{ lista: PedidoAReconciliar[]; marcador: MarcadorPo | null }> {
+  const { data: run, error: errRun } = await db.from("reposicao_pedidos_compra_run")
+    .select("run_id, finalizado_em")
+    .eq("empresa", "OBEN").eq("status", "ok").eq("volume_ok", true)
+    .order("seq", { ascending: false }).limit(1).maybeSingle();
+  if (errRun) throw new Error(`Leitura do marcador de PO: ${errRun.message}`);
+  const marcador = run && (run as MarcadorPo).run_id && (run as MarcadorPo).finalizado_em ? (run as MarcadorPo) : null;
+  if (!marcador) return { lista: [], marcador: null };
+  const pedidos = await fetchAll<PedidoDisparadoLido>(
+    (de, ate) => {
+      let q = db.from("pedido_compra_sugerido")
+        .select("id, status, canal_usado, data_ciclo, portal_protocolo, omie_pedido_compra_id, omie_po_inexistente_antes_de")
+        .eq("empresa", "OBEN").eq("status", "disparado").eq("canal_usado", "portal_sayerlack");
+      if (apenas !== undefined) q = q.eq("id", apenas);
+      return q.order("id", { ascending: true }).range(de, ate);
+    },
+    "varrer-portal:a-reconciliar",
+  );
+  const poIds = [...new Set(pedidos.map((p) => String(p.omie_pedido_compra_id ?? "").trim()).filter((s) => /^\d+$/.test(s)))];
+  const vistos = poIds.length === 0 ? [] : await fetchAll<{ omie_codigo_pedido: number | string }>(
+    (de, ate) => db.from("reposicao_po_last_seen").select("omie_codigo_pedido")
+      .eq("empresa", "OBEN").eq("run_id", marcador.run_id).in("omie_codigo_pedido", poIds)
+      .order("omie_codigo_pedido", { ascending: true }).range(de, ate),
+    "varrer-portal:po-vistos",
+  );
+  return { lista: pedidosAReconciliar(pedidos, marcador, new Set(vistos.map((v) => String(v.omie_codigo_pedido)))), marcador };
+}
+
+/** Encerra pela porta auditada (`corrigir_cancelamento_pos_disparo`: trava de status sob lock + trilha em
+ *  `reposicao_cancelamento_pos_disparo_audit`). Autor `sistema:*`, como `reposicao_encerrar_recusas_definitivas`. */
+async function encerrarCanceladoNoPortal(
+  db: Db, p: PedidoAReconciliar, situacao: string, marcador: MarcadorPo,
+): Promise<{ ok: boolean; mensagem: string }> {
+  const { error } = await db.rpc("corrigir_cancelamento_pos_disparo", {
+    p_pedido_id: p.pedido_id,
+    p_usuario: "sistema:varredura_portal",
+    p_motivo: "cancelado_junto_ao_fornecedor",
+    p_evidencia: `protocolo ${p.protocolo} — portal Sayerlack: "${situacao}"; PO ${p.omie_po_id} fora do Omie no run ${marcador.run_id} (fim ${marcador.finalizado_em})`,
+    p_justificativa: "Encerrado pela varredura do portal: o fornecedor cancelou o pedido e o PO não existe mais no Omie.",
+  });
+  return error ? { ok: false, mensagem: error.message } : { ok: true, mensagem: "encerrado" };
+}
+
 async function protocolosNoApp(db: Db, protocolos: string[]): Promise<Set<string>> {
   if (protocolos.length === 0) return new Set();
   const linhas = await fetchAll<{ portal_protocolo: string | null }>(
@@ -485,8 +539,13 @@ Deno.serve(async (req: Request) => {
       ].filter(([, v]) => !v).map(([k]) => k);
       if (faltando.length > 0) throw new Error(`Configuração ausente: ${faltando.join(", ")}`);
 
-      // 1. Lê a lista no portal.
-      const emissaoDesde = inicioDaJanela(hojeSP());
+      // 1. Lê a lista no portal. A janela de IMPORTAR segue 7 dias (`emissaoDesde`); a LEITURA se estende só para
+      //    alcançar pedido do app com PO fora do Omie (reconciliação, passo 2b) — sem nenhum, é a mesma janela.
+      const hoje = hojeSP();
+      const emissaoDesde = inicioDaJanela(hoje);
+      const aReconciliar = await carregarAReconciliar(db);
+      const janela = janelaDeLeitura(hoje, aReconciliar.lista);
+      const emissaoLeitura = janela.emissaoDesde;
       const ctrl = new AbortController();
       const timeout = setTimeout(() => ctrl.abort(), 185_000);
       let envelope: BrowserlessData;
@@ -499,7 +558,7 @@ Deno.serve(async (req: Request) => {
             code: BROWSERLESS_FUNCTION,
             context: {
               user: SAYERLACK_PORTAL_USER, pass: SAYERLACK_PORTAL_PASS, portalUrl: SAYERLACK_PORTAL_URL,
-              clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, emissaoDesde,
+              clienteCodigo: SAYERLACK_PORTAL_CLIENTE_CODIGO, emissaoDesde: emissaoLeitura,
             },
           }),
         });
@@ -535,11 +594,13 @@ Deno.serve(async (req: Request) => {
       const contagem: Record<string, number> = {};
       for (const p of classificados) contagem[p.classe] = (contagem[p.classe] ?? 0) + 1;
       const base = {
-        modo, versao: VERSAO, emissao_desde: emissaoDesde, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
+        modo, versao: VERSAO, emissao_desde: emissaoDesde, emissao_leitura: emissaoLeitura, paginas: envelope.paginas ?? null, info_portal: envelope.info ?? null,
         lidos: lista.pedidos.length, ilegiveis: lista.ilegiveis, repetidos: lista.repetidos, contagem,
         situacoes_portal: envelope.situacoes ?? [],
         // Só o que NÃO está no app nem no Omie — é o que o founder precisa olhar.
-        fora_do_app: classificados.filter((p) => p.classe !== "ja_no_app" && p.classe !== "ja_no_omie")
+        // (A leitura estendida da reconciliação não engorda este relatório: só a janela de importar.)
+        fora_do_app: classificados.filter((p) => p.classe !== "ja_no_app" && p.classe !== "ja_no_omie" && p.classe !== "fora_da_janela")
+          .filter((p) => !p.emissao || p.emissao >= emissaoDesde)
           .map((p) => ({ protocolo: p.protocolo, situacao: p.situacao, emissao: p.emissao, classe: p.classe })),
       };
       // Falha aberta de protocolo que JÁ entrou no app (por timeout indeterminado, botão ou rodada anterior) se resolve.
@@ -555,7 +616,43 @@ Deno.serve(async (req: Request) => {
           avisados.push({ protocolo: p.protocolo, notificado });
         }
       }
-      if (modo === "listar" || candidatos.length === 0) return { ...base, avisados, importados: [], falhas: [], adiados: [] };
+      // 2b. Reconciliação do "PO a reconciliar": cancelado no portal + PO fora do Omie ⇒ encerra pela porta auditada.
+      //     Antes de cada encerramento RELÊ o pedido (status + PO ainda fora do run válido) — a prova do começo da rodada
+      //     não basta (mesmo princípio da releitura antes de importar).
+      const desfechos = desfechoNoPortal(janela.alcancaveis, lista);
+      const encerrados: unknown[] = [];
+      const falhasReconciliacao: { pedido_id: number; protocolo: string; mensagem: string }[] = [];
+      if (modo === "importar") {
+        for (const d of desfechos) {
+          if (d.classe !== "cancelado_no_portal") continue;
+          const agora = await carregarAReconciliar(db, d.pedido_id);
+          const ainda = agora.lista.find((p) => p.pedido_id === d.pedido_id && p.protocolo === d.protocolo);
+          if (!ainda || !agora.marcador) continue; // mudou durante a rodada: a próxima decide
+          const r = await encerrarCanceladoNoPortal(db, ainda, d.situacao, agora.marcador);
+          console.log(`[varrer-portal] reconciliação #${d.pedido_id} (${d.protocolo}): ${r.mensagem}`);
+          if (r.ok) encerrados.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, situacao: d.situacao });
+          else falhasReconciliacao.push({ pedido_id: d.pedido_id, protocolo: d.protocolo, mensagem: r.mensagem });
+        }
+      }
+      const reconciliacao = {
+        a_reconciliar: aReconciliar.lista.length,
+        fora_do_alcance: janela.foraDoAlcance.map((p) => ({ pedido_id: p.pedido_id, protocolo: p.protocolo, data_ciclo: p.data_ciclo })),
+        desfechos: desfechos.map((d) => ({ pedido_id: d.pedido_id, protocolo: d.protocolo, classe: d.classe, situacao: "situacao" in d ? d.situacao : null })),
+        encerrados,
+        falhas: falhasReconciliacao,
+      };
+      // Encerramento que falhou é falha ALTA da rodada (o ✓ esconderia um pedido que segue inflando o card).
+      const falhaReconciliacao = () => {
+        if (falhasReconciliacao.length > 0) {
+          throw new Error(`Reconciliação: ${falhasReconciliacao.length} pedido(s) cancelado(s) no portal não encerraram: ` +
+            falhasReconciliacao.map((f) => `#${f.pedido_id} (${f.mensagem})`).join("; "));
+        }
+      };
+      if (modo === "listar" || candidatos.length === 0) {
+        resumoFinal = { ...base, reconciliacao, avisados, importados: [], falhas: [], adiados: [] };
+        falhaReconciliacao();
+        return resumoFinal;
+      }
 
       // 3. Importa, um por vez, reconferindo o banco antes de cada um.
       const importados: unknown[] = [];
@@ -599,7 +696,8 @@ Deno.serve(async (req: Request) => {
           falhas.push({ protocolo: c.protocolo, mensagem: res.mensagem, notificado });
         }
       }
-      resumoFinal = { ...base, avisados, importados, falhas, adiados, indeterminados };
+      resumoFinal = { ...base, reconciliacao, avisados, importados, falhas, adiados, indeterminados };
+      falhaReconciliacao();
       // Rodada com falha NÃO é sucesso no registro (Codex P2): o ✓ do UltimaExecucao esconderia o pedido que não entrou.
       if (falhas.length > 0) {
         throw new Error(`${falhas.length} pedido(s) do portal não entraram no Omie: ${falhas.map((f) => (f as { protocolo: string }).protocolo).join(", ")}`);
