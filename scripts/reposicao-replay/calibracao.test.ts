@@ -3,17 +3,17 @@ import { addDias, ehDiaUtil } from '../../src/lib/reposicao/orcamento-compra/dat
 import { alvoDaClasse, avaliarNaCalibracao, baseDaCalibracao, buscarTrio, calibrar, escolherCandidata, estoqueDaJanela, fillDaCelula, mediaSomas, reducaoRelativa, somarSomas, vereditoDaCalibracao, type ResultadoCalibracao } from './calibracao';
 import { documentoSorteado } from './aleatorio';
 import { somarDiasUteis } from './calendario';
-import { INICIO_AQUECIMENTO, JANELAS } from './config';
+import { GRADE_QUANTIS, INICIO_AQUECIMENTO, JANELAS } from './config';
 import { coorte } from './parados';
 import { classeEfetiva, validarClasse } from './classe';
 import { diagnosticoEstadoInicial } from './reconstrucao';
 import {
   anexarInformativa, avaliarCandidata, conferirParamsDoBaseline, ESTADO_DIVERGENTE_PERMITIDO, etapasPreCalibracao, exigirAncoraOmie, exigirGateParidade,
-  exigirValidacaoClasse, falhasDoGate, gateParidadePassa, linhaVeredito, montarGate, vereditoComModo, type DivergenciaEstado, type GateParidade,
+  exigirValidacaoClasse, falhasDoGate, gateParidadePassa, linhaVeredito, montarGate, skusQueExigemAncora, vereditoComModo, type DivergenciaEstado, type GateParidade,
 } from './rodar';
 import { avisoAncora, causaOficial, LIMITES, montarRelatorio, TEXTO_GATE_ECONOMIA, tituloSecaoInformativa, tituloVeredito, type Rodada } from './relatorio';
 import { ErroDadosReplay } from './tipos';
-import { paridadeF0, parametrosNoDia, preComputarComOrigem, sugestaoDaView, type ParamsDia } from './formulas';
+import { diagnosticoF0, paridadeF0, parametrosNoDia, preComputarComOrigem, sugestaoDaView, type ParamsDia } from './formulas';
 import { decidirCompra, simular } from './simulador';
 import type { Dados, EventoRecebimento, ItemLT, LinhaVenda, Sku } from './tipos';
 
@@ -39,6 +39,8 @@ const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[], recebimento
   zPorClasse: { A: 1.65, B: 1.28, C: 0.84 }, teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
   classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21',
   posicaoAbertura: new Map(Object.entries(abertura)), posicaoConferencia: null, hashDados: 'h',
+  // N2: o capital é valorado pelo preço do DIA; a fixture dá o nCMC da posição de abertura (o mesmo 4 do cmc da fixture)
+  cmcOmie: [{ data: INICIO_AQUECIMENTO, cmc: new Map(skus.map((s) => [s.sku, 4])) }],
 });
 
 describe('alvo da calibração', () => {
@@ -106,6 +108,12 @@ const gateOk = (): GateParidade => ({
   es: 1, pp: 0.9916, max: 0.9916, valor: 0.0005, decisao: { n: 14, de: 14 },
   estado: { n: 5, de: 6, divergentes: [divR21()] },
   estadoForaDaPopulacao: { n: 7, de: 8, divergentes: [{ sku: '11892839175', dono: '11892839175', replay: 0, qtdeFinal: 5, estado: { pp: 1, max: 2 }, gravado: { pp: 17, max: 21 } }] },
+  estadoPopulacao: {
+    donos: 152,
+    gravado: { es: { n: 150, de: 152 }, pp: { n: 150, de: 152 }, max: { n: 150, de: 152 } },
+    view: { es: { n: 133, de: 134 }, pp: { n: 133, de: 134 }, max: { n: 133, de: 134 } },
+  },
+  naoComprar: { n: 146, de: 146, divergentes: [] },
   status: { n: 134, de: 134 },
   cobertura: { view: { n: 151, de: 152 }, decisao: { n: 14, de: 14 } },
   paramsBaseline: { n: 6, de: 6 },
@@ -445,7 +453,7 @@ describe('Fix Codex leva C — gate de paridade (achado 8), classe (achado 14) e
     expect(q.estado).toEqual(pq.tipo === 'F0' ? { pp: pq.pp, max: pq.max } : null);
     expect(r.gate.estadoForaDaPopulacao).toMatchObject({ n: 0, de: 1 });
     expect(r.gate.estadoForaDaPopulacao.divergentes[0]).toMatchObject({ sku: 'FORA', gravado: { pp: 5, max: 9 } });
-    expect(r.gate.paramsBaseline).toEqual({ n: 2, de: 2 });
+    expect(r.gate.paramsBaseline).toEqual({ n: 3, de: 3 }); // N5: todos os donos da população (R sem sugestão também)
     expect(r.gate.cobertura.decisao).toEqual({ n: 3, de: 3 });
   });
   it('achado 8: a cobertura da view compara a presença do SKU na view de produção com a do replay', () => {
@@ -463,22 +471,24 @@ describe('Fix Codex leva C — gate de paridade (achado 8), classe (achado 14) e
     expect(() => exigirValidacaoClasse(v(5.01))).toThrow(ErroDadosReplay);
     expect(() => exigirValidacaoClasse(v(null))).toThrow(/^CLASSE_DIVERGENTE/);
   });
-  it('N1: os limites declaram por extenso R29, R34 e R35 (encerramento de hoje; tracking contaminado igual nos dois braços) e os rulings da leva B', () => {
+  it('N1 + leva D: os limites declaram R47 (revoga R29/R34), R46 (revoga R35 no sorteio), N2, N3, N5, N7, P2a, P2b e os rulings da leva B', () => {
     const t = LIMITES.join('\n');
-    for (const x of ['R29', 'R34', 'estado de HOJE do Omie', 'R35', 'pesa igual nos dois braços', 'R36', 'R37', 'R38', 'R39', 'desde o início do aquecimento', 'capturas de preço-app até a extração', 'achado 11', 'achado 12', 'achado 10']) {
+    for (const x of ['R47', 'revoga R29/R34', 'R46', 'revoga a R35', 'PEDIDA_DA_NF', 'preço DO DIA (N2)', 'nunca o cmc de hoje', 'N3', 'N5', 'N7', 'P2a', 'P2b', 'R36', 'R37', 'R38', 'R39', 'desde o início do aquecimento', 'capturas de preço-app até a extração', 'achado 11', 'achado 12', 'achado 10']) {
       expect(t).toContain(x);
     }
+    expect(t).not.toContain('Capital da avaliação a CMC de hoje'); // N2: o numerário constante saiu
     expect(t).not.toContain('limitada a [0, valor]'); // R24 revogada
     expect(t).not.toContain('entra uma vez, não é reamostrado'); // achado 12
   });
   it('R30: sem a posição Omie a rodada oficial para; o legado só com --informativo-saldo-hoje e rotulado não oficial', () => {
     const ancorado = cenario(false);
     const legado = { ...cenario(false), posicaoAbertura: null };
-    expect(exigirAncoraOmie(ancorado, false)).toBe('oficial');
-    expect(exigirAncoraOmie(ancorado, true)).toBe('oficial');
-    expect(() => exigirAncoraOmie(legado, false)).toThrow(/^ANCORA_OMIE_AUSENTE/);
-    expect(() => exigirAncoraOmie(legado, false)).toThrow(ErroDadosReplay);
-    expect(exigirAncoraOmie(legado, true)).toBe('nao_oficial_saldo_hoje');
+    const nec = skusQueExigemAncora(ancorado);
+    expect(exigirAncoraOmie(ancorado, false, nec)).toBe('oficial');
+    expect(exigirAncoraOmie(ancorado, true, nec)).toBe('oficial');
+    expect(() => exigirAncoraOmie(legado, false, nec)).toThrow(/^ANCORA_OMIE_AUSENTE/);
+    expect(() => exigirAncoraOmie(legado, false, nec)).toThrow(ErroDadosReplay);
+    expect(exigirAncoraOmie(legado, true, nec)).toBe('nao_oficial_saldo_hoje');
     expect(avisoAncora('nao_oficial_saldo_hoje').join(' ')).toMatch(/NÃO OFICIAL/);
     expect(avisoAncora('oficial')).toEqual([]);
   });
@@ -541,13 +551,14 @@ describe('Fix Codex leva C round 1 — I1 (legado nunca com cara de oficial) e M
 });
 
 describe('Fix Codex leva C round 1 — I2 (a calibração nunca escolhe pelo subtotal valorado)', () => {
-  it('I2: buscarTrio com estoque não comparável (null) para no quantil mais alto e marca capital indeterminado', () => {
+  it('I2 + N4: buscarTrio com estoque não comparável (null) não ordena por capital, visita o caminho todo e marca indeterminado', () => {
     let chamadas = 0;
     const r = buscarTrio(() => (chamadas++, { fill: { A: 1, B: 1, C: 1 }, estoque: null }), { A: 0.98, B: 0.95, C: 0.9 });
     expect(r.capitalIndeterminado).toBe(true);
-    expect(r.quantil).toEqual({ A: 0.999, B: 0.999, C: 0.999 });
+    expect(r.quantil).toEqual({ A: 0.999, B: 0.999, C: 0.999 }); // sem capital, nenhuma classe sai do quantil mais alto
+    expect(r.avaliacao.estoque).toBeNull();
     expect(r.inviavel).toBe(false);
-    expect(chamadas).toBe(1); // nenhuma comparação por capital
+    expect(chamadas).toBe(1 + 3 * (GRADE_QUANTIS.length - 1)); // N4: a cruz inteira pelo quantil mais alto, sem parar no 1º null
   });
   it('I2: candidata com estoque não valorado nunca vence pelo subtotal — INDETERMINADA ⇒ INCONCLUSIVO', () => {
     const r = (formula: 'F1' | 'F2' | 'F3', inviavel: boolean, estoqueMedio: number | null, estoqueF0: number | null = 1000) =>
@@ -563,6 +574,7 @@ describe('Fix Codex leva C round 1 — I2 (a calibração nunca escolhe pelo sub
   it('I2 (contraprova do Codex no caminho da calibração): SKU sem CMC até 30/04 com estoque ⇒ calibração sem redução, nunca o subtotal', () => {
     const dd = cenario(false);
     for (const v of dd.vendas) if (v.sku === 'R' && v.data <= JANELAS.calibracaoFim) v.cmcLinha = null;
+    dd.cmcOmie = dd.cmcOmie!.map((p) => ({ ...p, cmc: new Map([...p.cmc].filter(([s]) => s !== 'R')) })); // N2: sem nenhuma fonte documental
     const base = baseDaCalibracao(dd, { reps: 2, cacheDir: null });
     expect(base.estoqueF0).toBeNull();
     expect(estoqueDaJanela(base.somasF0)).toBeGreaterThan(0); // o subtotal existe — e é exatamente o que não pode ser usado
@@ -580,4 +592,94 @@ describe('Fix Codex leva C round 1 — I2 (a calibração nunca escolhe pelo sub
     expect(ok.estoqueMedio).not.toBeNull();
     expect(ok.capitalIndeterminado).toBe(false);
   }, 300_000);
+});
+
+describe('Fix Codex leva D — N4 (capital desconhecido na busca), N5 (estado da população) e N6 (âncora completa)', () => {
+  const ALVO = { A: 0.98, B: 0.95, C: 0.9 };
+  // Contraprova N4 do Codex: A = 90% em q = 0,999 e 100% em q = 0,50, capital desconhecido — a busca visitava 1 ponto e
+  // três fórmulas assim davam NO-GO / INVIAVEL_NA_CALIBRACAO.
+  it('N4: capital null não interrompe a busca nem vira inviável; três fórmulas assim ⇒ INCONCLUSIVO, nunca NO-GO', () => {
+    const r = buscarTrio((q) => ({ fill: { A: q.A === 0.5 ? 1 : 0.9, B: 1, C: 1 }, estoque: null }), ALVO);
+    expect(r.avaliacoes).toBeGreaterThan(1);
+    expect(r.inviavel).toBe(false);
+    expect(r.capitalIndeterminado).toBe(true);
+    expect(r.avaliacao.estoque).toBeNull();
+    const res = (['F1', 'F2', 'F3'] as const).map((formula) => ({ formula, inviavel: r.inviavel, estoqueMedio: r.avaliacao.estoque, estoqueF0: 1000, naoObservaveis: [] as ('A' | 'B' | 'C')[] }));
+    expect(vereditoDaCalibracao(res)).toEqual({ veredito: 'INCONCLUSIVO', motivos: ['CAPITAL_NAO_VALORADO_NA_CALIBRACAO'] });
+    // a indeterminada não é descartada: uma valorada não vence por ela ter sido "inviável"
+    expect(escolherCandidata([{ formula: 'F1', inviavel: false, estoqueMedio: 900, estoqueF0: 1000 }, res[1]])).toBe('INDETERMINADA');
+  });
+  it('N4: inviável só com o caminho inteiro visitado e nenhum ponto atingindo (com ou sem capital)', () => {
+    let n = 0;
+    const nunca = buscarTrio(() => (n++, { fill: { A: 0.9, B: 1, C: 1 }, estoque: null }), ALVO);
+    expect(nunca.inviavel).toBe(true);
+    expect(nunca.capitalIndeterminado).toBe(false);
+    expect(n).toBe(1 + 3 * (GRADE_QUANTIS.length - 1));
+  });
+  it('N4: capital conhecido nos pontos que atingem, mas null em outro ponto do caminho ⇒ indeterminada (não escolhe por subtotal)', () => {
+    const r = buscarTrio((q) => ({ fill: { A: 1, B: 1, C: 1 }, estoque: q.C === 0.5 ? null : q.A + q.B + q.C }), ALVO);
+    expect(r.inviavel).toBe(false);
+    expect(r.capitalIndeterminado).toBe(true);
+    // controle: capital conhecido em todo o caminho ⇒ escolhe o menor estoque
+    const ok = buscarTrio((q) => ({ fill: { A: 1, B: 1, C: 1 }, estoque: q.A + q.B + q.C }), ALVO);
+    expect(ok.capitalIndeterminado).toBe(false);
+    expect(ok.quantil).toEqual({ A: 0.5, B: 0.5, C: 0.5 });
+  });
+
+  it('N5: o gate reprova o estado da população fora do limiar, com a marca do ramo', () => {
+    const g = gateOk();
+    expect(falhasDoGate(g)).toEqual([]);
+    const ruimG = { ...g, estadoPopulacao: { ...g.estadoPopulacao, gravado: { ...g.estadoPopulacao.gravado, pp: { n: 6, de: 152 } } } };
+    expect(falhasDoGate(ruimG).some((f) => f.startsWith('ESTADO_POPULACAO_GRAVADO_PP'))).toBe(true);
+    const ruimV = { ...g, estadoPopulacao: { ...g.estadoPopulacao, view: { ...g.estadoPopulacao.view, max: { n: 0, de: 0 } } } };
+    expect(falhasDoGate(ruimV).some((f) => f.startsWith('ESTADO_POPULACAO_VIEW_MAX'))).toBe(true);
+    // "não comprar" provado é informativo (a posição do motor não é gravada para quem não compra): não reprova sozinho
+    const div = { sku: 'X1', dono: 'X1', replay: null, qtdeFinal: 0, estado: { pp: 5, max: 9 }, gravado: { pp: 2, max: 9 } };
+    expect(falhasDoGate({ ...g, naoComprar: { n: 145, de: 146, divergentes: [div] } })).toEqual([]);
+  });
+  // Contraprova N5 do Codex: alterar ES/PP/máximo dos SKUs SEM sugestão não mudava falhasDoGate().
+  it('N5: montarGate cobre os donos sem sugestão positiva — alterar o estado gravado deles reprova', () => {
+    const base = () => {
+      const dd = cenario(false);
+      const qP = decidirCompra(parametrosNoDia('F0', dd, 'P', dd.dataExtracao, { quantil: { A: 0.95, B: 0.95, C: 0.95 } }, { calibracao: false }), 0, dd.skus.get('P')!);
+      dd.sugestaoHoje = new Map([['P', { posicao: 0, qtdeFinal: qP }]]);
+      // o gravado de TODOS os donos = o estado do replay no dia da decisão (controle verde)
+      const r0 = montarGate(dd, { cacheDir: null });
+      for (const [sku, p] of r0.paramsDecisao) {
+        if (p.tipo !== 'F0') continue;
+        const es = diagnosticoF0(dd, sku, dd.dataExtracao, { calibracao: false }).es ?? 0;
+        dd.skus.set(sku, { ...dd.skus.get(sku)!, hoje: { es, pp: p.pp, max: p.max } });
+      }
+      return { dd, r0 };
+    };
+    const { dd: ok, r0 } = base();
+    expect([...r0.paramsDecisao.keys()].sort()).toEqual(['P', 'Q', 'R']); // Q e R sem sugestão também decidem no gate
+    const gOk = montarGate(ok, { cacheDir: null }).gate;
+    expect(gOk.naoComprar).toEqual({ n: 2, de: 2, divergentes: [] });
+    expect(falhasDoGate(gOk).filter((f) => f.startsWith('ESTADO_POPULACAO_GRAVADO'))).toEqual([]);
+    // estado gravado de Q e R (SEM sugestão) longe do replay: o estado da população sai do limiar e o gate reprova
+    const { dd: ruim } = base();
+    for (const k of ['Q', 'R']) {
+      const s = ruim.skus.get(k)!;
+      ruim.skus.set(k, { ...s, hoje: { es: s.hoje.es! + 10, pp: s.hoje.pp! - 3, max: s.hoje.max! + 10 } });
+    }
+    const gr = montarGate(ruim, { cacheDir: null }).gate;
+    const f = falhasDoGate(gr);
+    expect(f.some((x) => x.startsWith('ESTADO_POPULACAO_GRAVADO_ES'))).toBe(true);
+    expect(f.some((x) => x.startsWith('ESTADO_POPULACAO_GRAVADO_MAX'))).toBe(true);
+    expect(gr.naoComprar).toMatchObject({ n: 0, de: 2 }); // informativo: PP gravado abaixo do replay ⇒ não provado
+  });
+
+  // Contraprova N6 do Codex: exigirAncoraOmie({ posicaoAbertura: new Map() }, false) devolvia 'oficial'.
+  it('N6: a âncora tem de cobrir toda a população; mapa vazio ou SKU faltando para a rodada com a lista', () => {
+    expect(() => exigirAncoraOmie({ posicaoAbertura: new Map() }, false, [])).toThrow(/^ANCORA_OMIE_INCOMPLETA: posição de abertura VAZIA/);
+    const dd = cenario(false);
+    const nec = skusQueExigemAncora(dd);
+    expect(nec).toEqual(['P', 'Q', 'R']);
+    const semR = new Map([...dd.posicaoAbertura!].filter(([s]) => s !== 'R'));
+    expect(() => exigirAncoraOmie({ posicaoAbertura: semR }, false, nec)).toThrow(/^ANCORA_OMIE_INCOMPLETA: 1 SKU\(s\) da população sem posição na abertura: R$/);
+    expect(() => exigirAncoraOmie({ posicaoAbertura: semR }, true, nec)).toThrow(ErroDadosReplay); // a flag do legado não salva âncora incompleta
+    const semLog = { informativoSaldoHoje: false, cacheDir: null, log: () => {} };
+    expect(() => etapasPreCalibracao({ ...dd, posicaoAbertura: semR }, semLog)).toThrow(/^ANCORA_OMIE_INCOMPLETA/);
+  });
 });

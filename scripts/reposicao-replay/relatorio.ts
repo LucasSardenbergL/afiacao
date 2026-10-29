@@ -72,6 +72,8 @@ export interface Rodada {
       grupos: { f0: number | null; alt: number | null };
       /** R44: frações das unidades × dias por fonte do preço de capital. */
       fontes: { f0: FontesCapital | null; alt: FontesCapital | null };
+      /** N7: serviço das linhas do galão extra (informativo, fora das células); null = sem linha. Ausente em rodadas antigas. */
+      galao?: { f0: { linhas: number; fill: number | null } | null; alt: { linhas: number; fill: number | null } | null };
     }[];
     terminal: { cenario: CenarioR; f0: Pick<SomasSemanais, 'terminal' | 'balanco'>; alt: Pick<SomasSemanais, 'terminal' | 'balanco'> }[];
     equilibrio: { falta: Falta; valor: number | null }[];
@@ -118,7 +120,7 @@ export interface Diagnostico {
   /** LT (du) realizado nos pedidos de A do F0 (rep 0) a partir de `desde` × LT do parâmetro F0 no dia do pedido. */
   lt: { desde: Data; pedidos: number; sorteadoMedio: number | null; parametroMedio: number | null };
   /** Operação real × F0 simulado na calibração (R$ só aqui, local): estoque médio (mesma valoração) e unidades recebidas até 30/04. */
-  real: { estoqueReal: number; estoqueF0: number | null; recebidoReal: number; recebidoF0: number };
+  real: { estoqueReal: number | null; estoqueF0: number | null; recebidoReal: number; recebidoF0: number };
 }
 
 // ── formatação ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -145,6 +147,9 @@ export const TEXTO_GATE_ECONOMIA =
   `Gate (critério 5, R26): taxa 25% a.a.; emergencial 5/10/20% × atraso 0/0,5/1% por linha-dia; cenários espera, cancelamento e misto ` +
   `(${pc0(CENARIOS_FALTA.misto.espera)} espera, ${pc0(CENARIOS_FALTA.misto.emergencial)} compra emergencial, ${pc0(CENARIOS_FALTA.misto.cancelamento)} cancelamento).`;
 
+/** O limiar da paridade (rodar.ts PARIDADE_MINIMA), repetido aqui só para o texto (relatorio.ts não importa rodar.ts). */
+const PARIDADE_MINIMA_RELATORIO = 0.95;
+
 /** Limitações a DECLARAR (spec §10 + rulings do controlador). */
 export const LIMITES: readonly string[] = [
   '**12 meses de histórico** (spec §10): 6 meses de avaliação, poucos blocos longos; intervalos largos → INCONCLUSIVO é desfecho legítimo.',
@@ -152,10 +157,10 @@ export const LIMITES: readonly string[] = [
   '**Estado inicial** (spec §5.2/§10): o veredito é recomputado com `piso_zero` (linha "Estado inicial").',
   '**Seleção retrospectiva da coorte** (spec §5.1.1): o flag de reposição automática é o de hoje; a conclusão vale para a coorte habilitada hoje e não é confirmatória. "Todos os ativos" é sensibilidade (R11: definição composta do motor, menor que a contagem frouxa da spec).',
   '**R19** — a paridade primária do F0 é contra a VIEW de produção no instante da extração (fórmula × fórmula); o gravado em `sku_parametros` é paridade secundária (defasagem da passada das ~01:15, cold start e fusível = estado irredutível).',
-  '**Gate de paridade (achado 8)** — exige decisão E estado (os parâmetros do replay, os mesmos do mapa que o baseline simula), status OK e presença na view ≥ 95%, e todas as linhas de sugestao_hoje comparáveis. Divergência de estado só passa na allowlist nomeada da seção 7 (justificativa por SKU), nunca por limiar.',
+  '**Gate de paridade (achado 8)** — exige decisão E estado (os parâmetros do replay, os mesmos do mapa que o baseline simula), status OK e presença na view ≥ 95%, e todas as linhas de sugestao_hoje comparáveis. Divergência de estado só passa na allowlist nomeada da seção 7 (justificativa por SKU), nunca por limiar. **N5:** o estado cobre TODOS os donos da população simulada, com ou sem sugestão positiva — ES/PP/máximo do replay × gravado e × view ≥ 95% (os limiares da paridade), o que põe no gate também os donos cuja decisão foi NÃO comprar. A posição do motor não é gravada para quem não compra: quantas dessas decisões ficam PROVADAS (PP do replay < gravado, ou PP e máximo iguais) sai à parte, informativo.',
   '**R10 (revogada pelo achado 1)** — a âncora oficial é a posição datada do Omie (R31); o modo legado (saldo de hoje) só roda com `--informativo-saldo-hoje` e sai NÃO OFICIAL (R30).',
-  '**R29/R34 — encerramento com o estado de HOJE do Omie** — `PARCIAL_ENCERRADO_OMIE` (parcial que nunca chegou a 95% fecha no último t4), `SEM_T4_ENCERRADO_OMIE` e `SEM_T4_STATUS_RECEBIDO` (sem t4, saem da amostra) usam o encerramento/status de hoje: é look-ahead para pedidos que ainda estavam abertos na calibração. LT levemente otimista nesses itens, igual nos dois braços.',
-  '**R35 — tracking contaminado pesa igual nos dois braços** — o pedido casa em ~1/4 das linhas; as demais são o item gravado sob o tracking de OUTRO pedido da mesma NF (writer antigo), com t1 alheio e quantidade pedida da NF (`PEDIDA_DA_NF`). Ficam no LT como na produção (`v_sku_leadtime_efetivo`); o sorteio é comum aos dois braços, então o ruído é o mesmo em F0 e na candidata.',
+  '**R47 (revoga R29/R34 no que usavam o estado de hoje sem data)** — o encerramento no Omie só fecha o item com a DATA dele: o parcial encerrado fecha no último t4, mas só é conhecido a partir de `encerrado_omie_em` (antes disso estava aberto; na calibração só entra se encerrado até 30/04); o sem-t4 encerrado sai da amostra (`SEM_T4_ENCERRADO_OMIE`). Status RECEBIDO sem t4 (estado de hoje, sem data) NÃO prova recebimento: o item fica na amostra como aberto (`SEM_T4_STATUS_RECEBIDO`, contado). Resíduo: a quantidade do pedido vem do `raw_data` ATUAL do pedido (sem histórico de versões).',
+  '**R46 (revoga a R35 no sorteio)** — o pedido casa em ~1/4 das linhas; as demais são o item gravado sob o tracking de OUTRO pedido da mesma NF (writer antigo), com quantidade pedida da NF (`PEDIDA_DA_NF`): saem da amostra do SORTEIO de LT (falta evidência de que fecharam); a contagem e a sensibilidade com elas dentro aparecem na seção 8 e nas linhas `empirico_com_nf`. O LT do F0 usa a amostra da produção (`v_sku_leadtime_efetivo`, R43), que não muda; as fórmulas alternativas aprendem LT dos itens documentais, com elas (igual nos dois braços).',
   '**R23** — viés de LT por censura à direita (só documentos com t4 ≤ fim da janela perto de 30/04) e o aquecimento (out–dez/25) sorteia documentos de jan/26: LT levemente otimista no fim da calibração, igual nos dois braços.',
   '**R36** — a elegibilidade de catálogo e portal do galão (escolha de embalagem, achado 9) é a de HOJE (não há histórico desses filtros).',
   '**R37** — o estoque do galão extra (membro de grupo fora da coorte) entra no capital das duas políticas; a fração dos grupos no capital sai à parte na tabela de capital.',
@@ -166,7 +171,11 @@ export const LIMITES: readonly string[] = [
   '**Terminal nas somas semanais (achado 12)** — o custo terminal (backlog do fim custeado como emergencial + atraso) é soma da ÚLTIMA semana: só entra na reamostragem que a sorteia.',
   '**R25** — critério 3 (capital) e a redução do estresse avaliados nos TRÊS cenários de falta; qualquer FALHA → NO-GO.',
   '**R26** — critério 5 no gate só com a taxa de 25% a.a. (grade 3×3 × 3 cenários); 20% e 30% são sensibilidade (tabela à parte).',
-  '**Capital da avaliação a CMC de hoje** como numerário constante (na calibração, o último cmcLinha ≤ 30/04). **R45/R44:** SKU sem esse CMC é valorado, dia a dia, pelo nCMC (CMC contábil do ERP) da posição datada do Omie mais recente com data ≤ o dia (20/10, 31/01, 30/04) e, sem ela, pelo preco_compra_real dos documentos coerentes (origem normal) com t4 < o dia — a cadeia documental da produção, sem a venda × 0,55; preço de compra ≠ CMC contábil, igual nos dois braços; a fração do capital por fonte aparece. O que segue sem preço NÃO some (achado 10): capital, estresse e economia daquele recorte viram INCERTO. A margem da cancelada sem CMC (achado 11) não muda: margem não é capital.',
+  '**Capital pelo preço DO DIA (N2)** — o estoque de cada dia é valorado com o que se sabia nele: o cmcLinha da última venda ANTERIOR ao dia → o nCMC (CMC contábil do ERP, R45) da posição datada do Omie mais recente com data ≤ o dia (20/10, 31/01, 30/04) → o preco_compra_real dos documentos coerentes (origem normal) consolidados no corte do dia (R44, N3) → sem preço; nunca o cmc de hoje nem um cmc fixo da janela, e sem a venda × 0,55. Preço de compra ≠ CMC contábil, igual nos dois braços; a fração do capital por fonte aparece. O que segue sem preço NÃO some (achado 10): capital, estresse e economia daquele recorte viram INCERTO, e o diagnóstico "operação real × F0" sai n/d. A margem da cancelada sem CMC (achado 11) não muda: margem não é capital.',
+  '**Consolidação de cópias no corte temporal (N3)** — o preco_compra_real e o LT do F0 (cópias cruas de `v_sku_leadtime_history_normal`, regra de `v_sku_leadtime_efetivo` refeita em TS) consideram, em cada dia, só as cópias do documento com t4 anterior a ele: uma cópia futura não apaga nem adia uma observação passada. Resíduo: uma linha inserida ou corrigida depois do dia (sync atrasado) ainda entra como se fosse conhecida nele (não há histórico de versões das tabelas).',
+  '**Galão extra na conta econômica (N7)** — o membro de grupo fora da coorte entra no capital (R37) E no fechamento econômico dos dois braços (emergencial, cancelamento, entrega tardia/atraso, herdadas e backlog terminal); só as células de serviço o excluem (o denominador da coorte não muda) — o serviço dele aparece à parte, informativo, na tabela de capital.',
+  '**Recebimentos do mesmo documento (P2a)** — cópia idêntica (mesmo t4 e quantidade) sob outro tracking é o mesmo recebimento; datas diferentes são recebimentos distintos, cada um na sua data. Dois pedidos da mesma NF com a mesma quantidade no mesmo dia são indistinguíveis de cópias (viram 1).',
+  '**Preço-app (P2b)** — as capturas são ordenadas pelo instante (hora de SP), e a escolha de embalagem no dia d usa a mais recente com data < d.',
   '**LT exógeno**: as fórmulas aprendem LT só de recebimentos históricos com t4 < d, nunca de chegadas simuladas (permite pré-computar os níveis).',
   '**Sem feriados** no calendário de LT/revisão (como `dias_uteis_entre` da produção).',
   '**O replay não mede a operação real** (spec §10): separação, aceitação de troca — cabe à sombra e ao piloto. Um GO autoriza sombra/piloto, não a troca do motor.',
@@ -198,7 +207,10 @@ function secoesDoBloco(
   // 1. veredito
   s(`${H2}${tituloVeredito(b.veredito.veredito, o.oficial, o.rotuloNaoOficial)}`);
   if (b.congelado) s(`Candidata congelada na calibração: **${b.congelado.candidata}** — \`${JSON.stringify(b.congelado.params)}\`.`);
-  if (o.h === '##') s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7).`);
+  if (o.h === '##') {
+    const fora = r.paridade.gate.estadoForaDaPopulacao;
+    s(`Gate de paridade do F0: **${r.paridade.gatePassa ? 'PASSA' : 'FALHA'}** (detalhe na seção 7). Estado nos donos FORA da população simulada (R42, informativo): ${fora.n}/${fora.de}.`);
+  }
   for (const x of o.extrasVeredito ?? []) s(x);
   if (b.veredito.motivos.length > 0) s(['Motivos (FALHAs, ou INCERTOs se não há FALHA):', ...b.veredito.motivos.map((m) => `- ${m}`)].join('\n'));
   if (b.avaliacao) {
@@ -260,11 +272,12 @@ function secoesDoBloco(
     s(H3 + 'Capital (estoque físico médio a CMC, ponderado por dias corridos)');
     s(
       tabela(
-        ['Cenário', 'Estoque médio F0 (só o valorado)', 'Estoque médio cand. (só o valorado)', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)', 'Fonte do preço, unid.×dias F0 (R44)', 'Fonte do preço, unid.×dias cand. (R44)'],
+        ['Cenário', 'Estoque médio F0 (só o valorado)', 'Estoque médio cand. (só o valorado)', 'Redução ponto', 'LI', 'LS', 'Não valorado F0 / cand. (achado 10)', 'Grupos no capital F0 / cand. (R37)', 'Fonte do preço, unid.×dias F0 (R44)', 'Fonte do preço, unid.×dias cand. (R44)', 'Serviço do galão extra F0 / cand. (N7, informativo)'],
         a.capital.map((c) => [
           rotCen(c.cenario), brl(c.estoqueF0), brl(c.estoqueAlt), ivPct(comb(c.reducao)),
           `${pct(c.naoValorado.f0)} / ${pct(c.naoValorado.alt)}`, `${pct(c.grupos.f0)} / ${pct(c.grupos.alt)}`,
           textoFontes(c.fontes.f0), textoFontes(c.fontes.alt),
+          c.galao ? `${c.galao.f0 ? `${pct(c.galao.f0.fill)} (${num(c.galao.f0.linhas, 0)} linhas)` : 'sem linha'} / ${c.galao.alt ? pct(c.galao.alt.fill) : 'sem linha'}` : 'n/d',
         ]),
       ),
     );
@@ -415,6 +428,13 @@ export function montarRelatorio(r: Rodada): string {
       `Secundária (gravado): ES ${pct(p2.comparados.es ? p2.dentro.es / p2.comparados.es : null, 1)} · PP ${pct(p2.comparados.pp ? p2.dentro.pp / p2.comparados.pp : null, 1)} · máximo ${pct(p2.comparados.max ? p2.dentro.max / p2.comparados.max : null, 1)}; valor ${pct(p2.valorMaximoTotal > 0 ? p2.valorDeltaMaximoDivergente / p2.valorMaximoTotal : null)}.`,
   );
   s(`Quantidade (R21): decisão com PP/máximo gravados ${g.decisao.n}/${g.decisao.de}; com o estado do replay ${g.estado.n}/${g.estado.de}.`);
+  const ep = g.estadoPopulacao;
+  const fr = (x: { n: number; de: number }) => `${x.n}/${x.de}`;
+  s(
+    `Estado da população simulada (N5, ${ep.donos} donos, com ou sem sugestão positiva; limiar ${pct(PARIDADE_MINIMA_RELATORIO, 0)}): replay × gravado ES ${fr(ep.gravado.es)} · PP ${fr(ep.gravado.pp)} · máximo ${fr(ep.gravado.max)}; ` +
+      `sugestão do replay × view ES ${fr(ep.view.es)} · PP ${fr(ep.view.pp)} · máximo ${fr(ep.view.max)}. Decisões de NÃO comprar provadas sem a posição do motor (informativo; PP do replay < gravado, ou PP e máximo iguais): ${fr(g.naoComprar)}` +
+      (g.naoComprar.divergentes.length === 0 ? '.' : ` — divergentes: ${g.naoComprar.divergentes.map((d) => `${d.sku} (replay ${d.estado ? `${d.estado.pp}/${d.estado.max}` : 'n/d'} × gravado ${d.gravado.pp ?? 'n/d'}/${d.gravado.max ?? 'n/d'})`).join(', ')}.`),
+  );
   s(
     `Gate (achado 8): status OK ${g.status ? `${g.status.n}/${g.status.de}` : 'n/d'} · presença na view replay × produção ${g.cobertura.view.n}/${g.cobertura.view.de} · ` +
       `linhas de sugestao_hoje comparáveis ${g.cobertura.decisao.n}/${g.cobertura.decisao.de} · parâmetros do gate = os do mapa do baseline ${g.paramsBaseline.n}/${g.paramsBaseline.de}.`,
@@ -460,6 +480,8 @@ export function montarRelatorio(r: Rodada): string {
     s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem preço de capital em algum dia (nem cmc, nem cmc Omie datado, nem preco_compra_real; R44/R45): ${a.skusSemCmc.join(', ') || 'nenhum'}. SKUs valorados pelo cmc Omie datado (R45): ${a.skusCmcOmie.length}; pelo preco_compra_real (R44): ${a.skusCompraReal.length}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);
+  const nf = r.avisos.find((x) => x.codigo === 'PEDIDA_DA_NF')?.n ?? 0;
+  s(`**R46** — ${nf} item(ns) de LT sem a quantidade do pedido de compra (\`PEDIDA_DA_NF\`) ficam FORA da amostra do sorteio de LT da simulação (falta evidência de que fecharam); a sensibilidade com eles DENTRO são as linhas \`…/empirico_com_nf/…\` das tabelas de células e de capital (fora do veredito). O LT do F0 (view, R43) não muda.`);
   {
     // achado 14 (§5.1.1): a rodada só chega aqui com a divergência ≤ 5% do valor A
     const vc = r.validacaoClasse;
@@ -520,7 +542,7 @@ export function montarRelatorio(r: Rodada): string {
     const base = d.demandaA[0]?.unidades ?? 0;
     s(`Demanda de A por mês (unidades; razão contra o 1º mês): ${d.demandaA.map((m) => `${m.mes} ${num(m.unidades, 0)}${base > 0 ? ` (${num(m.unidades / base, 2)}×)` : ''}`).join(' · ')}. A média de 90 dias do F0 demora a acompanhar a alta.`);
     s(`LT nos pedidos de A desde ${d.lt.desde} (F0, rep 0, ${d.lt.pedidos} pedidos): sorteado médio ${d.lt.sorteadoMedio === null ? 'n/d' : num(d.lt.sorteadoMedio, 1)} du × parâmetro médio do F0 ${d.lt.parametroMedio === null ? 'n/d' : num(d.lt.parametroMedio, 1)} du.`);
-    s(`Operação real × F0 simulado (calibração): estoque médio real ${brl(d.real.estoqueReal)} × F0 ${d.real.estoqueF0 === null ? 'n/d (estoque sem CMC na calibração)' : `${brl(d.real.estoqueF0)} (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×)`}; recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
+    s(`Operação real × F0 simulado (calibração): estoque médio real ${d.real.estoqueReal === null ? 'n/d (estoque sem preço na calibração — nunca o subtotal valorado)' : brl(d.real.estoqueReal)} × F0 ${d.real.estoqueF0 === null ? 'n/d (estoque sem CMC na calibração)' : `${brl(d.real.estoqueF0)}${d.real.estoqueReal === null ? '' : ` (${num(d.real.estoqueReal / d.real.estoqueF0, 2)}×)`}`}; recebido real ${num(d.real.recebidoReal, 0)} × F0 ${num(d.real.recebidoF0, 0)} unidades (${num(d.real.recebidoReal / d.real.recebidoF0, 2)}×). A operação compra acima da sugestão do motor (a paridade de ES/PP/máximo passa), então o F0 simulado é o motor ao pé da letra, não a operação.`);
   }
   if (r.informativoErro) s(`**A rodada informativa falhou** (o veredito ${principalOficial ? 'oficial' : 'da rodada principal'} acima não é afetado): ${r.informativoErro}`);
   if (r.informativo) secoesDoBloco(r, r.informativo, s, { h: '###', prefixo: '11.', oficial: false, extrasVeredito: ['**NÃO OFICIAL (R27)** — alvo e critérios nas células *_alt; população simulada = só os alterados.'] });

@@ -50,7 +50,7 @@ import {
   type ResultadoCalibracao,
 } from './calibracao';
 import { classeEfetiva, validarClasse, type ValidacaoClasse } from './classe';
-import { CENARIOS_FALTA, GRADE_CUSTO, GRADE_QUANTIS, INICIO_AQUECIMENTO, JANELAS, NOME_METRICA_SERVICO, PRECISAO, TSB } from './config';
+import { CENARIOS_FALTA, COLD_START, GRADE_CUSTO, GRADE_QUANTIS, INICIO_AQUECIMENTO, JANELAS, NOME_METRICA_SERVICO, PRECISAO, TSB } from './config';
 import { carregarDados } from './dados';
 import {
   avaliarCriterios,
@@ -65,18 +65,17 @@ import {
   type Criterio,
   type EstatisticaPareada,
 } from './estatistica';
-import { diagnosticoF0, grupoDeEmbalagem, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
+import { dentroDaTolerancia, diagnosticoF0, grupoDeEmbalagem, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
 import { custoFaltaEquilibrio, custoLiquido, fracaoGrupos, fracaoNaoValorada, fracoesPorFonte, type GradeCusto } from './metricas';
 import { coorte, coorteTodosAtivos } from './parados';
 import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
-import { CELULAS, paridadeQuantidade, precoDocumentalNoDia, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
+import { CELULAS, paridadeQuantidade, precoCapitalNoDia, simular, type Celula, type Falta, type SomasSemanais } from './simulador';
 import {
   ErroDadosReplay,
   type BlocoBootstrap,
   type Classe,
   type Dados,
-  type Data,
   type Evidencia,
   type EvidenciaServico,
   type Intervalo,
@@ -103,10 +102,12 @@ export function cenariosDaAvaliacao(): Cenario[] {
   for (const inicial of INICIAIS) for (const lt of LTS) for (const falta of FALTAS) out.push({ pop: 'coorte', inicial, lt, falta, sub: false });
   for (const falta of CENARIOS_FALTA.servico) out.push({ pop: 'coorte', inicial: 'reconstruido', lt: 'empirico', falta, sub: true });
   for (const lt of ['empirico', 'estresse15'] as const) for (const falta of FALTAS) out.push({ pop: 'todos', inicial: 'reconstruido', lt, falta, sub: false });
+  // R46: sensibilidade com as linhas PEDIDA_DA_NF DENTRO da amostra de LT do sorteio (só tabela; fora do veredito)
+  for (const falta of FALTAS) out.push({ pop: 'coorte', inicial: 'reconstruido', lt: 'empirico_com_nf', falta, sub: false });
   return out;
 }
 /** Cenários cuja meia largura MC é controlada (os que entram nos critérios do veredito principal). */
-const naPrecisao = (c: Cenario): boolean => c.pop === 'coorte' && c.inicial === 'reconstruido' && !c.sub && c.lt !== 'choque29';
+const naPrecisao = (c: Cenario): boolean => c.pop === 'coorte' && c.inicial === 'reconstruido' && !c.sub && (c.lt === 'empirico' || c.lt === 'estresse15');
 const CELULAS_SERVICO: readonly Celula[] = ['A', 'B', 'C', 'A_alt', 'B_alt', 'C_alt'];
 
 // ── mapas congelados ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -474,6 +475,7 @@ export async function avaliarCandidata(
       naoValorado: { f0: fracaoNaoValorada(m.f0), alt: fracaoNaoValorada(m.alt) },
       grupos: { f0: fracaoGrupos(m.f0), alt: fracaoGrupos(m.alt) },
       fontes: { f0: fracoesPorFonte(m.f0), alt: fracoesPorFonte(m.alt) },
+      galao: { f0: servicoDoGalao(m.f0), alt: servicoDoGalao(m.alt) },
     });
     terminal.push({ cenario: cen, f0: { terminal: m.f0.terminal, balanco: m.f0.balanco }, alt: { terminal: m.alt.terminal, balanco: m.alt.balanco } });
   }
@@ -600,6 +602,12 @@ async function rodadaInformativa(dados: Dados, dir: string, paralelo: number, te
   return { veredito: av.veredito, congelado: cg, calibracao, fronteira: cal.fronteira, avaliacao: av.avaliacao };
 }
 
+/** N7: serviço das linhas do galão extra (informativo; fora das células). null = sem linha na janela. */
+function servicoDoGalao(s: SomasSemanais): { linhas: number; fill: number | null } | null {
+  const x = s.servicoExtras;
+  return x.linhas > 0 ? { linhas: x.linhas, fill: x.integrais / x.linhas } : null;
+}
+
 /** R44: de onde vem o preço do capital do F0 na calibração (frações de unidades × dias e contagem de SKUs). */
 function capitalDaBase(base: ReturnType<typeof baseDaCalibracao>): NonNullable<Rodada['calibracao']['capitalF0']> {
   return { fontes: fracoesPorFonte(base.somasF0), skusSemPreco: base.somasF0.skusSemCmc.length, skusCompraReal: base.somasF0.skusCompraReal.length, skusCmcOmie: base.somasF0.skusCmcOmie.length };
@@ -641,24 +649,25 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
       nPar++;
     }
   }
-  // operação real: estoque reconstruído (com ajuste) valorado como na calibração (cmc ≤ 30/04, senão o preço documental
-  // do dia — R44/R45) e recebido até 30/04
+  // operação real: estoque reconstruído (com ajuste) valorado pelo preço DO DIA, a mesma cadeia do simulador (N2) — e
+  // recebido até 30/04. N1 da re-revisão C: estoque sem preço (ou SKU sem reconstrução) ⇒ null, nunca o subtotal valorado.
   const rec = reconstruirSkus(dados);
-  const cmc = new Map<string, { d: Data; c: number }>();
-  for (const v of dados.vendas) {
-    if (v.cmcLinha === null || !(v.cmcLinha > 0) || v.data > JANELAS.calibracaoFim || !c.populacao.has(v.sku)) continue;
-    const x = cmc.get(v.sku);
-    if (!x || v.data > x.d) cmc.set(v.sku, { d: v.data, c: v.cmcLinha });
-  }
-
-  let soma = 0;
+  let soma: number | null = 0;
   let dias = 0;
   for (let i = diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoIni); i <= diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim); i++) {
+    const d = addDias(INICIO_AQUECIMENTO, i);
     for (const s of c.populacao) {
+      if (soma === null) break;
       const it = rec.itens.get(s);
-      // R44/R45: sem cmc ≤ 30/04, o preço documental do dia (nCMC Omie datado → preco_compra_real), como no simulador
-      const cc = cmc.get(s)?.c ?? precoDocumentalNoDia(dados, s, addDias(INICIO_AQUECIMENTO, i))?.preco;
-      if (it && cc !== undefined) soma += (it.fimDia[i] + it.ajuste) * cc;
+      if (!it) {
+        soma = null; // sem estoque reconstruído: ausente ≠ 0
+        break;
+      }
+      const q = it.fimDia[i] + it.ajuste;
+      if (Math.abs(q) <= 1e-9) continue;
+      const p = precoCapitalNoDia(dados, s, d);
+      if (p === null) soma = null;
+      else soma += q * p.preco;
     }
     dias++;
   }
@@ -669,7 +678,7 @@ function diagnosticar(dados: Dados, base: ReturnType<typeof baseDaCalibracao>): 
     semanalA,
     demandaA: [...porMes].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([mes, unidades]) => ({ mes, unidades })),
     lt: { desde, pedidos: nLt, sorteadoMedio: nLt > 0 ? somaSort / nLt : null, parametroMedio: nPar > 0 ? somaPar / nPar : null },
-    real: { estoqueReal: soma / dias, estoqueF0: base.estoqueF0, recebidoReal, recebidoF0: m.balanco.recebido },
+    real: { estoqueReal: soma === null ? null : soma / dias, estoqueF0: base.estoqueF0, recebidoReal, recebidoF0: m.balanco.recebido },
   };
 }
 
@@ -750,6 +759,23 @@ export interface GateParidade {
   estado: { n: number; de: number; divergentes: DivergenciaEstado[] };
   /** R42: o mesmo, nos donos FORA da população simulada — informativo (R20), não reprova. */
   estadoForaDaPopulacao: { n: number; de: number; divergentes: DivergenciaEstado[] };
+  /**
+   * N5: o ESTADO do replay no dia da decisão (ES do diagnóstico, PP/máximo do mapa do gate) × o gravado em produção
+   * (sku_parametros, o que o motor usou — R40) em TODOS os donos da população simulada, com ou sem sugestão positiva;
+   * e a sugestão do replay × v_sku_parametros_sugeridos nesses mesmos donos. Limiar e tolerância = os da paridade (R19).
+   */
+  estadoPopulacao: {
+    donos: number;
+    gravado: Record<'es' | 'pp' | 'max', { n: number; de: number }>;
+    view: Record<'es' | 'pp' | 'max', { n: number; de: number }>;
+  };
+  /**
+   * N5 (INFORMATIVO): as decisões de NÃO comprar — donos da população sem sugestão positiva. Elas entram no gate pelo ESTADO
+   * (`estadoPopulacao`, limiares da paridade); aqui só se mede quantas são PROVADAS sem a posição do motor (que não é gravada
+   * para quem não compra): PP do replay < PP gravado, ou PP e máximo iguais (no F0 da produção, não comprar ⇒ posição ≥ PP
+   * gravado). As não provadas (estado gravado ausente, máximo ±1, PP acima) são listadas no relatório, não reprovam.
+   */
+  naoComprar: { n: number; de: number; divergentes: DivergenciaEstado[] };
   /** Concordância do status OK replay × view (primária). null = não medida ⇒ FALHA. */
   status: { n: number; de: number } | null;
   /** Cobertura: presença na view replay × produção; e linhas de sugestao_hoje comparáveis (sem FORA_DOS_DADOS). */
@@ -785,6 +811,12 @@ export function falhasDoGate(g: GateParidade): string[] {
   const fora = e.divergentes.filter((d) => !divergenciaPermitida(d));
   if (fora.length > 0) {
     f.push(`ESTADO_DIVERGENTE_FORA_DA_ALLOWLIST: ${fora.map((d) => `${d.sku} (replay ${d.replay} × prod ${d.qtdeFinal}; estado ${JSON.stringify(d.estado)} × gravado ${JSON.stringify(d.gravado)})`).join(', ')}`);
+  }
+  for (const [ref, bloco] of [['GRAVADO', g.estadoPopulacao.gravado], ['VIEW', g.estadoPopulacao.view]] as const) {
+    for (const k of ['es', 'pp', 'max'] as const) {
+      const x = fracao(bloco[k]);
+      if (x === null || !(x >= PARIDADE_MINIMA)) f.push(`ESTADO_POPULACAO_${ref}_${k.toUpperCase()}: ${bloco[k].n}/${bloco[k].de}`);
+    }
   }
   const st = fracao(g.status);
   if (st === null || !(st >= PARIDADE_MINIMA)) f.push(`STATUS: ${g.status ? `${g.status.n}/${g.status.de}` : 'não medido'}`);
@@ -849,7 +881,8 @@ export function montarGate(dados: Dados, opcoes: { cacheDir?: string | null } = 
   const d = dados.dataExtracao;
   const simulados = coorteTodosAtivos(dados).populacao;
   const donoDe = (sku: string) => grupoDeEmbalagem(dados, sku)?.ancora ?? sku;
-  const donosPop = [...new Set([...dados.sugestaoHoje.keys()].filter((s) => dados.skus.has(s)).map(donoDe))].filter((s) => simulados.has(s)).sort();
+  // N5: TODOS os donos da população simulada (com ou sem sugestão positiva), não só os de sugestao_hoje
+  const donosPop = [...new Set([...simulados].filter((s) => dados.skus.has(s)).map(donoDe))].filter((s) => simulados.has(s) && dados.skus.has(s)).sort();
   const cache = opcoes.cacheDir === undefined ? {} : { cacheDir: opcoes.cacheDir };
   const mapaGate = donosPop.length === 0
     ? new Map<string, ParamsDia>()
@@ -880,6 +913,34 @@ export function montarGate(dados: Dados, opcoes: { cacheDir?: string | null } = 
       }),
     };
   };
+  // N5: estado (replay × gravado) e sugestão (replay × view) em todos os donos da população; decisões de não comprar
+  const contagem = () => ({ es: { n: 0, de: 0 }, pp: { n: 0, de: 0 }, max: { n: 0, de: 0 } });
+  const estadoPopulacao: GateParidade['estadoPopulacao'] = { donos: donosPop.length, gravado: contagem(), view: contagem() };
+  for (const dono of donosPop) {
+    const p = paramsHoje(dono);
+    const s = dados.skus.get(dono)!;
+    const es = diagnosticoF0(dados, dono, d, { calibracao: false }).es ?? (p.tipo === 'F0' ? COLD_START.es : null);
+    const rep = { es, pp: p.tipo === 'F0' ? p.pp : null, max: p.tipo === 'F0' ? p.max : null };
+    for (const k of ['es', 'pp', 'max'] as const) {
+      if (s.hoje[k] === null) continue;
+      estadoPopulacao.gravado[k].de++;
+      if (dentroDaTolerancia(s.hoje[k], rep[k])) estadoPopulacao.gravado[k].n++;
+    }
+  }
+  const prPop = paridadeF0(dados, donosPop).primaria;
+  for (const k of ['es', 'pp', 'max'] as const) estadoPopulacao.view[k] = { n: prPop.dentro[k], de: prPop.comparados[k] };
+  const comSugestao = new Set(decididas.map((l) => donoDe(l.sku)));
+  const naoComprar: GateParidade['naoComprar'] = { n: 0, de: 0, divergentes: [] };
+  for (const dono of donosPop) {
+    if (comSugestao.has(dono)) continue;
+    const p = paramsHoje(dono);
+    const s = dados.skus.get(dono)!;
+    naoComprar.de++;
+    const gp = s.hoje.pp;
+    const provado = p.tipo !== 'F0' || (gp !== null && (p.pp < gp || (p.pp === gp && p.max === s.hoje.max)));
+    if (provado) naoComprar.n++;
+    else naoComprar.divergentes.push({ sku: dono, dono, replay: null, qtdeFinal: 0, estado: p.tipo === 'F0' ? { pp: p.pp, max: p.max } : null, gravado: { pp: s.hoje.pp, max: s.hoje.max } });
+  }
   const gate: GateParidade = {
     es: pct(pr.dentro.es, pr.comparados.es),
     pp: pct(pr.dentro.pp, pr.comparados.pp),
@@ -888,6 +949,8 @@ export function montarGate(dados: Dados, opcoes: { cacheDir?: string | null } = 
     decisao: parQtd.gravado,
     estado: bloco(true),
     estadoForaDaPopulacao: bloco(false),
+    estadoPopulacao,
+    naoComprar,
     status: pr.statusConcorda,
     cobertura: { view: parF0.presencaNaView, decisao: { n: decididas.length, de: parQtd.linhas.length } },
     // o MESMO preComputar (e cache) que mapasDaAvaliacao entrega ao F0 do baseline
@@ -905,7 +968,7 @@ export function etapasPreCalibracao(
   o: { informativoSaldoHoje: boolean; cacheDir?: string | null; log?: (m: string) => void },
 ): ResultadoGate & { modoAncora: ModoAncora; validacaoClasse: ValidacaoClasse; gatePassa: boolean } {
   const lg = o.log ?? log;
-  const modoAncora = exigirAncoraOmie(dados, o.informativoSaldoHoje);
+  const modoAncora = exigirAncoraOmie(dados, o.informativoSaldoHoje, skusQueExigemAncora(dados));
   if (modoAncora !== 'oficial') lg('ÂNCORA: saldo de hoje (modo legado, --informativo-saldo-hoje) — rodada NÃO OFICIAL');
   const validacaoClasse = validarClasse(dados);
   lg(`VALIDAÇÃO DE CLASSE: ${validacaoClasse.valorADivergente === null ? 'n/d' : validacaoClasse.valorADivergente.toFixed(2)}% do valor A diverge (máximo ${CLASSE_DIVERGENCIA_MAXIMA_PCT}%)`);
@@ -917,7 +980,10 @@ export function etapasPreCalibracao(
   lg(
     `GATE_PARIDADE ${falhas.length === 0 ? 'PASSA' : `FALHA (${falhas.join('; ')})`}: ES ${g.es} PP ${g.pp} máx ${g.max} valor ${g.valor} decisão ${g.decisao.n}/${g.decisao.de} ` +
       `estado ${g.estado.n}/${g.estado.de} [${g.estado.divergentes.map((x) => x.sku).join(', ')}] fora da população ${fora.n}/${fora.de} [${fora.divergentes.map((x) => x.sku).join(', ')}] ` +
-      `status ${g.status?.n}/${g.status?.de} view ${g.cobertura.view.n}/${g.cobertura.view.de} params ${g.paramsBaseline.n}/${g.paramsBaseline.de}`,
+      `status ${g.status?.n}/${g.status?.de} view ${g.cobertura.view.n}/${g.cobertura.view.de} params ${g.paramsBaseline.n}/${g.paramsBaseline.de} ` +
+      `população ${g.estadoPopulacao.donos} donos: gravado ES ${g.estadoPopulacao.gravado.es.n}/${g.estadoPopulacao.gravado.es.de} PP ${g.estadoPopulacao.gravado.pp.n}/${g.estadoPopulacao.gravado.pp.de} máx ${g.estadoPopulacao.gravado.max.n}/${g.estadoPopulacao.gravado.max.de} · ` +
+      `view ES ${g.estadoPopulacao.view.es.n}/${g.estadoPopulacao.view.es.de} PP ${g.estadoPopulacao.view.pp.n}/${g.estadoPopulacao.view.pp.de} máx ${g.estadoPopulacao.view.max.n}/${g.estadoPopulacao.view.max.de} · ` +
+      `não comprar ${g.naoComprar.n}/${g.naoComprar.de} [${g.naoComprar.divergentes.map((x) => x.sku).join(', ')}]`,
   );
   exigirGateParidade(g); // FALHA ⇒ ErroDadosReplay ⇒ rc ≠ 0, antes da calibração (review I-3)
   return { ...r, modoAncora, validacaoClasse, gatePassa: falhas.length === 0 };
@@ -947,8 +1013,28 @@ export function exigirValidacaoClasse(v: ValidacaoClasse): void {
  * `--informativo-saldo-hoje` (modo legado, ancorado no saldo de hoje), e o relatório a rotula NÃO OFICIAL.
  */
 export type ModoAncora = 'oficial' | 'nao_oficial_saldo_hoje';
-export function exigirAncoraOmie(dados: Pick<Dados, 'posicaoAbertura'>, informativoSaldoHoje: boolean): ModoAncora {
-  if (dados.posicaoAbertura) return 'oficial';
+/**
+ * N6: a âncora tem de cobrir TODA a população que a rodada simula — a coorte, todos os ativos (gate, R27) e os membros de
+ * grupo das âncoras (o galão extra) que estão nos dados. Um SKU sem posição seria excluído da simulação e levaria junto a
+ * demanda dele (o serviço melhora por exclusão): a rodada para, nunca exclui.
+ */
+export function skusQueExigemAncora(dados: Dados): string[] {
+  const out = new Set<string>([...coorte(dados).populacao, ...coorteTodosAtivos(dados).populacao].filter((s) => dados.skus.has(s)));
+  for (const s of [...out]) {
+    const g = grupoDeEmbalagem(dados, s);
+    if (g && g.ancora === s) for (const m of g.membros) if (dados.skus.has(m)) out.add(m);
+  }
+  return [...out].sort();
+}
+export function exigirAncoraOmie(dados: Pick<Dados, 'posicaoAbertura'>, informativoSaldoHoje: boolean, necessarios: Iterable<string>): ModoAncora {
+  const pos = dados.posicaoAbertura;
+  if (pos) {
+    const faltam = [...necessarios].filter((s) => !pos.has(s)).sort();
+    if (pos.size === 0 || faltam.length > 0) {
+      throw new ErroDadosReplay(`ANCORA_OMIE_INCOMPLETA: ${pos.size === 0 ? 'posição de abertura VAZIA; ' : ''}${faltam.length} SKU(s) da população sem posição na abertura: ${faltam.join(', ')}`);
+    }
+    return 'oficial';
+  }
   if (informativoSaldoHoje) return 'nao_oficial_saldo_hoje';
   throw new ErroDadosReplay(
     'ANCORA_OMIE_AUSENTE: falta a posição datada do Omie na véspera do aquecimento (rode extrair-omie-posicao.ts); o modo legado ancorado no saldo de hoje só roda com --informativo-saldo-hoje e sai NÃO OFICIAL',
