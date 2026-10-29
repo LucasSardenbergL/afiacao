@@ -215,10 +215,10 @@ function secoesDoBloco(r: Rodada, b: BlocoRodada, s: (x: string) => void, o: { h
     s(TEXTO_GATE_ECONOMIA);
     s(
       tabela(
-        ['Falta', 'Emergencial', 'Atraso/dia', 'Custo ponto', 'LI', 'LS', 'Linhas com margem limitada (R24)', 'Valor com margem limitada'],
+        ['Falta', 'Emergencial', 'Atraso/dia', 'Custo ponto', 'LI', 'LS', 'Linhas com margem desconhecida (achado 11)', 'Valor com margem desconhecida'],
         a.blocos.economia.map((e) => {
-          const lin = e.linhasDemandadas ? e.linhasMargemLimitada / e.linhasDemandadas : null;
-          const val = e.valorDemandado ? e.valorMargemLimitada / e.valorDemandado : null;
+          const lin = e.linhasDemandadas ? e.linhasMargemDesconhecida / e.linhasDemandadas : null;
+          const val = e.valorDemandado ? e.valorMargemDesconhecida / e.valorDemandado : null;
           return [e.falta, pct(e.grade.emergencialPerc, 1), pct(e.grade.atrasoPerc, 1), ivBrl(comb(e.custo)), pct(lin), pct(val)];
         }),
       ),

@@ -27,6 +27,9 @@ function somas(n: number, dias = 7): SomasSemanais {
     semanas: Array.from({ length: n }, (_, i) => `2026-05-${String(1 + 7 * (i % 4)).padStart(2, '0')}#${i}`),
     porCelula,
     estoqueCmcDias: zeros(n),
+    estoqueNaoValoradoDias: zeros(n),
+    estoqueUnidadesDias: zeros(n),
+    estoqueCmcDiasGrupos: zeros(n),
     diasCorridos: Array.from({ length: n }, () => dias),
     entregue: { imediata: zeros(n), tardia: zeros(n), emergencial: zeros(n) },
     cancelada: { valor: zeros(n), margem: zeros(n) },
@@ -141,9 +144,39 @@ describe('bootstrapPareado', () => {
     const esperado =
       ((custoLiquido(b[0], a[0], G).custo as number) + (custoLiquido(b[1], a[1], G).custo as number)) / 2;
     expect(estatCusto(G)(b, a, [0, 1, 2])).toBeCloseTo(esperado, 9);
-    // idx repetido: o terminal (−10 em a[1]) não é multiplicado
+    // achado 12: o terminal (−10 em a[1]) é da ÚLTIMA semana: sem ela no sorteio, não entra
     const so0 = estatCusto(G)(b, a, [0, 0, 0]) as number;
-    expect(so0).toBeCloseTo(((1000 * 0.25 * 21) / 365 + (2000 * 0.25 * 21) / 365 - 10) / 2, 9);
+    expect(so0).toBeCloseTo(((1000 * 0.25 * 21) / 365 + (2000 * 0.25 * 21) / 365) / 2, 9);
+    // última semana sorteada duas vezes: o terminal entra duas vezes (como qualquer soma semanal)
+    const so2 = estatCusto(G)(b, a, [2, 2, 1]) as number;
+    expect(so2).toBeCloseTo(((1000 * 0.25 * 21) / 365 + (2000 * 0.25 * 21) / 365 - 20) / 2, 9);
+  });
+
+  it('achado 12 (contraprova do Codex): com o terminal na semana terminal, ponto = LI = LS deixa de acontecer e o LI fica negativo', () => {
+    // 24 semanas: a alternativa perde 1 por semana (emergencial 10 × 10%) e ganha 30 no terminal (backlog 300 do F0 × 10%)
+    const b = somas(24);
+    const a = somas(24);
+    a.entregue.emergencial = Array.from({ length: 24 }, () => 10);
+    b.terminal.backlogValor = 300;
+    for (const bloco of [4, 8] as const) {
+      const r = bootstrapPareado([b], [a], estatCusto(G), bloco, 2000);
+      expect(r.ponto).toBeCloseTo(6, 9); // −24 + 30
+      expect(r.li).not.toBeNull();
+      expect(r.li as number).toBeLessThan(0); // sorteios sem a última semana: −24
+      expect(r.ls as number).toBeGreaterThan(r.ponto as number);
+    }
+  });
+
+  it('achado 10: estoque não valorado no `idx` (qualquer braço) ⇒ redução de capital null', () => {
+    const b = somas(2);
+    b.estoqueCmcDias = [700, 2100];
+    const a = somas(2);
+    a.estoqueCmcDias = [700, 1400];
+    a.estoqueNaoValoradoDias = [0, 70];
+    expect(estatReducaoCapital([b], [a], [0, 1])).toBeNull();
+    expect(estatReducaoCapital([a], [b], [0, 1])).toBeNull();
+    expect(estatReducaoCapital([b], [a], [0, 0])).toBe(0);
+    expect(bootstrapPareado([b], [a], estatReducaoCapital, 4, 10).ponto).toBeNull();
   });
 });
 
@@ -198,8 +231,8 @@ function evidenciaGo(): Evidencia {
           falta,
           grade: { taxa: 0.25, emergencialPerc, atrasoPerc },
           custo: iv(500, 100, 900),
-          linhasMargemLimitada: 3,
-          valorMargemLimitada: 50,
+          linhasMargemDesconhecida: 3,
+          valorMargemDesconhecida: 50,
           linhasDemandadas: 5000,
           valorDemandado: 100000,
         });
@@ -304,9 +337,20 @@ describe('avaliarCriterios + veredito', () => {
     expect(v.motivos.some((m) => m.startsWith('5 Economia [cancelamento'))).toBe(true);
   });
 
-  it('economia: motivo mostra o limite de margem em %, sem R$ absoluto', () => {
+  it('achado 10: capital sem redução por estoque não valorado → INCERTO com a fração não valorada no motivo', () => {
+    const ev = evidenciaGo();
+    ev.capital[0] = { falta: 'espera', reducao: iv(null, null, null), naoValorado: { f0: 0.1, alt: 0.4 } };
+    const c = avaliarCriterios(ev).find((x) => x.criterio === '3 Capital [espera]')!;
+    expect(c.estado).toBe('INCERTO');
+    expect(c.motivo).toContain('estoque não valorado');
+    expect(c.motivo).toContain('10,00% (F0)');
+    expect(c.motivo).toContain('40,00% (cand.)');
+  });
+
+  it('economia: motivo mostra a margem desconhecida em %, sem R$ absoluto', () => {
     const cs = avaliarCriterios(evidenciaGo()).filter((c) => c.criterio.startsWith('5 Economia'));
     expect(cs).toHaveLength(27);
+    expect(cs[0].motivo).toContain('margem desconhecida');
     expect(cs[0].motivo).toContain('0,06% das linhas');
     expect(cs[0].motivo).toContain('0,05% do valor');
     expect(cs[0].motivo).not.toContain('500');

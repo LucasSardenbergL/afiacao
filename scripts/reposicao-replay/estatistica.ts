@@ -145,8 +145,15 @@ export const estatDeltaFillRate =
     return fa === null || fb === null ? null : fa - fb;
   };
 
-/** Redução relativa do estoque médio (1 − alt/base), ponderado pelos dias corridos; base sem estoque ⇒ null. */
+/**
+ * Redução relativa do estoque médio (1 − alt/base), ponderado pelos dias corridos; base sem estoque ⇒ null. Estoque sem
+ * CMC em qualquer braço nas semanas `idx` ⇒ null (achado 10): a redução nunca sai do subtotal valorado.
+ */
 export const estatReducaoCapital: EstatisticaPareada = (base, alt, idx) => {
+  for (const s of [...base, ...alt]) {
+    conferirIdx(s.semanas.length, idx);
+    for (const i of idx) if (s.estoqueNaoValoradoDias[i] > 0) return null;
+  }
   const mb = estoqueMedioAgregado(base, idx);
   const ma = estoqueMedioAgregado(alt, idx);
   if (mb === null || ma === null || !(mb > 0)) return null;
@@ -154,8 +161,9 @@ export const estatReducaoCapital: EstatisticaPareada = (base, alt, idx) => {
 };
 
 /**
- * Custo líquido (R$, positivo = alt vantajosa): média sobre as replicações de `custoLiquido(...).custo` (R24, pior
- * caso para a alternativa). O terminal é da janela: entra uma vez, não é reamostrado. Alguma rep null ⇒ null.
+ * Custo líquido (R$, positivo = alt vantajosa): média sobre as replicações de `custoLiquido(...).custo`. O terminal é
+ * soma da ÚLTIMA semana (achado 12): só entra quando ela é sorteada. Alguma rep null (margem desconhecida, estoque sem
+ * CMC) ⇒ null.
  */
 export const estatCusto =
   (g: GradeCusto): EstatisticaPareada =>
@@ -334,12 +342,20 @@ function capitalAusente(capital: readonly EvidenciaCapital[], prefixo: string): 
     .map((falta) => ({ criterio: `${prefixo} [${falta}]`, estado: 'INCERTO' as const, motivo: 'cenário de falta sem evidência' }));
 }
 
+/** Achado 10: a fração do estoque (unidades × dias) sem CMC, quando houver; o capital vira INCERTO por falta de dado. */
+function textoNaoValorado(c: EvidenciaCapital): string {
+  const n = c.naoValorado;
+  if (!n || ((n.f0 ?? 0) === 0 && (n.alt ?? 0) === 0)) return '';
+  return `; estoque não valorado (sem CMC; unidades × dias): ${pct(n.f0)} (F0), ${pct(n.alt)} (cand.) — redução não mensurável`;
+}
+
 /** Critério 3 em cada cenário de `CENARIOS_FALTA.economia` (R25); qualquer FALHA ⇒ NO-GO, ausente ⇒ INCERTO. */
 function criteriosCapital(capital: readonly EvidenciaCapital[]): Criterio[] {
   return [...capitalAusente(capital, '3 Capital'), ...capital.map((c): Criterio => {
     const nome = `3 Capital [${c.falta}]`;
     const iv = combinar(c.reducao);
-    const motivo = `redução ${limites(iv)}; exige ponto ≥ ${pct(CAPITAL_REDUCAO_MINIMA, 0)} e LI ≥ ${pct(CAPITAL_LI_MINIMO, 0)}`;
+    const motivo =
+      `redução ${limites(iv)}; exige ponto ≥ ${pct(CAPITAL_REDUCAO_MINIMA, 0)} e LI ≥ ${pct(CAPITAL_LI_MINIMO, 0)}` + textoNaoValorado(c);
     if (iv.ls !== null && iv.ls < CAPITAL_REDUCAO_MINIMA) return { criterio: nome, estado: 'FALHA', motivo };
     if (iv.ponto !== null && iv.ponto >= CAPITAL_REDUCAO_MINIMA && iv.li !== null && iv.li >= CAPITAL_LI_MINIMO) {
       return { criterio: nome, estado: 'PASSA', motivo };
@@ -354,7 +370,7 @@ function criteriosEstresse(ev: Evidencia['estresse']): Criterio[] {
   for (const c of ev.capital) {
     const nome = `4 Estresse [${c.falta}]`;
     const iv = combinar(c.reducao);
-    const motivo = `redução ${limites(iv)}; exige LI > 0`;
+    const motivo = `redução ${limites(iv)}; exige LI > 0` + textoNaoValorado(c);
     if (iv.ls !== null && iv.ls <= 0) out.push({ criterio: nome, estado: 'FALHA', motivo });
     else if (iv.li !== null && iv.li > 0) out.push({ criterio: nome, estado: 'PASSA', motivo });
     else out.push({ criterio: nome, estado: 'INCERTO', motivo });
@@ -369,8 +385,8 @@ const fracao = (num: number, den: number | null): number | null => (den !== null
 /**
  * Critério 5: cada célula fornecida é avaliada; exige, em cada cenário de `CENARIOS_FALTA.economia`, toda a grade na
  * taxa base (emergencial × atraso). As taxas de 20% e 30% são SÓ sensibilidade (R26): não são gate e a T9 não as passa;
- * se vierem, são avaliadas como as demais (código mantido). O motivo NÃO traz R$ absoluto (repo público): só o sinal exigido e o peso do
- * limite de margem (R24) em % das linhas e do valor demandados.
+ * se vierem, são avaliadas como as demais (código mantido). O motivo NÃO traz R$ absoluto (repo público): só o sinal exigido e o peso da
+ * margem desconhecida (achado 11) em % das linhas e do valor demandados.
  */
 function criteriosEconomia(economia: Evidencia['economia']): Criterio[] {
   const out: Criterio[] = [];
@@ -396,8 +412,8 @@ function criteriosEconomia(economia: Evidencia['economia']): Criterio[] {
     const nome = `5 Economia [${e.falta} ${rotuloGrade(e.grade)}]`;
     const iv = combinar(e.custo);
     const limite =
-      `margem limitada (R24): ${pct(fracao(e.linhasMargemLimitada, e.linhasDemandadas))} das linhas, ` +
-      `${pct(fracao(e.valorMargemLimitada, e.valorDemandado))} do valor`;
+      `margem desconhecida (cancelada sem CMC; achado 11): ${pct(fracao(e.linhasMargemDesconhecida, e.linhasDemandadas))} das linhas, ` +
+      `${pct(fracao(e.valorMargemDesconhecida, e.valorDemandado))} do valor`;
     if (iv.ls !== null && iv.ls < 0) out.push({ criterio: nome, estado: 'FALHA', motivo: `LS(custo líquido) < 0; ${limite}` });
     else if (iv.li !== null && iv.li > 0) out.push({ criterio: nome, estado: 'PASSA', motivo: `LI(custo líquido) > 0; ${limite}` });
     else {

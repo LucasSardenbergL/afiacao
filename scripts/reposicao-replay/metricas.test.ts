@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { custoFaltaEquilibrio, custoLiquido, dioSayerlack, estoqueMedio, fillRate } from './metricas';
+import { custoFaltaEquilibrio, custoLiquido, dioSayerlack, estoqueMedio, fillRate, fracaoNaoValorada } from './metricas';
 import { CELULAS, type Celula, type SomasCelula, type SomasSemanais } from './simulador';
 
 // Fixtures sintéticas (valores em R$ fictícios, só para casar as contas).
@@ -13,6 +13,9 @@ function somas(n: number, dias = 7): SomasSemanais {
     semanas: Array.from({ length: n }, (_, i) => `2026-05-${String(1 + 7 * i).padStart(2, '0')}`),
     porCelula,
     estoqueCmcDias: zeros(n),
+    estoqueNaoValoradoDias: zeros(n),
+    estoqueUnidadesDias: zeros(n),
+    estoqueCmcDiasGrupos: zeros(n),
     diasCorridos: Array.from({ length: n }, () => dias),
     entregue: { imediata: zeros(n), tardia: zeros(n), emergencial: zeros(n) },
     cancelada: { valor: zeros(n), margem: zeros(n) },
@@ -79,7 +82,7 @@ describe('custoLiquido', () => {
     base.cancelada = { valor: [100, 0, 0], margem: [30, 0, 0] };
     base.terminal = { estoqueCmc: 1, abertasCmc: 2, backlogValor: 50, backlogDiasAtraso: 500 };
     const alt = structuredClone(base);
-    expect(custoLiquido(base, alt, G)).toEqual({ custo: 0, linhasMargemLimitada: 0, valorMargemLimitada: 0 });
+    expect(custoLiquido(base, alt, G)).toEqual({ custo: 0, linhasMargemDesconhecida: 0, valorMargemDesconhecida: 0, estoqueNaoValoradoDias: 0 });
   });
   it('emergencial, margem cancelada e terminal entram como Δ (alt − base)', () => {
     const base = somas(1);
@@ -89,27 +92,57 @@ describe('custoLiquido', () => {
     alt.terminal = { estoqueCmc: 0, abertasCmc: 0, backlogValor: 300, backlogDiasAtraso: 2000 }; // 30 + 20
     expect(custoLiquido(base, alt, G).custo).toBeCloseTo(-350, 9);
   });
-  it('sem cmc só no ALT: margem = valor (pior caso para a alternativa) e conta as linhas limitadas', () => {
+  it('achado 11: cancelada sem cmc em QUALQUER braço ⇒ custo null (margem desconhecida é ilimitada para baixo; sem piso 0)', () => {
+    // contraprova do Codex: capital favorável (+50) e o F0 cancela uma linha de valor 100 sem cmc
+    const base = somas(1, 365);
+    const alt = somas(1, 365);
+    base.estoqueCmcDias = [400 * 365];
+    alt.estoqueCmcDias = [200 * 365]; // 200 × 25% = +50
+    base.cancelada = { valor: [100], margem: [null] };
+    base.canceladaSemCmc = { linhas: [1], valor: [100] };
+    const r = custoLiquido(base, alt, G);
+    expect(r.custo).toBeNull(); // o piso 0 da R24 dava +50
+    expect(r.linhasMargemDesconhecida).toBe(1);
+    expect(r.valorMargemDesconhecida).toBe(100);
+    // revelada (CMC total 200 ⇒ margem −100): a economia é NEGATIVA — o +50 do piso 0 era fabricado a favor da alternativa
+    const revelada = structuredClone(base);
+    revelada.cancelada = { valor: [100], margem: [-100] };
+    revelada.canceladaSemCmc = { linhas: [0], valor: [0] };
+    expect(custoLiquido(revelada, alt, G).custo).toBeCloseTo(-50, 9);
+    // o mesmo vale no braço da alternativa
+    expect(custoLiquido(alt, base, G).custo).toBeNull();
+  });
+  it('achado 11: a margem desconhecida só anula as semanas `idx` que a contêm', () => {
     const base = somas(2);
     const alt = somas(2);
-    // semana 0 mista (margem conhecida 100 + 1 linha sem cmc de 200); semana 1 toda sem cmc (margem null, 2 linhas, 400)
     alt.cancelada = { valor: [500, 400], margem: [100, null] };
-    alt.canceladaSemCmc = { linhas: [1, 2], valor: [200, 400] };
-    const r = custoLiquido(base, alt, G);
-    expect(r.custo).toBeCloseTo(-(100 + 200 + 0 + 400), 9); // alt perde a margem máxima possível
-    expect(r.linhasMargemLimitada).toBe(3);
-    expect(r.valorMargemLimitada).toBe(600);
-    expect(custoLiquido(base, alt, G, [0]).custo).toBeCloseTo(-300, 9); // idx restringe o limite também
+    alt.canceladaSemCmc = { linhas: [0, 2], valor: [0, 400] };
+    expect(custoLiquido(base, alt, G).custo).toBeNull();
+    expect(custoLiquido(base, alt, G, [0]).custo).toBeCloseTo(-100, 9);
+    expect(custoLiquido(base, alt, G, [1]).custo).toBeNull();
   });
-  it('sem cmc só na BASE: margem = 0 (a base não ganha crédito pela perda desconhecida)', () => {
-    const base = somas(1);
-    const alt = somas(1);
-    base.cancelada = { valor: [700], margem: [null] };
-    base.canceladaSemCmc = { linhas: [3], valor: [700] };
-    const r = custoLiquido(base, alt, G);
-    expect(r.custo).toBe(0); // se a base contasse margem = valor, a alt ganharia +700 fabricado
-    expect(r.linhasMargemLimitada).toBe(3);
-    expect(r.valorMargemLimitada).toBe(700);
+  it('achado 10: estoque não valorado em qualquer braço ⇒ custo null, custo de equilíbrio null e fração informada', () => {
+    const base = somas(2, 7);
+    const alt = somas(2, 7);
+    base.estoqueCmcDias = [700, 700];
+    alt.estoqueCmcDias = [350, 350];
+    alt.estoqueUnidadesDias = [100, 100];
+    alt.estoqueNaoValoradoDias = [0, 50];
+    alt.porCelula.total.demandadas = [10, 10];
+    expect(custoLiquido(base, alt, G).custo).toBeNull();
+    expect(custoLiquido(base, alt, G).estoqueNaoValoradoDias).toBe(50);
+    expect(custoLiquido(base, alt, G, [0]).custo).not.toBeNull();
+    expect(custoFaltaEquilibrio(base, alt, 0.25)).toBeNull();
+    expect(fracaoNaoValorada(alt)).toBeCloseTo(0.25, 12);
+    expect(fracaoNaoValorada(base)).toBeNull(); // sem unidades: ausente, não 0
+  });
+  it('achado 12: o custo terminal pertence à ÚLTIMA semana — conta só quando ela é sorteada, uma vez por sorteio', () => {
+    const base = somas(4);
+    const alt = somas(4);
+    base.terminal = { estoqueCmc: 0, abertasCmc: 0, backlogValor: 300, backlogDiasAtraso: 0 }; // 300 × 10% = 30 a favor da alt
+    expect(custoLiquido(base, alt, G).custo).toBeCloseTo(30, 9);
+    expect(custoLiquido(base, alt, G, [0, 1, 2]).custo).toBe(0);
+    expect(custoLiquido(base, alt, G, [3, 3]).custo).toBeCloseTo(60, 9);
   });
   it('null só por falta de dado de capital (janela sem dias corridos)', () => {
     const base = somas(1, 0);

@@ -63,7 +63,7 @@ import {
   type EstatisticaPareada,
 } from './estatistica';
 import { diagnosticoF0, hashCodigo, parametrosNoDia, paridadeF0, preComputar, preComputarComOrigem, type Formula, type ParamsDia, type ParamsFormula } from './formulas';
-import { custoFaltaEquilibrio, custoLiquido, type GradeCusto } from './metricas';
+import { custoFaltaEquilibrio, custoLiquido, fracaoNaoValorada, type GradeCusto } from './metricas';
 import { coorte, coorteTodosAtivos } from './parados';
 import { diagnosticoEstadoInicial, negativosNaAvaliacao, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { escreverRelatorio, type Diagnostico, type Rodada } from './relatorio';
@@ -292,7 +292,7 @@ function servico(m: Medias, falta: Falta, nulos: Nulos[], rotulo: string): Evide
 function capital(m: Medias, falta: Falta, nulos: Nulos[], rotulo: string) {
   const r = bootstrap(m.f0, m.alt, estatReducaoCapital);
   nulos.push({ cenario: rotulo, item: 'redução de capital', nulos: r.nulos });
-  return { falta, reducao: r.porBloco };
+  return { falta, reducao: r.porBloco, naoValorado: { f0: fracaoNaoValorada(m.f0), alt: fracaoNaoValorada(m.alt) } };
 }
 
 export function evidencia(
@@ -333,8 +333,8 @@ export function evidencia(
           const lim = custoLiquido(m.f0, m.alt, grade);
           ev.economia.push({
             falta, grade, custo: r.porBloco,
-            linhasMargemLimitada: lim.linhasMargemLimitada, valorMargemLimitada: lim.valorMargemLimitada,
-            // denominadores dos DOIS braços (o limite soma base + alt)
+            linhasMargemDesconhecida: lim.linhasMargemDesconhecida, valorMargemDesconhecida: lim.valorMargemDesconhecida,
+            // denominadores dos DOIS braços (a margem desconhecida soma base + alt)
             linhasDemandadas: 2 * somaV(total.demandadas), valorDemandado: 2 * somaV(total.valorDem),
           });
         }

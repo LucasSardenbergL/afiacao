@@ -225,6 +225,8 @@ export interface EvidenciaServico {
 export interface EvidenciaCapital {
   falta: Falta;
   reducao: IntervaloPorBloco;
+  /** Achado 10: fração das unidades × dias de estoque sem CMC na janela, por braço (null = sem unidade). Só informa o motivo. */
+  naoValorado?: { f0: number | null; alt: number | null };
 }
 
 /** Critério 5 numa célula da grade × cenário de falta. Custo em R$ (positivo = alternativa vantajosa). */
@@ -232,9 +234,9 @@ export interface EvidenciaEconomia {
   falta: Falta;
   grade: GradeCusto;
   custo: IntervaloPorBloco;
-  /** R24: linhas/valor de canceladas sem cmc cuja margem entrou pelo limite (pior caso para a alternativa). */
-  linhasMargemLimitada: number;
-  valorMargemLimitada: number;
+  /** Achado 11: linhas/valor de canceladas sem cmc (margem desconhecida) nos dois braços; > 0 ⇒ custo null (INCERTO). */
+  linhasMargemDesconhecida: number;
+  valorMargemDesconhecida: number;
   /** Denominadores para mostrar o limite em % (nunca R$ absoluto no relatório). */
   linhasDemandadas: number | null;
   valorDemandado: number | null;

@@ -567,3 +567,35 @@ describe('achado 9: escolha de embalagem do grupo', () => {
   });
 });
 
+
+describe('Fix Codex leva C', () => {
+  it('achado 10: o estoque de SKU sem CMC não some do capital; vai para estoqueNaoValoradoDias (unidades × dias)', () => {
+    // contraprova do Codex: o aumento de estoque concentrado no SKU sem CMC não aparecia no capital
+    const vs = [venda('n1', 'P', '2026-05-05', 1)];
+    const r = roda(dados([comAbertura(sku('P', { cmc: 4 }), 3, vs), comAbertura(sku('N', { cmc: null }), 50, vs)], vs), params({ P: SEM, N: SEM }));
+    const dias = diffDias(JANELA[0], JANELA[1]) + 1;
+    expect(soma(r.estoqueCmcDias)).toBe(4 * (3 + 2 * 25)); // o valorado continua o mesmo
+    expect(soma(r.estoqueNaoValoradoDias)).toBe(50 * dias);
+    expect(soma(r.estoqueUnidadesDias)).toBe(3 + 2 * 25 + 50 * dias);
+    expect(r.skusSemCmc).toEqual(['N']);
+    // sem SKU sem CMC: zero não valorado
+    const ok = roda(dados([comAbertura(sku('P', { cmc: 4 }), 3, vs)], vs), params({ P: SEM }));
+    expect(soma(ok.estoqueNaoValoradoDias)).toBe(0);
+  });
+
+  it('R37: o capital dos grupos de embalagem sai à parte (fração dos grupos no capital)', () => {
+    const eqs: Equivalencia[] = [
+      { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+      { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+    ];
+    const vs: LinhaVenda[] = [];
+    const dd = dados(
+      [comAbertura(sku('QT', { grupoEmbalagemId: 'G', cmc: 2 }), 0.81, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G', cmc: 3 }), 3.24, vs), comAbertura(sku('P', { cmc: 4 }), 5, vs)],
+      vs, { equivalencias: eqs },
+    );
+    const r = roda(dd, params({ QT: SEM, GL: SEM, P: SEM }));
+    const dias = diffDias(JANELA[0], JANELA[1]) + 1;
+    expect(soma(r.estoqueCmcDiasGrupos)).toBeCloseTo((2 * 0.81 + 3 * 3.24) * dias, 9);
+    expect(soma(r.estoqueCmcDias)).toBeCloseTo((2 * 0.81 + 3 * 3.24 + 4 * 5) * dias, 9);
+  });
+});

@@ -39,7 +39,9 @@
 //  · Margem cancelada = valor − cmcLinha × quantidade; cmcLinha null ⇒ margem null: fica FORA de `cancelada.margem` e é
 //    contada em `canceladaSemCmc` (nunca 0 fabricado); semana só com canceladas sem cmc ⇒ margem null. Capital: na
 //    CALIBRAÇÃO, o último cmcLinha <= fim da calibração (o cmc de hoje seria futuro); na AVALIAÇÃO, o CMC de hoje como
-//    numerário constante. SKU sem CMC fica fora do capital e listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas).
+//    numerário constante. SKU sem CMC é listado em `skusSemCmc` (o mesmo conjunto em todas as fórmulas) e o estoque dele NÃO
+//    some (achado 10 do Codex): vai para `estoqueNaoValoradoDias` (unidades × dias), e métricas.ts devolve null para a
+//    redução de capital e a economia de qualquer recorte de semanas que o contenha (nunca a redução do subtotal valorado).
 //  · Linha com quantidade <= 0 (4 no dado real, todas q = 0 e valor 0) não é demanda: ignorada e contada.
 //  · Fechamento verificado a cada chamada (fail-closed): por SKU, demanda medida = imediata + tardia + emergencial +
 //    cancelada + backlog terminal (unidades); estoque inicial + recebido − entregue = final. Violação lança.
@@ -72,6 +74,15 @@ export interface SomasSemanais {
   porCelula: Record<Celula, SomasCelula>;
   /** Σ (estoque físico de fim de dia × CMC) por dia corrido: ponderado pelos dias em que cada saldo permanece. */
   estoqueCmcDias: number[];
+  /**
+   * Achado 10: Σ (unidades de estoque de fim de dia dos SKUs SEM CMC) por dia corrido. > 0 numa semana ⇒ o capital dela não
+   * é mensurável (métricas.ts devolve null). Unidades misturam L e UN: serve para a FRAÇÃO não valorada, não para valorar.
+   */
+  estoqueNaoValoradoDias: number[];
+  /** Σ (unidades de estoque de fim de dia de TODOS os SKUs simulados) por dia corrido: denominador da fração não valorada. */
+  estoqueUnidadesDias: number[];
+  /** R37: a parte de `estoqueCmcDias` dos SKUs de grupo de embalagem (âncora, membros e galões extras). */
+  estoqueCmcDiasGrupos: number[];
   diasCorridos: number[];
   /** Valor (R$ da linha, pró-rata) entregue: imediata no dia; tardia por obrigação; emergencial por compra fora. */
   entregue: { imediata: number[]; tardia: number[]; emergencial: number[] };
@@ -572,6 +583,11 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
   // somas
   const cel = { dem: new Float64Array(NC * nSem), int: new Float64Array(NC * nSem), uDem: new Float64Array(NC * nSem), uAt: new Float64Array(NC * nSem), vDem: new Float64Array(NC * nSem), vAt: new Float64Array(NC * nSem) };
   const capital = new Float64Array(nSem);
+  const naoValorado = new Float64Array(nSem);
+  const unidades = new Float64Array(nSem);
+  const capitalGrupos = new Float64Array(nSem);
+  const emGrupo = new Uint8Array(nSku);
+  for (let s = 0; s < nSku; s++) if (P.membros[s] !== null || P.ehMembroNaoAncora[s]) emGrupo[s] = 1;
   const imediata = new Float64Array(nSem);
   const tardia = new Float64Array(nSem);
   const emergencial = new Float64Array(nSem);
@@ -769,8 +785,23 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     // capital (fim do dia, por dia corrido)
     if (w >= 0) {
       let v = 0;
-      for (let s = 0; s < nSku; s++) if (!Number.isNaN(P.cmc[s])) v += est[s] * P.cmc[s];
+      let nv = 0;
+      let u = 0;
+      let vg = 0;
+      for (let s = 0; s < nSku; s++) {
+        u += est[s];
+        if (Number.isNaN(P.cmc[s])) {
+          if (est[s] > EPS) nv += est[s]; // achado 10: sem CMC não vira 0, fica contado à parte (poeira < EPS não conta)
+          continue;
+        }
+        const x = est[s] * P.cmc[s];
+        v += x;
+        if (emGrupo[s]) vg += x;
+      }
       capital[w] += v;
+      naoValorado[w] += nv;
+      unidades[w] += u;
+      capitalGrupos[w] += vg;
     }
   }
 
@@ -823,6 +854,9 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     semanas: [...P.semanas],
     porCelula,
     estoqueCmcDias: Array.from(capital),
+    estoqueNaoValoradoDias: Array.from(naoValorado),
+    estoqueUnidadesDias: Array.from(unidades),
+    estoqueCmcDiasGrupos: Array.from(capitalGrupos),
     diasCorridos: [...P.diasPorSemana],
     entregue: { imediata: Array.from(imediata), tardia: Array.from(tardia), emergencial: Array.from(emergencial) },
     cancelada: { valor: Array.from(cancV), margem: Array.from(cancM, (m, w) => (semCmcL[w] > 0 && cancComCmc[w] === 0 ? null : m)) },

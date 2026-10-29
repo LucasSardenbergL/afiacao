@@ -59,6 +59,9 @@ export function somarSomas(acc: SomasSemanais | null, s: SomasSemanais): SomasSe
     mais(a.valorAt, b.valorAt);
   }
   mais(acc.estoqueCmcDias, s.estoqueCmcDias);
+  mais(acc.estoqueNaoValoradoDias, s.estoqueNaoValoradoDias);
+  mais(acc.estoqueUnidadesDias, s.estoqueUnidadesDias);
+  mais(acc.estoqueCmcDiasGrupos, s.estoqueCmcDiasGrupos);
   mais(acc.entregue.imediata, s.entregue.imediata);
   mais(acc.entregue.tardia, s.entregue.tardia);
   mais(acc.entregue.emergencial, s.entregue.emergencial);
@@ -75,6 +78,12 @@ export function somarSomas(acc: SomasSemanais | null, s: SomasSemanais): SomasSe
   acc.balanco.recebido += s.balanco.recebido;
   acc.balanco.entregue += s.balanco.entregue;
   acc.balanco.final += s.balanco.final;
+  if (acc.herdadas && s.herdadas) {
+    for (const k of ['abertura', 'entregue', 'terminal'] as const) {
+      acc.herdadas[k].unidades += s.herdadas[k].unidades;
+      acc.herdadas[k].valor += s.herdadas[k].valor;
+    }
+  } else if (acc.herdadas || s.herdadas) throw new Error('AGREGACAO_HERDADAS_INCOERENTES');
   // diasCorridos é do calendário (igual em todas as reps): NÃO soma.
   return acc;
 }
@@ -100,6 +109,9 @@ export function mediaSomas(soma: SomasSemanais, n: number): SomasSemanais {
     div(x.valorAt);
   }
   div(m.estoqueCmcDias);
+  div(m.estoqueNaoValoradoDias);
+  div(m.estoqueUnidadesDias);
+  div(m.estoqueCmcDiasGrupos);
   div(m.entregue.imediata);
   div(m.entregue.tardia);
   div(m.entregue.emergencial);
@@ -110,6 +122,12 @@ export function mediaSomas(soma: SomasSemanais, n: number): SomasSemanais {
   div(m.valorDiasAtraso);
   for (const k of ['estoqueCmc', 'abertasCmc', 'backlogValor', 'backlogDiasAtraso'] as const) m.terminal[k] /= n;
   for (const k of ['inicial', 'recebido', 'entregue', 'final'] as const) m.balanco[k] /= n;
+  if (m.herdadas) {
+    for (const k of ['abertura', 'entregue', 'terminal'] as const) {
+      m.herdadas[k].unidades /= n;
+      m.herdadas[k].valor /= n;
+    }
+  }
   return m;
 }
 
