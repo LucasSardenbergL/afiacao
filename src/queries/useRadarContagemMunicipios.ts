@@ -127,7 +127,7 @@ export function penetracaoMedia(dados: readonly RadarMunicipioPenetracao[]): num
   let clientes = 0;
   let empresas = 0;
   for (const m of dados) {
-    if (m.empresas_lote == null || m.empresas_lote <= 0 || m.clientes == null) continue;
+    if (m.empresas_lote == null || m.clientes == null) continue; // a RPC devolve os dois juntos (≥1) ou nenhum
     clientes += m.clientes;
     empresas += m.empresas_lote;
   }
