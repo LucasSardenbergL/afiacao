@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { criarChamada, DATAS_PADRAO, lerCredenciais, paginarPosicao, paraCsv, redigir, type Transporte } from './extrair-omie-posicao';
+import { criarChamada, DATAS_PADRAO, dentroDe, lerCredenciais, paginarPosicao, paraCsv, redigir, type Transporte } from './extrair-omie-posicao';
 
 // Credenciais FICTÍCIAS de fixture (não são da Omie).
 const CRED = { key: '9999000011112222', secret: 'segredo-de-fixture-abc' };
@@ -92,7 +92,14 @@ describe('extrair-omie-posicao', () => {
     expect(paraCsv([{ nCodProd: 20, cCodigo: 'B|1', nSaldo: null }, { nCodProd: 10, cCodigo: 'A', nSaldo: 0 }])).toBe('nCodProd|cCodigo|nSaldo\n10|A|0\n20|"B|1"|\nfim|ok\n');
   });
 
-  it('datas padrão: véspera do aquecimento (abertura) e fim da calibração (conferência)', () => {
-    expect(DATAS_PADRAO).toEqual(['2025-10-20', '2026-04-30']);
+  it('datas padrão (R31): véspera do aquecimento (abertura), fim do aquecimento e fim da calibração (conferência)', () => {
+    expect(DATAS_PADRAO).toEqual(['2025-10-20', '2026-01-31', '2026-04-30']);
+  });
+
+  it('guarda (revisão M4): a pasta de saída dentro do repositório é recusada', () => {
+    expect(dentroDe('/repo/x/dados', '/repo/x')).toBe(true);
+    expect(dentroDe('/repo/x', '/repo/x')).toBe(true);
+    expect(dentroDe('/repo/x2/dados', '/repo/x')).toBe(false);
+    expect(dentroDe('/home/u/.cache/afiacao/reposicao-replay', '/repo/x')).toBe(false);
   });
 });

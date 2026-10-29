@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA, CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
+import { CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA, CSVS_REPLAY, FATOR_DOC_MIN_DOCUMENTOS, FATOR_DOC_MIN_PARTICIPACAO, JANELAS, LT_ABERTO_MIN_DU, LT_FRACAO_COMPLETA } from './config';
 import { duEntre } from './calendario';
 import {
   ErroDadosReplay,
@@ -178,6 +178,12 @@ export interface RecebLinha {
   status: string;
   /** `sku_leadtime_history.valor_total` (R$ da linha); null/ausente = sem valor. Só alimenta o preco_compra_real do EOQ. */
   valor?: number | null;
+  /**
+   * R32: quantidade do PEDIDO de compra (`purchase_orders_tracking.raw_data->'produtos_consulta'[].nQtde`, somada nas
+   * linhas do pedido com `nCodProd` = SKU) e a unidade dela (`cUnidade`); null = não casou (fallback na quantidade da NF).
+   */
+  pedidoQtd?: number | null;
+  pedidoUnidade?: string | null;
 }
 
 const normUn = (u: string | null): string | null => (u === null ? null : u.trim().toUpperCase() || null);
@@ -193,6 +199,7 @@ export function fatoresNfParaEstoque(linhas: RecebLinha[], unidadeEstoque: Map<s
   const razoes = new Map<string, Map<string, number[]>>(); // chave -> (docId -> razões)
   for (const l of linhas) {
     if (l.t4 === null || l.t4 < l.t1 || l.pedida === null || !(l.pedida > 0) || l.recebida === null || !(l.recebida > 0)) continue;
+    if (l.t4 > JANELAS.calibracaoFim) continue; // R33: só documentos recebidos até 30/04 (sem olhar a avaliação)
     const k = chave(l);
     let m = razoes.get(k);
     if (!m) razoes.set(k, (m = new Map()));
@@ -270,7 +277,7 @@ export function montarItensLT(
     else grupos.set(k, [l]);
   }
   const itens: ItemLT[] = [];
-  const cont = { t4AntesT1: 0, encerradoSemT4: 0, recebidoSemT4: 0, parcial: 0, indeterminada: 0, parcialEncerrado: 0 };
+  const cont = { t4AntesT1: 0, encerradoSemT4: 0, recebidoSemT4: 0, parcial: 0, indeterminada: 0, parcialEncerrado: 0, pedidaDaNf: 0 };
   for (const g of grupos.values()) {
     const t1 = g.map((l) => l.t1).sort()[0];
     const antes = g.filter((l) => l.t4 !== null && l.t4 < l.t1).length;
@@ -290,12 +297,24 @@ export function montarItensLT(
       else itens.push(aberto());
       continue;
     }
-    // quantidade pedida na unidade de estoque (todas as linhas do documento-SKU; qualquer ausência => indeterminada)
+    // quantidade pedida na unidade de estoque. R32: a do PEDIDO de compra quando casou (mesma em todas as linhas do pedido:
+    // conta uma vez); a unidade dele converte por 1 (= estoque) ou pelo fator NF→estoque (= unidade da NF); outra unidade
+    // => indeterminada. Sem casar: fallback Σ quantidade da NF × fator (aviso PEDIDA_DA_NF).
     let pedidaEst: number | null = 0;
-    for (const l of g) {
-      const f = fatorDe(l);
-      if (pedidaEst === null || l.pedida === null || !(l.pedida > 0) || f === null) pedidaEst = null;
-      else pedidaEst += l.pedida * f;
+    const comPedido = g.find((l) => l.pedidoQtd !== undefined && l.pedidoQtd !== null);
+    if (comPedido) {
+      const q = comPedido.pedidoQtd as number;
+      const up = normUn(comPedido.pedidoUnidade ?? null);
+      const ue = normUn(unidadeEstoque.get(sku) ?? null);
+      const f = up !== null && up === ue ? 1 : up !== null && up === normUn(comPedido.unidadeNfe) ? fatorDe(comPedido) : null;
+      pedidaEst = q > 0 && f !== null ? q * f : null;
+    } else {
+      cont.pedidaDaNf++;
+      for (const l of g) {
+        const f = fatorDe(l);
+        if (pedidaEst === null || l.pedida === null || !(l.pedida > 0) || f === null) pedidaEst = null;
+        else pedidaEst += l.pedida * f;
+      }
     }
     let t4Completo: Data | null = null;
     if (pedidaEst !== null) {
@@ -332,6 +351,7 @@ export function montarItensLT(
   add('RECEBIMENTO_PARCIAL', cont.parcial);
   add('CONVERSAO_INDETERMINADA', cont.indeterminada);
   add('PARCIAL_ENCERRADO_OMIE', cont.parcialEncerrado);
+  add('PEDIDA_DA_NF', cont.pedidaDaNf);
   return { itens, avisos };
 }
 
@@ -453,7 +473,7 @@ function lerDataExtracao(dir: string): Data {
 
 function hashDosCsvs(dir: string): string {
   const h = createHash('sha256');
-  const opcionais = [CSV_POSICAO_ABERTURA, CSV_POSICAO_CONFERENCIA].filter((n) => existsSync(join(dir, `${n}.csv`)));
+  const opcionais = [CSV_POSICAO_ABERTURA, CSV_POSICAO_AQUECIMENTO_FIM, CSV_POSICAO_CONFERENCIA].filter((n) => existsSync(join(dir, `${n}.csv`)));
   for (const nome of [...CSVS_REPLAY, ...opcionais].sort()) {
     const arq = `${nome}.csv`;
     if (!existsSync(join(dir, arq))) return invalido(arq, 'ausente');
@@ -485,7 +505,12 @@ function lerPosicaoOmie(dir: string, nome: string): Map<string, number> | null {
 }
 
 /** `dataExtracao` vem da 1ª linha de extracao.log (carimbo UTC do extrair.sh). */
-export function carregarDados(dir: string): Dados {
+/** Posição do Omie no fim do aquecimento (31/01): início da conferência R31. */
+export const CSV_POSICAO_AQUECIMENTO_FIM = `posicao_omie_${JANELAS.aquecimentoFim}`;
+/** Dados + a posição de 31/01 (conferência R31; opcional, null se não extraída). */
+export type DadosCarregados = Dados & { posicaoAquecimentoFim: Map<string, number> | null };
+
+export function carregarDados(dir: string): DadosCarregados {
   const dataExtracao = lerDataExtracao(dir);
   const hashDados = hashDosCsvs(dir);
 
@@ -594,7 +619,7 @@ export function carregarDados(dir: string): Dados {
   });
 
   // recebimentos -> LT documental e chegadas físicas
-  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking', 'valor_total'], false);
+  const rc = lerTabela(dir, 'recebimentos', ['tracking_id', 'sku', 't1', 't4', 'quantidade_pedida', 'quantidade_recebida', 't2', 'doc_md5', 'unidade_nfe', 'encerrado_omie', 'status_tracking', 'valor_total', 'pedido_qtd', 'pedido_unidade'], false);
   const recLinhas: RecebLinha[] = rc.linhas.map((r) => {
     const docId = r[rc.col('doc_md5')];
     if (ehVazio(docId)) invalido(rc.arquivo, `doc_md5 vazio em ${r[rc.col('tracking_id')]}`);
@@ -611,6 +636,8 @@ export function carregarDados(dir: string): Dados {
       encerrado: bool(rc.arquivo, 'encerrado_omie', r[rc.col('encerrado_omie')]),
       status: r[rc.col('status_tracking')],
       valor: numOuNull(rc.arquivo, 'valor_total', r[rc.col('valor_total')]),
+      pedidoQtd: numOuNull(rc.arquivo, 'pedido_qtd', r[rc.col('pedido_qtd')]),
+      pedidoUnidade: textoOuNull(r[rc.col('pedido_unidade')]),
     };
   });
   const unidadeEstoque = new Map([...skusBrutos].map(([k, s]) => [k, s.unidadeEstoque] as const));
@@ -691,8 +718,9 @@ export function carregarDados(dir: string): Dados {
 
   const posicaoAbertura = lerPosicaoOmie(dir, CSV_POSICAO_ABERTURA);
   const posicaoConferencia = lerPosicaoOmie(dir, CSV_POSICAO_CONFERENCIA);
+  const posicaoAquecimentoFim = lerPosicaoOmie(dir, CSV_POSICAO_AQUECIMENTO_FIM);
   const precosCompra = precosCompraPorDocumento(recLinhas);
   const precosEmbalagem = lerPrecosEmbalagem(dir);
 
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, precosCompra, precosEmbalagem, hashDados };
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, hashDados };
 }

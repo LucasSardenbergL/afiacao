@@ -115,22 +115,60 @@ describe('estado inicial ancorado na posição do Omie (§5.9, achado 1)', () =>
     expect(diagnosticoEstadoInicial(d).semSaldo).toEqual([{ sku: 'S2', motivo: 'POSICAO_OMIE_AUSENTE' }]);
   });
 
-  it('conferência em 30/04: fração dos SKUs em que a reconstrução para a frente bate com a posição do Omie', () => {
-    // S1: 6 + 5 (fev) − 2 (mar) = 9 em 30/04 (bate); S2: 1 (não bate com 4); S3 sem posição de conferência
-    const d = comAncora(dados('2026-10-21', [sku('S1', 0), sku('S2', 0), sku('S3', 0)], [venda('S1', '2026-03-02', 2)], [rec('S1', '2026-02-10', 5)]), { S1: 6, S2: 1, S3: 0 });
-    const c = conferirPosicao(d, new Map([['S1', 9], ['S2', 4]]), '2026-04-30');
-    expect(c).toEqual({ data: '2026-04-30', total: 2, batem: 1, pctBatem: 0.5, divergentes: [{ sku: 'S2', reconstruido: 1, omie: 4 }] });
+  // R31 (revisão I1): o recebimento histórico só começa em 28/01/26; reconstruir out–jan para a frente só desconta venda e o
+  // "ajuste mínimo" FABRICARIA estoque. No modo âncora a abertura é a posição medida, sem ajuste.
+  it('modo âncora: abertura = nSaldo medido, SEM ajuste mínimo, mesmo com o caminho negativo antes dos recebimentos', () => {
+    const d = comAncora(dados('2026-10-21', [sku('S1', 50)], [venda('S1', '2025-11-03', 6)], [rec('S1', '2026-02-10', 6)]), { S1: 2 });
+    expect(estoqueInicial(d, 'reconstruido').get('S1')).toBe(2);
+    expect(estoqueInicial(d, 'piso_zero').get('S1')).toBe(2);
+    expect(diagnosticoEstadoInicial(d).ajustes).toEqual([]);
+    // posição medida negativa: 'reconstruido' fica com a medição, 'piso_zero' trunca
+    const n = comAncora(dados('2026-10-21', [sku('S1', 0)]), { S1: -3 });
+    expect(estoqueInicial(n, 'reconstruido').get('S1')).toBe(-3);
+    expect(estoqueInicial(n, 'piso_zero').get('S1')).toBe(0);
+  });
+
+  it('conferência (R31): posição de 31/01 + eventos de 01/02 a 30/04 contra a posição de 30/04', () => {
+    // S1: 6 em 31/01 + 5 (10/02) − 2 (02/03) = 9 → bate; a venda de 20/01 e a de 05/05 ficam FORA do intervalo
+    // S2: 1 em 31/01, nenhum evento → 1 ≠ 4 (diverge); S3 sem posição em 30/04 (fora do denominador)
+    const d = dados(
+      '2026-10-21',
+      [sku('S1', 0), sku('S2', 0), sku('S3', 0)],
+      [venda('S1', '2026-01-20', 7), venda('S1', '2026-03-02', 2), venda('S1', '2026-05-05', 4)],
+      [rec('S1', '2026-02-10', 5)],
+    );
+    const c = conferirPosicao(d, new Map([['S1', 6], ['S2', 1], ['S3', 0]]), new Map([['S1', 9], ['S2', 4]]));
+    expect(c).toEqual({ de: '2026-01-31', ate: '2026-04-30', total: 2, batem: 1, pctBatem: 0.5, divergentes: [{ sku: 'S2', reconstruido: 1, omie: 4 }] });
+  });
+
+  it('diagnóstico traz a âncora e a conferência quando as duas posições existem; sem elas, conferência null', () => {
+    const base = dados('2026-10-21', [sku('S1', 0)], [venda('S1', '2026-03-02', 2)]);
+    const com = { ...comAncora(base, { S1: 4 }), posicaoAquecimentoFim: new Map([['S1', 4]]), posicaoConferencia: new Map([['S1', 2]]) };
+    const dg = diagnosticoEstadoInicial(com);
+    expect(dg.ancora).toBe('posicao_omie');
+    expect(dg.conferencia).toMatchObject({ total: 1, batem: 1, pctBatem: 1 });
+    expect(diagnosticoEstadoInicial(base).conferencia).toBeNull();
+    expect(diagnosticoEstadoInicial(base).ancora).toBe('saldo_hoje');
   });
 });
 
-// Dado real (pula sem REPLAY_DADOS): na coorte ativa+habilitada, 80–88% dos SKUs fecham a conta sem dia negativo.
+// Dado real (pula sem REPLAY_DADOS). Modo legado (saldo de hoje): 80–88% dos SKUs ativos e habilitados fecham a conta sem
+// dia negativo — número calibrado NESSE modo. No modo âncora (R31) o caminho out–jan não tem recebimento (o histórico começa
+// em 28/01/26), então "fecha" não mede nada: o que vale é a conferência 31/01 → 30/04 (revisão M6).
 describe.skipIf(!process.env.REPLAY_DADOS)('estado inicial com dado real', () => {
-  it('entre 80% e 88% dos SKUs ativos e habilitados fecham', () => {
+  it('legado: 80–88% fecham; âncora: âncora declarada e conferência calculada', () => {
     const d = carregarDados(process.env.REPLAY_DADOS as string);
     const coorte = { ...d, skus: new Map([...d.skus].filter(([, s]) => s.ativo && s.habilitado)) };
     const dg = diagnosticoEstadoInicial(coorte);
-    expect(dg.pctFecham).not.toBeNull();
-    expect(dg.pctFecham as number).toBeGreaterThanOrEqual(0.8);
-    expect(dg.pctFecham as number).toBeLessThanOrEqual(0.88);
+    if (d.posicaoAbertura === null) {
+      expect(dg.ancora).toBe('saldo_hoje');
+      expect(dg.pctFecham).not.toBeNull();
+      expect(dg.pctFecham as number).toBeGreaterThanOrEqual(0.8);
+      expect(dg.pctFecham as number).toBeLessThanOrEqual(0.88);
+    } else {
+      expect(dg.ancora).toBe('posicao_omie');
+      expect(dg.ajustes).toEqual([]);
+      if (d.posicaoAquecimentoFim && d.posicaoConferencia) expect(dg.conferencia?.total ?? 0).toBeGreaterThan(0);
+    }
   });
 });

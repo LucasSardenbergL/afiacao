@@ -4,16 +4,19 @@
 // em $REPLAY_DADOS (nunca no repositório).
 //
 // Uso (no Mac):  bun scripts/reposicao-replay/extrair-omie-posicao.ts [AAAA-MM-DD ...]
-//   sem datas: a véspera do início do aquecimento (fim de 2025-10-20 = abertura de 2025-10-21) e 2026-04-30 (conferência).
+//   sem datas: a véspera do início do aquecimento (fim de 2025-10-20 = abertura de 2025-10-21), o fim do aquecimento
+//   (2026-01-31) e o fim da calibração (2026-04-30) — as duas últimas só para a CONFERÊNCIA (R31).
 // Credenciais: ~/.config/afiacao/omie-oben.env (OMIE_OBEN_APP_KEY, OMIE_OBEN_APP_SECRET). A chave NUNCA é impressa,
 // logada nem gravada: toda mensagem de erro passa por `redigir`.
 // Saída: $REPLAY_DADOS/posicao_omie_<data>.csv — `nCodProd|cCodigo|nSaldo`, cabeçalho, última linha `fim|ok`.
 // `nCodProd` é o `omie_codigo_produto` = `sku_codigo_omie` (a chave `sku` do replay), como a edge grava em cmc_snapshot.
 // Saldo ausente na resposta fica VAZIO (ausente ≠ zero).
-// Exit: 0 ok · 2 sem arquivo de credenciais (nenhuma chamada feita) · 1 falha da API/paginação (nada parcial gravado).
+// Exit: 0 ok · 2 sem arquivo de credenciais (nenhuma chamada feita) · 3 credencial ilegível ou pasta de saída DENTRO do
+// repositório (nenhuma chamada feita) · 1 falha da API/paginação (nada parcial gravado).
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { addDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { classificarFaultstring, redigirSegredo } from '../../supabase/functions/_shared/omie-falha';
 import { MAX_PAGINAS_POS_ESTOQUE } from '../../supabase/functions/_shared/omie-paginacao';
@@ -161,8 +164,16 @@ export function paraCsv(linhas: LinhaPosicao[]): string {
   return ['nCodProd|cCodigo|nSaldo', ...corpo, 'fim|ok'].join('\n') + '\n';
 }
 
-/** Datas padrão: véspera do aquecimento (fim do dia = abertura de INICIO_AQUECIMENTO) e o fim da calibração (conferência). */
-export const DATAS_PADRAO = [addDias(INICIO_AQUECIMENTO, -1), JANELAS.calibracaoFim];
+/** Datas padrão (R31): véspera do aquecimento (fim do dia = abertura de INICIO_AQUECIMENTO); fim do aquecimento e fim da
+ * calibração (conferência: posição(31/01) + eventos de 01/02 a 30/04 contra posição(30/04)). */
+export const DATAS_PADRAO = [addDias(INICIO_AQUECIMENTO, -1), JANELAS.aquecimentoFim, JANELAS.calibracaoFim];
+
+/** `dir` é `raiz` ou está abaixo dela (caminhos absolutos já resolvidos). */
+export function dentroDe(dir: string, raiz: string): boolean {
+  const d = resolve(dir);
+  const r = resolve(raiz);
+  return d === r || d.startsWith(r + sep);
+}
 
 async function main(): Promise<number> {
   const arqCred = join(homedir(), '.config', 'afiacao', 'omie-oben.env');
@@ -170,8 +181,19 @@ async function main(): Promise<number> {
     console.error(`sem credenciais em ${arqCred} — nenhuma chamada feita`);
     return 2;
   }
-  const cred = lerCredenciais(readFileSync(arqCred, 'utf8'));
+  let cred: Credenciais;
+  try {
+    cred = lerCredenciais(readFileSync(arqCred, 'utf8'));
+  } catch (e) {
+    console.error(`credencial ilegível: ${e instanceof Error ? e.message : 'erro'} — nenhuma chamada feita`); // mensagem nunca cita valor
+    return 3;
+  }
   const dir = process.env.REPLAY_DADOS ?? join(homedir(), '.cache', 'afiacao', 'reposicao-replay');
+  const repo = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+  if (dentroDe(dir, repo)) {
+    console.error(`pasta de saída ${dir} está DENTRO do repositório (${repo}) — recuso (dados nunca no repo)`);
+    return 3;
+  }
   const datas = process.argv.slice(2).length ? process.argv.slice(2) : DATAS_PADRAO;
   const transporte: Transporte = async (corpo) => {
     const r = await fetch(`${OMIE_API_URL}/estoque/consulta/`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: corpo });
@@ -196,5 +218,10 @@ async function main(): Promise<number> {
 }
 
 if (import.meta.main) {
-  main().then((rc) => process.exit(rc));
+  main()
+    .then((rc) => process.exit(rc))
+    .catch(() => {
+      console.error('falha inesperada (detalhe suprimido para não vazar credencial)');
+      process.exit(1);
+    });
 }

@@ -52,9 +52,22 @@ copy (
          h.sku_unidade as unidade_nfe,
          (pot.encerrado_omie_em is not null) as encerrado_omie,
          coalesce(pot.status::text, '') as status_tracking,
-         h.valor_total
+         h.valor_total,
+         ped.qtd as pedido_qtd,
+         ped.unidade as pedido_unidade
   from sku_leadtime_history h
   left join purchase_orders_tracking pot on pot.id = h.tracking_id
+  -- R32: quantidade do PEDIDO de compra = Σ nQtde das linhas de raw_data.produtos_consulta com nCodProd = SKU; unidade só
+  -- se única (cUnidade); sem casar => vazio (dados.ts cai na quantidade da NF, aviso PEDIDA_DA_NF). Casa ~1/4 das linhas:
+  -- as demais são o MESMO item gravado sob o tracking de outro pedido da mesma NF (contaminação do writer antigo).
+  left join lateral (
+    select sum((e->>'nQtde')::numeric) as qtd,
+           case when count(distinct e->>'cUnidade') = 1 then min(e->>'cUnidade') end as unidade
+    from jsonb_array_elements(case when jsonb_typeof(pot.raw_data->'produtos_consulta') = 'array'
+                                   then pot.raw_data->'produtos_consulta' else '[]'::jsonb end) e
+    where e->>'nCodProd' = h.sku_codigo_omie::text
+    having count(*) > 0
+  ) ped on true
   where h.empresa = 'OBEN'
     and h.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
                                      where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%')

@@ -12,7 +12,9 @@
 // Cenários:
 //  - 'reconstruido': abertura + ajuste mínimo que evita negativo, calculado SÓ com o caminho até FIM_CALIBRACAO
 //    (abertura e fim de cada dia). Um negativo que só aparece na avaliação NÃO é ajustado: é reportado por
-//    `negativosNaAvaliacao` (erro medido do simulador).
+//    `negativosNaAvaliacao` (erro medido do simulador). No modo ÂNCORA (R31) não há ajuste: a abertura é a medição, e o
+//    caminho para a frente de out/25 a jan/26 não tem recebimento (o histórico começa em 28/01/26), então `fecha` e os
+//    negativos desse modo são só informativos; a prova do modo âncora é a conferência 31/01 → 30/04.
 //  - 'piso_zero': abertura sem o ajuste, com negativo truncado em 0 (= max(0, cru)).
 import { addDias, diffDias } from '../../src/lib/reposicao/orcamento-compra/datas';
 import { reconstruirEstoque } from '../../src/lib/reposicao/orcamento-compra/demanda';
@@ -20,7 +22,13 @@ import { INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { Dados, Data } from './tipos';
 
 export type CenarioInicial = 'reconstruido' | 'piso_zero';
-export type DadosReconstrucao = Pick<Dados, 'vendas' | 'recebimentos' | 'skus' | 'dataExtracao'> & { posicaoAbertura?: Map<string, number> | null };
+export type DadosReconstrucao = Pick<Dados, 'vendas' | 'recebimentos' | 'skus' | 'dataExtracao'> & {
+  posicaoAbertura?: Map<string, number> | null;
+  /** Posição do Omie no fim do aquecimento (31/01): início da conferência (R31). */
+  posicaoAquecimentoFim?: Map<string, number> | null;
+  /** Posição do Omie no fim da calibração (30/04): fim da conferência (R31). */
+  posicaoConferencia?: Map<string, number> | null;
+};
 export type Ancora = 'posicao_omie' | 'saldo_hoje';
 
 /** Folga numérica: abaixo disso o "negativo" é ruído de ponto flutuante. */
@@ -99,7 +107,8 @@ export function reconstruirSkus(dados: DadosReconstrucao): Reconstrucao {
       sku: s.sku,
       aberturaCrua,
       fimDia,
-      ajuste: minCalib < -EPS ? -minCalib : 0,
+      // R31: no modo âncora a abertura é MEDIDA; o ajuste só existe para a reconstrução a partir de saldo
+      ajuste: !posicao && minCalib < -EPS ? -minCalib : 0,
       fecha: minTudo >= -EPS,
     });
   }
@@ -149,6 +158,8 @@ export interface DiagnosticoEstadoInicial {
   /** fecham / total; null se total = 0. */
   pctFecham: number | null;
   semSaldo: { sku: string; motivo: string }[];
+  /** Conferência 31/01 → 30/04 contra as posições do Omie (R31); null sem as duas posições. */
+  conferencia: ConferenciaPosicao | null;
   /** SKUs com ajuste > 0 (déficit na calibração). */
   ajustes: { sku: string; ajuste: number }[];
 }
@@ -164,33 +175,49 @@ export function diagnosticoEstadoInicial(dados: DadosReconstrucao): DiagnosticoE
     pctFecham: lista.length === 0 ? null : fecham / lista.length,
     semSaldo,
     ajustes: lista.filter((i) => i.ajuste > 0).map((i) => ({ sku: i.sku, ajuste: i.ajuste })),
+    conferencia: dados.posicaoAquecimentoFim && dados.posicaoConferencia ? conferirPosicao(dados, dados.posicaoAquecimentoFim, dados.posicaoConferencia) : null,
   };
 }
 
 export interface ConferenciaPosicao {
-  data: Data;
-  /** SKUs reconstruídos que têm posição do Omie na data de conferência. */
+  de: Data;
+  ate: Data;
+  /** SKUs com posição do Omie nas DUAS datas e no mapa de SKUs. */
   total: number;
-  /** Destes, quantos têm o fim do dia reconstruído (cru, sem ajuste) igual à posição do Omie (tolerância 1e-6). */
+  /** Destes, quantos têm posição(de) + recebimentos − vendas(no escopo) de (de, ate] igual à posição(ate) (tolerância 1e-6). */
   batem: number;
   /** batem / total; null se total = 0. */
   pctBatem: number | null;
   divergentes: { sku: string; reconstruido: number; omie: number }[];
 }
 
-/** Conferência da reconstrução PARA A FRENTE contra a posição do Omie numa data (ex.: 30/04). Não altera nada. */
-export function conferirPosicao(dados: DadosReconstrucao, posicaoNaData: Map<string, number>, dataConf: Data): ConferenciaPosicao {
-  const idx = diffDias(INICIO_AQUECIMENTO, dataConf);
+/**
+ * Conferência da reconstrução (R31): parte da posição MEDIDA do Omie no fim do aquecimento (31/01) e aplica só os eventos
+ * de 01/02 a 30/04 (vendas no escopo e recebimentos documentais), comparando com a posição medida em 30/04. Não altera nada;
+ * mede a dedup física (revisão M1/M5) e a convenção de data do Omie.
+ */
+export function conferirPosicao(
+  dados: DadosReconstrucao,
+  inicio: Map<string, number>,
+  fim: Map<string, number>,
+  de: Data = JANELAS.aquecimentoFim,
+  ate: Data = JANELAS.calibracaoFim,
+): ConferenciaPosicao {
+  const fluxo = new Map<string, number>();
+  const soma = (sku: string, q: number) => fluxo.set(sku, (fluxo.get(sku) ?? 0) + q);
+  for (const v of dados.vendas) if (v.noEscopo && v.data > de && v.data <= ate) soma(v.sku, -v.quantidade);
+  for (const r of dados.recebimentos) if (r.data > de && r.data <= ate) soma(r.sku, r.quantidade);
   const divergentes: ConferenciaPosicao['divergentes'] = [];
   let total = 0;
   let batem = 0;
-  for (const it of reconstruirSkus(dados).itens.values()) {
-    const omie = posicaoNaData.get(it.sku);
-    if (omie === undefined || idx < 0 || idx >= it.fimDia.length) continue;
+  for (const sku of [...dados.skus.keys()].sort()) {
+    const a = inicio.get(sku);
+    const b = fim.get(sku);
+    if (a === undefined || b === undefined) continue;
     total++;
-    const rec = it.fimDia[idx];
-    if (Math.abs(rec - omie) <= 1e-6) batem++;
-    else divergentes.push({ sku: it.sku, reconstruido: rec, omie });
+    const rec = a + (fluxo.get(sku) ?? 0);
+    if (Math.abs(rec - b) <= 1e-6) batem++;
+    else divergentes.push({ sku, reconstruido: rec, omie: b });
   }
-  return { data: dataConf, total, batem, pctBatem: total === 0 ? null : batem / total, divergentes };
+  return { de, ate, total, batem, pctBatem: total === 0 ? null : batem / total, divergentes };
 }

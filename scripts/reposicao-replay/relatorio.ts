@@ -368,6 +368,21 @@ export function montarRelatorio(r: Rodada): string {
     s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem CMC (fora do capital): ${a.skusSemCmc.join(', ') || 'nenhum'}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);
+  {
+    // Âncora do estado inicial (R31, revisão M3): de onde vem a abertura e a conferência 31/01 → 30/04 contra o Omie.
+    const ei = r.estadoInicial;
+    s(
+      ei.ancora === 'posicao_omie'
+        ? 'Âncora do estado inicial: posição datada do Omie na véspera do aquecimento (medida, sem ajuste; R31).'
+        : 'Âncora do estado inicial: **saldo de hoje (modo legado)** — a abertura DEPENDE da avaliação (§5.9 não atendida); falta a posição datada do Omie.',
+    );
+    const c = ei.conferencia;
+    s(
+      c === null
+        ? 'Conferência da reconstrução contra o Omie: sem as posições de 31/01 e 30/04 (não medida).'
+        : `Conferência ${c.de} → ${c.ate} (posição Omie + eventos contra posição Omie): ${c.batem}/${c.total} SKUs batem (${pct(c.pctBatem, 1)}); ${c.divergentes.length} divergentes.`,
+    );
+  }
   s(`Estado inicial: ${r.estadoInicial.fecham}/${r.estadoInicial.total} fecham (${pct(r.estadoInicial.pctFecham, 1)}); ${r.estadoInicial.ajustes.length} com ajuste da calibração; ${r.estadoInicial.semSaldo.length} sem saldo.`);
   s(`Parados (${r.parados.length}; ${r.parados.filter((x) => x.compradoUltimos90d).length} comprados nos 90 dias antes do corte):`);
   s(

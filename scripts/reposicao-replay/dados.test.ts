@@ -7,7 +7,7 @@ import { duEntre } from './calendario';
 
 const H = {
   vendas: 'linha_id|sku|data|quantidade|valor|cmc_linha|no_escopo',
-  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking|valor_total',
+  recebimentos: 'tracking_id|sku|t1|t4|quantidade_pedida|quantidade_recebida|t2|doc_md5|unidade_nfe|encerrado_omie|status_tracking|valor_total|pedido_qtd|pedido_unidade',
   skus:
     'sku|descricao|grupo_codigo|classe_abc_hoje|classe_forcada|minimo_forcado|minimo_operacional|multiplo_embalagem|unidade_nf|unidade_estoque|fator_conversao|cmc|saldo_hoje|habilitado|ativo|custo_pedido_aplicado|custo_capital_perc|es_hoje|pp_hoje|max_hoje|grupo_embalagem_id',
   config_custos:
@@ -62,6 +62,8 @@ function monta(ov: Partial<Record<Nome, string[]>> = {}, log = 'extracao em 2026
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 7 ? `${l}|tracking:${l.split('|')[0]}|UN|f|FATURADO` : l));
   // valor_total (achado 2) vazio quando o teste não o informa: sem valor, sem preço de compra
   b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 11 ? `${l}|` : l));
+  // sem as 2 colunas do pedido (R32): pedido não casado => fallback para a quantidade da NF
+  b.recebimentos = b.recebimentos.map((l) => (l.split('|').length === 12 ? `${l}||` : l));
   for (const n of Object.keys(H) as Nome[]) {
     writeFileSync(join(dir, `${n}.csv`), [H[n], ...b[n], 'fim|ok'].join('\n') + '\n');
   }
@@ -132,6 +134,11 @@ describe('posição datada do Omie (âncora do estado inicial, §5.9)', () => {
     expect(com.hashDados).not.toBe(sem.hashDados);
     writeFileSync(join(dir, 'posicao_omie_2026-04-30.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|1\nfim|ok\n');
     expect([...(carregarDados(dir).posicaoConferencia ?? [])]).toEqual([['11', 1]]);
+    expect(carregarDados(dir).posicaoAquecimentoFim).toBeNull();
+    writeFileSync(join(dir, 'posicao_omie_2026-01-31.csv'), 'nCodProd|cCodigo|nSaldo\n11|A|2\nfim|ok\n');
+    const tres = carregarDados(dir);
+    expect([...(tres.posicaoAquecimentoFim ?? [])]).toEqual([['11', 2]]);
+    expect(tres.hashDados).not.toBe(com.hashDados);
   });
   it('posição sem marcador ou com nCodProd duplicado é CSV inválido', () => {
     const dir = monta();
@@ -214,11 +221,54 @@ describe('LT documental (§5.9)', () => {
     expect(abre.itensLT[0]).toMatchObject({ aberto: true, t4: null });
   });
 
-  it('acumula recebimentos documentais: o LT é o t4 do documento que leva o acumulado a ≥ 95%', () => {
-    const d = carregarDados(
-      monta({ recebimentos: ['T|S1|2026-01-05|2026-01-09|50|30||docA|UN|f|FATURADO', 'T|S1|2026-01-05|2026-01-16|40|66||docB|UN|f|FATURADO', 'T|S1|2026-01-05|2026-01-23|10|4||docC|UN|f|FATURADO'] }),
-    );
-    expect(d.itensLT).toEqual([{ trackingId: 'T', sku: 'S1', t1: '2026-01-05', t2: null, t4: '2026-01-16', ltDu: 9, aberto: false }]);
+  // R32 (revisão I3): a quantidade PEDIDA vem do pedido de compra (raw_data.produtos_consulta[].nQtde casado por nCodProd).
+  // Contraprova do Codex num formato que o dado real produz: pedido de 100 UN faturado e recebido em 10 → aberto.
+  it('pedido de 100 UN faturado e recebido com 10 (NF = recebida) fica ABERTO pela quantidade do pedido', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-07|10|10||docA|UN|f|FATURADO||100|UN'] }));
+    expect(d.itensLT[0]).toMatchObject({ aberto: true, t4: null });
+    expect(d.avisos).toContainEqual({ codigo: 'RECEBIMENTO_PARCIAL', n: 1 });
+    expect(d.avisos.find((a) => a.codigo === 'PEDIDA_DA_NF')).toBeUndefined();
+  });
+
+  it('pedido de 100 UN com 96 recebidos fecha no t4 desse recebimento', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|96|96||docA|UN|f|FATURADO||100|UN'] }));
+    expect(d.itensLT[0]).toMatchObject({ aberto: false, t4: '2026-01-16', ltDu: 9 });
+  });
+
+  it('pedido não casado (sem nQtde) cai na quantidade da NF, com aviso PEDIDA_DA_NF contado', () => {
+    const d = carregarDados(monta({ recebimentos: ['A|S1|2026-01-05|2026-01-16|10|10', 'B|S1|2026-01-05|2026-01-16|10|10'] }));
+    expect(d.itensLT.every((i) => !i.aberto)).toBe(true);
+    expect(d.avisos).toContainEqual({ codigo: 'PEDIDA_DA_NF', n: 2 });
+  });
+
+  it('pedido em unidade que não é a de estoque nem a da NF: CONVERSAO_INDETERMINADA (aberto)', () => {
+    const d = carregarDados(monta({ recebimentos: ['T|S1|2026-01-05|2026-01-16|10|10||docA|UN|f|FATURADO||10|KG'] }));
+    expect(d.itensLT[0]).toMatchObject({ aberto: true });
+    expect(d.avisos).toContainEqual({ codigo: 'CONVERSAO_INDETERMINADA', n: 1 });
+  });
+
+  it('pedido na unidade da NF (L) com estoque em UN usa o fator documental NF→estoque', () => {
+    // fator 3/2,7 de 3 documentos; o pedido E é de 5,4 L (= 6 UN) e só 3 UN chegaram → aberto
+    const r = (t: string, t4: string, q: string, ped: string) => `${t}|S1|2026-01-05|${t4}|2.7|${q}||doc${t}|L|f|FATURADO||${ped}|L`;
+    const d = carregarDados(monta({ recebimentos: [r('A', '2026-01-09', '3', '2.7'), r('B', '2026-01-12', '3', '2.7'), r('C', '2026-01-13', '3', '2.7'), r('E', '2026-01-14', '3', '5.4')] }));
+    expect(d.itensLT.filter((i) => !i.aberto).map((i) => i.trackingId)).toEqual(['A', 'B', 'C']);
+    expect(d.itensLT.find((i) => i.trackingId === 'E')).toMatchObject({ aberto: true });
+  });
+
+  // R33 (revisão I4): o fator modal só usa documentos com t4 <= 30/04; a avaliação não muda a calibração.
+  it('fator documental ignora documentos com t4 > 30/04 (invariância da calibração)', () => {
+    const r = (t: string, t4: string, q: string) => `${t}|S1|2026-01-05|${t4}|2.7|${q}||doc${t}|L|f|FATURADO|||`;
+    const calib = [r('A', '2026-01-09', '3'), r('B', '2026-01-12', '3'), r('C', '2026-01-13', '3'), r('D', '2026-01-14', '1')];
+    // na avaliação, 5 documentos com razão 1/2,7: se contassem, a moda viraria 0,37 e o D (1 UN) passaria a fechar
+    const aval = ['F', 'G', 'H', 'I', 'J'].map((t, i) => r(t, `2026-06-0${i + 1}`, '1'));
+    const so = carregarDados(monta({ recebimentos: calib }));
+    const com = carregarDados(monta({ recebimentos: [...calib, ...aval] }));
+    const doc = (x: typeof so, t: string) => x.itensLT.find((i) => i.trackingId === t);
+    expect(doc(com, 'D')).toEqual(doc(so, 'D'));
+    expect(doc(so, 'D')).toMatchObject({ aberto: true });
+    // e só 2 documentos até 30/04 => indeterminado, por mais documentos que a avaliação traga
+    const dois = carregarDados(monta({ recebimentos: [r('A', '2026-01-09', '3'), r('B', '2026-01-12', '3'), ...aval] }));
+    expect(doc(dois, 'A')).toMatchObject({ aberto: true });
   });
 
   it('converte o pedido para a unidade de estoque: NF em L, estoque em UN, fator documental do SKU (0,9 L/UN)', () => {

@@ -26,17 +26,13 @@ const venda = (linhaId: string, s: string, data: string, quantidade: number): Li
 const item = (trackingId: string, s: string, t1: string, ltDu: number): ItemLT => ({
   trackingId, sku: s, t1, t2: null, t4: somarDiasUteis(t1, ltDu), ltDu, aberto: false,
 });
-/** saldoHoje que reconstrói a abertura desejada (R10: alterar a avaliação compensando o saldo mantém o MESMO estado físico). */
-const comAbertura = (s: Sku, abertura: number, vendas: LinhaVenda[], receb: EventoRecebimento[]): Sku => ({
-  ...s,
-  saldoHoje:
-    abertura - vendas.filter((v) => v.sku === s.sku).reduce((a, v) => a + v.quantidade, 0) + receb.filter((r) => r.sku === s.sku).reduce((a, r) => a + r.quantidade, 0),
-});
-const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[], recebimentos: EventoRecebimento[]): Dados => ({
+// Estado inicial no modo ÂNCORA (R31, revisão I2): posição medida fixa e saldoHoje FIXO (0) — nada é recalculado a partir
+// dos eventos, ao contrário da compensação revogada da R10.
+const dados = (skus: Sku[], vendas: LinhaVenda[], itensLT: ItemLT[], recebimentos: EventoRecebimento[], abertura: Record<string, number> = {}): Dados => ({
   vendas, itensLT, recebimentos, skus: new Map(skus.map((s) => [s.sku, s])),
   zPorClasse: { A: 1.65, B: 1.28, C: 0.84 }, teto: { ativa: true, diasB: 90, diasC: 60 }, equivalencias: [], sugestaoHoje: new Map(), excluidos: [],
   classificacaoHist: { regras: REGRAS, porSku: new Map() }, shareInsumo: new Map(), parametrosView: new Map(), avisos: [], dataExtracao: '2026-10-21',
-  posicaoAbertura: null, posicaoConferencia: null, hashDados: 'h',
+  posicaoAbertura: new Map(Object.entries(abertura)), posicaoConferencia: null, hashDados: 'h',
 });
 
 describe('alvo da calibração', () => {
@@ -58,7 +54,7 @@ describe('grade', () => {
     const vs = [venda('l1', 'P', a, 1), venda('l2', 'P', somarDiasUteis(a, 1), 1), venda('l3', 'P', somarDiasUteis(a, 2), 1)];
     const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-02-02', quantidade: 3 }]; // histórico: reconstrução sem negativo
     const itens = [item('X', 'P', somarDiasUteis(a, -10), 3), item('Y', 'P', somarDiasUteis(a, 11), 1)];
-    const dd = dados([comAbertura(sku('P', { multiplo: 2 }), 0, vs, receb)], vs, itens, receb);
+    const dd = dados([sku('P', { multiplo: 2 })], vs, itens, receb, { P: 0 });
     const nivel = (q: number): number => (q < 0.8 ? 0 : q <= 0.9 ? 1 : 2);
     const mapa = (s: number): Map<string, ParamsDia> => {
       const m = new Map<string, ParamsDia>();
@@ -95,7 +91,7 @@ describe('escolha da candidata', () => {
   });
 });
 
-// ── ponta a ponta: alterar a avaliação não muda nada da calibração (spec §5.9; R10 compensa o saldoHoje) ───────────────
+// ── ponta a ponta: alterar a avaliação não muda nada da calibração (spec §5.9), modo âncora, saldoHoje NÃO compensado ───
 function cenario(alterarAvaliacao: boolean): Dados {
   const vs: LinhaVenda[] = [];
   const receb: EventoRecebimento[] = [];
@@ -131,8 +127,8 @@ function cenario(alterarAvaliacao: boolean): Dados {
   if (alterarAvaliacao) for (const v of vs) if (v.data > JANELAS.calibracaoFim) v.cmcLinha = 9;
   receb.sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.sku < b.sku ? -1 : 1));
   const cmc = alterarAvaliacao ? 7 : 4;
-  const skus = [comAbertura(sku('P', { multiplo: 2, cmc }), 12, vs, receb), comAbertura(sku('Q', { cmc }), 8, vs, receb), comAbertura(sku('R', { cmc }), 30, vs, receb)];
-  return dados(skus, vs, itens, receb);
+  const skus = [sku('P', { multiplo: 2, cmc }), sku('Q', { cmc }), sku('R', { cmc })];
+  return dados(skus, vs, itens, receb, { P: 12, Q: 8, R: 30 });
 }
 
 describe('invariância', () => {
