@@ -14,7 +14,7 @@
  * Módulo de PLATAFORMA: a ficha (farmer-inteligencia) e o pedido (vendas) consomem o mesmo contrato.
  */
 
-export const ESTADOS_SITUACAO_RECEITA = [
+const ESTADOS_SITUACAO_RECEITA = [
   'irregular',
   'ativa',
   'outra',
@@ -22,7 +22,7 @@ export const ESTADOS_SITUACAO_RECEITA = [
   'sem_cnpj',
   'sem_documento',
 ] as const;
-export type EstadoSituacaoReceita = (typeof ESTADOS_SITUACAO_RECEITA)[number];
+type EstadoSituacaoReceita = (typeof ESTADOS_SITUACAO_RECEITA)[number];
 
 export interface SituacaoReceita {
   estado: EstadoSituacaoReceita;
