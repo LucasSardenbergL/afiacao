@@ -11,7 +11,8 @@
 -- O resto do contrato é o da 20261029200343 (ler o cabeçalho de lá). Mesma assinatura: CREATE OR REPLACE
 -- preserva o ACL, e o REVOKE/GRANT é reemitido assim mesmo, nomeando as roles.
 -- Molde TRAVA → PRE → CREATE → PÓS: a PRE aborta se o corpo vivo não for o da 20261029200343
--- (md5 4dc173d4393fcec59eac2c85a88e09ca, lido da PROD em 2026-10-30 via psql-ro) nem já este.
+-- (md5 4dc173d4393fcec59eac2c85a88e09ca, lido da PROD em 2026-10-30 via psql-ro) nem já este (1ab61f8b644befe6115130e606884f1b, o md5
+-- do corpo abaixo — a prova confere que o banco calcula o mesmo).
 -- Idempotente. Sem BEGIN/COMMIT: aplicar com `bun run db:aplicar <este arquivo>`.
 
 -- TRAVA, antes de ler: ALTER sem efeito (a volatilidade viva é STABLE) prende a função até o fim.
@@ -28,7 +29,7 @@ DO $pre_corpo$
 DECLARE
   v_src text := (SELECT p.prosrc FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.cliente_situacao_receita(uuid)'));
 BEGIN
-  IF md5(v_src) <> '4dc173d4393fcec59eac2c85a88e09ca' AND position('sem_lote_publicado' IN v_src) = 0 THEN
+  IF v_src IS NULL OR md5(v_src) NOT IN ('4dc173d4393fcec59eac2c85a88e09ca', '1ab61f8b644befe6115130e606884f1b') THEN
     RAISE EXCEPTION 'PRE FALHOU: corpo vivo de cliente_situacao_receita (md5 %) não é o da 20261029200343 nem este — outra sessão mexeu; reconcilie antes', md5(v_src);
   END IF;
 END

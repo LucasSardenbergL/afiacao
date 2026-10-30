@@ -144,7 +144,7 @@ case "${SABOTAGEM:-}" in
                         sabotar "$POS8_DE" "  IF false THEN" ;;
   reprocesso_publica)   sabotar "$REPROC_DE" "     AND i.situacao_aplicada_em IS NOT NULL;" ;;
   reprocesso_publica_sem_post) sabotar "$REPROC_DE" "     AND i.situacao_aplicada_em IS NOT NULL;"; sabotar "$POS8_DE" "  IF false THEN" ;;
-  pre_cega)             sabotar "  IF md5(v_src) <> '4dc173d4393fcec59eac2c85a88e09ca' AND" "  IF false AND" ;;
+  pre_cega)             sabotar "  IF v_src IS NULL OR md5(v_src) NOT IN (" "  IF false AND md5(v_src) NOT IN (" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -205,7 +205,9 @@ P -q -f "$FN_DOCS" >/dev/null
 P -q -f "$MIG1_USADA" >/dev/null   # a 1ª, como foi aplicada em prod (#764)
 echo "md5 do corpo da 1ª no harness: $(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.cliente_situacao_receita(uuid)'::regprocedure;")"
 P -q -f "$MIG_USADA" >/dev/null
-P -q -f "$MIG_USADA" >/dev/null   # idempotente
+# Idempotência é propriedade do arquivo REAL: só no controle (um corpo sabotado não é "nem a 1ª nem este" e
+# a PRE da 2ª passada o recusaria antes de qualquer assert).
+[ -z "${SABOTAGEM:-}" ] && P -q -f "$MIG_USADA" >/dev/null
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
@@ -347,8 +349,9 @@ if SAIDA16="$(P -q -f "$MIG_USADA" 2>&1)"; then r16="verde"; else r16="vermelho"
 p16="sem-pre"; case "$SAIDA16" in *"PRE FALHOU: corpo vivo"*) p16="pre";; esac
 eq "A16 corpo vivo derivado (nem a 1ª nem esta): a PRE da 2ª aborta o apply" "$r16 $p16" "vermelho pre"
 P -q -f "$MIG1" >/dev/null; P -q -f "$MIG_USADA" >/dev/null
-eq "A16b corpo da 1ª (o de PROD) → a 2ª aplica; md5 da 1ª no harness = o lido da PROD" \
-   "$(Pq -c "SELECT position('sem_lote_publicado' IN prosrc) > 0 FROM pg_proc WHERE oid = 'public.cliente_situacao_receita(uuid)'::regprocedure;")" "t"
+MD5_V2="$(grep -oE "NOT IN \('4dc173d4393fcec59eac2c85a88e09ca', '[0-9a-f]{32}'\)" "$MIG" | grep -oE "[0-9a-f]{32}'\)$" | tr -d "')")"
+eq "A16b corpo da 1ª (o de PROD) → a 2ª aplica, e o md5 que o BANCO calcula do corpo novo é o que a PRE da 2ª aceita" \
+   "$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.cliente_situacao_receita(uuid)'::regprocedure;")" "$MD5_V2"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "CLIENTE_SITUACAO_RECEITA_PROVA_OK"
