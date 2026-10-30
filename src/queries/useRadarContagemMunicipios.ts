@@ -108,12 +108,20 @@ export function useRadarPenetracaoMunicipios(uf: string | null, enabled: boolean
     queryFn: async (): Promise<RadarMunicipioPenetracao[] | null> => {
       const lote = await lerLoteVigente(qc);
       if (!lote) return null;
-      const { data, error } = await supabase.rpc(
+      // O corte é o p_limit (os 500 maiores mercados, o eixo da tela), não a capa de 1.000 do PostgREST:
+      // paginar com a mesma ordem da RPC garante que nenhum município do corte some em silêncio.
+      return fetchAllPages<RadarMunicipioPenetracao>(
+        (de, ate) =>
+          supabase
+            .rpc(
+              'radar_penetracao_por_municipio',
+              comNulo<'radar_penetracao_por_municipio', 'p_uf'>({ p_lote: lote.mes_referencia, p_uf: uf, p_limit: 500 }),
+            )
+            .order('empresas_lote', { ascending: false, nullsFirst: false })
+            .order('municipio_codigo')
+            .range(de, ate),
         'radar_penetracao_por_municipio',
-        comNulo<'radar_penetracao_por_municipio', 'p_uf'>({ p_lote: lote.mes_referencia, p_uf: uf, p_limit: 500 }),
       );
-      if (error) throw error;
-      return (data ?? []) as RadarMunicipioPenetracao[];
     },
     staleTime: 60_000,
   });

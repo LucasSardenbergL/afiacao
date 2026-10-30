@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
  * db/test-radar-contagem-lote.sh): p_lote = lote vigente por default, null com "incluir quem saiu".
  */
 let rpcs: Array<[string, Record<string, unknown>]> = [];
+let ranges: Array<[string, number, number]> = [];
 let respostaLotes: { data: unknown; error: { message: string } | null };
 
 function builderLotes() {
@@ -25,7 +26,16 @@ vi.mock('@/integrations/supabase/client', () => ({
     from: () => builderLotes(),
     rpc: (fn: string, args: Record<string, unknown>) => {
       rpcs.push([fn, args]);
-      return Promise.resolve({ data: [], error: null });
+      // Encadeável como o builder real (`.order().range()`), e then-able para quem só aguarda.
+      const b: Record<string, unknown> = {};
+      b.order = () => b;
+      b.range = (de: number, ate: number) => {
+        ranges.push([fn, de, ate]);
+        return b;
+      };
+      b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) =>
+        Promise.resolve({ data: [], error: null }).then(res, rej);
+      return b;
     },
   },
 }));
@@ -63,6 +73,7 @@ const argsDaContagem = () => {
 
 beforeEach(() => {
   rpcs = [];
+  ranges = [];
   respostaLotes = { data: LOTES, error: null };
 });
 
@@ -122,6 +133,8 @@ describe('useRadarPenetracaoMunicipios — denominador do lote vigente', () => {
     const chamadas = rpcs.filter(([fn]) => fn === 'radar_penetracao_por_municipio');
     expect(chamadas).toHaveLength(1);
     expect(chamadas[0][1]).toEqual({ p_lote: '2026-08', p_uf: 'SC', p_limit: 500 });
+    // Pagina (capa de 1.000 do PostgREST vale para .rpc()); página curta encerra na 1ª chamada.
+    expect(ranges).toEqual([['radar_penetracao_por_municipio', 0, 999]]);
   });
 
   it('sem UF: p_uf null dito (o país inteiro)', async () => {

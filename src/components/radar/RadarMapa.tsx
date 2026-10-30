@@ -176,6 +176,9 @@ export default function RadarMapa({
         </div>
       </div>
       <div ref={mapRef} className="w-full h-[420px]" style={{ zIndex: 1 }} />
+      {camada === 'leads' && q.isError && (
+        <p className="p-2 text-xs text-status-error">Não foi possível carregar os leads do mapa.</p>
+      )}
       {carregando && (
         <div className="p-2">
           <Skeleton className="h-4 w-40" />
