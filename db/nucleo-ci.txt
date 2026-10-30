@@ -608,6 +608,11 @@ db/test-radar-irmaos-por-raiz.sh            13  falsificar=11
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
 # VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
 db/test-radar-contagem-lote.sh              16  falsificar=12
+# Mapa do radar (frente 4): penetração inventada (0% sem denominador, cliente de lote velho contando,
+# concorrente "0" num lote sem carga), RPC sem gate, tabela de concorrentes legível sem o gate ou por
+# anon, porta de escrita aberta a authenticated, publicação sem reconciliação/duplicando, e migration
+# aplicada sem o gate da frente 2. RLS sob SET ROLE authenticated + GUC; default privileges do Supabase.
+db/test-radar-penetracao-concorrentes.sh    26  falsificar=19
 # Radar: AVISO AO GESTOR por lote fechado (20261020143000). Defeito aqui = e-mail repetido do mesmo lote,
 # e-mail retroativo do lote velho no 1º cron (ou pendência apagada por re-colada), "0 de N" com score de
 # outra foto (ausente ≠ zero), "0 de 0" sem cliente verificado, número sem denominador, lote running

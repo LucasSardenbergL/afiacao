@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **715** custom migrations totais
-- **2327** objetos esperados (criados por estas migrations)
+- **716** custom migrations totais
+- **2333** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 874
-  - `rls_policy`: 493
+  - `function`: 876
+  - `rls_policy`: 495
   - `index`: 305
-  - `table`: 210
+  - `table`: 212
   - `cron_job`: 200
   - `view`: 127
   - `trigger`: 114
@@ -5826,6 +5826,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_radar_evento_contato_del` | `radar_contatos` |
 | `trigger` | `public.trg_radar_evento_cadastro` | `radar_empresas` |
 | `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
+
+### `20261029170140_radar_penetracao_e_concorrentes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_concorrentes_publicar` | — |
+| `function` | `public.radar_penetracao_por_municipio` | — |
+| `table` | `public.radar_concorrentes_lote` | — |
+| `table` | `public.radar_concorrentes_municipio` | — |
+| `rls_policy` | `public.radar_concorrentes_lote_select_prospectar` | `radar_concorrentes_lote` |
+| `rls_policy` | `public.radar_concorrentes_municipio_select_prospectar` | `radar_concorrentes_municipio` |
 
 ### `20261029200343_cliente_situacao_receita.sql`
 
