@@ -59,6 +59,10 @@ describe('interpretarRespostaSituacao', () => {
     );
   });
 
+  it('sem lote publicado (55000 sem_lote_publicado) é erro de fonte → "indisponível", nunca sem_dado', () => {
+    expect(motivoDoErro(() => interpretarRespostaSituacao(null, { code: '55000', hint: 'sem_lote_publicado', message: 'x' }))).toBe('fonte');
+  });
+
   it('erro qualquer é erro de fonte', () => {
     expect(motivoDoErro(() => interpretarRespostaSituacao(null, { code: 'PGRST202', message: 'not found' }))).toBe('fonte');
   });
