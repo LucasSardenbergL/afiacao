@@ -1,22 +1,20 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Building2, Ban, ClipboardPlus, Download } from 'lucide-react';
+import { Building2, Ban, Columns3, Download } from 'lucide-react';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { track } from '@/lib/analytics';
 import { hojeSP } from '@/lib/time/sp-day';
 import { csvEmpresas, limitarSelecao, TETO_LOTE } from '@/lib/radar/lote';
 import { registrarContatoRadar } from '@/queries/useRegistrarContatoRadar';
-import { atribuirTarefaRadar } from '@/queries/useRadarAcoesLead';
 import { useRadarAcaoEmLote, type useRadarLoteOmie } from '@/queries/useRadarLote';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
+import { RadarComparar, MAX_COMPARAR } from '@/components/radar/RadarComparar';
 
 function baixarCsv(csv: string, nome: string) {
   const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
@@ -50,9 +48,8 @@ export function RadarAcoesLote({
   const acao = useRadarAcaoEmLote();
   const [confirmOmie, setConfirmOmie] = useState(false);
   const [confirmDescartar, setConfirmDescartar] = useState(false);
-  const [confirmTarefa, setConfirmTarefa] = useState(false);
   const [motivo, setMotivo] = useState('');
-  const [dias, setDias] = useState('7');
+  const [comparando, setComparando] = useState(false);
 
   const { dentro, fora } = limitarSelecao(selecao);
   const ocupado = acao.rodando || loteOmie.rodando || isImpersonating;
@@ -79,15 +76,6 @@ export function RadarAcoesLote({
     setMotivo('');
   };
 
-  const criarTarefas = async () => {
-    setConfirmTarefa(false);
-    const n = Math.max(1, Math.min(Number(dias) || 7, 90));
-    const r = await acao.executar(cnpjs, (cnpj) => atribuirTarefaRadar({ cnpj, diasRetomada: n }), 'radar.lote_tarefas');
-    onRemover(cnpjs.filter((c) => !r.falhas.some((f) => f.item === c)));
-    if (r.falhas.length === 0) toast.success(`${r.ok} tarefa(s) criada(s) pra você`, { description: `Retomar em ${n} dia(s)` });
-    else toast.warning(`${r.ok} criada(s) · ${r.falhas.length} falharam — confira em Tarefas antes de repetir`, { description: r.falhas[0]?.erro });
-  };
-
   const exportar = () => {
     baixarCsv(csvEmpresas(selecao), `radar-leads-${hojeSP()}.csv`);
     track('radar.lote_exportado_csv', { total: selecao.length });
@@ -106,7 +94,15 @@ export function RadarAcoesLote({
           loteOmie.temPendencias
             ? { id: 'omie', label: 'Lote pendente — ver', icon: Building2, variant: 'outline', onClick: onAbrirLote }
             : { id: 'omie', label: `Cadastrar no Omie${fora > 0 ? ` (${dentro.length})` : ''}`, icon: Building2, onClick: () => setConfirmOmie(true), disabled: ocupado },
-          { id: 'tarefa', label: 'Criar tarefas', icon: ClipboardPlus, variant: 'outline', onClick: () => setConfirmTarefa(true), disabled: ocupado },
+          // "Criar tarefas" saiu: o módulo `tarefas` está congelado até 2027-01-10 (a tarefa nascia num lugar que ninguém abre).
+          {
+            id: 'comparar',
+            label: selecao.length > MAX_COMPARAR ? `Comparar (até ${MAX_COMPARAR})` : 'Comparar',
+            icon: Columns3,
+            variant: 'outline',
+            onClick: () => { track('radar.comparar_aberto', { total: selecao.length }); setComparando(true); },
+            disabled: selecao.length < 2 || selecao.length > MAX_COMPARAR,
+          },
           { id: 'csv', label: 'Exportar CSV', icon: Download, variant: 'outline', onClick: exportar },
           { id: 'descartar', label: 'Descartar', icon: Ban, variant: 'destructive', onClick: () => { setMotivo(''); setConfirmDescartar(true); }, disabled: ocupado },
         ]}
@@ -143,23 +139,7 @@ export function RadarAcoesLote({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={confirmTarefa} onOpenChange={setConfirmTarefa}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Criar {dentro.length} tarefa{dentro.length === 1 ? '' : 's'} pra você?{tituloFora}</AlertDialogTitle>
-            <AlertDialogDescription>Uma tarefa "ligar" por lead, na sua lista, com a data de retomada abaixo.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="radar-lote-dias" className="text-sm">Retomar em</Label>
-            <Input id="radar-lote-dias" value={dias} onChange={(e) => setDias(e.target.value)} className="w-16 h-8" inputMode="numeric" />
-            <span className="text-sm text-muted-foreground">dias</span>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={criarTarefas}>Criar tarefas</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <RadarComparar empresas={comparando ? selecao.slice(0, MAX_COMPARAR) : []} open={comparando} onClose={() => setComparando(false)} />
     </>
   );
 }

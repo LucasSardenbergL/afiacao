@@ -18285,6 +18285,33 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_lista_acesso: {
+        Row: {
+          dia: string
+          farmer_user_id: string
+          n_compradores: number
+          n_leituras: number
+          primeira_em: string
+          ultima_em: string
+        }
+        Insert: {
+          dia: string
+          farmer_user_id: string
+          n_compradores: number
+          n_leituras?: number
+          primeira_em?: string
+          ultima_em?: string
+        }
+        Update: {
+          dia?: string
+          farmer_user_id?: string
+          n_compradores?: number
+          n_leituras?: number
+          primeira_em?: string
+          ultima_em?: string
+        }
+        Relationships: []
+      }
       venda_onda_log: {
         Row: {
           condicao: Json

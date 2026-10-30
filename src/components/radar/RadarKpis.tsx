@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { Skeleton } from '@/components/ui/skeleton';
 import { estadoDeLeitura, naoConsegui, desatualizado, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
@@ -21,8 +21,18 @@ function Card({ label, valor, hint }: { label: string; valor: number | string; h
   );
 }
 
+/** Moldura de CHIP de filtro: rótulo + contagem (ou o estado honesto dela) + o toggle. Os chips eram
+ *  cards do placar; viraram filtro porque o número só serve para decidir se vale a pena ligar. */
+function Chip({ children, testId }: { children: ReactNode; testId: string }) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-sm" data-testid={testId}>
+      {children}
+    </div>
+  );
+}
+
 /**
- * Card "Inéditos do lote YYYY-MM: N de T" — substitui o "Novos no lote" (que mostrava o `novos`
+ * Chip "Inéditos do lote YYYY-MM: N de T" — substitui o "Novos no lote" (que mostrava o `novos`
  * CONGELADO do ingest, sem denominador e sem ação). N vem de `useRadarIneditos` (count vivo, mesmo
  * predicado do selo "inédito" da linha); T é `total_recebido` do lote vigente. 1 clique liga o
  * filtro "só inéditos" da fila — e o sensor `radar.ineditos_filtro` leva N e T junto, para o uso
@@ -53,19 +63,19 @@ function CardIneditos({ soIneditos, onSoIneditos }: { soIneditos: boolean; onSoI
   };
 
   return (
-    <div className="rounded-md border bg-card p-3" data-testid="radar-kpi-ineditos">
-      <div className="text-xs text-muted-foreground">{lote ? `Inéditos do lote ${lote.mes_referencia}` : 'Inéditos do lote'}</div>
+    <Chip testId="radar-kpi-ineditos">
+      <span className="text-xs text-muted-foreground">{lote ? `Inéditos do lote ${lote.mes_referencia}` : 'Inéditos do lote'}</span>
       {carregando ? (
-        <div className="kpi-value text-2xl">…</div>
+        <span className="kpi-value">…</span>
       ) : falhou ? (
-        <div className="text-sm text-status-warning mt-1">não consegui contar</div>
+        <span className="text-xs text-status-warning">não consegui contar</span>
       ) : !lote ? (
-        <div className="text-sm text-muted-foreground mt-1">sem lote completo</div>
+        <span className="text-xs text-muted-foreground">sem lote completo</span>
       ) : (
-        <div className="kpi-value text-2xl">
+        <span className="kpi-value">
           {qN.data != null ? qN.data.toLocaleString('pt-BR') : '…'}
-          <span className="text-sm text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
-        </div>
+          <span className="text-xs text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
+        </span>
       )}
       {lote && (
         <button
@@ -73,19 +83,19 @@ function CardIneditos({ soIneditos, onSoIneditos }: { soIneditos: boolean; onSoI
           aria-pressed={soIneditos}
           onClick={alternar}
           className={cn(
-            'mt-1 rounded border px-1.5 py-px text-[11px] leading-4 transition-colors',
+            'rounded-full border px-2 py-px text-[11px] leading-4 transition-colors',
             soIneditos ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground hover:bg-accent/40',
           )}
         >
           só inéditos
         </button>
       )}
-    </div>
+    </Chip>
   );
 }
 
 /**
- * Card "Sugeridos para cadastro: N de T" (bloco 5 — qualificação + aprovação em 1 clique). N =
+ * Chip "Sugeridos para cadastro: N de T" (bloco 5 — qualificação + aprovação em 1 clique). N =
  * leads da foto vigente em conversa, não clientes, com score ≥ LIMIAR_SUGERIDO (predicado em
  * `sugeridos.ts`; count em `useRadarSugeridos`); T = `total_recebido` do lote. Conta o LOTE
  * INTEIRO — os filtros da tela (UF, CNAE, busca) não entram. 1 clique liga "só sugeridos" na
@@ -123,42 +133,94 @@ function CardSugeridos({ soSugeridos, onSoSugeridos }: { soSugeridos: boolean; o
   };
 
   return (
-    <div className="rounded-md border bg-card p-3" data-testid="radar-kpi-sugeridos">
-      <div className="text-xs text-muted-foreground" title={`Em conversa · não cliente · score ≥ ${LIMIAR_SUGERIDO} · foto vigente (lote inteiro, sem os filtros da tela)`}>
+    <Chip testId="radar-kpi-sugeridos">
+      <span className="text-xs text-muted-foreground" title={`Em conversa · não cliente · score ≥ ${LIMIAR_SUGERIDO} · foto vigente (lote inteiro, sem os filtros da tela)`}>
         Sugeridos para cadastro
-      </div>
+      </span>
       {!falhou && (carregando || estado.tipo === 'carregando') ? (
-        <div className="kpi-value text-2xl">…</div>
+        <span className="kpi-value">…</span>
       ) : falhou ? (
-        <div className="text-sm text-status-warning mt-1">não consegui contar</div>
+        <span className="text-xs text-status-warning">não consegui contar</span>
       ) : estado.tipo === 'sem_lote' ? (
-        <div className="text-sm text-muted-foreground mt-1">sem lote completo</div>
+        <span className="text-xs text-muted-foreground">sem lote completo</span>
       ) : estado.tipo === 'sem_score' ? (
-        <div className="text-sm text-muted-foreground mt-1" title="A rodada diária de score (03:30 BRT) ainda não cobriu este lote">sem score calculado</div>
+        <span className="text-xs text-muted-foreground" title="A rodada diária de score (03:30 BRT) ainda não cobriu este lote">sem score calculado</span>
       ) : estado.tipo === 'pronto' && lote ? (
-        <div className="kpi-value text-2xl">
+        <span className="kpi-value">
           {estado.n.toLocaleString('pt-BR')}
-          <span className="text-sm text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
-        </div>
+          <span className="text-xs text-muted-foreground font-normal"> de {lote.total_recebido.toLocaleString('pt-BR')}</span>
+        </span>
       ) : null}
       {!falhou && velho && (
-        <div className="text-[11px] text-status-warning" data-testid="radar-kpi-sugeridos-desatualizado">
+        <span className="text-[11px] text-status-warning" data-testid="radar-kpi-sugeridos-desatualizado">
           {velho === 'sem-rede' ? 'desatualizado · sem rede' : 'desatualizado · não consegui atualizar'}
-        </div>
+        </span>
       )}
-      {lote && estado.tipo === 'pronto' && (
+      {/* Ligado (pela URL) continua desligável mesmo sem número: o chip é o único controle do filtro. */}
+      {lote && (estado.tipo === 'pronto' || soSugeridos) && (
         <button
           type="button"
           aria-pressed={soSugeridos}
           onClick={alternar}
           className={cn(
-            'mt-1 rounded border px-1.5 py-px text-[11px] leading-4 transition-colors',
+            'rounded-full border px-2 py-px text-[11px] leading-4 transition-colors',
             soSugeridos ? 'border-primary bg-primary text-primary-foreground' : 'border-border text-muted-foreground hover:bg-accent/40',
           )}
         >
           só sugeridos
         </button>
       )}
+    </Chip>
+  );
+}
+
+/**
+ * Card "Lote vigente": o mês da foto da RFB que a fila mostra e quantas empresas ela trouxe. Mesma
+ * leitura (e cache) da fila; ausência é estado, nunca 0.
+ */
+function CardLote() {
+  const qL = useRadarLoteVigente();
+  const estado = estadoDeLeitura(qL);
+  const lote = qL.data ?? null;
+  return (
+    <div className="rounded-md border bg-card p-3" data-testid="radar-kpi-lote">
+      <div className="text-xs text-muted-foreground">Lote vigente</div>
+      {qL.data === undefined && naoConsegui(estado) ? (
+        <div className="text-sm text-status-warning mt-1">não consegui ler</div>
+      ) : qL.data === undefined ? (
+        <div className="kpi-value text-2xl">…</div>
+      ) : !lote ? (
+        <div className="text-sm text-muted-foreground mt-1">sem lote completo</div>
+      ) : (
+        <>
+          <div className="kpi-value text-2xl">{lote.mes_referencia}</div>
+          <div className="text-xs text-muted-foreground mt-0.5">{lote.total_recebido.toLocaleString('pt-BR')} empresas na foto</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Chips de filtro do lote (inéditos e sugeridos). Ficam FORA do placar de propósito: o placar depende
+ * do gate de `radar_kpis` (gestor/master); os chips leem as próprias contagens e são o único controle
+ * dos filtros "só inéditos" e "só sugeridos" — sumir com o placar não pode sumir com o filtro.
+ */
+export function RadarChipsLote({
+  soIneditos,
+  onSoIneditos,
+  soSugeridos,
+  onSoSugeridos,
+}: {
+  soIneditos: boolean;
+  onSoIneditos: (v: boolean) => void;
+  soSugeridos: boolean;
+  onSoSugeridos: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <CardIneditos soIneditos={soIneditos} onSoIneditos={onSoIneditos} />
+      <CardSugeridos soSugeridos={soSugeridos} onSoSugeridos={onSoSugeridos} />
     </div>
   );
 }
@@ -178,17 +240,7 @@ function CardSugeridos({ soSugeridos, onSoSugeridos }: { soSugeridos: boolean; o
  * Ausência de ACESSO NÃO passa por aqui: o `enabled` do hook espelha o gate da RPC, então
  * staff não-gestor cai em `desabilitada` — não renderiza, não avisa e não emite evento.
  */
-export function RadarKpis({
-  soIneditos,
-  onSoIneditos,
-  soSugeridos,
-  onSoSugeridos,
-}: {
-  soIneditos: boolean;
-  onSoIneditos: (v: boolean) => void;
-  soSugeridos: boolean;
-  onSoSugeridos: (v: boolean) => void;
-}) {
+export function RadarKpis() {
   const q = useRadarKpis();
   const { data } = q;
   const estado = estadoDeLeitura(q);
@@ -218,8 +270,8 @@ export function RadarKpis({
 
   if (estado === 'carregando')
     return (
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {Array.from({ length: 5 }).map((_, i) => (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} className="h-20" />
         ))}
       </div>
@@ -239,11 +291,10 @@ export function RadarKpis({
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <CardIneditos soIneditos={soIneditos} onSoIneditos={onSoIneditos} />
-        <CardSugeridos soSugeridos={soSugeridos} onSoSugeridos={onSoSugeridos} />
-        <Card label="A contatar" valor={data.a_contatar.toLocaleString('pt-BR')} />
-        <Card label="Em conversa" valor={data.em_conversa.toLocaleString('pt-BR')} />
+      {/* 3 cards (eram 5): "em conversa" está no filtro de status; inéditos e sugeridos viraram chips. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <CardLote />
+        <Card label="A contatar" valor={data.a_contatar.toLocaleString('pt-BR')} hint="todo o Radar, sem os filtros da tela" />
         <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} />
       </div>
       {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mt-2" />}
