@@ -23,7 +23,10 @@ export function useRadarAtendimentosAtivos() {
     enabled: podeProspectarRadar({ role, commercialRole }),
     staleTime: 30_000,
     queryFn: async (): Promise<Map<string, AtendimentoAtivo>> => {
-      const { data, error } = await supabase.rpc('radar_atendimentos_ativos').range(0, TETO_LEITURA_ATENDIMENTOS - 1);
+      const { data, error } = await supabase
+        .rpc('radar_atendimentos_ativos')
+        .order('cnpj', { ascending: true })
+        .range(0, TETO_LEITURA_ATENDIMENTOS - 1);
       if (error) throw error;
       return lerAtendimentosAtivos(data, 'radar_atendimentos_ativos');
     },
