@@ -319,6 +319,61 @@ func saveHashCacheTo(hc *HashCache, path string) error {
 	return nil
 }
 
+// podarHashesPeloSnapshot remove do cache, nos dois namespaces, toda chave cuja
+// identidade de 4 partes (a do keys-snapshot) não está em linhasSnapshot. O servidor
+// desativa exatamente essas fórmulas (todas as embalagens) ao receber o snapshot; sem
+// a poda, uma fórmula que voltasse idêntica seria pulada pelo hash antigo e ficaria
+// desativada para sempre. É esta poda que deixa o filtro por hash valer em delta.
+//
+// O caller tem que podar com as MESMAS linhas que envia e persistir o cache ANTES do
+// envio. Chave que não se deixa decodificar também sai: podar a mais custa só um
+// reenvio, podar a menos perde fórmula calado. Retorna quantas chaves saíram.
+func podarHashesPeloSnapshot(hc *HashCache, linhasSnapshot []string) int {
+	vivas := make(map[string]struct{}, len(linhasSnapshot))
+	for _, l := range linhasSnapshot {
+		vivas[l] = struct{}{}
+	}
+	podadas := 0
+	for key := range hc.Formulas {
+		if linha, ok := linhaSnapshotDaChave(key); ok {
+			if _, viva := vivas[linha]; viva {
+				continue
+			}
+		}
+		hc.Delete(key)
+		podadas++
+	}
+	return podadas
+}
+
+// linhaSnapshotDaChave decodifica uma chave de formulaCacheKey
+// ("<personalizada>|" + LP(cor) + LP(produto) + LP(base) + LP(embalagem)) e devolve a
+// linha do keys-snapshot da mesma fórmula fonte ("cor|produto|base|personalizada").
+// ok=false em qualquer formato inesperado.
+func linhaSnapshotDaChave(key string) (string, bool) {
+	person, resto, ok := strings.Cut(key, "|")
+	if !ok || (person != "true" && person != "false") {
+		return "", false
+	}
+	campos := make([]string, 0, 4)
+	for len(campos) < 4 {
+		nStr, depois, ok := strings.Cut(resto, ":")
+		if !ok {
+			return "", false
+		}
+		n, err := strconv.Atoi(nStr)
+		if err != nil || n < 0 || n > len(depois) || strconv.Itoa(n) != nStr {
+			return "", false
+		}
+		campos = append(campos, depois[:n])
+		resto = depois[n:]
+	}
+	if resto != "" {
+		return "", false
+	}
+	return fmt.Sprintf("%s|%s|%s|%s", campos[0], campos[1], campos[2], person), true
+}
+
 // pruneFormulaHashes remove do cache as chaves de fórmula DESTA entidade (mesmo
 // `personalizada`) ausentes de liveKeys na extração full-scan corrente. Só pode ser
 // chamado quando a extração foi COMPLETA (o caller gateia em hwm.IsZero()) — senão
