@@ -131,6 +131,22 @@ function classeOuNull(arq: string, nome: string, s: string): Classe | null {
 }
 const textoOuNull = (s: string): string | null => (ehVazio(s) ? null : s);
 
+/**
+ * Leva E: a quantidade que o gate de paridade compara é a DECISÃO DO MOTOR, não a edição humana antes do disparo.
+ * Sem ajuste humano → qtde_final. Com ajuste, sem teto e sem promoção → qtde_sem_teto (em 29/10, nas linhas sem
+ * ajuste/teto/promoção com a coluna preenchida, qtde_final = qtde_sem_teto em 1034 de 1035). Qualquer outro ajuste
+ * humano: a decisão do motor não é recuperável → para (nunca tira a linha do denominador, achado N5).
+ */
+export function decisaoDoMotor(
+  arq: string,
+  sku: string,
+  l: { qtdeFinal: number; ajustadoHumano: boolean; tetoAplicado: boolean; promocao: boolean; qtdeSemTeto: number | null },
+): number {
+  if (!l.ajustadoHumano) return l.qtdeFinal;
+  if (!l.tetoAplicado && !l.promocao && l.qtdeSemTeto !== null) return l.qtdeSemTeto;
+  return invalido(arq, `AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku ${sku} (teto ${l.tetoAplicado}, promoção ${l.promocao}, qtde_sem_teto ${l.qtdeSemTeto ?? 'vazio'})`);
+}
+
 // ── contrato de unidade (§5.6) ───────────────────────────────────────────────────────────────────────────────────
 /**
  * Divisor NF → estoque, ou null se a conversão é incoerente (SKU sai do replay; nunca se chuta).
@@ -847,13 +863,24 @@ export function carregarDados(dir: string): DadosCarregados {
   });
 
   // sugestao_hoje
-  const sg = lerTabela(dir, 'sugestao_hoje', ['sku', 'posicao', 'qtde_final'], true);
+  const sg = lerTabela(dir, 'sugestao_hoje', ['sku', 'posicao', 'qtde_final', 'ajustado_humano', 'teto_aplicado', 'promocao', 'qtde_sem_teto'], true);
   const sugestaoHoje = new Map<string, { posicao: number; qtdeFinal: number }>();
+  let ajustesHumanos = 0;
   for (const r of sg.linhas) {
     const sku = r[sg.col('sku')];
     if (sugestaoHoje.has(sku)) invalido(sg.arquivo, `sku duplicado: ${sku}`);
-    sugestaoHoje.set(sku, { posicao: num(sg.arquivo, 'posicao', r[sg.col('posicao')]), qtdeFinal: num(sg.arquivo, 'qtde_final', r[sg.col('qtde_final')]) });
+    const ajustadoHumano = bool(sg.arquivo, 'ajustado_humano', r[sg.col('ajustado_humano')]);
+    if (ajustadoHumano) ajustesHumanos++;
+    const qtdeFinal = decisaoDoMotor(sg.arquivo, sku, {
+      qtdeFinal: num(sg.arquivo, 'qtde_final', r[sg.col('qtde_final')]),
+      ajustadoHumano,
+      tetoAplicado: bool(sg.arquivo, 'teto_aplicado', r[sg.col('teto_aplicado')]),
+      promocao: bool(sg.arquivo, 'promocao', r[sg.col('promocao')]),
+      qtdeSemTeto: numOuNull(sg.arquivo, 'qtde_sem_teto', r[sg.col('qtde_sem_teto')]),
+    });
+    sugestaoHoje.set(sku, { posicao: num(sg.arquivo, 'posicao', r[sg.col('posicao')]), qtdeFinal });
   }
+  if (ajustesHumanos > 0) avisos.push({ codigo: 'AJUSTE_HUMANO_COMPARADO_COM_O_MOTOR', n: ajustesHumanos });
 
   // classificacao_hist
   const ch = lerTabela(dir, 'classificacao_hist', ['tipo', 'chave', 'classe_atual', 'classe_abc', 'classe_xyz', 'classe_pendente', 'meses_consecutivos', 'data_ultima_mudanca', 'valor'], false);

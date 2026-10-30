@@ -250,8 +250,12 @@ copy (
 -- Persistida em pedido_compra_sugerido/pedido_compra_item. "Última execução" = pedidos da MESMA hora de geração
 -- do último horario_geracao, sem os cancelados. posicao = estoque_atual (= físico + a caminho − comprometido,
 -- conferido nos dados), qtde_final = a quantidade final da linha. O sku pode ser o galão escolhido (troca de embalagem).
+-- Leva E: qtde_final inclui a edição humana antes do disparo; as colunas de ajuste deixam o carregador recuperar a
+-- decisão do motor (qtde_sem_teto) ou parar quando ela não é recuperável.
 copy (
-  select i.sku_codigo_omie as sku, i.estoque_atual as posicao, i.qtde_final
+  select i.sku_codigo_omie as sku, i.estoque_atual as posicao, i.qtde_final,
+         coalesce(i.ajustado_humano, false) as ajustado_humano, coalesce(i.teto_cobertura_aplicado, false) as teto_aplicado,
+         (i.modo_promocao is not null) as promocao, i.qtde_sem_teto
   from pedido_compra_sugerido p
   join pedido_compra_item i on i.pedido_id = p.id
   where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%'

@@ -131,6 +131,7 @@ export interface Dados {
   teto: TetoConfig;
   /** [] = arquivo válido sem equivalências; null = não carregado. */
   equivalencias: Equivalencia[] | null;
+  /** qtdeFinal = a decisão do motor (leva E: sem a edição humana; ver decisaoDoMotor). */
   sugestaoHoje: Map<string, { posicao: number; qtdeFinal: number }>;
   excluidos: { sku: string; motivo: string }[];
   classificacaoHist: ClassificacaoHist;
