@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **716** custom migrations totais
-- **2333** objetos esperados (criados por estas migrations)
+- **718** custom migrations totais
+- **2346** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 876
+  - `function`: 881
   - `rls_policy`: 495
-  - `index`: 305
-  - `table`: 212
+  - `index`: 312
+  - `table`: 213
   - `cron_job`: 200
   - `view`: 127
   - `trigger`: 114
@@ -5843,6 +5843,29 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.cliente_situacao_receita` | — |
+
+### `20261029201200_radar_acesso_vendedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_radar_prospectar` | — |
+| `function` | `private.radar_atendimento_expira_em` | — |
+| `function` | `public.radar_definir_atendimento` | — |
+| `function` | `public.radar_atendimentos_ativos` | — |
+| `function` | `public.radar_telefone_compartilhado` | — |
+| `table` | `public.radar_atendimentos` | — |
+| `index` | `public.radar_atendimentos_aberto_uniq` | `radar_atendimentos` |
+| `index` | `public.idx_radar_atendimentos_dono_aberto` | `radar_atendimentos` |
+| `index` | `public.idx_radar_empresas_tel1` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_tel2` | `radar_empresas` |
+
+### `20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tint_sync_runs_limpezas_24h` | `tint_sync_runs` |
+| `index` | `public.idx_tint_sync_runs_started_at` | `tint_sync_runs` |
+| `index` | `public.idx_tint_sync_runs_conta_tipo_inicio` | `tint_sync_runs` |
 
 ### `20261030000642_cliente_situacao_receita_lote_publicado.sql`
 
