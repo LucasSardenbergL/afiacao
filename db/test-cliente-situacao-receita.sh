@@ -31,11 +31,7 @@ MIG_DOCS="$REPO_ROOT/supabase/migrations/20261019200000_radar_situacao_cadastral
 if [ "${1:-}" = "--falsificar" ]; then
   # <sabotagem>:<assert que TEM de acusá-la> — `post:POSn` = a POSTCONDIÇÃO da migration aborta o apply;
   # `_sem_post` cega essa camada para provar que o assert executado pega sozinho (uma camada por vez).
-  SABOTAGENS="gate_aberto:post:POS6 gate_aberto_sem_post:A3 sem_hint:post:POS6 sem_hint_sem_post:A3 \
-conta_01_irregular:A9 ausente_vira_ativa:A9b lote_velho_confirmado:A11 le_lote_em_carga:A12 lote_mais_antigo:A10 \
-so_digitos:A13 acl_aberta:post:POS4 acl_aberta_sem_post:A8 invoker:post:POS2 invoker_sem_post:A1 \
-dono_sem_bypass:post:POS7 dono_sem_bypass_sem_post:A1 sem_vigente_le_tudo:post:POS8 sem_vigente_le_tudo_sem_post:A14 \
-reprocesso_publica:post:POS8 reprocesso_publica_sem_post:A15 pre_cega:A16"
+  SABOTAGENS="gate_aberto:post:POS6 gate_aberto_sem_post:A3 sem_hint:post:POS6 sem_hint_sem_post:A3 conta_01_irregular:A9 ausente_vira_ativa:A9b lote_velho_confirmado:A11 le_lote_em_carga:A12 lote_mais_antigo:A10 so_digitos:A13 acl_aberta:post:POS4 acl_aberta_sem_post:A8 invoker:post:POS2 invoker_sem_post:A1 dono_sem_bypass:post:POS7 dono_sem_bypass_sem_post:A1 sem_vigente_le_tudo:post:POS8 sem_vigente_le_tudo_sem_post:A14 reprocesso_publica:post:POS8 reprocesso_publica_sem_post:A15 pre_cega:A16"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-cliente-situacao.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
