@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Prova PG17 da trava `sku_parametros_trava_reativar_consolidado` [money-path].
-# Migration: supabase/migrations/20261029165429_reposicao_trava_reativar_sku_consolidado.sql
+# Prova PG17 do trigger `sku_parametros_desconsolidar_ao_religar` [money-path].
+# Migration: supabase/migrations/20261029165429_reposicao_desconsolidar_ao_religar_sku.sql
 #
 # Incidente: o DFA.4128LT (11892839175) foi consolidado em 12101724100 em 05/07/2026,
-# religado pela UI depois, e o motor voltou a comprá-lo (7 pedidos disparados).
-# A trava barra a TRANSIÇÃO de um SKU antigo de mapa ativo para o estado que o
-# motor compra, venha de qual escritor vier.
+# religado pela UI depois, e o motor voltou a comprá-lo (7 pedidos disparados) com a
+# venda dele contada também no destino. Decisão do founder (opção B): religar um
+# antigo DESFAZ o mapa (→ 'revertida'), venha de qual escritor vier; a migration
+# também desfaz os mapas que já violam o invariante.
 #
 # Carrega o SCHEMA REAL (schema-snapshot.sql), aplica a migration e roda os
 # asserts. O CONTROLE (migration real) roda na MESMA invocação das sabotagens
@@ -13,7 +14,7 @@
 # da migration em tmpdir (nunca em supabase/migrations/) e tem de dar vermelho
 # EXATO nos asserts que ela deveria derrubar.
 #
-# Uso: bash db/test-reposicao-trava-reativar-consolidado.sh [--falsificar]
+# Uso: bash db/test-reposicao-desconsolidar-ao-religar.sh [--falsificar]
 #      HARNESS_LOCALE=pt_BR.UTF-8 bash db/test-…   (rodar nos dois locales)
 set -euo pipefail
 
@@ -32,7 +33,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-trava-consol.XXXXXX")"
 SOCK="$(mktemp -d /tmp/pgs.XXXXXX)"   # socket curto: o limite do Unix-domain socket é 103 bytes
 DATA="$TMP/data"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-MIG="$REPO_ROOT/supabase/migrations/20261029165429_reposicao_trava_reativar_sku_consolidado.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261029165429_reposicao_desconsolidar_ao_religar_sku.sql"
 export LC_ALL=C LANG=C
 
 [ -f "$SNAP" ] || { echo "INFRA: snapshot ausente: $SNAP"; exit 1; }
@@ -71,24 +72,24 @@ GRANT ALL ON _t_res TO PUBLIC;
 GRANT ALL ON SEQUENCE _t_res_ord_seq TO PUBLIC;
 CREATE FUNCTION _t_assert(p_nome text, p_ok boolean, p_detalhe text DEFAULT '')
 RETURNS void LANGUAGE sql AS $$ INSERT INTO _t_res (nome, ok, detalhe) VALUES (p_nome, COALESCE(p_ok, false), p_detalhe) $$;
--- 'OK' ou a SQLSTATE da trava (ZR006); qualquer OUTRA exceção sobe e o cenário vira EXEC vermelho.
+-- 'OK' ou 23505 (colisão no UNIQUE do mapa); qualquer OUTRA exceção sobe e o cenário vira EXEC vermelho.
 CREATE FUNCTION _t_tenta(p_sql text) RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
   EXECUTE p_sql;
   RETURN 'OK';
-EXCEPTION WHEN SQLSTATE 'ZR006' THEN RETURN 'ZR006';
+EXCEPTION WHEN unique_violation THEN RETURN '23505';
 END $$;
 GRANT EXECUTE ON FUNCTION _t_assert(text, boolean, text), _t_tenta(text) TO PUBLIC;
 SQL
 
-# ── asserts (rodam depois da migration, num banco copiado do template) ──
-cat > "$TMP/asserts.sql" <<'SQL'
--- Linha 600 entra ATIVA antes do mapa dela: o estado contraditório que já existe em prod.
+# ── sementes: entram ANTES da migration (o 600 é o estado contraditório que já existe em prod) ──
+cat > "$TMP/sementes.sql" <<'SQL'
 INSERT INTO sku_parametros (empresa, sku_codigo_omie, tipo_reposicao, habilitado_reposicao_automatica) VALUES
   ('OBEN', 200, 'automatica',    true),   -- destino
-  ('OBEN', 600, 'automatica',    true);
-INSERT INTO sku_parametros (empresa, sku_codigo_omie, tipo_reposicao, habilitado_reposicao_automatica) VALUES
+  ('OBEN', 600, 'automatica',    true),   -- antigo JÁ religado (o 4128 de prod)
+  ('OBEN', 620, 'automatica',    true),   -- ativo; ganha mapa DEPOIS (INSERT direto)
   ('OBEN', 100, 'descontinuado', false),  -- antigo, mapa ativo
+  ('OBEN', 101, 'descontinuado', false),  -- antigo, religado em lote
   ('OBEN', 110, 'automatica',    false),  -- antigo, só o flag desligado
   ('OBEN', 120, 'descontinuado', true),   -- antigo, só o tipo desligado
   ('OBEN', 130, 'descontinuado', false),  -- antigo: muda o tipo mas segue fora do motor
@@ -96,82 +97,107 @@ INSERT INTO sku_parametros (empresa, sku_codigo_omie, tipo_reposicao, habilitado
   ('OBEN', 400, 'descontinuado', false),  -- mapa pendente
   ('OBEN', 500, 'descontinuado', false),  -- mapa de outra ação
   ('OBEN', 700, 'descontinuado', false),  -- mapa com empresa minúscula
-  ('OBEN', 800, 'descontinuado', false);  -- escritor sem visão de sku_substituicao
+  ('OBEN', 800, 'descontinuado', false),  -- escritor sem visão de sku_substituicao
+  ('OBEN', 950, 'descontinuado', false);  -- já desfeito uma vez e consolidado de novo
 INSERT INTO sku_substituicao (empresa, sku_codigo_antigo, sku_codigo_novo, acao_parametros, status, data_substituicao) VALUES
-  ('OBEN', '100', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '110', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '120', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '130', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '400', '200', 'consolidar_demanda', 'pendente', CURRENT_DATE),
-  ('OBEN', '500', '200', 'transferir',         'aplicada', CURRENT_DATE),
-  ('OBEN', '600', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('oben', '700', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '800', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE),
-  ('OBEN', '900', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE);
+  ('OBEN', '100', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '101', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '110', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '120', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '130', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '400', '200', 'consolidar_demanda', 'pendente',  CURRENT_DATE),
+  ('OBEN', '500', '200', 'transferir',         'aplicada',  CURRENT_DATE),
+  ('OBEN', '600', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('oben', '700', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '800', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '900', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE),
+  ('OBEN', '950', '200', 'consolidar_demanda', 'revertida', CURRENT_DATE),
+  ('OBEN', '950', '200', 'consolidar_demanda', 'aplicada',  CURRENT_DATE);
+SQL
+
+# ── asserts (depois da migration) ──
+cat > "$TMP/asserts.sql" <<'SQL'
+CREATE FUNCTION _t_st(p_antigo text) RETURNS text LANGUAGE sql AS $$
+  SELECT string_agg(status, ',' ORDER BY status) FROM sku_substituicao WHERE sku_codigo_antigo = p_antigo $$;
+GRANT EXECUTE ON FUNCTION _t_st(text) TO PUBLIC;
+
+-- A migration desfaz o mapa que JÁ viola o invariante (o 4128 de prod).
+SELECT _t_assert('B01_backfill_desfez_o_ja_religado', _t_st('600') = 'revertida');
+SELECT _t_assert('B02_backfill_anota_o_motivo',
+  (SELECT observacoes FROM sku_substituicao WHERE sku_codigo_antigo = '600') LIKE '%opção B%');
+SELECT _t_assert('B03_backfill_nao_toca_os_demais',
+  _t_st('100') = 'aplicada' AND _t_st('900') = 'aplicada' AND _t_st('500') = 'aplicada');
 
 -- Payload do botão "Reativar" (src/lib/reposicao/sku-param.ts reativarPayload).
-SELECT _t_assert('A01_reativar_antigo_barrado',
+SELECT _t_assert('A01_reativar_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 100$q$) = 'ZR006');
--- Payload do "Manter em estoque" do Baixo Giro, em lote com um SKU legítimo: o lote inteiro cai.
-SELECT _t_assert('A02_baixo_giro_lote_barrado',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 100$q$) = 'OK' AND _t_st('100') = 'revertida');
+SELECT _t_assert('A02_reativar_anota_quem_e_quando',
+  (SELECT observacoes FROM sku_substituicao WHERE sku_codigo_antigo = '100') LIKE 'desconsolidado em %religado%');
+-- Payload do "Manter em estoque" do Baixo Giro, em lote com um SKU sem mapa.
+SELECT _t_assert('A03_baixo_giro_lote_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET estoque_minimo = 1, ponto_pedido = 2, estoque_maximo = 3,
                      habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie IN (100, 300)$q$) = 'ZR006');
-SELECT _t_assert('A03_lote_atomico',
-  (SELECT tipo_reposicao FROM sku_parametros WHERE empresa = 'OBEN' AND sku_codigo_omie = 300) = 'descontinuado');
-SELECT _t_assert('A04_sem_mapa_reativa',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie IN (101, 300)$q$) = 'OK'
+  AND _t_st('101') = 'revertida'
+  AND (SELECT tipo_reposicao FROM sku_parametros WHERE sku_codigo_omie = 300) = 'automatica');
+SELECT _t_assert('A04_mapa_pendente_intocado',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 300$q$) = 'OK');
-SELECT _t_assert('A05_mapa_pendente_reativa',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 400$q$) = 'OK' AND _t_st('400') = 'pendente');
+SELECT _t_assert('A05_mapa_transferir_intocado',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 400$q$) = 'OK');
-SELECT _t_assert('A06_mapa_transferir_reativa',
-  _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 500$q$) = 'OK');
--- Linha já contraditória: reescrever o MESMO estado não é reativação (não derruba lote noturno).
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 500$q$) = 'OK' AND _t_st('500') = 'aplicada');
+-- Já estava no motor: reescrever o mesmo estado (lote noturno, edição de PP) não é religação.
+INSERT INTO sku_substituicao (empresa, sku_codigo_antigo, sku_codigo_novo, acao_parametros, status, data_substituicao)
+  VALUES ('OBEN', '620', '200', 'consolidar_demanda', 'aplicada', CURRENT_DATE);
 SELECT _t_assert('A07_ja_ativo_nao_e_transicao',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica', ponto_pedido = 9
-              WHERE empresa = 'OBEN' AND sku_codigo_omie IN (600, 200)$q$) = 'OK');
-SELECT _t_assert('A08_empresa_caixa_diferente_barrada',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie IN (620, 200)$q$) = 'OK' AND _t_st('620') = 'aplicada');
+SELECT _t_assert('A08_empresa_caixa_diferente_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 700$q$) = 'ZR006');
-SELECT _t_assert('A09_descontinuar_passa',
-  _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = false, tipo_reposicao = 'descontinuado'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 600$q$) = 'OK');
-SELECT _t_assert('A10_redescontinuado_nao_volta',
-  _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 600$q$) = 'ZR006');
-SELECT _t_assert('A11_insert_ativo_barrado',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 700$q$) = 'OK' AND _t_st('700') = 'revertida');
+SELECT _t_assert('A11_insert_ativo_desconsolida',
   _t_tenta($q$INSERT INTO sku_parametros (empresa, sku_codigo_omie, tipo_reposicao, habilitado_reposicao_automatica)
-              VALUES ('OBEN', 900, 'automatica', true)$q$) = 'ZR006');
-SELECT _t_assert('A12_so_flag_barrado',
+              VALUES ('OBEN', 900, 'automatica', true)$q$) = 'OK' AND _t_st('900') = 'revertida');
+SELECT _t_assert('A12_so_flag_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 110$q$) = 'ZR006');
-SELECT _t_assert('A13_so_tipo_barrado',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 110$q$) = 'OK' AND _t_st('110') = 'revertida');
+SELECT _t_assert('A13_so_tipo_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 120$q$) = 'ZR006');
-SELECT _t_assert('A14_tipo_sem_flag_fica_fora_e_passa',
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 120$q$) = 'OK' AND _t_st('120') = 'revertida');
+SELECT _t_assert('A14_tipo_sem_flag_fica_fora_e_intocado',
   _t_tenta($q$UPDATE sku_parametros SET tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 130$q$) = 'OK');
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 130$q$) = 'OK' AND _t_st('130') = 'aplicada');
 SELECT _t_assert('A15_acl_fechada',
-  NOT has_function_privilege('authenticated', 'public.trg_sku_parametros_trava_reativar_consolidado()', 'EXECUTE')
-  AND NOT has_function_privilege('anon', 'public.trg_sku_parametros_trava_reativar_consolidado()', 'EXECUTE'));
+  NOT has_function_privilege('authenticated', 'public.trg_sku_parametros_desconsolidar_ao_religar()', 'EXECUTE')
+  AND NOT has_function_privilege('anon', 'public.trg_sku_parametros_desconsolidar_ao_religar()', 'EXECUTE'));
+-- Re-consolidado depois de um desfazer: o 'revertida' velho não pode travar a religação (23505).
+SELECT _t_assert('A18_reconsolidado_religa_sem_colisao',
+  _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 950$q$) = 'OK' AND _t_st('950') = 'revertida');
 
 SET ROLE tester;
 -- Pré-condição do A17: o escritor de fato NÃO vê os mapas (senão o A17 não teria dente).
 SELECT _t_assert('A16_tester_cego_para_mapas', (SELECT count(*) FROM sku_substituicao) = 0);
-SELECT _t_assert('A17_escritor_sem_rls_barrado',
-  _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
-              WHERE empresa = 'OBEN' AND sku_codigo_omie = 800$q$) = 'ZR006');
+SELECT _tenta_tester FROM (SELECT _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
+              WHERE empresa = 'OBEN' AND sku_codigo_omie = 800$q$) AS _tenta_tester) x;
 RESET ROLE;
+SELECT _t_assert('A17_escritor_sem_rls_desconsolida', _t_st('800') = 'revertida');
+-- O invariante, em toda a tabela, ao fim de tudo.
+SELECT _t_assert('A19_invariante_global',
+  NOT EXISTS (SELECT 1 FROM sku_substituicao s JOIN sku_parametros p
+                ON upper(p.empresa) = upper(s.empresa) AND p.sku_codigo_omie::text = s.sku_codigo_antigo
+               WHERE s.status = 'aplicada' AND s.acao_parametros = 'consolidar_demanda'
+                 AND p.habilitado_reposicao_automatica AND COALESCE(p.tipo_reposicao, 'automatica') = 'automatica'
+                 AND p.sku_codigo_omie <> 620));
 SQL
-NESP="$(grep -c "_t_assert('A" "$TMP/asserts.sql")"
+NESP="$(grep -c "_t_assert('[AB]" "$TMP/asserts.sql")"
 
 # suite <migration> <banco> → linhas RES|nome|t/f|detalhe (roda em $(…): o nome vem de fora)
 suite() {
   local mig=$1 db="s_$2"
   PA -q -d postgres -c "CREATE DATABASE $db TEMPLATE tpl0" >/dev/null
+  PA -q -d "$db" -f "$TMP/sementes.sql" >/dev/null
   if ! PA -q -d "$db" -f "$mig" >/dev/null 2>"$TMP/$db.mig.err"; then
     echo "RES|MIGRATION|f|$(head -c 300 "$TMP/$db.mig.err" | tr '\n' ' ')"
     return 0
@@ -221,21 +247,25 @@ fals() {
   fi
 }
 echo "════ FALSIFICAÇÕES ════"
-# Camada 1 — a postcondição: sabotar só o DEFINER / só o REVOKE aborta a migration.
+# Camada 1 — a postcondição: sabotar só o DEFINER / só o REVOKE / só o backfill aborta a migration.
 fals pos_definer     "MIGRATION"  -e 's/^SECURITY DEFINER$/SECURITY INVOKER/'
 fals pos_revoke      "MIGRATION"  -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/'
+fals pos_backfill    "MIGRATION"  -e "s/^   SET status = 'revertida',$/   SET status = 'aplicada',/"
 # Camada 2 — os asserts, com a postcondição neutralizada junto (uma camada por vez).
-fals sem_definer     "A17_escritor_sem_rls_barrado" \
+fals sem_definer     "A17_escritor_sem_rls_desconsolida" \
   -e 's/^SECURITY DEFINER$/SECURITY INVOKER/' -e 's/AND p\.prosecdef/AND true/'
 fals sem_revoke      "A15_acl_fechada" \
   -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/' -e "s/RAISE EXCEPTION 'A2 FALHOU/RAISE NOTICE 'A2 FALHOU/"
-fals sem_old         "A07_ja_ativo_nao_e_transicao"         -e 's/RETURN NEW;   -- já estava no motor/NULL;   -- já estava no motor/'
-fals sem_upper       "A08_empresa_caixa_diferente_barrada"  -e 's/WHERE upper\(s\.empresa\) = upper\(NEW\.empresa\)/WHERE s.empresa = NEW.empresa/'
-fals sem_status      "A05_mapa_pendente_reativa"            -e "s/AND s\.status = 'aplicada'/AND true/"
-fals sem_acao        "A06_mapa_transferir_reativa"          -e "s/AND s\.acao_parametros = 'consolidar_demanda'/AND true/"
-fals so_tipo         "A14_tipo_sem_flag_fica_fora_e_passa"  -e 's/IF NOT \(COALESCE\(NEW\.habilitado_reposicao_automatica, false\)/IF NOT (true/'
-# Em cascata: com o A01 passando, o SKU 100 já está no motor quando o A02 o toca.
-fals colunas_erradas "A01_reativar_antigo_barrado A02_baixo_giro_lote_barrado A03_lote_atomico A08_empresa_caixa_diferente_barrada A10_redescontinuado_nao_volta A12_so_flag_barrado A13_so_tipo_barrado A17_escritor_sem_rls_barrado" \
+fals sem_backfill    "A19_invariante_global B01_backfill_desfez_o_ja_religado B02_backfill_anota_o_motivo" \
+  -e "s/^   SET status = 'revertida',$/   SET status = 'aplicada',/" -e "s/RAISE EXCEPTION 'A3 FALHOU/RAISE NOTICE 'A3 FALHOU/"
+fals sem_old         "A07_ja_ativo_nao_e_transicao"             -e 's/RETURN NULL;   -- já estava no motor/NULL;   -- já estava no motor/'
+fals sem_upper       "A08_empresa_caixa_diferente_desconsolida" -e 's/^   WHERE upper\(s\.empresa\) = upper\(NEW\.empresa\)$/   WHERE s.empresa = NEW.empresa/'
+fals sem_status      "A04_mapa_pendente_intocado"               -e "s/^     AND s\.status = 'aplicada'$/     AND true/"
+fals sem_acao        "A05_mapa_transferir_intocado"             -e "s/^     AND s\.acao_parametros = 'consolidar_demanda';$/     AND true;/"
+fals so_tipo         "A14_tipo_sem_flag_fica_fora_e_intocado"   -e 's/IF NOT \(COALESCE\(NEW\.habilitado_reposicao_automatica, false\)/IF NOT (true/'
+fals sem_delete      "A18_reconsolidado_religa_sem_colisao"     -e 's/^  DELETE FROM public\.sku_substituicao r$/  PERFORM 1 FROM public.sku_substituicao r/'
+# Só INSERT e UPDATE que escreve PP disparam: os religamentos puros (flag/tipo) não desfazem; A19 cai junto.
+fals colunas_erradas "A01_reativar_desconsolida A02_reativar_anota_quem_e_quando A08_empresa_caixa_diferente_desconsolida A12_so_flag_desconsolida A13_so_tipo_desconsolida A17_escritor_sem_rls_desconsolida A18_reconsolidado_religa_sem_colisao A19_invariante_global" \
   -e 's/UPDATE OF habilitado_reposicao_automatica, tipo_reposicao ON/UPDATE OF ponto_pedido ON/'
 echo "VERMELHOS=$VERM  SEM_DENTE=$FALSOS"
 [ "$FALSOS" -eq 0 ] || { echo "✗ falsificação sem dente"; exit 1; }
