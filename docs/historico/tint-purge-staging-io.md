@@ -45,3 +45,14 @@ A medição de 27/10 (12:52–13:07 UTC) deu queda de 96% na `tint_staging_formu
   - tarefa agendada, das 14:00 às 14:16 UTC: **534 MB** e cache hit de **98,87%**, com `tint_sync_runs` 381 MB.
   - No small, em 28/10, tinham sido 46,7 MB e 99,92%.
 - **Lição: medir o I/O no porte atual não prova que o porte menor aguenta.** Os 99,92% do small só mostravam que o conjunto de trabalho cabia em 512 MB. Com metade do cache, ~600 MB do tint passam a ir ao disco a cada promoção de catálogo (~30 por hora) e a cada varredura de `tint_sync_runs`, que não tem índice em `started_at`. Antes de tentar o micro de novo, é preciso encolher esse conjunto: quem varre `tint_sync_runs` e as leituras de staging na promoção de catálogo. Depois, medir com uma janela limpa, sem consultas de diagnóstico no meio: uma consulta por `started_at` relê os 87 MB e suja o delta, como aconteceu na 1ª janela de 5 min desta medição.
+
+## 2026-10-30 — correção do conector (filtro de hash em delta)
+
+- **O que mudou (`connector/sayersync`):** o filtro de hash agora vale também em delta, então a personalizada de `data_atualizacao` máxima deixa de voltar a cada ciclo. A poda do cache acontece no keys-snapshot, nas mesmas chaves que o servidor usa para desativar, e é persistida antes do envio. O cache herdado da 0.2.5 perde os hashes de personalizada na carga (`alinharCacheAoSnapshot`).
+- **Codex, 4 rodadas:**
+  - P1 do cache v1 herdado;
+  - P1 de downgrade ou rollback do `.prev` e volta;
+  - P1 de marca vazia com state perdido;
+  - na 4ª rodada, **LIBERA**, com 1 P2 aceito: snapshot da 0.2.5 aceito sem avançar o state.
+- **Falsificação:** 20 sabotagens, todas vermelhas, com controle verde antes e depois.
+- **Lição:** um cache que muda de semântica precisa invalidar o estado que a semântica antiga deixou. Bumpar a versão não basta quando a versão velha pode voltar a rodar (downgrade, rollback automático) e preserva o número da versão nova. A âncora certa é um fato que as duas versões escrevem: o `LastKeysSnapshot` do state.

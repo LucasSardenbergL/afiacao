@@ -609,6 +609,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		logger.Errorf("RunCycle: falha ao carregar hash-cache: %v — seguindo com cache vazio (full resend)", hcErr)
 		hc = newHashCache()
 	}
+	alinharCacheAoSnapshot(hc, st.LastKeysSnapshot)
 
 	// Conecta ao PG.
 	db, err := conectar(ctx, cfg.PGConn)
@@ -707,7 +708,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 			// no próximo ciclo; LastKeysSnapshot não avança).
 			logger.Warnf("RunCycle: keys-snapshot pulado — lookups de identidade indisponíveis")
 			failed = append(failed, "keys_snapshot")
-		} else if snapErr := sendKeysSnapshot(ctx, cfg, ex, originNow, lk); snapErr != nil {
+		} else if snapErr := podarEEnviarKeysSnapshot(ctx, cfg, ex, originNow, lk, hc); snapErr != nil {
 			logger.Errorf("RunCycle: falha no keys-snapshot: %v", snapErr)
 			failed = append(failed, "keys_snapshot")
 		} else {
@@ -1176,11 +1177,16 @@ func syncFormulas(
 	}
 
 	hwm := hwmFromState(st, entity)
-	// O hash-cache substitui o HWM SÓ quando ele está travado em zero (a FORMULA, com
-	// data NULL). Com HWM funcional, o delta por timestamp já é a verdade e o
-	// hash-filter/poda são bypassados — senão um delete+recreate de conteúdo idêntico
-	// seria pulado e ficaria ausente no servidor (Codex review 4ª passada).
-	applyHashFilter := hwm.IsZero()
+	// O filtro por hash vale em full-scan E em delta. Em delta ele é o que impede a
+	// linha de data_atualizacao MÁXIMA de voltar em todo ciclo: hwmFromState subtrai
+	// hwmMargin, então ela cai sempre na janela (formulaperson reenviou a mesma
+	// personalizada 442× em 4 dias, out/2026). O furo do delete+recreate idêntico
+	// (Codex 4ª passada) é fechado pela poda no keys-snapshot (podarHashesPeloSnapshot):
+	// o servidor só desativa fórmula por snapshot, e o conector poda e PERSISTE as
+	// mesmas chaves antes de enviá-lo — chave no cache ⇒ o servidor não a desativou.
+	// A poda por extração (liveKeys) continua só em full-scan: um delta parcial
+	// removeria chaves vivas.
+	fullScan := hwm.IsZero()
 
 	// Para shape=child com PK resolvida: pai e filha saem da MESMA tx REPEATABLE
 	// READ (fotografia consistente — sem ela, is_base_pura podia nascer de um
@@ -1218,7 +1224,7 @@ func syncFormulas(
 		// Full-scan que voltou VAZIO (entidade esvaziou na origem) ainda precisa
 		// PODAR: as chaves órfãs têm que sair do cache, senão fórmulas recriadas com
 		// o mesmo conteúdo seriam puladas pelo hash antigo (Codex review P2).
-		if applyHashFilter {
+		if fullScan {
 			pruneFormulaHashes(hc, map[string]struct{}{}, personalizada)
 		}
 		return nil
@@ -1279,10 +1285,8 @@ func syncFormulas(
 		key := formulaCacheKey(m)
 		liveKeys[key] = struct{}{}
 		hash := formulaContentHash(m)
-		if applyHashFilter {
-			if old, ok := hc.Get(key); ok && old == hash {
-				continue // full-scan: conteúdo inalterado → não re-envia
-			}
+		if old, ok := hc.Get(key); ok && old == hash {
+			continue // conteúdo inalterado e aceito pelo servidor → não re-envia
 		}
 		changed = append(changed, formulaToSend{payload: m, key: key, hash: hash})
 	}
@@ -1297,8 +1301,8 @@ func syncFormulas(
 	// data é NULL). Remove do cache as chaves DESTA entidade (mesmo `personalizada`)
 	// ausentes da extração: fórmulas removidas da origem e bloqueadas saem do cache
 	// (recriar/desbloquear força re-envio). Não podar em delta parcial removeria
-	// chaves vivas, por isso o gate applyHashFilter (== hwm.IsZero()).
-	if applyHashFilter {
+	// chaves vivas, por isso o gate fullScan (== hwm.IsZero()).
+	if fullScan {
 		pruneFormulaHashes(hc, liveKeys, personalizada)
 	}
 
@@ -1521,22 +1525,56 @@ func sendKeysSnapshot(
 	originNow time.Time,
 	lk *Lookups,
 ) error {
-	token, err := cfg.Token()
-	if err != nil || token == "" {
-		return fmt.Errorf("sendKeysSnapshot: token indisponível")
-	}
-	cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
-
-	// Obtém todas as fórmulas.
 	keys, err := ex.ExtractAllFormulasForSnapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("sendKeysSnapshot: extract: %w", err)
 	}
+	return enviarKeysSnapshot(ctx, cfg, chavesDoSnapshot(keys, lk), originNow)
+}
 
-	// Serializa as chaves como strings "cor_id|cod_produto|id_base|personalizada"
-	// (4 partes — SEM embalagem; ver F3 acima), traduzindo os ids crus para a
-	// identidade canônica. Deduplica: a mesma fórmula fonte pode aparecer em várias
-	// linhas de embalagem na origem, mas a chave colapsa.
+// podarEEnviarKeysSnapshot é o keys-snapshot do ciclo: extrai as chaves UMA vez, poda
+// o hash-cache com elas, PERSISTE a poda e só então envia essas mesmas chaves. Mesmo
+// conjunto na poda e no envio ⇒ toda fórmula que o servidor desativar já saiu do cache
+// em disco (Codex 5ª passada: crash entre envio e save deixaria hash órfão). Se o save
+// falha, o snapshot não sai. Envio que falha depois da poda só custa reenvio.
+func podarEEnviarKeysSnapshot(
+	ctx context.Context,
+	cfg *Config,
+	ex Extractor,
+	originNow time.Time,
+	lk *Lookups,
+	hc *HashCache,
+) error {
+	keys, err := ex.ExtractAllFormulasForSnapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("sendKeysSnapshot: extract: %w", err)
+	}
+	lines := chavesDoSnapshot(keys, lk)
+	if podadas := podarHashesPeloSnapshot(hc, lines); podadas > 0 {
+		logger.Infof("keys-snapshot: %d hash(es) podado(s) — fórmula(s) fora do snapshot", podadas)
+	}
+	if err := SaveHashCache(hc); err != nil {
+		return fmt.Errorf("keys-snapshot PULADO — poda do hash-cache não persistiu: %w", err)
+	}
+	if err := enviarKeysSnapshot(ctx, cfg, lines, originNow); err != nil {
+		return err
+	}
+	// Marca o snapshot como podado com o MESMO valor que o RunCycle grava em
+	// LastKeysSnapshot. Se este save ou o do state falhar, a marca diverge e o próximo
+	// ciclo descarta as personalizadas (reenvio, nunca perda).
+	hc.SnapshotPodado = originNow.Format(time.RFC3339)
+	hc.dirty = true
+	if err := SaveHashCache(hc); err != nil {
+		logger.Warnf("keys-snapshot: marca de poda não persistiu (%v) — personalizadas reenviam no próximo ciclo", err)
+	}
+	return nil
+}
+
+// chavesDoSnapshot serializa as chaves como strings "cor_id|cod_produto|id_base|personalizada"
+// (4 partes — SEM embalagem; ver F3 em sendKeysSnapshot), traduzindo os ids crus para a
+// identidade canônica. Deduplica: a mesma fórmula fonte pode aparecer em várias
+// linhas de embalagem na origem, mas a chave colapsa.
+func chavesDoSnapshot(keys []formulaKey, lk *Lookups) []string {
 	seen := make(map[string]struct{}, len(keys))
 	lines := make([]string, 0, len(keys))
 	for _, k := range keys {
@@ -1562,6 +1600,16 @@ func sendKeysSnapshot(
 		seen[line] = struct{}{}
 		lines = append(lines, line)
 	}
+	return lines
+}
+
+// enviarKeysSnapshot envia as chaves já serializadas em chunks de ≤snapshotChunkSize.
+func enviarKeysSnapshot(ctx context.Context, cfg *Config, lines []string, originNow time.Time) error {
+	token, err := cfg.Token()
+	if err != nil || token == "" {
+		return fmt.Errorf("sendKeysSnapshot: token indisponível")
+	}
+	cli := NewClient(cfg.AppURL, token, cfg.StoreCode)
 
 	// snapshot_id: 1 uuid por snapshot diário, IGUAL em todos os chunks (a edge agrupa
 	// os chunks por snapshot_id pra montar o conjunto completo antes de aplicar a deleção).
