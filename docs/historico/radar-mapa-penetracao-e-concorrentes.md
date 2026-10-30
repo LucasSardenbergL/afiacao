@@ -84,7 +84,32 @@ corte de 8 s do PostgREST, mas com pouca folga a frio. Se doer, a saída é um c
 
 | Camada | Quem | Observação |
 | --- | --- | --- |
-| Migration `20261029170140` | sessão (envelope: idempotente + transacional + PÓS) | **depois** da migration da frente 2 que cria `private.cap_radar_prospectar`; a PRE aborta sem ela |
+| Migration `20261029170140` ✅ aplicada 2026-10-30 | sessão (envelope: idempotente + transacional + PÓS) | **depois** da migration da frente 2 que cria `private.cap_radar_prospectar`; a PRE aborta sem ela |
 | Edge `radar-ingest` v1.4 | founder, chat do Lovable | `bun run pendencias:deploy` decide; sonda depois |
 | 1ª carga de concorrentes | automática na carga mensal do lote 2026-11 (sonda de segunda-feira) | ou antes, à mão: `bun scripts/radar/carga.ts --mes 2026-10 --so-concorrentes` com `RADAR_INGEST_URL`/`RADAR_CRON_SECRET` (~2 h, só os 10 zips de Estabelecimentos) |
 | Publish do Lovable | founder | mapa e ranking novos |
+
+## Aplicação em prod (2026-10-30)
+
+O PR #3414 foi mergeado antes da migration, a pedido do founder. A migration entrou depois de a
+frente 2 aplicar `private.cap_radar_prospectar(uuid)` (`20261029201200`, #3417; assinatura conferida
+por psql-ro: `(uuid) RETURNS boolean`, SECURITY DEFINER, anon sem EXECUTE).
+
+- **Canal:** MCP do Lovable (`query_database`, role `postgres`). O arquivo tem envelope `BEGIN;`/`COMMIT;`,
+  e o `db:aplicar` recusa isso por desenho, então não há recibo em `db_aplicacoes`.
+- **Ensaio:** o mesmo SQL com `RAISE 'ENSAIO_OK'` no lugar do `COMMIT`. Chegou ao marcador depois da
+  PÓS (P1 a P8, incluindo o md5 dos dois corpos), e um psql-ro logo em seguida confirmou que nada ficou
+  no banco.
+- **Apply:** com `COMMIT`.
+- **2ª testemunha (psql-ro):**
+  - a query de validação do PR deu `frente4_aplicada`;
+  - md5 vivo: penetração `f52a86ce…`, publicar `baeb6ff1…` (iguais aos do arquivo);
+  - as duas policies chamam `cap_radar_prospectar`;
+  - anon não lê e authenticated não escreve;
+  - `radar_contagem_por_municipio` da frente 2 continua intacta (md5 `85dbce2b…`).
+- **Pré-voo `wt:preflight`:** 🟢, sem colisão de objeto. O resultado chegou depois do apply porque a
+  varredura das 182 worktrees demorou; antes disso uma busca à mão pelos nomes dos objetos já tinha
+  dado zero colisão.
+- **Não feito:** chamar a RPC como `authenticated` em prod. O canal MCP parou de responder (timeout do
+  hook) logo depois do apply. A semântica (denominador, NULL, gate) está provada no PG17.
+
