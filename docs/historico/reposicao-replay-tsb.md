@@ -14,6 +14,15 @@ A rodada oficial depende de duas coisas fora do código:
 
 Sem a âncora, a rodada para com `ANCORA_OMIE_AUSENTE`, e o modo `--informativo-saldo-hoje` sai rotulado NÃO OFICIAL.
 
+**Extração limpa de 29/10, às 21:49 em São Paulo** (o motor rodou às 20:39). Ela está em `$REPLAY_DADOS` (pasta `reposicao-replay-2026-10-29`) e só falta a âncora do Omie para virar a rodada oficial. O gate de paridade reprovou na primeira tentativa, com decisão 14/15, porque o motor sugeriu 8 numa linha que uma pessoa editou para 18 antes do disparo. A **leva E** passou a comparar o gate com a decisão do motor:
+- linha editada à mão, sem teto e sem promoção: `qtde_sem_teto`;
+- linha em promoção não editada: `qtde_sem_promocao`, porque o `forward_buying` infla `qtde_final` sem marcar ajuste;
+- qualquer outro caso: a carga para, em vez de tirar a linha do denominador.
+
+Com a leva E, o gate passa: decisão 15/15 e estado 8/8. A rodada informativa ficou INCONCLUSIVA porque, sem o Omie, falta o CMC datado (`CAPITAL_NAO_VALORADO_NA_CALIBRACAO`).
+
+Atenção: `ajustado_humano` também marca linhas em que só o preço foi editado. Numa linha com teto, isso para a carga.
+
 ## Revisão adversarial do Codex (3 consultas de código)
 
 1. **REPROVA, 14 P1.** O founder mandou consertar os 14. Os rulings R2, R7, R9, R10, R22 e o piso 0 da R24 foram revogados onde contrariavam a §5.9.
