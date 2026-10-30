@@ -2,6 +2,7 @@
 // Usamos sentinels '__todas_ufs__' e '__fila__' para os valores "vazio"
 // e convertemos de volta para '' na lógica de set().
 
+import type { ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,10 +15,10 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import type { RadarFiltros as Filtros } from '@/queries/useRadarLista';
-import { UFS_BR, type PresetRadar } from '@/lib/radar/ui-helpers';
+import { UFS_BR, UFS_ATUACAO, ROTULO_PRESET, type PresetRadar } from '@/lib/radar/ui-helpers';
 import type { LoteIngest } from '@/lib/radar/lote-vigente';
-import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import { track } from '@/lib/analytics';
+import { RadarBuscaCnae } from '@/components/radar/RadarBuscaCnae';
 
 // Sentinel para "todas as UFs" (substitui value="" que Radix rejeita).
 const SENTINEL_UF = '__todas_ufs__';
@@ -38,38 +39,50 @@ export function RadarFiltros({
   filtros,
   set,
   lote = null,
+  acoes,
 }: {
   filtros: Filtros;
   set: (next: Partial<Filtros>) => void;
   /** Lote vigente — só para os sensores dos toggles de lote levarem o mês junto. */
   lote?: LoteIngest | null;
+  /** Ações à direita da linha de modos (favoritos). */
+  acoes?: ReactNode;
 }) {
+  const regiao = filtros.regiao ?? 'brasil';
+  const escolherRegiao = (r: 'atuacao' | 'brasil') => {
+    if (r === regiao) return;
+    track('radar.regiao_trocada', { regiao: r, uf: filtros.uf || null });
+    set({ regiao: r });
+  };
   return (
     <div className="space-y-3">
-      {/* Presets */}
-      <div className="flex gap-2">
+      {/* Modos de ordenação (rótulo = a ordem que a fila tem) */}
+      <div className="flex flex-wrap gap-2 items-center">
         <Button
           variant={filtros.preset === 'score' ? 'default' : 'outline'}
           size="sm"
           onClick={() => set({ preset: 'score' as PresetRadar })}
           title="Ordena pelo score de lead (0–100, recalculado 1×/dia); quem não tem score fica por último"
         >
-          Melhores leads
+          {ROTULO_PRESET.score}
         </Button>
         <Button
           variant={filtros.preset === 'novas' ? 'default' : 'outline'}
           size="sm"
           onClick={() => set({ preset: 'novas' as PresetRadar })}
+          title="Ordena pela data de abertura na RFB, da mais recente para a mais antiga (não filtra o lote)"
         >
-          Novas do lote
+          {ROTULO_PRESET.novas}
         </Button>
         <Button
           variant={filtros.preset === 'estabelecidas' ? 'default' : 'outline'}
           size="sm"
           onClick={() => set({ preset: 'estabelecidas' as PresetRadar })}
+          title="Abertas há 5 anos ou mais, por capital social"
         >
-          Estabelecidas
+          {ROTULO_PRESET.estabelecidas}
         </Button>
+        {acoes && <div className="ml-auto flex gap-2">{acoes}</div>}
       </div>
 
       {/* Filtros principais */}
@@ -81,6 +94,29 @@ export function RadarFiltros({
           onChange={(e) => set({ busca: e.target.value })}
         />
 
+        {/* Região: abre em MG e vizinhos (onde está a carteira); Brasil a 1 clique. UF escolhida vence. */}
+        <div className="inline-flex rounded-md border p-0.5" role="group" aria-label="Região">
+          <Button
+            variant={regiao === 'atuacao' ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-7"
+            aria-pressed={regiao === 'atuacao'}
+            title={`MG e vizinhos: ${UFS_ATUACAO.join(', ')}`}
+            onClick={() => escolherRegiao('atuacao')}
+          >
+            MG e vizinhos
+          </Button>
+          <Button
+            variant={regiao === 'brasil' ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-7"
+            aria-pressed={regiao === 'brasil'}
+            onClick={() => escolherRegiao('brasil')}
+          >
+            Brasil
+          </Button>
+        </div>
+
         {/* Select de UF — usa sentinel para o valor "todas" */}
         <Select
           value={filtros.uf || SENTINEL_UF}
@@ -90,7 +126,7 @@ export function RadarFiltros({
             <SelectValue placeholder="UF" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={SENTINEL_UF}>Todas UFs</SelectItem>
+            <SelectItem value={SENTINEL_UF}>{regiao === 'atuacao' ? 'Toda a região' : 'Todas UFs'}</SelectItem>
             {UFS_BR.map((u) => (
               <SelectItem key={u} value={u}>
                 {u}
@@ -106,12 +142,7 @@ export function RadarFiltros({
           onChange={(e) => set({ municipio: e.target.value })}
         />
 
-        <Input
-          className="w-40"
-          placeholder="CNAE (ex.: 3101-2/00)"
-          value={filtros.cnae}
-          onChange={(e) => set({ cnae: e.target.value })}
-        />
+        <RadarBuscaCnae valor={filtros.cnae} onChange={(cnae) => set({ cnae })} />
 
         {/* Select de status — usa sentinel para o valor "fila" */}
         <Select
@@ -154,8 +185,23 @@ export function RadarFiltros({
           </Label>
         </div>
 
-        {/* Toggles de LOTE: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente). Quem saiu do dump só
-            entra se pedido; "só inéditos" é o mesmo filtro do card do placar (1 clique lá liga aqui). */}
+        {/* Lead sem telefone E sem e-mail não tem por onde ser trabalhado: fica fora por padrão. */}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="radar-sem-contato"
+            checked={filtros.incluirSemContato === true}
+            onCheckedChange={(checked) => {
+              track('radar.sem_contato_toggle', { ativo: checked });
+              set({ incluirSemContato: checked });
+            }}
+          />
+          <Label htmlFor="radar-sem-contato" className="text-sm cursor-pointer" title="Inclui quem não tem telefone nem e-mail na RFB">
+            Incluir sem contato
+          </Label>
+        </div>
+
+        {/* Toggle de LOTE: a fila é a FOTO VIGENTE (ultimo_lote = lote vigente); quem saiu do dump só entra
+            se pedido. "Só inéditos" e "só sugeridos" são os chips do placar (RadarChipsLote). */}
         <div className="flex items-center gap-2">
           <Switch
             id="radar-saiu-do-dump"
@@ -170,41 +216,6 @@ export function RadarFiltros({
           </Label>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Switch
-            id="radar-so-ineditos"
-            checked={filtros.soIneditos}
-            onCheckedChange={(checked) => {
-              track('radar.ineditos_filtro', {
-                ativo: checked, origem: 'filtro', lote: lote?.mes_referencia ?? null, ineditos: null, total: lote?.total_recebido ?? null,
-              });
-              set({ soIneditos: checked });
-            }}
-          />
-          <Label htmlFor="radar-so-ineditos" className="text-sm cursor-pointer">
-            Só inéditos do lote
-          </Label>
-        </div>
-
-        {/* "Só sugeridos p/ cadastro" = o mesmo filtro do card "Sugeridos para cadastro" (em conversa ·
-            não cliente · score ≥ limiar · foto vigente). Vence status/já-clientes/saiu-do-dump. */}
-        <div className="flex items-center gap-2">
-          <Switch
-            id="radar-so-sugeridos"
-            checked={filtros.soSugeridos}
-            // Sem lote completo não há sugestão; ligado (pela URL) continua desligável.
-            disabled={!lote && !filtros.soSugeridos}
-            onCheckedChange={(checked) => {
-              track('radar.sugeridos_filtro', {
-                ativo: checked, origem: 'filtro', lote: lote?.mes_referencia ?? null, sugeridos: null, total: lote?.total_recebido ?? null, limiar: LIMIAR_SUGERIDO,
-              });
-              set({ soSugeridos: checked });
-            }}
-          />
-          <Label htmlFor="radar-so-sugeridos" className="text-sm cursor-pointer" title={`Em conversa, não cliente, score ≥ ${LIMIAR_SUGERIDO}, na foto vigente`}>
-            Só sugeridos p/ cadastro
-          </Label>
-        </div>
       </div>
     </div>
   );
