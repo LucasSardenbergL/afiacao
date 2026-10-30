@@ -394,7 +394,7 @@ describe('placar de 3 cards; inéditos e sugeridos viram chips FORA do gate', ()
   });
 
   it('SEM ACESSO ao placar: os chips de filtro continuam (o filtro não some com o gate)', async () => {
-    auth = { isMaster: false, isGestorComercial: false };
+    auth = { role: 'employee', commercialRole: 'operacional' }; // fora de cap_radar_prospectar (o vendedor agora entra)
     resposta = { data: kpis(), error: null };
     renderKpis();
     await waitFor(() => expect(screen.getByTestId('placar').textContent).toBe(''));

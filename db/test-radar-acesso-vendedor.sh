@@ -72,7 +72,7 @@ BEGIN
       ('radar_registrar_cadastro_omie_v2'),('registrar_contato_radar')) AS x(nome)
   LOOP
     SELECT count(*) INTO n FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname = r.nome;
-    IF n <> 1 THEN RAISE EXCEPTION 'OVERLOAD FORA DE PROD: % tem % assinaturas (prod: 1)', r.nome, n; END IF;
+    IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'OVERLOAD FORA DE PROD: % tem % assinaturas (prod: 1)', r.nome, n; END IF;
   END LOOP;
   FOR r IN SELECT * FROM (VALUES
     ('public.radar_kpis()', '19d4b2c33d5c6749b522147aae09c969'),
