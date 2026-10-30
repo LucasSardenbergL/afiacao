@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      so_concorrentes:
+        description: 'Só a camada de concorrentes do mapa (exige mes; não toca a fila de leads nem o lote)'
+        required: false
+        default: false
+        type: boolean
 
 # Nunca duas cargas ao mesmo tempo e nunca cancelar uma em andamento (chunks parciais + finalize de outra).
 concurrency:
@@ -88,7 +93,18 @@ jobs:
         env:
           MES_PEDIDO: ${{ inputs.mes }}
           FORCAR: ${{ inputs.forcar }}
+          SO_CONCORRENTES: ${{ inputs.so_concorrentes }}
         run: |
+          # Só concorrentes: o mês é o pedido, sem seletor (o seletor pula lote já complete, que é
+          # exatamente o caso da 1ª carga da camada).
+          if [ "$SO_CONCORRENTES" = "true" ]; then
+            if ! printf '%s' "$MES_PEDIDO" | grep -Eq '^[0-9]{4}-[0-9]{2}$'; then
+              echo "::error::so_concorrentes exige mes YYYY-MM"
+              exit 1
+            fi
+            echo "mes=$MES_PEDIDO" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           args=(--mes "$MES_PEDIDO")
           [ "$FORCAR" = "true" ] && args+=(--forcar)
           bun scripts/radar/mes-alvo.ts "${args[@]}"
@@ -109,7 +125,12 @@ jobs:
 
       - name: Carga ${{ steps.mes.outputs.mes }}
         if: steps.mes.outputs.mes != ''
-        run: bun scripts/radar/carga.ts --mes "${{ steps.mes.outputs.mes }}"
+        env:
+          SO_CONCORRENTES: ${{ inputs.so_concorrentes }}
+        run: |
+          args=(--mes "${{ steps.mes.outputs.mes }}")
+          [ "$SO_CONCORRENTES" = "true" ] && args+=(--so-concorrentes)
+          bun scripts/radar/carga.ts "${args[@]}"
 
       - name: Estado do lote na edge
         if: always() && steps.mes.outputs.mes != ''
