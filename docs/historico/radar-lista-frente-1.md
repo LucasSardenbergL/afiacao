@@ -62,3 +62,17 @@ passam a contar quando houver vendedor (frente 2).
 Depois do piloto com vendedor (frente 2): `radar.favorito_salvo` e `radar.cnae_escolhido` com
 denominador de titulares que abriram `/radar` no ledger. Sem ≥1 favorito salvo por um não-master em
 30 dias, os favoritos são candidatos a sair.
+
+## Seguimento: lote no Omie só para gestor/master (PR de seguimento ao #3413)
+
+Pedido da frente 2 e decisão do founder (2026-10-29): **o vendedor cadastra em 1 clique pela ficha; o
+cadastro EM MASSA é só do gestor/master.** Com o gate do Radar aberto ao vendedor (migration da
+frente 2), a barra em lote deixaria o vendedor rodar o lote pela UI.
+
+- `RadarAcoesLote`: "Cadastrar no Omie" e "Lote pendente — ver" só aparecem com
+  `isMaster || isGestorComercial` (o par que já existe no `useAuth()`). "Comparar", "Exportar CSV" e
+  "Descartar" continuam para todos.
+- `RadarClientes`: os avisos "Ver / retomar" e "Acompanhar" e o `RadarLoteDialog` seguem o mesmo gate.
+- **Barreira cosmética e declarada:** o servidor não distingue massa de 1 clique (a edge de criar
+  cliente é staff-wide). Fechar de verdade exigiria um gate no servidor, e esse não é o escopo deste PR.
+- Teste: `RadarAcoesLote.gestor.test.tsx`, falsificado (com o gate sabotado, rc=1).

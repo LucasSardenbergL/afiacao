@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Building2, Ban, Columns3, Download } from 'lucide-react';
-import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
+import { BulkActionsBar, type BulkAction } from '@/components/ui/bulk-actions-bar';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
 import { hojeSP } from '@/lib/time/sp-day';
 import { csvEmpresas, limitarSelecao, TETO_LOTE } from '@/lib/radar/lote';
@@ -45,6 +46,11 @@ export function RadarAcoesLote({
   onAbrirLote: () => void;
 }) {
   const { isImpersonating } = useImpersonation();
+  // Cadastro no Omie EM MASSA (e a retomada do lote) é só do gestor/master; o vendedor cadastra em 1 clique
+  // pela ficha (decisão do founder, 2026-10-29). Barreira de UI, declarada: o servidor não distingue massa
+  // de 1 clique (a edge de criar cliente é staff-wide). `useAuth()` real, não a lente.
+  const { isMaster, isGestorComercial } = useAuth();
+  const gestor = isMaster || isGestorComercial;
   const acao = useRadarAcaoEmLote();
   const [confirmOmie, setConfirmOmie] = useState(false);
   const [confirmDescartar, setConfirmDescartar] = useState(false);
@@ -81,6 +87,10 @@ export function RadarAcoesLote({
     track('radar.lote_exportado_csv', { total: selecao.length });
   };
 
+  const acaoOmie: BulkAction = loteOmie.temPendencias
+    ? { id: 'omie', label: 'Lote pendente — ver', icon: Building2, variant: 'outline', onClick: onAbrirLote }
+    : { id: 'omie', label: `Cadastrar no Omie${fora > 0 ? ` (${dentro.length})` : ''}`, icon: Building2, onClick: () => setConfirmOmie(true), disabled: ocupado };
+
   const tituloFora = fora > 0 ? ` (teto ${TETO_LOTE}: ${fora} ficam de fora)` : '';
 
   return (
@@ -91,9 +101,7 @@ export function RadarAcoesLote({
         itemSingular="lead"
         itemPlural="leads"
         actions={[
-          loteOmie.temPendencias
-            ? { id: 'omie', label: 'Lote pendente — ver', icon: Building2, variant: 'outline', onClick: onAbrirLote }
-            : { id: 'omie', label: `Cadastrar no Omie${fora > 0 ? ` (${dentro.length})` : ''}`, icon: Building2, onClick: () => setConfirmOmie(true), disabled: ocupado },
+          ...(gestor ? [acaoOmie] : []),
           // "Criar tarefas" saiu: o módulo `tarefas` está congelado até 2027-01-10 (a tarefa nascia num lugar que ninguém abre).
           {
             id: 'comparar',
@@ -108,7 +116,7 @@ export function RadarAcoesLote({
         ]}
       />
 
-      <AlertDialog open={confirmOmie} onOpenChange={setConfirmOmie}>
+      <AlertDialog open={gestor && confirmOmie} onOpenChange={setConfirmOmie}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Cadastrar {dentro.length} lead{dentro.length === 1 ? '' : 's'} no Omie (Oben)?{tituloFora}</AlertDialogTitle>
