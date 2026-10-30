@@ -57,7 +57,7 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
   });
 
   it("[E5] VERSAO bumpada para a aplicação por cron e EFEITO diz que a edge não aplica", () => {
-    expect(versao).toContain('export const VERSAO = "v1.3-situacao-por-cron";');
+    expect(versao).toContain('export const VERSAO = "v1.4-concorrentes";');
     expect(versao).toContain("radar-aplicar-situacao-diario");
   });
 
@@ -74,8 +74,8 @@ describe("edge radar-ingest — situação cadastral (texto)", () => {
     expect(carga).toContain("if (!resp?.descartadas_por_motivo) throw new Error(");
     // Contrato novo do finalize: a carga reconhece a aplicação pelo cron e só acusa edge antiga sem nenhum dos dois.
     expect(carga).toContain('fin?.situacao_aplicacao === "cron"');
-    // Um scan só por zip: as duas condições no mesmo read_csv, nunca uma segunda passada.
-    expect(carga).toContain("WHERE (${filtroUniverso}) OR ${filtroConhecidos};");
+    // Um scan só por zip: as três condições (universo, conhecidos, concorrentes) no mesmo read_csv, nunca uma segunda passada.
+    expect(carga).toContain("WHERE (${filtroUniverso}) OR ${filtroConhecidos} OR ${filtroConcorrentes};");
     expect((carga.match(/read_csv\('\$\{WORK\}\/est\/\*'/g) ?? []).length).toBe(1);
   });
 });

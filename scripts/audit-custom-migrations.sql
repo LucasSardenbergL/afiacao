@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 713
+-- Total de custom migrations: 714
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -777,7 +777,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql'),
   ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
   ('20261029150000', 'radar_score_versao', '20261029150000_radar_score_versao.sql'),
-  ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql')
+  ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql'),
+  ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3068,7 +3069,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
-  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5407,7 +5414,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
-  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox')
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio')
 )
 SELECT
   e.migration,

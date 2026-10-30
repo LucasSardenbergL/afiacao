@@ -23095,6 +23095,20 @@ export type Database = {
         }[]
       }
       radar_kpis: { Args: never; Returns: Json }
+      radar_penetracao_por_municipio: {
+        Args: { p_limit?: number; p_lote: string; p_uf?: string }
+        Returns: {
+          clientes: number
+          concorrentes: number
+          empresas_lote: number
+          lat: number
+          lng: number
+          municipio_codigo: string
+          municipio_nome: string
+          penetracao: number
+          uf: string
+        }[]
+      }
       radar_prospects_para_rota: {
         Args: { p_limit?: number; p_municipio_codigo: string }
         Returns: {

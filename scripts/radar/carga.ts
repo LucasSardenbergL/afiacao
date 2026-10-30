@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 /**
  * Carga do Radar de Clientes — dump RFB → radar-ingest.
- * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run] [--conhecidos <csv>]
+ * Uso: bun scripts/radar/carga.ts --mes 2026-05 [--base-url <url>] [--dry-run] [--conhecidos <csv>] [--so-concorrentes]
+ *   --so-concorrentes: lê só os Estabelecimentos e publica a camada de concorrentes do mapa (revendas de
+ *   tinta/verniz) do mês, sem tocar na fila de leads — é a 1ª carga da camada para um lote já `complete`.
  *   --conhecidos: CSV (cabeçalho `cnpj`) com os CNPJs conhecidos para extrair a situação cadastral num
  *   dry-run local; sem a edge a lista não existe e a extração é pulada com aviso.
  * Env: RADAR_INGEST_URL (https://<proj>.supabase.co/functions/v1/radar-ingest)
@@ -20,6 +22,7 @@ import {
 import type { RadarEmpresaRow, RadarMunicipioRow, RadarSituacaoRow } from "./types";
 import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
+import { CNAES_CONCORRENTES, montarPublicacao } from "./concorrentes";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
@@ -29,6 +32,7 @@ for (let i = 2; i < process.argv.length; i++) {
 const MES = args.get("mes") ?? "";
 if (!/^\d{4}-\d{2}$/.test(MES)) { console.error("--mes YYYY-MM obrigatório"); process.exit(1); }
 const DRY = args.get("dry-run") === "true";
+const SO_CONCORRENTES = args.get("so-concorrentes") === "true";
 // Share público oficial da RFB (Nextcloud) — token/bases em rfb.ts (compartilhado com mes-alvo.ts).
 const URL_BASES = args.get("base-url") ? [args.get("base-url")!] : basesCandidatas(MES);
 // WebDAV de share Nextcloud exige basic auth "<token>:" — as outras bases, não.
@@ -74,7 +78,7 @@ let temConhecidos = false;
 if (args.get("conhecidos") && args.get("conhecidos") !== "true") {
   copyFileSync(args.get("conhecidos")!, CONHECIDOS);
   temConhecidos = true;
-} else if (!DRY) {
+} else if (!DRY && !SO_CONCORRENTES) {
   const todos: string[] = [];
   let apos = "";
   for (;;) {
@@ -89,7 +93,7 @@ if (args.get("conhecidos") && args.get("conhecidos") !== "true") {
   writeFileSync(CONHECIDOS, `cnpj\n${todos.join("\n")}\n`);
   temConhecidos = true;
   console.log(`🧾 CNPJs conhecidos (radar ∪ clientes): ${todos.length}`);
-} else {
+} else if (!SO_CONCORRENTES) {
   console.warn("⚠️ dry-run sem --conhecidos: extração da situação cadastral PULADA (só o filtro por CNAE)");
 }
 const nConhecidos = temConhecidos ? readFileSync(CONHECIDOS, "utf-8").split("\n").filter((l) => l && l !== "cnpj").length : 0;
@@ -166,6 +170,14 @@ const mapaCnae = new Map(catalogoCnae.map((r) => [r.c, r.d]));
 const invalidos = cnaes.filter((c) => !mapaCnae.has(c));
 if (invalidos.length) { console.error(`❌ CNAEs fora do catálogo RFB (DV errado?): ${invalidos.join(", ")}`); process.exit(3); }
 console.log(`✅ curadoria: ${cnaes.length} CNAEs válidos`);
+// Concorrentes (camada do mapa, fora da fila): CNAE fora do catálogo desliga só a camada — a fila de
+// leads segue — e a carga termina vermelha (exitCode 6) no fim. No --so-concorrentes não há o que salvar: aborta.
+const concInvalidos = CNAES_CONCORRENTES.filter((c) => !mapaCnae.has(c));
+const concorrentesAtivos = concInvalidos.length === 0;
+if (!concorrentesAtivos) {
+  console.error(`❌ CNAEs de concorrentes fora do catálogo RFB: ${concInvalidos.join(", ")} — camada de concorrentes DESLIGADA nesta carga`);
+  if (SO_CONCORRENTES) process.exit(3);
+}
 
 // ── 3. Estabelecimentos: 10 zips, um por vez → parquet filtrado ──────────────
 // Filtro v1 = só CNAE PRINCIPAL (decisão do founder, 2026-06-11): match por
@@ -173,13 +185,15 @@ console.log(`✅ curadoria: ${cnaes.length} CNAEs válidos`);
 // hospital com serralheria interna). v2 planejada: reintroduzir secundários com
 // coluna match_via ('principal'|'secundario') e filtro default na UI.
 const inList = cnaes.map((c) => `'${c}'`).join(",");
+const inListConc = CNAES_CONCORRENTES.map((c) => `'${c}'`).join(",");
 let usouCache = false;
 for (let i = 0; i <= 9; i++) {
   // Parquet existente = cache (resume de carga interrompida). ⚠️ Se a CURADORIA
   // mudou desde a última rodada, apagar ${WORK}/est_filtrado_*.parquet antes —
   // parquet velho não contém CNAE recém-adicionado (o aviso de 0-matches denuncia).
   // Com conhecidos, o cache só vale se os DOIS parquets existem (o da situação nasce no mesmo scan).
-  if (existsSync(`${WORK}/est_filtrado_${i}.parquet`) && (!temConhecidos || existsSync(`${WORK}/sit_conhecidos_${i}.parquet`))) {
+  if (existsSync(`${WORK}/est_filtrado_${i}.parquet`) && (!temConhecidos || existsSync(`${WORK}/sit_conhecidos_${i}.parquet`))
+      && (!concorrentesAtivos || existsSync(`${WORK}/conc_${i}.parquet`))) {
     console.log(`↩️  Estabelecimentos${i}: parquet em cache, pulando`);
     usouCache = true;
     continue;
@@ -195,6 +209,8 @@ for (let i = 0; i <= 9; i++) {
   const filtroUniverso = `situacao = '02' AND cnae1 IN (${inList})`;
   const cnpjExpr = `lpad(b, 8, '0') || lpad(o, 4, '0') || lpad(dv, 2, '0')`;
   const filtroConhecidos = temConhecidos ? `(${cnpjExpr}) IN (SELECT cnpj FROM conhecidos)` : "false";
+  // Concorrentes entram no MESMO scan e saem já contados por (município, UF, CNAE): o parquet é minúsculo.
+  const filtroConcorrentes = concorrentesAtivos ? `(situacao = '02' AND cnae1 IN (${inListConc}))` : "false";
   duck(`
     ${temConhecidos ? `CREATE TEMP TABLE conhecidos AS SELECT cnpj FROM read_csv('${CONHECIDOS}', delim=',', header=true, all_varchar=true, names=['cnpj']);` : ""}
     CREATE TEMP TABLE scan AS
@@ -205,18 +221,45 @@ for (let i = 0; i <= 9; i++) {
                     names=['b','o','dv','matriz','fantasia','situacao','dt_sit','motivo','cid_ext','pais',
                            'dt','cnae1','cnae2','tlog','log','num','comp','bai','cep','uf',
                            'mun','ddd1','tel1','ddd2','tel2','ddd_fax','fax','email','sit_esp','dt_sit_esp'])
-      WHERE (${filtroUniverso}) OR ${filtroConhecidos};
+      WHERE (${filtroUniverso}) OR ${filtroConhecidos} OR ${filtroConcorrentes};
     COPY (
       SELECT b, o, dv, fantasia, dt, cnae1, cnae2, tlog, log, num,
              comp, bai, cep, uf, mun, ddd1, tel1, ddd2, tel2, email
       FROM scan WHERE ${filtroUniverso}
     ) TO '${WORK}/est_filtrado_${i}.parquet' (FORMAT parquet);
     ${temConhecidos ? `COPY (SELECT b, o, dv, situacao, dt_sit, motivo, cnae1 FROM scan WHERE ${filtroConhecidos})
-      TO '${WORK}/sit_conhecidos_${i}.parquet' (FORMAT parquet);` : ""}`);
+      TO '${WORK}/sit_conhecidos_${i}.parquet' (FORMAT parquet);` : ""}
+    ${concorrentesAtivos ? `COPY (SELECT mun, uf, cnae1, count(*) AS n FROM scan WHERE ${filtroConcorrentes} GROUP BY mun, uf, cnae1)
+      TO '${WORK}/conc_${i}.parquet' (FORMAT parquet);` : ""}`);
   rmSync(`${WORK}/est/`, { recursive: true, force: true });
   if (APAGAR_ZIPS) rmSync(zip, { force: true });
   console.log(`✅ Estabelecimentos${i} filtrado`);
 }
+
+// ── 3b. Concorrentes: soma dos 10 parquets → publicação (edge `publicar_concorrentes`) ──────────
+// A RPC publica o lote inteiro numa transação e reconcilia soma × total. Falha aqui NUNCA derruba a fila:
+// devolve false e quem chama decide o exit.
+async function publicarConcorrentes(): Promise<boolean> {
+  const saida = duck(`SELECT mun, uf, cnae1, sum(n)::BIGINT AS n FROM read_parquet('${WORK}/conc_*.parquet') GROUP BY mun, uf, cnae1`).trim();
+  const pub = montarPublicacao(saida ? JSON.parse(saida) : [], CNAES_CONCORRENTES);
+  const rej = Object.values(pub.rejeitadas).reduce((a, b) => a + b, 0);
+  const municipios = new Set(pub.linhas.map((l) => l.municipio_codigo)).size;
+  console.log(`🎨 concorrentes (revendas de tinta/verniz): ${pub.estabelecimentos} estabelecimentos em ${municipios} municípios`
+    + (rej > 0 ? ` · ⚠️ rejeitadas: ${JSON.stringify(pub.rejeitadas)}` : ""));
+  // Recorte vazio é defeito da carga, não "zero revendas no país" — a RPC também recusa.
+  if (pub.estabelecimentos === 0) { console.error("❌ concorrentes: recorte vazio — nada publicado"); return false; }
+  if (DRY) { console.log("🏁 dry-run: concorrentes não publicados"); return true; }
+  try {
+    const r = await post({ action: "publicar_concorrentes", mes: MES, cnaes: [...CNAES_CONCORRENTES],
+      linhas: pub.linhas, estabelecimentos: pub.estabelecimentos });
+    console.log("🎨 concorrentes publicados:", JSON.stringify(r));
+    return true;
+  } catch (e) {
+    console.error(`❌ concorrentes NÃO publicados (a fila de leads não é afetada): ${e instanceof Error ? e.message : e}`);
+    return false;
+  }
+}
+if (SO_CONCORRENTES) process.exit((await publicarConcorrentes()) ? 0 : 6);
 
 // ── 4. Empresas + Socios: semi-join pelos cnpj_basico filtrados ──────────────
 for (let i = 0; i <= 9; i++) baixar(`Empresas${i}.zip`);
@@ -345,6 +388,7 @@ console.log(`🗺️  municípios do universo: ${municipios.length} (${semLatLng
 if (DRY) {
   // Relatório LOCAL também no dry-run: a simulação é justamente onde se quer ver o que o dump rejeitaria.
   console.log(`${rejeitadasLocal.cnpj + rejeitadasLocal.cnae > 0 ? "⚠️" : "📋"} rejeições locais: ${JSON.stringify(rejeitadasLocal)}`);
+  if (concorrentesAtivos) await publicarConcorrentes();
   console.log("🏁 dry-run: nada enviado"); process.exit(0);
 }
 
@@ -394,3 +438,6 @@ if (temConhecidos && fin?.situacao_aplicacao === "cron") {
 } else if (temConhecidos && fin && !("situacao" in fin)) {
   console.warn("⚠️ finalize sem `situacao_aplicacao` nem `situacao`: edge antiga (v1.1) — a situação cadastral deste lote NÃO será aplicada");
 }
+// Concorrentes DEPOIS do finalize: o lote de leads já está `complete` e uma falha da camada só pinta o job
+// de vermelho (exitCode 6, e-mail do GitHub) — nunca deixa a fila sem foto vigente.
+if (!concorrentesAtivos || !(await publicarConcorrentes())) process.exitCode = 6;
