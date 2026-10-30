@@ -139,8 +139,10 @@ SELECT _t_assert('A03_baixo_giro_lote_desconsolida',
   _t_tenta($q$UPDATE sku_parametros SET estoque_minimo = 1, ponto_pedido = 2, estoque_maximo = 3,
                      habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
               WHERE empresa = 'OBEN' AND sku_codigo_omie IN (101, 300)$q$) = 'OK'
-  AND _t_st('101') = 'revertida'
-  AND (SELECT tipo_reposicao FROM sku_parametros WHERE sku_codigo_omie = 300) = 'automatica');
+  AND _t_st('101') = 'revertida');
+-- Statement PRÓPRIO: no mesmo SELECT do _t_tenta, a subconsulta viraria InitPlan e leria o antes.
+SELECT _t_assert('A06_lote_religa_o_sem_mapa',
+  (SELECT tipo_reposicao FROM sku_parametros WHERE sku_codigo_omie = 300) = 'automatica');
 SELECT _t_assert('A04_mapa_pendente_intocado',
   _t_tenta($q$UPDATE sku_parametros SET habilitado_reposicao_automatica = true, tipo_reposicao = 'automatica'
               WHERE empresa = 'OBEN' AND sku_codigo_omie = 400$q$) = 'OK' AND _t_st('400') = 'pendente');
