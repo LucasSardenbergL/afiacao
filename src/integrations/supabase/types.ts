@@ -21682,6 +21682,19 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      cliente_situacao_receita: {
+        Args: { p_customer_user_id: string }
+        Returns: {
+          cnpj: string
+          confirmado_no_vigente: boolean
+          data_situacao: string
+          estado: string
+          lote: string
+          lote_vigente: string
+          motivo_descricao: string
+          situacao: string
+        }[]
+      }
       cnpj_alfanumerico_valido: { Args: { p_doc: string }; Returns: boolean }
       cockpit_itens_snapshot: {
         Args: {

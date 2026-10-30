@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 714
+-- Total de custom migrations: 716
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -778,7 +778,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
   ('20261029150000', 'radar_score_versao', '20261029150000_radar_score_versao.sql'),
   ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql'),
-  ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql')
+  ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql'),
+  ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
+  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3075,7 +3077,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
   ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
-  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio')
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5420,7 +5424,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
   ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
-  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio')
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
 )
 SELECT
   e.migration,
@@ -5448,7 +5454,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 156.
+-- Funções redefinidas com corpo extraível: 157.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6046,7 +6052,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),
-  ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819')
+  ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
+  ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
+  ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
