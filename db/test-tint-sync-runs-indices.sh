@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PROVA — 20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql
+# PROVA — 20261030003132_tint_sync_runs_indices_conjunto_trabalho.sql
 #
 # Medido em 2026-10-29/30 (psql-ro): tint_promote_sync_run faz 1 seq scan dos 87 MB de
 # tint_sync_runs por promoção (~30/h) no somatório do cap de limpezas em 24h — no micro foram
@@ -31,7 +31,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PGPORT_TEST:-${PORT:-5461}}"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-syncruns.XXXXXX")"
 DATA="$TMP/data"
-MIG="$REPO_ROOT/supabase/migrations/20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261030003132_tint_sync_runs_indices_conjunto_trabalho.sql"
 export LC_ALL=C LANG=C
 
 [ -f "$MIG" ] || { echo "migration ausente: $MIG"; exit 1; }

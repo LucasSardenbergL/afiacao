@@ -5859,19 +5859,19 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_radar_empresas_tel1` | `radar_empresas` |
 | `index` | `public.idx_radar_empresas_tel2` | `radar_empresas` |
 
-### `20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql`
+### `20261030000642_cliente_situacao_receita_lote_publicado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_situacao_receita` | — |
+
+### `20261030003132_tint_sync_runs_indices_conjunto_trabalho.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_tint_sync_runs_limpezas_24h` | `tint_sync_runs` |
 | `index` | `public.idx_tint_sync_runs_started_at` | `tint_sync_runs` |
 | `index` | `public.idx_tint_sync_runs_conta_tipo_inicio` | `tint_sync_runs` |
-
-### `20261030000642_cliente_situacao_receita_lote_publicado.sql`
-
-| Tipo | Objeto | Parent |
-| --- | --- | --- |
-| `function` | `public.cliente_situacao_receita` | — |
 
 ## Próximos passos por status
 

@@ -781,8 +781,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql'),
   ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
   ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
-  ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
-  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql')
+  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
+  ('20261030003132', 'tint_sync_runs_indices_conjunto_trabalho', '20261030003132_tint_sync_runs_indices_conjunto_trabalho.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3091,10 +3091,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_atendimentos_dono_aberto', 'radar_atendimentos'),
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel1', 'radar_empresas'),
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel2', 'radar_empresas'),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
-  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5451,10 +5451,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_atendimentos_dono_aberto', 'radar_atendimentos'),
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel1', 'radar_empresas'),
   ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel2', 'radar_empresas'),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
-  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs')
 )
 SELECT
   e.migration,
