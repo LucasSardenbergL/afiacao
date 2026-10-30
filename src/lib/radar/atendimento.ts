@@ -105,3 +105,13 @@ export function avisoTelefoneCompartilhado(outrasRaizes: number): string | null 
     ? 'Este número também aparece em 1 empresa de outra raiz de CNPJ'
     : `Este número aparece em ${outrasRaizes} empresas de raízes diferentes`;
 }
+
+const CHAVE_MODO_DISCAGEM = 'radar.modo_discagem';
+
+/** Modo discagem ligado neste navegador? Preferência de conveniência: sem storage, o modo só não lembra. */
+export function lerModoDiscagem(): boolean {
+  try { return localStorage.getItem(CHAVE_MODO_DISCAGEM) === '1'; } catch { return false; }
+}
+export function gravarModoDiscagem(v: boolean): void {
+  try { localStorage.setItem(CHAVE_MODO_DISCAGEM, v ? '1' : '0'); } catch { /* sem storage: só não persiste */ }
+}

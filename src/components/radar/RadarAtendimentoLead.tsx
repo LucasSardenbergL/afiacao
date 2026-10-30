@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { podeGerirRadar } from '@/lib/radar/acesso';
+import { podeGerirRadar } from '@/lib/nav/acesso-radar';
 import { CLASSE_TOM } from '@/lib/radar/ui-helpers';
 import { diaMes, mensagemRecusa, rotuloAtendimento } from '@/lib/radar/atendimento';
 import { useRadarAtendimentosAtivos, useRadarDefinirAtendimento } from '@/queries/useRadarAtendimentos';

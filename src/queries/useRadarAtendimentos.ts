@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
-import { podeProspectarRadar } from '@/lib/radar/acesso';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import {
   lerAtendimentosAtivos, lerResultadoAtendimento, TETO_LEITURA_ATENDIMENTOS,
   type AtendimentoAtivo, type ResultadoAtendimento,

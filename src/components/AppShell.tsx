@@ -68,7 +68,7 @@ const MelhoriasPopover = lazy(() =>
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { itemVisivelParaSalesOnly, SECAO_VENDAS } from '@/lib/nav/home-por-persona';
-import { podeProspectarRadar } from '@/lib/radar/acesso';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';

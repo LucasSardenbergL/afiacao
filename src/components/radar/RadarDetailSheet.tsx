@@ -8,8 +8,8 @@ import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { RadarAcoesLead } from './RadarAcoesLead';
 import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { RadarAtendimentoLead } from './RadarAtendimentoLead';
-import { RadarModoDiscagem, lerModoDiscagem, gravarModoDiscagem } from './RadarModoDiscagem';
-import { avisoTelefoneCompartilhado } from '@/lib/radar/atendimento';
+import { RadarModoDiscagem } from './RadarModoDiscagem';
+import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { track } from '@/lib/analytics';
 import { isCellphone, whatsappLink } from '@/lib/phone';
@@ -20,7 +20,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useRadarContatos, LIMITE_HISTORICO_RADAR } from '@/queries/useRadarContatos';
 import {
   formatarCnpj, formatarCapital, rotuloPorte, idadeEmAnos, rotuloStatus, tomStatus, CLASSE_TOM, seloRfb, scoreUI,
-  selosFilial, textoFilialFicha, type IrmaosRaiz, type EstadoIrmaos,
+  selosFilial, textoFilialFicha, telefonePrincipal, type IrmaosRaiz, type EstadoIrmaos,
 } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
@@ -125,6 +125,7 @@ export function RadarDetailSheet({
     track('radar.modo_discagem', { ligado: v });
   };
   const outras = (tel: string) => compartilhado.data?.get(tel);
+  const telPrincipal = telefonePrincipal(empresa);
   const endereco = [empresa.logradouro, empresa.numero, empresa.bairro, empresa.municipio_nome, empresa.uf, empresa.cep]
     .filter(Boolean)
     .join(', ');
@@ -164,7 +165,8 @@ export function RadarDetailSheet({
         </div>
         {discagem ? (
           <div className="mt-3">
-            <RadarModoDiscagem empresa={empresa} nome={nome} compartilhado={compartilhado.data}
+            <RadarModoDiscagem empresa={empresa} compartilhado={compartilhado.data}
+              ligar={telPrincipal ? <BotaoLigar telefone={telPrincipal} nomeCliente={nome} variant="full" /> : null}
               compartilhadoFalhou={compartilhado.isError} onProximo={onProximo} />
           </div>
         ) : (

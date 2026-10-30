@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { podeGerirRadar } from '@/lib/radar/acesso';
+import { podeGerirRadar } from '@/lib/nav/acesso-radar';
 import { DivergenciaCadastro } from '@/lib/radar/cadastro-omie';
 import { useRadarCadastrarOmie, useRadarAtribuirTarefa } from '@/queries/useRadarAcoesLead';
 import type { RadarEmpresa } from '@/queries/useRadarLista';

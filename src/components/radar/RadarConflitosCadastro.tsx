@@ -12,7 +12,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
-import { podeGerirRadar } from '@/lib/radar/acesso';
+import { podeGerirRadar } from '@/lib/nav/acesso-radar';
 import { resumoConflito, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
 import {
   ehConflitoMudou, porCnpj, useRadarConflitosAbertos, useRadarConflitosDoLead, useRadarResolverConflito,

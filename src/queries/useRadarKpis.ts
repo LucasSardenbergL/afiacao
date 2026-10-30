@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
-import { podeProspectarRadar } from '@/lib/radar/acesso';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 
 export interface RadarKpis {
   lote: string | null;

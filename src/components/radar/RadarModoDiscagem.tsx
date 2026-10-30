@@ -1,31 +1,23 @@
 import { ChevronRight, PhoneOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BotaoLigar } from '@/components/call/BotaoLigar';
+import type { ReactNode } from 'react';
 import { RadarOutcomeMenu } from './RadarOutcomeMenu';
 import { avisoTelefoneCompartilhado } from '@/lib/radar/atendimento';
 import { telefonePrincipal } from '@/lib/radar/ui-helpers';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
-const CHAVE_MODO = 'radar.modo_discagem';
-
-/** Preferência por navegador (conveniência; sem storage o modo só não lembra). */
-export function lerModoDiscagem(): boolean {
-  try { return localStorage.getItem(CHAVE_MODO) === '1'; } catch { return false; }
-}
-export function gravarModoDiscagem(v: boolean): void {
-  try { localStorage.setItem(CHAVE_MODO, v ? '1' : '0'); } catch { /* sem storage: só não persiste */ }
-}
-
 /**
  * Modo discagem: o telefone grande, Ligar, os desfechos e "Próximo" num painel só — o vendedor percorre a fila
- * sem caçar botão. Ligar é o `BotaoLigar`, que se recusa na lente "Ver como" na própria fonte (a ligação não passa
- * pelo Supabase, então o write-guard não a vê); os desfechos são o `RadarOutcomeMenu`, que fica desligado na lente.
+ * sem caçar botão. O Ligar chega PRONTO da ficha (`ligar`, o `BotaoLigar` da telefonia: a ficha já tem essa aresta
+ * entre módulos) e se recusa na lente "Ver como" na própria fonte (a ligação não passa pelo Supabase, então o
+ * write-guard não a vê); os desfechos são o `RadarOutcomeMenu`, que fica desligado na lente.
  */
 export function RadarModoDiscagem({
-  empresa, nome, compartilhado, compartilhadoFalhou = false, onProximo,
+  empresa, ligar, compartilhado, compartilhadoFalhou = false, onProximo,
 }: {
   empresa: RadarEmpresa;
-  nome: string;
+  /** O botão Ligar do telefone principal (null sem telefone). */
+  ligar: ReactNode;
   /** Telefone → em quantas OUTRAS raízes ele aparece (undefined = ainda não lido ou falhou). */
   compartilhado: Map<string, number> | undefined;
   /** A leitura do aviso de telefone FALHOU: diz que não verificou, em vez de calar. */
@@ -53,7 +45,7 @@ export function RadarModoDiscagem({
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {tel && <BotaoLigar telefone={tel} nomeCliente={nome} variant="full" />}
+        {tel && ligar}
         <RadarOutcomeMenu cnpj={empresa.cnpj} empresa={empresa} onRegistrado={() => onProximo?.()} />
         {onProximo && (
           <Button variant="ghost" size="touch" onClick={onProximo} className="ml-auto" title="Pular para o próximo lead da lista">

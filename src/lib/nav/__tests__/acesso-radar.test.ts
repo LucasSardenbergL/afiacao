@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { podeGerirRadar, podeProspectarRadar } from '@/lib/radar/acesso';
+import { podeGerirRadar, podeProspectarRadar } from '@/lib/nav/acesso-radar';
 
 // O espelho de UI tem de bater com private.cap_radar_prospectar e pode_ver_carteira_completa (prova SQL em
 // db/test-radar-acesso-vendedor.sh, grupo A). Divergir abre botão que o servidor recusa, ou esconde o que ele aceita.
