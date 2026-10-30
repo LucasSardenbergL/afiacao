@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Radar, RotateCcw } from 'lucide-react';
 import { useUrlState } from '@/hooks/useUrlState';
+import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
@@ -101,6 +102,9 @@ export default function RadarClientes() {
   // o card de inéditos, a linha e a ficha. `null` = nenhum lote completo (sem selos, fila sem filtro).
   const lote = useRadarLoteVigente().data ?? null;
   const [loteAberto, setLoteAberto] = useState(false);
+  // Lote de cadastro no Omie (iniciar, retomar, acompanhar) é só do gestor/master — ver RadarAcoesLote.
+  const { isMaster, isGestorComercial } = useAuth();
+  const gestor = isMaster || isGestorComercial;
 
   // Seleção por CNPJ, com SNAPSHOT de cada empresa: a linha pode sair da lista (virou
   // cliente, refetch) e a ação em lote ainda precisa dos dados dela.
@@ -210,7 +214,7 @@ export default function RadarClientes() {
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
       <RadarConflitosIndicador onAbrir={abrirPorCnpj} />
       {/* Lote interrompido (aba fechada, parada, falhas): oferece retomar em vez de fingir que nada aconteceu. */}
-      {loteOmie.lote && !loteOmie.rodando && pendentesDoLote > 0 && (
+      {gestor && loteOmie.lote && !loteOmie.rodando && pendentesDoLote > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-sm">
           <RotateCcw className="w-4 h-4 text-status-warning shrink-0" />
           <span className="flex-1">
@@ -220,7 +224,7 @@ export default function RadarClientes() {
           <Button size="sm" variant="outline" onClick={() => setLoteAberto(true)}>Ver / retomar</Button>
         </div>
       )}
-      {loteOmie.rodando && !loteAberto && (
+      {gestor && loteOmie.rodando && !loteAberto && (
         <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
           <span className="flex-1">Cadastrando no Omie… {loteOmie.progresso?.feitos ?? 0}/{loteOmie.progresso?.total ?? 0}</span>
           <Button size="sm" variant="outline" onClick={() => setLoteAberto(true)}>Acompanhar</Button>
@@ -290,7 +294,7 @@ export default function RadarClientes() {
         loteOmie={loteOmie}
         onAbrirLote={() => setLoteAberto(true)}
       />
-      <RadarLoteDialog lote={loteOmie} open={loteAberto} onClose={() => setLoteAberto(false)} />
+      <RadarLoteDialog lote={loteOmie} open={gestor && loteAberto} onClose={() => setLoteAberto(false)} />
       <RadarDetailSheet
         empresa={aberta}
         hojeISO={hojeISO}

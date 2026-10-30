@@ -592,6 +592,12 @@ db/test-radar-situacao-cadastral.sh         22  falsificar=9
 # escritor aberto a authenticated. Determinismo (2 rodadas = 0 alterados), monotonia por fator, ledger com
 # faixas, erro propagando. Esquema mínimo, sessão limpa.
 db/test-radar-score.sh                      24  falsificar=17
+# Radar: PLACAR e nota no contato (20261029150000 + 20261029150100). Defeito aqui = versão da fórmula fora do
+# IS DISTINCT FROM (nota sem versão ou resumo incoerente), contato humano classificado pela sessão e não pela fonte,
+# nota relida do score ATUAL, contato desfeito/apagado contado como toque, cadastro virando toque, abertura de
+# outra rota, ledger que derruba o contato, coorte sorteada sem versão, não determinística, duplicada sob
+# concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated.
+db/test-radar-placar.sh                     25  falsificar=19
 # Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
 # (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
 # cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.

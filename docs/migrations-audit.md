@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **712** custom migrations totais
-- **2313** objetos esperados (criados por estas migrations)
+- **714** custom migrations totais
+- **2331** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 866
+  - `function`: 874
   - `rls_policy`: 495
-  - `index`: 301
-  - `table`: 210
+  - `index`: 305
+  - `table`: 212
   - `cron_job`: 200
   - `view`: 127
-  - `trigger`: 110
+  - `trigger`: 114
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5798,6 +5798,34 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261029095257_tint_arquivar_staging_fantasma_lote2.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261029150000_radar_score_versao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+
+### `20261029150100_radar_eventos_placar.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_evento_contato` | — |
+| `function` | `private.radar_evento_cadastro` | — |
+| `function` | `private.radar_evento_abertura` | — |
+| `function` | `public.radar_coorte_sortear` | — |
+| `function` | `public.radar_placar_uso` | — |
+| `function` | `public.radar_coorte_resultado` | — |
+| `function` | `public.radar_conversao_por_faixa` | — |
+| `table` | `public.radar_eventos` | — |
+| `table` | `public.radar_coorte_controle` | — |
+| `index` | `public.idx_radar_eventos_evento_em` | `radar_eventos` |
+| `index` | `public.idx_radar_eventos_contato` | `radar_eventos` |
+| `index` | `public.idx_radar_eventos_cnpj` | `radar_eventos` |
+| `index` | `public.idx_radar_coorte_cnpj` | `radar_coorte_controle` |
+| `trigger` | `public.trg_radar_evento_contato_ins` | `radar_contatos` |
+| `trigger` | `public.trg_radar_evento_contato_del` | `radar_contatos` |
+| `trigger` | `public.trg_radar_evento_cadastro` | `radar_empresas` |
+| `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
 
 ### `20261029170140_radar_penetracao_e_concorrentes.sql`
 
