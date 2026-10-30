@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# Prova PG17 da RPC `cliente_situacao_receita(p_customer_user_id)` — migration
-# 20261029200343_cliente_situacao_receita (Frente 5 do Radar: selo da Receita na ficha e no pedido).
+# Prova PG17 da RPC `cliente_situacao_receita(p_customer_user_id)` — migrations
+# 20261029200343_cliente_situacao_receita (1ª, aplicada como em prod) e
+# 20261030000642_cliente_situacao_receita_lote_publicado (a VIVA; as sabotagens agem nela, exceto as de
+# ACL, que agem na 1ª: CREATE OR REPLACE preserva o ACL, então sabotar o REVOKE da 2ª não muda nada).
+# (Frente 5 do Radar: selo da Receita na ficha e no pedido.)
 # Executa sob `SET ROLE authenticated` + GUC `test.uid` (o auth.uid() do harness):
 #   · escopo = cap_carteira_ler OR carteira_visivel_para — o CORPO REAL do gate de carteira (eligible,
 #     cobertura ativa/expirada/inativa) extraído da migration que o define, movido para `private` como
 #     em prod; fora dele, 42501 com HINT `fora_da_carteira` (o discriminador que o front casa);
 #   · a RLS de gestor de radar_situacao_cadastral continua intacta (SELECT direto do vendedor = 0);
 #   · ausente ≠ ativa: sem_dado / sem_cnpj / sem_documento, 1 linha sempre; 01 não vira irregular;
-#   · lote: o mais recente PUBLICADO (radar_ingest_state), 04→02 tira o selo, lote velho sai
-#     confirmado_no_vigente=false, lote em carga não é lido;
+#   · lote: o mais recente PUBLICADO (complete + situacao_aplicada_fechamento = finalizado_em), 04→02
+#     tira o selo, lote velho sai confirmado_no_vigente=false, lote em carga não é lido, reprocessamento
+#     não conta como publicado antes da aplicação, sem lote publicado → 55000 sem_lote_publicado;
+#   · a PRE da 2ª aborta se o corpo vivo não for o da 1ª (md5 de PROD) nem já o dela;
 #   · espelho da normalização de radar_docs_clientes() (20261019200000), POR DOCUMENTO.
 # Locale: PROVA_LC=C (default) ou PROVA_LC=pt_BR.UTF-8 — asserts casam SQLSTATE e marcadores ASCII.
 #
@@ -18,7 +23,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIG="$REPO_ROOT/supabase/migrations/20261029200343_cliente_situacao_receita.sql"
+MIG1="$REPO_ROOT/supabase/migrations/20261029200343_cliente_situacao_receita.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261030000642_cliente_situacao_receita_lote_publicado.sql"
 MIG_GATE="$REPO_ROOT/supabase/migrations/20260717181500_carteira_visivel_para_filtra_eligible.sql"
 MIG_DOCS="$REPO_ROOT/supabase/migrations/20261019200000_radar_situacao_cadastral.sql"
 
@@ -28,7 +34,8 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="gate_aberto:post:POS6 gate_aberto_sem_post:A3 sem_hint:post:POS6 sem_hint_sem_post:A3 \
 conta_01_irregular:A9 ausente_vira_ativa:A9b lote_velho_confirmado:A11 le_lote_em_carga:A12 lote_mais_antigo:A10 \
 so_digitos:A13 acl_aberta:post:POS4 acl_aberta_sem_post:A8 invoker:post:POS2 invoker_sem_post:A1 \
-dono_sem_bypass:post:POS7 dono_sem_bypass_sem_post:A1"
+dono_sem_bypass:post:POS7 dono_sem_bypass_sem_post:A1 sem_vigente_le_tudo:post:POS8 sem_vigente_le_tudo_sem_post:A14 \
+reprocesso_publica:post:POS8 reprocesso_publica_sem_post:A15 pre_cega:A16"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-cliente-situacao.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -67,20 +74,22 @@ DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-cliente-situacao.XXXXXX")/data"
 LC="${PROVA_LC:-C}"
 export LC_ALL="$LC" LANG="$LC"
 MIG_USADA="$(dirname "$DATA")/mig.sql"
+MIG1_USADA="$(dirname "$DATA")/mig1.sql"
 FN_GATE="$(dirname "$DATA")/fn-gate.sql"
 FN_DOCS="$(dirname "$DATA")/fn-docs.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
 
-cp "$MIG" "$MIG_USADA"
+cp "$MIG" "$MIG_USADA"; cp "$MIG1" "$MIG1_USADA"
 # Corpos VIVOS extraídos das migrations que os definem (só o bloco CREATE … $$;).
 awk '/^CREATE OR REPLACE FUNCTION public.carteira_visivel_para\(/{p=1} p{print} p && /^\$\$;$/{exit}' "$MIG_GATE" > "$FN_GATE"
 grep -q "a.eligible IS TRUE" "$FN_GATE" || { echo "não extraí carteira_visivel_para de $MIG_GATE"; exit 9; }
 awk '/^CREATE OR REPLACE FUNCTION public.radar_docs_clientes\(\)/{p=1} p{print} p && /^\$\$;$/{exit}' "$MIG_DOCS" > "$FN_DOCS"
 grep -q "DISTINCT ON (doc)" "$FN_DOCS" || { echo "não extraí radar_docs_clientes de $MIG_DOCS"; exit 9; }
 
-sabotar() { # $1 = de, $2 = para (literal; substitui TODAS as ocorrências)
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+sabotar() { sabotar_em "$MIG_USADA" "$@"; }
+sabotar_em() { # $1 = arquivo, $2 = de, $3 = para (literal; substitui TODAS as ocorrências)
+  python3 -I - "$1" "$2" "$3" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -100,6 +109,14 @@ DONO_PARA="ALTER TABLE public.radar_situacao_cadastral FORCE ROW LEVEL SECURITY;
 ALTER FUNCTION public.cliente_situacao_receita(uuid) OWNER TO dono_app;
 DO \$pos\$
 DECLARE"
+SEMVIG_DE="  IF v_vig IS NULL THEN
+    RAISE EXCEPTION 'cliente_situacao_receita: nenhum lote da Receita publicado'
+      USING ERRCODE = '55000', HINT = 'sem_lote_publicado';
+  END IF;
+"
+POS8_DE="  IF position('sem_lote_publicado' IN v_def) = 0 OR position('situacao_aplicada_fechamento = i.finalizado_em' IN v_def) = 0 THEN"
+REPROC_DE="     AND i.situacao_aplicada_fechamento IS NOT NULL
+     AND i.situacao_aplicada_fechamento = i.finalizado_em;"
 case "${SABOTAGEM:-}" in
   "") ;;
   gate_aberto)          sabotar "$GATE_DE" "  IF false THEN" ;;
@@ -109,17 +126,25 @@ case "${SABOTAGEM:-}" in
   conta_01_irregular)   sabotar "WHEN r.situacao IN ('03', '04', '08')" "WHEN r.situacao IN ('01', '03', '04', '08')" ;;
   ausente_vira_ativa)   sabotar "'sem_dado'::text" "'ativa'::text" ;;
   lote_velho_confirmado) sabotar "COALESCE(r.lote = v_vig, false)" "true" ;;
-  le_lote_em_carga)     sabotar "     AND (v_vig IS NULL OR s.lote <= v_vig)" "" ;;
+  le_lote_em_carga)     sabotar "     AND s.lote <= v_vig   -- só lote PUBLICADO" "     -- só lote PUBLICADO" ;;
   lote_mais_antigo)     sabotar "ORDER BY s.lote DESC, s.cnpj" "ORDER BY s.lote ASC, s.cnpj" ;;
   so_digitos)           sabotar "       WHERE v_d ~ '^[0-9A-Z]{12}[0-9]{2}\$'" "       WHERE false AND v_d ~ '^[0-9A-Z]{12}[0-9]{2}\$'" ;;
-  acl_aberta)           sabotar "REVOKE ALL ON FUNCTION public.cliente_situacao_receita(uuid) FROM anon;" "" ;;
-  acl_aberta_sem_post)  sabotar "REVOKE ALL ON FUNCTION public.cliente_situacao_receita(uuid) FROM anon;" ""
-                        sabotar "  IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('public', f, 'EXECUTE') THEN" "  IF false THEN" ;;
+  acl_aberta)           sabotar_em "$MIG1_USADA" "REVOKE ALL ON FUNCTION public.cliente_situacao_receita(uuid) FROM anon;" "" ;;
+  acl_aberta_sem_post)  for m in "$MIG1_USADA" "$MIG_USADA"; do
+                          sabotar_em "$m" "REVOKE ALL ON FUNCTION public.cliente_situacao_receita(uuid) FROM anon;" ""
+                          sabotar_em "$m" "  IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('public', f, 'EXECUTE') THEN" "  IF false THEN"
+                        done ;;
   invoker)              sabotar "STABLE SECURITY DEFINER" "STABLE SECURITY INVOKER" ;;
   invoker_sem_post)     sabotar "STABLE SECURITY DEFINER" "STABLE SECURITY INVOKER"
                         sabotar "  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = f) THEN" "  IF false THEN" ;;
   dono_sem_bypass)      sabotar "$DONO_DE" "$DONO_PARA" ;;
   dono_sem_bypass_sem_post) sabotar "$DONO_DE" "$DONO_PARA"; sabotar "$POS7_DE" "     WHERE true) THEN" ;;
+  sem_vigente_le_tudo)  sabotar "$SEMVIG_DE" "" ; sabotar "     AND s.lote <= v_vig   -- só" "     AND (v_vig IS NULL OR s.lote <= v_vig)   -- só" ;;
+  sem_vigente_le_tudo_sem_post) sabotar "$SEMVIG_DE" "" ; sabotar "     AND s.lote <= v_vig   -- só" "     AND (v_vig IS NULL OR s.lote <= v_vig)   -- só"
+                        sabotar "$POS8_DE" "  IF false THEN" ;;
+  reprocesso_publica)   sabotar "$REPROC_DE" "     AND i.situacao_aplicada_em IS NOT NULL;" ;;
+  reprocesso_publica_sem_post) sabotar "$REPROC_DE" "     AND i.situacao_aplicada_em IS NOT NULL;"; sabotar "$POS8_DE" "  IF false THEN" ;;
+  pre_cega)             sabotar "  IF md5(v_src) <> '4dc173d4393fcec59eac2c85a88e09ca' AND" "  IF false AND" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
@@ -154,7 +179,8 @@ CREATE TABLE public.carteira_assignments (customer_user_id uuid, owner_user_id u
 CREATE TABLE public.carteira_coverage (covered_user_id uuid, covering_user_id uuid, active boolean, valid_until timestamptz);
 CREATE TABLE public.profiles (user_id uuid PRIMARY KEY, document text, name text, razao_social text);
 CREATE TABLE public.omie_clientes_nao_vinculados (codigo text, cnpj_cpf text, razao_social text, nome_fantasia text);
-CREATE TABLE public.radar_ingest_state (mes_referencia text PRIMARY KEY, status text, situacao_aplicada_em timestamptz);
+CREATE TABLE public.radar_ingest_state (mes_referencia text PRIMARY KEY, status text, finalizado_em timestamptz,
+  situacao_aplicada_em timestamptz, situacao_aplicada_fechamento timestamptz);
 -- Mesmas colunas, PK e RLS de prod (20261019200000): leitura só gestor.
 CREATE TABLE public.radar_situacao_cadastral (
   cnpj text NOT NULL CHECK (cnpj ~ '^[0-9A-Z]{12}[0-9]{2}$'),
@@ -176,6 +202,8 @@ P -q -f "$FN_GATE" >/dev/null
 Pq -c "ALTER FUNCTION public.carteira_visivel_para(uuid, uuid) SET SCHEMA private; GRANT EXECUTE ON FUNCTION private.carteira_visivel_para(uuid, uuid) TO dono_app;" >/dev/null
 P -q -f "$FN_DOCS" >/dev/null
 
+P -q -f "$MIG1_USADA" >/dev/null   # a 1ª, como foi aplicada em prod (#764)
+echo "md5 do corpo da 1ª no harness: $(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.cliente_situacao_receita(uuid)'::regprocedure;")"
 P -q -f "$MIG_USADA" >/dev/null
 P -q -f "$MIG_USADA" >/dev/null   # idempotente
 
@@ -189,7 +217,9 @@ c() { printf 'cccccccc-0000-4000-8000-%012d' "$1"; }   # user_id de cliente n
 # Clientes: 1 irregular 04 confirmado · 2 ativa · 3 nula 01 · 4 sem linha · 5 CPF · 6 sem profile · 7 doc vazio
 #           8 alfanumérico com máscara 03 · 9 04→02 · 10 irregular só em lote velho · 11 eligible=false · 12 de outro dono
 Pq -c "INSERT INTO public.radar_ingest_state VALUES
-  ('2026-09','complete','2026-10-21 17:10+00'), ('2026-10','complete','2026-10-27 16:38+00'), ('2026-11','running',NULL);
+  ('2026-09','complete','2026-10-21 17:10+00','2026-10-21 17:10+00','2026-10-21 17:10+00'),
+  ('2026-10','complete','2026-10-27 16:38+00','2026-10-28 06:05+00','2026-10-27 16:38+00'),
+  ('2026-11','running',NULL,NULL,NULL);
 INSERT INTO public.profiles (user_id, document) VALUES
   ('$(c 1)','11.111.111/0001-91'), ('$(c 2)','22222222000192'), ('$(c 3)','33.333.333/0001-93'),
   ('$(c 4)','44444444000194'), ('$(c 5)','123.456.789-09'), ('$(c 7)','  '),
@@ -274,6 +304,23 @@ eq "A11 irregular só no lote velho → irregular rotulado 2026-09 com confirmad
 eq "A12 lote 2026-11 em carga (não publicado) não é lido: cliente 1 segue 04/2026-10 apesar do 02 de 2026-11" \
    "$(linha "$VEND" "$(c 1)" | cut -d'|' -f1,3,5)" "irregular|04|2026-10"
 
+# ── Publicação: reprocessamento e ausência de lote publicado ─────────────────────────────────────
+# Reprocessar 2026-10: o finalize novo troca finalizado_em e PRESERVA situacao_aplicada_em; a chave de
+# fechamento ainda é a antiga → 2026-10 não está publicado até a situação nova ser aplicada.
+Pq -c "UPDATE public.radar_ingest_state SET finalizado_em = '2026-10-30 09:00+00' WHERE mes_referencia = '2026-10';" >/dev/null
+eq "A15 reprocessamento de 2026-10 ainda não aplicado: vigente cai para 2026-09 e o cliente 1 sai 04/2026-09 confirmado nele" \
+   "$(linha "$VEND" "$(c 1)" | cut -d'|' -f1,3,5,6,7)" "irregular|04|2026-09|2026-09|true"
+Pq -c "UPDATE public.radar_ingest_state SET situacao_aplicada_fechamento = finalizado_em WHERE mes_referencia = '2026-10';" >/dev/null
+eq "A15b aplicada a situação do fechamento novo, 2026-10 volta a ser o vigente" "$(linha "$VEND" "$(c 1)" | cut -d'|' -f5,6)" "2026-10|2026-10"
+Pq -c "UPDATE public.radar_ingest_state SET situacao_aplicada_fechamento = NULL;" >/dev/null
+SAIDA14="$(como "$VEND" "SELECT * FROM public.cliente_situacao_receita('$(c 1)');" && echo VERDE)" || true
+v14="vermelho"; case "$SAIDA14" in *VERDE*) v14="verde";; esac
+s14="outro"; case "$SAIDA14" in *55000*) s14="55000";; esac
+h14="sem-hint"; case "$SAIDA14" in *sem_lote_publicado*) h14="sem_lote_publicado";; esac
+eq "A14 nenhum lote publicado: 55000 com HINT sem_lote_publicado (o front mostra indisponível), nunca selo nem silêncio" \
+   "$v14 $s14 $h14" "vermelho 55000 sem_lote_publicado"
+Pq -c "UPDATE public.radar_ingest_state SET situacao_aplicada_fechamento = finalizado_em WHERE status = 'complete';" >/dev/null
+
 # ── Espelho da normalização, POR DOCUMENTO, contra radar_docs_clientes() viva ─────────────────────
 # Para cada documento: profiles com SÓ ele; radar_docs_clientes() dá a chave (ou nada) e a RPC (gestor)
 # tem de devolver a MESMA (via sem_dado) ou sem_cnpj. Inclui o caso permissivo herdado (CPF com sufixo).
@@ -290,6 +337,18 @@ for d in "${DOCS[@]}"; do
 done
 eq "A13 espelho por documento: a RPC escolhe a MESMA chave que radar_docs_clientes() em ${#DOCS[@]} formatos (≤1 chave por doc)" \
    "${DIVERGE:-nenhuma}" "nenhuma"
+
+# ── PRE anti-deriva da 2ª: corpo vivo que não é o da 1ª (md5 de PROD) nem o dela aborta o apply ──
+"$PGBIN/psql" -X -v ON_ERROR_STOP=1 -qAt -p "$PORT" -h /tmp -U postgres -d postgres -f "$MIG1" >/dev/null   # volta ao corpo da 1ª
+DERIVA="$(dirname "$DATA")/deriva.sql"
+sed 's/-- Atribuição no CORPO (erro em DECLARE não é capturável pelo bloco)./-- corpo derivado por outra sessão/' "$MIG1" > "$DERIVA"
+P -q -f "$DERIVA" >/dev/null
+if SAIDA16="$(P -q -f "$MIG_USADA" 2>&1)"; then r16="verde"; else r16="vermelho"; fi
+p16="sem-pre"; case "$SAIDA16" in *"PRE FALHOU: corpo vivo"*) p16="pre";; esac
+eq "A16 corpo vivo derivado (nem a 1ª nem esta): a PRE da 2ª aborta o apply" "$r16 $p16" "vermelho pre"
+P -q -f "$MIG1" >/dev/null; P -q -f "$MIG_USADA" >/dev/null
+eq "A16b corpo da 1ª (o de PROD) → a 2ª aplica; md5 da 1ª no harness = o lido da PROD" \
+   "$(Pq -c "SELECT position('sem_lote_publicado' IN prosrc) > 0 FROM pg_proc WHERE oid = 'public.cliente_situacao_receita(uuid)'::regprocedure;")" "t"
 
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "CLIENTE_SITUACAO_RECEITA_PROVA_OK"
