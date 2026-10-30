@@ -133,15 +133,20 @@ const textoOuNull = (s: string): string | null => (ehVazio(s) ? null : s);
 
 /**
  * Leva E: a quantidade que o gate de paridade compara é a DECISÃO DO MOTOR, não a edição humana antes do disparo.
- * Sem ajuste humano → qtde_final. Com ajuste, sem teto e sem promoção → qtde_sem_teto (em 29/10, nas linhas sem
+ * Sem ajuste humano → qtde_final, salvo promoção: o forward_buying infla qtde_final sem marcar ajuste e guarda a
+ * decisão anterior em qtde_sem_promocao (vazia → para). Com ajuste, sem teto e sem promoção → qtde_sem_teto (em 29/10, nas linhas sem
  * ajuste/teto/promoção com a coluna preenchida, qtde_final = qtde_sem_teto em 1034 de 1035). Qualquer outro ajuste
  * humano: a decisão do motor não é recuperável → para (nunca tira a linha do denominador, achado N5).
  */
 export function decisaoDoMotor(
   arq: string,
   sku: string,
-  l: { qtdeFinal: number; ajustadoHumano: boolean; tetoAplicado: boolean; promocao: boolean; qtdeSemTeto: number | null },
+  l: { qtdeFinal: number; ajustadoHumano: boolean; tetoAplicado: boolean; promocao: boolean; qtdeSemTeto: number | null; qtdeSemPromocao: number | null },
 ): number {
+  if (!l.ajustadoHumano && l.promocao) {
+    if (l.qtdeSemPromocao !== null) return l.qtdeSemPromocao;
+    return invalido(arq, `PROMOCAO_SEM_DECISAO_DO_MOTOR: sku ${sku} (qtde_sem_promocao vazio)`);
+  }
   if (!l.ajustadoHumano) return l.qtdeFinal;
   if (!l.tetoAplicado && !l.promocao && l.qtdeSemTeto !== null) return l.qtdeSemTeto;
   return invalido(arq, `AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku ${sku} (teto ${l.tetoAplicado}, promoção ${l.promocao}, qtde_sem_teto ${l.qtdeSemTeto ?? 'vazio'})`);
@@ -863,7 +868,7 @@ export function carregarDados(dir: string): DadosCarregados {
   });
 
   // sugestao_hoje
-  const sg = lerTabela(dir, 'sugestao_hoje', ['sku', 'posicao', 'qtde_final', 'ajustado_humano', 'teto_aplicado', 'promocao', 'qtde_sem_teto'], true);
+  const sg = lerTabela(dir, 'sugestao_hoje', ['sku', 'posicao', 'qtde_final', 'ajustado_humano', 'teto_aplicado', 'promocao', 'qtde_sem_teto', 'qtde_sem_promocao'], true);
   const sugestaoHoje = new Map<string, { posicao: number; qtdeFinal: number }>();
   let ajustesHumanos = 0;
   for (const r of sg.linhas) {
@@ -877,6 +882,7 @@ export function carregarDados(dir: string): DadosCarregados {
       tetoAplicado: bool(sg.arquivo, 'teto_aplicado', r[sg.col('teto_aplicado')]),
       promocao: bool(sg.arquivo, 'promocao', r[sg.col('promocao')]),
       qtdeSemTeto: numOuNull(sg.arquivo, 'qtde_sem_teto', r[sg.col('qtde_sem_teto')]),
+      qtdeSemPromocao: numOuNull(sg.arquivo, 'qtde_sem_promocao', r[sg.col('qtde_sem_promocao')]),
     });
     sugestaoHoje.set(sku, { posicao: num(sg.arquivo, 'posicao', r[sg.col('posicao')]), qtdeFinal });
   }

@@ -255,7 +255,7 @@ copy (
 copy (
   select i.sku_codigo_omie as sku, i.estoque_atual as posicao, i.qtde_final,
          coalesce(i.ajustado_humano, false) as ajustado_humano, coalesce(i.teto_cobertura_aplicado, false) as teto_aplicado,
-         (i.modo_promocao is not null) as promocao, i.qtde_sem_teto
+         (i.modo_promocao is not null) as promocao, i.qtde_sem_teto, i.qtde_sem_promocao
   from pedido_compra_sugerido p
   join pedido_compra_item i on i.pedido_id = p.id
   where p.empresa = 'OBEN' and p.fornecedor_nome ilike '%sayerlack%'

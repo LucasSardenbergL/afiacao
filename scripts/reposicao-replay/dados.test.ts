@@ -19,7 +19,7 @@ const H = {
   teto: 'key|value',
   equivalencias:
     'sku|sku_equivalente|fator|grupo_id|fator_para_base_sku|fator_para_base_equivalente|unidades_omie_sku|unidades_omie_equivalente',
-  sugestao_hoje: 'sku|posicao|qtde_final|ajustado_humano|teto_aplicado|promocao|qtde_sem_teto',
+  sugestao_hoje: 'sku|posicao|qtde_final|ajustado_humano|teto_aplicado|promocao|qtde_sem_teto|qtde_sem_promocao',
   demanda_insumo: 'sku|share_insumo',
   parametros_view: 'sku|es|pp|max|status',
   precos_app: 'grupo_id|sku|fator_para_base|capturado_em|preco|elegivel_catalogo|stale_dias',
@@ -48,7 +48,7 @@ function base(): Record<Nome, string[]> {
       'reposicao_teto_cobertura_oben_dias_c|60',
     ],
     equivalencias: [],
-    sugestao_hoje: ['S1|2|3|f|f|f|3'],
+    sugestao_hoje: ['S1|2|3|f|f|f|3|'],
     demanda_insumo: [],
     parametros_view: ['S1|1|2|4|OK'],
     precos_app: [],
@@ -126,7 +126,7 @@ describe('carregarDados — validação dos CSVs', () => {
   it('hashDados muda com o conteúdo e é estável', () => {
     const a = carregarDados(monta()).hashDados;
     expect(carregarDados(monta()).hashDados).toBe(a);
-    expect(carregarDados(monta({ sugestao_hoje: ['S1|2|4|f|f|f|4'] })).hashDados).not.toBe(a);
+    expect(carregarDados(monta({ sugestao_hoje: ['S1|2|4|f|f|f|4|'] })).hashDados).not.toBe(a);
   });
 });
 
@@ -145,20 +145,25 @@ describe('leva E: sugestao_hoje compara a decisão do motor, não a edição hum
   };
 
   it('sem ajuste humano => qtde_final, mesmo com qtde_sem_teto diferente ou vazia; sem aviso', () => {
-    expect(qtde('S1|3|40|f|f|f|36')).toBe(40);
-    expect(qtde('S1|3|18|f|t|f|')).toBe(18);
-    expect(avisoHumano('S1|3|18|f|f|f|18')).toBeUndefined();
+    expect(qtde('S1|3|40|f|f|f|36|')).toBe(40);
+    expect(qtde('S1|3|18|f|t|f||')).toBe(18);
+    expect(avisoHumano('S1|3|18|f|f|f|18|')).toBeUndefined();
   });
 
   it('ajuste humano sem teto nem promoção => qtde_sem_teto (o caso 8689771455 de 29/10: 8, não 18) e conta no aviso', () => {
-    expect(qtde('S1|3|18|t|f|f|8')).toBe(8);
-    expect(avisoHumano('S1|3|18|t|f|f|8')).toBe(1);
+    expect(qtde('S1|3|18|t|f|f|8|')).toBe(8);
+    expect(avisoHumano('S1|3|18|t|f|f|8|')).toBe(1);
+  });
+
+  it('promoção sem ajuste humano => qtde_sem_promocao (forward_buying infla qtde_final sem marcar ajuste); vazia => para', () => {
+    expect(qtde('S1|3|30|f|f|t||12')).toBe(12);
+    expect(erro('S1|3|30|f|f|t||')).toContain('PROMOCAO_SEM_DECISAO_DO_MOTOR: sku S1 (qtde_sem_promocao vazio)');
   });
 
   it('ajuste humano com teto, promoção ou qtde_sem_teto vazia => para (nunca tira a linha do denominador)', () => {
-    expect(erro('S1|3|18|t|t|f|8')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto true');
-    expect(erro('S1|3|18|t|f|t|8')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto false, promoção true');
-    expect(erro('S1|3|18|t|f|f|')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto false, promoção false, qtde_sem_teto vazio)');
+    expect(erro('S1|3|18|t|t|f|8|')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto true');
+    expect(erro('S1|3|18|t|f|t|8|')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto false, promoção true');
+    expect(erro('S1|3|18|t|f|f||')).toContain('AJUSTE_HUMANO_SEM_DECISAO_DO_MOTOR: sku S1 (teto false, promoção false, qtde_sem_teto vazio)');
   });
 });
 
