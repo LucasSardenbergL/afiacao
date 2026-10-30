@@ -187,9 +187,7 @@ func writeItens(b *strings.Builder, v any) {
 // ─────────────────────────────────────────────────────────────
 
 // hashCacheVersion é a versão do formato do hashes.json (permite migração futura).
-// v2: o filtro por hash passou a valer em delta, com a poda pelo keys-snapshot. Um
-// cache v1 (≤0.2.5) não satisfaz a invariante da poda — o snapshot antigo desativava
-// fórmula sem tirá-la do cache — e perde os hashes de personalizada na carga (Codex P1).
+// v2: ganhou SnapshotPodado (ver alinharCacheAoSnapshot).
 const hashCacheVersion = 2
 
 // HashCache guarda o hash de conteúdo de cada fórmula JÁ enviada com sucesso ao
@@ -209,7 +207,11 @@ const hashCacheVersion = 2
 type HashCache struct {
 	Version  int               `json:"version"`
 	Formulas map[string]string `json:"formulas"`
-	dirty    bool              // não serializado; true = há mudança a persistir
+	// SnapshotPodado é o LastKeysSnapshot do último snapshot que ESTE código enviou
+	// depois de podar o cache (podarEEnviarKeysSnapshot). Diferente do state.json ⇒
+	// houve snapshot sem poda (≤0.2.5, inclusive num downgrade) ou ele se perdeu.
+	SnapshotPodado string `json:"snapshot_podado,omitempty"`
+	dirty          bool   // não serializado; true = há mudança a persistir
 }
 
 // newHashCache cria um cache vazio (= full sync na primeira execução).
@@ -288,20 +290,23 @@ func loadHashCacheFrom(path string) (*HashCache, error) {
 	if hc.Formulas == nil {
 		hc.Formulas = make(map[string]string)
 	}
-	if hc.Version < 2 {
-		migrarParaPodaPeloSnapshot(&hc)
+	if hc.Version == 0 {
+		hc.Version = hashCacheVersion
 	}
 	return &hc, nil
 }
 
-// migrarParaPodaPeloSnapshot leva um cache v1 (ou sem versão) para v2 descartando os
-// hashes de personalizada ("true|"). No v1 a formulaperson rodava em delta com o
-// filtro desligado e nunca era podada: o snapshot desativava a fórmula no servidor
-// e o hash ficava. Com o filtro ligado em delta, esse hash pularia a fórmula se ela
-// voltasse idêntica. O namespace padrão ("false|") fica: rodava em full-scan com a
-// poda por extração a cada ciclo, e descartá-lo reenviaria ~490 mil fórmulas.
-// Custo: as personalizadas reenviam uma vez, no próximo full-scan delas.
-func migrarParaPodaPeloSnapshot(hc *HashCache) {
+// alinharCacheAoSnapshot descarta os hashes de personalizada ("true|") quando o último
+// keys-snapshot registrado no state.json não foi podado por este código — cache de
+// ≤0.2.5, ou downgrade para ela e volta (Codex P1, 2 rodadas). Esse snapshot pode ter
+// desativado no servidor uma personalizada cujo hash ficou; com o filtro ligado em
+// delta, ela seria pulada se voltasse idêntica. O namespace padrão ("false|") fica:
+// sempre filtrou por hash (o resíduo dele é pré-existente) e descartá-lo reenviaria
+// ~490 mil linhas. Custo: as personalizadas reenviam uma vez.
+func alinharCacheAoSnapshot(hc *HashCache, ultimoSnapshot string) {
+	if hc.SnapshotPodado == ultimoSnapshot {
+		return
+	}
 	descartadas := 0
 	for key := range hc.Formulas {
 		if strings.HasPrefix(key, "true|") {
@@ -309,9 +314,9 @@ func migrarParaPodaPeloSnapshot(hc *HashCache) {
 			descartadas++
 		}
 	}
-	logger.Warnf("hashes.json v%d → v%d: %d hash(es) de personalizada descartado(s) (reenviam uma vez)",
-		hc.Version, hashCacheVersion, descartadas)
-	hc.Version = hashCacheVersion
+	logger.Warnf("hash-cache: último keys-snapshot (%q) não foi podado por esta versão (cache: %q) — %d hash(es) de personalizada descartado(s), reenviam uma vez",
+		ultimoSnapshot, hc.SnapshotPodado, descartadas)
+	hc.SnapshotPodado = ultimoSnapshot
 	hc.dirty = true
 }
 

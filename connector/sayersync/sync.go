@@ -609,6 +609,7 @@ func RunCycle(ctx context.Context, cfg *Config) bool {
 		logger.Errorf("RunCycle: falha ao carregar hash-cache: %v — seguindo com cache vazio (full resend)", hcErr)
 		hc = newHashCache()
 	}
+	alinharCacheAoSnapshot(hc, st.LastKeysSnapshot)
 
 	// Conecta ao PG.
 	db, err := conectar(ctx, cfg.PGConn)
@@ -1555,7 +1556,18 @@ func podarEEnviarKeysSnapshot(
 	if err := SaveHashCache(hc); err != nil {
 		return fmt.Errorf("keys-snapshot PULADO — poda do hash-cache não persistiu: %w", err)
 	}
-	return enviarKeysSnapshot(ctx, cfg, lines, originNow)
+	if err := enviarKeysSnapshot(ctx, cfg, lines, originNow); err != nil {
+		return err
+	}
+	// Marca o snapshot como podado com o MESMO valor que o RunCycle grava em
+	// LastKeysSnapshot. Se este save ou o do state falhar, a marca diverge e o próximo
+	// ciclo descarta as personalizadas (reenvio, nunca perda).
+	hc.SnapshotPodado = originNow.Format(time.RFC3339)
+	hc.dirty = true
+	if err := SaveHashCache(hc); err != nil {
+		logger.Warnf("keys-snapshot: marca de poda não persistiu (%v) — personalizadas reenviam no próximo ciclo", err)
+	}
+	return nil
 }
 
 // chavesDoSnapshot serializa as chaves como strings "cor_id|cod_produto|id_base|personalizada"

@@ -259,80 +259,160 @@ func TestSnapshot_saveFalhaNaoEnvia(t *testing.T) {
 	}
 }
 
-// Codex P1 (revisão do 2da786a9): um hashes.json v1 (≤0.2.5) não satisfaz a invariante
-// da poda — o snapshot antigo desativava a personalizada sem tirá-la do cache. A carga
-// descarta os hashes de personalizada e mantém os de padrão.
-func TestHashCache_v1DescartaPersonalizada(t *testing.T) {
+// Codex P1 (2 rodadas): o último keys-snapshot do state.json pode ter saído de um
+// código que não poda (≤0.2.5 — upgrade direto, ou downgrade e volta). Nesse caso os
+// hashes de personalizada saem; os de padrão ficam.
+func TestAlinhar_snapshotNaoPodadoDescartaPersonalizada(t *testing.T) {
 	person := keyDe("CORA", "PA", "BA", "EA", true)
 	padrao := keyDe("CORB", "PB", "BB", "EB", false)
-	for _, versao := range []string{`"version":1,`, ``} { // v1 explícito e arquivo sem versão
-		path := filepath.Join(t.TempDir(), "hashes.json")
-		raw := `{` + versao + `"formulas":{"` + person + `":"h1","` + padrao + `":"h2"}}`
-		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
-			t.Fatal(err)
-		}
-		hc, err := loadHashCacheFrom(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+	for _, marca := range []string{"", "2026-10-27T10:00:00Z"} { // cache da 0.2.5 (sem marca) e downgrade-e-volta
+		hc := newHashCache()
+		hc.SnapshotPodado = marca
+		hc.Set(person, "h1")
+		hc.Set(padrao, "h2")
+		hc.clearDirty()
+
+		alinharCacheAoSnapshot(hc, "2026-10-28T10:00:00Z")
+
 		if _, ok := hc.Get(person); ok {
-			t.Fatalf("cache %q manteve hash de personalizada", versao)
+			t.Fatalf("marca %q: manteve hash de personalizada", marca)
 		}
 		if h, ok := hc.Get(padrao); !ok || h != "h2" {
-			t.Fatalf("cache %q perdeu o hash de padrão", versao)
+			t.Fatalf("marca %q: perdeu hash de padrão", marca)
 		}
-		if hc.Version != hashCacheVersion || !hc.Dirty() {
-			t.Fatalf("cache %q não migrou (version=%d dirty=%v)", versao, hc.Version, hc.Dirty())
+		if hc.SnapshotPodado != "2026-10-28T10:00:00Z" || !hc.Dirty() {
+			t.Fatalf("marca %q: não alinhou (marca=%q dirty=%v)", marca, hc.SnapshotPodado, hc.Dirty())
 		}
 	}
 }
 
-// CONTROLE: cache já v2 carrega intacto.
-func TestHashCache_v2CarregaIntacto(t *testing.T) {
+// CONTROLE: snapshot podado por este código (ou nenhum snapshot ainda) não mexe.
+func TestAlinhar_snapshotPodadoNaoMexe(t *testing.T) {
 	person := keyDe("CORA", "PA", "BA", "EA", true)
-	path := filepath.Join(t.TempDir(), "hashes.json")
-	raw := `{"version":2,"formulas":{"` + person + `":"h1"}}`
-	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+	for _, marca := range []string{"2026-10-28T10:00:00Z", ""} {
+		hc := newHashCache()
+		hc.SnapshotPodado = marca
+		hc.Set(person, "h1")
+		hc.clearDirty()
+		alinharCacheAoSnapshot(hc, marca)
+		if _, ok := hc.Get(person); !ok || hc.Dirty() {
+			t.Fatalf("marca %q igual ao state: cache mexido (presente=%v dirty=%v)", marca, ok, hc.Dirty())
+		}
+	}
+}
+
+// A marca só é gravada depois do ENVIO do snapshot, com o valor que vira LastKeysSnapshot.
+func TestSnapshot_marcaGravadaSoAposEnvio(t *testing.T) {
+	dir := isolarStateDir(t)
+	originNow := time.Date(2026, 10, 28, 10, 0, 0, 0, time.UTC)
+	ex := &fakeExtractor{formulas: []formulaKey{{CorID: "CORA", CodProduto: "PA", IDBase: "BA", IDEmb: "E", Personalizada: true}}}
+
+	// Envio falha (servidor 500) → marca não muda.
+	ruim := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ruim.Close()
+	hc := newHashCache()
+	hc.SnapshotPodado = "anterior"
+	cfg := &Config{AppURL: ruim.URL, StoreCode: "loja-test", TokenPlainDev: "tok-test"}
+	if err := podarEEnviarKeysSnapshot(context.Background(), cfg, ex, originNow, newLookups(), hc); err == nil {
+		t.Fatal("envio com 500 não reportou erro")
+	}
+	if hc.SnapshotPodado != "anterior" {
+		t.Fatalf("marca avançou (%q) sem o snapshot ter sido aceito", hc.SnapshotPodado)
+	}
+
+	// Envio ok → marca = originNow em RFC3339, persistida.
+	srv := &testeSnapshot{dir: dir}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cfg.AppURL = ts.URL
+	if err := podarEEnviarKeysSnapshot(context.Background(), cfg, ex, originNow, newLookups(), hc); err != nil {
 		t.Fatal(err)
 	}
-	hc, err := loadHashCacheFrom(path)
+	want := originNow.Format(time.RFC3339)
+	disco, err := loadHashCacheFrom(filepath.Join(dir, "hashes.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := hc.Get(person); !ok || hc.Dirty() {
-		t.Fatalf("cache v2 mexido na carga (presente=%v dirty=%v)", ok, hc.Dirty())
+	if hc.SnapshotPodado != want || disco.SnapshotPodado != want {
+		t.Fatalf("marca após envio: memória=%q disco=%q, esperava %q", hc.SnapshotPodado, disco.SnapshotPodado, want)
 	}
 }
 
-// O cenário do Codex ponta a ponta: a 0.2.5 cacheou a personalizada, o snapshot dela
-// a desativou no servidor sem podar o cache, e ela volta idêntica no 1º ciclo da
-// versão nova. Tem que ser reenviada.
-func TestUpgrade_cacheV1PersonalizadaVoltaIdenticaReenvia(t *testing.T) {
+// Ponta a ponta do P1: a versão nova cacheia a personalizada (marca T1); a 0.2.5
+// roda um snapshot que a desativa sem podar e avança o state para T2; a versão nova
+// volta e a fórmula reaparece idêntica → tem que reenviar.
+func TestDowngradeEVolta_personalizadaIdenticaReenvia(t *testing.T) {
 	srv := &captureServer{}
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 	cli := newTestClient(ts.URL)
 	rm := newFakeMapping([]string{"formulaperson"}, FormulaShapeFlat)
-	st := &State{HWM: map[string]string{"formulaperson": "2026-10-27T13:00:00Z"}}
+	st := &State{HWM: map[string]string{"formulaperson": "2026-10-27T13:00:00Z"}, LastKeysSnapshot: "2026-10-27T10:00:00Z"}
 	linha := fxRow("CORA", "PA", "BA", "EA", []map[string]any{item("C1", 1, 1.0)})
 	ex := &fakeExtractor{rows: map[string][]map[string]any{"formulaperson": {linha}}}
+	ctx := context.Background()
 
-	m := mapFormula(linha, true, newLookups())
-	path := filepath.Join(t.TempDir(), "hashes.json")
-	raw, _ := json.Marshal(map[string]any{"version": 1, "formulas": map[string]string{
-		formulaCacheKey(m): formulaContentHash(m), // hash EXATO do conteúdo que volta
-	}})
-	if err := os.WriteFile(path, raw, 0600); err != nil {
+	hc := newHashCache()
+	hc.SnapshotPodado = st.LastKeysSnapshot
+	if err := syncFormulas(ctx, ex, cli, st, make(map[string]int), rm, true, newLookups(), hc); err != nil {
 		t.Fatal(err)
 	}
-	hc, err := loadHashCacheFrom(path)
+	if srv.countPathPrefix("/formulas") != 1 {
+		t.Fatal("envio inicial não aconteceu")
+	}
+
+	st.LastKeysSnapshot = "2026-10-28T10:00:00Z" // snapshot da 0.2.5: desativou, não podou
+	alinharCacheAoSnapshot(hc, st.LastKeysSnapshot)
+	if err := syncFormulas(ctx, ex, cli, st, make(map[string]int), rm, true, newLookups(), hc); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.countPathPrefix("/formulas"); got != 2 {
+		t.Fatalf("personalizada idêntica após snapshot não podado foi pulada (POSTs /formulas=%d, esperava 2)", got)
+	}
+}
+
+// Ligação: o RunCycle real alinha o cache ao state ANTES de sincronizar. Sem full
+// rescan, sem snapshot no dia e formulaperson em delta — a única coisa que pode tirar
+// a personalizada do cache é o alinhamento.
+func TestRunCycle_alinhaCacheAoSnapshotDoState(t *testing.T) {
+	c := prepararCiclo(t, schemaComVendasItem())
+	agora := time.Now().UTC()
+	c.ex.originNow = agora
+	c.ex.rows["formula"] = []map[string]any{fxRow("CORB", "PB", "BB", "EB", []map[string]any{item("C2", 1, 2.0)})}
+	person := keyDe("CORA", "PA", "BA", "EA", true)
+	padrao := keyDe("CORB", "PB", "BB", "EB", false)
+
+	st := &State{
+		HWM:              map[string]string{"formulaperson": agora.Add(-time.Hour).Format(time.RFC3339)},
+		LastFullRescan:   agora.Format(time.RFC3339),
+		LastKeysSnapshot: agora.Format(time.RFC3339), // snapshot de hoje, feito por quem não poda
+	}
+	if err := SaveState(st); err != nil {
+		t.Fatal(err)
+	}
+	hc := newHashCache()
+	hc.SnapshotPodado = agora.Add(-24 * time.Hour).Format(time.RFC3339)
+	hc.Set(person, "h1")
+	hc.Set(padrao, "h2")
+	if err := SaveHashCache(hc); err != nil {
+		t.Fatal(err)
+	}
+
+	RunCycle(context.Background(), c.cfg)
+
+	if c.srv.countPathPrefix("/keys-snapshot") != 0 {
+		t.Fatal("o teste pressupõe ciclo sem snapshot (ele podaria por conta própria)")
+	}
+	disco, err := LoadHashCache()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := syncFormulas(context.Background(), ex, cli, st, make(map[string]int), rm, true, newLookups(), hc); err != nil {
-		t.Fatal(err)
+	if _, ok := disco.Get(person); ok {
+		t.Fatal("RunCycle não descartou a personalizada com o último snapshot não podado")
 	}
-	if got := srv.countPathPrefix("/formulas"); got != 1 {
-		t.Fatalf("personalizada com hash herdado da v1 foi pulada (POSTs /formulas=%d, esperava 1)", got)
+	if _, ok := disco.Get(padrao); !ok {
+		t.Fatal("RunCycle descartou hash de padrão")
 	}
 }
