@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 713
+-- Total de custom migrations: 715
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -776,6 +776,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261028100200', 'analytics_ledger_corantes', '20261028100200_analytics_ledger_corantes.sql'),
   ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql'),
   ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
+  ('20261029150000', 'radar_score_versao', '20261029150000_radar_score_versao.sql'),
+  ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql'),
   ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
   ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql')
 ),
@@ -3051,6 +3053,24 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
   ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('radar_score_versao', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_contato', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_cadastro', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_resultado', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_conversao_por_faixa', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_eventos', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_coorte_controle', ''),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_evento_em', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_contato', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_cnpj', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_coorte_cnpj', 'radar_coorte_controle'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
   ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
 ),
@@ -5374,6 +5394,24 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
   ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('radar_score_versao', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_contato', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_cadastro', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_resultado', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_conversao_por_faixa', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_eventos', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_coorte_controle', ''),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_evento_em', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_contato', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_cnpj', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_coorte_cnpj', 'radar_coorte_controle'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
   ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
 )
@@ -5988,6 +6026,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
+  ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
   ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
