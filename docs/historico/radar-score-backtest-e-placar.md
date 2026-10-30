@@ -162,10 +162,15 @@ authenticated com tudo), para os REVOKE terem o que revogar.
 | --- | --- | --- |
 | Migration `20261029150000` (versão da fórmula) | ✅ sessão, 2026-10-29 ~21:00 BRT, pelo MCP: ensaio (`ENSAIO_OK`, rollback conferido) → apply → psql-ro ✅ (corpo `c31dfcac…`, coluna, ACL, cron 225) | — |
 | 1ª rodada do cron com versão | cron 225 | 03:30 BRT seguinte; conferir que `pulados` = 0 e que toda linha com score tem `v3` |
-| Migration `20261029150100` (ledger, coortes, placar) | sessão, no envelope | depois da 1ª; pode ser no mesmo dia |
+| Migration `20261029150100` (ledger, coortes, placar) | ✅ sessão, 2026-10-29 ~21:10 BRT, pelo MCP: ensaio (`ENSAIO_OK`, 4 s, 64.304 eventos) → apply → psql-ro ✅ (7 corpos com md5 igual ao arquivo, 4 triggers, ACL fechada) | — |
 | `SELECT public.radar_coorte_sortear(50);` | sessão (MCP) ou founder (SQL Editor) | **só depois** da 1ª rodada com versão (a função recusa antes) |
 | Publish do Lovable | — | nenhum: não há front nesta entrega |
 | Mostrar a amostra na fila | **frente 1** (contrato na nota da pasta compartilhada) | sem isso a coorte fica registrada e nunca é contatada |
+
+**1ª leitura do placar em prod (psql-ro, logo após o apply):** total = 1 titular tocou, 5 toques (os de 15/06), 0 nas
+janelas de 7/30/60 dias, 0 aberturas; reconciliação toda zerada; `autorizados_agora` NULL (a cap da frente 2 ainda
+não existe); janelas marcadas `aberturas_janela_completa = false` (o ledger acabou de nascer). Bate com a medição de
+2026-10-28.
 
 ## Follow-ups (fora desta frente)
 
