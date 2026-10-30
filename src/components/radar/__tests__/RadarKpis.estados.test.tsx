@@ -16,7 +16,7 @@ import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react
  */
 type Resposta = { data: unknown; error: { message: string } | null };
 let resposta: Resposta = { data: null, error: null };
-let auth = { isMaster: true, isGestorComercial: false };
+let auth = { role: 'master', commercialRole: 'master' as string | null };
 const track = vi.fn();
 
 /**
@@ -87,7 +87,7 @@ function renderKpis(props: { soIneditos?: boolean; soSugeridos?: boolean } = {})
 
 beforeEach(() => {
   onlineManager.setOnline(true);
-  auth = { isMaster: true, isGestorComercial: false };
+  auth = { role: 'master', commercialRole: 'master' };
   track.mockClear();
   onSoIneditos.mockClear();
   onSoSugeridos.mockClear();
@@ -140,11 +140,11 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
     ).toBeTruthy();
   });
 
-  it('SEM ACESSO (staff não-gestor): não renderiza, não avisa e NÃO emite evento', async () => {
-    // A RPC faz RAISE 'forbidden' para quem não é gestor/master, e /radar só exige
+  it('SEM ACESSO (staff fora do Radar): não renderiza, não avisa e NÃO emite evento', async () => {
+    // A RPC faz RAISE 'forbidden' para quem não passa em cap_radar_prospectar, e /radar só exige
     // RequireStaff. Aviso aqui seria alarme fabricado; evento aqui poluiria o denominador
     // de adoção com quem nunca poderia ver a tela.
-    auth = { isMaster: false, isGestorComercial: false };
+    auth = { role: 'employee', commercialRole: 'operacional' };
     resposta = { data: kpis(), error: null };
     renderKpis();
     await waitFor(() => expect(screen.getByTestId('placar').textContent).toBe(''));
@@ -394,7 +394,7 @@ describe('placar de 3 cards; inéditos e sugeridos viram chips FORA do gate', ()
   });
 
   it('SEM ACESSO ao placar: os chips de filtro continuam (o filtro não some com o gate)', async () => {
-    auth = { isMaster: false, isGestorComercial: false };
+    auth = { role: 'employee', commercialRole: 'operacional' }; // fora de cap_radar_prospectar (o vendedor agora entra)
     resposta = { data: kpis(), error: null };
     renderKpis();
     await waitFor(() => expect(screen.getByTestId('placar').textContent).toBe(''));

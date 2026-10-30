@@ -1288,9 +1288,12 @@ export interface LacunaGrupo {
 export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
   {
     def: { tipo: 'predicado', predicado: 'private.cap_carteira_ler' },
-    tabelasNoGrafo: 22,
-    tabelasMd5: '360014844c8f72cb0a362ad98a93722b',
-    medidoEm: '2026-08-28',
+    // 2026-10-30: 22 → 20. Saíram radar_empresas/radar_contatos/radar_ingest_state/radar_municipios para
+    // private.cap_radar_prospectar (20261029201200, grupo abaixo) e entrou radar_situacao_cadastral, cuja policy
+    // chamava o wrapper público e negava a todos (mesma semântica, agora pela capability que funciona).
+    tabelasNoGrafo: 20,
+    tabelasMd5: '57c3e379e5736f8d9b3749c825a226cb',
+    medidoEm: '2026-10-30',
     motivo:
       'Inteligência COMERCIAL (carteira, radar, farmer, visitas), não dinheiro/custo — o critério ' +
       'deste contrato não alcança o CONTEÚDO delas, e a RAIZ do grupo (`public.commercial_roles`) ' +
@@ -1299,6 +1302,19 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
       '`farmer_client_scores` e ARRASTOU o corpo de `cap_carteira_ler` para o congelamento. ' +
       'Gatilho de reentrada: no dia em que comissão ou preço passarem a depender da carteira, o ' +
       'grupo vira membro (i)/(ii).',
+  },
+  {
+    def: { tipo: 'predicado', predicado: 'private.cap_radar_prospectar' },
+    tabelasNoGrafo: 4,
+    tabelasMd5: '5b71c7e630d7a6686543d7735707e6a8',
+    medidoEm: '2026-10-30',
+    motivo:
+      'Radar de Clientes (20261029201200): dados públicos da RFB + estado de prospecção, lidos por master, gestor ' +
+      'comercial e vendedor (farmer/hunter/closer). Não é dinheiro nem custo, e o cliente do grupo segue protegido ' +
+      'por cap_carteira_ler (radar_cadastro_conflitos, radar_situacao_cadastral e os clientes só-Omie da RPC de ' +
+      'irmãos). O corpo da capability é provado executando em db/test-radar-acesso-vendedor.sh (sabotagem ' +
+      '`cap_aceita_operacional`). Gatilho de reentrada: no dia em que o Radar guardar valor de cliente, preço ou ' +
+      'custo, o grupo vira membro (i)/(ii).',
   },
   {
     def: { tipo: 'predicado', predicado: 'private.carteira_visivel_para' },

@@ -25,6 +25,11 @@ const BLOCKED_STORAGE = new Set(['upload', 'update', 'remove', 'move', 'copy', '
 // no ImpersonationContext) — são o bookkeeping da própria lente, não precisam estar aqui.
 const RPC_READONLY_ALLOWLIST = new Set<string>([
   'listar_pedidos_a_separar', // queries/usePedidosASeparar.ts — anti-join SELECT, leitura pura
+  // Radar (migration 20261029201200) — SELECT puro, sem persistir nada. A ficha mostra quem atende o lead, o aviso
+  // de telefone compartilhado e os conflitos ABERTOS do lead (a RPC só lê, sob FOR SHARE).
+  'radar_atendimentos_ativos',
+  'radar_telefone_compartilhado',
+  'radar_estado_cadastro_omie',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

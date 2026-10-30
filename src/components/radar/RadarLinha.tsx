@@ -9,6 +9,7 @@ import {
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
+import { ChipAtendimento } from './RadarAtendimentoLead';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -97,6 +98,7 @@ export function RadarLinha({
               {rfb.texto}
             </span>
           )}
+          <ChipAtendimento cnpj={empresa.cnpj} />
         </div>
         <div className="text-xs text-muted-foreground truncate">
           {[empresa.municipio_nome, empresa.uf].filter(Boolean).join(' · ')}

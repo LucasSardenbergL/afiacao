@@ -68,6 +68,7 @@ const MelhoriasPopover = lazy(() =>
 import { useSalesOnlyRestriction } from '@/hooks/useSalesOnlyRestriction';
 import { useDisplayAccess } from '@/hooks/useDisplayAccess';
 import { itemVisivelParaSalesOnly, SECAO_VENDAS } from '@/lib/nav/home-por-persona';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useRouteTracker } from '@/lib/dashboard/route-tracker';
 import { useOfflineFlush } from '@/hooks/useOfflineFlush';
@@ -91,6 +92,8 @@ interface NavItem {
   masterOnly?: boolean;
   /** Visível apenas a gestor comercial (gerencial/estrategico/super_admin) OU master. */
   gestorComercialOuMaster?: boolean;
+  /** Visível a quem prospecta no Radar: gestor comercial, master ou vendedor (`podeProspectarRadar`). */
+  radarProspectar?: boolean;
 }
 
 const unifiedNavSections: { title: string; items: NavItem[] }[] = [
@@ -126,6 +129,8 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: ShoppingCart, label: 'Pedidos', path: '/sales' },
       { icon: Phone, label: 'Telefonia', path: '/telefonia' },
       { icon: Wrench, label: 'Ferramentas de venda', path: '/vendas/ferramentas' },
+      // Prospecção é trabalho de VENDA: o vendedor sales-only só vê esta seção (migration 20261029201200).
+      { icon: Radar, label: 'Radar de Clientes', path: '/radar', radarProspectar: true },
       { icon: ClipboardList, label: 'Tarefas', path: '/tarefas', gestorComercialOuMaster: true },
       { icon: ListChecks, label: 'Tarefas recorrentes', path: '/tarefas/templates', gestorComercialOuMaster: true },
       { icon: MessageSquareText, label: 'Preview propostas', path: '/rota/propostas', gestorComercialOuMaster: true },
@@ -206,7 +211,6 @@ const unifiedNavSections: { title: string; items: NavItem[] }[] = [
       { icon: Users, label: 'Departamentos', path: '/admin/departments', staffOnly: true },
       { icon: UserX, label: 'Clientes não-vinculados', path: '/admin/clientes-nao-vinculados', gestorComercialOuMaster: true },
       { icon: Users, label: 'Grupos de Cliente', path: '/gestao/grupos-cliente', gestorComercialOuMaster: true },
-      { icon: Radar, label: 'Radar de Clientes', path: '/radar', gestorComercialOuMaster: true },
       { icon: Library, label: 'Base de conhecimento', path: '/admin/knowledge-base', staffOnly: true },
       { icon: Calculator, label: 'Calculadora de rendimento', path: '/admin/calculadora' },
       { icon: Factory, label: 'Processos padrão', path: '/admin/standard-processes' },
@@ -415,7 +419,8 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   const navigate = useNavigate();
   const { isStaff, isMaster, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
-  const { displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
+  const { displayRole, displayCommercialRole, displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
+  const displayRadar = podeProspectarRadar({ role: displayRole, commercialRole: displayCommercialRole });
   const { isImpersonating, effectiveUserId } = useImpersonation();
   const { favorites, isFavorite, toggle: toggleFavorite } = useSidebarFavorites();
 
@@ -670,7 +675,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
               sectionsWithBadges
                 .flatMap((s) => s.items)
                 .filter((item) => favorites.includes(item.path))
-                .filter((item) => (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial))
+                .filter((item) => (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial) && (!item.radarProspectar || displayRadar))
             }
             onToggleFavorite={toggleFavorite}
             isFavorite={isFavorite}
@@ -682,7 +687,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
           // não mais por título de seção — senão o Meu Dia ficava inalcançável.
           const visibleItems = section.items.filter(item =>
             (!displayIsSalesOnly || itemVisivelParaSalesOnly(section.title, item.path)) &&
-            (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial));
+            (!item.staffOnly || displayIsStaff) && (!item.masterOnly || displayIsMaster) && (!item.gestorComercialOuMaster || displayIsMaster || displayIsGestorComercial) && (!item.radarProspectar || displayRadar));
           if (visibleItems.length === 0) return null;
 
           const isSecondary = SECONDARY_SECTIONS.includes(section.title);
@@ -795,7 +800,8 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
 const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boolean; onClose: () => void }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly, displayLoading } = useDisplayAccess();
+  const { displayRole, displayCommercialRole, displayIsStaff: isStaff, displayIsMaster: isMaster, displayIsGestorComercial: isGestorComercial, displayIsSalesOnly: isSalesOnly, displayLoading } = useDisplayAccess();
+  const podeRadar = podeProspectarRadar({ role: displayRole, commercialRole: displayCommercialRole });
 
   if (!open) return null;
 
@@ -832,7 +838,7 @@ const MobileNav = React.memo(function MobileNav({ open, onClose }: { open: boole
             // Espelha o filtro do desktop: sales-only por ITEM (allowlist), não por seção.
             const visibleItems = section.items.filter(item =>
               (!isSalesOnly || itemVisivelParaSalesOnly(section.title, item.path)) &&
-              (!item.staffOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial));
+              (!item.staffOnly || isStaff) && (!item.masterOnly || isMaster) && (!item.gestorComercialOuMaster || isMaster || isGestorComercial) && (!item.radarProspectar || podeRadar));
             if (visibleItems.length === 0) return null;
             return (
               <div key={section.title} className="mb-1">
