@@ -27,9 +27,12 @@ export function SeloSituacaoReceita({
 }) {
   const q = useSituacaoReceitaCliente(customerUserId);
   const leitura = q.data;
-  const offline = q.fetchStatus === 'paused' && leitura === undefined;
+  // Pausada = quis consultar e não conseguiu (offline), MESMO com cache vencido na mão: o cache
+  // velho não pode passar por leitura nova (parecer Codex de código, ALTO 1).
+  const offline = q.fetchStatus === 'paused';
   const falhou = q.status === 'error' || offline;
-  const selo = leitura?.tipo === 'ok' ? seloReceita(leitura.dado) : null;
+  // O selo só existe quando a leitura vale — erro com dado antigo em cache mostra "indisponível".
+  const selo = !falhou && leitura?.tipo === 'ok' ? seloReceita(leitura.dado) : null;
 
   const desfecho: string | null = !customerUserId
     ? 'sem_vinculo'
@@ -45,22 +48,23 @@ export function SeloSituacaoReceita({
             ? 'sem_acesso'
             : leitura.dado.estado;
 
-  const lidaKey = useRef<string | null>(null);
+  // 1x por (superfície, cliente) por montagem: conjuntos, não "a última chave" (A→B→A não recontam).
+  const lidas = useRef(new Set<string>());
   useEffect(() => {
     if (!desfecho) return;
     const chave = `${superficie}:${customerUserId ?? '-'}`;
-    if (lidaKey.current === chave) return;
-    lidaKey.current = chave;
+    if (lidas.current.has(chave)) return;
+    lidas.current.add(chave);
     track('cliente.situacao_receita_lida', { superficie, estado: desfecho });
   }, [desfecho, superficie, customerUserId]);
 
-  const exibidaKey = useRef<string | null>(null);
+  const exibidas = useRef(new Set<string>());
   const situacao = leitura?.tipo === 'ok' ? leitura.dado.situacao : null;
   useEffect(() => {
     if (!selo || !customerUserId) return;
     const chave = `${superficie}:${customerUserId}`;
-    if (exibidaKey.current === chave) return;
-    exibidaKey.current = chave;
+    if (exibidas.current.has(chave)) return;
+    exibidas.current.add(chave);
     track('cliente.situacao_receita_irregular_exibida', { superficie, situacao, confirmado: selo.confirmado });
   }, [selo, situacao, superficie, customerUserId]);
 

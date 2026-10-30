@@ -19,6 +19,7 @@ const track = vi.fn();
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 
 import { SeloSituacaoReceita, type SuperficieSituacaoReceita } from '../SeloSituacaoReceita';
+import { interpretarRespostaSituacao } from '@/lib/receita/situacao-cliente';
 
 const linha = (over: Record<string, unknown> = {}) => ({
   estado: 'irregular', cnpj: '11111111000191', situacao: '08', data_situacao: '2026-03-15',
@@ -26,8 +27,14 @@ const linha = (over: Record<string, unknown> = {}) => ({
 });
 const ok = (over: Record<string, unknown> = {}) => () => Promise.resolve({ data: [linha(over)], error: null });
 
-function montar(customerUserId: string | null, superficie: SuperficieSituacaoReceita = 'pedido') {
-  const qc = new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } });
+/** Cache VENCIDO de uma leitura anterior do cliente (o staleTime do hook é 5 min). */
+type Cache = { id: string; linha: Record<string, unknown> };
+function montar(customerUserId: string | null, superficie: SuperficieSituacaoReceita = 'pedido', cache?: Cache) {
+  const qc = new QueryClient({ defaultOptions: { queries: { gcTime: 60_000 } } });
+  if (cache) {
+    const dado = interpretarRespostaSituacao([cache.linha], null);
+    qc.setQueryData(['situacao-receita-cliente', 'vendedor-1', cache.id], dado, { updatedAt: Date.now() - 3_600_000 });
+  }
   const ui = (id: string | null) => (
     <QueryClientProvider client={qc}>
       <SeloSituacaoReceita customerUserId={id} superficie={superficie} />
@@ -103,6 +110,35 @@ describe('SeloSituacaoReceita', () => {
     await screen.findByTestId('situacao-receita-indisponivel');
     expect(rpc).not.toHaveBeenCalled();
     expect(lidas()).toEqual([{ superficie: 'pedido', estado: 'offline' }]);
+  });
+
+  it('offline com cache VENCIDO de "ativa": indisponível, nunca o cache passando por leitura nova', async () => {
+    onlineManager.setOnline(false);
+    const { container } = montar('c1', 'pedido', { id: 'c1', linha: linha({ estado: 'ativa', situacao: '02' }) });
+    await screen.findByTestId('situacao-receita-indisponivel');
+    expect(container.textContent).toContain('indisponível');
+    expect(lidas()).toEqual([{ superficie: 'pedido', estado: 'offline' }]);
+  });
+
+  it('cache irregular vencido sem leitura nova (offline): só "indisponível" e nenhum irregular_exibida', async () => {
+    onlineManager.setOnline(false);
+    montar('c1', 'ficha', { id: 'c1', linha: linha() });
+    await screen.findByTestId('situacao-receita-indisponivel');
+    expect(screen.queryByTestId('selo-situacao-receita')).toBeNull();
+    expect(track.mock.calls.filter((c) => c[0] === 'cliente.situacao_receita_irregular_exibida')).toEqual([]);
+  });
+
+  it('A→B→A na mesma montagem: 1 leitura por cliente e 1 selo exibido', async () => {
+    respostas.set('a', ok());
+    respostas.set('b', ok({ estado: 'ativa', situacao: '02' }));
+    const { trocar } = montar('a');
+    await screen.findByTestId('selo-situacao-receita');
+    trocar('b');
+    await waitFor(() => expect(lidas()).toHaveLength(2));
+    trocar('a');
+    await screen.findByTestId('selo-situacao-receita');
+    expect(lidas()).toEqual([{ superficie: 'pedido', estado: 'irregular' }, { superficie: 'pedido', estado: 'ativa' }]);
+    expect(track.mock.calls.filter((c) => c[0] === 'cliente.situacao_receita_irregular_exibida')).toHaveLength(1);
   });
 
   it('troca A→B com B lento: o selo de A some na hora e não aparece no B', async () => {
