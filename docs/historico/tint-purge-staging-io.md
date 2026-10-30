@@ -56,3 +56,21 @@ A medição de 27/10 (12:52–13:07 UTC) deu queda de 96% na `tint_staging_formu
   - na 4ª rodada, **LIBERA**, com 1 P2 aceito: snapshot da 0.2.5 aceito sem avançar o state.
 - **Falsificação:** 20 sabotagens, todas vermelhas, com controle verde antes e depois.
 - **Lição:** um cache que muda de semântica precisa invalidar o estado que a semântica antiga deixou. Bumpar a versão não basta quando a versão velha pode voltar a rodar (downgrade, rollback automático) e preserva o número da versão nova. A âncora certa é um fato que as duas versões escrevem: o `LastKeysSnapshot` do state.
+
+## 2026-10-30 — índices em `tint_sync_runs` (#3419): a promoção para de varrer a tabela
+
+- **Quem varria:** o próprio `tint_promote_sync_run`, com 1 seq scan dos 87 MB por promoção no somatório do cap de limpezas em 24h (`account`, `store_code`, `COALESCE(promovido_em, started_at)`, `metadata ? 'receitas_limpas'`). Não era tela nem cron. A prova veio dos contadores desde o restart das 19:57: o `seq_scan` de `tint_sync_runs` (120) era igual aos scans de `tint_staging_bases`/`_produtos`/`_embalagens` e aos `idx_scan` de `idx_tint_sync_runs_status`, que acontecem uma vez por promoção.
+- **Mudança:** `20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql`, aplicada pela sessão via `db:aplicar` (tentativa #770, sha `ac6f49cb…`) e validada por psql-ro. Ela cria três índices (o parcial do cap, `started_at` e `(account, sync_type, started_at)` para as telas) e roda `ANALYZE`. Nenhuma lógica mudou. Na prod, o plano genérico do cap passou a ser Index Scan com 541 buffers, contra as 11.077 páginas da tabela. Prova PG17: `db/test-tint-sync-runs-indices.sh`.
+- **Delta no small** (janelas limpas de 15 min, com um amostrador de `pg_stat_activity` para consultas `tint_*` de outras sessões `claude_ro`; ele não pegou nenhuma):
+
+  | | antes (30/10 00:16–00:31 UTC, 5 promoções) | depois (03:42–03:57 UTC, 10 promoções) |
+  |---|---|---|
+  | `tint_sync_runs` seq scans | 5 | 0 |
+  | `tint_sync_runs` lógico | 456 MB (91 MB/promoção) | 89 MB (8,9 MB/promoção) |
+  | `tint_staging_skus` lógico | 102 MB (20 MB/promoção) | 206 MB (21 MB/promoção) |
+  | `tint_staging_corantes` lógico | 324 MB (65 MB/promoção) | 662 MB (66 MB/promoção) |
+  | banco: lido do disco · hit | 513 MB · 96,11% | 5,4 MB · 99,91% |
+
+  Os 513 MB do "antes" foram quase todos (430 MB) **1 seq scan de `tint_formulas`** de origem não identificada. Não veio de cron (`cron.job_run_details` da janela) nem do snapshot de chaves (aplicado 1×/dia às 10:06), e foi o único desde 19:57. Fica como pista, não como causa.
+- **O que sobra para o micro** (por promoção, medido): o "último por chave" do staging lê todas as versões retidas, porque cada run de catálogo reenvia o catálogo inteiro (224 SKUs e 57 bases por run, ~2.190 runs em 30 dias). Os números: `skus` ~20 MB, `corantes` ~66 MB (heap de 11 MB relido) e `bases` ~6 MB. Índice não reduz as páginas tocadas. As saídas são reescrever com `LATERAL … LIMIT 1` por chave (money-path: Codex mais falsificação) ou encurtar a retenção do superseded. Também segue em aberto a origem dos 306 MB de `tint_sync_errors` e dos 199 MB de `tint_receita_versoes` lidos no micro: nenhuma função os lê, e eles tiveram 0 scans desde 19:57, então tela ou ANALYZE pós-restart são os suspeitos.
+- **Lição: no porte atual, o critério certo é o volume LÓGICO por promoção, não o MB do disco.** No small, o disco fica perto de zero antes e depois porque tudo cabe no cache. O que prevê o micro é quanto cada promoção toca: o heap inteiro de 87 MB contra 541 buffers.
