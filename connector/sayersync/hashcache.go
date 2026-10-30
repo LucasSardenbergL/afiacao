@@ -211,7 +211,11 @@ type HashCache struct {
 	// depois de podar o cache (podarEEnviarKeysSnapshot). Diferente do state.json ⇒
 	// houve snapshot sem poda (≤0.2.5, inclusive num downgrade) ou ele se perdeu.
 	SnapshotPodado string `json:"snapshot_podado,omitempty"`
-	dirty          bool   // não serializado; true = há mudança a persistir
+	// PodaConfirmada distingue "alinhado com state sem snapshot" de "marca ausente"
+	// (cache da 0.2.5): sem ela, marca vazia == LastKeysSnapshot vazio (state perdido)
+	// passaria como alinhado (Codex P1, 3ª rodada).
+	PodaConfirmada bool `json:"poda_confirmada,omitempty"`
+	dirty          bool // não serializado; true = há mudança a persistir
 }
 
 // newHashCache cria um cache vazio (= full sync na primeira execução).
@@ -303,8 +307,13 @@ func loadHashCacheFrom(path string) (*HashCache, error) {
 // delta, ela seria pulada se voltasse idêntica. O namespace padrão ("false|") fica:
 // sempre filtrou por hash (o resíduo dele é pré-existente) e descartá-lo reenviaria
 // ~490 mil linhas. Custo: as personalizadas reenviam uma vez.
+//
+// Resíduo aceito (Codex P2): snapshot da 0.2.5 aceito pelo servidor sem que ela
+// avance o LastKeysSnapshot (morreu antes do SaveState, perdeu a resposta) passa
+// despercebido. Exige a 0.2.5 rodando de novo — downgrade manual ou rollback do .prev
+// (recovery.go) — e a fórmula sumir e voltar idêntica antes do próximo snapshot podado.
 func alinharCacheAoSnapshot(hc *HashCache, ultimoSnapshot string) {
-	if hc.SnapshotPodado == ultimoSnapshot {
+	if hc.PodaConfirmada && hc.SnapshotPodado == ultimoSnapshot {
 		return
 	}
 	descartadas := 0
@@ -317,6 +326,7 @@ func alinharCacheAoSnapshot(hc *HashCache, ultimoSnapshot string) {
 	logger.Warnf("hash-cache: último keys-snapshot (%q) não foi podado por esta versão (cache: %q) — %d hash(es) de personalizada descartado(s), reenviam uma vez",
 		ultimoSnapshot, hc.SnapshotPodado, descartadas)
 	hc.SnapshotPodado = ultimoSnapshot
+	hc.PodaConfirmada = true
 	hc.dirty = true
 }
 

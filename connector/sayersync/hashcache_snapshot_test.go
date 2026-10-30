@@ -265,14 +265,24 @@ func TestSnapshot_saveFalhaNaoEnvia(t *testing.T) {
 func TestAlinhar_snapshotNaoPodadoDescartaPersonalizada(t *testing.T) {
 	person := keyDe("CORA", "PA", "BA", "EA", true)
 	padrao := keyDe("CORB", "PB", "BB", "EB", false)
-	for _, marca := range []string{"", "2026-10-27T10:00:00Z"} { // cache da 0.2.5 (sem marca) e downgrade-e-volta
+	casos := []struct {
+		marca, state string
+		confirmada   bool
+	}{
+		{"", "2026-10-28T10:00:00Z", false},                    // cache da 0.2.5 (sem marca)
+		{"2026-10-27T10:00:00Z", "2026-10-28T10:00:00Z", true}, // downgrade e volta
+		{"", "", false}, // 0.2.5 + state perdido (Codex P1, 3ª rodada)
+	}
+	for _, c := range casos {
+		marca := c.marca
 		hc := newHashCache()
 		hc.SnapshotPodado = marca
+		hc.PodaConfirmada = c.confirmada
 		hc.Set(person, "h1")
 		hc.Set(padrao, "h2")
 		hc.clearDirty()
 
-		alinharCacheAoSnapshot(hc, "2026-10-28T10:00:00Z")
+		alinharCacheAoSnapshot(hc, c.state)
 
 		if _, ok := hc.Get(person); ok {
 			t.Fatalf("marca %q: manteve hash de personalizada", marca)
@@ -280,7 +290,7 @@ func TestAlinhar_snapshotNaoPodadoDescartaPersonalizada(t *testing.T) {
 		if h, ok := hc.Get(padrao); !ok || h != "h2" {
 			t.Fatalf("marca %q: perdeu hash de padrão", marca)
 		}
-		if hc.SnapshotPodado != "2026-10-28T10:00:00Z" || !hc.Dirty() {
+		if hc.SnapshotPodado != c.state || !hc.PodaConfirmada || !hc.Dirty() {
 			t.Fatalf("marca %q: não alinhou (marca=%q dirty=%v)", marca, hc.SnapshotPodado, hc.Dirty())
 		}
 	}
@@ -292,6 +302,7 @@ func TestAlinhar_snapshotPodadoNaoMexe(t *testing.T) {
 	for _, marca := range []string{"2026-10-28T10:00:00Z", ""} {
 		hc := newHashCache()
 		hc.SnapshotPodado = marca
+		hc.PodaConfirmada = true
 		hc.Set(person, "h1")
 		hc.clearDirty()
 		alinharCacheAoSnapshot(hc, marca)
@@ -356,6 +367,7 @@ func TestDowngradeEVolta_personalizadaIdenticaReenvia(t *testing.T) {
 
 	hc := newHashCache()
 	hc.SnapshotPodado = st.LastKeysSnapshot
+	hc.PodaConfirmada = true
 	if err := syncFormulas(ctx, ex, cli, st, make(map[string]int), rm, true, newLookups(), hc); err != nil {
 		t.Fatal(err)
 	}
@@ -414,5 +426,49 @@ func TestRunCycle_alinhaCacheAoSnapshotDoState(t *testing.T) {
 	}
 	if _, ok := disco.Get(padrao); !ok {
 		t.Fatal("RunCycle descartou hash de padrão")
+	}
+}
+
+// Codex P1 (3ª rodada), no RunCycle real: cache da 0.2.5 (sem marca, sem
+// confirmação) e state.json ausente. A personalizada volta idêntica — com o hash
+// EXATO no cache — e tem que ser reenviada. No 2º ciclo, já alinhado, não reenvia.
+func TestRunCycle_cacheLegadoSemStateReenviaUmaVez(t *testing.T) {
+	c := prepararCiclo(t, schemaComVendasItem())
+	linha := fxRow("CORA", "PA", "BA", "EA", []map[string]any{item("C1", 1, 1.0)})
+	c.ex.rows["formulaperson"] = []map[string]any{linha}
+	c.ex.formulas = []formulaKey{{CorID: "CORA", CodProduto: "PA", IDBase: "BA", IDEmb: "EA", Personalizada: true}} // o snapshot a vê
+	m := mapFormula(linha, true, newLookups())
+	if m == nil {
+		t.Fatal("mapFormula descartou a linha")
+	}
+	hc := &HashCache{Version: 1, Formulas: map[string]string{formulaCacheKey(m): formulaContentHash(m)}}
+	hc.dirty = true
+	if err := SaveHashCache(hc); err != nil {
+		t.Fatal(err)
+	}
+
+	enviosDaPersonalizada := func() int {
+		n := 0
+		for _, r := range c.srv.requests {
+			if r.Path != "/formulas" {
+				continue
+			}
+			lista, _ := r.Body["formulas"].([]any)
+			for _, f := range lista {
+				if fm, _ := f.(map[string]any); fm["cor_id"] == "CORA" && fm["personalizada"] == true {
+					n++
+				}
+			}
+		}
+		return n
+	}
+
+	RunCycle(context.Background(), c.cfg)
+	if got := enviosDaPersonalizada(); got != 1 {
+		t.Fatalf("1º ciclo: personalizada com hash legado enviada %d vez(es), esperava 1", got)
+	}
+	RunCycle(context.Background(), c.cfg)
+	if got := enviosDaPersonalizada(); got != 1 {
+		t.Fatalf("2º ciclo reenviou a personalizada (loop): total %d, esperava 1", got)
 	}
 }
