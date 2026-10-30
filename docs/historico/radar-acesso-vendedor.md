@@ -27,6 +27,17 @@
   Assumir/Renovar/Liberar, aviso de telefone e **modo discagem** (telefone grande, Ligar, desfechos e Próximo num
   painel); "Criar tarefa" e "Conferi no Omie" só para gestor; conflito do lead lido pela RPC (a tabela segue gestor).
 
+## Deploy (2026-10-30)
+
+- **Migration aplicada** pelo founder via `bun run db:aplicar` (tentativa **#768**, sha256 `16000ed1…`, a mesma do ensaio
+  contra prod). O apply pela sessão foi recusado pelo classificador de permissões e não foi contornado.
+- **2ª testemunha (psql-ro, 00:2x UTC):** a pós-condição inteira vale em prod (`VALIDADO … OK`), com o marcador de fim. O A3
+  (invocar `cap_radar_prospectar(NULL)`) troca para leitura do corpo, porque o `claude_ro` sem EXECUTE é o REVOKE funcionando.
+  Os 8 corpos têm o md5 esperado.
+- **Contrato:** `LACUNAS_POR_GRUPO` renovado (`cap_carteira_ler` 22 → 20, novo grupo `cap_radar_prospectar` com 4
+  tabelas). As 8 RPCs reescritas entram no baseline do `deriva:corpo:prod` como `EDICAO_MANUAL` (o `alvosDePatch` não lê o
+  laço). Carimbo regravado. Sobra 1 achado alheio: o grupo `fin_*` cresceu de 41 para 43 por outra entrega.
+
 ## O que o Codex pegou no desenho (max, 692 s) e o que foi feito
 
 | Achado | Decisão |
