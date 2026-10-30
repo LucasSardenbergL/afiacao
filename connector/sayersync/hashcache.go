@@ -187,7 +187,10 @@ func writeItens(b *strings.Builder, v any) {
 // ─────────────────────────────────────────────────────────────
 
 // hashCacheVersion é a versão do formato do hashes.json (permite migração futura).
-const hashCacheVersion = 1
+// v2: o filtro por hash passou a valer em delta, com a poda pelo keys-snapshot. Um
+// cache v1 (≤0.2.5) não satisfaz a invariante da poda — o snapshot antigo desativava
+// fórmula sem tirá-la do cache — e perde os hashes de personalizada na carga (Codex P1).
+const hashCacheVersion = 2
 
 // HashCache guarda o hash de conteúdo de cada fórmula JÁ enviada com sucesso ao
 // staging, indexado por formulaCacheKey. Persistido em hashes.json ao lado do exe.
@@ -285,10 +288,31 @@ func loadHashCacheFrom(path string) (*HashCache, error) {
 	if hc.Formulas == nil {
 		hc.Formulas = make(map[string]string)
 	}
-	if hc.Version == 0 {
-		hc.Version = hashCacheVersion
+	if hc.Version < 2 {
+		migrarParaPodaPeloSnapshot(&hc)
 	}
 	return &hc, nil
+}
+
+// migrarParaPodaPeloSnapshot leva um cache v1 (ou sem versão) para v2 descartando os
+// hashes de personalizada ("true|"). No v1 a formulaperson rodava em delta com o
+// filtro desligado e nunca era podada: o snapshot desativava a fórmula no servidor
+// e o hash ficava. Com o filtro ligado em delta, esse hash pularia a fórmula se ela
+// voltasse idêntica. O namespace padrão ("false|") fica: rodava em full-scan com a
+// poda por extração a cada ciclo, e descartá-lo reenviaria ~490 mil fórmulas.
+// Custo: as personalizadas reenviam uma vez, no próximo full-scan delas.
+func migrarParaPodaPeloSnapshot(hc *HashCache) {
+	descartadas := 0
+	for key := range hc.Formulas {
+		if strings.HasPrefix(key, "true|") {
+			delete(hc.Formulas, key)
+			descartadas++
+		}
+	}
+	logger.Warnf("hashes.json v%d → v%d: %d hash(es) de personalizada descartado(s) (reenviam uma vez)",
+		hc.Version, hashCacheVersion, descartadas)
+	hc.Version = hashCacheVersion
+	hc.dirty = true
 }
 
 // SaveHashCache persiste o cache em hashes.json ao lado do executável.

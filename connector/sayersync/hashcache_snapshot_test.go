@@ -258,3 +258,81 @@ func TestSnapshot_saveFalhaNaoEnvia(t *testing.T) {
 		t.Fatalf("snapshot saiu (%d POST) com a poda fora do disco", srv.snapshots)
 	}
 }
+
+// Codex P1 (revisão do 2da786a9): um hashes.json v1 (≤0.2.5) não satisfaz a invariante
+// da poda — o snapshot antigo desativava a personalizada sem tirá-la do cache. A carga
+// descarta os hashes de personalizada e mantém os de padrão.
+func TestHashCache_v1DescartaPersonalizada(t *testing.T) {
+	person := keyDe("CORA", "PA", "BA", "EA", true)
+	padrao := keyDe("CORB", "PB", "BB", "EB", false)
+	for _, versao := range []string{`"version":1,`, ``} { // v1 explícito e arquivo sem versão
+		path := filepath.Join(t.TempDir(), "hashes.json")
+		raw := `{` + versao + `"formulas":{"` + person + `":"h1","` + padrao + `":"h2"}}`
+		if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+			t.Fatal(err)
+		}
+		hc, err := loadHashCacheFrom(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := hc.Get(person); ok {
+			t.Fatalf("cache %q manteve hash de personalizada", versao)
+		}
+		if h, ok := hc.Get(padrao); !ok || h != "h2" {
+			t.Fatalf("cache %q perdeu o hash de padrão", versao)
+		}
+		if hc.Version != hashCacheVersion || !hc.Dirty() {
+			t.Fatalf("cache %q não migrou (version=%d dirty=%v)", versao, hc.Version, hc.Dirty())
+		}
+	}
+}
+
+// CONTROLE: cache já v2 carrega intacto.
+func TestHashCache_v2CarregaIntacto(t *testing.T) {
+	person := keyDe("CORA", "PA", "BA", "EA", true)
+	path := filepath.Join(t.TempDir(), "hashes.json")
+	raw := `{"version":2,"formulas":{"` + person + `":"h1"}}`
+	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	hc, err := loadHashCacheFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := hc.Get(person); !ok || hc.Dirty() {
+		t.Fatalf("cache v2 mexido na carga (presente=%v dirty=%v)", ok, hc.Dirty())
+	}
+}
+
+// O cenário do Codex ponta a ponta: a 0.2.5 cacheou a personalizada, o snapshot dela
+// a desativou no servidor sem podar o cache, e ela volta idêntica no 1º ciclo da
+// versão nova. Tem que ser reenviada.
+func TestUpgrade_cacheV1PersonalizadaVoltaIdenticaReenvia(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cli := newTestClient(ts.URL)
+	rm := newFakeMapping([]string{"formulaperson"}, FormulaShapeFlat)
+	st := &State{HWM: map[string]string{"formulaperson": "2026-10-27T13:00:00Z"}}
+	linha := fxRow("CORA", "PA", "BA", "EA", []map[string]any{item("C1", 1, 1.0)})
+	ex := &fakeExtractor{rows: map[string][]map[string]any{"formulaperson": {linha}}}
+
+	m := mapFormula(linha, true, newLookups())
+	path := filepath.Join(t.TempDir(), "hashes.json")
+	raw, _ := json.Marshal(map[string]any{"version": 1, "formulas": map[string]string{
+		formulaCacheKey(m): formulaContentHash(m), // hash EXATO do conteúdo que volta
+	}})
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	hc, err := loadHashCacheFrom(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncFormulas(context.Background(), ex, cli, st, make(map[string]int), rm, true, newLookups(), hc); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.countPathPrefix("/formulas"); got != 1 {
+		t.Fatalf("personalizada com hash herdado da v1 foi pulada (POSTs /formulas=%d, esperava 1)", got)
+	}
+}
