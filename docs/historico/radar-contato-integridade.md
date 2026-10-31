@@ -78,7 +78,8 @@ ausente (banco anterior) → `null` → "Desfeito", como antes.
 - Contatos anteriores à migration não têm retrato nem são donos: desfazer um deles (5 min) remove o registro sem
   restaurar o status. Havia 5 contatos humanos em prod.
 - `radar_aplicar_situacao` insere o contato ANTES de travar a linha e confere só os totais (Codex P1, herdado). Com a
-  autoria explícita essa premissa sai do desfazer; a correspondência por CNPJ no cron fica como follow-up.
+  autoria explícita essa premissa sai do desfazer; a correspondência por CNPJ no cron fica como follow-up (feito:
+  [radar-situacao-contato-por-cnpj.md](radar-situacao-contato-por-cnpj.md)).
 
 ## Deploy (2026-10-31)
 
@@ -107,6 +108,7 @@ possível registrar". O banco recusa do mesmo jeito; só o texto do aviso é pio
 ## Follow-ups
 
 - ~~`radar_kpis.virou_cliente_mes` pela data imutável `omie_cadastrado_em`~~ → [radar-kpis-conversao.md](radar-kpis-conversao.md).
-- `radar_aplicar_situacao`: correspondência contato↔estado por CNPJ, não só pelos totais (Codex P1, herdado).
+- ~~`radar_aplicar_situacao`: correspondência contato↔estado por CNPJ, não só pelos totais (Codex P1, herdado)~~ →
+  [radar-situacao-contato-por-cnpj.md](radar-situacao-contato-por-cnpj.md).
 - ~~Regravar `bun run authz:carimbo:gravar` depois do merge~~: feito pelo #3442 (carimbo de 13:10 UTC, já sem o
   `PATCH_NAO_CONCILIADO` transitório de `registrar_contato_radar`).
