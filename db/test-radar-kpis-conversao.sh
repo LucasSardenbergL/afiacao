@@ -184,7 +184,7 @@ sabotagem() {
     conta_lookup)  cv_sabotar "$K" "AND c.origem = 'incluir'" "" ;;
     sem_status)    cv_sabotar "$K" "WHERE e.prospeccao_status = 'virou_cliente'" "WHERE true" ;;
     outro_codigo)  cv_sabotar "$K" "AND c.codigo_cliente = e.omie_codigo_cliente" "" ;;
-    fuso)          cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc('month', now(), 'America/Sao_Paulo')" "e.omie_cadastrado_em >= date_trunc('month', now())" ;;
+    fuso)          cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc('month', now(), 'America/Sao_Paulo')" "e.omie_cadastrado_em >= date_trunc('month', now(), 'UTC')" ;;
     limite_aberto) cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc" "e.omie_cadastrado_em > date_trunc" ;;
     sem_teto)      cv_sabotar "$K" "interval '1 month', 'America/Sao_Paulo')" "interval '100 years', 'America/Sao_Paulo')" ;;
     join_multiplica) cv_sabotar "$K" "FROM public.radar_empresas e" "FROM public.radar_empresas e JOIN public.omie_cliente_confirmacoes cj ON cj.documento = e.cnpj AND cj.codigo_cliente = e.omie_codigo_cliente AND cj.origem = 'incluir'" ;;
