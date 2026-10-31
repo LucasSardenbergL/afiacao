@@ -32,3 +32,14 @@ Outras medições que entram no desenho:
 ## Item 5 — corante na demanda (Fase 2): critério NÃO atendido, parado aqui
 
 `db/consultas/reconciliacao-corante-fase2.sql` rodada em prod (psql-ro, 2026-10-31): **`VEREDITO = nao_medido`** — 0 WP elegíveis (recebido 0 L, retirado 0,00 L e dosado 0,000 L em todos os 14 WP desde a linha de base de 27/10). Critério 1 (≥ 90 d de cobertura contínua desde 2026-10-27) só pode fechar a partir de **2027-01-25**; critério 3 (≥ 1 sinal de uso da aba): `analytics_outbox` tem **0** `reposicao.corantes_aberta`. Nada de `v_sku_demanda_efetiva` muda nesta leva. Quando medir de novo: a mesma consulta + `SELECT count(*) FROM analytics_outbox WHERE evento = 'reposicao.corantes_aberta'` (lembrando a purga de 7 d — a contagem durável é no PostHog via HogQL).
+
+### Linha de base da prateleira (aplicada 2026-10-31, `db:aplicar` tentativa #809)
+
+| medida | valor |
+|---|---|
+| SKUs Oben com NF-e de venda nos 90 d | 361 (R$ 1.163.098) |
+| sem saldo nas duas fontes frescas | 22 (R$ 38.307) → 7,3 % dos SKUs lidos · 3,5 % do valor |
+| sem leitura (nenhuma fonte fresca ≤ 48 h) | 58 (R$ 74.997) → 16,1 % — **fora do denominador**, não "zero" |
+
+Lição que o teste de carga cobrou: 1 vaga da `filaCiclo` com 2 leituras dentro fura o teto de 2 RPCs em voo
+(`CicloTab.carga.test` mede o pico). Cada leitura toma a própria vaga.
