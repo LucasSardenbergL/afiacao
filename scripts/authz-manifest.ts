@@ -613,6 +613,15 @@ export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
   // `bun run authz:funcoes:prod`, que MEDE o EXECUTE real de prod. Ver
   // docs/historico/db-aplicar-colagem-manual-vira-comando.md.
   'public.aplicar_sql',
+  // Sensor de ruptura da Oben (2026-10-31, migration 20261031200000). Lê `inventory_position`
+  // ('vendas') e `sku_estoque_atual` ('OBEN') como DEFINER para dizer se o item do PV importado
+  // do Omie era atendível no instante da importação. NÃO é customer-facing nem staff-facing: só o
+  // trigger de `order_items` (AFTER INSERT, fail-open) e a função da prateleira diária (pg_cron
+  // como postgres) a chamam. Fecha por PRIVILÉGIO — `REVOKE ALL ... FROM PUBLIC, anon,
+  // authenticated, service_role` na migration, postcondição P5 e sabotagem na prova
+  // db/test-reposicao-ruptura-sensor.sh; medido em prod 2026-10-31 (psql-ro): anon/authenticated/
+  // service_role/public = false, owner postgres. Se um dia ganhar GRANT, PRECISA de gate.
+  'public._reposicao_ruptura_saldo_oben',
 ]);
 
 /**
