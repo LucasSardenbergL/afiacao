@@ -831,6 +831,10 @@ db/test-venda-lista-acesso.sh              38  falsificar=11
 # writer (RPC) que confere pedido↔conta↔cliente no servidor, relê o vencido, deduplica por (pedido, conta) e grava
 # `venda.prazo_sugerido` no outbox com chave = id da decisão; RLS: vendedora só lê a sua, master tudo.
 db/test-venda-prazo-decisao.sh             60  falsificar=15
+# Fila de cobrança com estado e dona + coorte congelada por TÍTULO (20261031210000, Frente B Oben PME/PMR PR2): selagem única por
+# empresa a partir da view real; fila visível por dona ATUAL/gestão; writer único de caso/promessa/evento; contato não muda
+# estado; quitado só com evidência positiva; `cobranca.estado_mudou` só em mudança de estado; dona NULL não é fail-open.
+db/test-cobranca-fila.sh                   58  falsificar=15
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o

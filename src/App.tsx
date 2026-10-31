@@ -158,6 +158,7 @@ const TintCatalogo = lazy(() => import("./pages/TintCatalogo"));
 const TintIntegracao = lazy(() => import("./pages/TintIntegracao"));
 const PerformanceHub = lazy(() => import("./pages/PerformanceHub"));
 const VendasFerramentas = lazy(() => import("./pages/VendasFerramentas"));
+const Cobranca = lazy(() => import("./pages/Cobranca"));
 const GestaoAdmin = lazy(() => import("./pages/GestaoAdmin"));
 const GestaoGovernanca = lazy(() => import("./pages/GestaoGovernanca"));
 const SaudeDados = lazy(() => import("./pages/SaudeDados"));
@@ -405,6 +406,7 @@ const App = () => {
                 <Route path="tintometrico/integracao" element={<TintIntegracao />} />
                 <Route path="performance" element={<PerformanceHub />} />
                 <Route path="vendas/ferramentas" element={<VendasFerramentas />} />
+                <Route path="cobranca" element={<Cobranca />} />
                 <Route path="gestao/admin" element={<GestaoAdmin />} />
                 <Route path="gestao/governanca" element={<GestaoGovernanca />} />
                 <Route path="gestao/saude-dados" element={<SaudeDados />} />
