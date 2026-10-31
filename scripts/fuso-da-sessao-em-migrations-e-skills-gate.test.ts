@@ -36,7 +36,10 @@ async function analisarCedendo(arquivos: readonly Arquivo[], corpos?: ReadonlyMa
 const FIX = 'supabase/migrations/20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql';
 // Migrations POSTERIORES ao FIX que redefinem uma das funções dele já com o fuso certo: o contrafactual
 // tira as duas, senão a sucessora cobre o corpo morto e nada ressuscita.
-const SUCESSORAS_DO_FIX = ['supabase/migrations/20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql'];
+const SUCESSORAS_DO_FIX = [
+  'supabase/migrations/20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql',
+  'supabase/migrations/20261031142000_radar_kpis_conversao.sql',
+];
 const RADAR = 'supabase/migrations/20260612130000_radar_rpcs_contato.sql';
 const VENDAS = '.claude/skills/bi-colacor/references/queries-vendas.md';
 const CAIXA = '.claude/skills/cfo-colacor/assets/sql/01-caixa-13-semanas.sql';

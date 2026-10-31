@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 723
+-- Total de custom migrations: 727
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -787,7 +787,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
   ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql'),
   ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql'),
-  ('20261031111000', 'radar_contato_integridade', '20261031111000_radar_contato_integridade.sql')
+  ('20261031111000', 'radar_contato_integridade', '20261031111000_radar_contato_integridade.sql'),
+  ('20261031130000', 'raio_x_correcoes_pos_revisao', '20261031130000_raio_x_correcoes_pos_revisao.sql'),
+  ('20261031130100', 'analytics_ledger_raio_x', '20261031130100_analytics_ledger_raio_x.sql'),
+  ('20261031141053', 'nao_vinculados_cron_colacor', '20261031141053_nao_vinculados_cron_colacor.sql'),
+  ('20261031142000', 'radar_kpis_conversao', '20261031142000_radar_kpis_conversao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3117,7 +3121,15 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_contato_integridade', 'function', 'public', 'registrar_contato_radar', ''),
   ('radar_contato_integridade', 'function', 'public', 'desfazer_contato_radar', ''),
   ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_upd', 'radar_empresas'),
-  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas')
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas'),
+  ('raio_x_correcoes_pos_revisao', 'function', 'public', 'raio_x_congelar_coorte', ''),
+  ('raio_x_correcoes_pos_revisao', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_correcoes_pos_revisao', 'table', 'public', 'raio_x_coorte_top', ''),
+  ('raio_x_correcoes_pos_revisao', 'rls_policy', 'public', 'raio_x_coorte_top_select_custo', 'raio_x_coorte_top'),
+  ('analytics_ledger_raio_x', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor-sc', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
+  ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5495,7 +5507,15 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_contato_integridade', 'function', 'public', 'registrar_contato_radar', ''),
   ('radar_contato_integridade', 'function', 'public', 'desfazer_contato_radar', ''),
   ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_upd', 'radar_empresas'),
-  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas')
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas'),
+  ('raio_x_correcoes_pos_revisao', 'function', 'public', 'raio_x_congelar_coorte', ''),
+  ('raio_x_correcoes_pos_revisao', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_correcoes_pos_revisao', 'table', 'public', 'raio_x_coorte_top', ''),
+  ('raio_x_correcoes_pos_revisao', 'rls_policy', 'public', 'raio_x_coorte_top_select_custo', 'raio_x_coorte_top'),
+  ('analytics_ledger_raio_x', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor-sc', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
+  ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', '')
 )
 SELECT
   e.migration,
@@ -5523,7 +5543,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 158.
+-- Funções redefinidas com corpo extraível: 159.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5865,6 +5885,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'desfazer_contato_radar', 2, '20261031111000_radar_contato_integridade.sql', '567058be0caa267a0f53df59afb5f11f'),
   ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
   ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
+  ('public', 'radar_kpis', 3, '20261031142000_radar_kpis_conversao.sql', '76011de6347fde43f2101a4329ecfd86'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
   ('public', 'kbv_block_mutation', 2, '20260613180000_kb_hardening_codex.sql', 'd4041ea6ffb7fd5b146e56a674cbe648'),
   ('public', 'aprovar_versao_boletim', 1, '20260613150000_kb_spec_versions_faseA.sql', 'f7e424f89058376c964730041ef20b99'),
@@ -6052,6 +6073,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 5, '20261020202720_analytics_ledger_venda_cliente.sql', 'e7e3ed81c939ba16a8fecb0c0619b7da'),
   ('public', 'analytics_ledger_registrar', 6, '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql', '743d4d9478fac9a98ea1907778b905ee'),
   ('public', 'analytics_ledger_registrar', 7, '20261028100200_analytics_ledger_corantes.sql', '1007fd19696f6fcd8c8e5029a8f80de9'),
+  ('public', 'analytics_ledger_registrar', 8, '20261031130100_analytics_ledger_raio_x.sql', '4fa14fb6b6d08e1b81be776ebe9a9b88'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
@@ -6107,6 +6129,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_finish_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8ab082334242f7d7c14afcfdc20ffa75'),
   ('public', 'vendas_sync_release_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '34c7537d07424efc870fdf474ef180ee'),
   ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa'),
+  ('public', 'raio_x_medicao', 1, '20261016120000_raio_x_estoque_parado.sql', '2be8b35964978fd3370cbbf220e31415'),
+  ('public', 'raio_x_medicao', 2, '20261031130000_raio_x_correcoes_pos_revisao.sql', '7769250e55f59465f904be43eef4d6dc'),
   ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),

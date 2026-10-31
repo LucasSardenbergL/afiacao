@@ -718,6 +718,12 @@ db/test-radar-acesso-vendedor.sh     81  falsificar=16
 # antiga (status = ação), sem tirar da cadeia, cadeia sem dono, sem motivo, sem releitura, janela larga, conversão
 # desfeita, vendedor tira cliente, re-marcar conta, dedupe sem dono, desfazer e registrar sem gate.
 db/test-radar-contato-integridade.sh 43  falsificar=19
+# Radar: o card "Viraram cliente (mês)" (radar_kpis.virou_cliente_mes) conta quem AINDA está em virou_cliente, foi
+# cadastrado no mês de SP pela data imutável omie_cadastrado_em e foi CRIADO pelo Radar no Omie (ledger origem
+# 'incluir', mesmo CNPJ e código). Tirar e devolver num mês novo não reconta; vínculo a cliente que já existia não conta.
+# Mês com piso e teto em SP; duas linhas 'incluir' iguais contam uma vez. 10 sabotagens: carimbo móvel, lookup conta,
+# sem status, outro código, fuso UTC, limite aberto, sem teto, JOIN multiplica, sem gate, anon com EXECUTE.
+db/test-radar-kpis-conversao.sh      19  falsificar=10
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

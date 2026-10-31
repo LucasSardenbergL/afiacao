@@ -51,10 +51,41 @@ clientes (0,53%)**, e 5.307 municípios sem nenhum cliente. **2.676 dos 2.686 cl
 Joinville tem 0 em 3.100.
 
 A causa é a fonte, não o mercado: `omie_clientes_nao_vinculados` só tem `empresa = 'oben'` (10.124 em
-MG, 7 em SC), e nenhum CNPJ de SC dessa fonte está no radar. Os clientes da Colacor SC não entram no
-`ja_cliente`. Por isso a legenda do mapa avisa que, fora de MG, 0% pode ser cadastro ausente, não
-mercado virgem. Ampliar a fonte do `ja_cliente` para o Omie da Colacor é trabalho de outra entrega
-(mexe em `radar_recruzar_ja_cliente`).
+MG, 7 em SC), e nenhum CNPJ de SC dessa fonte está no radar. Por isso a legenda do mapa avisa que, fora
+de MG, 0% pode ser cadastro ausente, não mercado virgem.
+
+### Correção (2026-10-31): a Colacor SC já entrava; o buraco é o cliente Colacor sem usuário
+
+A hipótese "os clientes da Colacor SC não entram no `ja_cliente`" estava errada. Medido em prod
+(psql-ro, 2026-10-31):
+
+- `radar_recruzar_ja_cliente` (e `radar_docs_clientes`) leem `profiles.document` ∪
+  `omie_clientes_nao_vinculados.cnpj_cpf`, **sem filtro de empresa**. Os vinculados, de qualquer conta,
+  já entram por `profiles`: dos 5.296 documentos do mapa `colacor_sc` (`omie_customer_account_map`),
+  **0** ficam fora dessa fonte.
+- "Colacor SC" é o CNPJ catarinense do grupo (veículo fiscal), não uma carteira em Santa Catarina. UF do
+  endereço dos clientes mapeados em `colacor_sc`: MG 4.975 · SP 202 · RS 35 · PR 26 · SC 24 · ES 9. A
+  Oben dá MG 5.286 · SC 26. Os 24 clientes `colacor_sc` com endereço em SC têm 24 CNPJs e **nenhum**
+  está em `radar_empresas`: estão fora do CNAE-alvo.
+- Cruzando com o radar cada fonte candidata (mapa das 3 contas, `customer_canonical_alias`,
+  `cliente_grupo_membros`, `omie_cliente_confirmacoes`, `profiles`, não-vinculados): **0 empresas
+  novas** em qualquer UF. Mudar a função SQL não mudaria nada.
+
+O que nunca era lido: o cliente do Omie da Colacor (contas `servicos` e `colacor_vendas`) **sem usuário
+nenhum**. O `start_nao_vinculados` da `omie-analytics-sync` recusava toda conta fora de `vendas`
+("v1: só Oben"). A entrega:
+
+- edge v1.15-nao-vinculados-tres-contas: `start_nao_vinculados` aceita as 3 contas. O `linked` já era
+  escopado à conta do run (proof fresca por conta), que é a pré-condição para abrir;
+- `supabase/migrations/20261031141053_nao_vinculados_cron_colacor.sql`: jobs diários para `servicos`
+  (08:40Z) e `colacor_vendas` (08:50Z), depois do da Oben (08:30Z). O recruzamento diário do radar
+  (06:15Z) pega as linhas no dia seguinte;
+- a tela `/clientes-nao-vinculados` continua lendo só `empresa='oben'`: as linhas novas servem ao
+  radar, não à tela.
+
+Expectativa honesta: a carteira conhecida da Colacor tem o perfil da Oben (MG), então o mais provável é
+o `ja_cliente` crescer em MG, não aparecer em SC. O número do antes e depois por UF vai no diário quando o
+primeiro snapshot Colacor rodar.
 
 ## Custo
 
