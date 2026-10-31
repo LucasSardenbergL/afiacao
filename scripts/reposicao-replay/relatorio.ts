@@ -86,6 +86,8 @@ export interface Rodada {
     skusCompraReal: string[];
     /** R45: SKUs valorados pelo nCMC da posição Omie datada. */
     skusCmcOmie: string[];
+    /** R53: SKUs sem saldo na abertura que só existem a partir do 1º evento real (recebimento ou venda); desde null = nunca. */
+    existenciaTardia: { sku: string; desde: string | null; via: 'recebimento' | 'venda' | null }[];
     excluidosSimulacao: { sku: string; motivo: string }[];
     linhasIgnoradas: number;
   } | null;
@@ -479,6 +481,8 @@ export function montarRelatorio(r: Rodada): string {
   s(`Fora do contrato de unidade/dados: ${[...porMotivo].map(([m, n]) => `${m} ${n}`).join(' · ') || 'nenhum'}.`);
   s(`Demanda via insumo (R16): ${r.coorte.excluidosInsumo.map((e) => `${e.sku} (${pct(e.shareInsumo, 0)})`).join(', ') || 'nenhum'}.`);
   if (a) {
+    const et = a.existenciaTardia;
+    s(`SKUs que só existem a partir do 1º evento real (R53): ${et.length} — pelo recebimento ${et.filter((x) => x.via === 'recebimento').length}, pela venda ${et.filter((x) => x.via === 'venda').length}, nunca ${et.filter((x) => x.via === null).length}.`);
     s(`Fora da simulação: ${a.excluidosSimulacao.map((e) => `${e.sku} ${e.motivo}`).join(', ') || 'nenhum'}. SKUs sem preço de capital em algum dia (nem cmc, nem cmc Omie datado, nem preco_compra_real; R44/R45): ${a.skusSemCmc.join(', ') || 'nenhum'}. SKUs valorados pelo cmc Omie datado (R45): ${a.skusCmcOmie.length}; pelo preco_compra_real (R44): ${a.skusCompraReal.length}. Linhas com quantidade ≤ 0 ignoradas: ${a.linhasIgnoradas}.`);
   }
   s(`Avisos da carga: ${r.avisos.map((x) => `${x.codigo} ${x.n}`).join(' · ') || 'nenhum'}.`);

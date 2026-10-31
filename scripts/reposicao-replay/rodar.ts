@@ -558,6 +558,7 @@ export async function avaliarCandidata(
       skusSemCmc: mBase.f0.skusSemCmc,
       skusCompraReal: mBase.f0.skusCompraReal,
       skusCmcOmie: mBase.f0.skusCmcOmie,
+      existenciaTardia: mBase.f0.existenciaTardia,
       excluidosSimulacao: mBase.f0.excluidos,
       linhasIgnoradas: mBase.f0.linhasIgnoradas,
     },

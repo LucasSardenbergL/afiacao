@@ -35,6 +35,8 @@ const dados = (skus: Sku[], vendas: LinhaVenda[], extra: Partial<Dados> = {}): D
   posicaoAbertura: null, posicaoConferencia: null, hashDados: 'h', ...extra,
 });
 const JANELA: [string, string] = ['2026-05-04', '2026-05-29'];
+/** R53: evento (q = 0) no início = o SKU já existia; para fixture cuja abertura 0 não é "SKU novo". */
+const existiaNoInicio = (s: string): EventoRecebimento => ({ sku: s, data: INICIO_AQUECIMENTO, quantidade: 0 });
 const SEM: ParamsDia = { tipo: 'SEM_DECISAO', motivo: 'F0_SEM_PARAMETRO' };
 /** Parâmetros em todo dia útil do início do aquecimento ao fim da janela. */
 const params = (por: Record<string, ParamsDia | ((d: string) => ParamsDia)>, fim = JANELA[1]): Map<string, ParamsDia> => {
@@ -414,7 +416,7 @@ describe('Fix Codex leva B', () => {
       { trackingId: 'B', sku: 'Q', t1: '2026-04-20', t2: null, t4: '2026-05-04', ltDu: 10, aberto: false },
       { trackingId: 'C', sku: 'Q', t1: '2026-04-21', t2: null, t4: null, ltDu: 15, aberto: true },
     ];
-    const dd = dados([comAbertura(sku('P'), 0, vs)], vs, { itensLT: its });
+    const dd = dados([comAbertura(sku('P'), 0, vs)], vs, { itensLT: its, recebimentos: [existiaNoInicio('P')] });
     const p = params({ P: (d: string) => (d === '2026-04-20' ? { tipo: 'S', s: 3 } : SEM) }, AVAL[1]);
     let comDocPosterior = 0;
     for (let rep = 0; rep < 30; rep++) {
@@ -532,7 +534,7 @@ describe('achado 9: escolha de embalagem do grupo', () => {
   it('simular: a compra cai no galão escolhido, com a conversão completa, e chega no estoque dele', () => {
     const vs = [venda('q1', 'QT', '2026-06-09', 0.81)];
     const dd = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }), vs, 0.81, 0, {
-      itensLT: [item('A', 'Q', '2026-04-01', 2), item('B', 'Q', '2026-06-09', 2)],
+      itensLT: [item('A', 'Q', '2026-04-01', 2), item('B', 'Q', '2026-06-09', 2)], recebimentos: [existiaNoInicio('GL')],
     });
     const fim = '2026-06-30';
     const p = params({ QT: (d: string) => (d === '2026-06-09' ? { tipo: 'S', s: 4 } : SEM), GL: { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' } }, fim);
@@ -542,7 +544,7 @@ describe('achado 9: escolha de embalagem do grupo', () => {
     expect(r.balanco.recebido).toBeCloseTo(6.48, 9);
     // o galão fora da população (sem parâmetros no mapa) entra no plano como EXTRA: recebe a compra, não é medido
     const vs2 = [...vs, venda('g1', 'GL', '2026-06-16', 3.24)];
-    const dd2 = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }), vs2, 0.81, 0, { itensLT: dd.itensLT });
+    const dd2 = grupo(precos({ QT: [['2026-06-05', 10]], GL: [['2026-06-05', 36]] }), vs2, 0.81, 0, { itensLT: dd.itensLT, recebimentos: dd.recebimentos });
     const pSoQT = params({ QT: (d: string) => (d === '2026-06-09' ? { tipo: 'S', s: 4 } : SEM) }, fim);
     const r2 = roda(dd2, pSoQT, { janela: ['2026-06-01', fim], rastro: true });
     expect(r2.pedidos).toEqual(r.pedidos);
@@ -749,5 +751,75 @@ describe('Fix Codex leva D — N2 (preço do capital por dia), N7 (galão extra 
     expect(padrao.pedidos![0]).toMatchObject({ dia: '2026-05-05', chegada: somarDiasUteis('2026-05-05', 2) });
     const sens = roda(dd, p, { rastro: true, itensLT: dd.itensLT });
     expect(sens.pedidos![0]).toMatchObject({ dia: '2026-05-05', chegada: null }); // LT 20 du: chega depois do fim da janela
+  });
+});
+
+describe('R53 — SKU sem saldo na abertura só existe a partir do 1º evento real (recebimento ou venda)', () => {
+  const S2 = params({ P: { tipo: 'S', s: 2 } });
+  const itensLT = [item('ANT', 'Q', '2025-10-01', 2), item('DOC0', 'Q', '2026-05-04', 2)]; // pedidos do aquecimento sorteiam o ANT
+
+  it('1º recebimento real: não decide antes dele; a chegada real é substituída pelas compras simuladas', () => {
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-05-06', quantidade: 5 }];
+    const vs = [venda('n1', 'P', '2026-05-15', 1)];
+    const r = roda(dados([comAbertura(sku('P'), 0, vs, receb)], vs, { recebimentos: receb, itensLT }), S2, { rastro: true });
+    expect(r.pedidos!.map((x) => x.dia)).toEqual(['2026-05-06', '2026-05-15']);
+    expect(r.balanco.recebido).toBe(r.pedidos!.filter((x) => x.chegada !== null).reduce((a, x) => a + x.qtd, 0)); // sem os 5 reais
+    expect(r.existenciaTardia).toEqual([{ sku: 'P', desde: '2026-05-06', via: 'recebimento' }]);
+    // controle: o MESMO SKU que já existia no início compra no 1º dia útil do aquecimento
+    const c = roda(dados([comAbertura(sku('P'), 0, vs, receb)], vs, { recebimentos: [existiaNoInicio('P'), ...receb], itensLT }), S2, { rastro: true });
+    expect(c.pedidos![0].dia).toBe(INICIO_AQUECIMENTO);
+    expect(c.existenciaTardia).toEqual([]);
+  });
+
+  it('venda antes do 1º recebimento: existe desde a venda', () => {
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-05-20', quantidade: 3 }];
+    const vs = [venda('n1', 'P', '2026-05-08', 1)];
+    const r = roda(dados([comAbertura(sku('P'), 0, vs, receb)], vs, { recebimentos: receb, itensLT }), S2, { rastro: true });
+    expect(r.pedidos![0].dia).toBe('2026-05-08');
+    expect(r.existenciaTardia).toEqual([{ sku: 'P', desde: '2026-05-08', via: 'venda' }]);
+  });
+
+  it('sem recebimento nem venda: nunca existe (nunca é comprado)', () => {
+    const r = roda(dados([comAbertura(sku('P'), 0, [])], [], { itensLT }), S2, { rastro: true });
+    expect(r.pedidos).toEqual([]);
+    expect(r.existenciaTardia).toEqual([{ sku: 'P', desde: null, via: null }]);
+    expect(roda(dados([comAbertura(sku('P'), 0, [])], [], { recebimentos: [existiaNoInicio('P')], itensLT }), S2, { rastro: true }).pedidos!.length).toBeGreaterThan(0);
+  });
+
+  it('sem preço ANTES de existir não põe o SKU em skusSemCmc (não há estoque a valorar)', () => {
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-05-06', quantidade: 5 }];
+    const vs = [venda('n1', 'P', '2026-05-15', 1)];
+    const omie = { cmcOmie: [{ data: '2026-05-06', cmc: new Map([['P', 4]]) }] };
+    const r = roda(dados([comAbertura(sku('P'), 0, vs, receb)], vs, { recebimentos: receb, itensLT, ...omie }), S2);
+    expect(r.skusSemCmc).toEqual([]);
+    expect(soma(r.estoqueNaoValoradoDias)).toBe(0);
+    // controle: existindo desde o início, 04 e 05/05 (na janela) ficam sem preço
+    const c = roda(dados([comAbertura(sku('P'), 0, vs, receb)], vs, { recebimentos: [existiaNoInicio('P'), ...receb], itensLT, ...omie }), S2);
+    expect(c.skusSemCmc).toEqual(['P']);
+  });
+});
+
+describe('R53 — embalagem escolhida que ainda não existe', () => {
+  const eqs: Equivalencia[] = [
+    { sku: 'QT', skuEquivalente: 'GL', fator: 0.25, grupoId: 'G', fatorParaBaseSku: 1, fatorParaBaseEquivalente: 4, unidadesOmieSku: 0.81, unidadesOmieEquivalente: 3.24 },
+    { sku: 'GL', skuEquivalente: 'QT', fator: 4, grupoId: 'G', fatorParaBaseSku: 4, fatorParaBaseEquivalente: 1, unidadesOmieSku: 3.24, unidadesOmieEquivalente: 0.81 },
+  ];
+  const pe: PrecosEmbalagem = {
+    staleDias: 45, elegivel: new Map([['QT', true], ['GL', true]]),
+    capturas: new Map([['QT', [{ data: '2026-06-05', preco: 10 }]], ['GL', [{ data: '2026-06-05', preco: 36 }]]]),
+  };
+  it('a compra fica na âncora, com o conv dela', () => {
+    const vs = [venda('q1', 'QT', '2026-06-09', 0.81)];
+    const mk = (receb: EventoRecebimento[]) =>
+      dados([comAbertura(sku('QT', { grupoEmbalagemId: 'G' }), 0.81, vs), comAbertura(sku('GL', { grupoEmbalagemId: 'G' }), 0, vs, receb)], vs, {
+        equivalencias: eqs, precosEmbalagem: pe, recebimentos: receb, itensLT: [item('A', 'Q', '2026-04-01', 2), item('B', 'Q', '2026-06-09', 2)],
+      });
+    const fim = '2026-06-30';
+    const p = params({ QT: (d: string) => (d === '2026-06-09' ? { tipo: 'S', s: 4 } : SEM), GL: { tipo: 'SEM_DECISAO', motivo: 'MEMBRO_GRUPO_NAO_ANCORA' } }, fim);
+    const r = roda(mk([]), p, { janela: ['2026-06-01', fim], rastro: true });
+    expect(r.pedidos).toEqual([{ dia: '2026-06-09', sku: 'QT', qtd: 4.05, chegada: '2026-06-11' }]); // ceil(4 / 0,81) = 5 QT
+    // controle: o galão que já existia recebe a compra (achado 9)
+    const c = roda(mk([existiaNoInicio('GL')]), p, { janela: ['2026-06-01', fim], rastro: true });
+    expect(c.pedidos).toEqual([{ dia: '2026-06-09', sku: 'GL', qtd: 6.48, chegada: '2026-06-11' }]);
   });
 });

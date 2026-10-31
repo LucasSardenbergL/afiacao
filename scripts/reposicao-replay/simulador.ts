@@ -57,7 +57,7 @@ import { classeEfetiva } from './classe';
 import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import { grupoDeEmbalagem, type Formula, type ParamsDia } from './formulas';
 import { coorte } from './parados';
-import { estoqueInicial, type CenarioInicial } from './reconstrucao';
+import { estoqueInicial, reconstruirSkus, type CenarioInicial } from './reconstrucao';
 import { precoValeEm } from './dados';
 import type { Classe, Dados, Data, ItemLT, Sku } from './tipos';
 
@@ -122,6 +122,8 @@ export interface SomasSemanais {
   skusCompraReal: string[];
   /** R45: SKUs sem cmc valorados pelo nCMC da posição Omie em algum dia da janela. */
   skusCmcOmie: string[];
+  /** R53: SKUs sem saldo na abertura que só passam a existir no 1º evento real (null = nunca: sem recebimento nem venda). */
+  existenciaTardia: { sku: string; desde: Data | null; via: 'recebimento' | 'venda' | null }[];
   excluidos: { sku: string; motivo: 'FORA_DOS_DADOS' | 'SEM_ESTOQUE_INICIAL' }[];
   linhasIgnoradas: number;
   /** Só com `rastro: true` (testes/diagnóstico): os pedidos simulados, qtd na unidade de estoque. */
@@ -292,6 +294,9 @@ interface Plano {
   skusSemCmc: string[];
   inicial: Float64Array;
   chegIni: { i: number; s: number; q: number }[];
+  /** R53: dia (índice) a partir do qual o SKU existe; nDias = nunca. */
+  iExiste: Int32Array;
+  existenciaTardia: { sku: string; desde: Data | null; via: 'recebimento' | 'venda' | null }[];
   /** Por SKU: membros simulados do grupo (inclui a âncora) quando o SKU é ÂNCORA; null fora disso. */
   membros: (Int32Array | null)[];
   /** Por SKU âncora: { conv }; null fora de grupo. */
@@ -418,6 +423,34 @@ function montarPlano(
       diasPorSemana[w]++;
     }
   }
+  // R53 (existência): SKU com saldo na abertura (âncora ou cenário) existe desde o início; senão só a partir do 1º evento
+  // REAL — recebimento físico ou venda, o que vier antes (o histórico de recebimentos começa depois do início, então a venda
+  // também é evidência). Antes disso não decide, não é comprado (nem como embalagem escolhida) e não tem estoque. A 1ª
+  // chegada real NÃO entra: como os demais recebimentos históricos, é substituída pelas compras simuladas (o SKU nasce com
+  // estoque 0 e a 1ª compra chega >= 1 du depois, quando o preco_compra_real do documento — t4 < d — já vale; injetá-la
+  // deixaria o próprio dia t4 com estoque sem preço). Sem nenhum evento: nunca existe (iExiste = nDias).
+  const abertura = new Map<string, number>();
+  for (const it of reconstruirSkus(dados).itens.values()) abertura.set(it.sku, it.aberturaCrua);
+  const primeiro = (m: Map<string, Data>, sku: string, d: Data) => {
+    const x = m.get(sku);
+    if (x === undefined || d < x) m.set(sku, d);
+  };
+  const recIni = new Map<string, Data>();
+  const venIni = new Map<string, Data>();
+  for (const r of dados.recebimentos) if (idxSku.has(r.sku)) primeiro(recIni, r.sku, r.data);
+  for (const v of dados.vendas) if (v.quantidade > 0 && idxSku.has(v.sku)) primeiro(venIni, v.sku, v.data);
+  const iExiste = new Int32Array(nSku);
+  const existenciaTardia: Plano['existenciaTardia'] = [];
+  for (let s = 0; s < nSku; s++) {
+    const sku = skus[s];
+    if (Math.abs(abertura.get(sku) ?? 0) > EPS || Math.abs(ini.get(sku)!) > EPS) continue;
+    const r = recIni.get(sku);
+    const v = venIni.get(sku);
+    const d = r !== undefined && (v === undefined || r <= v) ? r : v;
+    if (d !== undefined && d <= INICIO_AQUECIMENTO) continue; // evento antes do início (ou nele): já existia
+    iExiste[s] = d === undefined ? nDias : Math.min(nDias, diffDias(INICIO_AQUECIMENTO, d));
+    if (iExiste[s] > 0) existenciaTardia.push({ sku, desde: d === undefined ? null : d, via: d === undefined ? null : d === r ? 'recebimento' : 'venda' });
+  }
   // linhas (achado 7: célula pela classe efetiva do DIA da linha)
   const alt = altPassado ?? alterados(dados);
   let linhasIgnoradas = 0;
@@ -490,7 +523,7 @@ function montarPlano(
         pd[i] = v.preco;
         fd[i] = v.fonte;
       }
-      if (i >= iJanela) {
+      if (i >= iJanela && i >= iExiste[s]) {
         if (v === null) semPreco = true;
         else if (v.fonte === 2) usaOmie = true;
         else if (v.fonte === 1) usaCompra = true;
@@ -537,7 +570,10 @@ function montarPlano(
     const nDu = duLista.length;
     const e = { j: new Int32Array(nDu), conv: new Float64Array(nDu), sku: new Array<string>(nDu) };
     for (let k = 0; k < nDu; k++) {
-      const x = embalagemEscolhida(dados, skus[s], dias[duLista[k]])!;
+      let x = embalagemEscolhida(dados, skus[s], dias[duLista[k]])!;
+      const jx = idxSku.get(x.sku);
+      // R53: embalagem que ainda não existe não é comprada — a compra fica na âncora (o padrão do motor sem troca)
+      if (jx !== undefined && jx !== s && duLista[k] < iExiste[jx]) x = { sku: skus[s], conv: grupo[s]!.conv };
       e.j[k] = idxSku.get(x.sku) ?? -1;
       e.conv[k] = x.conv;
       e.sku[k] = x.sku;
@@ -548,7 +584,7 @@ function montarPlano(
     escolha,
     skus, skuObj, idxSku, nDias, iJanela, dias, util, cntDu, duPos: Int32Array.from(duLista), semana, semanas, diasPorSemana,
     linIni, linSku, linQtd, linVu, linCmc, linId, linDia, linCel, linAlt, linMedida, linFora, extra, offFila, precoDia, fonteDia, skusCompraReal, skusCmcOmie, skusSemCmc, inicial: inicialArr,
-    chegIni, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
+    chegIni, iExiste, existenciaTardia, membros, grupo, ehMembroNaoAncora, equivs, excluidos, linhasIgnoradas, itens,
     itensPre: itensPreCorte(itens, dados.dataExtracao), iFimCalib: diffDias(INICIO_AQUECIMENTO, JANELAS.calibracaoFim),
   };
 }
@@ -692,6 +728,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     // 1. chegadas
     for (let k = chHead[i]; k >= 0; k = chNext[k]) {
       const s = chSku[k];
+      if (i < P.iExiste[s]) throw new Error(`R53_CHEGADA_ANTES_DA_EXISTENCIA:${P.skus[s]}|${P.dias[i]}`);
       est[s] += chQtd[k];
       abertas[s] -= chQtd[k];
       recebido[s] += chQtd[k];
@@ -814,7 +851,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
       const k = P.cntDu[i] - 1;
       for (let s = 0; s < nSku; s++) {
         const p = pArr[s * nDu + k];
-        if (p === null) continue;
+        if (p === null || i < P.iExiste[s]) continue; // R53: antes de existir o SKU não decide
         let pos = 0;
         const ms = P.membros[s];
         // R39: no grupo a posição é físico + a caminho, SEM descontar o comprometido (embalagem-motor-rpc.sql:361,
@@ -940,6 +977,7 @@ export function simular(e: EntradaSimulacao): SomasSemanais {
     skusSemCmc: [...P.skusSemCmc],
     skusCompraReal: [...P.skusCompraReal],
     skusCmcOmie: [...P.skusCmcOmie],
+    existenciaTardia: P.existenciaTardia.map((x) => ({ ...x })),
     excluidos: [...P.excluidos],
     linhasIgnoradas: P.linhasIgnoradas,
   };

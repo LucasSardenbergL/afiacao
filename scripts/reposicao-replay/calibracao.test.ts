@@ -60,7 +60,8 @@ describe('grade', () => {
     //    a+2 fica sem estoque → 2/3. Nível MAIOR, serviço MENOR.
     const a = '2026-03-03';
     const vs = [venda('l1', 'P', a, 1), venda('l2', 'P', somarDiasUteis(a, 1), 1), venda('l3', 'P', somarDiasUteis(a, 2), 1)];
-    const receb: EventoRecebimento[] = [{ sku: 'P', data: '2026-02-02', quantidade: 3 }]; // histórico: reconstrução sem negativo
+    // histórico: reconstrução sem negativo; o evento q = 0 no início marca que P já existia (R53: abertura 0 ≠ SKU novo)
+    const receb: EventoRecebimento[] = [{ sku: 'P', data: INICIO_AQUECIMENTO, quantidade: 0 }, { sku: 'P', data: '2026-02-02', quantidade: 3 }];
     const itens = [item('X', 'P', somarDiasUteis(a, -10), 3), item('Y', 'P', somarDiasUteis(a, 11), 1)];
     const dd = dados([sku('P', { multiplo: 2 })], vs, itens, receb, { P: 0 });
     const nivel = (q: number): number => (q < 0.8 ? 0 : q <= 0.9 ? 1 : 2);

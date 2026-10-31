@@ -29,6 +29,7 @@ function somas(n: number, dias = 7): SomasSemanais {
     skusSemCmc: [],
     skusCompraReal: [],
     skusCmcOmie: [],
+    existenciaTardia: [],
     excluidos: [],
     linhasIgnoradas: 0,
   };
