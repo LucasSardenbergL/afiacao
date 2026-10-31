@@ -56,6 +56,7 @@ A medição de 27/10 (12:52–13:07 UTC) deu queda de 96% na `tint_staging_formu
   - na 4ª rodada, **LIBERA**, com 1 P2 aceito: snapshot da 0.2.5 aceito sem avançar o state.
 - **Falsificação:** 20 sabotagens, todas vermelhas, com controle verde antes e depois.
 - **Lição:** um cache que muda de semântica precisa invalidar o estado que a semântica antiga deixou. Bumpar a versão não basta quando a versão velha pode voltar a rodar (downgrade, rollback automático) e preserva o número da versão nova. A âncora certa é um fato que as duas versões escrevem: o `LastKeysSnapshot` do state.
+- **Em prod (psql-ro, 2026-10-31 03:11 UTC):** o 0.2.6 foi publicado pela tela Releases do conector. O sha256 do `.exe` no bucket é `ea2e3096…1c31`, igual ao build. A loja se atualizou na virada do dia UTC (o conector checa o manifesto 1 vez por dia), e o heartbeat das 03:06 já veio com `agent_version = 0.2.6`. O 1º keys-snapshot do código novo saiu entre 03:02 e 03:06. Resultado: zero fórmula desativada em 24h, 1.098 personalizadas ativas, zero promoção em erro, e 90 runs de catálogo contra 0 de fórmula desde 00:08. **Limite da evidência:** o ganho próprio da 0.2.6, que é deixar de fazer o POST, não aparece no banco. A edge v1.2 já respondia ao reenvio idêntico sem abrir run, e a tabela de integração não guarda contagem por ciclo. A prova direta fica no log do conector na loja.
 
 ## 2026-10-30 — índices em `tint_sync_runs` (#3419): a promoção para de varrer a tabela
 
