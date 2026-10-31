@@ -3,6 +3,8 @@
 -- categoria do CP da colacor de 2.09.05 para 2.01.01 (sync 18:12Z, DRE recalculado 18:16Z). Ele
 -- confirmou no chat que o "Ignorar" foi engano e pediu a aprovação. A tela não desfaz linha ignorada.
 -- Mantém resolvido_por (o founder); só troca status, resolvido_em e observacao.
+-- Aplicado pelo db:aplicar (tentativa #794) com `IF n <> 2`; o arquivo passou a `IS DISTINCT FROM 2`
+-- depois, pelo gate assert-verde-por-ausencia. Mesma semântica: n vem de GET DIAGNOSTICS e nunca é NULL.
 -- ANTES (psql-ro, 2026-10-31):
 --   513d55d2-b931-4991-936d-582ae9d7ea01 | desconsiderado | 700.00/700.00 | por 414a9727-ad1d-4998-914e-9c6ccf26cf50 | 2026-10-31 17:38:25.336+00 | obs NULL
 --   b3361a80-85d1-472e-8799-541f85385c1a | desconsiderado | 342.00/342.00 | por 414a9727-ad1d-4998-914e-9c6ccf26cf50 | 2026-10-31 17:38:29.073+00 | obs NULL
@@ -19,7 +21,7 @@ BEGIN
      AND resolvido_por = '414a9727-ad1d-4998-914e-9c6ccf26cf50'
      AND cr_id IS NOT NULL AND cp_id IS NOT NULL;
   GET DIAGNOSTICS n = ROW_COUNT;
-  IF n <> 2 THEN
+  IF n IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'APROVACAO_ESPERAVA_2_LINHAS: %', n;
   END IF;
 END
