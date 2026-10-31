@@ -10,6 +10,7 @@ import type {
   CompanyProfile,
 } from '@/hooks/unifiedOrder/types';
 import type { DeliveryOption } from '@/types';
+import type { PrazoDecisaoPorConta } from './prazoDecisao';
 
 export type SubmitClient = SupabaseClient<Database>;
 
@@ -78,6 +79,9 @@ export interface SubmitOrderParams {
   origem?: string | null;
   /** Liga ligação ↔ N pedidos. null na Fase 0 (Fase 1 preenche). */
   atendimentoId?: string | null;
+  /** Frente B (PR1): o que o aviso de prazo mostrou por conta; gravado após o envio de cada conta
+   *  com o desfecho real (fail-open: nunca segura a venda). Ausente = sem aviso na tela. */
+  prazoDecisao?: PrazoDecisaoPorConta;
 }
 
 export interface SubmitErrorEntry {
