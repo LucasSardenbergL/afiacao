@@ -1305,11 +1305,14 @@ export const LACUNAS_POR_GRUPO: LacunaGrupo[] = [
   },
   {
     def: { tipo: 'predicado', predicado: 'private.cap_radar_prospectar' },
-    tabelasNoGrafo: 4,
-    tabelasMd5: '5b71c7e630d7a6686543d7735707e6a8',
-    medidoEm: '2026-10-30',
+    // 2026-10-31: 4 → 6. Entraram radar_concorrentes_lote e radar_concorrentes_municipio (frente 4, camada de
+    // concorrentes do mapa: revendas da RFB por município, fora da fila de leads) — mesmo critério do grupo.
+    tabelasNoGrafo: 6,
+    tabelasMd5: '1683d782cb890726c14048d03f54210b',
+    medidoEm: '2026-10-31',
     motivo:
-      'Radar de Clientes (20261029201200): dados públicos da RFB + estado de prospecção, lidos por master, gestor ' +
+      'Radar de Clientes (20261029201200) e a camada de concorrentes do mapa: dados públicos da RFB + estado de ' +
+      'prospecção, lidos por master, gestor ' +
       'comercial e vendedor (farmer/hunter/closer). Não é dinheiro nem custo, e o cliente do grupo segue protegido ' +
       'por cap_carteira_ler (radar_cadastro_conflitos, radar_situacao_cadastral e os clientes só-Omie da RPC de ' +
       'irmãos). O corpo da capability é provado executando em db/test-radar-acesso-vendedor.sh (sabotagem ' +
