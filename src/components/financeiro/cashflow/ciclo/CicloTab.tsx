@@ -17,6 +17,7 @@ import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
 import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
+import { CicloRupturaSensor } from './CicloRupturaSensor';
 import { CargaAoAparecer } from './CargaAoAparecer';
 import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
@@ -105,6 +106,12 @@ export function CicloTab() {
         />
       </CargaAoAparecer>
 
+      {/* Sensor de ruptura: só a Oben tem (pedidos nascem no Omie; trigger na importação). Abaixo da dobra. */}
+      {tendencias.includes('oben') && (
+        <CargaAoAparecer rotulo="Sensor de ruptura">
+          <CicloRupturaSensor hoje={hoje} />
+        </CargaAoAparecer>
+      )}
       <CicloDescontoPainel
         empresas={tendencias}
         custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
