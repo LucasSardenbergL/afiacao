@@ -22,7 +22,7 @@ function empresaDaCompra(company: Company): string | null {
 
 const chave = (company: Company) => ['financeiro', 'ciclo', 'compra-suspensa', company] as const;
 /** As RPCs de escrita devolvem 1 linha por SKU: fatiar o array é o que torna o retorno estruturalmente < capa do PostgREST. */
-export const LOTE_RPC_SKUS = 200;
+const LOTE_RPC_SKUS = 200;
 const fatiar = (skus: number[]) => Array.from({ length: Math.ceil(skus.length / LOTE_RPC_SKUS) }, (_, i) => skus.slice(i * LOTE_RPC_SKUS, (i + 1) * LOTE_RPC_SKUS));
 const MSG_SEM_PERMISSAO = 'Sem permissão para segurar/reativar compra (exige papel master com acesso a compras).';
 
