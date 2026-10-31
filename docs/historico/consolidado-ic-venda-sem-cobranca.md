@@ -164,7 +164,13 @@ locales.
   - `fin_ic_reconcile_rodadas` ganhou o marco id=1 (`mapa_lido_em` 02:37:35Z), e a trava de bootstrap abriu.
   - O mapa segue com 5 linhas, porque o upsert só acrescenta e os códigos eram os mesmos.
   - A fila tem 11 `auto_matched` e 10 `sem_contrapartida`, e entre elas os 3 CP da oben.
-- **Falta:** o Publish e a marcação "Sem cobrança" nas 3 linhas, ambos do founder. Depois disso, a conferência de jan e fev por psql-ro, com o corpo como SELECT, porque `claude_ro` não tem EXECUTE na RPC.
+- **Publish:** no ar em 2026-10-28; o build servido bate com a main `f03a8d89`.
+- **Marcação (founder, 2026-10-31 17:14Z):** as 3 linhas passaram a `intragrupo_sem_cobranca`, com `resolvido_por`
+  preenchido. A fila ficou com 11 `auto_matched`, 3 sem cobrança e 7 `sem_contrapartida`.
+- **Conferência (psql-ro, corpo vivo da RPC como SELECT, `prosrc` md5 `83509e1a…`):** igual à simulação.
+  - 2026-01: CMV 295.585,86 → 205.585,86 (−90.000,00); resultado −71.043,00 → 18.957,00.
+  - 2026-02: CMV 244.033,03 → 132.435,42 (−111.597,61); resultado −121.983,22 → −10.385,61.
+  - Receita e despesas com eliminação 0 nos dois meses.
 
 ## Lições
 
