@@ -84,8 +84,36 @@ nenhum**. O `start_nao_vinculados` da `omie-analytics-sync` recusava toda conta 
   radar, não à tela.
 
 Expectativa honesta: a carteira conhecida da Colacor tem o perfil da Oben (MG), então o mais provável é
-o `ja_cliente` crescer em MG, não aparecer em SC. O número do antes e depois por UF vai no diário quando o
-primeiro snapshot Colacor rodar.
+o `ja_cliente` crescer em MG, não aparecer em SC.
+
+#### Medido (2026-10-31, psql-ro): +8 em MG, SC segue 0
+
+Ordem em prod: edge v1.15 atestada pela sonda às 18:19Z (fonte `409a1b64e69f` = main) → migration
+de cron pelo `db:aplicar` (recibo #795, 3 jobs validados por fora) → primeiro snapshot fora do cron
+(`db/2026-10-31-nao-vinculados-colacor-primeiro-snapshot.sql`, recibo #797, as duas respostas 202) →
+recruzamento (`db/2026-10-31-radar-recruzar-ja-cliente-colacor.sql`, recibo #800, função com o md5
+de sempre). O disparo e o recruzamento manuais existem porque o recruzamento diário (06:15Z) roda
+antes do snapshot Colacor (08:40Z e 08:50Z): pelo calendário, o primeiro efeito só sairia em 02/11.
+
+| | antes (16:15Z) | depois (18:5xZ) |
+|---|---|---|
+| `ja_cliente` MG | 3.003 | **3.011** |
+| `ja_cliente` SP | 3 | 3 |
+| `ja_cliente` ES, MT, PA, PE, PR, RJ, RS | 1 cada | 1 cada |
+| `ja_cliente` SC | 0 | **0** |
+
+- Snapshots: `colacor_sc` tem 55 clientes sem usuário e `colacor` tem 272 (327 linhas, 217 CNPJs).
+  A Oben tem 10.168.
+- UF desses clientes: colacor = MG 194 · SP 47 · PR 16 · **SC 9** · RJ 2 · ES 2 · BA 1 · RS 1;
+  colacor_sc = MG 50 · SP 2 · PA 1 · PR 1 · sem UF 1.
+- No radar, 30 desses CNPJs casam (colacor 23, colacor_sc 7), **todos em MG**. Só 8 eram novos; o
+  resto já estava marcado por profiles ou pelo snapshot da Oben.
+- Os 9 clientes Colacor de SC não estão no `radar_empresas`, assim como os 24 com usuário medidos
+  antes: o radar de SC é recortado pelo CNAE-alvo, e esses clientes ficam fora dele.
+
+Conclusão: a fonte do `ja_cliente` agora cobre as 3 contas, e o 0% de SC é **real**, não um buraco
+de fonte. Nenhum cliente conhecido do grupo em SC está no universo do radar de SC. Mudar isso é
+decisão sobre o recorte de CNAE, não sobre o cruzamento.
 
 ## Custo
 
