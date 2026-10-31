@@ -1113,8 +1113,8 @@ BEGIN
      OR NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c WHERE c.oid = 'public.reposicao_compra_suspensa_log'::regclass) THEN
     RAISE EXCEPTION 'POS-CS2 FALHOU: tabela da suspensão sem RLS';
   END IF;
-  IF (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa'::regclass) <> 1
-     OR (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa_log'::regclass) <> 2 THEN
+  IF (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa'::regclass) IS DISTINCT FROM 1
+     OR (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa_log'::regclass) IS DISTINCT FROM 2 THEN
     RAISE EXCEPTION 'POS-CS3 FALHOU: policies da suspensão divergem (esperado 1 SELECT na decisão; SELECT+INSERT no log)';
   END IF;
   IF has_table_privilege('authenticated', 'public.reposicao_compra_suspensa', 'INSERT')

@@ -204,6 +204,13 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 4, prova: '`UNION ALL` de 4 SELECTs agregados sem GROUP BY' }],
   ['get_whatsapp_funil @ src/hooks/useWhatsappFunil.ts',
     { tipo: 'estrutural', teto: 1, prova: 'SELECT de subqueries escalares, sem FROM' }],
+  // RPCs de ESCRITA do "segurar compra": devolvem 1 linha por SKU de p_skus (unnest DISTINCT) — o tamanho é o do
+  // array que o cliente mandou (coorte lida PAGINADA por reposicao_compra_suspensa_candidatos). Não há o que paginar
+  // numa mutação; o teto declarado é a capa do PostgREST, que um lote maior do que isso já estouraria no envio.
+  ['reposicao_compra_suspender @ src/hooks/useFinanceiroCompraSuspensa.ts',
+    { tipo: 'estrutural', teto: 1000, prova: 'RETURNS TABLE com 1 linha por SKU DISTINCT de p_skus (mutação, não leitura)' }],
+  ['reposicao_compra_reativar @ src/hooks/useFinanceiroCompraSuspensa.ts',
+    { tipo: 'estrutural', teto: 1000, prova: 'RETURNS TABLE com 1 linha por SKU DISTINCT de p_skus (mutação, não leitura)' }],
   ['get_data_health @ src/hooks/useDataHealth.ts',
     { tipo: 'estrutural', teto: 25, prova: 'CTE `checks` = 25 ramos UNION ALL, 1 linha cada; o único ramo com JOIN é limitado por `sync_state` (26 linhas)' }],
   ['gerar_pedidos_sugeridos_ciclo @ src/pages/AdminReposicaoPedidos.tsx',

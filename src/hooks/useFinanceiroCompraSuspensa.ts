@@ -8,6 +8,7 @@ import { fetchAllPages } from '@/lib/postgrest';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import type { Company } from '@/contexts/CompanyContext';
+import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 import {
   normalizarCandidato, normalizarRun, normalizarSuspensa, type Candidato, type OrigemSuspensao, type RunMotor, type SuspensaAtiva,
 } from '@/lib/financeiro/compra-suspensa-helpers';
@@ -33,7 +34,9 @@ export function useCompraSuspensaListar(company: Company, enabled = true) {
   return useQuery({
     queryKey: [...chave(company), 'ativas'],
     enabled: enabled && empresa !== null,
-    queryFn: async (): Promise<SuspensaAtiva[]> => {
+    retryDelay: retryDelayCiclo,
+    // Na fila do ciclo: a aba limita leituras concorrentes (ciclo-fila.ts) — sem isto o painel fura o teto.
+    queryFn: (): Promise<SuspensaAtiva[]> => filaCiclo(async () => {
       const linhas = await fetchAllPages(
         (de, ate) => supabase.rpc('reposicao_compra_suspensa_listar', { p_empresa: empresa as string }).select('*')
           .order('foto_valor_vendido_90d', { ascending: false, nullsFirst: false })
@@ -42,7 +45,7 @@ export function useCompraSuspensaListar(company: Company, enabled = true) {
         'reposicao_compra_suspensa_listar',
       );
       return linhas.map(normalizarSuspensa).filter((l): l is SuspensaAtiva => l !== null);
-    },
+    }),
   });
 }
 
@@ -51,7 +54,8 @@ export function useCompraSuspensaRuns(company: Company, dias = 30, enabled = tru
   return useQuery({
     queryKey: [...chave(company), 'runs', dias],
     enabled: enabled && empresa !== null,
-    queryFn: async (): Promise<RunMotor[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<RunMotor[]> => filaCiclo(async () => {
       // 30 dias × 12 runs/dia = 360 linhas: cabe numa página, mas paginar custa nada e não depende do cron.
       const linhas = await fetchAllPages(
         (de, ate) => supabase.rpc('reposicao_compra_suspensa_runs', { p_empresa: empresa as string, p_dias: dias }).select('*')
@@ -59,7 +63,7 @@ export function useCompraSuspensaRuns(company: Company, dias = 30, enabled = tru
         'reposicao_compra_suspensa_runs',
       );
       return linhas.map(normalizarRun).filter((l): l is RunMotor => l !== null);
-    },
+    }),
   });
 }
 
@@ -69,14 +73,15 @@ export function useCompraSuspensaCandidatos(company: Company, minDias = 180, ena
   return useQuery({
     queryKey: [...chave(company), 'candidatos', minDias],
     enabled: enabled && empresa !== null,
-    queryFn: async (): Promise<Candidato[]> => {
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Candidato[]> => filaCiclo(async () => {
       const linhas = await fetchAllPages(
         (de, ate) => supabase.rpc('reposicao_compra_suspensa_candidatos', { p_empresa: empresa as string, p_min_dias: minDias }).select('*')
           .order('valor', { ascending: false, nullsFirst: false }).order('sku_codigo_omie', { ascending: true }).range(de, ate),
         'reposicao_compra_suspensa_candidatos',
       );
       return linhas.map(normalizarCandidato).filter((l): l is Candidato => l !== null);
-    },
+    }),
   });
 }
 
