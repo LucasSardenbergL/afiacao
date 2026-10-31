@@ -5880,7 +5880,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'desfazer_contato_radar', 2, '20261031111000_radar_contato_integridade.sql', '567058be0caa267a0f53df59afb5f11f'),
   ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
   ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
-  ('public', 'radar_kpis', 3, '20261031142000_radar_kpis_conversao.sql', 'aefd1e056ac8c74ae1fe58977c1c92bb'),
+  ('public', 'radar_kpis', 3, '20261031142000_radar_kpis_conversao.sql', '76011de6347fde43f2101a4329ecfd86'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
   ('public', 'kbv_block_mutation', 2, '20260613180000_kb_hardening_codex.sql', 'd4041ea6ffb7fd5b146e56a674cbe648'),
   ('public', 'aprovar_versao_boletim', 1, '20260613150000_kb_spec_versions_faseA.sql', 'f7e424f89058376c964730041ef20b99'),
