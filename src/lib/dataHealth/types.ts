@@ -1,5 +1,6 @@
 export type HealthStatus = 'ok' | 'stale' | 'broken' | 'unknown';
-export type HealthDomain = 'financeiro' | 'omie_sync' | 'carteira' | 'estoque' | 'vendas' | 'alertas';
+/** `fora_do_vocabulario`: sentinela da borda (borda.ts) para linha que o app não sabe ler — nunca vem do banco. */
+export type HealthDomain = 'financeiro' | 'omie_sync' | 'carteira' | 'estoque' | 'vendas' | 'alertas' | 'analytics' | 'fora_do_vocabulario';
 export type HealthLevel = 'green' | 'amber' | 'red';
 
 /** Um check individual retornado pela RPC get_data_health. */

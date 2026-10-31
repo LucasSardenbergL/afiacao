@@ -7,6 +7,7 @@ import { rollupDomain, formatAge, badgeLevel, shouldShowDiagnostics } from '@/li
 
 const DOMAIN_LABEL: Record<string, string> = {
   financeiro: 'Financeiro', omie_sync: 'Syncs Omie', carteira: 'Carteira / Scoring', estoque: 'Estoque / Reposição', vendas: 'Vendas / Pedidos', alertas: 'Canal de alerta',
+  analytics: 'Analytics (outbox)', fora_do_vocabulario: 'Checks que o app não sabe ler',
 };
 const STATUS_CLS: Record<string, string> = {
   ok: 'text-status-success', stale: 'text-status-warning', broken: 'text-status-error', unknown: 'text-status-error',

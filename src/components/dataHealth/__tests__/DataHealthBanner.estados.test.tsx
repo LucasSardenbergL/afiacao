@@ -93,4 +93,15 @@ describe('DataHealthBanner — erro NÃO pode virar silêncio', () => {
     await waitFor(() => expect(erro.container.textContent).not.toBe(''));
     expect(erro.container.textContent).not.toBe(telaSaudavel);
   });
+  it('check de OUTRA fonte com domínio que o app não conhece não cega o banner desta fonte', async () => {
+    // Prod 2026-10-31: `analytics_outbox_*` vinham com domain `analytics` fora do vocabulário, a borda
+    // LANÇAVA, e todo banner caía no aviso de leitura falha em vez de dizer o estado da SUA fonte.
+    resposta = {
+      data: [check({ status: 'stale' }), check({ source: 'sensor_novo', domain: 'rh', status: 'ok' })],
+      error: null,
+    };
+    renderBanner();
+    expect(await screen.findByText(/Saldo bancário desatualizado/)).toBeTruthy();
+    expect(screen.queryByText(AVISO)).toBeNull();
+  });
 });
