@@ -459,8 +459,9 @@ TROCAS
 falsifica F2 MD5 EQUIV LEITURA <<'TROCAS'
 [("WHERE s.account = v_account AND s.store_code = v_store AND s.cod_produto = c.cod_produto", "WHERE s.account = v_account AND s.cod_produto = c.cod_produto")]
 TROCAS
-# F3 — corantes pegam a versão MAIS VELHA (ASC, ASC: o índice ainda serve, lido de trás para frente).
-falsifica F3 MD5 EQUIV <<'TROCAS'
+# F3 — corantes pegam a versão MAIS VELHA (ASC, ASC: o índice ainda serve, lido de trás para frente); o run BIG
+#      medido não deixa a descrição dele, e o blocos() fail-closed recusa a medida (LEITURA).
+falsifica F3 MD5 EQUIV LEITURA <<'TROCAS'
 [("AND s.id_corante_sayersystem = c.id_corante_sayersystem\n      ORDER BY s.created_at DESC, s.id DESC", "AND s.id_corante_sayersystem = c.id_corante_sayersystem\n      ORDER BY s.created_at ASC, s.id ASC")]
 TROCAS
 # F4 — o EXISTS de skus esquece a account: a chave que só existe na account divergente (P8) entra (e o índice perde o prefixo: a leitura também denuncia).

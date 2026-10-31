@@ -38,8 +38,10 @@
 -- COMO APLICA: índices (IF NOT EXISTS) → ANALYZE → TRAVA (ALTER sem efeito) → PRE (md5 do prosrc
 -- vivo ∈ {predecessor revisado, este}) → 5 trocas ancoradas (cada âncora casa exatamente 1 vez) +
 -- EXECUTE → PÓS (md5 = este) → REVOKE por cinto → postcondição relida do catálogo. Re-aplicar é no-op.
--- CREATE INDEX comum (não CONCURRENTLY): trava ESCRITA no staging pelo tempo do build (segundos;
--- skus = 90 MB); a leitura e a promoção seguem. O lock_timeout do executor aborta em vez de enfileirar.
+-- CREATE INDEX comum (não CONCURRENTLY): trava ESCRITA no staging até o COMMIT (o lock_timeout limita a
+-- ESPERA, não a retenção); a leitura e a promoção seguem. Medido em PG17 local com os volumes da prod
+-- (skus 490k/85 MB): os 7 builds + ANALYZE = 1,5 s. Aplicar logo APÓS um ciclo de promoção, com a
+-- próxima ingestão a ~15 min (parecer Codex: transação única aceita com a duração medida).
 -- APLICAR: bun run db:aplicar supabase/migrations/20261030071806_tint_promote_latest_por_chave_indexado.sql
 -- (sem BEGIN/COMMIT: o db:aplicar fornece a transação).
 -- Prova: db/test-tint-promote-latest-indexado.sh
