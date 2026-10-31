@@ -86,7 +86,7 @@ ausente (banco anterior) → `null` → "Desfeito", como antes.
 |---|---|---|
 | Migration `20261031111000` | ✅ aplicada 12:39:55–12:40:04 UTC pelo envelope (`bun run db:aplicar`, tentativa **#777**, sha256 `d74ddfd6…`, o mesmo do `--ensaio` de 12:39) | esta sessão |
 | Edge | nenhuma | — |
-| Publish do Lovable (front: `RadarOutcomeMenu`, `borda-rpc`) | ⏳ depois do merge | **founder** (Publish) |
+| Publish do Lovable (front: `RadarOutcomeMenu`, `borda-rpc`) | ✅ feito pelo founder após o merge (13:03:57 UTC); `monitor-deploy.sh --pr 3443` → `PR_NO_AR`, ar = main = `6dcabf38` | **founder** (Publish) |
 
 **Pré-voo PROD (psql-ro, 12:12 UTC):** md5 vivos = predecessores (`658d383c…`, `f695b1e6…`); guarda, colunas e triggers
 ausentes; 0 `virou_cliente` sem confirmação; 0 locks não-AccessShare e 0 sessões ativas em `radar_empresas`/`radar_contatos`;
@@ -108,5 +108,5 @@ possível registrar". O banco recusa do mesmo jeito; só o texto do aviso é pio
 
 - `radar_kpis.virou_cliente_mes` pela data imutável `omie_cadastrado_em` (o gestor tirar e devolver ainda reconta).
 - `radar_aplicar_situacao`: correspondência contato↔estado por CNPJ, não só pelos totais (Codex P1, herdado).
-- Regravar `bun run authz:carimbo:gravar` depois do merge: o carimbo deste PR traz 1 `PATCH_NAO_CONCILIADO` transitório
-  (o auditor lê as migrations da `origin/main`, que ainda não tinham a 20261031111000).
+- ~~Regravar `bun run authz:carimbo:gravar` depois do merge~~: feito pelo #3442 (carimbo de 13:10 UTC, já sem o
+  `PATCH_NAO_CONCILIADO` transitório de `registrar_contato_radar`).
