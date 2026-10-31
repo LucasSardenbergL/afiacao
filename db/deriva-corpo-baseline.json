@@ -123,6 +123,17 @@
       "desde": "2026-10-21"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261030071806_tint_promote_latest_por_chave_indexado.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3431: latest por chave indexado — 5 trocas por âncora (4 CROSS JOIN LATERAL no lugar do DISTINCT ON de skus/corantes). Conferido em prod em 2026-10-31 via psql-ro: 4 LATERAL no corpo; md5 = md5(prosrc) do banco (xmin 13272622).",
+      "md5": "954a96411be99c18ab4bff40df14e620",
+      "md5Tokens": "20b06647d1445d6b911a7fd541f51cb9",
+      "desde": "2026-10-31"
+    },
+    {
       "funcao": "tint_staging_purge",
       "identidade": "",
       "classe": "PATCH",
