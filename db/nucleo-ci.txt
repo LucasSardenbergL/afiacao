@@ -710,6 +710,14 @@ db/test-radar-cadastro-conflitos.sh  56  falsificar=15
 # expiração ressuscita, sem trava, liberar de qualquer um, definir sem gate, já-cliente assume, telefone mesma raiz,
 # ativos sem cap do dono, sem trava por dono (teto sob corrida), escrita ignora dono sem acesso, renovação ignorada, renovação como toque (o algoritmo antigo).
 db/test-radar-acesso-vendedor.sh     81  falsificar=16
+# Integridade das RPCs de contato do Radar (20261031111000): 'virou_cliente' só com o cliente confirmado no ledger (RD005)
+# na porta E no trigger (corpo ANTIGO em voo, INSERT direto), re-marcar é no-op, vendedor não tira cliente confirmado
+# (RD007), a conversão não se desfaz (RD006); desfazer restaura só o DONO do status (autoria explícita + retrato), tira o
+# contato da cadeia, e o traço do Codex (A descarta, B conversa, cron da RFB, desfazeres) preserva o descarte da RFB. Duas
+# corridas com o bloqueio observado em pg_stat_activity. 15 sabotagens: porta e classe sem RD005, autoria mantida, regra
+# antiga (status = ação), sem tirar da cadeia, cadeia sem dono, sem motivo, sem releitura, janela larga, conversão
+# desfeita, vendedor tira cliente, re-marcar conta, dedupe sem dono, desfazer e registrar sem gate.
+db/test-radar-contato-integridade.sh 43  falsificar=19
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).

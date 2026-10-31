@@ -29,6 +29,7 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { ACOES_CONTATO, type AcaoContato } from '@/lib/radar/ui-helpers';
 import { cadastravelNoOmie } from '@/lib/radar/sugeridos';
 import { DivergenciaCadastro, ehSemConfirmacaoDoServidor, FalhaCadastro, type OpcoesCadastro } from '@/lib/radar/cadastro-omie';
+import { sqlstateDe } from '@/lib/radar/conflito-cadastro';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
@@ -105,23 +106,32 @@ export function RadarOutcomeMenu({
   }, []);
   const aindaNoAlvo = (alvo: string) => montadoRef.current && cnpjAtualRef.current === alvo;
 
+  // O servidor só restaura o status quando o contato desfeito ainda é o DONO dele (20261031111000). Removido sem
+  // restaurar não é "desfeito": o lead mudou depois (outro vendedor, o cadastro, a RFB) e o status atual ficou.
+  const desfazer = async (id: string) => {
+    try {
+      const u = await undo.mutateAsync(id);
+      if (!u.deleted) toast.error('Não foi possível desfazer');
+      else if (u.statusRestaurado === false) {
+        toast.info('Registro removido; status preservado', {
+          description: 'O lead mudou depois deste registro, e o status atual foi mantido.',
+        });
+      } else toast.success('Desfeito');
+    } catch {
+      toast.error('Não foi possível desfazer');
+    }
+  };
+
   const registrar = async (acao: AcaoContato, nota?: string) => {
     const alvo = cnpj;
     try {
       const r = await reg.mutateAsync({ cnpj: alvo, acao, nota });
       let toastId: string | number | null = null;
       if (!r.deduped) {
-        toastId = toast.success(LABEL_OK[acao], {
-          action: {
-            label: 'Desfazer',
-            onClick: async () => {
-              const u = await undo.mutateAsync(r.id);
-              toast[u.deleted ? 'success' : 'error'](
-                u.deleted ? 'Desfeito' : 'Não foi possível desfazer',
-              );
-            },
-          },
-        });
+        // A conversão confirmada não se desfaz (RD006): o cliente continua no Omie.
+        toastId = acao === 'virou_cliente'
+          ? toast.success(LABEL_OK[acao])
+          : toast.success(LABEL_OK[acao], { action: { label: 'Desfazer', onClick: () => void desfazer(r.id) } });
       }
       // Sinal comercial num lead cadastrável: oferece o cadastro e ADIA o avanço da ficha até o
       // gestor responder. Registro que falhou nunca chega aqui; deduplicado não reoferece.
@@ -136,8 +146,20 @@ export function RadarOutcomeMenu({
       } else {
         onRegistrado?.(acao);
       }
-    } catch {
-      toast.error('Não foi possível registrar');
+    } catch (e) {
+      // Recusas de REGRA (pela SQLSTATE, nunca pela mensagem): nada foi gravado e repetir não muda a resposta.
+      const estado = sqlstateDe(e);
+      if (estado === 'RD005') {
+        toast.warning('"Virou cliente" vem do cadastro no Omie', {
+          description: 'O Radar só marca cliente com o cadastro confirmado pelo Omie (Oben): marque "em conversa" e cadastre pela oferta.',
+        });
+      } else if (estado === 'RD007') {
+        toast.warning('Já é cliente confirmado no Omie', {
+          description: 'Só o gestor muda o status de um cliente cadastrado.',
+        });
+      } else {
+        toast.error('Não foi possível registrar');
+      }
     }
   };
 
@@ -247,6 +269,15 @@ export function RadarOutcomeMenu({
         <DropdownMenuContent align="end">
           {ACOES_CONTATO.filter((a) => !a.confirmar).map((a) => {
             const Icon = ICON_MAP[a.icon];
+            // "Virou cliente" só com o vínculo Omie (o servidor exige a confirmação do ledger — RD005). Fica
+            // visível e desabilitado para dizer o caminho: o cadastro pela oferta de "em conversa".
+            if (a.acao === 'virou_cliente' && !empresa?.omie_codigo_cliente) {
+              return (
+                <DropdownMenuItem key={a.acao} disabled title="Vira cliente quando o cadastro no Omie (Oben) é confirmado">
+                  <Icon className="w-4 h-4 mr-2" /> {a.label} (pelo cadastro no Omie)
+                </DropdownMenuItem>
+              );
+            }
             return (
               <DropdownMenuItem key={a.acao} onClick={() => registrar(a.acao)}>
                 <Icon className="w-4 h-4 mr-2" /> {a.label}
