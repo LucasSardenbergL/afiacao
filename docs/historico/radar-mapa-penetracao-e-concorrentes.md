@@ -85,8 +85,8 @@ corte de 8 s do PostgREST, mas com pouca folga a frio. Se doer, a saída é um c
 | Camada | Quem | Observação |
 | --- | --- | --- |
 | Migration `20261029170140` ✅ aplicada 2026-10-30 | sessão (envelope: idempotente + transacional + PÓS) | **depois** da migration da frente 2 que cria `private.cap_radar_prospectar`; a PRE aborta sem ela |
-| Edge `radar-ingest` v1.4 | founder, chat do Lovable | `bun run pendencias:deploy` decide; sonda depois |
-| 1ª carga de concorrentes | automática na carga mensal do lote 2026-11 (sonda de segunda-feira) | ou antes, à mão: `bun scripts/radar/carga.ts --mes 2026-10 --so-concorrentes` com `RADAR_INGEST_URL`/`RADAR_CRON_SECRET` (~2 h, só os 10 zips de Estabelecimentos) |
+| Edge `radar-ingest` v1.4 ✅ 2026-10-30 | sessão, mensagem ao agente do Lovable | sonda DEPLOY CONFIRMADO; `pendencias:deploy` em "confere" |
+| 1ª carga de concorrentes ✅ 2026-10-31 (lote 2026-10) | sessão, `workflow_dispatch` com `so_concorrentes=true` (#3425) | daqui em diante entra sozinha na carga mensal |
 | Publish do Lovable | founder | mapa e ranking novos |
 
 ## Aplicação em prod (2026-10-30)
@@ -110,6 +110,23 @@ por psql-ro: `(uuid) RETURNS boolean`, SECURITY DEFINER, anon sem EXECUTE).
 - **Pré-voo `wt:preflight`:** 🟢, sem colisão de objeto. O resultado chegou depois do apply porque a
   varredura das 182 worktrees demorou; antes disso uma busca à mão pelos nomes dos objetos já tinha
   dado zero colisão.
-- **Não feito:** chamar a RPC como `authenticated` em prod. O canal MCP parou de responder (timeout do
-  hook) logo depois do apply. A semântica (denominador, NULL, gate) está provada no PG17.
+- **RPC como `authenticated` em prod:** feita depois, quando o canal MCP voltou. MG deu 846 municípios
+  e zero divergências contra a contagem direta. Sem a capacidade, a resposta é `forbidden: radar`.
 
+## 1ª carga de concorrentes (2026-10-31)
+
+O Mac não tinha disco para a carga (são mais de 25 GB de trabalho), e `forcar=true` recarregaria
+também a fila de leads. Por isso o workflow ganhou o input `so_concorrentes` (#3425): ele usa o mês
+pedido sem passar pelo seletor e chama `carga.ts --so-concorrentes`.
+
+- **Run:** [41158645343](https://github.com/LucasSardenbergL/afiacao/actions/runs/41158645343), verde
+  em 2h26 (os 10 zips de Estabelecimentos, cerca de 9 min cada depois do primeiro).
+- **Publicado:** lote `2026-10`, 21.833 estabelecimentos em 2.435 municípios e 28 UFs, 2.856 linhas
+  (município × CNAE). Por CNAE: 4741500 (varejo) 20.386 e 4679601 (atacado) 1.447.
+- **Conferência por psql-ro:** o cabeçalho em `radar_concorrentes_lote` bate com a soma e com a
+  contagem de municípios de `radar_concorrentes_municipio`. 9 municípios com concorrente não têm
+  coordenada em `radar_municipios`, então não aparecem como ponto no mapa.
+- **RPC como `authenticated`** (transação com ROLLBACK): em MG, os 846 municípios vêm com
+  `concorrentes` não nulo, 336 deles com valor positivo, somando 2.127 (igual à tabela). Nenhum
+  município de MG tem só concorrente sem lead. No Brasil, a primeira página de 2.000 tem 1.727
+  municípios com concorrente.
