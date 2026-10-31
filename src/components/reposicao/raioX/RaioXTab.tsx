@@ -124,7 +124,12 @@ export function RaioXTab() {
   // Denominador do "liquidar só o inequívoco": quantos (e quanto R$) a regra do servidor libera hoje, entre a mercadoria parada.
   const ineq = useMemo(() => {
     const sim = mercadoria.filter((i) => i.inequivoco === true);
-    return { n: sim.length, valor: sim.reduce((s, i) => s + (i.valor ?? 0), 0), aguardaN: mercadoria.filter((i) => i.inequivoco === false).length };
+    // ausente ≠ zero: SKU inequívoco sem CMC fica FORA da soma e é contado à parte (Codex P2-8)
+    const comValor = sim.filter((i) => i.valor !== null);
+    return {
+      n: sim.length, valor: comValor.length ? comValor.reduce((s, i) => s + (i.valor as number), 0) : null, semCusto: sim.length - comValor.length,
+      aguardaN: mercadoria.filter((i) => i.inequivoco === false).length,
+    };
   }, [mercadoria]);
   const unidadesVenda = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.unidades_venda])), [rx.itens]);
 
@@ -212,9 +217,9 @@ export function RaioXTab() {
               <option value="minhas">Minhas pendências</option>
             </select>
             <select aria-label="Liquidação" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxIneq} onChange={(e) => setF({ rxIneq: e.target.value })}>
-              <option value="">Inequívoco e aguardando</option>
-              <option value="inequivoco">Só inequívoco ({ineq.n} · {fmtReais(ineq.valor)})</option>
-              <option value="aguarda">Só aguardando ({ineq.aguardaN})</option>
+              <option value="">Inequívoco e aguardando (entre os parados)</option>
+              <option value="inequivoco">Só inequívoco ({ineq.n} · {ineq.valor === null ? 'R$ —' : fmtReais(ineq.valor)}{ineq.semCusto > 0 ? ` +${ineq.semCusto} sem custo` : ''})</option>
+              <option value="aguarda">Só aguardando ({ineq.aguardaN} entre os parados)</option>
             </select>
             <label className="flex items-center gap-1 text-sm">
               <input type="checkbox" checked={f.rxTop} onChange={(e) => setF({ rxTop: e.target.checked })} /> Top 61

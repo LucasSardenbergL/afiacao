@@ -52,6 +52,18 @@ decisão → item vendido → título → baixa monetária (rateio por SKU, parc
 reduzido a custo + receita faturada, rotulada como tal e com a troca por encalhe fora. É entrega própria (ledger de
 recebimento por SKU) e o critério da meta é decisão do founder.
 
+## Codex adversarial de CÓDIGO (gpt-6-astra high, 284 s, 131k tokens) — 4 P1 + 5 P2, absorvidos
+
+- P1 `sku_leadtime_history.empresa` é ENUM (`empresa_reposicao`): comparação com text quebrava a RPC em prod e o stub text
+  escondia → `::text` + stub com o enum real. P1 unidade da venda ≠ do estoque (CX × UN) inflava a cobertura → motivo
+  `unidade_divergente`. P1 insumo em `v_pcp_malha_oben_quarentena` perdia o consumo explodido e virava "zero" → motivo
+  `insumo_em_quarentena`. P1 bases "congeladas" eram reescritas a cada salvamento → só releem quando o PISO muda.
+- P2 cliente antigo (8 args) apagava frete/contrapartida → DEFAULT-sentinela (-1 / 'manter'); NULL explícito limpa.
+  P2 refetch com erro servia veredito velho → `isError` ⇒ mapa null. P2 soma do filtro sem custo → "R$ —" + "N sem
+  custo"; rótulo "entre os parados". P2 margem escondida sem médio → mostrada.
+- Confirmado sem finding: gate sem bypass pelo PostgREST; `ARRAY_REMOVE` nunca gera string vazia; PRE por md5 confere os
+  dois corpos; INVOKER dentro do DEFINER roda como postgres (lê MAIS impedimentos que a tela — erra para a espera).
+
 ## Prova
 
 `db/test-raio-x-inequivoco.sh` (âncoras 20261016120000 + 20261031130000 + 20261031180000 + esta): gate 42501/22023;
@@ -60,4 +72,5 @@ recebimento real com CMC inalterado, NF de entrada, ledger, cold-start, substitu
 sem cadastro, cadastro novo, dois motivos, manual vence, colacor sem NF, fonte velha); RX004 (recusa, sem linha-base;
 inequívoco passa; trocar passa; re-salvar antigo passa; voltar a liquidar é novo); planejar v2 (frete, bases, 22023s,
 cliente de 8 args, desconto NULL sem médio); medição com contrapartida; re-aplicação idempotente (PRE aceita o próprio
-corpo); **9 falsificações** com o FALHOU específico. Em `LOCALE=C` e `pt_BR.UTF-8`.
+corpo); bases congeladas (fontes mudam, mesmo piso não relê); cliente de 8 args preserva frete/contrapartida; **13
+falsificações** com o FALHOU específico. Em `LOCALE=C` e `pt_BR.UTF-8`.

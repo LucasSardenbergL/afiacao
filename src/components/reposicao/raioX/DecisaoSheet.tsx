@@ -456,9 +456,9 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
             <label htmlFor="rx-frete" className="block text-xs">Frete estimado (R$ total da liquidação)</label>
             <Input id="rx-frete" inputMode="decimal" value={frete} aria-invalid={erroFrete} onChange={(e) => { tocar(); setErroFrete(false); setFrete(e.target.value); }} />
             {erroFrete && <p className="text-xs text-status-error">{MSG_NUMERO_INVALIDO}</p>}
-            {decisao.desconto_sobre_medio_pct !== null && (
+            {(decisao.desconto_sobre_medio_pct !== null || decisao.margem_unit !== null) && (
               <p className="text-xs text-muted-foreground">
-                gravado: desconto {Math.round(decisao.desconto_sobre_medio_pct * 100)}% sobre o médio {decisao.preco_medio_base !== null ? fmtValorFino(decisao.preco_medio_base) : '—'}
+                gravado: {decisao.desconto_sobre_medio_pct !== null ? `desconto ${Math.round(decisao.desconto_sobre_medio_pct * 100)}% sobre o médio ${decisao.preco_medio_base !== null ? fmtValorFino(decisao.preco_medio_base) : '—'}` : 'desconto — (sem venda em 12m para um médio)'}
                 {decisao.margem_unit !== null ? ` · margem ${fmtValorFino(decisao.margem_unit)}/un sobre CMC ${decisao.cmc_base !== null ? fmtValorFino(decisao.cmc_base) : '—'}` : ' · margem — (sem CMC)'}
               </p>
             )}

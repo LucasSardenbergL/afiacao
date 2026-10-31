@@ -168,8 +168,9 @@ export function useRaioX(empresa: Empresa | null): {
   const coorte = coorteQ.data ?? null;
   const itensComCoorte = useMemo(() => aplicarCoorte(itens, coorte), [itens, coorte]);
   const mapaInequivoco = useMemo(
-    () => (inequivocoQ.data ? new Map<number, InequivocoSku>(inequivocoQ.data.map((q) => [q.sku_codigo_omie, q])) : null),
-    [inequivocoQ.data],
+    // Refetch que FALHOU não pode servir o veredito velho do cache como se fosse atual (Codex P2-6): erro ⇒ null.
+    () => (inequivocoQ.data && !inequivocoQ.isError ? new Map<number, InequivocoSku>(inequivocoQ.data.map((q) => [q.sku_codigo_omie, q])) : null),
+    [inequivocoQ.data, inequivocoQ.isError],
   );
   const itensFinal = useMemo(() => aplicarInequivoco(itensComCoorte, mapaInequivoco), [itensComCoorte, mapaInequivoco]);
   const placarCalc = useMemo(() => placar(itensComCoorte, decisoes, coorte), [itensComCoorte, decisoes, coorte]);

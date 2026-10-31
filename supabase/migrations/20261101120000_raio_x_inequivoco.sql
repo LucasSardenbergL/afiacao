@@ -14,14 +14,17 @@
 --        (recebimento real sku_leadtime_history.t4_data_recebimento, NF de entrada do armazém, observação do cmc_ledger —
 --        qualquer uma segura: precisão > recall); não cold-start; não substituído; não cadastro recente (<90d);
 --        mercadoria pelo SERVIDOR (classe giro, não 01/03/07/08/09/99, famílias/descrições de uso e consumo e
---        não-mercadoria do Raio-X, manual em raio_x_classificacao_manual vence).
+--        não-mercadoria do Raio-X, manual em raio_x_classificacao_manual vence); unidade da venda ≠ do estoque e
+--        insumo com ficha em quarentena (consumo explodido invisível) AGUARDAM.
 --      Devolve também qtd_liquidavel (saldo − 90 dias de consumo: liquidar não pode zerar quem ainda gira) e revisar_em.
 --   2. raio_x_decidir: destino 'liquidar' NOVO (destino mudou) exige inequívoco → senão RX004, nada escrito. Re-salvar uma
 --      liquidação já decidida (observação, fornecedor) continua passando. Mesma assinatura; PRE confere o corpo vivo.
 --   3. raio_x_decisao ganha frete_estimado, desconto_sobre_medio_pct, margem_unit, preco_medio_base, cmc_base (congelados
 --      ao planejar: bases e resultado da versão aprovada) e troca_contrapartida ('giro'|'encalhe': troca por outro encalhe
---      NÃO conta como liberado). raio_x_planejar ganha p_frete e p_troca_contrapartida (DEFAULT NULL — o cliente antigo
---      de 8 argumentos resolve para esta mesma função; a assinatura velha é DROPADA, ACL reemitida).
+--      NÃO conta como liberado). raio_x_planejar ganha p_frete e p_troca_contrapartida com DEFAULT-sentinela (-1 /
+--      'manter' = preservar o gravado: o cliente ANTIGO de 8 argumentos resolve nesta função sem apagar o que não
+--      conhece; cliente novo manda NULL para limpar). Bases do desconto/margem só se releem quando o PISO muda.
+--      Assinatura velha DROPADA, ACL reemitida.
 --   4. raio_x_medicao devolve troca_contrapartida (coluna nova no fim; DROP+CREATE, ACL reemitida).
 -- Não entregue aqui (registrado como follow-up): "caixa líquido RECEBIDO" por SKU (título → baixa) — a medição segue
 -- sendo estoque reduzido a custo + receita faturada, rotulada como tal.
@@ -77,24 +80,33 @@ BEGIN
        ORDER BY ip.omie_codigo_produto, ip.synced_at DESC NULLS LAST) x
     WHERE x.saldo > 0),
   p AS (
-    SELECT e.sku, op.tipo_produto, op.familia, op.descricao, (op.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS cad,
+    SELECT e.sku, op.tipo_produto, op.familia, op.descricao, op.unidade, (op.created_at AT TIME ZONE 'America/Sao_Paulo')::date AS cad,
            (op.omie_codigo_produto IS NOT NULL) AS tem_cadastro
       FROM e
       LEFT JOIN LATERAL (SELECT o.* FROM public.omie_products o
                           WHERE o.omie_codigo_produto = e.sku AND o.account = p_empresa
                           ORDER BY o.created_at DESC NULLS LAST LIMIT 1) op ON true),
   dem AS MATERIALIZED (
-    SELECT d.sku_codigo_omie AS sku, sum(d.quantidade) AS q365
+    -- unidade da venda ≠ unidade do estoque (CX × UN): a cobertura em unidades mistas MENTE → aguarda (Codex P1-2)
+    SELECT d.sku_codigo_omie AS sku, sum(d.quantidade) AS q365,
+           bool_or(d.sku_unidade IS NOT NULL AND p.unidade IS NOT NULL
+                   AND upper(trim(d.sku_unidade)) IS DISTINCT FROM upper(trim(p.unidade))) AS un_divergente
       FROM public.v_sku_demanda_efetiva d
+      LEFT JOIN p ON p.sku = d.sku_codigo_omie
      WHERE v_fonte AND d.empresa = v_vnd AND d.data_emissao >= v_hoje - 365
        AND (p_sku IS NULL OR d.sku_codigo_omie = p_sku)
      GROUP BY d.sku_codigo_omie),
+  -- insumo cuja ficha está em QUARENTENA (perda > 0, unidade divergente, pai ambíguo): o consumo explodido some da view e
+  -- viraria "zero" — desconhecido AGUARDA (Codex P1-3)
+  qua AS (
+    SELECT DISTINCT q.comp_oben AS sku FROM public.v_pcp_malha_oben_quarentena q
+     WHERE p_empresa = 'oben' AND q.comp_oben IS NOT NULL AND (p_sku IS NULL OR q.comp_oben = p_sku)),
   -- ENTRADA: 3 evidências; a mais recente vale. Qualquer uma recente SEGURA (precisão > recall para liquidar).
   ent AS (
     SELECT z.sku, max(z.dt) AS ultima FROM (
       SELECT slh.sku_codigo_omie::bigint AS sku, slh.t4_data_recebimento::date AS dt
         FROM public.sku_leadtime_history slh
-       WHERE v_vnd IS NOT NULL AND slh.empresa = v_vnd AND slh.quantidade_recebida > 0 AND slh.t4_data_recebimento IS NOT NULL
+       WHERE v_vnd IS NOT NULL AND slh.empresa::text = v_vnd AND slh.quantidade_recebida > 0 AND slh.t4_data_recebimento IS NOT NULL   -- empresa é ENUM empresa_reposicao (Codex P1-1)
       UNION ALL
       SELECT ri.produto_omie_id, r.data_emissao::date
         FROM public.nfe_recebimento_itens ri
@@ -112,7 +124,7 @@ BEGIN
     SELECT m.sku_codigo_omie AS sku, m.categoria FROM public.raio_x_classificacao_manual m WHERE m.empresa = p_empresa),
   base AS (
     SELECT p.sku, e.saldo, p.tipo_produto, p.familia, p.descricao, p.cad, p.tem_cadastro,
-           dm.q365,
+           dm.q365, coalesce(dm.un_divergente, false) AS un_divergente, (qua.sku IS NOT NULL) AS em_quarentena,
            CASE WHEN dm.q365 > 0 THEN round(e.saldo / (dm.q365 / 365.0), 1) END AS cob,
            ent.ultima,
            coalesce((SELECT sp.parametro_cold_start FROM public.sku_parametros sp
@@ -131,6 +143,7 @@ BEGIN
       FROM p
       JOIN e ON e.sku = p.sku
       LEFT JOIN dem dm ON dm.sku = p.sku
+      LEFT JOIN qua ON qua.sku = p.sku
       LEFT JOIN ent ON ent.sku = p.sku
       LEFT JOIN man ON man.sku = p.sku),
   cls AS (
@@ -145,6 +158,8 @@ BEGIN
              CASE WHEN NOT b.tem_cadastro OR nullif(trim(b.tipo_produto), '') IS NULL THEN 'cadastro_incompleto' END,
              CASE WHEN b.tem_cadastro AND nullif(trim(b.tipo_produto), '') IS NOT NULL AND NOT b.merc THEN 'nao_mercadoria' END,
              CASE WHEN v_fonte AND b.q365 > 0 AND b.cob <= c_cobertura_dias THEN 'cobertura_abaixo_365' END,
+             CASE WHEN b.un_divergente THEN 'unidade_divergente' END,
+             CASE WHEN b.em_quarentena THEN 'insumo_em_quarentena' END,
              CASE WHEN b.corante THEN 'corante' END,
              CASE WHEN b.ultima IS NOT NULL AND b.ultima >= v_hoje - c_entrada_dias THEN 'entrada_recente' END,
              CASE WHEN b.cold THEN 'cold_start' END,
@@ -388,7 +403,7 @@ COMMENT ON COLUMN public.raio_x_decisao.troca_contrapartida IS
 DROP FUNCTION IF EXISTS public.raio_x_planejar(text, bigint, numeric, text, uuid, date, boolean, timestamptz);
 CREATE OR REPLACE FUNCTION public.raio_x_planejar(
   p_empresa text, p_sku bigint, p_preco_piso numeric, p_canal text, p_responsavel uuid, p_prazo date,
-  p_concluido boolean, p_atualizado_em timestamptz, p_frete numeric DEFAULT NULL, p_troca_contrapartida text DEFAULT NULL)
+  p_concluido boolean, p_atualizado_em timestamptz, p_frete numeric DEFAULT -1, p_troca_contrapartida text DEFAULT 'manter')
 RETURNS public.raio_x_decisao
 LANGUAGE plpgsql
 VOLATILE
@@ -403,6 +418,11 @@ DECLARE
   v_hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
   v_pm12 numeric;
   v_cmc numeric;
+  -- DEFAULTs-sentinela = "manter o gravado": o cliente ANTIGO (8 args) não pode apagar frete/contrapartida que não conhece
+  -- (Codex P2-5). Cliente novo manda NULL explícito para limpar.
+  v_frete numeric;
+  v_contra text;
+  v_recalc boolean;
 BEGIN
   IF NOT private.cap_custo_ler(auth.uid()) THEN
     RAISE EXCEPTION 'RAIO_X_SO_CUSTO' USING ERRCODE = '42501';
@@ -424,7 +444,7 @@ BEGIN
   IF p_preco_piso = 'NaN'::numeric THEN
     RAISE EXCEPTION 'raio_x: preco_piso invalido: %', p_preco_piso USING ERRCODE = '22023';
   END IF;
-  IF p_frete < 0 THEN
+  IF p_frete < 0 AND p_frete IS DISTINCT FROM -1 THEN
     RAISE EXCEPTION 'raio_x: frete negativo: %', p_frete USING ERRCODE = '22023';
   END IF;
   IF p_frete = 'NaN'::numeric OR p_frete = 'Infinity'::numeric THEN
@@ -433,7 +453,7 @@ BEGIN
   IF p_canal IS NOT NULL AND p_canal NOT IN ('cliente_especifico','promocao_carteira','outlet_queima','outro') THEN
     RAISE EXCEPTION 'raio_x: canal invalido: %', p_canal USING ERRCODE = '22023';
   END IF;
-  IF p_troca_contrapartida IS NOT NULL AND p_troca_contrapartida NOT IN ('giro', 'encalhe') THEN
+  IF p_troca_contrapartida IS NOT NULL AND p_troca_contrapartida NOT IN ('giro', 'encalhe', 'manter') THEN
     RAISE EXCEPTION 'raio_x: contrapartida invalida: %', p_troca_contrapartida USING ERRCODE = '22023';
   END IF;
   IF p_responsavel IS NOT NULL
@@ -453,16 +473,24 @@ BEGIN
   IF v_old.atualizado_em IS DISTINCT FROM p_atualizado_em THEN
     RAISE EXCEPTION 'raio_x: decisao mudou desde a leitura (sku %)', p_sku USING ERRCODE = 'RX003';
   END IF;
-  IF v_old.destino <> 'liquidar' AND (p_preco_piso IS NOT NULL OR p_canal IS NOT NULL OR p_frete IS NOT NULL) THEN
+  v_frete  := CASE WHEN p_frete IS NOT DISTINCT FROM -1 THEN v_old.frete_estimado ELSE p_frete END;
+  v_contra := CASE WHEN p_troca_contrapartida IS NOT DISTINCT FROM 'manter' THEN v_old.troca_contrapartida ELSE p_troca_contrapartida END;
+  IF v_old.destino <> 'liquidar' AND (p_preco_piso IS NOT NULL OR p_canal IS NOT NULL OR v_frete IS NOT NULL) THEN
     RAISE EXCEPTION 'raio_x: piso, canal e frete so no destino liquidar (destino %)', v_old.destino USING ERRCODE = '22023';
   END IF;
-  IF v_old.destino <> 'trocar' AND p_troca_contrapartida IS NOT NULL THEN
+  IF v_old.destino <> 'trocar' AND v_contra IS NOT NULL THEN
     RAISE EXCEPTION 'raio_x: contrapartida so no destino trocar (destino %)', v_old.destino USING ERRCODE = '22023';
   END IF;
 
-  -- Bases CONGELADAS da versão aprovada (preço médio 12m faturado e CMC atual) — mudar responsável amanhã não
-  -- reescreve o histórico; sem médio (ex.: 0 venda em 12m) o desconto é DESCONHECIDO (NULL), nunca 0.
-  IF v_old.destino = 'liquidar' AND p_preco_piso IS NOT NULL THEN
+  -- Bases CONGELADAS da versão aprovada (preço médio 12m faturado e CMC atual): só se (re)leem quando o PISO muda ou
+  -- ainda não há base — editar só responsável/prazo amanhã NÃO reescreve o histórico (Codex P1-4). Sem médio (0 venda
+  -- em 12m) o desconto é DESCONHECIDO (NULL), nunca 0.
+  v_recalc := p_preco_piso IS NOT NULL AND (p_preco_piso IS DISTINCT FROM v_old.preco_piso OR (v_old.preco_medio_base IS NULL AND v_old.cmc_base IS NULL));
+  IF v_old.destino = 'liquidar' AND p_preco_piso IS NOT NULL AND NOT v_recalc THEN
+    v_pm12 := v_old.preco_medio_base;
+    v_cmc := v_old.cmc_base;
+  END IF;
+  IF v_old.destino = 'liquidar' AND v_recalc THEN
     IF v_vnd IS NOT NULL THEN
       SELECT sum(h.valor_total) / nullif(sum(h.quantidade), 0) INTO v_pm12
         FROM public.v_venda_items_history_efetivo h
@@ -478,12 +506,12 @@ BEGIN
   UPDATE public.raio_x_decisao d SET
     preco_piso       = p_preco_piso,
     canal_liquidacao = p_canal,
-    frete_estimado   = p_frete,
+    frete_estimado   = v_frete,
     preco_medio_base = CASE WHEN p_preco_piso IS NOT NULL THEN round(v_pm12::numeric, 4) END,
     cmc_base         = CASE WHEN p_preco_piso IS NOT NULL THEN v_cmc END,
     desconto_sobre_medio_pct = CASE WHEN p_preco_piso IS NOT NULL AND v_pm12 > 0 THEN round(1 - p_preco_piso / v_pm12, 4) END,
     margem_unit      = CASE WHEN p_preco_piso IS NOT NULL AND v_cmc IS NOT NULL THEN round(p_preco_piso - v_cmc, 4) END,
-    troca_contrapartida = p_troca_contrapartida,
+    troca_contrapartida = v_contra,
     responsavel      = p_responsavel,
     prazo            = p_prazo,
     -- re-salvar "executado" VIGENTE não move data nem autor; executado de antes do destino atual

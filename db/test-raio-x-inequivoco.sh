@@ -66,8 +66,10 @@ CREATE TABLE public.sku_parametros (empresa text, sku_codigo_omie bigint, fornec
 CREATE TABLE public.v_venda_items_history_efetivo (empresa text, data_emissao date, cliente_codigo_omie bigint, cliente_razao_social text,
   sku_codigo_omie bigint, sku_unidade text, quantidade numeric, valor_total numeric, valor_unitario numeric);
 CREATE TABLE public.venda_items_history (empresa text, data_emissao date);
-CREATE TABLE public.v_sku_demanda_efetiva (empresa text, sku_codigo_omie bigint, quantidade numeric, data_emissao date);
-CREATE TABLE public.sku_leadtime_history (empresa text, sku_codigo_omie text, quantidade_recebida numeric, t4_data_recebimento timestamptz);
+CREATE TABLE public.v_sku_demanda_efetiva (empresa text, sku_codigo_omie bigint, quantidade numeric, data_emissao date, sku_unidade text);
+CREATE TYPE public.empresa_reposicao AS ENUM ('OBEN', 'COLACOR');   -- tipo REAL da coluna (Codex codigo P1-1)
+CREATE TABLE public.sku_leadtime_history (empresa public.empresa_reposicao, sku_codigo_omie text, quantidade_recebida numeric, t4_data_recebimento timestamptz);
+CREATE TABLE public.v_pcp_malha_oben_quarentena (pai_oben bigint, comp_oben bigint, motivo text);
 CREATE TABLE public.cmc_ledger (account text, omie_codigo_produto bigint, observed_at timestamptz);
 CREATE TABLE public.sku_substituicao (empresa text, sku_codigo_antigo text, sku_codigo_novo text, status text, acao_parametros text);
 CREATE TABLE public.warehouses (id uuid PRIMARY KEY, code text);
@@ -110,6 +112,8 @@ INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, unidad
  (114,'C114','CORANTE LC COLD','UN',true,'Concentrados LC','oben','00', now() - interval '400 days'),
  (115,'C115','ENTRADA LEDGER','UN',true,'Vernizes','oben','00', now() - interval '400 days'),
  (116,'C116','MAQUINA DE TESTE','UN',true,'Vernizes','oben','00', now() - interval '400 days'),
+ (117,'C117','VENDA EM CAIXA','UN',true,'Vernizes','oben','00', now() - interval '400 days'),
+ (118,'C118','INSUMO QUARENTENA','UN',true,'Vernizes','oben','00', now() - interval '400 days'),
  (201,'C201','COLACOR PARADO','UN',true,'Vernizes','colacor','00', now() - interval '400 days');
 -- 111 = sem cadastro (so estoque)
 INSERT INTO public.inventory_position VALUES
@@ -117,11 +121,15 @@ INSERT INTO public.inventory_position VALUES
  (105,100,10,10,'oben',now()), (106,100,10,10,'oben',now()), (107,100,10,10,'oben',now()), (108,100,10,10,'oben',now()),
  (109,100,10,10,'oben',now()), (110,0,10,10,'oben',now()), (111,100,10,10,'oben',now()), (112,100,10,10,'oben',now()),
  (113,100,10,10,'oben',now()), (114,100,10,10,'oben',now()), (115,100,10,10,'oben',now()), (116,100,10,10,'oben',now()),
+ (117,100,10,10,'oben',now()), (118,100,10,10,'oben',now()),
  (201,100,10,10,'colacor_vendas',now());
 -- consumo 365d: 90 un (cobertura 405d) em todos menos 102 (0) e 103 (100 un = exatamente 365d)
 INSERT INTO public.v_sku_demanda_efetiva
   SELECT 'OBEN', s, 1, current_date - g FROM unnest(ARRAY[101,104,105,106,107,108,109,111,112,113,114,115,116]) s, generate_series(1, 360, 4) g;
 INSERT INTO public.v_sku_demanda_efetiva SELECT 'OBEN', 103, 1, current_date - g FROM generate_series(1, 300, 3) g;
+-- 117: venda em CX (estoque em UN) — 20 CX/ano "parecem" 1.825 dias de cobertura; 118: componente em quarentena, consumo invisivel
+INSERT INTO public.v_sku_demanda_efetiva (empresa, sku_codigo_omie, quantidade, data_emissao, sku_unidade) SELECT 'OBEN', 117, 1, current_date - g, 'CX' FROM generate_series(1, 360, 18) g;
+INSERT INTO public.v_pcp_malha_oben_quarentena VALUES (900, 118, 'perc_perda > 0');
 -- venda direta (para preco medio 12m do planejar): 101 vendeu 10 un por R$20
 INSERT INTO public.v_venda_items_history_efetivo (empresa, data_emissao, cliente_codigo_omie, sku_codigo_omie, sku_unidade, quantidade, valor_total)
   VALUES ('OBEN', current_date - 30, 1, 101, 'UN', 10, 200);
@@ -212,6 +220,8 @@ suite() {
   oks "$U_EST" "$(INEQ oben 111)" "false|cadastro_incompleto|405.6|N" "c 111 sem cadastro aguarda (desconhecido != elegivel)"
   oks "$U_EST" "$(INEQ oben 112)" "false|cadastro_recente|405.6|N" "c 112 cadastro ha 10d aguarda"
   oks "$U_EST" "$(INEQ oben 114)" "false|corante,cold_start|405.6|N" "c 114 TODOS os motivos (corante E cold)"
+  oks "$U_EST" "$(INEQ oben 117)" "false|unidade_divergente|1825.0|N" "c 117 venda em CX com estoque em UN aguarda (cobertura em unidades mistas mente)"
+  oks "$U_EST" "$(INEQ oben 118)" "false|insumo_em_quarentena|N|N" "c 118 insumo com ficha em quarentena aguarda (consumo invisivel nao e zero)"
   # manual vence a regra: 113 e tipo 07 mas classificado mercadoria a mao
   run "SELECT sku_codigo_omie FROM public.raio_x_classificar('oben', 113, 'mercadoria', 'e produto de venda')" "c classificar 113"
   oks "$U_EST" "$(INEQ oben 113)" "true|-|405.6|77.8" "c 113 manual mercadoria vence o tipo 07"
@@ -240,15 +250,24 @@ suite() {
   okp "$(PLANO oben 105)" "N|N|N|N|N|N|encalhe" "e contrapartida gravada"
   oks "$U_EST" "$(lanca "SELECT * FROM public.t_planejar(''oben'', 105, NULL, NULL, NULL, NULL, false, 10, NULL)" 22023)" "22023" "e frete fora do liquidar 22023"
   oks "$U_EST" "$(lanca "SELECT * FROM public.t_planejar(''oben'', 101, 15, NULL, NULL, NULL, false, NULL, ''giro'')" 22023)" "22023" "e contrapartida fora do trocar 22023"
-  oks "$U_EST" "$(lanca "SELECT * FROM public.t_planejar(''oben'', 101, 15, NULL, NULL, NULL, false, -1, NULL)" 22023)" "22023" "e frete negativo 22023"
+  oks "$U_EST" "$(lanca "SELECT * FROM public.t_planejar(''oben'', 101, 15, NULL, NULL, NULL, false, -5, NULL)" 22023)" "22023" "e frete negativo 22023 (-1 e a sentinela 'manter', -5 nao)"
   oks "$U_EST" "$(lanca "SELECT * FROM public.t_planejar(''oben'', 105, NULL, NULL, NULL, NULL, false, NULL, ''x'')" 22023)" "22023" "e contrapartida invalida 22023"
+  # fontes MUDAM (medio 20->30, cmc 10->18); re-salvar so o responsavel NAO reescreve as bases congeladas
+  P -c "UPDATE public.v_venda_items_history_efetivo SET valor_total = 300 WHERE sku_codigo_omie = 101; UPDATE public.inventory_position SET cmc = 18 WHERE omie_codigo_produto = 101;" >/dev/null
+  run "SELECT sku_codigo_omie FROM public.t_planejar('oben', 101, 15, 'outlet_queima', '$U_STAFF', '2026-12-05', false, 120, NULL)" "e re-salvar prazo com o MESMO piso"
+  okp "$(PLANO oben 101)" "15|120|0.2500|5.0000|20.0000|10|N" "e bases congeladas: mesmo piso nao relê medio/cmc"
   run "SELECT sku_codigo_omie FROM public.t_planejar8('oben', 101, 12, 'outro', NULL, NULL, false)" "e cliente antigo de 8 args resolve na funcao nova"
-  okp "$(PLANO oben 101)" "12|N|0.4000|2.0000|20.0000|10|N" "e 8 args: frete limpo, desconto recalculado nas bases"
+  okp "$(PLANO oben 101)" "12|120|0.6000|-6.0000|30.0000|18|N" "e 8 args PRESERVA o frete (sentinela) e piso NOVO relê as bases (medio 30, cmc 18)"
+  run "SELECT sku_codigo_omie FROM public.t_planejar8('oben', 105, NULL, NULL, '$U_STAFF', NULL, false)" "e 8 args na troca"
+  okp "$(PLANO oben 105)" "N|N|N|N|N|N|encalhe" "e 8 args PRESERVA a contrapartida encalhe (cliente antigo nao apaga o que nao conhece)"
+  run "SELECT sku_codigo_omie FROM public.t_planejar('oben', 105, NULL, NULL, '$U_STAFF', NULL, false, NULL, NULL)" "e cliente novo limpa com NULL explicito"
+  okp "$(PLANO oben 105)" "N|N|N|N|N|N|N" "e NULL explicito limpa a contrapartida"
   # sem venda em 12m (102): desconto DESCONHECIDO, nao 0
   run "$(dec "'oben', 102, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "e 102 liquidar"
   run "SELECT sku_codigo_omie FROM public.t_planejar('oben', 102, 8, NULL, NULL, NULL, false, NULL, NULL)" "e plano 102"
   okp "$(PLANO oben 102)" "8|N|N|-2.0000|N|10|N" "e sem medio: desconto NULL (nunca 0); margem negativa visivel"
 
+  run "SELECT sku_codigo_omie FROM public.t_planejar('oben', 105, NULL, NULL, '$U_STAFF', NULL, false, NULL, 'encalhe')" "e repoe encalhe para a medicao"
   # ---------- (f) medicao devolve a contrapartida ----------
   oks "$U_EST" "SELECT coalesce(troca_contrapartida,'N') FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 105" "encalhe" "f medicao traz troca_contrapartida"
   oks "$U_EST" "SELECT count(*) FROM public.raio_x_medicao('oben') WHERE destino IS NOT NULL" "4" "f medicao lista as 4 decisoes"
@@ -285,5 +304,9 @@ sabotar "5 cobertura 365 exata passa (<= vira <)" "s/AND b.cob <= c_cobertura_di
 sabotar "6 manual nao vence" "s/SELECT b.\*, CASE WHEN b.manual IS NOT NULL THEN b.manual = 'mercadoria' ELSE b.merc_regra END AS merc/SELECT b.*, b.merc_regra AS merc/" "c 113 manual mercadoria vence o tipo 07"
 sabotar "7 RX004 removido (liquidar fora do inequivoco passa)" "s/IF p_destino = 'liquidar' AND v_mudou/IF false AND v_mudou/" "d liquidar 105 (entrada recente) RX004"
 sabotar "8 ledger ignorado como entrada" "s/WHERE cl.account = CASE p_empresa WHEN 'oben' THEN 'vendas' ELSE 'colacor_vendas' END/WHERE false/" "c 115 observacao do ledger ha 5d aguarda (precisao > recall)"
+sabotar "10 unidade divergente nao segura" "s/CASE WHEN b.un_divergente THEN 'unidade_divergente' END,/NULL,/" "c 117 venda em CX com estoque em UN aguarda (cobertura em unidades mistas mente)"
+sabotar "11 quarentena nao segura" "s/CASE WHEN b.em_quarentena THEN 'insumo_em_quarentena' END,/NULL,/" "c 118 insumo com ficha em quarentena aguarda (consumo invisivel nao e zero)"
+sabotar "12 bases reescritas a cada salvamento" "s/v_recalc := p_preco_piso IS NOT NULL AND (p_preco_piso IS DISTINCT FROM v_old.preco_piso OR (v_old.preco_medio_base IS NULL AND v_old.cmc_base IS NULL));/v_recalc := p_preco_piso IS NOT NULL;/" "e bases congeladas: mesmo piso nao relê medio/cmc"
+sabotar "13 sentinela do frete ignorada (8 args apaga)" "s/v_frete  := CASE WHEN p_frete IS NOT DISTINCT FROM -1 THEN v_old.frete_estimado ELSE p_frete END;/v_frete := NULLIF(p_frete, -1);/" "e 8 args PRESERVA o frete (sentinela) e piso NOVO relê as bases (medio 30, cmc 18)"
 sabotar "9 desconto fabricado 0 sem medio" "s/AND v_pm12 > 0 THEN round(1 - p_preco_piso \/ v_pm12, 4) END,/THEN coalesce(round(1 - p_preco_piso \/ nullif(v_pm12,0), 4), 0) END,/" "e sem medio: desconto NULL (nunca 0); margem negativa visivel"
 echo "RAIO-X-INEQUIVOCO-PROVA-OK"
