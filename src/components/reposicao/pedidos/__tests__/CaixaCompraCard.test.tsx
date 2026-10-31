@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useEffect, useLayoutEffect, useReducer } from 'react';
 
 /**
  * #3401 — o card de caixa × fila de compras.
@@ -25,24 +26,6 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-// Para a corrida render × efeito: depois da PRÓXIMA leitura da chave (a do render), o relógio salta
-// para `saltarPara` — o efeito roda num instante posterior ao render.
-let saltarPara: Date | null = null;
-vi.mock('@/lib/financeiro/saldo-contas', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@/lib/financeiro/saldo-contas')>();
-  return {
-    ...real,
-    chaveFrescorDaLeitura: (agora: Date) => {
-      const chave = real.chaveFrescorDaLeitura(agora);
-      if (saltarPara) {
-        vi.setSystemTime(saltarPara);
-        saltarPara = null;
-      }
-      return chave;
-    },
-  };
-});
-
 import { CaixaCompraCard } from '../CaixaCompraCard';
 
 const FILA = [{ status: 'pendente_aprovacao', valor_total: 500 }];
@@ -54,11 +37,31 @@ function semanas(saldo: number, fluxo: number) {
   ];
 }
 
+// Para a corrida render × efeito: um irmão que re-renderiza junto com o card na volta da aba e, no
+// useLayoutEffect (que roda depois do render e ANTES dos useEffect do card), salta o relógio para
+// `saltarPara` — o efeito do card roda num instante posterior ao render dele.
+let saltarPara: Date | null = null;
+function SaltaRelogio() {
+  const [tick, forcar] = useReducer((n: number) => n + 1, 0);
+  useEffect(() => {
+    document.addEventListener('visibilitychange', forcar);
+    return () => document.removeEventListener('visibilitychange', forcar);
+  }, []);
+  useLayoutEffect(() => {
+    if (tick > 0 && saltarPara) {
+      vi.setSystemTime(saltarPara);
+      saltarPara = null;
+    }
+  }, [tick]);
+  return null;
+}
+
 function renderCard() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
       <CaixaCompraCard pedidos={FILA} />
+      <SaltaRelogio />
     </QueryClientProvider>,
   );
 }
@@ -120,6 +123,7 @@ describe('CaixaCompraCard — a leitura não atravessa a virada das 04h SP', () 
 
     // Às 04:05:00.250 a régua nova está garantida no banco: lê de novo.
     await avancar(10 * 60_000);
+    await avancar(0);
     expect(rpc).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/Virada diária do saldo bancário/)).toBeNull();
     expect(screen.getAllByText('R$ 7.000,00').length).toBeGreaterThan(0);
