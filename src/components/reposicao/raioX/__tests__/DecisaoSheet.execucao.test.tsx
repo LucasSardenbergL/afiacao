@@ -85,7 +85,7 @@ describe('DecisaoSheet — execução', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(argsDe('raio_x_planejar')).toEqual([{
       p_empresa: 'oben', p_sku: 1, p_preco_piso: 7.5, p_canal: 'outlet_queima', p_responsavel: 'u-ana',
-      p_prazo: '2026-11-15', p_concluido: false, p_atualizado_em: '2026-10-14T00:00:00Z',
+      p_prazo: '2026-11-15', p_concluido: false, p_atualizado_em: '2026-10-14T00:00:00Z', p_frete: null, p_troca_contrapartida: null,
     }]);
     expect(argsDe('raio_x_decidir')).toEqual([]);
     expect(track).toHaveBeenCalledWith('raio_x.plano', expect.objectContaining({ empresa: 'oben', tem_piso: true, canal: 'outlet_queima' }));
@@ -111,7 +111,7 @@ describe('DecisaoSheet — execução', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(argsDe('raio_x_planejar')).toEqual([{
       p_empresa: 'oben', p_sku: 1, p_preco_piso: null, p_canal: null, p_responsavel: 'u-bia',
-      p_prazo: '2026-11-20', p_concluido: true, p_atualizado_em: '2026-10-14T00:00:00Z',
+      p_prazo: '2026-11-20', p_concluido: true, p_atualizado_em: '2026-10-14T00:00:00Z', p_frete: null, p_troca_contrapartida: null,
     }]);
   });
 
