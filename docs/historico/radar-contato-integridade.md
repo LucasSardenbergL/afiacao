@@ -3,7 +3,7 @@
 > Pendências da frente 2 ([radar-acesso-vendedor.md](radar-acesso-vendedor.md), "Pendências fora desta frente"): duas
 > falhas ANTIGAS que só o gestor alcançava e que a abertura ao vendedor (`private.cap_radar_prospectar`, #3417) deixou ao
 > alcance de qualquer farmer/hunter/closer. Migration `20261031111000_radar_contato_integridade.sql`. Prova:
-> `db/test-radar-contato-integridade.sh` (núcleo do CI, 37 asserts, 15 sabotagens).
+> `db/test-radar-contato-integridade.sh` (núcleo do CI, 43 asserts, 19 sabotagens).
 
 ## Problema
 
@@ -48,13 +48,21 @@ nunca pela mensagem. O toast da conversão não tem "Desfazer". O desfazer lê 3
 "Desfeito"; `false` → "Registro removido; status preservado" (nunca "segue o registro de X": colisão não prova autoria);
 ausente (banco anterior) → `null` → "Desfeito", como antes.
 
+## Revisão do código (Codex max, 356 s): 1 ALTA e 2 MÉDIAS, as 3 corrigidas
+
+| Achado | Tratamento |
+|---|---|
+| ALTA: o trigger protegia só a ENTRADA em `virou_cliente`. Um corpo ANTIGO em voo no commit ainda tirava cliente confirmado, recarimbava a conversão e, pelo desfazer antigo, apagava o efeito de B | O trigger passa a impor RD007 a qualquer JWT (sem JWT = cron/servidor) e a manter a data da conversão quando o status regravado é o mesmo. Provado chamando o predecessor guardado (A15/A16), cada camada sabotada em separado. O desfazer antigo não é detectável por trigger: fechado por **evidência medida** na janela do apply (seção Deploy) |
+| MÉDIA: `SET LOCAL statement_timeout` dentro do `aplicar_sql` não rearma o temporizador do executor (300 s), e o PÓS varria 573 mil linhas segurando ACCESS EXCLUSIVE | O `statement_timeout` sai; a varredura da invariante vai para ANTES do `ALTER`; depois dele só há DDL de catálogo |
+| MÉDIA: nenhum teste atravessava as janelas de 5 min e 2 min durante a espera pela trava | D1–D4: contato com 4m59s (e dono com 1m59s), a linha presa 2,5 s com o bloqueio observado, e a janela vence na espera. Sabotagens `clock_timestamp()` → `now()` vermelhas |
+
 ## Prova
 
 - `db/test-radar-contato-integridade.sh`: snapshot + ACL de prod + retrato de 29/10 + a 20261029201200 + o corpo vivo do
   desfazer (`db/fixtures/radar-contato-integridade-prod-20261031.sql`). Os 4 predecessores com o md5 de prod conferido
   ANTES da migration. Tem o traço do Codex, o desfazer encadeado, o motivo do descarte devolvido e duas corridas com o
   bloqueio **observado** em `pg_stat_activity` (registrar × desfazer; dois desfazer do mesmo contato → só um apaga).
-  `--falsificar`: controle verde (37) e **15/15** sabotagens vermelhas no assert declarado, cada uma com a pré-condição
+  `--falsificar`: controle verde (43) e **19/19** sabotagens vermelhas no assert declarado, cada uma com a pré-condição
   verde. A porta e a classe do RD005 são sabotadas **separadamente** (cada camada tem o seu vermelho: A1/A11 e A9/A10).
 - Vitest: `RadarOutcomeMenu.integridade.test.tsx` (10) e `borda-rpc.test.ts` (3 estados). Falsificado: 5 sabotagens no
   menu, controle verde na mesma invocação, 5 vermelhas.

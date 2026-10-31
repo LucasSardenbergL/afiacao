@@ -317,7 +317,7 @@ sabotagem() {
   local R='public.registrar_contato_radar(text,text,text)' D='public.desfazer_contato_radar(uuid)' G='private.radar_empresas_status_guard()'
   case "$1" in
     porta_sem_rd005)    cv_sabotar "$R" "IF p_acao = 'virou_cliente' AND NOT v_confirmado THEN" "IF false THEN" ;;
-    classe_sem_rd005)   cv_sabotar "$G" "IF NEW.prospeccao_status = 'virou_cliente'" "IF false AND NEW.prospeccao_status = 'virou_cliente'" ;;
+    classe_sem_rd005)   cv_sabotar "$G" "AND (TG_OP = 'INSERT' OR OLD.prospeccao_status IS DISTINCT FROM 'virou_cliente')" "AND false" ;;
     autoria_mantida)    cv_sabotar "$G" "NEW.prospeccao_contato_id := NULL;" "NULL;" ;;
     regra_antiga)       cv_sabotar "$D" "IF v_dono IS NOT DISTINCT FROM p_id THEN" "IF (SELECT e.prospeccao_status FROM public.radar_empresas e WHERE e.cnpj = v_cnpj) = v_acao THEN" ;;
     sem_tirar_da_cadeia) cv_sabotar "$D" "WHERE contato_anterior_id = p_id;" "WHERE false;" ;;
