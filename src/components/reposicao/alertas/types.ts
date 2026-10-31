@@ -31,13 +31,31 @@ export type EventoOutlier = {
   detectado_em: string | null;
 };
 
+// Fila de ação × Registro. Medido em prod (2026-10-31): toda decisão humana sobre venda atípica foi
+// "aceitar" ("Vendas normais"), a última em 22/05, e aceitar não move o motor (spec 2026-07-16) — então
+// venda atípica é REGISTRO, não fila. Pedem decisão aqui só o que muda dado: SKU sem grupo (o grupo
+// define o LT de produção) e LT atípico (cobrança de fornecedor). Os tipos do Omie têm dono fora daqui:
+// o inativado se auto-resolve quando o SKU volta a ficar ativo (omie-sync-status-produtos) e o reativado
+// é respondido no Religar/Descontinuar da Revisão de parâmetros.
+export const TIPOS_FILA = ["sku_sem_grupo", "lt_atipico"] as const;
+export const TIPOS_REGISTRO = ["venda_atipica", "sku_inativado_omie", "sku_reativado_omie"] as const;
+
+export type Visao = "fila" | "registro";
+
+export const tiposDaVisao = (visao: Visao): readonly string[] =>
+  visao === "fila" ? TIPOS_FILA : TIPOS_REGISTRO;
+
+// Onde o reativado se resolve (Religar/Descontinuar). Aceitar aqui fecharia o evento sem a decisão.
+export const ROTA_REVISAO_PARAMETROS = "/admin/reposicao/sessao/parametros?tab=ajuste";
+
 export type OutlierStats = {
-  pendentes: number;
-  criticos: number;
-  atencao: number;
-  info: number;
-  aceitosHoje: number;
-  excluidosHoje: number;
+  semGrupo: number;
+  ltAtipico: number;
+  ltCriticos: number;
+  vendaAtipica: number;
+  inativadoOmie: number;
+  reativadoOmie: number;
+  decididosHoje: number;
 };
 
 export type SkuInfo = {
@@ -65,7 +83,28 @@ export const tipoLabel = (tipo: string) =>
     ? "LT atípico"
     : tipo === "sku_sem_grupo"
     ? "SKU sem grupo"
+    : tipo === "sku_inativado_omie"
+    ? "Inativado no Omie"
+    : tipo === "sku_reativado_omie"
+    ? "Reativado no Omie"
     : tipo;
+
+// Dias inteiros desde a detecção — o que estava escondido na tela: alerta "crítico" de abril ainda pendente.
+// Sem data → null (ausente ≠ zero: "há 0 dias" seria inventar frescor).
+export const idadeDias = (detectadoEm: string | null, agora: Date = new Date()): number | null => {
+  if (!detectadoEm) return null;
+  const t = new Date(detectadoEm).getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.max(0, Math.floor((agora.getTime() - t) / 86_400_000));
+};
+
+// Selecionável para "marcar como revisado" em lote: pendente, não crítico, e não é tipo que se resolve
+// com outra decisão (grupo, ou Religar/Descontinuar).
+export const podeAceitarEmLote = (e: Pick<EventoOutlier, "status" | "severidade" | "tipo">) =>
+  e.status === "pendente" &&
+  e.severidade !== "critico" &&
+  e.tipo !== "sku_sem_grupo" &&
+  e.tipo !== "sku_reativado_omie";
 
 export const fmt = (n: number | null | undefined, dec = 2) =>
   n === null || n === undefined ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
