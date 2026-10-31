@@ -13,7 +13,7 @@ import {
 } from '@/lib/financeiro/compra-suspensa-helpers';
 
 /** sku_parametros/venda_items_history falam MAIÚSCULO; a aba Ciclo fala Company. colacor_sc não tem SKU → null. */
-export function empresaDaCompra(company: Company): string | null {
+function empresaDaCompra(company: Company): string | null {
   if (company === 'oben') return 'OBEN';
   if (company === 'colacor') return 'COLACOR';
   return null;

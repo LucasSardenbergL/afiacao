@@ -135,9 +135,3 @@ export function resumirCandidatos(c: Candidato[]): { n: number; valor: number | 
   const s = somaHonesta(c.map((x) => x.valor));
   return { n: c.length, valor: s.total, semCusto: s.desconhecidos, noMotorN: c.filter((x) => x.noMotor).length, comVenda90N: c.filter((x) => (x.venda90 ?? 0) > 0).length };
 }
-
-export const ROTULO_IMPEDIMENTO: Record<string, string> = {
-  fora_do_motor: 'fora do motor (flag ou tipo de reposição) — reativar aqui não basta',
-  substituido: 'SKU substituído — a demanda está no destino',
-  ancora_suspensa: 'a embalagem-âncora do grupo segue suspensa',
-};
