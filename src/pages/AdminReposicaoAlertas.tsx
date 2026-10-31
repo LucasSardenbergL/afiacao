@@ -1,5 +1,7 @@
 import { exigirEmpresaReposicao } from "@/lib/reposicao/linha-view";
 import { useState, useMemo } from "react";
+import { useUrlState } from "@/hooks/useUrlState";
+import { track } from "@/lib/analytics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { ilikeOr, isSearchablePostgrestTerm } from "@/lib/postgrest";
@@ -7,9 +9,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
 import {
-  PAGE_SIZE,
-  type EventoOutlier, type SkuInfo, type AcaoConfirm,
+  PAGE_SIZE, tiposDaVisao, podeAceitarEmLote,
+  type EventoOutlier, type SkuInfo, type AcaoConfirm, type Visao,
 } from "@/components/reposicao/alertas/types";
+import { buscarStats, atribuirGrupoAosSkus } from "@/components/reposicao/alertas/api";
+import { SemGrupoLote } from "@/components/reposicao/alertas/SemGrupoLote";
 import { StatsCards } from "@/components/reposicao/alertas/StatsCards";
 import { AlertasFiltros } from "@/components/reposicao/alertas/AlertasFiltros";
 import { AlertasTable } from "@/components/reposicao/alertas/AlertasTable";
@@ -24,11 +28,35 @@ export default function AdminReposicaoAlertas() {
   // outra, a do seletor.
   const qc = useQueryClient();
 
-  const [page, setPage] = useState(1);
-  const [filtroTipo, setFiltroTipo] = useState<string>("__all__");
-  const [filtroSev, setFiltroSev] = useState<string>("__all__");
-  const [filtroStatus, setFiltroStatus] = useState<string>("pendente");
-  const [busca, setBusca] = useState("");
+  // Filtros na URL: sobrevivem ao F5 e dão link direto (ex.: ?visao=registro). Chaves sem colisão com o
+  // `?tab=` da Sessão de parâmetros, que embute esta tela como aba.
+  const [filtros, setFiltros] = useUrlState({
+    visao: "fila",
+    tipo: "__all__",
+    sev: "__all__",
+    status: "pendente",
+    q: "",
+    pagina: 1,
+  });
+  const visao: Visao = filtros.visao === "registro" ? "registro" : "fila";
+  const page = filtros.pagina;
+  const setPage = (v: number | ((prev: number) => number)) =>
+    setFiltros((prev) => ({ ...prev, pagina: typeof v === "function" ? v(prev.pagina) : v }));
+  // Cada filtro volta à página 1 NA MESMA escrita: o setter do useUrlState mescla sobre o estado do
+  // render, então duas chamadas no mesmo evento (filtro, depois página) se sobrescreveriam.
+  const filtroTipo = filtros.tipo;
+  const setFiltroTipo = (tipo: string) => setFiltros({ tipo, pagina: 1 });
+  const filtroSev = filtros.sev;
+  const setFiltroSev = (sev: string) => setFiltros({ sev, pagina: 1 });
+  const filtroStatus = filtros.status;
+  const setFiltroStatus = (status: string) => setFiltros({ status, pagina: 1 });
+  const busca = filtros.q;
+  const setBusca = (q: string) => setFiltros({ q, pagina: 1 });
+  // Trocar de visão zera tipo e página: o tipo de uma visão não existe na outra.
+  const setVisao = (v: Visao) => {
+    setFiltros({ visao: v, tipo: "__all__", pagina: 1 });
+    setSelecionados(new Set());
+  };
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
 
   const [drillEvento, setDrillEvento] = useState<EventoOutlier | null>(null);
@@ -38,28 +66,37 @@ export default function AdminReposicaoAlertas() {
   // Stats do cabeçalho
   const { data: stats } = useQuery({
     queryKey: ["outlier-stats"],
+    queryFn: () => buscarStats(),
+    refetchInterval: 60000,
+  });
+
+  // Sem grupo pendentes, inteiros (são poucos e é o bloco de ação da fila — não depende da página).
+  const { data: semGrupoPendentes } = useQuery({
+    enabled: visao === "fila",
+    queryKey: ["outliers-sem-grupo"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("eventos_outlier")
-        .select("severidade, status, decidido_em");
+        .select("*")
+        .eq("tipo", "sku_sem_grupo")
+        .eq("status", "pendente")
+        .order("detectado_em", { ascending: true })
+        .range(0, 999);
       if (error) throw error;
-      const rows = data ?? [];
-      const hoje = new Date().toISOString().slice(0, 10);
-      return {
-        pendentes: rows.filter((r) => r.status === "pendente").length,
-        criticos: rows.filter((r) => r.status === "pendente" && r.severidade === "critico").length,
-        atencao: rows.filter((r) => r.status === "pendente" && r.severidade === "atencao").length,
-        info: rows.filter((r) => r.status === "pendente" && r.severidade === "info").length,
-        aceitosHoje: rows.filter((r) => r.status === "aceito" && r.decidido_em?.startsWith(hoje)).length,
-        excluidosHoje: rows.filter((r) => r.status === "excluido" && r.decidido_em?.startsWith(hoje)).length,
-      };
+      return (data ?? []) as EventoOutlier[];
     },
-    refetchInterval: 30000,
   });
+
+  // Na fila, com status=pendente e sem tipo escolhido, o sem-grupo sai da TABELA: o bloco de lote acima
+  // já lista cada um com a ação. Escolher o tipo "SKU sem grupo" (ou outro status) traz de volta.
+  const blocoSemGrupoCobre = visao === "fila" && filtroStatus === "pendente" && filtroTipo === "__all__";
+  const tiposTabela = blocoSemGrupoCobre
+    ? tiposDaVisao(visao).filter((t) => t !== "sku_sem_grupo")
+    : tiposDaVisao(visao);
 
   // Lista paginada
   const { data: lista, isLoading } = useQuery({
-    queryKey: ["outliers-lista", page, filtroTipo, filtroSev, filtroStatus, busca],
+    queryKey: ["outliers-lista", visao, page, filtroTipo, filtroSev, filtroStatus, busca],
     queryFn: async () => {
       let q = supabase
         .from("eventos_outlier")
@@ -69,6 +106,7 @@ export default function AdminReposicaoAlertas() {
         .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
 
       if (filtroTipo !== "__all__") q = q.eq("tipo", filtroTipo);
+      else q = q.in("tipo", [...tiposTabela]);
       if (filtroSev !== "__all__") q = q.eq("severidade", filtroSev);
       if (filtroStatus !== "__all__") q = q.eq("status", filtroStatus);
       // Termo só-wildcard (`*`/`%%`) sanitiza pra vazio → `.or()` viraria match-all (#1062).
@@ -86,10 +124,12 @@ export default function AdminReposicaoAlertas() {
   const totalPages = Math.max(1, Math.ceil((lista?.total ?? 0) / PAGE_SIZE));
 
   const isSemGrupo = drillEvento?.tipo === "sku_sem_grupo";
+  // Só venda e LT têm série para desenhar; os tipos do Omie caíam no ramo de LT e plotavam leadtime à toa.
+  const temHistorico = drillEvento?.tipo === "venda_atipica" || drillEvento?.tipo === "lt_atipico";
 
   // Drill-down: histórico de vendas (90d) ou LT
   const { data: historico } = useQuery({
-    enabled: !!drillEvento && !isSemGrupo,
+    enabled: !!drillEvento && temHistorico,
     queryKey: ["outlier-historico", drillEvento?.id],
     queryFn: async () => {
       if (!drillEvento) return null;
@@ -200,44 +240,33 @@ export default function AdminReposicaoAlertas() {
 
   const [grupoEscolhido, setGrupoEscolhido] = useState<string>("");
 
-  // Mutation: atribuir grupo
+  const invalidarAlertas = () => {
+    qc.invalidateQueries({ queryKey: ["outliers-lista"] });
+    qc.invalidateQueries({ queryKey: ["outliers-sem-grupo"] });
+    qc.invalidateQueries({ queryKey: ["outlier-stats"] });
+    qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+  };
+
+  // Mutation: atribuir grupo (um SKU, pelo drill-down) — mesma escrita do lote.
   const atribuirGrupoMut = useMutation({
     mutationFn: async () => {
       if (!drillEvento || !grupoEscolhido) throw new Error("Selecione um grupo");
       // O Select devolve o id como TEXTO (SelectItem value é string); compara pelo texto, sem cast.
       const grupo = (gruposFornecedor ?? []).find((g) => String(g.id) === grupoEscolhido);
       if (!grupo) throw new Error("Grupo inválido");
-      // sku_grupo_producao = (empresa, sku_codigo_omie, grupo_codigo) — conferido na prod 2026-10-18.
-      // O payload antigo mandava fornecedor_grupo_id/fornecedor_nome/codigo_grupo (colunas que não
-      // existem) e o insert dava 400; o cast escondia isso do typecheck.
-      const { error: insErr } = await supabase
-        .from("sku_grupo_producao")
-        .insert({
-          empresa: drillEvento.empresa,
-          sku_codigo_omie: drillEvento.sku_codigo_omie,
-          grupo_codigo: grupo.grupo_codigo,
-        });
-      if (insErr) throw insErr;
-      // Marca evento como aceito
-      const { error: resErr } = await supabase.rpc("resolver_outlier", {
-        p_evento_id: drillEvento.id,
-        p_decisao: "aceitar",
-        p_justificativa: `Atribuído ao grupo ${grupo.grupo_codigo} — ${grupo.descricao}`,
-        p_usuario_email: user?.email || undefined,
+      const r = await atribuirGrupoAosSkus({
+        empresa: drillEvento.empresa, eventos: [drillEvento], grupo, usuarioEmail: user?.email,
       });
-      if (resErr) throw resErr;
-      // Recalcula parâmetros (LT mudou)
-      try {
-        await supabase.rpc("atualizar_parametros_numericos_skus", { p_empresa: drillEvento.empresa });
-      } catch (e) {
-        console.warn("Recálculo falhou:", e);
-      }
+      if (r.falha) throw new Error(r.falha.mensagem);
+      return r;
     },
-    onSuccess: () => {
-      toast.success("SKU classificado e parâmetros recalculados");
-      qc.invalidateQueries({ queryKey: ["outliers-lista"] });
-      qc.invalidateQueries({ queryKey: ["outlier-stats"] });
-      qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+    onSuccess: (r) => {
+      track("reposicao.alerta_grupo_atribuido", {
+        quantidade: r.atribuidos, lote: false, falhou: false, recalculo_falhou: r.recalculoFalhou,
+      });
+      if (r.recalculoFalhou) toast.warning("SKU classificado, mas o recálculo de parâmetros falhou");
+      else toast.success("SKU classificado e parâmetros recalculados");
+      invalidarAlertas();
       setDrillEvento(null);
       setGrupoEscolhido("");
     },
@@ -262,10 +291,9 @@ export default function AdminReposicaoAlertas() {
       return results;
     },
     onSuccess: (_, vars) => {
+      track("reposicao.alerta_revisado", { quantidade: vars.ids.length, lote: vars.ids.length > 1 });
       toast.success(`${vars.ids.length} alerta(s) marcado(s) como revisado(s)`);
-      qc.invalidateQueries({ queryKey: ["outliers-lista"] });
-      qc.invalidateQueries({ queryKey: ["outlier-stats"] });
-      qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+      invalidarAlertas();
       setSelecionados(new Set());
       setDrillEvento(null);
       setAcaoConfirm(null);
@@ -276,9 +304,7 @@ export default function AdminReposicaoAlertas() {
 
   const todosSelecionavel = useMemo(
     () =>
-      (lista?.rows ?? []).filter(
-        (r) => r.status === "pendente" && r.severidade !== "critico" && r.tipo !== "sku_sem_grupo",
-      ),
+      (lista?.rows ?? []).filter(podeAceitarEmLote),
     [lista],
   );
   const todosMarcados = todosSelecionavel.length > 0 && todosSelecionavel.every((r) => selecionados.has(r.id));
@@ -309,15 +335,28 @@ export default function AdminReposicaoAlertas() {
             <AlertTriangle className="h-6 w-6 text-warning" />
             Alertas de Outlier
           </h1>
-          <p className="text-sm text-muted-foreground">Triagem humana de eventos estatísticos atípicos</p>
+          <p className="text-sm text-muted-foreground">
+            {visao === "fila"
+              ? "Fila de ação: o que muda dado do motor (grupo de produção, leadtime do fornecedor)"
+              : "Registro: venda atípica e mudanças no Omie — informativo, não altera o motor"}
+          </p>
         </div>
       </div>
 
       {/* Estatísticas */}
-      <StatsCards stats={stats} />
+      <StatsCards stats={stats} visao={visao} onVisao={setVisao} />
+
+      {visao === "fila" && (
+        <SemGrupoLote
+          eventos={semGrupoPendentes ?? []}
+          usuarioEmail={user?.email}
+          onConcluido={invalidarAlertas}
+        />
+      )}
 
       {/* Filtros */}
       <AlertasFiltros
+        visao={visao}
         busca={busca}
         setBusca={setBusca}
         filtroTipo={filtroTipo}
@@ -326,7 +365,6 @@ export default function AdminReposicaoAlertas() {
         setFiltroSev={setFiltroSev}
         filtroStatus={filtroStatus}
         setFiltroStatus={setFiltroStatus}
-        setPage={setPage}
         selecionadosCount={selecionados.size}
         onAceitarLote={() => setAcaoConfirm({ lote: true })}
         onLimparSelecao={() => setSelecionados(new Set())}
@@ -345,6 +383,11 @@ export default function AdminReposicaoAlertas() {
         page={page}
         totalPages={totalPages}
         setPage={setPage}
+        mensagemVazia={
+          visao === "fila"
+            ? "Nada pede decisão aqui com estes filtros. Venda atípica fica no Registro."
+            : "Nenhum alerta encontrado"
+        }
       />
 
       {/* Drill-down */}

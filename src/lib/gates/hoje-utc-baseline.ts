@@ -28,8 +28,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'addDays: aritmética sobre YYYY-MM-DD ancorada em UTC (sem relógio); o hoje vem de quem chama' },
   { arquivo: 'src/lib/whatsapp/route-schedule.ts', trecho: 'd.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
     motivo: 'addDaysIso aritmética pura' },
-  { arquivo: 'src/pages/AdminReposicaoAlertas.tsx', trecho: 'new Date().toISOString().slice(0, 10)', n: 1, veredito: 'utc-consistente',
-    motivo: 'decidido_em?.startsWith(hoje) prefixo UTC — consertar os 2 lados' },
   { arquivo: 'src/pages/FinanceiroDashboard.tsx', trecho: 'sixMonthsAgo.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',
     motivo: 'new Date(y,m-6,1) meia-noite LOCAL → 03:00Z mesmo dia (só vale em UTC−3)' },
   { arquivo: 'src/pages/FinanceiroDashboard.tsx', trecho: 'threeMonthsAhead.toISOString().slice(0, 10)', n: 1, veredito: 'falso-positivo',

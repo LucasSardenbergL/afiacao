@@ -19,6 +19,7 @@ export const statusBadge = (status: string) => {
     aceito: { variant: "success", label: "Aceito" },
     excluido: { variant: "destructive", label: "Excluído" },
     ignorado: { variant: "secondary", label: "Ignorado" },
+    resolvido_auto: { variant: "secondary", label: "Resolvido auto" },
   };
   const cfg = map[status] ?? { variant: "outline" as BadgeVariant, label: status };
   return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
