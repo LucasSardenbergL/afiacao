@@ -637,4 +637,9 @@ describe('R54 — preço do capital pelas cópias já chegadas (t4 < d)', () => 
     expect([em(precosCompraPorDocumento(div, 'chegada'), '2026-02-10'), em(precosCompraPorDocumento(div, 'chegada'), '2026-02-20')]).toEqual([[1], []]);
     expect(em(precosCompraPorDocumento([l('a', '2026-02-05', 10), l('b', null, 10)], 'chegada'), '2026-02-10')).toEqual([1]);
   });
+  it('a carga monta as duas listas: precosCompra pela view (motor) e precosCompraCapital pela chegada', () => {
+    const d = carregarDados(monta({ recebimentos: ['T1|S1|2026-01-28|2026-02-05|10|10||docA|UN||FATURADO|35', 'T2|S1|2026-01-30|2026-02-19|10|10||docA|UN||FATURADO|35'] }));
+    expect(d.precosCompra).toEqual([{ sku: 'S1', desde: '2026-02-19', preco: 3.5 }]);
+    expect(d.precosCompraCapital).toEqual([{ sku: 'S1', desde: '2026-02-05', preco: 3.5 }]);
+  });
 });
