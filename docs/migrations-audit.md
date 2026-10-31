@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **723** custom migrations totais
-- **2364** objetos esperados (criados por estas migrations)
+- **726** custom migrations totais
+- **2371** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 888
-  - `rls_policy`: 495
+  - `function`: 891
+  - `rls_policy`: 496
   - `index`: 319
-  - `table`: 213
-  - `cron_job`: 200
+  - `table`: 214
+  - `cron_job`: 202
   - `view`: 127
   - `trigger`: 118
   - `enum_value`: 4
@@ -5915,6 +5915,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.desfazer_contato_radar` | — |
 | `trigger` | `public.trg_radar_status_guard_upd` | `radar_empresas` |
 | `trigger` | `public.trg_radar_status_guard_ins` | `radar_empresas` |
+
+### `20261031130000_raio_x_correcoes_pos_revisao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_congelar_coorte` | — |
+| `function` | `public.raio_x_medicao` | — |
+| `table` | `public.raio_x_coorte_top` | — |
+| `rls_policy` | `public.raio_x_coorte_top_select_custo` | `raio_x_coorte_top` |
+
+### `20261031130100_analytics_ledger_raio_x.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261031141053_nao_vinculados_cron_colacor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.nao-vinculados-refresh-diario-colacor-sc` | — |
+| `cron_job` | `cron.nao-vinculados-refresh-diario-colacor` | — |
 
 ## Próximos passos por status
 
