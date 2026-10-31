@@ -23900,6 +23900,88 @@ export type Database = {
           graduados: number
         }[]
       }
+      reposicao_compra_reativar: {
+        Args: { p_empresa: string; p_motivo?: string; p_skus: number[] }
+        Returns: {
+          impedimento: string | null
+          reativado: boolean
+          sku_codigo_omie: number
+        }[]
+      }
+      reposicao_compra_suspender: {
+        Args: {
+          p_empresa: string
+          p_lote_id?: string
+          p_motivo: string
+          p_origem?: string
+          p_revisar_em?: string
+          p_skus: number[]
+        }
+        Returns: {
+          inserido: boolean
+          pendentes_n: number
+          recusa: string | null
+          sku_codigo_omie: number
+        }[]
+      }
+      reposicao_compra_suspensa_candidatos: {
+        Args: { p_empresa: string; p_incluir_corante?: boolean; p_min_dias?: number }
+        Returns: {
+          cmc: number | null
+          consumo_365: number | null
+          corante: boolean
+          descricao: string | null
+          dias_365: number | null
+          dias_90: number | null
+          familia: string | null
+          fornecedor_nome: string | null
+          no_motor: boolean
+          saldo: number
+          sku_codigo_omie: number
+          valor: number | null
+          valor_vendido_90d: number | null
+        }[]
+      }
+      reposicao_compra_suspensa_listar: {
+        Args: { p_empresa: string }
+        Returns: {
+          cobertura_365d_atual: number | null
+          cobertura_90d_atual: number | null
+          descricao: string | null
+          evitado_ultimo_run: number | null
+          fornecedor_nome: string | null
+          foto_cobertura_90d_dias: number | null
+          foto_cobertura_dias: number | null
+          foto_no_motor: boolean | null
+          foto_valor: number | null
+          foto_valor_vendido_90d: number | null
+          id: string
+          lote_id: string | null
+          motivo: string
+          no_motor_atual: boolean | null
+          origem: string
+          qtde_ultimo_run: number | null
+          revisar_em: string
+          saldo_atual: number | null
+          sku_codigo_omie: number
+          suspenso_em: string
+          suspenso_por: string | null
+          suspenso_por_texto: string | null
+          valor_atual: number | null
+        }[]
+      }
+      reposicao_compra_suspensa_runs: {
+        Args: { p_dias?: number; p_empresa: string }
+        Returns: {
+          criado_em: string
+          data_ciclo: string
+          linhas_sem_preco: number
+          run_id: string
+          skus_incluidos: number
+          suspensas_compra_n: number
+          valor_evitado: number | null
+        }[]
+      }
       reposicao_conferir_envio: {
         Args: { p_pedido_id: number }
         Returns: {

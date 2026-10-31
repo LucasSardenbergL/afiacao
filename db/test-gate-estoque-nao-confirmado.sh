@@ -52,6 +52,16 @@ CREATE TABLE public.company_config (key text, value text);
 -- [COMPROMETIDO] o motor lê sales_orders desde a 20261010210000 (o vendido em pedido aberto) e a fixture concede
 -- SELECT de uma coluna dela ao authenticated: stub com as colunas que o motor lê, vazio (o desconto é zero aqui).
 DO $r$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $r$;
+-- [COMPRA SUSPENSA] a cauda da fixture (20261101090000) cria as tabelas da suspensão com RLS/GRANT: exige anon,
+-- service_role, auth.uid() e private.cap_compras_ler (stubs; a prova de ACL real é db/test-compra-suspensa-motor.sh).
+DO $r$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF;
+END $r$;
+CREATE SCHEMA IF NOT EXISTS auth;
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT NULL::uuid $$;
+CREATE SCHEMA IF NOT EXISTS private;
+CREATE OR REPLACE FUNCTION private.cap_compras_ler(p uuid) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT true $$;
 CREATE TABLE public.sales_orders (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), items jsonb NOT NULL DEFAULT '[]'::jsonb,
   status text NOT NULL DEFAULT 'rascunho', account text NOT NULL DEFAULT 'oben', hash_payload text, omie_numero_pedido text,
   omie_reconciliado_em timestamptz, deleted_at timestamptz);

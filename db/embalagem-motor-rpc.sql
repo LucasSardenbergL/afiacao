@@ -3,10 +3,10 @@
 --
 -- O guard src/lib/reposicao/__tests__/embalagem-motor-paridade.test.ts exige que este arquivo, do CREATE OR
 -- REPLACE até o FIM, seja IGUAL ao trecho da ÚLTIMA migration que recria a função (a que vence em prod).
--- Desde 2026-10-10 essa migration é a 20261010210000_motor_desconta_comprometido.sql (o motor desconta o vendido
--- em pedido de venda aberto no Omie, só nos SKUs sem grupo; antes, a 20261009194000 — #2849, unidades WP). O que
--- vem depois do $function$; é a coluna de rastro, o GRANT da coluna lida e a pós-condição, autocontida (o corpo e
--- a foto do ACL só são conferidos quando a migration roda inteira). Histórico: git log deste arquivo.
+-- Desde 2026-11-01 essa migration é a 20261101090000_reposicao_compra_suspensa.sql (o motor RESPEITA a suspensão de
+-- compra registrada em reposicao_compra_suspensa e loga a compra evitada; antes, a 20261010210000 — desconto do
+-- vendido em pedido aberto — e a 20261009194000 — #2849, unidades WP). O que vem depois do $function$; é a cauda
+-- autocontida que o motor exige (tabelas da suspensão com RLS, coluna do marker, pós-condição). Histórico: git log.
 -- Spec original (embalagem no motor, 2026-06-26): docs/superpowers/specs/2026-06-26-reposicao-embalagem-no-motor-spec.md
 
 -- A coluna que o motor lê (da mesma migration; NULL = fator relativo, a conta de antes). Idempotente.
@@ -399,6 +399,7 @@ BEGIN
   skus_decididos AS (
     SELECT b.empresa,
            CASE WHEN trocou THEN b.sku_escolhido ELSE b.ancora_sku END AS sku_codigo_omie,
+           b.ancora_sku, b.equiv_grupo,   -- [COMPRA SUSPENSA] a suspensão casa pelo SKU final OU pela âncora do grupo
            CASE WHEN trocou
                 THEN COALESCE((SELECT op2.descricao FROM omie_products op2
                                WHERE op2.omie_codigo_produto::text = b.sku_escolhido
@@ -499,6 +500,16 @@ BEGIN
   -- (cap 27 L→30 L vs 36 L→40 L segue capada; cap 36→40 vs 38→40 deixa de sê-lo porque FISICAMENTE são os
   -- mesmos 8 baldes — o cap não mudou a compra). Linha capada a ZERO fica 0 (o CASE exige > 0).
   -- qtde_sugerida NÃO muda (rastro em embalagens da âncora; a tela mostra "36 → 40" com a causa certa via fator_embalagem_portal).
+  -- [COMPRA SUSPENSA] decisão humana registrada em reposicao_compra_suspensa (spec 2026-10-31-reposicao-compra-suspensa):
+  -- ATIVA = reativado_em IS NULL (não vence sozinha; revisar_em é data de REVISÃO, não de liberação — Codex P1).
+  -- Lida UMA vez por run; a linha é segurada quando o SKU FINAL (âncora ou galão escolhido) OU a ÂNCORA do grupo
+  -- está suspensa — COALESCE(âncora, final) dá UM id por linha (sem duplicar o log). Fica em skus_necessitando para
+  -- que o log da compra evitada receba a MESMA qtde_final que iria ao pedido (pós-teto, pós-embalagem do portal).
+  suspensas_ativas AS (
+    SELECT cs.id, cs.sku_codigo_omie::text AS sku
+    FROM public.reposicao_compra_suspensa cs
+    WHERE cs.empresa = p_empresa AND cs.reativado_em IS NULL
+  ),
   skus_necessitando AS (
     SELECT sd.empresa, sd.sku_codigo_omie, sd.sku_descricao, sd.fornecedor_nome, sd.grupo_codigo,
            sd.ponto_pedido, sd.estoque_maximo, sd.estoque_fisico, sd.estoque_a_caminho, sd.estoque_efetivo, sd.estoque_comprometido,
@@ -513,8 +524,12 @@ BEGIN
            sd.preco_unitario, sd.primeira_compra, sd.horario_corte_pedido, sd.valor_maximo_mensal, sd.delta_max_perc,
            sd.suprimido, sd.motivo, sd.linha_fonte_sync,
            CASE WHEN sd.fator_embalagem IS NOT NULL AND sd.qtde_final > 0 THEN sd.fator_embalagem ELSE NULL END
-             AS fator_embalagem_portal
+             AS fator_embalagem_portal,
+           sd.ancora_sku, sd.equiv_grupo,
+           COALESCE(sa_anc.id, sa_fin.id) AS compra_suspensa_id   -- [COMPRA SUSPENSA] NULL = linha livre
     FROM skus_decididos sd
+    LEFT JOIN suspensas_ativas sa_anc ON sa_anc.sku = sd.ancora_sku
+    LEFT JOIN suspensas_ativas sa_fin ON sa_fin.sku = sd.sku_codigo_omie
   ),
   -- [GATE estoque-não-confirmado] LOG dos suprimidos ANTES de inserir o pedido — senão vira subcompra silenciosa.
   log_ins AS (
@@ -541,11 +556,26 @@ BEGIN
     WHERE NOT sn.suprimido AND sn.qtde_sugerida > 0 AND sn.qtde_final < sn.qtde_sem_teto
     RETURNING 1
   ),
+  -- [COMPRA SUSPENSA] LOG da compra EVITADA: só a linha que SERIA inserida (passou gate, teto>0, qtde>0) e está
+  -- suspensa — bloqueio anterior (gate/teto zero) NÃO conta como evitado pela suspensão (Codex P1). valor NULL
+  -- quando o preço é NULL (ausente ≠ zero). É R$ de SUGESTÃO suprimida POR RUN, não caixa economizado.
+  log_suspensa_ins AS (
+    INSERT INTO public.reposicao_compra_suspensa_log
+      (run_id, empresa, suspensa_id, sku_codigo_omie, ancora_sku, grupo_id, sku_descricao, fornecedor_nome,
+       qtde_final, preco_unitario, valor_evitado)
+    SELECT v_run_id, sn.empresa, sn.compra_suspensa_id, sn.sku_codigo_omie, sn.ancora_sku, sn.equiv_grupo,
+           sn.sku_descricao, sn.fornecedor_nome, sn.qtde_final, sn.preco_unitario,
+           CASE WHEN sn.preco_unitario IS NOT NULL THEN sn.qtde_final * sn.preco_unitario END
+    FROM skus_necessitando sn
+    WHERE sn.qtde_sugerida > 0 AND sn.qtde_final > 0 AND NOT sn.suprimido AND sn.compra_suspensa_id IS NOT NULL
+    RETURNING 1
+  ),
   -- [TETO cobertura] Filtro ÚNICO dos dois INSERTs (Codex P0: divergência entre cabeçalho e item geraria pedido
   -- vazio ou item qtde 0). qtde_final>0 é novo: linha capada a zero fica só no log.
+  -- [COMPRA SUSPENSA] compra_suspensa_id IS NULL: a linha suspensa fica só no log acima (mesmo filtro p/ cabeçalho e item).
   skus_inseriveis AS (
     SELECT * FROM skus_necessitando sn
-    WHERE sn.qtde_sugerida > 0 AND sn.qtde_final > 0 AND NOT sn.suprimido
+    WHERE sn.qtde_sugerida > 0 AND sn.qtde_final > 0 AND NOT sn.suprimido AND sn.compra_suspensa_id IS NULL
   ),
   pedidos_por_fornecedor_grupo AS (
     INSERT INTO pedido_compra_sugerido (
@@ -588,46 +618,123 @@ BEGIN
   -- suprimidos → sem este marcador a mensagem "N fora da compra" grudava por até 24h após o sync já ter confirmado o
   -- estoque (Codex 2026-07-08: é bug de FONTE-DE-VERDADE, não de render). Aditivo, FORA dos CTEs de decisão; mesmo
   -- role/caminho do INSERT no log acima (authenticated já escreve lá, RLS INSERT WITH CHECK true) → NÃO aborta a compra.
-  INSERT INTO public.reposicao_motor_run (run_id, empresa, data_ciclo, pedidos_gerados, skus_incluidos, suprimidos_n, capados_n)
+  INSERT INTO public.reposicao_motor_run (run_id, empresa, data_ciclo, pedidos_gerados, skus_incluidos, suprimidos_n, capados_n,
+                                          suspensas_compra_n)
   VALUES (v_run_id, p_empresa, p_data_ciclo, v_pedidos, v_skus,
           (SELECT count(*) FROM public.reposicao_estoque_nao_confirmado_log WHERE run_id = v_run_id),
-          (SELECT count(*) FROM public.reposicao_teto_cobertura_log WHERE run_id = v_run_id));
+          (SELECT count(*) FROM public.reposicao_teto_cobertura_log WHERE run_id = v_run_id),
+          (SELECT count(*) FROM public.reposicao_compra_suspensa_log WHERE run_id = v_run_id));
 
   RETURN QUERY SELECT v_pedidos, v_skus, v_valor, v_bloqueados;
 END;
 $function$;
 
--- Rastro do desconto no item (aditivo, nullable, idempotente): NULL = não se aplica (SKU de grupo, ou desconto desligado).
-ALTER TABLE public.pedido_compra_item ADD COLUMN IF NOT EXISTS estoque_comprometido numeric;
--- O motor é INVOKER e o botão "Recalcular" roda como o staff (authenticated): sem este GRANT a leitura nova dá
--- 42501 e o recálculo INTEIRO cai (medido 2026-10-10: has_column_privilege = false; o cron, service_role, passava).
--- Idioma do próprio hardening (20260709163500 → 20261001100000): coluna nova de sales_orders entra no SELECT POR
--- COLUNA; authenticated segue sem SELECT de tabela e sem omie_payload/omie_response. Efeito: o cliente lê o carimbo
--- de releitura nas PRÓPRIAS linhas (RLS sales_orders_select_customer) — metadado de sync, sem valor nem PII.
-GRANT SELECT (omie_reconciliado_em) ON public.sales_orders TO authenticated;
-COMMENT ON COLUMN public.pedido_compra_item.estoque_comprometido IS
-  'Unidades Omie já vendidas em pedido de venda aberto (relido pelo Omie na janela) descontadas do estoque_atual pelo motor. NULL = desconto não se aplica (SKU em grupo de equivalência ou desligado).';
+-- ── [COMPRA SUSPENSA] o que o motor acima LÊ e ESCREVE — na cauda (depois do CREATE) porque a fonte viva
+-- db/embalagem-motor-rpc.sql copia esta migration do CREATE do motor até o FIM (guard embalagem-motor-paridade) e
+-- as provas irmãs a carregam como fixture: a cauda tem de ser autocontida (IF NOT EXISTS, idempotente).
+-- Spec: docs/superpowers/specs/2026-10-31-reposicao-compra-suspensa-design.md (§3). 1 writer: as RPCs
+-- reposicao_compra_suspender/_reativar (SECURITY DEFINER, gate cap_compras_escrever) — a tabela NÃO tem policy de escrita.
+CREATE TABLE IF NOT EXISTS public.reposicao_compra_suspensa (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  empresa text NOT NULL,
+  sku_codigo_omie bigint NOT NULL,
+  motivo text NOT NULL,
+  origem text NOT NULL CHECK (origem IN ('ciclo_ui', 'lote_cobertura', 'envelope')),
+  lote_id uuid,
+  suspenso_por uuid,
+  suspenso_por_texto text,
+  suspenso_em timestamptz NOT NULL DEFAULT now(),
+  revisar_em date NOT NULL,
+  reativado_em timestamptz,
+  reativado_por uuid,
+  motivo_reativacao text,
+  foto_saldo numeric,
+  foto_cmc numeric,
+  foto_valor numeric,
+  foto_cobertura_dias numeric,
+  foto_cobertura_90d_dias numeric,
+  foto_no_motor boolean,
+  foto_valor_vendido_90d numeric,
+  criado_em timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE public.reposicao_compra_suspensa IS
+  'Decisão humana "segurar compra" por SKU. ATIVA = reativado_em IS NULL (não vence sozinha; revisar_em é data de revisão). O motor (gerar_pedidos_sugeridos_ciclo) segura a linha e loga a compra evitada. Escrita só pelas RPCs reposicao_compra_suspender/_reativar.';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_reposicao_compra_suspensa_ativa
+  ON public.reposicao_compra_suspensa (empresa, sku_codigo_omie) WHERE reativado_em IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reposicao_compra_suspensa_emp_lote ON public.reposicao_compra_suspensa (empresa, lote_id);
+ALTER TABLE public.reposicao_compra_suspensa ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reposicao_compra_suspensa FROM PUBLIC;
+REVOKE ALL ON public.reposicao_compra_suspensa FROM anon;
+REVOKE ALL ON public.reposicao_compra_suspensa FROM authenticated;
+-- SELECT explícito: policy sem GRANT deixaria o motor INVOKER (botão "Recalcular" como staff) abortar em 42501 (Codex P1-8).
+GRANT SELECT ON public.reposicao_compra_suspensa TO authenticated;
+GRANT ALL ON public.reposicao_compra_suspensa TO service_role;
+DROP POLICY IF EXISTS reposicao_compra_suspensa_sel ON public.reposicao_compra_suspensa;
+CREATE POLICY reposicao_compra_suspensa_sel ON public.reposicao_compra_suspensa
+  FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
 
--- PÓS, autocontida: db/embalagem-motor-rpc.sql copia este arquivo do CREATE do motor até o FIM (guard
--- embalagem-motor-paridade.test.ts) e as provas vizinhas o carregam como fixture e SABOTAM o corpo. Fora da
--- migration inteira valem só os invariantes do motor; com a foto da PRÉ: o corpo vivo é ESTE, os atributos
--- iguais aos da foto e a coluna de rastro existe. IF aninhado, não AND: a condição de um IF é planejada inteira,
--- e a foto ausente faria a referência à tabela temporária errar antes do to_regclass.
+-- Log da compra EVITADA por run (R$ de sugestão suprimida; NÃO é caixa economizado — a mesma necessidade reaparece a
+-- cada run enquanto suspensa). Mesmo padrão de ACL do reposicao_teto_cobertura_log: SELECT e INSERT via cap_compras_ler
+-- (quem completa a RPC já o tem; WITH CHECK true permitiria falsificar o audit).
+CREATE TABLE IF NOT EXISTS public.reposicao_compra_suspensa_log (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id uuid NOT NULL,
+  criado_em timestamptz NOT NULL DEFAULT now(),
+  empresa text NOT NULL,
+  suspensa_id uuid NOT NULL,
+  sku_codigo_omie text NOT NULL,
+  ancora_sku text,
+  grupo_id uuid,
+  sku_descricao text,
+  fornecedor_nome text,
+  qtde_final numeric NOT NULL,
+  preco_unitario numeric,
+  valor_evitado numeric
+);
+COMMENT ON TABLE public.reposicao_compra_suspensa_log IS
+  'Linha do ciclo normal que SERIA comprada (passou gate e teto) e foi segurada por reposicao_compra_suspensa. valor_evitado NULL = preço ausente. Soma entre runs mede R$·run de sugestão suprimida, não caixa.';
+CREATE INDEX IF NOT EXISTS idx_compra_suspensa_log_run ON public.reposicao_compra_suspensa_log (run_id);
+CREATE INDEX IF NOT EXISTS idx_compra_suspensa_log_emp_data ON public.reposicao_compra_suspensa_log (empresa, criado_em DESC);
+ALTER TABLE public.reposicao_compra_suspensa_log ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.reposicao_compra_suspensa_log FROM PUBLIC;
+REVOKE ALL ON public.reposicao_compra_suspensa_log FROM anon;
+REVOKE ALL ON public.reposicao_compra_suspensa_log FROM authenticated;
+GRANT SELECT, INSERT ON public.reposicao_compra_suspensa_log TO authenticated;
+GRANT ALL ON public.reposicao_compra_suspensa_log TO service_role;
+DROP POLICY IF EXISTS compra_suspensa_log_sel ON public.reposicao_compra_suspensa_log;
+CREATE POLICY compra_suspensa_log_sel ON public.reposicao_compra_suspensa_log
+  FOR SELECT TO authenticated
+  USING ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+DROP POLICY IF EXISTS compra_suspensa_log_ins ON public.reposicao_compra_suspensa_log;
+CREATE POLICY compra_suspensa_log_ins ON public.reposicao_compra_suspensa_log
+  FOR INSERT TO authenticated
+  WITH CHECK ((SELECT private.cap_compras_ler((SELECT auth.uid()))));
+
+-- O que o motor já exigia nas caudas anteriores e continua exigindo (20261010210000: rastro do desconto do vendido em
+-- pedido aberto e a coluna de sales_orders que o INVOKER lê como staff). Idempotente; fica aqui porque a cauda é a
+-- ÚNICA fonte das provas irmãs (sem isto, test-embalagem/gate/teto/em-transito quebram no INSERT do item).
+ALTER TABLE public.pedido_compra_item ADD COLUMN IF NOT EXISTS estoque_comprometido numeric;
+GRANT SELECT (omie_reconciliado_em) ON public.sales_orders TO authenticated;
+ALTER TABLE public.reposicao_motor_run ADD COLUMN IF NOT EXISTS suspensas_compra_n integer NOT NULL DEFAULT 0;
+COMMENT ON COLUMN public.reposicao_motor_run.suspensas_compra_n IS
+  'Linhas do run seguradas por reposicao_compra_suspensa (= count em reposicao_compra_suspensa_log do run).';
+
+-- PÓS, autocontida (vale na migration inteira e na fixture carregada pelas provas): o motor instalado é ESTE
+-- (lê a suspensão e escreve o log), os atributos não mudaram, e o que ele lê/escreve existe com RLS.
 DO $pos$
 DECLARE
   v_oid oid := to_regprocedure('public.gerar_pedidos_sugeridos_ciclo(text, date)');
-  v_txt text;
-  v_n int;
+  v_src text;
 BEGIN
   IF v_oid IS NULL THEN
     RAISE EXCEPTION 'POS-M1 FALHOU: gerar_pedidos_sugeridos_ciclo não existe — o motor e o Cockpit quebrariam';
   END IF;
-  SELECT pg_catalog.pg_get_function_arguments(p.oid) || ' ' || p.prosrc INTO v_txt FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
-  -- As agulhas vão partidas: o gate textual lê a migration inteira, literal incluso.
-  IF position(upper('current' || '_date') IN upper(v_txt)) > 0
-     OR position('::timestamp' || 'tz,' IN v_txt) > 0
-     OR (length(v_txt) - length(replace(v_txt, 'America/Sao_Paulo', ''))) / length('America/Sao_Paulo') IS DISTINCT FROM 2 THEN
-    RAISE EXCEPTION 'POS-M3 FALHOU: o motor ainda lê o dia da sessão, ou o corte voltou ao fuso da sessão';
+  SELECT p.prosrc INTO v_src FROM pg_catalog.pg_proc p WHERE p.oid = v_oid;
+  -- (o marker suspensas_compra_n NÃO entra aqui: a prova irmã do gate sabota o INSERT do marker e recarrega a fixture)
+  IF position('compra_suspensa_id IS NULL' IN v_src) = 0
+     OR position('reposicao_compra_suspensa_log' IN v_src) = 0 THEN
+    RAISE EXCEPTION 'POS-CS1 FALHOU: o motor instalado não lê a suspensão de compra (corpo sem compra_suspensa_id / log)';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
                   WHERE p.oid = v_oid AND p.provolatile = 'v' AND NOT p.prosecdef
@@ -635,30 +742,28 @@ BEGIN
                     AND pg_catalog.pg_get_userbyid(p.proowner) = 'postgres') THEN
     RAISE EXCEPTION 'POS-M4 FALHOU: o motor mudou de atributo — esperado VOLATILE, INVOKER, config [search_path=public, pg_temp;statement_timeout=120s], dono postgres';
   END IF;
-  IF to_regclass('pg_temp.motor_comprometido_foto') IS NOT NULL THEN
-    IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = v_oid) IS DISTINCT FROM '4187116fdf4284f79d416249d3f35335' THEN
-      RAISE EXCEPTION 'POS1 FALHOU: o motor instalado não é o desta migration';
-    END IF;
-    SELECT count(*) INTO v_n
-      FROM pg_temp.motor_comprometido_foto f
-      JOIN pg_catalog.pg_proc p ON p.oid = v_oid
-     WHERE f.acl IS NOT DISTINCT FROM p.proacl::text
-       AND f.config IS NOT DISTINCT FROM p.proconfig::text
-       AND f.secdef = p.prosecdef AND f.vol = p.provolatile
-       AND f.dono = pg_catalog.pg_get_userbyid(p.proowner);
-    IF v_n IS DISTINCT FROM 1 THEN
-      RAISE EXCEPTION 'POS3 FALHOU: ACL, config, SECURITY DEFINER, volatilidade ou dono mudou no replace';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
-                    WHERE a.attrelid = 'public.pedido_compra_item'::regclass AND a.attname = 'estoque_comprometido'
-                      AND NOT a.attisdropped AND a.atttypid = 'numeric'::regtype AND NOT a.attnotnull) THEN
-      RAISE EXCEPTION 'POS5 FALHOU: pedido_compra_item.estoque_comprometido ausente ou com tipo/nulidade errados';
-    END IF;
-    IF NOT has_column_privilege('authenticated', 'public.sales_orders', 'omie_reconciliado_em', 'SELECT')
-       OR has_table_privilege('authenticated', 'public.sales_orders', 'SELECT')
-       OR has_column_privilege('authenticated', 'public.sales_orders', 'omie_payload', 'SELECT') THEN
-      RAISE EXCEPTION 'POS6 FALHOU: o staff não lê omie_reconciliado_em, ou o SELECT de tabela/omie_payload reabriu';
-    END IF;
+  IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c WHERE c.oid = 'public.reposicao_compra_suspensa'::regclass)
+     OR NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class c WHERE c.oid = 'public.reposicao_compra_suspensa_log'::regclass) THEN
+    RAISE EXCEPTION 'POS-CS2 FALHOU: tabela da suspensão sem RLS';
   END IF;
+  IF (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa'::regclass) <> 1
+     OR (SELECT count(*) FROM pg_catalog.pg_policy WHERE polrelid = 'public.reposicao_compra_suspensa_log'::regclass) <> 2 THEN
+    RAISE EXCEPTION 'POS-CS3 FALHOU: policies da suspensão divergem (esperado 1 SELECT na decisão; SELECT+INSERT no log)';
+  END IF;
+  IF has_table_privilege('authenticated', 'public.reposicao_compra_suspensa', 'INSERT')
+     OR has_table_privilege('authenticated', 'public.reposicao_compra_suspensa', 'UPDATE')
+     OR has_table_privilege('anon', 'public.reposicao_compra_suspensa', 'SELECT')
+     OR NOT has_table_privilege('authenticated', 'public.reposicao_compra_suspensa', 'SELECT') THEN
+    RAISE EXCEPTION 'POS-CS4 FALHOU: ACL da decisão (authenticated só SELECT; anon nada)';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                  WHERE a.attrelid = 'public.reposicao_motor_run'::regclass AND a.attname = 'suspensas_compra_n' AND NOT a.attisdropped) THEN
+    RAISE EXCEPTION 'POS-CS5 FALHOU: reposicao_motor_run.suspensas_compra_n ausente';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+                  WHERE c.relname = 'uq_reposicao_compra_suspensa_ativa' AND i.indisunique AND i.indpred IS NOT NULL) THEN
+    RAISE EXCEPTION 'POS-CS6 FALHOU: índice único parcial da suspensão ativa ausente';
+  END IF;
+  RAISE NOTICE 'COMPRA-SUSPENSA-MOTOR-OK';
 END
 $pos$;
