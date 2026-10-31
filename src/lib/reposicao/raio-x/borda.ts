@@ -9,6 +9,7 @@ import type {
   Categoria,
   ClassificacaoManual,
   ClienteComprador,
+  CoorteTop,
   DecisaoRow,
   Destino,
   Empresa,
@@ -71,4 +72,17 @@ export function comoLinhaManual(r: Pick<Tables<'raio_x_classificacao_manual'>, '
 
 export function comoLinhaMedicao(r: MedicaoRpc): LinhaMedicao {
   return { ...r, destino: exigirDestino(r.destino, r.sku_codigo_omie) };
+}
+
+/** Linhas de `raio_x_coorte_top` de UMA empresa → coorte. Vazio = ainda não congelada (null, nunca coorte vazia). */
+export function comoCoorte(
+  rows: Pick<Tables<'raio_x_coorte_top'>, 'sku_codigo_omie' | 'posicao' | 'valor' | 'congelada_em'>[],
+): CoorteTop | null {
+  if (rows.length === 0) return null;
+  const congeladaEm = rows[0].congelada_em;
+  if (rows.some((r) => r.congelada_em !== congeladaEm)) throw new Error('raio-x: coorte com mais de um congelamento');
+  return {
+    congelada_em: congeladaEm,
+    itens: new Map(rows.map((r) => [r.sku_codigo_omie, { posicao: r.posicao, valor: r.valor }])),
+  };
 }

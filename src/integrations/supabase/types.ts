@@ -12441,6 +12441,33 @@ export type Database = {
         }
         Relationships: []
       }
+      raio_x_coorte_top: {
+        Row: {
+          congelada_em: string
+          congelada_por: string | null
+          empresa: string
+          posicao: number
+          sku_codigo_omie: number
+          valor: number | null
+        }
+        Insert: {
+          congelada_em?: string
+          congelada_por?: string | null
+          empresa: string
+          posicao: number
+          sku_codigo_omie: number
+          valor?: number | null
+        }
+        Update: {
+          congelada_em?: string
+          congelada_por?: string | null
+          empresa?: string
+          posicao?: number
+          sku_codigo_omie?: number
+          valor?: number | null
+        }
+        Relationships: []
+      }
       raio_x_decisao: {
         Row: {
           atualizado_em: string
@@ -23481,6 +23508,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      raio_x_congelar_coorte: {
+        Args: { p_empresa: string; p_skus: number[] }
+        Returns: number
       }
       raio_x_contar: {
         Args: { p_empresa: string; p_qtd: number; p_sku: number }

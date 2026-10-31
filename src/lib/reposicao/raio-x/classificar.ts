@@ -1,7 +1,7 @@
 // Categoria por tipo Omie + destino sugerido (porte de docs/superpowers/raio-x-estoque-parado/logica.mjs).
 // Lógica pura, sem I/O. Ausente ≠ zero: q12/cmc nulos nunca viram 0.
 import type {
-  Categoria, ClassificacaoManual, Empresa, FatoSku, ItemRaioX, Sugestao,
+  Categoria, ClassificacaoManual, CoorteTop, Empresa, FatoSku, ItemRaioX, Sugestao,
 } from './tipos';
 
 export const TOP_N = 61;
@@ -15,6 +15,13 @@ export const ROTULOS: Record<string, string> = {
   erro_cadastro: 'Erro de cadastro', novo_aguarde: 'Novo · aguarde', revisar: 'Revisar',
   sem_historico: 'Sem histórico de venda',
 };
+
+const TIPOS_INDUSTRIAIS = ['01', '03'];
+
+/** Matéria-prima (01) / produto em processo (03): estoque industrial (CPC 16), não distorção do DIO. */
+export function ehEstoqueIndustrial(i: Pick<ItemRaioX, 'categoria' | 'tipo_produto'>): boolean {
+  return i.categoria === 'uso_consumo' && i.tipo_produto !== null && TIPOS_INDUSTRIAIS.includes(i.tipo_produto);
+}
 
 const RE_NAO_MERC = /MAQUINA|ESPECTRO|SOFTWARE|MOSTRUARIO|CARTELA|EXPOSITOR|DISPLAY/i;
 const LIMITE_PARADO_DIAS = 180;
@@ -37,9 +44,15 @@ export function categorizar(
     return { categoria: 'mercadoria', motivo: 'sem cadastro no Omie' };
   }
   const d = f.descricao ?? '';
-  // tipo do item no Omie (SPED): 07 uso e consumo, 01 matéria-prima, 03 em processo, 08 imobilizado
-  if (f.tipo_produto !== null && ['07', '01', '03'].includes(f.tipo_produto)) {
-    return { categoria: 'uso_consumo', motivo: `tipo do item ${f.tipo_produto} no Omie (consumido aqui, não vendido)` };
+  // tipo do item no Omie (SPED): 07 uso e consumo, 01 matéria-prima, 03 em processo, 08 imobilizado.
+  // 01/03 seguem no bloco uso_consumo (fora da reposição), mas são estoque industrial legítimo (CPC 16):
+  // o placar os separa e NÃO os soma como "distorce o DIO" — ver `ehEstoqueIndustrial`.
+  if (f.tipo_produto !== null && TIPOS_INDUSTRIAIS.includes(f.tipo_produto)) {
+    const oque = f.tipo_produto === '01' ? 'matéria-prima' : 'produto em processo';
+    return { categoria: 'uso_consumo', motivo: `tipo do item ${f.tipo_produto} no Omie (${oque} — estoque industrial)` };
+  }
+  if (f.tipo_produto === '07') {
+    return { categoria: 'uso_consumo', motivo: 'tipo do item 07 no Omie (consumido aqui, não vendido)' };
   }
   if (f.tipo_produto === '08') return { categoria: 'nao_mercadoria', motivo: 'tipo do item 08 (imobilizado) no Omie' };
   if (f.familia === 'Imobilizado') return { categoria: 'nao_mercadoria', motivo: 'família Imobilizado' };
@@ -59,11 +72,9 @@ export function categorizar(
 
 export function sugerirDestino(f: FatoSku, hoje: string): { destino: Sugestao; motivo: string } {
   const cad = diasEntre(f.cadastro_em, hoje);
-  const ent = diasEntre(f.ult_entrada, hoje);
+  // Só o CADASTRO novo dá "aguarde". Entrada recente em item parado não imuniza (seria proteger justamente a
+  // recompra indevida): segue a regra normal e ganha `alerta_recompra` (ver `alertaRecompra`).
   if (cad !== null && cad < DIAS_NOVO) return { destino: 'novo_aguarde', motivo: `cadastrado há ${cad} dias` };
-  if (ent !== null && ent < DIAS_NOVO) {
-    return { destino: 'novo_aguarde', motivo: `entrada há ${ent} dias${f.q12 === 0 ? ' — recompra de item sem venda em 12m? revisar' : ''}` };
-  }
   if ((f.unidades_venda ?? []).some((u) => u !== f.unidade_estoque)) {
     return { destino: 'revisar', motivo: 'unidade da venda ≠ unidade do estoque — cobertura não confiável' };
   }
@@ -85,6 +96,13 @@ export function sugerirDestino(f: FatoSku, hoje: string): { destino: Sugestao; m
     return { destino: 'liquidar', motivo: `0 vendas em 12m · sem comprador · fornecedor ${f.fornecedor ?? '?'} — informe se aceita troca` };
   }
   return { destino: 'revisar', motivo: `fora do motor com cobertura ${cob === null ? '?' : Math.round(cob)} dias` };
+}
+
+/** Item parado com entrada nos últimos 90 dias: recompra recente de item parado — alerta, não imunidade. */
+export function alertaRecompra(f: FatoSku, hoje: string): string | null {
+  const ent = diasEntre(f.ult_entrada, hoje);
+  if (ent === null || ent >= DIAS_NOVO) return null;
+  return `recompra recente de item parado · entrada há ${ent} dias`;
 }
 
 function estaParado(f: FatoSku, cob: number | null, categoria: Categoria, empresa: Empresa): boolean {
@@ -113,7 +131,10 @@ export function classificar(
       parado,
       destino_sugerido: s ? s.destino : null,
       motivo_destino: s ? s.motivo : '',
+      alerta_recompra: parado ? alertaRecompra(f, hoje) : null,
       top: false,
+      top_atual: false,
+      entrou_no_top: false,
     };
   });
   itens.sort((a, b) => {
@@ -122,6 +143,21 @@ export function classificar(
     if (b.valor === null) return -1;
     return b.valor - a.valor || a.sku_codigo_omie - b.sku_codigo_omie;
   });
-  itens.filter((i) => i.parado && i.valor !== null).slice(0, TOP_N).forEach((i) => { i.top = true; });
+  // `top_atual` = o Top 61 de HOJE (recalculado a cada leitura). Sem coorte congelada, `top` o segue;
+  // com coorte, `aplicarCoorte` troca `top` pela coorte da meta.
+  itens.filter((i) => i.parado && i.valor !== null).slice(0, TOP_N).forEach((i) => { i.top = true; i.top_atual = true; });
   return itens;
+}
+
+/**
+ * Meta "100% do Top 61": o denominador é a coorte CONGELADA (gravada uma vez por empresa), não o Top de hoje —
+ * senão item que vende sai e outro entra, e a meta vira alvo móvel. Quem entraria no Top hoje e não está na
+ * coorte ganha `entrou_no_top` (aparece, mas não mexe no denominador). Coorte null = ainda não congelada.
+ */
+export function aplicarCoorte(itens: ItemRaioX[], coorte: CoorteTop | null): ItemRaioX[] {
+  if (!coorte) return itens;
+  return itens.map((i) => {
+    const naCoorte = coorte.itens.has(i.sku_codigo_omie);
+    return { ...i, top: naCoorte, entrou_no_top: i.top_atual && !naCoorte };
+  });
 }

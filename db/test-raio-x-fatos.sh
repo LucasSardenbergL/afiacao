@@ -2,6 +2,8 @@
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  PROVA PG17 — 20261016120000_raio_x_estoque_parado                         ║
 # ║  raio_x_estoque_fatos + RLS de raio_x_decisao / raio_x_classificacao_manual  ║
+# ║  + 20261031130000_raio_x_correcoes_pos_revisao (aplicada POR CIMA): medicao  ║
+# ║    pela foto + coorte do Top 61 congelada                                    ║
 # ║      bash db/test-raio-x-fatos.sh > logs/rx1.log 2>&1; echo "exit=$?"        ║
 # ║  LOCALE=pt_BR.UTF-8 bash db/test-raio-x-fatos.sh  (2o ambiente)              ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -28,6 +30,9 @@ DATA="$TMPD/data"
 LOC="${LOCALE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 MIG="$REPO_ROOT/supabase/migrations/20261016120000_raio_x_estoque_parado.sql"
+# Correcoes pos-revisao: substitui raio_x_medicao (janela pela foto) e cria a coorte do Top 61. As sabotagens
+# da medicao miram ESTE arquivo (o corpo vivo da medicao e o dele).
+MIG2="$REPO_ROOT/supabase/migrations/20261031130000_raio_x_correcoes_pos_revisao.sql"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/db/lib/pg-harness.sh"
@@ -225,10 +230,12 @@ RLSMSG='42501|new row violates row-level security policy for table "raio_x_decis
 suite() {
   falhas=0
   preparar_banco
-  # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
+  # As migrations (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
+  # $1 = a de 16/10 (ou sabotada), $2 = a de 31/10 por cima (ou sabotada). Cada uma re-colada (idempotencia).
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
-  # Re-colar a migration inteira de novo (idempotencia do re-apply) tambem tem de passar.
   P -f "$1" || { echo "APLICACAO FALHOU (2o apply): $1"; return 99; }
+  P -f "$2" || { echo "APLICACAO FALHOU: $2"; return 99; }
+  P -f "$2" || { echo "APLICACAO FALHOU (2o apply): $2"; return 99; }
   P -c "INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino) VALUES ('oben', 1, 'liquidar')"
   P -c "INSERT INTO public.raio_x_classificacao_manual (empresa, sku_codigo_omie, categoria, motivo) VALUES ('oben', 1, 'uso_consumo', 'teste')"
 
@@ -306,7 +313,8 @@ suite() {
   # sku3 colacor; sku7 oben (saldo mais recente 0); sku9999 oben sem linha de estoque; sku6 so contagem (destino NULL).
   P -c "DO \$m\$ DECLARE h date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; BEGIN
     UPDATE public.raio_x_decisao SET decidido_em = ((h - 3)::timestamp + time '15:00') AT TIME ZONE 'America/Sao_Paulo',
-      foto_saldo = 5, foto_cmc = 10, foto_valor = 50, foto_categoria = 'mercadoria', foto_em = now(), credito_troca = 7
+      foto_saldo = 5, foto_cmc = 10, foto_valor = 50, foto_categoria = 'mercadoria', credito_troca = 7,
+      foto_em = ((h - 3)::timestamp + time '15:00') AT TIME ZONE 'America/Sao_Paulo'
      WHERE empresa = 'oben' AND sku_codigo_omie = 1;
     INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino, decidido_em) VALUES
       ('oben', 3, 'venda_dirigida', now() - interval '7 days'),
@@ -330,11 +338,26 @@ suite() {
       (1, 'ABC-NAO-NUMERICO', now() - interval '1 hour'),
       (1, '3', now() - interval '20 days');
     -- fuso: sku5 decidido 23:30 SP do dia h-4 (= h-3 02:30 UTC); NF no mesmo dia SP nao conta, no dia SP seguinte conta
-    INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino, decidido_em) VALUES
-      ('oben', 5, 'liquidar', ((h - 4)::timestamp + time '23:30') AT TIME ZONE 'America/Sao_Paulo');
+    -- (a janela de venda e a da FOTO: foto e decisao no mesmo instante aqui)
+    INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino, decidido_em, foto_em) VALUES
+      ('oben', 5, 'liquidar', ((h - 4)::timestamp + time '23:30') AT TIME ZONE 'America/Sao_Paulo',
+                              ((h - 4)::timestamp + time '23:30') AT TIME ZONE 'America/Sao_Paulo');
     INSERT INTO v_venda_items_history_efetivo VALUES
       ('OBEN', h - 4, 301, 'CLI TZ', 5, 'UN', 7, 70, 10),
       ('OBEN', h - 3, 302, 'CLI TZ', 5, 'UN', 2, 20, 10);
+    -- troca de destino: sku4 fotografado no dia h-10 (1a decisao) e com o destino TROCADO no dia h-2 (decidido_em
+    -- muda, a foto nao). Venda h-10 (dia da foto) fora; h-6 e h-1 contam = 4 un / 40. Compra h-5 (antes da troca)
+    -- nao e contradicao; h-1 (depois) e.
+    INSERT INTO public.raio_x_decisao (empresa, sku_codigo_omie, destino, decidido_em, foto_em, foto_saldo, foto_cmc) VALUES
+      ('oben', 4, 'liquidar', ((h - 2)::timestamp + time '15:00') AT TIME ZONE 'America/Sao_Paulo',
+                              ((h - 10)::timestamp + time '15:00') AT TIME ZONE 'America/Sao_Paulo', 3, 1);
+    INSERT INTO v_venda_items_history_efetivo VALUES
+      ('OBEN', h - 10, 401, 'CLI M', 4, 'UN', 100, 1000, 10),
+      ('OBEN', h - 6,  401, 'CLI M', 4, 'UN', 3, 30, 10),
+      ('OBEN', h - 1,  401, 'CLI M', 4, 'UN', 1, 10, 10);
+    INSERT INTO public.pedido_compra_item (pedido_id, sku_codigo_omie, criado_em) VALUES
+      (1, '4', ((h - 5)::timestamp + time '10:00') AT TIME ZONE 'America/Sao_Paulo'),
+      (1, '4', ((h - 1)::timestamp + time '10:00') AT TIME ZONE 'America/Sao_Paulo');
   END \$m\$"
   MED="public.raio_x_medicao('oben')"; MEC="public.raio_x_medicao('colacor')"; MSIG="public.raio_x_medicao(text)"
 
@@ -352,6 +375,12 @@ suite() {
   oks "$U_MASTER" "SELECT ($HORAS ~ '1[345]:00') FROM $MED WHERE sku_codigo_omie = 1" "f" "m c pendente cancelado expirado fora de compras_apos"
   oks "$U_MASTER" "SELECT ($HORAS LIKE '%11:00%') FROM $MED WHERE sku_codigo_omie = 1" "t" "m c item em filho de split disparado entra"
   oks "$U_EST" "SELECT qtd_vendida || '|' || receita FROM $MED WHERE sku_codigo_omie = 5" "2|20" "m fuso: decisao 23:30 SP conta NF do dia SP seguinte e nao a do mesmo dia"
+  # (e) janela pela FOTO: trocar o destino (decidido_em muda) nao apaga venda feita entre a foto e a troca
+  oks "$U_EST" "SELECT qtd_vendida || '|' || receita FROM $MED WHERE sku_codigo_omie = 4" "4|40" "m troca de destino nao apaga venda anterior"
+  # contradicao de recompra segue por decidido_em do destino vigente: compra h-5 (antes da troca) fora, h-1 dentro
+  oks "$U_MASTER" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 4" "1" "m contradicao segue decidido_em do destino vigente"
+  # oben sem foto: venda NULL (ausente != zero), nunca 0 — sku3 tem NF depois da decisao
+  oks "$U_EST" "SELECT (qtd_vendida IS NULL AND receita IS NULL) FROM $MED WHERE sku_codigo_omie = 3" "t" "m oben sem foto qtd_vendida NULL"
   oks "$U_MASTER" "SELECT cardinality(compras_apos) FROM $MED WHERE sku_codigo_omie = 3" "0" "m c compra antes da decisao nao aparece"
   # R16: sem cap_compras_ler (estrategico le custo mas nao compras) -> NULL, nunca '{}' fabricado
   oks "$U_EST" "SELECT (compras_apos IS NULL) FROM $MED WHERE sku_codigo_omie = 1" "t" "m r16 sem cap_compras_ler compras_apos NULL"
@@ -363,7 +392,7 @@ suite() {
   oks "$U_EST" "SELECT (saldo_atual IS NULL) FROM $MED WHERE sku_codigo_omie = 9999" "t" "m d sem linha de estoque volta NULL"
   # sem foto volta com foto NULL; destino NULL fora; ordem; contagem
   oks "$U_EST" "SELECT (foto_saldo IS NULL AND foto_cmc IS NULL AND foto_valor IS NULL AND foto_categoria IS NULL) FROM $MED WHERE sku_codigo_omie = 3" "t" "m linha sem foto volta com foto NULL"
-  oks "$U_EST" "SELECT count(*) || '|' || count(*) FILTER (WHERE sku_codigo_omie = 6) FROM $MED" "5|0" "m so destino nao nulo"
+  oks "$U_EST" "SELECT count(*) || '|' || count(*) FILTER (WHERE sku_codigo_omie = 6) FROM $MED" "6|0" "m so destino nao nulo"
   oks "$U_EST" "SELECT (array_agg(s) = array_agg(s ORDER BY s)) FROM (SELECT sku_codigo_omie AS s FROM $MED) t" "t" "m ordem crescente por sku"
   oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''colacor_sc'')', '22023')" "22023|RAIO_X_EMPRESA_INVALIDA: colacor_sc" "m empresa invalida 22023"
   oks "$U_CUST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_medicao(''oben'')', '42501')" "42501|RAIO_X_SO_STAFF" "m customer barrado 42501"
@@ -372,21 +401,57 @@ suite() {
   okp "SELECT has_function_privilege('anon','$MSIG','EXECUTE')" "f" "m anon sem EXECUTE"
   okp "SELECT has_function_privilege('public','$MSIG','EXECUTE')" "f" "m public sem EXECUTE"
   okp "SELECT has_function_privilege('authenticated','$MSIG','EXECUTE')" "t" "m authenticated com EXECUTE"
+
+  # ---- coorte do Top 61 (raio_x_congelar_coorte / raio_x_coorte_top) ----
+  CONG="public.raio_x_congelar_coorte"; CSIG="public.raio_x_congelar_coorte(text,bigint[])"
+  COORTE="(SELECT string_agg(sku_codigo_omie || ':' || posicao || ':' || coalesce(valor::text, 'N'), ',' ORDER BY posicao) FROM public.raio_x_coorte_top WHERE empresa = 'oben')"
+  oks "$U_EST" "SELECT $CONG('oben', ARRAY[3,1,4,9999]::bigint[])" "4" "k congela 4 skus da oben"
+  # posicao = ordem da lista; valor = saldo x cmc mais recente lido no servidor; cmc 0 e sem estoque -> NULL (nunca 0)
+  oks "$U_EST" "SELECT $COORTE" "3:1:50.0,1:2:108,4:3:N,9999:4:N" "k posicao da lista e valor do servidor"
+  oks "$U_EST" "SELECT $CONG('oben', ARRAY[6,1]::bigint[])" "0" "k segundo congelamento devolve 0"
+  oks "$U_EST" "SELECT $COORTE" "3:1:50.0,1:2:108,4:3:N,9999:4:N" "k segundo congelamento nao altera a coorte"
+  # (2 statements: no mesmo SELECT a subconsulta veria o snapshot de ANTES do INSERT)
+  oks "$U_EST" "SELECT $CONG('colacor', ARRAY[3]::bigint[])" "1" "k colacor congela a parte"
+  oks "$U_EST" "SELECT valor FROM public.raio_x_coorte_top WHERE empresa = 'colacor'" "12" "k colacor le colacor_vendas"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT $CONG(''colacor'', (SELECT array_agg(g) FROM generate_series(1, 62) g)::bigint[])', '22023')" "22023|raio_x: coorte precisa de 1 a 61 skus (veio 62)" "k mais de 61 recusa 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT $CONG(''colacor'', ARRAY[]::bigint[])', '22023')" "22023|raio_x: coorte precisa de 1 a 61 skus (veio 0)" "k lista vazia recusa 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT $CONG(''colacor'', ARRAY[5,5]::bigint[])', '22023')" "22023|raio_x: coorte com sku repetido" "k sku repetido recusa 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT $CONG(''colacor'', ARRAY[5,NULL]::bigint[])', '22023')" "22023|raio_x: coorte com sku nulo" "k sku nulo recusa 22023"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT $CONG(''colacor_sc'', ARRAY[5]::bigint[])', '22023')" "22023|raio_x: empresa invalida: colacor_sc" "k empresa invalida recusa 22023"
+  oks "$U_CUST" "SELECT public.t_lanca('SELECT $CONG(''oben'', ARRAY[5]::bigint[])', '42501')" "42501|RAIO_X_SO_CUSTO" "k customer barrado 42501"
+  oks "$U_STAFF" "SELECT public.t_lanca('SELECT $CONG(''oben'', ARRAY[5]::bigint[])', '42501')" "42501|RAIO_X_SO_CUSTO" "k employee sem custo barrado 42501"
+  oks "$U_EST" "SELECT count(*) FROM public.raio_x_coorte_top" "5" "k controle: estrategico ve a coorte"
+  oks "$U_STAFF" "SELECT count(*) FROM public.raio_x_coorte_top" "0" "k employee sem custo ve 0 linhas da coorte"
+  oks "$U_CUST" "SELECT count(*) FROM public.raio_x_coorte_top" "0" "k customer ve 0 linhas da coorte"
+  oks "$U_EST" "SELECT public.t_lanca('INSERT INTO public.raio_x_coorte_top (empresa, sku_codigo_omie, posicao, congelada_em) VALUES (''oben'', 77, 9, now())', '42501')" '42501|new row violates row-level security policy for table "raio_x_coorte_top"' "k staff nao escreve direto na coorte"
+  okp "SELECT has_function_privilege('anon','$CSIG','EXECUTE')" "f" "k anon sem EXECUTE no congelar"
+  okp "SELECT has_function_privilege('public','$CSIG','EXECUTE')" "f" "k public sem EXECUTE no congelar"
+  okp "SELECT has_function_privilege('authenticated','$CSIG','EXECUTE')" "t" "k authenticated com EXECUTE no congelar"
   return "$falhas"
 }
 
 # 1) CONTROLE VERDE — a migration real precisa passar inteira.
-cp "$MIG" "$TMPD/mig.sql"
-rc=0; out="$(suite "$TMPD/mig.sql" 2>&1)" || rc=$?
+cp "$MIG" "$TMPD/mig.sql"; cp "$MIG2" "$TMPD/mig2.sql"
+rc=0; out="$(suite "$TMPD/mig.sql" "$TMPD/mig2.sql" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ]; then echo "$out"; echo "CONTROLE VERMELHO (rc=$rc) — abortando antes de falsificar"; exit 1; fi
 echo "CONTROLE OK (locale=$LOC)"
 
+# 1b) A PRE da 31/10 aborta se a medicao viva nao for a predecessora nem a dela (deriva de outra sessao).
+preparar_banco
+P -f "$MIG"
+P -c "DO \$x\$ BEGIN EXECUTE replace(pg_get_functiondef('public.raio_x_medicao(text)'::regprocedure), 'RAIO_X_SO_STAFF', 'RAIO_X_SO_STAFF_DERIVA'); END \$x\$"
+r=0; o="$(P -f "$MIG2" 2>&1)" || r=$?
+if [ "$r" -eq 0 ] || ! grep -qF "PRE FALHOU: raio_x_medicao viva" <<<"$o"; then
+  echo "PRE NAO ABORTOU COM CORPO DERIVADO (rc=$r)"; echo "$o"; exit 1
+fi
+echo "pre anti-deriva ok: corpo derivado aborta a 31/10"
+
 # 2) FALSIFICAÇÃO — uma sabotagem por vez, vermelha PELA asserção esperada. Controle verde acima, mesma invocação.
-sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |)
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |) — sabota a de 16/10
   sed "$2" "$MIG" > "$TMPD/sab.sql"
   if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
   local o r=0
-  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  o="$(suite "$TMPD/sab.sql" "$MIG2" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o"; exit 1; fi
   if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
@@ -426,48 +491,76 @@ sabotar "11 policy de decisao volta para staff comum" \
   "s/USING ((SELECT private.cap_custo_ler((SELECT auth.uid()))));/USING ((SELECT public.has_role(auth.uid(), 'employee') OR public.has_role(auth.uid(), 'master')));/" \
   "i employee sem commercial_role ve 0 linhas em raio_x_decisao (custo)"
 
-# Task 3 - raio_x_medicao
-sabotar "12 fronteira de venda estrita volta para >=" \
+# Sabota a de 31/10. O md5 do corpo da medicao (PRE/POS) e trocado pelo md5 VIVO: sem isso toda sabotagem do
+# corpo abortaria na postcondicao (rc=99) e nada seria provado. A PRE e provada a parte (1b).
+MD5_ESTE="$(grep -oE "IS DISTINCT FROM '[0-9a-f]{32}'" "$MIG2" | grep -oE '[0-9a-f]{32}')"
+[ -n "$MD5_ESTE" ] || { echo "MD5 DA POSCONDICAO NAO ENCONTRADO EM $MIG2"; exit 1; }
+VIVO="(SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.raio_x_medicao(text)'))"
+sabotar2() { # $1 nome, $2 expressão sed, $3 rótulo esperado — sabota a de 31/10
+  sed "$2" "$MIG2" > "$TMPD/sab2a.sql"
+  if cmp -s "$MIG2" "$TMPD/sab2a.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+  sed "s/'$MD5_ESTE'/$VIVO/g" "$TMPD/sab2a.sql" > "$TMPD/sab2.sql"
+  local o r=0
+  o="$(suite "$MIG" "$TMPD/sab2.sql" 2>&1)" || r=$?
+  if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
+  if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o"; exit 1; fi
+  if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
+    echo "SABOTAGEM VERMELHA PELO MOTIVO ERRADO: $1 (esperava FALHOU: $3)"; echo "$o"; exit 1
+  fi
+  echo "sabotagem vermelha ok: $1 (FALHOU: $3)"
+}
+
+# raio_x_medicao (corpo vivo = o da 31/10)
+sabotar2 "21 janela de venda volta para decidido_em" \
+  "s/(x.foto_em AT TIME ZONE/(x.decidido_em AT TIME ZONE/" \
+  "m troca de destino nao apaga venda anterior"
+sabotar2 "22 oben sem foto vira venda 0" \
+  "s/CASE WHEN v_vnd IS NULL OR d.dia IS NULL THEN/CASE WHEN v_vnd IS NULL THEN/g" \
+  "m oben sem foto qtd_vendida NULL"
+sabotar2 "23 contradicao passa a contar da foto" \
+  "s/AND i.criado_em > d.decidido_em/AND i.criado_em > (SELECT y.foto_em FROM public.raio_x_decisao y WHERE y.empresa = p_empresa AND y.sku_codigo_omie = d.sku)/" \
+  "m contradicao segue decidido_em do destino vigente"
+sabotar2 "12 fronteira de venda estrita volta para >=" \
   "s/FILTER (WHERE vh.data_emissao > d.dia)/FILTER (WHERE vh.data_emissao >= d.dia)/g" \
   "m a venda antes da decisao nao conta e a do proprio dia tambem nao"
-sabotar "12b dia da decisao sem AT TIME ZONE" \
-  "s/(x.decidido_em AT TIME ZONE 'America\/Sao_Paulo')::date AS dia/x.decidido_em::date AS dia/" \
+sabotar2 "12b dia da decisao sem AT TIME ZONE" \
+  "s/(x.foto_em AT TIME ZONE 'America\/Sao_Paulo')::date AS dia/x.foto_em::date AS dia/" \
   "m fuso: decisao 23:30 SP conta NF do dia SP seguinte e nao a do mesmo dia"
-sabotar "12c compras sem filtro de empresa do cabecalho" \
+sabotar2 "12c compras sem filtro de empresa do cabecalho" \
   "s/ AND pc.empresa = 'OBEN'//" \
   "m c cabecalho COLACOR fora de compras_apos"
-sabotar "13 colacor com qtd_vendida 0" \
-  "s/CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END/coalesce(v.qtd, 0)/" \
+sabotar2 "13 colacor com qtd_vendida 0" \
+  "s/CASE WHEN v_vnd IS NULL OR d.dia IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END/coalesce(v.qtd, 0)/" \
   "m b colacor sem venda e sem compras e NULL"
-sabotar "14 compras sem filtro de status" \
+sabotar2 "14 compras sem filtro de status" \
   "s/AND pc.status IN ('disparado','split_em_filhos')/AND true/" \
   "m c pendente cancelado expirado fora de compras_apos"
-sabotar "14b pendente_aprovacao entra em compras_apos" \
+sabotar2 "14b pendente_aprovacao entra em compras_apos" \
   "s/AND pc.status IN ('disparado','split_em_filhos')/AND pc.status IN ('disparado','split_em_filhos','pendente_aprovacao')/" \
   "m c pendente cancelado expirado fora de compras_apos"
-sabotar "15 compras antes da decisao entram" \
+sabotar2 "15 compras antes da decisao entram" \
   "s/AND i.criado_em > d.decidido_em/AND true/" \
   "m c compra antes da decisao nao aparece"
-sabotar "16 saldo atual sem linha vira 0" \
+sabotar2 "16 saldo atual sem linha vira 0" \
   "s/^\\( *\\)e\\.saldo,$/\\1coalesce(e.saldo, 0),/" \
   "m d sem linha de estoque volta NULL"
-sabotar "17 medicao sem gate" \
-  "/FUNCTION public.raio_x_medicao/,/^\$fn\$;/s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
+sabotar2 "17 medicao sem gate" \
+  "/CREATE OR REPLACE FUNCTION public.raio_x_medicao/,/^\$fn\$;/s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
   "m customer barrado 42501"
-sabotar "19 r16 compras_apos sem guarda cap_compras_ler" \
+sabotar2 "19 r16 compras_apos sem guarda cap_compras_ler" \
   "s/ AND private.cap_compras_ler(auth.uid()) THEN coalesce/ THEN coalesce/" \
   "m r16 sem cap_compras_ler compras_apos NULL"
 sabotar "20 r17 habilitado sem linha vira false" \
   "s/^         sp\.habilitado_reposicao_automatica\$/         coalesce(sp.habilitado_reposicao_automatica, false)/" \
   "r17 sem linha em sku_parametros volta NULL"
-sabotar "18 medicao inclui destino nulo" \
+sabotar2 "18 medicao inclui destino nulo" \
   "s/WHERE x.empresa = p_empresa AND x.destino IS NOT NULL)/WHERE x.empresa = p_empresa)/" \
   "m so destino nao nulo"
 
 # 7) tirar anon do REVOKE: a postcondicao embutida aborta o apply (rc=99) — vermelho pelo motivo certo.
 sed "s/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC;/" "$MIG" > "$TMPD/sab.sql"
 if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: 7"; exit 1; fi
-r=0; o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+r=0; o="$(suite "$TMPD/sab.sql" "$MIG2" 2>&1)" || r=$?
 if [ "$r" -ne 99 ] || ! grep -qF "postcondicao: anon executa" <<<"$o"; then
   echo "SABOTAGEM 7 NAO ABORTOU PELA POSTCONDICAO (rc=$r)"; echo "$o"; exit 1
 fi
@@ -477,5 +570,28 @@ echo "sabotagem vermelha ok: 7 anon fora do REVOKE (postcondicao aborta o apply,
 sabotar "7b anon fora do REVOKE sem postcondicao" \
   "s/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC;/;s/IF has_function_privilege('anon', 'public.raio_x_estoque_fatos(text)', 'EXECUTE') THEN/IF false THEN/" \
   "h anon sem EXECUTE"
+
+# coorte do Top 61
+sabotar2 "24 sem a guarda de coorte existente (primeira escrita vence)" \
+  "/\[guarda:inicio\]/,/\[guarda:fim\]/d" \
+  "k segundo congelamento devolve 0"
+sabotar2 "25 valor sem guarda de cmc (camada da funcao; o CHECK valor > 0 segura)" \
+  "s/CASE WHEN ip.cmc > 0 AND ip.saldo > 0 THEN/CASE WHEN ip.saldo > 0 THEN/" \
+  "k congela 4 skus da oben"
+sabotar2 "26 congelar sem gate de custo" \
+  "/FUNCTION public.raio_x_congelar_coorte/,/^\$fn\$;/s/IF NOT private.cap_custo_ler(auth.uid()) THEN/IF false THEN/" \
+  "k customer barrado 42501"
+sabotar2 "27 sem teto de 61 skus" \
+  "s/ OR cardinality(p_skus) > 61 THEN/ THEN/" \
+  "k mais de 61 recusa 22023"
+sabotar2 "28 sem recusa de sku repetido" \
+  "s/<> cardinality(p_skus) THEN/<> cardinality(p_skus) AND false THEN/" \
+  "k sku repetido recusa 22023"
+sabotar2 "29 policy da coorte aberta (USING true)" \
+  "/CREATE POLICY raio_x_coorte_top_select_custo/,/;/{s/^  USING.*/  USING (true);/;}" \
+  "k employee sem custo ve 0 linhas da coorte"
+sabotar2 "30 anon fora do REVOKE do congelar sem postcondicao" \
+  "s/REVOKE ALL ON FUNCTION public.raio_x_congelar_coorte(text, bigint\[\]) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_congelar_coorte(text, bigint[]) FROM PUBLIC;/;s/IF has_function_privilege('anon', f, 'EXECUTE') THEN/IF false THEN/" \
+  "k anon sem EXECUTE no congelar"
 
 echo "RAIOX-FATOS-OK"
