@@ -795,6 +795,12 @@ db/test-venda-lista-acesso.sh              38  falsificar=11
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
 # latest-por-chave e espera a lock do tick. 7 falsificações (conjunto exato) rodam em TODA execução.
 db/test-tint-purge-staging-diario.sh        13
+# Latest por chave indexado no promote (20261030071806): o DISTINCT ON das 5 staging vira LATERAL … LIMIT 1
+# (EXISTS no skus) sobre 7 índices; template = corpo de PROD (md5 conferido). O catálogo promovido sai IDÊNTICO
+# ao do promote antigo (empate, outra store/account, fórmula com preço); por promoção BIG o staging lido cai
+# ~15× (custom e genérico), e a medida é fail-closed (ok=true + efeito do run). 12 falsificações (conjunto
+# exato) rodam em TODA execução.
+db/test-tint-promote-latest-indexado.sh      8
 # Giro de corante, Fase 1 (20261028100000/100100/100200): o fato de consumo dosado só a promoção escreve, sem
 # cliente no staging; a cobertura é DERIVADA das extrações completas (ilha recente, dias SP inteiros, desde a 1ª
 # dosagem), o buraco de qualquer idade se cura, a versão é a CHEGADA, o consumidor das preparações não segura o

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 719
+-- Total de custom migrations: 720
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -783,7 +783,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
   ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
   ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
-  ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql')
+  ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
+  ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3096,7 +3097,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
-  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', '')
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5457,7 +5465,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
-  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', '')
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus')
 )
 SELECT
   e.migration,
