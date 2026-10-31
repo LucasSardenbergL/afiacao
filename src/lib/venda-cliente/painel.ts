@@ -126,7 +126,7 @@ export function rotuloSemana(semana: string): string {
 /** Situação do candidato na recompra: substituído não é repasse (vem sem preço sugerido). */
 export type SituacaoCompraRepasse = 'comprando' | 'parado' | 'substituido';
 
-export interface SubstitutoRepasse {
+interface SubstitutoRepasse {
   omie_codigo_produto: number;
   codigo: string | null;
   descricao: string | null;
