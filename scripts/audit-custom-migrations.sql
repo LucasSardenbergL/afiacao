@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 726
+-- Total de custom migrations: 727
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -790,6 +790,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031111000', 'radar_contato_integridade', '20261031111000_radar_contato_integridade.sql'),
   ('20261031130000', 'raio_x_correcoes_pos_revisao', '20261031130000_raio_x_correcoes_pos_revisao.sql'),
   ('20261031130100', 'analytics_ledger_raio_x', '20261031130100_analytics_ledger_raio_x.sql'),
+  ('20261031141053', 'nao_vinculados_cron_colacor', '20261031141053_nao_vinculados_cron_colacor.sql'),
   ('20261031142000', 'radar_kpis_conversao', '20261031142000_radar_kpis_conversao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3126,6 +3127,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('raio_x_correcoes_pos_revisao', 'table', 'public', 'raio_x_coorte_top', ''),
   ('raio_x_correcoes_pos_revisao', 'rls_policy', 'public', 'raio_x_coorte_top_select_custo', 'raio_x_coorte_top'),
   ('analytics_ledger_raio_x', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor-sc', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', '')
 ),
 obj_status AS (
@@ -5510,6 +5513,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('raio_x_correcoes_pos_revisao', 'table', 'public', 'raio_x_coorte_top', ''),
   ('raio_x_correcoes_pos_revisao', 'rls_policy', 'public', 'raio_x_coorte_top_select_custo', 'raio_x_coorte_top'),
   ('analytics_ledger_raio_x', 'function', 'public', 'analytics_ledger_registrar', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor-sc', ''),
+  ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', '')
 )
 SELECT

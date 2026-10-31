@@ -2726,9 +2726,13 @@ Deno.serve(async (req) => {
         break;
       }
       case "start_nao_vinculados": {
-        // v1: só Oben.
-        if (account !== "vendas") {
-          return new Response(JSON.stringify({ error: "v1 suporta apenas account=vendas (Oben)" }), {
+        // As 3 contas (v1.15). A tela /clientes-nao-vinculados continua lendo só `empresa='oben'`;
+        // os snapshots de colacor_sc/colacor existem para o `ja_cliente` do Radar
+        // (radar_recruzar_ja_cliente / radar_docs_clientes leem a tabela sem filtro de empresa) —
+        // cliente sem usuário nessas contas nunca era lido. O `linked` já é escopado à conta do run
+        // (fetchAllOmieClienteCodigos lê a proof fresca por conta), pré-condição para abrir aqui.
+        if (account !== "vendas" && account !== "servicos" && account !== "colacor_vendas") {
+          return new Response(JSON.stringify({ error: "account inválida para start_nao_vinculados" }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
@@ -2746,7 +2750,7 @@ Deno.serve(async (req) => {
         const { data: st } = await supabaseAdmin
           .from("omie_nao_vinculados_state")
           .select("status, started_at")
-          .eq("empresa", "oben")
+          .eq("empresa", accountToEmpresa(account))
           .maybeSingle();
         const running = st?.status === "running" && st?.started_at &&
           (Date.now() - new Date(st.started_at as string).getTime() < 15 * 60 * 1000);
@@ -2756,7 +2760,7 @@ Deno.serve(async (req) => {
           });
         }
         // Dispara a rotina dedicada de não-vinculados em background; responde 202 na hora.
-        const bgTask = syncNaoVinculados(supabaseAdmin, "vendas").catch((e) => {
+        const bgTask = syncNaoVinculados(supabaseAdmin, account).catch((e) => {
           console.error("[nao-vinculados][async]", e instanceof Error ? e.message : e);
         });
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment -- @ts-ignore intencional: EdgeRuntime é global do Deno/Supabase Edge (pode não estar tipado); @ts-expect-error quebraria o deploy se estivesse tipado

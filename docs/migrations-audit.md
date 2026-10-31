@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **726** custom migrations totais
-- **2370** objetos esperados (criados por estas migrations)
+- **727** custom migrations totais
+- **2372** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 892
   - `rls_policy`: 496
   - `index`: 319
   - `table`: 214
-  - `cron_job`: 200
+  - `cron_job`: 202
   - `view`: 127
   - `trigger`: 118
   - `enum_value`: 4
@@ -5930,6 +5930,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.analytics_ledger_registrar` | — |
+
+### `20261031141053_nao_vinculados_cron_colacor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.nao-vinculados-refresh-diario-colacor-sc` | — |
+| `cron_job` | `cron.nao-vinculados-refresh-diario-colacor` | — |
 
 ### `20261031142000_radar_kpis_conversao.sql`
 
