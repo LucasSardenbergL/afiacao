@@ -87,7 +87,7 @@ export type ResultadoReativar = { sku: number; reativado: boolean; impedimento: 
 export function useCompraSuspensaMutacoes(company: Company) {
   const qc = useQueryClient();
   const empresa = empresaDaCompra(company);
-  // Invalida também o giro (a coluna "Compra" da tabela lê a lista de ativas) — prefixo do ciclo desta empresa.
+  // Invalida as leituras da suspensão desta empresa (ativas, runs, candidatos); a coluna "Compra" lê a lista de ativas.
   const invalidar = () => qc.invalidateQueries({ queryKey: chave(company) });
 
   const suspender = useMutation({

@@ -306,7 +306,7 @@ eq "R7 galao suspenso com ancora livre: a linha (ancora) COMPRA 3 — semantica 
 eq "R7 sem log para o grupo nesse run" "$(log_sku 9101 2026-11-05)" "VAZIO"
 
 echo "=== R8: grupo com TROCA (final = GL 9602, ancora = QT 9601) ==="
-eq "R8 suspender a ancora 9601" "$(sess "$(cl "$U_MASTER")" "$SUSP('OBEN', ARRAY[9601]::bigint[], 'grupo troca')")" "9601|t|-|0"
+eq "R8 suspender a ancora 9601 (pendentes_n=1: o pedido de hoje tem o GL 9602 do grupo)" "$(sess "$(cl "$U_MASTER")" "$SUSP('OBEN', ARRAY[9601]::bigint[], 'grupo troca')")" "9601|t|-|1"
 run_ciclo OBEN 2026-11-09
 eq "R8 GL escolhido SOME (ancora suspensa segura o grupo)" "$(qf OBEN 2026-11-09 9602)" "AUSENTE"
 eq "R8 log no SKU final 9602 com ancora 9601 e grupo (2 GL x 30 = 60)" "$(log_sku 9602 2026-11-09)" "2|60|9601|66666666-6666-6666-6666-666666666666"
@@ -316,6 +316,16 @@ run_ciclo OBEN 2026-11-10
 eq "R8 GL suspenso E escolhido: a linha SOME (casa pelo SKU final)" "$(qf OBEN 2026-11-10 9602)" "AUSENTE"
 eq "R8 log do final 9602 (ancora 9601 registrada)" "$(log_sku 9602 2026-11-10)" "2|60|9601|66666666-6666-6666-6666-666666666666"
 eq "R8 reativar o GL" "$(sess "$(cl "$U_MASTER")" "$REAT('OBEN', ARRAY[9602]::bigint[], NULL)")" "9602|t|-"
+sess "$(cl "$U_MASTER")" "$SUSP('OBEN', ARRAY[9601,9602]::bigint[], 'ambos')" >/dev/null
+eq "R8 reativar ancora+galao JUNTOS: galao sem impedimento (ancora desta chamada nao conta)" "$(sess "$(cl "$U_MASTER")" "$REAT('OBEN', ARRAY[9601,9602]::bigint[], NULL)")" "9601|t|-;9602|t|-"
+echo "=== R9: SKU suspenso que ZEROU segue na lista com saldo 0 / cobertura 0 (risco visivel), nao NULL ==="
+P -q -c "UPDATE inventory_position SET saldo = 0 WHERE omie_codigo_produto = 9401; INSERT INTO sku_parametros (empresa, sku_codigo_omie, sku_descricao, fornecedor_nome, ponto_pedido, estoque_maximo, habilitado_reposicao_automatica, tipo_reposicao, valor_vendido_90d) VALUES ('OBEN', 9402, 'CAND ACELEROU', 'Sayerlack', 1, 2, true, 'automatica', 7);"
+sess "$(cl "$U_MASTER")" "$SUSP('OBEN', ARRAY[9401]::bigint[], 'zerou')" >/dev/null
+eq "R9 listar 9401: saldo_atual 0, cobertura_90d 0.0, valor 0.00" "$(sess "$(cl "$U_MASTER")" "SELECT concat_ws('|', saldo_atual, cobertura_90d_atual, valor_atual) FROM reposicao_compra_suspensa_listar('OBEN') WHERE sku_codigo_omie=9401")" "0|0.0|0.00"
+eq "R9 foto do SKU 9402 com estoque e parametro: saldo 100, no_motor t" "$(Pq -c "SELECT concat_ws('|', coalesce(f.saldo::text,'NULO'), f.no_motor) FROM public._reposicao_compra_foto('OBEN', ARRAY[9402]::bigint[]) f")" "100|t"
+P -q -c "DELETE FROM inventory_position WHERE omie_codigo_produto = 9402;"
+eq "R9 reativar SKU zerado com parametro: sem impedimento falso (fora_do_motor so sem flag)" "$(Pq -c "SELECT concat_ws('|', coalesce(f.saldo::text,'NULO'), f.no_motor) FROM public._reposicao_compra_foto('OBEN', ARRAY[9402]::bigint[]) f")" "NULO|t"
+sess "$(cl "$U_MASTER")" "$REAT('OBEN', ARRAY[9401]::bigint[], 'volta')" >/dev/null
 run_ciclo OBEN 2026-11-11
 eq "R8 tudo livre: GL volta a comprar 2" "$(qf OBEN 2026-11-11 9602)" "2"
 

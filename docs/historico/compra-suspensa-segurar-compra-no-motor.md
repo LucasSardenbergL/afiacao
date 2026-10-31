@@ -61,6 +61,18 @@ executado como authenticated. 4 falsificações com vermelho ESPECÍFICO (SKU su
 irmãos do motor (teto, embalagem, gate, em-trânsito) re-rodados com a fixture nova; ganharam stubs de `anon`/
 `service_role`/`auth.uid`/`private.cap_compras_ler` porque a cauda da fixture agora cria as tabelas da suspensão.
 
+## Codex adversarial de CÓDIGO (gpt-6-astra high, 170 s, 115k tokens) — 2 P1 + 6 P2, todos absorvidos
+
+- P1 "o alerta de falta some quando o estoque zera": `_reposicao_compra_foto` por lista passou a incluir SKU com saldo 0
+  (cobertura 0 → risco visível) e sem linha de estoque (saldo NULL = desconhecido, nunca 0); prova R9.
+- P1 "lote aplicado com coorte velha do cache": o diálogo só confirma com leitura FRESCA (`isSuccess && !isFetching && !isError`).
+- P2: Σ de runs rotulada parcial quando há linha sem preço em qualquer run; erro de leitura vira "—" (não 0 /
+  "Nenhuma" / "Segurar compra"); `reativar([âncora, galão])` não devolve `ancora_suspensa` da âncora da própria chamada
+  (snapshot do CTE); `pendentes_n` conta os membros do grupo (pedido pode estar no galão); diálogo não fecha durante a
+  mutação e zera motivo ao trocar de alvo; receita de rollback do envelope com sintaxe válida.
+- Sem bypass do gate pelo PostgREST (`session_user` = authenticator); `ON CONFLICT` casa o índice parcial; custo da foto
+  não multiplica por SKU (`dem` materializada uma vez).
+
 ## Lições
 
 - **A cauda da fixture do motor é a ÚNICA fonte das provas irmãs**: trocar a cauda sem repetir o que as caudas

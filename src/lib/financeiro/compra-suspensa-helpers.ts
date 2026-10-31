@@ -83,6 +83,8 @@ export type ResumoSuspensas = {
   runsN: number; runsComSupressaoN: number;
   /** Σ do evitado nos runs do período: R$·run (a mesma necessidade reaparece a cada run) — não é caixa. */
   evitadoRunsSoma: number | null;
+  /** Linhas sem preço em TODOS os runs do período: > 0 ⇒ a Σ acima é PARCIAL (Codex P2-3). */
+  runsLinhasSemPreco: number;
   revisaoVencidaN: number;
 };
 
@@ -101,6 +103,7 @@ export function resumirSuspensas(ativas: SuspensaAtiva[], runs: RunMotor[], hoje
     runsN: runs.length,
     runsComSupressaoN: runs.filter((r) => r.seguradasN > 0).length,
     evitadoRunsSoma: soma.total,
+    runsLinhasSemPreco: runs.reduce((n, r) => n + r.linhasSemPreco, 0),
     revisaoVencidaN: ativas.filter((a) => a.revisarEm < hoje).length,
   };
 }

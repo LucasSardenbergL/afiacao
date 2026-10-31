@@ -12,8 +12,10 @@
 --   2. cole o arquivo inteiro; a PÓS aborta (ROLLBACK) se algum aprovado-ainda-candidato ficou sem suspensão ativa.
 -- 2ª testemunha depois (psql-ro): SELECT count(*), round(sum(foto_valor)) FROM reposicao_compra_suspensa
 --   WHERE empresa='OBEN' AND lote_id = '<lote>' AND reativado_em IS NULL;
--- Rollback (dado, não DDL): SELECT * FROM reposicao_compra_reativar('OBEN', array_agg(sku_codigo_omie), 'rollback lote')
---   FROM reposicao_compra_suspensa WHERE lote_id='<lote>' AND reativado_em IS NULL.
+-- Rollback (dado, não DDL):
+--   SELECT * FROM reposicao_compra_reativar('OBEN',
+--     (SELECT array_agg(sku_codigo_omie) FROM reposicao_compra_suspensa WHERE lote_id = '<lote>' AND reativado_em IS NULL),
+--     'rollback do lote <lote>');
 
 BEGIN;
 

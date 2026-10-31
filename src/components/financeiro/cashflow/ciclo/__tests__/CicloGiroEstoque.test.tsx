@@ -7,9 +7,9 @@ const trackMock = vi.fn();
 vi.mock('@/hooks/useFinanceiroCiclo', () => ({ useCicloGiroSku: (c: string) => giroMock(c) }));
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => trackMock(...a) }));
 vi.mock('@/hooks/useFinanceiroCompraSuspensa', () => ({
-  useCompraSuspensaListar: () => ({ data: [], isLoading: false, error: null }),
-  useCompraSuspensaRuns: () => ({ data: [], isLoading: false, error: null }),
-  useCompraSuspensaCandidatos: () => ({ data: [], isLoading: false, error: null }),
+  useCompraSuspensaListar: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaRuns: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaCandidatos: () => ({ data: [], isLoading: false, error: null, isError: false, isSuccess: true, isFetching: false }),
   useCompraSuspensaMutacoes: () => ({ suspender: { mutate: vi.fn(), isPending: false }, reativar: { mutate: vi.fn(), isPending: false } }),
 }));
 

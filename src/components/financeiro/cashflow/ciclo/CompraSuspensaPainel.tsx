@@ -2,7 +2,7 @@
 // Registro em reposicao_compra_suspensa (autor, motivo, data de revisão); o motor segura a linha e loga a compra
 // evitada. Aqui: diálogo de suspensão (1 SKU ou o lote "≥180d"), painel das ativas com reativação em 1 clique e
 // o sensor com denominador (runs do motor). Spec: docs/superpowers/specs/2026-10-31-reposicao-compra-suspensa-design.md §5.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PauseCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,12 +36,17 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
   const [revisao, setRevisao] = useState<RevisaoDias>(90);
   const { suspender } = useCompraSuspensaMutacoes(company);
   const lote = useCompraSuspensaCandidatos(company, alvo?.tipo === 'lote' ? alvo.minDias : LIMIAR_LOTE_DIAS, alvo?.tipo === 'lote');
-  const candidatos: Candidato[] = alvo?.tipo === 'lote' ? (lote.data ?? []) : [];
+  // Lote só com leitura FRESCA e sem erro: o React Query mantém o cache anterior quando o refetch falha
+  // (ex.: FONTE_CONSUMO_INDISPONIVEL) e o botão suspenderia uma coorte velha (Codex código P1-2).
+  const loteFresco = alvo?.tipo === 'lote' && lote.isSuccess && !lote.isFetching && !lote.isError;
+  const candidatos: Candidato[] = loteFresco ? (lote.data ?? []) : [];
+  // Troca de alvo zera motivo/revisão: a justificativa digitada para um SKU nunca vaza para outro (Codex P2-7).
+  useEffect(() => { setMotivo(''); setRevisao(90); }, [alvo]);
   const resumo = resumirCandidatos(candidatos);
   const hoje = hojeSp();
   const revisarEm = somarDias(hoje, revisao);
   const skus = alvo?.tipo === 'sku' ? [alvo.sku] : candidatos.map((c) => c.sku);
-  const podeConfirmar = motivo.trim().length >= 3 && skus.length > 0 && !suspender.isPending;
+  const podeConfirmar = motivo.trim().length >= 3 && skus.length > 0 && !suspender.isPending && (alvo?.tipo === 'sku' || loteFresco);
 
   const confirmar = () => {
     if (!alvo) return;
@@ -52,7 +57,7 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
   };
 
   return (
-    <Dialog open={alvo !== null} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <Dialog open={alvo !== null} onOpenChange={(o) => { if (!o && !suspender.isPending) onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Segurar compra</DialogTitle>
@@ -64,9 +69,9 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
         </DialogHeader>
         {alvo?.tipo === 'lote' && (
           <div className="rounded-md border p-2 text-xs" data-testid="lote-resumo">
-            {lote.isLoading && <span>Calculando a coorte…</span>}
+            {lote.isFetching && <span>Calculando a coorte…</span>}
             {lote.error && <span className="text-status-error">Não foi possível calcular a coorte: fonte de consumo indisponível ou sem acesso.</span>}
-            {lote.data && (
+            {loteFresco && (
               <>
                 <div><strong>{resumo.n}</strong> SKUs · {brl(resumo.valor)} em estoque{resumo.semCusto > 0 ? ` (+${resumo.semCusto} sem custo)` : ''} · {resumo.noMotorN} no motor automático · {resumo.comVenda90N} venderam em 90d</div>
                 {resumo.n > 0 && (
@@ -91,7 +96,7 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
           <p className="text-xs text-muted-foreground">A suspensão NÃO vence sozinha: a data é de revisão. Reativar é 1 clique no painel.</p>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button variant="outline" onClick={onClose} disabled={suspender.isPending}>Cancelar</Button>
           <Button onClick={confirmar} disabled={!podeConfirmar}>
             {alvo?.tipo === 'lote' ? `Segurar ${skus.length} SKU(s)` : 'Segurar compra'}
           </Button>
@@ -102,10 +107,13 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
 }
 
 /** Célula "Compra" da tabela de giro: estado + ação de 1 clique. */
-export function CompraCell({ company, sku, descricao, suspensa, onSegurar }: {
-  company: Company; sku: number; descricao: string | null; suspensa: SuspensaAtiva | undefined; onSegurar: (a: AlvoSuspensao) => void;
+export function CompraCell({ company, sku, descricao, suspensa, indisponivel, onSegurar }: {
+  company: Company; sku: number; descricao: string | null; suspensa: SuspensaAtiva | undefined; indisponivel: boolean;
+  onSegurar: (a: AlvoSuspensao) => void;
 }) {
   const { reativar } = useCompraSuspensaMutacoes(company);
+  // Sem a lista de ativas não dá para afirmar "livre": mostra "—" (ausente ≠ zero; Codex P2-4).
+  if (indisponivel) return <span className="text-xs text-muted-foreground" title="leitura das suspensões indisponível">—</span>;
   if (suspensa) {
     return (
       <div className="flex items-center gap-1 text-xs">
@@ -128,6 +136,9 @@ export function CompraSuspensaPainel({ company, onSegurarLote }: { company: Comp
   const lista = useMemo(() => ordenarPorRisco(ativas.data ?? []), [ativas.data]);
   const r = resumirSuspensas(ativas.data ?? [], runs.data ?? [], hoje);
   const visiveis = todas ? lista : lista.slice(0, 20);
+  // Leitura falhou → "—", nunca 0 nem "Nenhuma": ausente ≠ zero (Codex P2-4).
+  const semAtivas = ativas.isError;
+  const semRuns = runs.isError;
 
   return (
     <section className="space-y-2 rounded-md border p-3" data-testid={`compra-suspensa-${company}`} aria-label="Compras suspensas">
@@ -139,22 +150,24 @@ export function CompraSuspensaPainel({ company, onSegurarLote }: { company: Comp
       </div>
       {ativas.error && <p className="text-xs text-status-error">Não foi possível ler as suspensões (sem acesso a compras ou erro de leitura).</p>}
       <div className="grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        <div><div className="text-xs text-muted-foreground">Ativas</div><div className="font-mono">{r.ativasN} <span className="text-xs text-muted-foreground">({r.noMotorN} no motor)</span></div></div>
-        <div><div className="text-xs text-muted-foreground">Estoque hoje nos suspensos</div><div className="font-mono">{brl(r.valorAtual)}</div>
-          {r.valorAtualSemCusto > 0 && <div className="text-xs text-muted-foreground">{r.valorAtualSemCusto} sem custo fora da soma</div>}</div>
+        <div><div className="text-xs text-muted-foreground">Ativas</div>
+          <div className="font-mono">{semAtivas ? '—' : <>{r.ativasN} <span className="text-xs text-muted-foreground">({r.noMotorN} no motor)</span></>}</div></div>
+        <div><div className="text-xs text-muted-foreground">Estoque hoje nos suspensos</div><div className="font-mono">{semAtivas ? '—' : brl(r.valorAtual)}</div>
+          {!semAtivas && r.valorAtualSemCusto > 0 && <div className="text-xs text-muted-foreground">{r.valorAtualSemCusto} sem custo fora da soma</div>}</div>
         <div><div className="text-xs text-muted-foreground">Último recálculo do motor</div>
-          <div className="font-mono">{r.ultimoRun ? `${brl(r.ultimoRun.evitado)} em ${r.ultimoRun.seguradasN} linha(s)` : '—'}</div>
-          {r.ultimoRun && r.ultimoRun.semPreco > 0 && <div className="text-xs text-muted-foreground">parcial: {r.ultimoRun.semPreco} linha(s) sem preço</div>}
-          {runs.error && <div className="text-xs text-status-error">runs indisponíveis</div>}</div>
+          <div className="font-mono">{semRuns ? '—' : r.ultimoRun ? `${brl(r.ultimoRun.evitado)} em ${r.ultimoRun.seguradasN} linha(s)` : '—'}</div>
+          {!semRuns && r.ultimoRun && r.ultimoRun.semPreco > 0 && <div className="text-xs text-muted-foreground">parcial: {r.ultimoRun.semPreco} linha(s) sem preço</div>}
+          {semRuns && <div className="text-xs text-status-error">runs indisponíveis</div>}</div>
         <div><div className="text-xs text-muted-foreground">Runs em 30d (com supressão)</div>
-          <div className="font-mono">{r.runsN} <span className="text-xs text-muted-foreground">({r.runsComSupressaoN})</span></div>
-          <div className="text-xs text-muted-foreground">Σ sugestão suprimida {brl(r.evitadoRunsSoma)} (R$·run, não caixa)</div></div>
+          <div className="font-mono">{semRuns ? '—' : <>{r.runsN} <span className="text-xs text-muted-foreground">({r.runsComSupressaoN})</span></>}</div>
+          {!semRuns && <div className="text-xs text-muted-foreground">Σ sugestão suprimida {brl(r.evitadoRunsSoma)} (R$·run, não caixa){r.runsLinhasSemPreco > 0 ? ` · parcial: ${r.runsLinhasSemPreco} linha(s) sem preço no período` : ''}</div>}</div>
       </div>
       {r.revisaoVencidaN > 0 && <p className="text-xs text-status-warning">{r.revisaoVencidaN} suspensão(ões) com revisão vencida — reveja ou reative.</p>}
       <p className="text-xs text-muted-foreground">
         Ordem = venda dos últimos 90d (quem mais vende primeiro): é a lista para reativar rápido se faltar. Cobertura &lt; {RISCO_FALTA_DIAS}d pela venda recente marca risco de falta — sinal provisório, não é fill-rate (sensor de ruptura em outra frente).
       </p>
       {ativas.isLoading ? <p className="text-xs text-muted-foreground">Carregando…</p>
+        : semAtivas ? null
         : lista.length === 0 ? <EmptyState tone="operational" icon={PauseCircle} title="Nenhuma compra suspensa" description="Use “Segurar compra” na tabela ou o lote ≥180d." />
         : (
           <>

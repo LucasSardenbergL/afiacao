@@ -38,7 +38,7 @@ function Traco({ titulo }: { titulo: string | null }) {
 }
 
 /** Coluna "Compra" (só Oben): a decisão "segurar compra" escrita no motor — ver CompraSuspensaPainel. */
-type ColunaCompra = { company: Company; suspensas: Map<number, SuspensaAtiva>; onSegurar: (a: AlvoSuspensao) => void };
+type ColunaCompra = { company: Company; suspensas: Map<number, SuspensaAtiva>; indisponivel: boolean; onSegurar: (a: AlvoSuspensao) => void };
 
 function TabelaGiro({ linhas, compra }: { linhas: GiroSku[]; compra?: ColunaCompra }) {
   const [todos, setTodos] = useState(false);
@@ -82,7 +82,7 @@ function TabelaGiro({ linhas, compra }: { linhas: GiroSku[]; compra?: ColunaComp
                 {compra && (
                   <TableCell>
                     <CompraCell company={compra.company} sku={s.omieCodigoProduto} descricao={s.descricao}
-                      suspensa={compra.suspensas.get(s.omieCodigoProduto)} onSegurar={compra.onSegurar} />
+                      suspensa={compra.suspensas.get(s.omieCodigoProduto)} indisponivel={compra.indisponivel} onSegurar={compra.onSegurar} />
                   </TableCell>
                 )}
               </TableRow>
@@ -177,7 +177,7 @@ function GiroEmpresa({ company, acao }: { company: Company; acao: FiltroAcaoGiro
       {temCompra && <CompraSuspensaPainel company={company} onSegurarLote={setAlvo} />}
       {filtrados.length === 0
         ? <p className="text-xs text-muted-foreground">Nenhum SKU neste filtro.</p>
-        : <TabelaGiro linhas={filtrados} compra={temCompra ? { company, suspensas: mapaSuspensas, onSegurar: setAlvo } : undefined} />}
+        : <TabelaGiro linhas={filtrados} compra={temCompra ? { company, suspensas: mapaSuspensas, indisponivel: suspensas.isError, onSegurar: setAlvo } : undefined} />}
       {temCompra && <SegurarCompraDialog company={company} alvo={alvo} onClose={() => setAlvo(null)} />}
       <ForaDoGiro company={company} linhas={foraGiro} total={totalFora} />
     </section>

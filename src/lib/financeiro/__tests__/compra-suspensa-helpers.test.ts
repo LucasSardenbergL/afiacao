@@ -57,6 +57,7 @@ describe('compra-suspensa-helpers', () => {
     expect(r.runsN).toBe(2);
     expect(r.runsComSupressaoN).toBe(1);
     expect(r.evitadoRunsSoma).toBe(180);
+    expect(r.runsLinhasSemPreco).toBe(1); // a Σ é parcial: o painel diz
     expect(r.revisaoVencidaN).toBe(1);
   });
 
@@ -65,6 +66,7 @@ describe('compra-suspensa-helpers', () => {
     expect(r.ultimoRun).toBeNull();
     expect(r.fotoValor).toBeNull();
     expect(r.evitadoRunsSoma).toBeNull();
+    expect(r.runsLinhasSemPreco).toBe(0);
     expect(r.ativasN).toBe(0);
   });
 

@@ -74,14 +74,21 @@ DECLARE
   v_fonte boolean := public._reposicao_compra_fonte_ok(p_empresa);
 BEGIN
   RETURN QUERY
-  WITH base AS MATERIALIZED (
-    SELECT ip.omie_codigo_produto AS cod, op.descricao, op.familia, ip.saldo, ip.cmc,
+  -- Universo: p_skus NULL → todo SKU com saldo > 0 da account; lista → TODOS os SKUs pedidos, inclusive quem ZEROU
+  -- (saldo 0: é a ruptura que a suspensão pode ter causado — Codex código P1-1) e quem não tem linha de estoque
+  -- (saldo NULL = desconhecido, nunca 0 fabricado).
+  WITH alvo AS MATERIALIZED (
+    SELECT DISTINCT a.sku AS cod FROM unnest(p_skus) AS a(sku) WHERE a.sku IS NOT NULL
+    UNION
+    SELECT ip0.omie_codigo_produto FROM public.inventory_position ip0
+     WHERE p_skus IS NULL AND ip0.account = v_account AND ip0.saldo > 0
+  ),
+  base AS MATERIALIZED (
+    SELECT k.cod, op.descricao, op.familia, ip.saldo, ip.cmc,
            public._fin_estoque_classe(op.tipo_produto, op.familia) AS classe
-      FROM public.inventory_position ip
-      LEFT JOIN public.omie_products op
-        ON op.omie_codigo_produto = ip.omie_codigo_produto AND op.account = lower(v_emp)
-     WHERE ip.account = v_account AND ip.saldo > 0
-       AND (p_skus IS NULL OR ip.omie_codigo_produto = ANY (p_skus))
+      FROM alvo k
+      LEFT JOIN public.inventory_position ip ON ip.account = v_account AND ip.omie_codigo_produto = k.cod
+      LEFT JOIN public.omie_products op ON op.omie_codigo_produto = k.cod AND op.account = lower(v_emp)
   ),
   dem AS MATERIALIZED (
     SELECT d.sku_codigo_omie AS cod,
@@ -93,11 +100,11 @@ BEGIN
      GROUP BY d.sku_codigo_omie
   )
   SELECT b.cod, b.descricao, b.familia, sp.fornecedor_nome, b.saldo, b.cmc,
-         CASE WHEN b.cmc > 0 THEN round(b.saldo * b.cmc, 2) END,
+         CASE WHEN b.saldo IS NOT NULL AND b.cmc > 0 THEN round(b.saldo * b.cmc, 2) END,
          CASE WHEN v_fonte THEN coalesce(dm.q365, 0) END,
-         CASE WHEN v_fonte AND dm.q365 > 0 THEN round(b.saldo / (dm.q365 / 365.0), 1) END,
+         CASE WHEN v_fonte AND b.saldo IS NOT NULL AND dm.q365 > 0 THEN round(b.saldo / (dm.q365 / 365.0), 1) END,
          CASE WHEN v_fonte THEN coalesce(dm.q90, 0) END,
-         CASE WHEN v_fonte AND dm.q90 > 0 THEN round(b.saldo / (dm.q90 / 90.0), 1) END,
+         CASE WHEN v_fonte AND b.saldo IS NOT NULL AND dm.q90 > 0 THEN round(b.saldo / (dm.q90 / 90.0), 1) END,
          (coalesce(sp.habilitado_reposicao_automatica, false) AND coalesce(sp.tipo_reposicao, 'automatica') = 'automatica'),
          sp.valor_vendido_90d,
          EXISTS (SELECT 1 FROM public.sku_substituicao ss
@@ -202,7 +209,11 @@ BEGIN
            WHERE pcs.empresa = v_emp
              AND pcs.status IN ('pendente_aprovacao', 'bloqueado_guardrail')
              AND coalesce(pcs.tipo_ciclo, 'normal') = 'normal'
-             AND pci.sku_codigo_omie = a.sku::text)
+             AND (pci.sku_codigo_omie = a.sku::text
+                  OR pci.sku_codigo_omie IN (SELECT m2.sku_codigo_omie
+                                               FROM public.sku_embalagem_equivalencia m1
+                                               JOIN public.sku_embalagem_equivalencia m2 ON m2.grupo_id = m1.grupo_id AND m2.ativo
+                                              WHERE m1.empresa = lower(v_emp) AND m1.ativo AND m1.sku_codigo_omie = a.sku::text)))
     FROM alvo a
     LEFT JOIN foto f ON f.sku_codigo_omie = a.sku
     LEFT JOIN ins i ON i.sku_codigo_omie = a.sku
@@ -242,7 +253,9 @@ BEGIN
                              JOIN public.reposicao_compra_suspensa cs2
                                ON cs2.empresa = v_emp AND cs2.reativado_em IS NULL AND cs2.sku_codigo_omie::text = anc.sku_codigo_omie
                             WHERE me.empresa = lower(v_emp) AND me.ativo AND me.sku_codigo_omie = a.sku::text
-                              AND anc.sku_codigo_omie <> a.sku::text) THEN 'ancora_suspensa'
+                              AND anc.sku_codigo_omie <> a.sku::text
+                              -- a âncora reativada NESTA chamada ainda aparece ativa no snapshot do CTE (Codex P2-5)
+                              AND NOT (cs2.sku_codigo_omie IN (SELECT sku FROM alvo))) THEN 'ancora_suspensa'
               -- fora do motor = nem o SKU nem a âncora do seu grupo estão habilitados/automáticos (o galão compra pela âncora)
               WHEN NOT coalesce(f.no_motor, false)
                AND NOT EXISTS (SELECT 1
