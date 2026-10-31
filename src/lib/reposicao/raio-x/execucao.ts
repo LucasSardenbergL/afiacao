@@ -6,7 +6,7 @@
 import type { CanalLiquidacao, DecisaoRow, Destino, LinhaMedicao } from './tipos';
 
 /** Destinos que pedem alguém executando. Manter/estratégico não têm execução (o motor já resolve). */
-export const DESTINOS_EXECUTAVEIS: readonly Destino[] = ['trocar', 'venda_dirigida', 'liquidar', 'erro_cadastro'];
+const DESTINOS_EXECUTAVEIS: readonly Destino[] = ['trocar', 'venda_dirigida', 'liquidar', 'erro_cadastro'];
 
 export const CANAIS: readonly CanalLiquidacao[] = ['cliente_especifico', 'promocao_carteira', 'outlet_queima', 'outro'];
 export const ROTULO_CANAL: Record<CanalLiquidacao, string> = {
@@ -45,9 +45,6 @@ export function concluidoVigente(d: Pick<DecisaoRow, 'concluido_em' | 'decidido_
 
 export const pisoVigente = (d: DecisaoRow | undefined): number | null =>
   d?.destino === 'liquidar' ? d.preco_piso : null;
-
-export const canalVigente = (d: DecisaoRow | undefined): CanalLiquidacao | null =>
-  d?.destino === 'liquidar' ? d.canal_liquidacao : null;
 
 export type SituacaoPlano =
   | { tipo: 'concluido' }

@@ -80,6 +80,35 @@ SELECT coalesce(v.dia, d.dia) AS dia, coalesce(v.empresa, d.empresa) AS empresa,
 
 Antes da migration do ledger ser aplicada e do Publish, zero visitas é **ausência de sensor**, não falta de uso. O denominador só vale a partir da 1ª linha.
 
+## Pacote 2 — plano de execução (2026-10-31) [money-path] [migration manual]
+
+Spec: `docs/superpowers/specs/2026-10-31-raio-x-pacote-2-design.md` (desenho aprovado pelo founder em chat).
+
+- **RPC nova `raio_x_planejar`** (migration `20261031180000_raio_x_plano_execucao.sql`): 6 colunas em `raio_x_decisao`
+  (`preco_piso`, `canal_liquidacao`, `responsavel`, `prazo`, `concluido_em`, `concluido_por`). Escritor único do plano;
+  `raio_x_decidir`/`raio_x_medicao` **intocadas** — o decidir devolve a linha via `%ROWTYPE` + `SELECT *` e ganha as
+  colunas sem recriar (provado EXECUTANDO no PG17, `db/test-raio-x-planejar.sh`: controle verde nos dois locales + 14
+  sabotagens, inclusive REVOKE sem anon e INVOKER abortando pela postcondição).
+- **Re-decidir não apaga o plano no banco:** a leitura filtra (piso/canal só com destino `liquidar`; `concluido_em <
+  decidido_em` = destino mudou depois → não concluído).
+- **Custo de esperar** = valor × taxa anual / 12, com a taxa de `fin_regua_custo_capital` (OBEN 17,75% a.a.; COLACOR
+  sem configuração → nada exibido). Com taxa única a ordem da lista não muda: o ganho é urgência em R$.
+- **Piso × preço real** só com UMA unidade de venda (senão "sem comparação"); a medição lista "liquidou abaixo do piso".
+- **"Executado" é tarefa, não dinheiro:** a meta continua vindo só da medição.
+
+### Query — adoção do plano (psql-ro)
+
+```sql
+SELECT empresa,
+       count(*) FILTER (WHERE destino IN ('trocar','venda_dirigida','liquidar','erro_cadastro')) AS executaveis,
+       count(*) FILTER (WHERE responsavel IS NOT NULL)                                          AS com_responsavel,
+       count(*) FILTER (WHERE destino = 'liquidar' AND preco_piso IS NOT NULL)                   AS liquidar_com_piso,
+       count(*) FILTER (WHERE concluido_em >= decidido_em OR (concluido_em IS NOT NULL AND decidido_em IS NULL)) AS executadas,
+       count(*) FILTER (WHERE concluido_em::date <= prazo)                                       AS no_prazo,
+       count(*) FILTER (WHERE prazo < (now() AT TIME ZONE 'America/Sao_Paulo')::date AND concluido_em IS NULL) AS vencidas
+  FROM public.raio_x_decisao GROUP BY empresa;
+```
+
 ## Pendências que não couberam
 
 - **Medir a meta da fase A no card a partir de 2026-11-25:** 100% do Top 61 decidido e caixa liberado ≥ R$ 60k.
