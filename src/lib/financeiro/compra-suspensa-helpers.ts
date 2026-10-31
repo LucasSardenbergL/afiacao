@@ -124,11 +124,12 @@ export function emRiscoDeFalta(a: Pick<SuspensaAtiva, 'cobertura90Atual'>): bool
 export const OPCOES_REVISAO_DIAS = [30, 60, 90, 180] as const;
 export type RevisaoDias = (typeof OPCOES_REVISAO_DIAS)[number];
 
-/** 'YYYY-MM-DD' + N dias (aritmética em UTC sobre a data civil; não depende do fuso do navegador). */
+/** 'YYYY-MM-DD' + N dias: aritmética em UTC de PROPÓSITO sobre a data civil (Date.UTC + getUTC*), sem passar pelo fuso do navegador. */
 export function somarDias(ymd: string, dias: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
-  const t = Date.UTC(y, m - 1, d + dias);
-  return new Date(t).toISOString().slice(0, 10);
+  const t = new Date(Date.UTC(y, m - 1, d + dias));
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${t.getUTCFullYear()}-${p2(t.getUTCMonth() + 1)}-${p2(t.getUTCDate())}`;
 }
 
 export function resumirCandidatos(c: Candidato[]): { n: number; valor: number | null; semCusto: number; noMotorN: number; comVenda90N: number } {

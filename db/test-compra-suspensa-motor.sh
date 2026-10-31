@@ -175,7 +175,7 @@ INSERT INTO sku_estoque_atual (empresa, sku_codigo_omie, estoque_fisico, estoque
  ('OBEN','9102',0,0,'ListarPosEstoque'),
  ('OBEN','9601',1,0,'ListarPosEstoque'),
  ('OBEN','9602',0,0,'ListarPosEstoque');
--- preco de compra so do 9003 (10/un): o evitado do 9004 tem de sair NULL (ausente != zero)
+-- preco de compra so do 9003 (10/un): o evitado do 9004 tem de sair NULL (ausente nao e zero)
 INSERT INTO sku_leadtime_history VALUES ('OBEN','9003',10,100);
 INSERT INTO sku_embalagem_equivalencia (empresa, grupo_id, sku_codigo_omie, fator_para_base, ativo) VALUES
  ('oben','11111111-1111-1111-1111-111111111111','9101',1,true),
@@ -266,7 +266,7 @@ eq "R4 9003 SOME do pedido" "$(qf OBEN 2026-11-02 9003)" "AUSENTE"
 eq "R4 9004 SOME do pedido" "$(qf OBEN 2026-11-02 9004)" "AUSENTE"
 eq "R4 grupo 9101 segue comprando 3" "$(qf OBEN 2026-11-02 9101)" "3"
 eq "R4 log 9003: qtde 18, evitado 180 (18x10), ancora 9003, sem grupo" "$(log_sku 9003 2026-11-02)" "18|180|9003|-"
-eq "R4 log 9004: qtde 7, evitado NULO (preco ausente != zero)" "$(log_sku 9004 2026-11-02)" "7|NULO|9004|-"
+eq "R4 log 9004: qtde 7, evitado NULO (preco ausente nao e zero)" "$(log_sku 9004 2026-11-02)" "7|NULO|9004|-"
 eq "R4 marker suspensas_compra_n=2" "$(ultimo_marker)" "2"
 eq "R4 idempotente: 2a chamada inserido=false, recusa ja_suspensa, pendentes 0" \
    "$(sess "$(cl "$U_MASTER")" "$SUSP('OBEN', ARRAY[9003]::bigint[], 'de novo')")" "9003|f|ja_suspensa|0"
