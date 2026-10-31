@@ -70,8 +70,8 @@ export function AlertaDrillSheet({
                 </CardContent>
               </Card>
 
-              {/* Seção 3 - Gráfico (não aplicável a sku_sem_grupo) */}
-              {!isSemGrupo && (
+              {/* Seção 3 - Gráfico: só venda e LT têm série (sem grupo e tipos do Omie, não) */}
+              {(drillEvento.tipo === "venda_atipica" || drillEvento.tipo === "lt_atipico") && (
                 <Card>
                   <CardHeader className="pb-2"><CardTitle className="text-sm">3. Histórico</CardTitle></CardHeader>
                   <CardContent>

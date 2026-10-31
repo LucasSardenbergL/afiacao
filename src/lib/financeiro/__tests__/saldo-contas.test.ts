@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { classificarSaldoConta, HORAS_TOLERANCIA_SYNC_BASE, referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from '../saldo-contas';
+import {
+  chaveFrescorDaLeitura,
+  classificarSaldoConta,
+  HORAS_TOLERANCIA_SYNC_BASE,
+  MARGEM_RELOGIO_VIRADA_MS,
+  msAteMudarChaveFrescor,
+  msAteViradaDoFrescor,
+  referenciaFrescorSaldo,
+  resumirSaldoContas,
+  saldoExibivelDaConta,
+} from '../saldo-contas';
 
 // Plano v3, item 2: saldo de conta corrente ausente OU velho nunca entra no caixa como número.
 describe('referenciaFrescorSaldo — o sync de base roda às 03h SP', () => {
@@ -19,6 +29,32 @@ describe('referenciaFrescorSaldo — o sync de base roda às 03h SP', () => {
     expect(referenciaFrescorSaldo(new Date('2026-10-26T02:30:00Z'))).toEqual({ hoje: '2026-10-25', minimo: '2026-10-25' });
     // 00:30 SP
     expect(referenciaFrescorSaldo(new Date('2026-10-26T03:30:00Z'))).toEqual({ hoje: '2026-10-26', minimo: '2026-10-25' });
+  });
+});
+
+// #3401: quem guarda em cache uma leitura julgada pela régua tem de descartá-la na virada.
+describe('virada da régua — msAteViradaDoFrescor e a chave de cache', () => {
+  it('a virada é às 04:00:00.000 SP (07:00Z), ao milissegundo', () => {
+    expect(msAteViradaDoFrescor(new Date('2026-10-26T06:59:59.000Z'))).toBe(1_000);
+    expect(msAteViradaDoFrescor(new Date('2026-10-26T06:59:59.999Z'))).toBe(1);
+    // Logo depois da virada, a próxima é amanhã.
+    expect(msAteViradaDoFrescor(new Date('2026-10-26T07:00:00.000Z'))).toBe(24 * 3_600_000);
+    // 22h SP: o dia UTC já virou, a régua não.
+    expect(msAteViradaDoFrescor(new Date('2026-10-27T01:00:00.000Z'))).toBe(6 * 3_600_000);
+  });
+
+  it('a chave é o minimo fora da janela de ±5 min e null dentro dela (03:55–04:05 SP)', () => {
+    expect(MARGEM_RELOGIO_VIRADA_MS).toBe(5 * 60_000);
+    expect(chaveFrescorDaLeitura(new Date('2026-10-26T06:54:59.999Z'))).toBe('2026-10-25');
+    expect(chaveFrescorDaLeitura(new Date('2026-10-26T06:55:00.000Z'))).toBeNull();
+    expect(chaveFrescorDaLeitura(new Date('2026-10-26T07:04:59.999Z'))).toBeNull();
+    expect(chaveFrescorDaLeitura(new Date('2026-10-26T07:05:00.000Z'))).toBe('2026-10-26');
+  });
+
+  it('msAteMudarChaveFrescor aponta para a entrada e para a saída da janela', () => {
+    expect(msAteMudarChaveFrescor(new Date('2026-10-26T06:50:00.000Z'))).toBe(5 * 60_000);
+    expect(msAteMudarChaveFrescor(new Date('2026-10-26T06:58:00.000Z'))).toBe(7 * 60_000);
+    expect(msAteMudarChaveFrescor(new Date('2026-10-26T07:05:00.000Z'))).toBe(24 * 3_600_000 - 10 * 60_000);
   });
 });
 

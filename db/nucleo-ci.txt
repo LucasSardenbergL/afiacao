@@ -187,6 +187,10 @@ db/test-sayerlack-importar-pedido-portal.sh 51
 # NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
 # controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
 db/test-projecao-13s-saldo-fresco.sh       46  falsificar=16
+# Sensor saldo_bancario conta a conta (20261031191715) e saldo_atual sem DEFAULT 0 (20261031191716): a mesma régua,
+# 03:59:59 × 04:00:00 SP em sessão UTC e SP, broken > stale, o defeito de antes reproduzido no corpo de prod, e o
+# upsert do omie-financeiro com conta nova sem extrato nascendo NULL (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
+db/test-data-health-saldo-bancario-conta-a-conta.sh  29  falsificar=10
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`
@@ -724,6 +728,14 @@ db/test-radar-contato-integridade.sh 43  falsificar=19
 # Mês com piso e teto em SP; duas linhas 'incluir' iguais contam uma vez. 10 sabotagens: carimbo móvel, lookup conta,
 # sem status, outro código, fuso UTC, limite aberto, sem teto, JOIN multiplica, sem gate, anon com EXECUTE.
 db/test-radar-kpis-conversao.sh      19  falsificar=10
+# Radar: o cron da RFB (radar_aplicar_situacao, 20261031190000) casa contato ↔ status POR CNPJ sob a trava da linha.
+# O contato `descartado` nasce do que o UPDATE devolveu (status_anterior = o da linha travada); reaplicar o lote = 0.
+# Duas corridas observadas em pg_stat_activity: o vendedor escreve entre o retrato e o descarte (X vira cliente, Y é
+# reaberto, W vira ja_cliente) e segura a linha durante o descarte. Contato desviado para outro CNPJ (mesmos totais):
+# a postcondição aborta com 25000 e desfaz. 10 sabotagens: contato do retrato (com e sem a postcondição), postcondição
+# por totais, status do retrato, sem trava, ja_cliente do retrato, sem status vivo, cliente das fontes descartado,
+# mudança fora do (b), anon com EXECUTE.
+db/test-radar-situacao-contato-por-cnpj.sh  28  falsificar=10
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
