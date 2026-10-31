@@ -1,8 +1,8 @@
 # Radar: o card "Viraram cliente (mês)" conta conversões (2026-10-31)
 
 > Follow-up de [radar-contato-integridade.md](radar-contato-integridade.md). Migration
-> `20261031142000_radar_kpis_conversao.sql`. Prova: `db/test-radar-kpis-conversao.sh` (núcleo do CI, 16 asserts,
-> 7 sabotagens).
+> `20261031142000_radar_kpis_conversao.sql`. Prova: `db/test-radar-kpis-conversao.sh` (núcleo do CI, 19 asserts,
+> 10 sabotagens).
 
 ## Problema
 
@@ -43,7 +43,7 @@ ponta a ponta usa as RPCs reais:
 2. o gestor tira o lead e ele sai do card;
 3. o lead é devolvido num mês novo e não reconta.
 
-`--falsificar`: com controle verde (16 asserts), as 7 sabotagens ficaram vermelhas, cada uma no assert declarado:
+`--falsificar`: com controle verde (19 asserts), as 10 sabotagens ficaram vermelhas, cada uma no assert declarado:
 
 | Sabotagem | Assert vermelho |
 |---|---|
@@ -51,9 +51,29 @@ ponta a ponta usa as RPCs reais:
 | `lookup` conta | K2 |
 | sem status | K4 |
 | outro código | K6 |
-| fuso UTC | K7 e K9 |
+| fuso UTC | K9 |
 | limite aberto (`>`) | K8 |
+| sem teto do mês | K10 |
+| `JOIN` no lugar do `EXISTS` | K5b |
 | sem gate | K0b |
+| `anon` com EXECUTE | G2 |
+
+A prova recusa (exit 1, `PROVA DESATUALIZADA`) quando uma migration POSTERIOR mexe em `radar_kpis`. Isso foi provado
+plantando uma migration falsa.
+
+## Revisão (Codex max, 422 s): nenhuma ALTA, 2 MÉDIAS e 3 BAIXAS, todas tratadas
+
+| Achado | Tratamento |
+|---|---|
+| MÉDIA: `radar_kpis` fora do `CV_FUNCOES`. Uma migration posterior que tirasse o gate não entraria no harness, e a prova seguiria verde | Guarda fail-closed: migration posterior que cite `radar_kpis` reprova a prova até entrar no harness |
+| MÉDIA: o ledger não tem unicidade. Um `JOIN` no lugar do `EXISTS` contaria duas vezes, sem assert que pegasse | K5b (`incluir` + `incluir`) e a sabotagem `join_multiplica` |
+| BAIXA: o G1 reaplicava a migration (que revoga `anon`) antes de o G2 olhar a ACL | A ACL é lida antes e depois da reaplicação (G2/G3), com a sabotagem `acl_anon` |
+| BAIXA: a sabotagem do fuso exigia K7 vermelho, que fica verde entre 21h e 24h de SP no último dia do mês | Declarada em K9, vermelho nos dois casos |
+| BAIXA (herdado): uma transação aberta antes da virada lê `now()` do mês velho e enxergaria o cadastro do mês novo | Teto `< date_add(início, 1 mês, SP)` e K10 com a sabotagem `sem_teto` |
+
+**Desempenho, medido em prod:** `EXPLAIN (ANALYZE, BUFFERS)` da contagem nova roda em **0,08 ms**. O planner entra pelo
+índice único parcial do vínculo (`omie_codigo_cliente IS NOT NULL`), em vez de varrer as 573 mil linhas, então não
+precisa de índice novo.
 
 **Lição de harness:** sob `LC_ALL=C`, `grep -E '[✓✗]'` não casa nada, porque a classe de caracteres multibyte vira
 classe de bytes. Contar asserts assim derrubou o laço da falsificação **calado** pelo `errexit`, depois do controle
