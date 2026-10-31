@@ -11,6 +11,8 @@ import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 import {
   normalizarSemanaPedidos, normalizarSemanaPrateleira, type SemanaPedidos, type SemanaPrateleira,
 } from '@/lib/financeiro/ruptura-sensor-helpers';
+import { ESTOQUE_ACCOUNT, cmvTtmFechado, diaSp, somarDias, type PontoEstoque } from '@/lib/financeiro/regua-ciclo-helpers';
+import { somarSaldoAberto } from '@/services/financeiroService';
 
 export function hojeSp(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -216,5 +218,102 @@ export function useRupturaSensor() {
         prateleira: prateleira.map((r) => normalizarSemanaPrateleira(r as Record<string, unknown>)).filter((s): s is SemanaPrateleira => s !== null),
       };
     },
+  });
+}
+
+// ── Régua honesta do card da empresa (Frente A, itens 2 e 3) ───────────────────────────────────────────
+// Insumos do DSO point-in-time, do R$/dia do PME e do PME por estoque MÉDIO dos 90 d. Ausente ≠ zero em
+// todos: insumo que falta vira null + motivo no helper puro (`regua-ciclo-helpers.ts`), nunca número.
+
+export type ReguaEmpresa = {
+  /** Σ CMV dos 12 meses fechados (DRE competência) — espelho do que a edge usa no PME. */
+  cmvTtm: { valor: number | null; meses: number; motivo: string | null };
+  /** Série diária (dia de SP) do estoque de giro gravada pelo snapshot do motor (engine v2.2+). */
+  estoqueSerie: PontoEstoque[];
+  /** Último sync da posição de estoque (inventory_position da conta da empresa); null = sem linha. */
+  estoqueSyncEm: string | null;
+  /** Cobertura de custo do estoque de giro (fin_estoque_giro_valor): % dos SKUs de giro com CMC. */
+  custoCobertura: { pct: number | null; skusGiro: number | null; skusComCusto: number | null };
+};
+
+const JANELA_SERIE_DIAS = 90;
+
+/** 4 leituras por empresa, em SÉRIE dentro de uma vaga da filaCiclo (pico de 1 leitura por vaga). */
+export function useReguaCiclo() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'regua', hojeSp()],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Record<Company, ReguaEmpresa>> => filaCiclo(async () => {
+      const hoje = hojeSp();
+      const [anoHoje] = hoje.split('-').map(Number);
+      const dre = await fetchAllPages(
+        (de, ate) =>
+          supabase.from('fin_dre_snapshots').select('company, ano, mes, cmv')
+            .eq('regime', 'competencia').gte('ano', anoHoje - 2)
+            .order('company', { ascending: true }).order('ano', { ascending: true }).order('mes', { ascending: true })
+            .range(de, ate),
+        'fin_dre_snapshots/ciclo-regua',
+      );
+      const inicioSerie = `${somarDias(hoje, -(JANELA_SERIE_DIAS - 1))}T00:00:00-03:00`; // 90 datas, hoje inclusive
+      const snaps = await fetchAllPages(
+        (de, ate) =>
+          supabase.from('fin_projecao_snapshots').select('company, snapshot_at, estoque_valor, estoque_fonte, estoque_cobertura_ok')
+            .eq('cenario', 'realista').gte('snapshot_at', inicioSerie)
+            .order('snapshot_at', { ascending: true }).order('id', { ascending: true })
+            .range(de, ate),
+        'fin_projecao_snapshots/ciclo-regua',
+      );
+      const out = {} as Record<Company, ReguaEmpresa>;
+      for (const c of ALL_COMPANIES) {
+        const linhasDre = dre
+          .filter((l) => l.company === c)
+          .map((l) => ({ ano: num(l.ano) ?? -1, mes: num(l.mes) ?? -1, cmv: num(l.cmv) }))
+          .filter((l) => l.ano > 0 && l.mes > 0);
+        // O ÚLTIMO snapshot do dia (de SP) decide o dia — inclusive quando ele veio SEM fonte: um snapshot das 20h
+        // sem estoque não pode ser "ressuscitado" pelo das 10h (Codex, 2026-10-31). Dia cujo último não tem
+        // fonte/valor fica descoberto (ausente ≠ zero).
+        const ultimoDoDia = new Map<string, (typeof snaps)[number]>();
+        for (const r of snaps) {
+          if (r.company !== c || typeof r.snapshot_at !== 'string') continue;
+          ultimoDoDia.set(diaSp(r.snapshot_at), r); // snaps vêm ascendentes por (snapshot_at, id)
+        }
+        const serie: PontoEstoque[] = [];
+        for (const [dia, r] of ultimoDoDia) {
+          if (r.estoque_fonte == null) continue;
+          const valor = num(r.estoque_valor);
+          if (valor === null) continue;
+          serie.push({ dia, valor, coberturaOk: r.estoque_cobertura_ok === true });
+        }
+        const sync = await supabase.from('inventory_position').select('synced_at')
+          .eq('account', ESTOQUE_ACCOUNT[c]).order('synced_at', { ascending: false }).range(0, 0);
+        if (sync.error) throw new Error(`inventory_position/${c}: ${sync.error.message}`);
+        const syncEm = sync.data?.[0]?.synced_at;
+        const giro = await supabase.rpc('fin_estoque_giro_valor', { p_company: c });
+        if (giro.error) throw new Error(`fin_estoque_giro_valor/${c}: ${giro.error.message}`);
+        const g = giro.data?.[0];
+        out[c] = {
+          cmvTtm: cmvTtmFechado(linhasDre, hoje),
+          estoqueSerie: serie,
+          estoqueSyncEm: typeof syncEm === 'string' ? syncEm : null,
+          custoCobertura: {
+            pct: g ? num(g.cobertura_pct) : null, skusGiro: g ? num(g.skus_giro) : null, skusComCusto: g ? num(g.skus_giro_com_custo) : null,
+          },
+        };
+      }
+      return out;
+    }),
+  });
+}
+
+/** Carteira ABERTA de CR (a vencer + vencido, saldo) por empresa — a base do DSO. Lê em série numa vaga. */
+export function useCrAbertoTotal() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'cr-aberto', hojeSp()],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<Record<Company, number>> => filaCiclo(async () => {
+      const out = {} as Record<Company, number>;
+      for (const c of ALL_COMPANIES) out[c] = await somarSaldoAberto('fin_contas_receber', c);
+      return out;
+    }),
   });
 }

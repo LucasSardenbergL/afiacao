@@ -5638,9 +5638,13 @@ export type Database = {
       fin_projecao_snapshots: {
         Row: {
           cenario: string
+          cmv_ttm: number | null
           company: string
           dados: Json
           dias_cobertura: number | null
+          estoque_cobertura_ok: boolean | null
+          estoque_fonte: string | null
+          estoque_valor: number | null
           horizon_weeks: number
           id: string
           liquidez_operacional_liquida: number | null
@@ -5651,9 +5655,13 @@ export type Database = {
         }
         Insert: {
           cenario: string
+          cmv_ttm?: number | null
           company: string
           dados: Json
           dias_cobertura?: number | null
+          estoque_cobertura_ok?: boolean | null
+          estoque_fonte?: string | null
+          estoque_valor?: number | null
           horizon_weeks?: number
           id?: string
           liquidez_operacional_liquida?: number | null
@@ -5664,9 +5672,13 @@ export type Database = {
         }
         Update: {
           cenario?: string
+          cmv_ttm?: number | null
           company?: string
           dados?: Json
           dias_cobertura?: number | null
+          estoque_cobertura_ok?: boolean | null
+          estoque_fonte?: string | null
+          estoque_valor?: number | null
           horizon_weeks?: number
           id?: string
           liquidez_operacional_liquida?: number | null

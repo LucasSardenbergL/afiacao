@@ -35,7 +35,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { useCicloCoorte, useCicloGiroSku, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm } from '../useFinanceiroCiclo';
+import { useCicloCoorte, useCicloGiroSku, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm, useReguaCiclo } from '../useFinanceiroCiclo';
 
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
@@ -201,5 +201,57 @@ describe('useCicloGiroSku', () => {
     const { result } = renderHook(() => useCicloGiroSku('colacor'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe('useReguaCiclo', () => {
+  it('CMV TTM dos 12 meses fechados do DRE competência, série de estoque por dia de SP (fonte nula fora), sync e cobertura', async () => {
+    // hojeSp = 2026-10-31 → 12 meses fechados = 2025-10 … 2026-09
+    tabelas.fin_dre_snapshots = {
+      error: null,
+      data: [
+        ...Array.from({ length: 12 }, (_, i) => { const idx = 2025 * 12 + 9 + i; return { company: 'oben', ano: Math.floor(idx / 12), mes: (idx % 12) + 1, cmv: '200000.00' }; }),
+        { company: 'oben', ano: 2026, mes: 10, cmv: '999999.00' }, // mês corrente: fora
+        { company: 'colacor', ano: 2026, mes: 9, cmv: '100.00' }, // 1/12 → sem CMV TTM
+      ],
+    };
+    tabelas.fin_projecao_snapshots = {
+      error: null,
+      data: [
+        { company: 'oben', snapshot_at: '2026-10-30T09:00:00Z', estoque_valor: '480000', estoque_fonte: 'omie', estoque_cobertura_ok: true },
+        { company: 'oben', snapshot_at: '2026-11-01T01:00:00Z', estoque_valor: '500000', estoque_fonte: 'omie', estoque_cobertura_ok: false }, // 22:00 de 31/10 em SP
+        { company: 'oben', snapshot_at: '2026-10-29T09:00:00Z', estoque_valor: null, estoque_fonte: null, estoque_cobertura_ok: null }, // sem fonte: fora
+        { company: 'oben', snapshot_at: '2026-10-28T09:00:00Z', estoque_valor: '470000', estoque_fonte: 'omie', estoque_cobertura_ok: true },
+        { company: 'oben', snapshot_at: '2026-10-28T20:00:00Z', estoque_valor: null, estoque_fonte: null, estoque_cobertura_ok: null }, // o ÚLTIMO do dia 28 não tem fonte → dia descoberto (não ressuscita o das 09h)
+        { company: 'colacor', snapshot_at: '2026-10-30T09:00:00Z', estoque_valor: '10', estoque_fonte: 'manual', estoque_cobertura_ok: true },
+      ],
+    };
+    tabelas.inventory_position = { error: null, data: [{ synced_at: '2026-10-31T22:30:11Z' }] };
+    tabelas.fin_estoque_giro_valor = { error: null, data: [{ cobertura_pct: '97.2', skus_giro: 400, skus_giro_com_custo: 389 }] };
+    const { result } = renderHook(() => useReguaCiclo(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const d = result.current.data!;
+    expect(d.oben.cmvTtm).toEqual({ valor: 2400000, meses: 12, motivo: null });
+    expect(d.colacor.cmvTtm.valor).toBeNull();
+    expect(d.colacor.cmvTtm.motivo).toContain('1/12');
+    expect(d.oben.estoqueSerie).toEqual([
+      { dia: '2026-10-30', valor: 480000, coberturaOk: true },
+      { dia: '2026-10-31', valor: 500000, coberturaOk: false },
+    ]);
+    expect(d.colacor.estoqueSerie).toEqual([{ dia: '2026-10-30', valor: 10, coberturaOk: true }]);
+    expect(d.oben.estoqueSyncEm).toBe('2026-10-31T22:30:11Z');
+    expect(d.oben.custoCobertura).toEqual({ pct: 97.2, skusGiro: 400, skusComCusto: 389 });
+    // a RPC de giro é chamada uma vez por empresa, com a conta certa
+    expect(rpcs.filter((r) => r.nome === 'fin_estoque_giro_valor').map((r) => (r.args as { p_company: string }).p_company)).toEqual(['oben', 'colacor', 'colacor_sc']);
+  });
+
+  it('erro na RPC de giro LANÇA (react-query expõe error) — nunca vira cobertura nula silenciosa', async () => {
+    tabelas.fin_dre_snapshots = { error: null, data: [] };
+    tabelas.fin_projecao_snapshots = { error: null, data: [] };
+    tabelas.inventory_position = { error: null, data: [] };
+    tabelas.fin_estoque_giro_valor = { error: { message: 'permission denied' }, data: null };
+    const { result } = renderHook(() => useReguaCiclo(), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(String(result.current.error)).toContain('fin_estoque_giro_valor/oben');
   });
 });
