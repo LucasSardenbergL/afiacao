@@ -112,8 +112,38 @@ antes do snapshot Colacor (08:40Z e 08:50Z): pelo calendário, o primeiro efeito
   antes: o radar de SC é recortado pelo CNAE-alvo, e esses clientes ficam fora dele.
 
 Conclusão: a fonte do `ja_cliente` agora cobre as 3 contas, e o 0% de SC é **real**, não um buraco
-de fonte. Nenhum cliente conhecido do grupo em SC está no universo do radar de SC. Mudar isso é
-decisão sobre o recorte de CNAE, não sobre o cruzamento.
+de fonte. Nenhum cliente conhecido do grupo em SC está no universo do radar de SC.
+
+#### Por que SC fica fora: não há cliente comprador lá (psql-ro, 2026-10-31)
+
+Conjunto: CNPJs (14 caracteres) de `profiles` com endereço em SC ∪ não-vinculados das 3 contas com
+`uf='SC'`. São **38**. O universo do radar é `situação ativa E CNAE-alvo` (`scripts/radar/carga.ts`),
+e `radar_situacao_cadastral` guarda a situação RFB dos CNPJs conhecidos. Então dá para separar as
+causas sem ter o CNAE na base:
+
+| situação RFB (lote 2026-10) | no radar | CNPJs | leitura |
+|---|---|---|---|
+| 02 ativa | não | 30 | fora **pelo CNAE** |
+| sem registro | não | 7 | não-vinculados Colacor que entraram hoje, depois da carga |
+| 08 baixada | não | 1 | fora pela situação |
+
+Quem são os 38: transportadoras (Expresso Leomar, Aceville, Transville, Alfa, Pauta, Azurelog…),
+fornecedores (Kanefusa Serras, HD Ferragens, Tecnofast, Mastercol) e prestadores (software, finanças,
+armazém). **Nenhum tem pedido** em `sales_orders`. O cadastro de "clientes" do Omie também guarda
+fornecedor e transportadora; o grupo não tem cliente comprador em SC.
+
+**Decisão: o recorte de CNAE não muda.** Ampliar o CNAE não acharia cliente em SC, porque não há
+cliente lá para achar, e a medição de 28/10
+([radar-uso-e-recorte-cnae-2026-10-28.md](radar-uso-e-recorte-cnae-2026-10-28.md)) já dizia que ampliar
+só aumentaria uma fila sem dono. O 0% de SC no mapa é o dado certo: mercado sem nenhuma penetração.
+
+**Precisão das 8 marcações novas.** Como o snapshot de não-vinculados inclui fornecedor e
+transportadora, um fornecedor dentro do CNAE-alvo poderia virar `ja_cliente` e sair da fila por
+engano. Conferi as 8: duas vidraçarias, uma fábrica de esquadrias, uma de usinagem e quatro MEIs de
+móveis ou artefatos de madeira, todas em MG e cadastradas pela Colacor. Nenhuma é fornecedor ou
+transportadora. O "0 pedidos" delas é esperado: `colacor_sc` é a conta de serviços (afiação), que não
+passa por `sales_orders`. O risco existe (é o mesmo do snapshot da Oben desde a v1), mas não apareceu
+nesta leva.
 
 ## Custo
 
