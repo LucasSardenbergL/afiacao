@@ -74,3 +74,38 @@ A medição de 27/10 (12:52–13:07 UTC) deu queda de 96% na `tint_staging_formu
   Os 513 MB do "antes" foram quase todos (430 MB) **1 seq scan de `tint_formulas`** de origem não identificada. Não veio de cron (`cron.job_run_details` da janela) nem do snapshot de chaves (aplicado 1×/dia às 10:06), e foi o único desde 19:57. Fica como pista, não como causa.
 - **O que sobra para o micro** (por promoção, medido): o "último por chave" do staging lê todas as versões retidas, porque cada run de catálogo reenvia o catálogo inteiro (224 SKUs e 57 bases por run, ~2.190 runs em 30 dias). Os números: `skus` ~20 MB, `corantes` ~66 MB (heap de 11 MB relido) e `bases` ~6 MB. Índice não reduz as páginas tocadas. As saídas são reescrever com `LATERAL … LIMIT 1` por chave (money-path: Codex mais falsificação) ou encurtar a retenção do superseded. Também segue em aberto a origem dos 306 MB de `tint_sync_errors` e dos 199 MB de `tint_receita_versoes` lidos no micro: nenhuma função os lê, e eles tiveram 0 scans desde 19:57, então tela ou ANALYZE pós-restart são os suspeitos.
 - **Lição: no porte atual, o critério certo é o volume LÓGICO por promoção, não o MB do disco.** No small, o disco fica perto de zero antes e depois porque tudo cabe no cache. O que prevê o micro é quanto cada promoção toca: o heap inteiro de 87 MB contra 541 buffers.
+
+## 2026-10-31 — latest por chave indexado no promote (#3431): o staging deixa de ser relido por promoção
+
+- **Mudança:** `20261030071806_tint_promote_latest_por_chave_indexado.sql`, aplicada pela sessão via `db:aplicar` (tentativa #773, sha `e9915806…`, às 03:10 UTC) logo depois de um ciclo de promoção, e validada por psql-ro (`md5(prosrc)` = `954a9641…`, 7 índices válidos).
+  - Os 4 `DISTINCT ON` de produtos, bases, embalagens e corantes viraram `CROSS JOIN LATERAL (… ORDER BY created_at DESC, id DESC LIMIT 1)`, cada um sobre um índice `(account, store_code, chave, created_at DESC, id DESC)`.
+  - O de skus virou `EXISTS` sobre `(account, store_code, cod_produto, id_base, id_embalagem)`.
+  - Corantes ganhou o índice em `sync_run_id` que faltava: eram 2 seq scans por promoção.
+  - O `cor_latest` manteve o texto e passou a usar o parcial `WHERE custo IS NOT NULL AND volume_ml IS NOT NULL`.
+- **Por que (a), e não encurtar a retenção:** o Codex apontou que o purge preserva o último por chave **independentemente de custo**, enquanto o `cor_latest` procura o último **com custo**. Encurtar a retenção apagaria o último custo válido de um corante cuja versão mais nova veio sem custo.
+- **Prova:** `db/test-tint-promote-latest-indexado.sh`, no núcleo do CI.
+  - O template é o corpo de prod. O catálogo promovido sai idêntico, comparado por md5 da chave natural completa.
+  - Numa promoção BIG, a leitura de staging cai de 7.924 para 517 blocos no catálogo e de 4.812 para 46 na fórmula, com plano custom e genérico.
+  - Roda com 12 falsificações de conjunto exato, nos locales C e pt_BR.
+- **Delta no small** (janelas limpas de 15 min, amostrador sem nenhuma consulta `tint_*` de outra sessão):
+
+  | por promoção de catálogo | antes (31/10 02:39–02:54 UTC, 5 promoções) | depois (31/10 03:17–03:33 UTC, 5 promoções) |
+  |---|---|---|
+  | `tint_staging_corantes` | 71,8 MB | 0,7 MB |
+  | `tint_staging_skus` | 21,6 MB | 5,3 MB |
+  | `tint_staging_bases` | 7,1 MB | 1,3 MB |
+  | `tint_staging_produtos` + `_embalagens` | 2,7 MB | 0,6 MB |
+  | **staging total** | **~103 MB** | **~8,1 MB** |
+  | banco: disco · hit · temp (janela) | 2,5 MB · 99,99% · 42 MB | 4,0 MB · 99,92% · 8 MB |
+
+- **O que sobra:** o 1º ciclo sob o corpo novo (03:15) fechou com 5 runs `complete`, 0 erros e o oficial íntegro (21/57/4/26/224). No staging, `skus` passou a ser o maior item, com 5 MB por promoção: o `EXISTS` faz 224 buscas no índice (o heap não é mais lido). Fora do staging, o maior item tint por promoção passa a ser `tint_sync_runs`, com ~11 MB lógicos (515 idx scans na janela, igual antes e depois).
+- **Lição:** uma medida de custo dentro de uma prova precisa ser fail-closed como qualquer assert. Uma promoção que aborta cedo lê ~0 blocos e passa em qualquer teto. O `blocos()` só devolve número quando o promote retornou `ok=true` **e** o efeito do run medido aparece no oficial (parecer Codex). Quando ele entrou, a F3 (corantes pegam a versão mais velha) passou a cair também na leitura, porque a descrição do run não aparece.
+
+### `tint_sync_errors` e `tint_receita_versoes` saem da lista do Mini (medido 31/10 02:32 UTC pela sessão-mãe)
+
+- Pelo `pg_stat_user_tables` (PG17: `last_seq_scan`/`last_idx_scan`), desde o restart de 29/10 19:57 UTC:
+  - `tint_sync_errors` (110 MB) teve 2 seq scans, o último em 30/10 10:09:38, e 0 idx scans;
+  - `tint_receita_versoes` (66 MB) teve 1 seq scan e 288 idx scans, os últimos também às 10:09:38.
+  - O mesmo segundo nas duas indica uma sessão de diagnóstico. Depois disso não houve **nenhuma** leitura até 31/10 02:30, cerca de 10 h de loja.
+- Nenhuma função lê `tint_sync_errors`: o promote e os ticks só fazem INSERT. A FK com cascade para `tint_sync_runs` tem índice. O único leitor recorrente de `tint_receita_versoes` é o cron diário das 05:03 UTC, que roda em 3 a 11 s.
+- Os 306 + 199 MB lidos no micro em 29/10 foram diagnóstico daquele dia, não carga de produção. Para o Mini, o staging "último por chave" era o único item restante; esta entrega o resolve.
