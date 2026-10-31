@@ -6,7 +6,6 @@ import {
   pisoVigente,
   resumoExecucao,
   situacaoPlano,
-  somarDias,
 } from '../execucao';
 import { decisao } from './fixtures';
 
@@ -24,13 +23,6 @@ describe('custoEsperarMensal', () => {
     expect(custoEsperarMensal(1000, Number.POSITIVE_INFINITY)).toBeNull();
     expect(custoEsperarMensal(0, 0.1)).toBeNull();
     expect(custoEsperarMensal(1000, 0)).toBeNull();
-  });
-});
-
-describe('somarDias', () => {
-  it('soma dias sem fuso', () => {
-    expect(somarDias('2026-10-31', 14)).toBe('2026-11-14');
-    expect(somarDias('2026-12-25', 10)).toBe('2027-01-04');
   });
 });
 

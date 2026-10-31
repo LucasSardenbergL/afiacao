@@ -24,9 +24,8 @@ import {
   concluidoVigente,
   PRAZO_PADRAO_DIAS,
   ROTULO_CANAL,
-  somarDias,
 } from '@/lib/reposicao/raio-x/execucao';
-import { hojeSP } from '@/lib/time/sp-day';
+import { addDias, hojeSP } from '@/lib/time/sp-day';
 import type { CanalLiquidacao, Categoria, DecisaoRow, Destino, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { useRaioXMutacoes, type PlanejarArgs } from './useRaioXMutacoes';
 import type { MembroEquipe } from './useExecucaoRaioX';
@@ -339,7 +338,7 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
   const semPlano = decisao.responsavel === null && decisao.prazo === null && decisao.preco_piso === null
     && decisao.canal_liquidacao === null && decisao.concluido_em === null;
   const [responsavel, setResponsavel] = useState(semPlano ? (decisao.decidido_por ?? '') : (decisao.responsavel ?? ''));
-  const [prazo, setPrazo] = useState(semPlano ? somarDias(hojeSP(), PRAZO_PADRAO_DIAS) : (decisao.prazo ?? ''));
+  const [prazo, setPrazo] = useState(semPlano ? addDias(hojeSP(), PRAZO_PADRAO_DIAS) : (decisao.prazo ?? ''));
   // A versão que o formulário edita (o Sheet remonta ao recarregar): vai como p_atualizado_em → RX003 se mudou.
   const [atualizadoEm] = useState(decisao.atualizado_em);
   const [concluido, setConcluido] = useState(concluidoVigente(decisao));

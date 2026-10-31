@@ -21,11 +21,6 @@ export const PRAZO_PADRAO_DIAS = 14;
 const DIA_MS = 86_400_000;
 const diasEntre = (de: string, ate: string) => Math.round((Date.parse(ate) - Date.parse(de)) / DIA_MS);
 
-/** 'YYYY-MM-DD' + n dias (UTC puro, sem fuso). */
-export function somarDias(dia: string, n: number): string {
-  return new Date(Date.parse(dia) + n * DIA_MS).toISOString().slice(0, 10);
-}
-
 /** Custo de capital de manter o valor parado por um mês: valor × taxa anual / 12. Sem valor ou taxa → null. */
 export function custoEsperarMensal(valor: number | null, taxaAnual: number | null): number | null {
   if (valor === null || taxaAnual === null || !Number.isFinite(valor) || !Number.isFinite(taxaAnual)) return null;

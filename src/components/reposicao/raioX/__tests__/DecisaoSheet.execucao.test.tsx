@@ -22,7 +22,7 @@ const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 const track = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a), captureException: vi.fn() }));
-vi.mock('@/lib/time/sp-day', () => ({ hojeSP: () => '2026-11-01' }));
+vi.mock('@/lib/time/sp-day', async (orig) => ({ ...(await orig<typeof import('@/lib/time/sp-day')>()), hojeSP: () => '2026-11-01' }));
 
 import { DecisaoSheet } from '../DecisaoSheet';
 

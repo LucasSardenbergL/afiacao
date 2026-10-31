@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
+import { fetchAllPages } from '@/lib/postgrest';
 import type { Empresa } from '@/lib/reposicao/raio-x/tipos';
 
 /** Taxa ANUAL (fração, ex.: 0,1775) de `fin_regua_custo_capital` — Selic + spread configurados. Sem config → null. */
@@ -34,23 +35,30 @@ export interface MembroEquipe {
   nome: string;
 }
 
-/** Quem pode ser responsável: employee/master (a RPC valida o mesmo). Poucas linhas — sem paginação. */
+/** Quem pode ser responsável: employee/master (a RPC valida o mesmo). Paginado (user_roles/profiles são tabelas grandes). */
 export function useEquipeRaioX(): MembroEquipe[] {
   const q = useQuery({
     queryKey: ['raio-x', 'equipe'],
     staleTime: 10 * 60 * 1000,
     queryFn: async (): Promise<MembroEquipe[]> => {
       try {
-        const { data: papeis, error } = await supabase
-          .from('user_roles')
-          .select('user_id')
-          .in('role', ['employee', 'master']);
-        if (error) throw error;
-        const ids = [...new Set((papeis ?? []).map((p) => p.user_id))];
+        const papeis = await fetchAllPages(
+          (de, ate) =>
+            supabase.from('user_roles').select('user_id').in('role', ['employee', 'master']).order('user_id', { ascending: true }).range(de, ate),
+          'user_roles',
+        );
+        const ids = [...new Set(papeis.map((p) => p.user_id))];
         if (ids.length === 0) return [];
-        const { data: perfis, error: e2 } = await supabase.from('profiles').select('user_id, name, email').in('user_id', ids);
-        if (e2) logger.warn('raio-x: nomes da equipe indisponíveis', { error: e2.code });
-        const nomes = new Map((perfis ?? []).map((p) => [p.user_id, p.name || p.email || p.user_id]));
+        // Sem nomes (falha de leitura) a equipe aparece pelo id — nunca some da lista.
+        const perfis = await fetchAllPages(
+          (de, ate) =>
+            supabase.from('profiles').select('user_id, name, email').in('user_id', ids).order('user_id', { ascending: true }).range(de, ate),
+          'profiles',
+        ).catch((e: unknown) => {
+          logger.warn('raio-x: nomes da equipe indisponíveis', { error: String(e) });
+          return [];
+        });
+        const nomes = new Map(perfis.map((p) => [p.user_id, p.name || p.email || p.user_id]));
         return ids
           .map((id) => ({ user_id: id, nome: nomes.get(id) ?? id }))
           .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
