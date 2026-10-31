@@ -293,3 +293,18 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   master que também é employee (o da prod é só-master e já cai no filtro employee) — a P5 passa a preferir esse.
 - **Medição** (psql-ro; `claude_ro` tem BYPASSRLS, então 0 é 0): a query está no PR; sem linha = não leu; `n_compradores
   = 0` = leu lista vazia.
+
+## Venda por cliente — Onda 2 ligada por decisão do founder, antes da adoção (2026-10-31)
+
+- **Decisão do founder** ("Comece a onda 2"): ligar `onda_complemento` sem esperar a condição automática do
+  `venda_avaliar_ondas` (≥ 80% de contatados por farmer em 2 semanas). Na decisão: `venda_contato` = 0 e
+  `venda_lista_acesso` = 0 desde 24/10 — as farmers ainda não abriram a lista.
+- **Envelope** `db/2026-10-31-venda-ligar-onda2.sql` (recibo #788): PRE exige Onda 1 ligada; UPDATE idempotente;
+  `venda_onda_log` com `condicao.manual = true` (o painel distingue de uma ligação automática); gera o complemento
+  da lista ativa de hoje (o cron das 08:15 UTC já tinha rodado sem ele); POS confere chave, log e Onda 3 intocada.
+- **Resultado em 31/10**: Regina 12 linhas / 8 compradores, Tatyana 14 / 8 de complemento, ao lado de 306 e 348
+  de recompra. A resposta da lista da farmer já traz `ondas.complemento = true` e os itens.
+- **Onda 3 continua automática**: liga sozinha no 1º cron depois de existir repasse aprovado vigente (hoje 0).
+  Aprovar um repasse no painel = ligar a Onda 3 na manhã seguinte.
+- **Leitura do desfecho**: complemento antes da adoção mede a lista, não a ação da farmer — comparar só a partir
+  da 1ª semana com `venda_lista_acesso` > 0.
