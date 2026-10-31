@@ -13,6 +13,9 @@
 -- Fonte: v_venda_items_history_efetivo (consolida SKU substituído, como o motor). cmc_linha = CMC do último
 -- cmc_snapshot (account 'vendas' = OBEN) com data_posicao <= data da venda; NULL antes do 1º snapshot
 -- (2026-01-15) — não existe CMC histórico anterior e fabricar seria money-path (ausente != zero).
+-- Leva F: o snapshot é buscado pelo código ORIGINAL da venda (venda_items_history, mesmo id). A view troca o código
+-- antigo pelo novo da consolidação (1:1, sem fator), e o código novo só ganha snapshot meses depois — pelo código
+-- novo, o destino da consolidação ficava sem preço na calibração inteira.
 copy (
   select v.id as linha_id,
          v.sku_codigo_omie::text as sku,
@@ -20,12 +23,13 @@ copy (
          v.quantidade,
          v.valor_total as valor,
          (select c.cmc from cmc_snapshot c
-           where c.account = 'vendas' and c.omie_codigo_produto = v.sku_codigo_omie
+           where c.account = 'vendas' and c.omie_codigo_produto = h.sku_codigo_omie
              and c.data_posicao <= v.data_emissao
            order by c.data_posicao desc limit 1) as cmc_linha,
          (v.sku_codigo_omie::text in (select sp.sku_codigo_omie::text from sku_parametros sp
                                        where sp.empresa = 'OBEN' and sp.fornecedor_nome ilike '%sayerlack%'))::int as no_escopo
   from v_venda_items_history_efetivo v
+  join venda_items_history h on h.id = v.id
   where v.empresa = 'OBEN'
   order by v.data_emissao, v.id
 ) to stdout with (format csv, delimiter '|', header true) \g :dir/vendas.csv
