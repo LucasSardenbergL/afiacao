@@ -321,10 +321,13 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   Base = código Sayerlack sem a embalagem (DFA.4128LT/QT/L5 → DFA.4128). Só famílias de função única
   (diluente, retardador, seladora nitro, thinners): catalisador/verniz/fundo/mordente/tingidor trocam por
   cor ou sistema, não por substituto.
-- **Medição em prod (31/10, 94 candidatos, R$ 54.822/ano)**: comprando 22 (R$ 1.848) · parado 60 (R$ 30.883) ·
-  substituído 12 (R$ 22.091). Casos-ouro: Lohan, Móveis & Cia (o nº 1 do ranking, R$ 9,5 mil) e Anderson →
-  substituído. **Lição**: só 3% do "recuperável/ano" estava em SKU que o cliente ainda compra na cadência — o
-  ranking por valor anual premiava justamente o que parou.
+- **Prod depois do apply (31/10, recibo #802; 94 candidatos, R$ 54.822/ano antes)**: comprando 22 (R$ 1.848) ·
+  parado 61 (R$ 33.195, sugerido mantido) · substituído 11 (R$ 19.779 que deixam de ser sugeridos). Casos-ouro:
+  Lohan, Móveis & Cia (o nº 1 do ranking, R$ 9,5 mil) e Anderson (DF.4056 e DFA.4128 → DFA.4080) → substituído.
+  O retardador do Anderson (DEA.4014 até out/25 → DEZ.8014 → DEA de novo em ago/26) fica `parado`: a base DEA
+  foi comprada nos 365 d antes da última DEZ, então a regra conservadora a lê como convivência.
+  **Lição**: só 3% do "recuperável/ano" estava em SKU que o cliente ainda compra na cadência — o ranking por
+  valor anual premiava justamente o que parou. Tempo da RPC em prod: 491 → ~540 ms.
 - **Tela**: a aba Repasses agrupa em "Segue comprando", "Parou de comprar" e "Substituído — não é repasse"
   (sem Aprovar; Revogar continua para um repasse vigente). Aprovar segue decisão do founder; Onda 3 intocada.
 - **Desempenho**: a 2ª leitura de `venda_linhas_pedido` (só compradores com candidato parado em família
