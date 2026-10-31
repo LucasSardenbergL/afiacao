@@ -18,7 +18,7 @@ import {
   OPCOES_REVISAO_DIAS, RISCO_FALTA_DIAS, emRiscoDeFalta, ordenarPorRisco, resumirCandidatos, resumirSuspensas, somarDias,
   type Candidato, type RevisaoDias, type SuspensaAtiva,
 } from '@/lib/financeiro/compra-suspensa-helpers';
-import { hojeSp, } from '@/hooks/useFinanceiroCiclo';
+import { hojeSP } from '@/lib/time/sp-day';
 import {
   useCompraSuspensaCandidatos, useCompraSuspensaListar, useCompraSuspensaMutacoes, useCompraSuspensaRuns,
 } from '@/hooks/useFinanceiroCompraSuspensa';
@@ -43,7 +43,7 @@ export function SegurarCompraDialog({ company, alvo, onClose }: { company: Compa
   // Troca de alvo zera motivo/revisão: a justificativa digitada para um SKU nunca vaza para outro (Codex P2-7).
   useEffect(() => { setMotivo(''); setRevisao(90); }, [alvo]);
   const resumo = resumirCandidatos(candidatos);
-  const hoje = hojeSp();
+  const hoje = hojeSP();
   const revisarEm = somarDias(hoje, revisao);
   const skus = alvo?.tipo === 'sku' ? [alvo.sku] : candidatos.map((c) => c.sku);
   const podeConfirmar = motivo.trim().length >= 3 && skus.length > 0 && !suspender.isPending && (alvo?.tipo === 'sku' || loteFresco);
@@ -132,7 +132,7 @@ export function CompraSuspensaPainel({ company, onSegurarLote }: { company: Comp
   const runs = useCompraSuspensaRuns(company, 30);
   const { reativar } = useCompraSuspensaMutacoes(company);
   const [todas, setTodas] = useState(false);
-  const hoje = hojeSp();
+  const hoje = hojeSP();
   const lista = useMemo(() => ordenarPorRisco(ativas.data ?? []), [ativas.data]);
   const r = resumirSuspensas(ativas.data ?? [], runs.data ?? [], hoje);
   const visiveis = todas ? lista : lista.slice(0, 20);
