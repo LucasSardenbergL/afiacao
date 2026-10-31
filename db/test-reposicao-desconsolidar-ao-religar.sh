@@ -227,7 +227,7 @@ SELECT _t_assert('A19_invariante_global',
                WHERE s.status = 'aplicada' AND s.acao_parametros = 'consolidar_demanda'
                  AND p.habilitado_reposicao_automatica AND COALESCE(p.tipo_reposicao, 'automatica') = 'automatica'));
 SQL
-NESP="$(grep -c "_t_assert('[AB]" "$TMP/asserts.sql")"
+NESP="$(grep -c "_t_assert('[ABC]" "$TMP/asserts.sql")"
 
 # suite <migration> <banco> → linhas RES|nome|t/f|detalhe (roda em $(…): o nome vem de fora)
 suite() {
