@@ -32,7 +32,8 @@ export function useRadarAmostra() {
       const porCnpj = new Map<string, RadarEmpresa>();
       for (let i = 0; i < sorteados.length; i += LOTE_IN) {
         const cnpjs = sorteados.slice(i, i + LOTE_IN).map((s) => s.cnpj);
-        const { data: linhas, error: e2 } = await supabase.from('radar_empresas').select('*').in('cnpj', cnpjs);
+        // CNPJ é a chave de radar_empresas: no máximo 1 linha por CNPJ pedido, então o teto do lote basta.
+        const { data: linhas, error: e2 } = await supabase.from('radar_empresas').select('*').in('cnpj', cnpjs).limit(LOTE_IN);
         if (e2) throw e2;
         for (const l of linhas ?? []) porCnpj.set(l.cnpj, l);
       }
