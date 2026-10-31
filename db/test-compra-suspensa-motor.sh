@@ -370,11 +370,11 @@ falsifica "F3-sem-ancora" \
   "qf OBEN 2026-11-07 9602" "2"
 rm -rf "$SAB_DIR"
 
-# F4 (gate): sabota o gate para no-op -> usuario SEM cap consegue suspender (vermelho = inserido=true); restaura pela MIGRATION
-P -q -c "CREATE OR REPLACE FUNCTION public._reposicao_compra_gate(p_escrever boolean) RETURNS void LANGUAGE sql AS \$\$ SELECT NULL::void \$\$;"
+# F4 (gate): cap_compras_escrever sempre true -> usuario SEM cap consegue suspender (vermelho = inserido=true); restaura o stub
+P -q -c "CREATE OR REPLACE FUNCTION private.cap_compras_escrever(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS \$\$ SELECT true \$\$;"
 eq "FALSIF F4 gate morto: sem cap suspende (esperado sob sabotagem t)" \
    "$(sess "$(cl "$U_NADA")" "SELECT inserido FROM reposicao_compra_suspender('OBEN', ARRAY[9402]::bigint[], 'furo')")" "t"
-P -q -f "$MIG" >/dev/null
+P -q -c "CREATE OR REPLACE FUNCTION private.cap_compras_escrever(p uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS \$\$ SELECT coalesce((SELECT escrever FROM public.cap_stub WHERE user_id = p), false) \$\$;"
 sess "$(cl "$U_MASTER")" "$REAT('OBEN', ARRAY[9402]::bigint[], 'limpa sabotagem')" >/dev/null
 eq "RESTAURA F4: sem cap -> 42501" "$(sqlstate "$(sess "$(cl "$U_NADA")" "$SUSP('OBEN', ARRAY[9402]::bigint[], 'x')")")" "42501"
 

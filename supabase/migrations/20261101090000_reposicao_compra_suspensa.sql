@@ -11,7 +11,7 @@
 -- O que muda:
 --   1. RPCs (SECURITY DEFINER, gate cap_compras_ler / cap_compras_escrever; sessão direta sem JWT = SQL Editor,
 --      db:aplicar, cron — passa; PostgREST sem JWT — 42501):
---        _reposicao_compra_fonte_ok · _reposicao_compra_foto (internas, sem GRANT)
+--        _reposicao_compra_fonte_ok · _reposicao_compra_foto (internas, sem GRANT); gate INLINE em cada RPC
 --        reposicao_compra_suspensa_candidatos(empresa, min_dias=180, incluir_corante=false)
 --        reposicao_compra_suspender(empresa, skus[], motivo, revisar_em, origem, lote_id)
 --        reposicao_compra_reativar(empresa, skus[], motivo) · reposicao_compra_suspensa_listar(empresa)
@@ -26,27 +26,9 @@
 -- Rollback: reposicao_compra_reativar em massa (dado) — a função fica; sem linha ativa o motor é o de antes.
 
 
--- ── 1) Gate compartilhado ─────────────────────────────────────────────────────────────────────────────────────────
+-- ── 1) Gate: INLINE em cada RPC (scripts/authz-manifest.ts exige `NOT private.cap_compras_*(…)` + RAISE no mesmo IF).
 -- auth.uid() NULL: sessão DIRETA (SQL Editor / db:aplicar / pg_cron) passa — é o caminho do envelope do apply em
 -- massa; PostgREST sem JWT (session_user authenticator/anon/authenticated) NÃO passa. Padrão da 20261010120000.
-CREATE OR REPLACE FUNCTION public._reposicao_compra_gate(p_escrever boolean)
-RETURNS void LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_uid uuid := auth.uid();
-BEGIN
-  IF v_uid IS NULL THEN
-    IF session_user IN ('authenticator', 'anon', 'authenticated') THEN
-      RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
-    END IF;
-    RETURN;
-  END IF;
-  IF p_escrever THEN
-    IF NOT private.cap_compras_escrever(v_uid) THEN
-      RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_ESCREVER' USING ERRCODE = '42501';
-    END IF;
-  ELSIF NOT private.cap_compras_ler(v_uid) THEN
-    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_LER' USING ERRCODE = '42501';
-  END IF;
-END $$;
 
 -- ── 2) Fonte de consumo (mesma régua da fin_ciclo_giro_sku §5.4-1: ≥330d de histórico e atualizada há ≤7d) ───────
 CREATE OR REPLACE FUNCTION public._reposicao_compra_fonte_ok(p_empresa text)
@@ -128,9 +110,14 @@ RETURNS TABLE(sku_codigo_omie bigint, descricao text, familia text, fornecedor_n
               valor_vendido_90d numeric, corante boolean)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
-DECLARE v_emp text := upper(trim(p_empresa));
+DECLARE v_emp text := upper(trim(p_empresa)); v_uid uuid := auth.uid();
 BEGIN
-  PERFORM public._reposicao_compra_gate(false);
+  IF v_uid IS NULL AND session_user IN ('authenticator', 'anon', 'authenticated') THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
+  END IF;
+  IF v_uid IS NOT NULL AND NOT private.cap_compras_ler(v_uid) THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_LER' USING ERRCODE = '42501';
+  END IF;
   IF p_min_dias IS NULL OR p_min_dias < 30 OR p_min_dias > 3650 THEN
     RAISE EXCEPTION 'p_min_dias invalido: %', p_min_dias USING ERRCODE = 'P0001';
   END IF;
@@ -168,7 +155,12 @@ DECLARE
   v_uid uuid := auth.uid();
   v_texto text;
 BEGIN
-  PERFORM public._reposicao_compra_gate(true);
+  IF v_uid IS NULL AND session_user IN ('authenticator', 'anon', 'authenticated') THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
+  END IF;
+  IF v_uid IS NOT NULL AND NOT private.cap_compras_escrever(v_uid) THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_ESCREVER' USING ERRCODE = '42501';
+  END IF;
   PERFORM public._fin_estoque_account(lower(trim(p_empresa)));
   IF p_skus IS NULL OR cardinality(p_skus) = 0 THEN
     RAISE EXCEPTION 'p_skus vazio' USING ERRCODE = 'P0001';
@@ -229,7 +221,12 @@ LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
 DECLARE v_emp text := upper(trim(p_empresa)); v_uid uuid := auth.uid();
 BEGIN
-  PERFORM public._reposicao_compra_gate(true);
+  IF v_uid IS NULL AND session_user IN ('authenticator', 'anon', 'authenticated') THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
+  END IF;
+  IF v_uid IS NOT NULL AND NOT private.cap_compras_escrever(v_uid) THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_ESCREVER' USING ERRCODE = '42501';
+  END IF;
   PERFORM public._fin_estoque_account(lower(trim(p_empresa)));
   IF p_skus IS NULL OR cardinality(p_skus) = 0 THEN
     RAISE EXCEPTION 'p_skus vazio' USING ERRCODE = 'P0001';
@@ -286,9 +283,14 @@ RETURNS TABLE(id uuid, sku_codigo_omie bigint, descricao text, fornecedor_nome t
               no_motor_atual boolean, evitado_ultimo_run numeric, qtde_ultimo_run numeric)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
-DECLARE v_emp text := upper(trim(p_empresa)); v_run uuid;
+DECLARE v_emp text := upper(trim(p_empresa)); v_run uuid; v_uid uuid := auth.uid();
 BEGIN
-  PERFORM public._reposicao_compra_gate(false);
+  IF v_uid IS NULL AND session_user IN ('authenticator', 'anon', 'authenticated') THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
+  END IF;
+  IF v_uid IS NOT NULL AND NOT private.cap_compras_ler(v_uid) THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_LER' USING ERRCODE = '42501';
+  END IF;
   PERFORM public._fin_estoque_account(lower(trim(p_empresa)));
   SELECT r.run_id INTO v_run FROM public.reposicao_motor_run r WHERE r.empresa = v_emp ORDER BY r.criado_em DESC LIMIT 1;
   RETURN QUERY
@@ -319,9 +321,14 @@ RETURNS TABLE(run_id uuid, criado_em timestamptz, data_ciclo date, suspensas_com
               valor_evitado numeric, linhas_sem_preco integer)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $$
 #variable_conflict use_column
-DECLARE v_emp text := upper(trim(p_empresa));
+DECLARE v_emp text := upper(trim(p_empresa)); v_uid uuid := auth.uid();
 BEGIN
-  PERFORM public._reposicao_compra_gate(false);
+  IF v_uid IS NULL AND session_user IN ('authenticator', 'anon', 'authenticated') THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_SESSAO' USING ERRCODE = '42501';
+  END IF;
+  IF v_uid IS NOT NULL AND NOT private.cap_compras_ler(v_uid) THEN
+    RAISE EXCEPTION 'COMPRA_SUSPENSA_SEM_CAP_LER' USING ERRCODE = '42501';
+  END IF;
   PERFORM public._fin_estoque_account(lower(trim(p_empresa)));
   IF p_dias IS NULL OR p_dias < 1 OR p_dias > 365 THEN
     RAISE EXCEPTION 'p_dias invalido: %', p_dias USING ERRCODE = 'P0001';
@@ -336,7 +343,6 @@ BEGIN
 END $$;
 
 -- ── 9) ACL (nasce aberto: REVOKE por nome antes do GRANT; helpers internos sem EXECUTE para app) ─────────────────
-REVOKE ALL ON FUNCTION public._reposicao_compra_gate(boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public._reposicao_compra_fonte_ok(text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public._reposicao_compra_foto(text, bigint[]) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.reposicao_compra_suspensa_candidatos(text, integer, boolean) FROM PUBLIC, anon;
@@ -365,8 +371,7 @@ BEGIN
       RAISE EXCEPTION 'postcondicao: ACL errada em %', f;
     END IF;
   END LOOP;
-  FOREACH f IN ARRAY ARRAY['public._reposicao_compra_gate(boolean)', 'public._reposicao_compra_fonte_ok(text)',
-                           'public._reposicao_compra_foto(text,bigint[])'] LOOP
+  FOREACH f IN ARRAY ARRAY['public._reposicao_compra_fonte_ok(text)', 'public._reposicao_compra_foto(text,bigint[])'] LOOP
     IF has_function_privilege('anon', f, 'EXECUTE') OR has_function_privilege('authenticated', f, 'EXECUTE') THEN
       RAISE EXCEPTION 'postcondicao: helper interno exposto %', f;
     END IF;

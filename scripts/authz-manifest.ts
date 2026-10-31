@@ -65,6 +65,25 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'plano de execução da decisão do Raio-X (preço piso, canal, responsável, prazo, executado)',
   },
+  // 2026-11-01 — "segurar compra" escreve no motor (Frente C PME/PMR, migration 20261101090000). Lê
+  // inventory_position (saldo×cmc) e fornecedor como DEFINER para a foto da decisão e a coorte; o lote em massa
+  // (envelope, sessão direta sem JWT) passa pelo mesmo corpo. Gate = cap_compras_ler (leituras) /
+  // cap_compras_escrever (writers, master-only). Prova de papel: db/test-compra-suspensa-motor.sh R2.
+  'public.reposicao_compra_suspensa_candidatos': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'coorte "cobertura ≥ N dias" com saldo×cmc e fornecedor por SKU (lote do segurar compra)',
+  },
+  'public.reposicao_compra_suspensa_listar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'suspensões ativas com foto e situação ao vivo (saldo×cmc, fornecedor, compra evitada)',
+  },
+  'public.reposicao_compra_suspender': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_escrever' }] },
+    motivo: 'o ÚNICO writer de reposicao_compra_suspensa: grava a foto (saldo×cmc) e conta pedidos pendentes do SKU',
+  },
   // 2026-10-18 — giro de estoque por SKU (aba Ciclo, frente 3). Mesmo gate de custo do
   // fin_estimar_estoque_omie que ela substitui no engine/diálogo (service_role OU cap_custo_ler).
   'public.fin_estoque_giro_valor': {
@@ -355,6 +374,12 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
  * v2: auditar cada uma individualmente e cruzar com os grants reais.
  */
 export const ACKNOWLEDGED_SENSITIVE = new Set<string>([
+  // "Segurar compra" (2026-11-01, migration 20261101090000): foto interna (saldo×cmc, fornecedor, cobertura)
+  // chamada SÓ pelas RPCs gateadas acima e pelo envelope como postgres. NÃO é exposta ao app: fecha por
+  // PRIVILÉGIO — `REVOKE ALL … FROM PUBLIC, anon, authenticated` na migration e postcondição que ABORTA se
+  // anon/authenticated executarem; prova no harness (`authenticated NAO executa a foto interna`). Se um dia
+  // ganhar GRANT para authenticated, PRECISA de gate e sai daqui.
+  'public._reposicao_compra_foto',
   // Venda por cliente — job de desfecho (2026-10-20, migration 20261020174221). Lê
   // `order_items.unit_price`/`desconto_valor` para decidir se a sugestão `tipo=preco` bateu o alvo
   // e somar `valor_realizado`, mas NÃO é customer-facing: só o cron (`venda-fechar-desfechos`,
