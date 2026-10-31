@@ -192,8 +192,8 @@ INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto
  ('22222222-0000-0000-0000-000000000002','colacor','L1','P2','P2 DIVERGENTE', now() - interval '2 days'),
  ('22222222-0000-0000-0000-000000000002','colacor','L1','P9','P9 DIVERGENTE', now() - interval '2 days');
 INSERT INTO tint_staging_bases (id, sync_run_id, account, store_code, id_base_sayersystem, descricao, created_at) VALUES
- ('00000000-0000-0000-0000-0000000000b1','22222222-0000-0000-0000-000000000002','oben','L1','B1','B1 empate perde', date_trunc('day', now()) - interval '2 days'),
- ('ffffffff-0000-0000-0000-0000000000b1','22222222-0000-0000-0000-000000000002','oben','L1','B1','B1 empate vence', date_trunc('day', now()) - interval '2 days');
+ ('00000000-0000-0000-0000-0000000000b1','22222222-0000-0000-0000-000000000002','oben','L1','B1','B1 empate perde', now() - interval '2 days'),
+ ('ffffffff-0000-0000-0000-0000000000b1','22222222-0000-0000-0000-000000000002','oben','L1','B1','B1 empate vence', now() - interval '2 days');
 INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml, created_at) VALUES
  ('22222222-0000-0000-0000-000000000002','oben','L1','E900','E900 v2', 950, now() - interval '2 days');
 INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, preco_litro, custo, volume_ml, created_at) VALUES
@@ -357,8 +357,9 @@ suite() {
   local c1 c2 p1
   seed_big "$db" 1; c1="$(blocos "$db" 33333333-0000-0000-0000-000000000001 force_custom_plan "$CATALOGO" "$(promoveu_cat 1)")"
   seed_big "$db" 2; c2="$(blocos "$db" 33333333-0000-0000-0000-000000000002 force_generic_plan "$CATALOGO" "$(promoveu_cat 2)")"
-  cabe "$c1" "$TETO_CATALOGO" && cabe "$c2" "$TETO_CATALOGO" \
-    || { cai LEITURA; echo "    (LEITURA: custom $c1, genérico $c2, teto $TETO_CATALOGO)" >&2; }
+  if ! { cabe "$c1" "$TETO_CATALOGO" && cabe "$c2" "$TETO_CATALOGO"; }; then
+    cai LEITURA; echo "    (LEITURA: custom $c1, genérico $c2, teto $TETO_CATALOGO)" >&2
+  fi
   seed_big_formula "$db" 1; p1="$(blocos "$db" 44444444-0000-0000-0000-000000000001 auto '^tint_staging_corantes$' "$(promoveu_formula 1)")"
   cabe "$p1" "$TETO_PRECO" || { cai LEITURA_PRECO; echo "    (LEITURA_PRECO: $p1, teto $TETO_PRECO)" >&2; }
   echo "    · $db: catálogo BIG custom=$c1 genérico=$c2 · fórmula BIG=$p1" >&2
