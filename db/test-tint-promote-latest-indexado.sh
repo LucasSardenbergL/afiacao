@@ -290,8 +290,8 @@ SELECT sync_run_id, id, 'KC' || o, o, 5 FROM tint_staging_formulas, generate_ser
 SQL
 }
 
-# Tetos (calibrados na 1ª execução: o novo fica ~10x abaixo, o antigo ~10x acima — ver os controles).
-TETO_CATALOGO=2000
+# Tetos: catálogo — controle 511–531, F7 (sem idx_tsc_latest) 1.134, antigo 6.722; preço — controle 42, antigo 3.610.
+TETO_CATALOGO=800
 TETO_PRECO=50
 
 # ── referência: o promote ANTIGO, do MESMO template ──────────────────────────────────────────────────
@@ -435,16 +435,16 @@ echo "════ FALSIFICAÇÕES ════"
 falsifica F1 MD5 EQUIV <<'TROCAS'
 [("AND s.id_base_sayersystem = c.id_base_sayersystem\n      ORDER BY s.created_at DESC, s.id DESC", "AND s.id_base_sayersystem = c.id_base_sayersystem\n      ORDER BY s.created_at DESC, s.id ASC")]
 TROCAS
-# F2 — o LATERAL de produtos esquece a store: a linha mais nova de OUTRA store vence.
-falsifica F2 MD5 EQUIV <<'TROCAS'
+# F2 — o LATERAL de produtos esquece a store: a linha mais nova de OUTRA store vence (e o índice perde o prefixo: a leitura também denuncia).
+falsifica F2 MD5 EQUIV LEITURA <<'TROCAS'
 [("WHERE s.account = v_account AND s.store_code = v_store AND s.cod_produto = c.cod_produto", "WHERE s.account = v_account AND s.cod_produto = c.cod_produto")]
 TROCAS
 # F3 — corantes pegam a versão MAIS VELHA (ASC, ASC: o índice ainda serve, lido de trás para frente).
 falsifica F3 MD5 EQUIV <<'TROCAS'
 [("AND s.id_corante_sayersystem = c.id_corante_sayersystem\n      ORDER BY s.created_at DESC, s.id DESC", "AND s.id_corante_sayersystem = c.id_corante_sayersystem\n      ORDER BY s.created_at ASC, s.id ASC")]
 TROCAS
-# F4 — o EXISTS de skus esquece a account: a chave que só existe na account divergente (P8) entra.
-falsifica F4 MD5 EQUIV <<'TROCAS'
+# F4 — o EXISTS de skus esquece a account: a chave que só existe na account divergente (P8) entra (e o índice perde o prefixo: a leitura também denuncia).
+falsifica F4 MD5 EQUIV LEITURA <<'TROCAS'
 [("      WHERE s.account = v_account AND s.store_code = v_store\n        AND s.cod_produto = c.cod_produto", "      WHERE s.store_code = v_store\n        AND s.cod_produto = c.cod_produto")]
 TROCAS
 # F5 — embalagens pegam a versão MAIS VELHA (volume 900 em vez de 950).
@@ -465,8 +465,8 @@ falsifica F7 LEITURA <<'TROCAS'
 [("CREATE INDEX IF NOT EXISTS idx_tsc_latest\n  ON public.tint_staging_corantes (account, store_code, id_corante_sayersystem, created_at DESC, id DESC);\n", ""),
  ("    ARRAY['idx_tsc_latest',      'tint_staging_corantes',   '(account, store_code, id_corante_sayersystem, created_at DESC, id DESC)'],\n", "")]
 TROCAS
-# F8 — sem o índice de run de corantes (+ postcondição): toda promoção volta a varrer corantes.
-falsifica F8 LEITURA <<'TROCAS'
+# F8 — sem o índice de run de corantes (+ postcondição): toda promoção volta a varrer corantes — a de fórmula também (LEITURA_PRECO).
+falsifica F8 LEITURA LEITURA_PRECO <<'TROCAS'
 [("CREATE INDEX IF NOT EXISTS idx_tsc_run\n  ON public.tint_staging_corantes (sync_run_id);\n", ""),
  ("    ARRAY['idx_tsc_run',         'tint_staging_corantes',   '(sync_run_id)'],\n", "")]
 TROCAS
