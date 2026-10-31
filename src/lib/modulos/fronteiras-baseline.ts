@@ -89,6 +89,7 @@ export const FRONTEIRAS_BASELINE: Aresta[] = [
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/hooks/useCoverage.ts", deModulo: "reposicao", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/hooks/useTarefas.ts", deModulo: "reposicao", paraModulo: "tarefas", kind: "runtime" },
   { de: "src/components/reposicao/baixoGiro/DesovaMissaoDialog.tsx", para: "src/lib/tarefas/categoria-map.ts", deModulo: "reposicao", paraModulo: "tarefas", kind: "runtime" },
+  { de: "src/components/reposicao/pedidos/CaixaCompraCard.tsx", para: "src/lib/financeiro/saldo-contas.ts", deModulo: "reposicao", paraModulo: "financeiro", kind: "runtime" },
   { de: "src/components/RequireFinanceiroAccess.tsx", para: "src/services/financeiroV2Service.ts", deModulo: "plataforma", paraModulo: "financeiro", kind: "runtime" },
   { de: "src/components/rota/planner/CityMultiSelector.tsx", para: "src/queries/useRadarCidadesRota.ts", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
   { de: "src/components/rota/planner/RouteStopCard.tsx", para: "src/components/radar/RadarOutcomeMenu.tsx", deModulo: "telefonia-whatsapp-rota", paraModulo: "farmer-inteligencia", kind: "runtime" },
