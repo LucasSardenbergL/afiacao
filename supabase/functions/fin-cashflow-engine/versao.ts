@@ -44,7 +44,10 @@ export const respostaSonda = criarRespostaSonda("fin-cashflow-engine");
 // NULL; o DEFAULT 0 a fazia "R$ 0") LANÇA em vez de somar zero; conta cujo saldo não é de hoje
 // (das 04h SP em diante — o sync de base roda às 03h) entra datada, até 7 dias, com motivo em
 // confianca_dados (motivos + saldo_inicial) e em premissas.saldo_cc_parcial (plano v3, item 2).
-export const VERSAO = "v2.0-saldo-cc-fresco";
+// v2.0 → v2.1: os fin_alertas que partem do saldo (caixa_negativo, ncg_deficit, cobertura_baixa)
+// levam o saldo datado — frase curta na mensagem + motivo em contexto.saldo_cc_parcial — como o
+// snapshot já levava; com o saldo fresco, o próximo run reescreve sem a marca (plano v3, item 2).
+export const VERSAO = "v2.1-alertas-saldo-datado";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

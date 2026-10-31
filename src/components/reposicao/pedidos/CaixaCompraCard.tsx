@@ -1,7 +1,9 @@
+import { useEffect, useReducer } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { chaveFrescorDaLeitura, msAteMudarChaveFrescor } from "@/lib/financeiro/saldo-contas";
 import {
   avaliarFilaNoCaixa,
   companyDoFinanceiro,
@@ -21,9 +23,37 @@ import { EMPRESA, formatBRL } from "./shared";
 export function CaixaCompraCard({ pedidos }: {
   pedidos: Array<{ status: string | null; valor_total: number | null }>;
 }) {
+  // A RPC julga o saldo pela régua do instante da leitura, no relógio do BANCO (`minimo` = dia SP
+  // de agora − 4 h). Na virada das 04h SP a régua muda: a leitura das 03:59 aceitou o saldo de
+  // ontem, que das 04h em diante já é velho (#3401). A chave carrega o `minimo` e vale `null` na
+  // janela 03:55–04:05 SP (folga para o relógio do aparelho divergir do banco): aí o card não lê
+  // nem exibe o que tinha. Sem placeholderData, a chave nova começa vazia. O timer e a volta da aba
+  // re-renderizam o card na hora certa — sem eles, staleTime e a falta de refetch no foco deixavam
+  // o número velho parado na tela.
+  const [tick, forcarRender] = useReducer((n: number) => n + 1, 0);
+  const chaveFrescor = chaveFrescorDaLeitura(new Date());
+  useEffect(() => {
+    // O efeito roda DEPOIS do render: se a chave mudou nesse intervalo (render 03:54:59.990, efeito
+    // 03:55:00.010), agendar a partir de agora pularia a entrada da janela e o número de antes
+    // ficaria na tela até 04:05 (Codex, revisão do código). Chave divergente → render já.
+    if (chaveFrescorDaLeitura(new Date()) !== chaveFrescor) {
+      forcarRender();
+      return;
+    }
+    // `tick` nas deps: um timer que dispare cedo demais (chave ainda igual) reagenda em vez de parar.
+    const id = setTimeout(forcarRender, msAteMudarChaveFrescor(new Date()) + 250);
+    return () => clearTimeout(id);
+  }, [chaveFrescor, tick]);
+  useEffect(() => {
+    // setTimeout atrasa em aba suspensa; ao voltar, a chave é recalculada na hora.
+    document.addEventListener("visibilitychange", forcarRender);
+    return () => document.removeEventListener("visibilitychange", forcarRender);
+  }, []);
+
   // Projeção 13 semanas (RPC gated employee|master — mesmo público desta tela).
   const projecao = useQuery({
-    queryKey: ["fin-projecao-13s", companyDoFinanceiro(EMPRESA)],
+    queryKey: ["fin-projecao-13s", companyDoFinanceiro(EMPRESA), chaveFrescor],
+    enabled: chaveFrescor != null,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<SemanaProjecao[]> => {
       const { data, error } = await supabase.rpc("fin_projecao_13_semanas", {
@@ -58,6 +88,7 @@ export function CaixaCompraCard({ pedidos }: {
   // Sem fila não há decisão de caixa a informar — o card some (menos ruído na tela).
   if (fila.totalRs <= 0) return null;
 
+  const naVirada = chaveFrescor == null;
   const indisponivel = projecao.isError || (!projecao.isLoading && piso == null);
   const impacto = piso ? avaliarFilaNoCaixa({ pisoRs: piso.pisoRs, filaRs: fila.totalRs }) : null;
 
@@ -70,7 +101,12 @@ export function CaixaCompraCard({ pedidos }: {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {projecao.isLoading ? (
+        {naVirada ? (
+          <p className="text-sm text-muted-foreground">
+            Virada diária do saldo bancário (04h): a projeção de caixa volta às 04h05, quando o
+            saldo de hoje passa a ser exigido.
+          </p>
+        ) : projecao.isLoading ? (
           <p className="text-sm text-muted-foreground">Carregando projeção de caixa…</p>
         ) : indisponivel ? (
           <p className="text-sm text-muted-foreground">
@@ -81,7 +117,7 @@ export function CaixaCompraCard({ pedidos }: {
           <>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <div>
-                <div className="text-xs text-muted-foreground">Piso projetado (13 sem)</div>
+                <div className="text-xs text-muted-foreground">Piso projetado (hoje e fechamentos semanais)</div>
                 <div className="kpi-value text-lg font-semibold tnum">{formatBRL(piso!.pisoRs)}</div>
                 {piso!.semanaLabel && (
                   <div className="text-xs text-muted-foreground">{piso!.semanaLabel}</div>
@@ -116,9 +152,11 @@ export function CaixaCompraCard({ pedidos }: {
             )}
             <p className="text-xs text-muted-foreground">
               Advisory — não bloqueia aprovação. Premissas: fila = pedidos do ciclo de HOJE
-              (pendentes + aprovados a disparar); pagamento à vista na semana corrente (projeção
-              encadeada); referência de veto R$0 (piso de runway não configurado); a projeção lê
-              só títulos já emitidos no Omie — compras já disparadas e ainda não faturadas não
+              (pendentes + aprovados a disparar); pagamento à vista hoje (projeção encadeada); o
+              piso olha o saldo de hoje e o fechamento de cada semana, não o dia a dia — um
+              pagamento antes de um recebimento da mesma semana pode furar o caixa sem aparecer
+              aqui; títulos vencidos antes desta semana ficam fora da projeção; referência de veto R$0 (piso de runway não configurado); a projeção lê só
+              títulos já emitidos no Omie — compras já disparadas e ainda não faturadas não
               aparecem nela.
             </p>
           </>

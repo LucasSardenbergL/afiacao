@@ -22,7 +22,13 @@ import { exigirLeitura, exigirLinhas, tolerarColunaAusente } from "../_shared/le
 import { escritaCritica } from "../_shared/escrita-critica.ts";
 import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import { lerPrazosEmpresa } from "./prazos-empresa.ts";
-import { referenciaFrescorSaldo, saldoInicialDasContas, type ContaComSaldo } from "./saldo-contas.ts";
+import {
+  marcarAlertasDoSaldoDatado,
+  referenciaFrescorSaldo,
+  saldoInicialDasContas,
+  type ContaComSaldo,
+  type SaldoInicialParcial,
+} from "./saldo-contas.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 // Observabilidade da execução (acoes_execucoes): sem ela, uma falha diária isolada é
 // INVISÍVEL — o consumidor "latest wins" serve o snapshot de ontem e o fin-valor-engine
@@ -363,6 +369,8 @@ type DadosBase = {
   saldo_cc: number;
   // Não-null quando alguma conta entrou com saldo datado (./saldo-contas.ts) — vai para o snapshot.
   saldo_cc_motivo: string | null;
+  // O mesmo saldo datado, em partes, para marcar os alertas que partem dele.
+  saldo_cc_parcial: SaldoInicialParcial | null;
   // null = sem fonte (nem manual recente nem estoque de giro com custo no Omie) — nunca 0.
   estoque_valor: number | null;
   estoque_data_ref: string | null;
@@ -617,6 +625,7 @@ async function carregarDados(
     cps,
     saldo_cc,
     saldo_cc_motivo: saldoInicial.motivo,
+    saldo_cc_parcial: saldoInicial.parcial,
     estoque_valor: estoque.valor,
     estoque_data_ref: estoque.data_ref,
     estoque_fonte: estoque.fonte,
@@ -1367,7 +1376,8 @@ async function calcular(
   // Fase 3 (B2): saída operacional projetada do horizonte → dias_cobertura.
   const saidasHorizonte = semanas.reduce((s, w) => s + w.total_saidas, 0);
   const indicadores = calcularIndicadores(dados, ncg, saidasHorizonte, horizon, company);
-  const alertas = avaliarAlertas(semanas, ncg, indicadores, dados.config);
+  // Saldo inicial datado → os alertas que partem dele carregam a marca (mensagem + contexto).
+  const alertas = marcarAlertasDoSaldoDatado(avaliarAlertas(semanas, ncg, indicadores, dados.config), dados.saldo_cc_parcial);
 
   // Auditoria: premissas aplicadas (curvas c/ cenário) + curvas calibradas puras + ponte.
   const premissasSnapshot = {

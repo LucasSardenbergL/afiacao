@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 729
+-- Total de custom migrations: 731
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -793,7 +793,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031141053', 'nao_vinculados_cron_colacor', '20261031141053_nao_vinculados_cron_colacor.sql'),
   ('20261031142000', 'radar_kpis_conversao', '20261031142000_radar_kpis_conversao.sql'),
   ('20261031180000', 'raio_x_plano_execucao', '20261031180000_raio_x_plano_execucao.sql'),
-  ('20261031190000', 'radar_situacao_contato_por_cnpj', '20261031190000_radar_situacao_contato_por_cnpj.sql')
+  ('20261031190000', 'radar_situacao_contato_por_cnpj', '20261031190000_radar_situacao_contato_por_cnpj.sql'),
+  ('20261031191715', 'data_health_saldo_bancario_conta_a_conta', '20261031191715_data_health_saldo_bancario_conta_a_conta.sql'),
+  ('20261031191716', 'fin_contas_correntes_saldo_atual_sem_default', '20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3133,7 +3135,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
-  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', '')
+  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('data_health_saldo_bancario_conta_a_conta', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5521,7 +5524,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
-  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', '')
+  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('data_health_saldo_bancario_conta_a_conta', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -5772,6 +5776,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
   ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
   ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
+  ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),
@@ -6144,7 +6149,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
   ('public', 'radar_aplicar_situacao', 1, '20261019200000_radar_situacao_cadastral.sql', '695220bdd5e21c77940a09591545c190'),
-  ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', 'ff06da92a9eda20431ee09cf362ae5dd'),
+  ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', '6ce2e3e0f597b1adc8648681419732d6'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
   ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
