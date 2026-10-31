@@ -689,6 +689,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/des/__tests__/faixa-json.test.ts",
       "src/components/des/simulador/__tests__/sim-result.test.ts",
       "src/lib/dataHealth/__tests__/borda.test.ts",
+      "src/lib/dataHealth/__tests__/reexecutar.test.ts",
       "src/hooks/__tests__/useIniciativasIceberg.test.ts",
       "src/pages/__tests__/GrupoCliente360.estados.test.tsx",
       "src/pages/__tests__/GovernanceAudit.margem-leitura-falhou.test.tsx",
