@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 721
+-- Total de custom migrations: 722
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -785,7 +785,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
   ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
   ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql'),
-  ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql')
+  ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql'),
+  ('20261031111000', 'radar_contato_integridade', '20261031111000_radar_contato_integridade.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3106,7 +3107,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
-  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', ''),
+  ('radar_contato_integridade', 'function', 'private', 'radar_empresas_status_guard', ''),
+  ('radar_contato_integridade', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_contato_integridade', 'function', 'public', 'desfazer_contato_radar', ''),
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_upd', 'radar_empresas'),
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5475,7 +5481,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
   ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
-  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', ''),
+  ('radar_contato_integridade', 'function', 'private', 'radar_empresas_status_guard', ''),
+  ('radar_contato_integridade', 'function', 'public', 'registrar_contato_radar', ''),
+  ('radar_contato_integridade', 'function', 'public', 'desfazer_contato_radar', ''),
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_upd', 'radar_empresas'),
+  ('radar_contato_integridade', 'trigger', 'public', 'trg_radar_status_guard_ins', 'radar_empresas')
 )
 SELECT
   e.migration,
@@ -5503,7 +5514,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 157.
+-- Funções redefinidas com corpo extraível: 158.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5840,6 +5851,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'confirmar_vinculo_boletim', 2, '20260613120000_kb_0c_aprovacao_master_only.sql', 'b8332df9e8b9ed7291daccf313524f23'),
   ('public', 'registrar_contato_radar', 1, '20260612130000_radar_rpcs_contato.sql', 'debfb2b1df4a40dde8949e17da4bd865'),
   ('public', 'registrar_contato_radar', 2, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '97d0726906cfd8499c5128b99371589d'),
+  ('public', 'registrar_contato_radar', 3, '20261031111000_radar_contato_integridade.sql', '64bba71156a8b5377aea8e165301ec0d'),
+  ('public', 'desfazer_contato_radar', 1, '20260612130000_radar_rpcs_contato.sql', '79613aaa8d7db719e90ec74bdb28e57f'),
+  ('public', 'desfazer_contato_radar', 2, '20261031111000_radar_contato_integridade.sql', '567058be0caa267a0f53df59afb5f11f'),
   ('public', 'radar_kpis', 1, '20260612130000_radar_rpcs_contato.sql', 'd880343a76c717903aaf8c070286042c'),
   ('public', 'radar_kpis', 2, '20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql', '35f3ea00ada679166cc8270f76651f84'),
   ('public', 'kbv_block_mutation', 1, '20260613150000_kb_spec_versions_faseA.sql', 'a56599c70fe40052ba5cb31aee16c4c4'),
