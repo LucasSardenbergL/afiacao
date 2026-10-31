@@ -12025,27 +12025,36 @@ export type Database = {
       radar_contatos: {
         Row: {
           acao: string
+          atualizado_anterior: string | null
           cnpj: string
+          contato_anterior_id: string | null
           created_at: string
           criado_por: string
+          descarte_motivo_anterior: string | null
           id: string
           nota: string | null
           status_anterior: string | null
         }
         Insert: {
           acao: string
+          atualizado_anterior?: string | null
           cnpj: string
+          contato_anterior_id?: string | null
           created_at?: string
           criado_por: string
+          descarte_motivo_anterior?: string | null
           id?: string
           nota?: string | null
           status_anterior?: string | null
         }
         Update: {
           acao?: string
+          atualizado_anterior?: string | null
           cnpj?: string
+          contato_anterior_id?: string | null
           created_at?: string
           criado_por?: string
+          descarte_motivo_anterior?: string | null
           id?: string
           nota?: string | null
           status_anterior?: string | null
@@ -12122,6 +12131,7 @@ export type Database = {
           porte: string | null
           primeira_vista_em: string
           prospeccao_atualizado_em: string | null
+          prospeccao_contato_id: string | null
           prospeccao_status: string
           razao_social: string | null
           rfb_situacao: string | null
@@ -12166,6 +12176,7 @@ export type Database = {
           porte?: string | null
           primeira_vista_em?: string
           prospeccao_atualizado_em?: string | null
+          prospeccao_contato_id?: string | null
           prospeccao_status?: string
           razao_social?: string | null
           rfb_situacao?: string | null
@@ -12210,6 +12221,7 @@ export type Database = {
           porte?: string | null
           primeira_vista_em?: string
           prospeccao_atualizado_em?: string | null
+          prospeccao_contato_id?: string | null
           prospeccao_status?: string
           razao_social?: string | null
           rfb_situacao?: string | null
@@ -12451,7 +12463,7 @@ export type Database = {
           valor: number | null
         }
         Insert: {
-          congelada_em?: string
+          congelada_em: string
           congelada_por?: string | null
           empresa: string
           posicao: number
@@ -23667,8 +23679,8 @@ export type Database = {
           p_canal: string
           p_concluido: boolean
           p_empresa: string
-          p_preco_piso: number
           p_prazo: string
+          p_preco_piso: number
           p_responsavel: string
           p_sku: number
         }
