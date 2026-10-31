@@ -10,10 +10,12 @@ import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
+import { podeGerirRadar } from '@/lib/nav/acesso-radar';
 import { resumoConflito, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
 import {
-  ehConflitoMudou, porCnpj, useRadarConflitosAbertos, useRadarConflitosDosCnpjs, useRadarResolverConflito,
+  ehConflitoMudou, porCnpj, useRadarConflitosAbertos, useRadarConflitosDoLead, useRadarResolverConflito,
 } from '@/queries/useRadarConflitosCadastro';
 
 // Conflitos de cadastro Radar×Omie guardados no servidor (migration 20261027160000). Conflito aberto barra o
@@ -22,7 +24,7 @@ import {
 
 /** Ficha do lead: os conflitos ABERTOS deste CNPJ, com "Conferi no Omie". */
 export function RadarConflitosDoLead({ cnpj }: { cnpj: string }) {
-  const q = useRadarConflitosDosCnpjs([cnpj]);
+  const q = useRadarConflitosDoLead(cnpj);
   const abertos = (q.data ?? []).filter((c) => c.resolvidoEm === null);
   if (q.isError) {
     return <p className="text-xs text-status-error">Não consegui ler os conflitos com o Omie deste lead — o cadastro fica bloqueado até a leitura voltar.</p>;
@@ -42,6 +44,9 @@ export function RadarConflitosDoLead({ cnpj }: { cnpj: string }) {
 function LinhaConflito({ conflito }: { conflito: ConflitoCadastro }) {
   const { isImpersonating } = useImpersonation();
   const resolver = useRadarResolverConflito();
+  const { role, commercialRole } = useAuth();
+  // radar_resolver_conflito_cadastro segue gestor/master: o vendedor vê o bloqueio, quem libera é o gestor.
+  const gestor = podeGerirRadar({ role, commercialRole });
   const [aberto, setAberto] = useState(false);
   const [nota, setNota] = useState('');
 
@@ -67,11 +72,15 @@ function LinhaConflito({ conflito }: { conflito: ConflitoCadastro }) {
           {`última ocorrência ${new Date(conflito.ultimaEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`}
         </div>
       </div>
-      <Button size="sm" variant="outline" disabled={isImpersonating || resolver.isPending} onClick={() => setAberto(true)}
-        title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}>
-        {resolver.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
-        Conferi no Omie
-      </Button>
+      {gestor ? (
+        <Button size="sm" variant="outline" disabled={isImpersonating || resolver.isPending} onClick={() => setAberto(true)}
+          title={isImpersonating ? 'Indisponível em modo Ver como' : undefined}>
+          {resolver.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
+          Conferi no Omie
+        </Button>
+      ) : (
+        <span className="shrink-0 text-xs text-muted-foreground">Peça a um gestor para conferir no Omie</span>
+      )}
       <AlertDialog open={aberto} onOpenChange={setAberto}>
         <AlertDialogContent>
           <AlertDialogHeader>

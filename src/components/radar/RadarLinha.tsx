@@ -9,6 +9,7 @@ import {
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
+import { ChipAtendimento } from './RadarAtendimentoLead';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -23,6 +24,7 @@ export function RadarLinha({
   lote = null,
   mostrarMotivos = false,
   irmaos = null,
+  amostra = null,
 }: {
   empresa: RadarEmpresa;
   hojeISO: string;
@@ -35,6 +37,8 @@ export function RadarLinha({
   mostrarMotivos?: boolean;
   /** Outros estabelecimentos da mesma raiz de CNPJ (selo "filial de cliente" / "+N da mesma empresa"); sem dado, sem selo. */
   irmaos?: IrmaosRaiz | null;
+  /** Sorteio da amostra de controle a que o lead pertence (selo "amostra"); null = não sorteado. */
+  amostra?: string | null;
 }) {
   const idade = idadeEmAnos(empresa.data_abertura, hojeISO);
   const nome = empresa.nome_fantasia || empresa.razao_social || empresa.cnpj;
@@ -62,6 +66,15 @@ export function RadarLinha({
           <span className="font-medium truncate">{nome}</span>
           {empresa.ja_cliente && (
             <Badge variant="secondary" className="shrink-0">já é cliente</Badge>
+          )}
+          {amostra && (
+            <span
+              className={cn('shrink-0 rounded border px-1.5 py-px text-[11px] leading-4', CLASSE_TOM.info)}
+              title={`Amostra de controle (${amostra}): lead fora do topo, sorteado para comparar a conversão com a do topo. Contate como qualquer outro.`}
+              data-testid="selo-amostra"
+            >
+              amostra
+            </span>
           )}
           {ehInedito(empresa, lote) && (
             <Badge variant="info" className="shrink-0">inédito</Badge>
@@ -97,6 +110,7 @@ export function RadarLinha({
               {rfb.texto}
             </span>
           )}
+          <ChipAtendimento cnpj={empresa.cnpj} />
         </div>
         <div className="text-xs text-muted-foreground truncate">
           {[empresa.municipio_nome, empresa.uf].filter(Boolean).join(' · ')}

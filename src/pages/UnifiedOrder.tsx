@@ -23,6 +23,7 @@ import { useOfflineSubmit } from '@/hooks/useOfflineSubmit';
 import { RestoreDraftDialog } from '@/components/unified-order/RestoreDraftDialog';
 import { CustomerSearch } from '@/components/unified-order/CustomerSearch';
 import { AlertaCreditoCliente } from '@/components/unified-order/AlertaCreditoCliente';
+import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
 import { TierClienteBadge } from '@/components/unified-order/TierClienteBadge';
 import { ExcecaoCreditoDialog } from '@/components/unified-order/ExcecaoCreditoDialog';
 import type { BloqueioCreditoPedido } from '@/services/orderSubmission';
@@ -410,10 +411,11 @@ const UnifiedOrder = () => {
             />
           )}
 
-          {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) + tier comercial */}
+          {/* Alerta de crédito (Fase 1 — informativo, não bloqueia) + situação na Receita (só alerta) + tier comercial */}
           {showCustomerSearch && h.selectedCustomer && (
             <div className="space-y-2">
               <AlertaCreditoCliente cliente={h.selectedCustomer} />
+              {!h.loadingCustomer && <SeloSituacaoReceita customerUserId={h.customerUserId} superficie="pedido" />}
               <TierClienteBadge
                 customerUserId={h.customerUserId}
                 customerName={h.selectedCustomer.nome_fantasia || h.selectedCustomer.razao_social}

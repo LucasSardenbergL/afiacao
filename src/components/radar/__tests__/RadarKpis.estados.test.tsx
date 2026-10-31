@@ -16,7 +16,7 @@ import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react
  */
 type Resposta = { data: unknown; error: { message: string } | null };
 let resposta: Resposta = { data: null, error: null };
-let auth = { isMaster: true, isGestorComercial: false };
+let auth = { role: 'master', commercialRole: 'master' as string | null };
 const track = vi.fn();
 
 /**
@@ -56,7 +56,7 @@ vi.mock('@/integrations/supabase/client', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => auth }));
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a) }));
 
-import { RadarKpis } from '../RadarKpis';
+import { RadarKpis, RadarChipsLote } from '../RadarKpis';
 
 const kpis = (over: Record<string, unknown> = {}) => ({
   lote: '2026-05', novos: 526176, a_contatar: 523180, em_conversa: 1, virou_cliente_mes: 0, ...over,
@@ -73,7 +73,9 @@ function renderKpis(props: { soIneditos?: boolean; soSugeridos?: boolean } = {})
   qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={qc}>
-      <RadarKpis
+      {/* Placar (3 cards, gate de radar_kpis) e chips de filtro (fora do gate) são irmãos na página. */}
+      <div data-testid="placar"><RadarKpis /></div>
+      <RadarChipsLote
         soIneditos={props.soIneditos ?? false}
         onSoIneditos={onSoIneditos}
         soSugeridos={props.soSugeridos ?? false}
@@ -85,7 +87,7 @@ function renderKpis(props: { soIneditos?: boolean; soSugeridos?: boolean } = {})
 
 beforeEach(() => {
   onlineManager.setOnline(true);
-  auth = { isMaster: true, isGestorComercial: false };
+  auth = { role: 'master', commercialRole: 'master' };
   track.mockClear();
   onSoIneditos.mockClear();
   onSoSugeridos.mockClear();
@@ -138,14 +140,14 @@ describe('RadarKpis — erro NÃO pode virar "lote vazio"', () => {
     ).toBeTruthy();
   });
 
-  it('SEM ACESSO (staff não-gestor): não renderiza, não avisa e NÃO emite evento', async () => {
-    // A RPC faz RAISE 'forbidden' para quem não é gestor/master, e /radar só exige
+  it('SEM ACESSO (staff fora do Radar): não renderiza, não avisa e NÃO emite evento', async () => {
+    // A RPC faz RAISE 'forbidden' para quem não passa em cap_radar_prospectar, e /radar só exige
     // RequireStaff. Aviso aqui seria alarme fabricado; evento aqui poluiria o denominador
     // de adoção com quem nunca poderia ver a tela.
-    auth = { isMaster: false, isGestorComercial: false };
+    auth = { role: 'employee', commercialRole: 'operacional' };
     resposta = { data: kpis(), error: null };
-    const { container } = renderKpis();
-    await waitFor(() => expect(container.textContent).toBe(''));
+    renderKpis();
+    await waitFor(() => expect(screen.getByTestId('placar').textContent).toBe(''));
     expect(screen.queryByText(AVISO)).toBeNull();
     expect(track, 'evento emitido para quem não tem acesso — polui o denominador').not.toHaveBeenCalled();
   });
@@ -376,5 +378,27 @@ describe('RadarKpis — card "Sugeridos para cadastro" (bloco 5)', () => {
     const ev = track.mock.calls.find(([n]) => n === 'radar.sugeridos_filtro') as [string, Record<string, unknown>] | undefined;
     expect(ev, 'sensor radar.sugeridos_filtro não emitiu').toBeTruthy();
     expect(ev?.[1]).toMatchObject({ ativo: true, origem: 'card', sugeridos: 12, total: 501380, limiar: 70, lote: '2026-08' });
+  });
+});
+
+describe('placar de 3 cards; inéditos e sugeridos viram chips FORA do gate', () => {
+  it('3 cards: lote vigente, a contatar e viraram cliente — "em conversa" saiu do placar', async () => {
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    expect(await screen.findByText(A_CONTATAR)).toBeTruthy();
+    const lote = await screen.findByTestId('radar-kpi-lote');
+    await waitFor(() => expect(lote.textContent).toMatch(/2026-08/));
+    expect(lote.textContent).toMatch(/empresas na foto/);
+    expect(screen.getByText('Viraram cliente (mês)')).toBeTruthy();
+    expect(screen.queryByText('Em conversa')).toBeNull();
+  });
+
+  it('SEM ACESSO ao placar: os chips de filtro continuam (o filtro não some com o gate)', async () => {
+    auth = { role: 'employee', commercialRole: 'operacional' }; // fora de cap_radar_prospectar (o vendedor agora entra)
+    resposta = { data: kpis(), error: null };
+    renderKpis();
+    await waitFor(() => expect(screen.getByTestId('placar').textContent).toBe(''));
+    expect(screen.getByTestId('radar-kpi-ineditos')).toBeTruthy();
+    expect(screen.getByTestId('radar-kpi-sugeridos')).toBeTruthy();
   });
 });

@@ -331,12 +331,12 @@ func TestSyncFormulas_loteComErroNaoAvancaHWM(t *testing.T) {
 	}
 }
 
-// Codex review (4ª passada) P1: para uma fonte com HWM funcional (delta por
-// timestamp), o hash-filter NÃO deve ser aplicado. Senão um delete+recreate com
-// conteúdo idêntico (o servidor soft-deletou via keys-snapshot; a fórmula volta) é
-// pulado pelo `old==hash` e fica ausente no servidor. O hash-cache só substitui o
-// HWM quando ele está travado (full-scan, hwm zero — o caso da FORMULA).
-func TestSyncFormulas_deltaComHWMNaoFiltraPorHash(t *testing.T) {
+// Com HWM funcional (delta por timestamp) o hash-filter TAMBÉM vale: a linha de
+// data máxima cai sempre na janela de hwmMargin e, sem o filtro, voltava em todo
+// ciclo (formulaperson: 442 reenvios da mesma personalizada, out/2026). O furo do
+// delete+recreate idêntico (Codex 4ª passada) é fechado pela poda no keys-snapshot —
+// ver hashcache_snapshot_test.go.
+func TestSyncFormulas_deltaComHWMFiltraPorHash(t *testing.T) {
 	srv := &captureServer{}
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
@@ -360,15 +360,51 @@ func TestSyncFormulas_deltaComHWMNaoFiltraPorHash(t *testing.T) {
 		t.Fatalf("ciclo 1 deveria enviar, POSTs=%d", got)
 	}
 
-	// Agora a fonte tem HWM (delta real). Mesma fórmula, conteúdo idêntico — mas o
-	// delta DEVE re-enviar (não filtrar por hash): o delete+recreate-idêntico seria
-	// pulado e ficaria stale no servidor.
+	// Agora a fonte tem HWM (delta real). Mesma fórmula, conteúdo idêntico → não reenvia.
 	st.HWM["formula"] = "2020-01-01T00:00:00Z"
 	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), hc); err != nil {
 		t.Fatalf("ciclo 2: %v", err)
 	}
+	if got := srv.countPathPrefix("/formulas"); got != 1 {
+		t.Fatalf("delta com HWM REENVIOU conteúdo idêntico já aceito: total POSTs=%d, esperava 1", got)
+	}
+
+	// Conteúdo muda no delta → reenvia só ela.
+	ex.rows["formula"][0] = fxRow("COR1", "P1", "B1", "E1", []map[string]any{item("C1", 1, 2.0)})
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, false, newLookups(), hc); err != nil {
+		t.Fatalf("ciclo 3: %v", err)
+	}
 	if got := srv.countPathPrefix("/formulas"); got != 2 {
-		t.Fatalf("delta com HWM deveria RE-ENVIAR (não filtrar por hash), total POSTs=%d, esperava 2", got)
+		t.Fatalf("delta com conteúdo novo deveria reenviar: total POSTs=%d, esperava 2", got)
+	}
+}
+
+// Delta NÃO poda pela extração: as linhas fora da janela do HWM não voltam, e
+// podá-las tiraria do cache fórmulas vivas (a poda de delta é a do keys-snapshot).
+func TestSyncFormulas_deltaNaoPodaPelaExtracao(t *testing.T) {
+	srv := &captureServer{}
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+	cli := newTestClient(ts.URL)
+	counts := make(map[string]int)
+	rm := newFakeMapping([]string{"formulaperson"}, FormulaShapeFlat)
+	hc := newHashCache()
+	st := &State{HWM: make(map[string]string)}
+
+	ex := &fakeExtractor{rows: map[string][]map[string]any{"formulaperson": {
+		fxRow("CORA", "PA", "BA", "EA", []map[string]any{item("C1", 1, 1.0)}),
+		fxRow("CORB", "PB", "BB", "EB", []map[string]any{item("C2", 1, 2.0)}),
+	}}}
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, newLookups(), hc); err != nil {
+		t.Fatalf("ciclo 1: %v", err)
+	}
+	st.HWM["formulaperson"] = "2020-01-01T00:00:00Z"
+	ex.rows["formulaperson"] = ex.rows["formulaperson"][:1] // só CORA dentro da janela
+	if err := syncFormulas(context.Background(), ex, cli, st, counts, rm, true, newLookups(), hc); err != nil {
+		t.Fatalf("ciclo 2: %v", err)
+	}
+	if _, ok := hc.Get(keyDe("CORB", "PB", "BB", "EB", true)); !ok {
+		t.Fatal("delta podou CORB, que só estava fora da janela do HWM")
 	}
 }
 

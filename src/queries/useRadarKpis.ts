@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
 
 export interface RadarKpis {
   lote: string | null;
@@ -33,21 +34,20 @@ function kpisDoJson(v: Json): RadarKpis {
 /**
  * KPIs do lote do Radar (RPC `radar_kpis`).
  *
- * O `enabled` espelha o gate do SERVIDOR: a RPC faz `RAISE EXCEPTION 'forbidden:
- * gestor/master only'` quando `pode_ver_carteira_completa` é falso (= master OU employee
- * com commercial_role gerencial/estrategico/super_admin), e a rota `/radar` só exige
- * `RequireStaff` — ou seja, staff não-gestor ABRE a página e a query falha por DESENHO.
- * Sem este gate, a correção da classe "erro colapsado em vazio" transformaria essa
- * negativa de ACESSO num aviso de "não consegui ler": alarme fabricado para quem nunca
- * poderia ver o número (precisão > recall). Com `enabled:false` o estado é `desabilitada`,
- * que `naoConsegui()` exclui de propósito — a pergunta que não foi feita.
+ * O `enabled` espelha o gate do SERVIDOR: a RPC faz `RAISE EXCEPTION 'forbidden: radar_prospectar'` quando
+ * `private.cap_radar_prospectar` é falso (= master, gestor comercial ou vendedor farmer/hunter/closer; migration
+ * 20261029201200), e a rota `/radar` só exige `RequireStaff` — staff fora do gate (operacional, sem cargo) ABRE
+ * a página e a query falharia por DESENHO. Sem este gate, a correção da classe "erro colapsado em vazio"
+ * transformaria essa negativa de ACESSO num aviso de "não consegui ler": alarme fabricado para quem nunca
+ * poderia ver o número (precisão > recall). Com `enabled:false` o estado é `desabilitada`, que `naoConsegui()`
+ * exclui de propósito — a pergunta que não foi feita.
  *
- * O servidor continua sendo a autoridade (RLS + RAISE); isto é defense-in-depth de UI, e
- * o par `isMaster || isGestorComercial` é o mesmo que o TierClienteBadge já usa.
+ * O servidor continua sendo a autoridade (RLS + RAISE); isto é defense-in-depth de UI, com o usuário REAL
+ * (`useAuth`): a RPC roda com o JWT dele, não com o da persona da lente.
  */
 export function useRadarKpis() {
-  const { isMaster, isGestorComercial } = useAuth();
-  const podeVer = isMaster || isGestorComercial;
+  const { role, commercialRole } = useAuth();
+  const podeVer = podeProspectarRadar({ role, commercialRole });
   return useQuery({
     queryKey: ['radar', 'kpis'],
     enabled: podeVer,

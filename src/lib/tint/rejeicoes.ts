@@ -160,3 +160,18 @@ export function origemPorCor(linhas: Array<{ cor_id: string | null; personalizad
   }
   return origem;
 }
+
+/**
+ * O número do badge da sidebar (`/tintometrico`) — o MESMO que o card "Fórmulas rejeitadas pela
+ * fonte" mostra: cores com receita barrada nas 24h até o último run. Antes o badge contava runs de
+ * `tint_importacoes` com erro em 60 dias (2.656 em 31/10/2026 com 1 cor barrada de fato).
+ *
+ * Lista vazia com rejeições na janela = o card mostra "N rejeições sem detalhe" → o badge mostra N.
+ * `null` (nunca houve run) não é alerta → 0, e o shell não pinta badge.
+ */
+export function contagemDoBadge(
+  r: { rejeicoesNaJanela: number; cores: readonly unknown[] } | null,
+): number {
+  if (!r) return 0;
+  return r.cores.length > 0 ? r.cores.length : r.rejeicoesNaJanela;
+}

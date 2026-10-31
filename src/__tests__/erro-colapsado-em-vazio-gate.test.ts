@@ -123,7 +123,10 @@ const BASELINE = new Map<string, number>([
   ["src/components/knowledge-base/ApprovalQueueSection.tsx", 1],
   ["src/components/knowledge-base/RendimentoCalculator.tsx", 1],
   ["src/components/knowledge-base/VersionHistory.tsx", 1],
-  ["src/components/radar/RadarMapa.tsx", 1],
+  // QUITADO (radar frente 4, #3414): o sítio era o `return` pelado do effect de marcadores. Ele saiu da
+  // medição porque o effect deixou de ler `q.data` direto (alias perdido: isso sozinho seria CEGAR). O
+  // conserto de verdade é o render: falha da camada Leads agora mostra "Não foi possível carregar os
+  // leads do mapa", e a de Penetração mostra a sua (prova: `q.isError`/`pen.isError` no JSX de RadarMapa).
   ["src/components/reposicao/cadeiaLogistica/useCadeiaLogistica.ts", 1],
   ["src/components/reposicao/pedidos/useDetalhesModal.ts", 1],
   ["src/components/reposicao/slaFornecedor/useSlaFornecedor.ts", 1],

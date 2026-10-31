@@ -222,6 +222,8 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 1, prova: '`SELECT count(*) FILTER …, count(*) FILTER … FROM pedidos` — agregado sem GROUP BY' }],
   ['ciclo_oportunidade_do_dia @ src/pages/AdminReposicaoOportunidades.tsx',
     { tipo: 'estrutural', teto: 1, prova: 'dois `RETURN QUERY SELECT <escalares>` em ramos exclusivos (o primeiro seguido de `RETURN;`)' }],
+  ['cliente_situacao_receita @ src/lib/receita/useSituacaoReceitaCliente.ts',
+    { tipo: 'estrutural', teto: 1, prova: 'todo caminho é UM `RETURN QUERY SELECT <escalares/record>` seguido de `RETURN;` (o último lê `… LIMIT 1` em `r`); executado em db/test-cliente-situacao-receita.sh A9c (1 linha em cada estado)' }],
   ['staff_get_sales_order_payload @ src/components/salesOrderEdit/useSalesOrderEdit.ts',
     { tipo: 'estrutural', teto: 1, prova: '`WHERE id = ANY(p_order_ids)` e o caller passa `[id]`' }],
   ['staff_get_sales_order_payload @ src/components/salesOrders/useSalesOrderDetail.ts',

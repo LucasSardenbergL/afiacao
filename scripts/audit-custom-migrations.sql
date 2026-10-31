@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 711
+-- Total de custom migrations: 722
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -775,7 +775,18 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261028100100', 'tint_corante_giro', '20261028100100_tint_corante_giro.sql'),
   ('20261028100200', 'analytics_ledger_corantes', '20261028100200_analytics_ledger_corantes.sql'),
   ('20261028220003', 'venda_lista_acesso', '20261028220003_venda_lista_acesso.sql'),
-  ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql')
+  ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
+  ('20261029150000', 'radar_score_versao', '20261029150000_radar_score_versao.sql'),
+  ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql'),
+  ('20261029165429', 'reposicao_desconsolidar_ao_religar_sku', '20261029165429_reposicao_desconsolidar_ao_religar_sku.sql'),
+  ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql'),
+  ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
+  ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
+  ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
+  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
+  ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
+  ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql'),
+  ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3048,7 +3059,59 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
-  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('radar_score_versao', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_contato', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_cadastro', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_resultado', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_conversao_por_faixa', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_eventos', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_coorte_controle', ''),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_evento_em', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_contato', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_cnpj', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_coorte_cnpj', 'radar_coorte_controle'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_parametros_desconsolidar_ao_religar', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_substituicao_exige_antigo_fora_do_motor', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_parametros_desconsolidar_ao_religar', 'sku_parametros'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_substituicao_exige_antigo_fora_do_motor', 'sku_substituicao'),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_acesso_vendedor', 'function', 'private', 'cap_radar_prospectar', ''),
+  ('radar_acesso_vendedor', 'function', 'private', 'radar_atendimento_expira_em', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_definir_atendimento', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_atendimentos_ativos', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_telefone_compartilhado', ''),
+  ('radar_acesso_vendedor', 'table', 'public', 'radar_atendimentos', ''),
+  ('radar_acesso_vendedor', 'index', 'public', 'radar_atendimentos_aberto_uniq', 'radar_atendimentos'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_atendimentos_dono_aberto', 'radar_atendimentos'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel1', 'radar_empresas'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel2', 'radar_empresas'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5369,7 +5432,59 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_corantes', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('venda_lista_acesso', 'function', 'public', 'venda_minhas_sugestoes', ''),
   ('venda_lista_acesso', 'table', 'public', 'venda_lista_acesso', ''),
-  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso')
+  ('venda_lista_acesso', 'rls_policy', 'public', 'venda_lista_acesso_select_master', 'venda_lista_acesso'),
+  ('radar_score_versao', 'function', 'public', 'radar_score_recalcular', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_contato', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_cadastro', ''),
+  ('radar_eventos_placar', 'function', 'private', 'radar_evento_abertura', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_sortear', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_placar_uso', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_coorte_resultado', ''),
+  ('radar_eventos_placar', 'function', 'public', 'radar_conversao_por_faixa', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_eventos', ''),
+  ('radar_eventos_placar', 'table', 'public', 'radar_coorte_controle', ''),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_evento_em', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_contato', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_eventos_cnpj', 'radar_eventos'),
+  ('radar_eventos_placar', 'index', 'public', 'idx_radar_coorte_cnpj', 'radar_coorte_controle'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_ins', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
+  ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_parametros_desconsolidar_ao_religar', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_substituicao_exige_antigo_fora_do_motor', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_parametros_desconsolidar_ao_religar', 'sku_parametros'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_substituicao_exige_antigo_fora_do_motor', 'sku_substituicao'),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
+  ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
+  ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_municipio', ''),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_lote_select_prospectar', 'radar_concorrentes_lote'),
+  ('radar_penetracao_e_concorrentes', 'rls_policy', 'public', 'radar_concorrentes_municipio_select_prospectar', 'radar_concorrentes_municipio'),
+  ('cliente_situacao_receita', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_acesso_vendedor', 'function', 'private', 'cap_radar_prospectar', ''),
+  ('radar_acesso_vendedor', 'function', 'private', 'radar_atendimento_expira_em', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_definir_atendimento', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_atendimentos_ativos', ''),
+  ('radar_acesso_vendedor', 'function', 'public', 'radar_telefone_compartilhado', ''),
+  ('radar_acesso_vendedor', 'table', 'public', 'radar_atendimentos', ''),
+  ('radar_acesso_vendedor', 'index', 'public', 'radar_atendimentos_aberto_uniq', 'radar_atendimentos'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_atendimentos_dono_aberto', 'radar_atendimentos'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel1', 'radar_empresas'),
+  ('radar_acesso_vendedor', 'index', 'public', 'idx_radar_empresas_tel2', 'radar_empresas'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
+  ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 )
 SELECT
   e.migration,
@@ -5397,7 +5512,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 156.
+-- Funções redefinidas com corpo extraível: 157.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5743,6 +5858,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 1, '20260613190000_radar_fatia3.sql', 'e2280b3dda8eb76207371e534a90e170'),
   ('public', 'radar_contagem_por_municipio', 2, '20260614140000_radar_contagem_perf.sql', 'a0067efe8a2bf49bb83877ca34c0142b'),
   ('public', 'radar_contagem_por_municipio', 3, '20261020120200_radar_contagem_municipio_lote_vigente.sql', '846683f98eef8db92fa698ba61cd6a04'),
+  ('public', 'radar_contagem_por_municipio', 4, '20261030071150_radar_contagem_municipio_regiao_contato.sql', 'f324426cbafcb16fcc5b847a9222e262'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
@@ -5982,6 +6098,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
   ('public', 'radar_score_recalcular', 2, '20261020120000_radar_score_lead_v2.sql', '780e4132b90c5f8ce1b4386d8c217f42'),
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
+  ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
   ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
@@ -5994,7 +6111,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_gerar_lista', 1, '20261020181743_venda_cliente_gerador.sql', '31f6e19f23eaa9a43dc45ae2f2b67a5c'),
   ('public', 'venda_gerar_lista', 2, '20261021031000_venda_cliente_ondas23.sql', '2082f4815dec8e16456d325052cbe355'),
   ('private', '_venda_repasse_base', 1, '20261020233000_venda_cliente_repasse.sql', 'db3943ce86f998a42d391fca310d7a0c'),
-  ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819')
+  ('private', '_venda_repasse_base', 2, '20261021021500_venda_repasse_base_desempenho.sql', '4cb2e342f09337e03b1f967c3bc0c819'),
+  ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
+  ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
