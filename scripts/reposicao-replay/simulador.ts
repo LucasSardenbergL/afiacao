@@ -1028,7 +1028,7 @@ function historicoCmcLinha(dados: Dados): Map<string, { data: Data; cmc: number 
  * Preço DOCUMENTAL do capital no dia d para SKU sem cmc da janela (R45, R44): o nCMC (CMC contábil do ERP) da posição
  * datada do Omie mais recente com data ≤ d; senão o preco_compra_real dos documentos com t4 < d; senão null.
  */
-export function precoDocumentalNoDia(dados: Pick<Dados, 'precosCompra' | 'cmcOmie'>, sku: string, d: Data): { preco: number; fonte: 'cmc_omie' | 'compra_real' } | null {
+export function precoDocumentalNoDia(dados: Pick<Dados, 'precosCompra' | 'precosCompraCapital' | 'cmcOmie'>, sku: string, d: Data): { preco: number; fonte: 'cmc_omie' | 'compra_real' } | null {
   const pos = dados.cmcOmie ?? [];
   for (let k = pos.length - 1; k >= 0; k--) {
     if (pos[k].data > d) continue;
@@ -1041,11 +1041,12 @@ export function precoDocumentalNoDia(dados: Pick<Dados, 'precosCompra' | 'cmcOmi
 /**
  * R44: preco_compra_real point-in-time — média do preço dos documentos coerentes (origem normal, garantida na carga, R38)
  * com t4 < `d`, como a CTE precos_compra da produção. Sem documento ⇒ null (nunca venda × 0,55, que não é valoração).
+ * R54: no capital, pelas cópias já chegadas (`precosCompraCapital`); sem ele (fixture), `precosCompra`.
  */
-export function precoCompraRealAte(dados: Pick<Dados, 'precosCompra'>, sku: string, d: Data): { preco: number; fonte: 'compra_real' } | null {
+export function precoCompraRealAte(dados: Pick<Dados, 'precosCompra' | 'precosCompraCapital'>, sku: string, d: Data): { preco: number; fonte: 'compra_real' } | null {
   let soma = 0;
   let n = 0;
-  for (const p of dados.precosCompra ?? []) {
+  for (const p of dados.precosCompraCapital ?? dados.precosCompra ?? []) {
     if (p.sku !== sku || !precoValeEm(p, d) || !(Number.isFinite(p.preco) && p.preco > 0)) continue;
     soma += p.preco;
     n++;

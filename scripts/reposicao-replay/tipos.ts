@@ -159,6 +159,12 @@ export interface Dados {
    * Ausente (fixture antiga) = sem preço de compra: a cadeia segue para a venda × 0,55, nunca 0.
    */
   precosCompra?: PrecoCompraDoc[];
+  /**
+   * R54 (Lucas, 31/10): o mesmo preco_compra_real, mas para o CAPITAL — em d valem as cópias do documento que já chegaram
+   * fisicamente (t4 < d); uma cópia criada e ainda não chegada não anula o documento (a NF chega com a mercadoria). A
+   * paridade do motor continua com `precosCompra` (N3/R51). Ausente (fixture) = usa `precosCompra`.
+   */
+  precosCompraCapital?: PrecoCompraDoc[];
   /** Preço-app dos membros de grupo de embalagem (achado 9). Ausente/null = sem preço: nunca troca de embalagem. */
   precosEmbalagem?: PrecosEmbalagem | null;
   /**

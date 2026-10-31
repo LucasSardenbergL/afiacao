@@ -466,6 +466,7 @@ describe('preços point-in-time (achados 2 e 9 do Codex)', () => {
       }),
     );
     expect(d.precosCompra).toEqual([{ sku: 'S1', desde: '2026-01-12', preco: 3.5 }]);
+    expect(d.precosCompraCapital).toEqual([{ sku: 'S1', desde: '2026-01-12', preco: 3.5 }]); // R54: a lista do capital também
     expect(d.precosEmbalagem?.staleDias).toBe(45);
     expect(d.precosEmbalagem?.capturas.get('S1')).toEqual([{ data: '2026-06-05', instante: '2026-06-05', preco: 11 }, { data: '2026-06-10', instante: '2026-06-10', preco: 12 }]);
     expect(d.precosEmbalagem?.capturas.has('S2')).toBe(false);
@@ -615,5 +616,25 @@ describe('Fix Codex leva D — N1 (R46/R47), N3, P2a e P2b', () => {
     const d = carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10T15:00:00|20|t|45', 'G|S1|1|2026-06-10T09:00:00|100|t|45'] }));
     expect(d.precosEmbalagem?.capturas.get('S1')?.map((c) => c.preco)).toEqual([100, 20]);
     expect(() => carregarDados(monta({ precos_app: ['G|S1|1|2026-06-10 15h|20|t|45'] }))).toThrow(/capturado_em inválido/);
+  });
+});
+
+describe('R54 — preço do capital pelas cópias já chegadas (t4 < d)', () => {
+  const l = (tr: string, t4: string | null, valor: number, t1 = '2026-01-05'): RecebLinha => ({
+    trackingId: tr, sku: 'S1', t1, t2: null, t4, pedida: 10, recebida: t4 === null ? null : 10, docId: 'nfe1', unidadeNfe: 'UN', encerradoEm: null, status: 'FATURADO', valor,
+  });
+  const em = (ps: ReturnType<typeof precosCompraPorDocumento>, d: string) => ps.filter((p) => precoValeEm(p, d)).map((p) => p.preco);
+  it('a cópia criada e ainda não chegada não anula o documento no capital; na view (motor) anula', () => {
+    // 1ª chegada 05/02; outra cópia do MESMO documento criada em 30/01 só chega em 19/02 (o caso real da leva F)
+    const ls = [l('a', '2026-02-05', 10, '2026-01-28'), l('b', '2026-02-19', 10, '2026-01-30')];
+    expect(em(precosCompraPorDocumento(ls), '2026-02-06')).toEqual([]); // N3/R51 inalterada
+    expect(em(precosCompraPorDocumento(ls, 'chegada'), '2026-02-05')).toEqual([]); // t4 < d: nunca no próprio dia
+    expect(em(precosCompraPorDocumento(ls, 'chegada'), '2026-02-06')).toEqual([1]);
+    expect(em(precosCompraPorDocumento(ls, 'chegada'), '2026-02-20')).toEqual([1]);
+  });
+  it('cópia já chegada e DIVERGENTE anula também no capital; cópia sem t4 não anula', () => {
+    const div = [l('a', '2026-02-05', 10), l('b', '2026-02-19', 12)];
+    expect([em(precosCompraPorDocumento(div, 'chegada'), '2026-02-10'), em(precosCompraPorDocumento(div, 'chegada'), '2026-02-20')]).toEqual([[1], []]);
+    expect(em(precosCompraPorDocumento([l('a', '2026-02-05', 10), l('b', null, 10)], 'chegada'), '2026-02-10')).toEqual([1]);
   });
 });

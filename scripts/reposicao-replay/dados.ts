@@ -402,12 +402,17 @@ export function montarItensLT(
  * diverge desta regra em só 1 trecho de 1 SKU (abril). Pendência do Codex (N3): uma cópia criada depois com t1 antigo
  * ainda apaga o passado.
  */
-export function trechosNoCorte<C extends { t1: Data | null; t4: Data | null }, R>(copias: readonly C[], avaliar: (existentes: readonly C[]) => R | null): { desde: Data; ate?: Data; valor: R }[] {
+export function trechosNoCorte<C extends { t1: Data | null; t4: Data | null }, R>(
+  copias: readonly C[],
+  avaliar: (existentes: readonly C[]) => R | null,
+  modo: 'view' | 'chegada' = 'view',
+): { desde: Data; ate?: Data; valor: R }[] {
   const pontos = [...new Set(copias.flatMap((c) => [c.t1, c.t4]).filter((x): x is Data => x !== null))].sort();
   const out: { desde: Data; ate?: Data; valor: R }[] = [];
   for (let k = 0; k < pontos.length; k++) {
     const d = k + 1 < pontos.length ? pontos[k + 1] : addDias(pontos[k], 1); // o estado é o mesmo em (pontos[k], pontos[k+1]]
-    const existentes = copias.filter((c) => c.t1 === null || c.t1 < d);
+    // 'chegada' (R54, só capital): em d valem as cópias que JÁ chegaram (t4 < d); a cópia criada e ainda não chegada não anula
+    const existentes = modo === 'chegada' ? copias.filter((c) => c.t4 !== null && c.t4 < d) : copias.filter((c) => c.t1 === null || c.t1 < d);
     if (existentes.length === 0 || existentes.some((c) => c.t4 === null || !(c.t4 < d))) continue; // anulado em d
     const v = avaliar(existentes);
     if (v === null) continue;
@@ -428,7 +433,7 @@ export function trechosNoCorte<C extends { t1: Data | null; t4: Data | null }, R
  * (a view anula o campo quando divergem ou faltam); preço = valor ÷ recebida, só com os dois > 0 (o FILTER da produção).
  * Saída: um trecho por intervalo de validade, `desde < d ≤ ate`. Ordenada por (sku, desde). Sem `valor`, sem preço.
  */
-export function precosCompraPorDocumento(linhas: readonly RecebLinha[]): PrecoCompraDoc[] {
+export function precosCompraPorDocumento(linhas: readonly RecebLinha[], modo: 'view' | 'chegada' = 'view'): PrecoCompraDoc[] {
   const porDoc = new Map<string, RecebLinha[]>();
   for (const l of linhas) {
     const g = porDoc.get(l.docId);
@@ -443,7 +448,7 @@ export function precosCompraPorDocumento(linhas: readonly RecebLinha[]): PrecoCo
       if (r0 === null || v0 === null || !(r0 > 0) || !(v0 > 0)) return null;
       if (!ex.every((l) => l.recebida === r0 && (l.valor ?? null) === v0 && l.sku === ex[0].sku)) return null;
       return { sku: ex[0].sku, preco: v0 / r0 };
-    });
+    }, modo);
     for (const t of tr) out.push({ sku: t.valor.sku, desde: t.desde, ...(t.ate !== undefined ? { ate: t.ate } : {}), preco: t.valor.preco });
   }
   return out.sort((a, b) => (a.sku < b.sku ? -1 : a.sku > b.sku ? 1 : a.desde < b.desde ? -1 : a.desde > b.desde ? 1 : a.preco - b.preco));
@@ -937,10 +942,11 @@ export function carregarDados(dir: string): DadosCarregados {
   const posicaoConferencia = lerPosicaoOmie(dir, CSV_POSICAO_CONFERENCIA);
   const posicaoAquecimentoFim = lerPosicaoOmie(dir, CSV_POSICAO_AQUECIMENTO_FIM);
   const precosCompra = precosCompraPorDocumento(recLinhas);
+  const precosCompraCapital = precosCompraPorDocumento(recLinhas, 'chegada');
   const precosEmbalagem = lerPrecosEmbalagem(dir);
 
   const motor = lerMotor(dir, dataExtracao);
   const cmcOmie = lerCmcOmie(dir);
   const ltMotor = lerLtMotor(dir);
-  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosEmbalagem, motor, ltMotor, cmcOmie, hashDados };
+  return { vendas, itensLT, recebimentos, skus, zPorClasse, teto, equivalencias, sugestaoHoje, excluidos, classificacaoHist, shareInsumo, parametrosView, avisos, dataExtracao, posicaoAbertura, posicaoConferencia, posicaoAquecimentoFim, precosCompra, precosCompraCapital, precosEmbalagem, motor, ltMotor, cmcOmie, hashDados };
 }

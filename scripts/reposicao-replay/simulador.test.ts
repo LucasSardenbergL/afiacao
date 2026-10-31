@@ -5,7 +5,7 @@ import { somarDiasUteis } from './calendario';
 import { classeEfetiva } from './classe';
 import { CENARIOS_FALTA, INICIO_AQUECIMENTO, JANELAS } from './config';
 import type { ParamsDia } from './formulas';
-import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, embalagemEscolhida, paridadeQuantidade, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
+import { conferirEstoque, conferirFechamento, convDoGrupo, decidirCompra, embalagemEscolhida, paridadeQuantidade, precoCompraRealAte, simular, type EntradaSimulacao, type SomasSemanais } from './simulador';
 import type { Dados, Equivalencia, EventoRecebimento, ItemLT, LinhaVenda, PrecosEmbalagem, Sku } from './tipos';
 
 const REGRAS: Record<string, string> = {
@@ -821,5 +821,15 @@ describe('R53 — embalagem escolhida que ainda não existe', () => {
     // controle: o galão que já existia recebe a compra (achado 9)
     const c = roda(mk([existiaNoInicio('GL')]), p, { janela: ['2026-06-01', fim], rastro: true });
     expect(c.pedidos).toEqual([{ dia: '2026-06-09', sku: 'GL', qtd: 6.48, chegada: '2026-06-11' }]);
+  });
+});
+
+describe('R54 — o capital usa precosCompraCapital; a paridade do motor, precosCompra', () => {
+  it('com as duas listas, precoCompraRealAte lê a do capital; sem ela (fixture), a da view', () => {
+    const view = [{ sku: 'P', desde: '2026-02-19', preco: 9 }];
+    const cap = [{ sku: 'P', desde: '2026-02-05', preco: 7 }];
+    expect(precoCompraRealAte({ precosCompra: view, precosCompraCapital: cap }, 'P', '2026-02-06')).toEqual({ preco: 7, fonte: 'compra_real' });
+    expect(precoCompraRealAte({ precosCompra: view }, 'P', '2026-02-06')).toBeNull();
+    expect(precoCompraRealAte({ precosCompra: view }, 'P', '2026-02-20')).toEqual({ preco: 9, fonte: 'compra_real' });
   });
 });
