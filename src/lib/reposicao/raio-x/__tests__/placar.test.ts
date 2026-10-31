@@ -77,6 +77,14 @@ describe('placar — coorte do Top 61 congelada', () => {
     expect(p.topDecididoN).toBe(1);
     expect(p.topTotal).toBe(550);
     expect(p.topDecidido).toBe(500);
+    expect(p.topZeradoN).toBe(0); // o sku 1 sumiu, mas foi decidido
+  });
+  it('membro sem decisão que sumiu dos fatos (saldo zerado) é mostrado à parte, e segue no denominador', () => {
+    const c = coorte([1, 500], [2, 50]);
+    const p = placar(aplicarCoorte(itens({ sku_codigo_omie: 2 }), c), new Map(), c);
+    expect(p.topN).toBe(2);
+    expect(p.topZeradoN).toBe(1);
+    expect(p.topDecididoN).toBe(0);
   });
   it('quem entraria no Top hoje e não está na coorte aparece (entrou_no_top) sem mexer no denominador', () => {
     const c = coorte([9, 70]);

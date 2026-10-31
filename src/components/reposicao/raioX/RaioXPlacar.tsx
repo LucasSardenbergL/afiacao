@@ -21,6 +21,11 @@ export function RaioXPlacar({ placar, coorteIndisponivel = false }: { placar: Pl
           {placar.topDecididoN} de {placar.topN} decididos · {fmtReais(placar.topDecidido)} de {fmtReais(placar.topTotal)}
           {placar.topSemCustoN > 0 && ` · ${placar.topSemCustoN} sem custo (fora da soma)`}
         </p>
+        {placar.topZeradoN > 0 && (
+          <p data-testid="placar-top-zerado" className="text-xs text-status-warning">
+            {placar.topZeradoN} da coorte saíram do estoque sem decisão (saldo zerado) — seguem na meta, sem linha para decidir
+          </p>
+        )}
         {placar.topEntrouDepoisN > 0 && (
           <p className="text-xs text-muted-foreground">
             {placar.topEntrouDepoisN} item(ns) entrariam no Top hoje — aparecem na lista, não mudam a meta

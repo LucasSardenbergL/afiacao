@@ -21,7 +21,7 @@ type Retorno = {
 const PLACAR = {
   total: 1000, decidido: 400, pendente: 600, porDestino: { trocar: 400 }, topTotal: 700, topDecidido: 400,
   semCustoN: 2, distorceDio: 5000, naoMercadoria: 5000, usoConsumo: 0, industrial: 0, semCustoDioN: 0,
-  coorteCongelada: true, topN: 3, topDecididoN: 1, topSemCustoN: 0, topEntrouDepoisN: 0,
+  coorteCongelada: true, topN: 3, topDecididoN: 1, topSemCustoN: 0, topZeradoN: 0, topEntrouDepoisN: 0,
 };
 let ret: Retorno;
 let empresaCtx = 'OBEN';

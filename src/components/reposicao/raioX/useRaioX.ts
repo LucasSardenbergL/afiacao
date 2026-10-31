@@ -148,7 +148,10 @@ export function useRaioX(empresa: Empresa | null): {
   const itensComCoorte = useMemo(() => aplicarCoorte(itens, coorte), [itens, coorte]);
   const placarCalc = useMemo(() => placar(itensComCoorte, decisoes, coorte), [itensComCoorte, decisoes, coorte]);
 
-  useCongelarCoorte(empresa, coorteQ.isSuccess && coorteQ.data === null, itens);
+  // Só congela com os insumos ATUAIS e completos: refetch pendente serviria o cache anterior (Codex P1) e a
+  // primeira escrita vence — uma lista errada não teria conserto.
+  const insumosFrescos = [fatosQ, manuaisQ, coorteQ].every((q) => q.isSuccess && !q.isFetching);
+  useCongelarCoorte(empresa, insumosFrescos && coorteQ.data === null, itens);
 
   const syncedHoras = useMemo(() => {
     let max: number | null = null;

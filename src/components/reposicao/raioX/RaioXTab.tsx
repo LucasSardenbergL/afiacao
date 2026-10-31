@@ -73,7 +73,8 @@ export function RaioXTab() {
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
-  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && i.parado), [rx.itens]);
+  // Membro da coorte que voltou a girar segue decidível (senão a meta de 100% ficaria inalcançável pela tela).
+  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && (i.parado || i.top)), [rx.itens]);
   const fornecedores = useMemo(
     () =>
       [...new Set(mercadoria.map((i) => fornecedorEfetivo(i, rx.decisoes.get(i.sku_codigo_omie))).filter((x): x is string => !!x))].sort(),
