@@ -9,6 +9,21 @@ import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
 import type { TopListItem } from '@/components/dashboard/cockpit/CockpitTopList';
 
+// Valores gravados em eventos_outlier.severidade, na ordem de prioridade da lista de topo.
+const SEVERIDADES = ['critico', 'atencao', 'info'] as const;
+
+const SEVERIDADE_LABEL: Record<string, string> = { critico: 'Crítico', atencao: 'Atenção', info: 'Info' };
+
+const TIPO_LABEL: Record<string, string> = {
+  venda_atipica: 'Venda atípica',
+  lt_atipico: 'Lead time atípico',
+  sku_sem_grupo: 'SKU sem grupo',
+  sku_inativado_omie: 'Inativado no Omie',
+  sku_reativado_omie: 'Reativado no Omie',
+};
+
+type AlertaPendente = { id: number; tipo: string; sku_descricao: string | null; severidade: string };
+
 export function useReposicaoZone() {
   const { companies, mode } = useDashboardCompany();
   const queryKey = ['dashboard', 'reposicao', mode, companies.join(',')];
@@ -41,31 +56,43 @@ export function useReposicaoZone() {
       } catch { /* */ }
 
       try {
-        const { data: alerts, count } = await supabase
+        // "Ativos" = aguardando decisão (status 'pendente'). Sem esse filtro o card contava a
+        // tabela inteira — inclusive aceitos/excluídos/resolvidos — e mostrava 511 com 238 pendentes.
+        const { count } = await supabase
           .from('eventos_outlier')
-          .select('id, tipo, sku_descricao, severidade', { count: 'exact' })
-          .order('detectado_em', { ascending: false, nullsFirst: false })
-          .limit(5);
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'pendente');
         alertasAtivos = count ?? 0;
-        if (alerts) {
-          const rows = alerts as Array<{
-            id: number;
-            tipo: string;
-            sku_descricao: string | null;
-            severidade: string;
-          }>;
-          topItems = rows.slice(0, 3).map((a) => ({
-            id: String(a.id),
-            icon: AlertTriangle,
-            title: a.sku_descricao ?? a.tipo ?? 'Alerta',
-            subtitle: `Severidade ${a.severidade ?? 'média'}`,
-            path: '/admin/reposicao/alertas',
-            itemType: 'outlier_event',
-            badge: a.severidade === 'alta' || a.severidade === 'critica'
-              ? { label: a.severidade, intent: 'error' as const }
+      } catch { /* */ }
+
+      try {
+        // Lista de topo: pendentes, crítico antes de atenção antes de info (mais recente dentro de
+        // cada severidade). Uma leitura por severidade porque a ordem alfabética do texto não serve.
+        const porSeveridade = await Promise.all(
+          SEVERIDADES.map((sev) =>
+            supabase
+              .from('eventos_outlier')
+              .select('id, tipo, sku_descricao, severidade')
+              .eq('status', 'pendente')
+              .eq('severidade', sev)
+              .order('detectado_em', { ascending: false, nullsFirst: false })
+              .limit(3),
+          ),
+        );
+        const rows = porSeveridade.flatMap((r) => (r.data ?? []) as AlertaPendente[]);
+        topItems = rows.slice(0, 3).map((a) => ({
+          id: String(a.id),
+          icon: AlertTriangle,
+          title: a.sku_descricao ?? a.tipo ?? 'Alerta',
+          subtitle: `${TIPO_LABEL[a.tipo] ?? a.tipo} · ${SEVERIDADE_LABEL[a.severidade] ?? a.severidade}`,
+          path: '/admin/reposicao/alertas',
+          itemType: 'outlier_event',
+          badge: a.severidade === 'critico'
+            ? { label: 'crítico', intent: 'error' as const }
+            : a.severidade === 'atencao'
+              ? { label: 'atenção', intent: 'warning' as const }
               : undefined,
-          }));
-        }
+        }));
       } catch { /* */ }
 
       try {
