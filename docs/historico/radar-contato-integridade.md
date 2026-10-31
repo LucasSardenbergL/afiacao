@@ -79,3 +79,34 @@ ausente (banco anterior) → `null` → "Desfeito", como antes.
   restaurar o status. Havia 5 contatos humanos em prod.
 - `radar_aplicar_situacao` insere o contato ANTES de travar a linha e confere só os totais (Codex P1, herdado). Com a
   autoria explícita essa premissa sai do desfazer; a correspondência por CNPJ no cron fica como follow-up.
+
+## Deploy (2026-10-31)
+
+| Camada | Estado | Quem |
+|---|---|---|
+| Migration `20261031111000` | ✅ aplicada 12:39:55–12:40:04 UTC pelo envelope (`bun run db:aplicar`, tentativa **#777**, sha256 `d74ddfd6…`, o mesmo do `--ensaio` de 12:39) | esta sessão |
+| Edge | nenhuma | — |
+| Publish do Lovable (front: `RadarOutcomeMenu`, `borda-rpc`) | ⏳ depois do merge | **founder** (Publish) |
+
+**Pré-voo PROD (psql-ro, 12:12 UTC):** md5 vivos = predecessores (`658d383c…`, `f695b1e6…`); guarda, colunas e triggers
+ausentes; 0 `virou_cliente` sem confirmação; 0 locks não-AccessShare e 0 sessões ativas em `radar_empresas`/`radar_contatos`;
+fora da janela dos crons do Radar (06:05–06:45 UTC). Repetido imediatamente antes do apply: 0 sessões ativas.
+
+**2ª testemunha (psql-ro, outra conexão, 12:40:42 UTC):** os 3 corpos com o md5 esperado (`26c486a1…`, `b2f4de64…`,
+`8e3db856…`), SECURITY DEFINER + VOLATILE + `search_path`; anon sem EXECUTE nas três; authenticated executa as 2 RPCs e
+não a guarda; o gate `cap_radar_prospectar` presente em registrar; 4 colunas; os 2 triggers ativos (`O`); 0
+`virou_cliente` sem confirmação; recibo #777 `aplicada` com o mesmo sha256; marcador `FIM_VALIDACAO_OK`.
+
+**Corpo antigo em voo (Codex ALTA, a parte que trigger não alcança):** todo registro pelo corpo antigo insere um contato
+humano, e todo desfazer gera `contato_desfeito` humano em `radar_eventos`. Medido de 12:34:55 até 12:40:42: **0** contatos
+humanos e **0** eventos humanos. Nenhuma chamada antiga atravessou o commit.
+
+**Bytes do front ≠ adoção:** até o Publish, o bundle antigo mostra "Virou cliente" ativo e recebe RD005 como "Não foi
+possível registrar". O banco recusa do mesmo jeito; só o texto do aviso é pior.
+
+## Follow-ups
+
+- `radar_kpis.virou_cliente_mes` pela data imutável `omie_cadastrado_em` (o gestor tirar e devolver ainda reconta).
+- `radar_aplicar_situacao`: correspondência contato↔estado por CNPJ, não só pelos totais (Codex P1, herdado).
+- Regravar `bun run authz:carimbo:gravar` depois do merge: o carimbo deste PR traz 1 `PATCH_NAO_CONCILIADO` transitório
+  (o auditor lê as migrations da `origin/main`, que ainda não tinham a 20261031111000).
