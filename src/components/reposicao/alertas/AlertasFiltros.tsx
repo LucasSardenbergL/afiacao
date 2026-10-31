@@ -1,16 +1,19 @@
 // Card de filtros + barra de ações em lote dos Alertas de Outlier.
 // Extraído de src/pages/AdminReposicaoAlertas.tsx (god-component split).
+// Os setters voltam à página 1 por conta própria (uma escrita só na URL — ver a página).
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, CheckCircle2 } from "lucide-react";
+import { tipoLabel, tiposDaVisao, type Visao } from "./types";
 
 export function AlertasFiltros({
-  busca, setBusca, filtroTipo, setFiltroTipo, filtroSev, setFiltroSev, filtroStatus, setFiltroStatus,
-  setPage, selecionadosCount, onAceitarLote, onLimparSelecao,
+  visao, busca, setBusca, filtroTipo, setFiltroTipo, filtroSev, setFiltroSev, filtroStatus, setFiltroStatus,
+  selecionadosCount, onAceitarLote, onLimparSelecao,
 }: {
+  visao: Visao;
   busca: string;
   setBusca: (s: string) => void;
   filtroTipo: string;
@@ -19,7 +22,6 @@ export function AlertasFiltros({
   setFiltroSev: (s: string) => void;
   filtroStatus: string;
   setFiltroStatus: (s: string) => void;
-  setPage: (p: number) => void;
   selecionadosCount: number;
   onAceitarLote: () => void;
   onLimparSelecao: () => void;
@@ -36,28 +38,25 @@ export function AlertasFiltros({
                 placeholder="Código ou descrição"
                 className="pl-8"
                 value={busca}
-                onChange={(e) => {
-                  setBusca(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => setBusca(e.target.value)}
               />
             </div>
           </div>
-          <div className="w-[160px]">
+          <div className="w-[180px]">
             <Label className="text-xs">Tipo</Label>
-            <Select value={filtroTipo} onValueChange={(v) => { setFiltroTipo(v); setPage(1); }}>
+            <Select value={filtroTipo} onValueChange={setFiltroTipo}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">Todos</SelectItem>
-                <SelectItem value="venda_atipica">Venda atípica</SelectItem>
-                <SelectItem value="lt_atipico">LT atípico</SelectItem>
-                <SelectItem value="sku_sem_grupo">SKU sem grupo</SelectItem>
+                {tiposDaVisao(visao).map((t) => (
+                  <SelectItem key={t} value={t}>{tipoLabel(t)}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
           <div className="w-[140px]">
             <Label className="text-xs">Severidade</Label>
-            <Select value={filtroSev} onValueChange={(v) => { setFiltroSev(v); setPage(1); }}>
+            <Select value={filtroSev} onValueChange={setFiltroSev}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">Todas</SelectItem>
@@ -69,14 +68,14 @@ export function AlertasFiltros({
           </div>
           <div className="w-[140px]">
             <Label className="text-xs">Status</Label>
-            <Select value={filtroStatus} onValueChange={(v) => { setFiltroStatus(v); setPage(1); }}>
+            <Select value={filtroStatus} onValueChange={setFiltroStatus}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">Todos</SelectItem>
                 <SelectItem value="pendente">Pendente</SelectItem>
                 <SelectItem value="aceito">Aceito</SelectItem>
+                <SelectItem value="resolvido_auto">Resolvido auto</SelectItem>
                 <SelectItem value="excluido">Excluído</SelectItem>
-                <SelectItem value="ignorado">Ignorado</SelectItem>
               </SelectContent>
             </Select>
           </div>

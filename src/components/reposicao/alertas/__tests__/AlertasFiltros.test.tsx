@@ -5,6 +5,7 @@ import { AlertasFiltros } from "../AlertasFiltros";
 function baseProps(over: Partial<React.ComponentProps<typeof AlertasFiltros>> = {}): React.ComponentProps<typeof AlertasFiltros> {
   const noop = () => { /* */ };
   return {
+    visao: "fila",
     busca: "",
     setBusca: noop,
     filtroTipo: "__all__",
@@ -13,7 +14,6 @@ function baseProps(over: Partial<React.ComponentProps<typeof AlertasFiltros>> = 
     setFiltroSev: noop,
     filtroStatus: "pendente",
     setFiltroStatus: noop,
-    setPage: noop,
     selecionadosCount: 0,
     onAceitarLote: noop,
     onLimparSelecao: noop,
@@ -29,13 +29,13 @@ describe("AlertasFiltros", () => {
     expect(screen.queryByText(/selecionado\(s\)/)).toBeNull();
   });
 
-  it("digitar na busca chama setBusca e reseta page", () => {
+  // A volta à página 1 é do setter (uma escrita só na URL), não de um setPage separado.
+  it("digitar na busca chama setBusca uma vez com o termo", () => {
     const setBusca = vi.fn();
-    const setPage = vi.fn();
-    render(<AlertasFiltros {...baseProps({ setBusca, setPage })} />);
+    render(<AlertasFiltros {...baseProps({ setBusca })} />);
     fireEvent.change(screen.getByPlaceholderText("Código ou descrição"), { target: { value: "abc" } });
+    expect(setBusca).toHaveBeenCalledTimes(1);
     expect(setBusca).toHaveBeenCalledWith("abc");
-    expect(setPage).toHaveBeenCalledWith(1);
   });
 
   it("barra de lote aparece com count>0 e botões disparam callbacks", () => {
