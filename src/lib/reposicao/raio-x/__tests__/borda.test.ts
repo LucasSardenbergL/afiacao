@@ -21,6 +21,12 @@ describe('borda do Raio-X — o que o cast escondia agora lança nomeando o camp
     expect(() => comoDecisaoRow({ ...decisao, canal_liquidacao: 'leilao' })).toThrow('canal "leilao"');
   });
 
+  it('bundle no ar antes da migration do pacote 2: colunas ausentes viram null, sem lançar', () => {
+    const { preco_piso: _a, canal_liquidacao: _b, responsavel: _c, prazo: _d, concluido_em: _e, concluido_por: _f, ...antiga } = decisao;
+    const r = comoDecisaoRow(antiga as Tables<'raio_x_decisao'>);
+    expect([r.preco_piso, r.canal_liquidacao, r.responsavel, r.prazo, r.concluido_em, r.concluido_por]).toEqual([null, null, null, null, null, null]);
+  });
+
   it('clientes jsonb: lista bem formada vira ClienteComprador; elemento torto lança; null fica null', () => {
     expect(clientesDe([{ nome: 'A', qtd: 2, ult: '2026-01-01' }, { nome: 'B', qtd: 1 }], 42)).toEqual([
       { nome: 'A', qtd: 2, ult: '2026-01-01' },

@@ -68,7 +68,14 @@ export function comoDecisaoRow(r: Tables<'raio_x_decisao'>): DecisaoRow {
     empresa: exigirEmpresa(r.empresa, r.sku_codigo_omie),
     destino: r.destino === null ? null : exigirDestino(r.destino, r.sku_codigo_omie),
     origem,
-    canal_liquidacao: r.canal_liquidacao === null ? null : exigirCanal(r.canal_liquidacao, r.sku_codigo_omie),
+    // Colunas do pacote 2: `?? null` porque o bundle pode ir ao ar ANTES da migration (Publish ≠ db:aplicar) —
+    // coluna inexistente chega undefined e não pode derrubar a aba nem virar "canal desconhecido".
+    preco_piso: r.preco_piso ?? null,
+    canal_liquidacao: r.canal_liquidacao == null ? null : exigirCanal(r.canal_liquidacao, r.sku_codigo_omie),
+    responsavel: r.responsavel ?? null,
+    prazo: r.prazo ?? null,
+    concluido_em: r.concluido_em ?? null,
+    concluido_por: r.concluido_por ?? null,
   };
 }
 
