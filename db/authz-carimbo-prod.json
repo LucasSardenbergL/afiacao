@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T21:24:12.657Z",
-  "sourceHead": "2cf18e02929c47497a713cce1b4352867397dfcf",
+  "medidoEm": "2026-10-31T23:26:16.485Z",
+  "sourceHead": "3a47af83e319ff34d6924aa316373b8040a21190",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -65,19 +65,19 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@7d72919db (fetch ok) · prod 2026-10-31 21:25:49.850049Z",
-      "contratoFingerprint": "464f59de1727780dfcff0f3523bc163fdced3d3d7e4c45ef830e6c310ab93ee6",
-      "auditorFingerprint": "29535ebadc8ee13811e69f394dde599672622ebceee98dd48266c6b233bc6079",
+      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@58672783c (fetch ok) · prod 2026-10-31 23:26:49.84855Z",
+      "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
+      "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [
         {
-          "id": "bc84266a52049e9e",
-          "linha": "❌ [SEM_PAR] radar_aplicar_situacao(text,timestamp with time zone): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261019200000_radar_situacao_cadastral.sql (xmin 13352267)",
+          "id": "ae098fdad9e2d261",
+          "linha": "❌ [SEM_PAR] detectar_skus_sem_grupo(text): corpo que nenhuma das 3 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260606140000_detectar_skus_sem_grupo_self_heal.sql (xmin 13360708)",
           "primeiraVez": "2026-10-31",
           "ultimaVez": "2026-10-31"
         },
         {
           "id": "a5d8d49ea2911099",
-          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13352126)",
+          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13357586)",
           "primeiraVez": "2026-10-31",
           "ultimaVez": "2026-10-31"
         }
