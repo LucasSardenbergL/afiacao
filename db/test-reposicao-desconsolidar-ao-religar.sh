@@ -19,7 +19,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=db/lib/pg-harness.sh
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
 PORT="${PGPORT_TEST:-${PORT:-5481}}"
 MODO=normal
