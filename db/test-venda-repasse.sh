@@ -19,6 +19,9 @@
 #        2 donos → 42501; estratégico (cap_carteira) lê
 #   C5   vencido some; revogado some; revogar 2x é no-op; venda posterior que alcança o alvo some
 #   ACL  tabela fechada a authenticated; RPCs fechadas a anon
+#   SUB  substituição (20261031233000): casos-ouro de prod 31/10 (Lohan, Móveis & Cia), convive comprando e
+#        parado, mesma base noutra embalagem, família larga, sem cadência, bordas da janela de 365 d e do 2×
+#        cadência, irmão sem código; ordem por situação; H2 = predecessor do repo é o corpo da prod
 #
 # Uso:  bash db/test-venda-repasse.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #       HARNESS_LC_ALL=pt_BR.UTF-8 bash db/test-venda-repasse.sh …   (rode nos DOIS locales)
@@ -35,8 +38,9 @@ export LC_ALL="${HARNESS_LC_ALL:-C}" LANG="${HARNESS_LC_ALL:-C}"
 MIG_ORIG="${MIG:-$REPO_ROOT/supabase/migrations/20261020233000_venda_cliente_repasse.sql}"
 MIG_DESEMP="$REPO_ROOT/supabase/migrations/20261021021500_venda_repasse_base_desempenho.sql"
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
+MIG_SUBST="$REPO_ROOT/supabase/migrations/20261031233000_venda_repasse_substituicao.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=54
+TOTAL_ESPERADO=70
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -45,7 +49,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   SABOTAGENS="vaza_cmc:C4a,C4t:C4b,C4c
               vaza_c_now:C4a,C4t:C4b,C4c
               sem_recusa:C3a,C3b,W1:AP1,C3c
-              tinta_null:C6,C3c:CAND1,C3a
+              tinta_null:C6,C3c,H2:CAND1,C3a
               dono_uniao:C4e,C4h:C4a,C4d
               sem_revalidar:C5d,C5b:C5a,C4b
               sem_finito:CAND1,CAND2,C4b:C4a,C4t
@@ -54,12 +58,23 @@ if [ "${1:-}" = "--falsificar" ]; then
               media_max:W2:W1
               alvo_texto:C4t:C4a
               paridade_markup:C1b:C1a,CAND1
-              gate_candidatos:C2b:C2a,C2c
+              gate_candidatos:C2b,H2:C2a,C2c
               pos_acl_anon:MIG!POS_ACL_ANON
               pos_rls:MIG!POS_RLS
               autojuncao:PERF:CAND1,C4b,PERFv
               pos_janela:MIG!POS_JANELA
-              pre_config:MIG!PRE_CONFIG"
+              pre_config:MIG!PRE_CONFIG
+              sem_convive:SUB5,SUB10:SUB1,SUB9
+              janela_366:SUB9:SUB10
+              embalagem:SUB6:SUB1
+              familia_larga:SUB7:SUB1
+              parado_borda:SUB11:SUB12
+              cadencia_null:SUB8:SUB5
+              sub_sugerido:SUB2:SUB1
+              sub_valor:SUB2:SUB1
+              escolha_sub:SUB1:SUB3
+              ordem_valor:SUB14:SUB1
+              pre_trava:MIG!PRE_TRAVA"
   falhas=0; sab_falhas=0
   echo "═══ CONTROLE (sem sabotagem) ═══"
   if ! PGPORT_TEST="$PORT" bash "$0" > "/tmp/falsif-${SLUG}-controle.log" 2>&1; then
@@ -319,6 +334,96 @@ BEGIN
   -- grupo 2 (dois donos): uma compra só para existir base
   PERFORM pg_temp.compra(can2, 7101, 'oben', d30, 10, 100, 0);
 END $seed$;
+-- ── substituição (20261031233000): casos-ouro de prod (31/10) + bordas ──
+-- Candidato: dias anteriores a 90, último dia a 100, c_last 60 no dia, c_now 80 fresco → defasado (sugerido 133,33).
+CREATE FUNCTION pg_temp.serie(p_cli uuid, p_cod bigint, p_dias int[], p_candidato boolean)
+RETURNS void LANGUAGE plpgsql AS $c$
+DECLARE hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date; i int;
+BEGIN
+  FOR i IN 1 .. cardinality(p_dias) LOOP   -- p_dias em dias ATRÁS de hoje, do mais antigo ao mais recente
+    PERFORM pg_temp.compra(p_cli, p_cod, 'oben', hoje - p_dias[i], 10,
+                           CASE WHEN p_candidato AND i = cardinality(p_dias) THEN 100 ELSE 90 END, 0);
+  END LOOP;
+END $c$;
+CREATE FUNCTION pg_temp.cand(p_cli uuid, p_cod bigint, p_ultima int, p_cad numeric)
+RETURNS void LANGUAGE plpgsql AS $c$
+DECLARE hoje date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
+BEGIN
+  INSERT INTO public.venda_recompra (comprador_id, empresa, omie_codigo_produto, n_pedidos, cadencia_dias, qtd_sugerida,
+                                     ultima_compra, ultimo_preco, data_referencia, calculado_em)
+    VALUES (p_cli, 'oben', p_cod, 5, p_cad, 10, hoje - p_ultima, 100, hoje, now());
+  INSERT INTO public.cmc_snapshot (omie_codigo_produto, account, data_posicao, cmc, synced_at)
+    VALUES (p_cod, 'oben', hoje - p_ultima, 60, now())
+    ON CONFLICT DO NOTHING;   -- mesmo SKU, mesmo dia de âncora em outro cenário
+  IF NOT EXISTS (SELECT 1 FROM public.inventory_position WHERE omie_codigo_produto = p_cod) THEN
+    INSERT INTO public.inventory_position (omie_codigo_produto, cmc, account, synced_at) VALUES (p_cod, 80, 'oben', now());
+  END IF;
+END $c$;
+DO $sub$
+DECLARE
+  lohan uuid := md5('vs:lohan')::uuid;     lohan_ali uuid := md5('vs:lohan-alias')::uuid;
+  cia   uuid := md5('vs:moveis-cia')::uuid;
+BEGIN
+  INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, is_tintometric, familia) VALUES
+    (9401,'PRD03396','DILUENTE PU DFA.4128LT','oben',false,'Diluente PU'),
+    (9402,'PRD03666','DILUENTE PU DFA.4080LT','oben',false,'Diluente PU'),
+    (9403,'PRD03395','DILUENTE PU DFA.4128L5','oben',false,'Diluente PU'),
+    (9404,'PRD03470','DILUENTE PU DFZ.8040LT','oben',false,'Diluente PU'),
+    (9405,'PRD00577','DILUENTE PU DF.4056LT','oben',false,'Diluente PU'),
+    (9406,'PRD02338','DILUENTE FORMICA 5L','oben',false,'Diluente PU'),
+    (9411,'PRD00072','CATALISADOR FC.6921L5','oben',false,'Catalisadores PU'),
+    (9412,'PRD03595','CATALISADOR FCA.7090QT','oben',false,'Catalisadores PU');
+  INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, status) VALUES (lohan_ali, lohan, 'active');
+  -- S1 Lohan: 4128 a cada 11 d até H-140; 4080 entra em H-130 (9 dias, parte pelo ALIAS); 8040 uma vez → 4080
+  PERFORM pg_temp.serie(lohan, 9401, ARRAY[200,189,178,167,156,145,140], true);
+  PERFORM pg_temp.cand(lohan, 9401, 140, 11);
+  PERFORM pg_temp.serie(lohan, 9402, ARRAY[130,115,100,85,70], false);
+  PERFORM pg_temp.serie(lohan_ali, 9402, ARRAY[55,40,25,10], false);
+  PERFORM pg_temp.serie(lohan, 9404, ARRAY[120], false);
+  -- S2 Móveis & Cia: 4128 a cada 25 d até H-197; 4080 UMA vez em H-59
+  PERFORM pg_temp.serie(cia, 9401, ARRAY[297,272,247,222,197], true);
+  PERFORM pg_temp.cand(cia, 9401, 197, 25);
+  PERFORM pg_temp.serie(cia, 9402, ARRAY[59], false);
+  -- S3 convive e segue comprando (José Herlon/Lucas): 4128 até H-10 (cad 14), 8040 alternado, 4080 novo em H-20
+  PERFORM pg_temp.serie(md5('vs:convive-comprando')::uuid, 9401, ARRAY[60,46,32,18,10], true);
+  PERFORM pg_temp.cand(md5('vs:convive-comprando')::uuid, 9401, 10, 14);
+  PERFORM pg_temp.serie(md5('vs:convive-comprando')::uuid, 9404, ARRAY[53,39,25], false);
+  PERFORM pg_temp.serie(md5('vs:convive-comprando')::uuid, 9402, ARRAY[20], false);
+  -- S4 convive e parou: 8040 já era comprado antes da última 4128 → não é substituto
+  PERFORM pg_temp.serie(md5('vs:convive-parado')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:convive-parado')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:convive-parado')::uuid, 9404, ARRAY[153,139,125,90,60,30], false);
+  -- S5 embalagem: 4128LT parou, 4128L5 (mesma base) entrou → não é substituto
+  PERFORM pg_temp.serie(md5('vs:embalagem')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:embalagem')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:embalagem')::uuid, 9403, ARRAY[90,60,30], false);
+  -- S6 família larga: catalisador parou, outro catalisador entrou → não é substituto
+  PERFORM pg_temp.serie(md5('vs:catalisador')::uuid, 9411, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:catalisador')::uuid, 9411, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:catalisador')::uuid, 9412, ARRAY[90,60,30], false);
+  -- S8 sem cadência (ausente ≠ zero): nada se afirma, o sugerido fica
+  PERFORM pg_temp.serie(md5('vs:sem-cadencia')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:sem-cadencia')::uuid, 9401, 100, NULL);
+  PERFORM pg_temp.serie(md5('vs:sem-cadencia')::uuid, 9402, ARRAY[90,60,30], false);
+  -- S9a/S9b borda da janela de convivência (365 d até a última compra do candidato, H-100)
+  PERFORM pg_temp.serie(md5('vs:janela-fora')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:janela-fora')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:janela-fora')::uuid, 9405, ARRAY[466,80,50], false);    -- 366 d antes: fora
+  PERFORM pg_temp.serie(md5('vs:janela-dentro')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:janela-dentro')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:janela-dentro')::uuid, 9405, ARRAY[465,80,50], false);  -- 365 d antes: dentro
+  -- S10a/S10b borda do "parou": 28 d = 2×14 ainda compra; 29 d parou (4080 novo em H-20 nos dois)
+  PERFORM pg_temp.serie(md5('vs:borda-comprando')::uuid, 9401, ARRAY[84,70,56,42,28], true);
+  PERFORM pg_temp.cand(md5('vs:borda-comprando')::uuid, 9401, 28, 14);
+  PERFORM pg_temp.serie(md5('vs:borda-comprando')::uuid, 9402, ARRAY[20], false);
+  PERFORM pg_temp.serie(md5('vs:borda-parado')::uuid, 9401, ARRAY[85,71,57,43,29], true);
+  PERFORM pg_temp.cand(md5('vs:borda-parado')::uuid, 9401, 29, 14);
+  PERFORM pg_temp.serie(md5('vs:borda-parado')::uuid, 9402, ARRAY[20], false);
+  -- S11 irmão SEM código na descrição: não prova base → não é substituto
+  PERFORM pg_temp.serie(md5('vs:sem-codigo')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:sem-codigo')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:sem-codigo')::uuid, 9406, ARRAY[90,60,30], false);
+END $sub$;
 SET session_replication_role = origin;
 ALTER TABLE public.sales_orders ENABLE TRIGGER ALL;
 ALTER TABLE public.order_items  ENABLE TRIGGER ALL;
@@ -373,13 +478,22 @@ eq C0 "o lote de paridade passa por 14 motivos distintos" "$NSTAT" "14"
 # ZONA 3 — a migration REAL (cópia, onde a sabotagem age)
 # Duas migrations: a original (20261020233000) e a de desempenho (20261021021500), que redefine o helper do
 # lote. A sabotagem age nas DUAS cópias (o helper existe nas duas); `sabotar_d` só na de desempenho.
-MIGC="$TMPD/mig.sql"; MIGD="$TMPD/mig-desempenho.sql"
-cp "$MIG_ORIG" "$MIGC"; cp "$MIG_DESEMP" "$MIGD"
+MIGC="$TMPD/mig.sql"; MIGD="$TMPD/mig-desempenho.sql"; MIGS="$TMPD/mig-substituicao.sql"
+cp "$MIG_ORIG" "$MIGC"; cp "$MIG_DESEMP" "$MIGD"; cp "$MIG_SUBST" "$MIGS"
 md5de() { cat "$@" | { md5 -q 2>/dev/null || md5sum | cut -d' ' -f1; }; }
-sabotar() { # $1 = sed; exige que o sed MUDE os arquivos (sabotagem que não casa = teatro)
-  local antes; antes="$(md5de "$MIGC" "$MIGD")"
-  sed -i.bak -E "$1" "$MIGC" "$MIGD"
-  [ "$antes" != "$(md5de "$MIGC" "$MIGD")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
+# a trava/PÓS por md5 da substituição vira NOTICE para o corpo sabotado chegar ao banco (o dente é o do ASSERT)
+desliga_md5_s() { sed -i.bak -E "s/RAISE EXCEPTION 'P(RE_TRAVA|OS): /RAISE NOTICE 'P\1: /g" "$MIGS"; }
+sabotar() { # $1 = sed nas TRÊS cópias (a substituição redefine os candidatos); exige que o sed MUDE os arquivos
+  local antes; antes="$(md5de "$MIGC" "$MIGD" "$MIGS")"
+  sed -i.bak -E "$1" "$MIGC" "$MIGD" "$MIGS"
+  [ "$antes" != "$(md5de "$MIGC" "$MIGD" "$MIGS")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada"; exit 2; }
+  desliga_md5_s
+}
+sabotar_s() { # só na migration da substituição
+  local antes; antes="$(md5de "$MIGS")"
+  sed -i.bak -E "$1" "$MIGS"
+  [ "$antes" != "$(md5de "$MIGS")" ] || { echo "INFRA: sabotagem '$SABOTAGEM' não casou nada (substituição)"; exit 2; }
+  desliga_md5_s
 }
 sabotar_d() { # só na migration de desempenho
   local antes; antes="$(md5de "$MIGD")"
@@ -410,17 +524,37 @@ case "${SABOTAGEM:-}" in
                    sabotar_d "s/RAISE EXCEPTION 'POS/RAISE NOTICE 'POS/g" ;;
   pre_config)      ;;   # age entre as duas migrations (abaixo)
   pos_janela)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/' ;;
+  # ── substituição (20261031233000) ──
+  sem_convive)     sabotar_s 's/BETWEEN x\.data_ancora - 365 AND x\.data_ancora\)\)$/BETWEEN x.data_ancora - 365 AND x.data_ancora - 100000))/' ;;
+  janela_366)      sabotar_s 's/BETWEEN x\.data_ancora - 365 AND/BETWEEN x.data_ancora - 366 AND/' ;;
+  embalagem)       sabotar_s "s/'\[A-Z\]\+\[0-9\]\?\\$', ''\) AS base/'^\\$', '') AS base/" ;;
+  familia_larga)   sabotar_s 's/WHERE op\.account = .oben. AND op\.familia = ANY \(v_familias_substituiveis\)$/WHERE op.account = '"'"'oben'"'"'/; s/WHERE c\.parado IS TRUE AND c\.familia = ANY \(v_familias_substituiveis\)\)$/WHERE c.parado IS TRUE)/' ;;
+  parado_borda)    sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) >= 2 * b.cadencia_dias END AS parado/' ;;
+  cadencia_null)   sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) > 2 * b.cadencia_dias ELSE false END AS parado/' ;;
+  sub_sugerido)    sabotar_s "s/CASE WHEN f\.situacao = 'substituido' THEN NULL ELSE f\.sugerido END AS sugerido_final/f.sugerido AS sugerido_final/" ;;
+  sub_valor)       sabotar_s "s/CASE WHEN f\.situacao IS DISTINCT FROM 'substituido'$/CASE WHEN true/" ;;
+  escolha_sub)     sabotar_s 's/s\.omie_codigo_produto, s\.n_dias DESC, s\.ultima DESC, s\.sku_sub$/s.omie_codigo_produto, s.n_dias ASC, s.ultima DESC, s.sku_sub/' ;;
+  ordem_valor)     sabotar_s "s/ORDER BY CASE g\.situacao WHEN 'comprando' THEN 0 WHEN 'parado' THEN 1 WHEN 'substituido' THEN 2 ELSE 3 END,/ORDER BY/" ;;
+  pre_trava)       ;;   # age entre a de desempenho e a da substituição (abaixo)
   *) echo "INFRA: sabotagem desconhecida $SABOTAGEM"; exit 2 ;;
 esac
 # pre_config: deriva de search_path no helper ANTES da migration de desempenho — a PRE tem de recusar
 DERIVA=":"; [ "${SABOTAGEM:-}" = "pre_config" ] && DERIVA="P -q -c 'ALTER FUNCTION private._venda_repasse_base(uuid) SET search_path = pg_catalog, public'"
-if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && eval "$DERIVA" && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1; then
-  ok "MIG migrations aplicaram (repasse + desempenho; PRE+CREATE+POS)"
+# pre_trava: deriva do CORPO dos candidatos ANTES da substituição (apply manual divergente) — a trava tem de recusar
+DERIVA_S=":"; [ "${SABOTAGEM:-}" = "pre_trava" ] && DERIVA_S="P -q -c \"DO \\\$d\\\$ BEGIN EXECUTE replace(pg_get_functiondef('public.venda_repasse_candidatos()'::regprocedure), 'RETURN v_out;', 'RETURN v_out; -- deriva'); END \\\$d\\\$\""
+MD5_CAND_PRE="(nao mediu)"
+if P -q -f "$MIGC" >"$TMPD/mig.out" 2>&1 && eval "$DERIVA" && P -q -f "$MIGD" >>"$TMPD/mig.out" 2>&1 \
+   && MD5_CAND_PRE="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid='public.venda_repasse_candidatos()'::regprocedure")" \
+   && eval "$DERIVA_S" && P -q -f "$MIGS" >>"$TMPD/mig.out" 2>&1; then
+  ok "MIG migrations aplicaram (repasse + desempenho + substituição; PRE+CREATE+POS)"
 else
   bad "MIG migration não aplicou: $(grep -m1 -E 'ERROR' "$TMPD/mig.out" | cut -c1-200)"
   echo "RESULTADO: $PASS ok / $FAIL fail"; exit 1
 fi
-if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar as migrations é seguro (PRE aceita este corpo)"
+# o predecessor do repo é o corpo medido na prod (psql-ro 2026-10-31) — a trava da substituição o aceita
+eq H2 "venda_repasse_candidatos antes da substituição = corpo medido na prod" "$MD5_CAND_PRE" "922cf8b1efcb82f45a6d962ff7e7de96"
+if P -q -f "$MIGC" >"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGD" >>"$TMPD/mig2.out" 2>&1 && P -q -f "$MIGS" >>"$TMPD/mig2.out" 2>&1 \
+   && P -q -f "$MIGS" >>"$TMPD/mig2.out" 2>&1; then ok "MIG2 re-colar as migrations é seguro (PRE aceita este corpo)"
 else bad "MIG2 re-colar falhou: $(grep -m1 ERROR "$TMPD/mig2.out" | cut -c1-200)"; fi
 eq H1 "get_defasagem_cliente: volatilidade/secdef/search_path/ACL preservados" \
   "$(Pq -c "SELECT provolatile::text||'|'||prosecdef::text||'|'||coalesce(array_to_string(proconfig,','),'-')||'|'||coalesce((SELECT string_agg(a::text, ',' ORDER BY a::text) FROM unnest(proacl) a),'NULL') FROM pg_proc WHERE oid='public.get_defasagem_cliente(jsonb,uuid)'::regprocedure")" \
@@ -456,6 +590,38 @@ eq CAND3 "R4 abaixo do piso: só o SINAL, sem sugerido" "$(cand 7104 abaixo_piso
 eq C6 "Colacor, tinta, tinta NULL e dia sem preço nunca são candidatos" \
   "$(como "$MST" "SELECT coalesce(string_agg(e->>'omie_codigo_produto', ',' ORDER BY e->>'omie_codigo_produto'), 'nenhum') FROM jsonb_array_elements(public.venda_repasse_candidatos()) e WHERE (e->>'omie_codigo_produto')::bigint IN (7102, 7103, 7105, 7106)")" \
   "nenhum"
+
+# SUB — substituição (20261031233000): situação de compra, substituto e sugestão
+sub() { # $1 = semente do comprador (md5('vs:…')), $2 = SKU, $3 = expressão sobre e (o candidato)
+  como "$MST" "SELECT coalesce(string_agg($3, '#'), '(sem candidato)') FROM jsonb_array_elements(public.venda_repasse_candidatos()) e WHERE (e->>'omie_codigo_produto')::bigint = $2 AND (e->>'comprador_id')::uuid = md5('vs:$1')::uuid"
+}
+SIT="coalesce(e->>'situacao_compra','(null)')||'|'||coalesce(e#>>'{substituto,omie_codigo_produto}','(null)')"
+eq SUB1 "Lohan: 4128 parou, 4080 entrou (9 dias, parte pelo alias; 8040 1 dia) → substituído por 4080" \
+  "$(sub lohan 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')||'|'||(e#>>'{substituto,primeira_compra}')||'|'||(e->>'dias_sem_comprar')")" \
+  "substituido|9402|9|$(Pq -c "SELECT $HOJE - 130")|140"
+eq SUB2 "substituído não é repasse: sem sugerido e sem valor anual; a defasagem fica" \
+  "$(sub lohan 9401 "coalesce(e->>'preco_sugerido','(null)')||'|'||coalesce(e->>'valor_anual_recuperavel','(null)')||'|'||(e->>'status_defasagem')")" \
+  "(null)|(null)|defasado"
+eq SUB3 "Móveis & Cia: 4128 parou, 4080 UMA vez depois → substituído" "$(sub moveis-cia 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')")" "substituido|9402|1"
+eq SUB4 "convive e segue comprando (irmão novo não importa) → comprando, sugerido fica" \
+  "$(sub convive-comprando 9401 "$SIT||'|'||(e->>'preco_sugerido')")" "comprando|(null)|133.33"
+eq SUB5 "convive e parou (8040 já era comprado antes) → parado, sem substituto, sugerido fica" \
+  "$(sub convive-parado 9401 "$SIT||'|'||(e->>'preco_sugerido')")" "parado|(null)|133.33"
+eq SUB6 "mesma base em outra embalagem (4128LT → 4128L5) não é substituto → parado" "$(sub embalagem 9401 "$SIT")" "parado|(null)"
+eq SUB7 "família larga (catalisador) não prova substituição → parado" "$(sub catalisador 9411 "$SIT")" "parado|(null)"
+eq SUB8 "sem cadência: não afirma situação nem substituto; sugerido fica (ausente ≠ zero)" \
+  "$(sub sem-cadencia 9401 "$SIT||'|'||(e->>'preco_sugerido')")" "(null)|(null)|133.33"
+eq SUB9 "irmão comprado 366 d antes da última compra (fora da janela) e depois → substituído" "$(sub janela-fora 9401 "$SIT")" "substituido|9405"
+eq SUB10 "irmão comprado 365 d antes da última compra (dentro da janela) → convivia → parado" "$(sub janela-dentro 9401 "$SIT")" "parado|(null)"
+eq SUB11 "28 d sem comprar com cadência 14 (= 2×) ainda é comprando" "$(sub borda-comprando 9401 "$SIT")" "comprando|(null)"
+eq SUB12 "29 d sem comprar com cadência 14 (> 2×) e irmão novo → substituído" "$(sub borda-parado 9401 "$SIT")" "substituido|9402"
+eq SUB13 "irmão sem código na descrição não prova base → parado" "$(sub sem-codigo 9401 "$SIT")" "parado|(null)"
+eq SUB14 "ordem: comprando → parado → substituído → sem cadência (inversões | classes presentes)" \
+  "$(como "$MST" "WITH t AS (SELECT o, CASE e->>'situacao_compra' WHEN 'comprando' THEN 0 WHEN 'parado' THEN 1 WHEN 'substituido' THEN 2 ELSE 3 END AS r FROM jsonb_array_elements(public.venda_repasse_candidatos()) WITH ORDINALITY x(e, o)) SELECT count(*) FILTER (WHERE r < lag_r)||'|'||(SELECT count(DISTINCT r) FROM t) FROM (SELECT r, lag(r) OVER (ORDER BY o) AS lag_r FROM t) y")" \
+  "0|4"
+eq SUB15 "substituto expõe exatamente as 6 chaves" \
+  "$(sub lohan 9401 "(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e->'substituto') k)")" \
+  "codigo,descricao,dias_com_compra,omie_codigo_produto,primeira_compra,ultima_compra"
 
 # C3 — aprovação recusa
 VAL="$HOJE + 30"
@@ -563,8 +729,10 @@ eq ACL3 "helpers privados fechados a authenticated" \
 # authenticated/authenticator). Incidente 2026-10-21: o corpo com autojunção levou 29 s aqui e deu 500 na prod.
 P -q <<'SQL' >/dev/null
 SET session_replication_role = replica;
-INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, is_tintometric)
-  SELECT 600000+s, (600000+s)::text, 'p'||s, 'oben', false FROM generate_series(1,400) s;
+-- família substituível com código na descrição + cadência 10 (todos PARADOS): exercita o 2º passe da substituição
+INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, is_tintometric, familia)
+  SELECT 600000+s, (600000+s)::text, 'DILUENTE PU DX.'||lpad(s::text, 4, '0')||'LT', 'oben', false, 'Diluente PU'
+    FROM generate_series(1,400) s;
 INSERT INTO public.inventory_position (omie_codigo_produto, cmc, account, synced_at)
   SELECT 600000+s, 80, 'oben', now() FROM generate_series(1,400) s;
 INSERT INTO public.cmc_snapshot (omie_codigo_produto, account, data_posicao, cmc, synced_at)
@@ -579,7 +747,7 @@ INSERT INTO public.sales_orders (id, customer_user_id, created_by, account, stat
 INSERT INTO public.order_items (sales_order_id, customer_user_id, omie_codigo_produto, quantity, unit_price, discount, desconto_valor)
   SELECT id, cli, cod, 10, 100, 0, 0 FROM ped;
 INSERT INTO public.venda_recompra (comprador_id, empresa, omie_codigo_produto, n_pedidos, cadencia_dias, qtd_sugerida, ultima_compra, ultimo_preco, data_referencia, calculado_em)
-  SELECT DISTINCT ON (cli, cod) cli, 'oben', cod, 9, 30, 10, dia, 100, (now() AT TIME ZONE 'America/Sao_Paulo')::date, now() FROM ped LIMIT 1400;
+  SELECT DISTINCT ON (cli, cod) cli, 'oben', cod, 9, 10, 10, dia, 100, (now() AT TIME ZONE 'America/Sao_Paulo')::date, now() FROM ped LIMIT 1400;
 SET session_replication_role = origin;
 ANALYZE;
 SQL
