@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **720** custom migrations totais
-- **2354** objetos esperados (criados por estas migrations)
+- **721** custom migrations totais
+- **2355** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 882
+  - `function`: 883
   - `rls_policy`: 495
   - `index`: 319
   - `table`: 213
@@ -5890,6 +5890,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tsc_latest` | `tint_staging_corantes` |
 | `index` | `public.idx_tsc_latest_custo` | `tint_staging_corantes` |
 | `index` | `public.idx_tss_chave` | `tint_staging_skus` |
+
+### `20261030233200_radar_amostra_vigente_leitura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_amostra_vigente` | — |
 
 ## Próximos passos por status
 

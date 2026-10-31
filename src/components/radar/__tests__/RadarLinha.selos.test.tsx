@@ -137,3 +137,16 @@ describe('RadarLinha — em atendimento', () => {
     expect(screen.queryByTestId('radar-atendimento')).toBeNull();
   });
 });
+
+describe('RadarLinha — selo da amostra de controle', () => {
+  it('sorteado da amostra ganha o selo "amostra" com o sorteio no título', () => {
+    render(<RadarLinha empresa={empresa({})} hojeISO="2026-10-20" selecionada={false} onSelecionar={() => {}} onAbrir={() => {}} lote={LOTE} amostra="coorte-2026-10" />);
+    expect(screen.getByTestId('selo-amostra').textContent).toBe('amostra');
+    expect(screen.getByTestId('selo-amostra').getAttribute('title')).toContain('coorte-2026-10');
+  });
+
+  it('lead fora da amostra: sem selo', () => {
+    renderLinha(empresa({}), LOTE);
+    expect(screen.queryByTestId('selo-amostra')).toBeNull();
+  });
+});
