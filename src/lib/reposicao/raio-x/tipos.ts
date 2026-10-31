@@ -71,7 +71,7 @@ export interface ItemRaioX extends FatoSku {
 }
 
 /** Linha de `raio_x_coorte_top`: valor congelado pelo SERVIDOR (saldo × cmc no congelamento; null = sem custo). */
-export interface MembroCoorte {
+interface MembroCoorte {
   posicao: number;
   valor: number | null;
 }

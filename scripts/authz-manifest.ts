@@ -51,6 +51,13 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'decisão do Raio-X: foto de custo (saldo×cmc) + tirar/restaurar o SKU no motor de compras',
   },
+  // 2026-10-31 — coorte do Top 61 do Raio-X: grava uma vez por empresa o valor (saldo×cmc) lido de
+  // inventory_position como DEFINER. Mesmo gate de custo do raio_x_decidir.
+  'public.raio_x_congelar_coorte': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'congelamento da coorte do Top 61 do Raio-X: foto de custo (saldo×cmc) por SKU',
+  },
   // 2026-10-18 — giro de estoque por SKU (aba Ciclo, frente 3). Mesmo gate de custo do
   // fin_estimar_estoque_omie que ela substitui no engine/diálogo (service_role OU cap_custo_ler).
   'public.fin_estoque_giro_valor': {
