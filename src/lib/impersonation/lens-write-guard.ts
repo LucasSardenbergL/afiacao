@@ -30,6 +30,8 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_atendimentos_ativos',
   'radar_telefone_compartilhado',
   'radar_estado_cadastro_omie',
+  // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
+  'radar_amostra_vigente',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

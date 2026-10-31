@@ -599,6 +599,10 @@ db/test-radar-score.sh                      24  falsificar=17
 # outra rota, ledger que derruba o contato, coorte sorteada sem versão, não determinística, duplicada sob
 # concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated.
 db/test-radar-placar.sh                     25  falsificar=19
+# Radar: a fila lê a AMOSTRA de controle (20261030233200). Defeito aqui = RPC sem o gate do Radar, topo vazando
+# junto com a amostra, sorteio antigo no lugar do vigente, anon executando, RPC sem SECURITY DEFINER (0 linhas
+# sob RLS) e radar_coorte_controle aberta ao front direto.
+db/test-radar-amostra-vigente.sh             7  falsificar=7
 # Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
 # (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
 # cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.

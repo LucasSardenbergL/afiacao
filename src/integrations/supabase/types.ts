@@ -23221,6 +23221,15 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_amostra_vigente: {
+        Args: never
+        Returns: {
+          cnpj: string
+          grupo: string
+          posicao: number
+          sorteio: string
+        }[]
+      }
       radar_aplicar_situacao: {
         Args: { p_agora?: string; p_lote: string }
         Returns: Json
