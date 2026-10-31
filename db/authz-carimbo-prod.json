@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T12:46:11.502Z",
-  "sourceHead": "30c70ea71ddbc760b091a1d68d97164905cdc999",
+  "medidoEm": "2026-10-31T13:10:07.884Z",
+  "sourceHead": "e5a3973386792e914eddbe994e94b3f7f81956da",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -77,25 +77,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 443 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@8a2e55542 (fetch ok) · prod 2026-10-31 12:46:36.736922Z",
-      "contratoFingerprint": "f7c97d0eb804130041e609a823b5804ea51bf2cee6d551c9d0638912bf621f21",
-      "auditorFingerprint": "b1b1d82764907d277cfd14f0bbe9a1b49cbf9e6c395a84e53b7210591476ecde",
-      "achados": [
-        {
-          "id": "d476dca355bff500",
-          "linha": "❌ [SEM_PAR] registrar_contato_radar(text,text,text): corpo que nem o último CREATE (20261019225545_radar_rpcs_cnpj_alfanumerico.sql) nem o patch aceito (20261029201200_radar_acesso_vendedor.sql) explicam (xmin 13313895)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        },
-        {
-          "id": "4694ada7cfaf98a6",
-          "linha": "❌ [SEM_PAR] desfazer_contato_radar(uuid): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260612130000_radar_rpcs_contato.sql (xmin 13313895)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        }
-      ]
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 443 identidade(s) batem com o repo (364 em dia, 65 só cosméticas, 13 aceitas na baseline) e 21 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 443 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@456a36de2 (fetch ok) · prod 2026-10-31 13:10:34.680392Z",
+      "contratoFingerprint": "25c6104c80c4b6fbdcd3c9cb224b86ded924e72b8ce78b5c86e7be44ec0598dd",
+      "auditorFingerprint": "930dd6f14617094e6bc27050765d11dac8235189a6f8e0e988854f0e4cc4611a",
+      "achados": []
     }
   }
 }

@@ -381,17 +381,6 @@
       "desde": "2026-10-30"
     },
     {
-      "funcao": "registrar_contato_radar",
-      "identidade": "text,text,text",
-      "classe": "PATCH",
-      "patch": "20261029201200_radar_acesso_vendedor.sql",
-      "efeito": "ALTERA",
-      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
-      "md5": "658d383c7f34f97427aacb053714ea3e",
-      "md5Tokens": "b6a279661c828989ce3aec0aa35f8e4f",
-      "desde": "2026-10-30"
-    },
-    {
       "funcao": "radar_atribuir_tarefa",
       "identidade": "text,integer",
       "classe": "PATCH",

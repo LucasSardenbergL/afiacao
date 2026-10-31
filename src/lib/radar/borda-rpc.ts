@@ -17,9 +17,16 @@ export function lerRegistroComDedupe(v: Json, fonte: string): { id: string; dedu
   return { id, deduped };
 }
 
-/** `desfazer_contato_radar`: `{deleted}`. */
-export function lerDesfazer(v: Json, fonte: string): { deleted: boolean } {
-  const { deleted } = objeto(v, fonte);
+/**
+ * `desfazer_contato_radar`: `{deleted, status_restaurado}`. Três estados em `statusRestaurado`: `true` (o contato era o
+ * dono do status e ele voltou), `false` (registro removido, status preservado — outro escreveu depois) e `null`
+ * (banco anterior à 20261031111000, que não informa: nunca se afirma uma coisa nem outra).
+ */
+export function lerDesfazer(v: Json, fonte: string): { deleted: boolean; statusRestaurado: boolean | null } {
+  const { deleted, status_restaurado } = objeto(v, fonte);
   if (typeof deleted !== 'boolean') throw new Error(`${fonte}: resposta fora da forma {deleted}`);
-  return { deleted };
+  if (status_restaurado !== undefined && typeof status_restaurado !== 'boolean') {
+    throw new Error(`${fonte}: resposta fora da forma {status_restaurado}`);
+  }
+  return { deleted, statusRestaurado: status_restaurado ?? null };
 }

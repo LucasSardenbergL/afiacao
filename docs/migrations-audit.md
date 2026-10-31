@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **721** custom migrations totais
-- **2355** objetos esperados (criados por estas migrations)
+- **723** custom migrations totais
+- **2364** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 883
+  - `function`: 888
   - `rls_policy`: 495
   - `index`: 319
   - `table`: 213
   - `cron_job`: 200
   - `view`: 127
-  - `trigger`: 114
+  - `trigger`: 118
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5827,6 +5827,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_radar_evento_cadastro` | `radar_empresas` |
 | `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
 
+### `20261029165429_reposicao_desconsolidar_ao_religar_sku.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.trg_sku_parametros_desconsolidar_ao_religar` | — |
+| `function` | `public.trg_sku_substituicao_exige_antigo_fora_do_motor` | — |
+| `trigger` | `public.sku_parametros_desconsolidar_ao_religar` | `sku_parametros` |
+| `trigger` | `public.sku_substituicao_exige_antigo_fora_do_motor` | `sku_substituicao` |
+
 ### `20261029170140_radar_penetracao_e_concorrentes.sql`
 
 | Tipo | Objeto | Parent |
@@ -5896,6 +5905,16 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.radar_amostra_vigente` | — |
+
+### `20261031111000_radar_contato_integridade.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_empresas_status_guard` | — |
+| `function` | `public.registrar_contato_radar` | — |
+| `function` | `public.desfazer_contato_radar` | — |
+| `trigger` | `public.trg_radar_status_guard_upd` | `radar_empresas` |
+| `trigger` | `public.trg_radar_status_guard_ins` | `radar_empresas` |
 
 ## Próximos passos por status
 
