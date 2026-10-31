@@ -108,3 +108,36 @@ describe('RaioXCaixaLiberado', () => {
     expect(linhaRecomprado.textContent).toContain('—');
   });
 });
+
+describe('pacote 2 — piso, custo de esperar e execução', () => {
+  it('liquidou abaixo do piso: lista clicável só onde a comparação é honesta (uma unidade de venda)', async () => {
+    const { decisao } = await import('@/lib/reposicao/raio-x/__tests__/fixtures');
+    const linhas = [
+      linha(1, { destino: 'liquidar', saldo_atual: 6, qtd_vendida: 4, receita: 32 }), // 8/un < piso 10
+      linha(2, { destino: 'liquidar', saldo_atual: 6, qtd_vendida: 4, receita: 32 }), // duas unidades: sem comparação
+      linha(3, { destino: 'liquidar', saldo_atual: 6, qtd_vendida: 4, receita: 48 }), // 12/un >= piso
+    ];
+    const decisoes = new Map([1, 2, 3].map((s) => [s, decisao(s, { destino: 'liquidar', preco_piso: 10 })]));
+    const unidadesVenda = new Map<number, string[] | null>([[1, ['UN']], [2, ['UN', 'CX']], [3, ['UN']]]);
+    const onFiltrarSku = vi.fn();
+    render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos}
+      onFiltrarSku={onFiltrarSku} decisoes={decisoes} unidadesVenda={unidadesVenda} />);
+    expect(screen.getByText('Liquidou abaixo do preço piso')).toBeTruthy();
+    const itens = screen.getAllByRole('button', { name: /vendido a/ });
+    expect(itens).toHaveLength(1);
+    expect(itens[0].textContent).toContain('A1');
+    fireEvent.click(itens[0]);
+    expect(onFiltrarSku).toHaveBeenCalledWith(1);
+  });
+
+  it('placar: custo de esperar e execução; sem taxa (null) não mostra número', () => {
+    const p = placar([], new Map());
+    const execucao = { executaveis: 4, concluidas: 1, vencidas: 2, semResponsavel: 1 };
+    const { rerender } = render(<RaioXPlacar placar={p} custoPendenteMes={1234} execucao={execucao} />);
+    expect(screen.getByTestId('placar-custo-esperar').textContent).toMatch(/1\.234/);
+    expect(screen.getByTestId('placar-execucao').textContent).toBe('Execução: 1 de 4 executadas · 2 vencida(s) · 1 sem responsável');
+    rerender(<RaioXPlacar placar={p} custoPendenteMes={null} execucao={{ executaveis: 0, concluidas: 0, vencidas: 0, semResponsavel: 0 }} />);
+    expect(screen.queryByTestId('placar-custo-esperar')).toBeNull();
+    expect(screen.queryByTestId('placar-execucao')).toBeNull();
+  });
+});

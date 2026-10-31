@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { medir } from '@/lib/reposicao/raio-x/medir';
-import type { Empresa, LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
-import { fmtReais } from './formato';
+import { alertaPiso, type AlertaPiso } from '@/lib/reposicao/raio-x/execucao';
+import type { DecisaoRow, Empresa, LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
+import { fmtReais, fmtValorFino } from './formato';
 
 const META_CAIXA = 60000;
 const META_TEXTO = 'R$ 60.000';
@@ -16,6 +17,10 @@ interface Props {
   /** sku_codigo_omie → código legível (só para exibir a contradição). */
   codigos: Map<number, string>;
   onFiltrarSku: (sku: number) => void;
+  /** Decisões vigentes (piso do liquidar). Opcional: sem elas, não há alerta de piso. */
+  decisoes?: Map<number, DecisaoRow>;
+  /** sku → unidades de venda (fatos). SKU fora dos fatos não compara com o piso. */
+  unidadesVenda?: Map<number, string[] | null>;
 }
 
 // Ausente ≠ zero: null vira "—", nunca "R$ 0".
@@ -45,8 +50,16 @@ function Linha({ rotulo, valor, nota }: { rotulo: string; valor: number | null; 
  * crédito de troca informado. Nenhuma delas é "caixa", e a tela nunca as soma com esse nome. A barra da meta usa
  * o critério da fase B (estoque reduzido + crédito informado), rotulado como critério. NUNCA soma com o DIO.
  */
-export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, onFiltrarSku }: Props) {
+export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, onFiltrarSku, decisoes, unidadesVenda }: Props) {
   const m = useMemo(() => (linhas ? medir(linhas, empresa) : null), [linhas, empresa]);
+  // Venda real abaixo do piso do liquidar — só onde a comparação é honesta (mesma unidade, venda desde a foto).
+  const abaixoDoPiso = useMemo<AlertaPiso[]>(
+    () =>
+      (linhas ?? [])
+        .map((l) => alertaPiso(l, decisoes?.get(l.sku_codigo_omie), unidadesVenda?.get(l.sku_codigo_omie)))
+        .filter((a): a is AlertaPiso => a !== null && a.abaixo),
+    [linhas, decisoes, unidadesVenda],
+  );
 
   if (erro) {
     const semPermissao = (erro as { code?: string }).code === '42501';
@@ -121,6 +134,25 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
                   onClick={() => onFiltrarSku(c.sku_codigo_omie)}
                 >
                   {codigos.get(c.sku_codigo_omie) ?? `SKU ${c.sku_codigo_omie}`} · {ROTULOS[c.destino] ?? c.destino} · pedido em {c.pedido_em.slice(0, 10)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {abaixoDoPiso.length > 0 && (
+        <div className="space-y-1">
+          <div className="text-sm font-medium text-status-warning">Liquidou abaixo do preço piso</div>
+          <ul className="space-y-1">
+            {abaixoDoPiso.map((a) => (
+              <li key={a.sku_codigo_omie}>
+                <button
+                  type="button"
+                  className="text-left text-sm underline-offset-2 hover:underline"
+                  onClick={() => onFiltrarSku(a.sku_codigo_omie)}
+                >
+                  {codigos.get(a.sku_codigo_omie) ?? `SKU ${a.sku_codigo_omie}`} · vendido a {fmtValorFino(a.preco)} · piso {fmtValorFino(a.piso)}
                 </button>
               </li>
             ))}

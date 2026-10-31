@@ -174,6 +174,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'congela a coorte do Top 61 do Raio-X (foto de custo por SKU); gate private.cap_custo_ler',
   },
+  'public.raio_x_planejar': {
+    fechadaPor: '20261031180000_raio_x_plano_execucao.sql',
+    permitido: PORTA_GATE,
+    motivo: 'plano de execução da decisão do Raio-X (piso, canal, responsável, prazo); gate private.cap_custo_ler',
+  },
   'public.fin_estoque_giro_valor': {
     fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
     permitido: PORTA_GATE,

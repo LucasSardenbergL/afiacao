@@ -5,7 +5,9 @@
 // passa por guarda e lança fora do vocabulário; o resto é atribuição estrutural, checada pelo TS.
 import type { Database, Json, Tables } from '@/integrations/supabase/types';
 import { DESTINOS } from './classificar';
+import { CANAIS } from './execucao';
 import type {
+  CanalLiquidacao,
   Categoria,
   ClassificacaoManual,
   ClienteComprador,
@@ -31,6 +33,11 @@ function ehDestino(s: string): s is Destino {
 function exigirDestino(s: string, sku: number): Destino {
   if (!ehDestino(s)) throw new Error(`raio-x: destino "${s}" desconhecido (SKU ${sku})`);
   return s;
+}
+function exigirCanal(s: string, sku: number): CanalLiquidacao {
+  const c = CANAIS.find((x) => x === s);
+  if (!c) throw new Error(`raio-x: canal "${s}" desconhecido (SKU ${sku})`);
+  return c;
 }
 function exigirEmpresa(s: string, sku: number): Empresa {
   if (s !== 'oben' && s !== 'colacor') throw new Error(`raio-x: empresa "${s}" fora de oben/colacor (SKU ${sku})`);
@@ -61,6 +68,14 @@ export function comoDecisaoRow(r: Tables<'raio_x_decisao'>): DecisaoRow {
     empresa: exigirEmpresa(r.empresa, r.sku_codigo_omie),
     destino: r.destino === null ? null : exigirDestino(r.destino, r.sku_codigo_omie),
     origem,
+    // Colunas do pacote 2: `?? null` porque o bundle pode ir ao ar ANTES da migration (Publish ≠ db:aplicar) —
+    // coluna inexistente chega undefined e não pode derrubar a aba nem virar "canal desconhecido".
+    preco_piso: r.preco_piso ?? null,
+    canal_liquidacao: r.canal_liquidacao == null ? null : exigirCanal(r.canal_liquidacao, r.sku_codigo_omie),
+    responsavel: r.responsavel ?? null,
+    prazo: r.prazo ?? null,
+    concluido_em: r.concluido_em ?? null,
+    concluido_por: r.concluido_por ?? null,
   };
 }
 

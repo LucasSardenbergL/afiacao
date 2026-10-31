@@ -7,6 +7,7 @@ const decisao: Tables<'raio_x_decisao'> = {
   decidido_em: null, decidido_por: null, destino: 'liquidar', empresa: 'oben', fornecedor_informado: null,
   foto_categoria: null, foto_cmc: null, foto_em: null, foto_saldo: null, foto_valor: null, motor_antes: null,
   observacao: null, origem: 'app', qtd_contada: null, sku_codigo_omie: 42, tirou_do_motor: false,
+  preco_piso: null, canal_liquidacao: null, responsavel: null, prazo: null, concluido_em: null, concluido_por: null,
 };
 
 describe('borda do Raio-X — o que o cast escondia agora lança nomeando o campo', () => {
@@ -16,6 +17,14 @@ describe('borda do Raio-X — o que o cast escondia agora lança nomeando o camp
     expect(() => comoDecisaoRow({ ...decisao, destino: 'doar' })).toThrow('destino "doar"');
     expect(() => comoDecisaoRow({ ...decisao, origem: 'planilha' })).toThrow('origem "planilha"');
     expect(() => comoDecisaoRow({ ...decisao, empresa: 'OBEN' })).toThrow('empresa "OBEN"');
+    expect(comoDecisaoRow({ ...decisao, canal_liquidacao: 'outlet_queima' }).canal_liquidacao).toBe('outlet_queima');
+    expect(() => comoDecisaoRow({ ...decisao, canal_liquidacao: 'leilao' })).toThrow('canal "leilao"');
+  });
+
+  it('bundle no ar antes da migration do pacote 2: colunas ausentes viram null, sem lançar', () => {
+    const { preco_piso: _a, canal_liquidacao: _b, responsavel: _c, prazo: _d, concluido_em: _e, concluido_por: _f, ...antiga } = decisao;
+    const r = comoDecisaoRow(antiga as Tables<'raio_x_decisao'>);
+    expect([r.preco_piso, r.canal_liquidacao, r.responsavel, r.prazo, r.concluido_em, r.concluido_por]).toEqual([null, null, null, null, null, null]);
   });
 
   it('clientes jsonb: lista bem formada vira ClienteComprador; elemento torto lança; null fica null', () => {

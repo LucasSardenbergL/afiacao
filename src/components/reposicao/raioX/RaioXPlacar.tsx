@@ -1,9 +1,16 @@
 import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import type { Placar } from '@/lib/reposicao/raio-x/placar';
+import type { ResumoExecucao } from '@/lib/reposicao/raio-x/execucao';
 import { fmtReais } from './formato';
 
 /** Placar da mercadoria parada. "Distorce o DIO" fica AO LADO do total — nunca somado a ele. */
-export function RaioXPlacar({ placar, coorteIndisponivel = false }: { placar: Placar; coorteIndisponivel?: boolean }) {
+export function RaioXPlacar({ placar, coorteIndisponivel = false, custoPendenteMes = null, execucao }: {
+  placar: Placar;
+  coorteIndisponivel?: boolean;
+  /** custo de capital do pendente por mês; null = sem taxa/sem pendente (não exibe número). */
+  custoPendenteMes?: number | null;
+  execucao?: ResumoExecucao;
+}) {
   const pct = placar.total > 0 ? Math.min(100, Math.round((placar.decidido / placar.total) * 100)) : 0;
   const destinos = Object.entries(placar.porDestino).filter(([, v]) => (v ?? 0) > 0);
   return (
@@ -21,6 +28,18 @@ export function RaioXPlacar({ placar, coorteIndisponivel = false }: { placar: Pl
           {placar.topDecididoN} de {placar.topN} decididos · {fmtReais(placar.topDecidido)} de {fmtReais(placar.topTotal)}
           {placar.topSemCustoN > 0 && ` · ${placar.topSemCustoN} sem custo (fora da soma)`}
         </p>
+        {custoPendenteMes !== null && (
+          <p data-testid="placar-custo-esperar" className="text-xs text-muted-foreground">
+            o pendente custa ~<span className="font-medium">{fmtReais(custoPendenteMes)}</span>/mês parado (custo de capital)
+          </p>
+        )}
+        {execucao && execucao.executaveis > 0 && (
+          <p data-testid="placar-execucao" className="text-xs text-muted-foreground">
+            Execução: {execucao.concluidas} de {execucao.executaveis} executadas
+            {execucao.vencidas > 0 && <> · <span className="font-medium text-status-error">{execucao.vencidas} vencida(s)</span></>}
+            {execucao.semResponsavel > 0 && <> · <span className="font-medium text-status-warning">{execucao.semResponsavel} sem responsável</span></>}
+          </p>
+        )}
         {placar.topZeradoN > 0 && (
           <p data-testid="placar-top-zerado" className="text-xs text-status-warning">
             {placar.topZeradoN} da coorte saíram do estoque sem decisão (saldo zerado) — seguem na meta, sem linha para decidir

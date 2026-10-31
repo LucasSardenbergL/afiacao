@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T14:47:00.850Z",
-  "sourceHead": "b72c651078abf22e16ccc1fb6a175ba58d8ef6f7",
+  "medidoEm": "2026-10-31T15:34:24.190Z",
+  "sourceHead": "6d9d8b5f2fc855b804c4b39ebe3eeccc7677beb9",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 69 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 70 definição(ões) lida(s) para 69 chave(s) da allowlist.",
-      "contratoFingerprint": "8c25106039e6bbbf1762d155fa542846da89bd46d384a93868fc0cab20ea9e66",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 70 definição(ões) lida(s) para 70 chave(s) da allowlist.",
+      "contratoFingerprint": "cb3074cfffad0da2f416a21e13fba64a3a61e0db39f6a4f14987a958725835ee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "86bce1749cb9d3e3",
+          "linha": "❌ public.raio_x_planejar — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_planejar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -29,12 +36,19 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 28 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 29 definição(ões) lida(s) para 28 chave(s) do manifest.",
-      "contratoFingerprint": "d4b89fa11e6adedd2241c32f8c95778914c6b582d4803ce95177acdefab076df",
+      "exit": 1,
+      "resumo": "authz:audit:prod — 1 divergência(s).",
+      "denominador": "🔎 authz:audit:prod — 29 definição(ões) lida(s) para 29 chave(s) do manifest.",
+      "contratoFingerprint": "279b9b7d94e55c72873605d054f9d23879f952a442e91eff2535c1379ae30321",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
-      "achados": []
+      "achados": [
+        {
+          "id": "d2cb3408d9b6e47c",
+          "linha": "❌ AUSENTE_EM_PROD: public.raio_x_planejar está no AUTHZ_MANIFEST e não existe no banco.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -63,19 +77,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 PATCH_NAO_CONCILIADO) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 444 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@eeb30778b (fetch ok) · prod 2026-10-31 14:47:27.888496Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 444 identidade(s) batem com o repo (366 em dia, 65 só cosméticas, 12 aceitas na baseline) e 21 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 444 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@43e817629 (fetch ok) · prod 2026-10-31 15:34:49.863555Z",
       "contratoFingerprint": "464f59de1727780dfcff0f3523bc163fdced3d3d7e4c45ef830e6c310ab93ee6",
       "auditorFingerprint": "29535ebadc8ee13811e69f394dde599672622ebceee98dd48266c6b233bc6079",
-      "achados": [
-        {
-          "id": "499e3b47b23456a2",
-          "linha": "❌ [PATCH_NAO_CONCILIADO] radar_kpis(): patch(es) por âncora posterior(es) ao último CREATE (20260927202603_fuso_sp_relogio_da_sessao_rpcs_views_des.sql) sem conciliação na baseline: 20261029201200_radar_acesso_vendedor.sql — confira se ALTERA (aceite o md5 de prod) ou SO_CITA (xmin 13323363)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        }
-      ]
+      "achados": []
     }
   }
 }

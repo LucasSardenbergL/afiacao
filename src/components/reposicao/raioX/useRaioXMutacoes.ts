@@ -1,5 +1,5 @@
 // Mutações do Raio-X (fase B, PR 3): decidir (money-path — `raio_x_decidir` pode mexer em sku_parametros,
-// o motor de compras), contar e classificar. Cada uma invalida o PREFIXO ['raio-x', empresa] (fatos,
+// o motor de compras), contar, classificar e planejar (pacote 2 — `raio_x_planejar`, só o plano de execução). Cada uma invalida o PREFIXO ['raio-x', empresa] (fatos,
 // decisões, manuais e o selo do pedido — Ruling S1) e avisa por toast. A empresa é a do ITEM, passada por
 // quem abriu, nunca relida do seletor na hora do clique.
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -9,16 +9,32 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { comNulo } from '@/lib/rpc-args';
 import type { DecidirArgs } from '@/lib/reposicao/raio-x/decisao';
-import type { Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
+import type { CanalLiquidacao, Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
+
+export interface PlanejarArgs {
+  sku: number;
+  precoPiso: number | null;
+  canal: CanalLiquidacao | null;
+  responsavel: string | null;
+  /** 'YYYY-MM-DD' */
+  prazo: string | null;
+  concluido: boolean;
+  /** atualizado_em da decisão que o formulário EDITOU (concorrência otimista — RX003 se mudou). */
+  atualizadoEm: string;
+}
 
 const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
 const MSG_RX001_RESTAURAR = 'Este SKU não tem mais parâmetro de reposição — não há motor para restaurar';
 const MSG_SEM_PERMISSAO = 'Sem permissão para decidir no Raio-X (exige acesso a custo).';
+const MSG_RX002 = 'Esta decisão foi desfeita — grave o destino antes do plano';
+const MSG_RX003 = 'Outra pessoa mudou esta decisão — recarregue antes de salvar a execução';
 
 /** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
 function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
   const code = (e as { code?: unknown } | null)?.code;
   if (code === 'RX001') toast.error(msgRx001);
+  else if (code === 'RX002') toast.error(MSG_RX002);
+  else if (code === 'RX003') toast.error(MSG_RX003);
   else if (code === '42501') toast.error(MSG_SEM_PERMISSAO);
   else toast.error(mensagemDeErro(e) ?? fallback);
 }
@@ -101,6 +117,37 @@ export function useRaioXMutacoes(empresa: Empresa) {
     onError: (e) => avisarErro(e, 'Não foi possível reclassificar.'),
   });
 
+  const mPlanejar = useMutation({
+    mutationFn: async ({ empresa, args }: { empresa: Empresa; args: PlanejarArgs }) => {
+      // Estado completo (como decidir): campo nulo LIMPA. A RPC (20261031180000, sem DEFAULT, não-STRICT) aceita NULL.
+      const params = comNulo<'raio_x_planejar', 'p_preco_piso' | 'p_canal' | 'p_responsavel' | 'p_prazo'>({
+        p_empresa: empresa,
+        p_sku: args.sku,
+        p_preco_piso: args.precoPiso,
+        p_canal: args.canal,
+        p_responsavel: args.responsavel,
+        p_prazo: args.prazo,
+        p_concluido: args.concluido,
+        p_atualizado_em: args.atualizadoEm,
+      });
+      const { error } = await supabase.rpc('raio_x_planejar', params);
+      if (error) throw error;
+    },
+    onSuccess: (_d, { empresa, args }) => {
+      void invalidar(empresa);
+      toast.success('Execução salva');
+      track('raio_x.plano', {
+        empresa,
+        tem_piso: args.precoPiso !== null,
+        canal: args.canal,
+        tem_responsavel: args.responsavel !== null,
+        tem_prazo: args.prazo !== null,
+        concluido: args.concluido,
+      });
+    },
+    onError: (e) => avisarErro(e, 'Não foi possível salvar a execução.'),
+  });
+
   /** Resolve `true` se gravou. Erro já virou toast; nunca rejeita. Número inválido não sai do cliente. */
   const decidir = async (args: DecidirArgs, acao: AcaoDecisao = 'decidir'): Promise<boolean> => {
     if (args.tirarDoMotor && args.restaurarMotor) {
@@ -143,10 +190,24 @@ export function useRaioXMutacoes(empresa: Empresa) {
     }
   };
 
+  const planejar = async (args: PlanejarArgs): Promise<boolean> => {
+    if (!numeroValido(args.precoPiso)) {
+      toast.error('Preço piso inválido.');
+      return false;
+    }
+    try {
+      await mPlanejar.mutateAsync({ empresa, args });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   return {
     decidir,
     contar,
     classificar,
-    pendente: mDecidir.isPending || mContar.isPending || mClassificar.isPending,
+    planejar,
+    pendente: mDecidir.isPending || mContar.isPending || mClassificar.isPending || mPlanejar.isPending,
   };
 }
