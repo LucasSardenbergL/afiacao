@@ -155,11 +155,29 @@ export interface Lote {
 
 export function rodarLote(dados: Dados, cg: Congelado, reps: readonly number[], cacheDir?: string | null): Lote {
   const mapas = mapasDaAvaliacao(dados, cg, cacheDir);
-  const janela: [string, string] = [JANELAS.avaliacaoIni, JANELAS.avaliacaoFim];
   const lote: Lote = { n: 0, somas: {}, porRep: {} };
-  const cens = cenariosDaAvaliacao();
+  for (const rep of reps) rodarRep(lote, dados, cg, mapas, rep);
+  return lote;
+}
+
+/**
+ * O mesmo lote de `rodarLote`, na mesma ordem de soma, mas devolvendo o event loop entre as repetições: no worker do
+ * vitest, minutos de CPU síncrona sem ceder estouram o RPC `onTaskUpdate` (job `testes` do #3411, 2 tentativas).
+ */
+async function rodarLoteCedendo(dados: Dados, cg: Congelado, reps: readonly number[], cacheDir?: string | null): Promise<Lote> {
+  const mapas = mapasDaAvaliacao(dados, cg, cacheDir);
+  const lote: Lote = { n: 0, somas: {}, porRep: {} };
   for (const rep of reps) {
-    for (const c of cens) {
+    await new Promise<void>((ok) => setImmediate(ok));
+    rodarRep(lote, dados, cg, mapas, rep);
+  }
+  return lote;
+}
+
+function rodarRep(lote: Lote, dados: Dados, cg: Congelado, mapas: ReturnType<typeof mapasDaAvaliacao>, rep: number): void {
+  const janela: [string, string] = [JANELAS.avaliacaoIni, JANELAS.avaliacaoFim];
+  {
+    for (const c of cenariosDaAvaliacao()) {
       const m = mapas[c.pop];
       const base = { rep, lt: c.lt, falta: c.falta, inicial: c.inicial, janela, dados, substituicao: c.sub, alterados: m.alterados };
       const s0 = simular({ ...base, formula: 'F0', params: m.f0 });
@@ -180,7 +198,6 @@ export function rodarLote(dados: Dados, cg: Congelado, reps: readonly number[], 
     }
     lote.n++;
   }
-  return lote;
 }
 
 function juntarLotes(a: Lote | null, b: Lote): Lote {
@@ -203,7 +220,7 @@ function juntarLotes(a: Lote | null, b: Lote): Lote {
 
 /** Lote em N processos filhos (cada um carrega os dados e lê as grades do cache em disco). */
 async function rodarLoteParalelo(dados: Dados, dir: string, cg: Congelado, reps: number[], paralelo: number, cacheDir?: string | null): Promise<Lote> {
-  if (paralelo <= 1) return rodarLote(dados, cg, reps, cacheDir);
+  if (paralelo <= 1) return rodarLoteCedendo(dados, cg, reps, cacheDir);
   const tmp = join(dir, 'tmp-lotes');
   mkdirSync(tmp, { recursive: true });
   const partes: number[][] = Array.from({ length: paralelo }, () => []);
