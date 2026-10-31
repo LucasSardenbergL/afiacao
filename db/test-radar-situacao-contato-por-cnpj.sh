@@ -168,7 +168,7 @@ acl() { P -tA -q -c "SELECT string_agg(has_function_privilege(r, 'public.radar_a
 # sessao <arquivo> <application_name> <-c sql…> — uma sessão em background (o "vendedor" ou o cron).
 sessao() {
   local out="$1" app="$2"; shift 2
-  PGAPPNAME="$app" P -v ON_ERROR_STOP=1 -tA -q "$@" > "$out" 2>&1 &
+  PGAPPNAME="$app" P -v ON_ERROR_STOP=1 -tA -q -c "SET client_min_messages = warning" "$@" > "$out" 2>&1 &
 }
 # esperar_app <application_name> — até a sessão anunciar que está pronta (máx. 10 s); imprime 1 ou 0.
 esperar_app() {
@@ -180,11 +180,14 @@ esperar_app() {
   printf 0
 }
 # O "vendedor" só age depois de VER o cron parado esperando trava (até 10 s); devolve t/f — o assert de que a corrida
-# aconteceu na ordem declarada (sem isto, uma prova verde podia não ter corrido nada).
+# aconteceu na ordem declarada (sem isto, uma prova verde podia não ter corrido nada). pg_stat_activity é um retrato
+# que vale até o fim da transação: sem pg_stat_clear_snapshot(), o laço (e o vendedor do R2, que está em BEGIN) relê
+# a foto velha e nunca vê o cron parar.
 VE_CRON_PARADO="DO \$v\$ BEGIN FOR i IN 1..200 LOOP
+    PERFORM pg_stat_clear_snapshot();
     EXIT WHEN EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'cron' AND wait_event_type = 'Lock');
     PERFORM pg_sleep(0.05); END LOOP; END \$v\$;"
-VIU_CRON_PARADO="SELECT 'viu=' || EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'cron' AND wait_event_type = 'Lock')"
+VIU_CRON_PARADO="SELECT pg_stat_clear_snapshot(); SELECT 'viu=' || EXISTS (SELECT 1 FROM pg_stat_activity WHERE application_name = 'cron' AND wait_event_type = 'Lock')"
 
 PASS=0; FAIL=0
 chk() {  # <id> <descrição> <obtido> <esperado>
