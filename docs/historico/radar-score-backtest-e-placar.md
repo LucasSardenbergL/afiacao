@@ -161,9 +161,9 @@ authenticated com tudo), para os REVOKE terem o que revogar.
 | Camada | Quem | Quando |
 | --- | --- | --- |
 | Migration `20261029150000` (versão da fórmula) | ✅ sessão, 2026-10-29 ~21:00 BRT, pelo MCP: ensaio (`ENSAIO_OK`, rollback conferido) → apply → psql-ro ✅ (corpo `c31dfcac…`, coluna, ACL, cron 225) | — |
-| 1ª rodada do cron com versão | cron 225 | 03:30 BRT seguinte; conferir que `pulados` = 0 e que toda linha com score tem `v3` |
+| 1ª rodada do cron com versão | ✅ cron 225, 2026-10-30 03:31 BRT: `sucesso`, `versao_formula` v3, 501.243 alterados, `pulados` 0, 115 s; psql-ro: 0 linhas com score sem versão | — |
 | Migration `20261029150100` (ledger, coortes, placar) | ✅ sessão, 2026-10-29 ~21:10 BRT, pelo MCP: ensaio (`ENSAIO_OK`, 4 s, 64.304 eventos) → apply → psql-ro ✅ (7 corpos com md5 igual ao arquivo, 4 triggers, ACL fechada) | — |
-| `SELECT public.radar_coorte_sortear(50);` | sessão (MCP) ou founder (SQL Editor) | **só depois** da 1ª rodada com versão (a função recusa antes) |
+| `SELECT public.radar_coorte_sortear(50);` | ✅ sessão (MCP), 2026-10-30 ~07:10 BRT: `coorte-2026-10` com **topo 536** (score 70–94) e **amostra 50** (40–66), todos `v3`; ledger `radar.coorte_sortear` `sucesso`; psql-ro confere | — |
 | Publish do Lovable | — | nenhum: não há front nesta entrega |
 | Mostrar a amostra na fila | **frente 1** (contrato na nota da pasta compartilhada) | sem isso a coorte fica registrada e nunca é contatada |
 
@@ -171,6 +171,11 @@ authenticated com tudo), para os REVOKE terem o que revogar.
 janelas de 7/30/60 dias, 0 aberturas; reconciliação toda zerada; `autorizados_agora` NULL (a cap da frente 2 ainda
 não existe); janelas marcadas `aberturas_janela_completa = false` (o ledger acabou de nascer). Bate com a medição de
 2026-10-28.
+
+**A amostra sorteada (2026-10-30):** MG 21 · SP 20 · ES 5 · PA 3 · RS 1. O universo "município com cliente" passa
+das UFs de atuação da frente 1 (`regiao='atuacao'`: MG, SP, RJ, ES, BA, GO, DF, MS). Os **4 leads de PA e RS ficam
+fora da lista padrão**. Eles continuam no denominador; quem mostrar a amostra precisa mostrá-los também, ou registrar
+que ficaram de fora.
 
 ## Follow-ups (fora desta frente)
 

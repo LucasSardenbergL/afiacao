@@ -27,12 +27,15 @@ const bunDoCi = (): string => {
 };
 
 describe("workflow radar-carga-mensal", () => {
-  it("[WF1] sonda semanal (segunda, 06:00 UTC = 03:00 BRT) + workflow_dispatch com mes e forcar", () => {
+  it("[WF1] sonda semanal (segunda, 06:00 UTC = 03:00 BRT) + workflow_dispatch com mes, forcar e so_concorrentes", () => {
     expect(wf.on?.schedule).toEqual([{ cron: "0 6 * * 1" }]);
     const inputs = wf.on?.workflow_dispatch?.inputs ?? {};
-    expect(Object.keys(inputs).sort()).toEqual(["forcar", "mes"]);
+    expect(Object.keys(inputs).sort()).toEqual(["forcar", "mes", "so_concorrentes"]);
     expect(inputs.forcar?.type).toBe("boolean");
     expect(inputs.forcar?.default).toBe(false);
+    // O agendamento nunca liga o modo só-concorrentes: só o disparo manual, com mês explícito.
+    expect(inputs.so_concorrentes?.type).toBe("boolean");
+    expect(inputs.so_concorrentes?.default).toBe(false);
   });
 
   it("[WF2] um job só, serializado por concurrency SEM cancelar a carga em andamento", () => {
@@ -75,9 +78,27 @@ describe("workflow radar-carga-mensal", () => {
   it("[WF6] carga só roda quando o seletor escolheu um mês, e usa o mês escolhido", () => {
     const carga = passos().find((p) => /^Carga/.test(p.name ?? ""));
     expect(carga?.if).toBe("steps.mes.outputs.mes != ''");
-    expect(carga?.run).toContain("scripts/radar/carga.ts --mes \"${{ steps.mes.outputs.mes }}\"");
+    expect(carga?.run).toContain("args=(--mes \"${{ steps.mes.outputs.mes }}\")");
+    expect(carga?.run).toContain("bun scripts/radar/carga.ts \"${args[@]}\"");
     const seletor = passos().find((p) => /Escolher o mês/.test(p.name ?? ""));
     expect(seletor?.run).toContain("scripts/radar/mes-alvo.ts");
+  });
+
+  it("[WF9] so_concorrentes: exige mes explícito, pula o seletor e passa --so-concorrentes à carga", () => {
+    const seletor = passos().find((p) => /Escolher o mês/.test(p.name ?? ""));
+    expect(seletor?.env?.SO_CONCORRENTES).toBe("${{ inputs.so_concorrentes }}");
+    const run = seletor?.run ?? "";
+    const iModo = run.indexOf('if [ "$SO_CONCORRENTES" = "true" ]');
+    expect(iModo).toBeGreaterThan(-1);
+    // o ramo vem ANTES do seletor e termina nele: sem mês válido, falha; com mês, sai sem chamar mes-alvo
+    expect(iModo).toBeLessThan(run.indexOf("scripts/radar/mes-alvo.ts"));
+    expect(run).toContain("so_concorrentes exige mes YYYY-MM");
+    // e SAI do passo: se cair no mes-alvo, ele escreve outro `mes=` (vazio para lote complete) e a carga some.
+    const ramo = run.slice(iModo, run.indexOf("scripts/radar/mes-alvo.ts"));
+    expect(ramo).toMatch(/echo "mes=\$MES_PEDIDO" >> "\$GITHUB_OUTPUT"\s+exit 0\s+fi/);
+    const carga = passos().find((p) => /^Carga/.test(p.name ?? ""));
+    expect(carga?.env?.SO_CONCORRENTES).toBe("${{ inputs.so_concorrentes }}");
+    expect(carga?.run).toContain('[ "$SO_CONCORRENTES" = "true" ] && args+=(--so-concorrentes)');
   });
 
   it("[WF8] inputs do dispatch entram por env, nunca interpolados no shell (injeção com o segredo no ambiente)", () => {

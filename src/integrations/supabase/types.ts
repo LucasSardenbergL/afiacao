@@ -11868,6 +11868,47 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_atendimentos: {
+        Row: {
+          assumido_em: string
+          cnpj: string
+          dono_user_id: string
+          encerrado_em: string | null
+          encerrado_por: string | null
+          id: number
+          motivo_encerramento: string | null
+          renovado_em: string | null
+        }
+        Insert: {
+          assumido_em: string
+          cnpj: string
+          dono_user_id: string
+          encerrado_em?: string | null
+          encerrado_por?: string | null
+          id?: number
+          motivo_encerramento?: string | null
+          renovado_em?: string | null
+        }
+        Update: {
+          assumido_em?: string
+          cnpj?: string
+          dono_user_id?: string
+          encerrado_em?: string | null
+          encerrado_por?: string | null
+          id?: number
+          motivo_encerramento?: string | null
+          renovado_em?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_atendimentos_cnpj_fkey"
+            columns: ["cnpj"]
+            isOneToOne: false
+            referencedRelation: "radar_empresas"
+            referencedColumns: ["cnpj"]
+          },
+        ]
+      }
       radar_cadastro_conflitos: {
         Row: {
           cnpj: string
@@ -11925,6 +11966,62 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_concorrentes_lote: {
+        Row: {
+          cnaes: string[]
+          estabelecimentos: number
+          lote: string
+          municipios: number
+          publicado_em: string
+        }
+        Insert: {
+          cnaes: string[]
+          estabelecimentos: number
+          lote: string
+          municipios: number
+          publicado_em?: string
+        }
+        Update: {
+          cnaes?: string[]
+          estabelecimentos?: number
+          lote?: string
+          municipios?: number
+          publicado_em?: string
+        }
+        Relationships: []
+      }
+      radar_concorrentes_municipio: {
+        Row: {
+          cnae: string
+          lote: string
+          municipio_codigo: string
+          quantidade: number
+          uf: string
+        }
+        Insert: {
+          cnae: string
+          lote: string
+          municipio_codigo: string
+          quantidade: number
+          uf: string
+        }
+        Update: {
+          cnae?: string
+          lote?: string
+          municipio_codigo?: string
+          quantidade?: number
+          uf?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "radar_concorrentes_municipio_lote_fkey"
+            columns: ["lote"]
+            isOneToOne: false
+            referencedRelation: "radar_concorrentes_lote"
+            referencedColumns: ["lote"]
+          },
+        ]
+      }
       radar_contatos: {
         Row: {
           acao: string
@@ -11963,6 +12060,39 @@ export type Database = {
           },
         ]
       }
+      radar_coorte_controle: {
+        Row: {
+          cnpj: string
+          grupo: string
+          lote: string
+          posicao: number
+          score_no_sorteio: number
+          score_versao: string
+          sorteada_em: string
+          sorteio: string
+        }
+        Insert: {
+          cnpj: string
+          grupo: string
+          lote: string
+          posicao: number
+          score_no_sorteio: number
+          score_versao: string
+          sorteada_em: string
+          sorteio: string
+        }
+        Update: {
+          cnpj?: string
+          grupo?: string
+          lote?: string
+          posicao?: number
+          score_no_sorteio?: number
+          score_versao?: string
+          sorteada_em?: string
+          sorteio?: string
+        }
+        Relationships: []
+      }
       radar_empresas: {
         Row: {
           bairro: string | null
@@ -12000,6 +12130,7 @@ export type Database = {
           score: number | null
           score_em: string | null
           score_motivos: string[] | null
+          score_versao: string | null
           socios_nomes: string | null
           telefone1: string | null
           telefone2: string | null
@@ -12043,6 +12174,7 @@ export type Database = {
           score?: number | null
           score_em?: string | null
           score_motivos?: string[] | null
+          score_versao?: string | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null
@@ -12086,12 +12218,67 @@ export type Database = {
           score?: number | null
           score_em?: string | null
           score_motivos?: string[] | null
+          score_versao?: string | null
           socios_nomes?: string | null
           telefone1?: string | null
           telefone2?: string | null
           uf?: string | null
           ultimo_lote?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      radar_eventos: {
+        Row: {
+          acao: string | null
+          cnpj: string | null
+          contato_id: string | null
+          evento: string
+          fonte_id: string
+          gravado_em: string
+          id: number
+          nota_capturada: boolean
+          ocorrido_em: string
+          origem: string
+          retroativo: boolean
+          score: number | null
+          score_em: string | null
+          score_versao: string | null
+          user_id: string | null
+        }
+        Insert: {
+          acao?: string | null
+          cnpj?: string | null
+          contato_id?: string | null
+          evento: string
+          fonte_id: string
+          gravado_em?: string
+          id?: never
+          nota_capturada?: boolean
+          ocorrido_em: string
+          origem: string
+          retroativo?: boolean
+          score?: number | null
+          score_em?: string | null
+          score_versao?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          acao?: string | null
+          cnpj?: string | null
+          contato_id?: string | null
+          evento?: string
+          fonte_id?: string
+          gravado_em?: string
+          id?: never
+          nota_capturada?: boolean
+          ocorrido_em?: string
+          origem?: string
+          retroativo?: boolean
+          score?: number | null
+          score_em?: string | null
+          score_versao?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -23047,7 +23234,7 @@ export type Database = {
         Returns: {
           assumido_em: string
           cnpj: string
-          dono_nome: string | null
+          dono_nome: string
           dono_user_id: string
           eh_meu: boolean
           expira_em: string
@@ -23062,10 +23249,20 @@ export type Database = {
         Args: { p_apos?: string; p_limite?: number }
         Returns: string[]
       }
+      radar_concorrentes_publicar: {
+        Args: {
+          p_cnaes: string[]
+          p_estabelecimentos: number
+          p_linhas: Json
+          p_lote: string
+        }
+        Returns: Json
+      }
       radar_contagem_por_municipio: {
         Args: {
           p_cnae_exato?: string
           p_cnae_prefix?: string
+          p_com_contato?: boolean
           p_data_abertura_max?: string
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
@@ -23074,6 +23271,7 @@ export type Database = {
           p_primeira_vista_min?: string
           p_status?: string
           p_uf?: string
+          p_ufs?: string[]
         }
         Returns: {
           a_contatar: number
@@ -23086,6 +23284,31 @@ export type Database = {
           uf: string
         }[]
       }
+      radar_conversao_por_faixa: {
+        Args: never
+        Returns: {
+          cadastros_novos: number
+          em_conversa: number
+          faixa: string
+          leads_tocados: number
+          virou_cliente: number
+        }[]
+      }
+      radar_coorte_resultado: {
+        Args: never
+        Returns: {
+          cadastros_novos: number
+          dias_de_acompanhamento: number
+          em_conversa: number
+          grupo: string
+          sorteada_em: string
+          sorteados: number
+          sorteio: string
+          tocados: number
+          virou_cliente: number
+        }[]
+      }
+      radar_coorte_sortear: { Args: { p_tamanho?: number }; Returns: Json }
       radar_definir_atendimento: {
         Args: { p_acao: string; p_cnpj: string }
         Returns: Json
@@ -23120,6 +23343,33 @@ export type Database = {
           municipio_nome: string
           penetracao: number
           uf: string
+        }[]
+      }
+      radar_placar_uso: {
+        Args: never
+        Returns: {
+          aberturas: number
+          aberturas_cobertas_desde: string
+          aberturas_janela_completa: boolean
+          aberturas_outbox_sem_evento: number
+          abriram: number
+          apagados_sem_desfeito: number
+          autorizados_agora: number
+          autorizados_motivo: string
+          cadastraram: number
+          cadastros_novos: number
+          cadastros_sem_evento: number
+          contatos_sem_evento: number
+          descartes: number
+          desde: string
+          desfeitos: number
+          devolvidos: number
+          em_conversa: number
+          eventos_automaticos: number
+          janela: string
+          tocaram: number
+          toques: number
+          vinculos_existentes: number
         }[]
       }
       radar_prospects_para_rota: {
@@ -23196,7 +23446,10 @@ export type Database = {
       radar_score_recalcular: { Args: never; Returns: Json }
       radar_telefone_compartilhado: {
         Args: { p_cnpj: string }
-        Returns: { outras_raizes: number; telefone: string }[]
+        Returns: {
+          outras_raizes: number
+          telefone: string
+        }[]
       }
       raio_x_classificar: {
         Args: {

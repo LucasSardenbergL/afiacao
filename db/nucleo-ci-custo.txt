@@ -84,6 +84,7 @@ db/test-radar-cadastro-omie-confirmacao.sh 18
 db/test-radar-cadastro-omie-idempotente.sh 146
 db/test-radar-cnpj-alfanumerico.sh 8
 db/test-radar-contagem-lote.sh 16
+db/test-radar-contagem-regiao.sh 18
 db/test-radar-irmaos-por-raiz.sh 13
 db/test-radar-recruzamento-diario.sh 10
 db/test-radar-recruzar-origem-omie.sh 4

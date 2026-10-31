@@ -52,7 +52,7 @@ Restrição de acesso: a policy da tabela é `pode_ver_carteira_completa` (gesto
 
 ## Follow-ups (não feitos aqui)
 
-- **Bloquear pedido a prazo para CNPJ irregular**: decisão do founder (hoje só alerta). O sinal para decidir é **query**, não telemetria: pedidos a prazo criados para clientes cujo CNPJ estava irregular no lote vigente da data do pedido (`sales_orders` × `radar_situacao_cadastral`).
+- **Bloquear pedido a prazo para CNPJ irregular**: **decidido pelo founder em 2026-10-30: fica SÓ ALERTA** (sem bloqueio). Reabrir só com medição na mão. O sinal para decidir é **query**, não telemetria: pedidos a prazo criados para clientes cujo CNPJ estava irregular no lote vigente da data do pedido (`sales_orders` × `radar_situacao_cadastral`).
 - **Cliente Omie sem cadastro no app** (sem `user_id`): o pedido diz "não consultada". Ler por documento exigiria outro gate (não há carteira sem `user_id`).
 - **Venda fora da carteira** (vendedor atendendo cliente de outro): recusa silenciosa por desenho. O sensor conta `sem_acesso`; se for frequente, discutir um escopo de "pedido em andamento".
 - **Ledger autenticado**: o sensor está só no `track()` (censurável). Adicionar evento ao `analytics_ledger_registrar` exige recriar a função quente (molde TRAVA→PRE, várias sessões mexendo); fica para quando houver fase N+1 que dependa do uso do selo.
