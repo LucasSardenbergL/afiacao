@@ -98,5 +98,8 @@ Decisão do founder (2026-10-30): corrigir de verdade a limitação acima, com m
   Teste do hook: `useRadarContagemMunicipios.regiao.test.tsx`, falsificado.
 - **Aplicada em prod em 2026-10-31** pelo founder (SQL Editor). Validada por fora (psql-ro, ~02:25 UTC):
   só a assinatura de 12 args, md5 `290add620a05772ff66e3004a08e1c40` = o do arquivo, SECURITY DEFINER +
-  `search_path=public`, EXECUTE só para `authenticated`/`service_role` (PUBLIC/anon fora). A entrada
-  `EDICAO_MANUAL` da assinatura velha saiu de `db/deriva-corpo-baseline.json` (`BASELINE_OBSOLETA`).
+  `search_path=public`, EXECUTE só para `authenticated`/`service_role` (PUBLIC/anon fora).
+- **Pendência:** a entrada `EDICAO_MANUAL` da assinatura velha em `db/deriva-corpo-baseline.json` ficou
+  obsoleta (`BASELINE_OBSOLETA`, aviso). Ela NÃO saiu neste PR porque a baseline é contrato do carimbo
+  `authz` (`corpo`): mexer nela exige `authz:carimbo:gravar`, e o `deriva:corpo:prod` de hoje sai 1 por 14
+  `PATCH_NAO_CONCILIADO` de outras RPCs do radar. Sai na próxima regravação do carimbo, junto com elas.
