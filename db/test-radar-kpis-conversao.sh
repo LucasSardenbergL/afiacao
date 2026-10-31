@@ -48,6 +48,13 @@ FIXTURE_DESFAZER="$REPO_ROOT/db/fixtures/radar-contato-integridade-prod-20261031
 MIG_ANT="$REPO_ROOT/supabase/migrations/20261031111000_radar_contato_integridade.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261031142000_radar_kpis_conversao.sql"
 [ -f "$FIXTURE" ] && [ -f "$FIXTURE_DESFAZER" ] && [ -f "$MIG_ANT" ] && [ -f "$MIG" ] || { echo "fixture ou migration ausente"; exit 1; }
+# radar_kpis fica FORA do CV_FUNCOES (a cadeia aplicaria esta migration antes de o predecessor ser conferido). Logo uma
+# migration POSTERIOR que mexa nele não entraria aqui e a prova seguiria verde sobre o corpo velho (Codex): recusa.
+POSTERIORES="$(cd "$REPO_ROOT/supabase/migrations" && for m in *.sql; do
+  [[ "$m" > "$(basename "$MIG")" ]] && grep -l 'radar_kpis' "$m"; done || true)"
+if [ -n "$POSTERIORES" ]; then
+  echo "PROVA DESATUALIZADA: migration posterior mexe em radar_kpis — leve-a ao harness: $POSTERIORES"; exit 1
+fi
 
 # shellcheck disable=SC2034  # consumida pelo db/lib/corpo-vivo.sh, que o shellcheck sem -x não segue
 CV_FUNCOES=(cap_radar_prospectar radar_atendimento_expira_em radar_definir_atendimento radar_atendimentos_ativos
@@ -117,6 +124,7 @@ lead() {
       VALUES ('$cnpj', 'LEAD $cnpj', '4744005', '2026-10', true, '$cod', $cad, '$st', $atu); $ins" > /dev/null
 }
 MES="date_trunc('month', now(), 'America/Sao_Paulo')"
+acl() { P -tA -q -c "SELECT has_function_privilege('anon','public.radar_kpis()','EXECUTE') || '|' || has_function_privilege('authenticated','public.radar_kpis()','EXECUTE') || '|' || has_function_privilege('service_role','public.radar_kpis()','EXECUTE')"; }
 
 cenario() {
   echo "── K. o card conta a conversão do mês ──"
@@ -133,31 +141,39 @@ cenario() {
   chk K4 "o gestor tirou de virou_cliente: não conta"             "$(kpi)" "1"
   lead 55555555000155 105 "now()" "now()" virou_cliente lookup=105 incluir=105
   chk K5 "lookup e incluir do mesmo código: conta (regra do cadastro)" "$(kpi)" "2"
+  # O ledger não tem unicidade: duas linhas 'incluir' iguais contam UMA conversão (JOIN no lugar do EXISTS contaria 2).
+  lead 61616161000161 111 "now()" "now()" virou_cliente incluir=111 incluir=111
+  chk K5b "duas linhas 'incluir' iguais: conta uma vez"            "$(kpi)" "3"
   lead 56565656000156 106 "now()" "now()" virou_cliente lookup=106 incluir=906
-  chk K6 "o 'incluir' é de OUTRO código: não conta"              "$(kpi)" "2"
+  chk K6 "o 'incluir' é de OUTRO código: não conta"              "$(kpi)" "3"
   lead 57575757000157 107 "$MES - interval '1 second'" "$MES - interval '1 second'" virou_cliente incluir=107
-  chk K7 "1 s antes do mês de SP começar: não conta"              "$(kpi)" "2"
+  chk K7 "1 s antes do mês de SP começar: não conta"              "$(kpi)" "3"
   lead 58585858000158 108 "$MES" "$MES" virou_cliente incluir=108
-  chk K8 "no 1º instante do mês de SP: conta"                     "$(kpi)" "3"
+  chk K8 "no 1º instante do mês de SP: conta"                     "$(kpi)" "4"
   # Fuso: 1 h antes do mês de SP é DENTRO do mês UTC (SP = UTC-3) — só conta se a função esquecer o fuso.
   lead 59595959000159 109 "$MES - interval '1 hour'" "$MES - interval '1 hour'" virou_cliente incluir=109
-  chk K9 "1 h antes do mês de SP (já no mês UTC): não conta"      "$(kpi)" "3"
+  chk K9 "1 h antes do mês de SP (já no mês UTC): não conta"      "$(kpi)" "4"
+  # Teto: a transação aberta antes da virada lê now() do mês velho e enxergaria o cadastro do mês novo.
+  lead 62626262000162 112 "date_add($MES, interval '1 month', 'America/Sao_Paulo')" "now()" virou_cliente incluir=112
+  chk K10 "cadastro do mês SEGUINTE: não conta neste"              "$(kpi)" "4"
 
   echo "── E. ponta a ponta pelas RPCs ──"
   P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_empresas (cnpj, razao_social, cnae_principal, ultimo_lote, ja_cliente)
       VALUES ('60606060000160', 'LEAD E', '4744005', '2026-10', false);
     INSERT INTO public.omie_cliente_confirmacoes (account, documento, codigo_cliente, origem) VALUES ('oben','60606060000160','110','incluir');"
   # A v2 é a que o app chama (a v1 só o service_role executa em prod); ela delega à v1, que grava o cadastro.
-  chk E1 "o cadastro pelo Radar conta"                            "$(q_como "$FARM" "SELECT public.radar_registrar_cadastro_omie_v2('60606060000160','110',false)->>'ok'") $(kpi)" "true 4"
-  chk E2 "o gestor tira: sai do card"                             "$(q_como "$GER" "SELECT public.registrar_contato_radar('60606060000160','descartado','encerrou')->>'deduped'") $(kpi)" "false 3"
+  chk E1 "o cadastro pelo Radar conta"                            "$(q_como "$FARM" "SELECT public.radar_registrar_cadastro_omie_v2('60606060000160','110',false)->>'ok'") $(kpi)" "true 5"
+  chk E2 "o gestor tira: sai do card"                             "$(q_como "$GER" "SELECT public.registrar_contato_radar('60606060000160','descartado','encerrou')->>'deduped'") $(kpi)" "false 4"
   # Devolver num mês NOVO: o cadastro fica no mês dele, e o carimbo do status vai para hoje.
   P -v ON_ERROR_STOP=1 -q -c "SET session_replication_role = replica;
     UPDATE public.radar_empresas SET omie_cadastrado_em = $MES - interval '20 days' WHERE cnpj = '60606060000160'"
-  chk E3 "devolvido num mês novo: não reconta"                    "$(q_como "$GER" "SELECT public.registrar_contato_radar('60606060000160','virou_cliente',NULL)->>'deduped'") $(kpi)" "false 3"
+  chk E3 "devolvido num mês novo: não reconta"                    "$(q_como "$GER" "SELECT public.registrar_contato_radar('60606060000160','virou_cliente',NULL)->>'deduped'") $(kpi)" "false 4"
 
   echo "── G. catálogo ──"
+  # A ACL é lida ANTES de reaplicar: a reaplicação repararia um grant indevido antes de alguém olhar (Codex).
+  chk G2 "anon sem EXECUTE; authenticated e service_role executam" "$(acl)" "false|true|true"
   chk G1 "re-aplicar a migration é no-op"           "$(P -v ON_ERROR_STOP=1 -q -1 -f "$MIG" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
-  chk G2 "anon sem EXECUTE"                         "$(P -tA -q -c "SELECT has_function_privilege('anon','public.radar_kpis()','EXECUTE')")" "f"
+  chk G3 "a reaplicação mantém a ACL"               "$(acl)" "false|true|true"
 }
 
 # sabotagem <nome> — muda UMA regra no clone. Exit ≠ 0 = a sabotagem não aplicou (falha da falsificação).
@@ -170,6 +186,9 @@ sabotagem() {
     outro_codigo)  cv_sabotar "$K" "AND c.codigo_cliente = e.omie_codigo_cliente" "" ;;
     fuso)          cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc('month', now(), 'America/Sao_Paulo')" "e.omie_cadastrado_em >= date_trunc('month', now())" ;;
     limite_aberto) cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc" "e.omie_cadastrado_em > date_trunc" ;;
+    sem_teto)      cv_sabotar "$K" "interval '1 month', 'America/Sao_Paulo')" "interval '100 years', 'America/Sao_Paulo')" ;;
+    join_multiplica) cv_sabotar "$K" "FROM public.radar_empresas e" "FROM public.radar_empresas e JOIN public.omie_cliente_confirmacoes cj ON cj.documento = e.cnpj AND cj.codigo_cliente = e.omie_codigo_cliente AND cj.origem = 'incluir'" ;;
+    acl_anon)      P -v ON_ERROR_STOP=1 -q -c "GRANT EXECUTE ON FUNCTION public.radar_kpis() TO anon" > /dev/null ;;
     sem_gate)      cv_sabotar "$K" "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false)) THEN" "IF false THEN" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
@@ -179,9 +198,12 @@ SABOTAGENS="carimbo_movel:K3:K2
 conta_lookup:K2:K1
 sem_status:K4:K3
 outro_codigo:K6:K5
-fuso:K7,K9:K6
+fuso:K9:K6
 limite_aberto:K8:K7
-sem_gate:K0b:K0a"
+sem_teto:K10:K9
+join_multiplica:K5b:K5
+sem_gate:K0b:K0a
+acl_anon:G2:G1"
 
 rodada() {
   adm -c "DROP DATABASE IF EXISTS rodada;" -c "CREATE DATABASE rodada TEMPLATE base;" || return 4

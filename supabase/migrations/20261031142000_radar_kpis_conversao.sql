@@ -36,8 +36,8 @@ DECLARE
   v_vivo text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_catalog.pg_proc p WHERE p.oid = 'public.radar_kpis()'::regprocedure;
-  IF v_vivo IS DISTINCT FROM 'de4e4731507e4be5a085c90efdfc0687' AND v_vivo IS DISTINCT FROM 'bbbb1546418e1876e7c913facc83de77' THEN
-    RAISE EXCEPTION 'PRE FALHOU: public.radar_kpis() vivo tem md5 % (esperado o predecessor de4e4731507e4be5a085c90efdfc0687 ou este bbbb1546418e1876e7c913facc83de77) — reler o corpo de prod antes de reaplicar',
+  IF v_vivo IS DISTINCT FROM 'de4e4731507e4be5a085c90efdfc0687' AND v_vivo IS DISTINCT FROM '6c10810f6f2beab5dbb9bca1e92ed747' THEN
+    RAISE EXCEPTION 'PRE FALHOU: public.radar_kpis() vivo tem md5 % (esperado o predecessor de4e4731507e4be5a085c90efdfc0687 ou este 6c10810f6f2beab5dbb9bca1e92ed747) — reler o corpo de prod antes de reaplicar',
       v_vivo;
   END IF;
 END
@@ -72,10 +72,12 @@ BEGIN
   SELECT count(*) INTO v_em_conversa FROM public.radar_empresas
    WHERE prospeccao_status = 'em_conversa';
   -- Conversão do mês: ainda cliente, cadastrada no mês (data que não se move) e CRIADA pelo Radar no Omie. Vincular
-  -- um cliente que já existia (origem 'lookup') não é conversão.
+  -- um cliente que já existia (origem 'lookup') não é conversão. O mês tem teto: uma transação aberta antes da virada
+  -- lê now() do mês velho e enxergaria o cadastro do mês novo (Codex). EXISTS, não JOIN: o ledger admite linhas repetidas.
   SELECT count(*) INTO v_virou_mes FROM public.radar_empresas e
    WHERE e.prospeccao_status = 'virou_cliente'
      AND e.omie_cadastrado_em >= date_trunc('month', now(), 'America/Sao_Paulo')
+     AND e.omie_cadastrado_em < date_add(date_trunc('month', now(), 'America/Sao_Paulo'), interval '1 month', 'America/Sao_Paulo')
      AND EXISTS (SELECT 1 FROM public.omie_cliente_confirmacoes c
                   WHERE c.account = 'oben' AND c.documento = e.cnpj
                     AND c.codigo_cliente = e.omie_codigo_cliente AND c.origem = 'incluir');
@@ -97,8 +99,8 @@ BEGIN
   SELECT md5(p.prosrc) AS md5, p.prosecdef, p.provolatile, p.proconfig,
          (SELECT count(*) FROM pg_catalog.pg_proc o WHERE o.pronamespace = p.pronamespace AND o.proname = p.proname) AS sobrecargas
     INTO v FROM pg_catalog.pg_proc p WHERE p.oid = 'public.radar_kpis()'::regprocedure;
-  IF v.md5 IS DISTINCT FROM 'bbbb1546418e1876e7c913facc83de77' THEN
-    RAISE EXCEPTION 'PÓS FALHOU: public.radar_kpis() ficou com md5 % (esperado bbbb1546418e1876e7c913facc83de77)', v.md5;
+  IF v.md5 IS DISTINCT FROM '6c10810f6f2beab5dbb9bca1e92ed747' THEN
+    RAISE EXCEPTION 'PÓS FALHOU: public.radar_kpis() ficou com md5 % (esperado 6c10810f6f2beab5dbb9bca1e92ed747)', v.md5;
   END IF;
   IF NOT v.prosecdef OR v.provolatile <> 'v' OR v.proconfig IS DISTINCT FROM ARRAY['search_path=public'] THEN
     RAISE EXCEPTION 'PÓS FALHOU: public.radar_kpis() perdeu atributos (secdef %, vol %, config %)', v.prosecdef, v.provolatile, v.proconfig;
