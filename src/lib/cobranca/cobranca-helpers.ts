@@ -12,14 +12,14 @@ export type FaixaCobranca = '<=45d' | '46-90d' | '>90d';
 export type SituacaoPromessa = 'aberta' | 'vencida' | 'saldo_caiu';
 export type CanalContato = 'whatsapp' | 'telefone' | 'email' | 'presencial';
 
-export const ESTADOS: ReadonlyArray<EstadoCobranca> = ['a_contatar', 'contatado', 'promessa', 'pago_informado', 'negociado', 'disputa'];
+const ESTADOS: ReadonlyArray<EstadoCobranca> = ['a_contatar', 'contatado', 'promessa', 'pago_informado', 'negociado', 'disputa'];
 export const ROTULO_ESTADO: Record<EstadoFila, string> = {
   a_contatar: 'A contatar', contatado: 'Contatado', promessa: 'Promessa', pago_informado: 'Pago (informado)',
   negociado: 'Negociado', disputa: 'Em disputa', cancelado_gestao: 'Cancelado (gestão)',
 };
 export const ROTULO_PROMESSA: Record<SituacaoPromessa, string> = { aberta: 'aberta', vencida: 'vencida', saldo_caiu: 'saldo caiu (sem baixa confirmada)' };
 export const ROTULO_FAIXA: Record<FaixaCobranca, string> = { '<=45d': 'Até 45 dias', '46-90d': '46 a 90 dias', '>90d': 'Mais de 90 dias' };
-export const ORDEM_FAIXA: ReadonlyArray<FaixaCobranca> = ['<=45d', '46-90d', '>90d'];
+const ORDEM_FAIXA: ReadonlyArray<FaixaCobranca> = ['<=45d', '46-90d', '>90d'];
 export const CANAIS: ReadonlyArray<{ codigo: CanalContato; rotulo: string }> = [
   { codigo: 'whatsapp', rotulo: 'WhatsApp' }, { codigo: 'telefone', rotulo: 'Telefone' },
   { codigo: 'email', rotulo: 'E-mail' }, { codigo: 'presencial', rotulo: 'Presencial' },
@@ -41,7 +41,7 @@ export type ReguaItem = {
   telefone: string | null; donaUserId: string | null; casoId: string | null; estado: EstadoCobranca | null; podeAgir: boolean;
 };
 
-export function num(x: unknown): number | null {
+function num(x: unknown): number | null {
   if (typeof x === 'number') return Number.isFinite(x) ? x : null;
   if (typeof x === 'string' && x.trim() !== '') { const n = Number(x); return Number.isFinite(n) ? n : null; }
   return null;
