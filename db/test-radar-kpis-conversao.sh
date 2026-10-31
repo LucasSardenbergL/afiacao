@@ -222,8 +222,8 @@ for item in $SABOTAGENS; do
   motivo=""
   if [ "$rc" -ne 0 ]; then
     motivo=" sabotagem não aplicou (exit $rc): $({ grep -m1 -E 'ERRO|ERROR|cv_|SABOTAGEM' "$log" || true; } | cut -c1-200)"
-  elif [ "$(grep -cE '^  [✓✗] ' "$log")" -ne "$executados_controle" ]; then
-    motivo=" a rodada executou $(grep -cE '^  [✓✗] ' "$log") asserts e o controle $executados_controle: vermelho de aborto, não de assert"
+  elif [ "$((PASS + FAIL))" -ne "$executados_controle" ]; then
+    motivo=" a rodada executou $((PASS + FAIL)) asserts e o controle $executados_controle: vermelho de aborto, não de assert"
   else
     for id in ${verm//,/ }; do
       if ! grep -Eq "^  ✓ ($id) " "$TMPD/controle.log" || ! grep -Eq "^  ✗ ($id) " "$log"; then
