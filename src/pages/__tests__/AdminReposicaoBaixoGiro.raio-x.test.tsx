@@ -27,6 +27,7 @@ let ret: Retorno;
 let empresaCtx = 'OBEN';
 const useRaioXMock = vi.fn((_e: unknown) => ret);
 
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-eu' } }) }));
 vi.mock('@/components/reposicao/raioX/useRaioX', () => ({
   useRaioX: (e: unknown) => useRaioXMock(e),
   useRaioXMedicao: () => ({ linhas: [], isLoading: false, erro: null }),

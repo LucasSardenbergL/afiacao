@@ -17,9 +17,20 @@ import {
   seloFaseA,
   sugestaoInicial,
 } from '@/lib/reposicao/raio-x/decisao';
-import type { Categoria, DecisaoRow, Destino, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
-import { useRaioXMutacoes } from './useRaioXMutacoes';
-import { fmtValor } from './formato';
+import {
+  CANAIS,
+  custoEsperarMensal,
+  ehExecutavel,
+  concluidoVigente,
+  PRAZO_PADRAO_DIAS,
+  ROTULO_CANAL,
+  somarDias,
+} from '@/lib/reposicao/raio-x/execucao';
+import { hojeSP } from '@/lib/time/sp-day';
+import type { CanalLiquidacao, Categoria, DecisaoRow, Destino, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import { useRaioXMutacoes, type PlanejarArgs } from './useRaioXMutacoes';
+import type { MembroEquipe } from './useExecucaoRaioX';
+import { fmtReais, fmtValor, fmtValorFino } from './formato';
 
 const ROTULO_CATEGORIA: Record<Categoria, string> = {
   mercadoria: 'Mercadoria',
@@ -39,11 +50,16 @@ interface Props {
   item: ItemRaioX;
   decisao: DecisaoRow | undefined;
   onClose: () => void;
+  /** taxa anual de custo de capital (lida pela aba); null/ausente = custo de esperar não exibido. */
+  taxa?: number | null;
+  /** quem pode ser responsável (lido pela aba). */
+  equipe?: MembroEquipe[];
 }
 
-export function DecisaoSheet({ empresa, item, decisao, onClose }: Props) {
+export function DecisaoSheet({ empresa, item, decisao, onClose, taxa = null, equipe = [] }: Props) {
   const { empresa: empresaCtx } = useReposicaoEmpresa();
   const empresaDoSeletor = empresaDoRaioX(empresaCtx);
+  const custoMes = custoEsperarMensal(item.valor, taxa);
   // "Recarregar" (S9) remonta o formulário com as props novas.
   const [versao, setVersao] = useState(0);
 
@@ -59,6 +75,7 @@ export function DecisaoSheet({ empresa, item, decisao, onClose }: Props) {
           <SheetTitle>{item.descricao ?? item.codigo}</SheetTitle>
           <SheetDescription>
             <span className="font-mono">{item.codigo}</span> · {ROTULO_CATEGORIA[item.categoria]} · {fmtValor(item.valor)}
+            {custoMes !== null && <> · custa ~{fmtReais(custoMes)}/mês parado</>}
           </SheetDescription>
         </SheetHeader>
         {/* remonta ao trocar de item ou recarregar: estado local (sujo, campos) nunca vaza entre SKUs nem sobrevive a refetch */}
@@ -69,13 +86,14 @@ export function DecisaoSheet({ empresa, item, decisao, onClose }: Props) {
           decisao={decisao}
           onClose={onClose}
           onRecarregar={() => setVersao((v) => v + 1)}
+          equipe={equipe}
         />
       </SheetContent>
     </Sheet>
   );
 }
 
-function FormDecisao({ empresa, item, decisao, onClose, onRecarregar }: Props & { onRecarregar: () => void }) {
+function FormDecisao({ empresa, item, decisao, onClose, onRecarregar, equipe = [] }: Props & { onRecarregar: () => void }) {
   const m = useRaioXMutacoes(empresa);
   const sugerido = sugestaoInicial(item);
   const gravado = decisao?.destino ?? null;
@@ -261,6 +279,18 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar }: Props & 
         Salvar decisão
       </Button>
 
+      {decisao && ehExecutavel(gravado) && (
+        <FormExecucao
+          item={item}
+          decisao={decisao}
+          equipe={equipe}
+          bloqueado={m.pendente || velho}
+          onSalvar={async (args) => {
+            if (await m.planejar(args)) onClose();
+          }}
+        />
+      )}
+
       {decisao?.motor_antes != null && (
         <section className="space-y-2 border-t pt-4">
           <p className="text-xs text-status-warning">
@@ -276,6 +306,125 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar }: Props & 
         if (await m.classificar(item.sku_codigo_omie, c, motivo)) onClose();
       }} />
     </div>
+  );
+}
+
+/** Converte número do banco para o campo pt-BR ("12,5"); null → vazio. */
+const paraCampo = (n: number | null) => (n === null ? '' : String(n).replace('.', ','));
+
+/**
+ * Plano de execução de uma decisão GRAVADA (pacote 2): responsável, prazo, executado e — no liquidar — preço piso
+ * e canal. Botão próprio (`raio_x_planejar`): a decisão e o plano nunca vão numa gravação dupla não-atômica.
+ */
+function FormExecucao({ item, decisao, equipe, bloqueado, onSalvar }: {
+  item: ItemRaioX;
+  decisao: DecisaoRow;
+  equipe: MembroEquipe[];
+  bloqueado: boolean;
+  onSalvar: (args: PlanejarArgs) => void;
+}) {
+  const liquidar = decisao.destino === 'liquidar';
+  // Plano ainda não gravado: os padrões (quem decidiu, hoje + 14 dias) são a proposta e podem ser salvos sem toque.
+  const semPlano = decisao.responsavel === null && decisao.prazo === null;
+  const [responsavel, setResponsavel] = useState(decisao.responsavel ?? decisao.decidido_por ?? '');
+  const [prazo, setPrazo] = useState(decisao.prazo ?? somarDias(hojeSP(), PRAZO_PADRAO_DIAS));
+  const [concluido, setConcluido] = useState(concluidoVigente(decisao));
+  const [piso, setPiso] = useState(liquidar ? paraCampo(decisao.preco_piso) : '');
+  const [canal, setCanal] = useState<CanalLiquidacao | ''>(liquidar ? (decisao.canal_liquidacao ?? '') : '');
+  const [erroPiso, setErroPiso] = useState(false);
+  const [sujo, setSujo] = useState(false);
+  const tocar = () => setSujo(true);
+  const unidadeVenda = item.unidades_venda && new Set(item.unidades_venda).size === 1 ? item.unidades_venda[0] : null;
+  // Responsável gravado que não está na lista (saiu da equipe / leitura falhou): aparece pelo id, não some.
+  const opcoes = responsavel && !equipe.some((e) => e.user_id === responsavel)
+    ? [...equipe, { user_id: responsavel, nome: `(fora da lista) ${responsavel.slice(0, 8)}` }]
+    : equipe;
+
+  const salvar = () => {
+    let precoPiso: number | null = null;
+    if (liquidar) {
+      const r = lerNumero(piso);
+      if (r.erro) {
+        setErroPiso(true);
+        return;
+      }
+      precoPiso = r.valor;
+    }
+    setErroPiso(false);
+    onSalvar({
+      sku: item.sku_codigo_omie,
+      precoPiso,
+      canal: liquidar && canal ? canal : null,
+      responsavel: responsavel || null,
+      prazo: prazo || null,
+      concluido,
+    });
+  };
+
+  return (
+    <section aria-label="Execução" className="space-y-3 border-t pt-4">
+      <h3 className="font-medium">Execução</h3>
+      <div className="space-y-1">
+        <label htmlFor="rx-resp" className="block text-xs">Responsável</label>
+        <select
+          id="rx-resp"
+          className="h-11 w-full rounded-md border bg-background px-2"
+          value={responsavel}
+          onChange={(e) => { tocar(); setResponsavel(e.target.value); }}
+        >
+          <option value="">— sem responsável —</option>
+          {opcoes.map((e) => <option key={e.user_id} value={e.user_id}>{e.nome}</option>)}
+        </select>
+      </div>
+      <div className="space-y-1">
+        <label htmlFor="rx-prazo" className="block text-xs">Prazo</label>
+        <Input id="rx-prazo" type="date" value={prazo} onChange={(e) => { tocar(); setPrazo(e.target.value); }} />
+      </div>
+      {liquidar && (
+        <>
+          <div className="space-y-1">
+            <label htmlFor="rx-piso" className="block text-xs">
+              Preço piso (R$ por {unidadeVenda ?? 'unidade de venda'})
+            </label>
+            <Input
+              id="rx-piso"
+              inputMode="decimal"
+              value={piso}
+              aria-invalid={erroPiso}
+              onChange={(e) => { tocar(); setErroPiso(false); setPiso(e.target.value); }}
+            />
+            {erroPiso && <p className="text-xs text-status-error">{MSG_NUMERO_INVALIDO}</p>}
+            <p className="text-xs text-muted-foreground">
+              referência: CMC {item.cmc !== null ? fmtValorFino(item.cmc) : '—'}
+              {item.unidade_estoque ? `/${item.unidade_estoque}` : ''} · preço médio 12m{' '}
+              {item.preco_medio_12m !== null ? fmtValorFino(item.preco_medio_12m) : '—'}
+              {!unidadeVenda && ' · mais de uma unidade de venda: a medição não compara com o piso'}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="rx-canal" className="block text-xs">Canal</label>
+            <select
+              id="rx-canal"
+              className="h-11 w-full rounded-md border bg-background px-2"
+              value={canal}
+              onChange={(e) => { tocar(); setCanal(e.target.value as CanalLiquidacao | ''); }}
+            >
+              <option value="">— sem canal —</option>
+              {CANAIS.map((c) => <option key={c} value={c}>{ROTULO_CANAL[c]}</option>)}
+            </select>
+            <p className="text-xs text-muted-foreground">detalhe (qual cliente, qual promoção) vai na observação</p>
+          </div>
+        </>
+      )}
+      <label className="flex min-h-11 items-center gap-2">
+        <input type="checkbox" checked={concluido} onChange={(e) => { tocar(); setConcluido(e.target.checked); }} />
+        executado
+      </label>
+      <p className="text-xs text-muted-foreground">marca a tarefa — o R$ liberado continua vindo só da medição</p>
+      <Button size="touch" variant="outline" className="w-full" disabled={(!sujo && !semPlano) || bloqueado} onClick={salvar}>
+        Salvar execução
+      </Button>
+    </section>
   );
 }
 

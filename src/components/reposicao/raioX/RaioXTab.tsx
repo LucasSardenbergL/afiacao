@@ -9,6 +9,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
+import { concluidoVigente, custoEsperarMensal, ehExecutavel, resumoExecucao } from '@/lib/reposicao/raio-x/execucao';
+import { hojeSP } from '@/lib/time/sp-day';
+import { useAuth } from '@/contexts/AuthContext';
 import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { useRaioX, useRaioXMedicao } from './useRaioX';
@@ -18,6 +21,7 @@ import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
 import { RaioXSaidas } from './RaioXSaidas';
 import { DecisaoSheet } from './DecisaoSheet';
+import { useEquipeRaioX, useTaxaCustoCapital } from './useExecucaoRaioX';
 
 type Segmento = 'mercadoria' | 'uso' | 'nao' | 'saidas';
 const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
@@ -37,6 +41,12 @@ export function RaioXTab() {
   const chave = empresaDoRaioX(empresa);
   const rx = useRaioX(chave);
   const medicao = useRaioXMedicao(chave);
+  const taxa = useTaxaCustoCapital(chave);
+  const equipe = useEquipeRaioX();
+  const nomes = useMemo(() => new Map(equipe.map((e) => [e.user_id, e.nome])), [equipe]);
+  // Identidade REAL (useAuth), não a da lente: "minhas" é sobre quem executa.
+  const { user } = useAuth();
+  const hoje = hojeSP();
   // Sheet: guarda sku + empresa de quem abriu; item e decisão são relidos do cache (vivos após invalidar).
   const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa } | null>(null);
   const fechar = useCallback(() => setAberto(null), []);
@@ -62,12 +72,12 @@ export function RaioXTab() {
     setAberto({ sku: i.sku_codigo_omie, empresa: chave });
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
   // Contradição clicável: lista de mercadoria filtrada pelo SKU exato (`rxSku` na URL — nunca a busca por código, que é substring).
   const filtrarSku = useCallback(
-    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
+    (sku: number) => setF({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false, rxBusca: '', rxSku: String(sku) }),
     [setF],
   );
 
@@ -91,13 +101,23 @@ export function RaioXTab() {
         const decidido = !!d?.destino;
         if (f.rxStatus === 'pendente' && decidido) return false;
         if (f.rxStatus === 'decidido' && !decidido) return false;
+        if (f.rxExec) {
+          // Filtros de execução: só decisões executáveis ainda não concluídas.
+          if (!d || !ehExecutavel(d.destino) || concluidoVigente(d)) return false;
+          if (f.rxExec === 'vencidas' && !(d.prazo && d.prazo < hoje)) return false;
+          if (f.rxExec === 'sem_responsavel' && d.responsavel) return false;
+          if (f.rxExec === 'minhas' && (!user || d.responsavel !== user.id)) return false;
+        }
         if (f.rxTop && !i.top) return false;
         if (f.rxSku && String(i.sku_codigo_omie) !== f.rxSku) return false;
         if (busca && !`${i.codigo} ${i.descricao ?? ''}`.toLowerCase().includes(busca)) return false;
         return true;
       })
       .sort(porValorDesc);
-  }, [mercadoria, f, rx.decisoes]);
+  }, [mercadoria, f, rx.decisoes, hoje, user]);
+
+  const execucao = useMemo(() => resumoExecucao(rx.decisoes.values(), hoje), [rx.decisoes, hoje]);
+  const unidadesVenda = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.unidades_venda])), [rx.itens]);
 
   const categoriaSeg = segmento === 'uso' ? 'uso_consumo' : segmento === 'nao' ? 'nao_mercadoria' : null;
   const contagem = useMemo(
@@ -130,7 +150,12 @@ export function RaioXTab() {
           estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
         </p>
       )}
-      <RaioXPlacar placar={rx.placar} coorteIndisponivel={rx.coorteEstado === 'indisponivel'} />
+      <RaioXPlacar
+        placar={rx.placar}
+        coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
+        custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
+        execucao={execucao}
+      />
       <RaioXCaixaLiberado
         linhas={medicao.linhas}
         isLoading={medicao.isLoading}
@@ -138,6 +163,8 @@ export function RaioXTab() {
         empresa={chave}
         codigos={codigos}
         onFiltrarSku={filtrarSku}
+        decisoes={rx.decisoes}
+        unidadesVenda={unidadesVenda}
       />
 
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
@@ -164,6 +191,12 @@ export function RaioXTab() {
               <option value="pendente">Pendente</option>
               <option value="decidido">Decidido</option>
             </select>
+            <select aria-label="Execução" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxExec} onChange={(e) => setF({ rxExec: e.target.value })}>
+              <option value="">Toda execução</option>
+              <option value="vencidas">Vencidas</option>
+              <option value="sem_responsavel">Sem responsável</option>
+              <option value="minhas">Minhas pendências</option>
+            </select>
             <label className="flex items-center gap-1 text-sm">
               <input type="checkbox" checked={f.rxTop} onChange={(e) => setF({ rxTop: e.target.checked })} /> Top 61
             </label>
@@ -178,7 +211,7 @@ export function RaioXTab() {
           {filtrados.length === 0 ? (
             <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description={mercadoria.length === 0 ? 'Nenhuma mercadoria parada nesta empresa.' : 'Nenhum item com esses filtros.'} />
           ) : (
-            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} />
+            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} />
           )}
         </>
       ) : segmento === 'saidas' ? (
@@ -189,7 +222,7 @@ export function RaioXTab() {
         <RaioXContagem empresa={chave} categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} onDecidir={abrir} />
       )}
       {itemAberto && aberto && (
-        <DecisaoSheet empresa={aberto.empresa} item={itemAberto} decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)} onClose={fechar} />
+        <DecisaoSheet empresa={aberto.empresa} item={itemAberto} decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)} onClose={fechar} taxa={taxa} equipe={equipe} />
       )}
     </div>
   );

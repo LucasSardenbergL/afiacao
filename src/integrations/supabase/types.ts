@@ -12471,6 +12471,9 @@ export type Database = {
       raio_x_decisao: {
         Row: {
           atualizado_em: string
+          canal_liquidacao: string | null
+          concluido_em: string | null
+          concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
           credito_troca: number | null
@@ -12487,12 +12490,18 @@ export type Database = {
           motor_antes: Json | null
           observacao: string | null
           origem: string
+          prazo: string | null
+          preco_piso: number | null
           qtd_contada: number | null
+          responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
         }
         Insert: {
           atualizado_em?: string
+          canal_liquidacao?: string | null
+          concluido_em?: string | null
+          concluido_por?: string | null
           contado_em?: string | null
           contado_por?: string | null
           credito_troca?: number | null
@@ -12509,12 +12518,18 @@ export type Database = {
           motor_antes?: Json | null
           observacao?: string | null
           origem?: string
+          prazo?: string | null
+          preco_piso?: number | null
           qtd_contada?: number | null
+          responsavel?: string | null
           sku_codigo_omie: number
           tirou_do_motor?: boolean
         }
         Update: {
           atualizado_em?: string
+          canal_liquidacao?: string | null
+          concluido_em?: string | null
+          concluido_por?: string | null
           contado_em?: string | null
           contado_por?: string | null
           credito_troca?: number | null
@@ -12531,7 +12546,10 @@ export type Database = {
           motor_antes?: Json | null
           observacao?: string | null
           origem?: string
+          prazo?: string | null
+          preco_piso?: number | null
           qtd_contada?: number | null
+          responsavel?: string | null
           sku_codigo_omie?: number
           tirou_do_motor?: boolean
         }
@@ -23517,6 +23535,9 @@ export type Database = {
         Args: { p_empresa: string; p_qtd: number; p_sku: number }
         Returns: {
           atualizado_em: string
+          canal_liquidacao: string | null
+          concluido_em: string | null
+          concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
           credito_troca: number | null
@@ -23533,7 +23554,10 @@ export type Database = {
           motor_antes: Json | null
           observacao: string | null
           origem: string
+          prazo: string | null
+          preco_piso: number | null
           qtd_contada: number | null
+          responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
         }
@@ -23558,6 +23582,9 @@ export type Database = {
         }
         Returns: {
           atualizado_em: string
+          canal_liquidacao: string | null
+          concluido_em: string | null
+          concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
           credito_troca: number | null
@@ -23574,7 +23601,10 @@ export type Database = {
           motor_antes: Json | null
           observacao: string | null
           origem: string
+          prazo: string | null
+          preco_piso: number | null
           qtd_contada: number | null
+          responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
         }
@@ -23630,6 +23660,51 @@ export type Database = {
           saldo_atual: number
           sku_codigo_omie: number
         }[]
+      }
+      raio_x_planejar: {
+        Args: {
+          p_canal: string
+          p_concluido: boolean
+          p_empresa: string
+          p_preco_piso: number
+          p_prazo: string
+          p_responsavel: string
+          p_sku: number
+        }
+        Returns: {
+          atualizado_em: string
+          canal_liquidacao: string | null
+          concluido_em: string | null
+          concluido_por: string | null
+          contado_em: string | null
+          contado_por: string | null
+          credito_troca: number | null
+          decidido_em: string | null
+          decidido_por: string | null
+          destino: string | null
+          empresa: string
+          fornecedor_informado: string | null
+          foto_categoria: string | null
+          foto_cmc: number | null
+          foto_em: string | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          motor_antes: Json | null
+          observacao: string | null
+          origem: string
+          prazo: string | null
+          preco_piso: number | null
+          qtd_contada: number | null
+          responsavel: string | null
+          sku_codigo_omie: number
+          tirou_do_motor: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "raio_x_decisao"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rank_precisao: { Args: { p: string }; Returns: number }
       recalcular_picking_task: { Args: { p_task_id: string }; Returns: Json }

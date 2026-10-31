@@ -13,6 +13,8 @@ export type Destino =
   | 'estrategico'
   | 'erro_cadastro';
 export type Sugestao = Destino | 'novo_aguarde' | 'revisar' | 'sem_historico';
+/** Canal de liquidação (CHECK de `raio_x_decisao.canal_liquidacao`). */
+export type CanalLiquidacao = 'cliente_especifico' | 'promocao_carteira' | 'outlet_queima' | 'outro';
 
 export interface ClienteComprador {
   nome: string;
@@ -104,6 +106,16 @@ export interface DecisaoRow {
   contado_em: string | null;
   origem: 'app' | 'artifact_fase_a';
   atualizado_em: string;
+  // Plano de execução (pacote 2; escritor único `raio_x_planejar`). Re-decidir não apaga: a leitura filtra
+  // (piso/canal só com destino liquidar; concluido_em < decidido_em = destino mudou depois).
+  /** R$ por unidade de VENDA. */
+  preco_piso: number | null;
+  canal_liquidacao: CanalLiquidacao | null;
+  responsavel: string | null;
+  /** 'YYYY-MM-DD' */
+  prazo: string | null;
+  concluido_em: string | null;
+  concluido_por: string | null;
 }
 
 /**

@@ -21,6 +21,7 @@ const linhas: LinhaMedicao[] = [{
   compras_apos: ['2026-09-10T12:00:00Z'],
 }];
 
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-eu' } }) }));
 vi.mock('@/contexts/ReposicaoEmpresaContext', () => ({ useReposicaoEmpresa: () => ({ empresa: 'OBEN', setEmpresa: () => {} }) }));
 vi.mock('../useRaioX', () => ({
   useRaioX: () => ({
