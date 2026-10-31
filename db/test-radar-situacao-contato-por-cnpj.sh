@@ -268,6 +268,22 @@ cenario() {
   chk R2c "Z2 virou cliente com o cron esperando: intocado"        "$(estado 30000000000212)" "virou_cliente|0|∅|∅"
   chk R2d "o finalize termina: 1 descarte"                         "$(tr -d '\n ' < "$TMPD/r2-cron.out")" "ok:1"
 
+  echo "── P. a postcondição compara POR CNPJ, não os totais (lote 2027-01) ──"
+  # Gancho só do harness: o contato de P1 é gravado em P2. 1 estado e 1 contato, CNPJs diferentes — a contagem passa,
+  # a postcondição tem de abortar (25000) e a chamada inteira volta atrás (Codex P2: sem isto, toda sabotagem que a
+  # alcança também mudava os totais).
+  emp 40000000000113 a_contatar false 2027-01       # P1: o lead descartado
+  emp 40000000000213 descartado false ''            # P2: recebe o contato desviado (existe por causa da FK)
+  sit 40000000000113 2027-01 08
+  P -v ON_ERROR_STOP=1 -q -c "CREATE FUNCTION prova.desvia_contato() RETURNS trigger LANGUAGE plpgsql AS \$f\$
+      BEGIN NEW.cnpj := '40000000000213'; RETURN NEW; END \$f\$;
+    CREATE TRIGGER zz_prova_desvia_contato BEFORE INSERT ON public.radar_contatos
+      FOR EACH ROW WHEN (NEW.cnpj = '40000000000113') EXECUTE FUNCTION prova.desvia_contato();" > /dev/null
+  chk P1 "contato em outro CNPJ, mesmos totais: a postcondição aborta" "$(aplicar 2027-01 '2027-01-05 06:05+00')" "ERRO:25000"
+  P -v ON_ERROR_STOP=1 -q -c "DROP TRIGGER zz_prova_desvia_contato ON public.radar_contatos" > /dev/null
+  chk P2 "P1 volta atrás: sem descarte e sem contato"              "$(estado 40000000000113)" "a_contatar|0|∅|∅"
+  chk P3 "P2 sem o contato desviado"                               "$(estado 40000000000213)" "descartado|0|∅|∅"
+
   echo "── G. catálogo ──"
   # A ACL é lida ANTES de reaplicar: a reaplicação repararia um grant indevido antes de alguém olhar (lição do #3447).
   chk G1 "PUBLIC, anon e authenticated não executam; service_role executa" "$(acl)" "false|false|false|true"
@@ -288,7 +304,8 @@ cenario() {
 sabotagem() {
   local F='public.radar_aplicar_situacao(text,timestamptz)'
   case "$1" in
-    # O contato volta a nascer do RETRATO (o corpo antigo); a postcondição por CNPJ tem de abortar a corrida R1.
+    # O contato volta a nascer do RETRATO (o corpo antigo); a postcondição tem de abortar a corrida R1 (3 contatos × 2
+    # estados — os totais também diferem; o dente de "por CNPJ" é o P1 com post_por_total).
     contato_do_retrato) cv_sabotar "$F" "      SELECT e.cnpj, 'descartado', e.descricao, c_sistema, e.status_anterior, p_agora
         FROM estado e" "      SELECT i.cnpj, 'descartado', i.descricao, c_sistema, i.prospeccao_status, p_agora
         FROM tmp_rfb_irreg i WHERE i.no_radar AND i.vigente AND NOT i.cliente
@@ -300,6 +317,8 @@ sabotagem() {
         FROM tmp_rfb_irreg i WHERE i.no_radar AND i.vigente AND NOT i.cliente
          AND i.prospeccao_status NOT IN ('descartado', 'virou_cliente')" || return 1
                    cv_sabotar "$F" "    IF v_diverge THEN" "    IF false THEN" ;;
+    # A postcondição volta a comparar os TOTAIS (o corpo antigo): o desvio do P1 (1 = 1) passa.
+    post_por_total) cv_sabotar "$F" "    IF v_diverge THEN" "    IF v_leads <> v_leads_upd THEN" ;;
     status_do_retrato) cv_sabotar "$F" "re.prospeccao_status AS status_anterior" "i.prospeccao_status AS status_anterior" ;;
     sem_trava)     cv_sabotar "$F" "
          FOR UPDATE OF re" "" ;;
@@ -318,6 +337,7 @@ sabotagem() {
 # <sabotagem>:<ids que TÊM de virar vermelho>[:<ids que têm de seguir verdes>]
 SABOTAGENS="contato_do_retrato:R1b:B1
 contato_do_retrato_sem_post:R1c,R1e:B1
+post_por_total:P1:B1
 status_do_retrato:R2b:R2c
 sem_trava:R2c:B1
 ja_cliente_do_retrato:R1e:R1d
