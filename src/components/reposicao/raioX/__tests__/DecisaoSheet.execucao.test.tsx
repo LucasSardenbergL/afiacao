@@ -32,7 +32,7 @@ const itemRX = (p: Partial<ItemRaioX> = {}): ItemRaioX => ({
   classe_abc: null, cadastro_em: null, ult_entrada: null, fornecedor: 'SAYERLACK', q12: 0, ncli: 0,
   ult_venda: null, preco_medio_12m: 9, clientes: [], synced_at: null, habilitado_reposicao_automatica: true,
   valor: 6000, cobertura: null, categoria: 'mercadoria', motivo_categoria: '', parado: true,
-  destino_sugerido: 'liquidar', motivo_destino: '', alerta_recompra: null, top: true, top_atual: true, entrou_no_top: false, ...p,
+  destino_sugerido: 'liquidar', motivo_destino: '', alerta_recompra: null, inequivoco: null, motivos_espera: [], qtd_liquidavel: null, ultima_entrada: null, top: true, top_atual: true, entrou_no_top: false, ...p,
 });
 
 const EQUIPE = [

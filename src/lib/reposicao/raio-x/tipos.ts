@@ -15,6 +15,22 @@ export type Destino =
 export type Sugestao = Destino | 'novo_aguarde' | 'revisar' | 'sem_historico';
 /** Canal de liquidação (CHECK de `raio_x_decisao.canal_liquidacao`). */
 export type CanalLiquidacao = 'cliente_especifico' | 'promocao_carteira' | 'outlet_queima' | 'outro';
+/** Contrapartida da troca (CHECK de `raio_x_decisao.troca_contrapartida`): o que entra no lugar. Encalhe não libera nada. */
+export type TrocaContrapartida = 'giro' | 'encalhe';
+/**
+ * Linha de `raio_x_inequivoco(p_empresa)`. A regra do "liquidar só o inequívoco" é do SERVIDOR (o decidir recusa
+ * com RX004); aqui só se exibe. `inequivoco=false` traz TODOS os motivos que seguram (nunca só o primeiro).
+ */
+export interface InequivocoSku {
+  sku_codigo_omie: number;
+  inequivoco: boolean;
+  motivos_espera: string[];
+  cobertura_dias: number | null;
+  /** saldo − 90 dias de consumo; null quando não é inequívoco. */
+  qtd_liquidavel: number | null;
+  ultima_entrada: string | null;
+  revisar_em: string | null;
+}
 
 export interface ClienteComprador {
   nome: string;
@@ -70,6 +86,11 @@ export interface ItemRaioX extends FatoSku {
   top_atual: boolean;
   /** Entraria no Top hoje, mas não está na coorte congelada: aparece, não mexe no denominador. */
   entrou_no_top: boolean;
+  /** Veredito do servidor (`raio_x_inequivoco`); null = leitura indisponível (nunca "inequívoco" por omissão). */
+  inequivoco: boolean | null;
+  motivos_espera: string[];
+  qtd_liquidavel: number | null;
+  ultima_entrada: string | null;
 }
 
 /** Linha de `raio_x_coorte_top`: valor congelado pelo SERVIDOR (saldo × cmc no congelamento; null = sem custo). */
@@ -116,6 +137,14 @@ export interface DecisaoRow {
   prazo: string | null;
   concluido_em: string | null;
   concluido_por: string | null;
+  // PR 2 (inequívoco): frete do liquidar, desconto COMERCIAL sobre o médio 12m e margem por unidade com as bases
+  // CONGELADAS ao planejar; contrapartida da troca. `?? null` na borda (bundle pode ir ao ar antes da migration).
+  frete_estimado: number | null;
+  desconto_sobre_medio_pct: number | null;
+  margem_unit: number | null;
+  preco_medio_base: number | null;
+  cmc_base: number | null;
+  troca_contrapartida: TrocaContrapartida | null;
 }
 
 /**
@@ -137,4 +166,5 @@ export interface LinhaMedicao {
   receita: number | null;
   preco_medio_12m: number | null;
   compras_apos: string[] | null;
+  troca_contrapartida: TrocaContrapartida | null;
 }

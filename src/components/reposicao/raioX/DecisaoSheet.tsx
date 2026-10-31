@@ -6,7 +6,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
+import { DESTINOS, ROTULOS, ROTULOS_ESPERA } from '@/lib/reposicao/raio-x/classificar';
 import {
   argsEstadoSalvo,
   assinaturaServidor,
@@ -26,7 +26,7 @@ import {
   ROTULO_CANAL,
 } from '@/lib/reposicao/raio-x/execucao';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
-import type { CanalLiquidacao, Categoria, DecisaoRow, Destino, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import type { CanalLiquidacao, Categoria, DecisaoRow, Destino, Empresa, ItemRaioX, TrocaContrapartida } from '@/lib/reposicao/raio-x/tipos';
 import { useRaioXMutacoes, type PlanejarArgs } from './useRaioXMutacoes';
 import type { MembroEquipe } from './useExecucaoRaioX';
 import { fmtReais, fmtValor, fmtValorFino } from './formato';
@@ -227,6 +227,11 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar, equipe = [
         </section>
       )}
 
+      {destino === 'liquidar' && destino !== gravado && item.inequivoco === false && (
+        <p role="status" className="text-xs text-status-warning" data-testid="aviso-rx004">
+          O servidor recusa liquidar fora do inequívoco (decisão do founder: só o inequívoco agora). Aguarda: {item.motivos_espera.map((m) => ROTULOS_ESPERA[m] ?? m).join(', ')}.
+        </p>
+      )}
       {destino === 'trocar' && (
         <section className="space-y-1">
           <label htmlFor="rx-credito" className="font-medium">Crédito de troca (R$)</label>
@@ -335,8 +340,9 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
   const liquidar = decisao.destino === 'liquidar';
   // Plano NUNCA gravado: os padrões (quem decidiu, hoje + 14 dias) são a proposta e podem ser salvos sem toque.
   // Plano existente: nulo gravado fica nulo (não "repõe" responsável/prazo apagados de propósito).
+  const trocar = decisao.destino === 'trocar';
   const semPlano = decisao.responsavel === null && decisao.prazo === null && decisao.preco_piso === null
-    && decisao.canal_liquidacao === null && decisao.concluido_em === null;
+    && decisao.canal_liquidacao === null && decisao.concluido_em === null && decisao.frete_estimado === null && decisao.troca_contrapartida === null;
   const [responsavel, setResponsavel] = useState(semPlano ? (decisao.decidido_por ?? '') : (decisao.responsavel ?? ''));
   const [prazo, setPrazo] = useState(semPlano ? addDias(hojeSP(), PRAZO_PADRAO_DIAS) : (decisao.prazo ?? ''));
   // A versão que o formulário edita (o Sheet remonta ao recarregar): vai como p_atualizado_em → RX003 se mudou.
@@ -344,6 +350,9 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
   const [concluido, setConcluido] = useState(concluidoVigente(decisao));
   const [piso, setPiso] = useState(liquidar ? paraCampo(decisao.preco_piso) : '');
   const [canal, setCanal] = useState<CanalLiquidacao | ''>(liquidar ? (decisao.canal_liquidacao ?? '') : '');
+  const [frete, setFrete] = useState(liquidar ? paraCampo(decisao.frete_estimado) : '');
+  const [erroFrete, setErroFrete] = useState(false);
+  const [contrapartida, setContrapartida] = useState<TrocaContrapartida | ''>(trocar ? (decisao.troca_contrapartida ?? '') : '');
   const [erroPiso, setErroPiso] = useState(false);
   const [sujo, setSujo] = useState(false);
   const tocar = () => {
@@ -367,9 +376,21 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
       precoPiso = r.valor;
     }
     setErroPiso(false);
+    let freteNum: number | null = null;
+    if (liquidar && frete.trim() !== '') {
+      const rf = lerNumero(frete);
+      if (rf.erro) {
+        setErroFrete(true);
+        return;
+      }
+      freteNum = rf.valor;
+    }
+    setErroFrete(false);
     onSalvar({
       sku: item.sku_codigo_omie,
       precoPiso,
+      frete: freteNum,
+      trocaContrapartida: trocar && contrapartida ? contrapartida : null,
       canal: liquidar && canal ? canal : null,
       responsavel: responsavel || null,
       prazo: prazo || null,
@@ -431,7 +452,29 @@ function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, o
             </select>
             <p className="text-xs text-muted-foreground">detalhe (qual cliente, qual promoção) vai na observação</p>
           </div>
+          <div className="space-y-1">
+            <label htmlFor="rx-frete" className="block text-xs">Frete estimado (R$ total da liquidação)</label>
+            <Input id="rx-frete" inputMode="decimal" value={frete} aria-invalid={erroFrete} onChange={(e) => { tocar(); setErroFrete(false); setFrete(e.target.value); }} />
+            {erroFrete && <p className="text-xs text-status-error">{MSG_NUMERO_INVALIDO}</p>}
+            {decisao.desconto_sobre_medio_pct !== null && (
+              <p className="text-xs text-muted-foreground">
+                gravado: desconto {Math.round(decisao.desconto_sobre_medio_pct * 100)}% sobre o médio {decisao.preco_medio_base !== null ? fmtValorFino(decisao.preco_medio_base) : '—'}
+                {decisao.margem_unit !== null ? ` · margem ${fmtValorFino(decisao.margem_unit)}/un sobre CMC ${decisao.cmc_base !== null ? fmtValorFino(decisao.cmc_base) : '—'}` : ' · margem — (sem CMC)'}
+              </p>
+            )}
+          </div>
         </>
+      )}
+      {trocar && (
+        <div className="space-y-1">
+          <label htmlFor="rx-contrapartida" className="block text-xs">O que entra no lugar</label>
+          <select id="rx-contrapartida" className="h-11 w-full rounded-md border bg-background px-2" value={contrapartida}
+            onChange={(e) => { tocar(); setContrapartida(e.target.value as TrocaContrapartida | ''); }}>
+            <option value="">— não informado —</option>
+            <option value="giro">produto que gira (conta no critério da meta)</option>
+            <option value="encalhe">outro encalhe (não libera nada)</option>
+          </select>
+        </div>
       )}
       <label className="flex min-h-11 items-center gap-2">
         <input type="checkbox" checked={concluido} onChange={(e) => { tocar(); setConcluido(e.target.checked); }} />

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { DecisaoRow, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
+import { ROTULOS_ESPERA } from '@/lib/reposicao/raio-x/classificar';
 import { custoEsperarMensal, pisoVigente, situacaoPlano, type SituacaoPlano } from '@/lib/reposicao/raio-x/execucao';
 import { fmtReais } from './formato';
 import { RaioXLista } from './RaioXLista';
@@ -19,6 +20,16 @@ const colunasBase: Coluna[] = [
         <span className="flex flex-col gap-0.5">
           <span className={r.decidido ? 'text-status-success' : 'text-muted-foreground'} title={i.motivo_destino}>{r.texto}</span>
           {i.alerta_recompra && <span className="text-xs text-status-warning">{i.alerta_recompra}</span>}
+          {i.inequivoco === true && (
+            <span className="text-xs text-status-success" data-testid="selo-inequivoco">
+              inequívoco{i.qtd_liquidavel !== null ? ` · liquidável ${Math.floor(i.qtd_liquidavel)} un` : ''}
+            </span>
+          )}
+          {i.inequivoco === false && (
+            <span className="text-xs text-muted-foreground" data-testid="selo-aguarda">
+              aguarda: {i.motivos_espera.map((m) => ROTULOS_ESPERA[m] ?? m).join(', ')}
+            </span>
+          )}
           {i.entrou_no_top && <span className="text-xs text-muted-foreground">entrou no Top depois do congelamento</span>}
         </span>
       );

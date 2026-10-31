@@ -84,7 +84,8 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
         <div className="text-sm text-muted-foreground">Liberado pelas decisões (parcelas separadas, não é caixa)</div>
         <Linha rotulo="Estoque reduzido (a custo)" valor={m.estoque_reduzido} nota={oben ? 'vendido + liquidado, ao CMC da foto' : 'sem NF para atribuir a saída'} />
         <Linha rotulo="Receita das vendas" valor={m.receita_vendas} nota={oben ? 'faturado por essas unidades' : 'sem NF'} />
-        <Linha rotulo="Crédito de troca informado" valor={m.trocado} nota="informado na decisão, não conferido" />
+        <Linha rotulo="Crédito de troca informado" valor={m.trocado} nota={`informado na decisão, não conferido${m.trocado_sem_contrapartida > 0 ? ` · ${fmtReais(m.trocado_sem_contrapartida)} sem contrapartida informada` : ''}`} />
+        {m.trocado_encalhe > 0 && <Linha rotulo="Troca por outro encalhe (fora do critério)" valor={m.trocado_encalhe} nota="entra outro parado no lugar — não libera" />}
       </div>
 
       <div className="space-y-2">

@@ -15,7 +15,8 @@ export const decisao = (sku: number, o: Partial<DecisaoRow> = {}): DecisaoRow =>
   credito_troca: null, decidido_por: null, decidido_em: null, foto_saldo: null, foto_cmc: null, foto_valor: null,
   foto_categoria: null, foto_em: null, tirou_do_motor: false, motor_antes: null, qtd_contada: null,
   contado_por: null, contado_em: null, origem: 'app', atualizado_em: '2026-10-14T00:00:00Z',
-  preco_piso: null, canal_liquidacao: null, responsavel: null, prazo: null, concluido_em: null, concluido_por: null, ...o,
+  preco_piso: null, canal_liquidacao: null, responsavel: null, prazo: null, concluido_em: null, concluido_por: null,
+  frete_estimado: null, desconto_sobre_medio_pct: null, margem_unit: null, preco_medio_base: null, cmc_base: null, troca_contrapartida: null, ...o,
 });
 
 export const mapaDecisoes = (...ds: DecisaoRow[]) => new Map(ds.map((d) => [d.sku_codigo_omie, d]));

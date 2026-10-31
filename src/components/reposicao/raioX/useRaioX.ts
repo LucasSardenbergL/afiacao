@@ -1,4 +1,3 @@
-import { comoCoorte, comoDecisaoRow, comoFatoSku, comoLinhaManual, comoLinhaMedicao } from '@/lib/reposicao/raio-x/borda';
 // Hook de leitura do Raio-X do estoque parado (fase B). Lê fatos (RPC), decisões e classificações
 // manuais, tudo PAGINADO (PostgREST capa em 1.000 linhas, inclusive `.rpc()`), e entrega itens já
 // classificados + placar. A medição (`raio_x_medicao`) fica para o PR 4.
@@ -7,7 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { hojeSP } from '@/lib/time/sp-day';
-import { aplicarCoorte, classificar } from '@/lib/reposicao/raio-x/classificar';
+import { aplicarCoorte, aplicarInequivoco, classificar } from '@/lib/reposicao/raio-x/classificar';
+import { comoCoorte, comoDecisaoRow, comoFatoSku, comoInequivoco, comoLinhaManual, comoLinhaMedicao } from '@/lib/reposicao/raio-x/borda';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
 import { placar } from '@/lib/reposicao/raio-x/placar';
@@ -16,6 +16,7 @@ import type {
   ClassificacaoManual,
   DecisaoRow,
   Empresa,
+  InequivocoSku,
   ItemRaioX,
   LinhaMedicao,
 } from '@/lib/reposicao/raio-x/tipos';
@@ -49,6 +50,8 @@ export function useRaioX(empresa: Empresa | null): {
   placar: ReturnType<typeof placar>;
   /** sem coorte congelada (ou indisponível) o placar usa o Top de hoje e diz isso. */
   coorteEstado: EstadoCoorte;
+  /** RPC raio_x_inequivoco falhou (ex.: migration ainda não aplicada): selos ficam "—". */
+  inequivocoIndisponivel: boolean;
   syncedHoras: number | null;
   isLoading: boolean;
   erro: Error | null;
@@ -127,6 +130,24 @@ export function useRaioX(empresa: Empresa | null): {
     },
   });
 
+  // Veredito "inequívoco" do servidor (PR 2). Falha NÃO derruba a aba: vira `inequivoco: null` (selo "—"), como a coorte.
+  const inequivocoQ = useQuery({
+    queryKey: ['raio-x', empresa, 'inequivoco'],
+    enabled,
+    retry,
+    queryFn: () =>
+      ler(() =>
+        fetchAllPages(
+          (de, ate) =>
+            supabase
+              .rpc('raio_x_inequivoco', { p_empresa: empresa as string })
+              .order('sku_codigo_omie', { ascending: true })
+              .range(de, ate),
+          'raio_x_inequivoco',
+        ).then((rows) => rows.map(comoInequivoco).filter((x): x is InequivocoSku => x !== null)),
+      ),
+  });
+
   const fatos = fatosQ.data;
   const decisoesData = decisoesQ.data;
   const manuaisData = manuaisQ.data;
@@ -146,6 +167,11 @@ export function useRaioX(empresa: Empresa | null): {
 
   const coorte = coorteQ.data ?? null;
   const itensComCoorte = useMemo(() => aplicarCoorte(itens, coorte), [itens, coorte]);
+  const mapaInequivoco = useMemo(
+    () => (inequivocoQ.data ? new Map<number, InequivocoSku>(inequivocoQ.data.map((q) => [q.sku_codigo_omie, q])) : null),
+    [inequivocoQ.data],
+  );
+  const itensFinal = useMemo(() => aplicarInequivoco(itensComCoorte, mapaInequivoco), [itensComCoorte, mapaInequivoco]);
   const placarCalc = useMemo(() => placar(itensComCoorte, decisoes, coorte), [itensComCoorte, decisoes, coorte]);
 
   // Só congela com os insumos ATUAIS e completos: refetch pendente serviria o cache anterior (Codex P1) e a
@@ -169,7 +195,8 @@ export function useRaioX(empresa: Empresa | null): {
   const coorteEstado: EstadoCoorte = coorteQ.isError ? 'indisponivel' : coorte ? 'congelada' : 'nao_congelada';
 
   return {
-    itens: erro ? [] : itensComCoorte,
+    itens: erro ? [] : itensFinal,
+    inequivocoIndisponivel: inequivocoQ.isError,
     decisoes,
     placar: placarCalc,
     coorteEstado,

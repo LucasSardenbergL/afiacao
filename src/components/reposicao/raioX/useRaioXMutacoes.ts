@@ -9,7 +9,7 @@ import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { comNulo } from '@/lib/rpc-args';
 import type { DecidirArgs } from '@/lib/reposicao/raio-x/decisao';
-import type { CanalLiquidacao, Categoria, Empresa } from '@/lib/reposicao/raio-x/tipos';
+import type { CanalLiquidacao, Categoria, Empresa, TrocaContrapartida } from '@/lib/reposicao/raio-x/tipos';
 
 export interface PlanejarArgs {
   sku: number;
@@ -21,6 +21,10 @@ export interface PlanejarArgs {
   concluido: boolean;
   /** atualizado_em da decisão que o formulário EDITOU (concorrência otimista — RX003 se mudou). */
   atualizadoEm: string;
+  /** R$ total estimado de frete da liquidação (só liquidar). */
+  frete: number | null;
+  /** só trocar: o que entra no lugar. */
+  trocaContrapartida: TrocaContrapartida | null;
 }
 
 const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
@@ -28,6 +32,7 @@ const MSG_RX001_RESTAURAR = 'Este SKU não tem mais parâmetro de reposição �
 const MSG_SEM_PERMISSAO = 'Sem permissão para decidir no Raio-X (exige acesso a custo).';
 const MSG_RX002 = 'Esta decisão foi desfeita — grave o destino antes do plano';
 const MSG_RX003 = 'Outra pessoa mudou esta decisão — recarregue antes de salvar a execução';
+const MSG_RX004 = 'Liquidar só no inequívoco: este SKU ainda aguarda (corante, entrada recente, cold-start, substituição ou cadastro) — escolha outro destino';
 
 /** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
 function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
@@ -35,6 +40,7 @@ function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
   if (code === 'RX001') toast.error(msgRx001);
   else if (code === 'RX002') toast.error(MSG_RX002);
   else if (code === 'RX003') toast.error(MSG_RX003);
+  else if (code === 'RX004') toast.error(MSG_RX004);
   else if (code === '42501') toast.error(MSG_SEM_PERMISSAO);
   else toast.error(mensagemDeErro(e) ?? fallback);
 }
@@ -120,7 +126,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
   const mPlanejar = useMutation({
     mutationFn: async ({ empresa, args }: { empresa: Empresa; args: PlanejarArgs }) => {
       // Estado completo (como decidir): campo nulo LIMPA. A RPC (20261031180000, sem DEFAULT, não-STRICT) aceita NULL.
-      const params = comNulo<'raio_x_planejar', 'p_preco_piso' | 'p_canal' | 'p_responsavel' | 'p_prazo'>({
+      const params = comNulo<'raio_x_planejar', 'p_preco_piso' | 'p_canal' | 'p_responsavel' | 'p_prazo' | 'p_frete' | 'p_troca_contrapartida'>({
         p_empresa: empresa,
         p_sku: args.sku,
         p_preco_piso: args.precoPiso,
@@ -128,6 +134,8 @@ export function useRaioXMutacoes(empresa: Empresa) {
         p_responsavel: args.responsavel,
         p_prazo: args.prazo,
         p_concluido: args.concluido,
+        p_frete: args.frete,
+        p_troca_contrapartida: args.trocaContrapartida,
         p_atualizado_em: args.atualizadoEm,
       });
       const { error } = await supabase.rpc('raio_x_planejar', params);
@@ -193,6 +201,10 @@ export function useRaioXMutacoes(empresa: Empresa) {
   const planejar = async (args: PlanejarArgs): Promise<boolean> => {
     if (!numeroValido(args.precoPiso)) {
       toast.error('Preço piso inválido.');
+      return false;
+    }
+    if (!numeroValido(args.frete)) {
+      toast.error('Frete inválido.');
       return false;
     }
     try {

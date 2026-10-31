@@ -1,7 +1,7 @@
 // Categoria por tipo Omie + destino sugerido (porte de docs/superpowers/raio-x-estoque-parado/logica.mjs).
 // Lógica pura, sem I/O. Ausente ≠ zero: q12/cmc nulos nunca viram 0.
 import type {
-  Categoria, ClassificacaoManual, CoorteTop, Empresa, FatoSku, ItemRaioX, Sugestao,
+  Categoria, ClassificacaoManual, CoorteTop, Empresa, FatoSku, InequivocoSku, ItemRaioX, Sugestao,
 } from './tipos';
 
 export const TOP_N = 61;
@@ -135,6 +135,10 @@ export function classificar(
       top: false,
       top_atual: false,
       entrou_no_top: false,
+      inequivoco: null,
+      motivos_espera: [],
+      qtd_liquidavel: null,
+      ultima_entrada: null,
     };
   });
   itens.sort((a, b) => {
@@ -147,6 +151,26 @@ export function classificar(
   // com coorte, `aplicarCoorte` troca `top` pela coorte da meta.
   itens.filter((i) => i.parado && i.valor !== null).slice(0, TOP_N).forEach((i) => { i.top = true; i.top_atual = true; });
   return itens;
+}
+
+/** Motivos de espera do servidor (`raio_x_inequivoco.motivos_espera`) → texto da tela. */
+export const ROTULOS_ESPERA: Record<string, string> = {
+  sem_nf: 'sem NF de venda', fonte_consumo_desatualizada: 'fonte de consumo desatualizada', cadastro_incompleto: 'cadastro incompleto',
+  nao_mercadoria: 'não é mercadoria', cobertura_abaixo_365: 'cobertura ≤ 365d', corante: 'corante (consumo dosado não medido)',
+  entrada_recente: 'entrada de compra em 90d', cold_start: 'cold-start', substituido: 'substituído', cadastro_recente: 'cadastro < 90d',
+};
+
+/**
+ * Veredito do servidor por SKU. `mapa` null (RPC indisponível) deixa `inequivoco: null` em tudo — a tela mostra "—",
+ * nunca promove a inequívoco por omissão (ausente ≠ elegível). SKU sem linha na RPC (saldo zerou) idem.
+ */
+export function aplicarInequivoco(itens: ItemRaioX[], mapa: Map<number, InequivocoSku> | null): ItemRaioX[] {
+  if (!mapa) return itens;
+  return itens.map((i) => {
+    const q = mapa.get(i.sku_codigo_omie);
+    if (!q) return i;
+    return { ...i, inequivoco: q.inequivoco, motivos_espera: q.motivos_espera, qtd_liquidavel: q.qtd_liquidavel, ultima_entrada: q.ultima_entrada };
+  });
 }
 
 /**
