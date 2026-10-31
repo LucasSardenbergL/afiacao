@@ -40,8 +40,8 @@ DECLARE
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_catalog.pg_proc p
    WHERE p.oid = 'public.radar_aplicar_situacao(text, timestamptz)'::regprocedure;
-  IF v_vivo IS DISTINCT FROM '73e049de2f5ec345daf0c8db81099e98' AND v_vivo IS DISTINCT FROM '177667479ac9a1e7825f24ad63c1123b' THEN
-    RAISE EXCEPTION 'PRE FALHOU: public.radar_aplicar_situacao vivo tem md5 % (esperado o predecessor 73e049de2f5ec345daf0c8db81099e98 ou este 177667479ac9a1e7825f24ad63c1123b) — reler o corpo de prod antes de reaplicar',
+  IF v_vivo IS DISTINCT FROM '73e049de2f5ec345daf0c8db81099e98' AND v_vivo IS DISTINCT FROM '3b99d4ddd83b8b49b1a2965439d56002' THEN
+    RAISE EXCEPTION 'PRE FALHOU: public.radar_aplicar_situacao vivo tem md5 % (esperado o predecessor 73e049de2f5ec345daf0c8db81099e98 ou este 3b99d4ddd83b8b49b1a2965439d56002) — reler o corpo de prod antes de reaplicar',
       v_vivo;
   END IF;
 END
@@ -117,7 +117,7 @@ BEGIN
   DECLARE
     v_diverge boolean;
   BEGIN
-    WITH alvo AS (
+    WITH alvo AS MATERIALIZED (
       SELECT re.cnpj, re.prospeccao_status AS status_anterior, i.descricao
         FROM public.radar_empresas re
         JOIN tmp_rfb_irreg i ON i.cnpj = re.cnpj
@@ -245,8 +245,8 @@ BEGIN
   SELECT md5(p.prosrc) AS md5, p.prosecdef, p.provolatile, p.proconfig,
          (SELECT count(*) FROM pg_catalog.pg_proc o WHERE o.pronamespace = p.pronamespace AND o.proname = p.proname) AS sobrecargas
     INTO v FROM pg_catalog.pg_proc p WHERE p.oid = f::regprocedure;
-  IF v.md5 IS DISTINCT FROM '177667479ac9a1e7825f24ad63c1123b' THEN
-    RAISE EXCEPTION 'PÓS FALHOU: % ficou com md5 % (esperado 177667479ac9a1e7825f24ad63c1123b)', f, v.md5;
+  IF v.md5 IS DISTINCT FROM '3b99d4ddd83b8b49b1a2965439d56002' THEN
+    RAISE EXCEPTION 'PÓS FALHOU: % ficou com md5 % (esperado 3b99d4ddd83b8b49b1a2965439d56002)', f, v.md5;
   END IF;
   IF NOT v.prosecdef OR v.provolatile <> 'v' OR v.proconfig IS DISTINCT FROM ARRAY['search_path=public, pg_temp'] THEN
     RAISE EXCEPTION 'PÓS FALHOU: % perdeu atributos (secdef %, vol %, config %)', f, v.prosecdef, v.provolatile, v.proconfig;
