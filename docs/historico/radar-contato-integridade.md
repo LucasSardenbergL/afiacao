@@ -106,7 +106,7 @@ possível registrar". O banco recusa do mesmo jeito; só o texto do aviso é pio
 
 ## Follow-ups
 
-- `radar_kpis.virou_cliente_mes` pela data imutável `omie_cadastrado_em` (o gestor tirar e devolver ainda reconta).
+- ~~`radar_kpis.virou_cliente_mes` pela data imutável `omie_cadastrado_em`~~ → [radar-kpis-conversao.md](radar-kpis-conversao.md).
 - `radar_aplicar_situacao`: correspondência contato↔estado por CNPJ, não só pelos totais (Codex P1, herdado).
 - ~~Regravar `bun run authz:carimbo:gravar` depois do merge~~: feito pelo #3442 (carimbo de 13:10 UTC, já sem o
   `PATCH_NAO_CONCILIADO` transitório de `registrar_contato_radar`).

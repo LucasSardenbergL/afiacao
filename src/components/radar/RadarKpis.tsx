@@ -295,7 +295,7 @@ export function RadarKpis() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <CardLote />
         <Card label="A contatar" valor={data.a_contatar.toLocaleString('pt-BR')} hint="todo o Radar, sem os filtros da tela" />
-        <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} />
+        <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} hint="clientes que o Radar criou no Omie neste mês" />
       </div>
       {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mt-2" />}
     </div>
