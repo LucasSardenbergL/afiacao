@@ -103,6 +103,11 @@ Spec: `docs/superpowers/specs/2026-10-31-raio-x-pacote-2-design.md` (desenho apr
   padrões só em plano nunca gravado; (P2) "Salvar execução" fechava o painel descartando rascunho da decisão →
   rascunho cruzado trava o outro botão. Authz/ACL/search_path e `decidir`/`contar` após o ALTER: sem achado.
 
+- **Deploy (2026-10-31):** PR #3448 mergeado; migration `20261031180000` aplicada pelo envelope (ensaio ok →
+  recibo **db:aplicar #786**), 2ª testemunha psql-ro (RPC SECURITY DEFINER, anon/PUBLIC sem EXECUTE, 6 colunas,
+  2 CHECKs, 17 decisões intactas); Publish feito pelo founder e conferido por bytes (`Salvar execução` no chunk
+  `AdminReposicaoBaixoGiro`, controle `Salvar decisão` no mesmo chunk). Falta recarregar o app no celular do comprador.
+
 ### Query — adoção do plano (psql-ro)
 
 ```sql
