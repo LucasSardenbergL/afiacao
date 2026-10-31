@@ -6,6 +6,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { classificar } from '@/lib/reposicao/raio-x/classificar';
+import { placar } from '@/lib/reposicao/raio-x/placar';
 import { fato, HOJE } from '@/lib/reposicao/raio-x/__tests__/fixtures';
 import type { LinhaMedicao } from '@/lib/reposicao/raio-x/tipos';
 
@@ -23,15 +24,17 @@ const linhas: LinhaMedicao[] = [{
 vi.mock('@/contexts/ReposicaoEmpresaContext', () => ({ useReposicaoEmpresa: () => ({ empresa: 'OBEN', setEmpresa: () => {} }) }));
 vi.mock('../useRaioX', () => ({
   useRaioX: () => ({
-    itens, decisoes: new Map(), syncedHoras: null, isLoading: false, erro: null,
-    placar: { total: 0, decidido: 0, pendente: 0, porDestino: {}, topTotal: 0, topDecidido: 0, semCustoN: 0, distorceDio: 0, semCustoDioN: 0 },
+    itens, decisoes: new Map(), syncedHoras: null, isLoading: false, erro: null, coorteEstado: 'congelada',
+    placar: placar(itens, new Map()),
   }),
   useRaioXMedicao: () => ({ linhas, isLoading: false, erro: null }),
 }));
 vi.mock('../DecisaoSheet', () => ({ DecisaoSheet: () => null }));
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 vi.mock('@/lib/analytics', () => ({ track: vi.fn(), captureException: vi.fn() }));
+vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: vi.fn() }));
 
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { RaioXTab } from '../RaioXTab';
 
 describe('RaioXTab — contradição filtra por SKU exato', () => {
@@ -46,5 +49,17 @@ describe('RaioXTab — contradição filtra por SKU exato', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Limpar filtro do SKU' }));
     expect(screen.queryByText(/Filtrando pelo SKU/)).toBeNull();
     expect(screen.getAllByText(/A100/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('RaioXTab — sensor de visita (ledger)', () => {
+  it('com a leitura pronta registra 1 visita com a empresa, mesmo re-renderizando', () => {
+    const qc = new QueryClient();
+    const arv = <QueryClientProvider client={qc}><MemoryRouter><RaioXTab /></MemoryRouter></QueryClientProvider>;
+    vi.mocked(registrarNoLedger).mockClear();
+    const { rerender } = render(arv);
+    rerender(arv);
+    expect(registrarNoLedger).toHaveBeenCalledTimes(1);
+    expect(registrarNoLedger).toHaveBeenCalledWith('reposicao.raio_x_aberta', 'oben', { empresa: 'oben' });
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PackageSearch } from 'lucide-react';
 import { useReposicaoEmpresa } from '@/contexts/ReposicaoEmpresaContext';
@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
 import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
 import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { useRaioX, useRaioXMedicao } from './useRaioX';
 import { RaioXPlacar } from './RaioXPlacar';
 import { RaioXCaixaLiberado } from './RaioXCaixaLiberado';
@@ -43,6 +44,15 @@ export function RaioXTab() {
   useEffect(() => {
     if (aberto && aberto.empresa !== chave) setAberto(null);
   }, [aberto, chave]);
+  // Sensor de visita (ledger server-side; o PostHog é censurado no Chrome do founder): 1x por empresa e montagem,
+  // só com a leitura PRONTA. O dedup de verdade é da RPC (titular × empresa × dia UTC).
+  const registradas = useRef<Set<Empresa>>(new Set());
+  const pronta = chave !== null && !rx.isLoading && !rx.erro;
+  useEffect(() => {
+    if (!pronta || !chave || registradas.current.has(chave)) return;
+    registradas.current.add(chave);
+    void registrarNoLedger('reposicao.raio_x_aberta', chave, { empresa: chave });
+  }, [pronta, chave]);
   const qc = useQueryClient();
   // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9
   // nunca mudaria — salvar apagaria o que outro operador gravou. Quando o refetch chegar com outra assinatura,
@@ -63,7 +73,8 @@ export function RaioXTab() {
 
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
-  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && i.parado), [rx.itens]);
+  // Membro da coorte que voltou a girar segue decidível (senão a meta de 100% ficaria inalcançável pela tela).
+  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && (i.parado || i.top)), [rx.itens]);
   const fornecedores = useMemo(
     () =>
       [...new Set(mercadoria.map((i) => fornecedorEfetivo(i, rx.decisoes.get(i.sku_codigo_omie))).filter((x): x is string => !!x))].sort(),
@@ -119,7 +130,7 @@ export function RaioXTab() {
           estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
         </p>
       )}
-      <RaioXPlacar placar={rx.placar} />
+      <RaioXPlacar placar={rx.placar} coorteIndisponivel={rx.coorteEstado === 'indisponivel'} />
       <RaioXCaixaLiberado
         linhas={medicao.linhas}
         isLoading={medicao.isLoading}

@@ -40,7 +40,11 @@ function Linha({ rotulo, valor, nota }: { rotulo: string; valor: number | null; 
   );
 }
 
-/** Caixa liberado pelas decisões do Raio-X. NUNCA soma com "R$ que distorce o DIO" (outro bloco, no placar). */
+/**
+ * O que as decisões do Raio-X liberaram, em parcelas SEPARADAS: estoque reduzido (a custo) · receita das vendas ·
+ * crédito de troca informado. Nenhuma delas é "caixa", e a tela nunca as soma com esse nome. A barra da meta usa
+ * o critério da fase B (estoque reduzido + crédito informado), rotulado como critério. NUNCA soma com o DIO.
+ */
 export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, onFiltrarSku }: Props) {
   const m = useMemo(() => (linhas ? medir(linhas, empresa) : null), [linhas, empresa]);
 
@@ -49,47 +53,51 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
     return (
       <div role="alert" className="rounded-md border border-status-error/30 bg-status-error/5 p-4 text-sm">
         {semPermissao
-          ? 'Caixa liberado indisponível: sem permissão para ver custo.'
-          : 'Não foi possível medir o caixa liberado. Recarregue a página; se persistir, avise o time.'}
+          ? 'Medição indisponível: sem permissão para ver custo.'
+          : 'Não foi possível medir o que foi liberado. Recarregue a página; se persistir, avise o time.'}
       </div>
     );
   }
   if (isLoading || !m) {
-    return <div role="status" className="rounded-md border p-4 text-sm text-muted-foreground">Medindo o caixa liberado…</div>;
+    return <div role="status" className="rounded-md border p-4 text-sm text-muted-foreground">Medindo o que foi liberado…</div>;
   }
 
   const oben = empresa === 'oben';
-  const pct = Math.min(100, Math.round((m.caixa_liberado / META_CAIXA) * 100));
+  const pct = Math.min(100, Math.round((m.meta_liberado / META_CAIXA) * 100));
 
   return (
-    <section aria-label="Caixa liberado" className="space-y-3 rounded-md border p-4">
+    <section aria-label="Liberado pelas decisões" className="space-y-3 rounded-md border p-4">
+      <div className="space-y-1" data-testid="parcelas-liberado">
+        <div className="text-sm text-muted-foreground">Liberado pelas decisões (parcelas separadas, não é caixa)</div>
+        <Linha rotulo="Estoque reduzido (a custo)" valor={m.estoque_reduzido} nota={oben ? 'vendido + liquidado, ao CMC da foto' : 'sem NF para atribuir a saída'} />
+        <Linha rotulo="Receita das vendas" valor={m.receita_vendas} nota={oben ? 'faturado por essas unidades' : 'sem NF'} />
+        <Linha rotulo="Crédito de troca informado" valor={m.trocado} nota="informado na decisão, não conferido" />
+      </div>
+
       <div className="space-y-2">
-        <div className="text-sm text-muted-foreground">Caixa liberado</div>
-        <div className="font-display text-xl">
-          {fmtReais(m.caixa_liberado)} <span className="text-sm text-muted-foreground">de {META_TEXTO}</span>
+        <div className="text-xs text-muted-foreground">
+          Meta {META_TEXTO} — critério: estoque reduzido (a custo) + crédito de troca informado
+        </div>
+        <div className="text-sm">
+          <span className="font-medium tabular-nums">{fmtReais(m.meta_liberado)}</span>{' '}
+          <span className="text-muted-foreground">de {META_TEXTO} no critério da meta</span>
         </div>
         <div
           role="progressbar"
-          aria-label="Caixa liberado contra a meta"
+          aria-label="Critério da meta: estoque reduzido mais crédito informado"
           aria-valuemin={0}
           aria-valuemax={META_CAIXA}
-          aria-valuenow={Math.min(m.caixa_liberado, META_CAIXA)}
+          aria-valuenow={Math.min(m.meta_liberado, META_CAIXA)}
           className="h-2 w-full overflow-hidden rounded bg-muted"
         >
           <div className="h-full bg-status-success" style={{ width: `${pct}%` }} />
         </div>
-        {!oben && (
-          <p className="text-xs text-muted-foreground">
-            Colacor: sem NF para atribuir a saída; só o crédito de troca conta como caixa.
-          </p>
-        )}
       </div>
 
       <div className="space-y-1">
-        {oben && <Linha rotulo="Vendido" valor={m.vendido} />}
-        {oben && <Linha rotulo="Liquidado (preço < 90% do médio 12m)" valor={m.liquidado} />}
-        <Linha rotulo="Trocado (crédito informado)" valor={m.trocado} />
-        {!oben && <Linha rotulo="Saiu do estoque (sem NF para atribuir: venda, consumo ou baixa?)" valor={m.saiu_sem_nf} nota="Não entra no caixa liberado." />}
+        {oben && <Linha rotulo="Vendido (a custo)" valor={m.vendido} />}
+        {oben && <Linha rotulo="Liquidado (a custo; preço < 90% do médio 12m)" valor={m.liquidado} />}
+        {!oben && <Linha rotulo="Saiu do estoque (sem NF para atribuir: venda, consumo ou baixa?)" valor={m.saiu_sem_nf} nota="Não entra no critério da meta." />}
         <Linha rotulo="Ainda parado" valor={m.parado} />
         {oben && <Linha rotulo="Recomprado" valor={m.recomprado} nota={m.compras_visiveis ? undefined : 'sem permissão para ver compras'} />}
       </div>

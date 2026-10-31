@@ -27,7 +27,7 @@ describe('medir (oben)', () => {
       linha({ sku_codigo_omie: 2, foto_categoria: 'nao_mercadoria', foto_valor: 100, saldo_atual: 0 }),
     ], 'oben');
     expect(m.trocado).toBe(30);
-    expect(m.caixa_liberado).toBe(30);
+    expect(m.meta_liberado).toBe(30);
     expect(m.reclassificado_nao_caixa).toBe(100);
   });
   it('acusa recompra após a decisão (compara instante)', () => {
@@ -50,7 +50,9 @@ describe('medir (oben)', () => {
   it('não conta como liberado o que foi recomprado', () => {
     const m = medir([linha({ saldo_atual: 10, qtd_vendida: 10, receita: 100 })], 'oben');
     expect(m.vendido).toBe(0);
-    expect(m.caixa_liberado).toBe(0);
+    expect(m.estoque_reduzido).toBe(0);
+    expect(m.receita_vendas).toBe(0);
+    expect(m.meta_liberado).toBe(0);
     expect(m.recomprado).toBe(50);
     expect(m.parado).toBe(50);
   });
@@ -131,6 +133,27 @@ describe('medir (colacor)', () => {
   it('crédito de troca ainda conta', () => {
     const m = medir([linha({ destino: 'trocar', credito_troca: 25, saldo_atual: 10, qtd_vendida: null, compras_apos: null })], 'colacor');
     expect(m.trocado).toBe(25);
-    expect(m.caixa_liberado).toBe(25);
+    expect(m.meta_liberado).toBe(25);
+    expect(m.estoque_reduzido).toBeNull(); // sem NF: ausente, não zero
+    expect(m.receita_vendas).toBeNull();
+  });
+});
+
+describe('medir — parcelas separadas, nunca "caixa"', () => {
+  it('estoque reduzido (a custo), receita das unidades contadas e crédito ficam separados', () => {
+    // foto 10 × cmc 100; saiu 4; vendeu 4 a R$ 150 → estoque reduzido 400, receita 600; + crédito 50 em outro SKU
+    const m = medir([
+      linha({ sku_codigo_omie: 1, destino: 'venda_dirigida', foto_saldo: 10, foto_cmc: 100, saldo_atual: 6, qtd_vendida: 4, receita: 600, preco_medio_12m: 150 }),
+      linha({ sku_codigo_omie: 2, destino: 'trocar', credito_troca: 50 }),
+    ], 'oben');
+    expect(m.estoque_reduzido).toBe(400);
+    expect(m.receita_vendas).toBe(600);
+    expect(m.trocado).toBe(50);
+    expect(m.meta_liberado).toBe(450); // critério da meta: estoque reduzido + crédito (receita NÃO entra)
+  });
+  it('receita só das unidades que saíram da foto (venda acima foi recomprada)', () => {
+    // foto 5, saiu 2, vendeu 4 a 10 → conta 2 unidades: receita 20, não 40
+    const m = medir([linha({ foto_saldo: 5, foto_cmc: 1, saldo_atual: 3, qtd_vendida: 4, receita: 40, preco_medio_12m: 10 })], 'oben');
+    expect(m.receita_vendas).toBe(20);
   });
 });

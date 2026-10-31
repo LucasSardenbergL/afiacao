@@ -13,7 +13,13 @@ const colunasBase: Coluna[] = [
     titulo: 'Destino',
     render: (i, d) => {
       const r = rotuloDestino(i, d);
-      return <span className={r.decidido ? 'text-status-success' : 'text-muted-foreground'} title={i.motivo_destino}>{r.texto}</span>;
+      return (
+        <span className="flex flex-col gap-0.5">
+          <span className={r.decidido ? 'text-status-success' : 'text-muted-foreground'} title={i.motivo_destino}>{r.texto}</span>
+          {i.alerta_recompra && <span className="text-xs text-status-warning">{i.alerta_recompra}</span>}
+          {i.entrou_no_top && <span className="text-xs text-muted-foreground">entrou no Top depois do congelamento</span>}
+        </span>
+      );
     },
   },
 ];

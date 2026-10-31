@@ -3,7 +3,7 @@ import type { Placar } from '@/lib/reposicao/raio-x/placar';
 import { fmtReais } from './formato';
 
 /** Placar da mercadoria parada. "Distorce o DIO" fica AO LADO do total — nunca somado a ele. */
-export function RaioXPlacar({ placar }: { placar: Placar }) {
+export function RaioXPlacar({ placar, coorteIndisponivel = false }: { placar: Placar; coorteIndisponivel?: boolean }) {
   const pct = placar.total > 0 ? Math.min(100, Math.round((placar.decidido / placar.total) * 100)) : 0;
   const destinos = Object.entries(placar.porDestino).filter(([, v]) => (v ?? 0) > 0);
   return (
@@ -16,9 +16,21 @@ export function RaioXPlacar({ placar }: { placar: Placar }) {
         <div className="h-2 w-full overflow-hidden rounded bg-muted" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full bg-status-success" style={{ width: `${pct}%` }} />
         </div>
-        <p className="text-xs text-muted-foreground">
-          Top 61: {fmtReais(placar.topDecidido)} decidido de {fmtReais(placar.topTotal)}
+        <p data-testid="placar-top" className="text-xs text-muted-foreground">
+          Top 61{placar.coorteCongelada ? ' (coorte congelada)' : coorteIndisponivel ? ' (de hoje — coorte indisponível)' : ' (de hoje — coorte ainda não congelada)'}:{' '}
+          {placar.topDecididoN} de {placar.topN} decididos · {fmtReais(placar.topDecidido)} de {fmtReais(placar.topTotal)}
+          {placar.topSemCustoN > 0 && ` · ${placar.topSemCustoN} sem custo (fora da soma)`}
         </p>
+        {placar.topZeradoN > 0 && (
+          <p data-testid="placar-top-zerado" className="text-xs text-status-warning">
+            {placar.topZeradoN} da coorte saíram do estoque sem decisão (saldo zerado) — seguem na meta, sem linha para decidir
+          </p>
+        )}
+        {placar.topEntrouDepoisN > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {placar.topEntrouDepoisN} item(ns) entrariam no Top hoje — aparecem na lista, não mudam a meta
+          </p>
+        )}
         {destinos.length > 0 && (
           <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
             {destinos.map(([d, v]) => (
@@ -32,13 +44,25 @@ export function RaioXPlacar({ placar }: { placar: Placar }) {
           </p>
         )}
       </div>
-      <div data-testid="placar-dio" className="rounded-md border p-4">
-        <div className="font-display text-xl">{fmtReais(placar.distorceDio)}</div>
-        <p className="text-sm text-muted-foreground">R$ que distorce o DIO</p>
-        <p className="text-xs text-muted-foreground">Não-mercadoria + uso e consumo. Não entra no total ao lado.</p>
+      <div data-testid="placar-dio" className="space-y-2 rounded-md border p-4">
+        <div>
+          <div className="font-display text-xl">{fmtReais(placar.distorceDio)}</div>
+          <p className="text-sm text-muted-foreground">R$ que distorce o DIO</p>
+        </div>
+        <ul className="space-y-0.5 text-xs">
+          <li>Não-mercadoria (imobilizado e afins): <span className="font-medium">{fmtReais(placar.naoMercadoria)}</span></li>
+          <li>Uso e consumo: <span className="font-medium">{fmtReais(placar.usoConsumo)}</span></li>
+        </ul>
+        {placar.industrial > 0 && (
+          <p data-testid="placar-industrial" className="text-xs text-muted-foreground">
+            Matéria-prima / produto em processo: <span className="font-medium">{fmtReais(placar.industrial)}</span> — estoque
+            industrial, não distorce o DIO.
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">Nada deste bloco entra no total ao lado.</p>
         {placar.semCustoDioN > 0 && (
           <p className="text-xs text-status-warning">
-            {placar.semCustoDioN} SKU(s) de uso/não-mercadoria sem custo — não avaliado (fora da soma)
+            {placar.semCustoDioN} SKU(s) fora da mercadoria sem custo — não avaliado (fora da soma)
           </p>
         )}
       </div>

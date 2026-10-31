@@ -60,7 +60,26 @@ export interface ItemRaioX extends FatoSku {
   parado: boolean;
   destino_sugerido: Sugestao | null;
   motivo_destino: string;
+  /** Item parado com entrada < 90 dias: recompra recente de item parado (alerta, não imunidade). */
+  alerta_recompra: string | null;
+  /** Na coorte da meta (congelada); sem coorte congelada, = `top_atual`. */
   top: boolean;
+  /** No Top 61 recalculado hoje. */
+  top_atual: boolean;
+  /** Entraria no Top hoje, mas não está na coorte congelada: aparece, não mexe no denominador. */
+  entrou_no_top: boolean;
+}
+
+/** Linha de `raio_x_coorte_top`: valor congelado pelo SERVIDOR (saldo × cmc no congelamento; null = sem custo). */
+interface MembroCoorte {
+  posicao: number;
+  valor: number | null;
+}
+
+/** Coorte do Top 61 congelada uma vez por empresa — o denominador da meta. */
+export interface CoorteTop {
+  congelada_em: string;
+  itens: Map<number, MembroCoorte>;
 }
 
 /** Linha da tabela `raio_x_decisao`. */

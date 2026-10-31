@@ -18,7 +18,7 @@ function linha(sku: number, extra: Partial<LinhaMedicao> = {}): LinhaMedicao {
 const codigos = new Map([[1, 'A1'], [2, 'A2'], [3, 'A3']]);
 
 describe('RaioXCaixaLiberado', () => {
-  it('(a) Oben: vendido/liquidado/trocado, barra contra R$ 60.000 e contradição clicável filtra pelo SKU', () => {
+  it('(a) Oben: parcelas separadas (estoque reduzido · receita · crédito), critério da meta e contradição clicável', () => {
     const linhas = [
       linha(1, { destino: 'venda_dirigida', saldo_atual: 5, qtd_vendida: 5, receita: 250, preco_medio_12m: 50 }), // vendido 500
       linha(2, { destino: 'liquidar', foto_cmc: 60, saldo_atual: 5, qtd_vendida: 5, receita: 100, preco_medio_12m: 50, compras_apos: ['2026-09-10T12:00:00Z'] }), // liquidado 300 (5 x 60) + contradição
@@ -28,11 +28,17 @@ describe('RaioXCaixaLiberado', () => {
     render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={onFiltrarSku} />);
     const valorDe = (rotulo: RegExp) => screen.getByText(rotulo).closest('div')!.textContent ?? '';
     const reais = (n: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(n);
-    expect(valorDe(/^Vendido$/)).toContain(reais(500));
+    expect(valorDe(/^Vendido \(a custo\)$/)).toContain(reais(500));
     expect(valorDe(/^Liquidado/)).toContain(reais(300));
-    expect(valorDe(/^Trocado/)).toContain(reais(300));
-    expect(screen.getByText(/de R\$ 60\.000/).parentElement!.textContent).toContain(reais(1100));
+    const parcelas = screen.getByTestId('parcelas-liberado');
+    const parcela = (rotulo: RegExp) => within(parcelas).getByText(rotulo).closest('div')!.textContent ?? '';
+    expect(parcela(/^Estoque reduzido \(a custo\)/)).toContain(reais(800));
+    expect(parcela(/^Receita das vendas/)).toContain(reais(350)); // 5 × 50 + 5 × 20
+    expect(parcela(/^Crédito de troca informado/)).toContain(reais(300));
+    // critério da meta INALTERADO (estoque reduzido + crédito), rotulado como critério — nunca "caixa"
+    expect(screen.getByText(/no critério da meta/).parentElement!.textContent).toContain(reais(1100));
     expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('60000');
+    expect(screen.queryByText(/caixa liberado/i)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /A2/ }));
     expect(onFiltrarSku).toHaveBeenCalledWith(2);
   });
@@ -41,11 +47,15 @@ describe('RaioXCaixaLiberado', () => {
     const linhas = [linha(1, { destino: 'trocar', credito_troca: 300, saldo_atual: 4, qtd_vendida: null, receita: null, preco_medio_12m: null, compras_apos: null })];
     const { container } = render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="colacor" codigos={codigos} onFiltrarSku={vi.fn()} />);
     expect(screen.getByText(/saiu do estoque \(sem NF para atribuir/i)).toBeTruthy();
-    expect(screen.getByText(/Trocado/)).toBeTruthy();
+    expect(screen.getByText(/Crédito de troca informado/)).toBeTruthy();
+    // sem NF: estoque reduzido e receita ausentes ("—"), nunca R$ 0
+    const parcelas = screen.getByTestId('parcelas-liberado');
+    expect(within(parcelas).getByText(/^Estoque reduzido/).closest('div')!.textContent).toContain('—');
+    expect(within(parcelas).getByText(/^Receita das vendas/).closest('div')!.textContent).toContain('—');
     expect(container.textContent?.toLowerCase()).not.toContain('vendido');
   });
 
-  it('(c) caixa liberado e "distorce o DIO" ficam em blocos distintos, sem soma', () => {
+  it('(c) liberado e "distorce o DIO" ficam em blocos distintos, sem soma', () => {
     const linhas = [linha(3, { destino: 'trocar', credito_troca: 300 })];
     const p = placar([], new Map());
     p.distorceDio = 7000;
@@ -55,7 +65,7 @@ describe('RaioXCaixaLiberado', () => {
         <RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos} onFiltrarSku={vi.fn()} />
       </>,
     );
-    const caixa = screen.getByRole('region', { name: 'Caixa liberado' });
+    const caixa = screen.getByRole('region', { name: 'Liberado pelas decisões' });
     const placarEl = screen.getByRole('region', { name: 'Placar do Raio-X' });
     expect(caixa.contains(placarEl)).toBe(false);
     expect(within(caixa).queryByText(/distorce o DIO/)).toBeNull();

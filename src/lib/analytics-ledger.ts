@@ -77,7 +77,13 @@ export type EventoLedger =
    * sinal com denominador, nunca por "ninguém reclamou".
    * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
-  | 'reposicao.corantes_aberta';
+  | 'reposicao.corantes_aberta'
+  /**
+   * Raio-X do estoque parado (fase B): a aba abriu com a leitura pronta. Chave = a empresa (oben | colacor).
+   * Hoje há 0 decisões no app e nenhum sinal de visita — este é o denominador da meta de 25/11.
+   * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
+   */
+  | 'reposicao.raio_x_aberta';
 
 /**
  * Registra um evento decisório no ledger server-side.

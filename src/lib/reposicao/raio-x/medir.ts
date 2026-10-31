@@ -1,4 +1,7 @@
 // Medição do que o Raio-X liberou. Recebe a linha de `raio_x_medicao` (a foto da decisão já vem na linha).
+// A janela de venda começa na FOTO (imutável), não em decidido_em: trocar o destino não apaga venda já feita.
+// NADA aqui é "caixa": estoque reduzido é saída valorizada ao CMC da foto, receita é o faturado dessas
+// unidades, crédito de troca é o que o operador informou. São parcelas separadas — nunca somadas como caixa.
 // Ausente ≠ zero: sem venda por NF (Colacor) vendido/liquidado são null; sem permissão de compras
 // (compras_apos null) recompra/contradições ficam null/vazias com `compras_visiveis: false`.
 import type { Destino, Empresa, LinhaMedicao } from './tipos';
@@ -16,8 +19,17 @@ export interface Medicao {
   vendido: number | null;
   liquidado: number | null;
   margem_sacrificada: number | null;
+  /** crédito de troca INFORMADO pelo operador (não conferido com o fornecedor). */
   trocado: number;
-  caixa_liberado: number;
+  /** vendido + liquidado, a custo (CMC da foto). Sem NF (Colacor) → null. */
+  estoque_reduzido: number | null;
+  /** faturado pelas unidades contadas em `estoque_reduzido` (preço médio do período). Sem NF → null. */
+  receita_vendas: number | null;
+  /**
+   * Critério da meta (≥ R$ 60k), INALTERADO desde a fase B: estoque reduzido a custo + crédito informado.
+   * É um critério de acompanhamento, não caixa — a tela mostra as parcelas, nunca "caixa liberado".
+   */
+  meta_liberado: number;
   parado: number;
   recomprado: number | null;
   saiu_sem_nf: number | null;
@@ -35,7 +47,7 @@ export interface Medicao {
 export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
   const comNf = empresa === 'oben';
   const comprasVisiveis = linhas.every((l) => l.compras_apos !== null);
-  let vendido = 0, liquidado = 0, margem = 0, recomprado = 0;
+  let vendido = 0, liquidado = 0, margem = 0, recomprado = 0, receita = 0;
   let trocado = 0, parado = 0, saiuSemNf = 0, reclassificado = 0, semMedicaoValor = 0;
   let reclassificadoSemCustoN = 0, semMedicaoSemCustoN = 0;
   const contradicoes: Contradicao[] = [];
@@ -65,6 +77,7 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
       recomprado += (vendidoNoPeriodo - qtd) * fc;
       const custo = qtd * fc;
       const precoPeriodo = qv > 0 && l.receita !== null ? l.receita / qv : null;
+      if (precoPeriodo !== null) receita += qtd * precoPeriodo;
       if (precoPeriodo !== null && l.preco_medio_12m && precoPeriodo < LIMIAR_LIQUIDACAO * l.preco_medio_12m) {
         liquidado += custo;
         margem += qtd * (l.preco_medio_12m - precoPeriodo);
@@ -75,6 +88,8 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
       saiuSemNf += saiu * fc; // sem NF: só sabemos que saiu, não por quê nem a que preço
     }
     parado += Math.max(0, Math.min(sa, fs)) * fc;
+    // Contradição segue por decidido_em do destino VIGENTE (de propósito): comprar antes de decidir tirar do
+    // estoque não contradiz a decisão; comprar depois, sim. A janela de venda (acima) é a da foto.
     if (comprasVisiveis && CONTRADICAO.includes(l.destino) && l.decidido_em) {
       const t0 = Date.parse(l.decidido_em);
       for (const p of l.compras_apos ?? []) {
@@ -83,14 +98,16 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     }
   }
 
-  // Caixa = só dinheiro real: venda + liquidação + crédito de troca. NUNCA reclassificação nem saída sem NF.
-  const caixa = (comNf ? vendido + liquidado : 0) + trocado;
+  // Critério da meta: estoque reduzido a custo + crédito informado. NUNCA reclassificação nem saída sem NF.
+  const estoqueReduzido = comNf ? vendido + liquidado : null;
   return {
     vendido: comNf ? vendido : null,
     liquidado: comNf ? liquidado : null,
     margem_sacrificada: comNf ? margem : null,
     trocado,
-    caixa_liberado: caixa,
+    estoque_reduzido: estoqueReduzido,
+    receita_vendas: comNf ? receita : null,
+    meta_liberado: (estoqueReduzido ?? 0) + trocado,
     parado,
     recomprado: comNf && comprasVisiveis ? recomprado : null,
     saiu_sem_nf: comNf ? null : saiuSemNf,
