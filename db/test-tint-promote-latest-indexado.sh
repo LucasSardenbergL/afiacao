@@ -119,24 +119,28 @@ T -q <<'SQL' >/dev/null
 INSERT INTO tint_integration_settings (id, account, store_code, integration_mode, sync_token, sync_enabled)
 VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','automatic_primary','tok_l1', true),
        ('aaaaaaaa-0000-0000-0000-000000000002','oben','BIG','automatic_primary','tok_big', true);
-INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
-VALUES ('33333333-0000-0000-0000-000000000000','aaaaaaaa-0000-0000-0000-000000000002','oben','BIG','catalogs','complete');
+-- 1 run por versão (como a prod: ~2.190 runs distintos) — com um run só, o plano genérico do
+-- 'chaves' (sync_run_id = $1) estimaria a tabela inteira e a medida viraria artefato da massa.
+INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status, started_at)
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid, 'aaaaaaaa-0000-0000-0000-000000000002','oben','BIG','catalogs','complete',
+       now() - interval '20 days' + g * interval '1 minute'
+  FROM generate_series(1, 3000) g;
 INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao, created_at)
-SELECT '33333333-0000-0000-0000-000000000000','oben','BIG','KP' || k, 'KP' || k || ' v' || g, now() - interval '20 days' + g * interval '1 minute'
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid,'oben','BIG','KP' || k, 'KP' || k || ' v' || g, now() - interval '20 days' + g * interval '1 minute'
   FROM generate_series(0, 9) k, generate_series(1, 1500) g;
 INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao, created_at)
-SELECT '33333333-0000-0000-0000-000000000000','oben','BIG','KB' || k, 'KB' || k || ' v' || g, now() - interval '20 days' + g * interval '1 minute'
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid,'oben','BIG','KB' || k, 'KB' || k || ' v' || g, now() - interval '20 days' + g * interval '1 minute'
   FROM generate_series(0, 19) k, generate_series(1, 1500) g;
 INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml, created_at)
-SELECT '33333333-0000-0000-0000-000000000000','oben','BIG','KE' || k, 'KE' || k, 900, now() - interval '20 days' + g * interval '1 minute'
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid,'oben','BIG','KE' || k, 'KE' || k, 900, now() - interval '20 days' + g * interval '1 minute'
   FROM generate_series(0, 3) k, generate_series(1, 1500) g;
 -- corantes: custo NULL em todas as versões menos UMA antiga por corante (como a prod: 0 com custo).
 INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, preco_litro, custo, volume_ml, created_at)
-SELECT '33333333-0000-0000-0000-000000000000','oben','BIG','KC' || k, 'KC' || k || ' v' || g, 50,
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid,'oben','BIG','KC' || k, 'KC' || k || ' v' || g, 50,
        CASE WHEN g = 1 THEN 40 END, 1000, now() - interval '20 days' + g * interval '1 minute'
   FROM generate_series(0, 25) k, generate_series(1, 1500) g;
 INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, created_at)
-SELECT '33333333-0000-0000-0000-000000000000','oben','BIG','KP' || (k % 10), 'KB' || (k / 10), 'KE0', now() - interval '20 days' + g * interval '1 minute'
+SELECT ('5' || lpad(g::text, 31, '0'))::uuid,'oben','BIG','KP' || (k % 10), 'KB' || (k / 10), 'KE0', now() - interval '20 days' + g * interval '1 minute'
   FROM generate_series(0, 59) k, generate_series(1, 3000) g;
 ANALYZE;
 SQL
