@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 718
+-- Total de custom migrations: 719
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -782,7 +782,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
   ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
   ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
-  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql')
+  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
+  ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3094,7 +3095,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5454,7 +5456,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 )
 SELECT
   e.migration,
