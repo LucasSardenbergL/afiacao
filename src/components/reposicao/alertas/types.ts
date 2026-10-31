@@ -37,8 +37,8 @@ export type EventoOutlier = {
 // define o LT de produção) e LT atípico (cobrança de fornecedor). Os tipos do Omie têm dono fora daqui:
 // o inativado se auto-resolve quando o SKU volta a ficar ativo (omie-sync-status-produtos) e o reativado
 // é respondido no Religar/Descontinuar da Revisão de parâmetros.
-export const TIPOS_FILA = ["sku_sem_grupo", "lt_atipico"] as const;
-export const TIPOS_REGISTRO = ["venda_atipica", "sku_inativado_omie", "sku_reativado_omie"] as const;
+const TIPOS_FILA = ["sku_sem_grupo", "lt_atipico"] as const;
+const TIPOS_REGISTRO = ["venda_atipica", "sku_inativado_omie", "sku_reativado_omie"] as const;
 
 export type Visao = "fila" | "registro";
 
