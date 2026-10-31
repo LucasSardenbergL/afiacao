@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agruparPorCor, classificarRejeicao, descreverSlots, motivoCurto, origemPorCor, type LinhaDeErro } from '../rejeicoes';
+import { agruparPorCor, classificarRejeicao, contagemDoBadge, descreverSlots, motivoCurto, origemPorCor, type LinhaDeErro } from '../rejeicoes';
 
 // Formas REAIS de `tint_sync_errors.error_details` (psql-ro, run de 21/10/2026 10:37).
 const item = (ordem: number, id_corante: string, qtd_ml: number, viola: boolean) => ({
@@ -126,5 +126,20 @@ describe('origemPorCor', () => {
       { cor_id: null, personalizada: true },
     ]);
     expect(o.size).toBe(0);
+  });
+});
+
+describe('contagemDoBadge', () => {
+  it('conta CORES, não rejeições — o mesmo número do card', () => {
+    expect(contagemDoBadge({ rejeicoesNaJanela: 17, cores: [{}] })).toBe(1);
+  });
+  it('lista vazia com rejeições na janela → o número de rejeições (o card mostra "sem detalhe")', () => {
+    expect(contagemDoBadge({ rejeicoesNaJanela: 3, cores: [] })).toBe(3);
+  });
+  it('janela limpa → 0', () => {
+    expect(contagemDoBadge({ rejeicoesNaJanela: 0, cores: [] })).toBe(0);
+  });
+  it('nunca houve run (null) → 0, não alerta', () => {
+    expect(contagemDoBadge(null)).toBe(0);
   });
 });
