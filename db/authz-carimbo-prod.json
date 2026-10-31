@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T15:34:24.190Z",
-  "sourceHead": "6d9d8b5f2fc855b804c4b39ebe3eeccc7677beb9",
+  "medidoEm": "2026-10-31T21:24:12.657Z",
+  "sourceHead": "2cf18e02929c47497a713cce1b4352867397dfcf",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 70 definição(ões) lida(s) para 70 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 70 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 71 definição(ões) lida(s) para 70 chave(s) da allowlist.",
       "contratoFingerprint": "cb3074cfffad0da2f416a21e13fba64a3a61e0db39f6a4f14987a958725835ee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": [
-        {
-          "id": "86bce1749cb9d3e3",
-          "linha": "❌ public.raio_x_planejar — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_planejar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -36,19 +29,12 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 1,
-      "resumo": "authz:audit:prod — 1 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 29 definição(ões) lida(s) para 29 chave(s) do manifest.",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 29 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 30 definição(ões) lida(s) para 29 chave(s) do manifest.",
       "contratoFingerprint": "279b9b7d94e55c72873605d054f9d23879f952a442e91eff2535c1379ae30321",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
-      "achados": [
-        {
-          "id": "d2cb3408d9b6e47c",
-          "linha": "❌ AUSENTE_EM_PROD: public.raio_x_planejar está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        }
-      ]
+      "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -77,12 +63,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 444 identidade(s) batem com o repo (366 em dia, 65 só cosméticas, 12 aceitas na baseline) e 21 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 444 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@43e817629 (fetch ok) · prod 2026-10-31 15:34:49.863555Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@7d72919db (fetch ok) · prod 2026-10-31 21:25:49.850049Z",
       "contratoFingerprint": "464f59de1727780dfcff0f3523bc163fdced3d3d7e4c45ef830e6c310ab93ee6",
       "auditorFingerprint": "29535ebadc8ee13811e69f394dde599672622ebceee98dd48266c6b233bc6079",
-      "achados": []
+      "achados": [
+        {
+          "id": "bc84266a52049e9e",
+          "linha": "❌ [SEM_PAR] radar_aplicar_situacao(text,timestamp with time zone): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261019200000_radar_situacao_cadastral.sql (xmin 13352267)",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        },
+        {
+          "id": "a5d8d49ea2911099",
+          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13352126)",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     }
   }
 }
