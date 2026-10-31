@@ -19,18 +19,22 @@ export interface PlanejarArgs {
   /** 'YYYY-MM-DD' */
   prazo: string | null;
   concluido: boolean;
+  /** atualizado_em da decisão que o formulário EDITOU (concorrência otimista — RX003 se mudou). */
+  atualizadoEm: string;
 }
 
 const MSG_RX001 = 'Este SKU não tem parâmetro de reposição — desmarque "tirar do motor"';
 const MSG_RX001_RESTAURAR = 'Este SKU não tem mais parâmetro de reposição — não há motor para restaurar';
 const MSG_SEM_PERMISSAO = 'Sem permissão para decidir no Raio-X (exige acesso a custo).';
 const MSG_RX002 = 'Esta decisão foi desfeita — grave o destino antes do plano';
+const MSG_RX003 = 'Outra pessoa mudou esta decisão — recarregue antes de salvar a execução';
 
 /** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
 function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
   const code = (e as { code?: unknown } | null)?.code;
   if (code === 'RX001') toast.error(msgRx001);
   else if (code === 'RX002') toast.error(MSG_RX002);
+  else if (code === 'RX003') toast.error(MSG_RX003);
   else if (code === '42501') toast.error(MSG_SEM_PERMISSAO);
   else toast.error(mensagemDeErro(e) ?? fallback);
 }
@@ -124,6 +128,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
         p_responsavel: args.responsavel,
         p_prazo: args.prazo,
         p_concluido: args.concluido,
+        p_atualizado_em: args.atualizadoEm,
       });
       const { error } = await supabase.rpc('raio_x_planejar', params);
       if (error) throw error;

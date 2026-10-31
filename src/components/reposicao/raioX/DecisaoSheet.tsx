@@ -120,6 +120,8 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar, equipe = [
   const podeTirarAgora = fase && estadoMotor(empresa, item, decisao?.destino) === 'pode_tirar';
 
   const tocar = () => setSujo(true);
+  // Rascunho na seção Execução: "Salvar decisão" fecharia o painel e o descartaria (e vice-versa).
+  const [execSujo, setExecSujo] = useState(false);
 
   const escolherDestino = (d: Destino) => {
     tocar();
@@ -275,9 +277,12 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar, equipe = [
         />
       </section>
 
-      <Button size="touch" className="w-full" disabled={!sujo || !destino || m.pendente || velho} onClick={salvar}>
+      <Button size="touch" className="w-full" disabled={!sujo || !destino || m.pendente || velho || execSujo} onClick={salvar}>
         Salvar decisão
       </Button>
+      {execSujo && (
+        <p className="text-xs text-status-warning">há mudança na execução não salva — salve a execução antes da decisão</p>
+      )}
 
       {decisao && ehExecutavel(gravado) && (
         <FormExecucao
@@ -285,6 +290,8 @@ function FormDecisao({ empresa, item, decisao, onClose, onRecarregar, equipe = [
           decisao={decisao}
           equipe={equipe}
           bloqueado={m.pendente || velho}
+          decisaoSuja={sujo}
+          onSujo={() => setExecSujo(true)}
           onSalvar={async (args) => {
             if (await m.planejar(args)) onClose();
           }}
@@ -316,24 +323,34 @@ const paraCampo = (n: number | null) => (n === null ? '' : String(n).replace('.'
  * Plano de execução de uma decisão GRAVADA (pacote 2): responsável, prazo, executado e — no liquidar — preço piso
  * e canal. Botão próprio (`raio_x_planejar`): a decisão e o plano nunca vão numa gravação dupla não-atômica.
  */
-function FormExecucao({ item, decisao, equipe, bloqueado, onSalvar }: {
+function FormExecucao({ item, decisao, equipe, bloqueado, decisaoSuja, onSujo, onSalvar }: {
   item: ItemRaioX;
   decisao: DecisaoRow;
   equipe: MembroEquipe[];
   bloqueado: boolean;
+  /** há mudança não salva na decisão (destino/observação): salvar a execução fecharia e a descartaria. */
+  decisaoSuja: boolean;
+  onSujo: () => void;
   onSalvar: (args: PlanejarArgs) => void;
 }) {
   const liquidar = decisao.destino === 'liquidar';
-  // Plano ainda não gravado: os padrões (quem decidiu, hoje + 14 dias) são a proposta e podem ser salvos sem toque.
-  const semPlano = decisao.responsavel === null && decisao.prazo === null;
-  const [responsavel, setResponsavel] = useState(decisao.responsavel ?? decisao.decidido_por ?? '');
-  const [prazo, setPrazo] = useState(decisao.prazo ?? somarDias(hojeSP(), PRAZO_PADRAO_DIAS));
+  // Plano NUNCA gravado: os padrões (quem decidiu, hoje + 14 dias) são a proposta e podem ser salvos sem toque.
+  // Plano existente: nulo gravado fica nulo (não "repõe" responsável/prazo apagados de propósito).
+  const semPlano = decisao.responsavel === null && decisao.prazo === null && decisao.preco_piso === null
+    && decisao.canal_liquidacao === null && decisao.concluido_em === null;
+  const [responsavel, setResponsavel] = useState(semPlano ? (decisao.decidido_por ?? '') : (decisao.responsavel ?? ''));
+  const [prazo, setPrazo] = useState(semPlano ? somarDias(hojeSP(), PRAZO_PADRAO_DIAS) : (decisao.prazo ?? ''));
+  // A versão que o formulário edita (o Sheet remonta ao recarregar): vai como p_atualizado_em → RX003 se mudou.
+  const [atualizadoEm] = useState(decisao.atualizado_em);
   const [concluido, setConcluido] = useState(concluidoVigente(decisao));
   const [piso, setPiso] = useState(liquidar ? paraCampo(decisao.preco_piso) : '');
   const [canal, setCanal] = useState<CanalLiquidacao | ''>(liquidar ? (decisao.canal_liquidacao ?? '') : '');
   const [erroPiso, setErroPiso] = useState(false);
   const [sujo, setSujo] = useState(false);
-  const tocar = () => setSujo(true);
+  const tocar = () => {
+    setSujo(true);
+    onSujo();
+  };
   const unidadeVenda = item.unidades_venda && new Set(item.unidades_venda).size === 1 ? item.unidades_venda[0] : null;
   // Responsável gravado que não está na lista (saiu da equipe / leitura falhou): aparece pelo id, não some.
   const opcoes = responsavel && !equipe.some((e) => e.user_id === responsavel)
@@ -358,6 +375,7 @@ function FormExecucao({ item, decisao, equipe, bloqueado, onSalvar }: {
       responsavel: responsavel || null,
       prazo: prazo || null,
       concluido,
+      atualizadoEm,
     });
   };
 
@@ -421,9 +439,12 @@ function FormExecucao({ item, decisao, equipe, bloqueado, onSalvar }: {
         executado
       </label>
       <p className="text-xs text-muted-foreground">marca a tarefa — o R$ liberado continua vindo só da medição</p>
-      <Button size="touch" variant="outline" className="w-full" disabled={(!sujo && !semPlano) || bloqueado} onClick={salvar}>
+      <Button size="touch" variant="outline" className="w-full" disabled={(!sujo && !semPlano) || bloqueado || decisaoSuja} onClick={salvar}>
         Salvar execução
       </Button>
+      {decisaoSuja && (
+        <p className="text-xs text-status-warning">há mudança na decisão não salva — salve a decisão antes da execução</p>
+      )}
     </section>
   );
 }

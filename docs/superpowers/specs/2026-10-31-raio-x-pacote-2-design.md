@@ -48,7 +48,7 @@ depende da tabela (conferido em `pg_depend`). O upsert de `raio_x_decidir` só e
 apaga o plano.
 
 **RPC nova `raio_x_planejar(p_empresa text, p_sku bigint, p_preco_piso numeric, p_canal text, p_responsavel uuid,
-p_prazo date, p_concluido boolean) RETURNS public.raio_x_decisao`** — SECURITY DEFINER, `search_path = public`,
+p_prazo date, p_concluido boolean, p_atualizado_em timestamptz) RETURNS public.raio_x_decisao`** — SECURITY DEFINER, `search_path = public`,
 escritor único do plano. Estado completo (como `raio_x_decidir`, Ruling S2: campo omitido = limpo).
 
 - gate `private.cap_custo_ler(auth.uid())` → 42501;
@@ -57,8 +57,9 @@ escritor único do plano. Estado completo (como `raio_x_decidir`, Ruling S2: cam
 - `p_preco_piso`/`p_canal` não nulos com destino ≠ `liquidar` → 22023;
 - piso < 0 ou NaN → 22023; canal fora da lista → 22023;
 - responsável não nulo e sem papel `employee`/`master` → 22023;
-- `p_concluido = true`: grava `concluido_em = now()`, `concluido_por = auth.uid()` **só se ainda nulo** (re-salvar
-  não move a data); `false` limpa os dois;
+- `p_atualizado_em` ≠ `atualizado_em` da linha travada → **RX003** (concorrência otimista; achado P1 do Codex);
+- `p_concluido = true`: preserva data/autor só se o executado for VIGENTE (`concluido_em ≥ decidido_em`); senão grava
+  `now()`/`auth.uid()` (re-marcar após mudar o destino registra a nova execução); `false` limpa os dois;
 - `atualizado_em = now()` (o Sheet aberto por outro operador fica "velho" — Ruling S9).
 - REVOKE de `PUBLIC, anon` nomeados; GRANT a `authenticated`; postcondição embutida (SECURITY DEFINER, anon sem
   EXECUTE, colunas presentes) que aborta o apply.
@@ -74,7 +75,7 @@ escritor único do plano. Estado completo (como `raio_x_decidir`, Ruling S2: cam
 - `situacaoPlano(decisao, hoje)`: `null` (sem decisão ou destino não executável) · `concluido` · `sem_responsavel` ·
   `vencido` (+ dias) · `no_prazo` · `sem_prazo`. Concluído só se `concluido_em ≥ decidido_em`.
 - `alertaPiso(linhaMedicao, decisao, unidadesVenda)`: só com destino `liquidar`, piso não nulo, `qtd_vendida > 0`,
-  `receita` não nula **e exatamente uma unidade de venda**; senão `null` ("sem comparação"). Devolve preço do período,
+  `receita > 0` (NF sem valor_total vira 0 na medição) **e exatamente uma unidade de venda**; senão `null` ("sem comparação"). Devolve preço do período,
   piso e `abaixo`.
 - `resumoExecucao(itens, decisoes, hoje)`: vencidas N · sem responsável N · concluídas N (no universo executável).
 
@@ -83,7 +84,8 @@ escritor único do plano. Estado completo (como `raio_x_decidir`, Ruling S2: cam
 - **Sheet de decisão:** seção **"Execução"** só para decisão **gravada** com destino executável: responsável (lista da
   equipe — `user_roles` employee/master + `profiles`), prazo (padrão hoje + 14 dias), botão-estado "executado"; para
   `liquidar`, piso (R$ por unidade de venda, mostrando unidade, CMC e preço médio 12m como referência) e canal.
-  Botão próprio **"Salvar execução"** → `raio_x_planejar`. Mesma guarda de rascunho velho (S9). Decisão nova
+  Botão próprio **"Salvar execução"** → `raio_x_planejar`. Mesma guarda de rascunho velho (S9) + RX003. Padrões só em
+  plano nunca gravado. Rascunho numa seção trava o botão da outra (fechar descartaria o rascunho). Decisão nova
   primeiro grava o destino; o plano vem depois (sem gravação dupla não-atômica).
 - **Linha da mercadoria:** "custa ~R$ X/mês parado" (sem custo/taxa: "—"); badge de situação (vencido há N dias /
   sem responsável / executado); selo "sem piso" em liquidar sem piso.

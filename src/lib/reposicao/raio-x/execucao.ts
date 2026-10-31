@@ -109,7 +109,8 @@ export function alertaPiso(
   const piso = pisoVigente(d);
   if (piso === null) return null;
   if (!unidadesVenda || new Set(unidadesVenda).size !== 1) return null;
-  if (l.qtd_vendida === null || l.qtd_vendida <= 0 || l.receita === null) return null;
+  // receita 0 com venda = valor_total ausente na NF (a medição soma com coalesce 0): ausente, não "vendido a R$ 0".
+  if (l.qtd_vendida === null || l.qtd_vendida <= 0 || l.receita === null || l.receita <= 0) return null;
   const preco = l.receita / l.qtd_vendida;
   if (!Number.isFinite(preco)) return null;
   return { sku_codigo_omie: l.sku_codigo_omie, preco, piso, abaixo: preco < piso };

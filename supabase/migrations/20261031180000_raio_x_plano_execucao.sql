@@ -33,7 +33,7 @@ COMMENT ON COLUMN public.raio_x_decisao.concluido_em IS
 
 CREATE OR REPLACE FUNCTION public.raio_x_planejar(
   p_empresa text, p_sku bigint, p_preco_piso numeric, p_canal text, p_responsavel uuid, p_prazo date,
-  p_concluido boolean)
+  p_concluido boolean, p_atualizado_em timestamptz)
 RETURNS public.raio_x_decisao
 LANGUAGE plpgsql
 VOLATILE
@@ -77,6 +77,11 @@ BEGIN
     RAISE EXCEPTION 'raio_x: sem decisao para planejar (sku %)', p_sku USING ERRCODE = 'RX002';
   END IF;
   -- [rx002:fim]
+  -- Concorrência otimista: o cliente manda o atualizado_em que EDITOU. Outro operador gravou no meio (decidir,
+  -- contar ou planejar) → RX003, nada escrito: o estado completo velho não sobrescreve o novo em silêncio.
+  IF v_old.atualizado_em IS DISTINCT FROM p_atualizado_em THEN
+    RAISE EXCEPTION 'raio_x: decisao mudou desde a leitura (sku %)', p_sku USING ERRCODE = 'RX003';
+  END IF;
   IF v_old.destino <> 'liquidar' AND (p_preco_piso IS NOT NULL OR p_canal IS NOT NULL) THEN
     RAISE EXCEPTION 'raio_x: piso e canal so no destino liquidar (destino %)', v_old.destino USING ERRCODE = '22023';
   END IF;
@@ -86,9 +91,14 @@ BEGIN
     canal_liquidacao = p_canal,
     responsavel      = p_responsavel,
     prazo            = p_prazo,
-    -- re-salvar "executado" não move a data nem o autor
-    concluido_em     = CASE WHEN p_concluido THEN coalesce(d.concluido_em, now()) END,
-    concluido_por    = CASE WHEN p_concluido THEN CASE WHEN d.concluido_em IS NULL THEN auth.uid() ELSE d.concluido_por END END,
+    -- re-salvar "executado" VIGENTE não move data nem autor; executado de antes do destino atual
+    -- (concluido_em < decidido_em) é de outra decisão: marcar de novo registra a nova execução.
+    concluido_em     = CASE WHEN p_concluido THEN
+                         CASE WHEN d.concluido_em IS NOT NULL AND (d.decidido_em IS NULL OR d.concluido_em >= d.decidido_em)
+                              THEN d.concluido_em ELSE now() END END,
+    concluido_por    = CASE WHEN p_concluido THEN
+                         CASE WHEN d.concluido_em IS NOT NULL AND (d.decidido_em IS NULL OR d.concluido_em >= d.decidido_em)
+                              THEN d.concluido_por ELSE auth.uid() END END,
     atualizado_em    = now()
    WHERE d.empresa = p_empresa AND d.sku_codigo_omie = p_sku
   RETURNING d.* INTO v_row;
@@ -96,13 +106,13 @@ BEGIN
 END;
 $fn$;
 
-REVOKE ALL ON FUNCTION public.raio_x_planejar(text, bigint, numeric, text, uuid, date, boolean) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.raio_x_planejar(text, bigint, numeric, text, uuid, date, boolean) TO authenticated;
+REVOKE ALL ON FUNCTION public.raio_x_planejar(text, bigint, numeric, text, uuid, date, boolean, timestamptz) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raio_x_planejar(text, bigint, numeric, text, uuid, date, boolean, timestamptz) TO authenticated;
 
 -- PÓS: postcondição embutida — qualquer falha aborta o apply inteiro.
 DO $pos$
 DECLARE
-  f text := 'public.raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean)';
+  f text := 'public.raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean,timestamptz)';
   c text;
 BEGIN
   IF NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = f::regprocedure) THEN

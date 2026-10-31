@@ -108,6 +108,7 @@ describe('alertaPiso', () => {
     expect(alertaPiso({ ...linha, qtd_vendida: 0 }, liq, ['UN'])).toBeNull();
     expect(alertaPiso({ ...linha, qtd_vendida: null }, liq, ['UN'])).toBeNull(); // Colacor / sem foto
     expect(alertaPiso({ ...linha, receita: null }, liq, ['UN'])).toBeNull();
+    expect(alertaPiso({ ...linha, receita: 0 }, liq, ['UN'])).toBeNull(); // NF sem valor_total vira 0 na medição
     expect(alertaPiso(linha, decisao(7, { destino: 'liquidar' }), ['UN'])).toBeNull(); // sem piso
     expect(alertaPiso({ ...linha, destino: 'trocar' }, liq, ['UN'])).toBeNull();
   });

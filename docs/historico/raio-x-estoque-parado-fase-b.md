@@ -95,6 +95,13 @@ Spec: `docs/superpowers/specs/2026-10-31-raio-x-pacote-2-design.md` (desenho apr
   sem configuração → nada exibido). Com taxa única a ordem da lista não muda: o ganho é urgência em R$.
 - **Piso × preço real** só com UMA unidade de venda (senão "sem comparação"); a medição lista "liquidou abaixo do piso".
 - **"Executado" é tarefa, não dinheiro:** a meta continua vindo só da medição.
+- **Ritual Codex (gpt-6-astra, high, 128s, ~121k tokens) — 5 achados, todos aplicados:** (P1) rascunho velho
+  sobrescrevia o plano → `p_atualizado_em` + **RX003** (concorrência otimista, provada no PG17); (P2) re-marcar
+  "executado" depois de mudar o destino guardava a data velha → só preserva execução VIGENTE; (P2) NF sem
+  `valor_total` vira receita 0 na medição (coalesce) → piso não compara com receita ≤ 0 (receita PARCIALMENTE ausente
+  segue indetectável sem tocar a medição — limitação aceita); (P2) reabrir repunha responsável/prazo apagados →
+  padrões só em plano nunca gravado; (P2) "Salvar execução" fechava o painel descartando rascunho da decisão →
+  rascunho cruzado trava o outro botão. Authz/ACL/search_path e `decidir`/`contar` após o ALTER: sem achado.
 
 ### Query — adoção do plano (psql-ro)
 

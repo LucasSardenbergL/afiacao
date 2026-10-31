@@ -23663,6 +23663,7 @@ export type Database = {
       }
       raio_x_planejar: {
         Args: {
+          p_atualizado_em: string
           p_canal: string
           p_concluido: boolean
           p_empresa: string

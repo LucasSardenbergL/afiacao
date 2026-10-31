@@ -146,14 +146,26 @@ okp() { # como postgres
 run() { # $1 SQL, $2 rotulo — precisa dar certo (como U_EST)
   local got; got="$(sess "$U_EST" "$1" 2>&1)" || { echo "FALHOU: $2 | ERRO-PSQL: $got"; falhas=$((falhas+1)); }
 }
-# raio_x_planejar(empresa, sku, piso, canal, responsavel, prazo, concluido)
-plan() { echo "SELECT sku_codigo_omie FROM public.raio_x_planejar($1)"; }
-lanca() { echo "SELECT public.t_lanca('SELECT * FROM public.raio_x_planejar($1)', '$2')"; }
+# t_planejar(empresa, sku, piso, canal, responsavel, prazo, concluido) = raio_x_planejar com o atualizado_em VIGENTE
+# (lido por t_v, DEFINER) — o caminho feliz do cliente que acabou de ler. RX003 e chamado direto, com valor velho.
+plan() { echo "SELECT sku_codigo_omie FROM public.t_planejar($1)"; }
+lanca() { echo "SELECT public.t_lanca('SELECT * FROM public.t_planejar($1)', '$2')"; }
+helpers_planejar() {
+  P <<'SQL'
+CREATE FUNCTION public.t_v(e text, s bigint) RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS
+  $$ SELECT atualizado_em FROM public.raio_x_decisao WHERE empresa = e AND sku_codigo_omie = s $$;
+CREATE FUNCTION public.t_planejar(e text, s bigint, piso numeric, canal text, resp uuid, prazo date, concl boolean)
+RETURNS SETOF public.raio_x_decisao LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN QUERY SELECT * FROM public.raio_x_planejar(e, s, piso, canal, resp, prazo, concl, public.t_v(e, s));
+END $$;
+SQL
+}
 dec() { echo "SELECT destino FROM public.raio_x_decidir($1)"; }
 COL() { echo "SELECT $3 FROM public.raio_x_decisao WHERE empresa = '$1' AND sku_codigo_omie = $2"; }
 PLANO() { echo "SELECT coalesce(preco_piso::text,'N') || '|' || coalesce(canal_liquidacao,'N') || '|' || coalesce(responsavel::text,'N') || '|' || coalesce(prazo::text,'N') || '|' || (concluido_em IS NOT NULL) || '|' || coalesce(concluido_por::text,'N') FROM public.raio_x_decisao WHERE empresa = '$1' AND sku_codigo_omie = $2"; }
 
-SIG="public.raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean)"
+SIG="public.raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean,timestamptz)"
 
 suite() {
   falhas=0
@@ -162,6 +174,7 @@ suite() {
   # decisoes de partida (antes da migration desta prova: o plano nasce sobre linhas existentes)
   run "$(dec "'oben', 1, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "z sku1 liquidar"
   P -f "$1" >/dev/null || { echo "APLICACAO FALHOU: $1"; return 99; }
+  helpers_planejar >/dev/null || { echo "HELPERS FALHARAM"; return 98; }
   run "$(dec "'oben', 4, 'venda_dirigida', 'mercadoria', NULL, NULL, NULL, false, false")" "z sku4 venda_dirigida (apos o ALTER)"
   run "$(dec "'colacor', 7, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "z colacor sku7"
   run "$(dec "'oben', 7, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "z oben sku7 (mesmo codigo)"
@@ -195,6 +208,21 @@ suite() {
   oks "$U_EST" "SELECT coalesce(prazo::text,'N') FROM public.raio_x_contar('oben', 1, 7)" "2026-11-25" "c contar devolve as colunas novas"
   run "$(dec "'oben', 1, 'venda_dirigida', 'mercadoria', NULL, NULL, NULL, false, false")" "c trocar destino"
   okp "$(PLANO oben 1)" "8|promocao_carteira|$U_STAFF|2026-11-25|false|N" "c re-decidir nao apaga o plano (leitura TS filtra)"
+
+  # ---------- (c2) executado de ANTES do destino atual: marcar de novo registra a nova execucao ----------
+  run "$(plan "'oben', 1, NULL, NULL, '$U_STAFF', '2026-11-25', true")" "c2 executado no venda_dirigida"
+  C2="$(Pq -c "SELECT concluido_em FROM public.raio_x_decisao WHERE empresa='oben' AND sku_codigo_omie=1")"
+  run "$(dec "'oben', 1, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "c2 muda destino depois de executado"
+  oks "$U_MASTER" "$(plan "'oben', 1, NULL, NULL, '$U_STAFF', '2026-11-25', true")" "1" "c2 marca de novo como master"
+  okp "$(COL oben 1 "(concluido_em > '$C2'::timestamptz AND concluido_em >= decidido_em) || '|' || concluido_por")" "true|$U_MASTER" "c2 executado velho nao prende a nova execucao"
+
+  # ---------- (r3) concorrencia otimista: atualizado_em velho -> RX003, nada escrito ----------
+  V0="$(Pq -c "SELECT atualizado_em FROM public.raio_x_decisao WHERE empresa='oben' AND sku_codigo_omie=1")"
+  run "$(plan "'oben', 1, 20, NULL, '$U_STAFF', '2026-11-25', true")" "r3 outro operador grava"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_planejar(''oben'', 1, 5, NULL, NULL, NULL, false, ''$V0''::timestamptz)', 'RX003')" "RX003|raio_x: decisao mudou desde a leitura (sku 1)" "r3 rascunho velho RX003"
+  oks "$U_EST" "SELECT public.t_lanca('SELECT * FROM public.raio_x_planejar(''oben'', 1, 5, NULL, NULL, NULL, false, NULL)', 'RX003')" "RX003|raio_x: decisao mudou desde a leitura (sku 1)" "r3 sem atualizado_em RX003"
+  okp "$(COL oben 1 "preco_piso || '|' || responsavel")" "20|$U_STAFF" "r3 RX003 nao escreveu"
+  run "$(dec "'oben', 1, 'venda_dirigida', 'mercadoria', NULL, NULL, NULL, false, false")" "r3 volta a venda_dirigida"
 
   # ---------- (d) piso/canal so em liquidar ----------
   oks "$U_EST" "$(lanca "''oben'', 4, 5, NULL, NULL, NULL, false" 22023)" "22023|raio_x: piso e canal so no destino liquidar (destino venda_dirigida)" "d piso em venda_dirigida 22023"
@@ -282,11 +310,17 @@ sabotar "8 responsavel sem checagem de papel" \
   "s/IF p_responsavel IS NOT NULL\$/IF false/" \
   "f responsavel customer 22023"
 sabotar "9 executado re-salvo move a data" \
-  "s/THEN coalesce(d.concluido_em, now()) END,/THEN now() END,/" \
+  "s/THEN d.concluido_em ELSE now() END END,/THEN now() ELSE now() END END,/" \
   "b re-salvar executado nao move data"
 sabotar "10 executado re-salvo troca o autor" \
-  "s/THEN CASE WHEN d.concluido_em IS NULL THEN auth.uid() ELSE d.concluido_por END END,/THEN auth.uid() END,/" \
+  "s/THEN d.concluido_por ELSE auth.uid() END END,/THEN auth.uid() ELSE auth.uid() END END,/" \
   "b re-salvar executado nao move data"
+sabotar "10b executado velho (antes do destino atual) preservado" \
+  "s/(d.decidido_em IS NULL OR d.concluido_em >= d.decidido_em)/true/g" \
+  "c2 executado velho nao prende a nova execucao"
+sabotar "10c sem concorrencia otimista" \
+  "s/IF v_old.atualizado_em IS DISTINCT FROM p_atualizado_em THEN/IF false THEN/" \
+  "r3 rascunho velho RX003"
 sabotar "11 CHECK da tabela sem o NaN" \
   "s/(preco_piso >= 0 AND preco_piso <> 'NaN'::numeric)/preco_piso >= 0/" \
   "f check da tabela barra NaN"
@@ -306,7 +340,7 @@ sabotar_pos() { # $1 nome, $2 sed, $3 mensagem esperada
   echo "sabotagem vermelha ok: $1 (postcondicao aborta o apply, rc=$r)"
 }
 sabotar_pos "13 anon fora do REVOKE" \
-  "s/date, boolean) FROM PUBLIC, anon;/date, boolean) FROM PUBLIC;/" \
+  "s/boolean, timestamptz) FROM PUBLIC, anon;/boolean, timestamptz) FROM PUBLIC;/" \
   "postcondicao: anon executa raio_x_planejar"
 sabotar_pos "14 SECURITY INVOKER" \
   "s/^SECURITY DEFINER\$/SECURITY INVOKER/" \

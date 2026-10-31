@@ -85,7 +85,7 @@ describe('DecisaoSheet — execução', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(argsDe('raio_x_planejar')).toEqual([{
       p_empresa: 'oben', p_sku: 1, p_preco_piso: 7.5, p_canal: 'outlet_queima', p_responsavel: 'u-ana',
-      p_prazo: '2026-11-15', p_concluido: false,
+      p_prazo: '2026-11-15', p_concluido: false, p_atualizado_em: '2026-10-14T00:00:00Z',
     }]);
     expect(argsDe('raio_x_decidir')).toEqual([]);
     expect(track).toHaveBeenCalledWith('raio_x.plano', expect.objectContaining({ empresa: 'oben', tem_piso: true, canal: 'outlet_queima' }));
@@ -111,8 +111,39 @@ describe('DecisaoSheet — execução', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(argsDe('raio_x_planejar')).toEqual([{
       p_empresa: 'oben', p_sku: 1, p_preco_piso: null, p_canal: null, p_responsavel: 'u-bia',
-      p_prazo: '2026-11-20', p_concluido: true,
+      p_prazo: '2026-11-20', p_concluido: true, p_atualizado_em: '2026-10-14T00:00:00Z',
     }]);
+  });
+
+  it('plano existente: responsável/prazo apagados de propósito NÃO voltam ao padrão ao editar o piso', async () => {
+    const { onClose } = abrir(decisao(1, { destino: 'liquidar', decidido_por: 'u-ana', preco_piso: 5 }));
+    expect((screen.getByLabelText('Responsável') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('Prazo') as HTMLInputElement).value).toBe('');
+    fireEvent.change(screen.getByLabelText(/Preço piso/), { target: { value: '6' } });
+    fireEvent.click(salvarExec());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(argsDe('raio_x_planejar')[0]).toEqual(expect.objectContaining({ p_preco_piso: 6, p_responsavel: null, p_prazo: null }));
+  });
+
+  it('rascunho cruzado: mexer na decisão trava "Salvar execução" e vice-versa (fechar descartaria o outro)', () => {
+    abrir(liquidar);
+    fireEvent.change(screen.getByLabelText('Observação'), { target: { value: 'cliente Fulano' } });
+    expect(salvarExec().disabled).toBe(true);
+    expect(screen.getByText(/salve a decisão antes da execução/)).toBeTruthy();
+  });
+
+  it('rascunho na execução trava "Salvar decisão"', () => {
+    abrir(liquidar);
+    fireEvent.change(screen.getByLabelText('Canal'), { target: { value: 'outro' } });
+    expect((screen.getByRole('button', { name: 'Salvar decisão' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/salve a execução antes da decisão/)).toBeTruthy();
+  });
+
+  it('RX003 (outro operador gravou no meio) vira mensagem própria', async () => {
+    rpc.mockImplementation(() => Promise.resolve({ data: null, error: { code: 'RX003', message: 'raio_x: decisao mudou' } }));
+    abrir(liquidar);
+    fireEvent.click(salvarExec());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Outra pessoa mudou esta decisão — recarregue antes de salvar a execução'));
   });
 
   it('executado antes de re-decidir (destino mudou) nasce desmarcado', () => {
