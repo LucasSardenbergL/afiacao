@@ -46,7 +46,7 @@
 | Camada | Quem | Estado |
 | --- | --- | --- |
 | Migration `20261030233200` | sessão, `bun run db:aplicar` | ✅ 2026-10-30 ~23:50 BRT: ensaio (`ENSAIO ok`, rollback conferido: função ausente depois) → apply (tentativa #772 virou recibo) → psql-ro: md5 do corpo `68e63b59…` = repo, SECDEF, `search_path=public, pg_temp`, anon/PUBLIC sem EXECUTE, authenticated/claude_ro com; tabela RLS on, 0 policies, sem SELECT para anon/authenticated; claude_ro sem cap → `forbidden: radar_prospectar`; com o JWT de um master (transação read-only, ROLLBACK) → 50 linhas, 1 sorteio (`coorte-2026-10`), posições 1–50, ES 5 · MG 21 · PA 3 · RS 1 · SP 20 |
-| Publish do Lovable (front) | **founder** | ⏳ depois do merge. Sem ele a RPC existe e ninguém a chama. E o SW só troca de build quando o cliente clica. |
+| Publish do Lovable (front) | **founder** | ✅ 2026-10-31: PR mergeado às 04:06Z (`76d3bef2b`). Publish feito; `monitor-deploy.sh --pr 3432` → exit 0 `PR_NO_AR` (o ar serve `__BUILD_SHA__` `7329a84a` = main). Nenhum commit entre o squash e o build servido toca os arquivos da amostra. Disponível ≠ adotado: o SW só troca de build quando o vendedor clica para atualizar. |
 
 ## Como medir (query, não recado)
 
