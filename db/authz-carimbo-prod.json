@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T12:16:59.659Z",
-  "sourceHead": "7ef8a3a1ebca1567b092326126e2939977900bcd",
+  "medidoEm": "2026-10-31T12:46:11.502Z",
+  "sourceHead": "30c70ea71ddbc760b091a1d68d97164905cdc999",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,19 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 68 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 69 definição(ões) lida(s) para 68 chave(s) da allowlist.",
-      "contratoFingerprint": "949fa5ec36d4c2e2d25c7ca5da4c526d0b2bcdaaab1cbd7203de7b5df6289496",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 69 definição(ões) lida(s) para 69 chave(s) da allowlist.",
+      "contratoFingerprint": "8c25106039e6bbbf1762d155fa542846da89bd46d384a93868fc0cab20ea9e66",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "c69b32d27f4e8415",
+          "linha": "❌ public.raio_x_congelar_coorte — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_congelar_coorte está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -70,12 +77,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 441 identidade(s) batem com o repo (360 em dia, 66 só cosméticas, 14 aceitas na baseline) e 21 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 441 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@3b94e3258 (fetch ok) · prod 2026-10-31 12:17:25.352132Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 443 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@8a2e55542 (fetch ok) · prod 2026-10-31 12:46:36.736922Z",
       "contratoFingerprint": "f7c97d0eb804130041e609a823b5804ea51bf2cee6d551c9d0638912bf621f21",
       "auditorFingerprint": "b1b1d82764907d277cfd14f0bbe9a1b49cbf9e6c395a84e53b7210591476ecde",
-      "achados": []
+      "achados": [
+        {
+          "id": "d476dca355bff500",
+          "linha": "❌ [SEM_PAR] registrar_contato_radar(text,text,text): corpo que nem o último CREATE (20261019225545_radar_rpcs_cnpj_alfanumerico.sql) nem o patch aceito (20261029201200_radar_acesso_vendedor.sql) explicam (xmin 13313895)",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        },
+        {
+          "id": "4694ada7cfaf98a6",
+          "linha": "❌ [SEM_PAR] desfazer_contato_radar(uuid): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260612130000_radar_rpcs_contato.sql (xmin 13313895)",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     }
   }
 }
