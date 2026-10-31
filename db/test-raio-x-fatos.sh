@@ -447,11 +447,19 @@ fi
 echo "pre anti-deriva ok: corpo derivado aborta a 31/10"
 
 # 2) FALSIFICAÇÃO — uma sabotagem por vez, vermelha PELA asserção esperada. Controle verde acima, mesma invocação.
+# Sabotar a de 16/10 pode mudar o corpo ANTIGO da medicao (ex.: o DISTINCT ON) e a PRE da 31/10 abortaria
+# (rc=99, nada provado): nas sabotagens da 16/10 a 31/10 roda numa copia com o md5 da predecessora trocado
+# pelo md5 vivo. A PRE e provada a parte (1b).
+VIVO="(SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.raio_x_medicao(text)'))"
+MD5_PRED="$(grep -oE "NOT IN \('[0-9a-f]{32}'" "$MIG2" | grep -oE '[0-9a-f]{32}')"
+[ -n "$MD5_PRED" ] || { echo "MD5 DA PREDECESSORA NAO ENCONTRADO EM $MIG2"; exit 1; }
+sed "s/'$MD5_PRED'/$VIVO/" "$MIG2" > "$TMPD/mig2-sem-pre.sql"
+if cmp -s "$MIG2" "$TMPD/mig2-sem-pre.sql"; then echo "NEUTRALIZACAO DA PRE NAO ALTEROU O ARQUIVO"; exit 1; fi
 sabotar() { # $1 nome, $2 expressão sed, $3 rótulo esperado (FALHOU: <rotulo> |) — sabota a de 16/10
   sed "$2" "$MIG" > "$TMPD/sab.sql"
   if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
   local o r=0
-  o="$(suite "$TMPD/sab.sql" "$MIG2" 2>&1)" || r=$?
+  o="$(suite "$TMPD/sab.sql" "$TMPD/mig2-sem-pre.sql" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   if [ "$r" -eq 99 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o"; exit 1; fi
   if ! grep -qF "FALHOU: $3 |" <<<"$o"; then
@@ -560,7 +568,7 @@ sabotar2 "18 medicao inclui destino nulo" \
 # 7) tirar anon do REVOKE: a postcondicao embutida aborta o apply (rc=99) — vermelho pelo motivo certo.
 sed "s/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.raio_x_estoque_fatos(text) FROM PUBLIC;/" "$MIG" > "$TMPD/sab.sql"
 if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: 7"; exit 1; fi
-r=0; o="$(suite "$TMPD/sab.sql" "$MIG2" 2>&1)" || r=$?
+r=0; o="$(suite "$TMPD/sab.sql" "$TMPD/mig2-sem-pre.sql" 2>&1)" || r=$?
 if [ "$r" -ne 99 ] || ! grep -qF "postcondicao: anon executa" <<<"$o"; then
   echo "SABOTAGEM 7 NAO ABORTOU PELA POSTCONDICAO (rc=$r)"; echo "$o"; exit 1
 fi
