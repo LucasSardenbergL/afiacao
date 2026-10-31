@@ -24,8 +24,8 @@
 -- 'parado' quando param (precisão > recall).
 -- Ordem: comprando → parado → substituido → sem cadência; dentro, valor anual desc (o legado é o desempate).
 --
--- Medição em prod (31/10, 94 candidatos, R$ 54.822/ano): comprando 22 (R$ 1.848) · parado 60 (R$ 30.883) ·
--- substituido 12 (R$ 22.091). Prova: db/test-venda-repasse.sh (casos-ouro Lohan/Móveis & Cia/Anderson).
+-- Medição em prod (31/10, 94 candidatos, R$ 54.822/ano): comprando 22 (R$ 1.848) · parado 61 (R$ 33.195) ·
+-- substituido 11 (R$ 19.779). Prova: db/test-venda-repasse.sh (casos-ouro de prod como fixtures).
 -- Só o corpo de venda_repasse_candidatos muda: assinatura, volatilidade, SECURITY DEFINER, SET, dono e ACL
 -- intactos (CREATE OR REPLACE preserva; a PÓS confere). NÃO toca _venda_repasse_base, aprovar, gerador.
 -- Molde: PRE (md5 medido na prod via psql-ro 2026-10-31 = 922cf8b1…, ou este corpo) → CREATE → PÓS (md5 +

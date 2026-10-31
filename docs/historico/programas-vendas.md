@@ -313,7 +313,7 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
 
 - **Regra do founder**: repasse faz sentido quando o cliente segue comprando o item e nenhum outro entrou para
   substituí-lo (ex.: a Oben passou o cliente do DFA.4128 para o DFA.4080, mais barato, mantendo o preço de venda).
-  Quem compra vários da mesma função ao mesmo tempo (José Herlon, Lucas Santos Ribeiro, Midala) não é descartado.
+  Quem compra vários da mesma função ao mesmo tempo (há compradores de 10+ diluentes) não é descartado.
 - **`venda_repasse_candidatos`** (migration `20261031233000`) ganha `situacao_compra`: `comprando` (≤ 2× a
   cadência sem comprar) · `parado` (> 2×, sem substituto — sinal; o sugerido fica) · `substituido` (parado e
   um SKU de OUTRA base da mesma família entrou depois, sem ter sido comprado nos 365 d até a última compra do
@@ -323,8 +323,8 @@ não clicou" de "a lista não aparece". `venda_minhas_sugestoes` (escritor únic
   cor ou sistema, não por substituto.
 - **Prod depois do apply (31/10, recibo #802; 94 candidatos, R$ 54.822/ano antes)**: comprando 22 (R$ 1.848) ·
   parado 61 (R$ 33.195, sugerido mantido) · substituído 11 (R$ 19.779 que deixam de ser sugeridos). Casos-ouro:
-  Lohan, Móveis & Cia (o nº 1 do ranking, R$ 9,5 mil) e Anderson (DF.4056 e DFA.4128 → DFA.4080) → substituído.
-  O retardador do Anderson (DEA.4014 até out/25 → DEZ.8014 → DEA de novo em ago/26) fica `parado`: a base DEA
+  os três (inclusive o nº 1 do ranking) → substituído pelo DFA.4080.
+  O retardador de um deles (DEA.4014 até out/25 → DEZ.8014 → DEA de novo em ago/26) fica `parado`: a base DEA
   foi comprada nos 365 d antes da última DEZ, então a regra conservadora a lê como convivência.
   **Lição**: só 3% do "recuperável/ano" estava em SKU que o cliente ainda compra na cadência — o ranking por
   valor anual premiava justamente o que parou. Tempo da RPC em prod: 491 → ~540 ms.

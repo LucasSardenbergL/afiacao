@@ -19,7 +19,7 @@
 #        2 donos → 42501; estratégico (cap_carteira) lê
 #   C5   vencido some; revogado some; revogar 2x é no-op; venda posterior que alcança o alvo some
 #   ACL  tabela fechada a authenticated; RPCs fechadas a anon
-#   SUB  substituição (20261031233000): casos-ouro de prod 31/10 (Lohan, Móveis & Cia), convive comprando e
+#   SUB  substituição (20261031233000): casos-ouro de prod 31/10 (anonimizados), convive comprando e
 #        parado, mesma base noutra embalagem, família larga, sem cadência, bordas da janela de 365 d e do 2×
 #        cadência, irmão sem código, embalagem em código de 3 segmentos, base substituta que convivia noutra
 #        embalagem; ordem por situação; H2 = predecessor do repo é o corpo da prod
@@ -363,8 +363,8 @@ BEGIN
 END $c$;
 DO $sub$
 DECLARE
-  lohan uuid := md5('vs:lohan')::uuid;     lohan_ali uuid := md5('vs:lohan-alias')::uuid;
-  cia   uuid := md5('vs:moveis-cia')::uuid;
+  ouro1 uuid := md5('vs:ouro1')::uuid;     ouro1_ali uuid := md5('vs:ouro1-alias')::uuid;
+  ouro2 uuid := md5('vs:ouro2')::uuid;
 BEGIN
   INSERT INTO public.omie_products (omie_codigo_produto, codigo, descricao, account, is_tintometric, familia) VALUES
     (9401,'PRD03396','DILUENTE PU DFA.4128LT','oben',false,'Diluente PU'),
@@ -378,18 +378,18 @@ BEGIN
     (9422,'PRD00315','SELADORA NL.9245.00QT','oben',false,'Seladora Nitrocelulose'),
     (9411,'PRD00072','CATALISADOR FC.6921L5','oben',false,'Catalisadores PU'),
     (9412,'PRD03595','CATALISADOR FCA.7090QT','oben',false,'Catalisadores PU');
-  INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, status) VALUES (lohan_ali, lohan, 'active');
-  -- S1 Lohan: 4128 a cada 11 d até H-140; 4080 entra em H-130 (9 dias, parte pelo ALIAS); 8040 uma vez → 4080
-  PERFORM pg_temp.serie(lohan, 9401, ARRAY[200,189,178,167,156,145,140], true);
-  PERFORM pg_temp.cand(lohan, 9401, 140, 11);
-  PERFORM pg_temp.serie(lohan, 9402, ARRAY[130,115,100,85,70], false);
-  PERFORM pg_temp.serie(lohan_ali, 9402, ARRAY[55,40,25,10], false);
-  PERFORM pg_temp.serie(lohan, 9404, ARRAY[120], false);
-  -- S2 Móveis & Cia: 4128 a cada 25 d até H-197; 4080 UMA vez em H-59
-  PERFORM pg_temp.serie(cia, 9401, ARRAY[297,272,247,222,197], true);
-  PERFORM pg_temp.cand(cia, 9401, 197, 25);
-  PERFORM pg_temp.serie(cia, 9402, ARRAY[59], false);
-  -- S3 convive e segue comprando (José Herlon/Lucas): 4128 até H-10 (cad 14), 8040 alternado, 4080 novo em H-20
+  INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, status) VALUES (ouro1_ali, ouro1, 'active');
+  -- S1 caso-ouro 1: 4128 a cada 11 d até H-140; 4080 entra em H-130 (9 dias, parte pelo ALIAS); 8040 uma vez → 4080
+  PERFORM pg_temp.serie(ouro1, 9401, ARRAY[200,189,178,167,156,145,140], true);
+  PERFORM pg_temp.cand(ouro1, 9401, 140, 11);
+  PERFORM pg_temp.serie(ouro1, 9402, ARRAY[130,115,100,85,70], false);
+  PERFORM pg_temp.serie(ouro1_ali, 9402, ARRAY[55,40,25,10], false);
+  PERFORM pg_temp.serie(ouro1, 9404, ARRAY[120], false);
+  -- S2 caso-ouro 2 (nº 1 do ranking): 4128 a cada 25 d até H-197; 4080 UMA vez em H-59
+  PERFORM pg_temp.serie(ouro2, 9401, ARRAY[297,272,247,222,197], true);
+  PERFORM pg_temp.cand(ouro2, 9401, 197, 25);
+  PERFORM pg_temp.serie(ouro2, 9402, ARRAY[59], false);
+  -- S3 convive e segue comprando (compradores de 10+ diluentes): 4128 até H-10 (cad 14), 8040 alternado, 4080 novo em H-20
   PERFORM pg_temp.serie(md5('vs:convive-comprando')::uuid, 9401, ARRAY[60,46,32,18,10], true);
   PERFORM pg_temp.cand(md5('vs:convive-comprando')::uuid, 9401, 10, 14);
   PERFORM pg_temp.serie(md5('vs:convive-comprando')::uuid, 9404, ARRAY[53,39,25], false);
@@ -611,13 +611,13 @@ sub() { # $1 = semente do comprador (md5('vs:…')), $2 = SKU, $3 = expressão s
   como "$MST" "SELECT coalesce(string_agg($3, '#'), '(sem candidato)') FROM jsonb_array_elements(public.venda_repasse_candidatos()) e WHERE (e->>'omie_codigo_produto')::bigint = $2 AND (e->>'comprador_id')::uuid = md5('vs:$1')::uuid"
 }
 SIT="coalesce(e->>'situacao_compra','(null)')||'|'||coalesce(e#>>'{substituto,omie_codigo_produto}','(null)')"
-eq SUB1 "Lohan: 4128 parou, 4080 entrou (9 dias, parte pelo alias; 8040 1 dia) → substituído por 4080" \
-  "$(sub lohan 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')||'|'||(e#>>'{substituto,primeira_compra}')||'|'||(e->>'dias_sem_comprar')")" \
+eq SUB1 "caso-ouro 1: 4128 parou, 4080 entrou (9 dias, parte pelo alias; 8040 1 dia) → substituído por 4080" \
+  "$(sub ouro1 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')||'|'||(e#>>'{substituto,primeira_compra}')||'|'||(e->>'dias_sem_comprar')")" \
   "substituido|9402|9|$(Pq -c "SELECT $HOJE - 130")|140"
 eq SUB2 "substituído não é repasse: sem sugerido e sem valor anual; a defasagem fica" \
-  "$(sub lohan 9401 "coalesce(e->>'preco_sugerido','(null)')||'|'||coalesce(e->>'valor_anual_recuperavel','(null)')||'|'||(e->>'status_defasagem')")" \
+  "$(sub ouro1 9401 "coalesce(e->>'preco_sugerido','(null)')||'|'||coalesce(e->>'valor_anual_recuperavel','(null)')||'|'||(e->>'status_defasagem')")" \
   "(null)|(null)|defasado"
-eq SUB3 "Móveis & Cia: 4128 parou, 4080 UMA vez depois → substituído" "$(sub moveis-cia 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')")" "substituido|9402|1"
+eq SUB3 "caso-ouro 2: 4128 parou, 4080 UMA vez depois → substituído" "$(sub ouro2 9401 "$SIT||'|'||(e#>>'{substituto,dias_com_compra}')")" "substituido|9402|1"
 eq SUB4 "convive e segue comprando (irmão novo não importa) → comprando, sugerido fica" \
   "$(sub convive-comprando 9401 "$SIT||'|'||(e->>'preco_sugerido')")" "comprando|(null)|133.33"
 eq SUB5 "convive e parou (8040 já era comprado antes) → parado, sem substituto, sugerido fica" \
@@ -637,7 +637,7 @@ eq SUB14 "ordem: comprando → parado → substituído → sem cadência (invers
 eq SUB16 "mesma base noutra embalagem em código de 3 segmentos (NL.9245.00LT → QT) → parado" "$(sub embalagem3 9421 "$SIT")" "parado|(null)"
 eq SUB17 "base substituta já convivia noutra embalagem (4080LT antes, 4080L5 depois) → parado" "$(sub convive-embalagem 9401 "$SIT")" "parado|(null)"
 eq SUB15 "substituto expõe exatamente as 6 chaves" \
-  "$(sub lohan 9401 "(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e->'substituto') k)")" \
+  "$(sub ouro1 9401 "(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e->'substituto') k)")" \
   "codigo,descricao,dias_com_compra,omie_codigo_produto,primeira_compra,ultima_compra"
 
 # C3 — aprovação recusa

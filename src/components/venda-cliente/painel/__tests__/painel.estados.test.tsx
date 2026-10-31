@@ -22,7 +22,7 @@ vi.mock('@/hooks/useVendaPainel', async (orig) => {
     useVendaPainel: () => ({ ...painelResposta, refetch: vi.fn() }),
     useAprovarRepasse: () => ({ mutate: vi.fn(), isPending: false }),
     useRepasseCandidatos: () => ({ data: candidatosResposta, isLoading: false, isError: false, error: null, refetch: vi.fn() }),
-    useNomesCompradores: () => ({ data: new Map([['c1', 'Lohan Móveis'], ['c2', 'Marcenaria X']]) }),
+    useNomesCompradores: () => ({ data: new Map([['c1', 'Marcenaria Y'], ['c2', 'Marcenaria X']]) }),
     useRevogarRepasse: () => ({ mutate: vi.fn(), isPending: false }),
   };
 });
