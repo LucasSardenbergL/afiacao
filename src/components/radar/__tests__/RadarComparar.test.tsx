@@ -10,7 +10,7 @@ const base = {
   logradouro: null, municipio_codigo: null, municipio_nome: 'NOVA SERRANA', nome_fantasia: null, numero: null,
   omie_cadastrado_em: null, omie_codigo_cliente: null, porte: '01', primeira_vista_em: '2026-01-01',
   prospeccao_atualizado_em: null, prospeccao_status: 'a_contatar', razao_social: 'X', rfb_situacao: null,
-  rfb_situacao_data: null, rfb_situacao_lote: null, score: null, score_em: null, score_motivos: null, socios_nomes: null,
+  rfb_situacao_data: null, rfb_situacao_lote: null, score: null, score_em: null, score_motivos: null, score_versao: null, socios_nomes: null,
   telefone1: null, telefone2: null, uf: 'MG', ultimo_lote: '2026-08', updated_at: '2026-01-01',
 } satisfies RadarEmpresa;
 
