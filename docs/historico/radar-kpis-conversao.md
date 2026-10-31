@@ -83,6 +83,21 @@ verde. A contagem agora sai dos contadores `PASS+FAIL`, como na prova irmã.
 
 | Camada | Estado | Quem |
 |---|---|---|
-| Migration `20261031142000` | ⏳ envelope `bun run db:aplicar` antes do merge, validada por psql-ro | esta sessão |
+| Migration `20261031142000` | ✅ aplicada às 14:46:09 UTC pelo envelope (`bun run db:aplicar`, tentativa **#784**, sha256 `8ea6d5fe…`, o mesmo do `--ensaio`) | esta sessão |
 | Edge | nenhuma | — |
 | Publish do Lovable (dica no card) | ⏳ depois do merge | **founder** |
+
+**Pré-voo (psql-ro, 14:45 UTC):** corpo vivo = predecessor (`de4e4731…`), 0 travas na função, fora da janela dos crons do
+Radar.
+
+**2ª testemunha (psql-ro, outra conexão):**
+
+- md5 `6c10810f…`, SECURITY DEFINER + VOLATILE + `search_path=public`, 1 sobrecarga, gate `cap_radar_prospectar`
+  presente;
+- `anon` sem EXECUTE, `authenticated` e `service_role` executam, e o grant do sandbox foi preservado;
+- recibo #784 `aplicada`, marcador `FIM_VALIDACAO_OK`.
+
+**Carimbo de authz:** regravado depois do apply. Traz 1 `PATCH_NAO_CONCILIADO` de `radar_kpis()`, que é transitório: o
+auditor lê as migrations da `origin/main`, que ainda não têm a 20261031142000. Some quando o carimbo for regravado depois
+do merge. O achado de `fin_*` (RLS) não é deste PR.
+
