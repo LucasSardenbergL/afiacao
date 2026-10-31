@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T21:33:30.233Z",
-  "sourceHead": "f2eca2042667c7cbc1b5a22da5879d8581153f13",
+  "medidoEm": "2026-10-31T23:12:25.251Z",
+  "sourceHead": "b3371052d543930e8b8798da64a49109d37abceb",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,12 +11,37 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 70 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 71 definição(ões) lida(s) para 70 chave(s) da allowlist.",
-      "contratoFingerprint": "cb3074cfffad0da2f416a21e13fba64a3a61e0db39f6a4f14987a958725835ee",
+      "exit": 1,
+      "resumo": "authz:funcoes:prod — 4 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
+      "denominador": "🔎 authz:funcoes:prod — 71 definição(ões) lida(s) para 74 chave(s) da allowlist.",
+      "contratoFingerprint": "4d3a549ff8a2778078881118090e7525c3d048f719fb322c20ad6d600499a465",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": []
+      "achados": [
+        {
+          "id": "40a5a97108a20a35",
+          "linha": "❌ public.reposicao_compra_suspensa_candidatos — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_compra_suspensa_candidatos está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        },
+        {
+          "id": "dd8ac7722d703290",
+          "linha": "❌ public.reposicao_compra_suspensa_listar — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_compra_suspensa_listar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        },
+        {
+          "id": "876a4e4eafb1aaf8",
+          "linha": "❌ public.reposicao_compra_suspender — [FUNCAO_AUSENTE_EM_PROD] public.reposicao_compra_suspender está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        },
+        {
+          "id": "26c8780c8056fd32",
+          "linha": "❌ public._reposicao_compra_foto — [FUNCAO_AUSENTE_EM_PROD] public._reposicao_compra_foto está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "primeiraVez": "2026-10-31",
+          "ultimaVez": "2026-10-31"
+        }
+      ]
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -83,20 +108,14 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@e8c604b55 (fetch ok) · prod 2026-10-31 21:34:23.406189Z",
+      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@93579508e (fetch ok) · prod 2026-10-31 23:13:05.957148Z",
       "contratoFingerprint": "464f59de1727780dfcff0f3523bc163fdced3d3d7e4c45ef830e6c310ab93ee6",
       "auditorFingerprint": "29535ebadc8ee13811e69f394dde599672622ebceee98dd48266c6b233bc6079",
       "achados": [
         {
-          "id": "bc84266a52049e9e",
-          "linha": "❌ [SEM_PAR] radar_aplicar_situacao(text,timestamp with time zone): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261019200000_radar_situacao_cadastral.sql (xmin 13352267)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
-        },
-        {
           "id": "a5d8d49ea2911099",
-          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13352126)",
+          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13357586)",
           "primeiraVez": "2026-10-31",
           "ultimaVez": "2026-10-31"
         }
