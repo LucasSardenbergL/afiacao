@@ -108,3 +108,18 @@ export const podeAceitarEmLote = (e: Pick<EventoOutlier, "status" | "severidade"
 
 export const fmt = (n: number | null | undefined, dec = 2) =>
   n === null || n === undefined ? "—" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+// Lote do "atribuir grupo": por empresa+fornecedor (o recálculo é por empresa), maior lote primeiro.
+export type LoteSemGrupo = { chave: string; empresa: string; fornecedor: string; eventos: EventoOutlier[] };
+
+export function agruparPorFornecedor(eventos: EventoOutlier[]): LoteSemGrupo[] {
+  const mapa = new Map<string, LoteSemGrupo>();
+  for (const e of eventos) {
+    const fornecedor = e.detalhes?.fornecedor ?? "";
+    const chave = `${e.empresa}|${fornecedor}`;
+    const lote = mapa.get(chave) ?? { chave, empresa: e.empresa, fornecedor, eventos: [] };
+    lote.eventos.push(e);
+    mapa.set(chave, lote);
+  }
+  return Array.from(mapa.values()).sort((a, b) => b.eventos.length - a.eventos.length);
+}

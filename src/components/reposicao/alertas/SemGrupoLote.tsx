@@ -13,26 +13,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { atribuirGrupoAosSkus } from "./api";
-import { idadeDias, type EventoOutlier } from "./types";
-
-type Lote = { chave: string; empresa: string; fornecedor: string; eventos: EventoOutlier[] };
-
-export function agruparPorFornecedor(eventos: EventoOutlier[]): Lote[] {
-  const mapa = new Map<string, Lote>();
-  for (const e of eventos) {
-    const fornecedor = e.detalhes?.fornecedor ?? "";
-    const chave = `${e.empresa}|${fornecedor}`;
-    const lote = mapa.get(chave) ?? { chave, empresa: e.empresa, fornecedor, eventos: [] };
-    lote.eventos.push(e);
-    mapa.set(chave, lote);
-  }
-  return Array.from(mapa.values()).sort((a, b) => b.eventos.length - a.eventos.length);
-}
+import { agruparPorFornecedor, idadeDias, type EventoOutlier, type LoteSemGrupo } from "./types";
 
 function LoteFornecedor({
   lote, usuarioEmail, onConcluido,
 }: {
-  lote: Lote;
+  lote: LoteSemGrupo;
   usuarioEmail?: string | null;
   onConcluido: () => void;
 }) {

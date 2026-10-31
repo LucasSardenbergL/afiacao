@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { agruparPorFornecedor } from "../SemGrupoLote";
-import type { EventoOutlier } from "../types";
+import { agruparPorFornecedor, type EventoOutlier } from "../types";
 
 const ev = (id: number, fornecedor: string | undefined, empresa = "OBEN"): EventoOutlier => ({
   id, empresa, sku_codigo_omie: String(id), sku_descricao: null, tipo: "sku_sem_grupo", severidade: "atencao",
