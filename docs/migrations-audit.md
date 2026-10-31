@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **719** custom migrations totais
-- **2347** objetos esperados (criados por estas migrations)
+- **720** custom migrations totais
+- **2348** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 882
+  - `function`: 883
   - `rls_policy`: 495
   - `index`: 312
   - `table`: 213
@@ -5872,6 +5872,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.cliente_situacao_receita` | — |
+
+### `20261030071150_radar_contagem_municipio_regiao_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
 
 ### `20261030233200_radar_amostra_vigente_leitura.sql`
 

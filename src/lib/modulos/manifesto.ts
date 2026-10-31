@@ -380,6 +380,7 @@ export const MODULOS: ModuloApp[] = [
       "src/queries/__tests__/useRadarLista.regiao-contato.test.tsx",
       "src/queries/__tests__/useRadarContagemMunicipios.lote-vigente.test.tsx",
       "src/queries/__tests__/useRadarContagemMunicipios.sugeridos.test.tsx",
+      "src/queries/__tests__/useRadarContagemMunicipios.regiao.test.tsx",
       "src/queries/__tests__/useRadarLote.esquecer.test.tsx",
       "src/queries/__tests__/useRadarConflitosCadastro.paginacao.test.ts",
       "src/components/radar/__tests__/RadarLinha.selos.test.tsx",

@@ -612,6 +612,10 @@ db/test-radar-irmaos-por-raiz.sh            13  falsificar=11
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
 # VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
 db/test-radar-contagem-lote.sh              16  falsificar=12
+# Radar: ranking de cidades e mapa seguem a REGIÃO e o CONTATO da fila (20261030071150). Defeito aqui =
+# região ignorada (o Brasil contado sob "MG e vizinhos"), lead sem telefone nem e-mail contado, região vazia
+# contando zero em silêncio, UF escolhida perdendo para a região, overload ambíguo ou RPC aberta a anon.
+db/test-radar-contagem-regiao.sh            21  falsificar=12
 # Mapa do radar (frente 4): penetração inventada (0% sem denominador, cliente de lote velho contando,
 # concorrente "0" num lote sem carga), RPC sem gate, tabela de concorrentes legível sem o gate ou por
 # anon, porta de escrita aberta a authenticated, publicação sem reconciliação/duplicando, e migration

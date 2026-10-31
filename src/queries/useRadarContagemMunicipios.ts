@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { comNulo } from '@/lib/rpc-args';
 import { fetchAllPages, likePrefixPattern } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae } from '@/lib/radar/ui-helpers';
+import { presetParaParams, digitosCnae, recorteDeUf } from '@/lib/radar/ui-helpers';
 import { recorteDeLote, type LoteIngest, type RecorteLote } from '@/lib/radar/lote-vigente';
 import { lerLoteVigente } from '@/queries/useRadarLoteVigente';
 import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
@@ -31,8 +31,13 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
   const qc = useQueryClient();
   const p = presetParaParams(filtros.preset, hojeISO);
   const cnae = digitosCnae(filtros.cnae);
+  // Região e contato: o MESMO recorte da fila (`recorteDeUf`, `incluirSemContato`). UF escolhida vence a
+  // região; campo ausente (roteirizador, testes antigos) = Brasil e com sem-contato, como antes.
+  const recorteUf = recorteDeUf(filtros);
   const params = {
-    p_uf: filtros.uf || null,
+    p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : null,
+    p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : null,
+    p_com_contato: filtros.incluirSemContato === false,
     p_cnae_exato: cnae.length === 7 ? cnae : null,
     p_cnae_prefix: cnae.length > 0 && cnae.length < 7 ? cnae : null,
     p_status: filtros.status || null,
@@ -57,14 +62,15 @@ export function useRadarContagemMunicipios(filtros: RadarFiltros, hojeISO: strin
       if (filtros.soSugeridos) {
         if (!lote) throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
         return contarSugeridosPorMunicipio(lote, recorte, {
-          uf: params.p_uf, cnaeExato: params.p_cnae_exato, cnaePrefixo: params.p_cnae_prefix,
+          uf: params.p_uf, ufs: params.p_ufs, comContato: params.p_com_contato,
+          cnaeExato: params.p_cnae_exato, cnaePrefixo: params.p_cnae_prefix,
           dataAberturaMin: params.p_data_abertura_min, dataAberturaMax: params.p_data_abertura_max,
         });
       }
       // NULL explícito em todo filtro ausente (os testes do lote vigente fixam esse contrato: o
       // recorte "sem lote" é NULL dito, não default implícito). Os args têm DEFAULT NULL na prod.
       type FiltroNulo =
-        | 'p_uf' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_status'
+        | 'p_uf' | 'p_ufs' | 'p_cnae_exato' | 'p_cnae_prefix' | 'p_status'
         | 'p_data_abertura_min' | 'p_data_abertura_max' | 'p_lote' | 'p_primeira_vista_min';
       const { data, error } = await supabase.rpc(
         'radar_contagem_por_municipio',
@@ -175,6 +181,8 @@ const LIMITE_MUNICIPIOS = 500;      // o mesmo p_limit da RPC
 
 interface FiltrosEstruturais {
   uf: string | null;
+  ufs: string[] | null;     // região (só quando não há UF)
+  comContato: boolean;      // esconde quem não tem telefone NEM e-mail
   cnaeExato: string | null;
   cnaePrefixo: string | null;
   dataAberturaMin: string | null;
@@ -197,6 +205,8 @@ async function contarSugeridosPorMunicipio(
       .select('municipio_codigo,municipio_nome,uf,telefone1,telefone2,prospeccao_status');
     q = filtrarSugeridos(q, lote);
     if (f.uf) q = q.eq('uf', f.uf);
+    else if (f.ufs) q = q.in('uf', f.ufs);
+    if (f.comContato) q = q.or('telefone1.not.is.null,telefone2.not.is.null,email.not.is.null');
     if (f.cnaeExato) q = q.eq('cnae_principal', f.cnaeExato);
     else if (prefixo) q = q.like('cnae_principal', prefixo);
     if (f.dataAberturaMin) q = q.gte('data_abertura', f.dataAberturaMin);
