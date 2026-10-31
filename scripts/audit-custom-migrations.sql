@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 720
+-- Total de custom migrations: 721
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -784,6 +784,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
   ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
   ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
+  ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql'),
   ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3098,6 +3099,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
   ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
   ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 ),
 obj_status AS (
@@ -5460,6 +5468,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
   ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
   ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
   ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 )
 SELECT
