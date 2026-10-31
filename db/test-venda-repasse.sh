@@ -21,7 +21,8 @@
 #   ACL  tabela fechada a authenticated; RPCs fechadas a anon
 #   SUB  substituição (20261031233000): casos-ouro de prod 31/10 (Lohan, Móveis & Cia), convive comprando e
 #        parado, mesma base noutra embalagem, família larga, sem cadência, bordas da janela de 365 d e do 2×
-#        cadência, irmão sem código; ordem por situação; H2 = predecessor do repo é o corpo da prod
+#        cadência, irmão sem código, embalagem em código de 3 segmentos, base substituta que convivia noutra
+#        embalagem; ordem por situação; H2 = predecessor do repo é o corpo da prod
 #
 # Uso:  bash db/test-venda-repasse.sh > /tmp/t.log 2>&1; echo "exit=$?"
 #       HARNESS_LC_ALL=pt_BR.UTF-8 bash db/test-venda-repasse.sh …   (rode nos DOIS locales)
@@ -40,7 +41,7 @@ MIG_DESEMP="$REPO_ROOT/supabase/migrations/20261021021500_venda_repasse_base_des
 MIG_DEFASAGEM="$REPO_ROOT/supabase/migrations/20261014211500_defasagem_desconto_valor.sql"
 MIG_SUBST="$REPO_ROOT/supabase/migrations/20261031233000_venda_repasse_substituicao.sql"
 SNAP="$REPO_ROOT/supabase/schema-snapshot.sql"
-TOTAL_ESPERADO=70
+TOTAL_ESPERADO=72
 
 # ── Falsificação ─────────────────────────────────────────────────────────────────────────────
 # nome:vermelhos:verdes. As sabotagens de corpo não tocam o que a POS confere (ACL/RLS/md5 do cockpit),
@@ -64,12 +65,13 @@ if [ "${1:-}" = "--falsificar" ]; then
               autojuncao:PERF:CAND1,C4b,PERFv
               pos_janela:MIG!POS_JANELA
               pre_config:MIG!PRE_CONFIG
-              sem_convive:SUB5,SUB10:SUB1,SUB9
+              sem_convive:SUB5,SUB10,SUB17:SUB1,SUB9
               janela_366:SUB9:SUB10
-              embalagem:SUB6:SUB1
+              embalagem:SUB16:SUB6,SUB1
+              convive_por_sku:SUB17:SUB5,SUB1
               familia_larga:SUB7:SUB1
               parado_borda:SUB11:SUB12
-              cadencia_null:SUB8:SUB5
+              cadencia_null:SUB8,SUB14:SUB5
               sub_sugerido:SUB2:SUB1
               sub_valor:SUB2:SUB1
               escolha_sub:SUB1:SUB3
@@ -371,6 +373,9 @@ BEGIN
     (9404,'PRD03470','DILUENTE PU DFZ.8040LT','oben',false,'Diluente PU'),
     (9405,'PRD00577','DILUENTE PU DF.4056LT','oben',false,'Diluente PU'),
     (9406,'PRD02338','DILUENTE FORMICA 5L','oben',false,'Diluente PU'),
+    (9407,'PRD03665','DILUENTE PU DFA.4080L5','oben',false,'Diluente PU'),
+    (9421,'PRD00314','SELADORA NL.9245.00LT','oben',false,'Seladora Nitrocelulose'),
+    (9422,'PRD00315','SELADORA NL.9245.00QT','oben',false,'Seladora Nitrocelulose'),
     (9411,'PRD00072','CATALISADOR FC.6921L5','oben',false,'Catalisadores PU'),
     (9412,'PRD03595','CATALISADOR FCA.7090QT','oben',false,'Catalisadores PU');
   INSERT INTO public.customer_canonical_alias (alias_user_id, canonical_user_id, status) VALUES (lohan_ali, lohan, 'active');
@@ -397,6 +402,15 @@ BEGIN
   PERFORM pg_temp.serie(md5('vs:embalagem')::uuid, 9401, ARRAY[160,146,132,118,100], true);
   PERFORM pg_temp.cand(md5('vs:embalagem')::uuid, 9401, 100, 14);
   PERFORM pg_temp.serie(md5('vs:embalagem')::uuid, 9403, ARRAY[90,60,30], false);
+  -- S5b embalagem em código de 3 segmentos (NL.9245.00LT → .00QT): só o corte do sufixo junta a base
+  PERFORM pg_temp.serie(md5('vs:embalagem3')::uuid, 9421, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:embalagem3')::uuid, 9421, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:embalagem3')::uuid, 9422, ARRAY[90,60,30], false);
+  -- S12 a base substituta já convivia noutra embalagem (4080LT antes, 4080L5 depois) → não é substituto
+  PERFORM pg_temp.serie(md5('vs:convive-embalagem')::uuid, 9401, ARRAY[160,146,132,118,100], true);
+  PERFORM pg_temp.cand(md5('vs:convive-embalagem')::uuid, 9401, 100, 14);
+  PERFORM pg_temp.serie(md5('vs:convive-embalagem')::uuid, 9402, ARRAY[110], false);
+  PERFORM pg_temp.serie(md5('vs:convive-embalagem')::uuid, 9407, ARRAY[90,60,30], false);
   -- S6 família larga: catalisador parou, outro catalisador entrou → não é substituto
   PERFORM pg_temp.serie(md5('vs:catalisador')::uuid, 9411, ARRAY[160,146,132,118,100], true);
   PERFORM pg_temp.cand(md5('vs:catalisador')::uuid, 9411, 100, 14);
@@ -525,10 +539,11 @@ case "${SABOTAGEM:-}" in
   pre_config)      ;;   # age entre as duas migrations (abaixo)
   pos_janela)      sabotar_d 's/^CREATE OR REPLACE FUNCTION private\._venda_repasse_base\(p_comprador uuid\)$/CREATE OR REPLACE FUNCTION private._venda_repasse_base_sabotada(p_comprador uuid)/' ;;
   # ── substituição (20261031233000) ──
-  sem_convive)     sabotar_s 's/BETWEEN x\.data_ancora - 365 AND x\.data_ancora\)\)$/BETWEEN x.data_ancora - 365 AND x.data_ancora - 100000))/' ;;
-  janela_366)      sabotar_s 's/BETWEEN x\.data_ancora - 365 AND/BETWEEN x.data_ancora - 366 AND/' ;;
+  sem_convive)     sabotar_s 's/BETWEEN cp\.data_ancora - 365 AND cp\.data_ancora\), false\) AS convivia_sku/BETWEEN cp.data_ancora - 365 AND cp.data_ancora - 100000), false) AS convivia_sku/' ;;
+  janela_366)      sabotar_s 's/BETWEEN cp\.data_ancora - 365 AND/BETWEEN cp.data_ancora - 366 AND/' ;;
   embalagem)       sabotar_s "s/'\[A-Z\]\+\[0-9\]\?\\$', ''\) AS base/'^\\$', '') AS base/" ;;
-  familia_larga)   sabotar_s 's/WHERE op\.account = .oben. AND op\.familia = ANY \(v_familias_substituiveis\)$/WHERE op.account = '"'"'oben'"'"'/; s/WHERE c\.parado IS TRUE AND c\.familia = ANY \(v_familias_substituiveis\)\)$/WHERE c.parado IS TRUE)/' ;;
+  convive_por_sku) sabotar_s 's/OVER \(PARTITION BY cp\.comprador_id, cp\.omie_codigo_produto, ds\.base\) AS convivia/OVER (PARTITION BY cp.comprador_id, cp.omie_codigo_produto, ds.omie_codigo_produto) AS convivia/' ;;
+  familia_larga)   sabotar_s 's/WHERE op\.account = .oben. AND op\.familia = ANY \(v_familias_substituiveis\)$/WHERE op.account = '"'"'oben'"'"'/' ;;
   parado_borda)    sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) >= 2 * b.cadencia_dias END AS parado/' ;;
   cadencia_null)   sabotar_s 's/THEN \(v_hoje - b\.data_ancora\) > 2 \* b\.cadencia_dias END AS parado/THEN (v_hoje - b.data_ancora) > 2 * b.cadencia_dias ELSE false END AS parado/' ;;
   sub_sugerido)    sabotar_s "s/CASE WHEN f\.situacao = 'substituido' THEN NULL ELSE f\.sugerido END AS sugerido_final/f.sugerido AS sugerido_final/" ;;
@@ -619,6 +634,8 @@ eq SUB13 "irmão sem código na descrição não prova base → parado" "$(sub s
 eq SUB14 "ordem: comprando → parado → substituído → sem cadência (inversões | classes presentes)" \
   "$(como "$MST" "WITH t AS (SELECT o, CASE e->>'situacao_compra' WHEN 'comprando' THEN 0 WHEN 'parado' THEN 1 WHEN 'substituido' THEN 2 ELSE 3 END AS r FROM jsonb_array_elements(public.venda_repasse_candidatos()) WITH ORDINALITY x(e, o)) SELECT count(*) FILTER (WHERE r < lag_r)||'|'||(SELECT count(DISTINCT r) FROM t) FROM (SELECT r, lag(r) OVER (ORDER BY o) AS lag_r FROM t) y")" \
   "0|4"
+eq SUB16 "mesma base noutra embalagem em código de 3 segmentos (NL.9245.00LT → QT) → parado" "$(sub embalagem3 9421 "$SIT")" "parado|(null)"
+eq SUB17 "base substituta já convivia noutra embalagem (4080LT antes, 4080L5 depois) → parado" "$(sub convive-embalagem 9401 "$SIT")" "parado|(null)"
 eq SUB15 "substituto expõe exatamente as 6 chaves" \
   "$(sub lohan 9401 "(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(e->'substituto') k)")" \
   "codigo,descricao,dias_com_compra,omie_codigo_produto,primeira_compra,ultima_compra"

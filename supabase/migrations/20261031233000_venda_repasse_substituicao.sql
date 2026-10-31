@@ -49,7 +49,7 @@ BEGIN
   -- trava a linha de pg_proc antes de medir (CREATE concorrente espera); reescreve o MESMO valor conferido
   ALTER FUNCTION public.venda_repasse_candidatos() SET search_path = public, pg_temp;
   SELECT md5(p.prosrc) INTO v_md5 FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.venda_repasse_candidatos()');
-  IF v_md5 IS DISTINCT FROM '922cf8b1efcb82f45a6d962ff7e7de96' AND v_md5 IS DISTINCT FROM '8d2007e3b2a245f50795cb19b8a813f8' THEN
+  IF v_md5 IS DISTINCT FROM '922cf8b1efcb82f45a6d962ff7e7de96' AND v_md5 IS DISTINCT FROM '12d7fff8f2c8dbd41403715f32cfb35c' THEN
     RAISE EXCEPTION 'PRE_TRAVA: venda_repasse_candidatos deriva — md5(prosrc)=% não é o medido na prod (922cf8b1…) nem este corpo', v_md5;
   END IF;
   INSERT INTO pg_temp.repasse_cand_retrato
@@ -109,44 +109,43 @@ BEGIN
      WHERE b.status_defasagem = 'defasado' OR b.abaixo_piso IS TRUE
   ),
   -- base = código da descrição sem a embalagem (DFA.4128LT → DFA.4128); sem código → NULL (não prova nada)
-  prod AS (
+  prod AS MATERIALIZED (
     SELECT op.omie_codigo_produto, op.codigo, op.descricao, op.familia,
            regexp_replace(substring(upper(op.descricao) FROM '[A-Z]{1,4}[0-9]{0,2}\.[0-9]{4}(?:\.[0-9A-Z]+)?'),
                           '[A-Z]+[0-9]?$', '') AS base
       FROM public.omie_products op
      WHERE op.account = 'oben' AND op.familia = ANY (v_familias_substituiveis)
   ),
-  -- dias de compra Oben dos compradores com candidato PARADO numa família substituível (a fonte é a mesma do lote)
-  dias AS MATERIALIZED (
-    SELECT DISTINCT l.comprador_id, l.omie_codigo_produto, l.data_pedido
+  -- candidatos PARADOS com base provada numa família substituível
+  cp AS MATERIALIZED (
+    SELECT c.comprador_id, c.omie_codigo_produto, c.data_ancora, p.familia, p.base
+      FROM c JOIN prod p ON p.omie_codigo_produto = c.omie_codigo_produto
+     WHERE c.parado IS TRUE AND p.base IS NOT NULL
+  ),
+  -- dias de compra Oben por comprador × SKU (com base) dessas famílias, só dos compradores de cp — UMA linha
+  -- por SKU com as datas num array: o cruzamento com cp fica do tamanho de "candidatos × SKUs da família",
+  -- não "× dias de compra" (a versão por linha de dia passava dos 8 s no volume de prova)
+  ds AS MATERIALIZED (
+    SELECT l.comprador_id, p.familia, p.base, l.omie_codigo_produto, array_agg(DISTINCT l.data_pedido) AS datas
       FROM private.venda_linhas_pedido(v_hoje + 1) l
-     WHERE l.empresa = 'oben'
-       AND l.comprador_id IN (SELECT c.comprador_id FROM c
-                               WHERE c.parado IS TRUE AND c.familia = ANY (v_familias_substituiveis))
+      JOIN prod p ON p.omie_codigo_produto = l.omie_codigo_produto AND p.base IS NOT NULL
+     WHERE l.empresa = 'oben' AND l.comprador_id IN (SELECT cp.comprador_id FROM cp)
+     GROUP BY l.comprador_id, p.familia, p.base, l.omie_codigo_produto
   ),
-  -- candidato parado × dia de compra de um irmão (mesma família, OUTRA base) do mesmo comprador
-  cruz AS (
-    SELECT c.comprador_id, c.omie_codigo_produto, c.data_ancora, ps.omie_codigo_produto AS sku_sub, ps.base,
-           d.data_pedido
-      FROM c
-      JOIN prod pc ON pc.omie_codigo_produto = c.omie_codigo_produto
-      JOIN dias d ON d.comprador_id = c.comprador_id
-      JOIN prod ps ON ps.omie_codigo_produto = d.omie_codigo_produto
-                  AND ps.familia = pc.familia AND ps.base <> pc.base
-     WHERE c.parado IS TRUE
-  ),
-  -- por SKU irmão: compras DEPOIS da última do candidato; e se a BASE dele (qualquer embalagem) já era
-  -- comprada nos 365 dias até a última compra do candidato — então convivia e não substitui.
-  -- Agregado com janela por base (hash join), não NOT EXISTS correlacionado: quadrático estourava os 8 s.
+  -- por SKU irmão (mesma família, OUTRA base): compras DEPOIS da última do candidato; e se a BASE dele (qualquer
+  -- embalagem) já era comprada nos 365 dias até a última compra do candidato — então convivia e não substitui
   sub AS (
-    SELECT x.comprador_id, x.omie_codigo_produto, x.sku_sub,
-           min(x.data_pedido) FILTER (WHERE x.data_pedido > x.data_ancora) AS primeira,
-           max(x.data_pedido) FILTER (WHERE x.data_pedido > x.data_ancora) AS ultima,
-           count(*) FILTER (WHERE x.data_pedido > x.data_ancora) AS n_dias,
-           bool_or(bool_or(x.data_pedido BETWEEN x.data_ancora - 365 AND x.data_ancora))
-             OVER (PARTITION BY x.comprador_id, x.omie_codigo_produto, x.base) AS convivia
-      FROM cruz x
-     GROUP BY x.comprador_id, x.omie_codigo_produto, x.sku_sub, x.base
+    SELECT cp.comprador_id, cp.omie_codigo_produto, ds.omie_codigo_produto AS sku_sub, x.primeira, x.ultima, x.n_dias,
+           bool_or(x.convivia_sku) OVER (PARTITION BY cp.comprador_id, cp.omie_codigo_produto, ds.base) AS convivia
+      FROM cp
+      JOIN ds ON ds.comprador_id = cp.comprador_id AND ds.familia = cp.familia AND ds.base <> cp.base
+      CROSS JOIN LATERAL (
+        SELECT min(u.d) FILTER (WHERE u.d > cp.data_ancora) AS primeira,
+               max(u.d) FILTER (WHERE u.d > cp.data_ancora) AS ultima,
+               count(*) FILTER (WHERE u.d > cp.data_ancora) AS n_dias,
+               COALESCE(bool_or(u.d BETWEEN cp.data_ancora - 365 AND cp.data_ancora), false) AS convivia_sku
+          FROM unnest(ds.datas) AS u(d)
+      ) x
   ),
   s1 AS (   -- o substituto exposto: mais dias de compra; empate → compra mais recente → menor código
     SELECT DISTINCT ON (s.comprador_id, s.omie_codigo_produto) s.*, p.codigo, p.descricao
@@ -234,7 +233,7 @@ BEGIN
   IF position('''substituido''' IN v_src) = 0 OR position('v_familias_substituiveis' IN v_src) = 0 THEN
     RAISE EXCEPTION 'POS_SUBST: venda_repasse_candidatos não classifica a substituição';
   END IF;
-  IF md5(v_src) IS DISTINCT FROM '8d2007e3b2a245f50795cb19b8a813f8' THEN
+  IF md5(v_src) IS DISTINCT FROM '12d7fff8f2c8dbd41403715f32cfb35c' THEN
     RAISE EXCEPTION 'POS: md5(prosrc)=% não é o corpo desta migration', md5(v_src);
   END IF;
   SELECT * INTO v_ret FROM pg_temp.repasse_cand_retrato;

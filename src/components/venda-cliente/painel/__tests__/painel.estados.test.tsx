@@ -187,6 +187,17 @@ describe('AbaRepasses — situação de compra (20261031233000)', () => {
     expect(within(sub).getByText('sem comprar há 144 d')).toBeTruthy();
   });
 
+  it('sem cadência vai para o grupo próprio, não para "Segue comprando"', () => {
+    candidatosResposta = [base, { ...base, comprador_id: 'c1', omie_codigo_produto: 9, situacao_compra: null, dias_sem_comprar: 100 }];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AbaRepasses disponivel hoje="2026-10-31" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole('heading', { name: /Segue comprando \(1\)/ })).toBeTruthy();
+    expect(within(grupo(/Sem cadência/)).getByText('sem comprar há 100 d')).toBeTruthy();
+  });
+
   it('substituído com repasse VIGENTE segue revogável', () => {
     candidatosResposta = [{
       ...substituido,

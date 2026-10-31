@@ -28,13 +28,13 @@ function dataCurta(iso: string) {
   return `${d}/${m}/${a.slice(2)}`;
 }
 
-/** Grupos da aba pela situação de compra (20261031233000); sem cadência fica com quem segue comprando. */
+/** Grupos da aba pela situação de compra (20261031233000), na ordem da RPC. */
 const GRUPOS = [
   {
     chave: 'comprando',
     titulo: 'Segue comprando',
     descricao: 'O cliente ainda compra o SKU na cadência — aqui o repasse faz sentido.',
-    pertence: (c: CandidatoRepasse) => c.situacao_compra === 'comprando' || c.situacao_compra === null,
+    pertence: (c: CandidatoRepasse) => c.situacao_compra === 'comprando',
   },
   {
     chave: 'parado',
@@ -47,6 +47,12 @@ const GRUPOS = [
     titulo: 'Substituído — não é repasse',
     descricao: 'O cliente parou este SKU e passou a comprar outro da mesma função. Sem preço sugerido.',
     pertence: (c: CandidatoRepasse) => c.situacao_compra === 'substituido',
+  },
+  {
+    chave: 'sem-cadencia',
+    titulo: 'Sem cadência',
+    descricao: 'Sem cadência de compra para dizer se o cliente ainda compra o SKU.',
+    pertence: (c: CandidatoRepasse) => c.situacao_compra === null,
   },
 ] as const;
 
