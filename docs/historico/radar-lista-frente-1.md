@@ -96,3 +96,7 @@ Decisão do founder (2026-10-30): corrigir de verdade a limitação acima, com m
   só a UF. O denominador dela é o mercado do lote, não o recorte da fila.
 - Prova: `db/test-radar-contagem-regiao.sh` (PG17, 21 asserts, `--falsificar` 12/12), no núcleo do CI.
   Teste do hook: `useRadarContagemMunicipios.regiao.test.tsx`, falsificado.
+- **Aplicada em prod em 2026-10-31** pelo founder (SQL Editor). Validada por fora (psql-ro, ~02:25 UTC):
+  só a assinatura de 12 args, md5 `290add620a05772ff66e3004a08e1c40` = o do arquivo, SECURITY DEFINER +
+  `search_path=public`, EXECUTE só para `authenticated`/`service_role` (PUBLIC/anon fora). A entrada
+  `EDICAO_MANUAL` da assinatura velha saiu de `db/deriva-corpo-baseline.json` (`BASELINE_OBSOLETA`).

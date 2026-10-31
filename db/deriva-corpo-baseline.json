@@ -304,16 +304,6 @@
       "desde": "2026-10-28"
     },
     {
-      "funcao": "radar_contagem_por_municipio",
-      "identidade": "text,text,text,text,boolean,date,date,integer,text,timestamp with time zone",
-      "classe": "EDICAO_MANUAL",
-      "esperadaNoAceite": "20261020120200_radar_contagem_municipio_lote_vigente.sql",
-      "motivo": "Patch programático da 20261029201200_radar_acesso_vendedor.sql (frente 2 do Radar): laço TRAVA → PRE md5 → replace literal do gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO → PÓS md5; o alvosDePatch não lê o laço. Aplicada via db:aplicar (tentativa #768) e conferida por psql-ro em 2026-10-30.",
-      "md5": "85dbce2b7d578f858e1239a5fbebcd43",
-      "md5Tokens": "7bb0175e890d7f719720494147de0e22",
-      "desde": "2026-10-30"
-    },
-    {
       "funcao": "radar_estado_cadastro_omie",
       "identidade": "text",
       "classe": "EDICAO_MANUAL",
