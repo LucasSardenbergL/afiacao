@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T13:10:07.884Z",
-  "sourceHead": "e5a3973386792e914eddbe994e94b3f7f81956da",
+  "medidoEm": "2026-10-31T14:37:59.099Z",
+  "sourceHead": "6dcabf38224fa776235788629b7acc24f5c948d9",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -13,13 +13,13 @@
       "script": "authz:funcoes:prod",
       "exit": 1,
       "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 69 definição(ões) lida(s) para 69 chave(s) da allowlist.",
-      "contratoFingerprint": "8c25106039e6bbbf1762d155fa542846da89bd46d384a93868fc0cab20ea9e66",
+      "denominador": "🔎 authz:funcoes:prod — 70 definição(ões) lida(s) para 70 chave(s) da allowlist.",
+      "contratoFingerprint": "cb3074cfffad0da2f416a21e13fba64a3a61e0db39f6a4f14987a958725835ee",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": [
         {
-          "id": "c69b32d27f4e8415",
-          "linha": "❌ public.raio_x_congelar_coorte — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_congelar_coorte está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
+          "id": "86bce1749cb9d3e3",
+          "linha": "❌ public.raio_x_planejar — [FUNCAO_AUSENTE_EM_PROD] public.raio_x_planejar está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
           "primeiraVez": "2026-10-31",
           "ultimaVez": "2026-10-31"
         }
@@ -38,13 +38,13 @@
       "script": "authz:audit:prod",
       "exit": 1,
       "resumo": "authz:audit:prod — 1 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 28 definição(ões) lida(s) para 28 chave(s) do manifest.",
-      "contratoFingerprint": "d4b89fa11e6adedd2241c32f8c95778914c6b582d4803ce95177acdefab076df",
+      "denominador": "🔎 authz:audit:prod — 29 definição(ões) lida(s) para 29 chave(s) do manifest.",
+      "contratoFingerprint": "279b9b7d94e55c72873605d054f9d23879f952a442e91eff2535c1379ae30321",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": [
         {
-          "id": "5b70a9aef24a6132",
-          "linha": "❌ AUSENTE_EM_PROD: public.raio_x_congelar_coorte está no AUTHZ_MANIFEST e não existe no banco.",
+          "id": "d2cb3408d9b6e47c",
+          "linha": "❌ AUSENTE_EM_PROD: public.raio_x_planejar está no AUTHZ_MANIFEST e não existe no banco.",
           "primeiraVez": "2026-10-31",
           "ultimaVez": "2026-10-31"
         }
@@ -78,8 +78,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 443 identidade(s) batem com o repo (364 em dia, 65 só cosméticas, 13 aceitas na baseline) e 21 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 443 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@456a36de2 (fetch ok) · prod 2026-10-31 13:10:34.680392Z",
+      "resumo": "✅ deriva-corpo — 444 identidade(s) batem com o repo (365 em dia, 65 só cosméticas, 13 aceitas na baseline) e 21 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 444 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@87715e795 (fetch ok) · prod 2026-10-31 14:39:05.962183Z",
       "contratoFingerprint": "25c6104c80c4b6fbdcd3c9cb224b86ded924e72b8ce78b5c86e7be44ec0598dd",
       "auditorFingerprint": "930dd6f14617094e6bc27050765d11dac8235189a6f8e0e988854f0e4cc4611a",
       "achados": []

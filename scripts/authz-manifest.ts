@@ -58,6 +58,13 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'congelamento da coorte do Top 61 do Raio-X: foto de custo (saldo×cmc) por SKU',
   },
+  // 2026-10-31 — plano de execução do Raio-X (pacote 2): piso/canal, responsável, prazo e executado
+  // sobre a decisão existente. Grava em raio_x_decisao (custo) como DEFINER; mesmo gate do raio_x_decidir.
+  'public.raio_x_planejar': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'plano de execução da decisão do Raio-X (preço piso, canal, responsável, prazo, executado)',
+  },
   // 2026-10-18 — giro de estoque por SKU (aba Ciclo, frente 3). Mesmo gate de custo do
   // fin_estimar_estoque_omie que ela substitui no engine/diálogo (service_role OU cap_custo_ler).
   'public.fin_estoque_giro_valor': {
