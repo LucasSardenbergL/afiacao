@@ -29,6 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import type { PresetRadar, RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const RadarMapa = lazy(() => import('@/components/radar/RadarMapa'));
 
@@ -256,7 +257,7 @@ export default function RadarClientes() {
           sorteio={amostra?.sorteio ?? null}
           resumo={resumoAmostra}
           naFila={amostraNaFila.length}
-          erro={amostraQ.isError ? (amostraQ.error instanceof Error ? amostraQ.error.message : 'erro de leitura') : null}
+          erro={amostraQ.isError ? mensagemDeErro(amostraQ.error) ?? 'erro de leitura' : null}
         />
       )}
       {raw.vista === 'mapa' ? (

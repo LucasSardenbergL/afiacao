@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { podeProspectarRadar } from '@/lib/nav/acesso-radar';
-import { lerAmostraVigente, type ItemAmostra } from '@/lib/radar/amostra';
+import { lerAmostraVigente, TETO_LEITURA_AMOSTRA, type ItemAmostra } from '@/lib/radar/amostra';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 export interface AmostraVigente {
@@ -25,7 +25,11 @@ export function useRadarAmostra() {
     enabled: podeProspectarRadar({ role, commercialRole }),
     staleTime: 30_000,
     queryFn: async (): Promise<AmostraVigente | null> => {
-      const { data, error } = await supabase.rpc('radar_amostra_vigente');
+      // Janela explícita com ordem estável; chegar ao teto é ERRO no leitor (nunca "a amostra acabou").
+      const { data, error } = await supabase
+        .rpc('radar_amostra_vigente')
+        .order('posicao', { ascending: true })
+        .range(0, TETO_LEITURA_AMOSTRA - 1);
       if (error) throw error;
       const sorteados = lerAmostraVigente(data, 'radar_amostra_vigente');
       if (sorteados.length === 0) return null;
