@@ -21,6 +21,9 @@ function empresaDaCompra(company: Company): string | null {
 }
 
 const chave = (company: Company) => ['financeiro', 'ciclo', 'compra-suspensa', company] as const;
+/** As RPCs de escrita devolvem 1 linha por SKU: fatiar o array é o que torna o retorno estruturalmente < capa do PostgREST. */
+export const LOTE_RPC_SKUS = 200;
+const fatiar = (skus: number[]) => Array.from({ length: Math.ceil(skus.length / LOTE_RPC_SKUS) }, (_, i) => skus.slice(i * LOTE_RPC_SKUS, (i + 1) * LOTE_RPC_SKUS));
 const MSG_SEM_PERMISSAO = 'Sem permissão para segurar/reativar compra (exige papel master com acesso a compras).';
 
 function avisarErro(e: unknown, fallback: string) {
@@ -98,11 +101,15 @@ export function useCompraSuspensaMutacoes(company: Company) {
   const suspender = useMutation({
     mutationFn: async (a: SuspenderArgs): Promise<ResultadoSuspender[]> => {
       if (!empresa) throw new Error('Empresa sem SKU de estoque');
-      const { data, error } = await supabase.rpc('reposicao_compra_suspender', {
-        p_empresa: empresa, p_skus: a.skus, p_motivo: a.motivo, p_revisar_em: a.revisarEm, p_origem: a.origem,
-      });
-      if (error) throw error;
-      return (data ?? []).map((r) => ({ sku: r.sku_codigo_omie, inserido: r.inserido, recusa: r.recusa, pendentesN: r.pendentes_n }));
+      const out: ResultadoSuspender[] = [];
+      for (const lote of fatiar(a.skus)) {
+        const { data, error } = await supabase.rpc('reposicao_compra_suspender', {
+          p_empresa: empresa, p_skus: lote, p_motivo: a.motivo, p_revisar_em: a.revisarEm, p_origem: a.origem,
+        });
+        if (error) throw error;
+        out.push(...(data ?? []).map((r) => ({ sku: r.sku_codigo_omie, inserido: r.inserido, recusa: r.recusa, pendentesN: r.pendentes_n })));
+      }
+      return out;
     },
     onSuccess: (res, a) => {
       const inseridos = res.filter((r) => r.inserido).length;
@@ -122,11 +129,15 @@ export function useCompraSuspensaMutacoes(company: Company) {
   const reativar = useMutation({
     mutationFn: async (a: { skus: number[]; motivo: string | null }): Promise<ResultadoReativar[]> => {
       if (!empresa) throw new Error('Empresa sem SKU de estoque');
-      const { data, error } = await supabase.rpc('reposicao_compra_reativar', {
-        p_empresa: empresa, p_skus: a.skus, ...(a.motivo ? { p_motivo: a.motivo } : {}),
-      });
-      if (error) throw error;
-      return (data ?? []).map((r) => ({ sku: r.sku_codigo_omie, reativado: r.reativado, impedimento: r.impedimento }));
+      const out: ResultadoReativar[] = [];
+      for (const lote of fatiar(a.skus)) {
+        const { data, error } = await supabase.rpc('reposicao_compra_reativar', {
+          p_empresa: empresa, p_skus: lote, ...(a.motivo ? { p_motivo: a.motivo } : {}),
+        });
+        if (error) throw error;
+        out.push(...(data ?? []).map((r) => ({ sku: r.sku_codigo_omie, reativado: r.reativado, impedimento: r.impedimento })));
+      }
+      return out;
     },
     onSuccess: (res, a) => {
       const reativados = res.filter((r) => r.reativado).length;
