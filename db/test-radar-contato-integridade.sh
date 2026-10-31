@@ -107,6 +107,7 @@ LA='24242424000124'   # cadastrado pela v2 (ledger 555)
 LG='25252525000125'   # legado: virou_cliente sem confirmação (de antes da invariante)
 L1='31313131000131'; L2='32323232000132'; L3='33333333000133'; L4='34343434000134'
 L5='35353535000135'; L6='36363636000136'; L7='37373737000137'; L8='38383838000138'
+L9='39393939000139'; L10='40404040000140'   # janelas atravessadas durante a espera pela trava
 LI='41414141000141'   # INSERT direto em virou_cliente
 
 echo "→ seed: papéis, leads, ledger, legado…"
@@ -119,7 +120,7 @@ INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
   ('$MASTER','master'),('$GER','gerencial'),('$FARM','farmer'),('$FARM2','farmer'),('$OPER','operacional');
 INSERT INTO public.radar_empresas (cnpj, razao_social, cnae_principal, ultimo_lote, ja_cliente)
 SELECT c, 'LEAD ' || c, '4744005', '2026-10', false
-  FROM unnest(ARRAY['$LV','$LS','$LA','$L1','$L2','$L3','$L4','$L5','$L6','$L7','$L8']) AS c;
+  FROM unnest(ARRAY['$LV','$LS','$LA','$L1','$L2','$L3','$L4','$L5','$L6','$L7','$L8','$L9','$L10']) AS c;
 UPDATE public.radar_empresas SET omie_codigo_cliente = '777' WHERE cnpj = '$LS';
 INSERT INTO public.omie_cliente_confirmacoes (account, documento, codigo_cliente, origem) VALUES ('oben','$LA','555','incluir');
 COMMIT;
@@ -143,10 +144,10 @@ q_como() {
   else printf 'ERRO: %s' "$(P -v ON_ERROR_STOP=1 -tA -q "${ctx[@]}" 2>&1 >/dev/null | tr '\n' ' ' | cut -c1-200)"; fi
 }
 st_como() { q_como authenticated "$1" "SELECT prova.sqlstate(\$cmd\$$2\$cmd\$);"; }
-# msg_como <uid> <sql> — a SQLSTATE e o começo da mensagem (distingue a recusa da PORTA da do trigger).
+# msg_como <uid> <sql> — a SQLSTATE e a CAMADA que recusou: 'porta' (a RPC) ou 'guarda' (o trigger).
 msg_como() {
   q_como authenticated "$1" "DO \$m\$ BEGIN PERFORM $2; RAISE EXCEPTION 'SEM_ERRO'; EXCEPTION WHEN OTHERS THEN
-    RAISE EXCEPTION 'MSG[%|%]', SQLSTATE, CASE WHEN SQLERRM LIKE '%vem do cadastro pelo Radar%' THEN 'porta' ELSE left(SQLERRM, 40) END; END \$m\$;" \
+    RAISE EXCEPTION 'MSG[%|%]', SQLSTATE, CASE WHEN SQLERRM LIKE '%vem do cadastro pelo Radar%' OR SQLERRM LIKE '%só o gestor muda o status%' THEN 'porta' ELSE 'guarda' END; END \$m\$;" \
     | sed -n 's/.*MSG\[\([^]]*\)\].*/\1/p'
 }
 gate_como() {
@@ -195,7 +196,12 @@ cenario() {
   chk A4 "cadastro pela v2 (ledger 555) converte"  "$(q_como authenticated "$FARM" "SELECT public.radar_registrar_cadastro_omie_v2('$LA','555',false)->>'ok'")|$(estado "$LA")" "true|virou_cliente|∅"
   local v1id; v1id="$(ultimo "$LA" "$FARM")"
   chk A5 "re-marcar cliente confirmado é no-op"    "$(reg "$FARM" "$LA" virou_cliente NULL id)|$(contatos "$LA")" "$v1id|1"
-  chk A6 "farmer tira cliente confirmado: RD007"   "$(st_como "$FARM" "SELECT public.registrar_contato_radar('$LA','descartado','x')")|$(estado "$LA")" "RD007|virou_cliente|∅"
+  chk A6 "farmer tira cliente confirmado: RD007 na porta" "$(msg_como "$FARM" "public.registrar_contato_radar('$LA','descartado','x')")|$(estado "$LA")" "RD007|porta|virou_cliente|∅"
+  # O corpo ANTIGO em voo (Codex, código): sem RD007 nem no-op próprios — quem recusa/preserva é o trigger.
+  chk A15 "corpo antigo tira cliente confirmado: RD007 na guarda" "$(msg_como "$FARM2" "public.registrar_contato_radar_antigo('$LA','descartado','x')")|$(estado "$LA")" "RD007|guarda|virou_cliente|∅"
+  local carimbo; carimbo="$(P -tA -q -c "SELECT prospeccao_atualizado_em FROM public.radar_empresas WHERE cnpj = '$LA'")"
+  chk A16 "corpo antigo re-marca: a data da conversão não muda" \
+    "$(q_como authenticated "$FARM2" "SELECT public.registrar_contato_radar_antigo('$LA','virou_cliente',NULL)->>'deduped'")|$(P -tA -q -c "SELECT prospeccao_atualizado_em = '$carimbo' FROM public.radar_empresas WHERE cnpj = '$LA'")" "false|t"
   chk A7 "gestor tira cliente confirmado"          "$(reg "$GER" "$LA" em_conversa)|$(estado "$LA")" "false|em_conversa|∅"
   chk A8 "farmer re-converte o confirmado"         "$(reg "$FARM" "$LA" virou_cliente)|$(estado "$LA")" "false|virou_cliente|∅"
   chk A9 "corpo ANTIGO em voo: o trigger recusa"   "$(st_como "$FARM" "SELECT public.registrar_contato_radar_antigo('$LV','virou_cliente',NULL)")|$(estado "$LV")" "RD005|a_contatar|∅"
@@ -275,6 +281,31 @@ SQL
   chk C5 "só UM dos dois apaga"                     "$(cat "$TMPD/c-d1.out" "$TMPD/c-d2.out" | tr -d ' ' | sort | tr '\n' ',')" "false,true,"
   chk C6 "…e o status volta uma vez só"             "$(estado "$L6")|$(contatos "$L6")" "a_contatar|∅|0"
 
+  echo "── D. janelas medidas DEPOIS da espera pela trava ──"
+  # Contato com 4m59s; a linha fica presa 2,5 s; o desfazer só lê o relógio depois → já passou de 5 min.
+  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_contatos (cnpj, acao, criado_por, status_anterior, created_at) VALUES ('$L9','em_conversa','$FARM','a_contatar', clock_timestamp() - interval '299 seconds')" \
+    -c "UPDATE public.radar_empresas SET prospeccao_status = 'em_conversa', prospeccao_contato_id = (SELECT id FROM public.radar_contatos WHERE cnpj = '$L9') WHERE cnpj = '$L9'"
+  local j9; j9="$(ultimo "$L9" "$FARM")"
+  em_fundo "$TMPD/d-trava9.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L9' FOR UPDATE" -c "SELECT pg_sleep(2.5)" -c "COMMIT"
+  local pt9=$!
+  sleep 0.3
+  em_fundo "$TMPD/d-desf9.out" "$FARM" -c "SELECT d->>'deleted' || '|' || (d->>'status_restaurado') FROM public.desfazer_contato_radar('$j9') d"
+  local pd9=$!
+  chk D1 "o desfazer espera a trava"               "$(esperar_bloqueio 1 desfazer_contato_radar)" "1"
+  wait "$pt9" || true; wait "$pd9" || true
+  chk D2 "a janela de 5 min venceu na espera: não desfaz" "$(tr -d '\n ' < "$TMPD/d-desf9.out")|$(estado "$L9")" "false|false|em_conversa|∅"
+  # Dono com 1m59s; mesma espera; o dedupe mede a janela depois dela → registro novo.
+  P -v ON_ERROR_STOP=1 -q -c "INSERT INTO public.radar_contatos (cnpj, acao, criado_por, status_anterior, created_at) VALUES ('$L10','em_conversa','$FARM','a_contatar', clock_timestamp() - interval '119 seconds')" \
+    -c "UPDATE public.radar_empresas SET prospeccao_status = 'em_conversa', prospeccao_contato_id = (SELECT id FROM public.radar_contatos WHERE cnpj = '$L10') WHERE cnpj = '$L10'"
+  em_fundo "$TMPD/d-trava10.out" "" -c "BEGIN" -c "SELECT 1 FROM public.radar_empresas WHERE cnpj = '$L10' FOR UPDATE" -c "SELECT pg_sleep(2.5)" -c "COMMIT"
+  local pt10=$!
+  sleep 0.3
+  em_fundo "$TMPD/d-reg10.out" "$FARM" -c "SELECT public.registrar_contato_radar('$L10','em_conversa',NULL)->>'deduped'"
+  local pr10=$!
+  chk D3 "o registrar espera a trava"              "$(esperar_bloqueio 1 registrar_contato_radar)" "1"
+  wait "$pt10" || true; wait "$pr10" || true
+  chk D4 "a janela de 2 min venceu na espera: registro novo" "$(tr -d '\n ' < "$TMPD/d-reg10.out")|$(contatos "$L10")" "false|2"
+
   echo "── G. catálogo ──"
   chk G1 "re-aplicar a migration é no-op"           "$(P -v ON_ERROR_STOP=1 -q -1 -f "$MIG" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
   chk G2 "anon sem EXECUTE nas 2 RPCs"              "$(P -tA -q -c "SELECT has_function_privilege('anon','public.registrar_contato_radar(text,text,text)','EXECUTE') OR has_function_privilege('anon','public.desfazer_contato_radar(uuid)','EXECUTE')")" "f"
@@ -299,6 +330,10 @@ sabotagem() {
     remarca_conta)      cv_sabotar "$R" "WHERE cnpj = p_cnpj AND acao = 'virou_cliente' ORDER BY created_at DESC, id DESC LIMIT 1;" "WHERE false;" ;;
     dedupe_sem_dono)    cv_sabotar "$R" "WHERE id = v_dono_atual AND criado_por = v_uid" "WHERE criado_por = v_uid" ;;
     desfazer_sem_gate)  cv_sabotar "$D" "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false)) THEN" "IF false THEN" ;;
+    guarda_tira)        cv_sabotar "$G" "ELSIF auth.uid() IS NOT NULL" "ELSIF false AND auth.uid() IS NOT NULL" ;;
+    guarda_recarimbo)   cv_sabotar "$G" "NEW.prospeccao_atualizado_em := OLD.prospeccao_atualizado_em;" "NULL;" ;;
+    relogio_desfazer)   cv_sabotar "$D" "v_agora := clock_timestamp();" "v_agora := now();" ;;
+    relogio_dedupe)     cv_sabotar "$R" "v_agora := clock_timestamp();" "v_agora := now();" ;;
     registrar_sem_gate) cv_sabotar "$R" "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false)) THEN" "IF false THEN" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
@@ -314,7 +349,11 @@ sem_motivo:B5,B8:B1
 sem_releitura:C5,B10:C2
 janela_larga:B10:B11
 desfaz_conversao:B9:B8
-vendedor_tira:A6:A7
+vendedor_tira:A6:A7,A15
+guarda_tira:A15:A6
+guarda_recarimbo:A16:A5
+relogio_desfazer:D2:D1
+relogio_dedupe:D4:D3
 remarca_conta:A5:A6
 dedupe_sem_dono:A8:A14
 desfazer_sem_gate:B11:B12

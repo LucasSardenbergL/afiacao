@@ -33,8 +33,10 @@
 -- ============================================================================================================
 
 -- O ALTER TABLE pede ACCESS EXCLUSIVE em radar_empresas (lida pela tela inteira): espera curta, ou aborta sem efeito.
+-- (lock_timeout vale para a próxima espera. O tempo de RETENÇÃO é limitado pelo statement_timeout do executor, 300 s:
+-- um SET LOCAL aqui dentro não rearma o temporizador já iniciado (Codex, código). Por isso nada pesado roda depois do
+-- ALTER: a varredura de radar_empresas fica antes dele.)
 SET LOCAL lock_timeout = '5s';
-SET LOCAL statement_timeout = '120s';
 
 -- ── TRAVA: ALTER sem efeito (a volatilidade VIVA) nas 2 RPCs, ANTES de ler o corpo ───────────────────────────
 DO $trava$
@@ -76,6 +78,20 @@ BEGIN
 END
 $pre$;
 
+-- A invariante vale para o que já existe (0 em prod no pré-voo de 2026-10-31). Varre radar_empresas ANTES do ALTER,
+-- sem segurar ACCESS EXCLUSIVE; depois dele o trigger guarda qualquer entrada nova.
+DO $pre_invariante$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.radar_empresas e
+              WHERE e.prospeccao_status = 'virou_cliente'
+                AND NOT EXISTS (SELECT 1 FROM public.omie_cliente_confirmacoes c
+                                 WHERE c.account = 'oben' AND c.documento = e.cnpj
+                                   AND c.codigo_cliente = NULLIF(btrim(e.omie_codigo_cliente), ''))) THEN
+    RAISE EXCEPTION 'PRE FALHOU: há empresa em virou_cliente sem cliente confirmado no ledger';
+  END IF;
+END
+$pre_invariante$;
+
 -- ── 1. Autoria do status e retrato do estado substituído ─────────────────────────────────────────────────────
 ALTER TABLE public.radar_empresas ADD COLUMN IF NOT EXISTS prospeccao_contato_id uuid;
 COMMENT ON COLUMN public.radar_empresas.prospeccao_contato_id IS
@@ -97,6 +113,23 @@ CREATE OR REPLACE FUNCTION private.radar_empresas_status_guard()
  SET search_path TO 'public', 'pg_temp'
 AS $function$
 BEGIN
+  -- As regras abaixo valem para QUALQUER escritor, inclusive o corpo ANTIGO de uma RPC que estava em voo quando a
+  -- migration commitou (o PL/pgSQL mantém a definição de quando a chamada começou — Codex, código).
+  IF TG_OP = 'UPDATE' AND OLD.prospeccao_status = 'virou_cliente' THEN
+    IF NEW.prospeccao_status = 'virou_cliente' THEN
+      -- A data da conversão é a da ENTRADA em virou_cliente: regravar o mesmo status não recarimba (o KPI do mês
+      -- conta pelo carimbo, e recarimbar era conversão nova no mês seguinte).
+      NEW.prospeccao_atualizado_em := OLD.prospeccao_atualizado_em;
+    ELSIF auth.uid() IS NOT NULL
+          AND NOT COALESCE(private.cap_carteira_ler(auth.uid()), false)
+          AND EXISTS (SELECT 1 FROM public.omie_cliente_confirmacoes c
+                       WHERE c.account = 'oben' AND c.documento = OLD.cnpj
+                         AND c.codigo_cliente = NULLIF(btrim(OLD.omie_codigo_cliente), '')) THEN
+      -- Cliente confirmado só sai de virou_cliente pelo gestor. Sem JWT (cron, SQL do founder) é escrita de servidor.
+      RAISE EXCEPTION 'RADAR_CLIENTE_CONFIRMADO: o CNPJ % é cliente confirmado no Omie/Oben e só sai de virou_cliente pelo gestor', OLD.cnpj
+        USING ERRCODE = 'RD007';
+    END IF;
+  END IF;
   -- Escrita de status que NÃO declara o dono (o mesmo valor de antes) não é de um contato desfazível: zera a autoria.
   IF TG_OP = 'UPDATE'
      AND (NEW.prospeccao_status IS DISTINCT FROM OLD.prospeccao_status
@@ -312,7 +345,7 @@ BEGIN
     SELECT x.sig, x.este, x.config FROM (VALUES
       ('public.registrar_contato_radar(text,text,text)', '26c486a156b0fd90d5187bfa377daae5', ARRAY['search_path=public']),
       ('public.desfazer_contato_radar(uuid)',            'b2f4de64f1110150c4c66905cfe3c542',  ARRAY['search_path=public']),
-      ('private.radar_empresas_status_guard()',          '4d40aee43e03f51e396ce8af3f940b45',     ARRAY['search_path=public, pg_temp'])
+      ('private.radar_empresas_status_guard()',          '8e3db85603b8e94d31262c68505d4983',     ARRAY['search_path=public, pg_temp'])
     ) AS x(sig, este, config)
   LOOP
     SELECT md5(p.prosrc) AS md5, p.prosecdef, p.provolatile, p.proconfig,
@@ -352,15 +385,6 @@ BEGIN
          AND t.tgfoid = 'private.radar_empresas_status_guard()'::regprocedure
          AND t.tgname IN ('trg_radar_status_guard_upd', 'trg_radar_status_guard_ins')) <> 2 THEN
     RAISE EXCEPTION 'PÓS FALHOU: os 2 triggers da guarda do status não estão ativos em radar_empresas';
-  END IF;
-
-  -- A invariante vale para o que já existe (0 em prod no pré-voo de 2026-10-31).
-  IF EXISTS (SELECT 1 FROM public.radar_empresas e
-              WHERE e.prospeccao_status = 'virou_cliente'
-                AND NOT EXISTS (SELECT 1 FROM public.omie_cliente_confirmacoes c
-                                 WHERE c.account = 'oben' AND c.documento = e.cnpj
-                                   AND c.codigo_cliente = NULLIF(btrim(e.omie_codigo_cliente), ''))) THEN
-    RAISE EXCEPTION 'PÓS FALHOU: há empresa em virou_cliente sem cliente confirmado no ledger';
   END IF;
 
   RAISE NOTICE 'VALIDADO 20261031111000: RPCs de contato, guarda do status e colunas de autoria no estado esperado';

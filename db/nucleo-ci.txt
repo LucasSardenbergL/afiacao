@@ -711,7 +711,7 @@ db/test-radar-acesso-vendedor.sh     81  falsificar=16
 # corridas com o bloqueio observado em pg_stat_activity. 15 sabotagens: porta e classe sem RD005, autoria mantida, regra
 # antiga (status = ação), sem tirar da cadeia, cadeia sem dono, sem motivo, sem releitura, janela larga, conversão
 # desfeita, vendedor tira cliente, re-marcar conta, dedupe sem dono, desfazer e registrar sem gate.
-db/test-radar-contato-integridade.sh 37  falsificar=15
+db/test-radar-contato-integridade.sh 43  falsificar=19
 # Identidade Omie por documento aceita CNPJ alfanumérico (follow-up 1 do #3180): helpers de DV/chave EXECUTADOS,
 # CHECK da evidência, snapshot (alnum casa alnum; alnum NÃO casa o numérico de mesma mutilação, que vai ao dono;
 # vínculo antigo mutilado é revogado), ACL. A PRE exige o md5 de PROD do predecessor (pg_get_functiondef, prosqlbody).
