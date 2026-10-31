@@ -76,3 +76,30 @@ frente 2), a barra em lote deixaria o vendedor rodar o lote pela UI.
 - **Barreira cosmética e declarada:** o servidor não distingue massa de 1 clique (a edge de criar
   cliente é staff-wide). Fechar de verdade exigiria um gate no servidor, e esse não é o escopo deste PR.
 - Teste: `RadarAcoesLote.gestor.test.tsx`, falsificado (com o gate sabotado, rc=1).
+
+## Seguimento 2: ranking e mapa seguem a região e o contato (migration 20261030071150)
+
+Decisão do founder (2026-10-30): corrigir de verdade a limitação acima, com migration.
+
+- `radar_contagem_por_municipio` ganha `p_ufs text[]` e `p_com_contato boolean` (12 args). DROP da
+  assinatura de 10 args + CREATE na mesma transação (overload ambíguo = PGRST203); ACL reemitido
+  nomeando as roles. Predecessora = corpo vivo de prod (gate `cap_radar_prospectar`, md5 `85dbce2b…`).
+  `p_ufs NULL` e `p_com_contato false` = comportamento anterior byte a byte (o roteirizador não muda).
+  `p_uf` vence `p_ufs`. Região vazia ou mal formada grita (`ufs inválido`).
+- **Custo medido em prod (psql-ro, lote 2026-10):** o agregado do default da tela (região + contato)
+  levou 1,98 s, contra 1,98 s do agregado de hoje (só lote). Os dois são seq scan; a região não piora.
+- Front: `useRadarContagemMunicipios` manda `p_ufs`/`p_com_contato` a partir de `recorteDeUf` e
+  `incluirSemContato`, e o caminho "só sugeridos" aplica o mesmo recorte na consulta de tabela.
+- **Ordem de deploy: migration ANTES do Publish.** O front novo chama a RPC com os 2 parâmetros novos;
+  sem a migration, ranking e mapa quebram (PGRST202). O front velho funciona com a RPC nova (defaults).
+- Fora do escopo, de propósito: a camada **Penetração** do mapa (`radar_penetracao_por_municipio`) segue
+  só a UF. O denominador dela é o mercado do lote, não o recorte da fila.
+- Prova: `db/test-radar-contagem-regiao.sh` (PG17, 21 asserts, `--falsificar` 12/12), no núcleo do CI.
+  Teste do hook: `useRadarContagemMunicipios.regiao.test.tsx`, falsificado.
+- **Aplicada em prod em 2026-10-31** pelo founder (SQL Editor). Validada por fora (psql-ro, ~02:25 UTC):
+  só a assinatura de 12 args, md5 `290add620a05772ff66e3004a08e1c40` = o do arquivo, SECURITY DEFINER +
+  `search_path=public`, EXECUTE só para `authenticated`/`service_role` (PUBLIC/anon fora).
+- **Pendência:** a entrada `EDICAO_MANUAL` da assinatura velha em `db/deriva-corpo-baseline.json` ficou
+  obsoleta (`BASELINE_OBSOLETA`, aviso). Ela NÃO saiu neste PR porque a baseline é contrato do carimbo
+  `authz` (`corpo`): mexer nela exige `authz:carimbo:gravar`, e o `deriva:corpo:prod` de hoje sai 1 por 14
+  `PATCH_NAO_CONCILIADO` de outras RPCs do radar. Sai na próxima regravação do carimbo, junto com elas.
