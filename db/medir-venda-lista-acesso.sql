@@ -6,6 +6,9 @@
 --   leu_vazia    = leu e a RPC devolveu 0 compradores
 --   leu_sem_lista= employee leu num dia em que o gerador não montou lista para ela
 -- claude_ro tem BYPASSRLS: 0 linhas no sensor é 0 de verdade, não RLS escondendo.
+-- app (do `navegacao.rota_servida`, que o AppShell grava a cada rota autenticada, para qualquer usuário):
+--   nao_abriu | abriu_sem_meu_dia | abriu_meu_dia | NULL = dia fora da janela da analytics_outbox, que PURGA
+--   (~7 dias) — ausente ≠ "não abriu". Rode a medição dentro da semana.
 WITH lista AS (
   SELECT s.farmer_user_id, s.dia_referencia AS dia, count(DISTINCT s.comprador_id) AS compradores_na_lista
     FROM public.venda_sugestao s
@@ -13,6 +16,15 @@ WITH lista AS (
    GROUP BY 1, 2
 ), acesso AS (
   SELECT * FROM public.venda_lista_acesso a WHERE a.dia >= :desde::date
+), janela AS (
+  SELECT (min(o.ocorrido_em) AT TIME ZONE 'America/Sao_Paulo')::date + 1 AS desde_completo
+    FROM public.analytics_outbox o
+), rotas AS (
+  SELECT o.user_id, (o.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia,
+         bool_or(o.props ->> 'rota' = '/meu-dia') AS meu_dia
+    FROM public.analytics_outbox o
+   WHERE o.evento = 'navegacao.rota_servida'
+   GROUP BY 1, 2
 )
 SELECT COALESCE(l.dia, a.dia) AS dia,
        COALESCE(pr.nome, COALESCE(l.farmer_user_id, a.farmer_user_id)::text) AS farmer,
@@ -20,6 +32,10 @@ SELECT COALESCE(l.dia, a.dia) AS dia,
             WHEN l.farmer_user_id IS NULL THEN 'leu_sem_lista'
             WHEN a.n_compradores = 0      THEN 'leu_vazia'
             ELSE 'leu' END AS estado,
+       CASE WHEN COALESCE(l.dia, a.dia) < j.desde_completo OR j.desde_completo IS NULL THEN NULL
+            WHEN ro.user_id IS NULL THEN 'nao_abriu'
+            WHEN ro.meu_dia THEN 'abriu_meu_dia'
+            ELSE 'abriu_sem_meu_dia' END AS app,
        l.compradores_na_lista,
        a.n_compradores AS compradores_vistos,
        a.n_leituras,
@@ -27,6 +43,8 @@ SELECT COALESCE(l.dia, a.dia) AS dia,
        to_char(a.ultima_em   AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS ultima_brt
   FROM lista l
   FULL JOIN acesso a ON a.farmer_user_id = l.farmer_user_id AND a.dia = l.dia
+  CROSS JOIN janela j
+  LEFT JOIN rotas ro ON ro.user_id = COALESCE(l.farmer_user_id, a.farmer_user_id) AND ro.dia = COALESCE(l.dia, a.dia)
   LEFT JOIN LATERAL (
     SELECT COALESCE(p.name, p.razao_social) AS nome FROM public.profiles p
      WHERE p.user_id = COALESCE(l.farmer_user_id, a.farmer_user_id) ORDER BY p.created_at LIMIT 1) pr ON true

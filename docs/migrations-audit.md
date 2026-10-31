@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **722** custom migrations totais
-- **2360** objetos esperados (criados por estas migrations)
+- **723** custom migrations totais
+- **2364** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 886
+  - `function`: 888
   - `rls_policy`: 495
   - `index`: 319
   - `table`: 213
   - `cron_job`: 200
   - `view`: 127
-  - `trigger`: 116
+  - `trigger`: 118
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5826,6 +5826,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_radar_evento_contato_del` | `radar_contatos` |
 | `trigger` | `public.trg_radar_evento_cadastro` | `radar_empresas` |
 | `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
+
+### `20261029165429_reposicao_desconsolidar_ao_religar_sku.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.trg_sku_parametros_desconsolidar_ao_religar` | — |
+| `function` | `public.trg_sku_substituicao_exige_antigo_fora_do_motor` | — |
+| `trigger` | `public.sku_parametros_desconsolidar_ao_religar` | `sku_parametros` |
+| `trigger` | `public.sku_substituicao_exige_antigo_fora_do_motor` | `sku_substituicao` |
 
 ### `20261029170140_radar_penetracao_e_concorrentes.sql`
 
