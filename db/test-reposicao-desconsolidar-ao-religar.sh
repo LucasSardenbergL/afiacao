@@ -313,6 +313,6 @@ fals sem_renomear      "A18_reconsolidado_religa_sem_colisao"     -e "s/^     SE
 # Só INSERT e UPDATE que escreve PP disparam: os religamentos puros (flag/tipo) não desfazem; A19 cai junto.
 fals colunas_erradas   "A01_reativar_desconsolida A02_reativar_anota_quem_e_quando A08_empresa_caixa_diferente_desconsolida A12_so_flag_desconsolida A13_so_tipo_desconsolida A17_escritor_sem_rls_desconsolida A18_reconsolidado_religa_sem_colisao A19_invariante_global" \
   -e 's/UPDATE OF habilitado_reposicao_automatica, tipo_reposicao ON/UPDATE OF ponto_pedido ON/'
-echo "VERMELHOS=$VERM  SEM_DENTE=$FALSOS"
+echo "SABOTAGENS: $VERM vermelhas / $FALSOS falhas"   # recibo ÚNICO lido pelo db/roda-nucleo-ci.sh
 [ "$FALSOS" -eq 0 ] || { echo "✗ falsificação sem dente"; exit 1; }
 echo "✅ CONTROLE verde ($NTOT asserts) + $VERM falsificações com vermelho exato · locale=$LOC"
