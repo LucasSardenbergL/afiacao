@@ -292,7 +292,7 @@ fals pos_backfill      "MIGRATION"  -e "s/^   AND COALESCE\(p\.tipo_reposicao, .
 fals pos_deferred      "MIGRATION"  -e 's/^  DEFERRABLE INITIALLY DEFERRED$/  NOT DEFERRABLE/'
 fals pos_renomear_bkp  "MIGRATION"  -e "s/^   SET status = 'revertida:' \|\| r\.id$/   SET status = r.status/"
 # Camada 2 — os asserts, com a postcondição neutralizada junto (uma camada por vez).
-fals sem_definer       "A17_escritor_sem_rls_desconsolida" \
+fals sem_definer       "A17_escritor_sem_rls_desconsolida A19_invariante_global" \
   -e 's/^SECURITY DEFINER$/SECURITY INVOKER/' -e 's/AND p\.prosecdef AND/AND true AND/'
 fals sem_revoke        "A15_acl_fechada" \
   -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/' -e "s/RAISE EXCEPTION 'A2 FALHOU/RAISE NOTICE 'A2 FALHOU/"
