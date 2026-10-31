@@ -238,7 +238,7 @@ export const VIVOS_PERMITIDOS: readonly VivoPermitido[] = [
       + 'só [0-9A-Z] (CNPJ alfanumérico RFB jul/2026, 20261019225545), não chega curinga',
   },
   {
-    identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone)',
+    identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean)',
     trecho: "like p_cnae_prefix || '%'",
     ancora: "p_cnae_prefix !~ '^[0-9]{1,7}$'",
     motivo: 'prefixo de CNAE: p_cnae_prefix passa por ^[0-9]{1,7}$ (RAISE) antes — só dígito, e o vazio também cai',
