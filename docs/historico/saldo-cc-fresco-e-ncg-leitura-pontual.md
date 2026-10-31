@@ -46,10 +46,10 @@ Consumidores:
 ### Fora do escopo (registrado, não mexido)
 
 - **RPC SQL `fin_projecao_13_semanas`** (achado do revisor, conferido no `pg_proc` de prod): `COALESCE(SUM(saldo_atual), 0) … WHERE ativo`, sem `saldo_data`. Lista vazia vira R$ 0, conta nula sai da soma e saldo velho conta como de hoje. Consumidores: `CaixaCompraCard` (decisão de compra) e `useFinanceiroZone`. Pede migration (`CREATE OR REPLACE` com pré-voo `pg_get_functiondef`), e por isso é follow-up próprio. → **Resolvido** na seção "Item 2, na RPC" abaixo.
-- Os alertas `fin_alertas` gerados no mesmo run não carregam o motivo do saldo datado (o snapshot carrega).
+- ~~Os alertas `fin_alertas` gerados no mesmo run não carregam o motivo do saldo datado (o snapshot carrega).~~ Fechado em 2026-10-31 (seção "As 4 lacunas").
 
-- O data-health por empresa usa `max(saldo_data)` (`db/aplicar-sync-reprocess-degradado-vigiadas.sql:37-38`): uma conta fresca esconde as velhas. A tela e a engine agora olham conta a conta, então a lacuna sobra só no sensor.
-- O produtor: `DROP DEFAULT` de `saldo_atual` (gravar NULL de verdade) seria migration. O consumidor já trata `saldo_data` NULL como ausente, então o DEFAULT não chega mais à soma.
+- ~~O data-health por empresa usa `max(saldo_data)` (`db/aplicar-sync-reprocess-degradado-vigiadas.sql:37-38`): uma conta fresca esconde as velhas. A tela e a engine agora olham conta a conta, então a lacuna sobra só no sensor.~~ Fechado em 2026-10-31.
+- ~~O produtor: `DROP DEFAULT` de `saldo_atual` (gravar NULL de verdade) seria migration. O consumidor já trata `saldo_data` NULL como ausente, então o DEFAULT não chega mais à soma.~~ Fechado em 2026-10-31.
 - ~~A lista `contas_correntes` do resumo ainda exibe `saldo_atual ?? 0` por conta.~~ Fechado em 2026-10-28 (seção "Item 2, na lista por conta").
 
 ## Item 3 — o cockpit de valor lia os snapshots de NCG com o eixo errado
@@ -177,3 +177,49 @@ O resumo (`getResumoFinanceiro`) já devolvia `saldo_total_cc: null` pela régua
 - Prova: os testes de helper, serviço e aba. A falsificação teve controle verde na mesma invocação e depois 5 sabotagens, todas vermelhas no teste delas: serviço de volta ao `?? 0`, velha com o valor antigo, desconhecida → 0, aba escondendo a indisponível, aba exibindo `fmt`.
 - Deploy: só **Publish** (`src/`), pelo founder. Sem edge, sem migration. Hoje nenhum número muda: as 40 contas estão frescas.
 - **Publish conferido (2026-10-29):** #3400 mergeado em `54fbca760` (22:34Z de 28/10). O HTML de `steu.lovable.app` trocou `/assets/index-Bicgy1Ig.js` → `/assets/index-DDyRhNXy.js`. Dos 354 chunks, `financeiroService-Rwr8N7KX.js` traz "Sem saldo do extrato" e "o extrato não atualizou", e `FinanceiroDashboard-CkCsIvVQ.js` traz `saldo_motivo`. Bytes = disponibilidade, não adoção: o PWA troca quando o cliente aceita a atualização.
+
+## As 4 lacunas que sobraram (2026-10-31)
+
+Medida de partida (psql-ro, 2026-10-31 ~19:00Z): 62 contas, 40 ativas (colacor 15, colacor_sc 10, oben 15), todas com `saldo_data` 31/10; 0 com `saldo_data` ou `saldo_atual` NULL. O sync das 03h gravou as 40 entre 03:00:12 e 03:00:30 SP: a virada das 04h tem ~1 h de folga. Nenhum número muda hoje: as quatro eram latentes.
+
+### 1. `CaixaCompraCard` (#3401)
+
+- **Piso semanal ≠ piso de caixa.** O piso passa a ser o MIN entre o saldo de HOJE e os 13 fechamentos. "Hoje" = `saldo_projetado[0] − fluxo_liquido[0]`, que é exatamente o saldo inicial da RPC (a semana 0 parte dele). O caso do issue (saldo R$100, compra R$500, +R$1.000 na sexta) agora acusa −R$400. Sem a semana 0 numérica, o card fica indisponível: um piso só de fechamentos não pode ter cara de piso de caixa. A conta é em centavos (`1100,10 − 1000` dava `100,0999…`, e uma fila de R$100,10 "furava" um caixa que zera).
+- **O que o card ainda NÃO vê, e agora diz:** o dia a dia dentro de cada semana (um pagamento antes de um recebimento da mesma semana) e os títulos vencidos antes desta semana (fora da RPC inteira). O limite pessimista (início da semana − todas as saídas) foi rejeitado: acenderia "fura caixa" quase toda semana.
+- **A leitura não atravessa a virada.** A chave da query carrega o `minimo` da régua e vale `null` em 03:55–04:05 SP (`chaveFrescorDaLeitura`, folga de ±5 min para o relógio do aparelho divergir do banco). Nessa janela o card não lê nem exibe o número e diz "Virada diária do saldo bancário". Um timer (`msAteMudarChaveFrescor`, busca binária sobre a própria régua, sem supor o offset de SP) e a volta da aba (`visibilitychange`) re-renderizam o card na hora certa.
+- **Codex (desenho, xhigh, 417 s, 149k tokens): reprovado, com 2 P1 e 1 P2.** Entraram: a margem do relógio (P1, ele reproduziu com 10 s de adiantamento: o saldo de ontem ficava na chave nova até a virada seguinte), os centavos (P2) e a nota sobre os vencidos. O outro P1 está no item 2.
+- **Codex (código, xhigh, 299 s, 143k tokens): reprovado, com 1 P1 e 1 P2, os dois consertados.** O P1 era uma corrida entre o render e o efeito, que ele reproduziu com React Query real e StrictMode. O render das 03:54:59.990 pegava a chave de antes, o efeito das 03:55:00.010 agendava direto para 04:05, e às 04:00:01 a tela ainda mostrava o saldo de ontem. Agora o efeito confere a chave e força o render quando ela divergiu, com teste próprio. O P2: o manifesto do núcleo exigia 11 sabotagens, e a prova tem 10.
+- Residual: relógio do aparelho divergindo mais de 5 min do banco. `useFinanceiroZone` lê a mesma RPC com `refetchInterval` de 5 min: a janela dele é ≤ 5 min e ele é KPI do dashboard, não decisão de compra.
+
+### 2. Sensor `saldo_bancario` conta a conta
+
+Migration `20261031191715_data_health_saldo_bancario_conta_a_conta.sql`, molde TRAVA → PRE (md5 `1eb65dcd…`, prod = `20261028000116`) → `CREATE OR REPLACE` → POS. O corpo antigo era `max(saldo_data)` de **todas** as contas (não por empresa), com `> 36 h` e cast do DATE no fuso da sessão: uma conta fresca escondia as outras 39. Agora cada conta ativa passa pela régua de `classificarSaldoConta`, igual à da RPC. broken = nenhuma ativa ou alguma desconhecida (NULL, NaN, data futura); stale = alguma velha; ok = todas frescas. A message conta as contas fora da régua por empresa, em ordem alfabética, e a data mais antiga. `expected_max_age_seconds` = 28 h é metadado (D é fresca até 04:00 SP de D+1); quem decide é a data. Uma linha só: três linhas com o mesmo `source` quebrariam o `.find()` do banner e o laço do watchdog.
+
+**O sensor não vira e-mail, e isto ficou como está.** Achado do Codex, conferido na prod: `saldo_bancario` não está no `v_sources` do `data_health_watchdog` (nenhum check do financeiro está). O check aparece no `/health` e no `DataHealthBanner` da Visão Geral. Ligar o push é sensor novo, e não há incidente que o peça (CLAUDE.md, "máquina meta nova"). Hoje a defesa de quem decide está nas telas, que já mostram "—" com o motivo.
+
+Prova `db/test-data-health-saldo-bancario-conta-a-conta.sh` (PG17, cadeia viva do trio, relógio controlado). O controle `A23` reproduz o defeito no corpo de prod: ok com 1 conta parada há 8 dias. Bordas: 03:59:59 × 04:00:00 SP em sessão UTC e SP, 22h SP, desconhecida (NULL, NaN, futura), inativa fora, nenhuma ativa, broken > stale, message constante com o relógio andando, e PRE, re-apply e ACL nos clones.
+
+### 3. `DROP DEFAULT` de `saldo_atual`
+
+Migration `20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql`. Writers medidos: só o `omie-financeiro`, num upsert por conta que só inclui `saldo_atual`/`saldo_data` quando o extrato respondeu. Nenhuma função SQL nem trigger escreve na tabela. Só o INSERT de conta NOVA com extrato falho dependia do default (nascia 0/NULL). A prova emula o upsert do PostgREST (só as colunas do payload no INSERT e no `DO UPDATE`): a conta nova sem extrato passa a nascer NULL/NULL, a existente preserva o saldo e o sucesso com saldo zero grava 0 e a data. Sem backfill, porque não há linha nascida do default. Codex: sem impedimento no writer atual; o cuidado é um futuro upsert em LOTE heterogêneo, em que a união de colunas transforma omissão em NULL para outra linha.
+
+### 4. `fin_alertas` com o saldo datado
+
+`fin-cashflow-engine` `v2.1-alertas-saldo-datado`. `marcarAlertasDoSaldoDatado` (`saldo-contas.ts`) marca só os 3 tipos cujo valor parte do saldo: `caixa_negativo`, `ncg_deficit` e `cobertura_baixa`. A mensagem (a única coisa que a `AlertasStack` exibe) ganha "— saldo inicial PARCIAL: N de M conta(s) com extrato de dd/mm/aaaa", e o motivo por extenso vai em `contexto.saldo_cc_parcial`. Como a persistência reescreve mensagem e contexto do alerta ativo a cada run, a marca some no 1º run com o saldo fresco. Residual: uma condição que o saldo datado esconde (um `caixa_negativo` dispensado porque o saldo velho era maior) não gera alerta para carregar o motivo. O snapshot e a tela das 13 semanas carregam.
+
+### Merge e apply (2026-10-31)
+
+- **Merge:** #3466, squash `93579508e`, 22:49Z. Nenhum commit do Lovable depois dele.
+- **Migrations:** aplicadas por `bun run db:aplicar` a partir de `93579508e`, cada uma depois do `--ensaio` (ok nas duas).
+  - Pré-voo às 22:52Z: corpo vivo `1eb65dcd…`, o predecessor, e DEFAULT 0.
+  - `20261031191715`: tentativa **#810** virou recibo, exit 0.
+  - `20261031191716`: tentativa **#811** virou recibo, exit 0.
+- **2ª testemunha** (`psql-ro`):
+  - `_data_health_compute`: md5 `ded4fd5b5f9d4731c9b9893b1ffba3ba`. Seguem `STABLE`, `SECURITY DEFINER`, `search_path=public, pg_temp` e o dono `postgres`. O EXECUTE segue `f` para anon, authenticated e PUBLIC.
+  - O watchdog (`b325d2af…`) e o heartbeat (`f5defcde…`) ficaram intocados.
+  - `fin_contas_correntes.saldo_atual`: `column_default` NULL, nullable.
+  - O dado no instante (19:53 SP): 40 ativas, 0 desconhecidas, 0 velhas. O sensor dá `ok`, nenhuma mudança de status.
+- **Edge `fin-cashflow-engine` v2.1: NÃO está no ar.** O `pendencias:deploy` acusou exatamente ela (`v2.0-saldo-cc-fresco` → `v2.1-alertas-saldo-datado`), e as outras 82 conferiam. O pacote `18be9c130124` (pré-condição de banco ok) foi montado, mas o `send_message` foi recusado: *workspace out of credits*. A mensagem não chegou ao agente.
+  - Até o deploy, os `fin_alertas` seguem sem a marca do saldo datado. Hoje isso não muda nada, porque as 40 contas estão frescas.
+  - Para fechar: créditos no workspace, depois o Passo 2 do pacote (`bun run pendencias:pacote` de novo, se a `main` andou), a sonda (`bun run sonda:sql fin-cashflow-engine`) e `pendencias:deploy` com exit 0.
+- **Publish: pendente, e é do founder.** `src/` mudou o `CaixaCompraCard`. Até o Publish, o card antigo segue no ar, mas a RPC já devolve "indisponível" para o saldo velho desde o #3383.

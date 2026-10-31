@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 730
+-- Total de custom migrations: 732
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -794,7 +794,9 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031142000', 'radar_kpis_conversao', '20261031142000_radar_kpis_conversao.sql'),
   ('20261031180000', 'raio_x_plano_execucao', '20261031180000_raio_x_plano_execucao.sql'),
   ('20261031190000', 'radar_situacao_contato_por_cnpj', '20261031190000_radar_situacao_contato_por_cnpj.sql'),
-  ('20261031191127', 'detectar_skus_sem_grupo_fornecedor_atual', '20261031191127_detectar_skus_sem_grupo_fornecedor_atual.sql')
+  ('20261031191127', 'detectar_skus_sem_grupo_fornecedor_atual', '20261031191127_detectar_skus_sem_grupo_fornecedor_atual.sql'),
+  ('20261031191715', 'data_health_saldo_bancario_conta_a_conta', '20261031191715_data_health_saldo_bancario_conta_a_conta.sql'),
+  ('20261031191716', 'fin_contas_correntes_saldo_atual_sem_default', '20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3135,7 +3137,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
   ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
-  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', '')
+  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', ''),
+  ('data_health_saldo_bancario_conta_a_conta', 'function', 'public', '_data_health_compute', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5524,7 +5527,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
   ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
-  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', '')
+  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', ''),
+  ('data_health_saldo_bancario_conta_a_conta', 'function', 'public', '_data_health_compute', '')
 )
 SELECT
   e.migration,
@@ -5776,6 +5780,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', '_data_health_compute', 36, '20261005220100_data_health_venda_empurrada_conta_pelo_app.sql', 'baf01d5785762d138aa826a1151f49e9'),
   ('public', '_data_health_compute', 37, '20261020101636_data_health_radar_lote_e_recruzamento.sql', '20cbe5d9227114a5493d988142607342'),
   ('public', '_data_health_compute', 38, '20261028000116_data_health_sync_state_erro_tolera_um_ciclo.sql', '784d16c410f90da3d1233a7bafdb7b29'),
+  ('public', '_data_health_compute', 39, '20261031191715_data_health_saldo_bancario_conta_a_conta.sql', 'ac1f616de90dcdb17656607b9f0f2458'),
   ('public', 'data_health_watchdog', 1, '20260527220000_data_health_watchdog.sql', '4d210b1cab0b10bcf589746005859c4b'),
   ('public', 'data_health_watchdog', 2, '20260527250000_data_health_checks_high.sql', '936015f396af02ab4229e4e20f656803'),
   ('public', 'data_health_watchdog', 3, '20260530190000_data_health_portal_push.sql', '0e436fed51baecafdfbccbe3191e5bfa'),

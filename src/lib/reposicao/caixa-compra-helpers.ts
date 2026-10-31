@@ -19,25 +19,49 @@ export function companyDoFinanceiro(empresa: string): string {
 
 export interface SemanaProjecao {
   saldo_projetado: number | null;
+  fluxo_liquido: number | null;
   semana_label: string | null;
 }
 
+/** Rótulo do ponto "hoje" quando ele é o piso. */
+export const ROTULO_PISO_HOJE = "hoje";
+
 /**
- * Piso da projeção (o MIN encadeado das 13 semanas). Linhas sem saldo numérico são ignoradas;
- * nenhuma linha válida → null (projeção indisponível ≠ piso zero).
+ * Piso da projeção: o MIN entre o saldo de HOJE e os fechamentos das 13 semanas encadeadas.
+ *
+ * O fechamento semanal sozinho não é piso de caixa (#3401): saldo R$100, compra à vista R$500 e
+ * recebimento R$1.000 na sexta fecham a semana em R$600, mas o caixa vai a −R$400 hoje. A compra
+ * à vista sai HOJE, então o saldo de hoje entra como ponto. Ele é exato pela RPC: a semana 0 parte
+ * do saldo inicial, e `saldo_projetado[0] = saldo inicial + fluxo_liquido[0]`.
+ *
+ * Ainda NÃO é o mínimo do dia a dia dentro de cada semana (um pagamento antes de um recebimento da
+ * mesma semana não aparece); a tela declara isso. Sem a semana 0 com saldo e fluxo numéricos não há
+ * o ponto "hoje" → null (indisponível), nunca um piso só de fechamentos com cara de piso de caixa.
+ * Semanas seguintes sem saldo numérico são ignoradas.
  */
 export function pisoProjecao(semanas: SemanaProjecao[]): { pisoRs: number; semanaLabel: string | null } | null {
-  let piso: number | null = null;
-  let label: string | null = null;
+  const s0 = semanas[0];
+  if (!s0) return null;
+  const saldo0 = s0.saldo_projetado;
+  const fluxo0 = s0.fluxo_liquido;
+  if (saldo0 == null || fluxo0 == null || !Number.isFinite(saldo0) || !Number.isFinite(fluxo0)) return null;
+  // Em centavos: 1100.10 − 1000 dá 100.09999999999991 em ponto flutuante, e a fila de R$100,10
+  // "furaria" um caixa que zera (Codex, desenho do #3401).
+  let piso = centavos(saldo0) - centavos(fluxo0);
+  let label: string | null = ROTULO_PISO_HOJE;
   for (const s of semanas) {
     const v = s.saldo_projetado;
     if (v == null || !Number.isFinite(v)) continue;
-    if (piso == null || v < piso) {
-      piso = v;
+    if (centavos(v) < piso) {
+      piso = centavos(v);
       label = s.semana_label ?? null;
     }
   }
-  return piso == null ? null : { pisoRs: piso, semanaLabel: label };
+  return { pisoRs: piso / 100, semanaLabel: label };
+}
+
+function centavos(rs: number): number {
+  return Math.round(rs * 100);
 }
 
 /**
@@ -59,7 +83,7 @@ export function somarFilaCompras(
 }
 
 /**
- * Impacto da fila (à vista ⇒ saída na semana corrente; a projeção é ENCADEADA, então subtrair
+ * Impacto da fila, em centavos (à vista ⇒ saída hoje; a projeção é ENCADEADA, então subtrair
  * do piso vale para todas as semanas seguintes). Referência de veto: R$0 — o piso de runway do
  * dono não está configurado no app (declarado na UI como premissa).
  */
@@ -67,8 +91,8 @@ export function avaliarFilaNoCaixa(args: { pisoRs: number; filaRs: number }): {
   pisoDepoisRs: number;
   furaCaixa: boolean;
 } {
-  const pisoDepoisRs = args.pisoRs - args.filaRs;
-  return { pisoDepoisRs, furaCaixa: pisoDepoisRs < 0 };
+  const depois = centavos(args.pisoRs) - centavos(args.filaRs);
+  return { pisoDepoisRs: depois / 100, furaCaixa: depois < 0 };
 }
 
 /**

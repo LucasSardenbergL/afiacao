@@ -187,6 +187,10 @@ db/test-sayerlack-importar-pedido-portal.sh 51
 # NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
 # controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
 db/test-projecao-13s-saldo-fresco.sh       46  falsificar=16
+# Sensor saldo_bancario conta a conta (20261031191715) e saldo_atual sem DEFAULT 0 (20261031191716): a mesma régua,
+# 03:59:59 × 04:00:00 SP em sessão UTC e SP, broken > stale, o defeito de antes reproduzido no corpo de prod, e o
+# upsert do omie-financeiro com conta nova sem extrato nascendo NULL (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).
+db/test-data-health-saldo-bancario-conta-a-conta.sh  29  falsificar=10
 
 # ── Eixo 3 — ATOMICIDADE ──────────────────────────────────────────────────────────
 # "Guard fora da escrita não é guard": o predicado tem de estar DENTRO do `WHERE`

@@ -56,15 +56,19 @@ export function referenciaFrescorSaldo(agora: Date): ReferenciaFrescor {
   return { hoje: diaSP(agora), minimo: diaSP(new Date(agora.getTime() - HORAS_TOLERANCIA_SYNC_BASE * 3_600_000)) };
 }
 
+/** O saldo inicial datado: quantas contas velhas, de quantas, a data mais antiga e o motivo por extenso. */
+export type SaldoInicialParcial = { velhas: number; total: number; maisAntiga: string; motivo: string };
+
 /**
  * Soma o saldo inicial. Lista vazia, conta desconhecida ou conta velha há mais de
- * SALDO_IDADE_MAX_PARCIAL_DIAS LANÇAM; conta velha dentro do teto entra com `motivo` (não-null só
- * quando há conta velha). O chamador põe o motivo em `motivos_confianca` e no snapshot.
+ * SALDO_IDADE_MAX_PARCIAL_DIAS LANÇAM; conta velha dentro do teto entra com `motivo` e `parcial`
+ * (não-null só quando há conta velha). O chamador põe o motivo em `motivos_confianca`, no snapshot e
+ * nos alertas que partem do saldo (`marcarAlertasDoSaldoDatado`).
  */
 export function saldoInicialDasContas(
   contas: readonly ContaComSaldo[],
   ref: ReferenciaFrescor,
-): { saldo: number; motivo: string | null } {
+): { saldo: number; motivo: string | null; parcial: SaldoInicialParcial | null } {
   if (contas.length === 0) {
     throw new Error('fin_contas_correntes: nenhuma conta ativa — saldo inicial indisponível');
   }
@@ -99,10 +103,41 @@ export function saldoInicialDasContas(
       );
     }
   }
-  const motivo = velhas > 0
-    ? `Saldo inicial PARCIAL: ${velhas} de ${contas.length} conta(s) corrente(s) com saldo do extrato de ${maisAntiga} ` +
-      `(anterior a ${ref.minimo} — o extrato do sync diário falhou e o saldo anterior foi preservado). ` +
-      `As 13 semanas, os dias de cobertura, a liquidez operacional e a tesouraria partem desse saldo datado.`
-    : null;
-  return { saldo, motivo };
+  if (velhas === 0 || maisAntiga == null) return { saldo, motivo: null, parcial: null };
+  const motivo =
+    `Saldo inicial PARCIAL: ${velhas} de ${contas.length} conta(s) corrente(s) com saldo do extrato de ${maisAntiga} ` +
+    `(anterior a ${ref.minimo} — o extrato do sync diário falhou e o saldo anterior foi preservado). ` +
+    `As 13 semanas, os dias de cobertura, a liquidez operacional e a tesouraria partem desse saldo datado.`;
+  return { saldo, motivo, parcial: { velhas, total: contas.length, maisAntiga, motivo } };
+}
+
+/**
+ * Os tipos de `fin_alertas` desta engine cujo VALOR parte do saldo inicial: as semanas encadeadas
+ * (`caixa_negativo`), a liquidez operacional líquida (`ncg_deficit`: saldo + CR + estoque − PCO) e
+ * os dias de cobertura (`cobertura_baixa`). `inadimplencia_alta`, `concentracao_top1` e `saida_spike`
+ * não usam o saldo.
+ */
+export const TIPOS_ALERTA_DO_SALDO: readonly string[] = ['caixa_negativo', 'ncg_deficit', 'cobertura_baixa'];
+
+type AlertaMarcavel = { tipo: string; mensagem: string; contexto: Record<string, unknown> };
+
+/**
+ * Com saldo inicial datado, os alertas que partem do saldo levam a marca: uma frase curta na
+ * `mensagem` (a única coisa que a AlertasStack exibe) e o motivo por extenso em
+ * `contexto.saldo_cc_parcial`, como o snapshot já fazia em `premissas`. Sem `parcial`, devolve os
+ * alertas intactos — e como a persistência reescreve mensagem e contexto do alerta ativo a cada run,
+ * a marca some no 1º run com o saldo fresco.
+ */
+export function marcarAlertasDoSaldoDatado<A extends AlertaMarcavel>(
+  alertas: readonly A[],
+  parcial: SaldoInicialParcial | null,
+): A[] {
+  if (parcial == null) return [...alertas];
+  const [ano, mes, dia] = parcial.maisAntiga.split('-');
+  const frase = ` — saldo inicial PARCIAL: ${parcial.velhas} de ${parcial.total} conta(s) com extrato de ${dia}/${mes}/${ano}`;
+  return alertas.map((a) =>
+    TIPOS_ALERTA_DO_SALDO.includes(a.tipo)
+      ? { ...a, mensagem: a.mensagem + frase, contexto: { ...a.contexto, saldo_cc_parcial: parcial.motivo } }
+      : a
+  );
 }
