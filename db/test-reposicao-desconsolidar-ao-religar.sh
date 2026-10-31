@@ -62,7 +62,7 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 -- Escritor que ESCREVE em sku_parametros mas NÃO enxerga sku_substituicao (RLS sem policy
 -- para ele): é o cenário em que uma trava SECURITY INVOKER ficaria cega e falharia aberta.
 CREATE ROLE tester NOLOGIN NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO tester;
+GRANT USAGE ON SCHEMA public, auth TO tester;   -- como o authenticated de prod (auth.uid())
 GRANT SELECT, INSERT, UPDATE ON public.sku_parametros TO tester;
 GRANT ALL ON public.sku_substituicao TO tester;   -- como o authenticated de prod: só a RLS esconde
 CREATE POLICY t_tester_all ON public.sku_parametros TO tester USING (true) WITH CHECK (true);
@@ -171,7 +171,9 @@ BEGIN
      WHERE empresa = 'OBEN' AND sku_codigo_omie IN (620, 200);
     v := _t_st('620');
     RAISE EXCEPTION 'desfaz' USING ERRCODE = 'ZT999';
-  EXCEPTION WHEN SQLSTATE 'ZT999' THEN NULL;
+  EXCEPTION
+    WHEN SQLSTATE 'ZT999' THEN NULL;
+    WHEN SQLSTATE 'ZR006' THEN v := 'guarda do mapa imediata';   -- deferred sabotado
   END;
   PERFORM _t_assert('A07_ja_ativo_nao_e_transicao', v = 'aplicada', v);
 END $$;
@@ -286,7 +288,7 @@ echo "════ FALSIFICAÇÕES ════"
 # Camada 1 — a postcondição: cada sabotagem SOZINHA aborta a migration.
 fals pos_definer       "MIGRATION"  -e 's/^SECURITY DEFINER$/SECURITY INVOKER/'
 fals pos_revoke        "MIGRATION"  -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/'
-fals pos_backfill      "MIGRATION"  -e "s/^   SET status = 'revertida',$/   SET status = 'aplicada',/"
+fals pos_backfill      "MIGRATION"  -e "s/^   AND COALESCE\(p\.tipo_reposicao, .automatica.\) = .automatica.;$/   AND false;/"
 fals pos_deferred      "MIGRATION"  -e 's/^  DEFERRABLE INITIALLY DEFERRED$/  NOT DEFERRABLE/'
 fals pos_renomear_bkp  "MIGRATION"  -e "s/^   SET status = 'revertida:' \|\| r\.id$/   SET status = r.status/"
 # Camada 2 — os asserts, com a postcondição neutralizada junto (uma camada por vez).
@@ -294,17 +296,17 @@ fals sem_definer       "A17_escritor_sem_rls_desconsolida" \
   -e 's/^SECURITY DEFINER$/SECURITY INVOKER/' -e 's/AND p\.prosecdef AND/AND true AND/'
 fals sem_revoke        "A15_acl_fechada" \
   -e 's/^REVOKE ALL ON FUNCTION.*$/-- revoke sabotado/' -e "s/RAISE EXCEPTION 'A2 FALHOU/RAISE NOTICE 'A2 FALHOU/"
-fals sem_backfill      "A19_invariante_global B01_backfill_desfez_o_ja_religado B04_backfill_preserva_o_desfazer_anterior" \
-  -e "s/^   SET status = 'revertida',$/   SET status = 'aplicada',/" -e "s/RAISE EXCEPTION 'A3 FALHOU/RAISE NOTICE 'A3 FALHOU/"
+fals sem_backfill      "A19_invariante_global B01_backfill_desfez_o_ja_religado B02_backfill_anota_o_motivo B04_backfill_preserva_o_desfazer_anterior" \
+  -e "s/^   AND COALESCE\(p\.tipo_reposicao, .automatica.\) = .automatica.;$/   AND false;/" -e "s/RAISE EXCEPTION 'A3 FALHOU/RAISE NOTICE 'A3 FALHOU/"
 fals sem_nota_backfill "B02_backfill_anota_o_motivo"              -e 's/decisão do founder, opção B/sem nota/'
-fals imediato          "C02_fluxo_consolidar_passa" \
+fals imediato          "A07_ja_ativo_nao_e_transicao C02_fluxo_consolidar_passa" \
   -e 's/^  DEFERRABLE INITIALLY DEFERRED$/  NOT DEFERRABLE/' -e 's/AND t\.tgdeferrable AND t\.tginitdeferred/AND true/'
-fals sem_guarda_mapa   "C01_mapa_sobre_sku_no_motor_recusado C01b_recusa_nao_deixa_mapa" \
+fals sem_guarda_mapa   "A19_invariante_global C01_mapa_sobre_sku_no_motor_recusado C01b_recusa_nao_deixa_mapa" \
   -e "s/RAISE EXCEPTION 'consolidação: o SKU antigo/RAISE NOTICE 'consolidação: o SKU antigo/"
 fals sem_old           "A07_ja_ativo_nao_e_transicao"             -e 's/RETURN NULL;   -- já estava no motor/NULL;   -- já estava no motor/'
 fals sem_upper         "A08_empresa_caixa_diferente_desconsolida A19_invariante_global" \
   -e 's/^   WHERE upper\(s\.empresa\) = upper\(NEW\.empresa\)$/   WHERE s.empresa = NEW.empresa/'
-fals sem_status        "A04_mapa_pendente_intocado"               -e "s/^     AND s\.status = 'aplicada'$/     AND true/"
+fals sem_status        "A04_mapa_pendente_intocado A18_reconsolidado_religa_sem_colisao"               -e "s/^     AND s\.status = 'aplicada'$/     AND true/"
 fals sem_acao          "A05_mapa_transferir_intocado"             -e "s/^     AND s\.acao_parametros = 'consolidar_demanda';$/     AND true;/"
 fals so_tipo           "A14_tipo_sem_flag_fica_fora_e_intocado"   -e 's/IF NOT \(COALESCE\(NEW\.habilitado_reposicao_automatica, false\)/IF NOT (true/'
 fals sem_renomear      "A18_reconsolidado_religa_sem_colisao"     -e "s/^     SET status = 'revertida:' \|\| r\.id$/     SET status = r.status/"
