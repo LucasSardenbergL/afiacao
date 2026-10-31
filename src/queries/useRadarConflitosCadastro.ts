@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
 import { track } from '@/lib/analytics';
-import { parsearConflito, parsearResolucao, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
+import { parsearConflito, parsearEstadoCadastro, parsearResolucao, type ConflitoCadastro } from '@/lib/radar/conflito-cadastro';
 import type { RadarEmpresa } from '@/queries/useRadarLista';
 
 // Conflitos de cadastro Radar×Omie guardados no SERVIDOR (migration 20261027160000). A tela lê daqui — o
@@ -48,6 +48,22 @@ export function useRadarConflitosDosCnpjs(cnpjs: string[]) {
       .in('cnpj', ordenados)
       .order('id', { ascending: true })
       .range(de, ate), 'radar_cadastro_conflitos/cnpjs'),
+  });
+}
+
+/**
+ * Conflitos ABERTOS de UM lead, pela RPC `radar_estado_cadastro_omie` (gate do Radar, que inclui o vendedor). A tabela
+ * `radar_cadastro_conflitos` segue legível só pelo gestor (migration 20261029201200): lida direto, ela daria ao vendedor
+ * "zero conflitos" num CNPJ bloqueado.
+ */
+export function useRadarConflitosDoLead(cnpj: string) {
+  return useQuery({
+    queryKey: [...CHAVE, 'lead', cnpj],
+    queryFn: async (): Promise<ConflitoCadastro[]> => {
+      const { data, error } = await supabase.rpc('radar_estado_cadastro_omie', { p_cnpj: cnpj });
+      if (error) throw error;
+      return parsearEstadoCadastro(data).conflitos;
+    },
   });
 }
 

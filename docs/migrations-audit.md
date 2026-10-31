@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **712** custom migrations totais
-- **2311** objetos esperados (criados por estas migrations)
+- **722** custom migrations totais
+- **2359** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 866
-  - `rls_policy`: 493
-  - `index`: 301
-  - `table`: 208
+  - `function`: 885
+  - `rls_policy`: 495
+  - `index`: 319
+  - `table`: 213
   - `cron_job`: 200
   - `view`: 127
-  - `trigger`: 112
+  - `trigger`: 116
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5799,6 +5799,34 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261029150000_radar_score_versao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_score_recalcular` | — |
+
+### `20261029150100_radar_eventos_placar.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_evento_contato` | — |
+| `function` | `private.radar_evento_cadastro` | — |
+| `function` | `private.radar_evento_abertura` | — |
+| `function` | `public.radar_coorte_sortear` | — |
+| `function` | `public.radar_placar_uso` | — |
+| `function` | `public.radar_coorte_resultado` | — |
+| `function` | `public.radar_conversao_por_faixa` | — |
+| `table` | `public.radar_eventos` | — |
+| `table` | `public.radar_coorte_controle` | — |
+| `index` | `public.idx_radar_eventos_evento_em` | `radar_eventos` |
+| `index` | `public.idx_radar_eventos_contato` | `radar_eventos` |
+| `index` | `public.idx_radar_eventos_cnpj` | `radar_eventos` |
+| `index` | `public.idx_radar_coorte_cnpj` | `radar_coorte_controle` |
+| `trigger` | `public.trg_radar_evento_contato_ins` | `radar_contatos` |
+| `trigger` | `public.trg_radar_evento_contato_del` | `radar_contatos` |
+| `trigger` | `public.trg_radar_evento_cadastro` | `radar_empresas` |
+| `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
+
 ### `20261029165429_reposicao_desconsolidar_ao_religar_sku.sql`
 
 | Tipo | Objeto | Parent |
@@ -5807,6 +5835,76 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.trg_sku_substituicao_exige_antigo_fora_do_motor` | — |
 | `trigger` | `public.sku_parametros_desconsolidar_ao_religar` | `sku_parametros` |
 | `trigger` | `public.sku_substituicao_exige_antigo_fora_do_motor` | `sku_substituicao` |
+
+### `20261029170140_radar_penetracao_e_concorrentes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_concorrentes_publicar` | — |
+| `function` | `public.radar_penetracao_por_municipio` | — |
+| `table` | `public.radar_concorrentes_lote` | — |
+| `table` | `public.radar_concorrentes_municipio` | — |
+| `rls_policy` | `public.radar_concorrentes_lote_select_prospectar` | `radar_concorrentes_lote` |
+| `rls_policy` | `public.radar_concorrentes_municipio_select_prospectar` | `radar_concorrentes_municipio` |
+
+### `20261029200343_cliente_situacao_receita.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_situacao_receita` | — |
+
+### `20261029201200_radar_acesso_vendedor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.cap_radar_prospectar` | — |
+| `function` | `private.radar_atendimento_expira_em` | — |
+| `function` | `public.radar_definir_atendimento` | — |
+| `function` | `public.radar_atendimentos_ativos` | — |
+| `function` | `public.radar_telefone_compartilhado` | — |
+| `table` | `public.radar_atendimentos` | — |
+| `index` | `public.radar_atendimentos_aberto_uniq` | `radar_atendimentos` |
+| `index` | `public.idx_radar_atendimentos_dono_aberto` | `radar_atendimentos` |
+| `index` | `public.idx_radar_empresas_tel1` | `radar_empresas` |
+| `index` | `public.idx_radar_empresas_tel2` | `radar_empresas` |
+
+### `20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tint_sync_runs_limpezas_24h` | `tint_sync_runs` |
+| `index` | `public.idx_tint_sync_runs_started_at` | `tint_sync_runs` |
+| `index` | `public.idx_tint_sync_runs_conta_tipo_inicio` | `tint_sync_runs` |
+
+### `20261030000642_cliente_situacao_receita_lote_publicado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cliente_situacao_receita` | — |
+
+### `20261030071150_radar_contagem_municipio_regiao_contato.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_contagem_por_municipio` | — |
+
+### `20261030071806_tint_promote_latest_por_chave_indexado.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_tsc_run` | `tint_staging_corantes` |
+| `index` | `public.idx_tsprod_latest` | `tint_staging_produtos` |
+| `index` | `public.idx_tsbase_latest` | `tint_staging_bases` |
+| `index` | `public.idx_tsemb_latest` | `tint_staging_embalagens` |
+| `index` | `public.idx_tsc_latest` | `tint_staging_corantes` |
+| `index` | `public.idx_tsc_latest_custo` | `tint_staging_corantes` |
+| `index` | `public.idx_tss_chave` | `tint_staging_skus` |
+
+### `20261030233200_radar_amostra_vigente_leitura.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_amostra_vigente` | — |
 
 ## Próximos passos por status
 

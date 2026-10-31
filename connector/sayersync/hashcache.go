@@ -187,7 +187,8 @@ func writeItens(b *strings.Builder, v any) {
 // ─────────────────────────────────────────────────────────────
 
 // hashCacheVersion é a versão do formato do hashes.json (permite migração futura).
-const hashCacheVersion = 1
+// v2: ganhou SnapshotPodado (ver alinharCacheAoSnapshot).
+const hashCacheVersion = 2
 
 // HashCache guarda o hash de conteúdo de cada fórmula JÁ enviada com sucesso ao
 // staging, indexado por formulaCacheKey. Persistido em hashes.json ao lado do exe.
@@ -206,7 +207,15 @@ const hashCacheVersion = 1
 type HashCache struct {
 	Version  int               `json:"version"`
 	Formulas map[string]string `json:"formulas"`
-	dirty    bool              // não serializado; true = há mudança a persistir
+	// SnapshotPodado é o LastKeysSnapshot do último snapshot que ESTE código enviou
+	// depois de podar o cache (podarEEnviarKeysSnapshot). Diferente do state.json ⇒
+	// houve snapshot sem poda (≤0.2.5, inclusive num downgrade) ou ele se perdeu.
+	SnapshotPodado string `json:"snapshot_podado,omitempty"`
+	// PodaConfirmada distingue "alinhado com state sem snapshot" de "marca ausente"
+	// (cache da 0.2.5): sem ela, marca vazia == LastKeysSnapshot vazio (state perdido)
+	// passaria como alinhado (Codex P1, 3ª rodada).
+	PodaConfirmada bool `json:"poda_confirmada,omitempty"`
+	dirty          bool // não serializado; true = há mudança a persistir
 }
 
 // newHashCache cria um cache vazio (= full sync na primeira execução).
@@ -291,6 +300,36 @@ func loadHashCacheFrom(path string) (*HashCache, error) {
 	return &hc, nil
 }
 
+// alinharCacheAoSnapshot descarta os hashes de personalizada ("true|") quando o último
+// keys-snapshot registrado no state.json não foi podado por este código — cache de
+// ≤0.2.5, ou downgrade para ela e volta (Codex P1, 2 rodadas). Esse snapshot pode ter
+// desativado no servidor uma personalizada cujo hash ficou; com o filtro ligado em
+// delta, ela seria pulada se voltasse idêntica. O namespace padrão ("false|") fica:
+// sempre filtrou por hash (o resíduo dele é pré-existente) e descartá-lo reenviaria
+// ~490 mil linhas. Custo: as personalizadas reenviam uma vez.
+//
+// Resíduo aceito (Codex P2): snapshot da 0.2.5 aceito pelo servidor sem que ela
+// avance o LastKeysSnapshot (morreu antes do SaveState, perdeu a resposta) passa
+// despercebido. Exige a 0.2.5 rodando de novo — downgrade manual ou rollback do .prev
+// (recovery.go) — e a fórmula sumir e voltar idêntica antes do próximo snapshot podado.
+func alinharCacheAoSnapshot(hc *HashCache, ultimoSnapshot string) {
+	if hc.PodaConfirmada && hc.SnapshotPodado == ultimoSnapshot {
+		return
+	}
+	descartadas := 0
+	for key := range hc.Formulas {
+		if strings.HasPrefix(key, "true|") {
+			delete(hc.Formulas, key)
+			descartadas++
+		}
+	}
+	logger.Warnf("hash-cache: último keys-snapshot (%q) não foi podado por esta versão (cache: %q) — %d hash(es) de personalizada descartado(s), reenviam uma vez",
+		ultimoSnapshot, hc.SnapshotPodado, descartadas)
+	hc.SnapshotPodado = ultimoSnapshot
+	hc.PodaConfirmada = true
+	hc.dirty = true
+}
+
 // SaveHashCache persiste o cache em hashes.json ao lado do executável.
 func SaveHashCache(hc *HashCache) error {
 	return saveHashCacheTo(hc, hashCachePath())
@@ -317,6 +356,61 @@ func saveHashCacheTo(hc *HashCache, path string) error {
 	}
 	hc.dirty = false
 	return nil
+}
+
+// podarHashesPeloSnapshot remove do cache, nos dois namespaces, toda chave cuja
+// identidade de 4 partes (a do keys-snapshot) não está em linhasSnapshot. O servidor
+// desativa exatamente essas fórmulas (todas as embalagens) ao receber o snapshot; sem
+// a poda, uma fórmula que voltasse idêntica seria pulada pelo hash antigo e ficaria
+// desativada para sempre. É esta poda que deixa o filtro por hash valer em delta.
+//
+// O caller tem que podar com as MESMAS linhas que envia e persistir o cache ANTES do
+// envio. Chave que não se deixa decodificar também sai: podar a mais custa só um
+// reenvio, podar a menos perde fórmula calado. Retorna quantas chaves saíram.
+func podarHashesPeloSnapshot(hc *HashCache, linhasSnapshot []string) int {
+	vivas := make(map[string]struct{}, len(linhasSnapshot))
+	for _, l := range linhasSnapshot {
+		vivas[l] = struct{}{}
+	}
+	podadas := 0
+	for key := range hc.Formulas {
+		if linha, ok := linhaSnapshotDaChave(key); ok {
+			if _, viva := vivas[linha]; viva {
+				continue
+			}
+		}
+		hc.Delete(key)
+		podadas++
+	}
+	return podadas
+}
+
+// linhaSnapshotDaChave decodifica uma chave de formulaCacheKey
+// ("<personalizada>|" + LP(cor) + LP(produto) + LP(base) + LP(embalagem)) e devolve a
+// linha do keys-snapshot da mesma fórmula fonte ("cor|produto|base|personalizada").
+// ok=false em qualquer formato inesperado.
+func linhaSnapshotDaChave(key string) (string, bool) {
+	person, resto, ok := strings.Cut(key, "|")
+	if !ok || (person != "true" && person != "false") {
+		return "", false
+	}
+	campos := make([]string, 0, 4)
+	for len(campos) < 4 {
+		nStr, depois, ok := strings.Cut(resto, ":")
+		if !ok {
+			return "", false
+		}
+		n, err := strconv.Atoi(nStr)
+		if err != nil || n < 0 || n > len(depois) || strconv.Itoa(n) != nStr {
+			return "", false
+		}
+		campos = append(campos, depois[:n])
+		resto = depois[n:]
+	}
+	if resto != "" {
+		return "", false
+	}
+	return fmt.Sprintf("%s|%s|%s|%s", campos[0], campos[1], campos[2], person), true
 }
 
 // pruneFormulaHashes remove do cache as chaves de fórmula DESTA entidade (mesmo

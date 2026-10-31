@@ -12,6 +12,7 @@ import type { ReactNode } from 'react';
  * db/test-radar-contagem-lote.sh): p_lote = lote vigente por default, null com "incluir quem saiu".
  */
 let rpcs: Array<[string, Record<string, unknown>]> = [];
+let ranges: Array<[string, number, number]> = [];
 let respostaLotes: { data: unknown; error: { message: string } | null };
 
 function builderLotes() {
@@ -25,12 +26,29 @@ vi.mock('@/integrations/supabase/client', () => ({
     from: () => builderLotes(),
     rpc: (fn: string, args: Record<string, unknown>) => {
       rpcs.push([fn, args]);
-      return Promise.resolve({ data: [], error: null });
+      // Encadeável como o builder real (`.order().range()`), e then-able para quem só aguarda.
+      const b: Record<string, unknown> = {};
+      b.order = () => b;
+      b.range = (de: number, ate: number) => {
+        ranges.push([fn, de, ate]);
+        return b;
+      };
+      b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) =>
+        Promise.resolve({ data: [], error: null }).then(res, rej);
+      return b;
     },
   },
 }));
 
-import { useRadarContagemMunicipios } from '../useRadarContagemMunicipios';
+import {
+  useRadarContagemMunicipios,
+  useRadarPenetracaoMunicipios,
+  penetracaoMedia,
+  faixaPenetracao,
+  oportunidadesPenetracao,
+  formatarPenetracao,
+  type RadarMunicipioPenetracao,
+} from '../useRadarContagemMunicipios';
 import type { RadarFiltros } from '../useRadarLista';
 
 const FILTROS: RadarFiltros = {
@@ -55,6 +73,7 @@ const argsDaContagem = () => {
 
 beforeEach(() => {
   rpcs = [];
+  ranges = [];
   respostaLotes = { data: LOTES, error: null };
 });
 
@@ -102,5 +121,78 @@ describe('useRadarContagemMunicipios — ranking/mapa contam o universo da fila'
     const { result } = renderHook(() => useRadarContagemMunicipios(FILTROS, '2026-10-19', true), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(rpcs).toEqual([]);
+  });
+});
+
+// Penetração (frente 4 do mapa). O banco — denominador do lote vigente, NULL sem denominador, concorrentes
+// NULL sem publicação — é provado em db/test-radar-penetracao-concorrentes.sh; aqui, o argumento e a leitura.
+describe('useRadarPenetracaoMunicipios — denominador do lote vigente', () => {
+  it('chama a RPC com o lote VIGENTE e a UF dos filtros', async () => {
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios('SC', true), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const chamadas = rpcs.filter(([fn]) => fn === 'radar_penetracao_por_municipio');
+    expect(chamadas).toHaveLength(1);
+    expect(chamadas[0][1]).toEqual({ p_lote: '2026-08', p_uf: 'SC', p_limit: 500 });
+    // Pagina (capa de 1.000 do PostgREST vale para .rpc()); página curta encerra na 1ª chamada.
+    expect(ranges).toEqual([['radar_penetracao_por_municipio', 0, 999]]);
+  });
+
+  it('sem UF: p_uf null dito (o país inteiro)', async () => {
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(rpcs.find(([fn]) => fn === 'radar_penetracao_por_municipio')?.[1].p_uf).toBeNull();
+  });
+
+  it('sem lote complete: camada indisponível (null) e a RPC nem é chamada — nunca penetração sobre a foto velha', async () => {
+    respostaLotes = { data: [LOTES[0]], error: null };
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBeNull();
+    expect(rpcs).toEqual([]);
+  });
+
+  it('leitura do lote FALHOU: erra junto, sem chamar a RPC', async () => {
+    respostaLotes = { data: null, error: { message: 'boom' } };
+    const { result } = renderHook(() => useRadarPenetracaoMunicipios(null, true), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(rpcs).toEqual([]);
+  });
+});
+
+const mun = (codigo: string, empresas: number | null, clientes: number | null, concorrentes: number | null = null): RadarMunicipioPenetracao => ({
+  municipio_codigo: codigo, municipio_nome: `CIDADE ${codigo}`, uf: 'SC', lat: -27, lng: -48,
+  empresas_lote: empresas, clientes,
+  penetracao: empresas != null && empresas > 0 && clientes != null ? clientes / empresas : null,
+  concorrentes,
+});
+
+describe('penetração — helpers (ausente ≠ zero)', () => {
+  const dados = [mun('A', 1000, 5), mun('B', 400, 8), mun('C', 300, 0), mun('D', null, null, 7), mun('E', 50, 1)];
+
+  it('média PONDERADA só sobre quem tem denominador; sem denominador nenhum, null (não 0%)', () => {
+    expect(penetracaoMedia(dados)).toBeCloseTo(14 / 1750, 10);
+    expect(penetracaoMedia([mun('D', null, null, 7)])).toBeNull();
+    expect(penetracaoMedia([])).toBeNull();
+  });
+
+  it('faixa: zero COM mercado é "sem_cliente"; sem denominador é "sem_dado"', () => {
+    const media = penetracaoMedia(dados);
+    expect(faixaPenetracao(dados[0], media)).toBe('abaixo');   // 0,5% < 0,8%
+    expect(faixaPenetracao(dados[1], media)).toBe('acima');    // 2%
+    expect(faixaPenetracao(dados[2], media)).toBe('sem_cliente');
+    expect(faixaPenetracao(dados[3], media)).toBe('sem_dado');
+    expect(faixaPenetracao(dados[0], null)).toBe('sem_dado');
+  });
+
+  it('oportunidades: abaixo da média, do maior mercado para o menor; sem denominador fica de fora', () => {
+    expect(oportunidadesPenetracao(dados, 5).map((m) => m.municipio_codigo)).toEqual(['A', 'C']);
+    expect(oportunidadesPenetracao(dados, 1).map((m) => m.municipio_codigo)).toEqual(['A']);
+    expect(oportunidadesPenetracao([mun('D', null, null, 7)], 5)).toEqual([]);
+  });
+
+  it('formatação: null vira "—", zero vira "0,0%"', () => {
+    expect(formatarPenetracao(null)).toBe('—');
+    expect(formatarPenetracao(0)).toBe('0,0%');
+    expect(formatarPenetracao(0.0053)).toBe('0,5%');
   });
 });

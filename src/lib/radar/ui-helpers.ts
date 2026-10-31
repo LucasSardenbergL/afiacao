@@ -215,3 +215,78 @@ export function formatarDataIso(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
+
+// ── Lista: rótulos dos modos, região de atuação e catálogo de CNAEs-alvo ───────────────────────────
+/** Rótulo HONESTO de cada modo: diz a ordem que a fila tem, não promete o que o modo não mede.
+ *  'novas' só ordena por data de abertura (não filtra "do lote"); 'score' é o score, não "o melhor". */
+export const ROTULO_PRESET: Record<PresetRadar, string> = {
+  score: 'Maior score',
+  novas: 'Abertura mais recente',
+  estabelecidas: 'Estabelecidas',
+};
+
+/** Região de atuação = MG e as UFs que fazem divisa com ela. Medido em prod (psql-ro, 2026-10-29): dos
+ *  3.013 leads `ja_cliente` do Radar, 3.003 são de MG (99,7%) e os outros 10 se espalham em 8 UFs, 3
+ *  delas vizinhas. A carteira é MG; os vizinhos são onde a rota alcança. Brasil fica a 1 clique. */
+export const UFS_ATUACAO = ['MG', 'SP', 'RJ', 'ES', 'BA', 'GO', 'DF', 'MS'] as const;
+export type RegiaoRadar = 'atuacao' | 'brasil';
+
+/** Recorte de UF da fila: a UF escolhida vence a região; sem UF, a região decide. */
+export function recorteDeUf(f: { uf: string; regiao?: RegiaoRadar }):
+  | { tipo: 'uf'; uf: string }
+  | { tipo: 'lista'; ufs: readonly string[] }
+  | { tipo: 'todas' } {
+  if (f.uf) return { tipo: 'uf', uf: f.uf };
+  if (f.regiao === 'atuacao') return { tipo: 'lista', ufs: UFS_ATUACAO };
+  return { tipo: 'todas' };
+}
+
+export interface CnaeAlvo { codigo: string; nome: string; grupo: string }
+/** Cópia estática de `scripts/radar/cnaes-alvo.txt` (a curadoria que a carga usa). O teste de
+ *  `ui-helpers` compara as duas listas: editar o .txt sem editar aqui fica vermelho no CI. */
+export const CNAES_ALVO: readonly CnaeAlvo[] = [
+  { codigo: '3101200', nome: 'Fabricação de móveis com predominância de madeira', grupo: 'Moveleiro' },
+  { codigo: '3102100', nome: 'Fabricação de móveis com predominância de metal', grupo: 'Moveleiro' },
+  { codigo: '3103900', nome: 'Fabricação de móveis de outros materiais (exceto madeira e metal)', grupo: 'Moveleiro' },
+  { codigo: '1621800', nome: 'Fabricação de madeira laminada e chapas (compensado/aglomerado/MDF)', grupo: 'Moveleiro' },
+  { codigo: '1622601', nome: 'Fabricação de casas de madeira pré-fabricadas', grupo: 'Moveleiro' },
+  { codigo: '1622602', nome: 'Fabricação de esquadrias de madeira p/ instalações industriais e comerciais', grupo: 'Moveleiro' },
+  { codigo: '1622699', nome: 'Fabricação de outros artigos de carpintaria para construção', grupo: 'Moveleiro' },
+  { codigo: '1623400', nome: 'Fabricação de artefatos de tanoaria e embalagens de madeira', grupo: 'Moveleiro' },
+  { codigo: '1629301', nome: 'Fabricação de artefatos diversos de madeira (exceto móveis)', grupo: 'Moveleiro' },
+  { codigo: '9529105', nome: 'Reparação de artigos do mobiliário (restauradores/estofadores)', grupo: 'Moveleiro' },
+  { codigo: '1610203', nome: 'Serrarias com desdobramento de madeira em bruto', grupo: 'Madeira bruta' },
+  { codigo: '1610204', nome: 'Serrarias sem desdobramento (resserragem)', grupo: 'Madeira bruta' },
+  { codigo: '1610205', nome: 'Serviço de tratamento de madeira sob contrato', grupo: 'Madeira bruta' },
+  { codigo: '2542000', nome: 'Fabricação de artigos de serralheria (exceto esquadrias)', grupo: 'Metal' },
+  { codigo: '2512800', nome: 'Fabricação de esquadrias de metal', grupo: 'Metal' },
+  { codigo: '2511000', nome: 'Fabricação de estruturas metálicas', grupo: 'Metal' },
+  { codigo: '2539001', nome: 'Serviços de usinagem, tornearia e solda', grupo: 'Metal' },
+  { codigo: '2539002', nome: 'Serviços de tratamento e revestimento em metais (polimento)', grupo: 'Metal' },
+  { codigo: '2391503', nome: 'Aparelhamento de placas e trabalhos em mármore/granito (marmorarias)', grupo: 'Pedra e vidro' },
+  { codigo: '2319200', nome: 'Fabricação de artigos de vidro', grupo: 'Pedra e vidro' },
+  { codigo: '4743100', nome: 'Comércio varejista de vidros (vidraçarias — corte/lapidação)', grupo: 'Pedra e vidro' },
+];
+
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+/** CNAEs-alvo cujo NOME contém todas as palavras digitadas (sem acento/caixa), ou cujo código começa
+ *  pelos dígitos digitados. Termo vazio = catálogo inteiro. */
+export function buscarCnaesAlvo(termo: string): CnaeAlvo[] {
+  const t = semAcento(termo.trim());
+  if (!t) return [...CNAES_ALVO];
+  const dig = t.replace(/\D/g, '');
+  const soCodigo = /^[\d\s./-]+$/.test(t);
+  if (soCodigo) return CNAES_ALVO.filter((c) => dig.length > 0 && c.codigo.startsWith(dig));
+  const palavras = t.split(/\s+/);
+  return CNAES_ALVO.filter((c) => {
+    const alvo = semAcento(`${c.nome} ${c.grupo}`);
+    return palavras.every((p) => alvo.includes(p));
+  });
+}
+
+/** Nome da atividade de um CNAE do catálogo (pelo código em qualquer formato), ou null. */
+export function nomeCnaeAlvo(cnae: string): string | null {
+  const d = digitosCnae(cnae);
+  return CNAES_ALVO.find((c) => c.codigo === d)?.nome ?? null;
+}

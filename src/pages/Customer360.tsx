@@ -29,6 +29,7 @@ import { leituraDaQuery } from '@/components/customer360/kpi-rotulos';
 import { IdentityColumn } from '@/components/customer360/IdentityColumn';
 import { ActivityColumn } from '@/components/customer360/ActivityColumn';
 import { VozTarefaDialog } from '@/components/tarefas/VozTarefaDialog';
+import { SeloSituacaoReceita } from '@/components/receita/SeloSituacaoReceita';
 
 export default function Customer360() {
   const { customerId } = useParams<{ customerId: string }>();
@@ -151,6 +152,9 @@ export default function Customer360() {
             </div>
           )}
         </div>
+
+        {/* Situação na Receita (RFB) — só alerta; ausente/ativa não mostram nada */}
+        <SeloSituacaoReceita customerUserId={customerId} superficie="ficha" />
 
         <CustomerKpiStrip faturamento12m={leitura12m} metricas={leituraMetricas} score={s} />
 

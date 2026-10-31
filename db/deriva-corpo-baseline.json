@@ -302,6 +302,146 @@
       "efeito": "SO_CITA",
       "motivo": "mesmo arquivo do CREATE, menção DEPOIS dele — REVOKE, comando do cron tint-preparacoes-tick e postcondição; o recorte por âncora reescreve tint_promocao_tick, não esta.",
       "desde": "2026-10-28"
+    },
+    {
+      "funcao": "radar_estado_cadastro_omie",
+      "identidade": "text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "f7001d52e2dda4002b5a51796091283f",
+      "md5Tokens": "be3a2b8337b928071b1d806fe3688e96",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_irmaos_por_raiz",
+      "identidade": "text[]",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "e7e9182a7662d0fc644b52a971dc2561",
+      "md5Tokens": "ddd3eb49daad120759d0df0987b51577",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_kpis",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "de4e4731507e4be5a085c90efdfc0687",
+      "md5Tokens": "4865a71237657ec2ccabcffec00e7107",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_prospects_para_rota",
+      "identidade": "text,integer",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "816c866e853fa8eef7359bdc36bcee90",
+      "md5Tokens": "da39c9d275960899dc161646d8ec3d0a",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_registrar_cadastro_omie",
+      "identidade": "text,text,boolean",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "0cd48f99a8683fa14c05a744372eb030",
+      "md5Tokens": "39dcdb840428b885719b49a11c051846",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_registrar_cadastro_omie_v2",
+      "identidade": "text,text,boolean",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "bda54cdc691c0682bb0e8b39a0fd7b0d",
+      "md5Tokens": "e0681341ee2eb6a4a549411cb653650e",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "registrar_contato_radar",
+      "identidade": "text,text,text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "ALTERA",
+      "motivo": "Frente 2 do Radar: o laço TRAVA → PRE md5 → replace literal → PÓS md5 troca o gate pode_ver_carteira_completa/cap_carteira_ler → private.cap_radar_prospectar sobre o pg_get_functiondef VIVO (irmãos também ganham o gate de projeção). Aplicada via db:aplicar (tentativa #768); md5 de prod conferido por psql-ro em 2026-10-30.",
+      "md5": "658d383c7f34f97427aacb053714ea3e",
+      "md5Tokens": "b6a279661c828989ce3aec0aa35f8e4f",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_atribuir_tarefa",
+      "identidade": "text,integer",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "pós-condição B5 confere que ela SEGUE gestor/master (lê o prosrc); o laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_salvar_geocode",
+      "identidade": "text,double precision,double precision,text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "pós-condição B5 confere que ela SEGUE gestor/master; o laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_registrar_conflito_cadastro",
+      "identidade": "text,text,text,text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "pós-condição B5 confere que ela SEGUE gestor/master; o laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_resolver_conflito_cadastro",
+      "identidade": "bigint,integer,text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "pós-condição B5 confere que ela SEGUE gestor/master; o laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_definir_atendimento",
+      "identidade": "text,text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "nasce neste mesmo arquivo por CREATE literal; as menções depois dele são o ACL e a pós-condição E1/E2. O laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_atendimentos_ativos",
+      "identidade": "",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "nasce neste mesmo arquivo por CREATE literal; as menções depois dele são o ACL e a pós-condição E1/E2. O laço de troca não a reescreve.",
+      "desde": "2026-10-30"
+    },
+    {
+      "funcao": "radar_telefone_compartilhado",
+      "identidade": "text",
+      "classe": "PATCH",
+      "patch": "20261029201200_radar_acesso_vendedor.sql",
+      "efeito": "SO_CITA",
+      "motivo": "nasce neste mesmo arquivo por CREATE literal; as menções depois dele são o ACL e a pós-condição E1/E2. O laço de troca não a reescreve.",
+      "desde": "2026-10-30"
     }
   ]
 }

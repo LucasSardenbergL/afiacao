@@ -105,7 +105,7 @@ export function useRadarCadastrarOmie() {
 }
 
 /** RPC `radar_atribuir_tarefa` (SECURITY DEFINER gestor/master): { id, deduped }. */
-export async function atribuirTarefaRadar(v: { cnpj: string; diasRetomada?: number }) {
+async function atribuirTarefaRadar(v: { cnpj: string; diasRetomada?: number }) {
   const { data, error } = await supabase.rpc('radar_atribuir_tarefa', {
     p_cnpj: v.cnpj,
     p_dias_retomada: v.diasRetomada ?? 7,

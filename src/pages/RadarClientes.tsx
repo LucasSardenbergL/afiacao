@@ -1,15 +1,21 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Radar, RotateCcw } from 'lucide-react';
 import { useUrlState } from '@/hooks/useUrlState';
+import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useRadarLista, type RadarFiltros, type RadarEmpresa } from '@/queries/useRadarLista';
 import { useRadarIrmaos } from '@/queries/useRadarIrmaos';
 import { useRadarKpis } from '@/queries/useRadarKpis';
 import { useRadarLoteOmie } from '@/queries/useRadarLote';
 import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
-import { RadarKpis } from '@/components/radar/RadarKpis';
+import { RadarKpis, RadarChipsLote } from '@/components/radar/RadarKpis';
+import { RadarFavoritos } from '@/components/radar/RadarFavoritos';
+import type { FiltrosSalvos } from '@/lib/radar/favoritos';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
+import { RadarAmostraRegra } from '@/components/radar/RadarAmostraRegra';
+import { useRadarAmostra } from '@/queries/useRadarAmostra';
+import { casaFiltrosExplicitos, intercalarAmostra, pendenteNaAmostra, resumirAmostra } from '@/lib/radar/amostra';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
 import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { RadarAcoesLote } from '@/components/radar/RadarAcoesLote';
@@ -20,9 +26,10 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import type { PresetRadar } from '@/lib/radar/ui-helpers';
+import type { PresetRadar, RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const RadarMapa = lazy(() => import('@/components/radar/RadarMapa'));
 
@@ -46,6 +53,8 @@ type RadarUrlState = {
   soIneditos: boolean;
   soSugeridos: boolean;
   preset: string;
+  regiao: string;
+  incluirSemContato: boolean;
   vista: string;
   [k: string]: string | boolean;
 };
@@ -62,16 +71,28 @@ const DEFAULTS: RadarUrlState = {
   soIneditos: false,
   soSugeridos: false,
   preset: 'score',
+  // Abre onde a carteira está (MG e vizinhos); "Brasil" é 1 clique e fica na URL.
+  regiao: 'atuacao',
+  // Lead sem telefone E sem e-mail fica fora por padrão (o toggle "incluir sem contato" traz de volta).
+  incluirSemContato: false,
   vista: 'lista',
 };
+
+/** O que um favorito guarda: os filtros da URL, sem a vista (lista/mapa é navegação, não filtro). */
+const { vista: _vista, ...PADRAO_FILTROS } = DEFAULTS;
+const PADRAO_FAVORITO: FiltrosSalvos = PADRAO_FILTROS;
 
 function narrowPreset(v: string): PresetRadar {
   return v === 'estabelecidas' || v === 'novas' ? v : 'score';
 }
+function narrowRegiao(v: string): RegiaoRadar {
+  return v === 'brasil' ? 'brasil' : 'atuacao';
+}
 
 export default function RadarClientes() {
   const [raw, set] = useUrlState<RadarUrlState>(DEFAULTS);
-  const filtros: RadarFiltros = { ...raw, preset: narrowPreset(raw.preset) };
+  const filtros: RadarFiltros = { ...raw, preset: narrowPreset(raw.preset), regiao: narrowRegiao(raw.regiao) };
+  const { vista: _v, ...filtrosAtuais } = raw;
 
   const hojeISO = useMemo(() => {
     const d = new Date();
@@ -85,6 +106,9 @@ export default function RadarClientes() {
   // o card de inéditos, a linha e a ficha. `null` = nenhum lote completo (sem selos, fila sem filtro).
   const lote = useRadarLoteVigente().data ?? null;
   const [loteAberto, setLoteAberto] = useState(false);
+  // Lote de cadastro no Omie (iniciar, retomar, acompanhar) é só do gestor/master — ver RadarAcoesLote.
+  const { isMaster, isGestorComercial } = useAuth();
+  const gestor = isMaster || isGestorComercial;
 
   // Seleção por CNPJ, com SNAPSHOT de cada empresa: a linha pode sair da lista (virou
   // cliente, refetch) e a ação em lote ainda precisa dos dados dela.
@@ -107,9 +131,26 @@ export default function RadarClientes() {
   const podePaginar = !!q.hasNextPage && !q.isFetchingNextPage && !loteOmie.rodando;
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), podePaginar);
 
-  const empresas = useMemo(() => q.data?.pages.flat() ?? [], [q.data]);
-  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem).
-  const irmaos = useRadarIrmaos(q.data?.pages ?? []);
+  // Amostra de controle: 1 a cada 10 posições, por cima do ranking (região e "só sugeridos" não a escondem; o que
+  // foi digitado — busca, UF, cidade, CNAE, status — sim). Regra e motivos em src/lib/radar/amostra.ts.
+  const amostraQ = useRadarAmostra();
+  const amostra = amostraQ.data ?? null;
+  const resumoAmostra = useMemo(() => (amostra ? resumirAmostra(amostra.itens) : null), [amostra]);
+  const { busca, uf, municipio, cnae, status } = filtros;
+  const amostraNaFila = useMemo(() => {
+    if (!amostra) return [];
+    const f = { busca, uf, municipio, cnae, status };
+    return amostra.itens.flatMap((i) => (i.empresa && pendenteNaAmostra(i.empresa) && casaFiltrosExplicitos(i.empresa, f) ? [i.empresa] : []));
+  }, [amostra, busca, uf, municipio, cnae, status]);
+  const cnpjsAmostra = useMemo(() => new Set(amostra?.itens.map((i) => i.cnpj) ?? []), [amostra]);
+  const filaAcabou = q.isSuccess && !q.hasNextPage;
+  const empresas = useMemo(
+    () => intercalarAmostra(q.data?.pages.flat() ?? [], amostraNaFila, filaAcabou),
+    [q.data, amostraNaFila, filaAcabou],
+  );
+  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem). A amostra é uma "página" a mais.
+  const paginasIrmaos = useMemo(() => [...(q.data?.pages ?? []), amostraNaFila], [q.data, amostraNaFila]);
+  const irmaos = useRadarIrmaos(paginasIrmaos);
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const atual = empresas.find((e) => e.cnpj === abertaCnpj) ?? abertaSnapshot.current;
@@ -176,19 +217,25 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
-      <RadarKpis
+      <RadarKpis />
+      <Filtros
+        filtros={filtros}
+        set={set}
+        lote={lote}
+        acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
+      />
+      <RadarChipsLote
         soIneditos={filtros.soIneditos}
         onSoIneditos={(v) => set({ soIneditos: v })}
         soSugeridos={filtros.soSugeridos}
         onSoSugeridos={(v) => set({ soSugeridos: v })}
       />
-      <Filtros filtros={filtros} set={set} lote={lote} />
       <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} onPick={(nome) => { track('radar.cidade_selecionada', {}); set({ municipio: nome }); }} />
 
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
       <RadarConflitosIndicador onAbrir={abrirPorCnpj} />
       {/* Lote interrompido (aba fechada, parada, falhas): oferece retomar em vez de fingir que nada aconteceu. */}
-      {loteOmie.lote && !loteOmie.rodando && pendentesDoLote > 0 && (
+      {gestor && loteOmie.lote && !loteOmie.rodando && pendentesDoLote > 0 && (
         <div className="flex items-center gap-2 rounded-md border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-sm">
           <RotateCcw className="w-4 h-4 text-status-warning shrink-0" />
           <span className="flex-1">
@@ -198,13 +245,21 @@ export default function RadarClientes() {
           <Button size="sm" variant="outline" onClick={() => setLoteAberto(true)}>Ver / retomar</Button>
         </div>
       )}
-      {loteOmie.rodando && !loteAberto && (
+      {gestor && loteOmie.rodando && !loteAberto && (
         <div className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
           <span className="flex-1">Cadastrando no Omie… {loteOmie.progresso?.feitos ?? 0}/{loteOmie.progresso?.total ?? 0}</span>
           <Button size="sm" variant="outline" onClick={() => setLoteAberto(true)}>Acompanhar</Button>
         </div>
       )}
 
+      {raw.vista !== 'mapa' && (
+        <RadarAmostraRegra
+          sorteio={amostra?.sorteio ?? null}
+          resumo={resumoAmostra}
+          naFila={amostraNaFila.length}
+          erro={amostraQ.isError ? mensagemDeErro(amostraQ.error) ?? 'erro de leitura' : null}
+        />
+      )}
       {raw.vista === 'mapa' ? (
         <Suspense fallback={<Skeleton className="h-[420px]" />}>
           <RadarMapa
@@ -251,6 +306,7 @@ export default function RadarClientes() {
                   lote={lote}
                   mostrarMotivos={filtros.soSugeridos}
                   irmaos={irmaos.dados.get(e.cnpj) ?? null}
+                  amostra={cnpjsAmostra.has(e.cnpj) ? amostra?.sorteio ?? null : null}
                 />
               ))}
               <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
@@ -268,7 +324,7 @@ export default function RadarClientes() {
         loteOmie={loteOmie}
         onAbrirLote={() => setLoteAberto(true)}
       />
-      <RadarLoteDialog lote={loteOmie} open={loteAberto} onClose={() => setLoteAberto(false)} />
+      <RadarLoteDialog lote={loteOmie} open={gestor && loteAberto} onClose={() => setLoteAberto(false)} />
       <RadarDetailSheet
         empresa={aberta}
         hojeISO={hojeISO}
