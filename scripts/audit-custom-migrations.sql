@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 729
+-- Total de custom migrations: 730
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -793,7 +793,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031141053', 'nao_vinculados_cron_colacor', '20261031141053_nao_vinculados_cron_colacor.sql'),
   ('20261031142000', 'radar_kpis_conversao', '20261031142000_radar_kpis_conversao.sql'),
   ('20261031180000', 'raio_x_plano_execucao', '20261031180000_raio_x_plano_execucao.sql'),
-  ('20261031190000', 'radar_situacao_contato_por_cnpj', '20261031190000_radar_situacao_contato_por_cnpj.sql')
+  ('20261031190000', 'radar_situacao_contato_por_cnpj', '20261031190000_radar_situacao_contato_por_cnpj.sql'),
+  ('20261031191127', 'detectar_skus_sem_grupo_fornecedor_atual', '20261031191127_detectar_skus_sem_grupo_fornecedor_atual.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3133,7 +3134,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
-  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', '')
+  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5521,7 +5523,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('nao_vinculados_cron_colacor', 'cron_job', 'cron', 'nao-vinculados-refresh-diario-colacor', ''),
   ('radar_kpis_conversao', 'function', 'public', 'radar_kpis', ''),
   ('raio_x_plano_execucao', 'function', 'public', 'raio_x_planejar', ''),
-  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', '')
+  ('radar_situacao_contato_por_cnpj', 'function', 'public', 'radar_aplicar_situacao', ''),
+  ('detectar_skus_sem_grupo_fornecedor_atual', 'function', 'public', 'detectar_skus_sem_grupo', '')
 )
 SELECT
   e.migration,
@@ -5598,6 +5601,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'detectar_skus_sem_grupo', 1, '20260419231054_aba546f4-9556-429a-b54c-33e25fdcb096.sql', '58eafb22203b2662e1a641ddc68b28a0'),
   ('public', 'detectar_skus_sem_grupo', 2, '20260606130000_detectar_skus_sem_grupo_exclui_04.sql', '79f418c8b7e50fd3dfad16b7c55266cb'),
   ('public', 'detectar_skus_sem_grupo', 3, '20260606140000_detectar_skus_sem_grupo_self_heal.sql', '983e1084aaca3577a4ecdd2198f2d05e'),
+  ('public', 'detectar_skus_sem_grupo', 4, '20261031191127_detectar_skus_sem_grupo_fornecedor_atual.sql', 'c0e9554434fbdd1dab3e63505b8be1f4'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 1, '20260420214653_4ec7596d-5f72-487c-b9e3-47237d8a6afc.sql', '43ee7de1e5b95df9514ede86d05cd1c3'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 2, '20260504223439_ec8efd39-1f12-45b2-beaf-aa153dd564b4.sql', '1d7fc82b04ae41dd1aa8fec1d0623a25'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 3, '20260504224422_864e655c-c35d-46fb-8cc2-d4e6e8c2e9f5.sql', '9df4d6344bb56797d4ab618929b26ded'),
@@ -6144,7 +6148,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_score_recalcular', 3, '20261021120000_radar_score_lead_v3_cnae_secundario.sql', '89424a4693b5386e8c48c62b2e12415c'),
   ('public', 'radar_score_recalcular', 4, '20261029150000_radar_score_versao.sql', '67d6f5c1880371b9a2e3d872b6c714a2'),
   ('public', 'radar_aplicar_situacao', 1, '20261019200000_radar_situacao_cadastral.sql', '695220bdd5e21c77940a09591545c190'),
-  ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', 'ff06da92a9eda20431ee09cf362ae5dd'),
+  ('public', 'radar_aplicar_situacao', 2, '20261031190000_radar_situacao_contato_por_cnpj.sql', '6ce2e3e0f597b1adc8648681419732d6'),
   ('public', 'radar_avisar_lote', 1, '20261020143000_radar_avisar_lote.sql', '64154443f7649f8ef872fd59fde63877'),
   ('public', 'radar_avisar_lote', 2, '20261027010000_radar_situacao_por_cron.sql', '3c01eb3957d21e7501eb3ade2e08757b'),
   ('public', 'venda_fechar_desfechos', 1, '20261020174221_venda_cliente_espinha.sql', '3320219381cdaba0d8c2bcff0fdcc5b4'),
