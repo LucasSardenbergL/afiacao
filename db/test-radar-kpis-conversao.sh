@@ -169,6 +169,7 @@ sabotagem() {
     sem_status)    cv_sabotar "$K" "WHERE e.prospeccao_status = 'virou_cliente'" "WHERE true" ;;
     outro_codigo)  cv_sabotar "$K" "AND c.codigo_cliente = e.omie_codigo_cliente" "" ;;
     fuso)          cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc('month', now(), 'America/Sao_Paulo')" "e.omie_cadastrado_em >= date_trunc('month', now())" ;;
+    limite_aberto) cv_sabotar "$K" "e.omie_cadastrado_em >= date_trunc" "e.omie_cadastrado_em > date_trunc" ;;
     sem_gate)      cv_sabotar "$K" "IF NOT (COALESCE(private.cap_radar_prospectar(v_uid), false)) THEN" "IF false THEN" ;;
     *) echo "sabotagem desconhecida: $1" >&2; return 1 ;;
   esac
@@ -178,7 +179,8 @@ SABOTAGENS="carimbo_movel:K3:K2
 conta_lookup:K2:K1
 sem_status:K4:K3
 outro_codigo:K6:K5
-fuso:K9:K8
+fuso:K7,K9:K6
+limite_aberto:K8:K7
 sem_gate:K0b:K0a"
 
 rodada() {
