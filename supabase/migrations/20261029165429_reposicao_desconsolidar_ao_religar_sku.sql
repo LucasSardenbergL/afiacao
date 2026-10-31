@@ -121,26 +121,28 @@ CREATE CONSTRAINT TRIGGER sku_substituicao_exige_antigo_fora_do_motor
 
 -- ── 3. restaura o invariante nas linhas que JÁ o violam ─────────────────────
 -- 29/10/2026: só 11892839175 → 12101724100. Idempotente: re-rodar não acha mais nada.
-CREATE TEMP TABLE _viol ON COMMIT DROP AS
-SELECT s.id, s.empresa, s.sku_codigo_antigo
-  FROM public.sku_substituicao s
-  JOIN public.sku_parametros p
-    ON upper(p.empresa) = upper(s.empresa) AND p.sku_codigo_omie::text = s.sku_codigo_antigo
- WHERE s.status = 'aplicada' AND s.acao_parametros = 'consolidar_demanda'
-   AND COALESCE(p.habilitado_reposicao_automatica, false)
-   AND COALESCE(p.tipo_reposicao, 'automatica') = 'automatica';
-
+-- O rename vai PRIMEIRO (abre espaço no UNIQUE) e não muda nenhuma linha 'aplicada', então o
+-- predicado de violação é o mesmo nos dois UPDATEs.
 UPDATE public.sku_substituicao r
    SET status = 'revertida:' || r.id
-  FROM _viol v
- WHERE r.status = 'revertida' AND r.empresa = v.empresa AND r.sku_codigo_antigo = v.sku_codigo_antigo;
+ WHERE r.status = 'revertida'
+   AND EXISTS (SELECT 1 FROM public.sku_substituicao s
+                 JOIN public.sku_parametros p
+                   ON upper(p.empresa) = upper(s.empresa) AND p.sku_codigo_omie::text = s.sku_codigo_antigo
+                WHERE s.empresa = r.empresa AND s.sku_codigo_antigo = r.sku_codigo_antigo
+                  AND s.status = 'aplicada' AND s.acao_parametros = 'consolidar_demanda'
+                  AND COALESCE(p.habilitado_reposicao_automatica, false)
+                  AND COALESCE(p.tipo_reposicao, 'automatica') = 'automatica');
 
 UPDATE public.sku_substituicao s
    SET status = 'revertida',
        observacoes = concat_ws(E'\n', NULLIF(s.observacoes, ''),
          'desconsolidado em 2026-10-29: SKU religado na reposição automática antes da trava (decisão do founder, opção B)')
-  FROM _viol v
- WHERE s.id = v.id;
+  FROM public.sku_parametros p
+ WHERE upper(p.empresa) = upper(s.empresa) AND p.sku_codigo_omie::text = s.sku_codigo_antigo
+   AND s.status = 'aplicada' AND s.acao_parametros = 'consolidar_demanda'
+   AND COALESCE(p.habilitado_reposicao_automatica, false)
+   AND COALESCE(p.tipo_reposicao, 'automatica') = 'automatica';
 
 -- ── postcondição ────────────────────────────────────────────────────────────
 DO $post$
