@@ -53,6 +53,56 @@ export function referenciaFrescorSaldo(agora: Date): ReferenciaFrescor {
   };
 }
 
+const JANELA_BUSCA_VIRADA_MS = 25 * 3_600_000;
+
+/**
+ * Milissegundos de `agora` até o 1º instante em que `referenciaFrescorSaldo(...).minimo` muda (a
+ * virada das 04h SP). Uma leitura guardada em cache foi julgada pela régua de ANTES dela: das 04h em
+ * diante a mesma conta já seria velha, então quem a exibe tem de descartá-la na virada (#3401).
+ * Busca binária sobre a própria régua: não supõe o offset de SP. `minimo` só cresce com o tempo, e
+ * em 25 h ele muda pelo menos uma vez.
+ */
+export function msAteViradaDoFrescor(agora: Date): number {
+  const t0 = agora.getTime();
+  const minimo0 = referenciaFrescorSaldo(agora).minimo;
+  let lo = 0;
+  let hi = JANELA_BUSCA_VIRADA_MS;
+  while (hi - lo > 1) {
+    const meio = Math.floor((lo + hi) / 2);
+    if (referenciaFrescorSaldo(new Date(t0 + meio)).minimo === minimo0) lo = meio;
+    else hi = meio;
+  }
+  return hi;
+}
+
+/**
+ * Folga para o relógio do aparelho divergir do banco. A régua da RPC roda no `now()` do BANCO; o
+ * aparelho só sabe a própria hora. Adiantado alguns segundos, ele mudaria a chave às "suas" 04h, a
+ * RPC ainda aceitaria o saldo de ontem, e esse número ficaria guardado na chave NOVA até a próxima
+ * virada (Codex, desenho do #3401: reproduzido com 10 s de adiantamento).
+ */
+export const MARGEM_RELOGIO_VIRADA_MS = 5 * 60_000;
+
+/**
+ * Chave de cache para uma leitura que o SERVIDOR julga pela régua: o `minimo` de agora, ou `null`
+ * na janela de ±`margemMs` em torno da virada (03:55–04:05 SP). Nessa janela não se sabe de que
+ * lado da virada o banco está: quem lê não lê nem exibe o que tinha.
+ */
+export function chaveFrescorDaLeitura(agora: Date, margemMs = MARGEM_RELOGIO_VIRADA_MS): string | null {
+  const antes = referenciaFrescorSaldo(new Date(agora.getTime() - margemMs)).minimo;
+  const depois = referenciaFrescorSaldo(new Date(agora.getTime() + margemMs)).minimo;
+  return antes === depois ? antes : null;
+}
+
+/** Milissegundos até `chaveFrescorDaLeitura` mudar (entrar ou sair da janela da virada). */
+export function msAteMudarChaveFrescor(agora: Date, margemMs = MARGEM_RELOGIO_VIRADA_MS): number {
+  const t = agora.getTime();
+  return Math.min(
+    msAteViradaDoFrescor(new Date(t - margemMs)),
+    msAteViradaDoFrescor(new Date(t + margemMs)),
+  );
+}
+
 /**
  * O saldo de UMA conta como a lista por conta o exibe: o número só quando fresco. Sem saldo do
  * extrato (inclui o DEFAULT 0 com `saldo_data` NULL) ou com saldo velho → `saldo: null` + motivo.
