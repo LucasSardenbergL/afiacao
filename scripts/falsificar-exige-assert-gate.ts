@@ -269,6 +269,25 @@ export const JUIZES: Readonly<Record<string, Juiz>> = {
       'if cmp -s "$orig" "$TMP/q.sql"; then echo "…"; exit 1; fi',
     ],
   },
+  'db/test-reposicao-desconsolidar-ao-religar.sh': {
+    motivo:
+      'fals <nome> <esperado> <sed…>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op conta como sem dente (cmp na cópia da migration)',
+    mede: ['got'],
+    ancoras: [
+      [
+        'got="$(suite "$copia" "$nome" | falhas_de)"',
+        'if [ "$got" = "$esperado" ]; then',
+        'echo "…"',
+        'VERM=$((VERM + 1))',
+        'else',
+        'echo "…"',
+        'FALSOS=$((FALSOS + 1))',
+        'fi',
+      ],
+      'local nome=$1 esperado=$2 copia got',
+      'if cmp -s "$MIG" "$copia"; then',
+    ],
+  },
   'db/test-tint-corante-giro.sh': {
     motivo:
       'fals <nome> <esperado>: vermelho só com o CONJUNTO EXATO de asserts caídos (falhas_de); sabotagem no-op aborta (cmp na migration)',
@@ -1211,6 +1230,7 @@ export const REGISTRO_FECHADO: readonly string[] = [
   'db/test-pedido-edicao-atomica.sh',
   'db/test-pedido-total-liquido-acervo.sh',
   'db/test-reconciliacao-corante.sh',
+  'db/test-reposicao-desconsolidar-ao-religar.sh',
   'db/test-tint-corante-giro.sh',
   'db/test-tint-promocao-assincrona.sh',
   'db/test-tint-promote.sh',

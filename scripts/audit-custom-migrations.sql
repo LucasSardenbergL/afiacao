@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 721
+-- Total de custom migrations: 722
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -778,6 +778,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029095257', 'tint_arquivar_staging_fantasma_lote2', '20261029095257_tint_arquivar_staging_fantasma_lote2.sql'),
   ('20261029150000', 'radar_score_versao', '20261029150000_radar_score_versao.sql'),
   ('20261029150100', 'radar_eventos_placar', '20261029150100_radar_eventos_placar.sql'),
+  ('20261029165429', 'reposicao_desconsolidar_ao_religar_sku', '20261029165429_reposicao_desconsolidar_ao_religar_sku.sql'),
   ('20261029170140', 'radar_penetracao_e_concorrentes', '20261029170140_radar_penetracao_e_concorrentes.sql'),
   ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
   ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
@@ -3077,6 +3078,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_parametros_desconsolidar_ao_religar', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_substituicao_exige_antigo_fora_do_motor', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_parametros_desconsolidar_ao_religar', 'sku_parametros'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_substituicao_exige_antigo_fora_do_motor', 'sku_substituicao'),
   ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
   ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
@@ -5446,6 +5451,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_contato_del', 'radar_contatos'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_cadastro', 'radar_empresas'),
   ('radar_eventos_placar', 'trigger', 'public', 'trg_radar_evento_abertura', 'analytics_outbox'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_parametros_desconsolidar_ao_religar', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'function', 'public', 'trg_sku_substituicao_exige_antigo_fora_do_motor', ''),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_parametros_desconsolidar_ao_religar', 'sku_parametros'),
+  ('reposicao_desconsolidar_ao_religar_sku', 'trigger', 'public', 'sku_substituicao_exige_antigo_fora_do_motor', 'sku_substituicao'),
   ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_concorrentes_publicar', ''),
   ('radar_penetracao_e_concorrentes', 'function', 'public', 'radar_penetracao_por_municipio', ''),
   ('radar_penetracao_e_concorrentes', 'table', 'public', 'radar_concorrentes_lote', ''),
