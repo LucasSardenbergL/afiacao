@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 718
+-- Total de custom migrations: 721
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -782,7 +782,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261029200343', 'cliente_situacao_receita', '20261029200343_cliente_situacao_receita.sql'),
   ('20261029201200', 'radar_acesso_vendedor', '20261029201200_radar_acesso_vendedor.sql'),
   ('20261029211738', 'tint_sync_runs_indices_conjunto_trabalho', '20261029211738_tint_sync_runs_indices_conjunto_trabalho.sql'),
-  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql')
+  ('20261030000642', 'cliente_situacao_receita_lote_publicado', '20261030000642_cliente_situacao_receita_lote_publicado.sql'),
+  ('20261030071150', 'radar_contagem_municipio_regiao_contato', '20261030071150_radar_contagem_municipio_regiao_contato.sql'),
+  ('20261030071806', 'tint_promote_latest_por_chave_indexado', '20261030071806_tint_promote_latest_por_chave_indexado.sql'),
+  ('20261030233200', 'radar_amostra_vigente_leitura', '20261030233200_radar_amostra_vigente_leitura.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3094,7 +3097,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5454,7 +5466,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_limpezas_24h', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_started_at', 'tint_sync_runs'),
   ('tint_sync_runs_indices_conjunto_trabalho', 'index', 'public', 'idx_tint_sync_runs_conta_tipo_inicio', 'tint_sync_runs'),
-  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', '')
+  ('cliente_situacao_receita_lote_publicado', 'function', 'public', 'cliente_situacao_receita', ''),
+  ('radar_contagem_municipio_regiao_contato', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_run', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsprod_latest', 'tint_staging_produtos'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsbase_latest', 'tint_staging_bases'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsemb_latest', 'tint_staging_embalagens'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tsc_latest_custo', 'tint_staging_corantes'),
+  ('tint_promote_latest_por_chave_indexado', 'index', 'public', 'idx_tss_chave', 'tint_staging_skus'),
+  ('radar_amostra_vigente_leitura', 'function', 'public', 'radar_amostra_vigente', '')
 )
 SELECT
   e.migration,
@@ -5828,6 +5849,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 1, '20260613190000_radar_fatia3.sql', 'e2280b3dda8eb76207371e534a90e170'),
   ('public', 'radar_contagem_por_municipio', 2, '20260614140000_radar_contagem_perf.sql', 'a0067efe8a2bf49bb83877ca34c0142b'),
   ('public', 'radar_contagem_por_municipio', 3, '20261020120200_radar_contagem_municipio_lote_vigente.sql', '846683f98eef8db92fa698ba61cd6a04'),
+  ('public', 'radar_contagem_por_municipio', 4, '20261030071150_radar_contagem_municipio_regiao_contato.sql', 'f324426cbafcb16fcc5b847a9222e262'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),

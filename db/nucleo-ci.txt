@@ -599,6 +599,10 @@ db/test-radar-score.sh                      24  falsificar=17
 # outra rota, ledger que derruba o contato, coorte sorteada sem versão, não determinística, duplicada sob
 # concorrência ou com denominador por contato, e tabela/RPC nova aberta a anon/authenticated.
 db/test-radar-placar.sh                     25  falsificar=19
+# Radar: a fila lê a AMOSTRA de controle (20261030233200). Defeito aqui = RPC sem o gate do Radar, topo vazando
+# junto com a amostra, sorteio antigo no lugar do vigente, anon executando, RPC sem SECURITY DEFINER (0 linhas
+# sob RLS) e radar_coorte_controle aberta ao front direto.
+db/test-radar-amostra-vigente.sh             7  falsificar=7
 # Radar: selo de FILIAL (20261021090000). Defeito aqui = vendedor sem carteira lendo a raiz de outro
 # (gate 42501), filial descartada/já-cliente contada como "+N na fila", o próprio CNPJ contado como cliente,
 # cliente de uma das 3 fontes (profiles · Omie não vinculado · radar.ja_cliente) sumindo, anon executando.
@@ -608,6 +612,10 @@ db/test-radar-irmaos-por-raiz.sh            13  falsificar=11
 # overload ambíguo para o PostgREST (assinatura velha viva) ou RPC de gestor aberta a anon. Parte do corpo
 # VIVO de prod (fixture psql-ro), PRE anti-deriva provada contra corpo divergente. Esquema mínimo.
 db/test-radar-contagem-lote.sh              16  falsificar=12
+# Radar: ranking de cidades e mapa seguem a REGIÃO e o CONTATO da fila (20261030071150). Defeito aqui =
+# região ignorada (o Brasil contado sob "MG e vizinhos"), lead sem telefone nem e-mail contado, região vazia
+# contando zero em silêncio, UF escolhida perdendo para a região, overload ambíguo ou RPC aberta a anon.
+db/test-radar-contagem-regiao.sh            21  falsificar=12
 # Mapa do radar (frente 4): penetração inventada (0% sem denominador, cliente de lote velho contando,
 # concorrente "0" num lote sem carga), RPC sem gate, tabela de concorrentes legível sem o gate ou por
 # anon, porta de escrita aberta a authenticated, publicação sem reconciliação/duplicando, e migration
@@ -791,6 +799,12 @@ db/test-venda-lista-acesso.sh              38  falsificar=11
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
 # latest-por-chave e espera a lock do tick. 7 falsificações (conjunto exato) rodam em TODA execução.
 db/test-tint-purge-staging-diario.sh        13
+# Latest por chave indexado no promote (20261030071806): o DISTINCT ON das 5 staging vira LATERAL … LIMIT 1
+# (EXISTS no skus) sobre 7 índices; template = corpo de PROD (md5 conferido). O catálogo promovido sai IDÊNTICO
+# ao do promote antigo (empate, outra store/account, fórmula com preço); por promoção BIG o staging lido cai
+# ~15× (custom e genérico), e a medida é fail-closed (ok=true + efeito do run). 12 falsificações (conjunto
+# exato) rodam em TODA execução.
+db/test-tint-promote-latest-indexado.sh      8
 # Giro de corante, Fase 1 (20261028100000/100100/100200): o fato de consumo dosado só a promoção escreve, sem
 # cliente no staging; a cobertura é DERIVADA das extrações completas (ilha recente, dias SP inteiros, desde a 1ª
 # dosagem), o buraco de qualquer idade se cura, a versão é a CHEGADA, o consumidor das preparações não segura o

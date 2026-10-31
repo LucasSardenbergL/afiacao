@@ -165,7 +165,7 @@ authenticated com tudo), para os REVOKE terem o que revogar.
 | Migration `20261029150100` (ledger, coortes, placar) | ✅ sessão, 2026-10-29 ~21:10 BRT, pelo MCP: ensaio (`ENSAIO_OK`, 4 s, 64.304 eventos) → apply → psql-ro ✅ (7 corpos com md5 igual ao arquivo, 4 triggers, ACL fechada) | — |
 | `SELECT public.radar_coorte_sortear(50);` | ✅ sessão (MCP), 2026-10-30 ~07:10 BRT: `coorte-2026-10` com **topo 536** (score 70–94) e **amostra 50** (40–66), todos `v3`; ledger `radar.coorte_sortear` `sucesso`; psql-ro confere | — |
 | Publish do Lovable | — | nenhum: não há front nesta entrega |
-| Mostrar a amostra na fila | **frente 1** (contrato na nota da pasta compartilhada) | sem isso a coorte fica registrada e nunca é contatada |
+| Mostrar a amostra na fila | sessão de 2026-10-30 | ✅ RPC aplicada; front aguarda Publish → [radar-amostra-na-fila.md](radar-amostra-na-fila.md) |
 
 **1ª leitura do placar em prod (psql-ro, logo após o apply):** total = 1 titular tocou, 5 toques (os de 15/06), 0 nas
 janelas de 7/30/60 dias, 0 aberturas; reconciliação toda zerada; `autorizados_agora` NULL (a cap da frente 2 ainda

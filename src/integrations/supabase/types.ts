@@ -23221,6 +23221,15 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_amostra_vigente: {
+        Args: never
+        Returns: {
+          cnpj: string
+          grupo: string
+          posicao: number
+          sorteio: string
+        }[]
+      }
       radar_aplicar_situacao: {
         Args: { p_agora?: string; p_lote: string }
         Returns: Json
@@ -23262,6 +23271,7 @@ export type Database = {
         Args: {
           p_cnae_exato?: string
           p_cnae_prefix?: string
+          p_com_contato?: boolean
           p_data_abertura_max?: string
           p_data_abertura_min?: string
           p_incluir_ja_clientes?: boolean
@@ -23270,6 +23280,7 @@ export type Database = {
           p_primeira_vista_min?: string
           p_status?: string
           p_uf?: string
+          p_ufs?: string[]
         }
         Returns: {
           a_contatar: number

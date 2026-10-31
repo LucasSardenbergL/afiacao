@@ -13,6 +13,9 @@ import { RadarFavoritos } from '@/components/radar/RadarFavoritos';
 import type { FiltrosSalvos } from '@/lib/radar/favoritos';
 import { RadarFiltros as Filtros } from '@/components/radar/RadarFiltros';
 import { RadarLinha } from '@/components/radar/RadarLinha';
+import { RadarAmostraRegra } from '@/components/radar/RadarAmostraRegra';
+import { useRadarAmostra } from '@/queries/useRadarAmostra';
+import { casaFiltrosExplicitos, intercalarAmostra, pendenteNaAmostra, resumirAmostra } from '@/lib/radar/amostra';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
 import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { RadarAcoesLote } from '@/components/radar/RadarAcoesLote';
@@ -26,6 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import type { PresetRadar, RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const RadarMapa = lazy(() => import('@/components/radar/RadarMapa'));
 
@@ -127,9 +131,26 @@ export default function RadarClientes() {
   const podePaginar = !!q.hasNextPage && !q.isFetchingNextPage && !loteOmie.rodando;
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), podePaginar);
 
-  const empresas = useMemo(() => q.data?.pages.flat() ?? [], [q.data]);
-  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem).
-  const irmaos = useRadarIrmaos(q.data?.pages ?? []);
+  // Amostra de controle: 1 a cada 10 posições, por cima do ranking (região e "só sugeridos" não a escondem; o que
+  // foi digitado — busca, UF, cidade, CNAE, status — sim). Regra e motivos em src/lib/radar/amostra.ts.
+  const amostraQ = useRadarAmostra();
+  const amostra = amostraQ.data ?? null;
+  const resumoAmostra = useMemo(() => (amostra ? resumirAmostra(amostra.itens) : null), [amostra]);
+  const { busca, uf, municipio, cnae, status } = filtros;
+  const amostraNaFila = useMemo(() => {
+    if (!amostra) return [];
+    const f = { busca, uf, municipio, cnae, status };
+    return amostra.itens.flatMap((i) => (i.empresa && pendenteNaAmostra(i.empresa) && casaFiltrosExplicitos(i.empresa, f) ? [i.empresa] : []));
+  }, [amostra, busca, uf, municipio, cnae, status]);
+  const cnpjsAmostra = useMemo(() => new Set(amostra?.itens.map((i) => i.cnpj) ?? []), [amostra]);
+  const filaAcabou = q.isSuccess && !q.hasNextPage;
+  const empresas = useMemo(
+    () => intercalarAmostra(q.data?.pages.flat() ?? [], amostraNaFila, filaAcabou),
+    [q.data, amostraNaFila, filaAcabou],
+  );
+  // Filiais da mesma raiz de CNPJ, uma consulta por página (só sinaliza; não mexe na ordem). A amostra é uma "página" a mais.
+  const paginasIrmaos = useMemo(() => [...(q.data?.pages ?? []), amostraNaFila], [q.data, amostraNaFila]);
+  const irmaos = useRadarIrmaos(paginasIrmaos);
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
     const atual = empresas.find((e) => e.cnpj === abertaCnpj) ?? abertaSnapshot.current;
@@ -231,6 +252,14 @@ export default function RadarClientes() {
         </div>
       )}
 
+      {raw.vista !== 'mapa' && (
+        <RadarAmostraRegra
+          sorteio={amostra?.sorteio ?? null}
+          resumo={resumoAmostra}
+          naFila={amostraNaFila.length}
+          erro={amostraQ.isError ? mensagemDeErro(amostraQ.error) ?? 'erro de leitura' : null}
+        />
+      )}
       {raw.vista === 'mapa' ? (
         <Suspense fallback={<Skeleton className="h-[420px]" />}>
           <RadarMapa
@@ -277,6 +306,7 @@ export default function RadarClientes() {
                   lote={lote}
                   mostrarMotivos={filtros.soSugeridos}
                   irmaos={irmaos.dados.get(e.cnpj) ?? null}
+                  amostra={cnpjsAmostra.has(e.cnpj) ? amostra?.sorteio ?? null : null}
                 />
               ))}
               <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
