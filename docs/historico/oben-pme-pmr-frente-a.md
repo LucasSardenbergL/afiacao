@@ -43,3 +43,17 @@ Outras medições que entram no desenho:
 
 Lição que o teste de carga cobrou: 1 vaga da `filaCiclo` com 2 leituras dentro fura o teto de 2 RPCs em voo
 (`CicloTab.carga.test` mede o pico). Cada leitura toma a própria vaga.
+
+### Correção de universo (migration `20261031200100`, CI da PR 1)
+
+Três gates do CI reprovaram a 1ª migration e viraram uma 2ª (a aplicada é imutável):
+
+- **`universo-pedidos`**: toda leitura de `sales_orders` leva o par canônico `<alias>.status NOT IN (cancelado,
+  rascunho, pendente, orcamento)` + `<alias>.deleted_at IS NULL` (autoridade em `src/lib/farmer/universo-pedidos.ts`).
+  O trigger e o denominador de cobertura da view ganharam o par; PV cancelado/apagado **não registra** mais (antes
+  registrava como `indeterminado` e a view o descartava — o filtro `status_pv <> 'cancelado'` virou camada
+  inalcançada e saiu, com a sabotagem dele). Prova: 24 sabotagens (C e pt_BR), 5 novas sobre o universo.
+- **`AUTHZ_FUNCOES_FECHADAS`**: SECDEF em `ACKNOWLEDGED_SENSITIVE` precisa de entrada no allowlist de EXECUTE
+  (`scripts/authz-funcoes-fechadas.ts`), com privilégios medidos na prod (anon/authenticated/service_role = false).
+- **`hoje-utc`**: `toISOString().slice(0, 10)` é dia UTC, mesmo sobre uma data já de SP — `semanaDe` passou a usar
+  `addDias` de `@/lib/time/sp-day`.

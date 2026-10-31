@@ -18,6 +18,8 @@ DATA="$TMPD/data"
 LOC="${LOCALE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 MIG="$REPO_ROOT/supabase/migrations/20261031200000_reposicao_ruptura_sensor.sql"
+# Correção do universo de pedidos (par canônico status/deleted_at): recria o trigger e a view semanal.
+MIG2="$REPO_ROOT/supabase/migrations/20261031200100_reposicao_ruptura_sensor_universo.sql"
 
 # shellcheck disable=SC1091
 . "$REPO_ROOT/db/lib/pg-harness.sh"
@@ -52,7 +54,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER AS $f$
 -- Colunas/tipos espelham a prod (medidos 2026-10-31 via psql-ro).
 CREATE TABLE public.sales_orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text, status text, order_date_kpi date,
-  omie_pedido_id bigint, hash_payload text, created_at timestamptz DEFAULT now());
+  omie_pedido_id bigint, hash_payload text, created_at timestamptz DEFAULT now(), deleted_at timestamptz);
 CREATE TABLE public.order_items (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   sales_order_id uuid REFERENCES public.sales_orders(id) ON DELETE CASCADE,
@@ -129,6 +131,7 @@ suite() {
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
+  P -f "$2" || { echo "APLICACAO FALHOU: $2"; return 99; }
 
   # ── Trigger: pedidos importados depois da migration ──
   P <<'SQL'
@@ -137,7 +140,9 @@ INSERT INTO public.sales_orders (id, account, status, order_date_kpi, omie_pedid
   ('aaaaaaaa-0000-0000-0000-000000000002','oben','faturado',  current_date, 9002, 'omie_b'),
   ('aaaaaaaa-0000-0000-0000-000000000003','oben','enviado',   current_date, NULL, NULL),
   ('aaaaaaaa-0000-0000-0000-000000000004','colacor','importado', current_date, 9004, 'omie_d'),
-  ('aaaaaaaa-0000-0000-0000-000000000005','oben','cancelado', current_date, 9005, 'omie_e');
+  ('aaaaaaaa-0000-0000-0000-000000000005','oben','cancelado', current_date, 9005, 'omie_e'),
+  ('aaaaaaaa-0000-0000-0000-000000000006','oben','importado', current_date, 9006, 'omie_f');
+UPDATE public.sales_orders SET deleted_at = now() WHERE id = 'aaaaaaaa-0000-0000-0000-000000000006';
 INSERT INTO public.order_items (sales_order_id, omie_codigo_produto, quantity, hash_payload, omie_codigo_item) VALUES
   ('aaaaaaaa-0000-0000-0000-000000000001', 1, 5, 'omie_a', 11),   -- saldo 10 >= 5  → atendivel
   ('aaaaaaaa-0000-0000-0000-000000000001', 2, 2, 'omie_a', 12),   -- saldo 1 < 2    → ruptura
@@ -149,11 +154,12 @@ INSERT INTO public.order_items (sales_order_id, omie_codigo_produto, quantity, h
   ('aaaaaaaa-0000-0000-0000-000000000002', 1, 1, 'omie_b', 21),   -- PV faturado    → indeterminado
   ('aaaaaaaa-0000-0000-0000-000000000003', 1, 1, NULL, NULL),     -- pedido do app  → nao registra
   ('aaaaaaaa-0000-0000-0000-000000000004', 1, 1, 'omie_d', 41),   -- colacor        → nao registra
-  ('aaaaaaaa-0000-0000-0000-000000000005', 1, 1, 'omie_e', 51),   -- cancelado      → indeterminado (fora do denominador)
+  ('aaaaaaaa-0000-0000-0000-000000000005', 1, 1, 'omie_e', 51),   -- cancelado      → fora do universo, nao registra
+  ('aaaaaaaa-0000-0000-0000-000000000006', 1, 1, 'omie_f', 61),   -- apagado        → fora do universo, nao registra
   ('aaaaaaaa-0000-0000-0000-000000000001', 1, 0, 'omie_a', 15),   -- quantidade 0   → pula (WARNING)
   ('aaaaaaaa-0000-0000-0000-000000000001', 1, 5, 'omie_a', 11);   -- repetido       → 1a leitura vence
 SQL
-  ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens" "9" "so PV importado da oben registra (9 itens)"
+  ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens" "8" "so PV importado da oben no universo registra (8 itens)"
   ok "SELECT leitura||'|'||estoque_saldo||'|'||estoque_fonte FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=11" "atendivel|10|inventory_position" "saldo >= quantidade = atendivel (1a fonte vence)"
   ok "SELECT leitura||'|'||estoque_saldo FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=12" "ruptura|1" "saldo menor que quantidade = ruptura"
   ok "SELECT leitura||'|'||coalesce(estoque_saldo::text,'null')||'|'||coalesce(estoque_fonte,'null') FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=13" "sem_leitura|null|null" "leitura velha (48h) nas 2 fontes = sem_leitura"
@@ -162,21 +168,22 @@ SQL
   ok "SELECT leitura||'|'||coalesce(estoque_saldo::text,'null')||'|'||coalesce(estoque_lido_em::text,'null') FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=17" "sem_leitura|null|null" "sem linha de estoque = sem_leitura sem saldo fabricado"
   ok "SELECT leitura FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_produto=5 AND omie_codigo_item IS NULL" "ruptura" "saldo zero e sem codigo de item = ruptura"
   ok "SELECT leitura||'|'||status_pv FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=21" "indeterminado|faturado" "PV faturado = indeterminado"
-  ok "SELECT leitura||'|'||status_pv FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=51" "indeterminado|cancelado" "PV cancelado = indeterminado"
+  ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=51" "0" "PV cancelado fora do universo = nao registra"
+  ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=61" "0" "PV apagado (deleted_at) fora do universo = nao registra"
   ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=15" "0" "quantidade zero nao e leitura"
   ok "SELECT count(*) FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=11" "1" "item repetido nao regrava"
-  ok "SELECT count(*) FROM order_items" "13" "o trigger nunca barra a importacao"
+  ok "SELECT count(*) FROM order_items" "14" "o trigger nunca barra a importacao"
   ok "SELECT omie_pedido_id||'|'||data_pedido::text FROM reposicao_ruptura_pedido_itens WHERE omie_codigo_item=11" "9001|$(Pq -c "SELECT current_date::text")" "fatos do PV copiados"
 
   # ── View semanal de pedidos: 6 registradas fora o cancelado; 3 decididas (< 20) → fill_rate null ──
-  ok "SELECT itens_registrados||'|'||itens_importados||'|'||pedidos||'|'||itens_atendiveis||'|'||itens_ruptura||'|'||itens_indeterminados||'|'||itens_sem_leitura FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "8|11|2|2|3|1|2" "semana: contagens por leitura"
+  ok "SELECT itens_registrados||'|'||itens_importados||'|'||pedidos||'|'||itens_atendiveis||'|'||itens_ruptura||'|'||itens_indeterminados||'|'||itens_sem_leitura FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "8|10|2|2|3|1|2" "semana: contagens por leitura"
   ok "SELECT coalesce(fill_rate_pct::text,'null') FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "null" "fill_rate null abaixo de 20 decididos"
-  ok "SELECT cobertura_pct FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "72.7" "cobertura = registrados sem cancelado / itens importados"
+  ok "SELECT cobertura_pct FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "80.0" "cobertura = registrados / itens importados do universo"
   # +20 itens atendíveis no PV 1 → 25 decididos, 22 atendíveis → 88.0
   P -c "INSERT INTO public.order_items (sales_order_id, omie_codigo_produto, quantity, hash_payload, omie_codigo_item)
         SELECT 'aaaaaaaa-0000-0000-0000-000000000001', 1, 1, 'omie_a', 100 + g FROM generate_series(1, 20) g"
   ok "SELECT fill_rate_pct FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA" "88.0" "fill_rate = atendiveis / decididos"
-  ok "SELECT count(*) FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA AND itens_registrados = 28" "1" "cancelado fora do denominador semanal"
+  ok "SELECT count(*) FROM v_reposicao_ruptura_pedidos_semana WHERE semana=$SEMANA AND itens_registrados = 28" "1" "universo: 28 registrados na semana"
 
   # ── Prateleira: linha de base nasce com a migration (hoje) ──
   ok "SELECT skus_com_venda_90d||'|'||skus_sem_saldo||'|'||skus_sem_leitura||'|'||valor_venda_90d||'|'||valor_venda_90d_sem_saldo||'|'||valor_venda_90d_sem_leitura FROM reposicao_ruptura_prateleira_diaria WHERE dia=$HOJE" "7|2|2|230|50|15" "prateleira: skus com venda x saldo"
@@ -194,7 +201,7 @@ SQL
   # RLS: master lê tudo; customer autenticado vê 0 linhas (policy), não erro. Mesmo role, mesma GUC da prod.
   local got_master got_customer
   got_master="$(rls_count '11111111-1111-1111-1111-111111111111')"
-  if [ "$got_master" != "29" ]; then echo "FALHOU: master le a trilha | esperado=[29] obtido=[$got_master]"; falhas=$((falhas+1)); fi
+  if [ "$got_master" != "28" ]; then echo "FALHOU: master le a trilha | esperado=[28] obtido=[$got_master]"; falhas=$((falhas+1)); fi
   got_customer="$(rls_count '22222222-2222-2222-2222-222222222222')"
   if [ "$got_customer" != "0" ]; then echo "FALHOU: customer nao le a trilha | esperado=[0] obtido=[$got_customer]"; falhas=$((falhas+1)); fi
   ok "SELECT username||'|'||schedule||'|'||active FROM cron.job WHERE jobname='reposicao-ruptura-prateleira-diario'" "postgres|10 10 * * *|true" "cron diario do owner"
@@ -202,17 +209,17 @@ SQL
 }
 
 # 1) CONTROLE VERDE — a migration real precisa passar inteira.
-cp "$MIG" "$TMPD/mig.sql"
-if ! suite "$TMPD/mig.sql"; then echo "CONTROLE VERMELHO — abortando antes de falsificar"; exit 1; fi
+cp "$MIG" "$TMPD/mig.sql"; cp "$MIG2" "$TMPD/mig2.sql"
+if ! suite "$TMPD/mig.sql" "$TMPD/mig2.sql"; then echo "CONTROLE VERMELHO — abortando antes de falsificar"; exit 1; fi
 echo "CONTROLE OK"
 
 # 2) FALSIFICAÇÃO — cada sabotagem TEM de ficar vermelha PELA asserção esperada: a cópia aplica (rc=0)
 #    e a saída contém "FALHOU: <rótulo>" (ASCII, caixa fixa). Vermelho por erro de sintaxe reprova.
-sabotar() { # $1 nome, $2 expressão sed, $3 rótulo da asserção esperada
-  sed "$2" "$MIG" > "$TMPD/sab.sql"
-  if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
+sabotar() { # $1 nome, $2 expressão sed, $3 rótulo da asserção esperada — o sed vale para as DUAS migrations
+  sed "$2" "$MIG" > "$TMPD/sab.sql"; sed "$2" "$MIG2" > "$TMPD/sab2.sql"
+  if cmp -s "$MIG" "$TMPD/sab.sql" && cmp -s "$MIG2" "$TMPD/sab2.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
   local out rc=0
-  out="$(suite "$TMPD/sab.sql" 2>&1)" || rc=$?
+  out="$(suite "$TMPD/sab.sql" "$TMPD/sab2.sql" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   # rc=99 só vale como vermelho se foi a POSTCONDIÇÃO da migration que barrou (rótulo "Pn FALHOU");
   # qualquer outro erro de aplicação não é prova.
@@ -230,13 +237,21 @@ sabotar "saldo > 0 em vez de >= quantidade" "s/ELSIF v_ip.saldo >= NEW.quantity 
 sabotar "PV faturado decidido" "s/IF v_so.status IN ('faturado', 'cancelado') THEN/IF false THEN/" "FALHOU: PV faturado = indeterminado |"
 # Pedido do app: DUAS camadas (WHEN do trigger + checagem do hash na função). Tirar só uma fica verde pela
 # outra (defesa em profundidade real); a prova tira as duas e exige o furo. A camada de CONTA é uma só.
-sabotar "pedido do app registrado (2 camadas)" "s/  WHEN (NEW.hash_payload IS NOT NULL AND NEW.hash_payload LIKE 'omie\\\\_%')//; s/OR v_so.hash_payload IS NULL OR v_so.hash_payload NOT LIKE 'omie\\\\_%' THEN/THEN/" "FALHOU: so PV importado da oben registra (9 itens) |"
-sabotar "pedido de outra empresa registrado" "s/OR v_so.account IS DISTINCT FROM 'oben'//" "FALHOU: so PV importado da oben registra (9 itens) |"
+sabotar "pedido do app registrado (2 camadas)" "s/  WHEN (NEW.hash_payload IS NOT NULL AND NEW.hash_payload LIKE 'omie\\\\_%')//; s/OR v_so.hash_payload IS NULL OR v_so.hash_payload NOT LIKE 'omie\\\\_%' THEN/THEN/" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
+sabotar "pedido de outra empresa registrado" "s/OR v_so.account IS DISTINCT FROM 'oben'//" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
+# Universo de pedidos (20261031200100): o par status/deleted_at na leitura do trigger e no denominador da view.
+# Duas camadas cada: o par E a postcondição que o vigia (P1/P2) — tirar só o par fica vermelho pela postcondição.
+FN='/FUNCTION public.reposicao_ruptura_registrar_item/,/^\$fn\$;/'
+VW='/VIEW public.v_reposicao_ruptura_pedidos_semana/,/LEFT JOIN imp USING/'
+sabotar "PV cancelado registrado (2 camadas)" "$FN s/^     AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')\$//; s/IF v_fn NOT LIKE '%so.deleted_at IS NULL%' OR v_fn NOT LIKE/IF false AND v_fn NOT LIKE/" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
+sabotar "PV apagado registrado (2 camadas)" "$FN s/^     AND so.deleted_at IS NULL;\$/;/; s/IF v_fn NOT LIKE '%so.deleted_at IS NULL%' OR v_fn NOT LIKE/IF false AND v_fn NOT LIKE/" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
+sabotar "trigger sem o par: so a postcondicao" "$FN s/^     AND so.deleted_at IS NULL;\$/;/" "P1 FALHOU"
+sabotar "denominador fora do universo (2 camadas)" "$VW s/^     AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')\$//; $VW s/^     AND so.deleted_at IS NULL\$//; s/IF v_vw NOT ILIKE '%so.deleted_at IS NULL%' OR/IF false AND/" "FALHOU: semana: contagens por leitura |"
+sabotar "view sem o par: so a postcondicao" "$VW s/^     AND so.deleted_at IS NULL\$//" "P2 FALHOU"
 # Quantidade zero: guard no WRITER + CHECK na TABELA (money-path: "o guard mora no writer; a invariante na
 # tabela"). Tirar só o guard fica verde pelo CHECK (o fail-open engole o 23514); a prova tira os dois.
 sabotar "quantidade zero como leitura (2 camadas)" "s/OR NEW.quantity <= 0 OR NEW.quantity >= 1000000 THEN/OR NEW.quantity >= 1000000 THEN/; s/CHECK (quantidade > 0 AND quantidade < 1000000)/CHECK (quantidade < 1000000)/" "FALHOU: quantidade zero nao e leitura |"
 sabotar "fill_rate com 1 decidido" "s/WHEN s.itens_atendiveis + s.itens_ruptura >= 20/WHEN s.itens_atendiveis + s.itens_ruptura >= 1/" "FALHOU: fill_rate null abaixo de 20 decididos |"
-sabotar "cancelado no denominador" "s/WHERE status_pv <> 'cancelado'/WHERE true/" "FALHOU: semana: contagens por leitura |"
 sabotar "prateleira: saldo < 0" "s/WHERE e.saldo IS NOT NULL AND e.saldo <= 0))::integer/WHERE e.saldo IS NOT NULL AND e.saldo < 0))::integer/" "FALHOU: prateleira: skus com venda x saldo |"
 sabotar "prateleira: zero da 2a fonte ignorado" "s/     AND s.estoque_fisico IS NOT NULL AND s.estoque_fisico <> 'NaN'/     AND s.estoque_fisico > 0/" "FALHOU: prateleira: skus com venda x saldo |"
 sabotar "prateleira: devolucao na demanda" "s/AND coalesce(h.cfop, '') NOT IN ('1202', '2202', '5202', '6202')//" "FALHOU: prateleira: skus com venda x saldo |"

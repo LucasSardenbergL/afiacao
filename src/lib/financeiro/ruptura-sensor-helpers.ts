@@ -9,6 +9,7 @@
 //     trigger é fail-open — cobertura < 100% é perda do sensor, não ruptura).
 //   • prateleira: % dos SKUs com venda em 90d (e leitura fresca) sem saldo, média dos dias lidos.
 // Guardrail da Frente C ("segurar compra"): fill-rate cai > 1 p.p. entre semanas FECHADAS → pausa.
+import { addDias } from '@/lib/time/sp-day';
 import { num } from '@/lib/financeiro/ciclo-cliente-helpers';
 
 export type SemanaPedidos = {
@@ -53,10 +54,8 @@ export function normalizarSemanaPrateleira(r: Record<string, unknown>): SemanaPr
 /** Segunda-feira (ISO) da semana de `hojeSp` (YYYY-MM-DD, calendário de SP). Semana = chave das views. */
 export function semanaDe(hojeSp: string): string {
   const [a, m, d] = hojeSp.split('-').map(Number);
-  const dt = new Date(Date.UTC(a, m - 1, d));
-  const dow = (dt.getUTCDay() + 6) % 7; // segunda = 0
-  dt.setUTCDate(dt.getUTCDate() - dow);
-  return dt.toISOString().slice(0, 10);
+  const dow = (new Date(Date.UTC(a, m - 1, d)).getUTCDay() + 6) % 7; // segunda = 0
+  return addDias(hojeSp, -dow); // aritmética de calendário, sem relógio (gate hoje-utc)
 }
 
 /**
