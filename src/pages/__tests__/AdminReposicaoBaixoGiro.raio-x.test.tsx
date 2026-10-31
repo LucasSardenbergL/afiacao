@@ -20,7 +20,8 @@ type Retorno = {
 
 const PLACAR = {
   total: 1000, decidido: 400, pendente: 600, porDestino: { trocar: 400 }, topTotal: 700, topDecidido: 400,
-  semCustoN: 2, distorceDio: 5000,
+  semCustoN: 2, distorceDio: 5000, naoMercadoria: 5000, usoConsumo: 0, industrial: 0, semCustoDioN: 0,
+  coorteCongelada: true, topN: 3, topDecididoN: 1, topSemCustoN: 0, topEntrouDepoisN: 0,
 };
 let ret: Retorno;
 let empresaCtx = 'OBEN';
@@ -59,7 +60,7 @@ const item = (p: Partial<ItemRaioX>): ItemRaioX => ({
   ult_venda: null, preco_medio_12m: null, clientes: [{ nome: 'CLIENTE A', ult: '2026-01-01', qtd: 3 }],
   synced_at: null, habilitado_reposicao_automatica: true, valor: 50, cobertura: null,
   categoria: 'mercadoria', motivo_categoria: '', parado: true, destino_sugerido: 'liquidar',
-  motivo_destino: '', top: true, ...p,
+  motivo_destino: '', alerta_recompra: null, top: true, top_atual: true, entrou_no_top: false, ...p,
 });
 
 const abrirAba = () => {

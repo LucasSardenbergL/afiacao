@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { categorizar, classificar, cobertura, sugerirDestino, TOP_N } from '../classificar';
+import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N } from '../classificar';
 import { fato, HOJE } from './fixtures';
 
 describe('categorizar', () => {
@@ -63,7 +63,8 @@ describe('cobertura', () => {
 describe('sugerirDestino', () => {
   it('ordem das regras', () => {
     expect(sugerirDestino(fato({ cadastro_em: '2026-09-01' }), HOJE).destino).toBe('novo_aguarde');
-    expect(sugerirDestino(fato({ ult_entrada: '2026-10-02' }), HOJE).destino).toBe('novo_aguarde');
+    // entrada recente NÃO imuniza (só cadastro novo dá "aguarde"): segue a regra normal → liquidar
+    expect(sugerirDestino(fato({ ult_entrada: '2026-10-02' }), HOJE).destino).toBe('liquidar');
     expect(sugerirDestino(fato({ unidades_venda: ['UN', 'GL'] }), HOJE).destino).toBe('revisar');
     expect(sugerirDestino(fato({ fornecedor: 'RENNER SAYERLACK S/A' }), HOJE).destino).toBe('trocar');
     expect(sugerirDestino(fato({ fornecedor: 'marca: SAYERLACK' }), HOJE).destino).toBe('trocar');
@@ -151,5 +152,38 @@ describe('classificar', () => {
     const r = classificar([fato({ sku_codigo_omie: 7 })], new Map([[7, { categoria: 'uso_consumo' as const, motivo: 'm' }]]), 'oben', HOJE);
     expect(r[0].categoria).toBe('uso_consumo');
     expect(r[0].parado).toBe(false);
+  });
+});
+
+describe('entrada recente em item parado: alerta, não imunidade', () => {
+  it('cadastro novo segue "aguarde"; entrada recente segue a regra normal e ganha alerta', () => {
+    const [i] = classificar([fato({ ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(i.destino_sugerido).toBe('liquidar');
+    expect(i.alerta_recompra).toBe('recompra recente de item parado · entrada há 12 dias');
+    const [n] = classificar([fato({ cadastro_em: '2026-09-01', ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(n.destino_sugerido).toBe('novo_aguarde');
+  });
+  it('entrada há 90+ dias ou ausente: sem alerta; item que não está parado: sem alerta', () => {
+    expect(alertaRecompra(fato({ ult_entrada: '2026-07-16' }), HOJE)).toBeNull(); // 90 dias
+    expect(alertaRecompra(fato({ ult_entrada: null }), HOJE)).toBeNull();
+    const [vende] = classificar([fato({ no_motor: true, q12: 100, saldo: 10, ult_entrada: '2026-10-02' })], new Map(), 'oben', HOJE);
+    expect(vende.parado).toBe(false);
+    expect(vende.alerta_recompra).toBeNull();
+  });
+});
+
+describe('01/03 (matéria-prima / produto em processo)', () => {
+  it('seguem uso_consumo (fora da reposição), com motivo de estoque industrial', () => {
+    const mp = categorizar(fato({ tipo_produto: '01' }));
+    expect(mp.categoria).toBe('uso_consumo');
+    expect(mp.motivo).toBe('tipo do item 01 no Omie (matéria-prima — estoque industrial)');
+    expect(categorizar(fato({ tipo_produto: '03' })).motivo).toBe('tipo do item 03 no Omie (produto em processo — estoque industrial)');
+    expect(categorizar(fato({ tipo_produto: '07' })).motivo).toBe('tipo do item 07 no Omie (consumido aqui, não vendido)');
+  });
+  it('ehEstoqueIndustrial só para uso_consumo 01/03', () => {
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '01' })).toBe(true);
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '03' })).toBe(true);
+    expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '07' })).toBe(false);
+    expect(ehEstoqueIndustrial({ categoria: 'mercadoria', tipo_produto: '01' })).toBe(false); // marcação manual vence
   });
 });

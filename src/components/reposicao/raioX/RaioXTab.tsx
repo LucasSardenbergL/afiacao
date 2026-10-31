@@ -51,7 +51,7 @@ export function RaioXTab() {
   useEffect(() => {
     if (!pronta || !chave || registradas.current.has(chave)) return;
     registradas.current.add(chave);
-    void registrarNoLedger('reposicao.raio_x_aberta', chave);
+    void registrarNoLedger('reposicao.raio_x_aberta', chave, { empresa: chave });
   }, [pronta, chave]);
   const qc = useQueryClient();
   // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9

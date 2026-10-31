@@ -45,6 +45,41 @@ O motivo foi terminar a faxina dentro do app, com autor, motor de compras e miss
 - **`if v <> n then raise` é barrado pelo gate `assert-verde-por-ausencia`** mesmo quando `v` vem de `count(*)`, que nunca é NULL. O gerador emite `is distinct from`. A versão aplicada (com `<>`) e a do repo diferem só nisso, e o commit `3d533b65a` registra.
 - **Ausente ≠ zero também no texto de apoio.** "N SKU(s) sem medição (R$ 0 na foto…)" com todos os SKUs sem custo é ausente apresentado como zero. Quando não há custo conhecido, o aviso diz só "N sem custo".
 
+## Correções pós-revisão (2026-10-31, revisão Codex + Fable de 2026-10-30) [money-path]
+
+A revisão achou 4 bugs que ameaçavam a medição da meta de 25/11, um rótulo errado na Colacor e a falta de sensor de visita (0 decisões no app desde ~18/10 e nenhum jeito de saber se alguém abriu a aba). Migrations `20261031130000_raio_x_correcoes_pos_revisao.sql` e `20261031130100_analytics_ledger_raio_x.sql`.
+
+1. **Janela de venda pela foto.** `raio_x_decidir` troca `decidido_em` quando o destino muda e a foto fica. A medição filtrava a venda por `decidido_em`, então trocar "venda dirigida" → "liquidar" apagava do placar venda já feita. Agora a janela começa no dia (SP) de `foto_em`, que é imutável, com fronteira estrita. Linha sem foto devolve `qtd_vendida`/`receita` NULL: antes vinha 0, que era ausente fabricado como zero. **A contradição de recompra continua por `decidido_em` do destino vigente, de propósito:** compra feita antes de decidir tirar do estoque não contradiz a decisão. As 17 decisões da fase A têm `foto_em = decidido_em` (15/10), então a medição delas não muda.
+2. **Coorte do Top 61 congelada** (`raio_x_coorte_top` + `raio_x_congelar_coorte`). Antes o Top era recalculado a cada leitura: item que vende sai, outro entra, e a meta virava alvo móvel. Na 1ª leitura sem coorte, o app manda os SKUs do Top de hoje. O servidor grava posição e valor (saldo × cmc lidos lá) uma única vez por empresa, e a primeira escrita vence. O placar mede contra a coorte, inclusive SKU que vendeu tudo e saiu da lista. Quem entraria no Top hoje aparece com "entrou no Top depois do congelamento" e não mexe no denominador. Se a coorte falhar (ex.: migration não aplicada), a aba **não cai**: o placar mede contra o Top de hoje e diz isso. **A coorte original de 17/10 não é reconstruível** (não há histórico de posição), então a coorte nasce no 1º acesso depois do Publish. Como houve 0 decisões no app desde então, o Top de hoje ≈ o de 17/10, menos o que vendeu.
+3. **Entrada recente vira alerta, não imunidade.** `novo_aguarde` agora vale só para cadastro < 90 dias. Item parado com entrada < 90 dias segue a regra normal e ganha na linha o alerta "recompra recente de item parado · entrada há N dias".
+4. **"Caixa liberado" não era caixa.** O card agora mostra três parcelas separadas: **estoque reduzido (a custo)**, **receita das vendas** (faturado das unidades contadas) e **crédito de troca informado**. **O critério da meta não mudou:** a barra dos R$ 60k segue somando estoque reduzido + crédito informado, agora rotulada "critério da meta", nunca "caixa". Mudar o critério (ex.: medir por receita) é decisão do founder.
+5. **Colacor, tipos 01/03.** Continuam no bloco uso e consumo (fora da reposição, decisão mantida), mas o placar os separa como **estoque industrial (CPC 16) que NÃO distorce o DIO**. "Distorce o DIO" passa a ser não-mercadoria (08/imobilizado e afins) + uso e consumo (07, família, marcação). Pelo psql-ro em 2026-10-31, na conta `colacor_vendas` com saldo > 0 e cmc > 0: 01 ≈ R$ 643k (173 SKUs), 03 ≈ R$ 141k (110), 07 ≈ R$ 202k (279), 08 ≈ R$ 1,48 mi (199).
+6. **Sensor de visita.** `reposicao.raio_x_aberta` no ledger server-side (`analytics_ledger_registrar`, mesmo molde da aba Corantes), 1× por titular, empresa e dia, só com a leitura pronta e nunca sob a lente "Ver como". ⚠️ A `analytics_outbox` **purga em 30 dias** (`purgar_em`). Para 25/11 cabe na janela; para série mais longa, rode a query antes de vencer.
+
+**Prova:** `db/test-raio-x-fatos.sh` aplica a 31/10 POR CIMA da 16/10. Controle verde nos dois locales; a PRE anti-deriva é provada à parte (corpo derivado aborta); 34 sabotagens ficam vermelhas pelo motivo certo, das quais 3 são da janela/contradição e 7 da coorte. Uma lição: **sabotar a migration ANTIGA também muda o corpo antigo que a PRE da nova confere**, então nesse laço a PRE roda neutralizada numa cópia, e é provada separadamente.
+
+### Query — visitas e decisões por dia (psql-ro)
+
+```sql
+WITH v AS (
+  SELECT (o.ocorrido_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia, o.props->>'empresa' AS empresa,
+         count(*) AS visitas, count(DISTINCT o.user_id) AS pessoas
+    FROM public.analytics_outbox o
+   WHERE o.evento = 'reposicao.raio_x_aberta'
+   GROUP BY 1, 2),
+d AS (  -- estado ATUAL: decidido_em é o da última troca de destino (o histórico de trocas não é guardado)
+  SELECT (x.decidido_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia, x.empresa, count(*) AS decisoes
+    FROM public.raio_x_decisao x
+   WHERE x.origem = 'app' AND x.destino IS NOT NULL
+   GROUP BY 1, 2)
+SELECT coalesce(v.dia, d.dia) AS dia, coalesce(v.empresa, d.empresa) AS empresa,
+       coalesce(v.visitas, 0) AS visitas, coalesce(v.pessoas, 0) AS pessoas, coalesce(d.decisoes, 0) AS decisoes
+  FROM v FULL JOIN d ON d.dia = v.dia AND d.empresa = v.empresa
+ ORDER BY 1 DESC, 2;
+```
+
+Antes da migration do ledger ser aplicada e do Publish, zero visitas é **ausência de sensor**, não falta de uso. O denominador só vale a partir da 1ª linha.
+
 ## Pendências que não couberam
 
 - **Medir a meta da fase A no card a partir de 2026-11-25:** 100% do Top 61 decidido e caixa liberado ≥ R$ 60k.
