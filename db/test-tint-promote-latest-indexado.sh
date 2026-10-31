@@ -206,15 +206,20 @@ INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id
 SELECT tint_promote_sync_run('22222222-0000-0000-0000-000000000002');
 
 -- R3 (agora): fórmula X em P1/B1/E900 com AX+AY e preço de base → _expand cheio, cor_latest executa.
+-- E uma 2ª X em P2/B1/E3600 (outro preço, outras qtds): só o PRODUTO distingue as duas — a impressão
+-- tem de enxergar uma permuta de preço/receita entre elas (parecer Codex P3).
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
 VALUES ('22222222-0000-0000-0000-000000000003','aaaaaaaa-0000-0000-0000-000000000001','oben','L1','formulas','complete');
 INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
 VALUES ('22222222-0000-0000-0000-000000000003','oben','L1','P1','B1','E900', 100, 10, 20),
-       ('22222222-0000-0000-0000-000000000003','oben','L1','P1','B1','E3600', 300, 10, 20);
+       ('22222222-0000-0000-0000-000000000003','oben','L1','P1','B1','E3600', 300, 10, 20),
+       ('22222222-0000-0000-0000-000000000003','oben','L1','P2','B1','E3600', 200, 10, 20);
 INSERT INTO tint_staging_formulas (sync_run_id, account, store_code, cor_id, nome_cor, cod_produto, id_base, id_embalagem, subcolecao, volume_final_ml, personalizada, expected_item_count)
-VALUES ('22222222-0000-0000-0000-000000000003','oben','L1','X','Cor X','P1','B1','E900','SL',900,false,2);
+VALUES ('22222222-0000-0000-0000-000000000003','oben','L1','X','Cor X','P1','B1','E900','SL',900,false,2),
+       ('22222222-0000-0000-0000-000000000003','oben','L1','X','Cor X','P2','B1','E3600','SL',3600,false,2);
 INSERT INTO tint_staging_formula_itens (sync_run_id, staging_formula_id, id_corante, ordem, qtd_ml)
-SELECT sync_run_id, id, c, o, q FROM tint_staging_formulas, (VALUES ('AX', 1, 10), ('AY', 2, 4)) v(c, o, q)
+SELECT sync_run_id, id, c, o, CASE WHEN cod_produto = 'P1' THEN q ELSE q * 3 END
+  FROM tint_staging_formulas, (VALUES ('AX', 1, 10), ('AY', 2, 4)) v(c, o, q)
  WHERE sync_run_id = '22222222-0000-0000-0000-000000000003';
 SELECT tint_promote_sync_run('22222222-0000-0000-0000-000000000003');
 
@@ -237,28 +242,42 @@ impressao() {
     UNION ALL SELECT 'S|' || p.cod_produto || '|' || b.id_base_sayersystem || '|' || e.id_embalagem_sayersystem
       FROM tint_skus s JOIN tint_produtos p ON p.id = s.produto_id JOIN tint_bases b ON b.id = s.base_id
       JOIN tint_embalagens e ON e.id = s.embalagem_id
-    UNION ALL SELECT 'F|' || f.cor_id || '|' || f.nome_cor || '|' || e.id_embalagem_sayersystem || '|' ||
-           COALESCE(f.volume_final_ml::text, '-') || '|' || COALESCE(f.preco_final_sayersystem::text, '-') || '|' ||
-           (f.desativada_em IS NULL)::text || '|' ||
-           COALESCE((SELECT string_agg(co.id_corante_sayersystem || '=' || trim_scale(i.qtd_ml), ',' ORDER BY i.ordem)
-                       FROM tint_formula_itens i JOIN tint_corantes co ON co.id = i.corante_id
-                      WHERE i.formula_id = f.id), '')
-      FROM tint_formulas f JOIN tint_embalagens e ON e.id = f.embalagem_id) s"
+    UNION ALL SELECT 'F|' || format('%L|%L|%L|%L|%L|%L|%L|%L|%L|%L|%L', f.account, f.cor_id, f.nome_cor,
+           p.cod_produto, b.id_base_sayersystem, e.id_embalagem_sayersystem, sc.id_subcolecao_sayersystem,
+           f.volume_final_ml, f.preco_final_sayersystem, f.desativada_em IS NULL,
+           (SELECT string_agg(format('%L=%L', co.id_corante_sayersystem, trim_scale(i.qtd_ml)), ',' ORDER BY i.ordem)
+              FROM tint_formula_itens i JOIN tint_corantes co ON co.id = i.corante_id
+             WHERE i.formula_id = f.id))
+      FROM tint_formulas f JOIN tint_embalagens e ON e.id = f.embalagem_id
+      JOIN tint_produtos p ON p.id = f.produto_id JOIN tint_bases b ON b.id = f.base_id
+      LEFT JOIN tint_subcolecoes sc ON sc.id = f.subcolecao_id) s"
 }
 q() { PA -d "$1" -tA -c "$2"; }
 
 # Páginas de staging tocadas por UMA promoção: delta de pg_statio (heap+índice) das 5 tabelas de catálogo.
 # A promoção roda numa sessão própria: o backend descarrega as estatísticas ao sair.
-blocos() {   # $1 = banco, $2 = run, $3 = plan_cache_mode, $4 = tabelas (regex)
-  local antes depois
+# Fail-closed: promoção que não devolve ok=true, ou que não deixou o efeito esperado ($5, SQL que tem de
+# dar 't'), imprime FALHOU em vez de um delta — uma promoção abortada cedo leria ~0 e passaria no teto.
+blocos() {   # $1 = banco, $2 = run, $3 = plan_cache_mode, $4 = tabelas (regex), $5 = efeito esperado
+  local antes depois r
   local sql="SELECT COALESCE(sum(heap_blks_hit + heap_blks_read + COALESCE(idx_blks_hit, 0) + COALESCE(idx_blks_read, 0)), 0)
                FROM pg_statio_user_tables WHERE relname ~ '$4'"
-  antes="$(q "$1" "$sql")"
-  PA -q -d "$1" -c "SET plan_cache_mode = $3" -c "SELECT tint_promote_sync_run('$2')" >/dev/null
+  antes="$(q "$1" "$sql")" || { echo FALHOU; return; }
+  r="$(PA -q -tA -d "$1" -c "SET plan_cache_mode = $3" -c "SELECT tint_promote_sync_run('$2')->>'ok'" 2>&1)" \
+    || { echo "    (promoção $2 em $1 falhou: $r)" >&2; echo FALHOU; return; }
+  [ "$r" = "true" ] || { echo "    (promoção $2 em $1: ok=[$r])" >&2; echo FALHOU; return; }
+  r="$(q "$1" "$5")" || { echo FALHOU; return; }
+  [ "$r" = "t" ] || { echo "    (promoção $2 em $1 sem o efeito esperado)" >&2; echo FALHOU; return; }
   sleep 1
-  depois="$(q "$1" "$sql")"
+  depois="$(q "$1" "$sql")" || { echo FALHOU; return; }
   echo $((depois - antes))
 }
+cabe() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -le "$2" ]; }   # delta numérico E dentro do teto
+# O efeito de cada run medido: o catálogo BIG com a descrição DESTE run, a fórmula KX deste run promovida.
+promoveu_cat() { echo "SELECT (SELECT count(*) FROM tint_produtos WHERE descricao LIKE '% novo$1') = 10
+                          AND (SELECT count(*) FROM tint_bases WHERE descricao LIKE '% novo$1') = 20
+                          AND (SELECT count(*) FROM tint_corantes WHERE descricao LIKE '% novo$1') = 26"; }
+promoveu_formula() { echo "SELECT count(*) = 1 FROM tint_formulas WHERE cor_id = 'KX$1' AND desativada_em IS NULL"; }
 CATALOGO='^tint_staging_(produtos|bases|embalagens|corantes|skus)$'
 
 # Run de catálogo BIG com 1 linha por chave (o reenvio do ciclo) e run de fórmula que expande em BIG.
@@ -267,13 +286,13 @@ seed_big() {   # $1 = banco, $2 = sufixo do run (dígito)
 INSERT INTO tint_sync_runs (id, setting_id, account, store_code, sync_type, status)
 VALUES ('33333333-0000-0000-0000-00000000000$2','aaaaaaaa-0000-0000-0000-000000000002','oben','BIG','catalogs','complete');
 INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
-SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KP' || k, 'KP' || k || ' novo' FROM generate_series(0, 9) k;
+SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KP' || k, 'KP' || k || ' novo$2' FROM generate_series(0, 9) k;
 INSERT INTO tint_staging_bases (sync_run_id, account, store_code, id_base_sayersystem, descricao)
-SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KB' || k, 'KB' || k || ' novo' FROM generate_series(0, 19) k;
+SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KB' || k, 'KB' || k || ' novo$2' FROM generate_series(0, 19) k;
 INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
 SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KE' || k, 'KE' || k, 900 FROM generate_series(0, 3) k;
 INSERT INTO tint_staging_corantes (sync_run_id, account, store_code, id_corante_sayersystem, descricao, preco_litro, volume_ml)
-SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KC' || k, 'KC' || k || ' novo', 50, 1000 FROM generate_series(0, 25) k;
+SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KC' || k, 'KC' || k || ' novo$2', 50, 1000 FROM generate_series(0, 25) k;
 INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
 SELECT '33333333-0000-0000-0000-00000000000$2','oben','BIG','KP' || (k % 10), 'KB' || (k / 10), 'KE0' FROM generate_series(0, 59) k;
 SQL
@@ -306,15 +325,16 @@ v="$(q ref "SELECT string_agg(x, ';' ORDER BY x) FROM (
   UNION ALL SELECT 'E900=' || volume_ml FROM tint_embalagens WHERE id_embalagem_sayersystem = 'E900'
   UNION ALL SELECT 'AX=' || descricao || '/' || preco_litro FROM tint_corantes WHERE id_corante_sayersystem = 'AX'
   UNION ALL SELECT 'X=' || count(*) || '/' || count(preco_final_sayersystem) FROM tint_formulas WHERE cor_id = 'X') s")"
-ESPERADO_REF='AX=AX v2/12;B1=B1 empate vence;E900=950;P1=P1 v2;P2=P2 v1;P8P9=0;X=2/2'
+ESPERADO_REF='AX=AX v2/12;B1=B1 empate vence;E900=950;P1=P1 v2;P2=P2 v1;P8P9=0;X=3/3'
 [ "$v" = "$ESPERADO_REF" ] || { echo "✗ cenário: a referência não exibe os casos de borda: [$v] ≠ [$ESPERADO_REF]"; exit 1; }
 echo "  · referência (promote antigo): $IMP_REF — $v"
 
 seed_big ref 1
-REF_CAT="$(blocos ref 33333333-0000-0000-0000-000000000001 auto "$CATALOGO")"
+REF_CAT="$(blocos ref 33333333-0000-0000-0000-000000000001 auto "$CATALOGO" "$(promoveu_cat 1)")"
 seed_big_formula ref 1
-REF_PRECO="$(blocos ref 44444444-0000-0000-0000-000000000001 auto '^tint_staging_corantes$')"
-[ "$REF_CAT" -gt $((TETO_CATALOGO * 3)) ] && [ "$REF_PRECO" -gt $((TETO_PRECO * 3)) ] \
+REF_PRECO="$(blocos ref 44444444-0000-0000-0000-000000000001 auto '^tint_staging_corantes$' "$(promoveu_formula 1)")"
+[[ "$REF_CAT" =~ ^[0-9]+$ ]] && [[ "$REF_PRECO" =~ ^[0-9]+$ ]] \
+  && [ "$REF_CAT" -gt $((TETO_CATALOGO * 3)) ] && [ "$REF_PRECO" -gt $((TETO_PRECO * 3)) ] \
   || { echo "✗ controle: o promote ANTIGO devia estourar os tetos (catálogo $REF_CAT vs $TETO_CATALOGO, preço $REF_PRECO vs $TETO_PRECO)"; exit 1; }
 echo "  · promote antigo: catálogo BIG = $REF_CAT blocos de staging, fórmula BIG = $REF_PRECO blocos de corantes"
 
@@ -335,12 +355,12 @@ suite() {
   if seed "$db" 2>"$TMP/$db.seed.log" && [ "$(impressao "$db")" = "$IMP_REF" ]; then :; else cai EQUIV; fi
 
   local c1 c2 p1
-  seed_big "$db" 1; c1="$(blocos "$db" 33333333-0000-0000-0000-000000000001 force_custom_plan "$CATALOGO")"
-  seed_big "$db" 2; c2="$(blocos "$db" 33333333-0000-0000-0000-000000000002 force_generic_plan "$CATALOGO")"
-  [ "$c1" -le "$TETO_CATALOGO" ] && [ "$c2" -le "$TETO_CATALOGO" ] \
+  seed_big "$db" 1; c1="$(blocos "$db" 33333333-0000-0000-0000-000000000001 force_custom_plan "$CATALOGO" "$(promoveu_cat 1)")"
+  seed_big "$db" 2; c2="$(blocos "$db" 33333333-0000-0000-0000-000000000002 force_generic_plan "$CATALOGO" "$(promoveu_cat 2)")"
+  cabe "$c1" "$TETO_CATALOGO" && cabe "$c2" "$TETO_CATALOGO" \
     || { cai LEITURA; echo "    (LEITURA: custom $c1, genérico $c2, teto $TETO_CATALOGO)" >&2; }
-  seed_big_formula "$db" 1; p1="$(blocos "$db" 44444444-0000-0000-0000-000000000001 auto '^tint_staging_corantes$')"
-  [ "$p1" -le "$TETO_PRECO" ] || { cai LEITURA_PRECO; echo "    (LEITURA_PRECO: $p1, teto $TETO_PRECO)" >&2; }
+  seed_big_formula "$db" 1; p1="$(blocos "$db" 44444444-0000-0000-0000-000000000001 auto '^tint_staging_corantes$' "$(promoveu_formula 1)")"
+  cabe "$p1" "$TETO_PRECO" || { cai LEITURA_PRECO; echo "    (LEITURA_PRECO: $p1, teto $TETO_PRECO)" >&2; }
   echo "    · $db: catálogo BIG custom=$c1 genérico=$c2 · fórmula BIG=$p1" >&2
 
   v="$(q "$db" "SELECT has_function_privilege('anon', 'public.tint_promote_sync_run(uuid)', 'EXECUTE')::text
