@@ -90,8 +90,8 @@ export function calcularPme(estoque: number | null, cmvTtm: number | null, cober
  *  fecham faixa (NaN, ≥ 0, < 1e8; cmv > 0, < 1e9) e exigem o par valor↔fonte: um valor que a tabela recusaria
  *  derrubaria o snapshot INTEIRO (e os alertas) — então ele vira ausência (null + null) ANTES do INSERT,
  *  nunca número fora de faixa (Codex, 2026-10-31). */
-export const SERIE_ESTOQUE_TETO = 100_000_000;
-export const SERIE_CMV_TETO = 1_000_000_000;
+const SERIE_ESTOQUE_TETO = 100_000_000;
+const SERIE_CMV_TETO = 1_000_000_000;
 export function colunasSerieEstoque(d: {
   estoque_valor: number | null; estoque_fonte: 'manual' | 'omie' | null; estoque_cobertura_ok: boolean; cmv_ttm: number | null;
 }): { estoque_valor: number | null; estoque_fonte: 'manual' | 'omie' | null; estoque_cobertura_ok: boolean | null; cmv_ttm: number | null } {
