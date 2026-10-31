@@ -5,7 +5,7 @@ import { agruparPorCor, contagemDoBadge, type CorRejeitada, type LinhaDeErro } f
 
 const ACCOUNT = 'oben';
 
-export type FormulasRejeitadas = {
+type FormulasRejeitadas = {
   /** Quando o último run de fórmulas começou — a janela termina nele. */
   runEm: string | null;
   /** Soma de `tint_sync_runs.errors` na janela — pode ser >0 com a lista vazia (detalhe faltou). */
