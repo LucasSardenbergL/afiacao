@@ -551,6 +551,30 @@ PY
   eq E3 "$(meta chaves_sem_preco)" "$(echo "$eqr" | cut -d'|' -f3)"   # S1 gravado = S1 pela view
   eq E4 "$(meta universo)" "$(echo "$eqr" | cut -d'|' -f4)"           # universo gravado = pelo IN
   eq E5 "$(echo "$eqr" | cut -d'|' -f5)" "274/455"                   # não-vacuidade: medido (274 sem preço de 455)
+  # o MESMO S1 nas outras duas exposições: a série e o alerta
+  eq E6 "$(Pq -c "SELECT s1_sem_preco FROM tint_watchdog_fase5_amostras ORDER BY medido_em DESC LIMIT 1")" "$(meta chaves_sem_preco)"
+  eq E7 "$(ctx tint_fase5_chave_sem_preco chaves)" "$(meta chaves_sem_preco)"
+
+  # V1: a view mudou → a função ABORTA, sem amostra e sem marcador (o dead-man cruzado é quem alarma)
+  local antes saida
+  antes="$(Pq -c "SELECT last_sync_at FROM sync_state WHERE entity_type='tint_watchdog_fase5'")"
+  P -c "DO \$v\$ BEGIN EXECUTE 'CREATE OR REPLACE VIEW public.v_tint_formula_canonica AS SELECT * FROM ('
+          || rtrim(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true), '; ') || ') x'; END \$v\$;" >/dev/null
+  saida="$("$PGBIN/psql" -X -q -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 \
+            -c "SELECT public.tint_watchdog_fase5_check();" 2>&1 || true)"
+  eq V1 "$(printf '%s' "$saida" | grep -c 'v_tint_formula_canonica mudou')/$(Pq -c "SELECT last_sync_at FROM sync_state WHERE entity_type='tint_watchdog_fase5'")" "1/$antes"
+  P -f "$RODADA/view.sql" >/dev/null
+  P -c "SELECT _reset();" >/dev/null
+
+  # T999/T1000: o limiar de severidade do S1 (>= 1000 é crítico), sobre as 1.000 chaves da 'oben'
+  P -c "UPDATE tint_formula_itens SET corante_id='c0000000-0000-0000-0000-0000000000bb'
+         WHERE formula_id IN (SELECT id FROM tint_formulas WHERE account='oben'
+                                AND subcolecao_id='50000000-0000-0000-0000-0000000000a1' ORDER BY cor_id, id LIMIT 999);" >/dev/null
+  roda; eq T999 "$(meta chaves_sem_preco)/$(sev tint_fase5_chave_sem_preco)" "999/aviso"
+  P -c "UPDATE tint_formula_itens SET corante_id='c0000000-0000-0000-0000-0000000000bb'
+         WHERE formula_id IN (SELECT id FROM tint_formulas WHERE account='oben'
+                                AND subcolecao_id='50000000-0000-0000-0000-0000000000a1');" >/dev/null
+  roda; eq T1000 "$(meta chaves_sem_preco)/$(sev tint_fase5_chave_sem_preco)" "1000/critico"
   P -c "SELECT _reset();" >/dev/null
 
   EM_SUITE=
@@ -568,7 +592,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E3,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E3,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU p11_proconfig_nulo:APPLY!P11_FALHOU p9_le_a_view_em_maiusculas:APPLY!P9_FALHOU p10_job_so_cita_a_funcao:APPLY!P10_FALHOU p12_sem_guard_da_view:APPLY!P12_FALHOU guard_da_view_desligado:V1 s1_critico_estrito:T1000 s1_amostra_zerada:E6 s1_ctx_zerado:E7"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
@@ -637,6 +661,21 @@ pares_de() {
 SET enable_indexonlyscan TO 'off'
 SET work_mem TO '16MB'
 " "") ;;
+    p11_proconfig_nulo) PARES=("SET search_path TO 'public', 'pg_temp'
+-- v5:" "-- v5:" "SET enable_indexscan TO 'off'
+SET enable_indexonlyscan TO 'off'
+SET work_mem TO '16MB'
+" "") ;;
+    p9_le_a_view_em_maiusculas) PARES=("        LEFT JOIN v_ok v   -- o oráculo: o que o balcão consegue precificar hoje (CTE acima)" "        LEFT JOIN (SELECT account, sku_id, cor_id FROM V_TINT_FORMULA_CANONICA WHERE receita_valida) v") ;;
+    # o texto da migration fica intacto (troca inócua no NOTICE); quem mente é o cron, preparado antes
+    p10_job_so_cita_a_funcao) PARES=("  RAISE NOTICE 'tint_watchdog_fase5 v5: guard da view" "  RAISE NOTICE 'tint_watchdog_fase5 v5 (sab): guard da view") ;;
+    p12_sem_guard_da_view) PARES=("       IS DISTINCT FROM '9654cfa221f35b4d756fe3a6094bd267' THEN" "       IS DISTINCT FROM md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true)) THEN") ;;
+    guard_da_view_desligado) PARES=("  IF md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true))
+       IS DISTINCT FROM" "  IF false AND md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true))
+       IS DISTINCT FROM") ;;
+    s1_critico_estrito) PARES=("CASE WHEN v_s1 >= 1000 THEN 'critico'" "CASE WHEN v_s1 > 1000 THEN 'critico'") ;;
+    s1_amostra_zerada) PARES=("  VALUES (v_criterio, v_universo, v_s1, v_s2_bruto," "  VALUES (v_criterio, v_universo, 0, v_s2_bruto,") ;;
+    s1_ctx_zerado) PARES=("      jsonb_build_object('chaves', v_s1, 'universo', v_universo));" "      jsonb_build_object('chaves', 0, 'universo', v_universo));") ;;
     p9_volta_a_ler_a_view) PARES=("        LEFT JOIN v_ok v   -- o oráculo: o que o balcão consegue precificar hoje (CTE acima)" "        LEFT JOIN (SELECT account, sku_id, cor_id FROM v_tint_formula_canonica WHERE receita_valida) v") ;;
     p2b_corte_30d_volta) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING max(ks.generated_at) >= now() - interval '30 days'") ;;
     *) return 1 ;;
@@ -679,6 +718,9 @@ PY2
       # APPLY da tabela nova: ela ainda não pode existir (o 1º apply em prod) — é quando o default
       # privilege do Supabase a faz nascer aberta. Já criada, o IF NOT EXISTS não a recria e a
       # pós-condição não teria o que pegar (medido na 1ª falsificação).
+      if [ "$s" = p10_job_so_cita_a_funcao ]; then
+        P -c "UPDATE cron.job SET command = 'SELECT 1; -- tint_watchdog_fase5_check()' WHERE jobname = 'tint-watchdog-fase5-6h';" >/dev/null
+      fi
       if saida="$(P -1 -f "$alvo" 2>&1)"; then
         SAB_F=$((SAB_F+1)); echo "!! $s: o apply sabotado PASSOU — a pós-condição não morde"
       elif printf '%s\n' "$saida" | grep -qF "$marca"; then
@@ -704,6 +746,7 @@ PY2
         grep -E '^  XX' "$RODADA/sab_${s}.log" || true
       fi ;;
   esac
+  P -c "UPDATE cron.job SET command = 'SELECT public.tint_watchdog_fase5_check();' WHERE jobname = 'tint-watchdog-fase5-6h';" >/dev/null
   P -1 -f "$RODADA/mig5_sem_pre.sql"   # restaura a real (sem a PRE: o vivo é o sabotado)
 done
 

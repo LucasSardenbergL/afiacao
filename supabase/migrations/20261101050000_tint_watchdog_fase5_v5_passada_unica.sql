@@ -40,11 +40,16 @@ DECLARE
   v_vivo text := (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
                    WHERE p.oid = to_regprocedure('public.tint_watchdog_fase5_check()'));
 BEGIN
-  IF v_vivo IS NULL OR v_vivo NOT IN ('48c49303017a36b2ff287c6241421c5c', 'c0b6f37f9ecc132bd14a295f6b724101') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('48c49303017a36b2ff287c6241421c5c', 'c9455ef40533517cf7c98759e36bd011') THEN
     RAISE EXCEPTION 'PRE FALHOU: tint_watchdog_fase5_check() vivo (md5 %) não é a v4 revisada nem esta v5', v_vivo;
   END IF;
-  IF to_regprocedure('public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb,numeric)') IS NULL THEN
-    RAISE EXCEPTION 'PRE FALHOU: o helper _tint_watchdog_fase5_transicao v2 não existe';
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p
+                  WHERE p.oid = to_regprocedure('public._tint_watchdog_fase5_transicao(text,text,bigint,text,text,text,jsonb,numeric)')
+                    AND position('tint_watchdog_fase5 helper v2' IN p.prosrc) > 0) THEN
+    RAISE EXCEPTION 'PRE FALHOU: o helper _tint_watchdog_fase5_transicao vivo não é a v2';
+  END IF;
+  IF md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true)) IS DISTINCT FROM '9654cfa221f35b4d756fe3a6094bd267' THEN
+    RAISE EXCEPTION 'PRE FALHOU: v_tint_formula_canonica viva não é a revisada (o S1 da v5 copia o predicado dela)';
   END IF;
 END
 $pre$;
@@ -92,6 +97,16 @@ BEGIN
   -- SAI SEM avançar o marcador — e o marcador parado é o que faz o dead-man cruzado alarmar.
   IF NOT pg_try_advisory_xact_lock(hashtext('tint_watchdog_fase5')) THEN
     RETURN;
+  END IF;
+
+  -- v5: o oráculo do S1 (CTE receita_ok) COPIA o predicado de corante de v_tint_formula_canonica.
+  -- A view mudou (md5 do pg_get_viewdef ≠ o revisado em 2026-11-01)? ABORTA: sem amostra e sem
+  -- marcador, e o dead-man cruzado (>13 h) alarma. Nunca segue com a cópia velha: o S1 diria
+  -- "precifica" para chave que o balcão recusa (parecer Codex v5, P2).
+  IF md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true))
+       IS DISTINCT FROM '9654cfa221f35b4d756fe3a6094bd267' THEN
+    RAISE EXCEPTION 'tint_watchdog_fase5 v5: v_tint_formula_canonica mudou (md5 %): o S1 copia o predicado de corante dela; revise o CTE receita_ok e recrie o watchdog',
+      md5(pg_get_viewdef('public.v_tint_formula_canonica'::regclass, true));
   END IF;
 
   -- ── UMA FOTOGRAFIA SÓ (challenge Codex v4, P1-2) ──────────────────────────────────────────
@@ -475,17 +490,24 @@ BEGIN
     RAISE EXCEPTION 'P6 FALHOU: anon/authenticated executam o watchdog ou o helper';
   END IF;
   -- v5: a leitura cara não pode voltar (comentário pode citar a view; código não)
-  IF position('v_tint_formula_canonica' IN regexp_replace(v_src, '--[^\n]*', '', 'g')) > 0 THEN
+  IF lower(regexp_replace(v_src, '--[^\n]*', '', 'g')) ~ '(from|join)\s+("?public"?\.)?"?v_tint_formula_canonica' THEN
     RAISE EXCEPTION 'P9 FALHOU: a v5 voltou a LER v_tint_formula_canonica (SubPlan por formula, 4,7 GB no Mini)';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'tint-watchdog-fase5-6h' AND active
-                    AND command LIKE '%tint_watchdog_fase5_check()%') THEN
-    RAISE EXCEPTION 'P10 FALHOU: o cron tint-watchdog-fase5-6h não está ativo chamando a função';
+  -- exatamente 1 job, ativo, na cadência de 6 h e com o comando INTEIRO (não basta citar a função)
+  IF (SELECT count(*) FROM cron.job WHERE jobname = 'tint-watchdog-fase5-6h') <> 1
+     OR NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'tint-watchdog-fase5-6h' AND active
+                       AND schedule = '0 */6 * * *'
+                       AND command ~ '^\s*(SET statement_timeout = ''[0-9]+min''; )?SELECT public\.tint_watchdog_fase5_check\(\);\s*$') THEN
+    RAISE EXCEPTION 'P10 FALHOU: o cron tint-watchdog-fase5-6h não é 1 job ativo, 0 */6 * * *, chamando só a função';
   END IF;
-  IF NOT (SELECT p.proconfig @> ARRAY['enable_indexscan=off', 'enable_indexonlyscan=off', 'work_mem=16MB']
-            FROM pg_proc p WHERE p.oid = v_oid) THEN
+  IF (SELECT p.proconfig @> ARRAY['enable_indexscan=off', 'enable_indexonlyscan=off', 'work_mem=16MB']
+        FROM pg_proc p WHERE p.oid = v_oid) IS NOT TRUE THEN
     RAISE EXCEPTION 'P11 FALHOU: a funcao perdeu a config do plano (sem ela volta o Index Scan da tabela inteira)';
   END IF;
-  RAISE NOTICE 'tint_watchdog_fase5 v5: config do plano, marcador v5, S4/S5, sem corte de 30d, definer, ACL, sem leitura da view, cron ativo';
+  IF position('9654cfa221f35b4d756fe3a6094bd267' IN v_src) = 0
+     OR position('RAISE EXCEPTION ''tint_watchdog_fase5 v5: v_tint_formula_canonica mudou' IN v_src) = 0 THEN
+    RAISE EXCEPTION 'P12 FALHOU: o guard da view revisada saiu da função (a cópia do predicado ficaria sem âncora)';
+  END IF;
+  RAISE NOTICE 'tint_watchdog_fase5 v5: guard da view, config do plano, marcador v5, S4/S5, sem corte de 30d, definer, ACL, sem leitura da view, cron ativo';
 END
 $post$;
