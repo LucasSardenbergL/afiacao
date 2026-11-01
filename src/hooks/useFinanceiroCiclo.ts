@@ -7,7 +7,11 @@ import { fetchAllPages } from '@/lib/postgrest';
 import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
+import { normalizarCustoCapital, type CustoCapital } from '@/lib/financeiro/ciclo-desconto-helpers';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
+import {
+  normalizarSemanaPedidos, normalizarSemanaPrateleira, type SemanaPedidos, type SemanaPrateleira,
+} from '@/lib/financeiro/ruptura-sensor-helpers';
 
 export function hojeSp(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
@@ -179,6 +183,58 @@ export function useCicloGiroSku(company: Company) {
         'fin_ciclo_giro_sku',
       );
       return linhas.map(normalizarGiro).filter((l): l is GiroSku => l !== null);
+    }),
+  });
+}
+
+export type RupturaSensor = { pedidos: SemanaPedidos[]; prateleira: SemanaPrateleira[] };
+
+/** Sensor de ruptura da Oben (migration 20261031200000): as duas views semanais, ordem estável por semana.
+ *  Erro de leitura LANÇA; linha ilegível é descartada (ausente ≠ zero). Só a Oben tem o sensor. */
+export function useRupturaSensor() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'ruptura-sensor'],
+    retryDelay: retryDelayCiclo,
+    // Cada view toma a PRÓPRIA vaga da fila (uma vaga com 2 leituras dentro furava o teto de 2 RPCs em voo —
+    // o `CicloTab.carga.test` mede o pico).
+    queryFn: async (): Promise<RupturaSensor> => {
+      const [pedidos, prateleira] = await Promise.all([
+        filaCiclo(() => fetchAllPages(
+          (de, ate) =>
+            supabase.from('v_reposicao_ruptura_pedidos_semana').select('*')
+              .eq('empresa', 'oben').order('semana', { ascending: true }).range(de, ate),
+          'v_reposicao_ruptura_pedidos_semana',
+        )),
+        filaCiclo(() => fetchAllPages(
+          (de, ate) =>
+            supabase.from('v_reposicao_ruptura_prateleira_semana').select('*')
+              .eq('empresa', 'oben').order('semana', { ascending: true }).range(de, ate),
+          'v_reposicao_ruptura_prateleira_semana',
+        )),
+      ]);
+      return {
+        pedidos: pedidos.map((r) => normalizarSemanaPedidos(r as Record<string, unknown>)).filter((s): s is SemanaPedidos => s !== null),
+        prateleira: prateleira.map((r) => normalizarSemanaPrateleira(r as Record<string, unknown>)).filter((s): s is SemanaPrateleira => s !== null),
+      };
+    },
+  });
+}
+
+/**
+ * Custo do dinheiro por empresa (Frente B, PR3): `fin_funding_inputs.custo_capital_mensal` pela RPC gateada
+ * (master). Erro LANÇA; empresa sem CET vem com `custoMensal: null` — o painel mostra "—", nunca 0.
+ */
+export function useCicloCustoCapital() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'custo-capital'],
+    retryDelay: retryDelayCiclo,
+    // RPC set-returning pagina pelo canônico (3 linhas hoje, mas a capa de 1.000 do PostgREST é silenciosa).
+    queryFn: (): Promise<CustoCapital[]> => filaCiclo(async () => {
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('fin_ciclo_custo_capital').select('*').order('company', { ascending: true }).range(de, ate),
+        'fin_ciclo_custo_capital',
+      );
+      return linhas.map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
     }),
   });
 }

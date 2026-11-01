@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-01T01:11:38.271Z",
-  "sourceHead": "c52e6b245d77a6480a26957c56147775a95decac",
+  "medidoEm": "2026-11-01T02:26:48.952Z",
+  "sourceHead": "3d3a7d19d77851f54ffcb72eee4cd578d3fbe331",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -13,8 +13,8 @@
       "script": "authz:funcoes:prod",
       "exit": 1,
       "resumo": "authz:funcoes:prod — 4 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 71 definição(ões) lida(s) para 74 chave(s) da allowlist.",
-      "contratoFingerprint": "4d3a549ff8a2778078881118090e7525c3d048f719fb322c20ad6d600499a465",
+      "denominador": "🔎 authz:funcoes:prod — 72 definição(ões) lida(s) para 75 chave(s) da allowlist.",
+      "contratoFingerprint": "e9160f6198f0f9583576a7b56e92e7e8d36c1b46a4ae08b2c252be20435257b3",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": [
         {
@@ -108,8 +108,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 8 divergência(s) em prod (8 AUSENTE) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 453 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@0127ed425 (fetch ok) · prod 2026-11-01 01:12:03.233684Z",
+      "resumo": "deriva-corpo — 9 divergência(s) em prod (9 AUSENTE) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 457 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@710d5be83 (fetch ok) · prod 2026-11-01 02:27:15.21193Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [
@@ -158,6 +158,12 @@
         {
           "id": "4790bb95cdd13885",
           "linha": "❌ [AUSENTE] cobranca_regua_hoje(text): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "59f0c414e06186d7",
+          "linha": "❌ [AUSENTE] fin_ciclo_custo_capital(): viva no repo (último CREATE: 20261031220000_fin_funding_cet_oben.sql) e ausente em prod — migration não aplicada ou DROP manual",
           "primeiraVez": "2026-11-01",
           "ultimaVez": "2026-11-01"
         }

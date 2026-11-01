@@ -363,6 +363,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_FECHADA,
     motivo: 'job de desfecho da venda por cliente (lê unit_price/desconto) — só cron/service_role',
   },
+  'public._reposicao_ruptura_saldo_oben': {
+    fechadaPor: '20261031200000_reposicao_ruptura_sensor.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'helper do sensor de ruptura da Oben (lê inventory_position/sku_estoque_atual como DEFINER) — só o trigger de order_items e o cron da prateleira',
+  },
   'private.margem_cliente_agregada': {
     fechadaPor: '20260726160000_margem_reconciliacao_universo_unico.sql',
     permitido: PORTA_FECHADA,
