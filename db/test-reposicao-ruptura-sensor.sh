@@ -241,6 +241,7 @@ sabotar "pedido do app registrado (2 camadas)" "s/  WHEN (NEW.hash_payload IS NO
 sabotar "pedido de outra empresa registrado" "s/OR v_so.account IS DISTINCT FROM 'oben'//" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
 # Universo de pedidos (20261031200100): o par status/deleted_at na leitura do trigger e no denominador da view.
 # Duas camadas cada: o par E a postcondição que o vigia (P1/P2) — tirar só o par fica vermelho pela postcondição.
+# shellcheck disable=SC2016  # o `$fn$` é o delimitador literal do corpo da função, não expansão
 FN='/FUNCTION public.reposicao_ruptura_registrar_item/,/^\$fn\$;/'
 VW='/VIEW public.v_reposicao_ruptura_pedidos_semana/,/LEFT JOIN imp USING/'
 sabotar "PV cancelado registrado (2 camadas)" "$FN s/^     AND so.status NOT IN ('cancelado', 'rascunho', 'pendente', 'orcamento')\$//; s/IF v_fn NOT LIKE '%so.deleted_at IS NULL%' OR v_fn NOT LIKE/IF false AND v_fn NOT LIKE/" "FALHOU: so PV importado da oben no universo registra (8 itens) |"
