@@ -179,6 +179,11 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'plano de execução da decisão do Raio-X (piso, canal, responsável, prazo); gate private.cap_custo_ler',
   },
+  'public.raio_x_inequivoco': {
+    fechadaPor: '20261101190000_raio_x_inequivoco_definer.sql',
+    permitido: PORTA_GATE,
+    motivo: 'veredito "liquidar só o inequívoco" do Raio-X (DEFINER desde 20261101190000); gate private.cap_custo_ler',
+  },
   // 2026-11-01 — "segurar compra" escreve no motor (migration 20261101090000): gate cap_compras_ler (leituras) /
   // cap_compras_escrever (writer) INLINE; a foto interna fecha por PRIVILÉGIO (postcondição mede anon/authenticated).
   'public.reposicao_compra_suspensa_candidatos': {

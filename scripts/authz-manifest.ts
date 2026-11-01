@@ -65,6 +65,13 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
     motivo: 'plano de execução da decisão do Raio-X (preço piso, canal, responsável, prazo, executado)',
   },
+  // 2026-11-01 — veredito "inequívoco" do Raio-X (20261101190000): nasceu INVOKER e dava 403 em prod (chama o helper
+  // interno _fin_estoque_classe, fechado para authenticated); virou DEFINER com o mesmo gate de custo do raio_x_decidir.
+  'public.raio_x_inequivoco': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_custo_ler' }] },
+    motivo: 'veredito "liquidar só o inequívoco" do Raio-X (cobertura, entradas, qtd liquidável por SKU)',
+  },
   // 2026-11-01 — "segurar compra" escreve no motor (Frente C PME/PMR, migration 20261101090000). Lê
   // inventory_position (saldo×cmc) e fornecedor como DEFINER para a foto da decisão e a coorte; o lote em massa
   // (envelope, sessão direta sem JWT) passa pelo mesmo corpo. Gate = cap_compras_ler (leituras) /
