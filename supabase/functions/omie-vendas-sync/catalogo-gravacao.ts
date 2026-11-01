@@ -16,6 +16,8 @@
 //
 // Separado do index.ts para ser testável no Deno sem o resto da edge (catalogo-gravacao_test.ts).
 
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
+
 /** O subconjunto do SupabaseClient que este módulo usa — facilita o duplo de teste. */
 export interface ClienteUpsert {
   from(tabela: string): {
@@ -73,7 +75,7 @@ function resumoFalhas(falhas: FalhasCatalogo): string {
  */
 export function erroComFalhasAcumuladas(erro: unknown, falhas: FalhasCatalogo): unknown {
   if (falhas.paginas.length === 0) return erro;
-  const mensagem = erro instanceof Error ? erro.message : String(erro);
+  const mensagem = mensagemDeErro(erro) ?? "erro sem mensagem";
   return new Error(`${resumoFalhas(falhas)} — e o run abortou depois: ${mensagem}`);
 }
 
