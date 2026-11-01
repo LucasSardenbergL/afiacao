@@ -826,6 +826,11 @@ db/test-venda-lista-lente.sh               26  falsificar=8
 # n_compradores = a última leitura; READ ONLY não derruba a lista (só 25006 é engolido; 23514 sobe); RLS só
 # master; saída byte-idêntica ao oráculo das Ondas 2–3; a PÓS prova a escrita na prod em subtransação desfeita.
 db/test-venda-lista-acesso.sh              38  falsificar=11
+# Aviso + decisão de prazo no pedido (20261031200000, Frente B Oben PME/PMR PR1): venda_prazo_aviso espelha a regra
+# `vencida_aberta` da view do Ciclo (paridade EXECUTADA com a migration real das views), gate staff; a decisão tem 1
+# writer (RPC) que confere pedido↔conta↔cliente no servidor, relê o vencido, deduplica por (pedido, conta) e grava
+# `venda.prazo_sugerido` no outbox com chave = id da decisão; RLS: vendedora só lê a sua, master tudo.
+db/test-venda-prazo-decisao.sh             60  falsificar=15
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
