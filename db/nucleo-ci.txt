@@ -656,8 +656,9 @@ db/test-tint-fase5-watchdog-v4.sh           41  falsificar=21
 # v5 (20261101050000): o MESMO watchdog com universo e oráculo do S1 em passada única + config do plano
 # na função — no Mini a v4 lia 8,1 GB/execução e estourou o timeout. Roda a suíte da v4 contra a v5 e
 # compara os CTEs extraídos da migration com a VIEW REAL numa fixture de 600 chaves (9 estados de
-# corante). ~4 s normal, ~85 s no --falsificar (controle verde + 31 sabotagens de conjunto exato).
-db/test-tint-fase5-watchdog-v5.sh           42  falsificar=31
+# corante), o guard da view em runtime e o limiar do S1. ~5 s normal, ~105 s no --falsificar (controle
+# verde + 39 sabotagens de conjunto exato, 7 delas de pós-condição que exigem o apply ABORTAR).
+db/test-tint-fase5-watchdog-v5.sh           47  falsificar=39
 # O promote para de ressuscitar fórmula de cor que a FONTE retirou (20261013150000) — money-path. Em
 # 13/10, 26.180 fórmulas de 6.545 cores ausentes do snapshot de chaves estavam ATIVAS, canônicas e
 # com receita válida (9.164 com preço final no balcão): o promote reexpandia o staging antigo do par
