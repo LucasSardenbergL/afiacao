@@ -7,6 +7,7 @@ import { fetchAllPages } from '@/lib/postgrest';
 import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
+import { normalizarCustoCapital, type CustoCapital } from '@/lib/financeiro/ciclo-desconto-helpers';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 import {
   normalizarSemanaPedidos, normalizarSemanaPrateleira, type SemanaPedidos, type SemanaPrateleira,
@@ -314,6 +315,25 @@ export function useCrAbertoTotal() {
       const out = {} as Record<Company, number>;
       for (const c of ALL_COMPANIES) out[c] = await somarSaldoAberto('fin_contas_receber', c);
       return out;
+    }),
+  });
+}
+
+/**
+ * Custo do dinheiro por empresa (Frente B, PR3): `fin_funding_inputs.custo_capital_mensal` pela RPC gateada
+ * (master). Erro LANÇA; empresa sem CET vem com `custoMensal: null` — o painel mostra "—", nunca 0.
+ */
+export function useCicloCustoCapital() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'custo-capital'],
+    retryDelay: retryDelayCiclo,
+    // RPC set-returning pagina pelo canônico (3 linhas hoje, mas a capa de 1.000 do PostgREST é silenciosa).
+    queryFn: (): Promise<CustoCapital[]> => filaCiclo(async () => {
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('fin_ciclo_custo_capital').select('*').order('company', { ascending: true }).range(de, ate),
+        'fin_ciclo_custo_capital',
+      );
+      return linhas.map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
     }),
   });
 }
