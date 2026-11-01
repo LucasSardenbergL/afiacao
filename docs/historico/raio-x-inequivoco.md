@@ -74,3 +74,17 @@ inequívoco passa; trocar passa; re-salvar antigo passa; voltar a liquidar é no
 cliente de 8 args, desconto NULL sem médio); medição com contrapartida; re-aplicação idempotente (PRE aceita o próprio
 corpo); bases congeladas (fontes mudam, mesmo piso não relê); cliente de 8 args preserva frete/contrapartida; **13
 falsificações** com o FALHOU específico. Em `LOCALE=C` e `pt_BR.UTF-8`.
+
+## Apply em prod (2026-11-01, founder: "Sim, ensaio e apply")
+
+- Pré-voo psql-ro: os 22 objetos referenciados existem; `raio_x_decidir` vivo com md5 `3f803bd3…` (= 20261016120000, PRE
+  aceita); `raio_x_medicao` vivo com o retorno da 20261031130000 (o novo só acrescenta `troca_contrapartida` no fim);
+  assinatura de 8 args de `raio_x_planejar` presente. `wt:preflight --full` 🟡 (só evolução serial de migrations commitadas).
+- Arquivo sem `BEGIN;/COMMIT;` para o executor (commit `e6067a5fa`); prova PG17 verde de novo em `LC_ALL=C` e `pt_BR.UTF-8`.
+- `bun run db:aplicar … --ensaio`: inteiro + `RAIO-X-INEQUIVOCO-OK` + ROLLBACK. Apply: **recibo #843**, sha256 `c98ad6f3…`.
+- 2ª testemunha psql-ro: 4 funções com ACL desenhada (anon/public não, authenticated sim; inequívoco/medição INVOKER,
+  planejar/decidir DEFINER), assinatura velha de planejar removida, decidir com md5 `307b5777…`, 6 colunas + 2 constraints
+  validadas, **17 decisões existentes intactas (10 liquidar)** — RX004 só recusa liquidação NOVA.
+- O número de inequívocos não foi lido: o gate `cap_custo_ler(auth.uid())` exige staff real e não forjei claims para um
+  relatório. **Próximo sinal (query, não recado)**: depois do Publish, a tela mostra o total; conferir que liquidar um SKU
+  "aguarda" devolve RX004 e que `raio_x_decisao` ganha `frete_estimado`/`troca_contrapartida` no 1º plano salvo.
