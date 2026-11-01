@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 747
+-- Total de custom migrations: 748
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -811,7 +811,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101120000', 'fin_ciclo_coorte_maturacao', '20261101120000_fin_ciclo_coorte_maturacao.sql'),
   ('20261101120000', 'raio_x_inequivoco', '20261101120000_raio_x_inequivoco.sql'),
   ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
-  ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql')
+  ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
+  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3244,7 +3245,11 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-continuacao-1min', ''),
   ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-semanal', ''),
   ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_select_staff', 'clientes_import_rodada'),
-  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada')
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5725,7 +5730,11 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-continuacao-1min', ''),
   ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-semanal', ''),
   ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_select_staff', 'clientes_import_rodada'),
-  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada')
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
 )
 SELECT
   e.migration,

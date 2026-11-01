@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **747** custom migrations totais
-- **2467** objetos esperados (criados por estas migrations)
+- **748** custom migrations totais
+- **2471** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 934
   - `rls_policy`: 515
-  - `index`: 334
+  - `index`: 338
   - `table`: 225
   - `cron_job`: 205
   - `view`: 131
@@ -6137,6 +6137,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `cron_job` | `cron.clientes-import-semanal` | — |
 | `rls_policy` | `public.clientes_import_rodada_select_staff` | `clientes_import_rodada` |
 | `rls_policy` | `public.clientes_import_rodada_service_all` | `clientes_import_rodada` |
+
+### `20261101201804_indices_lote7_seq_scans.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_sales_orders_customer_created` | `sales_orders` |
+| `index` | `public.idx_fin_sync_log_action_status_completed` | `fin_sync_log` |
+| `index` | `public.idx_tint_importacoes_account_created` | `tint_importacoes` |
+| `index` | `public.idx_addresses_user_id` | `addresses` |
 
 ## Próximos passos por status
 
