@@ -22434,6 +22434,66 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      cobranca_caso_registrar: { Args: { p: Json }; Returns: Json }
+      cobranca_fila: {
+        Args: { p_company: string }
+        Returns: {
+          atualizado_em: string | null
+          caso_id: string | null
+          company: string
+          dias_vencido_max: number | null
+          dona_nome: string | null
+          dona_user_id: string | null
+          estado: string
+          faixa: string | null
+          n_contatos: number
+          n_titulos_coorte: number | null
+          n_vencidas: number | null
+          nome_cliente: string | null
+          nota_atual: string | null
+          omie_codigo_cliente: number
+          pode_agir: boolean
+          promessa_data: string | null
+          promessa_id: string | null
+          promessa_situacao: string | null
+          promessa_valor: number | null
+          proximo_contato_em: string | null
+          saldo_inicial_coorte: number | null
+          saldo_atual_coorte: number | null
+          coorte_corte_em: string | null
+          saldo_vencido: number | null
+          ultimo_contato_em: string | null
+          pode_quitar: boolean
+          fechado_motivo: string | null
+        }[]
+      }
+      cobranca_regua_hoje: {
+        Args: { p_company: string }
+        Returns: {
+          caso_id: string | null
+          company: string
+          data_vencimento: string
+          dona_user_id: string | null
+          estado: string | null
+          marco: string
+          nome_cliente: string | null
+          numero_documento: string | null
+          omie_codigo_cliente: number
+          omie_codigo_lancamento: number
+          pode_agir: boolean
+          saldo: number
+          telefone: string | null
+        }[]
+      }
+      fin_ciclo_custo_capital: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          company: string
+          custo_capital_em: string | null
+          custo_capital_fonte: string | null
+          custo_capital_mensal: number | null
+        }[]
+      }
       fin_ciclo_giro_sku: {
         Args: { p_company: string }
         Returns: {
@@ -24513,6 +24573,11 @@ export type Database = {
         Args: { p_dia: string; p_fase: string }
         Returns: number
       }
+      venda_prazo_aviso: {
+        Args: { p_codigo: number; p_company: string }
+        Returns: Json
+      }
+      venda_prazo_decisao_registrar: { Args: { p: Json }; Returns: Json }
       venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
       venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
       venda_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
