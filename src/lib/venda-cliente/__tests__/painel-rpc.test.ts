@@ -101,9 +101,21 @@ const candidato = (over: Obj = {}): Obj => ({
   n_pedidos: 4,
   cadencia_dias: 30,
   qtd_sugerida: 20,
+  situacao_compra: 'comprando',
+  dias_sem_comprar: 12,
+  substituto: null,
   repasse_atual: null,
   ...over,
 });
+
+const substituto = {
+  omie_codigo_produto: 456,
+  codigo: 'PRD03666',
+  descricao: 'DILUENTE PU DFA.4080LT',
+  primeira_compra: '2026-06-24',
+  ultima_compra: '2026-10-27',
+  dias_com_compra: 7,
+};
 
 describe('lerCandidatos', () => {
   it('lê o candidato e ignora a evidência de custo extra (c_last/c_now)', () => {
@@ -130,6 +142,25 @@ describe('lerCandidatos', () => {
 
   it('empresa fora de oben LANÇA (repasse v1 é só oben)', () => {
     expect(() => lerCandidatos([candidato({ empresa: 'colacor' })])).toThrow(/empresa "colacor" fora do repasse v1/);
+  });
+
+  it('lê a situação de compra e o substituto', () => {
+    const [c] = lerCandidatos([
+      candidato({ situacao_compra: 'substituido', substituto, preco_sugerido: null, valor_anual_recuperavel: null }),
+    ]);
+    expect(c.situacao_compra).toBe('substituido');
+    expect(c.substituto).toEqual(substituto);
+    expect(lerCandidatos([candidato({ situacao_compra: null })])[0].situacao_compra).toBeNull();
+  });
+
+  it('situação desconhecida, ausente ou incoerente com o substituto LANÇA', () => {
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'trocado' })])).toThrow(/situacao_compra "trocado" desconhecida/);
+    const { situacao_compra: _s, ...semSituacao } = candidato();
+    expect(() => lerCandidatos([semSituacao])).toThrow(/sem "situacao_compra"/);
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido' })])).toThrow(/incoerente com o substituto/);
+    expect(() => lerCandidatos([candidato({ substituto })])).toThrow(/incoerente com o substituto/);
+    expect(() => lerCandidatos([candidato({ situacao_compra: 'substituido', substituto: { ...substituto, dias_com_compra: '7' } })]))
+      .toThrow(/substituto: "dias_com_compra" não é número/);
   });
 
   it('resposta que não é lista LANÇA', () => {
