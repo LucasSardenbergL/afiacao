@@ -223,3 +223,12 @@ Migration `20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql`. Wri
   - Até o deploy, os `fin_alertas` seguem sem a marca do saldo datado. Hoje isso não muda nada, porque as 40 contas estão frescas.
   - Para fechar: créditos no workspace, depois o Passo 2 do pacote (`bun run pendencias:pacote` de novo, se a `main` andou), a sonda (`bun run sonda:sql fin-cashflow-engine`) e `pendencias:deploy` com exit 0.
 - **Publish: pendente, e é do founder.** `src/` mudou o `CaixaCompraCard`. Até o Publish, o card antigo segue no ar, mas a RPC já devolve "indisponível" para o saldo velho desde o #3383.
+
+### Fecho (2026-11-01)
+
+- **Edge:** a v2.1 não precisou de deploy próprio. O #3477 (`f356f34e4`, 02:39 SP de 01/11) empilhou a `v2.2-serie-estoque-snapshot` sobre ela: o `index.ts` da v2.2 ainda chama `marcarAlertasDoSaldoDatado`, e o `versao.ts` registra v2.0 → v2.1 → v2.2. Nesse PR, uma sessão fez o deploy, e prod passou a servir a v2.2, atestada por sonda.
+  - `bun run pendencias:deploy`: **83 conferem**, `fin-cashflow-engine` incluída, e nenhuma pendência de deploy (`pendencias:pacote`: "nada pendente").
+  - O exit do comando é **1**, por causa de 8 linhas `IDENTIDADE_INCOERENTE`. São de outras edges (respostas de disparo que se identificaram como `analytics-outbox-drain`/`omie-sync-sku-items`), nenhuma da `fin-cashflow-engine`. É estado compartilhado, fora desta entrega.
+  - Os commits seguintes do bot (`fb6c963ee`, `a7fcee4ed`, 12:08Z) só tocaram `src/integrations/supabase/types.ts`. `git diff 93579508e origin/main` nos arquivos desta entrega mostra só a v2.2.
+- **Publish: feito.** O HTML de `steu.lovable.app` serve `/assets/index-BVrtji3i.js`, e o chunk `AdminReposicaoPedidos-jd_3zcwC.js` traz "Virada diária do saldo bancário", "hoje e fechamentos semanais", "não o dia a dia" e a chave `fin-projecao-13s`. Bytes = disponibilidade, não adoção: o PWA troca de build quando o cliente aceita a atualização.
+- **#3401 fechada** com o link do squash `93579508e`.
