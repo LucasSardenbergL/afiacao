@@ -18,6 +18,7 @@ ANCORA1="$REPO_ROOT/supabase/migrations/20261016120000_raio_x_estoque_parado.sql
 ANCORA2="$REPO_ROOT/supabase/migrations/20261031130000_raio_x_correcoes_pos_revisao.sql"
 ANCORA3="$REPO_ROOT/supabase/migrations/20261031180000_raio_x_plano_execucao.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261101120000_raio_x_inequivoco.sql"
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
 trap cleanup EXIT
