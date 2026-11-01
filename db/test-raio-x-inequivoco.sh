@@ -59,6 +59,9 @@ CREATE FUNCTION public._fin_estoque_classe(p_tipo text, p_familia text) RETURNS 
   SELECT CASE WHEN lower(trim(p_familia)) IN ('uso e consumo','imobilizado') THEN 'fora_giro'
               WHEN nullif(trim(p_tipo), '') IS NULL THEN 'sem_classificacao'
               WHEN trim(p_tipo) IN ('07','08','09','99') THEN 'fora_giro' ELSE 'giro' END $$;
+-- ACL de PROD (20261018200000:230): helper interno, SEM EXECUTE para authenticated. Sem isto o default privileges do
+-- harness o abria, e uma RPC INVOKER que o chama passava aqui e dava 42501 (403) em prod — o bug de 2026-11-01.
+REVOKE ALL ON FUNCTION public._fin_estoque_classe(text, text) FROM PUBLIC, anon, authenticated;
 CREATE TABLE public.inventory_position (omie_codigo_produto bigint, saldo numeric, cmc numeric, preco_medio numeric, account text, synced_at timestamptz);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, codigo text, descricao text, unidade text, ativo boolean, familia text,
   account text, tipo_produto text, metadata jsonb, created_at timestamptz);
