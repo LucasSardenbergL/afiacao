@@ -12,7 +12,7 @@ function linha(sku: number, extra: Partial<LinhaMedicao> = {}): LinhaMedicao {
   return {
     sku_codigo_omie: sku, destino: 'trocar', decidido_em: '2026-09-01T12:00:00Z',
     foto_saldo: 10, foto_cmc: 100, foto_valor: 1000, foto_categoria: 'mercadoria', credito_troca: null,
-    saldo_atual: 10, qtd_vendida: 0, receita: 0, preco_medio_12m: 50, compras_apos: [], ...extra,
+    saldo_atual: 10, qtd_vendida: 0, receita: 0, preco_medio_12m: 50, compras_apos: [], troca_contrapartida: null, ...extra,
   };
 }
 const codigos = new Map([[1, 'A1'], [2, 'A2'], [3, 'A3']]);

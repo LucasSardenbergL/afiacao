@@ -5,7 +5,7 @@ import type { LinhaMedicao } from '../tipos';
 const linha = (o: Partial<LinhaMedicao> = {}): LinhaMedicao => ({
   sku_codigo_omie: 1, destino: 'liquidar', decidido_em: null, foto_saldo: 10, foto_cmc: 5, foto_valor: 50,
   foto_categoria: 'mercadoria', credito_troca: null, saldo_atual: 10, qtd_vendida: 0, receita: 0,
-  preco_medio_12m: 10, compras_apos: [], ...o,
+  preco_medio_12m: 10, compras_apos: [], troca_contrapartida: null, ...o,
 });
 
 describe('medir (oben)', () => {
@@ -155,5 +155,19 @@ describe('medir — parcelas separadas, nunca "caixa"', () => {
     // foto 5, saiu 2, vendeu 4 a 10 → conta 2 unidades: receita 20, não 40
     const m = medir([linha({ foto_saldo: 5, foto_cmc: 1, saldo_atual: 3, qtd_vendida: 4, receita: 40, preco_medio_12m: 10 })], 'oben');
     expect(m.receita_vendas).toBe(20);
+  });
+});
+
+describe('troca_contrapartida (PR 2 — inequívoco)', () => {
+  it('encalhe sai do crédito que conta; sem contrapartida conta e é declarado', () => {
+    const m = medir([
+      linha({ sku_codigo_omie: 1, destino: 'trocar', credito_troca: 30, troca_contrapartida: 'encalhe' }),
+      linha({ sku_codigo_omie: 2, destino: 'trocar', credito_troca: 20, troca_contrapartida: 'giro' }),
+      linha({ sku_codigo_omie: 3, destino: 'trocar', credito_troca: 5, troca_contrapartida: null }),
+    ], 'oben');
+    expect(m.trocado).toBe(25);
+    expect(m.trocado_encalhe).toBe(30);
+    expect(m.trocado_sem_contrapartida).toBe(5);
+    expect(m.meta_liberado).toBe(25);
   });
 });

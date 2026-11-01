@@ -16,12 +16,15 @@ import type {
   Destino,
   Empresa,
   FatoSku,
+  InequivocoSku,
   LinhaMedicao,
+  TrocaContrapartida,
 } from './tipos';
 
 type Fns = Database['public']['Functions'];
 export type FatoRpc = Fns['raio_x_estoque_fatos']['Returns'][number];
 export type MedicaoRpc = Fns['raio_x_medicao']['Returns'][number];
+export type InequivocoRpc = Fns['raio_x_inequivoco']['Returns'][number];
 export type LinhaManual = ClassificacaoManual & { sku_codigo_omie: number };
 
 const CATEGORIAS: readonly Categoria[] = ['nao_mercadoria', 'uso_consumo', 'mercadoria'];
@@ -38,6 +41,10 @@ function exigirCanal(s: string, sku: number): CanalLiquidacao {
   const c = CANAIS.find((x) => x === s);
   if (!c) throw new Error(`raio-x: canal "${s}" desconhecido (SKU ${sku})`);
   return c;
+}
+function exigirContrapartida(s: string, sku: number): TrocaContrapartida {
+  if (s !== 'giro' && s !== 'encalhe') throw new Error(`raio-x: contrapartida "${s}" desconhecida (SKU ${sku})`);
+  return s;
 }
 function exigirEmpresa(s: string, sku: number): Empresa {
   if (s !== 'oben' && s !== 'colacor') throw new Error(`raio-x: empresa "${s}" fora de oben/colacor (SKU ${sku})`);
@@ -76,6 +83,12 @@ export function comoDecisaoRow(r: Tables<'raio_x_decisao'>): DecisaoRow {
     prazo: r.prazo ?? null,
     concluido_em: r.concluido_em ?? null,
     concluido_por: r.concluido_por ?? null,
+    frete_estimado: r.frete_estimado ?? null,
+    desconto_sobre_medio_pct: r.desconto_sobre_medio_pct ?? null,
+    margem_unit: r.margem_unit ?? null,
+    preco_medio_base: r.preco_medio_base ?? null,
+    cmc_base: r.cmc_base ?? null,
+    troca_contrapartida: r.troca_contrapartida == null ? null : exigirContrapartida(r.troca_contrapartida, r.sku_codigo_omie),
   };
 }
 
@@ -86,7 +99,23 @@ export function comoLinhaManual(r: Pick<Tables<'raio_x_classificacao_manual'>, '
 }
 
 export function comoLinhaMedicao(r: MedicaoRpc): LinhaMedicao {
-  return { ...r, destino: exigirDestino(r.destino, r.sku_codigo_omie) };
+  return {
+    ...r,
+    destino: exigirDestino(r.destino, r.sku_codigo_omie),
+    // coluna nova no fim da RPC: bundle antes da migration recebe undefined → null (não "giro" por omissão)
+    troca_contrapartida: r.troca_contrapartida == null ? null : exigirContrapartida(r.troca_contrapartida, r.sku_codigo_omie),
+  };
+}
+
+/** Linha de `raio_x_inequivoco`. Sem veredito booleano (RPC velha/linha estranha) → null: a lista mostra "—", nunca inequívoco. */
+export function comoInequivoco(r: InequivocoRpc): InequivocoSku | null {
+  if (typeof r.inequivoco !== 'boolean' || typeof r.sku_codigo_omie !== 'number') return null;
+  return {
+    sku_codigo_omie: r.sku_codigo_omie, inequivoco: r.inequivoco,
+    motivos_espera: Array.isArray(r.motivos_espera) ? r.motivos_espera.filter((m): m is string => typeof m === 'string') : [],
+    cobertura_dias: r.cobertura_dias ?? null, qtd_liquidavel: r.qtd_liquidavel ?? null,
+    ultima_entrada: r.ultima_entrada ?? null, revisar_em: r.revisar_em ?? null,
+  };
 }
 
 /** Linhas de `raio_x_coorte_top` de UMA empresa → coorte. Vazio = ainda não congelada (null, nunca coorte vazia). */

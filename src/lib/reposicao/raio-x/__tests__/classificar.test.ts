@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N } from '../classificar';
+import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N, aplicarInequivoco, ROTULOS_ESPERA } from '../classificar';
 import { fato, HOJE } from './fixtures';
 
 describe('categorizar', () => {
@@ -185,5 +185,20 @@ describe('01/03 (matéria-prima / produto em processo)', () => {
     expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '03' })).toBe(true);
     expect(ehEstoqueIndustrial({ categoria: 'uso_consumo', tipo_produto: '07' })).toBe(false);
     expect(ehEstoqueIndustrial({ categoria: 'mercadoria', tipo_produto: '01' })).toBe(false); // marcação manual vence
+  });
+});
+
+describe('aplicarInequivoco (veredito do servidor)', () => {
+  const base = classificar([fato({ sku_codigo_omie: 1, saldo: 100, q12: 0 }), fato({ sku_codigo_omie: 2, saldo: 100, q12: 0 })], new Map(), 'oben', HOJE);
+  it('mapa null (RPC indisponível) deixa tudo null — nunca inequívoco por omissão', () => {
+    expect(aplicarInequivoco(base, null).every((i) => i.inequivoco === null)).toBe(true);
+  });
+  it('aplica veredito e motivos por SKU; SKU fora do mapa fica null', () => {
+    const mapa = new Map([[1, { sku_codigo_omie: 1, inequivoco: false, motivos_espera: ['corante', 'cold_start'], cobertura_dias: null, qtd_liquidavel: null, ultima_entrada: null, revisar_em: null }]]);
+    const r = aplicarInequivoco(base, mapa);
+    expect(r[0].inequivoco).toBe(false);
+    expect(r[0].motivos_espera).toEqual(['corante', 'cold_start']);
+    expect(r[1].inequivoco).toBeNull();
+    expect(ROTULOS_ESPERA.corante).toContain('corante');
   });
 });

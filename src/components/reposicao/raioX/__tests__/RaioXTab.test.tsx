@@ -19,6 +19,7 @@ const linhas: LinhaMedicao[] = [{
   sku_codigo_omie: 1, destino: 'liquidar', decidido_em: '2026-09-01T12:00:00Z', foto_saldo: 5, foto_cmc: 10, foto_valor: 50,
   foto_categoria: 'mercadoria', credito_troca: null, saldo_atual: 5, qtd_vendida: 0, receita: 0, preco_medio_12m: 5,
   compras_apos: ['2026-09-10T12:00:00Z'],
+  troca_contrapartida: null,
 }];
 
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-eu' } }) }));

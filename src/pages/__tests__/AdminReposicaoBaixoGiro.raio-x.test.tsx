@@ -61,7 +61,8 @@ const item = (p: Partial<ItemRaioX>): ItemRaioX => ({
   ult_venda: null, preco_medio_12m: null, clientes: [{ nome: 'CLIENTE A', ult: '2026-01-01', qtd: 3 }],
   synced_at: null, habilitado_reposicao_automatica: true, valor: 50, cobertura: null,
   categoria: 'mercadoria', motivo_categoria: '', parado: true, destino_sugerido: 'liquidar',
-  motivo_destino: '', alerta_recompra: null, top: true, top_atual: true, entrou_no_top: false, ...p,
+  motivo_destino: '', alerta_recompra: null, top: true, top_atual: true, entrou_no_top: false,
+  inequivoco: null, motivos_espera: [], qtd_liquidavel: null, ultima_entrada: null, ...p,
 });
 
 const abrirAba = () => {

@@ -19,8 +19,12 @@ export interface Medicao {
   vendido: number | null;
   liquidado: number | null;
   margem_sacrificada: number | null;
-  /** crédito de troca INFORMADO pelo operador (não conferido com o fornecedor). */
+  /** crédito de troca INFORMADO pelo operador (não conferido com o fornecedor); contrapartida 'encalhe' fica FORA. */
   trocado: number;
+  /** crédito de troca cuja contrapartida é outro encalhe: nada foi liberado — fora do critério. */
+  trocado_encalhe: number;
+  /** parcela de `trocado` sem contrapartida informada (conta como hoje, mas é incerteza declarada). */
+  trocado_sem_contrapartida: number;
   /** vendido + liquidado, a custo (CMC da foto). Sem NF (Colacor) → null. */
   estoque_reduzido: number | null;
   /** faturado pelas unidades contadas em `estoque_reduzido` (preço médio do período). Sem NF → null. */
@@ -48,7 +52,7 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
   const comNf = empresa === 'oben';
   const comprasVisiveis = linhas.every((l) => l.compras_apos !== null);
   let vendido = 0, liquidado = 0, margem = 0, recomprado = 0, receita = 0;
-  let trocado = 0, parado = 0, saiuSemNf = 0, reclassificado = 0, semMedicaoValor = 0;
+  let trocado = 0, trocadoEncalhe = 0, trocadoSemContrapartida = 0, parado = 0, saiuSemNf = 0, reclassificado = 0, semMedicaoValor = 0;
   let reclassificadoSemCustoN = 0, semMedicaoSemCustoN = 0;
   const contradicoes: Contradicao[] = [];
   const semMedicao: number[] = [];
@@ -60,7 +64,14 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     }
     if (l.foto_categoria === 'uso_consumo') continue;
     // crédito de troca vem da decisão, não do estoque: conta mesmo se o SKU sumiu da medição
-    if (l.destino === 'trocar' && typeof l.credito_troca === 'number') trocado += l.credito_troca;
+    if (l.destino === 'trocar' && typeof l.credito_troca === 'number') {
+      // troca por outro ENCALHE não libera nada (Codex P0-5): sai do crédito que conta; sem contrapartida segue contando como hoje
+      if (l.troca_contrapartida === 'encalhe') trocadoEncalhe += l.credito_troca;
+      else {
+        trocado += l.credito_troca;
+        if (l.troca_contrapartida === null) trocadoSemContrapartida += l.credito_troca;
+      }
+    }
 
     const { foto_saldo: fs, foto_cmc: fc, saldo_atual: sa } = l;
     if (fs === null || fc === null || sa === null || (comNf && l.qtd_vendida === null)) {
@@ -105,6 +116,8 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     liquidado: comNf ? liquidado : null,
     margem_sacrificada: comNf ? margem : null,
     trocado,
+    trocado_encalhe: trocadoEncalhe,
+    trocado_sem_contrapartida: trocadoSemContrapartida,
     estoque_reduzido: estoqueReduzido,
     receita_vendas: comNf ? receita : null,
     meta_liberado: (estoqueReduzido ?? 0) + trocado,

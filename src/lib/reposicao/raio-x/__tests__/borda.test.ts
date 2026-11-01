@@ -8,6 +8,7 @@ const decisao: Tables<'raio_x_decisao'> = {
   foto_categoria: null, foto_cmc: null, foto_em: null, foto_saldo: null, foto_valor: null, motor_antes: null,
   observacao: null, origem: 'app', qtd_contada: null, sku_codigo_omie: 42, tirou_do_motor: false,
   preco_piso: null, canal_liquidacao: null, responsavel: null, prazo: null, concluido_em: null, concluido_por: null,
+  frete_estimado: null, desconto_sobre_medio_pct: null, margem_unit: null, preco_medio_base: null, cmc_base: null, troca_contrapartida: null,
 };
 
 describe('borda do Raio-X — o que o cast escondia agora lança nomeando o campo', () => {
@@ -43,6 +44,7 @@ describe('borda do Raio-X — o que o cast escondia agora lança nomeando o camp
     const med = {
       compras_apos: [], credito_troca: 0, decidido_em: '2026-01-01', destino: 'trocar', foto_categoria: 'mercadoria',
       foto_cmc: 1, foto_saldo: 2, foto_valor: 2, preco_medio_12m: 3, qtd_vendida: 0, receita: 0, saldo_atual: 2, sku_codigo_omie: 7,
+      troca_contrapartida: null,
     };
     expect(comoLinhaMedicao(med).destino).toBe('trocar');
     expect(() => comoLinhaMedicao({ ...med, destino: 'sumir' })).toThrow('destino "sumir"');

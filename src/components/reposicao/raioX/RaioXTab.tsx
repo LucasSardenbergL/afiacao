@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { useRaioX, useRaioXMedicao } from './useRaioX';
+import { fmtReais } from './formato';
 import { RaioXPlacar } from './RaioXPlacar';
 import { RaioXCaixaLiberado } from './RaioXCaixaLiberado';
 import { RaioXMercadoria } from './RaioXMercadoria';
@@ -72,7 +73,7 @@ export function RaioXTab() {
     setAberto({ sku: i.sku_codigo_omie, empresa: chave });
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '' });
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '', rxIneq: '' });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
   // Contradição clicável: lista de mercadoria filtrada pelo SKU exato (`rxSku` na URL — nunca a busca por código, que é substring).
@@ -98,6 +99,9 @@ export function RaioXTab() {
         const d = rx.decisoes.get(i.sku_codigo_omie);
         if (f.rxDestino && destinoEfetivo(i, d) !== f.rxDestino) return false;
         if (f.rxForn && fornecedorEfetivo(i, d) !== f.rxForn) return false;
+        // Inequívoco é veredito do SERVIDOR (null = indisponível, nunca entra em "inequívoco")
+        if (f.rxIneq === 'inequivoco' && i.inequivoco !== true) return false;
+        if (f.rxIneq === 'aguarda' && i.inequivoco !== false) return false;
         const decidido = !!d?.destino;
         if (f.rxStatus === 'pendente' && decidido) return false;
         if (f.rxStatus === 'decidido' && !decidido) return false;
@@ -117,6 +121,16 @@ export function RaioXTab() {
   }, [mercadoria, f, rx.decisoes, hoje, user]);
 
   const execucao = useMemo(() => resumoExecucao(rx.decisoes.values(), hoje), [rx.decisoes, hoje]);
+  // Denominador do "liquidar só o inequívoco": quantos (e quanto R$) a regra do servidor libera hoje, entre a mercadoria parada.
+  const ineq = useMemo(() => {
+    const sim = mercadoria.filter((i) => i.inequivoco === true);
+    // ausente ≠ zero: SKU inequívoco sem CMC fica FORA da soma e é contado à parte (Codex P2-8)
+    const comValor = sim.filter((i) => i.valor !== null);
+    return {
+      n: sim.length, valor: comValor.length ? comValor.reduce((s, i) => s + (i.valor as number), 0) : null, semCusto: sim.length - comValor.length,
+      aguardaN: mercadoria.filter((i) => i.inequivoco === false).length,
+    };
+  }, [mercadoria]);
   const unidadesVenda = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.unidades_venda])), [rx.itens]);
 
   const categoriaSeg = segmento === 'uso' ? 'uso_consumo' : segmento === 'nao' ? 'nao_mercadoria' : null;
@@ -145,6 +159,11 @@ export function RaioXTab() {
 
   return (
     <div className="space-y-4">
+      {rx.inequivocoIndisponivel && (
+        <p role="status" className="text-xs text-status-warning">
+          veredito "inequívoco" indisponível (migration ainda não aplicada ou sem acesso) — nenhum SKU é tratado como inequívoco por omissão
+        </p>
+      )}
       {rx.syncedHoras !== null && rx.syncedHoras >= 24 && (
         <p role="status" className="text-xs text-status-warning">
           estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
@@ -196,6 +215,11 @@ export function RaioXTab() {
               <option value="vencidas">Vencidas</option>
               <option value="sem_responsavel">Sem responsável</option>
               <option value="minhas">Minhas pendências</option>
+            </select>
+            <select aria-label="Liquidação" className="h-9 rounded-md border bg-background px-2 text-sm" value={f.rxIneq} onChange={(e) => setF({ rxIneq: e.target.value })}>
+              <option value="">Inequívoco e aguardando (entre os parados)</option>
+              <option value="inequivoco">Só inequívoco ({ineq.n} · {ineq.valor === null ? 'R$ —' : fmtReais(ineq.valor)}{ineq.semCusto > 0 ? ` +${ineq.semCusto} sem custo` : ''})</option>
+              <option value="aguarda">Só aguardando ({ineq.aguardaN} entre os parados)</option>
             </select>
             <label className="flex items-center gap-1 text-sm">
               <input type="checkbox" checked={f.rxTop} onChange={(e) => setF({ rxTop: e.target.checked })} /> Top 61
