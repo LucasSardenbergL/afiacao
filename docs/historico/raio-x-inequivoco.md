@@ -88,3 +88,21 @@ falsificações** com o FALHOU específico. Em `LOCALE=C` e `pt_BR.UTF-8`.
 - O número de inequívocos não foi lido: o gate `cap_custo_ler(auth.uid())` exige staff real e não forjei claims para um
   relatório. **Próximo sinal (query, não recado)**: depois do Publish, a tela mostra o total; conferir que liquidar um SKU
   "aguarda" devolve RX004 e que `raio_x_decisao` ganha `frete_estimado`/`troca_contrapartida` no 1º plano salvo.
+
+## Incidente pós-Publish: 403 no veredito (2026-11-01) e a correção DEFINER
+
+- **Sintoma (QA visual no Chrome logado, depois do Publish):** a aba Raio-X mostrava "veredito inequívoco indisponível —
+  nenhum SKU é tratado como inequívoco por omissão". A rede mostrou `POST /rest/v1/rpc/raio_x_inequivoco` → **403**.
+  O fail-closed funcionou (nada virou inequívoco por omissão), mas a feature estava morta para o usuário.
+- **Causa:** `raio_x_inequivoco` nasceu `SECURITY INVOKER` e o corpo chama `public._fin_estoque_classe`, helper interno
+  fechado para `authenticated` pela 20261018200000 (postcondição "helper interno exposto"). Medido em prod por
+  `has_function_privilege`: dos 16 objetos do corpo, só esse dava `false`. O `raio_x_decidir` (DEFINER) não era afetado.
+- **Por que a prova PG17 não pegou:** o harness faz `ALTER DEFAULT PRIVILEGES … GRANT EXECUTE ON FUNCTIONS TO
+  authenticated`, então o STUB do helper nascia aberto. Teste verde contra uma ACL que prod não tem. Corrigido: o stub
+  agora leva o `REVOKE` de prod, e a suíte fica VERMELHA (`permission denied for function _fin_estoque_classe`) sem a
+  correção — o controle negativo virou passo da prova, não recado.
+- **Correção:** `20261101190000_raio_x_inequivoco_definer.sql` — mesmo padrão das demais RPCs de custo do Raio-X
+  (DEFINER + gate `cap_custo_ler` no corpo). Corpo byte a byte igual (md5 `903937e4…` no PRE e na PÓS), só o cabeçalho
+  muda; o helper continua fechado (PÓS confere). Registro em `authz-manifest.ts` e `authz-funcoes-fechadas.ts`.
+- **Lição:** stub de harness herda a ACL do default privileges, não a de prod. Para RPC `INVOKER`, todo objeto do corpo
+  tem de existir no harness com a MESMA ACL de prod — senão a prova mede um banco mais aberto que o real.
