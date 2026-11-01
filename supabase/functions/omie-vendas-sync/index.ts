@@ -6,6 +6,7 @@ import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type Lista
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
+import { desfechoSyncProdutos, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -417,6 +418,7 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   let fimReal = false;
   let totalSynced = 0;
   let pagesProcessed = 0;
+  const falhas = novasFalhasCatalogo();
 
   // `pagesProcessed === 0` força a 1ª iteração mesmo com startPage > 1: totalPaginas (init=1) só é
   // aprendido DENTRO do loop, então `pagina <= totalPaginas` era falso de cara p/ startPage>1 →
@@ -505,14 +507,13 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         updated_at: new Date().toISOString(),
       }));
 
-    if (rows.length > 0) {
-      const { error } = await supabase.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
-      if (error) {
-        console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, error);
-      } else {
-        totalSynced += rows.length;
-      }
+    // N2: falha do upsert é CONTADA (não só logada) e decide o desfecho da action — ver
+    // catalogo-gravacao.ts. As páginas seguintes seguem sendo gravadas.
+    const gravacao = await gravarPaginaCatalogo(supabase, rows, pagina, falhas);
+    if (gravacao.erro !== null) {
+      console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, gravacao.erro);
     }
+    totalSynced += gravacao.gravadas;
 
     console.log(`[Omie Vendas][${account}] Página ${pagina}/${totalPaginas} - ${produtos.length} produtos processados`);
     pagina++;
@@ -520,7 +521,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   }
 
   const complete = fimReal || pagina > totalPaginas;
-  return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return {
+    resultado: { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete },
+    falhas,
+  };
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
@@ -2733,8 +2737,20 @@ Deno.serve(async (req) => {
     switch (action) {
       case "sync_products": {
         const startPage = params.start_page || 1;
-        const syncResult = await syncProducts(supabaseAdmin, startPage, 12, account);
-        result = { success: true, ...syncResult };
+        const { resultado, falhas } = await syncProducts(supabaseAdmin, startPage, 12, account);
+        const desfecho = desfechoSyncProdutos(resultado, falhas);
+        if (!desfecho.ok) {
+          // N2: linha não gravada em omie_products (preço) ⇒ o run NÃO é sucesso. fin_sync_log
+          // vira 'error' com os contadores (watchdog + data_health enxergam) e a resposta é 500 —
+          // o único sinal que o front (res.error do supabase-js) enxerga.
+          await completeVendaSync(supabaseAdmin, vendaLogId, desfecho.corpo, desfecho.erro);
+          vendaSyncFinalized = true;
+          return new Response(JSON.stringify(desfecho.corpo), {
+            status: desfecho.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        result = desfecho.corpo;
         break;
       }
 
