@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Wrench,
@@ -10,6 +10,7 @@ import {
   Building2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
 import {
@@ -164,6 +165,9 @@ export default function VendasFerramentas() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to="/cobranca" data-testid="vendas-link-cobranca">Cobranças da minha carteira</Link>
+          </Button>
           <Building2 className="h-4 w-4 text-muted-foreground" />
           <Select value={empresa} onValueChange={setEmpresa}>
             <SelectTrigger className="w-[140px]">
