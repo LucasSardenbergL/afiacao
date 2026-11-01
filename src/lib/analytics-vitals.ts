@@ -166,14 +166,6 @@ export type DepsColetor = {
 
 export function criarColetor(deps: DepsColetor) {
   const pendentes = new Map<NomeMetrica, EventoVital>();
-  /** `metrica_id → valor` do último envio — esconder a aba 2× sem piora não repete a linha. */
-  const enviados = new Map<string, number>();
-
-  function emitir(evento: EventoVital): void {
-    if (enviados.get(evento.metrica_id) === evento.valor) return;
-    enviados.set(evento.metrica_id, evento.valor);
-    deps.enviar(evento);
-  }
 
   return {
     aoMedir(metrica: MetricaVital): void {
@@ -181,11 +173,16 @@ export function criarColetor(deps: DepsColetor) {
       const rota = (t === null ? null : rotaNoInstante(deps.linha, t)) ?? deps.rotaAtual();
       const evento = montarEvento(metrica, rota, deps.conexao());
       if (ACUMULADAS.has(metrica.name)) pendentes.set(metrica.name, evento);
-      else emitir(evento);
+      else deps.enviar(evento);
     },
-    /** Chamar quando a aba esconde (inclui fechar/trocar de app no celular). */
+    /**
+     * Chamar quando a aba esconde (inclui fechar/trocar de app no celular).
+     * Esvaziar é o que impede esconder 2× sem piora de repetir a linha: a lib
+     * só chama `aoMedir` de novo quando o valor MUDA. (Houve aqui um dedupe por
+     * `metrica_id`+valor; a falsificação provou-o inalcançável e ele saiu.)
+     */
     descarregar(): void {
-      for (const evento of pendentes.values()) emitir(evento);
+      for (const evento of pendentes.values()) deps.enviar(evento);
       pendentes.clear();
     },
   };

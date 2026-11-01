@@ -150,14 +150,15 @@ describe('criarColetor — quando e com que rota sai', () => {
       metrica({
         name: 'CLS',
         value: 0.3,
+        // O maior NÃO é o último — senão "pega a última entrada" passaria igual.
         entries: [
-          { startTime: 100, value: 0.05 },
-          { startTime: 600, value: 0.25 },
+          { startTime: 100, value: 0.25 },
+          { startTime: 600, value: 0.05 },
         ],
       }),
     );
     coletor.descarregar();
-    expect(enviados[0].rota).toBe('/b');
+    expect(enviados[0].rota).toBe('/a');
   });
 
   it('LCP sai na hora; sem entrada (bfcache) cai na rota atual', () => {
