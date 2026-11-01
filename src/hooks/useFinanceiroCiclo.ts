@@ -192,10 +192,13 @@ export function useCicloCustoCapital() {
   return useQuery({
     queryKey: ['financeiro', 'ciclo', 'custo-capital'],
     retryDelay: retryDelayCiclo,
+    // RPC set-returning pagina pelo canônico (3 linhas hoje, mas a capa de 1.000 do PostgREST é silenciosa).
     queryFn: (): Promise<CustoCapital[]> => filaCiclo(async () => {
-      const { data, error } = await supabase.rpc('fin_ciclo_custo_capital');
-      if (error) throw new Error(error.message);
-      return (data ?? []).map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('fin_ciclo_custo_capital').select('*').order('company', { ascending: true }).range(de, ate),
+        'fin_ciclo_custo_capital',
+      );
+      return linhas.map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
     }),
   });
 }
