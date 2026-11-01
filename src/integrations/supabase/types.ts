@@ -19827,6 +19827,7 @@ export type Database = {
           maduro_d15: boolean | null
           maduro_d30: boolean | null
           maduro_d60: boolean | null
+          mes_parcial: boolean | null
           mes_vencimento: string | null
           pct_pago_d15: number | null
           pct_pago_d30: number | null
@@ -22452,6 +22453,7 @@ export type Database = {
           maduro_d15: boolean | null
           maduro_d30: boolean | null
           maduro_d60: boolean | null
+          mes_parcial: boolean | null
           mes_vencimento: string | null
           pct_pago_d15: number | null
           pct_pago_d30: number | null

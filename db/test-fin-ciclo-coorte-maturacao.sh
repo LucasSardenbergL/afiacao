@@ -6,16 +6,21 @@
 # ║  LOCALE=pt_BR.UTF-8 bash db/test-fin-ciclo-coorte-maturacao.sh  (2º ambiente)          ║
 # ╚══════════════════════════════════════════════════════════════════════════════════════╝
 # Controle verde na MESMA invocação + sabotagens sobre CÓPIA da migration (o repo nunca é tocado).
-# Asserções em ASCII, caixa fixa, sem -i. Fixture relativa a hoje_sp (a view lê `now()` em SP):
-#  - mês MADURO (mês de h-120: o último dia + 60 já passou): 8 títulos no universo cobrindo as 5 massas
-#    (antecipado, no dia, com atraso em 4 degraus de janela, sem data de baixa ×2, vencida aberta com
-#    saldo parcial) + 2 fora do universo (cancelado e sem cliente — filtro da v_ciclo_cr_titulos).
-#  - mês JOVEM (mês de h-1): nenhuma janela madura → pct NULL, flags false, massas preenchidas.
-#  - mês MEIO (mês de h-46): D+15 maduro e D+60 imaturo por construção (fim do mês entre h-46 e h-16);
-#    D+30 é ambíguo pelo calendário → prova-se só a COERÊNCIA (pct nulo ⇔ não maduro).
-#  - fora da janela de 365 d (vencido h-400, pago) e vencida aberta antiga (h-900): não viram coorte.
-# Sabotagens com postcondição embutida (invoker, gate, anon): a 1ª camada aborta o apply (rc=99 + mensagem
-# da postcondição); a camada "b" neutraliza a postcondição e exige que a ASSERÇÃO fique vermelha.
+# Asserções em ASCII, caixa fixa, sem -i.
+#
+# ⏰ RELÓGIO CONTROLADO (padrão de db/test-hoje-sp-views-defaults.sh): `public.now()` lê a GUC `test.agora`
+# e é TRIPWIRE sem ela; as views (v_ciclo_cr_titulos e a desta migration) são criadas com
+# `search_path=public,pg_catalog`, então o `now()` delas amarra no controlado. Fixture em datas ABSOLUTAS,
+# "hoje" = 2026-11-16 (SP) salvo onde a asserção muda o relógio — é o que prova as BORDAS sem depender do
+# dia em que a prova roda (achado Codex, 2026-11-01):
+#  - mês MADURO jul/2026: 9 títulos no universo cobrindo as 5 massas + 2 fora do universo (cancelado, sem cliente).
+#  - mês MEIO set/2026: fim 30/09 → D+15/D+30 maduros, D+60 (29/11) imaturo.
+#  - mês BORDA out/2026: fim 31/10 + 15 = 15/11 → maduro em 16/11 e NÃO em 15/11 (inclusive 23:59:59 SP);
+#    um título pago em D+15 exato (conta, `<=`) e outro em D+16 (não conta).
+#  - mês JOVEM nov/2026 (corrente): imaturo + mes_parcial.
+#  - nov/2025: começo da janela de 365 d (16/11/2025) → mes_parcial; vencida aberta de jun/2025 fica fora.
+# Limite conhecido: a tabela-stub de v_titulo_baixas não reproduz a restrição da view real (só CR
+# RECEBIDO/LIQUIDADO emitem baixa) — a fixture não depende disso (ATRASADO nunca recebe linha de baixa).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,7 +44,11 @@ trap cleanup EXIT
 "$PGBIN/initdb" -D "$DATA" -U postgres -E UTF8 --locale="$LOC" >/dev/null
 "$PGBIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$TMPD/pg.log" -w start >/dev/null
 P()  { "$PGBIN/psql" -X -q -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 "$@"; }
-Pq() { P -tA "$@"; }
+# Criação de objetos que leem now(): public antes de pg_catalog, para amarrar no relógio controlado.
+Pc() { PGOPTIONS="-c search_path=public,pg_catalog" P "$@"; }
+AGORA="2026-11-16T15:00:00Z"   # 12:00 de 16/11/2026 em SP
+# Leitura sob o relógio: $1 = test.agora, $2 = SQL (como postgres).
+Ler() { PGOPTIONS="-c test.agora=$1" P -tA -c "$2"; }
 
 U_MASTER="11111111-1111-1111-1111-111111111111"
 U_EMPLOYEE="22222222-2222-2222-2222-222222222222"
@@ -50,6 +59,17 @@ preparar_banco() {
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres prove
   P -f "$REPO_ROOT/db/stubs-supabase.sql"
   P <<'SQL'
+-- Relógio controlado: criado ANTES das views (elas amarram o now() no CREATE pelo search_path de quem cria).
+CREATE OR REPLACE FUNCTION public.now() RETURNS timestamptz LANGUAGE plpgsql STABLE AS $f$
+DECLARE v text := nullif(pg_catalog.current_setting('test.agora', true), '');
+BEGIN
+  IF v IS NULL THEN
+    RAISE EXCEPTION 'TRIPWIRE: now() lido sem test.agora — a prova escapou do relógio controlado'
+      USING ERRCODE = 'Z9T01';
+  END IF;
+  RETURN v::timestamptz;
+END $f$;
+
 CREATE TABLE public.fin_contas_receber (
   company text, omie_codigo_cliente bigint, nome_cliente text, omie_codigo_lancamento bigint,
   numero_documento text, data_emissao date, data_vencimento date, valor_documento numeric,
@@ -62,7 +82,7 @@ CREATE TABLE public.user_roles (user_id uuid, role text);
 CREATE TABLE public.fin_permissoes_stub (user_id uuid, empresas text[]);
 
 -- Stub de fin_user_can_access (como em test-fin-ciclo-rpc.sh): master/employee sem linha no stub = tudo;
--- com linha = só as empresas listadas (é o que prova o gate 2).
+-- com linha = só as empresas listadas (prova que a RPC APLICA o predicado; a função real de prod é outra).
 CREATE FUNCTION public.fin_user_can_access(check_company text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
   SELECT EXISTS (SELECT 1 FROM public.fin_permissoes_stub p
@@ -81,7 +101,7 @@ EXCEPTION WHEN SQLSTATE '42501' THEN
   RETURN '42501|' || SQLERRM;
 END $$;
 
--- Como o Supabase: EXECUTE por default para as 3 roles (a migration precisa fechar as duas pontas).
+-- Como o Supabase: privilégios por default para as 3 roles (a migration precisa fechar as duas pontas).
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon, authenticated, service_role;
 GRANT SELECT ON public.fin_contas_receber, public.v_titulo_baixas, public.user_roles, public.fin_permissoes_stub TO authenticated;
@@ -92,57 +112,64 @@ INSERT INTO public.user_roles VALUES
   ('33333333-3333-3333-3333-333333333333','master');
 INSERT INTO public.fin_permissoes_stub VALUES ('33333333-3333-3333-3333-333333333333', ARRAY['oben']);
 
-DO $f$
-DECLARE
-  h date := (now() AT TIME ZONE 'America/Sao_Paulo')::date;
-  v date := date_trunc('month', h - 120)::date + 10;  -- vencimento no mes MADURO
-BEGIN
-  -- Mes MADURO (oben): emissao = v-30 em todos.
-  INSERT INTO fin_contas_receber VALUES
-    ('oben',1,'CLI UM',101,'A',v-30,v,100,0,'RECEBIDO'),     -- baixa v-5  → antecipado 5 d
-    ('oben',1,'CLI UM',102,'B',v-30,v,200,0,'RECEBIDO'),     -- baixa v+10 → D+15
-    ('oben',1,'CLI UM',103,'C',v-30,v,300,0,'RECEBIDO'),     -- baixa v+20 → D+30
-    ('oben',1,'CLI UM',104,'D',v-30,v,400,0,'RECEBIDO'),     -- baixa v+45 → D+60
-    ('oben',1,'CLI UM',105,'E',v-30,v,500,0,'RECEBIDO'),     -- baixa v+70 → fora das 3 janelas
-    ('oben',2,'CLI DOIS',106,'F',v-30,v,100,60,'ATRASADO'),  -- vencida aberta, saldo 60
-    ('oben',2,'CLI DOIS',107,'G',v-30,v,50,0,'RECEBIDO'),    -- RECEBIDO sem baixa → paga_sem_baixa
-    ('oben',2,'CLI DOIS',108,'H',v-30,v,70,0,'RECEBIDO'),    -- baixa com data NULL → paga sem data
-    ('oben',2,'CLI DOIS',111,'I',v-30,v,80,0,'RECEBIDO'),    -- baixa = v → no dia
-    ('oben',1,'CLI UM',109,'X',v-30,v,999,0,'CANCELADO'),    -- fora do universo
-    ('oben',NULL,'SEM CLI',110,'Y',v-30,v,10,0,'RECEBIDO');  -- fora do universo (sem cliente)
-  INSERT INTO v_titulo_baixas VALUES
-    ('oben',101,'CR',v-5,100,1,25,'titulo'),
-    ('oben',102,'CR',v+10,200,1,40,'titulo'),
-    ('oben',103,'CR',v+20,300,1,50,'titulo'),
-    ('oben',104,'CR',v+45,400,1,75,'titulo'),
-    ('oben',105,'CR',v+70,500,1,100,'titulo'),
-    ('oben',108,'CR',NULL,70,1,30,'titulo'),
-    ('oben',111,'CR',v,80,1,30,'titulo'),
-    ('oben',109,'CR',v+1,999,1,31,'titulo'),
-    ('oben',110,'CR',v+1,10,1,31,'titulo');
-  -- Mes JOVEM (oben): vencido ontem, pago ontem.
-  INSERT INTO fin_contas_receber VALUES ('oben',1,'CLI UM',201,'J',h-31,h-1,100,0,'RECEBIDO');
-  INSERT INTO v_titulo_baixas VALUES ('oben',201,'CR',h-1,100,1,30,'titulo');
-  -- Mes MEIO (oben): vencido h-46, pago h-40.
-  INSERT INTO fin_contas_receber VALUES ('oben',1,'CLI UM',301,'K',h-76,h-46,100,0,'RECEBIDO');
-  INSERT INTO v_titulo_baixas VALUES ('oben',301,'CR',h-40,100,1,36,'titulo');
-  -- Fora da janela de 365 d (oben): pago, mas vencido ha 400 d.
-  INSERT INTO fin_contas_receber VALUES ('oben',1,'CLI UM',401,'L',h-430,h-400,100,0,'RECEBIDO');
-  INSERT INTO v_titulo_baixas VALUES ('oben',401,'CR',h-390,100,1,40,'titulo');
-  -- Vencida aberta ANTIGA (oben, h-900): entra na v_ciclo_cr_titulos (sem janela la), a coorte corta.
-  INSERT INTO fin_contas_receber VALUES ('oben',2,'CLI DOIS',402,'O',h-930,h-900,30,30,'ATRASADO');
-  -- colacor: 1 titulo no mes maduro (gate 2) + vencida aberta ANTIGA (h-900, fora da janela).
-  INSERT INTO fin_contas_receber VALUES
-    ('colacor',3,'CLI TRES',501,'M',v-30,v,200,0,'RECEBIDO'),
-    ('colacor',3,'CLI TRES',601,'N',h-930,h-900,50,50,'ATRASADO');
-  INSERT INTO v_titulo_baixas VALUES ('colacor',501,'CR',v+5,200,1,35,'titulo');
-END $f$;
+-- ── Fixture em datas ABSOLUTAS (hoje = 2026-11-16 SP) ─────────────────────────────────────────────
+-- Mes MADURO jul/2026: vencimento 10/07, emissao 10/06 em todos.
+INSERT INTO fin_contas_receber VALUES
+  ('oben',1,'CLI UM',101,'A','2026-06-10','2026-07-10',100,0,'RECEBIDO'),     -- baixa 05/07 → antecipado 5 d
+  ('oben',1,'CLI UM',102,'B','2026-06-10','2026-07-10',200,0,'RECEBIDO'),     -- baixa 20/07 → D+15 (atraso 10)
+  ('oben',1,'CLI UM',103,'C','2026-06-10','2026-07-10',300,0,'RECEBIDO'),     -- baixa 30/07 → D+30 (atraso 20)
+  ('oben',1,'CLI UM',104,'D','2026-06-10','2026-07-10',400,0,'RECEBIDO'),     -- baixa 24/08 → D+60 (atraso 45)
+  ('oben',1,'CLI UM',105,'E','2026-06-10','2026-07-10',500,0,'RECEBIDO'),     -- baixa 18/09 → fora (atraso 70)
+  ('oben',2,'CLI DOIS',106,'F','2026-06-10','2026-07-10',100,60,'ATRASADO'),  -- vencida aberta, saldo 60
+  ('oben',2,'CLI DOIS',107,'G','2026-06-10','2026-07-10',50,0,'RECEBIDO'),    -- RECEBIDO sem baixa → paga_sem_baixa
+  ('oben',2,'CLI DOIS',108,'H','2026-06-10','2026-07-10',70,0,'RECEBIDO'),    -- baixa com data NULL → paga sem data
+  ('oben',2,'CLI DOIS',111,'I','2026-06-10','2026-07-10',80,0,'RECEBIDO'),    -- baixa = vencimento → no dia
+  ('oben',1,'CLI UM',109,'X','2026-06-10','2026-07-10',999,0,'CANCELADO'),    -- fora do universo
+  ('oben',NULL,'SEM CLI',110,'Y','2026-06-10','2026-07-10',10,0,'RECEBIDO');  -- fora do universo (sem cliente)
+INSERT INTO v_titulo_baixas VALUES
+  ('oben',101,'CR','2026-07-05',100,1,25,'titulo'),
+  ('oben',102,'CR','2026-07-20',200,1,40,'titulo'),
+  ('oben',103,'CR','2026-07-30',300,1,50,'titulo'),
+  ('oben',104,'CR','2026-08-24',400,1,75,'titulo'),
+  ('oben',105,'CR','2026-09-18',500,1,100,'titulo'),
+  ('oben',108,'CR',NULL,70,1,30,'titulo'),
+  ('oben',111,'CR','2026-07-10',80,1,30,'titulo'),
+  ('oben',109,'CR','2026-07-11',999,1,31,'titulo'),
+  ('oben',110,'CR','2026-07-11',10,1,31,'titulo');
+-- Mes MEIO set/2026: vencido 20/09, pago 26/09 (D+6).
+INSERT INTO fin_contas_receber VALUES ('oben',1,'CLI UM',301,'K','2026-08-21','2026-09-20',100,0,'RECEBIDO');
+INSERT INTO v_titulo_baixas VALUES ('oben',301,'CR','2026-09-26',100,1,36,'titulo');
+-- Mes BORDA out/2026: dois titulos vencidos 31/10 — um pago em D+15 exato (15/11), outro em D+16 (16/11).
+INSERT INTO fin_contas_receber VALUES
+  ('oben',1,'CLI UM',311,'P','2026-10-01','2026-10-31',100,0,'RECEBIDO'),
+  ('oben',1,'CLI UM',312,'Q','2026-10-01','2026-10-31',100,0,'RECEBIDO');
+INSERT INTO v_titulo_baixas VALUES
+  ('oben',311,'CR','2026-11-15',100,1,45,'titulo'),
+  ('oben',312,'CR','2026-11-16',100,1,46,'titulo');
+-- Mes JOVEM nov/2026 (corrente): vencido 15/11, pago 15/11.
+INSERT INTO fin_contas_receber VALUES ('oben',1,'CLI UM',201,'J','2026-10-16','2026-11-15',100,0,'RECEBIDO');
+INSERT INTO v_titulo_baixas VALUES ('oben',201,'CR','2026-11-15',100,1,30,'titulo');
+-- nov/2025: a janela de 365 d comeca em 16/11/2025 → 401 (venc 20/11) entra, 402 (venc 10/11) fica fora
+-- ja na v_ciclo_cr_titulos; a coorte nov/2025 e um RECORTE do mes (mes_parcial).
+INSERT INTO fin_contas_receber VALUES
+  ('oben',1,'CLI UM',401,'L','2025-10-21','2025-11-20',100,0,'RECEBIDO'),
+  ('oben',1,'CLI UM',402,'M','2025-10-11','2025-11-10',100,0,'RECEBIDO');
+INSERT INTO v_titulo_baixas VALUES
+  ('oben',401,'CR','2025-11-25',100,1,35,'titulo'),
+  ('oben',402,'CR','2025-11-15',100,1,35,'titulo');
+-- Vencida aberta ANTIGA (oben, jun/2025): entra na v_ciclo_cr_titulos (sem janela la), a coorte corta.
+INSERT INTO fin_contas_receber VALUES ('oben',2,'CLI DOIS',403,'N','2025-05-11','2025-06-10',30,30,'ATRASADO');
+-- colacor: 1 titulo em jul/2026 (gate 2) + vencida aberta antiga (jan/2024, fora da janela).
+INSERT INTO fin_contas_receber VALUES
+  ('colacor',3,'CLI TRES',501,'R','2026-06-10','2026-07-10',200,0,'RECEBIDO'),
+  ('colacor',3,'CLI TRES',601,'S','2023-12-11','2024-01-10',50,50,'ATRASADO');
+INSERT INTO v_titulo_baixas VALUES ('colacor',501,'CR','2026-07-15',200,1,35,'titulo');
 SQL
-  P -f "$MIG_VIEWS"
-  P -f "$MIG_RPCS"
+  Pc -f "$MIG_VIEWS"
+  Pc -f "$MIG_RPCS"
 }
 
-# Sessão simulada: $1 = uuid do usuário ('' = sem claims), $2 = SQL (uma consulta). Roda como authenticated.
+# Sessão simulada sob o relógio: $1 = uuid do usuário ('' = sem claims), $2 = SQL. Roda como authenticated.
 sess() {
   {
     echo "BEGIN;"
@@ -152,7 +179,7 @@ sess() {
     fi
     echo "$2;"
     echo "COMMIT;"
-  } | Pq
+  } | PGOPTIONS="-c test.agora=$AGORA" P -tA
 }
 
 falhas=0
@@ -161,71 +188,88 @@ oks() {
   local got; got="$(sess "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
   if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
 }
-okp() { # como postgres
-  local got; got="$(Pq -c "$1" 2>&1)" || got="ERRO-PSQL: $got"
-  if [ "$got" != "$2" ]; then echo "FALHOU: $3 | esperado=[$2] obtido=[$got]"; falhas=$((falhas+1)); fi
+# Como postgres, sob o relógio padrão.
+okp() { okt "$AGORA" "$1" "$2" "$3"; }
+# Como postgres, sob um relógio dado: $1 = test.agora, $2 = SQL, $3 = esperado, $4 = rótulo.
+okt() {
+  local got; got="$(Ler "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
+  if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
 }
 
 V="public.v_ciclo_empresa_coorte_maturacao"
 RPC="public.fin_ciclo_empresa_coorte_maturacao()"
 BARRADO="42501|CICLO_SO_MASTER"
-MADURO="date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 120)::date"
-JOVEM="date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 1)::date"
-MEIO="date_trunc('month', (now() AT TIME ZONE 'America/Sao_Paulo')::date - 46)::date"
 
 suite() {
   falhas=0
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
-  P -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
+  Pc -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
 
-  # Fixture nao pode ser vacua (401, pago ha 400 d, ja fica fora na v_ciclo_cr_titulos; 402 entra e a coorte corta).
-  okp "SELECT count(*) FROM public.v_ciclo_cr_titulos WHERE company='oben'" "12" "fixture: 12 titulos oben no universo"
+  # Relógio controlado de fato: ler a fonte sem test.agora TEM de disparar o tripwire (senão as bordas abaixo
+  # seriam lidas no relógio de parede e a prova nada diria).
+  local trip; trip="$(P -tA -c "SELECT count(*) FROM public.v_ciclo_cr_titulos" 2>&1 || true)"
+  case "$trip" in *TRIPWIRE*) ;; *) echo "FALHOU: relogio controlado nao amarrou (leu sem test.agora: $trip) |"; falhas=$((falhas+1)) ;; esac
 
-  # (a) coortes: 3 da oben (maduro, meio, jovem) + 1 colacor; janela de 365 d e vencida antiga fora.
-  okp "SELECT count(*) FROM $V WHERE company='oben'" "3" "a janela: 3 coortes oben"
+  # Fixture nao pode ser vacua: 15 titulos oben no universo (402 fora pela janela da v_ciclo_cr_titulos; 109/110 fora).
+  okp "SELECT count(*) FROM public.v_ciclo_cr_titulos WHERE company='oben'" "15" "fixture: 15 titulos oben no universo"
+
+  # (a) coortes: 5 da oben (nov/25, jul, set, out, nov/26) + 1 colacor; vencidas abertas antigas fora.
+  okp "SELECT string_agg(mes_vencimento::text, ',' ORDER BY mes_vencimento) FROM $V WHERE company='oben'" \
+    "2025-11-01,2026-07-01,2026-09-01,2026-10-01,2026-11-01" "a janela: 5 coortes oben"
   okp "SELECT count(*) FROM $V WHERE company='colacor'" "1" "a colacor: 1 coorte"
-  okp "SELECT count(*) FROM $V WHERE company='oben' AND mes_vencimento = $MADURO" "1" "a coorte madura existe"
 
-  # (b) mes MADURO: universo, massas e maturacao.
-  local W="FROM $V WHERE company='oben' AND mes_vencimento = $MADURO"
+  # (b) mes MADURO jul/2026: universo, massas e maturacao.
+  local W="FROM $V WHERE company='oben' AND mes_vencimento = '2026-07-01'"
   okp "SELECT titulos||'|'||valor_vencido_no_mes $W" "9|1800" "b universo: 9 titulos somam 1800 (cancelado e sem cliente fora)"
   okp "SELECT valor_antecipado||'|'||valor_pago_no_dia||'|'||valor_pago_com_atraso $W" "100|80|1400" "b massas: antecipado, no dia, com atraso"
   okp "SELECT valor_pago_sem_data $W" "120" "b massa: pago sem data (sem baixa 50 + baixa sem data 70)"
   okp "SELECT valor_em_aberto $W" "60" "b massa: em aberto = saldo"
   okp "SELECT round(dias_antecipacao_pond, 2)||'|'||round(dias_atraso_pond, 2) $W" "5.00|43.57" "b dias ponderados por valor, cada um na sua massa"
-  okp "SELECT maduro_d15||'|'||maduro_d30||'|'||maduro_d60 $W" "true|true|true" "b coorte madura nas 3 janelas"
+  okp "SELECT maduro_d15||'|'||maduro_d30||'|'||maduro_d60||'|'||mes_parcial $W" "true|true|true|false" "b coorte madura nas 3 janelas e mes inteiro"
   okp "SELECT pct_pago_d15||'|'||pct_pago_d30||'|'||pct_pago_d60 $W" "0.2111|0.3778|0.6000" "b maturacao D+15/30/60 pelo VENCIMENTO"
 
-  # (c) mes JOVEM: imaturo nas 3 janelas → pct NULL (nunca numero parcial), massas preenchidas.
-  local J="FROM $V WHERE company='oben' AND mes_vencimento = $JOVEM"
-  okp "SELECT maduro_d15||'|'||maduro_d30||'|'||maduro_d60 $J" "false|false|false" "c coorte jovem: imatura nas 3 janelas"
+  # (c) mes JOVEM nov/2026 (corrente): imaturo nas 3 janelas → pct NULL (nunca numero parcial); mes_parcial.
+  local J="FROM $V WHERE company='oben' AND mes_vencimento = '2026-11-01'"
+  okp "SELECT maduro_d15||'|'||maduro_d30||'|'||maduro_d60||'|'||mes_parcial $J" "false|false|false|true" "c coorte jovem: imatura nas 3 janelas, mes parcial"
   okp "SELECT (pct_pago_d15 IS NULL)||'|'||(pct_pago_d30 IS NULL)||'|'||(pct_pago_d60 IS NULL) $J" "true|true|true" "c coorte jovem: pct_pago_d15 nulo"
   okp "SELECT valor_pago_no_dia||'|'||valor_vencido_no_mes $J" "100|100" "c coorte jovem: massas preenchidas"
 
-  # (d) mes MEIO: D+15 maduro e D+60 imaturo por construcao; D+30 coerente com a flag.
-  local M="FROM $V WHERE company='oben' AND mes_vencimento = $MEIO"
-  okp "SELECT maduro_d15||'|'||maduro_d60||'|'||pct_pago_d15||'|'||coalesce(pct_pago_d60::text,'null') $M" "true|false|1.0000|null" "d meio: D+15 publica, D+60 nao"
-  okp "SELECT (pct_pago_d30 IS NULL) = (NOT maduro_d30) $M" "t" "d meio: D+30 nulo sse imaturo"
+  # (d) mes MEIO set/2026: D+15 e D+30 maduros (fim 30/09 + 30 = 30/10 < 16/11), D+60 (29/11) imaturo.
+  local M="FROM $V WHERE company='oben' AND mes_vencimento = '2026-09-01'"
+  okp "SELECT maduro_d15||'|'||maduro_d30||'|'||maduro_d60||'|'||pct_pago_d15||'|'||pct_pago_d30||'|'||coalesce(pct_pago_d60::text,'null') $M" \
+    "true|true|false|1.0000|1.0000|null" "d meio: D+15 e D+30 publicam, D+60 nao"
 
-  # (e) RPC como master = view lida como postgres; ordem estavel.
-  oks "$U_MASTER" "SELECT count(*) FROM $RPC" "4" "e master ve as 4 coortes"
+  # (e) BORDA out/2026 (fim 31/10 + 15 = 15/11): madura em 16/11, imatura em 15/11 — inclusive 23:59:59 de SP.
+  #     Pago em D+15 exato conta (<=), em D+16 nao: 100 de 200.
+  local B="FROM $V WHERE company='oben' AND mes_vencimento = '2026-10-01'"
+  okp "SELECT maduro_d15||'|'||pct_pago_d15||'|'||maduro_d30 $B" "true|0.5000|false" "e borda: D+15 publica em 16/11 e conta so o pago em D+15 exato"
+  okt "2026-11-15T15:00:00Z" "SELECT maduro_d15||'|'||coalesce(pct_pago_d15::text,'null') $B" "false|null" "e borda: dia anterior nulo"
+  okt "2026-11-16T02:59:59Z" "SELECT maduro_d15||'|'||coalesce(pct_pago_d15::text,'null') $B" "false|null" "e borda: 23:59:59 de SP ainda e 15/11"
+  okt "2026-11-16T03:00:00Z" "SELECT maduro_d15||'|'||pct_pago_d15 $B" "true|0.5000" "e borda: 00:00:00 de SP vira 16/11"
+
+  # (f) nov/2025: comeco da janela (16/11/2025) → so o titulo de 20/11; mes_parcial; madura.
+  local N="FROM $V WHERE company='oben' AND mes_vencimento = '2025-11-01'"
+  okp "SELECT titulos||'|'||mes_parcial||'|'||pct_pago_d15 $N" "1|true|1.0000" "f mes cortado pela janela marcado como parcial"
+
+  # (g) RPC como master = view lida como postgres; ordem estavel.
+  oks "$U_MASTER" "SELECT count(*) FROM $RPC" "6" "g master ve as 6 coortes"
   oks "$U_MASTER" "SELECT string_agg(company||':'||mes_vencimento, ',' ORDER BY company, mes_vencimento) FROM $RPC" \
-    "$(Pq -c "SELECT string_agg(company||':'||mes_vencimento, ',' ORDER BY company, mes_vencimento) FROM $V")" "e RPC = view, ordenada"
-  oks "$U_MASTER" "SELECT pct_pago_d60 FROM $RPC WHERE company='oben' AND mes_vencimento = $MADURO" "0.6000" "e RPC traz a maturacao"
+    "$(Ler "$AGORA" "SELECT string_agg(company||':'||mes_vencimento, ',' ORDER BY company, mes_vencimento) FROM $V")" "g RPC = view, ordenada"
+  oks "$U_MASTER" "SELECT pct_pago_d60 FROM $RPC WHERE company='oben' AND mes_vencimento = '2026-07-01'" "0.6000" "g RPC traz a maturacao"
 
-  # (f) gate 1: employee e sem claims barrados.
-  oks "$U_EMPLOYEE" "SELECT public.t_lanca('SELECT * FROM $RPC')" "$BARRADO" "f employee barrado"
-  oks "" "SELECT public.t_lanca('SELECT * FROM $RPC')" "$BARRADO" "f sem claims barrado"
+  # (h) gate 1: employee e sem claims barrados.
+  oks "$U_EMPLOYEE" "SELECT public.t_lanca('SELECT * FROM $RPC')" "$BARRADO" "h employee barrado"
+  oks "" "SELECT public.t_lanca('SELECT * FROM $RPC')" "$BARRADO" "h sem claims barrado"
 
-  # (g) gate 2: master sem acesso a colacor so recebe oben.
-  oks "$U_MASTER_SO_OBEN" "SELECT count(*) || '|' || string_agg(DISTINCT company, ',') FROM $RPC" "3|oben" "g gate2 so oben"
+  # (i) gate 2: master sem acesso a colacor so recebe oben.
+  oks "$U_MASTER_SO_OBEN" "SELECT count(*) || '|' || string_agg(DISTINCT company, ',') FROM $RPC" "5|oben" "i gate2 so oben"
 
-  # (h) ACL e invoker.
-  okp "SELECT has_function_privilege('anon','$RPC','EXECUTE')" "f" "h anon sem EXECUTE"
-  okp "SELECT has_function_privilege('authenticated','$RPC','EXECUTE')" "t" "h authenticated com EXECUTE"
-  okp "SELECT has_table_privilege('anon','$V','SELECT')" "f" "h anon sem SELECT na view"
-  okp "SELECT 'security_invoker=on' = ANY (coalesce(c.reloptions,'{}')) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='v_ciclo_empresa_coorte_maturacao'" "t" "h view com security_invoker"
+  # (j) ACL e invoker.
+  okp "SELECT has_function_privilege('anon','$RPC','EXECUTE')" "f" "j anon sem EXECUTE"
+  okp "SELECT has_function_privilege('authenticated','$RPC','EXECUTE')" "t" "j authenticated com EXECUTE"
+  okp "SELECT has_table_privilege('anon','$V','SELECT')" "f" "j anon sem SELECT na view"
+  okp "SELECT 'security_invoker=on' = ANY (coalesce(c.reloptions,'{}')) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='v_ciclo_empresa_coorte_maturacao'" "t" "j view com security_invoker"
   return "$falhas"
 }
 
@@ -271,7 +315,7 @@ sabotar "3 D+30 pela emissao em vez do vencimento" \
   "b maturacao D+15/30/60 pelo VENCIMENTO"
 sabotar "4 janela de 365 d aberta" \
   "s/    AND v.data_vencimento >= hoje.h - 365//" \
-  "a janela: 3 coortes oben"
+  "a janela: 5 coortes oben"
 sabotar "5 pago sem data de baixa contado como se tivesse data" \
   "s/ OR (situacao = 'paga' AND data_baixa IS NULL)//" \
   "b massa: pago sem data (sem baixa 50 + baixa sem data 70)"
@@ -283,37 +327,47 @@ sabotar "7 dias de atraso sem ponderar por valor" \
   "b dias ponderados por valor, cada um na sua massa"
 sabotar "8 maturidade D+60 pela flag de D+15" \
   "s/(m.fim_mes + 60 < m.h) AS maduro_d60/(m.fim_mes + 15 < m.h) AS maduro_d60/" \
-  "d meio: D+15 publica, D+60 nao"
+  "d meio: D+15 e D+30 publicam, D+60 nao"
+# Bordas (relógio controlado): maturidade um dia cedo (<= em vez de <) e pagamento em D+N exato excluido.
+sabotar "9 maturidade publica um dia cedo (<= em vez de <)" \
+  "s/(m.fim_mes + 15 < m.h) AS maduro_d15/(m.fim_mes + 15 <= m.h) AS maduro_d15/; s/CASE WHEN m.fim_mes + 15 < m.h THEN/CASE WHEN m.fim_mes + 15 <= m.h THEN/" \
+  "e borda: dia anterior nulo"
+sabotar "10 pago em D+15 exato nao conta (< em vez de <=)" \
+  "s/AND data_baixa <= data_vencimento + 15/AND data_baixa < data_vencimento + 15/" \
+  "e borda: D+15 publica em 16/11 e conta so o pago em D+15 exato"
+sabotar "11 mes cortado pela janela sem marca" \
+  "s/        OR (m.mes_vencimento = date_trunc('month', m.h - 365)::date AND (m.h - 365) <> date_trunc('month', m.h - 365)::date)) AS mes_parcial/        OR false) AS mes_parcial/" \
+  "f mes cortado pela janela marcado como parcial"
 
-# 9) view sem security_invoker: a postcondição aborta; 9b neutraliza a postcondição → asserção (h) vermelha.
-sabotar_post "9 view sem security_invoker" \
+# 12) view sem security_invoker: a postcondição aborta; 12b neutraliza a postcondição → asserção (j) vermelha.
+sabotar_post "12 view sem security_invoker" \
   "s/WITH (security_invoker=on) AS/AS/" \
   "postcondicao: view sem security_invoker"
-sabotar "9b view sem security_invoker, postcondicao neutralizada" \
+sabotar "12b view sem security_invoker, postcondicao neutralizada" \
   "s/WITH (security_invoker=on) AS/AS/; s/IF v_ok IS DISTINCT FROM true THEN/IF false THEN/" \
-  "h view com security_invoker"
+  "j view com security_invoker"
 
-# 10) RPC sem gate master: idem em 2 camadas (a postcondição lê o corpo da função).
+# 13) RPC sem gate master: idem em 2 camadas (a postcondição lê o corpo da função).
 NEUTRA_GATE="s/IF v_def NOT LIKE '%_fin_ciclo_gate_master()%' OR v_def NOT LIKE '%fin_user_can_access(v.company)%' THEN/IF false THEN/"
-sabotar_post "10 RPC sem gate master" \
+sabotar_post "13 RPC sem gate master" \
   "/PERFORM public._fin_ciclo_gate_master();/d" \
   "postcondicao: RPC sem gate"
-sabotar "10b RPC sem gate master, postcondicao neutralizada" \
+sabotar "13b RPC sem gate master, postcondicao neutralizada" \
   "/PERFORM public._fin_ciclo_gate_master();/d; $NEUTRA_GATE" \
-  "f employee barrado"
-sabotar "11 RPC sem fin_user_can_access, postcondicao neutralizada" \
+  "h employee barrado"
+sabotar "14 RPC sem fin_user_can_access, postcondicao neutralizada" \
   "s/    WHERE public.fin_user_can_access(v.company)//; $NEUTRA_GATE" \
-  "g gate2 so oben"
+  "i gate2 so oben"
 
-# 12) anon fora do REVOKE da RPC: postcondição aborta; 12b neutralizada → asserção (h) vermelha.
-sabotar_post "12 anon fora do REVOKE da RPC" \
+# 15) anon fora do REVOKE da RPC: postcondição aborta; 15b neutralizada → asserção (j) vermelha.
+sabotar_post "15 anon fora do REVOKE da RPC" \
   "s/REVOKE ALL ON FUNCTION public.fin_ciclo_empresa_coorte_maturacao() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_empresa_coorte_maturacao() FROM PUBLIC;/" \
   "postcondicao: anon executa"
-sabotar "12b anon fora do REVOKE da RPC, postcondicao neutralizada" \
+sabotar "15b anon fora do REVOKE da RPC, postcondicao neutralizada" \
   "s/REVOKE ALL ON FUNCTION public.fin_ciclo_empresa_coorte_maturacao() FROM PUBLIC, anon;/REVOKE ALL ON FUNCTION public.fin_ciclo_empresa_coorte_maturacao() FROM PUBLIC;/; s/IF has_function_privilege('anon', 'public.fin_ciclo_empresa_coorte_maturacao()', 'EXECUTE') THEN/IF false THEN/" \
-  "h anon sem EXECUTE"
-sabotar "13 anon fora do REVOKE da view, postcondicao neutralizada" \
+  "j anon sem EXECUTE"
+sabotar "16 anon fora do REVOKE da view, postcondicao neutralizada" \
   "s/REVOKE ALL ON public.v_ciclo_empresa_coorte_maturacao FROM PUBLIC, anon;/REVOKE ALL ON public.v_ciclo_empresa_coorte_maturacao FROM PUBLIC;/; s/IF has_table_privilege('anon', 'public.v_ciclo_empresa_coorte_maturacao', 'SELECT') THEN/IF false THEN/" \
-  "h anon sem SELECT na view"
+  "j anon sem SELECT na view"
 
 echo "PROVA-CICLO-COORTE-MATURACAO-OK"

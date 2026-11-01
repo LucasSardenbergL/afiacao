@@ -16,12 +16,13 @@ function DotReal(props: { cx?: number; cy?: number; payload?: Ponto }) {
     : <circle cx={cx} cy={cy} r={3} fill="hsl(var(--primary))" />;
 }
 
-/** Maturação de UM mês para o tooltip do gráfico: "D+30: 37,8 %" ou "imatura" (janela ainda aberta). */
+/** Maturação de UM mês para o tooltip: "D+15 21,1% · D+30 …" (com "piso" quando há pago sem data), ou imatura. */
 function maturacaoDoMes(linhas: LinhaMaturacao[], rotulo: string): string {
   const l = linhas.find((x) => x.rotulo === rotulo);
   if (!l) return 'maturação indisponível';
-  const partes = JANELAS_MATURACAO.map((j) => `D+${j} ${celulaMaturacao(l.pct[j])}`);
-  return l.maduro[15] ? partes.join(' · ') : 'coorte imatura (D+15 ainda aberto)';
+  if (!l.maduro[15]) return 'coorte imatura (D+15 ainda aberto)';
+  const partes = JANELAS_MATURACAO.map((j) => `D+${j} ${celulaMaturacao(l.pct[j])}`).join(' · ');
+  return l.temSemData ? `${partes} (piso: há pago sem data de baixa)` : partes;
 }
 
 export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, maturacaoCarregando }: {
@@ -29,14 +30,16 @@ export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, matu
   maturacao: CoorteMaturacao[]; maturacaoErro: boolean; maturacaoCarregando: boolean;
 }) {
   const serie = montarSerieTendencia(coorte, company);
-  const linhas = montarLinhasMaturacao(maturacao, company);
+  // Erro na leitura: NENHUMA superfície publica (nem o tooltip com o cache antigo — Codex, 2026-11-01).
+  const linhas = maturacaoErro ? [] : montarLinhasMaturacao(maturacao, company);
   return (
     <Card data-testid={`ciclo-tendencia-${company}`}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">{COMPANIES[company].shortName} — prazo por mês de vencimento</CardTitle>
         <p className="text-xs text-muted-foreground">
-          * e círculo vazio = mês parcial (primeiro/último da janela). O tooltip traz a maturação da coorte: % do valor vencido no mês
-          pago até D+15/30/60 após o vencimento — uma janela só publica número quando todos os títulos do mês já passaram por ela.
+          * e círculo vazio = mês cortado pela janela (primeiro/último). Maturação da coorte = % do valor vencido no mês pago até
+          D+15/30/60 após o vencimento, com o título contando pelo valor integral na data da última baixa (não é recebimento parcial
+          acumulado); uma janela só publica número quando todos os títulos do mês já passaram por ela.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -65,7 +68,7 @@ export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, matu
           </div>
         )}
 
-        {/* Coortes com maturação fixa (Frente A, item 4): imatura = "—", nunca número parcial. */}
+        {/* Coortes com maturação fixa (Frente A, item 4): imatura = "—", nunca número parcial; % é PISO. */}
         {maturacaoErro && (
           <p className="text-status-error text-sm" data-testid={`ciclo-maturacao-erro-${company}`}>
             Não foi possível ler a maturação das coortes.
@@ -80,7 +83,11 @@ export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, matu
                   <th className="py-1 pr-2 font-medium">Vencimento</th>
                   <th className="py-1 pr-2 font-medium text-right">Vencido</th>
                   {JANELAS_MATURACAO.map((j) => (
-                    <th key={j} className="py-1 pr-2 font-medium text-right" title={`% do valor vencido no mês pago até ${j} dias após o vencimento`}>
+                    <th
+                      key={j}
+                      className="py-1 pr-2 font-medium text-right"
+                      title={`% do valor vencido no mês pago até ${j} dias após o vencimento (título pelo valor integral na data da última baixa; piso, sem arredondar para cima)`}
+                    >
                       D+{j}
                     </th>
                   ))}
@@ -94,8 +101,11 @@ export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, matu
                   <tr key={l.mes} className="border-t border-border" data-testid={`ciclo-maturacao-${company}-${l.rotulo}`}>
                     <td className="py-1 pr-2 tabular-nums">
                       {l.rotulo}
-                      {l.pctSemData > 0 && (
-                        <span className="text-muted-foreground" title={`${l.pctSemData.toFixed(1)}% do valor pago sem data de baixa: os D+N são piso`}> †</span>
+                      {l.parcial && (
+                        <span className="text-muted-foreground" title="mês cortado pela janela de 365 d: a coorte é um recorte, não o mês inteiro" data-testid={`ciclo-maturacao-${company}-${l.rotulo}-parcial`}>*</span>
+                      )}
+                      {l.temSemData && (
+                        <span className="text-muted-foreground" title={`${l.pctSemData.toFixed(1)}% do valor pago sem data de baixa: os D+N são piso`} data-testid={`ciclo-maturacao-${company}-${l.rotulo}-piso`}> †</span>
                       )}
                     </td>
                     <td className="py-1 pr-2 text-right tabular-nums">{l.titulos} tít.</td>
@@ -116,7 +126,7 @@ export function CicloTendencia({ coorte, company, maturacao, maturacaoErro, matu
                 ))}
               </tbody>
             </table>
-            {linhas.some((l) => l.pctSemData > 0) && (
+            {linhas.some((l) => l.temSemData) && (
               <p className="mt-1 text-xs text-muted-foreground">† parte do valor pago não tem data de baixa legível: nesses meses os D+N são piso.</p>
             )}
           </div>

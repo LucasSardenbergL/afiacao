@@ -343,6 +343,7 @@ describe('coortes com maturação fixa (Frente A, item 4)', () => {
     valorPagoSemData: maduro ? 120 : 0, valorEmAberto: 60, diasAntecipacaoPond: 5, diasAtrasoPond: 43.57,
     pct: maduro ? { 15: 0.2111, 30: 0.3778, 60: 0.6 } : { 15: null, 30: null, 60: null },
     maduro: { 15: maduro, 30: maduro, 60: maduro },
+    mesParcial: !maduro,
   });
 
   it('coorte madura publica D+15/30/60 em %; imatura mostra "—" (nunca número parcial); sem-data marca o piso', () => {
@@ -357,6 +358,10 @@ describe('coortes com maturação fixa (Frente A, item 4)', () => {
     const linhas = within(tabela).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'));
     expect(linhas).toEqual(['ciclo-maturacao-oben-2026-10', 'ciclo-maturacao-oben-2026-07']);
     expect(screen.getByText(/os D\+N são piso/)).toBeInTheDocument();
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-piso')).toBeInTheDocument();
+    // Mês cortado pela janela leva a marca *, com o motivo no title.
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-parcial')).toHaveTextContent('*');
+    expect(within(tabela).queryByTestId('ciclo-maturacao-oben-2026-07-parcial')).toBeNull();
   });
 
   it('erro na leitura da maturação aparece como erro, não como tabela vazia', () => {

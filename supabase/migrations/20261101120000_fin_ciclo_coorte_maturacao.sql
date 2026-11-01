@@ -67,13 +67,17 @@ SELECT m.company,
        (m.fim_mes + 15 < m.h) AS maduro_d15,
        (m.fim_mes + 30 < m.h) AS maduro_d30,
        (m.fim_mes + 60 < m.h) AS maduro_d60,
+       -- Mes CORTADO pela janela (o corrente, e o de 365 d atras quando a janela nao comeca no dia 1): a coorte
+       -- e um recorte do mes, nao o mes inteiro - mesma marca da v_ciclo_empresa_coorte (Codex, 2026-11-01).
+       (m.mes_vencimento = date_trunc('month', m.h)::date
+        OR (m.mes_vencimento = date_trunc('month', m.h - 365)::date AND (m.h - 365) <> date_trunc('month', m.h - 365)::date)) AS mes_parcial,
        CASE WHEN m.fim_mes + 15 < m.h THEN round(m.pago_d15 / nullif(m.valor_vencido_no_mes, 0), 4) END AS pct_pago_d15,
        CASE WHEN m.fim_mes + 30 < m.h THEN round(m.pago_d30 / nullif(m.valor_vencido_no_mes, 0), 4) END AS pct_pago_d30,
        CASE WHEN m.fim_mes + 60 < m.h THEN round(m.pago_d60 / nullif(m.valor_vencido_no_mes, 0), 4) END AS pct_pago_d60
 FROM m;
 
 COMMENT ON VIEW public.v_ciclo_empresa_coorte_maturacao IS
-  'Coortes de CR por mês de vencimento com maturação fixa: pct_pago_dN só quando maduro_dN (último dia do mês + N < hoje SP); massas separadas (antecipado / no dia / com atraso / sem data / em aberto). Ler pela RPC fin_ciclo_empresa_coorte_maturacao().';
+  'Coortes de CR por mês de vencimento com maturação fixa: pct_pago_dN só quando maduro_dN (último dia do mês + N < hoje SP); massas separadas (antecipado / no dia / com atraso / sem data / em aberto; nao formam particao: em aberto e SALDO). Titulo conta pelo valor INTEGRAL na data da ULTIMA baixa (nao e recebimento parcial acumulado). mes_parcial = coorte cortada pela janela. Ler pela RPC fin_ciclo_empresa_coorte_maturacao().';
 
 -- ── 2. RPC (mesmo gate das RPCs do ciclo) ───────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.fin_ciclo_empresa_coorte_maturacao()
