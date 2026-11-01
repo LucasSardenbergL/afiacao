@@ -18,6 +18,8 @@ ANCORA1="$REPO_ROOT/supabase/migrations/20261016120000_raio_x_estoque_parado.sql
 ANCORA2="$REPO_ROOT/supabase/migrations/20261031130000_raio_x_correcoes_pos_revisao.sql"
 ANCORA3="$REPO_ROOT/supabase/migrations/20261031180000_raio_x_plano_execucao.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261101120000_raio_x_inequivoco.sql"
+# correcao do 403 em prod: inequivoco vira SECURITY DEFINER (corpo identico). A suite aplica as DUAS, nesta ordem.
+MIG2="$REPO_ROOT/supabase/migrations/20261101190000_raio_x_inequivoco_definer.sql"
 # shellcheck disable=SC1091  # o gate roda sem -x; o helper é versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
@@ -59,6 +61,9 @@ CREATE FUNCTION public._fin_estoque_classe(p_tipo text, p_familia text) RETURNS 
   SELECT CASE WHEN lower(trim(p_familia)) IN ('uso e consumo','imobilizado') THEN 'fora_giro'
               WHEN nullif(trim(p_tipo), '') IS NULL THEN 'sem_classificacao'
               WHEN trim(p_tipo) IN ('07','08','09','99') THEN 'fora_giro' ELSE 'giro' END $$;
+-- ACL de PROD (20261018200000:230): helper interno, SEM EXECUTE para authenticated. Sem isto o default privileges do
+-- harness o abria, e uma RPC INVOKER que o chama passava aqui e dava 42501 (403) em prod — o bug de 2026-11-01.
+REVOKE ALL ON FUNCTION public._fin_estoque_classe(text, text) FROM PUBLIC, anon, authenticated;
 CREATE TABLE public.inventory_position (omie_codigo_produto bigint, saldo numeric, cmc numeric, preco_medio numeric, account text, synced_at timestamptz);
 CREATE TABLE public.omie_products (omie_codigo_produto bigint, codigo text, descricao text, unidade text, ativo boolean, familia text,
   account text, tipo_produto text, metadata jsonb, created_at timestamptz);
@@ -197,6 +202,7 @@ suite() {
   # decisoes de partida ANTES da regra nova: 104 (corante) ja 'liquidar' — a regra nao pode tornar orfa a liquidacao antiga
   run "$(dec "'oben', 104, 'liquidar', 'mercadoria', NULL, NULL, NULL, false, false")" "z 104 liquidar antes da regra"
   P -f "$1" >/dev/null || { echo "APLICACAO FALHOU: $1"; return 99; }
+  P -f "${MIG2_EFETIVA:-$MIG2}" >/dev/null || { echo "APLICACAO FALHOU: ${MIG2_EFETIVA:-$MIG2}"; return 99; }
   helpers >/dev/null || { echo "HELPERS FALHARAM"; return 98; }
 
   # ---------- (a) gate ----------
@@ -285,12 +291,22 @@ echo "md5 do raio_x_decidir desta migration: $MD5_NOVO"
 if ! grep -qF "$MD5_NOVO" "$MIG"; then echo "FALHOU: a PRE da migration nao aceita o proprio corpo (md5 $MD5_NOVO ausente) — re-rodar a migration abortaria"; exit 1; fi
 echo "== re-aplicar e idempotente (PRE aceita o proprio corpo) =="
 P -f "$MIG" >/dev/null || { echo "RE-APLICACAO FALHOU"; exit 1; }
+P -f "$MIG2" >/dev/null || { echo "RE-APLICACAO DA DEFINER FALHOU"; exit 1; }
+[ "$(Pq -c "SELECT prosecdef FROM pg_proc WHERE oid = 'public.raio_x_inequivoco(text,bigint)'::regprocedure")" = "t" ] || { echo "FALHOU: inequivoco nao e DEFINER apos re-aplicar as duas"; exit 1; }
+echo "== controle negativo: sem a DEFINER, a tela leva 42501 (o 403 de prod) =="
+: > "$TMPD/vazia.sql"
+if o="$(MIG2_EFETIVA="$TMPD/vazia.sql" suite "$MIG" 2>&1)"; then echo "CONTROLE NEGATIVO PASSOU (teste cego ao 403): sem a DEFINER a suite devia ficar vermelha"; exit 1; fi
+grep -qF "permission denied for function _fin_estoque_classe" <<<"$o" || { echo "CONTROLE NEGATIVO VERMELHO PELO MOTIVO ERRADO"; echo "$o" | head -5; exit 1; }
+echo "controle negativo ok: sem a DEFINER, permission denied for function _fin_estoque_classe"
 
+# Sabotagens mexem no CORPO do inequivoco: a PRE da 20261101190000 (md5) recusaria, e a sabotagem "nao aplicaria".
+# Nelas o DEFINER entra pelo ALTER equivalente; controle e re-aplicacao acima usam a migration real.
+printf '%s\n' 'ALTER FUNCTION public.raio_x_inequivoco(text, bigint) SECURITY DEFINER;' > "$TMPD/definer-alter.sql"
 sabotar() { # $1 nome, $2 expressao sed, $3 rotulo esperado (FALHOU: <rotulo> |)
   sed "$2" "$MIG" > "$TMPD/sab.sql"
   if cmp -s "$MIG" "$TMPD/sab.sql"; then echo "SABOTAGEM NAO ALTEROU O ARQUIVO: $1"; exit 1; fi
   local o r=0
-  o="$(suite "$TMPD/sab.sql" 2>&1)" || r=$?
+  o="$(MIG2_EFETIVA="$TMPD/definer-alter.sql" suite "$TMPD/sab.sql" 2>&1)" || r=$?
   if [ "$r" -eq 0 ]; then echo "SABOTAGEM PASSOU (teste cego): $1"; exit 1; fi
   if [ "$r" -ge 98 ]; then echo "SABOTAGEM NAO APLICOU (erro de SQL, nao e prova): $1"; echo "$o"; exit 1; fi
   if ! grep -qF "FALHOU: $3 |" <<<"$o"; then echo "SABOTAGEM VERMELHA PELO MOTIVO ERRADO: $1 (esperava FALHOU: $3)"; echo "$o"; exit 1; fi

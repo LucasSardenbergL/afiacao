@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-01T13:51:38.424Z",
-  "sourceHead": "c602f9797ed1291092f191226b135abeeeb44171",
+  "medidoEm": "2026-11-01T18:45:38.644Z",
+  "sourceHead": "8f9ace125cc96c1f058e1f3bfde3081e279289d3",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 75 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 76 definição(ões) lida(s) para 75 chave(s) da allowlist.",
-      "contratoFingerprint": "e9160f6198f0f9583576a7b56e92e7e8d36c1b46a4ae08b2c252be20435257b3",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 76 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 77 definição(ões) lida(s) para 76 chave(s) da allowlist.",
+      "contratoFingerprint": "15a6ddd96e60b61a967be99a2867657b1b61d6d5bd2bcd3fdc467d7be80fbcea",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 32 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 33 definição(ões) lida(s) para 32 chave(s) do manifest.",
-      "contratoFingerprint": "aa7ea688b4e327df9cf51bedfd82f572e397e53200508a9aa1d564a76c5fde27",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 33 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 34 definição(ões) lida(s) para 33 chave(s) do manifest.",
+      "contratoFingerprint": "41cc0637505bb8d8e9e4339ef60b86ff31711d99463f5c9b2a3573ca08b866c6",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -69,19 +69,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 458 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@26b0a96ef (fetch ok) · prod 2026-11-01 13:52:02.218856Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 466 identidade(s) batem com o repo (389 em dia, 65 só cosméticas, 11 aceitas na baseline) e 22 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 466 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@f5a20e96d (fetch ok) · prod 2026-11-01 18:46:04.438142Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
-      "achados": [
-        {
-          "id": "2021f7353ac34cf8",
-          "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 32 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261010210000_motor_desconta_comprometido.sql (xmin 13380933)",
-          "primeiraVez": "2026-11-01",
-          "ultimaVez": "2026-11-01"
-        }
-      ]
+      "achados": []
     }
   }
 }
