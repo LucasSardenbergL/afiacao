@@ -29,6 +29,37 @@ Outras medições que entram no desenho:
 - Superfície: card "Oben — sensor de ruptura" na aba Ciclo (`CicloRupturaSensor`, abaixo da dobra, só Oben).
 - Lições de falsificação: duas sabotagens ficaram **verdes na 1ª rodada** por defesa em profundidade real — o pedido do app é barrado pelo `WHEN` do trigger **e** pela checagem do hash na função; a quantidade zero é barrada pelo guard do writer **e** pelo `CHECK` da tabela. A prova passou a tirar as duas camadas de cada par (money-path: "sabote uma camada por vez: a que fica VERDE é redundante ou inalcançada").
 
+## Itens 2 e 3 — régua honesta do card e série de estoque (PR 2, migration `20261031210000`)
+
+**O que o card da empresa passa a dizer** (`CicloEmpresaCards.tsx`, regra pura em `regua-ciclo-helpers.ts`):
+
+- **DSO ao lado do PMR**, com a convenção no tooltip das duas células: *PMR = só títulos PAGOS (ponderado pelo valor
+  baixado; vencido não entra) · DSO = carteira ABERTA toda ÷ receita de competência TTM × 365*. Oben em 31/10:
+  R$ 645.925 abertos ÷ R$ 11.287/dia ≈ **57 d** contra PMR ≈ 31 d — a diferença é a carteira vencida, que o PMR
+  por desenho não vê. Teto de plausibilidade 730 d (acima vira null + motivo, como no `dso-dpo-helpers`).
+- **1 dia de PME = CMV TTM ÷ 365** (e não receita — o PME é sobre custo). CMV espelha `estoque-pme.ts` da edge:
+  12 meses fechados, 1 linha por mês, Σ > 0; faltando um mês → null com "cobre N/12 (último: AAAA-MM)".
+- **Estoque de giro** ganha hora do último sync (`inventory_position` da conta da empresa) e **cobertura de custo**
+  (`fin_estoque_giro_valor.cobertura_pct`). Sem sync ou sem cobertura lida é dito, não omitido.
+- **Ciclo** rotulado "soma de bases distintas" (foto de estoque + prazo dos pagos − CP total).
+- **PME pelo estoque MÉDIO dos 90 d**: média dos pontos diários (1 por dia de SP, o último vence) ÷ CMV TTM × 365.
+  Só com ≥ 60 dias cobertos e todos com cobertura de custo ok; senão null com "cobre N/90 dias (desde …)".
+
+**De onde vem a série** (item 3): o snapshot diário do `fin-cashflow-engine` (cron, `save_snapshot: true`) passa a
+gravar `estoque_valor`, `estoque_fonte`, `estoque_cobertura_ok` e `cmv_ttm` em **colunas dedicadas** de
+`fin_projecao_snapshots` (engine v2.2) — não em `premissas` (jsonb multi-chave; sinal money-path pede coluna + 1
+writer). CHECKs fecham faixa (NaN, ≥ 0, teto) e o par (valor sem fonte é fabricação); índice parcial
+`(company, cenario, snapshot_at DESC) WHERE estoque_fonte IS NOT NULL` serve a leitura dos 90 d.
+**A série nasce no 1º snapshot após o deploy da edge** — até lá o card diz "série de estoque ainda sem ponto";
+o PME médio só aparece a partir de ~60 dias depois (meados de jan/2027). Ordem de deploy: migration → edge.
+
+**Lições:**
+
+- `premissas` já carregava `estoque_fonte` como marca (37 snapshots em 30 d) e NUNCA `estoque_valor` — o jsonb
+  era "tem fonte", não "qual valor". A série precisava de coluna.
+- O `CicloTab.carga.test` vigia o pico de leituras em voo: hook com 4 leituras por empresa toma UMA vaga da
+  `filaCiclo` e lê em SÉRIE dentro dela (nunca `Promise.all` dentro da vaga).
+
 ## Item 5 — corante na demanda (Fase 2): critério NÃO atendido, parado aqui
 
 `db/consultas/reconciliacao-corante-fase2.sql` rodada em prod (psql-ro, 2026-10-31): **`VEREDITO = nao_medido`** — 0 WP elegíveis (recebido 0 L, retirado 0,00 L e dosado 0,000 L em todos os 14 WP desde a linha de base de 27/10). Critério 1 (≥ 90 d de cobertura contínua desde 2026-10-27) só pode fechar a partir de **2027-01-25**; critério 3 (≥ 1 sinal de uso da aba): `analytics_outbox` tem **0** `reposicao.corantes_aberta`. Nada de `v_sku_demanda_efetiva` muda nesta leva. Quando medir de novo: a mesma consulta + `SELECT count(*) FROM analytics_outbox WHERE evento = 'reposicao.corantes_aberta'` (lembrando a purga de 7 d — a contagem durável é no PostHog via HogQL).
