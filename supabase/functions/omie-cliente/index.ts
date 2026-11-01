@@ -4,7 +4,16 @@ import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
+import {
+  type AvancoRodada,
+  type CursorRodada,
+  interpretarAcquire,
+  MAX_PAGINAS_LOTE_SERVIDOR,
+  planejarAvanco,
+  resolverConta,
+} from "./import-servidor.ts";
 import { fetchAll } from "../_shared/paginate.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import {
   avaliarPagina,
   desfechoContaListagem,
@@ -653,6 +662,11 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // Rodada do import NO SERVIDOR (migration 20261101200000): preenchida só pela ação
+  // `continuar_import_clientes`, depois de reivindicar o lease. Fora do try para o catch externo
+  // conseguir devolver o lease com erro (senão a rodada esperaria os 7 min do lease vencer).
+  let rodada: (CursorRodada & { admin: SupabaseClient; contas: string[]; avancada: boolean }) | null = null;
+
   try {
     const body = await req.json();
 
@@ -676,6 +690,36 @@ Deno.serve(async (req) => {
       return jsonRes({ error: erroSondaAmbigua(decisaoSonda.valor, EFEITO) }, 400);
     }
 
+    // ── Import de clientes no SERVIDOR (migration 20261101200000_clientes_import_servidor) ──
+    // O laço do navegador morria no meio (aba recarregada, rede) e cada clique recomeçava da página 1.
+    // Agora o cron de 1 min chama esta ação com x-cron-secret: ela reivindica o lease da rodada
+    // aberta, injeta o cursor PERSISTIDO e cai no MESMO bloco `sync_all_clients` abaixo (sem duplicar
+    // a lógica que os guardrails money-path leem como texto); depois do bloco, avança o cursor.
+    // O `sync_all_clients` direto deixou de ser aceito: seria um 2º escritor de identidade fora do
+    // lease — o dedup é carregado no início de cada invocação, e duas simultâneas criariam o mesmo
+    // cliente duas vezes (achado Codex P1).
+    if (body.action === "continuar_import_clientes") {
+      const authCron = await authorizeCronOrStaff(req);
+      if (!authCron.ok) return authCron.response;
+      const adminRodada = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: leaseData, error: leaseErr } = await adminRodada.rpc("clientes_import_lease_acquire");
+      if (leaseErr) return jsonRes({ error: `clientes_import_lease_acquire: ${leaseErr.message}` }, 500);
+      const cursor = interpretarAcquire(leaseData);
+      if (!cursor) return jsonRes({ skipped: "sem_rodada_aberta_ou_lease_ocupado" }, 200);
+      const contas = getOmieAccounts().map((c) => c.account);
+      rodada = { ...cursor, admin: adminRodada, contas, avancada: false };
+      const conta = resolverConta(cursor.conta_slug, contas, CONTAS_ESPERADAS.map((c) => c.account));
+      body.account_index = conta.indice;
+      // Credencial da conta do cursor sumiu → a varredura segue na próxima conta, do começo dela.
+      body.start_page = conta.mesmaConta ? cursor.start_page : 1;
+      body.total_paginas = conta.mesmaConta ? cursor.total_paginas : 0;
+      body.action = "sync_all_clients";
+    } else if (body.action === "sync_all_clients") {
+      return jsonRes({
+        error: "O import de clientes agora roda no servidor. Recarregue a página e clique em Importar Todos de novo.",
+      }, 410);
+    }
+
     const { action, documento, query, codigo_cliente } = body;
 
     // Input validation
@@ -685,7 +729,9 @@ Deno.serve(async (req) => {
 
     // buscar_por_documento is allowed without auth (used during signup)
     // All other actions require authentication
-    if (action !== "buscar_por_documento") {
+    if (rodada) {
+      // Autenticada acima pelo cron (authorizeCronOrStaff) e dona do lease — não passa pelo gate de JWT.
+    } else if (action !== "buscar_por_documento") {
       const authHeader = req.headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
         return jsonRes({ error: "Não autorizado" }, 401);
@@ -999,7 +1045,9 @@ Deno.serve(async (req) => {
         const accounts = getOmieAccounts();
         const accountIndex = body.account_index ?? 0;
         const startPage = body.start_page ?? 1;
-        const maxPages = 3; // Process max 3 pages per call (~150 clients) to stay within timeout
+        // 3 páginas por chamada no caminho antigo; no servidor quem limita é o orçamento de tempo
+        // (orcamento.ts: sem página nova após 60 s, corte em 110 s) — o teto só evita varredura sem fim.
+        const maxPages = rodada ? MAX_PAGINAS_LOTE_SERVIDOR : 3;
 
         if (accountIndex >= accounts.length) {
           // Fim da varredura. As contas SEM credencial nunca entraram no laço — sem este campo
@@ -1695,9 +1743,43 @@ Deno.serve(async (req) => {
         return jsonRes({ error: "Ação não reconhecida" }, 400);
     }
 
+    if (rodada) {
+      // Lança se o resultado do bloco sair do contrato → o catch abaixo devolve o lease com erro.
+      const avanco: AvancoRodada = planejarAvanco(result, rodada.contas);
+      const { data: aplicado, error: avancoErr } = await rodada.admin.rpc("clientes_import_avancar", {
+        p_rodada_id: rodada.rodada_id,
+        p_lease_token: rodada.lease_token,
+        p_conta_slug: avanco.conta_slug,
+        p_start_page: avanco.start_page,
+        p_total_paginas: avanco.total_paginas,
+        p_importados: avanco.importados,
+        p_pulados: avanco.pulados,
+        p_erros: avanco.erros,
+        p_telefones: avanco.telefones_repostos,
+        p_falha: avanco.falha,
+        p_contas_sem_credencial: avanco.contas_sem_credencial,
+        p_concluida: avanco.concluida,
+      });
+      if (avancoErr) throw new Error(`clientes_import_avancar: ${avancoErr.message}`);
+      rodada.avancada = true;
+      // false = o lease não era mais desta invocação: os clientes gravados estão no banco (o próximo
+      // lote os pula), mas o cursor/acumulados deste lote não entram — nunca presumir que entraram.
+      if (aplicado !== true) console.error(`[continuar_import_clientes] lease perdido na rodada ${rodada.rodada_id}: avanço recusado`);
+      return jsonRes({ ...result, rodada: { id: rodada.rodada_id, avanco_aplicado: aplicado === true, ...avanco } }, 200);
+    }
+
     return jsonRes(result, 200);
   } catch (error) {
     console.error("[Omie Cliente] Erro:", error);
+    if (rodada && !rodada.avancada) {
+      const motivo = redigirSegredo(mensagemDeErro(error) ?? "erro sem mensagem");
+      const { error: libErr } = await rodada.admin.rpc("clientes_import_liberar_erro", {
+        p_rodada_id: rodada.rodada_id,
+        p_lease_token: rodada.lease_token,
+        p_motivo: motivo,
+      });
+      if (libErr) console.error(`[continuar_import_clientes] liberar_erro falhou na rodada ${rodada.rodada_id}:`, libErr.message);
+    }
     return jsonRes({ error: "Erro ao processar solicitação" }, 500);
   }
 });

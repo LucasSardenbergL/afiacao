@@ -24,8 +24,10 @@ import {
   type JanelaImportacao,
   type StatusJanelaConta,
 } from "./janelas";
+import { haRodadaAberta, rodadasRelevantes, statusRodada, type RodadaClientesRow } from "./rodadaClientes";
 
 const JANELAS_CURSOR_QUERY_KEY = "vendas-sync-cursor-janelas";
+const RODADAS_CLIENTES_QUERY_KEY = "clientes-import-rodadas";
 
 export type RecConfigs = ReturnType<typeof useAnalyticsSync>["recConfigs"];
 
@@ -155,158 +157,68 @@ export function useAnalyticsSync() {
     },
   });
 
-  const [clientSyncProgress, setClientSyncProgress] = useState<string | null>(null);
-
+  // Import de clientes NO SERVIDOR (migration 20261101200000_clientes_import_servidor): o botão só
+  // SEMEIA a rodada; o cron de 1 min chama a edge, que avança o cursor guardado no banco. Antes era
+  // um laço nesta aba — recarregar/perder a rede matava o import no meio e o próximo clique
+  // recomeçava da página 1. O registro do clique passa a significar "rodada solicitada"; andamento e
+  // desfecho vêm da própria rodada (query abaixo).
   const bulkClientSyncMutation = useMutationComRegistro({
     acao: ACOES_ANALYTICS_SYNC.importarClientes,
-    // Só há `detalhes` de sucesso quando as 3 contas foram percorridas: import parcial lança, e
-    // aí quem grava é o ramo de erro do useMutationComRegistro (status 'erro' + a mensagem que
-    // nomeia as contas interrompidas).
-    detalhes: (d) => ({ importados: d.totalImported, ja_existiam: d.totalSkipped, erros: d.totalErrors, telefones_repostos: d.totalTelefonesRepostos }),
     mutationFn: async () => {
-      let accountIndex = 0;
-      let startPage = 1;
-      let totalImported = 0;
-      let totalSkipped = 0;
-      let totalErrors = 0;
-      // Perfis já mapeados cujo telefone ganhou DDD nesta passada (edge v1.4 — régua de cobrança).
-      let totalTelefonesRepostos = 0;
-      // Contas que a edge INTERROMPEU (credencial revogada, erro que persistiu além do teto de
-      // retentativas). A edge pula a conta para que as demais sincronizem — o que só é honesto
-      // se a falha chegar aqui e à tela: pular em silêncio viraria "importação concluída" sobre
-      // um import parcial (money-path §8). Acumulamos e o toast final nomeia as contas.
-      const falhas: Array<{ conta: string; account: string; pagina: number; classe: string; motivo: string }> = [];
-      // Guard de PROGRESSO, independente da edge: se duas invocações seguidas devolverem o mesmo
-      // (account_index, start_page), o cursor não andou — e reinvocar é o laço quente original.
-      // A edge tem defesa própria, mas uma edge revertida pelo deploy do Lovable, antiga ou
-      // malformada voltaria a produzir exatamente esse cursor; aqui o laço morre de qualquer jeito.
-      let cursorAnterior = '';
-      // Contas do grupo sem credencial configurada na edge: não entram no laço, então sem isto
-      // sumiriam do relatório e o import sairia "concluído" com um terço da base fora.
-      const semCredencial = new Map<string, string>();
-      // Piso de páginas da conta em curso, devolvido pela edge e REPASSADO na próxima chamada.
-      // Sem transportá-lo, o teto reiniciava em `start_page` a cada invocação e uma resposta
-      // retomada COM clientes mas SEM `total_de_paginas` encerrava a conta na hora, deixando a
-      // cauda por importar (achado Codex do PR da classe de paginação; a edge tem defesa
-      // própria pela página cheia, mas ela é o cinto — este é o suspensório).
-      let totalPaginas = 0;
-
-      while (true) {
-        setClientSyncProgress(`Conta ${accountIndex + 1}/3 — página ${startPage}...`);
-        const { data, error } = await supabase.functions.invoke("omie-cliente", {
-          body: {
-            action: "sync_all_clients",
-            account_index: accountIndex,
-            start_page: startPage,
-            total_paginas: totalPaginas,
-          },
-        });
-        if (error) throw error;
-
-        totalImported += data?.imported || 0;
-        totalSkipped += data?.skipped || 0;
-        totalErrors += data?.errors || 0;
-        totalTelefonesRepostos += data?.telefones_repostos || 0;
-
-        // ANTES de qualquer `break`: a última resposta do laço também pode trazer a conta que
-        // falhou (a última conta abandonada zera o hasMore), e ler a falha depois do break a
-        // perderia justamente no caso em que ela é a única coisa a reportar.
-        for (const c of (data?.contas_sem_credencial ?? []) as Array<{ account?: string; name?: string }>) {
-          if (c?.account) semCredencial.set(String(c.account), String(c.name ?? c.account));
-        }
-        if (data?.falha?.conta_abandonada === true) {
-          falhas.push({
-            conta: String(data.falha.conta ?? data.falha.account ?? 'conta desconhecida'),
-            account: String(data.falha.account ?? ''),
-            pagina: Number(data.falha.pagina) || 0,
-            classe: String(data.falha.classe ?? 'indeterminada'),
-            motivo: String(data.falha.motivo ?? '').slice(0, 240),
-          });
-        }
-
-        if (data?.account) {
-          setClientSyncProgress(`${data.account}: +${data.imported} importados (pág ${data.lastPage}/${data.totalPages})`);
-        }
-
-        // Fim-sentinela da edge: accountIndex além da última conta devolve {done:true}
-        // SEM hasMore (omie-cliente:909) — é fim LEGÍTIMO, não malformação (Codex xhigh).
-        if (data?.done === true) break;
-        // Resposta malformada (sem `hasMore` booleano) NÃO é fim (classe #1338→#1564):
-        // colapsá-la com fim dava toast "Importação concluída" sobre um sync PARCIAL.
-        // Fim legítimo é exclusivamente `hasMore === false` / `done` vindos da edge.
-        if (data == null || typeof data.hasMore !== 'boolean') {
-          throw new Error('sync_all_clients: resposta sem hasMore booleano — malformada, não é fim');
-        }
-        if (!data.hasMore) break;
-        accountIndex = data.next.account_index;
-        startPage = data.next.start_page;
-        // A edge zera `total_paginas` ao trocar de conta (o total é por conta); `?? 0` cobre
-        // uma edge ainda não deployada, que não devolve o campo — aí vale a defesa da página
-        // cheia do lado de lá.
-        totalPaginas = data.next.total_paginas ?? 0;
-
-        // Cursor que NÃO andou = reinvocar a mesma conta/página = o laço quente original. A edge
-        // tem defesa própria, mas ela vive no código deployado; este guard não depende dele.
-        const cursorAtual = `${accountIndex}:${startPage}`;
-        if (cursorAtual === cursorAnterior) {
-          throw new Error(
-            `sync_all_clients: cursor parado em conta ${accountIndex} página ${startPage} — a edge não avançou (versão antiga/revertida?)`,
-          );
-        }
-        cursorAnterior = cursorAtual;
+      const { data, error } = await supabase.rpc("clientes_import_semear");
+      if (error) throw error;
+      const r = data as { desfecho?: string; rodada_id?: string } | null;
+      if (!r || (r.desfecho !== "semeada" && r.desfecho !== "ja_aberta")) {
+        throw new Error(`clientes_import_semear: resposta fora do contrato (${JSON.stringify(data)})`);
       }
-
-      setClientSyncProgress(null);
-
-      // Conta sem credencial nunca entra no laço: entra aqui, como falha permanente de
-      // configuração, para não sumir do relatório.
-      for (const [account, nome] of semCredencial) {
-        falhas.push({
-          conta: nome,
-          account,
-          pagina: 0,
-          classe: 'permanente',
-          motivo: 'credencial Omie não configurada nesta edge — a conta inteira ficou fora do import',
-        });
-      }
-
-      // ⚠️ Import parcial LANÇA. `useMutationComRegistro` fecha o registro como 'sucesso' sempre
-      // que a Promise resolve — então resolver com `falhas` deixaria `acoes_execucoes` gravado
-      // como sucesso, e depois de um reload o card <UltimaExecucao> mostraria ✓ sobre um import
-      // que deixou uma conta inteira para trás (achado Codex P1). O toast de 30s desapareceria e
-      // só o ✓ ficaria. Um import que não percorreu tudo não é sucesso: o estado durável tem de
-      // dizer isso. Os números vão na mensagem, que o registro persiste em `detalhes.erro`.
-      if (falhas.length > 0) {
-        const resumo = falhas
-          .map((f) => `${f.conta} (pág ${f.pagina}, ${f.classe}: ${f.motivo})`)
-          .join(' · ');
-        throw new Error(
-          `Importação PARCIAL — ${falhas.length} conta(s) não sincronizaram. ` +
-            `${totalImported} importados, ${totalSkipped} já existiam, ${totalErrors} erros. Interrompidas: ${resumo}`,
-        );
-      }
-
-      return { totalImported, totalSkipped, totalErrors, totalTelefonesRepostos };
+      return r as { desfecho: "semeada" | "ja_aberta"; rodada_id: string };
     },
-    // `onSuccess` só roda quando TODAS as contas foram percorridas: import parcial lança acima,
-    // de propósito, para que o registro durável em acoes_execucoes fique 'erro' e o card não
-    // mostre ✓ sobre uma conta que ficou de fora.
-    onSuccess: (data) => {
-      toast.success("Importação de clientes concluída", {
-        description: `${data.totalImported} importados, ${data.totalSkipped} já existiam, ${data.totalErrors} erros, ${data.totalTelefonesRepostos} telefones com DDD repostos`,
-        duration: 10000,
+    detalhes: (r) => ({ desfecho: r.desfecho, rodada_id: r.rodada_id }),
+    onSuccess: (r) => {
+      toast.success(r.desfecho === "semeada" ? "Importação iniciada no servidor" : "Já há uma importação em andamento", {
+        description: "Pode fechar esta aba — o servidor continua de onde parar.",
       });
     },
     onError: (error) => {
-      setClientSyncProgress(null);
-      // A mensagem do parcial já nomeia as contas interrompidas, as páginas e as classes.
-      // O `.replace(/^Error:\s*/)` de antes existia só para tirar o prefixo que o
-      // `String(error)` acrescenta; mensagemDeErro() lê `.message`, que já vem sem ele.
-      toast.error("Importação de clientes não concluída", {
+      toast.error("Não foi possível iniciar a importação de clientes", {
         description: mensagemDeErro(error) ?? "Erro sem mensagem — tente de novo ou avise a equipe.",
-        duration: 30000,
       });
     },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [RODADAS_CLIENTES_QUERY_KEY] }),
+  });
+
+  const rodadasClientesQuery = useQuery({
+    queryKey: [RODADAS_CLIENTES_QUERY_KEY],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("clientes_import_rodada")
+        .select("*")
+        .order("criado_em", { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return (data ?? []) as unknown as RodadaClientesRow[];
+    },
+    // Aberta: acompanha de perto. Sem aberta: segue descobrindo (o cron semanal pode abrir uma).
+    refetchInterval: (q) => (haRodadaAberta(q.state.data ?? []) ? 8000 : 60000),
+  });
+  const rodadasClientes = rodadasRelevantes(rodadasClientesQuery.data ?? []).map((r) => statusRodada(r));
+  const importacaoClientesAberta = haRodadaAberta(rodadasClientesQuery.data ?? []);
+
+  const rearmarRodadaClientesMutation = useMutation({
+    mutationFn: async (rodadaId: string) => {
+      const { data, error } = await supabase.rpc("clientes_import_rearmar", { p_rodada_id: rodadaId });
+      if (error) throw error;
+      return (data as { desfecho?: string } | null)?.desfecho ?? "desconhecido";
+    },
+    onSuccess: (desfecho) => {
+      if (desfecho === "rearmada") toast.success("Importação retomada de onde parou");
+      else if (desfecho === "outra_aberta") toast.info("Já há outra importação em andamento");
+      else toast.error("Esta rodada não pode ser retomada", { description: `Desfecho: ${desfecho}` });
+    },
+    onError: (error) => {
+      toast.error("Falha ao retomar a importação", { description: mensagemDeErro(error) ?? "Erro sem mensagem." });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: [RODADAS_CLIENTES_QUERY_KEY] }),
   });
 
   const addressSyncMutation = useMutationComRegistro({
@@ -512,7 +424,9 @@ export function useAnalyticsSync() {
     addressSyncMutation,
     bulkOrdersSyncMutation,
     recentOrdersSyncMutation,
-    clientSyncProgress,
+    rodadasClientes,
+    importacaoClientesAberta,
+    rearmarRodadaClientesMutation,
     addressSyncProgress,
     janelasImportacao,
     importacaoEmAndamento,

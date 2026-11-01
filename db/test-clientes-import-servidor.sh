@@ -216,7 +216,7 @@ for _ in $(seq 1 5); do
   T="$(token "$R1")"
   [ -n "$T" ] && Pq -c "$(svc "SELECT public.clientes_import_liberar_erro('$R1', '$T', 'Omie fora do ar')")" >/dev/null
 done
-eq "C5a 5 erros seguidos -> terminal erro_persistente" "$(Pq -c "SELECT coalesce(motivo_falha,'aberta') || ':' || ultimo_erro FROM public.clientes_import_rodada WHERE id='$R1'")" "erro_persistente:Omie fora do ar"
+eq "C5a 5 erros seguidos -> terminal erro_persistente" "$(Pq -c "SELECT coalesce(motivo_falha,'aberta') || ':' || (falhou_em IS NOT NULL) || ':' || ultimo_erro FROM public.clientes_import_rodada WHERE id='$R1'")" "erro_persistente:true:Omie fora do ar"
 
 # C7 nova rodada e conclusão; C6c/C6d
 eq "C7a semear com a anterior falhada abre outra" "$(semear "$E1")" "semeada"
