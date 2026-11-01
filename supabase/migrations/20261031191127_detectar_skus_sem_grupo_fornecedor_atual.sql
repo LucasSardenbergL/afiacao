@@ -29,14 +29,14 @@ BEGIN
 END
 $trava$;
 
--- PRE: corpo vivo ∈ {predecessor de PROD revisado, este}. Ausente aborta.
+-- PRE: corpo vivo ∈ {predecessor de PROD revisado, 1ª versão desta migration (66a2…, aplicada na tentativa #813 com o dia UTC), este}. Ausente aborta.
 DO $pre$
 DECLARE
   v_vivo text;
 BEGIN
   SELECT md5(p.prosrc) INTO v_vivo FROM pg_catalog.pg_proc p
    WHERE p.oid = to_regprocedure('public.detectar_skus_sem_grupo(text)');
-  IF v_vivo IS NULL OR v_vivo NOT IN ('4147eeda24634ae0d5bb97a18452baf5', '66a2054e7be82add28093aec2d2756f9') THEN
+  IF v_vivo IS NULL OR v_vivo NOT IN ('4147eeda24634ae0d5bb97a18452baf5', '66a2054e7be82add28093aec2d2756f9', 'c4b5a4c6b6979babe15f71d9195a33c6') THEN
     RAISE EXCEPTION 'PRE FALHOU: detectar_skus_sem_grupo vivo (md5 %) não é o predecessor revisado nem este', v_vivo;
   END IF;
 END
@@ -91,7 +91,7 @@ BEGIN
   ),
   inseridos AS (
     INSERT INTO eventos_outlier (empresa, sku_codigo_omie, sku_descricao, tipo, severidade, data_evento, detalhes)
-    SELECT sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao, 'sku_sem_grupo', 'atencao', CURRENT_DATE,
+    SELECT sp.empresa, sp.sku_codigo_omie::text, sp.sku_descricao, 'sku_sem_grupo', 'atencao', (now() AT TIME ZONE 'America/Sao_Paulo')::date,
       jsonb_build_object('fornecedor', sp.fornecedor_nome,
         'mensagem', 'SKU novo detectado. Classifique em um grupo de produção antes do próximo ciclo de reposição.')
     FROM sku_parametros sp
@@ -118,7 +118,7 @@ DECLARE
   v_violam integer;
 BEGIN
   IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
-       WHERE p.oid = to_regprocedure('public.detectar_skus_sem_grupo(text)')) IS DISTINCT FROM '66a2054e7be82add28093aec2d2756f9' THEN
+       WHERE p.oid = to_regprocedure('public.detectar_skus_sem_grupo(text)')) IS DISTINCT FROM 'c4b5a4c6b6979babe15f71d9195a33c6' THEN
     RAISE EXCEPTION 'POS FALHOU: detectar_skus_sem_grupo não é o corpo deste arquivo';
   END IF;
   IF has_function_privilege('anon', 'public.detectar_skus_sem_grupo(text)', 'EXECUTE')

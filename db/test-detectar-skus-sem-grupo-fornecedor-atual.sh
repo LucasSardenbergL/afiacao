@@ -67,7 +67,7 @@ BEGIN;
 SELECT public.detectar_skus_sem_grupo('OBEN');
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM eventos_outlier WHERE id IN (102,103,108) AND status='pendente') <> 3 THEN
+  IF (SELECT count(*) FROM eventos_outlier WHERE id IN (102,103,108) AND status='pendente') IS DISTINCT FROM 3 THEN
     RAISE EXCEPTION 'CONTROLE FALHOU: o corpo antigo já fecharia os alertas — o teste não reproduz o bug';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM eventos_outlier WHERE sku_codigo_omie='6' AND status='pendente') THEN
@@ -87,34 +87,34 @@ DO $$
 DECLARE r record; n int;
 BEGIN
   SELECT status, detalhes->>'fornecedor' AS f INTO r FROM eventos_outlier WHERE id=101;
-  IF r.status <> 'pendente' OR r.f <> 'SAY' THEN RAISE EXCEPTION 'A1 FALHOU: SKU ativo de fornecedor com grupo saiu da fila (%/%)', r.status, r.f; END IF;
+  IF r.status IS DISTINCT FROM 'pendente' OR r.f IS DISTINCT FROM 'SAY' THEN RAISE EXCEPTION 'A1 FALHOU: SKU ativo de fornecedor com grupo saiu da fila (%/%)', r.status, r.f; END IF;
 
   SELECT status, justificativa_decisao AS j INTO r FROM eventos_outlier WHERE id=102;
-  IF r.status <> 'excluido' OR r.j NOT LIKE 'O fornecedor atual do SKU%' THEN RAISE EXCEPTION 'A2 FALHOU: fornecedor trocado p/ um sem grupo (%/%)', r.status, r.j; END IF;
+  IF r.status IS DISTINCT FROM 'excluido' OR COALESCE(r.j, '') NOT LIKE 'O fornecedor atual do SKU%' THEN RAISE EXCEPTION 'A2 FALHOU: fornecedor trocado p/ um sem grupo (%/%)', r.status, r.j; END IF;
 
   SELECT status, justificativa_decisao AS j INTO r FROM eventos_outlier WHERE id=103;
-  IF r.status <> 'excluido' OR r.j NOT LIKE 'SKU inativo%' THEN RAISE EXCEPTION 'A3 FALHOU: SKU inativo (%/%)', r.status, r.j; END IF;
+  IF r.status IS DISTINCT FROM 'excluido' OR COALESCE(r.j, '') NOT LIKE 'SKU inativo%' THEN RAISE EXCEPTION 'A3 FALHOU: SKU inativo (%/%)', r.status, r.j; END IF;
 
   SELECT status, justificativa_decisao AS j INTO r FROM eventos_outlier WHERE id=104;
-  IF r.status <> 'excluido' OR r.j <> 'SKU já tem grupo ou é Produto Acabado (04) fabricado — não precisa de grupo.' THEN
+  IF r.status IS DISTINCT FROM 'excluido' OR r.j IS DISTINCT FROM 'SKU já tem grupo ou é Produto Acabado (04) fabricado — não precisa de grupo.' THEN
     RAISE EXCEPTION 'A4 FALHOU: SKU com grupo (%/%)', r.status, r.j; END IF;
 
   SELECT status, detalhes->>'fornecedor' AS f INTO r FROM eventos_outlier WHERE id=105;
-  IF r.status <> 'pendente' OR r.f <> 'SAY' THEN RAISE EXCEPTION 'A5 FALHOU: fornecedor desatualizado não foi reescrito (%/%)', r.status, r.f; END IF;
+  IF r.status IS DISTINCT FROM 'pendente' OR r.f IS DISTINCT FROM 'SAY' THEN RAISE EXCEPTION 'A5 FALHOU: fornecedor desatualizado não foi reescrito (%/%)', r.status, r.f; END IF;
 
   IF EXISTS (SELECT 1 FROM eventos_outlier WHERE sku_codigo_omie='6') THEN RAISE EXCEPTION 'A6 FALHOU: criou alerta p/ SKU inativo'; END IF;
 
   SELECT count(*) INTO n FROM eventos_outlier WHERE sku_codigo_omie='7' AND empresa='OBEN' AND status='pendente' AND detalhes->>'fornecedor'='SAY';
-  IF n <> 1 THEN RAISE EXCEPTION 'A7 FALHOU: SKU com ativo NULL deveria ganhar 1 alerta, tem %', n; END IF;
+  IF n IS DISTINCT FROM 1 THEN RAISE EXCEPTION 'A7 FALHOU: SKU com ativo NULL deveria ganhar 1 alerta, tem %', n; END IF;
 
-  IF (SELECT status FROM eventos_outlier WHERE id=108) <> 'excluido' THEN RAISE EXCEPTION 'A8 FALHOU: SKU sem linha em sku_parametros ficou pendente'; END IF;
+  IF (SELECT status FROM eventos_outlier WHERE id=108) IS DISTINCT FROM 'excluido' THEN RAISE EXCEPTION 'A8 FALHOU: SKU sem linha em sku_parametros ficou pendente'; END IF;
 
-  IF (SELECT status FROM eventos_outlier WHERE id=109) <> 'pendente' THEN RAISE EXCEPTION 'A9 FALHOU: mexeu em alerta de outra empresa'; END IF;
+  IF (SELECT status FROM eventos_outlier WHERE id=109) IS DISTINCT FROM 'pendente' THEN RAISE EXCEPTION 'A9 FALHOU: mexeu em alerta de outra empresa'; END IF;
 
   -- A10: idempotência — 2ª rodada não cria nem fecha nada.
   SELECT count(*) INTO n FROM eventos_outlier WHERE status='pendente';
-  IF public.detectar_skus_sem_grupo('OBEN') <> 0 THEN RAISE EXCEPTION 'A10 FALHOU: 2ª rodada inseriu'; END IF;
-  IF (SELECT count(*) FROM eventos_outlier WHERE status='pendente') <> n THEN RAISE EXCEPTION 'A10 FALHOU: 2ª rodada mudou a fila'; END IF;
+  IF public.detectar_skus_sem_grupo('OBEN') IS DISTINCT FROM 0 THEN RAISE EXCEPTION 'A10 FALHOU: 2ª rodada inseriu'; END IF;
+  IF (SELECT count(*) FROM eventos_outlier WHERE status='pendente') IS DISTINCT FROM n THEN RAISE EXCEPTION 'A10 FALHOU: 2ª rodada mudou a fila'; END IF;
   RAISE NOTICE 'OK A1–A10';
 END $$;
 SQL
