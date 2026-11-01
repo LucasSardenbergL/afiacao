@@ -1096,6 +1096,226 @@ export type Database = {
         }
         Relationships: []
       }
+      cobranca_caso: {
+        Row: {
+          aberto_em: string
+          aberto_por: string
+          atualizado_em: string
+          atualizado_por: string
+          company: string
+          dona_user_id: string | null
+          estado: string
+          fechado_em: string | null
+          fechado_motivo: string | null
+          id: string
+          nome_cliente: string | null
+          nota_atual: string | null
+          omie_codigo_cliente: number
+          proximo_contato_em: string | null
+        }
+        Insert: {
+          aberto_em?: string
+          aberto_por: string
+          atualizado_em?: string
+          atualizado_por: string
+          company: string
+          dona_user_id?: string | null
+          estado?: string
+          fechado_em?: string | null
+          fechado_motivo?: string | null
+          id?: string
+          nome_cliente?: string | null
+          nota_atual?: string | null
+          omie_codigo_cliente: number
+          proximo_contato_em?: string | null
+        }
+        Update: {
+          aberto_em?: string
+          aberto_por?: string
+          atualizado_em?: string
+          atualizado_por?: string
+          company?: string
+          dona_user_id?: string | null
+          estado?: string
+          fechado_em?: string | null
+          fechado_motivo?: string | null
+          id?: string
+          nome_cliente?: string | null
+          nota_atual?: string | null
+          omie_codigo_cliente?: number
+          proximo_contato_em?: string | null
+        }
+        Relationships: []
+      }
+      cobranca_coorte: {
+        Row: {
+          company: string
+          corte_em: string
+          fonte: string
+          id: string
+          n_clientes: number
+          n_titulos: number
+          saldo_total: number
+          selada_em: string
+        }
+        Insert: {
+          company: string
+          corte_em: string
+          fonte: string
+          id?: string
+          n_clientes: number
+          n_titulos: number
+          saldo_total: number
+          selada_em?: string
+        }
+        Update: {
+          company?: string
+          corte_em?: string
+          fonte?: string
+          id?: string
+          n_clientes?: number
+          n_titulos?: number
+          saldo_total?: number
+          selada_em?: string
+        }
+        Relationships: []
+      }
+      cobranca_coorte_titulo: {
+        Row: {
+          company: string
+          coorte_id: string
+          data_vencimento: string
+          dias_vencido_inicial: number
+          nome_cliente: string | null
+          omie_codigo_cliente: number
+          omie_codigo_lancamento: number
+          saldo_inicial: number
+        }
+        Insert: {
+          company: string
+          coorte_id: string
+          data_vencimento: string
+          dias_vencido_inicial: number
+          nome_cliente?: string | null
+          omie_codigo_cliente: number
+          omie_codigo_lancamento: number
+          saldo_inicial: number
+        }
+        Update: {
+          company?: string
+          coorte_id?: string
+          data_vencimento?: string
+          dias_vencido_inicial?: number
+          nome_cliente?: string | null
+          omie_codigo_cliente?: number
+          omie_codigo_lancamento?: number
+          saldo_inicial?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranca_coorte_titulo_coorte_id_fkey"
+            columns: ["coorte_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_coorte"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cobranca_evento: {
+        Row: {
+          autor: string
+          canal: string | null
+          caso_id: string
+          created_at: string
+          de_estado: string | null
+          id: string
+          nota: string | null
+          para_estado: string | null
+          promessa_id: string | null
+          tipo: string
+        }
+        Insert: {
+          autor: string
+          canal?: string | null
+          caso_id: string
+          created_at?: string
+          de_estado?: string | null
+          id?: string
+          nota?: string | null
+          para_estado?: string | null
+          promessa_id?: string | null
+          tipo: string
+        }
+        Update: {
+          autor?: string
+          canal?: string | null
+          caso_id?: string
+          created_at?: string
+          de_estado?: string | null
+          id?: string
+          nota?: string | null
+          para_estado?: string | null
+          promessa_id?: string | null
+          tipo?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranca_evento_caso_id_fkey"
+            columns: ["caso_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_caso"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cobranca_evento_promessa_id_fkey"
+            columns: ["promessa_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_promessa"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cobranca_promessa: {
+        Row: {
+          caso_id: string
+          criada_em: string
+          criada_por: string
+          data_prometida: string
+          id: string
+          saldo_na_criacao: number
+          substituida_em: string | null
+          valor: number
+        }
+        Insert: {
+          caso_id: string
+          criada_em?: string
+          criada_por: string
+          data_prometida: string
+          id?: string
+          saldo_na_criacao: number
+          substituida_em?: string | null
+          valor: number
+        }
+        Update: {
+          caso_id?: string
+          criada_em?: string
+          criada_por?: string
+          data_prometida?: string
+          id?: string
+          saldo_na_criacao?: number
+          substituida_em?: string | null
+          valor?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cobranca_promessa_caso_id_fkey"
+            columns: ["caso_id"]
+            isOneToOne: false
+            referencedRelation: "cobranca_caso"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cockpit_audit_log: {
         Row: {
           action: string
@@ -5206,18 +5426,27 @@ export type Database = {
       fin_funding_inputs: {
         Row: {
           company: string
+          custo_capital_em: string | null
+          custo_capital_fonte: string | null
+          custo_capital_mensal: number | null
           funding_inputs: Json
           updated_at: string
           updated_by: string | null
         }
         Insert: {
           company: string
+          custo_capital_em?: string | null
+          custo_capital_fonte?: string | null
+          custo_capital_mensal?: number | null
           funding_inputs?: Json
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
           company?: string
+          custo_capital_em?: string | null
+          custo_capital_fonte?: string | null
+          custo_capital_mensal?: number | null
           funding_inputs?: Json
           updated_at?: string
           updated_by?: string | null
@@ -13092,6 +13321,126 @@ export type Database = {
         }
         Relationships: []
       }
+      reposicao_compra_suspensa: {
+        Row: {
+          criado_em: string
+          empresa: string
+          foto_cmc: number | null
+          foto_cobertura_90d_dias: number | null
+          foto_cobertura_dias: number | null
+          foto_no_motor: boolean | null
+          foto_saldo: number | null
+          foto_valor: number | null
+          foto_valor_vendido_90d: number | null
+          id: string
+          lote_id: string | null
+          motivo: string
+          motivo_reativacao: string | null
+          origem: string
+          reativado_em: string | null
+          reativado_por: string | null
+          revisar_em: string
+          sku_codigo_omie: number
+          suspenso_em: string
+          suspenso_por: string | null
+          suspenso_por_texto: string | null
+        }
+        Insert: {
+          criado_em?: string
+          empresa: string
+          foto_cmc?: number | null
+          foto_cobertura_90d_dias?: number | null
+          foto_cobertura_dias?: number | null
+          foto_no_motor?: boolean | null
+          foto_saldo?: number | null
+          foto_valor?: number | null
+          foto_valor_vendido_90d?: number | null
+          id?: string
+          lote_id?: string | null
+          motivo: string
+          motivo_reativacao?: string | null
+          origem: string
+          reativado_em?: string | null
+          reativado_por?: string | null
+          revisar_em: string
+          sku_codigo_omie: number
+          suspenso_em?: string
+          suspenso_por?: string | null
+          suspenso_por_texto?: string | null
+        }
+        Update: {
+          criado_em?: string
+          empresa?: string
+          foto_cmc?: number | null
+          foto_cobertura_90d_dias?: number | null
+          foto_cobertura_dias?: number | null
+          foto_no_motor?: boolean | null
+          foto_saldo?: number | null
+          foto_valor?: number | null
+          foto_valor_vendido_90d?: number | null
+          id?: string
+          lote_id?: string | null
+          motivo?: string
+          motivo_reativacao?: string | null
+          origem?: string
+          reativado_em?: string | null
+          reativado_por?: string | null
+          revisar_em?: string
+          sku_codigo_omie?: number
+          suspenso_em?: string
+          suspenso_por?: string | null
+          suspenso_por_texto?: string | null
+        }
+        Relationships: []
+      }
+      reposicao_compra_suspensa_log: {
+        Row: {
+          ancora_sku: string | null
+          criado_em: string
+          empresa: string
+          fornecedor_nome: string | null
+          grupo_id: string | null
+          id: string
+          preco_unitario: number | null
+          qtde_final: number
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao: string | null
+          suspensa_id: string
+          valor_evitado: number | null
+        }
+        Insert: {
+          ancora_sku?: string | null
+          criado_em?: string
+          empresa: string
+          fornecedor_nome?: string | null
+          grupo_id?: string | null
+          id?: string
+          preco_unitario?: number | null
+          qtde_final: number
+          run_id: string
+          sku_codigo_omie: string
+          sku_descricao?: string | null
+          suspensa_id: string
+          valor_evitado?: number | null
+        }
+        Update: {
+          ancora_sku?: string | null
+          criado_em?: string
+          empresa?: string
+          fornecedor_nome?: string | null
+          grupo_id?: string | null
+          id?: string
+          preco_unitario?: number | null
+          qtde_final?: number
+          run_id?: string
+          sku_codigo_omie?: string
+          sku_descricao?: string | null
+          suspensa_id?: string
+          valor_evitado?: number | null
+        }
+        Relationships: []
+      }
       reposicao_depara_auto_log: {
         Row: {
           criado_em: string
@@ -13262,6 +13611,7 @@ export type Database = {
           run_id: string
           skus_incluidos: number
           suprimidos_n: number
+          suspensas_compra_n: number
         }
         Insert: {
           capados_n?: number
@@ -13273,6 +13623,7 @@ export type Database = {
           run_id: string
           skus_incluidos?: number
           suprimidos_n?: number
+          suspensas_compra_n?: number
         }
         Update: {
           capados_n?: number
@@ -13284,6 +13635,7 @@ export type Database = {
           run_id?: string
           skus_incluidos?: number
           suprimidos_n?: number
+          suspensas_compra_n?: number
         }
         Relationships: []
       }
@@ -13681,6 +14033,114 @@ export type Database = {
           skus_divergentes?: number
           varredura_completa?: boolean
           versao_edge?: string
+        }
+        Relationships: []
+      }
+      reposicao_ruptura_pedido_itens: {
+        Row: {
+          data_pedido: string | null
+          empresa: string
+          estoque_fonte: string | null
+          estoque_lido_em: string | null
+          estoque_saldo: number | null
+          id: number
+          leitura: string
+          omie_codigo_item: number | null
+          omie_codigo_produto: number
+          omie_pedido_id: number | null
+          order_item_id: string | null
+          quantidade: number
+          registrado_em: string
+          sales_order_id: string | null
+          status_pv: string
+        }
+        Insert: {
+          data_pedido?: string | null
+          empresa: string
+          estoque_fonte?: string | null
+          estoque_lido_em?: string | null
+          estoque_saldo?: number | null
+          id?: number
+          leitura: string
+          omie_codigo_item?: number | null
+          omie_codigo_produto: number
+          omie_pedido_id?: number | null
+          order_item_id?: string | null
+          quantidade: number
+          registrado_em?: string
+          sales_order_id?: string | null
+          status_pv: string
+        }
+        Update: {
+          data_pedido?: string | null
+          empresa?: string
+          estoque_fonte?: string | null
+          estoque_lido_em?: string | null
+          estoque_saldo?: number | null
+          id?: number
+          leitura?: string
+          omie_codigo_item?: number | null
+          omie_codigo_produto?: number
+          omie_pedido_id?: number | null
+          order_item_id?: string | null
+          quantidade?: number
+          registrado_em?: string
+          sales_order_id?: string | null
+          status_pv?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reposicao_ruptura_pedido_itens_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "sales_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reposicao_ruptura_pedido_itens_sales_order_id_fkey"
+            columns: ["sales_order_id"]
+            isOneToOne: false
+            referencedRelation: "selfservice_meus_pedidos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      reposicao_ruptura_prateleira_diaria: {
+        Row: {
+          dia: string
+          empresa: string
+          estoque_lido_em: string | null
+          registrado_em: string
+          skus_com_venda_90d: number
+          skus_sem_leitura: number
+          skus_sem_saldo: number
+          valor_venda_90d: number
+          valor_venda_90d_sem_leitura: number
+          valor_venda_90d_sem_saldo: number
+        }
+        Insert: {
+          dia: string
+          empresa: string
+          estoque_lido_em?: string | null
+          registrado_em?: string
+          skus_com_venda_90d: number
+          skus_sem_leitura: number
+          skus_sem_saldo: number
+          valor_venda_90d: number
+          valor_venda_90d_sem_leitura: number
+          valor_venda_90d_sem_saldo: number
+        }
+        Update: {
+          dia?: string
+          empresa?: string
+          estoque_lido_em?: string | null
+          registrado_em?: string
+          skus_com_venda_90d?: number
+          skus_sem_leitura?: number
+          skus_sem_saldo?: number
+          valor_venda_90d?: number
+          valor_venda_90d_sem_leitura?: number
+          valor_venda_90d_sem_saldo?: number
         }
         Relationships: []
       }
@@ -18625,6 +19085,72 @@ export type Database = {
         }
         Relationships: []
       }
+      venda_prazo_decisao: {
+        Row: {
+          company: string
+          created_at: string
+          decidido_por: string
+          decisao: string
+          desfecho_envio: string
+          dias_vencido_max: number | null
+          escolhida_cobre: boolean
+          id: string
+          motivo: string | null
+          motivo_sistema: string | null
+          n_titulos: number
+          nome_cliente: string | null
+          omie_codigo_cliente: number
+          parcela_escolhida: string
+          parcela_habitual: string | null
+          parcela_sugerida: string | null
+          sales_order_id: string
+          total_pedido: number | null
+          vencido_no_momento: number
+        }
+        Insert: {
+          company: string
+          created_at?: string
+          decidido_por: string
+          decisao: string
+          desfecho_envio: string
+          dias_vencido_max?: number | null
+          escolhida_cobre?: boolean
+          id?: string
+          motivo?: string | null
+          motivo_sistema?: string | null
+          n_titulos: number
+          nome_cliente?: string | null
+          omie_codigo_cliente: number
+          parcela_escolhida: string
+          parcela_habitual?: string | null
+          parcela_sugerida?: string | null
+          sales_order_id: string
+          total_pedido?: number | null
+          vencido_no_momento: number
+        }
+        Update: {
+          company?: string
+          created_at?: string
+          decidido_por?: string
+          decisao?: string
+          desfecho_envio?: string
+          dias_vencido_max?: number | null
+          escolhida_cobre?: boolean
+          id?: string
+          motivo?: string | null
+          motivo_sistema?: string | null
+          n_titulos?: number
+          nome_cliente?: string | null
+          omie_codigo_cliente?: number
+          parcela_escolhida?: string
+          parcela_habitual?: string | null
+          parcela_sugerida?: string | null
+          sales_order_id?: string
+          total_pedido?: number | null
+          vencido_no_momento?: number
+        }
+        Relationships: []
+      }
       venda_recompra: {
         Row: {
           atrasado: boolean
@@ -19815,6 +20341,29 @@ export type Database = {
           prazo_real_pond_pagas: number | null
           valor_em_aberto: number | null
           valor_pago: number | null
+          valor_vencido_no_mes: number | null
+        }
+        Relationships: []
+      }
+      v_ciclo_empresa_coorte_maturacao: {
+        Row: {
+          company: string | null
+          dias_antecipacao_pond: number | null
+          dias_atraso_pond: number | null
+          maduro_d15: boolean | null
+          maduro_d30: boolean | null
+          maduro_d60: boolean | null
+          mes_parcial: boolean | null
+          mes_vencimento: string | null
+          pct_pago_d15: number | null
+          pct_pago_d30: number | null
+          pct_pago_d60: number | null
+          titulos: number | null
+          valor_antecipado: number | null
+          valor_em_aberto: number | null
+          valor_pago_com_atraso: number | null
+          valor_pago_no_dia: number | null
+          valor_pago_sem_data: number | null
           valor_vencido_no_mes: number | null
         }
         Relationships: []
@@ -21671,6 +22220,40 @@ export type Database = {
         Args: { p_detalhes: Json; p_inicio: string }
         Returns: undefined
       }
+      _reposicao_compra_fonte_ok: {
+        Args: { p_empresa: string }
+        Returns: boolean
+      }
+      _reposicao_compra_foto: {
+        Args: { p_empresa: string; p_skus: number[] }
+        Returns: {
+          classe: string
+          cmc: number
+          consumo_365: number
+          consumo_90: number
+          corante: boolean
+          descricao: string
+          dias_365: number
+          dias_90: number
+          familia: string
+          fonte_ok: boolean
+          fornecedor_nome: string
+          no_motor: boolean
+          saldo: number
+          sku_codigo_omie: number
+          substituido: boolean
+          valor: number
+          valor_vendido_90d: number
+        }[]
+      }
+      _reposicao_ruptura_saldo_oben: {
+        Args: { p_corte: string; p_sku: number }
+        Returns: {
+          fonte: string
+          lido_em: string
+          saldo: number
+        }[]
+      }
       _tint_cobertura_bases_lista_email: {
         Args: { p_limit?: number }
         Returns: string
@@ -21981,6 +22564,69 @@ export type Database = {
         }[]
       }
       cnpj_alfanumerico_valido: { Args: { p_doc: string }; Returns: boolean }
+      cobranca_caso_registrar: { Args: { p: Json }; Returns: Json }
+      cobranca_dona: {
+        Args: { p_codigo: number; p_company: string }
+        Returns: string
+      }
+      cobranca_fila: {
+        Args: { p_company: string }
+        Returns: {
+          atualizado_em: string
+          caso_id: string
+          company: string
+          coorte_corte_em: string
+          dias_vencido_max: number
+          dona_nome: string
+          dona_user_id: string
+          estado: string
+          faixa: string
+          fechado_motivo: string
+          n_contatos: number
+          n_titulos_coorte: number
+          n_vencidas: number
+          nome_cliente: string
+          nota_atual: string
+          omie_codigo_cliente: number
+          pode_agir: boolean
+          pode_quitar: boolean
+          promessa_data: string
+          promessa_id: string
+          promessa_situacao: string
+          promessa_valor: number
+          proximo_contato_em: string
+          saldo_atual_coorte: number
+          saldo_inicial_coorte: number
+          saldo_vencido: number
+          ultimo_contato_em: string
+        }[]
+      }
+      cobranca_pode_agir: {
+        Args: { p_codigo: number; p_company: string; p_uid: string }
+        Returns: boolean
+      }
+      cobranca_quitacao_ok: {
+        Args: { p_codigo: number; p_company: string }
+        Returns: boolean
+      }
+      cobranca_regua_hoje: {
+        Args: { p_company: string }
+        Returns: {
+          caso_id: string
+          company: string
+          data_vencimento: string
+          dona_user_id: string
+          estado: string
+          marco: string
+          nome_cliente: string
+          numero_documento: string
+          omie_codigo_cliente: number
+          omie_codigo_lancamento: number
+          pode_agir: boolean
+          saldo: number
+          telefone: string
+        }[]
+      }
       cockpit_itens_snapshot: {
         Args: {
           p_created_at_de: string
@@ -22400,6 +23046,15 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      fin_ciclo_custo_capital: {
+        Args: never
+        Returns: {
+          company: string
+          custo_capital_em: string
+          custo_capital_fonte: string
+          custo_capital_mensal: number
+        }[]
+      }
       fin_ciclo_empresa_coorte: {
         Args: never
         Returns: {
@@ -22417,6 +23072,35 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "v_ciclo_empresa_coorte"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      fin_ciclo_empresa_coorte_maturacao: {
+        Args: never
+        Returns: {
+          company: string | null
+          dias_antecipacao_pond: number | null
+          dias_atraso_pond: number | null
+          maduro_d15: boolean | null
+          maduro_d30: boolean | null
+          maduro_d60: boolean | null
+          mes_parcial: boolean | null
+          mes_vencimento: string | null
+          pct_pago_d15: number | null
+          pct_pago_d30: number | null
+          pct_pago_d60: number | null
+          titulos: number | null
+          valor_antecipado: number | null
+          valor_em_aberto: number | null
+          valor_pago_com_atraso: number | null
+          valor_pago_no_dia: number | null
+          valor_pago_sem_data: number | null
+          valor_vencido_no_mes: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "v_ciclo_empresa_coorte_maturacao"
           isOneToOne: false
           isSetofReturn: true
         }
@@ -22456,66 +23140,6 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
-      }
-      cobranca_caso_registrar: { Args: { p: Json }; Returns: Json }
-      cobranca_fila: {
-        Args: { p_company: string }
-        Returns: {
-          atualizado_em: string | null
-          caso_id: string | null
-          company: string
-          dias_vencido_max: number | null
-          dona_nome: string | null
-          dona_user_id: string | null
-          estado: string
-          faixa: string | null
-          n_contatos: number
-          n_titulos_coorte: number | null
-          n_vencidas: number | null
-          nome_cliente: string | null
-          nota_atual: string | null
-          omie_codigo_cliente: number
-          pode_agir: boolean
-          promessa_data: string | null
-          promessa_id: string | null
-          promessa_situacao: string | null
-          promessa_valor: number | null
-          proximo_contato_em: string | null
-          saldo_inicial_coorte: number | null
-          saldo_atual_coorte: number | null
-          coorte_corte_em: string | null
-          saldo_vencido: number | null
-          ultimo_contato_em: string | null
-          pode_quitar: boolean
-          fechado_motivo: string | null
-        }[]
-      }
-      cobranca_regua_hoje: {
-        Args: { p_company: string }
-        Returns: {
-          caso_id: string | null
-          company: string
-          data_vencimento: string
-          dona_user_id: string | null
-          estado: string | null
-          marco: string
-          nome_cliente: string | null
-          numero_documento: string | null
-          omie_codigo_cliente: number
-          omie_codigo_lancamento: number
-          pode_agir: boolean
-          saldo: number
-          telefone: string | null
-        }[]
-      }
-      fin_ciclo_custo_capital: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          company: string
-          custo_capital_em: string | null
-          custo_capital_fonte: string | null
-          custo_capital_mensal: number | null
-        }[]
       }
       fin_ciclo_giro_sku: {
         Args: { p_company: string }
@@ -24001,6 +24625,92 @@ export type Database = {
           graduados: number
         }[]
       }
+      reposicao_compra_reativar: {
+        Args: { p_empresa: string; p_motivo?: string; p_skus: number[] }
+        Returns: {
+          impedimento: string
+          reativado: boolean
+          sku_codigo_omie: number
+        }[]
+      }
+      reposicao_compra_suspender: {
+        Args: {
+          p_empresa: string
+          p_lote_id?: string
+          p_motivo: string
+          p_origem?: string
+          p_revisar_em?: string
+          p_skus: number[]
+        }
+        Returns: {
+          inserido: boolean
+          pendentes_n: number
+          recusa: string
+          sku_codigo_omie: number
+        }[]
+      }
+      reposicao_compra_suspensa_candidatos: {
+        Args: {
+          p_empresa: string
+          p_incluir_corante?: boolean
+          p_min_dias?: number
+        }
+        Returns: {
+          cmc: number
+          consumo_365: number
+          corante: boolean
+          descricao: string
+          dias_365: number
+          dias_90: number
+          familia: string
+          fornecedor_nome: string
+          no_motor: boolean
+          saldo: number
+          sku_codigo_omie: number
+          valor: number
+          valor_vendido_90d: number
+        }[]
+      }
+      reposicao_compra_suspensa_listar: {
+        Args: { p_empresa: string }
+        Returns: {
+          cobertura_365d_atual: number
+          cobertura_90d_atual: number
+          descricao: string
+          evitado_ultimo_run: number
+          fornecedor_nome: string
+          foto_cobertura_90d_dias: number
+          foto_cobertura_dias: number
+          foto_no_motor: boolean
+          foto_valor: number
+          foto_valor_vendido_90d: number
+          id: string
+          lote_id: string
+          motivo: string
+          no_motor_atual: boolean
+          origem: string
+          qtde_ultimo_run: number
+          revisar_em: string
+          saldo_atual: number
+          sku_codigo_omie: number
+          suspenso_em: string
+          suspenso_por: string
+          suspenso_por_texto: string
+          valor_atual: number
+        }[]
+      }
+      reposicao_compra_suspensa_runs: {
+        Args: { p_dias?: number; p_empresa: string }
+        Returns: {
+          criado_em: string
+          data_ciclo: string
+          linhas_sem_preco: number
+          run_id: string
+          skus_incluidos: number
+          suspensas_compra_n: number
+          valor_evitado: number
+        }[]
+      }
       reposicao_conferir_envio: {
         Args: { p_pedido_id: number }
         Returns: {
@@ -24103,6 +24813,20 @@ export type Database = {
           p_seq: number
         }
         Returns: Json
+      }
+      reposicao_ruptura_prateleira_registrar: {
+        Args: { p_dia?: string }
+        Returns: {
+          dia: string
+          estoque_lido_em: string
+          gravou: boolean
+          skus_com_venda_90d: number
+          skus_sem_leitura: number
+          skus_sem_saldo: number
+          valor_venda_90d: number
+          valor_venda_90d_sem_leitura: number
+          valor_venda_90d_sem_saldo: number
+        }[]
       }
       reposicao_selar_pedido: {
         Args: { p_pedido_id: number; p_reusar_snapshot?: boolean }
@@ -24480,14 +25204,14 @@ export type Database = {
         Args: { p_dia: string; p_fase: string }
         Returns: number
       }
+      venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
+      venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
+      venda_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
       venda_prazo_aviso: {
         Args: { p_codigo: number; p_company: string }
         Returns: Json
       }
       venda_prazo_decisao_registrar: { Args: { p: Json }; Returns: Json }
-      venda_marcar_mostrada: { Args: { p_ids: string[] }; Returns: number }
-      venda_minhas_sugestoes: { Args: { p_dia?: string }; Returns: Json }
-      venda_painel: { Args: { p_ate: string; p_de: string }; Returns: Json }
       venda_preco_alvo_comprador: {
         Args: { p_comprador: string }
         Returns: Json
