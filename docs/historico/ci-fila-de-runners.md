@@ -61,6 +61,17 @@ o caminho crítico em dias. A receita do `comm` acima pega isso antes. Depois da
 merge 10:59Z): as 6 partes executaram em p50 11,7–13,7 min (antes 10–16), e o p50 até o `validate`
 foi de **14,5 min** (14,0–15,1) com fila ~0. São só 3 runs verdes, todos às 11h UTC, com pouca carga.
 
+**Tabela velha de novo, e o teto** (2026-11-01, lote 1 do plano v4). Em 15 runs verdes de PR, a
+`provas-sql (2)` levou p50 18,9 / máx 19,9 min de job contra o teto de 20. Dois runs em 15 foram
+cancelados no teto e re-rodados (+25 min cada). A tabela de 10-28 previa 846–852 s por parte, e o real
+foi de 930 a 1.160 s. Dezessete provas tinham entrado sem custo e pesavam o default de 30 s. A pior
+era `test-radar-contato-integridade`, com ~204 s. Outras ficaram mais caras, como `test-venda-repasse`
+(112 → 215 s). A tabela foi re-medida inteira pela mediana dos 15 runs. Refeita a partição com as
+durações de cada run, a pior parte passa de p50 18,3 / máx 19,3 para **15,4 / 16,0 min** de núcleo.
+Fora da amostra (custo dos 10 runs mais velhos, aplicado aos 5 mais novos), ela fica em 15,2–16,3 min.
+O teto subiu de 20 para 25 junto, como guarda e não como conserto. Os números de cada run e as partes
+do run do próprio PR estão no corpo do PR. A lição de 10-28 se repete: o `comm` acima é o que avisa.
+
 **Pico (ainda em aberto).** A comparação justa com a linha de base pede ~9,5 runs de PR/h. Desde o
 #3313 nenhuma hora passou de 5. A tarefa agendada de 2026-10-22 falhou pelo limite semanal de uso, e a de
 2026-10-27 parou no portão de ≥8 runs/h. Quando houver um dia com muitas sessões em paralelo: liste os
