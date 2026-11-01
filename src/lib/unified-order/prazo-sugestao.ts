@@ -53,8 +53,25 @@ const PRAZO_MAX_DIAS = 365;
 // Só as grafias conhecidas do Omie; QUALIFICADOR só o explicitamente permitido ("(faturamento)").
 // "A Vista (30 dias)" contradiz "à vista" e cai em null (achado Codex P1 #7).
 const RE_A_VISTA = /^\s*[aà]\s*vista(?:\s*\(\s*faturamento\s*\))?\s*$/i;
-// "30 dias" · "30dd" · "30 DDL" · "30/60/90 DDL" · "28/56/84 dias"
-const RE_CALENDARIO = /^\s*(\d{1,3}(?:\s*\/\s*\d{1,3})*)\s*(?:dias?|dd|ddl)\s*$/i;
+// Gramática REAL do catálogo Omie da Oben (145 condições medidas em prod, 2026-11-01 — QA pós-Publish
+// do #3473 achou o parser cego a TODAS as formas a prazo da conta): "Para 30 dias" (40), lista nua
+// "30/60/90" (80), "A Vista/30/60" (11), "A Vista" (1); e as grafias de sistema "30 dias"/"30dd"/"30 DDL".
+// Seguem ilegíveis POR DESENHO: "N Parcelas" (sem calendário), "(C)" (qualificador desconhecido),
+// "Informar o número de parcelas", "A Vista/1/1" (não crescente) e o número nu sozinho ("30" — sem
+// "Para"/"dias" não se sabe se é prazo). Falsificado contra `num_parcelas` do catálogo: toda descrição
+// lida tem o MESMO número de parcelas que o Omie declara.
+const RE_CALENDARIO = /^\s*(?:para\s+)?(\d{1,3}(?:\s*\/\s*\d{1,3})*)\s*(?:dias?|dd|ddl)?\s*$/i;
+const RE_ROTULO_DE_PRAZO = /^\s*para\s|(?:dias?|dd|ddl)\s*$/i;
+// "A Vista/30/60" = 1ª parcela à vista e as demais em dias (o Omie grafa assim; é calendário, não à vista).
+const RE_A_VISTA_MAIS = /^\s*[aà]\s*vista\s*\/\s*(\d{1,3}(?:\s*\/\s*\d{1,3})*)\s*$/i;
+
+/** Lista "30/60/90" → dias inteiros em (0, 365], estritamente crescentes; senão `null`. */
+function lerDias(lista: string): number[] | null {
+  const dias = lista.split('/').map((x) => Number(x.trim()));
+  if (dias.some((x) => !Number.isInteger(x) || x <= 0 || x > PRAZO_MAX_DIAS)) return null;
+  for (let i = 1; i < dias.length; i++) if (dias[i] <= dias[i - 1]) return null;
+  return dias;
+}
 
 /**
  * Lê a descrição da parcela como calendário de dias (crescente). `[0]` = à vista.
@@ -66,11 +83,17 @@ export function parseCalendarioParcela(descricao: string | null | undefined): nu
   const d = descricao.trim();
   if (d === '') return null;
   if (RE_A_VISTA.test(d)) return [0];
+  const mv = RE_A_VISTA_MAIS.exec(d);
+  if (mv) {
+    const resto = lerDias(mv[1]);
+    return resto ? [0, ...resto] : null;
+  }
   const m = RE_CALENDARIO.exec(d);
   if (!m) return null;
-  const dias = m[1].split('/').map((x) => Number(x.trim()));
-  if (dias.some((x) => !Number.isInteger(x) || x <= 0 || x > PRAZO_MAX_DIAS)) return null;
-  for (let i = 1; i < dias.length; i++) if (dias[i] <= dias[i - 1]) return null;
+  const dias = lerDias(m[1]);
+  if (!dias) return null;
+  // Um número só e sem rótulo ("30") é ambíguo — não se adivinha que é prazo.
+  if (dias.length === 1 && !RE_ROTULO_DE_PRAZO.test(d)) return null;
   return dias;
 }
 
