@@ -197,6 +197,25 @@ SELECT count(*) FILTER (WHERE n BETWEEN 8 AND 9) AS sem_ddd, count(*) FILTER (WH
 -- régua (logado como staff): SELECT count(*) FILTER (WHERE telefone IS NOT NULL) FROM public.cobranca_regua_hoje('oben');
 ```
 
+**Deploy (2026-11-01):** #3488 mergeado 13:42Z. Ledger `pendencias:deploy` → P1 `omie-cliente` v1.3 → v1.4; `pendencias:pacote omie-cliente` exit 0 (pré-condição `register_carteira_member` OK), pacote `a3b4a61af929` @ `2627f988f`. Enviado verbatim por `mcp__lovable__send_message`: 12/12 sha256 conferidos no workspace, função Active, resposta da edge ecoando `v1.4-telefone-com-ddd`, "No files were edited". O commit "Lovable update" do bot (`b363033aa`) só regenerou `src/integrations/supabase/types.ts` — nenhum arquivo da edge. **Atestação no ledger pendente:** a edge não está na allowlist do cron de sonda e o disparo humano (`bun run sonda:sql omie-cliente --so-disparo`, SQL Editor) não foi colado até 17:55Z; leitura em 120 min = INDETERMINADO (ausência de dado). A prova de que a v1.4 serve é funcional: o ramo de reposição só existe nela, e ele regravou ~5,4 mil perfis.
+
+**Reposição executada (card "Importar Clientes", founder, 17:21Z → 17:50Z):** ~240 perfis/min de 17:21 a 17:41 sem erro (ramo "já mapeado"), depois inserção de clientes novos (205 perfis criados: 55 colacor_sc + 150 oben).
+
+**Medido DEPOIS (psql-ro, 17:53Z, mesma query):**
+
+| recorte | total | sem DDD (8–9 díg.) | com DDD (10–11) | sem phone |
+|---|---|---|---|---|
+| perfis mapeados distintos (3 contas) | 5.865 | **6** (era 5.378) | **5.646** (era 15) | 213 |
+| por conta — oben | 5.772 | 6 | 5.546 | 212 |
+| por conta — colacor | 5.204 | 6 | 5.002 | 188 |
+| por conta — colacor_sc | 5.351 | 6 | 5.138 | 199 |
+
+Os 6 restantes são os mesmos nas 3 contas: o Omie não tem DDD para eles — ficam pelados por desenho (nunca DDD inventado). Formatos gravados: `(99) 9999-9999` ×3.182 e `(99) 99999-9999` ×2.449; 15 linhas legadas fora do padrão (4–5 dígitos ou 10 dígitos sem máscara) não foram tocadas.
+
+Régua de hoje (réplica read-only): **oben 29 linhas / 23 clientes / 26 com phone / 26 WhatsApp-ok** (era 0); colacor 6/6/6/**6** (era 0); colacor_sc 2/2/2/**2** (era 0).
+
+**Residual achado na execução — import de clientes novos estoura 150 s com backlog:** a última chamada (conta oben) inseriu 150 clientes NOVOS em ~165 s (17:48:29 → 17:51:13) e o gateway devolveu `504 IDLE_TIMEOUT` (150 s) às 17:50:52. Causa: o ramo de inserção faz 4 idas ao banco em série por cliente (`auth.admin.createUser` → `profiles.insert` → `register_carteira_member` → `upsertAddressFromOmie`), ~1,1 s cada; 3 páginas × 50 novos não cabem. **Não é regressão da v1.4** (a reposição não toca esse ramo) e é anterior: a execução de 22/07 também ficou presa em `executando`. O trabalho do lote NÃO se perdeu (a edge terminou no servidor até 17:51:13); o que se perdeu foi o cursor do front, que parou. Ficaram por importar clientes da Oben acima do último código gravado (96 códigos com título em `fin_contas_receber` sem vínculo; 17 com título em aberto). Re-clicar o card é idempotente (mapeados pulam, reposição já é no-op) e cada clique avança ≥1 lote; com backlog, a correção é um orçamento de tempo no laço (interromper antes de ~120 s e devolver o cursor na MESMA página). Duas linhas órfãs em `acoes_execucoes` (`executando` sem fim: 22/07 e 17:20:47Z) são o mesmo sintoma no registro.
+
 ## Fecho dos residuais do QA (2026-11-01, ~14:45Z) — parser e nome na régua em prod
 
 - **#3489** (parser lê o catálogo real do Omie) mergeado 14:30Z. Só frontend: vai ao ar no próximo 🖱️ Publish; a prova é por bytes (`RE_A_VISTA_MAIS` no chunk de `prazo-sugestao`).
