@@ -106,3 +106,9 @@ falsificações** com o FALHOU específico. Em `LOCALE=C` e `pt_BR.UTF-8`.
   muda; o helper continua fechado (PÓS confere). Registro em `authz-manifest.ts` e `authz-funcoes-fechadas.ts`.
 - **Lição:** stub de harness herda a ACL do default privileges, não a de prod. Para RPC `INVOKER`, todo objeto do corpo
   tem de existir no harness com a MESMA ACL de prod — senão a prova mede um banco mais aberto que o real.
+- **Aplicado (founder: "Sim, aplique"):** recibo **#845**; 2ª testemunha psql-ro: DEFINER, md5 do corpo igual, `search_path`
+  fixo, anon/public sem EXECUTE, helper ainda fechado. Codex (gpt-6-astra high): APROVO, sem P0/P1; P2 = esta prova
+  não está em `db/nucleo-ci.txt` (nenhuma do Raio-X está) — pendência registrada, não feita aqui.
+- **Tela depois do apply (Chrome logado, 2026-11-01 ~18:50Z):** aviso de indisponível sumiu; selos aparecem
+  ("inequívoco · liquidável 174 un" no ALMASUPER KIT MDF); filtro **"Só inequívoco (164 · R$ 91.956)"** — o número
+  que vale, mais restritivo que o preliminar de 217 / R$ 107.799 da tabela acima.
