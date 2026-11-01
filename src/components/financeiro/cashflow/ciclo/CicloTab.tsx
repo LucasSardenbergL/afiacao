@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Inbox, ListChecks } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { useCicloCoorte, useCicloResumo, useReceitaDiariaTtm, hojeSp, useCicloCustoCapital } from '@/hooks/useFinanceiroCiclo';
+import { useCicloCoorte, useCicloResumo, useCrAbertoTotal, useReceitaDiariaTtm, useReguaCiclo, hojeSp, useCicloCustoCapital } from '@/hooks/useFinanceiroCiclo';
 import { useUrlState } from '@/hooks/useUrlState';
 import { ALL_COMPANIES, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { EmptyState } from '@/components/EmptyState';
@@ -38,6 +38,8 @@ export function CicloTab() {
   const cpEmpresa = useCicloCpEmpresa();
   const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloGiroAcao: 'todos' });
   const custoCapital = useCicloCustoCapital();
+  const regua = useReguaCiclo();
+  const crAberto = useCrAbertoTotal();
   const [aberto, setAberto] = useState<ResumoCliente | null>(null);
 
   // Sensor de uso no LEDGER (o PostHog é censurado no Chrome do founder, o leitor da aba); a RPC
@@ -60,7 +62,9 @@ export function CicloTab() {
         {ALL_COMPANIES.map((c) => (
           <CicloEmpresaCard key={c} company={c} coorte={coorteDados} receitaDia={receita.data?.[c].porDia ?? null} receitaMeses={receita.data?.[c].mesesComDado} receitaErro={receita.error !== null && receita.error !== undefined}
             resumo={resumo.data} resumoErro={resumo.error !== null && resumo.error !== undefined} hoje={hoje}
-            cpEmpresa={cpEmpresa.data?.[c]} cpErro={cpEmpresa.error !== null && cpEmpresa.error !== undefined} />
+            cpEmpresa={cpEmpresa.data?.[c]} cpErro={cpEmpresa.error !== null && cpEmpresa.error !== undefined}
+            regua={regua.data?.[c]} reguaErro={regua.error !== null && regua.error !== undefined}
+            crAberto={crAberto.data?.[c]} crErro={crAberto.error !== null && crAberto.error !== undefined} />
         ))}
       </div>
       {receita.error && <p className="text-status-error text-sm">Não foi possível ler a receita TTM (valor de 1 dia de PMR indisponível).</p>}
