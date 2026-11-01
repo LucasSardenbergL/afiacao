@@ -13,7 +13,7 @@ const rpcs: Array<{ nome: string; args: unknown }> = [];
 function builder(tabela: string) {
   const b: Record<string, unknown> = {};
   const encadeia = () => b;
-  for (const m of ['select', 'eq', 'gte', 'order']) b[m] = encadeia;
+  for (const m of ['select', 'eq', 'gte', 'order', 'limit']) b[m] = encadeia;
   // fetchAllPages: 1ª página = linhas da tabela; 2ª (de > 0) = [] (fim)
   b.range = (de: number) => {
     consultas.push({ tabela, de });
