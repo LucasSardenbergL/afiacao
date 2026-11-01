@@ -9,11 +9,13 @@ const receitaMock = vi.fn();
 const projMock = vi.fn();
 const titulosMock = vi.fn();
 const custoMock = vi.fn();
+const maturacaoMock = vi.fn();
 
 vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   hojeSp: () => '2026-10-14',
   useCicloResumo: () => resumoMock(),
   useCicloCoorte: () => coorteMock(),
+  useCicloCoorteMaturacao: () => maturacaoMock(),
   useReceitaDiariaTtm: () => receitaMock(),
   useCicloTitulosCliente: () => titulosMock(),
   useCicloGiroSku: () => ({ data: [], isLoading: false, error: null }),
@@ -57,6 +59,7 @@ const renderTab = (url = '/') => render(<MemoryRouter initialEntries={[url]}><Ci
 
 beforeEach(() => {
   coorteMock.mockReturnValue(ok([]));
+  maturacaoMock.mockReturnValue(ok([]));
   receitaMock.mockReturnValue(ok({ oben: { porDia: 11300, mesesComDado: 12 }, colacor: { porDia: 2100, mesesComDado: 9 }, colacor_sc: { porDia: null, mesesComDado: 0 } }));
   titulosMock.mockReturnValue({ data: [], isLoading: false, error: null });
   projMock.mockImplementation(() => ok({ indicadores: proj, confianca_dados: { motivos: [] } }));
@@ -337,5 +340,40 @@ describe('nomeExibido', () => {
   it('decodifica entidade HTML do Omie e cai no código sem nome', () => {
     expect(nomeExibido({ nomeCliente: 'MOVEIS &amp; CIA', omieCodigoCliente: 1 })).toBe('MOVEIS & CIA');
     expect(nomeExibido({ nomeCliente: null, omieCodigoCliente: 42 })).toBe('#42');
+  });
+});
+
+describe('coortes com maturação fixa (Frente A, item 4)', () => {
+  const coorteMat = (mes: string, maduro: boolean) => ({
+    company: 'oben' as const, mes, titulos: 9, valorVencido: 1800, valorAntecipado: 100, valorPagoNoDia: 80, valorPagoComAtraso: 1400,
+    valorPagoSemData: maduro ? 120 : 0, valorEmAberto: 60, diasAntecipacaoPond: 5, diasAtrasoPond: 43.57,
+    pct: maduro ? { 15: 0.2111, 30: 0.3778, 60: 0.6 } : { 15: null, 30: null, 60: null },
+    maduro: { 15: maduro, 30: maduro, 60: maduro },
+    mesParcial: !maduro,
+  });
+
+  it('coorte madura publica D+15/30/60 em %; imatura mostra "—" (nunca número parcial); sem-data marca o piso', () => {
+    maturacaoMock.mockReturnValue(ok([coorteMat('2026-07-01', true), coorteMat('2026-10-01', false)]));
+    renderTab();
+    const tabela = screen.getByTestId('ciclo-maturacao-oben');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-d15')).toHaveTextContent('21.1%');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-d60')).toHaveTextContent('60.0%');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-d15')).toHaveTextContent('—');
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-d60')).toHaveTextContent('—');
+    // Mais recente primeiro.
+    const linhas = within(tabela).getAllByRole('row').slice(1).map((r) => r.getAttribute('data-testid'));
+    expect(linhas).toEqual(['ciclo-maturacao-oben-2026-10', 'ciclo-maturacao-oben-2026-07']);
+    expect(screen.getByText(/os D\+N são piso/)).toBeInTheDocument();
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-07-piso')).toBeInTheDocument();
+    // Mês cortado pela janela leva a marca *, com o motivo no title.
+    expect(within(tabela).getByTestId('ciclo-maturacao-oben-2026-10-parcial')).toHaveTextContent('*');
+    expect(within(tabela).queryByTestId('ciclo-maturacao-oben-2026-07-parcial')).toBeNull();
+  });
+
+  it('erro na leitura da maturação aparece como erro, não como tabela vazia', () => {
+    maturacaoMock.mockReturnValue({ data: undefined, isLoading: false, error: new Error('boom') });
+    renderTab();
+    expect(screen.getByTestId('ciclo-maturacao-erro-oben')).toBeInTheDocument();
+    expect(screen.queryByTestId('ciclo-maturacao-oben')).toBeNull();
   });
 });
