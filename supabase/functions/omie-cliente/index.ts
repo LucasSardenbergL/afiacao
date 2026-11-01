@@ -3,6 +3,7 @@ import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
+import { deveInterromperPagina, podeIniciarPagina } from "./orcamento.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
   avaliarPagina,
@@ -988,6 +989,9 @@ Deno.serve(async (req) => {
       case "sync_all_clients": {
         // Bulk import clients from one Omie account at a time (to avoid timeout)
         // Pass account_index: 0, 1, 2 and start_page (default 1)
+        // Relógio do orçamento de tempo (`orcamento.ts`): conta desde a entrada, porque o setup
+        // (códigos mapeados + perfis com documento) também consome os 150 s do gateway.
+        const inicioInvocacaoMs = Date.now();
         const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
         const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
         const adminClient = createClient(supabaseUrl, supabaseServiceKey);
@@ -1033,6 +1037,13 @@ Deno.serve(async (req) => {
         // Reposição de telefone (DDD) nos perfis JÁ mapeados — ver `telefone.ts` e o ramo abaixo.
         let accTelefonesRepostos = 0;
         let pagesProcessed = 0;
+        // true = esta invocação parou por tempo e devolve o cursor na página onde parou.
+        let orcamentoEsgotado = false;
+        const progresso = () => ({
+          decorridoMs: Date.now() - inicioInvocacaoMs,
+          paginasConcluidas: pagesProcessed,
+          clientesImportados: accImported,
+        });
 
         // Teto de tentativas da MESMA página, DENTRO desta invocação. Mora aqui — e não no cursor
         // — de propósito: um contador transportado degradaria para "sem teto" com qualquer caller
@@ -1116,6 +1127,12 @@ Deno.serve(async (req) => {
         console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
 
         while (page <= totalPages && pagesProcessed < maxPages) {
+          // Página nova só se ela cabe antes do corte de 150 s. `page` ainda não foi pedida, então
+          // o cursor já aponta para ela — o desfecho abaixo devolve hasMore com esta página.
+          if (!podeIniciarPagina(progresso())) {
+            orcamentoEsgotado = true;
+            break;
+          }
           try {
             const listResult = await callOmieApiWithCredentials(
               "geral/clientes/",
@@ -1201,6 +1218,12 @@ Deno.serve(async (req) => {
             }
 
             for (const cliente of clientes) {
+              // Corte no meio da página: os já gravados entraram em `existingCodes` (e no map), então
+              // a próxima invocação refaz esta página só com SKIPs até o primeiro não processado.
+              if (deveInterromperPagina(progresso())) {
+                orcamentoEsgotado = true;
+                break;
+              }
               const codigoCliente = cliente.codigo_cliente_omie || cliente.codigo_cliente;
               const cnpjCpf = normalizarDocumento(cliente.cnpj_cpf);
 
@@ -1306,6 +1329,14 @@ Deno.serve(async (req) => {
               }
             }
 
+            if (orcamentoEsgotado) {
+              // NÃO avança `page`: o cursor volta nesta mesma página. A busca dela deu certo, então
+              // um soluço anterior (retentativa) já foi superado — não é "o que interrompeu a conta".
+              console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: orçamento de tempo esgotado — retoma nesta página`);
+              tentativasNaPagina = 0;
+              falhaConta = null;
+              break;
+            }
             console.log(`[sync_all_clients] ${account.name} page ${page}/${totalPages}: +${clientes.length} clientes`);
             page++;
             pagesProcessed++;
@@ -1374,6 +1405,8 @@ Deno.serve(async (req) => {
           skipped: accSkipped,
           errors: accErrors,
           telefones_repostos: accTelefonesRepostos,
+          // true = parou antes do corte de 150 s do gateway; `next` aponta a página onde parou.
+          orcamento_esgotado: orcamentoEsgotado,
           totalPages,
           lastPage: page - 1,
           hasMore: cursor.hasMore || nextAccountIndex < accounts.length,
