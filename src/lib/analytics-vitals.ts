@@ -124,7 +124,7 @@ export function rotaNoInstante(linha: readonly MarcoDeRota[], t: number): string
  * uma só. Sem entrada (restauração do bfcache, que mede por rAF) → `null`, e
  * quem chama usa a rota atual.
  */
-export function instanteDaMetrica(metrica: MetricaVital): number | null {
+function instanteDaMetrica(metrica: MetricaVital): number | null {
   const { entries } = metrica;
   if (entries.length === 0) return null;
   if (metrica.name === 'CLS') {
