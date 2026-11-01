@@ -47,7 +47,7 @@ async function lerFormulasRejeitadas(): Promise<FormulasRejeitadas | null> {
 
   // Teto do PostgREST é 1.000 linhas SILENCIOSO — as duas leituras paginam (`fetchAllPages`
   // lança em página perdida em vez de devolver o parcial como se fosse tudo).
-  const runs = await fetchAllPages<{ errors: number | null }>(
+  const runs = await fetchAllPages<{ id: string; errors: number | null }>(
     (de, ate) => supabase
       .from('tint_sync_runs')
       .select('id, errors')
@@ -60,14 +60,16 @@ async function lerFormulasRejeitadas(): Promise<FormulasRejeitadas | null> {
     'tint_sync_runs/rejeitadas',
   );
 
+  // Por `sync_run_id IN (runs da janela)`, nunca embed `tint_sync_runs!inner(...)` filtrado: no plano
+  // GENÉRICO do PostgREST o embed virava seq scan dos ~110 MB de `tint_sync_errors` a cada poll do
+  // badge (leitor 2 do porte Mini, `docs/historico/tint-purge-staging-io.md`); o IN vai por
+  // `idx_tint_sync_errors_run`. Sem run na janela não há o que ler (e `.in()` vazio não é filtro).
   // Mais novo primeiro — `agruparPorCor` usa a 1ª ocorrência de cada cor como o run dela.
-  const linhas = await fetchAllPages<LinhaDeErro>(
+  const linhas = runs.length === 0 ? [] : await fetchAllPages<LinhaDeErro>(
     (de, ate) => supabase
       .from('tint_sync_errors')
-      .select('sync_run_id, entity_type, entity_id, error_message, error_details, tint_sync_runs!inner(account, sync_type, started_at)')
-      .eq('tint_sync_runs.account', ACCOUNT)
-      .eq('tint_sync_runs.sync_type', 'formulas')
-      .gte('tint_sync_runs.started_at', inicio)
+      .select('sync_run_id, entity_type, entity_id, error_message, error_details')
+      .in('sync_run_id', runs.map((r) => r.id))
       .order('created_at', { ascending: false })
       .order('id')
       .range(de, ate),
