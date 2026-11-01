@@ -116,7 +116,7 @@ Deno.test("fronteira da action com falha: finaliza o log UMA vez como erro (com 
   const resultado = { totalSynced: gravadas, totalPaginas: 1, lastPage: 1, nextPage: null, complete: true };
   const log = finalizadorFake();
 
-  const saida = await concluirSyncProdutos(resultado, falhas, log.finalizar);
+  const saida = await concluirSyncProdutos({ resultado, falhas }, log.finalizar);
 
   assertStrictEquals(saida.status, 500);
   assertStrictEquals(saida.corpo.success, false);
@@ -130,7 +130,7 @@ Deno.test("fronteira da action com falha: finaliza o log UMA vez como erro (com 
 Deno.test("fronteira da action sem falha: 200, corpo de sempre, NÃO finaliza o log (o epílogo comum fecha 'complete')", async () => {
   const resultado = { totalSynced: 10, totalPaginas: 1, lastPage: 1, nextPage: null, complete: true };
   const log = finalizadorFake();
-  const saida = await concluirSyncProdutos(resultado, novasFalhasCatalogo(), log.finalizar);
+  const saida = await concluirSyncProdutos({ resultado, falhas: novasFalhasCatalogo() }, log.finalizar);
   assertStrictEquals(saida.status, 200);
   assertEquals(saida.corpo, { success: true, ...resultado });
   assertStrictEquals(log.chamadas.length, 0);
@@ -147,4 +147,49 @@ Deno.test("exceção depois de falha de gravação: a mensagem carrega a contage
 Deno.test("exceção sem falha de gravação: devolve o MESMO erro (outras falhas inalteradas)", () => {
   const original = new Error("Omie 429 esgotado");
   assertStrictEquals(erroComFalhasAcumuladas(original, novasFalhasCatalogo()), original);
+});
+
+// ── Costura no index.ts (P2 do challenge Codex) ──────────────────────────────────────────────
+// O handler não é importável no Deno (Deno.serve + supabase-js remoto com `--no-remote`), então a
+// ligação helper↔handler é conferida no TEXTO: o MESMO acumulador `falhas` passa do syncProducts
+// para a gravação, para o erro acumulado e para o desfecho; e a action devolve o status do
+// desfecho com o log finalizado. Uma troca do acumulador (ex.: `novasFalhasCatalogo()` no lugar de
+// `falhas`) voltaria a dar 200/success:true sem nenhum teste do helper perceber.
+const INDEX = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
+const plano = (s: string) => s.replace(/\s+/g, " ");
+function regiao(inicio: string, fim: string): string {
+  const i = INDEX.indexOf(inicio);
+  assert(i >= 0, `início não achado no index.ts: ${inicio}`);
+  const j = INDEX.indexOf(fim, i + inicio.length);
+  assert(j > i, `fim não achado no index.ts: ${fim}`);
+  return plano(INDEX.slice(i, j));
+}
+function contem(trecho: string, esperado: string) {
+  assert(trecho.includes(plano(esperado)), `costura ausente no index.ts: ${esperado}`);
+}
+
+Deno.test("costura: syncProducts cria UM acumulador e o mesmo vai para as páginas e para o erro acumulado", () => {
+  const r = regiao("async function syncProducts(", "async function syncProductsPaginas(");
+  contem(r, "const falhas = novasFalhasCatalogo();");
+  contem(r, "return await syncProductsPaginas(supabase, startPage, maxPages, account, falhas);");
+  contem(r, "throw erroComFalhasAcumuladas(e, falhas);");
+  assertStrictEquals(INDEX.split("novasFalhasCatalogo(").length - 1, 1);
+});
+
+Deno.test("costura: as páginas gravam pelo helper com o acumulador recebido e o devolvem junto", () => {
+  const r = regiao("async function syncProductsPaginas(", "// Sincronizar estoque real");
+  contem(r, "const gravacao = await gravarPaginaCatalogo(supabase, rows, pagina, falhas);");
+  contem(r, "totalSynced += gravacao.gravadas;");
+  contem(r, "complete }, falhas, };");
+  assert(!r.includes('.from("omie_products").upsert('), "upsert de omie_products fora do helper");
+});
+
+Deno.test("costura: a action sync_products responde o status do desfecho e finaliza o log com o erro", () => {
+  const r = regiao('case "sync_products": {', 'case "sync_estoque": {');
+  contem(r, "const execucao = await syncProducts(supabaseAdmin, startPage, 12, account);");
+  contem(r, "const saida = await concluirSyncProdutos(execucao, async (corpo, erro) => {");
+  contem(r, "await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro); vendaSyncFinalized = true;");
+  contem(r, "if (saida.status !== 200) { return new Response(JSON.stringify(saida.corpo), { status: saida.status,");
+  contem(r, "result = saida.corpo;");
+  assert(!r.includes("success: true"), "a action voltou a afirmar success:true por conta própria");
 });

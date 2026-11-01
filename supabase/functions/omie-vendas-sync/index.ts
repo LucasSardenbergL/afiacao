@@ -2753,11 +2753,11 @@ Deno.serve(async (req) => {
     switch (action) {
       case "sync_products": {
         const startPage = params.start_page || 1;
-        const { resultado, falhas } = await syncProducts(supabaseAdmin, startPage, 12, account);
+        const execucao = await syncProducts(supabaseAdmin, startPage, 12, account);
         // N2: linha não gravada em omie_products (preço) ⇒ o run NÃO é sucesso. fin_sync_log
         // vira 'error' com os contadores (watchdog + data_health enxergam) e a resposta é 500 —
         // o único sinal que o front (res.error do supabase-js) enxerga.
-        const saida = await concluirSyncProdutos(resultado, falhas, async (corpo, erro) => {
+        const saida = await concluirSyncProdutos(execucao, async (corpo, erro) => {
           await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro);
           vendaSyncFinalized = true;
         });

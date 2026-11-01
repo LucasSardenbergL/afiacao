@@ -128,11 +128,10 @@ export function desfechoSyncProdutos(
  * fechá-lo como 'complete'. Sem falha, não finaliza: o epílogo comum das actions de sync fecha.
  */
 export async function concluirSyncProdutos(
-  resultado: ResultadoSyncProdutos,
-  falhas: FalhasCatalogo,
+  execucao: { resultado: ResultadoSyncProdutos; falhas: FalhasCatalogo },
   finalizarLog: (corpo: Record<string, unknown>, erro: string) => Promise<void>,
 ): Promise<{ status: 200 | 500; corpo: Record<string, unknown> }> {
-  const desfecho = desfechoSyncProdutos(resultado, falhas);
+  const desfecho = desfechoSyncProdutos(execucao.resultado, execucao.falhas);
   if (!desfecho.ok) await finalizarLog(desfecho.corpo, desfecho.erro);
   return { status: desfecho.status, corpo: desfecho.corpo };
 }
