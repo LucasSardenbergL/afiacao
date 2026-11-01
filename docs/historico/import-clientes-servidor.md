@@ -60,3 +60,30 @@ atômica; uma morte no meio deixa o placeholder órfão e a retomada conta erro 
 
 **Incremental diário**: pedir ao Omie só os clientes incluídos/alterados desde o último cursor. `ListarClientes`
 nunca foi chamado com filtro de data no repo — os nomes dos parâmetros precisam ser medidos em produção antes.
+
+## Deploy e primeira rodada (2026-11-01)
+
+- **Migration** pelo envelope `db:aplicar` (recibo #849), validada por fora: RLS, índice único válido, 2 crons
+  ativos com `timeout_milliseconds := 150000`, `clientes_import_lease_acquire` fechada para `authenticated` e `anon`.
+- **Edge `omie-cliente` v1.6** pelo MCP do Lovable (14/14 hashes contra `ec3927e4f`); sonda pelo envelope (recibo
+  #851) → `DEPLOY CONFIRMADO`, ledger `CONFERE` (#3505). O deploy fez o bot regenerar o `types.ts` e tirar o `| null`
+  de ~35 campos de novo — restaurado no #3504 (mesma classe do #3498/#3499).
+- **Publish** pelo founder; bytes provados com a sentinela `clientes_import_semear`.
+- **O 1º clique não chegou ao servidor**: o service worker ainda servia a build anterior (o build novo estava em
+  297/384 arquivos no preparo da release), e a build antiga chama `sync_all_clients`, que agora devolve 410. Com a
+  release promovida e a aba recarregada, o clique criou a rodada. É a 4ª camada de deploy (bytes = disponibilidade,
+  não adoção) agindo exatamente como desenhado.
+
+Rodada `eacc9370` (manual, 23:15:59 → 23:51:08 UTC, 34 invocações, zero erro, zero conta interrompida):
+
+| Conta | Páginas | Vínculos novos |
+|---|---|---|
+| colacor_sc | 108 | 0 |
+| oben | 316 | 7.091 |
+| colacor | 111 | 280 |
+
+Totais da rodada: 7.380 importados, 19.318 já existiam, 10 telefones repostos, zero código duplicado em
+`omie_customer_account_map`. **Clientes com título em aberto sem vínculo: oben 14 → 0, colacor 5 → 0, colacor_sc 0.**
+Os 5 da Colacor estavam em páginas que os cliques anteriores não alcançaram — não era outra causa.
+
+A lista `omie_clientes_nao_vinculados` (oben = 10.168) é um retrato do refresh diário; só cai no próximo refresh.
