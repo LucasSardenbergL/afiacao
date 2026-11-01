@@ -24,6 +24,12 @@ vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   useCrAbertoTotal: () => ({ data: undefined, isLoading: false, error: null }),
   useCicloCustoCapital: () => custoMock(),
 }));
+vi.mock('@/hooks/useFinanceiroCompraSuspensa', () => ({
+  useCompraSuspensaListar: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaRuns: () => ({ data: [], isLoading: false, error: null, isError: false }),
+  useCompraSuspensaCandidatos: () => ({ data: [], isLoading: false, error: null, isError: false, isSuccess: true, isFetching: false }),
+  useCompraSuspensaMutacoes: () => ({ suspender: { mutate: vi.fn(), isPending: false }, reativar: { mutate: vi.fn(), isPending: false } }),
+}));
 vi.mock('@/hooks/useFinanceiroCicloFornecedor', () => ({
   useCicloCpTitulos: () => ({ data: [], isLoading: false, error: null }),
   useCicloFornecedorResumo: () => ({ data: [], isLoading: false, error: null }),

@@ -179,6 +179,12 @@ SELECT * FROM reposicao_param_fila_log WHERE empresa='OBEN' ORDER BY medido_em D
   vendeu em 90d — alimenta o aviso de "Gerir pedidos" (`/admin/reposicao/pedidos`) e o filtro "Fora do motor" da Revisão (Religar/Descontinuar).
   ⚠️ Mudou o WHERE da `sku_base`? Mude a view e o `db/test-v-sku-fora-do-motor.sh`. Detalhe:
   `docs/historico/sku-fora-do-motor-em-silencio.md`.
+- **"Segurar compra" é REGISTRO, não flag** (2026-11-01, Frente C PME): `reposicao_compra_suspensa` (ativa = `reativado_em IS NULL`;
+  `revisar_em` é data de revisão, NÃO vence sozinha) — o motor segura a linha cujo SKU final OU âncora do grupo está suspensa e
+  loga a compra evitada em `reposicao_compra_suspensa_log` (R$ de sugestão por run, não caixa). Escrita só pelas RPCs
+  `reposicao_compra_suspender/_reativar` (master). **Não** use `habilitado=false`/`sob_encomenda` para "segurar": vira alerta
+  "fora do motor", perde o R$ evitado e religa por UPDATE cru. Mudou `skus_inseriveis`? A cauda da fixture do motor é a fonte
+  das provas irmãs — acumule o que o motor exige. → `docs/historico/compra-suspensa-segurar-compra-no-motor.md`
 - **Teto de cobertura ≠ fusível de magnitude.** O teto (`reposicao_teto_cobertura_oben_*`) é aplicado no
   **motor**, por dias de demanda; o fusível compara com o valor **anterior**. Se a demanda estiver errada,
   o teto usa a mesma demanda errada — só o fusível protege. Detalhe:

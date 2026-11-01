@@ -179,6 +179,28 @@ export const AUTHZ_FUNCOES_FECHADAS: Record<string, FuncaoFechada> = {
     permitido: PORTA_GATE,
     motivo: 'plano de execução da decisão do Raio-X (piso, canal, responsável, prazo); gate private.cap_custo_ler',
   },
+  // 2026-11-01 — "segurar compra" escreve no motor (migration 20261101090000): gate cap_compras_ler (leituras) /
+  // cap_compras_escrever (writer) INLINE; a foto interna fecha por PRIVILÉGIO (postcondição mede anon/authenticated).
+  'public.reposicao_compra_suspensa_candidatos': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'coorte do lote "segurar compra" (saldo×cmc, fornecedor); gate private.cap_compras_ler',
+  },
+  'public.reposicao_compra_suspensa_listar': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'suspensões ativas com foto e situação ao vivo; gate private.cap_compras_ler',
+  },
+  'public.reposicao_compra_suspender': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_GATE,
+    motivo: 'único writer de reposicao_compra_suspensa; gate private.cap_compras_escrever (master)',
+  },
+  'public._reposicao_compra_foto': {
+    fechadaPor: '20261101090000_reposicao_compra_suspensa.sql',
+    permitido: PORTA_FECHADA,
+    motivo: 'foto interna (saldo×cmc, fornecedor, cobertura) só pelas RPCs gateadas — REVOKE de anon/authenticated',
+  },
   'public.fin_estoque_giro_valor': {
     fechadaPor: '20261018200000_fin_ciclo_giro_sku.sql',
     permitido: PORTA_GATE,

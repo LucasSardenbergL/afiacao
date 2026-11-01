@@ -1,7 +1,7 @@
 // Giro de estoque por SKU (frente 3 do ciclo): onde o caixa está preso no estoque, por empresa
 // (nunca somado entre CNPJs). Candidatos a SEGURAR COMPRA e a LIQUIDAR + lista "fora do giro"
 // (imobilizado / uso e consumo) para o founder acompanhar. A regra é da RPC fin_ciclo_giro_sku.
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Inbox } from 'lucide-react';
 import { useCicloGiroSku } from '@/hooks/useFinanceiroCiclo';
 import { COMPANIES, type Company } from '@/contexts/CompanyContext';
@@ -18,6 +18,9 @@ import {
   resumirGiro, separarListas, type GiroSku,
 } from '@/lib/financeiro/ciclo-giro-helpers';
 import { brl, dias } from './ciclo-format';
+import { CompraCell, CompraSuspensaPainel, SegurarCompraDialog, type AlvoSuspensao } from './CompraSuspensaPainel';
+import { useCompraSuspensaListar } from '@/hooks/useFinanceiroCompraSuspensa';
+import type { SuspensaAtiva } from '@/lib/financeiro/compra-suspensa-helpers';
 
 export type FiltroAcaoGiro = 'todos' | 'liquidar' | 'segurar_compra';
 const FILTROS: Array<[FiltroAcaoGiro, string]> = [
@@ -34,7 +37,10 @@ function Traco({ titulo }: { titulo: string | null }) {
   return <span title={titulo ?? undefined}>—</span>;
 }
 
-function TabelaGiro({ linhas }: { linhas: GiroSku[] }) {
+/** Coluna "Compra" (só Oben): a decisão "segurar compra" escrita no motor — ver CompraSuspensaPainel. */
+type ColunaCompra = { company: Company; suspensas: Map<number, SuspensaAtiva>; indisponivel: boolean; onSegurar: (a: AlvoSuspensao) => void };
+
+function TabelaGiro({ linhas, compra }: { linhas: GiroSku[]; compra?: ColunaCompra }) {
   const [todos, setTodos] = useState(false);
   const visiveis = todos ? linhas : linhas.slice(0, TOPO);
   return (
@@ -46,6 +52,7 @@ function TabelaGiro({ linhas }: { linhas: GiroSku[] }) {
             <TableHead className="text-right">Saldo</TableHead><TableHead className="text-right">R$ parado</TableHead>
             <TableHead className="text-right">Cobertura (qtd)</TableHead><TableHead className="text-right">Sem saída</TableHead>
             <TableHead className="text-right">R$ acima de {LIMIAR_COBERTURA_ALVO_DIAS}d</TableHead><TableHead>Candidato</TableHead>
+            {compra && <TableHead>Compra</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -72,6 +79,12 @@ function TabelaGiro({ linhas }: { linhas: GiroSku[] }) {
                   {s.acao ? <Badge variant="outline">{ROTULO_ACAO[s.acao]}</Badge>
                     : <span className="text-muted-foreground">{mot ?? '—'}</span>}
                 </TableCell>
+                {compra && (
+                  <TableCell>
+                    <CompraCell company={compra.company} sku={s.omieCodigoProduto} descricao={s.descricao}
+                      suspensa={compra.suspensas.get(s.omieCodigoProduto)} indisponivel={compra.indisponivel} onSegurar={compra.onSegurar} />
+                  </TableCell>
+                )}
               </TableRow>
             );
           })}
@@ -122,6 +135,11 @@ function ForaDoGiro({ company, linhas, total }: { company: Company; linhas: Giro
 
 function GiroEmpresa({ company, acao }: { company: Company; acao: FiltroAcaoGiro }) {
   const q = useCicloGiroSku(company);
+  // "Segurar compra" só na Oben (sku_parametros/motor são da Oben; colacor não tem consumo por SKU).
+  const temCompra = company === 'oben';
+  const suspensas = useCompraSuspensaListar(company, temCompra);
+  const [alvo, setAlvo] = useState<AlvoSuspensao | null>(null);
+  const mapaSuspensas = useMemo(() => new Map((suspensas.data ?? []).map((a) => [a.sku, a])), [suspensas.data]);
   useEffect(() => { track('financeiro.ciclo_giro_visto', { empresa: company }); }, [company]);
 
   if (q.isLoading) return <PageSkeleton variant="list" />;
@@ -156,9 +174,11 @@ function GiroEmpresa({ company, acao }: { company: Company; acao: FiltroAcaoGiro
       <p className="text-xs text-muted-foreground">
         R$ a custo atual (CMC do Omie): cenário — não é previsão. Candidato não é ordem: confira reservas, lead time e demanda contratada antes de agir.
       </p>
+      {temCompra && <CompraSuspensaPainel company={company} onSegurarLote={setAlvo} />}
       {filtrados.length === 0
         ? <p className="text-xs text-muted-foreground">Nenhum SKU neste filtro.</p>
-        : <TabelaGiro linhas={filtrados} />}
+        : <TabelaGiro linhas={filtrados} compra={temCompra ? { company, suspensas: mapaSuspensas, indisponivel: suspensas.isError, onSegurar: setAlvo } : undefined} />}
+      {temCompra && <SegurarCompraDialog company={company} alvo={alvo} onClose={() => setAlvo(null)} />}
       <ForaDoGiro company={company} linhas={foraGiro} total={totalFora} />
     </section>
   );

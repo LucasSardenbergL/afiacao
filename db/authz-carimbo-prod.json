@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-01T13:21:35.013Z",
-  "sourceHead": "8e519d4f646ae9dd68e6eae8179b4ed0c7f569a3",
+  "medidoEm": "2026-11-01T13:51:38.424Z",
+  "sourceHead": "c602f9797ed1291092f191226b135abeeeb44171",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 71 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 72 definição(ões) lida(s) para 71 chave(s) da allowlist.",
-      "contratoFingerprint": "f5102f739fe66c4e4bbc12e66ff56d048f37e08e48d76ff789dfc650e31133ca",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 75 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 76 definição(ões) lida(s) para 75 chave(s) da allowlist.",
+      "contratoFingerprint": "e9160f6198f0f9583576a7b56e92e7e8d36c1b46a4ae08b2c252be20435257b3",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -30,9 +30,9 @@
     "audit": {
       "script": "authz:audit:prod",
       "exit": 0,
-      "resumo": "✅ gate do manifest vale no corpo VIVO das 29 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
-      "denominador": "🔎 authz:audit:prod — 30 definição(ões) lida(s) para 29 chave(s) do manifest.",
-      "contratoFingerprint": "279b9b7d94e55c72873605d054f9d23879f952a442e91eff2535c1379ae30321",
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 32 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 33 definição(ões) lida(s) para 32 chave(s) do manifest.",
+      "contratoFingerprint": "aa7ea688b4e327df9cf51bedfd82f572e397e53200508a9aa1d564a76c5fde27",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
       "achados": []
     },
@@ -71,7 +71,7 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 457 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@393686ecc (fetch ok) · prod 2026-11-01 13:22:00.410692Z",
+      "denominador": "🔎 deriva-corpo — 458 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@26b0a96ef (fetch ok) · prod 2026-11-01 13:52:02.218856Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [

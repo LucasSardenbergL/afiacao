@@ -204,6 +204,12 @@ const BASELINE = new Map<string, Waiver>([
     { tipo: 'estrutural', teto: 4, prova: '`UNION ALL` de 4 SELECTs agregados sem GROUP BY' }],
   ['get_whatsapp_funil @ src/hooks/useWhatsappFunil.ts',
     { tipo: 'estrutural', teto: 1, prova: 'SELECT de subqueries escalares, sem FROM' }],
+  // RPCs de ESCRITA do "segurar compra": devolvem 1 linha por SKU de p_skus (unnest DISTINCT). O hook FATIA o array em
+  // lotes de LOTE_RPC_SKUS=200 (useFinanceiroCompraSuspensa.ts) — o teto é do lado do cliente, por construção.
+  ['reposicao_compra_suspender @ src/hooks/useFinanceiroCompraSuspensa.ts',
+    { tipo: 'estrutural', teto: 200, prova: '1 linha por SKU DISTINCT de p_skus; o hook fatia p_skus em lotes de 200 (LOTE_RPC_SKUS)' }],
+  ['reposicao_compra_reativar @ src/hooks/useFinanceiroCompraSuspensa.ts',
+    { tipo: 'estrutural', teto: 200, prova: '1 linha por SKU DISTINCT de p_skus; o hook fatia p_skus em lotes de 200 (LOTE_RPC_SKUS)' }],
   ['get_data_health @ src/hooks/useDataHealth.ts',
     { tipo: 'estrutural', teto: 25, prova: 'CTE `checks` = 25 ramos UNION ALL, 1 linha cada; o único ramo com JOIN é limitado por `sync_state` (26 linhas)' }],
   ['gerar_pedidos_sugeridos_ciclo @ src/pages/AdminReposicaoPedidos.tsx',
