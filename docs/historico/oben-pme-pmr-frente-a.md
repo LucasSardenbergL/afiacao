@@ -88,3 +88,17 @@ Três gates do CI reprovaram a 1ª migration e viraram uma 2ª (a aplicada é im
   (`scripts/authz-funcoes-fechadas.ts`), com privilégios medidos na prod (anon/authenticated/service_role = false).
 - **`hoje-utc`**: `toISOString().slice(0, 10)` é dia UTC, mesmo sobre uma data já de SP — `semanaDe` passou a usar
   `addDias` de `@/lib/time/sp-day`.
+
+## Item 4 — coortes com maturação fixa D+15/30/60 (PR 3, migration `20261101120000`)
+
+**Por quê:** a `v_ciclo_empresa_coorte` publica "% pago" com o que foi liquidado ATÉ HOJE — a coorte de setembro parece pior que a de março só porque teve menos tempo. A régua honesta lê cada coorte (mês de **vencimento**) em janelas fixas após o vencimento.
+
+**O que o banco disse antes (psql-ro, 2026-11-01):** `fin_contas_receber.data_recebimento` é NULL em 100 % dos títulos dos 12 meses, nas 3 empresas — a data de pagamento só existe em `v_titulo_baixas.data_baixa_final` (última baixa do título). Por isso a maturação parte de `v_ciclo_cr_titulos` (universo já saneado) e o título conta pelo valor do documento inteiro na data da ÚLTIMA baixa — mesma convenção da situação `paga`. `paga_sem_baixa` = 0 em todos os meses medidos, mas a massa "pago sem data" existe no desenho (ausente ≠ zero: quando > 0 os D+N viram **piso**, com † na tabela).
+
+**View `v_ciclo_empresa_coorte_maturacao`** (`security_invoker=on`, anon fora) + **RPC `fin_ciclo_empresa_coorte_maturacao()`** (SECDEF, `search_path=''`, `_fin_ciclo_gate_master` + `fin_user_can_access`, anon/PUBLIC revogados nominalmente). Não substitui a view/RPC antigas.
+- `pct_pago_d15/d30/d60` = Σ valor dos títulos pagos até vencimento + N / Σ valor vencido no mês — **só quando `maduro_dN`** (último dia do mês + N < hoje SP); imatura = NULL + flag, nunca número parcial.
+- Massas **separadas**: `valor_antecipado` (baixa < vencimento), `valor_pago_no_dia`, `valor_pago_com_atraso`, `valor_pago_sem_data`, `valor_em_aberto` (saldo); `dias_antecipacao_pond` e `dias_atraso_pond` ponderados por valor, cada um só na sua massa — antecipação nunca compensa atraso.
+- Janela de 365 d no vencimento (como a coorte antiga); vencida aberta antiga some.
+- Prova `db/test-fin-ciclo-coorte-maturacao.sh` (`nucleo-ci.txt`): controle verde + **16 sabotagens** em C e pt_BR — antecipação somada ao atraso, imatura publicando número, D+30 pela emissão, janela aberta, sem-data contado, aberto pelo documento, dias sem ponderar, flag D+60 pela de D+15, invoker/gate/ACL em 2 camadas (postcondição aborta; neutralizada, a asserção fica vermelha). O que a prova NÃO cobre: o off-by-one do `<` na maturidade (exigiria um mês cujo fim + N caia exatamente em hoje — não é construível com `now()`; o caso é lido pela postura "fim + N **<** hoje", conservadora).
+
+**Superfície:** tabela de maturação em `CicloTendencia.tsx` (`ciclo-maturacao-<empresa>`), do mês mais recente ao mais antigo: Vencimento · nº títulos · D+15 · D+30 · D+60 (imatura = "—", célula esmaecida com o motivo no title) · Antecip. % · Atraso (dias ponderados) · Em aberto %. O tooltip do gráfico trocou o "% pago cru" pela maturação do mês. Hook `useCicloCoorteMaturacao` (1 vaga da `filaCiclo`, paginado), regra pura em `coorte-maturacao-helpers.ts` (imatura → null mesmo que o banco mande número; flag ilegível = imatura). Sem alerta universal "<90 %" (cortado pelo founder).

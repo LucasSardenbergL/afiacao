@@ -19819,6 +19819,28 @@ export type Database = {
         }
         Relationships: []
       }
+      v_ciclo_empresa_coorte_maturacao: {
+        Row: {
+          company: string | null
+          dias_antecipacao_pond: number | null
+          dias_atraso_pond: number | null
+          maduro_d15: boolean | null
+          maduro_d30: boolean | null
+          maduro_d60: boolean | null
+          mes_vencimento: string | null
+          pct_pago_d15: number | null
+          pct_pago_d30: number | null
+          pct_pago_d60: number | null
+          titulos: number | null
+          valor_antecipado: number | null
+          valor_em_aberto: number | null
+          valor_pago_com_atraso: number | null
+          valor_pago_no_dia: number | null
+          valor_pago_sem_data: number | null
+          valor_vencido_no_mes: number | null
+        }
+        Relationships: []
+      }
       v_ciclo_fornecedor_resumo: {
         Row: {
           atraso_pond_pos: number | null
@@ -22417,6 +22439,34 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "v_ciclo_empresa_coorte"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      fin_ciclo_empresa_coorte_maturacao: {
+        Args: never
+        Returns: {
+          company: string | null
+          dias_antecipacao_pond: number | null
+          dias_atraso_pond: number | null
+          maduro_d15: boolean | null
+          maduro_d30: boolean | null
+          maduro_d60: boolean | null
+          mes_vencimento: string | null
+          pct_pago_d15: number | null
+          pct_pago_d30: number | null
+          pct_pago_d60: number | null
+          titulos: number | null
+          valor_antecipado: number | null
+          valor_em_aberto: number | null
+          valor_pago_com_atraso: number | null
+          valor_pago_no_dia: number | null
+          valor_pago_sem_data: number | null
+          valor_vencido_no_mes: number | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "v_ciclo_empresa_coorte_maturacao"
           isOneToOne: false
           isSetofReturn: true
         }

@@ -35,7 +35,7 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
-import { useCicloCoorte, useCicloGiroSku, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm, useReguaCiclo } from '../useFinanceiroCiclo';
+import { useCicloCoorte, useCicloCoorteMaturacao, useCicloGiroSku, useCicloResumo, useCicloTitulosCliente, useReceitaDiariaTtm, useReguaCiclo } from '../useFinanceiroCiclo';
 
 const wrapper = ({ children }: { children: ReactNode }) =>
   createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
@@ -253,5 +253,33 @@ describe('useReguaCiclo', () => {
     const { result } = renderHook(() => useReguaCiclo(), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(String(result.current.error)).toContain('fin_estoque_giro_valor/oben');
+  });
+});
+
+describe('useCicloCoorteMaturacao', () => {
+  it('lê pela RPC, normaliza (imatura → pct null) e descarta linha sem denominador', async () => {
+    tabelas.fin_ciclo_empresa_coorte_maturacao = {
+      error: null,
+      data: [
+        { company: 'oben', mes_vencimento: '2026-07-01', titulos: 9, valor_vencido_no_mes: '1800', valor_antecipado: '100', valor_pago_no_dia: '80',
+          valor_pago_com_atraso: '1400', valor_pago_sem_data: '120', valor_em_aberto: '60', dias_antecipacao_pond: '5', dias_atraso_pond: '43.57',
+          maduro_d15: true, maduro_d30: true, maduro_d60: false, pct_pago_d15: '0.2111', pct_pago_d30: '0.3778', pct_pago_d60: null },
+        { company: 'oben', mes_vencimento: '2026-10-01', titulos: 1, valor_vencido_no_mes: null },
+      ],
+    };
+    const { result } = renderHook(() => useCicloCoorteMaturacao(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toHaveLength(1);
+    expect(result.current.data?.[0]).toMatchObject({
+      company: 'oben', mes: '2026-07-01', titulos: 9, valorVencido: 1800, valorPagoSemData: 120, diasAtrasoPond: 43.57,
+      pct: { 15: 0.2111, 30: 0.3778, 60: null }, maduro: { 15: true, 30: true, 60: false },
+    });
+    expect(rpcs).toEqual([{ nome: 'fin_ciclo_empresa_coorte_maturacao', args: undefined }]);
+  });
+
+  it('erro do supabase vira `error` do hook (nunca lista vazia)', async () => {
+    tabelas.fin_ciclo_empresa_coorte_maturacao = { data: null, error: { message: 'boom' } };
+    const { result } = renderHook(() => useCicloCoorteMaturacao(), { wrapper });
+    await waitFor(() => expect(result.current.isError).toBe(true));
   });
 });
