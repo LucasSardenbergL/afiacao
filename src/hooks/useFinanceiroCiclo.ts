@@ -9,6 +9,7 @@ import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/cicl
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
 import { normalizarCustoCapital, type CustoCapital } from '@/lib/financeiro/ciclo-desconto-helpers';
+import { normalizarCoorteMaturacao, type CoorteMaturacao } from '@/lib/financeiro/coorte-maturacao-helpers';
 import { filaCiclo, retryDelayCiclo } from '@/lib/financeiro/ciclo-fila';
 import {
   normalizarSemanaPedidos, normalizarSemanaPrateleira, type SemanaPedidos, type SemanaPrateleira,
@@ -340,6 +341,29 @@ export function useCicloCustoCapital() {
         'fin_ciclo_custo_capital',
       );
       return linhas.map((r) => normalizarCustoCapital(r as Record<string, unknown>)).filter((c): c is CustoCapital => c !== null);
+    }),
+  });
+}
+
+/**
+ * Coortes de recebimento com maturação FIXA (Frente A, item 4): % do valor vencido no mês pago até
+ * D+15/30/60 após o VENCIMENTO, só quando a coorte está madura para a janela (senão null + flag).
+ * Erro LANÇA; linha ilegível é descartada (ausente ≠ zero). Uma vaga da fila para a leitura inteira.
+ */
+export function useCicloCoorteMaturacao() {
+  return useQuery({
+    queryKey: ['financeiro', 'ciclo', 'coorte-maturacao'],
+    retryDelay: retryDelayCiclo,
+    queryFn: (): Promise<CoorteMaturacao[]> => filaCiclo(async () => {
+      // .rpc() set-returning também é capado em 1.000 linhas pelo PostgREST → paginar sempre.
+      const linhas = await fetchAllPages(
+        (de, ate) =>
+          supabase.rpc('fin_ciclo_empresa_coorte_maturacao').select('*')
+            .order('company', { ascending: true }).order('mes_vencimento', { ascending: true })
+            .range(de, ate),
+        'fin_ciclo_empresa_coorte_maturacao',
+      );
+      return linhas.map((r) => normalizarCoorteMaturacao(r as Record<string, unknown>)).filter((c): c is CoorteMaturacao => c !== null);
     }),
   });
 }
