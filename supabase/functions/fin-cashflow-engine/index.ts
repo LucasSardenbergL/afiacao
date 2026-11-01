@@ -39,7 +39,7 @@ import { hojeSP, somarDias } from "../_shared/hoje-sp.ts";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 // PME honesto (2026-10-18): estoque = inventário manual recente OU estoque de GIRO do Omie
 // (sem imobilizado/uso e consumo); CMV = 12 meses fechados exigidos. Ausente → null + motivo.
-import { calcularPme, cmvTtmFechado, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
+import { calcularPme, cmvTtmFechado, colunasSerieEstoque, resolverEstoque, type EstoqueOmie } from "./estoque-pme.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -1423,6 +1423,11 @@ async function calcular(
         saldo_tesouraria: indicadores.saldo_tesouraria,
         dias_cobertura: indicadores.dias_cobertura,
         premissas: premissasSnapshot as unknown as Record<string, unknown>,
+        // v2.2: série diária de estoque de giro em colunas DEDICADAS (migration 20261031210000) — o PME
+        // por estoque MÉDIO dos 90 d (aba Ciclo) lê daqui. Ausente = null (nunca 0); cobertura_ok=false
+        // marca subtotal. 1 writer: este cron. Não em `premissas` (jsonb multi-chave, sinal money-path).
+        // Fora de faixa vira ausência ANTES do INSERT: o CHECK da tabela nunca derruba o snapshot.
+        ...colunasSerieEstoque(dados),
       }),
     );
   }
