@@ -782,7 +782,7 @@ db/test-venda-recompra.sh                  49  falsificar=15
 # revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
 # gate de candidatos, POS ACL anon, POS RLS, autojunção (PERF: volume de prod sob o statement_timeout de 8 s — incidente
 # 2026-10-21, candidatos 500 na prod), POS janela, PRE config (search_path derivado).
-db/test-venda-repasse.sh                   54  falsificar=18
+db/test-venda-repasse.sh                   72  falsificar=30
 
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre

@@ -7,7 +7,7 @@
 //   - tipo trocado LANÇA. O lançamento cai no `isError` do react-query: a tela mostra a falha,
 //     nunca um número fabricado.
 import type { Json } from '@/integrations/supabase/types';
-import type { CandidatoRepasse, ContagemDesfecho, LinhaPainel, PainelVenda } from './painel';
+import type { CandidatoRepasse, ContagemDesfecho, LinhaPainel, PainelVenda, SituacaoCompraRepasse } from './painel';
 
 type Obj = { [k: string]: Json | undefined };
 
@@ -180,6 +180,8 @@ export function lerPainel(data: Json | null): PainelVenda {
 
 // ── venda_repasse_candidatos ──────────────────────────────────────────────────────────────────
 
+const SITUACOES: readonly SituacaoCompraRepasse[] = ['comprando', 'parado', 'substituido'];
+
 function candidato(v: Json, i: number): CandidatoRepasse {
   const onde = `venda_repasse_candidatos[${i}]`;
   const o = obj(v, onde);
@@ -187,6 +189,16 @@ function candidato(v: Json, i: number): CandidatoRepasse {
   if (empresa !== 'oben') throw new Error(`${onde}: empresa "${empresa}" fora do repasse v1 (só oben)`);
   const ra = objOuNulo(o, 'repasse_atual', onde);
   const ondeRa = `${onde}.repasse_atual`;
+  const situacao = strOuNulo(o, 'situacao_compra', onde);
+  if (situacao !== null && !SITUACOES.includes(situacao as SituacaoCompraRepasse)) {
+    throw new Error(`${onde}: situacao_compra "${situacao}" desconhecida`);
+  }
+  const sub = objOuNulo(o, 'substituto', onde);
+  const ondeSub = `${onde}.substituto`;
+  // substituído sem substituto (ou o inverso) é forma que a função não produz
+  if ((situacao === 'substituido') !== (sub !== null)) {
+    throw new Error(`${onde}: situacao_compra "${situacao}" incoerente com o substituto`);
+  }
   return {
     comprador_id: str(o, 'comprador_id', onde),
     empresa,
@@ -203,6 +215,16 @@ function candidato(v: Json, i: number): CandidatoRepasse {
     n_pedidos: numOuNulo(o, 'n_pedidos', onde),
     cadencia_dias: numOuNulo(o, 'cadencia_dias', onde),
     qtd_sugerida: numOuNulo(o, 'qtd_sugerida', onde),
+    situacao_compra: situacao as SituacaoCompraRepasse | null,
+    dias_sem_comprar: numOuNulo(o, 'dias_sem_comprar', onde),
+    substituto: sub && {
+      omie_codigo_produto: num(sub, 'omie_codigo_produto', ondeSub),
+      codigo: strOuNulo(sub, 'codigo', ondeSub),
+      descricao: strOuNulo(sub, 'descricao', ondeSub),
+      primeira_compra: str(sub, 'primeira_compra', ondeSub),
+      ultima_compra: str(sub, 'ultima_compra', ondeSub),
+      dias_com_compra: num(sub, 'dias_com_compra', ondeSub),
+    },
     repasse_atual: ra && {
       id: str(ra, 'id', ondeRa),
       preco_alvo: num(ra, 'preco_alvo', ondeRa),
