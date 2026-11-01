@@ -16,7 +16,11 @@
 --   (493 mil ativas em ordem aleatória, 481 mil heap fetches: o visibility map de tint_formula_itens
 --   estava em 49,6%) e 2,4 GB no IN do `k` (Index Scan da tabela inteira). No small levava 86-154 s;
 --   no Mini, 581 s às 12:00 e TIMEOUT de 600 s às 18:00 de 31/10, a 2 falhas do dead-man de 13 h.
---   Equivalência medida nos dados de prod antes desta migration: ver o PR.
+--   Medido em prod (mesmo SELECT, EXPLAIN ANALYZE BUFFERS, 05:00-05:10 UTC):
+--     v4: 620 s · 8,1 GB do disco                 v5 com a config abaixo: 18 s · 1,14 GB · 365 MB temp
+--   O que sobra é o catálogo lido UMA vez em seq scan (heap de tint_formulas + tint_formula_itens).
+--   Equivalência nos dados de prod (04:50-04:59 UTC): oráculo 493.064 = 493.064 chaves e universo
+--   463.995 = 463.995, zero diferença nos dois sentidos; S1 0 = 0.
 --
 -- NÃO MUDA: v_criterio continua 'v4' (S2 não mudou de critério; trocar fecharia alerta aberto à toa).
 -- ============================================================================================
@@ -50,6 +54,13 @@ RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_temp'
+-- v5: o plano por config DA FUNÇÃO (vale só durante a chamada e volta sozinho). Sem index scan,
+-- o `k` e o `v_ok` leem a tabela em seq scan (ring buffer: não expulsa o cache quente); com o
+-- index scan o planner escolhia percorrer tint_formulas inteira pelo índice = 2,5 GB aleatórios.
+-- work_mem: os HashAggregate de 0,5-1 M grupos; com os 3,5 MB do porte, 909 MB de temp.
+SET enable_indexscan TO 'off'
+SET enable_indexonlyscan TO 'off'
+SET work_mem TO '16MB'
 AS $function$
 DECLARE
   -- tint_watchdog_fase5 guard v5 — MARCADOR do guard anti-rollback. Uma versão
@@ -471,6 +482,10 @@ BEGIN
                     AND command LIKE '%tint_watchdog_fase5_check()%') THEN
     RAISE EXCEPTION 'P10 FALHOU: o cron tint-watchdog-fase5-6h não está ativo chamando a função';
   END IF;
-  RAISE NOTICE 'tint_watchdog_fase5 v5: marcador v5, S4/S5, sem corte de 30d, definer, ACL, sem leitura da view, cron ativo';
+  IF NOT (SELECT p.proconfig @> ARRAY['enable_indexscan=off', 'enable_indexonlyscan=off', 'work_mem=16MB']
+            FROM pg_proc p WHERE p.oid = v_oid) THEN
+    RAISE EXCEPTION 'P11 FALHOU: a funcao perdeu a config do plano (sem ela volta o Index Scan da tabela inteira)';
+  END IF;
+  RAISE NOTICE 'tint_watchdog_fase5 v5: config do plano, marcador v5, S4/S5, sem corte de 30d, definer, ACL, sem leitura da view, cron ativo';
 END
 $post$;

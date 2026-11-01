@@ -568,7 +568,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E3,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E3,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
@@ -633,6 +633,10 @@ pares_de() {
     s1_conta_desativada) PARES=("      JOIN receita_ok r ON r.formula_id = f.id
      WHERE f.desativada_em IS NULL AND f.sku_id IS NOT NULL" "      JOIN receita_ok r ON r.formula_id = f.id
      WHERE f.sku_id IS NOT NULL") ;;
+    p11_sem_config_do_plano) PARES=("SET enable_indexscan TO 'off'
+SET enable_indexonlyscan TO 'off'
+SET work_mem TO '16MB'
+" "") ;;
     p9_volta_a_ler_a_view) PARES=("        LEFT JOIN v_ok v   -- o oráculo: o que o balcão consegue precificar hoje (CTE acima)" "        LEFT JOIN (SELECT account, sku_id, cor_id FROM v_tint_formula_canonica WHERE receita_valida) v") ;;
     p2b_corte_30d_volta) PARES=("    HAVING max(ks.generated_at) >= now() - interval '7 days'" "    HAVING max(ks.generated_at) >= now() - interval '30 days'") ;;
     *) return 1 ;;
