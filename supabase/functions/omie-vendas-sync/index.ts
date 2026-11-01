@@ -6,6 +6,7 @@ import { buscarClienteEstrito, docDoPedido, erroDeIdentidadeDoPedido, type Lista
 import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
+import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -410,6 +411,23 @@ function getOmieItemIntegrationCode(index: number): number {
 
 // Sincronizar todos os produtos da empresa de vendas
 async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 12, account: Account = "oben") {
+  const falhas = novasFalhasCatalogo();
+  try {
+    return await syncProductsPaginas(supabase, startPage, maxPages, account, falhas);
+  } catch (e) {
+    // Exceção (Omie transitório, página anômala) DEPOIS de uma falha de gravação: a contagem das
+    // linhas não gravadas viaja na mensagem que o catch global grava no fin_sync_log.
+    throw erroComFalhasAcumuladas(e, falhas);
+  }
+}
+
+async function syncProductsPaginas(
+  supabase: SupabaseClient,
+  startPage: number,
+  maxPages: number,
+  account: Account,
+  falhas: FalhasCatalogo,
+) {
   let pagina = startPage;
   let totalPaginas = 1;
   // Fim REAL declarado por avaliarPagina (página vazia NA/apos a última declarada) — distingue
@@ -505,14 +523,13 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
         updated_at: new Date().toISOString(),
       }));
 
-    if (rows.length > 0) {
-      const { error } = await supabase.from("omie_products").upsert(rows, { onConflict: "omie_codigo_produto,account" });
-      if (error) {
-        console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, error);
-      } else {
-        totalSynced += rows.length;
-      }
+    // N2: falha do upsert é CONTADA (não só logada) e decide o desfecho da action — ver
+    // catalogo-gravacao.ts. As páginas seguintes seguem sendo gravadas.
+    const gravacao = await gravarPaginaCatalogo(supabase, rows, pagina, falhas);
+    if (gravacao.erro !== null) {
+      console.error(`[Omie Vendas][${account}] Erro batch upsert página ${pagina}:`, gravacao.erro);
     }
+    totalSynced += gravacao.gravadas;
 
     console.log(`[Omie Vendas][${account}] Página ${pagina}/${totalPaginas} - ${produtos.length} produtos processados`);
     pagina++;
@@ -520,7 +537,10 @@ async function syncProducts(supabase: SupabaseClient, startPage = 1, maxPages = 
   }
 
   const complete = fimReal || pagina > totalPaginas;
-  return { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete };
+  return {
+    resultado: { totalSynced, totalPaginas, lastPage: pagina - 1, nextPage: complete ? null : pagina, complete },
+    falhas,
+  };
 }
 
 // Sincronizar estoque real dos produtos via ListarPosEstoque (paginado)
@@ -2733,8 +2753,21 @@ Deno.serve(async (req) => {
     switch (action) {
       case "sync_products": {
         const startPage = params.start_page || 1;
-        const syncResult = await syncProducts(supabaseAdmin, startPage, 12, account);
-        result = { success: true, ...syncResult };
+        const execucao = await syncProducts(supabaseAdmin, startPage, 12, account);
+        // N2: linha não gravada em omie_products (preço) ⇒ o run NÃO é sucesso. fin_sync_log
+        // vira 'error' com os contadores (watchdog + data_health enxergam) e a resposta é 500 —
+        // o único sinal que o front (res.error do supabase-js) enxerga.
+        const saida = await concluirSyncProdutos(execucao, async (corpo, erro) => {
+          await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro);
+          vendaSyncFinalized = true;
+        });
+        if (saida.status !== 200) {
+          return new Response(JSON.stringify(saida.corpo), {
+            status: saida.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        result = saida.corpo;
         break;
       }
 
