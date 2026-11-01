@@ -163,13 +163,14 @@ sess() { # $1 = uuid ('' = sem claims), $2 = SQL. Roda como authenticated.
   } | Pq
 }
 falhas=0
+passes=0  # asserts que PASSARAM nesta suite — o runner do nucleo exige o total (PASS=n FAIL=m)
 oks() { # $1 uuid, $2 SQL, $3 esperado, $4 rotulo
   local got; got="$(sess "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
-  if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
+  if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); else passes=$((passes+1)); fi
 }
 okp() { local got; got="$(Pq -c "$1" 2>&1)" || got="ERRO-PSQL: $got"
-  if [ "$got" != "$2" ]; then echo "FALHOU: $3 | esperado=[$2] obtido=[$got]"; falhas=$((falhas+1)); fi; }
-run() { local got; got="$(sess "$U_EST" "$1" 2>&1)" || { echo "FALHOU: $2 | ERRO-PSQL: $got"; falhas=$((falhas+1)); }; }
+  if [ "$got" != "$2" ]; then echo "FALHOU: $3 | esperado=[$2] obtido=[$got]"; falhas=$((falhas+1)); else passes=$((passes+1)); fi; }
+run() { local got; if got="$(sess "$U_EST" "$1" 2>&1)"; then passes=$((passes+1)); else echo "FALHOU: $2 | ERRO-PSQL: $got"; falhas=$((falhas+1)); fi; }
 # linha do inequivoco: inequivoco|motivos|cobertura|qtd_liquidavel
 INEQ() { echo "SELECT coalesce(inequivoco::text,'N') || '|' || CASE WHEN cardinality(motivos_espera) = 0 THEN '-' ELSE array_to_string(motivos_espera, ',') END || '|' || coalesce(cobertura_dias::text,'N') || '|' || coalesce(round(qtd_liquidavel,1)::text,'N') FROM public.raio_x_inequivoco('$1') WHERE sku_codigo_omie = $2"; }
 dec() { echo "SELECT destino FROM public.raio_x_decidir($1)"; }
@@ -195,6 +196,7 @@ PLANO() { echo "SELECT coalesce(preco_piso::text,'N') || '|' || coalesce(frete_e
 
 suite() {
   falhas=0
+  passes=0
   preparar_banco
   P -f "$ANCORA1" >/dev/null || { echo "ANCORA1 FALHOU"; return 98; }
   P -f "$ANCORA2" >/dev/null || { echo "ANCORA2 FALHOU"; return 98; }
@@ -279,6 +281,7 @@ suite() {
   oks "$U_EST" "SELECT coalesce(troca_contrapartida,'N') FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 105" "encalhe" "f medicao traz troca_contrapartida"
   oks "$U_EST" "SELECT count(*) FROM public.raio_x_medicao('oben') WHERE destino IS NOT NULL" "4" "f medicao lista as 4 decisoes"
 
+  echo "PASS=$passes  FAIL=$falhas"
   [ "$falhas" -eq 0 ] || { echo "falhas=$falhas"; return 1; }
   return 0
 }
@@ -286,6 +289,8 @@ suite() {
 echo "== controle (migration real) =="
 if ! out="$(suite "$MIG" 2>&1)"; then echo "$out"; echo "CONTROLE VERMELHO"; exit 1; fi
 echo "controle verde"
+# a UNICA linha de contagem que chega ao log: a do controle (sabotagens e controle negativo ficam capturados)
+grep -E '^PASS=[0-9]+  FAIL=0$' <<<"$out" || { echo "FALHOU: controle sem linha PASS=n FAIL=0"; exit 1; }
 MD5_NOVO="$(Pq -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.raio_x_decidir(text,bigint,text,text,text,text,numeric,boolean,boolean)'::regprocedure")"
 echo "md5 do raio_x_decidir desta migration: $MD5_NOVO"
 if ! grep -qF "$MD5_NOVO" "$MIG"; then echo "FALHOU: a PRE da migration nao aceita o proprio corpo (md5 $MD5_NOVO ausente) — re-rodar a migration abortaria"; exit 1; fi

@@ -23,7 +23,11 @@ import type {
 
 type Fns = Database['public']['Functions'];
 export type FatoRpc = Fns['raio_x_estoque_fatos']['Returns'][number];
-export type MedicaoRpc = Fns['raio_x_medicao']['Returns'][number];
+// `troca_contrapartida` é anulável no banco e AUSENTE no bundle anterior à 20261101120000; o gerador a declara `string`
+// (regenerado pelo Lovable em 2026-11-01). O tipo da borda diz a verdade; o nulo vira null no domínio (abaixo).
+export type MedicaoRpc = Omit<Fns['raio_x_medicao']['Returns'][number], 'troca_contrapartida'> & {
+  troca_contrapartida?: string | null;
+};
 export type InequivocoRpc = Fns['raio_x_inequivoco']['Returns'][number];
 export type LinhaManual = ClassificacaoManual & { sku_codigo_omie: number };
 
