@@ -12725,24 +12725,24 @@ export type Database = {
         Row: {
           atualizado_em: string
           canal_liquidacao: string | null
+          cmc_base: number | null
           concluido_em: string | null
           concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
-          cmc_base: number | null
           credito_troca: number | null
           decidido_em: string | null
           decidido_por: string | null
           desconto_sobre_medio_pct: number | null
           destino: string | null
           empresa: string
-          frete_estimado: number | null
           fornecedor_informado: string | null
           foto_categoria: string | null
           foto_cmc: number | null
           foto_em: string | null
           foto_saldo: number | null
           foto_valor: number | null
+          frete_estimado: number | null
           margem_unit: number | null
           motor_antes: Json | null
           observacao: string | null
@@ -12759,19 +12759,15 @@ export type Database = {
         Insert: {
           atualizado_em?: string
           canal_liquidacao?: string | null
+          cmc_base?: number | null
           concluido_em?: string | null
           concluido_por?: string | null
           contado_em?: string | null
           contado_por?: string | null
-          cmc_base?: number | null
           credito_troca?: number | null
-          desconto_sobre_medio_pct?: number | null
-          frete_estimado?: number | null
-          margem_unit?: number | null
-          preco_medio_base?: number | null
-          troca_contrapartida?: string | null
           decidido_em?: string | null
           decidido_por?: string | null
+          desconto_sobre_medio_pct?: number | null
           destino?: string | null
           empresa: string
           fornecedor_informado?: string | null
@@ -12780,32 +12776,32 @@ export type Database = {
           foto_em?: string | null
           foto_saldo?: number | null
           foto_valor?: number | null
+          frete_estimado?: number | null
+          margem_unit?: number | null
           motor_antes?: Json | null
           observacao?: string | null
           origem?: string
           prazo?: string | null
+          preco_medio_base?: number | null
           preco_piso?: number | null
           qtd_contada?: number | null
           responsavel?: string | null
           sku_codigo_omie: number
           tirou_do_motor?: boolean
+          troca_contrapartida?: string | null
         }
         Update: {
           atualizado_em?: string
           canal_liquidacao?: string | null
+          cmc_base?: number | null
           concluido_em?: string | null
           concluido_por?: string | null
           contado_em?: string | null
           contado_por?: string | null
-          cmc_base?: number | null
           credito_troca?: number | null
-          desconto_sobre_medio_pct?: number | null
-          frete_estimado?: number | null
-          margem_unit?: number | null
-          preco_medio_base?: number | null
-          troca_contrapartida?: string | null
           decidido_em?: string | null
           decidido_por?: string | null
+          desconto_sobre_medio_pct?: number | null
           destino?: string | null
           empresa?: string
           fornecedor_informado?: string | null
@@ -12814,15 +12810,19 @@ export type Database = {
           foto_em?: string | null
           foto_saldo?: number | null
           foto_valor?: number | null
+          frete_estimado?: number | null
+          margem_unit?: number | null
           motor_antes?: Json | null
           observacao?: string | null
           origem?: string
           prazo?: string | null
+          preco_medio_base?: number | null
           preco_piso?: number | null
           qtd_contada?: number | null
           responsavel?: string | null
           sku_codigo_omie?: number
           tirou_do_motor?: boolean
+          troca_contrapartida?: string | null
         }
         Relationships: []
       }
@@ -24291,6 +24291,7 @@ export type Database = {
         Returns: {
           atualizado_em: string
           canal_liquidacao: string | null
+          cmc_base: number | null
           concluido_em: string | null
           concluido_por: string | null
           contado_em: string | null
@@ -24298,6 +24299,7 @@ export type Database = {
           credito_troca: number | null
           decidido_em: string | null
           decidido_por: string | null
+          desconto_sobre_medio_pct: number | null
           destino: string | null
           empresa: string
           fornecedor_informado: string | null
@@ -24306,15 +24308,19 @@ export type Database = {
           foto_em: string | null
           foto_saldo: number | null
           foto_valor: number | null
+          frete_estimado: number | null
+          margem_unit: number | null
           motor_antes: Json | null
           observacao: string | null
           origem: string
           prazo: string | null
+          preco_medio_base: number | null
           preco_piso: number | null
           qtd_contada: number | null
           responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
+          troca_contrapartida: string | null
         }
         SetofOptions: {
           from: "*"
@@ -24338,19 +24344,15 @@ export type Database = {
         Returns: {
           atualizado_em: string
           canal_liquidacao: string | null
+          cmc_base: number | null
           concluido_em: string | null
           concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
-          cmc_base: number | null
           credito_troca: number | null
-          desconto_sobre_medio_pct: number | null
-          frete_estimado: number | null
-          margem_unit: number | null
-          preco_medio_base: number | null
-          troca_contrapartida: string | null
           decidido_em: string | null
           decidido_por: string | null
+          desconto_sobre_medio_pct: number | null
           destino: string | null
           empresa: string
           fornecedor_informado: string | null
@@ -24359,15 +24361,19 @@ export type Database = {
           foto_em: string | null
           foto_saldo: number | null
           foto_valor: number | null
+          frete_estimado: number | null
+          margem_unit: number | null
           motor_antes: Json | null
           observacao: string | null
           origem: string
           prazo: string | null
+          preco_medio_base: number | null
           preco_piso: number | null
           qtd_contada: number | null
           responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
+          troca_contrapartida: string | null
         }
         SetofOptions: {
           from: "*"
@@ -24408,19 +24414,19 @@ export type Database = {
         Args: { p_empresa: string; p_sku?: number }
         Returns: {
           cadastro_recente: boolean
-          cobertura_dias: number | null
+          cobertura_dias: number
           cold_start: boolean
-          consumo_365: number | null
+          consumo_365: number
           corante: boolean
           fonte_ok: boolean
           inequivoco: boolean
           mercadoria_servidor: boolean
           motivos_espera: string[]
-          qtd_liquidavel: number | null
-          revisar_em: string | null
+          qtd_liquidavel: number
+          revisar_em: string
           sku_codigo_omie: number
           substituido: boolean
-          ultima_entrada: string | null
+          ultima_entrada: string
         }[]
       }
       raio_x_medicao: {
@@ -24439,7 +24445,7 @@ export type Database = {
           receita: number
           saldo_atual: number
           sku_codigo_omie: number
-          troca_contrapartida: string | null
+          troca_contrapartida: string
         }[]
       }
       raio_x_planejar: {
@@ -24458,19 +24464,15 @@ export type Database = {
         Returns: {
           atualizado_em: string
           canal_liquidacao: string | null
+          cmc_base: number | null
           concluido_em: string | null
           concluido_por: string | null
           contado_em: string | null
           contado_por: string | null
-          cmc_base: number | null
           credito_troca: number | null
-          desconto_sobre_medio_pct: number | null
-          frete_estimado: number | null
-          margem_unit: number | null
-          preco_medio_base: number | null
-          troca_contrapartida: string | null
           decidido_em: string | null
           decidido_por: string | null
+          desconto_sobre_medio_pct: number | null
           destino: string | null
           empresa: string
           fornecedor_informado: string | null
@@ -24479,15 +24481,19 @@ export type Database = {
           foto_em: string | null
           foto_saldo: number | null
           foto_valor: number | null
+          frete_estimado: number | null
+          margem_unit: number | null
           motor_antes: Json | null
           observacao: string | null
           origem: string
           prazo: string | null
+          preco_medio_base: number | null
           preco_piso: number | null
           qtd_contada: number | null
           responsavel: string | null
           sku_codigo_omie: number
           tirou_do_motor: boolean
+          troca_contrapartida: string | null
         }
         SetofOptions: {
           from: "*"
@@ -24680,7 +24686,7 @@ export type Database = {
       reposicao_compra_reativar: {
         Args: { p_empresa: string; p_motivo?: string; p_skus: number[] }
         Returns: {
-          impedimento: string | null
+          impedimento: string
           reativado: boolean
           sku_codigo_omie: number
         }[]
@@ -24697,54 +24703,58 @@ export type Database = {
         Returns: {
           inserido: boolean
           pendentes_n: number
-          recusa: string | null
+          recusa: string
           sku_codigo_omie: number
         }[]
       }
       reposicao_compra_suspensa_candidatos: {
-        Args: { p_empresa: string; p_incluir_corante?: boolean; p_min_dias?: number }
+        Args: {
+          p_empresa: string
+          p_incluir_corante?: boolean
+          p_min_dias?: number
+        }
         Returns: {
-          cmc: number | null
-          consumo_365: number | null
+          cmc: number
+          consumo_365: number
           corante: boolean
-          descricao: string | null
-          dias_365: number | null
-          dias_90: number | null
-          familia: string | null
-          fornecedor_nome: string | null
+          descricao: string
+          dias_365: number
+          dias_90: number
+          familia: string
+          fornecedor_nome: string
           no_motor: boolean
           saldo: number
           sku_codigo_omie: number
-          valor: number | null
-          valor_vendido_90d: number | null
+          valor: number
+          valor_vendido_90d: number
         }[]
       }
       reposicao_compra_suspensa_listar: {
         Args: { p_empresa: string }
         Returns: {
-          cobertura_365d_atual: number | null
-          cobertura_90d_atual: number | null
-          descricao: string | null
-          evitado_ultimo_run: number | null
-          fornecedor_nome: string | null
-          foto_cobertura_90d_dias: number | null
-          foto_cobertura_dias: number | null
-          foto_no_motor: boolean | null
-          foto_valor: number | null
-          foto_valor_vendido_90d: number | null
+          cobertura_365d_atual: number
+          cobertura_90d_atual: number
+          descricao: string
+          evitado_ultimo_run: number
+          fornecedor_nome: string
+          foto_cobertura_90d_dias: number
+          foto_cobertura_dias: number
+          foto_no_motor: boolean
+          foto_valor: number
+          foto_valor_vendido_90d: number
           id: string
-          lote_id: string | null
+          lote_id: string
           motivo: string
-          no_motor_atual: boolean | null
+          no_motor_atual: boolean
           origem: string
-          qtde_ultimo_run: number | null
+          qtde_ultimo_run: number
           revisar_em: string
-          saldo_atual: number | null
+          saldo_atual: number
           sku_codigo_omie: number
           suspenso_em: string
-          suspenso_por: string | null
-          suspenso_por_texto: string | null
-          valor_atual: number | null
+          suspenso_por: string
+          suspenso_por_texto: string
+          valor_atual: number
         }[]
       }
       reposicao_compra_suspensa_runs: {
@@ -24756,7 +24766,7 @@ export type Database = {
           run_id: string
           skus_incluidos: number
           suspensas_compra_n: number
-          valor_evitado: number | null
+          valor_evitado: number
         }[]
       }
       reposicao_conferir_envio: {
