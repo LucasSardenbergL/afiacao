@@ -248,7 +248,10 @@ BEGIN
   SELECT j.jobid INTO v_id FROM cron.job j WHERE j.jobname = job_name;
   IF v_id IS NULL THEN
     SELECT coalesce(max(j.jobid), 0) + 1 INTO v_id FROM cron.job j;
-    INSERT INTO cron.job (jobid, jobname, schedule, command, active) VALUES (v_id, job_name, schedule, command, true);
+    -- pg_cron grava o dono (a role que chamou) e o banco; a pós-condição de migration de cron mede
+    -- `username = 'postgres'` (ex.: 20261031200000, P8) — sem isto o stub devolvia NULL e reprovava.
+    INSERT INTO cron.job (jobid, jobname, schedule, command, active, username, database)
+    VALUES (v_id, job_name, schedule, command, true, current_user, current_database());
   ELSE
     UPDATE cron.job j SET schedule = cron.schedule.schedule, command = cron.schedule.command, active = true
      WHERE j.jobid = v_id;
