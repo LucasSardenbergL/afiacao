@@ -27,9 +27,11 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261031210000_cobranca_fila.sql"
 MIG_VIEWS="$REPO_ROOT/supabase/migrations/20261014120000_fin_ciclo_cliente_views.sql"
+# Régua com nome pela fonte da fila (QA pós-Publish 2026-11-01): aplicada ANTES do C8d (o C1d re-aplica a MIG original).
+MIG_NOME="$REPO_ROOT/supabase/migrations/20261101120000_cobranca_regua_nome_cliente.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="gate_fila:C2e dona_ve_tudo:C2b sela_duas_vezes:C1d contato_muda_estado:C4a quitado_sem_conciliar:C6a cancelar_sem_gestao:C6c coorte_so_vencida:POST!P6_FALHOU pode_agir_aberto:C3c dona_nula_fail_open:C3d evento_em_contato:C7a regua_d2_vencido:C8b revoke_dona:POST!P2_FALHOU tabela_insert_auth:POST!P3_FALHOU dona_de_abertura:C11a disputa_por_promessa:C12"
+  SABOTAGENS="gate_fila:C2e dona_ve_tudo:C2b sela_duas_vezes:C1d contato_muda_estado:C4a quitado_sem_conciliar:C6a cancelar_sem_gestao:C6c coorte_so_vencida:POST!P6_FALHOU pode_agir_aberto:C3c dona_nula_fail_open:C3d evento_em_contato:C7a regua_d2_vencido:C8b regua_nome_fonte:C8d revoke_dona:POST!P2_FALHOU tabela_insert_auth:POST!P3_FALHOU dona_de_abertura:C11a disputa_por_promessa:C12"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-cobranca-fila.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -70,12 +72,14 @@ export LC_ALL="$LOC" LANG="$LOC"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-cobranca-fila.XXXXXX")"
 DATA="$WORK/data"
 MIG_USADA="$WORK/mig.sql"
+MIG_NOME_USADA="$WORK/mig-nome.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 cp "$MIG" "$MIG_USADA"
+cp "$MIG_NOME" "$MIG_NOME_USADA"
 
 sabotar() {
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+  python3 -I - "${ALVO:-$MIG_USADA}" "$1" "$2" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -113,6 +117,7 @@ case "${SABOTAGEM:-}" in
     SELECT v.dias_vencido_max INTO v_dias" "  IF v_acao IN ('estado', 'promessa', 'fechar', 'contato') THEN
     SELECT v.dias_vencido_max INTO v_dias" ;;
   regua_d2_vencido)     sabotar "(r.data_vencimento = v_hoje + 2 AND r.status_titulo IN ('A VENCER', 'VENCE HOJE'))" "(r.data_vencimento = v_hoje + 2)" ;;
+  regua_nome_fonte)     ALVO="$MIG_NOME_USADA" sabotar "(SELECT max(nullif(btrim(p.name), '')) FROM public.omie_customer_account_map m" "(SELECT NULL::text FROM public.omie_customer_account_map m" ;;
   revoke_dona)          sabotar "REVOKE ALL ON FUNCTION public.cobranca_dona(text, bigint) FROM PUBLIC, anon;" "" ;;
   dona_de_abertura)     sabotar "    SELECT p.*, public.cobranca_dona(p.company, p.omie_codigo_cliente) AS dona" "    SELECT p.*, coalesce((SELECT c.dona_user_id FROM public.cobranca_caso c WHERE c.id = p.caso_id), public.cobranca_dona(p.company, p.omie_codigo_cliente)) AS dona"
                         sabotar "  UPDATE public.cobranca_caso SET dona_user_id = public.cobranca_dona(v_company, v_codigo) WHERE id = v_caso.id;" "" ;;
@@ -168,6 +173,7 @@ ALTER TABLE public.fin_contas_receber ENABLE ROW LEVEL SECURITY;
 CREATE TABLE public.v_titulo_baixas (company text, omie_codigo_lancamento bigint, tipo text, data_baixa_final date,
   valor_baixado numeric, n_movimentos integer, prazo_ponderado_dias numeric, origem_baixa text);
 CREATE TABLE public.omie_customer_account_map (user_id uuid, account text, omie_codigo_cliente bigint);
+CREATE TABLE public.omie_clientes_nao_vinculados (empresa text, omie_codigo_cliente bigint, razao_social text, nome_fantasia text);
 ALTER TABLE public.omie_customer_account_map ENABLE ROW LEVEL SECURITY;
 CREATE TABLE public.carteira_assignments (customer_user_id uuid, owner_user_id uuid, eligible boolean, updated_at timestamptz DEFAULT now());
 ALTER TABLE public.carteira_assignments ENABLE ROW LEVEL SECURITY;
@@ -300,6 +306,13 @@ eq "C7c chave = ledger:cobranca.estado_mudou:<evento_id>; props sem nome e sem R
 eq "C8a V1 ve D+1 (52) e D-2 (50, mapa→CU20→V1); nao o D+7 (53, sem dona)" "$(Pq -c "$(como "$V1" "SELECT string_agg(marco||':'||omie_codigo_cliente, ' ' ORDER BY omie_codigo_cliente) FROM public.cobranca_regua_hoje('oben')")")" "D-2:50 D+1:52"
 eq "C8b master ve D-2 so a vencer (50), nao o 51 (ATRASADO com venc. futuro); D+1 e D+7" "$(Pq -c "$(como "$M" "SELECT string_agg(marco||':'||omie_codigo_cliente, ' ' ORDER BY omie_codigo_cliente) FROM public.cobranca_regua_hoje('oben')")")" "D-2:50 D+1:52 D+7:53"
 eq "C8c telefone vem do mapa (50 → CU20 sem telefone → NULL; 52 → CU10 com telefone)" "$(Pq -c "$(como "$M" "SELECT coalesce(telefone,'NULO') FROM public.cobranca_regua_hoje('oben') WHERE omie_codigo_cliente=50")")|$(Pq -c "$(como "$M" "SELECT telefone FROM public.cobranca_regua_hoje('oben') WHERE omie_codigo_cliente=52")")" "NULO|48999990010"
+
+# C8d nome pela fonte da fila (migration 20261101120000): título sem nome → profiles.name pelo mapa → não-vinculados; título com nome vence
+P -q -c "INSERT INTO public.fin_contas_receber (company,omie_codigo_cliente,nome_cliente,omie_codigo_lancamento,numero_documento,data_emissao,data_vencimento,valor_documento,saldo,status_titulo) VALUES ('oben',54,NULL,5401,'H5','$H'::date-31,'$H'::date-1,10,10,'A VENCER'), ('oben',55,NULL,5501,'H6','$H'::date-37,'$H'::date-7,20,20,'ATRASADO'); INSERT INTO public.omie_customer_account_map VALUES ('$CU10','oben',54); INSERT INTO public.omie_clientes_nao_vinculados VALUES ('oben',55,'RAZAO 55','Fantasia 55');"
+if ! P -q -f "$MIG_NOME_USADA" > "$WORK/apply-nome.log" 2>&1; then cat "$WORK/apply-nome.log"; echo "APLICACAO FALHOU (nome)"; exit 1; fi
+grep -q "cobranca_regua_hoje recriada com nome_resolvido" "$WORK/apply-nome.log" || { echo "FAIL C8d postcondicao da migration do nome sem NOTICE"; FAIL=$((FAIL+1)); }
+eq "C8d regua: 52 nome do titulo; 54 (titulo NULL) via profiles.name; 55 (sem mapa) via nao_vinculados" "$(Pq -c "$(como "$M" "SELECT string_agg(omie_codigo_cliente||':'||coalesce(nome_cliente,'NULO'), ' ' ORDER BY omie_codigo_cliente) FROM public.cobranca_regua_hoje('oben') WHERE omie_codigo_cliente IN (52,54,55)")")" "52:CLI D1 54:Marcenaria Dez 55:Fantasia 55"
+eq "C8e re-apply da migration do nome e idempotente (PRE aceita a propria versao)" "$(if P -q -f "$MIG_NOME_USADA" >/dev/null 2>&1; then echo ok; else echo falhou; fi)" "ok"
 
 # C9 RLS/ACL
 eq "C9a V2 nao le caso do 10/20 (le 0); V1 le os seus" "$(Pq -c "$(como "$V2" "SELECT count(*) FROM public.cobranca_caso")")|$(Pq -c "$(como "$V1" "SELECT count(*) FROM public.cobranca_caso")")" "0|3"
