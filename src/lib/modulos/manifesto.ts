@@ -531,6 +531,7 @@ export const MODULOS: ModuloApp[] = [
     testes: [
       "src/pages/__tests__/TintDashboard.leitura-falhou.test.tsx",
       "src/hooks/__tests__/useTintCoresDoClienteUmToque.test.tsx",
+      "src/hooks/__tests__/useTintAlertas.leitura-por-run.test.tsx",
       "src/lib/tint/__tests__/preco-rpc.test.ts",
       "src/lib/tint/__tests__/rejeicoes.test.ts",
     ],

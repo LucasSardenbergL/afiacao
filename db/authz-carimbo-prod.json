@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-01T05:00:26.742Z",
-  "sourceHead": "56a0ecd35a9a44d740384fbdfcc522d1e492088b",
+  "medidoEm": "2026-11-01T13:21:35.013Z",
+  "sourceHead": "8e519d4f646ae9dd68e6eae8179b4ed0c7f569a3",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -70,26 +70,14 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 457 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@47c95e2a1 (fetch ok) · prod 2026-11-01 05:00:54.561132Z",
+      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 457 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@393686ecc (fetch ok) · prod 2026-11-01 13:22:00.410692Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [
         {
           "id": "2021f7353ac34cf8",
           "linha": "❌ [SEM_PAR] gerar_pedidos_sugeridos_ciclo(text,date): corpo que nenhuma das 32 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261010210000_motor_desconta_comprometido.sql (xmin 13380933)",
-          "primeiraVez": "2026-11-01",
-          "ultimaVez": "2026-11-01"
-        },
-        {
-          "id": "52f5066561cb944f",
-          "linha": "❌ [SEM_PAR] atualizar_descricao_sku_parametros(text): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260602101856_reposicao_refresh_descricao_sku_parametros.sql (xmin 13382264)",
-          "primeiraVez": "2026-11-01",
-          "ultimaVez": "2026-11-01"
-        },
-        {
-          "id": "06c5485021ad70e9",
-          "linha": "❌ [SEM_PAR] atualizar_parametros_numericos_skus(text,uuid): corpo que nenhuma das 5 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261001023000_hoje_sp_familia_data_ciclo.sql (xmin 13382264)",
           "primeiraVez": "2026-11-01",
           "ultimaVez": "2026-11-01"
         }

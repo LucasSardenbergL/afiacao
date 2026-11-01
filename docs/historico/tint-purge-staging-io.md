@@ -171,3 +171,17 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Fica em aberto:** o pico de memória da chamada inteira no Mini. O `claude_ro` não vê a memória dos processos, e o que mediu foi ≤ 33 MB por nó no `EXPLAIN`. A duração vem na série `tint_watchdog_fase5_amostras.duracao_s`.
 - **Lição: medir o plano é o que separa o conserto do palpite.** O primeiro corte (só reescrever os CTEs) ainda lia 3,5 GB, porque o planner estimou 50 mil grupos onde havia 464 mil e voltou a percorrer a tabela pelo índice. Só o `EXPLAIN ANALYZE` da versão nova mostrou isso.
 - **Lição: a 1ª falsificação achou a fixture cega.** No pool, o corante de volume NULL só aparecia ao lado de outro corante ruim, e o `bool_and` ignora NULL. Então a sabotagem que tirava o `IS NOT NULL` ficava verde. Cada estado ruim precisa aparecer também ao lado de corantes só bons.
+
+### 2026-11-01 — leitor 2 corrigido: badge `useTintAlertas` lê os erros pelos runs da janela
+
+- **Mudança (só front):** em `lerFormulasRejeitadas`, a 2ª leitura saiu do embed `tint_sync_runs!inner(account, sync_type, started_at)` filtrado. Agora lê `tint_sync_errors` com `.in('sync_run_id', ids)`, usando os ids dos runs da janela de 24h que a função já busca. Continuam `fetchAllPages` e a ordem (`created_at desc`, `id`). Sem run na janela, não consulta (`.in()` vazio não é filtro). `LinhaDeErro`/`agruparPorCor` não usavam campo do embed. O badge e o card seguem com a mesma query/queryKey (#3441). De quebra, `rejeicoesNaJanela` e `cores` passam a sair do MESMO conjunto de runs.
+- **Plano genérico em prod** (psql-ro, 01/11 ~12:05 UTC; `PREPARE` + `plan_cache_mode = force_generic_plan`, forma que o PostgREST gera; o EXPLAIN com literal esconde o seq scan):
+
+  | query | plano | buffers | disco | tempo |
+  |---|---|---|---|---|
+  | antiga (embed) | Parallel Seq Scan em `tint_sync_errors` (90.995 linhas) + Memoize/PK de `tint_sync_runs` (6.491 probes) | 40.102 | 14.057 (≈ 110 MB) | 629 ms |
+  | nova, janela de hoje (6 runs) | Index Scan `idx_tint_sync_errors_run` | 13 | 7 | 8,7 ms |
+  | nova, 150 runs (porte típico de 24h, ciclo ~11 min) | Index Scan `idx_tint_sync_errors_run` | 211 | 114 (≈ 0,9 MB) | 141 ms |
+
+- **Prova no repo:** `src/hooks/__tests__/useTintAlertas.leitura-por-run.test.tsx` trava o `.in('sync_run_id', <ids>)`, a ausência do embed e a não-consulta sem runs. Falsificado: com o embed de volta e sem o guard de vazio, os 2 casos ficam vermelhos.
+- **Linha de base para o pós-Publish** (12:09 UTC): `pg_stat_all_tables` de `tint_sync_errors` com `seq_scan = 69`, `idx_scan = 941` e `last_seq_scan` 12:07:29 UTC (o badge polando). Merge ≠ produção: o efeito só aparece depois do **Publish** no Lovable e conforme as abas trocam de build (o SW só troca quando o cliente clica). Sinal de pronto: `seq_scan` para de subir e `last_seq_scan` congela, enquanto `idx_scan` sobe.
