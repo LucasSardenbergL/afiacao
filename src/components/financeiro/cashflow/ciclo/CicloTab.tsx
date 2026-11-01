@@ -114,11 +114,6 @@ export function CicloTab() {
           <CicloRupturaSensor hoje={hoje} />
         </CargaAoAparecer>
       )}
-      <CicloDescontoPainel
-        empresas={tendencias}
-        custos={{ oben: filtros.cicloCustoOben, colacor: filtros.cicloCustoColacor, colacor_sc: filtros.cicloCustoColacorSc }}
-        onCusto={(c, t) => setFiltros({ [CHAVE_CUSTO[c]]: t })}
-      />
       {/* Frente B (PR2): a fila de cobrança com estado e dona vive na rota /cobranca (módulo próprio, staff);
           aqui só o atalho — a aba Ciclo segue sendo a leitura, a cobrança é a ação. */}
       <Button asChild variant="outline" size="sm" className="w-fit">
