@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
-import { normalizarFila, normalizarRegua, type FilaItem, type ReguaItem } from '@/lib/cobranca/cobranca-helpers';
+import { fetchAllPages } from '@/lib/postgrest';
+import { normalizarFila, normalizarRegua, ordenarFila, ordenarRegua, type FilaItem, type ReguaItem } from '@/lib/cobranca/cobranca-helpers';
 
 /**
  * Leituras e o writer da fila de cobrança (Frente B, PR2). As RPCs são SECURITY DEFINER com gate staff e
@@ -16,10 +17,13 @@ export function useCobrancaFila(company: Empresa) {
     queryKey: ['cobranca', 'fila', company],
     staleTime: 60_000,
     refetchInterval: 5 * 60_000,
+    // RPC set-returning pagina pelo canônico (capa silenciosa de 1.000 do PostgREST vale para .rpc()).
     queryFn: async (): Promise<FilaItem[]> => {
-      const { data, error } = await supabase.rpc('cobranca_fila', { p_company: company });
-      if (error) throw new Error(error.message);
-      return (data ?? []).map((r) => normalizarFila(r as Record<string, unknown>)).filter((x): x is FilaItem => x !== null);
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('cobranca_fila', { p_company: company }).select('*').order('omie_codigo_cliente', { ascending: true }).range(de, ate),
+        'cobranca_fila',
+      );
+      return ordenarFila(linhas.map((r) => normalizarFila(r as Record<string, unknown>)).filter((x): x is FilaItem => x !== null));
     },
   });
 }
@@ -32,9 +36,11 @@ export function useCobrancaRegua(company: Empresa) {
     refetchInterval: 5 * 60_000,
     refetchOnMount: 'always',
     queryFn: async (): Promise<ReguaItem[]> => {
-      const { data, error } = await supabase.rpc('cobranca_regua_hoje', { p_company: company });
-      if (error) throw new Error(error.message);
-      return (data ?? []).map((r) => normalizarRegua(r as Record<string, unknown>)).filter((x): x is ReguaItem => x !== null);
+      const linhas = await fetchAllPages(
+        (de, ate) => supabase.rpc('cobranca_regua_hoje', { p_company: company }).select('*').order('omie_codigo_lancamento', { ascending: true }).range(de, ate),
+        'cobranca_regua_hoje',
+      );
+      return ordenarRegua(linhas.map((r) => normalizarRegua(r as Record<string, unknown>)).filter((x): x is ReguaItem => x !== null));
     },
   });
 }

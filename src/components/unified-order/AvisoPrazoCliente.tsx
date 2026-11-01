@@ -7,6 +7,7 @@ import { usePrazoAviso, type ContaPedido } from '@/hooks/unifiedOrder/usePrazoAv
 import { dominaCalendario, faixaVencido, parseCalendarioParcela, sugerirParcela, type FormaLegivel, type Sugestao } from '@/lib/unified-order/prazo-sugestao';
 import type { PrazoDecisaoEstado } from '@/services/orderSubmission/prazoDecisao';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { track } from '@/lib/analytics';
 
 /**
@@ -101,7 +102,7 @@ export function AvisoPrazoCliente({ company, codigo, nomeCliente, formas, select
   }, [chave, oferta]);
 
   useEffect(() => {
-    if (error) track('venda.prazo_aviso_erro', { account: company, message: error instanceof Error ? error.message : 'erro' });
+    if (error) track('venda.prazo_aviso_erro', { account: company, message: mensagemDeErro(error) ?? 'erro de leitura' });
   }, [error, company]);
 
   const motivo = useMemo(() => {

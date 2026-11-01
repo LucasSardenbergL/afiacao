@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agruparPorFaixa, mensagemRegua, normalizarFila, normalizarRegua, parseValorBR, proximosEstados, telefoneWa, variacaoCoorte, type FilaItem, type ReguaItem } from '../cobranca-helpers';
+import { agruparPorFaixa, mensagemRegua, normalizarFila, normalizarRegua, ordenarFila, ordenarRegua, parseValorBR, proximosEstados, telefoneWa, variacaoCoorte, type FilaItem, type ReguaItem } from '../cobranca-helpers';
 
 const linha = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   company: 'oben', omie_codigo_cliente: 10, nome_cliente: 'CLI DEZ', saldo_vencido: '300.50', n_vencidas: 2, dias_vencido_max: 60, faixa: '46-90d',
@@ -41,6 +41,20 @@ describe('agruparPorFaixa — recentes primeiro; soma só quando todos têm sald
   it('um saldo null no grupo → soma null (nunca soma com 0 fabricado)', () => {
     const g = agruparPorFaixa([it_({ faixa: '<=45d', saldoVencido: 10 }), it_({ faixa: '<=45d', saldoVencido: null })]);
     expect(g[0].saldo).toBeNull();
+  });
+});
+
+describe('ordenarFila / ordenarRegua — a ordem de tela é refeita após a paginação por chave estável', () => {
+  const it_ = (o: Partial<FilaItem>): FilaItem => ({ ...normalizarFila(linha())!, ...o });
+  it('faixa (recentes primeiro, sem faixa por último), saldo DESC, código', () => {
+    const r = ordenarFila([it_({ omieCodigoCliente: 1, faixa: '>90d', saldoVencido: 900 }), it_({ omieCodigoCliente: 2, faixa: '<=45d', saldoVencido: 10 }),
+      it_({ omieCodigoCliente: 3, faixa: null, saldoVencido: null }), it_({ omieCodigoCliente: 4, faixa: '<=45d', saldoVencido: 50 })]);
+    expect(r.map((x) => x.omieCodigoCliente)).toEqual([4, 2, 1, 3]);
+  });
+  it('régua: D+7, D+1, D−2; saldo DESC', () => {
+    const base = normalizarRegua({ marco: 'D-2', company: 'oben', omie_codigo_cliente: 1, omie_codigo_lancamento: 1, data_vencimento: '2026-11-02', saldo: 10 })!;
+    const r = ordenarRegua([base, { ...base, marco: 'D+1', omieCodigoLancamento: 2, saldo: 5 }, { ...base, marco: 'D+7', omieCodigoLancamento: 3, saldo: 1 }, { ...base, marco: 'D+1', omieCodigoLancamento: 4, saldo: 50 }]);
+    expect(r.map((x) => x.omieCodigoLancamento)).toEqual([3, 4, 2, 1]);
   });
 });
 
