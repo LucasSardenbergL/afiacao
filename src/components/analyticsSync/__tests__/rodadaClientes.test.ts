@@ -21,6 +21,8 @@ describe("statusRodada", () => {
     const atrasada = statusRodada(base({ heartbeat_at: "2026-11-01T20:40:00Z" }), AGORA);
     expect(atrasada.estado).toBe("atrasada");
     expect(atrasada.descricao).toBe("Sem sinal do servidor há mais de 10 min (conta 2/3, página 40). Avise a equipe.");
+    // Worker morto com lease ocupado e sem cron para roubá-lo: também é atrasada, não "executando" eterno.
+    expect(statusRodada(base({ running_since: "2026-11-01T20:30:00Z", heartbeat_at: "2026-11-01T20:30:00Z" }), AGORA).estado).toBe("atrasada");
   });
 
   it("concluída com conta interrompida, sem credencial ou erros NÃO é 'concluida' — é parcial", () => {

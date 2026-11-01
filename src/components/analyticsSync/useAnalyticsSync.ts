@@ -1,6 +1,6 @@
 // Lógica da tela de Sincronização & Analytics (queries, mutations, sync orquestrado).
 // Extraída verbatim de src/pages/AdminAnalyticsSync.tsx (god-component split).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -189,19 +189,29 @@ export function useAnalyticsSync() {
 
   const rodadasClientesQuery = useQuery({
     queryKey: [RODADAS_CLIENTES_QUERY_KEY],
+    // Três leituras separadas (achado Codex P2): com um limite global, a falhada antiga sumia depois de
+    // N rodadas novas — e uma re-armada (criado_em antigo) ficava invisível como aberta.
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("clientes_import_rodada")
-        .select("*")
-        .order("criado_em", { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return (data ?? []) as unknown as RodadaClientesRow[];
+      const tabela = () => supabase.from("clientes_import_rodada").select("*");
+      const [aberta, falhada, concluida] = await Promise.all([
+        tabela().is("concluida_em", null).is("falhou_em", null).limit(1),
+        tabela().not("falhou_em", "is", null).order("falhou_em", { ascending: false }).limit(1),
+        tabela().not("concluida_em", "is", null).order("concluida_em", { ascending: false }).limit(1),
+      ]);
+      for (const r of [aberta, falhada, concluida]) if (r.error) throw r.error;
+      return [...(aberta.data ?? []), ...(falhada.data ?? []), ...(concluida.data ?? [])] as unknown as RodadaClientesRow[];
     },
     // Aberta: acompanha de perto. Sem aberta: segue descobrindo (o cron semanal pode abrir uma).
     refetchInterval: (q) => (haRodadaAberta(q.state.data ?? []) ? 8000 : 60000),
   });
-  const rodadasClientes = rodadasRelevantes(rodadasClientesQuery.data ?? []).map((r) => statusRodada(r));
+  // Relógio próprio (achado Codex P2): com respostas idênticas o React Query não re-renderiza, e o
+  // "atrasada" (que depende só do tempo) nunca apareceria.
+  const [agoraMs, setAgoraMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setAgoraMs(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const rodadasClientes = rodadasRelevantes(rodadasClientesQuery.data ?? []).map((r) => statusRodada(r, agoraMs));
   const importacaoClientesAberta = haRodadaAberta(rodadasClientesQuery.data ?? []);
 
   const rearmarRodadaClientesMutation = useMutation({

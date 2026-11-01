@@ -80,7 +80,9 @@ export function statusRodada(r: RodadaClientesRow, agoraMs: number = Date.now())
   }
   const ultimoSinal = Date.parse(r.heartbeat_at ?? r.criado_em);
   const rodando = r.running_since !== null;
-  if (!rodando && agoraMs - ultimoSinal > ATRASO_MS) {
+  // Vale também com lease ocupado: worker que morreu deixa running_since setado, e sem o cron
+  // ninguém o rouba — a rodada ficaria "executando" para sempre (achado Codex P2).
+  if (agoraMs - ultimoSinal > ATRASO_MS) {
     return {
       id: r.id, estado: "atrasada", podeRearmar: false,
       descricao: `Sem sinal do servidor há mais de 10 min (conta ${posicao}, página ${r.start_page}). Avise a equipe.`,
