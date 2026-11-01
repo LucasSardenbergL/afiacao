@@ -198,7 +198,9 @@ export function useAnalyticsSync() {
         tabela().not("falhou_em", "is", null).order("falhou_em", { ascending: false }).limit(1),
         tabela().not("concluida_em", "is", null).order("concluida_em", { ascending: false }).limit(1),
       ]);
-      for (const r of [aberta, falhada, concluida]) if (r.error) throw r.error;
+      if (aberta.error) throw aberta.error;
+      if (falhada.error) throw falhada.error;
+      if (concluida.error) throw concluida.error;
       return [...(aberta.data ?? []), ...(falhada.data ?? []), ...(concluida.data ?? [])] as unknown as RodadaClientesRow[];
     },
     // Aberta: acompanha de perto. Sem aberta: segue descobrindo (o cron semanal pode abrir uma).
