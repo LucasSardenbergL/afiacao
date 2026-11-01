@@ -64,6 +64,34 @@ o PME médio só aparece a partir de ~60 dias depois (meados de jan/2027). Ordem
 
 `db/consultas/reconciliacao-corante-fase2.sql` rodada em prod (psql-ro, 2026-10-31): **`VEREDITO = nao_medido`** — 0 WP elegíveis (recebido 0 L, retirado 0,00 L e dosado 0,000 L em todos os 14 WP desde a linha de base de 27/10). Critério 1 (≥ 90 d de cobertura contínua desde 2026-10-27) só pode fechar a partir de **2027-01-25**; critério 3 (≥ 1 sinal de uso da aba): `analytics_outbox` tem **0** `reposicao.corantes_aberta`. Nada de `v_sku_demanda_efetiva` muda nesta leva. Quando medir de novo: a mesma consulta + `SELECT count(*) FROM analytics_outbox WHERE evento = 'reposicao.corantes_aberta'` (lembrando a purga de 7 d — a contagem durável é no PostHog via HogQL).
 
+### Remedição 2026-11-01 — o bloqueio real é a FONTE, não o relógio (corrige a data acima)
+
+A mesma consulta, de novo em prod (psql-ro, 2026-11-01 ~15Z): **`nao_medido`**, os 14 WP com recebido, retirado e
+dosado em zero. Mas a data de 2027-01-25 acima está **errada**: ela conta 90 d a partir da linha de base, e o
+critério 1 é cobertura contínua de DOSAGEM — que ainda não começou, porque nenhuma dosagem chegou ao banco:
+
+| tabela (prod) | linhas, desde sempre |
+|---|---|
+| `tint_consumo_corante` · `tint_consumo_preparacao` | 0 · 0 |
+| `tint_consumo_planos` · `tint_consumo_extracoes` · `tint_consumo_extracao_lotes` | 0 · 0 · 0 |
+| `tint_vendas` · `tint_vendas_itens` | 0 · 0 |
+| `tint_sync_runs` com `sync_type` de preparação | 0 (o conector 0.2.6 envia só `catalogs`, `formulas`, `keys_snapshot`) |
+
+Causa, lida no código da `origin/main`: o cliente do plano (`PlanoPreparacoes`, Task 9 do plano
+`docs/superpowers/plans/2026-10-27-giro-corante-fase1.md`) existe no `sayersync`, mas **só os testes o chamam** —
+o ciclo não pede `/preparations/plano` nem envia lote. Ligá-lo são as **Tasks 11–12** do mesmo plano, que estão
+**🚧 à espera do passo 0 do founder** (spec `2026-10-27-giro-corante-reposicao-design.md` §"Passo 0 — Prova da
+fonte"): as consultas no SayerSystem, sem a coluna `cliente`, que dizem chave, formato do corante, unidade,
+profundidade e se a linha nasce na dosagem executada.
+
+Portanto o item 5 não "fecha sozinho em 2027-01": a sequência é **passo 0 (founder) → Tasks 11–12 (conector,
+nova versão publicada na loja) → 90 d de dosagem contínua → esta consulta** → só então `v_sku_demanda_efetiva`.
+O sinal de que o relógio começou é `SELECT count(*), min(data_dosagem) FROM tint_consumo_corante` sair de zero.
+
+Observação lateral, não incidente: o conector da loja não envia nada desde 2026-10-31 05:17 BRT (sábado). O fim
+de semana de 17–18/10 também teve zero runs e o de 24–25/10 rodou contínuo, então é compatível com o PC da loja
+desligado. Confirma-se na segunda: `SELECT max(started_at) FROM tint_sync_runs`.
+
 ### Linha de base da prateleira (aplicada 2026-10-31, `db:aplicar` tentativa #809)
 
 | medida | valor |
