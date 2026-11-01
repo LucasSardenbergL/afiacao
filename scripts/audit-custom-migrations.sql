@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 741
+-- Total de custom migrations: 742
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -805,7 +805,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031220000', 'fin_funding_cet_oben', '20261031220000_fin_funding_cet_oben.sql'),
   ('20261031233000', 'venda_repasse_substituicao', '20261031233000_venda_repasse_substituicao.sql'),
   ('20261101014150', 'descricao_segue_catalogo_omie', '20261101014150_descricao_segue_catalogo_omie.sql'),
-  ('20261101050000', 'tint_watchdog_fase5_v5_passada_unica', '20261101050000_tint_watchdog_fase5_v5_passada_unica.sql')
+  ('20261101050000', 'tint_watchdog_fase5_v5_passada_unica', '20261101050000_tint_watchdog_fase5_v5_passada_unica.sql'),
+  ('20261101120000', 'cobranca_regua_nome_cliente', '20261101120000_cobranca_regua_nome_cliente.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3200,7 +3201,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
-  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', '')
+  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5643,7 +5645,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
-  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', '')
+  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', ''),
+  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', '')
 )
 SELECT
   e.migration,
@@ -5671,7 +5674,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 163.
+-- Funções redefinidas com corpo extraível: 164.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6291,7 +6294,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
   ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346'),
   ('public', 'reposicao_ruptura_registrar_item', 1, '20261031200000_reposicao_ruptura_sensor.sql', 'bc9e9e6022775609c32ebccace1fe15a'),
-  ('public', 'reposicao_ruptura_registrar_item', 2, '20261031200100_reposicao_ruptura_sensor_universo.sql', '01819182e6691e02c36e4c8cb30c71ab')
+  ('public', 'reposicao_ruptura_registrar_item', 2, '20261031200100_reposicao_ruptura_sensor_universo.sql', '01819182e6691e02c36e4c8cb30c71ab'),
+  ('public', 'cobranca_regua_hoje', 1, '20261031210000_cobranca_fila.sql', 'f926bc3a846386db1c8e7eac0547d6a7'),
+  ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
