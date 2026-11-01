@@ -206,3 +206,20 @@ Migration `20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql`. Wri
 ### 4. `fin_alertas` com o saldo datado
 
 `fin-cashflow-engine` `v2.1-alertas-saldo-datado`. `marcarAlertasDoSaldoDatado` (`saldo-contas.ts`) marca só os 3 tipos cujo valor parte do saldo: `caixa_negativo`, `ncg_deficit` e `cobertura_baixa`. A mensagem (a única coisa que a `AlertasStack` exibe) ganha "— saldo inicial PARCIAL: N de M conta(s) com extrato de dd/mm/aaaa", e o motivo por extenso vai em `contexto.saldo_cc_parcial`. Como a persistência reescreve mensagem e contexto do alerta ativo a cada run, a marca some no 1º run com o saldo fresco. Residual: uma condição que o saldo datado esconde (um `caixa_negativo` dispensado porque o saldo velho era maior) não gera alerta para carregar o motivo. O snapshot e a tela das 13 semanas carregam.
+
+### Merge e apply (2026-10-31)
+
+- **Merge:** #3466, squash `93579508e`, 22:49Z. Nenhum commit do Lovable depois dele.
+- **Migrations:** aplicadas por `bun run db:aplicar` a partir de `93579508e`, cada uma depois do `--ensaio` (ok nas duas).
+  - Pré-voo às 22:52Z: corpo vivo `1eb65dcd…`, o predecessor, e DEFAULT 0.
+  - `20261031191715`: tentativa **#810** virou recibo, exit 0.
+  - `20261031191716`: tentativa **#811** virou recibo, exit 0.
+- **2ª testemunha** (`psql-ro`):
+  - `_data_health_compute`: md5 `ded4fd5b5f9d4731c9b9893b1ffba3ba`. Seguem `STABLE`, `SECURITY DEFINER`, `search_path=public, pg_temp` e o dono `postgres`. O EXECUTE segue `f` para anon, authenticated e PUBLIC.
+  - O watchdog (`b325d2af…`) e o heartbeat (`f5defcde…`) ficaram intocados.
+  - `fin_contas_correntes.saldo_atual`: `column_default` NULL, nullable.
+  - O dado no instante (19:53 SP): 40 ativas, 0 desconhecidas, 0 velhas. O sensor dá `ok`, nenhuma mudança de status.
+- **Edge `fin-cashflow-engine` v2.1: NÃO está no ar.** O `pendencias:deploy` acusou exatamente ela (`v2.0-saldo-cc-fresco` → `v2.1-alertas-saldo-datado`), e as outras 82 conferiam. O pacote `18be9c130124` (pré-condição de banco ok) foi montado, mas o `send_message` foi recusado: *workspace out of credits*. A mensagem não chegou ao agente.
+  - Até o deploy, os `fin_alertas` seguem sem a marca do saldo datado. Hoje isso não muda nada, porque as 40 contas estão frescas.
+  - Para fechar: créditos no workspace, depois o Passo 2 do pacote (`bun run pendencias:pacote` de novo, se a `main` andou), a sonda (`bun run sonda:sql fin-cashflow-engine`) e `pendencias:deploy` com exit 0.
+- **Publish: pendente, e é do founder.** `src/` mudou o `CaixaCompraCard`. Até o Publish, o card antigo segue no ar, mas a RPC já devolve "indisponível" para o saldo velho desde o #3383.
