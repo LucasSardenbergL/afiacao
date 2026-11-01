@@ -132,7 +132,7 @@ db/test-fin-ciclo-fornecedor.sh            42
 # Ciclo — Frente A item 4 (2026-11-01): coortes de CR com maturação FIXA D+15/30/60 pelo VENCIMENTO, massas
 # separadas (antecipado/no dia/com atraso/sem data/em aberto), coorte imatura = NULL + flag; RPC com o gate
 # master do ciclo. Controle verde + 16 sabotagens (postcondição em 2 camadas); ~60 s local.
-db/test-fin-ciclo-coorte-maturacao.sh        60
+db/test-fin-ciclo-coorte-maturacao.sh        29
 # DRE fase 2 (2026-10-13): CHECK do mapa ampliado (impostos em linha própria + fora_dre), fora_dre
 # proibido em _default (provado pelo COMPORTAMENTO na postcondição), colunas fora_dre/provisório SEM
 # default (ausente ≠ 0), e o script do mapa colacor só entra com a omie-financeiro v1.5 servida (ledger +

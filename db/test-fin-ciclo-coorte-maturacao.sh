@@ -182,9 +182,10 @@ sess() {
   } | PGOPTIONS="-c test.agora=$AGORA" P -tA
 }
 
-falhas=0
+falhas=0; asserts=0
 # $1 = uuid, $2 = SQL, $3 = esperado, $4 = rótulo. Erro de psql vira valor distinto (nunca mascara).
 oks() {
+  asserts=$((asserts+1))
   local got; got="$(sess "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
   if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
 }
@@ -192,6 +193,7 @@ oks() {
 okp() { okt "$AGORA" "$1" "$2" "$3"; }
 # Como postgres, sob um relógio dado: $1 = test.agora, $2 = SQL, $3 = esperado, $4 = rótulo.
 okt() {
+  asserts=$((asserts+1))
   local got; got="$(Ler "$1" "$2" 2>&1)" || got="ERRO-PSQL: $got"
   if [ "$got" != "$3" ]; then echo "FALHOU: $4 | esperado=[$3] obtido=[$got]"; falhas=$((falhas+1)); fi
 }
@@ -201,7 +203,7 @@ RPC="public.fin_ciclo_empresa_coorte_maturacao()"
 BARRADO="42501|CICLO_SO_MASTER"
 
 suite() {
-  falhas=0
+  falhas=0; asserts=0
   preparar_banco
   # A migration (ou a sabotagem) TEM de aplicar: erro de SQL nao pode passar por "vermelho".
   Pc -f "$1" || { echo "APLICACAO FALHOU: $1"; return 99; }
@@ -270,6 +272,7 @@ suite() {
   okp "SELECT has_function_privilege('authenticated','$RPC','EXECUTE')" "t" "j authenticated com EXECUTE"
   okp "SELECT has_table_privilege('anon','$V','SELECT')" "f" "j anon sem SELECT na view"
   okp "SELECT 'security_invoker=on' = ANY (coalesce(c.reloptions,'{}')) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname='v_ciclo_empresa_coorte_maturacao'" "t" "j view com security_invoker"
+  echo "PASS=$((asserts-falhas)) FAIL=$falhas"
   return "$falhas"
 }
 
@@ -277,6 +280,7 @@ suite() {
 cp "$MIG" "$TMPD/mig.sql"
 rc=0; out="$(suite "$TMPD/mig.sql" 2>&1)" || rc=$?
 if [ "$rc" -ne 0 ]; then echo "$out"; echo "CONTROLE VERMELHO (rc=$rc) — abortando antes de falsificar"; exit 1; fi
+grep -E '^PASS=[0-9]+ FAIL=0$' <<<"$out" || { echo "CONTROLE SEM CONTAGEM"; exit 1; }
 echo "CONTROLE OK"
 
 # 2) FALSIFICAÇÃO — uma sabotagem por vez, vermelha PELA asserção esperada.
