@@ -1050,9 +1050,17 @@ jobs:
   # maior. A espera por runner NÃO conta no teto: na 36831464837 as partes 2 e 3 ficaram 30m31s e
   # 31m39s na fila, sob teto 20, e passaram. Antes de devolver ao CI uma falsificação `fora-do-ci`,
   # veja em que parte ela cai (`NUCLEO_PARTE=i/3 bash db/roda-nucleo-ci.sh --lista`) e meça de novo.
+  #
+  # Teto 20 → 25 em 2026-11-01 (lote 1 do plano v4), JUNTO com a re-medição do
+  # db/nucleo-ci-custo.txt — o conserto é a tabela, o teto é a guarda. Em 15 runs verdes de PR a
+  # parte mais lenta levou p50 18,9 / máx 19,9 min de job contra o teto de 20, e 2 de 15 runs foram
+  # cancelados no teto e re-rodados: a tabela de 10-28 previa 846–852 s por parte, e 17 provas
+  # novas pesavam o default de 30 s (uma delas custa ~204 s). Com a tabela re-medida, as mesmas
+  # durações dão pior parte p50 15,4 / máx 16,0 min de núcleo (fora da amostra: 15,2–16,3). Teto 25
+  # = ~1,5× sobre isso; quando a pior parte destoar, re-meça a tabela (receita no cabeçalho dela).
   provas-sql:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
