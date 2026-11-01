@@ -560,6 +560,7 @@ const UnifiedOrder = () => {
               selectedParcelaColacor={h.selectedParcelaColacor} setSelectedParcelaColacor={h.setSelectedParcelaColacor}
               loadingFormas={h.loadingFormas} customerParcelaRankingOben={h.customerParcelaRankingOben}
               customerParcelaRankingColacor={h.customerParcelaRankingColacor}
+              avisoPrazo={isCustomerMode ? undefined : { cliente: h.selectedCustomer, onEstado: h.registrarEstadoPrazo }}
               estadoFormasOben={isCustomerMode ? undefined : h.estadoFormasOben}
               estadoFormasColacor={isCustomerMode ? undefined : h.estadoFormasColacor}
               onRecarregarFormas={isCustomerMode ? undefined : h.recarregarFormas}

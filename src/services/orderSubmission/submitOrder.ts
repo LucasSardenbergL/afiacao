@@ -23,6 +23,7 @@ import { validarVendabilidade, bloqueioVendabilidade } from './vendabilidade';
 import { findInvalidPricedProductItems, invalidPriceMessage } from './priceGuard';
 import { parseBloqueioAtp, mensagemRecusasAtp } from './atp';
 import type { BloqueioAtpPedido } from './atp';
+import { aguardarRegistrosComTeto, desfechoDosErros, registrarDecisaoPrazo } from './prazoDecisao';
 
 /** Resposta estruturada dos gates do edge (crédito Fase 2 / tint Fase 3 — não cria o PV). */
 interface GateCreditoPayload {
@@ -72,13 +73,16 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     customer, customerUserId, user, cart, subtotals, volumes,
     payment, delivery, meta, companyProfiles, defaultProductionAssigneeId,
     getServicePrice, supabase, isCustomerMode = false,
-    checkoutId, origem = null, atendimentoId = null, atpBackorder,
+    checkoutId, origem = null, atendimentoId = null, atpBackorder, prazoDecisao,
   } = params;
   const { obenProductItems, colacorProductItems, serviceItems } = cart;
   const errors: SubmitErrorEntry[] = [];
   const results: string[] = [];
   const bloqueiosCredito: BloqueioCreditoPedido[] = [];
   let bloqueioAtp: BloqueioAtpPedido | null = null;
+  // Frente B (PR1): registros da decisão de prazo correm em PARALELO ao resto do envio e são
+  // esperados com teto só no fim — a auditoria da Oben nunca segura o PV da Colacor (Codex P1 #3).
+  const registrosPrazo: Promise<void>[] = [];
 
   if (!obenProductItems.length && !colacorProductItems.length && !serviceItems.length) {
     return {
@@ -250,6 +254,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       };
     }
 
+    const errosAntesOben = errors.length;
     if (alreadySent && pvDivergente) {
       // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
       // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
@@ -354,6 +359,13 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         errors.push({ step: 'sync_oben_omie', message });
       }
     }
+    // Frente B (PR1): decisão de prazo do aviso, gravada com o DESFECHO desta tentativa. Fail-open.
+    if (prazoDecisao?.oben) {
+      registrosPrazo.push(registrarDecisaoPrazo(supabase, {
+        estado: prazoDecisao.oben, salesOrderId, parcelaEscolhida: payment.parcelaOben, formas: payment.formasPagamentoOben,
+        desfecho: desfechoDosErros(errors.slice(errosAntesOben).map(e => e.step), alreadySent, 'oben'),
+      }));
+    }
   }
 
   // ──────────────── Colacor ────────────────
@@ -411,6 +423,7 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
       };
     }
 
+    const errosAntesColacor = errors.length;
     if (alreadySent && pvDivergente) {
       // ATP 3.3: o PV foi vinculado por duplicidade e tem OUTROS itens — o carrinho atual NÃO
       // está no Omie. Nunca "já enviado" (limparia o carrinho e imprimiria itens que o ERP não tem).
@@ -539,6 +552,12 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
         results.push('PV Colacor (pendente ERP)');
         errors.push({ step: 'sync_colacor_omie', message });
       }
+    }
+    if (prazoDecisao?.colacor) {
+      registrosPrazo.push(registrarDecisaoPrazo(supabase, {
+        estado: prazoDecisao.colacor, salesOrderId, parcelaEscolhida: payment.parcelaColacor, formas: payment.formasPagamentoColacor,
+        desfecho: desfechoDosErros(errors.slice(errosAntesColacor).map(e => e.step), alreadySent, 'colacor'),
+      }));
     }
   }
 
@@ -673,6 +692,8 @@ export async function submitOrder(params: SubmitOrderParams): Promise<SubmitOrde
     orderNumbers: results,
     printDataList,
   };
+
+  await aguardarRegistrosComTeto(registrosPrazo);
 
   return {
     success: true,

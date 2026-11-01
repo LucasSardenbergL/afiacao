@@ -782,7 +782,7 @@ db/test-venda-recompra.sh                  49  falsificar=15
 # revalidar, CMC infinito, ressuscita revogado, retry da substituição, média→MAX, alvo como texto, markup do cockpit,
 # gate de candidatos, POS ACL anon, POS RLS, autojunção (PERF: volume de prod sob o statement_timeout de 8 s — incidente
 # 2026-10-21, candidatos 500 na prod), POS janela, PRE config (search_path derivado).
-db/test-venda-repasse.sh                   54  falsificar=18
+db/test-venda-repasse.sh                   72  falsificar=30
 
 # Venda por cliente — GERADOR D-1 (migration 20261020181743, Task 4 do plano 2026-10-20): lista do dia = UNIÃO de
 # atrasados das cidades de amanhã (porta de resolvePrepForWorkday, paridade SQL × TS via `bun` sobre
@@ -826,6 +826,11 @@ db/test-venda-lista-lente.sh               26  falsificar=8
 # n_compradores = a última leitura; READ ONLY não derruba a lista (só 25006 é engolido; 23514 sobe); RLS só
 # master; saída byte-idêntica ao oráculo das Ondas 2–3; a PÓS prova a escrita na prod em subtransação desfeita.
 db/test-venda-lista-acesso.sh              38  falsificar=11
+# Aviso + decisão de prazo no pedido (20261031200000, Frente B Oben PME/PMR PR1): venda_prazo_aviso espelha a regra
+# `vencida_aberta` da view do Ciclo (paridade EXECUTADA com a migration real das views), gate staff; a decisão tem 1
+# writer (RPC) que confere pedido↔conta↔cliente no servidor, relê o vencido, deduplica por (pedido, conta) e grava
+# `venda.prazo_sugerido` no outbox com chave = id da decisão; RLS: vendedora só lê a sua, master tudo.
+db/test-venda-prazo-decisao.sh             60  falsificar=15
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
