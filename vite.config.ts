@@ -351,6 +351,12 @@ function vendorChunk(id: string): string | undefined {
   // dele) e o entry passava a importar recharts+d3 inteiros (~114KB
   // gzip) só pra obter o clsx — medido no build de 2026-06-09.
   if (/node_modules[\\/](clsx|tailwind-merge|class-variance-authority)[\\/]/.test(id)) return 'vendor-utils';
+  // Mesmo padrão do clsx: o @hello-pangea/dnd (CockpitGrid da home staff,
+  // KanbanBoard do Admin) só precisa de _extends (@babel/runtime) e de
+  // invariant (tiny-invariant, via css-box-model; o recharts também usa), e
+  // sem bucket o Rollup alojava os dois no vendor-charts — a home pagava
+  // recharts+d3 (~111KB gzip) sem ter gráfico. Medido em 2026-11-01.
+  if (/node_modules[\\/](@babel[\\/]runtime|tiny-invariant)[\\/]/.test(id)) return 'vendor-utils';
   // Ancorado em node_modules: a regex antiga sem âncora casava
   // QUALQUER segmento "react" no caminho — capturava @elevenlabs/react
   // (SDK de voz, ~100KB gzip, usado só pelo FarmerCopilot lazy) pra
