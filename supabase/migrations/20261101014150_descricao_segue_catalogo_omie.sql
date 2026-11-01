@@ -12,8 +12,7 @@
 --     Omie (ex.: "BASE MICROTEX TRANSP WFOT.6861 450ML", de maio, para o 405ML de hoje).
 --
 -- Mudança:
---   1. atualizar_parametros_numericos_skus: COALESCE(sp.sku_descricao, d.sku_descricao) — o job só
---      preenche nome vazio; quem escreve o nome é o refresh do catálogo. Única linha alterada do corpo
+--   1. atualizar_parametros_numericos_skus: o job só preenche nome vazio (NULL, '' ou só espaços); quem escreve o nome é o refresh do catálogo. Única linha alterada do corpo
 --      de PROD (md5 efcc4251…); fornecedor_nome e o resto ficam como estão.
 --   2. atualizar_descricao_sku_parametros também reescreve a descrição dos alertas PENDENTES com o nome
 --      do catálogo (qualquer status no Omie: alerta de SKU inativado mostra o nome dele). Alerta decidido
@@ -50,7 +49,7 @@ BEGIN
     SELECT x.alvo, x.aceitos,
            (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure(x.alvo)) AS vivo
       FROM (VALUES
-        ('public.atualizar_parametros_numericos_skus(text, uuid)', ARRAY['efcc4251ff6bf4a9480ac6a22f726918', '7dd792877291ae06362f4d8249fedbf1']),
+        ('public.atualizar_parametros_numericos_skus(text, uuid)', ARRAY['efcc4251ff6bf4a9480ac6a22f726918', '8207508fb5b5ac9f551b6cd60f3e4011']),
         ('public.atualizar_descricao_sku_parametros(text)', ARRAY['9c0e5600fcc390f4dc0f53e2d737d48f', '03be42ac8b01c6f77671f5bf26cb8157'])
       ) AS x(alvo, aceitos)
   LOOP
@@ -114,7 +113,7 @@ BEGIN
   FROM base b;
 
   UPDATE public.sku_parametros sp SET
-    sku_descricao = COALESCE(sp.sku_descricao, d.sku_descricao),  -- o nome é do catálogo (atualizar_descricao_sku_parametros); daqui só preenche o vazio
+    sku_descricao = CASE WHEN NULLIF(trim(sp.sku_descricao), '') IS NULL THEN d.sku_descricao ELSE sp.sku_descricao END,  -- o nome é do catálogo (atualizar_descricao_sku_parametros); daqui só preenche o vazio
     fornecedor_nome = COALESCE(d.fornecedor_nome, sp.fornecedor_nome),
     demanda_media_diaria = d.demanda_media_diaria,
     demanda_desvio_padrao = d.demanda_sigma_diario,
@@ -259,7 +258,7 @@ DECLARE
   v_n integer;
 BEGIN
   IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p
-       WHERE p.oid = to_regprocedure('public.atualizar_parametros_numericos_skus(text, uuid)')) IS DISTINCT FROM '7dd792877291ae06362f4d8249fedbf1' THEN
+       WHERE p.oid = to_regprocedure('public.atualizar_parametros_numericos_skus(text, uuid)')) IS DISTINCT FROM '8207508fb5b5ac9f551b6cd60f3e4011' THEN
     RAISE EXCEPTION 'POS FALHOU: atualizar_parametros_numericos_skus não é o corpo deste arquivo';
   END IF;
   IF (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p

@@ -58,19 +58,21 @@ INSERT INTO omie_products (omie_codigo_produto, codigo, descricao, account, ativ
   (1, 'C1', 'NOME OMIE 1', 'oben', true), (2, 'C2', 'NOME OMIE 2', 'oben', true),
   (3, 'C3', 'NOME OMIE 3', 'oben', false), (2, 'C2', 'NOME COLACOR 2', 'colacor', true);
 -- cadastro: 1 já com o nome do Omie · 2 nome velho · 3 velho (Omie inativo: o cadastro não segue)
--- 5 sem nome e fora do catálogo · 6 com parâmetro a aplicar
+-- 5 sem nome e fora do catálogo · 6 com parâmetro a aplicar · 7 nome só com espaços
 INSERT INTO sku_parametros (empresa, sku_codigo_omie, sku_descricao, ponto_pedido, estoque_minimo,
   estoque_maximo, estoque_seguranca, cobertura_alvo_dias, habilitado_reposicao_automatica, tipo_reposicao, ativo) VALUES
   ('OBEN', 1, 'NOME OMIE 1', 50, 20, 120, 15, 30, true, 'automatica', true),
   ('OBEN', 2, 'NOME VELHO 2', 50, 20, 120, 15, 30, true, 'automatica', true),
   ('OBEN', 3, 'VELHO 3', 50, 20, 120, 15, 30, true, 'automatica', true),
   ('OBEN', 5, NULL, 50, 20, 120, 15, 30, true, 'automatica', true),
-  ('OBEN', 6, 'SKU 6', 50, 20, 120, 15, 30, true, 'automatica', true);
+  ('OBEN', 6, 'SKU 6', 50, 20, 120, 15, 30, true, 'automatica', true),
+  ('OBEN', 7, '  ', 50, 20, 120, 15, 30, true, 'automatica', true);
 INSERT INTO _param_sug_test (empresa, sku_codigo_omie, sku_descricao, estoque_minimo_sugerido, ponto_pedido_sugerido,
   estoque_maximo_sugerido, estoque_seguranca_sugerido, cobertura_alvo_dias) VALUES
   ('OBEN', 1, 'ZZ NOME DE VENDA 1', NULL, NULL, NULL, NULL, NULL),
   ('OBEN', 5, 'NOME DE VENDA 5', NULL, NULL, NULL, NULL, NULL),
-  ('OBEN', 6, 'ZZ NOME DE VENDA 6', 20, 60, 140, 15, 30);
+  ('OBEN', 6, 'ZZ NOME DE VENDA 6', 20, 60, 140, 15, 30),
+  ('OBEN', 7, 'NOME DE VENDA 7', NULL, NULL, NULL, NULL, NULL);
 -- alertas: 201 pendente nome velho · 202 pendente de SKU inativo no Omie · 203 decidido · 204 fora do
 -- catálogo · 205 de outra empresa
 INSERT INTO eventos_outlier (id, empresa, sku_codigo_omie, sku_descricao, tipo, severidade, data_evento, status) VALUES
@@ -116,6 +118,9 @@ BEGIN
 
   SELECT sku_descricao AS d INTO r FROM sku_parametros WHERE empresa='OBEN' AND sku_codigo_omie=5;
   IF r.d IS DISTINCT FROM 'NOME DE VENDA 5' THEN RAISE EXCEPTION 'B3 FALHOU: o job não preencheu o nome vazio (%)', r.d; END IF;
+
+  SELECT sku_descricao AS d INTO r FROM sku_parametros WHERE empresa='OBEN' AND sku_codigo_omie=7;
+  IF r.d IS DISTINCT FROM 'NOME DE VENDA 7' THEN RAISE EXCEPTION 'B3b FALHOU: o job não preencheu o nome só com espaços (%)', r.d; END IF;
 
   SELECT sku_descricao AS d, ponto_pedido AS pp, estoque_maximo AS mx INTO r FROM sku_parametros WHERE empresa='OBEN' AND sku_codigo_omie=6;
   IF r.d IS DISTINCT FROM 'SKU 6' OR r.pp IS DISTINCT FROM 60::numeric OR r.mx IS DISTINCT FROM 140::numeric THEN
