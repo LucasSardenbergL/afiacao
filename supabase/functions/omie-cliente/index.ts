@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { normalizarDocumento } from "../_shared/cnpj-alfanumerico.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
+import { deveReporTelefone, telefoneCompleto, telefoneOmie } from "./telefone.ts";
 import { fetchAll } from "../_shared/paginate.ts";
 import {
   avaliarPagina,
@@ -55,6 +56,7 @@ interface OmieCliente {
   nome_fantasia?: string;
   cnpj_cpf?: string;
   email?: string;
+  telefone1_ddd?: string;
   telefone1_numero?: string;
   endereco?: string;
   endereco_numero?: string;
@@ -434,14 +436,14 @@ async function upsertAddressFromOmie(
  */
 async function* paginarProfilesComDocumento(
   adminClient: SupabaseClient,
-): AsyncGenerator<Array<{ user_id: string; document: string }>> {
+): AsyncGenerator<Array<{ user_id: string; document: string; phone: string | null }>> {
   const pageSize = 1000;
   let cursor: string | null = null;
 
   while (true) {
     let query = adminClient
       .from("profiles")
-      .select("user_id, document")
+      .select("user_id, document, phone")
       .not("document", "is", null)
       .order("user_id")
       .limit(pageSize);
@@ -455,8 +457,8 @@ async function* paginarProfilesComDocumento(
     if (data == null) throw new Error("Falha ao paginar profiles: data null sem error — resposta malformada, não é fim");
     if (data.length === 0) return;
 
-    const rows = data as Array<{ user_id: string; document: string | null }>;
-    yield rows.filter((r): r is { user_id: string; document: string } => !!r.document);
+    const rows = data as Array<{ user_id: string; document: string | null; phone: string | null }>;
+    yield rows.filter((r): r is { user_id: string; document: string; phone: string | null } => !!r.document);
 
     cursor = rows[rows.length - 1].user_id;
     if (rows.length < pageSize) return;
@@ -770,7 +772,7 @@ Deno.serve(async (req) => {
             nome_fantasia: c.nome_fantasia,
             cnpj_cpf: c.cnpj_cpf,
             email: c.email,
-            telefone: c.telefone1_numero,
+            telefone: telefoneOmie(c.telefone1_ddd, c.telefone1_numero),
             cidade: c.cidade,
             estado: c.estado,
             codigo_vendedor: c.recomendacoes?.codigo_vendedor || c.codigo_vendedor || null,
@@ -795,7 +797,7 @@ Deno.serve(async (req) => {
               nome_fantasia: clienteCompleto.nome_fantasia,
               cnpj_cpf: clienteCompleto.cnpj_cpf,
               email: clienteCompleto.email,
-              telefone: clienteCompleto.telefone1_numero,
+              telefone: telefoneOmie(clienteCompleto.telefone1_ddd, clienteCompleto.telefone1_numero),
               endereco: clienteCompleto.endereco,
               endereco_numero: clienteCompleto.endereco_numero,
               complemento: clienteCompleto.complemento,
@@ -943,7 +945,7 @@ Deno.serve(async (req) => {
             user_id: newUserId,
             name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
             email: cliente.email || null,
-            phone: cliente.telefone || null,
+            phone: telefoneCompleto(cliente.telefone),
             document: cliente.cnpj_cpf ? normalizarDocumento(cliente.cnpj_cpf) : null,
           });
 
@@ -1028,6 +1030,8 @@ Deno.serve(async (req) => {
         let accImported = 0;
         let accSkipped = 0;
         let accErrors = 0;
+        // Reposição de telefone (DDD) nos perfis JÁ mapeados — ver `telefone.ts` e o ramo abaixo.
+        let accTelefonesRepostos = 0;
         let pagesProcessed = 0;
 
         // Teto de tentativas da MESMA página, DENTRO desta invocação. Mora aqui — e não no cursor
@@ -1059,6 +1063,8 @@ Deno.serve(async (req) => {
         // enxergava 1/7 dos códigos e o loop reprocessava o resto. A fresca dá os códigos DESTA
         // conta, paginados com .order estável.
         const existingCodes = new Set<number>();
+        // codigo Omie → user_id do map (o MESMO que `cobranca_regua_hoje` resolve para o telefone).
+        const userByCode = new Map<number, string>();
         let codeCursor: number | null = null;
         const codePageSize = 1000;
         while (true) {
@@ -1067,7 +1073,7 @@ Deno.serve(async (req) => {
           // e código pulado aqui vira cliente RECRIADO no laço de importação abaixo.
           let codeQuery = adminClient
             .from("omie_customer_account_map_fresco")
-            .select("omie_codigo_cliente")
+            .select("omie_codigo_cliente, user_id")
             .eq("account", account.account)
             .order("omie_codigo_cliente")
             .limit(codePageSize);
@@ -1081,7 +1087,10 @@ Deno.serve(async (req) => {
           // com o MESMO efeito do erro engolido acima (dedup cego recria clientes) — money-path §9.
           if (codePage == null) throw new Error(`Falha ao carregar códigos já mapeados (${account.account}): data null sem error — resposta malformada, não é fim`);
           if (codePage.length === 0) break;
-          for (const row of codePage) existingCodes.add(row.omie_codigo_cliente as number);
+          for (const row of codePage) {
+            existingCodes.add(row.omie_codigo_cliente as number);
+            if (typeof row.user_id === "string") userByCode.set(row.omie_codigo_cliente as number, row.user_id);
+          }
           codeCursor = codePage[codePage.length - 1].omie_codigo_cliente as number;
           if (codePage.length < codePageSize) break;
         }
@@ -1095,8 +1104,13 @@ Deno.serve(async (req) => {
         // (19%): para os outros 81%, `profileByDoc.get()` devolvia undefined e o laço abaixo criava
         // um usuário Auth NOVO para cliente que já tinha cadastro. Esta é a fábrica dos clones.
         const profileByDoc = new Map<string, string>();
+        // phone atual por user_id: a régua de reposição decide em memória, sem SELECT por cliente.
+        const phoneByUser = new Map<string, string | null>();
         for await (const pagina of paginarProfilesComDocumento(adminClient)) {
-          for (const p of pagina) profileByDoc.set(normalizarDocumento(p.document), p.user_id);
+          for (const p of pagina) {
+            profileByDoc.set(normalizarDocumento(p.document), p.user_id);
+            phoneByUser.set(p.user_id, p.phone);
+          }
         }
 
         console.log(`[sync_all_clients] Starting ${account.name} from page ${startPage}...`);
@@ -1196,6 +1210,28 @@ Deno.serve(async (req) => {
               }
 
               if (existingCodes.has(codigoCliente)) {
+                // Cliente já mapeado: o import pula, mas a REPOSIÇÃO do telefone passa por aqui.
+                // Até 2026-11-01 o insert gravava só `telefone1_numero` (sem DDD) e este ramo nunca
+                // revisitava o perfil — 5.378/5.668 perfis mapeados sem DDD, régua de cobrança sem
+                // WhatsApp. Idempotente: só escreve quando o atual NÃO tem DDD e o Omie fornece um
+                // completo; nunca sobrescreve telefone já completo (pode ter sido corrigido à mão).
+                // Alvo = user do map por (conta, código) — o mesmo que `cobranca_regua_hoje` lê;
+                // o doc é fallback (aliases fiscais compartilham doc entre contas).
+                const userAlvo = userByCode.get(codigoCliente) ?? profileByDoc.get(cnpjCpf);
+                const telefoneNovo = telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero);
+                if (userAlvo && phoneByUser.has(userAlvo) && deveReporTelefone(phoneByUser.get(userAlvo), telefoneNovo)) {
+                  const { error: foneErr } = await adminClient
+                    .from("profiles")
+                    .update({ phone: telefoneNovo })
+                    .eq("user_id", userAlvo);
+                  if (foneErr) {
+                    console.error(`[sync_all_clients] reposição de telefone falhou (user ${userAlvo}, código ${codigoCliente}):`, foneErr.message);
+                    accErrors++;
+                  } else {
+                    phoneByUser.set(userAlvo, telefoneNovo);
+                    accTelefonesRepostos++;
+                  }
+                }
                 accSkipped++;
                 continue;
               }
@@ -1225,7 +1261,7 @@ Deno.serve(async (req) => {
                     user_id: userId,
                     name: cliente.nome_fantasia || cliente.razao_social || "Cliente",
                     email: cliente.email || null,
-                    phone: cliente.telefone1_numero || null,
+                    phone: telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero),
                     document: cnpjCpf,
                   });
                   if (profileError) {
@@ -1234,6 +1270,7 @@ Deno.serve(async (req) => {
                     continue;
                   }
                   profileByDoc.set(cnpjCpf, userId);
+                  phoneByUser.set(userId, telefoneOmie(cliente.telefone1_ddd, cliente.telefone1_numero));
                 }
 
                 const codigoVendedor = cliente.recomendacoes?.codigo_vendedor || cliente.codigo_vendedor || null;
@@ -1336,6 +1373,7 @@ Deno.serve(async (req) => {
           imported: accImported,
           skipped: accSkipped,
           errors: accErrors,
+          telefones_repostos: accTelefonesRepostos,
           totalPages,
           lastPage: page - 1,
           hasMore: cursor.hasMore || nextAccountIndex < accounts.length,
