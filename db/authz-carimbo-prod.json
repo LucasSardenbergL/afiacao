@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-01T13:26:53.502Z",
-  "sourceHead": "f2be72e2742576d0ce9ca3e7b65ada6cae7d3a8c",
+  "medidoEm": "2026-11-01T13:51:38.424Z",
+  "sourceHead": "c602f9797ed1291092f191226b135abeeeb44171",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -71,7 +71,7 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 457 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@a951ac584 (fetch ok) · prod 2026-11-01 13:27:18.97429Z",
+      "denominador": "🔎 deriva-corpo — 458 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@26b0a96ef (fetch ok) · prod 2026-11-01 13:52:02.218856Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [
