@@ -319,9 +319,16 @@ BEGIN
                    WHEN j > 1 AND (i + j) % 7 = 0 THEN now() - interval '1 day' END,
               CASE WHEN j = 1 AND i % 5 <> 0 THEN 'fase5_geracao_legada'
                    WHEN j > 1 AND (i + j) % 7 = 0 THEN 'outro' END);
+      -- item 0: um dos 9 estados; item 1: SEMPRE o corante ok (sem ele, todo estado ruim só aparecia
+      -- ao lado de outro ruim — os vizinhos no pool — e a sabotagem do volume NULL passava verde:
+      -- bool_and ignora NULL, então "1 ruim-por-NULL + só bons" é o caso que separa o certo do errado);
+      -- item 2: outro estado
       FOR n IN 0..((i * j) % 4) - 1 LOOP
         INSERT INTO public.tint_formula_itens (formula_id, corante_id, qtd_ml)
-        VALUES (v_id, ('c1000000-0000-0000-0000-' || lpad((1 + (i + j + n) % 9)::text, 12, '0'))::uuid, 5);
+        VALUES (v_id, ('c1000000-0000-0000-0000-' || lpad((CASE n WHEN 0 THEN 1 + (i + j) % 9
+                                                                  WHEN 1 THEN 1
+                                                                  ELSE 1 + (i + 2 * j + 3) % 9 END)::text, 12, '0'))::uuid, 5)
+        ON CONFLICT (formula_id, corante_id) DO NOTHING;
       END LOOP;
     END LOOP;
   END LOOP;
@@ -543,7 +550,7 @@ PY
   roda
   eq E3 "$(meta chaves_sem_preco)" "$(echo "$eqr" | cut -d'|' -f3)"   # S1 gravado = S1 pela view
   eq E4 "$(meta universo)" "$(echo "$eqr" | cut -d'|' -f4)"           # universo gravado = pelo IN
-  eq E5 "$(echo "$eqr" | cut -d'|' -f5)" "305/455"                   # não-vacuidade: medido na 1ª rodada (305 sem preço de 455)
+  eq E5 "$(echo "$eqr" | cut -d'|' -f5)" "274/455"                   # não-vacuidade: medido (274 sem preço de 455)
   P -c "SELECT _reset();" >/dev/null
 
   EM_SUITE=
@@ -561,7 +568,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b relogio_min_chunk:F3 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4 k_inclui_cor_nula:E1,E3,E4 k_exige_todas_carimbadas:E1,E3,E4 s1_ativo_nulo_passa:E2,E3 s1_custo_nulo_passa:E2,E3 s1_volume_nulo_passa:E2,E3 s1_volume_zero_passa:E2,E3 s1_corante_orfao_passa:E2,E3 s1_produto_orfao_passa:E2,E3 s1_basta_um_item:E2,E3 s1_conta_desativada:E2,E3 p9_volta_a_ler_a_view:APPLY!P9_FALHOU"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
