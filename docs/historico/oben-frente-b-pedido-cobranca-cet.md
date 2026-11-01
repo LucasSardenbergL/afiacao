@@ -161,3 +161,38 @@ Residuais da régua, medidos e NÃO corrigidos aqui (cada um é entrega própria
 - **Régua sem nome do cliente** ("cliente 8689697854"): a RPC `cobranca_regua_hoje` lê
   `fin_contas_receber.nome_cliente`, que está **NULL nas 14.511 linhas da Oben**; a fila mostra nome porque
   passa por `v_ciclo_cliente_resumo`. Correção: a RPC coalescer pela mesma fonte da fila (migration).
+
+## PR4 — Telefone do perfil Omie nasce COM DDD + reposição dos já gravados (`omie-cliente` v1.4)
+
+**Sintoma (QA logado pós-Publish do PR2, 2026-11-01):** TODAS as linhas da régua `/cobranca` da Oben saíam como "telefone inválido no cadastro" — o botão de WhatsApp estava morto. A RPC `cobranca_regua_hoje` resolve o telefone por `omie_customer_account_map → profiles.phone`, e o `telefoneWa` do front exige 10–11 dígitos (DDD + número) para montar o `wa.me`.
+
+**Causa:** `supabase/functions/omie-cliente/index.ts` gravava `phone: telefone1_numero` (sem o `telefone1_ddd`) no insert de `profiles` do `sync_all_clients`, e devolvia o mesmo campo pelado em `pesquisar_clientes`/`consultar_cliente` (que alimentam o `criar_perfil_local`). O ramo "cliente já mapeado" do sync fazia `skip` sem nunca revisitar o perfil — então o dado errado era permanente. A `omie-vendas-sync` já compunha `(ddd) numero`; não havia outra fonte de DDD no banco (`customer_contacts` vazia; nenhum espelho de clientes com telefone).
+
+**Medido ANTES (psql-ro, 2026-11-01, só contagens):**
+
+| recorte | total | sem DDD (8–9 díg.) | com DDD (10–11) | sem phone |
+|---|---|---|---|---|
+| perfis mapeados distintos (3 contas) | 5.668 | **5.378** | 15 | 262 |
+| por conta — oben | 5.622 | 5.333 | 14 | 262 |
+| por conta — colacor | 5.204 | 4.938 | 14 | 239 |
+| por conta — colacor_sc | 5.296 | 5.019 | 15 | 249 |
+
+Régua de hoje (réplica read-only do filtro da RPC + mesma resolução de telefone): **oben 29 linhas / 23 clientes / 23 com phone / 0 WhatsApp-ok**; colacor 6/6/6/0; colacor_sc 2/2/2/0. Todos os 5.378 sem DDD têm `document` (o paginador de dedup os alcança).
+
+**Correção (precisão > recall — sem DDD é `null`, nunca número pelado nem DDD inventado):**
+- Módulo puro `omie-cliente/telefone.ts` (`telefoneOmie`, `telefoneCompleto`, `deveReporTelefone`) + `telefone_test.ts` (Deno, offline): DDD 2 dígitos (tolera `0xx`) + número 8–9 → `(DD) NNNNN-NNNN`; número que já traz o DDD é aceito (com ou sem `55`); DDD repetido no número não duplica.
+- Usado em todos os pontos: `pesquisar_clientes`, `consultar_cliente`, insert do `sync_all_clients` e `criar_perfil_local` (normaliza o `telefone` do body — sem DDD vira `null`).
+- **Reposição = o próprio `sync_all_clients`** (card "Importar Clientes (3 Contas Omie)" em `/admin/analytics-sync`): no ramo "já mapeado", resolve o user pelo map `(conta, código)` — o MESMO que a RPC lê — e faz `UPDATE profiles.phone` só quando o atual NÃO tem DDD e o Omie fornece um completo. Idempotente (2ª passada = 0 escritas), nunca sobrescreve telefone já completo (pode ter sido corrigido à mão). Zero SELECT por cliente: `phone` entra no paginador de profiles e `user_id` no da view fresca. A edge devolve `telefones_repostos`; o front soma e grava em `acoes_execucoes.detalhes` + toast.
+- `VERSAO` → `v1.4-telefone-com-ddd`; fingerprint regravado.
+
+**Fora de escopo (anotado, não tocado):** `omie-sync` `list_clientes` devolve `telefone: telefone1_numero` (sem consumidor em `src/`); `criar_cliente`/`criar_cliente_afiacao` mandam o `telefone` do formulário inteiro em `telefone1_numero` para o Omie (sem separar DDD) — ambos exigem bump/deploy de outras edges.
+
+**Verificação pós-deploy + reposição (rodar no psql-ro; a de régua também vale logado, trocando a réplica pela própria RPC):**
+```sql
+-- perfis mapeados por formato (esperado: sem_ddd → ~0 nos que o Omie tem DDD; com_ddd ↑)
+WITH p AS (SELECT DISTINCT pf.user_id, length(regexp_replace(coalesce(pf.phone,''), '\D', '', 'g')) AS n
+             FROM public.omie_customer_account_map m JOIN public.profiles pf ON pf.user_id = m.user_id)
+SELECT count(*) FILTER (WHERE n BETWEEN 8 AND 9) AS sem_ddd, count(*) FILTER (WHERE n BETWEEN 10 AND 11) AS com_ddd,
+       count(*) FILTER (WHERE n = 0) AS sem_phone FROM p;
+-- régua (logado como staff): SELECT count(*) FILTER (WHERE telefone IS NOT NULL) FROM public.cobranca_regua_hoje('oben');
+```

@@ -162,13 +162,15 @@ export function useAnalyticsSync() {
     // Só há `detalhes` de sucesso quando as 3 contas foram percorridas: import parcial lança, e
     // aí quem grava é o ramo de erro do useMutationComRegistro (status 'erro' + a mensagem que
     // nomeia as contas interrompidas).
-    detalhes: (d) => ({ importados: d.totalImported, ja_existiam: d.totalSkipped, erros: d.totalErrors }),
+    detalhes: (d) => ({ importados: d.totalImported, ja_existiam: d.totalSkipped, erros: d.totalErrors, telefones_repostos: d.totalTelefonesRepostos }),
     mutationFn: async () => {
       let accountIndex = 0;
       let startPage = 1;
       let totalImported = 0;
       let totalSkipped = 0;
       let totalErrors = 0;
+      // Perfis já mapeados cujo telefone ganhou DDD nesta passada (edge v1.4 — régua de cobrança).
+      let totalTelefonesRepostos = 0;
       // Contas que a edge INTERROMPEU (credencial revogada, erro que persistiu além do teto de
       // retentativas). A edge pula a conta para que as demais sincronizem — o que só é honesto
       // se a falha chegar aqui e à tela: pular em silêncio viraria "importação concluída" sobre
@@ -204,6 +206,7 @@ export function useAnalyticsSync() {
         totalImported += data?.imported || 0;
         totalSkipped += data?.skipped || 0;
         totalErrors += data?.errors || 0;
+        totalTelefonesRepostos += data?.telefones_repostos || 0;
 
         // ANTES de qualquer `break`: a última resposta do laço também pode trazer a conta que
         // falhou (a última conta abandonada zera o hasMore), e ler a falha depois do break a
@@ -283,14 +286,14 @@ export function useAnalyticsSync() {
         );
       }
 
-      return { totalImported, totalSkipped, totalErrors };
+      return { totalImported, totalSkipped, totalErrors, totalTelefonesRepostos };
     },
     // `onSuccess` só roda quando TODAS as contas foram percorridas: import parcial lança acima,
     // de propósito, para que o registro durável em acoes_execucoes fique 'erro' e o card não
     // mostre ✓ sobre uma conta que ficou de fora.
     onSuccess: (data) => {
       toast.success("Importação de clientes concluída", {
-        description: `${data.totalImported} importados, ${data.totalSkipped} já existiam, ${data.totalErrors} erros`,
+        description: `${data.totalImported} importados, ${data.totalSkipped} já existiam, ${data.totalErrors} erros, ${data.totalTelefonesRepostos} telefones com DDD repostos`,
         duration: 10000,
       });
     },

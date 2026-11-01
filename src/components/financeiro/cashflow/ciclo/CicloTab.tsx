@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Inbox, ListChecks } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { useCicloCoorte, useCicloResumo, useCrAbertoTotal, useReceitaDiariaTtm, useReguaCiclo, hojeSp, useCicloCustoCapital } from '@/hooks/useFinanceiroCiclo';
+import {
+  useCicloCoorte, useCicloCoorteMaturacao, useCicloResumo, useCrAbertoTotal, useReceitaDiariaTtm, useReguaCiclo, hojeSp, useCicloCustoCapital,
+} from '@/hooks/useFinanceiroCiclo';
 import { useUrlState } from '@/hooks/useUrlState';
 import { ALL_COMPANIES, COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { EmptyState } from '@/components/EmptyState';
@@ -34,6 +36,7 @@ export function CicloTab() {
   const hoje = hojeSp();
   const resumo = useCicloResumo();
   const coorte = useCicloCoorte();
+  const maturacao = useCicloCoorteMaturacao();
   const receita = useReceitaDiariaTtm();
   const cpEmpresa = useCicloCpEmpresa();
   const [filtros, setFiltros] = useUrlState({ cicloEmpresa: 'oben', cicloPerfil: 'todos', cicloGiroAcao: 'todos' });
@@ -70,7 +73,10 @@ export function CicloTab() {
       {receita.error && <p className="text-status-error text-sm">Não foi possível ler a receita TTM (valor de 1 dia de PMR indisponível).</p>}
       {coorte.error && <p className="text-status-error text-sm">Não foi possível ler a tendência por coorte.</p>}
       {coorte.isLoading && <PageSkeleton variant="cockpit" />}
-      {!coorte.error && !coorte.isLoading && tendencias.map((c) => <CicloTendencia key={c} coorte={coorteDados} company={c} />)}
+      {!coorte.error && !coorte.isLoading && tendencias.map((c) => (
+        <CicloTendencia key={c} coorte={coorteDados} company={c} maturacao={maturacao.data ?? []}
+          maturacaoErro={maturacao.error !== null && maturacao.error !== undefined} maturacaoCarregando={maturacao.isLoading} />
+      ))}
 
       <div className="flex flex-wrap items-center gap-2">
         <Select value={empresa} onValueChange={(v) => setFiltros({ cicloEmpresa: v })}>
