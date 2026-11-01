@@ -6,17 +6,42 @@ import { RefreshCw, Loader2, Sparkles, ShoppingCart, Users, MapPin, CheckCircle2
 import { UltimaExecucao } from "@/components/execucoes/UltimaExecucao";
 import { ACOES_ANALYTICS_SYNC } from "./acoes";
 import type { StatusJanelaConta } from "./janelas";
+import type { EstadoRodada, StatusRodada } from "./rodadaClientes";
+
+const RODADA_ICON: Record<EstadoRodada, typeof Clock> = {
+  executando: Loader2,
+  aguardando: Clock,
+  atrasada: AlertTriangle,
+  falhou: XCircle,
+  parcial: AlertTriangle,
+  concluida: CheckCircle2,
+};
+const RODADA_COR: Record<EstadoRodada, string> = {
+  executando: "text-primary",
+  aguardando: "text-muted-foreground",
+  atrasada: "text-status-warning",
+  falhou: "text-status-error",
+  parcial: "text-status-warning",
+  concluida: "text-status-success",
+};
 
 export function ImportClientesCard({
   isRunning,
   pending,
-  progress,
+  aberta,
+  rodadas,
   onImport,
+  onRearmar,
+  rearmando,
 }: {
   isRunning: boolean;
   pending: boolean;
-  progress: string | null;
+  /** Há rodada aberta no servidor: o botão só abriria a mesma (o servidor garante uma por vez). */
+  aberta: boolean;
+  rodadas: StatusRodada[];
   onImport: () => void;
+  onRearmar: (rodadaId: string) => void;
+  rearmando: boolean;
 }) {
   return (
     <Card>
@@ -26,7 +51,7 @@ export function ImportClientesCard({
             <Users className="h-5 w-5 text-muted-foreground" />
             <CardTitle className="text-base">Importar Clientes (3 Contas Omie)</CardTitle>
           </div>
-          <Button variant="outline" size="sm" disabled={isRunning} onClick={onImport}>
+          <Button variant="outline" size="sm" disabled={isRunning || aberta} onClick={onImport}>
             {pending ? (
               <Loader2 className="h-3 w-3 mr-2 animate-spin" />
             ) : (
@@ -44,12 +69,31 @@ export function ImportClientesCard({
           <code className="font-mono">omie_customer_account_map</code> (identidade por conta) e{' '}
           <code className="font-mono">carteira_membership_ledger</code> (membership da carteira).
           Pré-requisito para rodar os motores de inteligência (calculate-scores, algorithm-a-audit).
+          Roda no servidor e também sozinho todo domingo.
         </p>
-        {progress && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {progress}
-          </div>
+        {aberta && (
+          <p className="mt-3 text-xs font-medium text-primary" data-testid="clientes-import-servidor">
+            Importando no servidor — pode fechar esta aba.
+          </p>
+        )}
+        {rodadas.length > 0 && (
+          <ul className="mt-2 space-y-1.5">
+            {rodadas.map((r) => {
+              const Icone = RODADA_ICON[r.estado];
+              return (
+                <li key={r.id} className={`flex items-start gap-2 text-xs ${RODADA_COR[r.estado]}`} data-testid={`rodada-${r.estado}`}>
+                  <Icone className={`h-3 w-3 mt-0.5 shrink-0 ${r.estado === "executando" ? "animate-spin" : ""}`} />
+                  <span className="flex-1">{r.descricao}</span>
+                  {r.podeRearmar && (
+                    <Button variant="ghost" size="sm" className="h-6 px-2" disabled={rearmando || aberta} onClick={() => onRearmar(r.id)}>
+                      <RotateCcw className="h-3 w-3 mr-1" />
+                      Retomar
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </CardContent>
     </Card>

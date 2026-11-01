@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 742
+-- Total de custom migrations: 747
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -806,7 +806,12 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031233000', 'venda_repasse_substituicao', '20261031233000_venda_repasse_substituicao.sql'),
   ('20261101014150', 'descricao_segue_catalogo_omie', '20261101014150_descricao_segue_catalogo_omie.sql'),
   ('20261101050000', 'tint_watchdog_fase5_v5_passada_unica', '20261101050000_tint_watchdog_fase5_v5_passada_unica.sql'),
-  ('20261101120000', 'cobranca_regua_nome_cliente', '20261101120000_cobranca_regua_nome_cliente.sql')
+  ('20261101090000', 'reposicao_compra_suspensa', '20261101090000_reposicao_compra_suspensa.sql'),
+  ('20261101120000', 'cobranca_regua_nome_cliente', '20261101120000_cobranca_regua_nome_cliente.sql'),
+  ('20261101120000', 'fin_ciclo_coorte_maturacao', '20261101120000_fin_ciclo_coorte_maturacao.sql'),
+  ('20261101120000', 'raio_x_inequivoco', '20261101120000_raio_x_inequivoco.sql'),
+  ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
+  ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3202,7 +3207,44 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
   ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', '')
+  ('reposicao_compra_suspensa', 'function', 'public', '_reposicao_compra_fonte_ok', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', '_reposicao_compra_foto', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_candidatos', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspender', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_reativar', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_listar', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_runs', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_compra_suspensa', 'table', 'public', 'reposicao_compra_suspensa', ''),
+  ('reposicao_compra_suspensa', 'table', 'public', 'reposicao_compra_suspensa_log', ''),
+  ('reposicao_compra_suspensa', 'index', 'public', 'uq_reposicao_compra_suspensa_ativa', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_reposicao_compra_suspensa_emp_lote', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_compra_suspensa_log_run', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_compra_suspensa_log_emp_data', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'reposicao_compra_suspensa_sel', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'compra_suspensa_log_sel', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'compra_suspensa_log_ins', 'reposicao_compra_suspensa_log'),
+  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', ''),
+  ('fin_ciclo_coorte_maturacao', 'function', 'public', 'fin_ciclo_empresa_coorte_maturacao', ''),
+  ('fin_ciclo_coorte_maturacao', 'view', 'public', 'v_ciclo_empresa_coorte_maturacao', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_decidir', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_planejar', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_inequivoco_definer', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('clientes_import_servidor', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_semear', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_rearmar', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_lease_acquire', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_avancar', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_liberar_erro', ''),
+  ('clientes_import_servidor', 'table', 'public', 'clientes_import_rodada', ''),
+  ('clientes_import_servidor', 'index', 'public', 'clientes_import_rodada_uma_aberta', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'index', 'public', 'clientes_import_rodada_criado_em', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-continuacao-1min', ''),
+  ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-semanal', ''),
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_select_staff', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5646,7 +5688,44 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
   ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', ''),
-  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', '')
+  ('reposicao_compra_suspensa', 'function', 'public', '_reposicao_compra_fonte_ok', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', '_reposicao_compra_foto', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_candidatos', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspender', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_reativar', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_listar', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'reposicao_compra_suspensa_runs', ''),
+  ('reposicao_compra_suspensa', 'function', 'public', 'gerar_pedidos_sugeridos_ciclo', ''),
+  ('reposicao_compra_suspensa', 'table', 'public', 'reposicao_compra_suspensa', ''),
+  ('reposicao_compra_suspensa', 'table', 'public', 'reposicao_compra_suspensa_log', ''),
+  ('reposicao_compra_suspensa', 'index', 'public', 'uq_reposicao_compra_suspensa_ativa', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_reposicao_compra_suspensa_emp_lote', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_compra_suspensa_log_run', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'index', 'public', 'idx_compra_suspensa_log_emp_data', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'reposicao_compra_suspensa_sel', 'reposicao_compra_suspensa'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'compra_suspensa_log_sel', 'reposicao_compra_suspensa_log'),
+  ('reposicao_compra_suspensa', 'rls_policy', 'public', 'compra_suspensa_log_ins', 'reposicao_compra_suspensa_log'),
+  ('cobranca_regua_nome_cliente', 'function', 'public', 'cobranca_regua_hoje', ''),
+  ('fin_ciclo_coorte_maturacao', 'function', 'public', 'fin_ciclo_empresa_coorte_maturacao', ''),
+  ('fin_ciclo_coorte_maturacao', 'view', 'public', 'v_ciclo_empresa_coorte_maturacao', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_decidir', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_planejar', ''),
+  ('raio_x_inequivoco', 'function', 'public', 'raio_x_medicao', ''),
+  ('raio_x_inequivoco_definer', 'function', 'public', 'raio_x_inequivoco', ''),
+  ('clientes_import_servidor', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_semear', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_rearmar', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_lease_acquire', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_avancar', ''),
+  ('clientes_import_servidor', 'function', 'public', 'clientes_import_liberar_erro', ''),
+  ('clientes_import_servidor', 'table', 'public', 'clientes_import_rodada', ''),
+  ('clientes_import_servidor', 'index', 'public', 'clientes_import_rodada_uma_aberta', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'index', 'public', 'clientes_import_rodada_criado_em', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-continuacao-1min', ''),
+  ('clientes_import_servidor', 'cron_job', 'cron', 'clientes-import-semanal', ''),
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_select_staff', 'clientes_import_rodada'),
+  ('clientes_import_servidor', 'rls_policy', 'public', 'clientes_import_rodada_service_all', 'clientes_import_rodada')
 )
 SELECT
   e.migration,
@@ -5674,7 +5753,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 164.
+-- Funções redefinidas com corpo extraível: 167.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -5756,6 +5835,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'gerar_pedidos_sugeridos_ciclo', 30, '20261001023000_hoje_sp_familia_data_ciclo.sql', '722f2c1f8113e32ec38865428f6f10f2'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 31, '20261009194000_motor_unidades_concentrado_wp.sql', '878ee028877451245d7e7ebd07ce5dec'),
   ('public', 'gerar_pedidos_sugeridos_ciclo', 32, '20261010210000_motor_desconta_comprometido.sql', 'ab4672759ad766edcdede12d74ee14bd'),
+  ('public', 'gerar_pedidos_sugeridos_ciclo', 33, '20261101090000_reposicao_compra_suspensa.sql', '79b46dd418349e813121511a68054bf3'),
   ('public', 'envio_portal_lock_candidatos', 1, '20260430005120_ac9adac9-3575-4449-9703-2f88ba333c3f.sql', 'bcdd860ddf768655ce2a5d72fe0e02a7'),
   ('public', 'envio_portal_lock_candidatos', 2, '20260512101121_a96fa007-f688-4c3a-8cd9-43f9d88e5505.sql', 'fd19eefabbdaf5c42ec7d9b8e6a38e7e'),
   ('public', 'envio_portal_lock_candidatos', 3, '20260515010000_99661119-2843-4684-9dba-d21d55bf2ab9.sql', 'b116b7039ef4387546d2b86957b18c50'),
@@ -6266,8 +6346,11 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'vendas_sync_finish_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', '8ab082334242f7d7c14afcfdc20ffa75'),
   ('public', 'vendas_sync_release_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '34c7537d07424efc870fdf474ef180ee'),
   ('public', 'vendas_sync_release_fenced', 2, '20261015221700_vendas_sync_cursor_falha_honesta.sql', 'bf83aa86b229dc9a2018cb58852875aa'),
+  ('public', 'raio_x_decidir', 1, '20261016120000_raio_x_estoque_parado.sql', '967ee1d2de7393a8e7431275a7210ce8'),
+  ('public', 'raio_x_decidir', 2, '20261101120000_raio_x_inequivoco.sql', 'd07a7848b71e26fd4a21a994c7aeb291'),
   ('public', 'raio_x_medicao', 1, '20261016120000_raio_x_estoque_parado.sql', '2be8b35964978fd3370cbbf220e31415'),
   ('public', 'raio_x_medicao', 2, '20261031130000_raio_x_correcoes_pos_revisao.sql', '7769250e55f59465f904be43eef4d6dc'),
+  ('public', 'raio_x_medicao', 3, '20261101120000_raio_x_inequivoco.sql', '4495fe5e4f43c3329bb1b0d2b2dafbb3'),
   ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
@@ -6293,10 +6376,14 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'venda_repasse_candidatos', 2, '20261031233000_venda_repasse_substituicao.sql', '056472fcdec0ffb4214bca795678dbc4'),
   ('public', 'cliente_situacao_receita', 1, '20261029200343_cliente_situacao_receita.sql', '0b6f8d4dac462f14b3b417b355085c2f'),
   ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346'),
+  ('public', 'raio_x_planejar', 1, '20261031180000_raio_x_plano_execucao.sql', 'a2bef6dcf7ce233919472dfed0d022c5'),
+  ('public', 'raio_x_planejar', 2, '20261101120000_raio_x_inequivoco.sql', 'c04b148eaa1de55ab67b75e347eb6f35'),
   ('public', 'reposicao_ruptura_registrar_item', 1, '20261031200000_reposicao_ruptura_sensor.sql', 'bc9e9e6022775609c32ebccace1fe15a'),
   ('public', 'reposicao_ruptura_registrar_item', 2, '20261031200100_reposicao_ruptura_sensor_universo.sql', '01819182e6691e02c36e4c8cb30c71ab'),
   ('public', 'cobranca_regua_hoje', 1, '20261031210000_cobranca_fila.sql', 'f926bc3a846386db1c8e7eac0547d6a7'),
-  ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03')
+  ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03'),
+  ('public', 'raio_x_inequivoco', 1, '20261101120000_raio_x_inequivoco.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
+  ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

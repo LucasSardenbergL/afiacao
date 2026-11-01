@@ -24,7 +24,9 @@ export default function AdminAnalyticsSync() {
     addressSyncMutation,
     bulkOrdersSyncMutation,
     recentOrdersSyncMutation,
-    clientSyncProgress,
+    rodadasClientes,
+    importacaoClientesAberta,
+    rearmarRodadaClientesMutation,
     addressSyncProgress,
     janelasImportacao,
     importacaoEmAndamento,
@@ -85,8 +87,11 @@ export default function AdminAnalyticsSync() {
       <ImportClientesCard
         isRunning={isRunning}
         pending={bulkClientSyncMutation.isPending}
-        progress={clientSyncProgress}
+        aberta={importacaoClientesAberta}
+        rodadas={rodadasClientes}
         onImport={() => bulkClientSyncMutation.mutate()}
+        onRearmar={(id) => rearmarRodadaClientesMutation.mutate(id)}
+        rearmando={rearmarRodadaClientesMutation.isPending}
       />
 
       {/* Address Sync from Omie */}

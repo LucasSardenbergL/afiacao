@@ -9,17 +9,40 @@ vi.mock("@/components/execucoes/UltimaExecucao", () => ({
 import { ImportClientesCard, ImportEnderecosCard, ImportPedidosCard } from "../ImportCards";
 
 describe("ImportClientesCard", () => {
+  const base = { isRunning: false, pending: false, aberta: false, rodadas: [], onImport: () => {}, onRearmar: () => {}, rearmando: false };
+
   it("renderiza título e dispara onImport", () => {
     const onImport = vi.fn();
-    render(<ImportClientesCard isRunning={false} pending={false} progress={null} onImport={onImport} />);
+    render(<ImportClientesCard {...base} onImport={onImport} />);
     expect(screen.getByText("Importar Clientes (3 Contas Omie)")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Importar Todos/ }));
     expect(onImport).toHaveBeenCalledTimes(1);
   });
 
-  it("mostra o progresso quando presente", () => {
-    render(<ImportClientesCard isRunning pending progress="Conta 1/3 — página 2..." onImport={() => {}} />);
-    expect(screen.getByText("Conta 1/3 — página 2...")).toBeTruthy();
+  it("com rodada aberta no servidor: botão travado, aviso de que pode fechar a aba e o andamento", () => {
+    render(
+      <ImportClientesCard
+        {...base}
+        aberta
+        rodadas={[{ id: "r1", estado: "executando", descricao: "Importando — conta 2/3 (Oben), página 40/260.", podeRearmar: false }]}
+      />,
+    );
+    expect((screen.getByRole("button", { name: /Importar Todos/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("clientes-import-servidor").textContent).toBe("Importando no servidor — pode fechar esta aba.");
+    expect(screen.getByText("Importando — conta 2/3 (Oben), página 40/260.")).toBeTruthy();
+  });
+
+  it("rodada falhada oferece Retomar com o id certo", () => {
+    const onRearmar = vi.fn();
+    render(
+      <ImportClientesCard
+        {...base}
+        onRearmar={onRearmar}
+        rodadas={[{ id: "r9", estado: "falhou", descricao: "Falhou (erro repetido) em Oben, página 40.", podeRearmar: true }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Retomar/ }));
+    expect(onRearmar).toHaveBeenCalledWith("r9");
   });
 });
 

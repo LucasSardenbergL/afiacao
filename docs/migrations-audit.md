@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **742** custom migrations totais
-- **2430** objetos esperados (criados por estas migrations)
+- **747** custom migrations totais
+- **2467** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 914
-  - `rls_policy`: 510
-  - `index`: 328
-  - `table`: 222
-  - `cron_job`: 203
-  - `view`: 130
+  - `function`: 934
+  - `rls_policy`: 515
+  - `index`: 334
+  - `table`: 225
+  - `cron_job`: 205
+  - `view`: 131
   - `trigger`: 119
   - `enum_value`: 4
 
@@ -6070,11 +6070,73 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.tint_watchdog_fase5_check` | — |
 
+### `20261101090000_reposicao_compra_suspensa.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._reposicao_compra_fonte_ok` | — |
+| `function` | `public._reposicao_compra_foto` | — |
+| `function` | `public.reposicao_compra_suspensa_candidatos` | — |
+| `function` | `public.reposicao_compra_suspender` | — |
+| `function` | `public.reposicao_compra_reativar` | — |
+| `function` | `public.reposicao_compra_suspensa_listar` | — |
+| `function` | `public.reposicao_compra_suspensa_runs` | — |
+| `function` | `public.gerar_pedidos_sugeridos_ciclo` | — |
+| `table` | `public.reposicao_compra_suspensa` | — |
+| `table` | `public.reposicao_compra_suspensa_log` | — |
+| `index` | `public.uq_reposicao_compra_suspensa_ativa` | `reposicao_compra_suspensa` |
+| `index` | `public.idx_reposicao_compra_suspensa_emp_lote` | `reposicao_compra_suspensa` |
+| `index` | `public.idx_compra_suspensa_log_run` | `reposicao_compra_suspensa_log` |
+| `index` | `public.idx_compra_suspensa_log_emp_data` | `reposicao_compra_suspensa_log` |
+| `rls_policy` | `public.reposicao_compra_suspensa_sel` | `reposicao_compra_suspensa` |
+| `rls_policy` | `public.compra_suspensa_log_sel` | `reposicao_compra_suspensa_log` |
+| `rls_policy` | `public.compra_suspensa_log_ins` | `reposicao_compra_suspensa_log` |
+
 ### `20261101120000_cobranca_regua_nome_cliente.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.cobranca_regua_hoje` | — |
+
+### `20261101120000_fin_ciclo_coorte_maturacao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ciclo_empresa_coorte_maturacao` | — |
+| `view` | `public.v_ciclo_empresa_coorte_maturacao` | — |
+
+### `20261101120000_raio_x_inequivoco.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_inequivoco` | — |
+| `function` | `public.raio_x_decidir` | — |
+| `function` | `public.raio_x_planejar` | — |
+| `function` | `public.raio_x_medicao` | — |
+
+### `20261101190000_raio_x_inequivoco_definer.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_inequivoco` | — |
+
+### `20261101200000_clientes_import_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.clientes_import_semear_interno` | — |
+| `function` | `public.clientes_import_semear` | — |
+| `function` | `public.clientes_import_rearmar` | — |
+| `function` | `public.clientes_import_lease_acquire` | — |
+| `function` | `public.clientes_import_avancar` | — |
+| `function` | `public.clientes_import_liberar_erro` | — |
+| `table` | `public.clientes_import_rodada` | — |
+| `index` | `public.clientes_import_rodada_uma_aberta` | `clientes_import_rodada` |
+| `index` | `public.clientes_import_rodada_criado_em` | `clientes_import_rodada` |
+| `cron_job` | `cron.clientes-import-continuacao-1min` | — |
+| `cron_job` | `cron.clientes-import-semanal` | — |
+| `rls_policy` | `public.clientes_import_rodada_select_staff` | `clientes_import_rodada` |
+| `rls_policy` | `public.clientes_import_rodada_service_all` | `clientes_import_rodada` |
 
 ## Próximos passos por status
 

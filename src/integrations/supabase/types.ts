@@ -1036,6 +1036,87 @@ export type Database = {
         }
         Relationships: []
       }
+      clientes_import_rodada: {
+        Row: {
+          atualizado_em: string
+          concluida_em: string | null
+          conta_slug: string | null
+          contas_sem_credencial: Json
+          criado_em: string
+          erros: number
+          erros_consecutivos: number
+          falhas: Json
+          falhou_em: string | null
+          heartbeat_at: string | null
+          id: string
+          importados: number
+          invocacoes: number
+          invocacoes_sem_progresso: number
+          lease_token: string | null
+          motivo_falha: string | null
+          origem: string
+          pulados: number
+          running_since: string | null
+          solicitado_por: string | null
+          start_page: number
+          telefones_repostos: number
+          total_paginas: number
+          ultimo_erro: string | null
+        }
+        Insert: {
+          atualizado_em?: string
+          concluida_em?: string | null
+          conta_slug?: string | null
+          contas_sem_credencial?: Json
+          criado_em?: string
+          erros?: number
+          erros_consecutivos?: number
+          falhas?: Json
+          falhou_em?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          importados?: number
+          invocacoes?: number
+          invocacoes_sem_progresso?: number
+          lease_token?: string | null
+          motivo_falha?: string | null
+          origem: string
+          pulados?: number
+          running_since?: string | null
+          solicitado_por?: string | null
+          start_page?: number
+          telefones_repostos?: number
+          total_paginas?: number
+          ultimo_erro?: string | null
+        }
+        Update: {
+          atualizado_em?: string
+          concluida_em?: string | null
+          conta_slug?: string | null
+          contas_sem_credencial?: Json
+          criado_em?: string
+          erros?: number
+          erros_consecutivos?: number
+          falhas?: Json
+          falhou_em?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          importados?: number
+          invocacoes?: number
+          invocacoes_sem_progresso?: number
+          lease_token?: string | null
+          motivo_falha?: string | null
+          origem?: string
+          pulados?: number
+          running_since?: string | null
+          solicitado_por?: string | null
+          start_page?: number
+          telefones_repostos?: number
+          total_paginas?: number
+          ultimo_erro?: string | null
+        }
+        Relationships: []
+      }
       cmc_ledger: {
         Row: {
           account: string
@@ -22568,6 +22649,8 @@ export type Database = {
       }
       classificar_clientes_fornecedores: { Args: never; Returns: Json }
       classificar_sayerlack_grupo_default: { Args: never; Returns: number }
+      clientes_import_rearmar: { Args: { p_rodada_id: string }; Returns: Json }
+      clientes_import_semear: { Args: never; Returns: Json }
       cliente_situacao_receita: {
         Args: { p_customer_user_id: string }
         Returns: {

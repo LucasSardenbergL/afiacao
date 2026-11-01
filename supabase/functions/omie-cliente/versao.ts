@@ -38,8 +38,11 @@ export const respostaSonda = criarRespostaSonda("omie-cliente");
  * `v1.1-paginacao-eof-e-cursor` nomeia os dois fixes que esta fatia carrega até a edge: EOF por
  * página VAZIA (não mais página curta, #1889) e cursor comparado à PRIMEIRA linha da página
  * (#1901). Nenhum bundle anterior a esta fatia pode responder esta string.
+ *
+ * `v1.6-import-no-servidor` (2026-11-01): ação `continuar_import_clientes` (cron + lease da
+ * `clientes_import_rodada`) e `sync_all_clients` direto recusado com 410.
  */
-export const VERSAO = "v1.5-import-orcamento-tempo";
+export const VERSAO = "v1.6-import-no-servidor";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

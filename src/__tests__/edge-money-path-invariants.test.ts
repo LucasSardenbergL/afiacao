@@ -3334,37 +3334,41 @@ describe('guardrail money-path: erro Omie permanente não prende o sync_all_clie
     ).toMatch(/if \(contaAbandonada\) accErrors\+\+/);
   });
 
-  it('o caller acumula a falha ANTES de sair do laço e a tela não diz "concluída"', () => {
-    const corpo = removerComentarios(caller);
+  // Desde a migration 20261101200000 o "caller" do bloco não é mais um laço na aba: é a ação
+  // `continuar_import_clientes` (cron + lease da clientes_import_rodada). As MESMAS garantias moram
+  // agora na edge (planejarAvanco), na RPC de avanço e no estado que a tela deriva da rodada.
+  it('o caller no servidor acumula a falha, só conclui com contrato validado e a tela não diz "concluída" sobre parcial', () => {
+    const plano = removerComentarios(read('supabase/functions/omie-cliente/import-servidor.ts'));
+    const mig = removerComentarios(read('supabase/migrations/20261101200000_clientes_import_servidor.sql'));
+    const tela = removerComentarios(read('src/components/analyticsSync/rodadaClientes.ts'));
     expect(
-      corpo,
-      'REGRESSÃO: o caller parou de acumular as contas interrompidas — a edge pula a conta e ninguém fica sabendo',
-    ).toMatch(/data\?\.falha\?\.conta_abandonada === true/);
-    // A leitura tem de acontecer antes do `if (data?.done === true) break;`: a ÚLTIMA conta
-    // abandonada é justamente o caso em que a falha é a única coisa a reportar.
-    const posFalha = corpo.indexOf('data?.falha?.conta_abandonada');
-    const posBreakDone = corpo.indexOf('if (data?.done === true) break;');
-    expect(posFalha, 'sentinela: sumiu a leitura da falha no caller').toBeGreaterThan(-1);
-    expect(posBreakDone, 'sentinela: sumiu o fim-sentinela `done` do caller').toBeGreaterThan(-1);
+      plano,
+      'REGRESSÃO: o avanço da rodada parou de levar a falha da conta — a edge pula a conta e ninguém fica sabendo',
+    ).toMatch(/falha,\s*contas_sem_credencial: semCredencial/);
     expect(
-      posFalha,
-      'REGRESSÃO: o caller lê a falha DEPOIS de sair do laço — a falha da última conta se perde',
-    ).toBeLessThan(posBreakDone);
-    // Import parcial tem de LANÇAR, não resolver: `useMutationComRegistro` fecha o registro como
-    // 'sucesso' sempre que a Promise resolve, e aí o card <UltimaExecucao> mostra ✓ depois que o
-    // toast some — estado durável mentindo sobre uma conta que ficou fora (achado Codex P1).
+      mig,
+      'REGRESSÃO: a RPC de avanço parou de acumular as contas interrompidas',
+    ).toMatch(/coalesce\(\(p_falha->>'conta_abandonada'\)::boolean, false\)[\s\S]{0,120}r\.falhas \|\| jsonb_build_array/);
     expect(
-      corpo,
-      'REGRESSÃO: import com conta interrompida voltou a RESOLVER — acoes_execucoes grava sucesso e o card mostra ✓ sobre import parcial',
-    ).toMatch(/if \(falhas\.length > 0\)[\s\S]{0,400}throw new Error\(/);
+      plano,
+      'REGRESSÃO: "não sei" virou "acabou" — o fim tem de exigir done===true ou hasMore booleano',
+    ).toMatch(/typeof resultado\.hasMore !== "boolean"\)\s*\{\s*throw new Error\(/);
     expect(
-      corpo,
+      tela,
+      'REGRESSÃO: rodada concluída com conta interrompida/sem credencial/erros voltou a aparecer como "concluida"',
+    ).toMatch(/const pendente = r\.falhas\.length > 0 \|\| r\.contas_sem_credencial\.length > 0 \|\| r\.erros > 0;/);
+    expect(
+      mig,
       'REGRESSÃO: sumiu o guard de progresso do cursor — edge revertida volta a girar na mesma conta/página',
-    ).toMatch(/cursorAtual === cursorAnterior[\s\S]{0,200}throw new Error\(/);
+    ).toMatch(/invocacoes_sem_progresso \+ 1 >= 20 THEN 'sem_progresso'/);
     expect(
-      corpo,
+      mig,
       'REGRESSÃO: conta sem credencial voltou a sumir do relatório — o import sai "concluído" com um terço da base fora',
-    ).toMatch(/contas_sem_credencial/);
+    ).toMatch(/contas_sem_credencial = \(SELECT coalesce\(jsonb_agg\(DISTINCT x\)/);
+    expect(
+      removerComentarios(caller),
+      'REGRESSÃO: a tela voltou a conduzir o laço de páginas — recarregar a aba volta a matar o import no meio',
+    ).not.toMatch(/action: "sync_all_clients"/);
   });
 });
 
