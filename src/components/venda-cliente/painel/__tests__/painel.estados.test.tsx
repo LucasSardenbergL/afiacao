@@ -14,18 +14,23 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'master
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: vi.fn(), from: vi.fn() } }));
 
 let painelResposta: { data?: PainelVenda; isLoading: boolean; isError: boolean; error: unknown };
+let candidatosResposta: CandidatoRepasse[] = [];
 vi.mock('@/hooks/useVendaPainel', async (orig) => {
   const real = await orig<typeof import('@/hooks/useVendaPainel')>();
   return {
     ...real,
     useVendaPainel: () => ({ ...painelResposta, refetch: vi.fn() }),
     useAprovarRepasse: () => ({ mutate: vi.fn(), isPending: false }),
+    useRepasseCandidatos: () => ({ data: candidatosResposta, isLoading: false, isError: false, error: null, refetch: vi.fn() }),
+    useNomesCompradores: () => ({ data: new Map([['c1', 'Marcenaria Y'], ['c2', 'Marcenaria X']]) }),
+    useRevogarRepasse: () => ({ mutate: vi.fn(), isPending: false }),
   };
 });
 
 import VendaClientePainel from '@/pages/VendaClientePainel';
 import { TabelaAdocao } from '../TabelaAdocao';
 import { DialogAprovarRepasse } from '../DialogAprovarRepasse';
+import { AbaRepasses } from '../AbaRepasses';
 
 const vazio = { virou: 0, nao_virou: 0, nao_medivel: 0, pendentes: 0 };
 function linha(over: Partial<LinhaPainel> = {}): LinhaPainel {
@@ -129,7 +134,8 @@ describe('DialogAprovarRepasse', () => {
     comprador_id: 'c1', empresa: 'oben', omie_codigo_produto: 123, descricao: 'Seladora PU 3,6L',
     status_defasagem: 'defasado', motivo: null, abaixo_piso: false, ultimo_preco: 100,
     data_ultima_compra: '2026-09-01', preco_sugerido: 95, alta_custo_perc: 8, valor_anual_recuperavel: null,
-    n_pedidos: 5, cadencia_dias: 30, qtd_sugerida: 4, repasse_atual: null,
+    n_pedidos: 5, cadencia_dias: 30, qtd_sugerida: 4, situacao_compra: 'comprando', dias_sem_comprar: 50,
+    substituto: null, repasse_atual: null,
   };
 
   it('aprovar com preço abaixo do último bloqueia o botão', () => {
@@ -142,5 +148,68 @@ describe('DialogAprovarRepasse', () => {
     // pré-preenchido com o sugerido (95) < último (100)
     expect(screen.getByRole('button', { name: 'Aprovar' })).toBeDisabled();
     expect(screen.getByRole('alert')).toHaveTextContent(/acima do último preço/);
+  });
+});
+
+describe('AbaRepasses — situação de compra (20261031233000)', () => {
+  const base: CandidatoRepasse = {
+    comprador_id: 'c2', empresa: 'oben', omie_codigo_produto: 1, descricao: 'DILUENTE PU DF.4068LT',
+    status_defasagem: 'defasado', motivo: null, abaixo_piso: false, ultimo_preco: 100,
+    data_ultima_compra: '2026-10-20', preco_sugerido: 110, alta_custo_perc: 8, valor_anual_recuperavel: 500,
+    n_pedidos: 5, cadencia_dias: 14, qtd_sugerida: 4, situacao_compra: 'comprando', dias_sem_comprar: 11,
+    substituto: null, repasse_atual: null,
+  };
+  const substituido: CandidatoRepasse = {
+    ...base, comprador_id: 'c1', omie_codigo_produto: 2, descricao: 'DILUENTE PU DFA.4128LT',
+    preco_sugerido: null, valor_anual_recuperavel: null, situacao_compra: 'substituido', dias_sem_comprar: 144,
+    substituto: {
+      omie_codigo_produto: 3, codigo: 'PRD03666', descricao: 'DILUENTE PU DFA.4080LT',
+      primeira_compra: '2026-06-24', ultima_compra: '2026-10-27', dias_com_compra: 7,
+    },
+  };
+
+  function grupo(titulo: RegExp) {
+    return screen.getByRole('heading', { name: titulo }).closest('section') as HTMLElement;
+  }
+
+  it('quem segue comprando oferece Aprovar; o substituído mostra o substituto e NÃO oferece Aprovar', () => {
+    candidatosResposta = [base, substituido];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AbaRepasses disponivel hoje="2026-10-31" />
+      </QueryClientProvider>,
+    );
+    // detector: no grupo de quem compra o botão existe (o assert de ausência abaixo enxerga o botão)
+    expect(within(grupo(/Segue comprando/)).getByRole('button', { name: 'Aprovar' })).toBeTruthy();
+    const sub = grupo(/Substituído — não é repasse/);
+    expect(within(sub).queryByRole('button', { name: 'Aprovar' })).toBeNull();
+    expect(within(sub).getByText(/DFA\.4080LT desde 24\/06\/26 \(7 compras\)/)).toBeTruthy();
+    expect(within(sub).getByText('sem comprar há 144 d')).toBeTruthy();
+  });
+
+  it('sem cadência vai para o grupo próprio, não para "Segue comprando"', () => {
+    candidatosResposta = [base, { ...base, comprador_id: 'c1', omie_codigo_produto: 9, situacao_compra: null, dias_sem_comprar: 100 }];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AbaRepasses disponivel hoje="2026-10-31" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole('heading', { name: /Segue comprando \(1\)/ })).toBeTruthy();
+    expect(within(grupo(/Sem cadência/)).getByText('sem comprar há 100 d')).toBeTruthy();
+  });
+
+  it('substituído com repasse VIGENTE segue revogável', () => {
+    candidatosResposta = [{
+      ...substituido,
+      repasse_atual: { id: 'r1', preco_alvo: 120, valido_ate: '2026-12-31', revogado: false, vigente: true },
+    }];
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AbaRepasses disponivel hoje="2026-10-31" />
+      </QueryClientProvider>,
+    );
+    const sub = grupo(/Substituído — não é repasse/);
+    expect(within(sub).getByRole('button', { name: 'Revogar' })).toBeTruthy();
+    expect(within(sub).queryByRole('button', { name: 'Alterar' })).toBeNull();
   });
 });

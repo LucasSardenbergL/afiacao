@@ -123,6 +123,18 @@ export function rotuloSemana(semana: string): string {
 
 // ── Repasses (Task 6) ────────────────────────────────────────────────────────────────────────
 
+/** Situação do candidato na recompra: substituído não é repasse (vem sem preço sugerido). */
+export type SituacaoCompraRepasse = 'comprando' | 'parado' | 'substituido';
+
+interface SubstitutoRepasse {
+  omie_codigo_produto: number;
+  codigo: string | null;
+  descricao: string | null;
+  primeira_compra: string;
+  ultima_compra: string;
+  dias_com_compra: number;
+}
+
 export interface CandidatoRepasse {
   comprador_id: string;
   empresa: 'oben';
@@ -139,6 +151,11 @@ export interface CandidatoRepasse {
   n_pedidos: number | null;
   cadencia_dias: number | null;
   qtd_sugerida: number | null;
+  /** Ainda compra o SKU? NULL = sem cadência para afirmar (20261031233000). */
+  situacao_compra: SituacaoCompraRepasse | null;
+  dias_sem_comprar: number | null;
+  /** SKU de outra base, mesma família, que entrou depois que o candidato parou (só em 'substituido'). */
+  substituto: SubstitutoRepasse | null;
   repasse_atual: {
     id: string;
     preco_alvo: number;
