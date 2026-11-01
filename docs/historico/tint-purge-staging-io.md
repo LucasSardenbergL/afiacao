@@ -137,3 +137,37 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Veredito:** sem o fase5 em horário de loja, sem o badge e sem uma abertura do Radar, o Mini passa (1ª metade da série). Hoje ele reprova em toda janela com o fase5 (12h/18h UTC), com o Radar aberto, e cada vez mais com o badge. A volta para o small é decisão do founder. O argumento de urgência é o item 1: no Mini, o próprio sensor do fase5 está estourando o timeout.
 - **Lição: uma janela de 15 min não vê leitor de cadência longa.** O fase5 terminou 29 s antes do T0, e a janela concluiu "~310 MB fora do tint" sem ver os ~8 GB de 10 min antes. Quem acha a cadência longa é a duração por job em `cron.job_run_details` desde o restart; o delta curto só acha a curta.
 - **Lição: o mesmo SELECT do PostgREST tem dois planos.** Com literal, o embed desce pelo índice dos runs; no plano genérico, varre a tabela-mãe. O `EXPLAIN` que vale é `PREPARE` + `SET plan_cache_mode = force_generic_plan`, nunca só com o literal.
+
+### 2026-11-01 — leitor 1 corrigido: watchdog Fase 5 v5 em passada única
+
+- **Onde estavam os 8,1 GB** (`EXPLAIN (ANALYZE, BUFFERS)` do statement da v4 em prod, 04:38 UTC, 620 s):
+  - 4,7 GB no oráculo do S1. O planner achatou `v_tint_formula_canonica WHERE receita_valida` num filtro `EXISTS`/`NOT EXISTS` por fórmula, sobre as 493 mil ativas em ordem aleatória, com 481 mil heap fetches: o visibility map de `tint_formula_itens` estava em 49,6%, e o índice usado (272 MB) não cabe nos 256 MB de `shared_buffers`;
+  - 2,4 GB no `IN` do universo `k` (Index Scan da tabela inteira).
+- **v5** (`20261101050000`, prova `db/test-tint-fase5-watchdog-v5.sh`, no núcleo do CI):
+  - `k` por `GROUP BY … HAVING bool_or(motivo fase5)`;
+  - oráculo `receita_ok`/`v_ok` numa passada. É equivalente porque a canônica da chave é a de menor `rank_pref`, e `rank_pref <= 1` é exatamente `receita_valida`;
+  - config da função `enable_indexscan`/`enable_indexonlyscan = off` + `work_mem = 16MB`;
+  - guard em runtime: o md5 do `pg_get_viewdef` da view revisada. Se a view mudar, a função aborta sem marcador, e quem alarma é o dead-man.
+
+  | mesmo SELECT em prod | tempo | disco | temp |
+  |---|---|---|---|
+  | v4 | 620 s | 8,1 GB | ~200 MB |
+  | v5 sem a config | 220 s | 3,5 GB | 698 MB |
+  | v5 (com a config) | **18 s** | **1,14 GB** em seq scan (ring buffer, não expulsa o cache) | 365 MB |
+
+- **Equivalência nos dados de prod** (04:50–04:59 UTC, uma fotografia): oráculo 493.064 = 493.064 chaves, universo 463.995 = 463.995, zero diferença nos dois sentidos; S1 0 = 0.
+- **Prova:**
+  - roda a suíte da v4 contra a v5, mais uma fixture de 600 chaves com os 9 estados de corante. Os CTEs são extraídos do texto da migration e comparados com a view real;
+  - mede S1 nas três exposições (metadata, série, alerta), o limiar 999/1000 e o guard da view;
+  - 47 asserts; `--falsificar` com 39 sabotagens de conjunto exato, nos locales C e pt_BR.
+- **Codex** (gpt-6-astra max, 301 s): LIBERA COM AJUSTES, sem P0/P1. A equivalência foi re-derivada por ele. Os P2 foram aplicados antes do apply:
+  - P9 insensível a caixa;
+  - P10 com comando, cadência e unicidade;
+  - P11 `IS NOT TRUE` (`proconfig` NULL);
+  - S1 nas 3 exposições e no limiar;
+  - fingerprint da view na PRE e em runtime, helper v2 na PRE.
+- **Aplicada** pela sessão via `db:aplicar` (tentativa #838, sha `4ab0399c…`), depois de 2 ensaios em prod. Validada por psql-ro: corpo v5, config, definer, ACL e cron intactos.
+- **Em prod:** a 1ª execução sob a v5 (cron das 06:00 UTC de 01/11) levou **53,8 s**, contra 575,7 s às 00:00 e 581 s/timeout em 31/10. Os números saíram idênticos aos da última v4: universo 463.995, S1 0, bruto 12.682, S2 0, fantasmas 0, cor nova 0.
+- **Fica em aberto:** o pico de memória da chamada inteira no Mini. O `claude_ro` não vê a memória dos processos, e o que mediu foi ≤ 33 MB por nó no `EXPLAIN`. A duração vem na série `tint_watchdog_fase5_amostras.duracao_s`.
+- **Lição: medir o plano é o que separa o conserto do palpite.** O primeiro corte (só reescrever os CTEs) ainda lia 3,5 GB, porque o planner estimou 50 mil grupos onde havia 464 mil e voltou a percorrer a tabela pelo índice. Só o `EXPLAIN ANALYZE` da versão nova mostrou isso.
+- **Lição: a 1ª falsificação achou a fixture cega.** No pool, o corante de volume NULL só aparecia ao lado de outro corante ruim, e o `bool_and` ignora NULL. Então a sabotagem que tirava o `IS NOT NULL` ficava verde. Cada estado ruim precisa aparecer também ao lado de corantes só bons.

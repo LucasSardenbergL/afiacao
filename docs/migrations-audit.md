@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **732** custom migrations totais
-- **2376** objetos esperados (criados por estas migrations)
+- **741** custom migrations totais
+- **2429** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 896
-  - `rls_policy`: 496
-  - `index`: 319
-  - `table`: 214
-  - `cron_job`: 202
-  - `view`: 127
-  - `trigger`: 118
+  - `function`: 913
+  - `rls_policy`: 510
+  - `index`: 328
+  - `table`: 222
+  - `cron_job`: 203
+  - `view`: 130
+  - `trigger`: 119
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -5971,6 +5971,104 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261031191716_fin_contas_correntes_saldo_atual_sem_default.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261031200000_reposicao_ruptura_sensor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public._reposicao_ruptura_saldo_oben` | — |
+| `function` | `public.reposicao_ruptura_registrar_item` | — |
+| `function` | `public.reposicao_ruptura_prateleira_registrar` | — |
+| `view` | `public.v_reposicao_ruptura_pedidos_semana` | — |
+| `view` | `public.v_reposicao_ruptura_prateleira_semana` | — |
+| `table` | `public.reposicao_ruptura_pedido_itens` | — |
+| `table` | `public.reposicao_ruptura_prateleira_diaria` | — |
+| `index` | `public.reposicao_ruptura_pedido_itens_chave_uq` | `reposicao_ruptura_pedido_itens` |
+| `index` | `public.idx_reposicao_ruptura_pedido_itens_registrado` | `reposicao_ruptura_pedido_itens` |
+| `trigger` | `public.trg_reposicao_ruptura_registrar_item` | `order_items` |
+| `cron_job` | `cron.reposicao-ruptura-prateleira-diario` | — |
+| `rls_policy` | `public.reposicao_ruptura_pedido_itens_select_staff` | `reposicao_ruptura_pedido_itens` |
+| `rls_policy` | `public.reposicao_ruptura_prateleira_select_staff` | `reposicao_ruptura_prateleira_diaria` |
+
+### `20261031200000_venda_prazo_decisao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_prazo_aviso` | — |
+| `function` | `public.venda_prazo_decisao_registrar` | — |
+| `table` | `public.venda_prazo_decisao` | — |
+| `index` | `public.idx_venda_prazo_decisao_cliente` | `venda_prazo_decisao` |
+| `rls_policy` | `public.venda_prazo_decisao_select` | `venda_prazo_decisao` |
+| `rls_policy` | `public.venda_prazo_decisao_service_all` | `venda_prazo_decisao` |
+
+### `20261031200100_reposicao_ruptura_sensor_universo.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.reposicao_ruptura_registrar_item` | — |
+| `view` | `public.v_reposicao_ruptura_pedidos_semana` | — |
+
+### `20261031210000_cobranca_fila.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cobranca_dona` | — |
+| `function` | `public.cobranca_pode_agir` | — |
+| `function` | `public.cobranca_quitacao_ok` | — |
+| `function` | `public.cobranca_fila` | — |
+| `function` | `public.cobranca_caso_registrar` | — |
+| `function` | `public.cobranca_regua_hoje` | — |
+| `table` | `public.cobranca_coorte` | — |
+| `table` | `public.cobranca_coorte_titulo` | — |
+| `table` | `public.cobranca_caso` | — |
+| `table` | `public.cobranca_promessa` | — |
+| `table` | `public.cobranca_evento` | — |
+| `index` | `public.idx_cobranca_coorte_titulo_cliente` | `cobranca_coorte_titulo` |
+| `index` | `public.idx_cobranca_caso_aberto_unico` | `cobranca_caso` |
+| `index` | `public.idx_cobranca_caso_dona` | `cobranca_caso` |
+| `index` | `public.idx_cobranca_promessa_caso` | `cobranca_promessa` |
+| `index` | `public.idx_cobranca_evento_caso` | `cobranca_evento` |
+| `rls_policy` | `public.cobranca_coorte_select_gestao` | `cobranca_coorte` |
+| `rls_policy` | `public.cobranca_coorte_titulo_select_gestao` | `cobranca_coorte_titulo` |
+| `rls_policy` | `public.cobranca_coorte_service_all` | `cobranca_coorte` |
+| `rls_policy` | `public.cobranca_coorte_titulo_service_all` | `cobranca_coorte_titulo` |
+| `rls_policy` | `public.cobranca_caso_select` | `cobranca_caso` |
+| `rls_policy` | `public.cobranca_caso_service_all` | `cobranca_caso` |
+| `rls_policy` | `public.cobranca_promessa_select` | `cobranca_promessa` |
+| `rls_policy` | `public.cobranca_promessa_service_all` | `cobranca_promessa` |
+| `rls_policy` | `public.cobranca_evento_select` | `cobranca_evento` |
+| `rls_policy` | `public.cobranca_evento_service_all` | `cobranca_evento` |
+
+### `20261031210000_fin_projecao_snapshots_estoque.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fin_projecao_snapshots_serie_estoque` | `fin_projecao_snapshots` |
+
+### `20261031220000_fin_funding_cet_oben.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_ciclo_custo_capital` | — |
+
+### `20261031233000_venda_repasse_substituicao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.venda_repasse_candidatos` | — |
+
+### `20261101014150_descricao_segue_catalogo_omie.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.atualizar_parametros_numericos_skus` | — |
+| `function` | `public.atualizar_descricao_sku_parametros` | — |
+
+### `20261101050000_tint_watchdog_fase5_v5_passada_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_fase5_check` | — |
 
 ## Próximos passos por status
 
