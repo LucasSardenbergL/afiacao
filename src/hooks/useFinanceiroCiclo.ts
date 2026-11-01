@@ -287,12 +287,17 @@ export function useReguaCiclo() {
           serie.push({ dia, valor, coberturaOk: r.estoque_cobertura_ok === true });
         }
         const sync = await supabase.from('inventory_position').select('synced_at')
-          .eq('account', ESTOQUE_ACCOUNT[c]).order('synced_at', { ascending: false }).range(0, 0);
+          .eq('account', ESTOQUE_ACCOUNT[c]).order('synced_at', { ascending: false }).limit(1);
         if (sync.error) throw new Error(`inventory_position/${c}: ${sync.error.message}`);
         const syncEm = sync.data?.[0]?.synced_at;
-        const giro = await supabase.rpc('fin_estoque_giro_valor', { p_company: c });
-        if (giro.error) throw new Error(`fin_estoque_giro_valor/${c}: ${giro.error.message}`);
-        const g = giro.data?.[0];
+        // Set-returning (1 linha agregada por empresa): paginado mesmo assim — a capa de 1.000 do PostgREST vale
+        // para .rpc() e o gate exige o canônico (fetchAllPages LANÇA com telemetria na página perdida).
+        const giroLinhas = await fetchAllPages(
+          (de, ate) => supabase.rpc('fin_estoque_giro_valor', { p_company: c })
+            .order('valor_giro', { ascending: true }).range(de, ate),
+          `fin_estoque_giro_valor/${c}`,
+        ).catch((e: unknown) => { throw new Error(`fin_estoque_giro_valor/${c}: ${e instanceof Error ? e.message : String(e)}`); });
+        const g = giroLinhas[0];
         out[c] = {
           cmvTtm: cmvTtmFechado(linhasDre, hoje),
           estoqueSerie: serie,
