@@ -196,3 +196,10 @@ SELECT count(*) FILTER (WHERE n BETWEEN 8 AND 9) AS sem_ddd, count(*) FILTER (WH
        count(*) FILTER (WHERE n = 0) AS sem_phone FROM p;
 -- régua (logado como staff): SELECT count(*) FILTER (WHERE telefone IS NOT NULL) FROM public.cobranca_regua_hoje('oben');
 ```
+
+## Fecho dos residuais do QA (2026-11-01, ~14:45Z) — parser e nome na régua em prod
+
+- **#3489** (parser lê o catálogo real do Omie) mergeado 14:30Z. Só frontend: vai ao ar no próximo 🖱️ Publish; a prova é por bytes (`RE_A_VISTA_MAIS` no chunk de `prazo-sugestao`).
+- **#3490** (régua com `nome_resolvido`) mergeado 14:38Z; migration `20261101120000_cobranca_regua_nome_cliente.sql` **aplicada pelo envelope** (`bun run db:aplicar`, recibo **#841**), com OK explícito do founder. Pré-voo psql-ro antes do apply: função no estado anterior (âncora do PRE presente, sem `nome_resolvido`), ACL já fechado, colunas das duas fontes presentes.
+- **Segunda testemunha (psql-ro, outra conexão, pós-commit):** `pg_get_functiondef` contém `nome_resolvido` e `omie_clientes_nao_vinculados`; `has_function_privilege` = false para `anon` e `PUBLIC`, true para `authenticated`/`service_role`; `prosecdef=true` com `search_path=""`. Taxa de resolução replicando o `coalesce` da função sobre `fin_contas_receber` da Oben: **785 clientes com título, 785 com nome, 0 sem** — o "cliente 8689697854" do QA deixa de existir na régua.
+- Não medido aqui: adoção na tela (SW troca de build só no clique; régua lê a RPC ao montar, então o nome aparece na próxima abertura de `/cobranca`, sem Publish). Telefone/WhatsApp depende do #3488 (edge no ar; reposição por clique de staff em `/admin/analytics-sync` pendente na sessão-irmã).
