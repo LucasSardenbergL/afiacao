@@ -2,16 +2,6 @@
   "formato": "deriva-corpo-baseline/1",
   "entradas": [
     {
-      "funcao": "detectar_skus_sem_grupo",
-      "identidade": "text",
-      "classe": "EDICAO_MANUAL",
-      "esperadaNoAceite": "20260606140000_detectar_skus_sem_grupo_self_heal.sql",
-      "motivo": "prod difere do repo só no literal da justificativa gravada em eventos_outlier ('…não precisa de grupo.' × '…de grupo de produção.'); os outros 346 tokens são iguais. Em prod desde ≤2026-06-19 (schema-snapshot do Lovable). Aceita pelo founder em 2026-09-26.",
-      "md5": "4147eeda24634ae0d5bb97a18452baf5",
-      "md5Tokens": "d7fc1232e8d9866c39a70fe5fe94e3c2",
-      "desde": "2026-09-26"
-    },
-    {
       "funcao": "despinar_parametro",
       "identidade": "text,text",
       "classe": "PATCH",
