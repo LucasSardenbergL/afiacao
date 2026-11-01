@@ -93,7 +93,20 @@ export function proximosEstados(atual: EstadoCobranca): EstadoCobranca[] {
   return todos.filter((e) => e !== atual);
 }
 
-/** Agrupa por faixa na ordem de ataque (recentes antes de envelhecer); dentro, saldo DESC (a RPC já ordena). */
+/** Ordem de ataque: faixa (recentes primeiro; sem faixa por último), saldo DESC, código. A leitura pagina por
+ *  código (ordem estável do PostgREST), então a ordem de tela é refeita AQUI, nunca presumida da RPC. */
+export function ordenarFila(itens: FilaItem[]): FilaItem[] {
+  const pos = (f: FaixaCobranca | null) => (f === null ? ORDEM_FAIXA.length : ORDEM_FAIXA.indexOf(f));
+  return [...itens].sort((a, b) => pos(a.faixa) - pos(b.faixa) || (b.saldoVencido ?? -1) - (a.saldoVencido ?? -1) || a.omieCodigoCliente - b.omieCodigoCliente);
+}
+
+/** Régua: D+7 antes de D+1 antes de D−2 (o mais atrasado primeiro), depois saldo DESC. */
+export function ordenarRegua(itens: ReguaItem[]): ReguaItem[] {
+  const pos: Record<ReguaItem['marco'], number> = { 'D+7': 0, 'D+1': 1, 'D-2': 2 };
+  return [...itens].sort((a, b) => pos[a.marco] - pos[b.marco] || (b.saldo ?? -1) - (a.saldo ?? -1) || a.omieCodigoLancamento - b.omieCodigoLancamento);
+}
+
+/** Agrupa por faixa na ordem de ataque (recentes antes de envelhecer); dentro, mantém a ordem recebida (ver `ordenarFila`). */
 export function agruparPorFaixa(itens: FilaItem[]): Array<{ faixa: FaixaCobranca | 'sem_vencido'; itens: FilaItem[]; saldo: number | null }> {
   const grupos = new Map<FaixaCobranca | 'sem_vencido', FilaItem[]>();
   for (const it of itens) {
