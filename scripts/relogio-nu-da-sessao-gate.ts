@@ -170,8 +170,6 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
     motivo: 'o dia é só chave de agrupamento de analytics_outbox_perda, que não tem leitor; cron 04:20 UTC' },
   { alvo: 'detectar_outliers_empresa(text)', trecho: 'current_date', n: 2, veredito: 'latente',
     motivo: 'só o cron detectar-outliers-diario, 07:30 UTC (04:30 BRT): o mesmo dia nos dois fusos' },
-  { alvo: 'detectar_skus_sem_grupo(text)', trecho: 'current_date', n: 1, veredito: 'latente',
-    motivo: 'só o cron detectar-outliers-diario, 07:30 UTC (04:30 BRT): o mesmo dia nos dois fusos' },
   { alvo: 'fin_audit_trigger()', trecho: 'current_date', n: 3, veredito: 'latente',
     motivo: 'fin_audit_log.period_ref não tem leitor (useAuditTrail ordena por changed_at; só um índice a usa)' },
   { alvo: 'reposicao_param_fila_sensor(text)', trecho: 'current_date', n: 5, veredito: 'utc-consistente',
