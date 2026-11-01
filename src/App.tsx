@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { ThemeProvider } from "next-themes";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { initAnalytics } from "@/lib/analytics";
+import { MedidorVitals } from "@/components/shell/MedidorVitals";
 // Sistema de toast unificado em Sonner (Radix Toaster legado e wrapper useToast removidos).
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -215,6 +216,7 @@ const App = () => {
       {/* v7_startTransition: navegação entre rotas lazy mantém a tela anterior
           visível durante o load do chunk (sem flash do Suspense global). */}
       <BrowserRouter future={{ v7_startTransition: true }}>
+        <MedidorVitals />
         <AuthProvider>
           <ImpersonationProvider>
           <CompanyProvider>
