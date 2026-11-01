@@ -1,7 +1,7 @@
 -- Raio-X do estoque parado: LIQUIDAR SÓ O INEQUÍVOCO (Frente C da leva Oben PME/PMR; decisão do founder 2026-10-31:
 -- "agora, só o inequívoco"). Spec: docs/superpowers/specs/2026-10-31-oben-pme-pmr-plano-design.md §4 (Frente C) +
 -- docs/historico/raio-x-inequivoco.md (desenho pós-Codex: 6 P0 absorvidos).
--- Money-path. ⚠️ NÃO auto-aplica (nome custom) — aplicar via lovable-db-operator (SQL Editor). Depende das migrations
+-- Money-path. ⚠️ NÃO auto-aplica (nome custom) — aplicar via `bun run db:aplicar` (a transação é do executor: este arquivo NÃO leva BEGIN/COMMIT; para o SQL Editor, envolver em BEGIN; … COMMIT;). Depende das migrations
 -- 20261016120000 (raio_x_decisao/decidir), 20261031130000 (medicao v2) e 20261031180000 (planejar) JÁ aplicadas.
 -- Prova PG17: db/test-raio-x-inequivoco.sh (fixtures com UM impedimento cada + falsificações).
 --
@@ -29,7 +29,6 @@
 -- Não entregue aqui (registrado como follow-up): "caixa líquido RECEBIDO" por SKU (título → baixa) — a medição segue
 -- sendo estoque reduzido a custo + receita faturada, rotulada como tal.
 
-BEGIN;
 
 -- ── 1) raio_x_inequivoco ─────────────────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.raio_x_inequivoco(p_empresa text, p_sku bigint DEFAULT NULL)
@@ -651,4 +650,3 @@ BEGIN
 END
 $pos$;
 
-COMMIT;
