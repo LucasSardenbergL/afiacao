@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **740** custom migrations totais
-- **2428** objetos esperados (criados por estas migrations)
+- **741** custom migrations totais
+- **2429** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 913
   - `rls_policy`: 510
-  - `index`: 327
+  - `index`: 328
   - `table`: 222
   - `cron_job`: 203
   - `view`: 130
@@ -6038,6 +6038,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.cobranca_promessa_service_all` | `cobranca_promessa` |
 | `rls_policy` | `public.cobranca_evento_select` | `cobranca_evento` |
 | `rls_policy` | `public.cobranca_evento_service_all` | `cobranca_evento` |
+
+### `20261031210000_fin_projecao_snapshots_estoque.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fin_projecao_snapshots_serie_estoque` | `fin_projecao_snapshots` |
 
 ### `20261031220000_fin_funding_cet_oben.sql`
 

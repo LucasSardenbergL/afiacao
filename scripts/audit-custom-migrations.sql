@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 740
+-- Total de custom migrations: 741
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -801,6 +801,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031200000', 'venda_prazo_decisao', '20261031200000_venda_prazo_decisao.sql'),
   ('20261031200100', 'reposicao_ruptura_sensor_universo', '20261031200100_reposicao_ruptura_sensor_universo.sql'),
   ('20261031210000', 'cobranca_fila', '20261031210000_cobranca_fila.sql'),
+  ('20261031210000', 'fin_projecao_snapshots_estoque', '20261031210000_fin_projecao_snapshots_estoque.sql'),
   ('20261031220000', 'fin_funding_cet_oben', '20261031220000_fin_funding_cet_oben.sql'),
   ('20261031233000', 'venda_repasse_substituicao', '20261031233000_venda_repasse_substituicao.sql'),
   ('20261101014150', 'descricao_segue_catalogo_omie', '20261101014150_descricao_segue_catalogo_omie.sql'),
@@ -3194,6 +3195,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_promessa_service_all', 'cobranca_promessa'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_select', 'cobranca_evento'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_service_all', 'cobranca_evento'),
+  ('fin_projecao_snapshots_estoque', 'index', 'public', 'idx_fin_projecao_snapshots_serie_estoque', 'fin_projecao_snapshots'),
   ('fin_funding_cet_oben', 'function', 'public', 'fin_ciclo_custo_capital', ''),
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
@@ -5636,6 +5638,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_promessa_service_all', 'cobranca_promessa'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_select', 'cobranca_evento'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_service_all', 'cobranca_evento'),
+  ('fin_projecao_snapshots_estoque', 'index', 'public', 'idx_fin_projecao_snapshots_serie_estoque', 'fin_projecao_snapshots'),
   ('fin_funding_cet_oben', 'function', 'public', 'fin_ciclo_custo_capital', ''),
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
