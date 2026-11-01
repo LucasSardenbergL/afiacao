@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-10-31T23:26:16.485Z",
-  "sourceHead": "3a47af83e319ff34d6924aa316373b8040a21190",
+  "medidoEm": "2026-11-01T01:11:10.262Z",
+  "sourceHead": "276745b516428aa20d92bfc5441bd752f28cb467",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -12,9 +12,9 @@
     "funcoes": {
       "script": "authz:funcoes:prod",
       "exit": 0,
-      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 70 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
-      "denominador": "🔎 authz:funcoes:prod — 71 definição(ões) lida(s) para 70 chave(s) da allowlist.",
-      "contratoFingerprint": "cb3074cfffad0da2f416a21e13fba64a3a61e0db39f6a4f14987a958725835ee",
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 71 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 72 definição(ões) lida(s) para 71 chave(s) da allowlist.",
+      "contratoFingerprint": "f5102f739fe66c4e4bbc12e66ff56d048f37e08e48d76ff789dfc650e31133ca",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
       "achados": []
     },
@@ -57,29 +57,65 @@
           "id": "22239733bf533413",
           "linha": "❌ [LACUNA_GRUPO_MUDOU] fin_*: o grupo CRESCEU — 43 tabela(s) em prod contra 41 declarada(s) (medido em 2026-08-28). 5 curada(s), 38 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: fin_alertas, fin_antecipacoes, fin_audit_log, fin_balanco_inputs, fin_categoria_dre_mapping, fin_categorias, fin_conciliacao, fin_confiabilidade, fin_config_cashflow, fin_contas_correntes, fin_contas_pagar, fin_contas_receber, fin_custo_rateio, fin_divida_completude, fin_divida_parcelas, fin_dividas, fin_dre_custo_tipo, fin_dre_snapshots, fin_eliminacoes_intercompany, fin_eliminacoes_log, fin_estoque_valor, fin_eventos_eventuais, fin_eventos_recorrentes, fin_fechamento_log, fin_fechamentos, fin_forecast, fin_funding_inputs, fin_ic_contrapartes, fin_ic_matches, fin_ic_reconcile_rodadas, fin_kpi_tributario, fin_movimentacoes, fin_orcamento, fin_period_overrides, fin_permissoes, fin_projecao_snapshots, fin_regime_inputs, fin_sync_checkpoint, fin_sync_cursor, fin_sync_kick_retry, fin_sync_lease, fin_sync_log, fin_valor_inputs.",
           "primeiraVez": "2026-10-28",
-          "ultimaVez": "2026-10-31"
+          "ultimaVez": "2026-11-01"
         }
       ]
     },
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 2 divergência(s) em prod (2 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 445 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@58672783c (fetch ok) · prod 2026-10-31 23:26:49.84855Z",
+      "resumo": "deriva-corpo — 8 divergência(s) em prod (8 AUSENTE) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 453 identidade(s) conferida(s) · 21 aposentada(s) · ref origin/main@0127ed425 (fetch ok) · prod 2026-11-01 01:11:38.313708Z",
       "contratoFingerprint": "7c865486f5a02f512f0c779182cb1528231692113e5584f8783d393c0ba15f16",
       "auditorFingerprint": "5cb88de8b4c45a87c2c65bead6396dbd102f951d86669e034f47d6f3b15945c4",
       "achados": [
         {
-          "id": "ae098fdad9e2d261",
-          "linha": "❌ [SEM_PAR] detectar_skus_sem_grupo(text): corpo que nenhuma das 3 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20260606140000_detectar_skus_sem_grupo_self_heal.sql (xmin 13360708)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
+          "id": "4d298ad86076de8c",
+          "linha": "❌ [AUSENTE] venda_prazo_aviso(text,bigint): viva no repo (último CREATE: 20261031200000_venda_prazo_decisao.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
         },
         {
-          "id": "a5d8d49ea2911099",
-          "linha": "❌ [SEM_PAR] venda_repasse_candidatos(): corpo que nenhuma das 1 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261020233000_venda_cliente_repasse.sql (xmin 13357586)",
-          "primeiraVez": "2026-10-31",
-          "ultimaVez": "2026-10-31"
+          "id": "b52f8f6b15982e55",
+          "linha": "❌ [AUSENTE] venda_prazo_decisao_registrar(jsonb): viva no repo (último CREATE: 20261031200000_venda_prazo_decisao.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "966e499f3fd14d7e",
+          "linha": "❌ [AUSENTE] cobranca_dona(text,bigint): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "1c6ba73f6fb69808",
+          "linha": "❌ [AUSENTE] cobranca_pode_agir(uuid,text,bigint): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "a3166e1d9a76e61f",
+          "linha": "❌ [AUSENTE] cobranca_quitacao_ok(text,bigint): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "c2e48f5fafd64659",
+          "linha": "❌ [AUSENTE] cobranca_fila(text): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "b1f395400ea948ca",
+          "linha": "❌ [AUSENTE] cobranca_caso_registrar(jsonb): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
+        },
+        {
+          "id": "4790bb95cdd13885",
+          "linha": "❌ [AUSENTE] cobranca_regua_hoje(text): viva no repo (último CREATE: 20261031210000_cobranca_fila.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-01",
+          "ultimaVez": "2026-11-01"
         }
       ]
     }

@@ -56,7 +56,10 @@ class IntersectionObserverFalso {
 
 import { CicloTab } from '@/components/financeiro/cashflow/ciclo/CicloTab';
 
-const ABAIXO_DA_DOBRA = ['fin_ciclo_cp_titulos', 'fin_ciclo_fornecedor_resumo', 'fin_ciclo_giro_sku'];
+const ABAIXO_DA_DOBRA = [
+  'fin_ciclo_cp_titulos', 'fin_ciclo_fornecedor_resumo', 'fin_ciclo_giro_sku',
+  'v_reposicao_ruptura_pedidos_semana', 'v_reposicao_ruptura_prateleira_semana',
+];
 
 async function tick() { await act(async () => { await new Promise((r) => setTimeout(r, 0)); }); }
 

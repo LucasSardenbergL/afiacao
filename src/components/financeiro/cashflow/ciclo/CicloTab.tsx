@@ -18,6 +18,7 @@ import { CicloClienteDrill } from './CicloClienteDrill';
 import { CicloDescontoPainel } from './CicloDescontoPainel';
 import { CicloGiroEstoque, type FiltroAcaoGiro } from './CicloGiroEstoque';
 import { CicloFornecedoresSecao } from './CicloFornecedoresSecao';
+import { CicloRupturaSensor } from './CicloRupturaSensor';
 import { CargaAoAparecer } from './CargaAoAparecer';
 import { useCicloCpEmpresa } from '@/hooks/useFinanceiroCicloFornecedor';
 
@@ -107,6 +108,12 @@ export function CicloTab() {
         />
       </CargaAoAparecer>
 
+      {/* Sensor de ruptura: só a Oben tem (pedidos nascem no Omie; trigger na importação). Abaixo da dobra. */}
+      {tendencias.includes('oben') && (
+        <CargaAoAparecer rotulo="Sensor de ruptura">
+          <CicloRupturaSensor hoje={hoje} />
+        </CargaAoAparecer>
+      )}
       {/* Frente B (PR2): a fila de cobrança com estado e dona vive na rota /cobranca (módulo próprio, staff);
           aqui só o atalho — a aba Ciclo segue sendo a leitura, a cobrança é a ação. */}
       <Button asChild variant="outline" size="sm" className="w-fit">

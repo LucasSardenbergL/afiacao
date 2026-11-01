@@ -17,6 +17,7 @@ vi.mock('@/hooks/useFinanceiroCiclo', () => ({
   useReceitaDiariaTtm: () => receitaMock(),
   useCicloTitulosCliente: () => titulosMock(),
   useCicloGiroSku: () => ({ data: [], isLoading: false, error: null }),
+  useRupturaSensor: () => ({ data: { pedidos: [], prateleira: [] }, isLoading: false, error: null }),
   useCicloCustoCapital: () => custoMock(),
 }));
 vi.mock('@/hooks/useFinanceiroCicloFornecedor', () => ({
