@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **739** custom migrations totais
-- **2427** objetos esperados (criados por estas migrations)
+- **741** custom migrations totais
+- **2429** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 912
+  - `function`: 913
   - `rls_policy`: 510
-  - `index`: 327
+  - `index`: 328
   - `table`: 222
   - `cron_job`: 203
   - `view`: 130
@@ -6039,6 +6039,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.cobranca_evento_select` | `cobranca_evento` |
 | `rls_policy` | `public.cobranca_evento_service_all` | `cobranca_evento` |
 
+### `20261031210000_fin_projecao_snapshots_estoque.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_fin_projecao_snapshots_serie_estoque` | `fin_projecao_snapshots` |
+
 ### `20261031220000_fin_funding_cet_oben.sql`
 
 | Tipo | Objeto | Parent |
@@ -6057,6 +6063,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.atualizar_parametros_numericos_skus` | — |
 | `function` | `public.atualizar_descricao_sku_parametros` | — |
+
+### `20261101050000_tint_watchdog_fase5_v5_passada_unica.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_fase5_check` | — |
 
 ## Próximos passos por status
 

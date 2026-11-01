@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 739
+-- Total de custom migrations: 741
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -801,9 +801,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261031200000', 'venda_prazo_decisao', '20261031200000_venda_prazo_decisao.sql'),
   ('20261031200100', 'reposicao_ruptura_sensor_universo', '20261031200100_reposicao_ruptura_sensor_universo.sql'),
   ('20261031210000', 'cobranca_fila', '20261031210000_cobranca_fila.sql'),
+  ('20261031210000', 'fin_projecao_snapshots_estoque', '20261031210000_fin_projecao_snapshots_estoque.sql'),
   ('20261031220000', 'fin_funding_cet_oben', '20261031220000_fin_funding_cet_oben.sql'),
   ('20261031233000', 'venda_repasse_substituicao', '20261031233000_venda_repasse_substituicao.sql'),
-  ('20261101014150', 'descricao_segue_catalogo_omie', '20261101014150_descricao_segue_catalogo_omie.sql')
+  ('20261101014150', 'descricao_segue_catalogo_omie', '20261101014150_descricao_segue_catalogo_omie.sql'),
+  ('20261101050000', 'tint_watchdog_fase5_v5_passada_unica', '20261101050000_tint_watchdog_fase5_v5_passada_unica.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3193,10 +3195,12 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_promessa_service_all', 'cobranca_promessa'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_select', 'cobranca_evento'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_service_all', 'cobranca_evento'),
+  ('fin_projecao_snapshots_estoque', 'index', 'public', 'idx_fin_projecao_snapshots_serie_estoque', 'fin_projecao_snapshots'),
   ('fin_funding_cet_oben', 'function', 'public', 'fin_ciclo_custo_capital', ''),
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', '')
+  ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
+  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5634,10 +5638,12 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_promessa_service_all', 'cobranca_promessa'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_select', 'cobranca_evento'),
   ('cobranca_fila', 'rls_policy', 'public', 'cobranca_evento_service_all', 'cobranca_evento'),
+  ('fin_projecao_snapshots_estoque', 'index', 'public', 'idx_fin_projecao_snapshots_serie_estoque', 'fin_projecao_snapshots'),
   ('fin_funding_cet_oben', 'function', 'public', 'fin_ciclo_custo_capital', ''),
   ('venda_repasse_substituicao', 'function', 'public', 'venda_repasse_candidatos', ''),
   ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_parametros_numericos_skus', ''),
-  ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', '')
+  ('descricao_segue_catalogo_omie', 'function', 'public', 'atualizar_descricao_sku_parametros', ''),
+  ('tint_watchdog_fase5_v5_passada_unica', 'function', 'public', 'tint_watchdog_fase5_check', '')
 )
 SELECT
   e.migration,
@@ -5932,7 +5938,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'atualizar_parametros_numericos_skus', 4, '20260712140000_param_auto_log_valor_barrado_fusivel.sql', '7b1730f2e9c2af673b12de72bf0f4b28'),
   ('public', 'atualizar_parametros_numericos_skus', 5, '20260926001425_param_auto_em_transito_conta_disparado_simulado.sql', '2e97357542270b2e5c44d9fb46d09bff'),
   ('public', 'atualizar_parametros_numericos_skus', 6, '20261001023000_hoje_sp_familia_data_ciclo.sql', '9bc12d1b4ba22fadc2f1e7ddb2ad3e3e'),
-  ('public', 'atualizar_parametros_numericos_skus', 7, '20261101014150_descricao_segue_catalogo_omie.sql', 'f3b9138b904290b17b8d7f8277813f56'),
+  ('public', 'atualizar_parametros_numericos_skus', 7, '20261101014150_descricao_segue_catalogo_omie.sql', 'dd11a5ed2d7179ac0296a360b27598fe'),
   ('public', 'registrar_contato_rota', 1, '20260531170000_route_contact_log_escrita.sql', '46a7d7aefdeb438671ca1e2f3737b82f'),
   ('public', 'registrar_contato_rota', 2, '20260718170000_fu7_conserta_callers_orfaos.sql', '1f636cd3c55102641b965a09008ba39a'),
   ('public', 'tarefas_guard_comprovacao', 1, '20260601103000_tarefas_fase2_bloco_d.sql', '6e383f9950617271dbdcd5ab70f253c9'),
@@ -6162,6 +6168,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'tint_watchdog_fase5_check', 2, '20261010230000_tint_watchdog_fase5_s2_aviso.sql', '1b5320651c53a321324640e5f545f84a'),
   ('public', 'tint_watchdog_fase5_check', 3, '20261013120000_tint_watchdog_fase5_s2_persistente.sql', '4ac14c2f65c8e1dd996bf48877f2b276'),
   ('public', 'tint_watchdog_fase5_check', 4, '20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql', '0783718e1ef4267293fec13feda7d58b'),
+  ('public', 'tint_watchdog_fase5_check', 5, '20261101050000_tint_watchdog_fase5_v5_passada_unica.sql', '6219c9a86e27a3842970142d4449c5bc'),
   ('private', 'atp_disponivel', 1, '20260806101417_atp_reserva_estoque_fase1.sql', 'aeb0989efc8aae6130bfe73f2dd3d397'),
   ('private', 'atp_disponivel', 2, '20260806225052_atp_reserva_estoque_fase1_1_hardening.sql', '271e2acd633a4ceddd8a73cd988cfe49'),
   ('private', 'atp_disponivel', 3, '20260808012000_atp_reconciliacao_fase3.sql', '8326d00deff699c3730acadd7ee359a4'),
