@@ -127,6 +127,41 @@ GROUP BY ca.company;
 - Não adotado: nada.
 - Provas após as correções: PR2 **58 asserts, 15 sabotagens** (dona de abertura e disputa-por-promessa novas); PR1 60/15 (policy private); PR3 13/5. Todas verdes em C e pt_BR.
 
+## QA visual logado pós-Publish (2026-11-01) — o que os bytes não mostram
+
+Publish provado pelos bytes às ~04:50Z; o QA logado (Chrome, founder master) veio depois, já numa release
+posterior (`index-BVrtji3i`, outras sessões publicaram no meio). Três telas abertas de verdade:
+
+- **`/cobranca`** renderiza: régua D−2/D+1/D+7 e fila por faixa; 33 + 21 + 52 = 106 clientes e
+  R$ 36.329,98 + 52.811,23 + 191.074,05 = R$ 280.215,26 — **iguais à coorte selada** (cabeçalho = detalhe,
+  2ª testemunha pela tela). Primeira abertura deu **404**: a aba estava pinada na release anterior pelo SW
+  (`afiacao-release-index-CvD7wadp`, sem o chunk `Cobranca-*`); a release nova já estava `promovida` no
+  meta e a NAVEGAÇÃO seguinte a serviu. É o desenho (`src/sw/releases.ts`): quem tinha o app aberto vê a
+  rota nova só na próxima navegação/"Atualizar".
+- **Aviso de prazo no pedido** (MOVEIS FENIX, Oben, R$ 4.114 vencido há 4 d): renderiza no carrinho com
+  R$, títulos, dias, atraso médio e sync. **Defeito achado (PR1):** com "30/60/90" selecionado o aviso dizia
+  "Condição atual não lida como prazo em dias". O parser só lia "30 dias"/"30dd"/"30 DDL"; o catálogo
+  REAL do Omie da Oben (`omie_condicao_pagamento_catalogo`, 145 linhas) grafa **"Para 30 dias"** (40),
+  **"30/60/90"** nu (80), **"A Vista/30/60"** (11). Resultado: a sugestão NUNCA nascia para condição a
+  prazo da Oben. Correção no parser (PR de fix desta seção), falsificada contra `num_parcelas` do catálogo:
+  130 lidas · 15 ilegíveis por desenho ("N Parcelas", "(C)", "Informar…", "A Vista/1/1", "30/30") · 0
+  divergentes; Codex (gpt-6-astra·max·96 s·72k tk): 0 P0/P1, 2 P2 de cobertura adotados. `dias_parcelas`
+  do catálogo está vazio nas 145 linhas — por isso a verdade usada foi a contagem.
+- **Painel do CET** (aba Ciclo): Oben 2,5% a.m. com a fonte do cadastro, alerta 68,9% a.a., tabela 10/20/30
+  dias (0,82% / 1,63% / 2,44%), elegíveis 446 · já antecipam 13.
+
+Residuais da régua, medidos e NÃO corrigidos aqui (cada um é entrega própria):
+
+- **WhatsApp morto na régua:** o telefone vem de `profiles.phone` via `omie_customer_account_map`; dos 106
+  clientes da coorte, 96 mapeados e 95 com phone — mas **91 estão sem DDD** (`99999-9999` ×71,
+  `9999-9999` ×20), porque `omie-cliente/index.ts` grava `phone: cliente.telefone1_numero` (sem
+  `telefone1_ddd`; `omie-vendas-sync` concatena certo). `telefoneWa` exige 10–11 dígitos ⇒ "telefone
+  inválido no cadastro" em TODAS as linhas. Não há outra fonte de DDD no banco (`customer_contacts` vazia;
+  catálogo sem DDD) — conserto é na edge + re-sync, não no SQL.
+- **Régua sem nome do cliente** ("cliente 8689697854"): a RPC `cobranca_regua_hoje` lê
+  `fin_contas_receber.nome_cliente`, que está **NULL nas 14.511 linhas da Oben**; a fila mostra nome porque
+  passa por `v_ciclo_cliente_resumo`. Correção: a RPC coalescer pela mesma fonte da fila (migration).
+
 ## PR4 — Telefone do perfil Omie nasce COM DDD + reposição dos já gravados (`omie-cliente` v1.4)
 
 **Sintoma (QA logado pós-Publish do PR2, 2026-11-01):** TODAS as linhas da régua `/cobranca` da Oben saíam como "telefone inválido no cadastro" — o botão de WhatsApp estava morto. A RPC `cobranca_regua_hoje` resolve o telefone por `omie_customer_account_map → profiles.phone`, e o `telefoneWa` do front exige 10–11 dígitos (DDD + número) para montar o `wa.me`.

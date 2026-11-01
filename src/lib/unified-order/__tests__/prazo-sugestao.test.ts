@@ -205,3 +205,54 @@ describe('paridade dos degraus com a aba Ciclo (helper espelhado — vendas não
     expect([...DEGRAUS_PRAZO_PEDIDO]).toEqual(m![1].split(',').map((x) => Number(x.trim())));
   });
 });
+
+describe('parseCalendarioParcela — gramática REAL do catálogo Omie da Oben (QA pós-Publish #3473, 2026-11-01)', () => {
+  it('"Para N dia(s)" → [N]; lista nua "30/60/90" → calendário; "A Vista/30/60" → [0, 30, 60]', () => {
+    expect(parseCalendarioParcela('Para 30 dias')).toEqual([30]);
+    expect(parseCalendarioParcela('Para 1 dia')).toEqual([1]);
+    expect(parseCalendarioParcela('30/60/90')).toEqual([30, 60, 90]);
+    expect(parseCalendarioParcela('28/42/56/72/87')).toEqual([28, 42, 56, 72, 87]);
+    expect(parseCalendarioParcela('A Vista/30/60')).toEqual([0, 30, 60]);
+    expect(parseCalendarioParcela('A Vista/28')).toEqual([0, 28]);
+  });
+  it('segue ilegível por desenho: número nu sozinho, "N Parcelas", "(C)", "Informar…", "A Vista/1/1", "30/30"', () => {
+    expect(parseCalendarioParcela('30')).toBeNull();
+    expect(parseCalendarioParcela('36 Parcelas')).toBeNull();
+    expect(parseCalendarioParcela('1 Parcela')).toBeNull();
+    expect(parseCalendarioParcela('Para 30 dias (C)')).toBeNull();
+    expect(parseCalendarioParcela('30/60/90 (C)')).toBeNull();
+    expect(parseCalendarioParcela('Informar o número de parcelas')).toBeNull();
+    expect(parseCalendarioParcela('A Vista/1/1')).toBeNull();
+    expect(parseCalendarioParcela('30/30')).toBeNull();
+    expect(parseCalendarioParcela('A Vista/0/30')).toBeNull();
+  });
+  it('com as formas REAIS da Oben, 30/60/90 vencido sugere 30/60 (um degrau), e "A Vista/30/60" não é à vista', () => {
+    const formas = [
+      { codigo: '003', descricao: '30/60/90' },
+      { codigo: '002', descricao: '30/60' },
+      { codigo: '001', descricao: 'Para 30 dias' },
+      { codigo: '999', descricao: 'A Vista' },
+      { codigo: 'AV2', descricao: 'A Vista/30/60' },
+    ];
+    const s = sugerirParcela({ formas, parcelaAtual: '003', vencido: 4114, diasVencidoMax: 4 });
+    expect(s).toMatchObject({ tipo: 'degrau', prazoAtual: 90, prazoSugerido: 60, motivo: 'degrau' });
+    expect(s.tipo === 'degrau' && s.sugerida.codigo).toBe('002');
+    // "A Vista/30/60" é calendário (prazo 60), não à vista: "Para 30 dias" NÃO o domina (no dia 0 já
+    // há 1/3 recebido) e "30/60" estoura o degrau 56 → o desenho cai no fallback à vista (código real).
+    const av2 = sugerirParcela({ formas, parcelaAtual: 'AV2', vencido: 4114, diasVencidoMax: 4 });
+    expect(av2).toMatchObject({ tipo: 'degrau', prazoAtual: 60, prazoSugerido: 0, motivo: 'degrau' });
+    expect(av2.tipo === 'degrau' && av2.sugerida.codigo).toBe('999');
+  });
+  it('condição mista como CANDIDATA (Codex P2): "A Vista/30/60" → "A Vista/30" quando existe; com 61 d vencido só à vista integral serve', () => {
+    const formas = [
+      { codigo: 'AV2', descricao: 'A Vista/30/60' },
+      { codigo: 'AV1', descricao: 'A Vista/30' },
+      { codigo: '001', descricao: 'Para 30 dias' },
+    ];
+    const s = sugerirParcela({ formas, parcelaAtual: 'AV2', vencido: 500, diasVencidoMax: 10 });
+    expect(s).toMatchObject({ tipo: 'degrau', prazoAtual: 60, prazoSugerido: 30, motivo: 'degrau' });
+    expect(s.tipo === 'degrau' && s.sugerida.codigo).toBe('AV1');
+    // "A Vista/30" NÃO substitui o à vista integral exigido acima de 60 dias vencidos.
+    expect(sugerirParcela({ formas, parcelaAtual: 'AV2', vencido: 500, diasVencidoMax: 61 })).toEqual({ tipo: 'nenhuma', motivoSistema: 'sem_forma_menor' });
+  });
+});

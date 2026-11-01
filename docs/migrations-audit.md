@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **741** custom migrations totais
-- **2429** objetos esperados (criados por estas migrations)
+- **742** custom migrations totais
+- **2430** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 913
+  - `function`: 914
   - `rls_policy`: 510
   - `index`: 328
   - `table`: 222
@@ -6069,6 +6069,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.tint_watchdog_fase5_check` | — |
+
+### `20261101120000_cobranca_regua_nome_cliente.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.cobranca_regua_hoje` | — |
 
 ## Próximos passos por status
 
