@@ -20653,6 +20653,35 @@ export type Database = {
         }
         Relationships: []
       }
+      v_reposicao_ruptura_pedidos_semana: {
+        Row: {
+          cobertura_pct: number | null
+          empresa: string | null
+          fill_rate_pct: number | null
+          itens_atendiveis: number | null
+          itens_importados: number | null
+          itens_indeterminados: number | null
+          itens_registrados: number | null
+          itens_ruptura: number | null
+          itens_sem_leitura: number | null
+          pedidos: number | null
+          semana: string | null
+        }
+        Relationships: []
+      }
+      v_reposicao_ruptura_prateleira_semana: {
+        Row: {
+          dias_lidos: number | null
+          empresa: string | null
+          pct_skus_sem_leitura: number | null
+          pct_skus_sem_saldo: number | null
+          pct_valor_sem_saldo: number | null
+          semana: string | null
+          skus_com_venda_90d: number | null
+          ultimo_dia: string | null
+        }
+        Relationships: []
+      }
       v_reposicao_sku_fora_do_motor: {
         Row: {
           empresa: string | null

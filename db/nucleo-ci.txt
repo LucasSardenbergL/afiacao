@@ -835,6 +835,9 @@ db/test-venda-prazo-decisao.sh             60  falsificar=15
 # empresa a partir da view real; fila visível por dona ATUAL/gestão; writer único de caso/promessa/evento; contato não muda
 # estado; quitado só com evidência positiva; `cobranca.estado_mudou` só em mudança de estado; dona NULL não é fail-open.
 db/test-cobranca-fila.sh                   58  falsificar=15
+# CET persistido (20261031220000, Frente B PR3): coluna tipada em fin_funding_inputs (o upsert do Funding não a apaga),
+# oben 2,5% a.m. sem sobrescrever ajuste, CHECK da faixa, RPC gateada master com filtro de empresa.
+db/test-fin-funding-cet.sh                 13  falsificar=5
 # Purge de staging tint fora do promote (20261021203000): os 9 DELETEs do bloco PURGE saem de cada promoção
 # (98% da leitura de disco do banco, medido 2026-10-21) para tint_staging_purge() + cron diário. Template =
 # corpo de PROD (md5 conferido); o catálogo promovido sai IDÊNTICO ao do promote antigo; o purge preserva o
