@@ -91,3 +91,18 @@ irmãos do motor (teto, embalagem, gate, em-trânsito) re-rodados com a fixture 
   sinal provisório (não é fill-rate).
 - Compra manual fora do motor (portal Sayerlack digitado/importado) não vê a suspensão; medir vazamento confrontando
   `cmc_ledger`/recebimentos no intervalo suspenso é entrega própria.
+
+## Apply em prod (2026-11-01, founder: "Aprovo os 156")
+
+- Migration `20261101090000` aplicada por `bun run db:aplicar` (recibo #823, commit `c0be33dc1`); 2ª testemunha psql-ro: 8 corpos
+  com md5 igual ao arquivo, ACL/RLS/índice como desenhados. Pré-voo: motor vivo byte-idêntico à `20261010210000`.
+- Relatório da coorte (`db/relatorio-compra-suspensa-oben.sql`, `--ensaio`): **156 SKUs / R$ 122.201**, 107 no motor
+  (R$ 92.676), 73 sem venda 90d, 68 Sayerlack, 84 com cobertura >2 anos. Envelope `db/aplicar-compra-suspensa-oben-180d.sql`
+  com os 156 literais: ensaio 156=156 (ninguém saiu/entrou), apply recibo #830, **lote `bc8635a1-a355-4553-b31b-c3f8147de404`**,
+  `revisar_em 2027-01-30`, `suspenso_por_texto envelope:claude_rw:2026-11-01`.
+- **Lição**: as RPCs têm EXECUTE só para `authenticated`/`service_role` → nem `psql-ro` nem `psql-rw` cru as chamam (42501); o
+  caminho é o executor (`aplicar_sql`, dono `postgres`), cujo `EXECUTE` descarta SELECT → relatório por `DO` + `RAISE NOTICE`,
+  envelope SEM `BEGIN;/COMMIT;`.
+- **Próximo sinal (query, não recado)**: 1º run do motor após o apply deve mostrar `suspensas_compra_n` > 0 em
+  `reposicao_motor_run` e linhas em `reposicao_compra_suspensa_log` com `run_id` desse run; se ficar 0 com pedidos gerados
+  para SKUs do lote, a suspensão não está sendo lida. Rollback = `reposicao_compra_reativar('OBEN', <skus do lote>, motivo)`.
