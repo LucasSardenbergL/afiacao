@@ -61,6 +61,22 @@ export async function gravarPaginaCatalogo(
   return { gravadas: linhas.length, erro: null };
 }
 
+function resumoFalhas(falhas: FalhasCatalogo): string {
+  return `${MARCA_FALHA_GRAVACAO}: ${falhas.linhas} linha(s) em ${falhas.paginas.length} pagina(s) `
+    + `[${falhas.paginas.join(",")}] nao gravada(s) em omie_products: ${falhas.primeiraMensagem ?? "erro sem mensagem"}`;
+}
+
+/**
+ * Exceção que interrompe o run (Omie transitório, página anômala) DEPOIS de uma falha de
+ * gravação: o catch global da edge grava só a mensagem no `fin_sync_log` — sem isto, a contagem
+ * das linhas não gravadas sumia atrás do erro do Omie. Sem falha acumulada, devolve o MESMO erro.
+ */
+export function erroComFalhasAcumuladas(erro: unknown, falhas: FalhasCatalogo): unknown {
+  if (falhas.paginas.length === 0) return erro;
+  const mensagem = erro instanceof Error ? erro.message : String(erro);
+  return new Error(`${resumoFalhas(falhas)} — e o run abortou depois: ${mensagem}`);
+}
+
 /** O que `syncProducts` devolve (forma de antes, sem as falhas). */
 export interface ResultadoSyncProdutos {
   totalSynced: number;
@@ -87,8 +103,7 @@ export function desfechoSyncProdutos(
     return { ok: true, status: 200, corpo: { success: true, ...resultado } };
   }
   const primeiraFalha = Math.min(...falhas.paginas);
-  const erro = `${MARCA_FALHA_GRAVACAO}: ${falhas.linhas} linha(s) em ${falhas.paginas.length} pagina(s) `
-    + `[${falhas.paginas.join(",")}] nao gravada(s) em omie_products: ${falhas.primeiraMensagem ?? "erro sem mensagem"}`;
+  const erro = resumoFalhas(falhas);
   return {
     ok: false,
     status: 500,
@@ -103,4 +118,19 @@ export function desfechoSyncProdutos(
       linhasFalhas: falhas.linhas,
     },
   };
+}
+
+/**
+ * Fronteira da action: com falha, FINALIZA o log como erro (`finalizarLog` com a mensagem —
+ * vira `fin_sync_log.status='error'`) antes de devolver o 500, para o epílogo da edge não
+ * fechá-lo como 'complete'. Sem falha, não finaliza: o epílogo comum das actions de sync fecha.
+ */
+export async function concluirSyncProdutos(
+  resultado: ResultadoSyncProdutos,
+  falhas: FalhasCatalogo,
+  finalizarLog: (corpo: Record<string, unknown>, erro: string) => Promise<void>,
+): Promise<{ status: 200 | 500; corpo: Record<string, unknown> }> {
+  const desfecho = desfechoSyncProdutos(resultado, falhas);
+  if (!desfecho.ok) await finalizarLog(desfecho.corpo, desfecho.erro);
+  return { status: desfecho.status, corpo: desfecho.corpo };
 }

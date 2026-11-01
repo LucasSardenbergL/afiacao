@@ -1,7 +1,9 @@
 // Roda o CÓDIGO REAL de catalogo-gravacao.ts (N2: falha de upsert do catálogo não vira sucesso).
 import {
   type ClienteUpsert,
+  concluirSyncProdutos,
   desfechoSyncProdutos,
+  erroComFalhasAcumuladas,
   gravarPaginaCatalogo,
   MARCA_FALHA_GRAVACAO,
   novasFalhasCatalogo,
@@ -98,4 +100,51 @@ Deno.test("página sem linhas (tudo filtrado): não chama o upsert e não conta 
   assertEquals(await gravarPaginaCatalogo(db, [], 1, falhas), { gravadas: 0, erro: null });
   assertStrictEquals(chamadas.length, 0);
   assertEquals(falhas, novasFalhasCatalogo());
+});
+
+/** Duplo do finalizador do log (completeVendaSync): registra cada chamada. */
+function finalizadorFake() {
+  const chamadas: Array<{ corpo: Record<string, unknown>; erro: string }> = [];
+  return { chamadas, finalizar: (corpo: Record<string, unknown>, erro: string) => { chamadas.push({ corpo, erro }); return Promise.resolve(); } };
+}
+
+Deno.test("fronteira da action com falha: finaliza o log UMA vez como erro (com contadores) e devolve 500", async () => {
+  const { db, naPagina } = clienteFake(new Set([1]));
+  const falhas = novasFalhasCatalogo();
+  naPagina(1);
+  const { gravadas } = await gravarPaginaCatalogo(db, linhas(30), 1, falhas);
+  const resultado = { totalSynced: gravadas, totalPaginas: 1, lastPage: 1, nextPage: null, complete: true };
+  const log = finalizadorFake();
+
+  const saida = await concluirSyncProdutos(resultado, falhas, log.finalizar);
+
+  assertStrictEquals(saida.status, 500);
+  assertStrictEquals(saida.corpo.success, false);
+  assertStrictEquals(log.chamadas.length, 1);
+  // A mensagem passada ao finalizador é o que vira fin_sync_log.status='error' + error_message.
+  assert(log.chamadas[0].erro.startsWith(`${MARCA_FALHA_GRAVACAO}: 30 linha(s) em 1 pagina(s) [1]`));
+  assertStrictEquals(log.chamadas[0].corpo.linhasFalhas, 30);
+  assertStrictEquals(log.chamadas[0].corpo.success, false);
+});
+
+Deno.test("fronteira da action sem falha: 200, corpo de sempre, NÃO finaliza o log (o epílogo comum fecha 'complete')", async () => {
+  const resultado = { totalSynced: 10, totalPaginas: 1, lastPage: 1, nextPage: null, complete: true };
+  const log = finalizadorFake();
+  const saida = await concluirSyncProdutos(resultado, novasFalhasCatalogo(), log.finalizar);
+  assertStrictEquals(saida.status, 200);
+  assertEquals(saida.corpo, { success: true, ...resultado });
+  assertStrictEquals(log.chamadas.length, 0);
+});
+
+Deno.test("exceção depois de falha de gravação: a mensagem carrega a contagem e o erro original", () => {
+  const falhas = { paginas: [2], linhas: 100, primeiraMensagem: "timeout" };
+  const e = erroComFalhasAcumuladas(new Error("Omie 429 esgotado"), falhas);
+  assert(e instanceof Error);
+  assert(e.message.startsWith(`${MARCA_FALHA_GRAVACAO}: 100 linha(s) em 1 pagina(s) [2]`));
+  assert(e.message.endsWith("e o run abortou depois: Omie 429 esgotado"));
+});
+
+Deno.test("exceção sem falha de gravação: devolve o MESMO erro (outras falhas inalteradas)", () => {
+  const original = new Error("Omie 429 esgotado");
+  assertStrictEquals(erroComFalhasAcumuladas(original, novasFalhasCatalogo()), original);
 });
