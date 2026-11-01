@@ -12,7 +12,7 @@
 
 const NAO_DIGITO = /\D/g;
 
-export function digitos(raw: string | null | undefined): string {
+function digitos(raw: string | null | undefined): string {
   return (raw ?? "").replace(NAO_DIGITO, "");
 }
 
