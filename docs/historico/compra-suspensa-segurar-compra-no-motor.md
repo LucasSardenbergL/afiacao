@@ -106,3 +106,20 @@ irmãos do motor (teto, embalagem, gate, em-trânsito) re-rodados com a fixture 
 - **Próximo sinal (query, não recado)**: 1º run do motor após o apply deve mostrar `suspensas_compra_n` > 0 em
   `reposicao_motor_run` e linhas em `reposicao_compra_suspensa_log` com `run_id` desse run; se ficar 0 com pedidos gerados
   para SKUs do lote, a suspensão não está sendo lida. Rollback = `reposicao_compra_reativar('OBEN', <skus do lote>, motivo)`.
+
+## Prova viva (2026-11-01, psql-ro, 2 runs do motor depois do apply)
+
+| run (SP) | `pedidos_gerados` | `skus_incluidos` | `suspensas_compra_n` | log |
+|---|---|---|---|---|
+| 2026-10-31 17:16 (antes do apply) | 2 | 11 | 0 | — |
+| 2026-11-01 06:15 | 2 | 10 | **1** | 8689787819 VERNIZ PU FOSCO FO5.6748.00GL · Sayerlack · 1 un · R$ 154 evitado |
+| 2026-11-01 07:15 | 2 | 10 | **1** | idem |
+
+- O motor LEU a suspensão: o SKU segurado é do lote `bc8635a1` (`suspensa_id` bate), saiu do pedido (11 → 10 SKUs) e foi
+  logado com preço e valor evitado. Dos 10 itens dos 2 pedidos Oben de hoje (`pedido_compra_item`), **0 pertencem ao lote**.
+- Denominador honesto: 1 de 156 suspensos estava elegível neste ciclo; os outros 155 não teriam sido pedidos de qualquer jeito
+  hoje (cobertura ≥180d). O valor evitado acumula só quando o motor TENTA — R$ 309 em 2 runs é o sinal, não a economia.
+- Query da prova (repetir a cada leva): `SELECT run_id, criado_em, pedidos_gerados, skus_incluidos, suspensas_compra_n FROM
+  reposicao_motor_run WHERE empresa='OBEN' ORDER BY criado_em DESC LIMIT 3;` + `SELECT count(*) FROM pedido_compra_item i JOIN
+  pedido_compra_sugerido p ON p.id=i.pedido_id WHERE p.empresa='OBEN' AND p.data_ciclo=current_date AND i.sku_codigo_omie::text IN
+  (SELECT sku_codigo_omie::text FROM reposicao_compra_suspensa WHERE reativado_em IS NULL)` — tem de ser 0.
