@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { fetchAllPages } from '@/lib/postgrest';
+import { erroComCausa } from '@/lib/erro-mensagem';
 import { normalizarResumo, num, type ResumoCliente } from '@/lib/financeiro/ciclo-cliente-helpers';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { normalizarGiro, type GiroSku } from '@/lib/financeiro/ciclo-giro-helpers';
@@ -295,7 +296,7 @@ export function useReguaCiclo() {
           (de, ate) => supabase.rpc('fin_estoque_giro_valor', { p_company: c })
             .order('valor_giro', { ascending: true }).range(de, ate),
           `fin_estoque_giro_valor/${c}`,
-        ).catch((e: unknown) => { throw new Error(`fin_estoque_giro_valor/${c}: ${e instanceof Error ? e.message : String(e)}`); });
+        ).catch((e: unknown) => { throw erroComCausa(`fin_estoque_giro_valor/${c}`, e); });
         const g = giroLinhas[0];
         out[c] = {
           cmvTtm: cmvTtmFechado(linhasDre, hoje),
