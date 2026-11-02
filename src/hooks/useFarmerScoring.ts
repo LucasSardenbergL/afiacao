@@ -84,7 +84,7 @@ export interface AgendaItem {
   healthClass: string;
 }
 
-const DEFAULT_CONFIG: AlgorithmConfig = {
+export const DEFAULT_CONFIG: AlgorithmConfig = {
   k1: 1.0, k2: 1.0, cat_target: 5,
   health_w_rf: 0.35, health_w_m: 0.20, health_w_g: 0.15,
   health_w_x: 0.15, health_w_s: 0.15,
