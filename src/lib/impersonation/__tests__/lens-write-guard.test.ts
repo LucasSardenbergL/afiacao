@@ -117,6 +117,13 @@ describe('lens-write-guard', () => {
     expect(c.calls).toEqual(['rpc']);
   });
 
+  it('na lente: o agregado de saldo do cockpit financeiro (leitura pura, sem prefixo get_) passa', async () => {
+    const c = createLensGuardedClient(makeFakeClient());
+    setLensActive(true);
+    await c.rpc('fin_saldo_titulos_por_status');
+    expect(c.calls).toEqual(['rpc']);
+  });
+
   it('na lente: rpc de ESCRITA com nome ambíguo FORA da allowlist (ciclo_/sugerir_) é bloqueada', async () => {
     // Guarda contra allowlistar às cegas: ciclo_oportunidade_do_dia e
     // sugerir_negociacao_paralela_hoje GERAM pedidos/sugestões (escrita).

@@ -122,6 +122,38 @@ describe('useFinanceiroCockpit (react-query)', () => {
     expect(m.getTopInadimplentes).toHaveBeenCalledTimes(1);
   });
 
+  it('falha transitória: o retry do react-query recupera o bloco (o erro não vira "sucesso" no cache)', async () => {
+    // Antes o catch DENTRO da queryFn resolvia null: o retry nunca disparava e o null ficava 60 s no cache.
+    m.getResumoFinanceiro.mockRejectedValueOnce(new Error('timeout'));
+    m.getAgingReceber.mockRejectedValueOnce(new Error('timeout'));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 0, staleTime: 60_000 } } });
+    const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(2);
+    expect(result.current.totalCR).toBe(1500);
+    expect(m.getAgingReceber).toHaveBeenCalledTimes(2);
+  });
+
+  it('bloco que falhou é relido ao remontar (erro não é cacheado como dado)', async () => {
+    m.getResumoFinanceiro.mockRejectedValueOnce(new Error('off'));
+    const qc = novoClient();
+    const a = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(a.result.current.loading).toBe(false));
+    expect(a.result.current.totalCR).toBeNull();
+    a.unmount();
+    const b = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(b.result.current.totalCR).toBe(1500));
+    expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(2);
+  });
+
+  it('snapshots que falham → empresas ausentes (parcial), nunca NCG "saudável"', async () => {
+    m.getProjecaoSnapshotsCockpit.mockRejectedValue(new Error('off'));
+    const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(novoClient()) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.cockpit.parcial).toBe(true);
+    expect(result.current.cockpit.empresas_presentes).toEqual([]);
+  });
+
   it('recarregar invalida todos os blocos', async () => {
     const qc = novoClient();
     const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });

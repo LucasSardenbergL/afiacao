@@ -5,14 +5,14 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
-import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinResumo, type AgingData, type FinDRE } from '@/services/financeiroService';
+import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinDRE } from '@/services/financeiroService';
 import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgNaJanela, type BalancoInputRow } from '@/services/financeiroV2Service';
 import { caixaDoGrupo, consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { classificarFleurietEmpresa, type ClassificacaoFleurietEmpresa } from '@/lib/financeiro/fleuriet-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
 import type { DrillDownType } from '@/components/financeiro/CockpitDrillDown';
-import type { FinConfiabilidadeRow, InadimplenteRow } from './types';
+import type { FinConfiabilidadeRow } from './types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
 const EMPRESAS_COCKPIT: Company[] = ['oben', 'colacor', 'colacor_sc'];
@@ -40,17 +40,16 @@ function receitaLiquidaMensal(dre: FinDRE[], company: string): number | null {
 const QK = 'financeiro-cockpit';
 
 // Cada bloco é uma query própria (react-query): o mount reusa o cache (staleTime global de 60 s),
-// trocar o regime só refaz a DRE, e a falha de um bloco não derruba os outros. O fallback de erro
-// de cada bloco é o MESMO de antes (aging → null, inadimplentes → [], snapshots → [], balanço → {}),
-// salvo o resumo: em erro ele agora fica INDISPONÍVEL (null) em vez de `{}` — o `{}` virava
-// CR/CP/vencido = 0 e inadimplência "0,0%" verde (parecer Codex, plano v4 lote 13).
-async function lerResumoCockpit(): Promise<Record<string, FinResumo> | null> {
-  try {
-    return await getResumoFinanceiro(EMPRESAS_COCKPIT);
-  } catch (e) {
-    logger.warn('Resumo financeiro indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
-    return null;
-  }
+// trocar o regime só refaz a DRE, e a falha de um bloco não derruba os outros. A queryFn LANÇA —
+// o fallback de erro (aging → null, inadimplentes → [], snapshots → [], balanço → sem selo) é
+// aplicado na LEITURA do estado. Engolir o erro dentro da queryFn virava "sucesso" no cache: sem
+// o `retry` global e reusado por 60 s a cada remontagem (parecer Codex, plano v4 lote 13). O resumo
+// em erro fica INDISPONÍVEL (null) em vez de `{}` — o `{}` virava CR/CP/vencido = 0 e
+// inadimplência "0,0%" verde.
+function useLogarFalha(erro: unknown, mensagem: string) {
+  useEffect(() => {
+    if (erro) logger.warn(mensagem, { error: mensagemDeErro(erro) ?? '(sem mensagem)' });
+  }, [erro, mensagem]);
 }
 
 async function lerConfiabilidade(ano: number, mes: number): Promise<FinConfiabilidadeRow[]> {
@@ -83,10 +82,7 @@ interface InsumosFleuriet {
   ncg: Record<string, { ncg: number | null; snapshot_at: string }[]>;
 }
 async function lerInsumosFleuriet(): Promise<InsumosFleuriet> {
-  const balancos = await getBalancoInputs(EMPRESAS_COCKPIT).catch((e): Record<string, BalancoInputRow> => {
-    logger.warn('Balanço (Fleuriet) indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
-    return {};
-  });
+  const balancos = await getBalancoInputs(EMPRESAS_COCKPIT);
   const ncg: InsumosFleuriet['ncg'] = {};
   await Promise.all(EMPRESAS_COCKPIT.map(async (co) => {
     const bal = balancos[co];
@@ -107,42 +103,27 @@ export function useFinanceiroCockpit() {
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
 
-  const resumoQ = useQuery({ queryKey: [QK, 'resumo'], queryFn: lerResumoCockpit });
+  const resumoQ = useQuery({ queryKey: [QK, 'resumo'], queryFn: () => getResumoFinanceiro(EMPRESAS_COCKPIT) });
   // getAgingReceber LANÇA em erro (era EMPTY_AGING silencioso = "R$0 vencido" fabricado); o
   // fallback null é tratado como indisponível ('—'), nunca como carteira sã.
-  const agingQ = useQuery({
-    queryKey: [QK, 'aging'],
-    queryFn: () => getAgingReceber('all').catch((e): AgingData | null => {
-      logger.warn('Aging de recebíveis indisponível', { error: mensagemDeErro(e) ?? "erro sem mensagem" });
-      return null;
-    }),
-  });
+  const agingQ = useQuery({ queryKey: [QK, 'aging'], queryFn: () => getAgingReceber('all') });
   const dreQ = useQuery({
     queryKey: [QK, 'dre', ano, regime],
     queryFn: () => Promise.all(EMPRESAS_COCKPIT.map(co => getDRE(co, ano, undefined, regime))).then(r => r.flat()),
   });
   // getTopInadimplentes LANÇA em erro (era [] silencioso = falso "ninguém inadimplente").
-  const inadQ = useQuery({
-    queryKey: [QK, 'inadimplentes'],
-    queryFn: () => getTopInadimplentes('all', 5).catch((e): InadimplenteRow[] => {
-      logger.warn('Top inadimplentes indisponível', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
-      return [];
-    }),
-  });
+  const inadQ = useQuery({ queryKey: [QK, 'inadimplentes'], queryFn: () => getTopInadimplentes('all', 5) });
   // Projeção 13s + NCG consolidados via snapshot real da engine A1 (não a RPC ingênua)
-  const snapsQ = useQuery({
-    queryKey: [QK, 'snapshots'],
-    queryFn: () => getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT).catch((e) => {
-      logger.warn('Snapshots de projeção indisponíveis', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
-      return [];
-    }),
-  });
+  const snapsQ = useQuery({ queryKey: [QK, 'snapshots'], queryFn: () => getProjecaoSnapshotsCockpit(EMPRESAS_COCKPIT) });
   const fleurietQ = useQuery({ queryKey: [QK, 'fleuriet'], queryFn: lerInsumosFleuriet });
   const confQ = useQuery({ queryKey: [QK, 'confiabilidade', ano, mes], queryFn: () => lerConfiabilidade(ano, mes) });
 
-  useEffect(() => {
-    if (dreQ.error) logger.warn('DRE do cockpit indisponível', { error: mensagemDeErro(dreQ.error) ?? '(sem mensagem)' });
-  }, [dreQ.error]);
+  useLogarFalha(resumoQ.error, 'Resumo financeiro indisponível');
+  useLogarFalha(agingQ.error, 'Aging de recebíveis indisponível');
+  useLogarFalha(dreQ.error, 'DRE do cockpit indisponível');
+  useLogarFalha(inadQ.error, 'Top inadimplentes indisponível');
+  useLogarFalha(snapsQ.error, 'Snapshots de projeção indisponíveis');
+  useLogarFalha(fleurietQ.error, 'Balanço (Fleuriet) indisponível');
 
   const loading = resumoQ.isPending || agingQ.isPending || dreQ.isPending || inadQ.isPending || snapsQ.isPending;
   const resumo = resumoQ.data ?? null;
@@ -151,10 +132,11 @@ export function useFinanceiroCockpit() {
   const inadimplentes = inadQ.data ?? [];
   const confiabilidade = confQ.data ?? [];
   // Default = indisponível/parcial (Codex P1): em falha de carga, NCG não pode aparecer como R$0 "saudável".
-  const cockpit = useMemo(
-    () => (snapsQ.data ? consolidarCockpit({ esperadas: EMPRESAS_COCKPIT, snapshots: snapsQ.data }) : COCKPIT_VAZIO),
-    [snapsQ.data],
-  );
+  // Snapshots em erro = nenhuma empresa presente (o fallback `[]` de antes): consolidar marca todas ausentes.
+  const cockpit = useMemo(() => {
+    const snapshots = snapsQ.data ?? (snapsQ.isError ? [] : null);
+    return snapshots ? consolidarCockpit({ esperadas: EMPRESAS_COCKPIT, snapshots }) : COCKPIT_VAZIO;
+  }, [snapsQ.data, snapsQ.isError]);
   const fleuriet = useMemo(() => {
     const out: Record<string, ClassificacaoFleurietEmpresa> = {};
     if (!fleurietQ.data || !dreQ.data) return out;
@@ -229,7 +211,7 @@ export function useFinanceiroCockpit() {
   return {
     loading,
     regime,
-    recarregar: loadAll,
+    recarregar,
     confiabilidade,
     dreConsolidado,
     cockpit,

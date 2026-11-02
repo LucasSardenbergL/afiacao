@@ -23,6 +23,10 @@ describe('decimalParaCentavos / centavosParaReais', () => {
   it('só devolve number quando a conversão é exata', () => {
     expect(centavosParaReais(35171n)).toBe(351.71);
     expect(() => centavosParaReais(2n ** 53n)).toThrow('soma fora da faixa exata de number');
+    // isSafeInteger aceita, mas /100 colapsaria ",90" em ",91": recusa em vez de exibir centavo errado.
+    expect(() => centavosParaReais(9007199254740990n)).toThrow('soma fora da faixa exata de number');
+    expect(centavosParaReais(-4005n)).toBe(-40.05);
+    expect(centavosParaReais(1000000000003426n)).toBe(10000000000034.26);
   });
 });
 

@@ -38,11 +38,20 @@ export function decimalParaCentavos(s: string): bigint {
   return m[1] ? -cent : cent;
 }
 
-/** Centavos → reais em `number`, só se a conversão for exata (|centavos| ≤ 2^53−1). */
+/**
+ * Centavos → reais em `number`, só se o centavo sobreviver à conversão. `isSafeInteger` não basta:
+ * 9007199254740990n passa, mas `/ 100` exibe ",91" em vez de ",90" (parecer Codex) — então o
+ * resultado precisa formatar com 2 casas EXATAMENTE como o decimal de origem.
+ */
 export function centavosParaReais(c: bigint): number {
   const n = Number(c);
-  if (!Number.isSafeInteger(n)) throw new Error(`soma fora da faixa exata de number: ${c} centavos`);
-  return n / 100;
+  const reais = n / 100;
+  const abs = c < 0n ? -c : c;
+  const exato = `${c < 0n ? '-' : ''}${abs / 100n}.${(abs % 100n).toString().padStart(2, '0')}`;
+  if (!Number.isSafeInteger(n) || reais.toFixed(2) !== exato) {
+    throw new Error(`soma fora da faixa exata de number: ${c} centavos`);
+  }
+  return reais;
 }
 
 function ehObjeto(v: unknown): v is Record<string, unknown> {
