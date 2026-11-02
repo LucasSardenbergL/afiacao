@@ -259,7 +259,7 @@ function SidebarSection({
   collapsed: boolean;
   defaultOpen: boolean;
   isActive: (path: string) => boolean;
-  navigate: ReturnType<typeof useNavigate>;
+  navigate: (path: string) => void;
   items: NavItem[];
   onToggleFavorite?: (path: string) => void;
   isFavorite?: (path: string) => boolean;
@@ -333,7 +333,10 @@ function SidebarSection({
   );
 }
 
-function SidebarItem({
+// memo (plano v4, lote 10 — C8): cada navegação re-renderizava TODOS os itens visíveis da nav; com
+// props estáveis (`item` do useMemo de badges, `navigate` estável do AppSidebar) só os 2 itens cujo
+// `active` muda re-renderizam.
+const SidebarItem = React.memo(function SidebarItem({
   item,
   active,
   navigate,
@@ -343,7 +346,7 @@ function SidebarItem({
 }: {
   item: NavItem;
   active: boolean;
-  navigate: ReturnType<typeof useNavigate>;
+  navigate: (path: string) => void;
   collapsed: boolean;
   onToggleFavorite?: (path: string) => void;
   isFavorite?: boolean;
@@ -409,14 +412,21 @@ function SidebarItem({
     );
   }
   return button;
-}
+});
 
 // memo: com props estáveis (onToggle é useCallback no AppShell), re-renders do
 // shell (mobileOpen, lente, contexts) não re-renderizam os 80+ itens da nav.
 // Navegação e badges continuam re-renderizando por dentro (useLocation/queries).
 const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const location = useLocation();
+  // `useNavigate` troca de identidade a cada rota (react-router 6): passado direto aos itens,
+  // derrubaria o memo do SidebarItem justamente na navegação. A ref guarda o atual; `irPara` é estável.
   const navigate = useNavigate();
+  const navigateRef = React.useRef(navigate);
+  React.useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
+  const irPara = React.useCallback((path: string) => navigateRef.current(path), []);
   const { isStaff, isMaster, user } = useAuth();
   const isSalesOnly = useSalesOnlyRestriction();
   const { displayRole, displayCommercialRole, displayIsStaff, displayIsMaster, displayIsGestorComercial, displayIsSalesOnly, displayLoading } = useDisplayAccess();
@@ -670,7 +680,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
             collapsed={false}
             defaultOpen={true}
             isActive={isActive}
-            navigate={navigate}
+            navigate={irPara}
             items={
               sectionsWithBadges
                 .flatMap((s) => s.items)
@@ -699,7 +709,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
               collapsed={collapsed}
               defaultOpen={!isSecondary}
               isActive={isActive}
-              navigate={navigate}
+              navigate={irPara}
               items={visibleItems}
               onToggleFavorite={toggleFavorite}
               isFavorite={isFavorite}
