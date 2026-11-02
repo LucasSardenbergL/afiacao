@@ -31,78 +31,94 @@ export function useEstoqueZone() {
       let pickingAbertos = 0;
       let pickingFefoVencendo = 0;
       let recebimentosHoje = 0;
-      const topItems: TopListItem[] = [];
+      // Uma lista por leitura: com as leituras em paralelo, um `push` numa lista só deixaria a ordem
+      // do topo (NF antes de FEFO) a cargo de quem responde primeiro.
+      const topNf: TopListItem[] = [];
+      const topFefo: TopListItem[] = [];
 
-      try {
-        const { data: nf } = await supabase
-          .from('nfe_recebimentos')
-          .select('id, razao_social_emitente, created_at, status')
-          .eq('status', 'pendente');
-        if (nf) {
-          const rows = nf;
-          nfPendentes = rows.length;
-          nfPendentes24h = rows.filter((r) => r.created_at < cutoff24h).length;
-          for (const r of rows.slice(0, 2)) {
-            topItems.push({
-              id: r.id,
-              icon: FileCheck,
-              title: r.razao_social_emitente ?? 'Fornecedor',
-              subtitle: 'NF aguardando conferência',
-              path: `/admin/estoque/recebimento`,
-              itemType: 'nfe_pendente',
-              badge: r.created_at < cutoff24h ? { label: '>24h', intent: 'error' } : undefined,
-            });
+      const lerNfPendentes = async () => {
+        try {
+          const { data: nf } = await supabase
+            .from('nfe_recebimentos')
+            .select('id, razao_social_emitente, created_at, status')
+            .eq('status', 'pendente');
+          if (nf) {
+            const rows = nf;
+            nfPendentes = rows.length;
+            nfPendentes24h = rows.filter((r) => r.created_at < cutoff24h).length;
+            for (const r of rows.slice(0, 2)) {
+              topNf.push({
+                id: r.id,
+                icon: FileCheck,
+                title: r.razao_social_emitente ?? 'Fornecedor',
+                subtitle: 'NF aguardando conferência',
+                path: `/admin/estoque/recebimento`,
+                itemType: 'nfe_pendente',
+                badge: r.created_at < cutoff24h ? { label: '>24h', intent: 'error' } : undefined,
+              });
+            }
           }
-        }
-      } catch { /* */ }
+        } catch { /* */ }
+      };
 
-      try {
-        const { count } = await supabase
-          .from('picking_tasks')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['pendente', 'em_andamento']);
-        pickingAbertos = count ?? 0;
-      } catch { /* */ }
+      const lerPicking = async () => {
+        try {
+          const { count } = await supabase
+            .from('picking_tasks')
+            .select('id', { count: 'exact', head: true })
+            .in('status', ['pendente', 'em_andamento']);
+          pickingAbertos = count ?? 0;
+        } catch { /* */ }
+      };
 
-      try {
-        const today = new Date();
-        today.setDate(today.getDate() + 7);
-        // FEFO mora em picking_task_items (validade_fefo/product_descricao), não em picking_tasks.
-        const { data: fefo } = await supabase
-          .from('picking_task_items')
-          .select('id, product_descricao, validade_fefo')
-          .in('status', ['pendente', 'em_andamento'])
-          .not('validade_fefo', 'is', null)
-          .lt('validade_fefo', today.toISOString());
-        if (fefo) {
-          const rows = fefo as Array<{
-            id: string;
-            product_descricao: string | null;
-            validade_fefo: string | null;
-          }>;
-          pickingFefoVencendo = rows.length;
-          for (const t of rows.slice(0, 1)) {
-            topItems.push({
-              id: t.id,
-              icon: Package,
-              title: t.product_descricao ?? 'Item',
-              subtitle: 'Picking com validade próxima',
-              path: `/admin/estoque/picking`,
-              itemType: 'picking_fefo_vencendo',
-              badge: { label: 'FEFO', intent: 'warning' },
-            });
+      const lerFefo = async () => {
+        try {
+          const today = new Date();
+          today.setDate(today.getDate() + 7);
+          // FEFO mora em picking_task_items (validade_fefo/product_descricao), não em picking_tasks.
+          const { data: fefo } = await supabase
+            .from('picking_task_items')
+            .select('id, product_descricao, validade_fefo')
+            .in('status', ['pendente', 'em_andamento'])
+            .not('validade_fefo', 'is', null)
+            .lt('validade_fefo', today.toISOString());
+          if (fefo) {
+            const rows = fefo as Array<{
+              id: string;
+              product_descricao: string | null;
+              validade_fefo: string | null;
+            }>;
+            pickingFefoVencendo = rows.length;
+            for (const t of rows.slice(0, 1)) {
+              topFefo.push({
+                id: t.id,
+                icon: Package,
+                title: t.product_descricao ?? 'Item',
+                subtitle: 'Picking com validade próxima',
+                path: `/admin/estoque/picking`,
+                itemType: 'picking_fefo_vencendo',
+                badge: { label: 'FEFO', intent: 'warning' },
+              });
+            }
           }
-        }
-      } catch { /* */ }
+        } catch { /* */ }
+      };
 
-      try {
-        const { count } = await supabase
-          .from('nfe_recebimentos')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'conferido')
-          .gte('updated_at', startOfDay.toISOString());
-        recebimentosHoje = count ?? 0;
-      } catch { /* */ }
+      const lerRecebimentos = async () => {
+        try {
+          const { count } = await supabase
+            .from('nfe_recebimentos')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'conferido')
+            .gte('updated_at', startOfDay.toISOString());
+          recebimentosHoje = count ?? 0;
+        } catch { /* */ }
+      };
+
+      // Leituras independentes: saem juntas (plano v4, lote 10 — C2). Cada bloco engole a própria
+      // falha como antes, então o `Promise.all` nunca rejeita.
+      await Promise.all([lerNfPendentes(), lerPicking(), lerFefo(), lerRecebimentos()]);
+      const topItems = [...topNf, ...topFefo];
 
       return { nfPendentes, nfPendentes24h, pickingAbertos, pickingFefoVencendo, recebimentosHoje, topItems };
     },

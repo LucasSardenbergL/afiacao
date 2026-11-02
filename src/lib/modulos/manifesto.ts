@@ -455,6 +455,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FarmerCalls.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerGovernance.so-config.test.tsx",
       "src/hooks/dashboard/__tests__/useSistemaZone.falha.test.tsx",
+      "src/hooks/dashboard/__tests__/zonas.paralelo.test.tsx",
       "src/pages/__tests__/Customer360.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
