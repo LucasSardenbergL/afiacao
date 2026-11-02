@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **748** custom migrations totais
+- **749** custom migrations totais
 - **2471** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 934
@@ -6146,6 +6146,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fin_sync_log_action_status_completed` | `fin_sync_log` |
 | `index` | `public.idx_tint_importacoes_account_created` | `tint_importacoes` |
 | `index` | `public.idx_addresses_user_id` | `addresses` |
+
+### `20261101222916_hot_carimbo_sync_sem_indice.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

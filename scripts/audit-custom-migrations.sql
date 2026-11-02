@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 748
+-- Total de custom migrations: 749
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -14,7 +14,7 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 36 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 39 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
 --   • rls_policy public.Staff can view recalc queue (scoring_v2_signal_modifiers) — substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)
@@ -41,6 +41,9 @@
 --   • index public.uq_markup_policy_fam (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
 --   • index public.uq_markup_policy_sku (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
 --   • rls_policy public.markup_policy_select_staff (markup_policy) — substituída → markup_policy_select_carteira (20260704120000_preco_por_tier)
+--   • index public.idx_inventory_position_synced_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
+--   • index public.idx_omie_products_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
+--   • index public.idx_product_costs_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
 --   • rls_policy public.Staff lê log de auto-aprovação (reposicao_auto_aprovacao_v2) — substituída → reposicao_auto_aprovacao_log_sel (fu4h)
 --   • rls_policy public.regua_preco_log_staff_all (regua_preco) — substituída → regua_preco_log_select_custo (20260723150000_authz_custo_fu4f_fase2_regua)
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
@@ -812,7 +815,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101120000', 'raio_x_inequivoco', '20261101120000_raio_x_inequivoco.sql'),
   ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
   ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
-  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql')
+  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql'),
+  ('20261101222916', 'hot_carimbo_sync_sem_indice', '20261101222916_hot_carimbo_sync_sem_indice.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1767,9 +1771,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
@@ -4252,9 +4253,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
