@@ -165,6 +165,49 @@ describe('useFinanceiroCockpit (react-query)', () => {
     expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(2);
   });
 
+  // O resumo não rejeita mais quando só os TÍTULOS falham (o CC volta junto): a falha de LEITURA dos
+  // títulos precisa continuar disparando o retry e não pode ficar 60 s no cache como sucesso (Codex P2).
+  const comFalhaDeLeitura = () => ({
+    oben: { ...resumoSemTitulos('Falha ao carregar saldo de títulos: timeout'), titulos_falha_leitura: true as const },
+    colacor: { ...resumoSemTitulos('Falha ao carregar saldo de títulos: timeout'), titulos_falha_leitura: true as const },
+    colacor_sc: { ...resumoSemTitulos('Falha ao carregar saldo de títulos: timeout'), titulos_falha_leitura: true as const },
+  });
+
+  it('falha de LEITURA dos títulos: o retry recupera CR/CP', async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce(comFalhaDeLeitura());
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 0, staleTime: 60_000 } } });
+    const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(2);
+    expect(result.current.totalCR).toBe(1500);
+  });
+
+  it('falha de LEITURA dos títulos esgotada: CR/CP null, mas o caixa lido certo segue; remontar relê', async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce(comFalhaDeLeitura());
+    const qc = novoClient();
+    const a = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(a.result.current.loading).toBe(false));
+    expect(a.result.current.totalCR).toBeNull();
+    expect(a.result.current.totalCC).toBe(300);
+    a.unmount();
+    const b = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(b.result.current.totalCR).toBe(1500));
+    expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(2);
+  });
+
+  it('títulos AUSENTES (sem_acesso), não falha de leitura: sucesso sem retry — tentar de novo não muda o dado', async () => {
+    m.getResumoFinanceiro.mockResolvedValue({
+      oben: resumoEmpresa(1000, 400, 100), colacor: resumoSemTitulos('saldo de títulos indisponível (colacor): sem_acesso'),
+      colacor_sc: resumoEmpresa(0, 0, 0),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, retryDelay: 0, staleTime: 60_000 } } });
+    const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(qc) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(m.getResumoFinanceiro).toHaveBeenCalledTimes(1);
+    expect(result.current.totalCR).toBeNull();
+    expect(result.current.totalCC).toBe(300);
+  });
+
   it('snapshots que falham → empresas ausentes (parcial), nunca NCG "saudável"', async () => {
     m.getProjecaoSnapshotsCockpit.mockRejectedValue(new Error('off'));
     const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(novoClient()) });

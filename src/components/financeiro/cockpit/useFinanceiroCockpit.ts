@@ -5,7 +5,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type Company } from '@/contexts/CompanyContext';
 import { supabase } from '@/integrations/supabase/client';
-import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinDRE } from '@/services/financeiroService';
+import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinDRE, type FinResumo } from '@/services/financeiroService';
 import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgNaJanela, type BalancoInputRow } from '@/services/financeiroV2Service';
 import { caixaDoGrupo, consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
 import { consolidarTitulos } from '@/lib/financeiro/resumo-titulos';
@@ -51,6 +51,24 @@ function useLogarFalha(erro: unknown, mensagem: string) {
   useEffect(() => {
     if (erro) logger.warn(mensagem, { error: mensagemDeErro(erro) ?? '(sem mensagem)' });
   }, [erro, mensagem]);
+}
+
+// O resumo não lança quando só os TÍTULOS falham (o CC lido certo continua — follow-up do lote 13).
+// Mas falha de LEITURA dos títulos é transitória: resolvida como sucesso ela ficaria 60 s no cache
+// sem o `retry` (parecer Codex). Então a queryFn lança este erro, que leva o resumo parcial junto
+// para o caixa seguir na tela depois que as tentativas se esgotarem.
+class ResumoComTitulosFalhos extends Error {
+  constructor(readonly resumo: Record<string, FinResumo>, motivo: string) {
+    super(motivo);
+    this.name = 'ResumoComTitulosFalhos';
+  }
+}
+
+async function lerResumoCockpit(): Promise<Record<string, FinResumo>> {
+  const resumo = await getResumoFinanceiro(EMPRESAS_COCKPIT);
+  const falhas = Object.values(resumo).filter((r) => r.titulos_falha_leitura).map((r) => r.titulos_motivo);
+  if (falhas.length > 0) throw new ResumoComTitulosFalhos(resumo, [...new Set(falhas)].join(' · '));
+  return resumo;
 }
 
 async function lerConfiabilidade(ano: number, mes: number): Promise<FinConfiabilidadeRow[]> {
@@ -104,7 +122,7 @@ export function useFinanceiroCockpit() {
   const ano = new Date().getFullYear();
   const mes = new Date().getMonth() + 1;
 
-  const resumoQ = useQuery({ queryKey: [QK, 'resumo'], queryFn: () => getResumoFinanceiro(EMPRESAS_COCKPIT) });
+  const resumoQ = useQuery({ queryKey: [QK, 'resumo'], queryFn: lerResumoCockpit });
   // getAgingReceber LANÇA em erro (era EMPTY_AGING silencioso = "R$0 vencido" fabricado); o
   // fallback null é tratado como indisponível ('—'), nunca como carteira sã.
   const agingQ = useQuery({ queryKey: [QK, 'aging'], queryFn: () => getAgingReceber('all') });
@@ -127,7 +145,7 @@ export function useFinanceiroCockpit() {
   useLogarFalha(fleurietQ.error, 'Balanço (Fleuriet) indisponível');
 
   const loading = resumoQ.isPending || agingQ.isPending || dreQ.isPending || inadQ.isPending || snapsQ.isPending;
-  const resumo = resumoQ.data ?? null;
+  const resumo = resumoQ.data ?? (resumoQ.error instanceof ResumoComTitulosFalhos ? resumoQ.error.resumo : null);
   const aging = agingQ.data ?? null;
   const dre = useMemo(() => dreQ.data ?? [], [dreQ.data]);
   const inadimplentes = inadQ.data ?? [];

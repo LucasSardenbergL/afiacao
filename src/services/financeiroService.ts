@@ -260,7 +260,7 @@ async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<st
   const out: Record<string, TotaisTitulos> = {};
   for (const co of companies) {
     if (falha !== null) {
-      out[co] = TITULOS_INDISPONIVEIS(falha);
+      out[co] = TITULOS_INDISPONIVEIS(falha, true);
       continue;
     }
     try {

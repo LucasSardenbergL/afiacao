@@ -153,6 +153,8 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
       ...SEM_TITULOS, titulos_motivo: 'saldo de títulos indisponível (colacor): desconhecida', saldo_total_cc: 1000,
     });
     expect(resumo.colacor.contas_correntes).toHaveLength(1);
+    // Dado AUSENTE, não falha de leitura: tentar de novo não muda nada (o cockpit não faz retry).
+    expect(resumo.colacor.titulos_falha_leitura).toBeUndefined();
     expect(resumo.oben).toMatchObject({ total_a_receber: 7, posicao_liquida: 7, titulos_motivo: null, saldo_total_cc: 1000 });
   });
 
@@ -163,6 +165,7 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     expect(resumo.oben).toMatchObject({
       ...SEM_TITULOS,
       titulos_motivo: 'Falha ao carregar saldo de títulos: canceling statement due to statement timeout',
+      titulos_falha_leitura: true,
       saldo_total_cc: 1000,
     });
   });
@@ -328,7 +331,8 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     rpcRejeita = new Error('Failed to fetch');
     const resumo = await getResumoFinanceiro(['oben']);
     expect(resumo.oben).toMatchObject({
-      ...SEM_TITULOS, titulos_motivo: 'Falha ao carregar saldo de títulos: Failed to fetch', saldo_total_cc: 1000,
+      ...SEM_TITULOS, titulos_motivo: 'Falha ao carregar saldo de títulos: Failed to fetch', titulos_falha_leitura: true,
+      saldo_total_cc: 1000,
     });
   });
 

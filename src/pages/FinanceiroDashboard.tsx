@@ -249,7 +249,7 @@ const FinanceiroDashboard = ({ embedded = false }: { embedded?: boolean } = {}) 
           {/* `syncing` conta como carregando: durante o sync o previsto já foi descartado, e sem
               isso a aba mostraria o empty state "Sincronize os dados primeiro" no meio do sync. */}
           <FluxoCaixaTab data={fluxoCaixa} loading={loading || syncing} saldoCC={activeResumo?.saldo_total_cc}
-            indisponivel={errosCarga.fluxoCaixa ?? null} />
+            indisponivel={errosCarga.fluxoCaixa ?? null} titulosIndisponiveis={activeResumo?.titulos_motivo ?? null} />
         </TabsContent>
 
         {/* ═══════════ TAB: DRE ═══════════ */}

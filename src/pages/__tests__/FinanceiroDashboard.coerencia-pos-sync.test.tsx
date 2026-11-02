@@ -55,6 +55,7 @@ const SEM_MOVIMENTO = {
   total_a_pagar: 0,
   total_vencido_receber: 0,
   total_vencido_pagar: 0,
+  titulos_motivo: null,
 };
 
 /** O resumo vem por empresa e o hook consolida somando; só `oben` carrega o cenário. */
