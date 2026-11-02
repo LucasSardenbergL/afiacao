@@ -12,6 +12,7 @@ import {
   criarSupabaseStub,
   gerarUniversoGolden,
 } from '@/test/universo-pedidos-golden';
+import { chaveUniversoPedidos, lerUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
 
 /**
  * GOLDEN do `useBundleEngine` — plano v4, lote 16 (C4′): "mesmo dado ⇒ mesmos bundles".
@@ -59,8 +60,9 @@ function conferirGolden(nome: string, saida: unknown) {
 const universo = gerarUniversoGolden();
 let reg = criarRegistroStub();
 
+let qc: QueryClient;
 function rodar() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client: qc }, children);
   return renderHook(() => useBundleEngine(), { wrapper });
 }
@@ -78,6 +80,17 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+/**
+ * O universo de pedidos fica no cache para os OUTROS motores: se este o mutou (ordenou, alterou
+ * linha ou item), o próximo leria dado diferente. O que está no cache tem de ser igual a uma
+ * releitura fresca do mesmo banco — e tem de existir (senão a comparação é com nada).
+ */
+async function universoCompartilhadoIntacto() {
+  const emCache = qc.getQueryData(chaveUniversoPedidos(estado.auth.user.id));
+  expect(emCache, 'o motor não leu pelo universo compartilhado').toBeDefined();
+  expect(emCache).toEqual(await lerUniversoPedidos());
+}
 
 async function saidaDoMotor() {
   const { result } = rodar();
@@ -97,11 +110,13 @@ describe('useBundleEngine — mesmo universo de pedidos ⇒ mesma saída (golden
     estado.auth = { user: { id: FARMER_GOLDEN }, isMaster: false, isStaff: true };
     estado.lente = { effectiveUserId: FARMER_GOLDEN, isImpersonating: false };
     conferirGolden('bundle-farmer', await saidaDoMotor());
+    await universoCompartilhadoIntacto();
   });
 
   it('lente "Ver como": master olhando o farmer (só leitura)', async () => {
     estado.auth = { user: { id: 'master-1' }, isMaster: true, isStaff: true };
     estado.lente = { effectiveUserId: FARMER_GOLDEN, isImpersonating: true };
     conferirGolden('bundle-lente', await saidaDoMotor());
+    await universoCompartilhadoIntacto();
   });
 });

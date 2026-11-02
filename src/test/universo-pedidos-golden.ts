@@ -15,11 +15,14 @@
  * não trazia (ex.: `id` no bundle), a saída muda e o golden fica vermelho.
  */
 
+import { addDias } from '@/lib/time/sp-day';
+
 const AGORA = Date.UTC(2026, 9, 15, 12, 0, 0); // 2026-10-15T12:00:00Z — relógio fixo do golden
 export const AGORA_GOLDEN = AGORA;
 export const FARMER_GOLDEN = 'farmer-1';
 const OUTRO_FARMER = 'farmer-2';
 const DIA = 24 * 60 * 60 * 1000;
+const DIA_AGORA = '2026-10-15';
 
 /** mulberry32: PRNG de 32 bits, mesma sequência em qualquer máquina. */
 function prng(semente: number): () => number {
@@ -112,7 +115,8 @@ export function gerarUniversoGolden(nPedidos = 6_500): UniversoGolden {
       items,
       total,
       created_at: new Date(instante + DIA).toISOString(),
-      order_date_kpi: comKpi ? new Date(instante).toISOString().slice(0, 10) : null,
+      // Dia de calendário do instante (época UTC) a partir de um dia FIXO — fixture, não "hoje".
+      order_date_kpi: comKpi ? addDias(DIA_AGORA, Math.floor(instante / DIA) - Math.floor(AGORA / DIA)) : null,
       status: statusSorteado(),
       account: r() < 0.7 ? 'oben' : 'colacor',
       deleted_at: r() < 0.03 ? new Date(instante + 2 * DIA).toISOString() : null,
@@ -231,12 +235,17 @@ export interface RegistroStub {
   leiturasPedidos: Array<{ select: string; de: number; ate: number }>;
   /** RPCs de escrita/registro e escritas em tabela, em ordem. */
   escritas: Array<{ alvo: string; args: unknown }>;
-  /** Leitura de `sales_orders` (índice 0-based, na ordem de chegada) que devolve erro — página perdida. */
-  falharLeituraPedidos: ((indice: number) => boolean) | null;
+  /**
+   * Leitura de `sales_orders` (índice 0-based, na ordem de chegada) que falha: `'erro'` = página
+   * perdida (`{data:null, error}`), `'data_null'` = resposta malformada (`{data:null}` sem erro).
+   */
+  falharLeituraPedidos: ((indice: number) => false | 'erro' | 'data_null') | null;
+  /** Operadores que o "servidor" IGNORA em `sales_orders` — simula filtro/cursor não honrado. */
+  ignorarEmPedidos: ReadonlyArray<'gt' | 'gte' | 'lt'>;
 }
 
 export function criarRegistroStub(): RegistroStub {
-  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null };
+  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null, ignorarEmPedidos: [] };
 }
 
 type Filtro = (l: Linha) => boolean;
@@ -257,9 +266,10 @@ export function criarSupabaseStub(universo: () => UniversoGolden, reg: RegistroS
     c.eq = (col: string, v: unknown) => { filtros.push((l) => l[col] === v); return c; };
     c.neq = (col: string, v: unknown) => { filtros.push((l) => l[col] !== null && l[col] !== v); return c; };
     c.in = (col: string, vs: unknown[]) => { filtros.push((l) => vs.includes(l[col])); return c; };
-    c.gt = (col: string, v: unknown) => { filtros.push((l) => l[col] != null && comparar(l[col], v) > 0); return c; };
-    c.gte = (col: string, v: unknown) => { filtros.push((l) => l[col] != null && comparar(l[col], v) >= 0); return c; };
-    c.lt = (col: string, v: unknown) => { filtros.push((l) => l[col] != null && comparar(l[col], v) < 0); return c; };
+    const ignora = (op: 'gt' | 'gte' | 'lt') => tabela === 'sales_orders' && reg.ignorarEmPedidos.includes(op);
+    c.gt = (col: string, v: unknown) => { if (!ignora('gt')) filtros.push((l) => l[col] != null && comparar(l[col], v) > 0); return c; };
+    c.gte = (col: string, v: unknown) => { if (!ignora('gte')) filtros.push((l) => l[col] != null && comparar(l[col], v) >= 0); return c; };
+    c.lt = (col: string, v: unknown) => { if (!ignora('lt')) filtros.push((l) => l[col] != null && comparar(l[col], v) < 0); return c; };
     c.lte = (col: string, v: unknown) => { filtros.push((l) => l[col] != null && comparar(l[col], v) <= 0); return c; };
     c.not = (col: string, op: string, v: string) => {
       if (op === 'in') {
@@ -299,9 +309,11 @@ export function criarSupabaseStub(universo: () => UniversoGolden, reg: RegistroS
         if (tabela === 'sales_orders') {
           const indice = reg.leiturasPedidos.length;
           reg.leiturasPedidos.push({ select: selecao ?? '', de, ate: ate ?? -1 });
-          if (reg.falharLeituraPedidos?.(indice)) {
+          const falha = reg.falharLeituraPedidos?.(indice);
+          if (falha === 'erro') {
             return resolver({ data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } });
           }
+          if (falha === 'data_null') return resolver({ data: null, error: null });
         }
         let linhas = (universo().tabelas[tabela] ?? []).filter((l) => filtros.every((f) => f(l)));
         if (ordens.length) {

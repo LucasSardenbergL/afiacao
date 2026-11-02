@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -63,6 +64,12 @@ function chain(table: string): unknown {
   return c;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => chain(t) } }));
 vi.mock('@/contexts/ImpersonationContext', () => ({
   useImpersonation: () => ({ isImpersonating: false, effectiveUserId: FARMER }),
@@ -81,7 +88,7 @@ const scoresSemFiltroDeFarmer = () =>
 
 describe('useBundleEngine — página que falha não vira "sem carteira, deve ser super_admin"', () => {
   it('não recarrega a base INTEIRA quando a leitura da carteira falha', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(scoresSemFiltroDeFarmer()).toHaveLength(0);
@@ -89,7 +96,7 @@ describe('useBundleEngine — página que falha não vira "sem carteira, deve se
 
   it('lê a carteira escopada ao dono quando a consulta funciona', async () => {
     falharScores = false;
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const comFiltro = queries.filter(

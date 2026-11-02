@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Desde o lote 16 o `select` de pedidos dos 3 motores é a união compartilhada — o guard lê a fonte única.
+import { COLUNAS_UNIVERSO_PEDIDOS } from '@/lib/farmer/universo-pedidos-query';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -123,6 +126,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -157,7 +166,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: v
 import { useBundleEngine } from '../useBundleEngine';
 
 const rodar = async () => {
-  const { result } = renderHook(() => useBundleEngine());
+  const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
   await act(async () => { await result.current.calculateBundles(); });
   return result;
 };
@@ -254,7 +263,7 @@ describe('useBundleEngine — as duas pontas do par vêm do banco', () => {
   });
 
   it('o `select` de `sales_orders` pede `account` — é a conta que qualifica cada item', () => {
-    const select = fonte.match(/\.select\('customer_user_id, items[^']*'\)/)?.[0];
+    const select = (COLUNAS_UNIVERSO_PEDIDOS.includes('customer_user_id') && COLUNAS_UNIVERSO_PEDIDOS.includes('items') ? COLUNAS_UNIVERSO_PEDIDOS : undefined);
     expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
     expect(select).toContain('account');
   });

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 /**
@@ -84,6 +85,12 @@ function vendaveisDoSeed(): { product_id: string }[] {
   }).map((c) => ({ product_id: c.product_id }));
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -138,7 +145,7 @@ describe('FarmerRecommendations — o desfecho memorizado não atravessa a gera�
   it('DETECTOR: o card do seed expõe o botão de desfecho e ele grava', async () => {
     // Sem este teste, "os botões voltaram" e "a tela nunca renderizou botão nenhum"
     // seriam indistinguíveis — todos os asserts abaixo passariam num componente vazio.
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
 
     fireEvent.click(await abrirCardEPegarComprou());
 
@@ -148,7 +155,7 @@ describe('FarmerRecommendations — o desfecho memorizado não atravessa a gera�
   });
 
   it('após Recalcular, o card NÃO afirma "Venda registrada" sobre a linha nova', async () => {
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
     fireEvent.click(await abrirCardEPegarComprou());
     await screen.findByText('Venda registrada');
 
@@ -172,7 +179,7 @@ describe('FarmerRecommendations — o desfecho memorizado não atravessa a gera�
     // O lado silencioso do mesmo bug, e o pior: sem botão a vendedora não tem como
     // registrar o desfecho da recomendação nova, e ela morre como `expirado`, que a query
     // de medição lê como "substituída sem interação". Zero indistinguível de zero real.
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
     fireEvent.click(await abrirCardEPegarComprou());
     await screen.findByText('Venda registrada');
 
@@ -191,7 +198,7 @@ describe('FarmerRecommendations — o desfecho memorizado não atravessa a gera�
     // A chave de negócio é a única identidade que o browser tem, então o banco não
     // consegue distinguir; a serialização é do cliente.
     capturarPendente = true;
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
 
     fireEvent.click(await abrirCardEPegarComprou());
 

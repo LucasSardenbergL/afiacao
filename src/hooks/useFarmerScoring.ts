@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
-import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { buscarUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
@@ -126,7 +127,10 @@ export const useFarmerScoring = (farmerId?: string) => {
   //
   // ⚠️ `loadingRole` importa: enquanto o papel não resolve, `canViewManagerial` é false, e calcular
   // agora recortaria a tela de um gestor por um instante. O cálculo espera (dependência do effect).
-  const { isMaster } = useAuth();
+  const { isMaster, user } = useAuth();
+  // A leitura de `sales_orders` é sob a RLS do usuário REAL — é ele a chave do universo em cache.
+  const userIdReal = user?.id ?? null;
+  const queryClient = useQueryClient();
   const { canViewManagerial, loading: loadingRole } = useCommercialRole();
   const capCarteiraLer = isMaster || canViewManagerial;
 
@@ -153,8 +157,9 @@ export const useFarmerScoring = (farmerId?: string) => {
     })();
   }, []);
 
-  // Calculate scores for all clients
-  const calculateScores = useCallback(async () => {
+  // Calculate scores for all clients. `fresco`: o botão Recalcular relê o universo de pedidos;
+  // ao montar, o motor aceita o universo que outra tela leu há até 60 s (este hook só exibe).
+  const calcular = useCallback(async (fresco: boolean) => {
     if (!targetFarmerId) {
       setCalculating(false);
       setLoading(false);
@@ -163,23 +168,12 @@ export const useFarmerScoring = (farmerId?: string) => {
     setCalculating(true);
 
     try {
-      // 1. Load all customers with sales orders (paginado: 30.834 pedidos na denylist).
-      // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
-      // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
-      const salesOrders = await fetchAllPages((de, ate) =>
-        supabase
-          .from('sales_orders')
-          .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
-          // DENYLIST + `deleted_at IS NULL`: o MESMO universo de `private.margem_cliente_agregada()`.
-          // A allowlist anterior citava dois status inexistentes (`confirmado`/`entregue`, zero
-          // linhas), resolvia para só `faturado` e escondia 10.236 pedidos reais — a margem vinha
-          // de um universo e o resto do score de outro.
-          .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-          .is('deleted_at', null)
-          .order('id', { ascending: true })
-          .range(de, ate),
-        'sales_orders/scoring',
-      );
+      // 1. O universo de pedidos (denylist + `deleted_at`, o MESMO de
+      // `private.margem_cliente_agregada()`), compartilhado com cross-sell e bundle e lido em
+      // paralelo — `@/lib/farmer/universo-pedidos-query`. Inteiro ou erro: falha de qualquer
+      // página LANÇA e cai no catch abaixo, que declara `erro` e preserva o último estado bom.
+      if (!userIdReal) throw new Error('Sessão sem usuário — não há como ler os pedidos.');
+      const salesOrders = await buscarUniversoPedidos(queryClient, userIdReal, { fresco });
 
       if (salesOrders.length === 0) {
         // Leitura OK e base genuinamente vazia — vazio aqui é fato, não falha.
@@ -649,13 +643,14 @@ export const useFarmerScoring = (farmerId?: string) => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [targetFarmerId, config, capCarteiraLer]);
+  }, [targetFarmerId, config, capCarteiraLer, userIdReal, queryClient]);
+  const recalculate = useCallback(() => calcular(true), [calcular]);
 
   useEffect(() => {
     // `!loadingRole`: calcular antes de o papel comercial resolver recortaria a tela de um gestor
     // (canViewManagerial nasce false), e o recálculo só viria no próximo disparo. Esperar é a
     // diferença entre "gestor vê a base" e "gestor pisca a carteira e depois vê a base".
-    if (targetFarmerId && !loadingRole) calculateScores();
+    if (targetFarmerId && !loadingRole) calcular(false);
   }, [targetFarmerId, loadingRole, capCarteiraLer]);
 
   // Summary stats
@@ -680,6 +675,6 @@ export const useFarmerScoring = (farmerId?: string) => {
   return {
     config, clientScores, agenda, summary,
     loading, calculating, erro,
-    recalculate: calculateScores,
+    recalculate,
   };
 };
