@@ -8,8 +8,8 @@ import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
 import { buscarUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
 import type { Tables } from '@/integrations/supabase/types';
-import { useFarmerAlgorithmConfig } from '@/hooks/useFarmerAlgorithmConfig';
-import { DEFAULT_CONFIG, type AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
+import { useFarmerAlgorithmConfig, FARMER_ALGORITHM_CONFIG_KEY } from '@/hooks/useFarmerAlgorithmConfig';
+import type { AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { resolveProductIdsFromItems } from '@/lib/scoring/margin';
@@ -41,8 +41,8 @@ function itemDeMargem(item: Json): SalesOrderItem {
 
 // ─── Types ───────────────────────────────────────────────────────────
 // `AlgorithmConfig`/`DEFAULT_CONFIG` moram em `@/lib/scoring/configAlgoritmo` (quebra o ciclo com
-// `useFarmerAlgorithmConfig`); o re-export mantém quem importava daqui.
-export { DEFAULT_CONFIG, type AlgorithmConfig };
+// `useFarmerAlgorithmConfig`); o re-export do tipo mantém quem o importava daqui.
+export type { AlgorithmConfig };
 
 export interface ClientScore {
   customer_user_id: string;
@@ -155,6 +155,9 @@ export const useFarmerScoring = (farmerId?: string) => {
     const config = erroConfig ? null : configLida;
     if (!config) {
       if (erroConfig) {
+        // Invalida execução em voo (com a config de antes): ao terminar, ela publicaria `erro: null`
+        // por cima desta falha de leitura.
+        ++execucaoAtual.current;
         setErro(`Não consegui ler a configuração do algoritmo — os scores não foram calculados. ${erroConfig}`);
         setCalculating(false);
         setLoading(false);
@@ -648,7 +651,15 @@ export const useFarmerScoring = (farmerId?: string) => {
       }
     }
   }, [targetFarmerId, configLida, erroConfig, capCarteiraLer, userIdReal, queryClient]);
-  const recalculate = useCallback(() => calcular(true), [calcular]);
+  // Recalcular com a config em ERRO relê a CONFIG (o cálculo sozinho retornaria cedo e o botão não
+  // faria nada); quando ela volta, o effect abaixo recalcula. Fora disso, relê os pedidos e calcula.
+  const recalculate = useCallback(async () => {
+    if (erroConfig) {
+      await queryClient.refetchQueries({ queryKey: FARMER_ALGORITHM_CONFIG_KEY, exact: true });
+      return;
+    }
+    await calcular(true);
+  }, [calcular, erroConfig, queryClient]);
 
   useEffect(() => {
     // `!loadingRole`: calcular antes de o papel comercial resolver recortaria a tela de um gestor

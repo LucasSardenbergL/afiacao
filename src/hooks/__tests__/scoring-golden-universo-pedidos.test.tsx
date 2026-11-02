@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { createElement, type ReactNode } from 'react';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -203,5 +203,39 @@ describe('useFarmerScoring — a config do algoritmo é lida com honestidade (lo
     await act(async () => { await new Promise((r) => setTimeout(r, 600)); });
     expect(result.current.config?.k1).toBe(2);
     expect(result.current.erro).toBeNull();
+  });
+
+  it('releitura da config que FALHA no meio de uma execução: o `erro` fica — a execução antiga não o apaga', async () => {
+    reg.atrasoLeitura = (tabela, n) => (tabela === 'farmer_calls' && n === 0 ? 400 : 0);
+    const { result } = rodar();
+    await waitFor(() => expect(reg.leiturasPorTabela.farmer_calls ?? 0).toBe(1));
+    reg.falharTabelas = ['farmer_algorithm_config'];
+    await act(async () => { await qc.invalidateQueries({ queryKey: FARMER_ALGORITHM_CONFIG_KEY }); });
+    await waitFor(() => expect(result.current.erro).toMatch(/configuração do algoritmo/));
+    await act(async () => { await new Promise((r) => setTimeout(r, 600)); });
+    expect(result.current.erro).toMatch(/configuração do algoritmo/);
+    expect(result.current.clientScores).toEqual([]);
+  });
+
+  it('Recalcular depois de a config FALHAR relê a config — e, de volta, o motor calcula', async () => {
+    reg.falharTabelas = ['farmer_algorithm_config'];
+    const { result } = rodar();
+    await waitFor(() => expect(result.current.erro).toMatch(/configuração do algoritmo/));
+    reg.falharTabelas = [];
+    await act(async () => { await result.current.recalculate(); });
+    await waitFor(() => expect(result.current.erro).toBeNull());
+    expect(result.current.config?.k1).toBe(1.3);
+    expect(result.current.clientScores.length).toBeGreaterThan(50);
+  });
+
+  it('OFFLINE na 1ª carga: a config é tentada (não pausa) e o motor sai do loading', async () => {
+    onlineManager.setOnline(false);
+    try {
+      const { result } = rodar();
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(reg.leiturasPorTabela.farmer_algorithm_config ?? 0).toBeGreaterThan(0);
+    } finally {
+      onlineManager.setOnline(true);
+    }
   });
 });

@@ -23,6 +23,9 @@ export const FARMER_ALGORITHM_CONFIG_KEY = ['farmer-algorithm-config'] as const;
 export function useFarmerAlgorithmConfig() {
   const { data, isLoading, error } = useQuery({
     queryKey: FARMER_ALGORITHM_CONFIG_KEY,
+    // Offline, o default 'online' PAUSA a consulta sem rejeitar: o motor de scoring (que espera a
+    // config) ficaria no skeleton para sempre, sem erro. Assim a leitura tenta e a falha aparece.
+    networkMode: 'always',
     queryFn: async (): Promise<AlgorithmConfig> => {
       const { data: rows, error: erroLeitura } = await supabase
         .from('farmer_algorithm_config')
