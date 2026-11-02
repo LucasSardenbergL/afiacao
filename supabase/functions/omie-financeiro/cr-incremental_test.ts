@@ -4,11 +4,14 @@ import {
   avaliarProvaCliente,
   type DepsIncrementalCR,
   decidirModoCR,
+  embaralhar,
   executarIncrementalCR,
+  falhaVarreduraEstrita,
   FULL_MAX_DIAS,
   janelaAlteracao,
   janelaEmissao,
   PAGINA_PROVA,
+  rpcAusente,
 } from "./cr-incremental.ts";
 
 function assertEquals(a: unknown, b: unknown, msg?: string) {
@@ -53,7 +56,7 @@ Deno.test("full com mais de 7 dias vence, por mais recente que seja o incrementa
   );
 });
 
-Deno.test("marca = o mais recente entre full e incremental; janela volta 1 dia e vai até HOJE em SP", () => {
+Deno.test("marca = t0 do último incremental; janela volta 1 dia e vai até HOJE em SP", () => {
   // incremental às 14:20 BRT de 01/11 → marca 01/11 → de 31/10 até 01/11 (não 02/11: ainda é domingo em SP)
   assertEquals(
     decidirModoCR({
@@ -63,13 +66,19 @@ Deno.test("marca = o mais recente entre full e incremental; janela volta 1 dia e
     }),
     { modo: "incremental", de: "31/10/2026", ate: "01/11/2026", marca: "2026-11-01" },
   );
-  // incremental mais VELHO que o full: a marca é o início do full
+  // incremental mais VELHO que o full: a marca SEGUE no incremental — o full pode ter fechado truncado na
+  // continuação e não avança a janela (Codex, código, P1). Com max() a janela começaria em 29/10.
   assertEquals(
     decidirModoCR({
       cursorPendente: false,
       estado: { fullOkEm: h("2026-10-30T11:00:00Z"), incrementalOkEm: h("2026-10-29T11:20:00Z") },
       agora: AGORA,
     }),
+    { modo: "incremental", de: "28/10/2026", ate: "01/11/2026", marca: "2026-10-29" },
+  );
+  // bootstrap (nenhum incremental ainda): a marca é o início do full
+  assertEquals(
+    decidirModoCR({ cursorPendente: false, estado: { fullOkEm: h("2026-10-30T11:00:00Z"), incrementalOkEm: null }, agora: AGORA }),
     { modo: "incremental", de: "29/10/2026", ate: "01/11/2026", marca: "2026-10-30" },
   );
 });
@@ -130,6 +139,52 @@ Deno.test("sem contagem declarada, multipágina, contagem divergente ou página 
   assertEquals(avaliarProvaCliente({ ...base, totalDePaginas: 1, totalDeRegistros: PAGINA_PROVA, titulos: cheia }).tipo, "inconclusivo");
 });
 
+Deno.test("metadado inválido nunca vira prova: \"\", ausente, negativo, fracionário, 0 páginas com itens", () => {
+  const um = [{ codigo_lancamento_omie: 1, codigo_cliente_fornecedor: base.cliente }];
+  const casos: Array<[unknown, unknown, typeof um]> = [
+    [0, "", []], // Number("") === 0 fabricaria a contagem
+    [undefined, 0, []], // páginas ausentes não são 0
+    [-10, 0, []],
+    [0, -1, []],
+    [1, 1.5, um],
+    ["1x", 1, um],
+    [0, 1, um], // itens com 0 páginas declaradas: incoerente
+  ];
+  for (const [pags, regs, titulos] of casos) {
+    assertEquals(
+      avaliarProvaCliente({ ...base, totalDePaginas: pags, totalDeRegistros: regs, titulos }).tipo,
+      "inconclusivo",
+      `páginas=${JSON.stringify(pags)} registros=${JSON.stringify(regs)} itens=${titulos.length} deveria ser inconclusivo`,
+    );
+  }
+  // o par: string só de dígitos é contagem válida (o Omie às vezes serializa assim)
+  assertEquals(avaliarProvaCliente({ ...base, totalDePaginas: "1", totalDeRegistros: "1", titulos: um }).tipo, "ausente_provado");
+});
+
+Deno.test("fim estrito: 1ª página vazia com contagem > 0 é truncada; contagem ausente reprova", () => {
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: true, lidos: 0, declarados: 37 }), "truncada");
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: true, lidos: 0, declarados: undefined }), "contagem_ausente");
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: true, lidos: 0, declarados: "" }), "contagem_ausente");
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: false, lidos: 37, declarados: 37 }), "sem_fim_real");
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: true, lidos: 0, declarados: 0 }), null);
+  assertEquals(falhaVarreduraEstrita({ reachedEnd: true, lidos: 38, declarados: 37 }), null); // inclusão durante a varredura
+});
+
+Deno.test("rpcAusente: PGRST202 sempre; 42883 só se nomear a própria RPC", () => {
+  assertEquals(rpcAusente({ code: "PGRST202", message: "x" }, "fin_cr_marcar_ausentes"), true);
+  assertEquals(rpcAusente({ code: "42883", message: "function public.fin_cr_marcar_ausentes(text, bigint[], timestamptz) does not exist" }, "fin_cr_marcar_ausentes"), true);
+  assertEquals(rpcAusente({ code: "42883", message: "function public.dependencia_quebrada() does not exist" }, "fin_cr_marcar_ausentes"), false);
+  assertEquals(rpcAusente({ code: "42883" }, "fin_cr_marcar_ausentes"), false);
+  assertEquals(rpcAusente(null, "fin_cr_marcar_ausentes"), false);
+});
+
+Deno.test("embaralhar devolve permutação sem mexer na entrada", () => {
+  const xs = Array.from({ length: 30 }, (_, i) => i);
+  const r = embaralhar(xs);
+  assertEquals([...r].sort((a, b) => a - b), xs);
+  assertEquals(xs[0], 0);
+});
+
 Deno.test("item sem código ou de outro cliente (filtro ignorado) → inconclusivo, nunca prova", () => {
   const semCodigo = [{ codigo_lancamento_omie: undefined, codigo_cliente_fornecedor: base.cliente }];
   assertEquals(avaliarProvaCliente({ ...base, totalDePaginas: 1, totalDeRegistros: 1, titulos: semCodigo }), { tipo: "inconclusivo", motivo: "titulo_sem_codigo" });
@@ -153,16 +208,27 @@ function falsas(opts: {
   prova?: (cliente: number) => { totalDePaginas: unknown; totalDeRegistros: unknown; titulos: Array<{ codigo_lancamento_omie: number; codigo_cliente_fornecedor: number }> };
   falhaProva?: boolean;
   excluir?: { data?: unknown; error?: { code?: string; message?: string } };
+  /** Códigos vistos na reconfirmação (3ª listagem, só com confirmados). */
+  reconf?: number[];
+  falhaReconf?: boolean;
+  embaralhar?: <T>(xs: T[]) => T[];
 }) {
   const log: string[] = [];
   let chamadaLista = 0;
   const deps: DepsIncrementalCR = {
     listarEstrito: (filtros, codigos) => {
       chamadaLista++;
-      log.push(chamadaLista === 1 ? "A" : "B");
+      log.push(["A", "B", "R"][chamadaLista - 1] ?? "?");
       if (chamadaLista === 1) {
         if (filtros.filtrar_apenas_titulos_em_aberto !== "S") throw new Error("A sem filtro de aberto");
         for (const c of opts.a ?? [1, 2]) codigos.add(c);
+      } else if (chamadaLista === 3) {
+        // reconfirmação: do último dia de B até o dia de SP de agoraIso (02/11)
+        if (filtros.filtrar_por_data_de !== JANELA.ate || filtros.filtrar_por_data_ate !== "02/11/2026" || filtros.filtrar_apenas_alteracao !== "S") {
+          throw new Error(`reconfirmação com janela errada ${JSON.stringify(filtros)}`);
+        }
+        if (opts.falhaReconf) return Promise.reject(new Error("reconfirmação: retrato truncado"));
+        for (const c of opts.reconf ?? []) codigos.add(c);
       } else {
         if (filtros.filtrar_por_data_de !== JANELA.de || filtros.filtrar_apenas_alteracao !== "S") throw new Error("B sem janela");
         if (opts.falhaB) return Promise.reject(new Error("B: página vazia antes do piso"));
@@ -192,6 +258,7 @@ function falsas(opts: {
     },
     orcamentoEsgotado: () => false,
     agoraIso: () => "2026-11-02T08:21:00.000Z",
+    embaralhar: opts.embaralhar ?? ((xs) => xs),
   };
   return { deps, log };
 }
@@ -215,7 +282,7 @@ async function lancaCom(p: Promise<unknown>, trecho: string) {
 Deno.test("fluxo feliz: A → B → C1 com A∪B → prova → C3 só com o provado → marca POR ÚLTIMO", async () => {
   const { deps, log } = falsas({ candidatos: [{ codigo: 9, cliente: 5, emissao: "2026-10-01" }] });
   const r = reconciliado(await executarIncrementalCR(JANELA, deps));
-  assertEquals(log, ["A", "B", "C1:1,2,3", "C2:5", "C3:9", "MARCA"]);
+  assertEquals(log, ["A", "B", "C1:1,2,3", "C2:5", "R", "C3:9", "MARCA"]);
   assertEquals([r.reconciliacao, r.abertos, r.vistos, r.excluidos], ["ok", 2, 3, 1]);
 });
 
@@ -288,4 +355,59 @@ Deno.test("retorno do marcar sem lista de candidatos: lança (ausente ≠ vazio)
   const { deps, log } = falsas({ marcar: { data: { marcados: 0 } } });
   await lancaCom(executarIncrementalCR(JANELA, deps), "sem lista de candidatos");
   assertEquals(log.includes("MARCA"), false);
+});
+
+Deno.test("reconfirmação: confirmado alterado no Omie depois de B sai do DELETE (cliente/emissão mudaram)", async () => {
+  const { deps, log } = falsas({
+    candidatos: [{ codigo: 9, cliente: 5, emissao: "2026-10-01" }, { codigo: 10, cliente: 6, emissao: "2026-10-01" }],
+    reconf: [9],
+  });
+  const r = reconciliado(await executarIncrementalCR(JANELA, deps));
+  assertEquals(log, ["A", "B", "C1:1,2,3", "C2:5", "C2:6", "R", "C3:10", "MARCA"]);
+  assertEquals([r.reobservados, r.excluidos], [1, 1]);
+  // todos reobservados: o C3 nem é chamado
+  const todos = falsas({ candidatos: [{ codigo: 9, cliente: 5, emissao: "2026-10-01" }], reconf: [9] });
+  await executarIncrementalCR(JANELA, todos.deps);
+  assertEquals(todos.log, ["A", "B", "C1:1,2,3", "C2:5", "R", "MARCA"]);
+});
+
+Deno.test("reconfirmação falha: lança, sem C3 e sem marca", async () => {
+  const { deps, log } = falsas({ candidatos: [{ codigo: 9, cliente: 5, emissao: "2026-10-01" }], falhaReconf: true });
+  await lancaCom(executarIncrementalCR(JANELA, deps), "retrato truncado");
+  assertEquals(log, ["A", "B", "C1:1,2,3", "C2:5", "R"]);
+});
+
+Deno.test("sem confirmados não há reconfirmação (custo zero no caso comum)", async () => {
+  const { deps, log } = falsas({});
+  await executarIncrementalCR(JANELA, deps);
+  assertEquals(log, ["A", "B", "C1:1,2,3", "MARCA"]);
+});
+
+Deno.test("42883 de dependência interna NÃO vira 'indisponível': lança e não grava marca", async () => {
+  const { deps, log } = falsas({ marcar: { error: { code: "42883", message: "function public.dependencia_quebrada() does not exist" } } });
+  await lancaCom(executarIncrementalCR(JANELA, deps), "dependencia_quebrada");
+  assertEquals(log.includes("MARCA"), false);
+});
+
+Deno.test("a prova é cacheada por RESPOSTA, não por veredito: mesma chave, A ausente e B presente → só A ao DELETE", async () => {
+  const { deps, log } = falsas({
+    candidatos: [{ codigo: 9, cliente: 5, emissao: "2026-10-01" }, { codigo: 10, cliente: 5, emissao: "2026-10-01" }],
+    prova: () => ({ totalDePaginas: 1, totalDeRegistros: 1, titulos: [{ codigo_lancamento_omie: 10, codigo_cliente_fornecedor: 5 }] }),
+  });
+  const r = reconciliado(await executarIncrementalCR(JANELA, deps));
+  assertEquals(log.filter((l) => l.startsWith("C2") || l.startsWith("C3")), ["C2:5", "C3:9"]);
+  assertEquals([r.presentes, r.excluidos], [1, 1]);
+});
+
+Deno.test("a ordem das provas vem do embaralhar: inconclusivos perenes não monopolizam o teto", async () => {
+  // 10 primeiros sempre multipágina, 2 últimos provam. Na ordem fixa nunca são consultados (adiados);
+  // com a ordem invertida entram no teto e saem.
+  const cands = Array.from({ length: 12 }, (_, i) => ({ codigo: 100 + i, cliente: 500 + i, emissao: "2026-10-01" }));
+  const prova = (cliente: number) => cliente < 510
+    ? { totalDePaginas: 2, totalDeRegistros: 150, titulos: [{ codigo_lancamento_omie: 1, codigo_cliente_fornecedor: cliente }] }
+    : { totalDePaginas: 0, totalDeRegistros: 0, titulos: [] };
+  const fixa = reconciliado(await executarIncrementalCR(JANELA, falsas({ candidatos: cands, prova }).deps));
+  assertEquals([fixa.inconclusivos, fixa.adiados, fixa.excluidos], [10, 2, 0]);
+  const invertida = reconciliado(await executarIncrementalCR(JANELA, falsas({ candidatos: cands, prova, embaralhar: (xs) => [...xs].reverse() }).deps));
+  assertEquals([invertida.excluidos, invertida.adiados], [2, 2]);
 });

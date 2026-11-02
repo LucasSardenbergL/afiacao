@@ -25,7 +25,6 @@ import {
   validarTotalPaginas,
   desfechoVarreduraReversa,
   fingerprintPagina,
-  varreduraTruncada,
 } from "../_shared/omie-paginacao.ts";
 import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
 import {
@@ -33,6 +32,7 @@ import {
   type DepsIncrementalCR,
   type EstadoCR,
   executarIncrementalCR,
+  falhaVarreduraEstrita,
   MARCADOR_FULL_INICIO,
   MARCADOR_FULL_OK,
   MARCADOR_INCREMENTAL_OK,
@@ -927,7 +927,7 @@ async function syncContasReceber(
   let reachedEnd = false;
   let lastFingerprint = "";
   let lidos = 0;
-  let declarados: number | undefined;
+  let declarados: unknown;
 
   while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
@@ -941,6 +941,8 @@ async function syncContasReceber(
       if (isTimeBudgetExhausted()) break;
       throw new Error(`[Fin][${company}] CR p${pagina}: Omie sem resposta após retries (fora do estouro de budget) — falha, não fim da lista`);
     }
+    // Estrito: a contagem é lida ANTES do veredito da página — 1ª vazia com contagem > 0 não é fim.
+    if (estrito && pagina === startPage) declarados = result.total_de_registros;
 
     // Piso MONOTÔNICO (mesma regra do CP): o total sub-reportado segue NÃO decidindo
     // completude — só separa "fim real" de "vazia no meio" (fault/rate-limit).
@@ -1027,7 +1029,6 @@ async function syncContasReceber(
     if (estrito) {
       // Título ilegível no retrato que decide ausência: o real dele ficaria "não visto" (Codex, desenho).
       if (skipped > 0) throw new Error(`[Fin][${company}] CR p${pagina}: ${skipped} título(s) sem código no modo estrito — retrato não serve para reconciliar`);
-      if (pagina === startPage) declarados = result.total_de_registros as number | undefined;
       lidos += validRows.length;
     }
 
@@ -1051,11 +1052,9 @@ async function syncContasReceber(
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] CR stopped: time budget exhausted`);
   if (estrito) {
-    if (!reachedEnd) {
-      throw new Error(`[Fin][${company}] CR estrito ${JSON.stringify(filtros)}: parou na p${pagina} sem o fim real (${timedOut ? "budget" : "maxPages"}) — incompleto não reconcilia`);
-    }
-    if (varreduraTruncada(lidos, declarados)) {
-      throw new Error(`[Fin][${company}] CR estrito ${JSON.stringify(filtros)}: leu ${lidos} de ${declarados} declarados — retrato truncado`);
+    const falha = falhaVarreduraEstrita({ reachedEnd, lidos, declarados });
+    if (falha) {
+      throw new Error(`[Fin][${company}] CR estrito ${JSON.stringify(filtros)}: ${falha} (p${pagina}, ${timedOut ? "budget" : "laço"}, leu ${lidos} de ${String(declarados)} declarados) — incompleto não reconcilia`);
     }
   }
   return {
@@ -1131,6 +1130,29 @@ async function gravarMarcadorCR(db: SupabaseClient, company: Company, marcador: 
     { onConflict: "entity_type,account" },
   );
   if (error) throw new Error(`sync_state ${marcador}/${company}: ${error.message}`);
+}
+
+// Cursor do full de CR com erro que LANÇA (os leitores compartilhados de CP/movimentações engolem): um
+// cursor pendente lido como "nenhum" faria o full recomeçar com início NOVO e, se a gravação também
+// falhasse, a continuação velha publicaria esse início como full_ok sem ter lido as primeiras páginas.
+async function lerCursorCR(db: SupabaseClient, company: Company): Promise<number | undefined> {
+  const { data, error } = await db
+    .from("fin_sync_cursor")
+    .select("next_page")
+    .eq("company", company)
+    .eq("resource", "contas_receber")
+    .maybeSingle();
+  if (error) throw new Error(`fin_sync_cursor contas_receber/${company}: ${error.message}`);
+  const np = (data as { next_page?: number | null } | null)?.next_page;
+  return typeof np === "number" ? np : undefined;
+}
+
+async function gravarCursorCR(db: SupabaseClient, company: Company, r: { complete?: boolean; nextPage?: number | null }): Promise<void> {
+  const { error } = await db.from("fin_sync_cursor").upsert(
+    { company, resource: "contas_receber", next_page: r.complete ? null : (r.nextPage ?? null), backfill_desde: null, updated_at: new Date().toISOString() },
+    { onConflict: "company,resource" },
+  );
+  if (error) throw new Error(`fin_sync_cursor contas_receber/${company}: ${error.message}`);
 }
 
 async function lerEstadoCR(db: SupabaseClient, company: Company): Promise<EstadoCR | null> {
@@ -2630,7 +2652,7 @@ Deno.serve(async (req) => {
           result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
             // t0 congelado ANTES de qualquer leitura: marca d'água e guardas da reconciliação usam ele.
             const t0 = new Date();
-            const cursorPage = await readCursorStartPage(supabase, co, "contas_receber");
+            const cursorPage = await lerCursorCR(supabase, co);
             const modo = decidirModoCR({
               cursorPendente: cursorPage !== undefined,
               estado: await lerEstadoCR(supabase, co),
@@ -2650,7 +2672,7 @@ Deno.serve(async (req) => {
               }
             }
             const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
-            await writeCursor(supabase, co, "contas_receber", r);
+            await gravarCursorCR(supabase, co, r);
             let fullOkPublicado = false;
             if (r.complete) {
               try {

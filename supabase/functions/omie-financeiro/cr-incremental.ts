@@ -48,11 +48,11 @@ export function decidirModoCR(input: { cursorPendente: boolean; estado: EstadoCR
   if (agora.getTime() - estado.fullOkEm.getTime() > FULL_MAX_DIAS * DIA_MS) {
     return { modo: "full", motivo: "full_vencido" };
   }
-  // A marca é o instante mais recente a partir do qual TUDO foi listado: o início do último full
-  // completo ou o t0 do último incremental íntegro.
-  const marcaEm = estado.incrementalOkEm && estado.incrementalOkEm > estado.fullOkEm
-    ? estado.incrementalOkEm
-    : estado.fullOkEm;
+  // A marca é o t0 do último incremental íntegro; o início do full só serve no bootstrap (nenhum
+  // incremental ainda). NÃO é o máximo dos dois: a continuação de um full reinicia o piso de páginas e
+  // pode fechar `complete` truncado (Codex, código, P1) — deixar o full avançar a marca pularia alterações
+  // de título fechado em páginas não visitadas. Janela mais larga é sempre segura.
+  const marcaEm = estado.incrementalOkEm ?? estado.fullOkEm;
   return { modo: "incremental", ...janelaAlteracao(marcaEm, agora) };
 }
 
@@ -65,6 +65,19 @@ export function janelaAlteracao(marcaEm: Date, agora: Date): { de: string; ate: 
   const hoje = diaSP(agora);
   if (marca > hoje) throw new RangeError(`janelaAlteracao: marca no futuro (${marca} > ${hoje})`);
   return { de: paraDataOmie(somarDias(marca, -SOBREPOSICAO_DIAS)), ate: paraDataOmie(hoje), marca };
+}
+
+/**
+ * Veredito do fim de uma listagem ESTRITA (A, B e a reconfirmação): null = íntegra; texto = motivo para
+ * LANÇAR. A contagem declarada é lida da 1ª página ANTES do veredito de página vazia — vazia com contagem
+ * > 0 é truncamento, não fim (Codex, código, P1) — e precisa existir: sem ela não há como afirmar o todo.
+ */
+export function falhaVarreduraEstrita(input: { reachedEnd: boolean; lidos: number; declarados: unknown }): string | null {
+  if (!input.reachedEnd) return "sem_fim_real";
+  const declarados = inteiroNaoNegativo(input.declarados);
+  if (declarados === null) return "contagem_ausente";
+  if (input.lidos < declarados) return "truncada";
+  return null;
 }
 
 // ── Prova de exclusão (C2) ──────────────────────────────────────────────────────────────────────
@@ -102,6 +115,16 @@ export function janelaEmissao(emissao: string): { de: string; ate: string } {
  * é do cliente pedido — qualquer coisa fora disso é `inconclusivo` (o candidato fica para outro run;
  * nunca apaga por falta de dado).
  */
+/** Inteiro ≥ 0 de verdade (número ou string só de dígitos); qualquer outra coisa é null — `Number("")` é 0 fabricado. */
+function inteiroNaoNegativo(v: unknown): number | null {
+  if (typeof v === "number") return Number.isSafeInteger(v) && v >= 0 ? v : null;
+  if (typeof v === "string" && /^[0-9]+$/.test(v)) {
+    const n = Number(v);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+  return null;
+}
+
 export function avaliarProvaCliente(input: {
   codigo: number;
   cliente: number;
@@ -121,12 +144,12 @@ export function avaliarProvaCliente(input: {
   if (titulos.some((t) => Number(t.codigo_cliente_fornecedor) !== cliente)) {
     return { tipo: "inconclusivo", motivo: "filtro_cliente_ignorado" };
   }
-  const declarado = Number(totalDeRegistros);
-  if (totalDeRegistros === undefined || totalDeRegistros === null || !Number.isSafeInteger(declarado) || declarado < 0) {
-    return { tipo: "inconclusivo", motivo: "contagem_ausente" };
-  }
-  const paginas = Number(totalDePaginas ?? 0);
-  if (!Number.isSafeInteger(paginas) || paginas > 1 || declarado !== titulos.length || titulos.length >= PAGINA_PROVA) {
+  const declarado = inteiroNaoNegativo(totalDeRegistros);
+  const paginas = inteiroNaoNegativo(totalDePaginas);
+  if (declarado === null || paginas === null) return { tipo: "inconclusivo", motivo: "contagem_ausente" };
+  // Vazio medido no Omie: páginas 0 e registros 0. Com itens, exatamente 1 página.
+  const paginasCoerentes = titulos.length === 0 ? paginas <= 1 : paginas === 1;
+  if (!paginasCoerentes || declarado !== titulos.length || titulos.length >= PAGINA_PROVA) {
     return { tipo: "inconclusivo", motivo: "multipagina_ou_contagem_divergente" };
   }
   return {
@@ -141,7 +164,7 @@ export function avaliarProvaCliente(input: {
   };
 }
 
-// ── Orquestração do run incremental (A → B → C1 → C2 → C3 → marca) ─────────────────────────────
+// ── Orquestração do run incremental (A → B → C1 → C2 → C2b → C3 → marca) ─────────────────────────────
 // Aqui, e não no index.ts, para o FLUXO ser testado com dependências falsas: falha em qualquer etapa
 // LANÇA e a marca d'água (última etapa) não é gravada. O index.ts só liga as dependências reais.
 
@@ -159,16 +182,32 @@ export type DepsIncrementalCR = {
   gravarMarca(): Promise<void>;
   orcamentoEsgotado(): boolean;
   agoraIso(): string;
+  /** Ordem das provas no run; default aleatória (teste injeta uma determinística). */
+  embaralhar?<T>(xs: T[]): T[];
 };
+
+/** Fisher–Yates: sem ordem fixa, inconclusivos perenes não monopolizam o teto de provas (Codex, P2). */
+export function embaralhar<T>(xs: T[]): T[] {
+  const r = [...xs];
+  for (let i = r.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [r[i], r[j]] = [r[j], r[i]];
+  }
+  return r;
+}
 
 /** O `data` de uma RPC como objeto, ou null — o `error` já foi checado antes; forma errada não vira campo. */
 function registro(v: unknown): Record<string, unknown> | null {
   return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
-/** A migration 20261102020000 ainda não aplicada: a RPC não existe. ÚNICO erro que não lança. */
-export function rpcAusente(error: { code?: string } | null): boolean {
-  return error?.code === "PGRST202" || error?.code === "42883";
+/**
+ * A migration 20261102020000 ainda não aplicada: a RPC não existe. ÚNICO erro que não lança. `42883` sozinho
+ * não basta — é também função/operador faltando DENTRO da RPC (Codex, P1): só conta se nomear a própria RPC.
+ */
+export function rpcAusente(error: { code?: string; message?: string } | null, rpc: string): boolean {
+  if (error?.code === "PGRST202") return true;
+  return error?.code === "42883" && (error.message ?? "").includes(rpc);
 }
 
 export async function executarIncrementalCR(
@@ -193,14 +232,14 @@ export async function executarIncrementalCR(
 
   const marc = await deps.marcarAusentes([...codigos]);
   if (marc.error) {
-    if (!rpcAusente(marc.error)) throw new Error(`CR marcar_ausentes: ${marc.error.message ?? marc.error.code}`);
+    if (!rpcAusente(marc.error, "fin_cr_marcar_ausentes")) throw new Error(`CR marcar_ausentes: ${marc.error.message ?? marc.error.code}`);
     // Sem a migration: A+B estão íntegros (a marca pode avançar), só não há reconciliação.
     await deps.gravarMarca();
     return { ...base, reconciliacao: "indisponivel" as const };
   }
   const m = registro(marc.data);
   if (!m || !Array.isArray(m.candidatos)) throw new Error("CR marcar_ausentes: retorno sem lista de candidatos");
-  const candidatos = m.candidatos as CandidatoCR[];
+  const candidatos = (deps.embaralhar ?? embaralhar)(m.candidatos as CandidatoCR[]);
 
   // C2 — uma listagem por (cliente, janela de emissão): parcelas da mesma NF dividem a prova.
   const provas = new Map<string, { resposta: RespostaProva; janela: { de: string; ate: string } }>();
@@ -237,6 +276,31 @@ export async function executarIncrementalCR(
     else confirmados.push({ codigo: c.codigo, evidencia: { ...v.evidencia, consultado_em: deps.agoraIso() } });
   }
 
+  // C2b — o Omie muda cliente/emissão sem o espelho saber; se isso cair entre B e a prova, a prova lê a
+  // chave velha e volta vazia (Codex, código, P0). Relista os alterados de [último dia de B, hoje] logo
+  // antes do C3: código visto sai dos confirmados, e o upsert carimba updated_at > t0, que a guarda do C3
+  // também barra (defesa dupla).
+  let reobservados = 0;
+  let paginasReconfirmacao = 0;
+  if (confirmados.length > 0) {
+    const vistosAgora = new Set<number>();
+    const r = await deps.listarEstrito(
+      {
+        filtrar_por_data_de: janela.ate,
+        filtrar_por_data_ate: paraDataOmie(diaSP(new Date(deps.agoraIso()))),
+        filtrar_apenas_alteracao: "S",
+      },
+      vistosAgora,
+    );
+    paginasReconfirmacao = r.paginas;
+    for (let i = confirmados.length - 1; i >= 0; i--) {
+      if (vistosAgora.has(confirmados[i].codigo)) {
+        confirmados.splice(i, 1);
+        reobservados++;
+      }
+    }
+  }
+
   let excluidos = 0;
   if (confirmados.length > 0) {
     const exc = await deps.excluirConfirmados(confirmados);
@@ -257,6 +321,8 @@ export async function executarIncrementalCR(
     presentes,
     inconclusivos,
     adiados,
+    reobservados,
+    paginas_reconfirmacao: paginasReconfirmacao,
     excluidos,
   };
 }
