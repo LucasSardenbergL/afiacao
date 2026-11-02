@@ -207,13 +207,14 @@ async function fetchProfiles(ids: string[]): Promise<ProfileRow[]> {
   return out;
 }
 
-export function useRouteContactList(workdayIso: string) {
+export function useRouteContactList(workdayIso: string, { enabled = true }: { enabled?: boolean } = {}) {
   const { isImpersonating, effectiveUserId } = useImpersonation();
   // Na lente "Ver como", escopa a fila à carteira do ALVO (ver fetchVisitScoresByCityNorm).
   // Fora da lente: null → a RLS escopa a vendedora real, comportamento INALTERADO.
   const lensFarmerId = isImpersonating && effectiveUserId ? effectiveUserId : null;
   return useQuery<RouteContactListData>({
     queryKey: ['route-contact-list', workdayIso, lensFarmerId],
+    enabled,
     staleTime: 60_000,
     queryFn: async () => {
       // 1) agenda + override + config → cidades D-1

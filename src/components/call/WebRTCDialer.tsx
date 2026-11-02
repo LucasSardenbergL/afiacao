@@ -37,7 +37,11 @@ export function WebRTCDialer(props: Props) {
       isEstablished={!!owned && owned.isEstablished}
       isFinished={!!owned && owned.isFinished}
       onMakeCall={() => {
-        if (!ctx) return;
+        // Sem Provider (módulo Telefonia congelado, ou o lazy ainda carregando): avisa em vez de clique mudo.
+        if (!ctx) {
+          toast.info('Telefonia indisponível no momento.');
+          return;
+        }
         if (isLensActive()) {
           toast.error('Ligação indisponível na lente (somente leitura). Saia da lente para ligar.');
           return;
