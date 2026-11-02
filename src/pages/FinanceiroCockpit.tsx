@@ -82,10 +82,12 @@ const FinanceiroCockpit = () => {
         />
         <CockpitCard
           title="Posição líquida (abertos)"
-          value={totalCC === null ? '—' : fmtCompact(totalCC + totalCR - totalCP)}
-          positive={totalCC !== null && totalCC + totalCR - totalCP > 0}
+          value={totalCC === null || totalCR === null || totalCP === null ? '—' : fmtCompact(totalCC + totalCR - totalCP)}
+          positive={totalCC !== null && totalCR !== null && totalCP !== null && totalCC + totalCR - totalCP > 0}
           icon={Target}
-          detail={`+ ${fmtCompact(totalCR)} a receber / - ${fmtCompact(totalCP)} a pagar (abertos)`}
+          detail={totalCR === null || totalCP === null
+            ? 'Títulos a receber/pagar indisponíveis'
+            : `+ ${fmtCompact(totalCR)} a receber / - ${fmtCompact(totalCP)} a pagar (abertos)`}
           badge="CR+CC−CP abertos · não é projeção"
           onClick={() => setDrillDown('cr_aberto')}
         />
@@ -117,13 +119,13 @@ const FinanceiroCockpit = () => {
 
       {/* Row 2: Margens + Inadimplência + Risco — também staggered */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
-        <MiniCard label="Margem Bruta" value={`${margemBruta.toFixed(1)}%`}
-          color={margemBruta >= 30 ? 'text-status-success' : 'text-status-warning'} />
-        <MiniCard label={dreConsolidado.some((d) => d.resultado_provisorio === true) ? 'Margem Operacional (provisória)' : 'Margem Operacional'} value={`${margemOp.toFixed(1)}%`}
-          color={margemOp >= 10 ? 'text-status-success' : margemOp >= 0 ? 'text-status-warning' : 'text-status-error'} />
-        <MiniCard label="Inadimplência" value={`${pctInadimplencia.toFixed(1)}%`}
-          color={pctInadimplencia <= 10 ? 'text-status-success' : pctInadimplencia <= 25 ? 'text-status-warning' : 'text-status-error'}
-          subtitle={fmtCompact(totalVencidoCR)}
+        <MiniCard label="Margem Bruta" value={margemBruta === null ? '—' : `${margemBruta.toFixed(1)}%`}
+          color={margemBruta === null ? 'text-muted-foreground' : margemBruta >= 30 ? 'text-status-success' : 'text-status-warning'} />
+        <MiniCard label={dreConsolidado.some((d) => d.resultado_provisorio === true) ? 'Margem Operacional (provisória)' : 'Margem Operacional'} value={margemOp === null ? '—' : `${margemOp.toFixed(1)}%`}
+          color={margemOp === null ? 'text-muted-foreground' : margemOp >= 10 ? 'text-status-success' : margemOp >= 0 ? 'text-status-warning' : 'text-status-error'} />
+        <MiniCard label="Inadimplência" value={pctInadimplencia === null ? '—' : `${pctInadimplencia.toFixed(1)}%`}
+          color={pctInadimplencia === null ? 'text-muted-foreground' : pctInadimplencia <= 10 ? 'text-status-success' : pctInadimplencia <= 25 ? 'text-status-warning' : 'text-status-error'}
+          subtitle={totalVencidoCR === null ? 'títulos indisponíveis' : fmtCompact(totalVencidoCR)}
           onClick={() => setDrillDown('inadimplencia')} />
         <MiniCard label="Aging Crítico (+60d)" value={pctCritico === null ? '—' : `${pctCritico.toFixed(1)}%`}
           color={pctCritico === null ? 'text-muted-foreground' : pctCritico <= 5 ? 'text-status-success' : pctCritico <= 15 ? 'text-status-warning' : 'text-status-error'}

@@ -4,6 +4,7 @@ import { linhasCom } from "@/lib/linha-view";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
+import { comporSaldoTitulos, type SaldoTitulosEmpresa } from "@/lib/financeiro/saldo-titulos-agregado";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import { referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from "@/lib/financeiro/saldo-contas";
@@ -230,29 +231,48 @@ async function lerTodasAsPaginas<T>(
   return fetchAllPagesComMensagem(buscarPagina, contexto, `Falha ao carregar ${contexto}`);
 }
 
+/**
+ * Totais de CR/CP abertos e vencidos por empresa, somados NO BANCO pela RPC
+ * `fin_saldo_titulos_por_status` (plano v4, lote 13): 1 request para todas as empresas, no lugar
+ * das 4 leituras paginadas de `saldo` por empresa (3.428 linhas em 12 requests por abertura do
+ * cockpit, medido em 2026-11-01). Os conjuntos de status continuam sendo os do TS; a RPC é chamada
+ * com o aberto e o vencido sai dos grupos 'ATRASADO'. Erro da RPC, empresa sem acesso/desconhecida,
+ * saldo NULL ou resposta fora do envelope LANÇAM — o caller trata como fonte indisponível, nunca R$ 0.
+ */
+export async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, SaldoTitulosEmpresa>> {
+  const { data, error } = await supabase.rpc("fin_saldo_titulos_por_status", {
+    p_companies: [...companies],
+    p_statuses: [...OPEN_TITLE_STATUSES],
+  });
+  if (error) throw new Error(`Falha ao carregar saldo de títulos: ${error.message}`);
+  return comporSaldoTitulos(data, companies, OPEN_TITLE_STATUSES, VENCIDO_TITLE_STATUSES);
+}
+
+async function lerContasCorrentesAtivas(company: Company) {
+  // Erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
+  const { data, error } = await supabase
+    .from("fin_contas_correntes")
+    .select("descricao, saldo_atual, saldo_data, banco")
+    .eq("company", company)
+    .eq("ativo", true);
+  if (error) throw new Error(`Falha ao carregar contas correntes (${company}): ${error.message}`);
+  return data ?? [];
+}
+
 export async function getResumoFinanceiro(companies: Company[]): Promise<Record<string, FinResumo>> {
   const resumo: Record<string, FinResumo> = {};
+  if (companies.length === 0) return resumo;
 
-  for (const company of companies) {
-    // Saldos CC — erro LANÇA: caixa R$0 falso engana tanto quanto total truncado
-    const { data: contas, error: ccError } = await supabase
-      .from("fin_contas_correntes")
-      .select("descricao, saldo_atual, saldo_data, banco")
-      .eq("company", company)
-      .eq("ativo", true);
-    if (ccError) throw new Error(`Falha ao carregar contas correntes (${company}): ${ccError.message}`);
+  // Títulos (1 RPC) e contas correntes (1 leitura por empresa) em paralelo.
+  const [titulos, contasPorEmpresa] = await Promise.all([
+    lerSaldoTitulos(companies),
+    Promise.all(companies.map(lerContasCorrentesAtivas)),
+  ]);
 
-    // Abertos + vencidos: soma paginada do `saldo` — o reduce client-side sem
-    // .range() somava só a 1ª página de 1000 do PostgREST (oben tem ~11k títulos
-    // de CR aberto → totais truncados; mesmo bug do KPI de /financeiro/gestao, #719).
-    const [totalAReceber, totalAPagar, vencidoReceber, vencidoPagar] = await Promise.all([
-      somarSaldoAberto("fin_contas_receber", company),
-      somarSaldoAberto("fin_contas_pagar", company),
-      somarSaldoPorStatus("fin_contas_receber", company, VENCIDO_TITLE_STATUSES),
-      somarSaldoPorStatus("fin_contas_pagar", company, VENCIDO_TITLE_STATUSES),
-    ]);
-
-    const contasBrutas = contas ?? [];
+  companies.forEach((company, i) => {
+    const contasBrutas = contasPorEmpresa[i];
+    const { total_a_receber: totalAReceber, total_a_pagar: totalAPagar, total_vencido_receber: vencidoReceber,
+      total_vencido_pagar: vencidoPagar } = titulos[company];
 
     // Ausente ≠ zero. O `reduce` cru devolvia `0` em dois estados que NÃO são o mesmo fato:
     // "nenhuma conta ativa" (a leitura não errou — RLS ou flag `ativo` podem devolver lista
@@ -285,7 +305,7 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
       total_vencido_pagar: vencidoPagar,
       posicao_liquida: totalAReceber - totalAPagar,
     };
-  }
+  });
 
   return resumo;
 }
