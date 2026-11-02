@@ -54,7 +54,7 @@ function conferirGolden(nome: string, saida: unknown) {
     return;
   }
   expect(existsSync(arquivo), `golden ausente: ${arquivo}`).toBe(true);
-  expect(atual).toEqual(JSON.parse(readFileSync(arquivo, 'utf8')));
+  expect(atual).toEqual(canonico(JSON.parse(readFileSync(arquivo, 'utf8'))));
 }
 
 const universo = gerarUniversoGolden();

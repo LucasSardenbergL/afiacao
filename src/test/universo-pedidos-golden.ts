@@ -386,9 +386,14 @@ export function criarSupabaseStub(universo: () => UniversoGolden, reg: RegistroS
 
 /**
  * Forma canônica para comparar: ida-e-volta por JSON (Map/Set não sobrevivem — o teste converte
- * antes). Sem arredondar número de propósito: o invariante é BIT-A-BIT. Somar as mesmas linhas
- * em OUTRA ordem já muda o último bit de um float, e isso tem de ficar vermelho aqui.
+ * antes), com número em 12 dígitos significativos. Bit a bit NÃO serve entre máquinas: o
+ * `Math.log` do Linux do CI difere no último bit do macOS onde o golden foi gravado
+ * (`m` …822 × …823, PR #3540). A sensibilidade à ORDEM das linhas não depende disso: posição em
+ * array, desempate e conjunto são comparados exatos, e a equivalência da leitura é exata.
+ * Aplicar dos DOIS lados (saída e JSON gravado, que guarda a precisão cheia).
  */
 export function canonico(valor: unknown): unknown {
-  return JSON.parse(JSON.stringify(valor));
+  return JSON.parse(
+    JSON.stringify(valor, (_k, v) => (typeof v === 'number' && Number.isFinite(v) ? Number(v.toPrecision(12)) : v)),
+  );
 }
