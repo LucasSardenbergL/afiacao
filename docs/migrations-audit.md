@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **756** custom migrations totais
-- **2497** objetos esperados (criados por estas migrations)
+- **757** custom migrations totais
+- **2498** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 940
   - `rls_policy`: 519
-  - `index`: 347
+  - `index`: 348
   - `table`: 227
   - `cron_job`: 207
   - `view`: 133
@@ -6211,6 +6211,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `view` | `public.order_feed` | — |
+
+### `20261102180421_idx_sales_orders_account_omie_pedido.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_sales_orders_account_omie_pedido` | `sales_orders` |
 
 ## Próximos passos por status
 
