@@ -4728,6 +4728,7 @@ export type Database = {
       }
       fin_contas_receber: {
         Row: {
+          ausente_omie_desde: string | null
           categoria_codigo: string | null
           categoria_descricao: string | null
           centro_custo: string | null
@@ -4762,6 +4763,7 @@ export type Database = {
           vendedor_id: number | null
         }
         Insert: {
+          ausente_omie_desde?: string | null
           categoria_codigo?: string | null
           categoria_descricao?: string | null
           centro_custo?: string | null
@@ -4796,6 +4798,7 @@ export type Database = {
           vendedor_id?: number | null
         }
         Update: {
+          ausente_omie_desde?: string | null
           categoria_codigo?: string | null
           categoria_descricao?: string | null
           centro_custo?: string | null
@@ -4828,6 +4831,39 @@ export type Database = {
           valor_multa?: number | null
           valor_recebido?: number | null
           vendedor_id?: number | null
+        }
+        Relationships: []
+      }
+      fin_contas_receber_excluidos: {
+        Row: {
+          ausente_omie_desde: string
+          company: string
+          cr_id: string
+          evidencia: Json
+          excluido_em: string
+          id: number
+          linha: Json
+          omie_codigo_lancamento: number
+        }
+        Insert: {
+          ausente_omie_desde: string
+          company: string
+          cr_id: string
+          evidencia: Json
+          excluido_em?: string
+          id?: number
+          linha: Json
+          omie_codigo_lancamento: number
+        }
+        Update: {
+          ausente_omie_desde?: string
+          company?: string
+          cr_id?: string
+          evidencia?: Json
+          excluido_em?: string
+          id?: number
+          linha?: Json
+          omie_codigo_lancamento?: number
         }
         Relationships: []
       }
@@ -20187,6 +20223,7 @@ export type Database = {
       order_feed: {
         Row: {
           account: string | null
+          busca: string | null
           created_at: string | null
           customer_name: string | null
           customer_user_id: string | null
@@ -23366,6 +23403,14 @@ export type Database = {
           total_bruto: number
           total_consolidado: number
         }[]
+      }
+      fin_cr_excluir_confirmados: {
+        Args: { p_company: string; p_confirmados: Json; p_inicio_run: string }
+        Returns: Json
+      }
+      fin_cr_marcar_ausentes: {
+        Args: { p_company: string; p_inicio_run: string; p_vistos: number[] }
+        Returns: Json
       }
       fin_divida_replace_parcelas: {
         Args: { p_divida_id: string; p_parcelas: Json }

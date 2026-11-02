@@ -87,9 +87,22 @@ values ('a0000005-0000-0000-0000-000000000005','11111111-1111-1111-1111-11111111
 insert into public.orders (id, user_id, delivery_option, service_type, items, status, subtotal, total, created_at)
 values ('b0000001-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','retirada','afiacao',
   '[{"category":"Afiacao Serra","quantity":3}]'::jsonb,'em_afiacao',50,50, now() - interval '30 minutes');
+
+-- Cenários da coluna `busca` (20261101221452): nome com acento e entidade HTML, item com acento
+-- e descrição vazia, total com centavos; afiação com item só de 'name' e item sem nada.
+insert into auth.users (id) values ('33333333-3333-3333-3333-333333333333') on conflict do nothing;
+insert into public.profiles (id, user_id, name, document, is_approved)
+values (gen_random_uuid(), '33333333-3333-3333-3333-333333333333', 'JOÃO &amp; FILHOS', '33.333.333/0001-33', true);
+insert into public.sales_orders (id, customer_user_id, created_by, account, omie_numero_pedido, items, status, subtotal, total, created_at, deleted_at)
+values ('a0000006-0000-0000-0000-000000000006','33333333-3333-3333-3333-333333333333','33333333-3333-3333-3333-333333333333',
+  'colacor','0004567','[{"descricao":"Seladora Pólo","quantidade":2},{"descricao":"","quantidade":1}]'::jsonb,
+  'enviado',250.5,250.5, now() - interval '5 hour', null);
+insert into public.orders (id, user_id, delivery_option, service_type, items, status, subtotal, total, created_at)
+values ('b0000002-0000-0000-0000-000000000002','33333333-3333-3333-3333-333333333333','retirada','afiacao',
+  '[{"name":"Faca"},{"quantity":"x"}]'::jsonb,'em_afiacao',10,10, now() - interval '6 hour');
 SQL
 
-echo "→ asserts…"
+asserts() {
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 do $$
 declare r record;
@@ -143,6 +156,116 @@ begin
   end if;
 
   raise notice 'TODOS OS ASSERTS PASSARAM';
+end $$;
+SQL
+}
+
+echo "→ asserts (view de 20260606210000)…"
+asserts
+
+# ── 20261101221452: busca no servidor + itens calculados na projeção final ──────────────
+# As 13 colunas têm de sair IGUAIS às da view anterior (linha a linha), e `busca` entra no fim.
+P -v ON_ERROR_STOP=1 -q -c "create table public._feed_antes as select * from public.order_feed"
+
+echo "→ migration da busca (2× — a 2ª prova a idempotência)…"
+MIG_BUSCA="$REPO_ROOT/supabase/migrations/20261101221452_order_feed_busca_servidor.sql"
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_BUSCA" >/dev/null
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_BUSCA" >/dev/null
+
+echo "→ asserts (view nova)…"
+asserts
+
+# Asserts da busca: rodam depois de 20261101221452 e de novo depois de 20261102160821.
+asserts_busca() {
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+do $$
+declare r record; v_dif int;
+begin
+  -- 8. mesmas linhas e colunas que a view anterior (nos dois sentidos, com multiplicidade)
+  select count(*) into v_dif from (
+    (select origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,
+            item_names,item_quantity,status,subtotal,total from public.order_feed
+     except all select * from public._feed_antes)
+    union all
+    (select * from public._feed_antes
+     except all select origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,
+            item_names,item_quantity,status,subtotal,total from public.order_feed)) d;
+  if v_dif IS DISTINCT FROM 0 then raise exception 'FALHOU: view nova difere da anterior em % linha(s)', v_dif; end if;
+
+  -- 9. busca: sem acento, minúsculas, entidade decodificada, item vazio fora, total nos 2 formatos
+  select * into r from public.order_feed where id='a0000006-0000-0000-0000-000000000006';
+  if r.busca is distinct from E'joao & filhos\n0004567\nseladora polo\n250.50\n250,50' then
+    raise exception 'FALHOU: busca sales (got %)', r.busca;
+  end if;
+  if r.item_names is distinct from array['Seladora Pólo']::text[] then raise exception 'FALHOU: item vazio fora (got %)', r.item_names; end if;
+
+  -- 10. afiação: name e o padrão 'Afiação' entram na busca; quantidade ausente/malformada conta 1
+  select * into r from public.order_feed where id='b0000002-0000-0000-0000-000000000002';
+  if r.item_names is distinct from array['Faca','Afiação']::text[] then raise exception 'FALHOU: afiacao names padrao (got %)', r.item_names; end if;
+  if r.item_quantity is distinct from 2 then raise exception 'FALHOU: afiacao qty padrao 1+1 (got %)', r.item_quantity; end if;
+  if r.busca is distinct from E'joao & filhos\n\nfaca afiacao\n10.00\n10,00' then raise exception 'FALHOU: busca afiacao (got %)', r.busca; end if;
+
+  -- 11. sem profile e items não-array: busca existe (não vira NULL) e não quebra
+  select * into r from public.order_feed where id='a0000004-0000-0000-0000-000000000004';
+  if r.busca is distinct from E'\n\nz\n5.00\n5,00' then raise exception 'FALHOU: busca sem profile (got %)', r.busca; end if;
+  select * into r from public.order_feed where id='a0000005-0000-0000-0000-000000000005';
+  if r.busca is distinct from E'alice ltda\n\n\n0.00\n0,00' then raise exception 'FALHOU: busca items nao-array (got %)', r.busca; end if;
+
+  -- 12. o filtro que o front manda: um termo não casa atravessando dois campos
+  if (select count(*) from public.order_feed where busca ilike '%filhos%0004567%') IS DISTINCT FROM 1 then
+    raise exception 'FALHOU: ilike dentro da coluna';
+  end if;
+  if exists (select 1 from public.order_feed where busca ilike '%filhos 0004567%') then
+    raise exception 'FALHOU: termo casou atravessando nome e número';
+  end if;
+
+  -- 13. security_invoker sobreviveu ao replace (omitir o WITH reseta e a view fura a RLS)
+  if not exists (select 1 from pg_class c, unnest(c.reloptions) o
+                 where c.oid='public.order_feed'::regclass and o in ('security_invoker=true','security_invoker=on')) then
+    raise exception 'FALHOU: order_feed perdeu security_invoker';
+  end if;
+
+  raise notice 'ASSERTS DA BUSCA PASSARAM';
+end $$;
+SQL
+}
+asserts_busca
+
+# ── 20261102160821: mesmo corpo sem CTE — a view passa a ser achatada no plano ─────────
+# Com `WITH feed AS (…)` a view vira `Subquery Scan` e itens/busca rodam em TODAS as linhas antes
+# do Sort; sem CTE o Postgres achata a view e só calcula as linhas do LIMIT.
+P -v ON_ERROR_STOP=1 -q -c "create table public._feed_com_cte as select * from public.order_feed"
+
+echo "→ migration sem CTE (2× — a 2ª prova a idempotência)…"
+MIG_SEM_CTE="$REPO_ROOT/supabase/migrations/20261102160821_order_feed_sem_cte.sql"
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_SEM_CTE" >/dev/null
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_SEM_CTE" >/dev/null
+
+echo "→ asserts (view sem CTE)…"
+asserts
+asserts_busca
+
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+do $$
+declare v_dif int; v_plano text := '';
+begin
+  -- 14. as 14 colunas saem iguais às da view com CTE (nos dois sentidos, com multiplicidade)
+  select count(*) into v_dif from (
+    (select * from public.order_feed except all select * from public._feed_com_cte)
+    union all
+    (select * from public._feed_com_cte except all select * from public.order_feed)) d;
+  if v_dif IS DISTINCT FROM 0 then raise exception 'FALHOU: view sem CTE difere da com CTE em % linha(s)', v_dif; end if;
+
+  -- 15. a view é achatada: nada de Subquery Scan no plano da página (pull-up é do rewrite, não de estatística)
+  for v_plano in execute 'explain (costs off) select item_names, busca from public.order_feed '
+                         'order by created_at desc, origin, id limit 50' loop
+    if v_plano like '%Subquery Scan on order_feed%' then
+      raise exception 'FALHOU: order_feed não foi achatada (%) — a CTE voltou?', v_plano;
+    end if;
+  end loop;
+  if v_plano IS NULL OR v_plano = '' then raise exception 'FALHOU: EXPLAIN não devolveu plano'; end if;
+
+  raise notice 'ASSERTS SEM CTE PASSARAM';
 end $$;
 SQL
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -116,6 +117,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -172,7 +179,7 @@ describe('useBundleEngine — falha de vendáveis: bug de código ≠ dado indis
   it('CONTROLE POSITIVO: a fixture GERA bundle quando a RPC responde', async () => {
     // Sem isto os casos abaixo passariam de graça: "lista vazia" é o desfecho de qualquer
     // insumo faltando, então é preciso provar antes que este cenário sabe produzir bundle.
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.customerBundles.flatMap((c) => c.bundles).length).toBeGreaterThan(0);
@@ -180,7 +187,7 @@ describe('useBundleEngine — falha de vendáveis: bug de código ≠ dado indis
   });
 
   it('builder quebrado: sobe o TypeError ORIGINAL, não a frase de negócio', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
     expect(result.current.customerBundles.flatMap((c) => c.bundles).length).toBeGreaterThan(0);
 
@@ -207,7 +214,7 @@ describe('useBundleEngine — falha de vendáveis: bug de código ≠ dado indis
   });
 
   it('falha de página ESPERADA: frase de domínio, com o erro do PostgREST em `cause`', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     modo = 'pagina_falhou';
     await act(async () => { await result.current.calculateBundles(); });
 

@@ -1,26 +1,26 @@
-// Lógica da listagem de pedidos de venda — sobre a view order_feed (read model
-// único): UMA query carrega o conjunto completo (~550 pedidos) e busca/abas
-// filtram client-side sobre TUDO.
+// Lógica da listagem de pedidos de venda — sobre a view order_feed (read model único).
 //
-// Antes eram 2 useInfiniteQuery (sales_orders + orders) mescladas no cliente +
-// uma 3ª query de profiles — a busca só enxergava as páginas carregadas e dizia
-// "Nenhum pedido" pra pedidos que existiam (reproduzido em prod), a ordem global
-// quebrava ao paginar e os nomes piscavam. Spec:
-// docs/superpowers/specs/2026-06-06-order-feed-view-unificada-design.md
+// A view tem ~32 k pedidos. A listagem abre com uma página de FEED_PAGE_SIZE (ordem estável:
+// created_at desc, origin, id) e carrega mais ao rolar; aba de empresa e busca vão como filtro
+// pro servidor, então a busca alcança TODOS os pedidos. Antes a tela drenava 5 × 1.000 linhas a
+// cada abertura (1,19 MB) e filtrava em JS — a busca não achava pedido fora desse recorte
+// (plano v4, lote 8 — C3). A busca compara com a coluna `busca` da view (migration 20261101221452).
+// Spec original da view: docs/superpowers/specs/2026-06-06-order-feed-view-unificada-design.md
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useUrlState } from '@/hooks/useUrlState';
 import { toast } from 'sonner';
 import { shareOrderViaWhatsApp } from '@/utils/whatsappShare';
 import { formatarDataPedido } from '@/lib/pedido/data-pedido';
 import {
   type Account,
-  type OrderFeedCache,
   type OrderFeedRow,
+  type PaginaFeed,
 } from './types';
-import { dedupeFeedRows, feedRowDaLinha, filterFeedRows } from './feed';
+import { COLUNAS_LISTAGEM_FEED, dedupeFeedRows, feedRowDaLinha, padraoBuscaFeed } from './feed';
 import { fetchOrderDetail, orderDetailQueryKey } from './useSalesOrderDetail';
 import { descontosItensQueryKey } from './useDescontosItensPedido';
 import { softDeleteOrder } from './soft-delete';
@@ -32,78 +32,69 @@ import { ehFalhaDePagina } from '@/lib/postgrest';
 import { mensagemDoErroEdge } from '@/lib/invoke-function';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 
-// O PostgREST capa cada resposta em 1000 linhas → a query drena em páginas até o
-// count (medido em prod: ~2.660 pedidos ≈ 3 requests). Teto de sanidade de
-// FEED_MAX_PAGES (5.000 linhas): acima disso a listagem trunca e a UI avisa
-// (truncated) em vez de silenciar — é o gatilho pra migrar a busca pro servidor
-// (fase 2 do spec).
-const FEED_PAGE_SIZE = 1000;
-const FEED_MAX_PAGES = 5;
-export const FEED_MAX_TOTAL = FEED_PAGE_SIZE * FEED_MAX_PAGES;
+export const FEED_PAGE_SIZE = 50;
+
+const EMPRESAS: readonly Account[] = ['all', 'oben', 'colacor', 'colacor_sc'];
+const ehEmpresa = (v: string): v is Account => (EMPRESAS as readonly string[]).includes(v);
 
 export function useSalesOrders() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { user, isStaff, loading: authLoading, role } = useAuth();
-  const [accountFilter, setAccountFilter] = useState<Account>('all');
-  const [search, setSearch] = useState('');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Filtros na URL (compartilháveis, sobrevivem ao F5). `q` chega aqui já com debounce: quem segura
+  // a digitação é a toolbar, para cada tecla não re-renderizar a lista inteira.
+  const [filtros, setFiltros] = useUrlState({ q: '', empresa: 'all' });
+  const search = filtros.q;
+  const accountFilter: Account = ehEmpresa(filtros.empresa) ? filtros.empresa : 'all';
+  const setSearch = (q: string) => setFiltros({ q });
+  const setAccountFilter = (empresa: Account) => setFiltros({ empresa });
+  // Seleção guarda a LINHA, não só o id: trocar a busca tira o pedido da tela, e o bulk delete ainda
+  // precisa dele (omie_pedido_id, origin).
+  const [selecionados, setSelecionados] = useState<Map<string, OrderFeedRow>>(new Map());
+  const selectedIds = useMemo(() => new Set(selecionados.keys()), [selecionados]);
 
   useEffect(() => {
     if (!authLoading && role !== null && !isStaff) navigate('/', { replace: true });
   }, [authLoading, role, isStaff, navigate]);
 
-  /* ─── Feed unificado: 1 query, conjunto completo ─── */
-  // userId na key: troca de sessão não serve cache do usuário anterior.
-  const feedKey = useMemo(() => ['order-feed', user?.id] as const, [user?.id]);
-  const feedQuery = useQuery<OrderFeedCache>({
-    queryKey: feedKey,
+  /* ─── Feed paginado no servidor ─── */
+  // userId na key: troca de sessão não serve cache do usuário anterior. O prefixo (sem filtros) é o
+  // que o optimistic e a reconciliação do delete varrem.
+  const feedKeyBase = useMemo(() => ['order-feed', user?.id] as const, [user?.id]);
+  const padrao = padraoBuscaFeed(search);
+  const feedQuery = useInfiniteQuery({
+    queryKey: [...feedKeyBase, accountFilter, padrao],
     enabled: isStaff && !!user,
     staleTime: 60_000,
-    queryFn: async () => {
-      const drain = async (): Promise<OrderFeedCache> => {
-        const all: OrderFeedRow[] = [];
-        let total = 0;
-        for (let page = 0; page < FEED_MAX_PAGES; page++) {
-          const from = page * FEED_PAGE_SIZE;
-          const { data, error, count } = await supabase
-            .from('order_feed')
-            // count só na 1ª página (o total não muda entre as páginas do drain).
-            .select('*', { count: page === 0 ? 'exact' : undefined })
-            .order('created_at', { ascending: false, nullsFirst: false })
-            .order('origin', { ascending: true })
-            .order('id', { ascending: true })
-            .range(from, from + FEED_PAGE_SIZE - 1);
-          if (error) throw error;
-          const rows = (data ?? []).map(feedRowDaLinha);
-          all.push(...rows);
-          if (page === 0) total = count ?? rows.length;
-          // Fim real: alcançou o count ou a página veio parcial/vazia.
-          if (all.length >= total || rows.length < FEED_PAGE_SIZE) break;
-        }
-        return { rows: dedupeFeedRows(all), count: total };
-      };
-      // Escrita concorrente durante o drain por offset pode pular/duplicar linha
-      // (codex P1): dedupe resolve a duplicata; linha PULADA deixa rows < count —
-      // nesse caso re-drena UMA vez (staleTime NÃO re-busca sozinho; o projeto
-      // desliga refetchOnWindowFocus, então o buraco não se auto-curaria).
-      let result = await drain();
-      if (result.rows.length < result.count && result.count <= FEED_MAX_TOTAL) {
-        result = await drain();
-      }
-      return result;
+    // Trocar a busca mantém a lista anterior na tela até a nova chegar (sem piscar o skeleton).
+    placeholderData: keepPreviousData,
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }): Promise<PaginaFeed> => {
+      // count só na 1ª página e só sem busca: com busca ele seria um 2º scan dos ~32 k na mesma query.
+      let query = supabase
+        .from('order_feed')
+        .select(COLUNAS_LISTAGEM_FEED, { count: pageParam === 0 && !padrao ? 'exact' : undefined });
+      if (accountFilter !== 'all') query = query.eq('account', accountFilter);
+      if (padrao) query = query.ilike('busca', padrao);
+      const { data, error, count } = await query
+        .order('created_at', { ascending: false })
+        .order('origin', { ascending: true })
+        .order('id', { ascending: true })
+        .range(pageParam, pageParam + FEED_PAGE_SIZE - 1);
+      if (error) throw error;
+      return { rows: (data ?? []).map(feedRowDaLinha), count: count ?? null, offset: pageParam };
     },
+    // Página parcial = acabou. Offset com ordem estável; um pedido novo entre duas páginas desloca
+    // uma linha, e o dedupe abaixo tira a duplicata.
+    getNextPageParam: (ultima) => (ultima.rows.length < FEED_PAGE_SIZE ? undefined : ultima.offset + FEED_PAGE_SIZE),
   });
 
-  const orders = useMemo(() => feedQuery.data?.rows ?? [], [feedQuery.data]);
-  const totalCount = feedQuery.data?.count ?? 0;
-  // Aviso honesto de truncamento (nunca silenciar — "mostrando 1000 de N").
-  const truncated = totalCount > orders.length;
-
-  const filteredOrders = useMemo(
-    () => filterFeedRows(orders, search, accountFilter),
-    [orders, search, accountFilter],
+  const orders = useMemo(
+    () => dedupeFeedRows(feedQuery.data?.pages.flatMap((p) => p.rows) ?? []),
+    [feedQuery.data],
   );
+  // Total do servidor para a aba atual (null com busca — ver queryFn).
+  const totalCount = feedQuery.data?.pages[0]?.count ?? null;
 
   /* ─── Logos das empresas (cupom de impressão) — cache 24h ─── */
   const logosQuery = useQuery({
@@ -207,63 +198,58 @@ export function useSalesOrders() {
   };
 
   /* ─── Soft-delete + Omie exclude (optimistic no cache do feed) ─── */
-  // Reinsere rows no cache ATUAL (rollback composicional — codex P1: restaurar um
-  // snapshot integral ressuscitaria deleções concorrentes que já tinham sucedido).
-  const reinserirRows = (rows: OrderFeedRow[]) => {
-    queryClient.setQueryData<OrderFeedCache>(feedKey, (old) => {
+  // Tira as linhas de TODAS as páginas de TODAS as buscas em cache. Não há rollback por snapshot
+  // (codex P1: restaurar um snapshot integral ressuscitaria deleções concorrentes que já tinham
+  // sucedido): em falha, a reconciliação com o servidor devolve o que de fato continua vivo.
+  const tirarDoCache = (ids: Set<string>) => {
+    queryClient.setQueriesData<InfiniteData<PaginaFeed>>({ queryKey: feedKeyBase }, (old) => {
       if (!old) return old;
-      const merged = [...old.rows, ...rows].sort(
-        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+      const removidas = old.pages.reduce(
+        (n, p) => n + p.rows.filter((r) => r.origin === 'sales' && ids.has(r.id)).length,
+        0,
       );
-      return { rows: merged, count: old.count + rows.length };
+      return {
+        ...old,
+        pages: old.pages.map((p) => ({
+          ...p,
+          rows: p.rows.filter((r) => !(r.origin === 'sales' && ids.has(r.id))),
+          count: p.count === null ? null : Math.max(0, p.count - removidas),
+        })),
+      };
     });
   };
+  const reconciliar = () => queryClient.invalidateQueries({ queryKey: feedKeyBase });
 
   const deleteOrder = async (row: OrderFeedRow) => {
     // Cancela refetch em voo: uma resposta antiga chegando após o optimistic
     // recolocaria o pedido excluído (codex P1).
-    await queryClient.cancelQueries({ queryKey: feedKey });
-    queryClient.setQueryData<OrderFeedCache>(feedKey, (old) =>
-      old
-        ? {
-            rows: old.rows.filter((r) => !(r.origin === 'sales' && r.id === row.id)),
-            count: Math.max(0, old.count - 1),
-          }
-        : old,
-    );
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
+    await queryClient.cancelQueries({ queryKey: feedKeyBase });
+    tirarDoCache(new Set([row.id]));
+    setSelecionados((prev) => {
+      const next = new Map(prev);
       next.delete(row.id);
       return next;
     });
 
     const result = await softDeleteOrder({ id: row.id, omie_pedido_id: row.omie_pedido_id });
+    // Reconcilia com o servidor nos dois desfechos: no sucesso confirma; na falha devolve o pedido.
+    void reconciliar();
     if (result.ok) {
       toast.success('Pedido excluído');
-      // Reconcilia com o servidor (estado final pós-delete).
-      queryClient.invalidateQueries({ queryKey: feedKey });
       return;
     }
-    reinserirRows([row]);
     toast.error('Erro ao excluir pedido', { description: (result as { message: string }).message });
   };
 
   // Bulk delete — sequencial pra não floodar o Omie. Mostra progresso.
   const deleteSelected = async () => {
-    if (selectedIds.size === 0) return;
-    const toDelete = orders.filter((r) => selectedIds.has(r.id) && r.origin === 'sales');
+    if (selecionados.size === 0) return;
+    const toDelete = [...selecionados.values()].filter((r) => r.origin === 'sales');
     const deleteIds = new Set(toDelete.map((o) => o.id));
     // Cancela refetch em voo (resposta antiga reporia os excluídos — codex P1).
-    await queryClient.cancelQueries({ queryKey: feedKey });
-    queryClient.setQueryData<OrderFeedCache>(feedKey, (old) =>
-      old
-        ? {
-            rows: old.rows.filter((r) => !(r.origin === 'sales' && deleteIds.has(r.id))),
-            count: Math.max(0, old.count - deleteIds.size),
-          }
-        : old,
-    );
-    setSelectedIds(new Set());
+    await queryClient.cancelQueries({ queryKey: feedKeyBase });
+    tirarDoCache(deleteIds);
+    setSelecionados(new Map());
 
     // 1. Soft-delete em batch (1 UPDATE com .in('id', ...))
     const nowIso = new Date().toISOString();
@@ -274,7 +260,7 @@ export function useSalesOrders() {
 
     if (softErr) {
       console.error(softErr);
-      reinserirRows(toDelete); // rollback composicional (não restaura snapshot integral)
+      void reconciliar(); // nada foi gravado: o servidor devolve os pedidos
       toast.error(`Erro ao excluir pedidos`, { description: softErr.message });
       return;
     }
@@ -317,28 +303,25 @@ export function useSalesOrders() {
     if (failed === 0) {
       toast.success(`${success} pedido(s) excluído(s)`);
     } else if (success === 0) {
-      reinserirRows(toDelete); // rollback composicional (deleted_at já revertido no DB)
       toast.error(`Falhou: ${failed} pedido(s) não puderam ser excluídos`, { description: detalhe });
     } else {
-      // Parcial — restaura no cache as rows que falharam (já têm deleted_at=null no DB)
-      const failedSet = new Set(failedIds);
-      reinserirRows(toDelete.filter((r) => failedSet.has(r.id)));
       toast.warning(`${success} excluído(s), ${failed} falharam`, { description: detalhe });
     }
-    // Reconcilia com o servidor em qualquer desfecho do bulk.
-    queryClient.invalidateQueries({ queryKey: feedKey });
+    // Reconcilia com o servidor em qualquer desfecho do bulk: os que falharam (deleted_at já
+    // revertido) voltam à lista; os que ficaram ocultos por falha do rollback, não — é o estado real.
+    void reconciliar();
   };
 
-  const toggleSelect = (id: string, checked: boolean) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
+  const toggleSelect = (row: OrderFeedRow, checked: boolean) => {
+    setSelecionados((prev) => {
+      const next = new Map(prev);
+      if (checked) next.set(row.id, row);
+      else next.delete(row.id);
       return next;
     });
   };
 
-  const clearSelection = () => setSelectedIds(new Set());
+  const clearSelection = () => setSelecionados(new Map());
 
   return {
     navigate,
@@ -346,6 +329,12 @@ export function useSalesOrders() {
     loading: feedQuery.isLoading,
     loadError: feedQuery.isError,
     refetch: feedQuery.refetch,
+    // Busca/aba nova a caminho com a lista anterior na tela (placeholderData).
+    buscando: feedQuery.isPlaceholderData,
+    hasNextPage: feedQuery.hasNextPage,
+    fetchNextPage: feedQuery.fetchNextPage,
+    isFetchingNextPage: feedQuery.isFetchingNextPage,
+    nextPageError: feedQuery.isFetchNextPageError,
     accountFilter,
     setAccountFilter,
     search,
@@ -354,9 +343,7 @@ export function useSalesOrders() {
     toggleSelect,
     clearSelection,
     orders,
-    filteredOrders,
     totalCount,
-    truncated,
     deleteOrder,
     deleteSelected,
     handleShareOrder,
