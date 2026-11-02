@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -8,7 +9,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useFarmerGovernance, type GovernanceProposal } from '@/hooks/useFarmerGovernance';
-import { useFarmerScoring } from '@/hooks/useFarmerScoring';
+import { useFarmerAlgorithmConfig, FARMER_ALGORITHM_CONFIG_KEY } from '@/hooks/useFarmerAlgorithmConfig';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   Shield, CheckCircle, XCircle, Clock, FileText,
@@ -32,7 +34,10 @@ const FarmerGovernance = () => {
     proposals, auditLogs, loading, isGovernor,
     createProposal, approveProposal, rejectProposal,
   } = useFarmerGovernance();
-  const { config } = useFarmerScoring();
+  // Só a config — NÃO `useFarmerScoring()`: o motor baixaria todo o histórico de `sales_orders`
+  // para calcular uma carteira que esta tela não mostra (plano v4, lote 5 — N1).
+  const { config, erro: erroConfig } = useFarmerAlgorithmConfig();
+  const queryClient = useQueryClient();
 
   const [showNewProposal, setShowNewProposal] = useState(false);
   const [rejectDialog, setRejectDialog] = useState<string | null>(null);
@@ -57,27 +62,29 @@ const FarmerGovernance = () => {
 
   if (!isStaff) { navigate('/', { replace: true }); return null; }
 
-  const editableParams = [
-    { key: 'health_w_rf', label: 'Peso RF (Health)', current: config.health_w_rf },
-    { key: 'health_w_m', label: 'Peso M (Health)', current: config.health_w_m },
-    { key: 'health_w_g', label: 'Peso G (Health)', current: config.health_w_g },
-    { key: 'health_w_x', label: 'Peso X (Health)', current: config.health_w_x },
-    { key: 'health_w_s', label: 'Peso S (Health)', current: config.health_w_s },
-    { key: 'priority_w_churn', label: 'Peso Churn (Priority)', current: config.priority_w_churn },
-    { key: 'priority_w_recover', label: 'Peso Recover (Priority)', current: config.priority_w_recover },
-    { key: 'priority_w_expansion', label: 'Peso Expansion (Priority)', current: config.priority_w_expansion },
-    { key: 'priority_w_eff', label: 'Peso Eff (Priority)', current: config.priority_w_eff },
-    { key: 'agenda_pct_risco', label: 'Quota Risco (%)', current: config.agenda_pct_risco },
-    { key: 'agenda_pct_expansao', label: 'Quota Expansão (%)', current: config.agenda_pct_expansao },
-    { key: 'agenda_pct_followup', label: 'Quota Follow-up (%)', current: config.agenda_pct_followup },
-    { key: 'k1', label: 'k1 (ChurnRisk decay)', current: config.k1 },
-    { key: 'k2', label: 'k2 (RF decay)', current: config.k2 },
-    { key: 'cat_target', label: 'Categorias Alvo', current: config.cat_target },
-    { key: 'sla_contact_days', label: 'SLA Contato (dias)', current: config.sla_contact_days },
-  ];
+  // Sem config LIDA não há "valor atual" honesto: a lista fica vazia e o botão de nova proposta
+  // trava — senão `current_params` gravaria o default como se fosse o vigente.
+  const editableParams = config ? [
+      { key: 'health_w_rf', label: 'Peso RF (Health)', current: config.health_w_rf },
+      { key: 'health_w_m', label: 'Peso M (Health)', current: config.health_w_m },
+      { key: 'health_w_g', label: 'Peso G (Health)', current: config.health_w_g },
+      { key: 'health_w_x', label: 'Peso X (Health)', current: config.health_w_x },
+      { key: 'health_w_s', label: 'Peso S (Health)', current: config.health_w_s },
+      { key: 'priority_w_churn', label: 'Peso Churn (Priority)', current: config.priority_w_churn },
+      { key: 'priority_w_recover', label: 'Peso Recover (Priority)', current: config.priority_w_recover },
+      { key: 'priority_w_expansion', label: 'Peso Expansion (Priority)', current: config.priority_w_expansion },
+      { key: 'priority_w_eff', label: 'Peso Eff (Priority)', current: config.priority_w_eff },
+      { key: 'agenda_pct_risco', label: 'Quota Risco (%)', current: config.agenda_pct_risco },
+      { key: 'agenda_pct_expansao', label: 'Quota Expansão (%)', current: config.agenda_pct_expansao },
+      { key: 'agenda_pct_followup', label: 'Quota Follow-up (%)', current: config.agenda_pct_followup },
+      { key: 'k1', label: 'k1 (ChurnRisk decay)', current: config.k1 },
+      { key: 'k2', label: 'k2 (RF decay)', current: config.k2 },
+      { key: 'cat_target', label: 'Categorias Alvo', current: config.cat_target },
+      { key: 'sla_contact_days', label: 'SLA Contato (dias)', current: config.sla_contact_days },
+  ] : [];
 
   const handleSubmitProposal = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !config) return;
     setSaving(true);
 
     const currentParams: Record<string, number> = {};
@@ -130,7 +137,11 @@ const FarmerGovernance = () => {
           </Card>
         )}
 
-        <Button className="w-full" onClick={() => setShowNewProposal(true)}>
+        {erroConfig && (
+          <AvisoLeituraFalhou oque="a configuração atual do algoritmo (nova proposta bloqueada)" estado="erro" />
+        )}
+
+        <Button className="w-full" disabled={!config} onClick={() => setShowNewProposal(true)}>
           <Plus className="w-4 h-4 mr-2" /> Nova Proposta de Ajuste
         </Button>
 
@@ -147,7 +158,7 @@ const FarmerGovernance = () => {
                 Nenhuma proposta registrada
               </div>
             ) : (
-              proposals.map(p => <ProposalCard key={p.id} proposal={p} isGovernor={isGovernor} onApprove={approveProposal} onReject={(id) => setRejectDialog(id)} />)
+              proposals.map(p => <ProposalCard key={p.id} proposal={p} isGovernor={isGovernor} onApprove={async (id) => { await approveProposal(id); await queryClient.invalidateQueries({ queryKey: FARMER_ALGORITHM_CONFIG_KEY }); }} onReject={(id) => setRejectDialog(id)} />)
             )}
           </TabsContent>
 
