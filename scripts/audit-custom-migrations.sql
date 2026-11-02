@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 752
+-- Total de custom migrations: 754
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -817,8 +817,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
   ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql'),
   ('20261101210000', 'fin_saldo_titulos_por_status', '20261101210000_fin_saldo_titulos_por_status.sql'),
+  ('20261101221452', 'order_feed_busca_servidor', '20261101221452_order_feed_busca_servidor.sql'),
   ('20261101221749', 'expurgo_logs_tintometrico', '20261101221749_expurgo_logs_tintometrico.sql'),
   ('20261101222916', 'hot_carimbo_sync_sem_indice', '20261101222916_hot_carimbo_sync_sem_indice.sql'),
+  ('20261102020000', 'fin_cr_reconciliacao_exclusoes', '20261102020000_fin_cr_reconciliacao_exclusoes.sql'),
   ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3255,6 +3257,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
   ('fin_saldo_titulos_por_status', 'function', 'public', 'fin_saldo_titulos_por_status', ''),
+  ('order_feed_busca_servidor', 'view', 'public', 'order_feed', ''),
   ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
@@ -3264,6 +3267,10 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
   ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'index', 'public', 'idx_fin_cr_excluidos_company_codigo', 'fin_contas_receber_excluidos'),
   ('telemetria_vitals', 'function', 'public', 'telemetria_vitals_carimbar', ''),
   ('telemetria_vitals', 'table', 'public', 'telemetria_vitals', ''),
   ('telemetria_vitals', 'index', 'public', 'idx_telemetria_vitals_criado_em', 'telemetria_vitals'),
@@ -5755,6 +5762,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
   ('fin_saldo_titulos_por_status', 'function', 'public', 'fin_saldo_titulos_por_status', ''),
+  ('order_feed_busca_servidor', 'view', 'public', 'order_feed', ''),
   ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
@@ -5764,6 +5772,10 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
   ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'index', 'public', 'idx_fin_cr_excluidos_company_codigo', 'fin_contas_receber_excluidos'),
   ('telemetria_vitals', 'function', 'public', 'telemetria_vitals_carimbar', ''),
   ('telemetria_vitals', 'table', 'public', 'telemetria_vitals', ''),
   ('telemetria_vitals', 'index', 'public', 'idx_telemetria_vitals_criado_em', 'telemetria_vitals'),

@@ -158,23 +158,11 @@ function contarG3(fonte: string): number {
 }
 
 /**
- * G3 ALLOW — sítio inspecionado e ABSOLVIDO, que é diferente de dívida.
- *
- * `useSalesOrders.ts` é o laço que a janela de 300 escondia. Ele TEM a forma (`for` + `.range(`
- * + `(data ?? [])`), e mesmo assim não produz o silêncio da classe, porque o `?? []` não é a
- * única testemunha: o drain pede `count: 'exact'` na 1ª página e guarda o total. Se `data` vier
- * null SEM error, `rows` fica vazio e o laço encerra — mas `total` continua sendo o count do
- * servidor, então (i) `result.rows.length < result.count` dispara um re-drain, e (ii) se ainda
- * assim faltar linha, `truncated = totalCount > orders.length` acende o aviso na tela. O parcial
- * NÃO passa por completo, que é o dano que o G3 existe para impedir.
- *
- * Fica na ALLOW e não na DÍVIDA de propósito: dívida é o que se pretende quitar, e aqui não há
- * o que quitar. O que este waiver compra é que a próxima mudança nesse laço — tirar o `count`,
- * tirar o re-drain, tirar o `truncated` — reprove aqui em vez de passar despercebida.
+ * G3 ALLOW — sítio inspecionado e ABSOLVIDO, que é diferente de dívida. Vazia desde o lote 8 do
+ * plano v4: o único absolvido era o drain do feed de pedidos (`useSalesOrders.ts`), que virou uma
+ * página por request com busca no servidor (useInfiniteQuery) — não há mais laço ali.
  */
-const G3_ALLOW: ReadonlyMap<string, number> = new Map([
-  ['src/components/salesOrders/useSalesOrders.ts', 1],
-]);
+const G3_ALLOW: ReadonlyMap<string, number> = new Map([]);
 
 // DÍVIDA G3 (baseline por CONTAGEM, 2026-07-23 — chips de erradicação por domínio
 // abertos na mesma data). NÃO adicione entradas nem aumente contagens: crescer é
@@ -1476,9 +1464,6 @@ const G8_ALLOW: ReadonlyMap<string, number> = new Map([
   // `coletarTitulosEntidade`: chunk de `.in()` × páginas com teto de coleta e `truncado` DECLARADO
   // ao chamador (drill v2 do orçamento) — truncar é desfecho legítimo ali, não falha.
   ['src/lib/financeiro/orcamento-entidade-helpers.ts', 1],
-  // Drain do feed de pedidos: count na 1ª página + teto FEED_MAX_PAGES + re-drain quando
-  // rows < count (escrita concorrente). Contrato de truncamento HONESTO ("mostrando 1000 de N").
-  ['src/components/salesOrders/useSalesOrders.ts', 1],
 ]);
 
 function contarG8(): Map<string, number> {
