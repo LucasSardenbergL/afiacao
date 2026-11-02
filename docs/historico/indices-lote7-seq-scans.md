@@ -60,3 +60,15 @@ SELECT s.relname, s.indexrelname, s.idx_scan, x.indisvalid
 
 Sinal positivo: `idx_scan > 0` e crescendo em cada um. Para ver o efeito nas tabelas, compare o ritmo
 de `seq_scan` de `pg_stat_user_tables` com o da tabela "Antes".
+
+## Desfecho (2026-11-02)
+
+- **Aplicada pela sessão via `db:aplicar`**: ensaio ok (ROLLBACK), depois tentativa **#853** → recibo
+  (sha `3a8e6671…`, commit `6736ae9d3`, PR #3510).
+- **2ª testemunha (psql-ro, outra conexão):** os 4 índices com a definição esperada, `indisvalid` e
+  `indisready`. Planos em prod: `sales_orders` (cliente mediano) 4.962 → 7 buffers; `fin_sync_log`
+  1.442 → 550 buffers e 8 → 1,1 ms (989 heap fetches até o autovacuum ajustar o visibility map);
+  `tint_importacoes` 60 → 0,8 ms; os planos genéricos usam os índices novos.
+- **Uso real** (base gravada antes de qualquer consulta da sessão, 00:49:50 → 00:52:31 UTC):
+  `idx_scan` de `fin_sync_log` 4 → 19, `tint_importacoes` 1 → 3, `sales_orders` 2 → 3. `addresses`
+  sem uso nesse intervalo (domingo à noite); confira com a query acima.
