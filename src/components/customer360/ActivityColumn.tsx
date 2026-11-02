@@ -40,6 +40,10 @@ export function ActivityColumn({
   const semLeituraPedidos = !orders.data && naoConsegui(estadoPedidos) ? estadoPedidos : null;
   const pedidosVelhos = desatualizado(orders, orders.data !== undefined);
   const contagemPedidos = formatContagemComTeto(orders.data?.length ?? 0, LIMITE_FEED_PEDIDOS);
+  // Mesma regra para os itens preferidos: leitura que falhou não vira "sem itens preferidos".
+  const estadoPreferidos = estadoDeLeitura(preferred);
+  const semLeituraPreferidos = !preferred.data && naoConsegui(estadoPreferidos) ? estadoPreferidos : null;
+  const preferidosVelhos = desatualizado(preferred, preferred.data !== undefined);
   return (
     <div className="lg:col-span-2 space-y-4">
       <Card>
@@ -53,7 +57,16 @@ export function ActivityColumn({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {preferred.isLoading ? (
+          {preferidosVelhos && (
+            <AvisoLeituraFalhou
+              oque="a leitura mais recente dos itens preferidos"
+              estado={preferidosVelhos}
+              testId="aviso-c360-preferidos-desatualizado"
+            />
+          )}
+          {semLeituraPreferidos ? (
+            <AvisoLeituraFalhou oque="os itens preferidos" estado={semLeituraPreferidos} testId="aviso-c360-preferidos" />
+          ) : preferred.isLoading ? (
             <div className="space-y-2">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-10 bg-muted/40 rounded animate-pulse" />
@@ -67,13 +80,13 @@ export function ActivityColumn({
                   ? reguaByOmie?.get(it.omie_codigo_produto)
                   : undefined;
                 return (
-                <li key={`${it.product_codigo}-${it.account}`} className="py-2.5 flex items-center gap-3">
+                <li key={`${it.omie_codigo_produto}-${it.account}`} className="py-2.5 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {it.product_descricao ?? `Produto ${it.product_codigo}`}
+                      {it.product_descricao ?? `Produto ${it.product_codigo ?? it.omie_codigo_produto}`}
                     </div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="font-tabular">{it.product_codigo}</span>
+                      <span className="font-tabular">{it.product_codigo ?? it.omie_codigo_produto}</span>
                       {it.familia && (
                         <>
                           <span>·</span>
@@ -92,7 +105,7 @@ export function ActivityColumn({
                           result={regua.result}
                           precoAtual={regua.precoAtual}
                           contexto={{
-                            produto: it.product_descricao ?? `Produto ${it.product_codigo}`,
+                            produto: it.product_descricao ?? `Produto ${it.product_codigo ?? it.omie_codigo_produto}`,
                             cliente: customer.name ?? null,
                             qty: regua.qtyRef,
                             desde: regua.precoAtualAt ? formatDateOrDash(regua.precoAtualAt) : null,
@@ -115,7 +128,7 @@ export function ActivityColumn({
             <EmptyState
               icon={Package}
               title="Sem itens preferidos ainda"
-              description="Aparecerão depois das primeiras compras."
+              description="Nenhuma compra nos últimos 12 meses."
               tone="operational"
             />
           )}
