@@ -6,7 +6,7 @@
 
 export interface RodadaClientesRow {
   id: string;
-  origem: "manual" | "cron_semanal";
+  origem: "manual" | "cron_semanal" | "cron_diario";
   criado_em: string;
   conta_slug: string | null;
   start_page: number;

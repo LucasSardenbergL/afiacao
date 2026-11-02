@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **755** custom migrations totais
-- **2495** objetos esperados (criados por estas migrations)
+- **756** custom migrations totais
+- **2497** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 939
+  - `function`: 940
   - `rls_policy`: 519
   - `index`: 347
   - `table`: 227
-  - `cron_job`: 206
+  - `cron_job`: 207
   - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
@@ -6176,6 +6176,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261101222916_hot_carimbo_sync_sem_indice.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261102005510_clientes_import_varredura_diaria.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.clientes_import_semear_interno` | — |
+| `cron_job` | `cron.clientes-import-diario` | — |
 
 ### `20261102020000_fin_cr_reconciliacao_exclusoes.sql`
 
