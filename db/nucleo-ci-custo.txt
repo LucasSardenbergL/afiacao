@@ -117,6 +117,7 @@ db/test-reposicao-logs-insert-cap-compras.sh 1
 db/test-reposicao-po-observado.sh 92
 db/test-resolver-cliente-por-telefone.sh 8
 db/test-retencao-scores-farmer.sh 1
+db/test-retencao-scores-60d.sh 2
 db/test-expurgo-logs-tint.sh 5
 db/test-telemetria-vitals.sh 5
 db/test-sales-orders-kpi-no-envio.sh 44
