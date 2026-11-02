@@ -69,7 +69,7 @@ export function ImportClientesCard({
           <code className="font-mono">omie_customer_account_map</code> (identidade por conta) e{' '}
           <code className="font-mono">carteira_membership_ledger</code> (membership da carteira).
           Pré-requisito para rodar os motores de inteligência (calculate-scores, algorithm-a-audit).
-          Roda no servidor e também sozinho todo domingo.
+          Roda no servidor e também sozinho todo dia de madrugada.
         </p>
         {aberta && (
           <p className="mt-3 text-xs font-medium text-primary" data-testid="clientes-import-servidor">
