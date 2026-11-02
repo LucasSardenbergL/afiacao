@@ -23367,6 +23367,10 @@ export type Database = {
         }[]
       }
       fin_regua_custo_capital: { Args: { p_empresa: string }; Returns: number }
+      fin_saldo_titulos_por_status: {
+        Args: { p_companies: string[]; p_statuses: string[] }
+        Returns: Json
+      }
       fin_sync_heartbeat: { Args: never; Returns: undefined }
       fin_sync_kicks_perdidos: {
         Args: { p_now?: string }
