@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -48,6 +49,12 @@ function chain(table: string): unknown {
   return c;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -87,7 +94,7 @@ beforeEach(() => { falharVendaveis = true; vi.clearAllMocks(); });
 
 describe('useBundleEngine — falha de vendáveis é DECLARADA, não silêncio', () => {
   it('expõe `erro` quando a RPC de vendáveis falha', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.erro).toBeTruthy();
@@ -96,7 +103,7 @@ describe('useBundleEngine — falha de vendáveis é DECLARADA, não silêncio',
 
   it('não inventa erro quando a RPC responde', async () => {
     falharVendaveis = false;
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.erro).toBeNull();

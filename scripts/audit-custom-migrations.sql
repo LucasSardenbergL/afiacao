@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 754
+-- Total de custom migrations: 756
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -820,8 +820,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101221452', 'order_feed_busca_servidor', '20261101221452_order_feed_busca_servidor.sql'),
   ('20261101221749', 'expurgo_logs_tintometrico', '20261101221749_expurgo_logs_tintometrico.sql'),
   ('20261101222916', 'hot_carimbo_sync_sem_indice', '20261101222916_hot_carimbo_sync_sem_indice.sql'),
+  ('20261102005510', 'clientes_import_varredura_diaria', '20261102005510_clientes_import_varredura_diaria.sql'),
   ('20261102020000', 'fin_cr_reconciliacao_exclusoes', '20261102020000_fin_cr_reconciliacao_exclusoes.sql'),
-  ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql')
+  ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql'),
+  ('20261102160821', 'order_feed_sem_cte', '20261102160821_order_feed_sem_cte.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3267,6 +3269,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
   ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
+  ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', ''),
   ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
   ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
   ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
@@ -3278,7 +3282,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
-  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
+  ('order_feed_sem_cte', 'view', 'public', 'order_feed', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5772,6 +5777,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
   ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
   ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
+  ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', ''),
   ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
   ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
   ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
@@ -5783,7 +5790,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
-  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
+  ('order_feed_sem_cte', 'view', 'public', 'order_feed', '')
 )
 SELECT
   e.migration,
@@ -5811,7 +5819,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 167.
+-- Funções redefinidas com corpo extraível: 168.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6441,7 +6449,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cobranca_regua_hoje', 1, '20261031210000_cobranca_fila.sql', 'f926bc3a846386db1c8e7eac0547d6a7'),
   ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03'),
   ('public', 'raio_x_inequivoco', 1, '20261101120000_raio_x_inequivoco.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
-  ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a')
+  ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
+  ('private', 'clientes_import_semear_interno', 1, '20261101200000_clientes_import_servidor.sql', 'c9a6eaa2a248d59c9a7d8152d3e5dd6a'),
+  ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

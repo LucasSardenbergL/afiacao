@@ -890,5 +890,5 @@ db/test-tint-corante-giro.sh               34  falsificar=fora-do-ci  # 8 sabota
 db/test-reconciliacao-corante.sh           11  falsificar=fora-do-ci  # 7 sabotagens × suíte inteira (9 bancos clonados do snapshot); rodado local em C e pt_BR no PR
 # Import de clientes NO SERVIDOR (20261101200000): rodada com cursor no banco (slug da conta), 1 aberta por vez (índice único),
 # lease cercado de 7 min (> 400 s de parede da edge), terminal sem_progresso/erro_persistente re-armável, só falha que
-# ABANDONOU a conta entra no relatório, cron de 1 min só com rodada aberta + semanal; ACL service_role nas operacionais.
-db/test-clientes-import-servidor.sh        34  falsificar=11
+# ABANDONOU a conta entra no relatório, cron de 1 min só com rodada aberta + varredura diária (20261102005510, o semanal saiu); ACL service_role nas operacionais.
+db/test-clientes-import-servidor.sh        36  falsificar=14

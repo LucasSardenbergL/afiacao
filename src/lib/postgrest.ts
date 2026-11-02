@@ -271,6 +271,65 @@ export async function fetchAllPages<T>(
 }
 
 /**
+ * Lê um conjunto INTEIRO por KEYSET (cursor): cada página pede as linhas com chave MAIOR que a
+ * última lida — `buscarPagina(apos)` aplica `.gt(col, apos)` quando `apos` não é null, mais
+ * `.order(col)` e `.limit(POSTGREST_PAGE_SIZE)`. Mesmo contrato de falha de `fetchAllPages`:
+ * erro e `data: null` sem erro LANÇAM o erro assinado (`ehFalhaDePagina`), com a mesma
+ * telemetria; só página curta é fim.
+ *
+ * POR QUE EXISTE (plano v4, lote 16): o offset (`.range`) é frágil sob escrita concorrente — um
+ * INSERT à frente desloca as páginas seguintes e uma linha que existia o tempo todo some (ou
+ * repete), sem sinal nenhum. Com cursor, toda linha que existe durante a leitura inteira volta
+ * EXATAMENTE uma vez; o que nasce ou morre no meio pode ou não vir (não é fotografia atômica).
+ * E é o que permite ler em PARALELO com segurança: faixas disjuntas da chave, cada uma com o seu
+ * cursor (ver `@/lib/farmer/universo-pedidos-query`). Não substitui `fetchAllPages` nos callers
+ * existentes — trocar dezenas de leituras de uma vez é outra decisão.
+ *
+ * `chave` devolve a coluna do cursor. A ordem é conferida em JS (unidade de código UTF-16), que
+ * coincide com a do Postgres para uuid/hex canônico em minúsculas — o uso pretendido. Chave
+ * ausente ou fora de ordem LANÇA `Error` cru (não é falha de leitura: é o `.order`/`.gt` que não
+ * casa com o cursor, um bug de código), e a mensagem não leva a chave (dado do cliente).
+ */
+export async function fetchAllKeyset<T>(
+  buscarPagina: (apos: string | null) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  chave: (linha: T) => unknown,
+  fonte: string,
+): Promise<T[]> {
+  const todas: T[] = [];
+  let apos: string | null = null;
+  for (let pagina = 0; ; pagina++) {
+    // Construção e espera separadas, pelo mesmo motivo de `fetchAllPages`: só é assinado o que
+    // este helper decidiu lançar; throw síncrono do builder e rejeição sobem crus.
+    const requisicao = buscarPagina(apos);
+    const { data, error } = await requisicao;
+    if (error != null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, error);
+      throw falhaDePagina(`fetchAllKeyset: página ${pagina} falhou`, error, { motivo: 'pagina_falhou', fonte, pagina });
+    }
+    if (data == null) {
+      relatarPaginaPerdida(fonte, pagina, todas.length, null);
+      throw falhaDePagina(`fetchAllKeyset: página ${pagina} devolveu data null sem error`, error, {
+        motivo: 'data_null_sem_error',
+        fonte,
+        pagina,
+      });
+    }
+    for (const linha of data) {
+      const k = chave(linha);
+      if (typeof k !== 'string' || k === '') {
+        throw new Error(`fetchAllKeyset(${fonte}): página ${pagina} trouxe linha sem a chave do cursor`);
+      }
+      if (apos !== null && !(k > apos)) {
+        throw new Error(`fetchAllKeyset(${fonte}): página ${pagina} fora da ordem do cursor`);
+      }
+      apos = k;
+    }
+    todas.push(...data);
+    if (data.length < POSTGREST_PAGE_SIZE) return todas;
+  }
+}
+
+/**
  * `fetchAllPages` + a TRADUÇÃO da falha de leitura para a mensagem de DOMÍNIO que o caller
  * exibe (`e.message` em banner/toast/teste). A mensagem do canônico é deliberadamente opaca
  * ("fetchAllPages: página 0 (0-999) falhou") — boa para o plantão, inútil na tela: o usuário

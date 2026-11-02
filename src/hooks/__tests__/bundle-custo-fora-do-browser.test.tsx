@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -102,6 +103,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => { tabelasLidas.push(tabela); return stubChain(tabela); },
@@ -149,7 +156,7 @@ beforeEach(() => {
 
 describe('useBundleEngine — custo fora do browser', () => {
   it('A (controle positivo): com a RPC devolvendo os SKUs, o engine GERA bundle', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const bundles = result.current.customerBundles.flatMap((c) => c.bundles);
@@ -158,7 +165,7 @@ describe('useBundleEngine — custo fora do browser', () => {
 
   it('B (fail-closed): RPC falha → nenhum bundle', async () => {
     rpcResultado = { data: null, error: { message: 'permission denied' } };
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.customerBundles.flatMap((c) => c.bundles)).toEqual([]);
@@ -167,7 +174,7 @@ describe('useBundleEngine — custo fora do browser', () => {
   });
 
   it('C: não lê product_costs — consulta a RPC', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(tabelasLidas).not.toContain('product_costs');
@@ -175,7 +182,7 @@ describe('useBundleEngine — custo fora do browser', () => {
   });
 
   it('D: bundle_products não carrega "cost"/"margin" por SKU', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     // A chamada é EM LOTE (uma RPC com N linhas), então achatar é obrigatório: sem o flat,
@@ -194,7 +201,7 @@ describe('useBundleEngine — custo fora do browser', () => {
   });
 
   it('E: a afinidade vai na coluna DEDICADA — `lie_bundle` fica NULL (é coluna de DINHEIRO)', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const linhas = linhasPersistidas();

@@ -39,13 +39,20 @@ describe('universo de pedidos do scoring', () => {
       /\.in\(\s*['"]status['"]/.test(semComentarios),
       'o hook voltou a filtrar status por allowlist — diverge de margem_cliente_agregada()',
     ).toBe(false);
+    // Desde o lote 16 (plano v4) o universo de pedidos é lido em `@/lib/farmer/universo-pedidos-query`,
+    // compartilhado com cross-sell e bundle: o hook passa por ele, e a denylist + `deleted_at` moram lá.
+    expect(semComentarios.includes('buscarUniversoPedidos('), 'o hook não lê o universo compartilhado').toBe(true);
+    const compartilhado = readFileSync('src/lib/farmer/universo-pedidos-query.ts', 'utf8')
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .join('\n');
     expect(
-      semComentarios.includes('STATUS_NAO_VENDA'),
-      'o hook não usa mais a denylist compartilhada',
+      compartilhado.includes('STATUS_NAO_VENDA'),
+      'o universo compartilhado não usa mais a denylist',
     ).toBe(true);
     expect(
-      /\.is\(\s*['"]deleted_at['"]\s*,\s*null\s*\)/.test(semComentarios),
-      'o hook não filtra deleted_at — o helper filtra, e a denylist sozinha traria pedido apagado',
+      /\.is\(\s*['"]deleted_at['"]\s*,\s*null\s*\)/.test(compartilhado),
+      'o universo compartilhado não filtra deleted_at — e a denylist sozinha traria pedido apagado',
     ).toBe(true);
   });
 });

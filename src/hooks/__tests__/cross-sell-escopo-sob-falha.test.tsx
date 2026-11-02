@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -114,6 +115,12 @@ function vendaveisDoSeed(): { product_id: string }[] {
   }).map((c) => ({ product_id: c.product_id }));
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -150,7 +157,7 @@ const scoresSemFiltroDeFarmer = () =>
 
 describe('useCrossSellEngine — página que falha não vira "sem carteira, deve ser super_admin"', () => {
   it('não recarrega a base INTEIRA quando a leitura da carteira falha', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     expect(scoresSemFiltroDeFarmer()).toHaveLength(0);
@@ -158,7 +165,7 @@ describe('useCrossSellEngine — página que falha não vira "sem carteira, deve
 
   it('lê a carteira escopada ao dono quando a consulta funciona', async () => {
     falharScores = false;
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const comFiltro = queries.filter(
@@ -185,7 +192,7 @@ describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook
   it('DETECTOR: o caminho feliz produz recomendação (senão os asserts abaixo medem o vazio)', async () => {
     falharScores = false;
     semeado = true;
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     expect(result.current.recommendations.length, 'o seed parou de gerar recomendação').toBe(1);
@@ -193,7 +200,7 @@ describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook
   });
 
   it('expõe o erro quando a leitura falha, em vez de só escrever no console', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     expect(result.current.erro, 'a falha não chegou ao contrato do hook').toBeTruthy();
@@ -203,7 +210,7 @@ describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook
   it('marca DESATUALIZADO quando mantém o resultado de um cálculo anterior', async () => {
     falharScores = false;
     semeado = true;
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
     expect(result.current.recommendations).toHaveLength(1);
 
@@ -219,7 +226,7 @@ describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook
   it('sem resultado anterior a falha NÃO é "desatualizado" — é indisponível', async () => {
     // Discriminador: "velho" e "inexistente" pedem textos diferentes na tela. Marcar
     // desatualizado sem nada na mão faria a tela prometer um dado que não existe.
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     expect(result.current.recommendations).toHaveLength(0);
@@ -228,7 +235,7 @@ describe('useCrossSellEngine — a falha do cálculo aparece no contrato do hook
   });
 
   it('o recálculo bem-sucedido limpa erro e desatualizado', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
     expect(result.current.erro).toBeTruthy();
 

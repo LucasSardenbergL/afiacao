@@ -1,0 +1,1980 @@
+{
+ "customerBundles": [
+  {
+   "customerId": "cli-031",
+   "customerName": "Cliente 31",
+   "healthScore": 96,
+   "bundles": [
+    {
+     "customerId": "cli-031",
+     "customerName": "Cliente 31",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.02823481616900264,
+     "confidence": 0.5887126865671641,
+     "lift": 14.682325977869274,
+     "pBundle": 356.4,
+     "affinityBundle": 3.564,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 314.5,
+   "grossMarginPct": null,
+   "categoryCount": 0,
+   "daysSinceLastPurchase": 254,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 19",
+    "Produto 5",
+    "Produto 7",
+    "Produto 1",
+    "Produto 2"
+   ]
+  },
+  {
+   "customerId": "cli-079",
+   "customerName": "Cliente 79",
+   "healthScore": 99,
+   "bundles": [
+    {
+     "customerId": "cli-079",
+     "customerName": "Cliente 79",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      }
+     ],
+     "support": 0.025594149908592323,
+     "confidence": 0.5915948275862069,
+     "lift": 15.309426267726291,
+     "pBundle": 310.6,
+     "affinityBundle": 3.1064,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-079",
+     "customerName": "Cliente 79",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-22",
+       "name": "Produto 22",
+       "price": 51.22
+      }
+     ],
+     "support": 0.026203534430225474,
+     "confidence": 0.5802853697749196,
+     "lift": 14.991495272148558,
+     "pBundle": 298.4,
+     "affinityBundle": 2.9837,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4444.49,
+   "grossMarginPct": 31.2,
+   "categoryCount": 3,
+   "daysSinceLastPurchase": 266,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 5",
+    "Produto 19",
+    "Produto 20",
+    "Produto 27",
+    "Produto 21"
+   ]
+  },
+  {
+   "customerId": "cli-028",
+   "customerName": "Cliente 28",
+   "healthScore": 71.9,
+   "bundles": [
+    {
+     "customerId": "cli-028",
+     "customerName": "Cliente 28",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-19",
+       "name": "Produto 19",
+       "price": 220.24
+      }
+     ],
+     "support": 0.02823481616900264,
+     "confidence": 0.5772270114942528,
+     "lift": 14.682325977869274,
+     "pBundle": 256.9,
+     "affinityBundle": 2.5687,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1985.93,
+   "grossMarginPct": 9.6,
+   "categoryCount": 1,
+   "daysSinceLastPurchase": 321,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 22",
+    "Produto 23",
+    "Produto 8",
+    "Produto 25",
+    "Produto 26"
+   ]
+  },
+  {
+   "customerId": "cli-040",
+   "customerName": "Cliente 40",
+   "healthScore": 92.9,
+   "bundles": [
+    {
+     "customerId": "cli-040",
+     "customerName": "Cliente 40",
+     "products": [
+      {
+       "id": "sku-23",
+       "name": "Produto 23",
+       "price": 65.04
+      },
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      }
+     ],
+     "support": 0.04184440381880967,
+     "confidence": 0.6005368597989778,
+     "lift": 9.227146595630924,
+     "pBundle": 237,
+     "affinityBundle": 2.3695,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-040",
+     "customerName": "Cliente 40",
+     "products": [
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      },
+      {
+       "id": "sku-19",
+       "name": "Produto 19",
+       "price": 220.24
+      }
+     ],
+     "support": 0.043875685557586835,
+     "confidence": 0.6022100738248761,
+     "lift": 8.917977301351641,
+     "pBundle": 229.7,
+     "affinityBundle": 2.2965,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1388.8,
+   "grossMarginPct": 39.4,
+   "categoryCount": 8,
+   "daysSinceLastPurchase": 295,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 14",
+    "Produto 16",
+    "Produto 17",
+    "Produto 3",
+    "Produto 0"
+   ]
+  },
+  {
+   "customerId": "cli-039",
+   "customerName": "Cliente 39",
+   "healthScore": 99.5,
+   "bundles": [
+    {
+     "customerId": "cli-039",
+     "customerName": "Cliente 39",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      }
+     ],
+     "support": 0.025594149908592323,
+     "confidence": 0.5915948275862069,
+     "lift": 15.309426267726291,
+     "pBundle": 196.7,
+     "affinityBundle": 1.9673,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-039",
+     "customerName": "Cliente 39",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      }
+     ],
+     "support": 0.03026609790777981,
+     "confidence": 0.5874830623306233,
+     "lift": 14.901229681691321,
+     "pBundle": 190.1,
+     "affinityBundle": 1.9015,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3681.69,
+   "grossMarginPct": 32.9,
+   "categoryCount": 3,
+   "daysSinceLastPurchase": 73,
+   "cnae": "3101",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 12",
+    "Produto 3",
+    "Produto 27",
+    "Produto 2",
+    "Produto 4"
+   ]
+  },
+  {
+   "customerId": "cli-011",
+   "customerName": "Cliente 11",
+   "healthScore": 89.2,
+   "bundles": [
+    {
+     "customerId": "cli-011",
+     "customerName": "Cliente 11",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-23",
+       "name": "Produto 23",
+       "price": 65.04
+      }
+     ],
+     "support": 0.026203534430225474,
+     "confidence": 0.5755537974683544,
+     "lift": 14.991495272148558,
+     "pBundle": 192.5,
+     "affinityBundle": 1.9249,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3193.17,
+   "grossMarginPct": 3.6,
+   "categoryCount": 9,
+   "daysSinceLastPurchase": 118,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 25",
+    "Produto 26",
+    "Produto 28",
+    "Produto 5",
+    "Produto 2"
+   ]
+  },
+  {
+   "customerId": "cli-096",
+   "customerName": "Cliente 96",
+   "healthScore": 90.8,
+   "bundles": [
+    {
+     "customerId": "cli-096",
+     "customerName": "Cliente 96",
+     "products": [
+      {
+       "id": "sku-02",
+       "name": "Produto 2",
+       "price": 131.36
+      },
+      {
+       "id": "sku-05",
+       "name": "Produto 5",
+       "price": 75.95
+      }
+     ],
+     "support": 0.04123501929717652,
+     "confidence": 0.6355838515447636,
+     "lift": 9.545077591208656,
+     "pBundle": 187.6,
+     "affinityBundle": 1.8759,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4292.01,
+   "grossMarginPct": 7,
+   "categoryCount": 9,
+   "daysSinceLastPurchase": 375,
+   "cnae": "3101",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 19",
+    "Produto 20",
+    "Produto 18",
+    "Produto 10",
+    "Produto 11"
+   ]
+  },
+  {
+   "customerId": "cli-067",
+   "customerName": "Cliente 67",
+   "healthScore": 82.3,
+   "bundles": [
+    {
+     "customerId": "cli-067",
+     "customerName": "Cliente 67",
+     "products": [
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      },
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      }
+     ],
+     "support": 0.045805403209425145,
+     "confidence": 0.6161504177025241,
+     "lift": 8.952702400563476,
+     "pBundle": 179.3,
+     "affinityBundle": 1.7928,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-067",
+     "customerName": "Cliente 67",
+     "products": [
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      },
+      {
+       "id": "sku-11",
+       "name": "Produto 11",
+       "price": 366.39
+      }
+     ],
+     "support": 0.045500710948608566,
+     "confidence": 0.6120181862975654,
+     "lift": 8.64806154673117,
+     "pBundle": 172,
+     "affinityBundle": 1.7202,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3435.44,
+   "grossMarginPct": 4.3,
+   "categoryCount": 3,
+   "daysSinceLastPurchase": 203,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 23",
+    "Produto 14",
+    "Produto 15",
+    "Produto 0",
+    "Produto 1"
+   ]
+  },
+  {
+   "customerId": "cli-051",
+   "customerName": "Cliente 51",
+   "healthScore": 61.5,
+   "bundles": [
+    {
+     "customerId": "cli-051",
+     "customerName": "Cliente 51",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-17",
+       "name": "Produto 17",
+       "price": 325.05
+      }
+     ],
+     "support": 0.026914483038797482,
+     "confidence": 0.5809394409937888,
+     "lift": 14.8723926191427,
+     "pBundle": 171.7,
+     "affinityBundle": 1.7173,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3666.62,
+   "grossMarginPct": 17.6,
+   "categoryCount": 9,
+   "daysSinceLastPurchase": 137,
+   "cnae": "3101",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 14",
+    "Produto 23",
+    "Produto 10",
+    "Produto 11",
+    "Produto 13"
+   ]
+  },
+  {
+   "customerId": "cli-035",
+   "customerName": "Cliente 35",
+   "healthScore": 81.3,
+   "bundles": [
+    {
+     "customerId": "cli-035",
+     "customerName": "Cliente 35",
+     "products": [
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      },
+      {
+       "id": "sku-05",
+       "name": "Produto 5",
+       "price": 75.95
+      }
+     ],
+     "support": 0.04123501929717652,
+     "confidence": 0.6527690700104494,
+     "lift": 9.545077591208656,
+     "pBundle": 162.3,
+     "affinityBundle": 1.623,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-035",
+     "customerName": "Cliente 35",
+     "products": [
+      {
+       "id": "sku-23",
+       "name": "Produto 23",
+       "price": 65.04
+      },
+      {
+       "id": "sku-05",
+       "name": "Produto 5",
+       "price": 75.95
+      }
+     ],
+     "support": 0.04184440381880967,
+     "confidence": 0.6367280398925969,
+     "lift": 9.227146595630924,
+     "pBundle": 153,
+     "affinityBundle": 1.5304,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3446.5,
+   "grossMarginPct": 7.6,
+   "categoryCount": 7,
+   "daysSinceLastPurchase": 172,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 8",
+    "Produto 10",
+    "Produto 11",
+    "Produto 13",
+    "Produto 19"
+   ]
+  },
+  {
+   "customerId": "cli-077",
+   "customerName": "Cliente 77",
+   "healthScore": 68.2,
+   "bundles": [
+    {
+     "customerId": "cli-077",
+     "customerName": "Cliente 77",
+     "products": [
+      {
+       "id": "sku-17",
+       "name": "Produto 17",
+       "price": 325.05
+      },
+      {
+       "id": "sku-19",
+       "name": "Produto 19",
+       "price": 220.24
+      }
+     ],
+     "support": 0.04052407068860451,
+     "confidence": 0.5956664524880417,
+     "lift": 8.88914023880302,
+     "pBundle": 135.9,
+     "affinityBundle": 1.3591,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4708.09,
+   "grossMarginPct": 3.3,
+   "categoryCount": 4,
+   "daysSinceLastPurchase": 290,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 4",
+    "Produto 28",
+    "Produto 1",
+    "Produto 2",
+    "Produto 10"
+   ]
+  },
+  {
+   "customerId": "cli-092",
+   "customerName": "Cliente 92",
+   "healthScore": 49.5,
+   "bundles": [
+    {
+     "customerId": "cli-092",
+     "customerName": "Cliente 92",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.02823481616900264,
+     "confidence": 0.5887126865671641,
+     "lift": 14.682325977869274,
+     "pBundle": 129,
+     "affinityBundle": 1.29,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1337.09,
+   "grossMarginPct": null,
+   "categoryCount": 1,
+   "daysSinceLastPurchase": 270,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 14",
+    "Produto 22",
+    "Produto 16",
+    "Produto 17",
+    "Produto 6"
+   ]
+  },
+  {
+   "customerId": "cli-019",
+   "customerName": "Cliente 19",
+   "healthScore": 65.1,
+   "bundles": [
+    {
+     "customerId": "cli-019",
+     "customerName": "Cliente 19",
+     "products": [
+      {
+       "id": "sku-23",
+       "name": "Produto 23",
+       "price": 65.04
+      },
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      }
+     ],
+     "support": 0.04184440381880967,
+     "confidence": 0.6005368597989778,
+     "lift": 9.227146595630924,
+     "pBundle": 110.1,
+     "affinityBundle": 1.1008,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 466.13,
+   "grossMarginPct": 32.3,
+   "categoryCount": 5,
+   "daysSinceLastPurchase": 366,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 1",
+    "Produto 4",
+    "Produto 10",
+    "Produto 11",
+    "Produto 13"
+   ]
+  },
+  {
+   "customerId": "cli-062",
+   "customerName": "Cliente 62",
+   "healthScore": 90.6,
+   "bundles": [
+    {
+     "customerId": "cli-062",
+     "customerName": "Cliente 62",
+     "products": [
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      },
+      {
+       "id": "sku-02",
+       "name": "Produto 2",
+       "price": 131.36
+      }
+     ],
+     "support": 0.04113345521023766,
+     "confidence": 0.6030769644924221,
+     "lift": 9.360898986598446,
+     "pBundle": 108.4,
+     "affinityBundle": 1.0838,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-062",
+     "customerName": "Cliente 62",
+     "products": [
+      {
+       "id": "sku-02",
+       "name": "Produto 2",
+       "price": 131.36
+      },
+      {
+       "id": "sku-17",
+       "name": "Produto 17",
+       "price": 325.05
+      }
+     ],
+     "support": 0.03788340442819419,
+     "confidence": 0.59284905011431,
+     "lift": 9.516240528660035,
+     "pBundle": 108.3,
+     "affinityBundle": 1.0831,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4562.83,
+   "grossMarginPct": 18.3,
+   "categoryCount": 2,
+   "daysSinceLastPurchase": 67,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 22",
+    "Produto 23",
+    "Produto 8",
+    "Produto 19",
+    "Produto 14"
+   ]
+  },
+  {
+   "customerId": "cli-075",
+   "customerName": "Cliente 75",
+   "healthScore": 71.5,
+   "bundles": [
+    {
+     "customerId": "cli-075",
+     "customerName": "Cliente 75",
+     "products": [
+      {
+       "id": "sku-22",
+       "name": "Produto 22",
+       "price": 51.22
+      },
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      }
+     ],
+     "support": 0.04174283973187081,
+     "confidence": 0.6089527251468205,
+     "lift": 9.042967991020713,
+     "pBundle": 106.8,
+     "affinityBundle": 1.0684,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4080.04,
+   "grossMarginPct": 1.2,
+   "categoryCount": 5,
+   "daysSinceLastPurchase": 125,
+   "cnae": "3101",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 23",
+    "Produto 0",
+    "Produto 3",
+    "Produto 20",
+    "Produto 19"
+   ]
+  },
+  {
+   "customerId": "cli-074",
+   "customerName": "Cliente 74",
+   "healthScore": 77.6,
+   "bundles": [
+    {
+     "customerId": "cli-074",
+     "customerName": "Cliente 74",
+     "products": [
+      {
+       "id": "sku-02",
+       "name": "Produto 2",
+       "price": 131.36
+      },
+      {
+       "id": "sku-17",
+       "name": "Produto 17",
+       "price": 325.05
+      }
+     ],
+     "support": 0.03788340442819419,
+     "confidence": 0.59284905011431,
+     "lift": 9.516240528660035,
+     "pBundle": 104.1,
+     "affinityBundle": 1.0411,
+     "complexityFactor": 1,
+     "status": "pendente"
+    },
+    {
+     "customerId": "cli-074",
+     "customerName": "Cliente 74",
+     "products": [
+      {
+       "id": "sku-19",
+       "name": "Produto 19",
+       "price": 220.24
+      },
+      {
+       "id": "sku-02",
+       "name": "Produto 2",
+       "price": 131.36
+      }
+     ],
+     "support": 0.03920373755839935,
+     "confidence": 0.5891366206147741,
+     "lift": 9.32617388738661,
+     "pBundle": 101.4,
+     "affinityBundle": 1.0139,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3548.21,
+   "grossMarginPct": 35.1,
+   "categoryCount": 0,
+   "daysSinceLastPurchase": 120,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 5",
+    "Produto 7",
+    "Produto 8",
+    "Produto 10",
+    "Produto 22"
+   ]
+  },
+  {
+   "customerId": "cli-018",
+   "customerName": "Cliente 18",
+   "healthScore": 51.5,
+   "bundles": [
+    {
+     "customerId": "cli-018",
+     "customerName": "Cliente 18",
+     "products": [
+      {
+       "id": "sku-10",
+       "name": "Produto 10",
+       "price": 497.07
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.04377412147064798,
+     "confidence": 0.6307385486361297,
+     "lift": 8.73379869674143,
+     "pBundle": 98.6,
+     "affinityBundle": 0.9863,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 875.48,
+   "grossMarginPct": 28.8,
+   "categoryCount": 8,
+   "daysSinceLastPurchase": 94,
+   "cnae": "3101",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 4",
+    "Produto 6",
+    "Produto 12",
+    "Produto 18",
+    "Produto 22"
+   ]
+  },
+  {
+   "customerId": "cli-032",
+   "customerName": "Cliente 32",
+   "healthScore": 49.2,
+   "bundles": [
+    {
+     "customerId": "cli-032",
+     "customerName": "Cliente 32",
+     "products": [
+      {
+       "id": "sku-05",
+       "name": "Produto 5",
+       "price": 75.95
+      },
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      }
+     ],
+     "support": 0.045805403209425145,
+     "confidence": 0.6523415977961433,
+     "lift": 8.952702400563476,
+     "pBundle": 93.1,
+     "affinityBundle": 0.9314,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1274.77,
+   "grossMarginPct": null,
+   "categoryCount": 8,
+   "daysSinceLastPurchase": 165,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 14",
+    "Produto 16",
+    "Produto 17",
+    "Produto 23",
+    "Produto 2"
+   ]
+  },
+  {
+   "customerId": "cli-017",
+   "customerName": "Cliente 17",
+   "healthScore": 74.3,
+   "bundles": [
+    {
+     "customerId": "cli-017",
+     "customerName": "Cliente 17",
+     "products": [
+      {
+       "id": "sku-16",
+       "name": "Produto 16",
+       "price": 458.75
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.04052407068860451,
+     "confidence": 0.6043857634902411,
+     "lift": 8.88914023880302,
+     "pBundle": 86.4,
+     "affinityBundle": 0.864,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 833.03,
+   "grossMarginPct": 5.8,
+   "categoryCount": 3,
+   "daysSinceLastPurchase": 19,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 25",
+    "Produto 28",
+    "Produto 26",
+    "Produto 1",
+    "Produto 17"
+   ]
+  },
+  {
+   "customerId": "cli-089",
+   "customerName": "Cliente 89",
+   "healthScore": 43,
+   "bundles": [
+    {
+     "customerId": "cli-089",
+     "customerName": "Cliente 89",
+     "products": [
+      {
+       "id": "sku-23",
+       "name": "Produto 23",
+       "price": 65.04
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.0398131220800325,
+     "confidence": 0.6017664840355186,
+     "lift": 9.008242891808877,
+     "pBundle": 83,
+     "affinityBundle": 0.8296,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1095.27,
+   "grossMarginPct": 30.7,
+   "categoryCount": 4,
+   "daysSinceLastPurchase": 177,
+   "cnae": "2222",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 15",
+    "Produto 9",
+    "Produto 4",
+    "Produto 0",
+    "Produto 26"
+   ]
+  },
+  {
+   "customerId": "cli-076",
+   "customerName": "Cliente 76",
+   "healthScore": 29.4,
+   "bundles": [
+    {
+     "customerId": "cli-076",
+     "customerName": "Cliente 76",
+     "products": [
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      },
+      {
+       "id": "sku-22",
+       "name": "Produto 22",
+       "price": 51.22
+      }
+     ],
+     "support": 0.03717245581962218,
+     "confidence": 0.6093801973611266,
+     "lift": 9.635343181665894,
+     "pBundle": 50.1,
+     "affinityBundle": 0.5013,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 3077.35,
+   "grossMarginPct": 22.1,
+   "categoryCount": 5,
+   "daysSinceLastPurchase": 181,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 14",
+    "Produto 16",
+    "Produto 0",
+    "Produto 12",
+    "Produto 2"
+   ]
+  },
+  {
+   "customerId": "cli-058",
+   "customerName": "Cliente 58",
+   "healthScore": 19.8,
+   "bundles": [
+    {
+     "customerId": "cli-058",
+     "customerName": "Cliente 58",
+     "products": [
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      },
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      }
+     ],
+     "support": 0.045805403209425145,
+     "confidence": 0.6161504177025241,
+     "lift": 8.952702400563476,
+     "pBundle": 42.3,
+     "affinityBundle": 0.4234,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 1819.97,
+   "grossMarginPct": 5.9,
+   "categoryCount": 1,
+   "daysSinceLastPurchase": 203,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 16",
+    "Produto 17",
+    "Produto 11",
+    "Produto 25",
+    "Produto 26"
+   ]
+  },
+  {
+   "customerId": "cli-088",
+   "customerName": "Cliente 88",
+   "healthScore": 24.4,
+   "bundles": [
+    {
+     "customerId": "cli-088",
+     "customerName": "Cliente 88",
+     "products": [
+      {
+       "id": "sku-13",
+       "name": "Produto 13",
+       "price": 70.35
+      },
+      {
+       "id": "sku-10",
+       "name": "Produto 10",
+       "price": 497.07
+      }
+     ],
+     "support": 0.044485070079219986,
+     "confidence": 0.5934959349593496,
+     "lift": 8.220075207306648,
+     "pBundle": 36.7,
+     "affinityBundle": 0.3675,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 2807.31,
+   "grossMarginPct": 12.5,
+   "categoryCount": 5,
+   "daysSinceLastPurchase": 203,
+   "cnae": "2222",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 1",
+    "Produto 2",
+    "Produto 28",
+    "Produto 5",
+    "Produto 18"
+   ]
+  },
+  {
+   "customerId": "cli-084",
+   "customerName": "Cliente 84",
+   "healthScore": 10,
+   "bundles": [
+    {
+     "customerId": "cli-084",
+     "customerName": "Cliente 84",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      }
+     ],
+     "support": 0.025594149908592323,
+     "confidence": 0.5915948275862069,
+     "lift": 15.309426267726291,
+     "pBundle": 33.1,
+     "affinityBundle": 0.331,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 4208.48,
+   "grossMarginPct": 17.3,
+   "categoryCount": 5,
+   "daysSinceLastPurchase": 49,
+   "cnae": "3101",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 19",
+    "Produto 20",
+    "Produto 21",
+    "Produto 27",
+    "Produto 16"
+   ]
+  },
+  {
+   "customerId": "cli-081",
+   "customerName": "Cliente 81",
+   "healthScore": 10,
+   "bundles": [
+    {
+     "customerId": "cli-081",
+     "customerName": "Cliente 81",
+     "products": [
+      {
+       "id": "sku-24",
+       "name": "Produto 24",
+       "price": 238.04
+      },
+      {
+       "id": "sku-07",
+       "name": "Produto 7",
+       "price": 131.18
+      }
+     ],
+     "support": 0.03026609790777981,
+     "confidence": 0.5874830623306233,
+     "lift": 14.901229681691321,
+     "pBundle": 27.4,
+     "affinityBundle": 0.2737,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 579.48,
+   "grossMarginPct": null,
+   "categoryCount": 3,
+   "daysSinceLastPurchase": 126,
+   "cnae": "3101",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 16",
+    "Produto 17",
+    "Produto 22",
+    "Produto 23",
+    "Produto 19"
+   ]
+  },
+  {
+   "customerId": "cli-048",
+   "customerName": "Cliente 48",
+   "healthScore": 10,
+   "bundles": [
+    {
+     "customerId": "cli-048",
+     "customerName": "Cliente 48",
+     "products": [
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      },
+      {
+       "id": "sku-05",
+       "name": "Produto 5",
+       "price": 75.95
+      }
+     ],
+     "support": 0.04123501929717652,
+     "confidence": 0.6527690700104494,
+     "lift": 9.545077591208656,
+     "pBundle": 26.1,
+     "affinityBundle": 0.2615,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 2128.77,
+   "grossMarginPct": null,
+   "categoryCount": 4,
+   "daysSinceLastPurchase": 374,
+   "cnae": "3101",
+   "customerType": "revenda",
+   "recentProducts": [
+    "Produto 6",
+    "Produto 8",
+    "Produto 15",
+    "Produto 19",
+    "Produto 0"
+   ]
+  },
+  {
+   "customerId": "cli-093",
+   "customerName": "Cliente 93",
+   "healthScore": 10,
+   "bundles": [
+    {
+     "customerId": "cli-093",
+     "customerName": "Cliente 93",
+     "products": [
+      {
+       "id": "sku-01",
+       "name": "Produto 1",
+       "price": 120
+      },
+      {
+       "id": "sku-20",
+       "name": "Produto 20",
+       "price": 291.16
+      }
+     ],
+     "support": 0.03920373755839935,
+     "confidence": 0.6178075141533711,
+     "lift": 9.32617388738661,
+     "pBundle": 20.6,
+     "affinityBundle": 0.2057,
+     "complexityFactor": 1,
+     "status": "pendente"
+    }
+   ],
+   "individuais": {
+    "cross_sell": {
+     "status": "nenhum"
+    },
+    "up_sell": {
+     "status": "nenhum"
+    }
+   },
+   "avgMonthlySpend": 963.09,
+   "grossMarginPct": null,
+   "categoryCount": 4,
+   "daysSinceLastPurchase": 181,
+   "cnae": "3101",
+   "customerType": "industria",
+   "recentProducts": [
+    "Produto 4",
+    "Produto 22",
+    "Produto 23",
+    "Produto 12",
+    "Produto 26"
+   ]
+  }
+ ],
+ "rules": [
+  {
+   "antecedent": [
+    "sku-24"
+   ],
+   "consequent": [
+    "sku-27"
+   ],
+   "antecedentNames": [
+    "Produto 24"
+   ],
+   "consequentNames": [
+    "Produto 27"
+   ],
+   "support": 0.014625228519195612,
+   "confidence": 0.5373134328358209,
+   "lift": 20.665578358208954,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-27"
+   ],
+   "consequent": [
+    "sku-24"
+   ],
+   "antecedentNames": [
+    "Produto 27"
+   ],
+   "consequentNames": [
+    "Produto 24"
+   ],
+   "support": 0.014625228519195612,
+   "confidence": 0.5625,
+   "lift": 20.665578358208954,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-01"
+   ],
+   "consequent": [
+    "sku-02"
+   ],
+   "antecedentNames": [
+    "Produto 1"
+   ],
+   "consequentNames": [
+    "Produto 2"
+   ],
+   "support": 0.03656307129798903,
+   "confidence": 0.5863192182410424,
+   "lift": 9.953274177243626,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-02"
+   ],
+   "consequent": [
+    "sku-01"
+   ],
+   "antecedentNames": [
+    "Produto 2"
+   ],
+   "consequentNames": [
+    "Produto 1"
+   ],
+   "support": 0.03656307129798903,
+   "confidence": 0.6206896551724138,
+   "lift": 9.953274177243626,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-25"
+   ],
+   "consequent": [
+    "sku-26"
+   ],
+   "antecedentNames": [
+    "Produto 25"
+   ],
+   "consequentNames": [
+    "Produto 26"
+   ],
+   "support": 0.04042250660166565,
+   "confidence": 0.6440129449838188,
+   "lift": 9.407939846158278,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-26"
+   ],
+   "consequent": [
+    "sku-25"
+   ],
+   "antecedentNames": [
+    "Produto 26"
+   ],
+   "consequentNames": [
+    "Produto 25"
+   ],
+   "support": 0.04042250660166565,
+   "confidence": 0.5905044510385756,
+   "lift": 9.407939846158277,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-22"
+   ],
+   "consequent": [
+    "sku-23"
+   ],
+   "antecedentNames": [
+    "Produto 22"
+   ],
+   "consequentNames": [
+    "Produto 23"
+   ],
+   "support": 0.037781840341255334,
+   "confidence": 0.5886075949367089,
+   "lift": 9.317412186088161,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-23"
+   ],
+   "consequent": [
+    "sku-22"
+   ],
+   "antecedentNames": [
+    "Produto 23"
+   ],
+   "consequentNames": [
+    "Produto 22"
+   ],
+   "support": 0.037781840341255334,
+   "confidence": 0.5980707395498392,
+   "lift": 9.317412186088161,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-05"
+   ],
+   "consequent": [
+    "sku-07"
+   ],
+   "antecedentNames": [
+    "Produto 5"
+   ],
+   "consequentNames": [
+    "Produto 7"
+   ],
+   "support": 0.045906967296364,
+   "confidence": 0.6124661246612466,
+   "lift": 9.136881005173688,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-07"
+   ],
+   "consequent": [
+    "sku-05"
+   ],
+   "antecedentNames": [
+    "Produto 7"
+   ],
+   "consequentNames": [
+    "Produto 5"
+   ],
+   "support": 0.045906967296364,
+   "confidence": 0.6848484848484848,
+   "lift": 9.136881005173688,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-16"
+   ],
+   "consequent": [
+    "sku-17"
+   ],
+   "antecedentNames": [
+    "Produto 16"
+   ],
+   "consequentNames": [
+    "Produto 17"
+   ],
+   "support": 0.03920373755839935,
+   "confidence": 0.5993788819875776,
+   "lift": 9.079206880076445,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-17"
+   ],
+   "consequent": [
+    "sku-16"
+   ],
+   "antecedentNames": [
+    "Produto 17"
+   ],
+   "consequentNames": [
+    "Produto 16"
+   ],
+   "support": 0.03920373755839935,
+   "confidence": 0.5938461538461538,
+   "lift": 9.079206880076445,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-25"
+   ],
+   "consequent": [
+    "sku-28"
+   ],
+   "antecedentNames": [
+    "Produto 25"
+   ],
+   "consequentNames": [
+    "Produto 28"
+   ],
+   "support": 0.039609993906154786,
+   "confidence": 0.6310679611650486,
+   "lift": 9.005065428450823,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-28"
+   ],
+   "consequent": [
+    "sku-25"
+   ],
+   "antecedentNames": [
+    "Produto 28"
+   ],
+   "consequentNames": [
+    "Produto 25"
+   ],
+   "support": 0.039609993906154786,
+   "confidence": 0.5652173913043478,
+   "lift": 9.005065428450822,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-28"
+   ],
+   "consequent": [
+    "sku-26"
+   ],
+   "antecedentNames": [
+    "Produto 28"
+   ],
+   "consequentNames": [
+    "Produto 26"
+   ],
+   "support": 0.04245378834044282,
+   "confidence": 0.6057971014492753,
+   "lift": 8.849671010192234,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-26"
+   ],
+   "consequent": [
+    "sku-28"
+   ],
+   "antecedentNames": [
+    "Produto 26"
+   ],
+   "consequentNames": [
+    "Produto 28"
+   ],
+   "support": 0.04245378834044282,
+   "confidence": 0.6201780415430267,
+   "lift": 8.849671010192232,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-10"
+   ],
+   "consequent": [
+    "sku-13"
+   ],
+   "antecedentNames": [
+    "Produto 10"
+   ],
+   "consequentNames": [
+    "Produto 13"
+   ],
+   "support": 0.04570383912248629,
+   "confidence": 0.6198347107438017,
+   "lift": 8.768523795953264,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-13"
+   ],
+   "consequent": [
+    "sku-10"
+   ],
+   "antecedentNames": [
+    "Produto 13"
+   ],
+   "consequentNames": [
+    "Produto 10"
+   ],
+   "support": 0.04570383912248629,
+   "confidence": 0.646551724137931,
+   "lift": 8.768523795953264,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-19"
+   ],
+   "consequent": [
+    "sku-20"
+   ],
+   "antecedentNames": [
+    "Produto 19"
+   ],
+   "consequentNames": [
+    "Produto 20"
+   ],
+   "support": 0.04184440381880967,
+   "confidence": 0.6149253731343284,
+   "lift": 8.699073597529594,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-20"
+   ],
+   "consequent": [
+    "sku-19"
+   ],
+   "antecedentNames": [
+    "Produto 20"
+   ],
+   "consequentNames": [
+    "Produto 19"
+   ],
+   "support": 0.04184440381880967,
+   "confidence": 0.5919540229885057,
+   "lift": 8.699073597529594,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-13"
+   ],
+   "consequent": [
+    "sku-11"
+   ],
+   "antecedentNames": [
+    "Produto 13"
+   ],
+   "consequentNames": [
+    "Produto 11"
+   ],
+   "support": 0.043875685557586835,
+   "confidence": 0.6206896551724138,
+   "lift": 8.280908326324644,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-11"
+   ],
+   "consequent": [
+    "sku-13"
+   ],
+   "antecedentNames": [
+    "Produto 11"
+   ],
+   "consequentNames": [
+    "Produto 13"
+   ],
+   "support": 0.043875685557586835,
+   "confidence": 0.5853658536585366,
+   "lift": 8.280908326324642,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-11"
+   ],
+   "consequent": [
+    "sku-10"
+   ],
+   "antecedentNames": [
+    "Produto 11"
+   ],
+   "consequentNames": [
+    "Produto 10"
+   ],
+   "support": 0.04509445460085314,
+   "confidence": 0.6016260162601627,
+   "lift": 8.159242088288654,
+   "type": "sequential"
+  },
+  {
+   "antecedent": [
+    "sku-10"
+   ],
+   "consequent": [
+    "sku-11"
+   ],
+   "antecedentNames": [
+    "Produto 10"
+   ],
+   "consequentNames": [
+    "Produto 11"
+   ],
+   "support": 0.04509445460085314,
+   "confidence": 0.6115702479338843,
+   "lift": 8.159242088288652,
+   "type": "sequential"
+  }
+ ],
+ "erro": null,
+ "desatualizado": false,
+ "calculado": true,
+ "escritas": []
+}

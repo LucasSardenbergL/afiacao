@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prova PG17 do IMPORT DE CLIENTES NO SERVIDOR — migration 20261101200000_clientes_import_servidor
+# Prova PG17 do IMPORT DE CLIENTES NO SERVIDOR — migrations 20261101200000_clientes_import_servidor
+# + 20261102005510_clientes_import_varredura_diaria (aplicadas em sequência, como em prod)
 # (a rodada com cursor no banco que substitui o laço do navegador em /admin/analytics-sync).
 #
 # O que prova EXECUTANDO:
@@ -17,7 +18,7 @@
 #  C9  relatório: só falha que ABANDONOU a conta entra; contas sem credencial deduplicadas
 #  C10 RLS/ACL: staff lê, customer não; INSERT direto por authenticated → 42501; 2ª aberta direta → 23505
 #  C11 cron de continuação dispara a edge SÓ com rodada aberta, com a ação certa
-#  C12 cron semanal semeia (origem cron_semanal) e é no-op com rodada aberta
+#  C12 cron DIÁRIO (07:45 UTC) semeia com origem cron_diario e é no-op com rodada aberta; o semanal saiu
 #  C13 re-apply idempotente preserva as rodadas
 #
 #   bash db/test-clientes-import-servidor.sh > /tmp/t.log 2>&1; echo "exit=$?"
@@ -27,9 +28,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIG="$REPO_ROOT/supabase/migrations/20261101200000_clientes_import_servidor.sql"
+MIG2="$REPO_ROOT/supabase/migrations/20261102005510_clientes_import_varredura_diaria.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="gate_semear:C1c uma_aberta:POST!P2_FALHOU lease_ttl:C2b token_fence:C3a sem_progresso_teto:C4a erro_teto:C5a rearmar_zera:C6b falha_so_abandonada:C9a acl_acquire:POST!P3_FALHOU cron_timeout:POST!P5_FALHOU cron_so_aberta:C11b"
+  SABOTAGENS="gate_semear:C1c uma_aberta:POST!P2_FALHOU lease_ttl:C2b token_fence:C3a sem_progresso_teto:C4a erro_teto:C5a rearmar_zera:C6b falha_so_abandonada:C9a acl_acquire:POST!P3_FALHOU cron_timeout:POST!P5_FALHOU cron_so_aberta:C11b diario_check:POST!P1_FALHOU diario_semear:POST!P2_FALHOU diario_sem_unschedule:POST!P5_FALHOU"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-clientes-import.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -73,9 +75,11 @@ MIG_USADA="$WORK/mig.sql"
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 cp "$MIG" "$MIG_USADA"
+MIG2_USADA="$WORK/mig2.sql"
+cp "$MIG2" "$MIG2_USADA"
 
 sabotar() {
-  python3 -I - "$MIG_USADA" "$1" "$2" <<'PY'
+  python3 -I - "${ALVO:-$MIG_USADA}" "$1" "$2" <<'PY'
 import sys
 p, de, para = sys.argv[1:]
 s = open(p, encoding="utf-8").read()
@@ -105,6 +109,9 @@ case "${SABOTAGEM:-}" in
   cron_so_aberta)      sabotar "    IF EXISTS (SELECT 1 FROM public.clientes_import_rodada WHERE concluida_em IS NULL AND falhou_em IS NULL) THEN
       PERFORM net.http_post(" "    IF true THEN
       PERFORM net.http_post(" ;;
+  diario_check)        ALVO="$MIG2_USADA" sabotar "CHECK (origem IN ('manual', 'cron_semanal', 'cron_diario'))" "CHECK (origem IN ('manual', 'cron_semanal'))" ;;
+  diario_semear)       ALVO="$MIG2_USADA" sabotar "p_origem NOT IN ('manual', 'cron_semanal', 'cron_diario')" "p_origem NOT IN ('manual', 'cron_semanal')" ;;
+  diario_sem_unschedule) ALVO="$MIG2_USADA" sabotar "SELECT cron.unschedule('clientes-import-semanal')" "SELECT 'sabotado'" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -z "${SABOTAGEM:-}" ] || echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -154,6 +161,12 @@ CREATE FUNCTION cron.schedule(p_name text, p_schedule text, p_command text) RETU
   INSERT INTO cron.job (jobname, schedule, command) VALUES (p_name, p_schedule, p_command)
   ON CONFLICT (jobname) DO UPDATE SET schedule = EXCLUDED.schedule, command = EXCLUDED.command, active = true
   RETURNING jobid $$;
+CREATE FUNCTION cron.unschedule(p_name text) RETURNS boolean LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM cron.job WHERE jobname = p_name;
+  IF NOT FOUND THEN RAISE EXCEPTION 'could not find valid entry for job ''%''', p_name; END IF;
+  RETURN true;
+END $$;
 CREATE SCHEMA net;
 CREATE TABLE net.chamadas (id bigserial PRIMARY KEY, url text, body jsonb, timeout_ms int, secret text);
 CREATE FUNCTION net.http_post(url text, headers jsonb, body jsonb, timeout_milliseconds int) RETURNS bigint LANGUAGE sql AS $$
@@ -167,9 +180,10 @@ INSERT INTO auth.users VALUES ('$M'), ('$E1'), ('$CUST');
 INSERT INTO public.user_roles VALUES ('$M','master'), ('$E1','employee'), ('$CUST','customer');
 SQL
 
-aplicar() { P -v ON_ERROR_STOP=1 -f "$MIG_USADA" 2>&1; }
+aplicar() { { P -v ON_ERROR_STOP=1 -f "$MIG_USADA" && P -v ON_ERROR_STOP=1 -f "$MIG2_USADA"; } 2>&1; }
 SAIDA_APPLY="$(aplicar)" || { echo "$SAIDA_APPLY" | tail -20; echo "POST/APPLY FALHOU"; exit 1; }
 printf '%s\n' "$SAIDA_APPLY" | grep -q "clientes_import_rodada pronta" || { echo "APPLY sem NOTICE de postcondição"; exit 1; }
+printf '%s\n' "$SAIDA_APPLY" | grep -q "clientes_import varredura diaria pronta" || { echo "APPLY sem NOTICE da varredura diária"; exit 1; }
 
 PASS=0; FAIL=0
 eq() { if [ "$2" = "$3" ]; then echo "PASS $1"; PASS=$((PASS+1)); else echo "FAIL $1 — obtido [$2] esperado [$3]"; FAIL=$((FAIL+1)); fi; }
@@ -251,12 +265,14 @@ P -q -c "UPDATE public.clientes_import_rodada SET concluida_em = now() WHERE id 
 P -q -c "$CMD_CONT"
 eq "C11b sem rodada aberta: nenhuma chamada nova" "$(Pq -c "SELECT count(*) FROM net.chamadas")" "1"
 
-# C12 cron semanal
-CMD_SEM="$(Pq -c "SELECT command FROM cron.job WHERE jobname='clientes-import-semanal'")"
-P -q -c "$CMD_SEM"
-eq "C12a semanal semeia com origem cron_semanal" "$(Pq -c "SELECT origem || ':' || coalesce(solicitado_por::text,'null') FROM public.clientes_import_rodada WHERE concluida_em IS NULL AND falhou_em IS NULL")" "cron_semanal:null"
-P -q -c "$CMD_SEM"
-eq "C12b semanal com rodada aberta e no-op" "$(Pq -c "SELECT count(*) FROM public.clientes_import_rodada WHERE concluida_em IS NULL AND falhou_em IS NULL")|$(Pq -c "SELECT count(*) FROM public.clientes_import_rodada")" "1|4"
+# C12 cron diário (o semanal saiu)
+eq "C12c semanal removido, diario agendado 45 7" "$(Pq -c "SELECT count(*) FROM cron.job WHERE jobname='clientes-import-semanal'")|$(Pq -c "SELECT schedule FROM cron.job WHERE jobname='clientes-import-diario' AND active")" "0|45 7 * * *"
+CMD_DIA="$(Pq -c "SELECT command FROM cron.job WHERE jobname='clientes-import-diario'")"
+P -q -c "$CMD_DIA"
+eq "C12a diario semeia com origem cron_diario" "$(Pq -c "SELECT origem || ':' || coalesce(solicitado_por::text,'null') FROM public.clientes_import_rodada WHERE concluida_em IS NULL AND falhou_em IS NULL")" "cron_diario:null"
+P -q -c "$CMD_DIA"
+eq "C12b diario com rodada aberta e no-op" "$(Pq -c "SELECT count(*) FROM public.clientes_import_rodada WHERE concluida_em IS NULL AND falhou_em IS NULL")|$(Pq -c "SELECT count(*) FROM public.clientes_import_rodada")" "1|4"
+eq "C12d origem fora do conjunto -> 22023" "$(estado "SELECT private.clientes_import_semear_interno('cron_semanalx', NULL);")" "22023"
 
 # C13 re-apply
 SAIDA2="$(aplicar)" || { echo "$SAIDA2" | tail -10; }
