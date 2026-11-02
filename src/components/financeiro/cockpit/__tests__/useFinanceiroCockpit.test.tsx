@@ -38,7 +38,11 @@ import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 
 const resumoEmpresa = (cr: number, cp: number, venc: number) => ({
   contas_correntes: [], saldo_total_cc: 100, total_a_receber: cr, total_a_pagar: cp,
-  total_vencido_receber: venc, total_vencido_pagar: 0, posicao_liquida: cr - cp,
+  total_vencido_receber: venc, total_vencido_pagar: 0, posicao_liquida: cr - cp, titulos_motivo: null,
+});
+const resumoSemTitulos = (motivo: string) => ({
+  contas_correntes: [], saldo_total_cc: 100, total_a_receber: null, total_a_pagar: null,
+  total_vencido_receber: null, total_vencido_pagar: null, posicao_liquida: null, titulos_motivo: motivo,
 });
 
 function wrapper(qc: QueryClient) {
@@ -83,6 +87,21 @@ describe('useFinanceiroCockpit (react-query)', () => {
     expect(result.current.totalCC).toBeNull();
     expect(result.current.riscoLiquidez).toBeNull();
     expect(result.current.inadimplentes).toHaveLength(1);
+  });
+
+  it('títulos de UM CNPJ indisponíveis → CR/CP/inadimplência do grupo null, mas o caixa segue', async () => {
+    m.getResumoFinanceiro.mockResolvedValue({
+      oben: resumoEmpresa(1000, 400, 100), colacor: resumoSemTitulos('saldo de títulos indisponível (colacor): sem_acesso'),
+      colacor_sc: resumoEmpresa(0, 0, 0),
+    });
+    const { result } = renderHook(() => useFinanceiroCockpit(), { wrapper: wrapper(novoClient()) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.totalCR).toBeNull();
+    expect(result.current.totalCP).toBeNull();
+    expect(result.current.totalVencidoCR).toBeNull();
+    expect(result.current.pctInadimplencia).toBeNull();
+    expect(result.current.riscoLiquidez).toBeNull();
+    expect(result.current.totalCC).toBe(300);
   });
 
   it('DRE que falha → margens null, sem derrubar o resumo', async () => {

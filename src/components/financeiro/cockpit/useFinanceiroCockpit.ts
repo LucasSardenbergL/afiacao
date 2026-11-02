@@ -8,6 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { getResumoFinanceiro, getAgingReceber, getDRE, getTopInadimplentes, type FinDRE } from '@/services/financeiroService';
 import { getProjecaoSnapshotsCockpit, getBalancoInputs, getNcgNaJanela, type BalancoInputRow } from '@/services/financeiroV2Service';
 import { caixaDoGrupo, consolidarCockpit, type CockpitConsolidado } from '@/lib/financeiro/cockpit-consolida-helpers';
+import { consolidarTitulos } from '@/lib/financeiro/resumo-titulos';
 import { classificarFleurietEmpresa, type ClassificacaoFleurietEmpresa } from '@/lib/financeiro/fleuriet-helpers';
 import { useFinanceiroRegime } from '@/hooks/useFinanceiroRegime';
 import { logger } from '@/lib/logger';
@@ -157,11 +158,13 @@ export function useFinanceiroCockpit() {
   // Computed
   // Consolidado do grupo: indisponível se faltar o saldo de qualquer CNPJ (caixa é
   // por-CNPJ, não-fungível — a parcela que falta não se estima pelas outras).
-  // Resumo indisponível (null) → os totais de títulos também: o `reduce` sobre `{}` dava 0.
+  // Resumo indisponível (null) → os totais de títulos também: o `reduce` sobre `{}` dava 0. Títulos
+  // indisponíveis de um CNPJ anulam só CR/CP do grupo; o caixa segue a régua dele.
   const totalCC = resumo === null ? null : caixaDoGrupo(resumo);
-  const totalCR = resumo === null ? null : Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0);
-  const totalCP = resumo === null ? null : Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0);
-  const totalVencidoCR = resumo === null ? null : Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0);
+  const titulosGrupo = resumo === null ? null : consolidarTitulos(Object.values(resumo));
+  const totalCR = titulosGrupo?.total_a_receber ?? null;
+  const totalCP = titulosGrupo?.total_a_pagar ?? null;
+  const totalVencidoCR = titulosGrupo?.total_vencido_receber ?? null;
   // NCG real (ACO−PCO) consolidado da engine A1, não o CR−CP ingênuo
   const ncg = cockpit.ncg_total;
   const pctInadimplencia =

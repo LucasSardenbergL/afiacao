@@ -31,7 +31,37 @@ const resumoDe = (empresa: string) => ({
   total_vencido_receber: 0,
   total_vencido_pagar: 0,
   posicao_liquida: 0,
+  titulos_motivo: null,
   empresa,
+});
+
+describe('useFinanceiro — consolidado com títulos de um CNPJ indisponíveis', () => {
+  beforeEach(() => {
+    Object.values(m).forEach((f) => f.mockReset());
+    m.getLastSyncTime.mockResolvedValue(null);
+  });
+
+  it('CR/CP do grupo null + motivo, mas o saldo CC consolidado segue somado', async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce({
+      oben: resumoDe('oben'),
+      colacor: {
+        ...resumoDe('colacor'),
+        total_a_receber: null, total_a_pagar: null, total_vencido_receber: null, total_vencido_pagar: null,
+        posicao_liquida: null, titulos_motivo: 'saldo de títulos indisponível (colacor): desconhecida',
+      },
+      colacor_sc: resumoDe('colacor_sc'),
+    });
+    const { result } = renderHook(() => useFinanceiro('all'));
+    await act(async () => { await result.current.loadResumo(); });
+    expect(result.current.errosCarga.resumo).toBeUndefined();
+    expect(result.current.activeResumo).toMatchObject({
+      saldo_total_cc: 30,
+      total_a_receber: null,
+      total_a_pagar: null,
+      posicao_liquida: null,
+      titulos_motivo: 'saldo de títulos indisponível (colacor): desconhecida',
+    });
+  });
 });
 
 describe('useFinanceiro — errosCarga por dataset', () => {

@@ -20,8 +20,10 @@ function generateAlerts(
   for (const [co, r] of Object.entries(resumo)) {
     const name = COMPANIES[co as Company]?.shortName || co;
 
+    // Títulos indisponíveis (null) não disparam alerta de CR/CP: ausente não é "sem alerta" nem
+    // "alerta" — o motivo aparece no aviso de indisponível da Visão Geral.
     // Posição líquida negativa
-    if (r.posicao_liquida < 0) {
+    if (r.posicao_liquida !== null && r.posicao_liquida < 0) {
       alerts.push({
         severity: Math.abs(r.posicao_liquida) > 50000 ? 'critical' : 'warning',
         company: co,
@@ -32,7 +34,8 @@ function generateAlerts(
     }
 
     // Inadimplência alta (>20% do total a receber)
-    if (r.total_a_receber > 0 && r.total_vencido_receber / r.total_a_receber > 0.20) {
+    if (r.total_a_receber !== null && r.total_vencido_receber !== null
+        && r.total_a_receber > 0 && r.total_vencido_receber / r.total_a_receber > 0.20) {
       const pct = ((r.total_vencido_receber / r.total_a_receber) * 100).toFixed(0);
       alerts.push({
         severity: Number(pct) > 35 ? 'critical' : 'warning',
@@ -47,7 +50,8 @@ function generateAlerts(
     // fabricado de antes, saldo indisponível virava cobertura de 0% e disparava alerta
     // CRÍTICO de liquidez sobre uma empresa que pode estar com o caixa cheio. Precisão >
     // recall — o "—" do KPI de saldo é quem conta ao dono que o dado faltou.
-    if (r.saldo_total_cc !== null && r.total_a_pagar > 0 && r.saldo_total_cc / r.total_a_pagar < 0.30) {
+    if (r.saldo_total_cc !== null && r.total_a_pagar !== null && r.total_a_pagar > 0
+        && r.saldo_total_cc / r.total_a_pagar < 0.30) {
       const pct = ((r.saldo_total_cc / r.total_a_pagar) * 100).toFixed(0);
       alerts.push({
         severity: Number(pct) < 15 ? 'critical' : 'warning',
@@ -59,7 +63,7 @@ function generateAlerts(
     }
 
     // Vencidos a pagar
-    if (r.total_vencido_pagar > 10000) {
+    if (r.total_vencido_pagar !== null && r.total_vencido_pagar > 10000) {
       alerts.push({
         severity: r.total_vencido_pagar > 50000 ? 'critical' : 'warning',
         company: co,

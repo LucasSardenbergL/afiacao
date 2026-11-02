@@ -68,8 +68,12 @@ function makeBuilder(tabela: string) {
 // db/test-fin-saldo-titulos-por-status.sh): empresa sem título em NENHUM status → `desconhecida`;
 // grupos (tabela, empresa, status) só dos status pedidos, saldo como string decimal.
 const rpcCalls: Array<{ fn: string; args: { p_companies: string[]; p_statuses: string[] } }> = [];
+let rpcRejeita: Error | null = null;
+let rpcEnvelope: unknown;
 function fakeRpc(fn: string, args: { p_companies: string[]; p_statuses: string[] }) {
   rpcCalls.push({ fn, args });
+  if (rpcRejeita) return Promise.reject(rpcRejeita);
+  if (rpcEnvelope !== undefined) return Promise.resolve({ data: rpcEnvelope, error: null });
   const error = state.errors.rpc;
   if (error) return Promise.resolve({ data: null, error });
   const tabelas = [['receber', 'fin_contas_receber'], ['pagar', 'fin_contas_pagar']] as const;
@@ -120,6 +124,8 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     state.db = { fin_contas_correntes: [], fin_contas_receber: [titulo('oben', 'RECEBIDO', 1)], fin_contas_pagar: [] };
     state.errors = {};
     rpcCalls.length = 0;
+    rpcRejeita = null;
+    rpcEnvelope = undefined;
   });
 
   it('soma os títulos pela RPC: 1 chamada para todas as empresas, com o conjunto aberto canônico', async () => {
@@ -131,13 +137,34 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     }]);
   });
 
-  it('empresa desconhecida para a RPC LANÇA — nunca R$ 0 de títulos', async () => {
-    await expect(getResumoFinanceiro(['oben', 'colacor'])).rejects.toThrow('saldo de títulos indisponível (colacor): desconhecida');
+  // Títulos têm disponibilidade PRÓPRIA (follow-up do lote 13): a empresa sem títulos sai com os
+  // totais null + motivo — nunca R$ 0 — e NÃO derruba o saldo CC nem os títulos das outras.
+  const contaFresca = (company: string, saldo: number): Row =>
+    ({ company, ativo: true, descricao: `CC ${company}`, banco: '001', saldo_atual: saldo, saldo_data: HOJE_SP });
+  const SEM_TITULOS = {
+    total_a_receber: null, total_a_pagar: null, total_vencido_receber: null, total_vencido_pagar: null, posicao_liquida: null,
+  };
+
+  it('empresa desconhecida para a RPC: títulos null + motivo SÓ dela; CC e títulos das outras preservados', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000), contaFresca('colacor', 1000)];
+    state.db.fin_contas_receber.push(titulo('oben', 'A VENCER', 7));
+    const resumo = await getResumoFinanceiro(['oben', 'colacor']);
+    expect(resumo.colacor).toMatchObject({
+      ...SEM_TITULOS, titulos_motivo: 'saldo de títulos indisponível (colacor): desconhecida', saldo_total_cc: 1000,
+    });
+    expect(resumo.colacor.contas_correntes).toHaveLength(1);
+    expect(resumo.oben).toMatchObject({ total_a_receber: 7, posicao_liquida: 7, titulos_motivo: null, saldo_total_cc: 1000 });
   });
 
-  it('erro da RPC LANÇA com a mensagem do banco', async () => {
+  it('erro da RPC: títulos null em todas com a mensagem do banco; o CC lido certo continua', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000)];
     state.errors.rpc = { message: 'canceling statement due to statement timeout' };
-    await expect(getResumoFinanceiro(['oben'])).rejects.toThrow('Falha ao carregar saldo de títulos: canceling statement due to statement timeout');
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({
+      ...SEM_TITULOS,
+      titulos_motivo: 'Falha ao carregar saldo de títulos: canceling statement due to statement timeout',
+      saldo_total_cc: 1000,
+    });
   });
 
   it('soma TODOS os títulos abertos mesmo acima do cap de 1000 do PostgREST (CR e CP)', async () => {
@@ -296,10 +323,19 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
     expect(resumo.oben.saldo_total_cc).toBe(0);
   });
 
-  it('erro nos títulos LANÇA um Error real (nunca resumo parcial silencioso, nem "[object Object]" no banner)', async () => {
-    state.db.fin_contas_receber = muitos(10, 'oben', 'A VENCER', 1);
-    state.errors.rpc = { message: 'RLS negou' };
-    await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
+  it('RPC que REJEITA (rede) também vira títulos indisponíveis com motivo legível, não "[object Object]"', async () => {
+    state.db.fin_contas_correntes = [contaFresca('oben', 1000)];
+    rpcRejeita = new Error('Failed to fetch');
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({
+      ...SEM_TITULOS, titulos_motivo: 'Falha ao carregar saldo de títulos: Failed to fetch', saldo_total_cc: 1000,
+    });
+  });
+
+  it('envelope fora do contrato: títulos indisponíveis em todas (fail-closed), nunca R$ 0', async () => {
+    rpcEnvelope = [];
+    const resumo = await getResumoFinanceiro(['oben']);
+    expect(resumo.oben).toMatchObject({ ...SEM_TITULOS, titulos_motivo: 'resposta da RPC fora do envelope versão 1' });
   });
 
   it('erro nas contas correntes também LANÇA — caixa R$0 falso é tão ruim quanto total truncado', async () => {

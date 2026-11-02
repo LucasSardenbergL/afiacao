@@ -21,6 +21,18 @@ const resumoCo: FinResumo = {
   total_vencido_receber: 1500,
   total_vencido_pagar: 500,
   posicao_liquida: 6000,
+  titulos_motivo: null,
+};
+
+// Títulos indisponíveis, saldo bancário lido certo (follow-up do lote 13).
+const resumoSemTitulos: FinResumo = {
+  ...resumoCo,
+  total_a_receber: null,
+  total_a_pagar: null,
+  total_vencido_receber: null,
+  total_vencido_pagar: null,
+  posicao_liquida: null,
+  titulos_motivo: 'saldo de títulos indisponível (oben): sem_acesso',
 };
 
 const aging: AgingData = {
@@ -146,6 +158,29 @@ describe('VisaoGeralTab', () => {
 });
 
 describe('VisaoGeralTab — leitura indisponível', () => {
+  it('títulos indisponíveis: Saldo Bancário segue visível; CR/CP/indicadores "—" + motivo, sem R$ 0', () => {
+    const r: FinResumo = { ...resumoSemTitulos, contas_correntes: [], saldo_total_cc: 7777 };
+    renderWithClient(
+      <VisaoGeralTab
+        alerts={[]}
+        activeResumo={r}
+        resumo={{ oben: r }}
+        view="oben"
+        agingReceber={aging}
+        agingPagar={aging}
+        inadimplentes={[]}
+      />
+    );
+    const kpi = (titulo: string) => screen.getByText(titulo).parentElement as HTMLElement;
+    expect(kpi('Saldo Bancário').textContent).toContain('R$ 7.8k');
+    // Os buckets zerados do aging são zero LEGÍTIMO; o que não pode ter número é o que depende de títulos.
+    for (const t of ['A Receber', 'A Pagar', 'Posição Líquida', 'Capital de Giro', 'Inadimplência', 'Cobertura de Caixa']) {
+      expect(kpi(t).textContent).toContain('—');
+      expect(kpi(t).textContent).not.toMatch(/R\$|%/);
+    }
+    expect(screen.getAllByRole('alert')[0].textContent).toContain('saldo de títulos indisponível (oben): sem_acesso');
+  });
+
   it('resumo indisponível → aviso e nenhum R$ 0,00 fabricado', () => {
     renderWithClient(
       <VisaoGeralTab

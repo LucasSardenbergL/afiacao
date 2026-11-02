@@ -17,6 +17,11 @@ import { KpiCard } from '@/components/financeiro/dashboard/KpiCard';
 import { AgingCard } from '@/components/financeiro/dashboard/AgingCard';
 import { DataHealthBanner } from '@/components/dataHealth/DataHealthBanner';
 
+const compactoOuTraco = (v: number | null) => (v === null ? '—' : fmtCompact(v));
+// Desconhecido (null) fica neutro: nem o verde de "positivo" nem o vermelho de "negativo".
+const corDoSinal = (v: number | null) =>
+  v === null ? 'text-muted-foreground' : v >= 0 ? 'text-status-success' : 'text-status-error';
+
 export function VisaoGeralTab({
   alerts, activeResumo, resumo, view, agingReceber, agingPagar, inadimplentes,
   resumoIndisponivel = null, agingIndisponivel = null, inadimplentesIndisponivel = null,
@@ -46,8 +51,20 @@ export function VisaoGeralTab({
   const contasVisiveis =
     showContasZeradas || contasComSaldo.length === 0 ? contasCorrentes : contasComSaldo;
 
+  // Títulos têm disponibilidade própria: CR/CP indisponíveis não apagam o saldo bancário.
+  const titulosMotivo = activeResumo?.titulos_motivo ?? null;
+  const capitalGiro = activeResumo?.posicao_liquida ?? null;
+  const receber = activeResumo?.total_a_receber ?? null;
+  const vencidoReceber = activeResumo?.total_vencido_receber ?? null;
+  const inadimplenciaPct =
+    receber === null || vencidoReceber === null ? null : receber > 0 ? (vencidoReceber / receber) * 100 : 0;
+  const pagar = activeResumo?.total_a_pagar ?? null;
+  const saldoCC = activeResumo?.saldo_total_cc ?? null;
+  const coberturaPct = saldoCC !== null && pagar !== null && pagar > 0 ? (saldoCC / pagar) * 100 : null;
+
   const motivos = [
     resumoIndisponivel && `Resumo (KPIs e alertas): ${resumoIndisponivel}`,
+    titulosMotivo && `Títulos (A Receber, A Pagar, Posição Líquida): ${titulosMotivo}`,
     agingIndisponivel && `Aging: ${agingIndisponivel}`,
     inadimplentesIndisponivel && `Inadimplentes: ${inadimplentesIndisponivel}`,
   ].filter(Boolean) as string[];
@@ -153,16 +170,20 @@ export function VisaoGeralTab({
                   <div className="flex items-center gap-6 text-sm">
                     <div className="text-right">
                       <p className="text-muted-foreground text-xs">A Receber</p>
-                      <p className="font-medium text-status-success">{fmtCompact(r.total_a_receber)}</p>
+                      <p className={`font-medium ${r.total_a_receber === null ? 'text-muted-foreground' : 'text-status-success'}`}>
+                        {compactoOuTraco(r.total_a_receber)}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-muted-foreground text-xs">A Pagar</p>
-                      <p className="font-medium text-status-error">{fmtCompact(r.total_a_pagar)}</p>
+                      <p className={`font-medium ${r.total_a_pagar === null ? 'text-muted-foreground' : 'text-status-error'}`}>
+                        {compactoOuTraco(r.total_a_pagar)}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-muted-foreground text-xs">Líquida</p>
-                      <p className={`font-bold ${r.posicao_liquida >= 0 ? 'text-status-success' : 'text-status-error'}`}>
-                        {fmtCompact(r.posicao_liquida)}
+                      <p className={`font-bold ${corDoSinal(r.posicao_liquida)}`}>
+                        {compactoOuTraco(r.posicao_liquida)}
                       </p>
                     </div>
                   </div>
@@ -193,11 +214,8 @@ export function VisaoGeralTab({
               {/* Capital de Giro */}
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Capital de Giro</p>
-                <p className={`text-lg kpi-value mt-1 ${
-                  (activeResumo.total_a_receber - activeResumo.total_a_pagar) >= 0
-                    ? 'text-status-success' : 'text-status-error'
-                }`}>
-                  {fmtCompact(activeResumo.total_a_receber - activeResumo.total_a_pagar)}
+                <p className={`text-lg kpi-value mt-1 ${corDoSinal(capitalGiro)}`}>
+                  {compactoOuTraco(capitalGiro)}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">CR − CP abertos</p>
               </div>
@@ -205,12 +223,11 @@ export function VisaoGeralTab({
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Inadimplência</p>
                 <p className={`text-lg kpi-value mt-1 ${
-                  activeResumo.total_a_receber > 0 && (activeResumo.total_vencido_receber / activeResumo.total_a_receber) > 0.15
-                    ? 'text-status-error' : 'text-status-warning'
+                  inadimplenciaPct === null ? 'text-muted-foreground'
+                    : inadimplenciaPct > 15 ? 'text-status-error' : 'text-status-warning'
                 }`}>
-                  {activeResumo.total_a_receber > 0
-                    ? `${((activeResumo.total_vencido_receber / activeResumo.total_a_receber) * 100).toFixed(1)}%`
-                    : '0%'}
+                  {inadimplenciaPct === null ? '—'
+                    : receber !== null && receber > 0 ? `${inadimplenciaPct.toFixed(1)}%` : '0%'}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Vencido / Total CR</p>
               </div>
@@ -218,12 +235,9 @@ export function VisaoGeralTab({
               <div className="text-center p-3 rounded-lg bg-muted/40">
                 <p className="text-xs text-muted-foreground">Cobertura de Caixa</p>
                 <p className={`text-lg kpi-value mt-1 ${
-                  activeResumo.saldo_total_cc !== null && activeResumo.total_a_pagar > 0 && (activeResumo.saldo_total_cc / activeResumo.total_a_pagar) >= 0.5
-                    ? 'text-status-success' : 'text-status-error'
+                  coberturaPct !== null && coberturaPct >= 50 ? 'text-status-success' : 'text-status-error'
                 }`}>
-                  {activeResumo.saldo_total_cc !== null && activeResumo.total_a_pagar > 0
-                    ? `${((activeResumo.saldo_total_cc / activeResumo.total_a_pagar) * 100).toFixed(0)}%`
-                    : '—'}
+                  {coberturaPct !== null ? `${coberturaPct.toFixed(0)}%` : '—'}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Saldo CC / CP total</p>
               </div>
