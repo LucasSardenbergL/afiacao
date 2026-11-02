@@ -58,6 +58,10 @@ db/test-cliente-situacao-receita.sh        20  falsificar=21  # selo RFB fora do
 # de tabela + GRANT de 38) e por TEXTO (saneador + trigger + backup privado). Linha de base prova os dois furos;
 # writers de prod (fixture) seguem gravando; 15 sabotagens inline, cada uma exige o seu vermelho exato.
 db/test-tactical-plans-margem.sh           116
+# Plano v4 lote 13 (C6): a soma de saldo de CR/CP do cockpit sai do navegador para a RPC INVOKER. Estado de acesso
+# por empresa (sem_acesso/desconhecida, nunca R$ 0 de RLS), saldo em string decimal, ACL fora de anon/service_role/
+# PUBLIC; paridade com o oráculo exato e com o laço float8 do JS; 7 sabotagens inline + 2 da postcondição, cada uma exige o seu vermelho.
+db/test-fin-saldo-titulos-por-status.sh   74
 # FU4-F (pós-B): a ESCRITA default do Supabase fechada nas duas tabelas (REVOKE INSERT/UPDATE/DELETE/TRUNCATE/
 # REFERENCES/TRIGGER/MAINTAIN). fcs mantém UPDATE só de (updated_at) + policy de UPDATE com WITH CHECK (false):
 # o FOR SHARE das RPCs invoker de recomendação exige as duas, e a prova mostra a trava BLOQUEANDO a troca de dono
