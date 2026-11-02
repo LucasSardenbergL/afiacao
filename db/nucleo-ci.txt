@@ -279,6 +279,12 @@ db/test-vendas-sync-cursor-fencing.sh      47
 # 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
 db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
+# CR incremental (plano v4, lote 15): título ABERTO excluído no Omie só sai do espelho com PROVA da edge
+# (ausência em 2 runs = candidato; DELETE só com a listagem de 1 página do cliente sem o código), com
+# tombstone na mesma transação; retry do mesmo run, observação positiva no run, não-marcado e fechado nunca
+# se apagam; teto sem escrita. 5 sabotagens inline (uma neutraliza a defesa dupla do NOT NULL), cada uma
+# reprovando o SEU rótulo, com controle verde antes e depois.
+db/test-fin-cr-reconciliacao.sh            70
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
