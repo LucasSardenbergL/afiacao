@@ -49,97 +49,131 @@ colacor_sc usam o mesmo endpoint; o teto de exclusão (§3.4) e o 1º run observ
 
 ### 3.1 Modo por run (decidido pela edge, crons intocados)
 
-Por empresa, sob o lease já existente:
+Por empresa, sob o lease já existente, com `t0` congelado antes de qualquer leitura
+(`cr-incremental.ts` → `decidirModoCR`):
 
 1. `fin_sync_cursor(contas_receber).next_page` pendente → **continua o full** (comportamento atual).
-2. Sem marca d'água incremental, `full_ok` > 7 d, marca > 10 d, ou estado ilegível → **full**
-   (página 1). Estado em `sync_state` (padrão `deveRodarCompleto`, docs/agent/sync.md): 1 linha por
-   marcador × empresa, cada uma com UM writer — `fin_cr_full_inicio`, `fin_cr_full_ok`,
-   `fin_cr_incremental_ok` (`last_sync_at` = `t0` do run íntegro; a marca d'água é a data BRT dele).
-   Sem a migration aplicada (RPC/coluna ausentes) o incremental falha FECHADO para o full = exatamente o
-   comportamento de hoje — o deploy da edge não depende da ordem da migration.
+2. Estado ilegível, nenhum full completo registrado, ou último full completo > 7 dias → **full** (página 1).
 3. Senão → **incremental**.
+
+Estado em `sync_state` (padrão `deveRodarCompleto`, docs/agent/sync.md), 1 linha por marcador × empresa:
+`fin_cr_full_inicio` (gravado na página 1 do full), `fin_cr_full_ok` (no fim real do full recebe o
+início dele — só se existir e for posterior ao ok anterior; full herdado de bundle antigo é refeito),
+`fin_cr_incremental_ok` (`t0` do último incremental íntegro). **Marca d'água = a mais recente entre
+`incremental_ok` e `full_ok`**, em dia de São Paulo. O deploy da edge não depende da migration: sem a
+RPC, o run lista A e B e devolve `reconciliacao: "indisponivel"` (§3.4).
 
 ### 3.2 Incremental (1 invocação, sem continuação)
 
-`t0 = now()`, `hoje = hojeSP()`.
-
-- **A — conjunto aberto completo**: `filtrar_apenas_titulos_em_aberto=S`, paginação com os MESMOS
-  guards do full (piso monotônico, vazia antes do piso = anomalia que lança, página repetida lança,
-  `!result` fora de budget lança). Upsert por página. Recalcula o status relativo ao dia de TODO aberto.
+- **A — conjunto aberto completo**: `filtrar_apenas_titulos_em_aberto=S`, com os guards do full em
+  **modo estrito**: fim real obrigatório (budget/maxPages antes dele LANÇA), título sem código LANÇA,
+  lidos < `total_de_registros` declarado LANÇA, além do piso monotônico, vazia antes do piso e página
+  repetida. Upsert por página. Refaz o status relativo ao dia de todo aberto **visto**.
 - **B — alterados**: `filtrar_por_data_de = marca − 1 dia`, `ate = hoje`, `filtrar_apenas_alteracao=S`,
-  mesmos guards. Upsert por página. Roda DEPOIS de A: a observação mais nova vence (título baixado entre
-  A e B chega como RECEBIDO).
-- Budget estourado em A ou B → **lança** (log `error`, watchdog). Não avança marca, não reconcilia.
-- **C — reconciliação** (RPC, §3.4) com `vistos = códigos(A ∪ B)`, universo = abertos.
-- **Marca d'água** = `hoje` (data de `t0`), gravada só depois de A+B+C íntegros. A sobreposição de
-  1 dia cobre a granularidade de dia e alteração durante o próprio run.
+  mesmo modo estrito. Roda DEPOIS de A (a observação mais nova vence).
+- **C1/C2/C3 — reconciliação** (§3.4) com `vistos = códigos gravados em A ∪ B`.
+- **Marca d'água** gravada por ÚLTIMO, só com A+B+C íntegros. Qualquer falha LANÇA (`fin_sync_log`
+  `error`), sem marca.
 
-Custo medido: A = 2/4/9 páginas (colacor_sc/colacor/oben), B ≈ 1–2 páginas → ~20 páginas/run nas 3
-empresas, contra ~450. Cabe em uma invocação (~30 s).
+Custo medido: A = 2/4/9 páginas (colacor_sc/colacor/oben), B ≈ 1–2, provas ≤ 10 → ~20–30 chamadas/run
+nas 3 empresas, contra ~450 páginas. Cabe numa invocação.
 
 ### 3.3 Full (rede de segurança, semanal)
 
-Igual ao de hoje (cursor + continuação). Novo: na página 1 grava `full_iniciado_em`; ao alcançar o
-fim real, roda a reconciliação com universo = todos e "visto" = `updated_at ≥ full_iniciado_em`, e só
-então grava `full_ok_em` e `marca = data(full_iniciado_em)`.
+Igual ao de hoje (cursor + continuação), mais os marcadores. **Não reconcilia exclusão** (o universo
+"todos" por `updated_at` saiu na revisão — §7). Semanal porque o que o crédito lê (o aberto) é
+relistado inteiro a cada run por A, e o que muda num título fechado (estorno, cancelamento) carimba
+`dAlt` e entra por B; o full cobre o que esse contrato não garante em título fechado (tolerância
+explícita de até 7 dias para mudança tardia em título FECHADO, que não alimenta crédito nem DSO — este
+sai de `fin_movimentacoes`/`v_titulo_baixas`).
 
-**Por que semanal e não diário:** o que o crédito lê (o aberto) é refeito INTEIRO a cada run por A; o
-que muda num título fechado (estorno, cancelamento) carimba `dAlt` e entra por B. O full só pega o
-desconhecido em título FECHADO (exclusão de RECEBIDO/CANCELADO — 5 linhas, R$ 2,6 mil, hoje) e erro de
-marca d'água — nenhum dos dois alimenta DSO (que sai de `fin_movimentacoes`/`v_titulo_baixas`).
+### 3.4 Reconciliação de exclusões — candidato, prova, tombstone
 
-### 3.4 Reconciliação de exclusões — `fin_cr_reconciliar_ausentes` (SQL, 1 transação)
-
-- Coluna dedicada `fin_contas_receber.ausente_omie_desde timestamptz` (1 writer: esta RPC; não vai no
-  payload do upsert — não é jsonb multi-writer).
-- Visto → `ausente_omie_desde = NULL`.
-- Não visto, no universo, sem marca → marca `t0` (**candidato**). Não apaga.
-- Não visto, no universo, marcado por run ANTERIOR (`ausente_omie_desde < t0`) → **tombstone**
-  (`fin_contas_receber_excluidos`: linha inteira em jsonb + datas) **e DELETE**.
-- Duas ausências em runs completos distintos, porque a listagem paginada **desliza** (título que sai do
-  aberto no meio de A empurra outro para fora da janela da página — docs/agent/sync.md, estoque). Um
-  falso candidato reaparece no A seguinte e a marca é limpa.
-- **Teto**: candidatos novos + confirmações > `max(5, 10% do universo)` → `RAISE` sem escrever nada
-  (contrato do Omie mudou, filtro trocou de semântica). Hoje: 29/860 = 3,4% (oben), 7/116 = 6% (sc).
-- Por que DELETE (com tombstone) e não um status novo: `status_titulo` é texto livre (CHECK dropado em
-  20260329) e ~13 leitores só NEGAM `CANCELADO`/`RECEBIDO` — `fin_aging_receber`,
-  `v_grupo_contas_receber(_por_doc)`, `v_ciclo_*`, `fin_consolidado_intercompany`,
-  `fin_dre_competencia_base`, `cobranca_quitacao_ok`, `fin-cashflow-engine`, `titulos-dre.ts`,
-  `fin-valor-cockpit` (`tituloFaturavelAR`), `financeiroV2Service` — e contariam `EXCLUIDO` como aberto ou
-  faturável. Ausência de linha todos já tratam. Única FK: `fin_ic_matches.cr_id ON DELETE SET NULL`
-  (o tombstone guarda o `id`). Nenhum DELETE desta tabela existe hoje no código.
-- Efeito em `cobranca_quitacao_ok`: hoje o fantasma ABERTO bloqueia a quitação do cliente para sempre;
-  depois do DELETE ela passa a depender só dos títulos reais.
-- **Não** confirma exclusão chamando `ConsultarContaReceber` por título (§6).
+- **C1 `fin_cr_marcar_ausentes`** (SQL): universo = abertos da empresa. Visto → limpa
+  `ausente_omie_desde`. Ausente sem marca → marca `t0`. Devolve como **candidatos** só os marcados por
+  um run ANTERIOR (o deslize de um run se cura no seguinte sem gastar chamada ao Omie). **Teto**:
+  ausentes > `max(5, 10%)` dos abertos → `RAISE` sem escrever (filtro do Omie mudou). Hoje: 29/860,
+  7/116, 2/330.
+- **C2 prova (edge)**: por candidato, `ListarContasReceber` página 1 com `filtrar_cliente` +
+  `filtrar_por_emissao_de/ate` = emissão ± 1 dia. Uma resposta = leitura consistente, sem página para
+  deslizar. `ausente_provado` só se a resposta se afirma completa (`total_de_paginas ≤ 1`, itens =
+  `total_de_registros`, < 100), todo item tem código e é do cliente pedido; o código achado =
+  `presente`; o resto = `inconclusivo` (fica para outro run). Parcelas da mesma NF dividem a prova;
+  ≤ 10 provas por run (backlog da oben drena em ~3 runs). Medido na oben: controles reais vêm; o
+  fantasma vem vazio com `total_de_registros: 0` (sem fault) ou entre outros títulos do cliente.
+- **C3 `fin_cr_excluir_confirmados`** (SQL): só apaga quem segue aberto, marcado por run anterior e
+  **não regravado neste run** (`updated_at < t0` — observação positiva vence a prova). Tombstone
+  (`fin_contas_receber_excluidos`: linha inteira + evidência da prova) na mesma transação, antes do
+  DELETE; o `NOT NULL` de `ausente_omie_desde` no tombstone é uma 2ª defesa contra apagar não-marcado.
+- Por que DELETE e não status novo: `status_titulo` é texto livre (CHECK dropado em 20260329) e ~13
+  leitores só NEGAM `CANCELADO`/`RECEBIDO` (`fin_aging_receber`, `v_grupo_contas_receber(_por_doc)`,
+  `v_ciclo_*`, `fin_consolidado_intercompany`, `fin_dre_competencia_base`, `cobranca_quitacao_ok`,
+  `fin-cashflow-engine`, `titulos-dre.ts`, `fin-valor-cockpit`, `financeiroV2Service`). Ausência de linha
+  todos tratam. Única FK: `fin_ic_matches.cr_id ON DELETE SET NULL` (o tombstone guarda o `id`).
+- `cobranca_quitacao_ok`: hoje o fantasma ABERTO bloqueia a quitação do cliente para sempre.
+- **Nunca** `ConsultarContaReceber` por título inexistente (§6).
 
 ### 3.5 Frescor (`_data_health_compute`)
 
-`_data_health_compute` (20261031191715:116-123): `max(cr.updated_at)` GLOBAL (sem empresa), stale
-> 26 h. `cobranca_quitacao_ok` e `fin_calcular_confiabilidade` leem `fin_sync_log` complete de
-`sync_contas_receber` ≤ 24 h — o incremental grava a mesma linha por empresa por run. A reescreve todo aberto a cada run → `updated_at` do conjunto que
-o crédito lê continua sendo frescor real.
+Preservado, não melhorado: `max(cr.updated_at)` GLOBAL (20261031191715:116-123), stale > 26 h — o
+incremental regrava todo aberto a cada run, como o full regravava. `cobranca_quitacao_ok` e
+`fin_calcular_confiabilidade` leem `fin_sync_log` `complete` (o incremental só fecha `complete` com
+A+B+C íntegros; o full mantém a semântica de hoje). O Codex apontou que o agregado global já mente
+hoje (uma empresa sã esconde outra parada) — follow-up fora deste lote (§8).
 
-## 4. Régua (para a prova e para o Codex)
+## 4. Régua
 
-- **Unidade decisória:** título aberto por cliente (trava de crédito, aging, inadimplência).
+- **Unidade decisória:** título aberto por cliente (trava de crédito, aging, inadimplência, cobrança).
 - **Onde aparece:** `fin_contas_receber.status_titulo ∈ {ATRASADO, A VENCER, VENCE HOJE}`.
 - **Denominador:** abertos por empresa (oben 860 · colacor 330 · sc 116).
-- **Falsificação:** prova PG17 da RPC com baixa (sai do aberto, chega em B), estorno (volta ao aberto,
-  chega em A), exclusão (some de A e B: marca no run 1, tombstone+delete no run 2), deslize (some de A
-  num run só: marca e limpa), teto (RAISE sem escrita) — e sabotar uma camada por vez.
-- **Ordem do irreversível:** o DELETE só acontece no 2º run completo; o tombstone é gravado na mesma
-  transação, antes.
+- **Ordem do irreversível:** DELETE só com prova de uma resposta única, depois de 2 runs completos com
+  ausência, sem observação positiva no run; tombstone antes, na mesma transação.
 
-## 5. Observação pós-deploy
+## 5. Provas
 
-1º incremental por empresa: `results` no `fin_sync_log` traz `modo`, `paginas_a/b`, `vistos`,
-`marcados`, `excluidos`. Esperado no 1º run: oben 29 / sc 7 / colacor 2 marcados; no 2º, os mesmos
-excluídos.
+- `db/test-fin-cr-reconciliacao.sh` (PG17, no núcleo do CI, 70 asserts): baixa, estorno, exclusão
+  (marca → candidato → prova → apaga, FK do IC vira NULL), deslize que se cura, retry do mesmo `t0`,
+  observação positiva vence a prova, não-marcado e fechado não se apagam, teto sem escrita, falha do
+  tombstone desfaz o DELETE, isolamento, ACL. 5 sabotagens, cada uma reprovando o SEU rótulo, controle
+  verde antes e depois; LC_ALL=C e pt_BR.UTF-8.
+- `supabase/functions/omie-financeiro/cr-incremental_test.ts` (Deno, 22): decisor e janela (dia de SP),
+  veredito da prova, e o FLUXO com dependências falsas — falha em B, teto/permissão no C1, falha na
+  prova ou no C3 não gravam marca; só `PGRST202/42883` vira "indisponível"; presente nunca vai ao DELETE.
+  4 sabotagens do fluxo mordem.
 
-## 6. Incidente da medição
+## 6. Observação pós-deploy
+
+`fin_sync_log.results` do 1º incremental por empresa: `modo`, `paginas_abertos/alterados`, `vistos`,
+`marcados`, `candidatos`, `provas`, `presentes`, `inconclusivos`, `adiados`, `excluidos`. Esperado: 1º
+incremental marca oben 29 / sc 7 / colacor 2; o 2º os devolve como candidatos e prova; `presentes > 0`
+num run = sinal de deslize ou de contrato do filtro de aberto quebrado (investigar).
+
+## 7. Incidente da medição
 
 A sonda consultou ~14 títulos inexistentes em minutos e o Omie respondeu
-`API bloqueada por consumo indevido. Tente novamente em 1800 segundos` (oben, 2026-11-02 ~01:35 UTC,
-domingo 22:35 BRT). Nenhum cron do `omie-financeiro` roda nessa janela. Lição de desenho: "não
-cadastrado" conta como consumo indevido → confirmar exclusão título a título derrubaria a conta.
+`API bloqueada por consumo indevido. Tente novamente em 1800 segundos` (app key da oben, compartilhada
+por ~20 edges; 2026-11-02 ~01:35–02:05 UTC, domingo à noite). Conferido via `psql-ro` depois: nenhum
+erro de bloqueio em `sync_state` nem `sync_reprocess_log`; o único log financeiro da janela
+(`sync_pedidos` 02:05) fechou `complete`. `net._http_response` da janela já tinha sido purgado (ausência
+de dado, não prova). Lições: "não cadastrado" repetido conta como consumo indevido; e o Omie aceita
+UMA requisição por método por vez na conta ("Já existe uma requisição desse método sendo executada").
+
+## 8. Revisão Codex e residuais
+
+Desenho (gpt-6-astra · max · 565 s · 146.076 tokens): **P0 aceito** — duas ausências não provam
+exclusão (deslize repetido na fronteira de página); daí a prova por cliente. P1 aceitos: teto separado
+por abertos (o universo "todos" saiu), modo estrito (sem código, `maxPages`, contagem truncada), erros
+de RPC explícitos, marca por último, fluxo testado. **Residuais, fora deste lote:**
+
+- Frescor por empresa e por run integral no `_data_health_compute` (arquivo quente; hoje o `max` global
+  já mascara empresa parada).
+- O full reinicia o piso (`totalPaginas = 1`) a cada continuação — uma vazia na retomada pode passar
+  como EOF. Pré-existente; com a marca d'água vindo do incremental, um full truncado não abre buraco no
+  B, mas segue podendo publicar `full_ok` sobre retrato truncado de título FECHADO.
+- Exclusão de título FECHADO (hoje 5 linhas, R$ 2,6 mil: 3 RECEBIDO + 2 CANCELADO) não é reconciliada
+  — entra em leitores que só negam CANCELADO (DRE competência, faturável). Prova por cliente serviria
+  igual, falta o gerador de candidatos sem a régua errada do `updated_at`.
+- `|| 0` do mapeamento (`valor_documento`, `valor_recebido`) fabrica zero em campo ausente —
+  pré-existente, não tocado.
+- A cobertura do B por `dAlt` é hipótese MONITORADA (372/379 baixas de 30 dias, 2/2 estornos, 1/1
+  cancelamento, 447/447 inclusões — só oben): o full semanal é a tolerância a ela falhar em título fechado.
