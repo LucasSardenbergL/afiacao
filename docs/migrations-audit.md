@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **754** custom migrations totais
-- **2494** objetos esperados (criados por estas migrations)
+- **755** custom migrations totais
+- **2495** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 939
   - `rls_policy`: 519
   - `index`: 347
   - `table`: 227
   - `cron_job`: 206
-  - `view`: 132
+  - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
 
@@ -6198,6 +6198,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.telemetria_vitals_user_update` | `telemetria_vitals` |
 | `rls_policy` | `public.telemetria_vitals_user_read` | `telemetria_vitals` |
 | `rls_policy` | `public.telemetria_vitals_service_all` | `telemetria_vitals` |
+
+### `20261102160821_order_feed_sem_cte.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.order_feed` | — |
 
 ## Próximos passos por status
 
