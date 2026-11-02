@@ -7,6 +7,13 @@ import { captureException } from '@/lib/analytics';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
 import { canalToKind, canalToLabel, canalToTone, type CanalInteracao } from '@/lib/carteira/interacoes';
 import { LIMITE_FEED_PEDIDOS } from './format';
+import {
+  agregarItensPreferidos,
+  completarComCatalogo,
+  JANELA_PREFERIDOS_DIAS,
+  type PreferredItem,
+  type ProdutoCatalogo,
+} from './itens-preferidos';
 
 export function useCustomerCore(customerId: string | undefined) {
   return useQuery({
@@ -102,56 +109,47 @@ export function useCustomerScore(customerId: string | undefined, farmerId: strin
   });
 }
 
-interface PreferredItem {
-  product_codigo: string | null;
-  product_descricao: string | null;
-  familia: string | null;
-  order_count: number | null;
-  last_ordered_at: string | null;
-  account: string | null;
-  omie_codigo_produto: number;
-}
-
-/** Itens preferidos via Omie, casados pela view fresca omie_customer_account_map_fresco (Fatia 3 do fix
- *  de rótulo + P1a staleness). A proof-table mapeia (user_id, account) -> código Omie do cliente NAQUELA
- *  conta, populada DOCUMENT-FIRST pelo sync (sem a colisão de namespace do espelho omie_clientes poluído);
- *  a view expõe só as linhas frescas (updated_at nos últimos 7d) — vínculo órfão stale não vaza.
- *  customer_preferred_items é chaveada por (omie_codigo_cliente, account) da conta de VENDA; casamos
- *  pelos PARES (código, account) do mapa, cobrindo oben E colacor. Fail-safe (precisão>recall): mapa
- *  vazio (sync ainda não populou) -> []. NÃO usa .or() cru (guard-rail CLAUDE.md): .in×.in é produto
- *  cartesiano e traria (código de uma conta × account de outra) por colisão — o filtro de pares
- *  exatos em memória descarta esses. Ver docs/superpowers/specs/2026-07-07-espelho-omie-rotulo-por-conta-design.md. */
+/**
+ * Itens preferidos: os produtos que o cliente mais comprou nos últimos 12 meses, dos PEDIDOS DE VENDA
+ * (`sales_orders`, universo de venda, por `order_date_kpi`) — ver ./itens-preferidos.ts. Antes lia
+ * `customer_preferred_items`, congelada desde 08/06 (o escritor perdeu o único chamador em #682).
+ * Paginado sem teto, como o faturamento ao lado; a falha LANÇA — o card mostra "não consegui ler",
+ * nunca "sem itens preferidos".
+ */
 export function useCustomerPreferredItems(customerId: string | undefined) {
   return useQuery({
     queryKey: ['c360-preferred', customerId],
     enabled: !!customerId,
     staleTime: 5 * 60_000,
     queryFn: async (): Promise<PreferredItem[]> => {
-      // 1. mapa (account -> código) do cliente, por conta. Lê a VIEW FRESCA (P1a): só vínculos que o sync
-      //    viu no Omie nos últimos 7d (frescor no relógio do banco) — órfã stale não vaza como verdade.
-      const { data: maps } = await supabase
-        .from('omie_customer_account_map_fresco')
-        .select('account, omie_codigo_cliente')
-        .eq('user_id', customerId!);
-      const pares = (maps ?? []) as Array<{ account: string; omie_codigo_cliente: number }>;
-      if (pares.length === 0) return [];
+      const hoje = hojeSP();
+      const desde = addDias(hoje, -JANELA_PREFERIDOS_DIAS);
+      const pedidos = await fetchAllPages(
+        (de, ate) =>
+          supabase
+            .from('sales_orders')
+            .select('account, order_date_kpi, items')
+            .eq('customer_user_id', customerId!)
+            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+            .is('deleted_at', null)
+            .gte('order_date_kpi', desde)
+            .lte('order_date_kpi', hoje)
+            .order('id', { ascending: true })
+            .range(de, ate),
+        'sales_orders/c360-preferidos',
+      );
+      const itens = agregarItensPreferidos(pedidos);
+      if (itens.length === 0) return [];
 
-      const codigos = [...new Set(pares.map((p) => p.omie_codigo_cliente))];
-      const accounts = [...new Set(pares.map((p) => p.account))];
-      const paresValidos = new Set(pares.map((p) => `${p.omie_codigo_cliente}::${p.account}`));
-
-      // 2. preferred_items pelos códigos+contas do cliente; .in×.in (sem interpolar em .or()).
-      const { data } = await supabase
-        .from('customer_preferred_items')
-        .select('product_codigo, product_descricao, familia, order_count, last_ordered_at, account, omie_codigo_produto, omie_codigo_cliente')
-        .in('omie_codigo_cliente', codigos)
-        .in('account', accounts)
-        .order('last_ordered_at', { ascending: false, nullsFirst: false });
-
-      // 3. filtra os PARES EXATOS (código,account) — descarta o cruzamento cartesiano cross-account.
-      return ((data ?? []) as Array<PreferredItem & { omie_codigo_cliente: number }>)
-        .filter((it) => paresValidos.has(`${it.omie_codigo_cliente}::${it.account}`))
-        .slice(0, 10);
+      // Código e família vêm do catálogo; .in×.in é produto cartesiano, e o casamento por PAR
+      // (conta, produto) em completarComCatalogo descarta o cruzamento entre contas.
+      const { data: catalogo, error } = await supabase
+        .from('omie_products')
+        .select('account, omie_codigo_produto, codigo, familia')
+        .in('omie_codigo_produto', [...new Set(itens.map((it) => it.omie_codigo_produto))])
+        .in('account', [...new Set(itens.map((it) => it.account).filter((a): a is string => a !== null))]);
+      if (error) throw error;
+      return completarComCatalogo(itens, (catalogo ?? []) as ProdutoCatalogo[]);
     },
   });
 }
