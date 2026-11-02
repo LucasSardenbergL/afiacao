@@ -93,6 +93,22 @@ p99 677 B). Para linhas inline e este volume, não há ganho adicional que justi
 
 ## Antes/depois na prod
 
-Antes: ver a tabela do topo (taxa de ~3,6 k / 5,0 k / 4,0 k updates/h, 0% HOT). Depois do apply: medir com
-`pg_stat_user_tables` (Δ`n_tup_hot_upd`/Δ`n_tup_upd`) após ≥ 6 ciclos do `sync-inventory-vendas-30m` (~3 h) —
-o desfecho entra aqui.
+Aplicada em 2026-11-02 09:29Z por `bun run db:aplicar` (tentativa #858 → recibo, sha256 `e6897ecd…`), a
+pedido explícito do founder (o `DROP INDEX` não apaga dado e se desfaz com `CREATE INDEX`). 2ª testemunha
+por `psql-ro`: as 3 tabelas sem índice que dependa do carimbo, `{fillfactor=80}` gravado.
+
+`pg_stat_user_tables` (Δ`n_tup_hot_upd` / Δ`n_tup_upd`):
+
+| tabela | antes (01:15→09:25Z, 8,2 h) | 1º ciclo (09:29→10:15Z) | depois (09:29→12:35Z, 3,1 h) | regime (10:15→12:35Z) |
+|---|---:|---:|---:|---:|
+| inventory_position | 0% · ~3,8 k upd/h | 92,5% | **93,8%** · 3,8 k upd/h | 94,3% |
+| omie_products | 0% · ~5,5 k upd/h | 77,1% | **88,7%** · 3,7 k upd/h | 92,8% |
+| product_costs | 0% · ~5,3 k upd/h | 97,5% | **98,2%** · 5,0 k upd/h | 98,3% |
+
+- **Updates/h não caem — nem deviam:** o carimbo segue escrito em toda linha, todo ciclo (é o contrato). O que
+  muda é o custo de cada um: ~94–98% não tocam mais nenhum índice da tabela.
+- **Tamanho:** total das 3 caiu de 14,7 MB para 12,4 MB no apply (os 3 índices), e o heap ficou **parado**
+  ao longo das 3,1 h (975 kB / 6,8 MB / 1,2 MB) — o fillfactor 80 não inchou a tabela.
+- **Abaixo dos ~100% da prova:** a prod tem autovacuum de verdade (não `VACUUM` entre ciclos) e leitores
+  concorrentes; `omie_products` (a maior, 8 k linhas) ainda subia no regime (77 → 89 → 93%). Se cair abaixo
+  de ~85% de forma estável, olhar `last_autovacuum` antes de mexer no fillfactor.
