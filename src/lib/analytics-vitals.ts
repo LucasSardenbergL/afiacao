@@ -215,7 +215,7 @@ export type LinhaVital = EventoVital & {
   build_id: string | null;
 };
 
-export type MotivoCanoBanco = 'gravou' | 'lente_ativa' | 'sem_usuario' | 'falhou';
+type MotivoCanoBanco = 'gravou' | 'lente_ativa' | 'sem_usuario' | 'falhou';
 
 export type DepsCanoBanco = {
   usuario: () => Promise<string | null>;
