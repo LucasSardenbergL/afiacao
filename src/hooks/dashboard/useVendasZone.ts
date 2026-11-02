@@ -48,66 +48,77 @@ export function useVendasZone() {
       // "sem filtro" do dashboard Master (`fetch-pedidos-mtd`): `account` é NOT NULL e só tem esses
       // valores. Filtro inline (não builder em variável) para a leitura seguir visível ao
       // `single-shot-truncado-gate`.
-      const { data: pedidos, error: erroPedidos } = await supabase
-        .from('sales_orders')
-        .select('total, status, order_date_kpi')
-        .in('account', companies)
-        .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-        .is('deleted_at', null)
-        .gte('order_date_kpi', ontem)
-        .lt('order_date_kpi', amanha);
-      if (erroPedidos) throw new Error(`sales_orders (vendas do dia): ${erroPedidos.message}`);
-      if (pedidos == null) throw new Error('sales_orders (vendas do dia): data null sem error — malformada');
-      const { faturadoHoje, pedidosHoje, faturadoOntem } = agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
+      const lerPedidos = async () => {
+        const { data: pedidos, error: erroPedidos } = await supabase
+          .from('sales_orders')
+          .select('total, status, order_date_kpi')
+          .in('account', companies)
+          .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
+          .is('deleted_at', null)
+          .gte('order_date_kpi', ontem)
+          .lt('order_date_kpi', amanha);
+        if (erroPedidos) throw new Error(`sales_orders (vendas do dia): ${erroPedidos.message}`);
+        if (pedidos == null) throw new Error('sales_orders (vendas do dia): data null sem error — malformada');
+        return agregarVendasDiaKpi(pedidos as PedidoVendasKpi[], hoje);
+      };
 
-      try {
-        const { count } = await supabase
-          .from('orders')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'orcamento_enviado');
-        orcamentosAguardando = count ?? 0;
-      } catch { /* */ }
+      const lerOrcamentos = async () => {
+        try {
+          const { count } = await supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'orcamento_enviado');
+          orcamentosAguardando = count ?? 0;
+        } catch { /* */ }
+      };
 
       // Top-3: pedidos sem ação >24h por valor
       const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       let topItems: TopListItem[] = [];
-      try {
-        // NB: não dá pra embeddar profiles(name) — orders.user_id referencia
-        // auth.users, não public.profiles, então o PostgREST devolve 400. Busca
-        // os nomes num segundo lote por user_id (máx 3 ids, não é N+1).
-        const { data: top } = await supabase
-          .from('orders')
-          .select('id, total, status, created_at, user_id')
-          .eq('status', 'orcamento_enviado')
-          .lt('created_at', cutoff)
-          .order('total', { ascending: false })
-          .limit(3);
-        const rows = (top ?? []) as Array<{
-          id: string;
-          total?: number | string | null;
-          user_id?: string | null;
-        }>;
-        const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
-        const nameMap = new Map<string, string>();
-        if (userIds.length > 0) {
-          const { data: profs } = await supabase
-            .from('profiles')
-            .select('user_id, name')
-            .in('user_id', userIds);
-          for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
-            if (p.name) nameMap.set(p.user_id, p.name);
+      const lerTop = async () => {
+        try {
+          // NB: não dá pra embeddar profiles(name) — orders.user_id referencia
+          // auth.users, não public.profiles, então o PostgREST devolve 400. Busca
+          // os nomes num segundo lote por user_id (máx 3 ids, não é N+1).
+          const { data: top } = await supabase
+            .from('orders')
+            .select('id, total, status, created_at, user_id')
+            .eq('status', 'orcamento_enviado')
+            .lt('created_at', cutoff)
+            .order('total', { ascending: false })
+            .limit(3);
+          const rows = (top ?? []) as Array<{
+            id: string;
+            total?: number | string | null;
+            user_id?: string | null;
+          }>;
+          const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
+          const nameMap = new Map<string, string>();
+          if (userIds.length > 0) {
+            const { data: profs } = await supabase
+              .from('profiles')
+              .select('user_id, name')
+              .in('user_id', userIds);
+            for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
+              if (p.name) nameMap.set(p.user_id, p.name);
+            }
           }
-        }
-        topItems = rows.map((o) => ({
-          id: o.id,
-          icon: FileText,
-          title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
-          subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
-          path: `/admin/orders/${o.id}`,
-          itemType: 'orcamento_pending',
-          badge: { label: 'Ação', intent: 'warning' },
-        }));
-      } catch { /* */ }
+          topItems = rows.map((o) => ({
+            id: o.id,
+            icon: FileText,
+            title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
+            subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
+            path: `/admin/orders/${o.id}`,
+            itemType: 'orcamento_pending',
+            badge: { label: 'Ação', intent: 'warning' },
+          }));
+        } catch { /* */ }
+      };
+
+      // As três leituras não dependem uma da outra: saem juntas (plano v4, lote 10 — C2). Só a de
+      // vendas do dia lança — e o `Promise.all` rejeita com a MESMA mensagem dela; as outras duas
+      // seguem engolindo a própria falha como antes.
+      const [{ faturadoHoje, pedidosHoje, faturadoOntem }] = await Promise.all([lerPedidos(), lerOrcamentos(), lerTop()]);
 
       const deltaPct = faturadoOntem > 0
         ? Math.round(((faturadoHoje - faturadoOntem) / faturadoOntem) * 100)

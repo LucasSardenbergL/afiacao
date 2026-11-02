@@ -29,69 +29,81 @@ export function useFinanceiroZone() {
       let confiabilidadePct: number | null = null;
       let topItems: TopListItem[] | null = null;
 
-      try {
-        // Campo real do AgingData é vencido_90_plus_valor; 'faixa_90_mais'/'90+' não
-        // existem (o cast escondia — aging90 era 0 permanente e o alerta >90d nunca dava).
-        const aging = await getAgingReceber('all');
-        aging90 = aging.vencido_90_plus_valor ?? 0;
-      } catch { /* aging90 fica null — exibido como indisponível, não como R$0 */ }
+      const lerAging = async () => {
+        try {
+          // Campo real do AgingData é vencido_90_plus_valor; 'faixa_90_mais'/'90+' não
+          // existem (o cast escondia — aging90 era 0 permanente e o alerta >90d nunca dava).
+          const aging = await getAgingReceber('all');
+          aging90 = aging.vencido_90_plus_valor ?? 0;
+        } catch { /* aging90 fica null — exibido como indisponível, não como R$0 */ }
+      };
 
-      try {
-        const inadList = await getTopInadimplentes('all', 3);
-        topItems = [];
-        const rows = (inadList ?? []) as Array<{
-          id?: string | null;
-          cliente_nome?: string | null;
-          nome?: string | null;
-          valor_total?: number | null;
-          total?: number | null;
-          total_vencido?: number | null;
-        }>;
-        topItems = rows.map((r, i) => ({
-          id: r.id ?? `inad-${i}`,
-          icon: AlertTriangle,
-          title: r.cliente_nome ?? r.nome ?? 'Cliente',
-          subtitle: `${fmtBRL(Number(r.valor_total ?? r.total ?? r.total_vencido ?? 0))} em aberto`,
-          path: '/financeiro/cockpit',
-          itemType: 'inadimplente',
-          badge: { label: 'crítico', intent: 'error' as const },
-        }));
-      } catch { /* */ }
+      const lerInadimplentes = async () => {
+        try {
+          const inadList = await getTopInadimplentes('all', 3);
+          topItems = [];
+          const rows = (inadList ?? []) as Array<{
+            id?: string | null;
+            cliente_nome?: string | null;
+            nome?: string | null;
+            valor_total?: number | null;
+            total?: number | null;
+            total_vencido?: number | null;
+          }>;
+          topItems = rows.map((r, i) => ({
+            id: r.id ?? `inad-${i}`,
+            icon: AlertTriangle,
+            title: r.cliente_nome ?? r.nome ?? 'Cliente',
+            subtitle: `${fmtBRL(Number(r.valor_total ?? r.total ?? r.total_vencido ?? 0))} em aberto`,
+            path: '/financeiro/cockpit',
+            itemType: 'inadimplente',
+            badge: { label: 'crítico', intent: 'error' as const },
+          }));
+        } catch { /* */ }
+      };
 
-      try {
-        // fin_projecao_13_semanas é function (RPC), não tabela. Retorna 13 linhas
-        // com saldo_projetado por semana — pegamos o último (semana 13 = saldo
-        // final projetado).
-        // Modo 'all' = projeção consolidada: `p_company` tem DEFAULT NULL na prod, então omitir a
-        // chave é o mesmo NULL que a função trata como "todas".
-        const { data: proj } = await supabase.rpc(
-          'fin_projecao_13_semanas',
-          mode === 'all' ? {} : { p_company: primary },
-        );
-        const last = proj?.[proj.length - 1];
-        // Saldo NULL fica NULL ("—" na tela): antes `Number(null ?? 0)` fabricava R$ 0,00.
-        if (last) projecao13Total = last.saldo_projetado ?? null;
-      } catch { /* */ }
+      const lerProjecao = async () => {
+        try {
+          // fin_projecao_13_semanas é function (RPC), não tabela. Retorna 13 linhas
+          // com saldo_projetado por semana — pegamos o último (semana 13 = saldo
+          // final projetado).
+          // Modo 'all' = projeção consolidada: `p_company` tem DEFAULT NULL na prod, então omitir a
+          // chave é o mesmo NULL que a função trata como "todas".
+          const { data: proj } = await supabase.rpc(
+            'fin_projecao_13_semanas',
+            mode === 'all' ? {} : { p_company: primary },
+          );
+          const last = proj?.[proj.length - 1];
+          // Saldo NULL fica NULL ("—" na tela): antes `Number(null ?? 0)` fabricava R$ 0,00.
+          if (last) projecao13Total = last.saldo_projetado ?? null;
+        } catch { /* */ }
+      };
 
-      try {
-        const { data: conf } = await supabase
-          .from('fin_confiabilidade')
-          .select('pct_valor_mapeado, pct_mov_conciliado, fechamento_status')
-          .order('mes', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (conf) {
-          const row = conf as {
-            pct_valor_mapeado?: number | null;
-            pct_mov_conciliado?: number | null;
-            fechamento_status?: string | null;
-          };
-          const pctMap = Number(row.pct_valor_mapeado ?? 0);
-          const pctConc = Number(row.pct_mov_conciliado ?? 0);
-          const fech = row.fechamento_status === 'fechado' ? 30 : 0;
-          confiabilidadePct = Math.round(pctMap * 0.4 + pctConc * 0.3 + fech);
-        }
-      } catch { /* */ }
+      const lerConfiabilidade = async () => {
+        try {
+          const { data: conf } = await supabase
+            .from('fin_confiabilidade')
+            .select('pct_valor_mapeado, pct_mov_conciliado, fechamento_status')
+            .order('mes', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (conf) {
+            const row = conf as {
+              pct_valor_mapeado?: number | null;
+              pct_mov_conciliado?: number | null;
+              fechamento_status?: string | null;
+            };
+            const pctMap = Number(row.pct_valor_mapeado ?? 0);
+            const pctConc = Number(row.pct_mov_conciliado ?? 0);
+            const fech = row.fechamento_status === 'fechado' ? 30 : 0;
+            confiabilidadePct = Math.round(pctMap * 0.4 + pctConc * 0.3 + fech);
+          }
+        } catch { /* */ }
+      };
+
+      // Leituras independentes: saem juntas (plano v4, lote 10 — C2). Cada bloco engole a própria
+      // falha como antes (o KPI dele fica null → "—"), então o `Promise.all` nunca rejeita.
+      await Promise.all([lerAging(), lerInadimplentes(), lerProjecao(), lerConfiabilidade()]);
 
       return { aging90, projecao13Total, confiabilidadePct, topItems };
     },
