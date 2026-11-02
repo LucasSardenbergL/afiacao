@@ -12,6 +12,7 @@ import {
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { somarMeses } from "../_shared/meses-sp.ts";
 // Guards do total declarado pelo Omie (PISO, não verdade — docs/agent/sync.md):
 // proximoTotalPaginas mantém o piso monotônico entre respostas (uma intermediária sem o
@@ -26,6 +27,18 @@ import {
   fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
 import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
+import {
+  decidirModoCR,
+  type DepsIncrementalCR,
+  type EstadoCR,
+  executarIncrementalCR,
+  falhaVarreduraEstrita,
+  MARCADOR_FULL_INICIO,
+  MARCADOR_FULL_OK,
+  MARCADOR_INCREMENTAL_OK,
+  PAGINA_PROVA,
+  type TituloProva,
+} from "./cr-incremental.ts";
 
 // Extrai a LISTA de uma resposta do Omie exigindo que ela seja um ARRAY DE VERDADE.
 // O `(result.x as T[] | undefined) || []` histórico é o mesmo furo do `data ?? []` do
@@ -887,13 +900,19 @@ async function syncContasPagar(
 }
 
 // ═══════════════ SYNC CONTAS A RECEBER ═══════════════
+// `filtros` vai DIRETO ao `ListarContasReceber` (o full manda nenhum; o incremental manda o conjunto aberto
+// ou a janela de alteração). `estrito` é o modo do incremental: os códigos vistos alimentam a reconciliação
+// de exclusões, então qualquer coisa que torne o retrato incompleto LANÇA em vez de pausar — título sem
+// código, budget/maxPages antes do fim real, contagem lida < declarada.
 async function syncContasReceber(
   db: SupabaseClient,
   company: Company,
   filtroDataDe?: string,
   filtroDataAte?: string,
   maxPages = 500,
-  startPage = 1
+  startPage = 1,
+  filtros: Record<string, string> = {},
+  estrito?: { codigos: Set<number> },
 ) {
   // 100 = limite real do Omie p/ contareceber. O 500 antigo era IGNORADO pelo Omie
   // (retornava 100/pág) mas o total_de_paginas vinha sub-reportado p/ listas grandes →
@@ -907,19 +926,23 @@ async function syncContasReceber(
   let pagesProcessed = 0;
   let reachedEnd = false;
   let lastFingerprint = "";
+  let lidos = 0;
+  let declarados: unknown;
 
   while (pagesProcessed < maxPages && !isTimeBudgetExhausted()) {
     const result = await callOmie(
       company,
       "financas/contareceber/",
       "ListarContasReceber",
-      { pagina, registros_por_pagina: PAGE_SIZE }
+      { pagina, registros_por_pagina: PAGE_SIZE, ...filtros }
     );
     // Ver CP: budget estourado = pausa resumível; retries esgotados = falha que LANÇA.
     if (!result) {
       if (isTimeBudgetExhausted()) break;
       throw new Error(`[Fin][${company}] CR p${pagina}: Omie sem resposta após retries (fora do estouro de budget) — falha, não fim da lista`);
     }
+    // Estrito: a contagem é lida ANTES do veredito da página — 1ª vazia com contagem > 0 não é fim.
+    if (estrito && pagina === startPage) declarados = result.total_de_registros;
 
     // Piso MONOTÔNICO (mesma regra do CP): o total sub-reportado segue NÃO decidindo
     // completude — só separa "fim real" de "vazia no meio" (fault/rate-limit).
@@ -1003,6 +1026,11 @@ async function syncContasReceber(
     const validRows = rows.filter((r) => r.omie_codigo_lancamento != null);
     const skipped = rows.length - validRows.length;
     if (skipped > 0) console.log(`[Fin][${company}] CR p${pagina}: ${skipped} títulos sem código, ignorados`);
+    if (estrito) {
+      // Título ilegível no retrato que decide ausência: o real dele ficaria "não visto" (Codex, desenho).
+      if (skipped > 0) throw new Error(`[Fin][${company}] CR p${pagina}: ${skipped} título(s) sem código no modo estrito — retrato não serve para reconciliar`);
+      lidos += validRows.length;
+    }
 
     if (validRows.length > 0) {
       const { error } = await db
@@ -1012,6 +1040,8 @@ async function syncContasReceber(
       // em DSO/aging/projeção de caixa.
       if (error) throw new Error(`[Fin][${company}] Erro CR p${pagina}: ${error.message}`);
       totalSynced += validRows.length;
+      // Só DEPOIS do upsert gravado: código "visto" é código que está no espelho com o retrato de agora.
+      if (estrito) for (const r of validRows) estrito.codigos.add(Number(r.omie_codigo_lancamento));
     }
 
     console.log(`[Fin][${company}] CR p${pagina}/${totalPaginas} (+${validRows.length})`);
@@ -1021,12 +1051,120 @@ async function syncContasReceber(
 
   const timedOut = isTimeBudgetExhausted();
   if (timedOut) console.log(`[Fin][${company}] CR stopped: time budget exhausted`);
+  if (estrito) {
+    const falha = falhaVarreduraEstrita({ reachedEnd, lidos, declarados });
+    if (falha) {
+      throw new Error(`[Fin][${company}] CR estrito ${JSON.stringify(filtros)}: ${falha} (p${pagina}, ${timedOut ? "budget" : "laço"}, leu ${lidos} de ${String(declarados)} declarados) — incompleto não reconcilia`);
+    }
+  }
   return {
     totalSynced,
     complete: reachedEnd,
     nextPage: reachedEnd ? null : pagina,
     timedOut,
+    paginas: pagesProcessed,
   };
+}
+
+// ═══════════════ CONTAS A RECEBER INCREMENTAL (plano v4, lote 15) ═══════════════
+// Desenho e evidência: docs/superpowers/specs/2026-11-01-fin-cr-incremental-design.md. Por run e empresa:
+//   A. conjunto ABERTO inteiro (refaz o status relativo ao dia de todo aberto);
+//   B. alterados na janela [marca − 1 dia, hoje] (baixa, estorno, cancelamento, inclusão carimbam dAlt);
+//   C1. fin_cr_marcar_ausentes: aberto do espelho fora de A ∪ B vira candidato (2 runs);
+//   C2. prova por candidato: listagem de 1 página do cliente na janela de emissão, sem o código;
+//   C3. fin_cr_excluir_confirmados: tombstone + DELETE só do que C2 provou.
+// Qualquer falha em A/B/C LANÇA (fin_sync_log=error) e a marca d'água não avança.
+
+// Liga as dependências REAIS da orquestração (cr-incremental.ts, testada com falsas).
+function depsIncrementalCR(db: SupabaseClient, company: Company, t0: Date): DepsIncrementalCR {
+  return {
+    listarEstrito: async (filtros, codigos) => {
+      const r = await syncContasReceber(db, company, undefined, undefined, MAX_PAGINAS_FIN, 1, filtros, { codigos });
+      return { paginas: r.paginas, totalSynced: r.totalSynced };
+    },
+    marcarAusentes: async (vistos) =>
+      await db.rpc("fin_cr_marcar_ausentes", { p_company: company, p_vistos: vistos, p_inicio_run: t0.toISOString() }),
+    listarProva: async (cliente, janela) => {
+      const result = await callOmie(company, "financas/contareceber/", "ListarContasReceber", {
+        pagina: 1,
+        registros_por_pagina: PAGINA_PROVA,
+        filtrar_cliente: cliente,
+        filtrar_por_emissao_de: janela.de,
+        filtrar_por_emissao_ate: janela.ate,
+      });
+      if (!result) throw new Error(`[Fin][${company}] CR prova cliente ${cliente}: Omie sem resposta após retries`);
+      return {
+        totalDePaginas: result.total_de_paginas,
+        totalDeRegistros: result.total_de_registros,
+        titulos: listaOmie<TituloProva>(result, ["conta_receber_cadastro", "titulosEncontrados"], `[Fin][${company}] CR prova cliente ${cliente}`),
+      };
+    },
+    excluirConfirmados: async (confirmados) =>
+      await db.rpc("fin_cr_excluir_confirmados", { p_company: company, p_confirmados: confirmados, p_inicio_run: t0.toISOString() }),
+    gravarMarca: () => gravarMarcadorCR(db, company, MARCADOR_INCREMENTAL_OK, t0),
+    orcamentoEsgotado: isTimeBudgetExhausted,
+    agoraIso: () => new Date().toISOString(),
+  };
+}
+
+// Marcadores de cadência (`sync_state`, entity_type × account=empresa). Leitura: null = sem marcador;
+// erro LANÇA (o caller decide: estado ilegível → full).
+async function lerMarcadorCR(db: SupabaseClient, company: Company, marcador: string): Promise<Date | null> {
+  const { data, error } = await db
+    .from("sync_state")
+    .select("last_sync_at")
+    .eq("entity_type", marcador)
+    .eq("account", company)
+    .maybeSingle();
+  if (error) throw new Error(`sync_state ${marcador}/${company}: ${error.message}`);
+  const raw = (data as { last_sync_at?: string | null } | null)?.last_sync_at;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) throw new Error(`sync_state ${marcador}/${company}: last_sync_at ilegível (${raw})`);
+  return d;
+}
+
+async function gravarMarcadorCR(db: SupabaseClient, company: Company, marcador: string, em: Date): Promise<void> {
+  const { error } = await db.from("sync_state").upsert(
+    { entity_type: marcador, account: company, status: "complete", last_sync_at: em.toISOString(), updated_at: new Date().toISOString() },
+    { onConflict: "entity_type,account" },
+  );
+  if (error) throw new Error(`sync_state ${marcador}/${company}: ${error.message}`);
+}
+
+// Cursor do full de CR com erro que LANÇA (os leitores compartilhados de CP/movimentações engolem): um
+// cursor pendente lido como "nenhum" faria o full recomeçar com início NOVO e, se a gravação também
+// falhasse, a continuação velha publicaria esse início como full_ok sem ter lido as primeiras páginas.
+async function lerCursorCR(db: SupabaseClient, company: Company): Promise<number | undefined> {
+  const { data, error } = await db
+    .from("fin_sync_cursor")
+    .select("next_page")
+    .eq("company", company)
+    .eq("resource", "contas_receber")
+    .maybeSingle();
+  if (error) throw new Error(`fin_sync_cursor contas_receber/${company}: ${error.message}`);
+  const np = (data as { next_page?: number | null } | null)?.next_page;
+  return typeof np === "number" ? np : undefined;
+}
+
+async function gravarCursorCR(db: SupabaseClient, company: Company, r: { complete?: boolean; nextPage?: number | null }): Promise<void> {
+  const { error } = await db.from("fin_sync_cursor").upsert(
+    { company, resource: "contas_receber", next_page: r.complete ? null : (r.nextPage ?? null), backfill_desde: null, updated_at: new Date().toISOString() },
+    { onConflict: "company,resource" },
+  );
+  if (error) throw new Error(`fin_sync_cursor contas_receber/${company}: ${error.message}`);
+}
+
+async function lerEstadoCR(db: SupabaseClient, company: Company): Promise<EstadoCR | null> {
+  try {
+    return {
+      fullOkEm: await lerMarcadorCR(db, company, MARCADOR_FULL_OK),
+      incrementalOkEm: await lerMarcadorCR(db, company, MARCADOR_INCREMENTAL_OK),
+    };
+  } catch (e) {
+    console.error(`[Fin][${company}] CR estado ilegível → full: ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
+    return null;
+  }
 }
 
 // ═══════════════ SYNC MOVIMENTAÇÕES FINANCEIRAS ═══════════════
@@ -2512,10 +2650,43 @@ Deno.serve(async (req) => {
         const dataFim = filtro_data_ate || paraDataOmie(hojeSP());
         for (const co of targetCompanies) {
           result[co] = await runLeasedCompanySync(supabase, action, co, auth.userId || "unknown", async () => {
-            const startPage = (await readCursorStartPage(supabase, co, "contas_receber")) ?? 1;
+            // t0 congelado ANTES de qualquer leitura: marca d'água e guardas da reconciliação usam ele.
+            const t0 = new Date();
+            const cursorPage = await lerCursorCR(supabase, co);
+            const modo = decidirModoCR({
+              cursorPendente: cursorPage !== undefined,
+              estado: await lerEstadoCR(supabase, co),
+              agora: t0,
+            });
+            if (modo.modo === "incremental") {
+              const r = await executarIncrementalCR(modo, depsIncrementalCR(supabase, co, t0));
+              return { modo: "incremental", ...r, complete: true, nextPage: null };
+            }
+            // Full (comportamento anterior ao lote, intacto) + marcadores. O início só é gravado na
+            // página 1; ao chegar ao fim real, `full_ok` recebe esse início — e só se ele existir e for
+            // posterior ao último ok (full herdado de bundle antigo, sem início, é refeito do zero).
+            const startPage = cursorPage ?? 1;
+            if (startPage === 1) {
+              try { await gravarMarcadorCR(supabase, co, MARCADOR_FULL_INICIO, t0); } catch (e) {
+                console.error(`[Fin][${co}] CR full_inicio não gravado (full segue, não publicará full_ok): ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
+              }
+            }
             const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
-            await writeCursor(supabase, co, "contas_receber", r);
-            return r;
+            await gravarCursorCR(supabase, co, r);
+            let fullOkPublicado = false;
+            if (r.complete) {
+              try {
+                const inicio = await lerMarcadorCR(supabase, co, MARCADOR_FULL_INICIO);
+                const okAnterior = await lerMarcadorCR(supabase, co, MARCADOR_FULL_OK);
+                if (inicio && (!okAnterior || inicio > okAnterior)) {
+                  await gravarMarcadorCR(supabase, co, MARCADOR_FULL_OK, inicio);
+                  fullOkPublicado = true;
+                }
+              } catch (e) {
+                console.error(`[Fin][${co}] CR full_ok não publicado (próximo run refaz o full): ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
+              }
+            }
+            return { modo: modo.modo === "continuar_full" ? "full_continuacao" : "full", motivo: "motivo" in modo ? modo.motivo : null, fullOkPublicado, ...r };
           });
         }
         break;
