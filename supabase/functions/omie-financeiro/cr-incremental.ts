@@ -161,6 +161,11 @@ export type DepsIncrementalCR = {
   agoraIso(): string;
 };
 
+/** O `data` de uma RPC como objeto, ou null — o `error` já foi checado antes; forma errada não vira campo. */
+function registro(v: unknown): Record<string, unknown> | null {
+  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
 /** A migration 20261102020000 ainda não aplicada: a RPC não existe. ÚNICO erro que não lança. */
 export function rpcAusente(error: { code?: string } | null): boolean {
   return error?.code === "PGRST202" || error?.code === "42883";
@@ -193,7 +198,7 @@ export async function executarIncrementalCR(
     await deps.gravarMarca();
     return { ...base, reconciliacao: "indisponivel" as const };
   }
-  const m = marc.data as { marcados?: unknown; limpos?: unknown; candidatos?: unknown } | null;
+  const m = registro(marc.data);
   if (!m || !Array.isArray(m.candidatos)) throw new Error("CR marcar_ausentes: retorno sem lista de candidatos");
   const candidatos = m.candidatos as CandidatoCR[];
 
@@ -236,7 +241,7 @@ export async function executarIncrementalCR(
   if (confirmados.length > 0) {
     const exc = await deps.excluirConfirmados(confirmados);
     if (exc.error) throw new Error(`CR excluir_confirmados: ${exc.error.message ?? exc.error.code}`);
-    const n = Number((exc.data as { excluidos?: unknown } | null)?.excluidos);
+    const n = Number(registro(exc.data)?.excluidos);
     if (!Number.isSafeInteger(n)) throw new Error("CR excluir_confirmados: retorno sem contagem");
     excluidos = n;
   }

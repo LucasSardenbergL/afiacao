@@ -12,6 +12,7 @@ import {
 import { authorizeCronOrStaff } from "../_shared/auth.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { hojeSP, paraDataOmie } from "../_shared/hoje-sp.ts";
+import { mensagemDeErro } from "../_shared/erro-mensagem.ts";
 import { somarMeses } from "../_shared/meses-sp.ts";
 // Guards do total declarado pelo Omie (PISO, não verdade — docs/agent/sync.md):
 // proximoTotalPaginas mantém o piso monotônico entre respostas (uma intermediária sem o
@@ -1139,7 +1140,7 @@ async function lerEstadoCR(db: SupabaseClient, company: Company): Promise<Estado
       incrementalOkEm: await lerMarcadorCR(db, company, MARCADOR_INCREMENTAL_OK),
     };
   } catch (e) {
-    console.error(`[Fin][${company}] CR estado ilegível → full: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`[Fin][${company}] CR estado ilegível → full: ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
     return null;
   }
 }
@@ -2645,7 +2646,7 @@ Deno.serve(async (req) => {
             const startPage = cursorPage ?? 1;
             if (startPage === 1) {
               try { await gravarMarcadorCR(supabase, co, MARCADOR_FULL_INICIO, t0); } catch (e) {
-                console.error(`[Fin][${co}] CR full_inicio não gravado (full segue, não publicará full_ok): ${e instanceof Error ? e.message : String(e)}`);
+                console.error(`[Fin][${co}] CR full_inicio não gravado (full segue, não publicará full_ok): ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
               }
             }
             const r = await syncContasReceber(supabase, co, dataInicio, dataFim, maxPages, startPage);
@@ -2660,7 +2661,7 @@ Deno.serve(async (req) => {
                   fullOkPublicado = true;
                 }
               } catch (e) {
-                console.error(`[Fin][${co}] CR full_ok não publicado (próximo run refaz o full): ${e instanceof Error ? e.message : String(e)}`);
+                console.error(`[Fin][${co}] CR full_ok não publicado (próximo run refaz o full): ${mensagemDeErro(e) ?? "erro sem mensagem"}`);
               }
             }
             return { modo: modo.modo === "continuar_full" ? "full_continuacao" : "full", motivo: "motivo" in modo ? modo.motivo : null, fullOkPublicado, ...r };
