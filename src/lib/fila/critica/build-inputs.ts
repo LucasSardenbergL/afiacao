@@ -33,25 +33,26 @@ export interface WaSlaSinalCliente {
  * Junta ações + linhas de sinal em CriticaInput[] (1 por cliente, dedupe na ordem das ações).
  * rotaSinais === null ⇒ cadência indisponível (rota null em todos = degradação honesta).
  * rotaSinais !== null mas sem o cliente ⇒ rota lida, cliente sem sinal (default neutro).
+ * tarefaSinais/waSlaSinais === null ⇒ fonte não lida (indisponível) — nunca vira "sem sinal".
  */
 export function buildCriticaInputs(
   acoes: AcaoSugerida[],
   metricas: MetricRowFull[],
   rotaSinais: RotaSinalCliente[] | null,
-  tarefaSinais: TarefaSinalCliente[],
-  waSlaSinais: WaSlaSinalCliente[] = [],
+  tarefaSinais: TarefaSinalCliente[] | null,
+  waSlaSinais: WaSlaSinalCliente[] | null = [],
 ): CriticaInput[] {
   const mByCli = new Map(metricas.map(m => [m.customer_user_id, m]));
   const rByCli = rotaSinais ? new Map(rotaSinais.map(s => [s.customerUserId, s])) : null;
 
   // 1 tarefa por cliente: prioriza a atrasada-com-indício
   const tByCli = new Map<string, TarefaSinalCliente>();
-  for (const s of tarefaSinais) {
+  for (const s of tarefaSinais ?? []) {
     const atual = tByCli.get(s.customerUserId);
     if (!atual || (s.atrasada && s.temSugestaoPendente)) tByCli.set(s.customerUserId, s);
   }
 
-  const wByCli = new Map(waSlaSinais.map(s => [s.customerUserId, s]));
+  const wByCli = new Map((waSlaSinais ?? []).map(s => [s.customerUserId, s]));
 
   const out: CriticaInput[] = [];
   const vistos = new Set<string>();
@@ -89,7 +90,10 @@ export function buildCriticaInputs(
     const wRow = wByCli.get(cli);
     const waSla: WaSlaCliente | null = wRow ? { minutosUteis: wRow.minutosUteis, nivel: wRow.nivel } : null;
 
-    out.push({ clienteUserId: cli, clienteNome: a.clienteNome, metrica, rota, tarefa, waSla });
+    out.push({
+      clienteUserId: cli, clienteNome: a.clienteNome, metrica, rota, tarefa, waSla,
+      tarefaIndisponivel: tarefaSinais === null, waSlaIndisponivel: waSlaSinais === null,
+    });
   }
   return out;
 }

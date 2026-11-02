@@ -45,4 +45,16 @@ describe('buildCriticaInputs', () => {
     expect(out.find(i => i.clienteUserId === 'c1')!.waSla).toEqual({ minutosUteis: 45, nivel: 'vermelho' });
     expect(out.find(i => i.clienteUserId === 'c2')!.waSla).toBeNull();
   });
+
+  it('tarefa/WhatsApp null = fonte NÃO lida (indisponível), [] = lida sem sinal', () => {
+    const naoLidas = buildCriticaInputs([acao('c1')], [], [], null, null)[0];
+    expect(naoLidas.tarefaIndisponivel).toBe(true);
+    expect(naoLidas.waSlaIndisponivel).toBe(true);
+    expect(naoLidas.tarefa).toBeNull();
+    expect(naoLidas.waSla).toBeNull();
+
+    const lidas = buildCriticaInputs([acao('c1')], [], [], [], [])[0];
+    expect(lidas.tarefaIndisponivel).toBe(false);
+    expect(lidas.waSlaIndisponivel).toBe(false);
+  });
 });

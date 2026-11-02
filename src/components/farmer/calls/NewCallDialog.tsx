@@ -127,7 +127,11 @@ export function NewCallDialog({
                 <div className="text-center">
                   <p className="text-xs text-muted-foreground mb-1">Ligação</p>
                   <p className="text-2xl font-mono font-bold">{formatTimer(callSeconds)}</p>
-                  {selectedCustomer?.phone ? (
+                  {selectedCustomer?.phone && callBackend === 'indisponivel' ? (
+                    <Badge variant="outline" className="text-[10px] mt-1 text-muted-foreground">
+                      Telefonia indisponível — cronômetro manual
+                    </Badge>
+                  ) : selectedCustomer?.phone ? (
                     <Badge variant="outline" className="text-[10px] mt-1">
                       {nvoipIsConnecting && <><Loader2 className="w-3 h-3 mr-1 animate-spin" /> Conectando...</>}
                       {nvoipIsRinging && <><PhoneCall className="w-3 h-3 mr-1 animate-pulse" /> Tocando ramal/destino</>}

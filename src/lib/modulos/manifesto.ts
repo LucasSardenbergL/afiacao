@@ -387,6 +387,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/useDashboardLayout.ts",
     ],
     testes: [
+      "src/hooks/__tests__/useCriticaFila.congelamento.test.tsx",
       "src/hooks/__tests__/municao-ligacao-universo.test.tsx",
       "src/hooks/__tests__/historico-compras-universo.test.tsx",
       "src/hooks/__tests__/precoAlvoComprador-erro.test.tsx",
@@ -455,6 +456,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FarmerCalls.erro-honesto.test.tsx",
       "src/pages/__tests__/FarmerGovernance.so-config.test.tsx",
       "src/hooks/dashboard/__tests__/useSistemaZone.falha.test.tsx",
+      "src/hooks/dashboard/__tests__/zonas.paralelo.test.tsx",
       "src/pages/__tests__/Customer360.estados.test.tsx",
     ],
     risco: { moneyPath: false, offlineFirst: false, authSensitive: false },
@@ -823,6 +825,7 @@ export const MODULOS: ModuloApp[] = [
       "src/contexts/__tests__/WebRTCCallContext.fim-remoto-persiste.test.tsx",
       "src/pages/__tests__/WhatsappInbox.sla-leitura-falhou.test.tsx",
       "src/contexts/__tests__/webrtc-context-split.test.ts",
+      "src/contexts/__tests__/ConditionalWebRTCProvider.congelamento.test.tsx",
       "src/hooks/__tests__/useCallBackend.test.tsx",
       "src/queries/usePropostaPreview.universo.test.tsx",
       "src/hooks/__tests__/useCatalisadorLink.erro-honesto.test.tsx",

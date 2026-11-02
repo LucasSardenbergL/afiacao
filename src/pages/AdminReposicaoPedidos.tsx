@@ -1,6 +1,6 @@
 import type { Tables } from '@/integrations/supabase/types';
 import { linhasCom, type ComColunas } from '@/lib/reposicao/linha-view';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
@@ -111,7 +111,9 @@ export default function AdminReposicaoPedidos() {
   const [historicoData, setHistoricoData] = useState<string>(() => format(new Date(), 'yyyy-MM-dd'));
   // Prévia de itens aberta na linha (só-leitura), por pedido.
   const [itensAbertos, setItensAbertos] = useState<ReadonlySet<number>>(() => new Set());
-  const alternarItens = (id: number) => {
+  // useCallback (e os demais callbacks das linhas): o `PedidoRow` é `memo` — com função nova a cada
+  // render, abrir a prévia de UMA linha re-renderizava todas (plano v4, lote 10 — C8).
+  const alternarItens = useCallback((id: number) => {
     setItensAbertos((atual) => {
       const novo = new Set(atual);
       const abrir = !novo.has(id);
@@ -120,7 +122,7 @@ export default function AdminReposicaoPedidos() {
       track('reposicao.itens_inline_toggle', { pedido_id: id, abrir });
       return novo;
     });
-  };
+  }, []);
   const [histAberto, setHistAberto] = useState(false);
 
   // Vira a queryKey na meia-noite SEM re-render por minuto: setState com a MESMA
@@ -225,10 +227,12 @@ export default function AdminReposicaoPedidos() {
     };
   }, [queryClient]);
 
-  const abrirDetalhes = (p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
+  const abrirDetalhes = useCallback((p: PedidoSugerido, origem: 'fila' | 'historico_hoje' | 'atencao' | 'abaixo_minimo') => {
     track('reposicao.pedido_detalhes_aberto', { pedido_id: p.id, status: p.status, origem });
     setDetalhesPedido(p);
-  };
+  }, []);
+  const abrirDetalhesFila = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'fila'), [abrirDetalhes]);
+  const abrirDetalhesHistorico = useCallback((p: PedidoSugerido) => abrirDetalhes(p, 'historico_hoje'), [abrirDetalhes]);
 
   // A fila de atenção é cross-ciclo; o pai split (status='split_em_filhos') por
   // construção nunca entra (pedidoPrecisaAtencao só dispara em falha_envio/portal),
@@ -593,6 +597,12 @@ export default function AdminReposicaoPedidos() {
   const disparandoLinha = (pedidoId: number) =>
     (dispararMutation.isPending && dispararMutation.variables === pedidoId) ||
     (dispararOverrideMutation.isPending && dispararOverrideMutation.variables === pedidoId);
+
+  // `mutate` é estável no TanStack Query v5 — o objeto da mutação, não.
+  const { mutate: dispararPedido } = dispararMutation;
+  const { mutate: dispararPedidoOverride } = dispararOverrideMutation;
+  const disparar = useCallback((p: PedidoSugerido) => dispararPedido(p.id), [dispararPedido]);
+  const dispararIgnorandoMinimo = useCallback((p: PedidoSugerido) => dispararPedidoOverride(p.id), [dispararPedidoOverride]);
 
   const bloqueados = (pedidos ?? []).filter((p) => p.status === 'bloqueado_guardrail');
 
@@ -968,14 +978,14 @@ export default function AdminReposicaoPedidos() {
                       <PedidoRow
                         key={p.id}
                         p={p}
-                        onVerDetalhes={() => abrirDetalhes(p, 'fila')}
-                        onCancelar={() => setCancelarPedido(p)}
-                        onVerPortal={() => setPortalPedido(p)}
-                        onDisparar={() => dispararMutation.mutate(p.id)}
-                        onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                        onVerDetalhes={abrirDetalhesFila}
+                        onCancelar={setCancelarPedido}
+                        onVerPortal={setPortalPedido}
+                        onDisparar={disparar}
+                        onDispararIgnorandoMinimo={podeOverride ? dispararIgnorandoMinimo : undefined}
                         disparando={disparandoLinha(p.id)}
                         expandido={itensAbertos.has(p.id)}
-                        onAlternarItens={() => alternarItens(p.id)}
+                        onAlternarItens={alternarItens}
                         colunas={7}
                       />
                     ))}
@@ -1022,11 +1032,11 @@ export default function AdminReposicaoPedidos() {
                           <PedidoRow
                             key={p.id}
                             p={p}
-                            onVerDetalhes={() => abrirDetalhes(p, 'historico_hoje')}
-                            onCancelar={() => setCancelarPedido(p)}
-                            onVerPortal={() => setPortalPedido(p)}
-                            onDisparar={() => dispararMutation.mutate(p.id)}
-                            onDispararIgnorandoMinimo={podeOverride ? () => dispararOverrideMutation.mutate(p.id) : undefined}
+                            onVerDetalhes={abrirDetalhesHistorico}
+                            onCancelar={setCancelarPedido}
+                            onVerPortal={setPortalPedido}
+                            onDisparar={disparar}
+                            onDispararIgnorandoMinimo={podeOverride ? dispararIgnorandoMinimo : undefined}
                             disparando={disparandoLinha(p.id)}
                           />
                         ))}
