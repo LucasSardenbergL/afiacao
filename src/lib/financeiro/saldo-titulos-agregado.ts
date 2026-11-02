@@ -11,7 +11,7 @@
 // desconhecida / ausente) LANÇA; grupo com saldo NULL LANÇA. Grupo AUSENTE numa empresa `ok` é o
 // único zero legítimo — "nenhum título nesses status".
 
-export type TabelaTitulos = 'receber' | 'pagar';
+type TabelaTitulos = 'receber' | 'pagar';
 
 export interface SaldoTitulosEmpresa {
   total_a_receber: number;

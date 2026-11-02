@@ -239,7 +239,7 @@ async function lerTodasAsPaginas<T>(
  * com o aberto e o vencido sai dos grupos 'ATRASADO'. Erro da RPC, empresa sem acesso/desconhecida,
  * saldo NULL ou resposta fora do envelope LANÇAM — o caller trata como fonte indisponível, nunca R$ 0.
  */
-export async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, SaldoTitulosEmpresa>> {
+async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, SaldoTitulosEmpresa>> {
   const { data, error } = await supabase.rpc("fin_saldo_titulos_por_status", {
     p_companies: [...companies],
     p_statuses: [...OPEN_TITLE_STATUSES],
