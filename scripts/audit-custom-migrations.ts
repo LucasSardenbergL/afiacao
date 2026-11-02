@@ -93,6 +93,11 @@ const OBSOLETE: Record<string, string> = {
   // company_config.reposicao_auto_aprovacao_ativa='false'). Ligá-la exige um disparador de novo —
   // senão o pedido auto-aprovado fica órfão, e este audit NÃO vai mais acusar.
   'cron_baseline::disparar-pedidos-aprovados-oben': 'unschedule — 20261010150000_remove_cron_disparo_10h (#2911); ligar a auto-aprovação exige disparador',
+  // Índices na coluna de carimbo bloqueavam 100% do HOT update dos syncs (plano v4, lote 14 —
+  // docs/historico/hot-carimbo-sync-lote14.md). A ausência em prod é o estado CERTO depois do apply.
+  'idx_data_health_freshness_cols::idx_inventory_position_synced_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  'idx_data_health_freshness_cols::idx_omie_products_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  'idx_data_health_freshness_cols::idx_product_costs_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
 };
 
 interface MigrationAudit {
