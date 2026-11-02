@@ -11,7 +11,7 @@ import { diaSP, paraDataOmie, somarDias } from "../_shared/hoje-sp.ts";
 /** Full (rede de segurança) no máximo a cada 7 dias — ver §3.3 do desenho. */
 export const FULL_MAX_DIAS = 7;
 /** A marca d'água volta 1 dia: cobre a granularidade de dia e alteração durante o próprio run. */
-export const SOBREPOSICAO_DIAS = 1;
+const SOBREPOSICAO_DIAS = 1;
 
 // Marcadores em `sync_state` (entity_type × account=empresa), cada um com UM writer nesta edge.
 /** last_sync_at = início do full em andamento (gravado na página 1). */
@@ -88,9 +88,9 @@ export function falhaVarreduraEstrita(input: { reachedEnd: boolean; lidos: numbe
 // vazio com `total_de_registros: 0`, sem fault; outro voltou com 3 títulos do cliente e sem ele.
 
 /** Teto de listagens-prova por run e empresa: o backlog inicial (oben, 29) drena em ~3 runs. */
-export const MAX_PROVAS_POR_RUN = 10;
+const MAX_PROVAS_POR_RUN = 10;
 /** Janela de emissão da prova: ±1 dia em volta da emissão gravada. */
-export const FOLGA_EMISSAO_DIAS = 1;
+const FOLGA_EMISSAO_DIAS = 1;
 /** registros_por_pagina da prova; resposta com isso ou mais itens não cabe numa página só. */
 export const PAGINA_PROVA = 100;
 
@@ -168,9 +168,9 @@ export function avaliarProvaCliente(input: {
 // Aqui, e não no index.ts, para o FLUXO ser testado com dependências falsas: falha em qualquer etapa
 // LANÇA e a marca d'água (última etapa) não é gravada. O index.ts só liga as dependências reais.
 
-export type RespostaRpc = { data: unknown; error: { code?: string; message?: string } | null };
+type RespostaRpc = { data: unknown; error: { code?: string; message?: string } | null };
 export type RespostaProva = { totalDePaginas: unknown; totalDeRegistros: unknown; titulos: TituloProva[] };
-export type CandidatoCR = { codigo: number; cliente: number | null; emissao: string | null };
+type CandidatoCR = { codigo: number; cliente: number | null; emissao: string | null };
 
 export type DepsIncrementalCR = {
   /** Lista até o FIM REAL com os guards do full em modo estrito (lança se incompleto); acrescenta os códigos gravados. */
