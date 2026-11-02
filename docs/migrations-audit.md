@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **748** custom migrations totais
-- **2471** objetos esperados (criados por estas migrations)
+- **749** custom migrations totais
+- **2480** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 934
+  - `function`: 935
   - `rls_policy`: 515
-  - `index`: 338
+  - `index`: 345
   - `table`: 225
-  - `cron_job`: 205
+  - `cron_job`: 206
   - `view`: 131
   - `trigger`: 119
   - `enum_value`: 4
@@ -6146,6 +6146,20 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_fin_sync_log_action_status_completed` | `fin_sync_log` |
 | `index` | `public.idx_tint_importacoes_account_created` | `tint_importacoes` |
 | `index` | `public.idx_addresses_user_id` | `addresses` |
+
+### `20261101221749_expurgo_logs_tintometrico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.expurgar_logs_tint` | — |
+| `index` | `public.idx_tint_sync_errors_created_at` | `tint_sync_errors` |
+| `index` | `public.idx_tint_staging_formula_itens_sync_run_id` | `tint_staging_formula_itens` |
+| `index` | `public.idx_tint_staging_preparacao_itens_sync_run_id` | `tint_staging_preparacao_itens` |
+| `index` | `public.idx_tint_staging_cores_catalogo_sync_run_id` | `tint_staging_cores_catalogo` |
+| `index` | `public.idx_tint_staging_cores_personalizadas_sync_run_id` | `tint_staging_cores_personalizadas` |
+| `index` | `public.idx_tint_staging_precos_base_sync_run_id` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_reconciliation_runs_sync_run_id` | `tint_reconciliation_runs` |
+| `cron_job` | `cron.expurgo-logs-tint` | — |
 
 ## Próximos passos por status
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 748
+-- Total de custom migrations: 749
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -812,7 +812,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101120000', 'raio_x_inequivoco', '20261101120000_raio_x_inequivoco.sql'),
   ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
   ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
-  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql')
+  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql'),
+  ('20261101221749', 'expurgo_logs_tintometrico', '20261101221749_expurgo_logs_tintometrico.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3249,7 +3250,16 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
-  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_preparacao_itens_sync_run_id', 'tint_staging_preparacao_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_catalogo_sync_run_id', 'tint_staging_cores_catalogo'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_personalizadas_sync_run_id', 'tint_staging_cores_personalizadas'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
+  ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5734,7 +5744,16 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
-  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_preparacao_itens_sync_run_id', 'tint_staging_preparacao_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_catalogo_sync_run_id', 'tint_staging_cores_catalogo'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_personalizadas_sync_run_id', 'tint_staging_cores_personalizadas'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
+  ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', '')
 )
 SELECT
   e.migration,
