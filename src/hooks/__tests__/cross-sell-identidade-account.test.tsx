@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+// Desde o lote 16 o `select` de pedidos dos 3 motores é a união compartilhada — o guard lê a fonte única.
+import { COLUNAS_UNIVERSO_PEDIDOS } from '@/lib/farmer/universo-pedidos-query';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -105,6 +108,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -145,7 +154,7 @@ vi.mock('@/lib/analytics', () => ({ captureException: vi.fn(), track: vi.fn() })
 import { useCrossSellEngine } from '../useCrossSellEngine';
 
 const rodar = async () => {
-  const { result } = renderHook(() => useCrossSellEngine());
+  const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
   await act(async () => { await result.current.calculateRecommendations(); });
   return result;
 };
@@ -251,7 +260,7 @@ describe('useCrossSellEngine — as duas pontas do par vêm do banco', () => {
     // COMEÇASSE em `customer_user_id`, e quebrou quando `id` entrou na frente. Guard de forma
     // que depende da ordem de colunas dá falso VERMELHO em mudança inócua — e falso vermelho
     // repetido é o que faz um guard ser desligado.
-    const select = fonte.match(/\.select\('[^']*customer_user_id[^']*items[^']*'\)/)?.[0];
+    const select = (COLUNAS_UNIVERSO_PEDIDOS.includes('customer_user_id') && COLUNAS_UNIVERSO_PEDIDOS.includes('items') ? COLUNAS_UNIVERSO_PEDIDOS : undefined);
     expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
     expect(select).toContain('account');
   });
@@ -262,7 +271,7 @@ describe('useCrossSellEngine — as duas pontas do par vêm do banco', () => {
     // (a degradação vira a ordem de leitura, que é coerente), mas a regra DECLARADA —
     // "empate → maior id" — deixa de valer em silêncio. Em prod 258 pares (1,94%) empatam no
     // `created_at` do topo, então este desempate roda de verdade.
-    const select = fonte.match(/\.select\('[^']*customer_user_id[^']*items[^']*'\)/)?.[0];
+    const select = (COLUNAS_UNIVERSO_PEDIDOS.includes('customer_user_id') && COLUNAS_UNIVERSO_PEDIDOS.includes('items') ? COLUNAS_UNIVERSO_PEDIDOS : undefined);
     expect(select, 'o select de pedidos mudou de forma — reveja este guard').toBeTruthy();
     expect(select).toMatch(/(^|')id,|, id[,']/);
   });

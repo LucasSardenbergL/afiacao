@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
 /**
@@ -25,6 +26,12 @@ function stubChain(): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: () => stubChain() } }));
 
 const impMock = vi.fn();
@@ -61,7 +68,7 @@ describe('useFarmerExperiments — lente "Ver como"', () => {
 describe('useCrossSellEngine — lente "Ver como"', () => {
   it('na lente: lê os scores do ALVO e não cai no fallback super-admin (todos)', async () => {
     impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'alvo-id' });
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
     const farmerEq = eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1]);
     expect(farmerEq).toContain('alvo-id');
@@ -70,7 +77,7 @@ describe('useCrossSellEngine — lente "Ver como"', () => {
 
   it('fora da lente: lê os scores do próprio usuário', async () => {
     impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'master-id' });
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
     expect(eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1])).toContain('master-id');
   });
@@ -97,7 +104,7 @@ describe('useDiagnosticQuestions — lente "Ver como"', () => {
 describe('useBundleEngine — lente "Ver como"', () => {
   it('na lente: lê os scores do ALVO (farmer_id) e não cai no fallback super-admin (todos)', async () => {
     impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'alvo-id' });
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
     const farmerEq = eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1]);
     expect(farmerEq).toContain('alvo-id');
@@ -106,7 +113,7 @@ describe('useBundleEngine — lente "Ver como"', () => {
 
   it('fora da lente: lê os scores do próprio usuário', async () => {
     impMock.mockReturnValue({ isImpersonating: false, effectiveUserId: 'master-id' });
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
     expect(eqCalls.filter((c) => c[0] === 'farmer_id').map((c) => c[1])).toContain('master-id');
   });

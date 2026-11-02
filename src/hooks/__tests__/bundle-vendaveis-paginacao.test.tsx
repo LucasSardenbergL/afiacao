@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -117,6 +118,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -166,7 +173,7 @@ describe('useBundleEngine — os SKUs vendáveis além do cap de 1.000', () => {
     // Sem este caso o teste B passaria de graça: "nenhum bundle" é o desfecho de QUALQUER
     // insumo faltando, então é preciso provar que o cenário sabe produzir bundle.
     vendaveisNaCauda = false;
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(result.current.customerBundles.flatMap((c) => c.bundles).length).toBeGreaterThan(0);
@@ -174,7 +181,7 @@ describe('useBundleEngine — os SKUs vendáveis além do cap de 1.000', () => {
   });
 
   it('B: SKU vendável na posição 1.001 continua vendável — o par (B,C) é gerado e gravado', async () => {
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     const bundles = result.current.customerBundles.flatMap((c) => c.bundles);
@@ -191,7 +198,7 @@ describe('useBundleEngine — os SKUs vendáveis além do cap de 1.000', () => {
   it('C: a RPC de vendáveis é PAGINADA — pede a 2ª página em vez de aceitar a 1ª como total', async () => {
     // Ancora a causa, não só o sintoma: sem `.range()` o engine nunca saberia que há cauda,
     // porque 1.000 linhas é uma resposta plausível e indistinguível de "acabou".
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(rpcsChamadas.filter((n) => n === RPC_VENDAVEIS).length).toBeGreaterThan(1);
@@ -201,7 +208,7 @@ describe('useBundleEngine — os SKUs vendáveis além do cap de 1.000', () => {
     // A RPC não tem `ORDER BY` próprio. `.range()` sobre ordem indefinida deixa o plano
     // escolher a ordem de cada página: repetir é inócuo (destino é um Set), mas PULAR
     // reintroduz o mesmo bug de forma intermitente — o pior modo de falha para depurar.
-    const { result } = renderHook(() => useBundleEngine());
+    const { result } = renderHook(() => useBundleEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateBundles(); });
 
     expect(ordenacoesPedidas).toContain('product_id');
