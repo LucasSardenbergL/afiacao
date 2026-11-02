@@ -308,5 +308,6 @@ else
 fi
 
 echo "═══ resultado: $PASS ok · $FAIL falha(s) ═══"
+echo "RESULTADO: $PASS ok / $FAIL fail"   # formato que o db/roda-nucleo-ci.sh extrai
 [ "$FAIL" -eq 0 ] && echo "PROVA_FIN_CR_RECONCILIACAO_OK"
 [ "$FAIL" -eq 0 ]
