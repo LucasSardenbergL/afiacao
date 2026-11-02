@@ -152,14 +152,23 @@ BEGIN
 
   PERFORM pg_advisory_xact_lock(hashtext('fin_cr_reconciliacao'), hashtext(p_company));
 
-  SELECT coalesce(array_agg(r.id ORDER BY r.id), '{}'), coalesce(array_agg(e.evid ORDER BY r.id), '{}')
+  -- FOR UPDATE: o advisory lock só coordena quem também o toma. Um writer qualquer que regrave a linha
+  -- (observação positiva, updated_at > t0) com a transação aberta faria o DELETE esperar e apagar a versão
+  -- NOVA (Read Committed reavalia só `id = ANY`) — Codex, código, P0. Com a linha travada aqui, o Postgres
+  -- espera o writer e reavalia ESTE WHERE na versão nova: a regravação tira o título do lote.
+  WITH alvo AS (
+    SELECT r.id, e.evid
+      FROM (SELECT DISTINCT ON ((x->>'codigo')::bigint) (x->>'codigo')::bigint AS codigo, x->'evidencia' AS evid
+              FROM jsonb_array_elements(p_confirmados) x) e
+      JOIN public.fin_contas_receber r ON r.company = p_company AND r.omie_codigo_lancamento = e.codigo
+     WHERE r.status_titulo IN ('ATRASADO', 'A VENCER', 'VENCE HOJE')
+       AND r.ausente_omie_desde < p_inicio_run
+       AND r.updated_at < p_inicio_run
+       FOR UPDATE OF r
+  )
+  SELECT coalesce(array_agg(a.id ORDER BY a.id), '{}'), coalesce(array_agg(a.evid ORDER BY a.id), '{}')
     INTO v_ids, v_evid
-    FROM (SELECT DISTINCT ON ((x->>'codigo')::bigint) (x->>'codigo')::bigint AS codigo, x->'evidencia' AS evid
-            FROM jsonb_array_elements(p_confirmados) x) e
-    JOIN public.fin_contas_receber r ON r.company = p_company AND r.omie_codigo_lancamento = e.codigo
-   WHERE r.status_titulo IN ('ATRASADO', 'A VENCER', 'VENCE HOJE')
-     AND r.ausente_omie_desde < p_inicio_run
-     AND r.updated_at < p_inicio_run;
+    FROM alvo a;
 
   INSERT INTO public.fin_contas_receber_excluidos
          (company, omie_codigo_lancamento, cr_id, linha, ausente_omie_desde, evidencia)
@@ -167,8 +176,17 @@ BEGIN
     FROM unnest(v_ids, v_evid) AS v(id, evid)
     JOIN public.fin_contas_receber r ON r.id = v.id;
 
-  DELETE FROM public.fin_contas_receber r WHERE r.id = ANY (v_ids);
+  -- Guardas repetidas (defesa em profundidade: com a linha travada, nada deveria ter mudado).
+  DELETE FROM public.fin_contas_receber r
+   WHERE r.id = ANY (v_ids)
+     AND r.status_titulo IN ('ATRASADO', 'A VENCER', 'VENCE HOJE')
+     AND r.ausente_omie_desde < p_inicio_run
+     AND r.updated_at < p_inicio_run;
   GET DIAGNOSTICS v_excluidos = ROW_COUNT;
+  IF v_excluidos <> coalesce(array_length(v_ids, 1), 0) THEN
+    RAISE EXCEPTION 'fin_cr_excluir_confirmados: apagou % de % travados — tombstone divergente', v_excluidos, coalesce(array_length(v_ids, 1), 0)
+      USING ERRCODE = 'P0001';
+  END IF;
 
   RETURN jsonb_build_object('pedidos', jsonb_array_length(p_confirmados), 'excluidos', v_excluidos);
 END
@@ -203,8 +221,9 @@ BEGIN
     END IF;
   END LOOP;
   IF (SELECT prosrc FROM pg_proc WHERE oid = v_excluir) NOT LIKE '%r.updated_at < p_inicio_run%'
+     OR (SELECT prosrc FROM pg_proc WHERE oid = v_excluir) NOT LIKE '%FOR UPDATE OF r%'
      OR (SELECT prosrc FROM pg_proc WHERE oid = v_marcar) NOT LIKE '%r.ausente_omie_desde < p_inicio_run%' THEN
-    RAISE EXCEPTION 'POSTCONDICAO: corpo das funções sem as guardas de run anterior';
+    RAISE EXCEPTION 'POSTCONDICAO: corpo das funções sem as guardas de run anterior ou sem a trava de linha';
   END IF;
 END
 $post$;

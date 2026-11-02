@@ -9,6 +9,7 @@
 # ║   B baixa · E estorno · X exclusão (marca → candidato → prova → apaga)        ║
 # ║   D deslize se cura · R retry do MESMO run não vira candidato                  ║
 # ║   P observação positiva no run vence a prova · N/S não-marcado e fechado      ║
+# ║   C corrida: writer com a linha travada durante o C3 (FOR UPDATE + guardas)   ║
 # ║   não se apagam · T teto sem escrita · K falha no tombstone desfaz o DELETE   ║
 # ║   I isolamento por empresa · A ACL/argumentos                                  ║
 # ║  FALSIFICAÇÃO na MESMA invocação (5 sabotagens) com controle verde antes e     ║
@@ -161,6 +162,27 @@ cenarios() {
   P -q -c "SET test.role='service_role'; UPDATE public.fin_contas_receber SET updated_at='2026-11-02 14:21:00+00' WHERE omie_codigo_lancamento=7;"
   r=$(excluir oben "$(conf 7)" "$T2")
   eq "P1 regravado no run não é apagado" "$(existe oben 7)" "1"
+  eq "P1b regravado no run não ganha tombstone" "$(tomb oben 7)" "0"
+
+  echo "── C corrida: writer regrava o candidato com a transação ABERTA durante o C3 ──"
+  semeia_oben
+  marcar oben '{1,2,3,4,5,6,8,9,10}' "$T1" >/dev/null
+  marcar oben '{1,2,3,4,5,6,8,9,10}' "$T2" >/dev/null
+  P -q -c "SET test.role='service_role'; BEGIN; UPDATE public.fin_contas_receber SET updated_at='2026-11-02 14:21:00+00' WHERE company='oben' AND omie_codigo_lancamento=7; SELECT pg_sleep(2); COMMIT;" >/dev/null 2>&1 &
+  local wpid=$! emvoo=0
+  for _ in $(seq 1 50); do
+    if [ "$(Pq -c "SELECT count(*) FROM pg_stat_activity WHERE wait_event='PgSleep'")" = "1" ]; then emvoo=1; break; fi
+    sleep 0.1
+  done
+  eq "C0 writer em voo (linha travada) antes do C3" "$emvoo" "1"
+  r=$(excluir oben "$(conf 7)" "$T2")
+  wait "$wpid" || true
+  eq "C1 regravado em transação concorrente não é apagado" "$(existe oben 7)" "1"
+  eq "C1b sem tombstone do regravado" "$(tomb oben 7)" "0"
+  case "$r" in
+    *ERRO*) bad "C2 C3 esperou o writer e saiu limpo — veio [$r]" ;;
+    *) eq "C2 C3 esperou o writer e saiu limpo (excluidos)" "$(campo "$r" excluidos)" "0" ;;
+  esac
 
   echo "── N/S não-marcado e fechado não se apagam, mesmo com 'prova' ──"
   semeia_oben
@@ -249,11 +271,33 @@ else
   sabota "X2" "     AND r.ausente_omie_desde < p_inicio_run
      AND NOT" "     AND r.ausente_omie_desde <= p_inicio_run
      AND NOT"
-  sabota "P1" "     AND r.updated_at < p_inicio_run;" "     ;"
+  # P1 tem DUAS camadas (guarda no SELECT travado e no DELETE + contagem que reprova divergência): a
+  # sabotagem neutraliza as duas; uma só é redundante por desenho.
+  sabota "P1" "       AND r.updated_at < p_inicio_run
+       FOR UPDATE OF r" "       FOR UPDATE OF r" \
+    "     AND r.updated_at < p_inicio_run;
+  GET DIAGNOSTICS" "     ;
+  GET DIAGNOSTICS" \
+    "  IF v_excluidos <> coalesce(array_length(v_ids, 1), 0) THEN" "  IF false THEN"
+  # Corrida, uma camada por vez: sem a trava de linha o C3 deixa de sair limpo (C2: vira RAISE de
+  # divergência, porque a guarda do DELETE ainda segura); sem a trava E sem as guardas do DELETE, o título
+  # regravado some (C1).
+  sabota "C2" "       FOR UPDATE OF r
+  )" "  )"
+  sabota "C1" "       FOR UPDATE OF r
+  )" "  )" \
+    "     AND r.status_titulo IN ('ATRASADO', 'A VENCER', 'VENCE HOJE')
+     AND r.ausente_omie_desde < p_inicio_run
+     AND r.updated_at < p_inicio_run;
+  GET DIAGNOSTICS" "     ;
+  GET DIAGNOSTICS" \
+    "  IF v_excluidos <> coalesce(array_length(v_ids, 1), 0) THEN" "  IF false THEN"
   # N1 tem DUAS defesas: a guarda de marca E o NOT NULL de excluidos.ausente_omie_desde (o INSERT do
   # tombstone de um não-marcado falha e desfaz o DELETE). A sabotagem neutraliza as duas.
-  sabota "N1" "     AND r.ausente_omie_desde < p_inicio_run
-     AND r.updated_at" "     AND r.updated_at" \
+  sabota "N1" "       AND r.ausente_omie_desde < p_inicio_run
+       AND r.updated_at" "       AND r.updated_at" \
+    "     AND r.ausente_omie_desde < p_inicio_run
+     AND r.updated_at < p_inicio_run;" "     AND r.updated_at < p_inicio_run;" \
     "  SELECT r.company, r.omie_codigo_lancamento, r.id, to_jsonb(r), r.ausente_omie_desde, v.evid" \
     "  SELECT r.company, r.omie_codigo_lancamento, r.id, to_jsonb(r), coalesce(r.ausente_omie_desde, p_inicio_run), v.evid"
   sabota "T1" "IF v_ausentes > v_teto THEN" "IF false THEN"
