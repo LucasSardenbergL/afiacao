@@ -315,13 +315,9 @@ function orfaosG5(fonte: string): string[] {
 }
 
 // Allowlist do G5 — por VARIÁVEL do piso órfão, nunca por contagem (ver acima).
-const G5_ALLOW_VARS: ReadonlyMap<string, readonly string[]> = new Map([
-  // `histTotal` = histórico de itens preferidos (`customer_preferred_items`): decisão REGISTRADA
-  // no próprio call-site — ali a página perdida custa recall (menos item sugerido), não
-  // completude money-path, e o teto de 5 páginas do `for` já limita a varredura. Medido ANTES de
-  // escrever este assert, para ele não nascer falso-VERMELHO sobre decisão que um PR já tomou.
-  ['supabase/functions/omie-vendas-sync/index.ts', ['histTotal']],
-]);
+// Vazia desde a v1.32 da omie-vendas-sync: a única entrada (`histTotal`, histórico de itens
+// preferidos) saiu junto com a action `historico_produtos_cliente`, que estava morta desde #682.
+const G5_ALLOW_VARS: ReadonlyMap<string, readonly string[]> = new Map([]);
 
 const G5_ALLOW: ReadonlyMap<string, number> = new Map(
   [...G5_ALLOW_VARS].map(([arquivo, vars]) => [arquivo, vars.length]),
