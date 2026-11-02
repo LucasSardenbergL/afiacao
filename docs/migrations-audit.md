@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **750** custom migrations totais
+- **751** custom migrations totais
 - **2481** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 936
@@ -6166,6 +6166,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tint_staging_precos_base_sync_run_id` | `tint_staging_precos_base` |
 | `index` | `public.idx_tint_reconciliation_runs_sync_run_id` | `tint_reconciliation_runs` |
 | `cron_job` | `cron.expurgo-logs-tint` | — |
+
+### `20261101222916_hot_carimbo_sync_sem_indice.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
