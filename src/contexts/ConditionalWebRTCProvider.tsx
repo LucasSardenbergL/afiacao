@@ -1,5 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { rotaCongelada } from '@/lib/modulos/congelamento';
+import { MODULOS } from '@/lib/modulos/manifesto';
 
 /**
  * Lazy-load do WebRTCCallProvider — importa SipClient (e transitivamente jssip)
@@ -23,11 +25,18 @@ const WebRTCCallProvider = lazy(() =>
  *
  * Para staff, monta normalmente via Suspense — uma única instância
  * compartilhada via Context entre todos os <WebRTCDialer> da árvore.
+ *
+ * Módulo Telefonia congelado (M-41): não monta para NINGUÉM — sem o `import()`
+ * do chunk (jssip), sem pedir credencial SIP e sem REGISTER do ramal. Os
+ * consumidores leem o contexto opcional (null) e degradam: o dialer avisa,
+ * o modal de entrada some, o FarmerCalls cai no cronômetro manual
+ * (useCallBackendOpcional). Só a /telefonia exige o Provider — e ela própria
+ * está congelada (rota redireciona).
  */
 export function ConditionalWebRTCProvider({ children }: { children: ReactNode }) {
   const { isStaff } = useAuth();
 
-  if (!isStaff) {
+  if (!isStaff || rotaCongelada('/telefonia', MODULOS)) {
     return <>{children}</>;
   }
 
