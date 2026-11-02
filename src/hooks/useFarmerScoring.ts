@@ -1,19 +1,21 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useCommercialRole } from '@/hooks/useCommercialRole';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { filtrarPorCarteira } from '@/lib/scoring/escopoCarteira';
-import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { buscarUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
 import type { Tables } from '@/integrations/supabase/types';
+import { useFarmerAlgorithmConfig, FARMER_ALGORITHM_CONFIG_KEY } from '@/hooks/useFarmerAlgorithmConfig';
+import type { AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { fetchAllPages } from '@/lib/postgrest';
 import { resolveProductIdsFromItems } from '@/lib/scoring/margin';
 import { calcularHealthScore } from '@/lib/scoring/healthScore';
 import type { FaixaMargem } from '@/lib/scoring/faixaMargem';
 
-type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 type FarmerCallRow = Pick<
   Tables<'farmer_calls'>,
   'customer_user_id' | 'call_result' | 'is_whatsapp' | 'whatsapp_replied' | 'created_at'
@@ -38,15 +40,9 @@ function itemDeMargem(item: Json): SalesOrderItem {
 }
 
 // ─── Types ───────────────────────────────────────────────────────────
-export interface AlgorithmConfig {
-  k1: number; k2: number; cat_target: number;
-  health_w_rf: number; health_w_m: number; health_w_g: number;
-  health_w_x: number; health_w_s: number;
-  priority_w_churn: number; priority_w_recover: number;
-  priority_w_expansion: number; priority_w_eff: number;
-  agenda_pct_risco: number; agenda_pct_expansao: number;
-  agenda_pct_followup: number; sla_contact_days: number;
-}
+// `AlgorithmConfig`/`DEFAULT_CONFIG` moram em `@/lib/scoring/configAlgoritmo` (quebra o ciclo com
+// `useFarmerAlgorithmConfig`); o re-export do tipo mantém quem o importava daqui.
+export type { AlgorithmConfig };
 
 export interface ClientScore {
   customer_user_id: string;
@@ -84,15 +80,6 @@ export interface AgendaItem {
   healthClass: string;
 }
 
-export const DEFAULT_CONFIG: AlgorithmConfig = {
-  k1: 1.0, k2: 1.0, cat_target: 5,
-  health_w_rf: 0.35, health_w_m: 0.20, health_w_g: 0.15,
-  health_w_x: 0.15, health_w_s: 0.15,
-  priority_w_churn: 0.40, priority_w_recover: 0.30,
-  priority_w_expansion: 0.20, priority_w_eff: 0.10,
-  agenda_pct_risco: 0.50, agenda_pct_expansao: 0.30,
-  agenda_pct_followup: 0.20, sla_contact_days: 14,
-};
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -126,11 +113,24 @@ export const useFarmerScoring = (farmerId?: string) => {
   //
   // ⚠️ `loadingRole` importa: enquanto o papel não resolve, `canViewManagerial` é false, e calcular
   // agora recortaria a tela de um gestor por um instante. O cálculo espera (dependência do effect).
-  const { isMaster } = useAuth();
+  const { isMaster, user } = useAuth();
+  // A leitura de `sales_orders` é sob a RLS do usuário REAL — é ele a chave do universo em cache.
+  const userIdReal = user?.id ?? null;
+  const queryClient = useQueryClient();
   const { canViewManagerial, loading: loadingRole } = useCommercialRole();
   const capCarteiraLer = isMaster || canViewManagerial;
 
-  const [config, setConfig] = useState<AlgorithmConfig>(DEFAULT_CONFIG);
+  // Config do algoritmo pela leitura HONESTA (react-query, lote 5): falha de leitura NÃO vira
+  // DEFAULT. Antes, um `useEffect` ignorava o `error` e calculava calado com o default — e o
+  // effect do cálculo nem dependia da config: se ela chegasse DEPOIS do papel comercial, o 1º
+  // cálculo saía com o DEFAULT e ficava (a corrida que o lote 16 fecha).
+  const { config: configLida, erro: erroConfig, loading: carregandoConfig } = useFarmerAlgorithmConfig();
+  // A config EXPOSTA é a que produziu os scores na tela — não a vigente agora, nem o DEFAULT
+  // enquanto carrega (Dashboard/LOCC exibem esses pesos: default exibido seria "vigente" fabricado).
+  const [configDoCalculo, setConfigDoCalculo] = useState<AlgorithmConfig | null>(null);
+  // Só a execução MAIS RECENTE publica: uma releitura (config invalidada pela Governança, lente
+  // trocada) não pode ser sobrescrita por uma execução antiga que termine depois.
+  const execucaoAtual = useRef(0);
   const [clientScores, setClientScores] = useState<ClientScore[]>([]);
   const [agenda, setAgenda] = useState<AgendaItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,54 +140,49 @@ export const useFarmerScoring = (farmerId?: string) => {
   // setters só rodam no sucesso) — quem decide entre "indisponível" e "stale" é a UI.
   const [erro, setErro] = useState<string | null>(null);
 
-  // Load algorithm config
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from('farmer_algorithm_config').select('key, value');
-      const rows = (data ?? []) as AlgorithmConfigRow[];
-      if (rows.length > 0) {
-        const map: Record<string, number> = {};
-        rows.forEach((r) => { map[r.key] = Number(r.value); });
-        setConfig(prev => ({ ...prev, ...map } as AlgorithmConfig));
-      }
-    })();
-  }, []);
 
-  // Calculate scores for all clients
-  const calculateScores = useCallback(async () => {
+  // Calculate scores for all clients. `fresco`: o botão Recalcular relê o universo de pedidos;
+  // ao montar, o motor aceita o universo que outra tela leu há até 60 s (este hook só exibe).
+  const calcular = useCallback(async (fresco: boolean) => {
     if (!targetFarmerId) {
       setCalculating(false);
       setLoading(false);
       return;
     }
+    // A config que ESTA execução usa — capturada aqui e publicada junto com os scores. Leitura
+    // que falhou (inclusive releitura com valor antigo em cache) não calcula: config errada
+    // não vira score com cara de vigente.
+    const config = erroConfig ? null : configLida;
+    if (!config) {
+      if (erroConfig) {
+        // Invalida execução em voo (com a config de antes): ao terminar, ela publicaria `erro: null`
+        // por cima desta falha de leitura.
+        ++execucaoAtual.current;
+        setErro(`Não consegui ler a configuração do algoritmo — os scores não foram calculados. ${erroConfig}`);
+        setCalculating(false);
+        setLoading(false);
+      }
+      return;
+    }
+    const execucao = ++execucaoAtual.current;
+    const vigente = () => execucao === execucaoAtual.current;
     setCalculating(true);
 
     try {
-      // 1. Load all customers with sales orders (paginado: 30.834 pedidos na denylist).
-      // Sem paginar, TODO o scoring — recência, frequência, spend, margem, mix — enxergava
-      // só as primeiras 1.000 linhas, ~5% do histórico. Cross-sell e bundle já paginavam.
-      const salesOrders = await fetchAllPages((de, ate) =>
-        supabase
-          .from('sales_orders')
-          .select('id, customer_user_id, items, total, created_at, order_date_kpi, status')
-          // DENYLIST + `deleted_at IS NULL`: o MESMO universo de `private.margem_cliente_agregada()`.
-          // A allowlist anterior citava dois status inexistentes (`confirmado`/`entregue`, zero
-          // linhas), resolvia para só `faturado` e escondia 10.236 pedidos reais — a margem vinha
-          // de um universo e o resto do score de outro.
-          .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-          .is('deleted_at', null)
-          .order('id', { ascending: true })
-          .range(de, ate),
-        'sales_orders/scoring',
-      );
+      // 1. O universo de pedidos (denylist + `deleted_at`, o MESMO de
+      // `private.margem_cliente_agregada()`), compartilhado com cross-sell e bundle e lido em
+      // paralelo — `@/lib/farmer/universo-pedidos-query`. Inteiro ou erro: falha de qualquer
+      // página LANÇA e cai no catch abaixo, que declara `erro` e preserva o último estado bom.
+      if (!userIdReal) throw new Error('Sessão sem usuário — não há como ler os pedidos.');
+      const salesOrders = await buscarUniversoPedidos(queryClient, userIdReal, { fresco });
 
       if (salesOrders.length === 0) {
         // Leitura OK e base genuinamente vazia — vazio aqui é fato, não falha.
+        if (!vigente()) return;
         setClientScores([]);
         setAgenda([]);
+        setConfigDoCalculo(config);
         setErro(null);
-        setCalculating(false);
-        setLoading(false);
         return;
       }
 
@@ -573,7 +568,6 @@ export const useFarmerScoring = (farmerId?: string) => {
 
       // Sort by priority descending
       scores.sort((a, b) => b.priorityScore - a.priorityScore);
-      setClientScores(scores);
 
       // 8. Generate agenda with quotas
       const totalSlots = Math.min(scores.length, 20); // max 20 per day
@@ -628,7 +622,12 @@ export const useFarmerScoring = (farmerId?: string) => {
         });
       }
 
+      // Publica TUDO de uma vez e só se esta for a execução mais recente: uma execução antiga
+      // (config de antes da Governança, lente anterior) que termine depois não sobrescreve a atual.
+      if (!vigente()) return;
+      setClientScores(scores);
       setAgenda(agendaItems);
+      setConfigDoCalculo(config);
       setErro(null);
 
       // 9. Persistência: NENHUMA escrita client-side — este hook é DISPLAY-ONLY by design.
@@ -644,19 +643,32 @@ export const useFarmerScoring = (farmerId?: string) => {
       // `instanceof Error ? .message : <literal>` seria a porta de fuga do gate do #1661: o
       // erro do supabase-js sem `.throwOnError()` é objeto PLANO, cairia no literal e a recusa
       // da RLS/PostgREST morreria calada — contradizendo o próprio ponto deste erro honesto.
-      setErro(mensagemDeErro(error) ?? 'Falha ao calcular os scores');
+      if (vigente()) setErro(mensagemDeErro(error) ?? 'Falha ao calcular os scores');
     } finally {
-      setCalculating(false);
-      setLoading(false);
+      if (vigente()) {
+        setCalculating(false);
+        setLoading(false);
+      }
     }
-  }, [targetFarmerId, config, capCarteiraLer]);
+  }, [targetFarmerId, configLida, erroConfig, capCarteiraLer, userIdReal, queryClient]);
+  // Recalcular com a config em ERRO relê a CONFIG (o cálculo sozinho retornaria cedo e o botão não
+  // faria nada); quando ela volta, o effect abaixo recalcula. Fora disso, relê os pedidos e calcula.
+  const recalculate = useCallback(async () => {
+    if (erroConfig) {
+      await queryClient.refetchQueries({ queryKey: FARMER_ALGORITHM_CONFIG_KEY, exact: true });
+      return;
+    }
+    await calcular(true);
+  }, [calcular, erroConfig, queryClient]);
 
   useEffect(() => {
     // `!loadingRole`: calcular antes de o papel comercial resolver recortaria a tela de um gestor
     // (canViewManagerial nasce false), e o recálculo só viria no próximo disparo. Esperar é a
     // diferença entre "gestor vê a base" e "gestor pisca a carteira e depois vê a base".
-    if (targetFarmerId && !loadingRole) calculateScores();
-  }, [targetFarmerId, loadingRole, capCarteiraLer]);
+    // E espera a CONFIG: sem isto o 1º cálculo saía com o DEFAULT quando a config chegava depois
+    // do papel, e ficava. Config que muda (Governança invalidou) recalcula com a nova.
+    if (targetFarmerId && !loadingRole && !carregandoConfig) calcular(false);
+  }, [targetFarmerId, loadingRole, capCarteiraLer, carregandoConfig, configLida, erroConfig]);
 
   // Summary stats
   const summary = useMemo(() => {
@@ -678,8 +690,9 @@ export const useFarmerScoring = (farmerId?: string) => {
   }, [clientScores]);
 
   return {
-    config, clientScores, agenda, summary,
+    /** A config que produziu os scores exibidos; `null` antes do 1º cálculo (nunca o DEFAULT como vigente). */
+    config: configDoCalculo, clientScores, agenda, summary,
     loading, calculating, erro,
-    recalculate: calculateScores,
+    recalculate,
   };
 };

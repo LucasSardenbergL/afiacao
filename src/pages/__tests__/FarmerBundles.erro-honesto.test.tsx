@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 /**
@@ -105,6 +106,12 @@ function chain(table: string): unknown {
   return c;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -162,7 +169,7 @@ const calcular = () => fireEvent.click(screen.getByRole('button', { name: /Calcu
 describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
   it('DETECTOR: o caminho feliz renderiza o bundle e nenhum alerta', async () => {
     // Sem isto, "não achei o alerta" e "a tela nem chegou a montar" seriam indistinguíveis.
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
     calcular();
 
     expect(await screen.findByText('Cliente c7')).toBeTruthy();
@@ -172,7 +179,7 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
   it('não acusa a LEITURA quando quem falhou foi a GRAVAÇÃO', async () => {
     falharGravacao = true;
 
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
     calcular();
 
     const aviso = await screen.findByRole('alert');
@@ -195,7 +202,7 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
     // seguir dizendo que nada abaixo foi estimado.
     falharLeitura = true;
 
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
     calcular();
 
     const aviso = await screen.findByRole('alert');
@@ -211,7 +218,7 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
     // contrário, e mais perigoso: aqui o motor não confirmou margem de SKU nenhum.
     falharVendaveis = true;
 
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
     calcular();
 
     const aviso = await screen.findByRole('alert');
@@ -232,7 +239,7 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
   it('separa "calculei e não há bundle" de "clique em Calcular"', async () => {
     semBundles = true;
 
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
     calcular();
 
     // O cálculo roda inteiro e conclui, honestamente, que não há bundle nesta carteira.
@@ -254,7 +261,7 @@ describe('FarmerBundles — o texto na tela descreve o que aconteceu', () => {
   it('CONTRAPROVA: antes do primeiro cálculo a tela continua dizendo "Clique em Calcular"', async () => {
     // O defeito oposto — anunciar "não há bundle para esta carteira" para quem nunca calculou
     // é a mesma mentira ao contrário.
-    render(<FarmerBundles />);
+    render(<FarmerBundles />, { wrapper: comQueryClient() });
 
     expect(screen.getByText(/Clique em "Calcular"/i)).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();

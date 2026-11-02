@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 /**
@@ -88,6 +89,12 @@ function vendaveisDoSeed(): { product_id: string }[] {
   }).map((c) => ({ product_id: c.product_id }));
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (t: string) => chain(t),
@@ -129,7 +136,7 @@ const cardDo = (rotulo: string): string =>
 describe('FarmerRecommendations — falha do engine não vira "nenhuma recomendação"', () => {
   it('DETECTOR: o caminho feliz renderiza a recomendação e nenhum alerta', async () => {
     // Sem isto, "não achei o alerta" e "a tela nem chegou a montar" seriam indistinguíveis.
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
 
     expect(await screen.findByText('Cliente Um')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
@@ -138,7 +145,7 @@ describe('FarmerRecommendations — falha do engine não vira "nenhuma recomenda
   it('anuncia que NÃO CONSEGUIU calcular, em vez de "nenhuma recomendação disponível"', async () => {
     falharScores = true;
 
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
 
     const aviso = await screen.findByRole('alert');
     expect(aviso.textContent, 'o alerta não diz que a leitura falhou').toMatch(/não foi possível|indispon/i);
@@ -153,7 +160,7 @@ describe('FarmerRecommendations — falha do engine não vira "nenhuma recomenda
   it('os KPIs do topo mostram "—", não R$ 0,00 / 0, quando o cálculo falhou sem dado', async () => {
     falharScores = true;
 
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
     await screen.findByRole('alert');
 
     // "EIP Total (estimativa)" virou "Clientes com oferta": o custo saiu do browser, então
@@ -167,7 +174,7 @@ describe('FarmerRecommendations — falha do engine não vira "nenhuma recomenda
   });
 
   it('avisa que a lista é de um cálculo ANTERIOR quando o recálculo falha', async () => {
-    render(<FarmerRecommendations />);
+    render(<FarmerRecommendations />, { wrapper: comQueryClient() });
     await screen.findByText('Cliente Um');
 
     // Recálculo que perde uma página: hoje a lista se acomoda igualzinho a um sucesso.

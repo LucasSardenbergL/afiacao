@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { comQueryClient } from '@/test/query-client';
+import { renderHook, act, waitFor } from '@testing-library/react';
 
 /**
  * A faixa de margem chega CAPADA em 1.000 — e o cliente da cauda vira `neutro` sem ninguém ver.
@@ -85,6 +86,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -129,7 +136,9 @@ describe('useFarmerScoring — a faixa de margem além do cap de 1.000', () => {
     // Sem este caso o teste B passaria de graça: `neutro` é o desfecho de QUALQUER insumo
     // faltando, então é preciso provar que o cenário sabe produzir faixa de verdade.
     clienteNaCauda = false;
-    const { result } = renderHook(() => useFarmerScoring());
+    const { result } = renderHook(() => useFarmerScoring(), { wrapper: comQueryClient() });
+    // O motor só calcula com a config LIDA (lote 16): espera ela chegar e o 1º cálculo assentar.
+    await waitFor(() => expect(result.current.loading).toBe(false));
     await act(async () => { await result.current.recalculate(); });
 
     expect(faixaDe(result.current.clientScores, CLI_CABECA)?.margemFaixa).toBe('verde');
@@ -137,7 +146,9 @@ describe('useFarmerScoring — a faixa de margem além do cap de 1.000', () => {
   });
 
   it('B: cliente na posição 1.001 mantém a faixa REAL — não vira `neutro` fabricado', async () => {
-    const { result } = renderHook(() => useFarmerScoring());
+    const { result } = renderHook(() => useFarmerScoring(), { wrapper: comQueryClient() });
+    // O motor só calcula com a config LIDA (lote 16): espera ela chegar e o 1º cálculo assentar.
+    await waitFor(() => expect(result.current.loading).toBe(false));
     await act(async () => { await result.current.recalculate(); });
 
     const cabeca = faixaDe(result.current.clientScores, CLI_CABECA);
@@ -152,7 +163,9 @@ describe('useFarmerScoring — a faixa de margem além do cap de 1.000', () => {
   });
 
   it('C: pagina com `.order` ESTÁVEL — sem ordem total o cap volta de forma intermitente', async () => {
-    const { result } = renderHook(() => useFarmerScoring());
+    const { result } = renderHook(() => useFarmerScoring(), { wrapper: comQueryClient() });
+    // O motor só calcula com a config LIDA (lote 16): espera ela chegar e o 1º cálculo assentar.
+    await waitFor(() => expect(result.current.loading).toBe(false));
     await act(async () => { await result.current.recalculate(); });
 
     // A função não tem `ORDER BY` próprio: paginar sobre ordem indefinida deixa o plano

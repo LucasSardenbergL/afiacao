@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -102,6 +103,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -153,7 +160,7 @@ describe('useCrossSellEngine — falha de vendáveis: bug de código ≠ dado in
   it('CONTROLE POSITIVO: a fixture RECOMENDA quando a RPC responde', async () => {
     // Sem isto os casos abaixo passariam de graça: "lista vazia" é o desfecho de qualquer
     // insumo faltando, então é preciso provar antes que este cenário sabe recomendar.
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const recomendados = result.current.recommendations.flatMap((c) => c.crossSell.map((r) => r.productId));
@@ -162,7 +169,7 @@ describe('useCrossSellEngine — falha de vendáveis: bug de código ≠ dado in
   });
 
   it('builder quebrado: sobe o TypeError ORIGINAL, não a frase de negócio', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
     expect(result.current.recommendations.length).toBeGreaterThan(0);
 
@@ -188,7 +195,7 @@ describe('useCrossSellEngine — falha de vendáveis: bug de código ≠ dado in
   });
 
   it('falha de página ESPERADA: frase de domínio, com o erro do PostgREST em `cause`', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     modo = 'pagina_falhou';
     await act(async () => { await result.current.calculateRecommendations(); });
 

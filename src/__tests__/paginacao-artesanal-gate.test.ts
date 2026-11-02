@@ -1453,8 +1453,10 @@ function lacosPaginadosManuais(fonte: string, arquivo: string): number {
 // Allowlist G8 (por CONTAGEM, lista só encolhe — mesma mecânica de G1/G7). Cada entrada é um
 // paginador com CONTRATO que o `fetchAllPages` não tem; convergir exigiria estender o canônico.
 const G8_ALLOW: ReadonlyMap<string, number> = new Map([
-  // O próprio canônico.
-  ['src/lib/postgrest.ts', 1],
+  // O próprio canônico: `fetchAllPages` (offset) e `fetchAllKeyset` (cursor, plano v4 lote 16 —
+  // o universo de pedidos do Farmer lê faixas de id em PARALELO, o que offset não faz com
+  // segurança sob INSERT concorrente). Mesmo contrato assinado e mesma telemetria nos dois.
+  ['src/lib/postgrest.ts', 2],
   // `coletarPaginado`: teto de páginas que LANÇA (backstop de cartesiano) — o canônico não tem teto.
   ['src/lib/scoring/rpcPaginada.ts', 1],
   // `paginateAll`: teto `maxPages` que LANÇA (#1562, money-path §8; pin G2 acima).
