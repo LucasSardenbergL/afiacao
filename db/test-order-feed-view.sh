@@ -188,7 +188,7 @@ begin
     (select * from public._feed_antes
      except all select origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,
             item_names,item_quantity,status,subtotal,total from public.order_feed)) d;
-  if v_dif <> 0 then raise exception 'FALHOU: view nova difere da anterior em % linha(s)', v_dif; end if;
+  if v_dif IS DISTINCT FROM 0 then raise exception 'FALHOU: view nova difere da anterior em % linha(s)', v_dif; end if;
 
   -- 9. busca: sem acento, minúsculas, entidade decodificada, item vazio fora, total nos 2 formatos
   select * into r from public.order_feed where id='a0000006-0000-0000-0000-000000000006';
@@ -210,7 +210,7 @@ begin
   if r.busca is distinct from E'alice ltda\n\n\n0.00\n0,00' then raise exception 'FALHOU: busca items nao-array (got %)', r.busca; end if;
 
   -- 12. o filtro que o front manda: um termo não casa atravessando dois campos
-  if (select count(*) from public.order_feed where busca ilike '%filhos%0004567%') <> 1 then
+  if (select count(*) from public.order_feed where busca ilike '%filhos%0004567%') IS DISTINCT FROM 1 then
     raise exception 'FALHOU: ilike dentro da coluna';
   end if;
   if exists (select 1 from public.order_feed where busca ilike '%filhos 0004567%') then
