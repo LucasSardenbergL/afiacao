@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 748
+-- Total de custom migrations: 749
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -812,7 +812,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101120000', 'raio_x_inequivoco', '20261101120000_raio_x_inequivoco.sql'),
   ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
   ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
-  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql')
+  ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql'),
+  ('20261102005510', 'clientes_import_varredura_diaria', '20261102005510_clientes_import_varredura_diaria.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3249,7 +3250,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
-  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5734,7 +5737,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_sales_orders_customer_created', 'sales_orders'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
-  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses')
+  ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', '')
 )
 SELECT
   e.migration,
@@ -5762,7 +5767,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 167.
+-- Funções redefinidas com corpo extraível: 168.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6392,7 +6397,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cobranca_regua_hoje', 1, '20261031210000_cobranca_fila.sql', 'f926bc3a846386db1c8e7eac0547d6a7'),
   ('public', 'cobranca_regua_hoje', 2, '20261101120000_cobranca_regua_nome_cliente.sql', 'c0c4a95b8c7612262e56b4db3dbb7b03'),
   ('public', 'raio_x_inequivoco', 1, '20261101120000_raio_x_inequivoco.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
-  ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a')
+  ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
+  ('private', 'clientes_import_semear_interno', 1, '20261101200000_clientes_import_servidor.sql', 'c9a6eaa2a248d59c9a7d8152d3e5dd6a'),
+  ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

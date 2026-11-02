@@ -87,3 +87,12 @@ Totais da rodada: 7.380 importados, 19.318 já existiam, 10 telefones repostos, 
 Os 5 da Colacor estavam em páginas que os cliques anteriores não alcançaram — não era outra causa.
 
 A lista `omie_clientes_nao_vinculados` (oben = 10.168) é um retrato do refresh diário; só cai no próximo refresh.
+
+## Varredura diária (2026-11-02)
+
+Medido na 1ª rodada: página sem cliente novo anda a ~40/min, então uma varredura das 3 contas sem novidade custa
+~10–15 min de edge e ~535 chamadas ao Omie. O founder escolheu trocar a semanal pela **diária** em vez de construir o
+incremental por data (que exigiria medir antes os filtros do `ListarClientes`). Migration
+`20261102005510_clientes_import_varredura_diaria.sql`: cron `clientes-import-diario` às 07:45 UTC (04:45 SP), depois
+dos syncs Omie da madrugada e antes do refresh de não vinculados (08:30 UTC); origem `cron_diario`; o semanal saiu.
+Cliente novo no Omie vira vínculo em até 24 h, sem clique.
