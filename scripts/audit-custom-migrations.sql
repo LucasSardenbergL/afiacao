@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 749
+-- Total de custom migrations: 755
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -14,7 +14,7 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 36 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 39 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
 --   • rls_policy public.Staff can view recalc queue (scoring_v2_signal_modifiers) — substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)
@@ -41,6 +41,9 @@
 --   • index public.uq_markup_policy_fam (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
 --   • index public.uq_markup_policy_sku (markup_policy) — drop — 20260704120000_preco_por_tier → constraint markup_policy_escopo_tier_uq
 --   • rls_policy public.markup_policy_select_staff (markup_policy) — substituída → markup_policy_select_carteira (20260704120000_preco_por_tier)
+--   • index public.idx_inventory_position_synced_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
+--   • index public.idx_omie_products_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
+--   • index public.idx_product_costs_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
 --   • rls_policy public.Staff lê log de auto-aprovação (reposicao_auto_aprovacao_v2) — substituída → reposicao_auto_aprovacao_log_sel (fu4h)
 --   • rls_policy public.regua_preco_log_staff_all (regua_preco) — substituída → regua_preco_log_select_custo (20260723150000_authz_custo_fu4f_fase2_regua)
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
@@ -813,7 +816,13 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101190000', 'raio_x_inequivoco_definer', '20261101190000_raio_x_inequivoco_definer.sql'),
   ('20261101200000', 'clientes_import_servidor', '20261101200000_clientes_import_servidor.sql'),
   ('20261101201804', 'indices_lote7_seq_scans', '20261101201804_indices_lote7_seq_scans.sql'),
-  ('20261102005510', 'clientes_import_varredura_diaria', '20261102005510_clientes_import_varredura_diaria.sql')
+  ('20261101210000', 'fin_saldo_titulos_por_status', '20261101210000_fin_saldo_titulos_por_status.sql'),
+  ('20261101221452', 'order_feed_busca_servidor', '20261101221452_order_feed_busca_servidor.sql'),
+  ('20261101221749', 'expurgo_logs_tintometrico', '20261101221749_expurgo_logs_tintometrico.sql'),
+  ('20261101222916', 'hot_carimbo_sync_sem_indice', '20261101222916_hot_carimbo_sync_sem_indice.sql'),
+  ('20261102005510', 'clientes_import_varredura_diaria', '20261102005510_clientes_import_varredura_diaria.sql'),
+  ('20261102020000', 'fin_cr_reconciliacao_exclusoes', '20261102020000_fin_cr_reconciliacao_exclusoes.sql'),
+  ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1768,9 +1777,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
@@ -3251,8 +3257,31 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('fin_saldo_titulos_por_status', 'function', 'public', 'fin_saldo_titulos_por_status', ''),
+  ('order_feed_busca_servidor', 'view', 'public', 'order_feed', ''),
+  ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_preparacao_itens_sync_run_id', 'tint_staging_preparacao_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_catalogo_sync_run_id', 'tint_staging_cores_catalogo'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_personalizadas_sync_run_id', 'tint_staging_cores_personalizadas'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
+  ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
   ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
-  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', '')
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'index', 'public', 'idx_fin_cr_excluidos_company_codigo', 'fin_contas_receber_excluidos'),
+  ('telemetria_vitals', 'function', 'public', 'telemetria_vitals_carimbar', ''),
+  ('telemetria_vitals', 'table', 'public', 'telemetria_vitals', ''),
+  ('telemetria_vitals', 'index', 'public', 'idx_telemetria_vitals_criado_em', 'telemetria_vitals'),
+  ('telemetria_vitals', 'trigger', 'public', 'trg_telemetria_vitals_carimbar', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -4255,9 +4284,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-vendas-30m', ''),
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_inventory_position_synced_at', 'inventory_position'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_omie_products_updated_at', 'omie_products'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_product_costs_updated_at', 'product_costs'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
@@ -5738,8 +5764,31 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_fin_sync_log_action_status_completed', 'fin_sync_log'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_tint_importacoes_account_created', 'tint_importacoes'),
   ('indices_lote7_seq_scans', 'index', 'public', 'idx_addresses_user_id', 'addresses'),
+  ('fin_saldo_titulos_por_status', 'function', 'public', 'fin_saldo_titulos_por_status', ''),
+  ('order_feed_busca_servidor', 'view', 'public', 'order_feed', ''),
+  ('expurgo_logs_tintometrico', 'function', 'private', 'expurgar_logs_tint', ''),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_sync_errors_created_at', 'tint_sync_errors'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_formula_itens_sync_run_id', 'tint_staging_formula_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_preparacao_itens_sync_run_id', 'tint_staging_preparacao_itens'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_catalogo_sync_run_id', 'tint_staging_cores_catalogo'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_cores_personalizadas_sync_run_id', 'tint_staging_cores_personalizadas'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_staging_precos_base_sync_run_id', 'tint_staging_precos_base'),
+  ('expurgo_logs_tintometrico', 'index', 'public', 'idx_tint_reconciliation_runs_sync_run_id', 'tint_reconciliation_runs'),
+  ('expurgo_logs_tintometrico', 'cron_job', 'cron', 'expurgo-logs-tint', ''),
   ('clientes_import_varredura_diaria', 'function', 'private', 'clientes_import_semear_interno', ''),
-  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', '')
+  ('clientes_import_varredura_diaria', 'cron_job', 'cron', 'clientes-import-diario', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_marcar_ausentes', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'function', 'public', 'fin_cr_excluir_confirmados', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'table', 'public', 'fin_contas_receber_excluidos', ''),
+  ('fin_cr_reconciliacao_exclusoes', 'index', 'public', 'idx_fin_cr_excluidos_company_codigo', 'fin_contas_receber_excluidos'),
+  ('telemetria_vitals', 'function', 'public', 'telemetria_vitals_carimbar', ''),
+  ('telemetria_vitals', 'table', 'public', 'telemetria_vitals', ''),
+  ('telemetria_vitals', 'index', 'public', 'idx_telemetria_vitals_criado_em', 'telemetria_vitals'),
+  ('telemetria_vitals', 'trigger', 'public', 'trg_telemetria_vitals_carimbar', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
 )
 SELECT
   e.migration,

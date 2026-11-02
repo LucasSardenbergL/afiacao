@@ -65,8 +65,9 @@ export interface SalesOrder {
   discount?: number;
 }
 
-// Linha da view order_feed (read model da listagem — migration 20260606210000).
-type LinhaOrderFeed = Tables<'order_feed'>;
+// Linha da view order_feed (read model da listagem — migrations 20260606210000 e 20261101221452).
+// Sem `busca`: a coluna só serve de filtro no servidor e a listagem não a baixa.
+export type LinhaOrderFeed = Omit<Tables<'order_feed'>, 'busca'>;
 
 /** Colunas sem as quais a linha do feed não faz sentido (view: o gerador as dá todas `| null`). */
 export const COLUNAS_FEED_EXIGIDAS = [
@@ -79,10 +80,12 @@ export type OrderFeedRow = Omit<LinhaOrderFeed, (typeof COLUNAS_FEED_EXIGIDAS)[n
   [K in Exclude<(typeof COLUNAS_FEED_EXIGIDAS)[number], 'origin'>]: NonNullable<LinhaOrderFeed[K]>;
 } & { origin: 'sales' | 'afiacao' };
 
-// Cache da query única da listagem (['order-feed', userId]) — rollbacks optimistic.
-export interface OrderFeedCache {
+// Uma página da listagem (useInfiniteQuery ['order-feed', userId, empresa, busca]). `count` só vem
+// na 1ª página e só sem busca (o count da busca custaria um 2º scan dos ~32 k); `null` = não contado.
+export interface PaginaFeed {
   rows: OrderFeedRow[];
-  count: number;
+  count: number | null;
+  offset: number;
 }
 
 // Detalhe completo de um pedido, buscado por (origin, id) ao abrir o painel /

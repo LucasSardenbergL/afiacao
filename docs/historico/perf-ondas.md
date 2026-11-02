@@ -49,3 +49,14 @@ O `@hello-pangea/dnd` (CockpitGrid da home staff, KanbanBoard do Admin) importav
 O diagnóstico do plano citava só o `@babel/runtime`. Com essa regra sozinha o build não mudou: o `invariant` vinha de outro pacote. A conferência pelo `import{…}from"./vendor-charts"` do chunk do dnd, antes e depois, foi o que achou. Lição: ao mexer em bucket, meça no chunk importador quais símbolos ele ainda importa de lá, não só o tamanho dos vendors.
 
 Medido (fecho de imports estáticos via `vite build --manifest`, gzip -9): home staff 165,1 → 53,8 KB além do entry; Admin 154,6 → 43,4 KB; entry 283,7 → 283,9 KB; `vendor-utils` 6,9 → 7,1 KB; chunks com vendor-charts no fecho 13 → 10, e os 10 importam componentes de gráfico.
+
+## Plano v4, lote 8 (C3): Pedidos busca no servidor (2026-11-01)
+
+A tela `/sales` drenava 5 × 1.000 linhas de `order_feed` a cada abertura e buscava em JS. Com 32.159 pedidos, a busca só via um recorte de 5 mil e não achava pedido fora dele. Agora a tela abre com uma página de 50 (ordem estável `created_at desc, origin, id`), carrega mais ao rolar (`useInfiniteQuery` + `useInfiniteScroll`) e manda aba e busca como filtro ao servidor. A busca compara com uma coluna nova da view, `busca` (migration `20261101221452`): nome com entidades HTML decodificadas, nº do pedido, itens e total em "250.50" e "250,50", em minúsculas e sem acento por `translate` (a prod não tem `unaccent`).
+
+Duas lições:
+
+- **Medir a view como a tela a consulta, não o corpo solto.** Mover `item_names` da UNION para a projeção final deu 370 → 54 ms com o corpo rodado como consulta de topo, e esse foi o número da 1ª migration. Aplicada, a página continuou em ~390 ms: o corpo tinha `WITH feed AS (…)`, e o Postgres não achata uma subconsulta com CTE, então a view virou `Subquery Scan` e as subconsultas rodaram nas 32 k linhas (`loops=32159`) antes do Sort. Sem a CTE (UNION direto no FROM), medido como subconsulta: 42 ms. A equivalência foi provada na prod com `EXCEPT ALL` nos dois sentidos: 0 linhas diferentes em 32.159.
+- **A PÓS por md5 do corpo deixa as asserções de conteúdo inalcançadas.** Sabotar o corpo da migration dava vermelho na PÓS, antes de qualquer assert de conteúdo da prova PG17. Para falsificar as asserções, a sabotagem tira a PRE/PÓS, e um controle com a mesma remoção e sem sabotagem precisa ficar verde.
+
+Medido na prod (JSON da resposta): abertura 5.000 linhas / 2,07 MB em 5 requests → 50 linhas / 21 kB em 1 request. A busca custa um scan dos ~32 k (~0,6 s). Por isso ela vai sem `count`, que seria um segundo scan, e o rodapé mostra quantos pedidos foram carregados até ali.

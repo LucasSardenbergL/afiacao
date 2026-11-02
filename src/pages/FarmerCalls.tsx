@@ -11,8 +11,8 @@ import { toast } from 'sonner';
 import { useFarmerScoring, type AgendaItem } from '@/hooks/useFarmerScoring';
 import { TranscriptionPanel } from '@/components/call/TranscriptionPanel';
 import type { NvoipCallState } from '@/hooks/useNvoipCall';
-import { useCallBackend } from '@/hooks/useCallBackend';
-import { useWebRTCCall } from '@/hooks/useWebRTCCall';
+import { useCallBackendOpcional } from '@/hooks/useCallBackend';
+import { useWebRTCCallOpcional } from '@/hooks/useWebRTCCall';
 import { Plus } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { type Customer, type CallLog } from '@/components/farmer/calls/types';
@@ -83,10 +83,10 @@ const FarmerCalls = () => {
     isEstablished: nvoipIsEstablished,
     error: nvoipError,
     backend: callBackend,
-  } = useCallBackend();
+  } = useCallBackendOpcional();
 
   // Acesso direto ao WebRTCCallContext pra transcrição (só faz sentido em backend WebRTC)
-  const webrtc = useWebRTCCall();
+  const webrtc = useWebRTCCallOpcional();
   const [transcriptionPanelOpen, setTranscriptionPanelOpen] = useState(true);
 
 
@@ -284,7 +284,8 @@ const FarmerCalls = () => {
 
   const startCallTimer = async () => {
     // If we have a customer with phone, trigger real Nvoip call
-    const phone = selectedCustomer?.phone;
+    // Telefonia indisponível (módulo congelado): o telefone existe, mas a discagem não.
+    const phone = callBackend === 'webrtc' ? selectedCustomer?.phone : undefined;
     if (phone) {
       callStartRef.current = new Date();
       setIsCallActive(true);
@@ -578,7 +579,7 @@ const FarmerCalls = () => {
       />
 
       {/* Painel lateral de transcrição ao vivo — só renderiza em chamadas WebRTC ativas */}
-      {callBackend === 'webrtc' && webrtc.callState === 'established' && (
+      {callBackend === 'webrtc' && webrtc?.callState === 'established' && (
         <TranscriptionPanel
           status={webrtc.transcriptionStatus}
           turns={webrtc.transcriptionTurns}
@@ -592,7 +593,7 @@ const FarmerCalls = () => {
       )}
 
       {/* Botão pra reabrir o painel se vendedor fechou acidentalmente */}
-      {callBackend === 'webrtc' && webrtc.callState === 'established' && !transcriptionPanelOpen && (
+      {callBackend === 'webrtc' && webrtc?.callState === 'established' && !transcriptionPanelOpen && (
         <Button
           size="sm"
           variant="outline"

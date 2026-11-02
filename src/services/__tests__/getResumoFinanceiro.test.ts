@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { spBusinessDate } from '@/lib/time/sp-day';
+import { OPEN_TITLE_STATUSES } from '@/lib/financeiro/titulo-status';
 
 // Saldo de extrato de HOJE em SP: conta sem `saldo_data` fresco é indisponível (plano v3, item 2).
 const HOJE_SP = spBusinessDate(new Date());
@@ -63,8 +64,40 @@ function makeBuilder(tabela: string) {
   return builder;
 }
 
+// Fake da RPC `fin_saldo_titulos_por_status` com a semântica da migration (provada no PG17 por
+// db/test-fin-saldo-titulos-por-status.sh): empresa sem título em NENHUM status → `desconhecida`;
+// grupos (tabela, empresa, status) só dos status pedidos, saldo como string decimal.
+const rpcCalls: Array<{ fn: string; args: { p_companies: string[]; p_statuses: string[] } }> = [];
+function fakeRpc(fn: string, args: { p_companies: string[]; p_statuses: string[] }) {
+  rpcCalls.push({ fn, args });
+  const error = state.errors.rpc;
+  if (error) return Promise.resolve({ data: null, error });
+  const tabelas = [['receber', 'fin_contas_receber'], ['pagar', 'fin_contas_pagar']] as const;
+  const empresas = [...new Set(args.p_companies)].sort().map((company) => ({
+    company,
+    estado: tabelas.some(([, t]) => (state.db[t] ?? []).some((r) => r.company === company)) ? 'ok' : 'desconhecida',
+  }));
+  const ok = new Set(empresas.filter((e) => e.estado === 'ok').map((e) => e.company));
+  const grupos: Row[] = [];
+  for (const [tabela, t] of tabelas) {
+    const acc = new Map<string, { company: string; status: string; n: number; centavos: number }>();
+    for (const r of state.db[t] ?? []) {
+      const company = r.company as string, status = r.status_titulo as string;
+      if (!ok.has(company) || !args.p_statuses.includes(status)) continue;
+      const k = `${company}|${status}`;
+      const g = acc.get(k) ?? { company, status, n: 0, centavos: 0 };
+      g.n += 1; g.centavos += Math.round((r.saldo as number) * 100);
+      acc.set(k, g);
+    }
+    for (const g of acc.values()) {
+      grupos.push({ tabela, company: g.company, status_titulo: g.status, n_titulos: g.n, n_saldo_nulo: 0, saldo: (g.centavos / 100).toFixed(2) });
+    }
+  }
+  return Promise.resolve({ data: { versao: 1, empresas, grupos }, error: null });
+}
+
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (tabela: string) => makeBuilder(tabela) },
+  supabase: { from: (tabela: string) => makeBuilder(tabela), rpc: fakeRpc },
 }));
 
 import { getResumoFinanceiro, getLastSyncTime } from '@/services/financeiroService';
@@ -83,8 +116,28 @@ const muitos = (n: number, company: string, status: string, saldo: number): Row[
 
 describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
   beforeEach(() => {
-    state.db = { fin_contas_correntes: [], fin_contas_receber: [], fin_contas_pagar: [] };
+    // Um título liquidado: a empresa EXISTE para a RPC (senão `desconhecida`) sem mexer nos abertos.
+    state.db = { fin_contas_correntes: [], fin_contas_receber: [titulo('oben', 'RECEBIDO', 1)], fin_contas_pagar: [] };
     state.errors = {};
+    rpcCalls.length = 0;
+  });
+
+  it('soma os títulos pela RPC: 1 chamada para todas as empresas, com o conjunto aberto canônico', async () => {
+    state.db.fin_contas_receber.push(titulo('colacor', 'A VENCER', 3));
+    await getResumoFinanceiro(['oben', 'colacor']);
+    expect(rpcCalls).toEqual([{
+      fn: 'fin_saldo_titulos_por_status',
+      args: { p_companies: ['oben', 'colacor'], p_statuses: [...OPEN_TITLE_STATUSES] },
+    }]);
+  });
+
+  it('empresa desconhecida para a RPC LANÇA — nunca R$ 0 de títulos', async () => {
+    await expect(getResumoFinanceiro(['oben', 'colacor'])).rejects.toThrow('saldo de títulos indisponível (colacor): desconhecida');
+  });
+
+  it('erro da RPC LANÇA com a mensagem do banco', async () => {
+    state.errors.rpc = { message: 'canceling statement due to statement timeout' };
+    await expect(getResumoFinanceiro(['oben'])).rejects.toThrow('Falha ao carregar saldo de títulos: canceling statement due to statement timeout');
   });
 
   it('soma TODOS os títulos abertos mesmo acima do cap de 1000 do PostgREST (CR e CP)', async () => {
@@ -245,7 +298,7 @@ describe('getResumoFinanceiro (contrato do resumo do dashboard)', () => {
 
   it('erro nos títulos LANÇA um Error real (nunca resumo parcial silencioso, nem "[object Object]" no banner)', async () => {
     state.db.fin_contas_receber = muitos(10, 'oben', 'A VENCER', 1);
-    state.errors.fin_contas_pagar = { message: 'RLS negou' };
+    state.errors.rpc = { message: 'RLS negou' };
     await expect(getResumoFinanceiro(['oben'])).rejects.toBeInstanceOf(Error);
   });
 

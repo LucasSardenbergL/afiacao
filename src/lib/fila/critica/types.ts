@@ -63,7 +63,9 @@ export interface CriticaInput {
   metrica: MetricaCliente | null; // null = sem linha em customer_metrics_mv
   rota: RotaCliente | null; // null = cadência indisponível (leitura de log falhou)
   tarefa: TarefaCliente | null; // null = sem tarefa atrelada a este cliente
-  waSla: WaSlaCliente | null; // null = sem breach de WhatsApp aberto p/ este cliente (ou SLA não lido)
+  waSla: WaSlaCliente | null; // null = sem breach de WhatsApp aberto p/ este cliente
+  tarefaIndisponivel?: boolean; // true = tarefas NÃO lidas (módulo congelado / leitura falhou) — ≠ "sem tarefa"
+  waSlaIndisponivel?: boolean; // true = SLA NÃO lido (módulo congelado / leitura falhou) — ≠ "sem breach"
 }
 
 /** Resultado de um detector individual. */

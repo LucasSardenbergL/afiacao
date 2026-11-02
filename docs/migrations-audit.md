@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **749** custom migrations totais
-- **2473** objetos esperados (criados por estas migrations)
+- **755** custom migrations totais
+- **2496** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 935
-  - `rls_policy`: 515
-  - `index`: 338
-  - `table`: 225
-  - `cron_job`: 206
-  - `view`: 131
-  - `trigger`: 119
+  - `function`: 940
+  - `rls_policy`: 519
+  - `index`: 347
+  - `table`: 227
+  - `cron_job`: 207
+  - `view`: 132
+  - `trigger`: 120
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6147,12 +6147,64 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tint_importacoes_account_created` | `tint_importacoes` |
 | `index` | `public.idx_addresses_user_id` | `addresses` |
 
+### `20261101210000_fin_saldo_titulos_por_status.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_saldo_titulos_por_status` | — |
+
+### `20261101221452_order_feed_busca_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.order_feed` | — |
+
+### `20261101221749_expurgo_logs_tintometrico.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.expurgar_logs_tint` | — |
+| `index` | `public.idx_tint_sync_errors_created_at` | `tint_sync_errors` |
+| `index` | `public.idx_tint_staging_formula_itens_sync_run_id` | `tint_staging_formula_itens` |
+| `index` | `public.idx_tint_staging_preparacao_itens_sync_run_id` | `tint_staging_preparacao_itens` |
+| `index` | `public.idx_tint_staging_cores_catalogo_sync_run_id` | `tint_staging_cores_catalogo` |
+| `index` | `public.idx_tint_staging_cores_personalizadas_sync_run_id` | `tint_staging_cores_personalizadas` |
+| `index` | `public.idx_tint_staging_precos_base_sync_run_id` | `tint_staging_precos_base` |
+| `index` | `public.idx_tint_reconciliation_runs_sync_run_id` | `tint_reconciliation_runs` |
+| `cron_job` | `cron.expurgo-logs-tint` | — |
+
+### `20261101222916_hot_carimbo_sync_sem_indice.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
 ### `20261102005510_clientes_import_varredura_diaria.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `private.clientes_import_semear_interno` | — |
 | `cron_job` | `cron.clientes-import-diario` | — |
+
+### `20261102020000_fin_cr_reconciliacao_exclusoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_cr_marcar_ausentes` | — |
+| `function` | `public.fin_cr_excluir_confirmados` | — |
+| `table` | `public.fin_contas_receber_excluidos` | — |
+| `index` | `public.idx_fin_cr_excluidos_company_codigo` | `fin_contas_receber_excluidos` |
+
+### `20261102093527_telemetria_vitals.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.telemetria_vitals_carimbar` | — |
+| `table` | `public.telemetria_vitals` | — |
+| `index` | `public.idx_telemetria_vitals_criado_em` | `telemetria_vitals` |
+| `trigger` | `public.trg_telemetria_vitals_carimbar` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_insert` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_update` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_read` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_service_all` | `telemetria_vitals` |
 
 ## Próximos passos por status
 

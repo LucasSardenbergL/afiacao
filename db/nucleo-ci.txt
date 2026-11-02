@@ -40,6 +40,7 @@ db/test-security-invoker-views.sh          27
 db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
 db/test-retencao-scores-farmer.sh          14
+db/test-expurgo-logs-tint.sh               27
 db/test-sales-price-history-created-at-futuro.sh 13
 db/test-drop-quarentena-omie-clientes.sh    11
 db/test-wa-owner-efetivo-gate-staff.sh     25
@@ -58,6 +59,10 @@ db/test-cliente-situacao-receita.sh        20  falsificar=21  # selo RFB fora do
 # de tabela + GRANT de 38) e por TEXTO (saneador + trigger + backup privado). Linha de base prova os dois furos;
 # writers de prod (fixture) seguem gravando; 15 sabotagens inline, cada uma exige o seu vermelho exato.
 db/test-tactical-plans-margem.sh           116
+# Plano v4 lote 13 (C6): a soma de saldo de CR/CP do cockpit sai do navegador para a RPC INVOKER. Estado de acesso
+# por empresa (sem_acesso/desconhecida, nunca R$ 0 de RLS), saldo em string decimal, ACL fora de anon/service_role/
+# PUBLIC; paridade com o oráculo exato e com o laço float8 do JS; 7 sabotagens inline + 2 da postcondição, cada uma exige o seu vermelho.
+db/test-fin-saldo-titulos-por-status.sh   74
 # FU4-F (pós-B): a ESCRITA default do Supabase fechada nas duas tabelas (REVOKE INSERT/UPDATE/DELETE/TRUNCATE/
 # REFERENCES/TRIGGER/MAINTAIN). fcs mantém UPDATE só de (updated_at) + policy de UPDATE com WITH CHECK (false):
 # o FOR SHARE das RPCs invoker de recomendação exige as duas, e a prova mostra a trava BLOQUEANDO a troca de dono
@@ -112,6 +117,11 @@ db/test-reposicao-po-observado.sh          39  falsificar=33
 # Sombra da associação NF↔PO (20261017040000): só a RPC escreve, com compare-and-set por observado_em (run atrasado
 # não sobrescreve evidência nova); CHECK impede "associável" com motivo e proposta fora do associável; RLS staff.
 db/test-recebimento-associacao-sombra.sh    20  falsificar=13
+# Web-vitals pelo nosso banco (20261102093527, plano v4 lote 0b): o UPSERT do cliente (1 linha por instância
+# de métrica, último valor) só toca a PRÓPRIA linha. Cada policy falsificada sozinha: a de INSERT pelo INSERT
+# puro (no UPSERT a de SELECT barra a linha alheia sozinha), a de UPDATE pelo UPDATE sem WHERE (que não passa
+# pela de SELECT), a de SELECT pelo próprio UPSERT; trigger que segura criado_em; postcondição que aborta.
+db/test-telemetria-vitals.sh                27
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -279,6 +289,13 @@ db/test-vendas-sync-cursor-fencing.sh      47
 # 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
 db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
+# CR incremental (plano v4, lote 15): título ABERTO excluído no Omie só sai do espelho com PROVA da edge
+# (ausência em 2 runs = candidato; DELETE só com a listagem de 1 página do cliente sem o código), com
+# tombstone na mesma transação; retry do mesmo run, observação positiva no run, não-marcado e fechado nunca
+# se apagam; teto sem escrita; corrida com writer de linha travada durante o C3 (2 sessões). 7 sabotagens
+# inline (defesas duplas neutralizadas juntas; a da corrida, uma camada por vez), cada uma reprovando o SEU
+# rótulo, com controle verde antes e depois.
+db/test-fin-cr-reconciliacao.sh            82
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12

@@ -112,6 +112,8 @@ export function montarEvidencePack(input: CriticaInput, cfg: CriticaCfg = CRITIC
   if (input.metrica == null) faltaDado.push('Sem métricas de compra deste cliente.');
   else if (input.metrica.isColdStart) faltaDado.push('Cliente novo, sem histórico de compra.');
   if (input.rota == null) faltaDado.push('Sinais de rota indisponíveis (cadência não lida).');
+  if (input.tarefaIndisponivel) faltaDado.push('Sinais de tarefa indisponíveis (tarefas não lidas).');
+  if (input.waSlaIndisponivel) faltaDado.push('Sinais de WhatsApp indisponíveis (SLA não lido).');
 
   const resultados = [
     detectRecorrenteSumiu(input, cfg),
