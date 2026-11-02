@@ -48,6 +48,13 @@ ORDER BY metrica, p75 DESC;
 Para comparar builds, acrescente `AND build_id = '<entry do build>'`. O PostHog usa `quantile`
 (aproximado); aqui é `percentile_cont` (exato, interpolado). Com poucas amostras os dois divergem.
 
+## Aplicação (2026-11-02)
+
+- **Aplicada pela sessão via `db:aplicar`** antes do merge (a ordem é DDL → Publish): ensaio ok
+  (ROLLBACK), depois tentativa **#861** → recibo (sha `4dc5bb14…`, commit `f335a8717`).
+- **2ª testemunha (psql-ro):** RLS ligada, as 4 policies (insert/update/select próprios +
+  service_role), trigger de carimbo, PK `(user_id, metrica_id)`, 0 linhas.
+
 ## Retenção
 
 180 dias, escrita no `COMMENT ON TABLE`. Ainda não há expurgo automático: o volume é ~5 linhas por
