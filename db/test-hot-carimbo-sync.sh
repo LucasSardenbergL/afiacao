@@ -109,21 +109,22 @@ SQL
 # Ciclo do sync: as 3 tabelas, chunks de 500 em ordem de chave, 1 statement autocommit por chunk; depois
 # VACUUM. $3 = nº de linhas de inventory_position a PULAR no começo (chunk não confirmado; 0 = nenhum).
 # Imprime, por tabela: <upd>|<hot> do ciclo e o WAL do ciclo em bytes.
+NL=$'\n'
 ciclo() {
   local db="$1" stamp="$2" pula="${3:-0}" sql="" off
-  sql+="SELECT pg_stat_reset();"$'\n'
-  sql+="SELECT pg_current_wal_lsn() AS lsn0 \\gset"$'\n'
+  sql+="SELECT pg_stat_reset();${NL}"
+  sql+="SELECT pg_current_wal_lsn() AS lsn0 \\gset${NL}"
   for off in $(seq "$pula" 500 $((N_INV - 1))); do
     sql+="INSERT INTO public.inventory_position AS t (omie_codigo_produto, product_id, saldo, cmc, preco_medio, account, synced_at)
 SELECT omie_codigo_produto, product_id, saldo, cmc, preco_medio, account, '$stamp' FROM public.inventory_position
  ORDER BY omie_codigo_produto, account OFFSET $off LIMIT 500
 ON CONFLICT (omie_codigo_produto, account) DO UPDATE SET product_id = EXCLUDED.product_id, saldo = EXCLUDED.saldo,
-  cmc = EXCLUDED.cmc, preco_medio = EXCLUDED.preco_medio, account = EXCLUDED.account, synced_at = EXCLUDED.synced_at;"$'\n'
+  cmc = EXCLUDED.cmc, preco_medio = EXCLUDED.preco_medio, account = EXCLUDED.account, synced_at = EXCLUDED.synced_at;${NL}"
   done
   for off in $(seq 0 500 $((N_PC - 1))); do
     sql+="INSERT INTO public.product_costs AS t (product_id, cmc, updated_at)
 SELECT product_id, cmc, '$stamp' FROM public.product_costs ORDER BY product_id OFFSET $off LIMIT 500
-ON CONFLICT (product_id) DO UPDATE SET cmc = EXCLUDED.cmc, updated_at = EXCLUDED.updated_at;"$'\n'
+ON CONFLICT (product_id) DO UPDATE SET cmc = EXCLUDED.cmc, updated_at = EXCLUDED.updated_at;${NL}"
   done
   for off in $(seq 0 500 $((N_OP - 1))); do
     sql+="INSERT INTO public.omie_products AS t (omie_codigo_produto, omie_codigo_produto_integracao, codigo, descricao,
@@ -134,14 +135,14 @@ SELECT omie_codigo_produto, omie_codigo_produto_integracao, codigo, descricao, u
 ON CONFLICT (omie_codigo_produto, account) DO UPDATE SET omie_codigo_produto_integracao = EXCLUDED.omie_codigo_produto_integracao,
   codigo = EXCLUDED.codigo, descricao = EXCLUDED.descricao, unidade = EXCLUDED.unidade, ncm = EXCLUDED.ncm,
   valor_unitario = EXCLUDED.valor_unitario, ativo = EXCLUDED.ativo, familia = EXCLUDED.familia,
-  imagem_url = EXCLUDED.imagem_url, metadata = EXCLUDED.metadata, updated_at = EXCLUDED.updated_at;"$'\n'
+  imagem_url = EXCLUDED.imagem_url, metadata = EXCLUDED.metadata, updated_at = EXCLUDED.updated_at;${NL}"
   done
-  sql+="SELECT pg_current_wal_lsn() - :'lsn0'::pg_lsn AS wal \\gset"$'\n'
-  sql+="VACUUM public.inventory_position, public.product_costs, public.omie_products;"$'\n'
-  sql+="SELECT pg_stat_force_next_flush();"$'\n'
-  sql+="SELECT pg_stat_clear_snapshot();"$'\n'
+  sql+="SELECT pg_current_wal_lsn() - :'lsn0'::pg_lsn AS wal \\gset${NL}"
+  sql+="VACUUM public.inventory_position, public.product_costs, public.omie_products;${NL}"
+  sql+="SELECT pg_stat_force_next_flush();${NL}"
+  sql+="SELECT pg_stat_clear_snapshot();${NL}"
   sql+="SELECT string_agg(relname || '=' || n_tup_upd || '|' || n_tup_hot_upd, ' ' ORDER BY relname) || ' wal=' || :'wal'
-  FROM pg_stat_user_tables WHERE relname IN ('inventory_position', 'product_costs', 'omie_products');"$'\n'
+  FROM pg_stat_user_tables WHERE relname IN ('inventory_position', 'product_costs', 'omie_products');${NL}"
   PA -d "$db" <<<"$sql" | tail -1
 }
 
