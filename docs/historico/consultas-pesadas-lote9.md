@@ -84,6 +84,11 @@ Prova local (PG17, réplica sintética com os 4 parciais da prod, 32 k linhas), 
 idx_sales_orders_account_omie_pedido`; re-aplicação idempotente; pós-condição falsificada (homônimo com
 outra definição) → `rc=3` com `POS: … existe com outra definição`.
 
+Aplicada em 2026-11-02 pelo `db:aplicar` (ensaio ok → recibo #871). Depois (psql-ro, outra conexão):
+`Index Scan using idx_sales_orders_account_omie_pedido` × 25, 5.055 buffers, **26 ms**, 1 seq scan por
+chamada. Em uso real, de 18:12 a 18:32 UTC (com o tick das 18:30): `idx_scan` 25 → 202, e `sales_orders`
+com +28 seq scans no intervalo inteiro (antes, só o tick dava +51).
+
 ## Outras tabelas no topo de `seq_tup_read` (não tratadas aqui)
 
 - `addresses`: 11.023 seq scans lendo a tabela inteira mesmo com o `idx_addresses_user_id` do lote 7 em
