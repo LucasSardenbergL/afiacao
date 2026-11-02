@@ -242,10 +242,12 @@ export interface RegistroStub {
   falharLeituraPedidos: ((indice: number) => false | 'erro' | 'data_null') | null;
   /** Operadores que o "servidor" IGNORA em `sales_orders` — simula filtro/cursor não honrado. */
   ignorarEmPedidos: ReadonlyArray<'gt' | 'gte' | 'lt'>;
+  /** Tabelas cuja leitura devolve erro (ex.: `farmer_algorithm_config`). */
+  falharTabelas: ReadonlyArray<string>;
 }
 
 export function criarRegistroStub(): RegistroStub {
-  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null, ignorarEmPedidos: [] };
+  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null, ignorarEmPedidos: [], falharTabelas: [] };
 }
 
 type Filtro = (l: Linha) => boolean;
@@ -306,6 +308,9 @@ export function criarSupabaseStub(universo: () => UniversoGolden, reg: RegistroS
     c.then = (resolver: (v: unknown) => void, rejeitar?: (e: unknown) => void) => {
       try {
         if (escrita) return resolver({ data: null, error: null });
+        if (reg.falharTabelas.includes(tabela)) {
+          return resolver({ data: null, error: { message: 'permission denied for table', code: '42501' } });
+        }
         if (tabela === 'sales_orders') {
           const indice = reg.leiturasPedidos.length;
           reg.leiturasPedidos.push({ select: selecao ?? '', de, ate: ate ?? -1 });

@@ -44,6 +44,7 @@ vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => esta
 
 import { useFarmerScoring } from '../useFarmerScoring';
 import { useBundleEngine } from '../useBundleEngine';
+import { FARMER_ALGORITHM_CONFIG_KEY } from '../useFarmerAlgorithmConfig';
 
 const PASTA = resolve(process.cwd(), 'src/test/golden/universo-pedidos');
 
@@ -97,7 +98,7 @@ async function saidaDoMotor(clienteExistente?: QueryClient) {
   const papelFinal = estado.papel;
   estado.papel = { ...papelFinal, loading: true };
   const { result, rerender } = rodar(clienteExistente);
-  await waitFor(() => expect(result.current.config?.k1).toBe(1.3));
+  await waitFor(() => expect(qc.getQueryState(FARMER_ALGORITHM_CONFIG_KEY)?.status).toBe('success'));
   estado.papel = papelFinal;
   rerender();
   await waitFor(() => {
@@ -154,5 +155,37 @@ describe('useFarmerScoring — mesmo universo de pedidos ⇒ mesmo score (golden
     // Mesmo golden do vendedor gravado com o motor ANTERIOR: o dado que o bundle deixou no cache
     // (e por onde ele passou) produz o MESMO score.
     conferirGolden('scoring-vendedor', saida);
+  });
+});
+
+describe('useFarmerScoring — a config do algoritmo é lida com honestidade (lote 16, mudança INTENCIONAL)', () => {
+  beforeEach(() => {
+    estado.auth = { user: { id: FARMER_GOLDEN }, isMaster: false, isStaff: true };
+    estado.papel = { canViewManagerial: false, loading: false };
+    estado.lente = { effectiveUserId: FARMER_GOLDEN, isImpersonating: false };
+  });
+
+  it('config chegando DEPOIS do papel: calcula com a config LIDA (antes saía com o DEFAULT e ficava)', async () => {
+    // O papel já está resolvido no 1º render e a config ainda está em voo — a ordem em que o motor
+    // anterior calculava com o DEFAULT. Agora o resultado é o MESMO golden da config lida.
+    const { result } = rodar();
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+      expect(result.current.calculating).toBe(false);
+    });
+    expect(result.current.erro).toBeNull();
+    expect(result.current.config?.k1).toBe(1.3);
+    const { clientScores, agenda, summary, config } = result.current;
+    conferirGolden('scoring-vendedor', { clientScores, agenda, summary, config });
+  });
+
+  it('config que NÃO pôde ser lida ⇒ `erro` do motor, nada calculado, e nenhum DEFAULT exibido como vigente', async () => {
+    reg.falharTabelas = ['farmer_algorithm_config'];
+    const { result } = rodar();
+    await waitFor(() => expect(result.current.erro).toMatch(/configuração do algoritmo/));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.clientScores).toEqual([]);
+    expect(result.current.config).toBeNull();
+    expect(reg.leiturasPedidos.length, 'calculou (leu pedidos) com config desconhecida').toBe(0);
   });
 });

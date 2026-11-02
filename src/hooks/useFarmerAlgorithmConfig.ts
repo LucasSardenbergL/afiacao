@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import type { Tables } from '@/integrations/supabase/types';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
-import { DEFAULT_CONFIG, type AlgorithmConfig } from '@/hooks/useFarmerScoring';
+import { DEFAULT_CONFIG, type AlgorithmConfig } from '@/lib/scoring/configAlgoritmo';
 
 type AlgorithmConfigRow = Pick<Tables<'farmer_algorithm_config'>, 'key' | 'value'>;
 

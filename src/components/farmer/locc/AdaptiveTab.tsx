@@ -9,7 +9,7 @@ import { type AlgorithmConfig } from '@/hooks/useFarmerScoring';
 import { type FarmerMetrics } from '@/hooks/useFarmerMetrics';
 import { WeightBar } from './primitives';
 
-export const AdaptiveTab = memo(({ config, metrics, navigate }: { config: AlgorithmConfig; metrics: FarmerMetrics; navigate: (path: string) => void }) => (
+export const AdaptiveTab = memo(({ config, metrics, navigate }: { config: AlgorithmConfig | null; metrics: FarmerMetrics; navigate: (path: string) => void }) => (
   <>
     <Card>
       <CardHeader className="p-3 pb-2">
@@ -18,6 +18,9 @@ export const AdaptiveTab = memo(({ config, metrics, navigate }: { config: Algori
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
+        {/* `null` = o motor ainda não calculou (ou a config não pôde ser lida): não exibir DEFAULT como vigente. */}
+        {config ? (
+        <>
         <div>
           <p className="text-[10px] text-muted-foreground mb-1">Pesos do Health Score</p>
           <WeightBar label="RF (Recência)" value={config.health_w_rf * 100} />
@@ -39,6 +42,10 @@ export const AdaptiveTab = memo(({ config, metrics, navigate }: { config: Algori
           <WeightBar label="Expansão" value={config.agenda_pct_expansao * 100} color="bg-status-success" />
           <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info" />
         </div>
+        </>
+        ) : (
+          <p className="text-xs text-muted-foreground">Pesos indisponíveis até o motor calcular com a configuração lida do banco.</p>
+        )}
       </CardContent>
     </Card>
 
