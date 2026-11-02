@@ -7,6 +7,7 @@ import { gravarConfirmacao, linhaConfirmacao } from "./confirmacao-cadastro.ts";
 import { classificarSonda, EFEITO, erroSondaAmbigua, respostaSonda, VERSAO } from "./versao.ts";
 import { omieDateToIso, classifyOmieTransient, classifyPedidosPage, gerarJanelasMensais } from "./pagination.ts";
 import { concluirSyncProdutos, erroComFalhasAcumuladas, type FalhasCatalogo, gravarPaginaCatalogo, novasFalhasCatalogo } from "./catalogo-gravacao.ts";
+import { concluirSyncPedidosIncremental } from "./desfecho-pedidos.ts";
 import { carregarProductMap } from "../_shared/mapas-paginados.ts";
 import { descontoItemOmie } from "../_shared/desconto-omie.ts";
 import { classificarErroAtpGate, classificarRetornoAtpGate } from "../_shared/atp-gate.ts";
@@ -4043,10 +4044,22 @@ Deno.serve(async (req) => {
           break;
         }
 
-        // Modo INCREMENTAL (rolante, sem cursor) — inalterado: cron 2h, start_page=1, janela today-5..today.
+        // Modo INCREMENTAL (rolante, sem cursor): cron 2h, start_page=1, janela today-5..today.
+        // Sem cursor para retomar, parar antes do fim real (transitório esgotado, página anômala,
+        // orçamento de páginas) NÃO é sucesso — 500 + fin_sync_log 'error' (./desfecho-pedidos.ts).
         const startPagePedidos = params.start_page || 1;
         const syncPedidosResult = await syncPedidos(supabaseAdmin, startPagePedidos, maxPagesPedidos, account, dateFrom, dateTo);
-        result = { success: true, ...syncPedidosResult };
+        const saidaPedidos = await concluirSyncPedidosIncremental(syncPedidosResult, async (corpo, erro) => {
+          await completeVendaSync(supabaseAdmin, vendaLogId, corpo, erro);
+          vendaSyncFinalized = true;
+        });
+        if (saidaPedidos.status !== 200) {
+          return new Response(JSON.stringify(saidaPedidos.corpo), {
+            status: saidaPedidos.status,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        result = saidaPedidos.corpo;
         break;
       }
 
