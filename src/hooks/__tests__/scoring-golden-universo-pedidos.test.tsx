@@ -188,4 +188,20 @@ describe('useFarmerScoring — a config do algoritmo é lida com honestidade (lo
     expect(result.current.config).toBeNull();
     expect(reg.leiturasPedidos.length, 'calculou (leu pedidos) com config desconhecida').toBe(0);
   });
+
+  it('execução ANTIGA que termina depois não sobrescreve a atual (config trocada pela Governança no meio)', async () => {
+    // 1ª execução (k1 = 1,3) fica presa na leitura de `farmer_calls`; a config muda para k1 = 2,
+    // a Governança invalida, a 2ª execução termina ANTES — e a 1ª, ao terminar, não pode publicar.
+    reg.atrasoLeitura = (tabela, n) => (tabela === 'farmer_calls' && n === 0 ? 400 : 0);
+    const { result } = rodar();
+    await waitFor(() => expect(reg.leiturasPorTabela.farmer_calls ?? 0).toBe(1));
+    const tabelas = { ...universo.tabelas, farmer_algorithm_config: [{ key: 'k1', value: 2 }] };
+    estado.supabase = criarSupabaseStub(() => ({ ...universo, tabelas }), reg);
+    await act(async () => { await qc.invalidateQueries({ queryKey: FARMER_ALGORITHM_CONFIG_KEY }); });
+    await waitFor(() => expect(result.current.config?.k1).toBe(2));
+    // Deixa a execução antiga terminar e confere que ela NÃO publicou por cima.
+    await act(async () => { await new Promise((r) => setTimeout(r, 600)); });
+    expect(result.current.config?.k1).toBe(2);
+    expect(result.current.erro).toBeNull();
+  });
 });

@@ -244,10 +244,14 @@ export interface RegistroStub {
   ignorarEmPedidos: ReadonlyArray<'gt' | 'gte' | 'lt'>;
   /** Tabelas cuja leitura devolve erro (ex.: `farmer_algorithm_config`). */
   falharTabelas: ReadonlyArray<string>;
+  /** Atraso (ms) da N-ésima leitura de uma tabela — para forçar uma execução a terminar DEPOIS. */
+  atrasoLeitura: ((tabela: string, indiceNaTabela: number) => number) | null;
+  /** Leituras por tabela (contador interno do atraso). */
+  leiturasPorTabela: Record<string, number>;
 }
 
 export function criarRegistroStub(): RegistroStub {
-  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null, ignorarEmPedidos: [], falharTabelas: [] };
+  return { leiturasPedidos: [], escritas: [], falharLeituraPedidos: null, ignorarEmPedidos: [], falharTabelas: [], atrasoLeitura: null, leiturasPorTabela: {} };
 }
 
 type Filtro = (l: Linha) => boolean;
@@ -305,7 +309,10 @@ export function criarSupabaseStub(universo: () => UniversoGolden, reg: RegistroS
     for (const m of ['insert', 'upsert', 'update', 'delete']) {
       c[m] = (args?: unknown) => { escrita = m; reg.escritas.push({ alvo: `${tabela}.${m}`, args }); return c; };
     }
-    c.then = (resolver: (v: unknown) => void, rejeitar?: (e: unknown) => void) => {
+    c.then = (resolverDireto: (v: unknown) => void, rejeitar?: (e: unknown) => void) => {
+      const n = (reg.leiturasPorTabela[tabela] = (reg.leiturasPorTabela[tabela] ?? 0) + 1) - 1;
+      const atraso = escrita ? 0 : (reg.atrasoLeitura?.(tabela, n) ?? 0);
+      const resolver = (v: unknown) => (atraso > 0 ? void setTimeout(() => resolverDireto(v), atraso) : resolverDireto(v));
       try {
         if (escrita) return resolver({ data: null, error: null });
         if (reg.falharTabelas.includes(tabela)) {
