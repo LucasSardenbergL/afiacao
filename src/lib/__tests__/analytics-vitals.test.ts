@@ -1,8 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { removerComentarios } from '@/lib/gates/limpeza-fonte';
+import { logger } from '@/lib/logger';
 import {
   anotarRota,
+  criarCanoBanco,
   criarColetor,
   montarEvento,
+  type DepsCanoBanco,
+  type LinhaVital,
   rotaNoInstante,
   type EventoVital,
   type MarcoDeRota,
@@ -169,5 +176,134 @@ describe('criarColetor — quando e com que rota sai', () => {
       ['lcp', '/'],
       ['fcp', '/rota-atual'],
     ]);
+  });
+});
+
+describe('criarCanoBanco — o 2º cano, imune ao bloqueio do PostHog', () => {
+  const evento: EventoVital = {
+    metrica: 'inp',
+    valor: 240,
+    classificacao: 'melhorar',
+    rota: '/pedidos/:id',
+    navegacao: 'navegacao',
+    metrica_id: 'v5-1700000000000-123',
+    conexao: '4g',
+  };
+
+  function montar(over: Partial<DepsCanoBanco> = {}) {
+    const gravadas: LinhaVital[] = [];
+    const deps: DepsCanoBanco = {
+      usuario: async () => 'user-1',
+      lenteAtiva: () => false,
+      deviceId: () => 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      buildId: () => 'index-CCQwrURp',
+      gravar: async (linha) => {
+        gravadas.push(linha);
+        return { error: null };
+      },
+      ...over,
+    };
+    return { cano: criarCanoBanco(deps), gravadas };
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('grava o evento inteiro + dono, aparelho e build — sem reescrever a rota', async () => {
+    const { cano, gravadas } = montar();
+    await expect(cano(evento)).resolves.toBe('gravou');
+    expect(gravadas).toEqual([
+      {
+        ...evento,
+        user_id: 'user-1',
+        device_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        build_id: 'index-CCQwrURp',
+      },
+    ]);
+  });
+
+  it('lente "ver como" ativa: não grava nem pergunta o usuário', async () => {
+    const usuario = vi.fn(async () => 'user-1');
+    const { cano, gravadas } = montar({ lenteAtiva: () => true, usuario });
+    await expect(cano(evento)).resolves.toBe('lente_ativa');
+    expect(usuario).not.toHaveBeenCalled();
+    expect(gravadas).toHaveLength(0);
+  });
+
+  it('sem sessão (tela de login): não grava — a RLS recusaria a linha sem dono', async () => {
+    const { cano, gravadas } = montar({ usuario: async () => null });
+    await expect(cano(evento)).resolves.toBe('sem_usuario');
+    expect(gravadas).toHaveLength(0);
+  });
+
+  it('erro do PostgREST é fail-open para a tela, mas fica no logger.warn', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const { cano } = montar({ gravar: async () => ({ error: { message: 'new row violates row-level security' } }) });
+    await expect(cano(evento)).resolves.toBe('falhou');
+    expect(warn).toHaveBeenCalledWith('app.vitals não gravou no banco', {
+      error: 'new row violates row-level security',
+    });
+  });
+
+  it('exceção (sessão que não resolve, rede) também não lança para quem chamou', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const { cano } = montar({
+      usuario: async () => {
+        throw new Error('Failed to fetch');
+      },
+    });
+    await expect(cano(evento)).resolves.toBe('falhou');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Contrato entre o cliente e a migration. Coluna que não existe vira PGRST204,
+ * `onConflict` sem constraint igual vira 42P10 — e os dois caem no fail-open
+ * acima: a tela segue, a tabela fica VAZIA e a linha de base cega de novo, sem
+ * nada vermelho. Este teste é o que vê isso antes da produção.
+ */
+describe('telemetria_vitals — o payload casa com a migration', () => {
+  const RAIZ = resolve(__dirname, '../../..');
+  const migration = readFileSync(
+    resolve(RAIZ, 'supabase/migrations/20261102093527_telemetria_vitals.sql'),
+    'utf8',
+  );
+  const corpoTabela = migration.slice(
+    migration.indexOf('CREATE TABLE IF NOT EXISTS public.telemetria_vitals ('),
+    migration.indexOf('CREATE INDEX'),
+  );
+  const colunas = new Set(
+    [...corpoTabela.matchAll(/^ {2}([a-z_]+) [a-z]/gm)].map((m) => m[1]).filter((c) => c !== 'constraint'),
+  );
+
+  it('toda chave da linha enviada é coluna da tabela', async () => {
+    const gravadas: LinhaVital[] = [];
+    const cano = criarCanoBanco({
+      usuario: async () => 'u',
+      lenteAtiva: () => false,
+      deviceId: () => null,
+      buildId: () => null,
+      gravar: async (linha) => {
+        gravadas.push(linha);
+        return { error: null };
+      },
+    });
+    await cano(montarEvento(metrica({ name: 'LCP' }), '/', null));
+    const chaves = Object.keys(gravadas[0]);
+    expect(chaves.length).toBeGreaterThan(5);
+    expect(chaves.filter((c) => !colunas.has(c))).toEqual([]);
+  });
+
+  it('o onConflict do upsert é exatamente a PRIMARY KEY', () => {
+    const pk = /PRIMARY KEY \(([^)]+)\)/.exec(corpoTabela)?.[1].replace(/\s/g, '');
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, 'src/lib/analytics-vitals.ts'), 'utf8'));
+    const onConflict = /onConflict: '([^']+)'/.exec(fonte)?.[1];
+    expect(pk).toBe('user_id,metrica_id');
+    expect(onConflict).toBe(pk);
+  });
+
+  it('o envio ao banco tem o MESMO gate do track(): em DEV o .env aponta para produção', () => {
+    const fonte = removerComentarios(readFileSync(resolve(RAIZ, 'src/lib/analytics-vitals.ts'), 'utf8'));
+    expect(fonte).toMatch(/if \(telemetriaAtiva\(\)\) void gravarNoBanco\(evento\);/);
   });
 });

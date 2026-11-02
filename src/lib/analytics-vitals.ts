@@ -1,8 +1,12 @@
 import type { Metric } from 'web-vitals';
+import { supabase } from '@/integrations/supabase/client';
 import { track, telemetriaAtiva } from '@/lib/analytics';
 import { canonicalizarRota } from '@/lib/analytics-rota-canonica';
+import { resolverBuildId } from '@/lib/build-id';
+import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
+import { obterDeviceId } from '@/lib/telemetria-probe';
 
 /**
  * Core Web Vitals no aparelho do usuário (RUM) → evento `app.vitals`.
@@ -188,6 +192,89 @@ export function criarColetor(deps: DepsColetor) {
   };
 }
 
+// ─── 2º cano: o nosso banco ─────────────────────────────────────────────────
+
+/**
+ * Cada evento sai TAMBÉM para `telemetria_vitals`, pelo PostgREST — domínio do
+ * app, imune às listas que cortam o PostHog. Medido em 2026-11-02: o aparelho
+ * mais usado (103 de 155 boots em 7 dias) tem o PostHog bloqueado, então a linha
+ * de base só pelo PostHog sairia da minoria do uso. O PostHog continua: é ele
+ * que traz `$device_type`/`$browser` de quem chega.
+ *
+ * UPSERT por (`user_id`, `metrica_id`): INP/CLS podem sair 2× na mesma carga e a
+ * linha fica com o último valor — o mesmo `argMax` da query do PostHog.
+ *
+ * Pelo client OFICIAL, não por `fetch keepalive`: INP/CLS saem no
+ * `visibilitychange → hidden`, quando a página ainda está viva — o mesmo caminho
+ * que o `useLastVisit` mediu entregando em produção, e o keepalive cru mediu não
+ * entregando. O client embrulhado também respeita o write-guard da lente.
+ */
+export type LinhaVital = EventoVital & {
+  user_id: string;
+  device_id: string | null;
+  build_id: string | null;
+};
+
+export type MotivoCanoBanco = 'gravou' | 'lente_ativa' | 'sem_usuario' | 'falhou';
+
+export type DepsCanoBanco = {
+  usuario: () => Promise<string | null>;
+  lenteAtiva: () => boolean;
+  deviceId: () => string | null;
+  buildId: () => string | null;
+  gravar: (linha: LinhaVital) => PromiseLike<{ error: unknown }>;
+};
+
+/**
+ * Telemetria nunca quebra tela: toda falha vira `logger.warn` e o motivo
+ * devolvido — nada lança para quem chamou.
+ */
+export function criarCanoBanco(deps: DepsCanoBanco): (evento: EventoVital) => Promise<MotivoCanoBanco> {
+  return async (evento) => {
+    // A lente "ver como" barra a escrita no client; desistir aqui evita um warn
+    // por métrica enquanto ela estiver ligada.
+    if (deps.lenteAtiva()) return 'lente_ativa';
+    try {
+      const userId = await deps.usuario();
+      // A RLS só aceita a linha do próprio usuário: na tela de login não há dono.
+      if (!userId) return 'sem_usuario';
+      const { error } = await deps.gravar({
+        ...evento,
+        user_id: userId,
+        device_id: deps.deviceId(),
+        build_id: deps.buildId(),
+      });
+      if (!error) return 'gravou';
+      logger.warn('app.vitals não gravou no banco', { error: mensagemDeErro(error) ?? '(sem mensagem)' });
+    } catch (e) {
+      logger.warn('app.vitals não gravou no banco', { error: mensagemDeErro(e) ?? '(sem mensagem)' });
+    }
+    return 'falhou';
+  };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** O aparelho do `telemetria_probes`; `null` se o localStorage não responder (a coluna é uuid). */
+function deviceIdOuNull(): string | null {
+  try {
+    const id = obterDeviceId();
+    return UUID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+const gravarNoBanco = criarCanoBanco({
+  usuario: async () => (await supabase.auth.getSession()).data.session?.user.id ?? null,
+  lenteAtiva: isLensActive,
+  deviceId: deviceIdOuNull,
+  buildId: () => resolverBuildId(),
+  // `.then()` implícito no `await` de quem chama: o builder do PostgREST é
+  // preguiçoso e só manda a request quando alguém o consome.
+  gravar: (linha) => supabase.from('telemetria_vitals').upsert(linha, { onConflict: 'user_id,metrica_id' }),
+});
+
 // ─── Ligação com o browser ──────────────────────────────────────────────────
 
 const linhaDoTempo: MarcoDeRota[] = [];
@@ -224,6 +311,8 @@ export function iniciarVitals(): void {
   const coletor = criarColetor({
     enviar: (evento) => {
       track('app.vitals', evento);
+      // Mesmo gate do `track()`: em DEV o `.env` aponta para o banco de PRODUÇÃO.
+      if (telemetriaAtiva()) void gravarNoBanco(evento);
       if (emDev) logger.debug('[vitals] app.vitals', evento);
     },
     linha: linhaDoTempo,
