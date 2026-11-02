@@ -18,16 +18,36 @@ const webrtcReturn = {
   remoteStream: null,
 };
 
+const h = vi.hoisted(() => ({ semProvider: false }));
+
 vi.mock('@/hooks/useWebRTCCall', () => ({
   useWebRTCCall: () => webrtcReturn,
+  useWebRTCCallOpcional: () => (h.semProvider ? null : webrtcReturn),
 }));
 
-import { useCallBackend } from '../useCallBackend';
+import { useCallBackend, useCallBackendOpcional } from '../useCallBackend';
 
 describe('useCallBackend dispatcher', () => {
   it('usa SEMPRE o backend WebRTC (Nvoip click-to-call descontinuado da UI)', () => {
     const { result } = renderHook(() => useCallBackend());
     expect(result.current.backend).toBe('webrtc');
     expect(result.current.makeCall).toBe(webrtcReturn.makeCall);
+  });
+});
+
+describe('useCallBackendOpcional (FarmerCalls)', () => {
+  it('com Provider: idêntico ao useCallBackend', () => {
+    h.semProvider = false;
+    const { result } = renderHook(() => useCallBackendOpcional());
+    expect(result.current.backend).toBe('webrtc');
+    expect(result.current.makeCall).toBe(webrtcReturn.makeCall);
+  });
+
+  it('sem Provider (Telefonia congelada): não lança, backend indisponivel e inerte', () => {
+    h.semProvider = true;
+    const { result } = renderHook(() => useCallBackendOpcional());
+    expect(result.current.backend).toBe('indisponivel');
+    expect(result.current.callState).toBe('idle');
+    expect(result.current.isActive).toBe(false);
   });
 });

@@ -16527,6 +16527,51 @@ export type Database = {
         }
         Relationships: []
       }
+      telemetria_vitals: {
+        Row: {
+          atualizado_em: string
+          build_id: string | null
+          classificacao: string
+          conexao: string | null
+          criado_em: string
+          device_id: string | null
+          metrica: string
+          metrica_id: string
+          navegacao: string
+          rota: string
+          user_id: string
+          valor: number
+        }
+        Insert: {
+          atualizado_em?: string
+          build_id?: string | null
+          classificacao: string
+          conexao?: string | null
+          criado_em?: string
+          device_id?: string | null
+          metrica: string
+          metrica_id: string
+          navegacao: string
+          rota: string
+          user_id: string
+          valor: number
+        }
+        Update: {
+          atualizado_em?: string
+          build_id?: string | null
+          classificacao?: string
+          conexao?: string | null
+          criado_em?: string
+          device_id?: string | null
+          metrica?: string
+          metrica_id?: string
+          navegacao?: string
+          rota?: string
+          user_id?: string
+          valor?: number
+        }
+        Relationships: []
+      }
       tier_preco_config: {
         Row: {
           company: string
@@ -23368,6 +23413,10 @@ export type Database = {
         }[]
       }
       fin_regua_custo_capital: { Args: { p_empresa: string }; Returns: number }
+      fin_saldo_titulos_por_status: {
+        Args: { p_companies: string[]; p_statuses: string[] }
+        Returns: Json
+      }
       fin_sync_heartbeat: { Args: never; Returns: undefined }
       fin_sync_kicks_perdidos: {
         Args: { p_now?: string }

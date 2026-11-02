@@ -83,7 +83,7 @@ export function decidirProbe(ctx: ContextoDecisaoProbe): MotivoProbe | 'prossegu
  * acoplado a um `device_seq` que ordena a FSM de apontamento. Compartilhar o
  * identificador acoplaria telemetria a chão de fábrica — limpar um quebraria o outro.
  */
-function obterDeviceId(): string {
+export function obterDeviceId(): string {
   if (typeof localStorage === 'undefined') return 'ssr';
   let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {

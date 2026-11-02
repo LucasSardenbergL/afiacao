@@ -43,76 +43,87 @@ export function useSistemaZone() {
       let erroAprovacoes: string | null = null;
       let erroStaff: string | null = null;
 
-      try {
-        const { data: pending, count, error } = await supabase
-          .from('profiles')
-          .select('user_id, name, created_at', { count: 'exact' })
-          .eq('is_approved', false)
-          // Exclui clientes-fantasma importados do Omie (nunca pediram conta) do KPI de pendências.
-          .or('prospect_source.is.null,prospect_source.neq.omie_import')
-          .order('created_at', { ascending: true })
-          .limit(3);
-        // O supabase-js DEVOLVE o erro (não lança): sem este `throw` o `catch` nunca via a falha
-        // e o `count ?? 0` afirmava "0 aprovações" (plano v4, lote 5 — N3: ausente ≠ zero).
-        if (error) throw new Error(`profiles (aprovações pendentes): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
-        if (count === null || !pending) throw new Error('profiles (aprovações pendentes): contagem ausente sem error — malformada');
-        aprovacoesPendentes = count;
-        const rows = pending as Array<{
-          user_id: string;
-          name?: string | null;
-          created_at?: string | null;
-        }>;
-        topItems = rows.map((p) => ({
-          id: p.user_id,
-          icon: UserCheck,
-          title: p.name ?? 'Usuário sem nome',
-          subtitle: 'Aguardando liberação',
-          path: '/admin/approvals',
-          itemType: 'pending_approval',
-          badge: { label: 'novo', intent: 'info' as const },
-        }));
-      } catch (e) {
-        aprovacoesPendentes = null;
-        topItems = [];
-        erroAprovacoes = mensagemDeErro(e) ?? 'profiles (aprovações pendentes): falha sem mensagem';
-      }
-
-      try {
-        // Staff aprovados (proxy de "quantas pessoas operam o sistema"). Conta
-        // profiles com role staff (não-customer) via user_roles join via RPC
-        // ou query simples. Aqui contamos profiles approved (qualquer role).
-        const { count, error } = await supabase
-          .from('profiles')
-          .select('user_id', { count: 'exact', head: true })
-          .eq('is_approved', true);
-        if (error) throw new Error(`profiles (staff ativos): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
-        if (count === null) throw new Error('profiles (staff ativos): contagem ausente sem error — malformada');
-        staffAtivos = count;
-      } catch (e) {
-        staffAtivos = null;
-        erroStaff = mensagemDeErro(e) ?? 'profiles (staff ativos): falha sem mensagem';
-      }
-
-      try {
-        // Última atividade: max(created_at) de orders OU sales_orders, o que
-        // for mais recente. Proxy "sistema vivo / fluindo dado".
-        const [ordersRes, salesRes] = await Promise.all([
-          supabase.from('orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-          supabase.from('sales_orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-        ]);
-        // Este KPI é o proxy de "o sistema está vivo": a leitura que falha não pode se
-        // disfarçar de "nenhum pedido jamais entrou". Lança → o `catch` abaixo deixa
-        // `ultimaAtividadeIso` em null → o KPI mostra "—" em vez de uma data errada.
-        if (ordersRes.error) throw ordersRes.error;
-        if (salesRes.error) throw salesRes.error;
-        const o = (ordersRes.data as { created_at?: string | null } | null)?.created_at ?? null;
-        const s = (salesRes.data as { created_at?: string | null } | null)?.created_at ?? null;
-        if (o && s) {
-          ultimaAtividadeIso = new Date(o) > new Date(s) ? o : s;
-        } else {
-          ultimaAtividadeIso = o ?? s;
+      const lerAprovacoes = async () => {
+        try {
+          const { data: pending, count, error } = await supabase
+            .from('profiles')
+            .select('user_id, name, created_at', { count: 'exact' })
+            .eq('is_approved', false)
+            // Exclui clientes-fantasma importados do Omie (nunca pediram conta) do KPI de pendências.
+            .or('prospect_source.is.null,prospect_source.neq.omie_import')
+            .order('created_at', { ascending: true })
+            .limit(3);
+          // O supabase-js DEVOLVE o erro (não lança): sem este `throw` o `catch` nunca via a falha
+          // e o `count ?? 0` afirmava "0 aprovações" (plano v4, lote 5 — N3: ausente ≠ zero).
+          if (error) throw new Error(`profiles (aprovações pendentes): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+          if (count === null || !pending) throw new Error('profiles (aprovações pendentes): contagem ausente sem error — malformada');
+          aprovacoesPendentes = count;
+          const rows = pending as Array<{
+            user_id: string;
+            name?: string | null;
+            created_at?: string | null;
+          }>;
+          topItems = rows.map((p) => ({
+            id: p.user_id,
+            icon: UserCheck,
+            title: p.name ?? 'Usuário sem nome',
+            subtitle: 'Aguardando liberação',
+            path: '/admin/approvals',
+            itemType: 'pending_approval',
+            badge: { label: 'novo', intent: 'info' as const },
+          }));
+        } catch (e) {
+          aprovacoesPendentes = null;
+          topItems = [];
+          erroAprovacoes = mensagemDeErro(e) ?? 'profiles (aprovações pendentes): falha sem mensagem';
         }
-      } catch { /* */ }
+      };
+
+      const lerStaff = async () => {
+        try {
+          // Staff aprovados (proxy de "quantas pessoas operam o sistema"). Conta
+          // profiles com role staff (não-customer) via user_roles join via RPC
+          // ou query simples. Aqui contamos profiles approved (qualquer role).
+          const { count, error } = await supabase
+            .from('profiles')
+            .select('user_id', { count: 'exact', head: true })
+            .eq('is_approved', true);
+          if (error) throw new Error(`profiles (staff ativos): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+          if (count === null) throw new Error('profiles (staff ativos): contagem ausente sem error — malformada');
+          staffAtivos = count;
+        } catch (e) {
+          staffAtivos = null;
+          erroStaff = mensagemDeErro(e) ?? 'profiles (staff ativos): falha sem mensagem';
+        }
+      };
+
+      const lerUltimaAtividade = async () => {
+        try {
+          // Última atividade: max(created_at) de orders OU sales_orders, o que
+          // for mais recente. Proxy "sistema vivo / fluindo dado".
+          const [ordersRes, salesRes] = await Promise.all([
+            supabase.from('orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+            supabase.from('sales_orders').select('created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          ]);
+          // Este KPI é o proxy de "o sistema está vivo": a leitura que falha não pode se
+          // disfarçar de "nenhum pedido jamais entrou". Lança → o `catch` abaixo deixa
+          // `ultimaAtividadeIso` em null → o KPI mostra "—" em vez de uma data errada.
+          if (ordersRes.error) throw ordersRes.error;
+          if (salesRes.error) throw salesRes.error;
+          const o = (ordersRes.data as { created_at?: string | null } | null)?.created_at ?? null;
+          const s = (salesRes.data as { created_at?: string | null } | null)?.created_at ?? null;
+          if (o && s) {
+            ultimaAtividadeIso = new Date(o) > new Date(s) ? o : s;
+          } else {
+            ultimaAtividadeIso = o ?? s;
+          }
+        } catch { /* */ }
+      };
+
+      // As três leituras não dependem uma da outra: saem juntas (plano v4, lote 10 — C2). Cada
+      // bloco tem o próprio `catch`, então o `Promise.all` nunca rejeita e a falha segue
+      // degradando SÓ o KPI do bloco que caiu.
+      await Promise.all([lerAprovacoes(), lerStaff(), lerUltimaAtividade()]);
 
       return { aprovacoesPendentes, staffAtivos, ultimaAtividadeIso, topItems, erroAprovacoes, erroStaff };
     },

@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **752** custom migrations totais
-- **2482** objetos esperados (criados por estas migrations)
+- **754** custom migrations totais
+- **2494** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 936
-  - `rls_policy`: 515
-  - `index`: 345
-  - `table`: 225
+  - `function`: 939
+  - `rls_policy`: 519
+  - `index`: 347
+  - `table`: 227
   - `cron_job`: 206
   - `view`: 132
-  - `trigger`: 119
+  - `trigger`: 120
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6176,6 +6176,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261101222916_hot_carimbo_sync_sem_indice.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261102020000_fin_cr_reconciliacao_exclusoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_cr_marcar_ausentes` | — |
+| `function` | `public.fin_cr_excluir_confirmados` | — |
+| `table` | `public.fin_contas_receber_excluidos` | — |
+| `index` | `public.idx_fin_cr_excluidos_company_codigo` | `fin_contas_receber_excluidos` |
+
+### `20261102093527_telemetria_vitals.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.telemetria_vitals_carimbar` | — |
+| `table` | `public.telemetria_vitals` | — |
+| `index` | `public.idx_telemetria_vitals_criado_em` | `telemetria_vitals` |
+| `trigger` | `public.trg_telemetria_vitals_carimbar` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_insert` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_update` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_user_read` | `telemetria_vitals` |
+| `rls_policy` | `public.telemetria_vitals_service_all` | `telemetria_vitals` |
 
 ## Próximos passos por status
 

@@ -44,64 +44,76 @@ export function useReposicaoZone() {
       let aumentos7d = 0;
       let topItems: TopListItem[] = [];
 
-      try {
-        // "Prontos" = sugestões aguardando decisão do founder. O status 'pronto' não
-        // existe nesta tabela (era 0 permanente, o card nunca disparava); o estado real
-        // que precisa de ação é 'pendente_aprovacao'.
-        const { count } = await supabase
-          .from('pedido_compra_sugerido')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pendente_aprovacao');
-        sugeridosProntos = count ?? 0;
-      } catch { /* */ }
+      const lerSugeridos = async () => {
+        try {
+          // "Prontos" = sugestões aguardando decisão do founder. O status 'pronto' não
+          // existe nesta tabela (era 0 permanente, o card nunca disparava); o estado real
+          // que precisa de ação é 'pendente_aprovacao'.
+          const { count } = await supabase
+            .from('pedido_compra_sugerido')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pendente_aprovacao');
+          sugeridosProntos = count ?? 0;
+        } catch { /* */ }
+      };
 
-      try {
-        // "Ativos" = aguardando decisão (status 'pendente'). Sem esse filtro o card contava a
-        // tabela inteira — inclusive aceitos/excluídos/resolvidos — e mostrava 511 com 238 pendentes.
-        const { count } = await supabase
-          .from('eventos_outlier')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'pendente');
-        alertasAtivos = count ?? 0;
-      } catch { /* */ }
+      const lerAlertas = async () => {
+        try {
+          // "Ativos" = aguardando decisão (status 'pendente'). Sem esse filtro o card contava a
+          // tabela inteira — inclusive aceitos/excluídos/resolvidos — e mostrava 511 com 238 pendentes.
+          const { count } = await supabase
+            .from('eventos_outlier')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'pendente');
+          alertasAtivos = count ?? 0;
+        } catch { /* */ }
+      };
 
-      try {
-        // Lista de topo: pendentes, crítico antes de atenção antes de info (mais recente dentro de
-        // cada severidade). Uma leitura por severidade porque a ordem alfabética do texto não serve.
-        const porSeveridade = await Promise.all(
-          SEVERIDADES.map((sev) =>
-            supabase
-              .from('eventos_outlier')
-              .select('id, tipo, sku_descricao, severidade')
-              .eq('status', 'pendente')
-              .eq('severidade', sev)
-              .order('detectado_em', { ascending: false, nullsFirst: false })
-              .limit(3),
-          ),
-        );
-        const rows = porSeveridade.flatMap((r) => (r.data ?? []) as AlertaPendente[]);
-        topItems = rows.slice(0, 3).map((a) => ({
-          id: String(a.id),
-          icon: AlertTriangle,
-          title: a.sku_descricao ?? a.tipo ?? 'Alerta',
-          subtitle: `${TIPO_LABEL[a.tipo] ?? a.tipo} · ${SEVERIDADE_LABEL[a.severidade] ?? a.severidade}`,
-          path: '/admin/reposicao/alertas',
-          itemType: 'outlier_event',
-          badge: a.severidade === 'critico'
-            ? { label: 'crítico', intent: 'error' as const }
-            : a.severidade === 'atencao'
-              ? { label: 'atenção', intent: 'warning' as const }
-              : undefined,
-        }));
-      } catch { /* */ }
+      const lerTopAlertas = async () => {
+        try {
+          // Lista de topo: pendentes, crítico antes de atenção antes de info (mais recente dentro de
+          // cada severidade). Uma leitura por severidade porque a ordem alfabética do texto não serve.
+          const porSeveridade = await Promise.all(
+            SEVERIDADES.map((sev) =>
+              supabase
+                .from('eventos_outlier')
+                .select('id, tipo, sku_descricao, severidade')
+                .eq('status', 'pendente')
+                .eq('severidade', sev)
+                .order('detectado_em', { ascending: false, nullsFirst: false })
+                .limit(3),
+            ),
+          );
+          const rows = porSeveridade.flatMap((r) => (r.data ?? []) as AlertaPendente[]);
+          topItems = rows.slice(0, 3).map((a) => ({
+            id: String(a.id),
+            icon: AlertTriangle,
+            title: a.sku_descricao ?? a.tipo ?? 'Alerta',
+            subtitle: `${TIPO_LABEL[a.tipo] ?? a.tipo} · ${SEVERIDADE_LABEL[a.severidade] ?? a.severidade}`,
+            path: '/admin/reposicao/alertas',
+            itemType: 'outlier_event',
+            badge: a.severidade === 'critico'
+              ? { label: 'crítico', intent: 'error' as const }
+              : a.severidade === 'atencao'
+                ? { label: 'atenção', intent: 'warning' as const }
+                : undefined,
+          }));
+        } catch { /* */ }
+      };
 
-      try {
-        const { count } = await supabase
-          .from('fornecedor_aumento_anunciado')
-          .select('id', { count: 'exact', head: true })
-          .gte('criado_em', sevenDaysAgo);
-        aumentos7d = count ?? 0;
-      } catch { /* */ }
+      const lerAumentos = async () => {
+        try {
+          const { count } = await supabase
+            .from('fornecedor_aumento_anunciado')
+            .select('id', { count: 'exact', head: true })
+            .gte('criado_em', sevenDaysAgo);
+          aumentos7d = count ?? 0;
+        } catch { /* */ }
+      };
+
+      // Leituras independentes: saem juntas (plano v4, lote 10 — C2). Cada bloco engole a própria
+      // falha como antes, então o `Promise.all` nunca rejeita.
+      await Promise.all([lerSugeridos(), lerAlertas(), lerTopAlertas(), lerAumentos()]);
 
       return { sugeridosProntos, alertasAtivos, aumentos7d, topItems };
     },

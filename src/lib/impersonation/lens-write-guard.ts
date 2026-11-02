@@ -32,6 +32,8 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_estado_cadastro_omie',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
+  // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.
+  'fin_saldo_titulos_por_status',
 ]);
 function isReadOnlyRpc(name: string): boolean {
   return name.startsWith('get_') || name.startsWith('list_') || RPC_READONLY_ALLOWLIST.has(name);

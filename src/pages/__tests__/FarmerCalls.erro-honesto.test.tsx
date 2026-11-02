@@ -121,7 +121,7 @@ vi.mock('@/hooks/useMarkMixGapFeedback', () => ({
   useMarkMixGapFeedback: () => ({ mutate: vi.fn() }),
 }));
 vi.mock('@/hooks/useCallBackend', () => ({
-  useCallBackend: () => ({
+  useCallBackendOpcional: () => ({
     backend: 'nvoip' as const, callState: 'idle', callDuration: 0, isActive: false,
     isConnecting: false, isRinging: false, isEstablished: false, isFinished: false,
     error: null, audioLink: null, makeCall: vi.fn(), endCall: vi.fn(),
@@ -129,7 +129,7 @@ vi.mock('@/hooks/useCallBackend', () => ({
   }),
 }));
 vi.mock('@/hooks/useWebRTCCall', () => ({
-  useWebRTCCall: () => ({
+  useWebRTCCallOpcional: () => ({
     callState: 'idle', transcriptionStatus: 'idle', transcriptionTurns: [],
     transcriptionError: null, spinAnalysisStatus: 'idle', spinAnalysis: null,
     spinAnalysisError: null,

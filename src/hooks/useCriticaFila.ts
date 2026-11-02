@@ -12,6 +12,8 @@ import type { EvidencePack } from '@/lib/fila/critica/types';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useWhatsappSla } from '@/queries/useWhatsappSla';
+import { rotaCongelada } from '@/lib/modulos/congelamento';
+import { MODULOS } from '@/lib/modulos/manifesto';
 
 const IN_CHUNK = 200;
 
@@ -45,10 +47,12 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
   const { user } = useAuth();
   const { isImpersonating, effectiveUserId } = useImpersonation();
   const donoEfetivo = isImpersonating && effectiveUserId ? effectiveUserId : (user?.id ?? null);
-  const slaQ = useWhatsappSla();
+  // Módulo congelado (M-41) não é lido: a query fica desligada e o sinal sai "indisponível"
+  // abaixo (data ausente ⇒ null) — nunca lista vazia, que se passaria por "sem sinal".
+  const slaQ = useWhatsappSla({ enabled: rotaCongelada('/whatsapp', MODULOS) === null });
 
-  const rota = useRouteContactList(workdayIso);
-  const tarefas = useMinhasTarefas();
+  const rota = useRouteContactList(workdayIso, { enabled: rotaCongelada('/rota', MODULOS) === null });
+  const tarefas = useMinhasTarefas({ enabled: rotaCongelada('/tarefas', MODULOS) === null });
   const metricsQ = useQuery({
     queryKey: ['critica-metrics', topIds],
     enabled: topIds.length > 0,
@@ -60,11 +64,10 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
     const result = new Map<string, EvidencePack>();
     if (topIds.length === 0) return result;
 
-    const callQueue = rota.data?.callQueue ?? [];
-    const cadenciaIndisponivel = rota.data?.cadenciaIndisponivel ?? false;
-    const rotaSinais: RotaSinalCliente[] | null = cadenciaIndisponivel
+    // Sem data (desligada, carregando ou com erro) = fonte NÃO lida ⇒ null, nunca [].
+    const rotaSinais: RotaSinalCliente[] | null = rota.data == null || rota.data.cadenciaIndisponivel
       ? null
-      : callQueue.map(c => ({
+      : rota.data.callQueue.map(c => ({
           customerUserId: c.customerUserId,
           naCallQueue: true,
           semRespostaRecenteN: c.semRespostaRecenteN,
@@ -72,7 +75,7 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
         }));
 
     // Tarefa sem cliente (recorrente nascida de template sem cliente) não é sinal DE CLIENTE: fica fora.
-    const tarefaSinais: TarefaSinalCliente[] = (tarefas.data ?? []).flatMap(t =>
+    const tarefaSinais: TarefaSinalCliente[] | null = tarefas.data == null ? null : tarefas.data.flatMap(t =>
       t.customer_user_id === null
         ? []
         : [{
@@ -83,7 +86,7 @@ export function useCriticaFila(acoes: AcaoSugerida[], topN = 5): Map<string, Evi
           }],
     );
 
-    const waSlaSinais: WaSlaSinalCliente[] = (slaQ.data ?? [])
+    const waSlaSinais: WaSlaSinalCliente[] | null = slaQ.data == null ? null : slaQ.data
       .filter(r => r.customer_user_id != null && donoEfetivo != null && r.owner_user_id === donoEfetivo)
       .map(r => ({ customerUserId: r.customer_user_id as string, minutosUteis: r.minutos_uteis_aguardando, nivel: r.nivel }));
 

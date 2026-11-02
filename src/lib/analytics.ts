@@ -61,6 +61,12 @@ function withPosthog(fn: (p: PostHog) => void, label: string): void {
   }
 }
 
+/** Host de máquina local (preview/QA), nunca o app publicado. */
+export function ehHostLocal(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h.endsWith('.localhost') || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+}
+
 export function initAnalytics(): void {
   if (initStarted) return;
   if (typeof window === 'undefined') return;
@@ -108,8 +114,12 @@ export function initAnalytics(): void {
         person_profiles: 'identified_only',
         // Não enviar em desenvolvimento por padrão (opt-out explícito em DEV pra evitar
         // poluir dashboard de produção). Pra testar local, comente o opt_out abaixo.
+        // `DEV` sozinho não basta: `vite preview` (o /qa e o /browse dos agentes)
+        // serve build de PRODUÇÃO em localhost, logado com usuário real — e o
+        // chunk que some quando o preview é recompilado virava alerta `erro_app`
+        // de "Empresa: oben" vindo de http://localhost:4179.
         loaded: (instance) => {
-          if (import.meta.env.DEV) {
+          if (import.meta.env.DEV || ehHostLocal(window.location.hostname)) {
             instance.opt_out_capturing();
           }
         },

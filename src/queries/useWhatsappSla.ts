@@ -87,11 +87,12 @@ function acquireSlaRealtime(qc: ReturnType<typeof useQueryClient>): () => void {
   };
 }
 
-export function useWhatsappSla() {
+export function useWhatsappSla({ enabled = true }: { enabled?: boolean } = {}) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: SLA_QUERY_KEY,
     queryFn: fetchWhatsappSla,
+    enabled,
     refetchInterval: 30000, // "tiquetaqueia" o contador (now() na view dá minutos frescos a cada fetch)
     refetchIntervalInBackground: false,
     staleTime: 15000,
@@ -103,7 +104,8 @@ export function useWhatsappSla() {
   // canal inteiro (CHANNEL_ERROR silencioso, realtime morto). O canal nasce
   // no 1º consumidor e morre no último; o throttle continua colapsando a
   // rajada (blast/sync em lote) numa revalidação por janela de 3s.
-  useEffect(() => acquireSlaRealtime(qc), [qc]);
+  // Desligado (módulo WhatsApp congelado): nem query nem canal realtime.
+  useEffect(() => (enabled ? acquireSlaRealtime(qc) : undefined), [qc, enabled]);
   return q;
 }
 

@@ -117,6 +117,11 @@ db/test-reposicao-po-observado.sh          39  falsificar=33
 # Sombra da associação NF↔PO (20261017040000): só a RPC escreve, com compare-and-set por observado_em (run atrasado
 # não sobrescreve evidência nova); CHECK impede "associável" com motivo e proposta fora do associável; RLS staff.
 db/test-recebimento-associacao-sombra.sh    20  falsificar=13
+# Web-vitals pelo nosso banco (20261102093527, plano v4 lote 0b): o UPSERT do cliente (1 linha por instância
+# de métrica, último valor) só toca a PRÓPRIA linha. Cada policy falsificada sozinha: a de INSERT pelo INSERT
+# puro (no UPSERT a de SELECT barra a linha alheia sozinha), a de UPDATE pelo UPDATE sem WHERE (que não passa
+# pela de SELECT), a de SELECT pelo próprio UPSERT; trigger que segura criado_em; postcondição que aborta.
+db/test-telemetria-vitals.sh                27
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
@@ -284,6 +289,13 @@ db/test-vendas-sync-cursor-fencing.sh      47
 # 16 sabotagens inline, cada uma com o seu vermelho; o validador pós-apply reprova 13 delas.
 db/test-vendas-sync-cursor-falha-honesta.sh 72
 db/test-fin-sync-kick-skipped-busy.sh      18
+# CR incremental (plano v4, lote 15): título ABERTO excluído no Omie só sai do espelho com PROVA da edge
+# (ausência em 2 runs = candidato; DELETE só com a listagem de 1 página do cliente sem o código), com
+# tombstone na mesma transação; retry do mesmo run, observação positiva no run, não-marcado e fechado nunca
+# se apagam; teto sem escrita; corrida com writer de linha travada durante o C3 (2 sessões). 7 sabotagens
+# inline (defesas duplas neutralizadas juntas; a da corrida, uma camada por vez), cada uma reprovando o SEU
+# rótulo, com controle verde antes e depois.
+db/test-fin-cr-reconciliacao.sh            82
 db/test-pedido-venda-coerencia.sh          31
 # Tintométrico: a promoção saiu do HTTP para uma fila — tick concorrente PULA (try-lock), FIFO
 # estrito com backoff, statement_timeout capturado desfaz o parcial. O `--falsificar` (12
