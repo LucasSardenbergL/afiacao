@@ -32,7 +32,11 @@ const HomeSkeleton = () => (
 const Index = () => {
   const { user, isStaff, loading: roleLoading } = useAuth();
 
-  const { data: profile, isLoading: profileLoading } = useBasicProfile(user?.id);
+  // Profile só do CLIENTE: é prop do CustomerDashboard. A home staff não o usa (aprovação vem do
+  // AuthContext), então ele não pode segurar o skeleton do staff (plano v4, lote 5 — C2). O fetch
+  // segue em paralelo ao papel, como o dos pedidos, para o cliente não pagar uma viagem a mais.
+  const { data: profile, isLoading: profileLoading } =
+    useBasicProfile(!isStaff ? user?.id : undefined);
   const { data: pendingOrders = [], isLoading: customerOrdersLoading } =
     useCustomerPendingOrders(!isStaff ? user?.id : undefined);
   const { data: userTools = [] } =
@@ -51,7 +55,7 @@ const Index = () => {
     return 'Boa noite';
   };
 
-  if (roleLoading || profileLoading || (!isStaff && customerOrdersLoading)) {
+  if (roleLoading || (!isStaff && (profileLoading || customerOrdersLoading))) {
     return <HomeSkeleton />;
   }
 

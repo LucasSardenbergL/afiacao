@@ -6,13 +6,14 @@ import { CockpitCardFooter } from '../cockpit/CockpitCardFooter';
 import { CockpitCardError } from '../cockpit/CockpitCardError';
 import { CockpitCardSkeleton } from '../cockpit/CockpitCardSkeleton';
 import { useSistemaZone } from '@/hooks/dashboard/useSistemaZone';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 import { ZONE_META } from '@/lib/dashboard/zone-meta';
 import { useDashboardPersonaContext } from '@/contexts/DashboardPersonaContext';
 
 export function SistemaZone() {
   const meta = ZONE_META.sistema;
   const { persona } = useDashboardPersonaContext();
-  const { kpis, topItems, isLoading, isError, refetch, isLive } = useSistemaZone();
+  const { kpis, topItems, erroAprovacoes, isLoading, isError, refetch, isLive } = useSistemaZone();
 
   return (
     <CockpitCard>
@@ -22,7 +23,12 @@ export function SistemaZone() {
       {!isLoading && !isError && (
         <>
           <CockpitKpiRow kpis={kpis} />
-          <CockpitTopList zone="sistema" items={topItems} emptyLabel="Tudo em dia." />
+          {/* Lista vazia por FALHA não é "Tudo em dia.": a leitura de pendências não aconteceu. */}
+          {erroAprovacoes ? (
+            <AvisoLeituraFalhou oque="as aprovações pendentes" estado="erro" className="mx-4" />
+          ) : (
+            <CockpitTopList zone="sistema" items={topItems} emptyLabel="Tudo em dia." />
+          )}
         </>
       )}
       <CockpitCardFooter zone="sistema" persona={persona} label="Abrir aprovações" path={meta.cockpitPath} />
