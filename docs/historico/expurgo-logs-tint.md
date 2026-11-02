@@ -41,4 +41,25 @@ que a promoção leia.
 
 ## Aplicação e números
 
-<!-- preenchido após o apply -->
+**Apply (2026-11-02, 09:22 UTC):** o founder rodou `bun run db:aplicar`, e a tentativa #856 virou recibo na
+mesma transação (sha256 `61f945c6…`, igual ao arquivo mergeado no #3514). Conferido por fora via psql-ro:
+1 job ativo (id 259), 0 filhas sem índice, os 7 índices válidos, e a função sem EXECUTE para `anon` e
+`authenticated`.
+
+**1ª rodada do cron (09:41 UTC):** `succeeded` em 5,2 s, bem abaixo do `statement_timeout` de 2 min.
+Apagou exatamente o teto de 10k linhas em cada tabela.
+
+| Medida (psql-ro) | Antes (09:35) | Depois (09:41) |
+|---|---|---|
+| `tint_sync_runs` linhas (> 30 d) | 133.979 (100.102) | 123.979 (90.102) |
+| `tint_sync_errors` linhas (> 60 d) | 90.995 (37.660) | 80.995 (27.660) |
+| `tint_importacoes` linhas | 116.586 | 116.586 |
+| staging (skus+formulas+formula_itens+bases) | 1.225.958 | 1.225.958 |
+| fila da promoção (`pendente`/`erro`) | 0 | 0 |
+| tamanho runs / errors / importacoes | 122 / 116 / 39 MB | 122 / 116 / 39 MB |
+
+O staging e a fila ficaram intactos, então nenhuma linha referenciada saiu. Os arquivos não mudam de
+tamanho: o DELETE só libera espaço para reuso depois do autovacuum, e as tabelas param de crescer sem
+precisar de `VACUUM FULL`. O que falta sair escoa a 10k/h. Os erros (~27,7k) acabam em ~3 h. Dos runs, saem
+~86k: o resto dos 90k tem filha no staging e fica retido por desenho, porque na medição de 2026-11-01 eram
+95.990 apagáveis entre 100.102 vencidos. Isso leva ~9 h.
