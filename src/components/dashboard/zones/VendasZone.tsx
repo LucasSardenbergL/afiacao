@@ -14,7 +14,7 @@ import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
 export function VendasZone() {
   const meta = ZONE_META.vendas;
   const { persona } = useDashboardPersonaContext();
-  const { kpis, topItems, isLoading, isError, refetch, isLive, status, fetchStatus } = useVendasZone();
+  const { kpis, topItems, erroTopo, isLoading, isError, refetch, isLive, status, fetchStatus } = useVendasZone();
   // Offline a query PAUSA, e pausa não é erro: sem cache ela nem chega a "carregando" (o corpo
   // vazio dizia "Sem orçamentos aguardando."); com cache o faturado velho ficava como se fosse de
   // agora. Erro com cache segue o card de erro (degradação integral, decidida no #2766).
@@ -32,7 +32,14 @@ export function VendasZone() {
       {!isLoading && !isError && temDado && (
         <>
           <CockpitKpiRow kpis={kpis} />
-          <CockpitTopList zone="vendas" items={topItems} emptyLabel="Sem orçamentos aguardando." />
+          {/* Lista vazia por FALHA não é "Sem orçamentos aguardando.": a leitura não aconteceu. Com parte lida, mostra o
+              que veio e avisa que falta. */}
+          {(!erroTopo || topItems.length > 0) && (
+            <CockpitTopList zone="vendas" items={topItems} emptyLabel="Sem orçamentos aguardando." />
+          )}
+          {erroTopo && (
+            <AvisoLeituraFalhou oque="os orçamentos aguardando há mais de 24h" estado="erro" className="mx-4" testId="aviso-topo-falhou" />
+          )}
           {velho && (
             <AvisoLeituraFalhou
               oque="as vendas mais recentes (os números acima são da última leitura)"
