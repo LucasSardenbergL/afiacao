@@ -81,7 +81,7 @@ SQL
 
 MIG="$REPO_ROOT/supabase/migrations/20261102020000_fin_cr_reconciliacao_exclusoes.sql"
 P -q -f "$MIG"
-P -q -f "$MIG" >/dev/null 2>&1 && ok "L0 migration aplica 2× (idempotente)" || bad "L0 migration NÃO re-aplica"
+if P -q -f "$MIG" >/dev/null 2>&1; then ok "L0 migration aplica 2× (idempotente)"; else bad "L0 migration NÃO re-aplica"; fi
 
 # ── helpers (sempre como service_role, que é quem chama na edge) ──
 SR="SET test.role='service_role'; SET ROLE service_role;"
