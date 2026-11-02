@@ -21,6 +21,7 @@ TMPD="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")"
 DATA="$TMPD/data"
 export LC_ALL=C LANG=C          # sem isso o postmaster aborta ("became multithreaded during startup")
 
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$TMPD"; }
