@@ -59,15 +59,20 @@ Por empresa, sob o lease já existente, com `t0` congelado antes de qualquer lei
 Estado em `sync_state` (padrão `deveRodarCompleto`, docs/agent/sync.md), 1 linha por marcador × empresa:
 `fin_cr_full_inicio` (gravado na página 1 do full), `fin_cr_full_ok` (no fim real do full recebe o
 início dele — só se existir e for posterior ao ok anterior; full herdado de bundle antigo é refeito),
-`fin_cr_incremental_ok` (`t0` do último incremental íntegro). **Marca d'água = a mais recente entre
-`incremental_ok` e `full_ok`**, em dia de São Paulo. O deploy da edge não depende da migration: sem a
+`fin_cr_incremental_ok` (`t0` do último incremental íntegro). **Marca d'água = `incremental_ok`; o
+`full_ok` só no bootstrap** (nenhum incremental ainda), em dia de São Paulo — não o máximo dos dois: a
+continuação do full reinicia o piso e pode fechar truncada, e um `full_ok` mais novo pularia alteração de
+título fechado em página não visitada (Codex, código). Janela mais larga é sempre segura. O cursor do
+full de CR é lido e gravado com erro que LANÇA (os helpers compartilhados engolem): cursor pendente lido
+como "nenhum" recomeçaria o full com início novo, que a continuação velha publicaria como `full_ok`. O deploy da edge não depende da migration: sem a
 RPC, o run lista A e B e devolve `reconciliacao: "indisponivel"` (§3.4).
 
 ### 3.2 Incremental (1 invocação, sem continuação)
 
 - **A — conjunto aberto completo**: `filtrar_apenas_titulos_em_aberto=S`, com os guards do full em
   **modo estrito**: fim real obrigatório (budget/maxPages antes dele LANÇA), título sem código LANÇA,
-  lidos < `total_de_registros` declarado LANÇA, além do piso monotônico, vazia antes do piso e página
+  `total_de_registros` lido da 1ª página ANTES do veredito de página vazia e obrigatório (ausente ou
+  lidos < declarado LANÇA — `falhaVarreduraEstrita`), além do piso monotônico, vazia antes do piso e página
   repetida. Upsert por página. Refaz o status relativo ao dia de todo aberto **visto**.
 - **B — alterados**: `filtrar_por_data_de = marca − 1 dia`, `ate = hoje`, `filtrar_apenas_alteracao=S`,
   mesmo modo estrito. Roda DEPOIS de A (a observação mais nova vence).
@@ -98,11 +103,20 @@ sai de `fin_movimentacoes`/`v_titulo_baixas`).
   `filtrar_por_emissao_de/ate` = emissão ± 1 dia. Uma resposta = leitura consistente, sem página para
   deslizar. `ausente_provado` só se a resposta se afirma completa (`total_de_paginas ≤ 1`, itens =
   `total_de_registros`, < 100), todo item tem código e é do cliente pedido; o código achado =
-  `presente`; o resto = `inconclusivo` (fica para outro run). Parcelas da mesma NF dividem a prova;
-  ≤ 10 provas por run (backlog da oben drena em ~3 runs). Medido na oben: controles reais vêm; o
+  `presente`; o resto = `inconclusivo` (fica para outro run). Contagens só valem como inteiro ≥ 0 de
+  verdade (`Number("")` não vira 0; páginas ausentes não viram 0; itens com 0 páginas é incoerente).
+  Parcelas da mesma NF dividem a RESPOSTA (cada código é reavaliado nela); ≤ 10 provas por run, em ordem
+  embaralhada — inconclusivos perenes não monopolizam o teto (backlog da oben drena em ~3 runs). Medido na oben: controles reais vêm; o
   fantasma vem vazio com `total_de_registros: 0` (sem fault) ou entre outros títulos do cliente.
+- **C2b reconfirmação (edge)**, só se houver confirmado: relista os alterados de [último dia de B, hoje]
+  em modo estrito. O Omie pode mudar cliente/emissão do título entre B e a prova (a prova leria a chave
+  velha e voltaria vazia); código visto sai dos confirmados, e o upsert carimba `updated_at > t0`, que o
+  C3 também barra. Custo: ~1 página, só em run com exclusão.
 - **C3 `fin_cr_excluir_confirmados`** (SQL): só apaga quem segue aberto, marcado por run anterior e
-  **não regravado neste run** (`updated_at < t0` — observação positiva vence a prova). Tombstone
+  **não regravado neste run** (`updated_at < t0` — observação positiva vence a prova). Seleção com
+  `FOR UPDATE OF r` (writer concorrente com a linha regravada e a transação aberta: o Postgres espera e
+  reavalia as guardas na versão nova), guardas repetidas no DELETE e contagem igual à do tombstone ou
+  `RAISE`. Tombstone
   (`fin_contas_receber_excluidos`: linha inteira + evidência da prova) na mesma transação, antes do
   DELETE; o `NOT NULL` de `ausente_omie_desde` no tombstone é uma 2ª defesa contra apagar não-marcado.
 - Por que DELETE e não status novo: `status_titulo` é texto livre (CHECK dropado em 20260329) e ~13
@@ -112,6 +126,8 @@ sai de `fin_movimentacoes`/`v_titulo_baixas`).
   todos tratam. Única FK: `fin_ic_matches.cr_id ON DELETE SET NULL` (o tombstone guarda o `id`).
 - `cobranca_quitacao_ok`: hoje o fantasma ABERTO bloqueia a quitação do cliente para sempre.
 - **Nunca** `ConsultarContaReceber` por título inexistente (§6).
+- Migration ausente = `PGRST202`, ou `42883` cuja mensagem nomeia a própria RPC; `42883` de dependência
+  interna LANÇA (não vira "indisponível" com marca avançando).
 
 ### 3.5 Frescor (`_data_health_compute`)
 
@@ -131,15 +147,18 @@ hoje (uma empresa sã esconde outra parada) — follow-up fora deste lote (§8).
 
 ## 5. Provas
 
-- `db/test-fin-cr-reconciliacao.sh` (PG17, no núcleo do CI, 70 asserts): baixa, estorno, exclusão
+- `db/test-fin-cr-reconciliacao.sh` (PG17, no núcleo do CI, 82 asserts): baixa, estorno, exclusão
   (marca → candidato → prova → apaga, FK do IC vira NULL), deslize que se cura, retry do mesmo `t0`,
-  observação positiva vence a prova, não-marcado e fechado não se apagam, teto sem escrita, falha do
-  tombstone desfaz o DELETE, isolamento, ACL. 5 sabotagens, cada uma reprovando o SEU rótulo, controle
-  verde antes e depois; LC_ALL=C e pt_BR.UTF-8.
-- `supabase/functions/omie-financeiro/cr-incremental_test.ts` (Deno, 22): decisor e janela (dia de SP),
-  veredito da prova, e o FLUXO com dependências falsas — falha em B, teto/permissão no C1, falha na
-  prova ou no C3 não gravam marca; só `PGRST202/42883` vira "indisponível"; presente nunca vai ao DELETE.
-  4 sabotagens do fluxo mordem.
+  observação positiva vence a prova, **corrida** (writer com a linha regravada e a transação aberta
+  durante o C3, 2 sessões), não-marcado e fechado não se apagam, teto sem escrita, falha do tombstone
+  desfaz o DELETE, isolamento, ACL. 7 sabotagens, cada uma reprovando o SEU rótulo (defesas duplas
+  neutralizadas juntas; a da corrida, uma camada por vez), controle verde antes e depois; LC_ALL=C e
+  pt_BR.UTF-8.
+- `supabase/functions/omie-financeiro/cr-incremental_test.ts` (Deno, 32): decisor e janela (dia de SP,
+  marca do incremental), veredito da prova (metadado inválido nunca prova), fim estrito, `rpcAusente`, e o
+  FLUXO com dependências falsas — falha em B, teto/permissão/`42883` interno no C1, falha na prova, na
+  reconfirmação ou no C3 não gravam marca; presente e reobservado nunca vão ao DELETE; cache por
+  resposta, não por veredito; ordem embaralhada. 7 sabotagens mordem.
 
 ## 6. Observação pós-deploy
 
@@ -163,13 +182,25 @@ UMA requisição por método por vez na conta ("Já existe uma requisição dess
 Desenho (gpt-6-astra · max · 565 s · 146.076 tokens): **P0 aceito** — duas ausências não provam
 exclusão (deslize repetido na fronteira de página); daí a prova por cliente. P1 aceitos: teto separado
 por abertos (o universo "todos" saiu), modo estrito (sem código, `maxPages`, contagem truncada), erros
-de RPC explícitos, marca por último, fluxo testado. **Residuais, fora deste lote:**
+de RPC explícitos, marca por último, fluxo testado.
+
+Código (gpt-6-astra · max · 704 s · 175.898 tokens), reprovado com 2 P0 + 5 P1 + 2 P2, **todos aceitos**:
+P0 mudança de cliente/emissão no Omie entre B e a prova → C2b; P0 corrida no C3 em Read Committed →
+`FOR UPDATE` + guardas no DELETE + contagem (prova com 2 sessões, cenário C); P1 1ª página vazia com
+contagem > 0 passava no estrito; P1 `full_inicio` casado com cursor de outro full → cursor estrito; P1
+full truncado avançava a marca → marca do incremental; P1 metadado inválido virava prova; P1 `42883`
+interno virava "indisponível"; P2 testes cegos (cada correção tem teste e sabotagem que morde); P2 fila
+travada por 10 inconclusivos → ordem embaralhada. Fica como hipótese não medida: resposta do Omie
+coerente porém FALSA (itens omitidos com contagem igualmente sub-reportada).
+
+**Residuais, fora deste lote:**
 
 - Frescor por empresa e por run integral no `_data_health_compute` (arquivo quente; hoje o `max` global
   já mascara empresa parada).
 - O full reinicia o piso (`totalPaginas = 1`) a cada continuação — uma vazia na retomada pode passar
   como EOF. Pré-existente; com a marca d'água vindo do incremental, um full truncado não abre buraco no
-  B, mas segue podendo publicar `full_ok` sobre retrato truncado de título FECHADO.
+  B (exceto no bootstrap, quando ainda não há incremental), mas segue podendo publicar `full_ok` sobre
+  retrato truncado de título FECHADO.
 - Exclusão de título FECHADO (hoje 5 linhas, R$ 2,6 mil: 3 RECEBIDO + 2 CANCELADO) não é reconciliada
   — entra em leitores que só negam CANCELADO (DRE competência, faturável). Prova por cliente serviria
   igual, falta o gerador de candidatos sem a régua errada do `updated_at`.
