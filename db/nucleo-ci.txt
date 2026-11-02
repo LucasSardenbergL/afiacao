@@ -117,6 +117,11 @@ db/test-reposicao-po-observado.sh          39  falsificar=33
 # Sombra da associação NF↔PO (20261017040000): só a RPC escreve, com compare-and-set por observado_em (run atrasado
 # não sobrescreve evidência nova); CHECK impede "associável" com motivo e proposta fora do associável; RLS staff.
 db/test-recebimento-associacao-sombra.sh    20  falsificar=13
+# Web-vitals pelo nosso banco (20261102093527, plano v4 lote 0b): o UPSERT do cliente (1 linha por instância
+# de métrica, último valor) só toca a PRÓPRIA linha. Cada policy falsificada sozinha: a de INSERT pelo INSERT
+# puro (no UPSERT a de SELECT barra a linha alheia sozinha), a de UPDATE pelo UPDATE sem WHERE (que não passa
+# pela de SELECT), a de SELECT pelo próprio UPSERT; trigger que segura criado_em; postcondição que aborta.
+db/test-telemetria-vitals.sh                27
 
 # ── Eixo 2 — FINITUDE MONETÁRIA ───────────────────────────────────────────────────
 # `ausente ≠ zero`: preço que o Omie não mandou não vira R$ 0,00; custo sem cmc
