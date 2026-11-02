@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterFeedRows, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows } from '../feed';
+import { padraoBuscaFeed, mapSalesDetail, mapAfiacaoDetail, dedupeFeedRows } from '../feed';
 import type { OrderFeedRow } from '../types';
 
 const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
@@ -9,6 +9,7 @@ const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
   account: 'oben',
   order_number: '0000123',
   omie_pedido_id: 9,
+  busca: null,
   customer_user_id: 'u1',
   customer_name: 'ACME LTDA',
   item_names: ['Verniz PU', 'Catalisador'],
@@ -19,55 +20,25 @@ const row = (p: Partial<OrderFeedRow> = {}): OrderFeedRow => ({
   ...p,
 });
 
-const FIXTURE: OrderFeedRow[] = [
-  row({ id: 'a', account: 'oben', customer_name: 'ACME LTDA' }),
-  row({ id: 'b', account: 'colacor', customer_name: 'BETA M&amp;M MOVEIS', order_number: '0000777', total: 250.5 }),
-  row({ id: 'c', account: 'colacor_sc', customer_name: 'GAMA SC' }),
-  row({ id: 'd', origin: 'afiacao', account: 'colacor_sc', order_number: null, omie_pedido_id: null, customer_name: 'DELTA INTERIORES', item_names: ['Afiacao Serra'], item_quantity: 1 }),
-];
-
-describe('filterFeedRows — abas', () => {
-  it('all → tudo', () => expect(filterFeedRows(FIXTURE, '', 'all')).toHaveLength(4));
-  it('oben → só oben', () => {
-    const r = filterFeedRows(FIXTURE, '', 'oben');
-    expect(r.map((x) => x.id)).toEqual(['a']);
+// A busca agora é no servidor (coluna `busca` da view — os casos de conteúdo moram na prova PG17
+// db/test-order-feed-view.sh e no teste do hook). Aqui, o termo que vai no `.ilike`.
+describe('padraoBuscaFeed — o termo como a coluna busca o guarda', () => {
+  it('minúsculas e sem acento (casa com a coluna normalizada pela view)', () => {
+    expect(padraoBuscaFeed('AFIAÇÃO Serra')).toBe('%afiacao serra%');
+    expect(padraoBuscaFeed('Pôr do Sol')).toBe('%por do sol%');
   });
-  it('colacor_sc inclui sales SC E afiação (afiação opera sob SC)', () => {
-    const r = filterFeedRows(FIXTURE, '', 'colacor_sc');
-    expect(r.map((x) => x.id)).toEqual(['c', 'd']);
+  it('apara as pontas e mantém o miolo (busca de frase, não de palavras soltas)', () => {
+    expect(padraoBuscaFeed('  m&m moveis  ')).toBe('%m&m moveis%');
   });
-});
-
-describe('filterFeedRows — busca', () => {
-  it('por nome do cliente (com decode de entidades HTML — &amp; vira &)', () => {
-    expect(filterFeedRows(FIXTURE, 'm&m', 'all').map((x) => x.id)).toEqual(['b']);
+  it('número e valor em formato BR passam como estão (a coluna tem "250.50" e "250,50")', () => {
+    expect(padraoBuscaFeed('0000777')).toBe('%0000777%');
+    expect(padraoBuscaFeed('250,50')).toBe('%250,50%');
   });
-  it('por nº do pedido (PV)', () => {
-    expect(filterFeedRows(FIXTURE, '0777', 'all').map((x) => x.id)).toEqual(['b']);
-  });
-  it('por item', () => {
-    expect(filterFeedRows(FIXTURE, 'serra', 'all').map((x) => x.id)).toEqual(['d']);
-  });
-  it('por total', () => {
-    expect(filterFeedRows(FIXTURE, '250.50', 'all').map((x) => x.id)).toEqual(['b']);
-  });
-  it('sem match → vazio', () => {
-    expect(filterFeedRows(FIXTURE, 'xyzinexistente', 'all')).toHaveLength(0);
-  });
-  it('busca composta com aba', () => {
-    expect(filterFeedRows(FIXTURE, 'delta', 'colacor_sc').map((x) => x.id)).toEqual(['d']);
-    expect(filterFeedRows(FIXTURE, 'delta', 'oben')).toHaveLength(0);
-  });
-  it('busca sem acento acha item com acento (afiacao → Afiação)', () => {
-    const r = filterFeedRows([row({ item_names: ['Afiação Serra'] })], 'afiacao', 'all');
-    expect(r).toHaveLength(1);
-  });
-  it('busca por total com vírgula (formato BR) acha 250.5', () => {
-    expect(filterFeedRows(FIXTURE, '250,50', 'all').map((x) => x.id)).toEqual(['b']);
-  });
-  it('row com campos null não quebra a busca', () => {
-    const r = filterFeedRows([row({ customer_name: null, order_number: null, item_names: [] })], 'acme', 'all');
-    expect(r).toHaveLength(0);
+  it('curingas do usuário saem; vazio ou só-curinga = sem filtro (null), nunca match-all', () => {
+    expect(padraoBuscaFeed('50%_off*')).toBe('%50off%');
+    expect(padraoBuscaFeed('')).toBeNull();
+    expect(padraoBuscaFeed('   ')).toBeNull();
+    expect(padraoBuscaFeed('%*_')).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ function order(p: Partial<OrderFeedRow> = {}): OrderFeedRow {
     account: 'oben',
     order_number: '000123',
     omie_pedido_id: 9,
+    busca: null,
     customer_user_id: 'u1',
     customer_name: 'ACME Ltda',
     item_names: ['Verniz'],

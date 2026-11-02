@@ -21,15 +21,15 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **752** custom migrations totais
-- **2489** objetos esperados (criados por estas migrations)
+- **755** custom migrations totais
+- **2495** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 937
+  - `function`: 939
   - `rls_policy`: 519
-  - `index`: 346
-  - `table`: 226
+  - `index`: 347
+  - `table`: 227
   - `cron_job`: 206
-  - `view`: 131
+  - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
 
@@ -6153,6 +6153,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.fin_saldo_titulos_por_status` | — |
 
+### `20261101221452_order_feed_busca_servidor.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.order_feed` | — |
+
 ### `20261101221749_expurgo_logs_tintometrico.sql`
 
 | Tipo | Objeto | Parent |
@@ -6171,6 +6177,15 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261102020000_fin_cr_reconciliacao_exclusoes.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.fin_cr_marcar_ausentes` | — |
+| `function` | `public.fin_cr_excluir_confirmados` | — |
+| `table` | `public.fin_contas_receber_excluidos` | — |
+| `index` | `public.idx_fin_cr_excluidos_company_codigo` | `fin_contas_receber_excluidos` |
+
 ### `20261102093527_telemetria_vitals.sql`
 
 | Tipo | Objeto | Parent |
@@ -6183,6 +6198,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `rls_policy` | `public.telemetria_vitals_user_update` | `telemetria_vitals` |
 | `rls_policy` | `public.telemetria_vitals_user_read` | `telemetria_vitals` |
 | `rls_policy` | `public.telemetria_vitals_service_all` | `telemetria_vitals` |
+
+### `20261102160821_order_feed_sem_cte.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `view` | `public.order_feed` | — |
 
 ## Próximos passos por status
 

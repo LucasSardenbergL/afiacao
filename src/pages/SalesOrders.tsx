@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { ShoppingCart, Trash2, ChevronLeft, TriangleAlert } from 'lucide-react';
+import { ShoppingCart, Trash2, ChevronLeft, Loader2 } from 'lucide-react';
 import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { BulkActionsBar } from '@/components/ui/bulk-actions-bar';
 import { decodeHtml, type OrderFeedRow } from '@/components/salesOrders/types';
-import { useSalesOrders, FEED_MAX_TOTAL } from '@/components/salesOrders/useSalesOrders';
+import { useSalesOrders } from '@/components/salesOrders/useSalesOrders';
+import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
 import { useSalesOrderDetail } from '@/components/salesOrders/useSalesOrderDetail';
 import { useDescontosItensPedido } from '@/components/salesOrders/useDescontosItensPedido';
 import { SalesOrdersToolbar } from '@/components/salesOrders/SalesOrdersToolbar';
@@ -19,6 +20,11 @@ const SalesOrders = () => {
     loading,
     loadError,
     refetch,
+    buscando,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    nextPageError,
     accountFilter,
     setAccountFilter,
     search,
@@ -26,16 +32,20 @@ const SalesOrders = () => {
     selectedIds,
     toggleSelect,
     clearSelection,
-    filteredOrders,
+    orders,
     totalCount,
-    truncated,
     deleteOrder,
     deleteSelected,
     handleShareOrder,
     printOrder,
     prefetchDetail,
-    orders,
   } = useSalesOrders();
+  // Carrega a próxima página quando o fim da lista chega perto. Depois de uma falha, para: o botão
+  // "Tentar de novo" decide (sem ele, o sentinela visível re-dispararia em laço).
+  const sentinelaRef = useInfiniteScroll(
+    () => fetchNextPage(),
+    !!hasNextPage && !isFetchingNextPage && !nextPageError,
+  );
 
   // Pedido selecionado na listagem → o painel busca o detalhe completo por id.
   const [detailRow, setDetailRow] = useState<OrderFeedRow | null>(null);
@@ -81,19 +91,10 @@ const SalesOrders = () => {
         setAccountFilter={setAccountFilter}
         search={search}
         setSearch={setSearch}
+        buscando={buscando}
       />
 
-      {/* Aviso honesto: o feed bateu o teto de segurança — a busca não cobre tudo */}
-      {truncated && (
-        <div className="flex items-center gap-2 text-xs text-status-warning bg-status-warning-bg border border-status-warning/30 rounded-md px-3 py-2">
-          <TriangleAlert className="w-3.5 h-3.5 shrink-0" />
-          <span>
-            Mostrando os primeiros {FEED_MAX_TOTAL.toLocaleString('pt-BR')} de {totalCount.toLocaleString('pt-BR')} pedidos — a busca cobre só esses.
-          </span>
-        </div>
-      )}
-
-      {filteredOrders.length === 0 ? (
+      {orders.length === 0 ? (
         <EmptyState
           icon={ShoppingCart}
           title={search.trim() || accountFilter !== 'all' ? 'Nenhum pedido com esses filtros' : 'Nenhum pedido ainda'}
@@ -114,13 +115,13 @@ const SalesOrders = () => {
         />
       ) : (
         <div className="space-y-2">
-          {filteredOrders.map((order) => (
+          {orders.map((order) => (
             <SalesOrderCard
               key={`${order.origin}-${order.id}`}
               order={order}
               customerName={decodeHtml(order.customer_name || 'Cliente')}
               checked={selectedIds.has(order.id)}
-              onSelectChange={(v) => toggleSelect(order.id, v)}
+              onSelectChange={(v) => toggleSelect(order, v)}
               onShare={() => handleShareOrder(order)}
               onDelete={() => deleteOrder(order)}
               onNavigate={navigate}
@@ -129,11 +130,15 @@ const SalesOrders = () => {
               onPrefetch={() => prefetchDetail(order)}
             />
           ))}
-          <p className="text-center text-xs text-muted-foreground py-4">
-            {filteredOrders.length === totalCount
-              ? `${totalCount} pedido(s)`
-              : `${filteredOrders.length} de ${totalCount} pedido(s)`}
-          </p>
+          <div ref={sentinelaRef} className="flex flex-col items-center gap-2 py-4 text-xs text-muted-foreground">
+            {isFetchingNextPage && <Loader2 aria-label="Carregando mais pedidos" className="w-4 h-4 animate-spin" />}
+            {nextPageError && (
+              <Button variant="outline" size="sm" onClick={() => fetchNextPage()}>
+                Não carregou o resto — tentar de novo
+              </Button>
+            )}
+            <p>{rodapeDaLista(orders.length, totalCount, !!hasNextPage, !!search.trim())}</p>
+          </div>
         </div>
       )}
 
@@ -176,5 +181,13 @@ const SalesOrders = () => {
     </div>
   );
 };
+
+// O total só vem sem busca (com busca contaria os ~32 k de novo — ver useSalesOrders).
+function rodapeDaLista(carregados: number, total: number | null, temMais: boolean, comBusca: boolean): string {
+  const n = (v: number) => v.toLocaleString('pt-BR');
+  if (total !== null) return carregados >= total ? `${n(total)} pedido(s)` : `${n(carregados)} de ${n(total)} pedido(s)`;
+  const rotulo = comBusca ? 'encontrado(s)' : 'pedido(s)';
+  return temMais ? `${n(carregados)} ${rotulo} até aqui — role para ver mais` : `${n(carregados)} ${rotulo}`;
+}
 
 export default SalesOrders;
