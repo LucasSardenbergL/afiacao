@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { UserCheck } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { variantFromScore, type PriorityCandidate } from '@/lib/dashboard/priority-rules';
 import { formatCount } from '@/lib/dashboard/format';
 import type { KpiSpec } from '@/components/dashboard/cockpit/CockpitKpiRow';
@@ -28,18 +29,22 @@ export function useSistemaZone() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey,
     queryFn: async () => {
-      // `null` = a leitura FALHOU (≠ "zero aprovação pendente" / "zero staff"). Os três
-      // blocos abaixo têm `catch {}` que engole, então o valor inicial É o que a tela mostra
-      // quando algo quebra: começar em 0 fazia o KPI afirmar "0" com a mesma cara de um 0
-      // medido. Com null o KPI mostra "—" e o cartão de prioridade não dispara com base numa
+      // `null` = a leitura FALHOU (≠ "zero aprovação pendente" / "zero staff"). Cada bloco
+      // abaixo degrada SÓ o seu KPI (o `catch` deixa null e, nos dois de `profiles`, guarda o
+      // porquê), então o valor inicial É o que a tela mostra quando algo quebra: começar em 0
+      // fazia o KPI afirmar "0" com a mesma cara de um 0 medido. Com null o KPI mostra "—" e o cartão de prioridade não dispara com base numa
       // contagem que ninguém leu.
       let aprovacoesPendentes: number | null = null;
       let staffAtivos: number | null = null;
       let ultimaAtividadeIso: string | null = null;
       let topItems: TopListItem[] = [];
+      // POR QUE a leitura falhou, por bloco (`null` = leu). Sem isto a lista de aprovações vazia
+      // por FALHA dizia "Tudo em dia." — a mesma cara de zero pendência medida.
+      let erroAprovacoes: string | null = null;
+      let erroStaff: string | null = null;
 
       try {
-        const { data: pending, count } = await supabase
+        const { data: pending, count, error } = await supabase
           .from('profiles')
           .select('user_id, name, created_at', { count: 'exact' })
           .eq('is_approved', false)
@@ -47,35 +52,46 @@ export function useSistemaZone() {
           .or('prospect_source.is.null,prospect_source.neq.omie_import')
           .order('created_at', { ascending: true })
           .limit(3);
-        aprovacoesPendentes = count ?? 0;
-        if (pending) {
-          const rows = pending as Array<{
-            user_id: string;
-            name?: string | null;
-            created_at?: string | null;
-          }>;
-          topItems = rows.map((p) => ({
-            id: p.user_id,
-            icon: UserCheck,
-            title: p.name ?? 'Usuário sem nome',
-            subtitle: 'Aguardando liberação',
-            path: '/admin/approvals',
-            itemType: 'pending_approval',
-            badge: { label: 'novo', intent: 'info' as const },
-          }));
-        }
-      } catch { /* */ }
+        // O supabase-js DEVOLVE o erro (não lança): sem este `throw` o `catch` nunca via a falha
+        // e o `count ?? 0` afirmava "0 aprovações" (plano v4, lote 5 — N3: ausente ≠ zero).
+        if (error) throw new Error(`profiles (aprovações pendentes): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+        if (count === null || !pending) throw new Error('profiles (aprovações pendentes): contagem ausente sem error — malformada');
+        aprovacoesPendentes = count;
+        const rows = pending as Array<{
+          user_id: string;
+          name?: string | null;
+          created_at?: string | null;
+        }>;
+        topItems = rows.map((p) => ({
+          id: p.user_id,
+          icon: UserCheck,
+          title: p.name ?? 'Usuário sem nome',
+          subtitle: 'Aguardando liberação',
+          path: '/admin/approvals',
+          itemType: 'pending_approval',
+          badge: { label: 'novo', intent: 'info' as const },
+        }));
+      } catch (e) {
+        aprovacoesPendentes = null;
+        topItems = [];
+        erroAprovacoes = mensagemDeErro(e) ?? 'profiles (aprovações pendentes): falha sem mensagem';
+      }
 
       try {
         // Staff aprovados (proxy de "quantas pessoas operam o sistema"). Conta
         // profiles com role staff (não-customer) via user_roles join via RPC
         // ou query simples. Aqui contamos profiles approved (qualquer role).
-        const { count } = await supabase
+        const { count, error } = await supabase
           .from('profiles')
           .select('user_id', { count: 'exact', head: true })
           .eq('is_approved', true);
-        staffAtivos = count ?? 0;
-      } catch { /* */ }
+        if (error) throw new Error(`profiles (staff ativos): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+        if (count === null) throw new Error('profiles (staff ativos): contagem ausente sem error — malformada');
+        staffAtivos = count;
+      } catch (e) {
+        staffAtivos = null;
+        erroStaff = mensagemDeErro(e) ?? 'profiles (staff ativos): falha sem mensagem';
+      }
 
       try {
         // Última atividade: max(created_at) de orders OU sales_orders, o que
@@ -98,7 +114,7 @@ export function useSistemaZone() {
         }
       } catch { /* */ }
 
-      return { aprovacoesPendentes, staffAtivos, ultimaAtividadeIso, topItems };
+      return { aprovacoesPendentes, staffAtivos, ultimaAtividadeIso, topItems, erroAprovacoes, erroStaff };
     },
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
@@ -136,5 +152,17 @@ export function useSistemaZone() {
     return null;
   }, [data]);
 
-  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive };
+  return {
+    kpis,
+    topItems: data?.topItems ?? [],
+    priority,
+    // Leitura parcial que falhou: a zona diz "indisponível" no lugar da lista ("Tudo em dia."
+    // seria mentira) e o KPI correspondente já mostra "—".
+    erroAprovacoes: data?.erroAprovacoes ?? null,
+    erroStaff: data?.erroStaff ?? null,
+    isLoading,
+    isError,
+    refetch,
+    isLive,
+  };
 }
