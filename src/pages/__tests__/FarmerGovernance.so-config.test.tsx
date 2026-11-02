@@ -32,7 +32,14 @@ function chain(table: string): unknown {
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { from: (t: string) => chain(t), rpc: () => chain('rpc') },
 }));
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ isStaff: true, loading: false }) }));
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({ user: { id: 'u-gov' }, isStaff: true, isMaster: false, loading: false }),
+}));
+// Não são usados pela página: existem para que, SE o motor voltar a montar, ele chegue até a leitura
+// de `sales_orders` e o teste fique vermelho pelo motivo certo — não por falta de provider
+// (falsificado: sem estes mocks a sabotagem reprovava por `useImpersonation deve estar dentro…`).
+vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ effectiveUserId: 'u-gov' }) }));
+vi.mock('@/hooks/useCommercialRole', () => ({ useCommercialRole: () => ({ canViewManagerial: true, loading: false }) }));
 vi.mock('@/hooks/useFarmerGovernance', () => ({
   useFarmerGovernance: () => ({
     proposals: [],
