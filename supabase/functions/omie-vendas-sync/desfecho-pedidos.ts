@@ -32,7 +32,7 @@ export type DesfechoSyncPedidos =
   | { ok: true; status: 200; corpo: Record<string, unknown> }
   | { ok: false; status: 500; erro: string; corpo: Record<string, unknown> };
 
-function motivo(r: ResultadoSyncPedidosIncremental): string {
+function motivoDaParada(r: ResultadoSyncPedidosIncremental): string {
   // Sem lastErrorKind e sem fim real = o `while (pagesProcessed < maxPages)` acabou o orçamento.
   return r.lastErrorKind ?? "orcamento_de_paginas";
 }
@@ -40,7 +40,7 @@ function motivo(r: ResultadoSyncPedidosIncremental): string {
 export function desfechoSyncPedidosIncremental(r: ResultadoSyncPedidosIncremental): DesfechoSyncPedidos {
   if (r.complete) return { ok: true, status: 200, corpo: { success: true, ...r } };
   const erro = `${MARCA_PEDIDOS_INCOMPLETO}: janela incremental parou na pagina ${r.nextPage ?? "?"} `
-    + `sem chegar ao fim real do Omie (motivo: ${motivo(r)}); ${r.totalSynced} pedido(s) gravado(s) `
+    + `sem chegar ao fim real do Omie (motivo: ${motivoDaParada(r)}); ${r.totalSynced} pedido(s) gravado(s) `
     + `antes da parada, os das paginas seguintes NAO foram importados nesta run`;
   return { ok: false, status: 500, erro, corpo: { success: false, error: erro, ...r } };
 }
