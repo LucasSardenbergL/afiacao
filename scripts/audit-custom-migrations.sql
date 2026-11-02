@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 754
+-- Total de custom migrations: 755
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -821,7 +821,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261101221749', 'expurgo_logs_tintometrico', '20261101221749_expurgo_logs_tintometrico.sql'),
   ('20261101222916', 'hot_carimbo_sync_sem_indice', '20261101222916_hot_carimbo_sync_sem_indice.sql'),
   ('20261102020000', 'fin_cr_reconciliacao_exclusoes', '20261102020000_fin_cr_reconciliacao_exclusoes.sql'),
-  ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql')
+  ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql'),
+  ('20261102160821', 'order_feed_sem_cte', '20261102160821_order_feed_sem_cte.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3278,7 +3279,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
-  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
+  ('order_feed_sem_cte', 'view', 'public', 'order_feed', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5783,7 +5785,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_insert', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_update', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
-  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals')
+  ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
+  ('order_feed_sem_cte', 'view', 'public', 'order_feed', '')
 )
 SELECT
   e.migration,

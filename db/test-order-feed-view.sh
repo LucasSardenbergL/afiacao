@@ -175,6 +175,8 @@ P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_BUSCA" >/dev/null
 echo "→ asserts (view nova)…"
 asserts
 
+# Asserts da busca: rodam depois de 20261101221452 e de novo depois de 20261102160821.
+asserts_busca() {
 P -v ON_ERROR_STOP=1 -q <<'SQL'
 do $$
 declare r record; v_dif int;
@@ -224,6 +226,46 @@ begin
   end if;
 
   raise notice 'ASSERTS DA BUSCA PASSARAM';
+end $$;
+SQL
+}
+asserts_busca
+
+# ── 20261102160821: mesmo corpo sem CTE — a view passa a ser achatada no plano ─────────
+# Com `WITH feed AS (…)` a view vira `Subquery Scan` e itens/busca rodam em TODAS as linhas antes
+# do Sort; sem CTE o Postgres achata a view e só calcula as linhas do LIMIT.
+P -v ON_ERROR_STOP=1 -q -c "create table public._feed_com_cte as select * from public.order_feed"
+
+echo "→ migration sem CTE (2× — a 2ª prova a idempotência)…"
+MIG_SEM_CTE="$REPO_ROOT/supabase/migrations/20261102160821_order_feed_sem_cte.sql"
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_SEM_CTE" >/dev/null
+P --single-transaction -v ON_ERROR_STOP=1 -q -f "$MIG_SEM_CTE" >/dev/null
+
+echo "→ asserts (view sem CTE)…"
+asserts
+asserts_busca
+
+P -v ON_ERROR_STOP=1 -q <<'SQL'
+do $$
+declare v_dif int; v_plano text := '';
+begin
+  -- 14. as 14 colunas saem iguais às da view com CTE (nos dois sentidos, com multiplicidade)
+  select count(*) into v_dif from (
+    (select * from public.order_feed except all select * from public._feed_com_cte)
+    union all
+    (select * from public._feed_com_cte except all select * from public.order_feed)) d;
+  if v_dif IS DISTINCT FROM 0 then raise exception 'FALHOU: view sem CTE difere da com CTE em % linha(s)', v_dif; end if;
+
+  -- 15. a view é achatada: nada de Subquery Scan no plano da página (pull-up é do rewrite, não de estatística)
+  for v_plano in execute 'explain (costs off) select item_names, busca from public.order_feed '
+                         'order by created_at desc, origin, id limit 50' loop
+    if v_plano like '%Subquery Scan on order_feed%' then
+      raise exception 'FALHOU: order_feed não foi achatada (%) — a CTE voltou?', v_plano;
+    end if;
+  end loop;
+  if v_plano IS NULL OR v_plano = '' then raise exception 'FALHOU: EXPLAIN não devolveu plano'; end if;
+
+  raise notice 'ASSERTS SEM CTE PASSARAM';
 end $$;
 SQL
 
