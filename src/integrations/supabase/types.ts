@@ -20142,6 +20142,7 @@ export type Database = {
       order_feed: {
         Row: {
           account: string | null
+          busca: string | null
           created_at: string | null
           customer_name: string | null
           customer_user_id: string | null

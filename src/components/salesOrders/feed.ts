@@ -1,16 +1,15 @@
 // Helpers puros da listagem unificada de pedidos (view order_feed).
-// filterFeedRows: busca + filtro de empresa CLIENT-SIDE sobre o conjunto COMPLETO
-// (a view carrega tudo numa query — fim do "Nenhum pedido" falso de quando a busca
-// só enxergava as páginas baixadas).
+// padraoBuscaFeed: o termo da busca como o servidor o compara com a coluna `busca` (a busca alcança
+// os ~32 k pedidos, não só as páginas baixadas).
 // mapSalesDetail/mapAfiacaoDetail: normalizam a linha crua do detalhe (select('*')
 // de sales_orders | orders) pro shape SalesOrder que painel/impressão/share consomem.
-import type { Json, Tables } from '@/integrations/supabase/types';
+import type { Json } from '@/integrations/supabase/types';
 import { exigirColunas } from '@/lib/linha-view';
+import { ilikeContainsPattern } from '@/lib/postgrest';
 import {
   COLUNAS_FEED_EXIGIDAS,
-  decodeHtml,
-  type Account,
   type AfiacaoItemRaw,
+  type LinhaOrderFeed,
   type AfiacaoOrderRow,
   type OrderFeedRow,
   type SalesOrder,
@@ -22,28 +21,22 @@ import { totalLinhaOuAusente, precoUtilizavel } from '@/lib/format';
 // Normaliza pra busca: minúsculas + sem diacríticos ("afiacao" acha "Afiação").
 const normalizar = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-export function filterFeedRows(
-  rows: OrderFeedRow[],
-  search: string,
-  accountFilter: Account,
-): OrderFeedRow[] {
-  // Afiação já vem da view com account='colacor_sc' (opera sob a entidade SC),
-  // então o filtro de aba é uniforme — sem caso especial.
-  let result = accountFilter === 'all' ? rows : rows.filter((r) => r.account === accountFilter);
+/**
+ * Colunas que a listagem baixa — todas as da view MENOS `busca`, que só serve de filtro no servidor.
+ * O `select` tipado do supabase-js deriva daqui o tipo da linha (`LinhaOrderFeed`).
+ */
+export const COLUNAS_LISTAGEM_FEED =
+  'origin,id,created_at,account,order_number,omie_pedido_id,customer_user_id,customer_name,item_names,item_quantity,status,subtotal,total' as const;
 
-  const q = normalizar(search.trim());
-  if (q) {
-    // Busca numérica em formato BR: "250,50" também casa o total 250.50.
-    const qNum = q.replace(',', '.');
-    result = result.filter((r) => {
-      const name = normalizar(decodeHtml(r.customer_name || ''));
-      const pv = (r.order_number || '').toLowerCase();
-      const items = normalizar((r.item_names || []).join(' '));
-      const total = Number(r.total ?? 0).toFixed(2);
-      return name.includes(q) || pv.includes(q) || items.includes(q) || total.includes(q) || total.includes(qNum);
-    });
-  }
-  return result;
+/**
+ * Padrão do `.ilike('busca', …)` da listagem, ou `null` quando não há o que buscar.
+ * A coluna `busca` da view (migration 20261101221452) já vem em minúsculas e sem acento, com o nome
+ * do cliente (entidades HTML decodificadas), o nº do pedido, os itens e o total em "250.50" e
+ * "250,50" — por isso basta normalizar o termo do mesmo jeito: "afiacao" acha "Afiação", "250,5"
+ * acha o total 250.50. Os curingas do usuário (`%`, `_`, `*`) saem em `ilikeContainsPattern`.
+ */
+export function padraoBuscaFeed(search: string): string | null {
+  return ilikeContainsPattern(normalizar(search.trim()));
 }
 
 const ORIGENS_FEED: readonly OrderFeedRow['origin'][] = ['sales', 'afiacao'];
@@ -52,7 +45,7 @@ const ORIGENS_FEED: readonly OrderFeedRow['origin'][] = ['sales', 'afiacao'];
  * Borda da view `order_feed`: exige as colunas-chave (lança se vierem nulas — 0 em 31.955 linhas na
  * prod em 2026-10-20) e estreita `origin`. Antes um cast duplo para `OrderFeedRow[]` afirmava tudo.
  */
-export function feedRowDaLinha(linha: Tables<'order_feed'>): OrderFeedRow {
+export function feedRowDaLinha(linha: LinhaOrderFeed): OrderFeedRow {
   exigirColunas(linha, COLUNAS_FEED_EXIGIDAS, 'order_feed');
   const origin = ORIGENS_FEED.find((o) => o === linha.origin);
   if (!origin) throw new Error(`order_feed ${linha.id}: origin desconhecida (${linha.origin})`);
