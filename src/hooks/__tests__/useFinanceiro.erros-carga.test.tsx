@@ -64,6 +64,48 @@ describe('useFinanceiro — consolidado com títulos de um CNPJ indisponíveis',
   });
 });
 
+describe('useFinanceiro — consolidado com CNPJ AUSENTE do mapa', () => {
+  beforeEach(() => {
+    Object.values(m).forEach((f) => f.mockReset());
+    m.getLastSyncTime.mockResolvedValue(null);
+  });
+
+  it("troca 'oben' → 'all' antes da carga do grupo: o resumo da Oben NÃO vira total do grupo", async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce({ oben: resumoDe('oben') });
+    const { result } = renderHook(() => useFinanceiro('oben'));
+    await act(async () => { await result.current.loadResumo(); });
+    expect(result.current.activeResumo).toMatchObject({ saldo_total_cc: 10, total_a_receber: 1 });
+
+    act(() => { result.current.setView('all'); });
+    expect(result.current.activeResumo).toMatchObject({
+      saldo_total_cc: null,
+      total_a_receber: null,
+      total_a_pagar: null,
+      posicao_liquida: null,
+      titulos_motivo: 'resumo de colacor não carregado · resumo de colacor_sc não carregado',
+    });
+  });
+
+  it('falha ao recarregar UM CNPJ apaga só ele — e o consolidado passa a indisponível', async () => {
+    m.getResumoFinanceiro.mockResolvedValueOnce({
+      oben: resumoDe('oben'), colacor: resumoDe('colacor'), colacor_sc: resumoDe('colacor_sc'),
+    });
+    const { result } = renderHook(() => useFinanceiro('all'));
+    await act(async () => { await result.current.loadResumo(); });
+    expect(result.current.activeResumo).toMatchObject({ saldo_total_cc: 30, total_a_receber: 3 });
+
+    act(() => { result.current.setView('colacor'); });
+    m.getResumoFinanceiro.mockRejectedValueOnce(new Error('boom colacor'));
+    await act(async () => { await result.current.loadResumo(); });
+    act(() => { result.current.setView('all'); });
+    expect(result.current.activeResumo).toMatchObject({
+      saldo_total_cc: null,
+      total_a_receber: null,
+      titulos_motivo: 'resumo de colacor não carregado',
+    });
+  });
+});
+
 describe('useFinanceiro — errosCarga por dataset', () => {
   beforeEach(() => {
     Object.values(m).forEach((f) => f.mockReset());

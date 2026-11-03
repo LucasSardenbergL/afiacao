@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef } from 'react';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado, foraDreConsolidado } from '@/lib/financeiro/dre-helpers';
-import { consolidarTitulos } from '@/lib/financeiro/resumo-titulos';
+import { consolidarTitulos, TITULOS_INDISPONIVEIS } from '@/lib/financeiro/resumo-titulos';
 import {
   triggerFinanceiroSync,
   getResumoFinanceiro,
@@ -88,20 +88,28 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
    */
   const [versaoDados, setVersaoDados] = useState(0);
 
-  // Computed resumo consolidado
+  // Computed resumo consolidado — sempre sobre o GRUPO INTEIRO (ALL_COMPANIES), não sobre o que
+  // o mapa tem: o `resumo` acumula cargas de outras views, então ao trocar 'oben' → 'all' (antes
+  // da carga do grupo chegar) ou depois de uma falha que apagou um CNPJ, somar `Object.values`
+  // apresentava o caixa/CR/CP de UMA empresa como total do grupo.
+  const resumosPresentes = ALL_COMPANIES.flatMap((co) => (resumo[co] ? [resumo[co]] : []));
+  const resumosAusentes = ALL_COMPANIES.filter((co) => !resumo[co]);
   const resumoConsolidado: FinResumo | null =
-    Object.keys(resumo).length > 0
+    resumosPresentes.length > 0
       ? {
-          contas_correntes: Object.values(resumo).flatMap(r => r.contas_correntes),
+          contas_correntes: resumosPresentes.flatMap(r => r.contas_correntes),
           // Consolidado "todas": indisponível se faltar o saldo de QUALQUER CNPJ do grupo.
           // Somar só quem respondeu daria um total menor apresentado como total do grupo —
           // e caixa é por-CNPJ, não-fungível: a parcela que falta não se estima pelas outras.
-          saldo_total_cc: Object.values(resumo).some((r) => r.saldo_total_cc === null)
+          saldo_total_cc: resumosAusentes.length > 0 || resumosPresentes.some((r) => r.saldo_total_cc === null)
             ? null
-            : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
+            : resumosPresentes.reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
           // Mesma régua para os títulos, mas independente do saldo: um CNPJ sem títulos zera
           // (null) os totais de CR/CP do grupo, não o caixa.
-          ...consolidarTitulos(Object.values(resumo)),
+          ...consolidarTitulos([
+            ...resumosPresentes,
+            ...resumosAusentes.map((co) => TITULOS_INDISPONIVEIS(`resumo de ${co} não carregado`)),
+          ]),
         }
       : null;
 
