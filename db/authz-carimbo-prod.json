@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-03T16:38:19.013Z",
-  "sourceHead": "3cfa26ea763db12992b2ffa3aed1e081d221109d",
+  "medidoEm": "2026-11-03T17:33:01.265Z",
+  "sourceHead": "5c1645f1e0f357ea8ded70987f3ce88580dd4328",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -56,31 +56,12 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 1,
-      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 CORPO_ANTERIOR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@3cfa26ea7 (fetch ok) · prod 2026-11-03 16:38:48.052046Z",
+      "exit": 0,
+      "resumo": "✅ deriva-corpo — 477 identidade(s) batem com o repo (400 em dia, 65 só cosméticas, 11 aceitas na baseline) e 22 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@5c1645f1e (fetch ok) · prod 2026-11-03 17:33:32.450664Z",
       "contratoFingerprint": "86537199ae381b413ee48d2edfeab1c5d8bea34723b26b71612d98f80ca6bc44",
       "auditorFingerprint": "287610b6eb0f4af8a00eed9aed3cbf393f6ae17a0da8c431f66d87191e201b92",
-      "achados": [
-        {
-          "id": "8528bcf166d8a21a",
-          "linha": "❌ [CORPO_ANTERIOR] analytics_ledger_registrar(text,text,jsonb): prod roda o corpo de 20261031130100_analytics_ledger_raio_x.sql; o repo commitou 20261103120100_analytics_ledger_raio_x_decisao.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13320397)",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "7f7a2cd3d387752d",
-          "linha": "❌ [CORPO_ANTERIOR] raio_x_medicao(text): prod roda o corpo de 20261101120000_raio_x_inequivoco.sql; o repo commitou 20261103120000_raio_x_unidades.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13438719)",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "0f863b1956b8e6fe",
-          "linha": "❌ [CORPO_ANTERIOR] raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean,timestamp with time zone,numeric,text): prod roda o corpo de 20261101120000_raio_x_inequivoco.sql; o repo commitou 20261103120000_raio_x_unidades.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13438719)",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        }
-      ]
+      "achados": []
     }
   }
 }
