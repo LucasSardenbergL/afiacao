@@ -255,3 +255,26 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - `user_roles` teve 219 MB lógicos em 9.287 idx scans, provavelmente das checagens de RLS.
 
   Se um deles crescer, ele volta a disputar os 256 MB. É a próxima frente se o Mini voltar a apertar.
+
+### 2026-11-03 — a janela do fase5 ainda reprova o Mini (série de 60 s, 17:18–18:12 UTC)
+
+- **Medida:** delta de `pg_stat_database` e de `pg_statio_all_tables` (`public`, `cron`, `net`) a cada 60 s, pelo psql-ro, com o Mini no ar (256MB e 60 conexões).
+
+  | janela de 15 min | disco | hit | temp | conexões |
+  |---|---|---|---|---|
+  | 17:18–17:33 (controle) | 99,7 MB | 99,69% | 95,6 MB | 29/60 |
+  | 17:34–17:49 (contaminada: eu rodei `deriva:corpo:prod` e o audit de migrations às ~17:32–17:36) | 158,2 MB | 99,77% | 140,3 MB | 42/60 |
+  | **17:56–18:11, com o `tint-watchdog-fase5-6h` das 18:00** | **2.178 MB** | **90,98%** | **466 MB** | 42/60 |
+
+- **Quem leu:** 2.153 MB cabem no minuto das 18:00, e o resto da janela somou ~22 MB. Os três `last_seq_scan` ficaram em 18:00:27, o fim exato do fase5 (início 18:00:00, 26,2 s, `succeeded`):
+  - `tint_formulas`, 1.290 MB, ou seja **3 passadas** da tabela de 430 MB;
+  - `tint_formula_itens`, 571 MB, 1 passada;
+  - `tint_staging_formulas`, 291 MB, 1 passada.
+
+  Nos outros crons do mesmo minuto, o mais longo foi o `data-health-watchdog`, com 8,8 s.
+- **O que isso muda no "Mini aprovado" (subseção acima):**
+  - **continua valendo** para a janela limpa;
+  - **4 vezes por dia** (0h/6h/12h/18h UTC), a janela de 15 min que contém o fase5 reprova nos três critérios. O disco e o temp estouram por 5×;
+  - a v5 baixou o job de 575 s para ~26 s. Mas o volume ainda é o de uma passada do catálogo inteiro (2,15 GB, contra os 1,14 GB medidos no statement da v5 em 01/11), e ele ainda vai para o temp.
+- **O que é atenuante:** seq scan grande usa o *ring buffer*, então não expulsa o cache quente, e o pico dura menos de 30 s. Isso explica o hit voltar a ≥99,9% no minuto seguinte. Se o critério "≤400 MB por 15 min" vale para esse pico agendado é **decisão do founder**. Sem essa decisão, a régua diz que reprova.
+- **Próximo passo, se a decisão for "conta":** tirar as 3 passadas de `tint_formulas` e a de `tint_staging_formulas` do fase5. Por exemplo, ler `tint_formulas` uma vez só, ou fazer o universo incremental por `updated_at`. Também pode baixar a cadência de 6 h para 24 h, fora do horário de loja.
