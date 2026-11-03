@@ -220,4 +220,15 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Desvio deliberado:** re-promover um run JÁ promovido, sem outro run ter reaceitado a chave no meio, agora recalcula pelo E4 a chave que a 1ª invocação gravou (antes ficava com o preço da 1ª invocação porque o `importacao_id` reaproveitado coincidia). É a intenção escrita no próprio E4 ("já saiu com o preço novo" = nesta invocação).
 - **Aplicada em 2026-11-03 ~10:26 UTC** pelo `db:aplicar` (ensaio ok → recibo #879), fora de promoção (fila vazia, contadores de `tint_formulas` parados). Validada por fora (psql-ro): md5 do corpo `2c6f461f9c9d4f8c54ea817e25f88f61`, `_pulados` e lock por account presentes, exclusão por `importacao_id` ausente, `proconfig` e ACL preservados.
 - **Lição: comparar só o estado FINAL deixou 2 camadas verdes por engano.** O preço que o diff deixava velho era "curado" pelo E4 de um run seguinte, e a desativação pelo reenvio seguinte. Fotografar o estado depois de cada run tornou as duas falsificações vermelhas. E chave com staging nova é sempre reescrita (frescor), então a comparação de valores só é alcançável pelo que muda FORA da staging da chave (volume de embalagem, preço de base, desativação, edição de staff/legado no oficial) — o cenário precisa de cada um desses.
-- **Medida depois:** pendente da próxima promoção de fórmulas real (não havia run na fila em 03/11 10:24 UTC; chegam de forma irregular). Amostragem de `pg_stat_user_tables`/`pg_statio_user_tables` de `tint_formulas` e `tint_formula_itens`, `pg_stat_database` e `pg_stat_wal` a cada 10 s, sem ler tabela `tint_*`; o resultado por promoção entra aqui.
+- **Medida depois (03/11, psql-ro, só `pg_stat_*` a cada 10 s, nenhuma leitura de tabela `tint_*` durante a janela):** o 1º run de fórmulas pós-apply foi o `cefea03a` (1 staging, ingerido 13:03:36, promovido 13:04:35 UTC). A promoção reexpandiu o par e aceitou **1.028 chaves**: **1.024 puladas** (`formulas_identicas_puladas`) e 4 reescritas (as embalagens da chave da staging nova, que o frescor obriga a reescrever). Os contadores mudaram só no commit (13:04:28→13:04:38):
+
+  | | antes (run de 02/11, 606 stagings) | depois (run de 03/11, 1 staging) | o corpo antigo, neste mesmo run |
+  |---|---|---|---|
+  | chaves aceitas (`inserts`) | 408.470 | 1.028 | 1.028 |
+  | `tint_formulas` escritas (upd) | 408.470 | **4** | 1.028 |
+  | `tint_formula_itens` apagados + inseridos | 1.504.224 + 1.504.240 | **12 + 12** | ~3.084 + ~3.084 (3 itens/fórmula) |
+  | blocos lidos do disco nas 2 tabelas oficiais (heap + índice) | 10,7 GB na janela de 15 min | **3.056 (23,9 MB)** | — |
+  | blocos lógicos (hit + read) nas 2 tabelas | — | 14.946 (117 MB) | — |
+  | WAL do banco na janela de 10 s do commit | — | 1,0 MB | — |
+
+  O banco inteiro leu 18.339 blocos (143 MB) nos 10 s do commit, mas esse número inclui o resto da carga daquele intervalo. Limite da medida: é um run pequeno; a classe que reprovou o Mini (centenas de stagings em dezenas de pares) ainda não passou pelo corpo novo. Nela a escrita cai do mesmo jeito, mas a LEITURA das fórmulas do par para comparar continua: ~1 GB nas duas tabelas por promoção grande. Se isso cabe nos 400 MB/15 min do Mini, só a próxima carga grande diz. Ao contrário da escrita, essa leitura não suja páginas e não expulsa o cache.
