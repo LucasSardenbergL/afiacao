@@ -9,6 +9,9 @@ describe("diferencaConciliacao — a coluna gerada faz COALESCE(…, 0)", () => 
   it("sem os dois operandos → null, não R$ 0,00 'conciliado'", () => {
     expect(diferencaConciliacao({ mov_valor: null, titulo_valor: null, diferenca: 0 })).toBeNull();
   });
+  it("operandos presentes mas diferença não lida → null (não 0)", () => {
+    expect(diferencaConciliacao({ mov_valor: 100, titulo_valor: 90, diferenca: null })).toBeNull();
+  });
   it("zero REAL com os dois presentes → 0", () => {
     expect(diferencaConciliacao({ mov_valor: 100, titulo_valor: 100, diferenca: 0 })).toBe(0);
   });
