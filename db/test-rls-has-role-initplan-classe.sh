@@ -4,37 +4,32 @@
 # ║  has_role(auth.uid(), …) por linha → InitPlan nas 308 policies / 185 tabelas ║
 # ║  da prod (fixture verbatim). Camadas:                                         ║
 # ║   A1 matriz RLS REAL (SET ROLE + request.jwt.claims): o CONJUNTO de linhas    ║
-# ║      que cada papel lê/insere/atualiza/apaga é o mesmo antes e depois         ║
+# ║      que 10 chamadores leem/inserem/atualizam/apagam + UPDATE que muda coluna ║
+# ║      de autorização, igual antes e depois                                     ║
 # ║   A2 cada cláusula, ponto a ponto: (antiga) IS DISTINCT FROM (nova) = 0       ║
-# ║   A3 catálogo: cmd/permissive/roles/presença de cláusula iguais               ║
-# ║   A4 contagem: 308 policies reescritas, 872 chamadas, zero cru                ║
-# ║   A5 InitPlan: has_role roda O(1) por consulta (antes: por linha)             ║
-# ║   A6 idempotência: 2º apply não muda nada                                     ║
-# ║  Falsifica (controle verde ANTES, na mesma invocação): F1 troca o papel no    ║
-# ║  replace → P3 morde · F2 alarga TO → P1 morde · F3 pula uma tabela → P5 morde ║
-# ║  · F4 policy sabotada depois → A1 e A2 mordem.                                ║
+# ║   A3 catálogo · A4 contagem (308/872/zero cru) · A5 InitPlan O(1)             ║
+# ║   A6 idempotência · A7 plano genérico alternando usuário                      ║
+# ║   A8 corrida: policy apertada antes do lock é a que vale (travar ANTES de ler)║
+# ║   A9 lock_timeout: leitor segurando a tabela → 55P03 e nada aplicado          ║
+# ║   L1 limite documentado: identidade trocada no meio do statement              ║
+# ║  Falsifica (controle verde ANTES, na mesma invocação): F1 troca o papel → P3  ║
+# ║  · F2 alarga TO → P1 · F3 pula tabela → P5 · F5 orçamento → P6 · F6 → P0      ║
+# ║  · F4 policy sabotada depois → A1 e A2. A8 fica vermelho com a versão que lia ║
+# ║  antes de travar (conferido à mão no PR).                                     ║
 # ║  Rodar:  bash db/test-rls-has-role-initplan-classe.sh > /tmp/t.log 2>&1      ║
 # ║  Locale: PROVA_LOCALE=pt_BR.UTF-8 bash db/test-rls-has-role-initplan-classe.sh║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PGVER=17
-PGBIN="/opt/homebrew/opt/postgresql@${PGVER}/bin"
-[ -x "$PGBIN/initdb" ] || PGBIN="$(dirname "$(command -v initdb 2>/dev/null || echo /usr/lib/postgresql/${PGVER}/bin/initdb)")"
+export PGVER=17   # consumido pelo db/lib/pg-harness.sh via source
+# shellcheck disable=SC1091  # o gate roda sem -x; o helper e versionado ao lado, em db/lib/
+. "$REPO_ROOT/db/lib/pg-harness.sh"   # exporta PGBIN — fail-CLOSED, confere a major POSITIVAMENTE
 PORT="${PGPORT_TEST:-5483}"
 SLUG="rls-hr-classe"
 LOC="${PROVA_LOCALE:-C}"
 DATA="$(mktemp -d "/tmp/pgtest-${SLUG}.XXXXXX")/data"
 export LC_ALL="$LOC" LANG="$LOC"
-
-[ -x "$PGBIN/initdb" ] || { echo "postgresql@${PGVER} ausente"; exit 1; }
-if command -v brew >/dev/null 2>&1 && brew --prefix "postgresql@${PGVER}" >/dev/null 2>&1; then
-  CELLAR="$(brew --prefix "postgresql@${PGVER}")"
-  cp -Rn "$CELLAR"/share/postgresql/. "/opt/homebrew/share/postgresql@${PGVER}/" 2>/dev/null || true
-  mkdir -p "/opt/homebrew/lib/postgresql@${PGVER}" 2>/dev/null || true
-  cp -Rn "$CELLAR"/lib/postgresql/. "/opt/homebrew/lib/postgresql@${PGVER}/" 2>/dev/null || true
-fi
 
 cleanup() { "$PGBIN/pg_ctl" -D "$DATA" stop -m immediate >/dev/null 2>&1 || true; rm -rf "$(dirname "$DATA")"; }
 trap cleanup EXIT
@@ -88,16 +83,19 @@ ALTER TABLE public.user_roles ADD COLUMN IF NOT EXISTS user_id uuid, ADD COLUMN 
 GRANT USAGE ON SCHEMA private TO authenticated, anon;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public, private TO authenticated, anon;
 
--- Chamadores. EMP e EMP2 são employee com papel comercial diferente; SUPER só tem
--- o comercial super_admin; NOROLE é autenticado sem papel nenhum.
+-- Chamadores. emp/emp2/emp3 são employee com papel comercial gerencial /
+-- estrategico / nenhum; super só tem o comercial super_admin; oper só tem o
+-- comercial operacional (não privilegiado); norole é autenticado sem papel.
 CREATE SCHEMA _prova;
 CREATE TABLE _prova.caller (nome text PRIMARY KEY, uid uuid, papel text);
 INSERT INTO _prova.caller VALUES
   ('master', '11111111-1111-1111-1111-111111111111', 'authenticated'),
   ('emp',    '22222222-2222-2222-2222-222222222222', 'authenticated'),
   ('emp2',   '55555555-5555-5555-5555-555555555555', 'authenticated'),
+  ('emp3',   '77777777-7777-7777-7777-777777777777', 'authenticated'),
   ('cust',   '33333333-3333-3333-3333-333333333333', 'authenticated'),
   ('super',  '66666666-6666-6666-6666-666666666666', 'authenticated'),
+  ('oper',   '88888888-8888-8888-8888-888888888888', 'authenticated'),
   ('norole', '44444444-4444-4444-4444-444444444444', 'authenticated'),
   ('semuid', NULL,                                   'authenticated'),
   ('anon',   NULL,                                   'anon');
@@ -105,6 +103,7 @@ INSERT INTO public.user_roles (user_id, role) VALUES
   ('11111111-1111-1111-1111-111111111111','master'),
   ('22222222-2222-2222-2222-222222222222','employee'),
   ('55555555-5555-5555-5555-555555555555','employee'),
+  ('77777777-7777-7777-7777-777777777777','employee'),
   ('33333333-3333-3333-3333-333333333333','customer');
 
 -- Toda tabela do fixture: RLS ligada, grants do Supabase.
@@ -116,44 +115,58 @@ DO $$ DECLARE t text; BEGIN
 END $$;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon;
 
--- Seed: produto cartesiano dos valores que importam por tipo de coluna (uids dos
--- chamadores + NULL; os literais de texto que as policies citam + 'outro' + NULL).
--- Tabela sem coluna citada: 3 linhas. commercial_roles: o diretório, à mão.
+-- Diretório comercial e pedidos, à mão: cada pedido tem UM dono (o dono de um
+-- pedido não pode valer para os outros, senão o EXISTS de order_messages fica
+-- sempre verdadeiro para o customer).
+INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
+  ('11111111-1111-1111-1111-111111111111','master'),
+  ('22222222-2222-2222-2222-222222222222','gerencial'),
+  ('55555555-5555-5555-5555-555555555555','estrategico'),
+  ('66666666-6666-6666-6666-666666666666','super_admin'),
+  ('88888888-8888-8888-8888-888888888888','operacional'),
+  (NULL,'estrategico');
+INSERT INTO public.orders (id, user_id)
+  SELECT ('aaaaaaaa-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid, u
+  FROM (SELECT row_number() OVER () n, uid u FROM _prova.caller WHERE uid IS NOT NULL
+        UNION ALL SELECT 99, NULL) x;
+
+-- Conjunto de valores que importam para uma coluna: uids dos chamadores + NULL;
+-- os literais de texto que as policies citam + 'outro' + NULL; todos os papéis;
+-- order_id = os pedidos existentes + um id inexistente + NULL.
+CREATE FUNCTION _prova.valores(p_col text, p_udt text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$
+  SELECT CASE
+    WHEN p_col = 'order_id' THEN '(SELECT id FROM public.orders UNION ALL SELECT ''bbbbbbbb-0000-0000-0000-000000000000''::uuid UNION ALL SELECT NULL)'
+    WHEN p_udt = 'uuid' THEN '(SELECT uid FROM _prova.caller WHERE uid IS NOT NULL UNION ALL SELECT NULL)'
+    WHEN p_udt = 'text' THEN '(VALUES (''manual''::text),(''published''),(''draft''),(''in_review''),(''ativa''),(''outro''),(NULL))'
+    WHEN p_udt = 'commercial_role' THEN '(SELECT unnest(enum_range(NULL::public.commercial_role)) UNION ALL SELECT NULL)'
+    WHEN p_udt = 'app_role' THEN '(SELECT unnest(enum_range(NULL::public.app_role)) UNION ALL SELECT NULL)'
+  END
+$f$;
+
+-- Seed: produto cartesiano desses conjuntos. Tabela sem coluna citada: 3 linhas.
 DO $$
 DECLARE
-  t text; cols text[]; fontes text[]; c record;
-  vu text := '(VALUES (''11111111-1111-1111-1111-111111111111''::uuid),(''22222222-2222-2222-2222-222222222222''),(''55555555-5555-5555-5555-555555555555''),(''33333333-3333-3333-3333-333333333333''),(''66666666-6666-6666-6666-666666666666''),(''44444444-4444-4444-4444-444444444444''),(NULL))';
-  vt text := '(VALUES (''manual''::text),(''published''),(''draft''),(''in_review''),(''ativa''),(''outro''),(NULL))';
-  vc text := '(SELECT unnest(enum_range(NULL::public.commercial_role)) UNION ALL SELECT NULL)';
-  i int;
+  t text; cols text[]; fontes text[]; c record; f text; i int;
 BEGIN
-  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename NOT IN ('user_roles','commercial_roles') ORDER BY 1 LOOP
+  FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public'
+           AND tablename NOT IN ('user_roles','commercial_roles','orders') ORDER BY 1 LOOP
     cols := '{}'; fontes := '{}'; i := 0;
     FOR c IN SELECT column_name, udt_name FROM information_schema.columns
              WHERE table_schema='public' AND table_name=t AND column_name <> '_k' ORDER BY ordinal_position LOOP
+      f := _prova.valores(c.column_name, c.udt_name);
+      IF f IS NULL THEN RAISE EXCEPTION 'seed: tipo % de %.% sem conjunto de valores', c.udt_name, t, c.column_name; END IF;
       i := i + 1;
       cols := cols || quote_ident(c.column_name);
-      fontes := fontes || format('%s AS s%s(v)', CASE c.udt_name WHEN 'uuid' THEN vu WHEN 'text' THEN vt
-                                                          WHEN 'commercial_role' THEN vc
-                                                          ELSE NULL END, i);
-      IF fontes[i] IS NULL THEN RAISE EXCEPTION 'seed: tipo % de %.% sem conjunto de valores', c.udt_name, t, c.column_name; END IF;
+      fontes := fontes || format('%s AS s%s(v)', f, i);
     END LOOP;
     IF i = 0 THEN
-      EXECUTE format('INSERT INTO public.%I DEFAULT VALUES', t);
-      EXECUTE format('INSERT INTO public.%I DEFAULT VALUES', t);
-      EXECUTE format('INSERT INTO public.%I DEFAULT VALUES', t);
+      EXECUTE format('INSERT INTO public.%I SELECT FROM generate_series(1, 3)', t);
     ELSE
       EXECUTE format('INSERT INTO public.%I (%s) SELECT %s FROM %s', t, array_to_string(cols, ','),
         (SELECT string_agg(format('s%s.v', g), ',') FROM generate_series(1, i) g), array_to_string(fontes, ' CROSS JOIN '));
     END IF;
   END LOOP;
 END $$;
-INSERT INTO public.commercial_roles (user_id, commercial_role) VALUES
-  ('11111111-1111-1111-1111-111111111111','master'),
-  ('22222222-2222-2222-2222-222222222222','gerencial'),
-  ('55555555-5555-5555-5555-555555555555','estrategico'),
-  ('66666666-6666-6666-6666-666666666666','super_admin'),
-  (NULL,'estrategico');
 
 -- Linhas extras nas duas tabelas de tela medidas, para o contador por linha.
 INSERT INTO public.profiles SELECT FROM generate_series(1, 500);
@@ -174,34 +187,40 @@ $f$;
 -- Cada sonda roda num sub-bloco que termina em RAISE sentinela: o SET ROLE, o GUC e
 -- a escrita voltam atrás. Só a sentinela e a negação de RLS (42501) são esperadas;
 -- qualquer outro erro sobe e derruba a prova.
+CREATE FUNCTION _prova.entra(cl _prova.caller) RETURNS void LANGUAGE plpgsql AS $f$
+BEGIN
+  EXECUTE format('SET ROLE %I', cl.papel);
+  PERFORM set_config('request.jwt.claims', CASE WHEN cl.uid IS NULL THEN '' ELSE json_build_object('sub', cl.uid)::text END, true);
+END $f$;
+
 CREATE FUNCTION _prova.sondar(p_fase text) RETURNS void LANGUAGE plpgsql AS $f$
 DECLARE
-  t text; cl record; k int; ks int[]; sel text; upd text; del text; ins text; n int;
+  t text; cl _prova.caller; k int; sel text; upd text; del text; ins text; tra text; n int;
+  c record; v text; nlin int; passo int;
 BEGIN
   FOR t IN SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1 LOOP
+    EXECUTE format('SELECT count(*) FROM public.%I', t) INTO nlin;
+    passo := greatest(1, nlin / 50);
     FOR cl IN SELECT * FROM _prova.caller ORDER BY nome LOOP
       -- SELECT
       BEGIN
-        EXECUTE format('SET ROLE %I', cl.papel);
-        PERFORM set_config('request.jwt.claims', CASE WHEN cl.uid IS NULL THEN '' ELSE json_build_object('sub', cl.uid)::text END, true);
+        PERFORM _prova.entra(cl);
         EXECUTE format('SELECT coalesce(string_agg(_k::text, '','' ORDER BY _k), ''∅'') FROM public.%I', t) INTO sel;
         RAISE EXCEPTION USING ERRCODE = 'PV001';
       EXCEPTION WHEN SQLSTATE 'PV001' THEN NULL;
       END;
       -- DELETE (um statement, devolve o conjunto apagado)
       BEGIN
-        EXECUTE format('SET ROLE %I', cl.papel);
-        PERFORM set_config('request.jwt.claims', CASE WHEN cl.uid IS NULL THEN '' ELSE json_build_object('sub', cl.uid)::text END, true);
+        PERFORM _prova.entra(cl);
         EXECUTE format('WITH d AS (DELETE FROM public.%I RETURNING _k) SELECT coalesce(string_agg(_k::text, '','' ORDER BY _k), ''∅'') FROM d', t) INTO del;
         RAISE EXCEPTION USING ERRCODE = 'PV001';
       EXCEPTION WHEN SQLSTATE 'PV001' THEN NULL;
       END;
-      -- UPDATE e INSERT, linha a linha (WITH CHECK nega a linha, não o conjunto)
-      upd := ''; ins := '';
+      -- UPDATE, INSERT e TRANSIÇÃO, linha a linha (WITH CHECK nega a linha, não o conjunto)
+      upd := ''; ins := ''; tra := '';
       FOR k IN EXECUTE format('SELECT _k FROM public.%I ORDER BY _k', t) LOOP
         BEGIN
-          EXECUTE format('SET ROLE %I', cl.papel);
-          PERFORM set_config('request.jwt.claims', CASE WHEN cl.uid IS NULL THEN '' ELSE json_build_object('sub', cl.uid)::text END, true);
+          PERFORM _prova.entra(cl);
           BEGIN
             EXECUTE format('UPDATE public.%I SET _k = _k WHERE _k = $1', t) USING k;
             GET DIAGNOSTICS n = ROW_COUNT;
@@ -212,11 +231,10 @@ BEGIN
         EXCEPTION WHEN SQLSTATE 'PV001' THEN NULL;
         END;
         BEGIN
-          EXECUTE format('CREATE TEMP TABLE IF NOT EXISTS _cp AS SELECT * FROM public.%I WHERE _k = %s', t, k);
-          EXECUTE format('UPDATE _cp SET _k = _k + 1000000');
+          EXECUTE format('CREATE TEMP TABLE _cp AS SELECT * FROM public.%I WHERE _k = %s', t, k);
+          EXECUTE 'UPDATE _cp SET _k = _k + 1000000';
           EXECUTE 'GRANT SELECT ON _cp TO authenticated, anon';
-          EXECUTE format('SET ROLE %I', cl.papel);
-          PERFORM set_config('request.jwt.claims', CASE WHEN cl.uid IS NULL THEN '' ELSE json_build_object('sub', cl.uid)::text END, true);
+          PERFORM _prova.entra(cl);
           BEGIN
             EXECUTE format('INSERT INTO public.%I SELECT * FROM _cp', t);
             ins := ins || k || 'i,';
@@ -225,12 +243,44 @@ BEGIN
           RAISE EXCEPTION USING ERRCODE = 'PV001';
         EXCEPTION WHEN SQLSTATE 'PV001' THEN NULL;
         END;
+        -- transição: UPDATE que MUDA uma coluna de autorização para cada valor do
+        -- conjunto (dono → outro, draft → published…). Amostra ~50 linhas/tabela.
+        CONTINUE WHEN k % passo <> 0;
+        FOR c IN SELECT column_name, udt_name FROM information_schema.columns
+                 WHERE table_schema='public' AND table_name=t AND column_name <> '_k' ORDER BY ordinal_position LOOP
+          FOR v IN EXECUTE format('SELECT x::text FROM %s AS s(x)', _prova.valores(c.column_name, c.udt_name)) LOOP
+            BEGIN
+              PERFORM _prova.entra(cl);
+              BEGIN
+                EXECUTE format('UPDATE public.%I SET %I = $1::%s WHERE _k = $2', t, c.column_name,
+                               CASE c.udt_name WHEN 'uuid' THEN 'uuid' WHEN 'text' THEN 'text' ELSE 'public.' || c.udt_name END)
+                  USING v, k;
+                GET DIAGNOSTICS n = ROW_COUNT;
+                tra := tra || k || c.column_name || coalesce(v, '∅') || CASE WHEN n = 1 THEN 'u,' ELSE '-,' END;
+              EXCEPTION WHEN insufficient_privilege THEN tra := tra || k || c.column_name || coalesce(v, '∅') || 'X,';
+              END;
+              RAISE EXCEPTION USING ERRCODE = 'PV001';
+            EXCEPTION WHEN SQLSTATE 'PV001' THEN NULL;
+            END;
+          END LOOP;
+        END LOOP;
       END LOOP;
       INSERT INTO _prova.resultado VALUES
         (p_fase, t, cl.nome, 'SELECT', sel), (p_fase, t, cl.nome, 'DELETE', del),
         (p_fase, t, cl.nome, 'UPDATE', md5(upd)), (p_fase, t, cl.nome, 'INSERT', md5(ins));
+      IF tra <> '' THEN
+        INSERT INTO _prova.resultado VALUES (p_fase, t, cl.nome, 'TRANSICAO', md5(tra));
+      END IF;
     END LOOP;
   END LOOP;
+END $f$;
+
+-- O caminho do executor: o corpo do arquivo roda via EXECUTE dentro de uma função
+-- SECURITY DEFINER com search_path próprio, numa transação só (como aplicar_sql).
+CREATE FUNCTION _prova.aplicar(p_sql text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp AS $f$
+BEGIN
+  EXECUTE p_sql;
 END $f$;
 SQL
 
@@ -240,7 +290,7 @@ Pdb controle -q -c "SELECT _prova.sondar('antes'); SELECT _prova.foto_catalogo('
 DIST=$(Pdb controle -tA -c "SELECT count(DISTINCT assinatura) FROM _prova.resultado WHERE fase='antes' AND tabela='profiles' AND cmd='SELECT';")
 eq "C0 a sonda separa papéis em profiles (master/emp veem tudo, cust/anon nada)" "$DIST" "2"
 DIST=$(Pdb controle -tA -c "SELECT count(DISTINCT assinatura) FROM _prova.resultado WHERE fase='antes' AND tabela='order_messages' AND cmd IN ('SELECT','INSERT');")
-[ "${DIST:-0}" -ge 4 ] && ok "C0 a sonda separa linhas em order_messages (dono × staff × sender) ($DIST assinaturas)" || bad "C0 order_messages sem variedade ($DIST)"
+if [ "${DIST:-0}" -ge 4 ]; then ok "C0 a sonda separa linhas em order_messages (dono × staff × sender) ($DIST assinaturas)"; else bad "C0 order_messages sem variedade ($DIST)"; fi
 NPOL=$(Pdb controle -tA -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND (coalesce(qual,'')||coalesce(with_check,'')) ~ 'has_role\(auth\.uid\(\)';")
 eq "C0 fixture tem as 308 policies-alvo da prod" "$NPOL" "308"
 
@@ -269,15 +319,24 @@ SQL
 K_PROF_ANTES=$(contador_has_role controle profiles)
 K_TINT_ANTES=$(contador_has_role controle tint_importacoes)
 
-if ! Pdb controle -q -1 -f "$MIG" > /tmp/${SLUG}-mig.log 2>&1; then
+# Aplica um arquivo pelo caminho do executor (EXECUTE em função SECURITY DEFINER,
+# um statement = uma transação). VERBOSITY verbose põe a SQLSTATE na saída, que
+# não depende do locale.
+aplica() { Pdb "$1" -q -v VERBOSITY=verbose -c "SELECT _prova.aplicar(pg_read_file('$2'));"; }
+
+if ! aplica controle "$MIG" > /tmp/${SLUG}-mig.log 2>&1; then
   cat /tmp/${SLUG}-mig.log; bad "CONTROLE: a migration real falhou — abortando antes das sabotagens"; echo "RESULTADO: $PASS ok / $FAIL fail"; exit 1
 fi
-ok "Z2 migration real aplicada (controle verde)"
+ok "Z2 migration real aplicada pelo caminho do executor (controle verde)"
 Pdb controle -q -c "SELECT _prova.sondar('depois'); SELECT _prova.foto_catalogo('depois');" >/dev/null
 
 echo "── A1 matriz RLS real: o mesmo CONJUNTO por tabela × chamador × comando ──"
 TOT=$(Pdb controle -tA -c "SELECT count(*) FROM _prova.resultado WHERE fase='antes';")
-eq "A1 sondas por fase (185 tabelas × 8 chamadores × 4 comandos)" "$TOT" "5920"
+ESP=$(Pdb controle -tA -c "SELECT (SELECT count(*) FROM pg_tables WHERE schemaname='public') * (SELECT count(*) FROM _prova.caller) * 4
+  + (SELECT count(DISTINCT table_name) FROM information_schema.columns WHERE table_schema='public' AND column_name <> '_k') * (SELECT count(*) FROM _prova.caller);")
+eq "A1 sondas por fase (185 tabelas × 10 chamadores × 4 comandos + transições)" "$TOT" "$ESP"
+NTRA=$(Pdb controle -tA -c "SELECT count(*) FROM _prova.resultado WHERE fase='antes' AND cmd='TRANSICAO';")
+if [ "${NTRA:-0}" -ge 100 ]; then ok "A1 sondas de transição (UPDATE que muda coluna de autorização): $NTRA"; else bad "A1 poucas transições ($NTRA)"; fi
 DIF=$(Pdb controle -tA -c "SELECT count(*) FROM _prova.resultado a FULL JOIN _prova.resultado d ON d.fase='depois' AND (d.tabela,d.caller,d.cmd)=(a.tabela,a.caller,a.cmd) WHERE a.fase='antes' AND a.assinatura IS DISTINCT FROM d.assinatura;")
 eq "A1 sondas que mudaram" "$DIF" "0"
 
@@ -299,8 +358,8 @@ END $$;
 SELECT tot || '|' || pares FROM _a2;
 SQL
 )
-eq "A2 linhas onde (antiga) ≠ (nova), somando todas as cláusulas × 8 chamadores" "${A2%%|*}" "0"
-[ "${A2#*|}" -gt 0 ] && ok "A2 avaliou ${A2#*|} pares cláusula×chamador" || bad "A2 não avaliou nada"
+eq "A2 linhas onde (antiga) ≠ (nova), somando todas as cláusulas × 10 chamadores" "${A2%%|*}" "0"
+if [ "${A2#*|}" -gt 0 ]; then ok "A2 avaliou ${A2#*|} pares cláusula×chamador"; else bad "A2 não avaliou nada"; fi
 
 echo "── A3 catálogo preservado ──"
 A3=$(Pdb controle -tA -c "SELECT count(*) FROM _prova.clausula a FULL JOIN _prova.clausula d ON d.fase='depois' AND (d.tabela,d.policy)=(a.tabela,a.policy) WHERE a.fase='antes' AND (d.policy IS NULL OR (a.cmd,a.permissive,a.roles,a.qual IS NULL,a.wc IS NULL) IS DISTINCT FROM (d.cmd,d.permissive,d.roles,d.qual IS NULL,d.wc IS NULL));")
@@ -315,16 +374,93 @@ eq "A4 has_role cru que sobrou" "$(Pdb controle -tA -c "SELECT count(*) FROM pg_
 
 echo "── A5 InitPlan: has_role por consulta, não por linha ──"
 K_PROF=$(contador_has_role controle profiles); K_TINT=$(contador_has_role controle tint_importacoes)
-[ "${K_PROF_ANTES:-0}" -ge 500 ] && ok "A5 antes: profiles chamava has_role por linha (${K_PROF_ANTES}× p/ 503 linhas)" || bad "A5 antes: profiles só ${K_PROF_ANTES}× — o contador não mede"
-[ "${K_TINT_ANTES:-0}" -ge 500 ] && ok "A5 antes: tint_importacoes por linha (${K_TINT_ANTES}×)" || bad "A5 antes: tint_importacoes só ${K_TINT_ANTES}×"
-[ "${K_PROF:-99}" -le 4 ] && ok "A5 depois: profiles ${K_PROF}× por consulta" || bad "A5 depois: profiles ainda ${K_PROF}×"
-[ "${K_TINT:-99}" -le 4 ] && ok "A5 depois: tint_importacoes ${K_TINT}× por consulta" || bad "A5 depois: tint_importacoes ainda ${K_TINT}×"
+if [ "${K_PROF_ANTES:-0}" -ge 500 ]; then ok "A5 antes: profiles chamava has_role por linha (${K_PROF_ANTES}× p/ 503 linhas)"; else bad "A5 antes: profiles só ${K_PROF_ANTES}× — o contador não mede"; fi
+if [ "${K_TINT_ANTES:-0}" -ge 500 ]; then ok "A5 antes: tint_importacoes por linha (${K_TINT_ANTES}×)"; else bad "A5 antes: tint_importacoes só ${K_TINT_ANTES}×"; fi
+if [ "${K_PROF:-99}" -le 4 ]; then ok "A5 depois: profiles ${K_PROF}× por consulta"; else bad "A5 depois: profiles ainda ${K_PROF}×"; fi
+if [ "${K_TINT:-99}" -le 4 ]; then ok "A5 depois: tint_importacoes ${K_TINT}× por consulta"; else bad "A5 depois: tint_importacoes ainda ${K_TINT}×"; fi
 
 echo "── A6 idempotência ──"
-if Pdb controle -q -1 -f "$MIG" > /tmp/${SLUG}-mig2.log 2>&1; then ok "A6 2º apply passa"; else bad "A6 2º apply falhou"; cat /tmp/${SLUG}-mig2.log; fi
-grep -q "0 policies reescritas, 0 chamadas" /tmp/${SLUG}-mig2.log && ok "A6 2º apply não reescreve nada" || bad "A6 2º apply reescreveu algo: $(grep -o 'rls_has_role_initplan:.*' /tmp/${SLUG}-mig2.log | head -1)"
+if aplica controle "$MIG" > /tmp/${SLUG}-mig2.log 2>&1; then ok "A6 2º apply passa"; else bad "A6 2º apply falhou"; cat /tmp/${SLUG}-mig2.log; fi
+if grep -q "0 tabelas, 0 policies reescritas, 0 chamadas" /tmp/${SLUG}-mig2.log; then ok "A6 2º apply não reescreve nada"; else bad "A6 2º apply reescreveu algo: $(grep -o 'rls_has_role_initplan:.*' /tmp/${SLUG}-mig2.log | head -1)"; fi
 A6=$(Pdb controle -tA -c "SELECT count(*) FROM pg_policies p JOIN _prova.clausula d ON d.fase='depois' AND (d.tabela,d.policy)=(p.tablename,p.policyname) WHERE p.schemaname='public' AND (p.qual,p.with_check) IS DISTINCT FROM (d.qual,d.wc);")
 eq "A6 policies alteradas pelo 2º apply" "$A6" "0"
+
+echo "── A7 plano genérico (PostgREST reusa plano) alternando o usuário ──"
+A7=$(Pdb controle -q -tA <<'SQL' | tr '\n' ',' | sed 's/,$//'
+SET plan_cache_mode = force_generic_plan;
+SET ROLE authenticated;
+PREPARE q AS SELECT count(*) FROM public.profiles;
+SET "request.jwt.claims" = '{"sub":"22222222-2222-2222-2222-222222222222"}';
+EXECUTE q;
+SET "request.jwt.claims" = '{"sub":"33333333-3333-3333-3333-333333333333"}';
+EXECUTE q;
+SET "request.jwt.claims" = '{"sub":"11111111-1111-1111-1111-111111111111"}';
+EXECUTE q;
+SET "request.jwt.claims" = '';
+EXECUTE q;
+SQL
+)
+eq "A7 mesmo plano, emp→cust→master→sem uid" "$A7" "503,0,503,0"
+
+echo "── A8 corrida: policy apertada por outra sessão ANTES do lock é a que vale ──"
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base corrida
+# Outra sessão segura o lock de profiles com a policy apertada (só master) e commita em 300 ms.
+Pdb corrida -q -c "BEGIN; ALTER POLICY \"Employees can view all profiles\" ON public.profiles USING (has_role(auth.uid(), 'master'::app_role)); SELECT pg_sleep(0.3); COMMIT;" >/dev/null 2>&1 &
+APERTA=$!
+for _ in $(seq 1 50); do
+  [ "$(Pdb corrida -tA -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE c.relname='profiles' AND l.mode='AccessExclusiveLock' AND l.granted;")" = "1" ] && break
+  sleep 0.02
+done
+if aplica corrida "$MIG" > /tmp/${SLUG}-corrida.log 2>&1; then ok "A8 migration esperou o lock e passou"; else bad "A8 migration falhou na corrida"; cat /tmp/${SLUG}-corrida.log; fi
+wait "$APERTA" || true
+A8=$(Pdb corrida -tA -c "SELECT qual FROM pg_policies WHERE tablename='profiles' AND policyname='Employees can view all profiles';")
+eq "A8 vale a versão apertada (só master), embrulhada" "$A8" "( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)"
+
+echo "── A9 lock_timeout: leitor segurando a tabela → a migration desiste e volta atrás ──"
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base trava
+Pdb trava -q -c "BEGIN; LOCK TABLE public.profiles IN ACCESS SHARE MODE; SELECT pg_sleep(3); COMMIT;" >/dev/null 2>&1 &
+LEITOR=$!
+for _ in $(seq 1 50); do
+  [ "$(Pdb trava -tA -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE c.relname='profiles' AND l.mode='AccessShareLock' AND l.granted AND l.pid <> pg_backend_pid();")" = "1" ] && break
+  sleep 0.02
+done
+if aplica trava "$MIG" > /tmp/${SLUG}-trava.log 2>&1; then bad "A9 a migration passou com a tabela travada"
+elif grep -q "55P03" /tmp/${SLUG}-trava.log; then ok "A9 desistiu com 55P03 (lock_timeout)"
+else bad "A9 falhou sem 55P03: $(grep -m1 -E 'ERRO|ERROR' /tmp/${SLUG}-trava.log)"; fi
+wait "$LEITOR" || true
+eq "A9 nada ficou meio-aplicado" "$(Pdb trava -tA -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND (coalesce(qual,'')||coalesce(with_check,'')) ~ '\( SELECT has_role\(auth\.uid\(\), ';")" "0"
+
+echo "── L1 limite documentado: identidade trocada NO MEIO do statement ──"
+# A premissa da migration. Se um trigger trocasse o JWT entre a 1ª e a 2ª linha de um
+# INSERT, a forma direta reavaliaria e a embrulhada não. Prod não tem esse caminho
+# (conferido em 2026-11-02); este teste mostra que o limite é real, não teórico.
+"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base limite
+L1=$(Pdb limite -q -tA <<'SQL' | tail -2 | tr '\n' ','
+CREATE TABLE public._l1_direta (n int);  CREATE TABLE public._l1_embrulhada (n int);
+ALTER TABLE public._l1_direta ENABLE ROW LEVEL SECURITY; ALTER TABLE public._l1_embrulhada ENABLE ROW LEVEL SECURITY;
+GRANT ALL ON public._l1_direta, public._l1_embrulhada TO authenticated;
+CREATE POLICY p ON public._l1_direta FOR INSERT TO authenticated WITH CHECK (has_role(auth.uid(), 'employee'::app_role));
+CREATE POLICY p ON public._l1_embrulhada FOR INSERT TO authenticated WITH CHECK ((SELECT has_role(auth.uid(), 'employee'::app_role)));
+CREATE FUNCTION public._l1_troca() RETURNS trigger LANGUAGE plpgsql AS $f$
+BEGIN IF NEW.n = 2 THEN PERFORM set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-333333333333"}', true); END IF; RETURN NEW; END $f$;
+CREATE TRIGGER t BEFORE INSERT ON public._l1_direta FOR EACH ROW EXECUTE FUNCTION public._l1_troca();
+CREATE TRIGGER t BEFORE INSERT ON public._l1_embrulhada FOR EACH ROW EXECUTE FUNCTION public._l1_troca();
+CREATE FUNCTION public._l1_tenta(t text) RETURNS text LANGUAGE plpgsql AS $f$
+BEGIN
+  BEGIN
+    SET LOCAL ROLE authenticated;
+    PERFORM set_config('request.jwt.claims', '{"sub":"22222222-2222-2222-2222-222222222222"}', true);
+    EXECUTE format('INSERT INTO public.%I VALUES (1), (2)', t);
+    RAISE EXCEPTION USING ERRCODE = 'PV002';
+  EXCEPTION WHEN SQLSTATE 'PV002' THEN RETURN 'passou';
+            WHEN insufficient_privilege THEN RETURN 'negou';
+  END;
+END $f$;
+SELECT public._l1_tenta('_l1_direta');
+SELECT public._l1_tenta('_l1_embrulhada');
+SQL
+)
+eq "L1 direta nega a 2ª linha, embrulhada deixa passar (por isso a premissa)" "$L1" "negou,passou,"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ZONA 3 — FALSIFICAÇÃO. Cada sabotagem roda numa CÓPIA do banco base (ou numa
@@ -335,23 +471,27 @@ sabota_mig() {  # $1=rótulo $2=expressão sed $3=marca esperada
   sed "$2" "$MIG" > "$f"
   if cmp -s "$f" "$MIG"; then bad "$1 o sed não mudou a migration (sabotagem vazia)"; return; fi
   "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base "$db"
-  if Pdb "$db" -q -1 -f "$f" > "/tmp/${SLUG}-$1.log" 2>&1; then
+  if aplica "$db" "$f" > "/tmp/${SLUG}-$1.log" 2>&1; then
     bad "$1 migration sabotada PASSOU"
   elif grep -q "$3" "/tmp/${SLUG}-$1.log"; then
     ok "$1 morde com $3"
   else
     bad "$1 falhou, mas sem $3: $(grep -m1 -E 'ERRO|ERROR' "/tmp/${SLUG}-$1.log")"
   fi
-  # o ROLLBACK é do executor: o banco sabotado tem de seguir com zero policy embrulhada
+  # a transação é uma só: o banco sabotado tem de seguir com zero policy embrulhada
   local w; w=$(Pdb "$db" -tA -c "SELECT count(*) FROM pg_policies WHERE schemaname='public' AND (coalesce(qual,'')||coalesce(with_check,'')) ~ '\( SELECT has_role\(auth\.uid\(\), ';")
   eq "$1 nada ficou meio-aplicado" "$w" "0"
 }
 echo "── F1 replace troca o papel → P3 ──"
 sabota_mig F1 "s/'(SELECT \\\\1)'/'(SELECT has_role(auth.uid(), ''master''::app_role))'/g" "P3 FALHOU"
 echo "── F2 ALTER alarga para TO public → P1 ──"
-sabota_mig F2 "s/format('ALTER POLICY %I ON public.%I', r.polname, r.tabela)/format('ALTER POLICY %I ON public.%I TO public', r.polname, r.tabela)/" "P1 FALHOU"
+sabota_mig F2 "s/format('ALTER POLICY %I ON public.%I', r.polname, t)/format('ALTER POLICY %I ON public.%I TO public', r.polname, t)/" "P1 FALHOU"
 echo "── F3 pula uma tabela → P5 ──"
-sabota_mig F3 "s/CONTINUE WHEN q_new IS NOT DISTINCT FROM r.qual/CONTINUE WHEN r.tabela = 'profiles' OR q_new IS NOT DISTINCT FROM r.qual/" "P5 FALHOU"
+sabota_mig F3 "s/CONTINUE WHEN q_new IS NOT DISTINCT FROM r.qual/CONTINUE WHEN t = 'profiles' OR q_new IS NOT DISTINCT FROM r.qual/" "P5 FALHOU"
+echo "── F5 orçamento zerado → P6 ──"
+sabota_mig F5 "s/orcamento constant interval := '5 seconds'/orcamento constant interval := '0 seconds'/" "P6 FALHOU"
+echo "── F6 isolamento exigido trocado → P0 ──"
+sabota_mig F6 "s/current_setting('transaction_isolation') <> 'read committed'/current_setting('transaction_isolation') <> 'serializable'/" "P0 FALHOU"
 
 echo "── F4 policy sabotada depois do apply → A1 e A2 ──"
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T controle sab_F4
@@ -359,9 +499,9 @@ Pdb sab_F4 -q -c "DELETE FROM _prova.resultado WHERE fase='depois'; DELETE FROM 
   ALTER POLICY \"Employees can view all profiles\" ON public.profiles USING ((SELECT has_role(auth.uid(), 'master'::app_role)));
   SELECT _prova.sondar('depois'); SELECT _prova.foto_catalogo('depois');" >/dev/null
 F4=$(Pdb sab_F4 -tA -c "SELECT count(*) FROM _prova.resultado a JOIN _prova.resultado d ON d.fase='depois' AND (d.tabela,d.caller,d.cmd)=(a.tabela,a.caller,a.cmd) WHERE a.fase='antes' AND a.assinatura IS DISTINCT FROM d.assinatura;")
-[ "${F4:-0}" -ge 1 ] && ok "F4 A1 morde ($F4 sondas mudaram: employee perdeu profiles)" || bad "F4 A1 não viu employee perder profiles"
+if [ "${F4:-0}" -ge 1 ]; then ok "F4 A1 morde ($F4 sondas mudaram: employee perdeu profiles)"; else bad "F4 A1 não viu employee perder profiles"; fi
 F4b=$(Pdb sab_F4 -tA -c "SELECT set_config('request.jwt.claims','{\"sub\":\"22222222-2222-2222-2222-222222222222\"}',false) IS NULL; SELECT count(*) FROM public.profiles WHERE ((has_role(auth.uid(), 'master'::app_role) OR has_role(auth.uid(), 'employee'::app_role))) IS DISTINCT FROM (( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role));" | tail -1)
-[ "${F4b:-0}" -ge 1 ] && ok "F4 A2 morde ($F4b linhas divergem para o employee)" || bad "F4 A2 não viu a divergência"
+if [ "${F4b:-0}" -ge 1 ]; then ok "F4 A2 morde ($F4b linhas divergem para o employee)"; else bad "F4 A2 não viu a divergência"; fi
 
 echo "──────────────────────────────"
 echo "RESULTADO: $PASS ok / $FAIL fail (locale $LOC)"

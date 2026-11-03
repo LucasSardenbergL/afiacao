@@ -80,6 +80,10 @@ db/test-resolver-cliente-por-telefone.sh   15  falsificar=5
 # corantes só sai para staff: customer e anon recebem NULL e mantêm o preço final.
 db/test-tint-formulas-rls-initplan.sh      26
 db/test-tint-gate-custo-staff.sh           25
+# RLS has_role por linha → InitPlan na CLASSE do public (308 policies / 185 tabelas, fixture verbatim
+# da prod): o conjunto que cada papel lê/insere/atualiza/apaga é o mesmo antes e depois, cada cláusula é
+# igual ponto a ponto, travar-antes-de-ler fecha a corrida (A8) e lock_timeout faz a migration desistir.
+db/test-rls-has-role-initplan-classe.sh   39
 # Canal WhatsApp, núcleo HSM: o log de envio só a edge escreve (authenticated leva 42501 do GRANT, e a
 # camada que nega é DECLARADA), o catálogo só o master; a idempotência e os CHECKs são do banco. Monta o
 # schema por db/lib/corpo-vivo.sh — snapshot + o ACL MEDIDO em prod + a cadeia dinâmica — porque a
