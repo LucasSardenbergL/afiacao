@@ -3,7 +3,7 @@
 Plano: `docs/superpowers/plans/2026-11-01-plano-melhoria-v4/README.md`. Evidência de origem:
 `docs/historico/consultas-pesadas-lote9.md`, seção "RLS por linha".
 Migration: `supabase/migrations/20261102204836_rls_has_role_initplan_classe.sql`.
-Prova: `db/test-rls-has-role-initplan-classe.sh` (núcleo do CI, 39 asserts), fixture
+Prova: `db/test-rls-has-role-initplan-classe.sh` (núcleo do CI, 44 asserts), fixture
 `db/fixtures/rls-has-role-classe-prod-2026-11-02.sql`, gerado por `db/consultas/rls-has-role-classe-fixture.sql`.
 
 ## O problema
@@ -31,7 +31,7 @@ tabela (`tint_formulas`) e 15 (reposição); a classe seguia viva no resto.
 - **Premissa:** a identidade é constante durante o statement. Conferido na prod: nenhuma função do
   `public` escreve `request.jwt*` nem troca `ROLE`. A prova L1 mostra que o limite é real.
 
-## A prova (PG17, C e pt_BR.UTF-8, 39/39)
+## A prova (PG17, C e pt_BR.UTF-8, 44/44)
 
 Tabelas mínimas (só as colunas que as policies citam, com o tipo da prod) e as 313 policies **verbatim**
 (308 alvo + as 5 não-alvo de `commercial_roles`/`orders`, que as subqueries leem). A aplicação passa pelo
@@ -50,7 +50,7 @@ caminho do executor: EXECUTE dentro de função SECURITY DEFINER com `search_pat
 | L1 | identidade trocada no meio do statement: a direta nega e a embrulhada deixa passar |
 | F1–F6 | papel trocado → P3; `TO public` → P1; tabela pulada → P5; orçamento → P6; isolamento → P0; policy sabotada → A1 e A2 |
 
-O A8 foi falsificado à mão: com a versão que lia antes de travar (commit `3043970fe`), o A8 fica
+O A8 é falsificado no próprio script (F7): com a versão que lia antes de travar (fixture `db/fixtures/rls-has-role-initplan-v0-le-antes-de-travar.sql`, assert F7), o A8 fica
 **vermelho** (o employee volta a ver `profiles`). É a corrida que o Codex descreveu.
 
 ## Medição na prod, sob `authenticated` (EXPLAIN ANALYZE, transação READ ONLY)
@@ -70,7 +70,8 @@ linhas chamando `has_role` em cada uma. Daí a média de 323 ms do `pg_stat_stat
 - Desenho (xhigh, 254 s, 112 k tokens): APLICAR com ajustes. Bloqueava pela corrida ler→reescrever e
   pelos locks sem teto global. Os dois foram corrigidos, e a prova ganhou transição, seed de dono,
   plano genérico, caminho do executor e L1.
-- Código: _a preencher_.
+- Código (high, 88 s, 84 k tokens): APLICAR com ajustes. O teto P6 só valia antes de cada tabela (agora também ao fim do laço), "500 ms < 1 s" favorece mas não garante a vítima (comentário corrigido), e o A8 dependia de tempo (agora o concorrente só commita depois de VER a migration esperando, e o F7 roda a v0 como controle negativo).
+- Ensaio na prod (`db:aplicar --ensaio`, commit `f96c0217e`, 22:02 BRT): 185 tabelas, 308 policies, 872 chamadas, 969 ms, P0–P6 verdes, ROLLBACK conferido por psql-ro.
 
 ## Lições
 
