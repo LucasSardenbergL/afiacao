@@ -57,13 +57,22 @@ O A8 é falsificado no próprio script (F7): com a versão que lia antes de trav
 
 | Consulta da tela | Papel | Antes | Depois |
 |---|---|---|---|
-| `profiles` pendentes (`AdminApprovals`) | employee | 406 ms · 81.048 buffers | _a medir_ |
-| `profiles` pendentes | master | 227 ms · 48.911 buffers | _a medir_ |
-| `tint_importacoes` limit 1 (`useTintometricoZone`) | employee | 1,5 ms · 321 buffers | _a medir_ |
-| `tint_importacoes` limit 1 | customer | **4.487 ms · 506.106 buffers** | _a medir_ |
+| `profiles` pendentes (`AdminApprovals`) | employee | 406 ms · 81.048 buffers | **41 ms · 706 buffers** |
+| `profiles` pendentes | master | 227 ms · 48.911 buffers | **41 ms · 704 buffers** |
+| `tint_importacoes` limit 1 (`useTintometricoZone`) | employee | 1,5 ms · 321 buffers | 1,4 ms · 321 buffers |
+| `tint_importacoes` limit 1 | customer | **4.487 ms · 506.106 buffers** | **38 ms · 40.478 buffers** |
 
 O `limit 1` é barato para quem vê a 1ª linha. O caro é quem **não vê nada**: o scan percorre as 116 k
 linhas chamando `has_role` em cada uma. Daí a média de 323 ms do `pg_stat_statements`.
+
+O "depois" foi medido em 2026-11-03, após o apply (`db:aplicar`, tentativa #875, commit `03fbe19cd`, NOTICE
+"185 tabelas, 308 policies reescritas, 872 chamadas embrulhadas, 894 ms"). Conferido por psql-ro: 0 cru,
+308 policies e 872 chamadas na forma `( SELECT has_role(…) AS has_role)`. Todas as medidas são com o
+cache quente, uma consulta por vez. A 1ª rodada, com as quatro em paralelo e frio, deu 4.721 ms para o
+customer, mesmo com só 40 k buffers (3.125 lidos do disco). **Compare buffers antes de tempo quando as
+medições correm juntas.** O plano mostra `InitPlan 1/2` e um `Filter: ((InitPlan 1).col1 OR …)`. Os 40 k
+buffers que sobram para o customer são o índice percorrendo as 116 k linhas que ele não vê. O custo por
+linha acabou, mas o scan continua.
 
 ## Codex
 
