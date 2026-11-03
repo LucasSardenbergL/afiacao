@@ -18,7 +18,9 @@ export interface BuilderSugeridos<T> {
  * não se confere em PostgREST: o helper puro e a lib o conferem antes de tocar o ERP (o dump da RFB
  * só traz DV válido; um inválido contaria aqui e falharia ALTO no clique, sem cadastro errado). Card, filtro da fila e selo
  * da linha precisam contar/mostrar o MESMO conjunto — qualquer cláusula nova entra aqui e lá
- * (`sugeridos.test.ts` + os testes do card e da lista exigem o predicado inteiro).
+ * (`sugeridos.test.ts` + os testes do card e da lista exigem o predicado inteiro). O filtro da FILA
+ * mora em SQL desde 20261103131500 (RPC `radar_lista`, bloco "só sugeridos"): cláusula nova aqui entra
+ * também lá, e a prova `db/test-radar-lista-rpc.sh` (E14) compara os dois.
  *
  * `.or()` com string CONSTANTE (sem input) — a regra ESLint barra interpolação, não a forma.
  * RFB: positivo (`is.null` OU `eq.02`), porque a negação do PostgREST é NULL-blind e deixaria

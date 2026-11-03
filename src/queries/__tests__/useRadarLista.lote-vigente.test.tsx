@@ -8,11 +8,15 @@ import type { ReactNode } from 'react';
  *
  * Medido em prod (psql-ro, 2026-10-19): 52.011 leads ativos com ultimo_lote=2026-05 (saíram do
  * dump da RFB) seguiam na fila de 2026-08 porque `useRadarLista` só filtrava ja_cliente/status.
- * O supabase é um builder FALSO que grava a cadeia de filtros por tabela — o que se prova aqui
- * é a FORMA da query (quais filtros entram), não o banco.
+ * O supabase é FALSO: o builder grava a cadeia por tabela e o `.rpc()` grava os argumentos da
+ * `radar_lista` (a lista lê pela RPC desde 20261103131500). Prova-se a FORMA da chamada (quais recortes
+ * vão ao banco); que a RPC aplica cada um como a consulta de antes é a prova PG17
+ * `db/test-radar-lista-rpc.sh`.
  */
 type Chamada = [string, ...unknown[]];
+type Args = Record<string, unknown>;
 const chamadas: Record<string, Chamada[]> = {};
+let lista: Args[] = [];
 let respostas: Record<string, { data: unknown; error: { message: string } | null }> = {};
 
 function builder(tabela: string) {
@@ -24,7 +28,16 @@ function builder(tabela: string) {
   b.then = (res: (v: unknown) => void, rej: (e: unknown) => void) => Promise.resolve(respostas[tabela]).then(res, rej);
   return b;
 }
-vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => builder(t) } }));
+vi.mock('@/integrations/supabase/client', () => ({
+  supabase: {
+    from: (t: string) => builder(t),
+    rpc: (fn: string, args: Args) => {
+      if (fn !== 'radar_lista') throw new Error(`rpc inesperada: ${fn}`);
+      lista.push(args);
+      return Promise.resolve(respostas.radar_lista);
+    },
+  },
+}));
 
 import { useRadarLista, type RadarFiltros } from '../useRadarLista';
 
@@ -42,14 +55,15 @@ function wrapper({ children }: { children: ReactNode }) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
 }
-const filtroLote = () => chamadas.radar_empresas.filter((c) => c[0] === 'eq' && c[1] === 'ultimo_lote');
-const filtroInedito = () => chamadas.radar_empresas.filter((c) => c[0] === 'gte' && c[1] === 'primeira_vista_em');
+const filtroLote = () => lista.map((a) => a.p_ultimo_lote).filter((v) => v !== undefined);
+const filtroInedito = () => lista.map((a) => a.p_primeira_vista_min).filter((v) => v !== undefined);
 
 beforeEach(() => {
   for (const k of Object.keys(chamadas)) delete chamadas[k];
+  lista = [];
   respostas = {
     radar_ingest_state: { data: LOTES, error: null },
-    radar_empresas: { data: [], error: null },
+    radar_lista: { data: [], error: null },
   };
 });
 
@@ -57,7 +71,7 @@ describe('useRadarLista — a fila é a foto vigente', () => {
   it('default: filtra ultimo_lote = lote VIGENTE (o maior complete; o running no meio é ignorado)', async () => {
     const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-19'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(filtroLote()).toEqual([['eq', 'ultimo_lote', '2026-08']]);
+    expect(filtroLote()).toEqual(['2026-08']);
     expect(filtroInedito()).toEqual([]);
   });
 
@@ -73,8 +87,8 @@ describe('useRadarLista — a fila é a foto vigente', () => {
       { wrapper },
     );
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(filtroLote()).toEqual([['eq', 'ultimo_lote', '2026-08']]);
-    expect(filtroInedito()).toEqual([['gte', 'primeira_vista_em', '2026-10-19T16:31:08.593+00:00']]);
+    expect(filtroLote()).toEqual(['2026-08']);
+    expect(filtroInedito()).toEqual(['2026-10-19T16:31:08.593+00:00']);
   });
 
   it('sem lote complete: não filtra por lote (ausente ≠ "nenhum"; espelha o `v_lote IS NULL OR` da RPC)', async () => {
@@ -82,34 +96,32 @@ describe('useRadarLista — a fila é a foto vigente', () => {
     const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-19'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(filtroLote()).toEqual([]);
-    expect(chamadas.radar_empresas.length).toBeGreaterThan(0);
+    expect(lista.length).toBeGreaterThan(0);
   });
 
   it('leitura do lote FALHOU: a lista erra junto — nunca mostra a fila sem saber o lote', async () => {
     respostas.radar_ingest_state = { data: null, error: { message: 'boom' } };
     const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-19'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(chamadas.radar_empresas ?? []).toEqual([]);
+    expect(lista).toEqual([]);
   });
 });
 
 describe('useRadarLista — filtro "só sugeridos para cadastro" (bloco 5)', () => {
-  it('aplica o predicado inteiro do card (mesmo conjunto que o count) sobre a foto vigente', async () => {
-    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true }, '2026-10-20'), { wrapper });
+  it('pede à RPC o predicado do card (lote vigente + limiar do score); o predicado em si é provado no PG17 (E14)', async () => {
+    const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true, status: 'a_contatar' }, '2026-10-20'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    const c = chamadas.radar_empresas;
-    for (const esperado of [
-      ['eq', 'ultimo_lote', '2026-08'], ['eq', 'prospeccao_status', 'em_conversa'], ['eq', 'ja_cliente', false],
-      ['is', 'omie_codigo_cliente', null], ['or', 'rfb_situacao.is.null,rfb_situacao.eq.02'],
-      ['filter', 'cnpj', 'match', '^[0-9A-Z]{12}[0-9]{2}$'], ['gte', 'score', 70],
-    ]) expect(c, `faltou ${JSON.stringify(esperado)}`).toContainEqual(esperado);
+    expect(lista[0]).toMatchObject({ p_sugeridos_lote: '2026-08', p_sugeridos_score_min: 70 });
+    // o predicado fixa status e lote: os filtros comuns não vão junto
+    expect(lista[0].p_status).toBeUndefined();
+    expect(lista[0].p_ultimo_lote).toBeUndefined();
   });
 
   it('vence "incluir já-clientes" e "incluir quem saiu do dump": sugerido é por definição não-cliente e da foto', async () => {
     const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true, incluirJaClientes: true, incluirSaiuDoDump: true }, '2026-10-20'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(chamadas.radar_empresas).toContainEqual(['eq', 'ja_cliente', false]);
-    expect(filtroLote()).toEqual([['eq', 'ultimo_lote', '2026-08']]);
+    expect(lista[0]).toMatchObject({ p_sugeridos_lote: '2026-08', p_incluir_ja_clientes: false });
+    expect(lista[0].p_ultimo_lote).toBeUndefined();
   });
 
   it('sem lote vigente: a lista FALHA com o motivo — nunca a fila geral sob o rótulo "só sugeridos"', async () => {
@@ -117,7 +129,7 @@ describe('useRadarLista — filtro "só sugeridos para cadastro" (bloco 5)', () 
     const { result } = renderHook(() => useRadarLista({ ...FILTROS, soSugeridos: true }, '2026-10-20'), { wrapper });
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(String(result.current.error)).toMatch(/Sem lote completo/);
-    expect(chamadas.radar_empresas ?? [], 'consultou a fila geral').toEqual([]);
+    expect(lista, 'consultou a fila geral').toEqual([]);
   });
 
   it('controle: SEM o filtro e sem lote, a fila roda inteira (a falha acima é do filtro, não do lote)', async () => {
@@ -141,17 +153,10 @@ describe('useRadarLista — paginação presa ao lote vigente', () => {
     const w = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
     return { qc, w };
   }
-  /** Cada consulta à fila começa num `select`: fatia a gravação plana em uma cadeia por consulta. */
-  const consultas = () => {
-    const out: Chamada[][] = [];
-    for (const c of chamadas.radar_empresas ?? []) {
-      if (c[0] === 'select') out.push([]);
-      out[out.length - 1]?.push(c);
-    }
-    return out;
-  };
-  const loteDa = (cadeia: Chamada[]) => cadeia.find((c) => c[0] === 'eq' && c[1] === 'ultimo_lote')?.[2];
-  const inicioDa = (cadeia: Chamada[]) => cadeia.find((c) => c[0] === 'range')?.[1];
+  /** Uma chamada da RPC = uma consulta à fila. */
+  const consultas = () => lista;
+  const loteDa = (a: Args) => a.p_ultimo_lote;
+  const inicioDa = (a: Args) => a.p_offset;
 
   it('o lote vigente TROCA: a fila recomeça do topo com o lote novo', async () => {
     const { qc, w } = comCliente();
@@ -169,7 +174,7 @@ describe('useRadarLista — paginação presa ao lote vigente', () => {
 
   it('corrida: a página seguinte lê um lote NOVO antes da chave mudar — nunca é montada com ele', async () => {
     const { qc, w } = comCliente();
-    respostas.radar_empresas = { data: Array.from({ length: 50 }, (_, i) => ({ cnpj: String(i).padStart(14, '0') })), error: null };
+    respostas.radar_lista = { data: Array.from({ length: 50 }, (_, i) => ({ cnpj: String(i).padStart(14, '0') })), error: null };
     const { result } = renderHook(() => useRadarLista(FILTROS, '2026-10-21'), { wrapper: w });
     await waitFor(() => expect(result.current.hasNextPage).toBe(true));
 

@@ -1,10 +1,10 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
-import { ilike, ilikeOr, isSearchablePostgrestTerm, likePrefixPattern } from '@/lib/postgrest';
+import { isSearchablePostgrestTerm, sanitizeForPostgrestOr } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote } from '@/lib/radar/lote-vigente';
-import { filtrarSugeridos } from '@/queries/useRadarSugeridos';
+import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import type { Database } from '@/integrations/supabase/types';
 
 export type RadarEmpresa = Database['public']['Tables']['radar_empresas']['Row'];
@@ -53,6 +53,62 @@ function useRadarRodadaScore() {
 const identidadeDoLote = (l: { mes_referencia: string; iniciado_em: string } | null) =>
   l ? `${l.mes_referencia}@${l.iniciado_em}` : 'sem-lote';
 
+type ParametrosLista = Database['public']['Functions']['radar_lista']['Args'];
+
+/**
+ * Os filtros da tela → argumentos da RPC `radar_lista` (migration 20261103131500). A lista lia
+ * `radar_empresas` pelo PostgREST; sob o RLS da tabela o ILIKE da busca (não-leakproof) não vira
+ * condição de índice e cada busca era seq scan dos 731 MB (medido em prod 2026-11-03). A RPC roda
+ * como dono, com o mesmo gate da policy, e aplica estes mesmos recortes — `undefined` = sem filtro
+ * (o supabase-js omite a chave e o parâmetro cai no DEFAULT NULL).
+ */
+export function parametrosDaLista(
+  filtros: RadarFiltros,
+  lote: { mes_referencia: string; iniciado_em: string } | null,
+  hojeISO: string,
+  pagina: number,
+): ParametrosLista {
+  const p = presetParaParams(filtros.preset, hojeISO);
+  // A RPC só ordena DESC NULLS LAST (todos os presets de hoje). Preset novo ascendente tem de mudar a RPC
+  // antes — virar a fila em silêncio seria pior que falhar.
+  if (p.orderAsc) throw new Error(`radar_lista não ordena ascendente (preset ${filtros.preset})`);
+  // Termo: o mesmo sanitizador do `.or()` de antes; só-wildcard (`*`/`%%`) sanitiza pra vazio = lista base (#1062).
+  const termo = (t: string) => (isSearchablePostgrestTerm(t.trim()) ? sanitizeForPostgrestOr(t.trim()) : undefined);
+  const recorteUf = recorteDeUf(filtros);
+  // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial (3101-2/00). Completo (7) =
+  // match exato; parcial = a família (prefixo).
+  const cnaeDigitos = digitosCnae(filtros.cnae);
+  // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`): fixa
+  // status/ja_cliente/lote na RPC e vence os filtros de status. Sem lote completo o hook já falhou antes.
+  const sugeridos = lote && filtros.soSugeridos ? lote : null;
+  // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte do ranking e do mapa (`recorteDeLote`).
+  const recorte = recorteDeLote(lote, filtros);
+  return {
+    p_busca: termo(filtros.busca),
+    // Município: o banco guarda em MAIÚSCULAS (dump RFB); ILIKE parcial. Limitação conhecida: não é
+    // acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
+    p_municipio: termo(filtros.municipio),
+    p_uf: recorteUf.tipo === 'uf' ? recorteUf.uf : undefined,
+    p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : undefined,
+    p_cnae_exato: cnaeDigitos.length === 7 ? cnaeDigitos : undefined,
+    p_cnae_prefixo: cnaeDigitos.length > 0 && cnaeDigitos.length < 7 ? cnaeDigitos : undefined,
+    p_status: !sugeridos && filtros.status ? filtros.status : undefined,
+    p_incluir_ja_clientes: !sugeridos && filtros.incluirJaClientes,
+    p_ultimo_lote: !sugeridos && recorte.ultimoLote ? recorte.ultimoLote : undefined,
+    p_primeira_vista_min: recorte.primeiraVistaMin ?? undefined,
+    p_sugeridos_lote: sugeridos ? sugeridos.mes_referencia : undefined,
+    p_sugeridos_score_min: sugeridos ? LIMIAR_SUGERIDO : undefined,
+    // "com telefone" / "sem contato" escondido (só `false` explícito esconde; ausente = recorte antigo).
+    p_com_telefone: filtros.comTelefone,
+    p_com_contato: filtros.incluirSemContato === false,
+    p_data_abertura_min: p.dataAberturaMin ?? undefined,
+    p_data_abertura_max: p.dataAberturaMax ?? undefined,
+    p_ordem: p.orderColumn,
+    p_offset: pagina * PAGE,
+    p_limit: PAGE,
+  };
+}
+
 export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
   const qc = useQueryClient();
   const rodada = useRadarRodadaScore();
@@ -88,55 +144,8 @@ export function useRadarLista(filtros: RadarFiltros, hojeISO: string) {
       if (filtros.soSugeridos && !lote) {
         throw new Error('Sem lote completo da RFB: "só sugeridos" fica indisponível até a carga do lote terminar.');
       }
-      const p = presetParaParams(filtros.preset, hojeISO);
-      let q = supabase.from('radar_empresas').select('*');
-
-      // só-wildcard (`*`/`%%`) sanitiza pra vazio → `.or()` match-all (#1062); pula o filtro (lista base)
-      if (isSearchablePostgrestTerm(filtros.busca.trim())) q = q.or(ilikeOr(['razao_social', 'nome_fantasia'], filtros.busca.trim()));
-      const recorteUf = recorteDeUf(filtros);
-      if (recorteUf.tipo === 'uf') q = q.eq('uf', recorteUf.uf);
-      else if (recorteUf.tipo === 'lista') q = q.in('uf', [...recorteUf.ufs]);
-      // Município: o banco guarda em MAIÚSCULAS (dump RFB, "BELO HORIZONTE"); o usuário
-      // digita como quiser → ilike (case-insensitive + parcial, sanitizado). Limitação
-      // conhecida: ilike não é acento-insensitive ("sao" não casa "SÃO") — v2 com unaccent.
-      if (isSearchablePostgrestTerm(filtros.municipio.trim())) q = q.or(ilike('municipio_nome', filtros.municipio.trim()));
-      // CNAE: o banco guarda 7 dígitos puros; o usuário digita o formato oficial
-      // (3101-2/00). Normaliza p/ dígitos. Completo (7) = match exato pelo índice;
-      // parcial = prefix match (a família do CNAE). Vazio = sem filtro (null do helper).
-      const cnaeDigitos = digitosCnae(filtros.cnae);
-      const cnaePrefixo = likePrefixPattern(cnaeDigitos);
-      if (cnaeDigitos.length === 7) q = q.eq('cnae_principal', cnaeDigitos);
-      else if (cnaePrefixo) q = q.like('cnae_principal', cnaePrefixo);
-      // "Só sugeridos" é o predicado do card "Sugeridos para cadastro" (`filtrarSugeridos`, o mesmo
-      // count): ele já fixa status/ja_cliente/lote, então vence os filtros abaixo. Sem lote completo
-      // não há foto: a falha honesta já saiu lá em cima, logo após ler o lote.
-      const sugeridos = Boolean(lote && filtros.soSugeridos);
-      if (sugeridos && lote) q = filtrarSugeridos(q, lote);
-      if (!sugeridos) {
-        if (filtros.status) q = q.eq('prospeccao_status', filtros.status);
-        else q = q.neq('prospeccao_status', 'descartado'); // fila default esconde descartados
-        if (!filtros.incluirJaClientes) q = q.eq('ja_cliente', false);
-      }
-      // Foto VIGENTE / só inéditos / incluir quem saiu: o MESMO recorte que o ranking de cidades
-      // e o mapa passam à RPC `radar_contagem_por_municipio` (`recorteDeLote`). Com "só sugeridos"
-      // o lote já foi fixado por `filtrarSugeridos`; só o recorte de inéditos ainda pode somar.
-      const recorte = recorteDeLote(lote, filtros);
-      if (!sugeridos && recorte.ultimoLote) q = q.eq('ultimo_lote', recorte.ultimoLote);
-      if (recorte.primeiraVistaMin) q = q.gte('primeira_vista_em', recorte.primeiraVistaMin);
-      // "com telefone" = positivo (linha sem telefone não casa o OR; sem footgun NULL-blind)
-      if (filtros.comTelefone) q = q.or('telefone1.not.is.null,telefone2.not.is.null');
-      // "sem contato" = sem telefone E sem e-mail. Esconder é o default da tela (só `false` explícito
-      // esconde; ausente = recorte antigo). Positivo pelo mesmo motivo do de cima. Medido em prod
-      // (2026-10-29, nas 8 UFs da região): 0 strings vazias nessas colunas — NULL é a ausência.
-      if (filtros.incluirSemContato === false) q = q.or('telefone1.not.is.null,telefone2.not.is.null,email.not.is.null');
-      if (p.dataAberturaMax) q = q.lte('data_abertura', p.dataAberturaMax);
-      if (p.dataAberturaMin) q = q.gte('data_abertura', p.dataAberturaMin);
-
-      const from = (pageParam as number) * PAGE;
-      const { data, error } = await q
-        .order(p.orderColumn, { ascending: p.orderAsc, nullsFirst: false }) // preset 'score': score DESC NULLS LAST (idx_radar_lista_score)
-        .order('cnpj', { ascending: true }) // tie-break estável p/ paginação
-        .range(from, from + PAGE - 1);
+      // A RPC pagina e ordena (preset DESC NULLS LAST, cnpj): um `.order()` aqui REORDENARIA a página.
+      const { data, error } = await supabase.rpc('radar_lista', parametrosDaLista(filtros, lote, hojeISO, pageParam as number));
       if (error) throw error;
       return data as RadarEmpresa[];
     },
