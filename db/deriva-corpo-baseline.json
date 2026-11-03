@@ -124,6 +124,17 @@
       "desde": "2026-10-31"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261103093424_tint_promote_escreve_so_o_que_mudou.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3553: a promoção escreve só o que mudou (_pulados) — 8 trocas por âncora sobre o corpo da 20261030071806. Conferido em prod em 2026-11-03 via psql-ro: md5(prosrc) = c_este da migration, _pulados no corpo (xmin 13666804; recibo db:aplicar #879).",
+      "md5": "2c6f461f9c9d4f8c54ea817e25f88f61",
+      "md5Tokens": "a7550d2e21404d7e0eced01b21f9424f",
+      "desde": "2026-11-03"
+    },
+    {
       "funcao": "tint_staging_purge",
       "identidade": "",
       "classe": "PATCH",
