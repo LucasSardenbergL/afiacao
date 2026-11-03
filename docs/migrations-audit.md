@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **758** custom migrations totais
+- **759** custom migrations totais
 - **2500** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 941
@@ -6224,6 +6224,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `private.expurgar_scores_antigos` | — |
 | `cron_job` | `cron.expurgo-scores-farmer` | — |
+
+### `20261102204356_drop_customer_preferred_items.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
