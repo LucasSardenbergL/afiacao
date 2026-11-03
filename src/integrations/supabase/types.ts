@@ -1723,51 +1723,6 @@ export type Database = {
         }
         Relationships: []
       }
-      customer_preferred_items: {
-        Row: {
-          account: string
-          added_manually: boolean | null
-          created_at: string
-          familia: string | null
-          id: string
-          last_ordered_at: string | null
-          omie_codigo_cliente: number
-          omie_codigo_produto: number
-          order_count: number | null
-          product_codigo: string | null
-          product_descricao: string | null
-          updated_at: string
-        }
-        Insert: {
-          account?: string
-          added_manually?: boolean | null
-          created_at?: string
-          familia?: string | null
-          id?: string
-          last_ordered_at?: string | null
-          omie_codigo_cliente: number
-          omie_codigo_produto: number
-          order_count?: number | null
-          product_codigo?: string | null
-          product_descricao?: string | null
-          updated_at?: string
-        }
-        Update: {
-          account?: string
-          added_manually?: boolean | null
-          created_at?: string
-          familia?: string | null
-          id?: string
-          last_ordered_at?: string | null
-          omie_codigo_cliente?: number
-          omie_codigo_produto?: number
-          order_count?: number | null
-          product_codigo?: string | null
-          product_descricao?: string | null
-          updated_at?: string
-        }
-        Relationships: []
-      }
       customer_processes: {
         Row: {
           created_at: string
@@ -12223,6 +12178,72 @@ export type Database = {
           subscription?: Json
           user_agent?: string | null
           user_id?: string
+        }
+        Relationships: []
+      }
+      radar_agregado_estado: {
+        Row: {
+          base_iniciado_em: string | null
+          base_lote: string | null
+          calculado_em: string
+          empresas: number
+          grupos: number
+          id: number
+        }
+        Insert: {
+          base_iniciado_em?: string | null
+          base_lote?: string | null
+          calculado_em: string
+          empresas: number
+          grupos: number
+          id?: number
+        }
+        Update: {
+          base_iniciado_em?: string | null
+          base_lote?: string | null
+          calculado_em?: string
+          empresas?: number
+          grupos?: number
+          id?: number
+        }
+        Relationships: []
+      }
+      radar_agregado_municipio: {
+        Row: {
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf: string | null
+        }
+        Insert: {
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf?: string | null
+        }
+        Update: {
+          inedito?: boolean
+          ja_cliente?: boolean
+          lote?: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n?: number
+          prospeccao_status?: string
+          tem_contato?: boolean
+          tem_telefone?: boolean
+          uf?: string | null
         }
         Relationships: []
       }
@@ -24220,6 +24241,10 @@ export type Database = {
         Returns: string
       }
       push_sla_tick: { Args: never; Returns: undefined }
+      radar_agregado_recalcular: {
+        Args: { p_agora?: string; p_forcar?: boolean }
+        Returns: Json
+      }
       radar_amostra_vigente: {
         Args: never
         Returns: {
@@ -24361,7 +24386,51 @@ export type Database = {
           p_ufs?: string[]
           p_ultimo_lote?: string
         }
-        Returns: Database["public"]["Tables"]["radar_empresas"]["Row"][]
+        Returns: {
+          bairro: string | null
+          capital_social: number | null
+          cep: string | null
+          cnae_descricao: string | null
+          cnae_principal: string
+          cnaes_secundarios: string[]
+          cnpj: string
+          complemento: string | null
+          created_at: string
+          data_abertura: string | null
+          descarte_motivo: string | null
+          email: string | null
+          geocode_status: string | null
+          geocoded_em: string | null
+          ja_cliente: boolean
+          lat: number | null
+          lng: number | null
+          logradouro: string | null
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          nome_fantasia: string | null
+          numero: string | null
+          omie_cadastrado_em: string | null
+          omie_codigo_cliente: string | null
+          porte: string | null
+          primeira_vista_em: string
+          prospeccao_atualizado_em: string | null
+          prospeccao_contato_id: string | null
+          prospeccao_status: string
+          razao_social: string | null
+          rfb_situacao: string | null
+          rfb_situacao_data: string | null
+          rfb_situacao_lote: string | null
+          score: number | null
+          score_em: string | null
+          score_motivos: string[] | null
+          score_versao: string | null
+          socios_nomes: string | null
+          telefone1: string | null
+          telefone2: string | null
+          uf: string | null
+          ultimo_lote: string
+          updated_at: string
+        }[]
         SetofOptions: {
           from: "*"
           to: "radar_empresas"
@@ -24643,19 +24712,19 @@ export type Database = {
         Args: { p_empresa: string; p_sku?: number }
         Returns: {
           cadastro_recente: boolean
-          cobertura_dias: number | null
+          cobertura_dias: number
           cold_start: boolean
-          consumo_365: number | null
+          consumo_365: number
           corante: boolean
           fonte_ok: boolean
           inequivoco: boolean
           mercadoria_servidor: boolean
           motivos_espera: string[]
-          qtd_liquidavel: number | null
-          revisar_em: string | null
+          qtd_liquidavel: number
+          revisar_em: string
           sku_codigo_omie: number
           substituido: boolean
-          ultima_entrada: string | null
+          ultima_entrada: string
         }[]
       }
       raio_x_medicao: {
@@ -24674,7 +24743,9 @@ export type Database = {
           receita: number
           saldo_atual: number
           sku_codigo_omie: number
-          troca_contrapartida: string | null
+          troca_contrapartida: string
+          unidade_estoque: string
+          unidades_venda_periodo: string[]
         }[]
       }
       raio_x_planejar: {
@@ -24915,7 +24986,7 @@ export type Database = {
       reposicao_compra_reativar: {
         Args: { p_empresa: string; p_motivo?: string; p_skus: number[] }
         Returns: {
-          impedimento: string | null
+          impedimento: string
           reativado: boolean
           sku_codigo_omie: number
         }[]
@@ -24932,7 +25003,7 @@ export type Database = {
         Returns: {
           inserido: boolean
           pendentes_n: number
-          recusa: string | null
+          recusa: string
           sku_codigo_omie: number
         }[]
       }
@@ -24943,47 +25014,47 @@ export type Database = {
           p_min_dias?: number
         }
         Returns: {
-          cmc: number | null
-          consumo_365: number | null
+          cmc: number
+          consumo_365: number
           corante: boolean
-          descricao: string | null
-          dias_365: number | null
-          dias_90: number | null
-          familia: string | null
-          fornecedor_nome: string | null
+          descricao: string
+          dias_365: number
+          dias_90: number
+          familia: string
+          fornecedor_nome: string
           no_motor: boolean
           saldo: number
           sku_codigo_omie: number
-          valor: number | null
-          valor_vendido_90d: number | null
+          valor: number
+          valor_vendido_90d: number
         }[]
       }
       reposicao_compra_suspensa_listar: {
         Args: { p_empresa: string }
         Returns: {
-          cobertura_365d_atual: number | null
-          cobertura_90d_atual: number | null
-          descricao: string | null
-          evitado_ultimo_run: number | null
-          fornecedor_nome: string | null
-          foto_cobertura_90d_dias: number | null
-          foto_cobertura_dias: number | null
-          foto_no_motor: boolean | null
-          foto_valor: number | null
-          foto_valor_vendido_90d: number | null
+          cobertura_365d_atual: number
+          cobertura_90d_atual: number
+          descricao: string
+          evitado_ultimo_run: number
+          fornecedor_nome: string
+          foto_cobertura_90d_dias: number
+          foto_cobertura_dias: number
+          foto_no_motor: boolean
+          foto_valor: number
+          foto_valor_vendido_90d: number
           id: string
-          lote_id: string | null
+          lote_id: string
           motivo: string
-          no_motor_atual: boolean | null
+          no_motor_atual: boolean
           origem: string
-          qtde_ultimo_run: number | null
+          qtde_ultimo_run: number
           revisar_em: string
-          saldo_atual: number | null
+          saldo_atual: number
           sku_codigo_omie: number
           suspenso_em: string
-          suspenso_por: string | null
-          suspenso_por_texto: string | null
-          valor_atual: number | null
+          suspenso_por: string
+          suspenso_por_texto: string
+          valor_atual: number
         }[]
       }
       reposicao_compra_suspensa_runs: {
@@ -24995,7 +25066,7 @@ export type Database = {
           run_id: string
           skus_incluidos: number
           suspensas_compra_n: number
-          valor_evitado: number | null
+          valor_evitado: number
         }[]
       }
       reposicao_conferir_envio: {
