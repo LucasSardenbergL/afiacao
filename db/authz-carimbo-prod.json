@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-03T13:11:28.074Z",
-  "sourceHead": "6411646a3cb2bdac9419475044578c0bf4c8802f",
+  "medidoEm": "2026-11-03T16:38:19.013Z",
+  "sourceHead": "3cfa26ea763db12992b2ffa3aed1e081d221109d",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -47,94 +47,40 @@
     },
     "rls": {
       "script": "authz:rls:prod",
-      "exit": 1,
-      "resumo": "audit-rls — 12 divergencia(s) entre a RLS de prod e o contrato (scripts/authz-rls-esperado.ts).",
+      "exit": 0,
+      "resumo": "✅ audit-rls — 404 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
-      "contratoFingerprint": "cd74b6cc23c5fff5b7bd374fbf826424ab959e567629aae4b4d2765f669295c7",
+      "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
-      "achados": [
-        {
-          "id": "2840a1a83f6c3bde",
-          "linha": "❌ [POLICY_ALTERADA] public.user_roles » Admins and employees can view all roles: divergente do contrato em 1 campo(s) — USING 0a9f0d62d53097527a30f9ba4966a0de (contrato: 45ad0946ce322aefa63a18a15417ba0c).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "60055a8066ed53f5",
-          "linha": "❌ [POLICY_ALTERADA] public.user_roles » Only admins can manage roles: divergente do contrato em 2 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675) · WITH CHECK 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "f5336f06480cd182",
-          "linha": "❌ [POLICY_ALTERADA] public.profiles » Admins can delete profiles: divergente do contrato em 1 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "f485d720e0b1d519",
-          "linha": "❌ [POLICY_ALTERADA] public.profiles » Admins can update any profile: divergente do contrato em 2 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675) · WITH CHECK 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "309858bc39a67f74",
-          "linha": "❌ [POLICY_ALTERADA] public.profiles » Employees can view all profiles: divergente do contrato em 1 campo(s) — USING 0a9f0d62d53097527a30f9ba4966a0de (contrato: 45ad0946ce322aefa63a18a15417ba0c).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "8744431589f39925",
-          "linha": "❌ [POLICY_ALTERADA] public.commercial_roles » Admins can manage commercial roles: divergente do contrato em 2 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675) · WITH CHECK 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "b8e8ef51fe8583fe",
-          "linha": "❌ [POLICY_ALTERADA] public.markup_policy » markup_policy_write_master: divergente do contrato em 2 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675) · WITH CHECK 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "85c945e4c79d1002",
-          "linha": "❌ [POLICY_ALTERADA] public.tint_formula_itens » Staff can manage tint_formula_itens: divergente do contrato em 2 campo(s) — USING 0a9f0d62d53097527a30f9ba4966a0de (contrato: 45ad0946ce322aefa63a18a15417ba0c) · WITH CHECK 0a9f0d62d53097527a30f9ba4966a0de (contrato: 45ad0946ce322aefa63a18a15417ba0c).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "174a18b0e1babb8b",
-          "linha": "❌ [POLICY_ALTERADA] public.company_config » Only admins can manage company config: divergente do contrato em 2 campo(s) — USING 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675) · WITH CHECK 819c3bd5c25f88fbf998154b9048662b (contrato: 8ddd30b6b5137ea748cd7a8508a16675).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "1e95bc0d8da9f020",
-          "linha": "❌ [POLICY_ALTERADA] public.company_config » company_config_staff_select: divergente do contrato em 1 campo(s) — USING f85963d3cc093d56a882d09dd15bb2e1 (contrato: f0bb0ea348b482004bccf4646c00cead).",
-          "primeiraVez": "2026-11-03",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "22239733bf533413",
-          "linha": "❌ [LACUNA_GRUPO_MUDOU] fin_*: o grupo CRESCEU — 44 tabela(s) em prod contra 41 declarada(s) (medido em 2026-08-28). 5 curada(s), 39 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: fin_alertas, fin_antecipacoes, fin_audit_log, fin_balanco_inputs, fin_categoria_dre_mapping, fin_categorias, fin_conciliacao, fin_confiabilidade, fin_config_cashflow, fin_contas_correntes, fin_contas_pagar, fin_contas_receber, fin_contas_receber_excluidos, fin_custo_rateio, fin_divida_completude, fin_divida_parcelas, fin_dividas, fin_dre_custo_tipo, fin_dre_snapshots, fin_eliminacoes_intercompany, fin_eliminacoes_log, fin_estoque_valor, fin_eventos_eventuais, fin_eventos_recorrentes, fin_fechamento_log, fin_fechamentos, fin_forecast, fin_funding_inputs, fin_ic_contrapartes, fin_ic_matches, fin_ic_reconcile_rodadas, fin_kpi_tributario, fin_movimentacoes, fin_orcamento, fin_period_overrides, fin_permissoes, fin_projecao_snapshots, fin_regime_inputs, fin_sync_checkpoint, fin_sync_cursor, fin_sync_kick_retry, fin_sync_lease, fin_sync_log, fin_valor_inputs.",
-          "primeiraVez": "2026-10-28",
-          "ultimaVez": "2026-11-03"
-        },
-        {
-          "id": "b3390e844228bed0",
-          "linha": "❌ [LACUNA_GRUPO_MUDOU] private.cap_compras_ler: o grupo CRESCEU — 16 tabela(s) em prod contra 14 declarada(s) (medido em 2026-08-28). 1 curada(s), 15 lacuna(s) hoje. A declaração de não-cobertura virou falsa: ou uma migration gateou/renomeou tabela no grupo, ou o grupo sumiu. Confira se as novas merecem entrar no contrato pelo critério do cabeçalho ANTES de renovar `tabelasNoGrafo` (e a data). Tabelas hoje: pedido_compra_item, reposicao_alerta_pedido_minimo, reposicao_auto_aprovacao_log, reposicao_cold_start_log, reposicao_compra_suspensa, reposicao_compra_suspensa_log, reposicao_depara_auto_log, reposicao_estoque_nao_confirmado_log, reposicao_motor_run, reposicao_param_auto_log, reposicao_param_auto_run, reposicao_param_fila_log, reposicao_param_pin, reposicao_pedidos_compra_run, reposicao_po_last_seen, reposicao_teto_cobertura_log.",
-          "primeiraVez": "2026-11-01",
-          "ultimaVez": "2026-11-03"
-        }
-      ]
+      "achados": []
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 476 identidade(s) batem com o repo (399 em dia, 65 só cosméticas, 11 aceitas na baseline) e 22 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 476 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@ee71d4917 (fetch ok) · prod 2026-11-03 13:11:57.852049Z",
+      "exit": 1,
+      "resumo": "deriva-corpo — 3 divergência(s) em prod (3 CORPO_ANTERIOR) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@3cfa26ea7 (fetch ok) · prod 2026-11-03 16:38:48.052046Z",
       "contratoFingerprint": "86537199ae381b413ee48d2edfeab1c5d8bea34723b26b71612d98f80ca6bc44",
       "auditorFingerprint": "287610b6eb0f4af8a00eed9aed3cbf393f6ae17a0da8c431f66d87191e201b92",
-      "achados": []
+      "achados": [
+        {
+          "id": "8528bcf166d8a21a",
+          "linha": "❌ [CORPO_ANTERIOR] analytics_ledger_registrar(text,text,jsonb): prod roda o corpo de 20261031130100_analytics_ledger_raio_x.sql; o repo commitou 20261103120100_analytics_ledger_raio_x_decisao.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13320397)",
+          "primeiraVez": "2026-11-03",
+          "ultimaVez": "2026-11-03"
+        },
+        {
+          "id": "7f7a2cd3d387752d",
+          "linha": "❌ [CORPO_ANTERIOR] raio_x_medicao(text): prod roda o corpo de 20261101120000_raio_x_inequivoco.sql; o repo commitou 20261103120000_raio_x_unidades.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13438719)",
+          "primeiraVez": "2026-11-03",
+          "ultimaVez": "2026-11-03"
+        },
+        {
+          "id": "0f863b1956b8e6fe",
+          "linha": "❌ [CORPO_ANTERIOR] raio_x_planejar(text,bigint,numeric,text,uuid,date,boolean,timestamp with time zone,numeric,text): prod roda o corpo de 20261101120000_raio_x_inequivoco.sql; o repo commitou 20261103120000_raio_x_unidades.sql depois — revert por ordem de colagem, ou migration mergeada e não aplicada (xmin 13438719)",
+          "primeiraVez": "2026-11-03",
+          "ultimaVez": "2026-11-03"
+        }
+      ]
     }
   }
 }
