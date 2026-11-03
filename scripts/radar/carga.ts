@@ -17,12 +17,13 @@ import { mkdirSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { execFileSync, execSync } from "node:child_process";
 import {
   montarCnpj, normalizarData, normalizarTelefone, normalizarCapital,
-  splitCnaesSecundarios, normalizarTexto, normalizarChaveMunicipio,
+  splitCnaesSecundarios, normalizarTexto,
 } from "../../src/lib/radar/normalizar";
 import type { RadarEmpresaRow, RadarMunicipioRow, RadarSituacaoRow } from "./types";
 import { mapaDeMotivos, normalizarSituacao } from "./situacao";
 import { RFB_SHARE_TOKEN, basesCandidatas, precisaDeAuth } from "./rfb";
 import { CNAES_CONCORRENTES, montarPublicacao } from "./concorrentes";
+import { coordenadaDoMunicipio, indexarCoordenadasIbge } from "./municipios";
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
@@ -363,15 +364,9 @@ if (temConhecidos) {
     + (rejeitadasSituacao.cnpj + rejeitadasSituacao.situacao > 0 ? ` · ⚠️ rejeitadas: ${JSON.stringify(rejeitadasSituacao)}` : ""));
 }
 
-// ── 6. Municípios RFB + lat/lng IBGE (casamento por nome normalizado) ─────────
+// ── 6. Municípios RFB + lat/lng IBGE (casamento por código = siafi_id; nome de reserva) ─
 const ibge = readFileSync("scripts/radar/municipios-ibge.csv", "utf-8").split("\n").slice(1).filter(Boolean);
-const UF_POR_CODIGO: Record<string, string> = { "11":"RO","12":"AC","13":"AM","14":"RR","15":"PA","16":"AP","17":"TO","21":"MA","22":"PI","23":"CE","24":"RN","25":"PB","26":"PE","27":"AL","28":"SE","29":"BA","31":"MG","32":"ES","33":"RJ","35":"SP","41":"PR","42":"SC","43":"RS","50":"MS","51":"MT","52":"GO","53":"DF" };
-const latPorChave = new Map<string, { lat: number; lng: number }>();
-for (const l of ibge) {
-  const [_, nome, lat, lng, , uf_cod] = l.split(","); // codigo_ibge,nome,latitude,longitude,capital,codigo_uf,siafi_id
-  const uf = UF_POR_CODIGO[uf_cod?.trim() ?? ""] ?? "";
-  if (nome && uf) latPorChave.set(normalizarChaveMunicipio(nome, uf), { lat: +lat, lng: +lng });
-}
+const coordenadas = indexarCoordenadasIbge(ibge);
 const ufPorMunCodigo = new Map<string, string>();
 for (const r of linhas) if (r.municipio_codigo && r.uf) ufPorMunCodigo.set(r.municipio_codigo, r.uf);
 const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
@@ -379,7 +374,7 @@ const municipiosRfb: { cod: string; nome: string }[] = JSON.parse(duck(
 let semLatLng = 0;
 const municipios: RadarMunicipioRow[] = municipiosRfb.map((m) => {
   const uf = ufPorMunCodigo.get(m.cod) ?? "";
-  const hit = uf ? latPorChave.get(normalizarChaveMunicipio(m.nome, uf)) : undefined;
+  const hit = uf ? coordenadaDoMunicipio(coordenadas, m.cod, m.nome, uf) : undefined;
   if (uf && !hit) semLatLng++;
   return { codigo: m.cod, nome: m.nome, uf, lat: hit?.lat ?? null, lng: hit?.lng ?? null };
 }).filter((m) => m.uf); // só municípios que aparecem no nosso universo
