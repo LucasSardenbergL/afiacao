@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 758
+-- Total de custom migrations: 759
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -825,6 +825,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261102093527', 'telemetria_vitals', '20261102093527_telemetria_vitals.sql'),
   ('20261102160821', 'order_feed_sem_cte', '20261102160821_order_feed_sem_cte.sql'),
   ('20261102180421', 'idx_sales_orders_account_omie_pedido', '20261102180421_idx_sales_orders_account_omie_pedido.sql'),
+  ('20261102183000', 'retencao_scores_60d_semanal', '20261102183000_retencao_scores_60d_semanal.sql'),
   ('20261102204356', 'drop_customer_preferred_items', '20261102204356_drop_customer_preferred_items.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3286,7 +3287,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
   ('order_feed_sem_cte', 'view', 'public', 'order_feed', ''),
-  ('idx_sales_orders_account_omie_pedido', 'index', 'public', 'idx_sales_orders_account_omie_pedido', 'sales_orders')
+  ('idx_sales_orders_account_omie_pedido', 'index', 'public', 'idx_sales_orders_account_omie_pedido', 'sales_orders'),
+  ('retencao_scores_60d_semanal', 'function', 'private', 'expurgar_scores_antigos', ''),
+  ('retencao_scores_60d_semanal', 'cron_job', 'cron', 'expurgo-scores-farmer', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5795,7 +5798,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_user_read', 'telemetria_vitals'),
   ('telemetria_vitals', 'rls_policy', 'public', 'telemetria_vitals_service_all', 'telemetria_vitals'),
   ('order_feed_sem_cte', 'view', 'public', 'order_feed', ''),
-  ('idx_sales_orders_account_omie_pedido', 'index', 'public', 'idx_sales_orders_account_omie_pedido', 'sales_orders')
+  ('idx_sales_orders_account_omie_pedido', 'index', 'public', 'idx_sales_orders_account_omie_pedido', 'sales_orders'),
+  ('retencao_scores_60d_semanal', 'function', 'private', 'expurgar_scores_antigos', ''),
+  ('retencao_scores_60d_semanal', 'cron_job', 'cron', 'expurgo-scores-farmer', '')
 )
 SELECT
   e.migration,
@@ -5823,7 +5828,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 168.
+-- Funções redefinidas com corpo extraível: 169.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6406,6 +6411,8 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'picking_retomar', 2, '20261011140000_picking_v2_coleta_reserva.sql', '7c295ca7fb57cc73891c636cc20c6aff'),
   ('public', 'picking_concluir', 1, '20261011020000_picking_v2_schema.sql', 'e0a222a4a1dc02a7957eedcda9c5934a'),
   ('public', 'picking_concluir', 2, '20261011140000_picking_v2_coleta_reserva.sql', '5395b2ccef54177a66cd98728a8ff507'),
+  ('private', 'expurgar_scores_antigos', 1, '20261011120400_retencao_scores_farmer.sql', '9a32d272b330d73e706743e4d94b070d'),
+  ('private', 'expurgar_scores_antigos', 2, '20261102183000_retencao_scores_60d_semanal.sql', '503360f918cf4af6aa5a919f198eb557'),
   ('public', 'sayerlack_importar_pedido_portal', 1, '20261014120000_sayerlack_importar_pedido_portal.sql', 'c14ac9f70c17b8b4cdf505f568857517'),
   ('public', 'sayerlack_importar_pedido_portal', 2, '20261016013000_sayerlack_importar_pedido_portal_safeupdate.sql', 'f6fd335ab6cdd75263cefc10539fcca4'),
   ('public', 'vendas_sync_lease_acquire_fenced', 1, '20261015221600_vendas_sync_cursor_fencing_token.sql', '0d0aaef070dfc5a46cdd0964ec5279f3'),

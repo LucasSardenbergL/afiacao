@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **758** custom migrations totais
-- **2498** objetos esperados (criados por estas migrations)
+- **759** custom migrations totais
+- **2500** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 940
+  - `function`: 941
   - `rls_policy`: 519
   - `index`: 348
   - `table`: 227
-  - `cron_job`: 207
+  - `cron_job`: 208
   - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
@@ -6217,6 +6217,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `index` | `public.idx_sales_orders_account_omie_pedido` | `sales_orders` |
+
+### `20261102183000_retencao_scores_60d_semanal.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.expurgar_scores_antigos` | — |
+| `cron_job` | `cron.expurgo-scores-farmer` | — |
 
 ### `20261102204356_drop_customer_preferred_items.sql`
 
