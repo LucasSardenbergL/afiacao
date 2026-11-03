@@ -31,8 +31,9 @@ zonas tinham `try/catch` e faziam `x = count ?? 0`: o `catch` nunca via a falha 
 - O hook expõe `erros` (por bloco) e `erroTopo`. A falha da leitura do dia na Vendas continua
   derrubando a zona inteira (card de erro), como antes.
 
-Fora: o nome do cliente no topo da Vendas ainda cai em "Cliente" se a leitura de `profiles` falhar
-(rótulo, não número).
+Follow-up (PR seguinte): o nome do cliente no topo da Vendas caía em "Cliente" (a cara de cadastro
+sem nome) quando a leitura de `profiles` falhava. Agora vira "Nome indisponível", com o orçamento
+mantido na lista (ele foi lido) e o motivo em `erros.nomes`. Falsificação 3/3 em `C` e `pt_BR`.
 
 ## Prova
 

@@ -39,7 +39,7 @@ export function useVendasZone() {
       // `null` = a leitura FALHOU (≠ "nenhum orçamento aguardando"): o KPI mostra "—". O supabase-js
       // DEVOLVE o erro (não lança), então o bloco lança o seu para o `catch` ver (ausente ≠ zero).
       let orcamentosAguardando: number | null = null;
-      const erros: Record<'orcamentos' | 'top', string | null> = { orcamentos: null, top: null };
+      const erros: Record<'orcamentos' | 'top' | 'nomes', string | null> = { orcamentos: null, top: null, nomes: null };
 
       // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') no universo de VENDA da
       // autoridade (`STATUS_NAO_VENDA` + deleted_at), o mesmo do dashboard Master. order_date_kpi
@@ -105,10 +105,14 @@ export function useVendasZone() {
           const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
           const nameMap = new Map<string, string>();
           if (userIds.length > 0) {
-            const { data: profs } = await supabase
+            const { data: profs, error: erroNomes } = await supabase
               .from('profiles')
               .select('user_id, name')
               .in('user_id', userIds);
+            // Nome que não foi lido não vira "Cliente" (a cara de "cadastro sem nome"): o topo segue
+            // com os orçamentos, que foram lidos, e o rótulo diz que o nome está indisponível.
+            if (erroNomes) erros.nomes = `profiles (nomes do topo): ${mensagemDeErro(erroNomes) ?? 'erro sem mensagem'}`;
+            else if (!profs) erros.nomes = 'profiles (nomes do topo): data null sem error — malformada';
             for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
               if (p.name) nameMap.set(p.user_id, p.name);
             }
@@ -116,7 +120,7 @@ export function useVendasZone() {
           topItems = rows.map((o) => ({
             id: o.id,
             icon: FileText,
-            title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
+            title: (o.user_id && nameMap.get(o.user_id)) || (erros.nomes ? 'Nome indisponível' : 'Cliente'),
             subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
             path: `/admin/orders/${o.id}`,
             itemType: 'orcamento_pending',
