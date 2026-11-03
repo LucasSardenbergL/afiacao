@@ -24339,6 +24339,36 @@ export type Database = {
         }[]
       }
       radar_kpis: { Args: never; Returns: Json }
+      radar_lista: {
+        Args: {
+          p_busca?: string
+          p_cnae_exato?: string
+          p_cnae_prefixo?: string
+          p_com_contato?: boolean
+          p_com_telefone?: boolean
+          p_data_abertura_max?: string
+          p_data_abertura_min?: string
+          p_incluir_ja_clientes?: boolean
+          p_limit?: number
+          p_municipio?: string
+          p_offset?: number
+          p_ordem?: string
+          p_primeira_vista_min?: string
+          p_status?: string
+          p_sugeridos_lote?: string
+          p_sugeridos_score_min?: number
+          p_uf?: string
+          p_ufs?: string[]
+          p_ultimo_lote?: string
+        }
+        Returns: Database["public"]["Tables"]["radar_empresas"]["Row"][]
+        SetofOptions: {
+          from: "*"
+          to: "radar_empresas"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       radar_penetracao_por_municipio: {
         Args: { p_limit?: number; p_lote: string; p_uf?: string }
         Returns: {

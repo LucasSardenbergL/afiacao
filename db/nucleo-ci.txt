@@ -902,3 +902,8 @@ db/test-clientes-import-servidor.sh        36  falsificar=14
 # 17 contagens + 4 penetrações + KPIs; lote novo sem recálculo = 'agregado indisponível' (a_contatar NULL), nunca 0;
 # o escritor sai sem ler a tabela fora do marco (0 scans medidos em pg_stat_xact); RLS/ACL fechados; cron; PRE.
 db/test-radar-agregado.sh                  50  falsificar=17
+# Radar leitor 4, parte 3 (20261103131500): a lista do /radar pela RPC SECURITY DEFINER radar_lista — sob o RLS de
+# radar_empresas o ILIKE (não-leakproof) não usa o GIN trigrama e cada busca era seq scan. Medido SOB SET ROLE authenticated:
+# 19 recortes iguais à consulta de antes (sob RLS), a busca e o município lendo o trigrama sem seq scan, o controle reproduzindo
+# o seq scan, gate/ACL, entrada mal formada 22023, curinga literal, PRE.
+db/test-radar-lista-rpc.sh                 34  falsificar=15
