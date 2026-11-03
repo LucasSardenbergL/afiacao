@@ -15,9 +15,17 @@ import { decisao } from '@/lib/reposicao/raio-x/__tests__/fixtures';
 
 type Resp = { data: unknown; error: unknown };
 const rpc = vi.hoisted(() => vi.fn((_nome: string, _args: Record<string, unknown>): Promise<Resp> => Promise.resolve({ data: {}, error: null })));
-vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { rpc: (nome: string, args: Record<string, unknown>) => rpc(nome, args) },
-}));
+// versão viva da decisão no servidor (o salvar combinado relê antes de gravar — RX003 do lado do cliente)
+const viva = vi.hoisted(() => ({ v: null as string | null }));
+vi.mock('@/integrations/supabase/client', () => {
+  const sel = { eq: () => sel, maybeSingle: () => Promise.resolve({ data: viva.v === null ? null : { atualizado_em: viva.v }, error: null }) };
+  return {
+    supabase: {
+      rpc: (nome: string, args: Record<string, unknown>) => rpc(nome, args),
+      from: () => ({ select: () => sel }),
+    },
+  };
+});
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 const track = vi.hoisted(() => vi.fn());
@@ -43,6 +51,7 @@ const EQUIPE = [
 ];
 
 function abrir(d: DecisaoRow | undefined, item = itemRX(), taxa: number | null = 0.18, extra: { fila?: FilaSheet; onSalvo?: () => void } = {}) {
+  viva.v = d?.atualizado_em ?? null;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onClose = vi.fn();
   render(
@@ -295,5 +304,49 @@ describe('DecisaoSheet — execução', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Trocar' }));
     expect(screen.queryByLabelText('tirar do motor')).toBeNull();
     expect(salvarDec().disabled).toBe(false);
+  });
+
+  it('Codex P1 — outro operador gravou depois da leitura: o salvar combinado recusa ANTES de gravar (nada de plano velho por cima)', async () => {
+    servidorOk();
+    abrir(liquidar);
+    viva.v = '2026-11-02T09:00:00Z'; // B salvou piso/plano depois que A abriu
+    fireEvent.change(screen.getByLabelText('Observação'), { target: { value: 'só a observação' } });
+    fireEvent.click(salvarDec());
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Outra pessoa mudou esta decisão — recarregue antes de salvar a execução'));
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it('Codex P1 — troca por ENCALHE: crédito só depois da contrapartida; plano falhando, o crédito não conta como liberado', async () => {
+    rpc.mockImplementation((nome: string) => Promise.resolve(
+      nome === 'raio_x_decidir'
+        ? { data: { atualizado_em: VERSAO_NOVA }, error: null }
+        : { data: null, error: { code: '08006', message: 'rede caiu' } },
+    ));
+    const onSalvo = vi.fn();
+    abrir(undefined, itemRX({ destino_sugerido: 'trocar' }), 0.18, { onSalvo });
+    fireEvent.click(screen.getByRole('button', { name: 'Trocar' }));
+    fireEvent.change(screen.getByLabelText('Crédito de troca (R$)'), { target: { value: '60.000' } });
+    fireEvent.change(screen.getByLabelText('O que entra no lugar'), { target: { value: 'encalhe' } });
+    fireEvent.click(salvarDec());
+    await waitFor(() => expect(onSalvo).toHaveBeenCalled());
+    // 1ª decidir SEM crédito; planejar falhou; o crédito nunca foi gravado
+    expect(argsDe('raio_x_decidir')).toHaveLength(1);
+    expect(argsDe('raio_x_decidir')[0]).toEqual(expect.objectContaining({ p_destino: 'trocar', p_credito_troca: null }));
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringMatching(/^Decisão salva, mas a execução NÃO/));
+  });
+
+  it('troca por encalhe com tudo certo: decidir sem crédito → plano → crédito (mesmo destino, motor intocado na 3ª)', async () => {
+    servidorOk();
+    const { onClose } = abrir(undefined, itemRX({ destino_sugerido: 'trocar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Trocar' }));
+    fireEvent.change(screen.getByLabelText('Crédito de troca (R$)'), { target: { value: '1.500' } });
+    fireEvent.change(screen.getByLabelText('O que entra no lugar'), { target: { value: 'encalhe' } });
+    fireEvent.click(salvarDec());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(rpc.mock.calls.map((c) => c[0])).toEqual(['raio_x_decidir', 'raio_x_planejar', 'raio_x_decidir']);
+    const [d1, d2] = argsDe('raio_x_decidir');
+    expect(d1).toEqual(expect.objectContaining({ p_credito_troca: null, p_tirar_do_motor: true }));
+    expect(d2).toEqual(expect.objectContaining({ p_destino: 'trocar', p_credito_troca: 1500, p_tirar_do_motor: false, p_restaurar_motor: false }));
+    expect(argsDe('raio_x_planejar')[0]).toEqual(expect.objectContaining({ p_troca_contrapartida: 'encalhe', p_atualizado_em: VERSAO_NOVA }));
   });
 });

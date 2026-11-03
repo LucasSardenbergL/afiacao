@@ -52,7 +52,8 @@ function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
 
 const numeroValido = (n: number | null) => n === null || (Number.isFinite(n) && n >= 0);
 
-export type AcaoDecisao = 'decidir' | 'restaurar' | 'tirar_agora';
+/** `credito_troca` = 2ª chamada que só acrescenta o crédito depois da contrapartida "encalhe" (ver `salvar`). */
+export type AcaoDecisao = 'decidir' | 'restaurar' | 'tirar_agora' | 'credito_troca';
 /** De onde veio o toque que decidiu (sensor do ledger): Confirmar sugestão no card, painel direto ou pela fila. */
 export type OrigemDecisao = 'card' | 'sheet' | 'fila';
 /** Plano que acompanha a decisão no MESMO salvar (UX 5): tudo do PlanejarArgs menos o que vem da decisão gravada. */
@@ -247,9 +248,32 @@ export function useRaioXMutacoes(empresa: Empresa) {
       return 'falhou';
     }
     let atualizadoEm = ctx.atualizadoEm;
+    if (args && plano) {
+      // `raio_x_decidir` não recebe versão esperada; o plano iria com a versão que ELE devolve e sobrescreveria, sem RX003,
+      // um plano gravado por outro operador depois da nossa leitura (Codex P1). Relê a versão antes: mudou → nada é gravado.
+      const { data: viva, error: eVersao } = await supabase
+        .from('raio_x_decisao')
+        .select('atualizado_em')
+        .eq('empresa', empresa)
+        .eq('sku_codigo_omie', ctx.sku)
+        .maybeSingle();
+      if (eVersao) {
+        avisarErro(eVersao, 'Não foi possível conferir a versão da decisão.');
+        return 'falhou';
+      }
+      if ((viva?.atualizado_em ?? null) !== (ctx.atualizadoEm ?? null)) {
+        toast.error(MSG_RX003);
+        return 'falhou';
+      }
+    }
+    // Troca com contrapartida "encalhe": o crédito só vai DEPOIS da contrapartida gravada. Plano que falhasse com o crédito
+    // já gravado contaria o crédito como liberado (contrapartida nula conta — Codex P1); assim a falha subconta (lado seguro).
+    const creditoDepois = !!(args && plano && args.destino === 'trocar' && plano.trocaContrapartida === 'encalhe' && args.creditoTroca !== null);
     if (args) {
       try {
-        const row: unknown = await mDecidir.mutateAsync({ empresa, args, acao: 'decidir', origem: ctx.origem, silencioso: true });
+        const row: unknown = await mDecidir.mutateAsync({
+          empresa, args: creditoDepois ? { ...args, creditoTroca: null } : args, acao: 'decidir', origem: ctx.origem, silencioso: true,
+        });
         // só a versão gravada interessa aqui; lida crua (uma conversão que falhasse marcaria como "falhou" o que gravou)
         const v = (row as { atualizado_em?: unknown } | null)?.atualizado_em;
         atualizadoEm = typeof v === 'string' ? v : null;
@@ -278,6 +302,15 @@ export function useRaioXMutacoes(empresa: Empresa) {
       }
       toast.error(motivo);
       return 'falhou';
+    }
+    if (creditoDepois && args) {
+      try {
+        // mesmo destino (decidido_em não muda), motor já resolvido na 1ª chamada: só acrescenta o crédito
+        await mDecidir.mutateAsync({ empresa, args: { ...args, tirarDoMotor: false }, acao: 'credito_troca', silencioso: true });
+      } catch (e) {
+        toast.warning(`Decisão e contrapartida salvas, mas o crédito de troca NÃO: ${textoDoErro(e, 'erro ao salvar o crédito')}. Abra o item de novo para informar.`);
+        return 'parcial';
+      }
     }
     toast.success(args ? 'Decisão e execução salvas' : 'Execução salva');
     return 'ok';

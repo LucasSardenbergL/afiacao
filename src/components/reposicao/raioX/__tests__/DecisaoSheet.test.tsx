@@ -16,9 +16,17 @@ import { decisao } from '@/lib/reposicao/raio-x/__tests__/fixtures';
 
 type Resp = { data: unknown; error: unknown };
 const rpc = vi.hoisted(() => vi.fn((_nome: string, _args: Record<string, unknown>): Promise<Resp> => Promise.resolve({ data: {}, error: null })));
-vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { rpc: (nome: string, args: Record<string, unknown>) => rpc(nome, args) },
-}));
+// versão viva da decisão no servidor (o salvar combinado relê antes de gravar — RX003 do lado do cliente)
+const viva = vi.hoisted(() => ({ v: null as string | null }));
+vi.mock('@/integrations/supabase/client', () => {
+  const sel = { eq: () => sel, maybeSingle: () => Promise.resolve({ data: viva.v === null ? null : { atualizado_em: viva.v }, error: null }) };
+  return {
+    supabase: {
+      rpc: (nome: string, args: Record<string, unknown>) => rpc(nome, args),
+      from: () => ({ select: () => sel }),
+    },
+  };
+});
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
@@ -41,6 +49,7 @@ const itemRX = (p: Partial<ItemRaioX> = {}): ItemRaioX => ({
 const CTX: Record<Empresa, string> = { oben: 'OBEN', colacor: 'COLACOR' };
 
 function abrir(p: { item?: ItemRaioX; decisao?: DecisaoRow; empresa?: Empresa; ctx?: string } = {}) {
+  viva.v = p.decisao?.atualizado_em ?? null;
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const invalidar = vi.spyOn(qc, 'invalidateQueries');
   const onClose = vi.fn();

@@ -10,7 +10,8 @@
 --      12m; margem só com a unidade de venda única no histórico = a do estoque. Sem venda, sem cadastro ou divergente →
 --      NULL. A prova de unidade é relida a cada salvamento com piso; as bases (médio, CMC) seguem congeladas.
 --   2) raio_x_medicao ganha, NO FIM, `unidade_estoque` e `unidades_venda_periodo` (unidades das NFs desde a foto; nula
---      vira ''). A regra fica no TS (`unidadeEquivalente` em src/lib/reposicao/raio-x/medir.ts, testada lá). Muda o
+--      vira ''), e o `preco_medio_12m` (régua do "liquidou abaixo de 90% do médio") passa a NULL quando as vendas de 12m
+--      não estão numa única unidade = a do estoque (Codex P2). A regra da quantidade fica no TS (`unidadeEquivalente` em src/lib/reposicao/raio-x/medir.ts, testada lá). Muda o
 --      RETURNS → DROP + CREATE; ACL reemitida nomeando as roles.
 --
 -- Corpos de partida = os da 20261101120000_raio_x_inequivoco.sql (APLICADOS: md5 planejar 1bf86bd2fa624d5497099cad81726fcc,
@@ -39,7 +40,7 @@ BEGIN
   IF v_plan IS NULL OR v_plan NOT IN ('1bf86bd2fa624d5497099cad81726fcc', 'bf229655602a8ee1edbdaae3db745003') THEN
     RAISE EXCEPTION 'PRE FALHOU: raio_x_planejar vivo (md5 %) não é o predecessor revisado nem este — reconcilie antes', v_plan;
   END IF;
-  IF v_med IS NULL OR v_med NOT IN ('7b7f4b18ca51bbec7804e38c9c3e6d6d', 'c63031075c01577d75ddda25b3b332f1') THEN
+  IF v_med IS NULL OR v_med NOT IN ('7b7f4b18ca51bbec7804e38c9c3e6d6d', '9b09a375347d48feaa383e0097d1d843') THEN
     RAISE EXCEPTION 'PRE FALHOU: raio_x_medicao vivo (md5 %) não é o predecessor revisado nem este — reconcilie antes', v_med;
   END IF;
 END
@@ -266,7 +267,10 @@ BEGIN
            sum(vh.valor_total) FILTER (WHERE vh.data_emissao >= v_hoje - 365)
              / nullif(sum(vh.quantidade) FILTER (WHERE vh.data_emissao >= v_hoje - 365), 0) AS pm12,
            -- unidades das NFs na MESMA janela da quantidade (desde a foto); unidade nula vira '' (desconhecida, nunca prova)
-           array_agg(DISTINCT coalesce(vh.sku_unidade, '')) FILTER (WHERE vh.data_emissao > d.dia) AS unidades
+           array_agg(DISTINCT coalesce(vh.sku_unidade, '')) FILTER (WHERE vh.data_emissao > d.dia) AS unidades,
+           -- o médio 12m (referência do "liquidou abaixo de 90%") só vale com UMA unidade em 12m (Codex P2)
+           count(DISTINCT coalesce(vh.sku_unidade, '')) FILTER (WHERE vh.data_emissao >= v_hoje - 365) AS n_un12,
+           min(coalesce(vh.sku_unidade, '')) FILTER (WHERE vh.data_emissao >= v_hoje - 365) AS un12
       FROM d JOIN vh ON vh.sku = d.sku
      GROUP BY d.sku),
   c AS (
@@ -288,7 +292,10 @@ BEGIN
          e.saldo,
          CASE WHEN v_vnd IS NULL OR d.dia IS NULL THEN NULL::numeric ELSE coalesce(v.qtd, 0) END,
          CASE WHEN v_vnd IS NULL OR d.dia IS NULL THEN NULL::numeric ELSE coalesce(v.rec, 0) END,
-         CASE WHEN v_vnd IS NULL THEN NULL::numeric ELSE round(v.pm12::numeric, 4) END,
+         -- médio 12m só com unidade única em 12m = a do estoque; senão NULL (médio de CX com UN não é preço de nada)
+         CASE WHEN v_vnd IS NULL THEN NULL::numeric
+              WHEN v.n_un12 = 1 AND v.un12 <> '' AND v.un12 = u.unidade THEN round(v.pm12::numeric, 4)
+              ELSE NULL::numeric END,
          CASE WHEN p_empresa = 'oben' AND private.cap_compras_ler(auth.uid()) THEN coalesce(c.compras, '{}'::timestamptz[])
               ELSE NULL::timestamptz[] END,
          d.troca_contrapartida,
@@ -315,7 +322,7 @@ BEGIN
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_plan) IS DISTINCT FROM 'bf229655602a8ee1edbdaae3db745003' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo vivo de raio_x_planejar não é o desta migration';
   END IF;
-  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_med) IS DISTINCT FROM 'c63031075c01577d75ddda25b3b332f1' THEN
+  IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = v_med) IS DISTINCT FROM '9b09a375347d48feaa383e0097d1d843' THEN
     RAISE EXCEPTION 'POSTCONDICAO FALHOU: corpo vivo de raio_x_medicao não é o desta migration';
   END IF;
   IF NOT (SELECT prosecdef FROM pg_catalog.pg_proc WHERE oid = v_plan) THEN

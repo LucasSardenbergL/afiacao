@@ -234,6 +234,11 @@ suite() {
   oks "$U_EST" "$(UNID oben 101)" "UN|,UN" "f medicao 101: UN e NF sem unidade desde a foto (nula vira vazio)"
   oks "$U_EST" "$(UNID oben 102)" "UN|CX" "f medicao 102: CX desde a foto (antes da foto nao entra)"
   oks "$U_EST" "SELECT qtd_vendida FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 101" "3" "f quantidade desde a foto intacta"
+  # medio 12m: 101 vendeu UN e CX em 12m (e uma NF sem unidade) -> NULL; 102 so CX (estoque UN) -> NULL
+  oks "$U_EST" "SELECT coalesce(preco_medio_12m::text,'N') FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 101" "N" "f medio 12m com unidades misturadas e NULL"
+  oks "$U_EST" "SELECT coalesce(preco_medio_12m::text,'N') FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 102" "N" "f medio 12m em CX com estoque UN e NULL"
+  P -c "DELETE FROM public.v_venda_items_history_efetivo WHERE sku_codigo_omie = 101 AND (sku_unidade IS DISTINCT FROM 'UN');" >/dev/null
+  oks "$U_EST" "SELECT preco_medio_12m FROM public.raio_x_medicao('oben') WHERE sku_codigo_omie = 101" "20.0000" "f medio 12m so em UN = estoque vale (controle positivo)"
   oks "$U_EST" "$(dec "'colacor', 201, 'trocar', 'mercadoria', NULL, 'Forn', 10, false, false")" "trocar" "f decidir colacor 201"
   oks "$U_EST" "$(UNID colacor 201)" "UN|N" "f colacor: sem NF, unidades NULL (nunca lista vazia fingindo prova)"
   # ---------- (g) gate e ACL ----------
@@ -277,4 +282,5 @@ sabotar "3 medio misturado vira base" "s/      v_pm12 := NULL;/      v_pm12 := v
 sabotar "4 unidade nula some da lista da medicao" "s/array_agg(DISTINCT coalesce(vh.sku_unidade, ''))/array_agg(DISTINCT vh.sku_unidade)/" "f medicao 101: UN e NF sem unidade desde a foto (nula vira vazio)"
 sabotar "5 sem venda conta como prova (margem fabricada)" "s/v_un_equiv := coalesce(v_un_hist = 1 AND v_uv_hist <> '' AND v_uv_hist = v_ue, false);/v_un_equiv := coalesce(v_uv_hist = v_ue, true);/" "d sem venda: margem e desconto NULL (nada prova a unidade), CMC segue como base"
 sabotar "6 janela da unidade ignora a foto" "s/array_agg(DISTINCT coalesce(vh.sku_unidade, '')) FILTER (WHERE vh.data_emissao > d.dia)/array_agg(DISTINCT coalesce(vh.sku_unidade, ''))/" "f medicao 102: CX desde a foto (antes da foto nao entra)"
+sabotar "7 medio 12m sem prova de unidade" "s/WHEN v.n_un12 = 1 AND v.un12 <> '' AND v.un12 = u.unidade THEN round(v.pm12::numeric, 4)/WHEN true THEN round(v.pm12::numeric, 4)/" "f medio 12m com unidades misturadas e NULL"
 echo "RAIO-X-UNIDADES-PROVA-OK"
