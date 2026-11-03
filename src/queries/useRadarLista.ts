@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { isSearchablePostgrestTerm, sanitizeForPostgrestOr } from '@/lib/postgrest';
 import { presetParaParams, digitosCnae, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
-import { recorteDeLote } from '@/lib/radar/lote-vigente';
+import { recorteDeLote, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import type { Database } from '@/integrations/supabase/types';
 
@@ -64,7 +64,7 @@ type ParametrosLista = Database['public']['Functions']['radar_lista']['Args'];
  */
 export function parametrosDaLista(
   filtros: RadarFiltros,
-  lote: { mes_referencia: string; iniciado_em: string } | null,
+  lote: LoteIngest | null,
   hojeISO: string,
   pagina: number,
 ): ParametrosLista {

@@ -248,8 +248,9 @@ cmp_lista E10 "$PADRAO, p_cnae_prefixo => '3101'" "cnae_principal LIKE '3101%' A
 cmp_lista E11 "$PADRAO, p_status => 'em_conversa'" "prospeccao_status = 'em_conversa' AND ja_cliente = false AND $LOTE AND $CONT"
 cmp_lista E12 "$PADRAO, p_incluir_ja_clientes => true" "prospeccao_status <> 'descartado' AND $LOTE AND $CONT"
 cmp_lista E13 "$PADRAO, p_primeira_vista_min => '2026-10-20 06:00+00'" "$BASE AND $LOTE AND primeira_vista_em >= '2026-10-20 06:00+00' AND $CONT"
-cmp_lista E14 "p_sugeridos_lote => '2026-10', p_sugeridos_score_min => 70, p_com_contato => true" \
-  "ultimo_lote = '2026-10' AND prospeccao_status = 'em_conversa' AND ja_cliente = false AND omie_codigo_cliente IS NULL AND (rfb_situacao IS NULL OR rfb_situacao = '02') AND cnpj ~ '^[0-9A-Z]{12}[0-9]{2}\$' AND score >= 70 AND $CONT"
+# por data, não por score: na ordem por score os ≥70 já vêm no topo e o limiar some sem mudar a página
+cmp_lista E14 "p_sugeridos_lote => '2026-10', p_sugeridos_score_min => 70, p_com_contato => true, p_ordem => 'data_abertura'" \
+  "ultimo_lote = '2026-10' AND prospeccao_status = 'em_conversa' AND ja_cliente = false AND omie_codigo_cliente IS NULL AND (rfb_situacao IS NULL OR rfb_situacao = '02') AND cnpj ~ '^[0-9A-Z]{12}[0-9]{2}\$' AND score >= 70 AND $CONT" data_abertura
 cmp_lista E15 "p_ultimo_lote => '2026-10', p_com_telefone => true" "$BASE AND $LOTE AND (telefone1 IS NOT NULL OR telefone2 IS NOT NULL)"
 cmp_lista E16 "$PADRAO, p_data_abertura_min => '2010-01-01', p_data_abertura_max => '2015-06-30'" "$BASE AND $LOTE AND $CONT AND data_abertura >= '2010-01-01' AND data_abertura <= '2015-06-30'"
 cmp_lista E17 "$PADRAO, p_ordem => 'capital_social'" "$BASE AND $LOTE AND $CONT" capital_social
