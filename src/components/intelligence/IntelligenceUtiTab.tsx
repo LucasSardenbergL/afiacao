@@ -50,7 +50,7 @@ export function IntelligenceUtiTab() {
     return {
       uti: utiRows,
       observacao: contas.filter((c) => c.status === 'observacao'),
-      exposicao: utiRows.reduce((acc, c) => acc + c.vencido31, 0),
+      exposicao: utiRows.reduce((acc, c) => acc + (c.vencido31 ?? 0), 0),
     };
   }, [data]);
 
@@ -61,6 +61,10 @@ export function IntelligenceUtiTab() {
     const qDoc = q.replace(/\D/g, '');
     return base.filter((c) => c.nome.toLowerCase().includes(q) || (qDoc.length > 0 && (c.documento ?? '').includes(qDoc)));
   }, [uti, observacao, filtros.lista, busca]);
+
+  // Título vencido sem dono unívoco: os valores atribuídos viram PISO e o "ok" fica suspenso.
+  const semCliente = data?.frescor.recebiveisSemCliente;
+  const piso = (semCliente?.titulos ?? 0) > 0 ? '≥ ' : '';
 
   if (isLoading) return <PageSkeleton variant="cockpit" />;
   if (error) {
@@ -85,6 +89,12 @@ export function IntelligenceUtiTab() {
         <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
           Positivação: {data?.frescor.positivacaoMes ? `mês ${data.frescor.positivacaoMes.slice(0, 7)}` : 'sem snapshot'}
         </Badge>
+        {semCliente && semCliente.titulos > 0 && (
+          <Badge variant="outline" className="text-[10px] font-normal text-status-warning border-status-warning/40">
+            {semCliente.titulos} título(s) vencido(s) sem cliente identificado ({formatBRL(semCliente.saldo)}) — inadimplência
+            "ok" suspensa
+          </Badge>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-2">
@@ -103,7 +113,7 @@ export function IntelligenceUtiTab() {
         <Card>
           <CardContent className="p-3">
             <p className="text-xs text-muted-foreground">Exposição vencida 31+ (UTI)</p>
-            <p className="mt-0.5 text-lg font-semibold tabular-nums">{formatBRL(exposicao)}</p>
+            <p className="mt-0.5 text-lg font-semibold tabular-nums">{piso}{formatBRL(exposicao)}</p>
           </CardContent>
         </Card>
       </div>
@@ -177,8 +187,8 @@ export function IntelligenceUtiTab() {
                   <TableCell className="py-1.5 text-right tabular-nums text-sm">
                     {c.churnRisk != null ? `${Math.round(c.churnRisk)}%` : '—'}
                   </TableCell>
-                  <TableCell className={`py-1.5 text-right tabular-nums text-sm ${c.vencido31 > 0 ? 'text-status-error font-medium' : ''}`}>
-                    {c.sinalInadimplencia === null ? 'sem dado' : formatBRL(c.vencido31)}
+                  <TableCell className={`py-1.5 text-right tabular-nums text-sm ${(c.vencido31 ?? 0) > 0 ? 'text-status-error font-medium' : ''}`}>
+                    {c.vencido31 === null ? 'sem dado' : `${c.vencido31 > 0 ? piso : ''}${formatBRL(c.vencido31)}`}
                   </TableCell>
                   <TableCell className="py-1.5 text-right tabular-nums text-sm">{c.mesesSemPedido ?? '—'}</TableCell>
                   <TableCell className="py-1.5 text-right tabular-nums text-sm">{c.diasSemComprar ?? '—'}</TableCell>
