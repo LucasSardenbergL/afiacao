@@ -1031,6 +1031,7 @@ export const MODULOS: ModuloApp[] = [
       "src/hooks/__tests__/useBreadcrumbs.test.ts",
       "src/hooks/__tests__/usePushNotifications.topic.test.tsx",
       "src/hooks/__tests__/useDebouncedValue.test.tsx",
+      "src/hooks/__tests__/useAlertasCriticos.test.tsx",
       "src/hooks/__tests__/useInfiniteScroll.test.ts",
       "src/hooks/__tests__/useDisplayAccess.test.tsx",
       "src/hooks/__tests__/useImpersonationTargets.test.tsx",
