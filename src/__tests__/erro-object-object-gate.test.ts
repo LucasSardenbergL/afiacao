@@ -130,7 +130,6 @@ const A_DIVIDA: ReadonlyMap<string, number> = new Map([
   ['supabase/functions/omie-analytics-sync/index.ts', 1],
   ['supabase/functions/omie-analytics-sync/politica-retry.ts', 1],
   ['supabase/functions/omie-cliente/index.ts', 1],
-  ['supabase/functions/omie-financeiro/index.ts', 1],
   ['supabase/functions/omie-malha-sync/index.ts', 1],
   ['supabase/functions/omie-nfe-recebimento-sync/index.ts', 1],
   ['supabase/functions/omie-sync-ctes-recebidos/index.ts', 2],
