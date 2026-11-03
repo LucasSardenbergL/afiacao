@@ -12,6 +12,7 @@
 #           TEXTO), catálogo, erros por run, importações, retorno e metadata de cada run (sem
 #           importacao_id/formulas_identicas_puladas) e o FRESCOR por fórmula (updated_at e created_at de
 #           todo item > staging mais nova da chave — a prova que o formula-identica.ts da edge usa)
+#   DESVIO  re-promoção de run já promovido sem reaceite intermediário: o novo recalcula pelo E4 (antigo preserva)
 #   PULA    o novo pula de fato: no reenvio idêntico de 1 cor (R3), todas as chaves do par menos as dela
 #   VOLUME  reenvio de 2 cores num par de 4.000 fórmulas/12.000 itens: o novo escreve ≤ 100 tuplas nas duas
 #           tabelas oficiais; o antigo (controle) ≥ 20.000
@@ -420,6 +421,37 @@ SQL
 TETO_VOLUME=100
 PISO_ANTIGO=20000
 
+# DESVIO DELIBERADO (Codex 2ª rodada): re-promover um run JÁ promovido sem que outro run tenha reaceitado a
+# chave. O antigo exclui do E4 a fórmula que a 1ª invocação gravou (importacao_id reaproveitado coincide) e
+# ela fica com o preço de base 400; o novo só exclui o aceito NESTA invocação e recalcula pelo 500 pendente.
+# Par P3/B1, fora da impressão (que é do P1); promoções diretas, fora do _res.
+seed_desvio() {   # $1 = banco; imprime o preço final de D1/E3600
+  PA -q -d "$1" <<'SQL' >/dev/null
+SELECT _run('dddddddd-0000-0000-0000-000000000001', 'catalogs');
+INSERT INTO tint_staging_produtos (sync_run_id, account, store_code, cod_produto, descricao)
+VALUES ('dddddddd-0000-0000-0000-000000000001','oben','L1','P3','P3');
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('dddddddd-0000-0000-0000-000000000001','oben','L1','P3','B1','E900');
+SELECT tint_promote_sync_run('dddddddd-0000-0000-0000-000000000001');
+SELECT _run('dddddddd-0000-0000-0000-000000000002', 'formulas');
+SELECT _sf('dddddddd-0000-0000-0000-000000000002','D1','Cor D1','P3','B1',NULL,false,'[["AX",1,"6"]]');
+SELECT tint_promote_sync_run('dddddddd-0000-0000-0000-000000000002');
+SELECT _run('dddddddd-0000-0000-0000-000000000003', 'catalogs');
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('dddddddd-0000-0000-0000-000000000003','oben','L1','P3','B1','E3600');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('dddddddd-0000-0000-0000-000000000003','oben','L1','P3','B1','E3600', 400, 10, 20);
+SELECT tint_promote_sync_run('dddddddd-0000-0000-0000-000000000003');
+SELECT _run('dddddddd-0000-0000-0000-000000000004', 'catalogs');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('dddddddd-0000-0000-0000-000000000004','oben','L1','P3','B1','E3600', 500, 10, 20);
+SELECT tint_promote_sync_run('dddddddd-0000-0000-0000-000000000003');
+SQL
+  q "$1" "SELECT f.preco_final_sayersystem FROM tint_formulas f JOIN tint_produtos p ON p.id = f.produto_id
+           JOIN tint_embalagens e ON e.id = f.embalagem_id
+          WHERE f.cor_id = 'D1' AND p.cod_produto = 'P3' AND e.id_embalagem_sayersystem = 'E3600'"
+}
+
 # ── referência: o promote ANTIGO, do MESMO template ──────────────────────────────────────────────────
 PA -q -d postgres -c "CREATE DATABASE ref TEMPLATE tpl_diff" >/dev/null
 seed ref
@@ -446,13 +478,17 @@ ESPERADO_REF='C1escala=16.000000,40.000000;C1nome=Cor 1 nova;C2ativa=true;C3orde
 [ "$v" = "$ESPERADO_REF" ] || { echo "✗ cenário: a referência não exibe os casos de borda: [$v] ≠ [$ESPERADO_REF]"; exit 1; }
 echo "  · referência (promote antigo): $IMP_REF — $v"
 
+REF_DESVIO="$(seed_desvio ref)"
+[ "$REF_DESVIO" = "528.24" ] || { echo "✗ controle: o promote ANTIGO devia preservar 528.24 na re-promoção sem R intermediário (veio [$REF_DESVIO])"; exit 1; }
+echo "  · promote antigo: re-promoção sem run intermediário preserva $REF_DESVIO"
+
 seed_big_run ref
 REF_VOL="$(escritas ref b0000000-0000-0000-0000-000000000003)"
 [[ "$REF_VOL" =~ ^[0-9]+$ ]] && [ "$REF_VOL" -ge "$PISO_ANTIGO" ] \
   || { echo "✗ controle: o promote ANTIGO devia escrever ≥ $PISO_ANTIGO tuplas no run BIG (veio $REF_VOL)"; exit 1; }
 echo "  · promote antigo: run BIG (2 cores reenviadas) = $REF_VOL tuplas escritas"
 
-TODOS="MD5 EQUIV PULA VOLUME LOCK ACL IDEMP GUARDA"
+TODOS="MD5 EQUIV PULA DESVIO VOLUME LOCK ACL IDEMP GUARDA"
 
 # ── a suíte: $1 = arquivo da migration (real ou sabotada), $2 = banco; imprime os asserts que CAÍRAM ──
 suite() {
@@ -472,6 +508,9 @@ suite() {
   # R3 reenviou só C1: das 2×8 chaves do par (C6 inclusa; nenhuma barrada ainda) pulam todas menos as 2 de C1.
   v="$(q "$db" "SELECT r->>'formulas_identicas_puladas' FROM _res WHERE rot = 'R3'")"
   [ "$v" = "14" ] || { cai PULA; echo "    (PULA: R3 pulou [$v], esperado 14)" >&2; }
+
+  v="$(seed_desvio "$db")"
+  [ "$v" = "660.24" ] || { cai DESVIO; echo "    (DESVIO: re-promoção sem run intermediário deu [$v], esperado 660.24)" >&2; }
 
   local w
   seed_big_run "$db"; w="$(escritas "$db" b0000000-0000-0000-0000-000000000003)"
@@ -647,7 +686,7 @@ MOTIVO="P1 FALHOU" falsifica F14 "$TODOS" <<'TROCAS'
 TROCAS
 # F15 — o E4 volta a excluir pelo importacao_id do run nas duas pontas (a 1ª versão, Codex P1; postcondição
 #       ajustada): na re-promoção do R14 as E1800 puladas pelo R15 guardam importacao_id=R14 e não recalculam.
-falsifica F15 MD5 EQUIV <<'TROCAS'
+falsifica F15 MD5 EQUIV DESVIO <<'TROCAS'
 [("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t3$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t3$"),
  ("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$"),
  ("     OR (length(v_src) - length(replace(v_src, 'NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)', '')))\n        / length('NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)') <> 2\n     OR position('f.importacao_id IS DISTINCT FROM v_importacao_id' in v_src) > 0\n", "")]

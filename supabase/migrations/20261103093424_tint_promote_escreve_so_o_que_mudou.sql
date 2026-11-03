@@ -25,6 +25,10 @@
 --   Advisory lock também por ACCOUNT: tint_formulas é por account e o lock vivo é por account+store;
 --   duas lojas concorrentes classificariam _pulados sem trava e comporiam um resultado que nenhuma
 --   ordem serial do promote antigo produz (Codex P2; o tick já é serial, chamada direta não).
+--   Residual conhecido (Codex, 2ª rodada, P2): tint_apply_keys_snapshot toma só o lock de loja e
+--   desativa fórmulas da account; em paralelo com um promote de OUTRA loja, a chave pulada fica
+--   desativada e a reescrita reativa. Só alcançável fora do tint_promocao_tick, que serializa os dois
+--   (try-lock global; é o único chamador de ambos em 2026-11-03). Não tratado aqui.
 --   Novas chaves no metadata/retorno: formulas_identicas_puladas. `inserts`/registros_importados
 --   seguem contando as chaves ACEITAS (reescritas + idênticas), como antes.
 --
