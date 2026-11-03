@@ -1,6 +1,7 @@
 -- CONTROLE NEGATIVO de db/test-rls-has-role-initplan-classe.sh (F7): a 1ª versão
 -- da migration, que LIA a policy antes de travar a tabela. Com ela o A8 tem de
 -- ficar vermelho (a policy apertada por outra sessão é sobrescrita). Não aplicar.
+-- Única diferença do original: `<>` → IS DISTINCT FROM (gate verde-por-ausência).
 
 -- =============================================================================
 -- RLS — has_role(auth.uid(), …) por linha → InitPlan, na CLASSE inteira do
@@ -93,7 +94,7 @@ BEGIN
        OR d.polroles IS DISTINCT FROM r.polroles THEN
       RAISE EXCEPTION 'P1 FALHOU: %.% mudou cmd/permissive/roles — o ALTER alargou ou trocou a policy', r.tabela, r.polname;
     END IF;
-    IF (d.qual IS NULL) <> (r.qual IS NULL) OR (d.wc IS NULL) <> (r.wc IS NULL) THEN
+    IF (d.qual IS NULL) IS DISTINCT FROM (r.qual IS NULL) OR (d.wc IS NULL) IS DISTINCT FROM (r.wc IS NULL) THEN
       RAISE EXCEPTION 'P2 FALHOU: %.% ganhou ou perdeu cláusula USING/WITH CHECK', r.tabela, r.polname;
     END IF;
     IF regexp_replace(d.qual, embrul, '\1', 'g') IS DISTINCT FROM regexp_replace(r.qual, embrul, '\1', 'g')
@@ -120,7 +121,7 @@ BEGIN
   WHERE schemaname = 'public'
     AND (coalesce(qual, '') || ' ' || coalesce(with_check, ''))
         ~ '(?<!SELECT )has_role\(auth\.uid\(\), ''[a-z_]+''::app_role\)';
-  IF sobra <> 0 THEN
+  IF sobra IS DISTINCT FROM 0 THEN
     RAISE EXCEPTION 'P5 FALHOU: % policies do public ainda chamam has_role(auth.uid(), …) por linha', sobra;
   END IF;
   RAISE NOTICE 'rls_has_role_initplan: zero has_role cru no public';
