@@ -64,7 +64,8 @@ export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): His
   // preco" da ficha (o vendedor entraria na ligacao com R$ 0,00). Media ponderada fabricaria
   // um numero que nenhuma nota teve.
   // Empate de NOME na data da ultima compra: o menor na ordem de string (so para ser
-  // deterministico — o hook resolve o nome pelo codigo, entao na pratica e um so).
+  // deterministico — o hook resolve o nome pelo codigo, entao na pratica e um so). Duas grafias
+  // do MESMO instante em `ultimaData` ('2026-06-01' × '2026-06-01T00:00:00Z'): a maior string.
   interface Acumulado {
     codigo: number; nome: string; vezes: number;
     ultimaData: string; ultimaMs: number;
@@ -89,8 +90,9 @@ export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): His
       atual.ultimaMs = ms;
       atual.ultimaData = it.dataPedido;
       atual.nome = it.nome;
-    } else if (ms === atual.ultimaMs && it.nome < atual.nome) {
-      atual.nome = it.nome;
+    } else if (ms === atual.ultimaMs) {
+      if (it.nome < atual.nome) atual.nome = it.nome;
+      if (it.dataPedido > atual.ultimaData) atual.ultimaData = it.dataPedido;
     }
     if (it.precoUnit !== null) {
       if (ms > atual.precoMs) {
@@ -107,9 +109,15 @@ export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): His
     .map(({ codigo, nome, vezes, ultimoPreco, ultimaData }) => ({ codigo, nome, vezes, ultimoPreco, ultimaData }));
   const topProdutos = produtos.slice(0, 5);
 
+  // Pedidos na mesma data: maior valor primeiro, depois mais itens — a consulta ordena so por
+  // data, e sem desempate o corte em 3 escolhia pela ordem da resposta.
   const ultimosPedidos = pedidos
     .filter((p) => naoFutura(p.data, hojeMs))
-    .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime())
+    .sort((a, b) =>
+      new Date(b.data).getTime() - new Date(a.data).getTime() ||
+      b.valor - a.valor ||
+      b.nItens - a.nItens,
+    )
     .slice(0, 3);
 
   return { topProdutos, produtos, ultimosPedidos };

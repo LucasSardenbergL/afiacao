@@ -3,6 +3,13 @@ import { derivarHistorico } from './historico';
 
 const agora = new Date('2026-06-29T12:00:00Z');
 
+function* permutacoes<T>(xs: T[]): Generator<T[]> {
+  if (xs.length <= 1) { yield xs; return; }
+  for (let i = 0; i < xs.length; i++) {
+    for (const resto of permutacoes([...xs.slice(0, i), ...xs.slice(i + 1)])) yield [xs[i], ...resto];
+  }
+}
+
 describe('derivarHistorico', () => {
   it('agrupa itens por produto, conta vezes e pega o último preço/data', () => {
     const h = derivarHistorico({
@@ -97,24 +104,19 @@ describe('derivarHistorico', () => {
       { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 5, dataPedido: '2026-04-01' },
       { codigo: 2, nome: 'Seladora', quantidade: 1, precoUnit: null, dataPedido: '2026-06-05' },
       { codigo: 3, nome: 'Thinner 5L', quantidade: 1, precoUnit: 0, dataPedido: '2026-06-01' }, // nome empata na data → o menor
-      { codigo: 3, nome: 'Thinner', quantidade: 1, precoUnit: 30, dataPedido: '2026-06-01' },
+      // mesmo instante, outra grafia → `ultimaData` fica com a maior string
+      { codigo: 3, nome: 'Thinner', quantidade: 1, precoUnit: 30, dataPedido: '2026-06-01T00:00:00Z' },
       // empata com o código 2 em vezes E data → a ordem da lista desempata pelo código
       { codigo: 0, nome: 'Lixa', quantidade: 1, precoUnit: 7, dataPedido: '2026-06-05' },
     ];
     const esperado = {
       topProdutos: [
         { codigo: 1, nome: 'Verniz', vezes: 4, ultimoPreco: 20, ultimaData: '2026-06-01' },
-        { codigo: 3, nome: 'Thinner', vezes: 2, ultimoPreco: 30, ultimaData: '2026-06-01' },
+        { codigo: 3, nome: 'Thinner', vezes: 2, ultimoPreco: 30, ultimaData: '2026-06-01T00:00:00Z' },
         { codigo: 0, nome: 'Lixa', vezes: 1, ultimoPreco: 7, ultimaData: '2026-06-05' },
         { codigo: 2, nome: 'Seladora', vezes: 1, ultimoPreco: null, ultimaData: '2026-06-05' },
       ],
       ultimosPedidos: [],
-    };
-    const permutacoes = function* <T>(xs: T[]): Generator<T[]> {
-      if (xs.length <= 1) { yield xs; return; }
-      for (let i = 0; i < xs.length; i++) {
-        for (const resto of permutacoes([...xs.slice(0, i), ...xs.slice(i + 1)])) yield [xs[i], ...resto];
-      }
     };
     let n = 0;
     for (const ordem of permutacoes(itens)) {
@@ -123,6 +125,27 @@ describe('derivarHistorico', () => {
       n++;
     }
     expect(n).toBe(40320); // 8! — a suíte percorreu TODAS as ordens
+  });
+
+  it('PERMUTAÇÕES: pedidos na mesma data — o corte em 3 não depende da ordem', () => {
+    const pedidos = [
+      { data: '2026-06-20', valor: 100, nItens: 2 },
+      { data: '2026-06-20', valor: 300, nItens: 1 },
+      { data: '2026-06-10', valor: 50, nItens: 1 },
+      { data: '2026-06-10', valor: 50, nItens: 4 },
+      { data: '2026-06-01', valor: 999, nItens: 9 },
+    ];
+    const esperado = [
+      { data: '2026-06-20', valor: 300, nItens: 1 },
+      { data: '2026-06-20', valor: 100, nItens: 2 },
+      { data: '2026-06-10', valor: 50, nItens: 4 },
+    ];
+    let n = 0;
+    for (const ordem of permutacoes(pedidos)) {
+      expect(derivarHistorico({ agora, itens: [], pedidos: ordem }).ultimosPedidos).toEqual(esperado);
+      n++;
+    }
+    expect(n).toBe(120); // 5!
   });
 
   it('vazio → listas vazias (sem fabricar)', () => {
