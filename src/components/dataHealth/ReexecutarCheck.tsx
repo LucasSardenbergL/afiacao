@@ -31,11 +31,14 @@ async function disparar(r: Reexecucao): Promise<DesfechoReexecucao> {
   }
 }
 
-function useAoTerminar(source: string) {
+/** Contexto do clique no track/ledger: o check e, no sync_state_saude, a entidade. */
+type Rastro = { source: string; entidade?: string };
+
+function useAoTerminar(rastro: Rastro) {
   const queryClient = useQueryClient();
   return {
     onSuccess: (desfecho: DesfechoReexecucao) => {
-      track('saude_dados.reexecutar', { source, desfecho });
+      track('saude_dados.reexecutar', { ...rastro, desfecho });
       if (desfecho === 'em_andamento') {
         toast.info('Já há uma execução em andamento — este clique não rodou nada.');
         return;
@@ -45,7 +48,7 @@ function useAoTerminar(source: string) {
       queryClient.invalidateQueries({ queryKey: ['data-health'] });
     },
     onError: (e: Error) => {
-      track('saude_dados.reexecutar', { source, desfecho: 'erro' });
+      track('saude_dados.reexecutar', { ...rastro, desfecho: 'erro' });
       toast.error('Re-execução falhou', { description: mensagemDeErro(e) ?? 'Erro sem mensagem — tente de novo ou avise a equipe.' });
     },
   };
@@ -64,31 +67,36 @@ function Painel({ r, pendente, onClick }: { r: Reexecucao; pendente: boolean; on
 }
 
 /** Front é o escritor do slug: registra a execução em acoes_execucoes. */
-function ReexecutarRegistrandoNoFront({ r, source }: { r: Reexecucao; source: string }) {
+function ReexecutarRegistrandoNoFront({ r, rastro }: { r: Reexecucao; rastro: Rastro }) {
   const m = useMutationComRegistro<DesfechoReexecucao>({
     acao: r.acao,
     mutationFn: () => disparar(r),
-    detalhes: desfecho => ({ source, desfecho }),
-    ...useAoTerminar(source),
+    detalhes: desfecho => ({ ...rastro, desfecho }),
+    ...useAoTerminar(rastro),
   });
   return <Painel r={r} pendente={m.isPending} onClick={() => m.mutate()} />;
 }
 
 /** A edge já grava o slug (comRegistro server-side): o front só dispara e re-lê a caption. */
-function ReexecutarRegistradoPelaEdge({ r, source }: { r: Reexecucao; source: string }) {
+function ReexecutarRegistradoPelaEdge({ r, rastro }: { r: Reexecucao; rastro: Rastro }) {
   const queryClient = useQueryClient();
   const m = useMutation<DesfechoReexecucao, Error>({
     mutationFn: () => disparar(r),
-    ...useAoTerminar(source),
+    ...useAoTerminar(rastro),
     onSettled: () => queryClient.invalidateQueries({ queryKey: [ULTIMA_EXECUCAO_QUERY_KEY] }),
   });
   return <Painel r={r} pendente={m.isPending} onClick={() => m.mutate()} />;
 }
 
+/** Botão + caption <UltimaExecucao> de uma re-execução; o escritor do slug decide quem registra. */
+export function BotaoReexecucao({ r, rastro }: { r: Reexecucao; rastro: Rastro }) {
+  return r.escritor === 'front'
+    ? <ReexecutarRegistrandoNoFront r={r} rastro={rastro} />
+    : <ReexecutarRegistradoPelaEdge r={r} rastro={rastro} />;
+}
+
 export function ReexecutarCheck({ check }: { check: DataHealthCheck }) {
   const r = reexecucaoDoCheck(check);
   if (!r) return null;
-  return r.escritor === 'front'
-    ? <ReexecutarRegistrandoNoFront r={r} source={check.source} />
-    : <ReexecutarRegistradoPelaEdge r={r} source={check.source} />;
+  return <BotaoReexecucao r={r} rastro={{ source: check.source }} />;
 }
