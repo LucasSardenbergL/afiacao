@@ -47,11 +47,17 @@ FIXTURE="$REPO_ROOT/db/fixtures/radar-acesso-vendedor-prod-20261029.sql"
 FIXTURE_DESFAZER="$REPO_ROOT/db/fixtures/radar-contato-integridade-prod-20261031.sql"
 MIG_ANT="$REPO_ROOT/supabase/migrations/20261031111000_radar_contato_integridade.sql"
 MIG="$REPO_ROOT/supabase/migrations/20261031142000_radar_kpis_conversao.sql"
-[ -f "$FIXTURE" ] && [ -f "$FIXTURE_DESFAZER" ] && [ -f "$MIG_ANT" ] && [ -f "$MIG" ] || { echo "fixture ou migration ausente"; exit 1; }
+# A 20261103100000 (leitor 4 do Mini) recria radar_kpis lendo a_contatar do agregado; o virou_cliente_mes é o MESMO
+# texto. Ela entra no harness logo depois desta e vira a definição VIVA que os asserts e as sabotagens (cv_sabotar
+# muda o corpo vivo) medem. A equivalência do resto do corpo é da db/test-radar-agregado.sh.
+MIG_VIVA="$REPO_ROOT/supabase/migrations/20261103100000_radar_agregado_municipio.sql"
+# As outras 2 RPCs que ela recria têm de existir no corpo de prod (a PRE dela aborta com função ausente).
+PRED_VIVA="$REPO_ROOT/db/fixtures/radar-agregado-predecessoras-prod-20261103.sql"
+[ -f "$PRED_VIVA" ] && [ -f "$FIXTURE" ] && [ -f "$FIXTURE_DESFAZER" ] && [ -f "$MIG_ANT" ] && [ -f "$MIG" ] && [ -f "$MIG_VIVA" ] || { echo "fixture ou migration ausente"; exit 1; }
 # radar_kpis fica FORA do CV_FUNCOES (a cadeia aplicaria esta migration antes de o predecessor ser conferido). Logo uma
 # migration POSTERIOR que mexa nele não entraria aqui e a prova seguiria verde sobre o corpo velho (Codex): recusa.
 POSTERIORES="$(cd "$REPO_ROOT/supabase/migrations" && for m in *.sql; do
-  [[ "$m" > "$(basename "$MIG")" ]] && grep -l 'radar_kpis' "$m"; done || true)"
+  [[ "$m" > "$(basename "$MIG_VIVA")" ]] && grep -l 'radar_kpis' "$m"; done || true)"
 if [ -n "$POSTERIORES" ]; then
   echo "PROVA DESATUALIZADA: migration posterior mexe em radar_kpis — leve-a ao harness: $POSTERIORES"; exit 1
 fi
@@ -86,6 +92,9 @@ echo "    · predecessor = prod (md5 de4e4731…)"
 # A transação é do executor (db:aplicar); aqui, a do psql -1.
 P -v ON_ERROR_STOP=1 -q -1 -f "$MIG" > /dev/null
 echo "    · 20261031142000 aplicada (TRAVA → PRE → CREATE → PÓS)"
+P -v ON_ERROR_STOP=1 -q -1 -f "$PRED_VIVA" > /dev/null
+P -v ON_ERROR_STOP=1 -q -1 -f "$MIG_VIVA" > /dev/null
+echo "    · 20261103100000 aplicada (radar_kpis vivo = o do agregado)"
 
 GER='00000000-0000-0000-0000-00000000b002'     # employee + gerencial (gestor)
 FARM='00000000-0000-0000-0000-00000000b003'    # employee + farmer
@@ -172,7 +181,10 @@ cenario() {
   echo "── G. catálogo ──"
   # A ACL é lida ANTES de reaplicar: a reaplicação repararia um grant indevido antes de alguém olhar (Codex).
   chk G2 "anon sem EXECUTE; authenticated e service_role executam" "$(acl)" "false|true|true"
-  chk G1 "re-aplicar a migration é no-op"           "$(P -v ON_ERROR_STOP=1 -q -1 -f "$MIG" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
+  # O cenário roda num CLONE (TEMPLATE base): o stub de cron gravou database='base', e a P6 da migration viva exige
+  # o banco corrente (no pg_cron de prod o job nasce no banco em que foi criado). Alinha o stub ao clone, só isso.
+  P -v ON_ERROR_STOP=1 -q -c "UPDATE cron.job SET database = current_database() WHERE jobname = 'radar-agregado-recalcular'" > /dev/null
+  chk G1 "re-aplicar a migration viva é no-op"      "$(P -v ON_ERROR_STOP=1 -q -1 -f "$MIG_VIVA" >/dev/null 2>&1 && echo ok || echo falhou)" "ok"
   chk G3 "a reaplicação mantém a ACL"               "$(acl)" "false|true|true"
 }
 

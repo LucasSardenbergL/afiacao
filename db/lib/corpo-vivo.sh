@@ -253,7 +253,8 @@ BEGIN
     INSERT INTO cron.job (jobid, jobname, schedule, command, active, username, database)
     VALUES (v_id, job_name, schedule, command, true, current_user, current_database());
   ELSE
-    UPDATE cron.job j SET schedule = cron.schedule.schedule, command = cron.schedule.command, active = true
+    -- $2/$3: `cron.schedule.schedule` não resolve (42P01) — reagendar job existente morria aqui.
+    UPDATE cron.job j SET schedule = $2, command = $3, active = true
      WHERE j.jobid = v_id;
   END IF;
   RETURN v_id;
