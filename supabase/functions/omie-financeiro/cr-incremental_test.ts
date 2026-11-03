@@ -256,7 +256,7 @@ function falsas(opts: {
       log.push("MARCA");
       return Promise.resolve();
     },
-    orcamentoEsgotado: () => false,
+    orcamentoRestanteMs: () => Number.POSITIVE_INFINITY,
     agoraIso: () => "2026-11-02T08:21:00.000Z",
     embaralhar: opts.embaralhar ?? ((xs) => xs),
   };
