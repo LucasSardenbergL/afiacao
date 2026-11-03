@@ -169,8 +169,9 @@ export function useRaioX(empresa: Empresa | null): {
         .range(0, 999);
       if (error) throw preservarCode(error);
       const m = new Map<number, ProdutoCadastro>();
+      if (!data) return m;
       // mais recente primeiro (como o LATERAL de raio_x_estoque_fatos): o 1º de cada SKU vence
-      for (const r of data ?? []) {
+      for (const r of data) {
         if (!m.has(r.omie_codigo_produto)) m.set(r.omie_codigo_produto, { codigo: r.codigo, descricao: r.descricao });
       }
       return m;
@@ -188,8 +189,9 @@ export function useRaioX(empresa: Empresa | null): {
   useCongelarCoorte(empresa, insumosFrescos && coorteQ.data === null, itens);
 
   const syncedHoras = useMemo(() => {
+    if (!fatos) return null;
     let max: number | null = null;
-    for (const f of fatos ?? []) {
+    for (const f of fatos) {
       if (!f.synced_at) continue;
       const t = Date.parse(f.synced_at);
       if (!Number.isNaN(t) && (max === null || t > max)) max = t;
@@ -250,7 +252,8 @@ function opcoesCoorte(empresa: Empresa | null) {
         .order('posicao', { ascending: true })
         .range(0, 999);
       if (error) throw preservarCode(error);
-      return comoCoorte(data ?? []);
+      // sem linhas = coorte ainda não congelada (comoCoorte devolve null); erro já lançou acima
+      return comoCoorte(Array.isArray(data) ? data : []);
     },
   };
 }
