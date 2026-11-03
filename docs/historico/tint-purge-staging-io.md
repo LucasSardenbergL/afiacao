@@ -221,3 +221,22 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Aplicada em 2026-11-03 ~10:26 UTC** pelo `db:aplicar` (ensaio ok → recibo #879), fora de promoção (fila vazia, contadores de `tint_formulas` parados). Validada por fora (psql-ro): md5 do corpo `2c6f461f9c9d4f8c54ea817e25f88f61`, `_pulados` e lock por account presentes, exclusão por `importacao_id` ausente, `proconfig` e ACL preservados.
 - **Lição: comparar só o estado FINAL deixou 2 camadas verdes por engano.** O preço que o diff deixava velho era "curado" pelo E4 de um run seguinte, e a desativação pelo reenvio seguinte. Fotografar o estado depois de cada run tornou as duas falsificações vermelhas. E chave com staging nova é sempre reescrita (frescor), então a comparação de valores só é alcançável pelo que muda FORA da staging da chave (volume de embalagem, preço de base, desativação, edição de staff/legado no oficial) — o cenário precisa de cada um desses.
 - **Medida depois:** pendente da próxima promoção de fórmulas real (não havia run na fila em 03/11 10:24 UTC; chegam de forma irregular). Amostragem de `pg_stat_user_tables`/`pg_statio_user_tables` de `tint_formulas` e `tint_formula_itens`, `pg_stat_database` e `pg_stat_wal` a cada 10 s, sem ler tabela `tint_*`; o resultado por promoção entra aqui.
+
+## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
+
+- **Medida:** delta de `pg_statio` de **todas** as tabelas de `public`, das 12:43 às 12:59 UTC de 03/11, no Mini (256MB e 60 conexões, no ar desde 31/10 10:33). A janela teve 5 promoções de catálogo, e o amostrador não pegou nenhuma consulta de outra sessão `claude_ro`.
+
+  | critério do Mini | 31/10 18:10–18:26 (reprovado) | 03/11 12:43–12:59 |
+  |---|---|---|
+  | lido do disco ≤400 MB / 15 min | 589,5 MB | **16,7 MB** |
+  | hit ≥99% | 99,56% | **99,98%** |
+  | temp ≤100 MB | 237,6 MB | **99,4 MB** (no limite) |
+  | conexões ≤80% | 75% | **72%** (43 de 60) |
+
+- `tint_sync_errors` e `radar_empresas` já não leem do disco. O staging fica em ~8 MB lógicos por promoção, igual ao do small depois do #3431. A tabela que mais leu do disco foi `acoes_execucoes`, com 9,9 MB.
+- **Riscos que continuam no cache e não aparecem no disco:**
+  - o temp ficou a 0,6 MB do teto, com a origem ainda não identificada (o `claude_ro` não tem acesso ao `pg_stat_statements`);
+  - `venda_items_history` teve 514 MB lógicos em 5 seq scans;
+  - `user_roles` teve 219 MB lógicos em 9.287 idx scans, provavelmente das checagens de RLS.
+
+  Se um deles crescer, ele volta a disputar os 256 MB. É a próxima frente se o Mini voltar a apertar.
