@@ -342,6 +342,10 @@ const FarmerDashboard = () => {
 
           {/* LEARNING/IA TAB */}
           <TabsContent value="learning" className="space-y-3 mt-3">
+            {/* `config` é a que produziu os scores; `null` = ainda não calculou (ou a leitura da
+                config falhou — o `erro` do motor diz). Exibir o DEFAULT aqui seria fabricar "vigente". */}
+            {config ? (
+            <>
             <Card>
               <CardHeader className="p-3 pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -381,6 +385,10 @@ const FarmerDashboard = () => {
                 <WeightBar label="Follow-up" value={config.agenda_pct_followup * 100} color="bg-status-info" />
               </CardContent>
             </Card>
+            </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Pesos indisponíveis até o motor calcular com a configuração lida do banco.</p>
+            )}
             <Button variant="outline" className="w-full" onClick={() => navigate('/farmer/governance')}>
               <Shield className="w-4 h-4 mr-2" /> Propor Alteração de Pesos
             </Button>
@@ -413,7 +421,7 @@ const WeightBar = ({ label, value, color = 'bg-primary' }: { label: string; valu
   </div>
 );
 
-const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig }) => {
+const ClientDetail = ({ client, onBack }: { client: ClientScore; onBack: () => void; config: AlgorithmConfig | null }) => {
   const hc = healthColors[client.healthClass] || healthColors.critico;
   return (
     <div className="space-y-3">

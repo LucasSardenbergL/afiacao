@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -100,6 +101,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => { tabelasLidas.push(tabela); return stubChain(tabela); },
@@ -138,7 +145,7 @@ beforeEach(() => {
 
 describe('useCrossSellEngine — custo fora do browser', () => {
   it('A (controle positivo): com a RPC devolvendo o SKU, o engine RECOMENDA', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const recomendados = result.current.recommendations.flatMap((c) => c.crossSell.map((r) => r.productId));
@@ -147,7 +154,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
 
   it('B (fail-closed): RPC falha → NÃO recomenda nada', async () => {
     rpcResultado = { data: null, error: { message: 'permission denied' } };
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     // Degradar para "recomenda tudo" poria produto de PREJUÍZO no topo da lista da vendedora.
@@ -163,7 +170,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
   });
 
   it('C: não lê product_costs — consulta a RPC', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     expect(tabelasLidas).not.toContain('product_costs');
@@ -171,7 +178,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
   });
 
   it('D: o payload não carrega m_ij (m_ij ÷ cluster_volume_estimate = margem unitária)', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const linhas = linhasPersistidas();
@@ -184,7 +191,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
   });
 
   it('E: a afinidade vai na coluna DEDICADA e o dinheiro não sobe do browser', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const linhas = linhasPersistidas();
@@ -203,7 +210,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
   });
 
   it('F: a persistência SUBSTITUI a geração — manda run_id e a geração vista (compare-and-swap)', async () => {
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     const chamada = rpcArgs.find((c) => c.nome === RPC_SUBSTITUIR);
@@ -221,7 +228,7 @@ describe('useCrossSellEngine — custo fora do browser', () => {
 
   it('G: na lente "Ver como" NÃO persiste (o master inspeciona, não regrava a carteira do alvo)', async () => {
     impMock.mockReturnValue({ isImpersonating: true, effectiveUserId: 'outro-farmer' });
-    const { result } = renderHook(() => useCrossSellEngine());
+    const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
     await act(async () => { await result.current.calculateRecommendations(); });
 
     // Sem este assert, expirar-por-farmer na lente apagaria a geração vigente de OUTRA

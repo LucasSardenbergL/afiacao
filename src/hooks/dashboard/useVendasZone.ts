@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { FileText } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
 import { useDashboardCompany } from '@/hooks/useDashboardCompany';
 import { useCockpitChannel } from '@/hooks/dashboard/useCockpitChannel';
@@ -35,7 +36,10 @@ export function useVendasZone() {
       const ontem = addDias(hoje, -1);
       const amanha = addDias(hoje, 1);
 
-      let orcamentosAguardando = 0;
+      // `null` = a leitura FALHOU (≠ "nenhum orçamento aguardando"): o KPI mostra "—". O supabase-js
+      // DEVOLVE o erro (não lança), então o bloco lança o seu para o `catch` ver (ausente ≠ zero).
+      let orcamentosAguardando: number | null = null;
+      const erros: Record<'orcamentos' | 'top' | 'nomes', string | null> = { orcamentos: null, top: null, nomes: null };
 
       // Fonte do dia = order_date_kpi (date puro, 'YYYY-MM-DD') no universo de VENDA da
       // autoridade (`STATUS_NAO_VENDA` + deleted_at), o mesmo do dashboard Master. order_date_kpi
@@ -64,12 +68,16 @@ export function useVendasZone() {
 
       const lerOrcamentos = async () => {
         try {
-          const { count } = await supabase
+          const { count, error } = await supabase
             .from('orders')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'orcamento_enviado');
-          orcamentosAguardando = count ?? 0;
-        } catch { /* */ }
+          if (error) throw new Error(`orders (orçamentos aguardando): ${mensagemDeErro(error) ?? 'erro sem mensagem'}`);
+          if (count == null) throw new Error('orders (orçamentos aguardando): contagem ausente sem error — malformada');
+          orcamentosAguardando = count;
+        } catch (e) {
+          erros.orcamentos = mensagemDeErro(e) ?? 'orders (orçamentos aguardando): falha sem mensagem';
+        }
       };
 
       // Top-3: pedidos sem ação >24h por valor
@@ -80,14 +88,16 @@ export function useVendasZone() {
           // NB: não dá pra embeddar profiles(name) — orders.user_id referencia
           // auth.users, não public.profiles, então o PostgREST devolve 400. Busca
           // os nomes num segundo lote por user_id (máx 3 ids, não é N+1).
-          const { data: top } = await supabase
+          const { data: top, error: erroTop } = await supabase
             .from('orders')
             .select('id, total, status, created_at, user_id')
             .eq('status', 'orcamento_enviado')
             .lt('created_at', cutoff)
             .order('total', { ascending: false })
             .limit(3);
-          const rows = (top ?? []) as Array<{
+          if (erroTop) throw new Error(`orders (orçamentos >24h): ${mensagemDeErro(erroTop) ?? 'erro sem mensagem'}`);
+          if (!top) throw new Error('orders (orçamentos >24h): data null sem error — malformada');
+          const rows = top as Array<{
             id: string;
             total?: number | string | null;
             user_id?: string | null;
@@ -95,10 +105,14 @@ export function useVendasZone() {
           const userIds = [...new Set(rows.map((o) => o.user_id).filter(Boolean))] as string[];
           const nameMap = new Map<string, string>();
           if (userIds.length > 0) {
-            const { data: profs } = await supabase
+            const { data: profs, error: erroNomes } = await supabase
               .from('profiles')
               .select('user_id, name')
               .in('user_id', userIds);
+            // Nome que não foi lido não vira "Cliente" (a cara de "cadastro sem nome"): o topo segue
+            // com os orçamentos, que foram lidos, e o rótulo diz que o nome está indisponível.
+            if (erroNomes) erros.nomes = `profiles (nomes do topo): ${mensagemDeErro(erroNomes) ?? 'erro sem mensagem'}`;
+            else if (!profs) erros.nomes = 'profiles (nomes do topo): data null sem error — malformada';
             for (const p of (profs ?? []) as Array<{ user_id: string; name: string | null }>) {
               if (p.name) nameMap.set(p.user_id, p.name);
             }
@@ -106,18 +120,21 @@ export function useVendasZone() {
           topItems = rows.map((o) => ({
             id: o.id,
             icon: FileText,
-            title: (o.user_id && nameMap.get(o.user_id)) || 'Cliente',
+            title: (o.user_id && nameMap.get(o.user_id)) || (erros.nomes ? 'Nome indisponível' : 'Cliente'),
             subtitle: `Orçamento ${fmtBRL(Number(o.total ?? 0))} aguardando >24h`,
             path: `/admin/orders/${o.id}`,
             itemType: 'orcamento_pending',
             badge: { label: 'Ação', intent: 'warning' },
           }));
-        } catch { /* */ }
+        } catch (e) {
+          topItems = [];
+          erros.top = mensagemDeErro(e) ?? 'orders (orçamentos >24h): falha sem mensagem';
+        }
       };
 
       // As três leituras não dependem uma da outra: saem juntas (plano v4, lote 10 — C2). Só a de
       // vendas do dia lança — e o `Promise.all` rejeita com a MESMA mensagem dela; as outras duas
-      // seguem engolindo a própria falha como antes.
+      // degradam só o próprio bloco (KPI em "—", topo com aviso).
       const [{ faturadoHoje, pedidosHoje, faturadoOntem }] = await Promise.all([lerPedidos(), lerOrcamentos(), lerTop()]);
 
       const deltaPct = faturadoOntem > 0
@@ -130,6 +147,8 @@ export function useVendasZone() {
         orcamentosAguardando,
         deltaPct,
         topItems,
+        erros,
+        erroTopo: erros.top,
       };
     },
     staleTime: 60_000,
@@ -141,7 +160,7 @@ export function useVendasZone() {
     return [
       { label: 'Faturado hoje', value: fmtBRL(data.faturadoHoje), deltaPct: data.deltaPct },
       { label: 'Pedidos hoje', value: formatCount(data.pedidosHoje) },
-      { label: 'Aguardando', value: formatCount(data.orcamentosAguardando) },
+      { label: 'Aguardando', value: data.orcamentosAguardando === null ? '—' : formatCount(data.orcamentosAguardando) },
     ];
   }, [data]);
 
@@ -166,5 +185,18 @@ export function useVendasZone() {
 
   // `status`/`fetchStatus` saem para a TELA dizer "sem conexão": offline, a query fica `paused` com
   // `isError` falso — com cache, o número velho ficaria na tela como se fosse de agora.
-  return { kpis, topItems: data?.topItems ?? [], priority, isLoading, isError, refetch, isLive, status, fetchStatus };
+  // `erroTopo`: leitura do topo que falhou — a zona avisa no lugar de "Sem orçamentos aguardando.".
+  return {
+    kpis,
+    topItems: data?.topItems ?? [],
+    priority,
+    erroTopo: data?.erroTopo ?? null,
+    erros: data?.erros ?? null,
+    isLoading,
+    isError,
+    refetch,
+    isLive,
+    status,
+    fetchStatus,
+  };
 }

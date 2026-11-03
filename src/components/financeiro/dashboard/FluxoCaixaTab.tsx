@@ -8,13 +8,19 @@ import { agruparSemanasFluxo } from '@/components/financeiro/dashboard/fluxo-cai
 import { spBusinessDate } from '@/lib/time/sp-day';
 import type { FluxoCaixaDiario } from '@/services/financeiroService';
 
-export function FluxoCaixaTab({ data, loading, saldoCC, indisponivel = null }: {
+export function FluxoCaixaTab({ data, loading, saldoCC, indisponivel = null, titulosIndisponiveis = null }: {
   data: FluxoCaixaDiario[];
   loading: boolean;
   /** `null`/ausente = saldo bancário indisponível: a projeção fica sem âncora e degrada. */
   saldoCC?: number | null;
   /** Mensagem do erro de leitura deste dataset: falha NÃO é vazio — não mandar "sincronizar". */
   indisponivel?: string | null;
+  /**
+   * Motivo quando os títulos de alguma empresa da view estão indisponíveis (`titulos_motivo` do
+   * resumo). O previsto pode estar sem a carteira dela: somar o CC inteiro a um previsto parcial
+   * daria um saldo projetado com cara de total (parecer Codex) — então a projeção perde a âncora.
+   */
+  titulosIndisponiveis?: string | null;
 }) {
   if (loading) return <Skeleton className="h-60" />;
   if (indisponivel) {
@@ -56,7 +62,8 @@ export function FluxoCaixaTab({ data, loading, saldoCC, indisponivel = null }: {
     .reduce((s, d) => s + (d.saidas_previstas || 0), 0);
 
   // Agrupamento e projeção: função pura, testada sem render (ver fluxo-caixa-semanas.ts).
-  const semanas = agruparSemanasFluxo(data, { hoje: todayStr, saldoCC: saldoCC ?? null });
+  const ancora = titulosIndisponiveis ? null : saldoCC ?? null;
+  const semanas = agruparSemanasFluxo(data, { hoje: todayStr, saldoCC: ancora });
 
   // Recorte da tabela: a semana CORRENTE em diante — é nela que o dono decide os pagamentos
   // da semana. (Antes era `slice(-12)`, que na prática dava o mesmo por acidente da janela,
@@ -98,7 +105,12 @@ export function FluxoCaixaTab({ data, loading, saldoCC, indisponivel = null }: {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Fluxo de Caixa Semanal</CardTitle>
-          {saldoCC == null ? (
+          {titulosIndisponiveis ? (
+            <p role="alert" className="text-xs text-status-warning">
+              Títulos indisponíveis ({titulosIndisponiveis}) — o previsto pode estar incompleto, então
+              não há saldo projetado (coluna em "—").
+            </p>
+          ) : saldoCC == null ? (
             <p className="text-xs text-status-warning">
               Saldo bancário indisponível — sem âncora não há saldo projetado (coluna em "—").
               Entradas e saídas previstas seguem válidas.

@@ -68,6 +68,19 @@ describe('ActivityColumn', () => {
     expect(screen.getByTestId('aviso-c360-pedidos-recentes').getAttribute('data-estado')).toBe('erro');
   });
 
+  it('a leitura dos itens preferidos que FALHOU fala — não vira "Sem itens preferidos ainda"', () => {
+    const falhou = { data: undefined, status: 'error', fetchStatus: 'idle', isLoading: false } as unknown as PreferredQuery;
+    renderCol(<ActivityColumn preferred={falhou} interactions={emptyInteractions} orders={noOrders} customer={customer} />);
+    expect(screen.getByTestId('aviso-c360-preferidos').getAttribute('data-estado')).toBe('erro');
+    expect(screen.queryByText('Sem itens preferidos ainda')).toBeNull();
+  });
+
+  it('itens preferidos VAZIOS em mãos e o refetch falhou: avisa que é leitura velha', () => {
+    const vaziaVelha = { data: [], status: 'error', fetchStatus: 'idle', isLoading: false } as unknown as PreferredQuery;
+    renderCol(<ActivityColumn preferred={vaziaVelha} interactions={emptyInteractions} orders={noOrders} customer={customer} />);
+    expect(screen.getByTestId('aviso-c360-preferidos-desatualizado').getAttribute('data-estado')).toBe('erro');
+  });
+
   it('sem rede na 1ª carga do feed (pending + paused) também fala', () => {
     const semRede = { data: undefined, status: 'pending', fetchStatus: 'paused', isLoading: false } as unknown as OrdersQuery;
     renderCol(<ActivityColumn preferred={emptyPreferred} interactions={emptyInteractions} orders={semRede} customer={customer} />);

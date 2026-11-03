@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { comNulo } from '@/lib/rpc-args';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
@@ -12,7 +13,8 @@ import {
 } from '@/lib/farmer/completude-snapshot';
 import { lerHeadVigente, registrarGeracaoFarmer } from '@/lib/farmer/registrar-geracao';
 import { indexarCatalogoAtivo, resolverItemNoCatalogo } from '@/lib/farmer/identidade-item';
-import { STATUS_NAO_VENDA_POSTGREST } from '@/lib/farmer/universo-pedidos';
+import { buscarUniversoPedidos } from '@/lib/farmer/universo-pedidos-query';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   campoDeLinha,
   compararCandidatosUpSell,
@@ -174,6 +176,11 @@ export const useCrossSellEngine = () => {
   // useFarmerScoring): o master inspeciona, não regrava a carteira do alvo. Fora da
   // lente effectiveUserId === user.id (byte-equivalente, zero regressão).
   const { effectiveUserId, isImpersonating } = useImpersonation();
+  // A leitura de `sales_orders` é sob a RLS do usuário REAL (não do alvo da lente) — é ele a
+  // chave do universo de pedidos em cache.
+  const { user } = useAuth();
+  const userIdReal = user?.id ?? null;
+  const queryClient = useQueryClient();
   const [recommendations, setRecommendations] = useState<CustomerRecommendations[]>([]);
   const [loading, setLoading] = useState(false);
   const [calculating, setCalculating] = useState(false);
@@ -444,28 +451,14 @@ export const useCrossSellEngine = () => {
       const vendaveis = new Set(vendaveisResult.data.map((r) => r.product_id));
       insumos.vendaveis = { ok: true, n: vendaveis.size };
 
-      // 3. Load ALL sales history (avoid huge .in() URL with 3598 IDs)
-      // Mesmo defeito do loop manual acima — e aqui a perda é do HISTÓRICO que alimenta as
-      // regras de associação: menos pedidos = menos coocorrência = recomendação mais pobre,
-      // sem nada na tela indicando que o universo encolheu. `.order('id')` (PK) é a ordem
-      // estável; a coluna não precisa estar no `select`.
-      const salesOrders = await fetchAllPages(
-        (de, ate) =>
-          supabase
-            .from('sales_orders')
-            .select('id, customer_user_id, items, total, created_at, account')
-            // DENYLIST + `deleted_at IS NULL`: o MESMO universo de
-            // `private.margem_cliente_agregada()` e do `useFarmerScoring` (#1738). A allowlist que
-            // estava aqui citava DOIS status que nunca existiram nesta tabela (`confirmado`,
-            // `entregue`) e resolvia para só `faturado`: 10.281 pedidos reais — `importado` 5.455,
-            // `separacao` 2.817, `enviado` 2.009 — ficavam fora da coocorrência que gera a recomendação. Ver
-            // `@/lib/farmer/universo-pedidos` (inclusive o efeito no denominador do support).
-            .not('status', 'in', STATUS_NAO_VENDA_POSTGREST)
-            .is('deleted_at', null)
-            .order('id', { ascending: true })
-            .range(de, ate),
-        'sales_orders/cross-sell',
-      );
+      // 3. O histórico INTEIRO de pedidos (o universo denylist + `deleted_at`, o MESMO de
+      // `private.margem_cliente_agregada()`), compartilhado com scoring e bundle e lido em
+      // paralelo por keyset — `@/lib/farmer/universo-pedidos-query`. Perder página aqui seria
+      // perder coocorrência sem nada na tela indicando que o universo encolheu: a leitura é
+      // inteira ou LANÇA. `fresco`: este motor PUBLICA a geração, então não reusa cache.
+      // A ordem global por `id` é preservada — a referência de preço desempata por ela.
+      if (!userIdReal) throw new Error('Sessão sem usuário — não há como ler os pedidos.');
+      const salesOrders = await buscarUniversoPedidos(queryClient, userIdReal, { fresco: true });
 
       // Build set of customer IDs that have orders
       const customerIdsWithOrders = new Set<string>();
@@ -1293,7 +1286,7 @@ export const useCrossSellEngine = () => {
       setCalculating(false);
       setLoading(false);
     }
-  }, [effectiveUserId, isImpersonating, aplicarRecomendacoes]);
+  }, [effectiveUserId, isImpersonating, aplicarRecomendacoes, userIdReal, queryClient]);
 
   // ─── Actions ─────────────────────────────────────────────────────────
   // `markAsOffered` / `markAsAccepted` / `markAsRejected` e o `updateConversionStats`

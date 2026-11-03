@@ -4,7 +4,9 @@ import { linhasCom } from "@/lib/linha-view";
 import { agregarRealizadoPorDia } from "@/lib/financeiro/fluxo-realizado-helpers";
 import { janelaTTM, calcularDsoDpo, type DsoDpoResult } from "@/lib/financeiro/dso-dpo-helpers";
 import { OPEN_TITLE_STATUSES, isOpenTitleStatus } from "@/lib/financeiro/titulo-status";
-import { comporSaldoTitulos, type SaldoTitulosEmpresa } from "@/lib/financeiro/saldo-titulos-agregado";
+import { comporSaldoTitulos } from "@/lib/financeiro/saldo-titulos-agregado";
+import { TITULOS_INDISPONIVEIS, type TotaisTitulos } from "@/lib/financeiro/resumo-titulos";
+import { mensagemDeErro } from "@/lib/erro-mensagem";
 import { baixaOuIndisponivel, type ProcedenciaBaixa } from "@/lib/financeiro/procedencia-baixa";
 import { spBusinessDate } from "@/lib/time/sp-day";
 import { referenciaFrescorSaldo, resumirSaldoContas, saldoExibivelDaConta } from "@/lib/financeiro/saldo-contas";
@@ -18,7 +20,11 @@ import type {
 
 // ═══════════════ TYPES ═══════════════
 
-export interface FinResumo {
+/**
+ * Os totais de títulos (`total_*`, `posicao_liquida`, `titulos_motivo`) vêm de `TotaisTitulos` e têm
+ * disponibilidade PRÓPRIA: `null` + motivo quando CR/CP não puderam ser lidos, sem apagar o saldo CC.
+ */
+export interface FinResumo extends TotaisTitulos {
   /**
    * Lista por conta. `saldo_atual` é `null` quando a conta não tem saldo FRESCO do extrato
    * (`saldoExibivelDaConta`): ausente ou velho ≠ R$ 0. `saldo_motivo` diz qual dos dois.
@@ -32,11 +38,6 @@ export interface FinResumo {
    * `fin-cashflow-engine` já aplica com `exigirLinhas` no caminho dela.
    */
   saldo_total_cc: number | null;
-  total_a_receber: number;
-  total_a_pagar: number;
-  total_vencido_receber: number;
-  total_vencido_pagar: number;
-  posicao_liquida: number;
 }
 
 export interface FinContaPagar {
@@ -236,16 +237,40 @@ async function lerTodasAsPaginas<T>(
  * `fin_saldo_titulos_por_status` (plano v4, lote 13): 1 request para todas as empresas, no lugar
  * das 4 leituras paginadas de `saldo` por empresa (3.428 linhas em 12 requests por abertura do
  * cockpit, medido em 2026-11-01). Os conjuntos de status continuam sendo os do TS; a RPC é chamada
- * com o aberto e o vencido sai dos grupos 'ATRASADO'. Erro da RPC, empresa sem acesso/desconhecida,
- * saldo NULL ou resposta fora do envelope LANÇAM — o caller trata como fonte indisponível, nunca R$ 0.
+ * com o aberto e o vencido sai dos grupos 'ATRASADO'.
+ *
+ * Não lança: erro da RPC, empresa sem acesso/desconhecida, saldo NULL ou resposta fora do envelope
+ * viram títulos INDISPONÍVEIS (null + motivo) — nunca R$ 0 — da empresa afetada, compostos uma a
+ * uma, para que a falha de uma não derrube as outras nem o saldo CC lido em paralelo.
  */
-async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, SaldoTitulosEmpresa>> {
-  const { data, error } = await supabase.rpc("fin_saldo_titulos_por_status", {
-    p_companies: [...companies],
-    p_statuses: [...OPEN_TITLE_STATUSES],
-  });
-  if (error) throw new Error(`Falha ao carregar saldo de títulos: ${error.message}`);
-  return comporSaldoTitulos(data, companies, OPEN_TITLE_STATUSES, VENCIDO_TITLE_STATUSES);
+async function lerSaldoTitulos(companies: readonly Company[]): Promise<Record<string, TotaisTitulos>> {
+  let envelope: unknown = null;
+  let falha: string | null = null;
+  try {
+    const { data, error } = await supabase.rpc("fin_saldo_titulos_por_status", {
+      p_companies: [...companies],
+      p_statuses: [...OPEN_TITLE_STATUSES],
+    });
+    if (error) falha = `Falha ao carregar saldo de títulos: ${error.message}`;
+    else envelope = data;
+  } catch (e) {
+    falha = `Falha ao carregar saldo de títulos: ${mensagemDeErro(e) ?? "erro sem mensagem"}`;
+  }
+
+  const out: Record<string, TotaisTitulos> = {};
+  for (const co of companies) {
+    if (falha !== null) {
+      out[co] = TITULOS_INDISPONIVEIS(falha, true);
+      continue;
+    }
+    try {
+      const t = comporSaldoTitulos(envelope, [co], OPEN_TITLE_STATUSES, VENCIDO_TITLE_STATUSES)[co];
+      out[co] = { ...t, posicao_liquida: t.total_a_receber - t.total_a_pagar, titulos_motivo: null };
+    } catch (e) {
+      out[co] = TITULOS_INDISPONIVEIS(mensagemDeErro(e) ?? `saldo de títulos indisponível (${co})`);
+    }
+  }
+  return out;
 }
 
 async function lerContasCorrentesAtivas(company: Company) {
@@ -263,7 +288,8 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
   const resumo: Record<string, FinResumo> = {};
   if (companies.length === 0) return resumo;
 
-  // Títulos (1 RPC) e contas correntes (1 leitura por empresa) em paralelo.
+  // Títulos (1 RPC) e contas correntes (1 leitura por empresa) em paralelo. Títulos não lançam (cada
+  // empresa sai com totais ou null + motivo); só a falha do CC derruba o resumo.
   const [titulos, contasPorEmpresa] = await Promise.all([
     lerSaldoTitulos(companies),
     Promise.all(companies.map(lerContasCorrentesAtivas)),
@@ -271,8 +297,6 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
 
   companies.forEach((company, i) => {
     const contasBrutas = contasPorEmpresa[i];
-    const { total_a_receber: totalAReceber, total_a_pagar: totalAPagar, total_vencido_receber: vencidoReceber,
-      total_vencido_pagar: vencidoPagar } = titulos[company];
 
     // Ausente ≠ zero. O `reduce` cru devolvia `0` em dois estados que NÃO são o mesmo fato:
     // "nenhuma conta ativa" (a leitura não errou — RLS ou flag `ativo` podem devolver lista
@@ -299,11 +323,7 @@ export async function getResumoFinanceiro(companies: Company[]): Promise<Record<
     resumo[company] = {
       contas_correntes: contasNorm,
       saldo_total_cc: saldoContas.total,
-      total_a_receber: totalAReceber,
-      total_a_pagar: totalAPagar,
-      total_vencido_receber: vencidoReceber,
-      total_vencido_pagar: vencidoPagar,
-      posicao_liquida: totalAReceber - totalAPagar,
+      ...titulos[company],
     };
   });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { comQueryClient } from '@/test/query-client';
 import { renderHook, act } from '@testing-library/react';
 
 /**
@@ -203,6 +204,12 @@ function stubChain(tabela: string): unknown {
   return chain;
 }
 
+// A leitura de `sales_orders` como era antes do lote 16 (offset), pelo supabase mockado aqui: este
+// teste é de REGRA do motor, não do transporte — ver `@/test/universo-pedidos-offset`.
+vi.mock('@/lib/farmer/universo-pedidos-query', async (orig) => ({
+  ...(await orig<typeof import('@/lib/farmer/universo-pedidos-query')>()),
+  buscarUniversoPedidos: async () => (await import('@/test/universo-pedidos-offset')).lerUniversoPorOffset(),
+}));
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: {
     from: (tabela: string) => stubChain(tabela),
@@ -245,7 +252,7 @@ type Rec = { productId: string };
 type ResultadoCrossSell = { current: { recommendations: Array<{ upSell: Rec[] }> } };
 
 const topUpSell = async (): Promise<string[]> => {
-  const { result } = renderHook(() => useCrossSellEngine());
+  const { result } = renderHook(() => useCrossSellEngine(), { wrapper: comQueryClient() });
   await act(async () => { await result.current.calculateRecommendations(); });
   return (result as unknown as ResultadoCrossSell).current.recommendations
     .flatMap((c) => c.upSell)
