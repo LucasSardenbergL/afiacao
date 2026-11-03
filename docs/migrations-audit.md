@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **760** custom migrations totais
-- **2500** objetos esperados (criados por estas migrations)
+- **762** custom migrations totais
+- **2510** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 941
+  - `function`: 946
   - `rls_policy`: 519
-  - `index`: 348
-  - `table`: 227
-  - `cron_job`: 208
+  - `index`: 350
+  - `table`: 229
+  - `cron_job`: 209
   - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
@@ -6232,6 +6232,26 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261102204836_rls_has_role_initplan_classe.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261103100000_radar_agregado_municipio.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `private.radar_agregado_valido` | — |
+| `function` | `public.radar_agregado_recalcular` | — |
+| `function` | `public.radar_kpis` | — |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_penetracao_por_municipio` | — |
+| `table` | `public.radar_agregado_estado` | — |
+| `table` | `public.radar_agregado_municipio` | — |
+| `index` | `public.idx_radar_empresas_lote_vista` | `radar_empresas` |
+| `cron_job` | `cron.radar-agregado-recalcular` | — |
+
+### `20261103100100_radar_busca_trgm.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `index` | `public.idx_radar_empresas_busca_trgm` | `radar_empresas` |
 
 ## Próximos passos por status
 
