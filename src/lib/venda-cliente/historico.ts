@@ -53,34 +53,58 @@ const naoFutura = (iso: string, hojeMs: number): boolean => {
 export function derivarHistorico({ itens, pedidos, agora }: HistoricoInput): Historico {
   const hojeMs = agora.getTime();
 
-  const porProduto = new Map<number, TopProduto>();
+  // Duas datas por SKU, em UMA passagem: a da ultima COMPRA (avanca com qualquer item) e a do
+  // ultimo PRECO CONHECIDO (so avanca com item que tem preco). Antes era uma data so, e uma
+  // compra sem preco vista PRIMEIRO empurrava `ultimaData` adiante e escondia o preco mais velho
+  // que viesse depois — os mesmos itens davam 10, 20 ou null conforme a ordem da resposta.
+  // "Nao sei agora" nao apaga "sabia antes", e nada aqui depende da ordem de `itens`.
+  //
+  // Empate de PRECO na mesma data (2 pedidos no dia, 2 linhas do SKU no pedido): vence o MAIOR.
+  // O `precoUtilizavel` aceita 0 — uma linha bonificada no mesmo dia nao pode virar o "ultimo
+  // preco" da ficha (o vendedor entraria na ligacao com R$ 0,00). Media ponderada fabricaria
+  // um numero que nenhuma nota teve.
+  // Empate de NOME na data da ultima compra: o menor na ordem de string (so para ser
+  // deterministico — o hook resolve o nome pelo codigo, entao na pratica e um so).
+  interface Acumulado {
+    codigo: number; nome: string; vezes: number;
+    ultimaData: string; ultimaMs: number;
+    ultimoPreco: number | null; precoMs: number;
+  }
+  const porProduto = new Map<number, Acumulado>();
   for (const it of itens) {
     if (!naoFutura(it.dataPedido, hojeMs)) continue;
+    const ms = new Date(it.dataPedido).getTime();
+    const temPreco = it.precoUnit !== null;
     const atual = porProduto.get(it.codigo);
     if (!atual) {
       porProduto.set(it.codigo, {
         codigo: it.codigo, nome: it.nome, vezes: 1,
-        ultimoPreco: it.precoUnit, ultimaData: it.dataPedido,
+        ultimaData: it.dataPedido, ultimaMs: ms,
+        ultimoPreco: it.precoUnit, precoMs: temPreco ? ms : -Infinity,
       });
-    } else {
-      atual.vezes += 1;
-      if (new Date(it.dataPedido).getTime() > new Date(atual.ultimaData).getTime()) {
-        atual.ultimaData = it.dataPedido;
-        // A DATA avanca sempre (a compra existiu), mas o PRECO so e sobrescrito por um preco
-        // que se conhece. Antes, uma compra recente sem preco apagava o ultimo preco praticado
-        // e a ficha de pre-contato mostrava R$ 0,00 — o vendedor entrava na ligacao com um
-        // numero que ninguem praticou. "Nao sei agora" nao apaga "sabia antes".
-        if (it.precoUnit !== null) atual.ultimoPreco = it.precoUnit;
-        atual.nome = it.nome;
+      continue;
+    }
+    atual.vezes += 1;
+    if (ms > atual.ultimaMs) {
+      atual.ultimaMs = ms;
+      atual.ultimaData = it.dataPedido;
+      atual.nome = it.nome;
+    } else if (ms === atual.ultimaMs && it.nome < atual.nome) {
+      atual.nome = it.nome;
+    }
+    if (it.precoUnit !== null) {
+      if (ms > atual.precoMs) {
+        atual.precoMs = ms;
+        atual.ultimoPreco = it.precoUnit;
+      } else if (ms === atual.precoMs && it.precoUnit > (atual.ultimoPreco as number)) {
+        atual.ultimoPreco = it.precoUnit;
       }
     }
   }
 
-  const produtos = [...porProduto.values()]
-    .sort((a, b) =>
-      b.vezes - a.vezes ||
-      new Date(b.ultimaData).getTime() - new Date(a.ultimaData).getTime(),
-    );
+  const produtos: TopProduto[] = [...porProduto.values()]
+    .sort((a, b) => b.vezes - a.vezes || b.ultimaMs - a.ultimaMs || a.codigo - b.codigo)
+    .map(({ codigo, nome, vezes, ultimoPreco, ultimaData }) => ({ codigo, nome, vezes, ultimoPreco, ultimaData }));
   const topProdutos = produtos.slice(0, 5);
 
   const ultimosPedidos = pedidos

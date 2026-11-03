@@ -70,6 +70,61 @@ describe('derivarHistorico', () => {
     expect(h.ultimosPedidos).toEqual([]);
   });
 
+  it('compra recente SEM preço não esconde o preço antigo — em qualquer ordem', () => {
+    const antiga = { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 45, dataPedido: '2026-05-01' };
+    const recenteSemPreco = { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: null, dataPedido: '2026-06-10' };
+    for (const itens of [[antiga, recenteSemPreco], [recenteSemPreco, antiga]]) {
+      const [p] = derivarHistorico({ agora, pedidos: [], itens }).produtos;
+      expect(p.ultimoPreco).toBe(45);
+      expect(p.ultimaData).toBe('2026-06-10');
+    }
+  });
+
+  it('dois preços na mesma data: vence o MAIOR (bonificação a R$ 0 no dia não vira o último preço)', () => {
+    const itens = [
+      { codigo: 1, nome: 'Verniz', quantidade: 10, precoUnit: 38, dataPedido: '2026-06-10' },
+      { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 0, dataPedido: '2026-06-10' },
+      { codigo: 1, nome: 'Verniz', quantidade: 2, precoUnit: 41, dataPedido: '2026-06-10' },
+    ];
+    expect(derivarHistorico({ agora, pedidos: [], itens }).produtos[0].ultimoPreco).toBe(41);
+  });
+
+  it('PERMUTAÇÕES: toda ordem dos mesmos itens dá o mesmo resultado', () => {
+    const itens = [
+      { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 10, dataPedido: '2026-05-01' },
+      { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: null, dataPedido: '2026-06-01' },
+      { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 20, dataPedido: '2026-05-01' },
+      { codigo: 1, nome: 'Verniz', quantidade: 1, precoUnit: 5, dataPedido: '2026-04-01' },
+      { codigo: 2, nome: 'Seladora', quantidade: 1, precoUnit: null, dataPedido: '2026-06-05' },
+      { codigo: 3, nome: 'Thinner 5L', quantidade: 1, precoUnit: 0, dataPedido: '2026-06-01' }, // nome empata na data → o menor
+      { codigo: 3, nome: 'Thinner', quantidade: 1, precoUnit: 30, dataPedido: '2026-06-01' },
+      // empata com o código 2 em vezes E data → a ordem da lista desempata pelo código
+      { codigo: 0, nome: 'Lixa', quantidade: 1, precoUnit: 7, dataPedido: '2026-06-05' },
+    ];
+    const esperado = {
+      topProdutos: [
+        { codigo: 1, nome: 'Verniz', vezes: 4, ultimoPreco: 20, ultimaData: '2026-06-01' },
+        { codigo: 3, nome: 'Thinner', vezes: 2, ultimoPreco: 30, ultimaData: '2026-06-01' },
+        { codigo: 0, nome: 'Lixa', vezes: 1, ultimoPreco: 7, ultimaData: '2026-06-05' },
+        { codigo: 2, nome: 'Seladora', vezes: 1, ultimoPreco: null, ultimaData: '2026-06-05' },
+      ],
+      ultimosPedidos: [],
+    };
+    const permutacoes = function* <T>(xs: T[]): Generator<T[]> {
+      if (xs.length <= 1) { yield xs; return; }
+      for (let i = 0; i < xs.length; i++) {
+        for (const resto of permutacoes([...xs.slice(0, i), ...xs.slice(i + 1)])) yield [xs[i], ...resto];
+      }
+    };
+    let n = 0;
+    for (const ordem of permutacoes(itens)) {
+      const h = derivarHistorico({ agora, pedidos: [], itens: ordem });
+      expect(h).toEqual({ ...esperado, produtos: esperado.topProdutos });
+      n++;
+    }
+    expect(n).toBe(40320); // 8! — a suíte percorreu TODAS as ordens
+  });
+
   it('vazio → listas vazias (sem fabricar)', () => {
     expect(derivarHistorico({ agora, itens: [], pedidos: [] })).toEqual({ topProdutos: [], produtos: [], ultimosPedidos: [] });
   });
