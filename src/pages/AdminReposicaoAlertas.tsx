@@ -1,6 +1,7 @@
 import { exigirEmpresaReposicao } from "@/lib/reposicao/linha-view";
 import { useState, useMemo } from "react";
 import { useUrlState } from "@/hooks/useUrlState";
+import { CHAVE_OUTLIER_PENDENTES_COUNT } from "@/hooks/useAlertasCriticos";
 import { track } from "@/lib/analytics";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -244,7 +245,7 @@ export default function AdminReposicaoAlertas() {
     qc.invalidateQueries({ queryKey: ["outliers-lista"] });
     qc.invalidateQueries({ queryKey: ["outliers-sem-grupo"] });
     qc.invalidateQueries({ queryKey: ["outlier-stats"] });
-    qc.invalidateQueries({ queryKey: ["outlier-pendentes-count"] });
+    qc.invalidateQueries({ queryKey: CHAVE_OUTLIER_PENDENTES_COUNT });
   };
 
   // Mutation: atribuir grupo (um SKU, pelo drill-down) — mesma escrita do lote.

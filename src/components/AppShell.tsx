@@ -443,22 +443,9 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
   // clara e evitar mudança silenciosa se algum dia alguém ligar pra true.
   const enableStaffPolls = isStaff && !isSalesOnly;
 
-  // Contador de alertas de outlier pendentes (críticos + atenção)
-  const { data: outlierPendentes } = useQuery({
-    queryKey: ['outlier-pendentes-count'],
-    queryFn: async () => {
-      const { count } = await supabase
-        .from('eventos_outlier')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pendente')
-        .in('severidade', ['critico', 'atencao']);
-      return count ?? 0;
-    },
-    enabled: enableStaffPolls,
-    refetchInterval: 60000,
-    refetchIntervalInBackground: false,
-    staleTime: 30000,
-  });
+  // Contador de alertas de outlier pendentes (críticos + atenção) — UMA query alimenta os dois
+  // badges (/alertas e o destrutivo de /sessao/parametros); erro → null esconde o badge.
+  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
 
   // Contador de pedidos pendentes/bloqueados do dia atual
   const { data: pedidosPendentes } = useQuery({
@@ -533,7 +520,6 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
     staleTime: 30000,
   });
 
-  const { data: alertasCriticos } = useAlertasCriticos(enableStaffPolls);
   const { data: financeiroAtrasados } = useFinanceiroAlertas(enableStaffPolls);
   const { data: tintErros } = useTintAlertas(enableStaffPolls);
 
@@ -566,8 +552,8 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
       ...s,
       items: s.items.map((it) => {
         if (isImpersonating) return it; // na lente, sem badges (refletiriam dado do master)
-        if (it.path === '/admin/reposicao/alertas' && outlierPendentes) {
-          return { ...it, badge: outlierPendentes };
+        if (it.path === '/admin/reposicao/alertas' && alertasCriticos) {
+          return { ...it, badge: alertasCriticos };
         }
         if (it.path === '/admin/reposicao/pedidos' && pedidosPendentes) {
           return { ...it, badge: pedidosPendentes };
@@ -608,7 +594,7 @@ const AppSidebar = React.memo(function AppSidebar({ collapsed, onToggle }: { col
         return it;
       }),
     })),
-    [outlierPendentes, pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
+    [pedidosPendentes, aumentosAtivos, oportunidadesAtivas, negociacaoNovasCount, notificacoesPendentes, alertasCriticos, financeiroAtrasados, tintErros, missedCallsCount, tarefasCount, waSlaMeusVermelhos, melhoriasAbertas, isImpersonating],
   );
 
   const isActive = (path: string) => {
