@@ -27,7 +27,7 @@ import {
   fingerprintPagina,
 } from "../_shared/omie-paginacao.ts";
 import { colunasResumo, type ColunasResumo } from "./resumo-movimento.ts";
-import { chamarOmieComPolitica, type OmieGenericResponse } from "./omie-chamada.ts";
+import { chamarOmieComPolitica } from "./omie-chamada.ts";
 import {
   decidirModoCR,
   type DepsIncrementalCR,
@@ -191,6 +191,7 @@ function hasFinanceiroAccess(input: {
   );
 }
 
+type OmieGenericResponse = Record<string, unknown> & { faultstring?: string };
 
 interface OmieListResponse<T> {
   total_de_paginas?: number;
@@ -420,6 +421,10 @@ function isTimeBudgetExhausted(): boolean {
   return Date.now() - globalStartTime >= TIME_BUDGET_MS;
 }
 
+function orcamentoRestanteMs(): number {
+  return TIME_BUDGET_MS - (Date.now() - globalStartTime);
+}
+
 type Company = "oben" | "colacor" | "colacor_sc";
 
 function getCredentials(company: Company) {
@@ -513,6 +518,7 @@ async function callOmie(
     dormir: (ms) => new Promise((r) => setTimeout(r, ms)),
     agora: () => Date.now(),
     orcamentoEsgotado: isTimeBudgetExhausted,
+    orcamentoRestanteMs,
     log: (m) => console.log(m),
     aoChamar: () => { apiCallCount++; },
     aoRateLimit: () => { rateLimitHits++; },
@@ -1044,7 +1050,7 @@ function depsIncrementalCR(db: SupabaseClient, company: Company, t0: Date): Deps
     excluirConfirmados: async (confirmados) =>
       await db.rpc("fin_cr_excluir_confirmados", { p_company: company, p_confirmados: confirmados, p_inicio_run: t0.toISOString() }),
     gravarMarca: () => gravarMarcadorCR(db, company, MARCADOR_INCREMENTAL_OK, t0),
-    orcamentoEsgotado: isTimeBudgetExhausted,
+    orcamentoRestanteMs,
     agoraIso: () => new Date().toISOString(),
   };
 }

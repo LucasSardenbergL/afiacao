@@ -36,7 +36,7 @@ const TRAVA_MS = 6_000;
 type Pagina = Record<string, unknown>;
 
 /** Omie falso com relógio próprio: `dormir` avança o tempo, cada envio custa 300 ms. */
-function omieFalso(paginas: Record<string, Pagina>, opts: { orcamentoEsgotado?: () => boolean } = {}) {
+function omieFalso(paginas: Record<string, Pagina>, opts: { orcamentoRestanteMs?: () => number } = {}) {
   let agora = 0;
   let travadoAte = -1;
   const recusados = new Set<string>();
@@ -69,7 +69,8 @@ function omieFalso(paginas: Record<string, Pagina>, opts: { orcamentoEsgotado?: 
       return Promise.resolve();
     },
     agora: () => agora,
-    orcamentoEsgotado: opts.orcamentoEsgotado ?? (() => false),
+    orcamentoEsgotado: () => (opts.orcamentoRestanteMs?.() ?? Number.POSITIVE_INFINITY) <= 0,
+    orcamentoRestanteMs: opts.orcamentoRestanteMs ?? (() => Number.POSITIVE_INFINITY),
     log: () => {},
     aoChamar: () => {},
     aoRateLimit: () => {},
@@ -121,14 +122,24 @@ Deno.test("o resfriamento é por empresa+método: outra chave não espera", asyn
   assertEquals(sonos.length, 1, "controle: a PRÓPRIA chave resfria");
 });
 
-Deno.test("sem budget para resfriar: devolve null (pausa) e NÃO envia", async () => {
-  let esgotado = false;
-  const { deps, envios } = omieFalso(ROTEIRO, { orcamentoEsgotado: () => esgotado });
+Deno.test("o resfriamento não cabe no budget: devolve null (pausa), NÃO dorme e NÃO envia (Codex P2)", async () => {
+  let restante = Number.POSITIVE_INFINITY;
+  const { deps, envios, sonos } = omieFalso(ROTEIRO, { orcamentoRestanteMs: () => restante });
   await chamarOmieComPolitica("oben", CHAVE, A_VAZIA, deps);
-  esgotado = true;
+  restante = 5_000; // ainda há budget, mas menos que os ~10 s de resfriamento
   const r = await chamarOmieComPolitica("oben", CHAVE, B_P1, deps);
   assertEquals(r, null);
   assertEquals(envios.length, 1, "não pode ter enviado B");
+  assertEquals(sonos, [], "não pode dormir além do budget");
+});
+
+Deno.test("concorrência sem budget para a espera: lança na hora com o fault, sem dormir", async () => {
+  const { deps, envios, sonos } = omieFalso(ROTEIRO, { orcamentoRestanteMs: () => 6_000 });
+  await chamarOmieComPolitica("oben", CHAVE, A_VAZIA, deps);
+  deps.ultimaVazia.clear();
+  await rejeitaCom(chamarOmieComPolitica("oben", CHAVE, B_P1, deps), "HTTP 500 — ERROR: Já existe uma requisição");
+  assertEquals(envios.length, 2);
+  assertEquals(sonos, []);
 });
 
 Deno.test("500 de concorrência: espera como rate-limit; o reenvio idêntico (REDUNDANT) lança NA HORA com o fault", async () => {

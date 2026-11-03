@@ -89,6 +89,13 @@ export function falhaVarreduraEstrita(input: { reachedEnd: boolean; lidos: numbe
 
 /** Teto de listagens-prova por run e empresa: o backlog inicial (oben, 29) drena em ~3 runs. */
 const MAX_PROVAS_POR_RUN = 10;
+/**
+ * Budget que a coleta de provas deixa para fechar o run: a próxima prova (resfriamento de 10 s se a anterior
+ * veio vazia + o envio), a reconfirmação (outro resfriamento + 1–2 páginas) e o C3/marca. Sem a reserva,
+ * provas vazias em série (cada uma resfria 10 s, omie-chamada.ts) consumiam o budget, a reconfirmação
+ * pausava e o run lançava em TODO run com os mesmos candidatos (Codex, resfriamento, P1).
+ */
+export const RESERVA_FECHAMENTO_MS = 35_000;
 /** Janela de emissão da prova: ±1 dia em volta da emissão gravada. */
 const FOLGA_EMISSAO_DIAS = 1;
 /** registros_por_pagina da prova; resposta com isso ou mais itens não cabe numa página só. */
@@ -180,7 +187,8 @@ export type DepsIncrementalCR = {
   listarProva(cliente: number, janela: { de: string; ate: string }): Promise<RespostaProva>;
   excluirConfirmados(confirmados: Array<{ codigo: number; evidencia: Record<string, unknown> }>): Promise<RespostaRpc>;
   gravarMarca(): Promise<void>;
-  orcamentoEsgotado(): boolean;
+  /** Budget restante da invocação (ms). */
+  orcamentoRestanteMs(): number;
   agoraIso(): string;
   /** Ordem das provas no run; default aleatória (teste injeta uma determinística). */
   embaralhar?<T>(xs: T[]): T[];
@@ -256,7 +264,7 @@ export async function executarIncrementalCR(
     const chave = `${c.cliente}|${jan.de}|${jan.ate}`;
     let prova = provas.get(chave);
     if (!prova) {
-      if (provas.size >= MAX_PROVAS_POR_RUN || deps.orcamentoEsgotado()) {
+      if (provas.size >= MAX_PROVAS_POR_RUN || deps.orcamentoRestanteMs() < RESERVA_FECHAMENTO_MS) {
         adiados++;
         continue;
       }

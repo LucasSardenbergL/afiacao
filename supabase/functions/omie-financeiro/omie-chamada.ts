@@ -34,6 +34,8 @@ export interface DepsChamadaOmie {
   dormir(ms: number): Promise<void>;
   agora(): number;
   orcamentoEsgotado(): boolean;
+  /** Quanto falta do budget da invocação: uma espera que não cabe nele não começa (Codex, P2). */
+  orcamentoRestanteMs(): number;
   log(msg: string): void;
   aoChamar(): void;
   aoRateLimit(): void;
@@ -76,12 +78,13 @@ export async function chamarOmieComPolitica(
 ): Promise<OmieGenericResponse | null> {
   const maxRetries = 3;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    // 0) resfriamento pós-vazia. Sem budget para esperar = pausa resumível (null), como o estouro.
+    // 0) resfriamento pós-vazia. A espera não cabe no budget = pausa resumível (null), como o estouro —
+    //    dormir e enviar DEPOIS dos 100 s empurraria o fetch de 30 s para perto do teto da plataforma.
     const vaziaEm = deps.ultimaVazia.get(chave);
     if (vaziaEm !== undefined) {
       const falta = vaziaEm + RESFRIAMENTO_POS_VAZIA_MS - deps.agora();
       if (falta > 0) {
-        if (deps.orcamentoEsgotado()) return null;
+        if (deps.orcamentoRestanteMs() <= falta) return null;
         deps.log(`[Fin][${company}] Omie: resfriamento de ${(falta / 1000).toFixed(1)}s após resposta vazia`);
         await deps.dormir(falta);
       }
@@ -104,9 +107,10 @@ export async function chamarOmieComPolitica(
     if (!res.ok) {
       const fault = faultDoCorpo(await res.text().catch(() => ""));
       const cota = fault ? classificarFaultCota(fault) : null;
-      if (cota?.tipo === "concorrente" && attempt < maxRetries && !deps.orcamentoEsgotado()) {
+      const delayConcorrente = Math.min((attempt + 1) * 5 + 2, 15) * 1000;
+      if (cota?.tipo === "concorrente" && attempt < maxRetries && deps.orcamentoRestanteMs() > delayConcorrente) {
         deps.aoRateLimit();
-        const delay = Math.min((attempt + 1) * 5 + 2, 15) * 1000;
+        const delay = delayConcorrente;
         deps.log(`[Fin][${company}] Omie concorrente (HTTP ${res.status}), waiting ${delay / 1000}s`);
         await deps.dormir(delay);
         continue;
