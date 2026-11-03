@@ -17,7 +17,7 @@ export const ROTULO_CANAL: Record<CanalLiquidacao, string> = {
   outro: 'Outro',
 };
 
-export const PRAZO_PADRAO_DIAS = 14;
+const PRAZO_PADRAO_DIAS = 14;
 /** Data da meta do Raio-X (100% do Top 61 decidido e ≥ R$ 60 mil). */
 export const DATA_META = '2026-11-25';
 

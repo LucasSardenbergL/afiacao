@@ -52,7 +52,6 @@
     "supabase/functions/_shared/embalagem-captura-helpers.ts",
     "src/integrations/supabase/types.ts",
     "src/components/ui/**",
-    "src/hooks/use-mobile.tsx",
     "src/components/NvoipDialer.tsx",
     "src/hooks/useNvoipCall.ts"
   ],
