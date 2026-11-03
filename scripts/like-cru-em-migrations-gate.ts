@@ -202,7 +202,12 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   {
     arquivo: 'supabase/migrations/20261030071150_radar_contagem_municipio_regiao_contato.sql',
     trecho: "like p_cnae_prefix || '%'", n: 1,
-    motivo: `${RADAR_CONTAGEM} (a definição viva, de 12 args com p_ufs/p_com_contato, em VIVOS_PERMITIDOS)`,
+    motivo: `${RADAR_CONTAGEM} (definição antiga, de 12 args com p_ufs/p_com_contato — recriada pela 20261103100000)`,
+  },
+  {
+    arquivo: 'supabase/migrations/20261103100000_radar_agregado_municipio.sql',
+    trecho: "like p_cnae_prefix || '%'", n: 1,
+    motivo: `${RADAR_CONTAGEM} (a definição viva: o agregado do leitor 4; CNAE segue no caminho vivo, em VIVOS_PERMITIDOS)`,
   },
   {
     arquivo: 'supabase/migrations/20260615194500_fix_tarefas_matcher_enum.sql',

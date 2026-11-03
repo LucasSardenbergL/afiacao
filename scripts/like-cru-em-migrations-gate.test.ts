@@ -207,7 +207,8 @@ describe('o repo', () => {
     // radar_atribuir_tarefa — o MESMO falso-positivo de VIVOS_PERMITIDOS, a última no arquivo da definição viva.
     // + 1: a 20261020120200 recria radar_contagem_por_municipio com p_lote (assinatura de 10 args).
     // + 1: a 20261030071150 recria com p_ufs/p_com_contato (12 args).
-    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(26);
+    // + 1: a 20261103100000 recria a de 12 args lendo o agregado (leitor 4 do Mini); o CNAE segue no caminho vivo.
+    expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(27);
   });
 
   it('os 3 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {
