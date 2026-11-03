@@ -10,6 +10,7 @@ import { useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { useRadarIneditos } from '@/queries/useRadarIneditos';
 import { useRadarSugeridos } from '@/queries/useRadarSugeridos';
 import { LIMIAR_SUGERIDO, estadoCardSugeridos } from '@/lib/radar/sugeridos';
+import { formatarContagensEm } from '@/lib/radar/ui-helpers';
 
 function Card({ label, valor, hint }: { label: string; valor: number | string; hint?: string }) {
   return (
@@ -288,13 +289,23 @@ export function RadarKpis() {
 
   // `desabilitada` — a pergunta que não foi feita (staff sem acesso ao Radar).
   if (!data) return null;
+  const contagensEm = formatarContagensEm(data.contagens_em);
 
   return (
     <div className="space-y-2">
       {/* 3 cards (eram 5): "em conversa" está no filtro de status; inéditos e sugeridos viraram chips. */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <CardLote />
-        <Card label="A contatar" valor={data.a_contatar.toLocaleString('pt-BR')} hint="todo o Radar, sem os filtros da tela" />
+        {/* a_contatar vem do agregado pré-computado: null = ainda não calculado para o lote vigente. */}
+        {data.a_contatar === null ? (
+          <Card label="A contatar" valor="indisponível" hint="a contagem do lote vigente está sendo recalculada (até 1 h depois da carga)" />
+        ) : (
+          <Card
+            label="A contatar"
+            valor={data.a_contatar.toLocaleString('pt-BR')}
+            hint={`todo o Radar, sem os filtros da tela${contagensEm ? ` · contagem de ${contagensEm}` : ''}`}
+          />
+        )}
         <Card label="Viraram cliente (mês)" valor={data.virou_cliente_mes.toLocaleString('pt-BR')} hint="clientes que o Radar criou no Omie neste mês" />
       </div>
       {velho && <AvisoLeituraFalhou oque="a leitura mais recente" estado={velho} className="mt-2" />}

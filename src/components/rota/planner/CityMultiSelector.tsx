@@ -20,6 +20,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { filtrarCidadesPorUf } from '@/lib/route/city-filter';
 import { UfSelector } from './UfSelector';
 import type { CityOption } from './types';
+import { avisoContagem } from '@/lib/radar/ui-helpers';
 
 interface CityMultiSelectorProps {
   value: CityOption[];
@@ -31,7 +32,9 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
   const [open, setOpen] = useState(false);
   const selectedCodes = new Set(value.map((c) => c.codigo));
 
-  const { data: cidades = [], isLoading } = useRadarCidadesRota();
+  const { data: cidades = [], isLoading, isError, error } = useRadarCidadesRota();
+  // Erro sem snapshot local não é "nenhuma cidade": a contagem está indisponível ou a leitura falhou.
+  const semCidades = isError && cidades.length === 0;
   const { user } = useAuth();
   const ufKey = user?.id ? `radar-uf-rota:v1:${user.id}` : null;
   const [uf, setUf] = useState<string | null>(() => {
@@ -75,7 +78,7 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
             <Command>
               <CommandInput placeholder="Buscar cidade…" />
               <CommandList>
-                <CommandEmpty>Nenhuma cidade encontrada.</CommandEmpty>
+                <CommandEmpty>{semCidades ? avisoContagem(error, 'Lista de cidades do Radar') : 'Nenhuma cidade encontrada.'}</CommandEmpty>
                 <CommandGroup>
                   {cidadesFiltradas.map((cidade) => {
                     const selected = selectedCodes.has(cidade.codigo);

@@ -17,6 +17,7 @@ import {
 import { escapeHtml } from '@/lib/escape-html';
 import { track } from '@/lib/analytics';
 import type { RadarFiltros } from '@/queries/useRadarLista';
+import { avisoContagem } from '@/lib/radar/ui-helpers';
 
 // Fix dos ícones padrão do Leaflet com bundler (mesmo do AdminRoutePlanner).
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -177,7 +178,7 @@ export default function RadarMapa({
       </div>
       <div ref={mapRef} className="w-full h-[420px]" style={{ zIndex: 1 }} />
       {camada === 'leads' && q.isError && (
-        <p className="p-2 text-xs text-status-error">Não foi possível carregar os leads do mapa.</p>
+        <p className="p-2 text-xs text-status-error">{avisoContagem(q.error, 'Leads do mapa')}</p>
       )}
       {carregando && (
         <div className="p-2">
@@ -186,7 +187,7 @@ export default function RadarMapa({
       )}
       {(camada === 'penetracao' || mostrarConcorrentes) && !pen.isLoading && (
         <div className="p-2 text-xs text-muted-foreground space-y-1">
-          {pen.isError && <p className="text-status-error">Não foi possível carregar a penetração.</p>}
+          {pen.isError && <p className="text-status-error">{avisoContagem(pen.error, 'Penetração')}</p>}
           {pen.data === null && <p>Sem lote completo da RFB: penetração e concorrentes indisponíveis até a carga terminar.</p>}
           {camada === 'penetracao' && pen.data && (
             <p>

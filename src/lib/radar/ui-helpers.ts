@@ -216,6 +216,34 @@ export function formatarDataIso(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
 }
 
+// ── Contagens pré-computadas (radar_agregado_municipio, migration 20261103100000) ───────────────────
+/** Marca do RAISE das RPCs de contagem quando o agregado não é do lote vigente: na hora seguinte à carga
+ *  mensal, até o cron `radar-agregado-recalcular` (:35) recalcular. Não é falha de leitura — é contagem
+ *  que ainda não existe, e a tela diz "indisponível", nunca 0. */
+export const MARCA_AGREGADO_INDISPONIVEL = 'agregado indisponível';
+
+export function agregadoIndisponivel(erro: unknown): boolean {
+  if (!erro || typeof erro !== 'object' || !('message' in erro)) return false;
+  return String(erro.message).includes(MARCA_AGREGADO_INDISPONIVEL);
+}
+
+/** O texto do lugar onde a contagem ficaria: indisponível (recalculando) ou falha de leitura. */
+export function avisoContagem(erro: unknown, oque: string): string {
+  return agregadoIndisponivel(erro)
+    ? `${oque} indisponível: a contagem do lote vigente está sendo recalculada (até 1 h depois da carga).`
+    : `Não foi possível carregar ${oque.toLowerCase()}.`;
+}
+
+/** Hora do cálculo do agregado (ISO) → "dd/mm hh:mm" no fuso da loja; ilegível → null (o card não inventa hora). */
+export function formatarContagensEm(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
 // ── Lista: rótulos dos modos, região de atuação e catálogo de CNAEs-alvo ───────────────────────────
 /** Rótulo HONESTO de cada modo: diz a ordem que a fila tem, não promete o que o modo não mede.
  *  'novas' só ordena por data de abertura (não filtra "do lote"); 'score' é o score, não "o melhor". */

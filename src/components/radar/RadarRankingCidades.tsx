@@ -10,6 +10,7 @@ import {
   type RadarMunicipioContagem,
 } from '@/queries/useRadarContagemMunicipios';
 import type { RadarFiltros } from '@/queries/useRadarLista';
+import { avisoContagem } from '@/lib/radar/ui-helpers';
 
 export function RadarRankingCidades({
   filtros,
@@ -28,6 +29,9 @@ export function RadarRankingCidades({
   // Município fora da resposta da penetração fica SEM dado ('—'), não 0%.
   const penPorCodigo = useMemo(() => new Map((pen.data ?? []).map((m) => [m.municipio_codigo, m])), [pen.data]);
   const oportunidades = useMemo(() => oportunidadesPenetracao(pen.data ?? [], 5), [pen.data]);
+  // Erro sem dado em mãos NÃO é "0 empresas · nenhuma cidade": é contagem indisponível (agregado do lote
+  // ainda não calculado) ou falha de leitura — e a tela diz qual.
+  const semDado = q.isError && q.data === undefined;
 
   return (
     <Card className="p-3">
@@ -36,11 +40,13 @@ export function RadarRankingCidades({
           <MapPin className="w-4 h-4" /> Onde caçar
         </span>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {q.isLoading ? '…' : `${totalGeral.toLocaleString('pt-BR')} empresas · ${comTelGeral.toLocaleString('pt-BR')} c/ telefone`}
+          {q.isLoading ? '…' : semDado ? '—' : `${totalGeral.toLocaleString('pt-BR')} empresas · ${comTelGeral.toLocaleString('pt-BR')} c/ telefone`}
         </span>
       </div>
       {q.isLoading ? (
         <div className="space-y-1">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-6" />)}</div>
+      ) : semDado ? (
+        <p className="text-xs text-status-warning">{avisoContagem(q.error, 'Contagem por cidade')}</p>
       ) : top.length === 0 ? (
         <p className="text-xs text-muted-foreground">Nenhuma cidade nestes filtros.</p>
       ) : (
