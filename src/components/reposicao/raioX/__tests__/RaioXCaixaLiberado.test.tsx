@@ -123,8 +123,9 @@ describe('pacote 2 — piso, custo de esperar e execução', () => {
     const onFiltrarSku = vi.fn();
     render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos}
       onFiltrarSku={onFiltrarSku} decisoes={decisoes} unidadesVenda={unidadesVenda} />);
-    expect(screen.getByText('Liquidou abaixo do preço piso')).toBeTruthy();
-    const itens = screen.getAllByRole('button', { name: /vendido a/ });
+    expect(screen.getByText('Preço médio desde a foto abaixo do piso atual')).toBeTruthy();
+    expect(screen.queryByText(/Liquidou abaixo/)).toBeNull();
+    const itens = screen.getAllByRole('button', { name: /médio desde a foto .* piso atual/ });
     expect(itens).toHaveLength(1);
     expect(itens[0].textContent).toContain('A1');
     fireEvent.click(itens[0]);

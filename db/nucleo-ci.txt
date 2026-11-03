@@ -51,6 +51,9 @@ db/test-authz-is-not-true-escritas.sh      24
 # authenticated e deu 403 em prod (2026-11-01). A prova roda o stub com a ACL de PROD, exige o 42501 sem a correção
 # DEFINER (controle negativo) e 13 sabotagens inline da regra (sem modo --falsificar: cada uma exige o seu vermelho).
 db/test-raio-x-inequivoco.sh               55
+# Raio-X "unidade comprovada" (2ª revisão, bug 3): margem/desconto do plano e médio 12m da medição só com unidade
+# de venda única = a do estoque; 7 sabotagens inline (sem modo --falsificar: cada uma exige o seu vermelho).
+db/test-raio-x-unidades.sh                 25
 # FU4-F: a margem por cliente (farmer_client_scores.gross_margin_pct) fechada por privilégio de COLUNA para
 # authenticated/anon, com get_scores_margem como via (gate de projeção por cap_custo_ler). Linha de base com o
 # ACL de prod prova o furo; as 7 sabotagens rodam inline (sem modo --falsificar) e cada uma exige o seu vermelho.

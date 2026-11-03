@@ -95,7 +95,8 @@ export function DecisaoSheet({ empresa, item, decisao, onClose, onSalvo, taxa = 
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           {fila && (
-            <div data-testid="fila-cabecalho" className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            // pr-8: o "Pular" não pode encostar no X de fechar do Sheet (toque errado fecha a fila)
+            <div data-testid="fila-cabecalho" className="flex items-center justify-between gap-2 pr-8 text-xs text-muted-foreground">
               <span>
                 {fila.decididos} de {fila.total} decididos · {fila.pendente === null ? 'R$ —' : fmtReais(fila.pendente)} pendente
               </span>
@@ -360,6 +361,7 @@ function FormDecisao({ empresa, item, decisao, onClose, onSalvo, onRecarregar, e
               key={d}
               type="button"
               size="touch"
+              className="h-auto whitespace-normal py-2 leading-tight"
               variant={destino === d ? 'default' : 'outline'}
               aria-pressed={destino === d}
               aria-keyshortcuts={touch ? undefined : String(i + 1)}

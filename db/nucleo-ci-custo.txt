@@ -109,6 +109,7 @@ db/test-radar-situacao-cadastral.sh 15
 db/test-radar-situacao-contato-por-cnpj.sh 20
 db/test-radar-situacao-por-cron.sh 21
 db/test-raio-x-inequivoco.sh 16
+db/test-raio-x-unidades.sh 10
 db/test-recebimento-associacao-sombra.sh 16
 db/test-reconciliacao-corante.sh 4
 db/test-recusa-definitiva-portal-servidor.sh 2

@@ -144,7 +144,8 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
 
       {abaixoDoPiso.length > 0 && (
         <div className="space-y-1">
-          <div className="text-sm font-medium text-status-warning">Liquidou abaixo do preço piso</div>
+          {/* bug 4 da 2ª revisão: o piso não é versionado — compara o médio do período com o piso de HOJE, e diz isso */}
+          <div className="text-sm font-medium text-status-warning">Preço médio desde a foto abaixo do piso atual</div>
           <ul className="space-y-1">
             {abaixoDoPiso.map((a) => (
               <li key={a.sku_codigo_omie}>
@@ -153,7 +154,7 @@ export function RaioXCaixaLiberado({ linhas, isLoading, erro, empresa, codigos, 
                   className="text-left text-sm underline-offset-2 hover:underline"
                   onClick={() => onFiltrarSku(a.sku_codigo_omie)}
                 >
-                  {codigos.get(a.sku_codigo_omie) ?? `SKU ${a.sku_codigo_omie}`} · vendido a {fmtValorFino(a.preco)} · piso {fmtValorFino(a.piso)}
+                  {codigos.get(a.sku_codigo_omie) ?? `SKU ${a.sku_codigo_omie}`} · médio desde a foto {fmtValorFino(a.preco)} · piso atual {fmtValorFino(a.piso)}
                 </button>
               </li>
             ))}

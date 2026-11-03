@@ -251,14 +251,18 @@ export function useRaioXMutacoes(empresa: Empresa) {
     if (args && plano) {
       // `raio_x_decidir` não recebe versão esperada; o plano iria com a versão que ELE devolve e sobrescreveria, sem RX003,
       // um plano gravado por outro operador depois da nossa leitura (Codex P1). Relê a versão antes: mudou → nada é gravado.
-      const { data: viva, error: eVersao } = await supabase
-        .from('raio_x_decisao')
-        .select('atualizado_em')
-        .eq('empresa', empresa)
-        .eq('sku_codigo_omie', ctx.sku)
-        .maybeSingle();
-      if (eVersao) {
-        avisarErro(eVersao, 'Não foi possível conferir a versão da decisão.');
+      let viva: { atualizado_em: string } | null;
+      try {
+        const r = await supabase
+          .from('raio_x_decisao')
+          .select('atualizado_em')
+          .eq('empresa', empresa)
+          .eq('sku_codigo_omie', ctx.sku)
+          .maybeSingle();
+        if (r.error) throw r.error;
+        viva = r.data;
+      } catch (e) {
+        avisarErro(e, 'Não foi possível conferir a versão da decisão.');
         return 'falhou';
       }
       if ((viva?.atualizado_em ?? null) !== (ctx.atualizadoEm ?? null)) {
