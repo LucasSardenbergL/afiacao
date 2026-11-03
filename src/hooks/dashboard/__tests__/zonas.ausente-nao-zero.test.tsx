@@ -296,7 +296,7 @@ describe('Vendas: orçamentos que falham viram "—", não 0', () => {
   it('controle: orçamentos lidos → número medido e topo com prioridade', async () => {
     const z = await montar(useVendasZone);
     expect(kpi(z.kpis, 'Aguardando')).toBe('5');
-    expect(z.erros).toEqual({ orcamentos: null, top: null });
+    expect(z.erros).toEqual({ orcamentos: null, top: null, nomes: null });
     expect(z.topItems.map((t) => t.title)).toEqual(['Marcenaria Beta']);
     expect(z.priority?.zone).toBe('vendas');
   });
@@ -334,6 +334,29 @@ describe('Vendas: orçamentos que falham viram "—", não 0', () => {
     respostas[L.orcamentosTop] = MALFORMADA;
     const z = await montar(useVendasZone);
     expect(z.erros?.top).toBe('orders (orçamentos >24h): data null sem error — malformada');
+  });
+
+  it('controle: cadastro sem nome continua "Cliente"', async () => {
+    respostas[L.nomes] = { data: [{ user_id: 'u1', name: null }], error: null };
+    const z = await montar(useVendasZone);
+    expect(z.topItems.map((t) => t.title)).toEqual(['Cliente']);
+    expect(z.erros?.nomes).toBeNull();
+  });
+
+  it('nomes do topo com erro → "Nome indisponível", o orçamento segue na lista', async () => {
+    respostas[L.nomes] = ERRO;
+    const z = await montar(useVendasZone);
+    expect(z.erros?.nomes).toBe(`profiles (nomes do topo): ${TIMEOUT}`);
+    expect(z.topItems.map((t) => t.title)).toEqual(['Nome indisponível']);
+    expect(z.erroTopo).toBeNull();
+    expect(z.priority?.item.title).toBe('Orçamento >24h aguardando — Nome indisponível');
+  });
+
+  it('nomes do topo malformados → "Nome indisponível" pela mensagem de data null', async () => {
+    respostas[L.nomes] = MALFORMADA;
+    const z = await montar(useVendasZone);
+    expect(z.erros?.nomes).toBe('profiles (nomes do topo): data null sem error — malformada');
+    expect(z.topItems.map((t) => t.title)).toEqual(['Nome indisponível']);
   });
 
   it('tela: topo que falhou avisa em vez de "Sem orçamentos aguardando."', async () => {
