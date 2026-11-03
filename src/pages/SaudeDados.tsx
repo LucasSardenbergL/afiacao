@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { ShieldAlert } from 'lucide-react';
 import { useDataHealth } from '@/hooks/useDataHealth';
 import { ReexecutarCheck } from '@/components/dataHealth/ReexecutarCheck';
+import { ReexecutarSyncState } from '@/components/dataHealth/ReexecutarSyncState';
 import { rollupDomain, formatAge, badgeLevel, shouldShowDiagnostics } from '@/lib/dataHealth/health-helpers';
 
 const DOMAIN_LABEL: Record<string, string> = {
@@ -60,6 +61,7 @@ export default function SaudeDados() {
                     {c.how_to_fix && <p className="text-xs text-status-info mt-0.5">Como resolver: {c.how_to_fix}</p>}
                     {c.last_error && <p className="text-xs text-status-error mt-0.5 font-mono">{c.last_error}</p>}
                     <ReexecutarCheck check={c} />
+                    <ReexecutarSyncState check={c} />
                   </>
                 )}
               </div>

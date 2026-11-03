@@ -10,7 +10,8 @@ import type { DataHealthCheck } from './types';
  *  - correção humana (portal Sayerlack, cadastro no Omie, identidade, credencial/secret);
  *  - radar_recruzamento_tick e omie_tipo_produto_oben: sem caminho staff hoje (RPC só
  *    service_role / edge `authorizeCron`);
- *  - vendas_cadastros e sync_state_saude: a ação depende de QUAL entidade está vermelha.
+ *  - vendas_cadastros: a ação depende de QUAL entidade está vermelha;
+ *  - sync_state_saude: idem, mas tem botão POR ENTIDADE no próprio card (`syncState.ts`).
  *
  * O clique nunca mexe no check: ele só volta a `ok` quando o compute ler a fonte fresca.
  * O ledger `acoes_execucoes` (slug abaixo) é o sensor da fase 1 — quantas vezes se clicou e se curou.
@@ -23,7 +24,7 @@ export interface Reexecucao {
   escritor: 'front' | 'edge';
   alvo:
     | { tipo: 'rpc'; nome: 'request_customer_metrics_refresh' }
-    | { tipo: 'edge'; nome: string; body?: Record<string, string> };
+    | { tipo: 'edge'; nome: string; body?: Record<string, string | number> };
 }
 
 export const REEXECUCOES: Readonly<Record<string, Reexecucao>> = {
