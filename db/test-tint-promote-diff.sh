@@ -144,6 +144,14 @@ BEGIN
     VALUES (p_run, v, e->>0, (e->>1)::int, (e->>2)::numeric);
   END LOOP;
 END $$;
+-- Promoção que pode esperar um lock: devolve o desfecho em ASCII (o texto do erro é traduzido no pt_BR).
+CREATE FUNCTION _tenta(p_run uuid) RETURNS text LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM public.tint_promote_sync_run(p_run);
+  RETURN 'PASSOU';
+EXCEPTION WHEN lock_not_available THEN
+  RETURN 'BLOQUEADO';
+END $$;
 -- Estado do par P1 (L1) por chave natural, sem id/importacao_id/timestamps — o frescor entra como
 -- BOOLEANO relativo à staging mais nova da cor no par (a prova do formula-identica.ts da edge).
 CREATE FUNCTION _estado() RETURNS text LANGUAGE sql AS $$
@@ -327,6 +335,26 @@ INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_prod
 VALUES ('11111111-0000-0000-0000-000000000013','oben','L1','P1','B1','E3600', 300, 10, 20);
 SELECT _promove('R13', '11111111-0000-0000-0000-000000000013');
 SELECT _promove('R12', '11111111-0000-0000-0000-000000000012');
+
+-- R14..R14b (Codex P1): o catálogo R14 cria a E1800 (sku NOVO → reexpande o par) com preço de base 400;
+-- o reenvio de C9 (R15) reaceita as chaves E1800 idênticas (o antigo grava importacao_id=R15, o novo as
+-- pula e elas guardam R14); chega um preço 500 que ninguém promove (R16); RE-PROMOVE-se o R14. O E4 do
+-- R14 tem de recalcular as E1800 pelo preço 500 — o antigo recalcula porque o importacao_id é R15.
+SELECT _run('11111111-0000-0000-0000-000000000014', 'catalogs');
+INSERT INTO tint_staging_embalagens (sync_run_id, account, store_code, id_embalagem_sayersystem, descricao, volume_ml)
+VALUES ('11111111-0000-0000-0000-000000000014','oben','L1','E1800','E1800', 1800);
+INSERT INTO tint_staging_skus (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem)
+VALUES ('11111111-0000-0000-0000-000000000014','oben','L1','P1','B1','E1800');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('11111111-0000-0000-0000-000000000014','oben','L1','P1','B1','E1800', 400, 10, 20);
+SELECT _promove('R14', '11111111-0000-0000-0000-000000000014');
+SELECT _run('11111111-0000-0000-0000-000000000015', 'formulas');
+SELECT _sf('11111111-0000-0000-0000-000000000015','C9','Cor 9','P1','B1',NULL,false,'[]',true);
+SELECT _promove('R15', '11111111-0000-0000-0000-000000000015');
+SELECT _run('11111111-0000-0000-0000-000000000016', 'catalogs');
+INSERT INTO tint_staging_precos_base (sync_run_id, account, store_code, cod_produto, id_base, id_embalagem, custo, imposto_pct, margem_pct)
+VALUES ('11111111-0000-0000-0000-000000000016','oben','L1','P1','B1','E1800', 500, 10, 20);
+SELECT _promove('R14b', '11111111-0000-0000-0000-000000000014');
 SQL
 }
 
@@ -410,9 +438,11 @@ v="$(q ref "SELECT string_agg(x, ';' ORDER BY x COLLATE \"C\") FROM (
   UNION ALL SELECT 'precoE3600=' || count(preco_final_sayersystem) FROM tint_formulas f JOIN tint_embalagens e ON e.id = f.embalagem_id
      WHERE e.id_embalagem_sayersystem = 'E3600'
   UNION ALL SELECT 'R9recalc=' || (r->>'recalculadas') FROM _res WHERE rot = 'R9'
+  UNION ALL SELECT 'R14b=' || (r->>'recalculadas') || '/' || (SELECT count(*) FROM tint_formulas f JOIN tint_embalagens e ON e.id = f.embalagem_id
+     WHERE e.id_embalagem_sayersystem = 'E1800' AND f.preco_final_sayersystem > 660) FROM _res WHERE rot = 'R14b'
   UNION ALL SELECT 'R10C1=' || count(*) FROM tint_formula_itens i JOIN tint_formulas f ON f.id = i.formula_id
      WHERE f.cor_id = 'C1' AND i.qtd_ml::text NOT LIKE '%.%') s")"
-ESPERADO_REF='C1escala=16.000000,40.000000;C1nome=Cor 1 nova;C2ativa=true;C3ordem=3;C4vol=950,3600;C5itens=2;C6preservada=4;C9itens=0;R10C1=0;R9recalc=3;precoE3600=5'
+ESPERADO_REF='C1escala=16.000000,40.000000;C1nome=Cor 1 nova;C2ativa=true;C3ordem=3;C4vol=950,1800,3600;C5itens=3;C6preservada=4;C9itens=0;R10C1=0;R14b=8/3;R9recalc=3;precoE3600=5'
 [ "$v" = "$ESPERADO_REF" ] || { echo "✗ cenário: a referência não exibe os casos de borda: [$v] ≠ [$ESPERADO_REF]"; exit 1; }
 echo "  · referência (promote antigo): $IMP_REF — $v"
 
@@ -422,7 +452,7 @@ REF_VOL="$(escritas ref b0000000-0000-0000-0000-000000000003)"
   || { echo "✗ controle: o promote ANTIGO devia escrever ≥ $PISO_ANTIGO tuplas no run BIG (veio $REF_VOL)"; exit 1; }
 echo "  · promote antigo: run BIG (2 cores reenviadas) = $REF_VOL tuplas escritas"
 
-TODOS="MD5 EQUIV PULA VOLUME ACL IDEMP GUARDA"
+TODOS="MD5 EQUIV PULA VOLUME LOCK ACL IDEMP GUARDA"
 
 # ── a suíte: $1 = arquivo da migration (real ou sabotada), $2 = banco; imprime os asserts que CAÍRAM ──
 suite() {
@@ -447,6 +477,19 @@ suite() {
   seed_big_run "$db"; w="$(escritas "$db" b0000000-0000-0000-0000-000000000003)"
   cabe "$w" "$TETO_VOLUME" || { cai VOLUME; echo "    (VOLUME: $w tuplas, teto $TETO_VOLUME)" >&2; }
   echo "    · $db: run BIG = $w tuplas escritas (antigo $REF_VOL)" >&2
+
+  # LOCK (Codex P2): duas lojas da MESMA account não promovem em paralelo. A sessão 1 segura uma promoção
+  # de L1 aberta; a da loja BIG tem de esperar (lock_timeout 1 s → BLOQUEADO) e, solta, tem de PASSAR
+  # (controle: o run em si promove — o que barrou foi o lock).
+  q "$db" "SELECT _run('cccccccc-0000-0000-0000-000000000001', 'catalogs', 'L1'), _run('cccccccc-0000-0000-0000-000000000002', 'catalogs', 'BIG')" >/dev/null
+  PA -q -d "$db" -c "BEGIN" -c "SELECT tint_promote_sync_run('cccccccc-0000-0000-0000-000000000001')" \
+     -c "SELECT pg_sleep(4)" -c "COMMIT" >"$TMP/$db.lock1.log" 2>&1 &
+  local pid_lock=$! v1 v2
+  sleep 1.5
+  v1="$(PA -tA -d "$db" -c "SET lock_timeout = '1s'" -c "SELECT _tenta('cccccccc-0000-0000-0000-000000000002')" 2>&1 | tail -n 1)"
+  wait "$pid_lock" || true
+  v2="$(q "$db" "SELECT _tenta('cccccccc-0000-0000-0000-000000000002')" 2>&1)"
+  [ "$v1" = "BLOQUEADO" ] && [ "$v2" = "PASSOU" ] || { cai LOCK; echo "    (LOCK: com a outra loja aberta [$v1], depois [$v2])" >&2; }
 
   v="$(q "$db" "SELECT has_function_privilege('anon', 'public.tint_promote_sync_run(uuid)', 'EXECUTE')::text
                     || has_function_privilege('authenticated', 'public.tint_promote_sync_run(uuid)', 'EXECUTE')::text")"
@@ -577,12 +620,12 @@ falsifica F8 MD5 EQUIV <<'TROCAS'
 TROCAS
 # F9 — o E4 de precos_base sem a exclusão das puladas (postcondição ajustada): recalcula a mais no R9.
 falsifica F9 MD5 EQUIV <<'TROCAS'
-[("      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)   -- [DIFF]\n$t3$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n$t3$"),
+[("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t3$", "      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n$t3$"),
  ("        / length('NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)') <> 2", "        / length('NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)') <> 1")]
 TROCAS
-# F10 — o E4 de custo de corante sem a exclusão (postcondição ajustada): idem, pela outra ponta.
+# F10 — o E4 de custo de corante sem a exclusão das puladas (postcondição ajustada): idem, pela outra ponta.
 falsifica F10 MD5 EQUIV <<'TROCAS'
-[("      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)   -- [DIFF]\n$t4$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n$t4$"),
+[("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$", "      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n$t4$"),
  ("        / length('NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)') <> 2", "        / length('NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)') <> 1")]
 TROCAS
 # F11 — desempate da receita desejada invertido (MENOR ordem): a 2 etapas nunca casa → reescreve tudo.
@@ -600,7 +643,19 @@ falsifica F13 GUARDA <<'TROCAS'
 TROCAS
 # F14 — a postcondição pega o corpo sem a exclusão do E4 (troca removida, contagem 2 intacta): ABORTA.
 MOTIVO="P1 FALHOU" falsifica F14 "$TODOS" <<'TROCAS'
-[("      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)   -- [DIFF]\n$t4$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n$t4$")]
+[("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$", "      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n$t4$")]
+TROCAS
+# F15 — o E4 volta a excluir pelo importacao_id do run nas duas pontas (a 1ª versão, Codex P1; postcondição
+#       ajustada): na re-promoção do R14 as E1800 puladas pelo R15 guardam importacao_id=R14 e não recalculam.
+falsifica F15 MD5 EQUIV <<'TROCAS'
+[("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t3$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t3$"),
+ ("      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$", "      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)\n      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)\n$t4$"),
+ ("     OR (length(v_src) - length(replace(v_src, 'NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)', '')))\n        / length('NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)') <> 2\n     OR position('f.importacao_id IS DISTINCT FROM v_importacao_id' in v_src) > 0\n", "")]
+TROCAS
+# F16 — sem o lock por account (postcondição ajustada): a loja BIG promove com a L1 aberta.
+falsifica F16 MD5 LOCK <<'TROCAS'
+[("  PERFORM pg_advisory_xact_lock(hashtext('tint_formulas_account:' || v_account));\n$t7$", "$t7$"),
+ ("     OR position('pg_advisory_xact_lock(hashtext(''tint_formulas_account:'' || v_account))' in v_src) = 0\n", "")]
 TROCAS
 
 echo "─── controle $PASSOU ok | falsificações certas: $FALSIF_OK | inválidas/erradas: $FALSIF_ERR ───"

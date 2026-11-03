@@ -15,13 +15,21 @@
 --   antes do upsert, sai de _expand_uniq a chave cujo oficial JÁ É o que o upsert + DELETE/INSERT
 --   gravariam E é mais novo que a staging vencedora (a prova de frescor do formula-identica.ts da
 --   edge). Toda chave que difere em qualquer coisa — ou staging nova sobre oficial velho, ainda que
---   idêntica — segue o caminho antigo VERBATIM (header inteiro + receita inteira). O E4 passa a
---   excluir também as chaves puladas (antes a exclusão vinha do importacao_id que o upsert gravava).
+--   idêntica — segue o caminho antigo VERBATIM (header inteiro + receita inteira).
+--   E4: "já saiu com o preço novo" passa a ser a chave ACEITA NESTA invocação (_promoted ∪ _pulados).
+--   Antes vinha do importacao_id que o upsert gravava em toda chave; a pulada guarda o do último run
+--   que a REESCREVEU, e um run re-promovido o reencontraria e deixaria de recalcular (Codex P1, 03/11).
+--   Desvio deliberado, só em re-promoção de run JÁ promovido: a chave aceita na invocação anterior e
+--   não reaceita agora passa a ser recalculada (antes ficava com o preço da 1ª invocação porque o
+--   importacao_id reaproveitado coincidia) — é a intenção escrita no próprio E4.
+--   Advisory lock também por ACCOUNT: tint_formulas é por account e o lock vivo é por account+store;
+--   duas lojas concorrentes classificariam _pulados sem trava e comporiam um resultado que nenhuma
+--   ordem serial do promote antigo produz (Codex P2; o tick já é serial, chamada direta não).
 --   Novas chaves no metadata/retorno: formulas_identicas_puladas. `inserts`/registros_importados
 --   seguem contando as chaves ACEITAS (reescritas + idênticas), como antes.
 --
 -- COMO APLICA: TRAVA (ALTER sem efeito) → PRE (md5 do prosrc vivo ∈ {predecessor revisado, este}) →
--- 6 trocas ancoradas (cada âncora casa exatamente 1 vez) + EXECUTE → PÓS (md5 = este) → REVOKE por
+-- 8 trocas ancoradas (cada âncora casa exatamente 1 vez) + EXECUTE → PÓS (md5 = este) → REVOKE por
 -- cinto → postcondição relida do catálogo. Re-aplicar é no-op. Sem índice novo, sem DDL de tabela.
 -- Aplicar FORA de uma promoção em curso (a TRAVA espera o advisory/lock da função só pelo
 -- lock_timeout; a promoção em voo segue com o corpo antigo até o fim da transação dela).
@@ -45,9 +53,19 @@ DECLARE
   -- md5(prosrc) do corpo vivo em 2026-11-03 (psql-ro; = o que 20261030071806 produziu) e do corpo
   -- que esta migration produz.
   c_pred constant text := '954a96411be99c18ab4bff40df14e620';
-  c_este constant text := 'b5bd945dcc9f957269ffc356f9490095';
+  c_este constant text := '2c6f461f9c9d4f8c54ea817e25f88f61';
   -- (busca, troca): cada busca tem de casar exatamente 1 vez no corpo vivo.
   c_trocas constant text[][] := ARRAY[
+    -- T7: serializa também por ACCOUNT (tint_formulas é por account; o lock vivo é por account+store).
+    --     Sempre DEPOIS do de account+store: ordem única, sem deadlock entre promotes.
+    ARRAY[
+$b7$  PERFORM pg_advisory_xact_lock(hashtext('tint_sync:' || v_account || ':' || v_store));
+$b7$,
+$t7$  PERFORM pg_advisory_xact_lock(hashtext('tint_sync:' || v_account || ':' || v_store));
+  -- (20261103093424) e por ACCOUNT: o diff classifica _pulados lendo o oficial (que é por account) sem
+  -- travar linha; duas lojas da mesma account em paralelo comporiam metades de receitas (Codex P2).
+  PERFORM pg_advisory_xact_lock(hashtext('tint_formulas_account:' || v_account));
+$t7$],
     -- T1: contador novo.
     ARRAY[
 $b1$  v_fantasmas_fonte int := 0;   -- (20261013150000)
@@ -134,7 +152,7 @@ $t2$  -- ═══════════════════════�
 
   -- Upsert oficial em massa por uq_tint_formulas_chave; desativada_em = NULL (reativa). Captura
 $t2$],
-    -- T3: E4 por precos_base — a chave pulada conta como "já saiu com o preço novo" (como antes).
+    -- T3: E4 por precos_base — exclui a chave aceita nesta invocação (reescrita ou pulada).
     ARRAY[
 $b3$    WHERE sp.sync_run_id = p_sync_run_id
       AND f.desativada_em IS NULL
@@ -142,8 +160,10 @@ $b3$    WHERE sp.sync_run_id = p_sync_run_id
 $b3$,
 $t3$    WHERE sp.sync_run_id = p_sync_run_id
       AND f.desativada_em IS NULL
-      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)
-      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)   -- [DIFF]
+      -- [DIFF] aceita NESTA invocação (reescrita ou idêntica) já saiu com o preço novo. Não pelo
+      -- importacao_id: a pulada guarda o do último run que a reescreveu (Codex P1, 20261103093424).
+      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)
 $t3$],
     -- T4: E4 por custo de corante — idem.
     ARRAY[
@@ -153,8 +173,9 @@ $b4$      AND f.account = v_account
 $b4$,
 $t4$      AND f.account = v_account
       AND f.desativada_em IS NULL
-      AND (f.importacao_id IS DISTINCT FROM v_importacao_id)
-      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)   -- [DIFF]
+      -- [DIFF] idem ao E4 de precos_base.
+      AND NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)
+      AND NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)
 $t4$],
     -- T5: rastro durável no run.
     ARRAY[
@@ -221,10 +242,14 @@ BEGIN
   IF position('CREATE TEMP TABLE _pulados ON COMMIT DROP AS' in v_src) = 0
      OR (length(v_src) - length(replace(v_src, 'NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)', '')))
         / length('NOT EXISTS (SELECT 1 FROM _pulados pu WHERE pu.formula_id = f.id)') <> 2
+     OR (length(v_src) - length(replace(v_src, 'NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)', '')))
+        / length('NOT EXISTS (SELECT 1 FROM _promoted pm WHERE pm.formula_id = f.id)') <> 2
+     OR position('f.importacao_id IS DISTINCT FROM v_importacao_id' in v_src) > 0
+     OR position('pg_advisory_xact_lock(hashtext(''tint_formulas_account:'' || v_account))' in v_src) = 0
      OR position('''formulas_identicas_puladas'', v_puladas)' in v_src) = 0
      -- o caminho antigo de escrita segue intacto para o que mudou
      OR position('DELETE FROM tint_formula_itens fi USING _promoted pr WHERE fi.formula_id = pr.formula_id;' in v_src) = 0 THEN
-    RAISE EXCEPTION 'P1 FALHOU: o promote nao tem o diff (_pulados), a exclusao do E4 nas 2 pontas, o rastro no metadata ou perdeu o caminho de reescrita';
+    RAISE EXCEPTION 'P1 FALHOU: o promote nao tem o diff (_pulados), a exclusao do E4 por invocacao nas 2 pontas, o lock por account, o rastro no metadata ou perdeu o caminho de reescrita';
   END IF;
   IF NOT ('search_path=public' = ANY (v_cfg)) OR NOT ('statement_timeout=300s' = ANY (v_cfg)) THEN
     RAISE EXCEPTION 'P2 FALHOU: o promote perdeu search_path/statement_timeout (proconfig %)', v_cfg;
@@ -233,6 +258,6 @@ BEGIN
      OR has_function_privilege('authenticated', 'public.tint_promote_sync_run(uuid)', 'EXECUTE') THEN
     RAISE EXCEPTION 'P3 FALHOU: anon/authenticated executam o promote';
   END IF;
-  RAISE NOTICE 'promote-diff: _pulados + E4 nas 2 pontas + rastro, proconfig preservado, ACL fechada';
+  RAISE NOTICE 'promote-diff: _pulados + E4 por invocacao nas 2 pontas + lock por account + rastro, proconfig preservado, ACL fechada';
 END
 $post$;
