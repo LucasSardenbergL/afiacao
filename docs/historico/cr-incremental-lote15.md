@@ -47,3 +47,34 @@ SELECT company, count(*), min(excluido_em), max(excluido_em) FROM public.fin_con
 
 Sinal de problema: `modo=incremental` com `error_message` repetido (marca não avança → janela B cresce), ou
 `TETO` no C1 (filtro do Omie mudou). Residuais fora do lote: §8 do desenho.
+
+## Incidente 2026-11-03 14:20 UTC — o 1º incremental morreu em "HTTP 500"
+
+O full de bootstrap das 08:20 fechou nas 3 empresas e publicou `fin_cr_full_ok`. O run das 14:20, o 1º
+incremental, falhou nas 3 com `Error: Omie (<empresa>): HTTP 500` (api_calls 14/9/7). Foi fail-closed:
+0 marcados, nenhum tombstone, sem `fin_cr_incremental_ok`. Os 1.301 `updated_at >= 14:20` são o upsert
+normal do conjunto aberto (A).
+
+**Causa, reproduzida contra a API da oben:** depois de uma resposta **vazia**, o Omie trava o método:
+- por ~3 a 6 s a chamada seguinte leva HTTP 500 + `Já existe uma requisição desse método` (Client-1880);
+- o corpo idêntico, depois de uma recusa, vira `REDUNDANT` (Client-6) por ~50 s e, insistindo,
+  `MISUSE_API_PROCESS` (425).
+
+O full nunca via isso, porque termina na vazia. O incremental encadeia A (termina vazia) → B, e o
+`callOmie` decidia pelo status antes de ler o corpo (backoff de 5xx 1/2/4 s com o corpo idêntico).
+A conta fecha: oben 9 páginas + vazia + 4 tentativas = 14.
+
+**Conserto** (`omie-financeiro/omie-chamada.ts`, v1.11):
+- resfriamento de 10 s por empresa+método depois de resposta vazia;
+- o 5xx lê o fault: concorrência espera, REDUNDANT/bloqueio lança na hora, e a mensagem carrega o fault;
+- a espera só começa se couber no budget;
+- as provas param com `RESERVA_FECHAMENTO_MS` (35 s) de folga para a reconfirmação e o C3.
+
+Os dois últimos itens vieram do Codex (P1: provas vazias em série esgotavam o budget em todo run; P2:
+um fetch podia sair depois dos 100 s). **Efeito colateral:** com as provas vazias custando 10 s
+cada, cabem ~4 a 6 por run, e o resto vira `adiados`. Os 38 fantasmas levam alguns runs a mais.
+
+**Lição:** listagem filtrada do Omie que termina em página vazia **não pode** ser seguida de outra
+chamada ao mesmo método sem pausa. Qualquer edge que encadeie listagens (não só o CR) herda a trava.
+Dívida preservada, não ampliada: REDUNDANT em **HTTP 200** ainda retenta no `callOmie` (o
+`classifyOmieFault` espelha `src/lib/omie/omie-fault.ts`), e repetir renova a trava.
