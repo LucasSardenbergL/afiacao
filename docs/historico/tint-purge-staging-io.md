@@ -254,6 +254,18 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - não reexpandir chave cuja entrada não mudou. Isso toca a granularidade por par (#3333/#3355) e é decisão de produto;
   - aceitar o pico, porque runs de fórmula são ~2 por dia.
 
+  **Decisão do founder (03/11): aceitar o pico.** O Codex (`max`, 391 s, 126.025 tokens) REPROVOU o desenho da assinatura no cabeçalho (colunas de assinatura da receita mantidas por trigger nos itens + índice de cobertura por par + backfill por cron), com 6 P1:
+  1. o trigger agrega os itens antes de travar o cabeçalho, e duas edições concorrentes gravam assinatura velha. É falso "igual", o mesmo erro que o diff evita;
+  2. a RLS "Staff can manage" (FOR ALL) deixa staff gravar as colunas derivadas, e o grant de coluna não neutraliza o grant da tabela;
+  3. o backfill bate no guard do tombstone da fase 5 (42501);
+  4. `TRUNCATE` não dispara trigger de DELETE;
+  5. o índice de expressão `COALESCE(subcolecao_id, …)` pode impedir o index-only scan no PG17;
+  6. `ADD COLUMN` + `CREATE INDEX` na mesma transação segura o ACCESS EXCLUSIVE e bloqueia a leitura do balcão.
+
+  Corrigido, o desenho vira ~3 migrations em janelas separadas, uma proteção efetiva das colunas, um backfill com cursor durável e um ensaio de concorrência em PG17. É desproporcional para 2 janelas por dia acima do teto, num Mini que passa folgado nas demais (16,7 MB na janela aprovada).
+
+  **Reabrir se** o pico passar a doer: hit caindo, balcão lento na janela de um run de fórmulas, ou runs grandes ficando frequentes. A lista de P1 acima é o ponto de partida.
+
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
 - **Medida:** delta de `pg_statio` de **todas** as tabelas de `public`, das 12:43 às 12:59 UTC de 03/11, no Mini (256MB e 60 conexões, no ar desde 31/10 10:33). A janela teve 5 promoções de catálogo, e o amostrador não pegou nenhuma consulta de outra sessão `claude_ro`.
