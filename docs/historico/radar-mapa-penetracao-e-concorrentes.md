@@ -176,7 +176,7 @@ corte de 8 s do PostgREST, mas com pouca folga a frio. Se doer, a saída é um c
 | Migration `20261029170140` ✅ aplicada 2026-10-30 | sessão (envelope: idempotente + transacional + PÓS) | **depois** da migration da frente 2 que cria `private.cap_radar_prospectar`; a PRE aborta sem ela |
 | Edge `radar-ingest` v1.4 ✅ 2026-10-30 | sessão, mensagem ao agente do Lovable | sonda DEPLOY CONFIRMADO; `pendencias:deploy` em "confere" |
 | 1ª carga de concorrentes ✅ 2026-10-31 (lote 2026-10) | sessão, `workflow_dispatch` com `so_concorrentes=true` (#3425) | daqui em diante entra sozinha na carga mensal |
-| Publish do Lovable | founder | mapa e ranking novos |
+| Publish do Lovable ✅ 2026-10-31 | founder | `steu.lovable.app` serve `app-commit-sha` `7329a84a`, que contém o #3414 |
 
 ## Aplicação em prod (2026-10-30)
 
@@ -219,3 +219,24 @@ pedido sem passar pelo seletor e chama `carga.ts --so-concorrentes`.
   `concorrentes` não nulo, 336 deles com valor positivo, somando 2.127 (igual à tabela). Nenhum
   município de MG tem só concorrente sem lead. No Brasil, a primeira página de 2.000 tem 1.727
   municípios com concorrente.
+
+## Sinal de uso e coordenadas por código (2026-11-02)
+
+**Sinal da fase (PostHog + ledger, desde o Publish de 2026-10-31 04:53Z):** zero. Nenhum
+`radar.mapa_camada` nem `radar.mapa_concorrentes`, nenhum `$pageview` em `/radar*` e nenhuma
+`navegacao.rota_servida` com rota `/radar` (desde 2026-10-25). Denominador: 3 pessoas têm acesso ao Radar
+(1 master e 2 vendedores com papel comercial), e o PostHog recebeu 78 pageviews de 4 pessoas no período,
+nenhuma no Radar. "No ar e ninguém usou" não autoriza fase N+1 do mapa: o próximo passo é de adoção (os
+dois vendedores abrirem o Radar), não de código. A query para medir de novo é a da primeira linha desta
+seção, com `event IN ('radar.mapa_camada','radar.mapa_concorrentes')`.
+
+**Coordenadas casadas pelo código.** Os 9 municípios com concorrente sem coordenada eram problema de
+grafia: a carga casava RFB↔IBGE pelo nome normalizado, e a RFB escreve PARATI, ASSU, BRASOPOLIS,
+BALNEARIO DE PICARRAS e SANTA ISABEL DO PARA. O código de município da RFB é o `siafi_id` do CSV do
+IBGE. Medido em prod: 5.473 de 5.473 códigos de `radar_municipios` existem como `siafi_id`, todos com a
+mesma UF, e nenhum dos que já casavam por nome muda de coordenada. A carga passa a casar pelo código,
+com o nome de reserva (`scripts/radar/municipios.ts`). Ganham coordenada 17 municípios, com cerca de
+400 leads, que também ficavam fora do mapa. Entra em vigor na próxima carga de lote, quando
+`chunk_municipios` regrava `radar_municipios`. Ficam de fora o EXTERIOR e 3 códigos que só têm
+concorrente e nenhum lead (são 3 estabelecimentos), porque o universo de municípios da carga vem dos
+leads.
