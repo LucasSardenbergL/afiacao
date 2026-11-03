@@ -12,7 +12,8 @@ function linha(sku: number, extra: Partial<LinhaMedicao> = {}): LinhaMedicao {
   return {
     sku_codigo_omie: sku, destino: 'trocar', decidido_em: '2026-09-01T12:00:00Z',
     foto_saldo: 10, foto_cmc: 100, foto_valor: 1000, foto_categoria: 'mercadoria', credito_troca: null,
-    saldo_atual: 10, qtd_vendida: 0, receita: 0, preco_medio_12m: 50, compras_apos: [], troca_contrapartida: null, ...extra,
+    saldo_atual: 10, qtd_vendida: 0, receita: 0, preco_medio_12m: 50, compras_apos: [], troca_contrapartida: null,
+    unidade_estoque: 'UN', unidades_venda_periodo: ['UN'], ...extra,
   };
 }
 const codigos = new Map([[1, 'A1'], [2, 'A2'], [3, 'A3']]);
@@ -122,8 +123,9 @@ describe('pacote 2 — piso, custo de esperar e execução', () => {
     const onFiltrarSku = vi.fn();
     render(<RaioXCaixaLiberado linhas={linhas} isLoading={false} erro={null} empresa="oben" codigos={codigos}
       onFiltrarSku={onFiltrarSku} decisoes={decisoes} unidadesVenda={unidadesVenda} />);
-    expect(screen.getByText('Liquidou abaixo do preço piso')).toBeTruthy();
-    const itens = screen.getAllByRole('button', { name: /vendido a/ });
+    expect(screen.getByText('Preço médio desde a foto abaixo do piso atual')).toBeTruthy();
+    expect(screen.queryByText(/Liquidou abaixo/)).toBeNull();
+    const itens = screen.getAllByRole('button', { name: /médio desde a foto .* piso atual/ });
     expect(itens).toHaveLength(1);
     expect(itens[0].textContent).toContain('A1');
     fireEvent.click(itens[0]);

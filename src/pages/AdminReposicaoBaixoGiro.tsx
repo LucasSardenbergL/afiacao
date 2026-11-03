@@ -10,6 +10,9 @@ import { ManterEmEstoqueDialog } from "@/components/reposicao/baixoGiro/ManterEm
 import { DesovaMissaoDialog } from "@/components/reposicao/baixoGiro/DesovaMissaoDialog";
 import type { AlvoDesova } from "@/lib/reposicao/desova-helpers";
 import { RaioXTab } from "@/components/reposicao/raioX/RaioXTab";
+import { useRaioXPendentesTop } from "@/components/reposicao/raioX/useRaioX";
+import { empresaDoRaioX } from "@/lib/reposicao/raio-x/decisao";
+import { useUrlState } from "@/hooks/useUrlState";
 import { CorantesTab } from "@/components/reposicao/corantes/CorantesTab";
 import { useReposicaoEmpresa } from "@/contexts/ReposicaoEmpresaContext";
 import { Button } from "@/components/ui/button";
@@ -78,6 +81,9 @@ export default function AdminReposicaoBaixoGiro() {
   const [missaoAlvos, setMissaoAlvos] = useState<RowExcesso[] | null>(null); // desova (PR2 Cabreúva)
   const { empresa } = useReposicaoEmpresa();
   const [sobEncomendaAlvos, setSobEncomendaAlvos] = useState<RowBaixoGiro[] | null>(null);
+  // Aba na URL (link direto e Cmd-K "Raio-X: decidir Top 61" caem na fila) e pendentes do Top 61 no gatilho.
+  const [{ aba }, setUrl] = useUrlState({ aba: "baixo-giro" });
+  const pendentesTop = useRaioXPendentesTop(empresaDoRaioX(empresa));
 
   // Sem cache, `rows === []` zera o `kpis` e a tela afirmava R$ 0,00 de capital parado e 0 itens
   // na cauda — dinheiro fabricado por falha de transporte (§7 money-path). O irmão da mesma tela
@@ -108,15 +114,16 @@ export default function AdminReposicaoBaixoGiro() {
         <h1 className="font-display text-3xl">Baixo giro &amp; estoque parado</h1>
       </header>
       <Tabs
-        defaultValue="baixo-giro"
+        value={aba}
         onValueChange={(v) => {
+          setUrl({ aba: v });
           if (v === "excesso") track("reposicao.excesso_aba_aberta");
         }}
       >
         <TabsList>
           <TabsTrigger value="baixo-giro">Baixo giro</TabsTrigger>
           <TabsTrigger value="excesso">Excesso de estoque{excesso.kpis.skusN > 0 ? ` (${excesso.kpis.skusN})` : ""}</TabsTrigger>
-          <TabsTrigger value="raio-x">Raio-X</TabsTrigger>
+          <TabsTrigger value="raio-x">Raio-X{pendentesTop !== null && pendentesTop > 0 ? ` (${pendentesTop})` : ""}</TabsTrigger>
           {/* Giro de corante (Fase 1, advisory): a máquina tintométrica é só da OBEN. */}
           {empresa === "OBEN" && <TabsTrigger value="corantes">Corantes</TabsTrigger>}
         </TabsList>

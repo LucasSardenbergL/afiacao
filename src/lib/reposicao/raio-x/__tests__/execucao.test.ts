@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   alertaPiso,
+  DATA_META,
+  planoPadrao,
+  prazoPadrao,
   concluidoVigente,
   custoEsperarMensal,
   pisoVigente,
@@ -106,5 +109,21 @@ describe('alertaPiso', () => {
   });
   it('unidade repetida conta como uma só', () => {
     expect(alertaPiso(linha, liq, ['UN', 'UN'])?.abaixo).toBe(true);
+  });
+});
+
+describe('prazoPadrao / planoPadrao (UX 6)', () => {
+  it('min(hoje + 14, 25/11)', () => {
+    expect(prazoPadrao('2026-11-03')).toBe('2026-11-17');
+    expect(prazoPadrao('2026-11-15')).toBe(DATA_META);
+    expect(prazoPadrao(DATA_META)).toBe(DATA_META);
+  });
+  it('passada a meta, volta a hoje + 14 (nunca nasce vencido)', () => {
+    expect(prazoPadrao('2026-12-01')).toBe('2026-12-15');
+  });
+  it('plano padrão: responsável = quem decide, prazo padrão, nada de piso/canal/executado', () => {
+    expect(planoPadrao('u1', '2026-11-03')).toEqual({
+      precoPiso: null, frete: null, canal: null, trocaContrapartida: null, responsavel: 'u1', prazo: '2026-11-17', concluido: false,
+    });
   });
 });

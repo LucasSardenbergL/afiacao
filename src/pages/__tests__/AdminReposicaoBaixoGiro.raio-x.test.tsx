@@ -11,6 +11,7 @@ import type { ItemRaioX, DecisaoRow } from '@/lib/reposicao/raio-x/tipos';
 
 type Retorno = {
   itens: ItemRaioX[];
+  historicos?: ItemRaioX[];
   decisoes: Map<number, DecisaoRow>;
   placar: Record<string, unknown>;
   syncedHoras: number | null;
@@ -25,12 +26,14 @@ const PLACAR = {
 };
 let ret: Retorno;
 let empresaCtx = 'OBEN';
-const useRaioXMock = vi.fn((_e: unknown) => ret);
+const useRaioXMock = vi.fn((_e: unknown) => ({ historicos: [], ...ret }));
+let pendentesTop: number | null = null;
 
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'u-eu' } }) }));
 vi.mock('@/components/reposicao/raioX/useRaioX', () => ({
   useRaioX: (e: unknown) => useRaioXMock(e),
   useRaioXMedicao: () => ({ linhas: [], isLoading: false, erro: null }),
+  useRaioXPendentesTop: () => pendentesTop,
 }));
 vi.mock('@/contexts/ReposicaoEmpresaContext', () => ({
   useReposicaoEmpresa: () => ({ empresa: empresaCtx, setEmpresa: () => {} }),
@@ -76,6 +79,7 @@ const abrirAba = () => {
 
 beforeEach(() => {
   empresaCtx = 'OBEN';
+  pendentesTop = null;
   useRaioXMock.mockClear();
   ret = { itens: [item({})], decisoes: new Map(), placar: PLACAR, syncedHoras: 1, isLoading: false, erro: null };
 });
@@ -221,12 +225,33 @@ describe('aba Raio-X', () => {
     ret = { ...ret, decisoes: new Map([[1, { ...d0, observacao: 'gravado por B', atualizado_em: '2026-10-18T10:05:00Z' }]]) };
     rerender();
     expect(screen.getByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeTruthy();
-    expect((screen.getByRole('button', { name: 'Salvar decisão' }) as HTMLButtonElement).disabled).toBe(true);
+    // liquidar sem plano gravado: o botão único oferece a proposta de execução — e também fica bloqueado
+    expect((screen.getByRole('button', { name: 'Salvar execução' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('botão "Decidir" da linha abre o Sheet do item', () => {
     abrirAba();
     fireEvent.click(screen.getByRole('button', { name: 'Decidir C1' }));
     expect(screen.getByRole('button', { name: 'Salvar decisão' })).toBeTruthy();
+  });
+});
+
+describe('entrada direta na fila (UX 1)', () => {
+  it('gatilho da aba mostra os pendentes do Top 61', () => {
+    pendentesTop = 49;
+    const qc = new QueryClient();
+    render(<QueryClientProvider client={qc}><MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>);
+    expect(screen.getByRole('tab', { name: 'Raio-X (49)' })).toBeTruthy();
+  });
+  it('sem número conhecido (null) ou zerado: sem contador (nunca "(0)" inventado)', () => {
+    const qc = new QueryClient();
+    render(<QueryClientProvider client={qc}><MemoryRouter><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>);
+    expect(screen.getByRole('tab', { name: 'Raio-X' })).toBeTruthy();
+  });
+  it('?aba=raio-x abre direto na aba (link e Cmd-K)', () => {
+    const qc = new QueryClient();
+    render(<QueryClientProvider client={qc}><MemoryRouter initialEntries={['/admin/reposicao/baixo-giro?aba=raio-x']}><AdminReposicaoBaixoGiro /></MemoryRouter></QueryClientProvider>);
+    expect(screen.getByRole('tab', { name: 'Raio-X' }).getAttribute('aria-selected')).toBe('true');
+    expect(useRaioXMock).toHaveBeenCalled();
   });
 });

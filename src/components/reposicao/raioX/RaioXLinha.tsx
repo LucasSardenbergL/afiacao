@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROTULOS } from '@/lib/reposicao/raio-x/classificar';
-import type { DecisaoRow, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import type { DecisaoRow, Destino, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { fmtValor, SEM_NF } from './formato';
 
 const dataBR = (d: string | null): string => {
@@ -13,7 +13,7 @@ const dataBR = (d: string | null): string => {
 
 /** Giro de 12m. Colacor (q12 null) não tem venda por NF: nunca vira "0". */
 export const textoVenda = (i: ItemRaioX): string =>
-  i.q12 === null ? SEM_NF : `${i.q12} un · ${i.ncli ?? 0} cli · últ. ${dataBR(i.ult_venda)}`;
+  i.fora_do_estoque ? '—' : i.q12 === null ? SEM_NF : `${i.q12} un · ${i.ncli ?? 0} cli · últ. ${dataBR(i.ult_venda)}`;
 
 export function rotuloDestino(i: ItemRaioX, d: DecisaoRow | undefined): { texto: string; decidido: boolean } {
   if (d?.destino) return { texto: ROTULOS[d.destino] ?? d.destino, decidido: true };
@@ -95,19 +95,53 @@ export function CartaoItem({ item, decisao, colunas }: { item: ItemRaioX; decisa
   );
 }
 
-/** Coluna de ação: abre o Sheet de decisão do item. */
-export const colDecidir = (onDecidir: (i: ItemRaioX) => void): Coluna => ({
+/** "Confirmar: <sugestão>" de um item (UX 2): o que o botão faz e o aviso do motor. Ausente = nada a confirmar. */
+export interface Confirmacao {
+  destino: Destino;
+  tiraDoMotor: boolean;
+}
+
+/**
+ * Coluna de ação. Item pendente com sugestão confirmável: "Confirmar: <destino>" (1 toque grava a decisão) + "Outro
+ * destino" (abre o painel). Senão, "Decidir" abre o painel. Um item por toque — nunca confirmar em lote.
+ */
+export const colDecidir = (
+  onDecidir: (i: ItemRaioX) => void,
+  confirmar?: { de: (i: ItemRaioX, d: DecisaoRow | undefined) => Confirmacao | null; onConfirmar: (i: ItemRaioX) => void; pendente: boolean },
+): Coluna => ({
   titulo: 'Ação',
   className: 'text-right',
-  render: (i) => (
-    <Button size="touch" variant="outline" aria-label={`Decidir ${i.codigo}`} onClick={() => onDecidir(i)}>
-      Decidir
-    </Button>
-  ),
+  render: (i, d) => {
+    const c = confirmar?.de(i, d) ?? null;
+    if (!c || !confirmar) {
+      return (
+        <Button size="touch" variant="outline" aria-label={`Decidir ${i.codigo}`} onClick={() => onDecidir(i)}>
+          Decidir
+        </Button>
+      );
+    }
+    return (
+      <span className="flex flex-col items-stretch gap-1">
+        <Button size="touch" aria-label={`Confirmar ${ROTULOS[c.destino]} em ${i.codigo}`} disabled={confirmar.pendente} onClick={() => confirmar.onConfirmar(i)}>
+          Confirmar: {ROTULOS[c.destino]}
+        </Button>
+        {c.tiraDoMotor && <span className="text-xs text-muted-foreground">tira do motor de compra</span>}
+        <Button size="touch" variant="outline" aria-label={`Outro destino para ${i.codigo}`} onClick={() => onDecidir(i)}>
+          Outro destino
+        </Button>
+      </span>
+    );
+  },
 });
 
 export const colValor: Coluna = {
   titulo: 'Valor',
   className: 'text-right',
-  render: (i) => (i.valor === null ? <span className="text-status-warning">{fmtValor(null)}</span> : fmtValor(i.valor)),
+  render: (i) => {
+    // Linha histórica (saiu do estoque): o valor é o da FOTO da coorte, dito como tal — nunca "R$ 0" nem valor de hoje.
+    if (i.fora_do_estoque) {
+      return <span className="text-status-warning">saiu do estoque · foto {fmtValor(i.valor_coorte ?? null)}</span>;
+    }
+    return i.valor === null ? <span className="text-status-warning">{fmtValor(null)}</span> : fmtValor(i.valor);
+  },
 };

@@ -185,3 +185,19 @@ export function aplicarCoorte(itens: ItemRaioX[], coorte: CoorteTop | null): Ite
     return { ...i, top: naCoorte, entrou_no_top: i.top_atual && !naCoorte };
   });
 }
+
+/**
+ * A sugestão não recomenda o que o servidor recusa (bug 5 da 2ª revisão): `raio_x_decidir` só aceita liquidar NOVO
+ * com `raio_x_inequivoco.inequivoco = true` (RX004). Sem esse veredito — aguarda (entrada recente, cold-start, corante…)
+ * ou leitura indisponível (null: ausente ≠ elegível) — "liquidar" vira "revisar" com o motivo, e some o atalho
+ * "Confirmar sugestão". O bloqueio continua no servidor; isto só evita sugerir o caminho que ele fecha.
+ */
+export function alinharSugestaoAoServidor(itens: ItemRaioX[]): ItemRaioX[] {
+  return itens.map((i) => {
+    if (i.destino_sugerido !== 'liquidar' || i.inequivoco === true) return i;
+    const porque = i.inequivoco === false
+      ? `aguarda: ${i.motivos_espera.map((m) => ROTULOS_ESPERA[m] ?? m).join(', ') || 'veredito do servidor'}`
+      : 'veredito "inequívoco" indisponível';
+    return { ...i, destino_sugerido: 'revisar', motivo_destino: `liquidar ainda não liberado (${porque}) · ${i.motivo_destino}` };
+  });
+}

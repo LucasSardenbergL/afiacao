@@ -25,8 +25,11 @@ type Fns = Database['public']['Functions'];
 export type FatoRpc = Fns['raio_x_estoque_fatos']['Returns'][number];
 // `troca_contrapartida` é anulável no banco e AUSENTE no bundle anterior à 20261101120000; o gerador a declara `string`
 // (regenerado pelo Lovable em 2026-11-01). O tipo da borda diz a verdade; o nulo vira null no domínio (abaixo).
-export type MedicaoRpc = Omit<Fns['raio_x_medicao']['Returns'][number], 'troca_contrapartida'> & {
+// `unidade_estoque`/`unidades_venda_periodo` (20261103120000) ainda não estão no types.ts gerado: opcionais aqui.
+export type MedicaoRpc = Omit<Fns['raio_x_medicao']['Returns'][number], 'troca_contrapartida' | 'unidade_estoque' | 'unidades_venda_periodo'> & {
   troca_contrapartida?: string | null;
+  unidade_estoque?: string | null;
+  unidades_venda_periodo?: string[] | null;
 };
 export type InequivocoRpc = Fns['raio_x_inequivoco']['Returns'][number];
 export type LinhaManual = ClassificacaoManual & { sku_codigo_omie: number };
@@ -108,6 +111,12 @@ export function comoLinhaMedicao(r: MedicaoRpc): LinhaMedicao {
     destino: exigirDestino(r.destino, r.sku_codigo_omie),
     // coluna nova no fim da RPC: bundle antes da migration recebe undefined → null (não "giro" por omissão)
     troca_contrapartida: r.troca_contrapartida == null ? null : exigirContrapartida(r.troca_contrapartida, r.sku_codigo_omie),
+    // colunas novas no fim (migration 20261103120000): bundle antes dela recebe undefined → null = sem prova de
+    // unidade → SKU com venda fica "sem medição" (fail-closed), nunca CX comparada com UN.
+    unidade_estoque: typeof r.unidade_estoque === 'string' && r.unidade_estoque ? r.unidade_estoque : null,
+    unidades_venda_periodo: Array.isArray(r.unidades_venda_periodo)
+      ? r.unidades_venda_periodo.filter((u): u is string => typeof u === 'string')
+      : null,
   };
 }
 

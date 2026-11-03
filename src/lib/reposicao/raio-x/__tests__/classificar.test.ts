@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N, aplicarInequivoco, ROTULOS_ESPERA } from '../classificar';
+import { alertaRecompra, categorizar, classificar, cobertura, ehEstoqueIndustrial, sugerirDestino, TOP_N, aplicarInequivoco, ROTULOS_ESPERA, alinharSugestaoAoServidor } from '../classificar';
 import { fato, HOJE } from './fixtures';
 
 describe('categorizar', () => {
@@ -200,5 +200,30 @@ describe('aplicarInequivoco (veredito do servidor)', () => {
     expect(r[0].motivos_espera).toEqual(['corante', 'cold_start']);
     expect(r[1].inequivoco).toBeNull();
     expect(ROTULOS_ESPERA.corante).toContain('corante');
+  });
+});
+
+describe('alinharSugestaoAoServidor (bug 5)', () => {
+  // 0 vendas, sem Sayerlack: a regra local sugere liquidar
+  const base = () => classificar([fato({ sku_codigo_omie: 1, q12: 0, fornecedor: 'Forn X', cadastro_em: '2025-01-01' })], new Map(), 'oben', HOJE)[0];
+  it('liquidar sugerido com o servidor dizendo inequívoco: segue liquidar', () => {
+    expect(base().destino_sugerido).toBe('liquidar');
+    const [i] = alinharSugestaoAoServidor([{ ...base(), inequivoco: true }]);
+    expect(i.destino_sugerido).toBe('liquidar');
+  });
+  it('servidor diz que aguarda (entrada recente): vira "revisar" com o motivo — nunca sugere o que o RX004 recusa', () => {
+    const [i] = alinharSugestaoAoServidor([{ ...base(), inequivoco: false, motivos_espera: ['entrada_recente', 'cold_start'] }]);
+    expect(i.destino_sugerido).toBe('revisar');
+    expect(i.motivo_destino).toContain('entrada de compra em 90d, cold-start');
+  });
+  it('veredito indisponível (null): também não sugere liquidar (ausente ≠ elegível)', () => {
+    const [i] = alinharSugestaoAoServidor([base()]);
+    expect(i.inequivoco).toBeNull();
+    expect(i.destino_sugerido).toBe('revisar');
+    expect(i.motivo_destino).toContain('indisponível');
+  });
+  it('outros destinos ficam como estão', () => {
+    const t = classificar([fato({ sku_codigo_omie: 2, q12: 0, fornecedor: 'Sayerlack' })], new Map(), 'oben', HOJE)[0];
+    expect(alinharSugestaoAoServidor([t])[0].destino_sugerido).toBe('trocar');
   });
 });

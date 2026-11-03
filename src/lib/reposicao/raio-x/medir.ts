@@ -2,7 +2,8 @@
 // A janela de venda começa na FOTO (imutável), não em decidido_em: trocar o destino não apaga venda já feita.
 // NADA aqui é "caixa": estoque reduzido é saída valorizada ao CMC da foto, receita é o faturado dessas
 // unidades, crédito de troca é o que o operador informou. São parcelas separadas — nunca somadas como caixa.
-// Ausente ≠ zero: sem venda por NF (Colacor) vendido/liquidado são null; sem permissão de compras
+// Ausente ≠ zero: sem venda por NF (Colacor) vendido/liquidado são null; venda numa unidade ≠ da do estoque (sem
+// conversão comprovada) deixa o SKU sem medição — nunca compara CX vendida com UN em estoque; sem permissão de compras
 // (compras_apos null) recompra/contradições ficam null/vazias com `compras_visiveis: false`.
 import type { Destino, Empresa, LinhaMedicao } from './tipos';
 
@@ -48,6 +49,19 @@ export interface Medicao {
   sem_medicao_sem_custo_n: number;
 }
 
+/**
+ * A quantidade vendida (unidade da NF) só se compara com o saldo (unidade do estoque) quando TODA venda desde a foto
+ * saiu na unidade do estoque. Sem venda no período (qtd 0) não há o que converter. Unidade ausente (RPC antiga,
+ * cadastro sem unidade) ou divergente (vende em CX, estoca em UN) → sem prova de equivalência → false.
+ */
+export function unidadeEquivalente(l: Pick<LinhaMedicao, 'qtd_vendida' | 'unidade_estoque' | 'unidades_venda_periodo'>): boolean {
+  if (l.qtd_vendida !== null && l.qtd_vendida <= 0) return true;
+  const ue = l.unidade_estoque;
+  const uv = l.unidades_venda_periodo;
+  if (!ue || !uv || uv.length === 0) return false;
+  return uv.every((u) => u === ue);
+}
+
 export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
   const comNf = empresa === 'oben';
   const comprasVisiveis = linhas.every((l) => l.compras_apos !== null);
@@ -74,7 +88,7 @@ export function medir(linhas: LinhaMedicao[], empresa: Empresa): Medicao {
     }
 
     const { foto_saldo: fs, foto_cmc: fc, saldo_atual: sa } = l;
-    if (fs === null || fc === null || sa === null || (comNf && l.qtd_vendida === null)) {
+    if (fs === null || fc === null || sa === null || (comNf && (l.qtd_vendida === null || !unidadeEquivalente(l)))) {
       semMedicao.push(l.sku_codigo_omie);
       if (l.foto_valor === null) semMedicaoSemCustoN += 1; else semMedicaoValor += l.foto_valor;
       continue;
