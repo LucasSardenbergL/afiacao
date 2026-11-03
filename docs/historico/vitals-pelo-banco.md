@@ -55,6 +55,13 @@ Para comparar builds, acrescente `AND build_id = '<entry do build>'`. O PostHog 
 - **2ª testemunha (psql-ro):** RLS ligada, as 4 policies (insert/update/select próprios +
   service_role), trigger de carimbo, PK `(user_id, metrica_id)`, 0 linhas.
 
+## Desfecho (2026-11-02)
+
+- PR #3521 mergeado às 12:00 UTC (`7ff3068e`); o ar passou a servir a main (`f162f19d`, entry
+  `index-BSTKUhBH`, que contém `telemetria_vitals`).
+- **Canal imune provado:** o aparelho `1aedeba2` (0 eventos no PostHog) gravou CLS, FCP, LCP e TTFB a
+  partir das 16:06 UTC, no build `index-C460KMMi`. Era a fatia do uso que a linha de base não via.
+
 ## Retenção
 
 180 dias, escrita no `COMMENT ON TABLE`. Ainda não há expurgo automático: o volume é ~5 linhas por

@@ -240,3 +240,14 @@ com o nome de reserva (`scripts/radar/municipios.ts`). Ganham coordenada 17 muni
 `chunk_municipios` regrava `radar_municipios`. Ficam de fora o EXTERIOR e 3 códigos que só têm
 concorrente e nenhum lead (são 3 estabelecimentos), porque o universo de municípios da carga vem dos
 leads.
+
+**Aplicado em prod sem esperar o lote (2026-11-03).** A carga agendada de 2026-11-02 parou fail-closed: a
+sonda da RFB deu timeout (`dadosabertos.rfb.gov.br` não respondia nem para 2026-10), o que conta como
+inconclusivo, não como "não publicado". A próxima tentativa é a segunda-feira seguinte. Para não deixar
+o conserto (#3547) esperando a RFB, os 17 municípios receberam, via MCP, as coordenadas que a carga
+gravaria (pelo `siafi_id`). Antes houve um ensaio com `RAISE 'ENSAIO_OK'`, e o psql-ro confirmou que ele
+não gravou nada. O apply foi transacional, com PRE de 17 sem coordenada, POS de 17 atualizados e zero
+restantes fora de EX. Ele não é reaplicável: rodar de novo aborta na PRE, porque já não há 17 sem
+coordenada. Pelo psql-ro depois: nenhum município com lead sem coordenada e **nenhum lead sem ponto**.
+Na camada de concorrentes, ficam sem ponto o EXTERIOR e os 3 códigos sem lead (9 estabelecimentos).
+
