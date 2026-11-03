@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 763
+-- Total de custom migrations: 764
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -830,7 +830,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261102204836', 'rls_has_role_initplan_classe', '20261102204836_rls_has_role_initplan_classe.sql'),
   ('20261103093424', 'tint_promote_escreve_so_o_que_mudou', '20261103093424_tint_promote_escreve_so_o_que_mudou.sql'),
   ('20261103100000', 'radar_agregado_municipio', '20261103100000_radar_agregado_municipio.sql'),
-  ('20261103100100', 'radar_busca_trgm', '20261103100100_radar_busca_trgm.sql')
+  ('20261103100100', 'radar_busca_trgm', '20261103100100_radar_busca_trgm.sql'),
+  ('20261103131500', 'radar_lista_rpc', '20261103131500_radar_lista_rpc.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3303,7 +3304,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_agregado_municipio', 'table', 'public', 'radar_agregado_municipio', ''),
   ('radar_agregado_municipio', 'index', 'public', 'idx_radar_empresas_lote_vista', 'radar_empresas'),
   ('radar_agregado_municipio', 'cron_job', 'cron', 'radar-agregado-recalcular', ''),
-  ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas')
+  ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas'),
+  ('radar_lista_rpc', 'function', 'public', 'radar_lista', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5824,7 +5826,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_agregado_municipio', 'table', 'public', 'radar_agregado_municipio', ''),
   ('radar_agregado_municipio', 'index', 'public', 'idx_radar_empresas_lote_vista', 'radar_empresas'),
   ('radar_agregado_municipio', 'cron_job', 'cron', 'radar-agregado-recalcular', ''),
-  ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas')
+  ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas'),
+  ('radar_lista_rpc', 'function', 'public', 'radar_lista', '')
 )
 SELECT
   e.migration,
