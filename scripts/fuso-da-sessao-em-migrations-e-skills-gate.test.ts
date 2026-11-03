@@ -39,6 +39,7 @@ const FIX = 'supabase/migrations/20260927202603_fuso_sp_relogio_da_sessao_rpcs_v
 const SUCESSORAS_DO_FIX = [
   'supabase/migrations/20261028014827_projecao_13s_saldo_inicial_fresco_ou_nulo.sql',
   'supabase/migrations/20261031142000_radar_kpis_conversao.sql',
+  'supabase/migrations/20261103100000_radar_agregado_municipio.sql',
 ];
 const RADAR = 'supabase/migrations/20260612130000_radar_rpcs_contato.sql';
 const VENDAS = '.claude/skills/bi-colacor/references/queries-vendas.md';

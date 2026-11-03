@@ -897,3 +897,8 @@ db/test-reconciliacao-corante.sh           11  falsificar=fora-do-ci  # 7 sabota
 # lease cercado de 7 min (> 400 s de parede da edge), terminal sem_progresso/erro_persistente re-armável, só falha que
 # ABANDONOU a conta entra no relatório, cron de 1 min só com rodada aberta + varredura diária (20261102005510, o semanal saiu); ACL service_role nas operacionais.
 db/test-clientes-import-servidor.sh        36  falsificar=14
+# Radar leitor 4 do Mini (20261103100000): radar_kpis/radar_contagem_por_municipio/radar_penetracao_por_municipio leem
+# radar_agregado_municipio (1 escritor, cron :35) em vez de radar_empresas inteira. Equivalência com o corpo vivo de prod em
+# 17 contagens + 4 penetrações + KPIs; lote novo sem recálculo = 'agregado indisponível' (a_contatar NULL), nunca 0;
+# o escritor sai sem ler a tabela fora do marco (0 scans medidos em pg_stat_xact); RLS/ACL fechados; cron; PRE.
+db/test-radar-agregado.sh                  50  falsificar=17

@@ -31,7 +31,10 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
   const [open, setOpen] = useState(false);
   const selectedCodes = new Set(value.map((c) => c.codigo));
 
-  const { data: cidades = [], isLoading } = useRadarCidadesRota();
+  const { data: cidades = [], isLoading, isError } = useRadarCidadesRota();
+  // Erro sem snapshot local não é "nenhuma cidade": a leitura falhou, ou a contagem do Radar está sendo
+  // recalculada (o agregado do lote vigente, na hora seguinte à carga mensal — RAISE 'agregado indisponível').
+  const semCidades = isError && cidades.length === 0;
   const { user } = useAuth();
   const ufKey = user?.id ? `radar-uf-rota:v1:${user.id}` : null;
   const [uf, setUf] = useState<string | null>(() => {
@@ -75,7 +78,9 @@ export function CityMultiSelector({ value, onToggle, onRemove }: CityMultiSelect
             <Command>
               <CommandInput placeholder="Buscar cidade…" />
               <CommandList>
-                <CommandEmpty>Nenhuma cidade encontrada.</CommandEmpty>
+                <CommandEmpty>{semCidades
+                    ? 'Não foi possível carregar as cidades do Radar (a contagem pode estar sendo recalculada — tente em alguns minutos).'
+                    : 'Nenhuma cidade encontrada.'}</CommandEmpty>
                 <CommandGroup>
                   {cidadesFiltradas.map((cidade) => {
                     const selected = selectedCodes.has(cidade.codigo);

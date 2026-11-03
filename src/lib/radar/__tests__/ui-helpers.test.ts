@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACOES_CONTATO, presetParaParams, idadeEmAnos, rotuloPorte,
   formatarCapital, formatarCnpj, digitosCnae, seloRfb, formatarDataIso, scoreUI, versaoDaFila, selosFilial, textoFilialFicha,
+  agregadoIndisponivel, avisoContagem, formatarContagensEm, MARCA_AGREGADO_INDISPONIVEL,
 } from '../ui-helpers';
 
 describe('ACOES_CONTATO', () => {
@@ -222,5 +223,34 @@ describe('lista: rótulos, região e catálogo de CNAE', () => {
     expect(buscarCnaesAlvo('padaria')).toEqual([]);
     expect(nomeCnaeAlvo('2391-5/03')).toMatch(/marmorarias/);
     expect(nomeCnaeAlvo('0000000')).toBeNull();
+  });
+});
+
+describe('contagens pré-computadas (radar_agregado_municipio)', () => {
+  // A marca tem de ser a do RAISE da migration 20261103100000 — a prova PG17 (db/test-radar-agregado.sh) casa a mesma.
+  const raise = { message: 'agregado indisponível: as contagens do lote vigente ainda não foram calculadas', code: 'P0001' };
+
+  it('reconhece o RAISE das RPCs de contagem (PostgrestError), e só ele', () => {
+    expect(MARCA_AGREGADO_INDISPONIVEL).toBe('agregado indisponível');
+    expect(agregadoIndisponivel(raise)).toBe(true);
+    expect(agregadoIndisponivel(new Error('agregado indisponível: x'))).toBe(true);
+    expect(agregadoIndisponivel({ message: 'forbidden: radar_prospectar' })).toBe(false);
+    expect(agregadoIndisponivel({ message: 'canceling statement due to statement timeout' })).toBe(false);
+    expect(agregadoIndisponivel(null)).toBe(false);
+    expect(agregadoIndisponivel('agregado indisponível')).toBe(false);
+  });
+
+  it('o aviso separa "indisponível (recalculando)" de falha de leitura — nenhum dos dois é 0', () => {
+    expect(avisoContagem(raise, 'Contagem por cidade')).toBe(
+      'Contagem por cidade indisponível: a contagem do lote vigente está sendo recalculada (até 1 h depois da carga).',
+    );
+    expect(avisoContagem({ message: 'boom' }, 'Contagem por cidade')).toBe('Não foi possível carregar contagem por cidade.');
+  });
+
+  it('hora da contagem no fuso da loja; ausente ou ilegível → null (não inventa hora)', () => {
+    expect(formatarContagensEm('2026-11-03T06:35:12.4+00:00')).toMatch(/^03\/11,? 03:35$/);
+    expect(formatarContagensEm(null)).toBeNull();
+    expect(formatarContagensEm(undefined)).toBeNull();
+    expect(formatarContagensEm('ontem')).toBeNull();
   });
 });
