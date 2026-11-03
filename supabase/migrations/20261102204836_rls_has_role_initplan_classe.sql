@@ -44,11 +44,15 @@
 -- policies dela são lidas (READ COMMITTED: cada statement vê o que já commitou).
 --
 -- Locks: ALTER POLICY pega AccessExclusiveLock em cada tabela até o COMMIT.
--- lock_timeout de 500 ms fica ABAIXO do deadlock_timeout da prod (1 s): num
--- ciclo com um cron, quem desiste é esta migration, não o cron. E há um
--- orçamento GLOBAL de 5 s (o lock_timeout vale por tentativa e as esperas
--- somariam), abaixo do statement_timeout de 8 s do authenticated: a tela espera
--- no máximo isso e a migration volta atrás inteira. Re-tentar depois é seguro.
+-- Toda espera é limitada pelo lock_timeout de 500 ms, e há um orçamento GLOBAL
+-- de 5 s (P6), conferido antes de cada tabela e ao fim do laço. Como nenhum passo
+-- espera mais que 500 ms, a tela fica travada no máximo ~5,5 s, abaixo do
+-- statement_timeout de 8 s do authenticated, e a migration volta atrás inteira.
+-- Re-tentar depois é seguro.
+-- Deadlock: o lock_timeout abaixo do deadlock_timeout da prod (1 s) FAVORECE que
+-- a vítima de um ciclo seja esta migration, mas não garante: um cron que já
+-- esperava pode detectar o ciclo primeiro e ser abortado. Os crons re-rodam no
+-- próximo agendamento. Aplicar com tráfego baixo e sem DDL concorrente.
 SET LOCAL lock_timeout = '500ms';
 -- Renderizar e reparsear com o MESMO search_path, explícito.
 SET LOCAL search_path = public;
@@ -143,6 +147,10 @@ BEGIN
       END IF;
     END LOOP;
   END LOOP;
+
+  IF clock_timestamp() - inicio > orcamento THEN
+    RAISE EXCEPTION 'P6 FALHOU: orçamento de % estourado ao fim (% tabelas travadas) — re-tentar mais tarde', orcamento, n_tab;
+  END IF;
 
   RAISE NOTICE 'rls_has_role_initplan: % tabelas, % policies reescritas, % chamadas embrulhadas, % ms',
     n_tab, n_pol, n_cham, round(extract(epoch FROM clock_timestamp() - inicio) * 1000);

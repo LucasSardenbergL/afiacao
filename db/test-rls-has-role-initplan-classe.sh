@@ -14,8 +14,8 @@
 # ║   L1 limite documentado: identidade trocada no meio do statement              ║
 # ║  Falsifica (controle verde ANTES, na mesma invocação): F1 troca o papel → P3  ║
 # ║  · F2 alarga TO → P1 · F3 pula tabela → P5 · F5 orçamento → P6 · F6 → P0      ║
-# ║  · F4 policy sabotada depois → A1 e A2. A8 fica vermelho com a versão que lia ║
-# ║  antes de travar (conferido à mão no PR).                                     ║
+# ║  · F5b atraso no fim → P6 · F4 policy sabotada depois → A1 e A2               ║
+# ║  · F7 a versão que lia antes de travar (fixture v0) → A8 vermelho             ║
 # ║  Rodar:  bash db/test-rls-has-role-initplan-classe.sh > /tmp/t.log 2>&1      ║
 # ║  Locale: PROVA_LOCALE=pt_BR.UTF-8 bash db/test-rls-has-role-initplan-classe.sh║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -403,18 +403,50 @@ SQL
 eq "A7 mesmo plano, emp→cust→master→sem uid" "$A7" "503,0,503,0"
 
 echo "── A8 corrida: policy apertada por outra sessão ANTES do lock é a que vale ──"
-"$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base corrida
-# Outra sessão segura o lock de profiles com a policy apertada (só master) e commita em 300 ms.
-Pdb corrida -q -c "BEGIN; ALTER POLICY \"Employees can view all profiles\" ON public.profiles USING (has_role(auth.uid(), 'master'::app_role)); SELECT pg_sleep(0.3); COMMIT;" >/dev/null 2>&1 &
-APERTA=$!
-for _ in $(seq 1 50); do
-  [ "$(Pdb corrida -tA -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE c.relname='profiles' AND l.mode='AccessExclusiveLock' AND l.granted;")" = "1" ] && break
-  sleep 0.02
-done
-if aplica corrida "$MIG" > /tmp/${SLUG}-corrida.log 2>&1; then ok "A8 migration esperou o lock e passou"; else bad "A8 migration falhou na corrida"; cat /tmp/${SLUG}-corrida.log; fi
-wait "$APERTA" || true
-A8=$(Pdb corrida -tA -c "SELECT qual FROM pg_policies WHERE tablename='profiles' AND policyname='Employees can view all profiles';")
-eq "A8 vale a versão apertada (só master), embrulhada" "$A8" "( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)"
+# corrida <db> <migration> → imprime a qual final de "Employees can view all profiles".
+# A outra sessão aperta a policy (só master), segura o AccessExclusive e só commita
+# DEPOIS de ver a migration esperando um lock em profiles — sem espera vista, ela
+# aborta e a corrida não conta. Determinístico: não depende de quem chega primeiro.
+corrida() {
+  local db="$1" mig="$2" aperta rc_aperta rc_mig
+  "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base "$db"
+  Pdb "$db" -q > "/tmp/${SLUG}-$db-aperta.log" 2>&1 <<'SQL' &
+BEGIN;
+ALTER POLICY "Employees can view all profiles" ON public.profiles USING (has_role(auth.uid(), 'master'::app_role));
+DO $$ BEGIN
+  FOR i IN 1..300 LOOP
+    IF EXISTS (SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+               WHERE c.relname = 'profiles' AND NOT l.granted) THEN RETURN; END IF;
+    PERFORM pg_sleep(0.01);
+  END LOOP;
+  RAISE EXCEPTION 'CORRIDA_SEM_ESPERA';
+END $$;
+COMMIT;
+SQL
+  aperta=$!
+  for _ in $(seq 1 100); do
+    [ "$(Pdb "$db" -tA -c "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid=l.relation WHERE c.relname='profiles' AND l.mode='AccessExclusiveLock' AND l.granted;")" = "1" ] && break
+    sleep 0.02
+  done
+  if aplica "$db" "$mig" > "/tmp/${SLUG}-$db.log" 2>&1; then rc_mig=0; else rc_mig=$?; fi
+  if wait "$aperta"; then rc_aperta=0; else rc_aperta=$?; fi
+  echo "$rc_aperta|$rc_mig|$(Pdb "$db" -tA -c "SELECT qual FROM pg_policies WHERE tablename='profiles' AND policyname='Employees can view all profiles';")"
+}
+APERTADA="( SELECT has_role(auth.uid(), 'master'::app_role) AS has_role)"
+A8=$(corrida corrida "$MIG")
+eq "A8 a outra sessão viu a migration esperando e commitou" "${A8%%|*}" "0"
+R="${A8#*|}"; eq "A8 a migration passou depois da espera" "${R%%|*}" "0"
+eq "A8 vale a versão apertada (só master), embrulhada" "${R#*|}" "$APERTADA"
+
+echo "── F7 controle negativo: a versão que lia ANTES de travar sobrescreve a policy apertada ──"
+F7=$(corrida corrida_v0 "$REPO_ROOT/db/fixtures/rls-has-role-initplan-v0-le-antes-de-travar.sql")
+eq "F7 a outra sessão viu a v0 esperando e commitou" "${F7%%|*}" "0"
+R="${F7#*|}"
+if [ "${R#*|}" != "$APERTADA" ] && printf '%s' "${R#*|}" | grep -q "'employee'::app_role"; then
+  ok "F7 A8 morde: a v0 devolveu o employee à policy apertada"
+else
+  bad "F7 a v0 NÃO sobrescreveu (A8 não distingue): [${R#*|}]"
+fi
 
 echo "── A9 lock_timeout: leitor segurando a tabela → a migration desiste e volta atrás ──"
 "$PGBIN/createdb" -p "$PORT" -h /tmp -U postgres -T base trava
@@ -490,6 +522,8 @@ echo "── F3 pula uma tabela → P5 ──"
 sabota_mig F3 "s/CONTINUE WHEN q_new IS NOT DISTINCT FROM r.qual/CONTINUE WHEN t = 'profiles' OR q_new IS NOT DISTINCT FROM r.qual/" "P5 FALHOU"
 echo "── F5 orçamento zerado → P6 ──"
 sabota_mig F5 "s/orcamento constant interval := '5 seconds'/orcamento constant interval := '0 seconds'/" "P6 FALHOU"
+echo "── F5b atraso depois da última tabela → o teto do FIM morde (P6) ──"
+sabota_mig F5b "s/^  END LOOP;\$/  END LOOP; PERFORM pg_sleep(5.2);/" "P6 FALHOU: orçamento de 00:00:05 estourado ao fim"
 echo "── F6 isolamento exigido trocado → P0 ──"
 sabota_mig F6 "s/current_setting('transaction_isolation') <> 'read committed'/current_setting('transaction_isolation') <> 'serializable'/" "P0 FALHOU"
 
