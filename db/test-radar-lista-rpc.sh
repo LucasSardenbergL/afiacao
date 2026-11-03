@@ -71,6 +71,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   exit $?
 fi
 
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5573}"
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-radar-lista.XXXXXX")/data"
@@ -103,6 +104,7 @@ PY
 }
 MD5_CRAVADO="$(grep -o "v_md5 <> '[0-9a-f]\{32\}'" "$MIG" | grep -o '[0-9a-f]\{32\}')"
 
+# shellcheck disable=SC2016  # os trechos sabotados são SQL literal ($1, $w$…), não expansão do shell
 case "${SABOTAGEM:-}" in
   "") ;;
   sem_indice) sabotar "e.razao_social ILIKE private" "(e.razao_social || '') ILIKE private" ;;
