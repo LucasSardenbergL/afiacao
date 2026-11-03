@@ -235,7 +235,24 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   | blocos lógicos (hit + read) nas 2 tabelas | — | 14.946 (117 MB) | — |
   | WAL do banco na janela de 10 s do commit | — | 1,0 MB | — |
 
-  O banco inteiro leu 18.339 blocos (143 MB) nos 10 s do commit, mas esse número inclui o resto da carga daquele intervalo. Limite da medida: é um run pequeno; a classe que reprovou o Mini (centenas de stagings em dezenas de pares) ainda não passou pelo corpo novo. Nela a escrita cai do mesmo jeito, mas a LEITURA das fórmulas do par para comparar continua: ~1 GB nas duas tabelas por promoção grande. Se isso cabe nos 400 MB/15 min do Mini, só a próxima carga grande diz. Ao contrário da escrita, essa leitura não suja páginas e não expulsa o cache.
+  O banco inteiro leu 18.339 blocos (143 MB) nos 10 s do commit, mas esse número inclui o resto da carga daquele intervalo. Limite da medida: é um run pequeno; a classe que reprovou o Mini (centenas de stagings em dezenas de pares) ainda não passou pelo corpo novo. Nela a escrita cai do mesmo jeito, mas a LEITURA das fórmulas do par para comparar continua: ~1 GB nas duas tabelas por promoção grande (estimativa; o item abaixo mediu mais). Ao contrário da escrita, essa leitura não suja páginas, mas expulsa o cache: o que ela traz para os 256 MB de `shared_buffers` derruba o resto.
+- **Medida do 1º run médio (03/11, psql-ro, `pg_stat_*`):** o `9fdaaee4` (24 stagings, ingerido 13:24, promovido 13:29:03 UTC) aceitou **140.864 chaves e pulou todas** (`formulas_identicas_puladas` = 140.864, `recalculadas` = 0). Delta de 13:07:58 a 16:31:19, uma janela em que ele foi o único run de fórmulas:
+
+  | | `tint_formulas` | `tint_formula_itens` |
+  |---|---|---|
+  | escritas | 64 ins + 32 upd | 276 ins + 84 del |
+  | lido do disco: heap | 78.040 blocos (610 MB) | 107.137 (837 MB) |
+  | lido do disco: índice | 12.293 (96 MB) | 108.198 (845 MB) |
+  | tamanho atual (heap / índices) | 430 / 563 MB | 571 / 592 MB |
+
+  O corpo antigo reescreveria ~141 mil fórmulas e ~420 mil itens apagados mais ~420 mil inseridos. O corpo novo escreveu 96 fórmulas e 360 itens. A **leitura** das duas tabelas, porém, somou **305.668 blocos (~2,4 GB)**, mais que o tamanho delas (~2,2 GB). Comparar 140 mil chaves espalhadas varre as tabelas quase inteiras, e o que os 256 MB de cache despejam no meio é lido de novo.
+
+  A atribuição foi confirmada por controle: de 16:32:40 a 16:42:40 só rodaram promoções de catálogo, e as duas tabelas leram **0 blocos do disco** (2.640 + 363 hits). O banco inteiro leu 119 MB nessa janela.
+
+  **Veredito:** a escrita acabou, mas a leitura de comparação de um run de 24 stagings é ~6× o teto de 400 MB/15 min do Mini. A causa é o volume que a reexpansão por par aceita (140 mil chaves para 24 stagings), e não o diff. Os 3 caminhos possíveis são de outra entrega:
+  - comparar sem ler os itens, com uma assinatura da receita e um carimbo de frescor no próprio cabeçalho (1 escritor: o promote). Isso corta os ~1,7 GB de `tint_formula_itens`;
+  - não reexpandir chave cuja entrada não mudou. Isso toca a granularidade por par (#3333/#3355) e é decisão de produto;
+  - aceitar o pico, porque runs de fórmula são ~2 por dia.
 
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
