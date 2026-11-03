@@ -624,20 +624,6 @@ export const useBundleEngine = () => {
         }
       }
 
-      // Count triples
-      const tripleFreq = new Map<string, number>();
-      for (const basket of baskets) {
-        const unique = [...new Set(basket)].filter(id => frequentItems.includes(id));
-        for (let i = 0; i < unique.length; i++) {
-          for (let j = i + 1; j < unique.length; j++) {
-            for (let k = j + 1; k < unique.length; k++) {
-              const key = [unique[i], unique[j], unique[k]].sort().join('|');
-              tripleFreq.set(key, (tripleFreq.get(key) || 0) + 1);
-            }
-          }
-        }
-      }
-
       // Generate association rules
       const discoveredRules: AssociationRule[] = [];
 
