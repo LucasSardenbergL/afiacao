@@ -185,6 +185,7 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 
 - **Prova no repo:** `src/hooks/__tests__/useTintAlertas.leitura-por-run.test.tsx` trava o `.in('sync_run_id', <ids>)`, a ausência do embed e a não-consulta sem runs. Falsificado: com o embed de volta e sem o guard de vazio, os 2 casos ficam vermelhos.
 - **Linha de base para o pós-Publish** (12:09 UTC): `pg_stat_all_tables` de `tint_sync_errors` com `seq_scan = 69`, `idx_scan = 941` e `last_seq_scan` 12:07:29 UTC (o badge polando). Merge ≠ produção: o efeito só aparece depois do **Publish** no Lovable e conforme as abas trocam de build (o SW só troca quando o cliente clica). Sinal de pronto: `seq_scan` para de subir e `last_seq_scan` congela, enquanto `idx_scan` sobe.
+- **Em prod (conferido 03/11 00:37 UTC, psql-ro):** PR #3485 mergeado em 01/11 às 13:10 UTC, com Publish feito. `seq_scan` 69 → 81 e `last_seq_scan` **congelado em 02/11 09:21 UTC** (~15 h sem nenhum, contra 1 por poll antes). Os 12 a mais são das abas que ainda tinham o build velho até trocar. `idx_scan` 941 → 259.663, pela query nova em `idx_tint_sync_errors_run`. Leitor 2 resolvido.
 
 ## 2026-11-03 — a promoção de fórmulas escreve só o que mudou (migration `20261103093424`)
 
