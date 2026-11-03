@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 762
+-- Total de custom migrations: 763
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -828,6 +828,7 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261102183000', 'retencao_scores_60d_semanal', '20261102183000_retencao_scores_60d_semanal.sql'),
   ('20261102204356', 'drop_customer_preferred_items', '20261102204356_drop_customer_preferred_items.sql'),
   ('20261102204836', 'rls_has_role_initplan_classe', '20261102204836_rls_has_role_initplan_classe.sql'),
+  ('20261103093424', 'tint_promote_escreve_so_o_que_mudou', '20261103093424_tint_promote_escreve_so_o_que_mudou.sql'),
   ('20261103100000', 'radar_agregado_municipio', '20261103100000_radar_agregado_municipio.sql'),
   ('20261103100100', 'radar_busca_trgm', '20261103100100_radar_busca_trgm.sql')
 ),
