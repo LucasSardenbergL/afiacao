@@ -18,11 +18,17 @@ Nenhum título em aberto tinha documento. Todos tinham `omie_codigo_cliente`, e 
 
 ## Regra nova
 
-- **Identidade:** o par (empresa, código Omie) leva a um user pelo `omie_customer_account_map`, que tem `UNIQUE (omie_codigo_cliente, account)`. Os 576 vencidos 31+ casaram todos com um único user.
-- **Alias fiscal (database.md §5):** com alias `active` em `customer_canonical_alias`, a dívida soma no canônico. Hoje o mapa já aponta o código colacor_sc do alias para o canônico (1.633/1.633). Mesmo assim, o hook dobra o alias de forma defensiva. Alias `conflict` deixa a identidade ambígua, e a dívida fica desconhecida.
-- **Linha-clone fora do spine:** 1.459 scores são de users alias (churn 100, nenhuma compra em 180 dias, artefato do B-lite), e 1.458 deles apareciam em "observação". Quando o canônico está no spine, a linha do alias sai.
+- **Identidade fresca e unívoca:** o par (empresa, código Omie) leva a um user pela view `omie_customer_account_map_fresco`, que só traz vínculo tocado pelo sync nos últimos 7 dias. A tabela tem `UNIQUE (omie_codigo_cliente, account)`. Vínculo velho vira órfão. Os 26.625 vínculos tinham sido tocados no próprio dia da medição, e os 576 vencidos 31+ casaram todos com um único user.
+- **Alias fiscal (database.md §5):** com alias `active` em `customer_canonical_alias`, a dívida soma no canônico. Hoje o mapa já aponta o código colacor_sc do alias para o canônico (1.633/1.633). Mesmo assim, o hook dobra o alias de forma defensiva. Alias `conflict`, cadeia (`A→B→C`) e ciclo (`A↔B`) deixam a identidade ambígua, e a dívida fica desconhecida. O `carteira-rebuild` também aborta diante de cadeia.
+- **Uma linha por identidade:** 1.459 scores são de users alias (churn 100, nenhuma compra em 180 dias, artefato do B-lite), e 1.458 deles apareciam em "observação". O spine fica com uma linha por identidade resolvida: a do próprio canônico ou, se ele não estiver no spine, a de maior prioridade. Assim a mesma dívida não é somada duas vezes na exposição.
 - **Ausente ≠ zero:** se um título vencido não tem dono unívoco (sem código, sem vínculo, ambíguo, alias em conflito ou saldo nulo), ele vai para `recebiveisSemCliente`. Nesse caso, quem não tem dívida atribuída fica `null` ("sem dado"), porque o título órfão pode ser dele. Quem tem dívida atribuída continua com sinal `true`, e o valor dele passa a ser um **piso**: a tela mostra "≥" e um aviso.
 - **Corte:** "31+ dias" agora é `vencimento <= hoje-31`. Antes era `lt`, que exigia 32 dias ou mais.
+
+## Prova
+
+- 25 testes em `src/hooks/__tests__/useUtiContas.test.ts`. A leitura (`lerUtiContas`) roda contra um fake do PostgREST que filtra de verdade.
+- Falsificação com 12 sabotagens: suspensão do "ok", ambiguidade, alias em conflito, cadeia, linha-clone, preferência pelo canônico, chave sem empresa, saldo nulo, `lte`→`lt`, alias vazio por RLS, tabela crua no lugar da view fresca e chunk descartado. Cada uma foi exigida vermelha em `LC_ALL=C` e em `pt_BR.UTF-8`, com controle verde na mesma invocação.
+- Codex (`-r high`) respondeu AJUSTAR com 2 P1 e 2 P2: frescor, cadeia/ciclo, duplicação sem canônico no spine e leitura sem teste. Os quatro pontos estão neste PR.
 
 ## Limite conhecido
 

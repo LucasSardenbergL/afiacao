@@ -115,11 +115,14 @@ export interface TituloRow {
   saldo: number | null;
 }
 
-/** Cadastro Omie → user (omie_customer_account_map; UNIQUE (omie_codigo_cliente, account) no banco). */
+/**
+ * Cadastro Omie → user, lido da view `omie_customer_account_map_fresco` (vínculo tocado pelo sync
+ * nos últimos 7 dias; UNIQUE (omie_codigo_cliente, account) na tabela). Vínculo velho = órfão.
+ */
 export interface VinculoRow {
-  account: string;
-  omie_codigo_cliente: number;
-  user_id: string;
+  account: string | null;
+  omie_codigo_cliente: number | null;
+  user_id: string | null;
 }
 
 /**
@@ -144,6 +147,8 @@ export function atribuirVencidos(input: {
 }): { vencidoPorCliente: Map<string, number>; semCliente: RecebiveisSemCliente; canonico: (userId: string) => string | null } {
   const donosPorCadastro = new Map<string, Set<string>>();
   for (const v of input.vinculos) {
+    // Coluna de view é anulável no tipo: vínculo incompleto não prova dono (o título fica órfão).
+    if (v.account == null || v.omie_codigo_cliente == null || v.user_id == null) continue;
     const chave = `${v.account}:${v.omie_codigo_cliente}`;
     const donos = donosPorCadastro.get(chave) ?? new Set<string>();
     donos.add(v.user_id);
@@ -152,11 +157,17 @@ export function atribuirVencidos(input: {
 
   const aliasPorUser = new Map<string, AliasRow>();
   for (const a of input.aliases) aliasPorUser.set(a.alias_user_id, a);
-  // null = identidade ambígua (alias em conflito): não dá para dizer de quem é a dívida.
-  const canonico = (userId: string): string | null => {
+  // null = identidade ambígua: alias em conflito, ou cadeia/ciclo (canônico que também é alias
+  // vivo — o carteira-rebuild aborta nesse caso). Não dá para dizer de quem é a dívida.
+  const aliasVivo = (userId: string) => {
     const a = aliasPorUser.get(userId);
-    if (!a || a.status === 'inactive') return userId;
-    return a.status === 'active' ? a.canonical_user_id : null;
+    return a && a.status !== 'inactive' ? a : null;
+  };
+  const canonico = (userId: string): string | null => {
+    const a = aliasVivo(userId);
+    if (!a) return userId;
+    if (a.status !== 'active' || aliasVivo(a.canonical_user_id)) return null;
+    return a.canonical_user_id;
   };
 
   const vencidoPorCliente = new Map<string, number>();
@@ -205,16 +216,22 @@ export function montarContasUti(input: {
   const { vencidoPorCliente, semCliente, canonico } = atribuirVencidos(input);
   const atribuicaoCompleta = semCliente.titulos === 0;
 
-  const spineIds = new Set(input.scores.map((s) => s.customer_user_id));
-  // Dedup do spine: um cliente pode ter score por mais de um farmer — fica o de maior prioridade.
-  // O score do alias fiscal ATIVO sai quando o canônico está no spine: é o mesmo cliente, e o
-  // cadastro-clone não tem compra própria (churn 100 é artefato do B-lite, não sinal).
+  // Dedup do spine: UMA linha por identidade resolvida (alias fiscal ativo → canônico). Fica a
+  // linha do próprio canônico; sem ela, a de maior prioridade (vale também entre farmers). O
+  // cadastro-clone não tem compra própria (churn 100 é artefato do B-lite, não sinal), e duas
+  // linhas da mesma identidade somariam a mesma dívida duas vezes na exposição.
   const porCliente = new Map<string, ScoreRow>();
   for (const s of input.scores) {
-    const dono = canonico(s.customer_user_id);
-    if (dono != null && dono !== s.customer_user_id && spineIds.has(dono)) continue;
-    const atual = porCliente.get(s.customer_user_id);
-    if (!atual || (s.priority_score ?? 0) > (atual.priority_score ?? 0)) porCliente.set(s.customer_user_id, s);
+    const identidade = canonico(s.customer_user_id) ?? s.customer_user_id;
+    const ehCanonico = (r: ScoreRow) => r.customer_user_id === identidade;
+    const atual = porCliente.get(identidade);
+    if (
+      !atual ||
+      (ehCanonico(s) && !ehCanonico(atual)) ||
+      (ehCanonico(s) === ehCanonico(atual) && (s.priority_score ?? 0) > (atual.priority_score ?? 0))
+    ) {
+      porCliente.set(identidade, s);
+    }
   }
 
   const perfis = new Map<string, ProfileRow>();
@@ -233,7 +250,8 @@ export function montarContasUti(input: {
   let scoresCalculatedAt: string | null = null;
   const contas: UtiConta[] = [];
 
-  for (const [customerUserId, score] of porCliente) {
+  for (const score of porCliente.values()) {
+    const customerUserId = score.customer_user_id;
     if (score.calculated_at && (!scoresCalculatedAt || score.calculated_at > scoresCalculatedAt)) {
       scoresCalculatedAt = score.calculated_at;
     }
@@ -295,110 +313,113 @@ export function montarContasUti(input: {
   return { contas, scoresCalculatedAt, positivacaoMes, recebiveisSemCliente: semCliente };
 }
 
+/** Leitura da UTI (o `queryFn`), exportada para ser provada contra um fake que filtra. */
+export async function lerUtiContas(): Promise<UtiContasResult> {
+  const hoje = new Date();
+  // Vencido há 31+ dias: vencimento <= hoje-31 (o `lt` de antes exigia 32+).
+  const corteVencido = format(subDays(hoje, UTI_CRITERIOS.diasVencidoMin), 'yyyy-MM-dd');
+  const cortePositivacao = format(subMonths(hoje, 3), 'yyyy-MM-01');
+
+  // Paginam pelo canônico (ordem estável obrigatória): página perdida LANÇA — truncaria
+  // scores/títulos/snapshots da UTI — e é medida pela fonte.
+  const [scores, titulos, aliases, snapshots, syncRes] = await Promise.all([
+    fetchAllPagesComMensagem<ScoreRow>((from, to) =>
+      supabase
+        .from('farmer_client_scores')
+        .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, days_since_last_purchase, calculated_at')
+        .order('customer_user_id', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    'farmer_client_scores/uti', 'farmer_client_scores'),
+    fetchAllPagesComMensagem<TituloRow>((from, to) =>
+      supabase
+        .from('fin_contas_receber')
+        .select('company, omie_codigo_cliente, saldo')
+        .in('status_titulo', [...OPEN_TITLE_STATUSES])
+        .lte('data_vencimento', corteVencido)
+        .gt('saldo', 0)
+        .order('id', { ascending: true })
+        .range(from, to),
+    'fin_contas_receber/uti-vencidos', 'fin_contas_receber'),
+    // Todos os status: `conflict` também importa (identidade ambígua → desconhecido).
+    fetchAllPagesComMensagem<AliasRow>((from, to) =>
+      supabase
+        .from('customer_canonical_alias')
+        .select('alias_user_id, canonical_user_id, status')
+        .order('alias_user_id', { ascending: true })
+        .range(from, to),
+    'customer_canonical_alias/uti', 'customer_canonical_alias'),
+    fetchAllPagesComMensagem<SnapshotRow>((from, to) =>
+      supabase
+        .from('carteira_positivacao_snapshot')
+        .select('customer_user_id, mes, eligible, had_order_in_month')
+        .gte('mes', cortePositivacao)
+        .order('id', { ascending: true })
+        .range(from, to),
+    'carteira_positivacao_snapshot/uti', 'carteira_positivacao_snapshot'),
+    supabase
+      .from('fin_sync_log')
+      .select('completed_at')
+      .in('action', ['sync_contas_receber', 'sync_all'])
+      .eq('status', 'complete')
+      .order('completed_at', { ascending: false })
+      .limit(1),
+  ]);
+  if (syncRes.error) throw new Error(syncRes.error.message);
+
+  // Vínculos só dos códigos com título vencido (≤ 3 contas por código → bem abaixo da capa).
+  const codigos = [...new Set(titulos.map((t) => t.omie_codigo_cliente).filter((c): c is number => c != null))];
+  const vinculoChunks = await Promise.all(
+    chunk(codigos, 150).map((c, i) =>
+      fetchAllPagesComMensagem<VinculoRow>((from, to) =>
+        supabase
+          .from('omie_customer_account_map_fresco')
+          .select('account, omie_codigo_cliente, user_id')
+          .in('omie_codigo_cliente', c)
+          .order('id', { ascending: true })
+          .range(from, to),
+      `omie_customer_account_map_fresco/uti-${i}`, 'omie_customer_account_map_fresco'),
+    ),
+  );
+  const vinculos = vinculoChunks.flat();
+
+  const ids = [...new Set(scores.map((s) => s.customer_user_id))];
+  const profileChunks = await Promise.all(
+    chunk(ids, 150).map((c) =>
+      supabase.from('profiles').select('user_id, name, razao_social, document, cnpj').in('user_id', c),
+    ),
+  );
+  const perfis: ProfileRow[] = [];
+  for (const res of profileChunks) {
+    if (res.error) throw new Error(res.error.message);
+    perfis.push(...((res.data ?? []) as ProfileRow[]));
+  }
+
+  const { contas, scoresCalculatedAt, positivacaoMes, recebiveisSemCliente } = montarContasUti({
+    scores,
+    perfis,
+    titulos,
+    vinculos,
+    aliases,
+    snapshots,
+  });
+
+  return {
+    contas,
+    frescor: {
+      scoresCalculatedAt,
+      receberSyncAt: (syncRes.data?.[0]?.completed_at as string | null) ?? null,
+      positivacaoMes,
+      recebiveisSemCliente,
+    },
+  };
+}
+
 export function useUtiContas(enabled: boolean) {
   return useQuery({
     queryKey: ['uti-contas'],
     enabled,
     staleTime: 60_000,
-    queryFn: async (): Promise<UtiContasResult> => {
-      const hoje = new Date();
-      // Vencido há 31+ dias: vencimento <= hoje-31 (o `lt` de antes exigia 32+).
-      const corteVencido = format(subDays(hoje, UTI_CRITERIOS.diasVencidoMin), 'yyyy-MM-dd');
-      const cortePositivacao = format(subMonths(hoje, 3), 'yyyy-MM-01');
-
-      // Paginam pelo canônico (ordem estável obrigatória): página perdida LANÇA — truncaria
-      // scores/títulos/snapshots da UTI — e é medida pela fonte.
-      const [scores, titulos, aliases, snapshots, syncRes] = await Promise.all([
-        fetchAllPagesComMensagem<ScoreRow>((from, to) =>
-          supabase
-            .from('farmer_client_scores')
-            .select('customer_user_id, farmer_id, health_score, health_class, priority_score, churn_risk, days_since_last_purchase, calculated_at')
-            .order('customer_user_id', { ascending: true })
-            .order('id', { ascending: true })
-            .range(from, to),
-        'farmer_client_scores/uti', 'farmer_client_scores'),
-        fetchAllPagesComMensagem<TituloRow>((from, to) =>
-          supabase
-            .from('fin_contas_receber')
-            .select('company, omie_codigo_cliente, saldo')
-            .in('status_titulo', [...OPEN_TITLE_STATUSES])
-            .lte('data_vencimento', corteVencido)
-            .gt('saldo', 0)
-            .order('id', { ascending: true })
-            .range(from, to),
-        'fin_contas_receber/uti-vencidos', 'fin_contas_receber'),
-        // Todos os status: `conflict` também importa (identidade ambígua → desconhecido).
-        fetchAllPagesComMensagem<AliasRow>((from, to) =>
-          supabase
-            .from('customer_canonical_alias')
-            .select('alias_user_id, canonical_user_id, status')
-            .order('alias_user_id', { ascending: true })
-            .range(from, to),
-        'customer_canonical_alias/uti', 'customer_canonical_alias'),
-        fetchAllPagesComMensagem<SnapshotRow>((from, to) =>
-          supabase
-            .from('carteira_positivacao_snapshot')
-            .select('customer_user_id, mes, eligible, had_order_in_month')
-            .gte('mes', cortePositivacao)
-            .order('id', { ascending: true })
-            .range(from, to),
-        'carteira_positivacao_snapshot/uti', 'carteira_positivacao_snapshot'),
-        supabase
-          .from('fin_sync_log')
-          .select('completed_at')
-          .in('action', ['sync_contas_receber', 'sync_all'])
-          .eq('status', 'complete')
-          .order('completed_at', { ascending: false })
-          .limit(1),
-      ]);
-      if (syncRes.error) throw new Error(syncRes.error.message);
-
-      // Vínculos só dos códigos com título vencido (≤ 3 contas por código → bem abaixo da capa).
-      const codigos = [...new Set(titulos.map((t) => t.omie_codigo_cliente).filter((c): c is number => c != null))];
-      const vinculoChunks = await Promise.all(
-        chunk(codigos, 150).map((c, i) =>
-          fetchAllPagesComMensagem<VinculoRow>((from, to) =>
-            supabase
-              .from('omie_customer_account_map')
-              .select('account, omie_codigo_cliente, user_id')
-              .in('omie_codigo_cliente', c)
-              .order('id', { ascending: true })
-              .range(from, to),
-          `omie_customer_account_map/uti-${i}`, 'omie_customer_account_map'),
-        ),
-      );
-      const vinculos = vinculoChunks.flat();
-
-      const ids = [...new Set(scores.map((s) => s.customer_user_id))];
-      const profileChunks = await Promise.all(
-        chunk(ids, 150).map((c) =>
-          supabase.from('profiles').select('user_id, name, razao_social, document, cnpj').in('user_id', c),
-        ),
-      );
-      const perfis: ProfileRow[] = [];
-      for (const res of profileChunks) {
-        if (res.error) throw new Error(res.error.message);
-        perfis.push(...((res.data ?? []) as ProfileRow[]));
-      }
-
-      const { contas, scoresCalculatedAt, positivacaoMes, recebiveisSemCliente } = montarContasUti({
-        scores,
-        perfis,
-        titulos,
-        vinculos,
-        aliases,
-        snapshots,
-      });
-
-      return {
-        contas,
-        frescor: {
-          scoresCalculatedAt,
-          receberSyncAt: (syncRes.data?.[0]?.completed_at as string | null) ?? null,
-          positivacaoMes,
-          recebiveisSemCliente,
-        },
-      };
-    },
+    queryFn: lerUtiContas,
   });
 }

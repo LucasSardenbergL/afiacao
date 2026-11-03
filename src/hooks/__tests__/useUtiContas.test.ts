@@ -1,5 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+// Fake do PostgREST que FILTRA de verdade (in/eq/lt/lte/gt/gte + range): o `queryFn` é provado
+// pelo que devolve, não pelos métodos que chama. Só as tabelas populadas existem.
+type Linha = Record<string, unknown>;
+const tabelas: Record<string, Linha[]> = {};
+function builder(tabela: string) {
+  let linhas = [...(tabelas[tabela] ?? [])];
+  let de = 0;
+  let ate = Number.POSITIVE_INFINITY;
+  let limite = Number.POSITIVE_INFINITY;
+  const filtro = (f: (v: never, alvo: never) => boolean) => (c: string, alvo: unknown) => {
+    linhas = linhas.filter((l) => f(l[c] as never, alvo as never));
+    return b;
+  };
+  const b: Record<string, unknown> = {
+    select: () => b,
+    order: () => b,
+    in: filtro((v, alvo: unknown[]) => alvo.includes(v)),
+    eq: filtro((v, alvo) => v === alvo),
+    lt: filtro((v, alvo) => v < alvo),
+    lte: filtro((v, alvo) => v <= alvo),
+    gt: filtro((v, alvo) => v > alvo),
+    gte: filtro((v, alvo) => v >= alvo),
+    range: (f: number, t: number) => ((de = f), (ate = t), b),
+    limit: (n: number) => ((limite = n), b),
+    then: (ok: (v: unknown) => unknown, no?: (e: unknown) => unknown) =>
+      Promise.resolve({ data: linhas.slice(de, Math.min(ate + 1, de + limite)), error: null }).then(ok, no),
+  };
+  return b;
+}
+vi.mock('@/integrations/supabase/client', () => ({ supabase: { from: (t: string) => builder(t) } }));
+
 import {
+  lerUtiContas,
   montarContasUti,
   UTI_CRITERIOS,
   type AliasRow,
@@ -292,5 +325,87 @@ describe('montarContasUti — atribuição por código Omie (ausente ≠ zero)',
     });
     const porId = Object.fromEntries(r.contas.map((c) => [c.customerUserId, c.vencido31]));
     expect(porId).toEqual({ a1: 250, c1: 0 });
+  });
+});
+
+describe('montarContasUti — identidade com alias em cadeia/ciclo/múltiplos', () => {
+  const churn = (id: string) => score({ customer_user_id: id, churn_risk: 90 });
+
+  it('cadeia A→B→C: identidade desconhecida — título de A vira órfão e C não ganha "ok"', () => {
+    const r = montar({
+      scores: [churn('a'), churn('b'), churn('c1')],
+      vinculos: [...VINCULOS, vinculo('colacor_sc', 500, 'a')],
+      aliases: [alias('a', 'b'), alias('b', 'c1')],
+      titulos: [titulo('colacor_sc', 500, 250)],
+    });
+    expect(r.recebiveisSemCliente).toEqual({ titulos: 1, saldo: 250 });
+    const c1 = r.contas.find((c) => c.customerUserId === 'c1');
+    expect([c1?.sinalInadimplencia, c1?.vencido31]).toEqual([null, null]);
+    expect(r.contas.find((c) => c.customerUserId === 'a')?.sinalInadimplencia).toBeNull();
+  });
+
+  it('ciclo A↔B: nenhuma das duas linhas some e a dívida não evapora', () => {
+    const r = montar({
+      scores: [churn('a'), churn('b')],
+      vinculos: [...VINCULOS, vinculo('colacor_sc', 500, 'a')],
+      aliases: [alias('a', 'b'), alias('b', 'a')],
+      titulos: [titulo('colacor_sc', 500, 250)],
+    });
+    expect(r.contas.map((c) => c.customerUserId).sort()).toEqual(['a', 'b']);
+    for (const c of r.contas) expect(c.vencido31).toBeNull();
+    expect(r.recebiveisSemCliente.saldo).toBe(250);
+  });
+
+  it('dois aliases do mesmo canônico fora do spine: UMA linha, a dívida conta uma vez', () => {
+    const r = montar({
+      scores: [score({ customer_user_id: 'a', churn_risk: 100 }), score({ customer_user_id: 'b', churn_risk: 100, priority_score: 50 })],
+      aliases: [alias('a', 'c1'), alias('b', 'c1')],
+      titulos: [titulo('oben', 100, 250)],
+    });
+    expect(r.contas.map((c) => [c.customerUserId, c.vencido31])).toEqual([['b', 250]]);
+  });
+});
+
+describe('lerUtiContas — leitura (queryFn) contra fake que filtra', () => {
+  beforeAll(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-03T12:00:00'));
+  });
+  afterAll(() => vi.useRealTimers());
+
+  it('31 dias exatos entram; alias some; vínculo do 2º chunk casa; vínculo só da tabela crua não vale', async () => {
+    // 160 códigos com título vencido → 2 chunks de vínculos (150 + 10).
+    const codigos = Array.from({ length: 160 }, (_, i) => 1000 + i);
+    tabelas.farmer_client_scores = [
+      { id: 1, ...score({ customer_user_id: 'c1', churn_risk: 90 }) },
+      { id: 2, ...score({ customer_user_id: 'c2', churn_risk: 90 }) },
+      { id: 3, ...score({ customer_user_id: 'a1', churn_risk: 100, priority_score: 999 }) },
+    ];
+    tabelas.profiles = [{ ...perfil({ user_id: 'c1' }) }, { ...perfil({ user_id: 'c2' }) }];
+    tabelas.fin_contas_receber = [
+      // vence 03/10 = hoje − 31: entra (o `lt` antigo exigia 32+)
+      { id: 'cr-0', company: 'oben', omie_codigo_cliente: 100, saldo: 300, status_titulo: 'ATRASADO', data_vencimento: '2026-10-03' },
+      // 30 dias: fora
+      { id: 'cr-1', company: 'oben', omie_codigo_cliente: 100, saldo: 999, status_titulo: 'ATRASADO', data_vencimento: '2026-10-04' },
+      ...codigos.map((cod, i) => ({
+        id: `cr-${i + 2}`, company: 'oben', omie_codigo_cliente: cod, saldo: 1,
+        status_titulo: 'ATRASADO', data_vencimento: '2026-09-01',
+      })),
+    ];
+    // Vista fresca: c1 = 100; c2 = todos os 160 (o último cai no 2º chunk).
+    tabelas.omie_customer_account_map_fresco = [
+      { id: 'm-0', account: 'oben', omie_codigo_cliente: 100, user_id: 'c1' },
+      ...codigos.map((cod, i) => ({ id: `m-${i + 1}`, account: 'oben', omie_codigo_cliente: cod, user_id: 'c2' })),
+    ];
+    // A tabela crua tem um vínculo VELHO que a vista fresca já não tem — não pode ser lido.
+    tabelas.omie_customer_account_map = [{ id: 'x', account: 'oben', omie_codigo_cliente: 7777, user_id: 'c1' }];
+    tabelas.customer_canonical_alias = [{ alias_user_id: 'a1', canonical_user_id: 'c1', status: 'active' }];
+    tabelas.carteira_positivacao_snapshot = [];
+    tabelas.fin_sync_log = [];
+
+    const data = await lerUtiContas();
+    const porId = Object.fromEntries(data.contas.map((c) => [c.customerUserId, [c.sinalInadimplencia, c.vencido31]]));
+    expect(porId).toEqual({ c1: [true, 300], c2: [true, 160] });
+    expect(data.frescor.recebiveisSemCliente).toEqual({ titulos: 0, saldo: 0 });
   });
 });
