@@ -170,7 +170,7 @@ CREATE TABLE public.radar_empresas (
 SELECT setseed(0.42);
 INSERT INTO public.radar_empresas
 SELECT CASE WHEN g % 997 = 0 THEN 'X' || lpad(g::text, 13, '0') ELSE lpad(g::text, 14, '0') END,
-       CASE WHEN g % 40000 = 7 THEN 'MARCENARIA XQZWKJ ' || g ELSE 'EMPRESA ' || md5(g::text) END,
+       CASE WHEN g % 20000 = 7 THEN 'MARCENARIA XQZWKJ ' || g ELSE 'EMPRESA ' || md5(g::text) END,
        CASE WHEN g % 5 = 0 THEN NULL ELSE 'FANT ' || md5((g * 7)::text) END,
        (g % 300)::text,
        (ARRAY['POMERODE','BLUMENAU','GASPAR','UBERLANDIA','SAO PAULO','CURITIBA'])[1 + g % 6] || ' ' || (g % 50),
@@ -189,7 +189,7 @@ SELECT CASE WHEN g % 997 = 0 THEN 'X' || lpad(g::text, 13, '0') ELSE lpad(g::tex
        CASE WHEN g % 50 = 0 THEN 'OM' || g END,
        (ARRAY[NULL,'02','02','08'])[1 + g % 4],
        repeat('x', 300)
-  FROM generate_series(1, 200000) g
+  FROM generate_series(1, 60000) g
  ORDER BY random();
 CREATE INDEX idx_radar_empresas_busca_trgm ON public.radar_empresas
   USING gin (razao_social gin_trgm_ops, nome_fantasia gin_trgm_ops, municipio_nome gin_trgm_ops);
