@@ -3,6 +3,7 @@
 // Re-decidir não apaga o plano no banco: piso/canal só valem com destino liquidar e "executado" antes do
 // decidido_em vigente (o destino mudou depois) NÃO conta como concluído.
 // Ausente ≠ zero: custo sem CMC ou sem taxa é null; piso sem unidade de venda única não compara.
+import { addDias } from '@/lib/time/sp-day';
 import type { CanalLiquidacao, DecisaoRow, Destino, LinhaMedicao } from './tipos';
 
 /** Destinos que pedem alguém executando. Manter/estratégico não têm execução (o motor já resolve). */
@@ -17,6 +18,18 @@ export const ROTULO_CANAL: Record<CanalLiquidacao, string> = {
 };
 
 export const PRAZO_PADRAO_DIAS = 14;
+/** Data da meta do Raio-X (100% do Top 61 decidido e ≥ R$ 60 mil). */
+export const DATA_META = '2026-11-25';
+
+/**
+ * Prazo padrão do plano: min(hoje + 14, data da meta). Passada a meta, volta a hoje + 14 (nunca nasce vencido).
+ * `hoje` = 'YYYY-MM-DD' (SP).
+ */
+export function prazoPadrao(hoje: string): string {
+  const quinzena = addDias(hoje, PRAZO_PADRAO_DIAS);
+  if (DATA_META < hoje) return quinzena;
+  return quinzena < DATA_META ? quinzena : DATA_META;
+}
 
 const DIA_MS = 86_400_000;
 const diasEntre = (de: string, ate: string) => Math.round((Date.parse(ate) - Date.parse(de)) / DIA_MS);
@@ -85,7 +98,10 @@ export function resumoExecucao(decisoes: Iterable<DecisaoRow>, hoje: string): Re
 
 export interface AlertaPiso {
   sku_codigo_omie: number;
-  /** preço médio do período (receita / qtd vendida desde a foto), por unidade de venda. */
+  /**
+   * preço médio do período (receita / qtd vendida desde a foto), por unidade de venda. Compara com o piso ATUAL
+   * (o piso não é versionado): a tela diz "preço médio desde a foto abaixo do piso atual", nunca "vendeu abaixo do piso".
+   */
   preco: number;
   piso: number;
   abaixo: boolean;
@@ -109,4 +125,12 @@ export function alertaPiso(
   const preco = l.receita / l.qtd_vendida;
   if (!Number.isFinite(preco)) return null;
   return { sku_codigo_omie: l.sku_codigo_omie, preco, piso, abaixo: preco < piso };
+}
+
+/** Plano padrão que acompanha uma decisão nova com execução (UX 6): responsável = quem decide, prazo padrão, nada mais. */
+export function planoPadrao(responsavel: string | null, hoje: string) {
+  return {
+    precoPiso: null, frete: null, canal: null, trocaContrapartida: null,
+    responsavel, prazo: prazoPadrao(hoje), concluido: false,
+  };
 }

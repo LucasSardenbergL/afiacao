@@ -6,7 +6,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { ehFalhaDePagina, fetchAllPages } from '@/lib/postgrest';
 import { hojeSP } from '@/lib/time/sp-day';
-import { aplicarCoorte, aplicarInequivoco, classificar } from '@/lib/reposicao/raio-x/classificar';
+import { alinharSugestaoAoServidor, aplicarCoorte, aplicarInequivoco, classificar } from '@/lib/reposicao/raio-x/classificar';
+import { linhasForaDoEstoque, type ProdutoCadastro } from '@/lib/reposicao/raio-x/fila';
 import { comoCoorte, comoDecisaoRow, comoFatoSku, comoInequivoco, comoLinhaManual, comoLinhaMedicao } from '@/lib/reposicao/raio-x/borda';
 import { isLensActive } from '@/lib/impersonation/lens-write-guard';
 import { logger } from '@/lib/logger';
@@ -46,6 +47,8 @@ const retry = (n: number, e: unknown) => !semPermissao(e) && n < 2;
 
 export function useRaioX(empresa: Empresa | null): {
   itens: ItemRaioX[];
+  /** membros da coorte fora do estoque (saldo zerado): linhas históricas decidíveis, FORA de `itens` e do placar. */
+  historicos: ItemRaioX[];
   decisoes: Map<number, DecisaoRow>;
   placar: ReturnType<typeof placar>;
   /** sem coorte congelada (ou indisponível) o placar usa o Top de hoje e diz isso. */
@@ -75,24 +78,7 @@ export function useRaioX(empresa: Empresa | null): {
       ),
   });
 
-  const decisoesQ = useQuery({
-    queryKey: ['raio-x', empresa, 'decisoes'],
-    enabled,
-    retry,
-    queryFn: () =>
-      ler(() =>
-        fetchAllPages(
-          (de, ate) =>
-            supabase
-              .from('raio_x_decisao')
-              .select('*')
-              .eq('empresa', empresa as string)
-              .order('sku_codigo_omie', { ascending: true })
-              .range(de, ate),
-          'raio_x_decisao',
-        ).then((rows) => rows.map(comoDecisaoRow)),
-      ),
-  });
+  const decisoesQ = useQuery(opcoesDecisoes(empresa));
 
   const manuaisQ = useQuery({
     queryKey: ['raio-x', empresa, 'manuais'],
@@ -113,22 +99,7 @@ export function useRaioX(empresa: Empresa | null): {
       ),
   });
 
-  // Coorte do Top 61 (≤ 61 linhas por empresa — cabe numa página; `.range` só por disciplina).
-  const coorteQ = useQuery({
-    queryKey: ['raio-x', empresa, 'coorte'],
-    enabled,
-    retry,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('raio_x_coorte_top')
-        .select('sku_codigo_omie, posicao, valor, congelada_em')
-        .eq('empresa', empresa as string)
-        .order('posicao', { ascending: true })
-        .range(0, 999);
-      if (error) throw preservarCode(error);
-      return comoCoorte(data ?? []);
-    },
-  });
+  const coorteQ = useQuery(opcoesCoorte(empresa));
 
   // Veredito "inequívoco" do servidor (PR 2). Falha NÃO derruba a aba: vira `inequivoco: null` (selo "—"), como a coorte.
   const inequivocoQ = useQuery({
@@ -172,7 +143,43 @@ export function useRaioX(empresa: Empresa | null): {
     () => (inequivocoQ.data && !inequivocoQ.isError ? new Map<number, InequivocoSku>(inequivocoQ.data.map((q) => [q.sku_codigo_omie, q])) : null),
     [inequivocoQ.data, inequivocoQ.isError],
   );
-  const itensFinal = useMemo(() => aplicarInequivoco(itensComCoorte, mapaInequivoco), [itensComCoorte, mapaInequivoco]);
+  const itensFinal = useMemo(
+    () => alinharSugestaoAoServidor(aplicarInequivoco(itensComCoorte, mapaInequivoco)),
+    [itensComCoorte, mapaInequivoco],
+  );
+
+  // Membros da coorte que zeraram o saldo (fora dos fatos): linha histórica para decidir (bug 2). Nome/código vêm do
+  // cadastro (≤ 61 SKUs, uma página); falha na leitura do cadastro só tira o nome — a linha nasce com o nº do SKU.
+  const ausentes = useMemo(() => {
+    if (!coorte || !fatos) return [];
+    const presentes = new Set(fatos.map((f) => f.sku_codigo_omie));
+    return [...coorte.itens.keys()].filter((sku) => !presentes.has(sku)).sort((a, b) => a - b);
+  }, [coorte, fatos]);
+  const cadastroQ = useQuery({
+    queryKey: ['raio-x', empresa, 'cadastro-ausentes', ausentes],
+    enabled: enabled && ausentes.length > 0,
+    retry,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('omie_products')
+        .select('omie_codigo_produto, codigo, descricao, created_at')
+        .eq('account', empresa as string)
+        .in('omie_codigo_produto', ausentes)
+        .order('created_at', { ascending: false })
+        .range(0, 999);
+      if (error) throw preservarCode(error);
+      const m = new Map<number, ProdutoCadastro>();
+      // mais recente primeiro (como o LATERAL de raio_x_estoque_fatos): o 1º de cada SKU vence
+      for (const r of data ?? []) {
+        if (!m.has(r.omie_codigo_produto)) m.set(r.omie_codigo_produto, { codigo: r.codigo, descricao: r.descricao });
+      }
+      return m;
+    },
+  });
+  const historicos = useMemo(() => {
+    if (ausentes.length === 0) return [];
+    return linhasForaDoEstoque(coorte, new Set(itens.map((i) => i.sku_codigo_omie)), cadastroQ.data ?? new Map());
+  }, [ausentes, coorte, itens, cadastroQ.data]);
   const placarCalc = useMemo(() => placar(itensComCoorte, decisoes, coorte), [itensComCoorte, decisoes, coorte]);
 
   // Só congela com os insumos ATUAIS e completos: refetch pendente serviria o cache anterior (Codex P1) e a
@@ -197,6 +204,7 @@ export function useRaioX(empresa: Empresa | null): {
 
   return {
     itens: erro ? [] : itensFinal,
+    historicos: erro ? [] : historicos,
     inequivocoIndisponivel: inequivocoQ.isError,
     decisoes,
     placar: placarCalc,
@@ -205,6 +213,62 @@ export function useRaioX(empresa: Empresa | null): {
     isLoading: enabled && (fatosQ.isLoading || decisoesQ.isLoading || manuaisQ.isLoading || coorteQ.isLoading),
     erro: erro as Error | null,
   };
+}
+
+function opcoesDecisoes(empresa: Empresa | null) {
+  return {
+    queryKey: ['raio-x', empresa, 'decisoes'],
+    enabled: empresa !== null,
+    retry,
+    queryFn: () =>
+      ler(() =>
+        fetchAllPages(
+          (de, ate) =>
+            supabase
+              .from('raio_x_decisao')
+              .select('*')
+              .eq('empresa', empresa as string)
+              .order('sku_codigo_omie', { ascending: true })
+              .range(de, ate),
+          'raio_x_decisao',
+        ).then((rows) => rows.map(comoDecisaoRow)),
+      ),
+  };
+}
+
+/** Coorte do Top 61 (≤ 61 linhas por empresa — cabe numa página; `.range` só por disciplina). */
+function opcoesCoorte(empresa: Empresa | null) {
+  return {
+    queryKey: ['raio-x', empresa, 'coorte'],
+    enabled: empresa !== null,
+    retry,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('raio_x_coorte_top')
+        .select('sku_codigo_omie, posicao, valor, congelada_em')
+        .eq('empresa', empresa as string)
+        .order('posicao', { ascending: true })
+        .range(0, 999);
+      if (error) throw preservarCode(error);
+      return comoCoorte(data ?? []);
+    },
+  };
+}
+
+/**
+ * Pendentes do Top 61 congelado para o contador da aba ("Raio-X (49)"): só coorte + decisões (leituras pequenas, mesmo
+ * cache da aba) — sem os fatos pesados. `null` = sem coorte congelada ou leitura indisponível (sem número, nunca 0).
+ */
+export function useRaioXPendentesTop(empresa: Empresa | null): number | null {
+  const coorteQ = useQuery(opcoesCoorte(empresa));
+  const decisoesQ = useQuery(opcoesDecisoes(empresa));
+  const coorte = coorteQ.data;
+  const decisoes = decisoesQ.data;
+  return useMemo(() => {
+    if (!coorte || !decisoes || coorteQ.isError || decisoesQ.isError) return null;
+    const decididos = new Set(decisoes.filter((d) => d.destino).map((d) => d.sku_codigo_omie));
+    return [...coorte.itens.keys()].filter((sku) => !decididos.has(sku)).length;
+  }, [coorte, decisoes, coorteQ.isError, decisoesQ.isError]);
 }
 
 export type EstadoCoorte = 'congelada' | 'nao_congelada' | 'indisponivel';

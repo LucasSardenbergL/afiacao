@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { track } from '@/lib/analytics';
+import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { comNulo } from '@/lib/rpc-args';
 import type { DecidirArgs } from '@/lib/reposicao/raio-x/decisao';
@@ -34,20 +35,30 @@ const MSG_RX002 = 'Esta decisão foi desfeita — grave o destino antes do plano
 const MSG_RX003 = 'Outra pessoa mudou esta decisão — recarregue antes de salvar a execução';
 const MSG_RX004 = 'Liquidar só no inequívoco: este SKU ainda aguarda (corante, entrada recente, cold-start, substituição ou cadastro) — escolha outro destino';
 
-/** Toast de erro: SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
-function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
+/** SQLSTATE conhecida vira texto acionável; o resto usa a mensagem do servidor. */
+function textoDoErro(e: unknown, fallback: string, msgRx001 = MSG_RX001): string {
   const code = (e as { code?: unknown } | null)?.code;
-  if (code === 'RX001') toast.error(msgRx001);
-  else if (code === 'RX002') toast.error(MSG_RX002);
-  else if (code === 'RX003') toast.error(MSG_RX003);
-  else if (code === 'RX004') toast.error(MSG_RX004);
-  else if (code === '42501') toast.error(MSG_SEM_PERMISSAO);
-  else toast.error(mensagemDeErro(e) ?? fallback);
+  if (code === 'RX001') return msgRx001;
+  if (code === 'RX002') return MSG_RX002;
+  if (code === 'RX003') return MSG_RX003;
+  if (code === 'RX004') return MSG_RX004;
+  if (code === '42501') return MSG_SEM_PERMISSAO;
+  return mensagemDeErro(e) ?? fallback;
+}
+
+function avisarErro(e: unknown, fallback: string, msgRx001 = MSG_RX001) {
+  toast.error(textoDoErro(e, fallback, msgRx001));
 }
 
 const numeroValido = (n: number | null) => n === null || (Number.isFinite(n) && n >= 0);
 
 export type AcaoDecisao = 'decidir' | 'restaurar' | 'tirar_agora';
+/** De onde veio o toque que decidiu (sensor do ledger): Confirmar sugestão no card, painel direto ou pela fila. */
+export type OrigemDecisao = 'card' | 'sheet' | 'fila';
+/** Plano que acompanha a decisão no MESMO salvar (UX 5): tudo do PlanejarArgs menos o que vem da decisão gravada. */
+export type PlanoJunto = Omit<PlanejarArgs, 'sku' | 'atualizadoEm'>;
+/** `ok` = decisão (e plano, se havia) gravados; `parcial` = decisão gravada, plano NÃO; `falhou` = nada gravado. */
+export type ResultadoSalvar = 'ok' | 'parcial' | 'falhou';
 
 export function useRaioXMutacoes(empresa: Empresa) {
   const qc = useQueryClient();
@@ -56,7 +67,9 @@ export function useRaioXMutacoes(empresa: Empresa) {
   const invalidar = (emp: Empresa) => qc.invalidateQueries({ queryKey: ['raio-x', emp] });
 
   const mDecidir = useMutation({
-    mutationFn: async ({ empresa, args }: { empresa: Empresa; args: DecidirArgs; acao: AcaoDecisao }) => {
+    mutationFn: async ({ empresa, args }: {
+      empresa: Empresa; args: DecidirArgs; acao: AcaoDecisao; origem?: OrigemDecisao; silencioso?: boolean;
+    }) => {
       // O gerador declara todo Arg não-nulo, mas a RPC (migration 20261016120000, sem DEFAULT, não-STRICT —
       // conferido na prod) aceita NULL em destino/observação/fornecedor/crédito: `comNulo` reabre só essas 4
       // chaves e checa o resto contra o types.ts.
@@ -76,19 +89,25 @@ export function useRaioXMutacoes(empresa: Empresa) {
       if (error) throw error;
       return data;
     },
-    onSuccess: (row, { empresa, args, acao }) => {
+    onSuccess: (row, { empresa, args, acao, origem, silencioso }) => {
       void invalidar(empresa);
-      toast.success(acao === 'restaurar' ? 'Motor restaurado' : acao === 'tirar_agora' ? 'Tirado do motor' : 'Decisão salva');
+      if (!silencioso) toast.success(acao === 'restaurar' ? 'Motor restaurado' : acao === 'tirar_agora' ? 'Tirado do motor' : 'Decisão salva');
       track('raio_x.decisao', {
         empresa,
         destino: args.destino,
         tirou_do_motor: row?.tirou_do_motor ?? args.tirarDoMotor,
         acao,
+        origem: origem ?? null,
       });
+      // Sensor (ledger, 1x por SKU × origem × dia): só a decisão de destino, não restaurar/tirar agora.
+      if (acao === 'decidir' && origem && args.destino) {
+        void registrarNoLedger('reposicao.raio_x_decisao', `${empresa}:${args.sku}:${origem}`, { empresa, origem, destino: args.destino });
+      }
     },
     // RX001 no restaurar = o sku_parametros sumiu; "desmarque tirar do motor" não se aplica.
-    onError: (e, { acao }) =>
-      avisarErro(e, 'Não foi possível salvar a decisão.', acao === 'restaurar' ? MSG_RX001_RESTAURAR : MSG_RX001),
+    onError: (e, { acao, silencioso }) => {
+      if (!silencioso) avisarErro(e, 'Não foi possível salvar a decisão.', acao === 'restaurar' ? MSG_RX001_RESTAURAR : MSG_RX001);
+    },
   });
 
   const mContar = useMutation({
@@ -124,7 +143,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
   });
 
   const mPlanejar = useMutation({
-    mutationFn: async ({ empresa, args }: { empresa: Empresa; args: PlanejarArgs }) => {
+    mutationFn: async ({ empresa, args }: { empresa: Empresa; args: PlanejarArgs; silencioso?: boolean }) => {
       // Estado completo (como decidir): campo nulo LIMPA. A RPC (20261031180000, sem DEFAULT, não-STRICT) aceita NULL.
       const params = comNulo<'raio_x_planejar', 'p_preco_piso' | 'p_canal' | 'p_responsavel' | 'p_prazo' | 'p_frete' | 'p_troca_contrapartida'>({
         p_empresa: empresa,
@@ -141,9 +160,9 @@ export function useRaioXMutacoes(empresa: Empresa) {
       const { error } = await supabase.rpc('raio_x_planejar', params);
       if (error) throw error;
     },
-    onSuccess: (_d, { empresa, args }) => {
+    onSuccess: (_d, { empresa, args, silencioso }) => {
       void invalidar(empresa);
-      toast.success('Execução salva');
+      if (!silencioso) toast.success('Execução salva');
       track('raio_x.plano', {
         empresa,
         tem_piso: args.precoPiso !== null,
@@ -153,7 +172,9 @@ export function useRaioXMutacoes(empresa: Empresa) {
         concluido: args.concluido,
       });
     },
-    onError: (e) => avisarErro(e, 'Não foi possível salvar a execução.'),
+    onError: (e, { silencioso }) => {
+      if (!silencioso) avisarErro(e, 'Não foi possível salvar a execução.');
+    },
   });
 
   /** Resolve `true` se gravou. Erro já virou toast; nunca rejeita. Número inválido não sai do cliente. */
@@ -198,6 +219,70 @@ export function useRaioXMutacoes(empresa: Empresa) {
     }
   };
 
+  /**
+   * UM salvar para decisão + plano (UX 5 — liquidar num passo). As duas RPCs seguem separadas e em sequência
+   * (`raio_x_decidir` → `raio_x_planejar`, nunca uma gravação dupla escondida): o plano vai com o `atualizado_em` que a
+   * decisão ACABOU de gravar. Decisão sem mudança (`args` null) só planeja, com o `atualizadoEm` editado (RX003 se outro
+   * operador gravou no meio). Falha no plano depois da decisão gravada = `parcial`, com mensagem que diz isso.
+   */
+  const salvar = async (
+    args: DecidirArgs | null,
+    plano: PlanoJunto | null,
+    ctx: { sku: number; atualizadoEm: string | null; origem: OrigemDecisao },
+  ): Promise<ResultadoSalvar> => {
+    if (args && args.tirarDoMotor && args.restaurarMotor) {
+      toast.error('Não é possível tirar e restaurar o motor na mesma gravação.');
+      return 'falhou';
+    }
+    if (args && !numeroValido(args.creditoTroca)) {
+      toast.error('Crédito de troca inválido.');
+      return 'falhou';
+    }
+    if (plano && !numeroValido(plano.precoPiso)) {
+      toast.error('Preço piso inválido.');
+      return 'falhou';
+    }
+    if (plano && !numeroValido(plano.frete)) {
+      toast.error('Frete inválido.');
+      return 'falhou';
+    }
+    let atualizadoEm = ctx.atualizadoEm;
+    if (args) {
+      try {
+        const row: unknown = await mDecidir.mutateAsync({ empresa, args, acao: 'decidir', origem: ctx.origem, silencioso: true });
+        // só a versão gravada interessa aqui; lida crua (uma conversão que falhasse marcaria como "falhou" o que gravou)
+        const v = (row as { atualizado_em?: unknown } | null)?.atualizado_em;
+        atualizadoEm = typeof v === 'string' ? v : null;
+      } catch (e) {
+        avisarErro(e, 'Não foi possível salvar a decisão.');
+        return 'falhou';
+      }
+    }
+    if (!plano) {
+      toast.success('Decisão salva');
+      return 'ok';
+    }
+    if (!atualizadoEm) {
+      // decisão gravada sem devolver a linha: sem a versão, o plano não vai às cegas
+      if (args) toast.warning('Decisão salva, mas a execução não: recarregue o item para completar responsável e prazo.');
+      else toast.error('Sem a versão da decisão — recarregue antes de salvar a execução.');
+      return args ? 'parcial' : 'falhou';
+    }
+    try {
+      await mPlanejar.mutateAsync({ empresa, args: { ...plano, sku: ctx.sku, atualizadoEm }, silencioso: true });
+    } catch (e) {
+      const motivo = textoDoErro(e, 'erro ao salvar a execução');
+      if (args) {
+        toast.warning(`Decisão salva, mas a execução NÃO: ${motivo}. Abra o item de novo para completar.`);
+        return 'parcial';
+      }
+      toast.error(motivo);
+      return 'falhou';
+    }
+    toast.success(args ? 'Decisão e execução salvas' : 'Execução salva');
+    return 'ok';
+  };
+
   const planejar = async (args: PlanejarArgs): Promise<boolean> => {
     if (!numeroValido(args.precoPiso)) {
       toast.error('Preço piso inválido.');
@@ -220,6 +305,7 @@ export function useRaioXMutacoes(empresa: Empresa) {
     contar,
     classificar,
     planejar,
+    salvar,
     pendente: mDecidir.isPending || mContar.isPending || mClassificar.isPending || mPlanejar.isPending,
   };
 }

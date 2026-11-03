@@ -83,7 +83,13 @@ export type EventoLedger =
    * Hoje há 0 decisões no app e nenhum sinal de visita — este é o denominador da meta de 25/11.
    * (Sem ponto-e-vírgula neste bloco: o teste de paridade lê o tipo até o primeiro.)
    */
-  | 'reposicao.raio_x_aberta';
+  | 'reposicao.raio_x_aberta'
+  /**
+   * Decisão GRAVADA no Raio-X (sucesso de `raio_x_decidir`), por origem do toque: `card` (Confirmar sugestão na
+   * lista), `sheet` (painel aberto direto) ou `fila` (painel aberto pela fila do Top 61). Chave = empresa:sku:origem
+   * → 1 linha por SKU, origem e dia. É o sensor do pacote de UX de 2026-11: qual atalho gera decisão de verdade.
+   */
+  | 'reposicao.raio_x_decisao';
 
 /**
  * Registra um evento decisório no ledger server-side.

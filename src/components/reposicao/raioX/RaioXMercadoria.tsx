@@ -5,11 +5,11 @@ import { ROTULOS_ESPERA } from '@/lib/reposicao/raio-x/classificar';
 import { custoEsperarMensal, pisoVigente, situacaoPlano, type SituacaoPlano } from '@/lib/reposicao/raio-x/execucao';
 import { fmtReais } from './formato';
 import { RaioXLista } from './RaioXLista';
-import { colDecidir, colValor, rotuloDestino, textoVenda, type Coluna } from './RaioXLinha';
+import { colDecidir, colValor, rotuloDestino, textoVenda, type Coluna, type Confirmacao } from './RaioXLinha';
 
 const colunasBase: Coluna[] = [
   colValor,
-  { titulo: 'Saldo', className: 'text-right', render: (i) => `${i.saldo} ${i.unidade_estoque ?? ''}`.trim() },
+  { titulo: 'Saldo', className: 'text-right', render: (i) => (i.fora_do_estoque ? '0 (zerado)' : `${i.saldo} ${i.unidade_estoque ?? ''}`.trim()) },
   { titulo: 'Venda 12m', render: (i) => textoVenda(i) },
   { titulo: 'Fornecedor', render: (i, d) => fornecedorEfetivo(i, d) ?? '—' },
   {
@@ -65,10 +65,12 @@ const colExecucao = (taxa: number | null, hoje: string, nomes: Map<string, strin
 });
 
 /** Segmento 1: mercadoria parada, por R$. "Decidir" abre o Sheet de decisão. */
-export function RaioXMercadoria({ itens, decisoes, onDecidir, taxa, hoje, nomes }: {
+export function RaioXMercadoria({ itens, decisoes, onDecidir, taxa, hoje, nomes, confirmar }: {
   itens: ItemRaioX[];
   decisoes: Map<number, DecisaoRow>;
   onDecidir: (i: ItemRaioX) => void;
+  /** "Confirmar: <sugestão>" em 1 toque (UX 2). Ausente = só "Decidir". */
+  confirmar?: { de: (i: ItemRaioX, d: DecisaoRow | undefined) => Confirmacao | null; onConfirmar: (i: ItemRaioX) => void; pendente: boolean };
   /** taxa anual de custo de capital; null = sem taxa (custo não exibido). */
   taxa: number | null;
   /** 'YYYY-MM-DD' (SP) */
@@ -76,8 +78,8 @@ export function RaioXMercadoria({ itens, decisoes, onDecidir, taxa, hoje, nomes 
   nomes: Map<string, string>;
 }) {
   const colunas = useMemo(
-    () => [...colunasBase, colExecucao(taxa, hoje, nomes), colDecidir(onDecidir)],
-    [onDecidir, taxa, hoje, nomes],
+    () => [...colunasBase, colExecucao(taxa, hoje, nomes), colDecidir(onDecidir, confirmar)],
+    [onDecidir, taxa, hoje, nomes, confirmar],
   );
   return <RaioXLista itens={itens} decisoes={decisoes} colunas={colunas} />;
 }

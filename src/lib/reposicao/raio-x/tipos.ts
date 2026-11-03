@@ -91,6 +91,13 @@ export interface ItemRaioX extends FatoSku {
   motivos_espera: string[];
   qtd_liquidavel: number | null;
   ultima_entrada: string | null;
+  /**
+   * Membro da coorte congelada que SAIU dos fatos (saldo zerado) sem decisão: linha histórica sintetizada só para
+   * a decisão humana explícita (bug 2 da 2ª revisão) — o SKU segue no denominador, nunca sai da coorte.
+   */
+  fora_do_estoque?: true;
+  /** valor congelado na coorte (só na linha histórica; null = sem custo no congelamento). */
+  valor_coorte?: number | null;
 }
 
 /** Linha de `raio_x_coorte_top`: valor congelado pelo SERVIDOR (saldo × cmc no congelamento; null = sem custo). */
@@ -167,4 +174,10 @@ export interface LinhaMedicao {
   preco_medio_12m: number | null;
   compras_apos: string[] | null;
   troca_contrapartida: TrocaContrapartida | null;
+  /**
+   * Unidade do estoque (cadastro) e unidades das NFs de venda DESDE A FOTO. A quantidade vendida só se compara com o
+   * saldo quando as duas batem; sem prova de equivalência → sem medição (ausente ≠ zero). null = RPC antiga/sem dado.
+   */
+  unidade_estoque: string | null;
+  unidades_venda_periodo: string[] | null;
 }

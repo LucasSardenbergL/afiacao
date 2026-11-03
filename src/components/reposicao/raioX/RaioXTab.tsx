@@ -8,11 +8,15 @@ import { PageSkeleton } from '@/components/ui/page-skeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DESTINOS, ROTULOS } from '@/lib/reposicao/raio-x/classificar';
-import { destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
-import { concluidoVigente, custoEsperarMensal, ehExecutavel, resumoExecucao } from '@/lib/reposicao/raio-x/execucao';
+import { argsConfirmarSugestao, destinoEfetivo, empresaDoRaioX, fornecedorEfetivo } from '@/lib/reposicao/raio-x/decisao';
+import { concluidoVigente, custoEsperarMensal, ehExecutavel, planoPadrao, resumoExecucao } from '@/lib/reposicao/raio-x/execucao';
+import { filaTop, proximoDaFila } from '@/lib/reposicao/raio-x/fila';
+import { medir } from '@/lib/reposicao/raio-x/medir';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { toast } from 'sonner';
 import { hojeSP } from '@/lib/time/sp-day';
 import { useAuth } from '@/contexts/AuthContext';
-import type { Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
+import type { DecisaoRow, Empresa, ItemRaioX } from '@/lib/reposicao/raio-x/tipos';
 import { registrarNoLedger } from '@/lib/analytics-ledger';
 import { useRaioX, useRaioXMedicao } from './useRaioX';
 import { fmtReais } from './formato';
@@ -22,6 +26,8 @@ import { RaioXMercadoria } from './RaioXMercadoria';
 import { RaioXContagem } from './RaioXContagem';
 import { RaioXSaidas } from './RaioXSaidas';
 import { DecisaoSheet } from './DecisaoSheet';
+import { useRaioXMutacoes, type OrigemDecisao } from './useRaioXMutacoes';
+import type { Confirmacao } from './RaioXLinha';
 import { useEquipeRaioX, useTaxaCustoCapital } from './useExecucaoRaioX';
 
 type Segmento = 'mercadoria' | 'uso' | 'nao' | 'saidas';
@@ -35,7 +41,8 @@ const SEGMENTOS: { id: Segmento; rotulo: string }[] = [
 /** Filtro de destino (Ruling S4): os 6 destinos + as 3 sugestões que não são destino. */
 const OPCOES_DESTINO = [...DESTINOS, 'novo_aguarde', 'revisar', 'sem_historico'] as const;
 
-const porValorDesc = (a: ItemRaioX, b: ItemRaioX) => (b.valor ?? -Infinity) - (a.valor ?? -Infinity);
+const porValorDesc = (a: ItemRaioX, b: ItemRaioX) => (b.valor ?? b.valor_coorte ?? -Infinity) - (a.valor ?? a.valor_coorte ?? -Infinity);
+
 
 export function RaioXTab() {
   const { empresa } = useReposicaoEmpresa();
@@ -49,8 +56,13 @@ export function RaioXTab() {
   const { user } = useAuth();
   const hoje = hojeSP();
   // Sheet: guarda sku + empresa de quem abriu; item e decisão são relidos do cache (vivos após invalidar).
-  const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa } | null>(null);
+  // `origem`: de onde veio o toque (sensor); o painel aberto num item do Top 61 pendente segue para o próximo ao salvar.
+  const [aberto, setAberto] = useState<{ sku: number; empresa: Empresa; origem: OrigemDecisao } | null>(null);
   const fechar = useCallback(() => setAberto(null), []);
+  // SKUs gravados nesta montagem: a fila não os reoferece enquanto o refetch das decisões não volta.
+  const salvos = useRef<Set<number>>(new Set());
+  const isMobile = useIsMobile();
+  const m = useRaioXMutacoes(chave ?? 'oben'); // empresa só é lida ao gravar, e só se grava com `chave` não-nula
   // Trocou a empresa no seletor → descarta o Sheet (senão reabriria ao voltar para a empresa original).
   useEffect(() => {
     if (aberto && aberto.empresa !== chave) setAberto(null);
@@ -68,12 +80,13 @@ export function RaioXTab() {
   // Abrir relê o servidor (FI1): sem refetch-on-focus, o formulário nasceria do cache velho e a assinatura do S9
   // nunca mudaria — salvar apagaria o que outro operador gravou. Quando o refetch chegar com outra assinatura,
   // o Sheet bloqueia e oferece "Recarregar".
-  const abrir = useCallback((i: ItemRaioX) => {
+  const abrirSku = useCallback((sku: number, origem: OrigemDecisao) => {
     if (!chave) return;
-    setAberto({ sku: i.sku_codigo_omie, empresa: chave });
+    setAberto({ sku, empresa: chave, origem });
     void qc.invalidateQueries({ queryKey: ['raio-x', chave] });
   }, [chave, qc]);
-  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '', rxIneq: '' });
+  const abrir = useCallback((i: ItemRaioX) => abrirSku(i.sku_codigo_omie, 'sheet'), [abrirSku]);
+  const [f, setF] = useUrlState({ rx: 'mercadoria', rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false as boolean, rxBusca: '', rxSku: '', rxIneq: '', rxFila: false as boolean });
 
   const codigos = useMemo(() => new Map(rx.itens.map((i) => [i.sku_codigo_omie, i.codigo])), [rx.itens]);
   // Contradição clicável: lista de mercadoria filtrada pelo SKU exato (`rxSku` na URL — nunca a busca por código, que é substring).
@@ -85,7 +98,64 @@ export function RaioXTab() {
   const segmento: Segmento = f.rx === 'uso' || f.rx === 'nao' || f.rx === 'saidas' ? f.rx : 'mercadoria';
 
   // Membro da coorte que voltou a girar segue decidível (senão a meta de 100% ficaria inalcançável pela tela).
-  const mercadoria = useMemo(() => rx.itens.filter((i) => i.categoria === 'mercadoria' && (i.parado || i.top)), [rx.itens]);
+  // + linhas históricas: membro da coorte que zerou o saldo segue decidível (bug 2 — nunca sai da coorte).
+  const mercadoria = useMemo(
+    () => [...rx.itens.filter((i) => i.categoria === 'mercadoria' && (i.parado || i.top)), ...rx.historicos],
+    [rx.itens, rx.historicos],
+  );
+  // Fila do Top 61: pendentes da coorte por R$ (UX 3). Independe dos filtros da lista.
+  const fila = useMemo(() => filaTop(mercadoria, rx.decisoes), [mercadoria, rx.decisoes]);
+  const filaSkus = useMemo(() => new Set(fila.map((i) => i.sku_codigo_omie)), [fila]);
+  const abrirFila = useCallback(() => {
+    const prox = proximoDaFila(fila, null, salvos.current);
+    if (prox !== null) abrirSku(prox, 'fila');
+  }, [fila, abrirSku]);
+  // Link direto/Cmd-K (`rxFila=1`): com a leitura pronta, abre o 1º pendente do Top 61 e limpa o parâmetro.
+  useEffect(() => {
+    if (!f.rxFila || !pronta) return;
+    setF({ rxFila: false });
+    abrirFila();
+  }, [f.rxFila, pronta, setF, abrirFila]);
+
+  // Salvou no painel: item do Top 61 → próximo pendente (fila encadeada); fora do Top → fecha.
+  const aoSalvar = useCallback(() => {
+    if (!aberto) return;
+    salvos.current.add(aberto.sku);
+    if (!filaSkus.has(aberto.sku)) return setAberto(null);
+    const prox = proximoDaFila(fila, aberto.sku, salvos.current);
+    if (prox === null) {
+      setAberto(null);
+      toast.success('Top 61 todo decidido nesta passagem');
+      return;
+    }
+    setAberto({ sku: prox, empresa: aberto.empresa, origem: 'fila' });
+  }, [aberto, fila, filaSkus]);
+  const pular = useCallback(() => {
+    if (!aberto) return;
+    const prox = proximoDaFila(fila, aberto.sku, salvos.current);
+    if (prox === null) return setAberto(null);
+    setAberto({ sku: prox, empresa: aberto.empresa, origem: 'fila' });
+  }, [aberto, fila]);
+
+  // "Confirmar: <sugestão>" no card (UX 2): 1 toque = a decisão, com o plano padrão se o destino tem execução.
+  const confirmacaoDe = useCallback((i: ItemRaioX, d: DecisaoRow | undefined): Confirmacao | null => {
+    if (!chave) return null;
+    const a = argsConfirmarSugestao(chave, i, d);
+    return a && a.destino ? { destino: a.destino, tiraDoMotor: a.tirarDoMotor } : null;
+  }, [chave]);
+  const confirmarCard = useCallback(async (i: ItemRaioX) => {
+    if (!chave) return;
+    const d = rx.decisoes.get(i.sku_codigo_omie);
+    const args = argsConfirmarSugestao(chave, i, d);
+    if (!args || !args.destino) return;
+    const plano = ehExecutavel(args.destino) ? planoPadrao(user?.id ?? null, hoje) : null;
+    const res = await m.salvar(args, plano, { sku: i.sku_codigo_omie, atualizadoEm: d?.atualizado_em ?? null, origem: 'card' });
+    if (res !== 'falhou') salvos.current.add(i.sku_codigo_omie);
+  }, [chave, rx.decisoes, user, hoje, m]);
+  const confirmar = useMemo(
+    () => ({ de: confirmacaoDe, onConfirmar: (i: ItemRaioX) => void confirmarCard(i), pendente: m.pendente }),
+    [confirmacaoDe, confirmarCard, m.pendente],
+  );
   const fornecedores = useMemo(
     () =>
       [...new Set(mercadoria.map((i) => fornecedorEfetivo(i, rx.decisoes.get(i.sku_codigo_omie))).filter((x): x is string => !!x))].sort(),
@@ -140,7 +210,14 @@ export function RaioXTab() {
   );
 
   // Item sumiu do cache (reclassificado/fora do recorte) → nada a mostrar; o Sheet não abre com item velho.
-  const itemAberto = aberto && aberto.empresa === chave ? rx.itens.find((i) => i.sku_codigo_omie === aberto.sku) ?? null : null;
+  const itemAberto = aberto && aberto.empresa === chave
+    ? rx.itens.find((i) => i.sku_codigo_omie === aberto.sku) ?? rx.historicos.find((i) => i.sku_codigo_omie === aberto.sku) ?? null
+    : null;
+  // Linha única do mobile (UX 4): o critério da meta vem da MESMA medição do bloco completo; sem leitura → "—".
+  const liberado = useMemo(() => (medicao.linhas && chave ? medir(medicao.linhas, chave).meta_liberado : null), [medicao.linhas, chave]);
+  const pendenteTop = rx.placar.topTotal - rx.placar.topDecidido;
+  const filtrosAtivos = !!(f.rxDestino || f.rxForn || f.rxStatus || f.rxExec || f.rxTop || f.rxBusca || f.rxSku || f.rxIneq);
+  const limparFiltros = () => setF({ rxDestino: '', rxForn: '', rxStatus: '', rxExec: '', rxTop: false, rxBusca: '', rxSku: '', rxIneq: '' });
 
   if (chave === null) {
     return <EmptyState tone="operational" icon={PackageSearch} title="Sem cadastro de produto" description="sem cadastro de produto — fora do Raio-X por ora" />;
@@ -169,22 +246,67 @@ export function RaioXTab() {
           estoque sincronizado há {Math.floor(rx.syncedHoras)} h — números podem estar defasados
         </p>
       )}
-      <RaioXPlacar
-        placar={rx.placar}
-        coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
-        custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
-        execucao={execucao}
-      />
-      <RaioXCaixaLiberado
-        linhas={medicao.linhas}
-        isLoading={medicao.isLoading}
-        erro={medicao.erro}
-        empresa={chave}
-        codigos={codigos}
-        onFiltrarSku={filtrarSku}
-        decisoes={rx.decisoes}
-        unidadesVenda={unidadesVenda}
-      />
+      {rx.placar.topN > 0 && rx.placar.topDecididoN === rx.placar.topN ? (
+        <EmptyState
+          tone="operational"
+          icon={PackageSearch}
+          title="Top 61 decidido"
+          description={`Os ${rx.placar.topN} itens da meta têm decisão. Agora é executar e medir o liberado.`}
+        />
+      ) : fila.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="touch" onClick={abrirFila}>Decidir Top 61 ({fila.length} pendentes)</Button>
+        </div>
+      )}
+      {isMobile ? (
+        <>
+          <p data-testid="placar-linha" className="text-sm">
+            Top 61: {rx.placar.topDecididoN}/{rx.placar.topN} · liberado {liberado === null ? 'R$ —' : fmtReais(liberado)} de 60 mil
+            {execucao.vencidas > 0 && <> · <span className="text-status-error">{execucao.vencidas} vencidas</span></>}
+            {execucao.semResponsavel > 0 && <> · <span className="text-status-warning">{execucao.semResponsavel} sem responsável</span></>}
+          </p>
+          <details className="rounded-md border p-2 text-sm">
+            <summary className="min-h-11 cursor-pointer py-2">Placar e medição completos</summary>
+            <div className="mt-2 space-y-4">
+              <RaioXPlacar
+                placar={rx.placar}
+                coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
+                custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
+                execucao={execucao}
+              />
+              <RaioXCaixaLiberado
+                linhas={medicao.linhas}
+                isLoading={medicao.isLoading}
+                erro={medicao.erro}
+                empresa={chave}
+                codigos={codigos}
+                onFiltrarSku={filtrarSku}
+                decisoes={rx.decisoes}
+                unidadesVenda={unidadesVenda}
+              />
+            </div>
+          </details>
+        </>
+      ) : (
+        <>
+          <RaioXPlacar
+            placar={rx.placar}
+            coorteIndisponivel={rx.coorteEstado === 'indisponivel'}
+            custoPendenteMes={custoEsperarMensal(rx.placar.pendente, taxa)}
+            execucao={execucao}
+          />
+          <RaioXCaixaLiberado
+            linhas={medicao.linhas}
+            isLoading={medicao.isLoading}
+            erro={medicao.erro}
+            empresa={chave}
+            codigos={codigos}
+            onFiltrarSku={filtrarSku}
+            decisoes={rx.decisoes}
+            unidadesVenda={unidadesVenda}
+          />
+        </>
+      )}
 
       <div role="group" aria-label="Segmento" className="flex flex-wrap gap-2">
         {SEGMENTOS.map((s) => (
@@ -233,9 +355,21 @@ export function RaioXTab() {
             </div>
           )}
           {filtrados.length === 0 ? (
-            <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description={mercadoria.length === 0 ? 'Nenhuma mercadoria parada nesta empresa.' : 'Nenhum item com esses filtros.'} />
+            mercadoria.length === 0 ? (
+              <EmptyState tone="operational" icon={PackageSearch} title="Nada parado" description="Nenhuma mercadoria parada nesta empresa." />
+            ) : (
+              // Há itens fora do filtro: nunca dizer "Nada parado" (UX 4).
+              <EmptyState
+                tone="operational"
+                icon={PackageSearch}
+                title="Nenhum item com esses filtros"
+                description={`${mercadoria.length} item(ns) de mercadoria ficaram de fora do filtro.`}
+                actionLabel={filtrosAtivos ? 'Limpar filtros' : undefined}
+                onAction={filtrosAtivos ? limparFiltros : undefined}
+              />
+            )
           ) : (
-            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} />
+            <RaioXMercadoria itens={filtrados} decisoes={rx.decisoes} onDecidir={abrir} taxa={taxa} hoje={hoje} nomes={nomes} confirmar={confirmar} />
           )}
         </>
       ) : segmento === 'saidas' ? (
@@ -246,7 +380,23 @@ export function RaioXTab() {
         <RaioXContagem empresa={chave} categoria={segmento === 'uso' ? 'uso_consumo' : 'nao_mercadoria'} itens={contagem} decisoes={rx.decisoes} onDecidir={abrir} />
       )}
       {itemAberto && aberto && (
-        <DecisaoSheet empresa={aberto.empresa} item={itemAberto} decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)} onClose={fechar} taxa={taxa} equipe={equipe} />
+        <DecisaoSheet
+          empresa={aberto.empresa}
+          item={itemAberto}
+          decisao={rx.decisoes.get(itemAberto.sku_codigo_omie)}
+          onClose={fechar}
+          onSalvo={aoSalvar}
+          taxa={taxa}
+          equipe={equipe}
+          userId={user?.id ?? null}
+          origem={aberto.origem}
+          fila={filaSkus.has(itemAberto.sku_codigo_omie) ? {
+            decididos: rx.placar.topDecididoN,
+            total: rx.placar.topN,
+            pendente: pendenteTop,
+            onPular: pular,
+          } : null}
+        />
       )}
     </div>
   );

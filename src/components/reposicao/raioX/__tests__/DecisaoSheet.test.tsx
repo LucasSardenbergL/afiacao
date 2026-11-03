@@ -19,7 +19,8 @@ const rpc = vi.hoisted(() => vi.fn((_nome: string, _args: Record<string, unknown
 vi.mock('@/integrations/supabase/client', () => ({
   supabase: { rpc: (nome: string, args: Record<string, unknown>) => rpc(nome, args) },
 }));
-const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
+const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
+vi.mock('@/lib/analytics-ledger', () => ({ registrarNoLedger: vi.fn() }));
 vi.mock('sonner', () => ({ toast }));
 const track = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/analytics', () => ({ track: (...a: unknown[]) => track(...a), captureException: vi.fn() }));
@@ -68,7 +69,9 @@ const argsDe = (nome: string) => rpc.mock.calls.filter((c) => c[0] === nome).map
 
 beforeEach(() => {
   rpc.mockReset();
-  rpc.mockImplementation(() => Promise.resolve({ data: { tirou_do_motor: false }, error: null }));
+  // decidir devolve a linha gravada (a versão vai para o plano que segue no mesmo salvar)
+  rpc.mockImplementation(() => Promise.resolve({ data: { tirou_do_motor: false, atualizado_em: '2026-11-02T00:00:00Z' }, error: null }));
+  toast.warning.mockReset();
   toast.error.mockReset();
   toast.success.mockReset();
   track.mockReset();
@@ -76,7 +79,7 @@ beforeEach(() => {
 
 describe('DecisaoSheet', () => {
   it('(a) destino sugerido pré-selecionado, mas "Salvar" só habilita após um toque; manda o estado completo', async () => {
-    rpc.mockImplementation(() => Promise.resolve({ data: { tirou_do_motor: true }, error: null }));
+    rpc.mockImplementation(() => Promise.resolve({ data: { tirou_do_motor: true, atualizado_em: '2026-11-02T00:00:00Z' }, error: null }));
     const { onClose, invalidar } = abrir();
     expect(screen.getByRole('button', { name: 'Liquidar' }).getAttribute('aria-pressed')).toBe('true');
     expect(salvar().disabled).toBe(true);
@@ -272,7 +275,9 @@ describe('DecisaoSheet', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Recarregar' }));
     expect(screen.queryByText('Esta decisão mudou enquanto o painel estava aberto — recarregue')).toBeNull();
     expect((screen.getByLabelText('Observação') as HTMLTextAreaElement).value).toBe('do outro operador');
-    expect(salvar().disabled).toBe(true);
+    // sem toque na decisão, o único salvável é a PROPOSTA de plano (liquidar sem plano gravado) — a decisão não é reenviada
+    expect(screen.queryByRole('button', { name: 'Salvar decisão' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Salvar execução' }) as HTMLButtonElement).disabled).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'Liquidar' }));
     expect(salvar().disabled).toBe(false);
   });

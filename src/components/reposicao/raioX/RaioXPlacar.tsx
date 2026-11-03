@@ -42,7 +42,7 @@ export function RaioXPlacar({ placar, coorteIndisponivel = false, custoPendenteM
         )}
         {placar.topZeradoN > 0 && (
           <p data-testid="placar-top-zerado" className="text-xs text-status-warning">
-            {placar.topZeradoN} da coorte saíram do estoque sem decisão (saldo zerado) — seguem na meta, sem linha para decidir
+            {placar.topZeradoN} da coorte saíram do estoque sem decisão (saldo zerado) — seguem na meta; decida na linha "saiu do estoque" da lista
           </p>
         )}
         {placar.topEntrouDepoisN > 0 && (

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { medir } from '../medir';
+import { medir, unidadeEquivalente } from '../medir';
 import type { LinhaMedicao } from '../tipos';
 
 const linha = (o: Partial<LinhaMedicao> = {}): LinhaMedicao => ({
   sku_codigo_omie: 1, destino: 'liquidar', decidido_em: null, foto_saldo: 10, foto_cmc: 5, foto_valor: 50,
   foto_categoria: 'mercadoria', credito_troca: null, saldo_atual: 10, qtd_vendida: 0, receita: 0,
-  preco_medio_12m: 10, compras_apos: [], troca_contrapartida: null, ...o,
+  preco_medio_12m: 10, compras_apos: [], troca_contrapartida: null, unidade_estoque: 'UN', unidades_venda_periodo: ['UN'], ...o,
 });
 
 describe('medir (oben)', () => {
@@ -169,5 +169,46 @@ describe('troca_contrapartida (PR 2 — inequívoco)', () => {
     expect(m.trocado_encalhe).toBe(30);
     expect(m.trocado_sem_contrapartida).toBe(5);
     expect(m.meta_liberado).toBe(25);
+  });
+});
+
+describe('unidade comprovada (bug 3 da 2ª revisão)', () => {
+  it('vende em CX e estoca em UN: sem medição — nunca compara CX vendida com UN em estoque', () => {
+    const m = medir([linha({ saldo_atual: 4, qtd_vendida: 3, receita: 300, unidades_venda_periodo: ['CX'] })], 'oben');
+    expect(m.sem_medicao).toEqual([1]);
+    expect(m.sem_medicao_valor).toBe(50);
+    expect(m.vendido).toBe(0);
+    expect(m.liquidado).toBe(0);
+    expect(m.estoque_reduzido).toBe(0);
+    expect(m.receita_vendas).toBe(0);
+  });
+  it('unidades misturadas no período (UN e CX): sem medição', () => {
+    const m = medir([linha({ saldo_atual: 4, qtd_vendida: 6, receita: 60, unidades_venda_periodo: ['CX', 'UN'] })], 'oben');
+    expect(m.sem_medicao).toEqual([1]);
+  });
+  it('NF sem unidade ("") ou RPC antiga (null): sem prova → sem medição', () => {
+    expect(medir([linha({ qtd_vendida: 2, receita: 20, saldo_atual: 8, unidades_venda_periodo: ['', 'UN'] })], 'oben').sem_medicao).toEqual([1]);
+    expect(medir([linha({ qtd_vendida: 2, receita: 20, saldo_atual: 8, unidades_venda_periodo: null, unidade_estoque: null })], 'oben').sem_medicao).toEqual([1]);
+  });
+  it('sem venda no período não precisa de conversão: mede (0 vendido é zero comprovado)', () => {
+    const m = medir([linha({ qtd_vendida: 0, receita: 0, unidades_venda_periodo: [], unidade_estoque: null })], 'oben');
+    expect(m.sem_medicao).toEqual([]);
+    expect(m.vendido).toBe(0);
+    expect(m.parado).toBe(50);
+  });
+  it('mesma unidade: mede como antes', () => {
+    const m = medir([linha({ saldo_atual: 6, qtd_vendida: 4, receita: 40 })], 'oben');
+    expect(m.sem_medicao).toEqual([]);
+    expect(m.vendido).toBe(20);
+  });
+  it('colacor (sem NF) não depende de unidade', () => {
+    const m = medir([linha({ qtd_vendida: null, receita: null, saldo_atual: 6, unidades_venda_periodo: null })], 'colacor');
+    expect(m.saiu_sem_nf).toBe(20);
+  });
+  it('unidadeEquivalente: só prova quando TODA venda está na unidade do estoque', () => {
+    expect(unidadeEquivalente({ qtd_vendida: 2, unidade_estoque: 'UN', unidades_venda_periodo: ['UN'] })).toBe(true);
+    expect(unidadeEquivalente({ qtd_vendida: 2, unidade_estoque: 'UN', unidades_venda_periodo: ['un'] })).toBe(false);
+    expect(unidadeEquivalente({ qtd_vendida: 2, unidade_estoque: 'UN', unidades_venda_periodo: [] })).toBe(false);
+    expect(unidadeEquivalente({ qtd_vendida: 2, unidade_estoque: '', unidades_venda_periodo: [''] })).toBe(false);
   });
 });
