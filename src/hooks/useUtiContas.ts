@@ -140,7 +140,7 @@ export interface AliasRow {
  * Título sem código, sem vínculo, com mais de um dono ou dono em alias `conflict` não é
  * atribuído a ninguém — vai para `semCliente`, nunca para um cliente "provável".
  */
-export function atribuirVencidos(input: {
+function atribuirVencidos(input: {
   titulos: TituloRow[];
   vinculos: VinculoRow[];
   aliases: AliasRow[];
