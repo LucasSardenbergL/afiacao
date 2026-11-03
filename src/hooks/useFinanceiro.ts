@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef } from 'react';
 import { ALL_COMPANIES, type Company } from '@/contexts/CompanyContext';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
 import { provisorioConsolidado, foraDreConsolidado } from '@/lib/financeiro/dre-helpers';
+import { consolidarTitulos } from '@/lib/financeiro/resumo-titulos';
 import {
   triggerFinanceiroSync,
   getResumoFinanceiro,
@@ -98,11 +99,9 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
           saldo_total_cc: Object.values(resumo).some((r) => r.saldo_total_cc === null)
             ? null
             : Object.values(resumo).reduce((s, r) => s + (r.saldo_total_cc ?? 0), 0),
-          total_a_receber: Object.values(resumo).reduce((s, r) => s + r.total_a_receber, 0),
-          total_a_pagar: Object.values(resumo).reduce((s, r) => s + r.total_a_pagar, 0),
-          total_vencido_receber: Object.values(resumo).reduce((s, r) => s + r.total_vencido_receber, 0),
-          total_vencido_pagar: Object.values(resumo).reduce((s, r) => s + r.total_vencido_pagar, 0),
-          posicao_liquida: Object.values(resumo).reduce((s, r) => s + r.posicao_liquida, 0),
+          // Mesma régua para os títulos, mas independente do saldo: um CNPJ sem títulos zera
+          // (null) os totais de CR/CP do grupo, não o caixa.
+          ...consolidarTitulos(Object.values(resumo)),
         }
       : null;
 

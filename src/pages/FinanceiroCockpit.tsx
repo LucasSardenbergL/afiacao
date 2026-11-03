@@ -73,7 +73,7 @@ const FinanceiroCockpit = () => {
           icon={Wallet}
           detail={
             riscoLiquidez === null
-              ? 'Risco de liquidez: — (saldo bancário indisponível)'
+              ? `Risco de liquidez: — (${totalCC === null ? 'saldo bancário indisponível' : 'títulos a pagar indisponíveis'})`
               : `Risco de liquidez: ${riscoLabel} (${(riscoLiquidez * 100).toFixed(0)}%)`
           }
           detailColor={riscoColor}
