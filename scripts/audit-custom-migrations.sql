@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 775
+-- Total de custom migrations: 776
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -843,7 +843,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104110000', 'tint_promote_snap_fonte_so_com_expansao', '20261104110000_tint_promote_snap_fonte_so_com_expansao.sql'),
   ('20261104110100', 'tint_receita_assinada_no_cabecalho', '20261104110100_tint_receita_assinada_no_cabecalho.sql'),
   ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql'),
-  ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql')
+  ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql'),
+  ('20261104153351', 'radar_cnae_secundario', '20261104153351_radar_cnae_secundario.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3343,7 +3344,13 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens'),
-  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', '')
+  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_lista', ''),
+  ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5891,7 +5898,13 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens'),
-  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', '')
+  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_cnae_secundario', 'function', 'public', 'radar_lista', ''),
+  ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec')
 )
 SELECT
   e.migration,
@@ -5919,7 +5932,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 171.
+-- Funções redefinidas com corpo extraível: 172.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6280,6 +6293,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 4, '20261030071150_radar_contagem_municipio_regiao_contato.sql', 'f324426cbafcb16fcc5b847a9222e262'),
   ('public', 'radar_contagem_por_municipio', 5, '20261103100000_radar_agregado_municipio.sql', '99020b287d2b32f266e409caca4ab0ae'),
   ('public', 'radar_contagem_por_municipio', 6, '20261103223300_radar_agregado_cnae.sql', 'e894150109ba6adfd8eb5fc6701f7a1f'),
+  ('public', 'radar_contagem_por_municipio', 7, '20261104153351_radar_cnae_secundario.sql', '822bb416cf3b4ce2def0a7fa54cf69de'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
@@ -6566,7 +6580,10 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('private', 'clientes_import_semear_interno', 1, '20261101200000_clientes_import_servidor.sql', 'c9a6eaa2a248d59c9a7d8152d3e5dd6a'),
   ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573'),
   ('public', 'radar_agregado_recalcular', 1, '20261103100000_radar_agregado_municipio.sql', '486f25635979b302ded0f60a476a0a85'),
-  ('public', 'radar_agregado_recalcular', 2, '20261103223300_radar_agregado_cnae.sql', 'e1ad69fe29525103fe4158b0671b8cfe')
+  ('public', 'radar_agregado_recalcular', 2, '20261103223300_radar_agregado_cnae.sql', 'e1ad69fe29525103fe4158b0671b8cfe'),
+  ('public', 'radar_agregado_recalcular', 3, '20261104153351_radar_cnae_secundario.sql', 'bce4f5981e1491d2df5796b4489aae99'),
+  ('public', 'radar_lista', 1, '20261103131500_radar_lista_rpc.sql', '35f2b704bf5d9b3d429156aed6ac4890'),
+  ('public', 'radar_lista', 2, '20261104153351_radar_cnae_secundario.sql', 'b514c898e63fe2e0301ba8323cdd2955')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),

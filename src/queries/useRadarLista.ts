@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { isSearchablePostgrestTerm, sanitizeForPostgrestOr } from '@/lib/postgrest';
-import { presetParaParams, digitosCnae, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
+import { presetParaParams, digitosCnae, cnaeSecundarioCompleto, versaoDaFila, recorteDeUf, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { lerLoteVigente, useRadarLoteVigente } from '@/queries/useRadarLoteVigente';
 import { recorteDeLote, type LoteIngest } from '@/lib/radar/lote-vigente';
 import { LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
@@ -13,7 +13,7 @@ export interface RadarFiltros {
   busca: string;
   uf: string;            // '' = todas
   municipio: string;     // '' = todos
-  cnae: string;          // '' = todos (1 código por enquanto)
+  cnae: string;          // '' = todos — CNAE PRINCIPAL (código completo = exato; parcial = família)
   status: string;        // '' = qualquer; senão um prospeccao_status
   incluirJaClientes: boolean;
   comTelefone: boolean;  // só empresas com telefone1 OU telefone2
@@ -24,6 +24,7 @@ export interface RadarFiltros {
   // Opcionais: quem monta RadarFiltros sem eles (ranking, mapa, testes antigos) recebe o recorte de antes.
   regiao?: RegiaoRadar;        // 'atuacao' = MG e vizinhos (default da TELA); ausente/'brasil' = todas as UFs. UF escolhida vence.
   incluirSemContato?: boolean; // false (default da tela) = esconde quem não tem telefone NEM e-mail
+  cnaeSecundario?: string;     // CNAE entre os SECUNDÁRIOS (só código completo filtra); combina com `cnae` (E)
 }
 
 const PAGE = 50;
@@ -92,6 +93,7 @@ export function parametrosDaLista(
     p_ufs: recorteUf.tipo === 'lista' ? [...recorteUf.ufs] : undefined,
     p_cnae_exato: cnaeDigitos.length === 7 ? cnaeDigitos : undefined,
     p_cnae_prefixo: cnaeDigitos.length > 0 && cnaeDigitos.length < 7 ? cnaeDigitos : undefined,
+    p_cnae_secundario: cnaeSecundarioCompleto(filtros.cnaeSecundario) ?? undefined,
     p_status: !sugeridos && filtros.status ? filtros.status : undefined,
     p_incluir_ja_clientes: !sugeridos && filtros.incluirJaClientes,
     p_ultimo_lote: !sugeridos && recorte.ultimoLote ? recorte.ultimoLote : undefined,

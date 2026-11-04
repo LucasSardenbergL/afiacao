@@ -69,6 +69,15 @@ describe('casaFiltrosExplicitos', () => {
     expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, status: 'em_conversa' })).toBe(false);
   });
 
+  it('CNAE secundário: só o código completo filtra, contra o array de secundários', () => {
+    const e = lead('X', { cnaes_secundarios: ['2391503', '4330404'] });
+    expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, cnaeSecundario: '2391-5/03' })).toBe(true);
+    expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, cnaeSecundario: '3102-1/00' })).toBe(false);
+    expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, cnae: '3101-2/00', cnaeSecundario: '2391-5/03' })).toBe(true);
+    expect(casaFiltrosExplicitos(e, { ...SEM_FILTRO, cnaeSecundario: '2391' })).toBe(true);
+    expect(casaFiltrosExplicitos(lead('Y', { cnaes_secundarios: null }), { ...SEM_FILTRO, cnaeSecundario: '2391-5/03' })).toBe(false);
+  });
+
   it('busca só-curinga não filtra (mesma regra da fila no servidor)', () => {
     expect(casaFiltrosExplicitos(lead('X'), { ...SEM_FILTRO, busca: '%%' })).toBe(true);
   });

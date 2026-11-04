@@ -68,6 +68,16 @@ describe('useRadarContagemMunicipios — região e contato da fila', () => {
     await rodar(FILTROS);
     expect(argsRpc()).toMatchObject({ p_uf: null, p_ufs: null, p_com_contato: false });
   });
+  it('CNAE secundário: código completo vai como p_cnae_secundario, junto do principal; parcial ou ausente = NULL', async () => {
+    await rodar({ ...FILTROS, cnae: '3101-2/00', cnaeSecundario: '2391-5/03' });
+    expect(argsRpc()).toMatchObject({ p_cnae_exato: '3101200', p_cnae_secundario: '2391503' });
+    rpcs = [];
+    await rodar({ ...FILTROS, cnaeSecundario: '2391' });
+    expect(argsRpc()).toMatchObject({ p_cnae_secundario: null });
+    rpcs = [];
+    await rodar(FILTROS);
+    expect(argsRpc()).toMatchObject({ p_cnae_secundario: null });
+  });
   it('"só sugeridos": a região e o contato entram na consulta de tabela (a RPC nem é chamada)', async () => {
     await rodar({ ...FILTROS, soSugeridos: true, regiao: 'atuacao', incluirSemContato: false });
     expect(argsRpc()).toBeUndefined();
