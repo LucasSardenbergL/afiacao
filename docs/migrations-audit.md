@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **775** custom migrations totais
-- **2538** objetos esperados (criados por estas migrations)
+- **776** custom migrations totais
+- **2544** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 957
+  - `function`: 960
   - `rls_policy`: 519
-  - `index`: 360
-  - `table`: 230
+  - `index`: 362
+  - `table`: 231
   - `cron_job`: 210
   - `view`: 133
   - `trigger`: 125
@@ -6341,6 +6341,17 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261104120000_hot_contas_pagar_sem_indice_carimbo.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261104153351_radar_cnae_secundario.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_agregado_recalcular` | — |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_lista` | — |
+| `table` | `public.radar_agregado_cnae_sec` | — |
+| `index` | `public.idx_radar_empresas_cnaes_sec` | `radar_empresas` |
+| `index` | `public.idx_radar_agregado_cnae_sec_codigo` | `radar_agregado_cnae_sec` |
 
 ## Próximos passos por status
 

@@ -24346,6 +24346,7 @@ export type Database = {
         Args: {
           p_cnae_exato?: string
           p_cnae_prefix?: string
+          p_cnae_secundario?: string
           p_com_contato?: boolean
           p_data_abertura_max?: string
           p_data_abertura_min?: string
@@ -24420,6 +24421,7 @@ export type Database = {
           p_busca?: string
           p_cnae_exato?: string
           p_cnae_prefixo?: string
+          p_cnae_secundario?: string
           p_com_contato?: boolean
           p_com_telefone?: boolean
           p_data_abertura_max?: string

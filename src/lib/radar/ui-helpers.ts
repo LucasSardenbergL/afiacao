@@ -80,6 +80,13 @@ export function digitosCnae(input: string | null | undefined): string {
   return (input ?? '').replace(/\D/g, '').slice(0, 7);
 }
 
+/** CNAE secundário só filtra com o código COMPLETO (7 dígitos): o banco procura o código exato dentro do
+ *  array `cnaes_secundarios`, sem família. Parcial ou vazio = sem filtro (null). */
+export function cnaeSecundarioCompleto(input: string | null | undefined): string | null {
+  const d = digitosCnae(input);
+  return d.length === 7 ? d : null;
+}
+
 // ── Status de prospecção: rótulo + tom (cor semântica, nunca cor crua) ──────────────────
 export type TomStatus = 'neutro' | 'info' | 'warning' | 'success' | 'muted';
 const STATUS_UI: Record<string, { label: string; tom: TomStatus }> = {

@@ -46,6 +46,7 @@ type RadarUrlState = {
   uf: string;
   municipio: string;
   cnae: string;
+  cnaeSecundario: string;
   status: string;
   incluirJaClientes: boolean;
   comTelefone: boolean;
@@ -64,6 +65,7 @@ const DEFAULTS: RadarUrlState = {
   uf: '',
   municipio: '',
   cnae: '',
+  cnaeSecundario: '',
   status: '',
   incluirJaClientes: false,
   comTelefone: false,
@@ -132,16 +134,16 @@ export default function RadarClientes() {
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), podePaginar);
 
   // Amostra de controle: 1 a cada 10 posições, por cima do ranking (região e "só sugeridos" não a escondem; o que
-  // foi digitado — busca, UF, cidade, CNAE, status — sim). Regra e motivos em src/lib/radar/amostra.ts.
+  // foi digitado — busca, UF, cidade, CNAE principal/secundário, status — sim). Regra e motivos em src/lib/radar/amostra.ts.
   const amostraQ = useRadarAmostra();
   const amostra = amostraQ.data ?? null;
   const resumoAmostra = useMemo(() => (amostra ? resumirAmostra(amostra.itens) : null), [amostra]);
-  const { busca, uf, municipio, cnae, status } = filtros;
+  const { busca, uf, municipio, cnae, cnaeSecundario, status } = filtros;
   const amostraNaFila = useMemo(() => {
     if (!amostra) return [];
-    const f = { busca, uf, municipio, cnae, status };
+    const f = { busca, uf, municipio, cnae, cnaeSecundario, status };
     return amostra.itens.flatMap((i) => (i.empresa && pendenteNaAmostra(i.empresa) && casaFiltrosExplicitos(i.empresa, f) ? [i.empresa] : []));
-  }, [amostra, busca, uf, municipio, cnae, status]);
+  }, [amostra, busca, uf, municipio, cnae, cnaeSecundario, status]);
   const cnpjsAmostra = useMemo(() => new Set(amostra?.itens.map((i) => i.cnpj) ?? []), [amostra]);
   const filaAcabou = q.isSuccess && !q.hasNextPage;
   const empresas = useMemo(

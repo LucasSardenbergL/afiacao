@@ -119,6 +119,14 @@ describe('parametrosDaLista — termos, CNAE, ordem e página', () => {
     expect(params({ cnae: '' })).toMatchObject({ p_cnae_exato: undefined, p_cnae_prefixo: undefined });
   });
 
+  it('CNAE secundário: só o código completo filtra, e combina com o principal', () => {
+    expect(params({ cnae: '3101-2/00', cnaeSecundario: '2391-5/03' }))
+      .toMatchObject({ p_cnae_exato: '3101200', p_cnae_secundario: '2391503' });
+    expect(params({ cnaeSecundario: '2391' }).p_cnae_secundario).toBeUndefined();
+    expect(params({ cnaeSecundario: '' }).p_cnae_secundario).toBeUndefined();
+    expect(params({}).p_cnae_secundario).toBeUndefined();
+  });
+
   it('preset vira a coluna de ordem; "estabelecidas" leva o corte de idade', () => {
     expect(params({ preset: 'score' }).p_ordem).toBe('score');
     expect(params({ preset: 'novas' }).p_ordem).toBe('data_abertura');

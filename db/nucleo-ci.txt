@@ -923,3 +923,8 @@ db/test-radar-lista-rpc.sh                 34  falsificar=15
 # agregado por município. 16 chamadas iguais à contagem de antes; 0 leituras de radar_empresas medidas em pg_stat_xact
 # (controle: data fora do corte lê); lote novo = indisponível; RLS/ACL; corte em São Paulo; PRE.
 db/test-radar-agregado-cnae.sh             39  falsificar=14
+# CNAE secundário no /radar (migration 20261104153351): contagem e lista ganham p_cnae_secundario (E com o
+# principal); o ranking lê radar_agregado_cnae_sec (secundário coberto = CNAE principal da base) e a lista usa o
+# GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
+# 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
+db/test-radar-cnae-secundario.sh           46  falsificar=18
