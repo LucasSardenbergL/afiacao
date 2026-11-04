@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-04T13:32:32.035Z",
-  "sourceHead": "19e8ef462baa2fae76610efd65582fea9e55d19b",
+  "medidoEm": "2026-11-04T22:00:47.404Z",
+  "sourceHead": "d98809a14c496be5381affa0124caabc18a88afd",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 405 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 406 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -57,14 +57,38 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 1,
-      "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@b0d3e42a4 (fetch ok) · prod 2026-11-04 13:32:58.542823Z",
-      "contratoFingerprint": "2cf70a861e5cf1a57eff657cd18f756e58e0aeeddcfbcf944638f1ad4bfa789a",
-      "auditorFingerprint": "fae04bf873266b384840f767c200ebe7f084004082cb2e836c84a09640eee184",
+      "resumo": "deriva-corpo — 5 divergência(s) em prod (2 AUSENTE, 1 SEM_PAR, 2 OVERLOAD_FORA_DO_REPO) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 481 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@cc4f83977 (fetch ok) · prod 2026-11-04 22:01:52.170677Z",
+      "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
+      "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
       "achados": [
         {
-          "id": "49ac41a884abebe9",
-          "linha": "❌ [SEM_PAR] tint_promote_sync_run(uuid): corpo que nem o último CREATE (20260726120000_tint_promote_error_details_completo.sql) nem o patch aceito (20261104110000_tint_promote_snap_fonte_so_com_expansao.sql) explicam (xmin 13792171)",
+          "id": "e3cdcbfdb473dac4",
+          "linha": "❌ [AUSENTE] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean): viva no repo (último CREATE: 20261103223300_radar_agregado_cnae.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        },
+        {
+          "id": "51e349ce972943c3",
+          "linha": "❌ [SEM_PAR] radar_agregado_recalcular(boolean,timestamp with time zone): corpo que nenhuma das 2 versão(ões) commitadas explica — edição manual, ou DDL aplicada ANTES do merge (compare com as migrations das branches abertas) — último CREATE: 20261103223300_radar_agregado_cnae.sql (xmin 13834273)",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        },
+        {
+          "id": "e5b6f9747d57e880",
+          "linha": "❌ [AUSENTE] radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer): viva no repo (último CREATE: 20261103131500_radar_lista_rpc.sql) e ausente em prod — migration não aplicada ou DROP manual",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        },
+        {
+          "id": "25eff6da34e343ac",
+          "linha": "❌ [OVERLOAD_FORA_DO_REPO] radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean,text): overload vivo em prod que nenhuma migration declara (xmin 13834273)",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        },
+        {
+          "id": "96d6bd09011dd2e4",
+          "linha": "❌ [OVERLOAD_FORA_DO_REPO] radar_lista(text,text,text,text[],text,text,text,boolean,text,timestamp with time zone,text,numeric,boolean,boolean,date,date,text,integer,integer,text): overload vivo em prod que nenhuma migration declara (xmin 13834273)",
           "primeiraVez": "2026-11-04",
           "ultimaVez": "2026-11-04"
         }
