@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-03T17:33:01.265Z",
-  "sourceHead": "5c1645f1e0f357ea8ded70987f3ce88580dd4328",
+  "medidoEm": "2026-11-04T13:18:25.734Z",
+  "sourceHead": "8977c88d279370f6d64b37a84309d3da106086e8",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -48,7 +48,7 @@
     "rls": {
       "script": "authz:rls:prod",
       "exit": 0,
-      "resumo": "✅ audit-rls — 404 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
+      "resumo": "✅ audit-rls — 405 tabela(s) em public com RLS ligada (0 desligada); 30 tabela(s) curada(s), 71 policy(ies) e 13 funcao(oes)-predicado batem com o contrato (fecho transitivo, profundidade 1; 0 alcancada(s) so por outra funcao); 5 grupo(s) de lacuna conferido(s) — 87 tabela(s) distinta(s) no grafo, 8 ",
       "denominador": null,
       "contratoFingerprint": "5782353702c86a00e2ebb5b13b8db291ace51568e93782ad9f28304e7ce5b225",
       "auditorFingerprint": "a4ea65f8adfba4cc6e1589c97961807a3781e4b15bfcdae90fab8cd17a865d0f",
@@ -56,12 +56,25 @@
     },
     "corpo": {
       "script": "deriva:corpo:prod",
-      "exit": 0,
-      "resumo": "✅ deriva-corpo — 477 identidade(s) batem com o repo (400 em dia, 65 só cosméticas, 11 aceitas na baseline) e 22 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@5c1645f1e (fetch ok) · prod 2026-11-03 17:33:32.450664Z",
-      "contratoFingerprint": "86537199ae381b413ee48d2edfeab1c5d8bea34723b26b71612d98f80ca6bc44",
-      "auditorFingerprint": "287610b6eb0f4af8a00eed9aed3cbf393f6ae17a0da8c431f66d87191e201b92",
-      "achados": []
+      "exit": 1,
+      "resumo": "deriva-corpo — 2 divergência(s) em prod (1 SEM_PAR, 1 PATCH_NAO_CONCILIADO) — ver as linhas ❌",
+      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@cf6c45894 (fetch ok) · prod 2026-11-04 13:18:52.055336Z",
+      "contratoFingerprint": "57144b8f3ac67b6d0228b30e258dbb34e033c0344c6fb4411efb2933b6680c1c",
+      "auditorFingerprint": "beb67a66bf7d1c94881e604847dc2cf7c9cd2f2de6dcf371fe8d575a6a093c95",
+      "achados": [
+        {
+          "id": "49ac41a884abebe9",
+          "linha": "❌ [SEM_PAR] tint_promote_sync_run(uuid): corpo que nem o último CREATE (20260726120000_tint_promote_error_details_completo.sql) nem o patch aceito (20261103093424_tint_promote_escreve_so_o_que_mudou.sql) explicam (xmin 13792171)",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        },
+        {
+          "id": "59c50efa85fb95ee",
+          "linha": "❌ [PATCH_NAO_CONCILIADO] tint_apply_keys_snapshot(uuid): patch(es) por âncora posterior(es) ao último CREATE (20260611190000_tint_sync_codex_fixes.sql) sem conciliação na baseline: 20261103222838_tint_apply_keys_snapshot_lock_por_account.sql — confira se ALTERA (aceite o md5 de prod) ou SO_CITA (xmin 13739024)",
+          "primeiraVez": "2026-11-04",
+          "ultimaVez": "2026-11-04"
+        }
+      ]
     }
   }
 }
