@@ -65,6 +65,6 @@ Rodada única, focada em verde-falso: `scripts/codex-async.sh`, gpt-6-astra max,
 3. **Diff pai 1 → HEAD: não subestima.** As duas árvores são comparadas inteiras, com NUL e `--no-renames`; com merge de main dentro do PR, o checkout segue sendo o merge de teste.
 4. **Concessão de `docs/`: aceita na árvore atual.** Ela precisa ser revista quando uma prova passar a consumir docs, e o Codex observa que a main roda depois do merge, não antes. O cabeçalho do script já prescreve isso.
 
-## Depois
+## Depois (medido em PR real, pós-merge do #3585)
 
-Seção abaixo, preenchida com a medição pós-merge.
+Medição em andamento neste PR só de docs.
