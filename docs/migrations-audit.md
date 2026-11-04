@@ -21,13 +21,13 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **771** custom migrations totais
-- **2534** objetos esperados (criados por estas migrations)
+- **773** custom migrations totais
+- **2537** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 954
+  - `function`: 956
   - `rls_policy`: 519
   - `index`: 360
-  - `table`: 229
+  - `table`: 230
   - `cron_job`: 210
   - `view`: 133
   - `trigger`: 125
@@ -6286,6 +6286,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
+### `20261103223300_radar_agregado_cnae.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_agregado_recalcular` | — |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `table` | `public.radar_agregado_cnae` | — |
+
 ### `20261104020000_tint_watchdog_fase5_v6_indices.sql`
 
 | Tipo | Objeto | Parent |
@@ -6319,6 +6327,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_tint_formula_itens_invalida_del` | `tint_formula_itens` |
 | `trigger` | `public.trg_tint_formula_itens_invalida_upd` | `tint_formula_itens` |
 | `trigger` | `public.trg_tint_formula_itens_invalida_trunc` | `tint_formula_itens` |
+
+### `20261104110000_tint_promote_snap_fonte_so_com_expansao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

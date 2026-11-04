@@ -126,7 +126,7 @@ const ALERTA = 'reposicao_alerta_pedido_minimo_tick: v_fornecedor é o valor da 
 
 /**
  * As definições que as migrations guardam para sempre (varredura de 2026-09-29): 16 trechos, 22
- * ocorrências. Nenhuma é a definição viva, salvo as 3 de VIVOS_PERMITIDOS; o 2º universo garante isso.
+ * ocorrências. Nenhuma é a definição viva, salvo as 2 de VIVOS_PERMITIDOS; o 2º universo garante isso.
  */
 export const CONHECIDOS: readonly SitioConhecido[] = [
   {
@@ -207,7 +207,7 @@ export const CONHECIDOS: readonly SitioConhecido[] = [
   {
     arquivo: 'supabase/migrations/20261103100000_radar_agregado_municipio.sql',
     trecho: "like p_cnae_prefix || '%'", n: 1,
-    motivo: `${RADAR_CONTAGEM} (a definição viva: o agregado do leitor 4; CNAE segue no caminho vivo, em VIVOS_PERMITIDOS)`,
+    motivo: `${RADAR_CONTAGEM} (definição antiga, o agregado do leitor 4 — recriada pela 20261103223300, que troca o LIKE por starts_with)`,
   },
   {
     arquivo: 'supabase/migrations/20260615194500_fix_tarefas_matcher_enum.sql',
@@ -246,12 +246,6 @@ export const VIVOS_PERMITIDOS: readonly VivoPermitido[] = [
     ancora: "p_cnpj !~ '^[0-9A-Z]{12}[0-9]{2}$'",
     motivo: 'o LIKE é o dedupe da tarefa por CNPJ, e p_cnpj passa por ^[0-9A-Z]{12}[0-9]{2}$ (RAISE) antes — '
       + 'só [0-9A-Z] (CNPJ alfanumérico RFB jul/2026, 20261019225545), não chega curinga',
-  },
-  {
-    identidade: 'radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamp with time zone,text[],boolean)',
-    trecho: "like p_cnae_prefix || '%'",
-    ancora: "p_cnae_prefix !~ '^[0-9]{1,7}$'",
-    motivo: 'prefixo de CNAE: p_cnae_prefix passa por ^[0-9]{1,7}$ (RAISE) antes — só dígito, e o vazio também cai',
   },
   {
     identidade: 'reposicao_alerta_pedido_minimo_tick()',

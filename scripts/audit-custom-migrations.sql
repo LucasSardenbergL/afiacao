@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 771
+-- Total de custom migrations: 773
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -836,9 +836,11 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261103131500', 'radar_lista_rpc', '20261103131500_radar_lista_rpc.sql'),
   ('20261103222735', 'tint_watchdog_fase5_fora_do_horario_de_loja', '20261103222735_tint_watchdog_fase5_fora_do_horario_de_loja.sql'),
   ('20261103222838', 'tint_apply_keys_snapshot_lock_por_account', '20261103222838_tint_apply_keys_snapshot_lock_por_account.sql'),
+  ('20261103223300', 'radar_agregado_cnae', '20261103223300_radar_agregado_cnae.sql'),
   ('20261104020000', 'tint_watchdog_fase5_v6_indices', '20261104020000_tint_watchdog_fase5_v6_indices.sql'),
   ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql'),
-  ('20261104061910', 'tint_receita_assinada_no_cabecalho', '20261104061910_tint_receita_assinada_no_cabecalho.sql')
+  ('20261104061910', 'tint_receita_assinada_no_cabecalho', '20261104061910_tint_receita_assinada_no_cabecalho.sql'),
+  ('20261104110000', 'tint_promote_snap_fonte_so_com_expansao', '20261104110000_tint_promote_snap_fonte_so_com_expansao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3317,6 +3319,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('analytics_ledger_raio_x_decisao', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_lista_rpc', 'function', 'public', 'radar_lista', ''),
   ('tint_watchdog_fase5_fora_do_horario_de_loja', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('radar_agregado_cnae', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_agregado_cnae', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_agregado_cnae', 'table', 'public', 'radar_agregado_cnae', ''),
   ('tint_watchdog_fase5_v6_indices', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v6_indices', 'index', 'public', 'idx_tint_formulas_wd5_carimbo', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_indices', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
@@ -5862,6 +5867,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('analytics_ledger_raio_x_decisao', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_lista_rpc', 'function', 'public', 'radar_lista', ''),
   ('tint_watchdog_fase5_fora_do_horario_de_loja', 'cron_job', 'cron', 'tint-watchdog-fase5-6h', ''),
+  ('radar_agregado_cnae', 'function', 'public', 'radar_agregado_recalcular', ''),
+  ('radar_agregado_cnae', 'function', 'public', 'radar_contagem_por_municipio', ''),
+  ('radar_agregado_cnae', 'table', 'public', 'radar_agregado_cnae', ''),
   ('tint_watchdog_fase5_v6_indices', 'function', 'public', 'tint_watchdog_fase5_check', ''),
   ('tint_watchdog_fase5_v6_indices', 'index', 'public', 'idx_tint_formulas_wd5_carimbo', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_indices', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
@@ -5908,7 +5916,7 @@ ORDER BY status DESC, e.migration, e.kind, e.object_name;
 -- sem o apply da última. Aqui o md5 do corpo vivo é comparado com o histórico:
 --   ✅ em dia · ❌ NAO APLICADA (corpo é de uma migration anterior) · 🔴 DERIVA
 -- DERIVA (corpo que nenhuma migration declara) NÃO é "falta colar": é edição manual.
--- Funções redefinidas com corpo extraível: 170.
+-- Funções redefinidas com corpo extraível: 171.
 -- Fora da seção (4) — o último evento é REMOÇÃO de propósito (DROP / SET SCHEMA / RENAME):
 --   • public.import_tint_formulas — 20260806223407_drop_import_tint_formulas.sql
 --   • public.estimar_impacto_exclusao_outlier — 20260718093248_drop_estimar_impacto_exclusao_outlier_orfa.sql
@@ -6267,6 +6275,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'radar_contagem_por_municipio', 3, '20261020120200_radar_contagem_municipio_lote_vigente.sql', '846683f98eef8db92fa698ba61cd6a04'),
   ('public', 'radar_contagem_por_municipio', 4, '20261030071150_radar_contagem_municipio_regiao_contato.sql', 'f324426cbafcb16fcc5b847a9222e262'),
   ('public', 'radar_contagem_por_municipio', 5, '20261103100000_radar_agregado_municipio.sql', '99020b287d2b32f266e409caca4ab0ae'),
+  ('public', 'radar_contagem_por_municipio', 6, '20261103223300_radar_agregado_cnae.sql', 'e894150109ba6adfd8eb5fc6701f7a1f'),
   ('public', 'radar_atribuir_tarefa', 1, '20260613190000_radar_fatia3.sql', '136df6cdae5d8cbb506c1662789342e8'),
   ('public', 'radar_atribuir_tarefa', 2, '20260929001651_hoje_sp_sessao_utc_sete_funcoes.sql', '17278ad16ee09fbae874c91e0d88e6f7'),
   ('public', 'radar_atribuir_tarefa', 3, '20261019225545_radar_rpcs_cnpj_alfanumerico.sql', '368e5c2082118a81da0d1eeb73501bde'),
@@ -6551,7 +6560,9 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'raio_x_inequivoco', 1, '20261101120000_raio_x_inequivoco.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
   ('public', 'raio_x_inequivoco', 2, '20261101190000_raio_x_inequivoco_definer.sql', '038d24f0c4fb85a84e8dc2572cc3361a'),
   ('private', 'clientes_import_semear_interno', 1, '20261101200000_clientes_import_servidor.sql', 'c9a6eaa2a248d59c9a7d8152d3e5dd6a'),
-  ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573')
+  ('private', 'clientes_import_semear_interno', 2, '20261102005510_clientes_import_varredura_diaria.sql', '77405cf54b1588b4b2968f473eb6d573'),
+  ('public', 'radar_agregado_recalcular', 1, '20261103100000_radar_agregado_municipio.sql', '486f25635979b302ded0f60a476a0a85'),
+  ('public', 'radar_agregado_recalcular', 2, '20261103223300_radar_agregado_cnae.sql', 'e1ad69fe29525103fe4158b0671b8cfe')
 ),
 deriva_reconhecida (schema_name, object_name, body_md5, motivo) AS (VALUES
   ('public', 'apply_score_updates', '331996f594ff3491f36ce7da9068dbd9', 'cosmética (triagem 2026-10-08)'),
