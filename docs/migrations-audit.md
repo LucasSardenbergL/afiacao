@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **764** custom migrations totais
-- **2511** objetos esperados (criados por estas migrations)
+- **767** custom migrations totais
+- **2514** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 947
+  - `function`: 950
   - `rls_policy`: 519
   - `index`: 350
   - `table`: 229
@@ -6257,11 +6257,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `index` | `public.idx_radar_empresas_busca_trgm` | `radar_empresas` |
 
+### `20261103120000_raio_x_unidades.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.raio_x_planejar` | — |
+| `function` | `public.raio_x_medicao` | — |
+
+### `20261103120100_analytics_ledger_raio_x_decisao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.analytics_ledger_registrar` | — |
+
 ### `20261103131500_radar_lista_rpc.sql`
 
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.radar_lista` | — |
+
+### `20261103222838_tint_apply_keys_snapshot_lock_por_account.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 764
+-- Total de custom migrations: 767
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -831,7 +831,10 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261103093424', 'tint_promote_escreve_so_o_que_mudou', '20261103093424_tint_promote_escreve_so_o_que_mudou.sql'),
   ('20261103100000', 'radar_agregado_municipio', '20261103100000_radar_agregado_municipio.sql'),
   ('20261103100100', 'radar_busca_trgm', '20261103100100_radar_busca_trgm.sql'),
-  ('20261103131500', 'radar_lista_rpc', '20261103131500_radar_lista_rpc.sql')
+  ('20261103120000', 'raio_x_unidades', '20261103120000_raio_x_unidades.sql'),
+  ('20261103120100', 'analytics_ledger_raio_x_decisao', '20261103120100_analytics_ledger_raio_x_decisao.sql'),
+  ('20261103131500', 'radar_lista_rpc', '20261103131500_radar_lista_rpc.sql'),
+  ('20261103222838', 'tint_apply_keys_snapshot_lock_por_account', '20261103222838_tint_apply_keys_snapshot_lock_por_account.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3305,6 +3308,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_agregado_municipio', 'index', 'public', 'idx_radar_empresas_lote_vista', 'radar_empresas'),
   ('radar_agregado_municipio', 'cron_job', 'cron', 'radar-agregado-recalcular', ''),
   ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas'),
+  ('raio_x_unidades', 'function', 'public', 'raio_x_planejar', ''),
+  ('raio_x_unidades', 'function', 'public', 'raio_x_medicao', ''),
+  ('analytics_ledger_raio_x_decisao', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_lista_rpc', 'function', 'public', 'radar_lista', '')
 ),
 obj_status AS (
@@ -5827,6 +5833,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_agregado_municipio', 'index', 'public', 'idx_radar_empresas_lote_vista', 'radar_empresas'),
   ('radar_agregado_municipio', 'cron_job', 'cron', 'radar-agregado-recalcular', ''),
   ('radar_busca_trgm', 'index', 'public', 'idx_radar_empresas_busca_trgm', 'radar_empresas'),
+  ('raio_x_unidades', 'function', 'public', 'raio_x_planejar', ''),
+  ('raio_x_unidades', 'function', 'public', 'raio_x_medicao', ''),
+  ('analytics_ledger_raio_x_decisao', 'function', 'public', 'analytics_ledger_registrar', ''),
   ('radar_lista_rpc', 'function', 'public', 'radar_lista', '')
 )
 SELECT
@@ -6395,6 +6404,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'analytics_ledger_registrar', 6, '20261028031612_analytics_ledger_financeiro_ciclo_aberto.sql', '743d4d9478fac9a98ea1907778b905ee'),
   ('public', 'analytics_ledger_registrar', 7, '20261028100200_analytics_ledger_corantes.sql', '1007fd19696f6fcd8c8e5029a8f80de9'),
   ('public', 'analytics_ledger_registrar', 8, '20261031130100_analytics_ledger_raio_x.sql', '4fa14fb6b6d08e1b81be776ebe9a9b88'),
+  ('public', 'analytics_ledger_registrar', 9, '20261103120100_analytics_ledger_raio_x_decisao.sql', 'abde874d81523fdf819d56ede9bac618'),
   ('public', 'analytics_outbox_purgar', 1, '20260825214545_analytics_outbox.sql', '4746bb5a3ede491d961438a4163b0432'),
   ('public', 'analytics_outbox_purgar', 2, '20260829012000_analytics_outbox_perda_visivel.sql', '4daf67a757579017038757a16c5c31c3'),
   ('public', 'cockpit_itens_snapshot', 1, '20260830123820_snapshot_atomico_universo_itens.sql', '88bd481f1d36ab3ba72e7d9df1f1d206'),
@@ -6457,6 +6467,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'raio_x_medicao', 1, '20261016120000_raio_x_estoque_parado.sql', '2be8b35964978fd3370cbbf220e31415'),
   ('public', 'raio_x_medicao', 2, '20261031130000_raio_x_correcoes_pos_revisao.sql', '7769250e55f59465f904be43eef4d6dc'),
   ('public', 'raio_x_medicao', 3, '20261101120000_raio_x_inequivoco.sql', '4495fe5e4f43c3329bb1b0d2b2dafbb3'),
+  ('public', 'raio_x_medicao', 4, '20261103120000_raio_x_unidades.sql', '22d7eb770fe7e85c24736efda016c482'),
   ('public', 'fin_ciclo_cp_empresa', 1, '20261018150000_fin_ciclo_fornecedor.sql', 'c9a75d0bf7181e37762b3a06c4f16416'),
   ('public', 'fin_ciclo_cp_empresa', 2, '20261019090000_fin_ciclo_cp_empresa_perf.sql', 'b83eadabca7f33ec9bc921c243e7db57'),
   ('public', 'radar_score_recalcular', 1, '20261019180000_radar_score_lead.sql', 'eaf2ab0f17d436a58eb5b2a96893b18a'),
@@ -6486,6 +6497,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'cliente_situacao_receita', 2, '20261030000642_cliente_situacao_receita_lote_publicado.sql', 'afa87d095ab804309362545e56ad6346'),
   ('public', 'raio_x_planejar', 1, '20261031180000_raio_x_plano_execucao.sql', 'a2bef6dcf7ce233919472dfed0d022c5'),
   ('public', 'raio_x_planejar', 2, '20261101120000_raio_x_inequivoco.sql', 'c04b148eaa1de55ab67b75e347eb6f35'),
+  ('public', 'raio_x_planejar', 3, '20261103120000_raio_x_unidades.sql', '7231d6bced9841e379e0ffb3aa7d9c0b'),
   ('public', 'reposicao_ruptura_registrar_item', 1, '20261031200000_reposicao_ruptura_sensor.sql', 'bc9e9e6022775609c32ebccace1fe15a'),
   ('public', 'reposicao_ruptura_registrar_item', 2, '20261031200100_reposicao_ruptura_sensor_universo.sql', '01819182e6691e02c36e4c8cb30c71ab'),
   ('public', 'cobranca_regua_hoje', 1, '20261031210000_cobranca_fila.sql', 'f926bc3a846386db1c8e7eac0547d6a7'),
