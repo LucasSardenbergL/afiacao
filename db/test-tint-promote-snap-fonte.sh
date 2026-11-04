@@ -452,10 +452,8 @@ cat >"$TMP/trocas_F6" <<'EOF'
   EXECUTE v_def;
 =====
   IF v_md5 <> c_este THEN
-    RAISE EXCEPTION 'promote-snap-fonte ABORTADA: pos-troca
 -----
   IF false THEN
-    RAISE EXCEPTION 'promote-snap-fonte ABORTADA: pos-troca
 =====
      OR position('IF v_snap_id IS NOT NULL THEN' in v_src) > 0 THEN
 -----
