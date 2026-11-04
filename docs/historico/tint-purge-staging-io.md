@@ -274,6 +274,17 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - **Codex** (`max`, 475 s): APROVAR COM AJUSTES. Pediu que a guarda de `search_path` deixasse de ser NULL-cega (`ANY(NULL)` com `RESET search_path` passaria calado); feito, com o assert CFG e a falsificação F6.
   - **Deadlock preexistente, não tratado:** o tick (lock global → linha do run → loja) pode entrar em ciclo com um promote DIRETO do mesmo run (loja → account → `UPDATE` da linha do run), porque o tick segura a linha ao incrementar tentativas. Já existia só com o lock de loja. Manutenção manual deve passar pela fila, ou tomar o lock global antes de tudo.
 
+- **Assinatura da receita no cabeçalho, M1 (migration `20261104061910_tint_receita_assinada_no_cabecalho.sql`):** o desenho passou por 4 versões e 3 rodadas do Codex (v1–v3 REPROVAR; notas em `side-session-notes/…/tint-assinatura-desenho-v2.md`). O que entrou:
+  - `tint_formulas.receita_assinatura` (sha256 da MESMA string que o `_pulados` montava dos itens) e `receita_desde` (min(created_at) dos itens). O `_pulados` compara pela assinatura e só lê `tint_formula_itens` quando ela é NULL (filtro de uma vez dentro do LATERAL).
+  - **Um só assinador:** o gatilho BEFORE ROW `trg_tint_formulas_assinatura`. Gravar qualquer valor não-nulo em `receita_*` pede a assinatura; ele recalcula dos itens com a linha já travada e sobrescreve. INSERT, tombstone da Fase 5 e isolamento acima de READ COMMITTED gravam NULL.
+  - **Invalidação:** gatilhos por comando em `tint_formula_itens` (INSERT/UPDATE/DELETE com tabelas de transição, mais TRUNCATE) zeram a assinatura das fórmulas tocadas. Antes do filtro, travam o cabeçalho em ordem de id, porque um assinador em voo que não viu o item novo tem de terminar antes.
+  - As funções são SECURITY DEFINER, com `search_path pg_catalog, public, pg_temp` e relações qualificadas. O privilégio TRIGGER foi revogado de quem não é dono (service_role tinha, e um CREATE TRIGGER neutralizaria o assinador).
+  - **O promote:** o upsert grava NULL na assinatura. Depois dos itens, ele assina até 20.000 fórmulas por run: até metade para as reescritas, o resto para as puladas sem assinatura. Não há backfill nem cron: cada par converge nos runs que o tocam.
+  - **Prova** `db/test-tint-receita-assinada.sh` (lê o cenário da `db/test-tint-promote-diff.sh`):
+    - 15 asserts: MD5, EQUIV, ASSINA, LEITURA, CONC_A, CONC_B, RR, FORJA, TEMP, TOMB, PRIV, BULK, ACL, IDEMP e GUARDA, mais os controles DERIVA e TETO, e 15 falsificações com conjunto exato.
+    - EQUIV inclui QUAIS chaves são puladas em cada um dos 14 runs.
+    - No reenvio idêntico num par de 4.000 fórmulas, o promote varre `tint_formula_itens` 14 vezes. O de hoje varre 4.010.
+
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
 - **Medida:** delta de `pg_statio` de **todas** as tabelas de `public`, das 12:43 às 12:59 UTC de 03/11, no Mini (256MB e 60 conexões, no ar desde 31/10 10:33). A janela teve 5 promoções de catálogo, e o amostrador não pegou nenhuma consulta de outra sessão `claude_ro`.

@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **770** custom migrations totais
-- **2527** objetos esperados (criados por estas migrations)
+- **771** custom migrations totais
+- **2534** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 952
+  - `function`: 954
   - `rls_policy`: 519
   - `index`: 360
   - `table`: 229
   - `cron_job`: 210
   - `view`: 133
-  - `trigger`: 120
+  - `trigger`: 125
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6307,6 +6307,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tint_formula_itens_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_formula_itens_corante_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_staging_formulas_conta_criado` | `tint_staging_formulas` |
+
+### `20261104061910_tint_receita_assinada_no_cabecalho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_formulas_assina_receita` | — |
+| `function` | `public.tint_formula_itens_invalida_assinatura` | — |
+| `trigger` | `public.trg_tint_formulas_assinatura` | `tint_formulas` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_ins` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_del` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_upd` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_trunc` | `tint_formula_itens` |
 
 ## Próximos passos por status
 

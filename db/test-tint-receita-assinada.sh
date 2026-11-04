@@ -10,8 +10,9 @@
 #   EQUIV   do MESMO estado, os 14 runs do cenário dão o MESMO resultado com o promote de hoje e o novo —
 #           inclusive QUAIS chaves são puladas (formulas_identicas_puladas no retorno e no metadata) — e a
 #           re-promoção sem run intermediário dá o mesmo preço
-#   ASSINA  o promote assina (≥ 10 fórmulas do par P1 depois do cenário) e, no FIM de tudo, nenhuma
-#           assinatura não-nula difere da recalculada dos itens (sha256 e receita_desde)
+#   ASSINA  o promote assina (≥ 10 fórmulas do par P1 depois do cenário) e, depois de todos os runs
+#           (cenário, desvio, BIG), nenhuma assinatura não-nula difere da recalculada dos itens (sha256 e
+#           receita_desde); os ataques seguintes julgam cada um as suas fórmulas
 #   LEITURA par de 4.000 fórmulas: o 1º run assina as 4.000 (8 reescritas + 3.992 puladas); no reenvio
 #           idêntico seguinte o promote faz ≤ 100 varreduras em tint_formula_itens (o de hoje: ≥ 3.000)
 #   CONC_A  item escrito ANTES (transação aberta) e assinador depois: o assinador ESPERA e assina a
@@ -57,6 +58,7 @@ MIG_FANT="$REPO_ROOT/supabase/migrations/20261013150000_tint_promote_nao_ressusc
 MIG_REF="$REPO_ROOT/supabase/migrations/20261013220000_tint_promote_snapshot_ref_por_generated_at.sql"
 MIG_PURGE="$REPO_ROOT/supabase/migrations/20261021203000_tint_purge_staging_fora_do_promote.sql"
 MIG_LATEST="$REPO_ROOT/supabase/migrations/20261030071806_tint_promote_latest_por_chave_indexado.sql"
+# shellcheck disable=SC2034  # lido pelo cenário carregado com `.` abaixo
 MD5_PROD='954a96411be99c18ab4bff40df14e620'   # o que a cadeia do cenário reproduz (predecessor do diff)
 MD5_VIVO='2c6f461f9c9d4f8c54ea817e25f88f61'   # md5(prosrc) do promote em prod, 2026-11-04 (psql-ro)
 
@@ -564,8 +566,9 @@ TROCAS
 falsifica F4 RR <<'TROCAS'
 [("NOT IN ('read committed', 'read uncommitted')", "NOT IN ('read committed', 'read uncommitted', 'repeatable read')")]
 TROCAS
-# F5 — o assinador não reconhece o tombstone: carimbar mantém a assinatura.
-falsifica F5 TOMB <<'TROCAS'
+# F5 — o assinador não reconhece o tombstone: carimbar mantém a assinatura — e a invalidação (que pula
+#      tombstone de propósito: o guard dele barra UPDATE) não a zera nem no TRUNCATE.
+falsifica F5 TOMB BULK <<'TROCAS'
 [("     OR NEW.desativada_motivo IS NOT DISTINCT FROM 'fase5_geracao_legada'\n", "     OR (false AND NEW.desativada_motivo IS NOT DISTINCT FROM 'fase5_geracao_legada')\n")]
 TROCAS
 # F6 — o _pulados lê os itens mesmo assinado (sem o filtro de uma vez; postcondição ajustada): o
@@ -585,7 +588,7 @@ falsifica F8 MD5 <<'TROCAS'
 [("      desativada_em           = NULL,\n      receita_assinatura      = NULL,\n      receita_desde           = NULL\n    RETURNING$s7$", "      desativada_em           = NULL\n    RETURNING$s7$")]
 TROCAS
 # F9 — o promote não assina nada: tudo continua pelos itens.
-falsifica F9 MD5 ASSINA LEITURA <<'TROCAS'
+falsifica F9 MD5 LEITURA ASSINA <<'TROCAS'
 [("  IF current_setting('transaction_isolation') = 'read committed' THEN\n    CREATE TEMP TABLE _assinar", "  IF false THEN\n    CREATE TEMP TABLE _assinar")]
 TROCAS
 # F10 — TRIGGER não revogado (postcondição ajustada): service_role cria gatilho.

@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 770
+-- Total de custom migrations: 771
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -837,7 +837,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261103222735', 'tint_watchdog_fase5_fora_do_horario_de_loja', '20261103222735_tint_watchdog_fase5_fora_do_horario_de_loja.sql'),
   ('20261103222838', 'tint_apply_keys_snapshot_lock_por_account', '20261103222838_tint_apply_keys_snapshot_lock_por_account.sql'),
   ('20261104020000', 'tint_watchdog_fase5_v6_indices', '20261104020000_tint_watchdog_fase5_v6_indices.sql'),
-  ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql')
+  ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql'),
+  ('20261104061910', 'tint_receita_assinada_no_cabecalho', '20261104061910_tint_receita_assinada_no_cabecalho.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3327,7 +3328,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_formula', 'tint_formula_itens'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_corante_formula', 'tint_formula_itens'),
-  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas')
+  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas'),
+  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formulas_assina_receita', ''),
+  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formula_itens_invalida_assinatura', ''),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formulas_assinatura', 'tint_formulas'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5865,7 +5873,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_formula', 'tint_formula_itens'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_corante_formula', 'tint_formula_itens'),
-  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas')
+  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas'),
+  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formulas_assina_receita', ''),
+  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formula_itens_invalida_assinatura', ''),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formulas_assinatura', 'tint_formulas'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
 )
 SELECT
   e.migration,
