@@ -143,6 +143,8 @@ export function RadarFiltros({
         />
 
         <RadarBuscaCnae valor={filtros.cnae} onChange={(cnae) => set({ cnae })} />
+        {/* Combina com o principal (E): ex. principal "móveis de madeira" + secundário "marmoraria". */}
+        <RadarBuscaCnae campo="secundario" valor={filtros.cnaeSecundario ?? ''} onChange={(cnaeSecundario) => set({ cnaeSecundario })} />
 
         {/* Select de status — usa sentinel para o valor "fila" */}
         <Select

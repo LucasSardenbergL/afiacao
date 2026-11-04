@@ -13,7 +13,7 @@
 // - Só entra na fila quem está pendente (a contatar, não cliente). Quem foi contatado, descartado ou virou cliente
 //   SAI da fila e NÃO é substituído: a coorte é congelada e o denominador é o sorteio inteiro (o resumo conta).
 import { isSearchablePostgrestTerm } from '@/lib/postgrest';
-import { digitosCnae, UFS_ATUACAO } from '@/lib/radar/ui-helpers';
+import { cnaeSecundarioCompleto, digitosCnae, UFS_ATUACAO } from '@/lib/radar/ui-helpers';
 
 export const PASSO_AMOSTRA = 10;
 /** O PostgREST corta em 1.000 linhas em silêncio, `.rpc()` inclusive: chegar ao teto é ERRO, nunca "acabou". */
@@ -56,6 +56,7 @@ interface LeadAmostra {
   nome_fantasia: string | null;
   municipio_nome: string | null;
   cnae_principal: string | null;
+  cnaes_secundarios?: string[] | null;
   prospeccao_status: string;
   ja_cliente: boolean;
 }
@@ -70,6 +71,7 @@ export interface FiltrosExplicitos {
   uf: string;
   municipio: string;
   cnae: string;
+  cnaeSecundario?: string;
   status: string;
 }
 
@@ -87,6 +89,8 @@ export function casaFiltrosExplicitos(e: LeadAmostra, f: FiltrosExplicitos): boo
     && !(e.municipio_nome ?? '').toLocaleLowerCase('pt-BR').includes(municipio.toLocaleLowerCase('pt-BR'))) return false;
   const cnae = digitosCnae(f.cnae);
   if (cnae.length === 7 ? e.cnae_principal !== cnae : cnae !== '' && !(e.cnae_principal ?? '').startsWith(cnae)) return false;
+  const secundario = cnaeSecundarioCompleto(f.cnaeSecundario);
+  if (secundario && !(e.cnaes_secundarios ?? []).includes(secundario)) return false;
   if (f.status && f.status !== 'a_contatar') return false;
   return true;
 }
