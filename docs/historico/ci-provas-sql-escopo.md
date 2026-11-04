@@ -65,6 +65,18 @@ Rodada única, focada em verde-falso: `scripts/codex-async.sh`, gpt-6-astra max,
 3. **Diff pai 1 → HEAD: não subestima.** As duas árvores são comparadas inteiras, com NUL e `--no-renames`; com merge de main dentro do PR, o checkout segue sendo o merge de teste.
 4. **Concessão de `docs/`: aceita na árvore atual.** Ela precisa ser revista quando uma prova passar a consumir docs, e o Codex observa que a main roda depois do merge, não antes. O cabeçalho do script já prescreve isso.
 
-## Depois
+## Depois (medido em PR real, pós-merge do #3585)
 
-Seção abaixo, preenchida com a medição pós-merge.
+Mesmo método da linha de base (soma de `completedAt − startedAt` por job, `gh run view --json jobs`):
+
+| PR só de docs | antes: #3583, run 41813445293 | depois: #3589, run 41831969943 |
+|---|---|---|
+| `provas-sql` + união | 102,9 runner-min (6 partes + união) | **0** (skipped; escopo 0,2 min) |
+| run inteiro | 141,0 runner-min | **40,8** (−71%) |
+| parede do run | 20,4 min | **8,4 min** (caminho crítico: `testes`) |
+
+O log do `validate` no run 41831969943 diz `escopo das provas SQL: evento=pull_request resultado=success roda=false`, depois `⏭️ provas-sql` e `⏭️ provas-sql-uniao` pulados pelo escopo e `✅ os 8 jobs…`.
+
+O lado que RODA, também em PR real pós-merge: #3588 (lote 10, `db/` + `supabase/migrations/`), run 41831842385. O escopo listou os 5 arquivos que as provas podem ler (`db/nucleo-ci.txt`, `db/test-fornecedores-classificacao.sh`, a migration, …), decidiu `RODA o núcleo inteiro` e as 6 partes rodaram. O próprio #3585 (`scripts/` + `.github/`) também rodou o núcleo.
+
+Ressalva de método: são duas amostras, e o runner do GitHub varia ~45% (`medir-ganho-de-ci-sob-ruido.md`). O que esta tabela prova é estrutural, não estatístico: 6 jobs de ~16 min deixam de existir. A parede de 8,4 min tem o ruído normal do `testes`.
