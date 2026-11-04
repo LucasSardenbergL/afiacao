@@ -308,3 +308,27 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - a v5 baixou o job de 575 s para ~26 s. Mas o volume ainda é o de uma passada do catálogo inteiro (2,15 GB, contra os 1,14 GB medidos no statement da v5 em 01/11), e ele ainda vai para o temp.
 - **O que é atenuante:** seq scan grande usa o *ring buffer*, então não expulsa o cache quente, e o pico dura menos de 30 s. Isso explica o hit voltar a ≥99,9% no minuto seguinte. Se o critério "≤400 MB por 15 min" vale para esse pico agendado é **decisão do founder**. Sem essa decisão, a régua diz que reprova.
 - **Próximo passo, se a decisão for "conta":** tirar as 3 passadas de `tint_formulas` e a de `tint_staging_formulas` do fase5. Por exemplo, ler `tint_formulas` uma vez só, ou fazer o universo incremental por `updated_at`. Também pode baixar a cadência de 6 h para 24 h, fora do horário de loja.
+
+### 2026-11-04 — o fase5 sai do horário de loja (`30 9,21 * * *`, migration `20261103222735`)
+
+- **Decisão do founder:** "Mudar o horário" (e não "Baratear mais"). O volume de cada rodada não mudou. Ela só deixa de cair com a loja aberta.
+- **Horário de loja medido:** pelo agente tintométrico (`tint_sync_runs`, 14 dias, seg–sáb), com ~650 runs/h das 10 às 19 UTC, ~470 às 20 e ~260/h das 21 às 09. Portanto, loja = 10:00–20:59 UTC (07–17 BRT).
+- **Por que 2 rodadas e esse par:**
+  - o dead-man da Camada A (`tint_watchdog_corante_check`, `v_b_atraso > 13 hours`) obriga um intervalo ≤ 12 h;
+  - as duas rodadas precisam ficar fora de 10–21 UTC;
+  - o **único** par que cumpre as duas coisas é 21:xx + 09:xx. O minuto 30 evita os crons das 09:00/09:05/09:15;
+  - assim a Camada A (money-path) não foi tocada.
+- **Custo aceito:**
+  - **uma** rodada perdida já alarma (`tint_watchdog_fase5_parado`), ~1 h depois. Antes eram precisas duas;
+  - a latência de detecção sobe de ≤ 6 h para ≤ 12 h;
+  - o nome `tint-watchdog-fase5-6h` ficou, porque o texto do alerta da Camada A o cita.
+- **Trava de transição (P7):** a próxima rodada menos o marcador tem que dar ≤ 12 h 30 min. Aplicar entre 21:30–00:00 ou 09:30–12:00 UTC alarmaria. A P6 exige o limite de 13 h no corpo vivo da Camada A.
+- **Prova:** `db/test-tint-fase5-horario.sh` (PG17, numa transação como o `db:aplicar`):
+  - 12/12 verdes;
+  - cobre o mundo PROD (jobid 167 e md5 do comando intocados), DR, ATRASADO (P7 aborta com rollback) e CORANTE (P6 aborta);
+  - F1/F2/F3 ficam vermelhos depois do controle verde.
+- **Aplicado:**
+  - em 04/11 00:2x UTC, `db:aplicar` tentativa **#883**, recibo, logo depois da rodada das 00:00 (`succeeded`, marcador 00:00:29);
+  - psql-ro por fora: `30 9,21 * * *`, ativo, md5 do comando `fe21fbd8…` igual ao de antes.
+- **Acoplamento em voo:** a v6 do fase5 (`20261103220000_tint_watchdog_fase5_v6_indices.sql`, sessão própria) tem uma P10 que exige `0 */6`. Ela vai abortar limpo até trocar para `30 9,21 * * *`, e a sessão foi avisada. Re-aplicar a v5 (`20261101050000`) volta o job para `0 */6`, porque a última a rodar vence.
+- **Medir:** a janela de 15 min das 09:30 e das 21:30 UTC deve ter o pico do fase5, e as janelas das 12:00/18:00 não devem mais ter.
