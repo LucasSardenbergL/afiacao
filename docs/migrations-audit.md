@@ -21,12 +21,12 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **768** custom migrations totais
-- **2515** objetos esperados (criados por estas migrations)
+- **770** custom migrations totais
+- **2527** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 950
+  - `function`: 952
   - `rls_policy`: 519
-  - `index`: 350
+  - `index`: 360
   - `table`: 229
   - `cron_job`: 210
   - `view`: 133
@@ -6285,6 +6285,28 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261103222838_tint_apply_keys_snapshot_lock_por_account.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261104020000_tint_watchdog_fase5_v6_indices.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+| `index` | `public.idx_tint_formulas_wd5_carimbo` | `tint_formulas` |
+| `index` | `public.idx_tint_formulas_wd5_ativas` | `tint_formulas` |
+| `index` | `public.idx_tint_formula_itens_formula` | `tint_formula_itens` |
+| `index` | `public.idx_tint_formula_itens_corante_formula` | `tint_formula_itens` |
+| `index` | `public.idx_tint_staging_formulas_conta_criado` | `tint_staging_formulas` |
+
+### `20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_watchdog_fase5_check` | — |
+| `index` | `public.idx_tint_formulas_wd5_carimbo` | `tint_formulas` |
+| `index` | `public.idx_tint_formulas_wd5_ativas` | `tint_formulas` |
+| `index` | `public.idx_tint_formula_itens_formula` | `tint_formula_itens` |
+| `index` | `public.idx_tint_formula_itens_corante_formula` | `tint_formula_itens` |
+| `index` | `public.idx_tint_staging_formulas_conta_criado` | `tint_staging_formulas` |
 
 ## Próximos passos por status
 
