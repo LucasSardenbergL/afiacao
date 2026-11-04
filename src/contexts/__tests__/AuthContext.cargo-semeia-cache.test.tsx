@@ -59,7 +59,7 @@ function Sonda() {
   return loading ? null : <Cargo />;
 }
 
-async function bootar() {
+function montar() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -68,11 +68,26 @@ async function bootar() {
       </AuthProvider>
     </QueryClientProvider>,
   );
+  return queryClient;
+}
+
+async function bootar() {
+  const queryClient = montar();
   await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
   act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
   await waitFor(() => expect(visto.cargo).toBeDefined());
   return queryClient;
 }
+
+function adiada() {
+  let soltar: (r: Resposta) => void = () => {};
+  const promessa = new Promise<Resposta>((ok) => {
+    soltar = ok;
+  });
+  return { promessa, soltar };
+}
+const CHAVE = ['my-commercial-role', 'u-1'];
+const esvaziar = () => act(() => new Promise((r) => setTimeout(r, 20)));
 
 const ok = (data: unknown): Resposta => ({ data, error: null });
 
@@ -111,5 +126,47 @@ describe('AuthContext semeia o cargo comercial do useMyCommercialRole', () => {
     await bootar();
     await waitFor(() => expect(visto.cargo?.data).toBe('hunter'));
     expect(s.pedidos.commercial_roles).toBe(2);
+  });
+
+  it('retry descartado não semeia: a tentativa que venceu leu o cargo COM erro, então o hook consulta', async () => {
+    // cliente: a 1ª tentativa lê o cargo (null, sem erro) mas repete por timeout de profiles; a 2ª
+    // resolve profiles e falha no cargo. Semear a 1ª deixaria um null "fresco" de tentativa descartada.
+    s.respostas = {
+      user_roles: [ok({ role: 'customer' })],
+      profiles: [{ data: null, error: { message: 'Failed to fetch' } }, ok({ is_approved: true })],
+      commercial_roles: [ok(null), { data: null, error: { message: 'statement timeout' } }, ok({ commercial_role: 'hunter' })],
+    };
+    await bootar();
+    await waitFor(() => expect(visto.cargo?.data).toBe('hunter'), { timeout: 3000 });
+    expect(s.pedidos.commercial_roles).toBe(3);
+  });
+
+  it('SIGNED_OUT com o fetch do auth em voo: a leitura atrasada NÃO volta ao cache de quem saiu', async () => {
+    const cargo = adiada();
+    s.respostas.commercial_roles = [cargo.promessa as unknown as Resposta];
+    const queryClient = montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+
+    act(() => s.aoMudarAuth?.('SIGNED_OUT', null));
+    await act(async () => cargo.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(queryClient.getQueryData(CHAVE)).toBeUndefined();
+  });
+
+  it('refresh mais novo vence: a leitura do evento anterior que chega depois não sobrescreve', async () => {
+    const velha = adiada();
+    s.respostas.commercial_roles = [velha.promessa as unknown as Resposta, ok({ commercial_role: 'hunter' })];
+    const queryClient = montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+    act(() => s.aoMudarAuth?.('TOKEN_REFRESHED', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(queryClient.getQueryData(CHAVE)).toBe('hunter'));
+
+    await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(queryClient.getQueryData(CHAVE)).toBe('hunter');
   });
 });
