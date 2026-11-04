@@ -7,7 +7,7 @@
  * informa) — por isso "mesmo endereço", nunca "parente". O selo de força vem do servidor; aqui só se lê e se escreve.
  */
 
-export type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa';
+type SinalVinculo = 'telefone' | 'email' | 'endereco' | 'pessoa';
 export type ForcaVinculo = 'forte' | 'media';
 
 export interface VinculoCliente {
