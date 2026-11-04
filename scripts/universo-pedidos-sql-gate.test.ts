@@ -91,6 +91,9 @@ describe('universo de pedidos — calibração com as formas REAIS', () => {
       'public.v_grupo_comercial': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
       'public.v_caca_compradores': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
       'public.v_caca_candidatos': /^20261020130000_grupos_caca_cnpj_alfanumerico\.sql$/,
+      // 20261104113000 (plano v5, lote 10): a régua foi para uma CTE e o UPDATE só escreve a linha que mudou — as
+      // duas leituras de sales_orders seguem com o filtro do universo; o juízo abaixo continua sobre o corpo novo.
+      'public.classificar_clientes_fornecedores': /^20261104113000_classificacao_diff_before_write\.sql$/,
     };
     for (const o of CORRIGIDOS) {
       const d = modelo.get(o)!;
