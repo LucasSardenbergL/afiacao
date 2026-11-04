@@ -56,8 +56,11 @@ function normaliza(p: string): string {
  * contá-los devolveria ao núcleo justamente o PR só de docs, o maior bloco dos que pulam. Prova que
  * passe a LER um doc tem de, no mesmo PR, pôr `docs` de volta neste regex.
  */
-const CITACAO = /(?:^|[^\w.@/-])(?:\.\.\/)*((?:src|public|\.claude)\/[\w.@/-]*[\w@/-])/g;
-const CITACAO_SCRIPT = /(?:^|[^\w.@/-])(?:\.\.\/)*(scripts\/[\w.@/-]+\.(?:ts|mts|js|mjs))\b/g;
+// A âncora à esquerda aceita a RAIZ montada em variável — `$REPO_ROOT/`, `${RAIZ}/`, `$(git
+// rev-parse --show-toplevel)/` —, que é como as provas citam caminho; só `outro/dir/src/x` não casa.
+const ANCORA = String.raw`(?:^|[^\w.@/-]|\$\{?\w+\}?/|\)/)`;
+const CITACAO = new RegExp(String.raw`${ANCORA}(?:\.\.\/)*((?:src|public|\.claude)\/[\w.@/-]*[\w@/-])`, 'g');
+const CITACAO_SCRIPT = new RegExp(String.raw`${ANCORA}(?:\.\.\/)*(scripts\/[\w.@/-]+\.(?:ts|mts|js|mjs))\b`, 'g');
 const IMPORTA =
   /(?:import|export)\s[^'"`;]*?from\s*['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]\s*\)|require\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g;
 

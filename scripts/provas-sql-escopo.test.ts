@@ -85,6 +85,35 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
     expect(citacoes('-- nenhuma chamada em src/ nem em supabase/')).toEqual([]);
   });
 
+  // A forma como as provas DE FATO citam caminho: raiz em variável. A 1ª versão do regex não
+  // casava a `/` antes de `src` — `$REPO_ROOT/src/…` passava invisível.
+  it.each([
+    ['SKILL_SQL="$REPO_ROOT/.claude/skills/cfo/a.sql"', '.claude/skills/cfo/a.sql'],
+    ['grep -c x "${RAIZ}/src/lib/b.ts"', 'src/lib/b.ts'],
+    ['cat "$(git rev-parse --show-toplevel)/src/lib/c.ts"', 'src/lib/c.ts'],
+    ['bun "$REPO_ROOT/scripts/d.ts"', null],
+  ])('raiz em variável: %s', (texto, esperado) => {
+    expect(citacoes(texto)).toEqual(esperado === null ? [] : [esperado]);
+  });
+
+  it('script citado com raiz em variável entra no fecho', () => {
+    const lidos = lidosEmInerte(
+      repoFalso({
+        'db/test-e.sh': 'node "$REPO_ROOT/scripts/e.ts" && bun ${RAIZ}/scripts/f.mjs',
+        'scripts/e.ts': "import { z } from '../src/lib/z';",
+        'scripts/f.mjs': "import { w } from '../src/lib/w.js';",
+        'src/lib/z.ts': '',
+        'src/lib/w.ts': '',
+      }),
+    );
+    expect(inerte('src/lib/z.ts', lidos)).toBe(false);
+    expect(inerte('src/lib/w.ts', lidos)).toBe(false);
+  });
+
+  it('caminho aninhado em outro diretório NÃO é citação da raiz', () => {
+    expect(citacoes('supabase/functions/x/src/lib/y.ts')).toEqual([]);
+  });
+
   it('docs/ citado em comentário NÃO conta (é a concessão documentada no script)', () => {
     expect(citacoes('# detalhe em docs/agent/database.md')).toEqual([]);
   });
