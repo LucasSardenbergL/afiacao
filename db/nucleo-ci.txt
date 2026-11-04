@@ -113,7 +113,9 @@ db/test-melhorias-rpcs.sh                  39  falsificar=57
 # fundos fechada (o employee não escreve a exceção direto), o ACL de prod (classificar/aplicar só do
 # service_role) e o trigger que deriva is_fornecedor sem decidir a exclusão. Morreu no seed em 06-25: o gatilho
 # da carteira CRIA o score de farmer e o seed o reinseria (docs/historico/provas-carteira-revividas.md).
-db/test-fornecedores-classificacao.sh      26  falsificar=55
+# Lote 10 do v5: o diff-before-write (só a linha que mudou é escrita, medido por xmin) e a guarda de corrida
+# com o upsert de tags (2 sessões de verdade) — docs/historico/classificacao-diff-before-write.md.
+db/test-fornecedores-classificacao.sh      32  falsificar=62
 # Observação do conjunto aberto que o motor contou (PR0 da baixa de PO, 2026-10-05): só staff LÊ (RLS sob
 # SET ROLE + GUC; anon barrado no GRANT), só a RPC ESCREVE (nem service_role, que tem BYPASSRLS, escreve direto) e
 # só service_role a executa — com o ACL default de prod (ALL/EXECUTE para anon/authenticated) dando trabalho real
