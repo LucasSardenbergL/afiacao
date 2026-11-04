@@ -337,10 +337,10 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Aplicado:**
   - em 04/11 00:2x UTC, `db:aplicar` tentativa **#883**, recibo, logo depois da rodada das 00:00 (`succeeded`, marcador 00:00:29);
   - psql-ro por fora: `30 9,21 * * *`, ativo, md5 do comando `fe21fbd8…` igual ao de antes.
-- **Acoplamento em voo:** a v6 do fase5 (`20261103220000_tint_watchdog_fase5_v6_indices.sql`, sessão própria) tem uma P10 que exige `0 */6`. Ela vai abortar limpo até trocar para `30 9,21 * * *`, e a sessão foi avisada. Re-aplicar a v5 (`20261101050000`) volta o job para `0 */6`, porque a última a rodar vence.
+- **Acoplamento em voo:** a v6 do fase5 (`20261104020000_tint_watchdog_fase5_v6_indices.sql`, sessão própria) tem uma P10 que exige `0 */6`. Ela vai abortar limpo até trocar para `30 9,21 * * *`, e a sessão foi avisada. Re-aplicar a v5 (`20261101050000`) volta o job para `0 */6`, porque a última a rodar vence.
 - **Medir:** a janela de 15 min das 09:30 e das 21:30 UTC deve ter o pico do fase5, e as janelas das 12:00/18:00 não devem mais ter.
 
-### 2026-11-03 — v6: o watchdog fase5 lê índices, não o catálogo (`20261103220000`)
+### 2026-11-03 — v6: o watchdog fase5 lê índices, não o catálogo (`20261104020000`)
 
 - **Decisão do founder (03/11):** o pico agendado do fase5 conta para o critério do Mini. A semântica de S1..S5 não muda (o tombstone da Fase 5 é piso de gate).
 - **Por que "uma passada só" não bastava:** `tint_formulas` tem 430 MB. Uma única passada já passa do teto de 400 MB por 15 min. E o temp de fundo das janelas limpas já fica em ~95–99 MB, então o ciclo tem de gerar temp **zero**.
@@ -376,3 +376,4 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 
   `--falsificar` com conjunto exato.
 - **Codex** (desenho, gpt-6-astra max, 541 s, 169K tokens): 3 P1 + P2, nenhum P0, nenhum contraexemplo de dados admissível. Integrados: `k` sem MATERIALIZED, a falsificação completa, o PL1 forte e em escala, o ramo do corante NULL (contraexemplo fora das premissas de prod), o lock do apply (dura até o COMMIT) e as sabotagens que faltavam (UNION ALL, DISTINCT de `k`/`k_ret`, `OFFSET 0`, PRE). Ficou de fora o P2 preexistente do empate em `ref` (dois snapshots com os mesmos dois relógios), que já existia na v5 e mudaria a semântica.
+- **Acoplamento com o horário novo (#3576):** a v6 não mexe no cron. A P10 dela exige o job em `30 9,21 * * *`, e o arquivo foi renomeado para `20261104020000`, para ordenar depois do `20261103222735`. Assim um replay de DR aplica o horário antes da v6. Na prova, o efeito do `20261103222735` é reproduzido pelo mesmo `cron.schedule` entre a v5 e a v6. A migration inteira não roda no harness porque a P6 dela lê o corpo real do watchdog de corante, que lá é stub.

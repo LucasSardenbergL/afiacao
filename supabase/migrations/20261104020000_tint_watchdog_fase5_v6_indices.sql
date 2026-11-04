@@ -1,5 +1,5 @@
 -- ============================================================================================
--- 20261103220000 · tint_watchdog_fase5 v6 — o ciclo lê ÍNDICES pequenos, não o catálogo (cabe no Mini)
+-- 20261104020000 · tint_watchdog_fase5 v6 — o ciclo lê ÍNDICES pequenos, não o catálogo (cabe no Mini)
 -- Prova: db/test-tint-fase5-watchdog-v6.sh (PG17: a suíte da v5 inteira contra a v6 + PARIDADE do
 -- statement v5 × v6 em vários estados + equivalência do oráculo contra a view real + guarda do plano
 -- + falsificação no MESMO laço do controle verde)

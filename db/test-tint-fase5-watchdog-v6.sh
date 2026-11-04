@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-#  PROVA PG17 — tint_watchdog_fase5_check() v6 (20261103220000) [money-path]
+#  PROVA PG17 — tint_watchdog_fase5_check() v6 (20261104020000) [money-path]
 #  bash db/test-tint-fase5-watchdog-v6.sh > log 2>&1; echo "exit=$?"     (modo normal)
 #  bash db/test-tint-fase5-watchdog-v6.sh --falsificar > log 2>&1; echo "exit=$?"
 #  (NÃO pipe pra tail — engole o exit≠0.)
@@ -68,7 +68,7 @@ MIG2="$REPO_ROOT/supabase/migrations/20261010230000_tint_watchdog_fase5_s2_aviso
 MIG3="$REPO_ROOT/supabase/migrations/20261013120000_tint_watchdog_fase5_s2_persistente.sql"
 MIG4="$REPO_ROOT/supabase/migrations/20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql"
 MIG5="$REPO_ROOT/supabase/migrations/20261101050000_tint_watchdog_fase5_v5_passada_unica.sql"
-MIG6="$REPO_ROOT/supabase/migrations/20261103220000_tint_watchdog_fase5_v6_indices.sql"
+MIG6="$REPO_ROOT/supabase/migrations/20261104020000_tint_watchdog_fase5_v6_indices.sql"
 for m in "$MIG1" "$MIG2" "$MIG3" "$MIG4" "$MIG5" "$MIG6"; do
   [ -f "$m" ] || { echo "migration não encontrada: $m"; exit 1; }
 done
