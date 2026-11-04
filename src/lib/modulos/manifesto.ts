@@ -926,6 +926,7 @@ export const MODULOS: ModuloApp[] = [
       "src/lib/phone.ts",
       "src/lib/postgrest.ts",
       "src/lib/pwa-atualizacao.ts",
+      "src/lib/preload-rota.ts",
       // SW ponte (src/sw/sw.ts) + sua lógica pura (releases.ts) — plataforma, como o resto do PWA.
       "src/sw/**",
       "src/lib/pwa-build-minimo.ts",
@@ -989,6 +990,7 @@ export const MODULOS: ModuloApp[] = [
       "src/__tests__/omie-cliente-gate.test.ts",
       "src/__tests__/edge-import-entre-funcoes-gate.test.ts",
       "src/__tests__/app-route-dedupe.test.ts",
+      "src/lib/__tests__/preload-rota.test.tsx",
       "src/__tests__/auth.test.ts",
       "src/__tests__/documento-alfanumerico-front.test.ts",
       "src/__tests__/edge-app-url.test.ts",
