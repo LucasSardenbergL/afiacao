@@ -79,6 +79,7 @@ import { useWhatsappSlaBadge } from '@/queries/useWhatsappSla';
 import { Star } from 'lucide-react';
 import { MODULOS } from '@/lib/modulos/manifesto';
 import { rotaCongelada } from '@/lib/modulos/congelamento';
+import { usePrefetchRota } from '@/lib/preload-rota';
 
 /* ─── Navigation config ─── */
 interface NavItem {
@@ -353,6 +354,8 @@ const SidebarItem = React.memo(function SidebarItem({
 }) {
   const Icon = item.icon;
   const showStar = !collapsed && onToggleFavorite;
+  // F5 (plano v5): apontar/focar o item já baixa o chunk da rota; o clique só navega.
+  const prefetch = usePrefetchRota(item.path);
   const button = (
     <div
       className={cn(
@@ -362,6 +365,7 @@ const SidebarItem = React.memo(function SidebarItem({
     >
       <button
         onClick={() => navigate(item.path)}
+        {...prefetch}
         className={cn(
           'flex items-center gap-2.5 w-full rounded-md text-sm font-medium transition-colors',
           collapsed ? 'justify-center px-2 py-2' : 'px-3 py-1.5',
