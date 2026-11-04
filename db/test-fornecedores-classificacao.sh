@@ -205,17 +205,17 @@ CARIMBOS="SELECT coalesce(string_agg('c' || right(cc.user_id::text, 1), ' ' ORDE
 # bloqueia no lock de c4; só então A dá COMMIT. Imprime esperou(sim|nao)|<retorno da B>. "nao" = a corrida
 # não aconteceu (a B terminou sem esperar) — o R0 acusa, e o R1 não vale por vacuidade.
 corrida() {
-  local fifo="$TMPD/corrida.fifo" esperou=nao i pa pb
+  local fifo="$TMPD/corrida.fifo" esperou=nao pa pb
   rm -f "$fifo"; mkfifo "$fifo"
   P -v ON_ERROR_STOP=1 -q < "$fifo" > "$TMPD/corrida-a.log" 2>&1 & pa=$!
   exec 7> "$fifo"
   printf "BEGIN;\nUPDATE public.cliente_classificacao SET tags_omie = ARRAY['Cliente'] WHERE user_id = '%s';\n" "$(cid 4)" >&7
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     [ "$(P -tA -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'")" = 1 ] && break
     sleep 0.1
   done
   q_como service_role '' "$RODA" > "$TMPD/corrida-b.out" & pb=$!
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     if [ "$(P -tA -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")" = 1 ]; then
       esperou=sim; break
     fi
