@@ -928,3 +928,8 @@ db/test-radar-agregado-cnae.sh             39  falsificar=14
 # GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
 # 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
 db/test-radar-cnae-secundario.sh           46  falsificar=18
+
+# Possível vínculo/sucessor de cliente na ficha do Radar (migration 20261104201756): chave exclusiva (≤ 2 raízes),
+# telefone/e-mail sozinhos ocultos, contador derruba telefone/e-mail, pessoa só no mesmo município, cliente
+# só-profiles só com carteira, mesma raiz fora; os 4 índices casam por Index Cond; gate/ACL/helpers fechados.
+db/test-radar-possiveis-vinculos.sh        19  falsificar=12
