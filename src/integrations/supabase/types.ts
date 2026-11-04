@@ -12181,11 +12181,60 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_agregado_cnae: {
+        Row: {
+          cnae_principal: string
+          estabelecida: boolean
+          estabelecida_d1: boolean
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf: string | null
+        }
+        Insert: {
+          cnae_principal: string
+          estabelecida: boolean
+          estabelecida_d1: boolean
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf?: string | null
+        }
+        Update: {
+          cnae_principal?: string
+          estabelecida?: boolean
+          estabelecida_d1?: boolean
+          inedito?: boolean
+          ja_cliente?: boolean
+          lote?: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n?: number
+          prospeccao_status?: string
+          tem_contato?: boolean
+          tem_telefone?: boolean
+          uf?: string | null
+        }
+        Relationships: []
+      }
       radar_agregado_estado: {
         Row: {
           base_iniciado_em: string | null
           base_lote: string | null
           calculado_em: string
+          corte_estabelecida: string | null
           empresas: number
           grupos: number
           id: number
@@ -12194,6 +12243,7 @@ export type Database = {
           base_iniciado_em?: string | null
           base_lote?: string | null
           calculado_em: string
+          corte_estabelecida?: string | null
           empresas: number
           grupos: number
           id?: number
@@ -12202,6 +12252,7 @@ export type Database = {
           base_iniciado_em?: string | null
           base_lote?: string | null
           calculado_em?: string
+          corte_estabelecida?: string | null
           empresas?: number
           grupos?: number
           id?: number
