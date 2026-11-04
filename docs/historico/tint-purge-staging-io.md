@@ -267,6 +267,13 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 
   **Reabrir se** o pico passar a doer: hit caindo, balcão lento na janela de um run de fórmulas, ou runs grandes ficando frequentes. A lista de P1 acima é o ponto de partida.
 
+  **Reaberto pelo founder no mesmo dia (03/11):** ele pediu para resolver o desenho corrigido e o P2 residual. O P2 saiu primeiro (item abaixo); a assinatura no cabeçalho segue em outra entrega.
+
+- **P2 residual fechado (migration `20261103222838_tint_apply_keys_snapshot_lock_por_account.sql`):** o `tint_apply_keys_snapshot` desativa fórmulas ativas da account inteira, mas só tomava o lock de loja. Agora toma também o `tint_formulas_account:<account>` do promote, logo depois do de loja e antes de qualquer leitura do oficial. A ordem nos dois é a mesma (loja, depois account), então não há ciclo.
+  - **Prova** `db/test-tint-apply-lock-account.sh`: verde em C e pt_BR.UTF-8, com 8 asserts (APLICA MD5 LOCK LOJA ACL IDEMP GUARDA CFG) e 6 falsificações. O controle sem a migration mostra que o lock por account não era tomado antes.
+  - **Codex** (`max`, 475 s): APROVAR COM AJUSTES. Pediu que a guarda de `search_path` deixasse de ser NULL-cega (`ANY(NULL)` com `RESET search_path` passaria calado); feito, com o assert CFG e a falsificação F6.
+  - **Deadlock preexistente, não tratado:** o tick (lock global → linha do run → loja) pode entrar em ciclo com um promote DIRETO do mesmo run (loja → account → `UPDATE` da linha do run), porque o tick segura a linha ao incrementar tentativas. Já existia só com o lock de loja. Manutenção manual deve passar pela fila, ou tomar o lock global antes de tudo.
+
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
 - **Medida:** delta de `pg_statio` de **todas** as tabelas de `public`, das 12:43 às 12:59 UTC de 03/11, no Mini (256MB e 60 conexões, no ar desde 31/10 10:33). A janela teve 5 promoções de catálogo, e o amostrador não pegou nenhuma consulta de outra sessão `claude_ro`.

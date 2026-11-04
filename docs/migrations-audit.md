@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **767** custom migrations totais
+- **768** custom migrations totais
 - **2515** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 950
@@ -6281,6 +6281,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
+
+### `20261103222838_tint_apply_keys_snapshot_lock_por_account.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 
