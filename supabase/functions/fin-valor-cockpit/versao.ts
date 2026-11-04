@@ -32,7 +32,9 @@ export const respostaSonda = criarRespostaSonda("fin-valor-cockpit");
 // o empate entre elas; ver `criarRespostaSonda`).
 // v1.7 → v1.8: baixa CR derivada lida pela RPC fin_titulo_baixas_cr_mapa (UMA avaliação) em vez de
 // paginar v_titulo_baixas com .range() (~14 páginas, cada uma reavaliando a view inteira).
-export const VERSAO = "v1.8-baixas-cr-rpc";
+// v1.8 → v1.9: as 4 leituras de apoio (vínculo, nome, custo, estoque) saem em paralelo
+// (`carregarMapasApoio`, plano v5 lote 5 — VAL-IO); paginação e falha integral iguais.
+export const VERSAO = "v1.9-mapas-apoio-paralelos";
 
 /** Efeito caro citado no 400 de `probe` ambíguo. */
 export const EFEITO =

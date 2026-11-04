@@ -8,6 +8,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // pedidos/custos/estoque/CR parciais viram margem e EVP inflados no cockpit, sem sinal
 // nenhum na tela. O canônico lança nos dois casos (money-path §6/§9).
 import { fetchAll } from "../_shared/paginate.ts";
+import { carregarMapasApoio } from "./mapas-apoio.ts";
 import { carregarBaixasCr } from "../_shared/baixas-cr.ts";
 import type { BancoPostgrest } from "../_shared/paginate.ts";
 // A leitura de `order_items` NÃO mora mais aqui: esta edge importa
@@ -566,17 +567,30 @@ Deno.serve(async (req: Request) => {
     // "sem vendas" — há vendas, o que falta é o desconto apurado, e a diferença é o que impede
     // a tela de mostrar R$ 0 onde o honesto é "—".)
 
+    // VAL-IO (plano v5, lote 5): as 4 leituras de apoio saem JUNTAS — filtros independentes. Paginação e
+    // falha integral moram em `carregarMapasApoio` (a 1ª que falhar rejeita o conjunto; nada sai vazio).
+    // Estoque: ver o comentário da ponte de contas mais abaixo, onde o mapa é montado.
+    type EstoqueRow = { omie_codigo_produto: number; saldo: number | null; cmc: number | null; synced_at: string | null };
+    const { clientes: clientesAll, profiles: profilesAll, custos: custosAll, estoque: estoqueAll } = await carregarMapasApoio<
+      { user_id: string; omie_codigo_cliente: number },
+      { user_id: string | null; razao_social: string | null; name: string | null },
+      { product_id: string } & CostRow,
+      EstoqueRow
+    >({
+      clientes: (f, t) => db.from("omie_customer_account_map_fresco").select("user_id, omie_codigo_cliente").eq("account", "oben").order("omie_codigo_cliente", { ascending: true }).range(f, t),
+      profiles: (f, t) => db.from("profiles").select("user_id, razao_social, name").order("id", { ascending: true }).range(f, t),
+      custos: (f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_source, cost_confidence").order("id", { ascending: true }).range(f, t),
+      estoque: (f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc, synced_at").in("account", ESTOQUE_ACCOUNTS).order("id", { ascending: true }).range(f, t),
+    });
     // Mapas de apoio (paginados, sem .in para evitar URL gigante + truncamento)
     // #8 (P0-B-bis PR-4): mapa user->codigo de DISPLAY pela view fresca account=oben (COMPANY). O espelho
     // omie_clientes é colacor_sc-dominante sem conta → exibia o código de OUTRA conta do mesmo user.
     // UNIQUE(user_id,account) → ≤1 linha/user no Map. Display ℹ️ baixo: offset .range basta (um miss de TTL
     // entre páginas só omitiria 1 código; o syncPedidos, money-path, é que exige keyset). Ordena por
     // omie_codigo_cliente (UNIQUE por conta → estável e sem empate no offset).
-    const clientesAll = await fetchAll<{ user_id: string; omie_codigo_cliente: number }>((f, t) => db.from("omie_customer_account_map_fresco").select("user_id, omie_codigo_cliente").eq("account", "oben").order("omie_codigo_cliente", { ascending: true }).range(f, t), "omie_customer_account_map_fresco");
     const userToOmie = new Map(clientesAll.map((c) => [c.user_id, String(c.omie_codigo_cliente)]));
     // Nome do cliente: profiles.user_id = order_items.customer_user_id (~98% cobertura na Oben; psql-ro
     // 2026-06-23). razao_social tem prioridade, senão name. service_role bypassa a RLS de profiles.
-    const profilesAll = await fetchAll<{ user_id: string | null; razao_social: string | null; name: string | null }>((f, t) => db.from("profiles").select("user_id, razao_social, name").order("id", { ascending: true }).range(f, t), "profiles");
     const userParaNome = new Map<string, string>();
     for (const p of profilesAll) {
       const nome = (p.razao_social?.trim() || p.name?.trim() || "");
@@ -588,7 +602,6 @@ Deno.serve(async (req: Request) => {
     // custo USADO em BAIXA CONFIANÇA — fallback legado OU source NÃO-real (proxy/desconhecida) OU cost_confidence<0,7
     // → custo_baixa_confianca_pct (exclusivo de custo_ausente). A cláusula de SOURCE blinda o invariante latente: um
     // proxy carimbado com conf>=0,7 pelo motor NÃO vira margem firme silenciosa (recommend/audit já nulificam proxy).
-    const custosAll = await fetchAll<{ product_id: string } & CostRow>((f, t) => db.from("product_costs").select("product_id, cost_final, cost_price, cost_source, cost_confidence").order("id", { ascending: true }).range(f, t), "product_costs");
     const custoPorProduto = new Map<string, number>();
     const custoBaixaConfianca = new Set<string>(); // product_id cujo custo USADO é proxy/desconhecida/legado/conf<0,7 (v2)
     let custoLegadoFallback = 0;
@@ -610,8 +623,6 @@ Deno.serve(async (req: Request) => {
     // saldo/cmc são NULLABLE: cmc ausente/≤0/NaN OU saldo ausente/<0 → estoque_valor null (não R$0/negativo —
     // money-path: ausente≠zero; saldo<0 inflaria o EVP). ⚠️ débito pré-existente (Codex): montarCelulasComboEVP
     // trata estoque null como i_cs=0 (encargo subestimado → EVP superestimado p/ SKU sem estoque) — fora do escopo.
-    type EstoqueRow = { omie_codigo_produto: number; saldo: number | null; cmc: number | null; synced_at: string | null };
-    const estoqueAll = await fetchAll<EstoqueRow>((f, t) => db.from("inventory_position").select("omie_codigo_produto, saldo, cmc, synced_at").in("account", ESTOQUE_ACCOUNTS).order("id", { ascending: true }).range(f, t), "inventory_position");
     const estoqueValorPorSKU = new Map<string, number | null>(); // estoque_valor da linha eleita (null = sem custo/saldo confiável)
     const estoqueFrescPorSKU = new Map<string, number>();
     for (const e of estoqueAll) {
