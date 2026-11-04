@@ -21,7 +21,9 @@
 # ║   S3 sem o termo master → A1 e A2 · S4 WITH CHECK sem o conjunto → A1 (INSERT) ·    ║
 # ║   S5 EXECUTE para anon → A3 · S6 policy volta à função por linha → A4 e A5 ·   ║
 # ║   M1 migration sem REVOKE PUBLIC → P7 · M2 termo novo fora da forma do PG → P3 ║
-# ║   M3 isolamento REPEATABLE READ → P0                                           ║
+# ║   M3 isolamento REPEATABLE READ → P0 · S7 SubPlan sem hash → A4 ·              ║
+# ║   M4 corpo vivo da ANTIGA mudou → PRE · M5 nova já existe com outro corpo →    ║
+# ║   PRE · M6 reapply com GRANT OPTION → P7 · M7 atraso sem lock → P8 (orçamento) ║
 # ║  Rodar:  bash db/test-rls-carteira-visibilidade-conjunto.sh > /tmp/t.log 2>&1  ║
 # ║  Locale: PROVA_LOCALE=pt_BR.UTF-8 bash db/test-rls-carteira-visibilidade-…     ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -78,8 +80,9 @@ echo "═══ setup (PG17 :$PORT, locale $LOC) ═══"
 Pdb base -q -f "$REPO_ROOT/db/stubs-supabase.sql"
 Pdb base -q <<'SQL'
 ALTER ROLE service_role BYPASSRLS;
-CREATE ROLE sandbox_exec NOLOGIN;
-CREATE ROLE sandbox_exec_fzvklzpomgnyikkfkzai NOLOGIN;
+-- sandbox_exec* como na prod (pg_roles, 2026-11-04): BYPASSRLS, sem USAGE em private, 'ar' nas tabelas.
+CREATE ROLE sandbox_exec NOLOGIN BYPASSRLS;
+CREATE ROLE sandbox_exec_fzvklzpomgnyikkfkzai NOLOGIN BYPASSRLS;
 CREATE TYPE public.app_role AS ENUM ('master','employee','customer');
 CREATE SCHEMA IF NOT EXISTS private;
 -- ACL do schema como na prod
@@ -179,6 +182,9 @@ GRANT SELECT (id, rotulo, customer_user_id, farmer_id) ON public.farmer_client_s
 GRANT ALL ON public.farmer_client_scores TO service_role;
 GRANT SELECT, INSERT ON public.visitas_agendadas TO authenticated;
 GRANT ALL ON public.visitas_agendadas TO service_role;
+GRANT SELECT, INSERT ON public.carteira_assignments, public.carteira_coverage, public.customer_visit_scores, public.farmer_client_scores,
+  public.farmer_recommendations, public.farmer_bundle_recommendations, public.farmer_calls, public.route_visits, public.visitas_agendadas
+  TO sandbox_exec, sandbox_exec_fzvklzpomgnyikkfkzai;
 
 ALTER TABLE public.carteira_assignments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.carteira_coverage ENABLE ROW LEVEL SECURITY;
@@ -230,6 +236,8 @@ INSERT INTO _prova.caller VALUES
  ('E0', '00000000-0000-0000-0000-0000000000ab', 'authenticated'),
  ('CU', '00000000-0000-0000-0000-0000000000aa', 'authenticated'),
  ('NUL', NULL, 'authenticated'),
+ ('SBX', '00000000-0000-0000-0000-0000000000a2', 'sandbox_exec'),
+ ('SBF', '00000000-0000-0000-0000-0000000000a2', 'sandbox_exec_fzvklzpomgnyikkfkzai'),
  ('ANON', NULL, 'anon');
 CREATE FUNCTION _prova.u(text) RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT uid FROM _prova.caller WHERE nome = $1 $$;
 CREATE FUNCTION _prova.c(int) RETURNS uuid LANGUAGE sql IMMUTABLE AS $$ SELECT ('00000000-0000-0000-0000-0000000000c' || $1)::uuid $$;
@@ -382,19 +390,23 @@ $f$;
 
 -- A3: catálogo depois da migration.
 CREATE FUNCTION _prova.a3() RETURNS text LANGUAGE plpgsql AS $f$
-DECLARE erros text[] := '{}'; f oid := to_regprocedure('private.carteira_clientes_visiveis(uuid)'); acl_v text[]; acl_n text[];
+DECLARE erros text[] := '{}'; f oid; acl_v text[]; acl_n text[];
 BEGIN
+  SELECT array_agg(x.grantee::regrole::text || ':' || x.is_grantable ORDER BY x.grantee::regrole::text || ':' || x.is_grantable) INTO acl_v FROM pg_proc p, aclexplode(p.proacl) x
+   WHERE p.oid = 'private.carteira_visivel_para(uuid,uuid)'::regprocedure AND x.privilege_type = 'EXECUTE';
+  FOREACH f IN ARRAY ARRAY[to_regprocedure('private.carteira_ve_tudo()'), to_regprocedure('private.carteira_clientes_visiveis()')] LOOP
   IF f IS NULL THEN RETURN 'vermelho:função ausente'; END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = f AND prosecdef AND provolatile = 's' AND proretset
-                  AND proconfig = ARRAY['search_path=public']) THEN erros := erros || 'atributos'::text; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE oid = f AND prosecdef AND provolatile = 's'
+                  AND proretset = (f = to_regprocedure('private.carteira_clientes_visiveis()'))
+                  AND proowner = 'postgres'::regrole AND pronargs = 0
+                  AND proconfig = ARRAY['search_path=public']) THEN erros := erros || ('atributos ' || f::regprocedure::text); END IF;
   IF has_function_privilege('anon', f, 'EXECUTE') THEN erros := erros || 'anon executa'::text; END IF;
   IF EXISTS (SELECT 1 FROM pg_proc p, aclexplode(p.proacl) x WHERE p.oid = f AND x.grantee = 0) THEN erros := erros || 'PUBLIC executa'::text; END IF;
   IF NOT has_function_privilege('authenticated', f, 'EXECUTE') THEN erros := erros || 'authenticated sem EXECUTE'::text; END IF;
-  SELECT array_agg(x.grantee::regrole::text ORDER BY x.grantee::regrole::text) INTO acl_v FROM pg_proc p, aclexplode(p.proacl) x
-   WHERE p.oid = 'private.carteira_visivel_para(uuid,uuid)'::regprocedure AND x.privilege_type = 'EXECUTE';
-  SELECT array_agg(x.grantee::regrole::text ORDER BY x.grantee::regrole::text) INTO acl_n FROM pg_proc p, aclexplode(p.proacl) x
+  SELECT array_agg(x.grantee::regrole::text || ':' || x.is_grantable ORDER BY x.grantee::regrole::text || ':' || x.is_grantable) INTO acl_n FROM pg_proc p, aclexplode(p.proacl) x
    WHERE p.oid = f AND x.privilege_type = 'EXECUTE';
-  IF acl_v IS DISTINCT FROM acl_n THEN erros := erros || ('ACL ' || acl_n::text || ' ≠ ' || acl_v::text); END IF;
+  IF acl_v IS DISTINCT FROM acl_n THEN erros := erros || ('ACL ' || acl_n::text || ' <> ' || acl_v::text); END IF;
+  END LOOP;
   IF to_regprocedure('private.carteira_visivel_para(uuid,uuid)') IS NULL THEN erros := erros || 'antiga sumiu (9 chamadores)'::text; END IF;
   IF EXISTS (SELECT 1 FROM pg_policy WHERE coalesce(pg_get_expr(polqual, polrelid),'') || coalesce(pg_get_expr(polwithcheck, polrelid),'') LIKE '%carteira_visivel_para%')
     THEN erros := erros || 'policy por linha'::text; END IF;
@@ -420,7 +432,7 @@ BEGIN
   EXECUTE format('SELECT count(*) FROM public.%I', p_tabela) INTO n;
   RESET ROLE;
   v := coalesce(pg_stat_get_xact_function_calls('private.carteira_visivel_para(uuid,uuid)'::regprocedure), 0);
-  c := coalesce(pg_stat_get_xact_function_calls(to_regprocedure('private.carteira_clientes_visiveis(uuid)')), 0);
+  c := coalesce(pg_stat_get_xact_function_calls(to_regprocedure('private.carteira_clientes_visiveis()')), 0);
   RETURN format('linhas=%s,visivel_para=%s,clientes_visiveis=%s', n, v, c);
 END
 $f$;
@@ -464,7 +476,7 @@ eq "NOTICE: 8 reescritas"  "$(grep -c 'carteira por conjunto: 8 policies reescri
 
 Q real "SELECT _prova.sondar('depois')" >/dev/null
 A1_REAL=$(Q real "SELECT _prova.a1()")
-eq "A1 CONJUNTO igual antes/depois ($TOTAL_SONDAS sondas: 13 chamadores × (7 SELECT + 29 INSERT))" "$A1_REAL" "verde"
+eq "A1 CONJUNTO igual antes/depois ($TOTAL_SONDAS sondas: 15 chamadores × (7 SELECT + 29 INSERT))" "$A1_REAL" "verde"
 A2_REAL=$(Q real "SELECT _prova.a2()")
 eq "A2 cláusula ponto a ponto" "${A2_REAL%% (*}" "verde"
 echo "     ${A2_REAL}"
@@ -500,7 +512,7 @@ if aplica deriva "$MIG"; then bad "A7 aplicou sobre policy derivada"; else
   eq "A7 abortou no PRE" "$(grep -c 'PRE FALHOU: route_visits.rvis_select_carteira' "$TMPD/apply-deriva.log")" "1"
 fi
 eq "A7 nada aplicado (função ausente, 8 por linha)" \
-   "$(Q deriva "SELECT (to_regprocedure('private.carteira_clientes_visiveis(uuid)') IS NULL)::text || ',' || count(*) FROM pg_policy WHERE coalesce(pg_get_expr(polqual, polrelid),'') || coalesce(pg_get_expr(polwithcheck, polrelid),'') LIKE '%carteira_visivel_para%'")" \
+   "$(Q deriva "SELECT (to_regprocedure('private.carteira_clientes_visiveis()') IS NULL AND to_regprocedure('private.carteira_ve_tudo()') IS NULL)::text || ',' || count(*) FROM pg_policy WHERE coalesce(pg_get_expr(polqual, polrelid),'') || coalesce(pg_get_expr(polwithcheck, polrelid),'') LIKE '%carteira_visivel_para%'")" \
    "true,8"
 
 # A8 — plano genérico alternando usuário: o uid entra por InitPlan, o plano em cache não fixa ninguém.
@@ -532,7 +544,7 @@ if aplica trava "$MIG"; then bad "A9 aplicou com a tabela travada"; else
 fi
 Q trava "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'trava' AND pid <> pg_backend_pid()" >/dev/null
 wait "$BG" 2>/dev/null || true
-eq "A9 nada aplicado" "$(Q trava "SELECT (to_regprocedure('private.carteira_clientes_visiveis(uuid)') IS NULL)::text")" "true"
+eq "A9 nada aplicado" "$(Q trava "SELECT (to_regprocedure('private.carteira_clientes_visiveis()') IS NULL)::text")" "true"
 
 # ══════════════════════════════════════════════════════════════════════════════
 echo "── FALSIFICAÇÃO: os asserts têm dente (controle verde acima, mesma invocação) ──"
@@ -541,7 +553,7 @@ echo "── FALSIFICAÇÃO: os asserts têm dente (controle verde acima, mesma 
 # Corpo da função de conjunto, com um trecho trocado (a sabotagem precisa MUDAR o texto).
 sabota_funcao() {
   local db="$1" de="$2" para="$3"
-  local corpo; corpo=$(Q "$db" "SELECT pg_get_functiondef('private.carteira_clientes_visiveis(uuid)'::regprocedure)")
+  local corpo; corpo=$(Q "$db" "SELECT pg_get_functiondef('private.carteira_clientes_visiveis()'::regprocedure)")
   local novo; novo=$(printf '%s' "$corpo" | DE="$de" PARA="$para" perl -0777 -pe 's/\Q$ENV{DE}\E/$ENV{PARA}/')
   [ "$novo" != "$corpo" ] || { echo "sabotagem não mudou o corpo ($de)"; exit 1; }
   printf '%s;\n' "$novo" | Pdb "$db" -q >/dev/null
@@ -556,21 +568,21 @@ copia real s2; sabota_funcao s2 "(c.valid_until IS NULL OR c.valid_until > now()
 morde "S2 cobertura sem validade → A1" "$(Q s2 "SELECT _prova.a1()")" "verde"
 
 copia real s3
-Q s3 "ALTER POLICY \"View carteira por visibilidade\" ON public.carteira_assignments USING (customer_user_id IN ( SELECT private.carteira_clientes_visiveis(( SELECT auth.uid() AS uid)) AS carteira_clientes_visiveis))" >/dev/null
+Q s3 "ALTER POLICY \"View carteira por visibilidade\" ON public.carteira_assignments USING (customer_user_id IN ( SELECT private.carteira_clientes_visiveis() AS carteira_clientes_visiveis))" >/dev/null
 resonda s3
 morde "S3 sem o termo master → A1" "$(Q s3 "SELECT _prova.a1()")" "verde"
 A2_S3=$(Q s3 "SELECT _prova.a2()")
 morde "S3 sem o termo master → A2" "${A2_S3%% (*}" "verde"
 
 copia real s4
-Q s4 "ALTER POLICY vag_insert_own_carteira ON public.visitas_agendadas WITH CHECK (((scheduled_by = ( SELECT auth.uid() AS uid)) AND ( SELECT has_role(( SELECT auth.uid() AS uid), 'master'::app_role) AS has_role) AND (status = 'pendente'::text) AND (route_visit_id IS NULL)))" >/dev/null
+Q s4 "ALTER POLICY vag_insert_own_carteira ON public.visitas_agendadas WITH CHECK (((scheduled_by = ( SELECT auth.uid() AS uid)) AND ( SELECT private.carteira_ve_tudo() AS carteira_ve_tudo) AND (status = 'pendente'::text) AND (route_visit_id IS NULL)))" >/dev/null
 resonda s4
 S4=$(Q s4 "SELECT _prova.a1()")
 morde "S4 WITH CHECK sem o conjunto → A1" "$S4" "verde"
 if printf '%s' "$S4" | grep -q 'F1/ins:c1-eu-pendente ok'; then ok "S4 vermelho CERTO (F1 perdeu o INSERT de c1)"; else bad "S4 vermelho por outro motivo: $S4"; fi
 
 copia real s5
-Q s5 "GRANT EXECUTE ON FUNCTION private.carteira_clientes_visiveis(uuid) TO anon" >/dev/null
+Q s5 "GRANT EXECUTE ON FUNCTION private.carteira_clientes_visiveis() TO anon" >/dev/null
 morde "S5 EXECUTE para anon → A3" "$(Q s5 "SELECT _prova.a3()")" "verde"
 
 copia real s6
@@ -599,18 +611,58 @@ sabota_arquivo() {
   copia base "$nome"
   if aplica "$nome" "$alvo"; then echo "APLICOU"; else echo "ABORTOU"; fi
 }
-R=$(sabota_arquivo m1 "REVOKE ALL ON FUNCTION private.carteira_clientes_visiveis(uuid) FROM PUBLIC;" "SELECT 1;")
+R=$(sabota_arquivo m1 "REVOKE ALL ON FUNCTION private.carteira_ve_tudo(), private.carteira_clientes_visiveis() FROM PUBLIC;" "SELECT 1;")
 eq "M1 sem REVOKE PUBLIC → migration aborta" "$R" "ABORTOU"
 eq "M1 vermelho certo (P7)" "$(grep -c 'P7 FALHOU' "$TMPD/apply-m1.log")" "1"
-R=$(sabota_arquivo m2 "''master''::app_role) AS has_role)" "''master''::app_role))")
+R=$(sabota_arquivo m2 "( SELECT private.carteira_ve_tudo() AS carteira_ve_tudo)" "( SELECT private.carteira_ve_tudo())")
 eq "M2 termo fora da forma do PG → migration aborta" "$R" "ABORTOU"
 eq "M2 vermelho certo (P3)" "$(grep -c 'P3 FALHOU' "$TMPD/apply-m2.log")" "1"
 R=$(sabota_arquivo m3 "SET LOCAL lock_timeout = '500ms';" "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ; SET LOCAL lock_timeout = '500ms';")
 eq "M3 REPEATABLE READ → migration aborta" "$R" "ABORTOU"
 eq "M3 vermelho certo (P0)" "$(grep -c 'P0 FALHOU' "$TMPD/apply-m3.log")" "1"
 
+# S7 — o hash: com a estimativa da SRF inflada, o planejador desiste do hashed SubPlan.
+HASH_REAL=$(printf '%s' "$PLANO" | grep -c 'hashed SubPlan' || true)
+copia real s7
+Q s7 "ALTER FUNCTION private.carteira_clientes_visiveis() ROWS 1000000000" >/dev/null
+PLANO7=$(Pdb s7 -tA <<'SQL'
+BEGIN;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a2","role":"authenticated"}', true) IS NULL;
+SET LOCAL ROLE authenticated;
+EXPLAIN (COSTS OFF) SELECT rotulo FROM public.farmer_client_scores;
+ROLLBACK;
+SQL
+)
+morde "S7 SubPlan sem hash → A4" "$(printf '%s' "$PLANO7" | grep -c 'hashed SubPlan' || true)" "$HASH_REAL"
+
+# M4 — o corpo vivo da ANTIGA mudou (policies intactas): a regra copiada divergiria → PRE.
+copia base m4
+Q m4 "CREATE OR REPLACE FUNCTION private.carteira_visivel_para(_customer_user_id uuid, _uid uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$function\$ SELECT false \$function\$" >/dev/null
+if aplica m4 "$MIG"; then R=APLICOU; else R=ABORTOU; fi
+eq "M4 antiga endurecida → migration aborta" "$R" "ABORTOU"
+eq "M4 vermelho certo (PRE do corpo vivo)" "$(grep -c 'PRE FALHOU: o corpo vivo de private.carteira_visivel_para' "$TMPD/apply-m4.log")" "1"
+
+# M5 — a função nova já existe com OUTRO corpo: não sobrescreve.
+copia base m5
+Q m5 "CREATE FUNCTION private.carteira_clientes_visiveis() RETURNS SETOF uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS \$function\$ SELECT NULL::uuid WHERE false \$function\$" >/dev/null
+if aplica m5 "$MIG"; then R=APLICOU; else R=ABORTOU; fi
+eq "M5 nova com outro corpo → migration aborta" "$R" "ABORTOU"
+eq "M5 vermelho certo (PRE da nova)" "$(grep -c 'PRE FALHOU: private.carteira_clientes_visiveis()' "$TMPD/apply-m5.log")" "1"
+
+# M6 — reapply sobre ACL com GRANT OPTION (delegável): P7 compara is_grantable.
+copia real m6
+Q m6 "GRANT EXECUTE ON FUNCTION private.carteira_ve_tudo() TO authenticated WITH GRANT OPTION" >/dev/null
+if aplica m6 "$MIG"; then R=APLICOU; else R=ABORTOU; fi
+eq "M6 grant option → reapply aborta" "$R" "ABORTOU"
+eq "M6 vermelho certo (P7 ACL)" "$(grep -c 'P7 FALHOU: ACL de EXECUTE de private.carteira_ve_tudo()' "$TMPD/apply-m6.log")" "1"
+
+# M7 — orçamento: atraso sem contenção de lock (0,5 s por policy) → P8.
+R=$(sabota_arquivo m7 "    n_alter := n_alter + 1;" "    n_alter := n_alter + 1; PERFORM pg_sleep(0.5);")
+eq "M7 atraso → migration aborta" "$R" "ABORTOU"
+eq "M7 vermelho certo (P8)" "$(grep -c 'P8 FALHOU' "$TMPD/apply-m7.log")" "1"
+
 echo "──────────────────────────────"
-echo "Sabotagens S1-S6: $VERM vermelhas / $FALHAS_S sem dente"
+echo "Sabotagens S1-S7: $VERM vermelhas / $FALHAS_S sem dente"
 echo "RESULTADO: $PASS ok / $FAIL fail (locale $LOC)"
 [ "$FAIL" = "0" ] || { echo "❌ HARNESS VERMELHO"; exit 1; }
 echo "PROVA-RLS-CARTEIRA-CONJUNTO-OK"
