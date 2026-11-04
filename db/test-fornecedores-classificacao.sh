@@ -8,8 +8,8 @@
 # hoje 5 migrations: o trigger de coerência e o GRANT por coluna do funil em sales_orders, a
 # 20261001014100 do #2726 e as 2 que levam a melhoria_clientes_por_produto até o predecessor que o PRE
 # dela exige). Aplicar, reverter e o trigger são IGUAIS aos do snapshot (md5 = o de prod, medido em
-# 2026-10-01); a classificar é a PRÓXIMA — a da 20261001014100 (#2726: o pedido apagado não é venda), que a
-# prod recebe quando a migration for aplicada.
+# 2026-10-01); a classificar é a PRÓXIMA — a da 20261104113000 (plano v5 lote 10: diff-before-write, só escreve a
+# linha cuja classificação mudou), que a prod recebe quando a migration for aplicada.
 #
 # O que ela assevera (cada regra com sabotagem própria; os positivos são as pré-condições que as
 # sabotagens exigem verdes):
@@ -28,7 +28,12 @@
 #  • o ACL de prod: classificar e aplicar são só do service_role; o anon não executa a reversão (nega o
 #    EXECUTE, camada nomeada);
 #  • o trigger: deriva is_fornecedor no INSERT e no UPDATE OF tags_omie (caixa e espaço), e NÃO decide a
-#    exclusão (é da RPC, que conhece as vendas e a exceção).
+#    exclusão (é da RPC, que conhece as vendas e a exceção);
+#  • o diff-before-write (bloco D, medido por xmin e updated_at de cada linha): a linha nova é classificada, a
+#    2ª execução sem mudança não escreve NADA, a mudança de UMA flag (cada uma das 3, numa linha diferente)
+#    escreve só aquela linha, a linha removida só sai da contagem — e o retorno conta total|alterados|excluídos;
+#  • a guarda de corrida (bloco R, 2 sessões de verdade): tags mudadas por outra transação DURANTE a execução
+#    não são sobrescritas pela régua calculada sobre as tags velhas (R0 mede que a execução ESPEROU o lock).
 # Fora daqui, de propósito: o guard fcs_block_flagged_insert, que impede o score de um excluído de
 # ressuscitar (db/test-fcs-guard-flagged.sh — FORA do núcleo: verde na varredura de 2026-09-28, mas não
 # barra merge). Aqui ele só explica a ordem do seed: os scores nascem antes
@@ -175,6 +180,51 @@ fila() {
 reverter() { printf "SELECT public.reverter_exclusao_fornecedor('%s', '%s')" "$(cid "$1")" "$2"; }
 # as pendências INTEIRAS das 2 filas (visita|score): o reverter enfileira só o alvo
 TOTAL_FILAS="(SELECT count(*) FROM public.visit_score_recalc_queue WHERE processed_at IS NULL) || '|' || (SELECT count(*) FROM public.score_recalc_queue WHERE processed_at IS NULL)"
+# A execução da RPC com o retorno inteiro: total|alterados|excluídos.
+RODA="SELECT (r->>'classificados') || '|' || (r->>'alterados') || '|' || (r->>'excluidos') FROM (SELECT public.classificar_clientes_fornecedores() AS r) s;"
+# foto — xmin e updated_at de cada linha, ANTES da execução; ESCRITAS/CARIMBOS — quem mudou desde a foto
+# ('-' = ninguém). O xmin é a prova de escrita (versão nova da tupla); o carimbo é o contrato da coluna.
+foto() {
+  if P -v ON_ERROR_STOP=1 -q -c "DROP TABLE IF EXISTS prova_foto" \
+       -c "CREATE TABLE prova_foto AS SELECT user_id, xmin::text AS x, updated_at FROM public.cliente_classificacao" >/dev/null 2>&1
+  then printf 'OK'; else printf 'ERRO: foto'; fi
+}
+# roda_upd — a RPC (como service_role) e, na MESMA transação, o n_tup_upd dela (pg_stat_xact_user_tables): o nº
+# FÍSICO de updates, que é o que o lote 10 cobra — o xmin diz QUAIS linhas, não QUANTAS vezes (Codex: reescrever
+# 2× a mesma linha deixaria o xmin final igual). Imprime total|alterados|excluídos|updates.
+roda_upd() {
+  local out
+  if out="$(P -v ON_ERROR_STOP=1 -tA -q -c "SET ROLE service_role" -c "BEGIN" -c "$RODA" \
+       -c "SELECT n_tup_upd FROM pg_stat_xact_user_tables WHERE relid = 'public.cliente_classificacao'::regclass" -c "COMMIT" 2>&1)"
+  then printf '%s' "$out" | tr '\n' '|' | sed 's/|$//'
+  else printf 'ERRO: %s' "$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"; fi
+}
+ESCRITAS="SELECT coalesce(string_agg('c' || right(cc.user_id::text, 1), ' ' ORDER BY cc.user_id), '-') FROM public.cliente_classificacao cc JOIN prova_foto f USING (user_id) WHERE cc.xmin::text <> f.x;"
+CARIMBOS="SELECT coalesce(string_agg('c' || right(cc.user_id::text, 1), ' ' ORDER BY cc.user_id), '-') FROM public.cliente_classificacao cc JOIN prova_foto f USING (user_id) WHERE cc.updated_at IS DISTINCT FROM f.updated_at;"
+# corrida — a sessão A (psql lendo de um FIFO) abre a transação e troca as tags de c4; a B roda a RPC, que
+# bloqueia no lock de c4; só então A dá COMMIT. Imprime esperou(sim|nao)|<retorno da B>. "nao" = a corrida
+# não aconteceu (a B terminou sem esperar) — o R0 acusa, e o R1 não vale por vacuidade.
+corrida() {
+  local fifo="$TMPD/corrida.fifo" esperou=nao i pa pb
+  rm -f "$fifo"; mkfifo "$fifo"
+  P -v ON_ERROR_STOP=1 -q < "$fifo" > "$TMPD/corrida-a.log" 2>&1 & pa=$!
+  exec 7> "$fifo"
+  printf "BEGIN;\nUPDATE public.cliente_classificacao SET tags_omie = ARRAY['Cliente'] WHERE user_id = '%s';\n" "$(cid 4)" >&7
+  for i in $(seq 1 100); do
+    [ "$(P -tA -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND state = 'idle in transaction'")" = 1 ] && break
+    sleep 0.1
+  done
+  q_como service_role '' "$RODA" > "$TMPD/corrida-b.out" & pb=$!
+  for i in $(seq 1 100); do
+    if [ "$(P -tA -c "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")" = 1 ]; then
+      esperou=sim; break
+    fi
+    sleep 0.1
+  done
+  printf 'COMMIT;\n' >&7; exec 7>&-
+  wait "$pa" || true; wait "$pb" || true
+  printf '%s|%s' "$esperou" "$(cat "$TMPD/corrida-b.out")"
+}
 
 cenario() {
   PASS=0; FAIL=0; FALHOS=" "
@@ -238,6 +288,38 @@ cenario() {
   chk T2 "UPDATE OF tags_omie re-deriva, com espaço (nasce comum | vira ' Transportadora ')" \
     "$(st_como service_role '' "INSERT INTO public.cliente_classificacao (user_id, tags_omie) VALUES ('$(cid 9)', ARRAY['Cliente'])")|$(q_como service_role '' "SELECT $(b is_fornecedor) FROM public.cliente_classificacao WHERE user_id = '$(cid 9)';")|$(st_como service_role '' "UPDATE public.cliente_classificacao SET tags_omie = ARRAY[' Transportadora '] WHERE user_id = '$(cid 9)'")|$(q_como service_role '' "SELECT $(b is_fornecedor) FROM public.cliente_classificacao WHERE user_id = '$(cid 9)';")" \
     "OK|f|OK|t"
+
+  # Estado aqui (K→T): exceção de c1 c2 c5 ca; c7 e c9 recém-inseridos (o trigger pôs is_fornecedor, a RPC
+  # ainda não rodou para eles). A foto guarda xmin e updated_at de cada linha antes da execução: xmin diferente
+  # = a linha foi ESCRITA (o UPDATE grava versão nova mesmo com valor igual — é o defeito que o lote 10 tirou).
+  echo "→ diff-before-write: só a linha cuja classificação mudou é escrita (xmin e updated_at por linha)"
+  chk D0 "linhas novas (c7, c9) são classificadas e só elas escritas — foto|total|alterados|excluídos|updates|xmin|carimbo|c7|c9" \
+    "$(foto)|$(roda_upd)|$(q_como postgres '' "$ESCRITAS")|$(q_como postgres '' "$CARIMBOS")|$(classes="$(q_como service_role '' "$CLASSES")"; printf '%s|%s' "$(campo "$classes" c7)" "$(campo "$classes" c9)")" \
+    "OK|10|2|4|2|c7 c9|c7 c9|t|f|t|t|f|t"
+  chk D1 "2ª execução sem mudança: NENHUMA linha escrita (foto|total|alterados|excluídos|updates|xmin|carimbo)" \
+    "$(foto)|$(roda_upd)|$(q_como postgres '' "$ESCRITAS")|$(q_como postgres '' "$CARIMBOS")" \
+    "OK|10|0|4|0|-|-"
+  # UMA flag por linha: c3 ganha venda real (só tem_venda_real), c2 perde a exceção (só excluir_da_carteira),
+  # c6 tem is_fornecedor corrompido sem passar pelo trigger (só is_fornecedor) — cada flag sozinha tem de
+  # bastar para a linha ser escrita.
+  chk D2 "UMA flag muda em c2 c3 c6: só elas escritas, com a régua certa — setup|foto|total|alterados|excluídos|updates|xmin|carimbo|c2|c3|c6" \
+    "$(st_como postgres '' "INSERT INTO public.sales_orders (customer_user_id, created_by, status) VALUES ('$(cid 3)', '$F1', 'enviado')")$(st_como postgres '' "DELETE FROM public.fornecedor_excecao WHERE user_id = '$(cid 2)'")$(st_como postgres '' "UPDATE public.cliente_classificacao SET is_fornecedor = false WHERE user_id = '$(cid 6)'")|$(foto)|$(roda_upd)|$(q_como postgres '' "$ESCRITAS")|$(q_como postgres '' "$CARIMBOS")|$(classes="$(q_como service_role '' "$CLASSES")"; printf '%s|%s|%s' "$(campo "$classes" c2)" "$(campo "$classes" c3)" "$(campo "$classes" c6)")" \
+    "OKOKOK|OK|10|3|5|3|c2 c3 c6|c2 c3 c6|t|f|t|f|t|f|t|t|f"
+  chk D3 "linha removida (c8) só sai da contagem — remove|foto|total|alterados|excluídos|updates|xmin" \
+    "$(st_como postgres '' "DELETE FROM public.cliente_classificacao WHERE user_id = '$(cid 8)'")|$(foto)|$(roda_upd)|$(q_como postgres '' "$ESCRITAS")" \
+    "OK|OK|9|0|4|0|-"
+
+  # A corrida: c4 com excluir corrompido (a régua vai querer escrevê-lo) e, numa 2ª sessão ABERTA, as tags
+  # dele trocadas para 'Cliente' (o trigger já põe is_fornecedor=f). A execução lê o snapshot velho (c4
+  # fornecedor), espera o lock de c4 e reavalia o WHERE contra a versão nova: sem a guarda, gravaria t|f|t —
+  # excluiria da carteira quem deixou de ser fornecedor.
+  echo "→ corrida: tags trocadas por outra transação durante a execução não são sobrescritas"
+  local corr
+  corr="$(st_como postgres '' "UPDATE public.cliente_classificacao SET excluir_da_carteira = false WHERE user_id = '$(cid 4)'")|$(corrida)"
+  chk R0 "a execução ESPEROU o lock da linha que a outra sessão segurava (pré-condição: corrompe|esperou)" \
+    "$(printf '%s' "$corr" | cut -d'|' -f1-2)" "OK|sim"
+  chk R1 "a régua velha não sobrescreve as tags novas: total|alterados|excluídos|c4 (is|venda|exclui)" \
+    "$(printf '%s' "$corr" | cut -d'|' -f3-5)|$(campo "$(q_como service_role '' "$CLASSES")" c4)" "9|0|3|f|f|f"
   return 0
 }
 
@@ -269,7 +351,9 @@ SABOTAGENS="excecao_ignorada:K2:K1,K3,K6 venda_real_ignorada:K6:K1,K2,K3
             authenticated_executa_aplicar:G3:A2 excecao_employee_escreve:G4:G1
             trigger_sem_caixa:T1:K1 trigger_sem_espaco:T2:T1 trigger_decide_exclusao:T1:T2 trigger_so_no_insert:T2:T1
             migracao_nova_excecao_ignorada:K2:K1,K3 migracao_nova_drop_create_classificar:G3:K0
-            migracao_nova_drop_create_sem_anon_reverter:G2:V1"
+            migracao_nova_drop_create_sem_anon_reverter:G2:V1
+            diff_ausente:D1:K0 diff_cego_isforn:D2:D1 diff_cego_venda:D2:D1 diff_cego_excluir:A3,D2:K0
+            guarda_ausente:R1:R0,D1 alterados_mente:D1:K0 classificados_conta_escritas:D1:K0"
 
 # sabotagem <nome> — troca UMA camada do schema vivo no banco da rodada. Status ≠0 = não aplicou.
 sabotagem() {
@@ -277,16 +361,17 @@ sabotagem() {
   local rv='public.reverter_exclusao_fornecedor(uuid,text)' dv='public.cliente_classificacao_derive()'
   local status="NOT IN ('cancelado','rascunho','pendente','orcamento')"
   local apagado=' AND so.deleted_at IS NULL'
-  local decisao="$apagado"$'\n      )\n      AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao'
-  local coluna_venda=$'tem_venda_real = EXISTS (\n      SELECT 1 FROM public.sales_orders so\n      WHERE so.customer_user_id = cc.user_id\n        AND so.status '
-  local coluna_tag=$'is_fornecedor = EXISTS (\n      SELECT 1 FROM unnest(cc.tags_omie) t\n      WHERE '
-  local decisao_tag=$'excluir_da_carteira = (\n      EXISTS (\n        SELECT 1 FROM unnest(cc.tags_omie) t\n        WHERE '
+  local decisao="$apagado"$'\n        )\n        AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao'
+  local coluna_venda=$'AS is_fornecedor,\n      EXISTS (\n        SELECT 1 FROM public.sales_orders so\n        WHERE so.customer_user_id = cc.user_id\n          AND so.status '
+  local coluna_tag=$'cc.tags_omie,\n      EXISTS (\n        SELECT 1 FROM unnest(cc.tags_omie) t\n        WHERE '
+  local decisao_tag=$'AS tem_venda_real,\n      (\n        EXISTS (\n          SELECT 1 FROM unnest(cc.tags_omie) t\n          WHERE '
+  local diff_flags=$'(cc.is_fornecedor, cc.tem_venda_real, cc.excluir_da_carteira)\n          IS DISTINCT FROM (r.is_fornecedor, r.tem_venda_real, r.excluir_da_carteira)'
   local fila_fim=$'FROM public.carteira_assignments ca WHERE ca.customer_user_id = p_user_id\n  ON CONFLICT DO NOTHING;\n  GET DIAGNOSTICS '
   local so_excluidos=' IN (SELECT user_id FROM public.cliente_classificacao WHERE excluir_da_carteira)'
   case "$1" in
     excecao_ignorada)     cv_sabotar "$cl" "AND NOT EXISTS (SELECT 1 FROM public.fornecedor_excecao e WHERE e.user_id = cc.user_id)" "" ;;
-    venda_real_ignorada)  cv_sabotar "$cl" $'AND NOT EXISTS (\n        SELECT 1 FROM public.sales_orders so\n        WHERE so.customer_user_id' \
-                            $'AND NOT EXISTS (\n        SELECT 1 FROM public.sales_orders so\n        WHERE false AND so.customer_user_id' ;;
+    venda_real_ignorada)  cv_sabotar "$cl" $'AND NOT EXISTS (\n          SELECT 1 FROM public.sales_orders so\n          WHERE so.customer_user_id' \
+                            $'AND NOT EXISTS (\n          SELECT 1 FROM public.sales_orders so\n          WHERE false AND so.customer_user_id' ;;
     cancelado_vira_venda) cv_sabotar "$cl" "$status$decisao" "NOT IN ('rascunho','pendente','orcamento')$decisao" ;;
     rascunho_vira_venda)  cv_sabotar "$cl" "$status$decisao" "NOT IN ('cancelado','pendente','orcamento')$decisao" ;;
     pendente_vira_venda)  cv_sabotar "$cl" "$status$decisao" "NOT IN ('cancelado','rascunho','orcamento')$decisao" ;;
@@ -308,12 +393,22 @@ sabotagem() {
     decisao_tag_sem_caixa) cv_sabotar "$cl" "${decisao_tag}lower(trim(t))" "${decisao_tag}trim(t)" ;;
     decisao_tag_sem_espaco) cv_sabotar "$cl" "${decisao_tag}lower(trim(t))" "${decisao_tag}lower(t)" ;;
     # as 3 flags em cada direção: "pegajosa" nunca TIRA o valor corrompido, "nunca liga" nunca o PÕE
-    isforn_pegajoso)      cv_sabotar "$cl" "is_fornecedor = EXISTS (" "is_fornecedor = is_fornecedor OR EXISTS (" ;;
-    isforn_nunca_liga)    cv_sabotar "$cl" "is_fornecedor = EXISTS (" "is_fornecedor = is_fornecedor AND EXISTS (" ;;
-    venda_pegajosa)       cv_sabotar "$cl" "tem_venda_real = EXISTS (" "tem_venda_real = tem_venda_real OR EXISTS (" ;;
-    venda_nunca_liga)     cv_sabotar "$cl" "tem_venda_real = EXISTS (" "tem_venda_real = tem_venda_real AND EXISTS (" ;;
-    excluir_pegajoso)     cv_sabotar "$cl" "excluir_da_carteira = (" "excluir_da_carteira = excluir_da_carteira OR (" ;;
-    excluir_nunca_liga)   cv_sabotar "$cl" "excluir_da_carteira = (" "excluir_da_carteira = excluir_da_carteira AND (" ;;
+    isforn_pegajoso)      cv_sabotar "$cl" $'cc.tags_omie,\n      EXISTS (' $'cc.tags_omie,\n      cc.is_fornecedor OR EXISTS (' ;;
+    isforn_nunca_liga)    cv_sabotar "$cl" $'cc.tags_omie,\n      EXISTS (' $'cc.tags_omie,\n      cc.is_fornecedor AND EXISTS (' ;;
+    venda_pegajosa)       cv_sabotar "$cl" $'AS is_fornecedor,\n      EXISTS (' $'AS is_fornecedor,\n      cc.tem_venda_real OR EXISTS (' ;;
+    venda_nunca_liga)     cv_sabotar "$cl" $'AS is_fornecedor,\n      EXISTS (' $'AS is_fornecedor,\n      cc.tem_venda_real AND EXISTS (' ;;
+    excluir_pegajoso)     cv_sabotar "$cl" $'AS tem_venda_real,\n      (' $'AS tem_venda_real,\n      cc.excluir_da_carteira OR (' ;;
+    excluir_nunca_liga)   cv_sabotar "$cl" $'AS tem_venda_real,\n      (' $'AS tem_venda_real,\n      cc.excluir_da_carteira AND (' ;;
+    # o diff-before-write: sem o filtro, reescreve tudo (o defeito que o lote 10 tirou); cego a UMA flag, a
+    # mudança só dela não é escrita; a guarda de corrida; e o retorno que mente sobre o que escreveu
+    diff_ausente)         cv_sabotar "$cl" $'\n      AND '"$diff_flags" "" ;;
+    diff_cego_isforn)     cv_sabotar "$cl" "$diff_flags" $'(cc.tem_venda_real, cc.excluir_da_carteira)\n          IS DISTINCT FROM (r.tem_venda_real, r.excluir_da_carteira)' ;;
+    diff_cego_venda)      cv_sabotar "$cl" "$diff_flags" $'(cc.is_fornecedor, cc.excluir_da_carteira)\n          IS DISTINCT FROM (r.is_fornecedor, r.excluir_da_carteira)' ;;
+    diff_cego_excluir)    cv_sabotar "$cl" "$diff_flags" $'(cc.is_fornecedor, cc.tem_venda_real)\n          IS DISTINCT FROM (r.is_fornecedor, r.tem_venda_real)' ;;
+    guarda_ausente)       cv_sabotar "$cl" "AND cc.tags_omie IS NOT DISTINCT FROM r.tags_omie" "" ;;
+    alterados_mente)      cv_sabotar "$cl" "(SELECT count(*) FROM escrita)" "(SELECT count(*) FROM regua)" ;;
+    classificados_conta_escritas)
+                          cv_sabotar "$cl" "SELECT (SELECT count(*) FROM regua)," "SELECT (SELECT count(*) FROM escrita)," ;;
     contagem_mente)       cv_sabotar "$cl" "FROM public.cliente_classificacao WHERE excluir_da_carteira;" "FROM public.cliente_classificacao WHERE is_fornecedor;" ;;
     aplicar_sem_reclassificar)
                           cv_sabotar "$ap" "v_class := public.classificar_clientes_fornecedores();" "v_class := '{}'::jsonb;" ;;
