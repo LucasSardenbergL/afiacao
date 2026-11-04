@@ -277,6 +277,37 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - **Codex** (`max`, 475 s): APROVAR COM AJUSTES. Pediu que a guarda de `search_path` deixasse de ser NULL-cega (`ANY(NULL)` com `RESET search_path` passaria calado); feito, com o assert CFG e a falsificação F6.
   - **Deadlock preexistente, não tratado:** o tick (lock global → linha do run → loja) pode entrar em ciclo com um promote DIRETO do mesmo run (loja → account → `UPDATE` da linha do run), porque o tick segura a linha ao incrementar tentativas. Já existia só com o lock de loja. Manutenção manual deve passar pela fila, ou tomar o lock global antes de tudo.
 
+- **Assinatura da receita no cabeçalho, M1 (migration `20261104110100_tint_receita_assinada_no_cabecalho.sql`):** o desenho passou por 4 versões e 3 rodadas do Codex (v1–v3 REPROVAR; notas em `side-session-notes/…/tint-assinatura-desenho-v2.md`). O que entrou:
+  - `tint_formulas.receita_assinatura` (sha256 da MESMA string que o `_pulados` montava dos itens) e `receita_desde` (min(created_at) dos itens). O `_pulados` compara pela assinatura e só lê `tint_formula_itens` quando ela é NULL (filtro de uma vez dentro do LATERAL).
+  - **Um só assinador:** o gatilho BEFORE ROW `trg_tint_formulas_assinatura`. Gravar qualquer valor não-nulo em `receita_*` pede a assinatura; ele recalcula dos itens com a linha já travada e sobrescreve. INSERT, tombstone da Fase 5 e isolamento acima de READ COMMITTED gravam NULL.
+  - **Invalidação:** gatilhos por comando em `tint_formula_itens` (INSERT/UPDATE/DELETE com tabelas de transição, mais TRUNCATE) zeram a assinatura das fórmulas tocadas. Antes do filtro, travam o cabeçalho em ordem de id, porque um assinador em voo que não viu o item novo tem de terminar antes.
+  - As funções são SECURITY DEFINER, com `search_path pg_catalog, public, pg_temp` e relações qualificadas. O privilégio TRIGGER foi revogado de quem não é dono (service_role tinha, e um CREATE TRIGGER neutralizaria o assinador).
+  - **O promote:** o upsert grava NULL na assinatura. Depois dos itens, ele assina até 20.000 fórmulas por run: até metade para as reescritas, o resto para as puladas sem assinatura. Não há backfill nem cron: cada par converge nos runs que o tocam.
+  - **Prova** `db/test-tint-receita-assinada.sh` (lê o cenário da `db/test-tint-promote-diff.sh`):
+    - 15 asserts: MD5, EQUIV, ASSINA, LEITURA, CONC_A, CONC_B, RR, FORJA, TEMP, TOMB, PRIV, BULK, ACL, IDEMP e GUARDA, mais os controles DERIVA e TETO, e 15 falsificações com conjunto exato.
+    - EQUIV inclui QUAIS chaves são puladas em cada um dos 14 runs.
+    - No reenvio idêntico num par de 4.000 fórmulas, o promote varre `tint_formula_itens` 14 vezes. O de hoje varre 4.010.
+    - EQUIV compara QUAIS chaves são puladas em cada run, lidas do `_pulados` dentro da transação.
+    - O RH isola o hash: a staging vencedora de C8 muda no lugar, o cabeçalho continua igual e os itens continuam frescos.
+    - O TETO roda com teto 6, e as 8 reescritas ficam com só 3. Os asserts ITEM e as falsificações F16/F17 entraram por pedido do Codex.
+  - **Codex no código** (`max`, 772 s, 176.920 tokens): **APROVAR COM AJUSTES**, nenhum P1. Ele confirmou as 10 trocas e o md5 `4bd0e279…` sobre o corpo 2c6f. Depois disso, a sessão-irmã aplicou a `20261104110000` no promote (recibo #889, `2c6f` → `97d44242`); a M1 foi rebaseada com as mesmas 10 trocas, e o corpo final é `bbd219af…`, a equivalência sha256/`COALESCE` e o frescor `-infinity`, o early-return, o One-Time Filter e a cobertura das 2 ordens pela trava antes do filtro. Os 3 P2:
+    1. **Deadlock cabeçalho ↔ item, conhecido e não tratado.** Um escritor DIRETO de item trava o item e depois o cabeçalho, enquanto o promote trava o cabeçalho e depois deleta itens. O PG aborta um dos dois, e a fila do promote tem retry. Hoje o promote é o único escritor de itens. Um escritor novo deve travar os cabeçalhos ANTES de mexer nos itens.
+    2. **Lacunas da prova:** fechadas pelos itens acima.
+    3. **Custo das tabelas de transição:** medido numa bancada PG17 com `work_mem` de prod (3,5 MB), num par BIG com 5.015 reescritas e 14.985 puladas por run:
+       - temp igual nos dois (3,7 MB);
+       - tempo de 1,3–1,7 s no promote de hoje, contra 2,1–2,9 s com a M1 (3,1 s no 1º toque, que assina 20.000).
+       
+       Com cache quente, são cerca de +0,15 ms de CPU por fórmula REESCRITA (as travas da invalidação e a assinatura). O ganho é em leitura de disco das puladas, que a bancada com cache quente não mede. Num run de reescrita total (1,5 M itens), a tabela de transição do DELETE/INSERT derrama em temp na ordem de 100 MB. Esse run já estoura o Mini por conta própria (é o run de 02/11).
+  - **Aplicada em 04/11** (`db:aplicar`, recibo #890) sobre o corpo `97d44242`. **Renomeada depois do apply:** nasceu como `20261104061910_…`, que ordenava ANTES da `20261104110000` sobre a qual foi rebaseada. Num replay em ordem de nome a PRE dela abortaria, e o `deriva:corpo:prod` leria a `110000` como último patch. Virou `20261104110100_…` com os MESMOS bytes (sha256 `5db0f742…` = o do recibo #890). O comentário `APLICAR:` dentro dela ainda cita o nome antigo, de propósito: mudar os bytes desligaria o recibo. Validada por fora com psql-ro:
+    - promote `bbd219af…` (xmin 13792171), com proconfig preservado;
+    - as 2 colunas;
+    - os 5 gatilhos habilitados, com o tgtype certo;
+    - as 2 funções definer, com search_path fixo;
+    - TRIGGER só de `postgres`;
+    - promote fechado para anon/authenticated;
+    - 0 assinadas: elas nascem no 1º run que toca cada par.
+  - **Medir:** depois de alguns runs de fórmulas, `count(*) FILTER (WHERE receita_assinatura IS NOT NULL)` em `tint_formulas` deve crescer. A leitura de `tint_formula_itens` (delta de `pg_statio`) num run de reenvio deve cair para perto de zero, nos pares já assinados. Os 2,4 GB do run 9fdaaee4 eram 1,7 GB de itens; o heap de `tint_formulas` (610 MB) continua até a M2 (índice de cobertura por par).
+
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
 - **Medida:** delta de `pg_statio` de **todas** as tabelas de `public`, das 12:43 às 12:59 UTC de 03/11, no Mini (256MB e 60 conexões, no ar desde 31/10 10:33). A janela teve 5 promoções de catálogo, e o amostrador não pegou nenhuma consulta de outra sessão `claude_ro`.

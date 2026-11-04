@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-04T12:11:52.465Z",
-  "sourceHead": "a0f3ae27e84cb3bd007c571af0a83465fb70811a",
+  "medidoEm": "2026-11-04T13:32:32.035Z",
+  "sourceHead": "19e8ef462baa2fae76610efd65582fea9e55d19b",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -58,13 +58,13 @@
       "script": "deriva:corpo:prod",
       "exit": 1,
       "resumo": "deriva-corpo — 1 divergência(s) em prod (1 SEM_PAR) — ver as linhas ❌",
-      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@08b99200a (fetch ok) · prod 2026-11-04 12:12:18.004547Z",
-      "contratoFingerprint": "ac5c26348d4301f0e95b1186d3d976e00dbfc49b878468ec897793a7ac6a3ab9",
-      "auditorFingerprint": "33f77c3fe75785f008af0ab0a1c20fe6436f14073f665e7e0169aa57fcf79602",
+      "denominador": "🔎 deriva-corpo — 477 identidade(s) conferida(s) · 22 aposentada(s) · ref origin/main@b0d3e42a4 (fetch ok) · prod 2026-11-04 13:32:58.542823Z",
+      "contratoFingerprint": "2cf70a861e5cf1a57eff657cd18f756e58e0aeeddcfbcf944638f1ad4bfa789a",
+      "auditorFingerprint": "fae04bf873266b384840f767c200ebe7f084004082cb2e836c84a09640eee184",
       "achados": [
         {
           "id": "49ac41a884abebe9",
-          "linha": "❌ [SEM_PAR] tint_promote_sync_run(uuid): corpo que nem o último CREATE (20260726120000_tint_promote_error_details_completo.sql) nem o patch aceito (20261103093424_tint_promote_escreve_so_o_que_mudou.sql) explicam (xmin 13787158)",
+          "linha": "❌ [SEM_PAR] tint_promote_sync_run(uuid): corpo que nem o último CREATE (20260726120000_tint_promote_error_details_completo.sql) nem o patch aceito (20261104110000_tint_promote_snap_fonte_so_com_expansao.sql) explicam (xmin 13792171)",
           "primeiraVez": "2026-11-04",
           "ultimaVez": "2026-11-04"
         }
