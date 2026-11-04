@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 773
+-- Total de custom migrations: 774
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -840,7 +840,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104020000', 'tint_watchdog_fase5_v6_indices', '20261104020000_tint_watchdog_fase5_v6_indices.sql'),
   ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql'),
   ('20261104110000', 'tint_promote_snap_fonte_so_com_expansao', '20261104110000_tint_promote_snap_fonte_so_com_expansao.sql'),
-  ('20261104110100', 'tint_receita_assinada_no_cabecalho', '20261104110100_tint_receita_assinada_no_cabecalho.sql')
+  ('20261104110100', 'tint_receita_assinada_no_cabecalho', '20261104110100_tint_receita_assinada_no_cabecalho.sql'),
+  ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3340,7 +3341,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens'),
+  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5888,7 +5890,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
   ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
+  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens'),
+  ('classificacao_diff_before_write', 'function', 'public', 'classificar_clientes_fornecedores', '')
 )
 SELECT
   e.migration,
@@ -6214,6 +6217,7 @@ WITH corpo_esperado (schema_name, object_name, ordem, migration, body_md5) AS (V
   ('public', 'aplicar_promocoes_no_ciclo', 5, '20261001023000_hoje_sp_familia_data_ciclo.sql', 'b48783701e1a5987cffc04da2965d719'),
   ('public', 'classificar_clientes_fornecedores', 1, '20260606170100_fornecedores_classificacao_rpcs.sql', '06f0c47571100d53b2319ceb5864e211'),
   ('public', 'classificar_clientes_fornecedores', 2, '20261001014100_universo_pedidos_recencia.sql', 'fd67b3f971e5683438aadbdb8d439d84'),
+  ('public', 'classificar_clientes_fornecedores', 3, '20261104113000_classificacao_diff_before_write.sql', 'b10764f22d211b956a51a23439083944'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 1, '20260609150000_reposicao_alerta_pedido_minimo.sql', '149d7d577c0ca6dc0faff56269f31bb1'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 2, '20260610150000_reposicao_auto_aprovacao_piloto.sql', 'cf138b87a62881c13c5ce6154a4af3f6'),
   ('public', 'reposicao_alerta_pedido_minimo_tick', 3, '20260611120000_reposicao_fixes_codex_711.sql', '69d6c5fcfac5db26eaee12e912ab676c'),

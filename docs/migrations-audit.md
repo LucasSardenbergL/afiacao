@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **773** custom migrations totais
-- **2537** objetos esperados (criados por estas migrations)
+- **774** custom migrations totais
+- **2538** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 956
+  - `function`: 957
   - `rls_policy`: 519
   - `index`: 360
   - `table`: 230
@@ -6331,6 +6331,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `trigger` | `public.trg_tint_formula_itens_invalida_del` | `tint_formula_itens` |
 | `trigger` | `public.trg_tint_formula_itens_invalida_upd` | `tint_formula_itens` |
 | `trigger` | `public.trg_tint_formula_itens_invalida_trunc` | `tint_formula_itens` |
+
+### `20261104113000_classificacao_diff_before_write.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_clientes_fornecedores` | — |
 
 ## Próximos passos por status
 
