@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **774** custom migrations totais
+- **775** custom migrations totais
 - **2538** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 957
@@ -6337,6 +6337,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.classificar_clientes_fornecedores` | — |
+
+### `20261104120000_hot_contas_pagar_sem_indice_carimbo.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

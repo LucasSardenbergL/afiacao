@@ -100,8 +100,16 @@ function fakeRpc(fn: string, args: { p_companies: string[]; p_statuses: string[]
   return Promise.resolve({ data: { versao: 1, empresas, grupos }, error: null });
 }
 
+const fromCalls: string[] = [];
+
 vi.mock('@/integrations/supabase/client', () => ({
-  supabase: { from: (tabela: string) => makeBuilder(tabela), rpc: fakeRpc },
+  supabase: {
+    from: (tabela: string) => {
+      fromCalls.push(tabela);
+      return makeBuilder(tabela);
+    },
+    rpc: fakeRpc,
+  },
 }));
 
 import { getResumoFinanceiro, getLastSyncTime } from '@/services/financeiroService';
@@ -364,5 +372,14 @@ describe('getLastSyncTime — erro de leitura LANÇA (não vira "último sync" p
     state.db.fin_contas_receber = [{ updated_at: '2026-10-01T10:00:00Z' }];
     state.db.fin_contas_pagar = [{ updated_at: '2026-10-02T10:00:00Z' }];
     await expect(getLastSyncTime()).resolves.toBe('2026-10-02T10:00:00Z');
+  });
+
+  it('as 3 leituras saem juntas — a latência é a da mais lenta, não a soma', async () => {
+    // CP e movimentações não têm índice no carimbo (HOT do sync): cada top-1 é seq scan + RLS por
+    // linha. Em série, o resumo do useFinanceiro esperava a soma das três.
+    fromCalls.length = 0;
+    const pendente = getLastSyncTime();
+    expect(fromCalls).toEqual(['fin_contas_receber', 'fin_contas_pagar', 'fin_movimentacoes']);
+    await pendente;
   });
 });
