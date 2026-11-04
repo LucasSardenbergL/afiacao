@@ -87,6 +87,10 @@ db/test-tint-gate-custo-staff.sh           25
 # da prod): o conjunto que cada papel lê/insere/atualiza/apaga é o mesmo antes e depois, cada cláusula é
 # igual ponto a ponto, travar-antes-de-ler fecha a corrida (A8) e lock_timeout faz a migration desistir.
 db/test-rls-has-role-initplan-classe.sh   44
+# Visibilidade da carteira por CONJUNTO (D4 do v5): carteira_visivel_para saiu do caminho por linha das 8
+# policies; o conjunto que 13 chamadores leem e inserem (master, dono, cobertura ativa/expirada/inativa,
+# customer, uid nulo, anon…) é o mesmo antes e depois, ponto a ponto, com 8 sabotagens vermelhas.
+db/test-rls-carteira-visibilidade-conjunto.sh 55
 # Canal WhatsApp, núcleo HSM: o log de envio só a edge escreve (authenticated leva 42501 do GRANT, e a
 # camada que nega é DECLARADA), o catálogo só o master; a idempotência e os CHECKs são do banco. Monta o
 # schema por db/lib/corpo-vivo.sh — snapshot + o ACL MEDIDO em prod + a cadeia dinâmica — porque a
