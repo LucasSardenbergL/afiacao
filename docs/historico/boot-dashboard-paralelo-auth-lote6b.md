@@ -103,6 +103,18 @@ A/B de laboratório, mesmo método. O antes é a main com o 6b (`329086ecd`), ma
   `StaffDashboard` termina em ~+1.080, quase junto com o REST. Os dois passos já se sobrepunham, e
   o chunk é o gargalo do mobile. Em campo, quanto mais rápida a rede e maior o RTT do Supabase,
   mais o ganho se parece com o do desktop.
+- **Revisão do Codex (código, high, 106 s):** dois ajustes, aplicados e falsificados. (1) A
+  semente sai só da tentativa que venceu os retries, no `return` final: semear antes do `continue`
+  deixaria um `null` fresco de uma tentativa descartada. (2) Há uma geração do auth
+  (`geracaoAuthRef`), incrementada de forma síncrona em todo evento de auth, no `signOut`, no
+  `refetchRole` e no cleanup, e capturada ANTES do `setTimeout`. Um fetch atrasado não volta ao
+  cache depois de `SIGNED_OUT → clear()` nem atropela um `TOKEN_REFRESHED` mais novo. O A/B acima
+  é anterior a esse ajuste, que só acrescenta uma comparação síncrona.
+- **Achado anterior a este PR (fora do escopo):** os *setters* do `AuthContext` (`setRole`,
+  `setIsApproved`, `setCommercialRole`) têm a mesma corrida. Um fetch em voo que resolve depois de
+  `SIGNED_OUT` restaura o `role` de quem saiu, com `user` já `null`. O `ProtectedRoute` barra pelo
+  `user`, então não abre tela, mas o estado fica incoerente. A correção é usar a mesma geração nos
+  setters.
 - **Resíduo:** ainda sai um pedido a `commercial_roles` depois do auth, vindo do `useCommercialRole`
   (hook legado de `useState`/`useEffect`, chamado pelo `useDisplayAccess`). Fora da lente ele não
   segura a home, por isso ficou de fora.
