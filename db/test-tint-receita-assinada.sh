@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PROVA — 20261104061910_tint_receita_assinada_no_cabecalho.sql
+# PROVA — 20261104110100_tint_receita_assinada_no_cabecalho.sql
 #
 # O _pulados do promote passa a comparar a receita pela ASSINATURA do cabeçalho (sha256 da mesma string
 # que ele montava dos itens) e só lê tint_formula_itens quando ela é NULL. Esta prova sobe o corpo VIVO
@@ -51,7 +51,7 @@ LOC="${LOCALE_TESTE:-C}"
 export LC_ALL="$LOC" LANG="$LOC"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-assin.XXXXXX")"
 DATA="$TMP/data"
-MIG="$REPO_ROOT/supabase/migrations/20261104061910_tint_receita_assinada_no_cabecalho.sql"
+MIG="$REPO_ROOT/supabase/migrations/20261104110100_tint_receita_assinada_no_cabecalho.sql"
 MIG_DIFF="$REPO_ROOT/supabase/migrations/20261103093424_tint_promote_escreve_so_o_que_mudou.sql"
 MIG_SNAP="$REPO_ROOT/supabase/migrations/20261104110000_tint_promote_snap_fonte_so_com_expansao.sql"
 CENARIO="$REPO_ROOT/db/test-tint-promote-diff.sh"

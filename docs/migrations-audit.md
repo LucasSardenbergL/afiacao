@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **772** custom migrations totais
-- **2530** objetos esperados (criados por estas migrations)
+- **773** custom migrations totais
+- **2537** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 954
+  - `function`: 956
   - `rls_policy`: 519
   - `index`: 360
   - `table`: 230
   - `cron_job`: 210
   - `view`: 133
-  - `trigger`: 120
+  - `trigger`: 125
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6319,6 +6319,18 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 ### `20261104110000_tint_promote_snap_fonte_so_com_expansao.sql`
 
 > _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261104110100_tint_receita_assinada_no_cabecalho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_formulas_assina_receita` | — |
+| `function` | `public.tint_formula_itens_invalida_assinatura` | — |
+| `trigger` | `public.trg_tint_formulas_assinatura` | `tint_formulas` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_ins` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_del` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_upd` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_trunc` | `tint_formula_itens` |
 
 ## Próximos passos por status
 

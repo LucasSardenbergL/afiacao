@@ -277,7 +277,7 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - **Codex** (`max`, 475 s): APROVAR COM AJUSTES. Pediu que a guarda de `search_path` deixasse de ser NULL-cega (`ANY(NULL)` com `RESET search_path` passaria calado); feito, com o assert CFG e a falsificação F6.
   - **Deadlock preexistente, não tratado:** o tick (lock global → linha do run → loja) pode entrar em ciclo com um promote DIRETO do mesmo run (loja → account → `UPDATE` da linha do run), porque o tick segura a linha ao incrementar tentativas. Já existia só com o lock de loja. Manutenção manual deve passar pela fila, ou tomar o lock global antes de tudo.
 
-- **Assinatura da receita no cabeçalho, M1 (migration `20261104061910_tint_receita_assinada_no_cabecalho.sql`):** o desenho passou por 4 versões e 3 rodadas do Codex (v1–v3 REPROVAR; notas em `side-session-notes/…/tint-assinatura-desenho-v2.md`). O que entrou:
+- **Assinatura da receita no cabeçalho, M1 (migration `20261104110100_tint_receita_assinada_no_cabecalho.sql`):** o desenho passou por 4 versões e 3 rodadas do Codex (v1–v3 REPROVAR; notas em `side-session-notes/…/tint-assinatura-desenho-v2.md`). O que entrou:
   - `tint_formulas.receita_assinatura` (sha256 da MESMA string que o `_pulados` montava dos itens) e `receita_desde` (min(created_at) dos itens). O `_pulados` compara pela assinatura e só lê `tint_formula_itens` quando ela é NULL (filtro de uma vez dentro do LATERAL).
   - **Um só assinador:** o gatilho BEFORE ROW `trg_tint_formulas_assinatura`. Gravar qualquer valor não-nulo em `receita_*` pede a assinatura; ele recalcula dos itens com a linha já travada e sobrescreve. INSERT, tombstone da Fase 5 e isolamento acima de READ COMMITTED gravam NULL.
   - **Invalidação:** gatilhos por comando em `tint_formula_itens` (INSERT/UPDATE/DELETE com tabelas de transição, mais TRUNCATE) zeram a assinatura das fórmulas tocadas. Antes do filtro, travam o cabeçalho em ordem de id, porque um assinador em voo que não viu o item novo tem de terminar antes.
@@ -298,7 +298,7 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
        - tempo de 1,3–1,7 s no promote de hoje, contra 2,1–2,9 s com a M1 (3,1 s no 1º toque, que assina 20.000).
        
        Com cache quente, são cerca de +0,15 ms de CPU por fórmula REESCRITA (as travas da invalidação e a assinatura). O ganho é em leitura de disco das puladas, que a bancada com cache quente não mede. Num run de reescrita total (1,5 M itens), a tabela de transição do DELETE/INSERT derrama em temp na ordem de 100 MB. Esse run já estoura o Mini por conta própria (é o run de 02/11).
-  - **Aplicada em 04/11** (`db:aplicar`, recibo #890) sobre o corpo `97d44242`. Validada por fora com psql-ro:
+  - **Aplicada em 04/11** (`db:aplicar`, recibo #890) sobre o corpo `97d44242`. **Renomeada depois do apply:** nasceu como `20261104061910_…`, que ordenava ANTES da `20261104110000` sobre a qual foi rebaseada. Num replay em ordem de nome a PRE dela abortaria, e o `deriva:corpo:prod` leria a `110000` como último patch. Virou `20261104110100_…` com os MESMOS bytes (sha256 `5db0f742…` = o do recibo #890). O comentário `APLICAR:` dentro dela ainda cita o nome antigo, de propósito: mudar os bytes desligaria o recibo. Validada por fora com psql-ro:
     - promote `bbd219af…` (xmin 13792171), com proconfig preservado;
     - as 2 colunas;
     - os 5 gatilhos habilitados, com o tgtype certo;
