@@ -25,20 +25,21 @@ vi.mock('@/hooks/useMyCommercialRole', () => ({ useMyCommercialRole: () => ({ da
 vi.mock('@/hooks/useDisplayAccess', () => ({
   useDisplayAccess: () => ({ displayIsStaff: auth.isStaff, displayIsSalesOnly: false, displayLoading: false }),
 }));
-// Os dashboards são `lazy()` no Index. Mockar `@/components/dashboard/StaffDashboard` seria aresta
-// deste teste (loja-afiacao) para o módulo farmer-inteligencia — vazamento de fronteira. Então o
-// teste intercepta o `lazy` do React: nenhum dashboard real é carregado, e o stub diz QUAL o Index
-// escolheu pelo alvo do loader. Sem `vi.mock` de módulo alheio.
-vi.mock('react', async (importOriginal) => {
-  const real = await importOriginal<typeof import('react')>();
+// Os dashboards vêm dos carregadores de `@/pages/home/dashboards-home` (mesmo módulo deste teste).
+// Mockar `@/components/dashboard/StaffDashboard` seria aresta para o módulo farmer-inteligencia —
+// vazamento de fronteira. Então o teste troca só os carregadores: nenhum dashboard real é carregado,
+// e o stub diz QUAL o Index escolheu.
+vi.mock('@/pages/home/dashboards-home', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/pages/home/dashboards-home')>();
   return {
     ...real,
-    lazy: (loader: () => Promise<unknown>) => {
-      const alvo = /StaffDashboard/.test(String(loader)) ? 'cockpit-staff' : 'home-cliente';
-      const Stub = ({ profile }: { profile?: { name: string } | null }) =>
-        real.createElement('div', null, alvo === 'cockpit-staff' ? alvo : `${alvo}:${profile?.name ?? 'sem-profile'}`);
-      return Stub;
-    },
+    carregarStaffDashboard: () => Promise.resolve({ default: () => <div>cockpit-staff</div> }),
+    carregarCustomerDashboard: () =>
+      Promise.resolve({
+        default: ({ profile }: { profile?: { name: string } | null }) => (
+          <div>{`home-cliente:${profile?.name ?? 'sem-profile'}`}</div>
+        ),
+      }),
   };
 });
 
