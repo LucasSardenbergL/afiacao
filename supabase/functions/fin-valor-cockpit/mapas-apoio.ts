@@ -3,7 +3,7 @@
 // paginar até o fim. Aqui elas saem juntas.
 //
 // O que NÃO muda (contestação do Codex no plano v5):
-//  - paginação: cada uma continua no `fetchAll` (página até a curta; erro de página LANÇA);
+//  - paginação: cada uma continua no `fetchAll` (página até a VAZIA — o EOF é observado; erro de página LANÇA);
 //  - falha integral: a 1ª leitura que falhar rejeita o conjunto — nenhum mapa sai vazio no lugar
 //    de um erro, e nada é calculado com 3 de 4 mapas;
 //  - NÃO é snapshot transacional: são 4 requisições PostgREST, como antes (em série também não era).

@@ -73,6 +73,36 @@ Deno.test("paginação preservada: fonte com 2.345 linhas volta inteira, e cada 
   assertEquals(r.estoque, []);
 });
 
+Deno.test("paginação em TODAS as fontes: cada uma com mais de uma página volta inteira", async () => {
+  const r = await carregarMapasApoio({
+    clientes: fonte(linhas(1001, "c")),
+    profiles: fonte(linhas(1002, "p")),
+    custos: fonte(linhas(1003, "k")),
+    estoque: fonte(linhas(1004, "e")),
+  });
+  assertEquals([r.clientes.length, r.profiles.length, r.custos.length, r.estoque.length], [1001, 1002, 1003, 1004]);
+  assertEquals([r.clientes[1000], r.profiles[1001], r.custos[1002], r.estoque[1003]], [
+    { id: "c-1000" },
+    { id: "p-1001" },
+    { id: "k-1002" },
+    { id: "e-1003" },
+  ]);
+});
+
+Deno.test("falha rejeita JÁ: não espera as outras leituras terminarem (presas num portão que nunca abre)", async () => {
+  const nunca = new Promise<void>(() => {});
+  const timeout: ErroPostgrest = { message: "canceling statement due to statement timeout", code: "57014" };
+  await assertRejeitaFalha(
+    carregarMapasApoio({
+      clientes: fonte(linhas(1, "c"), { portao: nunca }),
+      profiles: fonte(linhas(1, "p"), { portao: nunca }),
+      custos: fonte(linhas(1, "k"), { portao: nunca }),
+      estoque: fonte([], { erro: timeout }),
+    }),
+    "inventory_position",
+  );
+});
+
 Deno.test("falha integral: uma leitura que falha rejeita o conjunto com a fonte certa — nada volta vazio", async () => {
   const timeout: ErroPostgrest = { message: "canceling statement due to statement timeout", code: "57014" };
   const ok = <T>(x: T[]) => fonte(x);
