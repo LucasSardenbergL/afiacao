@@ -21,7 +21,7 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **772** custom migrations totais
+- **773** custom migrations totais
 - **2531** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 955
@@ -6315,6 +6315,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tint_formula_itens_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_formula_itens_corante_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_staging_formulas_conta_criado` | `tint_staging_formulas` |
+
+### `20261104110000_tint_promote_snap_fonte_so_com_expansao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ### `20261104113000_classificacao_diff_before_write.sql`
 
