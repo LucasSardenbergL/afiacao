@@ -135,6 +135,39 @@
       "desde": "2026-11-03"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104110000_tint_promote_snap_fonte_so_com_expansao.sql",
+      "efeito": "ALTERA",
+      "motivo": "programa Mini, temp crônico: o _snap_fonte (DISTINCT das ~123 mil chaves do snapshot, ~9,5 MB de temp por promoção) só nasce com EXISTS (SELECT 1 FROM _expand_uniq) — 1 troca por âncora sobre o corpo da 20261103093424. md5 = c_este da migration (= replace da âncora sobre o prosrc de prod 2c6f461f…, calculado fora do banco e conferido no PG17). Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este, guard no corpo (xmin 13787158; recibo db:aplicar #889).",
+      "md5": "97d4424225edab7caff792b852afb371",
+      "md5Tokens": "96979d7542ae580129e7f7f4098656a0",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104110100_tint_receita_assinada_no_cabecalho.sql",
+      "efeito": "ALTERA",
+      "motivo": "receita assinada no cabeçalho (Mini M1): 10 trocas por âncora sobre o corpo da 20261104110000 — o _pulados compara pela assinatura e o promote assina até 20.000 por run. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este da migration (xmin 13792171; recibo db:aplicar #890).",
+      "md5": "bbd219afff819b3d2401f8e33a8a4010",
+      "md5Tokens": "54cae9584f62f3f7ced012a575a34792",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_apply_keys_snapshot",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261103222838_tint_apply_keys_snapshot_lock_por_account.sql",
+      "efeito": "ALTERA",
+      "motivo": "#3578: o apply passa a tomar o lock 'tint_formulas_account:<account>' depois do de loja — 1 troca por âncora sobre o corpo da 20260611190000. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este da migration (ea5acf0e…), lock por account no corpo (xmin 13739024).",
+      "md5": "ea5acf0e873fbc7793d887f882ad47d4",
+      "md5Tokens": "44633ab188dd2100a292cd86ce925015",
+      "desde": "2026-11-04"
+    },
+    {
       "funcao": "tint_staging_purge",
       "identidade": "",
       "classe": "PATCH",

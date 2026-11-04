@@ -21,16 +21,16 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **771** custom migrations totais
-- **2530** objetos esperados (criados por estas migrations)
+- **775** custom migrations totais
+- **2538** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 954
+  - `function`: 957
   - `rls_policy`: 519
   - `index`: 360
   - `table`: 230
   - `cron_job`: 210
   - `view`: 133
-  - `trigger`: 120
+  - `trigger`: 125
   - `enum_value`: 4
 
 ## Inventário por migration
@@ -6315,6 +6315,32 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_tint_formula_itens_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_formula_itens_corante_formula` | `tint_formula_itens` |
 | `index` | `public.idx_tint_staging_formulas_conta_criado` | `tint_staging_formulas` |
+
+### `20261104110000_tint_promote_snap_fonte_so_com_expansao.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
+
+### `20261104110100_tint_receita_assinada_no_cabecalho.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.tint_formulas_assina_receita` | — |
+| `function` | `public.tint_formula_itens_invalida_assinatura` | — |
+| `trigger` | `public.trg_tint_formulas_assinatura` | `tint_formulas` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_ins` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_del` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_upd` | `tint_formula_itens` |
+| `trigger` | `public.trg_tint_formula_itens_invalida_trunc` | `tint_formula_itens` |
+
+### `20261104113000_classificacao_diff_before_write.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.classificar_clientes_fornecedores` | — |
+
+### `20261104120000_hot_contas_pagar_sem_indice_carimbo.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

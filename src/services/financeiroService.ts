@@ -1092,27 +1092,32 @@ export function downloadCSV(content: string, filename: string): void {
  * `updated_at` mais recente entre as tabelas financeiras. LANÇA se qualquer leitura falhar:
  * ignorar o `error` devolvia o máximo só das tabelas que responderam (um "último sync" mais
  * velho que o real) ou `null`, em silêncio. `null` aqui significa só "tabelas vazias".
+ *
+ * As 3 leituras saem JUNTAS: o `useFinanceiro` espera esta função antes de mostrar o resumo, e
+ * fin_movimentacoes (147 k linhas) e fin_contas_pagar (desde o lote 11 do v5) não têm índice no
+ * carimbo — o top-1 é seq scan com a RLS `fin_user_can_access` avaliada por linha. Em série a
+ * latência era a SOMA; em paralelo é a da mais lenta. NÃO recriar índice em updated_at para
+ * acelerar isto: ele zera o HOT do sync (docs/historico/hot-contas-pagar-lote11.md).
  */
 export async function getLastSyncTime(): Promise<string | null> {
   const tables = ['fin_contas_receber', 'fin_contas_pagar', 'fin_movimentacoes'] as const;
+
+  const carimbos = await Promise.all(
+    tables.map(async (table) => {
+      const { data, error } = await supabase
+        .from(table)
+        .select('updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (error) throw new Error(`Falha ao ler o último sync (${table}): ${error.message}`);
+      return data?.[0]?.updated_at ?? null;
+    }),
+  );
+
   let latest: string | null = null;
-
-  for (const table of tables) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(1);
-    if (error) throw new Error(`Falha ao ler o último sync (${table}): ${error.message}`);
-
-    const updatedAt = data?.[0]?.updated_at;
-    if (updatedAt) {
-      if (!latest || updatedAt > latest) {
-        latest = updatedAt;
-      }
-    }
+  for (const updatedAt of carimbos) {
+    if (updatedAt && (!latest || updatedAt > latest)) latest = updatedAt;
   }
-
   return latest;
 }
 
