@@ -54,9 +54,26 @@ Tabelas mínimas com tipo e nulidade da prod, as três funções e as 8 policies
 
 ## Aplicação e medida "depois"
 
-_(preenchido após o apply)_
+**Ensaio** (`db:aplicar --ensaio`, commit `5a59d784a`, sha256 `3c135a8e…`): 8 policies reescritas, P0–P9 verdes. O ROLLBACK foi conferido por `psql-ro`: função ausente e as 8 ainda na forma antiga.
+**Apply** (`db:aplicar`, **tentativa #898**, recibo na mesma transação), 2026-11-04. Validado de fora por `psql-ro`: 0 policies chamando `carteira_visivel_para`, 8 por conjunto, anon sem EXECUTE nas duas funções, authenticated com, os três md5 iguais aos provados e a antiga preservada.
+
+**Medida por persona**, com o mesmo método da [seção do diagnóstico](rls-d4-custo-por-linha.md): conector Lovable, transação `READ ONLY` atestada, `SET LOCAL ROLE authenticated` e o farmer real sem master da maior carteira. O cache estava quente, salvo onde está marcado.
+
+| Leitura do farmer | Linhas lidas → vistas | Antes | Depois | Buffers antes → depois |
+|---|---|---|---|---|
+| `farmer_client_scores` | 16.991 → 1.570 | 1.333 ms (2.393 frio) | **10,4 ms** (138 frio) | 159.584 → **840** |
+| `farmer_recommendations` | 17.316 → 1.655 | 1.902 ms | **11,7 ms** (483 frio, 502 do disco) | 164.200 → **1.173** |
+| `carteira_assignments` (`eligible`) | 17.707 → 1.570 | 1.519 ms | **10,0 ms** | 148.155 → **1.083** |
+| `farmer_client_scores` busca de 1 cliente (achado 6 do Codex) | 1 → 1 | 2,1 ms | **6,2 ms** | 278 → **671** |
+
+- As **linhas vistas são as mesmas** de antes (1.570 / 1.655 / 1.570): é a equivalência observada na prod, não só no fixture.
+- O plano mostra `(ANY (customer_user_id = (hashed SubPlan N).col1))`. A função de conjunto roda **1×** (`ProjectSet`, 1.570 linhas, ~4,4 ms, ~485 buffers).
+- Leituras inteiras: de **130× a 160× mais rápidas**, com ~150× menos buffers.
+- **Busca pontual: +4 ms.** Ela agora monta o conjunto inteiro (~4,4 ms) para checar 1 cliente, onde antes era 1 chamada SECDEF. É o preço que o Codex previu. Pesa pouco ao lado do ganho de segundos nas leituras inteiras, e cai se um dia valer um índice cobrindo `(owner_user_id) INCLUDE (customer_user_id) WHERE eligible` (index-only no lugar dos ~485 buffers de heap). Hoje não há sinal de que valha.
+- Sobram, fora do escopo, os ~175 buffers (~1,1 ms) do InitPlan de `cap_carteira_ler` em toda leitura.
 
 ## Lições
 
 - **O curto-circuito do master não cabe na função de conjunto.** "Master vê tudo" inclui linhas sem cliente e clientes fora da carteira. Devolver "todos os clientes" para o master mudaria o que ele vê. O termo fica fora, como InitPlan.
+- **Trocar "por linha" por "conjunto 1×" move o custo, não o elimina.** A leitura inteira cai de segundos para ~10 ms. Já a busca de 1 linha passa a pagar o conjunto inteiro (+4 ms). Meça os dois acessos, não só o que motivou a troca.
 - **`IN (SELECT …)` troca false por NULL.** Em policy isso é inócuo só porque nada nega o termo. Prove `IS TRUE` ponto a ponto, não igualdade de booleanos.
