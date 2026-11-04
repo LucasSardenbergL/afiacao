@@ -464,3 +464,26 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Baseline da deriva:** entra o PATCH `20261104110000` e é **conciliado** o `tint_apply_keys_snapshot(uuid)` do #3578, que o `deriva:corpo:prod` acusava como `PATCH_NAO_CONCILIADO`. O md5 de prod `ea5acf0e` é o `c_este` daquela migration (xmin 13739024).
 - **Série depois do apply** (mesma régua, 12:09–12:44 UTC, loja aberta, 123 amostras): **85,8 MB/15 min** (antes, 126,6), abaixo do teto de 100. Houve **zero** saltos com a assinatura +3 arquivos / +7,6 MB, com 15 runs `catalogs` promovidos (15/15 `promovido`, 0 erros). Os ciclos `catalogs` de ~12:25 e ~12:36 só têm o +2 arquivos / +8,4 MB periódico do outro dono, que caiu na janela por coincidência. Os +2,5/+3,7 MB de 12:15 caem no lote de cron do minuto `:15` e já existiam antes do apply (11:45, 11:52). O `EXPLAIN` com temp 0 é vácuo aqui: nos runs `catalogs`, o statement deixou de executar. A evidência é a série.
 - **Fica para depois (não é desta entrega):** os 3 runs/dia de fórmulas seguem derramando ~10 MB cada no `_snap_fonte`. Para eles, tirar só o `DISTINCT` (o `NOT EXISTS` não muda com duplicata) precisa ser medido antes de adotar.
+
+## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
+
+**Pergunta:** a janela 13:00–13:15 UTC de 04/11 reprovou o Mini: 523,6 MB de disco, hit 96,86%. Desses, 430 MB vieram de `tint_formulas` (2 seq scans) e 84 MB de `tint_sync_runs` (1 seq scan). `pg_stat_user_tables` mostrava 87 seq scans em `tint_formulas` desde o restart de 31/10, o último às 15:28:37, com a loja aberta. Havia uma tela ou edge varrendo a tabela?
+
+**Medida** (psql-ro, só catálogo de stats):
+- **Amostrador** de `seq_scan`/`last_seq_scan`, a cada 3 s, das 15:50 às 18:52 UTC, com a loja aberta. Resultado: **zero** seq scans em `tint_formulas` e em `tint_sync_runs` em 3 h. Os contadores ficaram parados em 89 (última 15:32:37) e 37 (última 15:44:14).
+- **Os seq scans vêm aos pares:** os 2 das 15:28–15:32 somaram `seq_tup_read` +1.002.148, que é a tabela inteira uma vez (`n_live_tup` 1.002.575). Cada consulta paralela conta um seq scan por processo. Logo, os ~87 seq scans são ~44 consultas em 4,6 dias.
+- **Dono da janela das 13:00:** o ledger `public.db_aplicacoes` tem o **#890** aplicado às 13:10:36. É a M1, "receita assinada no cabeçalho" (`20261104110100`, PR #3590), que faz `ALTER TABLE tint_formulas`, gatilho e postcondições sobre a tabela. É evento pontual de DDL, não leitor recorrente.
+- **Runs do agente hoje:** 540 `catalogs`, 1 `formulas` (10:18, promovido às 10:27) e 1 `keys_snapshot` (03:13). Nenhum explica 13:00 nem 15:28.
+- **Janela limpa de controle** (18:54:37–19:09:40 UTC, loja aberta): disco **3,7 MB**, hit **99,95%**, temp **77,4 MB**, conexões **18/60 = 30%**. Passa os quatro critérios. Nenhuma tabela leu mais de 2 MB do disco.
+
+**Candidatos descartados com EXPLAIN em prod:**
+- **E4 da promoção** (recálculo de preço por `tint_staging_precos_base`, junção sem `cor_id`): não roda. O staging de preços de base está vazio e nenhum `tint_staging_corantes` chega com `custo`.
+- **Telas:** contador do `TintDashboard`, lista e busca de `TintFormulas`/`TintCatalogo`, `useGlobalSearch`, `TintPricing` e `useCorPrimeiro` via `v_tint_formula_canonica`. Todas usam índice (`idx_tint_formulas_busca_cor` index-only, `idx_tint_formulas_ativas`, `uq_tint_formulas_chave`).
+- **Ressalva, um leitor que não aparece como seq scan:** as buscas com `ilike`/`imatch` em `cor_id` (sem trigram) percorrem `idx_tint_formulas_ativas` inteiro, ~490 mil fórmulas ativas, com filtro no heap. É o heap quase todo, contado em `idx_scan`. Na janela de controle não leu do disco (cache quente). Vira leitor de disco só com cache frio. Se aparecer numa janela reprovada, a correção é um trigram em `cor_id` ou busca por prefixo.
+
+**Lições de régua** (valem para as próximas janelas):
+1. **Antes de culpar um leitor, cruze a janela com `db_aplicacoes`** (`iniciado_em`/`concluido_em`). Um apply, ou o ensaio de outra sessão, com postcondição sobre tabela grande reprova o Mini sozinho e não se repete.
+2. **O amostrador pode contaminar a própria medida.** A consulta de contexto do primeiro amostrador (`tint_sync_runs WHERE created_at > … OR completed_at > … OR promovido_em > …`) fazia seq scan na tabela que ele vigiava. Os 3 seq scans de 15:43–15:44 foram dele. A versão corrigida prefixa `started_at > now() - 120 s` (indexado) e foi conferida com `EXPLAIN` antes de rodar.
+3. **`pg_stat_activity` não serve para dar nome ao dono:** para o `claude_ro`, as linhas de outros papéis vêm sem `query`, `state`, `backend_type` e `leader_pid`. Sem `pg_read_all_stats`, quem dá o nome é o tempo: `last_seq_scan` em ms, `cron.job_run_details`, `tint_sync_runs` e `db_aplicacoes`.
+
+**Pendente, sem dono provado:** o par das 15:28:37/15:32:37, uma varredura completa cada, com 4 min entre eles. Não bate com cron, run do agente nem apply registrado. O mais provável é o diagnóstico de outra sessão. Não se repetiu em 3 h.
