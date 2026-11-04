@@ -57,8 +57,41 @@ baixar no clique.
 ## LCP
 
 O baseline em prod (`telemetria_vitals`, 2026-11-03) dá LCP de `/` com p50 de 4.070 ms e p75 de
-7.821 ms, n=8, 1 usuário e 6 builds. É pista, não prova. O "depois" só existe após o Publish e
-se mede com a query do PR (builds vistos pela primeira vez depois do Publish).
+7.821 ms, n=8, 1 usuário e 6 builds. É pista, não prova.
+
+**O campo não resolve o "depois", e esperar não muda isso** (medido 2026-11-04 11:01Z): em 30 dias a
+tabela tem 103 linhas de **1 usuário**, cerca de 1 LCP por build. Os Publish saem a cada poucas
+horas e já misturam lotes (o lote 7 entrou no mesmo dia). Dias depois haveria n≈10 de um aparelho
+com 2 lotes confundidos. A 1ª amostra pós-Publish (3.964 ms, n=1) é ruído.
+
+**Resolvido por A/B de laboratório (2026-11-04).** Build de produção de `f0ca540a6` (antes) e de
+`09d1f52f3` (o merge do lote 6), que diferem só pelo lote 6. Cada build tem seu servidor estático
+e cada carga sai de um contexto frio. A sessão falsa fica no localStorage, e o Supabase é
+interceptado com 400 ms fixos por requisição: role `master` aprovado e `[]` no resto. Todo
+tráfego externo é bloqueado. As cargas alternam antes/depois em 15 pares, mais 1 aquecimento
+descartado. Em todas, `/` renderizou (nenhuma terminou em `/auth`), e o elemento do LCP foi um
+`<p>`. O p vem de Mann-Whitney.
+
+| perfil | métrica | antes p50 [IQR] | depois p50 [IQR] | Δ p50 | p |
+|---|---|---|---|---|---|
+| mobile (Slow 4G + CPU 4×) | LCP | 11.384 [11.142–11.648] | 10.640 [10.278–10.786] | **−744 ms** | 0,0006 |
+| | LCP − início do auth | 4.257 | 3.413 | **−844 ms** | 0,0001 |
+| | pedido do `Index` − início do auth | +537 | −193 | −730 ms | <0,0001 |
+| desktop (10 Mbps, 40 ms, CPU 1×) | LCP | 2.896 [2.600–3.634] | 2.456 [2.446–3.542] | −440 ms | 0,10 |
+| | pedido do `Index` − início do auth | +426 | −37 | −463 ms | <0,0001 |
+
+- **O mecanismo está provado nos dois perfis:** o chunk da página saiu de "depois do auth" para
+  "antes do auth". No mobile, o LCP cai ~0,75 s com significância. No desktop, o ganho (~0,44 s)
+  fica dentro do ruído da máquina compartilhada (p=0,10). O absoluto do mobile é alto pelo
+  throttling Lighthouse somado à máquina carregada; o que vale é o Δ par a par.
+- **O que o F1 NÃO cobre, e é o próximo ganho:** para staff, o elemento do LCP vem do
+  `StaffDashboard`, um `lazy` **aninhado** dentro do `Index`. Ele só começa a baixar quando o
+  `Index` renderiza, ou seja, depois do auth, nas duas versões. O prefetch de rota só enxerga os
+  `lazyRota` da árvore do `App.tsx`. Pré-carregar o lazy interno da página de entrada é outra
+  fase, com sinal de produto próprio.
+- Limites: o laboratório fixa o auth em 400 ms e usa só a persona master. É medida do
+  **mecanismo**, não do usuário real. O script era de scratchpad e não ficou no repo, porque não
+  é gate nem sensor. O método está aqui para ser reproduzido.
 
 ## Lições
 
