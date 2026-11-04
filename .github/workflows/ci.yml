@@ -179,14 +179,15 @@ jobs:
       contents: read
 
     steps:
-      # `fetch-depth: 0` é o que dá merge-base ao gate `sonda:bump` (lá embaixo): sem histórico o
-      # checkout é shallow (depth 1) e `git merge-base origin/main HEAD` não resolve — e esse gate
-      # é fail-CLOSED, então ele reprovaria o repo inteiro em vez de degradar. Custo medido: ~118 MB
-      # de clone. A alternativa (`git diff HEAD^1 HEAD` sobre o merge commit de `refs/pull/N/merge`)
-      # é mais barata mas amarra o gate à mecânica de checkout do Actions e não roda igual local.
+      # Checkout RASO aqui (2026-11-04, lote 8 do plano v5): este job só instala e roda os 2 `tsc`,
+      # e nenhum dos dois lê histórico git. O `fetch-depth: 0` dos OUTROS jobs é o que dá merge-base
+      # ao gate `sonda:bump` (no `edges-e-build` desde o fan-out): sem histórico o checkout é shallow
+      # (depth 1) e `git merge-base origin/main HEAD` não resolve — e esse gate é fail-CLOSED, então
+      # reprovaria o repo inteiro em vez de degradar. Custo medido: ~118 MB de clone. A alternativa
+      # (`git diff HEAD^1 HEAD` sobre o merge commit de `refs/pull/N/merge`) é mais barata mas amarra
+      # o gate à mecânica de checkout do Actions e não roda igual local. Step novo aqui que leia git
+      # (merge-base, log, diff) precisa devolver o `fetch-depth: 0`.
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
 
       # ⚠️ bun-version tem que ser semver ESTRITO (x.y.z) — NÃO `latest`, `1.3`,
       # `^1.3.14` nem `1.3.x` (o exemplo da doc do input!). Só o estrito casa o
@@ -245,9 +246,9 @@ jobs:
       contents: read
 
     steps:
-      # Preâmbulo comum aos 4 jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
+      # Preâmbulo comum aos jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
       # para o merge-base do `sonda:bump`; `bun-version` semver ESTRITO) está comentado por
-      # extenso no job `typecheck` — não repetido aqui para não quadruplicar o texto.
+      # extenso no job `typecheck` (que, sozinho, faz checkout raso) — não repetido aqui.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -959,6 +960,33 @@ jobs:
         if: matrix.parte == 3
         run: bun run test:falsificacao:3
 
+  # Escopo do `provas-sql` (ver o bloco ESCOPO logo abaixo). `fetch-depth: 2` pelo mesmo motivo do
+  # `mutcheck-escopo`: com os dois pais do merge commit na árvore, `pai 1 → HEAD` é o que o PR muda.
+  provas-sql-escopo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      roda: ${{ steps.escopo.outputs.roda }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      # Semver estrito, mesmo motivo do job `typecheck` (o `bunpin:check` cobra a convergência).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      # O evento entra por `env:`, nunca `${{ }}` cru no `run:` (script injection).
+      - name: ESTE diff alcança o que as provas SQL leem?
+        id: escopo
+        env:
+          EVENTO: ${{ github.event_name }}
+        run: bun scripts/provas-sql-escopo.ts --evento "$EVENTO" --github-output
+
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
   # success. Existe porque é o único context exigido pela branch protection da main e o que
@@ -1058,7 +1086,18 @@ jobs:
   # novas pesavam o default de 30 s (uma delas custa ~204 s). Com a tabela re-medida, as mesmas
   # durações dão pior parte p50 15,4 / máx 16,0 min de núcleo (fora da amostra: 15,2–16,3). Teto 25
   # = ~1,5× sobre isso; quando a pior parte destoar, re-meça a tabela (receita no cabeçalho dela).
+  #
+  # ESCOPO (2026-11-04, E1 do plano v5): no `pull_request`, o núcleo só roda quando o diff toca algo
+  # que alguma prova LÊ. `provas-sql-escopo` decide em segundos (`scripts/provas-sql-escopo.ts`, uma
+  # ALLOWLIST DO INERTE: só pula se TODO arquivo mudado cai em `docs/`/`src/`/`public/`/`.claude/` e
+  # fora do que as provas leem lá dentro). Fora de PR roda TUDO — é a rede da main. Fail-closed nas
+  # três pontas: o script nunca sai ≠ 0 e erra para `roda=true`; este job só pula com `roda`
+  # EXPLICITAMENTE 'false' (job de escopo vermelho = saída vazia = roda); e o `validate` só aceita o
+  # SKIPPED daqui e da união com o `success` do escopo e o `roda=false` dele. Mapa de leitura e
+  # medição: docs/historico/ci-provas-sql-escopo.md
   provas-sql:
+    needs: [provas-sql-escopo]
+    if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -1362,9 +1401,11 @@ jobs:
   # manifesto (`db/roda-nucleo-ci.sh --uniao`; cada regra tem caso no db/falsifica-nucleo-ci.sh), e o
   # recibo do harness da 1ª parte. `!cancelled()` em vez do default: com uma parte vermelha ele roda
   # mesmo assim e diz o porquê — o default o pularia, e o `validate` só leria "skipped".
+  # Pula JUNTO com as partes, pela MESMA condição (escopo com `roda` explicitamente 'false'): rodar
+  # sobre partes puladas reprovaria por "terminou skipped". O `validate` confere os dois pulos.
   provas-sql-uniao:
-    needs: [provas-sql]
-    if: ${{ !cancelled() }}
+    needs: [provas-sql-escopo, provas-sql]
+    if: ${{ !cancelled() && needs.provas-sql-escopo.outputs.roda != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1409,7 +1450,7 @@ jobs:
 
   validate:
     if: always()
-    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql, provas-sql-uniao]
+    needs: [typecheck, testes, edges-e-build, gates-e-falsificacao, falsificacao, provas-sql-escopo, provas-sql, provas-sql-uniao]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # issues:write p/ o alerta de main-vermelha (abaixo) abrir Issue.
@@ -1421,17 +1462,34 @@ jobs:
       - name: Todos os jobs passaram? (exige 'success' POSITIVO de cada um)
         env:
           RESULTADOS: ${{ toJSON(needs) }}
+          EVENTO: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          esperados=7
-          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0
+          esperados=8
+          total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
+          # O ÚNICO skipped aceito (E1 do plano v5, 2026-11-04): `provas-sql` e `provas-sql-uniao` pulados
+          # porque o escopo DISSE que o diff não alcança nada que as provas leem. Exige as três coisas
+          # lidas juntas — evento `pull_request` (fora de PR o escopo nunca pula), o escopo em `success`
+          # e `roda` exatamente 'false'. Escopo vermelho, saída vazia ou qualquer outro valor = o skipped
+          # é ausência de dado e reprova, como sempre.
+          escopo_pulou=0
+          escopo_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].result // ""')"
+          escopo_roda="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.roda // ""')"
+          if [ "$EVENTO" = pull_request ] && [ "$escopo_resultado" = success ] && [ "$escopo_roda" = false ]; then
+            escopo_pulou=1
+          fi
+          echo "  escopo das provas SQL: evento=$EVENTO resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>}"
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
             [ "$job" = "provas-sql-uniao" ] && viu_uniao=1
             [ "$job" = "falsificacao" ] && viu_falsificacao=1
+            [ "$job" = "provas-sql-escopo" ] && viu_escopo=1
             if [ "$resultado" = "success" ]; then
               echo "  ✅ $job: success"
+            elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
+                 && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
+              echo "  ⏭️ $job: skipped pelo escopo (o diff não toca o que as provas leem; a main roda TUDO)"
             else
               echo "  ❌ $job: ${resultado:-<vazio>}"
               falhou=$((falhou + 1))
@@ -1465,11 +1523,21 @@ jobs:
             echo "::error::o job 'falsificacao' não está entre os $total lidos — a falsificação saiu do caminho obrigatório."
             exit 1
           fi
+          # E para o escopo das provas: sem ele no `needs`, o `escopo_pulou` acima leria saída vazia — e
+          # reprovaria, que é o lado seguro; a guarda dá o nome certo ao defeito.
+          if [ "$viu_escopo" -ne 1 ]; then
+            echo "::error::o job 'provas-sql-escopo' não está entre os $total lidos — ninguém justifica um provas-sql pulado."
+            exit 1
+          fi
           if [ "$falhou" -ne 0 ]; then
             echo "::error::$falhou de $total job(s) não terminaram em success (cancelled = estouro de timeout-minutes)."
             exit 1
           fi
-          echo "✅ os $total jobs do fan-out terminaram em success"
+          if [ "$escopo_pulou" -eq 1 ]; then
+            echo "✅ os $total jobs do fan-out terminaram em success ou foram pulados pelo escopo das provas SQL"
+          else
+            echo "✅ os $total jobs do fan-out terminaram em success"
+          fi
 
       # ─── Alerta de regressão (Componente 1 — mitigação de reversão Lovable) ──
       # O bot do Lovable commita DIRETO na main sem PR/CI; quando quebra build/
