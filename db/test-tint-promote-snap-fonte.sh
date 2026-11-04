@@ -20,7 +20,7 @@
 #   FILTRO     com expansão o filtro segue barrando a fantasma (A inativa, nem nasce na embalagem nova;
 #              contador > 0 nos dois runs) — paridade sozinha passaria se antigo e novo errassem juntos
 #   IDEMP      re-aplicar é no-op (md5 igual)
-#   GUARDA     aplicar sobre um promote de OUTRO corpo ABORTA em vez de trocá-lo
+#   GUARDA     aplicar sobre um promote de OUTRO corpo ABORTA (PRE ou PÓS-md5) e o corpo fica intacto
 #   ACL        anon/authenticated não executam o promote
 # Controle de não-vacuidade (no promote ANTIGO): o run catalogs sem expansão CRIA o _snap_fonte e
 # DERRAMA temp — sem isso MARCA_CAT/TEMP_CAT seriam vácuos.
@@ -169,13 +169,17 @@ VALUES ('aaaaaaaa-0000-0000-0000-000000000001','oben','L1','5a000000-0000-0000-0
         now() - interval '1 day', 'pendente');
 
 -- Estado canônico por chave NATURAL (os uuids de linhas novas diferem entre bancos) — o que a paridade
--- compara. Sem timestamps (now() difere); o resto de cada tabela que a promoção escreve, inteiro.
+-- compara. É uma PROJEÇÃO, não a relação inteira: sem timestamps (now() difere) e sem ids; as FKs entram
+-- pela chave natural do alvo (sku → produto/base/embalagem, importação → arquivo_hash).
 CREATE FUNCTION _estado(p_run uuid) RETURNS text LANGUAGE sql AS $$
   SELECT md5(concat_ws(E'\n',
     (SELECT string_agg(concat_ws('|', f.cor_id, p.cod_produto, b.id_base_sayersystem, e.id_embalagem_sayersystem,
               s.id_subcolecao_sayersystem, f.nome_cor, f.volume_final_ml::text, f.preco_final_sayersystem::text,
-              f.personalizada::text, (f.desativada_em IS NULL)::text, f.desativada_motivo, (f.sku_id IS NOT NULL)::text,
-              (f.importacao_id IS NOT NULL)::text,
+              f.personalizada::text, (f.desativada_em IS NULL)::text, f.desativada_motivo,
+              (SELECT sp.cod_produto || '/' || sb.id_base_sayersystem || '/' || se.id_embalagem_sayersystem
+                 FROM tint_skus sk JOIN tint_produtos sp ON sp.id = sk.produto_id JOIN tint_bases sb ON sb.id = sk.base_id
+                 JOIN tint_embalagens se ON se.id = sk.embalagem_id WHERE sk.id = f.sku_id),
+              (SELECT i.arquivo_hash FROM tint_importacoes i WHERE i.id = f.importacao_id),
               (SELECT string_agg(co.id_corante_sayersystem || ':' || fi.ordem::text || ':' || fi.qtd_ml::text, ',' ORDER BY co.id_corante_sayersystem)
                  FROM tint_formula_itens fi JOIN tint_corantes co ON co.id = fi.corante_id WHERE fi.formula_id = f.id)),
             E'\n' ORDER BY f.cor_id, e.id_embalagem_sayersystem)
@@ -317,7 +321,8 @@ suite() {
     cai GUARDA
   else
     depois="$(q "${db}_guarda" "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.tint_promote_sync_run(uuid)'::regprocedure")"
-    grep -q 'nao e o predecessor revisado' "$TMP/${db}_guarda.apl" && [ "$antes" = "$depois" ] || cai GUARDA
+    # qualquer camada da própria migration (PRE ou PÓS-md5) — F4 desliga a PRE e exige que a PÓS segure
+    grep -q 'promote-snap-fonte ABORTADA' "$TMP/${db}_guarda.apl" && [ "$antes" = "$depois" ] || cai GUARDA
   fi
 
   [ "$(q "${db}_cat" "SELECT has_function_privilege('anon','public.tint_promote_sync_run(uuid)','EXECUTE')
@@ -438,12 +443,19 @@ GRANT EXECUTE ON FUNCTION public.tint_promote_sync_run(uuid) TO authenticated;
 EOF
 falsifica F5 ACL
 
-# F6: a PÓS sem dente de posição/forma — a migration reemite o corpo VIVO (sem a troca) e a PÓS textual
-#     é desligada junto (camada a camada: aqui a camada é a TROCA) → MARCA_CAT e TEMP_CAT caem.
+# F6: sem a TROCA — a migration reemite o corpo VIVO (EXECUTE v_def) e as duas PÓS que a pegariam (md5 e
+#     textual) saem junto: o EXECUTE sabotado RODA (sem PÓS-md5 o ensaio não devolve md5 e o c_este fica
+#     SENTINELA). Só o comportamento denuncia: MD5, MARCA_CAT e TEMP_CAT caem; IDEMP segue (reemitir é no-op).
 cat >"$TMP/trocas_F6" <<'EOF'
   EXECUTE replace(v_def, c_busca, c_troca);
 -----
   EXECUTE v_def;
+=====
+  IF v_md5 <> c_este THEN
+    RAISE EXCEPTION 'promote-snap-fonte ABORTADA: pos-troca
+-----
+  IF false THEN
+    RAISE EXCEPTION 'promote-snap-fonte ABORTADA: pos-troca
 =====
      OR position('IF v_snap_id IS NOT NULL THEN' in v_src) > 0 THEN
 -----
@@ -453,7 +465,21 @@ cat >"$TMP/trocas_F6" <<'EOF'
 -----
   IF false AND (v_expand = 0 OR v_guard = 0 OR v_snap = 0 OR v_delete = 0
 EOF
-falsifica F6 MARCA_CAT TEMP_CAT
+falsifica F6 MD5 MARCA_CAT TEMP_CAT
+
+# F7: a camada TEXTUAL da PÓS sozinha — a troca reinsere o IF SEM o guard (md5 consistente pelo ensaio,
+#     então a PÓS-md5 passa): a postcondição P1 aborta a migration → APLICA cai e, com ele, tudo.
+cat >"$TMP/trocas_F7" <<'EOF'
+  IF v_snap_id IS NOT NULL AND EXISTS (SELECT 1 FROM _expand_uniq) THEN
+    CREATE TEMP TABLE _snap_fonte ON COMMIT DROP AS
+$t1$;
+-----
+  IF v_snap_id IS NOT NULL THEN
+    CREATE TEMP TABLE _snap_fonte ON COMMIT DROP AS
+$t1$;
+EOF
+# shellcheck disable=SC2086  # TODOS é a lista de asserts, um por palavra
+falsifica F7 $TODOS
 
 echo
 if [ "$FALHAS" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
