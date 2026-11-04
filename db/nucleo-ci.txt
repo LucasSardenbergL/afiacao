@@ -692,7 +692,7 @@ db/test-tint-fase5-watchdog-v4.sh           41  falsificar=21
 # corante), o guard da view em runtime e o limiar do S1. ~5 s normal, ~105 s no --falsificar (controle
 # verde + 39 sabotagens de conjunto exato, 7 delas de pós-condição que exigem o apply ABORTAR).
 db/test-tint-fase5-watchdog-v5.sh           47  falsificar=39
-# Watchdog Fase 5 v6 (20261104020000) — money-path. O ciclo passa a ler 5 índices parciais em vez de
+# Watchdog Fase 5 v6 (20261104020000) + v6.1 (20261104040000, a suíte roda contra ela) — money-path. O ciclo passa a ler 5 índices parciais em vez de
 # varrer tint_formulas/itens/staging (bancada em escala de prod: 1,37 GB → 114 MB, temp 260 MB → 0). Roda a
 # suíte da v5 contra a v6 + PARIDADE das 11 colunas do statement v5×v6 em 11 estados + equivalência contra
 # a VIEW REAL + PL1 (forma do plano num banco de ESCALA a ~5% de prod, com o planner de prod) + PRE1.

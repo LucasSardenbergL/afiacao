@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-#  PROVA PG17 — tint_watchdog_fase5_check() v6 (20261104020000) [money-path]
+#  PROVA PG17 — tint_watchdog_fase5_check() v6 (20261104020000) + v6.1 (20261104040000) [money-path]
 #  bash db/test-tint-fase5-watchdog-v6.sh > log 2>&1; echo "exit=$?"     (modo normal)
 #  bash db/test-tint-fase5-watchdog-v6.sh --falsificar > log 2>&1; echo "exit=$?"
 #  (NÃO pipe pra tail — engole o exit≠0.)
 #
 #  Derivada de db/test-tint-fase5-watchdog-v5.sh (que segue provando a v5). A v6 só muda CUSTO: o
 #  ciclo lê 4 índices parciais em vez de varrer tint_formulas, tint_formula_itens e o staging, e o
-#  S1 sai pelo COMPLEMENTO (as ativas inválidas). Então:
+#  S1 sai pelo COMPLEMENTO (as ativas inválidas). A v6.1 só troca o JOIN dos ramos de corante ruim/NULL
+#  por busca pela PK (prod fazia hash das 490 mil ativas: 16 MB de temp). A suíte roda contra a v6.1,
+#  aplicada por cima da v6 como em prod. Então:
 #  (1) a suíte INTEIRA da v5 roda contra a v6 — mesmo comportamento em S1..S5, série e marcador;
 #  (2) PARIDADE: em 11 estados da suíte (saudável, S1, item com corante NULL, S2, S4 nos dois
 #      limiares, S5, cor nova, 1.000 fantasmas, a fixture de equivalência e o limiar do S1), o
@@ -69,7 +71,8 @@ MIG3="$REPO_ROOT/supabase/migrations/20261013120000_tint_watchdog_fase5_s2_persi
 MIG4="$REPO_ROOT/supabase/migrations/20261013210000_tint_watchdog_fase5_v4_fonte_viva.sql"
 MIG5="$REPO_ROOT/supabase/migrations/20261101050000_tint_watchdog_fase5_v5_passada_unica.sql"
 MIG6="$REPO_ROOT/supabase/migrations/20261104020000_tint_watchdog_fase5_v6_indices.sql"
-for m in "$MIG1" "$MIG2" "$MIG3" "$MIG4" "$MIG5" "$MIG6"; do
+MIG61="$REPO_ROOT/supabase/migrations/20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql"
+for m in "$MIG1" "$MIG2" "$MIG3" "$MIG4" "$MIG5" "$MIG6" "$MIG61"; do
   [ -f "$m" ] || { echo "migration não encontrada: $m"; exit 1; }
 done
 
@@ -179,10 +182,10 @@ P -f "$MIG1"; P -f "$MIG2"; P -f "$MIG3"; P -f "$MIG4"; P -f "$MIG5"
 # não roda aqui: a P6 dela lê o corpo real de tint_watchdog_corante_check, que neste harness é stub.
 P -c "SELECT cron.schedule('tint-watchdog-fase5-6h', '30 9,21 * * *',
         \$c\$SET statement_timeout = '10min'; SELECT public.tint_watchdog_fase5_check();\$c\$);" >/dev/null
-P -f "$MIG6"
-echo "=== migrations aplicadas (v1 + v2 + v3 + v4 + v5 + horário + v6) ==="
-# a v6 sem a PRE: é como se restaura a real por cima de uma sabotada (ver cabeçalho)
-python3 - "$MIG6" "$RODADA/mig6_sem_pre.sql" <<'PY'
+P -f "$MIG6"; P -f "$MIG61"
+echo "=== migrations aplicadas (v1 + v2 + v3 + v4 + v5 + horário + v6 + v6.1) ==="
+# a v6.1 sem a PRE: é como se restaura a real por cima de uma sabotada (ver cabeçalho)
+python3 - "$MIG61" "$RODADA/mig6_sem_pre.sql" <<'PY'
 import sys
 s = open(sys.argv[1]).read(); a = s.index("DO $pre$"); b = s.index("$pre$;", a + 8) + len("$pre$;")
 open(sys.argv[2], "w").write(s[:a] + s[b:])
@@ -461,6 +464,10 @@ par() { eq "$1" "$(Pq -F '|' -f "$RODADA/ciclo_mig.sql" 2>&1)" "$(Pq -F '|' -f "
 # os acessos que podem varrer INTEIRA uma das três tabelas que a janela do fase5 lia: Seq Scan, ou
 # scan de índice sem condição — exceto a leitura dos dois índices PARCIAIS (de propósito) e a descida
 # logo abaixo de um Limit (a varredura solta de `presentes` lê uma tupla por corante).
+# NÃO pega: hash que derrama por estimativa errada. O da v6 em prod (hash das 490 mil ativas para 260
+# itens, 16 MB de temp, corrigido na v6.1) não se reproduz a ~5% da escala — nem a v6 hasheia aqui —,
+# então uma regra para ele seria vigia não falsificável. Quem pega é o EXPLAIN (ANALYZE, BUFFERS) do
+# statement em prod na verificação pós-apply (temp = 0) e a série da janela.
 cat > "$RODADA/pl1.py" <<'PY'
 import sys, json
 GRANDES = {"tint_formulas", "tint_formula_itens", "tint_staging_formulas"}
@@ -773,7 +780,7 @@ PY
 }
 
 if [ "$MODO" = normal ]; then
-  suite "$MIG6"
+  suite "$MIG61"
   [ "$FAIL" -eq 0 ]
   exit $?
 fi
@@ -854,21 +861,24 @@ pares_de() {
     s1_conta_desativada) PARES=("                          AND a.desativada_em IS NULL)
   ), o AS (" ")
   ), o AS (") ;;
-    s1_ruim_conta_desativada) PARES=("     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
-       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL" "     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
-       AND a.sku_id IS NOT NULL") ;;    s1_varredura_para_no_1o) PARES=("      FROM presentes pr WHERE pr.id IS NOT NULL" "      FROM presentes pr WHERE false") ;;
+    s1_ruim_conta_desativada) PARES=("f.desativada_em IS NULL AND f.sku_id IS NOT NULL
+                         OFFSET 0) a
+     WHERE fi.corante_id = ANY" "f.sku_id IS NOT NULL
+                         OFFSET 0) a
+     WHERE fi.corante_id = ANY") ;;
+  s1_varredura_para_no_1o) PARES=("      FROM presentes pr WHERE pr.id IS NOT NULL" "      FROM presentes pr WHERE false") ;;
     # os DOIS UNION: com um só, o (A UNION ALL B) UNION C final deduplica tudo e a troca é inócua
     s1_union_all) PARES=("       AND NOT EXISTS (SELECT 1 FROM tint_formula_itens fi WHERE fi.formula_id = a.id OFFSET 0)
     UNION
 " "       AND NOT EXISTS (SELECT 1 FROM tint_formula_itens fi WHERE fi.formula_id = a.id OFFSET 0)
     UNION ALL
-" "       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL
+" "     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
     UNION
-    -- (c)" "       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL
+    -- (c)" "     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
     UNION ALL
     -- (c)") ;;    s1_corante_nulo_passa) PARES=("     WHERE fi.corante_id IS NULL
-       AND a.desativada_em IS NULL" "     WHERE false
-       AND a.desativada_em IS NULL") ;;
+  ), sem_preco" "     WHERE false
+  ), sem_preco") ;;
     k_sem_distinct) PARES=("      FROM (SELECT DISTINCT f.account, f.sku_id, f.cor_id
               FROM tint_formulas f
              WHERE f.desativada_motivo" "      FROM (SELECT f.account, f.sku_id, f.cor_id
@@ -921,7 +931,7 @@ CREATE INDEX idx_tint_formulas_wd5_ativas ON public.tint_formulas (account, sku_
 }
 
 echo "── CONTROLE: suíte contra a migration REAL, na MESMA invocação ──"
-suite "$MIG6"
+suite "$MIG61"
 if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
   echo "CONTROLE VERMELHO (PASS=$PASS FAIL=$FAIL): falsificar contra uma suíte que já falha não prova nada"
   exit 1
@@ -933,7 +943,7 @@ for par in $SABOTAGENS; do
   s="${par%%:*}"; verm="${par#*:}"
   alvo="$RODADA/sab_${s}.sql"
   PARES=()
-  if ! pares_de "$s" || ! python3 - "$MIG6" "$alvo" "${PARES[@]}" <<'PY2'
+  if ! pares_de "$s" || ! python3 - "$MIG61" "$alvo" "${PARES[@]}" <<'PY2'
 import sys
 src, dst, pares = sys.argv[1], sys.argv[2], sys.argv[3:]
 if not pares or len(pares) % 2:
