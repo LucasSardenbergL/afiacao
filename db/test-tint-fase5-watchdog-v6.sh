@@ -174,8 +174,13 @@ P -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, aut
       ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;"
 
 # ══ ZONA 2 — as migrations REAIS, na ordem de prod ══
-P -f "$MIG1"; P -f "$MIG2"; P -f "$MIG3"; P -f "$MIG4"; P -f "$MIG5"; P -f "$MIG6"
-echo "=== migrations aplicadas (v1 + v2 + v3 + v4 + v5 + v6) ==="
+P -f "$MIG1"; P -f "$MIG2"; P -f "$MIG3"; P -f "$MIG4"; P -f "$MIG5"
+# o EFEITO do 20261103222735 (#3576, já em prod: o job fora do horário de loja). A migration inteira
+# não roda aqui: a P6 dela lê o corpo real de tint_watchdog_corante_check, que neste harness é stub.
+P -c "SELECT cron.schedule('tint-watchdog-fase5-6h', '30 9,21 * * *',
+        \$c\$SET statement_timeout = '10min'; SELECT public.tint_watchdog_fase5_check();\$c\$);" >/dev/null
+P -f "$MIG6"
+echo "=== migrations aplicadas (v1 + v2 + v3 + v4 + v5 + horário + v6) ==="
 # a v6 sem a PRE: é como se restaura a real por cima de uma sabotada (ver cabeçalho)
 python3 - "$MIG6" "$RODADA/mig6_sem_pre.sql" <<'PY'
 import sys
@@ -227,7 +232,7 @@ CREATE TABLE public.tint_formula_itens (id uuid PRIMARY KEY DEFAULT gen_random_u
   CONSTRAINT tint_formula_itens_formula_id_corante_id_key UNIQUE (formula_id, corante_id));
 CREATE INDEX idx_tint_formula_itens_corante ON public.tint_formula_itens USING btree (corante_id);
 CREATE TABLE public.tint_keys_snapshots (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text, snapshot_id uuid, entity text,
-  generated_at timestamptz, keys jsonb, created_at timestamptz, aplicacao_status text);
+  generated_at timestamptz, keys jsonb, created_at timestamptz, aplicacao_status text, aplicado_em timestamptz, chunk_index int);
 CREATE TABLE public.tint_staging_formulas (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), account text, cor_id text, cod_produto text,
   id_base text, personalizada boolean, raw jsonb, created_at timestamptz);
 CREATE INDEX idx_tsf_acct_par ON public.tint_staging_formulas (account, cod_produto, id_base);
@@ -523,6 +528,20 @@ suite() {
   P -c "SELECT _reset(); UPDATE tint_formula_itens SET corante_id = NULL WHERE formula_id='51000000-0000-0000-0000-000000000002';" >/dev/null
   roda; eq S1N "$(meta chaves_sem_preco)/$(sev tint_fase5_chave_sem_preco)" "1/aviso"
   par PAR_S1N
+  # S1d (v6): a única ativa de COR2 com DOIS corantes ruins, e a legada carimbada dela (desativada)
+  # também com item ruim. Continua 1 chave sem preço: cada fórmula conta UMA vez (UNION, não UNION ALL)
+  # e só as ATIVAS entram no complemento — sem este caso, as duas sabotagens passavam verdes
+  P -c "SELECT _reset();
+        INSERT INTO tint_corantes (id, omie_product_id, volume_total_ml)
+        VALUES ('c0000000-0000-0000-0000-0000000000cc', 'a0000000-0000-0000-0000-0000000000bb', 810) ON CONFLICT DO NOTHING;
+        UPDATE tint_formula_itens SET corante_id='c0000000-0000-0000-0000-0000000000bb' WHERE formula_id='51000000-0000-0000-0000-000000000002';
+        INSERT INTO tint_formula_itens (formula_id, corante_id, qtd_ml) VALUES
+          ('51000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-0000000000cc', 5),
+          ('11000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-0000000000bb', 5);" >/dev/null
+  roda; eq S1d "$(meta chaves_sem_preco)/$(sev tint_fase5_chave_sem_preco)" "1/aviso"
+  par PAR_S1d
+  P -c "DELETE FROM tint_formula_itens WHERE corante_id='c0000000-0000-0000-0000-0000000000cc'
+           OR formula_id='11000000-0000-0000-0000-000000000002';" >/dev/null
   P -c "SELECT _reset(); UPDATE tint_formulas SET desativada_motivo='limpo_manualmente'
         WHERE id IN (SELECT id FROM tint_formulas WHERE desativada_motivo='fase5_geracao_legada' ORDER BY id LIMIT 50);" >/dev/null
   P -c "INSERT INTO sync_state (entity_type, account, status, metadata) VALUES ('tint_watchdog_fase5','oben','complete','{\"universo_max\":1000}');" >/dev/null
@@ -764,7 +783,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:? ordem_por_aplicado_em:? janela_sem_aplicado:? janela_sem_7_dias:? janela_por_recebimento:? janela_por_chunk:? relogio_aplicado_em:? relogio_min_chunk:? igualdade_estrita:? s5_ausente_vira_saudavel:? s2_sem_nulo_sem_ref:? criterio_sem_guarda:? s2_sem_criterio_no_ctx:? s4_limiar_desloca:? s4_critico_estrito:? s5_critico_estrito:? p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:? k_inclui_cor_nula:? k_ativa_conta_desativada:? s1_ativo_nulo_passa:? s1_custo_nulo_passa:? s1_volume_nulo_passa:? s1_volume_zero_passa:? s1_corante_orfao_passa:? s1_produto_orfao_passa:? s1_sem_itens_passa:? s1_basta_uma_invalida:? s1_conta_desativada:? s1_ruim_conta_desativada:? s1_varredura_para_no_1o:? s1_union_all:? s1_corante_nulo_passa:? k_sem_distinct:? k_ret_sem_distinct:? plano_sem_offset0:? pre_aceita_qualquer:? p13_indice_corante_formula_ausente:APPLY!P13_FALHOU plano_staging_sem_indice:? plano_itens_sem_indice:? p9_volta_a_ler_a_view:APPLY!P9_FALHOU p9_le_a_view_em_maiusculas:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU p11_proconfig_nulo:APPLY!P11_FALHOU p11_config_da_v5_sobra:APPLY!P11_FALHOU p10_job_so_cita_a_funcao:APPLY!P10_FALHOU p12_sem_guard_da_view:APPLY!P12_FALHOU p13_indice_ausente:APPLY!P13_FALHOU p13_definicao_diferente:APPLY!P13_FALHOU guard_da_view_desligado:? s1_critico_estrito:? s1_amostra_zerada:? s1_ctx_zerado:?"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 relogio_min_chunk:F3,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4,PAR_E k_inclui_cor_nula:E1,E4,PAR_E k_ativa_conta_desativada:E1,PAR_E,PAR_R1,PAR_T200,PAR_T50,R1a,R1b,R2a,R4,R5c,R8,T199,T200,T201,T50,T51 s1_ativo_nulo_passa:E2,E3,PAR_E s1_custo_nulo_passa:E2,E3,PAR_E s1_volume_nulo_passa:E2,E3,PAR_E s1_volume_zero_passa:E2,E3,PAR_E s1_corante_orfao_passa:E2,E3,PAR_E s1_produto_orfao_passa:E2,E3,PAR_E s1_sem_itens_passa:E2,E3,PAR_E s1_basta_uma_invalida:E2,E3,PAR_E s1_conta_desativada:E2,E3,E7,PAR_E,PAR_S1,PAR_S1N,PAR_S1d,PAR_T999,S1N,S1a,S1d,T1000,T999 s1_ruim_conta_desativada:PAR_S1d,S1d s1_varredura_para_no_1o:E2,E3,PAR_E s1_union_all:PAR_S1d,S1d s1_corante_nulo_passa:PAR_S1N,S1N k_sem_distinct:A2,E1,E4,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999,R4,T1000,T200,T50,T999 k_ret_sem_distinct:PAR_F7,PAR_R1,R1a,R8 plano_sem_offset0:PL1 pre_aceita_qualquer:PRE1 p13_indice_corante_formula_ausente:APPLY!P13_FALHOU plano_staging_sem_indice:PL1 plano_itens_sem_indice:PL1 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p9_le_a_view_em_maiusculas:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU p11_proconfig_nulo:APPLY!P11_FALHOU p11_config_da_v5_sobra:APPLY!P11_FALHOU p10_job_so_cita_a_funcao:APPLY!P10_FALHOU p12_sem_guard_da_view:APPLY!P12_FALHOU p13_indice_ausente:APPLY!P13_FALHOU p13_definicao_diferente:APPLY!P13_FALHOU guard_da_view_desligado:V1 s1_critico_estrito:T1000 s1_amostra_zerada:E6 s1_ctx_zerado:E7"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {

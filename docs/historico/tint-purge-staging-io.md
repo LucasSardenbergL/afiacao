@@ -339,3 +339,40 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - psql-ro por fora: `30 9,21 * * *`, ativo, md5 do comando `fe21fbd8…` igual ao de antes.
 - **Acoplamento em voo:** a v6 do fase5 (`20261103220000_tint_watchdog_fase5_v6_indices.sql`, sessão própria) tem uma P10 que exige `0 */6`. Ela vai abortar limpo até trocar para `30 9,21 * * *`, e a sessão foi avisada. Re-aplicar a v5 (`20261101050000`) volta o job para `0 */6`, porque a última a rodar vence.
 - **Medir:** a janela de 15 min das 09:30 e das 21:30 UTC deve ter o pico do fase5, e as janelas das 12:00/18:00 não devem mais ter.
+
+### 2026-11-03 — v6: o watchdog fase5 lê índices, não o catálogo (`20261103220000`)
+
+- **Decisão do founder (03/11):** o pico agendado do fase5 conta para o critério do Mini. A semântica de S1..S5 não muda (o tombstone da Fase 5 é piso de gate).
+- **Por que "uma passada só" não bastava:** `tint_formulas` tem 430 MB. Uma única passada já passa do teto de 400 MB por 15 min. E o temp de fundo das janelas limpas já fica em ~95–99 MB, então o ciclo tem de gerar temp **zero**.
+- **O que a v6 faz** (mesmas 11 colunas do statement, que alimentam todos os alertas, a série e o marcador):
+  - 5 índices: `idx_tint_formulas_wd5_carimbo` (parcial, carimbadas) · `idx_tint_formulas_wd5_ativas` (parcial, ativas, com produto/base/personalizada + `INCLUDE (id)`) · `idx_tint_formula_itens_formula (formula_id)` · `idx_tint_formula_itens_corante_formula (corante_id, formula_id)` · `idx_tint_staging_formulas_conta_criado (account, created_at)`;
+  - o universo `k` sai do índice das carimbadas, e o "tem ativa" é uma sonda por chave;
+  - o S1 sai pelo **complemento**. São inválidas as ativas sem item (uma sonda por fórmula, com `OFFSET 0` para não virar anti-join) e as ativas com item de corante ruim (a varredura solta em `presentes` acha os ~16 corantes; o `= ANY(ARRAY())` lê só as faixas deles). Há ainda um ramo para corante NULL. A chave não precifica quando **toda** ativa dela é inválida;
+  - a `retirada` usa `NOT IN` (subplan em hash, em memória) no lugar do `NOT EXISTS`. Como `jsonb_array_elements_text` sempre estima 100 linhas, o planner ordenava as 718 mil chaves da janela em disco;
+  - a config é `enable_seqscan off` + `work_mem 16MB` (a v5 desligava o index scan, o contrário).
+- **Bancada PG17 em escala de prod** (1 M fórmulas, 3 M itens, 8 snapshots de 123 mil chaves, `shared_buffers=256MB`, `random_page_cost=1.1`; cache do Postgres frio a cada medida; `EXPLAIN (ANALYZE, BUFFERS)` do statement EXTRAÍDO da migration):
+
+  | statement | lido do disco | temp | tempo | 11 colunas |
+  |---|---|---|---|---|
+  | v5 (config dela) | 1,37 GB (175.621 blocos) | ~260 MB | 30 s | referência |
+  | v6, 1º corte (k materializado, `IN (SELECT ruim)`) | 296 MB | ~150 MB | 93 s | iguais |
+  | v6, `= ANY` sem o índice `(corante_id, formula_id)` | 348 MB | 0 | 7 s | iguais |
+  | **v6 final** | **114 MB (14.548 blocos)** | **0** | **4 s** | **iguais** |
+
+  O que ainda vem do disco é a leitura, uma vez cada, dos índices parciais (~110 MB). Em prod a escala de `tint_formula_itens` é ~1,2× a da bancada.
+- **Custo novo:** ~280 MB de índice (o maior é o `(corante_id, formula_id)`, ~165 MB em prod) e a manutenção dele no promote, que hoje grava só o diff. O `idx_tint_formula_itens_corante (corante_id)` de prod (63 MB) fica redundante para o watchdog; dropá-lo é DDL destrutivo, decisão do founder, e não foi feito.
+- **Riscos que continuam:**
+  - corante ruim usado por muitos itens, mesmo só em fórmulas desativadas, encarece o ciclo na proporção desses itens;
+  - um `k_ret` amplo (retirada em massa) lê o heap das fórmulas retiradas;
+  - um visibility map degradado (promote grande antes do autovacuum, que em `tint_formulas` roda a 5%) vira heap fetch.
+
+  Os três custam na proporção do dano e não mudam o resultado.
+- **Prova:** `db/test-tint-fase5-watchdog-v6.sh`. É a suíte da v5 inteira, mais:
+  - PARIDADE das 11 colunas v5×v6 em 11 estados;
+  - E1/E2 contra a VIEW REAL;
+  - S1N (item com corante NULL);
+  - PRE1 (corpo vivo divergente aborta antes dos builds);
+  - PL1 (forma do plano num banco de ESCALA a ~5% de prod, com o planner de prod).
+
+  `--falsificar` com conjunto exato.
+- **Codex** (desenho, gpt-6-astra max, 541 s, 169K tokens): 3 P1 + P2, nenhum P0, nenhum contraexemplo de dados admissível. Integrados: `k` sem MATERIALIZED, a falsificação completa, o PL1 forte e em escala, o ramo do corante NULL (contraexemplo fora das premissas de prod), o lock do apply (dura até o COMMIT) e as sabotagens que faltavam (UNION ALL, DISTINCT de `k`/`k_ret`, `OFFSET 0`, PRE). Ficou de fora o P2 preexistente do empate em `ref` (dois snapshots com os mesmos dois relógios), que já existia na v5 e mudaria a semântica.

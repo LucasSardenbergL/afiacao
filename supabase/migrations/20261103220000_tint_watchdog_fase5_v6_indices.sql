@@ -565,12 +565,13 @@ BEGIN
   IF lower(regexp_replace(v_src, '--[^\n]*', '', 'g')) ~ '(from|join)\s+("?public"?\.)?"?v_tint_formula_canonica' THEN
     RAISE EXCEPTION 'P9 FALHOU: a v6 voltou a LER v_tint_formula_canonica (SubPlan por formula, 4,7 GB no Mini)';
   END IF;
-  -- exatamente 1 job, ativo, na cadência de 6 h e com o comando INTEIRO (não basta citar a função)
+  -- exatamente 1 job, ativo, no horário fora da loja (20261103222735, decisão do founder: 09:30 e
+  -- 21:30 UTC) e com o comando INTEIRO (não basta citar a função). A v6 não mexe no cron.
   IF (SELECT count(*) FROM cron.job WHERE jobname = 'tint-watchdog-fase5-6h') <> 1
      OR NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'tint-watchdog-fase5-6h' AND active
-                       AND schedule = '0 */6 * * *'
+                       AND schedule = '30 9,21 * * *'
                        AND command ~ '^\s*(SET statement_timeout = ''[0-9]+min''; )?SELECT public\.tint_watchdog_fase5_check\(\);\s*$') THEN
-    RAISE EXCEPTION 'P10 FALHOU: o cron tint-watchdog-fase5-6h não é 1 job ativo, 0 */6 * * *, chamando só a função';
+    RAISE EXCEPTION 'P10 FALHOU: o cron tint-watchdog-fase5-6h não é 1 job ativo, 30 9,21 * * *, chamando só a função';
   END IF;
   -- v6: a config é a do plano por índice, e a da v5 (index scan desligado) não pode sobrar
   IF (SELECT p.proconfig @> ARRAY['enable_seqscan=off', 'work_mem=16MB']
