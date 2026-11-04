@@ -295,6 +295,15 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
        - tempo de 1,3–1,7 s no promote de hoje, contra 2,1–2,9 s com a M1 (3,1 s no 1º toque, que assina 20.000).
        
        Com cache quente, são cerca de +0,15 ms de CPU por fórmula REESCRITA (as travas da invalidação e a assinatura). O ganho é em leitura de disco das puladas, que a bancada com cache quente não mede. Num run de reescrita total (1,5 M itens), a tabela de transição do DELETE/INSERT derrama em temp na ordem de 100 MB. Esse run já estoura o Mini por conta própria (é o run de 02/11).
+  - **Aplicada em 04/11** (`db:aplicar`, recibo #890) sobre o corpo `97d44242`. Validada por fora com psql-ro:
+    - promote `bbd219af…` (xmin 13792171), com proconfig preservado;
+    - as 2 colunas;
+    - os 5 gatilhos habilitados, com o tgtype certo;
+    - as 2 funções definer, com search_path fixo;
+    - TRIGGER só de `postgres`;
+    - promote fechado para anon/authenticated;
+    - 0 assinadas: elas nascem no 1º run que toca cada par.
+  - **Medir:** depois de alguns runs de fórmulas, `count(*) FILTER (WHERE receita_assinatura IS NOT NULL)` em `tint_formulas` deve crescer. A leitura de `tint_formula_itens` (delta de `pg_statio`) num run de reenvio deve cair para perto de zero, nos pares já assinados. Os 2,4 GB do run 9fdaaee4 eram 1,7 GB de itens; o heap de `tint_formulas` (610 MB) continua até a M2 (índice de cobertura por par).
 
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 

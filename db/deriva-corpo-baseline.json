@@ -135,6 +135,26 @@
       "desde": "2026-11-03"
     },
     {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104110000_tint_promote_snap_fonte_so_com_expansao.sql",
+      "efeito": "ALTERA",
+      "motivo": "_snap_fonte só com expansão (sessão-irmã, recibo #889): 1 troca por âncora sobre o corpo da 20261103093424 (intermediário; o estado final é o da 20261104061910).",
+      "desde": "2026-11-04"
+    },
+    {
+      "funcao": "tint_promote_sync_run",
+      "identidade": "uuid",
+      "classe": "PATCH",
+      "patch": "20261104061910_tint_receita_assinada_no_cabecalho.sql",
+      "efeito": "ALTERA",
+      "motivo": "receita assinada no cabeçalho (Mini M1): 10 trocas por âncora sobre o corpo da 20261104110000 — o _pulados compara pela assinatura e o promote assina até 20.000 por run. Conferido em prod em 2026-11-04 via psql-ro: md5(prosrc) = c_este da migration (xmin 13792171; recibo db:aplicar #890).",
+      "md5": "bbd219afff819b3d2401f8e33a8a4010",
+      "md5Tokens": "54cae9584f62f3f7ced012a575a34792",
+      "desde": "2026-11-04"
+    },
+    {
       "funcao": "tint_staging_purge",
       "identidade": "",
       "classe": "PATCH",
