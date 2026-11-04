@@ -916,3 +916,8 @@ db/test-radar-agregado.sh                  50  falsificar=17
 # 19 recortes iguais à consulta de antes (sob RLS), a busca e o município lendo o trigrama sem seq scan, o controle reproduzindo
 # o seq scan, gate/ACL, entrada mal formada 22023, curinga literal, PRE.
 db/test-radar-lista-rpc.sh                 34  falsificar=15
+# Radar leitor 4, parte 4 (20261103223300): CNAE e o preset "estabelecidas" da contagem por município leem o
+# agregado fino (grão + CNAE + estabelecida no corte e no corte + 1), que o mesmo escritor calcula e de onde deriva o
+# agregado por município. 16 chamadas iguais à contagem de antes; 0 leituras de radar_empresas medidas em pg_stat_xact
+# (controle: data fora do corte lê); lote novo = indisponível; RLS/ACL; corte em São Paulo; PRE.
+db/test-radar-agregado-cnae.sh             39  falsificar=14

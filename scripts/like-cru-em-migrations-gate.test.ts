@@ -211,7 +211,7 @@ describe('o repo', () => {
     expect(CONHECIDOS.reduce((n, c) => n + c.n, 0)).toBe(27);
   });
 
-  it('os 3 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {
+  it('os 2 vivos permitidos estão no corpo vivo, com a âncora de pé', () => {
     for (const p of VIVOS_PERMITIDOS) {
       const corpo = REPO.corpos.get(p.identidade);
       expect(corpo, p.identidade).toBeDefined();
