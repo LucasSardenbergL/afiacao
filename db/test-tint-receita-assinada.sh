@@ -7,9 +7,10 @@
 # conferido contra prod) e assevera:
 #
 #   MD5     o promote trocado tem o md5 que a migration declara
-#   EQUIV   do MESMO estado, os 14 runs do cenário dão o MESMO resultado com o promote de hoje e o novo —
-#           inclusive QUAIS chaves são puladas (formulas_identicas_puladas no retorno e no metadata) — e a
-#           re-promoção sem run intermediário dá o mesmo preço
+#   EQUIV   do MESMO estado, os runs do cenário + o RH dão o MESMO resultado com o promote de hoje e o
+#           novo — inclusive QUAIS chaves são puladas em cada run (lidas do _pulados) — e a re-promoção
+#           sem run intermediário dá o mesmo preço. O RH isola o hash: a receita da staging de C8 muda no
+#           lugar (cabeçalho igual, itens frescos) e só a comparação da receita a separa
 #   ASSINA  o promote assina (≥ 10 fórmulas do par P1 depois do cenário) e, depois de todos os runs
 #           (cenário, desvio, BIG), nenhuma assinatura não-nula difere da recalculada dos itens (sha256 e
 #           receita_desde); os ataques seguintes julgam cada um as suas fórmulas
@@ -21,6 +22,8 @@
 #   RR      assinador em REPEATABLE READ com snapshot anterior a um item commitado: não assina velho
 #   FORJA   valor do chamador nunca vale: hash forjado (postgres e service_role), receita_desde
 #           isolada, INSERT com assinatura (→ NULL) e upsert com id proposto ≠ alvo
+#   ITEM    created_at NULL num item invalida (reassinada: receita_desde -infinity); item movido entre
+#           duas fórmulas assinadas invalida as duas
 #   TEMP    pg_temp.tint_formula_itens / pg_temp.tint_formulas na sessão não desviam assinar/invalidar
 #   TOMB    tombstone da Fase 5: carimbar zera, pedir assinatura não erra nem assina, item não erra
 #   PRIV    service_role sem TRIGGER (CREATE TRIGGER negado) e a escrita de item dele ainda invalida
@@ -29,7 +32,8 @@
 #   IDEMP   re-aplicar é no-op (md5 igual)
 #   GUARDA  re-aplicar sobre um promote de OUTRO corpo (versão posterior) ABORTA
 # Fora da suíte (controles): DERIVA — corpo vivo diferente do revisado ABORTA e não troca nada;
-# TETO — com o teto 40, cada run assina exatamente 40 e o seguinte avança.
+# TETO — com o teto 6 e 8 reescritas, as reescritas levam só a metade (3), as puladas as outras 3, e o
+# run seguinte avança.
 # Controles de não-vacuidade: o promote de hoje exibe os casos de borda (cenário), lê ≥ 3.000 vezes os
 # itens no reenvio do par BIG e service_role TEM o privilégio TRIGGER antes da migration.
 #
@@ -111,6 +115,21 @@ CREATE FUNCTION _fid(p_cor text, p_prod text, p_emb text) RETURNS uuid LANGUAGE 
     JOIN tint_embalagens e ON e.id = f.embalagem_id
    WHERE f.cor_id = p_cor AND p.cod_produto = p_prod AND e.id_embalagem_sayersystem = p_emb $$;
 CREATE FUNCTION _neutro() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+-- (Codex P2-2) a foto de cada run leva QUAIS chaves foram puladas (o _pulados do promote ainda existe
+-- na transação do _promove), não só quantas.
+CREATE OR REPLACE FUNCTION _promove(p_rot text, p_run uuid) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE v jsonb; k text := '-';
+BEGIN
+  v := public.tint_promote_sync_run(p_run);
+  IF to_regclass('pg_temp._pulados') IS NOT NULL THEN
+    EXECUTE $q$SELECT COALESCE(string_agg(f.cor_id || '/' || e.id_embalagem_sayersystem, ','
+                                          ORDER BY f.cor_id || '/' || e.id_embalagem_sayersystem COLLATE "C"), '')
+                 FROM pg_temp._pulados pu JOIN tint_formulas f ON f.id = pu.formula_id
+                 JOIN tint_embalagens e ON e.id = f.embalagem_id$q$ INTO k;
+  END IF;
+  INSERT INTO _res VALUES (p_rot, p_run, v, _estado() || ' pul=' || k);
+  RETURN v;
+END $$;
 SQL
 
 # Reenvio IDÊNTICO de K0003 em KP0 (o par de 4.000 fórmulas): a staging nova reescreve só K0003.
@@ -125,6 +144,21 @@ SELECT sf.sync_run_id, sf.id, v.c, v.o, v.q + (substr(sf.cor_id, 2)::int % 7)
   FROM tint_staging_formulas sf,
        (VALUES ('KC0', 1, 0.5), ('KC0', 4, 2.25), ('KC1', 2, 1.125), ('KC2', 3, 3.0)) v(c, o, q)
  WHERE sf.sync_run_id = 'b0000000-0000-0000-0000-000000000004';
+SQL
+}
+
+# RH (Codex P2-2): a receita da staging VENCEDORA de C8 muda no lugar (a staging continua mais velha que
+# o oficial: cabeçalho igual, itens frescos) e um reenvio de C3 reexpande o par. Só a comparação da
+# receita separa C8 — pelos itens no promote de hoje, pelo hash da assinatura no novo.
+seed_hash() {   # $1 = banco
+  PA -q -d "$1" <<'SQL' >/dev/null
+UPDATE tint_staging_formula_itens si SET qtd_ml = si.qtd_ml + 1
+  FROM tint_staging_formulas sf
+ WHERE si.staging_formula_id = sf.id AND sf.cor_id = 'C8' AND si.id_corante = 'AX'
+   AND sf.sync_run_id = '11111111-0000-0000-0000-000000000004';
+SELECT _run('11111111-0000-0000-0000-000000000017', 'formulas');
+SELECT _sf('11111111-0000-0000-0000-000000000017','C3','Cor 3','P1','B1',NULL,false,'[["AY",1,"2"],["AY",3,"3"]]');
+SELECT _promove('RH', '11111111-0000-0000-0000-000000000017');
 SQL
 }
 
@@ -193,6 +227,7 @@ duas_sessoes() {   # $1 = banco, $2 = SQL da 1ª, $3 = SQL da 2ª
 # ── referência: o promote de HOJE, do MESMO template ─────────────────────────────────────────────────
 PA -q -d postgres -c "CREATE DATABASE ref TEMPLATE tpl_diff" >/dev/null
 seed ref
+seed_hash ref
 IMP_REF="$(impressao ref)"
 v="$(q ref "SELECT string_agg(x, ';' ORDER BY x COLLATE \"C\") FROM (
   SELECT 'C1nome=' || min(nome_cor) x FROM tint_formulas WHERE cor_id = 'C1'
@@ -200,8 +235,14 @@ v="$(q ref "SELECT string_agg(x, ';' ORDER BY x COLLATE \"C\") FROM (
   UNION ALL SELECT 'R10C1=' || count(*) FROM tint_formula_itens i JOIN tint_formulas f ON f.id = i.formula_id
      WHERE f.cor_id = 'C1' AND i.qtd_ml::text NOT LIKE '%.%'
   UNION ALL SELECT 'R3pul=' || (r->>'formulas_identicas_puladas') FROM _res WHERE rot = 'R3'
-  UNION ALL SELECT 'R11pul=' || (r->>'formulas_identicas_puladas') FROM _res WHERE rot = 'R11') s")"
-ESPERADO_REF='C1nome=Cor 1 nova;C3ordem=3;R10C1=0;R11pul=14;R3pul=14'
+  UNION ALL SELECT 'R11pul=' || (r->>'formulas_identicas_puladas') FROM _res WHERE rot = 'R11'
+  UNION ALL SELECT 'R3chaves=' || (length(split_part(estado, ' pul=', 2)) - length(replace(split_part(estado, ' pul=', 2), ',', '')) + 1)
+              FROM _res WHERE rot = 'R3'
+  UNION ALL SELECT 'RHpulaC8=' || (position('C8/' in split_part(estado, ' pul=', 2)) > 0)
+                   || '/C3=' || (position('C3/' in split_part(estado, ' pul=', 2)) > 0)
+                   || '/outras=' || (split_part(estado, ' pul=', 2) <> '')
+              FROM _res WHERE rot = 'RH') s")"
+ESPERADO_REF='C1nome=Cor 1 nova;C3ordem=3;R10C1=0;R11pul=14;R3chaves=14;R3pul=14;RHpulaC8=false/C3=false/outras=true'
 [ "$v" = "$ESPERADO_REF" ] || { echo "✗ cenário: a referência não exibe os casos de borda: [$v] ≠ [$ESPERADO_REF]"; exit 1; }
 REF_DESVIO="$(seed_desvio ref)"
 echo "  · referência (promote de hoje): $IMP_REF — $v — desvio $REF_DESVIO"
@@ -217,7 +258,7 @@ echo "  · promote de hoje: reenvio idêntico no par BIG = ${REF_LEIT%% *} varre
             AND has_table_privilege('service_role', 'public.tint_formula_itens', 'TRIGGER')")" = "t" ] \
   || { echo "✗ controle: service_role devia ter TRIGGER antes da migration (como em prod)"; exit 1; }
 
-TODOS="MD5 EQUIV ASSINA LEITURA CONC_A CONC_B RR FORJA TEMP TOMB PRIV BULK ACL IDEMP GUARDA"
+TODOS="MD5 EQUIV ASSINA LEITURA CONC_A CONC_B RR FORJA ITEM TEMP TOMB PRIV BULK ACL IDEMP GUARDA"
 C_ESTE_REAL="$(sed -nE "s/.*c_este constant text := '([0-9a-f]{32})'.*/\1/p" "$MIG")"
 
 # Helpers que leem as colunas novas (só existem depois da migration).
@@ -263,8 +304,12 @@ suite() {
   [ "$v" = "$C_ESTE_REAL" ] || cai MD5
 
   # EQUIV: o cenário inteiro (estado por run, retorno, metadata, puladas) + a re-promoção sem intermediário.
-  if seed "$db" 2>"$TMP/$db.seed.log" && [ "$(impressao "$db")" = "$IMP_REF" ] \
-     && [ "$(seed_desvio "$db")" = "$REF_DESVIO" ]; then :; else cai EQUIV; fi
+  # (o RH só isola o hash se C8 chega a ele ASSINADA — senão compara pelos itens, como o de hoje)
+  local c8
+  if seed "$db" 2>"$TMP/$db.seed.log" \
+     && c8="$(q "$db" "SELECT bool_and(receita_assinatura IS NOT NULL) FROM tint_formulas WHERE cor_id = 'C8'")" \
+     && [ "$c8" = "t" ] && seed_hash "$db" && [ "$(impressao "$db")" = "$IMP_REF" ] \
+     && [ "$(seed_desvio "$db")" = "$REF_DESVIO" ]; then :; else cai EQUIV; echo "    (EQUIV: C8 assinada antes do RH [${c8:-?}])" >&2; fi
 
   # ASSINA (1/2): o promote assinou o par P1 e tudo o que assinou bate com os itens.
   v="$(q "$db" "SELECT count(*) FILTER (WHERE f.receita_assinatura IS NOT NULL) || '/' || _inconsistentes()
@@ -350,6 +395,27 @@ SELECT _assinada(_fid('K0201', 'KP2', 'KE0')) AND _assinada(_fid('K0202', 'KP2',
 SQL
 )" || true
   [ "$v" = "t" ] || { cai FORJA; echo "    (FORJA: [$(echo "$v" | head -c 300)])" >&2; }
+
+  # ITEM (Codex P2-2): created_at NULL num item de fórmula assinada invalida, e a reassinatura dá
+  # receita_desde -infinity (nunca fresca); item MOVIDO entre duas fórmulas assinadas invalida as duas.
+  X="$(q "$db" "SELECT _fid('K0401', 'KP4', 'KE0')")"
+  Y="$(q "$db" "SELECT _fid('K0402', 'KP4', 'KE0')")"
+  v="$(PA -q -tA -d "$db" 2>&1 <<SQL
+\set ON_ERROR_STOP 1
+UPDATE tint_formulas SET receita_assinatura = ''::bytea WHERE id IN ('$X', '$Y');
+UPDATE tint_formula_itens SET created_at = NULL WHERE formula_id = '$X' AND ordem = 3;
+SELECT 'nulo=' || _assinada('$X');
+UPDATE tint_formulas SET receita_assinatura = ''::bytea WHERE id = '$X';
+SELECT 'desde=' || receita_desde || '/' || _inconsistentes(ARRAY['$X'::uuid]) FROM tint_formulas WHERE id = '$X';
+DELETE FROM tint_formula_itens WHERE formula_id = '$Y' AND ordem = 3;
+UPDATE tint_formulas SET receita_assinatura = ''::bytea WHERE id = '$Y';
+SELECT 'antes=' || _assinada('$X') || '/' || _assinada('$Y');
+UPDATE tint_formula_itens SET formula_id = '$Y' WHERE formula_id = '$X' AND ordem = 3;
+SELECT 'movido=' || _assinada('$X') || '/' || _assinada('$Y');
+SQL
+)" || true
+  [ "$(echo "$v" | tr '\n' ' ')" = "nulo=false desde=-infinity/0 antes=true/true movido=false/false " ] \
+    || { cai ITEM; echo "    (ITEM: [$(echo "$v" | tr '\n' ' ' | head -c 300)])" >&2; }
 
   # TEMP: tabelas homônimas em pg_temp na sessão não desviam o assinador nem a invalidação.
   # (ids resolvidos ANTES, noutra sessão: na sessão sombreada até o helper _fid leria a tabela temporária)
@@ -501,23 +567,27 @@ consistente() {   # $1 = cópia com c_este SENTINELA → reescreve com o md5 cal
   if [ -n "$md5" ]; then sed -i.bak "s/c_este constant text := 'SENTINELA'/c_este constant text := '$md5'/" "$1"; fi
 }
 
-# TETO (controle fora da suíte): com o teto 40, o 1º run do par BIG assina 40 (8 reescritas + 32 puladas)
-# e o seguinte mais 40 — o resto fica NULL e é comparado pelos itens, com o mesmo resultado.
+# TETO (controle fora da suíte), com o teto 6 e a RESERVA saturada (Codex P2-2): o 1º run do par BIG tem
+# 8 reescritas, que só levam a metade (3); as puladas levam as outras 3. O seguinte assina mais 6 — o
+# resto fica NULL e é comparado pelos itens, com o mesmo resultado.
 python3 "$TMP/troca.py" "$MIG" "$TMP/teto.sql" <<'TROCAS'
-[("  c_teto_assinar   constant int := 20000;", "  c_teto_assinar   constant int := 40;")]
+[("  c_teto_assinar   constant int := 20000;", "  c_teto_assinar   constant int := 6;")]
 TROCAS
 consistente "$TMP/teto.sql"
 PA -q -d postgres -c "CREATE DATABASE teto TEMPLATE tpl_diff" >/dev/null
 if PA -q -d teto --single-transaction -f "$TMP/teto.sql" >"$TMP/teto.apply.log" 2>&1; then
   helpers_suite teto
   seed_big_run teto; v="$(leituras teto b0000000-0000-0000-0000-000000000003)"
+  s="$(q teto "SELECT count(*) FILTER (WHERE f.receita_assinatura IS NOT NULL AND f.cor_id IN ('K0001', 'K0002')) || '+'
+                      || count(*) FILTER (WHERE f.receita_assinatura IS NOT NULL AND f.cor_id NOT IN ('K0001', 'K0002'))
+                 FROM tint_formulas f JOIN tint_produtos p ON p.id = f.produto_id WHERE p.cod_produto = 'KP0'")"
   seed_big_run2 teto; w="$(leituras teto b0000000-0000-0000-0000-000000000004)"
   t="$(q teto "SELECT count(*) FILTER (WHERE f.receita_assinatura IS NOT NULL) || '/' || _inconsistentes()
                  FROM tint_formulas f JOIN tint_produtos p ON p.id = f.produto_id WHERE p.cod_produto = 'KP0'")"
-  if [[ "$v" =~ \ true\ 40\ 3992$ ]] && [[ "$w" =~ \ true\ 40\ 3996$ ]] && [[ "$t" =~ ^(7[6-9]|80)/0$ ]]; then
-    echo "  ✓ TETO: 40 por run ($t assinadas/inconsistentes no par)"; PASSOU=$((PASSOU + 1))
+  if [[ "$v" =~ \ true\ 6\ 3992$ ]] && [ "$s" = "3+3" ] && [[ "$w" =~ \ true\ 6\ 3996$ ]] && [[ "$t" =~ ^(9|1[0-2])/0$ ]]; then
+    echo "  ✓ TETO: 6 por run, reescritas na metade ($s no 1º; $t assinadas/inconsistentes no par)"; PASSOU=$((PASSOU + 1))
   else
-    echo "  ✗ TETO: 1º [$v], 2º [$w], par [$t]"; FALHAS=$((FALHAS + 1))
+    echo "  ✗ TETO: 1º [$v] reescritas+puladas [$s], 2º [$w], par [$t]"; FALHAS=$((FALHAS + 1))
   fi
 else
   echo "  ✗ TETO: a cópia com teto 40 não aplicou: $(grep -m1 -E 'ERRO|ERROR' "$TMP/teto.apply.log" | head -c 300)"; FALHAS=$((FALHAS + 1))
@@ -619,6 +689,18 @@ TROCAS
 # F15 — a postcondição pega um gatilho de invalidação desabilitado: a migration ABORTA.
 MOTIVO="P2 FALHOU" falsifica F15 "$TODOS" <<'TROCAS'
 [("-- ── PÓS-CONDIÇÃO (relida do catálogo)", "ALTER TABLE public.tint_formula_itens DISABLE TRIGGER trg_tint_formula_itens_invalida_del;\n-- ── PÓS-CONDIÇÃO (relida do catálogo)")]
+TROCAS
+
+# F16 (Codex P2-2) — a assinatura vale sem comparar o hash (postcondição ajustada): no RH, a C8 assinada
+#       cuja receita mudou sem staging nova (cabeçalho igual, itens frescos) é pulada.
+falsifica F16 MD5 EQUIV <<'TROCAS'
+[("             THEN f.receita_assinatura = sha256(convert_to(COALESCE(novo.receita, ''), 'UTF8'))\n", "             THEN true\n"),
+ ("     OR position('THEN f.receita_assinatura = sha256(convert_to(COALESCE(novo.receita, ''''), ''UTF8''))' in v_src) = 0\n", "")]
+TROCAS
+# F17 (Codex P2-2) — o UPDATE de item invalida só a fórmula de DESTINO: o item movido deixa a de origem
+#       assinada com a receita que não tem mais.
+falsifica F17 ITEM <<'TROCAS'
+[("     WHERE f.id IN (SELECT o.formula_id FROM antigos o UNION SELECT n.formula_id FROM novos n)\n       AND f.receita_assinatura IS NOT NULL\n", "     WHERE f.id IN (SELECT n.formula_id FROM novos n)\n       AND f.receita_assinatura IS NOT NULL\n")]
 TROCAS
 
 echo "─── controle $PASSOU ok | falsificações certas: $FALSIF_OK | inválidas/erradas: $FALSIF_ERR ───"
