@@ -985,7 +985,7 @@ jobs:
         id: escopo
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun scripts/provas-sql-escopo.ts --evento "$EVENTO" --github-output
+        run: bun run provas-sql:escopo --evento "$EVENTO" --github-output
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
