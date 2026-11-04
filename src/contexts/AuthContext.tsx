@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { logger } from '@/lib/logger';
 import { limparPushDoDevice } from '@/lib/push/device';
+import { semearMeuCargoComercial } from '@/lib/cargo-comercial-cache';
 
 export type AppRole = 'employee' | 'customer' | 'master';
 
@@ -170,6 +171,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // Store commercial role for downstream use (isGestorComercial)
         setCommercialRole(commercialResult.data?.commercial_role ?? null);
+        // Lote 6c: a MESMA leitura alimenta o `useMyCommercialRole`, que não refaz o REST depois
+        // que o Index monta. Leitura com erro não semeia (o hook consulta sozinho, sem fabricar null).
+        semearMeuCargoComercial(queryClient, userId, commercialResult);
 
         // Staff (admin/employee/master) or users with commercial roles are auto-approved
         const hasCommercialRole = !!commercialResult.data?.commercial_role;
@@ -233,7 +237,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
     }
-  }, [fetchUserRoleAndApprovalOnce]);
+  }, [fetchUserRoleAndApprovalOnce, queryClient]);
 
   useEffect(() => {
     let isMounted = true;
