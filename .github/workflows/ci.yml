@@ -981,11 +981,16 @@ jobs:
           bun-version: 1.3.14
 
       # O evento entra por `env:`, nunca `${{ }}` cru no `run:` (script injection).
+      # Step OPACO de propósito (`bun ./scripts/…`, sem nome de script no package.json): ele não é
+      # gate — decide escopo e nunca reprova conteúdo —, então não entra no censo de gates nem na
+      # matriz do `exclusividade`, que mediria "o que só ele pega" de algo que não pega nada. Fica
+      # VISÍVEL nos contadores de bloqueantes sem script dos dois (`gates:frescura`, `exclusividade`),
+      # como o `bash db/roda-nucleo-ci.sh` do núcleo.
       - name: ESTE diff alcança o que as provas SQL leem?
         id: escopo
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun run provas-sql:escopo --evento "$EVENTO" --github-output
+        run: bun ./scripts/provas-sql-escopo.ts --evento "$EVENTO" --github-output
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em

@@ -72,7 +72,6 @@
     "pendencias:pacote": "bun scripts/pendencias-pacote.ts",
     "mutcheck": "bash scripts/mutcheck-all.sh",
     "mutcheck:escopo": "bun scripts/mutcheck-escopo.ts",
-    "provas-sql:escopo": "bun scripts/provas-sql-escopo.ts",
     "mutcheck:selftest": "bash scripts/mutcheck.sh --selftest",
     "wt": "bash scripts/new-worktree.sh",
     "wt:status": "bash scripts/wt-status.sh",

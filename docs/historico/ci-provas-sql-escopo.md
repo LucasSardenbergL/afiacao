@@ -40,6 +40,11 @@ O desenho segue o padrão do `mutcheck-escopo`: um job novo, `provas-sql-escopo`
 
 Na simulação sobre os 100 PRs mergeados até 2026-11-04 (árvore de hoje), **49 pulam**. Nenhum dos que tocavam só os prefixos inertes foi barrado por uma exceção calculada; os 51 que rodam tocam `db/`, `supabase/`, `scripts/`, `.github/` ou a raiz.
 
+### Dois tropeços da entrega
+
+- **O regex de citação nascia cego à forma mais comum.** A 1ª versão exigia que o caractere antes de `src/` não fosse `/`, e as provas citam caminho como `"$REPO_ROOT/src/…"`, justamente com `/` antes. A âncora sobre a árvore real passou mesmo assim, porque os mesmos arquivos também aparecem em prosa ou por import em outros lugares; foi o caso unitário com `$REPO_ROOT` que ficou vermelho, no local e no CI. Agora a âncora aceita `$VAR/`, `${VAR}/` e `$(…)/`, e vale também para `scripts/…` citado assim, que entra no fecho. Lição: âncora sobre a árvore real prova o CONJUNTO, não o MECANISMO; cada forma de citar precisa do seu caso.
+- **O escopo é step OPACO de propósito.** Com nome no `package.json` (`provas-sql:escopo`) ele virou "gate novo" para o `exclusividade` (`GATE_NOVO_SEM_EXCLUSIVIDADE`: exigiria medição contra defeitos de algo que não reprova conteúdo). Ele é invocado como `bun ./scripts/provas-sql-escopo.ts …`, fora do censo de gates, e fica visível nos contadores de bloqueantes-sem-script dos dois gates, como o `bash db/roda-nucleo-ci.sh`.
+
 ## CI-GIT
 
 O job `typecheck` passou para checkout raso. Ele só instala e roda os 2 `tsc` (`tsconfig.app.json` e `scripts:typecheck`), e nenhum dos dois lê git. O `fetch-depth: 0` existia pelo `sonda:bump`, que mora no `edges-e-build` desde o fan-out. O comentário no job explica o motivo dos outros jobs e diz que um step novo que leia git precisa devolver o `fetch-depth: 0`.
