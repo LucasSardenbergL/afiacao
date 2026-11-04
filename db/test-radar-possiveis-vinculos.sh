@@ -196,7 +196,12 @@ eq "A12 cliente só-profiles: o gestor vê, por telefone (9º dígito cortado) +
    "$(res "$GESTOR" 18888888000101)" "28888888000101/forte/endereco+telefone/-/C8 PERFIL ME"
 eq "A13 lead que já é cliente não devolve nada" "$(res "$GESTOR" 21111111000101)" "-"
 
-expl() { Pq -c "SET enable_seqscan = off; EXPLAIN $1" | grep -c "$2" || true; }
+# O índice tem de ser usado pela CONDIÇÃO (Index Cond), não varrido inteiro só porque o seqscan está desligado
+# (a sabotagem indice_email_errado mostrou isso: a expressão errada ainda aparecia no plano, com Filter).
+expl() {
+  local plano; plano="$(Pq -c "SET enable_seqscan = off; EXPLAIN $1")"
+  if printf '%s\n' "$plano" | grep -q "$2" && printf '%s\n' "$plano" | grep -q "Index Cond"; then echo 1; else echo 0; fi
+}
 eq "A14 índice de e-mail casa com a expressão da RPC" \
    "$(expl "SELECT 1 FROM public.radar_empresas e WHERE e.email IS NOT NULL AND lower(btrim(e.email)) = 'x@y.z';" idx_radar_empresas_email_norm)" "1"
 eq "A15 índice de CEP casa com o join da RPC" \
