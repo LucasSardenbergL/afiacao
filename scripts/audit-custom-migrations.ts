@@ -98,6 +98,9 @@ const OBSOLETE: Record<string, string> = {
   'idx_data_health_freshness_cols::idx_inventory_position_synced_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
   'idx_data_health_freshness_cols::idx_omie_products_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
   'idx_data_health_freshness_cols::idx_product_costs_updated_at': 'drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)',
+  // Mesma causa em contas a pagar (plano v5, lote 11 — docs/historico/hot-contas-pagar-lote11.md).
+  // idx_fin_contas_receber_updated_at fica DE PROPÓSITO (decisão medida): a ausência dele seria ❌ real.
+  'idx_data_health_freshness_cols::idx_fin_contas_pagar_updated_at': 'drop — 20261104120000_hot_contas_pagar_sem_indice_carimbo (bloqueava HOT)',
 };
 
 interface MigrationAudit {
