@@ -1,7 +1,7 @@
 import { Component, Suspense, type ReactNode } from 'react';
 import { readFileSync } from 'node:fs';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Outlet, Route, Routes, createRoutesFromElements } from 'react-router-dom';
+import { MemoryRouter, Navigate, Outlet, Route, Routes, createRoutesFromElements } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ATRASO_INTENCAO_MS,
@@ -9,7 +9,7 @@ import {
   lazyRota,
   prefetchRota,
   registrarRotas,
-  tratarFalhaDeChunk,
+  instalarRecuperacaoDeChunk,
   usePrefetchRota,
 } from '@/lib/preload-rota';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -24,11 +24,13 @@ vi.mock('@/components/shell/SaidaComFilaPendente', () => ({
 
 const pagina = (texto: string) => () => Promise.resolve({ default: () => <p>{texto}</p> });
 
-/** Imita o `__vitePreload`: dispara `vite:preloadError` dentro da cadeia e rejeita. */
+/** Imita o `__vitePreload` (5.4): dispara `vite:preloadError` com o erro em `payload`
+ *  DENTRO da cadeia e rejeita com o MESMO objeto. */
 const falhaComoVite = () =>
   Promise.resolve().then(() => {
-    window.dispatchEvent(new Event('vite:preloadError', { cancelable: true }));
-    throw new TypeError('Failed to fetch dynamically imported module');
+    const erro = new TypeError('Failed to fetch dynamically imported module');
+    window.dispatchEvent(Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: erro }));
+    throw erro;
   });
 
 const esvaziar = () => act(() => new Promise((r) => setTimeout(r, 0)));
@@ -108,15 +110,17 @@ describe('loader único (F1): prefetch e lazy usam o MESMO carregador', () => {
 });
 
 describe('falha de chunk: prefetch é silencioso, navegação real recarrega', () => {
-  const instalar = () => {
-    const recarregar = vi.fn();
-    const ouvinte = () => tratarFalhaDeChunk(recarregar);
-    window.addEventListener('vite:preloadError', ouvinte);
-    return { recarregar, remover: () => window.removeEventListener('vite:preloadError', ouvinte) };
-  };
+  let recarregar: ReturnType<typeof vi.fn>;
+  let remover: () => void;
+  beforeEach(() => {
+    recarregar = vi.fn();
+    remover = instalarRecuperacaoDeChunk(recarregar);
+  });
+  afterEach(() => remover());
 
-  it('prefetch que rejeita NÃO recarrega; a navegação real com o mesmo chunk recarrega 1×', async () => {
-    const { recarregar, remover } = instalar();
+  const comFronteira = (no: ReactNode) => render(<Fronteira><Suspense fallback={<p>carregando</p>}>{no}</Suspense></Fronteira>);
+
+  it('prefetch que rejeita NÃO recarrega; a navegação real dessa rota recarrega 1× antes de carregar', async () => {
     const carregar = vi.fn(falhaComoVite);
     const Pagina = lazyRota(carregar);
     registrarRotas(createRoutesFromElements(<Route path="/x" element={<Pagina />} />));
@@ -126,21 +130,89 @@ describe('falha de chunk: prefetch é silencioso, navegação real recarrega', (
     expect(carregar).toHaveBeenCalledTimes(1);
     expect(recarregar).not.toHaveBeenCalled();
 
-    // controle na mesma invocação: o caminho real ainda recarrega
-    const erroReact = vi.spyOn(console, 'error').mockImplementation(() => {});
-    render(<Fronteira><Suspense fallback={null}><Pagina /></Suspense></Fronteira>);
-    expect(await screen.findByText('quebrou')).toBeTruthy();
-    expect(carregar).toHaveBeenCalledTimes(2);
+    // controle na mesma invocação: o caminho real recarrega (o CSS visto pelo Vite não
+    // geraria novo evento, então a recuperação não pode depender dele)
+    comFronteira(<Pagina />);
+    await esvaziar();
     expect(recarregar).toHaveBeenCalledTimes(1);
-    erroReact.mockRestore();
-    remover();
+    expect(carregar).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('carregando')).toBeTruthy();
   });
 
-  it('a guarda anti-loop segue valendo para a navegação real', () => {
-    const recarregar = vi.fn();
-    tratarFalhaDeChunk(recarregar);
-    tratarFalhaDeChunk(recarregar);
+  it('navegação real que falha sem prefetch recarrega 1× pelo evento', async () => {
+    const Pagina = lazyRota(vi.fn(falhaComoVite));
+    const erroReact = vi.spyOn(console, 'error').mockImplementation(() => {});
+    comFronteira(<Pagina />);
+    expect(await screen.findByText('quebrou')).toBeTruthy();
+    await esvaziar();
     expect(recarregar).toHaveBeenCalledTimes(1);
+    erroReact.mockRestore();
+  });
+
+  it('prefetch de A falha com a navegação real de B saudável em voo: não recarrega', async () => {
+    let liberarB: (m: { default: () => JSX.Element }) => void = () => {};
+    const a = vi.fn(falhaComoVite);
+    const b = vi.fn(() => new Promise<{ default: () => JSX.Element }>((r) => { liberarB = r; }));
+    const [A, B] = [a, b].map((c) => lazyRota(c));
+    registrarRotas(createRoutesFromElements(<Route path="/a" element={<A />} />));
+
+    comFronteira(<B />);
+    prefetchRota('/a');
+    await esvaziar();
+    expect(recarregar).not.toHaveBeenCalled();
+    await act(async () => liberarB({ default: () => <p>pagina-b</p> }));
+    expect(await screen.findByText('pagina-b')).toBeTruthy();
+    expect(recarregar).not.toHaveBeenCalled();
+  });
+
+  it('import NÃO-rota falha com prefetch em voo: a recuperação recarrega', async () => {
+    const a = vi.fn(() => new Promise<{ default: () => JSX.Element }>(() => {}));
+    const A = lazyRota(a);
+    registrarRotas(createRoutesFromElements(<Route path="/a" element={<A />} />));
+    prefetchRota('/a');
+
+    const evento = Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: new TypeError('outro') });
+    window.dispatchEvent(evento);
+    await esvaziar();
+    expect(recarregar).toHaveBeenCalledTimes(1);
+  });
+
+  it('a guarda anti-loop segue valendo: 2ª falha real não recarrega e a rota tenta carregar', async () => {
+    sessionStorage.setItem('__preload_error_reloaded__', '1');
+    const carregar = vi.fn(falhaComoVite);
+    const Pagina = lazyRota(carregar);
+    registrarRotas(createRoutesFromElements(<Route path="/x" element={<Pagina />} />));
+    prefetchRota('/x');
+    await esvaziar();
+
+    const erroReact = vi.spyOn(console, 'error').mockImplementation(() => {});
+    comFronteira(<Pagina />);
+    expect(await screen.findByText('quebrou')).toBeTruthy();
+    await esvaziar();
+    expect(carregar).toHaveBeenCalledTimes(2);
+    expect(recarregar).not.toHaveBeenCalled();
+    erroReact.mockRestore();
+  });
+});
+
+describe('redirects estáticos (F1): entrada por <Navigate> pré-carrega o destino', () => {
+  it('segue o `to` absoluto (com query) e corta ciclo', () => {
+    const novo = vi.fn(pagina('novo'));
+    const Novo = lazyRota(novo);
+    registrarRotas(
+      createRoutesFromElements(
+        <>
+          <Route path="/velho" element={<Navigate to="/meio" replace />} />
+          <Route path="/meio" element={<Navigate to="/novo?tab=x" replace />} />
+          <Route path="/novo" element={<Novo />} />
+          <Route path="/ciclo-a" element={<Navigate to="/ciclo-b" replace />} />
+          <Route path="/ciclo-b" element={<Navigate to="/ciclo-a" replace />} />
+        </>,
+      ),
+    );
+    prefetchRota('/velho');
+    expect(novo).toHaveBeenCalledTimes(1);
+    expect(() => prefetchRota('/ciclo-a')).not.toThrow();
   });
 });
 

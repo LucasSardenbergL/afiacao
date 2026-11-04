@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { acompanharRegistro, aplicadorPadrao } from "./lib/pwa-atualizacao";
-import { prefetchRota, tratarFalhaDeChunk } from "./lib/preload-rota";
+import { instalarRecuperacaoDeChunk, prefetchRota } from "./lib/preload-rota";
 
 /** Carimbo de build: o Vite (`define`) substitui por uma string literal com o short SHA
  *  do commit, ou "dev" se o build não tiver git. O cron/verify-frontend.sh grepa o SHA
@@ -64,7 +64,7 @@ if (isInLovablePreview || isInIframe) {
 // ao carregar — causa #1 de tela branca/spinner pós-deploy (o chunk hash velho
 // sumiu do servidor). Recarrega 1× pra buscar os chunks novos (guarda anti-loop),
 // mas NÃO quando a falha é só de prefetch (F5): quem recarrega é a navegação real.
-window.addEventListener("vite:preloadError", () => tratarFalhaDeChunk());
+instalarRecuperacaoDeChunk();
 
 // F1: o chunk da rota de entrada começa a baixar já, em paralelo à checagem de auth.
 // Só baixa: o render continua atrás do ProtectedRoute.

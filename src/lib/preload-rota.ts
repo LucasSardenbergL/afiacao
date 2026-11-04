@@ -11,13 +11,15 @@
  * - F5: a sidebar chama `usePrefetchRota(path)` ao apontar (com atraso de intenção) ou focar.
  *
  * Prefetch é especulativo: se o chunk sumiu (deploy novo, SW velho), o Vite dispara
- * `vite:preloadError` e o handler global do `main.tsx` recarregaria a página. O
- * `tratarFalhaDeChunk` só recarrega quando há um carregamento REAL (o do `lazy`) em voo.
- * Falha só de prefetch é silenciosa. A navegação real que vier depois falha de novo e
- * aí, sim, recarrega.
+ * `vite:preloadError` e o reload global recarregaria a página. A recuperação
+ * (`instalarRecuperacaoDeChunk`) atribui a falha pelo objeto de erro (`payload` do evento, o
+ * mesmo que rejeita a promise) e só a ignora quando ele veio SÓ de prefetch. Falha real
+ * (página, import não-rota) segue recarregando 1×. A navegação real de uma rota cujo prefetch
+ * falhou recarrega antes de carregar: o Vite marca a dependência CSS como vista antes de
+ * baixá-la, então a 2ª tentativa renderizaria sem CSS e sem novo evento.
  */
 import { isValidElement, lazy, useEffect, useMemo, useRef, Children, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
-import { matchRoutes, type RouteObject } from 'react-router-dom';
+import { Navigate, matchRoutes, type RouteObject } from 'react-router-dom';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mesmo contrato do React.lazy
 type Pagina = ComponentType<any>;
@@ -25,18 +27,41 @@ type Carregador = () => Promise<{ default: Pagina }>;
 
 const carregadores = new WeakMap<object, Carregador>();
 const jaPedidos = new Set<Carregador>();
+const falhouNoPrefetch = new Set<Carregador>();
+let errosEspeculativos = new WeakSet<object>();
+let errosReais = new WeakSet<object>();
 let rotas: RouteObject[] = [];
-let reaisEmVoo = 0;
-let especulativosEmVoo = 0;
+let recarregar: () => void = () => window.location.reload();
 
 /** Atraso de intenção do ponteiro: passar o mouse por cima da sidebar não baixa tudo. */
 export const ATRASO_INTENCAO_MS = 80;
+/** Teto de redirects estáticos (`<Navigate to>`) seguidos pelo prefetch; corta ciclo. */
+const MAX_REDIRECTS = 3;
+
+const marcar = (conjunto: WeakSet<object>, erro: unknown) => {
+  if (erro !== null && typeof erro === 'object') conjunto.add(erro);
+};
+
+/** Recarrega 1× por sessão (guarda anti-loop). Devolve se recarregou. */
+function recarregarUmaVez(): boolean {
+  try {
+    if (sessionStorage.getItem('__preload_error_reloaded__')) return false;
+    sessionStorage.setItem('__preload_error_reloaded__', '1');
+  } catch {
+    // sessionStorage indisponível: ainda assim recarrega (sem guarda).
+  }
+  recarregar();
+  return true;
+}
 
 export function lazyRota<T extends Pagina>(carregar: () => Promise<{ default: T }>): LazyExoticComponent<T> {
   const Componente = lazy(() => {
-    reaisEmVoo++;
-    return carregar().finally(() => {
-      reaisEmVoo--;
+    if (falhouNoPrefetch.has(carregar) && recarregarUmaVez()) {
+      return new Promise<{ default: T }>(() => {}); // a página está recarregando
+    }
+    return carregar().catch((erro: unknown) => {
+      marcar(errosReais, erro);
+      throw erro;
     });
   });
   carregadores.set(Componente, carregar);
@@ -64,23 +89,30 @@ function semRede(): boolean {
   return navigator.onLine === false || conexao?.saveData === true;
 }
 
+function prefetchCarregador(carregar: Carregador): void {
+  if (jaPedidos.has(carregar)) return;
+  jaPedidos.add(carregar);
+  carregar().catch((erro: unknown) => {
+    // silencioso de propósito: quem decide recarregar é a navegação real
+    marcar(errosEspeculativos, erro);
+    falhouNoPrefetch.add(carregar);
+  });
+}
+
 /** Baixa o chunk da rota de `caminho` sem renderizar nada. Nunca lança e nunca recarrega. */
-export function prefetchRota(caminho: string): void {
+export function prefetchRota(caminho: string, redirects = 0): void {
   if (semRede()) return;
   const pathname = caminho.split(/[?#]/)[0];
   for (const { route } of matchRoutes(rotas, pathname) ?? []) {
-    for (const carregar of carregadoresDoElemento(route.element)) {
-      if (jaPedidos.has(carregar)) continue;
-      jaPedidos.add(carregar);
-      especulativosEmVoo++;
-      carregar()
-        .catch(() => {
-          // silencioso de propósito: quem decide recarregar é a navegação real
-        })
-        .finally(() => {
-          especulativosEmVoo--;
-        });
+    const elemento = route.element;
+    if (isValidElement(elemento) && elemento.type === Navigate) {
+      const destino = (elemento.props as { to?: unknown }).to;
+      if (typeof destino === 'string' && destino.startsWith('/') && redirects < MAX_REDIRECTS) {
+        prefetchRota(destino, redirects + 1);
+      }
+      continue;
     }
+    carregadoresDoElemento(elemento).forEach(prefetchCarregador);
   }
 }
 
@@ -102,24 +134,30 @@ export function usePrefetchRota(caminho: string) {
 }
 
 /**
- * Handler de `vite:preloadError` (chunk ausente pós-deploy): recarrega 1× para buscar os
- * chunks novos (guarda anti-loop em sessionStorage), EXCETO quando só há prefetch em voo.
+ * Ouve `vite:preloadError` (chunk ausente pós-deploy) e recarrega 1× para buscar os chunks
+ * novos, EXCETO quando o erro veio só de prefetch. A decisão espera um macrotask: a promise
+ * que rejeitou com o mesmo `payload` já passou pelos `.catch` acima e foi classificada.
  */
-export function tratarFalhaDeChunk(recarregar: () => void = () => window.location.reload()): void {
-  if (especulativosEmVoo > 0 && reaisEmVoo === 0) return;
-  try {
-    if (sessionStorage.getItem('__preload_error_reloaded__')) return;
-    sessionStorage.setItem('__preload_error_reloaded__', '1');
-  } catch {
-    // sessionStorage indisponível: ainda assim recarrega (sem guarda).
-  }
-  recarregar();
+export function instalarRecuperacaoDeChunk(recarregarPagina?: () => void): () => void {
+  if (recarregarPagina) recarregar = recarregarPagina;
+  const ouvinte = (evento: Event) => {
+    const erro = (evento as Event & { payload?: unknown }).payload;
+    setTimeout(() => {
+      const temObjeto = erro !== null && typeof erro === 'object';
+      if (temObjeto && errosEspeculativos.has(erro) && !errosReais.has(erro)) return;
+      recarregarUmaVez();
+    }, 0);
+  };
+  window.addEventListener('vite:preloadError', ouvinte);
+  return () => window.removeEventListener('vite:preloadError', ouvinte);
 }
 
 /** Só para testes: zera o estado do módulo entre casos. */
 export function __resetarPreloadRota(): void {
   jaPedidos.clear();
+  falhouNoPrefetch.clear();
+  errosEspeculativos = new WeakSet();
+  errosReais = new WeakSet();
   rotas = [];
-  reaisEmVoo = 0;
-  especulativosEmVoo = 0;
+  recarregar = () => window.location.reload();
 }
