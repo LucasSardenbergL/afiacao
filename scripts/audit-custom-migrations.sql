@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 773
+-- Total de custom migrations: 774
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -14,7 +14,7 @@
 -- Read-only — não altera nada no banco.
 -- ========================================================================
 
--- 39 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
+-- 40 objeto(s) OBSOLETO(s) excluído(s) do inventário (criados por uma migration,
 -- removidos/renomeados por outra — NÃO são bug; ver OBSOLETE em scripts/audit-custom-migrations.ts):
 --   • rls_policy public.kb_product_specs_insert_staff (kb_specs_and_competitors) — substituída → kb_product_specs_insert_master (hardening)
 --   • rls_policy public.Staff can view recalc queue (scoring_v2_signal_modifiers) — substituída → Master can view recalc queue (20260718100000_filas_recalc_rls_master_only)
@@ -44,6 +44,7 @@
 --   • index public.idx_inventory_position_synced_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
 --   • index public.idx_omie_products_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
 --   • index public.idx_product_costs_updated_at (idx_data_health_freshness_cols) — drop — 20261101222916_hot_carimbo_sync_sem_indice (bloqueava HOT)
+--   • index public.idx_fin_contas_pagar_updated_at (idx_data_health_freshness_cols) — drop — 20261104120000_hot_contas_pagar_sem_indice_carimbo (bloqueava HOT)
 --   • rls_policy public.Staff lê log de auto-aprovação (reposicao_auto_aprovacao_v2) — substituída → reposicao_auto_aprovacao_log_sel (fu4h)
 --   • rls_policy public.regua_preco_log_staff_all (regua_preco) — substituída → regua_preco_log_select_custo (20260723150000_authz_custo_fu4f_fase2_regua)
 --   • index public.idx_customer_metrics_mv_uid (recencia_mv_order_date_kpi) — MV movida para private (20261001014100_universo_pedidos_recencia); o índice vive em private.customer_metrics_mv
@@ -840,7 +841,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104020000', 'tint_watchdog_fase5_v6_indices', '20261104020000_tint_watchdog_fase5_v6_indices.sql'),
   ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql'),
   ('20261104110000', 'tint_promote_snap_fonte_so_com_expansao', '20261104110000_tint_promote_snap_fonte_so_com_expansao.sql'),
-  ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql')
+  ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql'),
+  ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -1796,7 +1798,6 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
@@ -4338,7 +4339,6 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('reposicao_timeout_sync_inventory', 'cron_job', 'cron', 'sync-inventory-colacor-vendas-1h', ''),
   ('retencao_cron_job_run_details', 'cron_job', 'cron', 'purge-cron-job-run-details', ''),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_receber_updated_at', 'fin_contas_receber'),
-  ('idx_data_health_freshness_cols', 'index', 'public', 'idx_fin_contas_pagar_updated_at', 'fin_contas_pagar'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_farmer_client_scores_calculated_at', 'farmer_client_scores'),
   ('idx_data_health_freshness_cols', 'index', 'public', 'idx_pedido_compra_sugerido_data_ciclo', 'pedido_compra_sugerido'),
   ('idx_omie_products_codigo_text_account', 'index', 'public', 'idx_omie_products_codigo_text_account', 'omie_products'),
