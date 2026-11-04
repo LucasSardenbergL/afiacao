@@ -462,10 +462,13 @@ par() { eq "$1" "$(Pq -F '|' -f "$RODADA/ciclo_mig.sql" 2>&1)" "$(Pq -F '|' -f "
 # PLANO: o statement sob a config da PRÓPRIA função viva (proconfig, menos o search_path), em JSON, no
 # banco de ESCALA (zona 2b). Conta
 # os acessos que podem varrer INTEIRA uma das três tabelas que a janela do fase5 lia: Seq Scan, scan
-# de índice sem condição, ou Bitmap Heap Scan cujo bitmap vem de índice sem condição. Exceções: o
-# Index ONLY Scan dos dois índices PARCIAIS (de propósito; `Index Scan` neles sem condição é heap
-# fetch por entrada = vermelho — Codex retroativo P2, 04/11) e a descida logo abaixo de um Limit (a
-# varredura solta de `presentes` lê uma tupla por corante). NÃO prova "nunca lê o heap": com o
+# de índice sem condição, ou Bitmap Heap Scan cujo bitmap vem de índice sem condição. "Sem condição"
+# inclui o Index Cond feito SÓ de `IS NOT NULL` (o btree o aceita como condição, e ele lê o índice
+# inteiro). Os dois índices PARCIAIS são lidos inteiros de propósito, mas só INDEX-ONLY: qualquer
+# leitura deles que vá ao heap (Index Scan, ou bitmap) é vermelha, com ou sem condição (Codex
+# retroativo P2, 04/11 — o plano sabotado era Index Scan com `sku_id IS NOT NULL AND cor_id IS NOT
+# NULL` e passava). Exceção: a descida logo abaixo de um Limit (a varredura solta de `presentes` lê
+# uma tupla por corante). NÃO prova "nunca lê o heap": com o
 # visibility map degradado (promote grande antes do autovacuum) o Index Only Scan vira heap fetch, e a
 # fixture passa por VACUUM ANALYZE. Esse custo é operacional, na proporção do dano (histórico, v6).
 # NÃO pega: hash que derrama por estimativa errada. O da v6 em prod (hash das 490 mil ativas para 260
@@ -473,20 +476,25 @@ par() { eq "$1" "$(Pq -F '|' -f "$RODADA/ciclo_mig.sql" 2>&1)" "$(Pq -F '|' -f "
 # então uma regra para ele seria vigia não falsificável. Quem pega é o EXPLAIN (ANALYZE, BUFFERS) do
 # statement em prod na verificação pós-apply (temp = 0) e a série da janela.
 cat > "$RODADA/pl1.py" <<'PY'
-import sys, json
+import sys, json, re
 GRANDES = {"tint_formulas", "tint_formula_itens", "tint_staging_formulas"}
 INTEIRO_OK = {"idx_tint_formulas_wd5_carimbo", "idx_tint_formulas_wd5_ativas"}
 ruins = []
-def sem_cond(n):   # algum Bitmap Index Scan abaixo (BitmapAnd/Or inclusos) lê o índice inteiro
-    return any((f["Node Type"] == "Bitmap Index Scan" and "Index Cond" not in f) or sem_cond(f)
-               for f in n.get("Plans", []))
+def cond_vazia(n):   # sem Index Cond, ou só termos `col IS NOT NULL` (= o índice inteiro)
+    c = n.get("Index Cond")
+    if not c:
+        return True
+    return all(re.fullmatch(r"\(*\w+ IS NOT NULL\)*", x.strip()) for x in re.split(r"\s+AND\s+", c.strip("()")))
+def sem_cond(n):   # algum Bitmap Index Scan abaixo (BitmapAnd/Or inclusos) lê um parcial ou o índice inteiro
+    return any((f["Node Type"] == "Bitmap Index Scan" and (cond_vazia(f) or f.get("Index Name") in INTEIRO_OK))
+               or sem_cond(f) for f in n.get("Plans", []))
 def anda(n, pai=""):
     if n.get("Relation Name") in GRANDES:
         t = n["Node Type"]
         if t.endswith("Seq Scan"):
             ruins.append(t + ":" + n["Relation Name"])
-        elif t in ("Index Scan", "Index Only Scan") and "Index Cond" not in n and pai != "Limit" \
-                and not (t == "Index Only Scan" and n.get("Index Name") in INTEIRO_OK):
+        elif t in ("Index Scan", "Index Only Scan") and pai != "Limit" and (
+                t == "Index Scan" if n.get("Index Name") in INTEIRO_OK else cond_vazia(n)):
             ruins.append(t + ":" + n["Index Name"])
         elif t == "Bitmap Heap Scan" and sem_cond(n):
             ruins.append(t + ":" + n["Relation Name"])
@@ -524,13 +532,16 @@ suite() {
   extrai_ciclo "$mig" "$RODADA/ciclo_mig.sql" || echo ERRO_SQL >> "$VERM"
   eq PL1 "$(plano)" 0
   # PL1u: o próprio classificador, em planos sintéticos — seq · Index Scan (heap) sem condição no parcial
+  # · Index Scan (heap) no parcial COM `IS NOT NULL` · Index Only em índice comum só com `IS NOT NULL`
   # · Bitmap Heap de índice sem condição | Index Only no parcial · Bitmap Heap com condição (os 2 últimos = 0)
   eq PL1u "$(for j in '{"Node Type":"Seq Scan","Relation Name":"tint_formulas"}' \
       '{"Node Type":"Index Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
+      '{"Node Type":"Index Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo","Index Cond":"((sku_id IS NOT NULL) AND (cor_id IS NOT NULL))"}' \
+      '{"Node Type":"Index Only Scan","Relation Name":"tint_formula_itens","Index Name":"idx_tint_formula_itens_formula","Index Cond":"(formula_id IS NOT NULL)"}' \
       '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas"}]}' \
       '{"Node Type":"Index Only Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
       '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas","Index Cond":"x"}]}'; do
-      printf '[{"Plan":{"Node Type":"Result","Plans":[%s]}}]' "$j" | python3 "$RODADA/pl1.py" 2>/dev/null; done | tr '\n' ' ')" "1 1 1 0 0 "
+      printf '[{"Plan":{"Node Type":"Result","Plans":[%s]}}]' "$j" | python3 "$RODADA/pl1.py" 2>/dev/null; done | tr '\n' ' ')" "1 1 1 1 1 0 0 "
 
   # ── A: estado saudável ──
   P -c "SELECT _reset();" >/dev/null
