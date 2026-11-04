@@ -67,7 +67,20 @@ function recarregarUmaVez(): boolean {
   return true;
 }
 
-export function lazyRota<T extends Pagina>(carregar: () => Promise<{ default: T }>): LazyExoticComponent<T> {
+/**
+ * `prefetchJunto` (lote 6b): quem pré-carrega esta rota também pré-carrega o carregador que a
+ * função devolver (ex.: o dashboard que a home renderizou da última vez). O carregador devolvido
+ * deve ser o MESMO do `lazyRota` que o renderiza. Roda 1× por documento, junto do 1º prefetch da
+ * rota; exceção nele é engolida (é especulativo e não pode derrubar o boot).
+ */
+type OpcoesRota = { prefetchJunto?: () => Carregador | null };
+const prefetchJuntoDe = new WeakMap<Carregador, () => Carregador | null>();
+
+export function lazyRota<T extends Pagina>(
+  carregar: () => Promise<{ default: T }>,
+  opcoes: OpcoesRota = {},
+): LazyExoticComponent<T> {
+  if (opcoes.prefetchJunto) prefetchJuntoDe.set(carregar, opcoes.prefetchJunto);
   const Componente = lazy(async () => {
     // Prefetch em voo: espera o desfecho dele. O Vite já marcou o CSS como visto, então
     // carregar agora resolveria sem esperar o CSS (e sem recuperação se ele falhar).
@@ -120,6 +133,15 @@ function prefetchCarregador(carregar: Carregador): void {
     },
   );
   prefetchEmVoo.set(carregar, emVoo);
+  const junto = prefetchJuntoDe.get(carregar);
+  if (!junto) return;
+  let outro: Carregador | null = null;
+  try {
+    outro = junto();
+  } catch {
+    // especulativo: sem o "junto", a navegação real carrega sob demanda
+  }
+  if (outro) prefetchCarregador(outro);
 }
 
 /** Baixa o chunk da rota de `caminho` sem renderizar nada. Nunca lança e nunca recarrega. */

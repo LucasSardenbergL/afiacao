@@ -236,6 +236,126 @@ describe('falha de chunk: prefetch é silencioso, navegação real recarrega', (
   });
 });
 
+describe('prefetchJunto (lote 6b): a rota pré-carrega também o carregador que ela indicar', () => {
+  let recarregar: ReturnType<typeof vi.fn>;
+  let remover: () => void;
+  beforeEach(() => {
+    recarregar = vi.fn();
+    remover = instalarRecuperacaoDeChunk(recarregar);
+  });
+  afterEach(() => remover());
+
+  it('baixa o junto 1× por documento, e o lazy do junto reusa o MESMO carregador', async () => {
+    const carregarDash = vi.fn(pagina('cockpit'));
+    const Dash = lazyRota(carregarDash);
+    const junto = vi.fn(() => carregarDash);
+    const carregarHome = vi.fn(pagina('home'));
+    const Home = lazyRota(carregarHome, { prefetchJunto: junto });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    prefetchRota('/');
+    expect(carregarHome).toHaveBeenCalledTimes(1);
+    expect(junto).toHaveBeenCalledTimes(1);
+    expect(carregarDash).toHaveBeenCalledTimes(1);
+
+    render(<Suspense fallback={null}><Dash /></Suspense>);
+    expect(await screen.findByText('cockpit')).toBeTruthy();
+    expect(carregarDash).toHaveBeenCalledTimes(2);
+    expect(recarregar).not.toHaveBeenCalled();
+  });
+
+  it('junto que devolve null (sem dica) só baixa a rota', () => {
+    const carregarHome = vi.fn(pagina('home'));
+    const Home = lazyRota(carregarHome, { prefetchJunto: () => null });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    expect(carregarHome).toHaveBeenCalledTimes(1);
+  });
+
+  it('junto que lança é engolido: a rota continua pré-carregada e o boot não quebra', () => {
+    const carregarHome = vi.fn(pagina('home'));
+    const Home = lazyRota(carregarHome, {
+      prefetchJunto: () => {
+        throw new Error('storage quebrado');
+      },
+    });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    expect(() => prefetchRota('/')).not.toThrow();
+    expect(carregarHome).toHaveBeenCalledTimes(1);
+  });
+
+  it('dica errada cujo chunk falha e nunca renderiza: não recarrega, e a rota renderiza', async () => {
+    const carregarDash = vi.fn(falhaComoVite);
+    lazyRota(carregarDash);
+    const Home = lazyRota(pagina('home'), { prefetchJunto: () => carregarDash });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    await esvaziar();
+    expect(carregarDash).toHaveBeenCalledTimes(1);
+
+    render(<Suspense fallback={null}><Home /></Suspense>);
+    expect(await screen.findByText('home')).toBeTruthy();
+    await esvaziar();
+    expect(recarregar).not.toHaveBeenCalled();
+  });
+
+  it('o junto que falhou e DEPOIS renderiza recarrega 1× (o mesmo contrato da rota)', async () => {
+    const carregarDash = vi.fn(falhaComoVite);
+    const Dash = lazyRota(carregarDash);
+    const Home = lazyRota(pagina('home'), { prefetchJunto: () => carregarDash });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    await esvaziar();
+    expect(recarregar).not.toHaveBeenCalled();
+
+    render(<Suspense fallback={<p>carregando</p>}><Dash /></Suspense>);
+    await esvaziar();
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    expect(carregarDash).toHaveBeenCalledTimes(1);
+  });
+
+  it('render do junto com o prefetch dele em voo espera o desfecho', async () => {
+    // uma promise só, como o módulo em cache do navegador
+    let soltar: () => void = () => {};
+    const modulo = new Promise<{ default: () => JSX.Element }>((ok) => {
+      soltar = () => ok({ default: () => <p>cockpit</p> });
+    });
+    const carregarDash = vi.fn(() => modulo);
+    const Dash = lazyRota(carregarDash);
+    const Home = lazyRota(pagina('home'), { prefetchJunto: () => carregarDash });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    render(<Suspense fallback={<p>carregando</p>}><Dash /></Suspense>);
+    await esvaziar();
+    expect(carregarDash).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('carregando')).toBeTruthy();
+
+    await act(async () => soltar());
+    expect(await screen.findByText('cockpit')).toBeTruthy();
+    expect(carregarDash).toHaveBeenCalledTimes(2);
+    expect(recarregar).not.toHaveBeenCalled();
+  });
+
+  it('offline: nem a rota nem o junto baixam', () => {
+    const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
+    const junto = vi.fn(() => null);
+    const carregarHome = vi.fn(pagina('home'));
+    const Home = lazyRota(carregarHome, { prefetchJunto: junto });
+    registrarRotas(createRoutesFromElements(<Route path="/" element={<Home />} />));
+
+    prefetchRota('/');
+    expect(carregarHome).not.toHaveBeenCalled();
+    expect(junto).not.toHaveBeenCalled();
+    online.mockRestore();
+  });
+});
+
 describe('redirects estáticos (F1): entrada por <Navigate> pré-carrega o destino', () => {
   it('segue o `to` absoluto (com query) e corta ciclo', () => {
     const novo = vi.fn(pagina('novo'));

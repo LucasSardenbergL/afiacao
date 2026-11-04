@@ -21,9 +21,11 @@ import { NotificationPrompt } from "@/components/NotificationPrompt";
 import { AppShellLayout } from "@/components/AppShellLayout";
 import { GuardModuloCongelado } from "@/components/GuardModuloCongelado";
 import { PageSkeleton } from "@/components/ui/page-skeleton";
+import { carregadorDaDica } from "@/pages/home/dashboards-home";
 
 // Lazy-loaded pages
-const Index = lazyRota(() => import("./pages/Index"));
+// Lote 6b: pré-carregar `/` baixa também o dashboard da dica (o que a home renderizou da última vez).
+const Index = lazyRota(() => import("./pages/Index"), { prefetchJunto: carregadorDaDica });
 const Orders = lazyRota(() => import("./pages/Orders"));
 const OrderDetail = lazyRota(() => import("./pages/OrderDetail"));
 
