@@ -380,3 +380,20 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Codex** (desenho, gpt-6-astra max, 541 s, 169K tokens): 3 P1 + P2, nenhum P0, nenhum contraexemplo de dados admissível. Integrados: `k` sem MATERIALIZED, a falsificação completa, o PL1 forte e em escala, o ramo do corante NULL (contraexemplo fora das premissas de prod), o lock do apply (dura até o COMMIT) e as sabotagens que faltavam (UNION ALL, DISTINCT de `k`/`k_ret`, `OFFSET 0`, PRE). Ficou de fora o P2 preexistente do empate em `ref` (dois snapshots com os mesmos dois relógios), que já existia na v5 e mudaria a semântica.
 - **Acoplamento com o horário novo (#3576):** a v6 não mexe no cron. A P10 dela exige o job em `30 9,21 * * *`, e o arquivo foi renomeado para `20261104020000`, para ordenar depois do `20261103222735`. Assim um replay de DR aplica o horário antes da v6. Na prova, o efeito do `20261103222735` é reproduzido pelo mesmo `cron.schedule` entre a v5 e a v6. A migration inteira não roda no harness porque a P6 dela lê o corpo real do watchdog de corante, que lá é stub.
 - **v6.1 (`20261104040000`), minutos depois do apply da v6:** a v6 foi aplicada em 04/11 03:43 UTC pelo `db:aplicar`, tentativa #886. Rodei `EXPLAIN (ANALYZE, BUFFERS)` do statement em prod e medi 131 MB do disco, contra os 114 MB previstos pela bancada. Mas apareceram **16 MB de temp**: no ramo dos corantes ruins, o planner de prod fez hash das ~490 mil ativas para casar com 260 itens (`Batches: 2`). A bancada não mostrou isso porque lá o plano é paralelo e divide o hash. A v6.1 busca a fórmula de cada item pela PK (`LATERAL … OFFSET 0`): **temp 0, 11 s** em prod, com as mesmas 11 colunas da v6, que batem com a rodada real das 00:00 (universo 463.995, S1 0, bruto 12.682). O PL1 não pega essa classe: na escala de 5% nem a v6 hasheia, então uma regra para ela seria vigia não falsificável. **Lição:** a forma do plano se prova na fixture em escala; o spill por estimativa errada só aparece em prod. Por isso o `EXPLAIN (ANALYZE, BUFFERS)` do statement em prod, com temp = 0, é etapa obrigatória da verificação pós-apply.
+
+### 2026-11-04 — o temp crônico tem dois donos: promoção de catálogos (~73 MB/15 min) e um leitor de 7,8 MB (~56 MB/15 min)
+
+- **Medida:** `pg_stat_database.temp_bytes` a cada ~19 s, das 09:12 às 09:50 UTC (seg, loja abriu às 10:00), pelo psql-ro. A cada salto, registrei os `cron.job_run_details` vizinhos. Resultado: **335 MB em 2,52 janelas de 15 min = ~133 MB/15 min**, acima do teto de 100 MB do Mini mesmo na janela "limpa".
+
+  | origem | MB/15 min | assinatura |
+  |---|---|---|
+  | **promoção de catálogos**, `tint_promote_sync_run` disparada pelo `tint-promocao-tick` | **~73** | 16 saltos (45–55 MB por ciclo, 5–7 arquivos), sempre 20–100 s depois dos 5 runs `catalogs` do agente (09:15:37, 09:26:04, 09:36:30, 09:46:57; ciclo de ~10,5 min) |
+  | **sem dono** | **~56** | 18 saltos de **7,8 MB em 2 arquivos** (paralelo com 1 worker), a cada 1–2 min, em segundos que não caem no minuto cheio de nenhum cron |
+  | fase5 v6.1 (09:30) | ~4 | 10,5 MB em 3 saltos: o run real quase não derrama mais |
+
+- **Descartado no "sem dono":**
+  - **preparações:** `tint_staging_preparacoes*` tem 0 inserts desde o restart;
+  - **ticks de 15 s:** só leem `tint_sync_runs` por índice;
+  - **`clientes-import-continuacao-1min`:** os saltos não caem no minuto cheio.
+- **Por que o "sem dono" segue sem nome:** o `claude_ro` não lê `pg_stat_statements` (`permission denied for schema extensions`). Também não vê `query_start` nem `query` de outras roles. Atribuir exige `pg_read_all_stats` para o `claude_ro`, que é decisão do founder, ou uma série por `application_name` e `usename`.
+- **Próximo passo, promoção:** achar o statement do ramo `catalogs` de `tint_promote_sync_run` (66 mil caracteres) que faz sort/hash em disco. O método é o mesmo da v6.1: cópia read-only, `EXPLAIN (ANALYZE, BUFFERS)` em prod, depois exigir temp 0. A ordem de grandeza é de 4,8 GB de temp por dia. É money-path (catálogo/preço do tintométrico), com prova PG17 e Codex.
