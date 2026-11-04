@@ -21,24 +21,34 @@ baixar no clique.
 - **F5.** O `SidebarItem` do `AppShell` usa `usePrefetchRota(item.path)`, com 80 ms de intenção de
   ponteiro (passar o mouse por cima não baixa tudo) e prefetch imediato no foco de teclado.
 - **Risco do Codex tratado antes do F5.** Um prefetch de chunk ausente (deploy novo, SW velho)
-  dispara `vite:preloadError`, e o handler global recarregava a página. Agora o handler
-  (`tratarFalhaDeChunk`) só recarrega se um carregamento REAL (o wrapper do `lazy`) estiver em voo.
-  Falha só de prefetch é silenciosa. A navegação real com o mesmo chunk falha de novo e recarrega
-  1×, com a guarda anti-loop intacta.
+  dispara `vite:preloadError`, e o handler global recarregava a página. Agora
+  `instalarRecuperacaoDeChunk` atribui a falha pelo `payload` do evento, que é o mesmo objeto de
+  erro que rejeita a promise. O prefetch marca os seus erros e o `lazy` real marca os dele. A
+  decisão espera um macrotask e ignora só o erro que veio de prefetch. Falha real, de página ou
+  de import não-rota (componente lazy interno, `pwa-update`), segue recarregando 1×.
+- **Rota cujo prefetch falhou recarrega na navegação real, antes de carregar.** O
+  `__vitePreload` marca a dependência CSS como vista antes de baixá-la. Se o CSS falhou no
+  prefetch, a 2ª tentativa resolveria o JS e renderizaria sem CSS, sem novo evento. A guarda
+  anti-loop vale: se já recarregou nesta sessão, carrega normal.
+- **Entrada por redirect.** O prefetch segue `<Navigate to>` absoluto por até 3 saltos (os 19
+  redirects do `App.tsx` são todos literais absolutos).
 - Offline ou `saveData` → não faz prefetch. Assim, uma falha de rede não deixa a navegação real
   presa a um módulo que falhou.
 
 ## Prova
 
-- `src/lib/__tests__/preload-rota.test.tsx` (9 casos): (a) o prefetch e o render chamam o mesmo
+- `src/lib/__tests__/preload-rota.test.tsx` (14 casos): (a) o prefetch e o render chamam o mesmo
   carregador, e o `App.tsx` declara cada `import("./pages/…")` uma vez, dentro de `lazyRota`;
-  (b) um prefetch que rejeita (imitando o `__vitePreload`) não recarrega, e o controle de
-  navegação real na mesma invocação recarrega 1×; (c) o `ProtectedRoute` com auth carregando não
-  renderiza a página mesmo com o chunk pronto. Também cobre o hook (intenção e foco) e o offline.
-- Falsificação: 7 sabotagens, uma por vez (prefetch que recarrega, render antes do auth, loader
-  duplicado na lib, mapa paralelo no App, sem intenção, sem guarda offline, prefetch que ignora
-  wrapper). Todas ficaram vermelhas em `LC_ALL=C` e em `pt_BR.UTF-8`, com controle verde antes e
-  depois na mesma invocação.
+  (b) um prefetch que rejeita (imitando o `__vitePreload` 5.4, com `payload`) não recarrega, e a
+  navegação real dessa rota recarrega 1×. Também cobre a falha real sem prefetch, o prefetch de A
+  falhando com B saudável em voo, o import não-rota falhando com prefetch em voo e a guarda
+  anti-loop; (c) o `ProtectedRoute` com auth carregando não renderiza a página mesmo com o chunk
+  pronto. Fora isso, cobre redirects (com teto), intenção do ponteiro, foco e offline.
+- Falsificação: 13 sabotagens, uma por vez. Todas ficaram vermelhas em `LC_ALL=C` e em
+  `pt_BR.UTF-8` (26/26), com controle verde antes e depois na mesma invocação. Na 1ª rodada, a
+  sabotagem "redirect sem teto" ficou **verde**, o que mostrou que o teste de ciclo não provava
+  o teto (ver Lições). O teste foi trocado.
+- Codex (2 chamadas, `-r high`). 1ª: 4 achados (P1×2, P2×2), todos aplicados.
 
 ## LCP
 
@@ -51,4 +61,8 @@ se mede com a query do PR (builds vistos pela primeira vez depois do Publish).
 - A árvore de `<Route>` em JSX já é um mapa. `createRoutesFromElements` + `matchRoutes` evitam
   manter uma 2ª lista de caminhos que diverge da 1ª.
 - Todo import especulativo passa pelo mesmo `vite:preloadError` da navegação real. Quem recarrega
-  precisa saber **quem** pediu o chunk.
+  precisa saber **quem** pediu o chunk, e contador global de "em voo" não sabe: atribua pelo
+  objeto de erro (`payload`).
+- O `decodePath` do react-router engole qualquer exceção, inclusive o `RangeError` de estouro de
+  pilha. Recursão infinita dentro de `matchRoutes` não lança, só termina. Um teto de recursão se
+  prova pelo efeito além dele, nunca por "não lançou".

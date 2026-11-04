@@ -16,7 +16,12 @@
  * mesmo que rejeita a promise) e só a ignora quando ele veio SÓ de prefetch. Falha real
  * (página, import não-rota) segue recarregando 1×. A navegação real de uma rota cujo prefetch
  * falhou recarrega antes de carregar: o Vite marca a dependência CSS como vista antes de
- * baixá-la, então a 2ª tentativa renderizaria sem CSS e sem novo evento.
+ * baixá-la, então a 2ª tentativa renderizaria sem CSS e sem novo evento. Pelo mesmo motivo a
+ * navegação real espera o prefetch em voo da mesma rota terminar.
+ *
+ * Limite aceito: um import NÃO-rota que rejeite com o MESMO objeto de erro de um prefetch (erro
+ * de AVALIAÇÃO de módulo compartilhado) é tratado como especulativo. Recarregar não conserta
+ * erro de avaliação (o código é o mesmo); a rejeição continua chegando a quem importou.
  */
 import { isValidElement, lazy, useEffect, useMemo, useRef, Children, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { Navigate, matchRoutes, type RouteObject } from 'react-router-dom';
@@ -28,8 +33,13 @@ type Carregador = () => Promise<{ default: Pagina }>;
 const carregadores = new WeakMap<object, Carregador>();
 const jaPedidos = new Set<Carregador>();
 const falhouNoPrefetch = new Set<Carregador>();
-let errosEspeculativos = new WeakSet<object>();
-let errosReais = new WeakSet<object>();
+const prefetchEmVoo = new Map<Carregador, Promise<void>>();
+
+/** Erros vistos por origem. `payload` costuma ser objeto (WeakSet); primitivo (`throw 'x'`) vai no Set. */
+type Erros = { objetos: WeakSet<object>; primitivos: Set<unknown> };
+const novosErros = (): Erros => ({ objetos: new WeakSet(), primitivos: new Set() });
+let errosEspeculativos = novosErros();
+let errosReais = novosErros();
 let rotas: RouteObject[] = [];
 let recarregar: () => void = () => window.location.reload();
 
@@ -38,9 +48,12 @@ export const ATRASO_INTENCAO_MS = 80;
 /** Teto de redirects estáticos (`<Navigate to>`) seguidos pelo prefetch; corta ciclo. */
 const MAX_REDIRECTS = 3;
 
-const marcar = (conjunto: WeakSet<object>, erro: unknown) => {
-  if (erro !== null && typeof erro === 'object') conjunto.add(erro);
+const ehObjeto = (erro: unknown): erro is object => erro !== null && (typeof erro === 'object' || typeof erro === 'function');
+const marcar = (erros: Erros, erro: unknown) => {
+  if (ehObjeto(erro)) erros.objetos.add(erro);
+  else erros.primitivos.add(erro);
 };
+const contem = (erros: Erros, erro: unknown) => (ehObjeto(erro) ? erros.objetos.has(erro) : erros.primitivos.has(erro));
 
 /** Recarrega 1× por sessão (guarda anti-loop). Devolve se recarregou. */
 function recarregarUmaVez(): boolean {
@@ -55,7 +68,10 @@ function recarregarUmaVez(): boolean {
 }
 
 export function lazyRota<T extends Pagina>(carregar: () => Promise<{ default: T }>): LazyExoticComponent<T> {
-  const Componente = lazy(() => {
+  const Componente = lazy(async () => {
+    // Prefetch em voo: espera o desfecho dele. O Vite já marcou o CSS como visto, então
+    // carregar agora resolveria sem esperar o CSS (e sem recuperação se ele falhar).
+    await prefetchEmVoo.get(carregar);
     if (falhouNoPrefetch.has(carregar) && recarregarUmaVez()) {
       return new Promise<{ default: T }>(() => {}); // a página está recarregando
     }
@@ -92,11 +108,18 @@ function semRede(): boolean {
 function prefetchCarregador(carregar: Carregador): void {
   if (jaPedidos.has(carregar)) return;
   jaPedidos.add(carregar);
-  carregar().catch((erro: unknown) => {
-    // silencioso de propósito: quem decide recarregar é a navegação real
-    marcar(errosEspeculativos, erro);
-    falhouNoPrefetch.add(carregar);
-  });
+  const emVoo = carregar().then(
+    () => {
+      prefetchEmVoo.delete(carregar);
+    },
+    (erro: unknown) => {
+      // silencioso de propósito: quem decide recarregar é a navegação real
+      marcar(errosEspeculativos, erro);
+      falhouNoPrefetch.add(carregar);
+      prefetchEmVoo.delete(carregar);
+    },
+  );
+  prefetchEmVoo.set(carregar, emVoo);
 }
 
 /** Baixa o chunk da rota de `caminho` sem renderizar nada. Nunca lança e nunca recarrega. */
@@ -143,8 +166,7 @@ export function instalarRecuperacaoDeChunk(recarregarPagina?: () => void): () =>
   const ouvinte = (evento: Event) => {
     const erro = (evento as Event & { payload?: unknown }).payload;
     setTimeout(() => {
-      const temObjeto = erro !== null && typeof erro === 'object';
-      if (temObjeto && errosEspeculativos.has(erro) && !errosReais.has(erro)) return;
+      if (contem(errosEspeculativos, erro) && !contem(errosReais, erro)) return;
       recarregarUmaVez();
     }, 0);
   };
@@ -156,8 +178,9 @@ export function instalarRecuperacaoDeChunk(recarregarPagina?: () => void): () =>
 export function __resetarPreloadRota(): void {
   jaPedidos.clear();
   falhouNoPrefetch.clear();
-  errosEspeculativos = new WeakSet();
-  errosReais = new WeakSet();
+  prefetchEmVoo.clear();
+  errosEspeculativos = novosErros();
+  errosReais = novosErros();
   rotas = [];
   recarregar = () => window.location.reload();
 }

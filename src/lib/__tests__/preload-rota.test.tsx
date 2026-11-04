@@ -139,6 +139,47 @@ describe('falha de chunk: prefetch é silencioso, navegação real recarrega', (
     expect(screen.getByText('carregando')).toBeTruthy();
   });
 
+  it('navegação que começa com o prefetch ainda em voo espera o desfecho dele (CSS pendente)', async () => {
+    let falhar: () => void = () => {};
+    const carregar = vi.fn(
+      () =>
+        new Promise<{ default: () => JSX.Element }>((_, rejeitar) => {
+          falhar = () => {
+            const erro = new Error('Unable to preload CSS for /assets/x.css');
+            window.dispatchEvent(Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: erro }));
+            rejeitar(erro);
+          };
+        }),
+    );
+    const Pagina = lazyRota(carregar);
+    registrarRotas(createRoutesFromElements(<Route path="/x" element={<Pagina />} />));
+
+    prefetchRota('/x');
+    comFronteira(<Pagina />);
+    await esvaziar();
+    expect(carregar).toHaveBeenCalledTimes(1); // o real não disparou 2º carregamento por cima
+
+    await act(async () => falhar());
+    await esvaziar();
+    expect(recarregar).toHaveBeenCalledTimes(1);
+    expect(carregar).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefetch que rejeita com payload primitivo também é silencioso', async () => {
+    const carregar = vi.fn(() =>
+      Promise.resolve().then(() => {
+        window.dispatchEvent(Object.assign(new Event('vite:preloadError', { cancelable: true }), { payload: 'falhou' }));
+        throw 'falhou';
+      }),
+    );
+    const Pagina = lazyRota(carregar);
+    registrarRotas(createRoutesFromElements(<Route path="/x" element={<Pagina />} />));
+    prefetchRota('/x');
+    await esvaziar();
+    expect(carregar).toHaveBeenCalledTimes(1);
+    expect(recarregar).not.toHaveBeenCalled();
+  });
+
   it('navegação real que falha sem prefetch recarrega 1× pelo evento', async () => {
     const Pagina = lazyRota(vi.fn(falhaComoVite));
     const erroReact = vi.spyOn(console, 'error').mockImplementation(() => {});
