@@ -239,7 +239,7 @@ declare -a CHAMADAS=(
   "l|p_data_abertura_min => '2015-01-01', p_cnae_prefix => '31'"
   "m|p_lote => '2026-10', $REG, p_com_contato => true"
   "n|p_cnae_prefix => '1', p_lote => '2026-08', p_incluir_ja_clientes => true"
-  "o|p_cnae_prefix => '31', p_lote => '2026-10', p_primeira_vista_min => '2026-10-01 00:00+00'"
+  "o|p_cnae_prefix => '31', p_lote => '2026-10', p_primeira_vista_min => '2026-06-01 00:00+00'"
   "p|p_cnae_exato => '4744001', p_status => 'descartado', p_data_abertura_max => '$CORTE'"
 )
 ANTES_DIR="$(dirname "$DATA")/antes"; mkdir -p "$ANTES_DIR"
