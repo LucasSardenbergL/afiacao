@@ -39,7 +39,7 @@ dela. Teste falsificável em `getResumoFinanceiro.test.ts`: as 3 chamadas a `.fr
 ## Decisão
 
 - **CP — SIM: drop do índice + `fillfactor = 80`.** São ~32 k updates/dia, 100% não-HOT, ~258 k entradas de
-  índice/dia. Na prova (abaixo), o HOT vai de 0% para ≥ 99,7% e o WAL do ciclo cai ~80%. O custo é o
+  índice/dia. Na prova (abaixo), o HOT vai de 0% para ≥ 99,7% e o WAL do ciclo cai 65% (com FPI) a 83% (sem). O custo é o
   `max()` do data_health (+6,5 ms quente) e o top-1 do `getLastSyncTime`, que agora corre em paralelo.
 - **CR — NÃO agora.** Com o incremental o volume caiu ~10× (de ~91 k para ~9 k/dia). No PG17 o CR também
   chegaria a ~100% de HOT (incremental: 0% → 100%, WAL do ciclo 1,2 → 0,22 MB), mas o ganho é ~1/3,5 do CP e
@@ -56,11 +56,17 @@ empresa, ~170 B/linha). O upsert é o da edge (todas as colunas do payload, pág
 autocommit, ordem de chave). Cada ciclo tem CHECKPOINT antes (WAL com FPI) e VACUUM depois, e 20 títulos
 abertos viram de status (coluna indexada, update não-HOT legítimo, dentro do denominador).
 
-| variante (8 ciclos pós, mesmo estado aquecido) | pior HOT dos ciclos 6–8 | WAL do 8º ciclo |
-|---|---:|---:|
-| controle (índice, ff100) | 0% | 15,1 MB |
-| drop sem fillfactor | 89,3% | 2,9–4,0 MB |
-| **drop + fillfactor 80 (a migration)** | **99,7%** | **2,6 MB** |
+| variante (8 ciclos pós, mesmo estado aquecido) | pior HOT dos ciclos 6–8 | WAL do ciclo, com FPI | sem FPI |
+|---|---:|---:|---:|
+| controle (índice, ff100) | 0% | 20,2 MB | 15,1 MB |
+| drop sem fillfactor | 89,3% | — | 2,9–4,0 MB |
+| **drop + fillfactor 80 (a migration)** | **99,7%** | **7,05 MB (−65%)** | **2,6 MB (−83%)** |
+
+"Com FPI" = CHECKPOINT antes de cada ciclo (o que a prova versionada faz): as imagens de página inteira do
+heap (848 páginas ≈ 6,9 MB) continuam, e as dos 8 índices somem. A coluna "sem FPI" veio da 1ª versão da
+prova, que não fazia checkpoint por ciclo, e mostra o teto do ganho. O assert foi re-calibrado de < 30% para
+< 50% do controle quando o CHECKPOINT entrou. Foi a 1ª rodada vermelha (35%), e é o ponto P2 do Codex
+confirmado.
 
 Também prova: denominador exato em todo ciclo; heap parado (848 → 848 páginas, máximo dos 8 ciclos); valores
 de negócio intactos (md5); carimbo do último ciclo em toda linha; página não confirmada mantém o carimbo
