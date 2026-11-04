@@ -14,7 +14,7 @@
 # ║   A3 catálogo: função SETOF STABLE SECDEF, ACL = a da antiga, sem PUBLIC/anon; ║
 # ║      cmd/roles/permissive intactos; zero policy chamando a antiga              ║
 # ║   A4 plano: hashed SubPlan · A5 contador: 1 chamada por consulta (antes: N)    ║
-# ║   A6 idempotente · A7 deriva → PRE e nada aplicado · A8 plano genérico         ║
+# ║   A6 idempotente · A7 deriva → PRE e nada aplicado · A8/A8b plano genérico     ║
 # ║   A9 lock_timeout: leitor segurando a tabela → 55P03 e nada aplicado           ║
 # ║  Falsifica (controle verde ANTES, na mesma invocação):                         ║
 # ║   S1 conjunto sem `eligible` → A1 · S2 cobertura sem validade → A1 ·           ║
@@ -24,6 +24,7 @@
 # ║   M3 isolamento REPEATABLE READ → P0 · S7 SubPlan sem hash → A4 ·              ║
 # ║   M4 corpo vivo da ANTIGA mudou → PRE · M5 nova já existe com outro corpo →    ║
 # ║   PRE · M6 reapply com GRANT OPTION → P7 · M7 atraso sem lock → P8 (orçamento) ║
+# ║   · M8 reconferência final dos corpos (P9) com md5 trocado → P9               ║
 # ║  Rodar:  bash db/test-rls-carteira-visibilidade-conjunto.sh > /tmp/t.log 2>&1  ║
 # ║  Locale: PROVA_LOCALE=pt_BR.UTF-8 bash db/test-rls-carteira-visibilidade-…     ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -529,6 +530,18 @@ SELECT set_config('request.jwt.claims', '', false) IS NULL; EXECUTE p;
 SQL
 )
 eq "A8 plano genérico: F1, FC, F1, FX, M, nulo" "$(printf '%s' "$A8" | grep -v '^f$' | tr '\n' ' ')" "c1,c2,c3 c3 c1,c2,c3 - c1,c2,c3,c4,c5,c6,c7 - "
+# A8b — o termo master SEM cap para mascará-lo (carteira_assignments): M, F1, nulo, M.
+A8B=$(Pdb real -tAq <<'SQL'
+SET plan_cache_mode = force_generic_plan;
+SET ROLE authenticated;
+PREPARE q AS SELECT coalesce(string_agg(rotulo, ',' ORDER BY rotulo), '-') FROM public.carteira_assignments;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1"}', false) IS NULL; EXECUTE q;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a2"}', false) IS NULL; EXECUTE q;
+SELECT set_config('request.jwt.claims', '', false) IS NULL; EXECUTE q;
+SELECT set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000a1"}', false) IS NULL; EXECUTE q;
+SQL
+)
+eq "A8b plano genérico sem cap: M, F1, nulo, M" "$(printf '%s' "$A8B" | grep -v '^f$' | tr '\n' ' ')" "c1,c2,c3,c4,c5,c6 c1 - c1,c2,c3,c4,c5,c6 "
 
 # A9 — lock_timeout: um leitor segurando farmer_calls → 55P03, nada aplicado.
 copia base trava
@@ -660,6 +673,11 @@ eq "M6 vermelho certo (P7 ACL)" "$(grep -c 'P7 FALHOU: ACL de EXECUTE de private
 R=$(sabota_arquivo m7 "    n_alter := n_alter + 1;" "    n_alter := n_alter + 1; PERFORM pg_sleep(0.5);")
 eq "M7 atraso → migration aborta" "$R" "ABORTOU"
 eq "M7 vermelho certo (P8)" "$(grep -c 'P8 FALHOU' "$TMPD/apply-m7.log")" "1"
+
+# M8 — P9 tem dente: a reconferência final com um md5 que não bate aborta (não é decoração).
+R=$(sabota_arquivo m8 "'private.carteira_ve_tudo()'::regprocedure) <> '133d950a" "'private.carteira_ve_tudo()'::regprocedure) <> '033d950a")
+eq "M8 P9 com md5 trocado → migration aborta" "$R" "ABORTOU"
+eq "M8 vermelho certo (P9)" "$(grep -c 'P9 FALHOU' "$TMPD/apply-m8.log")" "1"
 
 echo "──────────────────────────────"
 echo "Sabotagens S1-S7: $VERM vermelhas / $FALHAS_S sem dente"

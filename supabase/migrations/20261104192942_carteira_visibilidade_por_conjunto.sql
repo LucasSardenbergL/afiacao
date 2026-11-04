@@ -38,7 +38,11 @@
 --
 -- Anti-deriva (a regra é COPIADA, não referenciada): o corpo vivo de
 -- carteira_visivel_para tem de ser o provado (md5 do prosrc lido na prod em
--- 2026-11-04); as funções novas, se já existirem, têm de ter o corpo desta migration;
+-- 2026-11-04); as funções novas, se já existirem, têm de ter o corpo desta migration
+-- (e então NÃO são recriadas; ausentes, nascem por CREATE sem OR REPLACE, que falha
+-- se outra sessão as criou no meio). Os três md5 são reconferidos no fim (P9), o que
+-- reduz a janela de corrida com um DDL concorrente fora do db:aplicar (que já
+-- serializa os applies) ao intervalo entre o P9 e o COMMIT;
 -- cada policy só é reescrita se o texto atual for IGUAL ao lido na prod, é pulada se
 -- já estiver na forma nova (idempotente) e qualquer outro texto aborta tudo.
 --
@@ -47,9 +51,9 @@
 -- 500 ms limita cada espera (e fica abaixo do deadlock_timeout de 1 s da prod, o que
 -- favorece que a vítima de um ciclo seja a migration); o orçamento GLOBAL (P8, 3 s
 -- desde o início) é conferido depois das travas e de novo no fim, e aborta tudo se
--- estourar. Não limita o tempo de um statement já em curso — esse é o
--- statement_timeout do executor —, mas impede de COMMITAR uma migration que segurou
--- as tabelas por mais que o orçamento.
+-- já tiver estourado NESSES pontos. Não é um teto de retenção das travas: não corta
+-- um statement em curso (isso é o statement_timeout do executor) nem cobre o que
+-- vem depois do último check (recibo do executor e COMMIT).
 --
 -- Premissa (a mesma do v4): a identidade é constante durante o statement — nenhuma
 -- função do public escreve request.jwt* nem troca ROLE.
@@ -92,7 +96,10 @@ $pre$;
 --    customer_user_id é NOT NULL em carteira_assignments: o conjunto não tem NULL.
 --    `(SELECT auth.uid())` para o uid ser InitPlan dentro da função também.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION private.carteira_ve_tudo()
+DO $cria$
+BEGIN
+IF to_regprocedure('private.carteira_ve_tudo()') IS NULL THEN
+CREATE FUNCTION private.carteira_ve_tudo()
  RETURNS boolean
  LANGUAGE sql
  STABLE SECURITY DEFINER
@@ -101,8 +108,11 @@ AS $function$
   SELECT ( SELECT auth.uid() ) IS NOT NULL
      AND COALESCE(public.has_role(( SELECT auth.uid() ), 'master'::app_role), false);
 $function$;
+END IF;
 
-CREATE OR REPLACE FUNCTION private.carteira_clientes_visiveis()
+IF to_regprocedure('private.carteira_clientes_visiveis()') IS NULL THEN
+
+CREATE FUNCTION private.carteira_clientes_visiveis()
  RETURNS SETOF uuid
  LANGUAGE sql
  STABLE SECURITY DEFINER
@@ -121,6 +131,9 @@ AS $function$
      AND c.active
      AND (c.valid_until IS NULL OR c.valid_until > now());
 $function$;
+END IF;
+END
+$cria$;
 
 COMMENT ON FUNCTION private.carteira_ve_tudo() IS
   'Termo master de carteira_visivel_para para o usuário da sessão (auth.uid()). Uso em RLS: (SELECT private.carteira_ve_tudo()). '
@@ -315,6 +328,13 @@ BEGIN
       RAISE EXCEPTION 'P7 FALHOU: authenticated sem EXECUTE em % — toda leitura da carteira daria 42501', f;
     END IF;
   END LOOP;
+
+  -- P9: os três corpos continuam os provados no fim (DDL concorrente desde o PRE).
+  IF (SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.carteira_visivel_para(uuid,uuid)'::regprocedure) <> '617e334077b954b06b1bce3ade5a3fab'
+     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.carteira_ve_tudo()'::regprocedure) <> '133d950a1e9c3bfeb5e49d6e44802148'
+     OR (SELECT md5(prosrc) FROM pg_proc WHERE oid = 'private.carteira_clientes_visiveis()'::regprocedure) <> '19299da046e044f1838c342eaab3539d' THEN
+    RAISE EXCEPTION 'P9 FALHOU: o corpo de uma das funções da carteira mudou durante a migration — re-tentar';
+  END IF;
 
   IF clock_timestamp() - current_setting('afiacao.carteira_conj_t0')::timestamptz > interval '3 seconds' THEN
     RAISE EXCEPTION 'P8 FALHOU: orçamento de 3 s estourado ao fim — re-tentar mais tarde';

@@ -3352,6 +3352,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
   ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
 ),
 obj_status AS (
@@ -5907,6 +5908,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
   ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
 )
 SELECT

@@ -12,37 +12,45 @@ Oito policies chamavam `private.carteira_visivel_para(customer_user_id, uid)`. �
 A regra da função é `uid IS NOT NULL AND (master(uid) OR c ∈ dono-elegível(uid) OR c ∈ cobertura-ativa-vigente(uid))`. Nenhum dos três termos depende da linha, exceto a pertença de `c`. Então:
 
 ```sql
-( SELECT has_role(( SELECT auth.uid() AS uid), 'master'::app_role) AS has_role)
-OR (customer_user_id IN ( SELECT private.carteira_clientes_visiveis(( SELECT auth.uid() AS uid))))
+( SELECT private.carteira_ve_tudo() AS carteira_ve_tudo)
+OR (customer_user_id IN ( SELECT private.carteira_clientes_visiveis() AS carteira_clientes_visiveis))
 ```
 
+- As duas funções **não recebem uid**: leem `( SELECT auth.uid() )` por dentro, para que ninguém consiga enumerar a carteira de outro usuário chamando-as (achado do Codex). O termo master fica numa função própria, e não em `has_role` direto na policy, para que a policy só chame funções com a ACL da antiga: assim a fronteira de privilégio não muda.
 - O termo master é InitPlan. Ele **não** pode ir para dentro da função de conjunto: o master vê também linhas com `customer_user_id` NULL (`farmer_calls`) e clientes fora de `carteira_assignments`, e nenhum conjunto de clientes reproduz isso.
-- `private.carteira_clientes_visiveis(uid)` é `SETOF uuid`, `STABLE SECURITY DEFINER`, `search_path=public`, com os dois EXISTS da antiga reescritos como `UNION`. O planejador executa o `IN (SELECT …)` como **hashed SubPlan**: uma chamada por consulta.
+- `private.carteira_clientes_visiveis()` é `SETOF uuid`, `STABLE SECURITY DEFINER`, `search_path=public`, com os dois EXISTS da antiga reescritos como `UNION`. O planejador executa o `IN (SELECT …)` como **hashed SubPlan**: uma chamada por consulta.
 - Inlinar o corpo direto na policy não serve: a policy de `carteira_assignments` leria a própria tabela e a RLS entraria em recursão. A função SECDEF (dona `postgres`, BYPASSRLS) lê sem RLS, como a antiga.
 - **NULL × false:** com `customer_user_id` NULL, `x IN (…)` dá NULL onde a antiga dava false. Policy só aceita TRUE (no USING e no WITH CHECK) e nenhuma das 8 nega o termo, então o conjunto é o mesmo. A prova compara `IS TRUE` ponto a ponto.
-- **ACL:** função nova nasce com EXECUTE para PUBLIC. A migration revoga PUBLIC e anon e copia, via `aclexplode`, os grantees de EXECUTE da antiga (authenticated, service_role, os dois `sandbox_exec*`). A pós-condição exige ACL igual.
+- **ACL:** função nova nasce com EXECUTE para PUBLIC. A migration revoga PUBLIC e anon e copia, via `aclexplode`, os grantees de EXECUTE da antiga (authenticated, service_role, os dois `sandbox_exec*`). A pós-condição exige a mesma ACL, comparando papel e `is_grantable`, e o mesmo dono.
 - `carteira_visivel_para` **fica**: 9 funções a chamam.
 
-A migration trava cada tabela antes de reler a policy, só reescreve se o texto for **igual ao lido na prod** (anti-deriva), pula se já estiver na forma nova (idempotente) e aborta em qualquer outro texto. As pós-condições P0–P7 rodam na mesma transação: isolamento, cmd/roles/permissive intactos, a outra cláusula intacta, texto gravado = texto provado, 8 de 8, zero policy chamando a antiga, atributos da função e ACL.
+A regra é **copiada**, não referenciada. Por isso o PRE exige que o corpo vivo de `carteira_visivel_para` seja o provado (md5 do `prosrc` da prod, igual ao do fixture), e que as funções novas, se já existirem, tenham o corpo desta migration. Nesse caso elas não são recriadas; se estiverem ausentes, nascem por `CREATE` sem `OR REPLACE`. Os três md5 são reconferidos no fim (P9). A migration trava cada tabela antes de reler a policy, só reescreve se o texto for **igual ao lido na prod** (anti-deriva), pula se já estiver na forma nova (idempotente) e aborta em qualquer outro texto. As pós-condições P0–P9 rodam na mesma transação: isolamento, cmd/roles/permissive intactos, a outra cláusula intacta, texto gravado = texto provado, 8 de 8, zero policy chamando a antiga, atributos e dono das funções, ACL, os corpos reconferidos e um orçamento global de 3 s. O orçamento é conferido depois das travas e no fim: rejeita quem já estourou nesses pontos, mas não é um teto de quanto tempo as travas ficam seguras.
 
-## A prova (PG17, C e pt_BR.UTF-8, 55/55)
+## A prova (PG17, C e pt_BR.UTF-8, 67/67)
 
 Tabelas mínimas com tipo e nulidade da prod, as três funções e as 8 policies **verbatim** (pg_get_expr), grants de tabela e função como na prod (inclusive o grant por coluna de `farmer_client_scores`). RLS real: `SET ROLE` + `request.jwt.claims`, com o corpo do `auth.uid()` da prod.
 
 | Camada | O que prova |
 |---|---|
 | C0 | a sonda distingue chamadores: valores absolutos antes da migration (dono vê só o elegível, master vê cliente NULL, cobertura expirada/inativa não vê, sem `valid_until` vê, anon leva 42501…) |
-| A1 | 13 chamadores × (7 SELECT + 29 INSERT candidatos em `visitas_agendadas`) = 468 sondas: o conjunto é o mesmo antes e depois |
+| A1 | 15 chamadores × (7 SELECT + 29 INSERT candidatos em `visitas_agendadas`) = 540 sondas: o conjunto é o mesmo antes e depois. Inclui os dois `sandbox_exec*` com BYPASSRLS, como na prod |
 | A2 | cada cláusula, ponto a ponto, por chamador: `(antiga IS TRUE) IS DISTINCT FROM (nova IS TRUE)` = 0, com 171 pares TRUE/TRUE (não-vazia) |
 | A3 | catálogo: SETOF STABLE SECDEF, ACL = a da antiga, sem PUBLIC/anon, cmd/roles intactos, antiga presente |
 | A4/A5 | plano com `hashed SubPlan`; contador (`track_functions`): antes 7 chamadas para 7 linhas, depois 1 |
-| A6–A9 | idempotente; deriva → PRE e nada aplicado; plano genérico alternando usuário; leitor segurando tabela → 55P03 e nada aplicado |
-| S1–S6 | sabotagens depois do apply: conjunto sem `eligible`, cobertura sem validade, sem termo master (A1 e A2), WITH CHECK sem o conjunto, EXECUTE para anon, policy de volta à função por linha (A4 e A5): 8 vermelhas |
-| M1–M3 | pós-condições da própria migration, com controle intacto verde: sem REVOKE PUBLIC → P7; termo fora da forma do PG → P3; REPEATABLE READ → P0 |
+| A6–A9 | idempotente; deriva → PRE e nada aplicado; plano genérico alternando usuário (A8b em `carteira_assignments`, onde nenhum termo cap mascara o master); leitor segurando tabela → 55P03 e nada aplicado |
+| S1–S7 | sabotagens depois do apply: conjunto sem `eligible`, cobertura sem validade, sem termo master (A1 e A2), WITH CHECK sem o conjunto, EXECUTE para anon, policy de volta à função por linha (A4 e A5), SRF com `ROWS 1e9` fazendo o planejador desistir do hash (A4): 9 vermelhas |
+| M1–M8 | PRE e pós-condições da própria migration, com controle intacto verde: sem REVOKE PUBLIC → P7; termo fora da forma do PG → P3; REPEATABLE READ → P0; corpo da antiga endurecido com as policies intactas → PRE; nova já existente com outro corpo → PRE; reapply com GRANT OPTION → P7; atraso sem contenção de lock → P8; md5 trocado na reconferência final → P9 |
 
 ## Codex
 
-_(preenchido após o parecer)_
+- **Desenho e código** (xhigh, 250 s, 133 mil tokens): **APLICAR COM AJUSTES**, sem P0. Todos os ajustes foram feitos e cada um ganhou sabotagem:
+  1. *(P1)* A anti-deriva protegia as policies, mas não a regra copiada. Agora há um PRE por md5 do corpo da antiga e da nova (M4, M5).
+  2. *(P1)* "500 ms × 8" limita cada espera, não o tempo segurando as travas. Voltou o orçamento global do v4 (P8, M7).
+  3. *(P2)* A função de conjunto com `_uid` deixava enumerar a carteira de outro usuário. As funções ficaram sem argumento.
+  4. *(P2)* O P7 comparava só os destinatários. Agora compara também `is_grantable` e o dono (M6).
+  5. *(P2)* `has_role` direto na policy mudava a fronteira de privilégio para `sandbox_exec`. Na prod os dois sandbox têm BYPASSRLS, então não mordia, mas o master foi para uma função com a ACL espelhada e os sandbox entraram na matriz. A sabotagem específica do hash é a S7.
+  6. *(P2)* A busca pontual passa a calcular o conjunto inteiro. Isso foi medido na prod antes e depois, na seção abaixo.
+- **2º passe (código, high, 120 s, 110 mil tokens):** nenhuma regressão de autorização. O `auth.uid()` lido dentro da SECDEF é o mesmo valor, porque o SECDEF troca `current_user`, não os GUCs. Funções SECDEF com `proconfig` não inlinam, e InitPlan e hash são refeitos a cada execução do plano genérico. Três ressalvas, todas feitas: *(média)* PRE não atômico com o replace → `CREATE` sem `OR REPLACE` + P9 (M8); *(baixa)* o comentário do P8 prometia mais do que garante → corrigido; *(baixa)* o A8 não isolava o termo master → A8b. O `db:aplicar` já serializa os applies; a janela residual é um DDL concorrente fora dele, entre o P9 e o COMMIT.
 
 ## Aplicação e medida "depois"
 
