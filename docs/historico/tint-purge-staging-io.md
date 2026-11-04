@@ -381,6 +381,23 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Acoplamento com o horário novo (#3576):** a v6 não mexe no cron. A P10 dela exige o job em `30 9,21 * * *`, e o arquivo foi renomeado para `20261104020000`, para ordenar depois do `20261103222735`. Assim um replay de DR aplica o horário antes da v6. Na prova, o efeito do `20261103222735` é reproduzido pelo mesmo `cron.schedule` entre a v5 e a v6. A migration inteira não roda no harness porque a P6 dela lê o corpo real do watchdog de corante, que lá é stub.
 - **v6.1 (`20261104040000`), minutos depois do apply da v6:** a v6 foi aplicada em 04/11 03:43 UTC pelo `db:aplicar`, tentativa #886. Rodei `EXPLAIN (ANALYZE, BUFFERS)` do statement em prod e medi 131 MB do disco, contra os 114 MB previstos pela bancada. Mas apareceram **16 MB de temp**: no ramo dos corantes ruins, o planner de prod fez hash das ~490 mil ativas para casar com 260 itens (`Batches: 2`). A bancada não mostrou isso porque lá o plano é paralelo e divide o hash. A v6.1 busca a fórmula de cada item pela PK (`LATERAL … OFFSET 0`): **temp 0, 11 s** em prod, com as mesmas 11 colunas da v6, que batem com a rodada real das 00:00 (universo 463.995, S1 0, bruto 12.682). O PL1 não pega essa classe: na escala de 5% nem a v6 hasheia, então uma regra para ela seria vigia não falsificável. **Lição:** a forma do plano se prova na fixture em escala; o spill por estimativa errada só aparece em prod. Por isso o `EXPLAIN (ANALYZE, BUFFERS)` do statement em prod, com temp = 0, é etapa obrigatória da verificação pós-apply.
 
+### 2026-11-04 — 1º run real da v6.1 em prod: o fase5 cabe no Mini; o temp de FUNDO, não (série de 60 s, 09:05–09:51 UTC)
+
+- **Série:** `pg_statio`/`pg_stat_database` via psql-ro a cada ~62 s, 43 snapshots (1 snapshot falhou às 09:25:21 e virou um intervalo de 2 min). O cron `tint-watchdog-fase5-6h` rodou às **09:30:01, 17 s, `succeeded`**.
+- **O que o ciclo leu** (intervalo 09:30:07→09:31:09): `tint_formulas` 87 MB + `tint_formula_itens` 57 MB + `tint_keys_snapshots` 4 MB ≈ **150 MB do disco**, zero seq scan, contra os 131 MB do `EXPLAIN` pós-apply. Temp do ciclo: **~10,5 MB** (os 2,6 MB do intervalo em que ele começou mais os 7,8 MB do seguinte; a série de 19 s da seção abaixo dá os mesmos 10,5 MB em 3 saltos).
+- **As 11 janelas de 15 min que contêm o run** (a primeira começa em 09:16:37 e a última em 09:29:02):
+
+  | critério do Mini | medido | |
+  |---|---|---|
+  | disco ≤ 400 MB | 197–273 MB | ✅ |
+  | hit ≥ 99% | 99,66–99,78% | ✅ |
+  | conexões ≤ 48 (80% de 60) | máx. 35 | ✅ |
+  | temp ≤ 100 MB | 101–145 MB | ❌ |
+
+- **O temp que reprova é de fundo, não do fase5.** As janelas de 15 min **sem** o run (09:30:07–09:50:56) dão **114–158 MB** de temp. Em 03/11 o fundo ficava em ~95–99 MB. O padrão é fixo: 7,8 MB/2 arquivos quase todo minuto, mais 36,8 MB/14 arquivos a cada ~10,5 min (09:16:37, 09:27:27, 09:37:25, 09:47:48), seguido de 15,1 MB/5 arquivos. A atribuição está na seção seguinte: os 36,8 MB são a promoção de catálogos, e os 7,8 MB ainda não têm dono.
+- **Outro leitor, fora do tint:** em 09:14:29→09:15:32, `radar_empresas` leu **2.524 MB do disco** em um minuto (seq 0, idx +1). As janelas que pegam esse minuto vão a ~2,9 GB do disco com hit de 94%. É um leitor diferente do `/radar` corrigido no leitor 4 (aquele fazia seq scan).
+- **Veredito:** a parte do fase5 está **dentro** do critério (~150 MB do disco, ~10,5 MB de temp, 17 s). A janela que contém o run reprova **só** no temp, e pelo fundo. Isso reprovaria mesmo sem o run. O próximo passo do Mini é atribuir o temp de fundo e a leitura de 2,5 GB do `radar_empresas`. Não é mais o watchdog.
+
 ### 2026-11-04 — o temp crônico tem dois donos: promoção de catálogos (~73 MB/15 min) e um leitor de 7,8 MB (~56 MB/15 min)
 
 - **Medida:** `pg_stat_database.temp_bytes` a cada ~19 s, das 09:12 às 09:50 UTC (seg, loja abriu às 10:00), pelo psql-ro. A cada salto, registrei os `cron.job_run_details` vizinhos. Resultado: **335 MB em 2,52 janelas de 15 min = ~133 MB/15 min**, acima do teto de 100 MB do Mini mesmo na janela "limpa".
