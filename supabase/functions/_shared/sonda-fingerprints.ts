@@ -38,7 +38,7 @@ export const FONTE_SHA256: Record<string, string> = {
   "fin-period-override": "5099e1ecf11cad8a60d5c87fa1c8a95cfd92fd8c34513f475de0033a1aa1354e",
   "fin-regime-tributario": "ed6e256a6bdf938bf789ce2ad2cc2378c375a6d6b425bfc220de6ed2aaa19a6e",
   "fin-suggest-mapping": "e7f3cd9152fca2ac8c740992e84c0386e59c544cc8274046bb089d84c4dc037a",
-  "fin-valor-cockpit": "cd056c4984acf7995efc3242cd1e88c1aef46bd5ac44f938e90d864108b31f79",
+  "fin-valor-cockpit": "dd8f0ada2dc58b31707e09d929c0e5e7adbd68b9eddc01b93c97d26b68f27322",
   "fin-valor-engine": "77b634c566f212a6b8b584519ca04d49e4b4fbf3a77b1c729b54cd4d2c11e487",
   "generate-bundle-argument": "4844fc382ff2708fb0c9e351a47eb2c48bb0f57bd24d9f46fdd705221a158f15",
   "generate-tactical-plan": "bba99a973472ad11bb710827eeba74a33f6d3e85ee53da174126552b9aa8521b",
