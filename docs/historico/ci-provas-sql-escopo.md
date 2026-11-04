@@ -53,7 +53,12 @@ O job `typecheck` passou para checkout raso. Ele só instala e roda os 2 `tsc` (
 
 ## 2ª opinião (Codex)
 
-Seção abaixo, preenchida com o parecer.
+Rodada única, focada em verde-falso: `scripts/codex-async.sh`, gpt-6-astra max, 299 s, 103.938 tokens, cota em 3%. **Veredito: APROVAR COM AJUSTES.**
+
+1. **Verde-falso real no resolvedor de imports. Corrigido.** O resolvedor escolhia o 1º candidato e `.ts` ganhava de `.tsx`, mas o Bun prefere `.tsx`. Um PR que acrescentasse `src/lib/whatsapp/route-city.tsx` ao lado do `.ts` mudaria o que o oráculo de `db/test-venda-gerador.sh` carrega, e o escopo dava `roda=false`; o Codex reproduziu a decisão em memória. O conserto não escolhe candidato: o lido é a **base sem extensão** (casa `.ts`/`.tsx`/`.mts`/`.js`/`.json`, e `base/…` se for diretório), e o fecho segue **todos** os candidatos existentes. Há regressão no teste para o cenário dele e para o fecho por mais de um candidato.
+2. **`validate`: sem bypass.** O Codex executou o shell real com 48 combinações de evento × resultado × saída; só a combinação autorizada aceitou os dois skipped. Re-run parcial preserva SHA e ref, e um `merge_group` futuro não autoriza o skip.
+3. **Diff pai 1 → HEAD: não subestima.** As duas árvores são comparadas inteiras, com NUL e `--no-renames`; com merge de main dentro do PR, o checkout segue sendo o merge de teste.
+4. **Concessão de `docs/`: aceita na árvore atual.** Ela precisa ser revista quando uma prova passar a consumir docs, e o Codex observa que a main roda depois do merge, não antes. O cabeçalho do script já prescreve isso.
 
 ## Depois
 

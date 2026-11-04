@@ -70,22 +70,28 @@ export function citacoes(texto: string, re: RegExp = CITACAO): string[] {
   return out;
 }
 
-/** Resolve um especificador de import (`@/x`, `./x`, `../x`) para um arquivo do repo, ou null. */
-export function resolverImport(
-  de: string,
-  esp: string,
-  existe: (p: string) => boolean,
-): string | null {
-  let base: string;
-  if (esp.startsWith('@/')) base = `src/${esp.slice(2)}`;
-  else if (esp.startsWith('.')) base = posix.normalize(posix.join(posix.dirname(de), esp));
+export interface Resolvido {
+  /** O especificador sem extensão — o que conta como LIDO: casa `.ts`, `.tsx`, `.mts`, `.js`… */
+  base: string;
+  /** TODOS os candidatos que existem, para o fecho seguir por cada um. */
+  existentes: string[];
+}
+
+/**
+ * Resolve um especificador de import (`@/x`, `./x`, `../x`); pacote/builtin ⇒ null. NÃO escolhe
+ * um candidato, de propósito (parecer Codex 2026-11-04): o Bun prefere `.tsx` a `.ts`, e um PR que
+ * acrescente `x.tsx` ao lado de `x.ts` muda o que a prova carrega. Por isso o lido é a `base` sem
+ * extensão, que casa qualquer uma (e `base/…`, se for diretório), e o fecho segue todas.
+ */
+export function resolverImport(de: string, esp: string, existe: (p: string) => boolean): Resolvido | null {
+  let alvo: string;
+  if (esp.startsWith('@/')) alvo = `src/${esp.slice(2)}`;
+  else if (esp.startsWith('.')) alvo = posix.normalize(posix.join(posix.dirname(de), esp));
   else return null; // pacote de node_modules / builtin `node:*`
-  const semJs = base.replace(/\.(m?js)$/, '');
-  for (const c of [base, `${semJs}.ts`, `${semJs}.tsx`, `${semJs}.mts`, `${base}/index.ts`]) {
-    if (existe(c)) return c;
-  }
-  // Não resolveu: o próprio especificador vale como caminho lido (prefixo), do lado seguro.
-  return base;
+  const base = alvo.replace(/\.(tsx?|mts|m?js|json)$/, '');
+  const exts = ['', '.ts', '.tsx', '.mts', '.js', '.mjs', '.json'];
+  const candidatos = [alvo, ...exts.map((e) => `${base}${e}`), ...exts.slice(1).map((e) => `${base}/index${e}`)];
+  return { base, existentes: [...new Set(candidatos)].filter(existe) };
 }
 
 export interface Repo {
@@ -125,7 +131,9 @@ export function lidosEmInerte(repo: Repo): Set<string> {
     for (const m of t.matchAll(IMPORTA)) {
       const esp = m.slice(1).find(Boolean)!;
       const r = resolverImport(f, esp, repo.existe);
-      if (r) fila.push(r);
+      if (!r) continue;
+      if (INERTES.some((p) => r.base.startsWith(p))) lidos.add(r.base);
+      fila.push(...r.existentes);
     }
   }
   return lidos;
@@ -139,7 +147,7 @@ export function inerte(arquivo: string, lidos: ReadonlySet<string>): boolean {
   const f = normaliza(arquivo);
   // Sem extensão também casa: o import de um arquivo que o PR APAGA não resolve na árvore do PR e
   // fica como `src/lib/x` — o diff traz `src/lib/x.ts`, e esse PR tem de rodar.
-  const semExt = f.replace(/\.(tsx?|mts|m?js)$/, '');
+  const semExt = f.replace(/\.(tsx?|mts|m?js|json)$/, '');
   for (const l of lidos) {
     const d = l.endsWith('/') ? l : `${l}/`;
     if (f === l || semExt === l || f.startsWith(d)) return false;

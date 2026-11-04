@@ -91,12 +91,53 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
 
   it('resolve @/, relativo, .js→.ts, index.ts; pacote fica de fora', () => {
     const existe = (p: string) => ['src/lib/a.ts', 'scripts/lib/b.ts', 'src/lib/c/index.ts'].includes(p);
-    expect(resolverImport('scripts/x.ts', '@/lib/a', existe)).toBe('src/lib/a.ts');
-    expect(resolverImport('db/lib/y.ts', '../../scripts/lib/b.js', existe)).toBe('scripts/lib/b.ts');
-    expect(resolverImport('scripts/x.ts', '../src/lib/c', existe)).toBe('src/lib/c/index.ts');
+    expect(resolverImport('scripts/x.ts', '@/lib/a', existe)).toEqual({ base: 'src/lib/a', existentes: ['src/lib/a.ts'] });
+    expect(resolverImport('db/lib/y.ts', '../../scripts/lib/b.js', existe)).toEqual({
+      base: 'scripts/lib/b',
+      existentes: ['scripts/lib/b.ts'],
+    });
+    expect(resolverImport('scripts/x.ts', '../src/lib/c', existe)).toEqual({
+      base: 'src/lib/c',
+      existentes: ['src/lib/c/index.ts'],
+    });
     expect(resolverImport('scripts/x.ts', 'node:fs', existe)).toBeNull();
     expect(resolverImport('scripts/x.ts', 'vitest', existe)).toBeNull();
-    expect(resolverImport('scripts/x.ts', '@/lib/sumiu', existe), 'não resolvido fica do lado seguro').toBe('src/lib/sumiu');
+    expect(resolverImport('scripts/x.ts', '@/lib/sumiu', existe), 'não resolvido fica do lado seguro').toEqual({
+      base: 'src/lib/sumiu',
+      existentes: [],
+    });
+  });
+
+  // Parecer Codex 2026-11-04: o Bun prefere `.tsx` a `.ts`. Um PR que acrescente `route-city.tsx` ao
+  // lado do `.ts` muda o que o oráculo da prova carrega — e o escopo antigo, que escolhia o `.ts`,
+  // dava roda=false.
+  it('.ts e .tsx coexistindo: o PR que acrescenta o .tsx RODA (o lido é a base sem extensão)', () => {
+    const arquivos = {
+      'db/test-venda-gerador.sh': 'bun scripts/venda-cidades-alvo-esperado.ts',
+      'scripts/venda-cidades-alvo-esperado.ts': "import { r } from '../src/lib/whatsapp/route-city';",
+      'src/lib/whatsapp/route-city.ts': '',
+    };
+    const lidos = lidosEmInerte(repoFalso({ ...arquivos, 'src/lib/whatsapp/route-city.tsx': '' }));
+    expect(decidir('pull_request', ['src/lib/whatsapp/route-city.tsx'], lidos).roda).toBe(true);
+    // e o caso de antes do PR, com só o .ts: tocar QUALQUER variante roda
+    const antes = lidosEmInerte(repoFalso(arquivos));
+    for (const f of ['src/lib/whatsapp/route-city.ts', 'src/lib/whatsapp/route-city.tsx', 'src/lib/whatsapp/route-city.mts']) {
+      expect(decidir('pull_request', [f], antes).roda, f).toBe(true);
+    }
+  });
+
+  it('o fecho segue TODOS os candidatos existentes, não só o primeiro', () => {
+    const lidos = lidosEmInerte(
+      repoFalso({
+        'db/lib/g.ts': "import { a } from '../../src/lib/dupla';",
+        'src/lib/dupla.ts': "import { b } from './so-do-ts';",
+        'src/lib/dupla.tsx': "import { c } from './so-do-tsx';",
+        'src/lib/so-do-ts.ts': '',
+        'src/lib/so-do-tsx.ts': '',
+      }),
+    );
+    expect(inerte('src/lib/so-do-ts.ts', lidos)).toBe(false);
+    expect(inerte('src/lib/so-do-tsx.ts', lidos)).toBe(false);
   });
 
   it('fecho transitivo: db/*.sh → scripts/*.ts citado → ../src → @/ → src', () => {
@@ -115,9 +156,11 @@ describe('provas-sql-escopo — o que as provas leem dentro do inerte', () => {
         'scripts/nao-citado.ts': "import '../src/lib/solto';",
       }),
     );
-    expect([...lidos].sort()).toEqual(
-      ['src/lib/farmer/u.ts', 'src/lib/farmer/v.ts', 'src/lib/gates/limpeza.ts', 'src/lib/r.ts'].sort(),
-    );
+    for (const f of ['src/lib/farmer/u.ts', 'src/lib/farmer/v.ts', 'src/lib/gates/limpeza.ts', 'src/lib/r.ts']) {
+      expect(inerte(f, lidos), f).toBe(false);
+    }
+    // `solto` só é alcançado por um script que nenhuma prova cita: segue inerte.
+    expect(inerte('src/lib/solto.ts', lidos)).toBe(true);
   });
 
   it('INERTES não inclui nada que as provas sabidamente leem por inteiro', () => {
