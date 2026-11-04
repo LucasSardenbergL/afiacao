@@ -21,14 +21,14 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **767** custom migrations totais
-- **2517** objetos esperados (criados por estas migrations)
+- **768** custom migrations totais
+- **2518** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
   - `function`: 952
   - `rls_policy`: 519
   - `index`: 350
   - `table`: 230
-  - `cron_job`: 209
+  - `cron_job`: 210
   - `view`: 133
   - `trigger`: 120
   - `enum_value`: 4
@@ -6275,6 +6275,12 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | Tipo | Objeto | Parent |
 | --- | --- | --- |
 | `function` | `public.radar_lista` | — |
+
+### `20261103222735_tint_watchdog_fase5_fora_do_horario_de_loja.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `cron_job` | `cron.tint-watchdog-fase5-6h` | — |
 
 ### `20261103223300_radar_agregado_cnae.sql`
 
