@@ -58,7 +58,7 @@ A função é SQL `SECURITY DEFINER` e recebe uma **coluna** como argumento, ent
 Quanto custa, com o que se consegue medir sem persona:
 
 - **O mesmo predicado inlinado** (corpo da função copiado, `uid` do farmer com maior carteira, `farmer_client_scores` inteira, 16.991 linhas): **5,7 ms**, com 65 ms no frio. O planejador transforma os dois EXISTS em `hashed SubPlan` e o `has_role` em InitPlan.
-- **Pela função SECDEF, por linha**, a estimativa é de ≥ 2 chamadas SECDEF por linha a ~38 µs cada, o que dá **~0,6–1,3 s por leitura da tabela inteira**, de 100× a 200× o inlinado. Esse número é estimado, não medido: falta o EXPLAIN por persona.
+- **Pela função SECDEF, por linha**, a estimativa era de ≥ 2 chamadas SECDEF por linha a ~38 µs cada, o que daria ~0,6–1,3 s por leitura da tabela inteira. **Medido depois por persona: 1,3–2,4 s** (seção "Medida por persona" abaixo), acima da estimativa.
 
 O desenho do conserto é candidato a lote próprio e **não** é desta entrega. É authz, e a ordem obrigatória é prova PG17 de equivalência (como o A1 do v4) e depois Codex. Não dá para inlinar direto: a policy de `carteira_assignments` usa a própria função, o que daria recursão de RLS, e é exatamente por isso que ela é SECDEF. A forma que preserva isso é um SECDEF que **devolve o conjunto**, chamado 1× com `customer_user_id IN (SELECT private.carteira_clientes_visiveis((SELECT auth.uid())))`. Isso vira `hashed SubPlan`, e o curto-circuito do master entra dentro dela.
 
@@ -92,7 +92,7 @@ Os "436" eram texto. Pela árvore, só 78 policies do `public` avaliam `auth.uid
 
 ## Recomendação (para o roadmap, não executada aqui)
 
-1. **Lote candidato: `carteira_visivel_para` por conjunto.** É o único item com ganho provável na casa do segundo, e cai em telas de farmer/gestão. Antes do desenho, falta 1 sinal: o EXPLAIN por persona abaixo, que confirma ou derruba a estimativa.
+1. **Lote candidato: `carteira_visivel_para` por conjunto.** É o único item com ganho na casa do segundo, e cai em telas de farmer/gestão. O sinal que faltava (EXPLAIN por persona) veio positivo: ver "Medida por persona".
 2. **Os 26 meio embrulhados**, quando alguém tocar essas tabelas, ou numa extensão barata do regex da migration de 02/11 que também case `has_role(( SELECT auth.uid() AS uid), …)`. O ganho de hoje é baixo e não justifica um lote sozinho.
 3. **`auth.uid()` cru: nada.**
 
@@ -114,6 +114,24 @@ rollback;
 ```
 
 A comparação se faz contra os 5,7 ms do predicado inlinado (`farmer_client_scores`). Ler os **buffers** antes do tempo (lição do v4).
+
+## Medida por persona (2026-11-04 ~22 UTC)
+
+A consulta acima foi rodada pela sessão, a pedido do founder, pelo conector Lovable (`query_database`, que entra como `postgres`), uma tabela por chamada. Cada texto começou com `SET TRANSACTION READ ONLY; SET LOCAL statement_timeout = '30s'`. Antes dos EXPLAIN, uma chamada de atestação com a mesma trava devolveu `somente_leitura=on`, `papel=authenticated`, `uid_ok`, `eh_employee=true` e `eh_master=false`, ou seja, um farmer real sem master, o da maior carteira. A resposta trouxe só planos, nenhum dado de negócio.
+
+| Leitura do farmer | Linhas lidas → vistas | Tempo | Buffers |
+|---|---|---|---|
+| `farmer_client_scores` (frio) | 16.991 → 1.570 | **2.393 ms** | 159.586 (677 do disco) |
+| `farmer_client_scores` (quente) | 16.991 → 1.570 | **1.333 ms** | 159.584 |
+| `farmer_recommendations` | 17.316 → 1.655 | **1.902 ms** | 164.200 |
+| `carteira_assignments` (`eligible`) | 17.707 → 1.570 | **1.519 ms** | 148.155 |
+| mesmo predicado inlinado (`psql-ro`, `farmer_client_scores`) | 16.991 | 5,7 ms | — |
+
+- A conta que fecha é por linha: a cada linha do scan, `private.carteira_visivel_para(customer_user_id, …)` aparece no `Filter` e custa ~9 buffers. O curto-circuito do master (`InitPlan`) é falso para o farmer, que paga os ~16 mil descartes. O custo é de **230× a 400×** o inlinado, e **~1,2 GB de buffer** por leitura.
+- Em `carteira_assignments`, o `auth.uid()` vai **cru** para dentro da função: o `Filter` mostra o corpo do `auth.uid()` (parse do jsonb) por linha. Na de `farmer_*`, ele já chega como InitPlan.
+- `dirtied=2` no frio são hint bits gravados pela leitura, não escrita da sessão (transação READ ONLY atestada).
+
+O sinal da fase N chegou: o lote de **visibilidade por conjunto** (§Recomendação 1) tem ganho medido de ~1,3–2,4 s → ~ms por leitura de farmer, nas 3 tabelas que telas reais varrem inteiras.
 
 ## Lições
 
