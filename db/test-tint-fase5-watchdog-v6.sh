@@ -533,14 +533,15 @@ suite() {
   eq PL1 "$(plano)" 0
   # PL1u: o próprio classificador, em planos sintéticos — seq · Index Scan (heap) sem condição no parcial
   # · Index Scan (heap) no parcial COM `IS NOT NULL` · Index Only em índice comum só com `IS NOT NULL`
-  # · Bitmap Heap de índice sem condição | Index Only no parcial · Bitmap Heap com condição (os 2 últimos = 0)
+  # · Bitmap Heap de índice sem condição | Index Only no parcial · Bitmap Heap com condição em índice COMUM
+  # (os 2 últimos = 0; bitmap num parcial vai ao heap = vermelho, com ou sem condição)
   eq PL1u "$(for j in '{"Node Type":"Seq Scan","Relation Name":"tint_formulas"}' \
       '{"Node Type":"Index Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
       '{"Node Type":"Index Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo","Index Cond":"((sku_id IS NOT NULL) AND (cor_id IS NOT NULL))"}' \
       '{"Node Type":"Index Only Scan","Relation Name":"tint_formula_itens","Index Name":"idx_tint_formula_itens_formula","Index Cond":"(formula_id IS NOT NULL)"}' \
       '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas"}]}' \
       '{"Node Type":"Index Only Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
-      '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas","Index Cond":"x"}]}'; do
+      '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formula_itens","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formula_itens_formula","Index Cond":"(formula_id = a.id)"}]}'; do
       printf '[{"Plan":{"Node Type":"Result","Plans":[%s]}}]' "$j" | python3 "$RODADA/pl1.py" 2>/dev/null; done | tr '\n' ' ')" "1 1 1 1 1 0 0 "
 
   # ── A: estado saudável ──
