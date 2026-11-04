@@ -48,7 +48,7 @@ BEGIN
          'd1ae9348b0208a57e03c7f388b75eaa7', 'f2302e3237f0bf804727d3587b08619b'),
         ('radar_contagem_por_municipio',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz,text[],boolean)')),
-         '1ffd4e5bd206bf83862b503a6a78a25a', 'fe21321b70f60fbc101fe6bad4c4aec8')
+         '1ffd4e5bd206bf83862b503a6a78a25a', '78fc43862dbe903f2966a69aac9dbaf6')
       ) AS x(alvo, vivo, predecessor, este)
   LOOP
     IF r.vivo IS NULL OR r.vivo NOT IN (r.predecessor, r.este) THEN
@@ -281,7 +281,8 @@ BEGIN
   END IF;
 
   -- VIVO: data de abertura fora do corte, data mínima ou inéditos de outro lote — o caminho de antes.
-  -- p_uf vence p_ufs: com UF escolhida a região não entra (a UF já recorta mais fino).
+  -- p_uf vence p_ufs: com UF escolhida a região não entra (a UF já recorta mais fino). Prefixo de CNAE
+  -- por starts_with: p_cnae_prefix só tem dígitos, então casa o mesmo que o LIKE de antes, sem curinga.
   RETURN QUERY
   SELECT re.municipio_codigo,
          COALESCE(m.nome, re.municipio_nome) AS municipio_nome,
@@ -295,7 +296,7 @@ BEGIN
    WHERE (p_uf IS NULL OR re.uf = p_uf)
      AND (p_uf IS NOT NULL OR p_ufs IS NULL OR re.uf = ANY (p_ufs))
      AND (p_cnae_exato  IS NULL OR re.cnae_principal = p_cnae_exato)
-     AND (p_cnae_prefix IS NULL OR re.cnae_principal LIKE p_cnae_prefix || '%')
+     AND (p_cnae_prefix IS NULL OR starts_with(re.cnae_principal, p_cnae_prefix))
      AND ((p_status IS NOT NULL AND re.prospeccao_status = p_status)
           OR (p_status IS NULL AND re.prospeccao_status <> 'descartado'))
      AND (p_incluir_ja_clientes OR re.ja_cliente = false)
@@ -324,7 +325,7 @@ BEGIN
     RAISE EXCEPTION 'P1 FALHOU: radar_agregado_recalcular vivo não é o corpo deste arquivo';
   END IF;
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.radar_contagem_por_municipio(text,text,text,text,boolean,date,date,integer,text,timestamptz,text[],boolean)'))
-     IS DISTINCT FROM 'fe21321b70f60fbc101fe6bad4c4aec8' THEN
+     IS DISTINCT FROM '78fc43862dbe903f2966a69aac9dbaf6' THEN
     RAISE EXCEPTION 'P1 FALHOU: radar_contagem_por_municipio vivo não é o corpo deste arquivo';
   END IF;
 
