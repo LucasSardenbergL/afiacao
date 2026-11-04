@@ -214,6 +214,33 @@ describe('redirects estáticos (F1): entrada por <Navigate> pré-carrega o desti
     expect(novo).toHaveBeenCalledTimes(1);
     expect(() => prefetchRota('/ciclo-a')).not.toThrow();
   });
+
+  it('o teto de saltos vale: 3 redirects pré-carregam, 4 não', () => {
+    // O ciclo sozinho não prova o teto: o decodePath do react-router engole o RangeError
+    // do estouro de pilha. Quem prova é o alvo além do teto ficar sem prefetch.
+    const tres = vi.fn(pagina('tres'));
+    const quatro = vi.fn(pagina('quatro'));
+    const [Tres, Quatro] = [tres, quatro].map((c) => lazyRota(c));
+    registrarRotas(
+      createRoutesFromElements(
+        <>
+          <Route path="/s1" element={<Navigate to="/s2" />} />
+          <Route path="/s2" element={<Navigate to="/s3" />} />
+          <Route path="/s3" element={<Navigate to="/alvo-tres" />} />
+          <Route path="/alvo-tres" element={<Tres />} />
+          <Route path="/q1" element={<Navigate to="/q2" />} />
+          <Route path="/q2" element={<Navigate to="/q3" />} />
+          <Route path="/q3" element={<Navigate to="/q4" />} />
+          <Route path="/q4" element={<Navigate to="/alvo-quatro" />} />
+          <Route path="/alvo-quatro" element={<Quatro />} />
+        </>,
+      ),
+    );
+    prefetchRota('/s1');
+    prefetchRota('/q1');
+    expect(tres).toHaveBeenCalledTimes(1);
+    expect(quatro).not.toHaveBeenCalled();
+  });
 });
 
 describe('autorização intacta (F1): baixar antes do auth sim, renderizar não', () => {
