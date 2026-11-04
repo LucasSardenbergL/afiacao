@@ -9,6 +9,7 @@ import { RadarAcoesLead } from './RadarAcoesLead';
 import { RadarConflitosDoLead } from './RadarConflitosCadastro';
 import { RadarAtendimentoLead } from './RadarAtendimentoLead';
 import { RadarModoDiscagem } from './RadarModoDiscagem';
+import { RadarVinculosLead } from './RadarVinculosLead';
 import { avisoTelefoneCompartilhado, gravarModoDiscagem, lerModoDiscagem } from '@/lib/radar/atendimento';
 import { useRadarTelefoneCompartilhado } from '@/queries/useRadarTelefoneCompartilhado';
 import { track } from '@/lib/analytics';
@@ -208,6 +209,9 @@ export function RadarDetailSheet({
             <span className="text-xs text-muted-foreground" data-testid="radar-filial-ficha">
               {textoFilialFicha(irmaosEstado, irmaos)}
             </span>
+          </Linha>
+          <Linha label="Já é cliente?">
+            <RadarVinculosLead cnpj={empresa.cnpj} />
           </Linha>
           {empresa.nome_fantasia && <Linha label="Fantasia">{empresa.nome_fantasia}</Linha>}
           <Linha label="CNPJ"><span className="font-tabular">{formatarCnpj(empresa.cnpj)}</span></Linha>

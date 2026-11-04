@@ -30,6 +30,8 @@ const RPC_READONLY_ALLOWLIST = new Set<string>([
   'radar_atendimentos_ativos',
   'radar_telefone_compartilhado',
   'radar_estado_cadastro_omie',
+  // Radar (migration 20261104201756) — STABLE, só lê: o "possível vínculo/sucessor de cliente" da ficha.
+  'radar_possiveis_vinculos',
   // Radar (migration 20261030233200) — SELECT puro da amostra de controle vigente, intercalada na fila.
   'radar_amostra_vigente',
   // Cockpit financeiro (migration 20261101210000) — STABLE, SECURITY INVOKER, só agrega saldo de títulos sob a RLS.

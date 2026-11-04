@@ -24532,6 +24532,16 @@ export type Database = {
           vinculos_existentes: number
         }[]
       }
+      radar_possiveis_vinculos: {
+        Args: { p_cnpj: string }
+        Returns: {
+          cliente_cnpj: string
+          cliente_nome: string
+          cliente_situacao: string
+          forca: string
+          sinais: string[]
+        }[]
+      }
       radar_prospects_para_rota: {
         Args: { p_limit?: number; p_municipio_codigo: string }
         Returns: {
