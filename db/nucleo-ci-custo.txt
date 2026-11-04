@@ -137,6 +137,7 @@ db/test-tint-corante-giro.sh 224
 db/test-tint-fase5-desativacao.sh 4
 db/test-tint-fase5-watchdog-v4.sh 65
 db/test-tint-fase5-watchdog-v5.sh 86
+db/test-tint-fase5-watchdog-v6.sh 150
 db/test-tint-fase5-watchdog.sh 220
 db/test-tint-formulas-rls-initplan.sh 1
 db/test-tint-gate-custo-staff.sh 1

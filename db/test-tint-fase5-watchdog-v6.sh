@@ -854,16 +854,19 @@ pares_de() {
     s1_conta_desativada) PARES=("                          AND a.desativada_em IS NULL)
   ), o AS (" ")
   ), o AS (") ;;
-    s1_ruim_conta_desativada) PARES=("       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL
-  ), sem_preco" "       AND a.sku_id IS NOT NULL
-  ), sem_preco") ;;
-    s1_varredura_para_no_1o) PARES=("      FROM presentes pr WHERE pr.id IS NOT NULL" "      FROM presentes pr WHERE false") ;;
+    s1_ruim_conta_desativada) PARES=("     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
+       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL" "     WHERE fi.corante_id = ANY (ARRAY(SELECT r.id FROM ruim r))
+       AND a.sku_id IS NOT NULL") ;;    s1_varredura_para_no_1o) PARES=("      FROM presentes pr WHERE pr.id IS NOT NULL" "      FROM presentes pr WHERE false") ;;
+    # os DOIS UNION: com um só, o (A UNION ALL B) UNION C final deduplica tudo e a troca é inócua
     s1_union_all) PARES=("       AND NOT EXISTS (SELECT 1 FROM tint_formula_itens fi WHERE fi.formula_id = a.id OFFSET 0)
     UNION
 " "       AND NOT EXISTS (SELECT 1 FROM tint_formula_itens fi WHERE fi.formula_id = a.id OFFSET 0)
     UNION ALL
-") ;;
-    s1_corante_nulo_passa) PARES=("     WHERE fi.corante_id IS NULL
+" "       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL
+    UNION
+    -- (c)" "       AND a.desativada_em IS NULL AND a.sku_id IS NOT NULL
+    UNION ALL
+    -- (c)") ;;    s1_corante_nulo_passa) PARES=("     WHERE fi.corante_id IS NULL
        AND a.desativada_em IS NULL" "     WHERE false
        AND a.desativada_em IS NULL") ;;
     k_sem_distinct) PARES=("      FROM (SELECT DISTINCT f.account, f.sku_id, f.cor_id
