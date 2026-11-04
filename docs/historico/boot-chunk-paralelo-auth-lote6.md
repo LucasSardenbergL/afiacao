@@ -29,7 +29,8 @@ baixar no clique.
 - **Rota cujo prefetch falhou recarrega na navegação real, antes de carregar.** O
   `__vitePreload` marca a dependência CSS como vista antes de baixá-la. Se o CSS falhou no
   prefetch, a 2ª tentativa resolveria o JS e renderizaria sem CSS, sem novo evento. A guarda
-  anti-loop vale: se já recarregou nesta sessão, carrega normal.
+  anti-loop vale: se já recarregou nesta sessão, carrega normal. Pelo mesmo motivo, a
+  navegação que começa com o prefetch daquela rota em voo espera o desfecho dele.
 - **Entrada por redirect.** O prefetch segue `<Navigate to>` absoluto por até 3 saltos (os 19
   redirects do `App.tsx` são todos literais absolutos).
 - Offline ou `saveData` → não faz prefetch. Assim, uma falha de rede não deixa a navegação real
@@ -37,18 +38,21 @@ baixar no clique.
 
 ## Prova
 
-- `src/lib/__tests__/preload-rota.test.tsx` (14 casos): (a) o prefetch e o render chamam o mesmo
+- `src/lib/__tests__/preload-rota.test.tsx` (16 casos): (a) o prefetch e o render chamam o mesmo
   carregador, e o `App.tsx` declara cada `import("./pages/…")` uma vez, dentro de `lazyRota`;
   (b) um prefetch que rejeita (imitando o `__vitePreload` 5.4, com `payload`) não recarrega, e a
   navegação real dessa rota recarrega 1×. Também cobre a falha real sem prefetch, o prefetch de A
-  falhando com B saudável em voo, o import não-rota falhando com prefetch em voo e a guarda
-  anti-loop; (c) o `ProtectedRoute` com auth carregando não renderiza a página mesmo com o chunk
+  falhando com B saudável em voo, o import não-rota falhando com prefetch em voo, o prefetch
+  ainda pendente na hora da navegação, o `payload` primitivo e a guarda anti-loop; (c) o `ProtectedRoute` com auth carregando não renderiza a página mesmo com o chunk
   pronto. Fora isso, cobre redirects (com teto), intenção do ponteiro, foco e offline.
-- Falsificação: 13 sabotagens, uma por vez. Todas ficaram vermelhas em `LC_ALL=C` e em
-  `pt_BR.UTF-8` (26/26), com controle verde antes e depois na mesma invocação. Na 1ª rodada, a
+- Falsificação: 15 sabotagens, uma por vez. Todas ficaram vermelhas em `LC_ALL=C` e em
+  `pt_BR.UTF-8` (30/30), com controle verde antes e depois na mesma invocação. Na 1ª rodada, a
   sabotagem "redirect sem teto" ficou **verde**, o que mostrou que o teste de ciclo não provava
   o teto (ver Lições). O teste foi trocado.
-- Codex (2 chamadas, `-r high`). 1ª: 4 achados (P1×2, P2×2), todos aplicados.
+- Codex (2 chamadas, `-r high`). 1ª: 4 achados (P1×2, P2×2), todos aplicados. 2ª (verificação):
+  2 fechados; 1 P2 reaberto (a navegação começando com o prefetch ainda em voo) e 1 P2 novo
+  (`payload` primitivo), ambos aplicados. 1 residual aceito: import não-rota que rejeita com o
+  MESMO objeto de erro de um prefetch (erro de avaliação compartilhado), que reload não conserta.
 
 ## LCP
 
