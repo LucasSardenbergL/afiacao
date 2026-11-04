@@ -87,8 +87,7 @@ tenta_com_lock_preso() {
      -c "SELECT pg_sleep(3)" -c "COMMIT" >/dev/null 2>&1 &
   local pid=$!
   # espera POSITIVA: o lock está de fato preso antes de tentar
-  local i
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     [ "$(q "$db" "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted")" -ge 1 ] && break
     sleep 0.1
   done
@@ -191,7 +190,8 @@ falsifica() {
   python_out="$(python3 "$TMP/sabota.py" "$MIG" "$TMP/trocas_$rot" "$copia")"
   if [ "$python_out" != "OK" ]; then echo "  ✗ $rot: sabotagem NÃO aplicou (âncora) — inválida"; FALSIF_ERR=$((FALSIF_ERR + 1)); return; fi
   # md5 consistente: ensaio com sentinela num banco descartável
-  local ens="ens_$(echo "$rot" | tr '[:upper:]' '[:lower:]')"
+  local ens
+  ens="ens_$(echo "$rot" | tr '[:upper:]' '[:lower:]')"
   sed -i.bak -E "s/^  c_este constant text := '[^']*';/  c_este constant text := 'SENTINELA';/" "$copia"
   PA -q -d postgres -c "CREATE DATABASE $ens TEMPLATE tpl_apply" >/dev/null
   local md5s
