@@ -87,7 +87,29 @@ atual de `fin_contas_receber` (2,3 mil clientes), o "sucessor de inadimplente" *
 justificar tocar o crédito agora. Se um dia tiver, entra como pista no fluxo de cadastro e venda, com o
 ritual Codex. Não fica num selo do Radar.
 
-## 4. Desenho para quando o piloto der sinal (não construído)
+## 4. Entrega na ficha (2026-11-04, decisão do founder de construir mesmo sem sinal do piloto)
+
+Depois do parecer, o founder escolheu **construir na ficha**. Ficou assim:
+
+- **Migration `20261104201756_radar_possiveis_vinculos.sql`:** 4 índices em `radar_empresas` (e-mail
+  normalizado, CEP, GIN do array de sócios, titular de MEI). Sem eles, a varredura sequencial custa
+  **5,6 s** por ficha. As expressões usam só funções nativas, porque índice com função própria exigiria
+  EXECUTE de quem grava (a carga). Também traz 2 helpers `private` fechados (`radar_tel_chave` e
+  `radar_chave_endereco`) e a RPC `radar_possiveis_vinculos(p_cnpj)` com as regras da §3. Gate
+  `cap_radar_prospectar`; cliente só-profiles só com `cap_carteira_ler`; o nome sai **sem** o CPF do MEI.
+- **Prova `db/test-radar-possiveis-vinculos.sh`:** 19 asserts e 12 sabotagens, todas vermelhas no seu
+  assert. Uma sabotagem (índice com a expressão errada) passou verde na 1ª versão: com
+  `enable_seqscan=off`, o planner varre o índice errado inteiro. Por isso os asserts de índice exigem
+  `Index Cond`.
+- **Ficha:** linha "Já é cliente?" (`RadarVinculosLead`), com "pista forte" ou "pista média", o título
+  "Possível sucessor de X (baixada na Receita)" ou "Possível vínculo com X", e a evidência mais "Confira com
+  o cliente". Erro ou forma inesperada da RPC não viram "nenhum vínculo".
+- **Sensor:** nenhum evento novo. Abrir a ficha já grava `radar_eventos.evento='abriu'` com o CNPJ, e o
+  vínculo é determinístico, então "fichas abertas com vínculo" é a query abaixo.
+- **Ensaio em prod (`db:aplicar --ensaio`):** rodou inteiro, a postcondição passou com os dados reais e
+  fez ROLLBACK.
+
+### Desenho original (mantido como referência)
 
 - **Onde:** só na **ficha** (`RadarDetailSheet`), via RPC sob demanda `radar_possiveis_vinculos(p_cnpj)`,
   no mesmo molde de `radar_telefone_compartilhado`: `cap_radar_prospectar`, `SECURITY DEFINER`, REVOKE
@@ -103,6 +125,14 @@ ritual Codex. Não fica num selo do Radar.
   descartados em `carga.ts`). Isso só depois de a ficha provar uso.
 
 ## Quando medir de novo ("quando" é query)
+
+```sql
+-- A ficha com vínculo é aberta? (denominador: fichas abertas por humano; numerador: as que têm vínculo)
+-- Rodar pela RPC exige JWT de quem prospecta; pelo psql-ro, olhe só o denominador e a lista de CNPJs abertos.
+select count(*) abriu, count(distinct cnpj) leads, min(ocorrido_em)::date, max(ocorrido_em)::date
+  from radar_eventos where evento = 'abriu' and origem = 'humano' and ocorrido_em > now() - interval '30 days';
+```
+
 
 ```sql
 -- O piloto deu sinal? (≥1 contato HUMANO, fora descarte em lote, nos últimos 30 dias, com denominador)
