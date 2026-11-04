@@ -916,9 +916,10 @@ pares_de() {
     # os builds sobem para antes da PRE (a PRE ainda aborta: só o PRE1b vê)
     pre_depois_dos_builds) PARES=("$IDX_BLOCO" "" "-- PRE: md5 EXATO" "$IDX_BLOCO
 -- PRE: md5 EXATO") ;;
-    # semântica IDÊNTICA (id é PK), mas a coluna fora do índice das carimbadas força heap: o PL1 antigo
-    # aceitava qualquer Index Scan no parcial (Codex retroativo P2)
-    plano_carimbo_heap) PARES=("               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL) c" "               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL AND f.id IS NOT NULL) c") ;;
+    # semântica IDÊNTICA (uuid nunca vira texto vazio), mas a coluna fora do índice das carimbadas força
+    # heap: o PL1 antigo aceitava qualquer Index Scan no parcial (Codex retroativo P2). NÃO `f.id IS NOT
+    # NULL`: o PG17 descarta IS NOT NULL de coluna NOT NULL no planejamento (medido: não mordia)
+    plano_carimbo_heap) PARES=("               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL) c" "               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL AND f.id::text <> '') c") ;;
     pre_aceita_qualquer) PARES=("  IF v_vivo IS NULL OR v_vivo NOT IN (" "  IF v_vivo IS NULL AND v_vivo NOT IN (") ;;
     p13_indice_corante_formula_ausente) PARES=("CREATE INDEX IF NOT EXISTS idx_tint_formula_itens_corante_formula
   ON public.tint_formula_itens (corante_id, formula_id);" "DROP INDEX IF EXISTS public.idx_tint_formula_itens_corante_formula;") ;;
