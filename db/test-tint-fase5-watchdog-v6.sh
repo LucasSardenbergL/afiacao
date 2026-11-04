@@ -461,9 +461,13 @@ H()       { Pq -c "SELECT public._tint_watchdog_fase5_transicao('oben', '$1', $2
 par() { eq "$1" "$(Pq -F '|' -f "$RODADA/ciclo_mig.sql" 2>&1)" "$(Pq -F '|' -f "$RODADA/ciclo_v5.sql" 2>&1)"; }
 # PLANO: o statement sob a config da PRÓPRIA função viva (proconfig, menos o search_path), em JSON, no
 # banco de ESCALA (zona 2b). Conta
-# os acessos que podem varrer INTEIRA uma das três tabelas que a janela do fase5 lia: Seq Scan, ou
-# scan de índice sem condição — exceto a leitura dos dois índices PARCIAIS (de propósito) e a descida
-# logo abaixo de um Limit (a varredura solta de `presentes` lê uma tupla por corante).
+# os acessos que podem varrer INTEIRA uma das três tabelas que a janela do fase5 lia: Seq Scan, scan
+# de índice sem condição, ou Bitmap Heap Scan cujo bitmap vem de índice sem condição. Exceções: o
+# Index ONLY Scan dos dois índices PARCIAIS (de propósito; `Index Scan` neles sem condição é heap
+# fetch por entrada = vermelho — Codex retroativo P2, 04/11) e a descida logo abaixo de um Limit (a
+# varredura solta de `presentes` lê uma tupla por corante). NÃO prova "nunca lê o heap": com o
+# visibility map degradado (promote grande antes do autovacuum) o Index Only Scan vira heap fetch, e a
+# fixture passa por VACUUM ANALYZE. Esse custo é operacional, na proporção do dano (histórico, v6).
 # NÃO pega: hash que derrama por estimativa errada. O da v6 em prod (hash das 490 mil ativas para 260
 # itens, 16 MB de temp, corrigido na v6.1) não se reproduz a ~5% da escala — nem a v6 hasheia aqui —,
 # então uma regra para ele seria vigia não falsificável. Quem pega é o EXPLAIN (ANALYZE, BUFFERS) do
@@ -473,14 +477,19 @@ import sys, json
 GRANDES = {"tint_formulas", "tint_formula_itens", "tint_staging_formulas"}
 INTEIRO_OK = {"idx_tint_formulas_wd5_carimbo", "idx_tint_formulas_wd5_ativas"}
 ruins = []
+def sem_cond(n):   # algum Bitmap Index Scan abaixo (BitmapAnd/Or inclusos) lê o índice inteiro
+    return any((f["Node Type"] == "Bitmap Index Scan" and "Index Cond" not in f) or sem_cond(f)
+               for f in n.get("Plans", []))
 def anda(n, pai=""):
     if n.get("Relation Name") in GRANDES:
         t = n["Node Type"]
         if t.endswith("Seq Scan"):
             ruins.append(t + ":" + n["Relation Name"])
-        elif t in ("Index Scan", "Index Only Scan") and "Index Cond" not in n \
-                and n.get("Index Name") not in INTEIRO_OK and pai != "Limit":
+        elif t in ("Index Scan", "Index Only Scan") and "Index Cond" not in n and pai != "Limit" \
+                and not (t == "Index Only Scan" and n.get("Index Name") in INTEIRO_OK):
             ruins.append(t + ":" + n["Index Name"])
+        elif t == "Bitmap Heap Scan" and sem_cond(n):
+            ruins.append(t + ":" + n["Relation Name"])
     for f in n.get("Plans", []):
         anda(f, n["Node Type"])
 try:
@@ -514,6 +523,14 @@ suite() {
   P -1 -f "$mig"
   extrai_ciclo "$mig" "$RODADA/ciclo_mig.sql" || echo ERRO_SQL >> "$VERM"
   eq PL1 "$(plano)" 0
+  # PL1u: o próprio classificador, em planos sintéticos — seq · Index Scan (heap) sem condição no parcial
+  # · Bitmap Heap de índice sem condição | Index Only no parcial · Bitmap Heap com condição (os 2 últimos = 0)
+  eq PL1u "$(for j in '{"Node Type":"Seq Scan","Relation Name":"tint_formulas"}' \
+      '{"Node Type":"Index Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
+      '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas"}]}' \
+      '{"Node Type":"Index Only Scan","Relation Name":"tint_formulas","Index Name":"idx_tint_formulas_wd5_carimbo"}' \
+      '{"Node Type":"Bitmap Heap Scan","Relation Name":"tint_formulas","Plans":[{"Node Type":"Bitmap Index Scan","Index Name":"idx_tint_formulas_wd5_ativas","Index Cond":"x"}]}'; do
+      printf '[{"Plan":{"Node Type":"Result","Plans":[%s]}}]' "$j" | python3 "$RODADA/pl1.py" 2>/dev/null; done | tr '\n' ' ')" "1 1 1 0 0 "
 
   # ── A: estado saudável ──
   P -c "SELECT _reset();" >/dev/null
@@ -771,8 +788,12 @@ PY
   # divergente) — a migration testada, COM a PRE, tem de abortar ANTES dos builds; depois restaura
   P -c "DO \$x\$ BEGIN EXECUTE replace(pg_get_functiondef('public.tint_watchdog_fase5_check()'::regprocedure),
           'v_t0          timestamptz := clock_timestamp();', 'v_t0          timestamptz := clock_timestamp();  -- divergente'); END \$x\$;" >/dev/null
-  saida="$("$PGBIN/psql" -X -q -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -f "$mig" 2>&1 || true)"
-  eq PRE1 "$(printf '%s' "$saida" | grep -c 'PRE FALHOU: tint_watchdog_fase5_check() vivo')" 1
+  saida="$("$PGBIN/psql" -X -q -e -p "$PORT" -h /tmp -U postgres -d prove -v ON_ERROR_STOP=1 -1 -f "$mig" 2>&1 || true)"
+  # o md5 PREENCHIDO casa só a mensagem do erro, não o eco do RAISE (que tem o `%`) pelo `-e`
+  eq PRE1 "$(printf '%s\n' "$saida" | grep -c 'PRE FALHOU: tint_watchdog_fase5_check() vivo (md5 [0-9a-f]')" 1
+  # PRE1b: ... e ANTES dos builds. O `-e` ecoa cada statement enviado; nenhum CREATE INDEX pode ter
+  # saído antes do aborto (num 1º apply real, os builds e seus locks viriam antes do erro — Codex P2)
+  eq PRE1b "$(printf '%s\n' "$saida" | grep -c 'CREATE INDEX IF NOT EXISTS')" 0
   P -1 -f "$RODADA/mig6_sem_pre.sql" >/dev/null
 
   EM_SUITE=
@@ -790,7 +811,7 @@ fi
 # contagem também é conferida: conjunto EXATO). `APPLY!MARCA` = sabotagem de pós-condição: o apply em
 # transação única TEM de abortar com aquela marca (`_` vira espaço). Conjuntos MEDIDOS na 1ª rodada,
 # não previstos — as 4 divergências da previsão estão explicadas nos comentários da suíte e no PR.
-SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 relogio_min_chunk:F3,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4,PAR_E k_inclui_cor_nula:E1,E4,PAR_E k_ativa_conta_desativada:E1,PAR_E,PAR_R1,PAR_T200,PAR_T50,R1a,R1b,R2a,R4,R5c,R8,T199,T200,T201,T50,T51 s1_ativo_nulo_passa:E2,E3,PAR_E s1_custo_nulo_passa:E2,E3,PAR_E s1_volume_nulo_passa:E2,E3,PAR_E s1_volume_zero_passa:E2,E3,PAR_E s1_corante_orfao_passa:E2,E3,PAR_E s1_produto_orfao_passa:E2,E3,PAR_E s1_sem_itens_passa:E2,E3,PAR_E s1_basta_uma_invalida:E2,E3,PAR_E s1_conta_desativada:E2,E3,E7,PAR_E,PAR_S1,PAR_S1N,PAR_S1d,PAR_T999,S1N,S1a,S1d,T1000,T999 s1_ruim_conta_desativada:E2,E3,PAR_E,PAR_S1d,S1d s1_varredura_para_no_1o:E2,E3,PAR_E s1_union_all:E2,PAR_S1d,S1d s1_corante_nulo_passa:PAR_S1N,S1N k_sem_distinct:A2,E1,E4,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999,R4,T1000,T200,T50,T999 k_ret_sem_distinct:PAR_F7,PAR_R1,R1a,R8 plano_sem_offset0:PL1 pre_aceita_qualquer:PRE1 p13_indice_corante_formula_ausente:APPLY!P13_FALHOU plano_staging_sem_indice:PL1 plano_itens_sem_indice:PL1 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p9_le_a_view_em_maiusculas:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU p11_proconfig_nulo:APPLY!P11_FALHOU p11_config_da_v5_sobra:APPLY!P11_FALHOU p10_job_so_cita_a_funcao:APPLY!P10_FALHOU p12_sem_guard_da_view:APPLY!P12_FALHOU p13_indice_ausente:APPLY!P13_FALHOU p13_definicao_diferente:APPLY!P13_FALHOU guard_da_view_desligado:V1 s1_critico_estrito:T1000 s1_amostra_zerada:E6 s1_ctx_zerado:E7"
+SABOTAGENS="ref_sem_aplicado:F4,F6b,R5d ordem_por_aplicado_em:F8,R7 janela_sem_aplicado:R3 janela_sem_7_dias:R2a,R7 janela_por_recebimento:R7 janela_por_chunk:R7,R8 relogio_aplicado_em:F2,F2b,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 relogio_min_chunk:F3,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999 igualdade_estrita:F2b s5_ausente_vira_saudavel:F6a s2_sem_nulo_sem_ref:F6b,R5d criterio_sem_guarda:R5d s2_sem_criterio_no_ctx:R1b,R5c s4_limiar_desloca:T50,T51 s4_critico_estrito:T200 s5_critico_estrito:F7 p4_instrucao_proibida:APPLY!P4_FALHOU p2b_corte_30d_volta:APPLY!P2b_FALHOU k_inclui_sku_nulo:E1,E4,PAR_E k_inclui_cor_nula:E1,E4,PAR_E k_ativa_conta_desativada:E1,PAR_E,PAR_R1,PAR_T200,PAR_T50,R1a,R1b,R2a,R4,R5c,R8,T199,T200,T201,T50,T51 s1_ativo_nulo_passa:E2,E3,PAR_E s1_custo_nulo_passa:E2,E3,PAR_E s1_volume_nulo_passa:E2,E3,PAR_E s1_volume_zero_passa:E2,E3,PAR_E s1_corante_orfao_passa:E2,E3,PAR_E s1_produto_orfao_passa:E2,E3,PAR_E s1_sem_itens_passa:E2,E3,PAR_E s1_basta_uma_invalida:E2,E3,PAR_E s1_conta_desativada:E2,E3,E7,PAR_E,PAR_S1,PAR_S1N,PAR_S1d,PAR_T999,S1N,S1a,S1d,T1000,T999 s1_ruim_conta_desativada:E2,E3,PAR_E,PAR_S1d,S1d s1_varredura_para_no_1o:E2,E3,PAR_E s1_union_all:E2,PAR_S1d,S1d s1_corante_nulo_passa:PAR_S1N,S1N k_sem_distinct:A2,E1,E4,PAR_A,PAR_E,PAR_F1,PAR_F2,PAR_F7,PAR_R1,PAR_S1,PAR_S1N,PAR_S1d,PAR_T200,PAR_T50,PAR_T999,R4,T1000,T200,T50,T999 k_ret_sem_distinct:PAR_F7,PAR_R1,R1a,R8 plano_sem_offset0:PL1 pre_aceita_qualquer:PRE1,PRE1b pre_depois_dos_builds:PRE1b plano_carimbo_heap:PL1 p13_indice_corante_formula_ausente:APPLY!P13_FALHOU plano_staging_sem_indice:PL1 plano_itens_sem_indice:PL1 p9_volta_a_ler_a_view:APPLY!P9_FALHOU p9_le_a_view_em_maiusculas:APPLY!P9_FALHOU p11_sem_config_do_plano:APPLY!P11_FALHOU p11_proconfig_nulo:APPLY!P11_FALHOU p11_config_da_v5_sobra:APPLY!P11_FALHOU p10_job_so_cita_a_funcao:APPLY!P10_FALHOU p12_sem_guard_da_view:APPLY!P12_FALHOU p13_indice_ausente:APPLY!P13_FALHOU p13_definicao_diferente:APPLY!P13_FALHOU guard_da_view_desligado:V1 s1_critico_estrito:T1000 s1_amostra_zerada:E6 s1_ctx_zerado:E7"
 
 # As trocas textuais de cada sabotagem (busca, troca, …). Cada busca tem de casar EXATAMENTE 1 vez.
 pares_de() {
@@ -892,6 +913,12 @@ pares_de() {
     -- Pré-filtro por cor_id (índice account, cor_id, …); quem decide é a chave inteira.
     SELECT f.account") ;;
     plano_sem_offset0) PARES=("WHERE fi.formula_id = a.id OFFSET 0)" "WHERE fi.formula_id = a.id)") ;;
+    # os builds sobem para antes da PRE (a PRE ainda aborta: só o PRE1b vê)
+    pre_depois_dos_builds) PARES=("$IDX_BLOCO" "" "-- PRE: md5 EXATO" "$IDX_BLOCO
+-- PRE: md5 EXATO") ;;
+    # semântica IDÊNTICA (id é PK), mas a coluna fora do índice das carimbadas força heap: o PL1 antigo
+    # aceitava qualquer Index Scan no parcial (Codex retroativo P2)
+    plano_carimbo_heap) PARES=("               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL) c" "               AND f.account IS NOT NULL AND f.sku_id IS NOT NULL AND f.cor_id IS NOT NULL AND f.id IS NOT NULL) c") ;;
     pre_aceita_qualquer) PARES=("  IF v_vivo IS NULL OR v_vivo NOT IN (" "  IF v_vivo IS NULL AND v_vivo NOT IN (") ;;
     p13_indice_corante_formula_ausente) PARES=("CREATE INDEX IF NOT EXISTS idx_tint_formula_itens_corante_formula
   ON public.tint_formula_itens (corante_id, formula_id);" "DROP INDEX IF EXISTS public.idx_tint_formula_itens_corante_formula;") ;;
@@ -930,6 +957,8 @@ CREATE INDEX idx_tint_formulas_wd5_ativas ON public.tint_formulas (account, sku_
   esac
 }
 
+IDX_BLOCO="$(sed -n '/^CREATE INDEX IF NOT EXISTS idx_tint_formulas_wd5_carimbo/,/(account, created_at);$/p' "$MIG61")"
+[ -n "$IDX_BLOCO" ] || { echo "IDX_BLOCO vazio: a âncora dos índices mudou"; exit 1; }
 echo "── CONTROLE: suíte contra a migration REAL, na MESMA invocação ──"
 suite "$MIG61"
 if [ "$FAIL" -ne 0 ] || [ "$PASS" -eq 0 ]; then
