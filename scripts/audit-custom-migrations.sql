@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 773
+-- Total de custom migrations: 772
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -839,7 +839,6 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261103223300', 'radar_agregado_cnae', '20261103223300_radar_agregado_cnae.sql'),
   ('20261104020000', 'tint_watchdog_fase5_v6_indices', '20261104020000_tint_watchdog_fase5_v6_indices.sql'),
   ('20261104040000', 'tint_watchdog_fase5_v6_1_sem_temp', '20261104040000_tint_watchdog_fase5_v6_1_sem_temp.sql'),
-  ('20261104061910', 'tint_receita_assinada_no_cabecalho', '20261104061910_tint_receita_assinada_no_cabecalho.sql'),
   ('20261104110000', 'tint_promote_snap_fonte_so_com_expansao', '20261104110000_tint_promote_snap_fonte_so_com_expansao.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
@@ -3333,14 +3332,7 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_formula', 'tint_formula_itens'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_corante_formula', 'tint_formula_itens'),
-  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas'),
-  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formulas_assina_receita', ''),
-  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formula_itens_invalida_assinatura', ''),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formulas_assinatura', 'tint_formulas'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
+  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5881,14 +5873,7 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formulas_wd5_ativas', 'tint_formulas'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_formula', 'tint_formula_itens'),
   ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_formula_itens_corante_formula', 'tint_formula_itens'),
-  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas'),
-  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formulas_assina_receita', ''),
-  ('tint_receita_assinada_no_cabecalho', 'function', 'public', 'tint_formula_itens_invalida_assinatura', ''),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formulas_assinatura', 'tint_formulas'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_ins', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_del', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_upd', 'tint_formula_itens'),
-  ('tint_receita_assinada_no_cabecalho', 'trigger', 'public', 'trg_tint_formula_itens_invalida_trunc', 'tint_formula_itens')
+  ('tint_watchdog_fase5_v6_1_sem_temp', 'index', 'public', 'idx_tint_staging_formulas_conta_criado', 'tint_staging_formulas')
 )
 SELECT
   e.migration,
