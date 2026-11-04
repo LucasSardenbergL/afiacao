@@ -205,10 +205,10 @@ $acl$;
 -- ── 5. o promote compara pela assinatura e assina o que tocou ────────────────────────────────────
 DO $mig$
 DECLARE
-  -- md5(prosrc) do corpo vivo em 2026-11-04 (psql-ro; = o que 20261103093424 produziu) e do corpo
-  -- que esta migration produz.
-  c_pred constant text := '2c6f461f9c9d4f8c54ea817e25f88f61';
-  c_este constant text := '4bd0e27952ed06b83df3213f1929ea74';
+  -- md5(prosrc) do corpo vivo em 2026-11-04 (psql-ro, xmin 13787158; = o que 20261104110000 produziu)
+  -- e do corpo que esta migration produz.
+  c_pred constant text := '97d4424225edab7caff792b852afb371';
+  c_este constant text := 'bbd219afff819b3d2401f8e33a8a4010';
   -- (busca, troca): cada busca tem de casar exatamente 1 vez no corpo vivo.
   c_trocas constant text[][] := ARRAY[
     -- A1: contadores.

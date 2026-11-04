@@ -53,6 +53,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-assin.XXXXXX")"
 DATA="$TMP/data"
 MIG="$REPO_ROOT/supabase/migrations/20261104061910_tint_receita_assinada_no_cabecalho.sql"
 MIG_DIFF="$REPO_ROOT/supabase/migrations/20261103093424_tint_promote_escreve_so_o_que_mudou.sql"
+MIG_SNAP="$REPO_ROOT/supabase/migrations/20261104110000_tint_promote_snap_fonte_so_com_expansao.sql"
 CENARIO="$REPO_ROOT/db/test-tint-promote-diff.sh"
 # a cadeia que o cenário aplica (variáveis que ele lê)
 MIG_V6="$REPO_ROOT/supabase/migrations/20260726120000_tint_promote_error_details_completo.sql"
@@ -64,9 +65,9 @@ MIG_PURGE="$REPO_ROOT/supabase/migrations/20261021203000_tint_purge_staging_fora
 MIG_LATEST="$REPO_ROOT/supabase/migrations/20261030071806_tint_promote_latest_por_chave_indexado.sql"
 # shellcheck disable=SC2034  # lido pelo cenário carregado com `.` abaixo
 MD5_PROD='954a96411be99c18ab4bff40df14e620'   # o que a cadeia do cenário reproduz (predecessor do diff)
-MD5_VIVO='2c6f461f9c9d4f8c54ea817e25f88f61'   # md5(prosrc) do promote em prod, 2026-11-04 (psql-ro)
+MD5_VIVO='97d4424225edab7caff792b852afb371'   # md5(prosrc) do promote em prod, 2026-11-04 (psql-ro, xmin 13787158)
 
-for f in "$MIG" "$MIG_DIFF" "$CENARIO" "$MIG_V6" "$MIG_5B1" "$MIG_ASYNC" "$MIG_FANT" "$MIG_REF" "$MIG_PURGE" "$MIG_LATEST"; do
+for f in "$MIG" "$MIG_DIFF" "$MIG_SNAP" "$CENARIO" "$MIG_V6" "$MIG_5B1" "$MIG_ASYNC" "$MIG_FANT" "$MIG_REF" "$MIG_PURGE" "$MIG_LATEST"; do
   [ -f "$f" ] || { echo "arquivo ausente: $f"; exit 1; }
 done
 
@@ -93,8 +94,9 @@ for fn in T seed seed_desvio seed_big_run escritas; do
   [ "$(type -t "$fn")" = "function" ] || { echo "✗ pré-condição: o cenário não definiu $fn"; exit 1; }
 done
 
-# o corpo de PROD hoje = a cadeia + o diff
+# o corpo de PROD hoje = a cadeia + o diff + o _snap_fonte só com expansão
 T -q --single-transaction -f "$MIG_DIFF" >/dev/null 2>&1
+T -q --single-transaction -f "$MIG_SNAP" >/dev/null 2>&1
 VIVO="$(T -tA -c "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.tint_promote_sync_run(uuid)'::regprocedure")"
 [ "$VIVO" = "$MD5_VIVO" ] || { echo "✗ pré-condição: o template não é o corpo de PROD (md5 $VIVO, prod $MD5_VIVO)"; exit 1; }
 echo "  · template = corpo de prod (md5 $VIVO)"
@@ -657,8 +659,8 @@ TROCAS
 falsifica F8 MD5 <<'TROCAS'
 [("      desativada_em           = NULL,\n      receita_assinatura      = NULL,\n      receita_desde           = NULL\n    RETURNING$s7$", "      desativada_em           = NULL\n    RETURNING$s7$")]
 TROCAS
-# F9 — o promote não assina nada: tudo continua pelos itens.
-falsifica F9 MD5 LEITURA ASSINA <<'TROCAS'
+# F9 — o promote não assina nada: tudo continua pelos itens (e a C8 não chega assinada ao RH).
+falsifica F9 MD5 EQUIV LEITURA ASSINA <<'TROCAS'
 [("  IF current_setting('transaction_isolation') = 'read committed' THEN\n    CREATE TEMP TABLE _assinar", "  IF false THEN\n    CREATE TEMP TABLE _assinar")]
 TROCAS
 # F10 — TRIGGER não revogado (postcondição ajustada): service_role cria gatilho.

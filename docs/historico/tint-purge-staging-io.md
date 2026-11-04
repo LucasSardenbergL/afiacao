@@ -284,6 +284,17 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
     - 15 asserts: MD5, EQUIV, ASSINA, LEITURA, CONC_A, CONC_B, RR, FORJA, TEMP, TOMB, PRIV, BULK, ACL, IDEMP e GUARDA, mais os controles DERIVA e TETO, e 15 falsificações com conjunto exato.
     - EQUIV inclui QUAIS chaves são puladas em cada um dos 14 runs.
     - No reenvio idêntico num par de 4.000 fórmulas, o promote varre `tint_formula_itens` 14 vezes. O de hoje varre 4.010.
+    - EQUIV compara QUAIS chaves são puladas em cada run, lidas do `_pulados` dentro da transação.
+    - O RH isola o hash: a staging vencedora de C8 muda no lugar, o cabeçalho continua igual e os itens continuam frescos.
+    - O TETO roda com teto 6, e as 8 reescritas ficam com só 3. Os asserts ITEM e as falsificações F16/F17 entraram por pedido do Codex.
+  - **Codex no código** (`max`, 772 s, 176.920 tokens): **APROVAR COM AJUSTES**, nenhum P1. Ele confirmou as 10 trocas e o md5 `bbd219af…`, a equivalência sha256/`COALESCE` e o frescor `-infinity`, o early-return, o One-Time Filter e a cobertura das 2 ordens pela trava antes do filtro. Os 3 P2:
+    1. **Deadlock cabeçalho ↔ item, conhecido e não tratado.** Um escritor DIRETO de item trava o item e depois o cabeçalho, enquanto o promote trava o cabeçalho e depois deleta itens. O PG aborta um dos dois, e a fila do promote tem retry. Hoje o promote é o único escritor de itens. Um escritor novo deve travar os cabeçalhos ANTES de mexer nos itens.
+    2. **Lacunas da prova:** fechadas pelos itens acima.
+    3. **Custo das tabelas de transição:** medido numa bancada PG17 com `work_mem` de prod (3,5 MB), num par BIG com 5.015 reescritas e 14.985 puladas por run:
+       - temp igual nos dois (3,7 MB);
+       - tempo de 1,3–1,7 s no promote de hoje, contra 2,1–2,9 s com a M1 (3,1 s no 1º toque, que assina 20.000).
+       
+       Com cache quente, são cerca de +0,15 ms de CPU por fórmula REESCRITA (as travas da invalidação e a assinatura). O ganho é em leitura de disco das puladas, que a bancada com cache quente não mede. Num run de reescrita total (1,5 M itens), a tabela de transição do DELETE/INSERT derrama em temp na ordem de 100 MB. Esse run já estoura o Mini por conta própria (é o run de 02/11).
 
 ## 2026-11-03 — Mini aprovado na janela limpa, depois dos leitores 1, 2 e 4 e da promoção de fórmulas por diff
 
