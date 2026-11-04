@@ -33,7 +33,7 @@ PRED="$REPO_ROOT/db/fixtures/radar-agregado-predecessoras-prod-20261103.sql"
 if [ "${1:-}" = "--falsificar" ]; then
   # nome:VERMELHOS — asserts (unidos por ',') que TÊM de ficar vermelhos; ou `APPLY!MARCA` quando a
   # postcondição/PRE da própria migration TEM de abortar o apply com aquela marca (`_` vira espaço).
-  SABOTAGENS="sec_ignorado_agg:S1,S2 sec_principal_ignorado:S2 sec_sem_distinct:D1,S1 sec_sem_cobertura:S7,S8 sec_vivo_ignorado:S7,S8 agg_padrao_com_sec:S1,S7 fino_com_sec:S2,S3 sec_nunca:I5 sec_sem_validade:B1d lista_ignorada:L1,L2,L3 lista_sem_indice:L4 cobertura_errada:APPLY!P5_FALHOU:_cobertura tabela_sec_aberta:APPLY!P2_FALHOU tabela_sec_aberta_sem_post:C1a lista_anon:APPLY!P3_FALHOU sem_gin:APPLY!P4_FALHOU pre_cega:F1a,F1b"
+  SABOTAGENS="sec_ignorado_agg:S1,S2 sec_principal_ignorado:S2 sec_sem_distinct:D1,S1 sec_sem_distinct_apply:APPLY!P5_FALHOU:_secundário sec_sem_cobertura:S7,S8 sec_vivo_ignorado:S7,S8 agg_padrao_com_sec:S1,S7 fino_com_sec:S2,S3 sec_nunca:I5 sec_sem_validade:B1d lista_ignorada:L1,L2,L3 lista_sem_indice:L4 cobertura_errada:APPLY!P5_FALHOU:_cobertura tabela_sec_aberta:APPLY!P2_FALHOU tabela_sec_aberta_sem_post:C1a lista_anon:APPLY!P3_FALHOU sem_gin:APPLY!P4_FALHOU pre_cega:F1a,F1b"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-cnae-sec.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -116,7 +116,9 @@ case "${SABOTAGEM:-}" in
            AND (p_uf IS NULL OR a.uf = p_uf)
            AND (p_uf IS NOT NULL OR p_ufs IS NULL OR a.uf = ANY (p_ufs))
 " ;;
-  sec_sem_distinct)   cegar_md5; sabotar "SELECT DISTINCT x.cs FROM unnest" "SELECT x.cs FROM unnest" ;;
+  sec_sem_distinct)   cegar_md5; sabotar "SELECT DISTINCT x.cs FROM unnest" "SELECT x.cs FROM unnest"
+                      sabotar "      RAISE EXCEPTION 'P5 FALHOU: secundário" "      RAISE NOTICE 'P5 FALHOU: secundário" ;;
+  sec_sem_distinct_apply) cegar_md5; sabotar "SELECT DISTINCT x.cs FROM unnest" "SELECT x.cs FROM unnest" ;;
   sec_sem_cobertura)  cegar_md5; sabotar "
        AND EXISTS (SELECT 1 FROM public.radar_agregado_estado e
                     WHERE e.id = 1 AND p_cnae_secundario = ANY (e.cnaes_secundarios_cobertos)) THEN" " THEN" ;;
@@ -139,7 +141,7 @@ case "${SABOTAGEM:-}" in
                       sabotar "    RAISE EXCEPTION 'P2 FALHOU: radar_agregado_cnae_sec legível" "    RAISE NOTICE 'P2 FALHOU: radar_agregado_cnae_sec legível" ;;
   lista_anon)         sabotar "date,date,text,integer,integer,text) TO authenticated, service_role;" "date,date,text,integer,integer,text) TO anon, authenticated, service_role;" ;;
   sem_gin)            sabotar "CREATE INDEX IF NOT EXISTS idx_radar_empresas_cnaes_sec ON public.radar_empresas USING gin (cnaes_secundarios);" "" ;;
-  pre_cega)           sabotar "    IF v_rec IS NULL OR v_rec NOT IN" "    IF false AND v_rec NOT IN" ;;
+  pre_cega)           sabotar "  IF v_rec IS NULL OR v_rec NOT IN" "  IF false AND v_rec NOT IN" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 9 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "⚠️  SABOTAGEM ATIVA: $SABOTAGEM"
