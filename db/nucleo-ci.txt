@@ -699,7 +699,7 @@ db/test-tint-fase5-watchdog-v5.sh           47  falsificar=39
 # suíte da v5 contra a v6 + PARIDADE das 11 colunas do statement v5×v6 em 11 estados + equivalência contra
 # a VIEW REAL + PL1 (forma do plano num banco de ESCALA a ~5% de prod, com o planner de prod) + PRE1.
 # --falsificar: controle verde + 54 sabotagens de conjunto exato (12 de pós-condição que abortam o apply).
-db/test-tint-fase5-watchdog-v6.sh           63  falsificar=fora-do-ci  # 42 suítes inteiras (~20 s cada no runner) ≈ +15 min: estourou o job de 25 min no PR #3580 (cancelado aos 17 min); controle + 54/54 sabotagens nos locales C e pt_BR rodados no PR (2026-11-04)
+db/test-tint-fase5-watchdog-v6.sh           65  falsificar=fora-do-ci  # cada sabotagem roda a suíte inteira (~20 s no runner): estourou o job de 25 min no PR #3580 (cancelado aos 17 min); controle 65 + 56/56 sabotagens exatas nos locales C e pt_BR rodados no PR do Codex retroativo (2026-11-04)
 # O promote para de ressuscitar fórmula de cor que a FONTE retirou (20261013150000) — money-path. Em
 # 13/10, 26.180 fórmulas de 6.545 cores ausentes do snapshot de chaves estavam ATIVAS, canônicas e
 # com receita válida (9.164 com preço final no balcão): o promote reexpandia o staging antigo do par
