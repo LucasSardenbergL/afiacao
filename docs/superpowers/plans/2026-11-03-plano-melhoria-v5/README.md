@@ -49,7 +49,7 @@ Base (✔ `gh run`): PR p50 **24,4 min** de parede; caminho crítico = `provas-s
 | # | Item | Evidência | Codex | Veredito |
 |---|---|---|---|---|
 | E1 | `provas-sql` com escopo por job | 33/60 PRs mergeados não tocam `db/` nem `supabase/` (13 só `docs/`); padrão já existe em `mutcheck-escopo` (`ci.yml:1637`) | AJUSTAR: há prova que lê `src/` (`db/test-projecao-13s-saldo-fresco.sh:290`); escopo **conservador** — incerteza roda tudo; adaptar união/recibos (`ci.yml:1365`) e `validate` (`:1425`) | **MANTER** (M) + 2ª opinião |
-| E3 | Merge queue (`merge_group`) | **Incidente**: main vermelha ~2h50 (01/11 e 02/11, #3498/#3539); 5 PRs falharam typecheck em arquivo que não tocaram (≈670 runner-min). `ci.yml:78-81` já aponta a solução | AJUSTAR: reutilizar `validate`, adaptar o auto-merge; nenhum gate próprio novo | **MANTER** (M) — founder ajusta a regra de branch no GitHub |
+| E3 | Merge queue (`merge_group`) | **Incidente**: main vermelha ~2h50 (01/11 e 02/11, #3498/#3539); 5 PRs falharam typecheck em arquivo que não tocaram (≈670 runner-min). `ci.yml:78-81` já aponta a solução | AJUSTAR: reutilizar `validate`, adaptar o auto-merge; nenhum gate próprio novo | 🚧 **BLOQUEADO** (2026-11-04): merge queue só existe em repo de organização, e este é de conta pessoal. Founder fechou (opção D). Ver `docs/historico/ci-merge-queue-bloqueada-repo-pessoal.md` |
 | CI-GIT | Checkout raso no job `typecheck` | `ci.yml:189` `fetch-depth: 0`; o job só instala e roda os 2 `tsc` | MANTER (ganho pequeno) | **MANTER** (P) |
 
 ### D. Banco e edges
@@ -84,7 +84,7 @@ Base (✔ `gh run`): PR p50 **24,4 min** de parede; caminho crítico = `provas-s
 | 6 | F1 → F5 — chunk em paralelo ao auth e prefetch na sidebar | — | sessão + **Publish** |
 | 7 | F3 — `vendor-ui` por alcance | build antes/depois | sessão + **Publish** |
 | 8 | CI-GIT + E1 — checkout raso e `provas-sql` com escopo | 2ª opinião (E1) | sessão |
-| 9 | E3 — merge queue | lote 8; Codex | sessão + **founder** (regra de branch no GitHub) |
+| 9 | E3 — merge queue · 🚧 **bloqueado pela plataforma** (repo pessoal; `docs/historico/ci-merge-queue-bloqueada-repo-pessoal.md`) | lote 8; Codex | — |
 | 10 | D3 fatia 1 — `cliente_classificacao` com diff | prova PG17 + Codex | sessão escreve migration; aplicação no envelope ou pelo founder |
 | 11 | D1 — HOT em CP (e CR depois do B3) | B3 observado; prova PG17 | idem |
 | — | D4, D5, F2 | datas/amostra (§2) | diagnóstico, sem PR |
