@@ -14,6 +14,7 @@
 #   ACL     anon/authenticated não executam o apply
 #   IDEMP   re-aplicar é no-op (md5 igual)
 #   GUARDA  re-aplicar sobre um apply de OUTRO corpo ABORTA em vez de trocá-lo
+#   CFG     apply sem search_path (proconfig NULL) → a migration ABORTA (a guarda não é NULL-cega)
 # Controle de não-vacuidade: SEM a migration, o apply NÃO espera o lock por account.
 #
 # Falsificações (cópias da migration em $TMP — o repo nunca é tocado), cada uma com o conjunto EXATO de
@@ -98,7 +99,7 @@ tenta_com_lock_preso() {
   echo "$v1 $v2"
 }
 
-TODOS="APLICA MD5 LOCK LOJA ACL IDEMP GUARDA"
+TODOS="APLICA MD5 LOCK LOJA ACL IDEMP GUARDA CFG"
 c_este_de() { sed -nE "s/^  c_este constant text := '([^']*)';/\1/p" "$1"; }
 
 # ── a suíte: $1 = arquivo da migration (real ou sabotada), $2 = banco; imprime os asserts que CAÍRAM ──
@@ -142,6 +143,10 @@ SQL
     depois="$(q "$db" "SELECT md5(prosrc) FROM pg_proc WHERE oid = 'public.tint_apply_keys_snapshot(uuid)'::regprocedure")"
     [ "$antes" = "$depois" ] || cai GUARDA
   fi
+  # CFG (Codex P2): apply sem search_path (proconfig NULL) → a migration ABORTA em vez de anunciar sucesso
+  PA -q -d postgres -c "CREATE DATABASE ${db}_cfg TEMPLATE tpl_apply" >/dev/null
+  q "${db}_cfg" "ALTER FUNCTION public.tint_apply_keys_snapshot(uuid) RESET search_path" >/dev/null
+  if PA -q -d "${db}_cfg" --single-transaction -f "$mig" >/dev/null 2>&1; then cai CFG; fi
   echo "$caidos" | xargs
 }
 
@@ -259,8 +264,16 @@ cat >"$TMP/trocas_F5" <<'EOF'
 EOF
 falsifica F5
 
+# F6: a guarda de search_path volta à forma NULL-cega (ANY(NULL) = NULL) → só CFG cai
+cat >"$TMP/trocas_F6" <<'EOF'
+  IF ('search_path=public' = ANY (v_cfg)) IS NOT TRUE THEN
+-----
+  IF NOT ('search_path=public' = ANY (v_cfg)) THEN
+EOF
+falsifica F6 CFG
+
 echo
 if [ "$FALHAS" -ne 0 ] || [ "$FALSIF_ERR" -ne 0 ]; then
   echo "VERMELHO (falhas=$FALHAS, falsificações erradas=$FALSIF_ERR)"; exit 1
 fi
-echo "VERDE: $TODOS + 5 falsificações (locale $LOC)"
+echo "VERDE: $TODOS + 6 falsificações (locale $LOC)"

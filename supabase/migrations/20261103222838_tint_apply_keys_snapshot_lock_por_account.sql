@@ -96,7 +96,8 @@ BEGIN
      OR position('UPDATE tint_formulas SET desativada_em' in v_src) < v_conta THEN
     RAISE EXCEPTION 'P1 FALHOU: o apply nao toma o lock por account depois do de loja e antes de desativar';
   END IF;
-  IF NOT ('search_path=public' = ANY (v_cfg)) THEN
+  -- IS NOT TRUE: proconfig NULL (RESET search_path) daria ANY(NULL) = NULL e passaria calado
+  IF ('search_path=public' = ANY (v_cfg)) IS NOT TRUE THEN
     RAISE EXCEPTION 'P2 FALHOU: o apply perdeu o search_path (proconfig %)', v_cfg;
   END IF;
   IF has_function_privilege('anon', 'public.tint_apply_keys_snapshot(uuid)', 'EXECUTE')
