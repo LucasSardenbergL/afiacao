@@ -100,7 +100,7 @@ case "${SABOTAGEM:-}" in
       RETURN v_resumo;" ;;
   tick_denominador_errado) cegar_md5; sabotar "  SELECT count(*) INTO v_ja_cliente_antes FROM public.radar_empresas WHERE ja_cliente;" "  SELECT count(*) INTO v_ja_cliente_antes FROM public.radar_empresas WHERE NOT ja_cliente;" ;;
   estado_aberto)       sabotar "REVOKE ALL ON TABLE public.radar_score_estado FROM PUBLIC, anon, authenticated;" "GRANT SELECT ON TABLE public.radar_score_estado TO authenticated;"
-                       sabotar "      RAISE EXCEPTION 'P2 FALHOU: radar_score_estado legível" "      RAISE NOTICE 'P2 FALHOU: radar_score_estado legível" ;;
+                       sabotar "    RAISE EXCEPTION 'P2 FALHOU: radar_score_estado legível" "    RAISE NOTICE 'P2 FALHOU: radar_score_estado legível" ;;
   escritor_aberto)     sabotar "-- PÓS" "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO authenticated;
 -- PÓS"
                        sabotar "      RAISE EXCEPTION 'P4 FALHOU" "      RAISE NOTICE 'P4 FALHOU" ;;
@@ -207,12 +207,13 @@ Pq -c "ANALYZE public.radar_empresas" >/dev/null
 eq "A1a 1º cálculo do score novo recalcula" "$(rodada | cut -d' ' -f1)" "true"
 eq "A1b EQUIVALÊNCIA: score/motivos/versão = predecessora" "$(foto)" "$FOTO_PRED"
 
+N_REG0="$(Pq -c "SELECT count(*) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")"
 R="$(rodada)"
 eq "B1a sem mudança → não recalcula" "$(echo "$R" | cut -d' ' -f1)" "false"
 eq "B1b sem mudança → 0 seq scans de radar_empresas" "$(echo "$R" | cut -d' ' -f2)" "0"
 
 ULT="$(Pq -c "SELECT detalhes::text FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")"
-eq "B4a rodada pulada registra sucesso automático" "$(Pq -c "SELECT status||'/'||origem FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1")" "sucesso/automatica"
+eq "B4a rodada pulada acrescenta 1 registro sucesso/automatica" "$(Pq -c "SELECT count(*) - $N_REG0 || '/' || (SELECT status||'/'||origem FROM public.acoes_execucoes WHERE acao='radar.score_recalcular' ORDER BY id DESC LIMIT 1) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular'")" "1/sucesso/automatica"
 eq "B4b o registro da pulada traz lote_vigente e recalculou=false" "$(Pq -c "SELECT (d->>'lote_vigente')||'/'||(d->>'recalculou') FROM (SELECT '$ULT'::jsonb d) x")" "2026-10/false"
 
 # B2a: linha muda com updated_at novo (ingestão/recruzamento bumpam) → recalcula e a linha reflete.
@@ -258,12 +259,18 @@ eq "C1b antes + marcados = total" "$(Pq -c "SELECT ((d->>'ja_cliente_antes')::in
 eq "C1c sem candidatos_antes (era o seq scan)" "$(Pq -c "SELECT '$DT'::jsonb ? 'candidatos_antes'")" "f"
 
 # D1/D2: fronteira.
+# SQLSTATE por marcador ASCII (a mensagem muda com o locale); outro erro propaga e o marcador não sai.
 D1="$(P -qAt 2>&1 <<'SQL' || true
 SET ROLE authenticated;
-SELECT count(*) FROM public.radar_score_estado;
+DO $d1$ BEGIN
+  PERFORM count(*) FROM public.radar_score_estado;
+  RAISE NOTICE 'D1_LEU';
+EXCEPTION WHEN insufficient_privilege THEN
+  RAISE NOTICE 'D1_NEGADO_42501';
+END $d1$;
 SQL
 )"
-eq "D1 authenticated não lê radar_score_estado (42501)" "$(echo "$D1" | grep -o 'permission denied' | head -1)" "permission denied"
+eq "D1 authenticated não lê radar_score_estado (42501)" "$(echo "$D1" | grep -o 'D1_[A-Z0-9_]*' | head -1)" "D1_NEGADO_42501"
 eq "D2 ACL: service_role executa; anon/authenticated/PUBLIC não" \
   "$(Pq -c "SELECT string_agg(f||':'||has_function_privilege('service_role',f,'EXECUTE')||has_function_privilege('anon',f,'EXECUTE')||has_function_privilege('authenticated',f,'EXECUTE'), ' ' ORDER BY f) FROM unnest(ARRAY['public.radar_recruzar_ja_cliente_tick()','public.radar_score_recalcular()']) f")" \
   "public.radar_recruzar_ja_cliente_tick():truefalsefalse public.radar_score_recalcular():truefalsefalse"
