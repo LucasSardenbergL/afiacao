@@ -14,6 +14,8 @@
 #     sozinha), o trânsito preservado, a linha só-meta e o snapshot com faturado NULL.
 #   Bloco Z — faturado ZERO é fato: posição 0,00 (não NULL), com e sem trânsito.
 #   Bloco M — meta NULL: posição e faixa valem; só o gap é NULL.
+#   (V2 só fica vermelho quando uma linha SAI da lista das que mudaram — gap_sem_meta; sabotar uma
+#   coluna de SEMSNAP não a tira de lá, porque as outras 4 seguem NULL.)
 #   Bloco V — as linhas com faturado e meta saem idênticas às do predecessor (23 colunas, nos dois
 #     sentidos); as 18 colunas não-derivadas, idênticas em TODAS as linhas; chaves presentes e únicas;
 #     nomes/tipos/ordem das colunas iguais.
@@ -67,14 +69,14 @@ TOTAL_ESPERADO=32
 #   sem_trava, sem_pre, pos_sem_invoker, pos_sem_md5, pre_sem_este — o envelope, 1 camada por vez
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="pos_c_coalesce:N1,V2:N2,N3,N4,N5,N7,Z1,Z2,M1,V1,V3,V4,D1,D2
-              pos_o_coalesce:N2,V2:N1,N3,N4,N5,N7,Z1,Z2,M1,V1,D1
-              faixa_c_coalesce:N3,V2,D1:N1,N2,N4,N5,N7,Z1,Z2,M1,V1,D2
-              faixa_o_coalesce:N4,V2:N1,N2,N3,N5,N7,Z1,Z2,M1,V1,D1
-              gap_sem_fat:N5,N7,V2:N1,N2,N3,N4,N8,Z1,Z2,M1,V1,D1
+  SABOTAGENS="pos_c_coalesce:N1,N7:N2,N3,N4,N5,Z1,Z2,M1,V1,V2,V3,V4,D1,D2
+              pos_o_coalesce:N2:N1,N3,N4,N5,N7,Z1,Z2,M1,V1,D1
+              faixa_c_coalesce:N3,D1:N1,N2,N4,N5,N7,Z1,Z2,M1,V1,D2
+              faixa_o_coalesce:N4:N1,N2,N3,N5,N7,Z1,Z2,M1,V1,D1
+              gap_sem_fat:N5,N7:N1,N2,N3,N4,N8,Z1,Z2,M1,V1,D1
               gap_sem_meta:M1,V2:N1,N2,N3,N4,N5,N7,Z1,Z2,V1,D1
               zero_vira_nulo:Z1,Z2,V1:N1,N2,N3,N4,N5,N7,M1
-              vizinha_alterada:N6,V1,V2:N1,N2,N3,N4,N5,Z1,Z2,M1
+              vizinha_alterada:N6,V1:N1,N2,N3,N4,N5,Z1,Z2,M1
               sem_invoker:S1,S2:P2,P3,N1,N2,N3,N4,N5,V1,S3
               sem_trava:K1:K2,K3,K4,K5
               sem_pre:K2:K1,K3,K4,K5
