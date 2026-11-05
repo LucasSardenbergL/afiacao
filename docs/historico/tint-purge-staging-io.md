@@ -502,9 +502,12 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - Conferência pelo conector: 1.133 entradas, 774 kB de texto, `claude_ro` com 0.
   - **Série seguinte, 14:00–14:10 UTC, loja aberta: 0 bytes de temp e 0 saltos às :41.** O contador estava vivo: `temp_files` foi de 9.381 às 01:52 para 10.460 às 14:00, antes do reset, e `xact_commit` subindo.
 - **Consequência para o Mini:** o leitor "sem dono" era ~56 dos ~86 MB/15 min. Depois do #3587 e deste reset, a janela medida com a loja aberta tem **temp 0**.
-- **Volta sozinho:** sem correção durável, o texto do `claude_ro` volta a passar do `work_mem` em poucos dias. Foram ~650 entradas/dia. A decisão fica com o founder:
-  - `ALTER ROLE claude_ro SET pg_stat_statements.track = 'none'` (parâmetro `SUSET`; não sei se o Supabase deixa o `postgres` alterá-lo);
-  - ou um reset periódico só desse papel.
+- **Correção durável (founder, SQL Editor, 05/11 ~14:12 UTC):** `ALTER ROLE claude_ro SET pg_stat_statements.track = 'none'`. O Supabase aceitou do `postgres`. Sem isso, o texto do `claude_ro` voltaria a passar do `work_mem` em poucos dias (~650 entradas/dia).
+  - Conferido pela psql-ro: uma conexão nova sai com `current_setting('pg_stat_statements.track') = none`. O valor fica no `rolconfig` (`setdatabase = 0`). O `default_transaction_read_only=on` continua na linha por banco, intacta.
+  - A sentinela `authz:claude-ro:prod` dá ✅ 39 asserções, exit 0: ela só confere o GUC read-only (`cfg LIKE 'default_transaction_read_only=%'`), então o GUC novo não acusa.
+  - Conferido pelo conector às 14:15 UTC, depois das dezenas de statements da sentinela: **0 entradas do `claude_ro`**.
+  - **Efeito colateral aceito:** as leituras do `claude_ro` saem do `pg_stat_statements`. Ninguém as lia: o próprio `claude_ro` não alcança `extensions`.
+  - **Se um dia o `claude_ro` for recriado** (`DROP ROLE` + `CREATE`), o GUC se perde e o temp das :41 volta em dias. A assinatura é +2 arquivos / +8,6 MB às :40–:41.
 
 ## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
 
