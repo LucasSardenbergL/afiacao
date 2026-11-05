@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/integrations/supabase/client';
+import { opcoesMeuCargoComercial } from '@/lib/cargo-comercial-cache';
 import { useAuthzContract } from '@/hooks/useAuthzContract';
 
 /**
@@ -64,40 +65,18 @@ interface UseCommercialRoleReturn {
 export function useCommercialRole(): UseCommercialRoleReturn {
   const { user } = useAuth();
   const { matrizAtiva, loading: loadingContrato } = useAuthzContract();
-  const [commercialRole, setCommercialRole] = useState<CommercialRole | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const fetchRole = async () => {
-    if (!user) {
-      setCommercialRole(null);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('commercial_roles')
-        .select('commercial_role')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Error fetching commercial role:', error);
-        setCommercialRole(null);
-      } else {
-        setCommercialRole((data?.commercial_role as CommercialRole) || null);
-      }
-    } catch (error) {
-      console.error('Error fetching commercial role:', error);
-      setCommercialRole(null);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchRole();
-  }, [user?.id]);
+  // Mesma chave e mesma consulta do `useMyCommercialRole`: o `AuthContext` semeia o cache com a
+  // leitura do boot, e este hook (chamado pelo `useDisplayAccess` em toda tela) não refaz o REST.
+  // É sempre o user REAL: na lente, quem lê o cargo do alvo é o `useDisplayAccess`.
+  const consulta = useQuery({ ...opcoesMeuCargoComercial(user?.id), enabled: !!user });
+  // Fail-closed: só um sucesso vira cargo. Erro (depois dos retries), offline ou sem user → null,
+  // e todo predicado abaixo nega. `loading` só enquanto a consulta de fato roda.
+  const commercialRole = consulta.isSuccess ? ((consulta.data as CommercialRole | null) ?? null) : null;
+  const loading = consulta.isLoading;
+  const { refetch: refazerConsulta } = consulta;
+  const refetch = useCallback(async () => {
+    await refazerConsulta();
+  }, [refazerConsulta]);
 
   const isSuperAdmin = commercialRole === 'super_admin';
   const isEstrategico = commercialRole === 'estrategico';
@@ -117,6 +96,6 @@ export function useCommercialRole(): UseCommercialRoleReturn {
     // Só está "pronto" quando as DUAS perguntas responderam — senão o consumidor leria
     // `canView* = false` como decisão final e não como "ainda não sei".
     loading: loading || loadingContrato,
-    refetch: fetchRole,
+    refetch,
   };
 }

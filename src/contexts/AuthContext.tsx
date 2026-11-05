@@ -139,13 +139,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
   }, []);
 
-  const fetchUserRoleAndApproval = useCallback(async (userId: string, geracao: number) => {
+  /**
+   * Lê papel/aprovação/cargo e escreve no estado. Devolve `true` se escreveu e `false` se a
+   * geração do auth mudou no caminho (logout, evento mais novo, refetch, desmontagem): aí a
+   * leitura é de outra época e NÃO escreve nada. Sem isso, um fetch que resolvia depois do
+   * `SIGNED_OUT` devolvia o `role` de quem saiu, com `user` já `null`; e um `TOKEN_REFRESHED`
+   * mais novo era sobrescrito pela leitura velha. Quem decide é a geração mais nova.
+   */
+  const fetchUserRoleAndApproval = useCallback(async (userId: string, geracao: number): Promise<boolean> => {
+    const vigente = () => geracao === geracaoAuthRef.current;
     for (let attempt = 0; attempt < ROLE_FETCH_RETRY_DELAYS_MS.length; attempt += 1) {
       const delayMs = ROLE_FETCH_RETRY_DELAYS_MS[attempt];
       if (delayMs > 0) await wait(delayMs);
+      if (!vigente()) return false;
 
       try {
         const [roleResult, profileResult, commercialResult] = await fetchUserRoleAndApprovalOnce(userId);
+        // Daqui até o fim do `try` não há `await`: uma checagem cobre todos os setters abaixo.
+        if (!vigente()) return false;
 
         if (roleResult.error) {
           if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(roleResult.error)) {
@@ -167,7 +178,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setRole(null);
           setIsApproved(false);
           setCommercialRole(null);
-          return;
+          return true;
         }
 
         const fetchedRole = (roleResult.data?.role as AppRole) || 'customer';
@@ -214,12 +225,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           }
         }
 
-        // Lote 6c: a MESMA leitura alimenta o `useMyCommercialRole`, que não refaz o REST depois
-        // que o Index monta. Só a tentativa que venceu os retries, só a geração atual, e leitura
-        // com erro não semeia (o hook consulta sozinho, sem fabricar null).
-        if (geracao === geracaoAuthRef.current) semearMeuCargoComercial(queryClient, userId, commercialResult);
-        return;
+        // Lote 6c: a MESMA leitura alimenta o cache do cargo (`useMyCommercialRole` e
+        // `useCommercialRole`), que não refazem o REST. Só a tentativa que venceu os retries, só a
+        // geração vigente (checada acima), e leitura com erro não semeia (o hook consulta sozinho).
+        semearMeuCargoComercial(queryClient, userId, commercialResult);
+        return true;
       } catch (error) {
+        if (!vigente()) return false;
         if (attempt < ROLE_FETCH_RETRY_DELAYS_MS.length - 1 && isTransientBackendError(error)) {
           logger.warn('Transient role/approval fetch exception — retrying', {
             stage: 'role_fetch_retry',
@@ -239,9 +251,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setRole(null);
         setIsApproved(false);
         setCommercialRole(null);
-        return;
+        return true;
       }
     }
+    return false; // inalcançável: a última tentativa nunca dá `continue`
   }, [fetchUserRoleAndApprovalOnce, queryClient]);
 
   useEffect(() => {
@@ -291,8 +304,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             if (event === 'SIGNED_IN') {
               createProfileIfNotExists(session.user.id, session.user.email);
             }
-            await fetchUserRoleAndApproval(session.user.id, geracao);
-            if (isMounted) finishLoading();
+            // Leitura de geração vencida não termina o loading: a mais nova (ou o SIGNED_OUT)
+            // termina. Senão o boot liberaria a tela com `user` setado e `role` ainda null.
+            const escreveu = await fetchUserRoleAndApproval(session.user.id, geracao);
+            if (isMounted && escreveu) finishLoading();
           }, 0);
         } else {
           // No session — safe to stop loading immediately

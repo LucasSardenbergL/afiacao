@@ -43,20 +43,28 @@ vi.mock('@/contexts/ImpersonationContext', () => ({ useImpersonation: () => ({ i
 vi.mock('@/hooks/useImpersonatedAccessProfile', () => ({
   useImpersonatedAccessProfile: () => ({ data: undefined, isLoading: false }),
 }));
+vi.mock('@/hooks/useAuthzContract', () => ({ useAuthzContract: () => ({ matrizAtiva: true, loading: false }) }));
 
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { useMyCommercialRole } from '@/hooks/useMyCommercialRole';
+import { useCommercialRole } from '@/hooks/useCommercialRole';
 
-const visto: { cargo?: ReturnType<typeof useMyCommercialRole> } = {};
+const visto: {
+  cargo?: ReturnType<typeof useMyCommercialRole>;
+  legado?: ReturnType<typeof useCommercialRole>;
+  auth?: ReturnType<typeof useAuth>;
+} = {};
 
+/** Os dois leitores do cargo do user real: o do Index e o legado (via `useDisplayAccess`). */
 function Cargo() {
   visto.cargo = useMyCommercialRole();
+  visto.legado = useCommercialRole();
   return null;
 }
 /** Como o Index: o hook do cargo só monta depois que o auth resolveu. */
 function Sonda() {
-  const { loading } = useAuth();
-  return loading ? null : <Cargo />;
+  visto.auth = useAuth();
+  return visto.auth.loading ? null : <Cargo />;
 }
 
 function montar() {
@@ -95,6 +103,8 @@ beforeEach(() => {
   s.aoMudarAuth = null;
   s.pedidos = {};
   visto.cargo = undefined;
+  visto.legado = undefined;
+  visto.auth = undefined;
   s.respostas = {
     user_roles: [ok({ role: 'master' })],
     profiles: [ok({ is_approved: true })],
@@ -108,6 +118,28 @@ describe('AuthContext semeia o cargo comercial do useMyCommercialRole', () => {
     expect(visto.cargo).toMatchObject({ data: 'farmer', isLoading: false, estado: 'pronta' });
     await new Promise((r) => setTimeout(r, 20));
     expect(s.pedidos.commercial_roles).toBe(1);
+  });
+
+  it('o useCommercialRole legado também lê do cache semeado: nasce com o cargo e sem REST próprio', async () => {
+    s.respostas.commercial_roles = [ok({ commercial_role: 'gerencial' })];
+    await bootar();
+    expect(visto.legado).toMatchObject({ commercialRole: 'gerencial', isGerencial: true, canViewManagerial: true, loading: false });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(s.pedidos.commercial_roles).toBe(1);
+  });
+
+  it('legado com leitura do boot COM erro: nega (null) e só concede depois que a própria consulta acha o cargo', async () => {
+    const propria = adiada();
+    s.respostas.commercial_roles = [
+      { data: null, error: { message: 'canceling statement due to statement timeout' } },
+      propria.promessa as unknown as Resposta,
+    ];
+    await bootar();
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(2));
+    expect(visto.legado).toMatchObject({ commercialRole: null, canViewStrategic: false, loading: true });
+    await act(async () => propria.soltar(ok({ commercial_role: 'estrategico' })));
+    await waitFor(() => expect(visto.legado).toMatchObject({ commercialRole: 'estrategico', canViewStrategic: true }));
+    expect(s.pedidos.commercial_roles).toBe(2); // os dois hooks dividem UMA consulta
   });
 
   it('leitura sem linha (sem erro): o hook nasce pronto com null, sem 2º REST', async () => {
@@ -168,5 +200,61 @@ describe('AuthContext semeia o cargo comercial do useMyCommercialRole', () => {
     await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
     await esvaziar();
     expect(queryClient.getQueryData(CHAVE)).toBe('hunter');
+  });
+});
+
+// O mesmo defeito, anterior ao 6c, nos SETTERS do AuthContext: um fetch em voo que resolvia depois
+// de um evento mais novo escrevia papel/aprovação/cargo de outra época no estado do auth.
+describe('AuthContext: leitura de geração vencida não escreve no estado do auth', () => {
+  it('SIGNED_OUT com o fetch em voo: o papel de quem saiu NÃO volta (user null, role null)', async () => {
+    const cargo = adiada();
+    s.respostas.commercial_roles = [cargo.promessa as unknown as Resposta];
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+
+    act(() => s.aoMudarAuth?.('SIGNED_OUT', null));
+    await act(async () => cargo.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ user: null, role: null, isApproved: false, isMaster: false, isStaff: false });
+  });
+
+  it('evento mais novo vence: o papel lido pelo evento anterior, que chega depois, não sobrescreve', async () => {
+    const velha = adiada();
+    s.respostas = {
+      user_roles: [ok({ role: 'master' }), ok({ role: 'employee' })],
+      profiles: [ok({ is_approved: true })],
+      commercial_roles: [velha.promessa as unknown as Resposta, ok({ commercial_role: 'hunter' })],
+    };
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+    act(() => s.aoMudarAuth?.('USER_UPDATED', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(visto.auth?.role).toBe('employee'));
+
+    await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ role: 'employee', isMaster: false, commercialRole: 'hunter' });
+  });
+
+  it('leitura vencida não termina o loading: a tela só libera quando a geração vigente escreveu o papel', async () => {
+    const velha = adiada();
+    const nova = adiada();
+    s.respostas.commercial_roles = [velha.promessa as unknown as Resposta, nova.promessa as unknown as Resposta];
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+    act(() => s.aoMudarAuth?.('TOKEN_REFRESHED', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(2));
+
+    await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ loading: true, role: null });
+
+    await act(async () => nova.soltar(ok({ commercial_role: 'farmer' })));
+    await waitFor(() => expect(visto.auth).toMatchObject({ loading: false, role: 'master' }));
   });
 });

@@ -11,8 +11,34 @@
  * consultando sozinho, como antes.
  */
 import type { QueryClient } from '@tanstack/react-query';
+import { supabase } from '@/integrations/supabase/client';
 
 export const chaveMeuCargoComercial = (userId: string | undefined) => ['my-commercial-role', userId] as const;
+
+/**
+ * A consulta ÚNICA da chave acima. Os dois leitores do cargo do user real (`useMyCommercialRole`
+ * e o legado `useCommercialRole`) dividem a chave, então dividem também esta função: dois
+ * `queryFn` diferentes na mesma chave dariam resultados diferentes conforme quem buscasse 1º.
+ * O `error` lança (não vira `null`): com timeout/RLS/500 o PostgREST devolve `{data:null, error}`,
+ * e engoli-lo fabricaria "consultei e não tem cargo" sem disparar os retries.
+ */
+export async function consultarMeuCargoComercial(userId: string | undefined): Promise<string | null> {
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from('commercial_roles')
+    .select('commercial_role')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data?.commercial_role ?? null;
+}
+
+/** Opções compartilhadas: mesma chave, mesma consulta, mesma validade (60 s). */
+export const opcoesMeuCargoComercial = (userId: string | undefined) => ({
+  queryKey: chaveMeuCargoComercial(userId),
+  queryFn: () => consultarMeuCargoComercial(userId),
+  staleTime: 60_000,
+});
 
 export function semearMeuCargoComercial(
   queryClient: QueryClient,
