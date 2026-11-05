@@ -26,7 +26,7 @@ MIG="$REPO_ROOT/supabase/migrations/20261105150000_radar_pipeline_diario_sem_rel
 PRED="$REPO_ROOT/db/fixtures/radar-pipeline-predecessoras-prod-20261105.sql"
 
 if [ "${1:-}" = "--falsificar" ]; then
-  SABOTAGENS="sem_gate:B1a,B1b gate_cego_upd:B2a gate_cego_jc:B2b gate_cego_lote:B2c sem_validade:B2d grava_com_pulados:B3 pulada_sem_registro:B4a,B4b tick_denominador_errado:C1a estado_aberto:D1 escritor_aberto:D2"
+  SABOTAGENS="sem_gate:B1a,B1b gate_cego_upd:B2a gate_cego_jc:B2b gate_cego_lote:B2c sem_validade:B2d grava_com_pulados:B3 pulada_sem_registro:B4a,B4b tick_denominador_errado:C1a estado_aberto:D1 escritor_aberto:D2 semente_cega:S2 semente_aceita_pulada:S3"
   LOGDIR="$(mktemp -d "${TMPDIR:-/tmp}/falsifica-radar-pipeline.XXXXXX")"
   echo "══ CONTROLE ══"
   if ! SABOTAGEM="" bash "$0" > "$LOGDIR/controle.log" 2>&1; then
@@ -104,6 +104,9 @@ case "${SABOTAGEM:-}" in
   escritor_aberto)     sabotar "-- PÓS" "GRANT EXECUTE ON FUNCTION public.radar_score_recalcular() TO authenticated;
 -- PÓS"
                        sabotar "      RAISE EXCEPTION 'P4 FALHOU" "      RAISE NOTICE 'P4 FALHOU" ;;
+  semente_cega)        sabotar "     AND v_upd < r_ini THEN" "     THEN" ;;
+  semente_aceita_pulada) sabotar "     AND (r_det->>'pulados') = '0'
+" "" ;;
   *) echo "sabotagem desconhecida: $SABOTAGEM"; exit 2 ;;
 esac
 [ -n "${SABOTAGEM:-}" ] && echo "SABOTAGEM ATIVA: $SABOTAGEM"
@@ -188,6 +191,9 @@ Pq -c "SELECT public.radar_score_recalcular()" >/dev/null
 FOTO_PRED="$(foto)"
 eq "A0b a predecessora pontuou empresas" "$(Pq -c "SELECT count(score) > 1000 FROM public.radar_empresas")" "t"
 Pq -c "UPDATE public.radar_empresas SET score = NULL, score_motivos = NULL, score_versao = NULL, score_em = NULL" >/dev/null
+# O reset acima é escrita SEM bump de updated_at (artefato do teste): o log da predecessora sai, senão a semente
+# da migration tomaria a rodada dela como cálculo consistente (é o que S1 prova de propósito, mais abaixo).
+Pq -c "DELETE FROM public.acoes_execucoes" >/dev/null
 
 # F1 antes do apply real: corpo vivo divergente aborta na PRE e o vivo fica intacto.
 Pq -c "ALTER FUNCTION public.radar_score_recalcular() RENAME TO radar_score_recalcular_orig" >/dev/null
@@ -257,6 +263,25 @@ DT="$(Pq -c "SELECT detalhes::text FROM public.acoes_execucoes WHERE acao='radar
 eq "C1a ja_cliente_antes = já-clientes antes" "$(Pq -c "SELECT d->>'ja_cliente_antes' FROM (SELECT '$DT'::jsonb d) x")" "$JC0"
 eq "C1b antes + marcados = total" "$(Pq -c "SELECT ((d->>'ja_cliente_antes')::int + (d->>'marcados')::int = (d->>'ja_cliente_total')::int) FROM (SELECT '$DT'::jsonb d) x")" "t"
 eq "C1c sem candidatos_antes (era o seq scan)" "$(Pq -c "SELECT '$DT'::jsonb ? 'candidatos_antes'")" "f"
+
+# S: semente do estado no apply (só com o corpo do arquivo — o re-apply passa pela PRE).
+if [ "$CORPO" = 0 ]; then
+  Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+  eq "S0 sem estado → rodada completa" "$(rodada | cut -d' ' -f1)" "true"
+  Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+  P -q -f "$MIG_USADA" 2>/dev/null
+  eq "S1a semente = a última rodada limpa" "$(Pq -c "SELECT calculado_em = (SELECT max(iniciado_em) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular') FROM public.radar_score_estado")" "t"
+  eq "S1b depois da semente, a rodada pula" "$(rodada | cut -d' ' -f1)" "false"
+  Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+  Pq -c "SELECT pg_sleep(0.01); UPDATE public.radar_empresas SET updated_at = clock_timestamp() WHERE cnpj = '$ALVO'" >/dev/null
+  P -q -f "$MIG_USADA" 2>/dev/null
+  eq "S2 escrita depois da última rodada → sem semente" "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")" "0"
+  eq "S3' rodada completa" "$(rodada | cut -d' ' -f1)" "true"
+  eq "S3'' rodada pulada" "$(rodada | cut -d' ' -f1)" "false"
+  Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+  P -q -f "$MIG_USADA" 2>/dev/null
+  eq "S3 última rodada foi pulada (sem 'pulados') → sem semente" "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")" "0"
+fi
 
 # D1/D2: fronteira.
 # SQLSTATE por marcador ASCII (a mensagem muda com o locale); outro erro propaga e o marcador não sai.

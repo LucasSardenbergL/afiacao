@@ -15,7 +15,9 @@
 --   4. radar_score_recalcular(): gate por impressão digital (lote, início do lote, versão da fórmula,
 --      max(updated_at), nº de já-clientes) gravada em radar_score_estado no fim de rodada LIMPA. Igual →
 --      não recalcula, mas REGISTRA a rodada (data_health e radar_avisar_lote leem lote_vigente dela).
---      Rede: recalcula de qualquer jeito se o último cálculo completo tem 7 dias.
+--      Rede: a rodada do 7º dia recalcula de qualquer jeito. Heurístico numa corrida de commit (ver o corpo).
+--   5. Semente do estado a partir da última rodada COMPLETA e limpa (pulados = 0) do lote vigente, se nada
+--      foi escrito em radar_empresas depois dela — a 1ª rodada do cron depois do apply já pode pular.
 -- FICA: o agregado das 06:35 depende do relógio (corte de "estabelecida" = hoje − 5 anos) e segue
 --   recalculando 1×/dia — próxima fatia.
 -- Recria função VIVA no molde TRAVA → PRE → CREATE → PÓS (predecessoras = corpo de prod de 2026-11-05,
@@ -45,7 +47,7 @@ BEGIN
       FROM (VALUES
         ('radar_score_recalcular',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_score_recalcular()')),
-         'c31dfcacae0898868b6c120556043c88', '9470cb3b4d17b7279bb8e8d1d00bc9f6'),
+         'c31dfcacae0898868b6c120556043c88', 'f61d210fe9e3a75c042cde6b8b9443bf'),
         ('radar_recruzar_ja_cliente_tick',
          (SELECT md5(p.prosrc) FROM pg_catalog.pg_proc p WHERE p.oid = to_regprocedure('public.radar_recruzar_ja_cliente_tick()')),
          '01f19eac2a57ce2dfaf6a677b73a6a0d', 'ca3ee373afecbb1312f68f394c435be6')
@@ -131,8 +133,12 @@ DECLARE
   v_resumo         jsonb;
   -- Versão da FÓRMULA gravada com o score (v4 = nova migration que troca esta constante e os pesos).
   c_versao         CONSTANT text := 'v3';
-  -- Rede de segurança do gate: mesmo sem mudança detectada, recalcula se o último cálculo tem 7 dias.
-  c_validade       CONSTANT interval := interval '7 days';
+  -- Rede de segurança do gate: sem mudança detectada, a rodada diária do 7º dia recalcula mesmo assim
+  -- (6 d 23 h: o cron das 06:30 nunca cai alguns ms antes do vencimento e empurra para o 8º — Codex BAIXO 3).
+  -- O gate é heurístico numa corrida: transação que começou ANTES da leitura da impressão e commita DEPOIS,
+  -- sem mudar o nº de já-clientes, fica invisível ao max(updated_at) — a rede de 7 dias é o teto da
+  -- defasagem (Codex MÉDIO 1; os escritores reais são a ingestão, que muda o lote, e o cadastro de 1 linha).
+  c_validade       CONSTANT interval := interval '6 days 23 hours';
   v_est            public.radar_score_estado%ROWTYPE;
   v_tem_estado     boolean;
   v_fp_upd         timestamptz;
@@ -399,6 +405,45 @@ BEGIN
 END;
 $function$;
 
+-- Semente: a última rodada completa (detalhes com 'pulados') do lote vigente, limpa, sem escrita posterior em
+-- radar_empresas (todo escritor das colunas do score bumpa updated_at), É um cálculo consistente com a impressão
+-- de agora. Sem isso a 1ª rodada do cron recalcularia tudo de novo. Estado já existente fica.
+DO $semente$
+DECLARE
+  v_lote  text;
+  v_ini   timestamptz;
+  v_upd   timestamptz;
+  v_jc    bigint;
+  r_ini   timestamptz;
+  r_det   jsonb;
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.radar_score_estado) THEN
+    RETURN;
+  END IF;
+  SELECT s.mes_referencia, s.iniciado_em INTO v_lote, v_ini
+    FROM public.radar_ingest_state s WHERE s.status = 'complete' ORDER BY s.mes_referencia DESC LIMIT 1;
+  SELECT e.iniciado_em, e.detalhes INTO r_ini, r_det
+    FROM public.acoes_execucoes e
+   WHERE e.acao = 'radar.score_recalcular' AND e.status = 'sucesso'
+   ORDER BY e.iniciado_em DESC LIMIT 1;
+  SELECT max(re.updated_at) INTO v_upd FROM public.radar_empresas re;
+  SELECT count(*) INTO v_jc FROM public.radar_empresas re WHERE re.ja_cliente;
+  IF r_ini IS NOT NULL
+     AND v_lote IS NOT NULL
+     AND r_det->>'lote_vigente' IS NOT DISTINCT FROM v_lote
+     AND r_det->>'versao_formula' = 'v3'
+     AND (r_det->>'pulados') = '0'
+     AND v_upd < r_ini THEN
+    INSERT INTO public.radar_score_estado
+           (id, lote, lote_iniciado_em, versao_formula, max_updated_at, ja_cliente_n, calculado_em)
+    VALUES (1, v_lote, v_ini, 'v3', v_upd, v_jc, r_ini);
+    RAISE NOTICE 'semente do gate: estado = rodada de %', r_ini;
+  ELSE
+    RAISE NOTICE 'semente do gate: sem rodada limpa posterior à última escrita — a próxima rodada recalcula';
+  END IF;
+END
+$semente$;
+
 -- PÓS
 DO $post$
 DECLARE
@@ -406,7 +451,7 @@ DECLARE
 BEGIN
   -- P1: as 2 funções vivas são ESTE arquivo (md5 exato do prosrc).
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.radar_score_recalcular()'))
-     IS DISTINCT FROM '9470cb3b4d17b7279bb8e8d1d00bc9f6' THEN
+     IS DISTINCT FROM 'f61d210fe9e3a75c042cde6b8b9443bf' THEN
     RAISE EXCEPTION 'P1 FALHOU: radar_score_recalcular vivo não é o corpo deste arquivo';
   END IF;
   IF (SELECT md5(prosrc) FROM pg_catalog.pg_proc WHERE oid = to_regprocedure('public.radar_recruzar_ja_cliente_tick()'))

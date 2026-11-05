@@ -96,7 +96,7 @@ db/test-promocao-descricao-fornecedor.sh 120
 db/test-radar-acesso-vendedor.sh 84
 db/test-radar-agregado-cnae.sh 28
 db/test-radar-agregado.sh 34
-db/test-radar-pipeline-diario.sh 32
+db/test-radar-pipeline-diario.sh 40
 db/test-radar-amostra-vigente.sh 8
 db/test-radar-avisar-lote.sh 23
 db/test-radar-cadastro-conflitos.sh 360
