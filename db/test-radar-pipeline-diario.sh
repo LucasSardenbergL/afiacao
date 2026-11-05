@@ -57,7 +57,7 @@ if [ "${1:-}" = "--falsificar" ]; then
   exit $?
 fi
 
-# shellcheck source=db/lib/pg-harness.sh
+# shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
 . "$REPO_ROOT/db/lib/pg-harness.sh"
 PORT="${PGPORT_TEST:-5583}"
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/pgtest-radar-pipeline.XXXXXX")/data"
