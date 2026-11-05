@@ -1395,7 +1395,14 @@ export interface AcaoFila {
 }
 export interface ProximaAcaoResult {
   fila: AcaoFila[];
-  caixa_por_empresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;
+  // disponivel null = DESCONHECIDO (≠ R$0). Campos novos opcionais: bundle de edge anterior à v1.1 não os manda.
+  caixa_por_empresa: Record<string, {
+    disponivel: number | null;
+    confianca: 'alta' | 'media' | 'baixa';
+    saldo_tesouraria?: number | null;
+    dias_cobertura?: number | null;
+    motivos?: string[];
+  }>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   gerado_em: string;
 }

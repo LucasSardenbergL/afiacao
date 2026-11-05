@@ -13,7 +13,7 @@ const GRUPOS: { status: StatusAcaoFila; titulo: string; classe: string }[] = [
   { status: 'consertar_antes', titulo: 'Consertar antes (preço/prazo/caixa — faça primeiro)', classe: 'text-status-warning' },
   { status: 'financiar_ja', titulo: 'Financiar já', classe: 'text-status-success' },
   { status: 'financiar_condicional', titulo: 'Financiar condicional (sem caixa hoje)', classe: 'text-status-info' },
-  { status: 'falta_dado', titulo: 'Falta dado (definir ação / hurdle)', classe: 'text-muted-foreground' },
+  { status: 'falta_dado', titulo: 'Falta dado (definir ação / hurdle / caixa)', classe: 'text-muted-foreground' },
   { status: 'nao_financiar', titulo: 'Não financiar / benchmark', classe: 'text-status-error' },
 ];
 
@@ -78,12 +78,23 @@ export default function FinanceiroProximaAcao() {
         </CardHeader>
         <CardContent className="text-sm">
           {Object.entries(data.caixa_por_empresa).map(([emp, c]) => (
-            <div key={emp} className="flex justify-between border-b border-border py-1 last:border-0">
-              <span>{emp}</span>
-              <span className="font-mono">
-                {brl(c.disponivel)}{' '}
-                <span className="text-muted-foreground">({c.confianca})</span>
-              </span>
+            <div key={emp} className="border-b border-border py-1 last:border-0">
+              <div className="flex justify-between">
+                <span>{emp}</span>
+                <span className="font-mono">
+                  {/* null = desconhecido ("—"), nunca R$0 */}
+                  {brl(c.disponivel)}{' '}
+                  <span className="text-muted-foreground">({c.confianca})</span>
+                </span>
+              </div>
+              {c.disponivel == null && c.saldo_tesouraria != null && (
+                <p className="text-xs text-muted-foreground">
+                  Saldo de tesouraria conhecido: <span className="font-mono">{brl(c.saldo_tesouraria)}</span> — disponível não calculado.
+                </p>
+              )}
+              {(c.motivos ?? []).map((m, i) => (
+                <p key={i} className="text-xs text-status-warning">{m}</p>
+              ))}
             </div>
           ))}
         </CardContent>

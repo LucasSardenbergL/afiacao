@@ -1,35 +1,67 @@
-// A4 — Próxima Melhor Ação. Módulo puro, espelhado verbatim na edge function Deno
-// supabase/functions/fin-next-best-action/index.ts. Compõe A1/A2/A3 numa fila priorizada.
+// A4 — Próxima Melhor Ação. Módulo puro, espelhado VERBATIM na edge Deno
+// supabase/functions/fin-next-best-action/fila.ts (o bloco MIRROR inteiro; paridade textual no
+// vitest `edge-money-path-invariants`). Compõe A1/A2/A3 numa fila priorizada.
 
+// MIRROR-START a4-fila
+const finito = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
+
+// "ausente ≠ R$0": saldo ou cobertura DESCONHECIDOS → disponível desconhecido (null), nunca 0.
+// O `?? 0` antigo no transporte fazia cobertura null ("sem base de saída") virar "R$0 disponível,
+// confiança alta" com o saldo inteiro conhecido (plano v6 C1, reprodução do Codex).
 export function caixaDisponivel(input: {
-  saldo_tesouraria: number;
-  dias_cobertura: number;
+  saldo_tesouraria: number | null;
+  dias_cobertura: number | null;
   reserva_dias_min: number;
   confianca_baixa: boolean;
-}): number {
-  if (input.dias_cobertura <= 0) return 0; // cobertura desconhecida → conservador, reserva tudo
+}): number | null {
+  if (!finito(input.saldo_tesouraria) || !finito(input.dias_cobertura)) return null;
+  if (input.dias_cobertura <= 0) return 0; // cobertura zero CONHECIDA (a A1 dá 0 só com saldo ≤ 0)
   const fracaoReserva = Math.min(1, input.reserva_dias_min / input.dias_cobertura);
   let disp = input.saldo_tesouraria * (1 - fracaoReserva);
   if (input.confianca_baixa) disp *= 0.5; // haircut quando a projeção de caixa é incerta
   return Math.max(0, disp);
 }
 
-export type FonteHurdle = 'wacc' | 'retorno_dono' | 'custo_divida' | 'mediana' | 'indisponivel';
+export type CaixaEmpresa = {
+  disponivel: number | null; // null = DESCONHECIDO (≠ R$0): a fila não decide financiamento no escuro
+  confianca: 'alta' | 'media' | 'baixa';
+  saldo_tesouraria: number | null; // pode ser conhecido mesmo quando o disponível não é
+  dias_cobertura: number | null;
+  motivos: string[];
+};
 
-export function hurdleEfetivo(input: {
-  wacc: number | null;
-  custo_divida_pos_imposto: number | null;
-  retorno_minimo_dono: number | null;
-  mediana_hurdles: number | null;
-}): { hurdle: number | null; fonte: FonteHurdle } {
-  // hurdle ≤0 é implausível (custo de capital nunca é não-positivo) → trata como ausente e pula pro próximo
-  // fallback. Coerente com os guards do A2/A3 ("soma ≤0 = capital grátis → null"). "ausente ≠ R$0".
-  const ok = (x: number | null): x is number => x != null && Number.isFinite(x) && x > 0;
-  if (ok(input.wacc)) return { hurdle: input.wacc, fonte: 'wacc' };
-  if (ok(input.retorno_minimo_dono)) return { hurdle: input.retorno_minimo_dono, fonte: 'retorno_dono' };
-  if (ok(input.custo_divida_pos_imposto)) return { hurdle: input.custo_divida_pos_imposto, fonte: 'custo_divida' };
-  if (ok(input.mediana_hurdles)) return { hurdle: input.mediana_hurdles, fonte: 'mediana' };
-  return { hurdle: null, fonte: 'indisponivel' };
+// Fatia da resposta da A1 (fin-cashflow-engine) que a A4 lê. Tudo opcional: é JSON de outra edge.
+export type RespostaA1Caixa = {
+  indicadores?: { dias_cobertura?: number | null; saldo_tesouraria?: number | null } | null;
+  confianca_dados?: { motivos?: string[] | null; saldo_inicial?: string | null } | null;
+};
+
+// Transporte A1 → caixa da A4. Só o que entra em saldo_tesouraria/dias_cobertura mexe no caixa:
+// o motivo de saldo DATADO (`confianca_dados.saldo_inicial`) rebaixa e aplica o haircut; os demais
+// motivos da A1 (estoque, CMV, prazos PMR/PMP/CCC) não entram nesses dois números → não anulam nem
+// rebaixam o caixa (degradação de PMR não é caixa desconhecido).
+export function caixaDaA1(resp: RespostaA1Caixa | null, reserva_dias_min: number): CaixaEmpresa {
+  if (resp == null) {
+    return { disponivel: null, confianca: 'baixa', saldo_tesouraria: null, dias_cobertura: null, motivos: ['Projeção de caixa (A1) indisponível — caixa disponível desconhecido.'] };
+  }
+  const saldoRaw = resp.indicadores?.saldo_tesouraria;
+  const diasRaw = resp.indicadores?.dias_cobertura;
+  const saldo = finito(saldoRaw) ? saldoRaw : null;
+  const dias = finito(diasRaw) ? diasRaw : null;
+  const motivos: string[] = [];
+  if (saldo == null) motivos.push('A1 respondeu sem saldo de tesouraria — caixa disponível desconhecido.');
+  else if (dias == null && diasRaw === null) motivos.push('Cobertura de caixa desconhecida (sem base de saída na projeção) — o saldo é conhecido, mas a reserva mínima não é dimensionável; caixa disponível não calculado.');
+  else if (dias == null) motivos.push('A1 respondeu sem dias de cobertura — caixa disponível não calculado.');
+  const motivoSaldo = resp.confianca_dados?.saldo_inicial;
+  const saldoDatado = typeof motivoSaldo === 'string' && motivoSaldo.trim().length > 0;
+  if (saldoDatado) motivos.push(`Saldo inicial datado: ${motivoSaldo}`);
+  // Só `saldo_inicial: null` EXPLÍCITO atesta frescor. Bloco ausente, A1 anterior a 8d901e947 (manda
+  // `{ motivos }` sem `saldo_inicial`) ou valor inválido → não atestado (Codex, revisão do código v6 C1).
+  const semAtestado = motivoSaldo !== null && !saldoDatado;
+  if (semAtestado) motivos.push('A1 sem confianca_dados.saldo_inicial — frescor do saldo não atestado.');
+  const disponivel = caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min, confianca_baixa: saldoDatado });
+  const confianca: CaixaEmpresa['confianca'] = disponivel == null || saldoDatado ? 'baixa' : semAtestado ? 'media' : 'alta';
+  return { disponivel, confianca, saldo_tesouraria: saldo, dias_cobertura: dias, motivos };
 }
 
 export type StatusAcao = 'financiar_ja' | 'financiar_condicional' | 'consertar_antes' | 'falta_dado' | 'nao_financiar';
@@ -40,7 +72,7 @@ export function classificarStatus(input: {
   impacto_eva: number | null;
   spread_positivo: boolean | null;
   caixa_consumido: number | null;
-  caixa_disponivel: number;
+  caixa_disponivel: number | null;
   hurdle: number | null;
   tem_dado: boolean;
 }): StatusAcao {
@@ -55,6 +87,8 @@ export function classificarStatus(input: {
     // dimensionar antes de financiar. NÃO assume custo 0/negativo: crescer SEMPRE consome caixa via
     // NCG, então custo ≤0 é dado implausível, não "grátis". "ausente ≠ R$0".
     if (input.caixa_consumido == null || input.caixa_consumido <= 0) return 'falta_dado';
+    // Caixa disponível DESCONHECIDO → não decide "já" vs "condicional" no escuro. "ausente ≠ R$0".
+    if (input.caixa_disponivel == null) return 'falta_dado';
     return input.caixa_consumido <= input.caixa_disponivel ? 'financiar_ja' : 'financiar_condicional';
   }
   return 'falta_dado';
@@ -73,7 +107,7 @@ export type AcaoCandidata = {
 type AcaoFila = AcaoCandidata & { hurdle: number | null; status: StatusAcao };
 export type ProximaAcaoResult = {
   fila: AcaoFila[];
-  caixa_por_empresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;
+  caixa_por_empresa: Record<string, CaixaEmpresa>;
   confianca: { nivel: 'alta' | 'media' | 'baixa'; motivos: string[] };
   gerado_em: string;
 };
@@ -82,7 +116,7 @@ const PRIORIDADE_TIPO: Record<TipoAcao, number> = { consertar_valor: 0, liberar_
 
 export function montarFilaAcoes(input: {
   candidatos: AcaoCandidata[];
-  caixaPorEmpresa: Record<string, { disponivel: number; confianca: 'alta' | 'media' | 'baixa' }>;
+  caixaPorEmpresa: Record<string, CaixaEmpresa>;
   hurdlePorEmpresa: Record<string, number>;
 }): ProximaAcaoResult {
   const candidatos = [...input.candidatos];
@@ -94,7 +128,11 @@ export function montarFilaAcoes(input: {
     // hurdle implausível (≤0) é tratado como ausente → crescer cai em falta_dado (não financia no escuro).
     const hurdleRaw = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
     const hurdle = hurdleRaw != null && Number.isFinite(hurdleRaw) && hurdleRaw > 0 ? hurdleRaw : null;
-    const caixaDisp = input.caixaPorEmpresa[c.empresa]?.disponivel ?? 0;
+    // Caixa DECISÓRIO: só o de confiança alta decide financiar_ja × condicional. O de saldo datado (baixa)
+    // ou não atestado (média) segue no card como ESTIMATA rotulada, mas não autoriza financiar (Codex, v6
+    // C1: R$32,5k estimado com saldo de até 7 dias aprovava uma ação de R$30k). Sem caixa ≠ R$0.
+    const cx = input.caixaPorEmpresa[c.empresa];
+    const caixaDisp = cx != null && cx.confianca === 'alta' ? cx.disponivel : null;
     // tem_dado: crescer precisa de hurdle + sinal de spread; consertar/liberar/benchmark sempre têm.
     const tem_dado = c.tipo === 'crescer' ? (hurdle != null && c.spread_positivo != null) : true;
     const status = classificarStatus({ tipo: c.tipo, impacto_eva: c.impacto_eva, spread_positivo: c.spread_positivo, caixa_consumido: c.caixa_consumido, caixa_disponivel: caixaDisp, hurdle, tem_dado });
@@ -124,10 +162,34 @@ export function montarFilaAcoes(input: {
   const motivos: string[] = [];
   let nivel: 'alta' | 'media' | 'baixa' = 'alta';
   const rebaixa = (n: 'media' | 'baixa', m: string) => { if (n === 'baixa' || nivel === 'alta') nivel = n; motivos.push(m); };
-  if (fila.some((a) => a.status === 'falta_dado')) rebaixa('media', 'Algumas ações sem hurdle/cockpit (Falta dado).');
+  if (fila.some((a) => a.status === 'falta_dado')) rebaixa('media', 'Algumas ações sem hurdle/cockpit/caixa (Falta dado).');
   // pior sinal entre os CANDIDATOS também conta (antes era ignorado): ex. sleeve company-level sem cockpit granular.
   if (fila.some((a) => a.confianca === 'baixa')) rebaixa('media', 'Inclui ação de confiança baixa (ex.: sleeve company-level sem cockpit granular).');
-  if (Object.values(input.caixaPorEmpresa).some((c) => c.confianca === 'baixa')) rebaixa('baixa', 'Projeção de caixa de alguma empresa com confiança baixa.');
+  // caixa: o motivo DA EMPRESA chega à fila (antes: frase genérica, e só para 'baixa').
+  for (const [empresa, cx] of Object.entries(input.caixaPorEmpresa)) {
+    if (cx.confianca === 'alta') continue;
+    rebaixa(cx.confianca, `Caixa (${empresa}): ${cx.motivos.length > 0 ? cx.motivos.join(' ') : `projeção com confiança ${cx.confianca}.`}`);
+  }
 
   return { fila, caixa_por_empresa: input.caixaPorEmpresa, confianca: { nivel, motivos }, gerado_em: new Date().toISOString() };
+}
+// MIRROR-END a4-fila
+
+// Fora do bloco MIRROR: a edge não usa (passa o WACC cru; a defesa contra hurdle ≤0 está em montarFilaAcoes).
+export type FonteHurdle = 'wacc' | 'retorno_dono' | 'custo_divida' | 'mediana' | 'indisponivel';
+
+export function hurdleEfetivo(input: {
+  wacc: number | null;
+  custo_divida_pos_imposto: number | null;
+  retorno_minimo_dono: number | null;
+  mediana_hurdles: number | null;
+}): { hurdle: number | null; fonte: FonteHurdle } {
+  // hurdle ≤0 é implausível (custo de capital nunca é não-positivo) → trata como ausente e pula pro próximo
+  // fallback. Coerente com os guards do A2/A3 ("soma ≤0 = capital grátis → null"). "ausente ≠ R$0".
+  const ok = (x: number | null): x is number => x != null && Number.isFinite(x) && x > 0;
+  if (ok(input.wacc)) return { hurdle: input.wacc, fonte: 'wacc' };
+  if (ok(input.retorno_minimo_dono)) return { hurdle: input.retorno_minimo_dono, fonte: 'retorno_dono' };
+  if (ok(input.custo_divida_pos_imposto)) return { hurdle: input.custo_divida_pos_imposto, fonte: 'custo_divida' };
+  if (ok(input.mediana_hurdles)) return { hurdle: input.mediana_hurdles, fonte: 'mediana' };
+  return { hurdle: null, fonte: 'indisponivel' };
 }

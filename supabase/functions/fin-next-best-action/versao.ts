@@ -16,7 +16,9 @@ import { criarRespostaSonda } from "../_shared/sonda-versao.ts";
 export const respostaSonda = criarRespostaSonda("fin-next-best-action");
 
 /** Atualize a cada mudança relevante de comportamento — é o que distingue bundle novo de velho. */
-export const VERSAO = "v1.0-sensor-inicial";
+// v1.1 (plano v6 C1): caixa desconhecido deixa de virar R$0 — cobertura null / saldo ausente → disponível
+// null com o motivo da A1; saldo datado rebaixa; `crescer` sem caixa conhecido cai em falta_dado.
+export const VERSAO = "v1.1-caixa-desconhecido-nao-vira-zero";
 
 /** Efeito citado no 400 de `probe` ambíguo. */
 export const EFEITO =
