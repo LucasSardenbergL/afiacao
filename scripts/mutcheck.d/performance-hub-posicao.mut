@@ -1,0 +1,10 @@
+# Hub: card 'Posição ao Vivo' sem faturado confirmado mostra '—' (nem trânsito, nem R$ 0).
+# @src: src/pages/PerformanceHub.tsx
+# @test: src/pages/__tests__/PerformanceHub.posicao.test.tsx
+# Rode: bash scripts/mutcheck.sh src/pages/PerformanceHub.tsx src/pages/__tests__/PerformanceHub.posicao.test.tsx scripts/mutcheck.d/performance-hub-posicao.mut
+PEGA | gate ignora o faturado (view antiga passa) | s/const semFaturado = linha\?\.fat_bruto_confirmado == null;/const semFaturado = false;/
+PEGA | posição NULL vira 0 | s/Number\(linha\?\.posicao_ao_vivo_otimista \?\? Number\.NaN\)/Number(linha?.posicao_ao_vivo_otimista ?? 0)/
+PEGA | leitura que falhou vira 0 | s/null as number \| null,/0 as number | null,/
+PEGA | card formata ausência como R\$ 0 | s/value: data\?\.posicao == null \? "—" : brl\(data\.posicao\)/value: brl(Number(data?.posicao ?? 0))/
+PEGA | select esquece o faturado (falha fechada: o controle fica vermelho) | s/\.select\("fat_bruto_confirmado, posicao_ao_vivo_otimista"\)/.select("posicao_ao_vivo_otimista")/
+PEGA | erro do PostgREST ignorado | s/^            if \(error\) throw error;$//
