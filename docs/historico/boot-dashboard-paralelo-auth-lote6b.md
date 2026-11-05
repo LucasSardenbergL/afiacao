@@ -129,19 +129,26 @@ A/B de laboratório, mesmo método. O antes é a main com o 6b (`329086ecd`), ma
 - **Leitura vencida não termina o loading.** Sem isso, a guarda acima abriria um buraco novo: o
   fetch do `INITIAL_SESSION`, vencido por um `TOKEN_REFRESHED` no boot, chamaria `finishLoading()`
   sem ter escrito o papel, e a tela liberaria com `user` setado e `role` null. Quem termina é a
-  geração que escreveu, ou o `SIGNED_OUT`, ou o failsafe de 10 s.
+  geração que escreveu: o evento mais novo, o `refetchRole`, o `SIGNED_OUT` ou o próprio `signOut()`
+  (quando as duas revogações falham e o evento não vem). O failsafe de 10 s fica só como rede.
 - **O `useCommercialRole` legado vira react-query na mesma chave.** A chave, a consulta e o
   `staleTime` saem de um lugar só (`opcoesMeuCargoComercial` em `src/lib/cargo-comercial-cache.ts`):
   dois `queryFn` diferentes na mesma chave dariam respostas diferentes conforme quem buscasse
   primeiro. O hook nasce do cache semeado pelo auth e não refaz o REST. O fail-closed das
-  capabilities fica: só uma leitura com sucesso vira cargo. Muda uma coisa: antes, erro de leitura
+  capabilities fica: só uma leitura com sucesso vira cargo, e não pausada: com cache antigo e
+  offline, a revalidação pausa e `isSuccess` continua `true` (é o estado do dado, não da tentativa).
+  O hook antigo negava offline, e conceder pelo cache seria afrouxar. Cache fresco (< 60 s) vale. Muda uma coisa: antes, erro de leitura
   virava `null` na hora; agora o hook fica em `loading` durante os retries do react-query e depois
   vira `null`. Os dois consumidores de `loading` (`useFarmerScoring`, `IntelligenceDashboard`)
   mostram "carregando" em vez de "sem acesso" nesse intervalo, o que é mais honesto.
-- **Falsificação:** 7 sabotagens, todas vermelhas em `LC_ALL=C` e `pt_BR.UTF-8`, com o controle
+- **Revisão do Codex (código, high, 153 s):** AJUSTAR com dois P2, os dois reproduzidos por ele e
+  aplicados com teste: (1) o `refetchRole` durante o boot e o logout sem evento ficavam com o
+  loading preso até o failsafe; (2) o legado concedia pelo cache com a revalidação pausada offline.
+- **Falsificação:** 10 sabotagens, todas vermelhas em `LC_ALL=C` e `pt_BR.UTF-8`, com o controle
   verde na mesma invocação: tirar a checagem depois do fetch, tirar a do `catch`, terminar o
-  loading com leitura vencida, não incrementar a geração no evento, chave própria no legado,
-  `loading` falso no legado, e a consulta compartilhada engolir o erro. A última só é pega por
+  loading com leitura vencida, não incrementar a geração no evento, `refetchRole` e logout sem
+  terminar o loading, chave própria no legado, `loading` falso no legado, conceder com a consulta
+  pausada, e a consulta compartilhada engolir o erro. A última só é pega por
   testes que já existiam (`useSinalPositivacao.rotulos`, `FarmerCalls.erro-honesto`). A checagem
   depois do `wait()` dos retries é economia (evita um REST de outra época), não correção: a
   checagem depois do fetch já barra a escrita.
