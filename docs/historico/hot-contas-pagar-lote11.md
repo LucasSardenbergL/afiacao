@@ -100,4 +100,28 @@ títulos de CP com `ABERTO` ou `VENCIDO`). Sem ação.
 
 ## Antes/depois na prod
 
-_(preencher após o apply: Δ`n_tup_hot_upd`/Δ`n_tup_upd` por ciclo, heap, `data_health` de CP verde)_
+Aplicada em 2026-11-04 às 15:45:04Z por `bun run db:aplicar`. O ensaio antes respondeu `POS ok` e fez
+rollback. Ledger `db_aplicacoes`: recibo #892 `aplicada`, sha256 `b23303c7424b…`, commit `3f1c8872a`.
+2ª testemunha (psql-ro): `idx_fin_contas_pagar_updated_at` ausente, CP com 7 índices e `{fillfactor=80}`,
+CR intacto (índice presente, `reloptions` nulo).
+
+Medido por psql-ro em volta do 1º ciclo de CP depois do apply (cron 76, 2026-11-05 08:00Z):
+
+| | antes do ciclo (07:55Z) | depois do ciclo (08:55Z) | Δ |
+|---|---:|---:|---:|
+| `n_tup_upd` | 156.935 | 173.093 | 16.158 |
+| `n_tup_hot_upd` | 0 | 15.908 | 15.908 |
+| **HOT do ciclo** | — | — | **98,5%** |
+| páginas do heap | 685 | 685 | 0 |
+| `n_dead_tup` | 467 | 664 | autovacuum às 08:02Z |
+
+- **Primeiro ciclo já em 98,5%.** A prova PG17 assertava só os ciclos 6–8 (≥ 98%) e esperava
+  convergência em uns 5 ciclos. Na prod o 1º ciclo já chegou lá. Explicação provável, não medida: o heap de
+  685 páginas para 16,3 k linhas já tinha folga, deixada pelos updates não-HOT de antes.
+- **Frescor intacto.** O carimbo das 3 empresas foi renovado no ciclo (colacor 11.867, colacor_sc 941,
+  oben 3.350 linhas tocadas; último às 08:10Z). O `data_health_watchdog` de 08:30Z avaliou 25 checks com
+  0 falhos, e não havia alerta de `data_health`/`sync` aberto em `fin_alertas`. Também ficou verde nas
+  rodadas de 16:00Z, 21:30Z e 07:30Z entre o apply e o ciclo.
+- `deriva:corpo:prod` em exit 0 depois do apply.
+- **Publish do `getLastSyncTime` em paralelo: pendente** em 2026-11-05 09:00Z. O bundle no ar seguia
+  `index-Bo5Gh-CB.js`. O modo automático barrou o `deploy_project` da sessão; o Publish ficou com o founder.
