@@ -73,6 +73,18 @@ formatadores.
   - `n_compras ?? 0`;
   - carregando desenhando o gráfico.
 
+## Lições do laço de falsificação
+
+- **Camada verde redundante (S1).** Sem o `if (error) throw error` nas contagens, a guarda
+  `count == null` pegava a falha do mesmo jeito, e o teste continuava verde. Agora o teste exige que
+  a query carregue o erro **do banco** (`permission denied`), não a mensagem genérica, e a camada
+  voltou a ser observável.
+- **Commit com sabotagem em voo.** Um `git add -A` feito enquanto o laço rodava em background
+  commitou o arquivo-fonte no meio da S10 (`false ? (` no lugar de `estadoDemanda !== 'pronta' ? (`).
+  O `restaurar()` do laço (`git checkout --`) passou a "restaurar" para a versão sabotada. Quem
+  pegou foi o **controle verde** da invocação seguinte, que abortou antes da 1ª sabotagem. Regra:
+  enquanto o laço roda, nada de commit no worktree. Se for preciso, `git add` nomeando os arquivos.
+
 ## Deploy
 
 Só **Publish** no Lovable (front puro: sem migration, sem edge).

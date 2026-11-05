@@ -442,7 +442,7 @@ function SkuDetailSheetImpl({
                 variante="bloco"
                 testId="aviso-sku-demanda"
               />
-            ) : false ? (
+            ) : estadoDemanda !== 'pronta' ? (
               <Skeleton className="h-56 w-full" aria-label="Carregando demanda diária" />
             ) : (
               <div data-testid="sku-demanda-grafico">
