@@ -83,7 +83,10 @@ export function DetalhesModal({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div><div className="text-muted-foreground">Grupo</div><div className="font-medium">{pedido.grupo_codigo ?? '—'}</div></div>
           <div><div className="text-muted-foreground">Nº SKUs</div><div className="font-medium">{pedido.num_skus}</div></div>
-          <div><div className="text-muted-foreground">Valor total</div><div className="font-medium">{formatBRL(totalAtual || pedido.valor_total)}</div></div>
+          {/* Zero editado (tudo zerado/removido) é total legítimo — nunca `totalAtual || valor_total`,
+              que trata 0 como ausente e devolve o total ANTIGO. Ausente de verdade é só enquanto os
+              itens não chegaram (ou falharam): aí vale o total gravado do pedido. */}
+          <div><div className="text-muted-foreground">Valor total</div><div className="font-medium" data-testid="valor-total-cabecalho">{formatBRL(itensEstado === 'ok' ? totalAtual : pedido.valor_total)}</div></div>
           <div><div className="text-muted-foreground">Horário corte</div><div className="font-medium">{formatTime(pedido.horario_corte_planejado)}</div></div>
         </div>
 
