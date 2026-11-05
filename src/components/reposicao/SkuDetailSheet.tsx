@@ -31,6 +31,9 @@ import {
 } from '@/lib/reposicao/sku-param';
 import { ConsolidarDemandaDialog } from '@/components/reposicao/ConsolidarDemandaDialog';
 import { addDias, hojeSP } from '@/lib/time/sp-day';
+import { estadoDeLeitura, naoConsegui } from '@/lib/leitura/estado-de-leitura';
+import { AvisoLeituraFalhou } from '@/components/leitura/AvisoLeituraFalhou';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type BadgeVariant =
   | 'default'
@@ -80,7 +83,9 @@ function SkuDetailSheetImpl({
   const open = !!sku;
 
   // Stats from view (pico, p95, preços, custos, fórmula)
-  const { data: stats } = useQuery<ViewStats | null>({
+  // As duas leituras LANÇAM: `if (error) return null` / `return []` deixava a query `success`
+  // e a ficha mostrava stats em branco e um gráfico vazio sem dizer que nada foi lido (C4 v6).
+  const statsQuery = useQuery<ViewStats | null>({
     queryKey: ['sku_view_stats', sku?.empresa, sku?.sku_codigo_omie],
     enabled: open,
     queryFn: async () => {
@@ -94,13 +99,13 @@ function SkuDetailSheetImpl({
         .eq('empresa', sku.empresa)
         .eq('sku_codigo_omie', sku.sku_codigo_omie)
         .maybeSingle();
-      if (error) return null;
+      if (error) throw error;
       return data;
     },
   });
 
   // 90d daily demand chart
-  const { data: demanda } = useQuery({
+  const demandaQuery = useQuery({
     queryKey: ['sku_demanda_90d', sku?.empresa, sku?.sku_codigo_omie],
     enabled: open,
     queryFn: async () => {
@@ -114,7 +119,8 @@ function SkuDetailSheetImpl({
         .eq('sku_codigo_omie', sku.sku_codigo_omie)
         .gte('data_emissao', since.toISOString())
         .order('data_emissao', { ascending: true });
-      if (error) return [];
+      if (error) throw error;
+      // Sucesso sem venda é o SKU PARADO: 90 dias observados em zero — esse zero é fato.
       const buckets: Record<string, number> = {};
       // Os buckets são dias de SP, como data_emissao: o ISO fatiado era o dia UTC (das 21h BRT em diante
       // o gráfico perdia o dia mais antigo e ganhava um "amanhã" vazio).
@@ -130,6 +136,12 @@ function SkuDetailSheetImpl({
       }));
     },
   });
+
+  const stats = statsQuery.data;
+  const demanda = demandaQuery.data;
+  const estadoStats = estadoDeLeitura(statsQuery);
+  const estadoDemanda = estadoDeLeitura(demandaQuery);
+  const semDemandaObservada = !!demanda && demanda.every((d) => d.qtde === 0);
 
   if (!sku) return null;
 
@@ -223,6 +235,14 @@ function SkuDetailSheetImpl({
             </dl>
           </section>
 
+          {naoConsegui(estadoStats) && (
+            <AvisoLeituraFalhou
+              oque="as estatísticas de preço, custo e demanda deste SKU (pico, P95, preços, custos da fórmula)"
+              estado={estadoStats}
+              testId="aviso-sku-stats"
+            />
+          )}
+
           {/* Demanda */}
           <section>
             <h3 className="font-semibold mb-2">Estatísticas de demanda (180d)</h3>
@@ -256,9 +276,12 @@ function SkuDetailSheetImpl({
               <dt className="text-muted-foreground">Preço de compra médio (histórico)</dt>
               <dd className="flex items-center gap-2">
                 {fmtBRL(stats?.preco_compra_real)}
-                <span className="text-xs text-muted-foreground">
-                  (baseado em {stats?.n_compras ?? 0} compras)
-                </span>
+                {/* `?? 0` dizia "baseado em 0 compras" quando a leitura falhou ou nem veio. */}
+                {stats?.n_compras != null && (
+                  <span className="text-xs text-muted-foreground">
+                    (baseado em {stats.n_compras} compras)
+                  </span>
+                )}
               </dd>
               <dt className="text-muted-foreground">Preço de venda médio (180d)</dt>
               <dd>{fmtBRL(stats?.preco_venda_medio)}</dd>
@@ -412,34 +435,52 @@ function SkuDetailSheetImpl({
           {/* Gráfico */}
           <section>
             <h3 className="font-semibold mb-2">Demanda diária (últimos 90d)</h3>
-            <div className="h-56 w-full">
-              <ResponsiveContainer>
-                <ComposedChart data={demanda ?? []} margin={{ left: 0, right: 8, top: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="dia" tick={{ fontSize: 10 }} interval={9} />
-                  <YAxis tick={{ fontSize: 10 }} />
-                  <ReTooltip />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Bar dataKey="qtde" name="Demanda" fill="hsl(var(--primary))" />
-                  {sku.estoque_minimo != null && (
-                    <ReferenceLine
-                      y={sku.estoque_minimo}
-                      stroke="hsl(var(--destructive))"
-                      strokeDasharray="4 4"
-                      label={{ value: 'EM', fontSize: 10, position: 'right' }}
-                    />
-                  )}
-                  {sku.ponto_pedido != null && (
-                    <ReferenceLine
-                      y={sku.ponto_pedido}
-                      stroke="hsl(var(--accent-foreground))"
-                      strokeDasharray="4 4"
-                      label={{ value: 'PP', fontSize: 10, position: 'right' }}
-                    />
-                  )}
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
+            {naoConsegui(estadoDemanda) ? (
+              <AvisoLeituraFalhou
+                oque="o histórico de vendas dos últimos 90 dias deste SKU"
+                estado={estadoDemanda}
+                variante="bloco"
+                testId="aviso-sku-demanda"
+              />
+            ) : estadoDemanda !== 'pronta' ? (
+              <Skeleton className="h-56 w-full" aria-label="Carregando demanda diária" />
+            ) : (
+              <div data-testid="sku-demanda-grafico">
+                {semDemandaObservada && (
+                  <p className="text-xs text-muted-foreground mb-1" data-testid="sku-demanda-sem-venda">
+                    Nenhuma venda registrada nos últimos 90 dias.
+                  </p>
+                )}
+                <div className="h-56 w-full">
+                  <ResponsiveContainer>
+                    <ComposedChart data={demanda ?? []} margin={{ left: 0, right: 8, top: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                      <XAxis dataKey="dia" tick={{ fontSize: 10 }} interval={9} />
+                      <YAxis tick={{ fontSize: 10 }} />
+                      <ReTooltip />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Bar dataKey="qtde" name="Demanda" fill="hsl(var(--primary))" />
+                      {sku.estoque_minimo != null && (
+                        <ReferenceLine
+                          y={sku.estoque_minimo}
+                          stroke="hsl(var(--destructive))"
+                          strokeDasharray="4 4"
+                          label={{ value: 'EM', fontSize: 10, position: 'right' }}
+                        />
+                      )}
+                      {sku.ponto_pedido != null && (
+                        <ReferenceLine
+                          y={sku.ponto_pedido}
+                          stroke="hsl(var(--accent-foreground))"
+                          strokeDasharray="4 4"
+                          label={{ value: 'PP', fontSize: 10, position: 'right' }}
+                        />
+                      )}
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Rodapé */}
