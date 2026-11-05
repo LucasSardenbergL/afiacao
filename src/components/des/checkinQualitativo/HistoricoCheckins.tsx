@@ -11,23 +11,29 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { type DescontoCheckin } from "./types";
+import { type LinhaHistoricoCheckin } from "./types";
 import { fmtPct, fmtDate } from "./format";
 
 interface HistoricoCheckinsProps {
   loading: boolean;
-  historico: DescontoCheckin[] | undefined;
+  historico: LinhaHistoricoCheckin[] | undefined;
+  /** A leitura falhou: dizer "nenhum checkin" seria afirmar o que não se leu. */
+  erro?: boolean;
 }
 
-export function HistoricoCheckins({ loading, historico }: HistoricoCheckinsProps) {
+export function HistoricoCheckins({ loading, historico, erro }: HistoricoCheckinsProps) {
   return (
-    <Card>
+    <Card data-testid="historico-checkins">
       <CardHeader>
         <CardTitle className="text-base">Checkins anteriores neste trimestre</CardTitle>
       </CardHeader>
       <CardContent>
         {loading ? (
           <Skeleton className="h-32 w-full" />
+        ) : erro ? (
+          <p className="text-sm text-status-error text-center py-6">
+            Não foi possível ler os check-ins deste trimestre.
+          </p>
         ) : (historico ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground text-center py-6">
             Nenhum checkin registrado ainda neste trimestre.

@@ -7,21 +7,37 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // de uma leitura que falhou — o card mostra "—".
 
 const { estado } = vi.hoisted(() => ({
-  estado: { posicao: null as Record<string, unknown> | null, falha: false },
+  estado: { posicao: null as Record<string, unknown> | null, falha: false, erro: false },
 }));
+
+// Devolve SÓ as colunas pedidas: um select que esquece fat_bruto_confirmado não recebe o campo
+// (como no PostgREST) — o mock não esconde a falta.
+const projetar = (linha: Record<string, unknown> | null, colunas: string) => {
+  if (!linha || colunas.trim() === "*") return linha;
+  return Object.fromEntries(
+    colunas.split(",").map((c) => c.trim()).filter((c) => c in linha).map((c) => [c, linha[c]]),
+  );
+};
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (tabela: string) => {
+      let colunas = "*";
       const q = {
-        select: () => q,
+        select: (c?: string) => {
+          colunas = c ?? "*";
+          return q;
+        },
         eq: () => q,
         limit: () => q,
         gte: () => Promise.resolve({ count: 3, error: null }),
         maybeSingle: () => {
           if (tabela !== "v_des_posicao_trimestre_ao_vivo") throw new Error(`tabela inesperada: ${tabela}`);
           if (estado.falha) return Promise.reject(new Error("rede"));
-          return Promise.resolve({ data: estado.posicao, error: null });
+          // erro do PostgREST com a linha antiga ainda "presente" — só o `error` diz que não leu
+          if (estado.erro)
+            return Promise.resolve({ data: { fat_bruto_confirmado: 1, posicao_ao_vivo_otimista: 297966.59 }, error: { message: "x" } });
+          return Promise.resolve({ data: projetar(estado.posicao, colunas), error: null });
         },
       };
       return q;
@@ -49,6 +65,7 @@ const valorDoCard = async (rotulo: string) => {
 beforeEach(() => {
   estado.posicao = null;
   estado.falha = false;
+  estado.erro = false;
 });
 
 describe("PerformanceHub — card Posição ao Vivo", () => {
@@ -58,6 +75,12 @@ describe("PerformanceHub — card Posição ao Vivo", () => {
     ["sem linha na view", null],
   ])("sem faturado confirmado — %s: mostra '—'", async (_nome, linha) => {
     estado.posicao = linha;
+    renderizar();
+    expect(await valorDoCard("Posição ao Vivo")).toBe("—");
+  });
+
+  it("leitura que devolveu erro (sem lançar): '—', nunca R$ 0", async () => {
+    estado.erro = true;
     renderizar();
     expect(await valorDoCard("Posição ao Vivo")).toBe("—");
   });

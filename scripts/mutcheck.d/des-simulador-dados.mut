@@ -7,3 +7,4 @@ PEGA | erro de leitura escondido | s/posicaoFalhou: posQuery\.isError,/posicaoFa
 # Inalcançada pela aba: com a posição desconhecida a aba já bloqueia antes de mostrar o 'faltam'.
 # O gate fica por tipo (conservadora number|null) e como defesa se a aba deixar de bloquear.
 SOBREVIVE | 'faltam' sem gate (a aba bloqueia antes) | s/if \(!posicao\.conhecida \|\| posicao\.conservadora == null\) return null;/if (posicao.conservadora == null) return null;/
+PEGA | select esquece o faturado (falha fechada: o controle fica vermelho) | s/\.select\("fat_bruto_confirmado, posicao_ao_vivo_conservadora, faixa_conservadora"\)/.select("posicao_ao_vivo_conservadora, faixa_conservadora")/

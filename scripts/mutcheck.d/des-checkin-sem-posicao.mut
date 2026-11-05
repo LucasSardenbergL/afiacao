@@ -3,3 +3,6 @@
 # @test: src/components/des/checkinQualitativo/__tests__/useCheckinQualitativo.sem-faturado.test.tsx
 # Rode: bash scripts/mutcheck.sh src/components/des/checkinQualitativo/useCheckinQualitativo.ts src/components/des/checkinQualitativo/__tests__/useCheckinQualitativo.sem-faturado.test.tsx scripts/mutcheck.d/des-checkin-sem-posicao.mut
 PEGA | desconto da view antiga sem gate | s/const desconto = posicao\.conhecida \? descontoQuery\.data : null;/const desconto = descontoQuery.data;/
+PEGA | check-ins anteriores sem gate (percentual da faixa do trânsito) | s/^      posicao\.conhecida$/      true/
+PEGA | select esquece o faturado (falha fechada: o controle fica vermelho) | s/\.select\("fat_bruto_confirmado, posicao_ao_vivo_conservadora, faixa_conservadora, faixa_otimista"\)/.select("posicao_ao_vivo_conservadora, faixa_conservadora, faixa_otimista")/
+PEGA | erro da lista de check-ins escondido | s/historicoErro: historicoQuery\.isError,/historicoErro: false,/

@@ -116,7 +116,9 @@ const BASELINE = new Map<string, number>([
   ["src/components/dashboard/FollowupsSugeridosCard.tsx", 1],
   ["src/components/dashboard/GestorExcecoes.tsx", 1],
   ["src/components/des/checkinQualitativo/useCheckinQualitativo.ts", 1],
-  ["src/components/des/simulador/useSimuladorData.ts", 2],
+  // 2→1 (v6 lote 3b, 2026-11-05): o "faltam p/ próxima faixa" passou a sair da posição derivada
+  // (posicao-ao-vivo.ts), e a posição desconhecida bloqueia a aba antes — sem `posQuery.data` cru.
+  ["src/components/des/simulador/useSimuladorData.ts", 1],
   ["src/components/farmer/ChamadasPendentesNudge.tsx", 1],
   ["src/components/farmer/copilot/OfertaCruaCard.tsx", 1],
   ["src/components/financeiro/cashflow/EventosOnboarding.tsx", 1],

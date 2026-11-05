@@ -4,3 +4,4 @@
 # Rode: bash scripts/mutcheck.sh src/components/des/CheckinQualitativoTab.tsx src/components/des/checkinQualitativo/__tests__/useCheckinQualitativo.sem-faturado.test.tsx scripts/mutcheck.d/des-checkin-tab-percentual.mut
 PEGA | qualitativo ausente vira 0 | s/^ {16}percentual=\{percentualPorCriterio\[c\.id\] \?\? null\}/                percentual={percentualPorCriterio[c.id] ?? 0}/
 PEGA | bônus ausente vira 0 | s/^ {20}percentual=\{percentualPorCriterio\[c\.id\] \?\? null\}/                    percentual={percentualPorCriterio[c.id] ?? 0}/
+PEGA | erro da lista não chega ao card | s/ erro=\{historicoErro\} \/>/ \/>/

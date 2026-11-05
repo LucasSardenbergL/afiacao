@@ -29,6 +29,15 @@ const FAIXAS = [
   { faixa_numero: 4, estrelas: 4, volume_min: 350000, volume_max: null },
 ];
 
+// Devolve SÓ as colunas pedidas: um select que esquece fat_bruto_confirmado não recebe o campo
+// (como no PostgREST) — o mock não esconde a falta.
+const projetar = (linha: Record<string, unknown> | null, colunas: string) => {
+  if (!linha || colunas.trim() === "*") return linha;
+  return Object.fromEntries(
+    colunas.split(",").map((c) => c.trim()).filter((c) => c in linha).map((c) => [c, linha[c]]),
+  );
+};
+
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     rpc: (...args: unknown[]) => {
@@ -37,8 +46,12 @@ vi.mock("@/integrations/supabase/client", () => ({
     },
     from: (tabela: string) => {
       let ordens = 0;
+      let colunas = "*";
       const q = {
-        select: () => q,
+        select: (c?: string) => {
+          colunas = c ?? "*";
+          return q;
+        },
         eq: () => q,
         order: () => {
           ordens += 1;
@@ -52,7 +65,7 @@ vi.mock("@/integrations/supabase/client", () => ({
           return Promise.resolve(
             estado.posicaoErro
               ? { data: null, error: { message: "falhou" } }
-              : { data: estado.posicao, error: null },
+              : { data: projetar(estado.posicao, colunas), error: null },
           );
         },
       };

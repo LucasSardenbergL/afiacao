@@ -54,7 +54,7 @@ export function KpiCards({ empresa }: { empresa: string }) {
       const [posicao, meta, ligacoes, spin] = await Promise.all([
         safeQuery(
           async () => {
-            const { data } = await client
+            const { data: linha, error } = await client
               .from("v_des_posicao_trimestre_ao_vivo")
               .select("fat_bruto_confirmado, posicao_ao_vivo_otimista")
               .eq("empresa", "OBEN")
@@ -62,10 +62,12 @@ export function KpiCards({ empresa }: { empresa: string }) {
               .eq("ano", ano)
               .limit(1)
               .maybeSingle();
+            // Leitura que falhou ≠ sem faturado: lança, e o safeQuery cai no null ("—"), nunca R$ 0.
+            if (error) throw error;
             // Sem faturado confirmado do GoodData, a "posição" da view antiga era só trânsito (e a
             // nova devolve NULL): ausente ≠ zero — o card mostra "—", nunca R$ 0 nem o trânsito.
-            if (data?.fat_bruto_confirmado == null || data?.posicao_ao_vivo_otimista == null) return null;
-            const n = Number(data.posicao_ao_vivo_otimista);
+            const semFaturado = linha?.fat_bruto_confirmado == null;
+            const n = semFaturado ? Number.NaN : Number(linha?.posicao_ao_vivo_otimista ?? Number.NaN);
             return Number.isFinite(n) ? n : null;
           },
           null as number | null,

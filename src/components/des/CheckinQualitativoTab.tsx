@@ -27,6 +27,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     bonusItems,
     historicoLoading,
     historico,
+    historicoErro,
   } = useCheckinQualitativo({ empresa, ano, trimestre });
 
   return (
@@ -90,7 +91,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
       )}
 
       {/* Histórico do trimestre */}
-      <HistoricoCheckins loading={historicoLoading} historico={historico} />
+      <HistoricoCheckins loading={historicoLoading} historico={historico} erro={historicoErro} />
 
       {/* Dialog confirmação com André */}
       <ConfirmacaoAndreDialog
