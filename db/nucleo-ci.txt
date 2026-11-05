@@ -520,6 +520,13 @@ db/test-fuso-sp-relogio-sessao.sh          53  falsificar=16
 # (trava, PRÉ, as 2 metades da PÓS, reaplicar). `sem_invoker` deixa o md5 VERDE — só S1/S2 o pegam.
 # Autocontida: initdb + stubs + a migration + db/fixtures/des-views-predecessoras-prod-20260927.sql.
 db/test-des-desconto-total-maximo.sh       19  falsificar=12
+# A posição ao vivo do DES sem faturado confirmado (20261105091216): sem snapshot do GoodData a
+# v_des_posicao_trimestre_ao_vivo somava COALESCE(fat, 0) + trânsito — a posição, a faixa e o gap
+# saíam só do trânsito. Agora as 5 derivadas são NULL (uma por assert, cada guarda falsifica sozinha);
+# faturado 0 segue fato; meta NULL ⇒ gap NULL; as 18 colunas de fato idênticas; a dependente
+# v_des_desconto_por_checkin (corpo da prod) perde a linha sem faixa; RLS sob SET ROLE; o envelope.
+# Autocontida: initdb + stubs + a migration + db/fixtures/des-posicao-ao-vivo-prod-20261105.sql.
+db/test-des-posicao-ao-vivo-sem-faturado.sh 32  falsificar=14
 # O "hoje" de SP no preço de partida (get_ultimos_precos_cliente) e na medição do piso
 # (medir_abaixo_piso_tier): o current_date da sessão UTC era amanhã das 21:00 às 23:59 BRT
 # (20260927172443). Mesmo relógio controlado, borda do DIA cruzada sob as duas sessões; o
@@ -932,6 +939,11 @@ db/test-radar-agregado-cnae.sh             39  falsificar=14
 # GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
 # 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
 db/test-radar-cnae-secundario.sh           46  falsificar=18
+# Mini, pipeline diário do Radar (20261105150000): o score das 06:30 sai sem reler radar_empresas quando a impressão
+# digital (lote, fórmula, max(updated_at), nº de já-clientes) não mudou — 0 seq scans medidos em pg_stat_xact — e
+# continua registrando a rodada; recalcula com updated_at novo, já-cliente sem bump, lote novo e na rede de 7 dias;
+# rodada com pulado não grava o estado; 1º cálculo = predecessora de prod; tick conta pelo índice parcial; RLS/ACL; PRE.
+db/test-radar-pipeline-diario.sh           36  falsificar=12
 
 # Possível vínculo/sucessor de cliente na ficha do Radar (migration 20261104201756): chave exclusiva (≤ 2 raízes),
 # telefone/e-mail sozinhos ocultos, contador derruba telefone/e-mail, pessoa só no mesmo município, cliente

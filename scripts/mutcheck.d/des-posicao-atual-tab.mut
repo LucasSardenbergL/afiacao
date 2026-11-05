@@ -1,0 +1,8 @@
+# A aba Posição Atual não mostra posição/faixa/barra/'meta atingida' sem faturado confirmado.
+# @src: src/components/des/PosicaoAtualTab.tsx
+# @test: src/components/des/__tests__/PosicaoAtualTab.sem-faturado.test.tsx
+# Rode: bash scripts/mutcheck.sh src/components/des/PosicaoAtualTab.tsx src/components/des/__tests__/PosicaoAtualTab.sem-faturado.test.tsx scripts/mutcheck.d/des-posicao-atual-tab.mut
+PEGA | card de posição sem gate | s/\{posicao\.conhecida \? \(/{true ? (/
+PEGA | ausência vira 'meta atingida' | s/\{posicao\.metaAtingida === true/{posicao.metaAtingida !== false/
+PEGA | barra sem gate | s/\{progress != null && \(/{(/
+PEGA | faixa sem gate | s/\{faixaConserv == null \|\| faixaOtim == null \? \(/{false ? (/

@@ -1,14 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { HistoricoCheckins } from "../HistoricoCheckins";
-import type { DescontoCheckin } from "../types";
+import type { LinhaHistoricoCheckin } from "../types";
 
-function row(p: Partial<DescontoCheckin>): DescontoCheckin {
+function row(p: Partial<LinhaHistoricoCheckin>): LinhaHistoricoCheckin {
   return {
-    checkin_id: 1, data_avaliacao: "2026-05-20", tipo: "projecao", empresa: "OBEN", ano: 2026, trimestre: 2,
-    faixa_numero: 2, estrelas: 3, desconto_padrao: 5,
-    qualitativos_atingidos_perc: 2.5, bonus_atingido_perc: 0,
-    desconto_total_projetado: 7.5, desconto_total_maximo: 10, avaliado_por: "joao",
+    checkin_id: 1, data_avaliacao: "2026-05-20", tipo: "projecao", avaliado_por: "joao",
+    qualitativos_atingidos_perc: 2.5, desconto_total_projetado: 7.5,
     ...p,
   };
 }
@@ -30,5 +28,22 @@ describe("HistoricoCheckins", () => {
   it("rotula confirmacao_andre como Confirmação", () => {
     render(<HistoricoCheckins loading={false} historico={[row({ tipo: "confirmacao_andre" })]} />);
     expect(screen.getByText("Confirmação")).toBeTruthy();
+  });
+
+  it("percentuais desconhecidos (sem faixa): '—', e o check-in segue listado", () => {
+    render(
+      <HistoricoCheckins
+        loading={false}
+        historico={[row({ qualitativos_atingidos_perc: null, desconto_total_projetado: null })]}
+      />,
+    );
+    expect(screen.getByText("20/05/2026")).toBeTruthy();
+    expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
+  it("leitura que falhou: não diz 'nenhum checkin'", () => {
+    render(<HistoricoCheckins loading={false} historico={undefined} erro />);
+    expect(screen.getByText("Não foi possível ler os check-ins deste trimestre.")).toBeTruthy();
+    expect(screen.queryByText(/Nenhum checkin registrado/)).toBeNull();
   });
 });

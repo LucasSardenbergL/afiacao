@@ -27,6 +27,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
     bonusItems,
     historicoLoading,
     historico,
+    historicoErro,
   } = useCheckinQualitativo({ empresa, ano, trimestre });
 
   return (
@@ -59,7 +60,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
                 key={c.id}
                 criterio={c}
                 resposta={respostas[c.id] ?? { atingido: false, observacao: "" }}
-                percentual={percentualPorCriterio[c.id] ?? 0}
+                percentual={percentualPorCriterio[c.id] ?? null}
                 onChange={(resp) => setResposta(c.id, resp)}
               />
             ))}
@@ -78,7 +79,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
                     key={c.id}
                     criterio={c}
                     resposta={respostas[c.id] ?? { atingido: false, observacao: "" }}
-                    percentual={percentualPorCriterio[c.id] ?? 0}
+                    percentual={percentualPorCriterio[c.id] ?? null}
                     bonus
                     onChange={(resp) => setResposta(c.id, resp)}
                   />
@@ -90,7 +91,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
       )}
 
       {/* Histórico do trimestre */}
-      <HistoricoCheckins loading={historicoLoading} historico={historico} />
+      <HistoricoCheckins loading={historicoLoading} historico={historico} erro={historicoErro} />
 
       {/* Dialog confirmação com André */}
       <ConfirmacaoAndreDialog

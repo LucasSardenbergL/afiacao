@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Info, Plus } from "lucide-react";
+import { AlertTriangle, Info, Plus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,11 +11,15 @@ export function SimuladorTab({ empresa, ano, trimestre }: Props) {
   const [showCompare, setShowCompare] = useState(false);
   const [comparePrazo, setComparePrazo] = useState<string>("");
 
-  const { prazos, faltamProximaFaixa, defaultPrazo, compareDefault, isLoading } = useSimuladorData(
-    empresa,
-    ano,
-    trimestre,
-  );
+  const {
+    prazos,
+    faltamProximaFaixa,
+    defaultPrazo,
+    compareDefault,
+    isLoading,
+    posicaoConhecida,
+    posicaoFalhou,
+  } = useSimuladorData(empresa, ano, trimestre);
 
   useEffect(() => {
     if (!comparePrazo && compareDefault) setComparePrazo(compareDefault);
@@ -23,6 +27,32 @@ export function SimuladorTab({ empresa, ano, trimestre }: Props) {
 
   if (isLoading) {
     return <Skeleton className="h-96 w-full" />;
+  }
+
+  // Sem faturado confirmado a posição do trimestre é desconhecida: a RPC simularia a partir de 0
+  // (faixa, ganho e recomendação sobre uma base inventada). Precisão > recall — não simula.
+  if (!posicaoConhecida) {
+    return (
+      <Card className="border-status-warning/30 bg-status-warning/5" data-testid="simulador-sem-posicao">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 text-status-warning mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground">
+                {posicaoFalhou
+                  ? "Não foi possível ler a posição do trimestre."
+                  : `Sem faturado confirmado do GoodData em T${trimestre}/${ano}.`}
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                A simulação parte da posição atual do trimestre. Sem ela, a faixa, o ganho e a
+                recomendação sairiam de uma base inventada — por isso a simulação fica indisponível até o
+                snapshot do GoodData chegar.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (

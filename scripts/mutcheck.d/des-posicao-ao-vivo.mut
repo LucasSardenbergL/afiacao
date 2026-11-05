@@ -1,0 +1,13 @@
+# Invariantes money-path da posição ao vivo do DES: sem faturado confirmado, posição/faixa/gap são null.
+# @src: src/components/des/posicao-ao-vivo.ts
+# @test: src/components/des/__tests__/posicao-ao-vivo.test.ts
+# Rode: bash scripts/mutcheck.sh src/components/des/posicao-ao-vivo.ts src/components/des/__tests__/posicao-ao-vivo.test.ts scripts/mutcheck.d/des-posicao-ao-vivo.mut
+# PEGA = a suíte DEVE matar. Origem: v6 lote 3b (prod 2026-11-05, OBEN T4/26 posição = só trânsito, 3★).
+PEGA | gate ignora o faturado (view antiga passa) | s/return numero\(linha\.fat_bruto_confirmado\) !== null && /return /
+PEGA | gate ignora a posição NULL | s/ && numero\(linha\.posicao_ao_vivo_conservadora\) !== null;/;/
+PEGA | desconhecida vira 0 estrelas | s/estrelasConservadora: null,/estrelasConservadora: 0,/
+PEGA | meta zero conta como meta | s/meta !== null && meta > 0/meta !== null && meta >= 0/
+PEGA | gap sem meta (gap 0 da view antiga) | s/const gap = temMeta \? numero\(linha\.gap_para_meta_pessoal\) : null;/const gap = numero(linha.gap_para_meta_pessoal);/
+PEGA | ausência vira 'meta atingida' | s/\? gap <= 0 : null,/? gap <= 0 : true,/
+PEGA | NaN da borda vira posição | s/return Number\.isFinite\(n\) \? n : null;/return n;/
+PEGA | progresso sem teto | s/Math\.min\(\(conservadora \/ meta\) \* 100, 100\)/(conservadora \/ meta) * 100/

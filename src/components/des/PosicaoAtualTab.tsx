@@ -5,7 +5,7 @@ import { Star, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Tables } from "@/integrations/supabase/types";
 import { type ComColunas, linhasCom } from "@/lib/linha-view";
-import { faixaDeJson } from "./faixa-json";
+import { derivarPosicaoAoVivo } from "./posicao-ao-vivo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -160,15 +160,20 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
     );
   }
 
-  const conserv = Number(pos.posicao_ao_vivo_conservadora ?? 0);
-  const otim = Number(pos.posicao_ao_vivo_otimista ?? 0);
-  const meta = Number(pos.meta_pessoal ?? 0);
-  const progress = meta > 0 ? Math.min((conserv / meta) * 100, 100) : 0;
+  // Sem faturado confirmado do GoodData, posição/faixa/gap são null (ausente ≠ zero) — ver posicao-ao-vivo.ts.
+  const posicao = derivarPosicaoAoVivo(pos);
+  const progress = posicao.progresso;
   const progressColor =
-    progress >= 100 ? "bg-status-success" : progress >= 75 ? "bg-status-warning" : "bg-status-error";
+    progress == null
+      ? "bg-muted"
+      : progress >= 100
+        ? "bg-status-success"
+        : progress >= 75
+          ? "bg-status-warning"
+          : "bg-status-error";
 
-  const faixaConserv = faixaDeJson(pos.faixa_conservadora)?.estrelas ?? 0;
-  const faixaOtim = faixaDeJson(pos.faixa_otimista)?.estrelas ?? 0;
+  const faixaConserv = posicao.estrelasConservadora;
+  const faixaOtim = posicao.estrelasOtimista;
 
   const dias = pos.dias_restantes ?? 0;
   const diasCls =
@@ -183,7 +188,7 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
       {/* LINHA 1 - Cards principais */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Posição ao vivo */}
-        <Card>
+        <Card data-testid="card-posicao">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -203,47 +208,74 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-status-success">{fmtBRL(conserv)}</p>
-            <p className="text-xs text-muted-foreground mt-1.5">
-              + {fmtBRL(pos.valor_em_transito_risco)} em pedidos de risco ={" "}
-              <span className="font-medium text-foreground">{fmtBRL(otim)}</span> otimista
-            </p>
+            {posicao.conhecida ? (
+              <>
+                <p className="text-2xl font-bold text-status-success">{fmtBRL(posicao.conservadora)}</p>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  + {fmtBRL(pos.valor_em_transito_risco)} em pedidos de risco ={" "}
+                  <span className="font-medium text-foreground">{fmtBRL(posicao.otimista)}</span> otimista
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-bold text-muted-foreground">—</p>
+                <p className="text-xs text-muted-foreground mt-1.5" data-testid="posicao-sem-faturado">
+                  Sem faturado confirmado do GoodData neste trimestre. Os{" "}
+                  {fmtBRL(pos.valor_em_transito_seguro)} em trânsito não são posição.
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
 
         {/* Card 2: Meta pessoal */}
-        <Card>
+        <Card data-testid="card-meta">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Meta pessoal
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-foreground">{fmtBRL(meta)}</p>
+            <p className="text-2xl font-bold text-foreground">{fmtBRL(posicao.meta)}</p>
             <div className="mt-2 space-y-1.5">
-              <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                <div
-                  className={cn("h-full transition-all", progressColor)}
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
+              {progress != null && (
+                <div className="h-2 w-full bg-muted rounded-full overflow-hidden" data-testid="barra-meta">
+                  <div
+                    className={cn("h-full transition-all", progressColor)}
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              )}
               <p className="text-xs text-muted-foreground">
-                {pos.gap_para_meta_pessoal != null && Number(pos.gap_para_meta_pessoal) > 0
-                  ? `Faltam ${fmtBRL(pos.gap_para_meta_pessoal)}`
-                  : "Meta atingida! 🎯"}
+                {posicao.metaAtingida === true
+                  ? "Meta atingida! 🎯"
+                  : posicao.metaAtingida === false
+                    ? `Faltam ${fmtBRL(posicao.gap)}`
+                    : !posicao.conhecida
+                      ? "Sem posição confirmada — não dá para medir o quanto falta."
+                      : "Meta pessoal não cadastrada."}
               </p>
             </div>
           </CardContent>
         </Card>
 
         {/* Card 3: Faixa DES */}
-        <Card>
+        <Card data-testid="card-faixa">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Faixa DES atingida
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {faixaConserv == null || faixaOtim == null ? (
+              <>
+                <p className="text-2xl font-bold text-muted-foreground">—</p>
+                <p className="text-xs text-muted-foreground mt-1.5">
+                  Sem faturado confirmado, a faixa não é calculada.
+                </p>
+              </>
+            ) : (
+              <>
             <div className="flex items-baseline gap-2">
               <p className="text-2xl font-bold text-foreground">{faixaConserv}</p>
               <span className="text-sm text-muted-foreground">estrelas</span>
@@ -266,6 +298,8 @@ export function PosicaoAtualTab({ empresa, ano, trimestre }: Props) {
                 </TooltipContent>
               )}
             </Tooltip>
+              </>
+            )}
           </CardContent>
         </Card>
 

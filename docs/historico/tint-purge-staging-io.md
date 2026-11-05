@@ -220,6 +220,7 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **CNAE secundário (migration `20261104153351_radar_cnae_secundario`, PR #3596):** pedido do founder. Uma marmoraria registrada com CNAE de móveis de madeira precisa ser separável sem sair da base. O `/radar` ganhou um 2º campo, combinado (E) com o principal, e só o código completo filtra. O escritor grava `radar_agregado_cnae_sec` (grão do fino + `cnae_secundario`, código repetido na RFB contado 1×) só para os códigos cobertos: os CNAEs principais da base, gravados em `radar_agregado_estado.cnaes_secundarios_cobertos`. A contagem ganhou um ramo: código coberto lê esse agregado; o resto vai ao vivo com `@>`. A lista ganhou `e.cnaes_secundarios @> ARRAY[$19]`, que usa o GIN `idx_radar_empresas_cnaes_sec`. Prova `db/test-radar-cnae-secundario.sh`: 46/46 em `C` e `pt_BR.UTF-8`, 18/18 sabotagens vermelhas.
 - **Apply e 2ª testemunha (04/11):** a tentativa #894 morreu com SIGTERM quando a sessão caiu, e a transação foi desfeita: as funções seguiram nas predecessoras, sem tabela nem índice e sem consulta pendurada. A #895 virou recibo (`EXIT=0`, sha256 `369c7d9b…`). Pelo psql-ro: md5 `d627135c…`/`a9cdbac0…`/`7bd1029e…`, 1 assinatura por RPC, `anon` sem EXECUTE; **21 códigos cobertos, 137.553 grupos**; tabela com RLS e sem SELECT para `anon`/`authenticated`; GIN válido, **5,1 MB**.
 - **Medida com uso (04/11 ~22:05 UTC, depois do merge às 22:01 e do Publish):** o founder filtrou por secundário. `idx_radar_agregado_cnae_sec_codigo` teve 10 leituras (última 22:04:43), o ranking e o mapa no agregado. O GIN teve 1 leitura às 22:00:26, junto com `idx_radar_empresas_cnae` e `idx_radar_empresas_local` (lista com principal + secundário). O `seq_scan` de `radar_empresas` (128) **não serve de prova aqui**: soma o apply (recálculo + GIN), as minhas contagens de secundários e o diagnóstico de outra sessão `claude_ro` (`profiles` × `radar_empresas`) que rodava às 22:05:42. Sem acesso a `pg_stat_statements`, a prova é por plano (EXPLAIN sem ANALYZE, `exit 0`): a lista default da tela + secundário, o principal + secundário (BitmapAnd GIN × `cnae_principal`) e a contagem viva de código **não** coberto (`4330404`, ~27 mil linhas) andam o GIN, e nenhuma faz Seq Scan. **Sinal de pronto atingido.**
+- **Drop do `idx_radar_muni_cover` antecipado (05/11, migration `20261105144036_radar_drop_muni_cover`, apply do founder):** o critério era "1 semana com `idx_scan` parado" (10/11), mas esperar não traria informação nova. Os contadores não têm reset (`stats_reset` nunca; postmaster de 31/10 10:33) e mostram `idx_scan = 0`, `idx_tup_read = 0` desde então, inclusive de 31/10 a 03/11, quando ainda existia o caminho rápido para o qual o índice nasceu. O índice é parcial (`ja_cliente = false AND status <> 'descartado'`) e, das 6 funções que agrupam por município, só a contagem viva tem esse predicado, e ela filtra por colunas fora do INCLUDE (`data_abertura`, `ultimo_lote`, `cnaes_secundarios`, `email`). A `carteira_por_municipio` não tem o predicado; a `radar_possiveis_vinculos` (nova, 04/11) vai pelo CNPJ. Ganho: 150 MB (23% dos 655 MB de índices da tabela) e uma inserção a menos por update não-HOT e por linha da carga mensal. A migration tem `lock_timeout = '3s'` (com leitor longo na frente, falha em vez de enfileirar o `/radar`), PRE que exige a definição exata de prod e PÓS que exige o `idx_radar_muni` intacto. Prova ad-hoc em PG17 (`C` e `pt_BR.UTF-8`): apaga, idempotente, PRE barra definição divergente, lock falha em 3 s (SQLSTATE `55P03`, não a mensagem, que vem traduzida no `pt_BR`); controle verde e 4/4 sabotagens vermelhas. Reverter = o `CREATE INDEX` de `20260614140000`, de preferência `CONCURRENTLY`.
 - **Medida pós-Publish (03/11 17:16 UTC, psql-ro, `exit 0`):** merge do #3559 às 14:44; o founder publicou, recarregou e buscou. `radar_empresas` seguiu com `seq_scan = 74` e `last_seq_scan` 13:10:16 UTC (congelado), enquanto `idx_radar_empresas_busca_trgm` foi de 0 para **16** leituras (última 17:13:39), junto com `idx_radar_lista_score`, `idx_radar_empresas_local` e `idx_radar_empresas_raiz` subindo no mesmo minuto. **Sinal de pronto atingido:** abrir, filtrar e buscar no `/radar` não leem mais a tabela inteira. Resta o 1º recálculo diário do agregado (04/11 06:35 UTC) e os pendentes já medidos (CNAE/"estabelecidas" no ranking; drop do `idx_radar_muni_cover` com o founder).
 
 ## 2026-11-03 — a promoção de fórmulas escreve só o que mudou (migration `20261103093424`)
@@ -486,6 +487,29 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   1. Leitura: `SELECT count(*), pg_size_pretty(sum(length(query))::bigint) FROM extensions.pg_stat_statements;`. Um total de textos na casa dos MB sustenta a hipótese.
   2. Se sustentar: `SELECT extensions.pg_stat_statements_reset();`. Perde-se o histórico de performance, que ninguém aqui consegue ler mesmo. Se os saltos das :41 somem na série seguinte, a atribuição fica **provada**, e o temp de fundo cai de ~86 para ~30 MB/15 min. Mas eles voltam à medida que os textos se acumulam. Também é preciso decidir se esse coletor interno do Supabase conta para o critério do Mini.
 
+### 2026-11-05 — provado: é o tuplestore do `pg_stat_statements`, e 77% do texto era do `claude_ro`
+
+- **Controle sem reset** (01:42–01:52 UTC, só `pg_stat_database` a cada 1 s, 0 quedas): 6 saltos de +2 arquivos / +8,6 MB, todos em **:40–:41**, somando 51,8 MB em 10 min. O derrame cresce aos poucos (8,5 → 8,6 MB), como o texto acumulado.
+- **O que o tuplestore carrega** (conector Lovable como `postgres`, `SET TRANSACTION READ ONLY` com `somente_leitura = on` atestado):
+  - 4.106 entradas, de um máximo de 5.000;
+  - **3,3 MB de texto**, o maior com 119 kB;
+  - `work_mem` 3,5 MB; último reset em 31/10, 10:33 UTC;
+  - `track = top`, `track_utility = on`.
+  - Com umas 40 colunas numéricas por entrada, dá ~5 MB por chamada. A sobra derrama ~4,3 MB, e 2 chamadas por coleta = 8,6 MB.
+- **De quem é o texto:**
+  - **`claude_ro`: 2.943 entradas, 2,5 MB (77%).** São as nossas leituras de diagnóstico (cada formato novo de SELECT ad-hoc de cada sessão), acumuladas em 4,5 dias.
+  - O resto: `service_role` 372 kB, `authenticated` 169 kB, `postgres` ~120 kB.
+- **Teste decisivo (founder, SQL Editor, 05/11 ~14:00 UTC):** `pg_stat_statements_reset(<oid do claude_ro>)`, que zera só esse papel.
+  - Conferência pelo conector: 1.133 entradas, 774 kB de texto, `claude_ro` com 0.
+  - **Série seguinte, 14:00–14:10 UTC, loja aberta: 0 bytes de temp e 0 saltos às :41.** O contador estava vivo: `temp_files` foi de 9.381 às 01:52 para 10.460 às 14:00, antes do reset, e `xact_commit` subindo.
+- **Consequência para o Mini:** o leitor "sem dono" era ~56 dos ~86 MB/15 min. Depois do #3587 e deste reset, a janela medida com a loja aberta tem **temp 0**.
+- **Correção durável (founder, SQL Editor, 05/11 ~14:12 UTC):** `ALTER ROLE claude_ro SET pg_stat_statements.track = 'none'`. O Supabase aceitou do `postgres`. Sem isso, o texto do `claude_ro` voltaria a passar do `work_mem` em poucos dias (~650 entradas/dia).
+  - Conferido pela psql-ro: uma conexão nova sai com `current_setting('pg_stat_statements.track') = none`. O valor fica no `rolconfig` (`setdatabase = 0`). O `default_transaction_read_only=on` continua na linha por banco, intacta.
+  - A sentinela `authz:claude-ro:prod` dá ✅ 39 asserções, exit 0: ela só confere o GUC read-only (`cfg LIKE 'default_transaction_read_only=%'`), então o GUC novo não acusa.
+  - Conferido pelo conector às 14:15 UTC, depois das dezenas de statements da sentinela: **0 entradas do `claude_ro`**.
+  - **Efeito colateral aceito:** as leituras do `claude_ro` saem do `pg_stat_statements`. Ninguém as lia: o próprio `claude_ro` não alcança `extensions`.
+  - **Se um dia o `claude_ro` for recriado** (`DROP ROLE` + `CREATE`), o GUC se perde e o temp das :41 volta em dias. A assinatura é +2 arquivos / +8,6 MB às :40–:41.
+
 ## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
 
 **Pergunta:** a janela 13:00–13:15 UTC de 04/11 reprovou o Mini: 523,6 MB de disco, hit 96,86%. Desses, 430 MB vieram de `tint_formulas` (2 seq scans) e 84 MB de `tint_sync_runs` (1 seq scan). `pg_stat_user_tables` mostrava 87 seq scans em `tint_formulas` desde o restart de 31/10, o último às 15:28:37, com a loja aberta. Havia uma tela ou edge varrendo a tabela?
@@ -558,3 +582,70 @@ SELECT sum((metadata->>'receitas_assinadas')::int) AS assinadas_desde_m1
 - Retome a M2 com ≥ ~90% das vivas e a leitura de itens por run em queda, medida no delta de `pg_statio` de um run de reenvio.
 
 **Medição:** a regra do `count(*)` (acima) se repetiu. As duas contagens desta sessão, às 21:55 de 04/11 e às 10:11:55 de 05/11, leram cada uma o heap inteiro: 55,1 mil blocos, 451 MB do disco.
+
+## 2026-11-05 — o hit < 99% "sem run" era evento de operador; o pipeline diário do Radar para de reler radar_empresas (`20261105150000`)
+
+**Pergunta:** por que a janela de controle de 04/11 (15:36–21:24 UTC, sem run de fórmulas) deu 97,67% de hit?
+
+**A premissa caiu.** Recortei a série de 60 s do banco inteiro que a sessão da M2 gravou (04/11 15:36 → 05/11 10:11, 1.044 min, 53,4 GB lidos):
+- os 97,65% vêm de **16 min** (15:40–15:56; 15:44 632 MB e 15:52 3,5 GB). Sem eles, a janela dá **17 MB/15 min e hit 99,82%**; das 16:00 às 21:24, 16 MB/15 min e 99,83%;
+- as horas 16–20, 02–04 e 07–09 UTC ficam todas ≥ 99,36%;
+- medida própria hoje, 14:14–14:56 UTC (horário de loja, sem run de fórmulas): 411 MB em 42 min (~147 MB/15 min), **hit 99,67%**.
+
+**Quem reprova janela** (cruzando a série com `db_aplicacoes`, `cron.job_run_details` e `gh run list`; nenhum workflow do período lê o banco):
+
+| UTC | lido | o que coincide |
+|---|---|---|
+| 04/11 15:44–15:52 | ~4,1 GB | `db_aplicacoes` #892 (15:45) + sessão do CNAE secundário em desenvolvimento |
+| 04/11 21:56–22:15 | ~25 GB | #894/#895 `radar_cnae_secundario`: GIN em `radar_empresas`, recálculo forçado do agregado, validação |
+| 04/11 23:10–23:57 | ~4,5 GB | #898 (23:04); 23:47 = 2,9 GB a 5% de hit, sem dono |
+| 05/11 01:23 | 2,9 GB | #900 `radar_possiveis_vinculos`: 4 `CREATE INDEX` em `radar_empresas` |
+| 05/11 05:24 | 1,4 GB | cron `tint-staging-purge-diario` (tint) |
+| 05/11 06:01–06:39 | ~7,3 GB | edges das 06:00 (0,7 GB) + **pipeline diário do Radar (6,4 GB)** |
+| 05/11 10:09 | 3,9 GB | run de fórmulas `82be55dc` (tint) |
+
+- **(a) Eventos de operador** (migration + diagnóstico das sessões, quase tudo sobre os 1,4 GB de `radar_empresas`): ~36 GB numa noite, o maior volume. São únicos e não há conserto de prod. **Regra de método:** a medida do Mini EXCLUI os minutos de `db_aplicacoes` (`iniciado_em` ± 15 min) e as validações da própria sessão. Em horário de loja, não varrer `radar_empresas` (731 MB de heap) para validar: preferir `EXPLAIN` sem `ANALYZE`, `pg_class.reltuples` ou índice. O apply desta migration é exemplo: 395 MB no minuto 14:58.
+- **(b) Pipeline diário do Radar**, a maior causa **recorrente** fora do tint. Em 8 dias o recruzar marcou **0** empresas nas 8 rodadas e o score alterou **0** linhas em 6, mas relia ~6,4 GB por dia:
+  - 06:16, recruzar: 1,5 GB, em 2 `count(*)` de denominador (2 seq scans);
+  - 06:30, score: 2,3 GB + 212 MB de temp, nas CTEs `muni`/`ufs`/`fatores`;
+  - 06:39, agregado: 2,6 GB.
+  - Decisão do founder: **(b)**.
+
+**Conserto (b)** — migration `20261105150000_radar_pipeline_diario_sem_releitura`, aplicada por `db:aplicar` (tentativa **#903**, recibo na mesma transação, 14:58 UTC):
+- índices `idx_radar_empresas_ja_cliente (municipio_codigo, uf) WHERE ja_cliente` (40 kB) e `idx_radar_empresas_updated_at` (3,9 MB);
+- tick: denominadores `ja_cliente_antes`/`ja_cliente_total` pelo índice parcial. `candidatos_antes` saiu: era o seq scan e ninguém o lia; o `data_health` só olha o frescor;
+- score: gate por impressão digital (lote, início do lote, versão da fórmula, `max(updated_at)`, nº de já-clientes), gravada em `radar_score_estado` só em rodada sem pulado. Se a impressão é igual, a rodada não recalcula, mas **registra** em `acoes_execucoes` com `lote_vigente` (lido pelo `radar_avisar_lote`). A rodada do 7º dia recalcula de qualquer jeito;
+- semente do estado no apply, a partir da rodada limpa das 06:30 de hoje: nenhuma escrita depois dela, `max_updated_at` = 31/10 18:57, 3.021 já-clientes. O cron de amanhã já pode pular;
+- premissa conferida (subagente, varredura do repo): os 3 únicos escritores das colunas que entram no score (edge `radar-ingest`, `radar_recruzar_ja_cliente`, `radar_registrar_cadastro_omie`) setam `updated_at` no mesmo comando;
+- **Codex** (challenge, sem ALTO):
+  - MÉDIO 1: commit fora de ordem fica invisível ao `max(updated_at)`. Aceito como heurística: os escritores concorrentes são a ingestão, que muda o lote, e o cadastro de 1 linha; o teto da defasagem é a rede de 7 dias;
+  - MÉDIO 2: o `CREATE INDEX` trava a escrita. Aceito: ~16 updates de usuário em 5 dias;
+  - BAIXO 3: virou 6 d 23 h.
+- **Prova** (`db/test-radar-pipeline-diario.sh`, no núcleo do CI): 36 asserts nos locales C e pt_BR; `--falsificar` com controle verde + 12/12 sabotagens vermelhas. O 1º cálculo é igual à predecessora de prod (md5 de score/motivos/versão) e a rodada sem mudança faz **0 seq scans** (`pg_stat_xact`).
+- **2ª testemunha** (psql-ro, depois do commit): md5 vivo = arquivo (score `f61d210f…`, tick `ca3ee373…`); estado semeado; índices válidos; ACL (`service_role` sim; anon/authenticated não) e RLS fechados; `EXPLAIN` dos 2 contadores = Index Only Scan.
+
+**Medida do depois (06/11 ~07:00 UTC)** — linha de base pós-apply de `radar_empresas` às 14:59:20 de 05/11: `heap_blks_read` 12.309.565, `idx_blks_read` 208.906, `seq_scan` 157. Esperado: o score com `recalculou=false` em milissegundos, contra 21 s hoje, e o recruzar sem os 2 seq scans. O agregado das 06:35 continua lendo ~2,6 GB:
+
+```sql
+SELECT acao, iniciado_em, round(extract(epoch FROM finalizado_em - iniciado_em), 1) AS s,
+       detalhes->>'recalculou' AS recalculou, detalhes->>'ja_cliente_antes' AS jc_antes
+  FROM public.acoes_execucoes
+ WHERE acao IN ('radar.score_recalcular', 'radar.recruzar_ja_cliente') AND iniciado_em >= '2026-11-06'
+ ORDER BY iniciado_em;
+SELECT heap_blks_read - 12309565 AS heap_lidos_desde_apply, idx_blks_read - 208906 AS idx_lidos,
+       (SELECT seq_scan FROM pg_stat_user_tables WHERE relname = 'radar_empresas') - 157 AS seq_scans
+  FROM pg_statio_user_tables WHERE relname = 'radar_empresas';
+```
+
+Se o recruzar ainda ler ~730 MB, quem lê é o `UPDATE … EXISTS` de `radar_recruzar_ja_cliente()` (o plano depende das estatísticas da temp table). Fica como a próxima fatia do recruzar.
+
+**Próximas fatias, ranqueadas** (volume por dia, fora do tint):
+1. agregado das 06:35: ~2,6 GB/dia. Depende do relógio (corte de "estabelecida" = hoje − 5 anos), então o recálculo diário é semântico. O caminho é ajustar só as empresas que cruzam o corte;
+2. eventos de operador (a): episódicos, mas o maior volume. Regra acima;
+3. `tint-staging-purge-diario` 05:23: ~1,4 GB/dia (tint);
+4. edges das 06:00 (`calculate-scores`, `scoring-recalc-batch`, `omie-analytics-sync`): ~0,7 GB/dia;
+5. **em horário de loja:** 14:40 de 05/11, seq scan paralelo de `priority_score_log` (210 MB, 1,35 M linhas, hit 94,5% no minuto), mais `health_score_history` 28 MB. Leitor não atribuído;
+6. 04/11 23:47: 2,9 GB a 5% de hit, sem dono (nenhum cron, apply ou workflow no minuto).
+
+- **Lição:** janela de controle sem atribuição por minuto esconde evento único. Antes de caçar "a causa do hit", recorte a série por minuto e cruze com `db_aplicacoes`: a média de 6 h de 97,67% era 16 min de 3,5 GB.
+- **Lição:** o `claude_ro` está com `pg_stat_statements.track=none` desde o #3635. O custo das nossas próprias leituras não aparece no `pg_stat_statements`, só na série de `pg_statio`/`pg_stat_io`. O `pg_stat_statements` foi zerado por completo às 14:13:13 UTC de 05/11.
