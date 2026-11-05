@@ -55,9 +55,9 @@ formatadores.
 
 ## Prova
 
-- `src/pages/__tests__/AdminEstoqueRecebimento.kpi-leitura.test.tsx`, com 21 casos:
+- `src/pages/__tests__/AdminEstoqueRecebimento.kpi-leitura.test.tsx`, com 22 casos:
   - os 4 cards × (a query entra em erro, render do erro, carregando, zero observado);
-  - offline, `count` nulo, soma parcial, soma completa e contagem positiva.
+  - offline, `count` nulo, `data` nulo, soma parcial, soma completa e contagem positiva.
   - O mock reconhece a query pelos **filtros**, não pela tabela, porque as 4 batem em
     `nfe_recebimentos`. Assim só uma falha por vez.
 - `src/components/reposicao/__tests__/SkuDetailSheet.leitura.test.tsx`, com 10 casos: gráfico e stats
@@ -84,6 +84,23 @@ formatadores.
   O `restaurar()` do laço (`git checkout --`) passou a "restaurar" para a versão sabotada. Quem
   pegou foi o **controle verde** da invocação seguinte, que abortou antes da 1ª sabotagem. Regra:
   enquanto o laço roda, nada de commit no worktree. Se for preciso, `git add` nomeando os arquivos.
+
+## O CI pegou o que o local não rodou (gate de paginação)
+
+O 1º push ficou vermelho no `paginacao-artesanal-gate.test.ts`, que não está no `gates:rapidos`. Dois
+achados, ambos na leitura do valor em trânsito:
+
+- **G7: `.range()` sem `.order()` estável.** O teto de 1000 linhas cortava num ponto arbitrário. Foi
+  corrigido com `.order("id")`. Quem acrescenta um `.range` como guarda de piso herda essa
+  obrigação.
+- **G3, janela larga:** um `for` a até 4000 caracteres antes do `.range(`, seguido de `?? []` logo
+  depois, conta como paginação artesanal, mesmo que o laço seja a soma e não uma paginação. Em vez
+  de afrouxar o gate, o `data ?? []` virou um erro explícito. Um `data` nulo sem erro é resposta
+  malformada, portanto ausência, e o card mostra "Indisponível" em vez de R$ 0,00. É a mesma regra
+  do `count` nulo. Esse caso ganhou teste e foi falsificado: controle verde e sabotagem vermelha.
+
+Lição: ao tocar uma leitura com `.range`, rode esse gate localmente
+(`heavy bun run test src/__tests__/paginacao-artesanal-gate.test.ts`) antes do push.
 
 ## Deploy
 
