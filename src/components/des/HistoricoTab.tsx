@@ -3,7 +3,7 @@
 // God-component split de src/components/des/HistoricoTab.tsx (comportamento 1:1).
 import { memo, useState } from "react";
 import { Link } from "react-router-dom";
-import { CalendarDays } from "lucide-react";
+import { AlertTriangle, CalendarDays } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,13 +28,32 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
     chartData,
     metaMedia,
     isLoading,
+    isError,
+    refetch,
   } = useHistoricoData(empresa, anoAtual, trimestreAtual);
 
   if (isLoading) {
     return <Skeleton className="h-96 w-full" />;
   }
 
-  if (!cards.length || (cards.length === 1 && cards[0].meta === 0 && !cards[0].ultimoCheckin && !cards[0].snapshots.length)) {
+  // Leitura falhou → erro explícito, nunca "Nenhum trimestre cadastrado" nem trimestres zerados.
+  if (isError) {
+    return (
+      <Card>
+        <CardContent className="p-12 text-center space-y-3">
+          <AlertTriangle className="h-10 w-10 mx-auto text-status-error/60" />
+          <p className="text-sm text-muted-foreground">
+            Não foi possível carregar o histórico do DES. Nenhum trimestre foi julgado.
+          </p>
+          <Button variant="outline" size="sm" onClick={refetch}>
+            Tentar novamente
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!cards.length || (cards.length === 1 && cards[0].meta === null && !cards[0].ultimoCheckin && !cards[0].snapshots.length)) {
     return (
       <Card>
         <CardContent className="p-12 text-center space-y-3">

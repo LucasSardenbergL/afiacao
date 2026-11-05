@@ -26,7 +26,7 @@ export interface SnapshotRow {
 }
 
 /** Linha da `v_des_desconto_por_checkin` com as colunas-chave exigidas na borda (`linhasCom`). */
-type CheckinDescontoRow = ComColunas<
+export type CheckinDescontoRow = ComColunas<
   Tables<"v_des_desconto_por_checkin">,
   "checkin_id" | "ano" | "trimestre" | "data_avaliacao" | "tipo"
 >;
@@ -34,9 +34,12 @@ export interface QuarterCard {
   ano: number;
   trimestre: number;
   isAtual: boolean;
-  meta: number;
-  faturado: number;
-  faixaEstrelas: number;
+  /** Meta do PRÓPRIO trimestre; `null` = trimestre sem meta cadastrada (nunca 0, nunca a atual). */
+  meta: number | null;
+  /** `null` = sem posição/snapshot do trimestre (ausente ≠ zero). */
+  faturado: number | null;
+  /** `null` = sem faixa ao vivo nem checkin. */
+  faixaEstrelas: number | null;
   inicio: string | null;
   fim: string | null;
   ultimoCheckin: CheckinDescontoRow | null;
@@ -45,7 +48,11 @@ export interface QuarterCard {
 
 export interface ChartDatum {
   label: string;
-  faturado: number;
-  meta: number;
+  faturado: number | null;
+  meta: number | null;
   isAtual: boolean;
+  julgamento: JulgamentoTrimestre;
 }
+
+/** Veredito do trimestre — ver `julgarTrimestre` em `derivar.ts`. */
+export type JulgamentoTrimestre = "em_andamento" | "atingida" | "nao_atingida" | "sem_dado";

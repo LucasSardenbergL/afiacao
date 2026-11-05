@@ -47,6 +47,31 @@ describe("QuarterCardItem", () => {
     expect(screen.getByText("50,0% da meta")).toBeTruthy();
   });
 
+  it("passado com meta mas SEM faturado → 'Sem dado', nunca 'Meta não atingida' nem R$ 0,00", () => {
+    setup({ card: makeCard({ faturado: null }) });
+    expect(screen.getByText("Sem dado")).toBeTruthy();
+    expect(screen.queryByText("Meta não atingida")).toBeNull();
+    expect(screen.queryByText("Meta atingida")).toBeNull();
+    expect(screen.queryByText(/R\$\s*0,00/)).toBeNull();
+  });
+
+  it("passado SEM meta → 'Sem dado' e meta '—'", () => {
+    setup({ card: makeCard({ meta: null, faturado: 50000 }) });
+    expect(screen.getByText("Sem dado")).toBeTruthy();
+    expect(screen.queryByText("Meta não atingida")).toBeNull();
+    expect(screen.queryByText("Meta atingida")).toBeNull();
+  });
+
+  it("sem faixa de estrelas mostra '—', não '0★'", () => {
+    setup({ card: makeCard({ faixaEstrelas: null }) });
+    expect(screen.queryByText("0★")).toBeNull();
+  });
+
+  it("atual sem faturado não mostra barra de progresso", () => {
+    setup({ card: makeCard({ isAtual: true, faturado: null }) });
+    expect(screen.queryByText(/% da meta/)).toBeNull();
+  });
+
   it("dispara onVerDetalhes ao clicar em Ver detalhes", () => {
     const props = setup();
     fireEvent.click(screen.getByText("Ver detalhes"));

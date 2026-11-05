@@ -41,7 +41,7 @@ export function DetalhesDialog({ detalhes: detalhesOpen, onOpenChange }: Detalhe
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Faixa DES</p>
-                  <p>{detalhesOpen.faixaEstrelas} estrelas</p>
+                  <p>{detalhesOpen.faixaEstrelas === null ? "—" : `${detalhesOpen.faixaEstrelas} estrelas`}</p>
                 </div>
               </div>
 
