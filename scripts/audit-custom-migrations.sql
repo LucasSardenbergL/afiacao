@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 777
+-- Total de custom migrations: 778
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -845,7 +845,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql'),
   ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql'),
   ('20261104153351', 'radar_cnae_secundario', '20261104153351_radar_cnae_secundario.sql'),
-  ('20261104192942', 'carteira_visibilidade_por_conjunto', '20261104192942_carteira_visibilidade_por_conjunto.sql')
+  ('20261104192942', 'carteira_visibilidade_por_conjunto', '20261104192942_carteira_visibilidade_por_conjunto.sql'),
+  ('20261104201756', 'radar_possiveis_vinculos', '20261104201756_radar_possiveis_vinculos.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3353,7 +3354,14 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
   ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
-  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', ''),
+  ('radar_possiveis_vinculos', 'function', 'private', 'radar_tel_chave', ''),
+  ('radar_possiveis_vinculos', 'function', 'private', 'radar_chave_endereco', ''),
+  ('radar_possiveis_vinculos', 'function', 'public', 'radar_possiveis_vinculos', ''),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_email_norm', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_cep', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5909,7 +5917,14 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
   ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
-  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', ''),
+  ('radar_possiveis_vinculos', 'function', 'private', 'radar_tel_chave', ''),
+  ('radar_possiveis_vinculos', 'function', 'private', 'radar_chave_endereco', ''),
+  ('radar_possiveis_vinculos', 'function', 'public', 'radar_possiveis_vinculos', ''),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_email_norm', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_cep', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas')
 )
 SELECT
   e.migration,
