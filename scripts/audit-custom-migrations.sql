@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 778
+-- Total de custom migrations: 779
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -846,7 +846,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql'),
   ('20261104153351', 'radar_cnae_secundario', '20261104153351_radar_cnae_secundario.sql'),
   ('20261104192942', 'carteira_visibilidade_por_conjunto', '20261104192942_carteira_visibilidade_por_conjunto.sql'),
-  ('20261104201756', 'radar_possiveis_vinculos', '20261104201756_radar_possiveis_vinculos.sql')
+  ('20261104201756', 'radar_possiveis_vinculos', '20261104201756_radar_possiveis_vinculos.sql'),
+  ('20261105091216', 'des_posicao_ao_vivo_sem_faturado_e_nula', '20261105091216_des_posicao_ao_vivo_sem_faturado_e_nula.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3361,7 +3362,8 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_email_norm', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_cep', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
-  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas')
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas'),
+  ('des_posicao_ao_vivo_sem_faturado_e_nula', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5924,7 +5926,8 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_email_norm', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_cep', 'radar_empresas'),
   ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_socios_arr', 'radar_empresas'),
-  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas')
+  ('radar_possiveis_vinculos', 'index', 'public', 'idx_radar_empresas_titular_mei', 'radar_empresas'),
+  ('des_posicao_ao_vivo_sem_faturado_e_nula', 'view', 'public', 'v_des_posicao_trimestre_ao_vivo', '')
 )
 SELECT
   e.migration,
