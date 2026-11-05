@@ -14,7 +14,7 @@ import {
   type Resposta,
 } from "./types";
 import { coresDoDesconto, numeroOuNulo } from "./format";
-import { faixaDeJson } from "../faixa-json";
+import { derivarPosicaoAoVivo } from "../posicao-ao-vivo";
 import { exigirColunas, linhasCom } from "@/lib/linha-view";
 
 /** Colunas sem as quais uma linha da `v_des_desconto_por_checkin` não faz sentido (ver `DescontoCheckin`). */
@@ -47,7 +47,7 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_des_posicao_trimestre_ao_vivo")
-        .select("faixa_conservadora, faixa_otimista")
+        .select("fat_bruto_confirmado, posicao_ao_vivo_conservadora, faixa_conservadora, faixa_otimista")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
@@ -57,8 +57,10 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     },
   });
 
-  // Percentuais por critério para a faixa atual
-  const faixaConservId = faixaDeJson(posicaoQuery.data?.faixa_conservadora)?.faixa_id ?? null;
+  // Percentuais por critério para a faixa atual. Sem faturado confirmado do GoodData a faixa é
+  // desconhecida (ausente ≠ zero) — vale também com a view antiga, que a tirava só do trânsito.
+  const posicao = useMemo(() => derivarPosicaoAoVivo(posicaoQuery.data), [posicaoQuery.data]);
+  const faixaConservId = posicao.faixaConservadoraId;
 
   const percentuaisQuery = useQuery({
     queryKey: ["des-percentuais", faixaConservId],
@@ -163,7 +165,8 @@ export function useCheckinQualitativo({ empresa, ano, trimestre }: Props) {
     return map;
   }, [percentuaisQuery.data]);
 
-  const desconto = descontoQuery.data;
+  // Com a view antiga, a linha de desconto existe mesmo sem faturado (faixa tirada do trânsito).
+  const desconto = posicao.conhecida ? descontoQuery.data : null;
   // Ausente ≠ zero: sem check-in no trimestre (ou faixa sem percentual) o máximo e o projetado são
   // null — a tela mostra "—" com o card neutro, em vez de "0,00%" em vermelho.
   const max = numeroOuNulo(desconto?.desconto_total_maximo);

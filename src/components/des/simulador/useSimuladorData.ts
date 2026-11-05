@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { PrazoOption } from "./types";
-import { faixaDeJson } from "../faixa-json";
+import { derivarPosicaoAoVivo } from "../posicao-ao-vivo";
 
 export function useSimuladorData(empresa: string, ano: number, trimestre: number) {
   // Prazos disponíveis
@@ -29,7 +29,7 @@ export function useSimuladorData(empresa: string, ano: number, trimestre: number
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_des_posicao_trimestre_ao_vivo")
-        .select("posicao_ao_vivo_conservadora, faixa_conservadora")
+        .select("fat_bruto_confirmado, posicao_ao_vivo_conservadora, faixa_conservadora")
         .eq("empresa", empresa)
         .eq("ano", ano)
         .eq("trimestre", trimestre)
@@ -57,15 +57,20 @@ export function useSimuladorData(empresa: string, ano: number, trimestre: number
     },
   });
 
+  // Sem faturado confirmado do GoodData a posição é desconhecida (ausente ≠ zero): não há "faltam"
+  // e a simulação não roda — a RPC partiria de 0 (posicao-ao-vivo.ts).
+  const posicao = useMemo(() => derivarPosicaoAoVivo(posQuery.data), [posQuery.data]);
+
   const faltamProximaFaixa = useMemo(() => {
-    const conserv = Number(posQuery.data?.posicao_ao_vivo_conservadora ?? 0);
+    if (!posicao.conhecida || posicao.conservadora == null) return null;
+    const conserv = posicao.conservadora;
     const faixas = faixasQuery.data ?? [];
-    const atualNumero = faixaDeJson(posQuery.data?.faixa_conservadora)?.faixa_numero ?? 0;
+    const atualNumero = posicao.faixaConservadoraNumero ?? 0;
     const proxima = faixas.find((f) => f.faixa_numero === atualNumero + 1);
     if (!proxima) return null;
     const gap = Number(proxima.volume_min) - conserv;
     return gap > 0 ? gap : null;
-  }, [posQuery.data, faixasQuery.data]);
+  }, [posicao, faixasQuery.data]);
 
   const prazos = prazosQuery.data ?? [];
   const defaultPrazo = useMemo(
@@ -80,5 +85,13 @@ export function useSimuladorData(empresa: string, ano: number, trimestre: number
 
   const isLoading = prazosQuery.isLoading || posQuery.isLoading || faixasQuery.isLoading;
 
-  return { prazos, faltamProximaFaixa, defaultPrazo, compareDefault, isLoading };
+  return {
+    prazos,
+    faltamProximaFaixa,
+    defaultPrazo,
+    compareDefault,
+    isLoading,
+    posicaoConhecida: posicao.conhecida,
+    posicaoFalhou: posQuery.isError,
+  };
 }

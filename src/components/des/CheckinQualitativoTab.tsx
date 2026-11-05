@@ -59,7 +59,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
                 key={c.id}
                 criterio={c}
                 resposta={respostas[c.id] ?? { atingido: false, observacao: "" }}
-                percentual={percentualPorCriterio[c.id] ?? 0}
+                percentual={percentualPorCriterio[c.id] ?? null}
                 onChange={(resp) => setResposta(c.id, resp)}
               />
             ))}
@@ -78,7 +78,7 @@ export function CheckinQualitativoTab({ empresa, ano, trimestre }: Props) {
                     key={c.id}
                     criterio={c}
                     resposta={respostas[c.id] ?? { atingido: false, observacao: "" }}
-                    percentual={percentualPorCriterio[c.id] ?? 0}
+                    percentual={percentualPorCriterio[c.id] ?? null}
                     bonus
                     onChange={(resp) => setResposta(c.id, resp)}
                   />

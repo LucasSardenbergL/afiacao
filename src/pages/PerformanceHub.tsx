@@ -37,7 +37,8 @@ const safeQuery = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
   }
 };
 
-function KpiCards({ empresa }: { empresa: string }) {
+/** Exportado para o teste da posição ao vivo (src/pages/__tests__/PerformanceHub.posicao.test.tsx). */
+export function KpiCards({ empresa }: { empresa: string }) {
   void empresa;
 
   const { data } = useQuery({
@@ -55,15 +56,19 @@ function KpiCards({ empresa }: { empresa: string }) {
           async () => {
             const { data } = await client
               .from("v_des_posicao_trimestre_ao_vivo")
-              .select("posicao_ao_vivo_otimista")
+              .select("fat_bruto_confirmado, posicao_ao_vivo_otimista")
               .eq("empresa", "OBEN")
               .eq("trimestre", trimestre)
               .eq("ano", ano)
               .limit(1)
               .maybeSingle();
-            return Number(data?.posicao_ao_vivo_otimista ?? 0);
+            // Sem faturado confirmado do GoodData, a "posição" da view antiga era só trânsito (e a
+            // nova devolve NULL): ausente ≠ zero — o card mostra "—", nunca R$ 0 nem o trânsito.
+            if (data?.fat_bruto_confirmado == null || data?.posicao_ao_vivo_otimista == null) return null;
+            const n = Number(data.posicao_ao_vivo_otimista);
+            return Number.isFinite(n) ? n : null;
           },
-          0,
+          null as number | null,
         ),
         safeQuery(
           async () => {
@@ -100,7 +105,7 @@ function KpiCards({ empresa }: { empresa: string }) {
     n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
   const cards = [
-    { label: "Posição ao Vivo", value: brl(Number(data?.posicao ?? 0)), icon: Trophy },
+    { label: "Posição ao Vivo", value: data?.posicao == null ? "—" : brl(data.posicao), icon: Trophy },
     { label: "Meta Pessoal", value: brl(Number(data?.meta ?? 0)), icon: Target },
     { label: "Ligações Hoje", value: data?.ligacoes ?? 0, icon: Phone },
     { label: "Score SPIN Médio", value: data?.spin ?? 0, icon: MessageSquare },
