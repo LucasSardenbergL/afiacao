@@ -361,6 +361,16 @@ describe('TintDashboard — a contagem de ~1 M fórmulas NÃO segura o painel (F
     expect(kpi.getAttribute('title')).toBe('Estimativa do banco: 994.882 (não é contagem exata)');
   });
 
+  it('a invalidação do TintMapping (`[tint-dashboard-metrics]`) ALCANÇA a contagem separada', async () => {
+    const qc = novoQc();
+    renderPagina(qc);
+    await screen.findByTestId('kpi-formulas');
+    expect(modosDeContagemFormulas).toHaveLength(1);
+    // a chave exata que o TintMapping invalida depois de mapear (4 sítios)
+    void qc.invalidateQueries({ queryKey: ['tint-dashboard-metrics'] });
+    await waitFor(() => expect(modosDeContagemFormulas).toHaveLength(2));
+  });
+
   it('acima de ~1 M a tela fala em "mi" (o caso de prod: 1.002.356)', async () => {
     CONTAGENS.formulas = 1002356;
     try {

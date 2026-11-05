@@ -74,7 +74,9 @@ function contagem(r: { count: number | null; error: { message: string } | null }
  */
 function useContagemFormulas() {
   return useQuery({
-    queryKey: ['tint-dashboard-formulas-estimadas'],
+    // PREFIXO de propósito: o `TintMapping` invalida `['tint-dashboard-metrics']` depois de mapear
+    // (4 sítios), e essa invalidação tem que continuar alcançando a contagem de fórmulas.
+    queryKey: ['tint-dashboard-metrics', 'formulas-estimadas'],
     queryFn: async () => contagem(
       await supabase.from('tint_formulas').select('id', { count: 'planned', head: true }).eq('account', ACCOUNT),
       'fórmulas',
