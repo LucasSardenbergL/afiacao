@@ -509,6 +509,7 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   - Conferido pelo conector às 14:15 UTC, depois das dezenas de statements da sentinela: **0 entradas do `claude_ro`**.
   - **Efeito colateral aceito:** as leituras do `claude_ro` saem do `pg_stat_statements`. Ninguém as lia: o próprio `claude_ro` não alcança `extensions`.
   - **Se um dia o `claude_ro` for recriado** (`DROP ROLE` + `CREATE`), o GUC se perde e o temp das :41 volta em dias. A assinatura é +2 arquivos / +8,6 MB às :40–:41.
+- **1ª hora inteira depois da correção durável** (psql-ro, `pg_stat_database` a cada ~15 s, 05/11 14:13:27–15:13:10 UTC, loja aberta, 157 leituras, 27 runs do agente promovidos): **0 saltos às :40–:41**. Temp total **27,4 MB na hora (~6,8 MB/15 min; teto do Mini = 100)**, em 5 eventos esparsos de 3,7 a 11,6 MB (14:16, 14:18, 14:29, 14:58, 15:05), sem fase com o minuto. O founder confirmou que o reset foi antes do início da série. A janela de 10 min logo após o reset não era acaso: o fundo sustenta por 1 h.
 
 ## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
 
