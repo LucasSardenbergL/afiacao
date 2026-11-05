@@ -486,6 +486,26 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
   1. Leitura: `SELECT count(*), pg_size_pretty(sum(length(query))::bigint) FROM extensions.pg_stat_statements;`. Um total de textos na casa dos MB sustenta a hipótese.
   2. Se sustentar: `SELECT extensions.pg_stat_statements_reset();`. Perde-se o histórico de performance, que ninguém aqui consegue ler mesmo. Se os saltos das :41 somem na série seguinte, a atribuição fica **provada**, e o temp de fundo cai de ~86 para ~30 MB/15 min. Mas eles voltam à medida que os textos se acumulam. Também é preciso decidir se esse coletor interno do Supabase conta para o critério do Mini.
 
+### 2026-11-05 — provado: é o tuplestore do `pg_stat_statements`, e 77% do texto era do `claude_ro`
+
+- **Controle sem reset** (01:42–01:52 UTC, só `pg_stat_database` a cada 1 s, 0 quedas): 6 saltos de +2 arquivos / +8,6 MB, todos em **:40–:41**, somando 51,8 MB em 10 min. O derrame cresce aos poucos (8,5 → 8,6 MB), como o texto acumulado.
+- **O que o tuplestore carrega** (conector Lovable como `postgres`, `SET TRANSACTION READ ONLY` com `somente_leitura = on` atestado):
+  - 4.106 entradas, de um máximo de 5.000;
+  - **3,3 MB de texto**, o maior com 119 kB;
+  - `work_mem` 3,5 MB; último reset em 31/10, 10:33 UTC;
+  - `track = top`, `track_utility = on`.
+  - Com umas 40 colunas numéricas por entrada, dá ~5 MB por chamada. A sobra derrama ~4,3 MB, e 2 chamadas por coleta = 8,6 MB.
+- **De quem é o texto:**
+  - **`claude_ro`: 2.943 entradas, 2,5 MB (77%).** São as nossas leituras de diagnóstico (cada formato novo de SELECT ad-hoc de cada sessão), acumuladas em 4,5 dias.
+  - O resto: `service_role` 372 kB, `authenticated` 169 kB, `postgres` ~120 kB.
+- **Teste decisivo (founder, SQL Editor, 05/11 ~14:00 UTC):** `pg_stat_statements_reset(<oid do claude_ro>)`, que zera só esse papel.
+  - Conferência pelo conector: 1.133 entradas, 774 kB de texto, `claude_ro` com 0.
+  - **Série seguinte, 14:00–14:10 UTC, loja aberta: 0 bytes de temp e 0 saltos às :41.** O contador estava vivo: `temp_files` foi de 9.381 às 01:52 para 10.460 às 14:00, antes do reset, e `xact_commit` subindo.
+- **Consequência para o Mini:** o leitor "sem dono" era ~56 dos ~86 MB/15 min. Depois do #3587 e deste reset, a janela medida com a loja aberta tem **temp 0**.
+- **Volta sozinho:** sem correção durável, o texto do `claude_ro` volta a passar do `work_mem` em poucos dias. Foram ~650 entradas/dia. A decisão fica com o founder:
+  - `ALTER ROLE claude_ro SET pg_stat_statements.track = 'none'` (parâmetro `SUSET`; não sei se o Supabase deixa o `postgres` alterá-lo);
+  - ou um reset periódico só desse papel.
+
 ## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
 
 **Pergunta:** a janela 13:00–13:15 UTC de 04/11 reprovou o Mini: 523,6 MB de disco, hit 96,86%. Desses, 430 MB vieram de `tint_formulas` (2 seq scans) e 84 MB de `tint_sync_runs` (1 seq scan). `pg_stat_user_tables` mostrava 87 seq scans em `tint_formulas` desde o restart de 31/10, o último às 15:28:37, com a loja aberta. Havia uma tela ou edge varrendo a tabela?
