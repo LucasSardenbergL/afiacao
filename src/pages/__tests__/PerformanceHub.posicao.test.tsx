@@ -91,6 +91,12 @@ describe("PerformanceHub — card Posição ao Vivo", () => {
     expect(await valorDoCard("Posição ao Vivo")).toBe("—");
   });
 
+  it("faturado presente mas posição NULL (forma inesperada): '—', nunca R$ 0", async () => {
+    estado.posicao = { fat_bruto_confirmado: 50000, posicao_ao_vivo_otimista: null, meta_pessoal: 400840.02 };
+    renderizar();
+    expect(await valorDoCard("Posição ao Vivo")).toBe("—");
+  });
+
   it("controle: com faturado confirmado mostra a posição", async () => {
     estado.posicao = { fat_bruto_confirmado: 50000, posicao_ao_vivo_otimista: 347966.59, meta_pessoal: 400840.02 };
     renderizar();
