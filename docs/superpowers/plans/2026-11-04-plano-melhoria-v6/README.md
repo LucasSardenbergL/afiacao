@@ -15,7 +15,7 @@ Fica em aberto o que depende de data, amostra ou plataforma:
 
 | Item | Estado | Quando / critério |
 |---|---|---|
-| D1 (lote 11): HOT em contas a pagar | `fillfactor=80` e índice do carimbo aplicados, mas **0 HOT** até agora (156.935 upd). O único ciclo depois do apply caiu no mesmo instante da aplicação | Ciclo das **08:00 UTC de 2026-11-05**. Medir o **delta** de `n_tup_hot_upd` depois do apply, não o percentual acumulado. Delta 0 = D1 falhou |
+| D1 (lote 11): HOT em contas a pagar | `fillfactor=80` e índice do carimbo aplicados, mas **0 HOT** até agora (156.935 upd). O único ciclo depois do apply caiu no mesmo instante da aplicação | ✅ **VERIFICADO** (ciclo das 08:00 UTC de 2026-11-05, `psql-ro`): Δ `n_tup_upd` 16.158, Δ `n_tup_hot_upd` **15.908 → 98,5% HOT** já no 1º ciclo, heap estável em 685 páginas, frescor intacto ([hot-contas-pagar-lote11.md](../../../historico/hot-contas-pagar-lote11.md)) |
 | B3: HOT em contas a receber | Incremental vigente, com ~1–9 k updates/dia (só +1.428 desde a manhã de 04/11) | ⏸️ Reabrir se voltar a ≥ ~30 k/dia ([hot-contas-pagar-lote11.md](../../../historico/hot-contas-pagar-lote11.md)) |
 | D5: índices com 0 scans | ~550 MB sem leitura em 4,5 d: `radar_empresas` (`idx_radar_muni_cover` 150 MB, `lista_estab` 58, `lista_novas` 43), `health_score_history` (104 + 25), `priority_score_log` (65 + 17), `tint_formulas` `idx_tint_formulas_nome_cor` 81 | Releitura em **2026-11-07 10:33 UTC**. O Radar tem uso mensal: não decidir DROP com menos de um ciclo |
 | B1 (v4): expurgo semanal dos scores | 451 k linhas > 60 d ainda presentes. O cron de domingo 04:30 nasceu em 02/11 | 1ª passada em **2026-11-08** |
