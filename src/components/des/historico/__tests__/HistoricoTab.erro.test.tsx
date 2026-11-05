@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 // (18/04) e a posição ao vivo do T4 sem faturado GoodData (só trânsito).
 
 const { estado } = vi.hoisted(() => ({
-  estado: { falhar: null as string | null, metaT3: 400840.02 },
+  estado: { falhar: null as string | null, metaT3: 400840.02, semMetas: false, fatBrutoT4: null as number | null },
 }));
 
 const meta = (trimestre: number, valor: number) => ({ ano: 2026, trimestre, meta_faturamento: valor, faixa_des_objetivo: null });
@@ -19,6 +19,7 @@ const meta = (trimestre: number, valor: number) => ({ ano: 2026, trimestre, meta
 function linhas(tabela: string): unknown {
   switch (tabela) {
     case "des_meta_empresa":
+      if (estado.semMetas) return [];
       return [meta(4, 400840.02), meta(3, estado.metaT3), meta(2, 400840.02), meta(1, 400840.02)];
     case "des_trimestre_snapshot":
       return [{ ano: 2026, trimestre: 2, data_referencia: "2026-04-18", fat_bruto_valor: 103068.74, pedidos_abertos_valor: 49539.78, objetivo_valor: 400840.02 }];
@@ -29,7 +30,7 @@ function linhas(tabela: string): unknown {
         ano: 2026,
         trimestre: 4,
         posicao_ao_vivo_conservadora: 264175.21,
-        fat_bruto_confirmado: null,
+        fat_bruto_confirmado: estado.fatBrutoT4,
         gooddata_data_referencia: null,
         faixa_conservadora: { estrelas: 3 },
         meta_pessoal: 400840.02,
@@ -81,6 +82,8 @@ const renderTab = () => render(<HistoricoTab empresa="OBEN" ano={2026} trimestre
 beforeEach(() => {
   estado.falhar = null;
   estado.metaT3 = 400840.02;
+  estado.semMetas = false;
+  estado.fatBrutoT4 = null;
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 afterEach(() => {
@@ -132,6 +135,14 @@ describe("HistoricoTab — dados de prod (2026-11-05)", () => {
     expect(screen.queryByText("Faturado final")).toBeNull();
     // T4: posição ao vivo é só trânsito (sem faturado GoodData) → não aparece como faturado.
     expect(screen.queryByText(/264\.175,21/)).toBeNull();
+  });
+
+  it("sem nenhuma meta mas com posição ao vivo faturada → mostra o atual, não 'Nenhum trimestre cadastrado'", async () => {
+    estado.semMetas = true;
+    estado.fatBrutoT4 = 150000;
+    renderTab();
+    await screen.findByText("T4 2026");
+    expect(screen.queryByText("Nenhum trimestre cadastrado ainda.")).toBeNull();
   });
 
   it("modal mostra o card VIGENTE: refetch com meta nova atualiza o modal aberto", async () => {
