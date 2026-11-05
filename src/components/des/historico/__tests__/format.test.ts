@@ -23,4 +23,18 @@ describe("historico/format", () => {
     expect(quarterDates(2026, 1)).toEqual({ inicio: "2026-01-01", fim: "2026-03-31" });
     expect(quarterDates(2026, 3)).toEqual({ inicio: "2026-07-01", fim: "2026-09-30" });
   });
+
+  it.each(["Asia/Tokyo", "America/Sao_Paulo", "UTC", "Pacific/Kiritimati"])(
+    "quarterDates não desloca o dia em fuso %s",
+    (tz) => {
+      const antes = process.env.TZ;
+      process.env.TZ = tz;
+      try {
+        expect(quarterDates(2026, 2)).toEqual({ inicio: "2026-04-01", fim: "2026-06-30" });
+        expect(quarterDates(2026, 4)).toEqual({ inicio: "2026-10-01", fim: "2026-12-31" });
+      } finally {
+        process.env.TZ = antes;
+      }
+    },
+  );
 });

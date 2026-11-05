@@ -33,7 +33,8 @@ function linhas(tabela: string): unknown {
         fat_bruto_confirmado: estado.fatBrutoT4,
         gooddata_data_referencia: null,
         faixa_conservadora: { estrelas: 3 },
-        meta_pessoal: 400840.02,
+        // a view lê meta_pessoal de des_meta_empresa: sem metas lá, sem meta aqui.
+        meta_pessoal: estado.semMetas ? null : 400840.02,
         inicio_trimestre: "2026-10-01",
         fim_trimestre: "2026-12-31",
       };
@@ -143,6 +144,7 @@ describe("HistoricoTab — dados de prod (2026-11-05)", () => {
     renderTab();
     await screen.findByText("T4 2026");
     expect(screen.queryByText("Nenhum trimestre cadastrado ainda.")).toBeNull();
+    expect(screen.getByText("Posição ao vivo (faturado + pedidos)")).toBeTruthy();
   });
 
   it("modal mostra o card VIGENTE: refetch com meta nova atualiza o modal aberto", async () => {

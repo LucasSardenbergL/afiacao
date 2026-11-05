@@ -16,6 +16,10 @@ export function quarterDates(ano: number, trimestre: number): { inicio: string; 
   const startMonth = (trimestre - 1) * 3;
   const inicio = new Date(ano, startMonth, 1);
   const fim = new Date(ano, startMonth + 3, 0);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  // Data de CALENDÁRIO pelos componentes locais — `toISOString()` converte para UTC e, em fuso
+  // positivo (ex.: Asia/Tokyo), devolvia o dia anterior (fim do T2 = 29/06). O fechamento do
+  // trimestre no histórico (`data_referencia >= fim`) depende desta data.
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return { inicio: iso(inicio), fim: iso(fim) };
 }
