@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { supabase } from '@/integrations/supabase/client';
 import { render, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -23,7 +24,7 @@ vi.mock('@/integrations/supabase/client', () => ({
         return { data: { subscription: { unsubscribe: vi.fn() } } };
       }),
       getSession: vi.fn(() => Promise.resolve({ data: { session: { user: { id: 'u-1' } } }, error: null })),
-      signOut: vi.fn(),
+      signOut: vi.fn(() => Promise.resolve({ error: null })),
     },
     from: vi.fn((tabela: string) => ({
       select: () => ({
@@ -277,5 +278,35 @@ describe('AuthContext: leitura de geração vencida não escreve no estado do au
 
     await act(async () => nova.soltar(ok({ commercial_role: 'farmer' })));
     await waitFor(() => expect(visto.auth).toMatchObject({ loading: false, role: 'master' }));
+  });
+
+  it('refetchRole durante o boot vence a leitura em voo e TERMINA o loading (não fica para o failsafe)', async () => {
+    const velha = adiada();
+    s.respostas.commercial_roles = [velha.promessa as unknown as Resposta, ok({ commercial_role: 'hunter' })];
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+
+    await act(async () => visto.auth?.refetchRole());
+    expect(visto.auth).toMatchObject({ loading: false, role: 'master', commercialRole: 'hunter' });
+    await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ loading: false, commercialRole: 'hunter' });
+  });
+
+  it('logout durante o boot cujas revogações falham (sem SIGNED_OUT): o próprio logout termina o loading', async () => {
+    const velha = adiada();
+    s.respostas.commercial_roles = [velha.promessa as unknown as Resposta];
+    vi.mocked(supabase.auth.signOut).mockResolvedValue({ error: { message: 'Failed to fetch' } } as never);
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+
+    await act(async () => visto.auth?.signOut());
+    await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ loading: false, user: null, role: null });
   });
 });

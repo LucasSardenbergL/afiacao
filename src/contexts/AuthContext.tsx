@@ -440,11 +440,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setRole(null);
     setIsApproved(false);
     setCommercialRole(null);
+    // O incremento acima vence o fetch do boot em voo, que então não termina o loading. Sem o
+    // `SIGNED_OUT` (as duas revogações falharam), quem termina é este logout.
+    finishLoading();
   }, [queryClient]);
 
   const refetchRole = useCallback(async () => {
     if (user) {
-      await fetchUserRoleAndApproval(user.id, ++geracaoAuthRef.current);
+      // Vence o fetch do boot em voo (que então não termina o loading): se escreveu, termina aqui.
+      if (await fetchUserRoleAndApproval(user.id, ++geracaoAuthRef.current)) finishLoading();
     }
   }, [user, fetchUserRoleAndApproval]);
 

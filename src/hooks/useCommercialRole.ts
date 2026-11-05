@@ -71,7 +71,11 @@ export function useCommercialRole(): UseCommercialRoleReturn {
   const consulta = useQuery({ ...opcoesMeuCargoComercial(user?.id), enabled: !!user });
   // Fail-closed: só um sucesso vira cargo. Erro (depois dos retries), offline ou sem user → null,
   // e todo predicado abaixo nega. `loading` só enquanto a consulta de fato roda.
-  const commercialRole = consulta.isSuccess ? ((consulta.data as CommercialRole | null) ?? null) : null;
+  // `isPaused`: com cache antigo e offline, a revalidação PAUSA e `isSuccess` continua `true` (é o
+  // estado do dado, não da tentativa atual). O hook antigo negava offline (o erro de rede virava
+  // null); conceder pelo cache seria afrouxar (achado do Codex). Cache FRESCO não revalida e vale.
+  const commercialRole =
+    consulta.isSuccess && !consulta.isPaused ? ((consulta.data as CommercialRole | null) ?? null) : null;
   const loading = consulta.isLoading;
   const { refetch: refazerConsulta } = consulta;
   const refetch = useCallback(async () => {
