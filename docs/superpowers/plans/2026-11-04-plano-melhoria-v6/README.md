@@ -77,7 +77,7 @@ Base nova (✔ `gh run`, 47 runs): PR verde p50 **20,1 min** (p90 28,5), contra 
 |---|---|---|---|---|
 | D6 | **WATCHDOG** — o `data-health-watchdog` ficou 4× mais lento em 5 dias | ✔ `cron.job_run_details`, média/dia: **1,48 s** (30/10) → 1,65 → 3,18 → 4,71 → 4,59 → **5,67 s** (04/11), 48 runs/dia. O EXISTS de `sales_orders` (lote 9 do v4) está corrigido; a curva é de outro check. `fin_sync_log`: 5.289 seq scans × 23.919 tuplas em 4,5 d | AJUSTAR a hipótese: `fin_sync_watchdog_check` é outro caminho, fora do trio acoplado. O `EXPLAIN` da chamada externa esconde o custo interno, e o `EXPLAIN ANALYZE` do watchdog **executa os efeitos** dele. Recortar as leituras internas, read-only | **DIAGNÓSTICO** (P) — o conjunto `_data_health_compute`+watchdog+heartbeat é acoplado (`docs/agent/sync.md`) |
 | D8 | **ROLLBACK** — 17 % das transações terminam em rollback | `pg_stat_database`: `xact_rollback` 227.464 de 1,31 M desde 31/10; à noite, 0,9 % | AJUSTAR: não é taxa de falha do produto. O `pg_stat_statements` só registra statements bem-sucedidos e o PostgREST faz rollback de propósito. Cruzar deltas por janela, logs com SQLSTATE e papel | **DIAGNÓSTICO** (P) — logs pelo founder |
-| D9 | **ESTATÍSTICA VELHA** — `venda_sugestao` estimada em 75× o real | `venda_sugestao`: 103 MB, 2.993 linhas, `reltuples` 223 k. `radar_empresas` (1,3 GB) sem vacuum/analyze desde o restart | AJUSTAR: separar as tabelas. `venda_sugestao` tem evidência forte. No Radar, tamanho e falta de manutenção na janela não provam bloat. VACUUM comum não devolve GB ao disco | **MANTER** `ANALYZE venda_sugestao` (P, founder ou envelope); Radar = só verificar |
+| D9 | **ESTATÍSTICA VELHA** — `venda_sugestao` estimada em 75× o real | `venda_sugestao`: 103 MB, 2.993 linhas, `reltuples` 223 k. `radar_empresas` (1,3 GB) sem vacuum/analyze desde o restart | AJUSTAR: separar as tabelas. `venda_sugestao` tem evidência forte. No Radar, tamanho e falta de manutenção na janela não provam bloat. VACUUM comum não devolve GB ao disco | **DESCARTADO** (2026-11-05, psql-ro): `count(*)` = **231.536**, então o `reltuples` de 223 k está certo. O 2.993 era o `n_live_tup`, contador zerado no restart de 31/10 — não o tamanho da tabela. Radar = só verificar |
 
 ## 3. Cortes
 
@@ -106,7 +106,7 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) continuam valendo; nenhum fato novo os 
 | 5 | F9 — contagem cara do tintométrico separada | lab antes/depois | sessão + **Publish** |
 | 6 | E9 + E10 — custos do núcleo re-medidos e experimento de 2 shards | — | sessão |
 | 7 | E13 — gate de sintaxe com 1 Node persistente | medida do step no runner | sessão |
-| 8 | D9 — `ANALYZE venda_sugestao` | — | founder no SQL Editor ou envelope |
+| 8 | ~~D9 — `ANALYZE venda_sugestao`~~ descartado: a premissa leu o `n_live_tup` pós-restart como tamanho real (ver §2 D) | — | — |
 | — | D6, D8, F11 | §2 | diagnóstico, sem PR de código |
 | — | F8 | 🧭 founder: usa o DRE consolidado? | sessão + **Publish**, se sim |
 | — | E11 | fila de volta ao p90 do v5 | ⏸️ |
