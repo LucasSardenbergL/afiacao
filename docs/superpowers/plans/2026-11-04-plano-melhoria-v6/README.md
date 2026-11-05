@@ -101,13 +101,13 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) continuam valendo; nenhum fato novo os 
 |---|---|---|---|
 | 1 | C1 — A4 sem caixa fabricado, degradação da A1 propagada | — | sessão + prova + Codex + **deploy de edge** + **Publish** ✅ #3612 |
 | 2 | C2 + C4 — estados de erro no Recebimento e na ficha do SKU | — | sessão + **Publish** ✅ #3611 |
-| 3 | C5 — histórico do DES sem meta transportada nem faturado inventado | — | sessão + Codex + **Publish** ✅ #3619 |
+| 3 | C5 — histórico do DES sem meta transportada nem faturado inventado | — | sessão + Codex + **Publish** ✅ #3619 · 3b (posição ao vivo sem faturado) ✅ #3634: Publish no ar e migration aplicada (md5 da view viva `02a50869…` = a nova, `psql-ro` 2026-11-05) |
 | 4 | C6 — total editado zero respeitado | — | sessão + **Publish** ✅ #3616 |
 | 5 | F9 — contagem cara do tintométrico separada | lab antes/depois | sessão + **Publish** ✅ #3623 |
 | 6 | E9 + E10 — custos do núcleo re-medidos e experimento de 2 shards | — | sessão |
 | 7 | ~~E13 — gate de sintaxe com 1 Node persistente~~ descartado: o step dura 5–8 s no runner e não está no caminho crítico do `validate` (ver §2 E) | — | — |
 | 8 | ~~D9 — `ANALYZE venda_sugestao`~~ descartado: a premissa leu o `n_live_tup` pós-restart como tamanho real (ver §2 D) | — | — |
-| — | D6, D8, F11 | §2 | diagnóstico, sem PR de código |
+| — | D6 ✅ #3625 (watchdog lê do disco no cron) · D8 ✅ #3628 (rollback acumulado de rajada passada, hoje 0,15%) · F11 ✅ #3629 (descartado por lab A/B; o cliente parou de polar `fin_period_overrides`) | §2 | diagnóstico |
 | — | ~~F8~~ ✅ #3610, Publish no ar (conferido no bundle servido) | founder confirmou o uso do consolidado | — |
 | — | E11 | fila de volta ao p90 do v5 | ⏸️ |
 
