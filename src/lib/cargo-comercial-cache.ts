@@ -13,7 +13,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 
-export const chaveMeuCargoComercial = (userId: string | undefined) => ['my-commercial-role', userId] as const;
+const chaveMeuCargoComercial = (userId: string | undefined) => ['my-commercial-role', userId] as const;
 
 /**
  * A consulta ÚNICA da chave acima. Os dois leitores do cargo do user real (`useMyCommercialRole`
@@ -22,7 +22,7 @@ export const chaveMeuCargoComercial = (userId: string | undefined) => ['my-comme
  * O `error` lança (não vira `null`): com timeout/RLS/500 o PostgREST devolve `{data:null, error}`,
  * e engoli-lo fabricaria "consultei e não tem cargo" sem disparar os retries.
  */
-export async function consultarMeuCargoComercial(userId: string | undefined): Promise<string | null> {
+async function consultarMeuCargoComercial(userId: string | undefined): Promise<string | null> {
   if (!userId) return null;
   const { data, error } = await supabase
     .from('commercial_roles')
