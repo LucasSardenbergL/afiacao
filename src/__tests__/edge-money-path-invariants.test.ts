@@ -5126,3 +5126,35 @@ describe('guardrail money-path: `reprocess_operational_orders` (cron da Colacor)
     expect(corpo).toContain('cfg.operational_enabled');
   });
 });
+
+// ── A4 (fin-next-best-action): caixa desconhecido não vira R$0 (plano v6 C1) ─────────────────────────
+// A edge fazia `dias_cobertura ?? 0` / `saldo_tesouraria ?? 0` no transporte da A1 e `disponivel ?? 0`
+// na fila: cobertura null ("sem base de saída") com saldo 10.000 virava "R$0 disponível, confiança
+// alta". O helper (fila + transporte) mora num bloco MIRROR copiado VERBATIM para ./fila.ts — a
+// paridade pega a reversão do Lovable e a cópia que deriva; o wiring prova que o handler USA o
+// transporte (o produto de `caixaDaA1` chega ao mapa de caixa) e não reabre o `?? 0` cru.
+describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, plano v6 C1)', () => {
+  const NBA_SRC = 'src/lib/financeiro/next-best-action-helpers.ts';
+  const NBA_FILA = 'supabase/functions/fin-next-best-action/fila.ts';
+  const NBA_INDEX = 'supabase/functions/fin-next-best-action/index.ts';
+
+  it('PARIDADE: o bloco a4-fila é idêntico em src × edge', () => {
+    const fonte = mirrorBlockNamed(read(NBA_SRC), 'a4-fila');
+    expect(fonte.length, 'sentinela: bloco da fonte vazio').toBeGreaterThan(2_000);
+    expect(fonte, 'sentinela: o bloco não contém o transporte').toContain('function caixaDaA1(');
+    expect(mirrorBlockNamed(read(NBA_FILA), 'a4-fila'), 'fila.ts divergiu do helper de src/ — recopie o bloco inteiro').toBe(fonte);
+  });
+
+  it('WIRING: o handler passa a resposta da A1 por caixaDaA1 e grava o retorno no mapa de caixa', () => {
+    const codigo = removerComentarios(read(NBA_INDEX));
+    expect(vereditoFronteira(codigo, 'caixaDaA1')).toBe('ok');
+    expect(codigo).toMatch(/caixaPorEmpresa\[empresa\] = caixaDaA1\(cash, RESERVA_DIAS_MIN\)/);
+  });
+
+  it('REGRESSÃO: nenhum `?? 0` sobre saldo/cobertura/disponível no handler nem no helper', () => {
+    for (const f of [NBA_INDEX, NBA_FILA]) {
+      const codigo = removerComentarios(read(f));
+      expect(codigo, `${f}: voltou a fabricar caixa com ?? 0`).not.toMatch(/(dias_cobertura|saldo_tesouraria|disponivel)\s*\?\?\s*0\b/);
+    }
+  });
+});
