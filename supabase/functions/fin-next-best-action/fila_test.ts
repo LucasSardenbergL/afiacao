@@ -141,3 +141,15 @@ Deno.test("A1→A4: saudável nas 3 → disponível calculado, nenhum motivo de 
   assertEq([j.caixa_por_empresa.oben.disponivel, j.caixa_por_empresa.colacor.disponivel, j.caixa_por_empresa.colacor_sc.disponivel], [65_000, 21_000, 0], "disponíveis");
   assertEq((j.confianca.motivos as string[]).filter((m) => m.startsWith("Caixa (")), [], "sem motivo de caixa");
 });
+
+Deno.test("A1→A4: formato LEGADO da A1 ({ motivos } sem saldo_inicial) não atesta frescor → média, não decide financiar", () => {
+  const legado: RespostaA1Caixa = { indicadores: { saldo_tesouraria: 100_000, dias_cobertura: 60 }, confianca_dados: { motivos: [] } };
+  const cx = caixaDaA1(legado, RESERVA);
+  assertEq([cx.disponivel, cx.confianca], [65_000, "media"], "caixa legado");
+  assertContem(cx.motivos[0], "frescor do saldo não atestado", "motivo");
+  const r = montarFilaAcoes({ candidatos: [crescer("oben", 50_000)], caixaPorEmpresa: { oben: cx }, hurdlePorEmpresa: { oben: 0.15 } });
+  assertEq(r.fila.find((a) => a.tipo === "crescer")?.status, "falta_dado", "caixa não atestado não decide financiar_ja");
+  const j = respostaA4([legado, legado, legado]);
+  assertEq(j.caixa_por_empresa.oben.confianca, "media", "confiança no JSON");
+  assertContem(j.confianca.motivos.join(" | "), "Caixa (oben): A1 sem confianca_dados.saldo_inicial", "motivo na fila");
+});

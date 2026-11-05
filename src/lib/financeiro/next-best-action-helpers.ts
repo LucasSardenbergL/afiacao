@@ -55,8 +55,10 @@ export function caixaDaA1(resp: RespostaA1Caixa | null, reserva_dias_min: number
   const motivoSaldo = resp.confianca_dados?.saldo_inicial;
   const saldoDatado = typeof motivoSaldo === 'string' && motivoSaldo.trim().length > 0;
   if (saldoDatado) motivos.push(`Saldo inicial datado: ${motivoSaldo}`);
-  const semAtestado = resp.confianca_dados == null; // A1 sem o bloco de degradação: frescor do saldo não atestado
-  if (semAtestado) motivos.push('A1 sem confianca_dados — frescor do saldo não atestado.');
+  // Só `saldo_inicial: null` EXPLÍCITO atesta frescor. Bloco ausente, A1 anterior a 8d901e947 (manda
+  // `{ motivos }` sem `saldo_inicial`) ou valor inválido → não atestado (Codex, revisão do código v6 C1).
+  const semAtestado = motivoSaldo !== null && !saldoDatado;
+  if (semAtestado) motivos.push('A1 sem confianca_dados.saldo_inicial — frescor do saldo não atestado.');
   const disponivel = caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min, confianca_baixa: saldoDatado });
   const confianca: CaixaEmpresa['confianca'] = disponivel == null || saldoDatado ? 'baixa' : semAtestado ? 'media' : 'alta';
   return { disponivel, confianca, saldo_tesouraria: saldo, dias_cobertura: dias, motivos };

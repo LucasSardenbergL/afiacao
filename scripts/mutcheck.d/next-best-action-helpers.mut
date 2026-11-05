@@ -19,3 +19,4 @@ PEGA | C1f caixa null com confiança alta                | s/disponivel == null 
 PEGA | C1g rollup ignora o caixa da empresa            | s/if \(cx\.confianca === 'alta'\) continue;/continue;/
 PEGA | C1h saldo datado sem haircut                    | s/confianca_baixa: saldoDatado \}/confianca_baixa: false }/
 PEGA | C1i caixa ESTIMADO (saldo datado) decide financiar | s/cx != null && cx\.confianca === 'alta' \? cx\.disponivel : null/cx?.disponivel ?? null/
+PEGA | C1j bloco parcial da A1 atesta frescor (Codex)  | s/const semAtestado = motivoSaldo !== null && !saldoDatado;/const semAtestado = resp.confianca_dados == null;/

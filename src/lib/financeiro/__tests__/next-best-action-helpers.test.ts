@@ -41,6 +41,11 @@ describe('caixaDaA1 (transporte A1 → A4, plano v6 C1)', () => {
     const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: ['… PMR/PMP/CCC ficam indisponíveis.'], saldo_inicial: null } }, 21);
     expect(r).toEqual({ disponivel: 65000, confianca: 'alta', saldo_tesouraria: 100000, dias_cobertura: 60, motivos: [] });
   });
+  it('formato legado da A1 ({ motivos } sem saldo_inicial) → média, frescor não atestado (Codex, revisão do código)', () => {
+    const r = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [] } }, 21);
+    expect(r).toMatchObject({ disponivel: 65000, confianca: 'media' });
+    expect(r.motivos[0]).toContain('frescor do saldo não atestado');
+  });
   it('A1 null → disponível null, baixa', () => {
     expect(caixaDaA1(null, 21)).toMatchObject({ disponivel: null, confianca: 'baixa' });
   });
