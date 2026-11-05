@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 // (18/04) e a posição ao vivo do T4 sem faturado GoodData (só trânsito).
 
 const { estado } = vi.hoisted(() => ({
-  estado: { falhar: null as string | null, metaT3: 400840.02, semMetas: false, fatBrutoT4: null as number | null },
+  estado: { pendurar: null as string | null, falhar: null as string | null, metaT3: 400840.02, semMetas: false, fatBrutoT4: null as number | null },
 }));
 
 const meta = (trimestre: number, valor: number) => ({ ano: 2026, trimestre, meta_faturamento: valor, faixa_des_objetivo: null });
@@ -47,7 +47,9 @@ vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (tabela: string) => {
       const resposta = () =>
-        Promise.resolve(
+        estado.pendurar === tabela
+          ? new Promise<never>(() => {})
+          : Promise.resolve(
           estado.falhar === tabela
             ? { data: null, error: { message: `falha em ${tabela}` } }
             : { data: linhas(tabela), error: null },
@@ -82,6 +84,7 @@ const renderTab = () => render(<HistoricoTab empresa="OBEN" ano={2026} trimestre
 
 beforeEach(() => {
   estado.falhar = null;
+  estado.pendurar = null;
   estado.metaT3 = 400840.02;
   estado.semMetas = false;
   estado.fatBrutoT4 = null;
@@ -110,6 +113,27 @@ describe("HistoricoTab — leitura que não aconteceu", () => {
     const aviso = await screen.findByTestId("aviso-leitura-falhou");
     expect(aviso.getAttribute("data-estado")).toBe("sem-rede");
     expect(screen.queryByText("Nenhum trimestre cadastrado ainda.")).toBeNull();
+  });
+
+  it("erro conhecido não fica escondido atrás do skeleton de outra query que nunca termina", async () => {
+    estado.falhar = "des_meta_empresa";
+    estado.pendurar = "des_trimestre_snapshot";
+    renderTab();
+    const aviso = await screen.findByTestId("aviso-leitura-falhou");
+    expect(aviso.getAttribute("data-estado")).toBe("erro");
+  });
+
+  it("offline DEPOIS de um sucesso (refetch pausado, cache na mão) → aviso 'sem-rede', não a posição velha", async () => {
+    estado.fatBrutoT4 = 150000;
+    renderTab();
+    await screen.findByText("T3 2026");
+    onlineManager.setOnline(false);
+    act(() => {
+      void qc.refetchQueries();
+    });
+    const aviso = await screen.findByTestId("aviso-leitura-falhou");
+    expect(aviso.getAttribute("data-estado")).toBe("sem-rede");
+    expect(screen.queryByText("Posição ao vivo (faturado + pedidos)")).toBeNull();
   });
 
   it("erro DEPOIS de um sucesso (cache na mão) → aviso, não os cards velhos", async () => {

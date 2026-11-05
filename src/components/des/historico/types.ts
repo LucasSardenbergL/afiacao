@@ -60,6 +60,8 @@ export interface ChartDatum {
   meta: number | null;
   isAtual: boolean;
   julgamento: JulgamentoTrimestre;
+  /** Proveniência do valor da barra (posição ao vivo, faturado final, faturado até dd/mm). */
+  rotulo: string;
 }
 
 /** Veredito do trimestre — ver `julgarTrimestre` em `derivar.ts`. */

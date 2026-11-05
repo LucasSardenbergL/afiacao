@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fmtBRL, fmtPct, fmtDate, quarterDates } from "../format";
+import { fmtBRL, fmtPct, fmtDate, quarterDates, trimestreCorrenteSP } from "../format";
 
 describe("historico/format", () => {
   it("fmtBRL trata null/undefined e formata em BRL", () => {
@@ -22,6 +22,18 @@ describe("historico/format", () => {
   it("quarterDates retorna início/fim do trimestre", () => {
     expect(quarterDates(2026, 1)).toEqual({ inicio: "2026-01-01", fim: "2026-03-31" });
     expect(quarterDates(2026, 3)).toEqual({ inicio: "2026-07-01", fim: "2026-09-30" });
+  });
+
+  it("trimestre corrente é o de São Paulo, não o do fuso do navegador (22h de 30/06 em SP = T2)", () => {
+    const antes = process.env.TZ;
+    process.env.TZ = "UTC";
+    try {
+      expect(trimestreCorrenteSP(new Date("2026-07-01T01:00:00Z"))).toEqual({ ano: 2026, trimestre: 2 });
+      expect(trimestreCorrenteSP(new Date("2026-07-01T03:00:00Z"))).toEqual({ ano: 2026, trimestre: 3 });
+      expect(trimestreCorrenteSP(new Date("2027-01-01T02:59:00Z"))).toEqual({ ano: 2026, trimestre: 4 });
+    } finally {
+      process.env.TZ = antes;
+    }
   });
 
   it.each(["Asia/Tokyo", "America/Sao_Paulo", "UTC", "Pacific/Kiritimati"])(

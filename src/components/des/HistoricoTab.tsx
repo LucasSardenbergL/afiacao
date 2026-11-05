@@ -35,14 +35,15 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
     estadoSemLeitura,
   } = useHistoricoData(empresa, anoAtual, trimestreAtual);
 
-  if (isLoading) {
-    return <Skeleton className="h-96 w-full" />;
-  }
-
   // Leitura que não aconteceu (erro/offline) → aviso explícito, nunca "Nenhum trimestre
-  // cadastrado" nem trimestres julgados com dado parcial.
+  // cadastrado" nem trimestres julgados com dado parcial. ANTES do skeleton: uma query ainda
+  // carregando não pode esconder o erro de outra já conhecido.
   if (estadoSemLeitura) {
     return <AvisoLeituraFalhou oque="o histórico do DES" estado={estadoSemLeitura} variante="bloco" />;
+  }
+
+  if (isLoading) {
+    return <Skeleton className="h-96 w-full" />;
   }
 
   if (!temHistorico(cards)) {

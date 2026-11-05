@@ -239,6 +239,15 @@ describe("julgarTrimestre — sem meta/faturado/fechamento nunca é 'não atingi
   });
 });
 
+describe("gráfico — proveniência do valor da barra", () => {
+  it("a barra do atual é POSIÇÃO e a do snapshot parcial é 'Faturado até', não 'Faturado'", () => {
+    const parcial: SnapshotRow = { ...snapshots[0], data_referencia: "2026-04-18" };
+    const por = Object.fromEntries(montarChartData(montarCards(entrada({ snapshots: [parcial] }))).map((d) => [d.label, d.rotulo]));
+    expect(por["T4/26"]).toBe("Posição ao vivo (faturado + pedidos)");
+    expect(por["T2/26"]).toBe("Faturado até 18/04/2026");
+  });
+});
+
 describe("temHistorico — ausência de meta não é ausência de histórico", () => {
   it("só a posição ao vivo do atual (sem meta/snapshot/checkin) já é histórico", () => {
     expect(temHistorico(montarCards(entrada({ metas: [], snapshots: [], checkins: [] })))).toBe(true);

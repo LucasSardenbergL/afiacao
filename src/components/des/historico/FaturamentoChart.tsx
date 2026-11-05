@@ -50,7 +50,12 @@ export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps
                 tickFormatter={(v) => `R$ ${(v / 1000).toFixed(0)}k`}
               />
               <RTooltip
-                formatter={(v: number) => fmtBRL(v)}
+                // O nome da série vem da proveniência do ponto: a barra do trimestre atual é
+                // POSIÇÃO (faturado + pedidos), e a de um snapshot parcial é "Faturado até dd/mm".
+                formatter={(v: number, _nome, item) => [
+                  fmtBRL(v),
+                  (item?.payload as ChartDatum | undefined)?.rotulo ?? "Faturado",
+                ]}
                 contentStyle={{
                   backgroundColor: "hsl(var(--background))",
                   border: "1px solid hsl(var(--border))",

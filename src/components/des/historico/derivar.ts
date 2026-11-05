@@ -180,6 +180,7 @@ export function montarChartData(cards: QuarterCard[]): ChartDatum[] {
       meta: c.meta,
       isAtual: c.isAtual,
       julgamento: julgarTrimestre(c),
+      rotulo: rotuloFaturado(c),
     }));
 }
 

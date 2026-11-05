@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MetaRow, SnapshotRow, QuarterCard } from "./types";
-import { estadoDeLeitura, type EstadoSemLeitura } from "@/lib/leitura/estado-de-leitura";
+import { desatualizado, estadoDeLeitura, type EstadoSemLeitura } from "@/lib/leitura/estado-de-leitura";
 import { montarCards, montarChartData, mediaDasMetas, type PosicaoAoVivo } from "./derivar";
 import { linhasCom } from "@/lib/linha-view";
 
@@ -110,7 +110,10 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
   // Fail-closed: QUALQUER leitura que não aconteceu (erro, inclusive após sucesso com cache, ou
   // offline na 1ª leitura — pending+paused, que NÃO é isLoading) → a tela não julga trimestre
   // nenhum. Dado parcial tratado como completo vira "sem dado" em massa ou "Nenhum trimestre".
-  const estados = [metasQuery, snapshotsQuery, checkinsQuery, posLiveQuery].map(estadoDeLeitura);
+  // Com cache em mãos, `estadoDeLeitura` diz 'pronta' mesmo com o refetch pausado offline:
+  // `desatualizado` nomeia isso — a posição "ao vivo" velha não pode passar por atual.
+  const queries = [metasQuery, snapshotsQuery, checkinsQuery, posLiveQuery];
+  const estados = queries.flatMap((q) => [estadoDeLeitura(q), desatualizado(q, q.data !== undefined)]);
   const estadoSemLeitura: EstadoSemLeitura | null = estados.includes("erro")
     ? "erro"
     : estados.includes("sem-rede")
