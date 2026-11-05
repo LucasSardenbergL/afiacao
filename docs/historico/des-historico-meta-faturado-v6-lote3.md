@@ -58,6 +58,16 @@ A derivação saiu para um módulo puro, `historico/derivar.ts` (`montarCards`, 
    positivo, o fim do T2 saía 29/06 e um snapshot da véspera "fecharia" o trimestre. Agora usa os
    componentes locais, e há teste em 4 fusos.
 
+8. **Adversarial de código (Codex, 4 P2, sem P0/P1), todos incorporados.**
+   - O aviso de leitura vem **antes** do skeleton. Antes, uma query pendurada escondia o erro já
+     conhecido de outra.
+   - O offline **com cache** (refetch `success+paused`, que `estadoDeLeitura` chama de "pronta")
+     também fecha a tela, via `desatualizado`. Senão, a posição "ao vivo" velha passava por atual.
+   - O trimestre corrente agora usa o relógio de SP (`trimestreCorrenteSP` sobre `hojeSP`), não o
+     fuso do navegador. Às 22h de 30/06 em SP já é T3 em UTC, e o T2 seria julgado antes de
+     acabar.
+   - O tooltip do gráfico mostra a proveniência ("Posição ao vivo…", "Faturado até dd/mm").
+
 ## Prova
 
 - vitest: `derivar.test.ts` (derivação pura), `QuarterCardItem.test.tsx` (badges e rótulos),
@@ -65,7 +75,9 @@ A derivação saiu para um módulo puro, `historico/derivar.ts` (`montarCards`, 
   cada uma das 4 queries falhando, offline, erro após sucesso, controle, empty-state e modal vigente).
 - Falsificação: script com controle verde **na mesma invocação** antes e depois, uma sabotagem por
   guarda (incluindo os consumidores: card, aba, modal), nos dois locales (`C` e `pt_BR.UTF-8`). O
-  script imprime qual teste ficou vermelho. Resultado no corpo do PR.
+  script imprime qual teste ficou vermelho. Rodada final: **24 sabotagens × 2 locales = 48/48
+  vermelhas**, cada uma pela asserção comportamental esperada, com os controles verdes
+  (`FALSIFICACAO-OK`).
 - A falsificação pegou um **teste cego**. O teste do empty-state "sem metas, com posição ao vivo"
   continuava verde com o empty-state antigo (S17), porque a fixture tinha `meta_pessoal` na view e
   `des_meta_empresa` vazio. Isso é incoerente, já que a view lê a meta dessa tabela: o card do
