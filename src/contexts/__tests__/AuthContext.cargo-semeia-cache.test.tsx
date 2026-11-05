@@ -89,10 +89,12 @@ async function bootar() {
 
 function adiada() {
   let soltar: (r: Resposta) => void = () => {};
-  const promessa = new Promise<Resposta>((ok) => {
+  let falhar: (e: Error) => void = () => {};
+  const promessa = new Promise<Resposta>((ok, nok) => {
     soltar = ok;
+    falhar = nok;
   });
-  return { promessa, soltar };
+  return { promessa, soltar, falhar };
 }
 const CHAVE = ['my-commercial-role', 'u-1'];
 const esvaziar = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -237,6 +239,25 @@ describe('AuthContext: leitura de geração vencida não escreve no estado do au
     await act(async () => velha.soltar(ok({ commercial_role: 'farmer' })));
     await esvaziar();
     expect(visto.auth).toMatchObject({ role: 'employee', isMaster: false, commercialRole: 'hunter' });
+  });
+
+  it('leitura velha que LANÇA depois que a nova escreveu: o fail-closed de outra época não zera o papel vigente', async () => {
+    const velha = adiada();
+    s.respostas = {
+      user_roles: [ok({ role: 'master' }), ok({ role: 'employee' })],
+      profiles: [ok({ is_approved: true })],
+      commercial_roles: [velha.promessa as unknown as Resposta, ok({ commercial_role: 'hunter' })],
+    };
+    montar();
+    await waitFor(() => expect(s.aoMudarAuth).not.toBeNull());
+    act(() => s.aoMudarAuth?.('INITIAL_SESSION', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(s.pedidos.commercial_roles).toBe(1));
+    act(() => s.aoMudarAuth?.('USER_UPDATED', { user: { id: 'u-1' } }));
+    await waitFor(() => expect(visto.auth?.role).toBe('employee'));
+
+    await act(async () => velha.falhar(new Error('JWT malformed')));
+    await esvaziar();
+    expect(visto.auth).toMatchObject({ role: 'employee', isApproved: true, commercialRole: 'hunter' });
   });
 
   it('leitura vencida não termina o loading: a tela só libera quando a geração vigente escreveu o papel', async () => {
