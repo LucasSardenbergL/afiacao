@@ -12229,11 +12229,63 @@ export type Database = {
         }
         Relationships: []
       }
+      radar_agregado_cnae_sec: {
+        Row: {
+          cnae_principal: string
+          cnae_secundario: string
+          estabelecida: boolean
+          estabelecida_d1: boolean
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo: string | null
+          municipio_nome: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf: string | null
+        }
+        Insert: {
+          cnae_principal: string
+          cnae_secundario: string
+          estabelecida: boolean
+          estabelecida_d1: boolean
+          inedito: boolean
+          ja_cliente: boolean
+          lote: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n: number
+          prospeccao_status: string
+          tem_contato: boolean
+          tem_telefone: boolean
+          uf?: string | null
+        }
+        Update: {
+          cnae_principal?: string
+          cnae_secundario?: string
+          estabelecida?: boolean
+          estabelecida_d1?: boolean
+          inedito?: boolean
+          ja_cliente?: boolean
+          lote?: string
+          municipio_codigo?: string | null
+          municipio_nome?: string | null
+          n?: number
+          prospeccao_status?: string
+          tem_contato?: boolean
+          tem_telefone?: boolean
+          uf?: string | null
+        }
+        Relationships: []
+      }
       radar_agregado_estado: {
         Row: {
           base_iniciado_em: string | null
           base_lote: string | null
           calculado_em: string
+          cnaes_secundarios_cobertos: string[] | null
           corte_estabelecida: string | null
           empresas: number
           grupos: number
@@ -12243,6 +12295,7 @@ export type Database = {
           base_iniciado_em?: string | null
           base_lote?: string | null
           calculado_em: string
+          cnaes_secundarios_cobertos?: string[] | null
           corte_estabelecida?: string | null
           empresas: number
           grupos: number
@@ -12252,6 +12305,7 @@ export type Database = {
           base_iniciado_em?: string | null
           base_lote?: string | null
           calculado_em?: string
+          cnaes_secundarios_cobertos?: string[] | null
           corte_estabelecida?: string | null
           empresas?: number
           grupos?: number
@@ -17142,6 +17196,8 @@ export type Database = {
           personalizada: boolean | null
           preco_final_sayersystem: number | null
           produto_id: string
+          receita_assinatura: string | null
+          receita_desde: string | null
           sku_id: string | null
           subcolecao_id: string | null
           updated_at: string | null
@@ -17163,6 +17219,8 @@ export type Database = {
           personalizada?: boolean | null
           preco_final_sayersystem?: number | null
           produto_id: string
+          receita_assinatura?: string | null
+          receita_desde?: string | null
           sku_id?: string | null
           subcolecao_id?: string | null
           updated_at?: string | null
@@ -17184,6 +17242,8 @@ export type Database = {
           personalizada?: boolean | null
           preco_final_sayersystem?: number | null
           produto_id?: string
+          receita_assinatura?: string | null
+          receita_desde?: string | null
           sku_id?: string | null
           subcolecao_id?: string | null
           updated_at?: string | null
