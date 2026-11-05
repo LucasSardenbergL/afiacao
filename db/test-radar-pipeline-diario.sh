@@ -44,17 +44,18 @@ if [ "${1:-}" = "--falsificar" ]; then
     if ! grep -q "SABOTAGEM ATIVA: $s" "$log"; then
       echo "❌ $s: sabotagem NÃO aplicou"; SAB_F=$((SAB_F+1)); continue
     fi
-    ok=1
-    IFS=',' read -ra AS <<< "$verm"
-    for a in "${AS[@]}"; do
-      grep -q "^FAIL $a " "$log" || { echo "❌ $s: vermelho, mas $a não falhou (log: $log)"; ok=0; }
+    faltou=""
+    for id in ${verm//,/ }; do
+      grep -q "^FAIL $id " "$log" || faltou="$faltou $id"
     done
-    if [ "$ok" = 1 ]; then SAB_V=$((SAB_V+1)); echo "✅ $s → $verm vermelho(s)"; else SAB_F=$((SAB_F+1)); fi
+    if [ -z "$faltou" ]; then
+      SAB_V=$((SAB_V+1)); echo "✅ $s → {$verm} vermelho"
+    else
+      SAB_F=$((SAB_F+1)); echo "❌ $s: declarado {$verm}, faltou:$faltou (log: $log)"
+    fi
   done
-  echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"
-  [ "$SAB_F" -eq 0 ] && echo "RADAR_PIPELINE_FALSIFICACAO_OK"
-  [ "$SAB_F" -eq 0 ]
-  exit $?
+  echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"   # recibo exigido por db/roda-nucleo-ci.sh
+  [ "$SAB_F" -eq 0 ] && exit 0 || exit 1
 fi
 
 # shellcheck disable=SC1091  # caminho resolvido em runtime a partir de REPO_ROOT
