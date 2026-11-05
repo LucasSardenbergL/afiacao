@@ -146,7 +146,11 @@ export function montarFilaAcoes(input: {
     // hurdle implausível (≤0) é tratado como ausente → crescer cai em falta_dado (não financia no escuro).
     const hurdleRaw = c.empresa in input.hurdlePorEmpresa ? input.hurdlePorEmpresa[c.empresa] : null;
     const hurdle = hurdleRaw != null && Number.isFinite(hurdleRaw) && hurdleRaw > 0 ? hurdleRaw : null;
-    const caixaDisp = input.caixaPorEmpresa[c.empresa]?.disponivel ?? null; // sem caixa ≠ R$0
+    // Caixa DECISÓRIO: só o de confiança alta decide financiar_ja × condicional. O de saldo datado (baixa)
+    // ou não atestado (média) segue no card como ESTIMATA rotulada, mas não autoriza financiar (Codex, v6
+    // C1: R$32,5k estimado com saldo de até 7 dias aprovava uma ação de R$30k). Sem caixa ≠ R$0.
+    const cx = input.caixaPorEmpresa[c.empresa];
+    const caixaDisp = cx != null && cx.confianca === 'alta' ? cx.disponivel : null;
     // tem_dado: crescer precisa de hurdle + sinal de spread; consertar/liberar/benchmark sempre têm.
     const tem_dado = c.tipo === 'crescer' ? (hurdle != null && c.spread_positivo != null) : true;
     const status = classificarStatus({ tipo: c.tipo, impacto_eva: c.impacto_eva, spread_positivo: c.spread_positivo, caixa_consumido: c.caixa_consumido, caixa_disponivel: caixaDisp, hurdle, tem_dado });

@@ -5137,6 +5137,7 @@ describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, pl
   const NBA_SRC = 'src/lib/financeiro/next-best-action-helpers.ts';
   const NBA_FILA = 'supabase/functions/fin-next-best-action/fila.ts';
   const NBA_INDEX = 'supabase/functions/fin-next-best-action/index.ts';
+  const NBA_ORQ = 'supabase/functions/fin-next-best-action/orquestracao.ts';
 
   it('PARIDADE: o bloco a4-fila é idêntico em src × edge', () => {
     const fonte = mirrorBlockNamed(read(NBA_SRC), 'a4-fila');
@@ -5145,14 +5146,17 @@ describe('guardrail money-path: A4 sem caixa fabricado (fin-next-best-action, pl
     expect(mirrorBlockNamed(read(NBA_FILA), 'a4-fila'), 'fila.ts divergiu do helper de src/ — recopie o bloco inteiro').toBe(fonte);
   });
 
-  it('WIRING: o handler passa a resposta da A1 por caixaDaA1 e grava o retorno no mapa de caixa', () => {
-    const codigo = removerComentarios(read(NBA_INDEX));
-    expect(vereditoFronteira(codigo, 'caixaDaA1')).toBe('ok');
-    expect(codigo).toMatch(/caixaPorEmpresa\[empresa\] = caixaDaA1\(cash, RESERVA_DIAS_MIN\)/);
+  it('WIRING: o handler entrega as respostas cruas à orquestração, que passa a A1 por caixaDaA1', () => {
+    const handler = removerComentarios(read(NBA_INDEX));
+    expect(vereditoFronteira(handler, 'montarRespostaA4')).toBe('ok');
+    expect(handler).toMatch(/const result = montarRespostaA4\(\{[^}]*cashResults[^}]*\}\);\s*return jsonResponse\(result, 200\)/);
+    const orq = removerComentarios(read(NBA_ORQ));
+    expect(vereditoFronteira(orq, 'caixaDaA1')).toBe('ok');
+    expect(orq).toMatch(/caixaPorEmpresa\[empresa\] = caixaDaA1\(cash, input\.reservaDiasMin\)/);
   });
 
   it('REGRESSÃO: nenhum `?? 0` sobre saldo/cobertura/disponível no handler nem no helper', () => {
-    for (const f of [NBA_INDEX, NBA_FILA]) {
+    for (const f of [NBA_INDEX, NBA_ORQ, NBA_FILA]) {
       const codigo = removerComentarios(read(f));
       expect(codigo, `${f}: voltou a fabricar caixa com ?? 0`).not.toMatch(/(dias_cobertura|saldo_tesouraria|disponivel)\s*\?\?\s*0\b/);
     }

@@ -58,6 +58,16 @@ describe('montarFilaAcoes com caixa desconhecido (plano v6 C1)', () => {
     expect(r.confianca.nivel).toBe('baixa');
     expect(r.confianca.motivos.join(' | ')).toContain('Caixa (oben): Cobertura de caixa desconhecida');
   });
+  it('saldo datado: a ESTIMATA (baixa) segue no card mas não aprova financiar_ja (contraexemplo do Codex)', () => {
+    const caixa = caixaDaA1({ indicadores: { saldo_tesouraria: 100000, dias_cobertura: 60 }, confianca_dados: { motivos: [], saldo_inicial: 'Saldo datado.' } }, 21);
+    const r = montarFilaAcoes({
+      candidatos: [{ empresa: 'oben', descricao: 'c', tipo: 'crescer', impacto_eva: 1000, caixa_consumido: 30000, payback_meses: 6, spread_positivo: true, confianca: 'alta' }],
+      caixaPorEmpresa: { oben: caixa },
+      hurdlePorEmpresa: { oben: 0.15 },
+    });
+    expect(r.fila.find((a) => a.tipo === 'crescer')!.status).toBe('falta_dado');
+    expect(r.caixa_por_empresa.oben.disponivel).toBeCloseTo(32500, 6);
+  });
   it('classificarStatus: caixa null não decide financiar_ja/condicional', () => {
     expect(classificarStatus({ tipo: 'crescer', impacto_eva: 1, spread_positivo: true, caixa_consumido: 1, caixa_disponivel: null, hurdle: 0.1, tem_dado: true })).toBe('falta_dado');
   });

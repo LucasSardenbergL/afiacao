@@ -13,7 +13,7 @@ const GRUPOS: { status: StatusAcaoFila; titulo: string; classe: string }[] = [
   { status: 'consertar_antes', titulo: 'Consertar antes (preço/prazo/caixa — faça primeiro)', classe: 'text-status-warning' },
   { status: 'financiar_ja', titulo: 'Financiar já', classe: 'text-status-success' },
   { status: 'financiar_condicional', titulo: 'Financiar condicional (sem caixa hoje)', classe: 'text-status-info' },
-  { status: 'falta_dado', titulo: 'Falta dado (definir ação / hurdle)', classe: 'text-muted-foreground' },
+  { status: 'falta_dado', titulo: 'Falta dado (definir ação / hurdle / caixa)', classe: 'text-muted-foreground' },
   { status: 'nao_financiar', titulo: 'Não financiar / benchmark', classe: 'text-status-error' },
 ];
 

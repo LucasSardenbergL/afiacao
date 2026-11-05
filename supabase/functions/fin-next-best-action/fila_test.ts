@@ -3,6 +3,7 @@
 // saldo 10.000 virava "R$0 disponível, confiança alta" (`?? 0` no transporte + `?? 0` na fila).
 // Estes casos rodam o helper REAL da edge (./fila.ts), não a cópia de src/.
 import { type AcaoCandidata, caixaDaA1, classificarStatus, montarFilaAcoes, type RespostaA1Caixa } from "./fila.ts";
+import { montarRespostaA4 } from "./orquestracao.ts";
 
 const RESERVA = 21;
 
@@ -49,6 +50,10 @@ Deno.test("saldo datado: calcula com haircut, rebaixa para baixa e propaga o mot
   assertEq(cx.disponivel, 32_500, "disponível com haircut");
   assertEq(cx.confianca, "baixa", "confiança");
   assertEq(cx.motivos, ["Saldo inicial datado: Saldo de 2 conta(s) datado."], "motivo");
+  // Contraexemplo do Codex (desenho): a ESTIMATA de R$32,5k não pode aprovar uma ação de R$30k.
+  const r = montarFilaAcoes({ candidatos: [crescer("oben", 30_000)], caixaPorEmpresa: { oben: cx }, hurdlePorEmpresa: { oben: 0.15 } });
+  assertEq(r.fila.find((a) => a.tipo === "crescer")?.status, "falta_dado", "estimata de saldo datado não decide financiar");
+  assertEq(r.caixa_por_empresa.oben.disponivel, 32_500, "a estimata segue no card, rotulada");
 });
 
 Deno.test("saudável: disponível calculado, confiança alta, sem motivo; status por comparação com o caixa", () => {
@@ -103,4 +108,36 @@ Deno.test("A1 sem confianca_dados (versão antiga): calcula, mas confiança méd
 Deno.test("empresa fora do mapa de caixa: crescer dimensionado cai em falta_dado (não compara com R$0)", () => {
   const r = montarFilaAcoes({ candidatos: [crescer("colacor", 5_000)], caixaPorEmpresa: {}, hurdlePorEmpresa: { colacor: 0.15 } });
   assertEq(r.fila.find((a) => a.tipo === "crescer")?.status, "falta_dado", "status");
+});
+
+// ── Ponta a ponta: resposta CRUA da A1 → orquestração real da edge → JSON que a tela/fin-funding leem ──
+// (Codex, desenho: o `?? 0` reintroduzido no CALLER não é pego por teste só do helper.)
+const EMPRESAS = ["oben", "colacor", "colacor_sc"];
+const valorOk = { reportado: { wacc: 0.15, spread: 0.02 } };
+function respostaA4(cash: Array<RespostaA1Caixa | null>) {
+  // JSON.parse(JSON.stringify(...)): o que de fato sai no corpo da resposta (undefined some, null fica).
+  return JSON.parse(JSON.stringify(montarRespostaA4({ empresas: EMPRESAS, reservaDiasMin: RESERVA, cashResults: cash, valorResults: [valorOk, valorOk, valorOk], cockpit: { recomendacoesCliente: [] } })));
+}
+
+Deno.test("A1→A4: cobertura null + saldo 10.000 sai como disponivel:null com o motivo, não 0/alta", () => {
+  const j = respostaA4([a1(10_000, null), a1(100_000, 60), a1(100_000, 60)]);
+  assertEq(j.caixa_por_empresa.oben.disponivel, null, "oben disponível no JSON");
+  assertEq(j.caixa_por_empresa.oben.saldo_tesouraria, 10_000, "saldo conhecido no JSON");
+  assertEq(j.caixa_por_empresa.oben.confianca, "baixa", "confiança oben");
+  assertContem(j.caixa_por_empresa.oben.motivos.join(" "), "sem base de saída", "motivo no JSON");
+  assertEq(j.caixa_por_empresa.colacor.disponivel, 65_000, "empresa saudável intacta");
+  assertEq(j.confianca.nivel, "baixa", "nível da fila");
+  assertContem(j.confianca.motivos.join(" | "), "Caixa (oben)", "motivo na confiança da fila");
+});
+
+Deno.test("A1→A4: A1 falhou (null) → disponivel:null + 'Insumos indisponíveis' (antes: 0 com haircut)", () => {
+  const j = respostaA4([null, a1(100_000, 60), a1(100_000, 60)]);
+  assertEq(j.caixa_por_empresa.oben.disponivel, null, "oben");
+  assertContem(j.confianca.motivos.join(" | "), "Insumos indisponíveis (function falhou): caixa (oben)", "falha listada");
+});
+
+Deno.test("A1→A4: saudável nas 3 → disponível calculado, nenhum motivo de caixa", () => {
+  const j = respostaA4([a1(100_000, 60), a1(42_000, 42), a1(-1, 0)]);
+  assertEq([j.caixa_por_empresa.oben.disponivel, j.caixa_por_empresa.colacor.disponivel, j.caixa_por_empresa.colacor_sc.disponivel], [65_000, 21_000, 0], "disponíveis");
+  assertEq((j.confianca.motivos as string[]).filter((m) => m.startsWith("Caixa (")), [], "sem motivo de caixa");
 });
