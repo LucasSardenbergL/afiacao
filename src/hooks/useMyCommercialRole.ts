@@ -1,10 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useImpersonatedAccessProfile } from '@/hooks/useImpersonatedAccessProfile';
 import { estadoDeLeitura, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
-import { chaveMeuCargoComercial } from '@/lib/cargo-comercial-cache';
+import { opcoesMeuCargoComercial } from '@/lib/cargo-comercial-cache';
 
 /**
  * Role comercial do "eu efetivo": o user real, ou o ALVO na lente "Ver como".
@@ -38,24 +37,13 @@ export function useMyCommercialRole(): { data: MyCommercialRole; isLoading: bool
   // Sem lente: consulta o role do master. Na lente, `enabled:false` evita consultar
   // o role do master (que renderizaria o dashboard ERRADO — o do master).
   const realQuery = useQuery({
-    queryKey: chaveMeuCargoComercial(user?.id),
+    ...opcoesMeuCargoComercial(user?.id),
     enabled: !!user && !isImpersonating,
-    staleTime: 60_000,
-    queryFn: async (): Promise<MyCommercialRole> => {
-      if (!user) return null;
-      // ⚠️ O `error` NÃO pode ser descartado aqui. Descartá-lo era a assinatura literal da classe
-      // "silêncio afirmativo" (`docs/agent/money-path.md`): com timeout/RLS/500 o PostgREST
-      // devolve `{data:null, error}`, a query resolveria com SUCESSO e `null`, e quem lê o
-      // `estado` como "consultei e este user não tem papel" fabricaria `is_hunter:false` para
-      // todo hunter atingido — sem nem disparar os retries, porque para o react-query nada falhou.
-      // Achado do /codex sobre o fix do #1896, que só tinha tapado o buraco do offline.
-      const { data, error } = await supabase.from('commercial_roles')
-        .select('commercial_role')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      return (data?.commercial_role ?? null) as MyCommercialRole;
-    },
+    // ⚠️ A consulta (`consultarMeuCargoComercial`) LANÇA no `error` em vez de devolver `null`.
+    // Descartá-lo era a assinatura literal da classe "silêncio afirmativo"
+    // (`docs/agent/money-path.md`): com timeout/RLS/500 a query resolveria com SUCESSO e `null`, e
+    // quem lê o `estado` como "consultei e este user não tem papel" fabricaria `is_hunter:false`
+    // para todo hunter atingido, sem nem disparar os retries. Achado do /codex sobre o fix do #1896.
   });
 
   // Na lente: role do ALVO. Vem do RPC master-only get_user_access_profile_for, que o
@@ -69,5 +57,5 @@ export function useMyCommercialRole(): { data: MyCommercialRole; isLoading: bool
       estado: estadoDeLeitura(perfilAlvo),
     };
   }
-  return { data: realQuery.data ?? null, isLoading: realQuery.isLoading, estado: estadoDeLeitura(realQuery) };
+  return { data: (realQuery.data ?? null) as MyCommercialRole, isLoading: realQuery.isLoading, estado: estadoDeLeitura(realQuery) };
 }
