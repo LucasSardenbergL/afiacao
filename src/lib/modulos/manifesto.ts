@@ -202,6 +202,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/__tests__/FinanceiroIntercompanyFila.sem-cobranca.test.tsx",
       "src/pages/__tests__/FinanceiroSync.erro-honesto.test.tsx",
       "src/hooks/__tests__/useFinanceiro.erros-carga.test.tsx",
+      "src/hooks/__tests__/useFinanceiro.dre-consolidado-paralelo.test.tsx",
       "src/hooks/__tests__/useFinanceiroRegime.test.tsx",
       "src/hooks/__tests__/useFinanceiroCiclo.test.tsx",
       "src/hooks/__tests__/useFinanceiroCicloFornecedor.test.tsx",
