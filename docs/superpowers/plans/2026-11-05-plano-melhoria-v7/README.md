@@ -18,7 +18,7 @@ Fica em aberto o que depende de data, amostra, plataforma ou founder:
 
 | Item | Estado (medido hoje) | Quando / critério |
 |---|---|---|
-| **#3634: Publish + migration manual** | Front fora do bundle servido (acima). A view `v_des_posicao_trimestre_ao_vivo` na prod tem `md5(pg_get_viewdef)` = `f299f906…`, contra `02a50869…` esperado pela POS1 da migration `20261105091216`: **não aplicada** | 🧭 founder: Publish **primeiro** (o front degrada para "—" com a view antiga) e depois a migration no SQL Editor, com `BEGIN; … COMMIT;` |
+| **#3634: Publish + migration manual** | ✅ **APLICADO** (2026-11-05, pedido do founder). Migration `20261105091216` pelo `db:aplicar`: ensaio com ROLLBACK verde, depois **tentativa #906 → recibo**. 2ª testemunha (`psql-ro`): `md5(pg_get_viewdef)` = `02a50869…` (o da POS1), `security_invoker=on`, e 3 das 4 linhas sem faturado com **0 gap fabricado**. Front no ar: o bundle servido (`app-commit-sha=ba6fc062`) traz o gate `fat_bruto_confirmado !== null && posicao_ao_vivo_conservadora !== null` no chunk `AdminDesTrimestreAtual-DBG1nxdN.js` | — |
 | D5/B1: DROP dos índices sem uso dos scores | Inalterado: `idx_radar_muni_cover` 150 MB, `lista_estab` 58, `lista_novas` 43, `idx_health_history_customer` 104 + `_farmer` 25, `idx_priority_log_customer` 65 + `_farmer_date` 17, `idx_tint_formulas_nome_cor` 81 — todos `idx_scan=0` (~543 MB). Os 4 dos scores **pesam no DELETE do expurgo** sem servir leitura | Releitura a partir de **2026-11-07 10:33 UTC**, na sessão `v5-d5-b1-indices`, que já existe. O Radar tem uso mensal: não decidir DROP com menos de um ciclo. O `idx_radar_muni_cover` já tem PR **draft** de outra sessão (#3639, migration do founder) |
 | B1: expurgo semanal | Job 196 (`30 4 * * 0`, `expurgar_scores_antigos(60, 10000)`) rodou em 01/11 04:30 (37 s, succeeded). Restam **464.310 linhas > 60 d** em cada tabela de score. O teto da função (60 × 10 k) cabe | 1ª passada com 60 d em **2026-11-08 04:30**. Conferir `cron.job_run_details` (jobid 196) e `count(*) FILTER (WHERE calculated_at < now()-'60 days')` |
 | Web-vitals dos lotes de tela | `telemetria_vitals`: 200 linhas, **1 `user_id`**, 33 builds desde 02/11 | ~2026-11-09, separando por build adotado. A data não garante amostra |
@@ -106,6 +106,6 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) e do v6 (C3, D7, F10, NF-NULL, NF-CHAVE
 | — | E17 | lotes 4 e 5 medidos | experimento |
 | — | D11 | — | diagnóstico read-only, sem PR de código |
 | — | D12 | #3638/#3639 | outra sessão |
-| — | #3634 Publish + migration | — | 🧭 founder |
+| — | ~~#3634 Publish + migration~~ ✅ aplicados em 2026-11-05 (ver §0) | — | — |
 
 Os lotes 1, 2, 3, 6 e 7 tocam arquivos distintos e são independentes entre si. 4 → 5 → E17 rodam em sequência para não misturar a medição do CI. Antes de cada lote, procurar o artefato na main (`git grep <símbolo> origin/main`): no meio da escrita deste plano, outra sessão abriu o #3638/#3639 sobre o Radar, que este levantamento também tinha achado.
