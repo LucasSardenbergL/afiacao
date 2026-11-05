@@ -12,9 +12,9 @@ function formatRemaining(expiresAt: string): string {
   return `${min}:${String(sec).padStart(2, '0')}`;
 }
 
-export function ActiveOverrideBadge() {
+export function ActiveOverrideBadge({ habilitado }: { habilitado: boolean }) {
   const { activeCompany } = useCompany();
-  const { activeOverride } = usePeriodOverride(activeCompany);
+  const { activeOverride } = usePeriodOverride(activeCompany, { habilitado });
   const [, force] = useState(0);
 
   useEffect(() => {
