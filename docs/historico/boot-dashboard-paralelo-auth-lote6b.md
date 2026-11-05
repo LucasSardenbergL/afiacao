@@ -141,6 +141,11 @@ A/B de laboratório, mesmo método. O antes é a main com o 6b (`329086ecd`), ma
   virava `null` na hora; agora o hook fica em `loading` durante os retries do react-query e depois
   vira `null`. Os dois consumidores de `loading` (`useFarmerScoring`, `IntelligenceDashboard`)
   mostram "carregando" em vez de "sem acesso" nesse intervalo, o que é mais honesto.
+- **Laboratório (mesmo método, master, dica `staff`, desktop, 5 pares; antes = main `a6f2aa438`):**
+  pedidos a `commercial_roles` por carga de `/` caíram de **8 para 1** nas 5 cargas. Cada
+  instância do legado (o `useDisplayAccess` é chamado por vários componentes da casca) fazia o seu
+  REST no `useEffect`; agora todas leem a chave semeada pelo auth. O LCP − início do auth não muda
+  (476–483 → 477–491 ms), como esperado: esses pedidos não seguravam a home, só ocupavam conexão.
 - **Revisão do Codex (código, high, 153 s):** AJUSTAR com dois P2, os dois reproduzidos por ele e
   aplicados com teste: (1) o `refetchRole` durante o boot e o logout sem evento ficavam com o
   loading preso até o failsafe; (2) o legado concedia pelo cache com a revalidação pausada offline.
