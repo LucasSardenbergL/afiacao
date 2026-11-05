@@ -98,7 +98,11 @@ describe.each(CARDS)('card "$label" — carregando, erro e zero observado não s
     await waitFor(() => {
       const estado = qc.getQueriesData({ queryKey: [c.queryKey] });
       expect(estado.length).toBe(1);
-      expect(qc.getQueryState(estado[0][0])?.status).toBe('error');
+      const q = qc.getQueryState(estado[0][0]);
+      expect(q?.status).toBe('error');
+      // o erro é o do BANCO, não a guarda genérica de count nulo — a camada do `throw error`
+      // ficava redundante (verde sob sabotagem) sem esta asserção
+      expect((q?.error as { message?: string } | null)?.message).toBe('permission denied');
     });
   });
 

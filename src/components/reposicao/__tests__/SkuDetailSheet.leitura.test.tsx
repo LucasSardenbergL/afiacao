@@ -91,7 +91,9 @@ describe('ficha do SKU — demanda 90d (gráfico)', () => {
     plano = { venda_items_history: 'erro' };
     const { qc } = renderFicha();
     await waitFor(() =>
-      expect(qc.getQueryState(['sku_demanda_90d', 'OBEN', 123])?.status).toBe('error'),
+      expect(qc.getQueryState(['sku_demanda_90d', 'OBEN', 123])?.error).toMatchObject({
+        message: 'permission denied',
+      }),
     );
   });
 
@@ -141,7 +143,9 @@ describe('ficha do SKU — stats da view (pico, P95, preços, custos)', () => {
     plano = { v_sku_parametros_sugeridos: 'erro' };
     const { qc } = renderFicha();
     await waitFor(() =>
-      expect(qc.getQueryState(['sku_view_stats', 'OBEN', 123])?.status).toBe('error'),
+      expect(qc.getQueryState(['sku_view_stats', 'OBEN', 123])?.error).toMatchObject({
+        message: 'permission denied',
+      }),
     );
   });
 
