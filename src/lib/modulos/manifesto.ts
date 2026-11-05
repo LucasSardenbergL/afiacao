@@ -951,6 +951,7 @@ export const MODULOS: ModuloApp[] = [
       "src/pages/AdminAjuda.tsx",
       "src/pages/AdminNotificacoes.tsx",
       "src/contexts/AuthContext.tsx",
+      "src/lib/cargo-comercial-cache.ts",
       "src/contexts/CompanyContext.tsx",
       "src/contexts/AppShellContext.tsx",
       "src/contexts/ImpersonationContext.tsx",
@@ -989,6 +990,7 @@ export const MODULOS: ModuloApp[] = [
       "src/components/leitura/**",
     ],
     testes: [
+      "src/contexts/__tests__/AuthContext.cargo-semeia-cache.test.tsx",
       "src/__tests__/anthropic-cliente-gate.test.ts",
       "src/__tests__/omie-cliente-gate.test.ts",
       "src/__tests__/edge-import-entre-funcoes-gate.test.ts",

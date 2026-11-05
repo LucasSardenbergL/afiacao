@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useImpersonation } from '@/contexts/ImpersonationContext';
 import { useImpersonatedAccessProfile } from '@/hooks/useImpersonatedAccessProfile';
 import { estadoDeLeitura, type EstadoLeitura } from '@/lib/leitura/estado-de-leitura';
+import { chaveMeuCargoComercial } from '@/lib/cargo-comercial-cache';
 
 /**
  * Role comercial do "eu efetivo": o user real, ou o ALVO na lente "Ver como".
@@ -37,7 +38,7 @@ export function useMyCommercialRole(): { data: MyCommercialRole; isLoading: bool
   // Sem lente: consulta o role do master. Na lente, `enabled:false` evita consultar
   // o role do master (que renderizaria o dashboard ERRADO — o do master).
   const realQuery = useQuery({
-    queryKey: ['my-commercial-role', user?.id],
+    queryKey: chaveMeuCargoComercial(user?.id),
     enabled: !!user && !isImpersonating,
     staleTime: 60_000,
     queryFn: async (): Promise<MyCommercialRole> => {

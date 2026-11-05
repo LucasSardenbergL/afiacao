@@ -79,13 +79,45 @@ rodou fora do `heavy`.
   comportamento: é só uma leitura de localStorage. Como no lote 6, é medida do **mecanismo**, não
   do usuário real; o medidor ficou fora do repo, porque não é gate nem sensor.
 
-## Fora do escopo (próximo passo, medido)
+## Lote 6c: o cargo comercial lido no auth semeia o cache
 
-- **O 2º REST de `commercial_roles`** (~0,55 s no laboratório mobile, um RTT real em campo): o
-  `AuthContext` já lê `commercial_roles` em paralelo a `user_roles`/`profiles`, e o
-  `useMyCommercialRole` refaz a leitura depois que o `Index` monta. Semear o cache do react-query
-  a partir do `AuthContext` (só quando a leitura dele veio SEM erro, para não fabricar `null`) tira
-  esse passo. O `AuthContext` é arquivo quente e de auth, por isso fica em outro lote.
+2026-11-04, PR seguinte ao #3603. O `AuthContext` já lê `commercial_roles` em paralelo a
+`user_roles`/`profiles`, mas o `useMyCommercialRole` refazia a leitura depois que o `Index`
+montava, e o `Index` segurava o skeleton do staff até ela voltar. Agora o auth semeia o cache
+`['my-commercial-role', userId]` com a MESMA leitura (`src/lib/cargo-comercial-cache.ts`; a chave
+mora fora do hook porque o hook importa o `useAuth`). **Leitura com erro não semeia**: semear
+`null` de uma leitura que falhou fabricaria "consultei e não tem cargo". Com erro, o hook consulta
+sozinho, como antes. Com dado fresco (staleTime 60 s), o hook nasce `pronta` e não refaz o REST.
+
+A/B de laboratório, mesmo método. O antes é a main com o 6b (`329086ecd`), master, dica `staff`,
+15 pares:
+
+| perfil | LCP − início do auth | Δ p50 | p |
+|---|---|---|---|
+| desktop (10 Mbps, 40 ms) | 893 [890–896] → 481 [477–492] | **−412 ms** | <0,0001 |
+| mobile (Slow 4G + CPU 4×) | 2.045 [1.961–2.492] → 2.149 [1.975–2.291] | +104 (ruído) | 0,82 |
+
+- **O desktop ganha o RTT inteiro:** o chunk já estava pronto (+190), e quem segurava a home era o
+  REST.
+- **O mobile não ganha nada, e o motivo foi medido:** depois do 6b, o download do chunk do
+  `StaffDashboard` termina em ~+1.080, quase junto com o REST. Os dois passos já se sobrepunham, e
+  o chunk é o gargalo do mobile. Em campo, quanto mais rápida a rede e maior o RTT do Supabase,
+  mais o ganho se parece com o do desktop.
+- **Revisão do Codex (código, high, 106 s):** dois ajustes, aplicados e falsificados. (1) A
+  semente sai só da tentativa que venceu os retries, no `return` final: semear antes do `continue`
+  deixaria um `null` fresco de uma tentativa descartada. (2) Há uma geração do auth
+  (`geracaoAuthRef`), incrementada de forma síncrona em todo evento de auth, no `signOut`, no
+  `refetchRole` e no cleanup, e capturada ANTES do `setTimeout`. Um fetch atrasado não volta ao
+  cache depois de `SIGNED_OUT → clear()` nem atropela um `TOKEN_REFRESHED` mais novo. O A/B acima
+  é anterior a esse ajuste, que só acrescenta uma comparação síncrona.
+- **Achado anterior a este PR (fora do escopo):** os *setters* do `AuthContext` (`setRole`,
+  `setIsApproved`, `setCommercialRole`) têm a mesma corrida. Um fetch em voo que resolve depois de
+  `SIGNED_OUT` restaura o `role` de quem saiu, com `user` já `null`. O `ProtectedRoute` barra pelo
+  `user`, então não abre tela, mas o estado fica incoerente. A correção é usar a mesma geração nos
+  setters.
+- **Resíduo:** ainda sai um pedido a `commercial_roles` depois do auth, vindo do `useCommercialRole`
+  (hook legado de `useState`/`useEffect`, chamado pelo `useDisplayAccess`). Fora da lente ele não
+  segura a home, por isso ficou de fora.
 
 ## Lições
 
