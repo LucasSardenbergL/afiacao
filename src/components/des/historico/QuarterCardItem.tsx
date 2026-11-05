@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { fmtBRL, fmtPct, fmtDate } from "./format";
 import { StarsRow } from "./StarsRow";
-import { julgarTrimestre, progressoDaMeta } from "./derivar";
+import { julgarTrimestre, progressoDaMeta, rotuloFaturado } from "./derivar";
 import type { QuarterCard } from "./types";
 
 interface QuarterCardItemProps {
@@ -54,6 +54,20 @@ export function QuarterCardItem({ card: c, onVerDetalhes }: QuarterCardItemProps
                 Sem dado
               </Badge>
             )}
+            {julgamento === "sem_fechamento" && (
+              <Badge
+                variant="outline"
+                className="text-muted-foreground text-xs"
+                title="O último faturado registrado é de antes do fim do trimestre — não dá para julgar a meta"
+              >
+                Sem fechamento
+              </Badge>
+            )}
+            {julgamento === "planejado" && (
+              <Badge variant="outline" className="text-muted-foreground text-xs">
+                Planejado
+              </Badge>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -64,9 +78,7 @@ export function QuarterCardItem({ card: c, onVerDetalhes }: QuarterCardItemProps
             <p className="text-sm font-medium mt-1">{fmtBRL(c.meta)}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">
-              {c.isAtual ? "Faturado (ao vivo)" : "Faturado final"}
-            </p>
+            <p className="text-xs text-muted-foreground">{rotuloFaturado(c)}</p>
             <p className={cn("text-sm font-medium mt-1", atingiu ? "text-status-success" : "text-foreground")}>
               {fmtBRL(c.faturado)}
             </p>

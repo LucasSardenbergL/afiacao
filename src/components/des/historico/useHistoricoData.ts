@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { MetaRow, SnapshotRow, QuarterCard } from "./types";
+import { estadoDeLeitura, type EstadoSemLeitura } from "@/lib/leitura/estado-de-leitura";
 import { montarCards, montarChartData, mediaDasMetas, type PosicaoAoVivo } from "./derivar";
 import { linhasCom } from "@/lib/linha-view";
 
@@ -61,7 +62,9 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_des_posicao_trimestre_ao_vivo")
-        .select("ano, trimestre, posicao_ao_vivo_conservadora, faixa_conservadora, meta_pessoal, inicio_trimestre, fim_trimestre")
+        .select(
+          "ano, trimestre, posicao_ao_vivo_conservadora, fat_bruto_confirmado, gooddata_data_referencia, faixa_conservadora, meta_pessoal, inicio_trimestre, fim_trimestre",
+        )
         .eq("empresa", empresa)
         .eq("ano", anoAtual)
         .eq("trimestre", trimestreAtual)
@@ -95,7 +98,7 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     return cards.filter((c) => {
       if (filtroAno !== "__todos__" && String(c.ano) !== filtroAno) return false;
       if (filtroStatus === "andamento" && !c.isAtual) return false;
-      if (filtroStatus === "encerrados" && c.isAtual) return false;
+      if (filtroStatus === "encerrados" && (c.isAtual || c.isFuturo)) return false;
       return true;
     });
   }, [cards, filtroAno, filtroStatus]);
@@ -104,19 +107,16 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
 
   const metaMedia = useMemo(() => mediaDasMetas(chartData), [chartData]);
 
-  const isLoading =
-    metasQuery.isLoading ||
-    snapshotsQuery.isLoading ||
-    checkinsQuery.isLoading ||
-    posLiveQuery.isLoading;
-
-  // Fail-closed: QUALQUER leitura falhou → a tela não julga trimestre nenhum. Dado parcial
-  // (ex.: sem snapshots) viraria "sem dado" em massa, ou "Nenhum trimestre cadastrado".
-  const queries = [metasQuery, snapshotsQuery, checkinsQuery, posLiveQuery];
-  const isError = queries.some((q) => q.isError);
-  const refetch = () => {
-    queries.filter((q) => q.isError).forEach((q) => void q.refetch());
-  };
+  // Fail-closed: QUALQUER leitura que não aconteceu (erro, inclusive após sucesso com cache, ou
+  // offline na 1ª leitura — pending+paused, que NÃO é isLoading) → a tela não julga trimestre
+  // nenhum. Dado parcial tratado como completo vira "sem dado" em massa ou "Nenhum trimestre".
+  const estados = [metasQuery, snapshotsQuery, checkinsQuery, posLiveQuery].map(estadoDeLeitura);
+  const estadoSemLeitura: EstadoSemLeitura | null = estados.includes("erro")
+    ? "erro"
+    : estados.includes("sem-rede")
+      ? "sem-rede"
+      : null;
+  const isLoading = estados.includes("carregando");
 
   return {
     filtroAno,
@@ -129,7 +129,6 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     chartData,
     metaMedia,
     isLoading,
-    isError,
-    refetch,
+    estadoSemLeitura,
   };
 }

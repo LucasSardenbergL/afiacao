@@ -3,7 +3,7 @@
 // God-component split de src/components/des/HistoricoTab.tsx (comportamento 1:1).
 import { memo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CalendarDays } from "lucide-react";
+import { CalendarDays } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,10 +12,14 @@ import { HistoricoFiltros } from "./historico/HistoricoFiltros";
 import { FaturamentoChart } from "./historico/FaturamentoChart";
 import { QuarterCardItem } from "./historico/QuarterCardItem";
 import { DetalhesDialog } from "./historico/DetalhesDialog";
-import type { Props, QuarterCard } from "./historico/types";
+import { temHistorico } from "./historico/derivar";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
+import type { Props } from "./historico/types";
 
 function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }: Props) {
-  const [detalhesOpen, setDetalhesOpen] = useState<QuarterCard | null>(null);
+  // Guarda a IDENTIDADE do trimestre, não uma cópia do card: o modal mostra sempre o card vigente
+  // (após refetch, a cópia ficaria com meta/faturado velhos).
+  const [detalhesChave, setDetalhesChave] = useState<{ ano: number; trimestre: number } | null>(null);
 
   const {
     filtroAno,
@@ -28,32 +32,20 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
     chartData,
     metaMedia,
     isLoading,
-    isError,
-    refetch,
+    estadoSemLeitura,
   } = useHistoricoData(empresa, anoAtual, trimestreAtual);
 
   if (isLoading) {
     return <Skeleton className="h-96 w-full" />;
   }
 
-  // Leitura falhou → erro explícito, nunca "Nenhum trimestre cadastrado" nem trimestres zerados.
-  if (isError) {
-    return (
-      <Card>
-        <CardContent className="p-12 text-center space-y-3">
-          <AlertTriangle className="h-10 w-10 mx-auto text-status-error/60" />
-          <p className="text-sm text-muted-foreground">
-            Não foi possível carregar o histórico do DES. Nenhum trimestre foi julgado.
-          </p>
-          <Button variant="outline" size="sm" onClick={refetch}>
-            Tentar novamente
-          </Button>
-        </CardContent>
-      </Card>
-    );
+  // Leitura que não aconteceu (erro/offline) → aviso explícito, nunca "Nenhum trimestre
+  // cadastrado" nem trimestres julgados com dado parcial.
+  if (estadoSemLeitura) {
+    return <AvisoLeituraFalhou oque="o histórico do DES" estado={estadoSemLeitura} variante="bloco" />;
   }
 
-  if (!cards.length || (cards.length === 1 && cards[0].meta === null && !cards[0].ultimoCheckin && !cards[0].snapshots.length)) {
+  if (!temHistorico(cards)) {
     return (
       <Card>
         <CardContent className="p-12 text-center space-y-3">
@@ -88,7 +80,11 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
       {/* Timeline de cards */}
       <div className="space-y-4">
         {cardsFiltrados.map((c) => (
-          <QuarterCardItem key={`${c.ano}-${c.trimestre}`} card={c} onVerDetalhes={setDetalhesOpen} />
+          <QuarterCardItem
+            key={`${c.ano}-${c.trimestre}`}
+            card={c}
+            onVerDetalhes={(x) => setDetalhesChave({ ano: x.ano, trimestre: x.trimestre })}
+          />
         ))}
         {cardsFiltrados.length === 0 && (
           <Card>
@@ -102,7 +98,14 @@ function HistoricoTabImpl({ empresa, ano: anoAtual, trimestre: trimestreAtual }:
       </div>
 
       {/* Modal de detalhes */}
-      <DetalhesDialog detalhes={detalhesOpen} onOpenChange={(o) => !o && setDetalhesOpen(null)} />
+      <DetalhesDialog
+        detalhes={
+          detalhesChave
+            ? (cards.find((c) => c.ano === detalhesChave.ano && c.trimestre === detalhesChave.trimestre) ?? null)
+            : null
+        }
+        onOpenChange={(o) => !o && setDetalhesChave(null)}
+      />
     </div>
   );
 }

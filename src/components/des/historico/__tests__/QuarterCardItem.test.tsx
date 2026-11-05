@@ -8,8 +8,12 @@ function makeCard(overrides: Partial<QuarterCard> = {}): QuarterCard {
     ano: 2026,
     trimestre: 2,
     isAtual: false,
+    isFuturo: false,
     meta: 100000,
     faturado: 120000,
+    faturadoOrigem: "snapshot",
+    faturadoReferencia: "2026-06-30",
+    fechado: true,
     faixaEstrelas: 4,
     inicio: "2026-04-01",
     fim: "2026-06-30",
@@ -70,6 +74,20 @@ describe("QuarterCardItem", () => {
   it("atual sem faturado não mostra barra de progresso", () => {
     setup({ card: makeCard({ isAtual: true, faturado: null }) });
     expect(screen.queryByText(/% da meta/)).toBeNull();
+  });
+
+  it("snapshot parcial abaixo da meta → 'Sem fechamento' e 'Faturado até', nunca 'Meta não atingida'", () => {
+    setup({ card: makeCard({ faturado: 50000, fechado: false, faturadoReferencia: "2026-04-18" }) });
+    expect(screen.getByText("Sem fechamento")).toBeTruthy();
+    expect(screen.getByText("Faturado até 18/04/2026")).toBeTruthy();
+    expect(screen.queryByText("Meta não atingida")).toBeNull();
+    expect(screen.queryByText("Faturado final")).toBeNull();
+  });
+
+  it("futuro → 'Planejado', sem julgamento", () => {
+    setup({ card: makeCard({ isFuturo: true, faturado: null, faturadoOrigem: null, fechado: false }) });
+    expect(screen.getByText("Planejado")).toBeTruthy();
+    expect(screen.queryByText("Meta não atingida")).toBeNull();
   });
 
   it("dispara onVerDetalhes ao clicar em Ver detalhes", () => {

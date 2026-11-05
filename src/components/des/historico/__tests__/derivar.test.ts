@@ -6,13 +6,16 @@ import {
   montarChartData,
   numOuNull,
   progressoDaMeta,
+  rotuloFaturado,
+  temHistorico,
   type EntradaCards,
   type PosicaoAoVivo,
 } from "../derivar";
 import type { CheckinDescontoRow, MetaRow, SnapshotRow } from "../types";
 
-// Cenário espelha a prod em 2026-11 (OBEN): T4/26 é o atual; T3/26 e T1/26 têm meta mas NENHUM
-// snapshot; T2/26 tem snapshot. O trimestre T4/25 não tem meta cadastrada (só checkin).
+// Cenário próximo da prod em 2026-11 (OBEN): T4/26 é o atual; T3/26 e T1/26 têm meta mas NENHUM
+// snapshot; T2/26 tem snapshot de FECHAMENTO (30/06) aqui — na prod o único é PARCIAL (18/04), ver
+// o describe de fechamento. O trimestre T4/25 não tem meta cadastrada (só checkin).
 const META_ATUAL = 500_000;
 const META_PASSADA = 400_840.02;
 
@@ -34,6 +37,8 @@ const live: PosicaoAoVivo = {
   ano: 2026,
   trimestre: 4,
   posicao_ao_vivo_conservadora: 120_000,
+  fat_bruto_confirmado: 80_000,
+  gooddata_data_referencia: "2026-10-31",
   faixa_conservadora: { estrelas: 2 },
   meta_pessoal: META_ATUAL,
   inicio_trimestre: "2026-10-01",
@@ -74,10 +79,29 @@ describe("montarCards — nulidade (ausente ≠ zero)", () => {
     expect(card(cards, 2026, 4).faixaEstrelas).toBe(2);
   });
 
+  it("zero REAL de snapshot é preservado (não vira null) e é julgado", () => {
+    const s: SnapshotRow = { ...snapshots[0], fat_bruto_valor: 0 };
+    const c = card(montarCards(entrada({ snapshots: [s] })), 2026, 2);
+    expect(c.faturado).toBe(0);
+    expect(julgarTrimestre(c)).toBe("nao_atingida");
+  });
+
+  it("último snapshot com faturado null NÃO cai para um anterior preenchido", () => {
+    const anterior: SnapshotRow = { ...snapshots[0], data_referencia: "2026-05-15", fat_bruto_valor: 200_000 };
+    const ultimo: SnapshotRow = { ...snapshots[0], data_referencia: "2026-07-02", fat_bruto_valor: null };
+    const c = card(montarCards(entrada({ snapshots: [anterior, ultimo] })), 2026, 2);
+    expect(c.faturado).toBeNull();
+    expect(julgarTrimestre(c)).toBe("sem_dado");
+  });
+
   it("numOuNull nunca fabrica 0", () => {
     expect(numOuNull(null)).toBeNull();
     expect(numOuNull(undefined)).toBeNull();
     expect(numOuNull("")).toBeNull();
+    expect(numOuNull("   ")).toBeNull();
+    expect(numOuNull(false)).toBeNull();
+    expect(numOuNull([])).toBeNull();
+    expect(numOuNull(Number.POSITIVE_INFINITY)).toBeNull();
     expect(numOuNull(Number.NaN)).toBeNull();
     expect(numOuNull("abc")).toBeNull();
     expect(numOuNull(0)).toBe(0);
@@ -114,29 +138,95 @@ describe("montarCards — procedência temporal (meta do próprio trimestre)", (
     expect(atual.faturado).toBeNull();
   });
 
+  it("meta própria ZERO do atual não é substituída pela da posição ao vivo", () => {
+    const comZero = metas.map((m) => (m.ano === 2026 && m.trimestre === 4 ? { ...m, meta_faturamento: 0 } : m));
+    expect(card(montarCards(entrada({ metas: comZero })), 2026, 4).meta).toBe(0);
+  });
+
+  it("mesmo trimestre de OUTRO ano não herda a posição ao vivo", () => {
+    const cards = montarCards(entrada({ checkins: [checkin(2025, 4, 3)] }));
+    const t4_25 = card(cards, 2025, 4);
+    expect(t4_25.meta).toBeNull();
+    expect(t4_25.faturado).toBeNull();
+  });
+
   it("objetivo_valor do snapshot (objetivo do fornecedor) não vira meta", () => {
     const sem = metas.filter((m) => !(m.ano === 2026 && m.trimestre === 2));
     expect(card(montarCards(entrada({ metas: sem })), 2026, 2).meta).toBeNull();
   });
 });
 
-describe("julgarTrimestre — sem meta/sem faturado é 'sem_dado', nunca 'não atingida'", () => {
+describe("posição ao vivo ≠ faturado (view faz COALESCE(fat_bruto,0) + trânsito)", () => {
+  it("sem fat_bruto_confirmado a posição é só trânsito: faturado e faixa ao vivo viram null", () => {
+    // prod 2026-11-05, T4/26: fat_bruto_confirmado NULL, posição 264.175,21 = trânsito, 3★ dela.
+    const soTransito: PosicaoAoVivo = { ...live, fat_bruto_confirmado: null, gooddata_data_referencia: null, posicao_ao_vivo_conservadora: 264_175.21, faixa_conservadora: { estrelas: 3 } };
+    const atual = card(montarCards(entrada({ live: soTransito })), 2026, 4);
+    expect(atual.faturado).toBeNull();
+    expect(atual.faixaEstrelas).toBeNull();
+    expect(atual.meta).toBe(META_ATUAL);
+  });
+
+  it("com fat_bruto_confirmado a posição vale e é rotulada como posição, não faturado", () => {
+    const atual = card(montarCards(entrada()), 2026, 4);
+    expect(atual.faturado).toBe(120_000);
+    expect(atual.faturadoOrigem).toBe("ao_vivo");
+    expect(rotuloFaturado(atual)).toBe("Posição ao vivo (faturado + pedidos)");
+  });
+});
+
+describe("fechamento — snapshot parcial não julga", () => {
+  it("prod: único snapshot do T2/26 é de 18/04 → sem_fechamento, rótulo 'Faturado até 18/04/2026'", () => {
+    const parcial: SnapshotRow = { ...snapshots[0], data_referencia: "2026-04-18", fat_bruto_valor: 103_068.74 };
+    const c = card(montarCards(entrada({ snapshots: [parcial] })), 2026, 2);
+    expect(c.faturado).toBe(103_068.74);
+    expect(c.fechado).toBe(false);
+    expect(julgarTrimestre(c)).toBe("sem_fechamento");
+    expect(rotuloFaturado(c)).toBe("Faturado até 18/04/2026");
+  });
+
+  it("snapshot NO último dia do trimestre fecha; um dia antes não", () => {
+    const noFim: SnapshotRow = { ...snapshots[0], data_referencia: "2026-06-30" };
+    const vespera: SnapshotRow = { ...snapshots[0], data_referencia: "2026-06-29" };
+    expect(card(montarCards(entrada({ snapshots: [noFim] })), 2026, 2).fechado).toBe(true);
+    expect(card(montarCards(entrada({ snapshots: [vespera] })), 2026, 2).fechado).toBe(false);
+  });
+
+  it("snapshot do trimestre atual nunca 'fecha' (mesmo sem posição ao vivo)", () => {
+    const s: SnapshotRow = { ...snapshots[0], ano: 2026, trimestre: 4, data_referencia: "2026-12-31" };
+    const c = card(montarCards(entrada({ snapshots: [s], live: null })), 2026, 4);
+    expect(c.fechado).toBe(false);
+    expect(c.faturadoOrigem).toBe("snapshot");
+  });
+});
+
+describe("julgarTrimestre — sem meta/faturado/fechamento nunca é 'não atingida'", () => {
+  const base = { isAtual: false, isFuturo: false, fechado: true };
   it("passado com meta e faturado null → sem_dado", () => {
-    expect(julgarTrimestre({ isAtual: false, meta: META_PASSADA, faturado: null })).toBe("sem_dado");
+    expect(julgarTrimestre({ ...base, meta: META_PASSADA, faturado: null })).toBe("sem_dado");
   });
   it("passado sem meta → sem_dado (mesmo com faturado)", () => {
-    expect(julgarTrimestre({ isAtual: false, meta: null, faturado: 10 })).toBe("sem_dado");
-    expect(julgarTrimestre({ isAtual: false, meta: 0, faturado: 10 })).toBe("sem_dado");
+    expect(julgarTrimestre({ ...base, meta: null, faturado: 10 })).toBe("sem_dado");
+    expect(julgarTrimestre({ ...base, meta: 0, faturado: 10 })).toBe("sem_dado");
   });
-  it("passado com dados → atingida / nao_atingida", () => {
-    expect(julgarTrimestre({ isAtual: false, meta: 100, faturado: 100 })).toBe("atingida");
-    expect(julgarTrimestre({ isAtual: false, meta: 100, faturado: 99.99 })).toBe("nao_atingida");
-    expect(julgarTrimestre({ isAtual: false, meta: 100, faturado: 0 })).toBe("nao_atingida");
+  it("passado sem fechamento → sem_fechamento", () => {
+    expect(julgarTrimestre({ ...base, fechado: false, meta: 100, faturado: 1 })).toBe("sem_fechamento");
   });
-  it("atual → em_andamento", () => {
-    expect(julgarTrimestre({ isAtual: true, meta: null, faturado: null })).toBe("em_andamento");
+  it("passado fechado → atingida / nao_atingida, no centavo", () => {
+    expect(julgarTrimestre({ ...base, meta: 100, faturado: 100 })).toBe("atingida");
+    expect(julgarTrimestre({ ...base, meta: 100, faturado: 100.01 })).toBe("atingida");
+    expect(julgarTrimestre({ ...base, meta: 100, faturado: 99.99 })).toBe("nao_atingida");
   });
-  it("cenário prod: T1 e T3/26 viram sem_dado; T2/26 é julgado", () => {
+  it("atual → em_andamento; futuro → planejado", () => {
+    expect(julgarTrimestre({ ...base, isAtual: true, meta: null, faturado: null })).toBe("em_andamento");
+    expect(julgarTrimestre({ ...base, isFuturo: true, meta: 100, faturado: null })).toBe("planejado");
+  });
+  it("trimestre futuro com meta cadastrada vira card 'planejado', não 'não atingida'", () => {
+    const comFuturo = [...metas, { ano: 2027, trimestre: 1, meta_faturamento: 450_000, faixa_des_objetivo: null }];
+    const f = card(montarCards(entrada({ metas: comFuturo })), 2027, 1);
+    expect(f.isFuturo).toBe(true);
+    expect(julgarTrimestre(f)).toBe("planejado");
+  });
+  it("cenário prod: 5 cards preservados; só T2/26 (fechado) é julgado", () => {
     const chart = montarChartData(montarCards(entrada()));
     const por = Object.fromEntries(chart.map((d) => [d.label, d.julgamento]));
     expect(por).toEqual({
@@ -146,6 +236,15 @@ describe("julgarTrimestre — sem meta/sem faturado é 'sem_dado', nunca 'não a
       "T3/26": "sem_dado",
       "T4/26": "em_andamento",
     });
+  });
+});
+
+describe("temHistorico — ausência de meta não é ausência de histórico", () => {
+  it("só a posição ao vivo do atual (sem meta/snapshot/checkin) já é histórico", () => {
+    expect(temHistorico(montarCards(entrada({ metas: [], snapshots: [], checkins: [] })))).toBe(true);
+  });
+  it("nada em fonte nenhuma → sem histórico", () => {
+    expect(temHistorico(montarCards(entrada({ metas: [], snapshots: [], checkins: [], live: null })))).toBe(false);
   });
 });
 

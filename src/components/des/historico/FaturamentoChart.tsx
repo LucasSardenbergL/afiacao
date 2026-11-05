@@ -27,7 +27,9 @@ const COR_POR_JULGAMENTO: Record<ChartDatum["julgamento"], string> = {
   em_andamento: "hsl(var(--status-info))",
   atingida: "hsl(var(--status-success))",
   nao_atingida: "hsl(var(--status-error))",
+  sem_fechamento: "hsl(var(--muted-foreground))",
   sem_dado: "hsl(var(--muted-foreground))",
+  planejado: "hsl(var(--muted-foreground))",
 };
 
 export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps) {

@@ -1,74 +1,150 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, waitFor, fireEvent, act, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { ReactNode } from "react";
 
-// Leitura que falha não pode virar "Nenhum trimestre cadastrado" nem trimestre zerado: o hook
-// expõe isError e a aba mostra o erro (fail-closed — nenhum trimestre é julgado).
+// Integração HistoricoTab + useHistoricoData com QueryClient REAL e Supabase mockado.
+// Leitura que não aconteceu (erro — inclusive depois de um sucesso — ou offline) não pode virar
+// "Nenhum trimestre cadastrado" nem trimestre julgado: a aba mostra <AvisoLeituraFalhou>.
+// Os dados espelham a prod em 2026-11-05 (OBEN): metas T1..T4/26, um snapshot PARCIAL do T2
+// (18/04) e a posição ao vivo do T4 sem faturado GoodData (só trânsito).
 
-const { falhar } = vi.hoisted(() => ({ falhar: { tabela: null as string | null } }));
+const { estado } = vi.hoisted(() => ({
+  estado: { falhar: null as string | null, metaT3: 400840.02 },
+}));
 
-const LINHAS: Record<string, unknown[]> = {
-  des_meta_empresa: [{ ano: 2026, trimestre: 3, meta_faturamento: 400840.02, faixa_des_objetivo: null }],
-  des_trimestre_snapshot: [],
-  v_des_desconto_por_checkin: [],
-};
+const meta = (trimestre: number, valor: number) => ({ ano: 2026, trimestre, meta_faturamento: valor, faixa_des_objetivo: null });
+
+function linhas(tabela: string): unknown {
+  switch (tabela) {
+    case "des_meta_empresa":
+      return [meta(4, 400840.02), meta(3, estado.metaT3), meta(2, 400840.02), meta(1, 400840.02)];
+    case "des_trimestre_snapshot":
+      return [{ ano: 2026, trimestre: 2, data_referencia: "2026-04-18", fat_bruto_valor: 103068.74, pedidos_abertos_valor: 49539.78, objetivo_valor: 400840.02 }];
+    case "v_des_desconto_por_checkin":
+      return [];
+    case "v_des_posicao_trimestre_ao_vivo":
+      return {
+        ano: 2026,
+        trimestre: 4,
+        posicao_ao_vivo_conservadora: 264175.21,
+        fat_bruto_confirmado: null,
+        gooddata_data_referencia: null,
+        faixa_conservadora: { estrelas: 3 },
+        meta_pessoal: 400840.02,
+        inicio_trimestre: "2026-10-01",
+        fim_trimestre: "2026-12-31",
+      };
+    default:
+      throw new Error(`tabela inesperada: ${tabela}`);
+  }
+}
 
 vi.mock("@/integrations/supabase/client", () => ({
   supabase: {
     from: (tabela: string) => {
-      const erro = falhar.tabela === tabela ? { message: `falha em ${tabela}` } : null;
+      const resposta = () =>
+        Promise.resolve(
+          estado.falhar === tabela
+            ? { data: null, error: { message: `falha em ${tabela}` } }
+            : { data: linhas(tabela), error: null },
+        );
       const q = {
         select: () => q,
         eq: () => q,
         order: () => q,
-        maybeSingle: () => Promise.resolve(erro ? { data: null, error: erro } : { data: null, error: null }),
-        then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
-          Promise.resolve(erro ? { data: null, error: erro } : { data: LINHAS[tabela] ?? [], error: null }).then(ok, ko),
+        maybeSingle: resposta,
+        then: (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => resposta().then(ok, ko),
       };
       return q;
     },
   },
 }));
 
-// recharts (ResponsiveContainer) exige ResizeObserver, ausente no jsdom; o gráfico tem seu próprio
-// contrato (cor por julgamento) testado na derivação.
+// recharts (ResponsiveContainer) exige ResizeObserver, ausente no jsdom; a cor por julgamento
+// do gráfico é testada na derivação (montarChartData).
 vi.mock("../FaturamentoChart", () => ({ FaturamentoChart: () => null }));
 
 import { HistoricoTab } from "../../HistoricoTab";
 
+let qc: QueryClient;
 function wrapper({ children }: { children: ReactNode }) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
     <QueryClientProvider client={qc}>
       <MemoryRouter>{children}</MemoryRouter>
     </QueryClientProvider>
   );
 }
+const renderTab = () => render(<HistoricoTab empresa="OBEN" ano={2026} trimestre={4} />, { wrapper });
 
 beforeEach(() => {
-  falhar.tabela = null;
+  estado.falhar = null;
+  estado.metaT3 = 400840.02;
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+});
+afterEach(() => {
+  onlineManager.setOnline(true);
 });
 
-describe("HistoricoTab — estado de erro", () => {
+describe("HistoricoTab — leitura que não aconteceu", () => {
   it.each(["des_meta_empresa", "des_trimestre_snapshot", "v_des_desconto_por_checkin", "v_des_posicao_trimestre_ao_vivo"])(
-    "falha em %s → mensagem de erro, sem empty-state nem julgamento",
+    "falha em %s → aviso de erro, sem empty-state nem julgamento",
     async (tabela) => {
-      falhar.tabela = tabela;
-      render(<HistoricoTab empresa="OBEN" ano={2026} trimestre={4} />, { wrapper });
-      await waitFor(() => expect(screen.getByText(/Não foi possível carregar o histórico do DES/)).toBeTruthy());
+      estado.falhar = tabela;
+      renderTab();
+      const aviso = await screen.findByTestId("aviso-leitura-falhou");
+      expect(aviso.getAttribute("data-estado")).toBe("erro");
       expect(screen.queryByText("Nenhum trimestre cadastrado ainda.")).toBeNull();
-      expect(screen.queryByText("Meta não atingida")).toBeNull();
-      expect(screen.getByText("Tentar novamente")).toBeTruthy();
+      expect(screen.queryByText("T3 2026")).toBeNull();
     },
   );
 
-  it("CONTROLE: sem falha, o passado com meta e sem snapshot aparece como 'Sem dado'", async () => {
-    render(<HistoricoTab empresa="OBEN" ano={2026} trimestre={4} />, { wrapper });
-    await waitFor(() => expect(screen.getByText("T3 2026")).toBeTruthy());
-    expect(screen.queryByText(/Não foi possível carregar/)).toBeNull();
-    expect(screen.getByText("Sem dado")).toBeTruthy();
+  it("offline na 1ª leitura (pending+paused, que não é isLoading) → aviso 'sem-rede', não vazio", async () => {
+    onlineManager.setOnline(false);
+    renderTab();
+    const aviso = await screen.findByTestId("aviso-leitura-falhou");
+    expect(aviso.getAttribute("data-estado")).toBe("sem-rede");
+    expect(screen.queryByText("Nenhum trimestre cadastrado ainda.")).toBeNull();
+  });
+
+  it("erro DEPOIS de um sucesso (cache na mão) → aviso, não os cards velhos", async () => {
+    renderTab();
+    await screen.findByText("T3 2026");
+    estado.falhar = "des_trimestre_snapshot";
+    await act(() => qc.refetchQueries());
+    const aviso = await screen.findByTestId("aviso-leitura-falhou");
+    expect(aviso.getAttribute("data-estado")).toBe("erro");
+    expect(screen.queryByText("T3 2026")).toBeNull();
+  });
+});
+
+describe("HistoricoTab — dados de prod (2026-11-05)", () => {
+  it("CONTROLE: 4 cards; T1/T3 'Sem dado', T2 parcial 'Sem fechamento', nenhum 'Meta não atingida'", async () => {
+    renderTab();
+    await screen.findByText("T3 2026");
+    expect(screen.queryByTestId("aviso-leitura-falhou")).toBeNull();
+    for (const t of ["T1 2026", "T2 2026", "T3 2026", "T4 2026"]) expect(screen.getByText(t)).toBeTruthy();
+    expect(screen.getAllByText("Sem dado")).toHaveLength(2);
+    expect(screen.getAllByText("Sem fechamento")).toHaveLength(1);
+    expect(screen.getByText("Faturado até 18/04/2026")).toBeTruthy();
     expect(screen.queryByText("Meta não atingida")).toBeNull();
+    expect(screen.queryByText("Faturado final")).toBeNull();
+    // T4: posição ao vivo é só trânsito (sem faturado GoodData) → não aparece como faturado.
+    expect(screen.queryByText(/264\.175,21/)).toBeNull();
+  });
+
+  it("modal mostra o card VIGENTE: refetch com meta nova atualiza o modal aberto", async () => {
+    renderTab();
+    await screen.findByText("T3 2026");
+    const t3 = screen.getByText("T3 2026").closest(".rounded-lg, [class*='card']") as HTMLElement | null;
+    const botoes = screen.getAllByText("Ver detalhes");
+    // ordem desc: T4, T3, T2, T1
+    fireEvent.click(t3 ? within(t3).getByText("Ver detalhes") : botoes[1]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/400\.840,02/)).toBeTruthy();
+    estado.metaT3 = 555000;
+    await act(() => qc.refetchQueries());
+    await waitFor(() => expect(within(screen.getByRole("dialog")).getByText(/555\.000,00/)).toBeTruthy());
   });
 });
