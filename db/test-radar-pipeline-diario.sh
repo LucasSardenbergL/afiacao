@@ -51,7 +51,7 @@ if [ "${1:-}" = "--falsificar" ]; then
     done
     if [ "$ok" = 1 ]; then SAB_V=$((SAB_V+1)); echo "✅ $s → $verm vermelho(s)"; else SAB_F=$((SAB_F+1)); fi
   done
-  echo "falsificação: $SAB_V vermelhas como esperado, $SAB_F furadas"
+  echo "SABOTAGENS: $SAB_V vermelhas / $SAB_F falhas"
   [ "$SAB_F" -eq 0 ] && echo "RADAR_PIPELINE_FALSIFICACAO_OK"
   [ "$SAB_F" -eq 0 ]
   exit $?

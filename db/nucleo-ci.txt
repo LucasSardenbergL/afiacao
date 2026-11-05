@@ -939,6 +939,11 @@ db/test-radar-agregado-cnae.sh             39  falsificar=14
 # GIN. Oráculo em SQL direto na tabela para 8 recortes de contagem e 3 de lista; repetido no array conta 1 vez;
 # 0 leituras de radar_empresas no coberto (controle: não coberto lê); lote novo = indisponível; RLS/ACL; PRE.
 db/test-radar-cnae-secundario.sh           46  falsificar=18
+# Mini, pipeline diário do Radar (20261105150000): o score das 06:30 sai sem reler radar_empresas quando a impressão
+# digital (lote, fórmula, max(updated_at), nº de já-clientes) não mudou — 0 seq scans medidos em pg_stat_xact — e
+# continua registrando a rodada; recalcula com updated_at novo, já-cliente sem bump, lote novo e na rede de 7 dias;
+# rodada com pulado não grava o estado; 1º cálculo = predecessora de prod; tick conta pelo índice parcial; RLS/ACL; PRE.
+db/test-radar-pipeline-diario.sh           28  falsificar=10
 
 # Possível vínculo/sucessor de cliente na ficha do Radar (migration 20261104201756): chave exclusiva (≤ 2 raízes),
 # telefone/e-mail sozinhos ocultos, contador derruba telefone/e-mail, pessoa só no mesmo município, cliente
