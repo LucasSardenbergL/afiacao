@@ -2,7 +2,8 @@
 // A4 — helper PURO da fila (sem IO, sem Deno.env: o teste Deno importa este módulo sem subir a edge).
 // Cópia VERBATIM do bloco MIRROR de src/lib/financeiro/next-best-action-helpers.ts (Deno não importa
 // de `src/`). A paridade textual é vigiada no vitest `src/__tests__/edge-money-path-invariants.test.ts`:
-// mude a FONTE e recopie o bloco inteiro — nunca edite só aqui.
+// mude a FONTE e recopie o bloco inteiro — nunca edite só aqui. Única diferença
+// permitida: `export` (a normalização da paridade o ignora) — `caixaDisponivel` não é exportada aqui (knip).
 
 // MIRROR-START a4-fila
 const finito = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
@@ -10,7 +11,7 @@ const finito = (x: unknown): x is number => typeof x === 'number' && Number.isFi
 // "ausente ≠ R$0": saldo ou cobertura DESCONHECIDOS → disponível desconhecido (null), nunca 0.
 // O `?? 0` antigo no transporte fazia cobertura null ("sem base de saída") virar "R$0 disponível,
 // confiança alta" com o saldo inteiro conhecido (plano v6 C1, reprodução do Codex).
-export function caixaDisponivel(input: {
+function caixaDisponivel(input: {
   saldo_tesouraria: number | null;
   dias_cobertura: number | null;
   reserva_dias_min: number;
@@ -62,24 +63,6 @@ export function caixaDaA1(resp: RespostaA1Caixa | null, reserva_dias_min: number
   const disponivel = caixaDisponivel({ saldo_tesouraria: saldo, dias_cobertura: dias, reserva_dias_min, confianca_baixa: saldoDatado });
   const confianca: CaixaEmpresa['confianca'] = disponivel == null || saldoDatado ? 'baixa' : semAtestado ? 'media' : 'alta';
   return { disponivel, confianca, saldo_tesouraria: saldo, dias_cobertura: dias, motivos };
-}
-
-export type FonteHurdle = 'wacc' | 'retorno_dono' | 'custo_divida' | 'mediana' | 'indisponivel';
-
-export function hurdleEfetivo(input: {
-  wacc: number | null;
-  custo_divida_pos_imposto: number | null;
-  retorno_minimo_dono: number | null;
-  mediana_hurdles: number | null;
-}): { hurdle: number | null; fonte: FonteHurdle } {
-  // hurdle ≤0 é implausível (custo de capital nunca é não-positivo) → trata como ausente e pula pro próximo
-  // fallback. Coerente com os guards do A2/A3 ("soma ≤0 = capital grátis → null"). "ausente ≠ R$0".
-  const ok = (x: number | null): x is number => x != null && Number.isFinite(x) && x > 0;
-  if (ok(input.wacc)) return { hurdle: input.wacc, fonte: 'wacc' };
-  if (ok(input.retorno_minimo_dono)) return { hurdle: input.retorno_minimo_dono, fonte: 'retorno_dono' };
-  if (ok(input.custo_divida_pos_imposto)) return { hurdle: input.custo_divida_pos_imposto, fonte: 'custo_divida' };
-  if (ok(input.mediana_hurdles)) return { hurdle: input.mediana_hurdles, fonte: 'mediana' };
-  return { hurdle: null, fonte: 'indisponivel' };
 }
 
 export type StatusAcao = 'financiar_ja' | 'financiar_condicional' | 'consertar_antes' | 'falta_dado' | 'nao_financiar';
