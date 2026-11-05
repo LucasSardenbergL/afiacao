@@ -34,6 +34,9 @@ export type DatasetFinanceiro =
   | 'fluxoCaixa'
   | 'inadimplentes';
 
+/** Ordem FIXA das empresas no DRE consolidado (o array concatenado segue esta ordem). */
+const EMPRESAS_DRE_CONSOLIDADO: readonly Company[] = ['oben', 'colacor', 'colacor_sc'];
+
 export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
   const [view, setView] = useState<FinanceiroView>(defaultCompany);
   const [loading, setLoading] = useState(false);
@@ -238,14 +241,14 @@ export function useFinanceiro(defaultCompany: FinanceiroView = 'all') {
     try {
       setLoading(true);
       if (view === 'all') {
-        // Para consolidado, carregar cada empresa e somar
-        const allDres: FinDRE[] = [];
-        for (const co of ['oben', 'colacor', 'colacor_sc'] as Company[]) {
-          const data = await getDRE(co, ano, meses, regime);
-          allDres.push(...data);
-        }
+        // Consolidado: as 3 leituras são independentes (empresa/ano/regime) → em paralelo, espera = max.
+        // Promise.all preserva a ORDEM do array (oben, colacor, colacor_sc) e rejeita se QUALQUER uma
+        // rejeitar → nunca um DRE parcial apresentado como o consolidado (cai no catch: [] + falha).
+        const porEmpresa = await Promise.all(
+          EMPRESAS_DRE_CONSOLIDADO.map((co) => getDRE(co, ano, meses, regime)),
+        );
         if (g !== geracoes.current.dre) return;
-        setDre(allDres);
+        setDre(porEmpresa.flat());
       } else {
         const data = await getDRE(view as Company, ano, meses, regime);
         if (g !== geracoes.current.dre) return;
