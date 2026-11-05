@@ -732,6 +732,9 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
   const { pedirSaida, dialogoSaida } = useSaidaComFilaPendente();
   const { isImpersonating } = useImpersonation();
   const { displayIsStaff } = useDisplayAccess();
+  // Poll de 30 s do override: identidade REAL (como os polls de badge do shell), porque a RLS
+  // só deixa staff ler. Sem o gate, todo cliente polava a tabela para receber vazio (lab F11).
+  const { isStaff } = useAuth();
 
   return (
     <header
@@ -758,7 +761,7 @@ const AppTopbar = React.memo(function AppTopbar({ sidebarCollapsed, onMobileMenu
 
       <div className="flex items-center gap-1">
         <Suspense fallback={null}>
-          <ActiveOverrideBadge />
+          <ActiveOverrideBadge habilitado={isStaff} />
           <PersonaSwitcherChip />
         </Suspense>
         <CompanySwitcher />

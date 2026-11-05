@@ -12,12 +12,17 @@ export type ActiveOverride = {
   acao_planejada: string;
 };
 
-export function usePeriodOverride(company: string) {
+/**
+ * `habilitado` (default true) é o gate do poll de 30 s. O badge do topbar DEVE passar
+ * `isStaff`: a RLS (`fin_period_overrides_select_staff`) só deixa employee/master ler, e sem o
+ * gate toda aba de cliente polava a tabela a cada 30 s para receber vazio (lab F11, plano v6).
+ */
+export function usePeriodOverride(company: string, { habilitado = true }: { habilitado?: boolean } = {}) {
   const qc = useQueryClient();
 
   const activeOverride = useQuery<ActiveOverride | null>({
     queryKey: ['fin_period_overrides', 'active', company],
-    enabled: Boolean(company),
+    enabled: Boolean(company) && habilitado,
     refetchInterval: 30_000,
     queryFn: async () => {
       const { data, error } = await supabase
