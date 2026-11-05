@@ -18,12 +18,15 @@ import { JANELA_HORAS, useFormulasRejeitadas } from '@/hooks/useTintAlertas';
 
 const ACCOUNT = 'oben';
 
+/**
+ * As métricas BARATAS do painel. A contagem de fórmulas NÃO mora aqui: ela tem leitura própria
+ * (`useContagemFormulas`), para que o custo dela não segure o resto da tela.
+ */
 function useMetrics() {
   return useQuery({
     queryKey: ['tint-dashboard-metrics'],
     queryFn: async () => {
-      const [formulas, skusAll, skusMapped, corantesAll, corantesMapped, lastImport] = await Promise.all([
-        supabase.from('tint_formulas').select('id', { count: 'exact', head: true }).eq('account', ACCOUNT),
+      const [skusAll, skusMapped, corantesAll, corantesMapped, lastImport] = await Promise.all([
         supabase.from('tint_skus').select('id', { count: 'exact', head: true }).eq('account', ACCOUNT),
         supabase.from('tint_skus').select('id', { count: 'exact', head: true }).eq('account', ACCOUNT).not('omie_product_id', 'is', null),
         supabase.from('tint_corantes').select('id', { count: 'exact', head: true }).eq('account', ACCOUNT),
@@ -35,7 +38,6 @@ function useMetrics() {
       // (psql-ro, 2026-09-07). Ausência de contagem NÃO é contagem zero — LANÇA.
       if (lastImport.error) throw lastImport.error;
       return {
-        totalFormulas: contagem(formulas, 'fórmulas'),
         totalSkus: contagem(skusAll, 'SKUs'),
         skusMapped: contagem(skusMapped, 'SKUs mapeados'),
         totalCorantes: contagem(corantesAll, 'corantes'),
@@ -56,6 +58,40 @@ function contagem(r: { count: number | null; error: { message: string } | null }
   if (r.error) throw r.error;
   if (r.count == null) throw new Error(`contagem de ${oque} não veio na resposta`);
   return r.count;
+}
+
+/**
+ * Quantas fórmulas há — em leitura PRÓPRIA e ESTIMADA (F9 do plano v6).
+ *
+ * Era um `count: 'exact'` sobre ~1 M linhas dentro do `Promise.all` de `useMetrics`: 215 ms
+ * quente e 7.953 ms frio (index-only scan, psql-ro 2026-11-04), e como a chave era uma só, o
+ * painel INTEIRO ficava no skeleton esperando essa contagem. Duas mudanças, que se somam:
+ *  - leitura separada: SKUs, corantes e última importação aparecem sem esperar por ela;
+ *  - `planned`: o PostgREST devolve a estimativa do planner (o EXPLAIN, 0,1 ms), sem varrer a
+ *    tabela. Medido: 1.001.700 estimadas × 1.002.356 reais (erro de 0,07%).
+ * Por ser estimativa, a tela mostra o número com "~" e diz que é aproximado (`aproximado`).
+ * Mostrar o número do planner como contagem exata seria afirmar o que não foi contado.
+ */
+function useContagemFormulas() {
+  return useQuery({
+    queryKey: ['tint-dashboard-formulas-estimadas'],
+    queryFn: async () => contagem(
+      await supabase.from('tint_formulas').select('id', { count: 'planned', head: true }).eq('account', ACCOUNT),
+      'fórmulas',
+    ),
+  });
+}
+
+/**
+ * Uma estimativa escrita de um jeito que NÃO se lê como contagem exata: "~1,0 mi", "~995 mil".
+ * A partir de 999.500 vai para "mi", senão o arredondamento daria "~1.000 mil".
+ */
+function aproximado(n: number): string {
+  if (n >= 999_500) {
+    return `~${(n / 1_000_000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} mi`;
+  }
+  if (n >= 1_000) return `~${Math.round(n / 1_000).toLocaleString('pt-BR')} mil`;
+  return `~${n.toLocaleString('pt-BR')}`;
 }
 
 /**
@@ -192,7 +228,16 @@ export default function TintDashboard() {
   // por `const q = useMetrics()` + `q.data` some com o sítio do detector do gate sem corrigir nada
   // (docs/historico/a-forma-que-some-e-a-forma-que-mente.md, achado da fatia #2).
   const { data: m, status: statusM, fetchStatus: fetchM } = useMetrics();
+  const { data: formulas, status: statusF, fetchStatus: fetchF } = useContagemFormulas();
   const { data: rejeitadas, status: statusE, fetchStatus: fetchE } = useFormulasRejeitadas();
+
+  // A contagem de fórmulas tem estado PRÓPRIO: enquanto ela não chega, o card dela mostra
+  // skeleton e o resto do painel já está de pé; se ela falhar, o aviso é só dela.
+  const fatiaF = { status: statusF, fetchStatus: fetchF };
+  const estadoF = estadoDeLeitura(fatiaF);
+  const formulasSemLeitura: EstadoSemLeitura | null =
+    (naoConsegui(estadoF) && formulas === undefined ? estadoF : null)
+    ?? desatualizado(fatiaF, formulas !== undefined);
 
   const fatiaM = { status: statusM, fetchStatus: fetchM };
   const fatiaE = { status: statusE, fetchStatus: fetchE };
@@ -223,7 +268,7 @@ export default function TintDashboard() {
 
       {metricasSemLeitura && (
         <AvisoLeituraFalhou
-          oque="os números do tintométrico (fórmulas, SKUs, corantes e a última importação)"
+          oque="os números do tintométrico (SKUs, corantes e a última importação)"
           estado={metricasSemLeitura}
           variante="bloco"
           testId="aviso-leitura-metricas"
@@ -248,8 +293,30 @@ export default function TintDashboard() {
             <Beaker className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">{kpi(m?.totalFormulas)}</p>
-            <p className="text-xs text-muted-foreground">importadas</p>
+            {formulas !== undefined ? (
+              <>
+                <p
+                  className="text-2xl font-bold"
+                  data-testid="kpi-formulas"
+                  title={`Estimativa do banco: ${formulas.toLocaleString('pt-BR')} (não é contagem exata)`}
+                >
+                  {aproximado(formulas)}
+                </p>
+                <p className="text-xs text-muted-foreground">importadas · número aproximado</p>
+              </>
+            ) : estadoF === 'carregando' ? (
+              <Skeleton className="h-8 w-24" data-testid="kpi-formulas-carregando" />
+            ) : (
+              <p className="text-2xl font-bold" data-testid="kpi-formulas">—</p>
+            )}
+            {formulasSemLeitura && (
+              <AvisoLeituraFalhou
+                oque="a contagem de fórmulas"
+                estado={formulasSemLeitura}
+                className="mt-2 mb-0"
+                testId="aviso-leitura-formulas"
+              />
+            )}
           </CardContent>
         </Card>
 

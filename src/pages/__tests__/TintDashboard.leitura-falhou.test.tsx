@@ -32,7 +32,14 @@ const ERRO = { message: 'permission denied' };
  * COUNT da `.maybeSingle()` da última importação — sem isso o `throw` do `lastImport.error`
  * cobriria o guard de `contagem()` e a camada passaria verde por REDUNDÂNCIA, não por desenho.
  */
-let falha: 'nenhuma' | 'metricas' | 'erros' | 'origem' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' = 'nenhuma';
+let falha: 'nenhuma' | 'metricas' | 'erros' | 'origem' | 'so-contagem' | 'contagem-nula' | 'erro-com-contagem' | 'so-formulas' = 'nenhuma';
+/**
+ * A contagem de fórmulas NUNCA responde nesta rodada — o cenário do F9 (v6): o `count` de ~1 M
+ * linhas que levava 7,9 s frio. O resto do painel tem que ficar de pé sem ela.
+ */
+let formulasPendente = false;
+/** O `count` que cada leitura de `tint_formulas` pediu — o modo é o que separa exata de estimada. */
+let modosDeContagemFormulas: Array<string | undefined> = [];
 /** Marcas `personalizada` por cor — o que as 3 leituras de origem (formulas/versões/staging) devolvem. */
 let marcasOrigem: Record<string, Array<{ cor_id: string; personalizada: boolean }>> = {};
 let listaErros: unknown[] = [];
@@ -116,6 +123,7 @@ function resposta(tabela: string, chamados: Set<string>): Resposta {
     return { ...vazio, data: chamados.has('range') && marcasOrigem[tabela] ? marcasOrigem[tabela] : [] };
   }
   if (falha === 'metricas') return { ...vazio, error: ERRO };
+  if (tabela === 'tint_formulas' && falha === 'so-formulas') return { ...vazio, error: ERRO };
   const ehContagem = tabela === 'tint_formulas' || tabela === 'tint_skus' || tabela === 'tint_corantes';
   // só as tabelas de COUNT falham — a `.maybeSingle()` da última importação responde normal
   if (ehContagem && falha === 'so-contagem') return { ...vazio, error: ERRO };
@@ -140,13 +148,24 @@ function resposta(tabela: string, chamados: Set<string>): Resposta {
 function chain(tabela: string): unknown {
   const chamados = new Set<string>();
   const c: Record<string, unknown> = {};
+  let modoDeContagem: string | undefined;
   for (const m of [
-    'select', 'eq', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'in', 'order', 'limit',
+    'eq', 'gte', 'lt', 'lte', 'gt', 'is', 'not', 'in', 'order', 'limit',
     'range', 'or', 'neq', 'filter', 'single', 'maybeSingle', 'contains',
   ]) {
     c[m] = () => { chamados.add(m); return c; };
   }
-  c.then = (resolve: (v: Resposta) => void) => resolve(resposta(tabela, chamados));
+  c.select = (_cols?: string, opts?: { count?: string }) => {
+    chamados.add('select');
+    modoDeContagem = opts?.count;
+    if (tabela === 'tint_formulas' && opts?.count) modosDeContagemFormulas.push(opts.count);
+    return c;
+  };
+  c.then = (resolve: (v: Resposta) => void) => {
+    // a contagem de fórmulas pendurada: nunca resolve (só ela — a leitura de origem usa `.in`)
+    if (formulasPendente && tabela === 'tint_formulas' && modoDeContagem) return;
+    resolve(resposta(tabela, chamados));
+  };
   return c;
 }
 
@@ -172,6 +191,9 @@ import TintDashboard from '../TintDashboard';
 const AVISO = /não quer dizer que está tudo certo/i;
 const FRASE_SEM_IMPORTACAO = /Nenhuma importação/i;
 const TITULO_ERROS = /Fórmulas rejeitadas pela fonte/i;
+/** 994.882 é estimativa do planner na tela — escrita com "~", nunca como contagem exata. */
+const FORMULAS_APROX = '~995 mil';
+const ROTULO_APROX = /número aproximado/i;
 
 function novoQc() {
   return new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -188,6 +210,8 @@ function renderPagina(qc = novoQc()) {
 beforeEach(() => {
   onlineManager.setOnline(true);
   falha = 'nenhuma';
+  formulasPendente = false;
+  modosDeContagemFormulas = [];
   listaErros = errosDoRun();
   ultimoRun = runComErro();
   ultimaImportacao = importacaoOk();
@@ -203,7 +227,8 @@ afterEach(() => { onlineManager.setOnline(true); });
 describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => {
   it('CONTROLE: leitura boa → os números reais aparecem e NÃO há aviso', async () => {
     renderPagina();
-    expect(await screen.findByText('994.882')).toBeTruthy();
+    expect(await screen.findByText(FORMULAS_APROX)).toBeTruthy();
+    expect(screen.getByText(ROTULO_APROX)).toBeTruthy();
     // os dois KPIs de mapeamento vivem num nó de texto SÓ ("180 / 220") — casar '180' sozinho
     // não acharia nada, porque `getNodeText` concatena os filhos de texto diretos do elemento.
     expect(screen.getByText('180 / 220')).toBeTruthy();
@@ -220,7 +245,7 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     expect(aviso.getAttribute('data-estado')).toBe('erro');
     // o defeito da classe: `count ?? 0` afirmava 0 fórmulas sobre 994.882 linhas
     expect(screen.queryByText('0')).toBeNull();
-    expect(screen.queryByText('994.882')).toBeNull();
+    expect(screen.queryByText(FORMULAS_APROX)).toBeNull();
     // e o card da última importação parava de afirmar o vazio
     expect(screen.queryByText(FRASE_SEM_IMPORTACAO)).toBeNull();
   });
@@ -231,7 +256,7 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
 
     const aviso = await screen.findByTestId('aviso-leitura-metricas');
     expect(aviso.getAttribute('data-estado')).toBe('erro');
-    expect(screen.queryByText('994.882')).toBeNull();
+    expect(screen.queryByText(FORMULAS_APROX)).toBeNull();
   });
 
   it('contagem AUSENTE sem erro: também avisa — `count ?? 0` fabricaria zero por outra porta', async () => {
@@ -251,7 +276,7 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     const aviso = await screen.findByTestId('aviso-leitura-metricas');
     expect(aviso.getAttribute('data-estado')).toBe('erro');
     // a contagem VEIO, mas veio junto de um erro: exibi-la seria confiar num número não autorizado
-    expect(screen.queryByText('994.882')).toBeNull();
+    expect(screen.queryByText(FORMULAS_APROX)).toBeNull();
   });
 
   it('CONTROLE do vazio REAL: leu e não há importação → a frase é dita, e é VERDADE', async () => {
@@ -276,7 +301,7 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     // coberto pelo composto do card de erros, logo abaixo: juntos cobrem os dois.
     const qc = novoQc();
     renderPagina(qc);
-    expect(await screen.findByText('994.882')).toBeTruthy();
+    expect(await screen.findByText('180 / 220')).toBeTruthy();
     expect(screen.queryByTestId('aviso-leitura-metricas')).toBeNull();
 
     falha = 'metricas';
@@ -284,9 +309,9 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
 
     const aviso = await screen.findByTestId('aviso-leitura-metricas');
     expect(aviso.getAttribute('data-estado')).toBe('erro');
-    // e os números CONTINUAM na tela, com o aviso ao lado — apagar 994.882 fórmulas já lidas
+    // e os números CONTINUAM na tela, com o aviso ao lado — apagar números já lidos
     // porque um refetch falhou seria trocar um defeito por outro.
-    expect(screen.getByText('994.882')).toBeTruthy();
+    expect(screen.getByText('180 / 220')).toBeTruthy();
   });
 
   it('erro e vazio real NÃO produzem a mesma tela (o colapso, medido)', async () => {
@@ -302,6 +327,61 @@ describe('TintDashboard — métricas ilegíveis NÃO podem virar zeros', () => 
     const erro = renderPagina();
     await screen.findByTestId('aviso-leitura-metricas');
     expect(erro.container.textContent).not.toBe(telaVazia);
+  });
+});
+
+describe('TintDashboard — a contagem de ~1 M fórmulas NÃO segura o painel (F9, v6)', () => {
+  it('contagem de fórmulas PENDENTE: o resto do painel já renderiza, e o card dela mostra skeleton', async () => {
+    formulasPendente = true;
+    renderPagina();
+    // o que a chave única segurava: SKUs, corantes e a última importação, sem esperar a contagem
+    expect(await screen.findByText('180 / 220')).toBeTruthy();
+    expect(screen.getByText('10 / 14')).toBeTruthy();
+    expect(screen.getByText('formulas')).toBeTruthy();
+    expect(await screen.findByText(TITULO_ERROS)).toBeTruthy();
+    // e o card de fórmulas diz que está carregando — nem número, nem zero, nem travessão
+    expect(screen.getByTestId('kpi-formulas-carregando')).toBeTruthy();
+    expect(screen.queryByTestId('kpi-formulas')).toBeNull();
+    expect(screen.queryByTestId('aviso-leitura-formulas')).toBeNull();
+  });
+
+  it('a contagem é a ESTIMADA do planner (`planned`) — nunca a exata que varre ~1 M linhas', async () => {
+    renderPagina();
+    await screen.findByText(FORMULAS_APROX);
+    expect(modosDeContagemFormulas).toEqual(['planned']);
+  });
+
+  it('estimada: a tela escreve "~" e diz "aproximado" — nunca o número cru, que se lê como exato', async () => {
+    renderPagina();
+    const kpi = await screen.findByTestId('kpi-formulas');
+    expect(kpi.textContent).toBe(FORMULAS_APROX);
+    expect(screen.getByText(ROTULO_APROX)).toBeTruthy();
+    expect(screen.queryByText('994.882')).toBeNull();
+    // o número do planner fica no title, dito como estimativa
+    expect(kpi.getAttribute('title')).toBe('Estimativa do banco: 994.882 (não é contagem exata)');
+  });
+
+  it('acima de ~1 M a tela fala em "mi" (o caso de prod: 1.002.356)', async () => {
+    CONTAGENS.formulas = 1002356;
+    try {
+      renderPagina();
+      const kpi = await screen.findByTestId('kpi-formulas');
+      expect(kpi.textContent).toBe('~1,0 mi');
+    } finally {
+      CONTAGENS.formulas = 994882;
+    }
+  });
+
+  it('ERRO só na contagem de fórmulas: aviso PRÓPRIO, travessão no card, e o resto do painel de pé', async () => {
+    falha = 'so-formulas';
+    renderPagina();
+    const aviso = await screen.findByTestId('aviso-leitura-formulas');
+    expect(aviso.getAttribute('data-estado')).toBe('erro');
+    expect(screen.getByTestId('kpi-formulas').textContent).toBe('—');
+    expect(screen.queryByText(ROTULO_APROX)).toBeNull();
+    expect(screen.getByText('180 / 220')).toBeTruthy();
+    // âncora própria: o aviso das outras métricas não pode cobrir este
+    expect(screen.queryByTestId('aviso-leitura-metricas')).toBeNull();
   });
 });
 
