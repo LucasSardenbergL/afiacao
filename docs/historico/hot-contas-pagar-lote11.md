@@ -125,3 +125,4 @@ Medido por psql-ro em volta do 1º ciclo de CP depois do apply (cron 76, 2026-11
 - `deriva:corpo:prod` em exit 0 depois do apply.
 - **Publish do `getLastSyncTime` em paralelo: pendente** em 2026-11-05 09:00Z. O bundle no ar seguia
   `index-Bo5Gh-CB.js`. O modo automático barrou o `deploy_project` da sessão; o Publish ficou com o founder.
+- **Publish conferido em 2026-11-05 14:41Z** (`verify-frontend.sh`, pelos bytes): o entry servido passou a `index-RqRdHGLt.js` e contém sentinelas exclusivas de commits **posteriores** a este (`44c171da4`, C5 do v6, e `3661972a1`, F9), dos quais este é ancestral (`git merge-base --is-ancestor`). O `getLastSyncTime` paralelo está, portanto, no build servido. Bytes provam disponibilidade, não adoção: o SW só troca quando o cliente aceita a atualização.
