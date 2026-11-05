@@ -468,6 +468,24 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **Série depois do apply** (mesma régua, 12:09–12:44 UTC, loja aberta, 123 amostras): **85,8 MB/15 min** (antes, 126,6), abaixo do teto de 100. Houve **zero** saltos com a assinatura +3 arquivos / +7,6 MB, com 15 runs `catalogs` promovidos (15/15 `promovido`, 0 erros). Os ciclos `catalogs` de ~12:25 e ~12:36 só têm o +2 arquivos / +8,4 MB periódico do outro dono, que caiu na janela por coincidência. Os +2,5/+3,7 MB de 12:15 caem no lote de cron do minuto `:15` e já existiam antes do apply (11:45, 11:52). O `EXPLAIN` com temp 0 é vácuo aqui: nos runs `catalogs`, o statement deixou de executar. A evidência é a série.
 - **Fica para depois (não é desta entrega):** os 3 runs/dia de fórmulas seguem derramando ~10 MB cada no `_snap_fonte`. Para eles, tirar só o `DISTINCT` (o `NOT EXISTS` não muda com duplicata) precisa ser medido antes de adotar.
 
+### 2026-11-04 — o "+2 arquivos / +8,4 MB" não é código nosso: trava em fase com o minuto, às :40–:41, e não lê tabela
+
+- **Medida** (psql-ro, 23:25–23:46 UTC, uma conexão com `\watch` a cada 1 s, reconectando a cada 60 ticks, 0 quedas):
+  - `pg_stat_database` (temp);
+  - `pg_stat_activity` (pid, `usename`, `application_name`; o `claude_ro` não vê query nem estado de outras roles);
+  - `pg_stat_user_tables` inteira (465 tabelas, `cron` e `net` incluídos);
+  - depois, 4 min de `pg_stat_sys_tables` (`pg_catalog`).
+- **A fase:** dos 12 saltos de +2 arquivos / +8,5 MB, 10 caem no **segundo :40–:41**, separados por **60 ou 120 s** exatos: 23:25:41, 23:32:40, 23:33:41, 23:35:41, 23:37:41, 23:38:40, 23:40:41, 23:42:40, 23:44:40, 23:45:40. Os outros dois (23:29:46 e 23:30:53) atrasaram alguns segundos. Nenhum cron nosso dispara fora do `:00`, e um job que derrama "às vezes" no mesmo segundo é um coletor periódico. Os 2 saltos de +1 arquivo / +4,2 MB (23:27:30 e 23:28:17) são outro leitor, pequeno: tabelas `tint_*` via PostgREST.
+- **O que ele lê: nada que se veja.**
+  - Na maioria dos saltos, a janela de 4 s não tem tupla de tabela de usuário. Nos que têm, a leitura é de outro leitor que coincidiu: as 133.125 tuplas de `omie_customer_account_map` + `sync_reprocess_log` aparecem idênticas a cada ~5 min.
+  - No catálogo, o único sinal é o **do próprio observador**: `pg_class` +6.274 e `pg_index` +248 a cada tick vêm do `pg_stat_*_tables` da série.
+  - Uma query que derrama 2 × 4,2 MB sem ler tabela nem catálogo encaixa num **SRF materializado acima do `work_mem`** (3,5 MB). O exemplo típico é `pg_stat_statements()`, cujo tuplestore carrega o texto de cada statement.
+- **Quem:** não há conexão transitória que discrimine. As que aparecem (`authenticator/postgrest`, o próprio `claude_ro`) estão em ~78% dos ticks longe dos saltos também. Logo, ele roda numa conexão **estável**. Das 12 estáveis, a que coleta a cada minuto é a **`supabase_admin/postgres_exporter`**, o coletor de métricas do Supabase. **Atribuição por eliminação, confiança média:** a fase e o "não lê tabela" são medidos; o exporter é a única explicação de fase fixa que sobra.
+- **Peso:** ~56 MB/15 min, a maior parte dos 85,8 MB/15 min da janela de loja aberta depois do #3587. Não é código do repo, então **não há PR que o corrija**.
+- **Experimento decisivo (founder, SQL Editor).** O `claude_ro` não lê `extensions` (`permission denied`).
+  1. Leitura: `SELECT count(*), pg_size_pretty(sum(length(query))::bigint) FROM extensions.pg_stat_statements;`. Um total de textos na casa dos MB sustenta a hipótese.
+  2. Se sustentar: `SELECT extensions.pg_stat_statements_reset();`. Perde-se o histórico de performance, que ninguém aqui consegue ler mesmo. Se os saltos das :41 somem na série seguinte, a atribuição fica **provada**, e o temp de fundo cai de ~86 para ~30 MB/15 min. Mas eles voltam à medida que os textos se acumulam. Também é preciso decidir se esse coletor interno do Supabase conta para o critério do Mini.
+
 ## 2026-11-04 — o "5º leitor" de `tint_formulas` não é recorrente: a janela das 13:00 pegou um apply
 
 **Pergunta:** a janela 13:00–13:15 UTC de 04/11 reprovou o Mini: 523,6 MB de disco, hit 96,86%. Desses, 430 MB vieram de `tint_formulas` (2 seq scans) e 84 MB de `tint_sync_runs` (1 seq scan). `pg_stat_user_tables` mostrava 87 seq scans em `tint_formulas` desde o restart de 31/10, o último às 15:28:37, com a loja aberta. Havia uma tela ou edge varrendo a tabela?

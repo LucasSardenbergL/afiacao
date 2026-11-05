@@ -3,7 +3,7 @@
 -- ========================================================================
 --
 -- Gerado por: scripts/audit-custom-migrations.ts
--- Total de custom migrations: 776
+-- Total de custom migrations: 777
 --
 -- Como usar:
 --   1. Abra o Supabase SQL Editor (via Lovable Cloud → Backend → SQL Editor)
@@ -844,7 +844,8 @@ WITH expected (version, slug, filename) AS (VALUES
   ('20261104110100', 'tint_receita_assinada_no_cabecalho', '20261104110100_tint_receita_assinada_no_cabecalho.sql'),
   ('20261104113000', 'classificacao_diff_before_write', '20261104113000_classificacao_diff_before_write.sql'),
   ('20261104120000', 'hot_contas_pagar_sem_indice_carimbo', '20261104120000_hot_contas_pagar_sem_indice_carimbo.sql'),
-  ('20261104153351', 'radar_cnae_secundario', '20261104153351_radar_cnae_secundario.sql')
+  ('20261104153351', 'radar_cnae_secundario', '20261104153351_radar_cnae_secundario.sql'),
+  ('20261104192942', 'carteira_visibilidade_por_conjunto', '20261104192942_carteira_visibilidade_por_conjunto.sql')
 ),
 expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VALUES
   ('financial_module', 'view', 'public', 'fin_aging_receber', ''),
@@ -3350,7 +3351,9 @@ expected_objects (migration, kind, schema_name, object_name, parent_name) AS (VA
   ('radar_cnae_secundario', 'function', 'public', 'radar_lista', ''),
   ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
-  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec')
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
 ),
 obj_status AS (
   SELECT eo.migration,
@@ -5904,7 +5907,9 @@ WITH expected_objects (migration, kind, schema_name, object_name, parent_name) A
   ('radar_cnae_secundario', 'function', 'public', 'radar_lista', ''),
   ('radar_cnae_secundario', 'table', 'public', 'radar_agregado_cnae_sec', ''),
   ('radar_cnae_secundario', 'index', 'public', 'idx_radar_empresas_cnaes_sec', 'radar_empresas'),
-  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec')
+  ('radar_cnae_secundario', 'index', 'public', 'idx_radar_agregado_cnae_sec_codigo', 'radar_agregado_cnae_sec'),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_ve_tudo', ''),
+  ('carteira_visibilidade_por_conjunto', 'function', 'private', 'carteira_clientes_visiveis', '')
 )
 SELECT
   e.migration,
