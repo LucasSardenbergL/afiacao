@@ -247,9 +247,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # EXPERIMENTO E10 (plano v6, lote 6): vitest em 2 shards (`--shard=i/2`). O `pool: forks` e
-        # o resto do vitest.config.ts ficam iguais; só a lista de arquivos é dividida. O `validate`
-        # lê `needs.testes.result`, que a matriz agrega (success só se os 2 shards passarem).
+        # 2 shards do vitest (E10 do plano v6, 2026-11-05). O `pool: forks` e o resto do
+        # vitest.config.ts ficam iguais; só a lista de arquivos é dividida. O `validate` lê
+        # `needs.testes.result`, que a matriz agrega (success só se os 2 shards passarem). Medido: job
+        # 7,2 min (p50, 120 runs; mín. 4,8) → 4,4 / 4,28 (575 + 575 arquivos) por +1% de runner. Tira
+        # o `testes` do caminho crítico nos runs sem provas SQL (docs/historico/ci-lote6-v6-lpt-remedido-e-shard-vitest.md).
         shard: [1, 2]
 
     steps:
