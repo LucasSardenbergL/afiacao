@@ -1,16 +1,12 @@
 // Hook de dados/estado do HistoricoTab.
-// Extraído verbatim de src/components/des/HistoricoTab.tsx (god-component split):
-// 4 queries (metas/snapshots/checkins/posição ao vivo) + memos derivados + filtros.
+// 4 queries (metas/snapshots/checkins/posição ao vivo) + derivação pura (./derivar) + filtros.
+// Expõe isLoading E isError: leitura que falhou não vira lista vazia nem trimestre zerado.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { quarterDates } from "./format";
-import type {
-  MetaRow,
-  SnapshotRow,
-  QuarterCard,
-} from "./types";
-import { faixaDeJson } from "../faixa-json";
+import type { MetaRow, SnapshotRow, QuarterCard } from "./types";
+import { desatualizado, estadoDeLeitura, type EstadoSemLeitura } from "@/lib/leitura/estado-de-leitura";
+import { montarCards, montarChartData, mediaDasMetas, type PosicaoAoVivo } from "./derivar";
 import { linhasCom } from "@/lib/linha-view";
 
 export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtual: number) {
@@ -66,69 +62,31 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     queryFn: async () => {
       const { data, error } = await supabase
         .from("v_des_posicao_trimestre_ao_vivo")
-        .select("ano, trimestre, posicao_ao_vivo_conservadora, faixa_conservadora, meta_pessoal, inicio_trimestre, fim_trimestre")
+        .select(
+          "ano, trimestre, posicao_ao_vivo_conservadora, fat_bruto_confirmado, gooddata_data_referencia, faixa_conservadora, meta_pessoal, inicio_trimestre, fim_trimestre",
+        )
         .eq("empresa", empresa)
         .eq("ano", anoAtual)
         .eq("trimestre", trimestreAtual)
         .maybeSingle();
       if (error) throw error;
-      return data;
+      return data as PosicaoAoVivo | null;
     },
   });
 
-  const cards: QuarterCard[] = useMemo(() => {
-    const metas = metasQuery.data ?? [];
-    const snapshots = snapshotsQuery.data ?? [];
-    const checkins = checkinsQuery.data ?? [];
-    const live = posLiveQuery.data;
-
-    const keys = new Set<string>();
-    metas.forEach((m) => keys.add(`${m.ano}-${m.trimestre}`));
-    snapshots.forEach((s) => keys.add(`${s.ano}-${s.trimestre}`));
-    checkins.forEach((c) => keys.add(`${c.ano}-${c.trimestre}`));
-    keys.add(`${anoAtual}-${trimestreAtual}`);
-
-    const list: QuarterCard[] = Array.from(keys).map((k) => {
-      const [a, t] = k.split("-").map(Number);
-      const isAtual = a === anoAtual && t === trimestreAtual;
-      const meta = metas.find((m) => m.ano === a && m.trimestre === t);
-      const snapsTri = snapshots.filter((s) => s.ano === a && s.trimestre === t);
-      const ultimoSnap = snapsTri[0]; // já vem desc
-      // Para trimestre corrente, prioriza posicao ao vivo conservadora
-      const faturado = isAtual
-        ? Number(live?.posicao_ao_vivo_conservadora ?? ultimoSnap?.fat_bruto_valor ?? 0)
-        : Number(ultimoSnap?.fat_bruto_valor ?? 0);
-
-      // Último checkin: confirmacao_andre tem prioridade, senão projecao
-      const checkinsTri = checkins.filter((c) => c.ano === a && c.trimestre === t);
-      const ultimoCheckin =
-        checkinsTri.find((c) => c.tipo === "confirmacao_andre") ??
-        checkinsTri[0] ??
-        null;
-
-      const faixaEstrelas = isAtual
-        ? Number(faixaDeJson(live?.faixa_conservadora)?.estrelas ?? ultimoCheckin?.estrelas ?? 0)
-        : Number(ultimoCheckin?.estrelas ?? 0);
-
-      const dates = quarterDates(a, t);
-      return {
-        ano: a,
-        trimestre: t,
-        isAtual,
-        meta: Number(meta?.meta_faturamento ?? live?.meta_pessoal ?? 0),
-        faturado,
-        faixaEstrelas,
-        inicio: isAtual ? (live?.inicio_trimestre ?? dates.inicio) : dates.inicio,
-        fim: isAtual ? (live?.fim_trimestre ?? dates.fim) : dates.fim,
-        ultimoCheckin,
-        snapshots: snapsTri,
-      };
-    });
-
-    // Ordena desc (ano, trimestre)
-    list.sort((a, b) => (b.ano - a.ano) || (b.trimestre - a.trimestre));
-    return list;
-  }, [metasQuery.data, snapshotsQuery.data, checkinsQuery.data, posLiveQuery.data, anoAtual, trimestreAtual]);
+  // Derivação pura (ausente ≠ zero · meta do próprio trimestre) — ver ./derivar.ts.
+  const cards: QuarterCard[] = useMemo(
+    () =>
+      montarCards({
+        metas: metasQuery.data ?? [],
+        snapshots: snapshotsQuery.data ?? [],
+        checkins: checkinsQuery.data ?? [],
+        live: posLiveQuery.data,
+        anoAtual,
+        trimestreAtual,
+      }),
+    [metasQuery.data, snapshotsQuery.data, checkinsQuery.data, posLiveQuery.data, anoAtual, trimestreAtual],
+  );
 
   const anosDisponiveis = useMemo(() => {
     const set = new Set<number>();
@@ -140,33 +98,28 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     return cards.filter((c) => {
       if (filtroAno !== "__todos__" && String(c.ano) !== filtroAno) return false;
       if (filtroStatus === "andamento" && !c.isAtual) return false;
-      if (filtroStatus === "encerrados" && c.isAtual) return false;
+      if (filtroStatus === "encerrados" && (c.isAtual || c.isFuturo)) return false;
       return true;
     });
   }, [cards, filtroAno, filtroStatus]);
 
-  const chartData = useMemo(() => {
-    return [...cardsFiltrados]
-      .sort((a, b) => (a.ano - b.ano) || (a.trimestre - b.trimestre))
-      .map((c) => ({
-        label: `T${c.trimestre}/${String(c.ano).slice(2)}`,
-        faturado: c.faturado,
-        meta: c.meta,
-        isAtual: c.isAtual,
-      }));
-  }, [cardsFiltrados]);
+  const chartData = useMemo(() => montarChartData(cardsFiltrados), [cardsFiltrados]);
 
-  const metaMedia = useMemo(() => {
-    const metas = chartData.map((d) => d.meta).filter((m) => m > 0);
-    if (!metas.length) return 0;
-    return metas.reduce((a, b) => a + b, 0) / metas.length;
-  }, [chartData]);
+  const metaMedia = useMemo(() => mediaDasMetas(chartData), [chartData]);
 
-  const isLoading =
-    metasQuery.isLoading ||
-    snapshotsQuery.isLoading ||
-    checkinsQuery.isLoading ||
-    posLiveQuery.isLoading;
+  // Fail-closed: QUALQUER leitura que não aconteceu (erro, inclusive após sucesso com cache, ou
+  // offline na 1ª leitura — pending+paused, que NÃO é isLoading) → a tela não julga trimestre
+  // nenhum. Dado parcial tratado como completo vira "sem dado" em massa ou "Nenhum trimestre".
+  // Com cache em mãos, `estadoDeLeitura` diz 'pronta' mesmo com o refetch pausado offline:
+  // `desatualizado` nomeia isso — a posição "ao vivo" velha não pode passar por atual.
+  const queries = [metasQuery, snapshotsQuery, checkinsQuery, posLiveQuery];
+  const estados = queries.flatMap((q) => [estadoDeLeitura(q), desatualizado(q, q.data !== undefined)]);
+  const estadoSemLeitura: EstadoSemLeitura | null = estados.includes("erro")
+    ? "erro"
+    : estados.includes("sem-rede")
+      ? "sem-rede"
+      : null;
+  const isLoading = estados.includes("carregando");
 
   return {
     filtroAno,
@@ -179,5 +132,6 @@ export function useHistoricoData(empresa: string, anoAtual: number, trimestreAtu
     chartData,
     metaMedia,
     isLoading,
+    estadoSemLeitura,
   };
 }

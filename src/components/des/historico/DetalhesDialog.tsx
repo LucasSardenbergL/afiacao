@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { fmtBRL, fmtPct, fmtDate } from "./format";
+import { rotuloFaturado } from "./derivar";
 import type { QuarterCard } from "./types";
 
 interface DetalhesDialogProps {
@@ -36,12 +37,12 @@ export function DetalhesDialog({ detalhes: detalhesOpen, onOpenChange }: Detalhe
                   <p>{fmtBRL(detalhesOpen.meta)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Faturado</p>
+                  <p className="text-xs text-muted-foreground">{rotuloFaturado(detalhesOpen)}</p>
                   <p>{fmtBRL(detalhesOpen.faturado)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Faixa DES</p>
-                  <p>{detalhesOpen.faixaEstrelas} estrelas</p>
+                  <p>{detalhesOpen.faixaEstrelas === null ? "—" : `${detalhesOpen.faixaEstrelas} estrelas`}</p>
                 </div>
               </div>
 
