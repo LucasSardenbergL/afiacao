@@ -57,7 +57,7 @@ Fica em aberto o que depende de data, amostra ou plataforma:
 |---|---|---|---|---|
 | F7 | **CR-BOOT** — `commercial_roles` relido depois do auth | O `useMyCommercialRole` relia o que o `AuthContext` já tinha lido, e o lab do 6b mediu esse REST como o serial dominante que sobrou. O `useCommercialRole.ts:78-100` (legado, `useEffect`+`useState` por instância, chamado pelo `useDisplayAccess`) faz a mesma leitura | AJUSTAR: semear pela **resposta bem-sucedida**, nunca pelo estado do contexto, preservando lente e geração do auth | ✅ **ENTREGUE pelo #3607 (v5 lote 6c)**, mergeado enquanto este plano era escrito: desktop −412 ms, mobile sem ganho (o chunk é o gargalo) ([histórico](../../../historico/boot-dashboard-paralelo-auth-lote6b.md)). O resíduo do `useCommercialRole` "não segura a home" e fica para quando tocar o hook |
 | F9 | **TINT-COUNT** — a home do tintométrico conta 1 M linhas | ✔ `TintDashboard.tsx:26` `count: 'exact'` sobre `tint_formulas` (1.002.148 linhas): **215 ms quente / 7.953 ms frio** (`psql-ro`, index-only scan) | AJUSTAR: `staleTime` longo não salva a 1ª visita e congelaria a chave inteira (`:23-43`). Separar a contagem cara e, se for estimada, rotulá-la como aproximada | **MANTER** (P) |
-| F8 | **DRE-IO** — 3 DRE em série no consolidado | ✔ `useFinanceiro.ts:243-245`: três `await getDRE` independentes | AJUSTAR: condicionado ao uso do DRE **consolidado**; preservar geração, ordem e falha integral | 🧭 **AGUARDA** confirmação do founder de que usa o consolidado. O conserto é P |
+| F8 | **DRE-IO** — 3 DRE em série no consolidado | ✔ `useFinanceiro.ts:243-245`: três `await getDRE` independentes | AJUSTAR: condicionado ao uso do DRE **consolidado**; preservar geração, ordem e falha integral | ✅ **ENTREGUE pelo #3610** (o founder confirmou que usa o consolidado). **Publish conferido no bundle servido** em 2026-11-05: o chunk `useFinanceiro-BQzhV1ju.js` faz `Promise.all(…map(getDRE))` + `.flat()` ([histórico](../../../historico/dre-consolidado-paralelo-f8-v6.md)) |
 | F11 | **BOOT-ADIAR** — polls secundários competindo com o LCP | `AppShell.tsx:452-552` + `useDataHealth.ts:17-20` | AJUSTAR: a contagem de ~13 polls superestima, porque telefonia, tarefas e WhatsApp estão congelados (`AppShell.tsx:533,538,547`). Medir as requisições realmente disparadas antes de adiar | **DIAGNÓSTICO** — aba Network no lab, sem PR |
 
 ### E. Dev e CI
@@ -108,7 +108,7 @@ Os cortes do v5 (E6, D2, E2, E8, F6, E4) continuam valendo; nenhum fato novo os 
 | 7 | ~~E13 — gate de sintaxe com 1 Node persistente~~ descartado: o step dura 5–8 s no runner e não está no caminho crítico do `validate` (ver §2 E) | — | — |
 | 8 | ~~D9 — `ANALYZE venda_sugestao`~~ descartado: a premissa leu o `n_live_tup` pós-restart como tamanho real (ver §2 D) | — | — |
 | — | D6, D8, F11 | §2 | diagnóstico, sem PR de código |
-| — | F8 | 🧭 founder: usa o DRE consolidado? | sessão + **Publish**, se sim |
+| — | ~~F8~~ ✅ #3610, Publish no ar (conferido no bundle servido) | founder confirmou o uso do consolidado | — |
 | — | E11 | fila de volta ao p90 do v5 | ⏸️ |
 
 Os lotes 1–7 são independentes entre si (arquivos distintos). Antes de cada um, procurar o artefato na main (`git grep <símbolo> origin/main`): o F7 foi entregue por outra sessão no meio da escrita deste plano.
