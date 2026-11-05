@@ -22,7 +22,8 @@
 - **Listas anexadas ao e-mail** (`_tint_cobertura_bases_lista_email`, `_vendas_familia_ausente_lista_email`): só rodam com a fonte não-ok, e as duas estão `ok`.
 - **Escritas do loop / trigger de auditoria**: 0 checks não-ok, então 0 episódios; os 25 UPDATEs batem numa `fin_alertas` de 296 linhas, e o `trg_audit` só dispara em linha alterada.
 - **RLS escondendo linhas da minha medição**: `claude_ro` tem `rolbypassrls`; o JIT está desligado.
-- **Teste síncrono** (corpo rodado 1 s depois do cron das 12:30 UTC): os dois rodaram rápidos (watchdog 0,68 s, corpo 250 ms). **Não capturou o modo lento**, então é inconclusivo.
+- **Teste síncrono** (corpo rodado 1 s depois do cron das 12:30 UTC; uma sessão irmã repetiu às 09:30:03 SP, o mesmo instante, e mediu 237 ms): os dois rodaram rápidos (watchdog 0,68 s, corpo 237–250 ms). **Não capturou o modo lento**, então é inconclusivo.
+- **Visibility map do `fin_sync_log`** (achado da sessão irmã): `relallvisible` 644/1439 (45%), com ~11,7 k heap fetches nos 4 Index Only Scans. Custa ~45 ms, um efeito lateral real que não explica segundos. Um `VACUUM` resolveria esse pedaço, mas não o D6.
 
 ## Leitura e hipótese aberta
 
