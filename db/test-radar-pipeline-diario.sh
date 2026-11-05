@@ -273,6 +273,8 @@ if [ "$CORPO" = 0 ]; then
   eq "S1a semente = a última rodada limpa" "$(Pq -c "SELECT calculado_em = (SELECT max(iniciado_em) FROM public.acoes_execucoes WHERE acao='radar.score_recalcular') FROM public.radar_score_estado")" "t"
   eq "S1b depois da semente, a rodada pula" "$(rodada | cut -d' ' -f1)" "false"
   Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
+  eq "S2' rodada completa (a última passa a ser limpa)" "$(rodada | cut -d' ' -f1)" "true"
+  Pq -c "DELETE FROM public.radar_score_estado" >/dev/null
   Pq -c "SELECT pg_sleep(0.01); UPDATE public.radar_empresas SET updated_at = clock_timestamp() WHERE cnpj = '$ALVO'" >/dev/null
   P -q -f "$MIG_USADA" 2>/dev/null
   eq "S2 escrita depois da última rodada → sem semente" "$(Pq -c "SELECT count(*) FROM public.radar_score_estado")" "0"
