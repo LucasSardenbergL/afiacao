@@ -160,9 +160,13 @@ function KpiCards({ empresa }: { empresa: string }) {
         .select("valor_total")
         .eq("warehouse_id", warehouseId)
         .in("status", ["pendente", "em_conferencia", "divergencia"])
+        // ordem estável: sem ela o corte do `.range` é arbitrário (gate G7)
+        .order("id", { ascending: true })
         .range(0, TETO_TRANSITO - 1);
       if (error) throw error;
-      return somarValorTransito(data ?? []);
+      // `data` nulo SEM erro é resposta malformada: ausência, não "nenhuma NF-e em trânsito".
+      if (!data) throw new Error("valor em trânsito: resposta sem linhas");
+      return somarValorTransito(data);
     },
     refetchInterval: 60000,
   });

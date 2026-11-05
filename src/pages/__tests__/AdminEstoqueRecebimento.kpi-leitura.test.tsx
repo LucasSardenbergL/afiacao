@@ -45,7 +45,7 @@ function builder() {
     const r: Resposta =
       p === 'erro'
         ? { data: null, error: { message: 'permission denied' }, count: null }
-        : { data: p.data ?? [], error: null, count: p.count === undefined ? 0 : p.count };
+        : { data: p.data === undefined ? [] : p.data, error: null, count: p.count === undefined ? 0 : p.count };
     return Promise.resolve(r).then(ok, ko);
   };
   return q;
@@ -151,6 +151,13 @@ describe('Recebimento — casos de borda', () => {
     renderPagina();
     await waitFor(() => expect(card('divergencias').getAttribute('data-estado')).toBe('erro'));
     expect(texto('divergencias')).toBe('Divergências—Indisponível');
+  });
+
+  it('valor em trânsito com data nulo SEM erro não vira R$ 0,00', async () => {
+    plano = { transito: { data: null as unknown as unknown[] } };
+    renderPagina();
+    await waitFor(() => expect(card('transito').getAttribute('data-estado')).toBe('erro'));
+    expect(texto('transito')).toBe('ValoremTrânsito—Indisponível');
   });
 
   it('valor em trânsito com NF-e sem valor é PISO ("≥"), não o total afirmado', async () => {
