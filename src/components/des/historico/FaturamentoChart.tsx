@@ -17,8 +17,20 @@ import type { ChartDatum } from "./types";
 
 interface FaturamentoChartProps {
   chartData: ChartDatum[];
-  metaMedia: number;
+  /** `null` = nenhuma meta positiva no recorte → sem linha de referência. */
+  metaMedia: number | null;
 }
+
+// Cor da barra pelo julgamento (./derivar): trimestre sem meta/faturado é neutro, nunca verde
+// por `faturado >= 0` nem vermelho por faturado fabricado. Faturado `null` = sem barra.
+const COR_POR_JULGAMENTO: Record<ChartDatum["julgamento"], string> = {
+  em_andamento: "hsl(var(--status-info))",
+  atingida: "hsl(var(--status-success))",
+  nao_atingida: "hsl(var(--status-error))",
+  sem_fechamento: "hsl(var(--muted-foreground))",
+  sem_dado: "hsl(var(--muted-foreground))",
+  planejado: "hsl(var(--muted-foreground))",
+};
 
 export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps) {
   return (
@@ -38,7 +50,12 @@ export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps
                 tickFormatter={(v) => `R$ ${(v / 1000).toFixed(0)}k`}
               />
               <RTooltip
-                formatter={(v: number) => fmtBRL(v)}
+                // O nome da série vem da proveniência do ponto: a barra do trimestre atual é
+                // POSIÇÃO (faturado + pedidos), e a de um snapshot parcial é "Faturado até dd/mm".
+                formatter={(v: number, _nome, item) => [
+                  fmtBRL(v),
+                  (item?.payload as ChartDatum | undefined)?.rotulo ?? "Faturado",
+                ]}
                 contentStyle={{
                   backgroundColor: "hsl(var(--background))",
                   border: "1px solid hsl(var(--border))",
@@ -50,17 +67,11 @@ export function FaturamentoChart({ chartData, metaMedia }: FaturamentoChartProps
                 {chartData.map((d, i) => (
                   <Cell
                     key={i}
-                    fill={
-                      d.isAtual
-                        ? "hsl(var(--status-info))"
-                        : d.faturado >= d.meta
-                          ? "hsl(var(--status-success))"
-                          : "hsl(var(--status-error))"
-                    }
+                    fill={COR_POR_JULGAMENTO[d.julgamento]}
                   />
                 ))}
               </Bar>
-              {metaMedia > 0 && (
+              {metaMedia !== null && (
                 <ReferenceLine
                   y={metaMedia}
                   stroke="hsl(var(--foreground))"

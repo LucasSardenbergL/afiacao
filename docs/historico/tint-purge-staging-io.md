@@ -512,3 +512,49 @@ O founder trocou para o Mini (`shared_buffers` 256MB, `max_connections` 60) às 
 - **15:32:30**: a sessão `tint-m2-indice-cobertura` rodou a mesma contagem, terminando às 15:32:37.
 
 Os dois são diagnóstico, não produto. Isso fecha a conta dos ~87 seq scans desde 31/10, que somam ~44 consultas paralelas. Todos os donos achados são pontuais ou de madrugada: applies e ensaios de migration sobre a tabela (o ensaio do `db:aplicar` **não** grava no ledger, então é invisível em `db_aplicacoes`), contagens de diagnóstico das sessões, o fase5 v5 4×/dia até 03/11, builds de índice e o expurgo da madrugada. **Regra para diagnóstico em prod:** `count(*)` sem filtro em `tint_formulas` custa 430 MB de disco e reprova uma janela do Mini sozinho. Use `pg_class.reltuples` / `pg_stat_user_tables.n_live_tup` para o tamanho, e um `FILTER` só com predicado indexado.
+
+## 2026-11-05 — 1º run de fórmulas depois da M1 (`82be55dc`): medida, e a M2 fica segurada
+
+**Pergunta:** a M1 (#3590, recibo #890) já gera sinal? E o índice de cobertura por par em `tint_formulas` (M2: chave `(account, produto_id, base_id, cor_id, embalagem_id)` + INCLUDE das colunas do lookup do `_pulados`, `WHERE desativada_em IS NULL`) deve entrar agora?
+
+**Gate de entrada (04/11):** de 13:10 a 21:56 UTC não houve run de `formulas`, só 65 de catálogo, e havia 0 assinadas. O índice **não** foi criado sem sinal. Um vigia psql-ro tirou snapshot de `pg_statio`/`pg_stat` a cada 60 s até o próximo run de fórmulas ser promovido.
+
+**Janela de controle sem run de fórmulas** (15:36–21:24 UTC de 04/11):
+- `tint_formulas` leu 39 blocos de heap e 309 de índice do disco.
+- O banco inteiro leu ~230 MB por 15 min, com temp de ~83 MB por 15 min e hit de **97,67%**. O hit fica abaixo da meta do Mini mesmo sem run, e o culpado não é `tint_formulas`.
+
+**O run `82be55dc`** (ingerido 10:02:52 e promovido 10:09:06 UTC de 05/11). Delta das 10:01:50 às 10:11:20, sozinho na janela:
+
+| | `tint_formulas` | `tint_formula_itens` |
+|---|---|---|
+| lido do disco: heap | 106.302 blocos (**871 MB**) | 215.280 (**1.764 MB**) |
+| lido do disco: índice | 24.600 (202 MB) | 48.174 (395 MB) |
+| escritas | 208 ins + 20.064 upd, **HOT 97,3%** | 976 ins + 192 del |
+
+- **Metadata:** 271.008 chaves; `formulas_identicas_puladas` 270.736; `receitas_assinadas` **20.000** (o teto `c_teto_assinar` por run); `recalculadas` 0.
+- **Banco inteiro em 9,5 min:** 4.366 MB do disco, hit 94,37%, temp 499 MB.
+- **Por chave, contra o `9fdaaee4`:**
+  - `tint_formulas`: 3,2 KB, contra 4,3 KB.
+  - itens: 6,5 KB, contra 5,9 KB. Com 4% assinadas (e o 1º toque lendo os itens para assinar), a M1 ainda não aparece na leitura de itens.
+
+**Sinal da M1:** positivo, com denominador. São 20.000 assinadas de 493.788 vivas (4,05%). O teto é de 20 mil por run, e os runs de fórmulas vêm 1 a 3 vezes por dia desde 28/10. A convergência leva ≥ 24 runs, ou 1 a 3 semanas, e só nos pares que cada run toca.
+
+**Decisão do founder (05/11): segurar a M2 até a M1 convergir.** O índice não traz ganho durante a convergência, e traz custo:
+1. **HOT:** os ~20 mil UPDATEs do assinador por run são 97,3% HOT hoje. Com `receita_assinatura`/`receita_desde` no INCLUDE, que é obrigatório para o index-only, todos deixariam de ser HOT e escreveriam nos 8 índices da tabela. O lote 11 (#3591) foi na direção oposta.
+2. **Visibility map:** as 20 mil linhas, em ordem de `formula_id` (uuid), sujam ~30% das 55,1 mil páginas do heap a cada run (1−e^(−20000/55103)). O autovacuum só dispara perto de 50 mil linhas mortas: depois do run eram 19.398, e o último autovacuum foi em 02/11. Durante a convergência, o "Index Only Scan" voltaria ao heap numa fração grande do lookup.
+3. **O maior bloco do run são os itens (1,76 GB),** e esse corte é da M1. O heap de `tint_formulas` (871 MB) é o alvo da M2, que só paga quando o assinador parar de sujar páginas.
+
+**Pré-voo do desenho, já feito para a retomada:**
+- No corpo vivo do promote (md5 `bbd219afff819b3d2401f8e33a8a4010`), o lookup do `_pulados` lê `id, updated_at, nome_cor, sku_id, volume_final_ml, preco_final_sayersystem, personalizada, receita_assinatura, receita_desde`, e filtra por `subcolecao_id` (com `COALESCE`).
+- `updated_at` e `preco_final_sayersystem` hoje não são indexados. Os 2 UPDATEs de recálculo de preço (`SET preco…, updated_at = now()`) deixariam de ser HOT. Esse recálculo esteve em 0 nos 7 dias até 04/11 (2.370 runs de catálogo e 14 de fórmulas).
+
+**Quando revisitar** (é uma query, não um recado; lê só `tint_sync_runs`, sem varrer `tint_formulas`):
+```sql
+SELECT sum((metadata->>'receitas_assinadas')::int) AS assinadas_desde_m1
+  FROM public.tint_sync_runs
+ WHERE sync_type = 'formulas' AND started_at > '2026-11-04 13:10:37+00';
+```
+- É limite superior: uma reassinatura de par já assinado conta de novo.
+- Retome a M2 com ≥ ~90% das vivas e a leitura de itens por run em queda, medida no delta de `pg_statio` de um run de reenvio.
+
+**Medição:** a regra do `count(*)` (acima) se repetiu. As duas contagens desta sessão, às 21:55 de 04/11 e às 10:11:55 de 05/11, leram cada uma o heap inteiro: 55,1 mil blocos, 451 MB do disco.

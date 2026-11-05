@@ -244,6 +244,15 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # 2 shards do vitest (E10 do plano v6, 2026-11-05). O `pool: forks` e o resto do
+        # vitest.config.ts ficam iguais; só a lista de arquivos é dividida. O `validate` lê
+        # `needs.testes.result`, que a matriz agrega (success só se os 2 shards passarem). Medido: job
+        # 7,2 min (p50, 120 runs; mín. 4,8) → 4,4 / 4,28 (575 + 575 arquivos) por +1% de runner. Tira
+        # o `testes` do caminho crítico nos runs sem provas SQL (docs/historico/ci-lote6-v6-lpt-remedido-e-shard-vitest.md).
+        shard: [1, 2]
 
     steps:
       # Preâmbulo comum aos jobs de trabalho. O PORQUÊ de cada escolha (`fetch-depth: 0`
@@ -261,8 +270,15 @@ jobs:
       - name: Install deps
         run: bun install --frozen-lockfile
 
-      - name: Tests
-        run: bun run test
+      # Um step ESTÁTICO por shard (e não `--shard=${{ matrix.shard }}`): o `exclusividade` assina o
+      # argv literal de cada gate bloqueante e recusa interpolação — o mesmo desenho do job
+      # `falsificacao` com `test:falsificacao:1..3`.
+      - name: Tests (shard 1/2)
+        if: matrix.shard == 1
+        run: bun run test:shard:1
+      - name: Tests (shard 2/2)
+        if: matrix.shard == 2
+        run: bun run test:shard:2
 
       # O vitest procura `@vitest-environment` com REGEX NO ARQUIVO INTEIRO e aceita o alias
       # `jest` (coverage.DfSpMS-b.js:2403). Num repo de gates textuais, um teste que CITE o
@@ -1131,6 +1147,8 @@ jobs:
         # 6 partes: com o preâmbulo medido em 29 s (p50, 1.283 jobs), 4 partes balanceadas (~14,3 min)
         # poupariam ~1 min de runner por run e devolveriam o caminho crítico de hoje. Prova cara nova
         # entra no default (30 s) até a tabela ser re-medida — receita no cabeçalho dela.
+        # Re-medida em 2026-11-05 (lote 6 do plano v6, 20 runs): a parte 5 somava 19,4 min de núcleo
+        # contra 14,9–17,6 nas outras (9 provas no default); com a tabela nova, 16,4 min cada.
         parte: [1, 2, 3, 4, 5, 6]
     permissions:
       contents: read

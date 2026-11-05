@@ -7,16 +7,10 @@ import { CheckinQualitativoTab } from "@/components/des/CheckinQualitativoTab";
 import { SimuladorTab } from "@/components/des/SimuladorTab";
 import { HistoricoTab } from "@/components/des/HistoricoTab";
 import { ConfiguracaoTab } from "@/components/des/ConfiguracaoTab";
+import { trimestreCorrenteSP } from "@/components/des/historico/format";
 
 const EMPRESA = "OBEN";
 
-function getCurrentQuarter(): { ano: number; trimestre: number } {
-  const now = new Date();
-  return {
-    ano: now.getFullYear(),
-    trimestre: Math.floor(now.getMonth() / 3) + 1,
-  };
-}
 
 export default function AdminDesTrimestreAtual() {
   const location = useLocation();
@@ -24,7 +18,7 @@ export default function AdminDesTrimestreAtual() {
   const [tab, setTab] = useState(
     location.pathname.includes("/configuracao") ? "config" : "posicao",
   );
-  const { ano, trimestre } = getCurrentQuarter();
+  const { ano, trimestre } = trimestreCorrenteSP();
 
   // Sincroniza a aba com a rota nos dois sentidos, mesmo se o componente não
   // remontar ao navegar entre /trimestre-atual e /configuracao (mesmo element).

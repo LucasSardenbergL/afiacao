@@ -104,6 +104,16 @@
       "motivo": "pre-existente quando a matriz nasceu; divida a medir"
     },
     {
+      "gate": "test:shard:1",
+      "desde": "2026-11-05",
+      "motivo": "shard 1/2 do vitest (`vitest run --shard=1/2`) — o mesmo `bun run test` medido; a uniao dos 2 shards e o vitest que garante. Experimento E10 do plano v6"
+    },
+    {
+      "gate": "test:shard:2",
+      "desde": "2026-11-05",
+      "motivo": "shard 2/2 do vitest (`vitest run --shard=2/2`) — o mesmo `bun run test` medido; a uniao dos 2 shards e o vitest que garante. Experimento E10 do plano v6"
+    },
+    {
       "gate": "test:falsificacao:1",
       "desde": "2026-10-18",
       "motivo": "fatia 1/3 do test:falsificacao (medido em 8 linhas); a uniao das 3 fatias E a invocacao medida — particao provada em scripts/falsificacao-cobertura.test.ts"

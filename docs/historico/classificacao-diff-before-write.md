@@ -76,6 +76,11 @@ Só `LC_ALL=C`: a prova fixa o locale, e nenhum assert depende de collation.
 
 Medido por psql-ro em 2026-11-04 12:03Z, sem escrever: a régua avalia 17.459 linhas e **0 mudariam agora**; o SELECT
 da régua leva 1,2 s. Esperado depois do apply: o job 139 sai de 17.459 updates/dia para só as mudanças reais
-(clientes novos do sync e flags que viraram). `n_tup_upd` antes do apply: 102.492 (12:03Z).
+(clientes novos do sync e flags que viraram). `n_tup_upd` antes do apply: 102.492 (12:03Z; igual às 23:12Z, já com a função nova).
 
-<!-- a medição do 1º ciclo do cron depois do apply entra aqui -->
+**Depois** (founder aplicou pelo SQL Editor; validado por psql-ro em 2026-11-04 22:04Z: md5 `4f0e049f…`, atributos e
+ACL iguais). 1º ciclo, 2026-11-05 07:15Z: job 139 `succeeded` em 4,9 s (antes, 2,5–4,8 s). **0 linhas escritas** pela
+classificação (nenhum `updated_at` ≥ 07:15; antes eram 17.459 todo dia). `n_tup_upd` foi a 118.282 (+15.790 desde a
+linha de base, sem restart desde 31/10). Esse delta é **exatamente** o upsert de tags do dia: 15.790 linhas com
+`tags_synced_at` de hoje, ou seja, a contribuição da classificação caiu de 17.459 para 0 updates por dia. O
+upsert de tags continua como está, por desenho (`tags_synced_at` é a confirmação por linha do sync).
