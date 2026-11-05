@@ -1,0 +1,5 @@
+# Check-in DES: sem faturado confirmado, sem desconto projetado nem 'Vale 0,00%'.
+# @src: src/components/des/checkinQualitativo/useCheckinQualitativo.ts
+# @test: src/components/des/checkinQualitativo/__tests__/useCheckinQualitativo.sem-faturado.test.tsx
+# Rode: bash scripts/mutcheck.sh src/components/des/checkinQualitativo/useCheckinQualitativo.ts src/components/des/checkinQualitativo/__tests__/useCheckinQualitativo.sem-faturado.test.tsx scripts/mutcheck.d/des-checkin-sem-posicao.mut
+PEGA | desconto da view antiga sem gate | s/const desconto = posicao\.conhecida \? descontoQuery\.data : null;/const desconto = descontoQuery.data;/

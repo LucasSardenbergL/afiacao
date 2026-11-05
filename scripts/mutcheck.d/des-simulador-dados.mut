@@ -1,0 +1,9 @@
+# useSimuladorData: a posição desconhecida chega à aba (que bloqueia) e não vira 'faltam'.
+# @src: src/components/des/simulador/useSimuladorData.ts
+# @test: src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx
+# Rode: bash scripts/mutcheck.sh src/components/des/simulador/useSimuladorData.ts src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx scripts/mutcheck.d/des-simulador-dados.mut
+PEGA | posição sempre conhecida | s/posicaoConhecida: posicao\.conhecida,/posicaoConhecida: true,/
+PEGA | erro de leitura escondido | s/posicaoFalhou: posQuery\.isError,/posicaoFalhou: false,/
+# Inalcançada pela aba: com a posição desconhecida a aba já bloqueia antes de mostrar o 'faltam'.
+# O gate fica por tipo (conservadora number|null) e como defesa se a aba deixar de bloquear.
+SOBREVIVE | 'faltam' sem gate (a aba bloqueia antes) | s/if \(!posicao\.conhecida \|\| posicao\.conservadora == null\) return null;/if (posicao.conservadora == null) return null;/

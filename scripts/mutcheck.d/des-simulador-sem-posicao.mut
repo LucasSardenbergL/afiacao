@@ -1,0 +1,6 @@
+# O Simulador DES não simula sem posição confirmada (a RPC partiria de 0).
+# @src: src/components/des/SimuladorTab.tsx
+# @test: src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx
+# Rode: bash scripts/mutcheck.sh src/components/des/SimuladorTab.tsx src/components/des/simulador/__tests__/SimuladorTab.sem-faturado.test.tsx scripts/mutcheck.d/des-simulador-sem-posicao.mut
+PEGA | não bloqueia | s/if \(!posicaoConhecida\) \{/if (false) {/
+PEGA | erro de leitura dito como 'sem faturado' | s/\{posicaoFalhou$/{false/

@@ -74,6 +74,7 @@ vi.mock("@/integrations/supabase/client", () => ({
 
 import { useCheckinQualitativo } from "../useCheckinQualitativo";
 import { CriterioCard } from "../CriterioCard";
+import { CheckinQualitativoTab } from "../../CheckinQualitativoTab";
 
 const FAIXA_3 = { faixa_id: 13, faixa_numero: 3, estrelas: 3, desconto_padrao_perc: 1.5, volume_min: 250000, volume_max: 349999.99 };
 const VIEW_ANTIGA = { fat_bruto_confirmado: null, posicao_ao_vivo_conservadora: 297966.59, faixa_conservadora: FAIXA_3, faixa_otimista: FAIXA_3 };
@@ -145,5 +146,20 @@ describe("CriterioCard — percentual desconhecido", () => {
       />,
     );
     expect(screen.getByText("Vale 0,50%")).toBeTruthy();
+  });
+});
+
+describe("CheckinQualitativoTab sem faturado confirmado", () => {
+  it("cada critério mostra 'Vale —', nunca 'Vale 0,00%'", async () => {
+    estado.posicao = VIEW_NOVA;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <CheckinQualitativoTab empresa="OBEN" ano={2026} trimestre={4} />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Treinamento");
+    expect(screen.getAllByText("Vale —")).toHaveLength(2);
+    expect(document.body.textContent).not.toMatch(/Vale 0,00%/);
   });
 });
