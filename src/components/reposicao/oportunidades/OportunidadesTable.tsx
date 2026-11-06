@@ -8,6 +8,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Loader2, ChevronRight, MoreVertical, EyeOff, ArrowRight } from "lucide-react";
 import { EstadoVazio } from "./components";
+import { AvisoLeituraFalhou } from "@/components/leitura/AvisoLeituraFalhou";
+import type { EstadoSemLeitura } from "@/lib/leitura/estado-de-leitura";
 import {
   formatBRL, formatNumber, formatDate, cenarioIcon, cenarioLabel, descontoBadgeClass,
   recomendacaoBadgeClass, RECOMENDACAO_LABEL,
@@ -15,9 +17,14 @@ import {
 import type { OportunidadeComDecisao } from "./types";
 
 export function OportunidadesTable({
-  isLoading, totalCount, rows, navigate, onOpenDrawer, onIgnorar,
+  isLoading, semLeitura, totalCount, rows, navigate, onOpenDrawer, onIgnorar,
 }: {
   isLoading: boolean;
+  /**
+   * A leitura falhou e NÃO há dado anterior em mãos (plano v7, C10). Antes a falha caía no
+   * <EstadoVazio> — "nenhuma oportunidade hoje" — que é uma afirmação sobre o mundo.
+   */
+  semLeitura: EstadoSemLeitura | null;
   totalCount: number;
   rows: OportunidadeComDecisao[];
   navigate: ReturnType<typeof useNavigate>;
@@ -29,6 +36,16 @@ export function OportunidadesTable({
       <div className="flex items-center gap-2 text-sm text-muted-foreground py-12 justify-center">
         <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
       </div>
+    );
+  }
+  if (semLeitura) {
+    return (
+      <AvisoLeituraFalhou
+        oque="as oportunidades de compra"
+        estado={semLeitura}
+        variante="bloco"
+        testId="aviso-oportunidades"
+      />
     );
   }
   if (totalCount === 0) {
