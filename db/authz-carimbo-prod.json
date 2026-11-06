@@ -1,7 +1,7 @@
 {
   "schemaVersion": 3,
-  "medidoEm": "2026-11-06T20:57:04.795Z",
-  "sourceHead": "8417fa2fab268a4af374e9575a62384189fdea44",
+  "medidoEm": "2026-11-06T23:54:38.068Z",
+  "sourceHead": "e673c327169f85853f95283dca3b4fd46089451c",
   "alvo": {
     "usuario": "claude_ro",
     "servidor": "PostgreSQL 17.6",
@@ -11,19 +11,12 @@
   "audits": {
     "funcoes": {
       "script": "authz:funcoes:prod",
-      "exit": 1,
-      "resumo": "authz:funcoes:prod — 1 divergência(s) de EXECUTE. Ver scripts/authz-funcoes-fechadas.ts.",
-      "denominador": "🔎 authz:funcoes:prod — 77 definição(ões) lida(s) para 77 chave(s) da allowlist.",
+      "exit": 0,
+      "resumo": "✅ o EXECUTE de prod bate com o contrato nas 77 função(ões) da allowlist. ⚠️ 1 delas têm o fecho FORA do repo (fechadaPor=null) e portanto NÃO são vigiadas pelo CI: public.aplicar_sql.",
+      "denominador": "🔎 authz:funcoes:prod — 78 definição(ões) lida(s) para 77 chave(s) da allowlist.",
       "contratoFingerprint": "0a384388803ffd7196bd44537f451a263067779b2386485089f48d79c76b06b9",
       "auditorFingerprint": "8971003ee5ae2343ff6129fe9569b7afb3b5cfd5bab5abed86c6e27520c8358f",
-      "achados": [
-        {
-          "id": "4b3e06906a25efb9",
-          "linha": "❌ public.sayerlack_painel_portal — [FUNCAO_AUSENTE_EM_PROD] public.sayerlack_painel_portal está na allowlist e NÃO existe no banco — foi removida, renomeada, ou a allowlist ficou obsoleta.",
-          "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-06"
-        }
-      ]
+      "achados": []
     },
     "grants": {
       "script": "authz:grants:prod",
@@ -36,19 +29,12 @@
     },
     "audit": {
       "script": "authz:audit:prod",
-      "exit": 1,
-      "resumo": "authz:audit:prod — 1 divergência(s).",
-      "denominador": "🔎 authz:audit:prod — 34 definição(ões) lida(s) para 34 chave(s) do manifest.",
+      "exit": 0,
+      "resumo": "✅ gate do manifest vale no corpo VIVO das 34 funções, e as 0 reescritas baselinadas batem no md5 de prod.",
+      "denominador": "🔎 authz:audit:prod — 35 definição(ões) lida(s) para 34 chave(s) do manifest.",
       "contratoFingerprint": "fefa08d71158c2936ddf36ecc518c0507ded89850eb9cf765ccd7f90b71ce71a",
       "auditorFingerprint": "8243bb07ec22b02ca36694989777a7859c086994435fe38f9e48b649907e8909",
-      "achados": [
-        {
-          "id": "57f184302b938866",
-          "linha": "❌ AUSENTE_EM_PROD: public.sayerlack_painel_portal está no AUTHZ_MANIFEST e não existe no banco.",
-          "primeiraVez": "2026-11-06",
-          "ultimaVez": "2026-11-06"
-        }
-      ]
+      "achados": []
     },
     "claudeRo": {
       "script": "authz:claude-ro:prod",
@@ -108,8 +94,8 @@
     "corpo": {
       "script": "deriva:corpo:prod",
       "exit": 0,
-      "resumo": "✅ deriva-corpo — 482 identidade(s) batem com o repo (404 em dia, 65 só cosméticas, 12 aceitas na baseline) e 24 aposentada(s) estão ausentes",
-      "denominador": "🔎 deriva-corpo — 482 identidade(s) conferida(s) · 24 aposentada(s) · ref origin/main@95815dd61 (fetch ok) · prod 2026-11-06 20:57:32.772288Z",
+      "resumo": "✅ deriva-corpo — 483 identidade(s) batem com o repo (405 em dia, 65 só cosméticas, 12 aceitas na baseline) e 28 aposentada(s) estão ausentes",
+      "denominador": "🔎 deriva-corpo — 483 identidade(s) conferida(s) · 28 aposentada(s) · ref origin/main@e313f7c55 (fetch ok) · prod 2026-11-06 23:55:20.627548Z",
       "contratoFingerprint": "0292bcdcedcfd4f9492106b01765fdba42819fa21a8088a032d7d5a933ef8ffa",
       "auditorFingerprint": "c34625081a1ed5cf90d66fa67effbdfa872fb15924c15ae6911e4e23c400764e",
       "achados": []
