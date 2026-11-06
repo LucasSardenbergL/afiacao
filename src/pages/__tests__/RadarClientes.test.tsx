@@ -248,4 +248,17 @@ describe('RadarClientes — fila do vendedor', () => {
     await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Lead não encontrado no Radar', expect.anything()));
     expect(screen.queryByTestId('ficha')).toBeNull();
   });
+
+  it('B1: a fila de hoje vem no topo com "Começar pelo 1º lead"; filtros e território ficam recolhidos para o vendedor', async () => {
+    fonte.paginas = [[lead('A'), lead('B')]];
+    montar('/radar?uf=SP');
+    await waitFor(() => expect(cnpjsNaLista()).toEqual(['A', 'B']));
+    const topo = screen.getByTestId('radar-fila-de-hoje');
+    expect(within(topo).getByText('Sua fila de hoje')).toBeTruthy();
+    // filtro ativo é CONTADO no rótulo da seção recolhida (fechar não esconde o recorte)
+    expect(within(topo).getByRole('button', { name: /Mais filtros e território/ }).getAttribute('aria-expanded')).toBe('false');
+    expect(within(topo).getByText(/1 ativo/)).toBeTruthy();
+    fireEvent.click(within(topo).getByText('Começar pelo 1º lead'));
+    expect(screen.getByTestId('ficha-cnpj').textContent).toBe('A');
+  });
 });

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Radar, RotateCcw } from 'lucide-react';
+import { ChevronDown, Radar, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
@@ -276,6 +277,13 @@ export default function RadarClientes() {
   };
 
   const pendentesDoLote = loteOmie.progresso?.pendentes ?? 0;
+  // "Mais filtros e território" (B1): fechado para o vendedor, aberto para o gestor (o analítico continua a 1 clique
+  // de cada um). Filtro ativo fica CONTADO no rótulo — fechar a seção não pode esconder que a fila está recortada.
+  // `null` = o usuário ainda não mexeu: segue o papel (que pode chegar depois do 1º render).
+  const [maisEscolhido, setMaisAberto] = useState<boolean | null>(null);
+  const maisAberto = maisEscolhido ?? gestor;
+  const filtrosAtivos = (Object.keys(PADRAO_FILTROS) as (keyof typeof PADRAO_FILTROS)[])
+    .filter((k) => filtrosAtuais[k] !== PADRAO_FILTROS[k]).length;
   const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS }); };
   const semPaginas = !q.data?.pages.length;
 
@@ -311,21 +319,50 @@ export default function RadarClientes() {
           </Button>
         </div>
       </div>
-      <RadarKpis />
-      <Filtros
-        filtros={filtros}
-        set={set}
-        lote={lote}
-        acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
-      />
-      <RadarChipsLote
-        soIneditos={filtros.soIneditos}
-        onSoIneditos={(v) => set({ soIneditos: v })}
-        soSugeridos={filtros.soSugeridos}
-        onSoSugeridos={(v) => set({ soSugeridos: v })}
-      />
-      {/* O território espera a 1ª página da fila (C5): é secundário e não pode disputar a abertura com ela. */}
-      <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending} onPick={(c) => escolherCidade(c, 'ranking')} />
+      {/* Pacote B1: a ENTRADA do vendedor é a fila, não o painel. Antes havia ~16 controles acima da lista, o 1º lead
+          ficava abaixo da dobra no celular e o número de destaque era "A contatar 508.719". */}
+      <section className="rounded-md border p-3 space-y-2" data-testid="radar-fila-de-hoje">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0">
+            <h2 className="text-lg font-display leading-tight">Sua fila de hoje</h2>
+            <p className="text-xs text-muted-foreground">
+              {q.isLoading ? 'Carregando a fila…'
+                : `${empresas.length}${q.hasNextPage ? '+' : ''} lead${empresas.length === 1 ? '' : 's'} · ordem: ${ROTULO_PRESET[filtros.preset]}`}
+            </p>
+          </div>
+          <Button size="touch" className="ml-auto" disabled={empresas.length === 0}
+            onClick={() => { const primeiro = empresas[0]; if (primeiro) { track('radar.fila_comecar', {}); abrir(primeiro); } }}>
+            Começar pelo 1º lead
+          </Button>
+        </div>
+        <Collapsible open={maisAberto} onOpenChange={(v) => { setMaisAberto(v); track('radar.mais_filtros', { aberto: v }); }}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="px-2 -ml-2" aria-expanded={maisAberto}>
+              <SlidersHorizontal className="w-4 h-4 mr-1" />
+              Mais filtros e território
+              {filtrosAtivos > 0 && <span className="ml-1 text-xs text-status-info">({filtrosAtivos} ativo{filtrosAtivos === 1 ? '' : 's'})</span>}
+              <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${maisAberto ? 'rotate-180' : ''}`} />
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pt-2">
+            <Filtros
+              filtros={filtros}
+              set={set}
+              lote={lote}
+              acoes={<RadarFavoritos atuais={filtrosAtuais} padrao={PADRAO_FAVORITO} onAplicar={(f) => set({ ...PADRAO_FAVORITO, ...f })} />}
+            />
+            <RadarChipsLote
+              soIneditos={filtros.soIneditos}
+              onSoIneditos={(v) => set({ soIneditos: v })}
+              soSugeridos={filtros.soSugeridos}
+              onSoSugeridos={(v) => set({ soSugeridos: v })}
+            />
+            <RadarKpis />
+            {/* O território espera a 1ª página da fila (C5): é secundário e não pode disputar a abertura com ela. */}
+            <RadarRankingCidades filtros={filtros} hojeISO={hojeISO} adiar={q.isPending} onPick={(c) => escolherCidade(c, 'ranking')} />
+          </CollapsibleContent>
+        </Collapsible>
+      </section>
 
       {/* Conflitos Radar×Omie guardados no servidor: alcançáveis mesmo fora da fila e depois de esquecer o lote. */}
       <RadarConflitosIndicador onAbrir={abrirPorCnpj} />
