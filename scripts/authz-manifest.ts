@@ -81,6 +81,12 @@ export const AUTHZ_MANIFEST: Record<string, AuthzEntry> = {
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
     motivo: 'coorte "cobertura ≥ N dias" com saldo×cmc e fornecedor por SKU (lote do segurar compra)',
   },
+  // 2026-11 — card "Varredura do portal" em Gerir pedidos: pendências do cron, importados e importados sem PO.
+  'public.sayerlack_painel_portal': {
+    sensitive: true,
+    requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },
+    motivo: 'pedidos do portal Sayerlack importados (protocolo, PO, valor) e falhas da varredura — leitura de compras',
+  },
   'public.reposicao_compra_suspensa_listar': {
     sensitive: true,
     requiredGate: { anyOf: [{ call: 'cap_compras_ler' }] },

@@ -44,7 +44,7 @@ import { OverrideMinimoButton } from '@/components/reposicao/pedidos/OverrideMin
 import { acaoLinhaAtencao, particionarAtencao } from '@/components/reposicao/pedidos/shared';
 import { AbaixoMinimoCard } from '@/components/reposicao/pedidos/AbaixoMinimoCard';
 import { PoSumidoCard } from '@/components/reposicao/pedidos/PoSumidoCard';
-import { ImportarPedidoPortalDialog } from '@/components/reposicao/pedidos/ImportarPedidoPortalDialog';
+import { PedidosPortalCard } from '@/components/reposicao/pedidos/PedidosPortalCard';
 import { ehAcessoNegado, frescorDoDetector, normalizarCandidatos, normalizarMarcador, ordenarCandidatos, type Frescor, type MarcadorPos, type PoCandidato } from '@/components/reposicao/pedidos/po-sumido';
 import { useAuth } from '@/contexts/AuthContext';
 import { track } from '@/lib/analytics';
@@ -769,11 +769,11 @@ export default function AdminReposicaoPedidos() {
             </AlertDialogContent>
           </AlertDialog>
           <UltimaExecucao acao="reposicao.sincronizar_recalcular" />
-          <ImportarPedidoPortalDialog />
-          {/* Varredura automática do portal (cron 12:30 · 17:30 · 22:30) — registro server-side da edge. */}
-          <UltimaExecucao acao="reposicao.varrer_portal_sayerlack" />
         </div>
       </div>
+
+      {/* Portal Sayerlack: importar pelo número, o que a varredura importou e o que ficou pendente. */}
+      <PedidosPortalCard />
 
       {/* Vindos do cockpit "Ciclo diário" (aposentado): frescor das fontes + SKUs que o motor não vê. */}
       <DataHealthBanner source="reposicao_sugestoes" />
