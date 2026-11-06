@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **789** custom migrations totais
-- **2575** objetos esperados (criados por estas migrations)
+- **790** custom migrations totais
+- **2578** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 977
+  - `function`: 980
   - `rls_policy`: 519
   - `index`: 369
   - `table`: 232
@@ -6442,6 +6442,14 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | --- | --- | --- |
 | `function` | `public.sayerlack_importar_pedido_portal` | — |
 | `function` | `public.sayerlack_painel_portal` | — |
+
+### `20261106175800_radar_mapa_regiao_cidade_telefone.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.radar_penetracao_por_municipio` | — |
+| `function` | `public.radar_contagem_por_municipio` | — |
+| `function` | `public.radar_lista` | — |
 
 ### `20261106205556_drop_indices_ociosos_scores.sql`
 

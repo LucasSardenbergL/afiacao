@@ -184,6 +184,32 @@ describe('selosFilial / textoFilialFicha (mesma raiz de CNPJ)', () => {
   });
 });
 
+// C2 (pacote C): o clique numa cidade leva o código e ajusta o recorte geográfico de forma explícita.
+describe('filtrosDaCidade', () => {
+  it('dentro do recorte: código + nome, sem mexer em UF/região', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    expect(filtrosDaCidade({ codigo: '4123', nome: 'SANTA LUZIA', uf: 'MG' }, { uf: '', regiao: 'atuacao' }))
+      .toEqual({ patch: { municipio: 'SANTA LUZIA', municipioCodigo: '4123' }, ajuste: null });
+    expect(filtrosDaCidade({ codigo: '4123', nome: 'SANTA LUZIA', uf: 'MG' }, { uf: 'MG', regiao: 'atuacao' }).ajuste).toBeNull();
+  });
+  it('fora da região de atuação: amplia para o Brasil e diz', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    const r = filtrosDaCidade({ codigo: '7535', nome: 'CURITIBA', uf: 'PR' }, { uf: '', regiao: 'atuacao' });
+    expect(r.patch).toEqual({ municipio: 'CURITIBA', municipioCodigo: '7535', regiao: 'brasil' });
+    expect(r.ajuste).toContain('CURITIBA/PR');
+  });
+  it('UF escolhida diferente da cidade: troca a UF e diz', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    const r = filtrosDaCidade({ codigo: '3851', nome: 'SANTA LUZIA', uf: 'BA' }, { uf: 'MG', regiao: 'brasil' });
+    expect(r.patch).toEqual({ municipio: 'SANTA LUZIA', municipioCodigo: '3851', uf: 'BA' });
+    expect(r.ajuste).toContain('MG para BA');
+  });
+  it('nome ausente: o código vira o rótulo, nunca "null"', async () => {
+    const { filtrosDaCidade } = await import('../ui-helpers');
+    expect(filtrosDaCidade({ codigo: '9999', nome: null, uf: null }, { uf: '' }).patch.municipio).toBe('');
+  });
+});
+
 describe('lista: rótulos, região e catálogo de CNAE', () => {
   it('rótulos dos modos dizem a ordem que a fila tem', async () => {
     const { ROTULO_PRESET } = await import('../ui-helpers');

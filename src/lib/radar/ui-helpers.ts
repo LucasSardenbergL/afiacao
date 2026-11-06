@@ -276,6 +276,42 @@ export function recorteDeUf(f: { uf: string; regiao?: RegiaoRadar }):
   return { tipo: 'todas' };
 }
 
+/** O recorte geográfico em palavras, para rotular somas e médias ("em MG", "na região de atuação", "no Brasil"). */
+export function rotuloRecorteGeo(f: { uf: string; regiao?: RegiaoRadar }): string {
+  const r = recorteDeUf(f);
+  if (r.tipo === 'uf') return `em ${r.uf}`;
+  if (r.tipo === 'lista') return 'na região de atuação (MG e vizinhos)';
+  return 'no Brasil';
+}
+
+/** Cidade escolhida no ranking ou no mapa. A identidade é o CÓDIGO RFB: o nome se repete entre UFs (234 nomes
+ *  em `radar_municipios`, medido em prod 2026-11-06), e "Santa Luzia" por nome trazia a de outra UF. */
+export interface CidadeEscolhida { codigo: string; nome: string | null; uf: string | null }
+
+/** Os filtros que abrem a fila DESSA cidade: código exato + o nome como rótulo do campo. Se a cidade cai fora do
+ *  recorte geográfico atual, o recorte é ajustado e `ajuste` diz o quê (a tela avisa) — nunca uma fila vazia
+ *  calada. UF escolhida diferente → a UF da cidade; região de atuação que não a contém → Brasil. */
+export function filtrosDaCidade(
+  c: CidadeEscolhida,
+  f: { uf: string; regiao?: RegiaoRadar },
+): { patch: { municipio: string; municipioCodigo: string; uf?: string; regiao?: RegiaoRadar }; ajuste: string | null } {
+  const patch: { municipio: string; municipioCodigo: string; uf?: string; regiao?: RegiaoRadar } = {
+    municipio: c.nome ?? '',
+    municipioCodigo: c.codigo,
+  };
+  const rotulo = `${c.nome ?? c.codigo}${c.uf ? `/${c.uf}` : ''}`;
+  if (!c.uf) return { patch, ajuste: null };
+  if (f.uf && f.uf !== c.uf) {
+    patch.uf = c.uf;
+    return { patch, ajuste: `UF trocada de ${f.uf} para ${c.uf} para mostrar ${rotulo}.` };
+  }
+  if (!f.uf && f.regiao === 'atuacao' && !(UFS_ATUACAO as readonly string[]).includes(c.uf)) {
+    patch.regiao = 'brasil';
+    return { patch, ajuste: `${rotulo} fica fora da região de atuação: a fila passou a mostrar o Brasil.` };
+  }
+  return { patch, ajuste: null };
+}
+
 export interface CnaeAlvo { codigo: string; nome: string; grupo: string }
 /** Cópia estática de `scripts/radar/cnaes-alvo.txt` (a curadoria que a carga usa). O teste de
  *  `ui-helpers` compara as duas listas: editar o .txt sem editar aqui fica vermelho no CI. */
