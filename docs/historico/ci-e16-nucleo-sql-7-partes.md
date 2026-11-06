@@ -62,9 +62,37 @@ sem ele.
 - **Parte mais curta:** a 5ª (11,9 e 12,6) é a mais leve nos dois attempts, o que sugere um resíduo de
   tabela (provas que ficaram mais rápidas). Não vale re-medir por isso: ela não está no caminho crítico.
 
+## Depois do merge: 24 runs com carga real (2026-11-06)
+
+O run do commit final (42156233361) deu pior parte de 16,4 e parede de 23,0 min. Ali a espera não caiu nas
+partes: a `provas-sql-uniao` esperou 2m40s por runner, e o `validate` esperou 3m18s, na cauda serial.
+
+Depois, foram os 24 runs verdes do `ci.yml` com 7 partes, de 03:47Z a 15:49Z de 2026-11-06 (PR, dispatch e
+push), medidos com o mesmo método:
+
+| métrica | base 6 partes (17 runs), p50 | 7 partes (24 runs), p50 | p90 / extremos (7 partes) |
+|---|---|---|---|
+| pior parte | 19,3 (mín. 18,6) | **16,5** | p90 17,7 · máx. **17,9** |
+| runner-min (total) | 147,5 | 145,4 | p90 149,9 |
+| fila p90 do run | 0,4 | 1,4 | p90 12,0 · máx. 13,5 |
+| parede até o `validate` | 23,0 | 26,8 | p90 35,3 · máx. 42,2 |
+| parede, só runs com fila p90 ≤ 0,4 | 22,2 (n=9) | **18,5** (n=9) | — |
+
+- **Pior parte:** caiu 2,8 min de p50. O **máximo** de depois (17,9) fica abaixo do **mínimo** de antes
+  (18,6) em 24 contra 17 runs, então o ruído de máquina não explica a queda. Isso fecha o p50 novo que os 2
+  attempts não fechavam.
+- **Runner-min:** ficou neutro (145,4 contra 147,5).
+- **Fila e parede:** pioraram, mas a carga também mudou. Na janela de depois rodaram **4,7 runs de CI por
+  hora**, contra 3,3 na base (1,4×), com os lotes 1, 2, 5, 6 e 7 do v7 abrindo PRs ao mesmo tempo. Como os
+  runner-min por run empataram, a demanda que o +1 job acrescenta é de pico (~15 min a mais de um runner),
+  e não de volume. Separar esse efeito do da carga pediria duas janelas com a mesma carga, e aqui não há.
+  Nos runs sem fila, a parede caiu 3,7 min, que é o ganho que N=7 entrega.
+
 ## Veredito: MANTIDO
 
-N=7 encurta a pior parte e a parede sem custar runner-min. Fica em aberto a fila sob carga, que se
-confere nos runs normais do dia: rode o `mede.sh` descrito no PR #3643 sobre runs do horário comercial e
-compare com a fila p90 da base. **Reverter** é voltar `parte:` a `[1..6]` no `ci.yml` (nada mais muda: a
-partição e a união leem N do GitHub). O lote 5 (E14) pode medir sobre esta base de 7 partes.
+N=7 encurta a pior parte (p50 19,3 → 16,5, distribuições sem sobreposição) e a parede sem fila
+(22,2 → 18,5) sem custar runner-min. A fila p90 subiu de 0,4 para 1,4 numa janela com 1,4× mais runs, e
+esta medição não consegue atribuir essa alta ao job a mais. Se a fila voltar a incomodar com carga
+comparável à da base, essa é a pergunta a medir, e a alavanca continua sendo a demanda
+([ci-fila-de-runners.md](ci-fila-de-runners.md)), não o N. **Reverter** é voltar `parte:` a `[1..6]` no
+`ci.yml` (nada mais muda: a partição e a união leem N do GitHub).
