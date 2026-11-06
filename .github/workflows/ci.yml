@@ -100,6 +100,13 @@ on:
         description: 'Rodar o mutation-check (todos os contratos .mut)'
         type: boolean
         default: true
+      # O pós-merge passa `true` (E14 do plano v7, 2026-11-06): as provas SQL pulam só se o diff
+      # CUMULATIVO desde a última base com provas e união verdes for todo de `docs/`. Default `false`:
+      # o dispatch manual segue rodando tudo. Desenho: job `provas-sql-escopo`.
+      provas_escopo_docs:
+        description: 'Pular as provas SQL se, desde a última base com provas verdes, só docs/ mudou'
+        type: boolean
+        default: false
 
 # ┌─ FAN-OUT (2026-09-07) ─────────────────────────────────────────────────────────────────────────┐
 # O `validate` era UM job serial de ~40 steps, com `timeout-minutes: 15`. Medido em 2026-09-07 sobre
@@ -978,17 +985,29 @@ jobs:
 
   # Escopo do `provas-sql` (ver o bloco ESCOPO logo abaixo). `fetch-depth: 2` pelo mesmo motivo do
   # `mutcheck-escopo`: com os dois pais do merge commit na árvore, `pai 1 → HEAD` é o que o PR muda.
+  #
+  # No dispatch pós-merge da main (E14 do plano v7) o histórico vem INTEIRO: o escopo procura, pela API,
+  # o último run da main com provas e união `success` e exige que o SHA dele seja ANCESTRAL do
+  # `github.sha` deste run (`git merge-base --is-ancestor`), com o diff cumulativo entre os dois. Em
+  # PR fica o raso, que é o caminho crítico quando as provas rodam. `actions: read` é para essa busca.
   provas-sql-escopo:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     outputs:
       roda: ${{ steps.escopo.outputs.roda }}
+      base: ${{ steps.escopo.outputs.base }}
     steps:
       - uses: actions/checkout@v5
+        if: ${{ github.event_name != 'workflow_dispatch' }}
         with:
           fetch-depth: 2
+      - uses: actions/checkout@v5
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        with:
+          fetch-depth: 0
 
       # Semver estrito, mesmo motivo do job `typecheck` (o `bunpin:check` cobra a convergência).
       - name: Setup Bun
@@ -1006,7 +1025,15 @@ jobs:
         id: escopo
         env:
           EVENTO: ${{ github.event_name }}
-        run: bun ./scripts/provas-sql-escopo.ts --evento "$EVENTO" --github-output
+          ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          bun ./scripts/provas-sql-escopo.ts --evento "$EVENTO" --escopo-docs "$ESCOPO_DOCS"
+          --ref "$REF" --sha "$SHA" --repo "$REPO" --run-id "$RUN_ID" --github-output
 
   # ─── Agregador — É ESTE o required status check ─────────────────────────────
   # `validate` não roda trabalho nenhum: ele só AFIRMA que os 4 jobs acima terminaram em
@@ -1111,7 +1138,9 @@ jobs:
   # ESCOPO (2026-11-04, E1 do plano v5): no `pull_request`, o núcleo só roda quando o diff toca algo
   # que alguma prova LÊ. `provas-sql-escopo` decide em segundos (`scripts/provas-sql-escopo.ts`, uma
   # ALLOWLIST DO INERTE: só pula se TODO arquivo mudado cai em `docs/`/`src/`/`public/`/`.claude/` e
-  # fora do que as provas leem lá dentro). Fora de PR roda TUDO — é a rede da main. Fail-closed nas
+  # fora do que as provas leem lá dentro). Fora de PR roda TUDO — é a rede da main —, com UMA exceção
+  # estreita (E14 do plano v7): o dispatch pós-merge pula se o diff CUMULATIVO desde a última base com
+  # provas e união verdes for só de `docs/` (sem a allowlist do PR). Fail-closed nas
   # três pontas: o script nunca sai ≠ 0 e erra para `roda=true`; este job só pula com `roda`
   # EXPLICITAMENTE 'false' (job de escopo vermelho = saída vazia = roda); e o `validate` só aceita o
   # SKIPPED daqui e da união com o `success` do escopo e o `roda=false` dele. Mapa de leitura e
@@ -1491,22 +1520,33 @@ jobs:
         env:
           RESULTADOS: ${{ toJSON(needs) }}
           EVENTO: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          ESCOPO_DOCS: ${{ inputs.provas_escopo_docs }}
         run: |
           set -euo pipefail
           esperados=8
           total=0; falhou=0; viu_provas_sql=0; viu_uniao=0; viu_falsificacao=0; viu_escopo=0
-          # O ÚNICO skipped aceito (E1 do plano v5, 2026-11-04): `provas-sql` e `provas-sql-uniao` pulados
-          # porque o escopo DISSE que o diff não alcança nada que as provas leem. Exige as três coisas
-          # lidas juntas — evento `pull_request` (fora de PR o escopo nunca pula), o escopo em `success`
-          # e `roda` exatamente 'false'. Escopo vermelho, saída vazia ou qualquer outro valor = o skipped
-          # é ausência de dado e reprova, como sempre.
+          # O ÚNICO skipped aceito: `provas-sql` e `provas-sql-uniao` pulados porque o escopo DISSE que
+          # o diff não alcança nada que as provas leem. Sempre com o escopo em `success` e `roda`
+          # exatamente 'false', e em UM de dois eventos:
+          #  - `pull_request` (E1 do plano v5, 2026-11-04);
+          #  - o dispatch pós-merge da main (E14 do plano v7, 2026-11-06): `workflow_dispatch` na ref
+          #    main, com o input `provas_escopo_docs` true e a `base` verde (40 hex) que o escopo achou.
+          # Push, cron e dispatch manual nunca pulam. Escopo vermelho, saída vazia ou qualquer outro
+          # valor = o skipped é ausência de dado e reprova, como sempre.
           escopo_pulou=0
           escopo_resultado="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].result // ""')"
           escopo_roda="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.roda // ""')"
-          if [ "$EVENTO" = pull_request ] && [ "$escopo_resultado" = success ] && [ "$escopo_roda" = false ]; then
-            escopo_pulou=1
+          escopo_base="$(printf '%s' "$RESULTADOS" | jq -r '.["provas-sql-escopo"].outputs.base // ""')"
+          if [ "$escopo_resultado" = success ] && [ "$escopo_roda" = false ]; then
+            if [ "$EVENTO" = pull_request ]; then
+              escopo_pulou=1
+            elif [ "$EVENTO" = workflow_dispatch ] && [ "$REF" = refs/heads/main ] && [ "$ESCOPO_DOCS" = true ] \
+                 && [[ "$escopo_base" =~ ^[0-9a-f]{40}$ ]]; then
+              escopo_pulou=1
+            fi
           fi
-          echo "  escopo das provas SQL: evento=$EVENTO resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>}"
+          echo "  escopo das provas SQL: evento=$EVENTO ref=$REF escopo_docs=${ESCOPO_DOCS:-<vazio>} resultado=${escopo_resultado:-<vazio>} roda=${escopo_roda:-<vazio>} base=${escopo_base:-<vazio>}"
           while IFS="$(printf '\t')" read -r job resultado; do
             total=$((total + 1))
             [ "$job" = "provas-sql" ] && viu_provas_sql=1
@@ -1517,7 +1557,11 @@ jobs:
               echo "  ✅ $job: success"
             elif [ "$resultado" = skipped ] && [ "$escopo_pulou" -eq 1 ] \
                  && { [ "$job" = provas-sql ] || [ "$job" = provas-sql-uniao ]; }; then
-              echo "  ⏭️ $job: skipped pelo escopo (o diff não toca o que as provas leem; a main roda TUDO)"
+              if [ "$EVENTO" = pull_request ]; then
+                echo "  ⏭️ $job: skipped pelo escopo (o diff não toca o que as provas leem)"
+              else
+                echo "  ⏭️ $job: skipped pelo escopo da main (só docs/ desde a base verde $escopo_base)"
+              fi
             else
               echo "  ❌ $job: ${resultado:-<vazio>}"
               falhou=$((falhou + 1))

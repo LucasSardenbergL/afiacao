@@ -115,7 +115,9 @@ jobs:
               MERGED)
                 # `mutcheck=false`: a rede de todos os contratos `.mut` roda no cron diário do ci.yml, não
                 # a cada merge (~56 min de runner por merge, na fila dos PRs — ci.yml, input `mutcheck`).
-                gh workflow run ci.yml --repo "$REPO" --ref main -f mutcheck=false
+                # `provas_escopo_docs=true` (E14 do plano v7): as provas SQL pulam se, desde a última base
+                # com provas verdes, só `docs/` mudou. O cron e o dispatch manual seguem rodando tudo.
+                gh workflow run ci.yml --repo "$REPO" --ref main -f mutcheck=false -f provas_escopo_docs=true
                 echo "✅ PR #$pr mergeado → CI disparado na main (workflow_dispatch)"
                 exit 0 ;;
               CLOSED)
