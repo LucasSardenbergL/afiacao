@@ -1,6 +1,5 @@
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { BotaoLigar } from '@/components/call/BotaoLigar';
 import { cn } from '@/lib/utils';
 import {
   idadeEmAnos, rotuloPorte, rotuloStatus, tomStatus, CLASSE_TOM, telefonePrincipal, seloRfb, scoreUI, selosFilial,
@@ -11,6 +10,7 @@ import { ehInedito, saiuDoDump, rotuloSaiuDoDump, type LoteIngest } from '@/lib/
 import { ehSugerido, LIMIAR_SUGERIDO } from '@/lib/radar/sugeridos';
 import { seloVinculo, type EstadoVinculos, type ResumoVinculoLista } from '@/lib/radar/vinculos';
 import { ChipAtendimento } from './RadarAtendimentoLead';
+import { RadarTelefoneAcao } from './RadarTelefoneAcao';
 
 /**
  * Linha da lista. Checkbox e botão de abrir são IRMÃOS (não aninhados): a linha inteira
@@ -156,7 +156,7 @@ export function RadarLinha({
         </span>
       </div>
       <div className="w-8 flex justify-center">
-        {tel && <BotaoLigar telefone={tel} nomeCliente={empresa.razao_social || nome} variant="icon" />}
+        {tel && <RadarTelefoneAcao telefone={tel} />}
       </div>
     </div>
   );

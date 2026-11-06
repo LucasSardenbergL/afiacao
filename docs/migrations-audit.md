@@ -21,10 +21,10 @@ Este audit valida **quais custom migrations estão de fato aplicadas no banco**.
 
 ## Resumo
 
-- **788** custom migrations totais
-- **2587** objetos esperados (criados por estas migrations)
+- **790** custom migrations totais
+- **2589** objetos esperados (criados por estas migrations)
 - Quebra por tipo:
-  - `function`: 981
+  - `function`: 983
   - `rls_policy`: 519
   - `index`: 371
   - `table`: 237
@@ -6436,6 +6436,13 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `function` | `public.radar_placar_uso` | — |
 | `trigger` | `public.trg_radar_evento_abertura` | `analytics_outbox` |
 
+### `20261106140000_sayerlack_importar_portal_revisao.sql`
+
+| Tipo | Objeto | Parent |
+| --- | --- | --- |
+| `function` | `public.sayerlack_importar_pedido_portal` | — |
+| `function` | `public.sayerlack_painel_portal` | — |
+
 ### `20261106181000_radar_leads_ao_vendedor.sql`
 
 | Tipo | Objeto | Parent |
@@ -6454,6 +6461,10 @@ Lista canônica do que cada migration *deveria* criar (extraído via regex de `C
 | `index` | `public.idx_radar_email_vendedor_leads_cnpj` | `radar_email_vendedor_leads` |
 | `index` | `public.idx_radar_lead_aberturas_envio` | `radar_lead_aberturas` |
 | `cron_job` | `cron.radar-avisar-vendedores-semanal` | — |
+
+### `20261106205556_drop_indices_ociosos_scores.sql`
+
+> _Nenhum objeto extraído via regex._ Migration provavelmente é `ALTER TABLE` / `UPDATE` / `INSERT` / RLS-only. Validar manualmente.
 
 ## Próximos passos por status
 

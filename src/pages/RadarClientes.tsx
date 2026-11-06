@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Radar, RotateCcw } from 'lucide-react';
+import { toast } from 'sonner';
 import { useUrlState } from '@/hooks/useUrlState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll';
@@ -17,6 +18,7 @@ import { RadarLinha } from '@/components/radar/RadarLinha';
 import { RadarAmostraRegra } from '@/components/radar/RadarAmostraRegra';
 import { useRadarAmostra } from '@/queries/useRadarAmostra';
 import { casaFiltrosExplicitos, intercalarAmostra, pendenteNaAmostra, resumirAmostra } from '@/lib/radar/amostra';
+import { proximoDaFila, type PassoFila } from '@/lib/radar/fila';
 import { RadarDetailSheet } from '@/components/radar/RadarDetailSheet';
 import { RadarRankingCidades } from '@/components/radar/RadarRankingCidades';
 import { RadarAcoesLote } from '@/components/radar/RadarAcoesLote';
@@ -27,7 +29,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import type { PresetRadar, RegiaoRadar } from '@/lib/radar/ui-helpers';
+import { ROTULO_PRESET, type PresetRadar, type RegiaoRadar } from '@/lib/radar/ui-helpers';
 import { TETO_LOTE } from '@/lib/radar/lote';
 import { track } from '@/lib/analytics';
 import { mensagemDeErro } from '@/lib/erro-mensagem';
@@ -94,8 +96,10 @@ function narrowRegiao(v: string): RegiaoRadar {
 
 export default function RadarClientes() {
   const [raw, set] = useUrlState<RadarUrlState>(DEFAULTS);
-  const filtros: RadarFiltros = { ...raw, preset: narrowPreset(raw.preset), regiao: narrowRegiao(raw.regiao) };
-  const { vista: _v, ...filtrosAtuais } = raw;
+  // Apresentação ≠ dados (pacote A6): `vista` (lista/mapa) fica FORA dos filtros. Ela entrava pelo spread, então
+  // trocar Lista↔Mapa mudava a chave da consulta (refetch da fila) e o efeito abaixo apagava a seleção.
+  const { vista, ...filtrosAtuais } = raw;
+  const filtros: RadarFiltros = { ...filtrosAtuais, preset: narrowPreset(filtrosAtuais.preset), regiao: narrowRegiao(filtrosAtuais.regiao) };
 
   const hojeISO = useMemo(() => {
     const d = new Date();
@@ -128,10 +132,15 @@ export default function RadarClientes() {
   // Ficha aberta por CNPJ; o objeto é relido da lista a cada render (não fica velho).
   const [abertaCnpj, setAbertaCnpj] = useState<string | null>(null);
   const abertaSnapshot = useRef<RadarEmpresa | null>(null);
+  // Posição do lead aberto na última vez em que estava na lista: se ele sair (contato registrado → refetch), o
+  // "Próximo" segue de onde o vendedor estava, não do topo.
+  const ultimoIndice = useRef<number | null>(null);
 
   // Paginação CONGELADA enquanto um lote roda: a lista é por offset e as cadastradas
   // somem da fila — carregar a página seguinte no meio pularia empresas.
-  const podePaginar = !!q.hasNextPage && !q.isFetchingNextPage && !loteOmie.rodando;
+  // Falha na página seguinte também segura o scroll infinito: senão ele re-dispara em laço sobre o mesmo erro. O
+  // rodapé oferece "Tentar carregar mais".
+  const podePaginar = !!q.hasNextPage && !q.isFetchingNextPage && !q.isFetchNextPageError && !loteOmie.rodando;
   const sentinelRef = useInfiniteScroll(() => q.fetchNextPage(), podePaginar);
 
   // Amostra de controle: 1 a cada 10 posições, por cima do ranking (região e "só sugeridos" não a escondem; o que
@@ -158,7 +167,9 @@ export default function RadarClientes() {
   const vinculos = useRadarVinculosLista(paginasIrmaos);
   const aberta = useMemo(() => {
     if (!abertaCnpj) return null;
-    const atual = empresas.find((e) => e.cnpj === abertaCnpj) ?? abertaSnapshot.current;
+    const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
+    if (i >= 0) ultimoIndice.current = i;
+    const atual = empresas[i] ?? abertaSnapshot.current;
     abertaSnapshot.current = atual;
     return atual;
   }, [abertaCnpj, empresas]);
@@ -170,12 +181,47 @@ export default function RadarClientes() {
     if (!e) throw new Error('lead não encontrado no Radar');
     abrir(e);
   }, [empresas, abrir]);
-  const proximo = useCallback(() => {
-    if (!abertaCnpj) return;
-    const i = empresas.findIndex((e) => e.cnpj === abertaCnpj);
-    const prox = empresas[i + 1] ?? empresas.find((e) => e.cnpj !== abertaCnpj);
-    if (prox) { track('radar.proximo_lead', {}); abrir(prox); } else setAbertaCnpj(null);
-  }, [abertaCnpj, empresas, abrir]);
+  // "Próximo" (pacote A1): no fim do carregado BUSCA a página seguinte; no fim de verdade fecha a ficha e DIZ que a
+  // fila acabou. Nunca volta ao 1º lead (o vendedor re-ligaria para quem já falou). Decisão em src/lib/radar/fila.ts.
+  const abertaCnpjRef = useRef(abertaCnpj);
+  abertaCnpjRef.current = abertaCnpj;
+  const buscandoProximo = useRef(false);
+  const aplicarPasso = useCallback((passo: PassoFila<RadarEmpresa>) => {
+    if (passo.tipo === 'abrir') {
+      track('radar.proximo_lead', {});
+      ultimoIndice.current = passo.indice;
+      abrir(passo.empresa);
+    } else if (passo.tipo === 'fim') {
+      track('radar.fila_acabou', {});
+      setAbertaCnpj(null);
+      toast.info('Fim da fila', { description: 'Não há mais leads com estes filtros.' });
+    } else {
+      toast.info('Role a lista para carregar mais leads');
+    }
+  }, [abrir]);
+  const proximo = useCallback(async () => {
+    const atual = abertaCnpjRef.current;
+    if (!atual || buscandoProximo.current) return;
+    const passo = proximoDaFila(empresas, atual, ultimoIndice.current, !!q.hasNextPage);
+    if (passo.tipo !== 'buscar_mais') { aplicarPasso(passo); return; }
+    if (loteOmie.rodando) {
+      toast.info('Paginação pausada enquanto o lote roda', { description: 'O próximo lead aparece quando o lote de cadastro terminar.' });
+      return;
+    }
+    buscandoProximo.current = true;
+    try {
+      const r = await q.fetchNextPage();
+      if (abertaCnpjRef.current !== atual) return; // a ficha mudou ou fechou enquanto a página vinha
+      if (r.isError) {
+        toast.error('Não consegui carregar o próximo lead', { description: mensagemDeErro(r.error) ?? 'Tente de novo.' });
+        return;
+      }
+      const fila = intercalarAmostra(r.data?.pages.flat() ?? [], amostraNaFila, !r.hasNextPage);
+      aplicarPasso(proximoDaFila(fila, atual, ultimoIndice.current, !!r.hasNextPage));
+    } finally {
+      buscandoProximo.current = false;
+    }
+  }, [empresas, q, loteOmie.rodando, amostraNaFila, aplicarPasso]);
 
   const selecionar = useCallback((e: RadarEmpresa, v: boolean) => {
     setSelecao((s) => {
@@ -198,6 +244,8 @@ export default function RadarClientes() {
   };
 
   const pendentesDoLote = loteOmie.progresso?.pendentes ?? 0;
+  const limparFiltros = () => { track('radar.filtros_limpos', {}); set({ ...PADRAO_FILTROS }); };
+  const semPaginas = !q.data?.pages.length;
 
   return (
     <div className="p-4 space-y-4 max-w-6xl mx-auto pb-24">
@@ -210,11 +258,11 @@ export default function RadarClientes() {
           </span>
         )}
         <div className="ml-auto flex gap-1">
-          <Button variant={raw.vista !== 'mapa' ? 'default' : 'outline'} size="sm" onClick={() => set({ vista: 'lista' })}>
+          <Button variant={vista !== 'mapa' ? 'default' : 'outline'} size="sm" onClick={() => set({ vista: 'lista' })}>
             Lista
           </Button>
           <Button
-            variant={raw.vista === 'mapa' ? 'default' : 'outline'}
+            variant={vista === 'mapa' ? 'default' : 'outline'}
             size="sm"
             onClick={() => { track('radar.mapa_aberto', {}); set({ vista: 'mapa' }); }}
           >
@@ -257,7 +305,7 @@ export default function RadarClientes() {
         </div>
       )}
 
-      {raw.vista !== 'mapa' && (
+      {vista !== 'mapa' && (
         <RadarAmostraRegra
           sorteio={amostra?.sorteio ?? null}
           resumo={resumoAmostra}
@@ -265,7 +313,7 @@ export default function RadarClientes() {
           erro={amostraQ.isError ? mensagemDeErro(amostraQ.error) ?? 'erro de leitura' : null}
         />
       )}
-      {raw.vista === 'mapa' ? (
+      {vista === 'mapa' ? (
         <Suspense fallback={<Skeleton className="h-[420px]" />}>
           <RadarMapa
             filtros={filtros}
@@ -294,10 +342,19 @@ export default function RadarClientes() {
             <div className="p-3 space-y-2">
               {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
             </div>
-          ) : q.isError ? (
-            <EmptyState tone="operational" icon={Radar} title="Não foi possível carregar" description="Tente novamente em instantes." />
+          ) : q.isError && semPaginas ? (
+            // Só sem NENHUMA página: falha na página seguinte preserva a lista (rodapé abaixo) — pacote A5.
+            <EmptyState
+              tone="operational" icon={Radar} title="Não foi possível carregar a fila"
+              description={mensagemDeErro(q.error) ?? 'Tente novamente em instantes.'}
+              actionLabel="Tentar de novo" onAction={() => void q.refetch()}
+            />
           ) : empresas.length === 0 ? (
-            <EmptyState tone="operational" icon={Radar} title="Nenhuma empresa nesta fila" description="Ajuste os filtros ou troque o modo de ataque." />
+            <EmptyState
+              tone="operational" icon={Radar} title="Nenhuma empresa nesta fila"
+              description={`Ajuste os filtros ou troque a ordem (${Object.values(ROTULO_PRESET).join(', ')}).`}
+              actionLabel="Limpar filtros" onAction={limparFiltros}
+            />
           ) : (
             <>
               {empresas.map((e) => (
@@ -316,8 +373,15 @@ export default function RadarClientes() {
                   amostra={cnpjsAmostra.has(e.cnpj) ? amostra?.sorteio ?? null : null}
                 />
               ))}
-              <div ref={sentinelRef} className="h-10 flex items-center justify-center text-xs text-muted-foreground">
-                {q.isFetchingNextPage ? 'Carregando…' : loteOmie.rodando && q.hasNextPage ? 'Paginação pausada enquanto o lote roda' : q.hasNextPage ? '' : 'Fim da lista'}
+              <div ref={sentinelRef} className="min-h-10 py-1 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                {q.isFetchingNextPage ? 'Carregando…'
+                  : q.isFetchNextPageError ? (
+                    <>
+                      <span className="text-status-error" data-testid="radar-erro-pagina">Não consegui carregar mais leads.</span>
+                      <Button size="sm" variant="outline" onClick={() => void q.fetchNextPage()}>Tentar carregar mais</Button>
+                    </>
+                  )
+                  : loteOmie.rodando && q.hasNextPage ? 'Paginação pausada enquanto o lote roda' : q.hasNextPage ? '' : 'Fim da lista'}
               </div>
             </>
           )}
@@ -336,7 +400,7 @@ export default function RadarClientes() {
         empresa={aberta}
         hojeISO={hojeISO}
         onClose={() => setAbertaCnpj(null)}
-        onProximo={proximo}
+        onProximo={() => void proximo()}
         lote={lote}
         irmaos={aberta ? irmaos.dados.get(aberta.cnpj) ?? null : null}
         irmaosEstado={aberta ? irmaos.estadoDe(aberta.cnpj) : 'carregando'}

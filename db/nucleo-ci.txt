@@ -41,6 +41,7 @@ db/test-views-invoker-off-p0.sh            25
 db/test-authz-revoke-anon-rpc.sh           19
 db/test-retencao-scores-farmer.sh          14
 db/test-retencao-scores-60d.sh             26
+db/test-drop-indices-scores.sh             12
 db/test-expurgo-logs-tint.sh               27
 db/test-sales-price-history-created-at-futuro.sh 13
 db/test-drop-quarentena-omie-clientes.sh    11
@@ -214,7 +215,7 @@ db/test-sayerlack-ipi-po.sh                95
 # Importar pedido digitado direto no portal Sayerlack: de-para inverso (ambíguo/inativo/outra empresa = sem de-para),
 # qtde inteira no Omie (÷ fator), custo pela MESMA prova da RPC acima na MESMA transação (recusa = nada gravado),
 # idempotência por protocolo (lock + UNIQUE), authz, falsificação por camada.
-db/test-sayerlack-importar-pedido-portal.sh 51
+db/test-sayerlack-importar-pedido-portal.sh 75
 # Saldo inicial da projeção de 13 semanas (20261028014827): conta ausente/velha/NaN ou lista vazia → saldo_projetado
 # NULL, nunca R$ 0 nem soma parcial; régua de frescor = classificarSaldoConta (04h SP), sob sessão UTC e SP; relógio
 # controlado; PRE recusa deriva; 16 sabotagens num espelho (docs/historico/saldo-cc-fresco-e-ncg-leitura-pontual.md).

@@ -90,3 +90,24 @@ Base (✔ `gh run`): PR p50 **24,4 min** de parede; caminho crítico = `provas-s
 | — | D4, D5, F2 | datas/amostra (§2) | diagnóstico, sem PR |
 
 Lotes 1–8 e 10 são independentes entre si (arquivos distintos); 6 e 7 tocam o boot — rodar em sequência para não confundir a medição.
+
+## 5. Fecho (2026-11-06)
+
+Todos os lotes executáveis estão **mergeados e no ar**, cada um conferido na sua camada de deploy:
+
+- **Front (Publish conferido pelos bytes servidos):** 1 (#3566), 2 (#3563), 3 (#3565), 4 (#3562), 6 (#3579), 6b (#3603), 6c (#3607) e o resíduo do 6c (#3618), além do 7 (#3581).
+- **Edge (sonda com `versao` e `fonte` iguais às da main):** o 5 (#3573), VAL-IO na v1.9.
+- **Migrations (validadas por `psql-ro`):** 10 (#3588), 11 (#3591) e o conserto do D4 (#3604, tentativa #898).
+- **Só CI:** 8 (#3585/#3589).
+
+D1 está medido. O 1º ciclo de contas a pagar depois do apply ficou em **98,5% HOT**, contra 0 antes ([histórico](../../../historico/hot-contas-pagar-lote11.md)).
+
+O que ainda falta tem data ou sai do nosso alcance:
+
+| Item | Onde fecha |
+|---|---|
+| D5: DROP dos 4 índices sem uso dos scores (~211 MB) | Sessão "Plano v5 · D5/B1", depois do fim da janela de 7 dias (2026-11-07 10:33 UTC). O SQL do founder já está pronto; os índices do Radar ficam só para releitura, porque o uso é mensal |
+| B1: 1ª passada do expurgo com 60 d | Cron de 2026-11-08 04:30 UTC, conferido por tarefa agendada às 11:00 UTC do mesmo dia |
+| Web-vitals de campo, F2 e E3 | Passam para a tabela de abertos do [v7](../2026-11-05-plano-melhoria-v7/README.md) §0, que já os lista. O ganho dos lotes de tela está medido em laboratório (lote 6: LCP −744 ms no mobile; 6b: −1,5 s no LCP depois do auth; 6c: −412 ms no desktop), e a confirmação de campo espera amostra com mais de 1 usuário |
+
+Com D5 e B1 fechados, o v5 está encerrado.
